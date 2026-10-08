@@ -116,7 +116,7 @@ pub(super) fn sync_precipitation(
     stats: Res<RenderStats>,
     time: Res<Time>,
     mut state: Local<PrecipState>,
-    cams: Query<&GlobalTransform, With<Camera3d>>,
+    cams: Query<&GlobalTransform, With<crate::camera::OrbitCamera>>,
     mut blocks: Query<(&Precipitation, &mut Transform, &mut Visibility, &mut Mesh3d)>,
 ) {
     let w = &sim.world;
@@ -217,7 +217,7 @@ pub(super) fn sync_steam(
     lighting: Res<Lighting>,
     time: Res<Time>,
     mut state: Local<SteamState>,
-    cams: Query<&GlobalTransform, With<Camera3d>>,
+    cams: Query<&GlobalTransform, With<crate::camera::OrbitCamera>>,
     mut puffs: Query<(&Steam, &mut Transform, &mut MeshMaterial3d<StandardMaterial>, &mut Visibility)>,
 ) {
     let w = &sim.world;
@@ -284,6 +284,7 @@ pub(super) fn sync_steam(
     }
     let Some(cam) = cams.iter().next() else { return };
     let face = cam.compute_transform().rotation;
+    let eye = cam.translation();
     let now = time.elapsed_secs();
     let dir = haze::wind_dir(w.clock.tick);
     let wind = w.weather.wind.clamp(0.05, 1.0);
@@ -296,7 +297,7 @@ pub(super) fn sync_steam(
         let rise = (6.0 + 16.0 * scale) * age.powf(0.7);
         let pos = *vent + Vec3::Y * (1.0 + rise) + along * (age * age * (4.0 + 14.0 * wind) * scale.sqrt());
         let size = 1.5 + (4.0 + 5.0 * scale) * age.powf(0.8);
-        let a = smoothstep(0.0, 0.1, age) * (1.0 - age).powf(1.5) * (0.6 + 0.25 * scale).min(1.0);
+        let a = smoothstep(0.0, 0.1, age) * (1.0 - age).powf(1.5) * (0.6 + 0.25 * scale).min(1.0) * haze::near_fade(eye.distance(pos), size);
         if a < 0.5 / STEAM_STEPS as f32 {
             *vis = Visibility::Hidden;
             continue;

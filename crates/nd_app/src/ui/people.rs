@@ -1,14 +1,16 @@
-//! The People window: who lives here, by class and housing tier, who was
-//! pushed out, the income-inequality graph, and the favourites list; and,
-//! on its second tab, what people complain about (`ui/concerns.rs`).
+//! City Data's People tab: Population (who lives here over time, by class
+//! and housing tier, who was pushed out), Income and inequality (the classes
+//! over time, the Gini index, the income histogram and the Lorenz curve) and
+//! Favourites. Complaints and concerns are `ui/concerns.rs`, Social is
+//! `ui/social.rs`.
 
 use bevy::prelude::*;
 use bevy_egui::egui;
 use nd_sim::{CitizenId, Tier, World};
 
 use super::tools::warn_if;
-use super::pane::{self, Series};
-use super::{hint, section, Info, UiCtx, GOLD, WARN};
+use super::pane::{self, heading, row, Series};
+use super::{hint, UiCtx, GOLD, WARN};
 use bevy_egui::egui::Color32;
 use crate::tools::Selection;
 
@@ -22,116 +24,29 @@ pub(super) fn tier_color(t: Tier) -> egui::Color32 {
     }
 }
 
-/// [concerns] The window's tabs; which is showing lives in egui memory.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Tab {
-    #[default]
-    Overview,
-    Concerns,
-    /// [social] Friendships, feuds, crews and clubs.
-    Social,
-}
-
-fn tab_id() -> egui::Id {
-    egui::Id::new("people_window_tab")
-}
-
-/// Show a tab (for the remote API's `window {name: "people", tab}`).
-pub fn set_tab(ctx: &egui::Context, tab: Tab) {
-    ctx.data_mut(|d| d.insert_temp(tab_id(), tab));
-}
-
-/// `big` is the expanded view: the population charts over time above the
-/// same tabs.
-pub fn window(ui: &mut egui::Ui, p: &mut UiCtx, big: bool) {
-    if big {
-        expanded_charts(ui, p);
-        ui.separator();
-    }
-    let ctx = ui.ctx().clone();
-    let mut tab: Tab = ctx.data(|d| d.get_temp(tab_id())).unwrap_or_default();
-    ui.horizontal(|ui| {
-        ui.selectable_value(&mut tab, Tab::Overview, "Overview");
-        ui.selectable_value(&mut tab, Tab::Concerns, "Complaints & concerns");
-        ui.selectable_value(&mut tab, Tab::Social, "Social");
-    });
-    set_tab(&ctx, tab);
-    ui.separator();
-    match tab {
-        Tab::Overview => overview(ui, p, big),
-        Tab::Concerns => super::concerns::tab(ui, p),
-        Tab::Social => super::social::tab(ui, p),
-    }
-}
-
-fn overview(ui: &mut egui::Ui, p: &mut UiCtx, big: bool) {
-    let e = &p.sim.world.economy;
-    section(ui, "POPULATION");
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(format!("{}", p.sim.world.citizens.len())).strong().font(crate::ui::theme::title()));
-        ui.label(egui::RichText::new(format!("people   {} waiting to move in   {} unhoused   {} unemployed", e.waiting_immigrants, e.unhoused, e.unemployed)).small());
-    });
-    if !big {
-        // The last month at midnight, then now: population over time even
-        // in the compact view.
-        let mut pop: Vec<f32> = e.history.last_days(30).map(|d| d.population as f32).collect();
-        pop.push(p.sim.world.citizens.len() as f32);
-        let first = e.history.last_days(30).next().map_or(0, |d| d.day);
-        pane::sparkline(ui, &pop, GOLD, 44.0, &format!("population at each midnight since day {first}, and now; expand for households, jobs and class"));
-    }
-    class_row(ui, "class", e.class_counts);
-    class_row(ui, "housing", e.tier_counts);
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("rents").weak());
-        for (i, t) in Tier::ALL.iter().enumerate() {
-            ui.label(egui::RichText::new(format!("{:.0}", e.avg_rent[i])).color(tier_color(*t)));
-        }
-        hint(ui, "per day, by housing tier");
-    });
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("pushed out").weak());
-        ui.label(warn_if(e.displaced_total > 0, format!("{} displaced   {} left town   {} priced out", e.displaced_total, e.emigrated_total, e.priced_out_total)).small());
-    });
-    // [review] Why they left, biggest reason first.
-    if e.emigrated_total > 0 {
-        let mut why: Vec<(u32, &str)> = nd_sim::economy::LeaveReason::ALL.iter().map(|r| (e.emigrated_by[r.index()], r.key())).filter(|(n, _)| *n > 0).collect();
-        why.sort_by(|a, b| b.0.cmp(&a.0));
-        if !why.is_empty() {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("left over").weak());
-                ui.label(egui::RichText::new(why.iter().map(|(n, k)| format!("{k} {n}")).collect::<Vec<_>>().join("   ")).small());
-                hint(ui, "people who left town, by reason (since this was counted)");
-            });
-        }
-    }
-
-    section(ui, "INCOME INEQUALITY");
-    inequality(ui, &p.sim.world);
-
-    favourites(ui, p);
-}
-
-/// The expanded view's charts: population and what it is made of, over
-/// the chosen range (hourly population for the 72-hour range).
-fn expanded_charts(ui: &mut egui::Ui, p: &mut UiCtx) {
-    let span = pane::span_picker(ui, Info::People);
+/// People, Population: the headline figures, population and what it is
+/// made of over the range (hourly people for 72 h), then class, housing,
+/// rents and who was pushed out.
+pub fn population(ui: &mut egui::Ui, p: &mut UiCtx) {
+    let span = pane::data_span(ui.ctx());
     let w = &p.sim.world;
     let e = &w.economy;
     let h = &e.history;
     let days = pane::days(h, span);
     let first = days.first().map(|d| d.population).unwrap_or(0) as f32;
     let now = w.citizens.len() as f32;
-    ui.horizontal_wrapped(|ui| {
+    pane::cards(ui, |ui| {
         pane::kpi(ui, "people", egui::RichText::new(format!("{now:.0}")).color(GOLD));
         pane::kpi(ui, &format!("change over {} d", days.len()), warn_if(now < first, format!("{:+.0}", now - first)));
         pane::kpi(ui, "growth yesterday", egui::RichText::new(format!("{:+.1}%", e.growth_per_day * 100.0)));
         pane::kpi(ui, "households", egui::RichText::new(format!("{}", e.households)));
         pane::kpi(ui, "unemployment", warn_if(e.unemployment_share() > 0.08, format!("{:.0}%", e.unemployment_share() * 100.0)));
+        pane::kpi(ui, "unhoused", warn_if(e.unhoused > 0, format!("{}", e.unhoused)));
     });
-    section(ui, "POPULATION OVER TIME");
+    heading(ui, "Population over time");
     if span == pane::Span::Hours {
         let hours = pane::hours(h);
-        pane::line_chart(ui, &pane::hour_labels(&hours), &[Series::new("people", GOLD, pane::hcol(&hours, |r| r.population as f32))], 140.0, &|x| format!("{x:.0}"));
+        pane::line_chart(ui, &pane::hour_labels(&hours), &[Series::new("people", GOLD, pane::hcol(&hours, |r| r.population as f32))], 160.0, &|x| format!("{x:.0}"));
     } else {
         let labels = pane::day_labels(&days);
         let series = [
@@ -144,20 +59,79 @@ fn expanded_charts(ui: &mut egui::Ui, p: &mut UiCtx) {
         ];
         pane::line_chart(ui, &labels, &series, 160.0, &|x| format!("{x:.0}"));
         pane::legend(ui, &series.iter().map(|s| (s.name.as_str(), s.color)).collect::<Vec<_>>());
-        section(ui, "BY INCOME CLASS");
-        let series: Vec<Series> = Tier::ALL.iter().enumerate().map(|(i, t)| Series::new(format!("{} earners", t.label()), tier_color(*t), pane::col(&days, |d| d.classes[i] as f32))).collect();
-        pane::stacked_bars(ui, &labels, &series, 110.0, false, None, &|x| format!("{x:.0}"));
-        pane::legend(ui, &series.iter().map(|s| (s.name.as_str(), s.color)).collect::<Vec<_>>());
-        section(ui, "INEQUALITY");
-        pane::line_chart(ui, &labels, &[Series::new("Gini", GOLD, pane::col(&days, |d| d.gini))], 80.0, &|x| format!("{x:.2}"));
     }
+    heading(ui, "Who lives here");
+    row(ui, "people", format!("{}   {} waiting to move in   {} unhoused   {} unemployed", w.citizens.len(), e.waiting_immigrants, e.unhoused, e.unemployed));
+    class_row(ui, "by income class", e.class_counts);
+    class_row(ui, "homes by tier", e.tier_counts);
+    pane::row_with(ui, "rent per home per day", |ui| {
+        for (i, t) in Tier::ALL.iter().enumerate() {
+            ui.label(egui::RichText::new(format!("{} {:.0}", t.label(), e.avg_rent[i])).color(tier_color(*t)));
+        }
+    });
+    heading(ui, "Pushed out");
+    row(ui, "since the start", warn_if(e.displaced_total > 0, format!("{} displaced   {} left town   {} priced out", e.displaced_total, e.emigrated_total, e.priced_out_total)));
+    // [review] Why they left, biggest reason first.
+    if e.emigrated_total > 0 {
+        let mut why: Vec<(u32, &str)> = nd_sim::economy::LeaveReason::ALL.iter().map(|r| (e.emigrated_by[r.index()], r.key())).filter(|(n, _)| *n > 0).collect();
+        why.sort_by(|a, b| b.0.cmp(&a.0));
+        if !why.is_empty() {
+            row(ui, "left over", why.iter().map(|(n, k)| format!("{k} {n}")).collect::<Vec<_>>().join("   "));
+            hint(ui, "People who left town, by reason (since this was counted).");
+        }
+    }
+}
+
+/// People, Income and inequality: the classes and the Gini index over the
+/// range, then how income is spread now.
+pub fn inequality_page(ui: &mut egui::Ui, p: &mut UiCtx) {
+    let span = pane::data_span(ui.ctx());
+    let w = &p.sim.world;
+    let e = &w.economy;
+    let mut incomes: Vec<f32> = w.citizens.values().map(|c| c.income).collect();
+    incomes.sort_by(f32::total_cmp);
+    let n = incomes.len();
+    let total: f32 = incomes.iter().sum();
+    pane::cards(ui, |ui| {
+        pane::kpi(ui, "Gini index", egui::RichText::new(format!("{:.2}", e.gini)).color(if e.gini > 0.4 { WARN } else { GOLD }));
+        if n > 0 {
+            let top: f32 = incomes[n - (n / 10).max(1)..].iter().sum::<f32>() / total.max(1.0);
+            pane::kpi(ui, "median income/day", egui::RichText::new(format!("{:.0}", incomes[n / 2])));
+            pane::kpi(ui, "mean income/day", egui::RichText::new(format!("{:.0}", total / n as f32)));
+            pane::kpi(ui, "earned by the top 10%", egui::RichText::new(format!("{:.0}%", top * 100.0)));
+        }
+        for (i, t) in Tier::ALL.iter().enumerate() {
+            pane::kpi(ui, &format!("{} earners", t.label()), egui::RichText::new(format!("{}", e.class_counts[i])).color(tier_color(*t)));
+        }
+    });
+    let days = pane::days(&e.history, if span == pane::Span::Hours { pane::Span::Week } else { span });
+    let labels = pane::day_labels(&days);
+    heading(ui, "By income class");
+    let series: Vec<Series> = Tier::ALL.iter().enumerate().map(|(i, t)| Series::new(format!("{} earners", t.label()), tier_color(*t), pane::col(&days, |d| d.classes[i] as f32))).collect();
+    pane::stacked_bars(ui, &labels, &series, 130.0, false, None, &|x| format!("{x:.0}"));
+    pane::legend(ui, &series.iter().map(|s| (s.name.as_str(), s.color)).collect::<Vec<_>>());
+    heading(ui, "Gini index over time");
+    pane::line_chart(ui, &labels, &[Series::new("Gini", GOLD, pane::col(&days, |d| d.gini))], 100.0, &|x| format!("{x:.2}"));
+    hint(ui, "0 is everyone earning the same; 1 is one person earning everything. Above 0.4 reads as unequal.");
+    heading(ui, "How income is spread now");
+    inequality(ui, w);
+}
+
+/// People, Favourites.
+pub fn favourites_page(ui: &mut egui::Ui, p: &mut UiCtx) {
+    let n = p.tools.favorites.iter().filter(|id| p.sim.world.citizens.contains_key(**id)).count();
+    pane::cards(ui, |ui| {
+        pane::kpi(ui, "starred", egui::RichText::new(format!("{n}")).color(GOLD));
+        pane::kpi(ui, "gift from the treasury", egui::RichText::new(format!("${:.0}", nd_sim::GIFT_AMOUNT)));
+    });
+    heading(ui, "Your people");
+    favourites(ui, p);
 }
 
 /// Three figures coloured by class, with their shares.
 fn class_row(ui: &mut egui::Ui, label: &str, counts: [u32; 3]) {
     let total = counts.iter().sum::<u32>().max(1) as f32;
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(label).weak());
+    pane::row_with(ui, label, |ui| {
         for (i, t) in Tier::ALL.iter().enumerate() {
             ui.label(egui::RichText::new(format!("{} {} ({:.0}%)", t.label(), counts[i], counts[i] as f32 / total * 100.0)).color(tier_color(*t)));
         }
@@ -186,7 +160,7 @@ fn inequality(ui: &mut egui::Ui, w: &World) {
     ui.horizontal_top(|ui| {
         // The Lorenz chart beside it is LORENZ_SIZE wide; reserving less made
         // the window grow a little every frame until it filled the screen.
-        let width = (ui.available_width() - LORENZ_SIZE - ui.spacing().item_spacing.x).max(220.0);
+        let width = (ui.available_width() - LORENZ_SIZE - ui.spacing().item_spacing.x).clamp(220.0, 760.0);
         histogram(ui, &incomes, width);
         lorenz(ui, &incomes, total);
     });
@@ -297,7 +271,6 @@ fn lorenz(ui: &mut egui::Ui, sorted: &[f32], total: f32) {
 fn favourites(ui: &mut egui::Ui, p: &mut UiCtx) {
     let w = &p.sim.world;
     p.tools.favorites.retain(|id| w.citizens.contains_key(*id));
-    section(ui, "FAVOURITES");
     if p.tools.favorites.is_empty() {
         hint(ui, "Star someone in their person pane (Inspect tool, click a citizen) to keep them here.");
         return;

@@ -1,15 +1,12 @@
-//! The Economy window. Compact: the treasury and yesterday's ledger as
-//! signed bars. Expanded: where the money has been going over time and
-//! what every ledger line is made of.
+//! City Data's Economy tab: Overview (the treasury over time and what the
+//! city's businesses want), Cash flow (income and spending by flow, day by
+//! day, and yesterday's books as signed bars), Ledger (every ledger line
+//! broken into the buildings, lines, classes or land uses that made it, from
+//! the sim's itemised ledger) and Taxes (the take by class and land use,
+//! then the rates, from `ui/taxes.rs`).
 //!
-//! The expanded view is a column of independent sections, each a function
-//! taking the world and the chosen range (`expanded` lists them in order):
-//! the headline figures, the treasury over time, income and spending by
-//! flow over time, the ledger drill-down (every flow broken into the
-//! buildings, lines, classes or land uses that made it, from the sim's
-//! itemised ledger), the tax take by class and land use, and trade. A
-//! taxes section (rates per sub-type, from the feat/taxes work) slots in
-//! as one more function after `tax_take` without touching the others.
+//! Each page is a column of independent sections, each a function taking
+//! the world and the range picked in the view's sub-tab row.
 
 use bevy::prelude::Vec2;
 use bevy_egui::egui::{self, Color32};
@@ -19,7 +16,8 @@ use nd_sim::{Building, LandUse, Tier, World};
 
 use super::pane::{self, Series, Span};
 use super::tools::warn_if;
-use super::{hint, section, zone_color32, Info, UiCtx, GOLD, WARN};
+use super::pane::{heading, row};
+use super::{hint, zone_color32, UiCtx, GOLD, WARN};
 use crate::tools::Selection;
 
 const INCOME: Color32 = Color32::from_rgb(110, 200, 140);
@@ -66,7 +64,7 @@ pub fn flow_note(f: Flow) -> &'static str {
         Flow::ParkingFines => "Tickets the parking wardens write.",
         Flow::ParkingFees => "Fees at the car parks the city runs, by car park.",
         Flow::PlantUpkeep => "Each power plant's and battery pack's running cost, paid at midnight.",
-        Flow::GridImport => "Electricity bought from the regional grid when the plants and batteries fall short; the Power window shows when.",
+        Flow::GridImport => "Electricity bought from the regional grid when the plants and batteries fall short; Services, Power in City Data shows when.",
         Flow::TransitUpkeep => "The buses on the lines and each depot, and each port or ferry terminal, paid at midnight.",
         Flow::RailUpkeep => "Each station and freight yard, paid at midnight.",
         Flow::Construction => "One-off costs of what the city builds: plants, services, depots, stations, ports, car parks, bridges.",
@@ -74,27 +72,53 @@ pub fn flow_note(f: Flow) -> &'static str {
         Flow::TouristTax => "12% on every hotel night visitors pay, by hotel.",
         Flow::SubwayFares => "Metro fares as riders board, by station.",
         Flow::SubwayUpkeep => "Each metro station and its tunnels, and every train run, paid at midnight.",
-        Flow::ImportDuty => "The duty on every import from outside (the rate is in the Taxes window).",
+        Flow::ImportDuty => "The duty on every import from outside (the rate is in City Data, Economy, Taxes).",
         Flow::Tolls => "Tolls paid at the city's toll booths and plazas.",
         Flow::TollUpkeep => "Staff and upkeep of each toll booth and plaza, paid at midnight.",
-        Flow::GridExport => "Surplus electricity sold to the regional grid (what the batteries had no room for), paid at midnight at the export price; the Power window shows when.",
+        Flow::GridExport => "Surplus electricity sold to the regional grid (what the batteries had no room for), paid at midnight at the export price; Services, Power in City Data shows when.",
         Flow::Gifts => "Money the city gave residents' households (the person pane's and favourites' \"gift $1000\"), by who got it.",
-        Flow::RoadMaintenance => "Road crews resurfacing worn streets, up to the day's allowance (the funding level in the Taxes window times what the network needs); the crews go to dear land first.",
+        Flow::RoadMaintenance => "Road crews resurfacing worn streets, up to the day's allowance (the funding level in City Data, Economy, Taxes, times what the network needs); the crews go to dear land first.",
         Flow::Fines => "Fines from busted street races and shut-down raves.",
     }
 }
 
-/// The compact view: treasury and yesterday's ledger as signed bars.
-pub fn compact(ui: &mut egui::Ui, p: &mut UiCtx) {
-    let e = &p.sim.world.economy;
-    section(ui, "TREASURY");
-    row(ui, "balance", warn_if(e.treasury < 0.0, format!("{:.0}", e.treasury)).strong());
-    row(ui, "taxes so far today", format!("{:.0}", e.tax_today));
-    row(ui, "plant upkeep", format!("{:.0}/day   imported power {:.0} today   exported {:.0} today", e.power.upkeep_today, e.power.import_cost_today, e.power.export_income_today));
+/// Economy, Overview: the headline figures, the treasury over time, today
+/// so far, and what the city's businesses want.
+pub fn overview(ui: &mut egui::Ui, p: &mut UiCtx) {
+    let span = pane::data_span(ui.ctx());
+    let w = &p.sim.world;
+    let e = &w.economy;
+    let days = pane::days(&e.history, span);
+    headline(ui, w, &days);
+    treasury(ui, w, &days, span);
+    heading(ui, "Today so far");
     let today: f32 = e.ledger.today.iter().sum();
-    row(ui, "net today so far", warn_if(today < 0.0, format!("{today:+.0}")));
+    row(ui, "net", warn_if(today < 0.0, format!("{today:+.0}")));
+    row(ui, "taxes", format!("{:.0}", e.tax_today));
+    row(ui, "power", format!("plant upkeep {:.0}/day · imported {:.0} · exported {:.0}", e.power.upkeep_today, e.power.import_cost_today, e.power.export_income_today));
+    hint(ui, "Cash flow has every flow day by day; Ledger opens each line onto what made it.");
+    // [economy] what the city's businesses want, and why
+    super::pressure::wanted(ui, w);
+}
 
-    section(ui, "YESTERDAY'S LEDGER");
+/// Economy, Cash flow: every flow over the range, then yesterday's books.
+pub fn cash_flow(ui: &mut egui::Ui, p: &mut UiCtx) {
+    let span = pane::data_span(ui.ctx());
+    let w = &p.sim.world;
+    let e = &w.economy;
+    let days = pane::days(&e.history, span);
+    let income: f32 = e.ledger.yesterday.iter().filter(|x| **x > 0.0).sum();
+    let spending: f32 = e.ledger.yesterday.iter().filter(|x| **x < 0.0).sum();
+    let today: f32 = e.ledger.today.iter().sum();
+    pane::cards(ui, |ui| {
+        pane::kpi(ui, "treasury", warn_if(e.treasury < 0.0, format!("{:.0}", e.treasury)).color(if e.treasury < 0.0 { WARN } else { GOLD }));
+        pane::kpi(ui, "income yesterday", egui::RichText::new(format!("{income:.0}")).color(INCOME));
+        pane::kpi(ui, "spending yesterday", egui::RichText::new(format!("{spending:.0}")).color(WARN));
+        pane::kpi(ui, "net yesterday", warn_if(income + spending < 0.0, format!("{:+.0}", income + spending)));
+        pane::kpi(ui, "net today so far", warn_if(today < 0.0, format!("{today:+.0}")));
+    });
+    flows_over_time(ui, &days);
+    heading(ui, "Yesterday's books");
     let entries = e.ledger.yesterday_sorted();
     if entries.is_empty() {
         hint(ui, "No books yet: the ledger closes at midnight.");
@@ -102,67 +126,48 @@ pub fn compact(ui: &mut egui::Ui, p: &mut UiCtx) {
     }
     let scale = entries.iter().map(|(_, x)| x.abs()).fold(1.0, f32::max);
     for (flow, x) in &entries {
-        signed_bar(ui, flow.label(), *x, scale);
+        signed_bar(ui, flow.label(), *x, scale, flow_color(*flow));
     }
     let net: f32 = entries.iter().map(|(_, x)| x).sum();
     ui.separator();
-    signed_bar(ui, "net", net, scale);
-    // [economy] what the city's businesses want
-    super::pressure::compact(ui, &p.sim.world);
-    hint(ui, "Expand (the corner button) for the ledger over time and what each line is made of.");
-}
-
-fn row(ui: &mut egui::Ui, label: &str, value: impl Into<egui::RichText>) {
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(label).weak());
-        ui.label(value.into());
-    });
+    signed_bar(ui, "net", net, scale, if net < 0.0 { WARN } else { INCOME });
 }
 
 /// One ledger line: label, a bar growing right for income and left for
 /// spending from a centre axis, and the figure. Drawn with the painter so
 /// the sign reads at a glance.
-fn signed_bar(ui: &mut egui::Ui, label: &str, value: f32, scale: f32) {
+fn signed_bar(ui: &mut egui::Ui, label: &str, value: f32, scale: f32, col: Color32) {
     ui.horizontal(|ui| {
-        ui.add_sized(egui::vec2(110.0, 16.0), egui::Label::new(egui::RichText::new(label).small()));
-        let (resp, painter) = ui.allocate_painter(egui::vec2(160.0, 14.0), egui::Sense::hover());
+        ui.add_sized(egui::vec2(190.0, 18.0), egui::Label::new(egui::RichText::new(label).color(pane::CAPTION)).truncate());
+        let (resp, painter) = ui.allocate_painter(egui::vec2(360.0, 14.0), egui::Sense::hover());
         let rect = resp.rect;
         let mid = rect.center().x;
         painter.vline(mid, rect.y_range(), egui::Stroke::new(1.0, Color32::from_gray(90)));
         let half = rect.width() / 2.0 - 2.0;
         let len = (value.abs() / scale * half).max(if value == 0.0 { 0.0 } else { 1.0 });
-        let (x0, x1, col) = if value >= 0.0 { (mid, mid + len, INCOME) } else { (mid - len, mid, WARN) };
+        let (x0, x1) = if value >= 0.0 { (mid, mid + len) } else { (mid - len, mid) };
         painter.rect_filled(egui::Rect::from_min_max(egui::pos2(x0, rect.top() + 2.0), egui::pos2(x1, rect.bottom() - 2.0)), 1.0, col);
-        ui.label(warn_if(value < 0.0, format!("{value:+.0}")).small());
+        ui.label(warn_if(value < 0.0, format!("{value:+.0}")));
     });
 }
 
-/// What the player asked for from inside the expanded view, applied after
-/// the world is no longer borrowed.
+/// What the player asked for from inside a page, applied after the world
+/// is no longer borrowed.
 #[derive(Default)]
 struct Actions {
     select: Option<nd_sim::BuildingId>,
     fly: Option<Vec2>,
 }
 
-/// The expanded view: the sections in order.
-pub fn expanded(ui: &mut egui::Ui, p: &mut UiCtx) {
-    let span = pane::span_picker(ui, Info::Economy);
+/// Economy, Ledger: every line, opening onto what made it.
+pub fn ledger(ui: &mut egui::Ui, p: &mut UiCtx) {
+    let span = pane::data_span(ui.ctx());
     let mut act = Actions::default();
     {
         let w = &p.sim.world;
-        let assets = p.assets;
-        let zone = |lu: LandUse| zone_color32(assets.palette.zone_color(lu));
         let days = pane::days(&w.economy.history, span);
         headline(ui, w, &days);
-        // [economy] what the city's businesses want, and why
-        super::pressure::expanded(ui, w);
-        treasury(ui, w, &days, span);
-        flows_over_time(ui, &days);
         ledger_drill(ui, w, &days, &mut act);
-        tax_take(ui, w, &days, &zone);
-        // A taxes section (rates per sub-type) slots in here.
-        trade(ui, w, &days);
     }
     if let Some(b) = act.select {
         *p.selection = Selection::Building(b);
@@ -172,16 +177,41 @@ pub fn expanded(ui: &mut egui::Ui, p: &mut UiCtx) {
     }
 }
 
+/// Economy, Taxes: the take over time, then the rates (`ui/taxes.rs`).
+pub fn taxes(ui: &mut egui::Ui, p: &mut UiCtx) {
+    let span = pane::data_span(ui.ctx());
+    {
+        let w = &p.sim.world;
+        let l = &w.economy.ledger;
+        let taxes = [Flow::IncomeTax, Flow::BusinessTax, Flow::TouristTax, Flow::ImportDuty, Flow::Tolls];
+        let yesterday: f32 = taxes.iter().map(|f| l.yesterday_of(*f)).sum();
+        let today: f32 = taxes.iter().map(|f| l.today_of(*f)).sum();
+        let all: f32 = l.yesterday.iter().filter(|x| **x > 0.0).sum();
+        pane::cards(ui, |ui| {
+            pane::kpi(ui, "taxes yesterday", egui::RichText::new(format!("{yesterday:.0}")).color(GOLD));
+            pane::kpi(ui, "taxes today so far", egui::RichText::new(format!("{today:.0}")));
+            pane::kpi(ui, "share of yesterday's income", egui::RichText::new(if all > 0.0 { format!("{:.0}%", yesterday / all * 100.0) } else { "-".into() }));
+            pane::kpi(ui, "import duty rate", egui::RichText::new(format!("{:.0}%", w.economy.taxes.import_duty * 100.0)));
+        });
+        let assets = p.assets;
+        let zone = |lu: LandUse| zone_color32(assets.palette.zone_color(lu));
+        let days = pane::days(&w.economy.history, span);
+        tax_take(ui, w, &days, &zone);
+    }
+    super::taxes::window(ui, p);
+}
+
 /// Treasury, yesterday's net, the average over the range and how long the
 /// money lasts if the average is a loss.
 fn headline(ui: &mut egui::Ui, w: &World, days: &[&DayRecord]) {
     let e = &w.economy;
     let n = days.len().max(1) as f32;
-    let avg_net = days.iter().map(|d| d.net()).sum::<f32>() / n;
-    let income = days.iter().map(|d| d.income()).sum::<f32>() / n;
-    let spending = days.iter().map(|d| d.spending()).sum::<f32>() / n;
-    let yesterday: f32 = e.ledger.yesterday.iter().sum();
-    ui.horizontal_wrapped(|ui| {
+    // `+ 0.0`: an empty f32 sum is -0.0, which prints "-0".
+    let avg_net = days.iter().map(|d| d.net()).sum::<f32>() / n + 0.0;
+    let income = days.iter().map(|d| d.income()).sum::<f32>() / n + 0.0;
+    let spending = days.iter().map(|d| d.spending()).sum::<f32>() / n + 0.0;
+    let yesterday: f32 = e.ledger.yesterday.iter().sum::<f32>() + 0.0;
+    pane::cards(ui, |ui| {
         pane::kpi(ui, "treasury", warn_if(e.treasury < 0.0, format!("{:.0}", e.treasury)).color(if e.treasury < 0.0 { WARN } else { GOLD }));
         pane::kpi(ui, "net yesterday", warn_if(yesterday < 0.0, format!("{yesterday:+.0}")));
         pane::kpi(ui, &format!("avg net/day over {} d", days.len()), warn_if(avg_net < 0.0, format!("{avg_net:+.0}")));
@@ -194,7 +224,7 @@ fn headline(ui: &mut egui::Ui, w: &World, days: &[&DayRecord]) {
 }
 
 fn treasury(ui: &mut egui::Ui, w: &World, days: &[&DayRecord], span: Span) {
-    section(ui, "TREASURY");
+    heading(ui, "Treasury");
     let h = &w.economy.history;
     if span == Span::Hours {
         let hours = pane::hours(h);
@@ -208,7 +238,7 @@ fn treasury(ui: &mut egui::Ui, w: &World, days: &[&DayRecord], span: Span) {
 /// Every flow as a layer of a diverging stacked bar a day: income above
 /// the axis, spending below, the net as a line.
 fn flows_over_time(ui: &mut egui::Ui, days: &[&DayRecord]) {
-    section(ui, "INCOME AND SPENDING BY FLOW, PER DAY");
+    heading(ui, "Income and spending by flow, per day");
     let used: Vec<Flow> = Flow::ALL.into_iter().filter(|f| days.iter().any(|d| d.flow(*f) != 0.0)).collect();
     let series: Vec<Series> = used.iter().map(|f| Series::new(f.label(), flow_color(*f), pane::col(days, |d| d.flow(*f)))).collect();
     pane::stacked_bars(ui, &pane::day_labels(days), &series, 170.0, true, None, &|x| format!("{x:+.0}"));
@@ -227,7 +257,7 @@ enum DrillDay {
 
 /// Every ledger line, opening onto what made it.
 fn ledger_drill(ui: &mut egui::Ui, w: &World, days: &[&DayRecord], act: &mut Actions) {
-    section(ui, "LEDGER, LINE BY LINE");
+    heading(ui, "Ledger, line by line");
     let id = egui::Id::new("economy_drill_day");
     let mut which: DrillDay = ui.ctx().data(|d| d.get_temp(id)).unwrap_or_default();
     ui.horizontal(|ui| {
@@ -347,7 +377,7 @@ pub fn item_label(w: &World, it: &Item) -> (String, String) {
 /// Income tax by class and business tax by land use: yesterday's figures
 /// and the range as stacked bars.
 fn tax_take(ui: &mut egui::Ui, w: &World, days: &[&DayRecord], zone: &dyn Fn(LandUse) -> Color32) {
-    section(ui, "TAX TAKE");
+    heading(ui, "Tax take");
     let l = &w.economy.ledger;
     let mut series = Vec::new();
     for t in Tier::ALL {
@@ -383,18 +413,4 @@ fn tax_take(ui: &mut egui::Ui, w: &World, days: &[&DayRecord], zone: &dyn Fn(Lan
             ui.label(egui::RichText::new(format!("other (air-taxi levy) {other:.0}")).small());
         }
     });
-}
-
-fn trade(ui: &mut egui::Ui, w: &World, days: &[&DayRecord]) {
-    section(ui, "TRADE");
-    let m = &w.economy.market;
-    hint(ui, &format!("today so far: imports {:.0} · exports {:.0} · building materials {:.0} · {} deals", m.imports_today, m.exports_today, w.economy.materials_today, m.deals_today));
-    let series = [
-        Series::new("imports", WARN, pane::col(days, |d| d.imports)),
-        Series::new("exports", INCOME, pane::col(days, |d| d.exports)),
-        Series::new("building materials", Color32::from_rgb(150, 150, 165), pane::col(days, |d| d.materials)),
-    ];
-    pane::line_chart(ui, &pane::day_labels(days), &series, 110.0, &|x| format!("{x:.0}"));
-    pane::legend(ui, &series.iter().map(|s| (s.name.as_str(), s.color)).collect::<Vec<_>>());
-    hint(ui, "Value of goods bought from and sold out of town by the city's businesses (not the treasury's money).");
 }

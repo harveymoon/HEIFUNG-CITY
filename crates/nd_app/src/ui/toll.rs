@@ -58,7 +58,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, id: u32
     let charges = ways.iter().map(|(d, n)| format!("{n} lane{} {d}bound", if *n == 1 { "" } else { "s" })).collect::<Vec<_>>().join(", ");
     ui.label(format!("Charges {}: {charges}", if ways.len() > 1 { "both ways" } else { "one way" }));
 
-    // The toll, with a quick adjuster and the way to the Taxes window.
+    // The toll, with a quick adjuster and the way to Economy, Taxes.
     section(ui, "TOLL");
     let mut price = b.price;
     let mut set = None;
@@ -75,8 +75,8 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, id: u32
         }
     });
     hint(ui, &format!("Lorries pay {:.1}; buses, emergency and city vehicles go free. Drivers count a toll as {:.0} m of detour per unit of money, so a dear one sends some round.", b.price * TRUCK_FACTOR, nd_sim::tolls::TOLL_AVERSION_M));
-    if ui.small_button("Every booth in the Taxes window").clicked() {
-        super::Info::Taxes.set_open(ui.ctx(), true);
+    if ui.small_button("Every booth: City Data, Economy, Taxes").clicked() {
+        super::city_data::open_at(ui.ctx(), super::city_data::Page::EconomyTaxes);
     }
 
     // Through, today / yesterday / all along.

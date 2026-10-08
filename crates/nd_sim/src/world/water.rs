@@ -3,7 +3,7 @@
 //! traffic, and the docks with their ships.
 
 use super::*;
-use crate::landscape::{BRIDGE_CLEARANCE, HIGHWAY_HALF_GAP, HIGHWAY_LANES, HIGHWAY_Y, MAX_LOT_SLOPE, UNDERPASS_CLEARANCE, WATER_LEVEL};
+use crate::landscape::{BRIDGE_CLEARANCE, HIGHWAY_HALF_GAP, HIGHWAY_LANES, HIGHWAY_Y, UNDERPASS_CLEARANCE, WATER_LEVEL};
 use crate::ports::{self, Port, PortId, PortKind, Ship, ShipKind};
 use crate::zoning::WaterMask;
 
@@ -261,7 +261,9 @@ impl World {
         WaterMask::new(&self.landscape.water_polygons())
     }
 
-    /// Mark lots on ground too steep to level (or in the water) unusable.
+    /// Mark lots on ground too steep to level (a cliff, or more rise than
+    /// one terrace takes) or in the water unusable. Ordinary hillsides are
+    /// graded: the lot's pad is levelled to its street (`Ground`).
     pub(super) fn grade_lots(&mut self) {
         if self.landscape.is_flat() {
             return;
@@ -271,12 +273,44 @@ impl World {
             if l.landlocked {
                 continue;
             }
-            let mut pts = l.polygon.clone();
-            pts.push(l.center);
-            if land.is_water(l.center) || land.slope_over(&pts) > MAX_LOT_SLOPE {
+            if land.lot_ground_problem(&l.polygon, l.center).is_some() {
                 l.landlocked = true;
             }
         }
+    }
+
+    /// [island-lots] Half-side of the square parcels are cut in: the
+    /// configured buildable square (`half_extent`), grown on a landscape to
+    /// take in every street and path drawn past it (an island off the
+    /// coast) with its parcels, in steps of 100 m, up to the edge of the map.
+    /// Derived from the roads alone, so it is the same after a load.
+    pub fn parcel_half(&self) -> f32 {
+        let base = self.config.half_extent;
+        if self.landscape.is_flat() {
+            return base;
+        }
+        let edge = crate::landscape::LAND_HALF;
+        let mut r = base;
+        for (id, s) in self.roads.alive_segments() {
+            if s.is_rail() || s.fronts_nothing() {
+                continue;
+            }
+            let (a, b) = self.roads.segment_points(id);
+            for p in [a, b] {
+                let c = p.x.abs().max(p.y.abs());
+                if c < edge {
+                    r = r.max(c + crate::zoning::PARCEL_REACH + s.half_width() + 10.0);
+                }
+            }
+        }
+        ((r / 100.0).ceil() * 100.0).min(edge - 100.0).max(base)
+    }
+
+    /// [island-lots] Half-side of the built-ground raster: the parcels'
+    /// square and 200 m round it (as it always was round `half_extent`),
+    /// so every lot's pad is levelled into the ground.
+    pub fn ground_half(&self) -> f32 {
+        (self.parcel_half() + 200.0).min(crate::landscape::LAND_HALF)
     }
 
     /// Heights of the road nodes, then the built ground from them.
@@ -367,7 +401,7 @@ impl World {
         self.relief = !flat || z.iter().any(|h| h.abs() > 1e-3) || self.roads.alive_segments().any(|(_, s)| s.bridge);
         self.road_z = z;
         self.road_inner = inner_heights(&self.landscape, &self.roads, &self.road_z, floor, &crossings);
-        self.ground = crate::landscape::Ground::build(&self.landscape, &self.roads, &self.road_z, &self.road_inner, &self.lots, self.config.half_extent + 200.0);
+        self.ground = crate::landscape::Ground::build(&self.landscape, &self.roads, &self.road_z, &self.road_inner, &self.lots, self.ground_half());
     }
 
     /// Legs (by their first point) of a road drawn along `points` at

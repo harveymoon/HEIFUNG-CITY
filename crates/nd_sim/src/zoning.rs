@@ -1261,6 +1261,9 @@ pub struct Parcel {
     pub street_frontage: bool,
     /// Too steep to level, or standing in the water.
     pub rough: bool,
+    /// [island-lots] Why the ground is rough, in plain words (a cliff,
+    /// water), for the Zone tool's refusal.
+    pub rough_why: Option<&'static str>,
     /// Land use as built (from the master plan); None is unzoned.
     pub land_use: Option<LandUse>,
     /// The lot this parcel is part of, once zoned and built into one.
@@ -1284,7 +1287,7 @@ impl Parcel {
             return None;
         }
         if self.rough {
-            return Some("too steep or wet to build on");
+            return Some(self.rough_why.unwrap_or("too steep or wet to build on"));
         }
         if !self.path_frontage {
             if lu.takes_backland() {
@@ -1602,6 +1605,7 @@ fn parcel_of(poly: Vec<Vec2>, roads: &RoadNetwork) -> Option<Parcel> {
         path_frontage: !home.landlocked,
         street_frontage: street,
         rough: false,
+        rough_why: None,
         land_use: None,
         lot: None,
         polygon: poly,
