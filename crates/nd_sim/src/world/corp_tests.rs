@@ -434,9 +434,10 @@ fn students_bring_trade_to_pizza_places_and_bars_by_campus() {
 #[test]
 fn families_with_children_prefer_homes_a_school_covers_and_the_childless_do_not_care() {
     let mut w = town();
-    w.add_road(&[Vec2::new(-1500.0, 0.0), Vec2::new(1500.0, 0.0)], 1, 1);
-    w.add_zone(rect(-1450.0, 8.0, 300.0, 60.0), LandUse::Residential);
-    w.add_zone(rect(1150.0, 8.0, 300.0, 60.0), LandUse::Residential);
+    w.add_road(&[Vec2::new(-1100.0, 0.0), Vec2::new(1100.0, 0.0)], 1, 1);
+    w.add_zone(rect(-1050.0, 8.0, 300.0, 60.0), LandUse::Residential);
+    w.add_zone(rect(750.0, 8.0, 300.0, 60.0), LandUse::Residential);
+    w.add_zone(rect(590.0, 8.0, 150.0, 60.0), LandUse::Civic);
     let mut west = Vec::new();
     let mut east = Vec::new();
     for l in free_lots(&w, LandUse::Residential) {
@@ -450,7 +451,8 @@ fn families_with_children_prefer_homes_a_school_covers_and_the_childless_do_not_
             east.push(b);
         }
     }
-    w.place_building(crate::services::Placeable::Service(ServiceKind::School, Tier::Mid), Vec2::new(1250.0, -35.0)).expect("a school on the south side");
+    let school_lot = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Civic && l.building.is_none()).map(|(id, _)| id).next().expect("a civic lot");
+    w.build_service(school_lot, ServiceKind::School, Tier::Mid).unwrap();
     w.refresh_coverage();
     assert!(east.iter().any(|b| w.school_cover(*b) >= super::campus::FAMILY_SCHOOL_COVER), "the school covers the east end");
     assert!(west.iter().all(|b| w.school_cover(*b) == 0.0), "not the west end");

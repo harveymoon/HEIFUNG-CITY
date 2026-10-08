@@ -265,7 +265,8 @@ pub fn university(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let fh = c.fh().max(3.6);
     // The hall, set back behind the quad.
     let hall_d = (d * 0.32).clamp(8.0, 22.0);
-    let hall = fit_inside(c, &rect((lo.x + hi.x) * 0.5, hi.y - hall_d * 0.5 - 1.0, w * 0.42, hall_d * 0.5));
+    // Inset so the cornice stays on the lot.
+    let hall = offset_poly(&fit_inside(c, &rect((lo.x + hi.x) * 0.5, hi.y - hall_d * 0.5 - 1.0, w * 0.42, hall_d * 0.5)), 0.5);
     if hall.len() < 3 {
         return;
     }
@@ -288,19 +289,27 @@ pub fn university(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let front: Face = c.front_face(&hall);
     let pw = (front.len * 0.45).clamp(6.0, 22.0);
     let n = ((pw / 2.6) as i32).max(3);
+    // Room in front for the portico and its steps, or just a door.
+    let room = [-0.5f32, 0.0, 0.5].iter().all(|s| [0.0f32, 2.2, 4.4].iter().all(|d| {
+        let p = front.at((pw + 2.0) * s, *d);
+        c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 0.4
+    }));
+    let n = if room { n } else { -1 };
     for k in 0..=n {
         let t = -pw * 0.5 + pw * k as f32 / n as f32;
         front.bx(g, f, Stone, t, h * 0.42, 1.6, Vec3::new(0.7, h * 0.84, 0.7), mul(stone, 1.05));
     }
-    front.bx(g, f, Stone, 0.0, h * 0.88, 1.6, Vec3::new(pw + 1.2, h * 0.12, 3.4), stone);
+    if room {
+        front.bx(g, f, Stone, 0.0, h * 0.88, 1.6, Vec3::new(pw + 1.2, h * 0.12, 3.4), stone);
+    }
     // Steps.
-    for s in 0..3 {
+    for s in 0..if room { 3 } else { 0 } {
         front.bx(g, f, Stone, 0.0, 0.1 + s as f32 * 0.2, 3.6 - s as f32 * 0.5, Vec3::new(pw + 2.0 - s as f32, 0.2, 1.2), mul(stone, 0.9));
     }
     entrance(g, c, rng, &front, 0.0, 2.6, 3.2);
     // Clock tower over the middle.
     let mid = poly_center(&hall);
-    let tw = (hall_d * 0.35).clamp(4.0, 7.0);
+    let tw = (hall_d * 0.35).clamp(4.0, 7.0).min(inradius(&hall) * 1.7).max(1.5);
     let th = h + [8.0, 12.0, 18.0][c.tier.index()];
     f.bx(g, Stone, mid.x, (h + th) * 0.5, mid.y, Vec3::new(tw, th - h, tw), mul(stone, 0.95));
     for (out, rot) in [(Vec2::new(0.0, -1.0), 0.0f32), (Vec2::new(0.0, 1.0), 0.0), (Vec2::new(-1.0, 0.0), std::f32::consts::FRAC_PI_2), (Vec2::new(1.0, 0.0), std::f32::consts::FRAC_PI_2)] {
@@ -336,7 +345,7 @@ pub fn university(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             }
             for k in 0..6 {
                 let p = Vec2::new(lo.x + 3.0 + k as f32 * (w - 6.0) / 5.0, qc.y + if k % 2 == 0 { 3.5 } else { -3.5 });
-                if c.inside_local(p) && (p.x - qc.x).abs() > 2.5 {
+                if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 3.4 && (p.x - qc.x).abs() > 2.5 {
                     tree_in(g, f, pal, p, 6.0, 3.0, pal.foliage);
                 }
             }
