@@ -129,6 +129,9 @@ pub struct Driving {
     pub tows: Vec<Tow>,
     pub recent: Vec<CrashRecord>,
     pub takeovers: Takeovers,
+    /// [tow-moves] Tow trucks off the lanes against a one-way or turning
+    /// round (`world/tow_moves.rs`).
+    pub moves: Vec<super::tow_moves::TowMove>,
 }
 
 /// A stable `0..1` from a car id, for its weave phase and a stranger's traits.
@@ -317,6 +320,8 @@ impl World {
         match self.citizens.get(c.citizen) {
             Some(p) => format!("{}'s {body}", p.name),
             None if c.siren || self.services.unit_of_car(id).is_some() => format!("emergency {body}"),
+            // [moto] A rider from out of town in a moto pack.
+            None if c.drive.gang.is_some_and(|g| g.pack) => format!("a {body} with the moto pack"),
             None => {
                 let an = if body.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
                 format!("{an} {body} passing through")
@@ -628,6 +633,16 @@ impl World {
         self.traffic.remove_car(wreck);
         self.enforcement.stats.wrecks_towed_total += 1;
         self.driving.tows.push(Tow { truck, model, yard: company });
+        // [tow-moves] Turned round in the street when the yard lies back
+        // the other way.
+        if let Some(goal) = self.yard_goal(company) {
+            if let Some(t) = self.traffic.cars.get_mut(truck) {
+                t.drive.recovering = false;
+            }
+            if self.maybe_u_turn(truck, goal, super::tow_moves::AfterMove::Home { company }) {
+                return;
+            }
+        }
         self.recovery_truck_home(truck, company);
     }
 
@@ -635,7 +650,7 @@ impl World {
     /// with its load to its yard (put away there, `unclaimed_arrival`), or
     /// off the map for one from out of town or one going back empty. With
     /// no road there it pulls in and tries again (`retire_vehicle`).
-    fn recovery_truck_home(&mut self, truck: CarId, company: Option<BuildingId>) {
+    pub(super) fn recovery_truck_home(&mut self, truck: CarId, company: Option<BuildingId>) {
         let Some(t) = self.traffic.cars.get_mut(truck) else { return };
         t.drive.amber = false;
         t.drive.recovering = false;
@@ -718,7 +733,7 @@ impl World {
 
     /// Locals who would join a takeover: young, rebellious, with wheels,
     /// free right now. Best candidates (flashiest rides) first.
-    fn takeover_crew(&self) -> Vec<CitizenId> {
+    pub(super) fn takeover_crew(&self) -> Vec<CitizenId> {
         let mut out: Vec<(CitizenId, f32)> = self
             .citizens
             .iter()
@@ -893,7 +908,7 @@ impl World {
         let car = self.drive_from_spot(vid, segment, to_pt, cid, crate::vehicle::Errand::Trip)?;
         self.leave_building(cid);
         let tc = &mut self.traffic.cars[car];
-        tc.drive.gang = Some(GangRole { takeover: t.id, phase: GangPhase::Joining, race: false });
+        tc.drive.gang = Some(GangRole { takeover: t.id, phase: GangPhase::Joining, race: false, pack: false });
         let (pos, model) = (tc.pos, tc.model);
         let c = &mut self.citizens[cid];
         c.pos = pos;
@@ -938,7 +953,7 @@ impl World {
             };
             let tc = &mut self.traffic.cars[car];
             tc.model = VehicleModel { class: VehicleClass::Expensive, body, wear: 0, tuned: !body.two_wheeler(), livery: Livery::None, paint: rng.random_range(0..crate::vehicle::PAINTS) };
-            tc.drive.gang = Some(GangRole { takeover: t.id, phase: GangPhase::Joining, race: false });
+            tc.drive.gang = Some(GangRole { takeover: t.id, phase: GangPhase::Joining, race: false, pack: false });
             t.cars.push(car);
             t.outsiders += 1;
             t.to_spawn -= 1;

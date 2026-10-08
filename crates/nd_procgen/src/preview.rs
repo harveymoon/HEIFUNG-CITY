@@ -10,7 +10,7 @@ use crate::palette::Palette;
 use crate::street::{generate_street, StreetInput, StreetLayer};
 use crate::surface::{Geometry, Surface};
 use glam::Vec2;
-use nd_sim::roads::{is_highway_spec, RoadKind, RoadNetwork, TUNNEL_LEVEL, VIADUCT_LEVEL};
+use nd_sim::roads::{RoadKind, RoadNetwork, TUNNEL_LEVEL, VIADUCT_LEVEL};
 use nd_sim::traffic::LaneNetwork;
 use nd_sim::World;
 
@@ -51,11 +51,15 @@ pub fn road_preview_with(world: &World, points: &[Vec2], levels: &[f32], lanes_f
         RoadKind::Street => (lanes_fwd, lanes_bwd),
         _ => (0, 0),
     };
+    // [interchange] A ramp as it will be built: its ends on the highway
+    // eased in (a no-op when the caller eased it already).
+    let (points, levels) = nd_sim::roads::ease_ramp_way(points, levels, lanes_fwd, lanes_bwd, kind, &world.roads);
+    let (points, levels) = (&points[..], &levels[..]);
     let level = |i: usize| levels.get(i).copied().unwrap_or(0.0);
     // Lay it into a copy of the network to see where it joins and crosses.
     let mut net = world.roads.clone();
     let made = net.add_polyline_levels(points, levels, lanes_fwd, lanes_bwd, kind);
-    let highway = is_highway_spec(kind, lanes_fwd, lanes_bwd);
+    let class = nd_sim::roads::WayClass::laying(kind, lanes_fwd, lanes_bwd, false);
     let separated = net.grade_crossings();
     for &sid in &made {
         let s = net.segment(sid);
@@ -98,7 +102,7 @@ pub fn road_preview_with(world: &World, points: &[Vec2], levels: &[f32], lanes_f
     for n in &mini.nodes {
         let on_road = world.roads.nearest_where(n.pos, |s| !s.is_rail()).filter(|(_, _, q)| q.distance(n.pos) < 1.0);
         let h = match on_road {
-            Some((sid, t, _)) if !nd_sim::roads::grade_separated(world.roads.segment(sid).is_highway(), world.roads.segment_level(sid, t), highway, n.level) => world.road_height(sid, t),
+            Some((sid, t, _)) if !nd_sim::roads::separated(world.roads.segment(sid).class(), world.roads.segment_level(sid, t), class, n.level) => world.road_height(sid, t),
             _ => ground(n.pos) + n.level,
         };
         z.push(h);
@@ -115,7 +119,7 @@ pub fn road_preview_with(world: &World, points: &[Vec2], levels: &[f32], lanes_f
     out.heights = points.iter().enumerate().map(|(i, &p)| mini.node_near(p, 0.5).map_or(ground(p) + level(i), |n| z[n.0 as usize])).collect();
     let mut lanes = LaneNetwork::default();
     lanes.rebuild(&mini);
-    let mut geo = generate_street(&StreetInput { roads: &mini, net: &lanes, land_value: &world.land_value, palette, seed: 1, heights: &z, inner: &[], layer: StreetLayer::All });
+    let mut geo = generate_street(&StreetInput { roads: &mini, net: &lanes, land_value: &world.land_value, palette, seed: 1, heights: &z, inner: &[], layer: StreetLayer::All, closed: &[] });
     // Decks and pillars under the raised parts.
     let concrete = crate::buildings::parts::mul(palette.concrete(0), 0.85);
     for (sid, s) in mini.alive_segments() {

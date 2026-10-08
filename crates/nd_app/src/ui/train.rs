@@ -119,6 +119,8 @@ fn surface(ui: &mut egui::Ui, w: &World, id: nd_sim::TrainId, t: &Train, assets:
                     format!("Bringing in {:.0} units: {}", m.import_units(), kinds.iter().take(4).map(|(r, a)| format!("{a:.0} {}", r.label())).collect::<Vec<_>>().join(", "))
                 };
                 ui.label(egui::RichText::new(text).color(IVORY));
+                // [freight] How full the wagons are.
+                ui.label(egui::RichText::new(format!("{} wagons  ·  {:.0} of {:.0} units aboard", m.wagons, m.aboard, m.capacity)).small().weak());
             }
         }
     }
@@ -346,11 +348,14 @@ fn freight(ui: &mut egui::Ui, w: &World, id: nd_sim::TrainId, picked: &mut Optio
     let Some(m) = w.freight_manifest(id) else { return };
     let units = m.import_units();
     section(ui, &format!("FREIGHT  ·  {:.0} units to set down  ·  {:.0} exports aboard", units.max(0.0), m.exports_aboard.max(0.0)));
+    // [freight] The wagons and how full they are.
+    let fill = if m.capacity > 0.0 { (m.aboard / m.capacity).clamp(0.0, 1.0) } else { 0.0 };
+    ui.add(egui::ProgressBar::new(fill).desired_height(10.0).text(egui::RichText::new(format!("{} wagons  ·  {:.0} / {:.0} units", m.wagons, m.aboard, m.capacity)).small()));
     if m.unloaded > 0.0 {
         ui.label(egui::RichText::new(format!("Set down {:.0} units of imports at the yards so far", m.unloaded)).color(RUNNING));
     }
     if m.loads.is_empty() && m.exports_aboard <= 0.0 && m.exports_to_collect.is_empty() {
-        hint(ui, if m.unloaded > 0.0 { "nothing more to set down: running back out of town" } else { "running empty: no goods waiting at the yards on its way" });
+        hint(ui, if m.unloaded > 0.0 { "nothing more to set down: running back out of town" } else { "running empty: no goods were waiting for its yards when it set off" });
         return;
     }
     if !m.loads.is_empty() {
@@ -364,14 +369,14 @@ fn freight(ui: &mut egui::Ui, w: &World, id: nd_sim::TrainId, picked: &mut Optio
         }
         let by_kind: Vec<String> = kinds.iter().map(|(r, a)| format!("{a:.0} {}", r.label())).collect();
         ui.label(egui::RichText::new(by_kind.join("  ·  ")).color(GOLD).strong());
-        hint(ui, "imports from out of town, by rail");
+        hint(ui, "imports aboard, loaded at the edge of the map");
         egui::ScrollArea::vertical().id_salt("train_freight").max_height(240.0).auto_shrink([false, true]).show(ui, |ui| {
             for l in &m.loads {
                 ui.add_space(2.0);
                 ui.label(egui::RichText::new(format!("{:.0} {}  ·  worth {:.0}", l.amount, l.resource.label(), l.price)).color(IVORY).strong());
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    ui.label(egui::RichText::new("from out of town, off at").small().weak());
+                    ui.label(egui::RichText::new("aboard from out of town, off at").small().weak());
                     if ui.link(egui::RichText::new(name_of(w, l.yard)).small()).clicked() {
                         *picked = Some(Selection::Building(l.yard));
                     }
@@ -395,7 +400,7 @@ fn freight(ui: &mut egui::Ui, w: &World, id: nd_sim::TrainId, picked: &mut Optio
     }
     for (y, a) in &m.exports_to_collect {
         ui.horizontal_wrapped(|ui| {
-            ui.label(egui::RichText::new(format!("{a:.0} units of exports to pick up at")).small());
+            ui.label(egui::RichText::new(format!("{a:.0} units of exports waiting at")).small());
             if ui.link(egui::RichText::new(name_of(w, *y)).small()).clicked() {
                 *picked = Some(Selection::Building(*y));
             }

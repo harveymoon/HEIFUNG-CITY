@@ -94,6 +94,7 @@ pub fn train_detail(w: &World, id: TrainId, palette: &[[f32; 3]]) -> Option<Valu
         }
         v["freight"] = json!({
             "import_units": round(m.import_units().max(0.0)), "unloaded": round(m.unloaded),
+            "wagons": m.wagons, "capacity": round(m.capacity), "aboard": round(m.aboard),
             "by_kind": kinds.iter().map(|(r, a)| json!({ "resource": r, "amount": round(*a) })).collect::<Vec<_>>(),
             "loads": loads,
             "exports_aboard": round(m.exports_aboard.max(0.0)),

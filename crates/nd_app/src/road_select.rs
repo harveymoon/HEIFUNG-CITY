@@ -270,8 +270,15 @@ impl Card {
         });
         let tolls = w.tolls.booths.iter().filter(|t| t.segment == Some(sid)).map(|t| (t.id, t.name.clone(), t.price)).collect();
         let mut crossings = (0, 0, 0, 0);
-        for c in w.walk.crossings.iter().filter(|c| c.segment == sid) {
+        // [footbridge] A zebra where a footpath meets the street sits on the
+        // node between two pieces and is listed with one of them: it counts
+        // on both (Harvey's footbridge there showed on neither card's
+        // neighbour). A crosswalk a footbridge replaced counts only as the
+        // footbridge.
+        let on_piece = |c: &&nd_sim::walk::Crossing| c.segment == sid || (c.kind == nd_sim::walk::CrossingKind::Zebra && (c.node == Some(s.a) || c.node == Some(s.b)));
+        for c in w.walk.crossings.iter().filter(on_piece) {
             match c.kind {
+                _ if c.closed => {}
                 nd_sim::walk::CrossingKind::Junction => crossings.0 += 1,
                 nd_sim::walk::CrossingKind::Zebra => crossings.1 += 1,
                 _ => {}

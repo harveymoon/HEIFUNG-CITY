@@ -286,7 +286,10 @@ pub fn thing_pose(sim: &Sim, sel: Selection) -> Option<ThingPose> {
             };
             riding.or_else(|| {
                 let p = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
-                Some(ThingPose { pos: p, heading: Some(lerp_angle(c.prev_heading, c.heading, f)), eye: ground(p) + EYE_HEIGHT - 0.05 })
+                // [footbridge] On a raised way's deck (as drawn), and up a
+                // footbridge's stairs.
+                let feet = w.walker_way_height(c, p).unwrap_or_else(|| ground(p)) + w.walker_level(c, p);
+                Some(ThingPose { pos: p, heading: Some(lerp_angle(c.prev_heading, c.heading, f)), eye: feet + EYE_HEIGHT - 0.05 })
             })
         }
     }

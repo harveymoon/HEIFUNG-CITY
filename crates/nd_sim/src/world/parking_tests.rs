@@ -121,11 +121,18 @@ fn two_hours_at_the_kerb_earn_a_ticket() {
     let _ = home;
 }
 
+/// [clamp] Over the limit after the grace: clamped, with a fine and a
+/// time limit. Unpaid (the household is broke) the car is towed when the
+/// limit runs out, the fine added to the release fee.
 #[test]
-fn after_the_grace_a_company_in_town_tows_it_and_the_owner_pays_to_fetch_it() {
+fn after_the_grace_it_is_clamped_and_towed_when_the_fine_goes_unpaid() {
     let mut w = town();
     let yard = tow_yard(&mut w);
     let (id, vid) = parked_far(&mut w);
+    if let Some(h) = w.citizens[id].household {
+        w.households[h].money = 0.0;
+    }
+    w.citizens[id].savings = 0.0;
     let now = w.clock.tick;
     set_since(&mut w, vid, now - KERB_LIMIT - GRACE - 10);
     w.check_parked(vid);
@@ -134,11 +141,21 @@ fn after_the_grace_a_company_in_town_tows_it_and_the_owner_pays_to_fetch_it() {
         s.ticketed = now - GRACE - 1;
     }
     w.check_parked(vid);
-    let job = *w.enforcement.job_for(vid).expect("tow called");
+    let job = *w.enforcement.job_for(vid).expect("tow booked");
     assert_eq!(job.company, Some(yard));
-    assert_eq!(job.reason, TowReason::Overstay);
+    assert_eq!(job.reason, TowReason::Unpaid);
+    assert!(matches!(job.state, TowState::Waiting { until } if until >= now + CLAMP_LIMIT), "not before the limit: {:?}", job.state);
+    let spot = *w.vehicles.cars[vid].spot().unwrap();
+    assert!(spot.booted, "clamped");
+    assert!(w.car_ready(id, spot.pos).is_none(), "a clamped car cannot be driven");
+    assert!(w.citizens[id].memories.iter().any(|m| m.text.contains("clamped")));
+    assert_eq!(w.enforcement.stats.clamps_total, 1);
+    // Still clamped and at the kerb an hour before the limit.
+    run(&mut w, (CLAMP_LIMIT - 60) as usize);
+    let s = *w.vehicles.cars[vid].spot().unwrap();
+    assert!(s.booted && s.kind.on_street(), "waits out the limit at the kerb");
     let mut hooked = false;
-    for _ in 0..600 {
+    for _ in 0..700 {
         run(&mut w, 1);
         let k = w.vehicles.cars[vid].spot().map(|s| s.kind);
         if k == Some(ParkKind::Hooked) {
@@ -153,7 +170,11 @@ fn after_the_grace_a_company_in_town_tows_it_and_the_owner_pays_to_fetch_it() {
     let spot = *w.vehicles.cars[vid].spot().unwrap();
     assert_eq!(spot.kind, ParkKind::Pound);
     assert_eq!(spot.building, Some(yard), "in the company's pound");
+    assert!(!spot.booted, "the clamp came off with the hook");
+    assert!(spot.fee >= TOW_FEE + CLAMP_FINE, "the unpaid fine is owed at the pound: {}", spot.fee);
     assert_eq!(w.enforcement.stats.tows_total, 1);
+    assert_eq!(w.enforcement.stats.clamps_towed_total, 1);
+    assert!(w.citizens[id].memories.iter().any(|m| m.text.contains("fine went unpaid")));
     assert_no_car_lost(&w);
     // The owner fetches it: travels to the yard, pays, drives home.
     let money_yard = w.buildings[yard].business.as_ref().unwrap().money;
@@ -172,6 +193,41 @@ fn after_the_grace_a_company_in_town_tows_it_and_the_owner_pays_to_fetch_it() {
     assert_eq!(w.enforcement.stats.released_total, 1, "released");
     assert!(w.buildings[yard].business.as_ref().unwrap().money >= money_yard + TOW_FEE, "the yard was paid");
     assert!(!w.vehicles.cars[vid].spot().is_some_and(|s| s.kind == ParkKind::Pound), "out of the pound");
+    assert_no_car_lost(&w);
+}
+
+/// [clamp] An owner who can pay settles the clamp fine: the clamp comes
+/// off, the tow is cancelled and the car can be driven again.
+#[test]
+fn a_clamp_fine_paid_in_time_takes_the_clamp_off() {
+    let mut w = town();
+    tow_yard(&mut w);
+    let (id, vid) = parked_far(&mut w);
+    if let Some(h) = w.citizens[id].household {
+        w.households[h].money = 1000.0;
+    }
+    w.citizens[id].savings = 1000.0;
+    while !(8..14).contains(&w.clock.hour()) {
+        run(&mut w, 1);
+    }
+    w.clamp(vid).expect("clamped");
+    let money = purse(&w, id);
+    let fines = w.economy.ledger.today_of(Flow::ParkingFines);
+    for _ in 0..CLAMP_LIMIT {
+        run(&mut w, 1);
+        if w.enforcement.stats.clamps_paid_total > 0 {
+            break;
+        }
+    }
+    assert_eq!(w.enforcement.stats.clamps_paid_total, 1, "paid within the limit");
+    let spot = *w.vehicles.cars[vid].spot().unwrap();
+    assert!(!spot.booted && spot.kind.on_street(), "clamp off, still at the kerb");
+    assert!(w.enforcement.job_for(vid).is_none(), "the tow is cancelled");
+    assert!(w.car_ready(id, spot.pos).is_some(), "drivable again");
+    assert!(money - purse(&w, id) >= CLAMP_FINE - 0.01, "the household paid");
+    assert!(w.economy.ledger.today_of(Flow::ParkingFines) >= fines + CLAMP_FINE - 0.01 || w.clock.minute_of_day() < 60, "into the treasury");
+    assert!(w.citizens[id].memories.iter().any(|m| m.text.contains("clamp off")));
+    assert_eq!(w.enforcement.stats.tows_total, 0);
     assert_no_car_lost(&w);
 }
 
@@ -407,6 +463,113 @@ fn an_hour_of_hunting_for_a_space_ends_with_the_car_left_somewhere() {
     assert!(w.vehicles.cars[vid].spot().is_some(), "parked");
     assert!(w.traffic.cars.contains_key(fresh) && w.vehicles.cars[vid2].spot().is_none(), "the fresh one drives on to look: {:?} {:?}", w.traffic.cars.get(fresh).map(|c| c.errand), w.vehicles.cars[vid2].spot().map(|s| (s.kind, s.pos)));
     assert_no_car_lost(&w);
+}
+
+// ── [tow-moves] against a one-way, and turning round ───────────────────────
+
+/// A citizen (the first adult with a home) given a car parked near `at`.
+fn car_near(w: &mut World, at: Vec2) -> (CitizenId, VehicleId) {
+    let id = w.citizens.iter().filter(|(_, c)| c.home.is_some() && c.can_work() && c.car.is_none()).map(|(id, _)| id).next().unwrap_or_else(|| w.citizens.iter().find(|(_, c)| c.home.is_some()).map(|(id, _)| id).unwrap());
+    if let Some(v) = w.citizens[id].car {
+        w.drop_car(v, CarEvent::Sold);
+    }
+    let home = w.citizens[id].home.unwrap();
+    {
+        let c = &mut w.citizens[id];
+        c.activity = Activity::AtHome;
+        c.inside = Some(home);
+        c.next_decision_tick = u64::MAX;
+    }
+    let vid = w.give_car_parked(id, at);
+    (id, vid)
+}
+
+/// A car parked near the end of a one-way street whose legal way in is a
+/// long loop: the truck comes in from the far end and creeps the last
+/// stretch against the traffic, ambers on, hooks the car and turns round.
+#[test]
+fn a_tow_truck_takes_the_last_stretch_of_a_one_way_against_the_traffic() {
+    let mut w = town();
+    // A one-way street north to the avenue at x = 300, its far end joined
+    // round by a street along y = -200 to the cross street.
+    w.add_road(&[Vec2::new(300.0, -200.0), Vec2::new(300.0, 0.0)], 1, 0);
+    w.add_road(&[Vec2::new(0.0, -200.0), Vec2::new(300.0, -200.0)], 1, 1);
+    run(&mut w, 2);
+    let (_, vid) = car_near(&mut w, Vec2::new(300.0, -45.0));
+    let spot = *w.vehicles.cars[vid].spot().unwrap();
+    assert!(spot.kind.on_street() && (spot.pos.x - 300.0).abs() < 8.0, "parked on the one-way: {:?}", spot.pos);
+    let job = w.call_tow(vid, TowReason::Illegal).expect("tow called");
+    let mut against = false;
+    let mut truck = None;
+    for _ in 0..400 {
+        run(&mut w, 1);
+        if let Some(t) = w.enforcement.job(job).and_then(|j| j.truck) {
+            truck = Some(t);
+        }
+        if let Some(t) = truck.and_then(|t| w.traffic.cars.get(t)) {
+            if w.traffic.in_manoeuvre(truck.unwrap()) && (t.pos.x - 300.0).abs() < 8.0 && t.pos.y < -2.0 && t.heading.sin() < -0.8 {
+                against = true;
+                assert!(t.drive.amber, "hazard lights on");
+            }
+        }
+        if w.vehicles.cars[vid].spot().is_some_and(|s| s.kind == ParkKind::Pound) {
+            break;
+        }
+    }
+    assert!(w.enforcement.stats.contraflow_total >= 1, "planned against the one-way");
+    assert!(against, "drove south up the north-bound one-way, slowly, off the lanes");
+    assert!(w.enforcement.stats.u_turns_total >= 1, "turned round with the car on");
+    assert_eq!(w.vehicles.cars[vid].spot().map(|s| s.kind), Some(ParkKind::Pound), "and took it to the pound");
+    assert!(w.driving.moves.is_empty(), "no move left hanging");
+    assert_no_car_lost(&w);
+}
+
+/// A truck that hooked a car facing away from its yard turns round in the
+/// street instead of driving on to the dead end and back.
+#[test]
+fn a_tow_truck_turns_round_in_the_street_for_the_short_way_back() {
+    let mut w = town();
+    tow_yard(&mut w);
+    // Cars on both sides of the long south street: whichever truck stops
+    // facing away from the yard (north) turns round.
+    let (_, a) = car_near(&mut w, Vec2::new(4.0, -150.0));
+    let (_, b) = car_near(&mut w, Vec2::new(-4.0, -170.0));
+    w.call_tow(a, TowReason::Illegal);
+    w.call_tow(b, TowReason::Illegal);
+    let mut turning = false;
+    for _ in 0..900 {
+        run(&mut w, 1);
+        turning |= w.driving.moves.iter().any(|m| matches!(m.then, super::tow_moves::AfterMove::ToPound { .. }));
+        if [a, b].iter().all(|v| w.vehicles.cars[*v].spot().is_some_and(|s| s.kind == ParkKind::Pound)) {
+            break;
+        }
+    }
+    assert!(w.enforcement.stats.u_turns_total >= 1, "a U-turn in the street");
+    assert!(turning, "seen turning round");
+    for v in [a, b] {
+        assert_eq!(w.vehicles.cars[v].spot().map(|s| s.kind), Some(ParkKind::Pound));
+    }
+    assert!(w.driving.moves.is_empty());
+    assert_no_car_lost(&w);
+}
+
+/// [tow-moves] Same city, same tows, same moves.
+#[test]
+fn tow_moves_are_deterministic() {
+    let make = || {
+        let mut w = town();
+        w.add_road(&[Vec2::new(300.0, -200.0), Vec2::new(300.0, 0.0)], 1, 0);
+        w.add_road(&[Vec2::new(0.0, -200.0), Vec2::new(300.0, -200.0)], 1, 1);
+        run(&mut w, 2);
+        let (_, v) = car_near(&mut w, Vec2::new(300.0, -45.0));
+        w.call_tow(v, TowReason::Illegal);
+        run(&mut w, 120);
+        w
+    };
+    let (a, b) = (make(), make());
+    let poses = |w: &World| w.traffic.cars.iter().map(|(id, c)| format!("{id:?} {:.3} {:.3} {:.3}", c.pos.x, c.pos.y, c.heading)).collect::<Vec<_>>();
+    assert_eq!(poses(&a), poses(&b));
+    assert_eq!(format!("{:?}", a.enforcement.stats), format!("{:?}", b.enforcement.stats));
 }
 
 #[test]

@@ -23,6 +23,9 @@ pub struct SegmentId(pub u32);
 
 /// Nodes closer than this are merged when roads are drawn.
 pub const SNAP_RADIUS: f32 = 5.0;
+/// [interchange] A vertex this close to a node was put on it (snapped by
+/// the tool), not merely drawn near it.
+pub const SNAP_EXACT: f32 = 1.0;
 pub const LANE_WIDTH: f32 = 3.5;
 /// Extra asphalt beyond the lanes (sidewalk / shoulder).
 pub const SHOULDER: f32 = 1.5;
@@ -69,6 +72,94 @@ pub fn passes_over(highway_a: bool, level_a: f32, highway_b: bool, level_b: f32)
     }
 }
 
+/// [interchange] The part a way plays where it crosses another: what it
+/// may meet at a junction without an end dropped on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WayClass {
+    /// A highway carriageway: meets only other carriageways.
+    Highway,
+    /// A slip road (`Segment::ramp`): meets the highway only by its ends
+    /// and other slip roads (forks and merges), never a street or a path
+    /// that merely crosses it. A street drawn under a highway with ramps
+    /// used to cut every ramp it crossed into a junction, which ended the
+    /// ramp there (`classify`) and turned the rest of it into a town street.
+    Ramp,
+    /// A one-way street being laid: it may become a slip road or stay a
+    /// town street, so it meets both.
+    OneWay,
+    /// Every other street (two-way streets, town one-way streets, rings)
+    /// and the railway: crosses a slip road on a bridge.
+    Street,
+    /// A path: crosses a slip road at grade, as people cross one at a
+    /// ramp's end (a ramp lifted over every footpath near its foot would
+    /// have to climb 4.5 m in a few metres).
+    Foot,
+}
+
+impl WayClass {
+    /// The class of a way of this kind and these lanes as it is being laid.
+    pub fn laying(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8, ring: bool) -> Self {
+        if kind == RoadKind::Path {
+            WayClass::Foot
+        } else if ring {
+            WayClass::Street
+        } else if is_highway_spec(kind, lanes_fwd, lanes_bwd) {
+            WayClass::Highway
+        } else if is_ramp_spec(kind, lanes_fwd, lanes_bwd) {
+            WayClass::OneWay
+        } else {
+            WayClass::Street
+        }
+    }
+
+    fn rank(self) -> u8 {
+        match self {
+            WayClass::Highway => 2,
+            WayClass::Ramp | WayClass::OneWay => 1,
+            WayClass::Street | WayClass::Foot => 0,
+        }
+    }
+
+    /// The class a vertex placed right on a node or a way (snapped there by
+    /// the tool) meets it as: deliberately, so a street's control point on
+    /// a ramp's end makes the ramp's terminal junction there.
+    fn snapped(self) -> Self {
+        match self {
+            WayClass::Street => WayClass::OneWay,
+            c => c,
+        }
+    }
+}
+
+/// [interchange] [`grade_separated`] with slip roads: two ways crossing pass
+/// one over the other unless they may meet at a junction. Levels 4.5 m or
+/// more apart never meet; a highway meets only highways; a slip road meets
+/// slip roads, one-way streets being laid (a ramp fork) and paths, never a
+/// street or the railway that crosses it; everything else meets at grade.
+pub fn separated(a: WayClass, level_a: f32, b: WayClass, level_b: f32) -> bool {
+    use WayClass::*;
+    if (level_a - level_b).abs() >= GRADE_SEPARATION {
+        return true;
+    }
+    match (a, b) {
+        (Highway, Highway) => false,
+        (Highway, _) | (_, Highway) => true,
+        (Ramp, Street) | (Street, Ramp) => true,
+        _ => false,
+    }
+}
+
+/// [interchange] [`passes_over`] with slip roads: the way drawn higher goes
+/// over; at about the same level the highway goes over a slip road and
+/// either over a street or a path.
+pub fn passes_over_class(a: WayClass, level_a: f32, b: WayClass, level_b: f32) -> bool {
+    if (level_a - level_b).abs() >= 1.0 {
+        level_a > level_b
+    } else {
+        a.rank() > b.rank()
+    }
+}
+
 /// Where two ways cross without a junction: the upper one passes over the
 /// lower. `upper` and `lower` are the segments with the parameter of the
 /// crossing along each.
@@ -77,6 +168,15 @@ pub struct Crossing {
     pub at: Vec2,
     pub upper: (SegmentId, f32),
     pub lower: (SegmentId, f32),
+}
+
+/// [interchange] Where a dropped road end lands (`RoadNetwork::end_target`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum EndTarget {
+    /// On an existing node.
+    Node(NodeId),
+    /// On a way, at this parameter and point (it is split there).
+    On(SegmentId, f32, Vec2),
 }
 
 /// What a road carries. Streets have car lanes and pavements; paths are for
@@ -105,13 +205,27 @@ pub fn is_ramp_spec(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> bool {
 /// How far back from a merge (or on from a diverge) a ramp runs alongside
 /// the highway before it joins.
 pub const RAMP_LEAD: f32 = 40.0;
+/// [interchange] The shortest lead a short ramp gets: a ramp whose far end
+/// is close along the highway gets a lead of a share of that distance, so
+/// it does not run alongside past the place it is going to.
+pub const RAMP_LEAD_MIN: f32 = 15.0;
 
 /// A ramp polyline with its ends on a highway eased in: where an end lies on
 /// a highway carriageway and the ramp meets it at more than 15 degrees, a
-/// lead point is put `RAMP_LEAD` before the join (a merge) or after it (a
-/// diverge), beside the carriageway, so the last piece runs alongside it
-/// and joins nearly tangent. `forward` is whether traffic runs in point
-/// order.
+/// lead point is put before the join (a merge) or after it (a diverge),
+/// beside the carriageway, so the last piece runs alongside it and joins
+/// nearly tangent; then the bend from the lead to the ramp's next point is
+/// rounded (a few points on a curve leaving the lead along the highway).
+/// `forward` is whether traffic runs in point order.
+///
+/// [interchange] The lead is `RAMP_LEAD` on a long ramp, but at most 45% of
+/// how far the ramp's next point lies along the highway (not under
+/// `RAMP_LEAD_MIN`): a fixed 40 m lead on a diamond whose ramps reach the
+/// cross street 50 m along ran each ramp alongside the highway right up to
+/// the street under it and then hairpinned onto it, over the street's own
+/// asphalt. Easing is idempotent: an end whose next point already stands
+/// beside the carriageway (a lead) is left alone, so a preview can ease
+/// what the build eases again.
 pub fn ease_ramp_ends(points: &[Vec2], forward: bool, roads: &RoadNetwork) -> Vec<Vec2> {
     let mut pts = points.to_vec();
     if pts.len() < 2 {
@@ -128,8 +242,9 @@ pub fn ease_ramp_ends(points: &[Vec2], forward: bool, roads: &RoadNetwork) -> Ve
         let s = roads.segment(sid);
         let (a, b) = roads.segment_points(sid);
         let travel = if s.lanes_fwd > 0 { (b - a).normalize_or_zero() } else { (a - b).normalize_or_zero() };
-        let away = (pts[i_next] - q).normalize_or_zero();
-        if away == Vec2::ZERO || travel.dot(away).abs() > 0.966 || pts[i_next].distance(q) < RAMP_LEAD + 5.0 {
+        let next = pts[i_next];
+        let away = (next - q).normalize_or_zero();
+        if away == Vec2::ZERO || travel.dot(away).abs() > 0.966 || next.distance(q) < 25.0 {
             continue;
         }
         // Traffic arrives at this end (a merge) or leaves from it (a diverge).
@@ -139,15 +254,63 @@ pub fn ease_ramp_ends(points: &[Vec2], forward: bool, roads: &RoadNetwork) -> Ve
         let side = if side.dot(away) >= 0.0 { side } else { -side };
         // Beside the carriageway: half its width, half the ramp's, a margin.
         let gap = s.half_width() + LANE_WIDTH * 0.5 + SHOULDER + 1.0;
-        let lead = q + along * RAMP_LEAD + side * gap;
+        let (ra, rb) = ((next - q).dot(along), (next - q).dot(side));
+        // Already beside the carriageway, ahead of the join: a lead.
+        if ra > 0.0 && rb <= gap + 0.5 {
+            continue;
+        }
+        let lead_len = if ra > 0.0 { (ra * 0.45).max(rb * 0.25).clamp(RAMP_LEAD_MIN, RAMP_LEAD) } else { RAMP_LEAD };
+        let lead = q + along * lead_len + side * gap;
+        // The bend from the lead to the next point, rounded: a quadratic
+        // curve leaving the lead along the highway.
+        let rest = next - lead;
+        let ahead = rest.dot(along);
+        let mut bend: Vec<Vec2> = Vec::new();
+        if ahead > 4.0 {
+            // A gentle pull: a control point further on cut the bend in
+            // toward a cross street the ramp turns onto.
+            let c = lead + along * (ahead * 0.3);
+            let k = ((rest.length() / 12.0).round() as usize).clamp(2, 6);
+            for i in 1..k {
+                let t = i as f32 / k as f32;
+                bend.push(lead * (1.0 - t) * (1.0 - t) + c * (2.0 * (1.0 - t) * t) + next * (t * t));
+            }
+        }
         pts[i_end] = q;
         if end {
-            pts.insert(i_end, lead);
+            // ..., next, bend (from next back to the lead), lead, q.
+            let mut ins: Vec<Vec2> = bend.into_iter().rev().collect();
+            ins.push(lead);
+            for (k, v) in ins.into_iter().enumerate() {
+                pts.insert(i_end + k, v);
+            }
         } else {
-            pts.insert(1, lead);
+            // q, lead, bend (from the lead on to next), next, ...
+            let mut ins = vec![lead];
+            ins.extend(bend);
+            for (k, v) in ins.into_iter().enumerate() {
+                pts.insert(1 + k, v);
+            }
         }
     }
     pts
+}
+
+/// [interchange] A way's points and levels with its ramp ends eased in, as
+/// the network lays it (`ease_ramp_ends`, levels carried onto the new
+/// points): only one-way streets narrower than a highway that are not a
+/// roundabout's ring. The world's rebuild and the previews both use this,
+/// so the hologram shows the ramp as it will be built.
+pub fn ease_ramp_way(points: &[Vec2], levels: &[f32], lanes_fwd: u8, lanes_bwd: u8, kind: RoadKind, roads: &RoadNetwork) -> (Vec<Vec2>, Vec<f32>) {
+    if !is_ramp_spec(kind, lanes_fwd, lanes_bwd) || roads.is_ring_way(points, lanes_fwd, lanes_bwd, kind) {
+        return (points.to_vec(), levels.to_vec());
+    }
+    let eased = ease_ramp_ends(points, lanes_fwd > 0, roads);
+    if eased == points {
+        return (eased, levels.to_vec());
+    }
+    let lv = crate::plan::carry_levels(points, levels, &eased);
+    (eased, lv)
 }
 
 /// Spacing of the height samples along a long way (`sample_heights`).
@@ -265,6 +428,19 @@ impl Segment {
         self.ramp || self.is_highway()
     }
 
+    /// [interchange] Its part in grade separation (`separated`).
+    pub fn class(&self) -> WayClass {
+        if self.is_highway() {
+            WayClass::Highway
+        } else if self.ramp {
+            WayClass::Ramp
+        } else if self.kind == RoadKind::Path {
+            WayClass::Foot
+        } else {
+            WayClass::Street
+        }
+    }
+
     /// A way for traffic only: the highway, its slip roads and tunnels.
     /// None of them fronts parcels, takes kerb parking (legal or not),
     /// carries walkers or crossings, or gets RVs, camps or litter beside
@@ -339,6 +515,12 @@ impl RoadNetwork {
         let (t, q) = project_on_segment(p, a, b);
         Some((sid, t, q))
     }
+    /// [footbridge] Live segments whose bounding box comes within `r` of
+    /// `p` (a box query on the segment grid: never searches further out).
+    pub fn segments_near(&self, p: Vec2, r: f32) -> Vec<SegmentId> {
+        self.grid().in_box(p - Vec2::splat(r), p + Vec2::splat(r)).into_iter().filter(|&i| self.segments[i as usize].alive).map(SegmentId).collect()
+    }
+
     pub fn node(&self, id: NodeId) -> &Node {
         &self.nodes[id.0 as usize]
     }
@@ -400,13 +582,13 @@ impl RoadNetwork {
     /// May a way at `level` (a highway or not) share node `n`? A node with
     /// no ways yet takes anything; otherwise some way there must be one it
     /// could meet at a junction (not grade-separated from it).
-    fn node_accepts(&self, n: NodeId, level: f32, highway: bool) -> bool {
+    fn node_accepts(&self, n: NodeId, level: f32, class: WayClass) -> bool {
         let node = self.node(n);
         let mut alive = node.segments.iter().map(|&s| self.segment(s)).filter(|s| s.alive).peekable();
         if alive.peek().is_none() {
             return true;
         }
-        alive.any(|s| !grade_separated(s.is_highway(), node.level, highway, level))
+        alive.any(|s| !separated(s.class(), node.level, class, level))
     }
 
     fn push_node(&mut self, p: Vec2, level: f32) -> NodeId {
@@ -416,13 +598,13 @@ impl RoadNetwork {
 
     /// Node for a junction where a way at `level` crosses another at grade:
     /// a node of any kind nearby that the way may meet, else a new one.
-    fn get_or_add_node(&mut self, p: Vec2, level: f32, highway: bool) -> NodeId {
+    fn get_or_add_node(&mut self, p: Vec2, level: f32, class: WayClass) -> NodeId {
         let near = self
             .nodes
             .iter()
             .enumerate()
             .map(|(i, n)| (NodeId(i as u32), n.pos.distance(p)))
-            .filter(|&(id, d)| d <= SNAP_RADIUS && self.node_accepts(id, level, highway))
+            .filter(|&(id, d)| d <= SNAP_RADIUS && self.node_accepts(id, level, class))
             .min_by(|a, b| a.1.total_cmp(&b.1));
         match near {
             Some((id, _)) => id,
@@ -433,8 +615,15 @@ impl RoadNetwork {
     /// Node for an interior vertex: only a node its kind can join at its
     /// level, so a street vertex passing near the track does not become a
     /// crossing, nor a viaduct vertex over a street a junction.
-    fn get_or_add_node_kind(&mut self, p: Vec2, kind: RoadKind, level: f32, highway: bool) -> NodeId {
-        if let Some(id) = self.node_near_kind_where(p, SNAP_RADIUS, kind, |net, n| net.node_accepts(n, level, highway)) {
+    fn get_or_add_node_kind(&mut self, p: Vec2, kind: RoadKind, level: f32, class: WayClass) -> NodeId {
+        if let Some(id) = self.node_near_kind_where(p, SNAP_RADIUS, kind, |net, n| net.node_accepts(n, level, class)) {
+            return id;
+        }
+        // [interchange] A vertex right on a node (the tool snaps a click to
+        // it) meets it deliberately: a street's control point on the end of
+        // a ramp is the ramp's terminal junction, though the street only
+        // passes slip roads it crosses.
+        if let Some(id) = self.node_near_kind_where(p, SNAP_EXACT, kind, |net, n| net.node_accepts(n, level, class.snapped())) {
             return id;
         }
         // A vertex lying on a way it may meet (a height sample of one road
@@ -447,7 +636,7 @@ impl RoadNetwork {
         let level_crossing = |s: &Segment| s.kind == RoadKind::Rail && kind == RoadKind::Street;
         let on = self.nearest_where(p, |s| s.alive).filter(|&(sid, t, q)| {
             let s = self.segment(sid);
-            q.distance(p) < 0.5 && ((s.kind == RoadKind::Rail) == (kind == RoadKind::Rail) || level_crossing(s)) && !grade_separated(s.is_highway(), self.segment_level(sid, t), highway, level)
+            q.distance(p) < 0.5 && ((s.kind == RoadKind::Rail) == (kind == RoadKind::Rail) || level_crossing(s)) && !separated(s.class(), self.segment_level(sid, t), class.snapped(), level)
         });
         if let Some((sid, _, _)) = on {
             // On one of the track's own nodes: cross there.
@@ -473,28 +662,92 @@ impl RoadNetwork {
     /// dropped on, at that road's level (that is how ramps meet highways).
     /// `own` are the pieces already laid for this same way: its far end
     /// never snaps back onto them (a curve's last sample is closer to the
-    /// one before it than the snap radius).
+    /// one before it than the snap radius). See [`RoadNetwork::end_target`]
+    /// for which way it picks.
     fn end_node(&mut self, p: Vec2, radius: f32, kind: RoadKind, level: f32, own: &[SegmentId]) -> NodeId {
         // Its own start stays a target, so a closed loop (a ring) closes.
         let start = own.first().map(|&s| self.segment(s).a);
         let own_nodes: Vec<NodeId> = own.iter().flat_map(|&s| [self.segment(s).a, self.segment(s).b]).filter(|&n| Some(n) != start).collect();
-        let free = |_: &Self, n: NodeId| !own_nodes.contains(&n);
-        if let Some(id) = self.node_near_kind_where(p, SNAP_RADIUS, kind, free) {
-            return id;
-        }
-        let near = self.nearest_where(p, |seg| Self::joins(seg.kind, kind) && !(own_nodes.contains(&seg.a) || own_nodes.contains(&seg.b)));
-        if let Some((sid, t, q)) = near {
-            if q.distance(p) <= radius {
-                if let Some(id) = self.node_near_kind_where(q, SNAP_RADIUS, kind, free) {
-                    return id;
-                }
+        match self.end_target(p, radius, kind, level, &own_nodes) {
+            Some(EndTarget::Node(id)) => id,
+            Some(EndTarget::On(sid, t, q)) => {
                 let at = self.segment_level(sid, t);
                 let id = self.push_node(q, at);
                 self.split_segment(sid, id);
-                return id;
+                id
+            }
+            None => self.push_node(p, level),
+        }
+    }
+
+    /// [interchange] Where an end of a way of `kind` drawn at `level` and
+    /// dropped at `p` lands: a node within `SNAP_RADIUS`, else a point on a
+    /// way within `radius` (a node within `SNAP_RADIUS` of that point if
+    /// there is one), else nowhere. Of what is in reach, a way at about the
+    /// end's own level (`GRADE_SEPARATION`) wins: an end dropped where a
+    /// viaduct passes over a street joins the one it was drawn at, and a
+    /// ramp end at a street under the highway lands on the street, never on
+    /// the deck overhead (it used to take the nearest node of any level).
+    /// Only with nothing at its level in reach does it come up or down to
+    /// a way at another level (a raised road ramps down to the road it is
+    /// dropped on). A path lands on the highway or a slip road only with no
+    /// other way in reach (a footpath dropped by an on-ramp beside the
+    /// street the ramp leaves used to split the ramp, leading walkers onto
+    /// it; it now joins the street).
+    fn end_target(&self, p: Vec2, radius: f32, kind: RoadKind, level: f32, own_nodes: &[NodeId]) -> Option<EndTarget> {
+        let foot = kind == RoadKind::Path;
+        let seg_ok = |s: &Segment| s.alive && Self::joins(s.kind, kind) && !(own_nodes.contains(&s.a) || own_nodes.contains(&s.b));
+        // A node is a target when some way of it may take the end (for a
+        // path on the walkers' pass, a way that is not a motorway).
+        let node_ok = |net: &Self, n: NodeId, walk: bool| {
+            if own_nodes.contains(&n) {
+                return false;
+            }
+            let node = net.node(n);
+            let mut alive = node.segments.iter().map(|&s| net.segment(s)).filter(|s| s.alive).peekable();
+            alive.peek().is_none() || alive.any(|s| Self::joins(s.kind, kind) && !(walk && s.is_motorway()))
+        };
+        let at_level = |l: f32| (l - level).abs() < GRADE_SEPARATION;
+        let node_level = |net: &Self, n: NodeId| {
+            let node = net.node(n);
+            if node.segments.iter().any(|&s| net.segment(s).alive) {
+                Some(node.level)
+            } else {
+                None
+            }
+        };
+        // Ways within reach, nearest first: (distance, segment, t, point).
+        let lo = p - Vec2::splat(radius);
+        let hi = p + Vec2::splat(radius);
+        let mut ways: Vec<(f32, SegmentId, f32, Vec2)> = self
+            .segments_in_box(lo, hi)
+            .filter(|&sid| seg_ok(self.segment(sid)))
+            .map(|sid| {
+                let (a, b) = self.segment_points(sid);
+                let (t, q) = project_on_segment(p, a, b);
+                (q.distance(p), sid, t, q)
+            })
+            .filter(|w| w.0 <= radius)
+            .collect();
+        ways.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
+        // Passes: at its own level first; for a path, a way that is not
+        // the highway or a slip road first (it lands on one only with
+        // nothing else in reach; the walk graph stops short of it).
+        let passes: &[(bool, bool)] = if foot { &[(true, true), (true, false), (false, true), (false, false)] } else { &[(true, false), (false, false)] };
+        for &(same_level, walk) in passes {
+            let level_ok = |l: Option<f32>| l.is_none_or(|l| !same_level || at_level(l));
+            if let Some(id) = self.node_near_kind_where(p, SNAP_RADIUS, kind, |net, n| node_ok(net, n, walk) && level_ok(node_level(net, n))) {
+                return Some(EndTarget::Node(id));
+            }
+            if let Some(&(_, sid, t, q)) = ways.iter().find(|w| level_ok(Some(self.segment_level(w.1, w.2))) && !(walk && self.segment(w.1).is_motorway())) {
+                let l = self.segment_level(sid, t);
+                if let Some(id) = self.node_near_kind_where(q, SNAP_RADIUS, kind, |net, n| node_ok(net, n, walk) && node_level(net, n).is_none_or(|nl| (nl - l).abs() < GRADE_SEPARATION)) {
+                    return Some(EndTarget::Node(id));
+                }
+                return Some(EndTarget::On(sid, t, q));
             }
         }
-        self.push_node(p, level)
+        None
     }
 
     /// [tools] Where an end of a way dropped at `p` lands and the level it
@@ -504,14 +757,20 @@ impl RoadNetwork {
     /// where and how it was drawn). A raised road dropped on a road at grade
     /// ends on that road: its deck ramps down to it.
     pub fn end_landing(&self, p: Vec2, kind: RoadKind) -> Option<(Vec2, f32)> {
-        if let Some(id) = self.node_near_kind_where(p, SNAP_RADIUS, kind, |_, _| true) {
-            let n = self.node(id);
-            if n.segments.iter().any(|&s| self.segment(s).alive) {
-                return Some((n.pos, n.level));
+        self.end_landing_at(p, kind, 0.0)
+    }
+
+    /// [interchange] [`RoadNetwork::end_landing`] for an end drawn at
+    /// `level`: a way at about that level wins over one at another
+    /// (`end_target`).
+    pub fn end_landing_at(&self, p: Vec2, kind: RoadKind, level: f32) -> Option<(Vec2, f32)> {
+        match self.end_target(p, END_SNAP_RADIUS, kind, level, &[])? {
+            EndTarget::Node(id) => {
+                let n = self.node(id);
+                n.segments.iter().any(|&s| self.segment(s).alive).then_some((n.pos, n.level))
             }
+            EndTarget::On(sid, t, q) => Some((q, self.segment_level(sid, t))),
         }
-        let (sid, t, q) = self.nearest_where(p, |seg| Self::joins(seg.kind, kind))?;
-        (q.distance(p) <= END_SNAP_RADIUS).then(|| (q, self.segment_level(sid, t)))
     }
 
     /// [tools] A way's points and levels as the network lays it: each end
@@ -522,7 +781,7 @@ impl RoadNetwork {
         let n = pts.len();
         if n >= 2 {
             for i in [0, n - 1] {
-                if let Some((q, l)) = self.end_landing(pts[i], kind) {
+                if let Some((q, l)) = self.end_landing_at(pts[i], kind, lv[i]) {
                     pts[i] = q;
                     lv[i] = l;
                 }
@@ -662,7 +921,7 @@ impl RoadNetwork {
         let mut out = Vec::new();
         let last = points.len().saturating_sub(1);
         self.laying_ring = self.is_ring_way(points, lanes_fwd, lanes_bwd, kind);
-        let highway = is_highway_spec(kind, lanes_fwd, lanes_bwd) && !self.laying_ring;
+        let class = WayClass::laying(kind, lanes_fwd, lanes_bwd, self.laying_ring);
         let level = |i: usize| levels.get(i).copied().filter(|l| l.is_finite()).unwrap_or(0.0);
         for (i, w) in points.windows(2).enumerate() {
             if w[0].distance(w[1]) < 0.5 {
@@ -670,8 +929,8 @@ impl RoadNetwork {
             }
             // Road ends snap onto whatever road they were dropped near so a
             // T-junction forms; interior points only split roads they cross.
-            let a = if i == 0 { self.end_node(w[0], END_SNAP_RADIUS, kind, level(0), &[]) } else { self.get_or_add_node_kind(w[0], kind, level(i), highway) };
-            let b = if i + 1 == last { self.end_node(w[1], END_SNAP_RADIUS, kind, level(i + 1), &out) } else { self.get_or_add_node_kind(w[1], kind, level(i + 1), highway) };
+            let a = if i == 0 { self.end_node(w[0], END_SNAP_RADIUS, kind, level(0), &[]) } else { self.get_or_add_node_kind(w[0], kind, level(i), class) };
+            let b = if i + 1 == last { self.end_node(w[1], END_SNAP_RADIUS, kind, level(i + 1), &out) } else { self.get_or_add_node_kind(w[1], kind, level(i + 1), class) };
             out.extend(self.add_segment_between(a, b, lanes_fwd, lanes_bwd, kind));
         }
         self.laying_ring = false;
@@ -739,7 +998,7 @@ impl RoadNetwork {
         // candidates are fixed before splitting starts, in ascending id
         // order, so the junction nodes come out as a full scan makes them.
         let candidates = self.grid().in_box(pa.min(pb), pa.max(pb));
-        let highway = is_highway_spec(kind, lanes_fwd, lanes_bwd) && !self.laying_ring;
+        let class = WayClass::laying(kind, lanes_fwd, lanes_bwd, self.laying_ring);
         for i in candidates {
             let s = self.segments[i as usize].clone();
             if !s.alive || s.a == a || s.a == b || s.b == a || s.b == b {
@@ -749,11 +1008,11 @@ impl RoadNetwork {
             if let Some((t, u)) = segment_intersection(pa, pb, p0, p1) {
                 let x = pa.lerp(pb, t);
                 let (mine, theirs) = (level_at(t), self.segment_level(SegmentId(i), u));
-                if grade_separated(highway, mine, s.is_highway(), theirs) {
+                if separated(class, mine, s.class(), theirs) {
                     // A flyover: no junction. The upper way gets a vertex of
                     // its own over the crossing (never shared: it is not
                     // snapped to the lower way's nodes).
-                    if passes_over(highway, mine, s.is_highway(), theirs) {
+                    if passes_over_class(class, mine, s.class(), theirs) {
                         let n = self.push_node(x, mine);
                         cuts.push((t, n));
                     } else {
@@ -762,7 +1021,7 @@ impl RoadNetwork {
                     }
                     continue;
                 }
-                let n = self.get_or_add_node(x, mine, highway);
+                let n = self.get_or_add_node(x, mine, class);
                 if n != s.a && n != s.b {
                     self.split_segment(SegmentId(i), n);
                 }
@@ -791,8 +1050,9 @@ impl RoadNetwork {
                     continue;
                 }
                 // Only a node this way could meet: not one on a highway (or
-                // a street, for a highway), nor one well above or below.
-                if !self.node_accepts(id, level_at(t), highway) || n.segments.iter().any(|&s| self.segments[s.0 as usize].alive && self.segments[s.0 as usize].is_highway() != highway) {
+                // a street, for a highway), nor on a slip road for a street
+                // or a path, nor one well above or below.
+                if !self.node_accepts(id, level_at(t), class) || n.segments.iter().any(|&s| self.segments[s.0 as usize].alive && separated(self.segments[s.0 as usize].class(), 0.0, class, 0.0)) {
                     continue;
                 }
                 cuts.push((t, id));
@@ -833,11 +1093,11 @@ impl RoadNetwork {
                 let (q0, q1) = self.segment_points(oid);
                 let Some((t, u)) = segment_intersection_closed(p0, p1, q0, q1, EPS) else { continue };
                 let (ls, lo) = (self.segment_level(sid, t), self.segment_level(oid, u));
-                if !grade_separated(s.is_highway(), ls, o.is_highway(), lo) {
+                if !separated(s.class(), ls, o.class(), lo) {
                     continue;
                 }
                 let at = p0.lerp(p1, t);
-                let (upper, lower) = if passes_over(s.is_highway(), ls, o.is_highway(), lo) { ((sid, t), (oid, u)) } else { ((oid, u), (sid, t)) };
+                let (upper, lower) = if passes_over_class(s.class(), ls, o.class(), lo) { ((sid, t), (oid, u)) } else { ((oid, u), (sid, t)) };
                 let shares = |x: SegmentId, y: SegmentId| {
                     let (a, b) = (self.segment(x), self.segment(y));
                     x == y || a.a == b.a || a.a == b.b || a.b == b.a || a.b == b.b

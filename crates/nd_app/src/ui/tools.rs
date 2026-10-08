@@ -16,13 +16,37 @@ pub fn sub_pane(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &
         Tool::Road => road(ui, tools),
         Tool::Zone => zone(ui, sim, tools, assets),
         Tool::Edit => edit(ui, sim, tools, plan),
-        Tool::Bulldoze => hint(ui, help::tool_hint(Tool::Bulldoze)),
+        Tool::Bulldoze => bulldoze(ui, sim, tools),
         Tool::Inspect => hint(ui, help::tool_hint(Tool::Inspect)),
         Tool::Transit => transit(ui, sim, tools),
         Tool::Rail => rail(ui, sim, tools),
         Tool::Buildings => buildings(ui, sim, tools),
         Tool::District => super::districts::sub_pane(ui, sim, tools),
     }
+}
+
+/// [dirty-industry] The Bulldoze tool: remove things, or clean up
+/// contaminated ground over a circle (the hover label quotes the cost).
+fn bulldoze(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
+    ui.horizontal(|ui| {
+        if ui.selectable_label(!tools.cleanup, "Remove").on_hover_text("Roads, zones and the city's own buildings").clicked() {
+            tools.cleanup = false;
+        }
+        if ui.selectable_label(tools.cleanup, "Clean up ground").on_hover_text("Send a crew to dig out contaminated ground, paid up front").clicked() {
+            tools.cleanup = true;
+        }
+    });
+    if !tools.cleanup {
+        hint(ui, help::tool_hint(Tool::Bulldoze));
+        return;
+    }
+    ui.add(egui::Slider::new(&mut tools.cleanup_radius, nd_sim::world::CLEANUP_MIN_RADIUS..=nd_sim::world::CLEANUP_MAX_RADIUS).step_by(5.0).suffix(" m").text("radius"));
+    let w = &sim.world;
+    if !w.cleanups.is_empty() {
+        let jobs: Vec<String> = w.cleanups.iter().map(|j| format!("{:.0} m at ({:.0}, {:.0}) {:.0}%", j.radius, j.center.x, j.center.y, j.progress() * 100.0)).collect();
+        hint(ui, &format!("Crews at work: {}", jobs.join(" · ")));
+    }
+    hint(ui, &format!("Click contaminated ground: a crew digs it out from the middle over 2 to 6 days, {:.0} per cell of full contamination, paid when sent. The pointer shows the area, the cost and the days (red when the ground is clean or the treasury short). The Contamination layer (K) shows where.", nd_sim::world::CLEANUP_COST));
 }
 
 fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
@@ -43,6 +67,23 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
             }
         });
         hint(ui, help::ROAD_ROUNDABOUT);
+        return;
+    }
+    // [interchange] The cross street's lanes and what would stop it.
+    if tools.interchange {
+        ui.horizontal(|ui| {
+            ui.label("cross street");
+            for (f, b, name) in [(1u8, 1u8, "Lane"), (2, 2, "Street"), (3, 3, "Avenue")] {
+                if ui.selectable_label(tools.lanes_fwd == f && tools.lanes_bwd == b, name).clicked() {
+                    tools.lanes_fwd = f;
+                    tools.lanes_bwd = b;
+                }
+            }
+        });
+        if let Some((why, at)) = &tools.interchange_refusal {
+            ui.label(egui::RichText::new(format!("! Cannot be built: {why} (red pin at {:.0}, {:.0}).", at.x, at.y)).color(WARN).small());
+        }
+        hint(ui, help::ROAD_INTERCHANGE);
         return;
     }
     // Lanes and curvature share a row so the bar stays shallow.
@@ -535,6 +576,9 @@ pub fn road_label(tools: &ToolState) -> String {
     if tools.roundabout {
         return "Roundabout".into();
     }
+    if tools.interchange {
+        return format!("Interchange (diamond), cross street {} + {} lanes", tools.lanes_fwd, tools.lanes_bwd);
+    }
     if tools.tunnel {
         return format!("Tunnel, {} + {} lanes", tools.lanes_fwd, tools.lanes_bwd);
     }
@@ -563,6 +607,7 @@ pub fn preset_hint(label: &str) -> &'static str {
         "Ramp" => "One lane, one direction: slip roads onto a highway",
         "Highway" => "Four lanes one way: 25 m/s, no frontage, grade-separated",
         "Roundabout" => "A one-way ring with give-way entries: click to stamp it over roads and junctions",
+        "Interchange" => "A diamond interchange: click across the highway; a street under it, four ramps, a signalled junction each side",
         _ => "",
     }
 }
