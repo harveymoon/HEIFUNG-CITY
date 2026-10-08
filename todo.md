@@ -312,7 +312,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Freight trains really carry their cargo instead of yards handing it to any train (train-inspect)
 - [x] In-game Clean up button for contaminated land (API only now); contamination along rivers/downwind (dirty-industry) → DONE [feat/mural-cleanup]: Bulldoze → Clean up ground (radius, red/green hover with cells, cost, days), crews dig over 2-6 days with a visible site; daily drift downwind (smoke wind) and downstream
 - [x] Murals painted on the building facade, not a free-standing wall → DONE [feat/mural-cleanup]: painted on the drawn street wall clear of windows, procedural per crew (motif, palette, tag), floodlit night copy; wall only on vacant lots/glass fronts
-- [ ] LLM dialogue for spotlit citizens (social)
+- [x] LLM dialogue for spotlit citizens and on-demand diaries → DONE [feat/committee]: through the pluggable backend, display only
 - [ ] Bridge deck ends need abutments; ramp gore on a highway bridge has no deck; low signal arms on steep approaches; cars stop short of the stop line at sharp forks (road-polish)
 - [ ] Hydro/tidal still fixed size; huge 2-tower coal plant only seen in a unit test (plant-scale)
 - [ ] Town streets 2+2 into 1+1 step at the kerbs instead of tapering (lane-join)
@@ -337,12 +337,10 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 ## Agents running (update when starting/merging; survives context compaction)
 - fix/interchange: clean interchanges, ramp+street logic (started 2026-10-07 23:25)
-- fix/footbridge: footbridge replaces crosswalk (started 2026-10-08 00:00)
 - feat/fishing: fishing trips (started 2026-10-08 00:35)
 - feat/econ-followups: batteries arbitrage, parking pressure → lots, industry lifts cheap land, relocating businesses, rich owners' holdings, wind small-lot check (started 2026-10-08)
 - feat/street-followups: tow trucks on a job (one-ways/U-turns), booted cars towed, murder, moto packs, fire engines park at the kerb (started 2026-10-08)
 - feat/freight: freight trains carry cargo, hydro/tidal scale (started 2026-10-08)
-- feat/mural-cleanup: murals on facades, clean-up tool, contamination spread (started 2026-10-08)
 - fix/interchange (extended): + road-polish leftovers: abutments, gore deck, signal arms, stop line, town street tapers
 - fix/false-block: false road refusal by a far plant; blockers in the plan preview (started 2026-10-08)
 - feat/supertall: supertall league (started 2026-10-08, from the queue)
