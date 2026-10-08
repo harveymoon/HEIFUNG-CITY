@@ -84,6 +84,8 @@ mod survey;
 mod subway;
 /// [society] Camps, RVs and overflowing bins.
 mod society;
+/// [social] Murals and community gardens.
+mod social;
 mod solar;
 mod turbines;
 /// [taxis] Cabs in their yards, at ranks and kerbs; yard signs.
@@ -472,6 +474,8 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, (nights::sync_road_wear, nights::sync_raves, nights::race_gizmos).in_set(SimSet::Sync).after(sync_cars).before(lift_movers));
         // [society] Skid row and the trash.
         app.init_resource::<society::SocietyRender>().add_systems(Update, society::sync_society.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
+        // [social] Murals and gardens.
+        app.init_resource::<social::SocialRender>().add_systems(Update, social::sync_social.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
         // Drone taxis and helicopters, after the buildings whose pads they land on.
         app.init_resource::<air::AirState>().add_systems(Update, air::sync_air.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, check_car_bodies.after(lift_movers).in_set(SimSet::Sync));

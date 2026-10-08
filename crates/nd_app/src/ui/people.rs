@@ -28,6 +28,8 @@ pub enum Tab {
     #[default]
     Overview,
     Concerns,
+    /// [social] Friendships, feuds, crews and clubs.
+    Social,
 }
 
 fn tab_id() -> egui::Id {
@@ -51,12 +53,14 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx, big: bool) {
     ui.horizontal(|ui| {
         ui.selectable_value(&mut tab, Tab::Overview, "Overview");
         ui.selectable_value(&mut tab, Tab::Concerns, "Complaints & concerns");
+        ui.selectable_value(&mut tab, Tab::Social, "Social");
     });
     set_tab(&ctx, tab);
     ui.separator();
     match tab {
         Tab::Overview => overview(ui, p, big),
         Tab::Concerns => super::concerns::tab(ui, p),
+        Tab::Social => super::social::tab(ui, p),
     }
 }
 

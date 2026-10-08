@@ -1323,6 +1323,99 @@ Citizens are rendered from their simulated positions every frame.
   least 0.8 m/s, output scales with current), tidal (sea shore, two tides a day) and geothermal (hot
   spot, scales with heat) plants extend `PowerPlantKind`.
 
+## The social layer: people talking, friends and feuds, crews and clubs
+
+`nd_sim::social` (data and pure rules), `world/social.rs` (the systems), `world/social_tests.rs`.
+People who share a bench, a bar, a workplace, a bus or a few metres of pavement get talking; how
+it goes builds friendships and feuds; friends and enemies then act differently; friends with a
+passion in common form groups that make things in the city.
+
+- **Ties** (a `Circle` per citizen in `World::social.circles`, at most `MAX_TIES` = 16, the
+  weakest dropped first, never a partner): affinity (-1..1), familiarity (0..1), trust (0..1),
+  when, how and where they met (a bench, a bar, a park, work, a friend's home, transit, the
+  street, a club), talks, romance (`spark`), money lent. The label is derived: stranger,
+  acquaintance (familiarity 0.08), friend (affinity 0.3 and familiarity 0.25), close friend
+  (0.6 / 0.5), partner, rival (-0.25), enemy (-0.55). Household members have no ties (they are
+  family). Ties and conversation notes are saved as tuples to keep saves small.
+- **Compatibility** is fixed per pair (`compatibility`): the gap on each personality trait
+  (sociability and hedonism weigh most), age (three decades apart rarely click), class (rich and
+  poor rarely agree), the strongest shared interest (`interests`: music, sports, books, art,
+  business, gardening, the neighbourhood, from personality, age and class) and a little chemistry
+  from a hash of the pair.
+- **Encounters** (`step_social`, every 3 ticks): everyone out of the house is put in a spot: a
+  venue, a stadium, a bench, a park, their workplace, a home with a guest in, a bus or train, a
+  stop, a 4 m cell of pavement. Spots are sorted, and within each a few pairs (three at most) are
+  drawn by a hash of the tick and the spot; at most `TALK_BUDGET` = 48 conversations a round, so
+  the cost is bounded and never O(n^2). A pair talks with a chance by setting (a friend's sofa
+  0.25, a bar 0.16, a bench 0.12, the park 0.07, a bus 0.025, work 0.02, passing in the street
+  0.012) times sociability, more for friends, much less for enemies (unless drunk); the same pair
+  not twice within 45 minutes. Adults talk with anyone grown up, teenagers with their own age,
+  small children not at all.
+- **A conversation** (`converse`) has a topic from their lives (work; rent, more when either is
+  squeezed; the city's concern of the week; the news; the game, at the stadium above all; a place
+  they both know; gossip about someone both know; music, art and books by shared interest; the
+  weather; family) and an outcome: agreement, laughter, flirting (adults near in age, single), a
+  favour (someone in need, and trust between them), an argument, insults, now and then a fight
+  (enemies with drink or a rebellious streak, in a bar, a park, the street or at work). The chance
+  of it going well grows with compatibility, existing affinity and mood and shrinks with a touchy
+  topic between classes and with drink. Affinity and trust move by the outcome and drift towards
+  compatibility; familiarity grows. Becoming friends, close friends, a couple, rivals or enemies
+  is remembered; every talk goes in the citizen's last six conversations. Gossip moves the
+  listener's feeling for the third person towards the speaker's (by trust); a bad word about a
+  place costs its reputation a little. A fight is an assault: counted as an offence and reported
+  to the police (`report_crime`); both remember it.
+- **What it changes**: `choose_place` adds `social_pull`: friends there now (+0.15 each, two at
+  most) and friends who are regulars (+0.06), an enemy there now (-0.6) or whose regular spot it
+  is (-0.2), a band playing tonight (+0.35 plus its reputation; +0.9 for the band's friends, +2
+  for the band). From 11:00 to 22:00 (`plan_outings`, hourly at :25; daytime only for those
+  without work) a free, sociable person may meet a free friend at a place they both like: living
+  within 700 m, one calls round and they walk there together at the slower one's pace
+  (`social_pace`); otherwise both go. With nowhere both like, one pops round to the other's home.
+  In the park a friend sits on a friend's bench if there is room (`seat_by_friend`), and close
+  friends and partners can come along on an outing (`bring_company`). At midnight: the jobless
+  are taken on where a trusted friend works, a household squeezed by its rent moves to a cheaper
+  flat where a friend lives, the broke borrow from a friend with savings (paid back when they can;
+  a debt left too long sours it), and a partner living alone moves in with the other
+  (`move_into_household`). Ties fade without contact (familiarity after 2 days, affinity after 5,
+  grudges slower); a word exchanged once is forgotten after three days.
+- **Groups** (`Group`): each midnight a few people with two friends or more and a strong passion
+  (0.45) start a band, sports club, book club, street-art crew, startup, community garden group
+  or neighbourhood association with the friends who share it (three people, two for a startup;
+  neighbours within 450 m for an association). Kinds already common are less likely. A group has a
+  base (the place of the right kind its members like best), meets every few days at 18:00 (those
+  who turn up grow closer), recruits members' friends who care (never someone with an enemy in
+  it), builds momentum from its members' passion and meetings (cooling 5% a day) and at its kind's
+  threshold makes something: a gig at its venue (news, the venue's name up, a crowd drawn that
+  night), a match in its park or a reading at its café (the place's name up), a mural (a painted
+  wall at the front of a building near the members; land value +0.02 x quality near by, less
+  where the land is dear), a community garden on a vacant lot (land value +0.025; lost if the lot
+  is built on), a business (the members' pooled savings, 40% up to 2,500, open a venue, bakery,
+  gadget shop or office on a vacant lot near the founder, who owns it), or a petition to the
+  player (`Ask`: more police, lower rent, a safe crossing, clean streets, a park, jobs, quiet;
+  quoted in the complaints). A petition the city answers (checked daily) cheers them up; one
+  ignored for three days becomes a protest at the nearest civic building (else a park), members
+  and friends marching at 11:00; after eight days it lapses. Rivals inside a group cost it
+  momentum and may split it: the one with fewer friends in it walks out with those who like them
+  better, starting a group of their own when there are enough. A group with no momentum for ten
+  days, or fewer than two members, folds.
+- **Visible** (`ui/social.rs`, `render/social.rs`, `nd_procgen::social`): speech bubbles over
+  people talking when the camera is within about 320 m (an icon and the topic; within 90 m the
+  line said; red for a fight; at the door of the bar when they talk inside; overlapping ones
+  stack), a note over a venue while a band plays and a fist over a protest; murals and gardens.
+  The person pane lists friends and foes (clickable, coloured by bond, how and when they met),
+  their groups and recent conversations ("talked rent with Mara Okafor at The Blue Lantern:
+  agreed"). The People window's Social tab has the day's counts, a friendships chart, pairs by
+  bond, every group (members, base, works, momentum) and petitions to the player; social news
+  toasts.
+- **Determinism**: every roll is a hash of the pair, the tick and a salt; the world's random
+  stream is drawn only when a startup opens its business (`build_on_as`, as other founders do).
+- **Numbers** (the perf probe's 4,000-person city with rule minds, days 5 to 18 after loading):
+  6,000 to 8,000 conversations a day, about three in four warm; 200 to 300 new friendships and 75
+  to 120 feuds a day once going; after two weeks about 1,300 friend pairs, 1,000 close-friend
+  pairs, 170 couples, 450 rival and 280 enemy pairs; 10 to 25 meet-ups and a few home visits,
+  jobs through friends and moves-in a day; two groups formed a day, their first works after about
+  five days. Cost: about 0.1 ms a tick.
+
 ## Minds and the LLM plan
 
 ```

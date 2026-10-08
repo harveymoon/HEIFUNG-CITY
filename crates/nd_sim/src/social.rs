@@ -147,8 +147,11 @@ impl Met {
     }
 }
 
-/// One side of a relationship.
+/// One side of a relationship. Saved as a tuple (`TieRepr`): a big city
+/// has a hundred thousand of them, and a pretty-printed struct each made
+/// the save a third larger.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(from = "TieRepr", into = "TieRepr")]
 pub struct Tie {
     pub who: CitizenId,
     /// Liking, `-1..1`.
@@ -165,14 +168,26 @@ pub struct Tie {
     pub met_at: Option<BuildingId>,
     pub talks: u16,
     /// A couple.
-    #[serde(default)]
     pub partner: bool,
     /// Romance building up from flirting, `0..1`.
-    #[serde(default)]
     pub spark: f32,
     /// Money lent to them and not paid back.
-    #[serde(default)]
     pub lent: f32,
+}
+
+type TieRepr = (CitizenId, f32, f32, f32, u64, u64, Met, Option<BuildingId>, u16, bool, f32, f32);
+
+impl From<TieRepr> for Tie {
+    fn from(t: TieRepr) -> Self {
+        let (who, affinity, familiarity, trust, since, last, met, met_at, talks, partner, spark, lent) = t;
+        Tie { who, affinity, familiarity, trust, since, last, met, met_at, talks, partner, spark, lent }
+    }
+}
+
+impl From<Tie> for TieRepr {
+    fn from(t: Tie) -> Self {
+        (t.who, t.affinity, t.familiarity, t.trust, t.since, t.last, t.met, t.met_at, t.talks, t.partner, t.spark, t.lent)
+    }
 }
 
 impl Tie {
@@ -187,7 +202,7 @@ impl Tie {
         if self.affinity <= ENEMY_AFFINITY {
             return Bond::Enemy;
         }
-        if self.affinity <= RIVAL_AFFINITY && self.familiarity >= 0.1 {
+        if self.affinity <= RIVAL_AFFINITY && self.familiarity >= 0.15 {
             return Bond::Rival;
         }
         if self.affinity >= CLOSE_AFFINITY && self.familiarity >= CLOSE_FAMILIARITY {
@@ -434,7 +449,7 @@ impl Outcome {
             Outcome::Agreed => "💬",
             Outcome::Laughed => "😂",
             Outcome::Flirted => "❤",
-            Outcome::Favour => "🤝",
+            Outcome::Favour => "✔",
             Outcome::Argued => "😠",
             Outcome::Insulted => "💢",
             Outcome::Fight => "💥",
@@ -478,7 +493,7 @@ impl Setting {
             Setting::Bench => 0.12,
             Setting::Park => 0.07,
             Setting::Home => 0.25,
-            Setting::Work => 0.035,
+            Setting::Work => 0.02,
             Setting::Transit => 0.025,
             Setting::Stop => 0.04,
             Setting::Street => 0.012,
@@ -508,8 +523,9 @@ pub struct Talk {
     pub line: String,
 }
 
-/// One conversation as a citizen remembers it.
+/// One conversation as a citizen remembers it (saved as a tuple).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(from = "NoteRepr", into = "NoteRepr")]
 pub struct TalkNote {
     pub tick: u64,
     pub with: CitizenId,
@@ -517,6 +533,21 @@ pub struct TalkNote {
     pub outcome: Outcome,
     pub place: Option<BuildingId>,
     pub setting: Setting,
+}
+
+type NoteRepr = (u64, CitizenId, Topic, Outcome, Option<BuildingId>, Setting);
+
+impl From<NoteRepr> for TalkNote {
+    fn from(n: NoteRepr) -> Self {
+        let (tick, with, topic, outcome, place, setting) = n;
+        TalkNote { tick, with, topic, outcome, place, setting }
+    }
+}
+
+impl From<TalkNote> for NoteRepr {
+    fn from(n: TalkNote) -> Self {
+        (n.tick, n.with, n.topic, n.outcome, n.place, n.setting)
+    }
 }
 
 /// What a group is about.
@@ -623,13 +654,13 @@ pub fn interests(seed: u64, age: u8, class: Tier) -> [f32; 7] {
     };
     // A personal quirk per kind, from the seed.
     let q = |k: u64| hash01(seed, 0x1A7E_4E57, k) * 0.3 - 0.15;
-    let band = 0.45 * hed + 0.35 * young + 0.25 * soc + 0.15 * cur - 0.3 * old + q(0);
-    let sports = 0.4 * amb + 0.3 * soc + 0.3 * young - 0.15 * cur - 0.25 * old + q(1);
-    let books = 0.5 * cur + 0.3 * cau + 0.25 * old - 0.25 * hed + q(2);
-    let art = 0.45 * cur + 0.35 * hed + 0.25 * young - 0.35 * cau - 0.2 * rich + q(3);
-    let startup = (0.6 * amb + 0.25 * cur + 0.2 * rich - 0.15 * old - 0.2 * poor + q(4)) * adult;
-    let garden = 0.4 * cau + 0.3 * old + 0.2 * soc - 0.2 * hed + 0.1 * poor + q(5);
-    let hood = (0.35 * cau + 0.3 * old + 0.25 * soc + 0.15 * amb + q(6)) * adult;
+    let band = 0.45 * hed + 0.35 * young + 0.25 * soc + 0.15 * cur - 0.3 * old - 0.2 + q(0);
+    let sports = 0.4 * amb + 0.3 * soc + 0.3 * young - 0.15 * cur - 0.25 * old + 0.06 + q(1);
+    let books = 0.5 * cur + 0.3 * cau + 0.25 * old - 0.25 * hed + 0.08 + q(2);
+    let art = 0.45 * cur + 0.35 * hed + 0.25 * young - 0.35 * cau - 0.2 * rich + 0.12 + q(3);
+    let startup = (0.6 * amb + 0.25 * cur + 0.2 * rich - 0.15 * old - 0.2 * poor - 0.04 + q(4)) * adult;
+    let garden = 0.4 * cau + 0.3 * old + 0.2 * soc - 0.2 * hed + 0.1 * poor + 0.08 + q(5);
+    let hood = (0.35 * cau + 0.3 * old + 0.25 * soc + 0.15 * amb - 0.04 + q(6)) * adult;
     [band, sports, books, art, startup, garden, hood].map(|x| x.clamp(0.0, 1.0))
 }
 
@@ -645,7 +676,7 @@ pub fn compatibility(a: (u64, u8, Tier), b: (u64, u8, Tier)) -> f32 {
     // Temperament: the gap on each trait (sociability and hedonism most).
     let w = [0.3, 0.15, 0.3, 0.15, 0.1];
     let gap: f32 = (0..5).map(|k| w[k] * (ta[k] - tb[k]).abs()).sum();
-    let temper = 0.35 - gap * 1.4;
+    let temper = 0.45 - gap * 1.4;
     // Age: a decade apart is fine, three are not.
     let years = (a.1 as f32 - b.1 as f32).abs();
     let age = 0.15 - (years / 30.0).min(1.0) * 0.4;
@@ -943,7 +974,31 @@ pub struct Social {
     pub serial: u64,
     /// Place choices an enemy steered today (counted by `social_pull`).
     #[serde(skip)]
-    pub avoid_hits: std::cell::Cell<u32>,
+    pub avoid_hits: Tally,
+}
+
+/// A counter bumped from `&self` (place choice reads the world shared).
+#[derive(Debug, Default)]
+pub struct Tally(std::sync::atomic::AtomicU32);
+
+impl Clone for Tally {
+    fn clone(&self) -> Self {
+        Tally(std::sync::atomic::AtomicU32::new(self.get()))
+    }
+}
+
+impl Tally {
+    pub fn bump(&self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn get(&self) -> u32 {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn take(&self) -> u32 {
+        self.0.swap(0, std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 impl Social {

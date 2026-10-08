@@ -1307,3 +1307,48 @@ curl -d '{"cmd":"race"}' http://127.0.0.1:4817/cmd
 curl -d '{"cmd":"street_events","limit":5}' http://127.0.0.1:4817/cmd
 curl -d '{"cmd":"roads","funding":0.3,"age_days":120}' http://127.0.0.1:4817/cmd
 ```
+
+## People talking: friends, feuds and groups [social]
+
+`social {days?, talks?, group?}`: the city's social life (DESIGN.md, Social layer).
+
+- `days` (default 7): daily history to include; `talks` (default 10): the latest conversations.
+- `group`: a group id; the reply is that group alone, `{group}`, with `member_list` (id, name,
+  founder).
+
+Reply:
+
+- `today`, `yesterday`, `history`: day, talks, good_talks, bad_talks, friendships,
+  close_friendships, couples, feuds, fights, meetups, home_visits, favours, loans, jobs_found,
+  homes_found, moved_in, enemy_avoidance (place choices an enemy put people off), gossip,
+  groups_formed, groups_folded, splits, works.
+- `pairs` by bond city-wide (acquaintance, friend, close_friend, partner, rival, enemy);
+  `people_with_ties`, `people_with_a_friend`, `population`; `totals` (talks, friendships, feuds,
+  fights, couples).
+- `groups` (active): id, name, kind (band, sports_club, book_club, street_art, startup, garden,
+  neighbourhood), members, founder, founded_day, momentum, threshold (momentum it takes to make
+  something), reputation, meetings, base and base_id (where it meets), works ({kind: gig | match |
+  reading | mural | garden | business | petition | protest, day, ...}), split_from, folded_day.
+  `folded_groups` counts the ones that folded.
+- `petitions` (newest first): id, group, day, ask (more_police, lower_rent, crossing,
+  clean_streets, park, jobs, quiet), concern, text, at, signatures, state (open, answered,
+  protested, lapsed), rally (where they march).
+- `murals` (group, building, at, quality), `gardens` (group, lot, at), `gigs` (group, venue, from,
+  until, on_now, crowd), `outings_planned`, `walking_together` (pairs).
+- `news` and `recent_talks` (when, a, b, a_id, b_id, topic, topic_label, outcome: agreed, laughed,
+  flirted, favour, argued, insulted, fight; where: venue, stadium, bench, park, work, home,
+  transit, stop, street; place, at, line).
+
+`inspect {citizen}` has a `social` block: `ties` (id, name, bond: acquaintance, friend, close
+friend, partner, rival, enemy; affinity, familiarity, trust, talks, met, met_at, since, last,
+partner, lent), `groups` (id, name, kind, founder), `talks` (their recent conversations: when,
+with, with_id, topic, outcome, place, where) and `walking_with`.
+
+`window {name: "people", tab: "social"}` shows the Social tab in game. Speech bubbles show over
+people talking (and at the door of a bar where they talk inside) when the camera is within about
+320 m; a band's gig shows a note over the venue and a protest a fist over the rally point.
+
+```sh
+curl -d '{"cmd":"social","days":3,"talks":20}' http://127.0.0.1:4817/cmd
+curl -d '{"cmd":"social","group":4}' http://127.0.0.1:4817/cmd
+```

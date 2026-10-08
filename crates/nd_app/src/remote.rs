@@ -41,6 +41,8 @@ mod property;
 mod report;
 /// [society] crime, homelessness and trash.
 mod society;
+/// [social] Friends, feuds, groups.
+mod social;
 /// [subway] The `subway` command and report section.
 mod subway;
 mod taxes;
@@ -588,6 +590,8 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "incident" => incident(cmd, ctx),
         "incidents" => incidents(cmd, ctx),
         "society" => society::command(cmd, &mut ctx.sim.world),
+        // [social]
+        "social" => social::command(cmd, &ctx.sim.world),
         // [events]
         "street_events" | "nights" => nights::command(cmd, &ctx.sim.world),
         "race" => nights::race(cmd, &mut ctx.sim.world),
@@ -856,7 +860,8 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 ctx.windows.people_tab = Some(match tab.trim().to_ascii_lowercase().as_str() {
                     "overview" => crate::ui::people::Tab::Overview,
                     "concerns" | "complaints" => crate::ui::people::Tab::Concerns,
-                    other => return Err(format!("unknown tab {other:?}; people has overview, concerns")),
+                    "social" => crate::ui::people::Tab::Social,
+                    other => return Err(format!("unknown tab {other:?}; people has overview, concerns, social")),
                 });
             }
             // Expanding opens the window too; only one is expanded at a time.
@@ -1947,6 +1952,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         let c = w.citizens.get(id).ok_or("no such citizen")?;
         let mut v = citizen_detail(w, id, c, ctx.tools.favorites.contains(&id));
         v["places"] = places::citizen_places(w, id);
+        v["social"] = social::citizen_social(w, id);
         v["holdings"] = follow::holdings_json(w, id);
         return Ok(json!({ "citizen": v }));
     }
@@ -2078,6 +2084,7 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
             Some(c) => {
                 let mut v = citizen_detail(w, id, c, favourites.contains(&id));
                 v["places"] = places::citizen_places(w, id);
+                v["social"] = social::citizen_social(w, id);
                 v["holdings"] = follow::holdings_json(w, id);
                 if let nd_sim::Activity::Driving { car, .. } = c.activity {
                     if let Some(x) = w.traffic.cars.get(car) {
@@ -2650,8 +2657,9 @@ fn help() -> Value {
         "taxes": { "set": "{line: rate, ...} where line is a key (residential_low|residential_mid|residential_high|grocery|bakery|gadget_shop|parking|nightlife_low|nightlife_mid|nightlife_high|farming|oil|refinery|manufacturing|logistics|fishing|tech) or a land use for its whole group; rate 0.2 or 20 (= 20%)", "category": "one line (with rate)", "import_duty": "share of import prices (0..1)", "reset": "bool: back to the standard rates", "returns": "every line: rate, default, pull, buildings, homes/jobs, today, yesterday, recent_per_day; by_land_use; duty" },
         "tolls": { "action": "list (default) | price | remove | inspect", "id": "booth id (or at: [x,y])", "price": "toll per car (lorries pay double)", "returns": "booths with cars and revenue today/yesterday/total, paid/free today, upkeep" },
         "export": { "path": "optional .json (see files); default exports/city-<unix>.json: report + map + history + every row of every list" },
-        "window": { "name": "city|economy|taxes|market|people|power|transit|emergencies|view (or land)|districts|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), or title (the title screen), or history (the Game history window)", "open": "bool, omitted toggles", "expanded": "bool: the large view with charts (opens the window; only one is expanded at a time); not saves/help/dev", "tab": "people only: overview|concerns" },
-        "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" }
+        "window": { "name": "city|economy|taxes|market|people|power|transit|emergencies|view (or land)|districts|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), or title (the title screen), or history (the Game history window)", "open": "bool, omitted toggles", "expanded": "bool: the large view with charts (opens the window; only one is expanded at a time); not saves/help/dev", "tab": "people only: overview|concerns|social" },
+        "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" },
+        "social": { "days": "daily history to include (default 7)", "talks": "latest conversations to list (default 10)", "group": "optional group id: that group in full, with its members", "note": "people talking: today's and yesterday's conversations, friendships, feuds, fights, meet-ups, jobs and flats through friends, couples moving in; pairs by bond city-wide; every crew and club with momentum, reputation, base and works (gigs, matches, readings, murals, gardens, businesses, petitions, protests); petitions to the player; murals, gardens, gigs; news. inspect {citizen} has a social block (ties with bond and how they met, groups, recent conversations)" }
     });
     if let (Some(c), Some(r)) = (v["commands"].as_object_mut(), review.as_object()) {
         c.extend(r.clone());

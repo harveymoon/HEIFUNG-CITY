@@ -183,6 +183,7 @@ impl World {
                     let setting = match bld.service {
                         Some(s) if s.kind == ServiceKind::Stadium => Setting::Stadium,
                         Some(_) => Setting::Street,
+                        None if bld.is_parking() => Setting::Street,
                         None if bld.land_use == LandUse::Residential => Setting::Home,
                         None if bld.land_use == LandUse::Park => Setting::Park,
                         None => Setting::Venue,
@@ -385,7 +386,7 @@ impl World {
         let drunk = ca.drunk.max(cb.drunk);
         let (topic, about, topic_place) = self.pick_topic(a, b, spot, salt);
         let class_gap = (ca.class().index() as f32 - cb.class().index() as f32).abs() * 0.5;
-        let x = 0.55 + 2.4 * compat + 1.7 * aff + 1.2 * (mood - 0.5) - topic.heat() * (0.5 + 1.4 * class_gap) - 0.6 * drunk;
+        let x = 1.1 + 2.2 * compat + 1.7 * aff + 1.0 * (mood - 0.5) - topic.heat() * (0.3 + 1.2 * class_gap) - 0.6 * drunk;
         let p_good = 1.0 / (1.0 + (-x).exp());
         let roll = hash01(salt, tick, 0x0C7);
         let s = hash01(salt, tick, 0x5C7);
@@ -406,7 +407,9 @@ impl World {
         } else {
             let rebel = crate::citizens::rebelliousness(ta[3].min(tb[3]), hed);
             let brawl_spot = matches!(spot.setting, Setting::Venue | Setting::Street | Setting::Park | Setting::Stadium | Setting::Stop);
-            if aff <= ENEMY_AFFINITY * 0.8 && brawl_spot && (drunk > 0.3 || rebel > 0.6) && s < 0.1 + 0.25 * drunk {
+            // A workplace feud boils over now and then too.
+            let brawl = if brawl_spot { 0.12 + 0.25 * drunk } else if spot.setting == Setting::Work { 0.05 } else { 0.0 };
+            if aff <= ENEMY_AFFINITY * 0.8 && (drunk > 0.2 || rebel > 0.5) && s < brawl {
                 Outcome::Fight
             } else if (aff < -0.2 && s < 0.5) || s < 0.15 {
                 Outcome::Insulted
@@ -607,7 +610,10 @@ impl World {
             if !bond.is_friendly() && bond != Bond::Enemy {
                 continue;
             }
-            let here = inside.contains(&t.who);
+            // An acquaintance from the regular haunts already draws there
+            // (`choose_place`): not twice.
+            let known = self.citizens.get(id).is_some_and(|c| c.places.knows(t.who));
+            let here = inside.contains(&t.who) && (!known || !bond.is_friendly());
             let regular = self.citizens.get(t.who).is_some_and(|x| x.places.get(place).is_some_and(|m| m.regular));
             if bond.is_friendly() {
                 friends_here += here as u32;
@@ -617,7 +623,10 @@ impl World {
                 foe_regular |= regular;
             }
         }
-        pull += 0.15 * friends_here.min(2) as f32 + 0.06 * friends_regular.min(3) as f32;
+        // Friends who are regulars already draw through the acquaintances
+        // in `choose_place`; here only friends there now count.
+        let _ = friends_regular;
+        pull += 0.1 * friends_here.min(2) as f32;
         if foe_here {
             pull -= 0.6;
         }
@@ -625,7 +634,7 @@ impl World {
             pull -= 0.2;
         }
         if foe_here || foe_regular {
-            self.social.avoid_hits.set(self.social.avoid_hits.get() + 1);
+            self.social.avoid_hits.bump();
         }
         pull
     }
@@ -726,7 +735,8 @@ impl World {
             if other.is_some_and(|m| m.never) {
                 continue;
             }
-            let score = p.score.min(other.map_or(if p.regular { 0.1 } else { -1.0 }, |m| m.score)) + if p.regular { 0.2 } else { 0.0 };
+            // A place only one of them knows will do if they love it.
+            let score = p.score.min(other.map_or(if p.regular || p.score > 0.3 { p.score * 0.5 } else { -1.0 }, |m| m.score)) + if p.regular { 0.2 } else { 0.0 };
             if score < 0.0 || best.as_ref().is_some_and(|x| x.0 >= score) {
                 continue;
             }
@@ -770,7 +780,7 @@ impl World {
                 continue;
             }
             let soc = crate::places::traits(c.seed)[0];
-            if hash01(c.seed, tick, 0x0F7) >= 0.03 + 0.1 * soc {
+            if hash01(c.seed, tick, 0x0F7) >= 0.08 + 0.2 * soc {
                 continue;
             }
             // The friend: the closest bond first, then the warmest.
@@ -1001,7 +1011,7 @@ impl World {
         self.move_in_together();
         self.daily_groups();
         self.check_petitions();
-        self.social.today.avoided = self.social.avoid_hits.replace(0);
+        self.social.today.avoided = self.social.avoid_hits.take();
         let day = self.clock.day();
         self.social.roll_day(day);
     }
@@ -1054,7 +1064,9 @@ impl World {
                     broke_up.push((*id, t.who));
                 }
             }
-            c.ties.retain(|t| t.partner || t.familiarity >= 0.04 || t.affinity.abs() >= 0.12);
+            // A word exchanged once is forgotten in a few days unless it
+            // left a mark; known faces fade slowly.
+            c.ties.retain(|t| t.partner || t.affinity.abs() >= 0.15 || if t.talks <= 1 { tick < t.last + 3 * 1440 } else { t.familiarity >= 0.05 });
         }
         for (a, b) in broke_up {
             if let Some(t) = self.social.circles.get_mut(&b).and_then(|c| c.tie_mut(a)) {
@@ -1291,6 +1303,10 @@ impl World {
         }
         let start = (mix(day, 0x6A0) % ids.len() as u64) as usize;
         let mut formed = 0;
+        let mut per_kind = [0u32; 7];
+        for g in self.social.active_groups() {
+            per_kind[g.kind.index()] += 1;
+        }
         for k in 0..ids.len().min(800) {
             if formed >= 2 || active + formed >= cap {
                 break;
@@ -1302,7 +1318,8 @@ impl World {
             }
             let mine = self.interests_of(f);
             // Strongest passion that is not taken care of yet.
-            let mut kinds: Vec<(f32, GroupKind)> = GroupKind::ALL.iter().map(|k| (mine[k.index()], *k)).filter(|(v, k)| *v >= 0.45 && !self.in_group_of_kind(f, *k)).collect();
+            // A city with five bands already has less room for a sixth.
+            let mut kinds: Vec<(f32, GroupKind)> = GroupKind::ALL.iter().map(|k| (mine[k.index()], *k)).filter(|(v, k)| *v >= 0.45 && !self.in_group_of_kind(f, *k)).map(|(v, k)| (v - 0.06 * per_kind[k.index()] as f32, k)).collect();
             kinds.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
             let Some(&(_, kind)) = kinds.first() else { continue };
             if hash01(fc.seed, day, 0x6F0 + kind.index() as u64) > 0.35 {
@@ -1351,6 +1368,7 @@ impl World {
             self.social.push_news(tick, format!("{} {fname} and friends started {name}, a {}.", kind.icon(), kind.label()), pos, Some(id));
             self.social.today.groups_formed += 1;
             formed += 1;
+            per_kind[kind.index()] += 1;
         }
     }
 
@@ -1538,7 +1556,7 @@ impl World {
             .map(|g| {
                 let care: f32 = g.members.iter().map(|m| self.interests_of(*m)[g.kind.index()]).sum();
                 let met_lately = if day.saturating_sub(g.last_met) <= 3 { 0.1 } else { 0.0 };
-                (g.id, 0.05 * care + met_lately)
+                (g.id, 0.08 * care + met_lately)
             })
             .collect();
         for (gid, gain) in updates {
@@ -2071,3 +2089,4 @@ fn capital(s: &str) -> String {
     let mut c = s.chars();
     c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
 }
+
