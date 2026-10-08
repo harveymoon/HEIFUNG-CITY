@@ -127,7 +127,7 @@ pub fn rows(w: &World, what: &str) -> Result<Vec<Value>, String> {
             .map(|(id, b, l)| {
                 json!({
                     "id": key_str(id), "name": b.name, "kind": rail_name(l.kind), "rail_connected": l.rail_connected, "road_connected": l.road_connected,
-                    "works": l.works() && !b.is_derelict(), "inbound_units": round(b.rail_inbound.iter().map(|c| c.amount).sum()),
+                    "works": l.works() && !b.is_derelict(), "inbound_units": round(w.rail.orders_for(id).1), "aboard_units": round(w.rail.aboard_for(id)),
                     "outbound_units": round(b.rail_outbound), "workers": b.workers.len(), "jobs": b.jobs, "derelict": b.is_derelict(), "pos": pos(b),
                 })
             })

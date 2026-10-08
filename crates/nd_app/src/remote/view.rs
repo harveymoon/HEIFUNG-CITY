@@ -418,8 +418,8 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
     let rail = b.rail.as_ref().map(|l| {
         json!({
             "kind": rail_name(l.kind), "rail_connected": l.rail_connected, "road_connected": l.road_connected, "works": l.works(),
-            "platform": points(&l.platform), "inbound_orders": b.rail_inbound.len(),
-            "inbound_units": round(b.rail_inbound.iter().map(|c| c.amount).sum::<f32>()), "outbound_units": round(b.rail_outbound),
+            "platform": points(&l.platform), "inbound_orders": w.rail.orders_for(id).0,
+            "inbound_units": round(w.rail.orders_for(id).1), "aboard_units": round(w.rail.aboard_for(id)), "outbound_units": round(b.rail_outbound),
         })
     });
     let business = b.business.as_ref().map(|z| {
@@ -819,7 +819,8 @@ pub fn train_row(w: &World, id: TrainId, t: &Train) -> Value {
     json!({
         "id": key_str(id), "headcode": crate::train_select::headcode(id, t.kind), "kind": match t.kind { TrainKind::Passenger => "passenger", TrainKind::Freight => "freight" },
         "cars": t.cars, "pos": v2(head), "speed": round(t.speed), "held": t.held, "dwell": round(t.dwell),
-        "passengers": t.passengers.len(), "cargo_units": round(t.cargo.iter().map(|c| c.amount).sum::<f32>()),
+        "passengers": t.passengers.len(), "cargo_units": round(t.cargo.iter().map(|c| c.amount).sum::<f32>()), "exports_units": round(t.exports),
+        "capacity_units": if t.kind == TrainKind::Freight { round(t.freight_capacity()) } else { 0.0 },
         "next_stop": opt_key(next), "next_stop_name": building_name(w, next), "stops": t.stops.len(),
     })
 }

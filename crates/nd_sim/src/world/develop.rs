@@ -100,7 +100,9 @@ impl World {
         r.trains = self.rail.trains.len() as u32;
         r.stations = self.stations.len() as u32;
         r.yards = self.yards.len() as u32;
-        r.freight_waiting = self.yards.iter().filter_map(|y| self.buildings.get(*y)).map(|b| b.rail_inbound.iter().map(|c| c.amount).sum::<f32>()).sum();
+        // [freight] Ordered by rail and not yet in town: waiting out of town
+        // or aboard a freight train on its way.
+        r.freight_waiting = self.rail.orders.iter().map(|o| o.cargo.amount).sum::<f32>() + self.rail.trains.values().flat_map(|t| t.cargo.iter()).map(|c| c.amount).sum::<f32>();
         self.available = self.available_land_uses();
         self.groceries_for_sale = self.retail_available(Resource::Groceries);
         self.meals_for_sale = self.retail_available(Resource::BakedGoods);
