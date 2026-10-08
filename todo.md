@@ -282,7 +282,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Fire engines park mid-road/junction at a scene; crew stand in traffic (from feat/fire-scene leftovers)
 - [ ] Ferry/docks need only water access, rail stations only track; each gets a connectable road stub to join the network later [feat/dock-access]
 - [ ] Ferry terminal on a civic zone took the zone's shape/look: unzone first, own footprint [feat/dock-access]
-- [ ] Fishing boats actually go out, fish at grounds for hours, return and unload; berths empty while at sea [feat/fishing]
+- [x] Fishing boats actually go out, fish at grounds for hours, return and unload; berths empty while at sea [feat/fishing]   → DONE [feat/fishing]: saved fleets per fishing port (a trawler per berth) out 03:00-08:00 to seeded grounds on open water (clear of lanes, routes on water only), trawl/haul for hours, home 12:00-17:00 to unload; catch replaces hourly output (same total), richer further out, less on fouled water, storms keep them in; nets/wake/gulls/deck lights/fish boxes; inspector fleet, grounds on the Water layer, API inspect.fishing and `ships`.
 - [ ] Selecting a ferry terminal highlights its routes; other routes dim; route list in the inspector [feat/ferry-routes]
 - [ ] FLAG (day 24): no lots along roads on a hilly island (slope ~0.42); zoning there impossible, no reason shown [fix/island-lots]
 - [ ] People on an elevated path walk at ground level (even over water) under it; walkers/cars on raised ways must be drawn on the deck [fix/footbridge]
