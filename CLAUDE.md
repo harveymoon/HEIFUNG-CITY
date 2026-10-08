@@ -36,7 +36,9 @@ Open work: `todo.md` (sorted by area; tick items with "→ DONE [branch]: what")
   the rust-lld linker. Use `--profile fast` (release without LTO, 16 codegen units) for tests:
   `cargo test --profile fast --workspace`
 - The playable exe is `cargo build -p nd_app --release` into `target/release` (main checkout
-  only). Move a running `neon_district.exe` aside first (`mv` it to `neon_district.old-HHMM.exe`).
+  only). Move a running `neon_district.exe` aside first (`mv` it to `neon_district.old-HHMM.exe`), and
+  delete the old copy only after the new exe exists. If rustc dies with STATUS_STACK_BUFFER_OVERRUN
+  (0xc0000409) on the release link of nd_app, rebuild with `RUST_MIN_STACK=268435456` and `-j 2`.
 - `society_demo`'s 911 thresholds are borderline at a fixed seed; unrelated changes can flip it.
 
 ## Running a test instance
