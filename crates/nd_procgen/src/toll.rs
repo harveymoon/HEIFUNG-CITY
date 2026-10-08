@@ -58,8 +58,8 @@ fn toll(g: &mut Geometry, b: &TollDraw, pal: &Palette) {
     }
     let right = Vec2::new(-d.y, d.x);
     let yaw = d.y.atan2(d.x);
-    let neon = if pal.glow_colors.is_empty() { [1.0, 0.2, 0.8] } else { pal.glow_colors[b.id as usize % pal.glow_colors.len()] };
-    let neon2 = if pal.glow_colors.len() > 1 { pal.glow_colors[(b.id as usize + 3) % pal.glow_colors.len()] } else { [0.2, 0.9, 1.0] };
+    let neon = if pal.glow_colors.is_empty() { [1.0, 0.2, 0.8] } else { pal.glow(b.id as usize) };
+    let neon2 = if pal.glow_colors.len() > 1 { pal.glow(b.id as usize + 3) } else { [0.2, 0.9, 1.0] };
     let concrete = rgba(mul(pal.concrete(0), 1.15));
     let hazard = rgba([0.95, 0.75, 0.1]);
     let steel = rgba(mul(pal.steel, 0.75));

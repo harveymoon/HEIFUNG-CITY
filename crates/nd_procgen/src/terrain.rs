@@ -37,7 +37,7 @@ pub fn terrain_height(cfg: &TerrainConfig, noise: &Fbm<Perlin>, x: f32, z: f32) 
     if r <= cfg.basin_radius {
         return 0.0;
     }
-    let t = ((r - cfg.basin_radius) / (cfg.half_size - cfg.basin_radius)).clamp(0.0, 1.0);
+    let t = ((r - cfg.basin_radius) / (cfg.half_size - cfg.basin_radius).max(1e-3)).clamp(0.0, 1.0);
     let ramp = t * t * (3.0 - 2.0 * t);
     let n = noise.get([x as f64 * 0.0025, z as f64 * 0.0025]) as f32 * 0.5 + 0.5;
     let mut level = 1.0f32;

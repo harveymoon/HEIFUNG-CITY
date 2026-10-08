@@ -198,7 +198,7 @@ pub(super) fn bunting(g: &mut Geometry, f: &Frame, a: Vec3, b: Vec3, n: i32, col
     for i in 1..n {
         let t = i as f32 / n as f32;
         let p = wa.lerp(wb, t) - Vec3::Y * (0.4 * 4.0 * t * (1.0 - t) + 0.25);
-        let col = colors[i as usize % colors.len().max(1)];
+        let col = crate::palette::at(colors, i as usize);
         g.part(Tarp).boxed(p, Vec3::new(0.35, 0.4, 0.02), yaw, rgba(col));
     }
 }

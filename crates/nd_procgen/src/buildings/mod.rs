@@ -660,7 +660,10 @@ impl LandUseRules {
         self.floor_height = self.floor_height.clamp(2.2, 12.0);
         self.inset = self.inset.max(0.0);
         self.window_spacing = self.window_spacing.max(0.8);
-        self.window_size = [self.window_size[0].max(0.2), self.window_size[1].max(0.2)];
+        // A window wider than its spacing overlaps the next; one taller
+        // than a floor reaches into the floors above and below (and under
+        // the ground on the first).
+        self.window_size = [self.window_size[0].max(0.2).min(self.window_spacing * 0.9), self.window_size[1].max(0.2).min(self.floor_height * 0.8)];
     }
 }
 
@@ -743,7 +746,7 @@ impl BuildingRules {
         let options = self.options(lu, tier);
         let weights: Vec<f32> = options.iter().map(|o| o.weight * adjacency::site_fit(o.style, site) * adjacency::neighbour_factor(o.style, near)).collect();
         let total: f32 = weights.iter().sum();
-        if options.is_empty() || total.is_nan() || total <= 0.0 {
+        if options.is_empty() || !(total > 0.0 && total.is_finite()) {
             return default_style(lu, tier);
         }
         let mut r = rng.random_range(0.0..total);
@@ -1214,6 +1217,12 @@ impl Ctx<'_> {
     /// `Frame::to_local` first (or `park::Park::inside_world`).
     pub fn inside_local(&self, p: Vec2) -> bool {
         point_in_polygon(p, &self.lot_poly)
+    }
+
+    /// Whether the straight run from `a` to `b` stays over the lot: a wire
+    /// or a string of lights across a concave lot's notch would not.
+    pub fn spans_lot(&self, a: Vec2, b: Vec2) -> bool {
+        (0..=8).all(|k| self.inside_local(a.lerp(b, k as f32 / 8.0)))
     }
 
     /// Distance from the middle of a face, outward, to the lot boundary: the
@@ -1709,6 +1718,9 @@ fn back_edge_link(lot: &Lot, kind: RailFacility) -> RailLink {
 
 #[cfg(test)]
 mod coplanar_tests;
+
+#[cfg(test)]
+mod sweep_tests;
 
 #[cfg(test)]
 mod tests {

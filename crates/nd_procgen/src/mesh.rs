@@ -56,9 +56,13 @@ fn uv_basis(n: Vec3, edge: Option<Vec3>) -> (Vec3, Vec3) {
 /// right-hand rule round the ring, its length is twice the enclosed area.
 fn newell(ring: &[Vec3]) -> Vec3 {
     let n = ring.len();
+    // Relative to the ring's own centre: in world coordinates hundreds of
+    // metres out, the cross products of a wire's centimetre ring cancel to
+    // noise and the winding comes out at random.
+    let o = centroid(ring);
     let mut acc = Vec3::ZERO;
     for i in 0..n {
-        acc += ring[i].cross(ring[(i + 1) % n]);
+        acc += (ring[i] - o).cross(ring[(i + 1) % n] - o);
     }
     acc
 }
@@ -282,15 +286,21 @@ impl MeshData {
             return;
         }
         let base = self.positions.len() as u32;
-        // A counter-clockwise outline in (x, z) seen from +Y winds clockwise
-        // once y becomes z, so its triangles need reversing to face up.
-        let ccw = nd_sim::zoning::polygon_area(poly) > 0.0;
         let basis = uv_basis(Vec3::Y, None);
         for p in poly {
             self.push(Vec3::new(p.x, y, p.y), Vec3::Y, color, basis);
         }
+        // Each triangle is wound to face up on its own, and slivers are
+        // dropped: an outline that crosses itself (a ground patch fitted
+        // into a corner, a path doubling back) has no single winding.
         let mut tri = |a: u32, b: u32, c: u32| {
-            if ccw {
+            let (pa, pb, pc) = (poly[a as usize], poly[b as usize], poly[c as usize]);
+            let z = (pb - pa).perp_dot(pc - pa);
+            if z.abs() < 1e-6 {
+                return;
+            }
+            // (x, z) counter-clockwise faces down once z becomes depth.
+            if z > 0.0 {
                 self.indices.extend_from_slice(&[base + a, base + c, base + b]);
             } else {
                 self.indices.extend_from_slice(&[base + a, base + b, base + c]);
@@ -311,6 +321,9 @@ impl MeshData {
     pub fn ground_strip(&mut self, points: &[Vec2], width: f32, y: f32, color: [f32; 4]) {
         for w in points.windows(2) {
             let d = (w[1] - w[0]).normalize_or_zero();
+            if d == Vec2::ZERO {
+                continue;
+            }
             let n = Vec2::new(-d.y, d.x) * width * 0.5;
             let a = w[0] + n;
             let b = w[1] + n;
@@ -379,22 +392,33 @@ impl MeshData {
             return;
         }
         let mut normal = newell(ring);
-        if normal.length_squared() < 1e-12 {
+        // `!(x > eps)` also turns away a NaN ring.
+        if !(normal.length_squared() > 1e-12) {
             return;
         }
-        let flip = normal.dot(out) < 0.0;
-        if flip {
+        if normal.dot(out) < 0.0 {
             normal = -normal;
         }
         let normal = normal.normalize();
         let basis = uv_basis(normal, Some(ring[1] - ring[0]));
-        let flat: Vec<Vec2> = ring.iter().map(|p| Vec2::new(p.dot(basis.0), p.dot(basis.1))).collect();
+        // Flat coordinates relative to the ring, in which counter-clockwise
+        // faces along `normal` (u x v = normal).
+        let o = ring[0];
+        let flat: Vec<Vec2> = ring.iter().map(|p| Vec2::new((*p - o).dot(basis.0), (*p - o).dot(basis.1))).collect();
         let base = self.positions.len() as u32;
         for p in ring {
             self.push(*p, normal, color, basis);
         }
+        // Each triangle is wound on its own, and the slivers of three points
+        // in a line (an offset outline keeps them) are dropped: their
+        // winding is rounding noise.
         let mut tri = |a: usize, b: usize, c: usize| {
-            let (b, c) = if flip { (c, b) } else { (b, c) };
+            let (e1, e2) = (flat[b] - flat[a], flat[c] - flat[a]);
+            let z = e1.perp_dot(e2);
+            if z.abs() <= 1e-4 * e1.length() * e2.length() || z.abs() < 1e-9 {
+                return;
+            }
+            let (b, c) = if z < 0.0 { (c, b) } else { (b, c) };
             self.indices.extend_from_slice(&[base + a as u32, base + b as u32, base + c as u32]);
         };
         if is_convex(&flat) {
@@ -619,9 +643,15 @@ impl MeshData {
     /// square-section ring strip through seven points.
     pub fn wire(&mut self, a: Vec3, b: Vec3, sag: f32, thickness: f32, color: [f32; 4]) {
         let segs = 6;
-        if a.distance(b) < 1e-3 {
+        let len = a.distance(b);
+        if len < 1e-3 {
             return;
         }
+        // The rings are square to the chord, so the sagging path must keep
+        // moving along it: on a steep wire too much sag turns back on itself
+        // and folds the tube inside out.
+        let steep = ((b - a).y / len).abs();
+        let sag = if steep > 1e-3 { sag.min(0.8 * len / (4.0 * steep)) } else { sag };
         let pts: Vec<Vec3> = (0..=segs)
             .map(|i| {
                 let t = i as f32 / segs as f32;
@@ -785,5 +815,35 @@ mod tests {
         let mut g = MeshData::default();
         g.ground_polygon(&[Vec2::new(0.0, 0.0), Vec2::new(3.0, 1.0), Vec2::new(2.0, 4.0)], 0.0, [1.0; 4]);
         assert_eq!(g.tangents[0], [1.0, 0.0, 0.0, 1.0]);
+    }
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+
+    /// Thin wires and tubes hundreds of metres from the origin keep their
+    /// normals on the side the triangles face (the ring winding was read
+    /// from cross products of world coordinates, which cancel to noise).
+    #[test]
+    fn far_thin_wires_face_outward() {
+        for (i, at) in [Vec3::ZERO, Vec3::new(306.8, 4.0, -169.2), Vec3::new(-1500.0, 30.0, 1700.0)].into_iter().enumerate() {
+            for k in 0..200u32 {
+                let f = |j: u32| ((k * 7919 + j * 104_729) % 1000) as f32 / 1000.0;
+                let a = at + Vec3::new(f(1) * 6.0 - 3.0, f(2) * 2.0, f(3) * 6.0 - 3.0);
+                // k = 0 at the second spot: the car dealer's bunting the sweep caught.
+                let (a, b0) = if i == 1 && k == 0 { (Vec3::new(306.8, 4.0, -169.2), Some(Vec3::new(309.8, 3.4, -169.5))) } else { (a, None) };
+                let b = if let Some(b) = b0 { b } else if k % 2 == 0 { at + Vec3::new(f(4) * 6.0 - 3.0, f(5) * 2.0, f(6) * 6.0 - 3.0) } else { a + Vec3::new(f(4) * 0.6 - 0.3, f(5) * 2.0 - 1.0, f(6) * 0.6 - 0.3) };
+                let mut m = MeshData::default();
+                m.wire(a, b, 0.4, 0.025, [1.0; 4]);
+                m.tube(a, b, 0.02, 4, [1.0; 4]);
+                for t in m.indices.chunks_exact(3) {
+                    let v = [t[0], t[1], t[2]].map(|i| Vec3::from(m.positions[i as usize]) - at);
+                    let cross = (v[1] - v[0]).cross(v[2] - v[0]);
+                    let nv: Vec3 = [t[0], t[1], t[2]].iter().map(|&i| Vec3::from(m.normals[i as usize])).sum();
+                    assert!(cross.length() < 1e-6 || cross.normalize().dot(nv.normalize()) > -0.2, "case {i}/{k}: wire {a} -> {b} has a face turned against its normal");
+                }
+            }
+        }
     }
 }

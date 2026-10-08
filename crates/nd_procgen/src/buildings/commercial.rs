@@ -277,7 +277,8 @@ pub fn slab_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         g.part(Glow).boxed(f.at2(*p, y + 0.3), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
     }
     // With a helipad on top the mast stands at the edge, not through the pad.
-    let pad = rng.random_bool(0.5);
+    // A pad needs a roof wide enough for its 2 m minimum radius.
+    let pad = rng.random_bool(0.5) && inradius(&poly) >= 3.4;
     let mast = if pad && !poly.is_empty() { poly_center(&poly).lerp(poly[0], 0.85) } else { poly_center(&poly) };
     antenna_mast(g, c, mast, y + 2.5, 9.0);
     if pad {

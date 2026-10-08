@@ -73,10 +73,10 @@ pub fn shack_bar(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for p in &poles {
         f.bx(g, Wood, p.x, 2.5, p.y, Vec3::new(0.16, 5.0, 0.16), pal.bark);
     }
-    for w in poles.windows(2) {
+    for w in poles.windows(2).filter(|w| c.spans_lot(w[0], w[1])) {
         string_lights(g, f, Vec3::new(w[0].x, 4.8, w[0].y), Vec3::new(w[1].x, 4.8, w[1].y), 10, mul(pick(rng, &pal.glow_colors), 1.1));
     }
-    if let (Some(a), Some((b, w, _, h))) = (poles.first(), shacks.first()) {
+    if let (Some(a), Some((b, w, _, h))) = (poles.first().filter(|a| shacks.first().is_some_and(|s| c.spans_lot(**a, s.0 - Vec2::new(s.1 * 0.5, 0.0)))), shacks.first()) {
         string_lights(g, f, Vec3::new(a.x, 4.8, a.y), Vec3::new(b.x - w * 0.5, h + 0.1, b.y), 8, mul(pal.window_warm, 1.2));
     }
     if let Some(p) = c.random_inside(rng, 4.0) {

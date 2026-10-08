@@ -781,7 +781,9 @@ pub fn demolition_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: 
     // The broken top: a raw slab over what the cut left, rubble on it and
     // rebar sticking up round its edge.
     let hull: Vec<Vec2> = convex_hull(&cut_points.iter().map(|p| f.to_local(*p)).collect::<Vec<_>>());
-    let hull = if hull.len() >= 3 && polygon_area(&hull).abs() > 6.0 && poly_inside(c, &hull) { hull } else { Vec::new() };
+    // A sliver of a hull (a cut through one thin wall) offsets into a
+    // bow-tie whose cap folds over: no slab on it.
+    let hull = if hull.len() >= 3 && polygon_area(&hull).abs() > 6.0 && inradius(&hull) > 0.8 && poly_inside(c, &hull) { hull } else { Vec::new() };
     if cut > 0.6 && !hull.is_empty() {
         extrude(g, f, Concrete, &offset_poly(&hull, 0.1), (cut - 0.3).max(0.0), cut, mul(concrete, 0.75));
         let rng = &mut sub(c, 20);
@@ -970,7 +972,7 @@ pub fn clip_above(g: &mut Geometry, cut: f32) -> Vec<Vec2> {
                     let pos = lerp3(old.positions[ia], old.positions[ib]);
                     points.push(Vec2::new(pos[0], pos[2]));
                     m.positions.push(pos);
-                    m.normals.push(lerp3(old.normals[ia], old.normals[ib]));
+                    m.normals.push(Vec3::from(lerp3(old.normals[ia], old.normals[ib])).normalize_or(Vec3::from(old.normals[ia])).to_array());
                     m.colors.push(lerp4(old.colors[ia], old.colors[ib]));
                     let (ua, ub) = (old.uvs[ia], old.uvs[ib]);
                     m.uvs.push([ua[0] + (ub[0] - ua[0]) * t, ua[1] + (ub[1] - ua[1]) * t]);
@@ -978,8 +980,13 @@ pub fn clip_above(g: &mut Geometry, cut: f32) -> Vec<Vec2> {
                     out.push(m.positions.len() as u32 - 1);
                 }
             }
+            // A triangle grazing the cut leaves a sliver whose winding is
+            // rounding noise: dropped.
             for k in 1..out.len().saturating_sub(1) {
-                m.indices.extend_from_slice(&[out[0], out[k], out[k + 1]]);
+                let [a, b, c] = [out[0], out[k], out[k + 1]].map(|i| Vec3::from(m.positions[i as usize]));
+                if (b - a).cross(c - a).length() > 1e-5 {
+                    m.indices.extend_from_slice(&[out[0], out[k], out[k + 1]]);
+                }
             }
         }
     }

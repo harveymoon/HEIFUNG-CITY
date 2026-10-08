@@ -748,7 +748,7 @@ pub fn billboard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f3
 pub fn grime(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0: f32, y1: f32, amount: f32) {
     let f = &c.frame;
     let n = ((c.style.grime + c.wear) * amount * rng.random_range(0.5..1.5)) as i32;
-    for _ in 0..n {
+    for _ in 0..if face.len < 0.5 { 0 } else { n } {
         let t = rng.random_range(-face.len * 0.45..face.len * 0.45);
         let sh = rng.random_range(0.8..(y1 - y0).max(1.0));
         face.decal(g, f, Rust, t, y1 - sh * 0.5, 0.02, rng.random_range(0.3..1.2), sh, c.palette.rust_stain);
@@ -817,6 +817,11 @@ pub fn balcony(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, w: f32, d
 }
 
 pub fn ac_unit(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, d: f32) {
+    // Under a ground-floor window on a low storey it would sink into the
+    // ground.
+    if y < 0.35 {
+        return;
+    }
     let f = &c.frame;
     face.bx(g, f, Metal, t, y, d, Vec3::new(0.8, 0.6, 0.35), mul(c.palette.steel, 0.9));
     face.decal(g, f, Matte, t, y, d + 0.18, 0.5, 0.5, DARK);

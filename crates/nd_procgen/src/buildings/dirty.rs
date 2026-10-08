@@ -438,7 +438,7 @@ pub fn chemical_works(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         sign_board(g, c, rng, &fr, fr.len * 0.3, h - 1.0, (fr.len * 0.3).min(6.0), 0.6);
     }
     // Tanks in rows behind, banded yellow and black.
-    let (lo, hi) = bounds(&offset_poly(&lot, 3.0));
+    let (lo, _) = bounds(&offset_poly(&lot, 3.0));
     let rows = [1, 2, 2][t];
     for row in 0..rows {
         let v = area.v0 + area.d() * (0.58 + 0.18 * row as f32);
