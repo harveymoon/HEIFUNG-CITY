@@ -299,6 +299,16 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Town streets 2+2 into 1+1 step at the kerbs instead of tapering (lane-join)
 - [ ] One engine per fire; crew are station payroll names (fire-scene)
 - [ ] Wind small-lot exception on unzoned sites with no lot yet (fixed in plant-scale? verify)
+- [ ] Tow trucks on a job may drive against one-ways and make U-turns (todo5; noted not done)
+- [ ] Rich owners own several homes/businesses/cars: selecting highlights everything they own; several map pins per person (todo5; "no data yet")
+- [ ] Look-dev leftovers: normal maps, Bevy atmosphere/sky and distance fog, street lamps casting light, wet roads (todo5)
+- [ ] Parking pressure makes parking businesses profitable so entrepreneurs build more parking lots (todo2, todo5; verify, likely missing)
+- [ ] A booted car gets towed away eventually (todo4; verify)
+- [ ] Crime can include murder (todo2; only theft/burglary/assault/vandalism now)
+- [ ] Industry on cheap land lifts land value a little (todo2; verify)
+- [ ] Moto gangs ride as a pack, reckless, weaving through traffic (todo2; verify)
+- [ ] Coal smoke visible from walk view (todo2; verify); wind farm sizes (now per lot — check the original complaint is answered)
+- [ ] A bought-out business moves to a new location instead of only closing (todo5)
 
 ## Questions for Harvey (unanswered)
 - [ ] Should parking lots the player places stop a road (like stations/plants) instead of being bought out?
