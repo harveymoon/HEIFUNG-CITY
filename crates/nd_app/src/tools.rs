@@ -235,7 +235,7 @@ pub struct ToolState {
     pub rail_kind: nd_sim::RailFacility,
     /// Rail tool: a dock instead of a station or yard.
     pub dock: Option<nd_sim::PortKind>,
-    /// People starred in the person pane; listed in the People window.
+    /// People starred in the person pane; listed in City Data, People, Favourites.
     pub favorites: Vec<CitizenId>,
     /// Zone tool: polygon, brush or marquee.
     pub zone_mode: ZoneMode,
@@ -674,6 +674,8 @@ pub enum Selection {
     /// [fire-scene] An emergency unit: a fire engine, police car or
     /// ambulance, on the road or standing on scene (`fire_scene`).
     Unit(nd_sim::UnitId),
+    /// [ferry-routes] A ferry or freighter on the water (`world.ports.ships`).
+    Ship(nd_sim::ports::ShipId),
 }
 
 pub struct ToolsPlugin;
@@ -829,7 +831,7 @@ pub(crate) fn tool_input(
             tools.stroke = None;
         }
     }
-    if key(KeyCode::Escape) {
+    if key(KeyCode::Escape) && !flags.data_view {
         tools.points.clear();
         tools.drag = None;
         // A stroke already painted stays (Ctrl+Z takes it back); a marquee
@@ -1160,7 +1162,7 @@ pub(crate) fn tool_input(
             tools.hover_city_building = ground.and_then(|p| {
                 let w = &sim.world;
                 let l = w.lots.values().find(|l| l.contains(p))?;
-                l.building.filter(|&b| w.is_city_building(b) && w.buildings.get(b).is_some_and(|b| b.rail.is_none() && b.port.is_none()))
+                l.building.filter(|&b| w.is_city_building(b) && w.buildings.get(b).is_some_and(|b| b.rail.is_none()))
             });
             if tools.hover_city_building.is_some() {
                 tools.hover_gesture = None;
@@ -1283,7 +1285,7 @@ pub(crate) fn tool_input(
                         *selection = Selection::Building(id);
                         match sim.world.ports.port_of(id) {
                             Some(port) if port.works() => format!("{} built with its pier. Ships call from the next sailing.", dock.label()),
-                            Some(port) if !port.road_connected => format!("{} built with its pier. Join its street stub to the city's roads and it opens.", dock.label()),
+                            Some(port) if !port.road_connected => format!("{} built with its pier and an access road. Not connected to the road network yet: draw a road to the marked end.", dock.label()),
                             _ => format!("{} built, but no ship can reach it from off the map.", dock.label()),
                         }
                     }
@@ -1300,7 +1302,7 @@ pub(crate) fn tool_input(
                             let link = sim.world.buildings.get(id).and_then(|b| b.rail.as_ref()).map(|l| (l.rail_connected, l.road_connected));
                             match link {
                                 Some((true, true)) => format!("{} placed and connected. Trains call from the next headway.", kind.label()),
-                                Some((true, false)) => format!("{} placed on the track. Join a road to its street stub and it opens.", kind.label()),
+                                Some((true, false)) => format!("{} placed on the track; trains call. Not connected to the road network yet: draw a road to the marked end.", kind.label()),
                                 Some((false, true)) => format!("{} placed by the street. Lay track onto its rail stub and it opens.", kind.label()),
                                 Some((false, false)) => format!("{} placed. Lay track to its rail stub and a road to its street stub.", kind.label()),
                                 None => format!("{} placed, but it reports no rail link; select it to check.", kind.label()),
@@ -1360,7 +1362,7 @@ pub(crate) fn tool_input(
                     // [tolls] A toll booth goes across the road, not on a lot.
                     if let nd_sim::Placeable::Toll(size) = what {
                         tools.status = match sim.world.place_toll(p, size) {
-                            Ok(_) => format!("{} built for {:.0}; {:.0}/day to run. Toll {:.1} a car (set it in the Taxes window).", what.label(), what.cost(), what.upkeep(), size.default_price()),
+                            Ok(_) => format!("{} built for {:.0}; {:.0}/day to run. Toll {:.1} a car (set it in City Data, Economy, Taxes).", what.label(), what.cost(), what.upkeep(), size.default_price()),
                             Err(e) => format!("Cannot build: {e}."),
                         };
                         return;
@@ -1381,6 +1383,8 @@ pub(crate) fn tool_input(
                                     }
                                     s
                                 }
+                                // [dock-access] A dock or station off the roads says so.
+                                None if sim.world.road_access(id) == Some(false) => format!("{} built for {:.0}. Not connected to the road network yet: draw a road to the marked end of its street stub.", what.label(), paid),
                                 None => format!("{} built for {:.0}; {:.0}/day to run.", what.label(), paid, what.upkeep()),
                             }
                         }
@@ -1505,6 +1509,10 @@ fn pick_any(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
         (_, Some((_, id))) => return Selection::Citizen(id),
         _ => {}
     }
+    // [ferry-routes] A ferry or freighter, by its drawn hull.
+    if let Some((_, id)) = crate::ferry_select::pick(w, p, f) {
+        return Selection::Ship(id);
+    }
     // [toll-inspect] A toll booth (a vehicle in it was picked above).
     if let Some(id) = crate::toll_select::pick(w, p) {
         return Selection::Toll(id);
@@ -1567,7 +1575,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
 
     // Bus lines: the lane path of every leg in the line's colour, stops as
     // rings, broken legs red. With the Buses tool or the toggle every line
-    // shows; otherwise only a selected one (picked in the Transit window,
+    // shows; otherwise only a selected one (picked in City Data's Services, Transit,
     // the Buses list or by clicking one of its buses), drawn bright with
     // marker posts at its stops and a pulsing ring over each of its buses.
     // [metro-ux] Not while drawing a metro line: the Metro layer is about the metro.
@@ -1800,8 +1808,10 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                         let [a, b] = port.pier;
                         gizmos.line(lift(a), lift(b), white);
                         gizmos.line(lift(b), lift(port.berth), cyan);
-                        let [sa, sb] = port.road_line();
+                        // [dock-access] The access road it would lay inland.
+                        let [sa, sb] = sim.world.dock_stub(&port);
                         gizmos.line(lift(sa), lift(sb), cyan);
+                        gizmos.circle(Isometry3d::new(lift(sb), flat), 6.0, cyan);
                     }
                     Err(_) => {
                         gizmos.circle(Isometry3d::new(lift(c), flat), 12.0, red);
@@ -1903,6 +1913,8 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
         }
         // [train-inspect] drawn by `crate::train_select::draw`.
         Selection::Train(_) | Selection::Metro(_) => {}
+        // [ferry-routes] drawn by `crate::ferry_select`, with its route.
+        Selection::Ship(_) => {}
         Selection::Building(b) => {
             lot_outline(gizmos, w, b, 1.6, gold);
             // [plant-groups] A Sunfield or Wind Park is selected whole.
@@ -2283,6 +2295,14 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
                 gizmos.linestrip(pts, green);
                 let [a, b] = port.pier;
                 gizmos.line(lift(a), lift(b), Color::linear_rgb(3.0, 3.0, 3.0));
+                // [dock-access] The access road it would lay, and its free end.
+                let probe = port.front_mid() - port.seaward * nd_sim::rail::ROAD_GAP;
+                if !w.roads.nearest_street(probe).is_some_and(|(_, _, q)| q.distance(probe) <= nd_sim::rail::ROAD_EDGE_FUSE) {
+                    let [sa, sb] = w.dock_stub(&port);
+                    let cyan = Color::linear_rgb(0.3, 2.0, 3.0);
+                    gizmos.line(lift(sa), lift(sb), cyan);
+                    gizmos.circle(Isometry3d::new(lift(sb), flat), 6.0, cyan);
+                }
             }
             Err(_) => {
                 gizmos.circle(Isometry3d::new(lift(c), flat), 12.0, red);

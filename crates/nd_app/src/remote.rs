@@ -59,6 +59,8 @@ mod trains;
 mod units;
 mod view;
 mod window;
+/// [ferry-routes] A dock's routes and `inspect {ship}`.
+mod ferry;
 
 use std::collections::VecDeque;
 use std::io::Read;
@@ -906,34 +908,56 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             }
             Ok(json!({ "window": "title", "open": open }))
         }
+        "window" if req_str(cmd, "name").is_ok_and(|n| crate::ui::city_data::Page::from_window(n).is_some()) => {
+            // [city-data] The report windows are City Data pages now: the old
+            // name opens its tab (at its last sub-tab) or its page; People's
+            // old `tab` and a `sub` pick a sub-tab. `expanded` is accepted and
+            // means open: every page is full size.
+            use crate::ui::city_data::{Page, Target};
+            let name = req_str(cmd, "name")?;
+            let mut target = Page::from_window(name).ok_or("unreachable")?;
+            if let Some(sub) = opt_str(cmd, "sub")?.or(opt_str(cmd, "tab")?) {
+                let tab = match target {
+                    Target::Tab(t) => t,
+                    Target::Page(p) => p.tab(),
+                };
+                let sub = if sub.trim().eq_ignore_ascii_case("overview") && tab == crate::ui::city_data::Tab::People { "population" } else { sub };
+                target = Target::Page(Page::parse(None, tab.key(), Some(sub))?);
+            }
+            let open = if opt_bool(cmd, "expanded")? == Some(true) { Some(true) } else { opt_bool(cmd, "open")? };
+            let mut v = ctx.windows.request_data(Some(target), open);
+            v["window"] = json!("city data");
+            v["note"] = json!("the report windows are tabs of the City Data view now; see city_data");
+            Ok(v)
+        }
         "window" => {
             let info = window::info_of(req_str(cmd, "name")?)?;
-            // [concerns] The People window's tabs.
-            if let Some(tab) = opt_str(cmd, "tab")? {
-                ctx.windows.people_tab = Some(match tab.trim().to_ascii_lowercase().as_str() {
-                    "overview" => crate::ui::people::Tab::Overview,
-                    "concerns" | "complaints" => crate::ui::people::Tab::Concerns,
-                    "social" => crate::ui::people::Tab::Social,
-                    other => return Err(format!("unknown tab {other:?}; people has overview, concerns, social")),
-                });
+            let (open, list) = ctx.windows.request(info, opt_bool(cmd, "open")?);
+            Ok(json!({ "window": info.title().to_ascii_lowercase(), "open": open, "windows_open": list }))
+        }
+        "city_data" => {
+            // [city-data] The full-screen City Data view.
+            use crate::ui::city_data::{Page, Target};
+            let tab = opt_str(cmd, "tab")?;
+            let sub = opt_str(cmd, "sub")?;
+            let open = opt_bool(cmd, "open")?;
+            if let Some(y) = opt_f32(cmd, "scroll")? {
+                ctx.windows.data_scroll = Some(y.max(0.0));
             }
-            // Expanding opens the window too; only one is expanded at a time.
-            let expand = opt_bool(cmd, "expanded")?;
-            if expand.is_some() && !info.expandable() {
-                return Err(format!("{} has no expanded view", info.title()));
+            if tab.is_none() && sub.is_some() {
+                return Err("sub needs a tab".into());
             }
-            let open_arg = if expand == Some(true) { Some(true) } else { opt_bool(cmd, "open")? };
-            let (open, list) = ctx.windows.request(info, open_arg);
-            let mut expanded = ctx.windows.expanded_name();
-            if let Some(on) = expand {
-                ctx.windows.expand = Some((info, on));
-                let me = info.title().to_ascii_lowercase();
-                expanded = if on { Some(me) } else if expanded.as_deref() == Some(me.as_str()) { None } else { expanded };
+            if tab.is_none() && open.is_none() {
+                return Ok(ctx.windows.data_json());
             }
-            if !open && expanded.as_deref() == Some(info.title().to_ascii_lowercase().as_str()) {
-                expanded = None;
-            }
-            Ok(json!({ "window": info.title().to_ascii_lowercase(), "open": open, "expanded": expanded, "windows_open": list }))
+            let target = match (tab, sub) {
+                (Some(t), Some(s)) => Some(Target::Page(Page::parse(None, t, Some(s))?)),
+                (Some(t), None) => Some(Target::Tab(crate::ui::city_data::Tab::parse(t).ok_or_else(|| format!("unknown tab {t:?}; one of city, economy, market, people, services"))?)),
+                _ => None,
+            };
+            // Naming a page opens it unless told otherwise.
+            let open = open.or(target.map(|_| true));
+            Ok(ctx.windows.request_data(target, open))
         }
         other => Err(format!("unknown command {other:?}; try {{\"cmd\": \"help\"}}")),
     }
@@ -1189,7 +1213,7 @@ fn status(ctx: &Ctx) -> Value {
     v["subway"] = json!({ "stations": ss.stations, "lines": ss.lines, "trains": ss.trains, "waiting": ss.waiting, "riding": ss.riding, "riders_today": ss.riders_today, "riders_yesterday": ss.riders_yesterday, "fares_today": round(ss.fares_today) });
     // Added after the literal: one `json!` this size hits the macro recursion limit.
     v["windows_open"] = json!(ctx.windows.open_names());
-    v["window_expanded"] = json!(ctx.windows.expanded_name());
+    v["city_data"] = ctx.windows.data_status();
     v["build_window"] = json!({ "open": ctx.windows.build_open, "section": ctx.windows.build_section });
     v["title_screen"] = json!(ctx.saves.title);
     // [climate] The map's climate and what its weather is doing to the view.
@@ -1500,7 +1524,7 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let link = w.buildings.get(id).and_then(|b| b.rail.as_ref()).map(|l| (l.rail_connected, l.road_connected));
             let note = match link {
                 Some((true, true)) => "placed and connected",
-                Some((true, false)) => "placed on the track; join a road to its street stub",
+                Some((true, false)) => "placed on the track; trains call, nobody gets on or off until a road reaches the marked end of its street stub (road_access.stub_ends)",
                 Some((false, true)) => "placed by the street; lay track onto its rail stub",
                 Some((false, false)) => "placed; needs track to its rail stub and a road to its street stub",
                 None => "placed",
@@ -1526,7 +1550,7 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let port = w.ports.port_of(id).cloned();
             let note = match port {
                 Some(p) if p.works() => format!("{} built with its pier; ships call from the next sailing", dock.label()),
-                Some(p) if !p.road_connected => format!("{} built with its pier; join its street stub to the city's roads", dock.label()),
+                Some(p) if !p.road_connected => format!("{} built with its pier and an access road; not connected to the road network: draw a road to the marked end of its stub (road_access.stub_ends)", dock.label()),
                 _ => format!("{} built, but no ship can reach it from off the map", dock.label()),
             };
             (id, note)
@@ -1571,7 +1595,12 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     *ctx.selection = Selection::Building(id);
     ctx.tools.status = note.clone();
     let b = ctx.sim.world.buildings.get(id).map(|b| building_row(&ctx.sim.world, id, b)).unwrap_or(Value::Null);
-    Ok(json!({ "building": key_str(id), "message": note, "row": b, "treasury": round(ctx.sim.world.economy.treasury) }))
+    let mut out = json!({ "building": key_str(id), "message": note, "row": b, "treasury": round(ctx.sim.world.economy.treasury) });
+    // [dock-access] A dock or station: connected, and the stub's free end.
+    if let Some(connected) = ctx.sim.world.road_access(id) {
+        out["road_access"] = view::access_json(&ctx.sim.world, id, connected);
+    }
+    Ok(out)
 }
 
 /// [plant-groups] What a plant `kind` would be on the lot at `x`,`y`
@@ -1714,7 +1743,7 @@ fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     };
     match action {
         // Highlight a line on the map (its path, stops and buses), as
-        // clicking it in the Transit window does; no route clears it.
+        // clicking it in City Data's Services, Transit does; no route clears it.
         "select" => {
             let id = match field(cmd, "route") {
                 Some(_) => Some(route_arg(w)?),
@@ -2079,6 +2108,10 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         v["place"] = places::building_place(w, id);
         // [land] owner, sale price, plots, form, pressure
         v["land"] = property::building_land(w, id);
+        // [ferry-routes] a terminal's routes, a shipping port's lane
+        if crate::ferry_select::is_route_dock(w, id) {
+            v["routes"] = ferry::routes_json(w, id);
+        }
         return Ok(json!({ "building": v }));
     }
     if let Some(v) = field(cmd, "lot") {
@@ -2123,6 +2156,10 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(v) = field(cmd, "metro") {
         let id = key_from(v)?;
         return Ok(json!({ "metro": trains::metro_detail(w, id).ok_or("no such metro train")? }));
+    }
+    if let Some(v) = field(cmd, "ship") {
+        let id = key_from(v)?;
+        return Ok(json!({ "ship": ferry::ship_json(w, id).ok_or("no such ship")? }));
     }
     if let Some(v) = field(cmd, "route") {
         let id = key_from(v)?;
@@ -2178,6 +2215,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Selection::Train(id) => inspect(&json!({ "train": key_str(id) }), ctx),
         Selection::Metro(id) => inspect(&json!({ "metro": key_str(id) }), ctx),
         Selection::Unit(id) => inspect(&json!({ "unit": key_str(id) }), ctx),
+        Selection::Ship(id) => inspect(&json!({ "ship": key_str(id) }), ctx),
         Selection::None => Err("inspect needs one of citizen, building, lot, car, bot, train, metro, toll, road, segment, route, gesture (an id), or a selection".into()),
     }
 }
@@ -2201,7 +2239,7 @@ pub fn building_style(sim: &crate::sim::Sim, id: nd_sim::BuildingId, assets: &Ga
 /// Everything about what the player has selected, as `inspect` gives it,
 /// in one reply: a car with why it stands, the jam in front of it, its trip
 /// and lanes; a citizen (and the car they are driving); a building; a
-/// parked car; plus the bus line picked in the Transit window, if any.
+/// parked car; plus the bus line picked in City Data's Services, Transit, if any.
 pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<nd_sim::RouteId>, assets: &GameAssets, favourites: &[nd_sim::CitizenId]) -> Value {
     let w = &sim.world;
     let detail = match sel {
@@ -2237,6 +2275,7 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
         Selection::Train(id) => trains::train_detail(w, id, &assets.palette.car_colors).unwrap_or(Value::Null),
         Selection::Metro(id) => trains::metro_detail(w, id).unwrap_or(Value::Null),
         Selection::Unit(id) => units::unit_detail(sim, id, &assets.rules).unwrap_or(Value::Null),
+        Selection::Ship(id) => ferry::ship_json(w, id).unwrap_or(Value::Null),
     };
     let bus_line = route_sel.and_then(|r| w.transit.routes.get(r).map(|route| {
         let mut v = route_row(r, route);
@@ -2344,6 +2383,13 @@ fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             return Err(if w.services.units.contains_key(id) { "that unit is in its station".into() } else { "no such unit".into() });
         }
         Selection::Unit(id)
+    } else if let Some(v) = field(cmd, "ship") {
+        // [ferry-routes] A ferry or freighter (`landscape` lists the ships).
+        let id = key_from(v)?;
+        if !w.ports.ships.contains_key(id) {
+            return Err("no such ship".into());
+        }
+        Selection::Ship(id)
     } else if let Some(p) = opt_vec2(cmd, "at")? {
         // Pick exactly as a click with the Inspect tool does.
         crate::tools::pick(&*ctx.sim, p, ctx.tools.depth)
@@ -2601,7 +2647,15 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
                 Selection::Metro(id)
             }
-            _ => return Err("follow: one of citizen, car, bot, building, train, metro".into()),
+            // [ferry-routes]
+            "ship" => {
+                let id = key_from(id)?;
+                if !w.ports.ships.contains_key(id) {
+                    return Err("follow: no such ship".into());
+                }
+                Selection::Ship(id)
+            }
+            _ => return Err("follow: one of citizen, car, bot, building, train, metro, ship".into()),
         });
     }
     let look_at = opt_vec2(cmd, "look_at")?;
@@ -2823,9 +2877,9 @@ fn help() -> Value {
             "incidents": { "active": "bool (only those under way)", "limit": "default 50, newest first", "kind": "fire|crime|medical|crash" },
             "bus": { "action": "select|new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|rename|recolour|line|select_stop|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses", "name": "rename", "color": "0..7", "look": "select_stop: point the camera" },
             "find": { "what": "citizens|buildings|lots|parcels|cars|trains|drones|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
-            "inspect": { "citizen|building|lot|car|train|drone|vehicle|route": "id (vehicle: a private car's record; a unit's car also gets unit)", "unit": "id: an emergency unit: title, kind, station, state, doing, crew (citizen, name, role, out, pos, pose), incident (fire: how_bad, intensity, minutes_to_out, progress, damage; else patient, suspect, people), and for a fire engine at work scene (seconds, water_litres, aim, ladder {yaw_deg, pitch_deg, length, outriggers, tip}, hoses, streams)", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "id, or [x,y]: the piece a click there picks (else the nearest), as segment, plus road: the road card (kind, lanes, limit, level, run, now {vehicles by kind, bikes, walkers, speed, congestion, queue}, flow, hourly (72 h), decay {wear, condition, effects, wear_per_day, next_condition, repair_cost, queue_place, last_repaired_day}, tolls, crossings, bus_stops, kerb parking)", "toll": "int: a toll booth in full (traffic, lorries, free, avoided, queue, hourly)" },
+            "inspect": { "citizen|building|lot|car|train|drone|vehicle|route": "id (vehicle: a private car's record; a unit's car also gets unit)", "unit": "id: an emergency unit: title, kind, station, state, doing, crew (citizen, name, role, out, pos, pose), incident (fire: how_bad, intensity, minutes_to_out, progress, damage; else patient, suspect, people), and for a fire engine at work scene (seconds, water_litres, aim, ladder {yaw_deg, pitch_deg, length, outriggers, tip}, hoses, streams)", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "id, or [x,y]: the piece a click there picks (else the nearest), as segment, plus road: the road card (kind, lanes, limit, level, run, now {vehicles by kind, bikes, walkers, speed, congestion, queue}, flow, hourly (72 h), decay {wear, condition, effects, wear_per_day, next_condition, repair_cost, queue_place, last_repaired_day}, tolls, crossings, bus_stops, kerb parking)", "toll": "int: a toll booth in full (traffic, lorries, free, avoided, queue, hourly)", "ship": "id (landscape.ships): a ferry or freighter: title, doing, passengers, cargo, route; a ferry terminal or shipping port building also gets routes (to, ships, headway_min, next_departure, passengers_today)" },
             "lane_use": { "junction": "[x,y]", "approach": "[x,y] on the arriving street", "lanes": "[\"L\", \"S+R\", ...] leftmost first (L, S, R joined with +), or \"reset\" for the demand-chosen default" },
-            "select": { "citizen|building|car|vehicle|bot": "id (vehicle: a parked car; bot: a delivery robot)", "unit": "id: an emergency unit (fire engine, police car, ambulance) driving or standing on scene (see units); a click on one picks it the same way", "toll": "int: a toll booth", "road|segment": "id or [x,y]: a street piece", "at": "[x,y] picks like a click (vehicles, people, booths, parked cars, then the road piece, then lots); nothing clears" },
+            "select": { "citizen|building|car|vehicle|bot": "id (vehicle: a parked car; bot: a delivery robot)", "unit": "id: an emergency unit (fire engine, police car, ambulance) driving or standing on scene (see units); a click on one picks it the same way", "toll": "int: a toll booth", "road|segment": "id or [x,y]: a street piece", "ship": "id: a ferry or freighter (landscape.ships)", "at": "[x,y] picks like a click (vehicles, people, booths, parked cars, then the road piece, then lots); nothing clears" },
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
             "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|bot|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
             "overlay": { "active": "the map layer to show, or none (layers are exclusive: showing one hides the others)", "layer": "zoning|land_value|districts|traffic|traffic_types|paths|people|pollution, a land survey layer (farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech), or projects (the dim other-projects switch, not a layer)", "on": "bool, omitted toggles; on hides every other layer", "land": "a land survey layer key, or none", "<layer name>": "bool (older form): true shows it alone, false hides it if it shows" },
@@ -2883,7 +2937,8 @@ fn help() -> Value {
         "tolls": { "action": "list (default) | price | remove | inspect", "id": "booth id (or at: [x,y])", "price": "toll per car (lorries pay double)", "returns": "booths with cars and revenue today/yesterday/total, paid/free today, upkeep" },
         "export": { "path": "optional .json (see files); default exports/city-<unix>.json: report + map + history + every row of every list" },
         "build_highlight": { "category": "a Build section (power|services|transit|rail|water|attractions), a sub-section (safety, health and education, sanitation, parking, metro, buses...) or a kind (health, police, fire, school, metro_station, coal...): opens the Build window there (a kind also picks it, as a click on its tile) and highlights those buildings on the map with their service areas", "off": "bool: close the Build window (the highlight goes with it)", "note": "no fields: what is highlighted now and the summary (worked out the frame after a change)" },
-        "window": { "name": "city|economy|taxes|market|people|power|transit|emergencies|view (or land)|districts|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), or title (the title screen), or history (the Game history window)", "open": "bool, omitted toggles", "expanded": "bool: the large view with charts (opens the window; only one is expanded at a time); not saves/help/dev", "tab": "people only: overview|concerns|social" },
+        "window": { "name": "a tool window: lines|view (or land)|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), new_game, title (the title screen), history (the Game history window); the old report names city|economy|taxes|market|people|power|transit|emergencies|districts|tourism open their City Data tab or page", "open": "bool, omitted toggles", "sub": "with a City Data name: the sub-tab (people's old tab overview|concerns|social works too)" },
+        "city_data": { "tab": "city|economy|market|people|services (omitted with open: the page it was on)", "sub": "the tab's sub-tab: city overview|land|districts|tourism; economy overview|cash_flow|ledger|taxes; market goods|businesses|trade; people population|inequality|concerns|social|favourites; services power|transit|emergencies (omitted: the tab's last one)", "open": "bool; omitted with a tab opens; no fields reports the view and the list of tabs", "scroll": "points from the page's top to scroll to (for screenshots of long pages)", "note": "the full-screen City Data view (J in the game, Esc closes); status.city_data says what it shows" },
         "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" },
         "social": { "days": "daily history to include (default 7)", "talks": "latest conversations to list (default 10)", "group": "optional group id: that group in full, with its members", "note": "people talking: today's and yesterday's conversations, friendships, feuds, fights, meet-ups, jobs and flats through friends, couples moving in; pairs by bond city-wide; every crew and club with momentum, reputation, base and works (gigs, matches, readings, murals, gardens, businesses, petitions, protests); petitions to the player; murals, gardens, gigs; news. inspect {citizen} has a social block (ties with bond and how they met, groups, recent conversations)" }
     });

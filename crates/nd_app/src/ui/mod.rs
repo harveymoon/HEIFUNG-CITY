@@ -1,22 +1,26 @@
 //! egui HUD in the Cities: Skylines mould: a thin top bar (clock, speed,
-//! treasury, population, the info-window toggles, camera mode), a bottom
-//! toolbar with one big button per tool and a sub-pane holding only the
-//! active tool's parameters, and draggable info windows for everything that
-//! used to scroll past in the side panel. This file owns the plugin, the
+//! treasury, population, City Data and the tool-window toggles, camera
+//! mode), a bottom toolbar with one big button per tool and a sub-pane
+//! holding only the active tool's parameters, draggable tool windows, and
+//! the full-screen City Data view for every report on the city. This file owns the plugin, the
 //! input flags the rest of the app reads, and the frame skeleton; each piece
 //! of the HUD lives in its own module.
 
-/// [concerns] The People window's complaints tab.
+/// [concerns] City Data's People, Complaints and concerns.
 /// The Build window: every road, zone and building in one catalogue.
 pub mod build;
+/// [ferry-routes] A dock's routes and the ship card in the inspector.
+mod ferry;
 /// [committee] The Committee window.
 pub mod committee;
 /// [voices] A citizen's diary, on demand.
 pub mod diary;
 mod concerns;
+/// [city-data] The full-screen City Data view: tabs, sub-tabs, pages.
+pub mod city_data;
 mod detail;
 mod economy;
-/// [districts] The District tool's pane and the Districts window.
+/// [districts] The District tool's pane and City Data's Districts and Tourism pages.
 mod districts;
 mod emergencies;
 /// [camera] Follow / Zoom to buttons, the gift button, the locked banner.
@@ -106,6 +110,9 @@ pub struct UiFlags {
     news_seen: u32,
     /// [social] The last social news line toasted.
     social_seen: u32,
+    /// [city-data] The City Data view covered the map last pass: Esc is
+    /// its, not the tools' or the camera's.
+    pub data_view: bool,
 }
 
 impl UiFlags {
@@ -243,6 +250,9 @@ pub(crate) fn side_panel(
     // The map area between the bars: windows open inside it and are kept
     // from being dragged under either bar.
     let content = egui::Rect::from_min_max(egui::pos2(view.left(), top_rect.bottom()), egui::pos2(view.right(), bottom_rect.top()));
+    // [city-data] Its keys first (J, Esc), then the view under the windows.
+    city_data::keys(ctx);
+    let data_rect = city_data::show(ctx, &mut p, content);
     windows::show_all(ctx, &mut p, content);
     build::window(ctx, &mut p, content);
     inspector::window(ctx, &mut p, content);
@@ -256,12 +266,18 @@ pub(crate) fn side_panel(
     let fly_to = p.fly_to;
 
     flags.panel_rects = vec![top_rect, bottom_rect];
+    // [city-data] The view sits on the background layer, which egui's
+    // pointer test ignores: test it by hand like the bars.
+    flags.panel_rects.extend(data_rect);
+    flags.data_view = data_rect.is_some();
     nights::news_toast(&sim.world, &mut flags);
     social::news_toast(&sim.world, &mut flags);
     toast(ctx, &mut flags, bottom_rect.height());
     // The land layer's reading under the pointer, for the legend.
     let here = overlays.land.zip(cursor.ground).map(|(l, p)| legend::land_here(&sim.world, l, p));
-    legend::show(ctx, &overlays, &assets, &sim.world, content, here.as_deref());
+    if data_rect.is_none() {
+        legend::show(ctx, &overlays, &assets, &sim.world, content, here.as_deref());
+    }
     // [camera] "go" buttons fly smoothly, and end a follow.
     if let Some(p) = fly_to {
         follow.stop();
@@ -271,12 +287,14 @@ pub(crate) fn side_panel(
     }
 
     person::pane(ctx, &mut sim, &mut tools, &mut selection, &mut flags, content, (&mut follow, &mut fly, &mut mode));
-    follow::banner(ctx, &sim, &mut follow, &mut mode, &mut selection, content);
-    if tools.tool == Tool::Inspect && *mode == CameraMode::Orbit {
+    if data_rect.is_none() {
+        follow::banner(ctx, &sim, &mut follow, &mut mode, &mut selection, content);
+    }
+    if tools.tool == Tool::Inspect && *mode == CameraMode::Orbit && data_rect.is_none() {
         hover::card(ctx, &sim, &cursor);
     }
     // [plant-groups] What the picked building would be on the lot under the pointer.
-    if tools.tool == Tool::Buildings && *mode == CameraMode::Orbit && !ctx.is_pointer_over_egui() {
+    if tools.tool == Tool::Buildings && *mode == CameraMode::Orbit && !ctx.is_pointer_over_egui() && data_rect.is_none() {
         hover::build_card(ctx, &sim, &cursor, &tools);
     }
 

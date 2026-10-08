@@ -109,7 +109,7 @@ Every example is the POST body; the reply always carries `"ok"`.
 | Command | Fields | Reply |
 | --- | --- | --- |
 | `help` | | every command and its fields |
-| `status` | | clock, paused, speed, effective_speed, population, buildings, under_construction, lots, homes/jobs, treasury, ledger_yesterday, power, weather, land, market, demand, traffic, transit, rail, render (fps, ticks_per_frame, triangles), camera, tool, selection, project, overlays, lighting, message, tool_status, event_seq, favourites, `windows_open`, `window_expanded`, `build_window` {open, section}, `title_screen`, `climate` {climate, label, precipitation: null or {kind rain/snow, intensity 0..1}}, `alerts_top` (the first 5 of `report`'s alerts) |
+| `status` | | clock, paused, speed, effective_speed, population, buildings, under_construction, lots, homes/jobs, treasury, ledger_yesterday, power, weather, land, market, demand, traffic, transit, rail, render (fps, ticks_per_frame, triangles), camera, tool, selection, project, overlays, lighting, message, tool_status, event_seq, favourites, `windows_open` (the tool windows), `city_data` {open, tab, sub}, `build_window` {open, section}, `title_screen`, `climate` {climate, label, precipitation: null or {kind rain/snow, intensity 0..1}}, `alerts_top` (the first 5 of `report`'s alerts) |
 | `pause` | `paused` bool (omit to toggle) | `paused` |
 | `speed` | `index` 0..5 (1×, 4×, 16×, 64×, 256×, 1024×), or `value`: a multiple of real time for what moves, snapped to the nearest step on a log scale. At 1× people walk at their true pace; the clock runs 15× faster than that | `speed_index`, `speed`, `ticks_per_second`, `label` |
 | `step` | `ticks` (default 1, max 100000) | `clock`, `took_ms` |
@@ -203,6 +203,23 @@ main thread, then serialises and writes it on a worker thread.
 {"cmd": "terrain_at", "x": -420, "y": 100}
 {"cmd": "resource", "x": 300, "z": -650}
 {"cmd": "grid"}
+```
+
+**Ferry routes.** [ferry-routes] `landscape.ships` rows carry `id`. `select {ship: id}` selects a
+ferry or freighter (a click on its hull with the Inspect tool does too; `camera {follow}` and the
+inspector's Follow work on it); `inspect {ship: id}` (or `inspect` with one selected) gives `id`,
+`kind`, `title`, `doing`, `at`, `passengers`, `cargo`, `home` (its terminal) and `route` {from, to,
+colour}. `inspect {building}` of a ferry terminal or shipping port adds `routes`: one row per route
+calling there, `kind` (ferry / freight), `to` (the far end's name), `end` ({kind: terminal, building}
+/ {kind: town_off_map, index, edge} / {kind: open_sea}), `end_at` (its berth, or where the route
+leaves sight), `running`, `colour`, `ships` [{id, doing, passengers}], `headway_min` (both ends'
+boats together, on the rotation as it stands), `next_departure` (the next boat out from this dock on
+it, as `tick_time`), `passengers_today` (both ways) and `length_m`. With a dock or ship selected the
+map draws its routes bright with direction chevrons and the city's other routes dim.
+
+```json
+{"cmd": "select", "ship": "3:1"}
+{"cmd": "inspect", "building": "120:4"}
 ```
 
 **Climates** (`nd_sim::Climate` on the landscape's levers; old saves are Desert). Each adds to
@@ -320,8 +337,10 @@ within 80 m is used, as before.
 
 
 - `station`, `freight_yard`, `central_station` (also `central`, `main_station`): rail pieces, placed
-  anywhere (`World::place_rail_facility`); the reply message says whether track and street are
-  joined. The Central Station (one per city) is also a metro station and a bus terminal (a depot).
+  anywhere (`World::place_rail_facility`); no road is needed. The reply message says whether track and street are
+  joined. [dock-access] A passenger station on the track whose street is not yet on the road
+  network is a halt: trains call there, nobody gets on or off, it hires nobody. Draw a road to
+  a marked end of its street stub (`road_access.stub_ends`) and it opens. The Central Station (one per city) is also a metro station and a bus terminal (a depot).
 - `metro_station` (also `metro`, `subway_station`): a metro entrance on the lot under the point
   (`World::build_metro_station`); stations need 160 m between them. Join them with `subway {action:
   "line"}`.
@@ -349,8 +368,16 @@ within 80 m is used, as before.
   figures are in the Buildings tool's hover `note` (`tool {hover}`).
 - `shipping_port` (or `port`), `ferry_terminal` (or `ferry`): at the water's edge within 90 m of the
   point (`World::place_port`). Ports need a river at least 40 m wide or the sea; ferries any water
-  16 m or wider. Each builds a pier and, unless a street is already along its landward side, a
-  street stub to join to the city.
+  16 m or wider. Each builds a pier. [dock-access] No road is needed: unless a street is already
+  along its landward side, a dock lays its own access road, a 1+1 street with pavements running
+  14-32 m inland from its gate (turned or shortened round water, buildings and other docks), and
+  the far end (`road_access.stub_ends`) is where a road is drawn onto it; it snaps there like any
+  road end. Until it is on the road network (a road component with zoned lots, or one reaching
+  off the map) a ferry terminal's boats still sail but carry no one, a port lands nothing and a
+  marina or fishing port does not open; nobody is hired and no lorry or taxi is sent there.
+  Docks placed over zoned land take the ground out of the zone (zoned lots under the footprint
+  go) and are drawn as themselves at once; `bulldoze {building}` on a dock takes it and its pier
+  away and gives the ground back to the plan (its access road stays).
 - `toll_booth` (also `toll`), `toll_plaza` (also `plaza`): across the road at the point
   (`World::place_toll`), not on a lot: the nearest street or highway piece within 15 m that has a
   straight run either side (booth 18 m, plaza 50 m between junctions or bends; a click near a
@@ -366,7 +393,12 @@ within 80 m is used, as before.
   treasury. Costs, upkeep, jobs, coverage radius, vehicles and capacity per tier are in
   `nd_sim::services::ServiceKind`.
 
-Reply: `building` id, `message`, `row`, `treasury`; or the sim's reason as `error`.
+Reply: `building` id, `message`, `row`, `treasury`; or the sim's reason as `error`. For a dock,
+station or yard the reply adds [dock-access] `road_access` {`connected`, `stub_ends` ([[x, y]]: the
+free ends of its street stub to draw a road to; empty once joined), `problem` (what is held up,
+or null)}; `inspect {building}` carries the same `road_access`, and for a dock `dock` {kind,
+road_connected, reaches_elsewhere, works, ferries_sail, berth, stub}. `report`'s alerts add
+`dock_not_connected`.
 
 ```json
 {"cmd": "place", "kind": "solar", "x": -210, "y": -210}
@@ -524,7 +556,7 @@ Reply: `cost`, `removed_cells`, `treasury`; an error when the ground is clean or
 
 | action | fields |
 | --- | --- |
-| `select` | `route` (omit to clear): highlight that line on the map, its path, stops and every bus on it, as clicking it in the Transit window or clicking one of its buses does |
+| `select` | `route` (omit to clear): highlight that line on the map, its path, stops and every bus on it, as clicking it in City Data's Services, Transit or clicking one of its buses does |
 | `new_route` | (none) |
 | `add_stop` | `x`, `y`, `route` optional (default: the line being drawn, or a new one) |
 | `move_stop` | `route`, `index`, `x`, `y` |
@@ -739,8 +771,9 @@ several plots), home, business, form. A billionaire's other homes and businesses
 | `overlay` | **Map layers are exclusive**: one shows at a time (as the top bar's Layer button), with its key in the legend. `active` a layer key or `none`: show it alone. `layer` (zoning, land_value, districts, traffic, traffic_types, danger, paths, people, pollution, crime, map, metro, or a land survey layer, below; `traffic` and `crime` also dim the city and light up the vehicles they are about, `map` is the street map view with street names and pins; `metro` dims the city and shows the metro lines in their colours and every station as a named marker, and picking the metro line tool switches to it, leaving it puts back the layer before) with `on` (bool; omitted toggles): on shows it and hides every other, off hides it if it shows. `land` a land survey layer key (shown alone) or `none`. Older form, a bool per layer name: true shows that layer alone (several trues: the last listed in the registry wins), false hides it if it shows. `projects` (bool, or `layer: "projects"`) is the dim other-projects switch, not a layer, and is left alone by the rest. Reply: every flag layer and whether it is on, `land` (the survey layer shown, or null), `active` (the key of the layer showing, or null) and `projects` (also in `status.overlays`). New layers are added as one entry in `crate::map_layers::MAP_LAYERS` and appear here by their key |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
 | `heat_vision` (alias `heat`) | `on` (bool; omitted toggles). Drone heat vision: buildings, ground and roads go near-black, people, vehicles, fires and drones glow by temperature (lights and engines white-hot), with motion blur, scanlines, noise, a vignette and a reticle. Same as key H and the top bar's Heat button. Reply `heat_vision`; also `status.lighting.heat_vision` |
-| `graphics` (alias `quality`) | `quality` auto / low / medium / high. Pins the graphics tier (Low: MSAA, no SSAO or haze; Medium: TAA, light SSAO; High: TAA, full SSAO, volumetric haze, big shadows) or hands it back to the frame-rate throttler (Auto). Pin one before screenshots that must compare. Reply `quality`, `tier` (in force from the next frame), `frame_ms` (smoothed), `sim_ms`, `auto_steps`, `reason`, `effects`; also `status.render.graphics`. `ND_QUALITY` sets the starting setting |
-| `window` | `name` city / economy / taxes / market / people / power / transit / emergencies / view (also `land`, `layers`, `map`: the View window, once Land) / districts / saves / help / dev, `open` (omit to toggle), `expanded` (bool: the large view with charts over time and the drill-downs; `true` also opens the window, and only one window is expanded at a time, so expanding one puts the other back to compact; saves, help and dev have none). Reply `open`, `expanded` (the expanded window's name or null), `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it; `status.window_expanded` names the expanded window. `name: "build"`: the Build window, `open` (omit to toggle), `section` roads / zoning / parks / districts / power / services / transit / rail / water / attractions (opens it there); `status.build_window` {open, section}. A building tool picked with `tool` opens the Build window at its section, as its hotkey does. `name: "title"`: the title screen (above) |
+| `graphics` (alias `quality`) | `quality` auto / low / medium / high. Pins the graphics tier (Low: MSAA, no SSAO or haze, no rain or snow, street lamps only glow; Medium: TAA, light SSAO, real light from the 18 street lamps nearest the view at night; High: TAA, full SSAO, volumetric haze, big shadows, 40 lit lamps. Every tier: wet, glossy roads while it rains, fog tinted and thickened by climate and weather) or hands it back to the frame-rate throttler (Auto). Pin one before screenshots that must compare. Reply `quality`, `tier` (in force from the next frame), `frame_ms` (smoothed), `sim_ms`, `auto_steps`, `reason`, `effects`; also `status.render.graphics`. `ND_QUALITY` sets the starting setting |
+| `window` | `name` a tool window: lines / view (also `land`, `layers`, `map`: the View window, once Land) / saves / help / dev, `open` (omit to toggle). Reply `open`, `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it. The old report windows are City Data pages now: `name` city / economy / market / people / services opens that tab (at its last sub-tab), taxes / power / transit / emergencies / districts / tourism their page (Economy › Taxes, Services › Power, ...); `sub` (or People's old `tab` overview / concerns / social) picks a sub-tab, `open` false closes the view, omitted toggles, `expanded` is accepted and opens. The reply is `city_data`'s. `name: "build"`: the Build window, `open` (omit to toggle), `section` roads / zoning / parks / districts / power / services / transit / rail / water / attractions (opens it there); `status.build_window` {open, section}. A building tool picked with `tool` opens the Build window at its section, as its hotkey does. `name: "title"`: the title screen (above) |
+| `city_data` | `tab` city / economy / market / people / services, `sub` (the tab's sub-tab, below; omitted: the tab's last one this session), `open` (bool; a `tab` alone opens; `open: true` alone reopens where it was; `open: false` closes). No fields: the state only. Reply `open`, `tab`, `sub`, `title` (the page's), `tabs` [{tab, label, subs}]. The full-screen City Data view (top bar, or J; Esc closes): **city** overview / land / districts / tourism; **economy** overview / cash_flow / ledger / taxes; **market** goods / businesses / trade; **people** population / inequality / concerns / social / favourites; **services** power / transit / emergencies. Applied in the same frame's egui pass, so a following `screenshot` shows it; `status.city_data` says what shows |
 
 Land survey layers (map layers like the rest, so one at a time with them; K steps through these
 in the game; the top bar's Layer button and the View window list them;
@@ -958,7 +991,7 @@ Each reply carries `took_ms`; see the timings measured on a real city at the end
 max_mw, price_per_mwh, mean_price_per_mwh, income_today, income_yesterday}`, `battery_totals {count,
 charge_mwh, capacity_mwh, level, charging_mw, discharging_mw, round_trip_efficiency}`, `weather` (as the
 `weather` command), `grid` (as the `grid` command), and a row per plant and battery
-(`World::plant_rows`, the same figures as the Power window):
+(`World::plant_rows`, the same figures as City Data's Services, Power):
 
 - `plants`: id, name, kind, capacity_mw, available_mw (what the weather allows), output_mw (less
   curtailment), mean_mw_24h, upkeep_per_day, cost_per_mwh (upkeep over the last 24 hours' energy; null
@@ -996,7 +1029,7 @@ gain `exported_mwh`, `battery_in_mwh`, `battery_out_mwh` and `ledger.grid_export
 | --- | --- |
 | `overview` | day, time, population, households_housed, homes {total, free, being_built}, jobs {total, filled, free, being_built}, buildings {built, under_construction, derelict, vacant_lots, unusable_lots, lots_total}, treasury, net_yesterday, net_today_so_far, land_value_avg, gini, demand_by_land_use (0..1), headline_alerts |
 | `people` | by_class, by_activity, employment {employed, employed_in_businesses, employed_on_building_sites, unemployed_on_gig_income, unemployment_share (of everyone), jobs_free, working_age_adults, unemployed_adults, adult_unemployment_share}, housing {housed, unhoused, waiting_immigrants, homes_free}, income_per_day and savings (distributions; savings also in_overdraft, at_overdraft_floor), rent_burden {over_30pct_of_income, over_50pct_of_income, their shares, rent_stressed_now, rent_to_income distribution}, mood (distribution 0..1), hunger {hungry_now, mean_satiety, no_groceries_at_home, hungry_days histogram 0..4+}, commute_modes_now (walk/bike/car/bus/train counts and shares of the people travelling now; owns_car_share, owns_bike_share), moves (displaced, emigrated, priced-out totals), recent_memory_reasons (memories of the last 2 days grouped by their fixed text, e.g. "Rent got too steep", "Couldn't afford anything at") |
-| `economy` | treasury, ledger {today_so_far and yesterday by flow, nets}, ledger_items {yesterday, today_so_far: per flow {total, items: [{building + name / route + name / class / land_use / name, amount, postings}], not_itemised}} (the Economy window's drill-down: service upkeep by station, clinic and car park, transit upkeep by depot and the bus fleet, plant upkeep by plant, fares by line and station, income tax by class, business tax by land use), tax_today, upkeep_today, trade_today {imports_value, exports_value, building_materials_imported, deals, meals_sold, walk_in_sales, parking_fees}, businesses {total, open, closed_ever, by_kind: count, open, closed, mean_staffing, mean_money, revenue and spend totals, inputs (stock, target, fill), outputs (stock, mean_price)}, resources (town_stock, avg_price, price_vs_base, local_sellers_open, local_supply_per_day, business_demand_per_day, scarce), most_profitable_today and least_profitable_today (10 each, with ids) |
+| `economy` | treasury, ledger {today_so_far and yesterday by flow, nets}, ledger_items {yesterday, today_so_far: per flow {total, items: [{building + name / route + name / class / land_use / name, amount, postings}], not_itemised}} (City Data's Economy, Ledger drill-down: service upkeep by station, clinic and car park, transit upkeep by depot and the bus fleet, plant upkeep by plant, fares by line and station, income tax by class, business tax by land use), tax_today, upkeep_today, trade_today {imports_value, exports_value, building_materials_imported, deals, meals_sold, walk_in_sales, parking_fees}, businesses {total, open, closed_ever, by_kind: count, open, closed, mean_staffing, mean_money, revenue and spend totals, inputs (stock, target, fill), outputs (stock, mean_price)}, resources (town_stock, avg_price, price_vs_base, local_sellers_open, local_supply_per_day, business_demand_per_day, scarce), most_profitable_today and least_profitable_today (10 each, with ids) |
 | `land` | lots_by_land_use {vacant, built, under_construction, unusable, total, area_m2}, buildings_by_land_use_and_tier, special_buildings, floors_histogram, rents_by_tier {buildings, homes, residents, occupancy, rent_per_home_day_avg, min, max}, land_value {avg_grid, lots distribution, tier_cuts}, parks {lots, area_m2} |
 | `services` | emergency {coverage_pct_of_homes {police, fire, health, school}, incidents_today {fire, crime, medical}, resolved_today, unanswered_today, arrests_today, avg_response_min (call to arrival, today or else yesterday), response {fire, crime, medical: answered, median_min, p90_min, within_30_min_pct, of (today or yesterday)}, queued {fire, crime, medical} (calls past their dispatch time waiting for a unit), queue_max_today, all_units_busy_min_today, all_units_busy_now_min (null when a unit is free), unanswered_why_today {per kind: all_units_busy, no_route, no_station}, mutual_aid_today, unreachable_today, diverted_today, units_on_patrol (crashes count with police in the per-kind figures), units, units_busy (on a call: responding, on scene, transporting), fires_burning, burned_down_total, waiting_for_ambulance, in_hospital, dispatch {dispatcher_on_duty, minutes_to_dispatch}, stadium_crowd_today, tickets_today, stadium_events_tonight, upkeep_per_day, education_wage_bonus_today, stations: id, kind, tier, workers, radius_m, units, units_crewed, units_busy, units_on_patrol, beds_used, capacity; active_incidents: id, kind, stage, building, minutes_since_start, intensity, unit, dispatcher; recent (last 10 resolved with outcome and response_min)}, power (see Power below), transit {routes: id, stops, buses_wanted, buses_running, riders_today, waiting, length_m, broken_legs, runnable; totals}, subway {stations, lines, trains, tunnel_m, waiting, riding, riders_today, riders_yesterday, fares_today, fares_yesterday, upkeep_yesterday, runs_today, fare, in_service, line_list (line rows as for the `subway` command), station_list (station rows)}, rail {facilities: id, kind, rail_connected, road_connected, works, waiting_passengers, freight units; trains by kind; riders, freight}, taxis {companies: id, name, fleet, cabs (id, number, place yard/rank/kerb/road, job, on_duty, rider, car, rank, pos), rides_today, missed_today, money; cabs, on_duty, in_yard, at_ranks, at_kerb, on_road, carrying, to_pickup, riders_waiting, rides_today/yesterday, fares_today/yesterday, mean_wait_min_today, mean_ride_m_today, drunk_rides_today, night_rides_today, gave_up_today/yesterday, unserved_demand_today/yesterday, companies_founded_total, cabs_bought_total, cabs_sold_total}, cargo_hubs {hubs: id, name, works, units {waiting_for_semi, on_semi, inbound_rail_or_sea, in_shed, exports_gathered}, loads, semi_on_the_way, lorry_bays, lorries_parked, siding_yard, quay_port; received_today, forwarded_today, semis_in_today, semis_out_today, long_haul_trips_saved_today/yesterday/total, handling_fees_today}, air {vertiports, pads {vertiports, rooftop, hospital, fire, police}, rooftop_pads, drones {taxis, air_ambulances, police_helicopters, airborne, holding, mean_taxi_battery}, flights_today, riders_today, fares_today and yesterday's, waiting_for_drone, in_the_air, gave_up_today, holds_today, medic_flights_today/total, police_flights_today, company {money, revenue}, noise {cells, max, max_land_value_penalty, grumbles_today}}, parking {capacity, used, occupancy, parked_on_street_today, last_shortage_at, enforcement {rule, offices: id, name, tier, officers, patrol_cars_now, patrol_cars_wanted, radius_m; patrol_cars_now, coverage {kerb_slots, within_patrol_reach, share}, tickets_today, fines_today, tickets_total, fines_total, on_street_now {over_limit, ticketed}, tows_today, tows_out_of_town_today, tows_total, tows_out_of_town_total, tow_jobs_open, tow_trucks_on_road, wrecks_towed_total, pound {cars, in_town, out_of_town, released_today, release_fees_today, released_total, auctioned_today, auctioned_total}, tow_companies: id, name, staff, trucks, in_pound, money; city_lots: id, name, size, capacity, used, occupancy, price; city_lot_fees_today, parked_by_place}}, traffic {vehicles, cars, trucks, buses, mean_speed_kmh_moving, stopped, stuck, waiting_at_kerb, gridlocks, left_turn_wait_mean_s, left_turn_wait_max_s (over the last 500 left turns), left_turns_measured, protected_left_arrows_now, passing_left_turners_now, lane_use_set_by_player, lanes, intersections, signals, private_cars {cars, cars_parked, cars_driving, cars_searching (on the road looking for a space), parked_by_place (home, building, parking lot, kerb, street (no space), dealer), kerb_slots {total, used, occupancy}, created_total, destroyed_total, events_total (arrived_with_household, bought, bought_out_of_town, sold, scrapped, emigrated: the only ways a car comes or goes), bought_today, sold_today, bikes_bought_today, bikes_sold_today, circled_today, search_minutes_today, parked_today {home_or_building, lot, kerb, no_space}, mode_shares_today and mode_shares_yesterday {trips, modes {walk, bike, bus, train, car, taxi: trips, share}}, commute_pain {per mode: users (who used it lately), mean (bad half-hours per trip)}, parking_pain_mean_of_owners, fleet_parked_at_businesses, fleet_bought_total, fleet_returned_today}} |
 | `industry` | by_kind (farming, oil, refinery, manufacturing, logistics, fishing, tech): buildings, open, jobs, mean_staffing, profit_today, nuisance {radius_m, weight}, fouls_ground; contamination {cells, cells_over_0_3, max, total, cell_m}; fleet {truck_and_bus_lots, bays, trucks_parked, trucks_on_road, returning_empty}; biases {count, newest_first}; plant_land_value (each plant kind's radius, weight, load, ash) |

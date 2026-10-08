@@ -1,4 +1,4 @@
-//! The Emergencies window: every 911 call, live while it happens and kept
+//! City Data's Services, Emergencies page: every 911 call, live while it happens and kept
 //! as a history. Each incident shows when it was called in and by whom, the
 //! dispatcher, the unit sent (city or out of town, and the fee), how long the
 //! unit took from dispatch to the scene and how long it worked there, the
@@ -9,7 +9,8 @@ use bevy::prelude::Vec2;
 use bevy_egui::egui;
 use nd_sim::services::{Incident, IncidentKind, Stage};
 
-use super::{hint, section, UiCtx};
+use super::pane::heading;
+use super::{hint, UiCtx};
 
 const FIRE: egui::Color32 = egui::Color32::from_rgb(255, 120, 60);
 const CRIME: egui::Color32 = egui::Color32::from_rgb(110, 160, 255);
@@ -26,10 +27,10 @@ fn kind_color(k: IncidentKind) -> egui::Color32 {
 
 fn charts(ui: &mut egui::Ui, p: &mut UiCtx) {
     use super::pane::{self, Series};
-    let span = pane::span_picker(ui, super::Info::Emergencies);
+    let span = pane::data_span(ui.ctx());
     let days = pane::days(&p.sim.world.economy.history, if span == pane::Span::Hours { pane::Span::Week } else { span });
     let labels = pane::day_labels(&days);
-    section(ui, "CALLS PER DAY");
+    heading(ui, "Calls per day");
     let series = [
         Series::new("fire", FIRE, pane::col(&days, |d| d.incidents[0] as f32)),
         Series::new("crime", CRIME, pane::col(&days, |d| d.incidents[1] as f32)),
@@ -37,7 +38,7 @@ fn charts(ui: &mut egui::Ui, p: &mut UiCtx) {
     ];
     pane::stacked_bars(ui, &labels, &series, 110.0, false, None, &|x| format!("{x:.0}"));
     pane::legend(ui, &series.iter().map(|s| (s.name.as_str(), s.color)).collect::<Vec<_>>());
-    section(ui, "RESPONSE");
+    heading(ui, "Response");
     let series = [
         Series::new("avg minutes to arrive", egui::Color32::from_rgb(235, 180, 90), pane::col(&days, |d| d.avg_response_min)),
         Series::new("unanswered", egui::Color32::from_rgb(255, 90, 90), pane::col(&days, |d| d.unanswered as f32)),
@@ -45,7 +46,7 @@ fn charts(ui: &mut egui::Ui, p: &mut UiCtx) {
     ];
     pane::line_chart(ui, &labels, &series, 100.0, &|x| format!("{x:.0}"));
     pane::legend(ui, &series.iter().map(|s| (s.name.as_str(), s.color)).collect::<Vec<_>>());
-    hint(ui, "The out-of-town fees are itemised under service upkeep in the Economy window.");
+    hint(ui, "The out-of-town fees are itemised under service upkeep in Economy, Ledger.");
 }
 
 /// "day 3 14:05" for a tick.
@@ -65,18 +66,29 @@ enum Filter {
     Kind(IncidentKind),
 }
 
-/// `big` is the expanded view: calls and response times over the days
-/// above the live list and the record.
-pub fn window(ui: &mut egui::Ui, p: &mut UiCtx, big: bool) {
-    if big {
-        charts(ui, p);
-        ui.separator();
+/// Services, Emergencies: the headline figures, calls and response times
+/// over the days, then the live list and the record.
+pub fn page(ui: &mut egui::Ui, p: &mut UiCtx) {
+    {
+        let w = &p.sim.world;
+        let s = &w.services;
+        let st = &s.stats;
+        let calls: u32 = st.incidents_today.iter().sum();
+        super::pane::cards(ui, |ui| {
+            super::pane::kpi(ui, "emergencies now", super::tools::warn_if(s.active().count() > 0, format!("{}", s.active().count())));
+            super::pane::kpi(ui, "fires burning", super::tools::warn_if(st.fires_burning > 0, format!("{}", st.fires_burning)));
+            super::pane::kpi(ui, "units out", egui::RichText::new(format!("{}/{}", st.units_busy, st.units)));
+            super::pane::kpi(ui, "avg response", egui::RichText::new(format!("{:.0} min", st.avg_response())).color(super::GOLD));
+            super::pane::kpi(ui, "calls today", egui::RichText::new(format!("{calls}")));
+            super::pane::kpi(ui, "unanswered today", super::tools::warn_if(st.unanswered_today > 0, format!("{}", st.unanswered_today)));
+        });
     }
+    charts(ui, p);
     let w = &p.sim.world;
     let s = &w.services;
     let st = &s.stats;
     let (dispatcher, delay) = w.dispatcher();
-    section(ui, "NOW");
+    heading(ui, "Now");
     ui.label(format!(
         "{} active · {} fires burning · {}/{} units out · avg response {:.0} min · dispatcher {}",
         s.active().count(),
@@ -101,7 +113,7 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx, big: bool) {
     let s = &w.services;
 
     let mut fly: Option<nd_sim::Vec2> = None;
-    section(ui, "LIVE");
+    heading(ui, "Live");
     let active: Vec<&Incident> = s.active().collect();
     if active.is_empty() {
         hint(ui, "No emergencies right now.");
@@ -110,7 +122,7 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx, big: bool) {
         incident_row(ui, p.sim.world.clock.tick, inc, true, &mut fly);
     }
 
-    section(ui, "HISTORY");
+    heading(ui, "History");
     let id = egui::Id::new("emergencies_filter");
     let mut filter: Filter = ui.data(|d| d.get_temp(id)).unwrap_or_default();
     ui.horizontal(|ui| {
@@ -128,11 +140,10 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx, big: bool) {
     if past.is_empty() {
         hint(ui, "Nothing on record yet.");
     }
-    egui::ScrollArea::vertical().id_salt("emergency_history").max_height(360.0).show(ui, |ui| {
-        for inc in past {
-            incident_row(ui, p.sim.world.clock.tick, inc, false, &mut fly);
-        }
-    });
+    // The page scrolls; the record shows its newest 200.
+    for inc in past.into_iter().take(200) {
+        incident_row(ui, p.sim.world.clock.tick, inc, false, &mut fly);
+    }
     if let Some(at) = fly {
         p.fly_to = Some(Vec2::new(at.x, at.y));
     }

@@ -1,5 +1,6 @@
-//! The top bar: title, clock and speed, treasury and population, the
-//! toggles that open the info windows (Dev among them), and the camera mode.
+//! The top bar: title, clock and speed, treasury and population (each a
+//! link into City Data), the City Data button and the toggles that open the
+//! tool windows (Dev among them), and the camera mode.
 //! Two lines, read left to right like a city builder's status strip: the
 //! city's figures (the map layer at the right), then the window toggles
 //! (view and camera at the right).
@@ -210,10 +211,13 @@ fn more_width(ui: &egui::Ui) -> f32 {
     label_width(ui, MORE)
 }
 
-/// The window toggles in bar order: `New game…` before Saves, a separator
-/// before it and before Dev.
+/// The toggles in bar order: City Data and the Committee, then the tool
+/// windows with `New game…` before Saves; a separator before Lines, before
+/// New game and before Dev.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Toggle {
+    /// [city-data] The full-screen City Data view.
+    CityData,
     Window(Info),
     NewGame,
     /// [committee] The Committee window (`ui/committee.rs`).
@@ -222,13 +226,12 @@ enum Toggle {
 
 impl Toggle {
     fn all() -> Vec<Toggle> {
-        let mut out = Vec::new();
+        // [committee] The Committee sits by City Data: both are about running
+        // the city, not tools for the map; it stays its own floating window.
+        let mut out = vec![Toggle::CityData, Toggle::Committee];
         for info in Info::ALL {
             if info == Info::Saves {
                 out.push(Toggle::NewGame);
-            }
-            if info == Info::Districts {
-                out.push(Toggle::Committee);
             }
             out.push(Toggle::Window(info));
         }
@@ -236,11 +239,12 @@ impl Toggle {
     }
 
     fn separated(self) -> bool {
-        matches!(self, Toggle::NewGame | Toggle::Window(Info::Dev))
+        matches!(self, Toggle::NewGame | Toggle::Window(Info::Dev) | Toggle::Window(Info::Lines))
     }
 
     fn label(self) -> &'static str {
         match self {
+            Toggle::CityData => "City Data",
             Toggle::Window(info) => info.title(),
             Toggle::NewGame => "New game…",
             Toggle::Committee => "Committee",
@@ -249,6 +253,7 @@ impl Toggle {
 
     fn is_open(self, ctx: &egui::Context) -> bool {
         match self {
+            Toggle::CityData => super::city_data::is_open(ctx),
             Toggle::Window(info) => info.is_open(ctx),
             Toggle::NewGame => super::newgame::is_open(ctx),
             Toggle::Committee => super::committee::is_open(ctx),
@@ -258,6 +263,13 @@ impl Toggle {
     fn show(self, ui: &mut egui::Ui) {
         match self {
             Toggle::NewGame => super::newgame::toggle(ui),
+            Toggle::CityData => {
+                let open = super::city_data::is_open(ui.ctx());
+                let text = egui::RichText::new("City Data").color(if open { IVORY } else { GOLD });
+                if ui.selectable_label(open, text).on_hover_text("Every report on the city in one full-screen view: City, Economy, Market, People, Services [J]. Esc closes it.").clicked() {
+                    super::city_data::set_open(ui.ctx(), !open);
+                }
+            }
             Toggle::Committee => super::committee::toggle(ui),
             Toggle::Window(info) => {
                 let open = info.is_open(ui.ctx());
@@ -274,7 +286,7 @@ fn toggle_widths(ui: &egui::Ui) -> Vec<(Toggle, f32)> {
     Toggle::all().into_iter().map(|t| (t, label_width(ui, t.label()) + if t.separated() { GROUP_GAP - ITEM_GAP } else { 0.0 })).collect()
 }
 
-/// One toggle per info window, lit while the window is open; the ones that
+/// City Data, then one toggle per tool window, lit while it is open; the ones that
 /// do not fit in `width` go in a "More" menu at the end, lit while one of
 /// them is open.
 fn window_toggles(ui: &mut egui::Ui, width: f32) {
@@ -358,15 +370,28 @@ fn treasury_and_population(ui: &mut egui::Ui, p: &mut UiCtx) {
     let treasury = if e.treasury < 0.0 { treasury.color(WARN) } else { treasury.color(GOLD) };
     let resp = ui
         .add_sized(egui::vec2(80.0, ui.spacing().interact_size.y), egui::Label::new(treasury).wrap_mode(egui::TextWrapMode::Extend).sense(egui::Sense::click()))
-        .on_hover_text(format!("treasury · taxes so far today {:.0}", e.tax_today));
+        .on_hover_text(format!("treasury · taxes so far today {:.0}
+Click: City Data, Economy, Cash flow", e.tax_today));
+    if resp.clicked() {
+        super::city_data::open_at(ui.ctx(), super::city_data::Page::EconomyCashFlow);
+    }
     dev_grant(ui, &resp, p);
     let w = &p.sim.world;
     let e = &w.economy;
-    slot(ui, 64.0, egui::RichText::new(format!("pop {}", w.citizens.len())).strong()).on_hover_text(format!("{} homes · {} jobs · {} waiting to move in", e.homes_total, e.jobs_total, e.waiting_immigrants));
+    let pop = ui
+        .add_sized(egui::vec2(64.0, ui.spacing().interact_size.y), egui::Label::new(egui::RichText::new(format!("pop {}", w.citizens.len())).strong()).wrap_mode(egui::TextWrapMode::Extend).sense(egui::Sense::click()))
+        .on_hover_text(format!("{} homes · {} jobs · {} waiting to move in
+Click: City Data, People, Population", e.homes_total, e.jobs_total, e.waiting_immigrants));
+    if pop.clicked() {
+        super::city_data::open_at(ui.ctx(), super::city_data::Page::PeoplePopulation);
+    }
     let power = &e.power;
     // No demand yet (an empty map) reads as 0% served: nothing to warn about.
     let text = if power.demand_mw > 0.0 && power.served < 0.98 { egui::RichText::new(format!("⚡ {:.0}%", power.served * 100.0)).small().color(WARN) } else { egui::RichText::new("") };
-    slot(ui, 40.0, text).on_hover_text(format!("power served {:.0}%: the Power window has the detail", power.served * 100.0));
+    if slot(ui, 40.0, text).interact(egui::Sense::click()).on_hover_text(format!("power served {:.0}%
+Click: City Data, Services, Power", power.served * 100.0)).clicked() {
+        super::city_data::open_at(ui.ctx(), super::city_data::Page::ServicesPower);
+    }
 }
 
 /// Dev: how long the treasury figure must be held down for a grant.

@@ -1,4 +1,4 @@
-//! [tax] [tolls] The Taxes window: a rate per land use and sub-type, set
+//! [tax] [tolls] City Data's Economy, Taxes page (the rates): a rate per land use and sub-type, set
 //! with a slider, beside the number of buildings under it and a bar of what
 //! it brought in at the last collection (with a tick at its running daily
 //! average; bars are scaled within their land use); a stacked bar of the
@@ -13,7 +13,8 @@ use bevy_egui::egui;
 use nd_sim::tax::TaxCategory;
 use nd_sim::LandUse;
 
-use super::{hint, section, zone_color32, UiCtx, GOLD, WARN};
+use super::pane::heading;
+use super::{hint, zone_color32, UiCtx, GOLD, WARN};
 
 const LESS: egui::Color32 = egui::Color32::from_rgb(110, 200, 140);
 const AVG_TICK: egui::Color32 = egui::Color32::from_rgb(235, 225, 200);
@@ -30,7 +31,7 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
 
     // [clarity] Every tax the city raises, in one table: what each brought
     // in today and yesterday (from the ledger).
-    section(ui, "ALL TAXES");
+    heading(ui, "All taxes");
     {
         use nd_sim::economy::Flow;
         let l = &p.sim.world.economy.ledger;
@@ -42,34 +43,29 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
             ("Import duty", Flow::ImportDuty, format!("{:.0}% on imports", t.import_duty * 100.0)),
             ("Tolls", Flow::Tolls, format!("{} booths", p.sim.world.tolls.booths.len())),
         ];
-        egui::Grid::new("tax_all").num_columns(4).spacing(egui::vec2(10.0, 2.0)).show(ui, |ui| {
-            ui.label(egui::RichText::new("tax").small().weak());
-            ui.label(egui::RichText::new("rate").small().weak());
-            ui.label(egui::RichText::new("today").small().weak());
-            ui.label(egui::RichText::new("yesterday").small().weak());
-            ui.end_row();
+        super::pane::table(ui, "tax_all", &["tax", "rate", "today", "yesterday"], |ui| {
             let (mut sum_t, mut sum_y) = (0.0, 0.0);
             for (name, flow, rate) in lines {
                 let (td, yd) = (l.today_of(flow), l.yesterday_of(flow));
                 sum_t += td;
                 sum_y += yd;
-                ui.label(egui::RichText::new(name).small());
-                ui.label(egui::RichText::new(rate).small().weak());
-                ui.label(egui::RichText::new(format!("{td:.0}")).small());
-                ui.label(egui::RichText::new(format!("{yd:.0}")).small());
+                ui.label(egui::RichText::new(name));
+                ui.label(egui::RichText::new(rate).weak());
+                ui.label(egui::RichText::new(format!("{td:.0}")));
+                ui.label(egui::RichText::new(format!("{yd:.0}")));
                 ui.end_row();
             }
-            ui.label(egui::RichText::new("All taxes").small().strong().color(GOLD));
+            ui.label(egui::RichText::new("All taxes").strong().color(GOLD));
             ui.label("");
-            ui.label(egui::RichText::new(format!("{sum_t:.0}")).small().strong());
-            ui.label(egui::RichText::new(format!("{sum_y:.0}")).small().strong());
+            ui.label(egui::RichText::new(format!("{sum_t:.0}")).strong());
+            ui.label(egui::RichText::new(format!("{sum_y:.0}")).strong());
             ui.end_row();
         });
     }
 
     // [clarity] The tourist tax: a share of every hotel night, paid by the
     // visitor. Dearer keeps some away; cheaper draws more.
-    section(ui, "TOURIST TAX");
+    heading(ui, "Tourist tax");
     ui.horizontal(|ui| {
         let t = &p.sim.world.economy.taxes;
         let mut pct = t.tourist_tax() * 100.0;
@@ -88,7 +84,7 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
         ui.label(egui::RichText::new(format!("{:.0} today · {:.0} yesterday · visits ×{pull:.2}", s.tax_today, s.tax_yesterday)).small().color(col));
     });
 
-    section(ui, "LAST COLLECTION BY LAND USE");
+    heading(ui, "Last collection by land use");
     // One stacked bar: each land use's share of the take, in its zone colour.
     let (resp, painter) = ui.allocate_painter(egui::vec2(ui.available_width().min(360.0), 16.0), egui::Sense::hover());
     let rect = resp.rect;
@@ -156,7 +152,7 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
         });
     }
 
-    section(ui, "IMPORT DUTY");
+    heading(ui, "Import duty");
     ui.horizontal(|ui| {
         let mut pct = duty * 100.0;
         ui.spacing_mut().slider_width = 160.0;
@@ -169,7 +165,7 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
     // [events] Road crews: the funding level and who they serve.
     super::nights::road_budget(ui, p);
 
-    section(ui, "TOLL BOOTHS");
+    heading(ui, "Toll booths");
     if p.sim.world.tolls.booths.is_empty() {
         hint(ui, "None yet. Buildings > Transit > Toll booth or Toll plaza, then click a straight stretch of road.");
         return;

@@ -481,7 +481,7 @@ pub fn placeable_info(ui: &mut egui::Ui, sim: &mut Sim, what: Placeable) {
         // [tolls]
         Placeable::Toll(s) => {
             line += &format!(
-                ". Click a road: it sits across the carriageway (both ways) on a straight run of {:.0} m or more. Every car pays {:.1} (lorries double, buses and emergencies free) and slows to {:.0} km/h through it; drivers weigh the toll and some take another way. Set prices in the Taxes window.",
+                ". Click a road: it sits across the carriageway (both ways) on a straight run of {:.0} m or more. Every car pays {:.1} (lorries double, buses and emergencies free) and slows to {:.0} km/h through it; drivers weigh the toll and some take another way. Set prices in City Data, Economy, Taxes.",
                 s.clearance() * 2.0 + 2.0,
                 s.default_price(),
                 s.speed() * 3.6

@@ -277,13 +277,13 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] FLAG (day 23): pedestrians and taxis stuck on the highway near (590, 408); Cass Baptiste waits for a cab that never comes for days [fix/ped-highway]
 - [x] FLAG (day 23): interchange with a street underpass came out as garbage, ramps re-routed, artifacts; clean interchanges (maybe a diamond tool) [fix/interchange] → DONE [fix/interchange]: ramp leads scale to the ramp (a fixed 40 m lead hairpinned short ramps onto the street under the highway), previews ease ramps as built, gore hatching stops with the ramp; streets crossing ramps pass under them; ends prefer their own level; paths never land on ramps; Road tool Interchange preset (diamond in two clicks, refusals pinned)
 - [ ] FLAG (day 23): footbridge over Umbra Parade left the crosswalk; nobody uses the bridge; cars stop for people on it [fix/footbridge]
-- [ ] One full-screen City Data pane (tabs City/Economy/Market/People/... with sub-tabs), consistent page style; tools stay floating [feat/city-data]
-- [ ] High quality: near-camera geometry washes out white in walk/close orbit [fix/haze]
+- [x] One full-screen City Data pane (tabs City/Economy/Market/People/... with sub-tabs), consistent page style; tools stay floating → DONE [feat/city-data]: City Data view (J, top bar), 5 tabs × 19 pages, one page style in ui/pane.rs; Lines/View/Saves/Help/Dev stay windows; API city_data {tab, sub, open, scroll}, old window names map to pages
+- [x] High quality: near-camera geometry washes out white in walk/close orbit [fix/haze] → DONE [fix/haze]: Bevy's volumetric fog painted its full unexposed ambient over anything a few metres from the camera; patched shader (render/volumetric_fog_city.wgsl). Also smoke/steam puffs fade out round the camera (no wash walking through smog). Look-dev follow-up on the same branch: street lamps cast light near the camera at night (40 High / 18 Medium / 0 Low), wet glossy roads in rain, fog tint and reach by climate/weather/mode, a thicker coal plume. Not done: Bevy Atmosphere (would mean retuning every light to physical units; the dome stays)
 - [ ] Fire engines park mid-road/junction at a scene; crew stand in traffic (from feat/fire-scene leftovers)
-- [ ] Ferry/docks need only water access, rail stations only track; each gets a connectable road stub to join the network later [feat/dock-access]
-- [ ] Ferry terminal on a civic zone took the zone's shape/look: unzone first, own footprint [feat/dock-access]
+- [x] Ferry/docks need only water access, rail stations only track; each gets a connectable road stub to join the network later [feat/dock-access]   → DONE [feat/dock-access]: a dock off any street lays a short inland access road (Port::stub) whose free end carries an amber "connect a road here" ring and label; stations on track alone are halts (trains call, nobody on or off); off-network docks/stations hire nobody, ferries sail empty, the inspector, Build hover card, alerts and remote `road_access` say so; joined, all works as before.
+- [x] Ferry terminal on a civic zone took the zone's shape/look: unzone first, own footprint [feat/dock-access]   → DONE [feat/dock-access]: docks and stations never inherit the clearing of what they bought out (they showed as the old civic building on its lot): drawn as themselves on their own footprint at once, zoned lots under them go; docks can now be bulldozed, giving the ground back to the plan.
 - [ ] Fishing boats actually go out, fish at grounds for hours, return and unload; berths empty while at sea [feat/fishing]
-- [ ] Selecting a ferry terminal highlights its routes; other routes dim; route list in the inspector [feat/ferry-routes]
+- [x] Selecting a ferry terminal highlights its routes; other routes dim; route list in the inspector [feat/ferry-routes] → DONE [feat/ferry-routes]: glowing route bands + chevrons + end labels, others dim; ferries/freighters selectable; inspector route rows (boats, headway, next boat, riders today, click flies there); ships now sail round islands instead of over them (`Landscape::sea_way`)
 - [x] FLAG (day 24): no lots along roads on a hilly island (slope ~0.42); zoning there impossible, no reason shown [fix/island-lots] → DONE [fix/island-lots]: parcels were clipped to `half_extent` (900 m) so streets past it (his island at y 1140-1340) had none; the clip and the built-ground raster now grow to take in every fronting street (to the map edge). Lots go on hillsides up to 70% (cut and filled to a pad at their street) with at most 18 m of rise across one lot; only cliffs/water are rough, with the reason shown. The Zone tool hover says why at the cursor where there is no parcel (water, too far from a road, past the buildable land).
 - [ ] People on an elevated path walk at ground level (even over water) under it; walkers/cars on raised ways must be drawn on the deck [fix/footbridge]
 - [x] People window grew every frame until it filled the screen → DONE [main 53c3a89]: histogram reserves the Lorenz chart's width; compact windows capped
@@ -302,7 +302,10 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 - [ ] Land-value and estate-pressure grids stop at half_extent+200; Walk camera clamped to half_extent+150 (island-lots leftovers)
 - [ ] A big generated city (2,168 lots) hit "memory allocation of 268435456 bytes failed" at day 10 under heavy machine load (committee agent) — check memory growth
-- [ ] fix/ped-highway merged with 2 failing tests (its last test; society_demo 911 borderline) — agent fixing
+- [x] fix/ped-highway's 2 failing tests → DONE: its test uses a lived-in city; society_demo drill now 7 fires (median 13 min, was decided by 4)
+
+- [ ] Dock/station joined only by a footpath counts as unconnected; zoning layer tints a dock's own lot civic blue (dock-access leftovers)
+- [ ] Ferry headway/next departure are estimates; two towns on the same map edge draw overlapping route bands (ferry-routes leftovers)
 
 ## Follow-ups noted in agent reports (not started)
 - [ ] Batteries charge on cheap night power and discharge at the evening peak (grid-weather)
@@ -316,13 +319,14 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Wind small-lot exception on unzoned sites with no lot yet (fixed in plant-scale? verify)
 - [ ] Tow trucks on a job may drive against one-ways and make U-turns (todo5; noted not done)
 - [ ] Rich owners own several homes/businesses/cars: selecting highlights everything they own; several map pins per person (todo5; "no data yet")
-- [ ] Look-dev leftovers: normal maps, Bevy atmosphere/sky and distance fog, street lamps casting light, wet roads (todo5)
+- [x] Look-dev leftovers → DONE [fix/haze]: lamp light (40/18/0 by tier), wet roads in rain, climate/weather/hour fog, coal smoke from walk view; normal maps already present. Left: Bevy Atmosphere (would need physical light units), building-lot lamps
 - [ ] Parking pressure makes parking businesses profitable so entrepreneurs build more parking lots (todo2, todo5; verify, likely missing)
 - [ ] A booted car gets towed away eventually (todo4; verify)
 - [ ] Crime can include murder (todo2; only theft/burglary/assault/vandalism now)
 - [ ] Industry on cheap land lifts land value a little (todo2; verify)
 - [ ] Moto gangs ride as a pack, reckless, weaving through traffic (todo2; verify)
-- [ ] Coal smoke visible from walk view (todo2; verify); wind farm sizes (now per lot — check the original complaint is answered)
+- [x] Coal smoke visible from walk view → DONE [fix/haze]
+- [ ] Wind farm sizes (now per lot — check the original complaint is answered)
 - [ ] A bought-out business moves to a new location instead of only closing (todo5)
 
 ## Questions for Harvey (unanswered)
@@ -333,15 +337,12 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 ## Agents running (update when starting/merging; survives context compaction)
 - fix/interchange: clean interchanges, ramp+street logic (started 2026-10-07 23:25)
 - fix/footbridge: footbridge replaces crosswalk (started 2026-10-08 00:00)
-- feat/city-data: full-screen City Data pane with tabs (started 2026-10-08 00:05)
-- fix/haze: white washout near the camera at High (started 2026-10-08 00:20)
-- feat/dock-access: docks/stations without road access, road stubs (started 2026-10-08 00:25)
 - feat/fishing: fishing trips (started 2026-10-08 00:35)
-- feat/ferry-routes: ferry route highlight (started 2026-10-08 00:40)
 - feat/econ-followups: batteries arbitrage, parking pressure → lots, industry lifts cheap land, relocating businesses, rich owners' holdings, wind small-lot check (started 2026-10-08)
 - feat/street-followups: tow trucks on a job (one-ways/U-turns), booted cars towed, murder, moto packs, fire engines park at the kerb (started 2026-10-08)
 - feat/freight: freight trains carry cargo, hydro/tidal scale (started 2026-10-08)
 - feat/mural-cleanup: murals on facades, clean-up tool, contamination spread (started 2026-10-08)
-- fix/haze (extended): + look-dev: normal maps, sky/atmosphere/fog, lamp light, wet roads, coal smoke in walk view
 - fix/interchange (extended): + road-polish leftovers: abutments, gore deck, signal arms, stop line, town street tapers
 - fix/false-block: false road refusal by a far plant; blockers in the plan preview (started 2026-10-08)
+- feat/supertall: supertall league (started 2026-10-08, from the queue)
+- feat/waterfront: waterfront parcels, beach businesses, private jetties, public beach zone (started 2026-10-08, from the queue)
