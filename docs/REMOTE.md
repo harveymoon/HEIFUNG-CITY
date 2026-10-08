@@ -711,6 +711,40 @@ was changed) and `editor_open`. Everything is saved with the city (`Traffic::jun
 {"cmd": "intersection", "at": [209, -149], "crossing": 700, "upgrade": "footbridge"}
 ```
 
+The reply also has `level_crossing` (null unless the junction's node lies on the railway; see
+below). At a level crossing that is no junction (a street straight over the track), `intersection`
+answers with `intersection: null` and the crossing as `level_crossing`.
+
+#### Level crossings: `level_crossings` [rail-crossing]
+
+Where a street or a footpath crosses the railway at grade. Streets of more than two lanes in all
+get half-barriers (an arm on the arriving traffic's right reaching over its lanes to the centre
+line, and a short gate over the pavement behind it), smaller streets flashing lights, a bell and
+crossbucks only, footpaths lights and small gates. The lights start 15 s before a train reaches the
+crossing, the arms start down 3 s later (5 s to come down), stay down while a train is over it and
+2 s after the last one clears, then rise (5 s). While the lights are on, vehicles stop at the stop
+line (one too close to stop goes on and clears it), walkers and cyclists at the edge of the track;
+a train never runs onto a crossing that is not closed with its box clear of vehicles (it waits; the
+count is `trains_held`).
+
+`level_crossings` lists every crossing; `{at: [x, y], radius?}` (default 60 m) or `{index}` returns
+the one as `crossing`. Each: `index`, `node`, `at`, `rail_dir`, `guard` (barriers | lights |
+footpath gates), `barriers`, `lanes` (of the widest street over it), `reach_m` (half its box along
+the track), `phase` (open | warning | lowering | closed | raising), `lights_flashing`,
+`closed_to_traffic`, `barrier_down` (0 up .. 1 down), `train_over`, `eta_s` (the next train),
+`trains_coming` [{train, seconds}], `vehicles_waiting`, `people_waiting` (this tick),
+`trains_last_hour`, `trains_per_hour` (over the last day), `trains_total`, `closures`, `closure_s`
+(the current or last closure), `average_closure_s`, `vehicles_held`, `average_wait_s` (per held
+vehicle), `trains_held`, `arms` [{segment, away (the way the arm leaves the crossing), lanes_in,
+lanes_out, path, stop_line_m (from the centre), barrier, barrier_length_m}]. Aliases `crossings`,
+`level_crossing`, `rail_crossings`. The cycle and counts are saved (serde defaults); the geometry is
+taken from the roads again on load. A vehicle stopped at one shows `why` `level_crossing`.
+
+```json
+{"cmd": "level_crossings"}
+{"cmd": "level_crossings", "at": [0, -480]}
+```
+
 `plan` also carries `will_refuse` (null, or word for word what implementing the active project
 would answer: a city structure its roads take, else no room for a raised road's columns), `blockers`
 (each structure as `{id, name, at, road_gesture, road, stretch, runs_over, reason}`: the planned road

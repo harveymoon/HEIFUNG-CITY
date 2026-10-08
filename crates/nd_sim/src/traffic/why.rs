@@ -62,6 +62,9 @@ pub enum StopReason {
     /// [scene] A tow truck at work off the lanes (against a one-way, or
     /// turning round).
     AtWork,
+    /// [rail-crossing] At a level crossing: its lights are on, a train is
+    /// coming or passing.
+    LevelCrossing,
     /// Standing still for none of the reasons above. Should not happen: a
     /// car showing this is a bug worth reporting.
     Unexplained,
@@ -104,6 +107,7 @@ impl StopReason {
             StopReason::InShow => "in_show",
             StopReason::Scene => "scene",
             StopReason::AtWork => "at_work",
+            StopReason::LevelCrossing => "level_crossing",
             StopReason::Unexplained => "unexplained",
         }
     }
@@ -133,6 +137,7 @@ impl StopReason {
             StopReason::InShow => "in a street takeover show".into(),
             StopReason::Scene => "held up at an emergency scene or a tow truck at work, no room to pass".into(),
             StopReason::AtWork => "a tow truck at work, slowly, hazard lights on".into(),
+            StopReason::LevelCrossing => "waiting at a level crossing for a train".into(),
             StopReason::Unexplained => "stopped for no reason the sim knows (a bug: please report it)".into(),
         }
     }
@@ -227,6 +232,7 @@ impl Traffic {
             Wait::Crashed => StopReason::Crashed { wrecked: false },
             Wait::Blocked if self.scene_zones().iter().any(|z| z.pos.distance(c.pos) < 60.0) => StopReason::Scene,
             Wait::Blocked => StopReason::Takeover,
+            Wait::RailCrossing => StopReason::LevelCrossing,
         };
         // A car rolling along behind another is not "held up" in any way a
         // player cares about; it is driving.

@@ -515,8 +515,11 @@ impl World {
             self.rail.last_freight_tick = tick;
         }
         let ids: Vec<TrainId> = self.rail.trains.keys().collect();
+        let waited = std::mem::take(&mut self.level_crossings.trains_waiting);
         for id in ids {
             let blocked = self.rail.blocked(id);
+            // [rail-crossing] Short of a crossing not yet closed and clear.
+            let crossing = self.crossing_hold(id);
             let branch_busy = self.rail.trains.iter().any(|(oid, o)| oid != id && o.on_branch());
             // A stop whose station or yard was pulled down is passed.
             while self.rail.trains[id].next_stop < self.rail.trains[id].stops.len() && !self.buildings.contains_key(self.rail.trains[id].stops[self.rail.trains[id].next_stop].0) {
@@ -546,7 +549,20 @@ impl World {
                         t.held = true;
                     }
                 }
+                let mut at_crossing = None;
+                if let Some((h, k)) = crossing.filter(|&(h, _)| h < limit && h < t.s + t.speed * seconds) {
+                    limit = h;
+                    at_crossing = Some(k);
+                }
                 t.s = (t.s + t.speed * seconds).min(limit);
+                if let Some(k) = at_crossing.filter(|_| t.s >= limit - 0.01) {
+                    self.level_crossings.trains_waiting.push(id);
+                    if !waited.contains(&id) {
+                        if let Some(c) = self.level_crossings.list.get_mut(k) {
+                            c.trains_held += 1;
+                        }
+                    }
+                }
                 if t.s >= target - 0.01 {
                     if t.next_stop < t.stops.len() { Some(true) } else { Some(false) }
                 } else {

@@ -1351,7 +1351,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         let paths_here = node.segments.iter().filter(|&&s| roads.segment(s).alive && roads.segment(s).kind == RoadKind::Path).count();
         let rails_here: Vec<SegmentId> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_rail()).collect();
         if !alive.is_empty() && !rails_here.is_empty() {
-            level_crossing(&mut g, pal, roads, node.pos, &alive, &rails_here);
+            level_crossing(&mut g, pal, roads, NodeId(i as u32), node.pos, &alive, &rails_here);
             continue;
         }
         if alive.len() == 2 && paths_here > 0 {
@@ -1807,7 +1807,7 @@ fn crossing_reach(roads: &RoadNetwork, node: NodeId, points: &[Vec2], start: boo
 
 /// Where track crosses a street: planks between the rails over the
 /// carriageway, crossbuck signs and barrier posts on both sides.
-fn level_crossing(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, at: Vec2, streets: &[SegmentId], rails: &[SegmentId]) {
+fn level_crossing(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, node: NodeId, at: Vec2, streets: &[SegmentId], rails: &[SegmentId]) {
     let Some(&street) = streets.first() else { return };
     let Some(&rail) = rails.first() else { return };
     let (sa, sb) = roads.segment_points(street);
@@ -1838,18 +1838,18 @@ fn level_crossing(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, at: Vec2
             }
         }
     }
-    // Signs and posts where the pavement meets the track.
-    for side in [-1.0f32, 1.0] {
-        for s2 in [-1.0f32, 1.0] {
-            let p = at + sd * side * (RAIL_HALF_WIDTH + 1.6) + s_right * s2 * (hw + SIDEWALK * 0.4);
-            g.part(Matte).boxed(Vec3::new(p.x, 1.6, p.y), Vec3::new(0.1, 3.2, 0.1), 0.0, rgba(mul(pal.steel, 0.6)));
-            let yaw = sd.y.atan2(sd.x);
-            g.part(Matte).boxed(Vec3::new(p.x, 3.0, p.y), Vec3::new(1.2, 0.18, 0.04), yaw + 0.6, rgba(pal.chalk));
-            g.part(Matte).boxed(Vec3::new(p.x, 3.0, p.y), Vec3::new(1.2, 0.18, 0.04), yaw - 0.6, rgba(pal.chalk));
-            g.part(Glow).boxed(Vec3::new(p.x, 2.4, p.y), Vec3::new(0.22, 0.22, 0.1), yaw, rgba(pal.warning_light));
-            // Barrier arm, raised.
-            g.part(Matte).boxed(Vec3::new(p.x, 2.2, p.y), Vec3::new(0.12, 2.8, 0.12), 0.0, rgba(pal.chalk));
-            g.part(Matte).boxed(Vec3::new(p.x, 2.6, p.y), Vec3::new(0.14, 0.4, 0.14), 0.0, rgba(mul(pal.warning_light, 0.4)));
+    // [rail-crossing] Stop lines across the arriving lanes, clear of the
+    // track (the lanes end there: `nd_sim::level_crossing::stop_radius`).
+    // The posts, lamps and barriers are the app's (`crate::crossing`).
+    if let Some(c) = nd_sim::level_crossing::at(roads, node) {
+        for a in c.arms.iter().filter(|a| !a.path && a.lanes_in > 0) {
+            let h = a.heading();
+            let right = Vec2::new(-h.y, h.x);
+            let total = (a.lanes_in + a.lanes_out) as f32;
+            let p = at + a.away * (a.stop + 1.0);
+            let (from, to) = (-total * 0.5 * LANE_WIDTH + a.lanes_out as f32 * LANE_WIDTH, total * 0.5 * LANE_WIDTH);
+            let from = if a.lanes_out > 0 { from + 0.15 } else { from };
+            g.part(Paint).ground_strip(&[p + right * from, p + right * to], 0.45, MARK_Y + 0.003, rgba(mul(pal.lane_marker, 1.0)));
         }
     }
 }

@@ -203,6 +203,16 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, sid: nd
         }
     }
 
+    // [rail-crossing] A level crossing at either end.
+    if !compact {
+        let seg = w.roads.segment(sid);
+        for node in [seg.a, seg.b] {
+            if let Some(c) = w.level_crossings.at_node(node) {
+                level_crossing(ui, w, c);
+            }
+        }
+    }
+
     // What stands on it.
     if !compact {
         let mut on = Vec::new();
@@ -248,6 +258,42 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, sid: nd
         });
     }
     None
+}
+
+/// [rail-crossing] A level crossing's section: its guard, where it is in
+/// its cycle, the trains coming and its counts.
+fn level_crossing(ui: &mut egui::Ui, w: &nd_sim::World, c: &nd_sim::level_crossing::LevelCrossing) {
+    use nd_sim::level_crossing::{CrossingGuard, CrossingPhase};
+    section(ui, "LEVEL CROSSING");
+    let guard = match c.guard {
+        CrossingGuard::Barriers => "Half-barriers, flashing lights and a bell",
+        CrossingGuard::Lights => "Flashing lights and a bell (no barriers on a street of two lanes or fewer)",
+        CrossingGuard::Footpath => "Flashing lights and gates across the path",
+    };
+    hint(ui, guard);
+    let arms = c.guard.has_arms();
+    let (state, col) = match c.phase {
+        CrossingPhase::Open => ("Open: lights out, traffic passes", GOOD),
+        CrossingPhase::Warning => ("Lights flashing: a train is coming", FAIR),
+        CrossingPhase::Lowering => (if arms { "Barriers coming down" } else { "Lights flashing: a train is coming" }, WARN),
+        CrossingPhase::Closed => (if c.occupied { "Closed: a train is passing" } else { "Closed: the train is close" }, WARN),
+        CrossingPhase::Raising => (if arms { "Barriers going up" } else { "Lights about to go out" }, FAIR),
+    };
+    ui.label(egui::RichText::new(state).color(col).strong());
+    if c.shut() && (c.vehicles_waiting > 0 || c.people_waiting > 0) {
+        hint(ui, &format!("{} and {} waiting, shut {:.0} s so far", plural(c.vehicles_waiting, "vehicle", "vehicles"), plural(c.people_waiting, "walker or cyclist", "walkers and cyclists"), c.closure_seconds));
+    }
+    if let Some(&(_, secs)) = w.trains_coming(c).first() {
+        hint(ui, &format!("Next train in about {secs:.0} s"));
+    }
+    let now = w.clock.tick;
+    ui.label(egui::RichText::new(format!("{} in the last hour, {:.1} an hour over the day, {} in all", plural(c.trains_last_hour(now) as u32, "train", "trains"), c.trains_per_hour(now), c.trains_total)).small());
+    if c.closures > 0 {
+        ui.label(egui::RichText::new(format!("Shut {:.0} s a time on average; vehicles wait {:.0} s on average ({} held)", c.average_closure(), c.average_wait(), c.vehicles_held)).small());
+    }
+    if c.trains_held > 0 {
+        hint(ui, &format!("Trains slowed for it: {} (something was still on it, or the barriers were late)", c.trains_held));
+    }
 }
 
 /// "Avenue · 2 + 2 lanes · 50 km/h · 120 m · at grade".

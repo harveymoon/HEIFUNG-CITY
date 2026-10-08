@@ -72,6 +72,10 @@ pub mod poses;
 /// [clarity] Origins and destinations, crews, crash sites.
 pub mod journeys;
 mod kerbside;
+/// [rail-crossing] Level crossings: lights, barriers, who waits.
+mod level_crossings;
+#[cfg(test)]
+mod level_crossing_tests;
 #[cfg(test)]
 mod ped_highway_tests;
 mod pillars;
@@ -435,6 +439,9 @@ pub struct World {
     pub transit: Transit,
     #[serde(default)]
     pub rail: Rail,
+    /// [rail-crossing] Level crossings: their cycles and counts.
+    #[serde(default)]
+    pub level_crossings: crate::level_crossing::LevelCrossings,
     /// Stations and yards placed as pieces, with their own lots.
     #[serde(default)]
     pub facilities: SlotMap<FacilityId, Facility>,
@@ -722,6 +729,7 @@ impl World {
             weather: Weather::default(),
             transit: Transit::default(),
             rail: Rail::default(),
+            level_crossings: Default::default(),
             facilities: SlotMap::with_key(),
             economy,
             services: crate::services::Services::default(),
@@ -1372,6 +1380,8 @@ impl World {
     fn step_traffic(&mut self) {
         // [fire-scene] What stands at the roadside for the traffic to pass.
         self.set_traffic_scenes();
+        // [rail-crossing] Lights and barriers for the trains coming.
+        self.step_level_crossings();
         let arrived = self.traffic.step(self.config.traffic_seconds_per_tick, self.config.traffic_substeps);
         // [tolls] Before anyone arriving is taken off the road.
         self.settle_tolls();

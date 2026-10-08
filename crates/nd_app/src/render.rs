@@ -97,6 +97,8 @@ mod social;
 mod cleanup;
 mod solar;
 mod turbines;
+/// [rail-crossing] Level crossing lamps and barrier arms.
+mod crossings;
 /// [taxis] Cabs in their yards, at ranks and kerbs; yard signs.
 mod taxis;
 /// [waterfront] Private jetties off waterfront lots.
@@ -504,6 +506,8 @@ impl Plugin for RenderPlugin {
         // Drone taxis and helicopters, after the buildings whose pads they land on.
         app.init_resource::<air::AirState>().add_systems(Update, air::sync_air.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, check_car_bodies.after(lift_movers).in_set(SimSet::Sync));
+        // [rail-crossing] Level crossing gear: flashing lamps, swinging arms.
+        app.add_systems(Update, crossings::sync_crossings.after(sync_trains).before(update_daylight).in_set(SimSet::Sync));
         app.add_systems(Update, sky::sync_sky.after(update_daylight).in_set(SimSet::Sync));
         // [look] Street lamps that light the road at night, wet roads in
         // the rain, and the fog's reach by climate and weather.
