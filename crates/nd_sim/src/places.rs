@@ -103,7 +103,7 @@ pub fn is_place(b: &Building) -> bool {
     if b.service.is_some() || b.is_power() || b.rail.is_some() || b.port.is_some() {
         return false;
     }
-    b.land_use == LandUse::Park || b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::Venue | BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop))
+    b.land_use == LandUse::Park || b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::Venue | BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Cafe | BusinessKind::Bookshop))
 }
 
 /// The vibe of a place: venues by the word in their name and their tier
@@ -114,8 +114,8 @@ pub fn vibe_of(b: &Building) -> Vibe {
     }
     match b.business.as_ref().map(|z| z.kind) {
         Some(BusinessKind::Grocery) => return Vibe::Grocer,
-        Some(BusinessKind::Bakery) => return Vibe::Cafe,
-        Some(BusinessKind::GadgetShop) => return Vibe::Boutique,
+        Some(BusinessKind::Bakery | BusinessKind::Cafe) => return Vibe::Cafe,
+        Some(BusinessKind::GadgetShop | BusinessKind::Bookshop) => return Vibe::Boutique,
         _ => {}
     }
     let n = b.name.as_str();

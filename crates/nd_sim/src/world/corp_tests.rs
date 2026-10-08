@@ -399,7 +399,7 @@ fn students_bring_trade_to_pizza_places_and_bars_by_campus() {
     assert!(w.corps.stats.student_trade_today > 0.0);
     // A new shop by a busy campus opens as a pizza place (half the plots).
     let picks: Vec<Option<BusinessKind>> = shops.iter().filter(|l| w.lots[**l].center.distance(at) <= CAMPUS_REACH).map(|l| w.campus_business(*l, LandUse::Commercial)).collect();
-    assert!(picks.iter().any(|k| *k == Some(BusinessKind::Bakery)), "{picks:?}");
+    assert!(picks.iter().any(|k| matches!(k, Some(BusinessKind::Bakery | BusinessKind::Cafe | BusinessKind::Bookshop))), "{picks:?}");
     assert!(w.campus_business(far_lot, LandUse::Commercial).is_none());
     // At night, students living here go out to a haunt near campus.
     let stand_ins = std::mem::take(&mut w.corps.campuses[0].students);
@@ -558,4 +558,79 @@ fn an_old_save_loads_with_no_corps_and_runs() {
     }
     let again = World::from_ron(&w.to_ron().unwrap()).expect("and saves again");
     assert_eq!(again.corps.rules, w.corps.rules);
+}
+
+// ── [sweep-sim] megacorp leftovers ──────────────────────────────────────
+
+#[test]
+fn a_local_student_leaves_the_family_home_for_a_dorm() {
+    let (mut w, _) = campus_town();
+    people(&mut w);
+    for _ in 0..30 {
+        w.clock.tick += 1440;
+        w.daily_campuses();
+        let sites: Vec<BuildingId> = w.corps.campuses[0].annexes.iter().map(|(b, _)| *b).filter(|b| w.buildings[*b].construction.is_some()).collect();
+        for s in sites {
+            w.finish_construction(s);
+        }
+    }
+    let dorm = w.corps.campuses[0].annexes.iter().find(|(_, a)| *a == Annex::Dorm).map(|(b, _)| *b).expect("a dorm");
+    // A family: a parent and a child of student age who wants a dorm.
+    let (hid, kid) = w
+        .households
+        .iter()
+        .filter(|(_, h)| h.members.len() >= 2 && h.home.is_some_and(|x| x != dorm))
+        .find_map(|(id, h)| h.members.iter().copied().find(|m| unit(mix(w.citizens[*m].seed, 0xD0_4E)) < super::campus::LOCAL_DORM_SHARE).map(|m| (id, m)))
+        .expect("a family with a would-be boarder");
+    let parent = w.households[hid].members.iter().copied().find(|m| *m != kid).unwrap();
+    w.citizens[kid].age = 20;
+    w.citizens[parent].age = 47;
+    w.citizens[kid].activity = Activity::AtHome;
+    if !w.corps.campuses[0].students.contains(&kid) {
+        w.corps.campuses[0].students.push(kid);
+    }
+    let family_home = w.citizens[kid].home.unwrap();
+    if w.buildings[dorm].free_homes() == 0 {
+        w.buildings[dorm].homes += 1;
+    }
+    let left_before = w.corps.stats.students_left_home_total;
+    let mut free = vec![dorm];
+    let moved = w.students_leave_home(0, &mut free);
+    assert!(moved >= 1);
+    let c = &w.citizens[kid];
+    assert_eq!(c.home, Some(dorm), "moved into the dorm");
+    let own = c.household.unwrap();
+    assert_ne!(own, hid, "a household of their own");
+    assert_eq!(w.households[own].members, vec![kid]);
+    assert!(!w.households[hid].members.contains(&kid), "left the family's");
+    assert!(w.households[hid].members.contains(&parent));
+    assert!(!w.buildings[family_home].residents.contains(&kid));
+    assert!(w.buildings[dorm].residents.contains(&kid));
+    assert_eq!(w.corps.stats.students_left_home_total, left_before + 1);
+    assert!(left_before > 0, "locals moved out on their own over the month too");
+    // A dorm rent, discounted.
+    assert!(w.rent_due(own, dorm) < w.buildings[dorm].rent);
+}
+
+#[test]
+fn a_corp_opens_varied_trades_on_land_it_buys() {
+    let mut w = two_streets();
+    w.add_zone(rect(-650.0, -68.0, 600.0, 60.0), LandUse::Entertainment);
+    let (a, _) = firm(&mut w, 600.0, 10);
+    assert_eq!(w.promote_to_corp(a), Ok(0));
+    let lots = free_lots(&w, LandUse::Entertainment);
+    assert!(lots.len() >= 3, "entertainment plots: {}", lots.len());
+    let mut kinds = Vec::new();
+    for l in lots.into_iter().take(3) {
+        let b = w.corp_build_on(l, 0).expect("built");
+        assert!(!w.buildings[b].name.ends_with("Venue"), "named like a bar: {}", w.buildings[b].name);
+        kinds.push(w.buildings[b].business.as_ref().unwrap().kind);
+    }
+    kinds.sort_by_key(|k| k.index());
+    kinds.dedup();
+    assert_eq!(kinds.len(), 3, "three different trades: {kinds:?}");
+    // Cafés and bookshops sell over the counter.
+    assert_eq!(BusinessKind::Cafe.walk_in_sale(), Some(Resource::BakedGoods));
+    assert_eq!(BusinessKind::Bookshop.walk_in_sale(), Some(Resource::Goods));
+    assert!(BusinessKind::Cafe.student_trade() && BusinessKind::Bookshop.student_trade());
 }

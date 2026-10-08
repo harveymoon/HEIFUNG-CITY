@@ -1397,8 +1397,8 @@ impl World {
     fn group_base(&self, kind: GroupKind, members: &[CitizenId]) -> Option<BuildingId> {
         let want = |b: &Building| match kind {
             GroupKind::SportsClub | GroupKind::Garden => b.land_use == LandUse::Park,
-            GroupKind::Neighbourhood => b.land_use == LandUse::Park || b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Bakery),
-            GroupKind::BookClub => b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::Bakery | BusinessKind::Venue)),
+            GroupKind::Neighbourhood => b.land_use == LandUse::Park || b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::Bakery | BusinessKind::Cafe)),
+            GroupKind::BookClub => b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::Bakery | BusinessKind::Venue | BusinessKind::Cafe | BusinessKind::Bookshop)),
             _ => b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Venue),
         };
         let mut score: BTreeMap<BuildingId, f32> = BTreeMap::new();

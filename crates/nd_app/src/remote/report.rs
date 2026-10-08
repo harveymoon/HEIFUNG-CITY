@@ -1074,7 +1074,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
         let at = building_pos(w, b);
         if b.construction.is_none() {
             if let Some(z) = &b.business {
-                let food = matches!(z.kind, BusinessKind::Grocery | BusinessKind::Bakery);
+                let food = matches!(z.kind, BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::Cafe);
                 if z.closed {
                     closed.add(k.clone(), at);
                 } else {

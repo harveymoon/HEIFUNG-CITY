@@ -110,7 +110,8 @@ fn order_of(kind: BusinessKind) -> Option<(Resource, f32)> {
     match kind {
         BusinessKind::Grocery => Some((Resource::Groceries, 4.0)),
         BusinessKind::Bakery => Some((Resource::BakedGoods, 2.0)),
-        BusinessKind::GadgetShop => Some((Resource::Goods, 1.0)),
+        BusinessKind::GadgetShop | BusinessKind::Bookshop => Some((Resource::Goods, 1.0)),
+        BusinessKind::Cafe => Some((Resource::BakedGoods, 1.0)),
         _ => None,
     }
 }
