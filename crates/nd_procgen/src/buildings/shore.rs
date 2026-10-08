@@ -52,7 +52,6 @@ pub struct BeachLook {
 
 const SAND: [f32; 3] = [0.74, 0.66, 0.48];
 const WHITE: [f32; 3] = [0.9, 0.89, 0.85];
-const POOL: [f32; 3] = [0.08, 0.62, 0.78];
 const POOL_GLOW: [f32; 3] = [0.15, 1.1, 1.4];
 const WARM: [f32; 3] = [1.6, 1.1, 0.55];
 const TORCH: [f32; 3] = [2.2, 0.9, 0.25];
@@ -115,10 +114,8 @@ fn torch(g: &mut Geometry, f: &Frame, p: Vec2, y: f32) {
 fn pool(g: &mut Geometry, f: &Frame, r: &R, y: f32) {
     let c = r.c();
     f.bx(g, Paving, c.x, y + 0.06, c.y, Vec3::new(r.w() + 1.2, 0.12, r.d() + 1.2), [0.85, 0.84, 0.8]);
-    f.bx(g, Glass, c.x, y + 0.14, c.y, Vec3::new(r.w(), 0.04, r.d()), POOL);
-    // The underwater lights: a glowing sheet just under the surface reads
-    // as lit water at night and turquoise by day.
-    f.bx(g, Glow, c.x, y + 0.1, c.y, Vec3::new(r.w() * 0.96, 0.02, r.d() * 0.96), mul(POOL_GLOW, 0.55));
+    // The water lit from below: turquoise by day, glowing at night.
+    f.bx(g, Glow, c.x, y + 0.13, c.y, Vec3::new(r.w(), 0.04, r.d()), mul(POOL_GLOW, 0.55));
     f.bx(g, Metal, r.u0 + 0.6, y + 0.6, r.v0 + 0.2, Vec3::new(0.5, 0.9, 0.06), [0.75, 0.76, 0.78]);
 }
 

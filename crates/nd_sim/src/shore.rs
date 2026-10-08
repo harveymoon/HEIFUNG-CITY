@@ -117,6 +117,23 @@ pub fn beach_name(seed: u64) -> String {
     format!("{} {}", FIRST[(h % 16) as usize], LAST[((h >> 8) % 6) as usize])
 }
 
+/// A waterfront trade's name from its seed (fictional, like every name in
+/// the city), or None for any other business.
+pub fn trade_name(kind: crate::market::BusinessKind, seed: u64) -> Option<String> {
+    use crate::market::BusinessKind as B;
+    const PLACE: [&str; 12] = ["Coral", "Lagoon", "Tidewater", "Neon Tide", "Seaglass", "Moonwake", "Palmetto", "Saltwind", "Azure", "Driftline", "Halcyon", "Brightwater"];
+    let h = mix(seed, 0x7EAD);
+    let place = PLACE[(h % PLACE.len() as u64) as usize];
+    let pick = |v: &[&str]| v[((h >> 8) % v.len() as u64) as usize].to_string();
+    Some(match kind {
+        B::BeachResort => format!("{place} {}", pick(&["Resort", "Beach Resort", "Bay Resort", "Sands Resort", "Club"])),
+        B::PierRestaurant => format!("{} {place}", pick(&["The Pier at", "Salt & Ember,", "Tables at", "Oyster Deck,"])),
+        B::BeachBar => format!("{place} {}", pick(&["Beach Bar", "Shack", "Tiki Bar", "Cabana Bar"])),
+        B::BoatRental => format!("{place} {}", pick(&["Boat Hire", "Kayaks & Pedalos", "Watersports", "Paddle Co."])),
+        _ => return None,
+    })
+}
+
 fn mix(a: u64, b: u64) -> u64 {
     let mut x = a.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
     x ^= x >> 31;

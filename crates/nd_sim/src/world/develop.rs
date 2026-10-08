@@ -790,6 +790,10 @@ impl World {
             }
             let jobs = b.jobs;
             b.business = Some(Business::new(kind, jobs));
+            // [waterfront] the shore's trades are named for the water
+            if let Some(n) = crate::shore::trade_name(kind, b.seed) {
+                b.name = n;
+            }
         }
         // Nothing opens overnight: the lot becomes a building site first.
         b.construction = Some(Construction::new(Construction::days_for(floors, tier)));
