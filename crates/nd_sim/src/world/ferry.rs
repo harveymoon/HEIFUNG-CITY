@@ -86,15 +86,22 @@ impl World {
             return;
         }
         let aboard: Vec<TouristId> = self.tourism.tourists.iter().filter(|(_, t)| matches!(t.state, TouristState::Aboard { terminal: x, .. } if x == terminal)).map(|(id, _)| id).collect();
+        // [ferry-routes] Everyone off the boat rode the route in.
+        let n = aboard.len() as u32;
         for id in aboard {
             self.disembark(id, terminal);
         }
+        let before = self.ports.commuters_today.get(&terminal).copied().unwrap_or(0);
         self.commuters_off_the_boat(terminal);
+        let n = n + self.ports.commuters_today.get(&terminal).copied().unwrap_or(0).saturating_sub(before);
         let back: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::Abroad { terminal: x, until, .. } if x == terminal && until <= tick)).map(|(id, _)| id).collect();
+        let n = n + back.len() as u32;
         for id in back {
             self.home_from_day_trip(id);
         }
-        let _ = town;
+        if n > 0 {
+            self.ports.count_line_riders(terminal, None, Some(town), n);
+        }
     }
 
     /// A visitor or commuter steps off the boat at `terminal` and heads for

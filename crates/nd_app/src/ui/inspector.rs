@@ -13,7 +13,7 @@ use crate::tools::Selection;
 /// The inspector window on a selected building or car, on the right where
 /// the person pane opens too. Closing it deselects.
 pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
-    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_)) {
+    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_) | Selection::Ship(_)) {
         return;
     }
     let mut open = true;
@@ -27,6 +27,10 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
         .vscroll(true)
         .show(ctx, |ui| {
             show(ui, p.sim, p.selection, p.assets);
+            // [ferry-routes] A click on a route flies to its far end.
+            if let Some(at) = super::ferry::take_fly(ui.ctx()) {
+                p.fly_to = Some(at);
+            }
             ui.separator();
             // [camera] Follow it, or fly to it.
             super::follow::camera_buttons(ui, p.sim, *p.selection, p.follow, p.fly, p.mode);
@@ -143,6 +147,8 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
         Selection::Bot(id) => bot(ui, &sim.world, selection, id),
         // [fire-scene]
         Selection::Unit(id) => unit(ui, sim, selection, assets, id),
+        // [ferry-routes]
+        Selection::Ship(id) => super::ferry::ship_card(ui, &sim.world, selection, id),
         // [train-inspect]
         Selection::Train(_) | Selection::Metro(_) => super::train::show(ui, &sim.world, selection, assets),
         Selection::Parked(vid) => {
@@ -633,18 +639,8 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
         hint(ui, todo);
         hint(ui, problem.split("; ").nth(1).unwrap_or(""));
     }
-    // [ferries] The towns off the map its boats run to.
-    if b.port == Some(nd_sim::ports::PortKind::FerryTerminal) {
-        section(ui, "FERRIES");
-        let towns = w.ferry_towns(id);
-        let waiting = w.ports.boarding.get(&id).copied().unwrap_or(0);
-        if towns.is_empty() {
-            ui.label("its water does not reach the edge of the map, so no boats run off it");
-        } else {
-            let list: Vec<String> = towns.iter().map(|t| format!("{} ({}, {:.0} km)", t.name, t.edge.label(), t.km)).collect();
-            ui.label(format!("ferries to {} · {waiting} waiting to board", list.join(", ")));
-        }
-    }
+    // [ferries] [ferry-routes] Its routes: where to, the boats, the next one.
+    super::ferry::dock_routes(ui, w, id);
     if let Some(link) = &b.rail {
         let joined = if link.works() { "" } else if !link.rail_connected { " · NOT CONNECTED TO THE RAILWAY" } else { " · NOT CONNECTED TO THE ROADS" };
         section(ui, "RAIL");

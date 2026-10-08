@@ -26,6 +26,8 @@ mod sim;
 mod stub_marks;
 mod tools;
 mod train_select;
+/// [ferry-routes] Ferry routes on the water when a terminal or ship is selected.
+mod ferry_select;
 mod ui;
 
 use bevy::prelude::*;
@@ -74,6 +76,7 @@ fn main() {
             committee::CommitteePlugin,
             build_highlight::BuildHighlightPlugin,
             stub_marks::StubMarksPlugin,
+            ferry_select::FerrySelectPlugin,
         ))
         .run();
 }

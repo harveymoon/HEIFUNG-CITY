@@ -1375,6 +1375,7 @@ impl World {
                     self.economy.credit_item(Flow::BusFares, fares, Item::Building(b));
                     self.ports.stats.ferry_riders_today += riders;
                     self.ports.stats.ferry_fares_today += fares;
+                    self.ports.count_line_riders(b, to, remote, riders);
                     self.ports.ships.insert(Ship { kind: ShipKind::Ferry, path, s: 0.0, prev_s: 0.0, speed, dwell: ports::FERRY_DWELL, port: b, to, cargo: Vec::new(), passengers: riders, docked: false, berth_s, color: 0, remote, home: false });
                     self.ports.ports[*pid].last_sailing = tick;
                     self.ports.ports[*pid].sailings += 1;
@@ -1426,6 +1427,7 @@ impl World {
         s.day_trippers_back_today = 0;
         self.ports.commuters_today.clear();
         self.ports.trips_today.clear();
+        self.ports.line_riders.clear();
     }
 }
 

@@ -644,6 +644,8 @@ pub enum Selection {
     /// [fire-scene] An emergency unit: a fire engine, police car or
     /// ambulance, on the road or standing on scene (`fire_scene`).
     Unit(nd_sim::UnitId),
+    /// [ferry-routes] A ferry or freighter on the water (`world.ports.ships`).
+    Ship(nd_sim::ports::ShipId),
 }
 
 pub struct ToolsPlugin;
@@ -1453,6 +1455,10 @@ fn pick_any(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
         (_, Some((_, id))) => return Selection::Citizen(id),
         _ => {}
     }
+    // [ferry-routes] A ferry or freighter, by its drawn hull.
+    if let Some((_, id)) = crate::ferry_select::pick(w, p, f) {
+        return Selection::Ship(id);
+    }
     // [toll-inspect] A toll booth (a vehicle in it was picked above).
     if let Some(id) = crate::toll_select::pick(w, p) {
         return Selection::Toll(id);
@@ -1853,6 +1859,8 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
         }
         // [train-inspect] drawn by `crate::train_select::draw`.
         Selection::Train(_) | Selection::Metro(_) => {}
+        // [ferry-routes] drawn by `crate::ferry_select`, with its route.
+        Selection::Ship(_) => {}
         Selection::Building(b) => {
             lot_outline(gizmos, w, b, 1.6, gold);
             // [plant-groups] A Sunfield or Wind Park is selected whole.
