@@ -440,10 +440,26 @@ impl RoadNetwork {
         // A vertex lying on a way it may meet (a height sample of one road
         // falling on another) splits it there: a crossing exactly at a
         // vertex is no crossing to the segment test.
+        // A street's vertex lying on the track at grade is a level crossing
+        // there ([road-polish]: the crossing test between pieces does not
+        // see a crossing at a piece's end, so the street used to pass under
+        // the track at grade, the track drawn floating over its lanes).
+        let level_crossing = |s: &Segment| s.kind == RoadKind::Rail && kind == RoadKind::Street;
         let on = self.nearest_where(p, |s| s.alive).filter(|&(sid, t, q)| {
             let s = self.segment(sid);
-            q.distance(p) < 0.5 && Self::joins(s.kind, kind) == Self::joins(kind, s.kind) && (s.kind == RoadKind::Rail) == (kind == RoadKind::Rail) && !grade_separated(s.is_highway(), self.segment_level(sid, t), highway, level)
+            q.distance(p) < 0.5 && ((s.kind == RoadKind::Rail) == (kind == RoadKind::Rail) || level_crossing(s)) && !grade_separated(s.is_highway(), self.segment_level(sid, t), highway, level)
         });
+        if let Some((sid, _, _)) = on {
+            // On one of the track's own nodes: cross there.
+            let s = self.segment(sid);
+            if level_crossing(s) {
+                for n in [s.a, s.b] {
+                    if self.node(n).pos.distance(p) < 0.5 {
+                        return n;
+                    }
+                }
+            }
+        }
         let id = self.push_node(p, level);
         if let Some((sid, _, _)) = on {
             self.split_segment(sid, id);
@@ -1389,6 +1405,25 @@ mod tests {
         assert_eq!(net.path(sa, sb).map(|p| p.len()), Some(3));
         // The rail ends are still the only rail leaves.
         assert_eq!(net.rail_leaf_nodes().len(), 2);
+    }
+
+    /// [road-polish] A street whose vertex lies exactly on the track (a
+    /// height sample or a bend falling on it) still crosses it at a level
+    /// crossing: the crossing test between pieces missed a crossing at a
+    /// piece's end, so the street ran under the track at grade, which was
+    /// drawn floating over its lanes on its bed (four places on the trunk
+    /// line in the grid-and-plaza example city).
+    #[test]
+    fn a_street_vertex_on_the_track_makes_a_level_crossing() {
+        for x in [5.0f32, 0.0] {
+            let mut net = RoadNetwork::default();
+            net.add_polyline_kind(&[Vec2::new(-100.0, 0.0), Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)], 0, 0, RoadKind::Rail);
+            net.add_polyline(&[Vec2::new(x, -100.0), Vec2::new(x, 0.0), Vec2::new(x + 3.0, 100.0)], 1, 1);
+            let crossing = net.node_near(Vec2::new(x, 0.0), 1.0).expect("a node on the track");
+            let kinds: Vec<RoadKind> = net.neighbors(crossing).map(|(_, s)| net.segment(s).kind).collect();
+            assert_eq!(kinds.iter().filter(|k| **k == RoadKind::Rail).count(), 2, "x {x}: the track runs through the crossing: {kinds:?}");
+            assert_eq!(kinds.iter().filter(|k| **k == RoadKind::Street).count(), 2, "x {x}: {kinds:?}");
+        }
     }
 
     #[test]
