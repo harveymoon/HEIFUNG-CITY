@@ -376,6 +376,66 @@ pub fn is_build_tool(tool: Tool) -> bool {
     matches!(tool, Tool::Road | Tool::Zone | Tool::Buildings | Tool::Transit | Tool::Rail | Tool::District)
 }
 
+// ── [build-highlight] what the map shows ────────────────────────────────────
+
+/// The kind a building is matched by: a service at its middle tier (a
+/// clinic and a hospital are both Health), anything else as it is.
+pub fn norm(p: Placeable) -> Placeable {
+    p.with_tier(Tier::Mid)
+}
+
+/// The kinds of building a section (or sub-section) lists, the ones already
+/// on the map get highlighted: everything that stands on a lot or by the
+/// track. Roads, zones, districts, lines and toll booths have none.
+pub fn highlight_kinds(cat: Cat, sub: Option<&str>) -> Vec<Placeable> {
+    groups(cat)
+        .into_iter()
+        .filter(|g| sub.is_none_or(|s| s == g.name))
+        .flat_map(|g| g.items)
+        .filter_map(|i| i.placeable())
+        .filter(|p| !matches!(p, Placeable::Toll(_)))
+        .map(norm)
+        .collect()
+}
+
+/// What the Build window asks the map to highlight: the section's kinds,
+/// the picked item (if it is one of them) strongly.
+pub fn highlight_sel(cat: Option<Cat>, sub: Option<&'static str>, tools: &ToolState) -> Option<crate::build_highlight::HighlightSel> {
+    let cat = cat?;
+    let kinds = highlight_kinds(cat, sub);
+    if kinds.is_empty() {
+        return None;
+    }
+    let focus = if is_build_tool(tools.tool) { current_item(tools).and_then(|i| i.placeable()).map(norm).filter(|p| kinds.contains(p)) } else { None };
+    Some(crate::build_highlight::HighlightSel { cat, sub, focus })
+}
+
+/// The remote API's `build_highlight {category}`: a section key ("power"),
+/// a sub-section ("safety", "parking") or a kind ("health", "police",
+/// "metro_station"), as the section, sub-section and item to show.
+pub fn resolve_highlight(name: &str) -> Option<(Cat, Option<&'static str>, Option<Item>)> {
+    let n = name.trim().to_ascii_lowercase().replace(['_', '-'], " ");
+    if let Some(cat) = Cat::parse(&n) {
+        return Some((cat, None, None));
+    }
+    let with_kinds = |f: &dyn Fn(&Group) -> bool| -> Option<(Cat, &'static str)> {
+        Cat::ALL.into_iter().find_map(|c| groups(c).into_iter().find(|g| f(g) && !highlight_kinds(c, Some(g.name)).is_empty()).map(|g| (c, g.name)))
+    };
+    if let Some((cat, g)) = with_kinds(&|g: &Group| g.name.eq_ignore_ascii_case(&n)) {
+        return Some((cat, Some(g), None));
+    }
+    if let Some(p) = Placeable::parse(&n.replace(' ', "_"), None).filter(|p| !matches!(p, Placeable::Toll(_))) {
+        for cat in Cat::ALL {
+            for g in groups(cat) {
+                if let Some(item) = g.items.iter().copied().find(|i| i.placeable().map(norm) == Some(norm(p))) {
+                    return Some((cat, Some(g.name), Some(item)));
+                }
+            }
+        }
+    }
+    with_kinds(&|g: &Group| g.name.to_ascii_lowercase().split([' ', ',']).any(|w| w == n)).map(|(c, g)| (c, Some(g), None))
+}
+
 // ── window state ────────────────────────────────────────────────────────────
 
 fn open_id() -> egui::Id {
@@ -428,6 +488,16 @@ pub fn show_section(ctx: &egui::Context, cat: Cat) {
     set_open(ctx, true);
 }
 
+/// [build-highlight] Open the window on a section and one of its
+/// sub-sections (None for all of it).
+pub fn show_sub(ctx: &egui::Context, cat: Cat, sub: Option<&'static str>) {
+    let mut st: State = ctx.data(|d| d.get_temp(state_id())).unwrap_or_default();
+    st.cat = Some(cat);
+    st.sub = sub;
+    ctx.data_mut(|d| d.insert_temp(state_id(), st));
+    set_open(ctx, true);
+}
+
 /// The section the window shows (for `status`).
 pub fn section_of(ctx: &egui::Context) -> Option<Cat> {
     ctx.data(|d| d.get_temp::<State>(state_id())).and_then(|s| s.cat)
@@ -468,6 +538,7 @@ const INFO_WIDTH: f32 = 330.0;
 pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: Rect) {
     follow_tools(ctx, p.tools);
     if !is_open(ctx) {
+        p.highlight.sel = None;
         return;
     }
     let mut st: State = ctx.data(|d| d.get_temp(state_id())).unwrap_or_default();
@@ -508,6 +579,8 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: Rect) {
             column(ui, tree_r, "build_tree", &mut |ui| tree(ui, &mut st));
             column(ui, grid_r, "build_grid", &mut |ui| hovered = grid(ui, p, &st));
             column(ui, info_r, "build_info", &mut |ui| {
+                // [build-highlight] What the section has on the map.
+                on_the_map(ui, p);
                 let shown = hovered.or(current_item(p.tools));
                 if let Some(item) = shown {
                     info(ui, p, item, hovered.is_some());
@@ -524,6 +597,8 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: Rect) {
                 }
             });
         });
+    // [build-highlight] The section's buildings on the map.
+    p.highlight.sel = if keep { highlight_sel(st.cat, st.sub, p.tools) } else { None };
     // Follow a pick made in the grid this frame.
     st.last = current_item(p.tools);
     st.last_tool = Some(p.tools.tool);
@@ -531,6 +606,46 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: Rect) {
     if !keep {
         close(ctx, p.tools);
     }
+}
+
+/// [build-highlight] The highlighted buildings in a line or two ("12
+/// hospitals · 84% of homes covered · 3 districts uncovered"), the colour
+/// key, and the uncovered places as buttons that fly the camera there.
+fn on_the_map(ui: &mut egui::Ui, p: &mut UiCtx) {
+    let Some(view) = p.highlight.view.clone() else { return };
+    if p.highlight.sel.is_none() {
+        return;
+    }
+    let s = &view.summary;
+    section(ui, "ON THE MAP");
+    ui.label(egui::RichText::new(&s.headline).small().color(IVORY));
+    for line in &s.detail {
+        ui.label(egui::RichText::new(line).small().weak());
+    }
+    if !s.legend.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            for (col, text) in &s.legend {
+                let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                ui.painter().rect_filled(r, 2.0, *col);
+                ui.label(egui::RichText::new(text).small().weak());
+                ui.add_space(4.0);
+            }
+        });
+    }
+    if !s.spots.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(4.0, 2.0);
+            ui.label(egui::RichText::new("uncovered:").small().weak());
+            for spot in s.spots.iter().take(6) {
+                let b = egui::Button::new(egui::RichText::new(format!("{} ({})", spot.name, spot.homes)).small().color(Color32::from_rgb(255, 140, 120))).frame(false);
+                if ui.add(b).on_hover_text("Fly there").clicked() {
+                    p.fly_to = Some(bevy::math::Vec2::new(spot.at.x, spot.at.y));
+                }
+            }
+        });
+    }
+    ui.add_space(4.0);
 }
 
 /// How far a sub-section sits in under its section in the tree.
@@ -873,6 +988,34 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn highlight_names_resolve_to_a_section_a_sub_section_or_a_kind() {
+        assert_eq!(resolve_highlight("power"), Some((Cat::Power, None, None)));
+        assert_eq!(resolve_highlight("safety"), Some((Cat::Services, Some("Safety"), None)));
+        assert_eq!(resolve_highlight("parking"), Some((Cat::Transit, Some("Parking"), None)));
+        let (cat, sub, item) = resolve_highlight("health").unwrap();
+        assert_eq!((cat, sub), (Cat::Services, Some("Health and education")));
+        assert_eq!(item.and_then(|i| i.placeable()).map(norm), Some(Placeable::Service(ServiceKind::Health, Tier::Mid)));
+        assert_eq!(resolve_highlight("police").map(|r| r.1), Some(Some("Safety")));
+        assert_eq!(resolve_highlight("metro_station").map(|r| (r.0, r.1)), Some((Cat::Transit, Some("Metro"))));
+        assert!(resolve_highlight("nonsense").is_none());
+        // Roads, zones and tolls put down no buildings to show.
+        assert!(highlight_kinds(Cat::Roads, None).is_empty());
+        assert!(highlight_kinds(Cat::Zoning, None).is_empty());
+        assert!(highlight_kinds(Cat::Transit, Some("Tolls")).is_empty());
+        assert!(!highlight_kinds(Cat::Rail, None).is_empty(), "stations and yards");
+    }
+
+    #[test]
+    fn a_picked_item_is_the_focus_only_inside_the_section_shown() {
+        let mut t = ToolState::default();
+        activate(Item::Place(Placeable::Service(ServiceKind::Health, Tier::High)), &mut t);
+        let sel = highlight_sel(Some(Cat::Services), Some("Health and education"), &t).unwrap();
+        assert_eq!(sel.focus, Some(Placeable::Service(ServiceKind::Health, Tier::Mid)));
+        assert_eq!(highlight_sel(Some(Cat::Services), Some("Safety"), &t).unwrap().focus, None);
+        assert!(highlight_sel(Some(Cat::Roads), None, &t).is_none());
     }
 
     #[test]

@@ -272,14 +272,75 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [x] Select a road segment in Inspect/Edit: lanes, speed, traffic now and hourly chart, congestion, wear/condition, repair cost and Repair now [feat/road-inspect] → DONE [feat/road-inspect]: Inspect click picks the piece (upper level at crossings), gold edge outline + faint run; card with traffic now, 72 h hourly counts, wear rate/next step, crews' queue, Repair now; Edit mode compact card; `select/inspect {road}`, `repair_road`
 - [x] Social layer: encounters and conversations build friendships/rivalries; friends meet up and help each other, enemies avoid and feud; crews/clubs form and make things (gigs, murals, gardens, startups, petitions); speech bubbles, person pane ties, Social window [feat/social] → DONE [feat/social]: `nd_sim::social` + `world/social.rs` (ties, bounded encounters, conversations, outings and calling round, jobs/flats/loans/moving in through friends, enemy avoidance, fights to the police, seven group kinds with gigs, matches, readings, murals, gardens, businesses, petitions and protests, splits); bubbles, person pane, People > Social tab, murals and gardens drawn; `social` API. Left: LLM dialogue lines for spotlight citizens.
 - [x] Visual QA pass on road structures: walk + orbit survey of junctions, overpasses, underpasses, bridges, ramps, tunnels; fix artifacts at the root, before/after shots [fix/road-polish] → DONE [fix/road-polish]: docs/qa/road_artifacts_2026-10-07.md (36 artifacts, 29 fixed: lane lines through junctions, pad discs, ramp X lines, fork corners, poles and furniture in lanes, level crossings, paths, dead ends, tapers, roundabout facets, bridge parapets, vents; open: High-tier haze whiteout, flat-map cuttings, bridge abutments, signal arms on slopes)
-- [ ] Fire scene: units on scene clickable with an inspector; crews climb out in turnout gear, hose lines and water streams, the engine's ladder raises and extends toward the fire [feat/fire-scene]
-- [ ] Build pane category highlights existing buildings of that kind with icons, plus their service areas, coverage % and gaps [feat/build-highlight]
+- [x] Fire scene: units on scene clickable with an inspector; crews climb out in turnout gear, hose lines and water streams, the engine's ladder raises and extends toward the fire [feat/fire-scene] → DONE [feat/fire-scene]: Selection::Unit + inspector/remote `units`/`inspect {unit}`; firefighter figures, hoses, instanced water, ladder rig with outriggers; 3-minute pack-up before leaving
+- [x] Build pane category highlights existing buildings of that kind with icons, plus their service areas, coverage % and gaps [feat/build-highlight]  → DONE [feat/build-highlight]: outlines + markers per kind, road-network service areas (additive overlap, homes left out in red), radius reaches, bus stop catchments, power output labels, summary with fly-to gaps, API build_highlight
 - [ ] FLAG (day 23): pedestrians and taxis stuck on the highway near (590, 408); Cass Baptiste waits for a cab that never comes for days [fix/ped-highway]
 - [ ] FLAG (day 23): interchange with a street underpass came out as garbage, ramps re-routed, artifacts; clean interchanges (maybe a diamond tool) [fix/interchange]
+- [ ] FLAG (day 23): footbridge over Umbra Parade left the crosswalk; nobody uses the bridge; cars stop for people on it [fix/footbridge]
+- [ ] One full-screen City Data pane (tabs City/Economy/Market/People/... with sub-tabs), consistent page style; tools stay floating [feat/city-data]
+- [ ] High quality: near-camera geometry washes out white in walk/close orbit [fix/haze]
+- [ ] Fire engines park mid-road/junction at a scene; crew stand in traffic (from feat/fire-scene leftovers)
+- [ ] Ferry/docks need only water access, rail stations only track; each gets a connectable road stub to join the network later [feat/dock-access]
+- [ ] Ferry terminal on a civic zone took the zone's shape/look: unzone first, own footprint [feat/dock-access]
+- [ ] Fishing boats actually go out, fish at grounds for hours, return and unload; berths empty while at sea [feat/fishing]
+- [ ] Selecting a ferry terminal highlights its routes; other routes dim; route list in the inspector [feat/ferry-routes]
+- [ ] FLAG (day 24): no lots along roads on a hilly island (slope ~0.42); zoning there impossible, no reason shown [fix/island-lots]
+- [ ] People on an elevated path walk at ground level (even over water) under it; walkers/cars on raised ways must be drawn on the deck [fix/footbridge]
+- [x] People window grew every frame until it filled the screen → DONE [main 53c3a89]: histogram reserves the Lorenz chart's width; compact windows capped
+- [x] Speech bubbles around town off → DONE [main 2b7c892]: off by default, View window checkbox, saved in settings.ron
+- [ ] FLAG (new city day 3): blue plan near Pylon Drive refused on Implement, "would take" a far-away geothermal plant, nothing outlined [fix/false-block]
+
+## Queued (Harvey 2026-10-08: add new requests here; start agents only as running ones finish)
+- [ ] Mega-corps: a company that grows big enough becomes a mega-corp (fictional), buys land in every kind of area and owns many industries and companies; procedural logo and colour shown on its skyscrapers, trucks and other buildings; owns employee housing; builds a headquarters tower; buys first what is closest by driving distance to HQ
+- [ ] Universities act like mega-corps around campus: buy nearby residential plots for dorms, build admin offices, theatres, sports facilities, frat houses on nearby plots, claim nearby parks as campus plaza; adjacency bonus with pizza shops and bars for students
+- [ ] Schools raise the desirability of nearby homes for families with children
+- [ ] Supertall league: much taller buildings on high-density, high-value land; mega-tall towers buy out adjacent lots for a big footprint (Empire State → Burj Khalifa scale); developers keep out-building each other for the city's tallest if city rules allow (height caps)
+- [ ] Waterfront: parcels along a road near the water reach all the way to the water's edge; waterfront businesses that thrive there (beach resorts, hotels, fancy on-the-water restaurants); fishing and shipping industries with water access can build their own small ports
+- [ ] Park paths are real paths: the path tool can snap to and connect them, and they join the walk network (and expand the pedestrian walking area around them)
+- [ ] "Public beach" zone paintable on any waterfront; people walk/relax on it if they can reach it (from a park, a road or a path)
+
+## Follow-ups noted in agent reports (not started)
+- [ ] Batteries charge on cheap night power and discharge at the evening peak (grid-weather)
+- [ ] Freight trains really carry their cargo instead of yards handing it to any train (train-inspect)
+- [ ] In-game Clean up button for contaminated land (API only now); contamination along rivers/downwind (dirty-industry)
+- [ ] Murals painted on the building facade, not a free-standing wall; LLM dialogue for spotlit citizens (social)
+- [ ] Bridge deck ends need abutments; ramp gore on a highway bridge has no deck; low signal arms on steep approaches; cars stop short of the stop line at sharp forks (road-polish)
+- [ ] Hydro/tidal still fixed size; huge 2-tower coal plant only seen in a unit test (plant-scale)
+- [ ] Town streets 2+2 into 1+1 step at the kerbs instead of tapering (lane-join)
+- [ ] One engine per fire; crew are station payroll names (fire-scene)
+- [ ] Wind small-lot exception on unzoned sites with no lot yet (fixed in plant-scale? verify)
+- [ ] Tow trucks on a job may drive against one-ways and make U-turns (todo5; noted not done)
+- [ ] Rich owners own several homes/businesses/cars: selecting highlights everything they own; several map pins per person (todo5; "no data yet")
+- [ ] Look-dev leftovers: normal maps, Bevy atmosphere/sky and distance fog, street lamps casting light, wet roads (todo5)
+- [ ] Parking pressure makes parking businesses profitable so entrepreneurs build more parking lots (todo2, todo5; verify, likely missing)
+- [ ] A booted car gets towed away eventually (todo4; verify)
+- [ ] Crime can include murder (todo2; only theft/burglary/assault/vandalism now)
+- [ ] Industry on cheap land lifts land value a little (todo2; verify)
+- [ ] Moto gangs ride as a pack, reckless, weaving through traffic (todo2; verify)
+- [ ] Coal smoke visible from walk view (todo2; verify); wind farm sizes (now per lot — check the original complaint is answered)
+- [ ] A bought-out business moves to a new location instead of only closing (todo5)
+
+## Questions for Harvey (unanswered)
+- [ ] Should parking lots the player places stop a road (like stations/plants) instead of being bought out?
+- [x] Cranes stand still 17:00–08:00 by design → ANSWERED 2026-10-08: keep as is.
+- [ ] Delete old todo2.md–todo5.md (their items were carried into todo.md)?
 
 ## Agents running (update when starting/merging; survives context compaction)
-- feat/fire-scene: fire scene crews, hoses, ladder (started 2026-10-07 evening)
-- feat/build-highlight: category highlights and service areas (started 2026-10-07 evening)
 - feat/committee: AI committee, mock backend first, Ollama/Claude connectors (started 2026-10-07 evening)
 - fix/ped-highway: pedestrians/taxis stranded on the highway (started 2026-10-07 23:20)
 - fix/interchange: clean interchanges, ramp+street logic (started 2026-10-07 23:25)
+- fix/footbridge: footbridge replaces crosswalk (started 2026-10-08 00:00)
+- feat/city-data: full-screen City Data pane with tabs (started 2026-10-08 00:05)
+- fix/haze: white washout near the camera at High (started 2026-10-08 00:20)
+- feat/dock-access: docks/stations without road access, road stubs (started 2026-10-08 00:25)
+- feat/fishing: fishing trips (started 2026-10-08 00:35)
+- feat/ferry-routes: ferry route highlight (started 2026-10-08 00:40)
+- fix/island-lots: no lots on hilly island roads (started 2026-10-08 00:50)
+- feat/econ-followups: batteries arbitrage, parking pressure → lots, industry lifts cheap land, relocating businesses, rich owners' holdings, wind small-lot check (started 2026-10-08)
+- feat/street-followups: tow trucks on a job (one-ways/U-turns), booted cars towed, murder, moto packs, fire engines park at the kerb (started 2026-10-08)
+- feat/freight: freight trains carry cargo, hydro/tidal scale (started 2026-10-08)
+- feat/mural-cleanup: murals on facades, clean-up tool, contamination spread (started 2026-10-08)
+- fix/haze (extended): + look-dev: normal maps, sky/atmosphere/fog, lamp light, wet roads, coal smoke in walk view
+- fix/interchange (extended): + road-polish leftovers: abutments, gore deck, signal arms, stop line, town street tapers
+- feat/committee (extended): + LLM dialogue for spotlit citizens and on-demand diaries
+- fix/false-block: false road refusal by a far plant; blockers in the plan preview (started 2026-10-08)

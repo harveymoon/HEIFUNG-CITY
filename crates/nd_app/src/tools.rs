@@ -671,6 +671,9 @@ pub enum Selection {
     /// [road-inspect] A street piece (kept on its piece through rebuilds by
     /// `road_select::keep_on_rebuild`).
     Road(nd_sim::SegmentId),
+    /// [fire-scene] An emergency unit: a fire engine, police car or
+    /// ambulance, on the road or standing on scene (`fire_scene`).
+    Unit(nd_sim::UnitId),
 }
 
 pub struct ToolsPlugin;
@@ -1430,6 +1433,15 @@ fn metro_click(sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, 
 /// The underground view draws only what is below ground, so there a click
 /// picks only a vehicle in a tunnel: nothing it could not see.
 pub(crate) fn pick(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
+    // [fire-scene] An emergency unit's car is the unit (its card follows it
+    // from the road onto the scene and back).
+    match pick_any(sim, p, depth) {
+        Selection::Car(id) => sim.world.services.unit_of_car(id).map_or(Selection::Car(id), Selection::Unit),
+        s => s,
+    }
+}
+
+fn pick_any(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
     let w = &sim.world;
     let f = sim.frac();
     let under = depth == Depth::Underground;
@@ -1454,6 +1466,16 @@ pub(crate) fn pick(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
     }
     if under {
         return car.map_or(Selection::None, |(_, id, _)| Selection::Car(id));
+    }
+    // [fire-scene] A firefighter at work (a click right on them), then a
+    // unit standing on scene or on a beat (out of traffic, so not a car).
+    if let Some((_, c)) = crate::fire_scene::pick_crew(w, &sim.building_tops, p, f).filter(|(d, _)| *d < 1.0) {
+        return Selection::Citizen(c);
+    }
+    if let Some((du, uid)) = crate::fire_scene::pick_standing(w, p) {
+        if car.is_none_or(|c| c.0 > du) {
+            return Selection::Unit(uid);
+        }
     }
     // People in the open (drivers are picked through their car).
     let person = w
@@ -1861,6 +1883,24 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
         Selection::Road(sid) => crate::road_select::draw(gizmos, w, sid),
         // [camera] drawn by `crate::marks`, with its route and its shop.
         Selection::Bot(_) => {}
+        // [fire-scene] A unit: its car's outline and route while it drives;
+        // standing, its body, and the building it is working at.
+        Selection::Unit(uid) => {
+            let Some(u) = w.services.units.get(uid) else { return };
+            if let Some(car) = u.car.filter(|c| w.traffic.cars.contains_key(*c)) {
+                draw_selection(gizmos, sim, Selection::Car(car));
+            } else if let Some((p, h)) = crate::fire_scene::unit_pose(w, uid, f) {
+                let (len, wid, tall) = match u.kind {
+                    nd_sim::UnitKind::FireEngine => (8.4, 2.9, 3.2),
+                    nd_sim::UnitKind::Ambulance => (6.3, 2.6, 2.7),
+                    nd_sim::UnitKind::PoliceCar => (5.0, 2.3, 1.9),
+                };
+                vehicle_outline(gizmos, p, h, len, wid, tall + w.surface_height(p), gold);
+            }
+            if let Some(i) = crate::fire_scene::unit_incident(w, uid).filter(|i| w.buildings.contains_key(i.building)) {
+                lot_outline(gizmos, w, i.building, 1.3, Color::linear_rgb(3.0, 0.9, 0.2));
+            }
+        }
         // [train-inspect] drawn by `crate::train_select::draw`.
         Selection::Train(_) | Selection::Metro(_) => {}
         Selection::Building(b) => {

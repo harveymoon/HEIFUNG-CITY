@@ -53,6 +53,8 @@ mod road;
 /// [taxis] Taxi companies and cargo hubs in the report and inspector.
 mod taxis;
 mod trains;
+// [fire-scene] Emergency units: inspect, select, list.
+mod units;
 mod view;
 mod window;
 
@@ -292,6 +294,8 @@ struct Ctx<'w, 's> {
     diagnostics: Res<'w, DiagnosticsStore>,
     commands: Commands<'w, 's>,
     claude: ResMut<'w, crate::flags::ClaudeFlags>,
+    /// [build-highlight] What the Build window's section shows on the map.
+    highlight: Res<'w, crate::build_highlight::BuildHighlight>,
 }
 
 fn remote_commands(inbox: Res<Inbox>, mut ctx: Ctx) {
@@ -606,6 +610,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "tolls" | "toll" => taxes::tolls(cmd, &mut ctx.sim.world),
         "incident" => incident(cmd, ctx),
         "incidents" => incidents(cmd, ctx),
+        "units" => Ok(units::units_list(&ctx.sim.world, opt_str(cmd, "kind")?, opt_bool(cmd, "out")?.unwrap_or(false), ctx.sim.frac())),
         "society" => society::command(cmd, &mut ctx.sim.world),
         // [social]
         "social" => social::command(cmd, &ctx.sim.world),
@@ -849,6 +854,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(v)
         }
         "export" => export(cmd, ctx),
+        "build_highlight" => build_highlight(cmd, ctx),
         "window" if req_str(cmd, "name").is_ok_and(|n| n.trim().eq_ignore_ascii_case("new_game") || n.trim().eq_ignore_ascii_case("new game")) => {
             let open = opt_bool(cmd, "open")?.unwrap_or(true);
             ctx.windows.new_game = Some(open);
@@ -1573,7 +1579,15 @@ fn incident(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             if !w.buildings.contains_key(b) {
                 return Err("no such building".into());
             }
-            if kind == "fire" { w.start_fire(b) } else { w.start_crime(b) }.ok_or("cannot start that here (already burning, a site, a park or a station)")?
+            let id = if kind == "fire" { w.start_fire(b) } else { w.start_crime(b) }.ok_or("cannot start that here (already burning, a site, a park or a station)")?;
+            // [fire-scene] Dev: start it already this big (0..1), for a fire
+            // that takes the engine a while to knock down.
+            if let Some(k) = opt_f32(cmd, "intensity")?.filter(|_| kind == "fire") {
+                if let Some(i) = w.services.incident_mut(id) {
+                    i.intensity = k.clamp(0.01, 1.0);
+                }
+            }
+            id
         }
         "medical" | "sick" => {
             let c = match field(cmd, "citizen") {
@@ -2048,7 +2062,16 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(v) = field(cmd, "car") {
         let id = key_from(v)?;
         let c = w.traffic.cars.get(id).ok_or("no such car")?;
-        return Ok(json!({ "car": car_detail(w, id, c) }));
+        let mut v = json!({ "car": car_detail(w, id, c) });
+        // [fire-scene] An emergency unit's car: the unit card as well.
+        if let Some(uid) = w.services.unit_of_car(id) {
+            v["unit"] = units::unit_detail(&ctx.sim, uid, &ctx.assets.rules).unwrap_or(Value::Null);
+        }
+        return Ok(v);
+    }
+    if let Some(v) = field(cmd, "unit") {
+        let id = key_from(v)?;
+        return Ok(json!({ "unit": units::unit_detail(&ctx.sim, id, &ctx.assets.rules).ok_or("no such unit")? }));
     }
     if let Some(v) = field(cmd, "vehicle") {
         let id = key_from(v)?;
@@ -2127,6 +2150,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Selection::Bot(id) => inspect(&json!({ "bot": key_str(id) }), ctx),
         Selection::Train(id) => inspect(&json!({ "train": key_str(id) }), ctx),
         Selection::Metro(id) => inspect(&json!({ "metro": key_str(id) }), ctx),
+        Selection::Unit(id) => inspect(&json!({ "unit": key_str(id) }), ctx),
         Selection::None => Err("inspect needs one of citizen, building, lot, car, bot, train, metro, toll, road, segment, route, gesture (an id), or a selection".into()),
     }
 }
@@ -2185,6 +2209,7 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
         Selection::Bot(id) => follow::bot_detail(w, id).unwrap_or(Value::Null),
         Selection::Train(id) => trains::train_detail(w, id, &assets.palette.car_colors).unwrap_or(Value::Null),
         Selection::Metro(id) => trains::metro_detail(w, id).unwrap_or(Value::Null),
+        Selection::Unit(id) => units::unit_detail(sim, id, &assets.rules).unwrap_or(Value::Null),
     };
     let bus_line = route_sel.and_then(|r| w.transit.routes.get(r).map(|route| {
         let mut v = route_row(r, route);
@@ -2285,6 +2310,13 @@ fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             return Err("no such metro train".into());
         }
         Selection::Metro(id)
+    } else if let Some(v) = field(cmd, "unit") {
+        // [fire-scene] An emergency unit (`units` lists them), driving or on scene.
+        let id = key_from(v)?;
+        if crate::fire_scene::unit_pose(w, id, ctx.sim.frac()).is_none() {
+            return Err(if w.services.units.contains_key(id) { "that unit is in its station".into() } else { "no such unit".into() });
+        }
+        Selection::Unit(id)
     } else if let Some(p) = opt_vec2(cmd, "at")? {
         // Pick exactly as a click with the Inspect tool does.
         crate::tools::pick(&*ctx.sim, p, ctx.tools.depth)
@@ -2519,6 +2551,14 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
                 Selection::Bot(id)
             }
+            // [fire-scene]
+            "unit" => {
+                let id = key_from(id)?;
+                if crate::fire_scene::unit_pose(w, id, ctx.sim.frac()).is_none() {
+                    return Err("follow: no such unit out of its station".into());
+                }
+                Selection::Unit(id)
+            }
             // [train-inspect]
             "train" => {
                 let id = key_from(id)?;
@@ -2682,6 +2722,50 @@ fn export(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
 
 // ── help ────────────────────────────────────────────────────────────────────
 
+/// [build-highlight] `build_highlight {category, off}`: open the Build
+/// window on a section, sub-section or kind so its buildings and service
+/// areas show on the map; with no fields, what shows now.
+fn build_highlight(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    use crate::ui::build;
+    let now = |ctx: &Ctx| {
+        let sel = ctx.highlight.sel;
+        let view = ctx.highlight.view.as_ref();
+        json!({
+            "on": sel.is_some(),
+            "section": sel.map(|s| s.cat.key()),
+            "sub": sel.and_then(|s| s.sub),
+            "focus": sel.and_then(|s| s.focus).map(|p| p.label()),
+            "buildings": view.map_or(Vec::new(), |v| v.marked.iter().map(|m| json!({ "building": key_str(m.id), "name": m.name, "kind": format!("{:?}", m.family).to_lowercase(), "level": format!("{:?}", m.level).to_lowercase(), "label": m.label })).collect()),
+            "summary": view.map(|v| v.summary.headline.clone()),
+            "detail": view.map(|v| v.summary.detail.clone()),
+            "homes_covered": view.and_then(|v| v.homes_covered),
+            "uncovered": view.map(|v| v.summary.spots.iter().map(|s| json!({ "name": s.name, "at": [s.at.x, s.at.y], "homes": s.homes })).collect::<Vec<_>>()),
+        })
+    };
+    if opt_bool(cmd, "off")? == Some(true) {
+        ctx.windows.build = Some((false, None));
+        if build::is_build_tool(ctx.tools.tool) {
+            ctx.tools.tool = Tool::Inspect;
+            ctx.tools.points.clear();
+            ctx.tools.drag = None;
+        }
+        return Ok(json!({ "on": false }));
+    }
+    let Some(name) = opt_str(cmd, "category")?.or(opt_str(cmd, "item")?) else { return Ok(now(ctx)) };
+    let (cat, sub, item) = build::resolve_highlight(name).ok_or_else(|| format!("nothing to highlight for {name:?}: a section (power, services, transit, rail, water, attractions), a sub-section (safety, sanitation, parking, metro...) or a kind (health, police, fire, school, metro_station...)"))?;
+    if build::highlight_kinds(cat, sub).is_empty() {
+        return Err(format!("{} has no buildings to highlight (roads, zones, districts, lines and tolls have none)", sub.unwrap_or(cat.label())));
+    }
+    if let Some(item) = item {
+        build::activate(item, &mut ctx.tools);
+    } else if build::is_build_tool(ctx.tools.tool) && build::current_item(&ctx.tools).and_then(|i| i.placeable()).is_none_or(|p| !build::highlight_kinds(cat, sub).contains(&build::norm(p))) {
+        // A tool for something else would keep the window elsewhere.
+        ctx.tools.tool = Tool::Inspect;
+    }
+    ctx.windows.build_sub = Some((cat, sub));
+    Ok(json!({ "on": true, "section": cat.key(), "sub": sub, "item": item.map(|i| i.label()), "note": "the highlight and its summary are worked out next frame: build_highlight {} reads them" }))
+}
+
 fn help() -> Value {
     let mut v = json!({
         "transport": "POST http://127.0.0.1:<port>/cmd (default port 4817) with JSON {\"cmd\": name, ...fields} and Content-Type: application/json (or the header X-ND-Remote: 1); GET /status, GET /help. Replies {ok: true, ...} or {ok: false, error} with HTTP 400. Requests from web pages (an Origin or Sec-Fetch-Site header from another site, a foreign Host) get 403; bodies over 1 MB 413; a 504 means the command was withdrawn unrun. See docs/REMOTE.md.",
@@ -2708,13 +2792,13 @@ fn help() -> Value {
             "terrain_at": { "x": "f", "y": "f", "returns": "natural/ground/surface heights, slope, water (kind, current, width), nearest shore, hot spot, power sites and dock placement for the lot there, survey (every land layer's value 0..1 there: resources, and the chance of each industry kind)" },
             "grant": { "amount": "money added to the treasury (dev), default 100000" },
             "landscape": { "returns": "preset and levers, rivers (width, current, hydro_ok), lakes, sea, hot spots, highway ends and through cars, bridges, docks, ships" },
-            "incident": { "kind": "fire|crime|medical|crash|takeover|chase", "building": "id (fire, crime; medical without citizen)", "citizen": "id (medical)", "car": "id (crash; default the car nearest at)", "at": "[x,y] (crash, takeover: the junction nearest)", "speed": "m/s (crash, default 25 = written off)" },
+            "incident": { "kind": "fire|crime|medical|crash|takeover|chase", "building": "id (fire, crime; medical without citizen)", "intensity": "fire, dev: start it this big (0..1; one engine knocks off 0.012 a minute)", "citizen": "id (medical)", "car": "id (crash; default the car nearest at)", "at": "[x,y] (crash, takeover: the junction nearest)", "speed": "m/s (crash, default 25 = written off)" },
             "incidents": { "active": "bool (only those under way)", "limit": "default 50, newest first", "kind": "fire|crime|medical|crash" },
             "bus": { "action": "select|new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|rename|recolour|line|select_stop|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses", "name": "rename", "color": "0..7", "look": "select_stop: point the camera" },
             "find": { "what": "citizens|buildings|lots|parcels|cars|trains|drones|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
-            "inspect": { "citizen|building|lot|car|train|drone|vehicle|route": "id (vehicle: a private car's record)", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "id, or [x,y]: the piece a click there picks (else the nearest), as segment, plus road: the road card (kind, lanes, limit, level, run, now {vehicles by kind, bikes, walkers, speed, congestion, queue}, flow, hourly (72 h), decay {wear, condition, effects, wear_per_day, next_condition, repair_cost, queue_place, last_repaired_day}, tolls, crossings, bus_stops, kerb parking)", "toll": "int: a toll booth in full (traffic, lorries, free, avoided, queue, hourly)" },
+            "inspect": { "citizen|building|lot|car|train|drone|vehicle|route": "id (vehicle: a private car's record; a unit's car also gets unit)", "unit": "id: an emergency unit: title, kind, station, state, doing, crew (citizen, name, role, out, pos, pose), incident (fire: how_bad, intensity, minutes_to_out, progress, damage; else patient, suspect, people), and for a fire engine at work scene (seconds, water_litres, aim, ladder {yaw_deg, pitch_deg, length, outriggers, tip}, hoses, streams)", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "id, or [x,y]: the piece a click there picks (else the nearest), as segment, plus road: the road card (kind, lanes, limit, level, run, now {vehicles by kind, bikes, walkers, speed, congestion, queue}, flow, hourly (72 h), decay {wear, condition, effects, wear_per_day, next_condition, repair_cost, queue_place, last_repaired_day}, tolls, crossings, bus_stops, kerb parking)", "toll": "int: a toll booth in full (traffic, lorries, free, avoided, queue, hourly)" },
             "lane_use": { "junction": "[x,y]", "approach": "[x,y] on the arriving street", "lanes": "[\"L\", \"S+R\", ...] leftmost first (L, S, R joined with +), or \"reset\" for the demand-chosen default" },
-            "select": { "citizen|building|car|vehicle|bot": "id (vehicle: a parked car; bot: a delivery robot)", "toll": "int: a toll booth", "road|segment": "id or [x,y]: a street piece", "at": "[x,y] picks like a click (vehicles, people, booths, parked cars, then the road piece, then lots); nothing clears" },
+            "select": { "citizen|building|car|vehicle|bot": "id (vehicle: a parked car; bot: a delivery robot)", "unit": "id: an emergency unit (fire engine, police car, ambulance) driving or standing on scene (see units); a click on one picks it the same way", "toll": "int: a toll booth", "road|segment": "id or [x,y]: a street piece", "at": "[x,y] picks like a click (vehicles, people, booths, parked cars, then the road piece, then lots); nothing clears" },
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
             "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|bot|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
             "overlay": { "active": "the map layer to show, or none (layers are exclusive: showing one hides the others)", "layer": "zoning|land_value|districts|traffic|traffic_types|paths|people|pollution, a land survey layer (farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech), or projects (the dim other-projects switch, not a layer)", "on": "bool, omitted toggles; on hides every other layer", "land": "a land survey layer key, or none", "<layer name>": "bool (older form): true shows it alone, false hides it if it shows" },
@@ -2729,6 +2813,8 @@ fn help() -> Value {
     v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
     v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
     // [road-inspect]
+    // [fire-scene]
+    v["commands"]["units"] = json!({ "kind": "optional: fire_engine|police_car|ambulance (or Engine|Car|Medic)", "out": "bool: only units out of the station", "returns": "units: unit id, title, kind, state, doing, pos, incident; select {unit} / inspect {unit} take the id" });
     v["commands"]["repair_road"] = json!({ "road": "id or [x,y]; default the selected road", "returns": "repaired, cost, treasury, road (the card); pays the crews' price (lane-m x wear x 6) from the treasury as road maintenance" });
     v["commands"]["add_interchange"] = json!({ "from": "[x,y]: one end of the cross street, on one side of the highway", "to": "[x,y]: the other end, across the highway", "lanes_fwd": "cross street lanes (default 2)", "lanes_bwd": "(default 2)", "check": "bool: only plan it, add nothing", "implement": "bool", "returns": "gesture_ids, interchange {kept_street, terminals, crossings, roads [{points, lanes}]}, or refused {why, at}; project state" });
     v["commands"]["rebuild_roads"] = json!({ "returns": "segments_before, segments, roads_version", "note": "dev: lays the roads, lots and lanes again from the plan as an implement does, with the current road-building rules (nothing in the plan changes)" });
@@ -2764,6 +2850,7 @@ fn help() -> Value {
         "taxes": { "set": "{line: rate, ...} where line is a key (residential_low|residential_mid|residential_high|grocery|bakery|gadget_shop|parking|nightlife_low|nightlife_mid|nightlife_high|farming|oil|refinery|manufacturing|logistics|fishing|tech) or a land use for its whole group; rate 0.2 or 20 (= 20%)", "category": "one line (with rate)", "import_duty": "share of import prices (0..1)", "reset": "bool: back to the standard rates", "returns": "every line: rate, default, pull, buildings, homes/jobs, today, yesterday, recent_per_day; by_land_use; duty" },
         "tolls": { "action": "list (default) | price | remove | inspect", "id": "booth id (or at: [x,y])", "price": "toll per car (lorries pay double)", "returns": "booths with cars and revenue today/yesterday/total, paid/free today, upkeep" },
         "export": { "path": "optional .json (see files); default exports/city-<unix>.json: report + map + history + every row of every list" },
+        "build_highlight": { "category": "a Build section (power|services|transit|rail|water|attractions), a sub-section (safety, health and education, sanitation, parking, metro, buses...) or a kind (health, police, fire, school, metro_station, coal...): opens the Build window there (a kind also picks it, as a click on its tile) and highlights those buildings on the map with their service areas", "off": "bool: close the Build window (the highlight goes with it)", "note": "no fields: what is highlighted now and the summary (worked out the frame after a change)" },
         "window": { "name": "city|economy|taxes|market|people|power|transit|emergencies|view (or land)|districts|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), or title (the title screen), or history (the Game history window)", "open": "bool, omitted toggles", "expanded": "bool: the large view with charts (opens the window; only one is expanded at a time); not saves/help/dev", "tab": "people only: overview|concerns|social" },
         "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" },
         "social": { "days": "daily history to include (default 7)", "talks": "latest conversations to list (default 10)", "group": "optional group id: that group in full, with its members", "note": "people talking: today's and yesterday's conversations, friendships, feuds, fights, meet-ups, jobs and flats through friends, couples moving in; pairs by bond city-wide; every crew and club with momentum, reputation, base and works (gigs, matches, readings, murals, gardens, businesses, petitions, protests); petitions to the player; murals, gardens, gigs; news. inspect {citizen} has a social block (ties with bond and how they met, groups, recent conversations)" }

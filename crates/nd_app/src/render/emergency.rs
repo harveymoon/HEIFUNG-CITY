@@ -22,13 +22,47 @@ pub(super) struct EmergencyAssets {
     /// Unlit, so flames read in daylight too (the shared glow dims by day).
     flame_mat: Handle<StandardMaterial>,
     smoke: Handle<Mesh>,
+    /// [fire-scene] White steam where the water hits a fire being fought.
+    steam: Handle<Mesh>,
     rubble: Handle<Mesh>,
+    /// [fire-scene] The fire engine's aerial ladder: turntable, the four
+    /// nested sections (widest first), an outrigger beam and its jack.
+    turntable: Handle<Mesh>,
+    sections: [Handle<Mesh>; LADDER_SECTIONS],
+    beam: Handle<Mesh>,
+    jack: Handle<Mesh>,
+    steel: Handle<StandardMaterial>,
 }
+
+use crate::fire_scene::{engine_scene, LadderPose, LADDER_PIVOT, LADDER_SECTION, LADDER_SECTIONS};
+
+/// [fire-scene] A part of an engine's ladder rig.
+#[derive(Component)]
+pub(super) struct RigPart;
+
+/// [fire-scene] An engine's ladder and outriggers: children of its body,
+/// posed from `fire_scene::engine_scene` (stowed while it drives).
+struct Rig {
+    turntable: Entity,
+    boom: Entity,
+    sections: [Entity; LADDER_SECTIONS],
+    /// Front left, front right, back left, back right.
+    beams: [Entity; 4],
+    jacks: [Entity; 4],
+}
+
+/// Where the outriggers sit along the truck, and how far each slides out.
+const OUTRIGGER_X: [f32; 2] = [1.0, -2.5];
+const OUTRIGGER_SIDES: [f32; 4] = [1.0, -1.0, 1.0, -1.0];
+const OUTRIGGER_REACH: f32 = 1.3;
+/// The roof the turntable sits on.
+const ROOF: f32 = 2.8;
 
 #[derive(Default)]
 pub(super) struct EmergencyState {
     units: HashMap<UnitId, [Entity; 3]>,
-    fires: HashMap<BuildingId, [Entity; 2]>,
+    fires: HashMap<BuildingId, [Entity; 3]>,
+    rigs: HashMap<UnitId, Rig>,
     rubble: HashMap<LotId, Entity>,
 }
 
@@ -57,7 +91,15 @@ fn make_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateria
         m.boxed(Vec3::new(-0.6, 1.6, 0.0), Vec3::new(6.0, 2.4, 2.4), 0.0, white);
         m.boxed(Vec3::new(3.1, 1.5, 0.0), Vec3::new(1.6, 2.2, 2.35), 0.0, white);
         m.boxed(Vec3::new(3.7, 2.0, 0.0), Vec3::new(0.3, 0.9, 2.1), 0.0, dark);
-        m.boxed(Vec3::new(-0.8, 2.95, 0.0), Vec3::new(5.4, 0.25, 0.9), 0.0, [0.75, 0.75, 0.78, 1.0]);
+        // (The ladder is a rig of its own, `Rig`; a low roof rack under it.)
+        m.boxed(Vec3::new(0.2, 2.86, 0.0), Vec3::new(4.6, 0.12, 1.3), 0.0, [0.3, 0.3, 0.32, 1.0]);
+        // Lockers along the sides and the pump panel's chrome.
+        for z in [-1.21f32, 1.21] {
+            m.boxed(Vec3::new(-0.4, 1.1, z), Vec3::new(1.2, 0.9, 0.04), 0.0, [0.8, 0.82, 0.85, 1.0]);
+            for x in [-2.6f32, 1.4] {
+                m.boxed(Vec3::new(x, 1.9, z), Vec3::new(1.4, 1.2, 0.03), 0.0, [0.85, 0.85, 0.87, 1.0]);
+            }
+        }
         m.boxed(Vec3::new(-0.6, 1.0, 0.0), Vec3::new(6.05, 0.15, 2.45), 0.0, [1.4, 1.2, 0.6, 1.0]);
         wheels(&mut m, &[-2.4, -1.2, 2.6], 1.05, 0.5);
         meshes.add(super::shared_mesh(&m, true))
@@ -105,7 +147,8 @@ fn make_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateria
         let mut m = MeshData::default();
         let tongues = [(0.0f32, 0.0f32, 1.0f32), (0.35, 0.2, 0.7), (-0.3, 0.25, 0.8), (0.2, -0.35, 0.6), (-0.25, -0.3, 0.75), (0.42, -0.1, 0.5), (-0.45, 0.0, 0.55)];
         for (k, (x, z, h)) in tongues.iter().enumerate() {
-            let col = if k % 2 == 0 { [3.2, 1.0, 0.15, 1.0] } else { [3.0, 1.8, 0.3, 1.0] };
+            // [fire-scene] Saturated enough to read as flame, not peach, by day.
+            let col = if k % 2 == 0 { [1.8, 0.48, 0.04, 1.0] } else { [1.9, 0.95, 0.1, 1.0] };
             m.boxed(Vec3::new(*x, h * 0.5, *z), Vec3::new(0.22, *h, 0.22), k as f32 * 0.7, col);
         }
         meshes.add(super::shared_mesh(&m, false))
@@ -120,6 +163,65 @@ fn make_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateria
         }
         meshes.add(super::shared_mesh(&m, false))
     };
+    // Steam: the same column in white, for a fire under the hoses.
+    let steam = {
+        let mut m = MeshData::default();
+        for k in 0..7 {
+            let t = k as f32;
+            let r = 0.35 + t * 0.16;
+            m.boxed(Vec3::new(-0.1 * t, 0.3 + t * 0.5, 0.12 * t), Vec3::new(r * 2.0, r * 1.3, r * 2.0), t * 0.8 + 0.3, [0.85, 0.87, 0.9, (0.38 - t * 0.045).max(0.06)]);
+        }
+        meshes.add(super::shared_mesh(&m, false))
+    };
+    // [fire-scene] The aerial ladder: a turntable with its control
+    // pedestal, then four nested sections along +x from the pivot (rails,
+    // rungs and a red stripe; the last one carries the monitor nozzle).
+    let steel_c = [0.78, 0.79, 0.82, 1.0];
+    let turntable = {
+        let mut m = MeshData::default();
+        m.boxed(Vec3::new(0.0, 0.12, 0.0), Vec3::new(1.7, 0.24, 1.7), 0.0, [0.22, 0.22, 0.24, 1.0]);
+        m.boxed(Vec3::new(0.0, 0.35, 0.0), Vec3::new(1.1, 0.3, 1.1), 0.0, [0.75, 0.08, 0.06, 1.0]);
+        m.boxed(Vec3::new(-0.55, 0.75, 0.6), Vec3::new(0.3, 0.6, 0.3), 0.0, [0.3, 0.3, 0.32, 1.0]);
+        // The pivot cheeks the ladder hinges between.
+        for z in [-0.5f32, 0.5] {
+            m.boxed(Vec3::new(0.0, 0.5, z), Vec3::new(0.5, 0.5, 0.1), 0.0, steel_c);
+        }
+        meshes.add(super::shared_mesh(&m, false))
+    };
+    let section = |meshes: &mut Assets<Mesh>, k: usize| {
+        let mut m = MeshData::default();
+        let half = 0.48 - 0.06 * k as f32;
+        let len = LADDER_SECTION;
+        for z in [-half, half] {
+            m.boxed(Vec3::new(len * 0.5, 0.0, z), Vec3::new(len, 0.3, 0.07), 0.0, steel_c);
+            m.boxed(Vec3::new(len * 0.5, 0.17, z), Vec3::new(len, 0.05, 0.075), 0.0, [0.8, 0.06, 0.05, 1.0]);
+        }
+        let rungs = (len / 0.55) as usize;
+        for r in 0..rungs {
+            m.boxed(Vec3::new(0.3 + r as f32 * 0.55, -0.08, 0.0), Vec3::new(0.06, 0.06, half * 2.0), 0.0, steel_c);
+        }
+        if k == LADDER_SECTIONS - 1 {
+            // The monitor at the tip and a little platform to stand on.
+            m.boxed(Vec3::new(len - 0.5, -0.12, 0.0), Vec3::new(1.0, 0.06, half * 2.0 + 0.1), 0.0, [0.3, 0.3, 0.32, 1.0]);
+            m.boxed(Vec3::new(len + 0.1, 0.2, 0.0), Vec3::new(0.5, 0.18, 0.18), 0.0, [0.9, 0.75, 0.2, 1.0]);
+        }
+        meshes.add(super::shared_mesh(&m, false))
+    };
+    let sections = std::array::from_fn(|k| section(meshes, k));
+    // An outrigger beam along +z (scaled to its reach) and a jack hanging
+    // down from y = 0 (scaled to the ground), striped red and white.
+    let beam = {
+        let mut m = MeshData::default();
+        m.boxed(Vec3::new(0.0, 0.0, 0.5), Vec3::new(0.28, 0.22, 1.0), 0.0, [0.85, 0.85, 0.85, 1.0]);
+        meshes.add(super::shared_mesh(&m, false))
+    };
+    let jack = {
+        let mut m = MeshData::default();
+        m.boxed(Vec3::new(0.0, -0.5, 0.0), Vec3::new(0.2, 1.0, 0.2), 0.0, [0.8, 0.07, 0.05, 1.0]);
+        m.boxed(Vec3::new(0.0, -0.97, 0.0), Vec3::new(0.55, 0.06, 0.55), 0.0, [0.2, 0.2, 0.2, 1.0]);
+        meshes.add(super::shared_mesh(&m, false))
+    };
+    let steel = materials.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.4, metallic: 0.55, ..default() });
     let rubble = {
         let mut m = MeshData::default();
         let pieces = [(0.0f32, 0.0f32, 1.0f32, 0.0f32), (0.3, 0.25, 0.6, 0.4), (-0.3, 0.2, 0.7, 1.1), (0.25, -0.3, 0.5, 0.8), (-0.25, -0.25, 0.8, 2.0), (0.0, 0.38, 0.4, 0.3), (0.4, -0.05, 0.45, 1.6)];
@@ -130,7 +232,7 @@ fn make_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateria
         meshes.add(super::shared_mesh(&m, true))
     };
     let flame_mat = materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, ..default() });
-    EmergencyAssets { bodies: [engine, police, ambulance], bars, paint, light_a, light_b, flame, flame_mat, smoke, rubble }
+    EmergencyAssets { bodies: [engine, police, ambulance], bars, paint, light_a, light_b, flame, flame_mat, smoke, steam, rubble, turntable, sections, beam, jack, steel }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -147,6 +249,7 @@ pub(super) fn sync_emergency(
     mut es: Local<EmergencyState>,
     mut q: Query<(&mut Transform, &mut Visibility), With<EmergencyTag>>,
     mut cars: Query<&mut Visibility, (With<CarTag>, Without<EmergencyTag>)>,
+    mut parts: Query<&mut Transform, (With<RigPart>, Without<EmergencyTag>, Without<CarTag>)>,
 ) {
     let w = &sim.world;
     let s = &w.services;
@@ -156,6 +259,7 @@ pub(super) fn sync_emergency(
                 commands.entity(e).despawn();
             }
         }
+        es.rigs.clear();
         for (_, ents) in es.fires.drain() {
             for e in ents {
                 commands.entity(e).despawn();
@@ -196,8 +300,13 @@ pub(super) fn sync_emergency(
                 }
             }
             es.units.insert(uid, [body, la, lb]);
+            if u.kind == UnitKind::FireEngine {
+                let rig = spawn_rig(&mut commands, a, body);
+                es.rigs.insert(uid, rig);
+            }
         }
         if !shown {
+            es.rigs.remove(&uid);
             if let Some(ents) = es.units.remove(&uid) {
                 for e in ents {
                     commands.entity(e).despawn();
@@ -207,6 +316,7 @@ pub(super) fn sync_emergency(
     }
     let gone: Vec<UnitId> = es.units.keys().copied().filter(|id| !s.units.contains_key(*id)).collect();
     for id in gone {
+        es.rigs.remove(&id);
         if let Some(ents) = es.units.remove(&id) {
             for e in ents {
                 commands.entity(e).despawn();
@@ -233,10 +343,16 @@ pub(super) fn sync_emergency(
                 };
             }
         }
+        // [fire-scene] The ladder up and the legs down at a fire.
+        if let Some(rig) = es.rigs.get(uid) {
+            let pose = engine_scene(w, *uid, f, &game.rules, &sim.building_tops).map_or_else(LadderPose::stowed, |s| s.ladder);
+            pose_rig(rig, &pose, &mut parts);
+        }
     }
 
     // Fires: flames on the roof and a smoke column, flickering with intensity.
     let burning: HashMap<BuildingId, f32> = s.fires().collect();
+    let fought: HashSet<BuildingId> = s.active().filter(|i| i.kind == nd_sim::services::IncidentKind::Fire && i.stage == nd_sim::services::Stage::OnScene).map(|i| i.building).collect();
     let out: Vec<BuildingId> = es.fires.keys().copied().filter(|b| !burning.contains_key(b)).collect();
     for b in out {
         if let Some(ents) = es.fires.remove(&b) {
@@ -251,11 +367,17 @@ pub(super) fn sync_emergency(
         let ents = *es.fires.entry(bid).or_insert_with(|| {
             let fl = commands.spawn((Mesh3d(a.flame.clone()), MeshMaterial3d(a.flame_mat.clone()), super::offstage(), NotShadowCaster, NotShadowReceiver, EmergencyTag, Grounded)).id();
             let sm = commands.spawn((Mesh3d(a.smoke.clone()), MeshMaterial3d(mats.overlay.clone()), super::offstage(), NotShadowCaster, NotShadowReceiver, EmergencyTag, Grounded)).id();
-            [fl, sm]
+            let st = commands.spawn((Mesh3d(a.steam.clone()), MeshMaterial3d(mats.overlay.clone()), super::offstage(), NotShadowCaster, NotShadowReceiver, EmergencyTag, Grounded)).id();
+            [fl, sm, st]
         });
+        // [fire-scene] Under the hoses: less black smoke, more white steam,
+        // the more so as it weakens.
+        let fought = fought.contains(&bid);
         // The roof as the building generator stacks it: floors at the land
         // use's storey height.
-        let height = (b.floors.max(1) as f32 * game.rules.for_land_use(b.land_use).floor_height).min(160.0);
+        // [fire-scene] As drawn (a style's tower can rise well above the
+        // storeys' height), else floors at the land use's storey height.
+        let height = sim.building_tops.height(w, bid, &game.rules);
         let size = (lot.area().sqrt() * 0.55).clamp(5.0, 30.0);
         let seed = phase_of(bid) * 10.0;
         let flicker = 0.8 + 0.25 * (t * 9.0 + seed).sin() + 0.12 * (t * 23.0 + seed * 2.0).sin();
@@ -266,8 +388,16 @@ pub(super) fn sync_emergency(
             tf.rotation = Quat::from_rotation_y(t * 0.3 + seed);
         }
         if let Ok((mut tf, _)) = q.get_mut(ents[1]) {
+            let s = if fought { 0.45 + 0.55 * k } else { 1.0 };
             tf.translation = Vec3::new(lot.center.x, height + size * 0.2, lot.center.y);
-            tf.scale = Vec3::new(size * (0.5 + 0.6 * k), size * (0.5 + 0.8 * k), size * (0.5 + 0.6 * k));
+            tf.scale = Vec3::new(size * (0.5 + 0.6 * k), size * (0.5 + 0.8 * k), size * (0.5 + 0.6 * k)) * s;
+        }
+        if let Ok((mut tf, mut vis)) = q.get_mut(ents[2]) {
+            *vis = if fought { Visibility::Inherited } else { Visibility::Hidden };
+            let s = size * (0.45 + 0.7 * (1.0 - k)) * (0.9 + 0.1 * (t * 1.7 + seed).sin());
+            tf.translation = Vec3::new(lot.center.x, height, lot.center.y);
+            tf.scale = Vec3::new(s, s * 1.2, s);
+            tf.rotation = Quat::from_rotation_y(-t * 0.2 + seed);
         }
     }
 
@@ -287,6 +417,52 @@ pub(super) fn sync_emergency(
         let size = w.lots.get(lid).map_or(8.0, |l| (l.area().sqrt() * 0.7).clamp(4.0, 30.0));
         let e = commands.spawn((Mesh3d(a.rubble.clone()), MeshMaterial3d(mats.surface(Surface::Concrete)), Transform::from_translation(Vec3::new(at.x, 0.0, at.y)).with_scale(Vec3::new(size, size * 0.4, size)), EmergencyTag, Grounded)).id();
         es.rubble.insert(lid, e);
+    }
+}
+
+/// [fire-scene] An engine's ladder and outriggers, as children of its body.
+fn spawn_rig(commands: &mut Commands, a: &EmergencyAssets, body: Entity) -> Rig {
+    let part = |commands: &mut Commands, mesh: &Handle<Mesh>, parent: Entity, tf: Transform| commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(a.steel.clone()), tf, NotShadowCaster, RigPart, ChildOf(parent))).id();
+    let turntable = part(commands, &a.turntable, body, Transform::from_xyz(LADDER_PIVOT[0], ROOF, LADDER_PIVOT[2]));
+    let boom = commands.spawn((Transform::from_xyz(0.0, LADDER_PIVOT[1] - ROOF, 0.0), Visibility::Inherited, RigPart, ChildOf(turntable))).id();
+    let sections = std::array::from_fn(|k| part(commands, &a.sections[k], boom, Transform::from_xyz(0.0, 0.07 * k as f32, 0.0)));
+    let mut beams = [Entity::PLACEHOLDER; 4];
+    let mut jacks = [Entity::PLACEHOLDER; 4];
+    for i in 0..4 {
+        let (x, side) = (OUTRIGGER_X[i / 2], OUTRIGGER_SIDES[i]);
+        let rot = if side > 0.0 { Quat::IDENTITY } else { Quat::from_rotation_y(std::f32::consts::PI) };
+        beams[i] = part(commands, &a.beam, body, Transform::from_xyz(x, 0.75, side * 0.9).with_rotation(rot));
+        jacks[i] = part(commands, &a.jack, body, Transform::from_xyz(x, 0.75, side * 1.0));
+    }
+    Rig { turntable, boom, sections, beams, jacks }
+}
+
+/// Pose an engine's rig (all in its body's frame): the turntable turned,
+/// the boom raised, each fly section slid out past the one below, the
+/// outrigger beams out and their jacks down to the ground.
+fn pose_rig(rig: &Rig, pose: &LadderPose, parts: &mut Query<&mut Transform, (With<RigPart>, Without<EmergencyTag>, Without<CarTag>)>) {
+    if let Ok(mut tf) = parts.get_mut(rig.turntable) {
+        tf.rotation = Quat::from_rotation_y(-pose.yaw_rel);
+    }
+    if let Ok(mut tf) = parts.get_mut(rig.boom) {
+        tf.rotation = Quat::from_rotation_z(pose.pitch);
+    }
+    let off = pose.section_offset();
+    for (k, e) in rig.sections.iter().enumerate() {
+        if let Ok(mut tf) = parts.get_mut(*e) {
+            tf.translation = Vec3::new(off * k as f32, 0.07 * k as f32, 0.0);
+        }
+    }
+    let reach = 0.25 + OUTRIGGER_REACH * pose.outriggers;
+    for i in 0..4 {
+        let side = OUTRIGGER_SIDES[i];
+        if let Ok(mut tf) = parts.get_mut(rig.beams[i]) {
+            tf.scale = Vec3::new(1.0, 1.0, reach);
+        }
+        if let Ok(mut tf) = parts.get_mut(rig.jacks[i]) {
+            tf.translation.z = side * (0.9 + reach - 0.12);
+            tf.scale = Vec3::new(1.0, 0.05 + 0.75 * pose.outriggers, 1.0);
+        }
     }
 }
 
