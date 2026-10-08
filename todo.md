@@ -281,6 +281,9 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] High quality: near-camera geometry washes out white in walk/close orbit [fix/haze]
 - [ ] Fire engines park mid-road/junction at a scene; crew stand in traffic (from feat/fire-scene leftovers)
 - [ ] Ferry/docks need only water access, rail stations only track; each gets a connectable road stub to join the network later [feat/dock-access]
+- [ ] Ferry terminal on a civic zone took the zone's shape/look: unzone first, own footprint [feat/dock-access]
+- [ ] Fishing boats actually go out, fish at grounds for hours, return and unload; berths empty while at sea [feat/fishing]
+- [ ] Selecting a ferry terminal highlights its routes; other routes dim; route list in the inspector [feat/ferry-routes]
 
 ## Agents running (update when starting/merging; survives context compaction)
 - feat/committee: AI committee, mock backend first, Ollama/Claude connectors (started 2026-10-07 evening)
@@ -290,3 +293,5 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - feat/city-data: full-screen City Data pane with tabs (started 2026-10-08 00:05)
 - fix/haze: white washout near the camera at High (started 2026-10-08 00:20)
 - feat/dock-access: docks/stations without road access, road stubs (started 2026-10-08 00:25)
+- feat/fishing: fishing trips (started 2026-10-08 00:35)
+- feat/ferry-routes: ferry route highlight (started 2026-10-08 00:40)
