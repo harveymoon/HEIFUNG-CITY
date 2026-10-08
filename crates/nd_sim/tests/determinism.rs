@@ -46,8 +46,8 @@ fn the_same_seed_runs_to_the_same_world() {
 }
 
 /// Not yet: the world's own state now survives a save (the buses' leg
-/// timings, the concern of the week; the services', society's and air's
-/// streams on fix/review-sim-core), but state kept outside `world/` is
+/// timings, the concern of the week, the services', society's and air's
+/// streams), but state kept outside `world/` is
 /// still rebuilt rather than loaded, and the run drifts from the first
 /// tick after a load. Found with this test (2026-10, review phase 2a):
 /// - `traffic`: the lane network's live state (`Traffic::net`: queues,

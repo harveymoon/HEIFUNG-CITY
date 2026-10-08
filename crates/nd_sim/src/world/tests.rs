@@ -2811,11 +2811,8 @@ fn solar_and_wind_scale_with_their_lot_at_a_steady_cost_per_megawatt() {
 /// [review] The services', society's and air's own random streams are
 /// saved: a loaded game draws exactly what the running one would (they
 /// were reseeded from the seed and the load tick). A save from before
-/// them still loads and reseeds. The saving itself is on
-/// fix/review-sim-core (288900c, `rng_save::opt`, outside `world/`): run
-/// this once both branches are in.
+/// them still loads and reseeds (`crate::rng_save::opt`).
 #[test]
-#[ignore = "needs fix/review-sim-core 288900c (the streams saved); un-ignore after both merge"]
 fn the_per_system_random_streams_survive_a_save() {
     use rand::Rng;
     let mut w = flat_world();

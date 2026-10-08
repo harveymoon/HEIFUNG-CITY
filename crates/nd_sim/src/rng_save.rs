@@ -1,7 +1,7 @@
 //! Saving a random stream: RON cannot encode ChaCha's 128-bit counter, so
 //! a stream is kept as its seed, stream id and word position, and picks up
-//! after a load exactly where it stopped (the layout of the world's own
-//! stream, `world::rng_serde`). `opt` is for the lazily made per-system
+//! after a load exactly where it stopped. `one` is the world's own stream
+//! (`World::rng`); `opt` is for the lazily made per-system
 //! streams (`Option<SimRng>`): saves from before they were kept load as
 //! `None` and are seeded afresh on first use.
 
@@ -28,6 +28,19 @@ impl Saved {
         rng.set_stream(self.stream);
         rng.set_word_pos(((self.pos_hi as u128) << 64) | self.pos_lo as u128);
         rng
+    }
+}
+
+/// For a `SimRng` field (the world's own stream).
+pub mod one {
+    use super::*;
+
+    pub fn serialize<S: Serializer>(rng: &SimRng, s: S) -> Result<S::Ok, S::Error> {
+        Saved::of(rng).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<SimRng, D::Error> {
+        Ok(Saved::deserialize(d)?.rng())
     }
 }
 

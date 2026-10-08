@@ -382,7 +382,7 @@ pub struct World {
     pub version: u32,
     pub config: WorldConfig,
     pub clock: SimClock,
-    #[serde(with = "rng_serde")]
+    #[serde(with = "crate::rng_save::one")]
     rng: SimRng,
     /// What is built.
     pub master: Plan,
@@ -1460,29 +1460,3 @@ pub(crate) fn legacy_save_text() -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("the committed legacy fixture {} is missing: {e}", path.display()))
 }
 
-mod rng_serde {
-    use crate::SimRng;
-    use rand::SeedableRng;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    #[derive(Serialize, Deserialize)]
-    struct Saved {
-        seed: [u8; 32],
-        stream: u64,
-        pos_hi: u64,
-        pos_lo: u64,
-    }
-
-    pub fn serialize<S: Serializer>(rng: &SimRng, s: S) -> Result<S::Ok, S::Error> {
-        let pos = rng.get_word_pos();
-        Saved { seed: rng.get_seed(), stream: rng.get_stream(), pos_hi: (pos >> 64) as u64, pos_lo: pos as u64 }.serialize(s)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<SimRng, D::Error> {
-        let saved = Saved::deserialize(d)?;
-        let mut rng = SimRng::from_seed(saved.seed);
-        rng.set_stream(saved.stream);
-        rng.set_word_pos(((saved.pos_hi as u128) << 64) | saved.pos_lo as u128);
-        Ok(rng)
-    }
-}
