@@ -1372,7 +1372,19 @@ fn plan(ctx: &Ctx) -> Value {
     // [tools] What implementing the active project would refuse on, checked
     // now as implementing checks it (the trial rebuild included).
     let check = w.active_project_check();
-    v["will_refuse"] = json!(check.pillar_refusal);
+    // Exactly what Implement would answer now (None: it implements).
+    v["will_refuse"] = json!(check.refusal);
+    // Every structure it would refuse on, with the road that takes it.
+    v["blockers"] = json!(check
+        .blocks
+        .iter()
+        .map(|k| json!({
+            "id": key_str(k.building), "name": k.name, "at": [k.at.x, k.at.y],
+            "road_gesture": k.road.map(|g| g.0), "road": k.road_label,
+            "stretch": [[k.a.x, k.a.y], [k.b.x, k.b.y]],
+            "runs_over": k.runs_over, "reason": k.reason(),
+        }))
+        .collect::<Vec<_>>());
     v["pillar_gaps"] = json!(check.pillar_gaps.iter().map(junction::gap_json).collect::<Vec<_>>());
     v
 }

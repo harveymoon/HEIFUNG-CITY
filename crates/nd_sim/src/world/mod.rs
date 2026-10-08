@@ -82,7 +82,7 @@ mod places;
 #[cfg(test)]
 mod places_tests;
 mod industry_bridge;
-pub use plan::{ProjectCheck, ProjectInfo, ProjectPreview};
+pub use plan::{Blocker, ProjectCheck, ProjectInfo, ProjectPreview};
 mod power;
 pub use power::{GridAsset, GridHour, PlantRow};
 pub mod plant_groups;
@@ -91,6 +91,8 @@ pub use plant_groups::{PlantGroup, PlantJoin, PlantPreview};
 mod plant_groups_tests;
 #[cfg(test)]
 mod plant_scale_tests;
+#[cfg(test)]
+mod blocker_tests;
 mod services;
 mod society;
 /// [social] Encounters, conversations, friends and feuds, crews and clubs.
