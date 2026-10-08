@@ -20,6 +20,7 @@ pub fn label(sim: &Sim, sel: Selection) -> String {
         Selection::Road(sid) => crate::road_select::name(w, sid),
         Selection::Citizen(id) => w.citizens.get(id).map_or_else(|| "someone".into(), |c| c.name.clone()),
         Selection::Car(id) => w.car_label(id),
+        Selection::Unit(id) => crate::fire_scene::unit_title(w, id),
         Selection::Parked(id) => w.vehicles.cars.get(id).and_then(|v| w.citizens.get(v.owner)).map_or_else(|| "a parked car".into(), |c| format!("{}'s parked car", c.name)),
         Selection::Building(id) => w.buildings.get(id).map_or_else(|| "a building".into(), |b| b.name.clone()),
         Selection::Bot(id) => nd_sim::bots::bot_name(w, id),

@@ -191,7 +191,7 @@ impl World {
         let Some(uk) = kind.unit_kind() else { return };
         let have = self.services.units.values().filter(|u| u.station == station).count();
         for k in have..kind.units(tier) {
-            self.services.units.insert(Unit { kind: uk, station, number: k as u8 + 1, state: UnitState::Idle, car: None, incident: None, pos, heading: 0.0, hospital: None, patrol_until: 0, leaving: false });
+            self.services.units.insert(Unit { kind: uk, station, number: k as u8 + 1, state: UnitState::Idle, car: None, incident: None, pos, heading: 0.0, hospital: None, patrol_until: 0, leaving: false, packing_until: 0 });
         }
     }
 
@@ -237,7 +237,6 @@ impl World {
     /// budget left (a station's radius minus the road distance) over all
     /// stations of the kind, faded over the last `COVERAGE_FADE` metres.
     pub fn refresh_coverage(&mut self) {
-        let n = self.roads.nodes.len();
         let mut out: HashMap<LotId, [f32; 4]> = HashMap::new();
         let mut sources: [Vec<(SegmentId, Vec2, f32)>; 4] = Default::default();
         for b in self.buildings.values() {
@@ -251,50 +250,8 @@ impl World {
             }
         }
         for (k, src) in sources.iter().enumerate() {
-            if src.is_empty() {
-                continue;
-            }
-            let mut best = vec![f32::NEG_INFINITY; n];
-            let mut heap = BinaryHeap::new();
-            for &(seg, p, r) in src {
-                let s = self.roads.segment(seg);
-                for node in [s.a, s.b] {
-                    let budget = r - p.distance(self.roads.node(node).pos);
-                    if budget > best[node.0 as usize] {
-                        best[node.0 as usize] = budget;
-                        heap.push(Budget(budget, node.0));
-                    }
-                }
-            }
-            while let Some(Budget(b, node)) = heap.pop() {
-                if b < best[node as usize] || b <= 0.0 {
-                    continue;
-                }
-                let here = self.roads.node(NodeId(node)).pos;
-                for (nb, sid) in self.roads.neighbors(NodeId(node)) {
-                    if self.roads.segment(sid).is_rail() {
-                        continue;
-                    }
-                    let nbudget = b - here.distance(self.roads.node(nb).pos);
-                    if nbudget > best[nb.0 as usize] {
-                        best[nb.0 as usize] = nbudget;
-                        heap.push(Budget(nbudget, nb.0));
-                    }
-                }
-            }
-            for (lid, lot) in self.lots.iter() {
-                let Some((seg, p)) = self.lot_access(lot) else { continue };
-                let s = self.roads.segment(seg);
-                let mut rem = [s.a, s.b].iter().map(|nd| best[nd.0 as usize] - p.distance(self.roads.node(*nd).pos)).fold(f32::NEG_INFINITY, f32::max);
-                for &(sseg, sp, r) in src {
-                    if sseg == seg {
-                        rem = rem.max(r - p.distance(sp));
-                    }
-                }
-                let cov = (rem / COVERAGE_FADE).clamp(0.0, 1.0);
-                if cov > 0.0 {
-                    out.entry(lid).or_insert([0.0; 4])[k] = cov;
-                }
+            for (lid, cov) in self.coverage_from(src) {
+                out.entry(lid).or_insert([0.0; 4])[k] = cov;
             }
         }
         self.services.coverage = out;
@@ -305,6 +262,110 @@ impl World {
             let covered = homes.iter().filter(|l| self.services.coverage.get(l).is_some_and(|c| c[k] >= COVERED)).count();
             self.services.stats.coverage[k] = if homes.is_empty() { 0.0 } else { covered as f32 / homes.len() as f32 };
         }
+    }
+
+    /// Lots reached from `src` (road access point, budget in metres) along
+    /// the street network, with their coverage `0..1` (the best budget left
+    /// on arrival, faded over the last `COVERAGE_FADE` metres). Rail does
+    /// not carry coverage. Lots with none are left out.
+    fn coverage_from(&self, src: &[(SegmentId, Vec2, f32)]) -> Vec<(LotId, f32)> {
+        if src.is_empty() {
+            return Vec::new();
+        }
+        let n = self.roads.nodes.len();
+        let mut best = vec![f32::NEG_INFINITY; n];
+        let mut heap = BinaryHeap::new();
+        for &(seg, p, r) in src {
+            let s = self.roads.segment(seg);
+            for node in [s.a, s.b] {
+                let budget = r - p.distance(self.roads.node(node).pos);
+                if budget > best[node.0 as usize] {
+                    best[node.0 as usize] = budget;
+                    heap.push(Budget(budget, node.0));
+                }
+            }
+        }
+        while let Some(Budget(b, node)) = heap.pop() {
+            if b < best[node as usize] || b <= 0.0 {
+                continue;
+            }
+            let here = self.roads.node(NodeId(node)).pos;
+            for (nb, sid) in self.roads.neighbors(NodeId(node)) {
+                if self.roads.segment(sid).is_rail() {
+                    continue;
+                }
+                let nbudget = b - here.distance(self.roads.node(nb).pos);
+                if nbudget > best[nb.0 as usize] {
+                    best[nb.0 as usize] = nbudget;
+                    heap.push(Budget(nbudget, nb.0));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for (lid, lot) in self.lots.iter() {
+            let Some((seg, p)) = self.lot_access(lot) else { continue };
+            let s = self.roads.segment(seg);
+            let mut rem = [s.a, s.b].iter().map(|nd| best[nd.0 as usize] - p.distance(self.roads.node(*nd).pos)).fold(f32::NEG_INFINITY, f32::max);
+            for &(sseg, sp, r) in src {
+                if sseg == seg {
+                    rem = rem.max(r - p.distance(sp));
+                }
+            }
+            let cov = (rem / COVERAGE_FADE).clamp(0.0, 1.0);
+            if cov > 0.0 {
+                out.push((lid, cov));
+            }
+        }
+        out
+    }
+
+    /// [build-highlight] The lots one covering station reaches by road and
+    /// how well (`0..1`), as `refresh_coverage` counts them for it alone:
+    /// its own service area. Empty for a station that covers nothing (not a
+    /// covering kind, derelict, being built, or off the street network).
+    pub fn service_reach(&self, station: BuildingId) -> Vec<(LotId, f32)> {
+        let Some(b) = self.buildings.get(station) else { return Vec::new() };
+        let Some(s) = b.service else { return Vec::new() };
+        if s.kind.coverage_index().is_none() || b.is_derelict() || b.construction.is_some() {
+            return Vec::new();
+        }
+        let Some((seg, p)) = self.lots.get(b.lot).and_then(|l| self.lot_access(l)) else { return Vec::new() };
+        self.coverage_from(&[(seg, p, s.kind.radius(s.tier))])
+    }
+
+    /// [build-highlight] What a building was put down as with the Build
+    /// window (a service at its tier, a plant, a depot...), or None for
+    /// anything that grew on its own.
+    pub fn placed_as(&self, id: BuildingId) -> Option<Placeable> {
+        let b = self.buildings.get(id)?;
+        if let Some(s) = b.service {
+            return Some(Placeable::Service(s.kind, s.tier));
+        }
+        if let Some(k) = b.plant {
+            return Some(Placeable::Plant(k));
+        }
+        if let Some(bat) = &b.battery {
+            return Some(Placeable::Battery(bat.kind));
+        }
+        if self.cargo_hubs.hubs.contains_key(&id) {
+            return Some(Placeable::CargoHub);
+        }
+        if let Some(r) = &b.rail {
+            return Some(Placeable::Rail(r.kind));
+        }
+        if let Some(k) = b.port {
+            return Some(Placeable::Dock(k));
+        }
+        if b.metro {
+            return Some(Placeable::MetroStation);
+        }
+        if b.depot {
+            return Some(Placeable::BusDepot);
+        }
+        if let Some(c) = self.vehicles.city_lots.get(&id) {
+            return Some(Placeable::ParkingLot(c.size));
+        }
+        None
     }
 
     /// Coverage of the lot nearest `p` by a covering service kind.
@@ -679,6 +740,7 @@ impl World {
         for id in active {
             self.step_incident(id);
         }
+        self.step_packing();
         self.dispatch_queue();
         if tick % 5 == 2 {
             self.step_patrols();
@@ -1772,6 +1834,19 @@ impl World {
         }
     }
 
+    /// [fire-scene] Fire engines whose crew has packed up drive home.
+    fn step_packing(&mut self) {
+        let tick = self.clock.tick;
+        let done: Vec<UnitId> = self.services.units.iter().filter(|(_, u)| u.packing_until > 0 && (tick >= u.packing_until || u.state != UnitState::OnScene)).map(|(id, _)| id).collect();
+        for uid in done {
+            let u = &mut self.services.units[uid];
+            u.packing_until = 0;
+            if u.state == UnitState::OnScene {
+                self.send_home(uid);
+            }
+        }
+    }
+
     /// Work on scene is done (crimes and patients; fires end when out).
     fn finish_scene(&mut self, id: u32) {
         let tick = self.clock.tick;
@@ -2067,7 +2142,10 @@ impl World {
         }
         if let Some(uid) = unit {
             let u = self.services.units.get(uid).filter(|u| u.incident == Some(id)).map(|u| u.state);
-            if u == Some(UnitState::OnScene) {
+            if u == Some(UnitState::OnScene) && kind == IncidentKind::Fire {
+                // [fire-scene] The crew packs up first (`step_packing`).
+                self.services.units[uid].packing_until = tick + PACK_UP_TICKS;
+            } else if u == Some(UnitState::OnScene) {
                 self.send_home(uid);
             } else if u == Some(UnitState::Responding) {
                 // Called off on the way: free at once, from where it is.
@@ -2310,6 +2388,40 @@ mod tests {
         max
     }
 
+    /// [fire-scene] Once the fire is out the engine stays a few minutes on
+    /// scene while the crew packs up (still on the job, its incident still
+    /// named for the renderer), then drives home.
+    #[test]
+    fn a_fire_engine_packs_up_before_it_leaves() {
+        let mut w = town();
+        let crew = people(&mut w, 8);
+        let station = w.build_service(civic_lot(&w, -350.0), ServiceKind::Fire, Tier::Mid).unwrap();
+        let desk = w.build_service(civic_lot(&w, -150.0), ServiceKind::Dispatch, Tier::Mid).unwrap();
+        staff(&mut w, station, &crew[..6], false);
+        staff(&mut w, desk, &crew[6..7], true);
+        let target = building_at(&mut w, 100.0);
+        let id = w.start_fire(target).unwrap();
+        run_until(&mut w, 600, |w| !w.services.incident(id).unwrap().active());
+        let inc = w.services.incident(id).unwrap();
+        assert_eq!(inc.outcome, Some(Outcome::Extinguished));
+        let (uid, out_at) = (inc.unit.unwrap(), inc.resolved.unwrap());
+        let u = &w.services.units[uid];
+        assert!(u.packing(), "packing up: {:?}", u.state);
+        assert_eq!(u.incident, Some(id), "still at its fire");
+        assert_eq!(u.packing_until, out_at + PACK_UP_TICKS);
+        assert!(u.busy() && u.car.is_none(), "parked and not free for calls");
+        // Its crew is out with it, and says so.
+        let hand = w.unit_crew(uid)[0];
+        assert_eq!(w.crew_unit_of(hand), Some(uid));
+        assert!(w.activity_line(hand).starts_with("out with Engine"), "{}", w.activity_line(hand));
+        run_until(&mut w, 20, |w| !w.services.units[uid].packing());
+        let u = &w.services.units[uid];
+        assert_eq!(w.clock.tick, out_at + PACK_UP_TICKS, "left on time");
+        assert_eq!(u.state, UnitState::Returning);
+        assert_eq!(u.packing_until, 0);
+        assert!(u.incident.is_none() && u.car.is_some(), "driving home");
+    }
+
     #[test]
     fn a_fire_is_called_in_dispatched_fought_and_put_out() {
         let mut w = town();
@@ -2454,6 +2566,35 @@ mod tests {
         // Coverage cuts the fire risk the hourly roll uses.
         let risk = |cov: f32| FIRE_RISK[1] * (1.0 - FIRE_COVER_CUT * cov);
         assert!(risk(1.0) < risk(0.0) * 0.35);
+    }
+
+    #[test]
+    fn a_stations_reach_is_its_share_of_the_coverage() {
+        let mut w = town();
+        let a = w.build_service(civic_lot(&w, -560.0), ServiceKind::Health, Tier::Mid).unwrap();
+        // [build-highlight] One station alone: its reach is the coverage.
+        let reach = w.service_reach(a);
+        assert!(reach.len() > 5);
+        for (lot, cov) in &reach {
+            assert!((w.services.coverage_of(*lot, ServiceKind::Health) - cov).abs() < 1e-5);
+        }
+        assert_eq!(reach.len(), w.services.coverage.values().filter(|c| c[2] > 0.0).count());
+        assert_eq!(w.placed_as(a), Some(Placeable::Service(ServiceKind::Health, Tier::Mid)));
+        // A second one: the coverage is the best of the two, lot by lot.
+        let b = w.build_service(civic_lot(&w, 300.0), ServiceKind::Health, Tier::Low).unwrap();
+        let rb = w.service_reach(b);
+        assert!(!rb.is_empty());
+        for (lot, c) in w.services.coverage.iter().filter(|(_, c)| c[2] > 0.0) {
+            let best = reach.iter().chain(&rb).filter(|(l, _)| l == lot).map(|(_, v)| *v).fold(0.0f32, f32::max);
+            assert!((best - c[2]).abs() < 1e-5);
+        }
+        // Not a covering kind, or not a placed building: nothing.
+        let jail = w.build_service(civic_lot(&w, 0.0), ServiceKind::Jail, Tier::Low).unwrap();
+        assert!(w.service_reach(jail).is_empty());
+        let grown = w.buildings.iter().find(|(_, b)| b.service.is_none() && b.plant.is_none() && !b.depot && !b.metro && b.rail.is_none() && b.port.is_none()).map(|(id, _)| id);
+        if let Some(g) = grown {
+            assert_eq!(w.placed_as(g), None);
+        }
     }
 
     #[test]

@@ -30,6 +30,8 @@ pub struct WindowRequests {
     pub build: Option<(bool, Option<crate::ui::build::Cat>)>,
     /// Whether the Build window was open at the end of the last egui pass,
     /// and the section it showed.
+    /// [build-highlight] Open the Build window at a section and sub-section.
+    pub build_sub: Option<(crate::ui::build::Cat, Option<&'static str>)>,
     pub build_open: bool,
     pub build_section: Option<&'static str>,
 }
@@ -89,6 +91,9 @@ pub fn apply_window_requests(mut contexts: EguiContexts, mut req: ResMut<WindowR
             (true, Some(cat)) => crate::ui::build::show_section(ctx, cat),
             (open, _) => crate::ui::build::set_open(ctx, open),
         }
+    }
+    if let Some((cat, sub)) = req.build_sub.take() {
+        crate::ui::build::show_sub(ctx, cat, sub);
     }
     if let Some((info, on)) = req.expand.take() {
         crate::ui::pane::set_expanded(ctx, info, on);
