@@ -279,7 +279,6 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 ## Agents running (update when starting/merging; survives context compaction)
 - feat/fire-scene: fire scene crews, hoses, ladder (started 2026-10-07 evening)
-- feat/build-highlight: category highlights and service areas (started 2026-10-07 evening)
 - feat/committee: AI committee, mock backend first, Ollama/Claude connectors (started 2026-10-07 evening)
 - fix/ped-highway: pedestrians/taxis stranded on the highway (started 2026-10-07 23:20)
 - fix/interchange: clean interchanges, ramp+street logic (started 2026-10-07 23:25)
