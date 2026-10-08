@@ -324,6 +324,10 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 - [x] An instance crashed once with no panic text (waterfront agent) — the memory agent is investigating crashes; add a panic hook that writes a crash log next to the saves → DONE [fix/sweep-sim]: `nd_app::crash`: a panic hook writes message, thread, location, backtrace, frame, sim clock and the last save/load to `saves/crash.log` (keeps crash.1-4.log); a wrapping global allocator frees a 2 MiB reserve and logs a failed allocation (size, context, backtrace for big ones) before the usual abort
 
+- [ ] Small gaps in the junction surface beside corners at steep junctions (sweep-visual)
+- [ ] Tower windows all stayed lit at night once after generate_city + remote steps (fixed by save/reload) — window-light update timing (sweep-visual)
+- [ ] Park hub gates (paths into a park interior would split the park lot — needs a design); parclo/cloverleaf and street-over-highway interchange layouts
+
 ## Follow-ups noted in agent reports (not started)
 - [x] Waterfront leftovers: the fishing fleet (world/fishing.rs) does not sail a trawler from a private fishing jetty yet (berth is `Jetty::berth`); cargo-quay coasters are not drawn sailing; old saves keep their parcels unless `waterfront_parcels {on}` (no in-game toggle); beach crowds beyond the sim's own visitors are drawn as props (feat/waterfront) → trawlers and coasters DONE [fix/sweep-visual]: a fishery with its own jetty gets a one-boat fleet (`Fleet::jetty`) on the same grounds/out/home logic (its catch replaces its hourly fish like a port's; inspector FISHING FLEET, `inspect.fishing`, `ships`); the jetty's static boat is drawn only when no fleet sails it; a cargo quay's coaster sails in by water from the map's edge ahead of each load (`shore.inbound`), lies alongside 75 min after landing (`Jetty::last_load`), then sails out (renderer only). The parcels toggle and beach props remain
 - [x] Freight trains really carry their cargo instead of yards handing it to any train (train-inspect) → DONE [feat/freight]: rail orders wait out of town (`Rail::orders`, saved) and are loaded at the map edge into 50-unit wagons (5–12, oldest first), ride in and come off at their yard; exports picked up as room allows; the train inspector's manifest is what is aboard (wagons, units of capacity); an extra train 45 min after the last when goods are left behind; old saves' yard orders migrate to the queue; `examples/freight_probe` (demo: longest wait 2 h)
@@ -366,5 +370,4 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Faster save and load (and smaller saves); history autosaves keep 24 × ~150 MB per big city (~3.6 GB) — fewer or compressed
 - [ ] Settings menu (graphics, controls, UI scale, etc.)
 - (Later / skipped for now: challenges and scenarios, elections and disasters, water and sewage, seasons and events, advisor and heat maps, neighbouring towns, sound, tutorial)
-- fix/sweep-visual: leftovers sweep (supertall podium/night, park-path step, interchange overlap, jetty trawlers, coasters) (started 2026-10-08; ready to merge)
 - feat/rail-crossing: level crossing barriers and flashing lights (started 2026-10-08)
