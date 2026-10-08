@@ -247,7 +247,8 @@ pub(super) fn sync_emergency(
     time: Res<Time>,
     mut assets: Local<Option<EmergencyAssets>>,
     mut es: Local<EmergencyState>,
-    mut q: Query<(&mut Transform, &mut Visibility), With<EmergencyTag>>,
+    selection: Res<crate::tools::Selection>,
+    mut q: Query<(&mut Transform, &mut Visibility, Option<&mut InTunnel>), With<EmergencyTag>>,
     mut cars: Query<&mut Visibility, (With<CarTag>, Without<EmergencyTag>)>,
     mut parts: Query<&mut Transform, (With<RigPart>, Without<EmergencyTag>, Without<CarTag>)>,
 ) {
@@ -290,9 +291,9 @@ pub(super) fn sync_emergency(
         let shown = u.car.is_some_and(|c| w.traffic.cars.contains_key(c)) || matches!(u.state, UnitState::OnScene | UnitState::Patrol);
         if shown && !es.units.contains_key(&uid) {
             let k = kind_index(u.kind);
-            let body = commands.spawn((Mesh3d(a.bodies[k].clone()), MeshMaterial3d(a.paint[k].clone()), super::offstage(), NotShadowCaster, EmergencyTag, Grounded, super::focus::UnitTag)).id();
-            let la = commands.spawn((Mesh3d(a.bars[k][0].clone()), MeshMaterial3d(a.light_a[k].clone()), super::offstage(), NotShadowCaster, NotShadowReceiver, EmergencyTag, Grounded, super::focus::UnitTag)).id();
-            let lb = commands.spawn((Mesh3d(a.bars[k][1].clone()), MeshMaterial3d(a.light_b[k].clone()), super::offstage(), NotShadowCaster, NotShadowReceiver, EmergencyTag, Grounded, super::focus::UnitTag)).id();
+            let body = commands.spawn((Mesh3d(a.bodies[k].clone()), MeshMaterial3d(a.paint[k].clone()), super::offstage(), NotShadowCaster, EmergencyTag, SelfLifted, InTunnel(false), super::focus::UnitTag)).id();
+            let la = commands.spawn((Mesh3d(a.bars[k][0].clone()), MeshMaterial3d(a.light_a[k].clone()), super::offstage(), NotShadowCaster, NotShadowReceiver, EmergencyTag, SelfLifted, InTunnel(false), super::focus::UnitTag)).id();
+            let lb = commands.spawn((Mesh3d(a.bars[k][1].clone()), MeshMaterial3d(a.light_b[k].clone()), super::offstage(), NotShadowCaster, NotShadowReceiver, EmergencyTag, SelfLifted, InTunnel(false), super::focus::UnitTag)).id();
             // [layers] The Crime layer lights the police up (`focus`).
             if u.kind == UnitKind::PoliceCar {
                 for e in [body, la, lb] {
@@ -323,17 +324,31 @@ pub(super) fn sync_emergency(
             }
         }
     }
+    let lifted = super::lifts(*selection);
     for (uid, ents) in es.units.iter() {
         let Some(u) = s.units.get(*uid) else { continue };
-        let (pos, heading) = match u.car.and_then(|c| w.traffic.cars.get(c)) {
+        // [fix/review-app] At the height of the road the unit drives on (a
+        // viaduct, a tunnel), as `sync_cars` does, not lifted to the top
+        // surface by `lift_movers`; and in the tunnel layer when it is in
+        // one. Lifted when selected, like a selected car.
+        let car = u.car.and_then(|c| w.traffic.cars.get(c));
+        let (pos, heading) = match car {
             Some(car) => car.pose_at(f),
             None => (u.pos, u.heading),
         };
+        let (ground, tunnel) = match car {
+            Some(car) => (w.car_height_at(car, pos), w.car_in_tunnel(car)),
+            None => (w.surface_height_near(pos, w.ground_height(pos)), false),
+        };
+        let y = ground + 0.05 + if lifted.unit == Some(*uid) { super::SELECTED_LIFT } else { 0.0 };
         // Lights and sirens: the two halves of the bar alternate.
         let phase = ((t * 5.0 + phase_of(*uid)) as i64) % 2 == 0;
         for (i, e) in ents.iter().enumerate() {
-            if let Ok((mut tf, mut vis)) = q.get_mut(*e) {
-                tf.translation = Vec3::new(pos.x, 0.05, pos.y);
+            if let Ok((mut tf, mut vis, depth)) = q.get_mut(*e) {
+                tf.translation = Vec3::new(pos.x, y, pos.y);
+                if let Some(mut d) = depth.filter(|d| d.0 != tunnel) {
+                    d.0 = tunnel;
+                }
                 tf.rotation = Quat::from_rotation_y(-heading);
                 *vis = match i {
                     0 => Visibility::Inherited,
@@ -382,17 +397,17 @@ pub(super) fn sync_emergency(
         let seed = phase_of(bid) * 10.0;
         let flicker = 0.8 + 0.25 * (t * 9.0 + seed).sin() + 0.12 * (t * 23.0 + seed * 2.0).sin();
         let k = intensity.clamp(0.1, 1.0);
-        if let Ok((mut tf, _)) = q.get_mut(ents[0]) {
+        if let Ok((mut tf, _, _)) = q.get_mut(ents[0]) {
             tf.translation = Vec3::new(lot.center.x, height, lot.center.y);
             tf.scale = Vec3::new(size * (0.6 + 0.5 * k), size * (0.35 + 0.8 * k) * flicker, size * (0.6 + 0.5 * k));
             tf.rotation = Quat::from_rotation_y(t * 0.3 + seed);
         }
-        if let Ok((mut tf, _)) = q.get_mut(ents[1]) {
+        if let Ok((mut tf, _, _)) = q.get_mut(ents[1]) {
             let s = if fought { 0.45 + 0.55 * k } else { 1.0 };
             tf.translation = Vec3::new(lot.center.x, height + size * 0.2, lot.center.y);
             tf.scale = Vec3::new(size * (0.5 + 0.6 * k), size * (0.5 + 0.8 * k), size * (0.5 + 0.6 * k)) * s;
         }
-        if let Ok((mut tf, mut vis)) = q.get_mut(ents[2]) {
+        if let Ok((mut tf, mut vis, _)) = q.get_mut(ents[2]) {
             *vis = if fought { Visibility::Inherited } else { Visibility::Hidden };
             let s = size * (0.45 + 0.7 * (1.0 - k)) * (0.9 + 0.1 * (t * 1.7 + seed).sin());
             tf.translation = Vec3::new(lot.center.x, height, lot.center.y);

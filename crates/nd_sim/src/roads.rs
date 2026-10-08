@@ -1194,9 +1194,13 @@ impl RoadNetwork {
         let mut came_from: HashMap<NodeId, NodeId> = HashMap::new();
         let mut g: HashMap<NodeId, f32> = HashMap::new();
         g.insert(from, 0.0);
-        open.push(Open { f: self.node(from).pos.distance(goal), node: from });
+        open.push(Open { f: self.node(from).pos.distance(goal), g: 0.0, node: from });
 
-        while let Some(Open { node, .. }) = open.pop() {
+        while let Some(Open { node, g: popped_g, .. }) = open.pop() {
+            // An entry left behind when the node was reached more cheaply.
+            if popped_g > g[&node] {
+                continue;
+            }
             if node == to {
                 let mut path = vec![to];
                 let mut cur = to;
@@ -1216,7 +1220,7 @@ impl RoadNetwork {
                 if g.get(&next).map_or(true, |&old| cost < old) {
                     g.insert(next, cost);
                     came_from.insert(next, node);
-                    open.push(Open { f: cost + self.node(next).pos.distance(goal), node: next });
+                    open.push(Open { f: cost + self.node(next).pos.distance(goal), g: cost, node: next });
                 }
             }
         }
@@ -1503,6 +1507,8 @@ pub fn layout_rings(rings: &[(Ring, u64)], roads: &[(Vec<Vec2>, bool, u64)]) -> 
 #[derive(PartialEq)]
 struct Open {
     f: f32,
+    /// The cost to reach `node` when pushed (stale once it is reached for less).
+    g: f32,
     node: NodeId,
 }
 

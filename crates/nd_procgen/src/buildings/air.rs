@@ -157,7 +157,9 @@ pub fn rooftop_deck(g: &mut Geometry, c: &Ctx) -> bool {
 
 /// Pad centres on a polygon (lot-local): as many as `want` fit on a grid
 /// with room for a deck of radius `r` each.
-fn pad_spots(poly: &[Vec2], want: usize, r: f32) -> Vec<Vec2> {
+/// Pad centres on `poly` with the radius each one fits: `r` on a grid, or
+/// one smaller pad on the deepest point.
+fn pad_spots(poly: &[Vec2], want: usize, r: f32) -> Vec<(Vec2, f32)> {
     let inner = offset_poly(poly, r + 0.4);
     if inner.len() < 3 {
         return Vec::new();
@@ -171,7 +173,7 @@ fn pad_spots(poly: &[Vec2], want: usize, r: f32) -> Vec<Vec2> {
         while u <= hi.x + 0.01 && out.len() < want {
             let p = Vec2::new(u, v);
             if nd_sim::zoning::point_in_polygon(p, &inner) && distance_to_boundary(p, poly) >= r + 0.3 {
-                out.push(p);
+                out.push((p, r));
             }
             u += step;
         }
@@ -179,8 +181,9 @@ fn pad_spots(poly: &[Vec2], want: usize, r: f32) -> Vec<Vec2> {
     }
     if out.is_empty() {
         let p = interior_anchor(poly);
-        if distance_to_boundary(p, poly) >= r * 0.8 {
-            out.push(p);
+        let room = distance_to_boundary(p, poly);
+        if room >= r * 0.8 {
+            out.push((p, r.min(room - 0.1)));
         }
     }
     out
@@ -212,13 +215,13 @@ pub fn vertiport(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             r = 3.0;
             spots = pad_spots(&lot, want, r);
         }
-        for p in &spots {
-            helipad(g, c, *p, 0.05, r);
-            charger(g, c, *p + Vec2::new(r + 0.3, 0.0), 0.0);
+        for &(p, r) in &spots {
+            helipad(g, c, p, 0.05, r);
+            charger(g, c, p + Vec2::new(r + 0.3, 0.0), 0.0);
         }
         let front = c.front_face(&lot);
         let k = front.at(front.len * 0.3, 2.2);
-        if c.inside_local(k) && distance_to_boundary(k, &c.lot_poly) > 1.6 && spots.iter().all(|p| p.distance(k) > r + 1.8) {
+        if c.inside_local(k) && distance_to_boundary(k, &c.lot_poly) > 1.6 && spots.iter().all(|(p, _)| p.distance(k) > r + 1.8) {
             f.bx(g, Glass, k.x, 1.3, k.y, Vec3::new(2.4, 2.6, 1.8), pal.glass_dark);
             f.bx(g, Panel, k.x, 2.7, k.y, Vec3::new(2.8, 0.25, 2.2), [0.85, 0.86, 0.88]);
             f.bx(g, Glow, k.x, 2.95, k.y - 0.95, Vec3::new(2.2, 0.35, 0.06), neon);
@@ -259,9 +262,9 @@ pub fn vertiport(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let s = pad_spots(&main, want, r);
         if s.is_empty() { pad_spots(&main, want, 3.0) } else { s }
     };
-    for p in &spots {
-        helipad(g, c, *p, deck - 0.05, r);
-        let q = *p + Vec2::new(0.0, r + 0.35);
+    for &(p, r) in &spots {
+        helipad(g, c, p, deck - 0.05, r);
+        let q = p + Vec2::new(0.0, r + 0.35);
         if nd_sim::zoning::point_in_polygon(q, &main) {
             charger(g, c, q, deck);
         }
@@ -275,14 +278,14 @@ pub fn vertiport(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // Lift core and stair, at the back.
     let core = fit_inside(c, &rect(lo.x + w * 0.5 + w * 0.36, hi.y - d * 0.12, 1.6, 1.6));
-    if core.len() >= 3 && inradius(&core) > 0.8 && spots.iter().all(|p| p.distance(poly_center(&core)) > r + 1.8) {
+    if core.len() >= 3 && inradius(&core) > 0.8 && spots.iter().all(|(p, _)| p.distance(poly_center(&core)) > r + 1.8) {
         extrude(g, f, Panel, &core, 0.0, deck + 3.0, mul(base_col, 0.9));
         extrude(g, f, Glow, &offset_poly(&core, 0.02), deck + 2.6, deck + 2.8, mul(neon, 0.7));
     }
     if c.tier == Tier::High {
         // Control tower: a slim shaft with a glass cab and a beacon.
         let t = fit_inside(c, &rect(lo.x + w * 0.1, hi.y - d * 0.12, 1.8, 1.8));
-        if t.len() >= 3 && inradius(&t) > 0.9 && spots.iter().all(|p| p.distance(poly_center(&t)) > r + 2.2) {
+        if t.len() >= 3 && inradius(&t) > 0.9 && spots.iter().all(|(p, _)| p.distance(poly_center(&t)) > r + 2.2) {
             let top = deck + 14.0;
             extrude(g, f, Concrete, &t, 0.0, top, mul(pal.concrete(0), 0.9));
             let cab = fit_inside(c, &offset_poly(&t, -0.9));

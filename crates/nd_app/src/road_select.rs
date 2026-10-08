@@ -89,6 +89,44 @@ fn edges(gizmos: &mut Gizmos, w: &World, sid: SegmentId, out: f32, colour: Color
     }
 }
 
+/// The live piece whose midpoint is within a few metres of `mid`: where a
+/// selected piece went when the network was rebuilt (new segment numbers).
+pub fn repoint(w: &World, mid: SVec2) -> Option<SegmentId> {
+    w.roads
+        .nearest_on_network(mid)
+        .filter(|&(n, _, _)| {
+            let (a, b) = w.roads.segment_points(n);
+            ((a + b) * 0.5).distance(mid) < 6.0
+        })
+        .map(|(n, _, _)| n)
+}
+
+/// The midpoint of a live piece.
+fn midpoint(w: &World, sid: SegmentId) -> Option<SVec2> {
+    w.roads.try_segment(sid).filter(|s| s.alive)?;
+    let (a, b) = w.roads.segment_points(sid);
+    Some((a + b) * 0.5)
+}
+
+/// [fix/review-app] Run `f` (an implement) and keep a road selection on
+/// its piece through the rebuild it causes, at once: the road card drawn
+/// later in the same egui pass would otherwise find the old piece gone and
+/// drop the selection before `keep_on_rebuild` could re-point it (the
+/// toolbar's Implement lost it; Ctrl+Enter, in Input, did not).
+pub fn keeping_road<R>(w: &mut World, selection: &mut Selection, f: impl FnOnce(&mut World) -> R) -> R {
+    let mid = match *selection {
+        Selection::Road(sid) => midpoint(w, sid),
+        _ => None,
+    };
+    let r = f(w);
+    if let (Some(mid), Selection::Road(sid)) = (mid, *selection) {
+        if midpoint(w, sid).is_none_or(|m| m.distance(mid) > 0.01) {
+            *selection = repoint(w, mid).map_or(Selection::None, Selection::Road);
+        }
+    }
+    r
+}
+
 /// Keeps a road selection on its piece when the network is rebuilt (new
 /// segment numbers): the piece whose midpoint is nearest the selected
 /// one's, else the selection is dropped.
@@ -100,30 +138,23 @@ pub fn keep_on_rebuild(sim: Res<Sim>, mut selection: ResMut<Selection>, mut last
     };
     let version = w.roads.version;
     match *last {
-        Some((s, mid, v)) if s == sid && v != version => {
-            let found = w.roads.nearest_on_network(mid).filter(|&(n, _, _)| {
-                let (a, b) = w.roads.segment_points(n);
-                ((a + b) * 0.5).distance(mid) < 6.0
-            });
-            match found {
-                Some((n, _, _)) => *selection = Selection::Road(n),
-                None => {
-                    *selection = Selection::None;
-                    *last = None;
-                    return;
-                }
+        Some((s, mid, v)) if s == sid && v != version => match repoint(w, mid) {
+            Some(n) => *selection = Selection::Road(n),
+            None => {
+                *selection = Selection::None;
+                *last = None;
+                return;
             }
-        }
+        },
         _ => {}
     }
     let Selection::Road(sid) = *selection else { return };
-    if let Some(s) = w.roads.try_segment(sid).filter(|s| s.alive) {
-        let _ = s;
-        let (a, b) = w.roads.segment_points(sid);
-        *last = Some((sid, (a + b) * 0.5, version));
-    } else {
-        *selection = Selection::None;
-        *last = None;
+    match midpoint(w, sid) {
+        Some(mid) => *last = Some((sid, mid, version)),
+        None => {
+            *selection = Selection::None;
+            *last = None;
+        }
     }
 }
 

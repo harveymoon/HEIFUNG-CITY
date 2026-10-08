@@ -121,7 +121,7 @@ pub fn furniture(g: &mut Geometry, pal: &Palette, rigs: &[CrossingRig]) {
         let s3 = Vec3::new(side.x, 0.0, side.y);
         let yaw = r.facing.y.atan2(r.facing.x);
         // Footing and post.
-        g.part(Concrete).boxed(Vec3::new(r.post.x, KERB_H + 0.08, r.post.y), Vec3::new(0.5, 0.16, 0.5), yaw, rgba(mul(pal.concrete[0], 0.9)));
+        g.part(Concrete).boxed(Vec3::new(r.post.x, KERB_H + 0.08, r.post.y), Vec3::new(0.5, 0.16, 0.5), yaw, rgba(mul(pal.concrete(0), 0.9)));
         g.part(Metal).cylinder(r.post, 0.075, 0.065, KERB_H, 4.25, 8, grey);
         // The lamps' crossbar, black backboard and hoods.
         let c = Vec3::new(r.post.x, LAMP_Y, r.post.y) + f3 * 0.1;

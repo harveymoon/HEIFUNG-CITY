@@ -172,6 +172,32 @@ pub fn set_active(o: &mut Overlays, layer: Option<LayerId>) {
     }
 }
 
+/// [fix/review-app] The layer hotkeys: O zoning, V land value, P paths,
+/// L the people/traffic/pollution/crime cycle, K the land layers. Read
+/// here, before `keep_exclusive`, not inside the render systems in Sync:
+/// there two exclusive layers showed together for a frame, and the systems
+/// earlier in the chain saw the toggle a frame late.
+fn layer_hotkeys(keys: Res<ButtonInput<KeyCode>>, flags: Res<crate::ui::UiFlags>, mut overlays: ResMut<Overlays>) {
+    if flags.keyboard_captured {
+        return;
+    }
+    if keys.just_pressed(KeyCode::KeyO) {
+        overlays.zoning = !overlays.zoning;
+    }
+    if keys.just_pressed(KeyCode::KeyV) {
+        overlays.land_value = !overlays.land_value;
+    }
+    if keys.just_pressed(KeyCode::KeyP) {
+        overlays.paths = !overlays.paths;
+    }
+    if keys.just_pressed(KeyCode::KeyL) {
+        overlays.cycle();
+    }
+    if keys.just_pressed(KeyCode::KeyK) {
+        overlays.cycle_land();
+    }
+}
+
 /// Keep one layer on: when a second came on since the last frame, the
 /// newest stays. Runs in `PreUpdate`, so whatever turned a flag on last
 /// frame is settled before the renderer reads the flags.
@@ -190,7 +216,7 @@ pub struct MapLayersPlugin;
 
 impl Plugin for MapLayersPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PreUpdate, keep_exclusive);
+        app.add_systems(PreUpdate, (layer_hotkeys, keep_exclusive).chain().after(bevy::input::InputSystems));
     }
 }
 

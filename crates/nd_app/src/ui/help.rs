@@ -6,7 +6,7 @@ use crate::tools::Tool;
 use nd_sim::PowerPlantKind;
 
 pub const CAMERA_WALK: &str = "Mouse to look, WASD to walk, Shift to run, Tab or Esc to return.";
-pub const CAMERA_ORBIT: &str = "Right-drag rotate · middle-drag or shift-drag pan · wheel or [ ] zoom ([ ] raise and lower the road while the Road tool draws) · WASD pan, Q/E turn · Tab walks the street · F6 busiest junction · F7/F8/F9 a low/middle/high tier building · F11 a power plant · F12 a park · F5 a station or yard";
+pub const CAMERA_ORBIT: &str = "Right-drag rotate · middle-drag or shift-drag pan · wheel or [ ] zoom ([ ] raise and lower the road while the Road tool draws) · WASD pan, Q/E turn · Tab walks the street · F6 busiest junction · F7/Shift+F8/F9 a low/middle/high tier building · F8 Flag for Claude · F11 a power plant · F12 a park · F5 a station or yard";
 pub const HOTKEYS: &str = "Space pause · - / = speed · Ctrl+Z / Ctrl+Y undo and redo · Ctrl+Enter implement · J City Data · Esc clears points and the selection (or closes City Data) · Backspace drops the last point or stop · Delete removes the hovered point or stop · O zoning layer · V land value · L heat layers · K land and resource layers (farmland, oil, geothermal, best place for each industry) · M metro (lines and stations) · P pedestrian network · H drone heat vision · G seeds the demo on an empty map";
 pub const TOOL_KEYS: &str = "Tools by digit 1–9 or by letter I R Z B N T Y (Edit has no letter: Q and E turn the camera). The building ones (2 Road, 3 Zone, 6 Buildings, 7 Transit, 8 Rail, 9 Districts) open the Build window at their section.";
 

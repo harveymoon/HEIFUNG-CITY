@@ -482,7 +482,7 @@ pub fn strip_mine(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // The conveyor: from the floor over the rim to the ore heap out front.
     let rim_pt = centre + (outer[sides * 3 / 4] - centre) * top0;
-    let heap_pt = Vec2::new(rim_pt.x.clamp(area.u0 + 3.0, area.u1 - 3.0), area.v0 + fs * 0.5);
+    let heap_pt = Vec2::new(crate::mesh::clamp_safe(rim_pt.x, area.u0 + 3.0, area.u1 - 3.0), area.v0 + fs * 0.5);
     let heap_ok = c.inside_local(heap_pt) && distance_to_boundary(heap_pt, &c.lot_poly) > 2.0 && distance_to_boundary(rim_pt, &c.lot_poly) > 1.0;
     let pts = [Vec3::new(centre.x, 1.0, centre.y), Vec3::new(rim_pt.x, rim + 3.0, rim_pt.y), Vec3::new(heap_pt.x, 6.0, heap_pt.y)];
     for w in pts.windows(2).take(if heap_ok { 2 } else { 0 }) {

@@ -130,7 +130,8 @@ pub fn cash_flow(ui: &mut egui::Ui, p: &mut UiCtx) {
     }
     let net: f32 = entries.iter().map(|(_, x)| x).sum();
     ui.separator();
-    signed_bar(ui, "net", net, scale, if net < 0.0 { WARN } else { INCOME });
+    // [fix/review-app] The net is a sum: it can outgrow the largest line.
+    signed_bar(ui, "net", net, scale.max(net.abs()), if net < 0.0 { WARN } else { INCOME });
 }
 
 /// One ledger line: label, a bar growing right for income and left for
@@ -144,7 +145,7 @@ fn signed_bar(ui: &mut egui::Ui, label: &str, value: f32, scale: f32, col: Color
         let mid = rect.center().x;
         painter.vline(mid, rect.y_range(), egui::Stroke::new(1.0, Color32::from_gray(90)));
         let half = rect.width() / 2.0 - 2.0;
-        let len = (value.abs() / scale * half).max(if value == 0.0 { 0.0 } else { 1.0 });
+        let len = (value.abs() / scale * half).max(if value == 0.0 { 0.0 } else { 1.0 }).min(half);
         let (x0, x1) = if value >= 0.0 { (mid, mid + len) } else { (mid - len, mid) };
         painter.rect_filled(egui::Rect::from_min_max(egui::pos2(x0, rect.top() + 2.0), egui::pos2(x1, rect.bottom() - 2.0)), 1.0, col);
         ui.label(warn_if(value < 0.0, format!("{value:+.0}")));

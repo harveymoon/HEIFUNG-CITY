@@ -71,7 +71,7 @@ pub(super) fn sync_taxis(mut commands: Commands, sim: Res<Sim>, mats: Res<Materi
             }
         }
         let v = vr.variant(&mut meshes, &model);
-        let finish = vr.finish[model.class as usize].clone();
+        let finish = vr.finish_of(model.class);
         let pose = Transform::from_translation(Vec3::new(p.x, 0.05, p.y)).with_rotation(Quat::from_rotation_y(-heading));
         let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, ParkedCabTag, Grounded)).id();
         // The roof sign and lamps: a cab waiting for a fare shows its light.

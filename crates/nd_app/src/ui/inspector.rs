@@ -392,11 +392,19 @@ fn bot(ui: &mut egui::Ui, w: &nd_sim::World, selection: &mut Selection, id: nd_s
 fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets: &GameAssets, id: nd_sim::BuildingId) {
     // [free-placement] A bulldoze confirmed last frame: it goes, and its
     // ground back to the zoning plan.
-    let bulldoze = egui::Id::new(("inspector_bulldoze", id));
+    // [fix/review-app] Keyed by the city too: a loaded city reuses ids, and
+    // its building must not come up already armed.
+    let bulldoze = egui::Id::new(("inspector_bulldoze", sim.generation, id));
     if ui.ctx().data_mut(|d| d.remove_temp::<bool>(bulldoze.with("go"))).unwrap_or(false) {
-        if sim.world.bulldoze_building(id).is_ok() {
-            *selection = Selection::None;
-            return;
+        match sim.world.bulldoze_building(id) {
+            Ok(_) => {
+                *selection = Selection::None;
+                return;
+            }
+            // Say why, beside the button (the armed state is already gone).
+            Err(e) => {
+                ui.ctx().data_mut(|d| d.insert_temp(bulldoze.with("err"), e.to_string()));
+            }
         }
     }
     let w = &sim.world;
@@ -461,6 +469,9 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 if ui.small_button("Cancel").clicked() {
                     ui.ctx().data_mut(|d| d.remove::<bool>(bulldoze));
                 }
+            }
+            if let Some(err) = ui.ctx().data(|d| d.get_temp::<String>(bulldoze.with("err"))) {
+                ui.label(egui::RichText::new(format!("Not bulldozed: {err}")).small().color(WARN));
             }
         });
     }

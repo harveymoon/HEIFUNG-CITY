@@ -28,7 +28,7 @@ fn main() {
     // up first (the demo district does the same), and say so rather than
     // panic if the plant still cannot be built.
     world.economy.treasury = world.economy.treasury.max(150_000.0);
-    let lot = world.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial && l.area() >= 600.0).max_by(|a, b| a.1.area().total_cmp(&b.1.area())).map(|(id, _)| id);
+    let lot = world.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial && l.building.is_none() && l.area() >= 600.0).min_by(|a, b| (a.1.area() - nd_sim::power::COAL_REFERENCE_AREA).abs().total_cmp(&(b.1.area() - nd_sim::power::COAL_REFERENCE_AREA).abs())).map(|(id, _)| id);
     if let Some(lot) = lot {
         if let Err(e) = world.build_power(lot, nd_sim::PowerPlantKind::Coal) {
             eprintln!("no coal plant: {e}");

@@ -740,7 +740,7 @@ fn pumpjack(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, color: [f32;
     let yaw = rng.random_range(0.0..std::f32::consts::TAU);
     let d = Vec2::new(yaw.cos(), yaw.sin());
     let tilt = rng.random_range(-0.25..0.25);
-    f.bx_yaw(g, Concrete, p.x, 0.2, p.y, Vec3::new(5.5, 0.4, 1.6), mul(c.palette.concrete[0], 0.8), yaw);
+    f.bx_yaw(g, Concrete, p.x, 0.2, p.y, Vec3::new(5.5, 0.4, 1.6), mul(c.palette.concrete(0), 0.8), yaw);
     // Sampson post (A-frame).
     for s in [-0.5f32, 0.5] {
         let q = p + Vec2::new(-d.y, d.x) * s;
@@ -786,7 +786,7 @@ fn derrick(g: &mut Geometry, c: &Ctx, p: Vec2, h: f32) {
     }
     f.bx(g, Metal, p.x, h + 0.4, p.y, Vec3::new(1.6, 0.8, 1.6), steel);
     f.bx(g, Glow, p.x, h + 1.0, p.y, Vec3::new(0.3, 0.3, 0.3), c.palette.aviation_light);
-    f.bx(g, Concrete, p.x, 0.3, p.y, Vec3::new(5.0, 0.6, 5.0), mul(c.palette.concrete[0], 0.75));
+    f.bx(g, Concrete, p.x, 0.3, p.y, Vec3::new(5.0, 0.6, 5.0), mul(c.palette.concrete(0), 0.75));
 }
 
 // ── refinery ─────────────────────────────────────────────────────────────────
@@ -1035,7 +1035,7 @@ pub fn truck_lot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let front = c.front_face(&lot);
     let fuel = front.at(-front.len * 0.3, -3.5);
     if poly_inside(c, &rect(fuel.x, fuel.y, 2.5, 1.2)) {
-        f.bx(g, Concrete, fuel.x, 0.15, fuel.y, Vec3::new(5.0, 0.3, 1.6), mul(pal.concrete[0], 0.9));
+        f.bx(g, Concrete, fuel.x, 0.15, fuel.y, Vec3::new(5.0, 0.3, 1.6), mul(pal.concrete(0), 0.9));
         for k in [-1.0f32, 1.0] {
             f.bx(g, Metal, fuel.x + k * 1.2, 0.95, fuel.y, Vec3::new(0.6, 1.3, 0.5), mul(pal.warning_light, 0.5));
         }

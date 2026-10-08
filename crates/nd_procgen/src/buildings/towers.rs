@@ -232,7 +232,8 @@ pub fn twin_slab(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 if room > 0.3 {
                     for k in 1..fl {
                         face.bx(g, f, Concrete, 0.0, k as f32 * fh, room * 0.5, Vec3::new(face.len * 0.9, 0.18, room), trim);
-                        face.decal(g, f, Matte, 0.0, k as f32 * fh + 0.5, room, face.len * 0.9, 0.85, mul(pal.steel, 0.5));
+                        // The railing 2 cm proud of the slab's edge, not in its face.
+                        face.decal(g, f, Matte, 0.0, k as f32 * fh + 0.5, room + 0.02, face.len * 0.9, 0.85, mul(pal.steel, 0.5));
                     }
                 }
             }
@@ -599,7 +600,10 @@ pub fn glass_castle(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         for k in (1..floors).step_by(if form == Form::High { 2 } else { 1 }) {
             if coin(rng, c.lit_chance()) {
                 let y = k as f32 * fh;
-                let ring = if y < h * 0.55 { scale_poly(&base, 1.0 - 0.08 * (y / (h * 0.55))) } else { scale_poly(&mid_poly, 1.0 - 0.05 * ((y - h * 0.55) / (h * 0.45))) };
+                // On the facets at this height: the lofts turn and taper
+                // from one plan to the next, so the seam mixes the two.
+                let mix_plan = |a: &[Vec2], b: &[Vec2], t: f32| -> Vec<Vec2> { if a.len() == b.len() { a.iter().zip(b).map(|(p, q)| p.lerp(*q, t)).collect() } else { scale_poly(a, 1.0 - (1.0 - 0.95) * t) } };
+                let ring = if y < h * 0.55 { mix_plan(&base, &mid_poly, y / (h * 0.55)) } else { mix_plan(&mid_poly, &body_top, (y - h * 0.55) / (h * 0.45)) };
                 let ring = offset_poly(&ring, -0.04);
                 let col = mul(pick(rng, &c.style.window_colors), 0.75);
                 window_light(g, c, |g| extrude(g, f, Glow, &ring, y, y + 0.2, col));

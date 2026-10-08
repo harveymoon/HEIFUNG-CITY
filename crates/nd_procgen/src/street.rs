@@ -1040,7 +1040,9 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             // Only a way at this one's height counts: a tunnel (or any way
             // passing well under or over) is not beside it, and the
             // barrier used to stop exactly where a tunnel ramp ran beneath.
-            let run_z: Vec<f32> = run.nodes.iter().map(|&n| node_z(n)).collect();
+            // The run's own height comes from its binned profile (`lifts`),
+            // inner samples and all: a list of node heights against the
+            // run's points read the first node's height everywhere.
             // Along a taper at either end the barrier follows its edge
             // (`lane_taper`), not the narrower road's.
             let in_taper = |p: Vec2| {
@@ -1064,7 +1066,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
                     let (a, b) = roads.segment_points(o);
                     let (t, q) = nd_sim::roads::project_on_segment(p, a, b);
                     let oz = nd_sim::landscape::way_height(roads, heights, inp.inner, o, t);
-                    q.distance(p) < os.half_width() + 1.2 && (oz - profile_height(&run.points, &run_z, p)).abs() < 2.5
+                    q.distance(p) < os.half_width() + 1.2 && (oz - run_z(ri, p)).abs() < 2.5
                 })
             };
             for side in [-1.0f32, 1.0] {
@@ -1095,7 +1097,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
                 let right = Vec2::new(-d.y, d.x);
                 // Not on the lanes of a ramp running alongside to merge.
                 let q = p + right * side * (hw + 0.5);
-                if !junction::on_carriageway(roads, heights, inp.inner, q, profile_height(&run.points, &run_z, q), 0.05) {
+                if !junction::on_carriageway(roads, heights, inp.inner, q, run_z(ri, q), 0.05) {
                     lamp_post_world(&mut g, q, 9.0, pal.street_lamp);
                 }
                 s += 40.0;
@@ -1511,7 +1513,9 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             }
 
             if corner.fill.len() >= 3 {
-                g.part(Paving).ground_polygon(&corner.fill, KERB_H - 0.01, paving_c);
+                // 3 mm over the pavements it overlaps (theirs at KERB_H -
+                // 0.01, with other UVs): one surface wins, no flicker.
+                g.part(Paving).ground_polygon(&corner.fill, CORNER_FILL_Y, paving_c);
                 let mut edges: Vec<(Vec2, Vec2, Option<Vec2>)> = corner.rim.windows(2).map(|w| (w[0], w[1], None)).collect();
                 if corner.stub && !corner.rim.is_empty() {
                     // Where the paving stops beside a link with none: its
@@ -1525,7 +1529,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
                     let n = Vec2::new(-(q - p).y, (q - p).x);
                     let towards = facing.unwrap_or((p + q) * 0.5 - centre);
                     let n = if n.dot(towards) < 0.0 { -n } else { n };
-                    let y = KERB_H - 0.01;
+                    let y = CORNER_FILL_Y;
                     g.part(Paving).quad_facing([Vec3::new(p.x, 0.0, p.y), Vec3::new(q.x, 0.0, q.y), Vec3::new(q.x, y, q.y), Vec3::new(p.x, y, p.y)], Vec3::new(n.x, 0.0, n.y), paving_c);
                 }
             }
@@ -2106,6 +2110,9 @@ const TACTILE_DEPTH: f32 = 0.8;
 /// How deep a corner's kerb ribbon reaches into the pavement: to the top of
 /// a curb cut's ramp. The flat paving fill of the corner begins there.
 const CORNER_RIBBON: f32 = KERB_W + CUT_LANDING + CUT_RAMP;
+/// The paving that fills a junction corner behind its kerb ribbon: a layer
+/// over the arms' pavements (KERB_H - 0.01) where it overlaps them.
+const CORNER_FILL_Y: f32 = KERB_H - 0.007;
 
 /// Where a crosswalk meets the kerbs of the street it crosses: a band
 /// `half` either side of `mid` along the street, as far out to either side

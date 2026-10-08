@@ -405,7 +405,8 @@ pub struct Air {
     /// Last tick each citizen grumbled about a drone, so once a day at most.
     #[serde(skip)]
     pub grumbled: HashMap<CitizenId, u64>,
-    #[serde(skip)]
+    /// The drones' own stream, saved (see `World::arng`).
+    #[serde(default, with = "crate::rng_save::opt")]
     pub rng: Option<crate::SimRng>,
 }
 

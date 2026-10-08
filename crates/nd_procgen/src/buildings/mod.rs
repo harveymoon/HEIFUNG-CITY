@@ -660,7 +660,10 @@ impl LandUseRules {
         self.floor_height = self.floor_height.clamp(2.2, 12.0);
         self.inset = self.inset.max(0.0);
         self.window_spacing = self.window_spacing.max(0.8);
-        self.window_size = [self.window_size[0].max(0.2), self.window_size[1].max(0.2)];
+        // A window wider than its spacing overlaps the next; one taller
+        // than a floor reaches into the floors above and below (and under
+        // the ground on the first).
+        self.window_size = [self.window_size[0].max(0.2).min(self.window_spacing * 0.9), self.window_size[1].max(0.2).min(self.floor_height * 0.8)];
     }
 }
 
@@ -743,7 +746,7 @@ impl BuildingRules {
         let options = self.options(lu, tier);
         let weights: Vec<f32> = options.iter().map(|o| o.weight * adjacency::site_fit(o.style, site) * adjacency::neighbour_factor(o.style, near)).collect();
         let total: f32 = weights.iter().sum();
-        if options.is_empty() || total.is_nan() || total <= 0.0 {
+        if options.is_empty() || !(total > 0.0 && total.is_finite()) {
             return default_style(lu, tier);
         }
         let mut r = rng.random_range(0.0..total);
@@ -1214,6 +1217,12 @@ impl Ctx<'_> {
     /// `Frame::to_local` first (or `park::Park::inside_world`).
     pub fn inside_local(&self, p: Vec2) -> bool {
         point_in_polygon(p, &self.lot_poly)
+    }
+
+    /// Whether the straight run from `a` to `b` stays over the lot: a wire
+    /// or a string of lights across a concave lot's notch would not.
+    pub fn spans_lot(&self, a: Vec2, b: Vec2) -> bool {
+        (0..=8).all(|k| self.inside_local(a.lerp(b, k as f32 / 8.0)))
     }
 
     /// Distance from the middle of a face, outward, to the lot boundary: the
@@ -1711,6 +1720,9 @@ fn back_edge_link(lot: &Lot, kind: RailFacility) -> RailLink {
 mod coplanar_tests;
 
 #[cfg(test)]
+mod sweep_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use nd_sim::roads::RoadNetwork;
@@ -1985,6 +1997,63 @@ mod tests {
             }
         }
         assert!(worst.is_empty(), "{} sites leave their lot or budget:\n{}", worst.len(), worst.join("\n"));
+    }
+
+    /// The site's small ground-level triangles (wholly under `y_max`, no
+    /// edge over 7 m: the yard's clutter, not the hoarding runs or the
+    /// sheeting down the scaffold) as millimetre-rounded vertices, sorted.
+    fn low_tris(g: &Geometry, y_max: f32) -> Vec<(String, [[i64; 3]; 3])> {
+        let mut out = Vec::new();
+        for (s, m) in g.iter() {
+            for t in m.indices.chunks_exact(3) {
+                let v = [t[0], t[1], t[2]].map(|i| m.positions[i as usize]);
+                let small = (0..3).all(|k| Vec3::from(v[k]).distance(Vec3::from(v[(k + 1) % 3])) < 7.0);
+                if small && v.iter().all(|p| p[1] < y_max) {
+                    out.push((format!("{s:?}"), v.map(|p| p.map(|x| (x * 1000.0).round() as i64))));
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// `small` is contained in `big`, counting repeats.
+    fn is_sub_multiset<T: Ord>(small: &[T], big: &[T]) -> bool {
+        let mut j = 0;
+        for x in small {
+            while j < big.len() && big[j] < *x {
+                j += 1;
+            }
+            if j == big.len() || big[j] != *x {
+                return false;
+            }
+            j += 1;
+        }
+        true
+    }
+
+    /// A progress step keeps the yard where it was: the cabin, the truck,
+    /// the heaps, the stacks still there and the crew on the ground do not
+    /// jump when the structure gains a floor (the stacks only thin out).
+    #[test]
+    fn construction_clutter_is_stable_across_progress() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        let mut checked = 0;
+        for lu in [LandUse::Residential, LandUse::Commercial, LandUse::Industrial] {
+            for (li, lot) in many_lots(lu).iter().enumerate().take(12) {
+                for (floors, a, b) in [(9u8, 0.30f32, 0.36f32), (20, 0.2, 0.45), (3, 0.45, 0.6)] {
+                    let site = |p: f32| generate_building(lot, lu, floors, Tier::Mid, 1.0, 5 + li as u64, &rules, &pal, &Extras { construction: Some(p), ..Extras::default() });
+                    let (early, late) = (low_tris(&site(a), 1.6), low_tris(&site(b), 1.6));
+                    if !is_sub_multiset(&late, &early) {
+                        let extra: Vec<_> = late.iter().filter(|t| !early.contains(t)).take(6).collect();
+                        panic!("{lu:?} lot {li} floors {floors}: the yard at {b} is not the yard at {a} thinned out ({} vs {} ground triangles); new: {extra:?}", late.len(), early.len());
+                    }
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 20);
     }
 
     /// Demolition sites at every stage stay on their lot, are well formed,

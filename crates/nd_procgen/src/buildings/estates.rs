@@ -74,7 +74,10 @@ fn house(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, cu: f32, cv: f32, hw: f3
     }
     let front = c.front_face(&p);
     let t = (rng.random::<f32>() - 0.5) * front.len * 0.3;
-    entrance(g, c, rng, &front, t, 1.1, 2.2);
+    // The canopy stands out from the door: only where there is lot for it.
+    if room(c, &front, t - 1.2, t + 1.2, 1.6) {
+        entrance(g, c, rng, &front, t, 1.1, 2.2);
+    }
     Some(p)
 }
 
@@ -288,7 +291,7 @@ pub fn huts(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     for _ in 0..3 {
         if let Some(p) = c.random_inside(rng, 2.0) {
-            g.part(Rust).cylinder(f.to_world(p.x, p.y), 0.35, 0.35, 0.0, 0.95, 10, rgba(mul(pal.metal_paint[0], 0.6)));
+            g.part(Rust).cylinder(f.to_world(p.x, p.y), 0.35, 0.35, 0.0, 0.95, 10, rgba(mul(pal.metal_paint(0), 0.6)));
         }
     }
 }
@@ -441,8 +444,10 @@ pub fn mcmansion(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let ge = offset_poly(&gp, -0.4);
         loft(g, f, Panel, &ge, &ridge(&ge), 3.0, 4.6, roof);
         let gf = c.front_face(&gp);
-        for t in [-2.9f32, 0.0, 2.9] {
-            roller_door(g, c, &gf, t, 2.5, 2.2, WHITE);
+        // Up to three doors, as many as the wing's face holds once fitted.
+        let n = ((gf.len - 0.4) / 2.9).floor().clamp(0.0, 3.0) as i32;
+        for k in 0..n {
+            roller_door(g, c, &gf, (k as f32 - (n - 1) as f32 * 0.5) * 2.9, 2.5, 2.2, WHITE);
         }
     }
     // Looping drive with a fountain in the middle.

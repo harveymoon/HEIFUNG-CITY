@@ -58,8 +58,8 @@ fn toll(g: &mut Geometry, b: &TollDraw, pal: &Palette) {
     }
     let right = Vec2::new(-d.y, d.x);
     let yaw = d.y.atan2(d.x);
-    let neon = if pal.glow_colors.is_empty() { [1.0, 0.2, 0.8] } else { pal.glow_colors[b.id as usize % pal.glow_colors.len()] };
-    let neon2 = if pal.glow_colors.len() > 1 { pal.glow_colors[(b.id as usize + 3) % pal.glow_colors.len()] } else { [0.2, 0.9, 1.0] };
+    let neon = if pal.glow_colors.is_empty() { [1.0, 0.2, 0.8] } else { pal.glow(b.id as usize) };
+    let neon2 = if pal.glow_colors.len() > 1 { pal.glow(b.id as usize + 3) } else { [0.2, 0.9, 1.0] };
     let concrete = rgba(mul(pal.concrete(0), 1.15));
     let hazard = rgba([0.95, 0.75, 0.1]);
     let steel = rgba(mul(pal.steel, 0.75));
@@ -99,7 +99,9 @@ fn toll(g: &mut Geometry, b: &TollDraw, pal: &Palette) {
         // The road's edges in the booth line's frame.
         let (el, er) = (-hw - c, hw - c);
         let apron = [at(-f, el), at(-s, -w), at(s, -w), at(f, el), at(f, er), at(s, w), at(-s, w), at(-f, er)];
-        g.part(Asphalt).ground_polygon(&apron, 0.06, rgba(mul(pal.asphalt, 1.12)));
+        // Over the road's own lane marks (0.085), which it replaces, rather
+        // than under them; its lines a layer above that.
+        g.part(Asphalt).ground_polygon(&apron, 0.092, rgba(mul(pal.asphalt, 1.12)));
         // Kerbs along the flared edges, a strip of kerb lights on them.
         for (side, edge) in [(-1.0f32, el), (1.0, er)] {
             let pts = [at(-f, edge), at(-s, side * w), at(s, side * w), at(f, edge)];
@@ -120,7 +122,7 @@ fn toll(g: &mut Geometry, b: &TollDraw, pal: &Palette) {
             for sgn in [-1.0f32, 1.0] {
                 let a = at(sgn * s, v);
                 let e = at(sgn * f, v_road);
-                line(g, a, e, 0.14, 0.085, marker);
+                line(g, a, e, 0.14, 0.1, marker);
             }
         }
         // Tall lamps at the four corners of the straight part.

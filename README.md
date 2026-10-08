@@ -4,10 +4,14 @@ A procedural near-future city builder built to be tinkered with: worn, realistic
 The simulation is engine-independent and deterministic; the renderer is a thin layer on top.
 
 ```
-cargo run --release -p nd_app          # the game
-cargo run --example headless -p nd_sim # simulate a city in the terminal
-cargo test                             # sim tests
+cargo run --release -p nd_app                  # the game
+cargo run --example headless -p nd_sim -- 3    # simulate a small grid city for 3 days in the terminal
+cargo test --profile fast --workspace          # the tests
 ```
+
+`headless` lays out its own small grid. The probes in `crates/nd_sim/examples/` (`land_probe`,
+`carlife_probe`, `jam_probe`, `peak_probe`, ...) run the demo district of
+`crates/nd_sim/tests/demo_city.rs`, the one the Dev window seeds.
 
 First build takes several minutes (Bevy). After that, `cargo run -p nd_app --features fast-dev`
 links Bevy dynamically for quicker iteration.

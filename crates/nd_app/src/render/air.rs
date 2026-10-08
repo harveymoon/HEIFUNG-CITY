@@ -122,12 +122,12 @@ pub(super) fn sync_air(
         }
         let model = model_of(d.craft, d.number);
         let v = vr.variant(&mut meshes, &model);
-        let finish = vr.finish[model.class as usize].clone();
+        let finish = vr.finish_of(model.class);
         let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), super::offstage(), Visibility::Visible, AirTag)).id();
         let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), super::offstage(), Visibility::Visible, NotShadowCaster, NotShadowReceiver, AirTag)).id();
         let fx = v.fx.map(|fx| commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), super::offstage(), Visibility::Visible, NotShadowCaster, NotShadowReceiver, AirTag)).id());
         let strobe = commands.spawn((Mesh3d(st.strobe_mesh.clone().unwrap()), MeshMaterial3d(st.strobe_mat.clone().unwrap()), super::offstage(), Visibility::Hidden, NotShadowCaster, NotShadowReceiver, AirTag)).id();
-        let rotor = (d.craft != Craft::Taxi).then(|| commands.spawn((Mesh3d(st.rotor.clone().unwrap()), MeshMaterial3d(vr.finish[1].clone()), super::offstage(), Visibility::Visible, AirTag)).id());
+        let rotor = (d.craft != Craft::Taxi).then(|| commands.spawn((Mesh3d(st.rotor.clone().unwrap()), MeshMaterial3d(vr.finish_of(nd_sim::vehicle::VehicleClass::Mid)), super::offstage(), Visibility::Visible, AirTag)).id());
         let beam = (d.craft == Craft::PoliceHeli).then(|| {
             let cone = commands.spawn((Mesh3d(st.cone.clone().unwrap()), MeshMaterial3d(st.beam_mat.clone().unwrap()), super::offstage(), Visibility::Hidden, NotShadowCaster, NotShadowReceiver, AirTag)).id();
             let light = commands

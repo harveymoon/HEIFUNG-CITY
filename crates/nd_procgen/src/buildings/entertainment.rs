@@ -73,10 +73,10 @@ pub fn shack_bar(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for p in &poles {
         f.bx(g, Wood, p.x, 2.5, p.y, Vec3::new(0.16, 5.0, 0.16), pal.bark);
     }
-    for w in poles.windows(2) {
+    for w in poles.windows(2).filter(|w| c.spans_lot(w[0], w[1])) {
         string_lights(g, f, Vec3::new(w[0].x, 4.8, w[0].y), Vec3::new(w[1].x, 4.8, w[1].y), 10, mul(pick(rng, &pal.glow_colors), 1.1));
     }
-    if let (Some(a), Some((b, w, _, h))) = (poles.first(), shacks.first()) {
+    if let (Some(a), Some((b, w, _, h))) = (poles.first().filter(|a| shacks.first().is_some_and(|s| c.spans_lot(**a, s.0 - Vec2::new(s.1 * 0.5, 0.0)))), shacks.first()) {
         string_lights(g, f, Vec3::new(a.x, 4.8, a.y), Vec3::new(b.x - w * 0.5, h + 0.1, b.y), 8, mul(pal.window_warm, 1.2));
     }
     if let Some(p) = c.random_inside(rng, 4.0) {
@@ -164,7 +164,7 @@ pub fn cinema(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let pal = c.palette;
     let poly = &c.poly;
     let lobby_h = c.fh() * 2.0;
-    let hall_h = (c.floors as f32 * c.fh()).clamp(lobby_h + 4.0, 20.0);
+    let hall_h = (c.floors as f32 * c.fh()).min(20.0).max(lobby_h + 4.0);
     let col = mul(pick(rng, &pal.plaster), 1.0 - 0.25 * c.wear);
     extrude(g, f, Plaster, poly, 0.0, lobby_h, col);
     // Auditorium block set back from the front.
@@ -284,8 +284,14 @@ pub fn arena(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Outward-leaning shell with a lit band and a roof ring.
     loft(g, f, Panel, &bowl, &scale_poly(&bowl, 1.12), 0.0, h * 0.7, panel);
     loft(g, f, Panel, &scale_poly(&bowl, 1.12), &scale_poly(&bowl, 1.05), h * 0.7, h, mul(panel, 0.85));
-    extrude(g, f, Glow, &scale_poly(&bowl, 1.125), h * 0.35, h * 0.42, mul(pick(rng, &pal.led_colors), 0.7));
-    extrude(g, f, Glow, &scale_poly(&bowl, 1.08), h * 0.74, h * 0.77, mul(pal.window_cold, 0.6));
+    // The lit bands follow the leaning shell, a hair proud of it: the
+    // shell's scale at height y, plus 0.6 per cent. (Drawn as straight
+    // cylinders they floated a metre or two out of one stage and were
+    // buried in the other.)
+    let shell = |y: f32| if y <= h * 0.7 { 1.0 + 0.12 * y / (h * 0.7) } else { 1.12 - 0.07 * (y - h * 0.7) / (h * 0.3) } + 0.006;
+    for (y0, y1, col) in [(h * 0.35, h * 0.42, mul(pick(rng, &pal.led_colors), 0.7)), (h * 0.74, h * 0.77, mul(pal.window_cold, 0.6))] {
+        band(g, f, Glow, &scale_poly(&bowl, shell(y0)), &scale_poly(&bowl, shell(y1)), y0, y1, col);
+    }
     extrude(g, f, Metal, &scale_poly(&bowl, 1.05), h, h + 1.2, mul(pal.steel, 0.9));
     let roof = scale_poly(&bowl, 1.0);
     extrude(g, f, Metal, &roof, h + 1.2, h + 1.5, mul(panel, 0.7));

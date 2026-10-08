@@ -16,7 +16,7 @@
 //! one. Everything here is saved with the world, so history survives a
 //! load.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
@@ -315,11 +315,11 @@ pub struct Concerns {
     pub mood_days: VecDeque<MoodSample>,
     /// Happiness each hour, the last `MOOD_HOURS`.
     pub mood_hours: VecDeque<MoodSample>,
-    /// Who has complained about what today (one count each a day). Not
-    /// saved: after a load, someone may count twice that day.
-    #[serde(skip)]
-    seen: HashSet<(CitizenId, u8)>,
-    #[serde(skip)]
+    /// Who has complained about what today (one count each a day). Saved,
+    /// so nobody counts twice in a day across a load.
+    #[serde(default)]
+    seen: BTreeSet<(CitizenId, u8)>,
+    #[serde(default)]
     seen_day: u64,
 }
 

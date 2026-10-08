@@ -174,21 +174,22 @@ fn ledger_row<'de, D: serde::Deserializer<'de>>(d: D) -> Result<[f32; FLOWS], D:
 }
 
 /// A fixed-size array saved when the enum it is indexed by was shorter
-/// (new business kinds since): missing entries take their default, extra
-/// ones are dropped, so older saves keep loading.
+/// (new business kinds, plant kinds, offences since) or longer: missing
+/// entries take their default, extra ones are dropped, so saves keep
+/// loading. Use it on every saved array sized by an enum's count.
 pub(crate) fn padded<'de, D, T, const N: usize>(d: D) -> Result<[T; N], D::Error>
 where
     D: serde::Deserializer<'de>,
-    T: serde::Deserialize<'de> + Default + Copy,
+    T: serde::Deserialize<'de> + Default,
 {
     struct Pad<T, const N: usize>(std::marker::PhantomData<T>);
-    impl<'de, T: serde::Deserialize<'de> + Default + Copy, const N: usize> serde::de::Visitor<'de> for Pad<T, N> {
+    impl<'de, T: serde::Deserialize<'de> + Default, const N: usize> serde::de::Visitor<'de> for Pad<T, N> {
         type Value = [T; N];
         fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
             write!(f, "up to {N} values")
         }
         fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-            let mut out = [T::default(); N];
+            let mut out: [T; N] = std::array::from_fn(|_| T::default());
             let mut i = 0;
             while let Some(x) = seq.next_element::<T>()? {
                 if i < N {

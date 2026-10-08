@@ -157,14 +157,32 @@ fn alerts_come_from_the_member_who_watches_and_respect_cooldowns() {
     assert!(raise_alerts(&mut c, &r, 24).iter().any(|id| c.alerts.iter().any(|a| a.id == *id && a.rule == "safety_police_coverage")));
 }
 
+/// The pretty save with one top-level field cut out (and nothing else):
+/// a save from before the field existed. Top-level fields sit at four
+/// spaces; everything inside one is deeper.
+fn without_field(text: &str, field: &str) -> String {
+    let start = text.find(&format!("\n    {field}: ")).expect("the field is saved") + 1;
+    let rest = &text[start..];
+    let end = rest
+        .match_indices('\n')
+        .map(|(i, _)| i + 1)
+        .find(|&i| {
+            let line = &rest[i..];
+            line.starts_with(')') || (line.starts_with("    ") && line[4..].starts_with(|c: char| c.is_ascii_lowercase()))
+        })
+        .expect("the field ends");
+    format!("{}{}", &text[..start], &rest[end..])
+}
+
 #[test]
 fn an_old_save_loads_with_no_committee_and_sets_one_up() {
     let w = World::new(WorldConfig::default());
     let text = w.to_ron().unwrap();
-    let at = text.rfind("committee:").expect("the field is saved");
-    let mut old = text[..at].trim_end().trim_end_matches(',').to_string();
-    old.push(')');
-    assert!(!old.contains("committee"));
+    let old = without_field(&text, "committee");
+    assert!(!old.contains("\n    committee: "));
+    // Only the committee is gone: the fields saved after it are all there.
+    let fields = |t: &str| t.lines().filter(|l| l.starts_with("    ") && l[4..].starts_with(|c: char| c.is_ascii_lowercase())).count();
+    assert_eq!(fields(&old) + 1, fields(&text));
     let mut back = World::from_ron(&old).expect("an old save loads");
     assert!(!back.committee.is_set_up());
     back.committee_ensure();

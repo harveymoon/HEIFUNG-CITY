@@ -104,6 +104,12 @@ the replies back. So:
 
 Every example is the POST body; the reply always carries `"ok"`.
 
+**Other names.** Some commands answer to other names as well (`help` lists them under `aliases`):
+`add_interchange` (`interchange`); `campus` (`university`); `city_name` (`city_identity`); `cleanup` (`clean_up`); `committee_meeting` (`meeting`); `corps` (`corp`, `megacorp`); `dirt_at` (`contamination_at`); `district` (`districts`); `estate` (`land_market`); `favourite` (`favorite`); `graphics` (`quality`); `grounds_junctions` (`park_junctions`); `heat_vision` (`heat`); `level_crossings` (`level_crossing`, `crossings`, `rail_crossings`); `pressure` (`pressures`); `roads` (`road_condition`, `road_budget`); `shore` (`waterfront`); `skyline` (`towers`, `height_limit`); `street_events` (`nights`); `subway` (`metro`); `taxes` (`tax`); `tolls` (`toll`); `tourism` (`tourists`); `tow_car` (`tow`, `boot`); `zoom_to` (`zoom`).
+
+`help` is checked against the dispatcher by a unit test (`remote::dispatch_tests`): every command
+it runs is documented in `help` or named as an alias, and nothing else is.
+
 ### Overview and time
 
 | Command | Fields | Reply |
@@ -113,13 +119,15 @@ Every example is the POST body; the reply always carries `"ok"`.
 | `memory` | | [memory] `working_set_mb`, `peak_working_set_mb`, `commit_mb` (the process's private commit); `meshes`, `materials`, `images`, `entities`; `render` {building_entities, people_meshes}; `world` {citizens, buildings, cars, lots, day}; `heap` {live_mb, peak_mb, biggest_block_mb} with the `heap-count` cargo feature only (zeros otherwise) |
 | `pause` | `paused` bool (omit to toggle) | `paused` |
 | `speed` | `index` 0..5 (1×, 4×, 16×, 64×, 256×, 1024×), or `value`: a multiple of real time for what moves, snapped to the nearest step on a log scale. At 1× people walk at their true pace; the clock runs 15× faster than that | `speed_index`, `speed`, `ticks_per_second`, `label` |
-| `step` | `ticks` (default 1, max 100000) | `clock`, `took_ms` |
+| `step` | `ticks` (default 1, max 100000) | `ticks` (run), `clock`, `took_ms`; `stopped` when a committee meeting was called |
 
 `step` runs the ticks immediately, on the main thread, even while paused (the same `World::tick`
 the frame loop uses), and stalls the frame for as long as it takes: a young city runs thousands of
 ticks a second, a big one far fewer. A step that has started is waited for (up to 5 minutes), but
 the frame freezes meanwhile, so prefer several shorter steps. A big step also floods the event
-ring (see `events`).
+ring (see `events`). The committee's daily round (samples, alerts, the meeting calendar) runs for
+every new day the step crosses; when it calls a meeting, the city pauses for it as in game and the
+step stops there: `ticks` says how many ran and `stopped` says why (`committee_meeting` runs it).
 
 ```json
 {"cmd": "pause", "paused": true}
@@ -133,7 +141,7 @@ ring (see `events`).
 | --- | --- | --- |
 | `seed_demo` | | lays out and implements the demo district (works on any map) |
 | `save` | `name` or `path`, both optional | `name`: a named game, as Saves, Save as: `saves/<name>.ron` (the name made file-safe: ASCII letters, digits and `-` kept, the rest `_`, at most 48 characters), a sidecar `saves/<name>.meta.json` (name as typed, day, population, treasury, buildings, landscape, saved_unix) and a top-down map picture `saves/<name>.png`, rendered offscreen and written about half a second later. Reply `path`, `name`, `thumbnail`, `meta` (absolute). Neither: `saves/city.ron` plus a dated slot, like Quick save (with a sidecar and `saves/city.png`). `path`: just that file |
-| `load` | `path` (`.ron`, see the file rules) | as the Load button: tools and selection reset, the city comes up paused; closes the title screen |
+| `load` | `path` (`.ron`, see the file rules), `confirm` (see below) | as the Load button: the selection and the tools' ids reset (their settings stay), the city comes up paused; closes the title screen. A failed load is an error and leaves the running city as it was |
 | `list_saves` | | `saves`, newest first: `path`, `name` (as typed for named games; "Latest quick save", "Autosave", "Quick save, day N" otherwise), `kind` (named / latest / autosave / dated), `modified_unix`, `bytes`, `day`, `population`, `treasury`, `buildings`, `landscape` (null for saves without a sidecar), `thumbnail` (absolute PNG path, or null), `city` (the city's name; an old named save's save name; "Unnamed city" otherwise), `game_id` (null before ids); `by_city`: `[{city, saves: [path, ...]}]`, the grouping the title screen and the Saves window show |
 | `city_name` | `name` optional | without `name`: `name` (as kept, "" when unnamed), `display_name`, `game_id` (null for a save from before ids until it is next saved), `history_entries`. With `name`: renames the city (control characters dropped, spaces folded, at most 40 characters; "" leaves it unnamed); saves from then on carry it |
 | `game_history` | `action` list (default) / bookmark / unmark / mark / revert, and per action below | the running game's history of autosaves (below) |
@@ -184,12 +192,29 @@ Every save is written to a temporary file and renamed over the target, so a cras
 leaves the old file whole. The daily autosave (`saves/autosave.ron`) copies the world on the
 main thread, then serialises and writes it on a worker thread.
 
+#### Replacing the city: `confirm`
+
+`load`, `new_game` and `generate_city` throw the running city away. When it has play time that no
+save holds (its clock has moved since it was last saved, loaded or started; the daily autosave does
+not count, the next day overwrites it), they are refused unless the request carries
+`"confirm": true`, and the error says what would be lost:
+
+```json
+{"ok": false, "error": "new_game replaces the running city (day 3, 14:20), which has play time no save holds; save it first, or send confirm: true to replace it anyway"}
+{"cmd": "new_game", "preset": "coast", "confirm": true}
+```
+
+A city just started, saved or loaded needs no `confirm`, and neither does an untouched one (no
+building, no project and no road beyond those it started with, such as the empty landscape a
+`ND_TITLE=0` instance starts on). `game_history {action: "revert"}` always needs it. Edits made
+while paused do not count as play time.
+
 ### Landscape and new games
 
 | Command | Fields | Reply |
 | --- | --- | --- |
-| `new_game` | `preset` river_valley (default) / islands / coast / delta / plains / flat, `seed`, `water` 0..1, `relief` 0..1 (height variation), `branching` 0..1, `islands` 0..8, `climate` temperate / desert (default) / tropical / arctic / volcanic (also `iceland`) (`highway` is ignored: every new game has the highway and the trunk line); omitted levers take the preset's; optional `name` (the city's name) | throws the city away and starts on the landscape with a new game id; tools and selection reset. Reply as `landscape` plus `identity` |
-| `generate_city` | `preset` grid_plaza (default) / coastal_river / old_town / twin_centres, `seed` (default 1; seeds the landscape and the city), optional `landscape` (a `new_game` preset to lay the city on instead of the preset's own) and `water`, `relief`, `branching` levers, optional `climate` (as `new_game`; default desert), optional `name` | throws the city away and starts a new game with a whole generated city on it (below); tools and selection reset. Reply as `landscape` plus `city`: `preset`, `seed`, `arterial`/`collector`/`local` (`roads`, `length_m`), `zones`, `lots`, `interchanges`, `way_in`, `centres`, `took_ms` |
+| `new_game` | `preset` river_valley (default) / islands / coast / delta / plains / flat, `seed`, `water` 0..1, `relief` 0..1 (height variation), `branching` 0..1, `islands` 0..8, `climate` temperate / desert (default) / tropical / arctic / volcanic (also `iceland`) (`highway` is ignored: every new game has the highway and the trunk line); omitted levers take the preset's; optional `name` (the city's name); `confirm` (see above) | throws the city away and starts on the landscape with a new game id; the selection and the tools' ids reset. Reply as `landscape` plus `identity` |
+| `generate_city` | `preset` grid_plaza (default) / coastal_river / old_town / twin_centres, `seed` (default 1; seeds the landscape and the city), optional `landscape` (a `new_game` preset to lay the city on instead of the preset's own) and `water`, `relief`, `branching` levers, optional `climate` (as `new_game`; default desert), optional `name`, `confirm` (see above) | throws the city away and starts a new game with a whole generated city on it (below); the selection and the tools' ids reset. Reply as `landscape` plus `city`: `preset`, `seed`, `arterial`/`collector`/`local` (`roads`, `length_m`), `zones`, `lots`, `interchanges`, `way_in`, `centres`, `took_ms` |
 | `landscape` | | preset, `climate` and levers, `rivers` (kind river/stream, width, current_mps, hydro_ok, source, mouth, length), `lakes`, `sea`, `hot_spots`, `highway` (entries, exits, through_cars), `bridges` (count, metres, on the highway), `ports`, `ships`, `port_stats` |
 | `terrain_at` | `x`, `y` | `natural_height`, `ground_height` (graded under roads and lots), `surface_height` (bridge decks included), `slope`, `water` (kind, current, width, flow), `nearest_shore`, `hot_spot`, `lot`, `power_sites` (hydro/tidal/geothermal ok or why not, for the lot there), `docks` (whether a shipping port or ferry terminal would go there, or why not), `survey` (every land survey layer's value 0..1 there), `access` (`park_min`, `nightlife_min`: minutes on foot along the walk network to the nearest park / open entertainment, null when none can be walked to; `value_for_homes`: what that adds to a home's land value; `text`; the whole object is null off the walk network) |
 | `resource` | `x`, `y` (or `z` for `y`) | the wind and sun for power plants at a point: `climate`, `water`, `wind {site_factor` (the map's wind field there against open level ground, 0.35..1.8: windy on hills, ridges, high ground and by wide water, sheltered in valleys), `mean_ms` (ordinary-day wind there), `now_ms`, `typical_yield` (a wind farm's share of nameplate on an ordinary day), `yield_now`, `cut_out_now}` (the wind there is past the turbines' cut-out), `solar {site_factor, climate_sun, sun` (0..1.1, 1 = the desert's open ground), `yield_now}`. `terrain_at` carries the same under `resource` |
@@ -549,9 +574,15 @@ plants and the count of `suffering_neighbours`.
 (default 100, at most 300 m) at 450 per cell of full contamination, booked as construction.
 Reply: `cost`, `removed_cells`, `treasury`; an error when the ground is clean or the treasury short.
 
+Testing: `contaminate {x, y, radius?, amount?}` pours contamination onto the ground (`radius`
+default 60 m, `amount` 0..1, default 0.6). `paint_mural {building, group?, quality?, seed?}` puts a
+mural on that building's street face now (`group`: a street-art crew id, default the first crew;
+`quality` -1..1, default 0.6).
+
 ```json
 {"cmd": "dirt_at", "x": 120, "y": -40}
 {"cmd": "remediate", "x": 120, "y": -40, "radius": 120}
+{"cmd": "contaminate", "x": 120, "y": -40, "amount": 0.8}
 ```
 
 ### Buses
@@ -1053,7 +1084,7 @@ pane; clicking either selects the building.
 
 `screenshot {path?}`: queues a capture of the window (`Screenshot::primary_window()` with
 `save_to_disk`) and replies at once with the absolute `path` (default
-`<working dir>/screenshots/shot-<unix seconds>.png`). A given path must end in `.png` and lie in
+`<working dir>/screenshots/shot-<unix ms>.png`). A given path must end in `.png` and lie in
 the allowed folders (see [Who may call](#who-may-call)). **The file is written a frame or two later**,
 when the GPU copy lands: poll for it (the MCP tool waits up to 5 s). It captures the whole window,
 UI panel included, at the window's size (a full-HD window makes a 2–5 MB PNG). PNG only. A
@@ -1302,7 +1333,7 @@ settings. Reply: `kind`, `sort`, `desc`, `total`, `matched`, `offset`, `rows`, `
 
 `{"cmd": "export", "path": "exports/optional.json"}` writes `report` (all sections), `map_summary`,
 `history` and `tables` (every row of every `list` kind) as one JSON document, by default to
-`<working dir>/exports/city-<unix>.json` (`/exports` is git-ignored). A given path must end in
+`<working dir>/exports/city-<unix ms>.json` (`/exports` is git-ignored). A given path must end in
 `.json` and lie in the allowed folders (see [Who may call](#who-may-call)). The file is written
 atomically. Reply: `path`, `bytes`, `took_ms`.
 
@@ -1792,8 +1823,12 @@ button) does.
 - `settings {backend?, local_url?, local_model?, claude_model?, claude_effort?,
   claude_fallbacks?, timeout_s?, auto_meetings?, veto_allowed?, save?, test?}`: switch the
   backend (applied at once; `save: true` writes `committee_settings.ron`), start a "Test
-  connection" (`test: true`; the result shows in `backend.test` on a later call). Never takes or
-  returns an API key: set `ANTHROPIC_API_KEY`, or paste one in the window.
+  connection" (`test: true`, ignored while one runs; the result shows in `backend.test` on a later
+  call). Never takes or returns an API key: set `ANTHROPIC_API_KEY`, or paste one in the window.
+  The backend fields (`backend`, `local_url`, `local_model`, `claude_model`, `claude_effort`,
+  `claude_fallbacks`, `timeout_s`) are refused unless the player has ticked "Let the remote API
+  change the backend" in the Committee window's settings (this run only; the reply's
+  `remote_may_switch` says): a model may cost money and a URL points the committee at a server.
 
 `committee_meeting {start?, vote?, abstain_rest?, fast_forward?, transcript_from?}` (alias
 `meeting`):

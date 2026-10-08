@@ -69,6 +69,9 @@ pub fn screen(ctx: &egui::Context, p: &mut UiCtx) {
             if let Some((_, label)) = &newest {
                 hint(ui, &format!("Continue loads {label}."));
             }
+            if p.flags.message.starts_with("load failed") {
+                ui.label(egui::RichText::new(&p.flags.message).color(crate::ui::WARN));
+            }
             ui.add_space(14.0);
             section(ui, "SAVED GAMES");
             // [identity] One row of cards per city, the city played last first.
@@ -101,8 +104,11 @@ pub fn screen(ctx: &egui::Context, p: &mut UiCtx) {
         });
     });
     if let Some(path) = load {
-        super::saves::load_now(&path, p.sim, p.tools, p.selection, p.plan, p.flags);
-        p.saves.title = false;
+        // [fix/review-app] A failed load keeps the title screen up (its
+        // message says why).
+        if super::saves::load_now(&path, p.sim, p.flags).is_ok() {
+            p.saves.title = false;
+        }
     }
     if new_game {
         super::newgame::set_open(ctx, true);
