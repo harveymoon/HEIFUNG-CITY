@@ -1456,6 +1456,9 @@ impl World {
     /// Whoever was in a vehicle that vanished (network rebuilt, bad save)
     /// stands where it was and decides again.
     pub(super) fn strand_driver(&mut self, cid: CitizenId, pos: Vec2) {
+        // [ped-highway] Out of the vehicle onto the pavement, never the
+        // carriageway of a highway or ramp.
+        let pos = self.kerbside(pos);
         if let Some(c) = self.citizens.get_mut(cid) {
             c.pos = pos;
             c.inside = None;
