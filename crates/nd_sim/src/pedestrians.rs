@@ -97,9 +97,10 @@ pub fn hash01(a: u64, b: u64, c: u64) -> f32 {
     (z >> 40) as f32 / (1u64 << 24) as f32
 }
 
-/// One walker's state on the move (never saved: a loaded walker starts
-/// afresh from where they stand).
+/// One walker's state on the move. Saved with `Pedestrians::walkers`, so
+/// every field defaults (`#[serde(default)]`): add new ones the same way.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Walker {
     /// The path this state belongs to: length and its ends' bits.
     pub key: (usize, u32, u32),
@@ -128,9 +129,18 @@ pub struct Walker {
     pub room_leg: usize,
 }
 
-/// What a crossing is to the lane network, worked out when roads change.
+impl Default for Walker {
+    /// A walker with no state yet: the path key and the room are worked
+    /// out afresh (`usize::MAX`), at the standard pace.
+    fn default() -> Self {
+        Walker { key: (usize::MAX, 0, 0), base: Vec2::ZERO, side: 0.0, keep: 0.0, crossing: None, waiting: None, bold: false, against: false, caution: 0.5, hedonism: 0.5, pace: 1.0, room: (-SIDESTEP_MAX, SIDESTEP_MAX), room_leg: usize::MAX }
+    }
+}
+
 /// [cyclists] A cyclist's state at the crossings (`world/riders.rs`).
+/// Saved, so every field defaults.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Rider {
     /// The crossing they are waiting at and since when.
     pub waiting: Option<(u32, u64)>,
@@ -140,6 +150,13 @@ pub struct Rider {
     pub hedonism: f32,
 }
 
+impl Default for Rider {
+    fn default() -> Self {
+        Rider { waiting: None, ran: None, caution: 0.5, hedonism: 0.5 }
+    }
+}
+
+/// What a crossing is to the lane network, worked out when roads change.
 #[derive(Clone, Debug, Default)]
 pub struct CrossingInfo {
     /// Signalised: the intersection and the approach it crosses.
@@ -308,5 +325,15 @@ mod tests {
         assert!(rebel > 0.3, "{rebel}");
         assert!(jaywalk_chance(22, 0.05, 0.95, 0.6, true) > rebel);
         assert_eq!(jaywalk_chance(40, 0.5, 0.3, 0.0, false), 0.0, "an ordinary sober person on time waits");
+    }
+
+    /// Walkers and riders saved before a field existed still load, at the
+    /// defaults (the standard pace, room worked out afresh).
+    #[test]
+    fn walkers_and_riders_from_older_saves_load() {
+        let w: Walker = ron::from_str("(key: (3, 1, 2), base: (1.0, 2.0), side: 0.5, caution: 0.2)").expect("walker loads");
+        assert_eq!((w.key, w.caution, w.pace, w.room_leg), ((3, 1, 2), 0.2, 1.0, usize::MAX));
+        let r: Rider = ron::from_str("(ran: Some(4))").expect("rider loads");
+        assert_eq!((r.ran, r.waiting), (Some(4), None));
     }
 }

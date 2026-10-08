@@ -21,6 +21,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::buildings::BuildingId;
 use crate::economy::{Flow, FLOWS};
+use crate::power::PowerPlantKind;
+use crate::services::IncidentKind;
+use crate::zoning::LandUse;
 use crate::transit::RouteId;
 
 /// Days kept in the daily ring: a year of play.
@@ -47,9 +50,11 @@ pub struct DayRecord {
     /// `flow`, which treats missing entries as zero).
     pub ledger: Vec<f32>,
     /// Income tax by the payer's class (low, middle, high).
+    #[serde(deserialize_with = "crate::economy::padded")]
     pub income_tax_by_class: [f32; 3],
     /// Business tax by the land use of the business (`LandUse::index`).
-    pub business_tax_by_use: [f32; 6],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub business_tax_by_use: [f32; LandUse::ALL.len()],
     pub population: u32,
     pub households: u32,
     pub working_age: u32,
@@ -59,6 +64,7 @@ pub struct DayRecord {
     pub unhoused: u32,
     pub waiting_immigrants: u32,
     /// Citizens per income class.
+    #[serde(deserialize_with = "crate::economy::padded")]
     pub classes: [u32; 3],
     pub homes: u32,
     pub homes_filled: u32,
@@ -69,9 +75,11 @@ pub struct DayRecord {
     pub sites: u32,
     pub avg_land_value: f32,
     pub gini: f32,
+    #[serde(deserialize_with = "crate::economy::padded")]
     pub avg_rent: [f32; 3],
     /// Development demand per land use (`LandUse::index`).
-    pub demand: [f32; 6],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub demand: [f32; LandUse::ALL.len()],
     pub businesses: u32,
     pub imports: f32,
     pub exports: f32,
@@ -79,7 +87,8 @@ pub struct DayRecord {
     pub materials: f32,
     pub deals: u32,
     /// The day's energy by plant kind (`PowerPlantKind::index`), MWh.
-    pub supply_mwh: [f32; 7],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub supply_mwh: [f32; PowerPlantKind::ALL.len()],
     pub demand_mwh: f32,
     pub imported_mwh: f32,
     /// Sold to the regional grid, MWh.
@@ -98,8 +107,10 @@ pub struct DayRecord {
     /// Riders per bus line.
     pub route_riders: Vec<(RouteId, u32)>,
     /// 911 calls by kind (fire, crime, medical), and those resolved.
-    pub incidents: [u32; 3],
-    pub resolved: [u32; 3],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub incidents: [u32; IncidentKind::SLOTS],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub resolved: [u32; IncidentKind::SLOTS],
     pub unanswered: u32,
     pub out_of_town_calls: u32,
     /// Mean minutes from call to arrival.
@@ -144,7 +155,8 @@ pub struct HourRecord {
     pub population: u32,
     pub supply_mw: f32,
     /// Supply by plant kind (`PowerPlantKind::index`).
-    pub supply_by_kind: [f32; 7],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub supply_by_kind: [f32; PowerPlantKind::ALL.len()],
     pub demand_mw: f32,
     pub imported_mw: f32,
     /// Sold to the regional grid.
@@ -174,7 +186,8 @@ pub struct HourRecord {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DayAcc {
-    pub supply_mwh: [f32; 7],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub supply_mwh: [f32; PowerPlantKind::ALL.len()],
     pub demand_mwh: f32,
     pub imported_mwh: f32,
     pub exported_mwh: f32,
@@ -366,5 +379,20 @@ mod tests {
         assert_eq!((d.income(), d.spending()), (10.0, 4.0));
         let back: History = ron::from_str(&ron::to_string(&h).unwrap()).unwrap();
         assert_eq!(back.days, h.days);
+    }
+
+    /// A record saved with fewer plant kinds or call slots than there are
+    /// now (or more) still loads: the arrays are padded or cut.
+    #[test]
+    fn records_from_saves_with_other_kind_counts_load() {
+        let short = "(day: 3, supply_mwh: (1.0, 2.0), incidents: (4,), demand: (0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5))";
+        let d: DayRecord = ron::from_str(short).expect("loads");
+        assert_eq!(d.day, 3);
+        assert_eq!(d.supply_mwh[1], 2.0);
+        assert_eq!(d.supply_mwh[PowerPlantKind::ALL.len() - 1], 0.0);
+        assert_eq!(d.incidents, [4, 0, 0]);
+        assert_eq!(d.demand.len(), LandUse::ALL.len());
+        let back: DayRecord = ron::from_str(&ron::to_string(&d).unwrap()).unwrap();
+        assert_eq!(back, d);
     }
 }

@@ -271,6 +271,10 @@ impl World {
     /// none (nothing is pulled down for them).
     pub(super) fn pillars_after_load(&mut self) {
         if !self.pillars.is_empty() {
+            // Saves keyed by std's hasher: to the stable `way_key`.
+            let (built, _) = self.master.built_roads_levels();
+            let raised: Vec<_> = built.into_iter().filter(|(_, _, levels, ..)| pillars::is_raised(levels)).map(|(_, pts, levels, ..)| (pts, levels)).collect();
+            pillars::migrate_way_keys(&mut self.pillars, raised.iter().map(|(p, l)| (p.as_slice(), l.as_slice())));
             return;
         }
         let ways = self.raised_ways();

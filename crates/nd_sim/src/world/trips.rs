@@ -1378,19 +1378,23 @@ impl World {
     #[allow(clippy::too_many_arguments)]
     fn walk_or_ride(&mut self, id: CitizenId, target: BuildingId, purpose: Purpose, mode: TravelMode, from_node: NodeId, to_node: NodeId, walk_from: Vec2, entrance: Vec2, fresh: bool) -> bool {
         crate::prof_scope!("walk_or_ride");
-        let Some(nodes) = self.roads.foot_path(from_node, to_node) else { return false };
+        // A walker's way through the blocks first: the street path (an A*)
+        // is only searched when there is none, or for a bike.
+        let walk = if mode == TravelMode::Walk { self.walk_route_for(id, walk_from, entrance, purpose) } else { None };
+        let mut streets = Vec::new();
+        if walk.is_none() {
+            let Some(nodes) = self.roads.foot_path(from_node, to_node) else { return false };
+            streets = nodes;
+        }
         let exit_pos = self.leave_building(id);
-        let mut path = match mode {
-            TravelMode::Walk => match self.walk_route_for(id, walk_from, entrance, purpose) {
-                Some((pts, walk_nodes)) => {
-                    if fresh {
-                        self.note_footfall(id, &walk_nodes);
-                    }
-                    pts
+        let mut path = match walk {
+            Some((pts, walk_nodes)) => {
+                if fresh {
+                    self.note_footfall(id, &walk_nodes);
                 }
-                None => self.route_path(&nodes, mode),
-            },
-            TravelMode::Bike => self.route_path(&nodes, mode),
+                pts
+            }
+            None => self.route_path(&streets, mode),
         };
         path.push(entrance);
         let c = &mut self.citizens[id];

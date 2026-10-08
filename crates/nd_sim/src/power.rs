@@ -424,8 +424,8 @@ pub struct PowerStats {
     pub upkeep_today: f32,
     /// This hour's supply by kind of plant (`PowerPlantKind::index`), for
     /// the Power window's chart of where the megawatts come from.
-    #[serde(default)]
-    pub supply_by_kind: [f32; 7],
+    #[serde(default, deserialize_with = "crate::economy::padded")]
+    pub supply_by_kind: [f32; PowerPlantKind::ALL.len()],
     /// Megawatts sold to the regional grid this hour: surplus the
     /// batteries had no room for.
     #[serde(default)]
@@ -963,7 +963,7 @@ pub fn demand_at(b: &Building, hour: f32, temp_c: f32) -> f32 {
 /// curve is 24 multiplications, not 24 passes over the buildings.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DemandBase {
-    pub by_use: [f32; 6],
+    pub by_use: [f32; crate::zoning::LandUse::ALL.len()],
     pub sites: f32,
 }
 

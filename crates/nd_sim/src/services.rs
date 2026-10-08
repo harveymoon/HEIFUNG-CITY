@@ -853,6 +853,8 @@ pub enum IncidentKind {
 
 impl IncidentKind {
     pub const ALL: [IncidentKind; 3] = [IncidentKind::Fire, IncidentKind::Crime, IncidentKind::Medical];
+    /// Slots of the per-service figures (`slot`): one per `UnitKind`.
+    pub const SLOTS: usize = 3;
 
     pub fn index(self) -> usize {
         self as usize
@@ -1262,9 +1264,12 @@ pub struct Admission {
 #[serde(default)]
 pub struct ServiceStats {
     /// Share of homes covered, per covering kind (police, fire, health, school).
+    #[serde(deserialize_with = "crate::economy::padded")]
     pub coverage: [f32; 4],
-    pub incidents_today: [u32; 3],
-    pub resolved_today: [u32; 3],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub incidents_today: [u32; IncidentKind::SLOTS],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub resolved_today: [u32; IncidentKind::SLOTS],
     pub unanswered_today: u32,
     pub arrests_today: u32,
     pub response_ticks_today: u64,
@@ -1295,19 +1300,27 @@ pub struct ServiceStats {
     pub education_bonus_today: f32,
     // ── response, per incident kind (fire, crime, medical) ──
     /// Minutes from call to arrival of each call answered today, and yesterday's.
-    pub response_min_today: [Vec<u16>; 3],
-    pub response_min_yesterday: [Vec<u16>; 3],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub response_min_today: [Vec<u16>; IncidentKind::SLOTS],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub response_min_yesterday: [Vec<u16>; IncidentKind::SLOTS],
     /// Calls past their dispatch time waiting for a unit, now; the most today.
-    pub queued: [u32; 3],
-    pub queue_max_today: [u32; 3],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub queued: [u32; IncidentKind::SLOTS],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub queue_max_today: [u32; IncidentKind::SLOTS],
     /// Minutes today every unit of the kind was busy, and since when the
     /// current spell has lasted (None when a unit is free).
-    pub saturated_min_today: [u32; 3],
-    pub saturated_since: [Option<u64>; 3],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub saturated_min_today: [u32; IncidentKind::SLOTS],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub saturated_since: [Option<u64>; IncidentKind::SLOTS],
     /// Yesterday's saturated minutes, for the alert after midnight.
-    pub saturated_min_yesterday: [u32; 3],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub saturated_min_yesterday: [u32; IncidentKind::SLOTS],
     /// Calls that gave up unanswered today, per kind, by why nobody came.
-    pub unanswered_why_today: [UnansweredWhy; 3],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub unanswered_why_today: [UnansweredWhy; IncidentKind::SLOTS],
     /// Mutual aid from the next town while every unit was busy, today.
     pub mutual_aid_today: u32,
     /// Units pulled off a lower-priority call for a more urgent one, today.
@@ -1477,8 +1490,9 @@ pub struct Services {
     /// are retried every five minutes rather than every tick).
     #[serde(skip)]
     pub route_failed: HashMap<u32, u64>,
-    /// The services' own random stream (see `World::srng`).
-    #[serde(skip)]
+    /// The services' own random stream (see `World::srng`). Saved, so a
+    /// loaded game rolls the same fires and crimes as one left running.
+    #[serde(default, with = "crate::rng_save::opt")]
     pub rng: Option<crate::SimRng>,
     /// [emergency] Car chases under way.
     pub chases: Vec<Chase>,

@@ -23,17 +23,17 @@ These are the real save hazards, and they are listed in §1.3.
 
 | # | Sev | Where | What |
 |---|---|---|---|
-| 1 | **High** | `tourism.rs:338` | `score_by_kind() -> [f32; 6]`, but `AttractionKind` has 7 variants (`Beach` = 6). It panics when a beach attraction exists. The UI (`nd_app/src/ui/districts.rs:206-211`) indexes `by_kind[6]` for every kind, so **drawing the tourism pane panics every time**. Return `[f32; AttractionKind::ALL.len()]`. |
-| 2 | **High** | `traffic.rs:3513-3530` | A stale `idx` is used after the 30-minute replan. The snapshot `(lane_id, idx, len, s, s_end)` is taken before `replan_from_here` (which sets `idx = 0` and swaps the route, `traffic.rs:2423-2434`). The check `idx + 1 == route.len()` then compares the *old* idx against the *new* route. A stalled car can be snapped to `s_end` and marked arrived blocks from its goal, or skip lane advance for that substep. Fix: take the snapshot after the replan block, or `continue` after a successful replan. |
-| 3 | Med | `traffic.rs:2035-2052` | A* has no closed set and no stale-entry skip, and duplicates count toward the 20,000-expansion cap. On large maps this gives false "no route" results, which then cause strandings and replans. Store `g` in `Open` and skip `popped_g > g[lane]` before counting. The same pattern is in `roads.rs:1188` (`path_where`) and `walk.rs:1268` (`route_nodes_with`). |
-| 4 | Med | `road_wear.rs:200-262`, `road_traffic.rs:128-170` | Splitting a street loses its wear and history on *both* halves. Matching is midpoint to midpoint within `MATCH_REACH = 4.5 m`, so any piece longer than 18 m fails to match after a split. That contradicts the doc comment, and adding a junction resurfaces the street for free. Also `load[i]` is carried over by index even though segment ids are renumbered (`road_wear.rs:257-261`). Match each new midpoint *onto the old segment* instead (`project_on_segment` distance under ~1 m), share one matcher between the two modules, and add a split test. |
-| 5 | Med | `services.rs:1482`, `society.rs:21`, `air.rs:409`, `concerns.rs:321` | RNG streams and dedup state marked `#[serde(skip)]` are lazily reseeded from `(seed, tick of first use)` after a load. A loaded game therefore diverges from one that kept running: fires, crime, illness, rats, drones, and complaint double-counting all change. Either save them with the existing `rng_serde` (as `world/mod.rs:384` does), or derive a per-tick `rng_for(seed ^ K, tick)` the way `bots.rs` does. |
-| 6 | Med | `power.rs:428`, `history.rs:82,101,147,177`, `crime.rs:182-184`, `services.rs:1266-1267` | Arrays are sized by literal enum counts (`[f32; 7]`, `[u32; 5]`, `[u32; 3]`). Adding a plant kind or offence would make **every existing save unloadable**, because the history ring holds hundreds of these records. Apply the existing `economy::padded` deserializer (`economy.rs:179`) and size the arrays as `Enum::ALL.len()`. |
-| 7 | Med | `pedestrians.rs:100-134` | `Walker` (and `Rider`) are saved through `Pedestrians::walkers`, but have no `Default` and no `#[serde(default)]`. `pace`, `room` and `room_leg` were added one commit after walkers became saved (6c792fd → 54cfa15). The next field added to either struct will break saves. Derive `Default` and add `#[serde(default)]` on both. Also fix the doc at line 100 ("never saved"), which is false. |
-| 8 | Med | `pillars.rs:171-180` | `way_key` uses `std` `DefaultHasher`, and its value is saved (`Pillar.way`) and matched against fresh keys (`world/pillars.rs:179,291`, `world/plan.rs:1074`). Std does not guarantee the algorithm stays stable across Rust releases. A toolchain bump would make every raised way look new: columns would be replanned and could trigger buyouts. Replace it with an explicit FNV or splitmix over the same quantised `i64`s. |
-| 9 | Med | `traffic.rs:2382-2407` | `reroute` calls `insert_sorted(first, id)` even when the car is `entering` (at the kerb) or in a stunt. `pull_out` then inserts it again, so the car appears twice in `lane.cars`. One caller can trigger this today: the fallback in `world/buses.rs:419`. Skip `insert_sorted` when `entering \|\| in_stunt()`. |
-| 10 | Med | `zoning.rs:700-711` | `subdivide_sized` at `depth > 60`, or when `cut` fails, pushes the exterior ring of a polygon *with holes*. The parcel then silently covers a lake or an excluded area. Push nothing in those paths, and never emit a polygon whose `interiors()` is non-empty. |
-| 11 | Low | `services.rs:855-866, 1266` | `IncidentKind::index()` gives `Crash` = 3, but `incidents_today` and `resolved_today` are `[u32; 3]`, so `get_mut` silently drops crash calls from "calls today" (`world/services.rs:447,2245`). Meanwhile `unanswered_today` *does* count crashes, so unanswered can exceed calls. Count by `slot()` instead. |
+| 1 | **High** | `tourism.rs:338` | `score_by_kind() -> [f32; 6]`, but `AttractionKind` has 7 variants (`Beach` = 6). It panics when a beach attraction exists. The UI (`nd_app/src/ui/districts.rs:206-211`) indexes `by_kind[6]` for every kind, so **drawing the tourism pane panics every time**. Return `[f32; AttractionKind::ALL.len()]`. **FIXED 9ee6376 (on main before phase 2a)** |
+| 2 | **High** | `traffic.rs:3513-3530` | A stale `idx` is used after the 30-minute replan. The snapshot `(lane_id, idx, len, s, s_end)` is taken before `replan_from_here` (which sets `idx = 0` and swaps the route, `traffic.rs:2423-2434`). The check `idx + 1 == route.len()` then compares the *old* idx against the *new* route. A stalled car can be snapped to `s_end` and marked arrived blocks from its goal, or skip lane advance for that substep. Fix: take the snapshot after the replan block, or `continue` after a successful replan. **FIXED 8ec8651** |
+| 3 | Med | `traffic.rs:2035-2052` | A* has no closed set and no stale-entry skip, and duplicates count toward the 20,000-expansion cap. On large maps this gives false "no route" results, which then cause strandings and replans. Store `g` in `Open` and skip `popped_g > g[lane]` before counting. The same pattern is in `roads.rs:1188` (`path_where`) and `walk.rs:1268` (`route_nodes_with`). **FIXED 8ec8651** |
+| 4 | Med | `road_wear.rs:200-262`, `road_traffic.rs:128-170` | Splitting a street loses its wear and history on *both* halves. Matching is midpoint to midpoint within `MATCH_REACH = 4.5 m`, so any piece longer than 18 m fails to match after a split. That contradicts the doc comment, and adding a junction resurfaces the street for free. Also `load[i]` is carried over by index even though segment ids are renumbered (`road_wear.rs:257-261`). Match each new midpoint *onto the old segment* instead (`project_on_segment` distance under ~1 m), share one matcher between the two modules, and add a split test. **FIXED a9186c2** |
+| 5 | Med | `services.rs:1482`, `society.rs:21`, `air.rs:409`, `concerns.rs:321` | RNG streams and dedup state marked `#[serde(skip)]` are lazily reseeded from `(seed, tick of first use)` after a load. A loaded game therefore diverges from one that kept running: fires, crime, illness, rats, drones, and complaint double-counting all change. Either save them with the existing `rng_serde` (as `world/mod.rs:384` does), or derive a per-tick `rng_for(seed ^ K, tick)` the way `bots.rs` does. **FIXED 288900c** |
+| 6 | Med | `power.rs:428`, `history.rs:82,101,147,177`, `crime.rs:182-184`, `services.rs:1266-1267` | Arrays are sized by literal enum counts (`[f32; 7]`, `[u32; 5]`, `[u32; 3]`). Adding a plant kind or offence would make **every existing save unloadable**, because the history ring holds hundreds of these records. Apply the existing `economy::padded` deserializer (`economy.rs:179`) and size the arrays as `Enum::ALL.len()`. **FIXED 1ff7123** |
+| 7 | Med | `pedestrians.rs:100-134` | `Walker` (and `Rider`) are saved through `Pedestrians::walkers`, but have no `Default` and no `#[serde(default)]`. `pace`, `room` and `room_leg` were added one commit after walkers became saved (6c792fd → 54cfa15). The next field added to either struct will break saves. Derive `Default` and add `#[serde(default)]` on both. Also fix the doc at line 100 ("never saved"), which is false. **FIXED e558fb6** |
+| 8 | Med | `pillars.rs:171-180` | `way_key` uses `std` `DefaultHasher`, and its value is saved (`Pillar.way`) and matched against fresh keys (`world/pillars.rs:179,291`, `world/plan.rs:1074`). Std does not guarantee the algorithm stays stable across Rust releases. A toolchain bump would make every raised way look new: columns would be replanned and could trigger buyouts. Replace it with an explicit FNV or splitmix over the same quantised `i64`s. **FIXED d7df2af** |
+| 9 | Med | `traffic.rs:2382-2407` | `reroute` calls `insert_sorted(first, id)` even when the car is `entering` (at the kerb) or in a stunt. `pull_out` then inserts it again, so the car appears twice in `lane.cars`. One caller can trigger this today: the fallback in `world/buses.rs:419`. Skip `insert_sorted` when `entering \|\| in_stunt()`. **FIXED 8ec8651** |
+| 10 | Med | `zoning.rs:700-711` | `subdivide_sized` at `depth > 60`, or when `cut` fails, pushes the exterior ring of a polygon *with holes*. The parcel then silently covers a lake or an excluded area. Push nothing in those paths, and never emit a polygon whose `interiors()` is non-empty. **FIXED 8e0abfd** |
+| 11 | Low | `services.rs:855-866, 1266` | `IncidentKind::index()` gives `Crash` = 3, but `incidents_today` and `resolved_today` are `[u32; 3]`, so `get_mut` silently drops crash calls from "calls today" (`world/services.rs:447,2245`). Meanwhile `unanswered_today` *does* count crashes, so unanswered can exceed calls. Count by `slot()` instead. **Not here: the fix is in `world/services.rs` (index by `slot()`), done on fix/review-sim-world. Arrays sized by `IncidentKind::SLOTS` in 1ff7123** |
 
 ### (b) Behaviour-preserving refactors
 
@@ -73,7 +73,7 @@ High and Medium bugs are all in the Top 20 above: #1-#11. These are the remainin
 | Low | `landscape.rs:907` | `.max(...)` is applied after `random_range(a..b)`, so it cannot prevent an empty range. Not reachable with today's constants. | Clamp before drawing the range. |
 | Low | `landscape.rs:620` | `Flat` presets return early, before `add_hot_spots` and `climate_extras`. Flat + Volcanic gets no hot spots, although its blurb promises them. | Decide whether that is intended; if not, run both before returning. |
 | Low | `landscape.rs:1394, 1428` | `sea_way` silently returns a straight `[a, b]` line across land when A* fails. | Return an `Option`. |
-| Low | `road_wear.rs:237` | `self.wear[i]` is guarded only by `self.mids.get(i)`, so a save where `wear` is shorter than `mids` panics. A leftover `let _ = k;` sits at line 217. | Use `wear.get(i)`. |
+| Low | `road_wear.rs:237` | `self.wear[i]` is guarded only by `self.mids.get(i)`, so a save where `wear` is shorter than `mids` panics. A leftover `let _ = k;` sits at line 217. | Use `wear.get(i)`. **FIXED a9186c2** |
 | Low | `level_crossing.rs` `rebuild` | Two new crossings within 3 m of one old crossing both clone its counters. | Mark the old crossing as taken once matched. |
 | Low | `world/water.rs:33, 487, 489` | Still uses the pre-`WayClass` `roads::grade_separated`, which does not know that a ramp is separated from a street. | Use `separated(Segment::class())`. |
 | Low | `walk.rs:913-960` | Lot gates are matched by edge *midpoint* in 12 m cells (±1 cell). Long collinear edges whose midpoints are more than 24 m apart get no gate. | Index edge bounding boxes in `geom::Grid` and query with `in_box`. |
@@ -92,7 +92,7 @@ High and Medium bugs are all in the Top 20 above: #1-#11. These are the remainin
   - `walk.rs`, `zoning.rs` and `roads.rs` lookups
 
 **Latent risks.**
-- `traffic/roundabout.rs:83` `RingLanes::entry_node` iterates a `HashMap` to choose a result. It is dead code today (§3.3). Delete it before someone calls it.
+- `traffic/roundabout.rs:83` `RingLanes::entry_node` iterates a `HashMap` to choose a result. It is dead code today (§3.3). Delete it before someone calls it. **FIXED 288900c** (deleted)
 - `traffic/roundabout.rs:494, 739`: tests pick a node or lane from HashMap/HashSet order. They are order-independent today but fragile.
 - Hot-path stream draws:
   - `Traffic::roll` (splitmix, saved) is drawn per substep in `hazards`, `entered_red` and `crash`. Any new caller shifts every later crash and reshuffles `drunk_drivers_swerve_more_and_crash_more_often` (`traffic.rs:4972`).
@@ -160,7 +160,7 @@ Proposal: `hash::{mix, mix2 /* shore variant */, hash01, unit, fnv}`. Keep each 
 | Default signalled-by-shape rule | `traffic.rs:1604`, `junction.rs:87` | One `default_signalized()` |
 | Next car on the route | `traffic.rs:3163` (`blocker_ahead`), `traffic/why.rs:247` | One `Traffic` helper |
 | Drive towards a point | `traffic.rs:4101` (closure in `step_stunt`), `traffic/scene.rs:~158` | One `drive_toward()` |
-| Old-to-new segment matcher | `road_wear.rs` and `road_traffic.rs` (same constants, `cell()`, 3×3 search) | One shared matcher, which is also where #4 gets fixed |
+| Old-to-new segment matcher | `road_wear.rs` and `road_traffic.rs` (same constants, `cell()`, 3×3 search) | One shared matcher, which is also where #4 gets fixed **FIXED a9186c2** (`seg_match.rs`) |
 | Nearest lot | `world/services.rs:395` `coverage_at` (linear scan), `concerns.rs:494` | Backed by `geom::Grid` |
 | Nearest road | `zoning.rs:452` `nearest_road` wraps `nearest_where` | Fine; keep it, as it only adds a filter |
 
@@ -240,9 +240,9 @@ Each item was grepped across all of `crates/`, including nd_app and the examples
 |---|---|
 | traffic | `traffic.rs:190-192`: an orphaned "trips older than this end where the car stands" sits on `SIREN_SPEED_FACTOR` and contradicts `REPLAN_AFTER`. |
 | traffic | Docs glued to the wrong function: `traffic.rs:332` (`project`'s doc is above `points_between`), `1158` (`change_pending`'s is above `glide_at`), `2509` (`lookahead`'s is above `limit_ahead`), `traffic/crosswalk.rs:231`. |
-| road_wear, road_traffic | `road_wear.rs:203` and `road_traffic.rs:130` promise that a split keeps wear on both halves, which is false (#4). |
+| road_wear, road_traffic | `road_wear.rs:203` and `road_traffic.rs:130` promise that a split keeps wear on both halves, which is false (#4). **FIXED a9186c2** (now true) |
 | roads | `roads.rs:1273` says "1 or 2" ring lanes, but `RING_MAX_LANES = 3`. `roads.rs:359` has a path doc on `RAIL_HALF_WIDTH`. |
-| pedestrians | `pedestrians.rs:100` says walkers are "never saved", which is false. `pedestrians.rs:131` has the `CrossingInfo` doc on `Rider`. |
+| pedestrians | `pedestrians.rs:100` says walkers are "never saved", which is false. `pedestrians.rs:131` has the `CrossingInfo` doc on `Rider`. **FIXED e558fb6** |
 | walk, rail | `walk.rs:1059` (footbridge doc misplaced). `rail.rs:813` (misplaced doc). `rail.rs:385` says "within a degree", but no angle is checked. `rail.rs:290` has a rambling half-sentence. |
 | subway | `subway.rs:328` says "ties go to the shorter walk", which is not implemented, and the fourth tuple field is always 0. |
 | zoning, landscape, geom | `zoning.rs:74` has `lot_width`'s doc on `fronts_paths`. `landscape.rs:2584` describes a caller that does not exist. `geom.rs` claims to be "the one place a formula lives" (§2.2 shows otherwise). |
@@ -275,7 +275,7 @@ Each item was grepped across all of `crates/`, including nd_app and the examples
 ### Roads, walk and trips
 
 - **Road rebuild is O(P·S)** (#18).
-- **`world/trips.rs:1381`:** `walk_or_ride` runs `roads.foot_path()` (an A* with two HashMaps and no stale skip) on *every* walking trip, even when `walk_route_for` succeeds and the result is never used. Compute it lazily.
+- **`world/trips.rs:1381`:** `walk_or_ride` runs `roads.foot_path()` (an A* with two HashMaps and no stale skip) on *every* walking trip, even when `walk_route_for` succeeds and the result is never used. Compute it lazily. **FIXED 4a3cea1**
 - **Walk graph:** fully rebuilt on every lot add or remove (`world/mod.rs:821`, from `placement.rs:174, 298, 323` and `construction.rs:259`, which runs mid-sim). Acceptable for now; make it incremental per lot when it shows in profiles. `park::plan_parks_with` (`park.rs:156, 167`) is O(L·P) plus an O(P²) shared-edge pass with no bounding-box test on every `rebuild_walk`. Add a `BTreeSet` and a `boxes_overlap` pre-check.
 
 ### Parcel cutting
@@ -310,12 +310,12 @@ Each item was grepped across all of `crates/`, including nd_app and the examples
 1. **demo_city tests run 5 times** (#12). `tests/sim_checks.rs`, `society_demo.rs`, `probe_society_civic.rs` and `probe_society_units.rs` all `#[path]`-include `demo_city.rs`, together with its 8 `#[test]` functions. That multiplies runtime by 5, and multiplies the borderline `late < 0.085` check by 5 as well.
 2. **The demo layout exists in about 10 copies, and the example copies are stale.**
    - Copies: `tests/demo_city.rs:13`, `nd_app/src/sim.rs:130`, `landscape.rs:2886` (`demo_ground_world`), and the examples carlife, freight, parking, land, jam, peak, traffic, perf and headless.
-   - **Every example copy places the coal plant with `max_by(area)`.** The app and the tests now use the lot nearest `power::COAL_REFERENCE_AREA`, so the probes measure a different city. That includes `headless`, which the README advertises.
+   - **Every example copy places the coal plant with `max_by(area)`.** The app and the tests now use the lot nearest `power::COAL_REFERENCE_AREA`, so the probes measure a different city. That includes `headless`, which the README advertises. **FIXED cab8ce3** (placement and README pointer; the shared `scenarios::demo_district` is left for the refactor phase)
    - Fix: `pub fn nd_sim::scenarios::demo_district(&mut World)`, used by the app, the tests and the examples.
 3. **No whole-world determinism test and no save → load → continue test.** Determinism is only checked per subsystem (`car_tests.rs:332`, towers, air, chases, level crossings, roundabouts). `tests/sim_checks.rs:81-84` admits that vehicles do not yet move identically after a load. This gap hides #5.
 4. **No old-save fixture.**
    - Compatibility tests strip fields out of freshly generated RON.
-   - `committee/tests.rs:164` uses `rfind("committee:")` and truncates everything after it, which also removes `shore`, `path_links` and `corps`. The test therefore does not prove what it claims. Edit a parsed RON value instead.
+   - `committee/tests.rs:164` uses `rfind("committee:")` and truncates everything after it, which also removes `shore`, `path_links` and `corps`. The test therefore does not prove what it claims. Edit a parsed RON value instead. **FIXED eac1131** (cuts only that top-level field, checks the rest)
    - `tests/rebuild_regressions.rs:124-149` is `#[ignore]` and silently *passes* when `ND_SAVE` is unset. Make it `panic!`.
 
 ### Fragile tests
@@ -358,7 +358,7 @@ Fixes:
 
 All 24 compile. None asserts anything; that is fine for the ones that inspect saves.
 
-- **Stale:** every demo-based probe uses the old coal plant placement (item 2 above). `land_probe.rs:1` claims to match `tests/demo_city.rs`, which is no longer true.
+- **Stale:** every demo-based probe uses the old coal plant placement (item 2 above). `land_probe.rs:1` claims to match `tests/demo_city.rs`, which is no longer true. **FIXED cab8ce3**
 - **Superseded or duplicated:**
 
   | Probe(s) | Action |

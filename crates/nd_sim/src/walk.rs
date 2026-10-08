@@ -1267,7 +1267,7 @@ impl WalkGraph {
     /// `jaywalk` (each costs [`JAY_PENALTY`] metres more than its length).
     pub fn route_nodes_with(&self, from: u32, to: u32, jaywalk: bool) -> Option<Vec<u32>> {
         #[derive(PartialEq)]
-        struct Item(f32, u32);
+        struct Item(f32, f32, u32);
         impl Eq for Item {}
         impl PartialOrd for Item {
             fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
@@ -1286,11 +1286,15 @@ impl WalkGraph {
         let mut prev = vec![u32::MAX; n];
         let mut heap = BinaryHeap::new();
         dist[from as usize] = 0.0;
-        heap.push(Item(h(from), from));
+        heap.push(Item(h(from), 0.0, from));
         // [under-construction] Park walkways and gates of a site are shut,
         // unless the walk starts in there (someone leaving).
         let keep_out = !self.closed.is_empty() && !self.node_closed(from);
-        while let Some(Item(_, u)) = heap.pop() {
+        while let Some(Item(_, g, u)) = heap.pop() {
+            // Stale: `u` was reached more cheaply since this was pushed.
+            if g > dist[u as usize] {
+                continue;
+            }
             if u == to {
                 break;
             }
@@ -1315,7 +1319,7 @@ impl WalkGraph {
                 if nd < dist[e.to as usize] {
                     dist[e.to as usize] = nd;
                     prev[e.to as usize] = u;
-                    heap.push(Item(nd + h(e.to), e.to));
+                    heap.push(Item(nd + h(e.to), nd, e.to));
                 }
             }
         }

@@ -79,11 +79,6 @@ impl RingLanes {
         self.penalty.get(lane as usize).copied().unwrap_or(0.0)
     }
 
-    /// The ring node with this connector as an entry, if any.
-    pub fn entry_node(&self, conn: LaneId) -> Option<NodeId> {
-        self.nodes.iter().find(|(_, n)| n.entries.contains(&conn)).map(|(id, _)| *id)
-    }
-
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }

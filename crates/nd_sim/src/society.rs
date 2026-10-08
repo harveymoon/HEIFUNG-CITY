@@ -16,7 +16,8 @@ pub struct Society {
     pub crime: crate::crime::Crime,
     pub homeless: crate::homeless::Homeless,
     pub trash: crate::trash::Trash,
-    /// Not saved: a loaded world reseeds it from the seed and the clock.
-    #[serde(skip)]
+    /// Saved, so a loaded game goes on as one left running (a save from
+    /// before it was kept reseeds it from the seed and the clock).
+    #[serde(with = "crate::rng_save::opt")]
     pub rng: Option<SimRng>,
 }

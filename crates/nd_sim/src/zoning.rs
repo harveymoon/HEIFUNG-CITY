@@ -697,8 +697,12 @@ fn subdivide_sized(poly: Polygon<f64>, lu: LandUse, (lw, ld): (f32, f32), roads:
     if pts.len() < 3 {
         return;
     }
+    // `pts` is the outer ring only: a piece with a hole (a lake, an
+    // excluded area) is never pushed whole, or the parcel would cover it.
     if depth > 60 {
-        out.push(pts);
+        if poly.interiors().is_empty() {
+            out.push(pts);
+        }
         return;
     }
     if let Some(hole) = poly.interiors().first() {
@@ -706,7 +710,6 @@ fn subdivide_sized(poly: Polygon<f64>, lu: LandUse, (lw, ld): (f32, f32), roads:
             let origin = Vec2::new(c.x as f32, c.y as f32);
             let pieces = cut(&poly, origin, Vec2::X);
             if pieces.is_empty() {
-                out.push(pts);
                 return;
             }
             for piece in pieces {
@@ -777,6 +780,11 @@ fn subdivide_sized(poly: Polygon<f64>, lu: LandUse, (lw, ld): (f32, f32), roads:
             }
         }
         for piece in core.0 {
+            // A core ringing a hole is cut through it first (above).
+            if !piece.interiors().is_empty() {
+                subdivide_sized(piece, lu, (lw, ld), roads, rng, depth + 1, out);
+                continue;
+            }
             // No frontage left here: unusable ground, kept whole.
             let p = from_geo(&piece);
             if area_f(&piece) >= MIN_AREA && p.len() >= 3 {
@@ -2040,6 +2048,23 @@ thread_local! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A piece too deep in the recursion to cut further is kept only when
+    /// it has no hole: its outer ring alone would cover the lake.
+    #[test]
+    fn a_piece_with_a_hole_is_never_a_parcel_whole() {
+        use rand::SeedableRng;
+        let ring = |c: f64, r: f64| LineString::from(vec![(c - r, c - r), (c + r, c - r), (c + r, c + r), (c - r, c + r), (c - r, c - r)]);
+        let holed = Polygon::new(ring(0.0, 60.0), vec![ring(0.0, 10.0)]);
+        let solid = Polygon::new(ring(0.0, 60.0), vec![]);
+        let roads = RoadNetwork::default();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1);
+        let mut out = Vec::new();
+        subdivide(holed, LandUse::Residential, &roads, &mut rng, 61, &mut out);
+        assert!(out.is_empty(), "the holed piece was kept whole");
+        subdivide(solid, LandUse::Residential, &roads, &mut rng, 61, &mut out);
+        assert_eq!(out.len(), 1);
+    }
 
     /// [tools] The outline Harvey's geothermal plant's parcels joined into
     /// on a recut: a slit out to a tip and straight back where two shared
