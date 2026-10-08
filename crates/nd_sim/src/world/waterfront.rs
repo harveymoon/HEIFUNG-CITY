@@ -151,6 +151,8 @@ impl World {
             .filter(|(b, _)| self.buildings.get(*b).is_some_and(|x| x.construction.is_none() && x.business.as_ref().is_some_and(|z| !z.closed)))
             .collect();
         let boats = |w: &World| w.ports.ships.values().filter(|s| matches!(s.kind, ShipKind::Yacht | ShipKind::Sailboat)).count();
+        // [fishing] Trawlers at sea count too.
+        self.scene.boats_out = (boats(self) + self.fishing.fleets.values().map(|f| f.at_sea()).sum::<usize>()) as u32;
         for (b, port) in docks {
             if boats(self) >= MAX_BOATS {
                 break;
