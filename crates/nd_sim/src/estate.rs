@@ -224,6 +224,12 @@ pub enum OwnerKind {
     Elite { citizen: CitizenId },
     /// A citizen who owns what they founded (a taxi firm's founder).
     Person { citizen: CitizenId },
+    /// [megacorp] A mega-corporation grown out of a company of `kind`
+    /// (`crate::corp::MegaCorp`, found by this owner's id).
+    MegaCorp { kind: BusinessKind },
+    /// [megacorp] A university and the buildings round its campus
+    /// (`crate::corp::Campus`).
+    University { campus: BuildingId },
 }
 
 impl OwnerKind {

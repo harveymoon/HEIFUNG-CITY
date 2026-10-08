@@ -9,6 +9,8 @@
 
 pub mod adjacency;
 pub mod air;
+/// [megacorp] Brands on buildings and the university's hall.
+pub mod brand;
 mod civic;
 mod commercial;
 mod construction;
@@ -284,6 +286,8 @@ pub enum Style {
     Feedlot,
     /// Cell houses, banded tank rows, a stack and a poisoned pond.
     ChemicalWorks,
+    /// [megacorp] A university's main hall, portico, clock tower and quad.
+    University,
 }
 
 impl Style {
@@ -292,7 +296,7 @@ impl Style {
         self as usize
     }
 
-    pub const ALL: [Style; 110] = [
+    pub const ALL: [Style; 111] = [
         Style::Stacks,
         Style::Tenement,
         Style::Brutalist,
@@ -403,7 +407,22 @@ impl Style {
         Style::Smelter,
         Style::Feedlot,
         Style::ChemicalWorks,
+        Style::University,
     ];
+
+    /// [megacorp] The style a campus annex is drawn in (`None`: a dorm
+    /// keeps the block it was bought as).
+    pub fn for_annex(a: nd_sim::corp::Annex) -> Option<Style> {
+        use nd_sim::corp::Annex;
+        match a {
+            Annex::Admin => Some(Style::Ministry),
+            Annex::Theatre => Some(Style::Cinema),
+            Annex::Sports => Some(Style::Arena),
+            Annex::Frat => Some(Style::McMansion),
+            Annex::Plaza => Some(Style::Plaza),
+            Annex::Dorm => None,
+        }
+    }
 
     /// [land] The style a building's form forces (`nd_sim::estate::Form`);
     /// `None` for merged plots, which keep their kind's own looks.
@@ -450,6 +469,7 @@ impl Style {
             K::Vertiport => Style::Vertiport,
             // [parking] A parking enforcement office: a small station.
             K::ParkingEnforcement => Style::PoliceStation,
+            K::University => Style::University,
         }
     }
 
@@ -527,6 +547,7 @@ impl Style {
             Style::Landmark => "landmark",
             Style::Stadium => "stadium",
             Style::Prison => "jail",
+            Style::University => "university hall",
             Style::Farmstead => "farm",
             Style::OilField => "oil field",
             Style::Refinery => "refinery",
@@ -1115,11 +1136,15 @@ pub struct Extras<'a> {
     /// (`World::plant_scale`): a coal or nuclear station is composed of
     /// more units, not stretched, when it is bigger.
     pub plant_scale: f32,
+    /// [megacorp] The owner's brand and where it is shown (`World::brand_mark`).
+    pub brand: Option<nd_sim::corp::BrandMark>,
+    /// [megacorp] A campus annex: its own look (`Style::for_annex`).
+    pub annex: Option<nd_sim::corp::Annex>,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None }
+        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, brand: None, annex: None }
     }
 }
 
@@ -1225,6 +1250,11 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
     let mut rng = rng_for(seed, 11);
     match (extras.plant, extras.parking) {
         _ if extras.service.is_some() => Style::for_service(extras.service.unwrap()),
+        // [megacorp] A campus annex has its kind's look; an HQ is a tower.
+        _ if extras.annex.is_some_and(|a| Style::for_annex(a).is_some()) => Style::for_annex(extras.annex.unwrap()).unwrap(),
+        _ if extras.brand.is_some_and(|m| m.role == nd_sim::corp::BrandRole::Headquarters) && land_use == LandUse::Commercial => {
+            if seed % 2 == 0 { Style::TwistTower } else { Style::SlabTower }
+        }
         // [land] McMansions, mansions, mega hotels and museums.
         _ if Style::for_form(extras.form).is_some() => Style::for_form(extras.form).unwrap(),
         // [subway] Before the depot: the Central Station is a bus terminal too.
@@ -1529,6 +1559,7 @@ fn generate_styled_extras(
         Style::Landmark => services::landmark(&mut g, &ctx, &mut rng),
         Style::Stadium => services::stadium(&mut g, &ctx, &mut rng),
         Style::Prison => services::prison(&mut g, &ctx, &mut rng),
+        Style::University => brand::university(&mut g, &ctx, &mut rng),
         Style::Farmstead => industrial::farmstead(&mut g, &ctx, &mut rng),
         Style::OilField => industrial::oil_field(&mut g, &ctx, &mut rng),
         Style::Refinery => industrial::refinery(&mut g, &ctx, &mut rng),
@@ -1570,6 +1601,10 @@ fn generate_styled_extras(
     }
     if extras.rooftop_pad && style.pad_capable() && g.pads.is_empty() {
         air::rooftop_deck(&mut g, &ctx);
+    }
+    // [megacorp] The owner's brand: rooftop signs, banners, the HQ crown.
+    if let Some(m) = &extras.brand {
+        brand::decorate(&mut g, &ctx, m);
     }
     if weathered(tier, ctx.wear) {
         g.weather();

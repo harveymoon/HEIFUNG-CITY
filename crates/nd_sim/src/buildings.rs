@@ -340,6 +340,11 @@ pub struct Building {
     /// too, beside its railway platforms and bus terminal.
     #[serde(default)]
     pub metro: bool,
+    /// [megacorp] A campus building beyond a university's main one (a dorm,
+    /// offices, a theatre, a sports centre, a frat house, a plaza). Offices,
+    /// theatres and sports centres are the campus's own (`is_special`).
+    #[serde(default)]
+    pub annex: Option<crate::corp::Annex>,
     /// [land] Extra plots it spans, the form it was built in and who owns
     /// it (`crate::estate`). Default: one plot, independently owned.
     #[serde(default)]
@@ -394,6 +399,7 @@ impl Building {
             demolition: None,
             look: None,
             metro: false,
+            annex: None,
             plot: Default::default(),
         };
         b.recompute_capacity();
@@ -416,7 +422,7 @@ impl Building {
     /// (A dock was missing here: the daily market update retiered shipping
     /// ports and recomputed their jobs as an ordinary industrial building.)
     pub fn is_special(&self) -> bool {
-        self.is_power() || self.depot || self.rail.is_some() || self.port.is_some() || self.service.is_some() || self.metro
+        self.is_power() || self.depot || self.rail.is_some() || self.port.is_some() || self.service.is_some() || self.metro || self.annex.is_some_and(|a| a.special())
     }
 
     pub fn parking_free(&self) -> u16 {
@@ -455,6 +461,13 @@ impl Building {
             self.homes = 0;
             self.jobs = Construction::crew(self.floors);
             self.parking_capacity = 0;
+            return;
+        }
+        // [megacorp] A campus's offices, theatre or sports centre.
+        if let Some(a) = self.annex.filter(|a| a.special()) {
+            self.homes = 0;
+            self.jobs = a.jobs();
+            self.parking_capacity = 6;
             return;
         }
         if self.is_parking() || self.is_special() {
@@ -548,6 +561,10 @@ impl Building {
     pub fn opening_hours(&self) -> Hours {
         if let Some(s) = self.service {
             return s.kind.hours();
+        }
+        // [megacorp] A campus's offices, theatre or sports centre.
+        if let Some(a) = self.annex.filter(|a| a.special()) {
+            return a.hours();
         }
         self.business.as_ref().map_or(Hours::ALWAYS, |z| z.kind.hours())
     }

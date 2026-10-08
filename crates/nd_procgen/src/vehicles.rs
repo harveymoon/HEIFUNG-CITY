@@ -81,6 +81,56 @@ const RIDER: [f32; 3] = [0.10, 0.10, 0.12];
 /// [taxis] Cab yellow: saturated enough to read as a cab from the top-down camera.
 const TAXI_YELLOW: [f32; 3] = [1.0, 0.55, 0.0];
 
+/// A number per livery for the variant's seed.
+fn livery_code(l: Livery) -> u64 {
+    match l {
+        Livery::Corp(c, s) => 100 + c as u64 * 256 + s as u64,
+        Livery::None => 0,
+        Livery::Pizza => 1,
+        Livery::Parcels => 2,
+        Livery::Grocery => 3,
+        Livery::Construction => 4,
+        Livery::Utility => 5,
+        Livery::Transit => 6,
+        Livery::Taxi => 7,
+    }
+}
+
+/// [megacorp] A brand colour, linear.
+fn brand_rgb(c: u8) -> [f32; 3] {
+    let b = nd_sim::corp::Brand { colour: c, ..Default::default() };
+    b.rgb_f32()
+}
+
+/// [megacorp] The corp's mark (shape and monogram packed in `mark`, see
+/// `World::corp_livery`) lit on both sides of the body, read the right way
+/// round from each side, on a dark panel.
+fn corp_logo(b: &mut B, x: f32, y: f32, hw: f32, size: f32, colour: u8, mark: u8) {
+    use nd_sim::corp::{LogoPixel, LogoShape, LOGO_N};
+    let shape = [LogoShape::Circle, LogoShape::Ring, LogoShape::Hexagon, LogoShape::Diamond, LogoShape::Triangle, LogoShape::Square, LogoShape::Chevron, LogoShape::Shield][(mark & 7) as usize];
+    let monogram = (b'A' + (mark >> 3).min(25)) as char;
+    let bmp = nd_sim::corp::Brand { colour, shape, monogram, name: String::new() }.logo_bitmap();
+    let lit = mul(brand_rgb(colour), 2.6);
+    let px = size / LOGO_N as f32;
+    let half = (LOGO_N as f32 - 1.0) * 0.5;
+    for s in [-1.0f32, 1.0] {
+        b.body.decal(Vec3::new(x, y, s * (hw + 0.018)), Vec3::X, Vec3::Y, size + px, size + px, Vec3::Z * s, c4([0.02, 0.02, 0.025]));
+        for (r, row) in bmp.iter().enumerate() {
+            for (c, p) in row.iter().enumerate() {
+                let col = match p {
+                    LogoPixel::Shape => lit,
+                    LogoPixel::LetterAlone => [2.6, 2.6, 2.5],
+                    _ => continue,
+                };
+                // Viewer's right is +x on the +z side, -x on the -z side.
+                let px_x = x + s * (c as f32 - half) * px;
+                let px_y = y + (half - r as f32) * px;
+                b.lights.decal(Vec3::new(px_x, px_y, s * (hw + 0.03)), Vec3::X, Vec3::Y, px * 1.02, px * 1.02, Vec3::Z * s, c4(col));
+            }
+        }
+    }
+}
+
 /// Livery colours: body, accent, lit sign.
 pub fn livery_colors(l: Livery, paint: u8) -> Option<([f32; 3], [f32; 3], [f32; 3])> {
     let neon = NEON[paint as usize % NEON.len()];
@@ -94,6 +144,12 @@ pub fn livery_colors(l: Livery, paint: u8) -> Option<([f32; 3], [f32; 3], [f32; 
         Livery::Transit => ([0.82, 0.84, 0.86], [neon[0] * 0.3, neon[1] * 0.3, neon[2] * 0.3], neon),
         // [taxis] Neon yellow, a black checker band, a hot lit roof sign.
         Livery::Taxi => (TAXI_YELLOW, [0.02, 0.02, 0.025], [3.2, 2.6, 0.5]),
+        // [megacorp] A dark body tinted with the brand, the brand as accent
+        // and lit sign.
+        Livery::Corp(c, _) => {
+            let k = brand_rgb(c);
+            (mix(k, [0.05, 0.05, 0.06], 0.6), k, mul(k, 2.4))
+        }
     })
 }
 
@@ -282,7 +338,7 @@ fn slope_quad(mesh: &mut MeshData, p0: (f32, f32), p1: (f32, f32), hw: f32, col:
 fn build(m: &VehicleModel, paint: [f32; 3], detail: bool) -> VehicleMesh {
     let seed = {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for v in [m.body as u64, m.class as u64, m.wear as u64, m.tuned as u64, m.livery as u64, m.paint as u64] {
+        for v in [m.body as u64, m.class as u64, m.wear as u64, m.tuned as u64, livery_code(m.livery), m.paint as u64] {
             h = (h ^ v).wrapping_mul(0x100_0000_01b3);
         }
         h
@@ -882,10 +938,15 @@ fn livery_marks(b: &mut B, accent: [f32; 3], sign: [f32; 3]) {
                     b.lamp(-len * 0.5 - 0.01, 0.7 + i as f32 * 0.12, 0.0, 1.8, 0.05, -1.0, if i % 2 == 0 { AMBER } else { [0.05, 0.05, 0.05] });
                 }
             }
-            b.sides(x, y, hw, w * 0.5, h * 0.6, accent);
-            b.lit_sides(x, y, hw + 0.005, w * 0.42, h * 0.45, sign);
-            // Brand emblem: a dark square inside the lit panel.
-            b.lit_sides(x, y, hw + 0.01, h * 0.25, h * 0.25, mul(accent, 0.2));
+            if let Livery::Corp(colour, mark) = m.livery {
+                // [megacorp] The corp's logo, big on the box.
+                corp_logo(b, x, y, hw, (h * 0.85).min(w * 0.6), colour, mark);
+            } else {
+                b.sides(x, y, hw, w * 0.5, h * 0.6, accent);
+                b.lit_sides(x, y, hw + 0.005, w * 0.42, h * 0.45, sign);
+                // Brand emblem: a dark square inside the lit panel.
+                b.lit_sides(x, y, hw + 0.01, h * 0.25, h * 0.25, mul(accent, 0.2));
+            }
         }
         BodyType::Hatchback | BodyType::Sedan | BodyType::Suv | BodyType::Coupe if m.livery == Livery::Taxi => taxi_marks(b, accent, sign),
         BodyType::Hatchback | BodyType::Sedan | BodyType::Suv | BodyType::Pickup | BodyType::Coupe | BodyType::CyberTruck => {
@@ -904,6 +965,10 @@ fn livery_marks(b: &mut B, accent: [f32; 3], sign: [f32; 3]) {
         }
         BodyType::Semi => {
             b.lit_sides(len * 0.5 - 1.1, 2.75, 1.17, 0.9, 0.3, sign);
+            // [megacorp] The logo on the trailer.
+            if let Livery::Corp(colour, mark) = m.livery {
+                corp_logo(b, -1.4, 2.3, 1.25, 1.9, colour, mark);
+            }
         }
         _ => {}
     }

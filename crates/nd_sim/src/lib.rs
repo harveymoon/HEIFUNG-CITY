@@ -15,6 +15,8 @@ pub mod clock;
 pub mod committee;
 /// [concerns] Complaints by category and city happiness over time.
 pub mod concerns;
+/// [megacorp] Mega-corporations, universities, brands and logos.
+pub mod corp;
 pub mod crime;
 /// [districts] Named districts with specialisations and the Historic freeze.
 pub mod districts;

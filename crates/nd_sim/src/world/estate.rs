@@ -308,7 +308,8 @@ impl World {
             return false;
         }
         if let Some((_, o)) = self.owner_of(bid) {
-            if matches!(o.kind, OwnerKind::Elite { .. } | OwnerKind::Household { .. }) {
+            // [megacorp] A corp's or a university's holdings are not for sale.
+            if matches!(o.kind, OwnerKind::Elite { .. } | OwnerKind::Household { .. } | OwnerKind::MegaCorp { .. } | OwnerKind::University { .. }) {
                 return false;
             }
         }
@@ -439,7 +440,7 @@ impl World {
     /// Buy `plots` for `bid`: vacant ones join at once, built ones are
     /// pulled down first (`memory` for those who must leave) and join when
     /// the rubble is gone.
-    fn take_plots(&mut self, bid: BuildingId, plots: &[LotId], memory: &str) {
+    pub(super) fn take_plots(&mut self, bid: BuildingId, plots: &[LotId], memory: &str) {
         for &l in plots {
             let Some(lot) = self.lots.get(l) else { continue };
             match lot.building {

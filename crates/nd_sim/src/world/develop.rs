@@ -307,7 +307,12 @@ impl World {
             }
             // Services reassure, landmarks draw (`services::ServiceKind::land_value`).
             if let Some(s) = bld.service {
-                let (r, w) = s.kind.land_value(s.tier);
+                let (r, mut w) = s.kind.land_value(s.tier);
+                // [megacorp] A good school (well staffed) lifts the homes
+                // round it more than one short of teachers.
+                if s.kind == crate::services::ServiceKind::School && bld.construction.is_none() {
+                    w *= 0.8 + 0.4 * bld.staffing();
+                }
                 if s.kind == crate::services::ServiceKind::Vertiport {
                     // Rotor noise: a nuisance the homes around feel most.
                     b.splat_nuisance(c, r, -w);
@@ -813,6 +818,10 @@ impl World {
         // [tourism x districts] hotels where visitors lack beds, and the
         // trades a district's policy favours
         if let Some(k) = self.district_business(lot_id, lu, jobs) {
+            return Some(k);
+        }
+        // [megacorp] Pizza places and bars by a busy campus.
+        if let Some(k) = self.campus_business(lot_id, lu) {
             return Some(k);
         }
         if lu == LandUse::Industrial {

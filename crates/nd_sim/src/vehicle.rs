@@ -141,10 +141,15 @@ pub enum Livery {
     /// [taxis] A taxi company's cab: neon yellow, a checker band, a lit
     /// roof sign and underglow (`crate::taxi`).
     Taxi,
+    /// [megacorp] A mega-corp's fleet: its brand colour (an index into
+    /// `crate::corp::BRAND_COLOURS`) and its mark (the logo shape,
+    /// `LogoShape as u8`, in the low three bits, the monogram's letter from
+    /// A in the rest), lit on the side.
+    Corp(u8, u8),
 }
 
 impl Livery {
-    pub const ALL: [Livery; 8] = [Livery::None, Livery::Pizza, Livery::Parcels, Livery::Grocery, Livery::Construction, Livery::Utility, Livery::Transit, Livery::Taxi];
+    pub const ALL: [Livery; 9] = [Livery::None, Livery::Pizza, Livery::Parcels, Livery::Grocery, Livery::Construction, Livery::Utility, Livery::Transit, Livery::Taxi, Livery::Corp(6, 2)];
 
     /// The fleet a business sends its deliveries in.
     pub fn for_business(kind: BusinessKind) -> Livery {
