@@ -51,6 +51,9 @@ pub struct Sim {
     /// the renderer as it draws, read by the inspector and the remote API so
     /// the style they name is the one on screen.
     pub styles: nd_procgen::StyleBook,
+    /// [fire-scene] Every building's drawn height, filled by the renderer
+    /// the same way (`fire_scene::BuildingTops`).
+    pub building_tops: crate::fire_scene::BuildingTops,
 }
 
 impl Sim {
@@ -69,6 +72,7 @@ impl Sim {
             tick_ms: 0.0,
             effective_speed: 1.0,
             styles: nd_procgen::StyleBook::default(),
+            building_tops: Default::default(),
         }
     }
 

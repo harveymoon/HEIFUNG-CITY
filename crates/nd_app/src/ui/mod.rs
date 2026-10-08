@@ -182,6 +182,9 @@ pub struct UiCtx<'a> {
     pub diagnostics: &'a DiagnosticsStore,
     /// Rendered thumbnails of the buildings, for the Build window.
     pub thumbs: &'a Thumbs,
+    /// [build-highlight] The Build window's section on the map: the window
+    /// sets what to show and reads back the summary.
+    pub highlight: &'a mut crate::build_highlight::BuildHighlight,
 }
 
 /// The whole HUD, once per frame. The name is historical: this used to lay
@@ -204,7 +207,7 @@ pub(crate) fn side_panel(
     cams: Query<&OrbitCamera>,
     assets: Res<GameAssets>,
     (stats, diagnostics, thumbs): (Res<RenderStats>, Res<DiagnosticsStore>, Res<Thumbs>),
-    (mut follow, mut fly): (ResMut<CameraFollow>, ResMut<CameraFly>),
+    (mut follow, mut fly, mut highlight): (ResMut<CameraFollow>, ResMut<CameraFly>, ResMut<crate::build_highlight::BuildHighlight>),
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     // Visuals persist in the context; setting them every frame only churns.
@@ -232,6 +235,7 @@ pub(crate) fn side_panel(
         stats: &stats,
         diagnostics: &diagnostics,
         thumbs: &thumbs,
+        highlight: &mut highlight,
     };
     let top = egui::Panel::top("top_bar").frame(bar_frame()).show(&mut root, |ui| topbar::show(ui, &mut p));
     let bottom = egui::Panel::bottom("tool_bar").frame(bar_frame()).show(&mut root, |ui| toolbar::show(ui, &mut p));

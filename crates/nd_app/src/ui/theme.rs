@@ -139,6 +139,43 @@ const SETTINGS_PATH: &str = "settings.ron";
 struct Settings {
     #[serde(default)]
     ui_scale: Option<f32>,
+    /// [social] Speech bubbles over people talking around town. Off unless
+    /// the player turns them on in the View window.
+    #[serde(default)]
+    speech_bubbles: Option<bool>,
+}
+
+fn load_settings() -> Settings {
+    std::fs::read_to_string(SETTINGS_PATH).ok().and_then(|t| ron::from_str::<Settings>(&t).ok()).unwrap_or_default()
+}
+
+fn save_settings(settings: &Settings) {
+    if let Ok(text) = ron::ser::to_string_pretty(settings, Default::default()) {
+        let _ = std::fs::write(SETTINGS_PATH, text);
+    }
+}
+
+/// 0 not read yet, 1 off, 2 on.
+static BUBBLES: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Whether speech bubbles show over people talking (saved; off by default).
+pub fn bubbles_on() -> bool {
+    use std::sync::atomic::Ordering;
+    match BUBBLES.load(Ordering::Relaxed) {
+        0 => {
+            let on = load_settings().speech_bubbles.unwrap_or(false);
+            BUBBLES.store(if on { 2 } else { 1 }, Ordering::Relaxed);
+            on
+        }
+        v => v == 2,
+    }
+}
+
+fn set_bubbles(on: bool) {
+    BUBBLES.store(if on { 2 } else { 1 }, std::sync::atomic::Ordering::Relaxed);
+    let mut settings = load_settings();
+    settings.speech_bubbles = Some(on);
+    save_settings(&settings);
 }
 
 fn clamp_scale(s: f32) -> f32 {
@@ -161,11 +198,9 @@ pub fn saved_scale() -> f32 {
 pub fn set_scale(ctx: &egui::Context, scale: f32) {
     let scale = clamp_scale(scale);
     ctx.set_zoom_factor(scale);
-    let mut settings = std::fs::read_to_string(SETTINGS_PATH).ok().and_then(|t| ron::from_str::<Settings>(&t).ok()).unwrap_or_default();
+    let mut settings = load_settings();
     settings.ui_scale = Some(scale);
-    if let Ok(text) = ron::ser::to_string_pretty(&settings, Default::default()) {
-        let _ = std::fs::write(SETTINGS_PATH, text);
-    }
+    save_settings(&settings);
 }
 
 /// A point Bevy projected (`Camera::world_to_viewport`, logical pixels) in
@@ -187,6 +222,10 @@ pub fn scale_setting(ui: &mut egui::Ui) {
         }
     });
     super::hint(ui, &format!("{:.0}% · scales every panel, window and label on the map", now * 100.0));
+    let mut on = bubbles_on();
+    if ui.checkbox(&mut on, "Speech bubbles over people talking").clicked() {
+        set_bubbles(on);
+    }
 }
 
 #[cfg(test)]
