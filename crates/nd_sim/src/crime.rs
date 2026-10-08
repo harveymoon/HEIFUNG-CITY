@@ -179,9 +179,12 @@ pub struct Hotspot {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CrimeStats {
-    pub offences_today: [u32; 5],
-    pub offences_yesterday: [u32; 5],
-    pub offences_total: [u32; 5],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub offences_today: [u32; Offence::ALL.len()],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub offences_yesterday: [u32; Offence::ALL.len()],
+    #[serde(deserialize_with = "crate::economy::padded")]
+    pub offences_total: [u32; Offence::ALL.len()],
     pub arrests_today: u32,
     pub arrests_total: u32,
     pub jailed_total: u32,
@@ -819,7 +822,7 @@ impl World {
         }
         s.hotspots.retain(|h| h.heat >= HEAT_FORGET);
         s.stats.offences_yesterday = s.stats.offences_today;
-        s.stats.offences_today = [0; 5];
+        s.stats.offences_today = Default::default();
         s.stats.arrests_today = 0;
         s.stats.stolen_today = 0.0;
     }
