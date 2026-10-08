@@ -67,6 +67,10 @@ pub const POLICE_DETER: f32 = 0.5;
 pub const REACH: f32 = 260.0;
 /// Share of assaults that end in a death.
 pub const MURDER_SHARE: f32 = 0.06;
+/// [murder] Who hears of a killing: neighbours living this close.
+pub const GRIEF_RADIUS: f32 = 150.0;
+/// [murder] Share of fights between enemies that end in a death.
+pub const FEUD_KILL_CHANCE: f32 = 0.03;
 /// Theft takes this share of a business's cash, at most `THEFT_MAX`, and up
 /// to `THEFT_STOCK` units of what it sells.
 pub const THEFT_SHARE: f32 = 0.06;
@@ -139,7 +143,8 @@ impl Offence {
         match self {
             Offence::Theft => CrimeKind::Theft,
             Offence::Burglary => CrimeKind::Robbery,
-            Offence::Assault | Offence::Murder => CrimeKind::Assault,
+            Offence::Assault => CrimeKind::Assault,
+            Offence::Murder => CrimeKind::Homicide,
             Offence::Vandalism => CrimeKind::Vandalism,
         }
     }
@@ -589,22 +594,7 @@ impl World {
                     return self.offend(cid, target, Offence::Vandalism);
                 };
                 if offence == Offence::Murder {
-                    let (vname, household) = self.citizens.get(v).map(|c| (c.name.clone(), c.household)).unwrap_or_default();
-                    let family: Vec<CitizenId> = household.and_then(|h| self.households.get(h)).map(|h| h.members.clone()).unwrap_or_default();
-                    for m in family.into_iter().filter(|m| *m != v) {
-                        if let Some(c) = self.citizens.get_mut(m) {
-                            c.remember(tick, format!("{vname} was killed at {bname}. Nothing is the same."));
-                            self.concerns.heard(m, c, crate::concerns::Concern::Safety, 1.0);
-                            c.mood = (c.mood - 0.3).max(0.0);
-                        }
-                    }
-                    for w in regulars.iter().filter(|w| **w != v) {
-                        if let Some(c) = self.citizens.get_mut(*w) {
-                            c.remember(tick, format!("Someone was killed at {bname}."));
-                            self.concerns.heard(*w, c, crate::concerns::Concern::Safety, 0.6);
-                            c.mood = (c.mood - 0.08).max(0.0);
-                        }
-                    }
+                    // Grief, the news and the report: `World::murder`, below.
                 } else if let Some(c) = self.citizens.get_mut(v) {
                     c.remember(tick, format!("Got jumped at {bname}."));
                     self.concerns.heard(v, c, crate::concerns::Concern::Safety, 0.7);
@@ -652,7 +642,9 @@ impl World {
         s.stats.offences_total[offence.index()] += 1;
         s.stats.stolen_today += stolen;
         s.stats.stolen_total += stolen;
-        s.add_heat(at, if offence == Offence::Murder { 3.0 } else { 1.0 });
+        if offence != Offence::Murder {
+            s.add_heat(at, 1.0);
+        }
         if let Some(c) = self.citizens.get_mut(cid) {
             if stolen > 0.0 {
                 c.savings += stolen * 0.5;
@@ -660,16 +652,12 @@ impl World {
             c.thought = if first_since { "First job done. My hands are still shaking.".to_string() } else { "Nobody saw a thing.".to_string() };
             c.remember(tick, format!("Did a {} at {bname}.", offence.key()));
         }
-        let id = self.report_crime(offence.crime_kind(), target, Some(cid), victim);
         if offence == Offence::Murder {
-            // The victim is gone: the incident keeps their name.
-            if let Some(v) = victim {
-                if self.citizens.contains_key(v) {
-                    self.society_remove_citizen(v);
-                    self.society.crime.stats.killed_total += 1;
-                }
-            }
-        } else if offence == Offence::Assault {
+            // A stranger's work: the police have no name to go on.
+            return self.murder(cid, victim?, target, false);
+        }
+        let id = self.report_crime(offence.crime_kind(), target, Some(cid), victim);
+        if offence == Offence::Assault {
             // Hurt: taken ill where they stand, an ambulance case.
             if let Some(v) = victim {
                 if self.citizens.get(v).is_some_and(|c| c.inside.is_some()) && !self.is_patient(v) {
@@ -678,6 +666,89 @@ impl World {
             }
         }
         id
+    }
+
+    // ── [murder] a killing ───────────────────────────────────────────────
+
+    /// `killer` kills `victim` at `at` (an offender's job gone wrong, or a
+    /// feud that went too far: `known`, the police know who to look for).
+    /// Before the victim leaves the city the people in their life hear of
+    /// it: household and friends grieve (memory, mood, a heavy safety
+    /// concern), the place's regulars and the neighbours within
+    /// `GRIEF_RADIUS` are shaken, and a line goes in the city news. Then
+    /// it is reported as a homicide (a long investigation) and the victim
+    /// is removed. Returns the incident. No new draws: the report's own.
+    pub fn murder(&mut self, killer: CitizenId, victim: CitizenId, at: BuildingId, known: bool) -> Option<u32> {
+        let tick = self.clock.tick;
+        let (vname, household) = self.citizens.get(victim).map(|c| (c.name.clone(), c.household))?;
+        let (bname, place) = {
+            let b = self.buildings.get(at)?;
+            (b.name.clone(), self.lots.get(b.lot).map_or(Vec2::ZERO, |l| l.center))
+        };
+        let mut family: Vec<CitizenId> = household.and_then(|h| self.households.get(h)).map(|h| h.members.clone()).unwrap_or_default();
+        family.retain(|m| *m != victim && *m != killer);
+        let mut friends: Vec<CitizenId> = self.social.circles.get(&victim).map(|c| c.friends().map(|t| t.who).collect()).unwrap_or_default();
+        friends.retain(|f| *f != killer && !family.contains(f));
+        friends.sort();
+        for m in &family {
+            if let Some(c) = self.citizens.get_mut(*m) {
+                c.remember(tick, format!("{vname} was killed at {bname}. Nothing is the same."));
+                c.thought = format!("I keep expecting {vname} to walk in.");
+                self.concerns.said(tick, *m, c, crate::concerns::Concern::Safety, 1.0, format!("{vname} was killed at {bname}. Who's next?"));
+                c.mood = (c.mood - 0.3).max(0.0);
+            }
+        }
+        for f in &friends {
+            if let Some(c) = self.citizens.get_mut(*f) {
+                c.remember(tick, format!("{vname} is dead. Killed at {bname}. I can't take it in."));
+                self.concerns.heard(*f, c, crate::concerns::Concern::Safety, 0.9);
+                c.mood = (c.mood - 0.18).max(0.0);
+            }
+        }
+        // The place's regulars, and the neighbours.
+        let regulars: Vec<CitizenId> = self.buildings[at].residents.iter().chain(self.buildings[at].workers.iter()).copied().collect();
+        let near: Vec<CitizenId> = self
+            .citizens
+            .iter()
+            .filter(|(id, _)| *id != victim && *id != killer && !family.contains(id) && !friends.contains(id))
+            .filter(|(id, c)| regulars.contains(id) || c.home.and_then(|h| self.buildings.get(h)).and_then(|b| self.lots.get(b.lot)).is_some_and(|l| l.center.distance(place) <= GRIEF_RADIUS))
+            .map(|(id, _)| id)
+            .collect();
+        for n in near {
+            if let Some(c) = self.citizens.get_mut(n) {
+                c.remember(tick, format!("Someone was killed at {bname}. Police everywhere."));
+                self.concerns.heard(n, c, crate::concerns::Concern::Safety, 0.6);
+                c.mood = (c.mood - 0.06).max(0.0);
+            }
+        }
+        if let Some(c) = self.citizens.get_mut(killer) {
+            c.remember(tick, format!("It went too far at {bname}. {vname} isn't getting up."));
+            c.thought = "What have I done.".to_string();
+        }
+        self.social.push_news(tick, format!("🕯 {vname} was killed at {bname}. Police are investigating."), place, None);
+        self.society.crime.add_heat(place, 3.0);
+        self.society.crime.stats.killed_total += 1;
+        let id = self.report_crime(CrimeKind::Homicide, at, Some(killer), Some(victim));
+        if let Some(i) = id.and_then(|i| self.services.incident_mut(i)) {
+            i.known_suspect = known;
+        }
+        // The victim is gone: the incident keeps their name.
+        self.society_remove_citizen(victim);
+        id
+    }
+
+    /// [murder] An arrest for a killing: the news, and the family hear.
+    pub(crate) fn homicide_solved(&mut self, inc: &crate::services::Incident) {
+        let tick = self.clock.tick;
+        let name = |role: &str| inc.people.iter().find(|p| p.role == role).map(|p| p.name.clone());
+        let (Some(killer), Some(vname)) = (name("suspect"), name("victim")) else { return };
+        self.social.push_news(tick, format!("🕯 Police arrested {killer} for the killing of {vname}."), inc.pos, None);
+        let grieving: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.memories.iter().any(|m| m.text.starts_with(&format!("{vname} was killed")) || m.text.starts_with(&format!("{vname} is dead")))).map(|(id, _)| id).collect();
+        for g in grieving {
+            if let Some(c) = self.citizens.get_mut(g) {
+                c.remember(tick, format!("They arrested {killer} for what happened to {vname}."));
+            }
+        }
     }
 
     // ── midnight ───────────────────────────────────────────────────────────
