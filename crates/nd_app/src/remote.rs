@@ -59,6 +59,8 @@ mod trains;
 mod units;
 mod view;
 mod window;
+/// [ferry-routes] A dock's routes and `inspect {ship}`.
+mod ferry;
 
 use std::collections::VecDeque;
 use std::io::Read;
@@ -1478,7 +1480,7 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let link = w.buildings.get(id).and_then(|b| b.rail.as_ref()).map(|l| (l.rail_connected, l.road_connected));
             let note = match link {
                 Some((true, true)) => "placed and connected",
-                Some((true, false)) => "placed on the track; join a road to its street stub",
+                Some((true, false)) => "placed on the track; trains call, nobody gets on or off until a road reaches the marked end of its street stub (road_access.stub_ends)",
                 Some((false, true)) => "placed by the street; lay track onto its rail stub",
                 Some((false, false)) => "placed; needs track to its rail stub and a road to its street stub",
                 None => "placed",
@@ -1504,7 +1506,7 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let port = w.ports.port_of(id).cloned();
             let note = match port {
                 Some(p) if p.works() => format!("{} built with its pier; ships call from the next sailing", dock.label()),
-                Some(p) if !p.road_connected => format!("{} built with its pier; join its street stub to the city's roads", dock.label()),
+                Some(p) if !p.road_connected => format!("{} built with its pier and an access road; not connected to the road network: draw a road to the marked end of its stub (road_access.stub_ends)", dock.label()),
                 _ => format!("{} built, but no ship can reach it from off the map", dock.label()),
             };
             (id, note)
@@ -1549,7 +1551,12 @@ fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     *ctx.selection = Selection::Building(id);
     ctx.tools.status = note.clone();
     let b = ctx.sim.world.buildings.get(id).map(|b| building_row(&ctx.sim.world, id, b)).unwrap_or(Value::Null);
-    Ok(json!({ "building": key_str(id), "message": note, "row": b, "treasury": round(ctx.sim.world.economy.treasury) }))
+    let mut out = json!({ "building": key_str(id), "message": note, "row": b, "treasury": round(ctx.sim.world.economy.treasury) });
+    // [dock-access] A dock or station: connected, and the stub's free end.
+    if let Some(connected) = ctx.sim.world.road_access(id) {
+        out["road_access"] = view::access_json(&ctx.sim.world, id, connected);
+    }
+    Ok(out)
 }
 
 /// [plant-groups] What a plant `kind` would be on the lot at `x`,`y`
@@ -2057,6 +2064,10 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         v["place"] = places::building_place(w, id);
         // [land] owner, sale price, plots, form, pressure
         v["land"] = property::building_land(w, id);
+        // [ferry-routes] a terminal's routes, a shipping port's lane
+        if crate::ferry_select::is_route_dock(w, id) {
+            v["routes"] = ferry::routes_json(w, id);
+        }
         return Ok(json!({ "building": v }));
     }
     if let Some(v) = field(cmd, "lot") {
@@ -2101,6 +2112,10 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(v) = field(cmd, "metro") {
         let id = key_from(v)?;
         return Ok(json!({ "metro": trains::metro_detail(w, id).ok_or("no such metro train")? }));
+    }
+    if let Some(v) = field(cmd, "ship") {
+        let id = key_from(v)?;
+        return Ok(json!({ "ship": ferry::ship_json(w, id).ok_or("no such ship")? }));
     }
     if let Some(v) = field(cmd, "route") {
         let id = key_from(v)?;
@@ -2156,6 +2171,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Selection::Train(id) => inspect(&json!({ "train": key_str(id) }), ctx),
         Selection::Metro(id) => inspect(&json!({ "metro": key_str(id) }), ctx),
         Selection::Unit(id) => inspect(&json!({ "unit": key_str(id) }), ctx),
+        Selection::Ship(id) => inspect(&json!({ "ship": key_str(id) }), ctx),
         Selection::None => Err("inspect needs one of citizen, building, lot, car, bot, train, metro, toll, road, segment, route, gesture (an id), or a selection".into()),
     }
 }
@@ -2215,6 +2231,7 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
         Selection::Train(id) => trains::train_detail(w, id, &assets.palette.car_colors).unwrap_or(Value::Null),
         Selection::Metro(id) => trains::metro_detail(w, id).unwrap_or(Value::Null),
         Selection::Unit(id) => units::unit_detail(sim, id, &assets.rules).unwrap_or(Value::Null),
+        Selection::Ship(id) => ferry::ship_json(w, id).unwrap_or(Value::Null),
     };
     let bus_line = route_sel.and_then(|r| w.transit.routes.get(r).map(|route| {
         let mut v = route_row(r, route);
@@ -2322,6 +2339,13 @@ fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             return Err(if w.services.units.contains_key(id) { "that unit is in its station".into() } else { "no such unit".into() });
         }
         Selection::Unit(id)
+    } else if let Some(v) = field(cmd, "ship") {
+        // [ferry-routes] A ferry or freighter (`landscape` lists the ships).
+        let id = key_from(v)?;
+        if !w.ports.ships.contains_key(id) {
+            return Err("no such ship".into());
+        }
+        Selection::Ship(id)
     } else if let Some(p) = opt_vec2(cmd, "at")? {
         // Pick exactly as a click with the Inspect tool does.
         crate::tools::pick(&*ctx.sim, p, ctx.tools.depth)
@@ -2575,7 +2599,15 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
                 Selection::Metro(id)
             }
-            _ => return Err("follow: one of citizen, car, bot, building, train, metro".into()),
+            // [ferry-routes]
+            "ship" => {
+                let id = key_from(id)?;
+                if !w.ports.ships.contains_key(id) {
+                    return Err("follow: no such ship".into());
+                }
+                Selection::Ship(id)
+            }
+            _ => return Err("follow: one of citizen, car, bot, building, train, metro, ship".into()),
         });
     }
     let look_at = opt_vec2(cmd, "look_at")?;
@@ -2797,9 +2829,9 @@ fn help() -> Value {
             "incidents": { "active": "bool (only those under way)", "limit": "default 50, newest first", "kind": "fire|crime|medical|crash" },
             "bus": { "action": "select|new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|rename|recolour|line|select_stop|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses", "name": "rename", "color": "0..7", "look": "select_stop: point the camera" },
             "find": { "what": "citizens|buildings|lots|parcels|cars|trains|drones|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
-            "inspect": { "citizen|building|lot|car|train|drone|vehicle|route": "id (vehicle: a private car's record; a unit's car also gets unit)", "unit": "id: an emergency unit: title, kind, station, state, doing, crew (citizen, name, role, out, pos, pose), incident (fire: how_bad, intensity, minutes_to_out, progress, damage; else patient, suspect, people), and for a fire engine at work scene (seconds, water_litres, aim, ladder {yaw_deg, pitch_deg, length, outriggers, tip}, hoses, streams)", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "id, or [x,y]: the piece a click there picks (else the nearest), as segment, plus road: the road card (kind, lanes, limit, level, run, now {vehicles by kind, bikes, walkers, speed, congestion, queue}, flow, hourly (72 h), decay {wear, condition, effects, wear_per_day, next_condition, repair_cost, queue_place, last_repaired_day}, tolls, crossings, bus_stops, kerb parking)", "toll": "int: a toll booth in full (traffic, lorries, free, avoided, queue, hourly)" },
+            "inspect": { "citizen|building|lot|car|train|drone|vehicle|route": "id (vehicle: a private car's record; a unit's car also gets unit)", "unit": "id: an emergency unit: title, kind, station, state, doing, crew (citizen, name, role, out, pos, pose), incident (fire: how_bad, intensity, minutes_to_out, progress, damage; else patient, suspect, people), and for a fire engine at work scene (seconds, water_litres, aim, ladder {yaw_deg, pitch_deg, length, outriggers, tip}, hoses, streams)", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "id, or [x,y]: the piece a click there picks (else the nearest), as segment, plus road: the road card (kind, lanes, limit, level, run, now {vehicles by kind, bikes, walkers, speed, congestion, queue}, flow, hourly (72 h), decay {wear, condition, effects, wear_per_day, next_condition, repair_cost, queue_place, last_repaired_day}, tolls, crossings, bus_stops, kerb parking)", "toll": "int: a toll booth in full (traffic, lorries, free, avoided, queue, hourly)", "ship": "id (landscape.ships): a ferry or freighter: title, doing, passengers, cargo, route; a ferry terminal or shipping port building also gets routes (to, ships, headway_min, next_departure, passengers_today)" },
             "lane_use": { "junction": "[x,y]", "approach": "[x,y] on the arriving street", "lanes": "[\"L\", \"S+R\", ...] leftmost first (L, S, R joined with +), or \"reset\" for the demand-chosen default" },
-            "select": { "citizen|building|car|vehicle|bot": "id (vehicle: a parked car; bot: a delivery robot)", "unit": "id: an emergency unit (fire engine, police car, ambulance) driving or standing on scene (see units); a click on one picks it the same way", "toll": "int: a toll booth", "road|segment": "id or [x,y]: a street piece", "at": "[x,y] picks like a click (vehicles, people, booths, parked cars, then the road piece, then lots); nothing clears" },
+            "select": { "citizen|building|car|vehicle|bot": "id (vehicle: a parked car; bot: a delivery robot)", "unit": "id: an emergency unit (fire engine, police car, ambulance) driving or standing on scene (see units); a click on one picks it the same way", "toll": "int: a toll booth", "road|segment": "id or [x,y]: a street piece", "ship": "id: a ferry or freighter (landscape.ships)", "at": "[x,y] picks like a click (vehicles, people, booths, parked cars, then the road piece, then lots); nothing clears" },
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
             "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|bot|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
             "overlay": { "active": "the map layer to show, or none (layers are exclusive: showing one hides the others)", "layer": "zoning|land_value|districts|traffic|traffic_types|paths|people|pollution, a land survey layer (farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech), or projects (the dim other-projects switch, not a layer)", "on": "bool, omitted toggles; on hides every other layer", "land": "a land survey layer key, or none", "<layer name>": "bool (older form): true shows it alone, false hides it if it shows" },

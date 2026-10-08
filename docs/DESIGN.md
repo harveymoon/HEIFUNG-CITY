@@ -745,7 +745,9 @@ Citizens are rendered from their simulated positions every frame.
   moment it is placed (specials always have) and inherits the clearing: its lot shows the
   old building coming down, and the structure appears when the rubble is gone. (Making
   the structure wait would mean gating plants, depots, stations and docks on a state they
-  never had; showing the clearing first gives the same picture without that.) Sites are
+  never had; showing the clearing first gives the same picture without that.) [dock-access]
+  Stations, yards and docks are the exception: they stand on footprints of their own and are
+  drawn as themselves at once, what they bought out cleared away. Sites are
   drawn as the real building cut down from the top (triangles above the working level are
   dropped, those across it clipped), a raw broken slab with rebar on what is left,
   hoarding, a high-reach excavator with a crusher at the cut (a small machine on the roof
@@ -831,7 +833,12 @@ Citizens are rendered from their simulated positions every frame.
   side (`RailLink`). Nothing runs until the rail side reaches an end of the railway and
   the street side reaches the city's roads (`RailLink::works`), recomputed on every
   rebuild; unjoined connectors show red in the Rail tool and the inspector says which
-  side is missing. Track drawn by the player is eased when built: ends joining existing
+  side is missing. [dock-access] No road is needed to place one. A passenger station whose
+  track is joined but whose street is not is a halt (`World::halts`): passenger trains call
+  and stand their time, nobody gets on or off, it hires nobody. "The roads" are a road
+  component holding zoned lots or reaching off the map (`World::network_components`). The
+  free ends of an unjoined street stub carry an amber "connect a road here" ring and label
+  (`nd_app::stub_marks`), and the inspector, the Build tool's hover card and the alerts say so. Track drawn by the player is eased when built: ends joining existing
   track leave or arrive along it through a 60 m turnout, corners are rounded to a 120 m
   radius, long legs stay straight, so there are no right angles or square forks.
   Trains run west to east from one end of the line to the other, calling at every
@@ -1348,7 +1355,14 @@ Citizens are rendered from their simulated positions every frame.
   highway carries on across a road rebuild. The ground and water beyond the map are drawn out to
   the horizon, graded to the ways that run out there. Docks
   (`nd_sim::ports`) stand on the shore with a pier and a street stub, take over grown lots, and work
-  once their street reaches the city: freighters route by water (river centrelines, tributaries
+  once their street reaches the city. [dock-access] They need only the water's edge: one not set
+  down by a street lays its own access road (`Port::stub`, a 1+1 street with pavements from its gate
+  14-32 m inland, turned up to 60 degrees or shortened round water, buildings and other docks) whose
+  free end is marked for the player to draw a road onto. Off the roads a ferry terminal's boats
+  still sail (`Port::sails`) but carry no one (nobody steps off or is sent there; residents back
+  from a day out are set down at home), nothing lands at a port, nobody is hired. A dock or station
+  over zoned ground takes it out of the zone and is drawn as itself at once (it never inherits
+  the clearing); a dock can be bulldozed, giving its ground back to the plan: freighters route by water (river centrelines, tributaries
   joining, mouths opening on the sea) from off the map to the berth and back, landing imports for
   lorries; ferries run terminal to terminal or out to elsewhere with fares. A ferry terminal must
   stand on water that reaches the map edge; it is given one or two towns off the map
