@@ -6,6 +6,7 @@ mod assets;
 mod build_highlight;
 mod camera;
 mod district_tool;
+mod fire_scene;
 mod flags;
 mod map_layers;
 /// [camera] Favourites' gold, a person's place posts, a robot's route.

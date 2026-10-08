@@ -108,7 +108,7 @@ impl CameraFollow {
             return false;
         }
         match self.target {
-            Some(Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_)) => true,
+            Some(Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_)) => true,
             Some(Selection::Citizen(id)) => sim.world.citizens.get(id).is_some_and(|c| matches!(c.activity, nd_sim::Activity::Driving { .. } | nd_sim::Activity::Riding { .. } | nd_sim::Activity::Passenger { seated: true, .. })),
             _ => false,
         }
@@ -172,6 +172,11 @@ pub fn zoom_distance(sim: &Sim, sel: Selection) -> f32 {
             }
         }
         Selection::Parked(_) => 35.0,
+        // [fire-scene] An engine at work with its ladder up wants room.
+        Selection::Unit(id) => match sim.world.services.units.get(id).map(|u| u.kind) {
+            Some(nd_sim::UnitKind::FireEngine) => 60.0,
+            _ => 40.0,
+        },
         // [train-inspect] Far enough back to see the whole train.
         Selection::Train(_) => 110.0,
         Selection::Metro(_) => 70.0,
@@ -233,6 +238,15 @@ pub fn thing_pose(sim: &Sim, sel: Selection) -> Option<ThingPose> {
             car_pose(id, if big { 2.6 } else { 1.25 })
         }
         Selection::Parked(id) => w.vehicles.cars.get(id).and_then(|c| c.spot()).map(|s| ThingPose { pos: s.pos, heading: Some(s.heading), eye: ground(s.pos) + 1.2 }),
+        // [fire-scene] On the road its car's pose; standing, where it stopped.
+        Selection::Unit(id) => {
+            let tall = w.services.units.get(id).is_some_and(|u| u.kind != nd_sim::UnitKind::PoliceCar);
+            let head = if tall { 2.4 } else { 1.25 };
+            match w.services.units.get(id).and_then(|u| u.car) {
+                Some(car) if w.traffic.cars.contains_key(car) => car_pose(car, head),
+                _ => crate::fire_scene::unit_pose(w, id, f).map(|(p, h)| ThingPose { pos: p, heading: Some(h), eye: ground(p) + head }),
+            }
+        }
         Selection::Building(id) => w.buildings.get(id).and_then(|b| w.lots.get(b.lot)).map(|l| ThingPose { pos: l.center, heading: None, eye: ground(l.center) + EYE_HEIGHT }),
         // [train-inspect] The locomotive's cab (the metro's front car, in its tunnel).
         Selection::Train(_) | Selection::Metro(_) => {
@@ -250,6 +264,10 @@ pub fn thing_pose(sim: &Sim, sel: Selection) -> Option<ThingPose> {
         }),
         Selection::Citizen(id) => {
             let c = w.citizens.get(id)?;
+            // [fire-scene] Out with their fire engine, ambulance or police car.
+            if let Some((p, h, eye)) = crate::fire_scene::crew_pose(w, &sim.building_tops, id, f) {
+                return Some(ThingPose { pos: p, heading: Some(h), eye });
+            }
             let riding = match &c.activity {
                 nd_sim::Activity::Driving { car, .. } => car_pose(*car, 1.2),
                 nd_sim::Activity::Riding { bus } => car_pose(*bus, 2.6),
