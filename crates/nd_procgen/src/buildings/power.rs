@@ -86,10 +86,14 @@ impl<'a> Packer<'a> {
         let corners = [a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y)];
         for i in 0..4 {
             let (p, q) = (corners[i], corners[(i + 1) % 4]);
-            let n = (p.distance(q) / 2.0).ceil().max(1.0) as i32;
+            let n = (p.distance(q) / 0.75).ceil().max(1.0) as i32;
             if (0..n).any(|k| !nd_sim::zoning::point_in_polygon(p.lerp(q, k as f32 / n as f32), self.poly)) {
                 return false;
             }
+        }
+        // A notch of the outline poking in between the samples.
+        if self.poly.iter().any(|v| v.x > a.x && v.x < b.x && v.y > a.y && v.y < b.y) {
+            return false;
         }
         let (a, b) = (c - h - Vec2::splat(gap), c + h + Vec2::splat(gap));
         !self.taken.iter().any(|(lo, hi)| a.x < hi.x && b.x > lo.x && a.y < hi.y && b.y > lo.y)
@@ -431,7 +435,7 @@ pub fn coal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let Some(&(hp, hh, _)) = lay.heaps.iter().take(3).min_by(|x, y| x.0.distance(b).total_cmp(&y.0.distance(b))) else { continue };
         let foot = hp + Vec2::new(hh.x + 1.5, 0.0);
         let side = Vec2::new(b.x - bh_half.x, b.y + (i as f32 - 0.5) * 2.0);
-        if !c.inside_local(foot) || foot.distance(side) < 6.0 {
+        if !c.inside_local(foot) || distance_to_boundary(foot, &c.lot_poly) < 2.3 || foot.distance(side) < 6.0 {
             continue;
         }
         let a = f.at(foot.x, 3.0, foot.y);
