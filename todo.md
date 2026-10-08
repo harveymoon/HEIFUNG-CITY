@@ -316,6 +316,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Supertall leftovers: big podium over 6–8 plot sites reads heavy; office towers dark at night (landmark always-on floors); long tower shadows vs 650 m cascade unverified
 - [ ] Park-path leftovers: 1–2 m grass step between path end and park walkway; no gates while a building is under construction; no hub gates
 
+- [ ] names.rs business tables include names borrowed from films/games (Nakatomi, Arasaka, Tessier, Kiroshi): replace with original generated names
+
 ## Follow-ups noted in agent reports (not started)
 - [x] Freight trains really carry their cargo instead of yards handing it to any train (train-inspect) → DONE [feat/freight]: rail orders wait out of town (`Rail::orders`, saved) and are loaded at the map edge into 50-unit wagons (5–12, oldest first), ride in and come off at their yard; exports picked up as room allows; the train inspector's manifest is what is aboard (wagons, units of capacity); an extra train 45 min after the last when goods are left behind; old saves' yard orders migrate to the queue; `examples/freight_probe` (demo: longest wait 2 h)
 - [x] Batteries charge on cheap night power and discharge at the evening peak (grid-weather) → DONE [feat/econ-followups]: `power::PriceBands`/`dispatch_tou`: six cheapest hours buy from the grid, six dearest deliver first, hold between (never at the cost of a brownout); savings per hour/day/pack; battery inspector SoC-vs-price chart, Power page rule + savings per day
@@ -346,6 +348,5 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 ## Agents running (update when starting/merging; survives context compaction)
 - feat/waterfront: waterfront parcels, beach businesses, private jetties, public beach zone (started 2026-10-08, from the queue)
-- feat/megacorp: mega-corps, universities, schools near families (started 2026-10-08, from the queue; done, waiting to merge)
 - fix/under-construction: buildings under construction don't function (started 2026-10-08)
 - feat/directory: City Data directory of businesses and citizens (started 2026-10-08)
