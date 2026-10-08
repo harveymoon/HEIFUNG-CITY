@@ -1,82 +1,17 @@
 //! Regression checks on the demo district for REVIEW2's test gaps and this
-//! round's sim changes: async mind answers mid-trip (M4), save/load
-//! round trips mid-run (L7), park bench seats, and walking access in the
-//! land value.
+//! round's sim changes: save/load round trips mid-run (L7), park bench
+//! seats, and walking access in the land value.
 //!
 //! cargo test --release -p nd_sim --test sim_checks -- --nocapture
 
-#[path = "demo_city.rs"]
-#[allow(dead_code)]
-mod demo;
+mod common;
 
 use nd_minds::RuleBasedMind;
-use nd_sim::{Activity, CitizenId, Decision, Intent, LandUse, MindContext, MindProvider, World};
+use nd_sim::{Activity, LandUse, World};
 
-/// The rule-based mind, plus answers that arrive "late" through `poll`,
-/// as an LLM's do in the app's `HybridMind`.
-struct Late {
-    rules: RuleBasedMind,
-    queue: Vec<(CitizenId, Decision)>,
-}
-
-impl MindProvider for Late {
-    fn decide(&mut self, ctx: &MindContext) -> Option<Decision> {
-        self.rules.decide(ctx)
-    }
-    fn poll(&mut self) -> Vec<(CitizenId, Decision)> {
-        std::mem::take(&mut self.queue)
-    }
-    fn name(&self) -> &'static str {
-        "late"
-    }
-}
-
-/// Riders listed on a bus who are not on it, and private cars on the road
-/// whose owner is not driving them.
-fn ghosts(w: &World) -> (usize, usize) {
-    let mut bus = 0;
-    let mut car = 0;
-    for (cid, c) in w.traffic.cars.iter() {
-        if let Some(b) = &c.bus {
-            bus += b.passengers.iter().filter(|p| !w.citizens.get(**p).is_some_and(|x| matches!(x.activity, Activity::Riding { bus } if bus == cid))).count();
-        }
-        if c.bus.is_none() && c.cargo.is_none() && c.owned.is_some() && w.citizens.get(c.citizen).is_some_and(|x| !matches!(x.activity, Activity::Driving { car, .. } if car == cid)) {
-            car += 1;
-        }
-    }
-    (bus, car)
-}
-
-/// REVIEW2 M4: an answer polled for someone driving or on the bus keeps
-/// its thought but does not pull them out of the vehicle.
-#[test]
-fn async_answers_do_not_pull_people_out_of_moving_vehicles() {
-    let mut w = demo::demo_world();
-    let mut m = Late { rules: RuleBasedMind::default(), queue: Vec::new() };
-    for _ in 0..1440 * 3 {
-        w.tick(&mut m);
-    }
-    let mut injected = 0;
-    let mut worst = (0, 0);
-    let mut thought_seen = false;
-    for i in 0..480u64 {
-        let mut targets = Vec::new();
-        if i % 5 == 0 {
-            targets = w.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::Driving { .. } | Activity::Riding { .. })).map(|(id, _)| id).take(2).collect();
-            for &id in &targets {
-                m.queue.push((id, Decision { intent: Intent::GoHome, thought: "model says: go home".into(), memory: None }));
-                injected += 1;
-            }
-        }
-        w.tick(&mut m);
-        thought_seen |= targets.iter().any(|&id| w.citizens.get(id).is_some_and(|c| c.thought == "model says: go home"));
-        let g = ghosts(&w);
-        worst = (worst.0.max(g.0), worst.1.max(g.1));
-    }
-    assert!(injected >= 20, "answers injected mid-trip: {injected}");
-    assert!(thought_seen, "the thought is still taken");
-    assert_eq!(worst, (0, 0), "(bus riders not riding, cars driven by someone not in them)");
-}
+// [review] REVIEW2 M4 (late answers mid-trip) is checked once, in
+// `demo_city::late_mind_answers_wait_until_the_trip_is_over`; this file
+// had a second copy of it.
 
 /// REVIEW2 L7, the parts this sim owns: walkers' pavement state and a land
 /// value cycle in progress survive a save. (Vehicles do not yet move
@@ -84,7 +19,7 @@ fn async_answers_do_not_pull_people_out_of_moving_vehicles() {
 /// this does not compare positions.)
 #[test]
 fn a_save_mid_walk_and_mid_land_value_cycle_keeps_both() {
-    let mut a = demo::demo_world();
+    let mut a = common::demo_world();
     let mut ma = RuleBasedMind::default();
     for _ in 0..1440 * 3 {
         a.tick(&mut ma);
@@ -117,7 +52,7 @@ fn a_save_mid_walk_and_mid_land_value_cycle_keeps_both() {
 /// or failed on when one stray sitter came, which rail import timing moves).
 #[test]
 fn park_benches_seat_one_person_per_seat() {
-    let mut w = demo::demo_world();
+    let mut w = common::demo_world();
     let mut m = RuleBasedMind::default();
     let mut most = 0;
     for t in 0..1440 * 2 + 720 {
@@ -137,7 +72,7 @@ fn park_benches_seat_one_person_per_seat() {
 /// short walk away, and the land value carries it.
 #[test]
 fn demo_homes_know_how_far_the_park_and_nightlife_are() {
-    let mut w = demo::demo_world();
+    let mut w = common::demo_world();
     let mut m = RuleBasedMind::default();
     for _ in 0..1440 * 3 {
         w.tick(&mut m);

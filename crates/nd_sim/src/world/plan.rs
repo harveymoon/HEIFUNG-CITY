@@ -1260,9 +1260,9 @@ impl World {
                 self.pack_business_at(bid, "the road works", at, area, lu);
             }
             if expropriated {
-                let lot = self.buildings.get(bid).map(|b| b.lot);
-                if let Some(lot) = lot {
-                    self.events.push(SimEvent::Expropriated(bid, lot));
+                // [review] The old key is stale after the recut: the null key.
+                if self.buildings.contains_key(bid) {
+                    self.events.push(SimEvent::Expropriated(bid, LotId::default()));
                 }
                 self.demolish_with(bid, Some(at), Some("Our block was pulled down for the road works. Homeless again."));
             } else {
@@ -1353,8 +1353,10 @@ impl World {
     /// some other lot (and no `.get()` guard notices). Each old key is
     /// mapped to the new lot its building moved onto, else the new lot
     /// under its old centre, and the keys kept elsewhere follow: rubble by
-    /// where it lies, camps and footfall still owed to shops by their lot.
-    /// Keys with no lot any more are dropped.
+    /// where it lies, camps and footfall still owed to shops by their lot,
+    /// campus plots pending an annex, gardens, murals (by their building)
+    /// and a street race's meet and finish. Keys with no lot any more are
+    /// dropped (a race spot or a group's record of a work gets the null key).
     fn remap_lot_keys(&mut self, old_lots: &SlotMap<LotId, Lot>, grid: &LotGrid, carried: &HashMap<LotId, LotId>) {
         let lots = &self.lots;
         let lot_at = |p: Vec2| -> Option<LotId> {
@@ -1377,6 +1379,35 @@ impl World {
         for c in self.citizens.values_mut() {
             if !c.pending_footfall.is_empty() {
                 c.pending_footfall = c.pending_footfall.iter().filter_map(|l| map.get(l).copied()).collect();
+            }
+        }
+        // [review] Campus plots being cleared for an annex (their
+        // reservation is renewed: the rebuild cleared them all).
+        for k in &mut self.corps.campuses {
+            k.pending = k.pending.iter().filter_map(|(l, a)| map.get(l).map(|n| (*n, *a))).collect();
+            for (l, _) in &k.pending {
+                if self.lots.get(*l).is_some_and(|x| x.building.is_some()) {
+                    self.estate.reserved.insert(*l, k.building);
+                }
+            }
+        }
+        // Gardens by where they grow, murals by their wall's building.
+        let gardens = std::mem::take(&mut self.social.gardens);
+        self.social.gardens = gardens.into_iter().filter_map(|mut g| (map.get(&g.lot).copied().or_else(|| lot_at(g.pos))).map(|n| { g.lot = n; g })).collect();
+        let buildings = &self.buildings;
+        let murals = std::mem::take(&mut self.social.murals);
+        self.social.murals = murals.into_iter().filter_map(|mut m| (m.building.and_then(|b| buildings.get(b)).map(|b| b.lot).or_else(|| map.get(&m.lot).copied())).map(|n| { m.lot = n; m })).collect();
+        for g in self.social.groups.iter_mut() {
+            for w in &mut g.works {
+                if let crate::social::Work::Mural { lot, .. } | crate::social::Work::Garden { lot, .. } = w {
+                    *lot = map.get(lot).copied().unwrap_or_default();
+                }
+            }
+        }
+        // A street race's meet and finish.
+        if let Some(r) = self.street_events.race.as_mut() {
+            for s in [&mut r.meet, &mut r.finish] {
+                s.lot = map.get(&s.lot).copied().or_else(|| lot_at(s.centre)).unwrap_or_default();
             }
         }
     }
@@ -1442,9 +1473,6 @@ impl World {
         }
     }
 
-    /// Is this one of the city's own structures (a plant, depot, station
-    /// or yard)? Those are never taken over by another placement; the player
-    /// bulldozes them first.
     /// A parcel under one of the city's own structures (or a station or
     /// yard footprint): its zoning cannot change until the structure goes.
     pub fn parcel_holds_civic(&self, i: usize) -> bool {
@@ -1499,8 +1527,10 @@ impl World {
         }
     }
 
+    /// One of the city's own structures ([`Building::is_city_structure`]):
+    /// never taken over by another placement; the player bulldozes it first.
     pub(super) fn is_civic_structure(b: &Building) -> bool {
-        b.is_power() || b.depot || b.rail.is_some() || b.port.is_some() || b.service.is_some() || b.metro || b.city_parking || b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::CargoHub)
+        b.is_city_structure()
     }
 
     /// The city takes a lot for one of its own structures: whatever grew
@@ -1550,7 +1580,9 @@ impl World {
             }
         }
         let tick = self.clock.tick;
-        let center = self.lots.get(b.lot).map(|l| l.center).or(at).unwrap_or(Vec2::ZERO);
+        // [review] During a rebuild `b.lot` is an old key naming some other
+        // lot: where it stood (`at`) comes first.
+        let center = at.or_else(|| self.lots.get(b.lot).map(|l| l.center)).unwrap_or(Vec2::ZERO);
         for cid in b.residents.iter().copied() {
             if let Some(c) = self.citizens.get_mut(cid) {
                 if c.home == Some(bid) {
@@ -1592,9 +1624,10 @@ impl World {
             }
             self.refresh_facility_cache();
         }
-        self.events.push(SimEvent::BuildingRemoved(bid, b.lot));
-        // [land] Extra plots freed, a bought plot handed over.
+        // [land] Extra plots freed, a bought plot handed over. Its old key
+        // names nothing (or another lot) once the lots are recut.
         let lot = if at.is_none() { b.lot } else { LotId::default() };
+        self.events.push(SimEvent::BuildingRemoved(bid, lot));
         self.estate_building_gone(bid, &b.plot, lot);
     }
 

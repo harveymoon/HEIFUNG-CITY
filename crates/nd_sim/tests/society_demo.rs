@@ -11,32 +11,11 @@
 use nd_minds::RuleBasedMind;
 use nd_sim::crime::Offence;
 use nd_sim::services::{response_summary, IncidentKind, Outcome};
-use nd_sim::{LandUse, Placeable, ServiceKind, Tier, World};
+use nd_sim::{LandUse, ServiceKind, Tier};
 
-#[path = "demo_city.rs"]
-#[allow(dead_code)]
-mod demo;
+mod common;
 
-fn place(w: &mut World, kind: ServiceKind, tier: Tier, uses: &[LandUse]) {
-    place_near(w, kind, tier, uses, None)
-}
-
-/// Place on the first suitable lot, or the one nearest `near`.
-fn place_near(w: &mut World, kind: ServiceKind, tier: Tier, uses: &[LandUse], near: Option<nd_sim::Vec2>) {
-    let what = Placeable::Service(kind, tier);
-    let ok = |w: &World, vacant: bool| {
-        let fits = w.lots.iter().filter(|(id, l)| uses.contains(&l.land_use) && (!vacant || l.building.is_none()) && w.placement_problem(what, *id).is_none());
-        match near {
-            Some(p) => fits.min_by(|a, b| a.1.center.distance(p).total_cmp(&b.1.center.distance(p))).map(|(id, _)| id),
-            None => fits.map(|(id, _)| id).next(),
-        }
-    };
-    let lot = ok(w, true).or_else(|| ok(w, false)).unwrap_or_else(|| {
-        let why: Vec<String> = w.lots.iter().filter(|(_, l)| uses.contains(&l.land_use)).filter_map(|(id, _)| w.placement_problem(what, id)).take(5).collect();
-        panic!("nowhere for {kind:?} (treasury {:.0}): {why:?}", w.economy.treasury)
-    });
-    w.build_service(lot, kind, tier).unwrap();
-}
+use common::{place, place_near};
 
 struct Day8 {
     pop: usize,
@@ -58,7 +37,7 @@ struct Day8 {
 }
 
 fn run(services: bool) -> Day8 {
-    let mut world = demo::demo_world();
+    let mut world = common::demo_world();
     if services {
         place(&mut world, ServiceKind::Police, Tier::Mid, &[LandUse::Civic, LandUse::Commercial]);
         place(&mut world, ServiceKind::Dispatch, Tier::Low, &[LandUse::Civic, LandUse::Commercial]);

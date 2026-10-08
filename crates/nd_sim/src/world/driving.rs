@@ -391,19 +391,38 @@ impl World {
         let mut injured = Vec::new();
         let mut incident = None;
         if bad {
+            // [review] Who is to blame: the driver of the car whose fault it
+            // was (`cars[0]` gives the cause), if that is a citizen. It took
+            // the first citizen driver instead, so a stranger's red light got
+            // the citizen they hit arrested. Read before the write-offs below
+            // unseat anyone.
+            let at_fault = cars.first().map(|&c| &self.traffic.cars[c]).filter(|c| c.drive.profile.drunk >= DRUNK || matches!(r.cause, CrashCause::RedLight | CrashCause::OffRoad)).map(|c| c.citizen).filter(|d| self.citizens.contains_key(*d));
             for &c in &cars {
                 let car = &self.traffic.cars[c];
                 let driver = car.citizen;
                 let bike = car.model.body.two_wheeler();
                 let chance = ((r.severity - 0.3) * 1.3 + if bike { 0.25 } else { 0.0 }).clamp(0.0, 0.95);
                 let hurt = self.citizens.contains_key(driver) && rng.random::<f32>() < chance;
-                if hurt {
+                let protected = car.bus.is_some() || car.cargo.is_some() || car.siren || car.in_stunt();
+                let mut wrecked = car.drive.crash.is_some_and(|cs| cs.wrecked);
+                if hurt && !wrecked && !protected {
+                    // [review] Hurt, they cannot drive on: the car stays as a
+                    // write-off and they wait by it for the ambulance (they
+                    // kept driving while an incident waited for them).
+                    if let Some(cs) = self.traffic.cars[c].drive.crash.as_mut() {
+                        cs.wrecked = true;
+                        wrecked = true;
+                    }
+                }
+                // (A bus, lorry, siren or stunt only scrapes: nobody in it is
+                // hurt.)
+                if hurt && !protected {
                     injured.push(driver);
                 }
-                let wrecked = car.drive.crash.is_some_and(|cs| cs.wrecked);
                 if !wrecked {
                     continue;
                 }
+                let car = &self.traffic.cars[c];
                 let (pos, heading, model, owned) = (car.pos, car.heading, car.model, car.owned);
                 self.traffic.cars[c].citizen = CitizenId::default();
                 // [carlife] Written off: scrapped (the tow truck hauls it to the yard).
@@ -438,7 +457,6 @@ impl World {
                     self.concerns.heard(driver, p, crate::concerns::Concern::Commute, 0.6);
                 }
             }
-            let at_fault = cars.first().map(|&c| &self.traffic.cars[c]).filter(|c| c.drive.profile.drunk >= DRUNK || matches!(r.cause, CrashCause::RedLight | CrashCause::OffRoad)).and(drivers.first().copied());
             let caller = self.witness(r.pos, 300.0, &drivers);
             if let Some(near) = near {
                 if let Some((id, _)) = self.report_crash(r.pos, near, &drivers, &injured, at_fault, caller) {
@@ -1364,6 +1382,77 @@ mod tests {
         }
         let c = w.traffic.cars.get(id)?;
         Some((id, c.drive.anger, c.drive.anger_peak, c.drive.calm.unwrap(), c.drive.profile, w.driving.road_rage_today))
+    }
+
+    /// Two citizen cars on the road at once (a few seeds tried).
+    fn two_on_the_road() -> (World, CarId, CarId) {
+        for seed in [3u64, 5, 9, 11, 13] {
+            let mut w = town(seed);
+            let mine = |w: &World| -> Vec<CarId> { w.traffic.cars.iter().filter(|(_, c)| w.citizens.contains_key(c.citizen) && c.bus.is_none() && c.cargo.is_none() && !c.siren && !c.in_stunt() && c.drive.crash.is_none()).map(|(id, _)| id).collect() };
+            if tick(&mut w, 4000, |w| mine(w).len() >= 2) {
+                let v = mine(&w);
+                return (w, v[0], v[1]);
+            }
+        }
+        panic!("no two citizen cars on the road");
+    }
+
+    fn bad_crash(w: &mut World, cars: &[CarId], cause: CrashCause) -> u32 {
+        let id = 9_000;
+        for &c in cars {
+            w.traffic.cars[c].drive.crash = Some(crate::traffic::CrashState { id, hold: 0.0, wrecked: true });
+        }
+        let pos = w.traffic.cars[cars[0]].pos;
+        w.handle_crash(CrashReport { id, cars: cars.to_vec(), pos, speed: 15.0, cause, severity: 0.95 });
+        id
+    }
+
+    /// [review] The blame went to the first *citizen* driver, while the
+    /// cause came from the car at fault: a stranger running a red light
+    /// got the citizen they hit arrested.
+    #[test]
+    fn a_strangers_red_light_does_not_get_their_victim_arrested() {
+        let (mut w, stranger, victim) = two_on_the_road();
+        let who = w.traffic.cars[victim].citizen;
+        // Someone from out of town at the wheel.
+        w.traffic.cars[stranger].citizen = CitizenId::default();
+        bad_crash(&mut w, &[stranger, victim], CrashCause::RedLight);
+        let scene = w.services.active().find(|i| i.kind == IncidentKind::Crash).expect("a crash scene");
+        assert_ne!(scene.suspect, Some(who), "the victim is no suspect");
+        assert_eq!(scene.suspect, None, "the stranger is not ours to arrest");
+        // [review] The crash scene is in the day's calls (with the police).
+        let medical = w.services.active().filter(|i| i.kind == IncidentKind::Medical).count() as u32;
+        assert_eq!(w.services.stats.incidents_today[1], 1, "the crash counted with the police");
+        assert_eq!(w.services.stats.incidents_today[2], medical);
+        // And a citizen who ran the light is the suspect.
+        let (mut w, culprit, other) = two_on_the_road();
+        let who = w.traffic.cars[culprit].citizen;
+        bad_crash(&mut w, &[culprit, other], CrashCause::RedLight);
+        let scene = w.services.active().find(|i| i.kind == IncidentKind::Crash).expect("a crash scene");
+        assert_eq!(scene.suspect, Some(who));
+    }
+
+    /// [review] An injured driver whose car was not written off kept
+    /// driving while a medical incident waited for them at the scene.
+    #[test]
+    fn a_hurt_driver_does_not_drive_on() {
+        let (mut w, a, b) = two_on_the_road();
+        let drivers = [w.traffic.cars[a].citizen, w.traffic.cars[b].citizen];
+        let id = 9_000;
+        for c in [a, b] {
+            // A bad crash, neither car written off by the traffic model.
+            w.traffic.cars[c].drive.crash = Some(crate::traffic::CrashState { id, hold: 30.0, wrecked: false });
+        }
+        // One wreck makes it a bad crash; the other car is only dented.
+        w.traffic.cars[a].drive.crash.as_mut().unwrap().wrecked = true;
+        let pos = w.traffic.cars[a].pos;
+        w.handle_crash(CrashReport { id, cars: vec![a, b], pos, speed: 20.0, cause: CrashCause::RearEnd, severity: 0.95 });
+        let hurt = w.driving.recent.last().unwrap().injured.clone();
+        assert!(!hurt.is_empty(), "someone was hurt at this severity");
+        for d in hurt {
+            assert!(drivers.contains(&d));
+            assert!(!w.citizens[d].activity.is_traveling(), "{} is hurt and out of the car", w.citizens[d].name);
+        }
     }
 
     #[test]

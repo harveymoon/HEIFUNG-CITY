@@ -352,6 +352,7 @@ impl World {
         self.ports.stats.ferry_fares_today += fare;
         self.ports.stats.day_trips_today += 1;
         *self.ports.boarding.entry(b).or_insert(0) += 1;
+        *self.ports.prepaid.entry(b).or_insert(0) += 1;
         self.settle_footfall(id);
         let name = self.ferry_town_name(b, trip.town);
         let mut rng = crate::rng_for(self.citizens[id].seed ^ tick, SALT ^ 0xB0A7);

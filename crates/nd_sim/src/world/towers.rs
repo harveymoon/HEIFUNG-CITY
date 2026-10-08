@@ -213,7 +213,7 @@ impl World {
     /// not promised to anyone, not in a historic district.
     fn tower_plot_ok(&self, lid: LotId, lu: LandUse) -> bool {
         let Some(l) = self.lots.get(lid) else { return false };
-        if l.land_use != lu || self.estate.reserved.contains_key(&lid) || self.under_facility(l.center) || self.district_frozen(lid) {
+        if l.land_use != lu || !self.site_clear(lid, SiteRule::ANY_NOT_HISTORIC) {
             return false;
         }
         match l.building {
@@ -410,6 +410,10 @@ impl World {
         let memory = format!("Our block was bought by {dev_name} for {name}. We had to go.");
         let bid = match self.lots[primary].building {
             Some(b) => {
+                // [review] Its owner is paid and its business moves out
+                // first, as in every other acquisition (both were lost).
+                self.pack_business(b, &name);
+                self.settle_sale(b);
                 self.redevelop_with(b, Tier::High, floors, value, memory.clone(), false);
                 let bld = &mut self.buildings[b];
                 bld.land_use = lu;

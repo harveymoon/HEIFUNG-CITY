@@ -894,6 +894,9 @@ impl World {
         // Nothing free in sight (or no way to it from here: lanes never
         // lead back onto the one the car is on): drive round the block
         // and look again.
+        // [review] One search counts once toward the parking trouble, even
+        // when the circling finds no street and it gives up at once.
+        let mut counted = false;
         if tries < GIVE_UP && !worn_out {
             let r = if desperate { SEARCH_RADIUS * 2.0 } else { SEARCH_RADIUS };
             let mut segs: Vec<SegmentId> = self.roads.segments_in_box(target - Vec2::splat(r), target + Vec2::splat(r)).filter(|&s| self.roads.try_segment(s).is_some_and(|g| g.is_street() && !g.is_highway() && g.lanes() > 0)).collect();
@@ -902,6 +905,7 @@ impl World {
                 self.vehicles.stats.circled_today += 1;
                 self.economy.parking_street_today += 1;
                 self.economy.parking_shortage_at = Some(target);
+                counted = true;
             }
             for _ in 0..4 {
                 let Some(&sid) = segs.choose(&mut self.rng) else { break };
@@ -919,7 +923,7 @@ impl World {
             }
         }
         // Gave up: onto the street, wherever.
-        if tries == 0 {
+        if tries == 0 && !counted {
             self.economy.parking_street_today += 1;
             self.economy.parking_shortage_at = Some(target);
         }

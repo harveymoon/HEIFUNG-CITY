@@ -449,7 +449,9 @@ impl World {
         c.revenue_yesterday = gross;
         c.cash += skim;
         if levy > 0.0 {
-            let paid = levy.min(c.cash.max(0.0) + skim);
+            // [review] `cash` already holds the skim: adding it again let the
+            // levy drive the corp into debt.
+            let paid = levy.min(c.cash.max(0.0));
             c.cash -= paid;
             c.levy_total += paid;
             let name = c.brand.name.clone();
@@ -511,7 +513,7 @@ impl World {
     /// merge of its own, not promised or frozen.
     pub(super) fn hq_plot_ok(&self, lid: LotId) -> bool {
         let Some(l) = self.lots.get(lid) else { return false };
-        if l.land_use != LandUse::Commercial || self.estate.reserved.contains_key(&lid) || self.under_facility(l.center) || self.district_frozen(lid) || !l.usable() {
+        if l.land_use != LandUse::Commercial || !self.site_clear(lid, SiteRule::STREET_NOT_HISTORIC) {
             return false;
         }
         match l.building {
@@ -582,6 +584,7 @@ impl World {
         let bid = match self.lots[primary].building {
             Some(b) => {
                 self.pack_business(b, &format!("{name}'s headquarters"));
+                self.settle_sale(b);
                 self.buildings[b].land_use = LandUse::Commercial;
                 self.redevelop_with(b, Tier::High, floors, value, memory.clone(), true);
                 b
@@ -669,7 +672,7 @@ impl World {
             if !land_ok {
                 break;
             }
-            if l.building.is_some() || !l.usable() || l.landlocked || l.land_use == LandUse::Park || self.estate.reserved.contains_key(&lid) || self.under_facility(l.center) || self.district_frozen(lid) || self.services.is_rubble(lid) {
+            if l.land_use == LandUse::Park || !self.lot_free_for(lid, SiteRule::STREET_NOT_HISTORIC) {
                 continue;
             }
             if l.land_use == LandUse::Residential && !wants_homes {

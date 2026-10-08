@@ -66,25 +66,12 @@ impl World {
     /// Place a power plant on a lot, paying from the treasury. Whatever grew
     /// there is bought out and pulled down: the city outranks the market.
     pub fn build_power(&mut self, lot_id: LotId, kind: PowerPlantKind) -> Result<BuildingId, String> {
+        // [review] The same site checks as the preview (it re-implemented
+        // them and missed the thickness check: heavy plants on kerb strips).
+        if let Some(problem) = self.placement_problem(crate::services::Placeable::Plant(kind), lot_id) {
+            return Err(problem);
+        }
         let lot = self.lots.get(lot_id).ok_or("no such lot")?;
-        if let Some(b) = lot.building.and_then(|b| self.buildings.get(b)) {
-            if Self::is_civic_structure(b) {
-                return Err(format!("{} stands there; bulldoze it first", b.name));
-            }
-        }
-        if lot.landlocked {
-            return Err("that land has no road access".into());
-        }
-        if self.under_facility(lot.center) {
-            return Err("that ground belongs to a station or yard".into());
-        }
-        // [free-placement] Any zone, or none: only park land is kept.
-        if !crate::services::Placeable::Plant(kind).allowed_on(lot.land_use) {
-            return Err(format!("that is park land: unzone it before putting a {} there", kind.label()));
-        }
-        if lot.area() < kind.min_area() && self.small_plant_site_joins(kind, &lot.polygon, Some(lot_id)).is_none() {
-            return Err(format!("too small: a {} needs {:.0} m²", kind.label(), kind.min_area()));
-        }
         self.power_site(lot_id, kind)?;
         // [clarity] Solar and wind are priced by the lot they fill;
         // [plant-scale] coal, nuclear and geothermal by the site, capped.

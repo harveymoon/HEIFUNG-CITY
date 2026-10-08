@@ -228,16 +228,12 @@ fn deterministic_and_saved() {
     assert_eq!(back.skyline, a.skyline);
 }
 
-/// A real save from before the league (`saves/flags/flag_patch.ron` copied
-/// into the worktree; skipped when absent): it loads with no limit and no
+/// A real save from before the league (the committed legacy fixture,
+/// `legacy_save_text`): it loads with no limit and no
 /// towers, and runs through a day.
 #[test]
 fn an_old_save_loads_without_the_league() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../saves/flags/flag_patch.ron");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        eprintln!("skipped: no {}", path.display());
-        return;
-    };
+    let text = super::legacy_save_text();
     let mut w = World::from_ron(&text).expect("the old save loads");
     assert_eq!(w.skyline, crate::towers::Skyline::default());
     assert!(w.buildings.values().all(|b| b.plot.tower.is_none()));

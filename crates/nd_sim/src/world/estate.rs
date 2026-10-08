@@ -19,9 +19,26 @@ const ESTATE_SALT: u64 = 0x5E57_A7E0_1A4D;
 /// Fictional property developers.
 const DEVELOPERS: &[&str] = &["Kessler Land", "Halcyon Developments", "Argent Holdings", "Meridian Estates", "Nocturne Property", "Zenith Build", "Fulcrum Realty"];
 
+/// [review] The salts of [`World::erng`]'s small-number draw sites, in one
+/// place so no two share one: `invest_rich` used 4, the same as
+/// `daily_elites`, so on the same midnight tick both drew identical
+/// numbers (an elite spawn day was always an invest day).
+pub(super) mod erng_salt {
+    pub const DENSIFY: u64 = 1;
+    pub const EXPAND_FIRMS: u64 = 2;
+    pub const MCMANSIONS: u64 = 3;
+    pub const ELITES: u64 = 4;
+    pub const NIMBY: u64 = 5;
+    pub const INVEST_RICH: u64 = 6;
+    pub const ACQUIRE_NAME: u64 = 9;
+    #[cfg(test)]
+    pub const ALL: [u64; 7] = [DENSIFY, EXPAND_FIRMS, MCMANSIONS, ELITES, NIMBY, INVEST_RICH, ACQUIRE_NAME];
+}
+
 impl World {
     /// A generator for one draw site, keyed by the tick: deterministic and
-    /// independent of the world's own stream.
+    /// independent of the world's own stream. Small salts come from
+    /// [`erng_salt`]; the others are distinct hex tags.
     pub(super) fn erng(&self, salt: u64) -> SimRng {
         crate::rng_for(self.config.seed ^ ESTATE_SALT ^ salt.wrapping_mul(0x51_7C_C1_B7), self.clock.tick)
     }
@@ -224,6 +241,44 @@ impl World {
         }
     }
 
+    /// [review] The market buys `bid` from whoever owns it: the owner is
+    /// paid its [`World::sale_price`] (what the buyer's price was summed
+    /// from) and lets it go. Sellers were never paid: an investor's second
+    /// home, bought with a real deposit, could be taken for nothing. Called
+    /// after `pack_business` (a business that moves takes its owner and
+    /// goodwill along) and before the building is pulled down or rebuilt.
+    pub(super) fn settle_sale(&mut self, bid: BuildingId) {
+        let Some(oid) = self.buildings.get(bid).and_then(|b| b.plot.owner) else { return };
+        let price = self.sale_price(bid);
+        self.buildings[bid].plot.owner = None;
+        let Some(o) = self.estate.owners.get_mut(oid) else { return };
+        o.properties.retain(|p| *p != bid);
+        o.earned += price;
+        let kind = o.kind.clone();
+        match kind {
+            OwnerKind::Person { citizen } | OwnerKind::Elite { citizen } => {
+                if let Some(c) = self.citizens.get_mut(citizen) {
+                    match c.household.and_then(|h| self.households.get_mut(h)) {
+                        Some(h) => h.money += price as f32,
+                        None => c.savings += price as f32,
+                    }
+                }
+            }
+            OwnerKind::Household { household } => {
+                if let Some(h) = self.households.get_mut(household) {
+                    h.money += price as f32;
+                }
+            }
+            OwnerKind::MegaCorp { .. } => {
+                if let Some(c) = self.corps.corps.iter_mut().find(|c| c.owner == oid) {
+                    c.cash += price;
+                }
+            }
+            // A firm, developer or university books it as earned.
+            _ => {}
+        }
+    }
+
     /// The owner record that is `cid`'s own: their billionaire record, a
     /// person record, or the household's (a McMansion), made on first use.
     pub(super) fn owner_for_citizen(&mut self, cid: CitizenId) -> Option<OwnerId> {
@@ -306,7 +361,9 @@ impl World {
         if b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::TaxiCompany | BusinessKind::CargoHub)) {
             return false;
         }
-        if b.plot.form.is_some_and(|f| f.owner_occupied()) || !b.plot.pending_lots.is_empty() {
+        // A home bought outright is not for sale while its owners hold it
+        // ([review] an empty mansion, its billionaire dead, is).
+        if b.plot.form.is_some_and(|f| f.owner_occupied()) && b.plot.owner.is_some() || !b.plot.pending_lots.is_empty() {
             return false;
         }
         // [supertall] A league tower is nobody's teardown.
@@ -358,6 +415,28 @@ impl World {
         let named: Vec<(BuildingId, CitizenId)> = self.buildings.iter().filter(|(_, b)| b.plot.owner.is_none()).filter_map(|(id, b)| b.business.as_ref().and_then(|z| z.owner).filter(|c| self.citizens.contains_key(*c)).map(|c| (id, c))).collect();
         for (b, c) in named {
             self.set_business_owner(b, c);
+        }
+        // [review] A billionaire who died: their mansion and firms go on the
+        // market, the neighbours' NIMBY leaves with them and the police
+        // escort moves on. (The keep-list was built before the dead were
+        // pruned, so their owner record held everything forever.)
+        let citizens = &self.citizens;
+        let dead: Vec<(OwnerId, Option<BuildingId>)> = self.estate.elites.iter().filter(|e| !citizens.contains_key(e.citizen)).map(|e| (e.owner, e.mansion)).collect();
+        for (o, mansion) in &dead {
+            let props = self.estate.owners.get_mut(*o).map(|x| std::mem::take(&mut x.properties)).unwrap_or_default();
+            for b in props {
+                if let Some(b) = self.buildings.get_mut(b).filter(|b| b.plot.owner == Some(*o)) {
+                    b.plot.owner = None;
+                }
+            }
+            if let Some(m) = mansion {
+                self.estate.nimby.retain(|n| n.mansion != *m);
+            }
+        }
+        if !dead.is_empty() {
+            let citizens = &self.citizens;
+            self.estate.elites.retain(|e| citizens.contains_key(e.citizen));
+            self.refresh_police_escort();
         }
         let elites: Vec<OwnerId> = self.estate.elites.iter().map(|e| e.owner).collect();
         self.estate.owners.retain(|id, o| !o.properties.is_empty() || elites.contains(&id));
@@ -425,6 +504,16 @@ impl World {
         }
     }
 
+    /// A reservation on `lot` is dropped (something else takes the plot):
+    /// the reserving building forgets it as pending.
+    pub(super) fn drop_reservation(&mut self, lot: LotId) {
+        if let Some(bid) = self.estate.reserved.remove(&lot) {
+            if let Some(b) = self.buildings.get_mut(bid) {
+                b.plot.pending_lots.retain(|l| *l != lot);
+            }
+        }
+    }
+
     /// A plot someone bought is clear: it becomes part of their building.
     pub(super) fn claim_reserved(&mut self, lot: LotId) {
         let Some(&bid) = self.estate.reserved.get(&lot) else { return };
@@ -435,6 +524,13 @@ impl World {
             return;
         }
         self.estate.reserved.remove(&lot);
+        // [review] A plot a campus bought for an annex gets the annex, not a
+        // share of the university building (it stayed pending forever).
+        if let Some((ki, annex)) = self.corps.campuses.iter().enumerate().find_map(|(ki, k)| k.pending.iter().find(|(l, _)| *l == lot).map(|(_, a)| (ki, *a))) {
+            self.corps.campuses[ki].pending.retain(|(x, _)| *x != lot);
+            self.build_annex(ki, lot, annex);
+            return;
+        }
         let Some(b) = self.buildings.get_mut(bid) else { return };
         b.plot.pending_lots.retain(|l| *l != lot);
         if !b.plot.extra_lots.contains(&lot) && b.lot != lot {
@@ -462,6 +558,7 @@ impl World {
                     // [relocate] A business next door looks for a new place.
                     let why = format!("{}'s expansion", self.buildings.get(bid).map_or(String::new(), |b| b.name.clone()));
                     self.pack_business(other, &why);
+                    self.settle_sale(other);
                     // A park standing on rezoned ground just goes.
                     self.estate.reserved.insert(l, bid);
                     if let Some(b) = self.buildings.get_mut(bid) {
@@ -483,7 +580,7 @@ impl World {
         let mine: Vec<&Lot> = ours.iter().filter_map(|l| self.lots.get(*l)).collect();
         let mut out: Vec<(f64, LotId)> = Vec::new();
         for (lid, l) in self.lots.iter() {
-            if l.land_use != lu || ours.contains(&lid) || self.estate.reserved.contains_key(&lid) || self.under_facility(l.center) {
+            if l.land_use != lu || ours.contains(&lid) || !self.site_clear(lid, SiteRule::ANY) {
                 continue;
             }
             if !mine.iter().any(|m| m.center.distance(l.center) < 120.0 && lots_touch(m, l)) {
@@ -512,7 +609,7 @@ impl World {
     /// first, a few a day. Residents move, a business closes (the new
     /// building opens as what the market wants).
     pub(super) fn densify(&mut self) {
-        let mut rng = self.erng(1);
+        let mut rng = self.erng(erng_salt::DENSIFY);
         if self.estate.pressure.samples < 24 {
             return;
         }
@@ -594,6 +691,7 @@ impl World {
         if had_business {
             self.pack_business(bid, &format!("{dev_name}'s rebuild"));
         }
+        self.settle_sale(bid);
         self.redevelop_with(bid, tier, floors, value, memory, false);
         if had_business {
             // The old business closes with the sale; the new building
@@ -633,7 +731,7 @@ impl World {
     /// Successful firms grow, two a day at most: branch kinds open a
     /// branch across the city, the rest buy the plot next door.
     pub(super) fn expand_firms(&mut self) {
-        let mut rng = self.erng(2);
+        let mut rng = self.erng(erng_salt::EXPAND_FIRMS);
         let mut cands: Vec<(f32, BuildingId)> = self
             .buildings
             .iter()
@@ -674,7 +772,7 @@ impl World {
         let taxi = kind == BusinessKind::TaxiCompany;
         let mut best: Option<(f32, LotId)> = None;
         for (lid, l) in self.lots.iter() {
-            if l.building.is_some() || !l.usable() || self.estate.reserved.contains_key(&lid) || self.under_facility(l.center) {
+            if !self.lot_free_for(lid, SiteRule::STREET) {
                 continue;
             }
             let ok_use = if taxi { matches!(l.land_use, LandUse::Commercial | LandUse::Industrial) && l.car_segment.is_some() && l.area() >= crate::taxi::YARD_MIN_AREA } else { l.land_use == lu };
@@ -771,7 +869,7 @@ impl World {
     /// suburb and builds one big house with a pool: at most one a day, and
     /// one for every six well-off households.
     pub(super) fn build_mcmansions(&mut self) {
-        let mut rng = self.erng(3);
+        let mut rng = self.erng(erng_salt::MCMANSIONS);
         if !rng.random_bool(0.3) {
             return;
         }
@@ -808,7 +906,7 @@ impl World {
     fn mcmansion_site(&self) -> Option<Vec<LotId>> {
         let mut cands: Vec<(f32, LotId)> = Vec::new();
         for (lid, l) in self.lots.iter() {
-            if l.land_use != LandUse::Residential || self.estate.reserved.contains_key(&lid) || self.under_facility(l.center) || self.district_frozen(lid) {
+            if l.land_use != LandUse::Residential || !self.site_clear(lid, SiteRule::ANY_NOT_HISTORIC) {
                 continue;
             }
             if self.pressure_floors(lid) > LOW_DENSITY_FLOORS {
@@ -862,6 +960,7 @@ impl World {
                     _ => "a family's new house".to_string(),
                 };
                 self.pack_business(b, &why);
+                self.settle_sale(b);
                 self.buildings[b].plot.form = Some(form);
                 self.buildings[b].plot.buyer = buyer;
                 self.buildings[b].land_use = LandUse::Residential;
@@ -872,7 +971,7 @@ impl World {
             None => {
                 let seed = self.fresh_seed();
                 let name = {
-                    let mut rng = self.erng(9);
+                    let mut rng = self.erng(erng_salt::ACQUIRE_NAME);
                     names::building_name(&mut rng, LandUse::Residential)
                 };
                 let mut b = Building::new(primary, LandUse::Residential, floors, Tier::High, seed, name, self.clock.tick, value);
@@ -962,7 +1061,7 @@ impl World {
         if self.estate.elites.len() >= self.elite_cap() || !self.elite_gate().3 {
             return;
         }
-        let mut rng = self.erng(4);
+        let mut rng = self.erng(erng_salt::ELITES);
         let chance = (ELITE_DAILY_CHANCE * (1.0 + 0.5 * self.estate.elites.len() as f64)).min(0.25);
         if rng.random_bool(chance) {
             let _ = self.spawn_elite(&mut rng);
@@ -1057,7 +1156,6 @@ impl World {
     /// free home until the mansion is done. `None` without a free home.
     fn elite_visitor(&mut self, rng: &mut SimRng) -> Option<CitizenId> {
         let home = self.buildings.iter().filter(|(_, b)| b.land_use == LandUse::Residential && b.operating() && b.free_homes() > 0).max_by(|a, b| a.1.tier.cmp(&b.1.tier).then(a.1.rent.total_cmp(&b.1.rent)).then(b.0.cmp(&a.0))).map(|(id, _)| id)?;
-        let template = self.citizens.values().find(|c| c.stage() == crate::citizens::LifeStage::Adult)?.clone();
         let seed = self.fresh_seed();
         let family = names::family_name(rng);
         let name = names::member_name(rng, &family);
@@ -1066,43 +1164,14 @@ impl World {
         let hid = self.households.insert(Household { members: Vec::new(), home: Some(home), money: 50_000.0, groceries: 6.0, rent_stress_days: 0, moved_day: self.clock.day() });
         let look = crate::looks::family_looks(&[(seed, 48)], Tier::High).into_iter().next();
         let c = Citizen {
-            name,
-            seed,
-            home: Some(home),
-            work: None,
-            pos,
-            prev_pos: pos,
-            heading: 0.0,
-            prev_heading: 0.0,
-            mode: TravelMode::Walk,
-            owns_car: false,
-            owns_bike: false,
-            vehicle: None,
-            parked_at: None,
-            transit: None,
-            activity: Activity::Idle,
-            memories: Vec::new(),
-            places: Default::default(),
             thought: "Charming little city. I'll take it.".to_string(),
-            spotlight: false,
-            next_decision_tick: tick + 5,
-            arrived_tick: tick,
-            inside: None,
             mood: 0.8,
             income: 1000.0,
             savings: 5_000.0,
-            rent_stress_days: 0,
             satiety: 0.9,
             groceries: 6.0,
-            hungry_days: 0,
-            trail: Vec::new(),
-            pending_footfall: Vec::new(),
-            household: Some(hid),
-            age: 48,
-            car: None,
-            to_car: None,
             look,
-            ..template
+            ..Citizen::newcomer(name, seed, 48, Some(home), Some(hid), pos, tick)
         };
         let id = self.citizens.insert(c);
         self.households[hid].members.push(id);
@@ -1150,7 +1219,7 @@ impl World {
             .collect();
         let mansions: Vec<Vec2> = self.buildings.iter().filter(|(_, b)| b.plot.form == Some(Form::Mansion)).filter_map(|(id, _)| self.footprint(id).map(|l| l.center)).collect();
         let open = |lid: LotId, l: &Lot| -> bool {
-            if l.land_use != LandUse::Residential || self.estate.reserved.contains_key(&lid) || self.under_facility(l.center) || self.district_frozen(lid) {
+            if l.land_use != LandUse::Residential || !self.site_clear(lid, SiteRule::ANY_NOT_HISTORIC) {
                 return false;
             }
             match l.building {
@@ -1235,7 +1304,7 @@ impl World {
             n.strength *= NIMBY_DECAY;
         }
         self.estate.nimby.retain(|n| n.strength >= 0.02);
-        let mut rng = self.erng(5);
+        let mut rng = self.erng(erng_salt::NIMBY);
         for k in 0..self.estate.nimby.len() {
             let n = self.estate.nimby[k].clone();
             if n.price_out_left == 0 {
@@ -1450,4 +1519,15 @@ pub fn escort_model() -> VehicleModel {
 pub fn police_escort_model() -> VehicleModel {
     use crate::vehicle::{BodyType, Livery, VehicleClass};
     VehicleModel { class: VehicleClass::Mid, body: BodyType::Sedan, wear: 0, tuned: false, livery: Livery::None, paint: 3 }
+}
+
+#[cfg(test)]
+mod salt_tests {
+    #[test]
+    fn every_estate_draw_site_has_its_own_salt() {
+        let all = super::erng_salt::ALL;
+        for (i, a) in all.iter().enumerate() {
+            assert!(!all[i + 1..].contains(a), "salt {a} used twice");
+        }
+    }
 }

@@ -124,7 +124,9 @@ fn a_car_on_a_split_street_drives_on_and_only_removed_streets_lose_cars() {
 #[test]
 #[ignore]
 fn a_saved_city_keeps_its_traffic_through_plan_edits() {
-    let Ok(path) = std::env::var("ND_SAVE") else { return };
+    // [review] Run by hand (`--ignored`) it must test something: without
+    // the file it fails with the hint instead of passing quietly.
+    let path = std::env::var("ND_SAVE").expect("set ND_SAVE to a save to run this (see the doc comment)");
     let text = std::fs::read_to_string(&path).expect("read the save");
     let mut w = World::from_ron(&text).expect("the save loads");
     let mut minds = nd_minds::RuleBasedMind::default();

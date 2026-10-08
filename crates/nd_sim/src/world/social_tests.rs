@@ -511,3 +511,52 @@ fn an_old_save_without_the_social_layer_loads() {
     let back = World::from_ron(&text).unwrap();
     assert!(back.social.bond(a, b).is_friendly());
 }
+
+/// [review] Loans ran after `daily_household` had pooled every pocket into
+/// the household purse, so no pocket was ever broke or flush enough: no
+/// loan could happen. They now read the household purse.
+#[test]
+fn a_broke_friend_borrows_at_midnight_and_pays_back() {
+    let mut t = town(21);
+    let a = t.person(505, 30, 0);
+    let b = t.person(606, 31, 1);
+    t.make_friends(a, b, 0.8);
+    let (ha, hb) = (t.w.citizens[a].household.unwrap(), t.w.citizens[b].household.unwrap());
+    t.w.households[ha].money = -500.0;
+    t.w.households[hb].money = 5000.0;
+    // Through the real midnight: households pool their pockets first.
+    t.w.clock = SimClock::starting_at(6, 23, 59);
+    let mut minds = IdleMind;
+    t.w.tick(&mut minds);
+    let lent = t.w.social.circles[&b].tie(a).map_or(0.0, |x| x.lent);
+    assert!(lent > 0.0, "a friend lent money: {:?}", t.w.citizens[a].memories);
+    // Flush again: the debt is paid back the next midnight.
+    t.w.households[ha].money = 5000.0;
+    t.w.clock = SimClock::starting_at(7, 23, 59);
+    t.w.tick(&mut minds);
+    assert_eq!(t.w.social.circles[&b].tie(a).map_or(-1.0, |x| x.lent), 0.0, "paid back");
+}
+
+/// [review] A rebuild recuts every lot and a fresh SlotMap re-issues keys:
+/// gardens and murals kept their old keys, which then named other lots.
+#[test]
+fn gardens_and_murals_follow_their_lots_through_a_rebuild() {
+    let mut t = town(17);
+    let crew = group_of(&mut t, GroupKind::StreetArt);
+    t.w.social.group_mut(crew).unwrap().momentum = 5.0;
+    t.w.produce();
+    let growers = group_of(&mut t, GroupKind::Garden);
+    t.w.social.group_mut(growers).unwrap().momentum = 5.0;
+    t.w.produce();
+    let g = t.w.social.gardens.first().expect("a garden").clone();
+    let m = t.w.social.murals.first().expect("a mural").clone();
+    // Road works elsewhere: every lot is cut again.
+    t.w.add_road(&[Vec2::new(-400.0, -300.0), Vec2::new(400.0, -300.0)], 1, 1);
+    t.w.add_road(&[Vec2::new(300.0, -300.0), Vec2::new(300.0, 0.0)], 1, 1);
+    let g2 = t.w.social.gardens.iter().find(|x| x.group == g.group).expect("the garden is still there");
+    let l = &t.w.lots[g2.lot];
+    assert!(l.contains(g.pos) || l.center.distance(g.pos) < 6.0, "the garden's key names the lot it grows on");
+    let m2 = t.w.social.murals.iter().find(|x| x.group == m.group).expect("the mural is still there");
+    let b = m2.building.unwrap();
+    assert_eq!(m2.lot, t.w.buildings[b].lot, "the mural's key names its wall's lot");
+}

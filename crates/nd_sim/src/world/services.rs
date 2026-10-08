@@ -444,7 +444,9 @@ impl World {
             second_alarm: None,
             known_suspect: false,
         });
-        if let Some(n) = self.services.stats.incidents_today.get_mut(kind.index()) {
+        // [review] By `slot()`: a crash (index 3) fell off the end of the
+        // three counters; it counts with the police, who clear it.
+        if let Some(n) = self.services.stats.incidents_today.get_mut(kind.slot()) {
             *n += 1;
         }
         self.events.push(SimEvent::IncidentStarted(id));
@@ -1324,23 +1326,15 @@ impl World {
     // ── repairs ────────────────────────────────────────────────────────────
 
     /// [services] What one of the city's own structures cost to put up
-    /// (the base for its repair bill).
-    fn civic_value(b: &Building) -> f32 {
-        if let Some(s) = b.service {
-            s.kind.build_cost(s.tier)
-        } else if let Some(k) = b.plant {
-            Placeable::Plant(k).cost()
-        } else if let Some(r) = &b.rail {
-            Placeable::Rail(r.kind).cost()
-        } else if let Some(k) = b.port {
-            Placeable::Dock(k).cost()
-        } else if b.depot {
-            Placeable::BusDepot.cost()
-        } else if b.metro {
-            Placeable::MetroStation.cost()
-        } else {
-            Placeable::CargoHub.cost()
+    /// (the base for its repair bill): what it was placed as, a plant at its
+    /// site's scale. [review] Batteries and city car parks fell through to
+    /// a cargo hub's price, plants to their unscaled one.
+    fn civic_value(&self, id: BuildingId) -> f32 {
+        let Some(b) = self.buildings.get(id) else { return 0.0 };
+        if let Some(k) = b.plant {
+            return k.cost_at(self.plant_scale(b));
         }
+        self.placed_as(id).map_or(0.0, |p| p.cost())
     }
 
     /// [services] Midnight: the city mends its own structures (stations,
@@ -1356,7 +1350,7 @@ impl World {
             .filter(|(id, b)| Self::is_civic_structure(b) && b.operating() && b.condition < 1.0 && !self.services.is_burning(*id))
             .map(|(id, b)| {
                 let amount = REPAIR_PER_DAY.min(1.0 - b.condition);
-                (id, amount, amount * REPAIR_SHARE * Self::civic_value(b), b.name.clone())
+                (id, amount, amount * REPAIR_SHARE * self.civic_value(id), b.name.clone())
             })
             .collect();
         for (id, amount, cost, name) in jobs {
@@ -2242,7 +2236,7 @@ impl World {
         inc.resolved = Some(tick);
         inc.outcome = Some(outcome);
         let (kind, unit, citizen, bid, answered, second) = (inc.kind, inc.unit, inc.citizen, inc.building, inc.arrived.is_some(), inc.second);
-        if let Some(n) = self.services.stats.resolved_today.get_mut(kind.index()) {
+        if let Some(n) = self.services.stats.resolved_today.get_mut(kind.slot()) {
             *n += 1;
         }
         if !answered && !matches!(outcome, Outcome::Gone) {
@@ -2534,6 +2528,18 @@ mod tests {
     /// [fire-scene] Once the fire is out the engine stays a few minutes on
     /// scene while the crew packs up (still on the job, its incident still
     /// named for the renderer), then drives home.
+    /// [review] Repairs are priced off what a structure cost: batteries and
+    /// city car parks were priced as cargo hubs.
+    #[test]
+    fn repairs_are_priced_off_what_was_built() {
+        let mut w = town();
+        let bat = w.build_battery(civic_lot(&w, -450.0), crate::power::BatteryKind::Small).unwrap();
+        assert_eq!(w.civic_value(bat), Placeable::Battery(crate::power::BatteryKind::Small).cost());
+        let park = w.build_city_parking(civic_lot(&w, 450.0), crate::enforcement::LotSize::Small).unwrap();
+        assert_eq!(w.civic_value(park), Placeable::ParkingLot(crate::enforcement::LotSize::Small).cost());
+        assert_ne!(w.civic_value(park), Placeable::CargoHub.cost());
+    }
+
     #[test]
     fn a_fire_engine_packs_up_before_it_leaves() {
         let mut w = town();

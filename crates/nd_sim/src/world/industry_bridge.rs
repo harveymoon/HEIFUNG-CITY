@@ -8,8 +8,11 @@
 use super::*;
 
 /// The sub-types the Zone tool offers for industrial land: (key, label).
-/// "auto" clears any bias so the ground decides.
-pub const INDUSTRY_CHOICES: [(&str, &str); 8] = [
+/// "auto" clears any bias so the ground decides, then every
+/// `IndustryKind::ALL` in order by its `key()`. [review] Sized from the
+/// kinds so a new one cannot be left out (Mining, Smelting and
+/// FactoryFarming were); a test checks the keys match.
+pub const INDUSTRY_CHOICES: [(&str, &str); crate::industry::IndustryKind::COUNT + 1] = [
     ("auto", "Auto (ground)"),
     ("farming", "Farming"),
     ("oil", "Oil"),
@@ -18,6 +21,9 @@ pub const INDUSTRY_CHOICES: [(&str, &str); 8] = [
     ("logistics", "Logistics"),
     ("fishing", "Fishing"),
     ("tech", "Tech"),
+    ("mining", "Mining"),
+    ("smelting", "Smelting"),
+    ("factory_farming", "Factory farming"),
 ];
 
 impl World {
@@ -29,7 +35,7 @@ impl World {
     }
 
     /// The industry kind the ground under a parcel suggests (its label),
-    /// for the Zone tool's read-out. None until the industry model is in.
+    /// for the Zone tool's read-out. None off industrial land.
     pub fn suggested_industry(&self, parcel: usize) -> Option<String> {
         let center = self.parcels.parcels.get(parcel)?.center;
         let lot = self.lots.iter().find(|(_, l)| point_in_polygon(center, &l.polygon)).map(|(id, _)| id)?;
@@ -41,5 +47,20 @@ impl World {
     /// The sub-zone the player set over a point, if any (its key).
     pub fn industry_choice_at(&self, p: Vec2) -> Option<String> {
         self.industry_bias_at(p).map(|k| k.map_or("auto", |k| k.key()).to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::industry::IndustryKind;
+
+    #[test]
+    fn the_zone_tool_offers_every_industry_kind() {
+        assert_eq!(INDUSTRY_CHOICES[0].0, "auto");
+        for (i, k) in IndustryKind::ALL.into_iter().enumerate() {
+            assert_eq!(INDUSTRY_CHOICES[i + 1].0, k.key(), "{k:?}");
+            assert_eq!(IndustryKind::from_key(INDUSTRY_CHOICES[i + 1].0), Some(k));
+        }
     }
 }

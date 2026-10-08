@@ -568,7 +568,7 @@ impl World {
         let mut best: Option<(f32, LotId)> = None;
         for &id in vacant {
             let Some(lot) = self.lots.get(id) else { continue };
-            if lot.building.is_some() || !lot.usable() || self.under_facility(lot.center) || self.services.is_rubble(id) {
+            if !self.lot_free_for(id, SiteRule::STREET) {
                 continue;
             }
             let Some(rank) = p.uses.iter().position(|u| *u == lot.land_use) else { continue };
