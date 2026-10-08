@@ -343,3 +343,4 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - feat/mural-cleanup: murals on facades, clean-up tool, contamination spread (started 2026-10-08)
 - fix/interchange (extended): + road-polish leftovers: abutments, gore deck, signal arms, stop line, town street tapers
 - fix/false-block: false road refusal by a far plant; blockers in the plan preview (started 2026-10-08)
+- feat/supertall: supertall league (started 2026-10-08, from the queue)
