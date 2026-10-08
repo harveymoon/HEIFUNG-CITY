@@ -646,10 +646,18 @@ Citizens are rendered from their simulated positions every frame.
   at the school, the child gets out, it drives on), and the mode choice: a seat in the car of family
   or a coworker setting off by car from the same spot to within 300 m of where the trip goes is a
   free, comfortable option (`ModePlan::Lift`).
-- **Parking businesses**: when the day's circling outruns free spaces, development opens a
-  parking lot on a vacant lot near the last driver who could not find a space: a surface lot where
-  land is cheap (about one space per 28 m², two jobs), a multi-storey car park on middle land
-  (three to five decks). It is the cheapest business in town and lives or dies on fees (a fee by
+- **Parking businesses**: [parking-market] when drivers circle where the lots are full, a resident
+  opens another (`world/parking.rs::maybe_open_parking`): the trigger is four drivers circling today
+  (three while the town's parking businesses cover their costs 1.3x, ten while they lose money); the
+  spot is the concerns' Parking hotspot of the last three days, then where the last driver gave up;
+  nothing opens while the lots within 220 m were under 85% full at their busiest, within 150 m of a
+  lot opened in the last two days, or once paid spaces match the town's cars (60 at least). The founder is a
+  grown-up within 1.5 km who can pay (300 for a surface lot, 1,200 for a car park), who owns it; with
+  nobody able, an operator from out of town comes only for three times the trigger. Every parking
+  business sets tomorrow's fee at midnight by its busiest moment (`Building::parking_peak`): 85%
+  full or more, +15% (up to 2.5x its base by tier and land value); under 40%, -10% (down to 0.6x).
+  The lot is a surface lot where land is cheap (about one space per 28 m², two jobs), a
+  multi-storey car park on middle land (three to five decks). It is the cheapest business in town and lives or dies on fees (a fee by
   tier and land value per car parked). Towers (high tier) bring their own spaces for about half
   their homes and jobs, middle-tier blocks a quarter, cheap buildings none. Parking lots render
   their occupancy; cars at the kerb are drawn there.
@@ -828,6 +836,21 @@ Citizens are rendered from their simulated positions every frame.
   escorts take the boss's driving style, follow every change of course and leave at the end
   of the run. Guards (one per escort car) walk round them on foot and stand at the kerb for
   an hour where the convoy stopped (drawn by `render/convoys.rs`).
+  *Relocation* (`world/relocate.rs`): a business bought out of its building (road works through
+  it, a city building on its lot, a developer's rebuild, a neighbour's expansion, a mansion) is
+  packed up first (`EstateMarket::moving`: cash, books, stock, owner, staff). The next development
+  round moves it to the nearest vacant lot of its land use within 1.5 km with at least half its
+  ground, if it can pay 200 + 20 a job: same name, same owner, a building site that reopens with
+  its old staff hired back if they are still out of work; "moved from ..." in the inspector and a
+  news line. It looks for two days, then is gone. Kinds tied to their ground (farms, wells,
+  fishing, marinas) and parking, taxi yards and cargo hubs close as before.
+  *The well-off invest* (`world/rich.rs`): daily (35% roll) the richest household earning 220+ a
+  day with 1,000 in the bank, not a billionaire's, buys in its top earner's name a business in
+  profit (if it owns none) or else a second home in a middle or high block of up to 24 homes,
+  putting 30% of its cash down; at most one property per 220 of daily income (four at most).
+  *Garages*: a finished mansion takes the billionaire's supercars beyond the one they drive, a
+  McMansion a second car, as real cars in the house's own spaces (`OwnedCar::spare`), never driven,
+  sold when the owner is gone.
 - **Railway** (`RoadKind::Rail`, `nd_sim::rail`): track is a third kind of way in the road
   network, single track 4.8 m wide. A trunk line crosses the map 480 m south of the
   centre from the start, edge to edge and on out of sight; the player lays branches off it with the Road tool's Rail
@@ -1003,7 +1026,18 @@ Citizens are rendered from their simulated positions every frame.
   is imported. Battery packs (Buildings, Power: small 20 MWh / 5 MW, medium 80 / 20, farm 240 / 80;
   `BatteryKind`) charge and discharge at 95% each way (about 90% round trip); every pack takes or
   gives the same share of its own headroom, so they fill and empty together; they work once their
-  lot is clear and run in slot order, so the dispatch is deterministic. Placing a plant or battery
+  lot is clear and run in slot order, so the dispatch is deterministic. [batteries] They play the
+  day's time-of-use prices by one rule (`power::PriceBands`, `dispatch_tou`): the day's 24 import
+  prices (at the temperature the day's swing gives each hour) mark its six cheapest hours (cheap) and
+  six dearest (dear). A surplus always charges them first. In a cheap hour they also buy from the
+  regional grid, within its import line, to fill up (only if the round trip pays: cheap under
+  0.9 x 0.9025 x dear). In a dear hour a shortfall drains them before anything is imported. In
+  between they hold the charge for the peak and give only what the import line cannot cover
+  (nobody browns out to save a charge). A flat price day falls back to the old merit order. What
+  they save is booked per hour (`Dispatch::battery_savings`: imports spared at the hour's price,
+  less power bought to charge them, less exports their surplus would have earned), summed per day
+  (`DayRecord::battery_savings`) and split per pack by its share of the flow
+  (`Battery::savings_today/yesterday`). Placing a plant or battery
   refreshes who is powered but books no hour (no money, no battery energy, no dark hour); the hour is
   booked once, on the hour. A plant does not feed the grid while the old building on its lot is
   still being cleared; solar, wind and battery yards clear it at once. Each plant kind has an air
@@ -2084,7 +2118,10 @@ What the pages chart:
   energy per day the same way; money for power per day (export income, import cost, upkeep);
   brownout hours and peak demand; a table of plants and batteries (output now and 24-hour mean,
   upkeep, cost per MWh, CO2 a day, smog, noise; batteries' charge and flow) and a 72-hour chart per
-  plant (output against nameplate) and per battery (stored MWh and flow).
+  plant (output against nameplate) and per battery (stored MWh and flow); [batteries] the
+  batteries' rule this hour and the day's cheap and dear prices, and their savings per day. A
+  battery's inspector shows its rule, its savings today and yesterday, and its state of charge
+  against the price over the last hours.
   The page ends with the hour's balance, the batteries' fill, costs, the next 24 hours and the weather.
 - **Transit**: riders per day by mode; riders per bus line; fares against upkeep; who is waiting
   and riding hour by hour; a table of lines with today, yesterday, the average and fares.
@@ -2166,8 +2203,9 @@ legs it changed. Nothing here draws random numbers.
 - **A person's places**: `World::holdings_of` is their home, work and every business they own
   (`Business::owner`; taxi founders own their firm). Each is a big clickable pin (HOME, WORK,
   OWNS, `ui/pins.rs`) over its building on a post (`marks.rs`), held at the screen edge when off
-  screen, and a button in the person pane. Either selects the building. Multiple homes have no
-  data yet; when they do, `holdings_of` lists them and they get pins with no UI change.
+  screen, and a button in the person pane. Either selects the building. Second homes and
+  businesses the well-off buy (`world/rich.rs`) are listed and pinned the same way; the person
+  pane sums them up ("owns 3 properties · 4 cars: one driven, 3 in the garage at ...").
 - **Favourites** wear gold in the world: a ring and a diamond over the head, and a gold box round
   the car they drive or ride in and their parked car (`marks.rs`). City Data's People › Favourites has
   go (a smooth flight), follow and a "$" gift.

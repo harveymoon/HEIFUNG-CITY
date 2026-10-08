@@ -310,9 +310,11 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Interchange leftovers: hand-drawn ramps at sharp angles still overlap the street briefly; Interchange tool ignores roads pending in a project; only the diamond (no parclo/cloverleaf, no street over the highway); concrete band at a junction edge on river_valley slopes
 - [x] Road-polish leftovers → DONE [fix/interchange]: bridge abutments, signal arms on climbs, stop line at sharp forks; gore deck partly; town street tapers already existed
 
+- [ ] Econ leftovers: investors' second homes/businesses pay no rent/profit; owned buildings skip densify; spare cars never driven; battery thresholds use predicted temperature (econ-followups)
+
 ## Follow-ups noted in agent reports (not started)
-- [ ] Batteries charge on cheap night power and discharge at the evening peak (grid-weather)
 - [x] Freight trains really carry their cargo instead of yards handing it to any train (train-inspect) → DONE [feat/freight]: rail orders wait out of town (`Rail::orders`, saved) and are loaded at the map edge into 50-unit wagons (5–12, oldest first), ride in and come off at their yard; exports picked up as room allows; the train inspector's manifest is what is aboard (wagons, units of capacity); an extra train 45 min after the last when goods are left behind; old saves' yard orders migrate to the queue; `examples/freight_probe` (demo: longest wait 2 h)
+- [x] Batteries charge on cheap night power and discharge at the evening peak (grid-weather) → DONE [feat/econ-followups]: `power::PriceBands`/`dispatch_tou`: six cheapest hours buy from the grid, six dearest deliver first, hold between (never at the cost of a brownout); savings per hour/day/pack; battery inspector SoC-vs-price chart, Power page rule + savings per day
 - [x] In-game Clean up button for contaminated land (API only now); contamination along rivers/downwind (dirty-industry) → DONE [feat/mural-cleanup]: Bulldoze → Clean up ground (radius, red/green hover with cells, cost, days), crews dig over 2-6 days with a visible site; daily drift downwind (smoke wind) and downstream
 - [x] Murals painted on the building facade, not a free-standing wall → DONE [feat/mural-cleanup]: painted on the drawn street wall clear of windows, procedural per crew (motif, palette, tag), floodlit night copy; wall only on vacant lots/glass fronts
 - [x] LLM dialogue for spotlit citizens and on-demand diaries → DONE [feat/committee]: through the pluggable backend, display only
@@ -320,18 +322,18 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [x] Hydro/tidal still fixed size; huge 2-tower coal plant only seen in a unit test (plant-scale) → DONE [feat/freight] (hydro/tidal part): sized to their site like coal (700 m² per nameplate, 1–8 turbine bays, size kept on the plant, old plants keep 70/60 MW); halls/houses grow by 8/7 m bays (second row on a narrow lot), dam adds intake towers and gates, tidal barrage a caisson per bay; Build hover shows MW/cost/scale. The huge coal plant in play is not checked here
 - [x] Town street tapers → already on main (road-polish #14)
 - [ ] One engine per fire; crew are station payroll names (fire-scene)
-- [ ] Wind small-lot exception on unzoned sites with no lot yet (fixed in plant-scale? verify)
+- [x] Wind small-lot exception on unzoned sites with no lot yet (fixed in plant-scale? verify) → DONE [feat/econ-followups]: verified working (plant-scale's `small_plant_site_joins` in `lot_problem`); test `a_small_unzoned_site_may_join_the_wind_park_next_door`
 - [ ] Tow trucks on a job may drive against one-ways and make U-turns (todo5; noted not done)
-- [ ] Rich owners own several homes/businesses/cars: selecting highlights everything they own; several map pins per person (todo5; "no data yet")
+- [x] Rich owners own several homes/businesses/cars: selecting highlights everything they own; several map pins per person (todo5; "no data yet") → DONE [feat/econ-followups]: highlight/list/pins already existed (`owned_with`, `holdings_of`); now the well-off (220+/day) buy a business or second home (`world/rich.rs`), mansions/McMansions keep spare cars in the garage (`OwnedCar::spare`), person pane sums holdings and cars
 - [x] Look-dev leftovers → DONE [fix/haze]: lamp light (40/18/0 by tier), wet roads in rain, climate/weather/hour fog, coal smoke from walk view; normal maps already present. Left: Bevy Atmosphere (would need physical light units), building-lot lamps
-- [ ] Parking pressure makes parking businesses profitable so entrepreneurs build more parking lots (todo2, todo5; verify, likely missing)
+- [x] Parking pressure makes parking businesses profitable so entrepreneurs build more parking lots (todo2, todo5; verify, likely missing) → DONE [feat/econ-followups]: lots existed (4 circling → a lot near the last driver); now fees follow peak occupancy nightly, a local with savings founds the lot at the concerns' hotspot when nearby lots were full, with spacing and a cap (`maybe_open_parking`)
 - [ ] A booted car gets towed away eventually (todo4; verify)
 - [ ] Crime can include murder (todo2; only theft/burglary/assault/vandalism now)
-- [ ] Industry on cheap land lifts land value a little (todo2; verify)
+- [x] Industry on cheap land lifts land value a little (todo2; verify) → DONE [feat/econ-followups]: already there (`splat_lift`, up to +0.1 fading out at 0.35); test added
 - [ ] Moto gangs ride as a pack, reckless, weaving through traffic (todo2; verify)
 - [x] Coal smoke visible from walk view → DONE [fix/haze]
 - [ ] Wind farm sizes (now per lot — check the original complaint is answered)
-- [ ] A bought-out business moves to a new location instead of only closing (todo5)
+- [x] A bought-out business moves to a new location instead of only closing (todo5) → DONE [feat/econ-followups]: `world/relocate.rs`: road works, city buildings, developer rebuilds, neighbour expansions and mansions pack the business; it moves to the nearest vacant lot of its land use within 1.5 km if it can pay (same name/owner, staff rehired), "moved from" in the inspector, news line
 
 ## Questions for Harvey (unanswered)
 - [x] Player-placed parking lots stop a road like other city buildings → DONE [main]: `city_parking` flag, old saves migrate (Harvey: any user-placed building must not be demolished by a road)
@@ -339,7 +341,6 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Delete old todo2.md–todo5.md (their items were carried into todo.md)?
 
 ## Agents running (update when starting/merging; survives context compaction)
-- feat/econ-followups: batteries arbitrage, parking pressure → lots, industry lifts cheap land, relocating businesses, rich owners' holdings, wind small-lot check (started 2026-10-08)
 - feat/street-followups: tow trucks on a job (one-ways/U-turns), booted cars towed, murder, moto packs, fire engines park at the kerb (started 2026-10-08)
 - feat/supertall: supertall league (started 2026-10-08, from the queue)
 - feat/waterfront: waterfront parcels, beach businesses, private jetties, public beach zone (started 2026-10-08, from the queue)

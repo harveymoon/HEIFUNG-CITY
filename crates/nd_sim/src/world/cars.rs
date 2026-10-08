@@ -1077,7 +1077,7 @@ impl World {
 
     pub(super) fn new_car(&mut self, owner: CitizenId, model: VehicleModel, place: CarPlace, event: CarEvent) -> VehicleId {
         let color = self.rng.random_range(0..8u8);
-        let vid = self.vehicles.cars.insert(OwnedCar { owner, model, place, color, since: self.clock.tick });
+        let vid = self.vehicles.cars.insert(OwnedCar { owner, model, place, color, since: self.clock.tick, spare: false });
         self.vehicles.note(event);
         if let Some(c) = self.citizens.get_mut(owner) {
             c.car = Some(vid);
@@ -1383,7 +1383,7 @@ impl World {
             .cars
             .iter()
             .filter(|(id, c)| match c.place {
-                CarPlace::Parked(_) => !self.citizens.get(c.owner).is_some_and(|o| o.car == Some(*id)),
+                CarPlace::Parked(_) => !self.citizens.get(c.owner).is_some_and(|o| o.car == Some(*id)) && !self.spare_kept(c),
                 CarPlace::Driving(cid) => !self.traffic.cars.get(cid).is_some_and(|t| t.owned.is_some()),
             })
             .map(|(id, _)| id)

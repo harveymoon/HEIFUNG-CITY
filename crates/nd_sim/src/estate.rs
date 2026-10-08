@@ -335,6 +335,12 @@ pub struct EstateStats {
     pub priced_out_total: u32,
     pub convoys_total: u32,
     pub buyouts_today: u32,
+    /// [relocate] Businesses that moved after a buyout, and those that
+    /// found nowhere they could afford.
+    pub relocated_total: u32,
+    pub relocate_failed_total: u32,
+    /// [rich] Second homes and businesses the well-off bought.
+    pub investments_total: u32,
 }
 
 // ── the pressure grid ────────────────────────────────────────────────────────
@@ -462,6 +468,36 @@ pub struct EstateMarket {
     /// span them.
     pub reserved: BTreeMap<LotId, BuildingId>,
     pub stats: EstateStats,
+    /// [relocate] Businesses that lost their building to a buyout and are
+    /// looking for a new place (`World::relocate_waiting`).
+    pub moving: Vec<Moving>,
+}
+
+/// [relocate] A business bought out of its building (road works, a city
+/// building, a developer's rebuild, a neighbour's expansion), packed up
+/// with its cash, books and owner, looking for a vacant lot of its land
+/// use nearby. Kept a couple of days; if nothing turns up it is gone.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Moving {
+    pub business: crate::market::Business,
+    /// The building's name, kept for the new one.
+    pub name: String,
+    pub land_use: crate::zoning::LandUse,
+    /// Where it stood and how much ground it had.
+    pub from: Vec2,
+    pub area: f32,
+    pub jobs: u16,
+    /// Its owner record (not a developer's), to hand the new building to.
+    pub owner: Option<OwnerId>,
+    /// Its staff, hired back when the new place opens.
+    pub staff: Vec<CitizenId>,
+    /// "road works", "a developer's rebuild", ...
+    pub why: String,
+    /// Where it stood, in words, taken when it packed up ("next to Lucky
+    /// Bodega"), while the old neighbours still stood.
+    #[serde(default)]
+    pub from_words: String,
+    pub since_tick: u64,
 }
 
 impl EstateMarket {

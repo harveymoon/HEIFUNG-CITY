@@ -143,6 +143,10 @@ mod fishing_tests;
 // [events] street races and warehouse raves; road wear and maintenance
 mod nights;
 mod roadworks;
+mod relocate;
+mod rich;
+#[cfg(test)]
+mod econ_followups_tests;
 mod dirt;
 pub use fishing::BoatReport;
 pub use dirt::{CleanupJob, CleanupQuote, DirtyNeighbour, ADJACENCY_OUTPUT_HIT, ADJACENCY_VALUE_HIT, CLEANUP_COST, CLEANUP_MAX_RADIUS, CLEANUP_MIN_RADIUS};
