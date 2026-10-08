@@ -311,6 +311,11 @@ struct Ctx<'w, 's> {
     committee: ResMut<'w, crate::committee::CommitteeRt>,
     /// [build-highlight] What the Build window's section shows on the map.
     highlight: Res<'w, crate::build_highlight::BuildHighlight>,
+    /// [memory] For the `memory` command: what the renderer holds.
+    meshes: Res<'w, Assets<Mesh>>,
+    materials: Res<'w, Assets<StandardMaterial>>,
+    images: Res<'w, Assets<Image>>,
+    entities: Query<'w, 's, Entity>,
 }
 
 fn remote_commands(inbox: Res<Inbox>, mut ctx: Ctx) {
@@ -420,6 +425,8 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     match name {
         "help" => Ok(help()),
         "status" => Ok(status(ctx)),
+        // [memory] The process's memory and what the renderer and the world hold.
+        "memory" => Ok(memory_json(ctx)),
         "pause" => {
             let paused = opt_bool(cmd, "paused")?.unwrap_or(!ctx.sim.paused);
             ctx.sim.paused = paused;
@@ -1229,6 +1236,22 @@ fn paint(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     }
     v["implemented"] = json!(implemented && ctx.sim.world.implement_refused.is_none());
     Ok(v)
+}
+
+/// [memory] The process's working set (and its peak) and commit charge,
+/// the renderer's asset and entity counts, and the world's big collections.
+fn memory_json(ctx: &Ctx) -> Value {
+    let (ws, peak_ws, commit) = crate::memory::process_memory();
+    let heap = crate::memory::heap();
+    let mb = |n: usize| round(n as f32 / 1_048_576.0);
+    let w = &ctx.sim.world;
+    json!({
+        "working_set_mb": mb(ws), "peak_working_set_mb": mb(peak_ws), "commit_mb": mb(commit),
+        "heap": { "note": "with the heap-count feature only", "live_mb": mb(heap.0), "peak_mb": mb(heap.1), "biggest_block_mb": mb(heap.2) },
+        "meshes": ctx.meshes.len(), "materials": ctx.materials.len(), "images": ctx.images.len(), "entities": ctx.entities.iter().count(),
+        "render": { "building_entities": ctx.stats.building_entities, "people_meshes": ctx.stats.people_meshes },
+        "world": { "citizens": w.citizens.len(), "buildings": w.buildings.len(), "cars": w.traffic.cars.len(), "lots": w.lots.len(), "day": w.clock.day() },
+    })
 }
 
 fn status(ctx: &Ctx) -> Value {
@@ -3098,6 +3121,7 @@ fn help() -> Value {
     v["commands"]["ownership"] = json!({ "building": "id: what to highlight when it is selected: the owner and every property with its outline (a rich person's other homes and businesses too)" });
     v["commands"]["set_weather"] = json!({ "cloud": "0..1 (rain or snow above 0.6, by climate)", "wind": "0.05..1", "temp_c": "-50..55", "note": "dev: sets the sky now; it drifts again hour by hour" });
     v["commands"]["ships"] = json!({ "returns": "every ship and boat: freighters, ferries, marina boats and (fishing) trawlers with name, port, at, heading_deg, state (in_port|outbound|fishing|hauling|returning|unloading), at_sea, nets_out, fish_aboard, catch_today; count, trawlers_at_sea" });
+    v["commands"]["memory"] = json!({ "note": "[memory] the process working set, peak and commit charge (MB), the renderer's mesh/material/image and entity counts, and the world's big counts" });
     v["commands"]["generate_city"] = json!({ "preset": "grid_plaza|coastal_river|old_town|twin_centres (default grid_plaza)", "seed": "u64 (default 1): the city and its landscape", "landscape": "optional landscape preset to lay it on instead of the city preset's own (river_valley|islands|coast|delta|plains|flat)", "water": "0..1", "relief": "0..1", "branching": "0..1", "climate": "temperate|desert|tropical|arctic|volcanic (default: the city preset's, desert)", "note": "throws the city away: a new game with a whole generated city (tensor-field streets, zoning, highway interchanges, a coal plant); returns the landscape summary and city {arterial, collector, local, zones, lots, interchanges, way_in, centres}" });
     // [districts] [tourism]
     v["commands"]["district"] = json!({ "action": "list (default)|create|paint|erase|set|remove|at|select|layer", "id": "district id (or district: id or name)", "at": "[x,y] brush centre", "radius": "m, default 40", "polygon": "[[x,y],...]", "rect": "[[x0,y0],[x1,y1]]", "residential": "kowloon|suburban|eco|none", "commercial": "neon_strip|tech_campus|night_market|tourist|none", "industry": "farming|oil|refinery|manufacturing|logistics|fishing|tech|none", "historic": "bool", "height_limit": "metres (null or 0 lifts it): nothing new rises over it in the district", "rename": "new name", "on": "bool (layer)" });

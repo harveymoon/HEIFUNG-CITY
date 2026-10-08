@@ -42,6 +42,10 @@ fn city_grows_and_round_trips_through_ron() {
     }
     assert!(!w.citizens.is_empty());
     let text = w.to_ron().unwrap();
+    // [memory] The streamed save is the same bytes.
+    let mut streamed = Vec::new();
+    w.write_ron(&mut streamed).unwrap();
+    assert_eq!(String::from_utf8(streamed).unwrap(), text);
     let back = World::from_ron(&text).unwrap();
     assert_eq!(back.citizens.len(), w.citizens.len());
     assert_eq!(back.traffic.net.lanes.len(), w.traffic.net.lanes.len());
