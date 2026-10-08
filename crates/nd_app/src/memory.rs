@@ -50,45 +50,26 @@ pub fn heap() -> (usize, usize, usize) {
     }
 }
 
+/// [memory] The counters behind `heap()`. There is one global allocator
+/// (`crash::CrashAlloc`); with the feature on it calls these after each
+/// successful allocation, free and reallocation.
 #[cfg(feature = "heap-count")]
-mod counting {
-    use std::alloc::{GlobalAlloc, Layout, System};
+pub(crate) mod counting {
     use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
     pub static LIVE: AtomicUsize = AtomicUsize::new(0);
     pub static PEAK: AtomicUsize = AtomicUsize::new(0);
     pub static BIGGEST: AtomicUsize = AtomicUsize::new(0);
 
-    struct Counting;
-
-    fn note(n: usize) {
+    /// `n` bytes were handed out.
+    pub fn alloc(n: usize) {
         let live = LIVE.fetch_add(n, Relaxed) + n;
         PEAK.fetch_max(live, Relaxed);
         BIGGEST.fetch_max(n, Relaxed);
     }
 
-    // SAFETY: every call goes straight to the system allocator; only the
-    // counters are added.
-    unsafe impl GlobalAlloc for Counting {
-        unsafe fn alloc(&self, l: Layout) -> *mut u8 {
-            note(l.size());
-            unsafe { System.alloc(l) }
-        }
-        unsafe fn alloc_zeroed(&self, l: Layout) -> *mut u8 {
-            note(l.size());
-            unsafe { System.alloc_zeroed(l) }
-        }
-        unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
-            LIVE.fetch_sub(l.size(), Relaxed);
-            unsafe { System.dealloc(p, l) }
-        }
-        unsafe fn realloc(&self, p: *mut u8, l: Layout, new: usize) -> *mut u8 {
-            LIVE.fetch_sub(l.size(), Relaxed);
-            note(new);
-            unsafe { System.realloc(p, l, new) }
-        }
+    /// `n` bytes were given back.
+    pub fn free(n: usize) {
+        LIVE.fetch_sub(n, Relaxed);
     }
-
-    #[global_allocator]
-    static A: Counting = Counting;
 }

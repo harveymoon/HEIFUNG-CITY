@@ -189,7 +189,13 @@ pub fn command(cmd: &Value, sim: &mut Sim, rt: &mut CommitteeRt) -> Result<Value
         }
         "settings" => {
             // Never takes or returns an API key: set ANTHROPIC_API_KEY or use
-            // the window.
+            // the window. [fix/review-app] The backend and its connection
+            // change only when the player allowed it in the window (a model
+            // may cost money; a URL points the committee at a server).
+            let wants_switch = ["backend", "local_url", "local_model", "claude_model", "claude_effort", "claude_fallbacks", "timeout_s"].iter().any(|k| field(cmd, k).is_some());
+            if wants_switch && !rt.remote_may_switch {
+                return Err("the backend settings are the player's: tick \"Let the remote API change the backend\" in the Committee window's settings first".into());
+            }
             let mut changed = false;
             if let Some(b) = opt_str(cmd, "backend")? {
                 rt.settings.backend = BackendChoice::parse(b).ok_or_else(|| format!("unknown backend {b:?}; mock, local or claude"))?;
@@ -222,10 +228,11 @@ pub fn command(cmd: &Value, sim: &mut Sim, rt: &mut CommitteeRt) -> Result<Value
                     rt.save_settings()?;
                 }
             }
-            if opt_bool(cmd, "test")?.unwrap_or(false) {
+            // One test at a time (each holds a thread for up to a minute).
+            if opt_bool(cmd, "test")?.unwrap_or(false) && rt.test.is_none() {
                 rt.test_connection();
             }
-            Ok(json!({ "backend": backend(rt), "auto_meetings": sim.world.committee.auto_meetings, "veto_allowed": sim.world.committee.veto_allowed }))
+            Ok(json!({ "remote_may_switch": rt.remote_may_switch, "backend": backend(rt), "auto_meetings": sim.world.committee.auto_meetings, "veto_allowed": sim.world.committee.veto_allowed }))
         }
         other => Err(format!("unknown committee action {other:?}; state, members, appoint, dismiss, alerts, check_alerts, projects, implement, dismiss_project, pick_site, refresh_sites, report, minutes, settings")),
     }
@@ -257,8 +264,12 @@ pub fn meeting_command(cmd: &Value, sim: &mut Sim, rt: &mut CommitteeRt) -> Resu
         // The stand-in answers at once: run to the mayor's vote or the end
         // now. A model keeps its own pace (the frames pump it).
         if rt.courier.is_mock() {
-            let CommitteeRt { driver, courier, .. } = rt;
-            driver.run(&mut sim.world, courier, 400);
+            let CommitteeRt { driver, courier, voices, .. } = rt;
+            // [fix/review-app] Voice lines and diaries polled on the way
+            // are theirs, not dropped.
+            for d in driver.run(&mut sim.world, courier, 400) {
+                voices.take(&d);
+            }
         }
     }
     let from = opt_u64(cmd, "transcript_from")?.unwrap_or(0) as usize;

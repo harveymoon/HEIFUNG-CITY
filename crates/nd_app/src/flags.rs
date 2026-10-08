@@ -43,6 +43,9 @@ pub struct ClaudeFlags {
     next: u32,
     /// The note being typed; `Some` while the note box is open.
     pub draft: Option<String>,
+    /// [fix/review-app] Where the camera looked when the note box opened:
+    /// the view the player flagged, not wherever it drifted while typing.
+    draft_look: Option<[f32; 2]>,
 }
 
 /// Where flags are appended, one JSON object per line.
@@ -82,7 +85,9 @@ pub struct FlagsPlugin;
 
 impl Plugin for FlagsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ClaudeFlags>().add_systems(EguiPrimaryContextPass, flag_box);
+        // [fix/review-app] After the side panel, which sets `want_flag` and
+        // drops keyboard focus.
+        app.init_resource::<ClaudeFlags>().add_systems(EguiPrimaryContextPass, flag_box.after(crate::ui::side_panel));
     }
 }
 
@@ -101,9 +106,12 @@ fn flag_box(
     mut ui: ResMut<UiFlags>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
-    if (keys.just_pressed(KeyCode::F8) && !ui.keyboard_captured) || std::mem::take(&mut ui.want_flag) {
+    // Plain F8 only: Shift+F8 is the camera's middle-tier jump.
+    let shifted = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    if (keys.just_pressed(KeyCode::F8) && !shifted && !ui.keyboard_captured) || std::mem::take(&mut ui.want_flag) {
         if flags.draft.is_none() {
             flags.draft = Some(String::new());
+            flags.draft_look = cams.iter().next().map(|c| [c.target.x, c.target.z]);
         }
     }
     let Some(mut note) = flags.draft.take() else { return Ok(()) };
@@ -135,12 +143,14 @@ fn flag_box(
             });
         });
     if save {
-        let look = cams.iter().next().map_or([0.0, 0.0], |c| [c.target.x, c.target.z]);
+        let look = flags.draft_look.take().or_else(|| cams.iter().next().map(|c| [c.target.x, c.target.z])).unwrap_or([0.0, 0.0]);
         let snapshot = crate::remote::selected_detail(&sim, *selection, tools.route_sel, &assets, &tools.favorites);
         let id = flags.add(sim.world.clock.tick, *selection, brief, note.trim().to_string(), look, snapshot).id;
         ui.message = format!("Flagged for Claude (#{id}): the remote API's `flags` command lists it");
     } else if !cancel {
         flags.draft = Some(note);
+    } else {
+        flags.draft_look = None;
     }
     Ok(())
 }

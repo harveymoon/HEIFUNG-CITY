@@ -31,7 +31,9 @@ static RESERVE_PTR: AtomicPtr<u8> = AtomicPtr::new(std::ptr::null_mut());
 static IN_OOM: AtomicBool = AtomicBool::new(false);
 static INSTALLED: AtomicBool = AtomicBool::new(false);
 
-/// The system allocator, watched for failures (see the module notes).
+/// The system allocator, watched for failures (see the module notes). The
+/// game's only `#[global_allocator]`: with the `heap-count` feature it also
+/// feeds the counters in `memory::counting`.
 pub struct CrashAlloc;
 
 unsafe impl GlobalAlloc for CrashAlloc {
@@ -39,6 +41,9 @@ unsafe impl GlobalAlloc for CrashAlloc {
         let p = unsafe { System.alloc(layout) };
         if p.is_null() {
             out_of_memory(layout.size());
+        } else {
+            #[cfg(feature = "heap-count")]
+            crate::memory::counting::alloc(layout.size());
         }
         p
     }
@@ -47,6 +52,9 @@ unsafe impl GlobalAlloc for CrashAlloc {
         let p = unsafe { System.alloc_zeroed(layout) };
         if p.is_null() {
             out_of_memory(layout.size());
+        } else {
+            #[cfg(feature = "heap-count")]
+            crate::memory::counting::alloc(layout.size());
         }
         p
     }
@@ -55,11 +63,19 @@ unsafe impl GlobalAlloc for CrashAlloc {
         let p = unsafe { System.realloc(ptr, layout, new_size) };
         if p.is_null() {
             out_of_memory(new_size);
+        } else {
+            #[cfg(feature = "heap-count")]
+            {
+                crate::memory::counting::free(layout.size());
+                crate::memory::counting::alloc(new_size);
+            }
         }
         p
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        #[cfg(feature = "heap-count")]
+        crate::memory::counting::free(layout.size());
         unsafe { System.dealloc(ptr, layout) }
     }
 }

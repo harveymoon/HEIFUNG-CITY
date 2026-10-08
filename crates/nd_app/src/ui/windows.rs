@@ -103,7 +103,7 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, info: Info) {
     match info {
         Info::Lines => super::lines::window(ui, p),
         Info::Land => land(ui, p),
-        Info::Saves => saves::panel(ui, p.sim, p.tools, p.selection, p.plan, p.saves, p.flags),
+        Info::Saves => saves::panel(ui, p.sim, p.saves, p.flags),
         Info::Help => help_window(ui),
         Info::Dev => dev(ui, p),
     }

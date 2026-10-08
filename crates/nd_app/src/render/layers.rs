@@ -16,7 +16,6 @@ use nd_sim::{Activity, LandUse, Vec2 as SVec2, World};
 
 use super::{despawn_all, to_mesh, Grounded, Materials, Overlays};
 use crate::sim::Sim;
-use crate::ui::UiFlags;
 
 #[derive(Component)]
 pub(super) struct TrafficLayerTag;
@@ -269,12 +268,10 @@ pub(super) fn sync_layers(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    keys: Res<ButtonInput<KeyCode>>,
-    flags: Res<UiFlags>,
     sim: Res<Sim>,
     mats: Res<Materials>,
     time: Res<Time>,
-    mut overlays: ResMut<Overlays>,
+    overlays: Res<Overlays>,
     mut layer_state: Local<([f32; 4], [bool; 4])>,
     mut marker_assets: Local<MarkerAssets>,
     traffic_q: Query<Entity, With<TrafficLayerTag>>,
@@ -283,9 +280,6 @@ pub(super) fn sync_layers(
     crime_q: Query<Entity, With<CrimeLayerTag>>,
     mut markers: Query<(Entity, &VehicleMarker, &mut Transform)>,
 ) {
-    if keys.just_pressed(KeyCode::KeyL) && !flags.keyboard_captured {
-        overlays.cycle();
-    }
     let w = &sim.world;
     let now = time.elapsed_secs();
     let (timers, shown) = &mut *layer_state;
@@ -368,11 +362,14 @@ pub(super) fn sync_layers(
     let f = sim.frac();
     let mut have = std::collections::HashSet::new();
     for (e, mk, mut tf) in &mut markers {
-        match w.traffic.cars.get(mk.0) {
+        // [fix/review-app] A loaded city reuses car ids: its markers start
+        // over rather than stick to a different car (of another class).
+        match w.traffic.cars.get(mk.0).filter(|_| !sim.full_rebuild) {
             Some(car) => {
-                let p = car.pose_at(f).0;
+                // The interpolated pose, heading included, as the car's own.
+                let (p, heading) = car.pose_at(f);
                 tf.translation = Vec3::new(p.x, 0.0, p.y);
-                tf.rotation = Quat::from_rotation_y(-car.heading);
+                tf.rotation = Quat::from_rotation_y(-heading);
                 have.insert(mk.0);
             }
             None => commands.entity(e).despawn(),

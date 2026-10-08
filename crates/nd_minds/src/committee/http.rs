@@ -6,8 +6,9 @@
 //! The API key is only ever put in a request header: never in an error,
 //! a log line or `Debug` output.
 
+use std::collections::HashSet;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -50,6 +51,10 @@ pub struct HttpBackend {
     /// holds it); one thread ever polls.
     rx: Mutex<Receiver<(u64, Result<TurnReply, String>)>>,
     name: String,
+    /// [fix/review-app] Turns the courier gave up on: the worker answers
+    /// one at a time, so a queue behind a slow call would otherwise still
+    /// send (and pay for) turns whose answers are thrown away.
+    cancelled: Arc<Mutex<HashSet<u64>>>,
 }
 
 impl HttpBackend {
@@ -57,11 +62,16 @@ impl HttpBackend {
         let (tx, jobs) = channel::<(u64, TurnRequest)>();
         let (done, rx) = channel();
         let name = flavor.label();
+        let cancelled: Arc<Mutex<HashSet<u64>>> = Arc::default();
+        let skip = cancelled.clone();
         std::thread::Builder::new()
             .name("committee-http".into())
             .spawn(move || {
                 let agent = ureq::AgentBuilder::new().timeout(timeout).build();
                 while let Ok((id, req)) = jobs.recv() {
+                    if skip.lock().map(|mut c| c.remove(&id)).unwrap_or(false) {
+                        continue;
+                    }
                     let r = call(&agent, &flavor, &req);
                     if done.send((id, r)).is_err() {
                         break;
@@ -69,7 +79,7 @@ impl HttpBackend {
                 }
             })
             .expect("spawn the committee's HTTP worker");
-        HttpBackend { tx, rx: Mutex::new(rx), name }
+        HttpBackend { tx, rx: Mutex::new(rx), name, cancelled }
     }
 }
 
@@ -79,11 +89,27 @@ impl CommitteeBackend for HttpBackend {
     }
 
     fn poll(&mut self) -> Vec<(u64, Result<TurnReply, String>)> {
-        self.rx.lock().map(|rx| rx.try_iter().collect()).unwrap_or_default()
+        let out: Vec<(u64, Result<TurnReply, String>)> = self.rx.lock().map(|rx| rx.try_iter().collect()).unwrap_or_default();
+        // Answered after all (cancelled while its call was in flight):
+        // nothing left to skip.
+        if !out.is_empty() {
+            if let Ok(mut c) = self.cancelled.lock() {
+                for (id, _) in &out {
+                    c.remove(id);
+                }
+            }
+        }
+        out
     }
 
     fn name(&self) -> String {
         self.name.clone()
+    }
+
+    fn cancel(&mut self, id: u64) {
+        if let Ok(mut c) = self.cancelled.lock() {
+            c.insert(id);
+        }
     }
 }
 

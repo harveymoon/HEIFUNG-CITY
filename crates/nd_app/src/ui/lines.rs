@@ -39,15 +39,19 @@ enum Act {
 /// to each stop, so the strip reads "by Kowloon Noodle Bar", not "stop 4".
 #[derive(Clone, Default)]
 struct StopNames {
+    /// [fix/review-app] `Sim::generation`: `transit.version` is not saved
+    /// (0 after every load), so a loaded city with as many lines could show
+    /// the last city's stop names.
+    generation: u64,
     version: u64,
     routes: usize,
     names: std::collections::HashMap<(RouteId, usize), String>,
 }
 
-fn stop_names(ctx: &egui::Context, w: &nd_sim::World) -> StopNames {
+fn stop_names(ctx: &egui::Context, w: &nd_sim::World, generation: u64) -> StopNames {
     let id = egui::Id::new("lines_stop_names");
     let cached: Option<StopNames> = ctx.data(|d| d.get_temp(id));
-    if let Some(c) = cached.filter(|c| c.version == w.transit.version && c.routes == w.transit.routes.len()) {
+    if let Some(c) = cached.filter(|c| c.generation == generation && c.version == w.transit.version && c.routes == w.transit.routes.len()) {
         return c;
     }
     let mut names = std::collections::HashMap::new();
@@ -57,7 +61,7 @@ fn stop_names(ctx: &egui::Context, w: &nd_sim::World) -> StopNames {
             names.insert((rid, i), near.map_or_else(|| format!("stop {}", i + 1), |(b, _)| format!("by {}", b.name)));
         }
     }
-    let fresh = StopNames { version: w.transit.version, routes: w.transit.routes.len(), names };
+    let fresh = StopNames { generation, version: w.transit.version, routes: w.transit.routes.len(), names };
     ctx.data_mut(|d| d.insert_temp(id, fresh.clone()));
     fresh
 }
@@ -185,7 +189,8 @@ fn line(ui: &mut egui::Ui, p: &UiCtx, rid: RouteId, act: &mut Option<Act>) {
             *act = Some(Act::Buses(rid, r.buses.saturating_add(1)));
         }
         ui.add_space(12.0);
-        let armed_id = egui::Id::new(("line_delete_armed", rid));
+        // [fix/review-app] Keyed by the city too: a loaded city reuses ids.
+        let armed_id = egui::Id::new(("line_delete_armed", p.sim.generation, rid));
         let armed = ui.ctx().data(|d| d.get_temp::<bool>(armed_id)).unwrap_or(false);
         let label = if armed { egui::RichText::new("Really delete?").color(WARN).strong() } else { egui::RichText::new("Delete line").color(WARN) };
         if ui.small_button(label).on_hover_text("Removes the line; its buses go home and its riders walk").clicked() {
@@ -225,7 +230,7 @@ fn line(ui: &mut egui::Ui, p: &UiCtx, rid: RouteId, act: &mut Option<Act>) {
         }
     }
     let busiest = r.stops.iter().map(|s| s.stats.on_today.max(s.stats.off_today)).max().unwrap_or(0).max(1);
-    let names = stop_names(ui.ctx(), w);
+    let names = stop_names(ui.ctx(), w, p.sim.generation);
     section(ui, "STOPS, IN THE ORDER THE BUSES RUN");
     hint(ui, "green got on, red got off today (hover for yesterday); between stops the leg's length and time, timed by the buses where they have run it");
     let selected_stop = p.tools.stop_sel.filter(|(sr, _)| *sr == rid).map(|(_, i)| i);

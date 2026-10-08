@@ -613,6 +613,8 @@ fn settings_tab(ui: &mut egui::Ui, sim: &mut Sim, rt: &mut CommitteeRt) {
         ui.label(egui::RichText::new(format!("{e}. The stand-in speaks until this is fixed.")).color(WARN));
     }
     hint(ui, &format!("{} calls made, {} answered by the stand-in after a failure", rt.courier.calls, rt.courier.fallbacks));
+    ui.checkbox(&mut rt.remote_may_switch, "Let the remote API change the backend (this run only)")
+        .on_hover_text("Off: scripts and agents driving the game may read these settings and test the connection, but not switch the committee to a paid model or another server");
     for e in rt.courier.errors.iter().rev().take(3) {
         ui.label(egui::RichText::new(e).small().color(WARN));
     }
