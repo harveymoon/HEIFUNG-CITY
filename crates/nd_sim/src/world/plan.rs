@@ -1297,7 +1297,7 @@ impl World {
     }
 
     pub(super) fn is_civic_structure(b: &Building) -> bool {
-        b.is_power() || b.depot || b.rail.is_some() || b.port.is_some() || b.service.is_some() || b.metro || b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::CargoHub)
+        b.is_power() || b.depot || b.rail.is_some() || b.port.is_some() || b.service.is_some() || b.metro || b.city_parking || b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::CargoHub)
     }
 
     /// The city takes a lot for one of its own structures: whatever grew
@@ -1456,6 +1456,9 @@ impl World {
     /// Whoever was in a vehicle that vanished (network rebuilt, bad save)
     /// stands where it was and decides again.
     pub(super) fn strand_driver(&mut self, cid: CitizenId, pos: Vec2) {
+        // [ped-highway] Out of the vehicle onto the pavement, never the
+        // carriageway of a highway or ramp.
+        let pos = self.kerbside(pos);
         if let Some(c) = self.citizens.get_mut(cid) {
             c.pos = pos;
             c.inside = None;

@@ -143,6 +143,7 @@ impl World {
     /// where it was, free to decide again.
     fn strand_flyer(&mut self, c: CitizenId, at: Vec2) {
         let tick = self.clock.tick;
+        let at = self.kerbside(at);
         if let Some(c) = self.citizens.get_mut(c) {
             c.activity = Activity::Idle;
             c.transit = None;
