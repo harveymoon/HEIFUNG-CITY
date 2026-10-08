@@ -7,8 +7,10 @@
 //! Ferries are not timetabled: a terminal sends its next boat a headway
 //! after the last and takes turns between its destinations
 //! (`World::dispatch_ships`). The headway and next departure here replay
-//! that rotation forward, so they are the plan if nothing is held up (a
-//! boat still at the pier, two already out).
+//! that rotation forward. [sweep-sim] The first departure waits for the
+//! terminal's boats as they are now: one at the pier must leave first, and
+//! with both out the next waits for the first one home (their remaining
+//! dwell and water to sail).
 //!
 //! Working out the paths runs the water router, so callers keep a
 //! `WaterNet` and rebuild it only when `water_net_signature` changes.
@@ -158,6 +160,30 @@ pub struct LineInfo {
 /// destination to come round a few times.
 const ROTATION_TURNS: u32 = 48;
 
+/// [sweep-sim] Metres between the bands of routes that share a water path
+/// (two towns off the same edge of the map), and how far out from the pier
+/// they ease apart.
+const SHARED_BAND_GAP: f32 = 16.0;
+const SHARED_BAND_EASE: f32 = 160.0;
+
+/// [sweep-sim] `path` moved `off` metres to its left, eased in over the
+/// first `SHARED_BAND_EASE` metres so it still leaves from the pier.
+fn eased_offset(path: &[Vec2], off: f32) -> Vec<Vec2> {
+    let shifted = crate::geom::offset_polyline(path, off);
+    let mut along = 0.0;
+    path.iter()
+        .enumerate()
+        .map(|(i, &p)| {
+            if i > 0 {
+                along += p.distance(path[i - 1]);
+            }
+            let t = (along / SHARED_BAND_EASE).clamp(0.0, 1.0);
+            let t = t * t * (3.0 - 2.0 * t);
+            p.lerp(shifted[i], t)
+        })
+        .collect()
+}
+
 fn key_bits(b: BuildingId) -> u64 {
     slotmap::Key::data(&b).as_ffi()
 }
@@ -231,6 +257,27 @@ impl World {
         for (k, l) in lines.iter_mut().filter(|l| l.kind == LineKind::Ferry).enumerate() {
             l.color = k as u8;
         }
+        // [sweep-sim] Routes from one dock along the same water (two towns
+        // off the same edge) side by side, not one band over the other.
+        let n = lines.len();
+        let mut done = vec![false; n];
+        for i in 0..n {
+            if done[i] {
+                continue;
+            }
+            let group: Vec<usize> = (i..n).filter(|&j| !done[j] && lines[j].from == lines[i].from && lines[j].path == lines[i].path).collect();
+            for &j in &group {
+                done[j] = true;
+            }
+            if group.len() < 2 {
+                continue;
+            }
+            let mid = (group.len() - 1) as f32 * 0.5;
+            for (k, &j) in group.iter().enumerate() {
+                let off = (k as f32 - mid) * SHARED_BAND_GAP;
+                lines[j].path = eased_offset(&lines[j].path, off);
+            }
+        }
         WaterNet { lines }
     }
 
@@ -261,12 +308,15 @@ impl World {
     /// `dispatch_ships` would pick them: (departure tick, where to).
     fn ferry_rotation(&self, net: &WaterNet, b: BuildingId, turns: u32) -> Vec<(u64, LineEnd)> {
         let Some((pid, port)) = self.ports.ports.iter().find(|(_, p)| p.building == Some(b)) else { return Vec::new() };
-        if port.kind != PortKind::FerryTerminal || !port.works() {
+        // [sweep-sim] As `dispatch_ships` picks: a terminal's boats sail
+        // (empty) even before people can reach it, to any terminal that sails.
+        if port.kind != PortKind::FerryTerminal || !port.sails() || self.buildings.get(b).is_none_or(|x| x.is_derelict()) {
             return Vec::new();
         }
-        let others: Vec<BuildingId> = self.ports.ports.iter().filter(|(oid, o)| *oid != pid && o.kind == PortKind::FerryTerminal && o.works()).filter_map(|(_, o)| o.building).collect();
+        let others: Vec<BuildingId> = self.ports.ports.iter().filter(|(oid, o)| *oid != pid && o.kind == PortKind::FerryTerminal && o.sails()).filter_map(|(_, o)| o.building).collect();
         let has = |to: LineEnd| net.find(b, to).is_some();
-        let mut t = Self::in_service((port.last_sailing + ports::FERRY_HEADWAY).max(self.clock.tick));
+        let free = self.ferry_free_at(b);
+        let mut t = Self::dispatch_tick(Self::in_service((port.last_sailing + ports::FERRY_HEADWAY).max(self.clock.tick).max(free)));
         let mut out = Vec::new();
         for k in 0..turns {
             let turn = port.sailings as usize + k as usize;
@@ -283,9 +333,73 @@ impl World {
             if let Some(d) = dest {
                 out.push((t, d));
             }
-            t = Self::in_service(t + ports::FERRY_HEADWAY);
+            t = Self::dispatch_tick(Self::in_service(t + ports::FERRY_HEADWAY));
         }
         out
+    }
+
+    /// [sweep-sim] Ships are sent on ticks ending in 3 (`step_ships`): the
+    /// first such tick at or after `t`.
+    fn dispatch_tick(t: u64) -> u64 {
+        t + (13 - t % 10) % 10
+    }
+
+    /// [sweep-sim] Ticks until `s` has sailed its path out: its dwell now,
+    /// the water left (hurried past the map edge on a run off it), the
+    /// dwell at the far berth if it is not there yet, and on a run off the
+    /// map the unloading at home.
+    fn ship_ticks_left(s: &Ship) -> u64 {
+        let total = crate::geom::path_length(&s.path);
+        let speed = s.speed.max(0.01);
+        let mut ticks = s.dwell as f32;
+        if s.home {
+            return ticks as u64 + 1;
+        }
+        // Walk what is left in steps, counting the hurried stretches.
+        let step = 60.0f32;
+        let mut x = s.s;
+        while x < total {
+            let d = step.min(total - x);
+            let p = s.pose_at(x + d * 0.5).0;
+            let off = s.remote.is_some() && p.x.abs().max(p.y.abs()) > crate::landscape::MAP_EDGE + 400.0;
+            ticks += d / (speed * if off { ports::OFF_MAP_SPEEDUP } else { 1.0 });
+            x += d;
+        }
+        if !s.docked {
+            ticks += ports::FERRY_DWELL as f32;
+        }
+        if s.remote.is_some() {
+            ticks += ports::FERRY_UNLOAD as f32;
+        }
+        ticks.ceil() as u64 + 1
+    }
+
+    /// [sweep-sim] The first tick terminal `b` could send a boat as its
+    /// ferries stand now: none at its pier (one boarding there leaves after
+    /// its dwell; one coming in is in until it is done) and fewer than
+    /// `FERRIES_PER_TERMINAL` out (else the first one home).
+    pub fn ferry_free_at(&self, b: BuildingId) -> u64 {
+        let now = self.clock.tick;
+        let Some(port) = self.ports.port_of(b) else { return now };
+        let mine: Vec<&Ship> = self.ports.ships.values().filter(|s| s.port == b && s.kind == ShipKind::Ferry).collect();
+        let mut free = now;
+        for s in &mine {
+            if s.pose().0.distance(port.berth) >= 40.0 {
+                continue;
+            }
+            let clear = if !s.docked && !s.home && s.s < 40.0 {
+                // Boarding at its own pier: the dwell, then out past 40 m.
+                now + s.dwell as u64 + ((40.0 - s.s).max(0.0) / s.speed.max(0.01)).ceil() as u64 + 1
+            } else {
+                now + Self::ship_ticks_left(s)
+            };
+            free = free.max(clear);
+        }
+        if mine.len() >= ports::FERRIES_PER_TERMINAL {
+            let first_home = mine.iter().map(|s| now + Self::ship_ticks_left(s)).min().unwrap_or(now);
+            free = free.max(first_home);
+        }
+        free
     }
 
     /// [ferry-routes] Every line calling at dock `b`, with its boats,
@@ -397,6 +511,75 @@ mod tests {
         let pid = w.ports.ports.iter().find(|(_, x)| x.building == Some(built[1])).unwrap().0;
         w.ports.ports.remove(pid);
         assert_ne!(w.water_net_signature(), sig);
+    }
+
+    /// [sweep-sim] Two routes on one water path are drawn side by side,
+    /// still leaving from the pier.
+    #[test]
+    fn a_shared_path_is_eased_apart_from_the_pier() {
+        let path = vec![Vec2::ZERO, Vec2::new(100.0, 0.0), Vec2::new(1000.0, 0.0)];
+        let l = eased_offset(&path, 8.0);
+        assert!(l[0].distance(path[0]) < 1e-3, "leaves from the pier");
+        assert!((l[2].y - 8.0).abs() < 0.01, "a band apart out on the water: {:?}", l[2]);
+        let r = eased_offset(&path, -8.0);
+        assert!((l[2].y - r[2].y).abs() > 15.0);
+    }
+
+    /// [sweep-sim] The next departure waits for the boat at the pier, and
+    /// the boat goes when it says.
+    #[test]
+    fn the_next_departure_follows_the_boats() {
+        use crate::landscape::{LandscapeParams, LandscapePreset};
+        use crate::mind::IdleMind;
+        let mut w = World::new(WorldConfig { landscape: LandscapeParams::preset(LandscapePreset::RiverValley, 3), ..WorldConfig::default() });
+        w.economy.treasury = 500_000.0;
+        let r = &w.landscape.rivers[0];
+        let p = *r.points.iter().min_by(|a, b| a.y.abs().total_cmp(&b.y.abs())).unwrap();
+        let (seg, _, _) = r.nearest(p);
+        let flow = r.flow(seg);
+        let n = Vec2::new(-flow.y, flow.x);
+        let width = r.width;
+        let mut built = Vec::new();
+        for (side, along) in [(1.0, 0.0), (-1.0, 120.0), (1.0, 260.0), (-1.0, -200.0)] {
+            if let Ok(b) = w.place_port(PortKind::FerryTerminal, p + n * side * (width * 0.5 + 20.0) + flow * along) {
+                built.push(b);
+            }
+            if built.len() == 2 {
+                break;
+            }
+        }
+        let b = built[0];
+        let mut minds = IdleMind;
+        let count = |w: &World| w.ports.ships.values().filter(|s| s.port == b && s.kind == ShipKind::Ferry).count();
+        // Run to a boat boarding at the pier.
+        let mut boarding = false;
+        for _ in 0..3000 {
+            w.tick(&mut minds);
+            if let Some(s) = w.ports.ships.values().find(|s| s.port == b && s.kind == ShipKind::Ferry && s.dwell > 2 && !s.docked && s.s < 1.0) {
+                let dwell = s.dwell as u64;
+                assert!(w.ferry_free_at(b) >= w.clock.tick + dwell, "not before the boat at the pier leaves");
+                boarding = true;
+                break;
+            }
+        }
+        assert!(boarding, "a ferry boarded");
+        // The predicted next sailing from here, then watch for it.
+        let net = w.water_net();
+        let predicted = w.line_infos(&net, b).iter().filter(|i| i.kind == LineKind::Ferry).filter_map(|i| i.next_departure).min().expect("a next departure");
+        let before = count(&w);
+        let mut sailed = None;
+        let mut last = before;
+        for _ in 0..1500 {
+            w.tick(&mut minds);
+            let c = count(&w);
+            if c > last {
+                sailed = Some(w.clock.tick);
+                break;
+            }
+            last = c;
+        }
+        let sailed = sailed.expect("another boat sailed");
+        assert!(sailed + 1 >= predicted && sailed <= predicted + 10, "predicted {predicted}, sailed {sailed}");
     }
 
     #[test]
