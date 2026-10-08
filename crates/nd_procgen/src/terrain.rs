@@ -564,14 +564,27 @@ fn underpasses(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32;
         let b3 = Vec3::new(b.x, u.over_z_at(reach) - 0.05, b.y);
         let hw = u.over_half_width + 0.4;
         let side = Vec2::new(-u.over_dir.y, u.over_dir.x) * (hw - 0.2);
+        // A highway or ramp carried over has its own concrete barrier along
+        // the deck's edge (`street`): a parapet there stood in the same
+        // place, the two boxes flickering through each other. It keeps the
+        // rail on top.
+        let motorway_over = world.roads.segments_in_box(u.at - Vec2::splat(2.0), u.at + Vec2::splat(2.0)).any(|o| {
+            let s = world.roads.segment(o);
+            let (oa, ob) = world.roads.segment_points(o);
+            s.alive && (s.is_motorway() || s.ring) && (ob - oa).normalize_or_zero().dot(u.over_dir).abs() > 0.98 && nd_sim::roads::project_on_segment(u.at, oa, ob).1.distance(u.at) < 1.0
+        });
         // Two halves meeting over the crossing: it may be the crest of a
         // way lifted over the other.
         for (p0, p1) in [(a3, m3), (m3, b3)] {
             g.part(Surface::Concrete).slab(p0, p1, hw * 2.0, 1.4, rgba(concrete));
             for sgn in [1.0f32, -1.0] {
                 let off = Vec3::new(side.x * sgn, 0.0, side.y * sgn);
-                g.part(Surface::Metal).beam(p0 + off + Vec3::Y * 1.0, p1 + off + Vec3::Y * 1.0, 0.15, rgba(steel));
-                g.part(Surface::Concrete).slab(p0 + off + Vec3::Y * 0.45, p1 + off + Vec3::Y * 0.45, 0.35, 0.5, rgba(mul(concrete, 0.9)));
+                // On the barrier's top (0.8 m) or the parapet's.
+                let rail = if motorway_over { 0.88 } else { 1.0 };
+                g.part(Surface::Metal).beam(p0 + off + Vec3::Y * rail, p1 + off + Vec3::Y * rail, 0.15, rgba(steel));
+                if !motorway_over {
+                    g.part(Surface::Concrete).slab(p0 + off + Vec3::Y * 0.45, p1 + off + Vec3::Y * 0.45, 0.35, 0.5, rgba(mul(concrete, 0.9)));
+                }
             }
         }
         // Abutment and wing walls along the lower way, their tops following
