@@ -46,6 +46,8 @@ mod subway;
 mod taxes;
 /// [toll-inspect] A toll booth in full for `inspect {toll}`.
 mod tolls;
+/// [road-inspect] A street piece in full for `inspect {road}`.
+mod road;
 /// [taxis] Taxi companies and cargo hubs in the report and inspector.
 mod taxis;
 mod trains;
@@ -593,6 +595,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "race" => nights::race(cmd, &mut ctx.sim.world),
         "rave" => nights::rave(cmd, &mut ctx.sim.world),
         "roads" | "road_condition" | "road_budget" => nights::roads(cmd, &mut ctx.sim.world),
+        "repair_road" => repair_road(cmd, ctx),
         "district" | "districts" => districts::district(cmd, &mut ctx.sim.world, &mut ctx.overlays, &mut ctx.tools),
         "tourism" | "tourists" => districts::tourism(cmd, &mut ctx.sim.world),
         "concerns" => concerns::command(cmd, &ctx.sim.world),
@@ -2007,9 +2010,10 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         return Ok(json!({ "gesture": gesture(id, &g) }));
     }
     // A road piece: by id, or the one nearest a point.
+    // [road-inspect] `road`: an id, or [x, y] picked as a click would be.
     let seg = match (field(cmd, "segment"), field(cmd, "road")) {
         (Some(v), _) => Some(nd_sim::SegmentId(v.as_u64().ok_or("segment id is a number")? as u32)),
-        (None, Some(v)) => Some(w.roads.nearest_on_network(vec2_of(v)?).ok_or("no roads")?.0),
+        (None, Some(v)) => Some(road::road_id(w, v, ctx.tools.depth)?),
         _ => None,
     };
     if let Some(sid) = seg {
@@ -2035,11 +2039,12 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             "nodes": [s.a.0, s.b.0], "junction_degrees": [w.roads.neighbors(s.a).count(), w.roads.neighbors(s.b).count()],
             "grade_crossings": crossings,
             "condition": nights::segment_condition(w, sid),
-        }}));
+        }, "road": road::road_detail(w, sid) }));
     }
     // No id: whatever is selected.
     match *ctx.selection {
         Selection::Toll(id) => inspect(&json!({ "toll": id }), ctx),
+        Selection::Road(sid) => inspect(&json!({ "segment": sid.0 }), ctx),
         Selection::Citizen(id) => inspect(&json!({ "citizen": key_str(id) }), ctx),
         Selection::Building(id) => inspect(&json!({ "building": key_str(id) }), ctx),
         Selection::Car(id) => inspect(&json!({ "car": key_str(id) }), ctx),
@@ -2047,7 +2052,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Selection::Bot(id) => inspect(&json!({ "bot": key_str(id) }), ctx),
         Selection::Train(id) => inspect(&json!({ "train": key_str(id) }), ctx),
         Selection::Metro(id) => inspect(&json!({ "metro": key_str(id) }), ctx),
-        Selection::None => Err("inspect needs one of citizen, building, lot, car, bot, train, metro, toll, route, gesture (an id), or a selection".into()),
+        Selection::None => Err("inspect needs one of citizen, building, lot, car, bot, train, metro, toll, road, segment, route, gesture (an id), or a selection".into()),
     }
 }
 
@@ -2076,6 +2081,7 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
     let detail = match sel {
         Selection::None => Value::Null,
         Selection::Toll(id) => tolls::toll_detail(w, id).unwrap_or(Value::Null),
+        Selection::Road(sid) => road::road_detail(w, sid).unwrap_or(Value::Null),
         Selection::Car(id) => w.traffic.cars.get(id).map_or(Value::Null, |c| car_detail(w, id, c)),
         Selection::Citizen(id) => match w.citizens.get(id) {
             Some(c) => {
@@ -2138,11 +2144,29 @@ fn flags_cmd(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     Ok(json!({ "flags": rows, "total": total, "file": absolute(crate::flags::FLAG_FILE) }))
 }
 
+/// [road-inspect] `repair_road {road?}`: "Repair now" on a piece (by id or
+/// [x, y]; else the selected one): resurfaced at once, paid from the
+/// treasury as road maintenance.
+fn repair_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let sid = match field(cmd, "road").or_else(|| field(cmd, "segment")) {
+        Some(v) => road::road_id(&ctx.sim.world, v, ctx.tools.depth)?,
+        None => match *ctx.selection {
+            Selection::Road(sid) => sid,
+            _ => return Err("missing field \"road\": an id or [x, y] (or select a road first)".into()),
+        },
+    };
+    let cost = ctx.sim.world.repair_road_now(sid)?;
+    Ok(json!({ "repaired": sid.0, "cost": round(cost), "treasury": round(ctx.sim.world.economy.treasury), "road": road::road_detail(&ctx.sim.world, sid) }))
+}
+
 fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let w = &ctx.sim.world;
     let sel = if let Some(v) = field(cmd, "toll") {
         // [toll-inspect]
         Selection::Toll(tolls::toll_id(w, v)?)
+    } else if let Some(v) = field(cmd, "road").or_else(|| field(cmd, "segment")) {
+        // [road-inspect] A street piece by id, or the one under [x, y].
+        Selection::Road(road::road_id(w, v, ctx.tools.depth)?)
     } else if let Some(v) = field(cmd, "citizen") {
         let id = key_from(v)?;
         if !w.citizens.contains_key(id) {
@@ -2608,9 +2632,9 @@ fn help() -> Value {
             "incidents": { "active": "bool (only those under way)", "limit": "default 50, newest first", "kind": "fire|crime|medical|crash" },
             "bus": { "action": "select|new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|rename|recolour|line|select_stop|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses", "name": "rename", "color": "0..7", "look": "select_stop: point the camera" },
             "find": { "what": "citizens|buildings|lots|parcels|cars|trains|drones|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
-            "inspect": { "citizen|building|lot|car|train|drone|vehicle|route": "id (vehicle: a private car's record)", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "[x,y]: the road piece nearest a point, as segment", "toll": "int: a toll booth in full (traffic, lorries, free, avoided, queue, hourly)" },
+            "inspect": { "citizen|building|lot|car|train|drone|vehicle|route": "id (vehicle: a private car's record)", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "id, or [x,y]: the piece a click there picks (else the nearest), as segment, plus road: the road card (kind, lanes, limit, level, run, now {vehicles by kind, bikes, walkers, speed, congestion, queue}, flow, hourly (72 h), decay {wear, condition, effects, wear_per_day, next_condition, repair_cost, queue_place, last_repaired_day}, tolls, crossings, bus_stops, kerb parking)", "toll": "int: a toll booth in full (traffic, lorries, free, avoided, queue, hourly)" },
             "lane_use": { "junction": "[x,y]", "approach": "[x,y] on the arriving street", "lanes": "[\"L\", \"S+R\", ...] leftmost first (L, S, R joined with +), or \"reset\" for the demand-chosen default" },
-            "select": { "citizen|building|car|vehicle|bot": "id (vehicle: a parked car; bot: a delivery robot)", "toll": "int: a toll booth", "at": "[x,y] picks like a click; nothing clears" },
+            "select": { "citizen|building|car|vehicle|bot": "id (vehicle: a parked car; bot: a delivery robot)", "toll": "int: a toll booth", "road|segment": "id or [x,y]: a street piece", "at": "[x,y] picks like a click (vehicles, people, booths, parked cars, then the road piece, then lots); nothing clears" },
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
             "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|bot|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
             "overlay": { "active": "the map layer to show, or none (layers are exclusive: showing one hides the others)", "layer": "zoning|land_value|districts|traffic|traffic_types|paths|people|pollution, a land survey layer (farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech), or projects (the dim other-projects switch, not a layer)", "on": "bool, omitted toggles; on hides every other layer", "land": "a land survey layer key, or none", "<layer name>": "bool (older form): true shows it alone, false hides it if it shows" },
@@ -2624,6 +2648,8 @@ fn help() -> Value {
     // Kept out of the literal above: it is at the json! recursion limit.
     v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
     v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
+    // [road-inspect]
+    v["commands"]["repair_road"] = json!({ "road": "id or [x,y]; default the selected road", "returns": "repaired, cost, treasury, road (the card); pays the crews' price (lane-m x wear x 6) from the treasury as road maintenance" });
     // [plant-groups]
     v["commands"]["plant_preview"] = json!({ "kind": "solar|wind|coal|...", "x": "f", "y": "f", "note": "read-only: MW, cost and upkeep on the site a click there takes (a lot, or unzoned ground joined into one), the Sunfield / Wind Park it would join and what it adds, and any problem" });
     // [grid-weather]
