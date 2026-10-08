@@ -741,6 +741,10 @@ fn markers(mut contexts: bevy_egui::EguiContexts, hl: Res<BuildHighlight>, sim: 
     }
     let Some((camera, gt, orbit)) = cams.iter().next() else { return Ok(()) };
     let ctx = contexts.ctx_mut()?;
+    // [city-data] The map is covered: nothing to label.
+    if crate::ui::city_data::is_open(ctx) {
+        return Ok(());
+    }
     let clip = flags.map_rect(ctx.content_rect());
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("build_highlight_markers"))).with_clip_rect(clip);
     let w = &sim.world;

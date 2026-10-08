@@ -1,4 +1,4 @@
-//! [concerns] The People window's "Complaints & concerns" tab: city
+//! [concerns] City Data's People, Complaints and concerns page: city
 //! happiness over time as a line chart (mean mood, the unhappy and happy
 //! shares, mood by class in the tier colours) and the concerns people
 //! raise most this week, ranked, each with a trend against last week, a
@@ -11,7 +11,8 @@ use nd_sim::concerns::{Concern, MoodSample, Ranked, HAPPY, UNHAPPY, WEEK};
 use nd_sim::{CitizenId, Tier, World};
 
 use super::people::tier_color;
-use super::{hint, section, UiCtx, GOLD, IVORY, WARN};
+use super::pane::heading;
+use super::{hint, UiCtx, GOLD, IVORY, WARN};
 use crate::tools::Selection;
 
 const CALM: egui::Color32 = egui::Color32::from_rgb(120, 210, 140);
@@ -67,7 +68,18 @@ fn mood_color(m: f32) -> egui::Color32 {
 pub fn tab(ui: &mut egui::Ui, p: &mut UiCtx) {
     let w = &p.sim.world;
     let now = w.mood_now();
-    section(ui, "HAPPINESS");
+    if now.people > 0 {
+        let top = w.concerns.ranked(w.clock.day()).into_iter().next();
+        super::pane::cards(ui, |ui| {
+            super::pane::kpi(ui, "mean mood", egui::RichText::new(format!("{:.0}%", now.mean * 100.0)).color(mood_color(now.mean)));
+            super::pane::kpi(ui, "unhappy", egui::RichText::new(format!("{:.0}%", now.unhappy * 100.0)).color(if now.unhappy > 0.2 { WARN } else { IVORY }));
+            super::pane::kpi(ui, "happy", egui::RichText::new(format!("{:.0}%", now.happy * 100.0)).color(CALM));
+            if let Some(r) = top {
+                super::pane::kpi(ui, "top concern this week", egui::RichText::new(format!("{} ({})", r.concern.label(), r.this_week)).color(GOLD));
+            }
+        });
+    }
+    heading(ui, "Happiness");
     if now.people == 0 {
         hint(ui, "Nobody lives here yet.");
         return;
@@ -100,7 +112,7 @@ pub fn tab(ui: &mut egui::Ui, p: &mut UiCtx) {
     chart(ui, &samples, range);
     legend(ui);
 
-    section(ui, "TOP CONCERNS THIS WEEK");
+    heading(ui, "Top concerns this week");
     concerns(ui, p);
 }
 

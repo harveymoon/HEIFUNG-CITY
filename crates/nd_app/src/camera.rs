@@ -336,7 +336,7 @@ fn control_camera(
     }
     // [camera] Escape first ends a follow (and its point of view) or a
     // flight, and is used up by it: the selection stays for a second Escape.
-    if keys.just_pressed(KeyCode::Escape) && (follow.target.is_some() || fly.flying()) {
+    if keys.just_pressed(KeyCode::Escape) && !flags.data_view && (follow.target.is_some() || fly.flying()) {
         follow.stop();
         fly.flight = None;
         if *mode == CameraMode::Walk {
@@ -356,7 +356,7 @@ fn control_camera(
     let held = |k: KeyCode| !flags.keyboard_captured && keys.pressed(k);
 
     // Tab toggles walk mode; Escape leaves it.
-    if key(KeyCode::Tab) || (keys.just_pressed(KeyCode::Escape) && *mode == CameraMode::Walk) {
+    if key(KeyCode::Tab) || (keys.just_pressed(KeyCode::Escape) && !flags.data_view && *mode == CameraMode::Walk) {
         *mode = if *mode == CameraMode::Walk { CameraMode::Orbit } else { CameraMode::Walk };
     }
     let pov = *mode == CameraMode::Walk && pov_capable;

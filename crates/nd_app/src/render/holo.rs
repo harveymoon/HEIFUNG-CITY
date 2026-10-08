@@ -166,6 +166,10 @@ pub fn gap_labels(mut contexts: bevy_egui::EguiContexts, sim: Res<Sim>, tools: R
     let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };
     let w = &sim.world;
     let ctx = contexts.ctx_mut()?;
+    // [city-data] The map is covered: nothing to label.
+    if crate::ui::city_data::is_open(ctx) {
+        return Ok(());
+    }
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("pillar_gap_labels")));
     for g in &gaps {
         let spot = gap_spot(g);
