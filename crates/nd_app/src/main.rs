@@ -73,10 +73,8 @@ fn main() {
             map_layers::MapLayersPlugin,
             marks::MarksPlugin,
             metro_ux::MetroUxPlugin,
-            committee::CommitteePlugin,
-            build_highlight::BuildHighlightPlugin,
-            stub_marks::StubMarksPlugin,
-            ferry_select::FerrySelectPlugin,
+            // Bevy takes at most 15 plugins in one tuple: the newer ones nest.
+            (committee::CommitteePlugin, build_highlight::BuildHighlightPlugin, stub_marks::StubMarksPlugin, ferry_select::FerrySelectPlugin),
         ))
         .run();
 }
