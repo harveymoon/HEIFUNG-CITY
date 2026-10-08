@@ -10,6 +10,9 @@ use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// [committee] The committee's text backends and the meeting driver.
+pub mod committee;
+
 // ── personality ──────────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

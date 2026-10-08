@@ -10,3 +10,12 @@ nd_sim = { workspace = true }
 serde = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
+# [committee] Model replies are JSON; the local-model and Claude connectors
+# talk HTTP(S) on a worker thread.
+serde_json = "1"
+ron = { workspace = true }
+ureq = "2.12"
+
+[dev-dependencies]
+# [committee] A fake model server on localhost for the connector tests.
+tiny_http = "0.12"

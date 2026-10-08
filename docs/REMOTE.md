@@ -1486,3 +1486,85 @@ people talking (and at the door of a bar where they talk inside) when the camera
 curl -d '{"cmd":"social","days":3,"talks":20}' http://127.0.0.1:4817/cmd
 curl -d '{"cmd":"social","group":4}' http://127.0.0.1:4817/cmd
 ```
+
+## The mayor's committee [committee]
+
+The AI committee (docs/AI_COMMITTEE.md): fictional politicians, six seats, alerts between
+meetings, a meeting every 30 sim days, votes, and projects for the mayor. The committee never
+changes the city by itself: only `committee {action: "implement"}` (or the window's Implement
+button) does.
+
+`committee {action?}` (default `state`):
+
+- `state`: `day`, `next_meeting_day`, `meetings_held`, `auto_meetings`, `veto_allowed`,
+  `in_session` (number, stage, waiting_for_mayor) or null; `seats` (seat 1..6: id, name, scope,
+  title, temper, party, age, leanings with spending/growth/order -1..1, goals, background,
+  `record` {seated_since, times_appointed, times_dismissed, meetings, alerts, proposed,
+  proposals_passed, votes_yes, votes_no, abstained}, `memory` lines; or `{seat, empty: true}`);
+  `candidates` (the rest of the pool, brief); the last 10 `alerts`; `unseen_alerts`; the last 10
+  `projects`; `backend` (choice mock|local|claude, speaking_through, error, local_url,
+  local_model, claude_model, claude_effort, claude_fallbacks, claude_key (where the key comes
+  from, never the key), timeout_s, max_tokens, calls, fallbacks, errors, test).
+- `members` (alias `pool`): every politician in full, with `seat` or null.
+- `appoint {id, seat?}`: to the first empty seat, or to `seat` (1..6), dismissing its holder.
+  `dismiss {id}`: the seat stays empty until filled.
+- `alerts {limit?, mark_seen?}`: newest first: id, day, member, name, rule, when (the rule in
+  words), severity (1 notice, 2 warning, 3 urgent), text, phrased (the backend's words rather than
+  the rule's), seen, facts; plus `rules` (key, scope, when, cooldown_days). `check_alerts` runs
+  today's rules now (normally once a sim day) and returns `raised`.
+- `projects`: every committee project: id, name ("Committee: Northside clinic"), meeting, proposal,
+  by, status (pending, needs_mayor, implemented, dismissed, failed) and status_detail, action,
+  pick (1-based), reason (the secretary's), world_project (zoning: the parked world project that
+  previews it), options (option, label, point, parcels, stops, radius, area, area_m2, cost, score,
+  notes), log.
+- `implement {project}`: carry it out (build on the picked site, zone the parcels, add the bus
+  line, set the tax, toll or road funding, dig out the ground); returns `done`. Fails (and the
+  project stays open as `failed`) if the game refuses, e.g. the site was taken meanwhile.
+  `dismiss_project {project}`, `pick_site {project, option}`, `refresh_sites {project}` (look
+  for valid sites again).
+- `report`: the compact city report the committee reads, as `text` (what a model is sent) and
+  `report` (the figures).
+- `minutes {meeting?}`: a past meeting (default the last), as `committee_meeting` returns one;
+  `kept` lists the numbers kept (the last 6).
+- `settings {backend?, local_url?, local_model?, claude_model?, claude_effort?,
+  claude_fallbacks?, timeout_s?, auto_meetings?, veto_allowed?, save?, test?}`: switch the
+  backend (applied at once; `save: true` writes `committee_settings.ron`), start a "Test
+  connection" (`test: true`; the result shows in `backend.test` on a later call). Never takes or
+  returns an API key: set `ANTHROPIC_API_KEY`, or paste one in the window.
+
+`committee_meeting {start?, vote?, abstain_rest?, fast_forward?, transcript_from?}` (alias
+`meeting`):
+
+- `start: true` calls a meeting now (the sim pauses until it closes).
+- `vote: {proposal, vote}` with vote `yes|no|abstain|veto` (or `vote: "yes", proposal: n`): the
+  mayor's vote. `abstain_rest: true` abstains on every proposal not yet voted on. The meeting
+  waits at "the mayor's vote" until every proposal has one.
+- `fast_forward: true` (alias `skip`): the window shows everything at once; with the stand-in the
+  meeting runs to the mayor's vote (or the end) before the reply. A model keeps its own pace.
+- Reply: `in_session`, and `meeting` (number, day, stage, on_demand, calls, waiting_for_mayor,
+  done, members, proposers, `transcript` from `transcript_from` (speaker: "secretary", "mayor" or
+  a member id; name, kind: speech|agenda|vote|result|note, text), `proposals` (id, title, by,
+  by_name, action, rationale, cost, votes [{member, name, vote, reason}], mayor, tally {yes, no,
+  abstain}, outcome, would_be, project)); between meetings `next_meeting_day` and `last` (the
+  last minutes).
+
+`window {name: "committee", tab?: "meeting|members|alerts|projects|settings"}` opens the window.
+
+[voices] Through the same backend:
+
+- `diary {citizen, refresh?}`: the citizen's diary of today, written from their memories and
+  conversations: `day`, `text`, `pending` (a model still writing: call again), `by_model`,
+  `backend`. The stand-in answers at once. Display only, not in the save.
+- `voices {limit?}`: conversations of spotlit or favourite citizens that got a model's line
+  (`serial`, `a`, `b`, names, `topic`, `template` (the sim's line), `line` (the model's)), and
+  `lines_written`, `diaries_written`. With the stand-in no lines are asked (the template is the
+  line).
+
+```sh
+curl -d '{"cmd":"committee"}' http://127.0.0.1:4817/cmd
+curl -d '{"cmd":"committee","action":"appoint","id":9,"seat":3}' http://127.0.0.1:4817/cmd
+curl -d '{"cmd":"committee_meeting","start":true,"fast_forward":true}' http://127.0.0.1:4817/cmd
+curl -d '{"cmd":"committee_meeting","vote":{"proposal":1,"vote":"yes"}}' http://127.0.0.1:4817/cmd
+curl -d '{"cmd":"committee_meeting","abstain_rest":true,"fast_forward":true}' http://127.0.0.1:4817/cmd
+curl -d '{"cmd":"committee","action":"implement","project":21}' http://127.0.0.1:4817/cmd
+```

@@ -596,6 +596,11 @@ pub struct World {
     /// [social] The city's concern of the week, for small talk (hourly).
     #[serde(skip)]
     social_concern: Option<crate::concerns::Concern>,
+    /// [committee] The mayor's committee: the pool, the seats, alerts,
+    /// meetings and their projects (`crate::committee`). The sim never
+    /// reads it; old saves load with none and set one up when first used.
+    #[serde(default)]
+    pub committee: crate::committee::Committee,
 }
 
 impl World {
@@ -692,6 +697,7 @@ impl World {
             road_log: Default::default(),
             social: Default::default(),
             social_concern: None,
+            committee: Default::default(),
         };
         w.estate.pressure = crate::estate::Pressure::new(half + 200.0);
         w.landscape = Landscape::new(&w.config.landscape);
