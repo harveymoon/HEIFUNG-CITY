@@ -1003,7 +1003,10 @@ fn sync_lane_arrows(
     }
     state.arrows_version = net.arrows_version;
     despawn_all(&mut commands, &existing);
-    let geo = nd_procgen::street::lane_arrows(net, &assets.palette);
+    // Set at their own road's height (not lifted in `lift_spawned`).
+    let w = &sim.world;
+    let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
+    let geo = nd_procgen::street::lane_arrows(&w.roads, net, heights, if w.relief { &w.road_inner } else { &[] }, &assets.palette);
     spawn_geometry(&mut commands, &mut meshes, &mats, &geo, LaneArrowsTag);
 }
 
@@ -1021,7 +1024,7 @@ fn sync_signals(
     if net.version != state.lanes_version || sim.full_rebuild {
         state.lanes_version = net.version;
         despawn_all(&mut commands, &existing);
-        for post in signal_posts(net) {
+        for post in signal_posts(&sim.world.roads, net) {
             commands.spawn((
                 Mesh3d(mats.signal_mesh.clone()),
                 MeshMaterial3d(mats.signal_red.clone()),
@@ -3057,15 +3060,16 @@ fn lift_spawned(
     sim: Res<Sim>,
     mut meshes: ResMut<Assets<Mesh>>,
     q: Query<&Mesh3d, Or<(Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<ScatterTag>, Added<RingPreviewTag>)>>,
-    arrows: Query<&Mesh3d, Or<(Added<LaneArrowsTag>, Added<TollTag>)>>,
+    arrows: Query<&Mesh3d, Added<TollTag>>,
     mut signals: Query<&mut Transform, Added<SignalTag>>,
 ) {
     let w = &sim.world;
     if !w.relief {
         return;
     }
-    // Lane arrows and signal lamps belong to a road: they go at its height
-    // (a tunnel junction's lamps stay in the tunnel).
+    // Toll booths and signal lamps belong to a road: they go at its height
+    // (a tunnel junction's lamps stay in the tunnel). Lane arrows are drawn
+    // at their road's height already (`street::lane_arrows`).
     let on_road = |p: SVec2| match w.roads.nearest_where(p, |s| !s.is_rail()) {
         Some((sid, t, q)) if q.distance(p) < 25.0 => w.road_height(sid, t),
         _ => w.surface_height(p),

@@ -42,6 +42,10 @@ pub const CROSSWALK_BACK: f32 = 3.3;
 pub const RING_CROSSWALK_BACK: f32 = 7.5;
 /// Half the depth of a zebra along the street.
 pub const CROSSWALK_HALF: f32 = 1.2;
+/// The longest straight a junction corner's rounded kerb takes along each
+/// arm (`nd_procgen::street`): the nose of a sharp fork is rounded tightly
+/// rather than over tens of metres.
+pub const CORNER_TANGENT_MAX: f32 = 4.0;
 /// A run of street between junctions longer than this gets mid-block
 /// zebras, about one every `MIDBLOCK_EVERY` metres.
 pub const MIDBLOCK_MIN: f32 = 170.0;
@@ -235,10 +239,14 @@ fn acute_setback(roads: &RoadNetwork, node: NodeId, seg: SegmentId) -> f32 {
         let h2 = o.half_width();
         // Along `seg`, where its kerb line meets the neighbour's.
         let meet = (h2 + h1 * cos) / theta.sin();
-        // Half the rounded kerb's run along the arm past that point.
+        // The rounded kerb's run along the arm past that point (a sharp
+        // fork's nose is rounded tightly, `CORNER_TANGENT_MAX`): the zebra
+        // lies past it, on the straight kerb, where the kerb drops square
+        // across it ([road-polish]: it used to sit half on the curve, whose
+        // kerb then stood full height across one corner of the zebra).
         let r = (0.6 * h1.min(h2)).clamp(3.0, 6.0);
-        let round = r * ((std::f32::consts::PI - theta) * 0.5).tan();
-        need = need.max(meet + 0.5 * round + CROSSWALK_HALF);
+        let round = (r * ((std::f32::consts::PI - theta) * 0.5).tan()).min(CORNER_TANGENT_MAX);
+        need = need.max(meet + round + CROSSWALK_HALF + 0.3);
     }
     need
 }
