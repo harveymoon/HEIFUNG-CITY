@@ -352,7 +352,6 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [x] Old todo2.md–todo5.md deleted after checking every request is in todo.md
 
 ## Agents running (update when starting/merging; survives context compaction)
-- fix/under-construction: buildings under construction don't function (started 2026-10-08)
 - fix/memory: memory growth / 256 MiB allocation crash (started 2026-10-08)
 
 ## Next steps (Harvey 2026-10-08) — start only after the current phase and the final code review are done
