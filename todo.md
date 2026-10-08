@@ -278,7 +278,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] FLAG (day 23): interchange with a street underpass came out as garbage, ramps re-routed, artifacts; clean interchanges (maybe a diamond tool) [fix/interchange]
 - [ ] FLAG (day 23): footbridge over Umbra Parade left the crosswalk; nobody uses the bridge; cars stop for people on it [fix/footbridge]
 - [ ] One full-screen City Data pane (tabs City/Economy/Market/People/... with sub-tabs), consistent page style; tools stay floating [feat/city-data]
-- [ ] High quality: near-camera geometry washes out white in walk/close orbit [fix/haze]
+- [x] High quality: near-camera geometry washes out white in walk/close orbit [fix/haze] → DONE [fix/haze]: Bevy's volumetric fog painted its full unexposed ambient over anything a few metres from the camera; patched shader (render/volumetric_fog_city.wgsl). Also smoke/steam puffs fade out round the camera (no wash walking through smog). Look-dev follow-up on the same branch: street lamps cast light near the camera at night (40 High / 18 Medium / 0 Low), wet glossy roads in rain, fog tint and reach by climate/weather/mode, a thicker coal plume. Not done: Bevy Atmosphere (would mean retuning every light to physical units; the dome stays)
 - [ ] Fire engines park mid-road/junction at a scene; crew stand in traffic (from feat/fire-scene leftovers)
 
 ## Agents running (update when starting/merging; survives context compaction)
