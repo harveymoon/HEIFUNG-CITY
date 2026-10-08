@@ -27,7 +27,11 @@ fn place(w: &mut World, kind: ServiceKind, tier: Tier, uses: &[LandUse]) -> Buil
         .next()
         .or_else(|| w.lots.iter().filter(|(id, l)| uses.contains(&l.land_use) && w.placement_problem(what, *id).is_none()).map(|(id, _)| id).next())
         .expect("a lot");
-    w.build_service(lot, kind, tier).unwrap()
+    let id = w.build_service(lot, kind, tier).unwrap();
+    // [under-construction] A station works once what stood on its lot is
+    // cleared: skip the wait.
+    w.finish_demolition(id);
+    id
 }
 
 fn warm_world() -> (World, RuleBasedMind) {

@@ -237,7 +237,7 @@ impl World {
         let mut cands: Vec<(BuildingId, f32, f32, f32)> = Vec::new(); // id, cost, distance, price
         for (bid, b) in self.buildings.iter() {
             let Some(bz) = &b.business else { continue };
-            if b.construction.is_some() || bz.closed || !bz.sells(r) || bz.stock_of(r) < 1.0 || !b.serves_at(hour) {
+            if !b.operating() || bz.closed || !bz.sells(r) || bz.stock_of(r) < 1.0 || !b.serves_at(hour) {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };

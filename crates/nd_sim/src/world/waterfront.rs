@@ -148,7 +148,7 @@ impl World {
             .values()
             .filter(|p| p.kind.is_marina() && p.works())
             .filter_map(|p| p.building.map(|b| (b, p.clone())))
-            .filter(|(b, _)| self.buildings.get(*b).is_some_and(|x| x.construction.is_none() && x.business.as_ref().is_some_and(|z| !z.closed)))
+            .filter(|(b, _)| self.buildings.get(*b).is_some_and(|x| x.operating() && x.business.as_ref().is_some_and(|z| !z.closed)))
             .collect();
         let boats = |w: &World| w.ports.ships.values().filter(|s| matches!(s.kind, ShipKind::Yacht | ShipKind::Sailboat)).count();
         // [fishing] Trawlers at sea count too.

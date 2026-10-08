@@ -23,7 +23,7 @@ impl World {
     pub fn hotel_beds(&self, b: BuildingId) -> u16 {
         let Some(bld) = self.buildings.get(b) else { return 0 };
         let hotel = bld.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Hotel && !z.closed);
-        if !hotel || bld.construction.is_some() || bld.is_derelict() {
+        if !hotel || !bld.operating() || bld.is_derelict() {
             return 0;
         }
         bld.floors.max(1) as u16 * tm::beds_per_floor(bld.tier)
@@ -55,7 +55,7 @@ impl World {
         let mut out: Vec<Attraction> = Vec::new();
         let entrance = |w: &World, b: BuildingId| w.building_entrance(b).unwrap_or_default();
         for (id, b) in self.buildings.iter() {
-            if b.construction.is_some() {
+            if !b.operating() {
                 continue;
             }
             if let Some(s) = b.service {
@@ -90,7 +90,7 @@ impl World {
             let mid = e.centroid();
             let mut n = 0usize;
             let mut best: Option<(f32, BuildingId)> = None;
-            for (id, b) in self.buildings.iter().filter(|(_, b)| b.construction.is_none() && matches!(b.land_use, LandUse::Residential | LandUse::Commercial | LandUse::Entertainment)) {
+            for (id, b) in self.buildings.iter().filter(|(_, b)| b.operating() && matches!(b.land_use, LandUse::Residential | LandUse::Commercial | LandUse::Entertainment)) {
                 let Some(lot) = self.lots.get(b.lot) else { continue };
                 if self.districts.grid.at(lot.center) != d.id {
                     continue;
@@ -143,7 +143,7 @@ impl World {
     fn vertiports(&self) -> Vec<BuildingId> {
         self.buildings
             .iter()
-            .filter(|(_, b)| b.construction.is_none() && b.service.is_some_and(|s| s.kind == ServiceKind::Vertiport))
+            .filter(|(_, b)| b.operating() && b.service.is_some_and(|s| s.kind == ServiceKind::Vertiport))
             .map(|(id, _)| id)
             .collect()
     }
@@ -493,7 +493,7 @@ impl World {
             self.tourist_leg(id, Goal::Hotel, to);
             return;
         };
-        let open = bld.opening_hours().contains(hour) && bld.construction.is_none();
+        let open = bld.opening_hours().contains(hour) && bld.operating();
         let jobs = bld.jobs;
         let mut paid = 0.0;
         let mut venue = false;
@@ -678,7 +678,7 @@ impl World {
         for (id, b) in self.buildings.iter() {
             let Some(z) = b.business.as_ref() else { continue };
             let wanted = if night { z.kind == BusinessKind::Venue } else { matches!(z.kind, BusinessKind::GadgetShop | BusinessKind::Bakery) || (z.kind == BusinessKind::Venue && hour >= 18) };
-            if !wanted || z.closed || b.construction.is_some() || !b.opening_hours().contains(hour) {
+            if !wanted || z.closed || !b.operating() || !b.opening_hours().contains(hour) {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };

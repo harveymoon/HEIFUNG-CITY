@@ -53,7 +53,7 @@ impl World {
 
     /// A station's street entrance and how far people walk to it.
     pub(super) fn metro_entrance(&self, station: BuildingId) -> Option<(Vec2, f32)> {
-        let b = self.buildings.get(station).filter(|b| b.metro && !b.is_derelict())?;
+        let b = self.buildings.get(station).filter(|b| b.metro && !b.is_derelict() && b.operating())?;
         let reach = if b.rail.is_some() { metro::CENTRAL_REACH } else { metro::REACH };
         self.building_entrance(station).map(|p| (p, reach))
     }

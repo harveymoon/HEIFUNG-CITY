@@ -51,7 +51,7 @@ impl World {
     /// (road works): where it stood, its ground and land use given.
     pub(super) fn pack_business_at(&mut self, bid: BuildingId, why: &str, from: Vec2, area: f32, land_use: LandUse) {
         let Some(b) = self.buildings.get(bid) else { return };
-        if b.construction.is_some() || b.demolition.is_some() || b.is_special() {
+        if !b.operating() || b.is_special() {
             return;
         }
         let Some(z) = b.business.as_ref() else { return };
@@ -67,7 +67,7 @@ impl World {
         let from_words = self
             .buildings
             .iter()
-            .filter(|(id, x)| *id != bid && x.construction.is_none() && x.demolition.is_none())
+            .filter(|(id, x)| *id != bid && x.operating())
             .filter_map(|(_, x)| self.lots.get(x.lot).map(|l| (l.center.distance(from), x.name.as_str())))
             .filter(|(d, _)| *d < 150.0)
             .min_by(|a, b| a.0.total_cmp(&b.0))

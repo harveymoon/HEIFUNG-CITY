@@ -217,7 +217,7 @@ impl World {
         let Some(b) = self.buildings.get(station) else { return 0 };
         let Some(s) = b.service else { return 0 };
         let Some(uk) = s.kind.unit_kind() else { return 0 };
-        if b.is_derelict() || b.construction.is_some() {
+        if b.is_derelict() || !b.operating() {
             return 0;
         }
         s.kind.units(s.tier).min(b.workers.len() / uk.crew())
@@ -243,7 +243,7 @@ impl World {
         for (id, b) in self.buildings.iter() {
             if let Some(s) = b.service {
                 if s.kind.coverage_index().is_some() {
-                    (id, s.tier.index(), b.is_derelict(), b.lot).hash(&mut h);
+                    (id, s.tier.index(), b.is_derelict(), b.operating(), b.lot).hash(&mut h);
                 }
             }
         }
@@ -259,7 +259,7 @@ impl World {
         for b in self.buildings.values() {
             let Some(s) = b.service else { continue };
             let Some(k) = s.kind.coverage_index() else { continue };
-            if b.is_derelict() || b.construction.is_some() {
+            if b.is_derelict() || !b.operating() {
                 continue;
             }
             if let Some((seg, p)) = self.lots.get(b.lot).and_then(|l| self.lot_access(l)) {
@@ -274,7 +274,7 @@ impl World {
         self.services.coverage = out;
         self.services.coverage_key = Some(self.coverage_signature());
         // Share of homes covered, per kind.
-        let homes: Vec<LotId> = self.buildings.values().filter(|b| b.homes > 0 && b.construction.is_none()).map(|b| b.lot).collect();
+        let homes: Vec<LotId> = self.buildings.values().filter(|b| b.homes > 0 && b.operating()).map(|b| b.lot).collect();
         for k in 0..4 {
             let covered = homes.iter().filter(|l| self.services.coverage.get(l).is_some_and(|c| c[k] >= COVERED)).count();
             self.services.stats.coverage[k] = if homes.is_empty() { 0.0 } else { covered as f32 / homes.len() as f32 };
@@ -343,7 +343,7 @@ impl World {
     pub fn service_reach(&self, station: BuildingId) -> Vec<(LotId, f32)> {
         let Some(b) = self.buildings.get(station) else { return Vec::new() };
         let Some(s) = b.service else { return Vec::new() };
-        if s.kind.coverage_index().is_none() || b.is_derelict() || b.construction.is_some() {
+        if s.kind.coverage_index().is_none() || b.is_derelict() || !b.operating() {
             return Vec::new();
         }
         let Some((seg, p)) = self.lots.get(b.lot).and_then(|l| self.lot_access(l)) else { return Vec::new() };
@@ -448,7 +448,7 @@ impl World {
     /// Set a building alight. None if it cannot burn or already does.
     pub fn start_fire(&mut self, bid: BuildingId) -> Option<u32> {
         let b = self.buildings.get(bid)?;
-        if b.construction.is_some() || b.land_use == LandUse::Park || b.rail.is_some() || self.services.is_burning(bid) {
+        if !b.operating() || b.land_use == LandUse::Park || b.rail.is_some() || self.services.is_burning(bid) {
             return None;
         }
         let occupied = !b.residents.is_empty() || !b.workers.is_empty() || b.visitors > 0;
@@ -623,7 +623,7 @@ impl World {
     /// the jobless first, else someone on a lower wage elsewhere (a public
     /// job pays well), so a fully employed town still staffs its stations.
     fn recruit_staff(&mut self) {
-        let posts: Vec<(BuildingId, f32)> = self.buildings.iter().filter(|(_, b)| b.service.is_some() && b.construction.is_none() && !b.is_derelict() && b.free_jobs() > 0).map(|(id, b)| (id, b.wage())).collect();
+        let posts: Vec<(BuildingId, f32)> = self.buildings.iter().filter(|(_, b)| b.service.is_some() && b.operating() && !b.is_derelict() && b.free_jobs() > 0).map(|(id, b)| (id, b.wage())).collect();
         for (bid, wage) in posts {
             for _ in 0..2 {
                 if self.buildings[bid].free_jobs() == 0 {
@@ -643,7 +643,7 @@ impl World {
                     self.citizens
                         .iter()
                         .filter(|(_, c)| c.can_work())
-                        .filter_map(|(id, c)| c.work.and_then(|w| self.buildings.get(w)).filter(|w| !w.is_special() && w.construction.is_none() && w.wage() < wage).map(|_| id))
+                        .filter_map(|(id, c)| c.work.and_then(|w| self.buildings.get(w)).filter(|w| !w.is_special() && w.operating() && w.wage() < wage).map(|_| id))
                         .next()
                 };
                 let Some(cid) = jobless.or_else(poach) else { break };
@@ -673,7 +673,7 @@ impl World {
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         for bid in ids {
             let b = &self.buildings[bid];
-            if b.construction.is_some() || b.land_use == LandUse::Park || b.service.is_some_and(|s| s.kind == ServiceKind::Monument) {
+            if !b.operating() || b.land_use == LandUse::Park || b.service.is_some_and(|s| s.kind == ServiceKind::Monument) {
                 continue;
             }
             let lot = b.lot;
@@ -1026,7 +1026,7 @@ impl World {
         let recent: Vec<Vec2> = self.services.incidents.iter().filter(|i| i.kind.unit() == kind && i.started >= since).map(|i| i.pos).collect();
         let mut cands: Vec<(f32, LotId)> = Vec::new();
         for b in self.buildings.values() {
-            if b.construction.is_some() || b.land_use == LandUse::Park {
+            if !b.operating() || b.land_use == LandUse::Park {
                 continue;
             }
             let Some(l) = self.lots.get(b.lot) else { continue };
@@ -1104,7 +1104,7 @@ impl World {
     /// the public job, ours takes theirs). Hired at random, a 911 centre of
     /// three could leave the evening with nobody at the desk.
     fn balance_rosters(&mut self) {
-        let posts: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.service.is_some() && b.construction.is_none() && !b.is_derelict() && b.workers.len() >= 3).map(|(id, _)| id).collect();
+        let posts: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.service.is_some() && b.operating() && !b.is_derelict() && b.workers.len() >= 3).map(|(id, _)| id).collect();
         for bid in posts {
             let Some((want, 0)) = self.thinnest_shift(bid) else { continue };
             let b = &self.buildings[bid];
@@ -1121,7 +1121,7 @@ impl World {
                 .citizens
                 .iter()
                 .filter(|(_, c)| c.can_work() && b.shift_for(c.seed).open == want)
-                .filter_map(|(id, c)| c.work.filter(|w| self.buildings.get(*w).is_some_and(|x| !x.is_special() && x.construction.is_none() && x.wage() < wage)).map(|w| (id, w)))
+                .filter_map(|(id, c)| c.work.filter(|w| self.buildings.get(*w).is_some_and(|x| !x.is_special() && x.operating() && x.wage() < wage)).map(|w| (id, w)))
                 .next();
             let Some((cid, old)) = cand else { continue };
             self.buildings[bid].workers.retain(|x| *x != spare);
@@ -1347,7 +1347,7 @@ impl World {
         let jobs: Vec<(BuildingId, f32, f32, String)> = self
             .buildings
             .iter()
-            .filter(|(id, b)| Self::is_civic_structure(b) && b.construction.is_none() && b.condition < 1.0 && !self.services.is_burning(*id))
+            .filter(|(id, b)| Self::is_civic_structure(b) && b.operating() && b.condition < 1.0 && !self.services.is_burning(*id))
             .map(|(id, b)| {
                 let amount = REPAIR_PER_DAY.min(1.0 - b.condition);
                 (id, amount, amount * REPAIR_SHARE * Self::civic_value(b), b.name.clone())
@@ -1585,7 +1585,7 @@ impl World {
     /// Who answers 911 right now and how long the job takes to go out: a
     /// dispatcher at the desk, one on call, or the regional line.
     pub fn dispatcher(&self) -> (Option<CitizenId>, u64) {
-        let centres: Vec<(BuildingId, &Building)> = self.buildings.iter().filter(|(_, b)| b.service.is_some_and(|s| s.kind == ServiceKind::Dispatch) && !b.is_derelict() && b.construction.is_none()).collect();
+        let centres: Vec<(BuildingId, &Building)> = self.buildings.iter().filter(|(_, b)| b.service.is_some_and(|s| s.kind == ServiceKind::Dispatch) && !b.is_derelict() && b.operating()).collect();
         let mut on_call = None;
         for (id, b) in &centres {
             for &w in &b.workers {
@@ -2066,7 +2066,7 @@ impl World {
         self.buildings
             .iter()
             .filter_map(|(id, b)| b.service.filter(|s| s.kind == ServiceKind::Health).map(|s| (id, b, s)))
-            .filter(|(_, b, _)| !b.is_derelict())
+            .filter(|(_, b, _)| !b.is_derelict() && b.operating())
             .filter(|(id, _, s)| (self.services.admissions.iter().filter(|a| a.hospital == *id).count() as u32) < s.kind.capacity(s.tier))
             .filter_map(|(id, b, _)| self.lots.get(b.lot).map(|l| (id, l.center.distance(p))))
             .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -2138,7 +2138,7 @@ impl World {
             w.buildings
                 .iter()
                 .filter_map(|(bid, b)| b.service.filter(|x| x.kind == kind).map(|x| (bid, b, x)))
-                .filter(|(_, b, _)| !b.is_derelict() && b.construction.is_none())
+                .filter(|(_, b, _)| !b.is_derelict() && b.operating())
                 .filter(|(bid, _, x)| !room || occupancy.iter().find(|o| o.0 == *bid).map_or(0, |o| o.1) < x.kind.capacity(x.tier))
                 .filter_map(|(bid, b, _)| w.lots.get(b.lot).map(|l| (bid, l.center.distance(at))))
                 .min_by(|a, b| a.1.total_cmp(&b.1))
@@ -2293,7 +2293,7 @@ impl World {
             .buildings
             .iter()
             .filter_map(|(id, b)| b.service.filter(|s| s.kind == ServiceKind::School).map(|s| (id, b, s)))
-            .filter(|(_, b, _)| !b.is_derelict() && b.construction.is_none())
+            .filter(|(_, b, _)| !b.is_derelict() && b.operating())
             .filter_map(|(id, b, s)| self.lots.get(b.lot).map(|l| (id, l.center, s.kind.capacity(s.tier), b.land_use)))
             .collect();
         if schools.is_empty() {
@@ -2326,7 +2326,7 @@ impl World {
 
     fn start_stadium_events(&mut self) {
         let tick = self.clock.tick;
-        let stadiums: Vec<BuildingId> = self.services.events_today.iter().copied().filter(|b| self.buildings.get(*b).is_some_and(|b| !b.is_derelict())).collect();
+        let stadiums: Vec<BuildingId> = self.services.events_today.iter().copied().filter(|b| self.buildings.get(*b).is_some_and(|b| !b.is_derelict() && b.operating())).collect();
         for sid in stadiums {
             let (seats, lu, name, at) = {
                 let b = &self.buildings[sid];
@@ -2378,10 +2378,12 @@ impl World {
             bonus += income - base;
             self.citizens[cid].income = income;
         }
-        let stadiums: Vec<(BuildingId, Tier)> = self.buildings.iter().filter_map(|(id, b)| b.service.filter(|s| s.kind == ServiceKind::Stadium).map(|s| (id, s.tier))).collect();
+        let stadiums: Vec<(BuildingId, Tier, bool)> = self.buildings.iter().filter_map(|(id, b)| b.service.filter(|s| s.kind == ServiceKind::Stadium).map(|s| (id, s.tier, b.operating()))).collect();
         let mut tonight = Vec::new();
-        for (id, tier) in stadiums {
-            if self.srng().random_bool(EVENT_CHANCE[tier.index()]) {
+        for (id, tier, open) in stadiums {
+            // [under-construction] The draw is made for a stadium still
+            // being built too (the dice stay in step); it hosts nothing.
+            if self.srng().random_bool(EVENT_CHANCE[tier.index()]) && open {
                 tonight.push(id);
             }
         }

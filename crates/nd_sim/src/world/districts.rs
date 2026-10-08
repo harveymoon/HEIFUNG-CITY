@@ -191,7 +191,7 @@ impl World {
 
     /// Eco, historic and campus buildings lift the land around them.
     pub(super) fn splat_districts(&self, b: &mut LandValueBuilder) {
-        for bld in self.buildings.values().filter(|b| b.construction.is_none()) {
+        for bld in self.buildings.values().filter(|b| b.operating()) {
             let Some((r, w)) = bld.look.and_then(|l| l.land_value()) else { continue };
             if let Some(lot) = self.lots.get(bld.lot) {
                 b.splat(lot.center, r, w);
@@ -214,7 +214,7 @@ impl World {
         for id in ids {
             let b = &self.buildings[id];
             // [supertall] a league tower keeps its own architecture
-            if b.construction.is_some() || b.demolition.is_some() || b.is_special() || b.is_parking() || b.port.is_some() || b.plot.tower.is_some() {
+            if !b.operating() || b.is_special() || b.is_parking() || b.port.is_some() || b.plot.tower.is_some() {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };

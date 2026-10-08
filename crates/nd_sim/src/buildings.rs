@@ -436,6 +436,17 @@ impl Building {
         self.construction.is_some()
     }
 
+    /// [under-construction] Open as its finished self: not a building site
+    /// and not coming down. A site has its crew and nothing else: no
+    /// visitors or customers, no homes or permanent jobs, no service cover,
+    /// no power, no parking, no transit, no pull on tourists or land value.
+    /// Every system that picks a building as a destination or lets it act
+    /// on the city asks this. (Derelict buildings still operate, badly;
+    /// callers that shut them out too check `is_derelict` beside it.)
+    pub fn operating(&self) -> bool {
+        self.construction.is_none() && self.demolition.is_none()
+    }
+
     /// Coming down, with nothing to follow on the lot.
     pub fn being_demolished(&self) -> bool {
         self.demolition.as_ref().is_some_and(|d| d.clear_lot)
@@ -591,7 +602,7 @@ impl Building {
 
     /// Built, not derelict or shut down, and with room inside.
     pub fn takes_customers(&self) -> bool {
-        self.construction.is_none() && !self.is_derelict() && self.business.as_ref().is_none_or(|z| !z.closed) && self.visitors < self.customer_capacity()
+        self.operating() && !self.is_derelict() && self.business.as_ref().is_none_or(|z| !z.closed) && self.visitors < self.customer_capacity()
     }
 
     /// Open to a customer at `hour`: `takes_customers` and inside its

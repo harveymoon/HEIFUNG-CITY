@@ -107,7 +107,7 @@ impl World {
             .values()
             .filter(|p| f(p.kind) && p.works())
             .filter_map(|p| p.building.map(|b| (b, p.kind, p.center)))
-            .filter(|(b, _, _)| self.buildings.get(*b).is_some_and(|x| x.construction.is_none() && x.business.as_ref().is_none_or(|z| !z.closed)))
+            .filter(|(b, _, _)| self.buildings.get(*b).is_some_and(|x| x.operating() && x.business.as_ref().is_none_or(|z| !z.closed)))
             .collect()
     }
 
@@ -115,7 +115,7 @@ impl World {
     fn daily_output(&self, kinds: &[BusinessKind]) -> f32 {
         self.buildings
             .values()
-            .filter(|b| b.construction.is_none())
+            .filter(|b| b.operating())
             .filter_map(|b| b.business.as_ref().filter(|z| !z.closed && kinds.contains(&z.kind)).map(|z| (b, z)))
             .map(|(b, z)| {
                 let per = z.kind.recipe().outputs.first().map_or(0.0, |o| o.1);
@@ -353,7 +353,7 @@ impl World {
         let dealers: Vec<(BuildingId, Vec2)> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.construction.is_none() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::CarDealer && !z.closed))
+            .filter(|(_, b)| b.operating() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::CarDealer && !z.closed))
             .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, l.center)))
             .collect();
         if dealers.is_empty() {
@@ -578,7 +578,7 @@ impl World {
             let shops: Vec<(BuildingId, f32)> = self
                 .buildings
                 .iter()
-                .filter(|(_, b)| b.construction.is_none() && b.opening_hours().contains(hour) && b.business.as_ref().is_some_and(|z| z.kind == kind && !z.closed))
+                .filter(|(_, b)| b.operating() && b.opening_hours().contains(hour) && b.business.as_ref().is_some_and(|z| z.kind == kind && !z.closed))
                 .map(|(id, b)| {
                     let staffing = if b.jobs == 0 { 0.0 } else { b.workers.len() as f32 / b.jobs as f32 };
                     let per_shop = if kind == BusinessKind::Mechanic { pressure::REPAIRS_PER_SHOP } else { 12.0 };
@@ -628,7 +628,7 @@ impl World {
         let galleries: Vec<(BuildingId, Vec2, String)> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.construction.is_none() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Gallery && !z.closed))
+            .filter(|(_, b)| b.operating() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Gallery && !z.closed))
             .filter(|(id, _)| mix(key_of(*id), day) % pressure::OPENING_EVERY_DAYS == 0)
             .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, l.center, b.name.clone())))
             .collect();
@@ -776,7 +776,7 @@ impl World {
         let mut studios: Vec<(BuildingId, u16)> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.construction.is_none() && b.free_jobs() > 0 && b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::ArtStudio | BusinessKind::Gallery) && !z.closed))
+            .filter(|(_, b)| b.operating() && b.free_jobs() > 0 && b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::ArtStudio | BusinessKind::Gallery) && !z.closed))
             .map(|(id, b)| (id, b.free_jobs()))
             .collect();
         if !studios.is_empty() {
@@ -833,7 +833,7 @@ impl World {
                 let best = self
                     .buildings
                     .iter()
-                    .filter(|(id, b)| *id != old && b.land_use == LandUse::Residential && b.construction.is_none() && b.free_homes() > 0 && b.tier == Tier::Low && b.rent <= old_rent)
+                    .filter(|(id, b)| *id != old && b.land_use == LandUse::Residential && b.operating() && b.free_homes() > 0 && b.tier == Tier::Low && b.rent <= old_rent)
                     .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, near_warehouse(l.center))))
                     .filter(|(_, d)| *d <= 500.0)
                     .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
@@ -893,7 +893,7 @@ impl World {
             format!("Paying its way: {:.0} a day in, {:.0} out.", rev / days, spend / days)
         };
         // What it is up against or short of.
-        if !z.closed && b.construction.is_none() {
+        if !z.closed && b.operating() {
             let staff = if b.jobs > 0 { b.workers.len() as f32 / b.jobs as f32 } else { 1.0 };
             if staff < 0.5 {
                 doing.push_str(&format!(" Short-staffed: {} of {} jobs filled.", b.workers.len(), b.jobs));
