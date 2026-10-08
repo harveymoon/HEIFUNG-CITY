@@ -284,6 +284,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Ferry terminal on a civic zone took the zone's shape/look: unzone first, own footprint [feat/dock-access]
 - [ ] Fishing boats actually go out, fish at grounds for hours, return and unload; berths empty while at sea [feat/fishing]
 - [ ] Selecting a ferry terminal highlights its routes; other routes dim; route list in the inspector [feat/ferry-routes]
+- [ ] FLAG (day 24): no lots along roads on a hilly island (slope ~0.42); zoning there impossible, no reason shown [fix/island-lots]
 
 ## Agents running (update when starting/merging; survives context compaction)
 - feat/committee: AI committee, mock backend first, Ollama/Claude connectors (started 2026-10-07 evening)
@@ -295,3 +296,4 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - feat/dock-access: docks/stations without road access, road stubs (started 2026-10-08 00:25)
 - feat/fishing: fishing trips (started 2026-10-08 00:35)
 - feat/ferry-routes: ferry route highlight (started 2026-10-08 00:40)
+- fix/island-lots: no lots on hilly island roads (started 2026-10-08 00:50)
