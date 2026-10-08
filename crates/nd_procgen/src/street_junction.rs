@@ -279,6 +279,34 @@ pub(crate) fn keep_off_arms(here: Vec2, m: &[Mouth], p: Vec2, clear: f32) -> Vec
     p
 }
 
+/// A pole for arm `seg` of junction `here` (arms `m`): moved off every
+/// arm's carriageway (`keep_off_arms`) and, if that leaves it on the
+/// junction's own surface (between arms, beyond any kerb), moved out along
+/// its arm, on the same side, until it stands on the pavement: a signal
+/// pole of a five-way junction stood in the middle of the junction.
+pub(crate) fn place_pole(here: Vec2, m: &[Mouth], seg: SegmentId, p: Vec2, clear: f32) -> Vec2 {
+    let p = keep_off_arms(here, m, p, clear);
+    let pad: Vec<Vec2> = pad_outline(here, m).iter().map(|q| q.p).collect();
+    let on_road = |q: Vec2| {
+        m.iter().any(|a| (q - here).dot(a.dir) > -0.5 && (q - here).perp_dot(a.dir).abs() < a.hw + clear - 1e-3) || (pad.len() >= 3 && nd_sim::zoning::point_in_polygon(q, &pad))
+    };
+    if !on_road(p) {
+        return p;
+    }
+    let Some(a) = m.iter().find(|x| x.seg == seg) else { return p };
+    let side = if (p - here).perp_dot(a.dir) >= 0.0 { 1.0 } else { -1.0 };
+    let cw = Vec2::new(a.dir.y, -a.dir.x);
+    let mut along = (p - here).dot(a.dir).max(a.at);
+    for _ in 0..60 {
+        let q = here + a.dir * along + cw * side * (a.hw + clear);
+        if !on_road(q) {
+            return q;
+        }
+        along += 0.5;
+    }
+    p
+}
+
 /// How much further back than the lane's end (the junction's radius) the
 /// stop line of arm `seg` at junction `n` is painted, past what an ordinary
 /// junction has (4 m: the crosswalk between): the signal's pole and heads

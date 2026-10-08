@@ -786,6 +786,8 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
     let lifts: Vec<Option<RunProfile>> = profiles.iter().map(|(p, z)| z.iter().any(|h| *h != 0.0).then(|| RunProfile::new(p, z, 40.0))).collect();
     let run_z = |ri: usize, p: Vec2| lifts.get(ri).and_then(|l| l.as_ref()).map_or(0.0, |l| l.height(p));
     let corners = junction_corners(roads, net, &runs);
+    // Whether each run is drawn worn (as the run loop decides it).
+    let run_worn: Vec<bool> = runs.iter().map(|r| inp.land_value.at(point_along(&r.points, path_length(&r.points) * 0.5).0) < 0.35).collect();
     // The run arriving at each node on each segment.
     let mut arm_run: HashMap<(u32, u32), usize> = HashMap::new();
     for (ri, r) in runs.iter().enumerate() {
@@ -1046,6 +1048,8 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         // Kerbs and pavements, each side to its own corners, dropped
         // wherever a crosswalk meets them.
         let run_cuts: Vec<Cut> = run.nodes.windows(2).filter_map(|w| segment_between(roads, w[0], w[1])).flat_map(|s| cuts.get(&s.0).into_iter().flatten().copied()).collect();
+        // Where each side's kerb and pavement begin and end (along the run).
+        let mut kerb_ends = [(t0, t1); 2];
         for side in [-1.0f32, 1.0] {
             if ring_out.is_some_and(|o| o != side) {
                 continue;
@@ -1069,6 +1073,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
                 }
             };
             let (e0, e1) = (end(run.start_node, true, t0), end(run.end_node, false, t1));
+            kerb_ends[(side > 0.0) as usize] = (e0, e1);
             let line = if (e0, e1) == (t0, t1) { walk.clone() } else { trim(pts, e0, e1) };
             if line.len() >= 2 {
                 kerb_ribbon(&mut g, &offset_path(&line, side * hw), None, side, SIDEWALK, true, true, &run_cuts, &kerb_cols);
@@ -1107,12 +1112,19 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             (p + right * side * off, d, right)
         };
         let free = |p: Vec2| !junction::on_carriageway(roads, heights, inp.inner, p, run_z(ri, p), 0.05);
+        // On that side's pavement, not out on a junction's asphalt where
+        // the kerb starts further along (a fork's wedge).
+        let run_len = path_length(pts);
+        let kerbed = |s: f32, side: f32| {
+            let (e0, e1) = kerb_ends[(side > 0.0) as usize];
+            t0 + s >= e0 + 0.8 && t0 + s <= run_len - e1 - 0.8
+        };
         let mut lamp_ts: Vec<(f32, f32)> = Vec::new();
         let mut s = 6.0;
         let mut side = 1.0;
         while s < len - 4.0 {
             let (p, _, _) = at(s, side, lamp_off);
-            if free(p) {
+            if free(p) && kerbed(s, side) {
                 lamp_post_world(&mut g, p, 7.0, pal.street_lamp);
                 lamp_ts.push((s, side));
             }
@@ -1127,7 +1139,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
                         continue;
                     }
                     let (p, d, _) = at(s, side, back_off);
-                    if !free(p) {
+                    if !free(p) || !kerbed(s, side) {
                         continue;
                     }
                     g.part(Concrete).boxed(Vec3::new(p.x, KERB_H + 0.2, p.y), Vec3::new(1.3, 0.4, 1.3), d.y.atan2(d.x), rgba(mul(pal.paving, 1.1)));
@@ -1141,7 +1153,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             let mut s = 2.0;
             while s < len - 1.0 {
                 let (p, d, right) = at(s, -1.0, back_off);
-                if !free(p) {
+                if !free(p) || !kerbed(s, -1.0) {
                     s += 32.0;
                     continue;
                 }
@@ -1166,7 +1178,7 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             let side = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
             let (p, d, right) = at(s, side, hw + 1.2);
             let pick = rng.random_range(0..6);
-            if !free(p) || !free(at(s, side, back_off).0) {
+            if !free(p) || !free(at(s, side, back_off).0) || !kerbed(s, side) {
                 s += 22.0 + rng.random_range(0.0..20.0);
                 continue;
             }
@@ -1283,7 +1295,16 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         if let Some(ramp) = gore_ramp(roads, NodeId(i as u32)) {
             // Bright paint, as the lane arrows: the hatching is the one
             // marking that tells a driver where not to be.
+            let (v, ix) = (g.get(Asphalt).positions.len(), g.get(Asphalt).indices.len());
             ramp_gore(&mut g, roads, NodeId(i as u32), ramp, asphalt_c, rgba(mul(pal.lane_marker, 1.25)));
+            // In the same asphalt as the carriageway it widens out of (a
+            // highway out of town is worn; the gore was a pale patch on it).
+            let carriageway = gore_lines(roads, NodeId(i as u32), ramp).and_then(|_| {
+                node.segments.iter().copied().find(|&s| s != ramp && roads.segment(s).alive && roads.segment(s).is_highway())
+            });
+            if carriageway.and_then(|s| arm_run.get(&(i as u32, s.0))).is_some_and(|&ri| run_worn[ri]) {
+                weather_tail(&mut g, vec![(Asphalt, v, ix)]);
+            }
             continue;
         }
         let nid = NodeId(i as u32);
@@ -1847,7 +1868,7 @@ fn signal_groups(roads: &RoadNetwork, net: &LaneNetwork, corners: &Corners) -> V
         }
     }
     let mut out = Vec::new();
-    for (node, lanes) in groups.into_values() {
+    for ((seg, _), (node, lanes)) in groups.into_iter() {
         let Some((_, _, d)) = lanes.first() else { continue };
         let d = *d;
         let right = Vec2::new(-d.y, d.x);
@@ -1856,7 +1877,7 @@ fn signal_groups(roads: &RoadNetwork, net: &LaneNetwork, corners: &Corners) -> V
         // On the pavement: behind the corner's kerb where the corner is
         // rounded off past it.
         let pole = behind_kerb(rightmost.1 + right * (LANE_WIDTH * 0.5 + SHOULDER + 0.45), corners.by_node.get(&node.0), 0.45);
-        let pole = if pad_node(roads, node) { junction::keep_off_arms(roads.node(node).pos, arms.entry(node.0).or_insert_with(|| mouths(roads, net, node)), pole, 0.45) } else { pole };
+        let pole = if pad_node(roads, node) { junction::place_pole(roads.node(node).pos, arms.entry(node.0).or_insert_with(|| mouths(roads, net, node)), SegmentId(seg), pole, 0.45) } else { pole };
         out.push(SignalGroup { node, pole, leftmost: leftmost.1 - right * (LANE_WIDTH * 0.2), heads: lanes.iter().map(|(_, p, _)| *p).collect(), heading: d.y.atan2(d.x) });
     }
     out
@@ -1894,7 +1915,7 @@ fn ped_signal_posts_at(roads: &RoadNetwork, net: &LaneNetwork, corners: &Corners
             for sgn in [-1.0f32, 1.0] {
                 // Just outside the zebra, on the kerb, facing the far kerb.
                 let pole = behind_kerb(mid + side * sgn * (hw + 0.35) + away * (nd_sim::walk::CROSSWALK_HALF + 0.35), corners.by_node.get(&inter.node.0), 0.35);
-                let pole = junction::keep_off_arms(node.pos, &mouth_list, pole, 0.35);
+                let pole = junction::place_pole(node.pos, &mouth_list, sid, pole, 0.35);
                 let facing = -side * sgn;
                 let lamp = Vec3::new(pole.x + facing.x * 0.3, PED_HEAD_Y, pole.y + facing.y * 0.3);
                 out.push(PedSignalPost { inter: k, approach: ap, pole, lamp, heading: facing.y.atan2(facing.x) });
