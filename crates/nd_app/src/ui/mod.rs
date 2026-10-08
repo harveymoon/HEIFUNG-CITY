@@ -31,6 +31,8 @@ mod person;
 /// [camera] A selected person's home / work / owned pins.
 mod pins;
 mod places;
+/// [social] Friends and foes, the Social tab, speech bubbles.
+pub mod social;
 /// [economy] What the city's businesses want, and why a business is here.
 mod pressure;
 /// [inspector] Painted head-and-shoulders portraits of citizens.
@@ -98,6 +100,8 @@ pub struct UiFlags {
     toast: Option<(String, f64)>,
     /// [events] The last city news line toasted (`nights::news_toast`).
     news_seen: u32,
+    /// [social] The last social news line toasted.
+    social_seen: u32,
 }
 
 impl UiFlags {
@@ -120,7 +124,7 @@ impl Plugin for UiPlugin {
             .add_systems(PreUpdate, install_fonts.after(EguiPreUpdateSet::InitContexts).before(EguiPreUpdateSet::BeginPass))
             .add_systems(PreUpdate, read_input_flags.after(EguiPreUpdateSet::BeginPass))
             .add_systems(Update, saves::autosave.in_set(SimSet::Sync))
-            .add_systems(EguiPrimaryContextPass, (side_panel, pins::map_pins.after(side_panel)));
+            .add_systems(EguiPrimaryContextPass, (side_panel, pins::map_pins.after(side_panel), social::bubbles.after(side_panel)));
     }
 }
 
@@ -245,6 +249,7 @@ pub(crate) fn side_panel(
 
     flags.panel_rects = vec![top_rect, bottom_rect];
     nights::news_toast(&sim.world, &mut flags);
+    social::news_toast(&sim.world, &mut flags);
     toast(ctx, &mut flags, bottom_rect.height());
     // The land layer's reading under the pointer, for the legend.
     let here = overlays.land.zip(cursor.ground).map(|(l, p)| legend::land_here(&sim.world, l, p));

@@ -66,6 +66,8 @@ pub mod tolls;
 /// [taxis] Taxi companies, their cabs and the riders who hail them.
 pub mod taxi;
 pub mod society;
+/// [social] Ties between citizens, conversations, crews and clubs.
+pub mod social;
 pub mod survey;
 /// [tourism] Visitors, attractions and hotels.
 pub mod tourism;

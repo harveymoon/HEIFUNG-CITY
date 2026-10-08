@@ -164,6 +164,8 @@ impl World {
             let inside = crowds.get(&bid).unwrap_or(&empty);
             let (regular_friends, friends_there) = self.friends_at(id, bid, inside);
             let mut social = 0.08 * regular_friends.min(3) as f32 + 0.15 * friends_there.min(2) as f32;
+            // [social] Friends draw, enemies repel, a friend's band tonight.
+            social += self.social_pull(id, bid, inside);
             // [economy] An opening tonight draws a crowd, and the guests most.
             if let Some(o) = self.scene.opening_at(bid, tick) {
                 social += if o.invited.contains(&id) { 1.2 } else { 0.4 };
@@ -311,6 +313,8 @@ impl World {
         if let Some(w) = c.work.and_then(|w| self.buildings.get(w)) {
             pool.extend(w.workers.iter().filter(|m| **m != id).take(16).map(|m| (*m, false)));
         }
+        // [social] Close friends and a partner too.
+        pool.extend(self.social_company(id).into_iter().map(|m| (m, false)));
         let free: Vec<CitizenId> = pool
             .into_iter()
             .filter(|&(m, family)| {
