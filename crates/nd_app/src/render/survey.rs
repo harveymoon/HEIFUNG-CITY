@@ -22,7 +22,6 @@ use nd_sim::{IndustryKind, LandscapeParams, World};
 
 use super::{despawn_all, to_mesh, Materials, Overlays};
 use crate::sim::Sim;
-use crate::ui::UiFlags;
 
 #[derive(Component)]
 pub(super) struct LandLayerTag;
@@ -133,18 +132,13 @@ fn fishing_grounds(w: &World, m: &mut nd_procgen::MeshData) {
 pub(super) fn sync_land_layer(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    keys: Res<ButtonInput<KeyCode>>,
-    flags: Res<UiFlags>,
     sim: Res<Sim>,
     mats: Res<Materials>,
     time: Res<Time>,
-    mut overlays: ResMut<Overlays>,
+    overlays: Res<Overlays>,
     mut st: Local<SurveyState>,
     q: Query<Entity, With<LandLayerTag>>,
 ) {
-    if keys.just_pressed(KeyCode::KeyK) && !flags.keyboard_captured {
-        overlays.cycle_land();
-    }
     let w = &sim.world;
     let Some(layer) = overlays.land else {
         if st.shown.take().is_some() {

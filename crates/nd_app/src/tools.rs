@@ -778,11 +778,52 @@ impl Plugin for ToolsPlugin {
             // Input, outlines and rings used the pre-tick state and last
             // frame's `frac`, so at speed the gold box trailed its car.
             .add_systems(Update, draw_gizmos.in_set(SimSet::Sync))
+            // [fix/review-app] The selection checked once, right after the
+            // sim moved, for every reader after it (overlays, the remote
+            // API's `selected`, a flag's snapshot), not only by the
+            // inspector's egui pass.
+            .add_systems(Update, validate_selection.after(SimSet::Step).before(SimSet::Sync))
             .add_systems(Update, path_trim_toasts.in_set(SimSet::Sync));
     }
 }
 
 const POINT_PICK_RADIUS: f32 = 8.0;
+
+/// [fix/review-app] What the selection should be now that the sim has
+/// moved: the same, `None` when the thing is gone, or the station for an
+/// emergency unit back home. One exhaustive match, so a new kind of
+/// selection has to say how it can vanish.
+pub fn validated(sel: Selection, sim: &Sim) -> Selection {
+    let w = &sim.world;
+    let alive = match sel {
+        Selection::None => true,
+        Selection::Citizen(id) => w.citizens.contains_key(id),
+        Selection::Building(id) => w.buildings.contains_key(id),
+        Selection::Car(id) => w.traffic.cars.contains_key(id),
+        Selection::Parked(id) => w.vehicles.cars.get(id).is_some_and(|c| c.spot().is_some()),
+        Selection::Toll(id) => w.tolls.get(id).is_some(),
+        Selection::Bot(id) => w.bots.bots.contains_key(id),
+        Selection::Train(id) => w.rail.trains.contains_key(id),
+        Selection::Metro(id) => w.subway.trains.contains_key(id),
+        // A street piece is re-pointed across rebuilds by
+        // `road_select::keep_on_rebuild` and the road card: left to them.
+        Selection::Road(_) => true,
+        Selection::Unit(id) => match w.services.units.get(id) {
+            None => false,
+            Some(u) if crate::fire_scene::unit_pose(w, id, sim.frac()).is_none() => return Selection::Building(u.station),
+            Some(_) => true,
+        },
+        Selection::Ship(id) => w.ports.ships.contains_key(id),
+    };
+    if alive { sel } else { Selection::None }
+}
+
+fn validate_selection(sim: Res<Sim>, mut selection: ResMut<Selection>) {
+    let now = validated(*selection, &sim);
+    if now != *selection {
+        *selection = now;
+    }
+}
 
 /// [park-paths] A path cut back because the park (or other grounds) it was
 /// joined to went: say so.

@@ -26,7 +26,6 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use crate::assets::GameAssets;
-use crate::ui::UiFlags;
 use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
 
@@ -1409,19 +1408,14 @@ fn is_vacant_lot(lot: &nd_sim::Lot) -> bool {
 fn sync_lots(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    keys: Res<ButtonInput<KeyCode>>,
     sim: Res<Sim>,
     assets: Res<GameAssets>,
     mats: Res<Materials>,
-    mut overlays: ResMut<Overlays>,
+    overlays: Res<Overlays>,
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<LotsTag>>,
-    flags: Res<UiFlags>,
     tools: Res<crate::tools::ToolState>,
 ) {
-    if keys.just_pressed(KeyCode::KeyO) && !flags.keyboard_captured {
-        overlays.zoning = !overlays.zoning;
-    }
     let w = &sim.world;
     let mut h = DefaultHasher::new();
     for (id, lot) in w.lots.iter() {
@@ -2722,18 +2716,13 @@ fn sync_bots(
 fn sync_overlay(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    keys: Res<ButtonInput<KeyCode>>,
     sim: Res<Sim>,
     assets: Res<GameAssets>,
     mats: Res<Materials>,
-    mut overlays: ResMut<Overlays>,
+    overlays: Res<Overlays>,
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<OverlayTag>>,
-    flags: Res<UiFlags>,
 ) {
-    if keys.just_pressed(KeyCode::KeyV) && !flags.keyboard_captured {
-        overlays.land_value = !overlays.land_value;
-    }
     let lv = &sim.world.land_value;
     if overlays.land_value == state.overlay_shown && lv.version == state.overlay_version && !assets.palette_changed && !sim.full_rebuild {
         return;
@@ -2764,18 +2753,13 @@ fn sync_overlay(
 fn sync_paths(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    keys: Res<ButtonInput<KeyCode>>,
     sim: Res<Sim>,
     assets: Res<GameAssets>,
     mats: Res<Materials>,
-    mut overlays: ResMut<Overlays>,
+    overlays: Res<Overlays>,
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<PathsTag>>,
-    flags: Res<UiFlags>,
 ) {
-    if keys.just_pressed(KeyCode::KeyP) && !flags.keyboard_captured {
-        overlays.paths = !overlays.paths;
-    }
     let walk = &sim.world.walk;
     if overlays.paths == state.paths_shown && walk.version == state.paths_version && !sim.full_rebuild {
         return;

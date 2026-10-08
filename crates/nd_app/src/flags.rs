@@ -85,7 +85,9 @@ pub struct FlagsPlugin;
 
 impl Plugin for FlagsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ClaudeFlags>().add_systems(EguiPrimaryContextPass, flag_box);
+        // [fix/review-app] After the side panel, which sets `want_flag` and
+        // drops keyboard focus.
+        app.init_resource::<ClaudeFlags>().add_systems(EguiPrimaryContextPass, flag_box.after(crate::ui::side_panel));
     }
 }
 
