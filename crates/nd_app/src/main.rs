@@ -5,6 +5,8 @@ mod assets;
 /// [build-highlight] A Build window section's buildings and service areas on the map.
 mod build_highlight;
 mod camera;
+/// [fix/review-app] The one reset of app state when a different city starts.
+mod city_reset;
 /// [committee] The mayor's AI committee in the running game.
 mod committee;
 /// [sweep-sim] Crash logs beside the saves: panics and failed allocations.
@@ -82,7 +84,7 @@ fn main() {
             metro_ux::MetroUxPlugin,
         ))
         // A plugin tuple holds at most 15: the rest go in a second one.
-        .add_plugins((committee::CommitteePlugin, build_highlight::BuildHighlightPlugin, stub_marks::StubMarksPlugin, ferry_select::FerrySelectPlugin, crash::CrashPlugin))
+        .add_plugins((committee::CommitteePlugin, build_highlight::BuildHighlightPlugin, stub_marks::StubMarksPlugin, ferry_select::FerrySelectPlugin, crash::CrashPlugin, city_reset::CityResetPlugin))
         .run();
 }
 

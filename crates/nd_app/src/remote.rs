@@ -139,7 +139,7 @@ impl Plugin for RemotePlugin {
             .init_resource::<EventLog>()
             .init_resource::<History>()
             .init_resource::<WindowRequests>()
-            .add_systems(Update, remote_commands.in_set(SimSet::Input).before(crate::tools::tool_input))
+            .add_systems(Update, remote_commands.in_set(SimSet::Input).before(crate::tools::tool_input).before(crate::city_reset::on_city_replaced))
             .add_systems(Update, (log_events, record_history).in_set(SimSet::Sync))
             // Before the panel draws, so a request shows the same frame.
             .add_systems(bevy_egui::EguiPrimaryContextPass, window::apply_window_requests.before(crate::ui::side_panel));
@@ -318,6 +318,24 @@ struct Ctx<'w, 's> {
     materials: Res<'w, Assets<StandardMaterial>>,
     images: Res<'w, Assets<Image>>,
     entities: Query<'w, 's, Entity>,
+    /// [fix/review-app] Which city the tools and selection belong to.
+    epoch: ResMut<'w, crate::city_reset::CityEpoch>,
+}
+
+/// [fix/review-app] `load`, `new_game` and `generate_city` throw the running
+/// city away. When it has play time no save holds (`Sim::unsaved_play`)
+/// they ask for `"confirm": true`, so an agent cannot wipe a player's game
+/// by accident; a city just saved, just loaded or not yet started needs none.
+fn confirm_replace(cmd: &Value, ctx: &Ctx, what: &str) -> Result<(), String> {
+    if !ctx.sim.unsaved_play() || opt_bool(cmd, "confirm")? == Some(true) {
+        return Ok(());
+    }
+    let clock = &ctx.sim.world.clock;
+    Err(format!(
+        "{what} replaces the running city (day {}, {}), which has play time no save holds; save it first, or send confirm: true to replace it anyway",
+        clock.day() + 1,
+        clock.format_hhmm()
+    ))
 }
 
 fn remote_commands(inbox: Res<Inbox>, mut ctx: Ctx) {
@@ -332,7 +350,15 @@ fn remote_commands(inbox: Res<Inbox>, mut ctx: Ctx) {
         if p.state.compare_exchange(QUEUED, TAKEN, Ordering::SeqCst, Ordering::SeqCst).is_err() {
             continue;
         }
-        let reply = match execute(&p.cmd, &mut ctx) {
+        let result = execute(&p.cmd, &mut ctx);
+        // [fix/review-app] A command that replaced the city: reset what
+        // named the old one's ids now, before the next command in this
+        // batch reads it (`city_reset` would only run later this frame).
+        {
+            let Ctx { sim, epoch, tools, selection, eplan, follow, fly, .. } = &mut ctx;
+            crate::city_reset::catch_up(sim.generation, epoch, tools, selection, eplan, follow, fly);
+        }
+        let reply = match result {
             Ok(mut body) => {
                 if body.get("ok").is_none() {
                     body["ok"] = json!(true);
@@ -480,31 +506,23 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "game_history" => identity::game_history(cmd, ctx),
         "load" => {
             let path = allowed_path(req_str(cmd, "path")?, "ron", false)?;
-            let Ctx { sim, tools, selection, eplan, flags, saves, follow, fly, .. } = &mut *ctx;
-            load_now(&path, sim, tools, selection, eplan, flags);
-            saves.mark_dirty();
-            saves.title = false;
-            follow.stop();
-            fly.flight = None;
-            if flags.message.starts_with("load failed") {
-                return Err(flags.message.clone());
-            }
+            confirm_replace(cmd, ctx, "load")?;
+            let message = load_now(&path, &mut ctx.sim, &mut ctx.flags)?;
+            ctx.saves.mark_dirty();
+            ctx.saves.title = false;
             ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "city loaded");
-            Ok(json!({ "message": ctx.flags.message, "clock": clock(&ctx.sim), "paused": ctx.sim.paused }))
+            Ok(json!({ "message": message, "clock": clock(&ctx.sim), "paused": ctx.sim.paused }))
         }
         "new_game" => {
             let params = land::params_from(cmd)?;
+            let name = opt_str(cmd, "name")?;
+            confirm_replace(cmd, ctx, "new_game")?;
             ctx.saves.title = false;
             ctx.sim.paused = false;
             ctx.sim.new_game(params);
-            if let Some(name) = opt_str(cmd, "name")? {
+            if let Some(name) = name {
                 ctx.sim.set_city_name(name);
             }
-            *ctx.tools = ToolState::default();
-            *ctx.selection = Selection::None;
-            ctx.eplan.invalidate();
-            ctx.follow.stop();
-            ctx.fly.flight = None;
             ctx.tools.status = format!("New city: {} {} landscape", ctx.sim.world.landscape.params.climate.label(), ctx.sim.world.landscape.params.preset.label());
             ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "new game");
             let mut v = land::summary(&ctx.sim.world);
@@ -513,18 +531,15 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         "generate_city" => {
             let (preset, params) = land::city_params_from(cmd)?;
+            let name = opt_str(cmd, "name")?;
+            confirm_replace(cmd, ctx, "generate_city")?;
             ctx.saves.title = false;
             ctx.sim.paused = false;
             let start = std::time::Instant::now();
             let (plan, laid) = ctx.sim.generate_city(preset, params);
-            if let Some(name) = opt_str(cmd, "name")? {
+            if let Some(name) = name {
                 ctx.sim.set_city_name(name);
             }
-            *ctx.tools = ToolState::default();
-            *ctx.selection = Selection::None;
-            ctx.eplan.invalidate();
-            ctx.follow.stop();
-            ctx.fly.flight = None;
             ctx.tools.status = format!("New city: {} on a {} landscape", preset.label(), ctx.sim.world.landscape.params.preset.label());
             ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "generated city");
             let mut v = land::summary(&ctx.sim.world);

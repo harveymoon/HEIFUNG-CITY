@@ -186,6 +186,9 @@ pub struct ToolState {
     pub points: Vec<SVec2>,
     pub status: String,
     pub drag: Option<(GestureId, usize)>,
+    /// [fix/review-app] The current drag has moved its point (and so has
+    /// its own undo step, see [`drag_frame`]).
+    pub drag_moved: bool,
     pub hover_point: Option<(GestureId, usize)>,
     pub hover_gesture: Option<GestureId>,
     /// [free-placement] Bulldoze tool: the city building under the pointer
@@ -480,6 +483,48 @@ impl ToolState {
 
     /// [tools] Does the Road tool take the [ and ] keys (the camera zooms
     /// with them otherwise)?
+    /// [fix/review-app] A different city starts (`city_reset`): drop
+    /// everything that names the old city's ids (the drawing, drags,
+    /// hovers, the route and stop being edited, favourites, the district
+    /// polygon, the junction editor) and keep the player's choices: the
+    /// tool, road kind and lanes, zone and brush, the Build pick, transit
+    /// and rail modes, elevation, and the status line (the replacing
+    /// command has just written it).
+    pub fn forget_city(&mut self) {
+        let fresh = ToolState {
+            tool: self.tool,
+            lanes_fwd: self.lanes_fwd,
+            lanes_bwd: self.lanes_bwd,
+            land_use: self.land_use,
+            status: std::mem::take(&mut self.status),
+            cleanup: self.cleanup,
+            cleanup_radius: self.cleanup_radius,
+            curved: self.curved,
+            kind: self.kind,
+            build_cat: self.build_cat,
+            build: self.build,
+            build_tier: self.build_tier,
+            transit_mode: self.transit_mode,
+            show_routes: self.show_routes,
+            rail_kind: self.rail_kind,
+            dock: self.dock,
+            zone_mode: self.zone_mode,
+            brush_radius: self.brush_radius,
+            unzone: self.unzone,
+            industry: self.industry,
+            beach: self.beach,
+            roundabout: self.roundabout,
+            interchange: self.interchange,
+            ring_radius: self.ring_radius,
+            ring_lanes: self.ring_lanes,
+            elevation: self.elevation,
+            tunnel: self.tunnel,
+            depth: self.depth,
+            ..ToolState::default()
+        };
+        *self = fresh;
+    }
+
     pub fn captures_brackets(&self) -> bool {
         self.tool == Tool::Road && !self.roundabout
     }
@@ -516,6 +561,7 @@ impl Default for ToolState {
             points: Vec::new(),
             status: String::new(),
             drag: None,
+            drag_moved: false,
             right_press: None,
             hover_point: None,
             hover_gesture: None,
@@ -1147,9 +1193,10 @@ pub(crate) fn tool_input(
             if let Some((id, idx)) = tools.drag {
                 if let (Some(p), Some(mut g)) = (ground, plan.gestures.get(&id).cloned()) {
                     if idx < g.points().len() {
+                        let before = g.clone();
                         g.move_point(idx, p);
                         let release = !buttons.pressed(MouseButton::Left);
-                        sim.world.set_gesture(id, g, release);
+                        drag_frame(&mut sim.world, id, &before, g, &mut tools.drag_moved);
                         if release {
                             tools.drag = None;
                             tools.status = "Control point moved".into();
@@ -1169,6 +1216,7 @@ pub(crate) fn tool_input(
                     tools.status = "Intersection editor: lanes, left turns, signals and crosswalks.".into();
                 } else if let Some(hp) = tools.hover_point {
                     tools.drag = Some(hp);
+                    tools.drag_moved = false;
                     tools.selected_gesture = Some(hp.0);
                 } else {
                     tools.selected_gesture = tools.hover_gesture;
@@ -2451,6 +2499,21 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
     }
 }
 
+/// [fix/review-app] One frame of a control-point drag of gesture `id`
+/// from `before` to `after`. The first frame that moves the point records
+/// a new undo step, so the shape before the drag stays one Ctrl+Z away;
+/// every later frame, the release included, amends that step. (Amending
+/// from the first frame overwrote the step that drew the gesture: undo
+/// then kept the moved shape, and a second undo deleted it.)
+pub fn drag_frame(world: &mut nd_sim::World, id: GestureId, before: &nd_sim::Gesture, after: nd_sim::Gesture, moved: &mut bool) {
+    if *moved {
+        world.set_gesture(id, after, false);
+    } else if after != *before {
+        world.set_gesture(id, after, true);
+        *moved = true;
+    }
+}
+
 #[cfg(test)]
 mod pick_tests {
     use super::*;
@@ -2480,5 +2543,54 @@ mod pick_tests {
         let on_highway = start + (SVec2::new(-150.0, 10.0) - start).normalize() * 3.0;
         assert_eq!(nearest_control_point(&plan, on_highway), Some((GestureId(1), 0)));
         assert_eq!(nearest_gesture(&plan, on_highway).map(|g| g.0), Some(GestureId(1)));
+    }
+}
+
+#[cfg(test)]
+mod drag_tests {
+    use super::*;
+
+    fn road(x: f32) -> Gesture {
+        Gesture::Road { points: vec![SVec2::new(x, -300.0), SVec2::new(x, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() }
+    }
+
+    /// Run a drag of `id`'s first point to x = 300, 320, 340 (release on
+    /// the last), the way the Edit tool calls `drag_frame`.
+    fn drag(w: &mut World, id: GestureId) {
+        let mut moved = false;
+        let mut current = w.gesture(id).unwrap();
+        // A frame that does not move it yet records nothing.
+        drag_frame(w, id, &current.clone(), current.clone(), &mut moved);
+        for x in [300.0, 320.0, 340.0] {
+            let mut g = current.clone();
+            g.move_point(0, SVec2::new(x, -300.0));
+            drag_frame(w, id, &current, g.clone(), &mut moved);
+            current = g;
+        }
+    }
+
+    /// [fix/review-app] Draw a road, drag a control point, undo: the road is
+    /// back where it was drawn (one undo), and a second undo removes it.
+    #[test]
+    fn undo_after_drag_restores_the_drawn_shape() {
+        let mut w = World::new(nd_sim::WorldConfig { landscape: nd_sim::LandscapeParams::flat(), ..Default::default() });
+        let id = w.add_gesture(road(200.0));
+        drag(&mut w, id);
+        assert_eq!(w.gesture(id).unwrap().points()[0], SVec2::new(340.0, -300.0));
+        assert!(w.undo());
+        assert_eq!(w.gesture(id), Some(road(200.0)), "one undo puts the drawn shape back");
+        assert!(w.redo());
+        assert_eq!(w.gesture(id).unwrap().points()[0], SVec2::new(340.0, -300.0), "redo moves it again");
+        assert!(w.undo());
+        assert!(w.undo());
+        assert_eq!(w.gesture(id), None, "the second undo removes the road");
+        // Two drags in a row are two undo steps.
+        assert!(w.redo());
+        drag(&mut w, id);
+        drag(&mut w, id);
+        assert!(w.undo());
+        assert!(w.gesture(id).is_some());
+        assert!(w.undo());
+        assert_eq!(w.gesture(id), Some(road(200.0)));
     }
 }
