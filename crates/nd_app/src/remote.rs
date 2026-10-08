@@ -485,15 +485,27 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             // Hour by hour, each chunk ending at minute 59, so history sees
             // every hour and reads the day's counters before midnight
             // resets them, however many days one request covers.
+            // [fix/review-app] The committee's round runs for every new day
+            // (not once per request), and a meeting it calls ends the step
+            // there: the city waits for the meeting, as in game.
             let mut left = n;
+            let mut meeting = false;
             while left > 0 {
                 let r = ctx.sim.world.clock.tick % 60;
                 let chunk = left.min(if r < 59 { 59 - r } else { 60 });
                 ctx.sim.step_ticks(chunk as u32);
                 ctx.history.observe(&ctx.sim.world);
                 left -= chunk;
+                if crate::committee::daily(&mut ctx.sim, &mut ctx.committee, &mut ctx.flags) {
+                    meeting = true;
+                    break;
+                }
             }
-            Ok(json!({ "ticks": n, "clock": clock(&ctx.sim), "took_ms": start.elapsed().as_millis() as u64 }))
+            let mut v = json!({ "ticks": n - left, "clock": clock(&ctx.sim), "took_ms": start.elapsed().as_millis() as u64 });
+            if meeting {
+                v["stopped"] = json!("the committee meets: the city is paused for the meeting (committee_meeting to run it)");
+            }
+            Ok(v)
         }
         "seed_demo" => {
             ctx.saves.title = false;

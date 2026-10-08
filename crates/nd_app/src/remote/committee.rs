@@ -257,8 +257,12 @@ pub fn meeting_command(cmd: &Value, sim: &mut Sim, rt: &mut CommitteeRt) -> Resu
         // The stand-in answers at once: run to the mayor's vote or the end
         // now. A model keeps its own pace (the frames pump it).
         if rt.courier.is_mock() {
-            let CommitteeRt { driver, courier, .. } = rt;
-            driver.run(&mut sim.world, courier, 400);
+            let CommitteeRt { driver, courier, voices, .. } = rt;
+            // [fix/review-app] Voice lines and diaries polled on the way
+            // are theirs, not dropped.
+            for d in driver.run(&mut sim.world, courier, 400) {
+                voices.take(&d);
+            }
         }
     }
     let from = opt_u64(cmd, "transcript_from")?.unwrap_or(0) as usize;
