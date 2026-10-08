@@ -304,6 +304,9 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] A big generated city (2,168 lots) hit "memory allocation of 268435456 bytes failed" at day 10 under heavy machine load (committee agent) — check memory growth
 - [x] fix/ped-highway's 2 failing tests → DONE: its test uses a lived-in city; society_demo drill now 7 fires (median 13 min, was decided by 4)
 
+- [ ] Dock/station joined only by a footpath counts as unconnected; zoning layer tints a dock's own lot civic blue (dock-access leftovers)
+- [ ] Ferry headway/next departure are estimates; two towns on the same map edge draw overlapping route bands (ferry-routes leftovers)
+
 ## Follow-ups noted in agent reports (not started)
 - [ ] Batteries charge on cheap night power and discharge at the evening peak (grid-weather)
 - [ ] Freight trains really carry their cargo instead of yards handing it to any train (train-inspect)
@@ -334,9 +337,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 ## Agents running (update when starting/merging; survives context compaction)
 - fix/interchange: clean interchanges, ramp+street logic (started 2026-10-07 23:25)
 - fix/footbridge: footbridge replaces crosswalk (started 2026-10-08 00:00)
-- feat/dock-access: docks/stations without road access, road stubs (started 2026-10-08 00:25)
 - feat/fishing: fishing trips (started 2026-10-08 00:35)
-- feat/ferry-routes: ferry route highlight (started 2026-10-08 00:40)
 - feat/econ-followups: batteries arbitrage, parking pressure → lots, industry lifts cheap land, relocating businesses, rich owners' holdings, wind small-lot check (started 2026-10-08)
 - feat/street-followups: tow trucks on a job (one-ways/U-turns), booted cars towed, murder, moto packs, fire engines park at the kerb (started 2026-10-08)
 - feat/freight: freight trains carry cargo, hydro/tidal scale (started 2026-10-08)
