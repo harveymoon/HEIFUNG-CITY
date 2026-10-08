@@ -611,7 +611,7 @@ fn power_is_rationed_rich_first_and_plants_fix_it() {
     // A nuclear plant covers everything.
     w.economy.treasury = 200_000.0;
     let plant = w.build_power(big, PowerPlantKind::Nuclear).expect("nuclear plant built");
-    assert!(w.buildings[plant].plant == Some(PowerPlantKind::Nuclear) && w.buildings[plant].jobs == 60);
+    assert!(w.buildings[plant].plant == Some(PowerPlantKind::Nuclear) && w.buildings[plant].jobs == PowerPlantKind::Nuclear.jobs_at(w.plant_scale(&w.buildings[plant])));
     assert!(w.economy.treasury < 200_000.0);
     let p = &w.economy.power;
     assert_eq!(p.plants, 1);
@@ -1069,7 +1069,8 @@ fn player_placed_plants_and_depots_work_from_the_moment_of_placement() {
     let plant = w.build_power(big, PowerPlantKind::Coal).expect("coal plant");
     let b = &w.buildings[plant];
     assert!(b.construction.is_none(), "specials are placed finished");
-    assert_eq!(b.jobs, PowerPlantKind::Coal.jobs());
+    // [plant-scale] Jobs follow the plant's size.
+    assert_eq!(b.jobs, PowerPlantKind::Coal.jobs_at(b.plant_scale.unwrap()));
     assert_eq!(w.economy.power.plants, 1, "it is on the grid at once");
     let depot_lot = ind.iter().copied().find(|&l| l != big && w.lots[l].building.is_none() && w.lots[l].area() >= transit::DEPOT_MIN_AREA && w.lots[l].car_access());
     if let Some(l) = depot_lot {
@@ -2733,5 +2734,5 @@ fn solar_and_wind_scale_with_their_lot_at_a_steady_cost_per_megawatt() {
         assert!((w.plant_upkeep(ba) / mw_a - w.plant_upkeep(bb) / mw_b).abs() < 0.01, "{kind:?}: the same upkeep per MW");
     }
     // A fixed-size plant is not scaled.
-    assert_eq!(PowerPlantKind::Coal.size_scale(10_000.0), 1.0);
+    assert_eq!(PowerPlantKind::Hydro.size_scale(10_000.0), 1.0);
 }

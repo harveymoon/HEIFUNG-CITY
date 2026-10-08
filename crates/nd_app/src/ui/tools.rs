@@ -423,7 +423,13 @@ pub fn placeable_info(ui: &mut egui::Ui, sim: &mut Sim, what: Placeable) {
     match what {
         Placeable::Plant(k) => {
             if let Some(a) = k.reference_area() {
-                line += &format!(" (for a {a:.0} m² lot: output, cost and upkeep scale with the lot's size, up to {:.0}× on one lot). Touching lots of the same kind run as one {}; a lot too small on its own may join one next door.", nd_sim::power::MAX_LOT_SCALE, if k == nd_sim::PowerPlantKind::Solar { "Sunfield" } else { "Wind Park" });
+                if k.sized_when_built() {
+                    // [plant-scale] Sized to the site, within a range.
+                    let (lo, hi) = k.size_range();
+                    line += &format!(" (for a {a:.0} m² site: output, cost, upkeep and jobs scale with the site, from {:.0} MW on {:.0} m² to {:.0} MW on {:.0} m²; more ground than that is yard). The hover shows what it would be before you click", k.capacity_at(lo), k.min_area(), k.capacity_at(hi), k.max_area());
+                } else {
+                    line += &format!(" (for a {a:.0} m² lot: output, cost and upkeep scale with the lot's size, up to {:.0}× on one lot). Touching lots of the same kind run as one {}; a lot too small on its own may join one next door.", nd_sim::power::MAX_LOT_SCALE, if k == nd_sim::PowerPlantKind::Solar { "Sunfield" } else { "Wind Park" });
+                }
             }
             line += help::power_note(k);
             line += &format!(" Goes {}.", k.site_hint());

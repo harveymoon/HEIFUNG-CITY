@@ -444,6 +444,8 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
     Extras {
         parking: b.parking_visual().or(taxi_yard.then_some(0.0)),
         plant: b.plant,
+        // [plant-scale] how big the plant is (modules, not stretching)
+        plant_scale: world.plant_scale(b),
         // [power] grid battery: size, share full and flow
         battery: b.battery.as_ref().map(|x| (x.kind, x.level(), x.flow_mw)),
         depot: b.depot,

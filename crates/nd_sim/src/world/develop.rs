@@ -274,7 +274,8 @@ impl World {
                 b.splat(c, r, w);
             }
             if let Some(kind) = bld.plant {
-                let (r, w) = kind.pollution();
+                // [plant-scale] by its size (1 on older saves' plants).
+                let (r, w) = kind.pollution_at(if kind.sized_when_built() { bld.plant_scale.unwrap_or(1.0) } else { 1.0 });
                 if r > 0.0 {
                     // [industry] a nuisance: homes feel it most
                     b.splat_nuisance(c, r, -w);

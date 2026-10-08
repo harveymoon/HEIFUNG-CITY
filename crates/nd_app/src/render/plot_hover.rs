@@ -80,10 +80,10 @@ pub fn hover_site(w: &World, tools: &ToolState, p: SVec2) -> Option<HoverSite> {
                 _ => w.placement_site(what, p),
             };
             let (ok, text, outline) = match site {
-                Ok(site) => match w.site_problem(what, &site) {
-                    None => (true, site.note(), site.outline),
-                    Some(why) => (false, why, site.outline),
-                },
+                Ok(site) => {
+                    let (ok, text) = site_verdict(w, what, &site);
+                    (ok, text, site.outline)
+                }
                 Err(why) => (false, why, Vec::new()),
             };
             buildings_site(w, tools, p, ok, text, outline)
@@ -101,6 +101,61 @@ pub fn hover_site(w: &World, tools: &ToolState, p: SVec2) -> Option<HoverSite> {
         }
         _ => None,
     }
+}
+
+/// [plant-scale] What a click on `site` would do, as the hover label says
+/// it: `(true, what it would be)` or `(false, why not)`. A plant shows its
+/// nameplate there, what it costs to build and to run and, for solar and
+/// wind, the Sunfield or Wind Park it would join and what the joined
+/// installation makes (`World::plant_preview_site`: the figures the click
+/// charges, on an existing lot or the one made of unzoned ground);
+/// anything else its cost and upkeep. The ground note follows.
+pub fn site_verdict(w: &World, what: nd_sim::Placeable, site: &nd_sim::PlacementSite) -> (bool, String) {
+    if let Some(why) = w.site_problem(what, site) {
+        return (false, why);
+    }
+    let figures = match what {
+        nd_sim::Placeable::Plant(k) => match w.plant_preview_site(k, site) {
+            Some(p) => plant_figures(&p),
+            None => String::new(),
+        },
+        _ => format!("costs {}, {}/day", thousands(what.cost()), thousands(what.upkeep())),
+    };
+    (true, if figures.is_empty() { site.note() } else { format!("{figures}\n{}", site.note()) })
+}
+
+/// [plant-scale] A plant preview in a line or two: "130 MW, costs 21,600,
+/// 1,170/day" and "joins Saffron Sunfield: 3 lots, 124 MW together (+38 MW)".
+pub fn plant_figures(p: &nd_sim::PlantPreview) -> String {
+    let site = if p.site > 0.0 && (p.site - 1.0).abs() > 0.01 { p.site } else { 1.0 };
+    let mut s = format!("{} MW, costs {}, {}/day", mw(p.capacity_mw * site), thousands(p.cost), thousands(p.upkeep_per_day));
+    if site != 1.0 {
+        s.push_str(&format!(" (site {:.0}%)", site * 100.0));
+    }
+    if let Some(j) = &p.join {
+        let name = j.joins.clone().unwrap_or_default();
+        s.push_str(&format!("\njoins {name}: {} lots, {} MW together (+{} MW)", j.members.len() + 1, mw(j.capacity_mw), mw(j.capacity_mw - j.before_mw)));
+    }
+    s
+}
+
+/// Megawatts to a tenth below ten, whole above.
+fn mw(x: f32) -> String {
+    if x.abs() < 10.0 { format!("{x:.1}") } else { format!("{x:.0}") }
+}
+
+/// A whole number with thousands separators: 21,600.
+pub fn thousands(x: f32) -> String {
+    let n = x.round() as i64;
+    let digits = n.unsigned_abs().to_string();
+    let mut out = String::new();
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    if n < 0 { format!("-{out}") } else { out }
 }
 
 fn capitalised(s: &str) -> String {

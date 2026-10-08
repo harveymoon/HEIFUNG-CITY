@@ -197,6 +197,9 @@ pub struct ToolState {
     /// [free-placement] The last site worked out, kept while the pointer
     /// stays on its parcel: (item, parcel, parcels version, lots, site).
     pub build_site: Option<(nd_sim::Placeable, usize, u64, usize, Result<nd_sim::PlacementSite, String>)>,
+    /// [plant-scale] The verdict on that site (with a plant's figures),
+    /// kept while nothing it depends on changes: (key, ok, text).
+    pub build_verdict: Option<(u64, bool, String)>,
     /// Draw smooth roads through the clicked points.
     pub curved: bool,
     /// Road picked with the Edit tool for upgrading.
@@ -468,6 +471,7 @@ impl Default for ToolState {
             hover_city_building: None,
             build_here: None,
             build_site: None,
+            build_verdict: None,
             curved: false,
             selected_gesture: None,
             kind: RoadKind::Street,
@@ -634,6 +638,9 @@ pub enum Selection {
     Train(nd_sim::TrainId),
     /// [train-inspect] A metro train in its tunnel (`world.subway.trains`).
     Metro(nd_sim::MetroTrainId),
+    /// [road-inspect] A street piece (kept on its piece through rebuilds by
+    /// `road_select::keep_on_rebuild`).
+    Road(nd_sim::SegmentId),
 }
 
 pub struct ToolsPlugin;
@@ -644,7 +651,7 @@ impl Plugin for ToolsPlugin {
             .init_resource::<Selection>()
             .init_resource::<EffectivePlan>()
             .configure_sets(Update, (SimSet::Input, SimSet::Step, SimSet::Sync).chain())
-            .add_systems(Update, (tool_input, draw_gizmos).chain().in_set(SimSet::Input));
+            .add_systems(Update, (tool_input, crate::road_select::keep_on_rebuild, draw_gizmos).chain().in_set(SimSet::Input));
     }
 }
 
@@ -1051,6 +1058,14 @@ pub(crate) fn tool_input(
                     if tools.selected_gesture.is_some() {
                         tools.status = "Road selected: change lanes, direction or curve in the panel.".into();
                     }
+                    // [road-inspect] The piece clicked, for the road card
+                    // beside the upgrade panel (none for a road only planned).
+                    let piece = ground.filter(|_| tools.selected_gesture.is_some()).and_then(|p| crate::road_select::pick(&sim.world, p, tools.depth));
+                    match piece {
+                        Some(sid) => *selection = Selection::Road(sid),
+                        None if matches!(*selection, Selection::Road(_)) => *selection = Selection::None,
+                        None => {}
+                    }
                 }
             } else if shift_click {
                 if let (Some(p), Some((id, seg))) = (ground, ground.and_then(|p| nearest_gesture(plan, p))) {
@@ -1259,11 +1274,25 @@ pub(crate) fn tool_input(
                     if let Some((a, b, c, d)) = key {
                         tools.build_site = Some((a, b, c, d, site.clone()));
                     }
+                    // [plant-scale] With what it would be there: a plant's
+                    // MW, cost and upkeep, the park it would join.
                     Some(match site {
-                        Ok(site) => match w.site_problem(what, &site) {
-                            None => (true, site.note(), site.outline),
-                            Some(why) => (false, why, site.outline),
-                        },
+                        Ok(site) => {
+                            // Worked out again only when the site, the
+                            // buildings or the treasury move.
+                            let vkey = {
+                                use std::hash::{Hash, Hasher};
+                                let mut h = std::collections::hash_map::DefaultHasher::new();
+                                (format!("{what:?}"), key.map(|k| (k.1, k.2, k.3)), site.lot, site.parcels.clone(), w.buildings.len(), w.economy.treasury.round() as i64, w.clock.tick / 60).hash(&mut h);
+                                h.finish()
+                            };
+                            let (ok, text) = match &tools.build_verdict {
+                                Some((k, ok, text)) if *k == vkey => (*ok, text.clone()),
+                                _ => crate::render::site_verdict(w, what, &site),
+                            };
+                            tools.build_verdict = Some((vkey, ok, text.clone()));
+                            (ok, text, site.outline)
+                        }
                         Err(why) => (false, why, Vec::new()),
                     })
                 }
@@ -1414,6 +1443,10 @@ pub(crate) fn pick(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
         .min_by(|a, b| a.0.total_cmp(&b.0));
     if let Some((_, vid)) = parked {
         return Selection::Parked(vid);
+    }
+    // [road-inspect] The street piece under the pointer (not in a junction).
+    if let Some(sid) = crate::road_select::pick(w, p, depth) {
+        return Selection::Road(sid);
     }
     for (_, lot) in w.lots.iter() {
         if let Some(b) = lot.building {
@@ -1771,6 +1804,7 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
     match selection {
         Selection::None => {}
         Selection::Toll(id) => crate::toll_select::draw(gizmos, w, id),
+        Selection::Road(sid) => crate::road_select::draw(gizmos, w, sid),
         // [camera] drawn by `crate::marks`, with its route and its shop.
         Selection::Bot(_) => {}
         // [train-inspect] drawn by `crate::train_select::draw`.

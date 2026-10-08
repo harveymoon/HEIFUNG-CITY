@@ -280,6 +280,12 @@ pub struct Building {
     /// A power plant placed by the player.
     #[serde(default)]
     pub plant: Option<crate::power::PowerPlantKind>,
+    /// [plant-scale] A coal, nuclear or geothermal plant's size, as a share
+    /// of its kind's nameplate, fixed from its site when it was built.
+    /// `None` on plants from older saves (built at the fixed size: 1) and
+    /// on solar and wind, which follow their lot.
+    #[serde(default)]
+    pub plant_scale: Option<f32>,
     /// A grid battery pack placed by the player, with its charge.
     #[serde(default)]
     pub battery: Option<crate::power::Battery>,
@@ -362,6 +368,7 @@ impl Building {
             parking_used: 0,
             parking_price: 0.0,
             plant: None,
+            plant_scale: None,
             battery: None,
             powered: 1.0,
             unpowered_hours_today: 0,

@@ -118,7 +118,8 @@ pub fn geothermal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
     }
     // Well heads with pipes to the plant.
-    let wells = 3 + rng.random_range(0..3);
+    // [plant-scale] More wells on a bigger plant.
+    let wells = (((3 + rng.random_range(0..3)) as f32 * c.plant_scale).round() as i32).clamp(2, 10);
     for k in 0..wells {
         let p = Vec2::new(lo.x + w * (0.15 + 0.7 * k as f32 / wells as f32), lo.y + d * (0.25 + 0.12 * (k % 2) as f32));
         if !c.inside_local(p) || distance_to_boundary(p, &c.lot_poly) < 2.0 {

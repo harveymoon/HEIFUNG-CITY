@@ -12,6 +12,8 @@ mod marks;
 mod metro_ux;
 /// [toll-inspect] Picking and outlining toll booths.
 mod toll_select;
+/// [road-inspect] Picking and outlining street pieces, and the road card's figures.
+mod road_select;
 mod remote;
 mod render;
 mod sim;
