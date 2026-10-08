@@ -344,6 +344,62 @@ impl World {
         Ok(n)
     }
 
+    /// [footbridge] The height (absolute, as `road_height`) of the raised
+    /// way a walker or rider at `pos` is going along: an elevated path or
+    /// street, a viaduct, a bridge over the water, a cutting. None at grade
+    /// (and in a flat city), where they stand on the ground as before.
+    ///
+    /// Harvey's flag: people on an elevated path were drawn on the ground
+    /// (on the water) beside it. They were lifted onto whatever surface was
+    /// nearest their last height, so whoever came onto the path where it
+    /// was already up, or stepped half a metre off its narrow deck,
+    /// stayed down. Now the leg they walk names the way: a raised way
+    /// running along the leg, with them on its corridor.
+    pub fn walker_way_height(&self, c: &Citizen, pos: Vec2) -> Option<f32> {
+        let Activity::Traveling { path, idx, .. } = &c.activity else { return None };
+        let to = *path.get(*idx)?;
+        let from = if *idx > 0 { path[*idx - 1] } else { pos };
+        self.way_height_on_leg(from, to, pos)
+    }
+
+    /// [footbridge] `walker_way_height` for someone at `pos` on the leg
+    /// from `from` to `to`.
+    pub fn way_height_on_leg(&self, from: Vec2, to: Vec2, pos: Vec2) -> Option<f32> {
+        if !self.relief {
+            return None;
+        }
+        let leg = to - from;
+        let len = leg.length();
+        let dir = (len > 0.5).then(|| leg / len);
+        let mut best: Option<(f32, f32)> = None;
+        for sid in self.roads.segments_near(pos, 12.0) {
+            let s = self.roads.segment(sid);
+            if s.is_rail() || s.tunnel {
+                continue;
+            }
+            let (na, nb) = (self.roads.node(s.a), self.roads.node(s.b));
+            if !(s.bridge || s.viaduct || na.level.abs() > 0.3 || nb.level.abs() > 0.3) {
+                continue;
+            }
+            let (a, b) = self.roads.segment_points(sid);
+            let along = (b - a).normalize_or_zero();
+            // Along the way, not across it (a street under a viaduct).
+            if dir.is_some_and(|d| d.dot(along).abs() < 0.7) {
+                continue;
+            }
+            let reach = s.half_width() + if s.is_street() { crate::zoning::SIDEWALK } else { 0.0 } + 1.5;
+            let (t, q) = crate::geom::project_on_segment(pos, a, b);
+            let d = q.distance(pos);
+            if d > reach {
+                continue;
+            }
+            if best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, self.road_height(sid, t)));
+            }
+        }
+        best.map(|(_, z)| z)
+    }
+
     /// How high a walker stands above the ground: up the stairs and on the
     /// deck of a raised walkway, 0 elsewhere.
     pub fn walker_level(&self, c: &Citizen, pos: Vec2) -> f32 {

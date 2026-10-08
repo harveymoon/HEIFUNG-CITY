@@ -239,7 +239,7 @@ impl World {
     /// to `b` (m, - left, + right): on a pavement, from the building line
     /// to the kerb; on a crossing, the zebra's depth; anywhere else (lot
     /// paths, parks, plazas) a good width.
-    fn walk_room(&self, a: Vec2, b: Vec2) -> (f32, f32) {
+    pub(super) fn walk_room(&self, a: Vec2, b: Vec2) -> (f32, f32) {
         let open = (-OPEN_ROOM, OPEN_ROOM);
         let len = a.distance(b);
         if len < 0.5 {
@@ -251,6 +251,26 @@ impl World {
         let dir = (b - a) / len;
         let right = Vec2::new(-dir.y, dir.x);
         let mid = (a + b) * 0.5;
+        // [footbridge] Up a footbridge's stairs or on its deck: within its
+        // width, not out over the street beside it.
+        if self.walk.level_at_node(a) != 0.0 || self.walk.level_at_node(b) != 0.0 {
+            let half = crate::junctions::FOOTBRIDGE_WIDTH * 0.5 - 0.3;
+            return (-half, half);
+        }
+        // [footbridge] Along a raised path (on a viaduct, a bridge): on its
+        // deck, not in the air (or on the water) beside it.
+        for sid in self.roads.segments_near(mid, crate::roads::PATH_HALF_WIDTH) {
+            let s = self.roads.segment(sid);
+            if s.kind != crate::roads::RoadKind::Path || !(s.bridge || s.viaduct) {
+                continue;
+            }
+            let (pa, pb) = self.roads.segment_points(sid);
+            let q = crate::geom::project_on_segment(mid, pa, pb).1;
+            if q.distance(mid) < crate::roads::PATH_HALF_WIDTH && (pb - pa).normalize_or_zero().dot(dir).abs() > 0.7 {
+                let half = crate::roads::PATH_HALF_WIDTH - 0.4;
+                return (-half, half);
+            }
+        }
         let Some((sid, _, q)) = self.roads.nearest_street(mid) else { return open };
         let hw = self.roads.segment(sid).half_width();
         let to = q - mid;

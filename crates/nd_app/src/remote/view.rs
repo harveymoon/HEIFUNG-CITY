@@ -354,6 +354,9 @@ pub fn citizen_detail(w: &World, id: CitizenId, c: &Citizen, favourite: bool) ->
     // [tools] On a raised walkway (a footbridge), how high (outside the
     // literal above: it is at the json! macro's recursion limit).
     v["raised_level"] = json!(round(w.walker_level(c, c.pos)));
+    // [footbridge] On an elevated path, viaduct or bridge: the deck's height
+    // they are drawn at (null at grade).
+    v["way_height"] = json!(w.walker_way_height(c, c.pos).map(round));
     v["appearance"] = appearance(c);
     // [clarity] What they are doing in words, and their pose outdoors.
     v["doing"] = json!(w.activity_line(id));

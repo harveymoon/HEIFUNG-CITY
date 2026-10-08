@@ -1903,7 +1903,7 @@ fn sync_citizens(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
-    mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d, Option<&swap::SwapOriginal>), With<CitizenTag>>,
+    mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d, Option<&swap::SwapOriginal>, Option<&mut WayHeight>), With<CitizenTag>>,
 ) {
     let w = &sim.world;
     let f = sim.frac();
@@ -1915,7 +1915,7 @@ fn sync_citizens(
     for (id, _) in w.citizens.iter() {
         if !state.citizens.contains_key(&id) {
             let e = commands
-                .spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(look_mat.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CitizenTag))
+                .spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(look_mat.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CitizenTag, WayHeight::default()))
                 .id();
             state.citizens.insert(id, e);
         }
@@ -1950,7 +1950,7 @@ fn sync_citizens(
     let down = w.down_on_street();
     for &(id, e, key, stature, _) in &outdoors {
         let Some(c) = w.citizens.get(id) else { continue };
-        let Ok((mut tf, mut vis, _, mut mesh, _)) = q.get_mut(e) else { continue };
+        let Ok((mut tf, mut vis, _, mut mesh, _, way)) = q.get_mut(e) else { continue };
         *vis = Visibility::Visible;
         let pos = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
         let heading = lerp_angle(c.prev_heading, c.heading, f);
@@ -1963,6 +1963,10 @@ fn sync_citizens(
         let pos = if lying && down.contains(&id) { pos + SVec2::new(-c.heading.sin(), c.heading.cos()) * 2.6 } else { pos };
         // [tools] Up the stairs and over a footbridge (a raised walkway).
         let raised = w.walker_level(c, pos);
+        // [footbridge] On an elevated path, a viaduct or a bridge: on its deck.
+        if let Some(mut way) = way {
+            way.0 = w.walker_way_height(c, pos);
+        }
         tf.translation = Vec3::new(pos.x, if lying { 0.12 } else if seated { 0.02 } else { 0.16 } + raised, pos.y);
         tf.rotation = Quat::from_rotation_y(-heading);
         if lying {
@@ -1987,7 +1991,7 @@ fn sync_citizens(
     }
     for (id, &e) in state.citizens.iter() {
         let Some(c) = w.citizens.get(*id) else { continue };
-        let Ok((_, mut vis, mut mat, mut mesh, heat_original)) = q.get_mut(e) else { continue };
+        let Ok((_, mut vis, mut mat, mut mesh, heat_original, _)) = q.get_mut(e) else { continue };
         if !c.is_visible() {
             *vis = Visibility::Hidden;
             // Indoors: let go of the figure so the cache can drop it.
@@ -2948,6 +2952,13 @@ struct Lifted {
     lift: f32,
 }
 
+/// [footbridge] The height of the raised way (elevated path, viaduct,
+/// bridge) a walker or rider is going along this frame, if any
+/// (`World::walker_way_height`): `lift_movers` puts them on it rather than
+/// on whatever surface is nearest their last height.
+#[derive(Component, Default)]
+pub struct WayHeight(pub Option<f32>);
+
 #[derive(Component)]
 struct WaterTag;
 #[derive(Component, Clone)]
@@ -3126,12 +3137,12 @@ fn lift_spawned(
 
 /// Raise movers onto the ground after their poses are written.
 #[allow(clippy::type_complexity)]
-fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>), (Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>, Without<SelfLifted>)>) {
+fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>, Option<&WayHeight>), (Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>, Without<SelfLifted>)>) {
     let w = &sim.world;
     if !w.relief {
         return;
     }
-    for (e, mut tf, lifted) in &mut q {
+    for (e, mut tf, lifted, way) in &mut q {
         let base = match &lifted {
             // Not rewritten since the last lift: take the old lift off.
             Some(l) if tf.translation.y == l.after => tf.translation.y - l.lift,
@@ -3139,9 +3150,11 @@ fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut
         };
         // Keep to the level it was on: under a viaduct or on it.
         let at = SVec2::new(tf.translation.x, tf.translation.z);
-        let lift = match &lifted {
-            Some(l) => w.surface_height_near(at, l.lift),
-            None => w.surface_height_near(at, w.ground_height(at)),
+        let lift = match (way.and_then(|h| h.0), &lifted) {
+            // [footbridge] On a raised way: its deck, whatever was nearest.
+            (Some(h), _) => h,
+            (None, Some(l)) => w.surface_height_near(at, l.lift),
+            (None, None) => w.surface_height_near(at, w.ground_height(at)),
         };
         tf.translation.y = base + lift;
         let after = tf.translation.y;
