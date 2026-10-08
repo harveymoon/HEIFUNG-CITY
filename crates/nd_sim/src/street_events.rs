@@ -60,6 +60,99 @@ pub const RACE_FINE: f32 = 250.0;
 /// Spectators at most.
 pub const RACE_CROWD: usize = 18;
 
+// ── moto packs ────────────────────────────────────────────────────────────
+
+/// [moto] Chance an evening has a moto pack ride when the city has a crew,
+/// the minute it is rolled and the window it starts in after that.
+pub const MOTO_NIGHT_CHANCE: f32 = 0.25;
+pub const MOTO_ROLL_MINUTE: u32 = 20 * 60;
+pub const MOTO_START_WINDOW: (u64, u64) = (20, 150);
+/// Local gang members on bikes in a pack, at most, and riders from out of
+/// town (a range).
+pub const MOTO_LOCALS: usize = 4;
+pub const MOTO_OUTSIDERS: (u32, u32) = (3, 7);
+/// Ticks the outsiders wait off the map for the locals to reach the meet.
+pub const MOTO_GATHER: u64 = 45;
+/// The longest a ride lasts before the stragglers are sent off.
+pub const MOTO_MAX: u64 = 90;
+/// A police car this close to a local rider may give chase (m), and the
+/// chance it does (once per pack).
+pub const MOTO_CHASE_REACH: f32 = 150.0;
+pub const MOTO_CHASE_CHANCE: f32 = 0.6;
+/// A rider further than this ahead of (or behind) the pack eases off (or
+/// opens up) to keep the column loose but together (m).
+pub const MOTO_SPREAD: f32 = 60.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MotoStage {
+    /// Locals riding to the meet at the road end; outsiders off the map.
+    Gathering,
+    /// Outsiders rolling in; locals pull out as they come by.
+    Rolling,
+    /// The pack is on the streets.
+    Riding,
+}
+
+/// One rider: their bike on the road, the local riding it (none for an
+/// outsider), and whether they have peeled off home.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct Rider {
+    pub car: CarId,
+    pub citizen: Option<CitizenId>,
+    /// Joined the ride (a local that reached the meet, or an outsider).
+    #[serde(default)]
+    pub riding: bool,
+    /// The connector whose red it last ran (counted once).
+    #[serde(default)]
+    pub last_run: Option<LaneId>,
+    /// The lane it was on last tick (for counting lane changes).
+    #[serde(default)]
+    pub lane: Option<LaneId>,
+}
+
+/// [moto] A pack of motorbikes riding through town: local gang members
+/// (the takeover crew on two wheels) and a club from out of town.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MotoPack {
+    pub id: u32,
+    pub stage: MotoStage,
+    /// The road end they meet at and come in by, the lane and the place
+    /// on it the locals wait at.
+    pub entry: crate::roads::NodeId,
+    pub meet_lane: LaneId,
+    pub meet_s: f32,
+    pub meet: Vec2,
+    /// The way through town: the meet to `via` (a nightlife street, else
+    /// the middle of town), then off the map at `exit`.
+    pub via: Vec2,
+    pub via_name: String,
+    pub exit: (LaneId, f32),
+    pub place: String,
+    pub started: u64,
+    pub set_off: Option<u64>,
+    pub riders: Vec<Rider>,
+    pub to_spawn: u32,
+    pub outsiders: u32,
+    /// Locals who set out for the meet.
+    #[serde(default)]
+    pub locals: u32,
+    /// The 911 call about them and the chase it became.
+    pub incident: Option<u32>,
+    pub chase: Option<u32>,
+    #[serde(default)]
+    pub chase_tried: bool,
+    /// Reds run and lane changes through traffic, for the record.
+    pub red_runs: u32,
+    pub lane_changes: u32,
+}
+
+impl MotoPack {
+    /// Riders still with the pack.
+    pub fn riding(&self) -> usize {
+        self.riders.iter().filter(|r| r.riding).count()
+    }
+}
+
 // ── raves ─────────────────────────────────────────────────────────────────
 
 /// When tonight's rave is rolled, when doors open, and when it would end
@@ -316,6 +409,8 @@ pub struct RaveSpot {
 pub enum EventKind {
     Race,
     Rave,
+    /// [moto] A motorbike gang riding through town as a pack.
+    MotoPack,
 }
 
 impl EventKind {
@@ -323,6 +418,7 @@ impl EventKind {
         match self {
             EventKind::Race => "street race",
             EventKind::Rave => "warehouse rave",
+            EventKind::MotoPack => "moto pack",
         }
     }
 }
@@ -391,6 +487,12 @@ pub struct StreetEvents {
     pub raves_total: u32,
     pub busts_total: u32,
     pub fines_total: f32,
+    /// [moto] The pack riding now, tonight's plan and the day it was rolled.
+    pub moto: Option<MotoPack>,
+    pub moto_planned: Option<u64>,
+    pub moto_rolled_day: u64,
+    pub packs_total: u32,
+    pub pack_chases_total: u32,
 }
 
 impl StreetEvents {
@@ -417,6 +519,11 @@ impl StreetEvents {
 
     pub fn last_rave_day(&self, b: BuildingId) -> Option<u64> {
         self.rave_days.iter().find(|x| x.0 == b).map(|x| x.1)
+    }
+
+    /// [moto] The pack `car` rides in, if any.
+    pub fn pack_of_car(&self, car: CarId) -> Option<&MotoPack> {
+        self.moto.as_ref().filter(|p| p.riders.iter().any(|r| r.car == car))
     }
 
     /// The race `car` is in, if any.

@@ -11,38 +11,87 @@ use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use rand::Rng;
 
-/// Turbine hall at the back by the water, penstock pipes, switchyard in front.
+/// [freight] Width of one turbine bay along a hydro hall or tidal house,
+/// metres: a bigger station is more bays side by side, never a stretched
+/// hall (`PowerPlantKind::turbine_bays`).
+pub const HYDRO_BAY: f32 = 8.0;
+pub const TIDAL_BAY: f32 = 7.0;
+
+/// [freight] Gap between two rows of bays, metres.
+pub const ROW_GAP: f32 = 3.0;
+
+/// [freight] A station's turbine bays in rows, from the water's edge
+/// inward: as many per row as fit across 75% of a lot `w` wide, and a
+/// second row in front when they do not all fit and the lot is `d` deep
+/// enough for two halls `depth` deep; else one row across up to 92% of the
+/// lot (a station too big for a narrow, shallow lot shows the bays that fit).
+pub fn bay_rows(scale: f32, w: f32, d: f32, bay: f32, depth: f32) -> Vec<u32> {
+    let total = nd_sim::PowerPlantKind::turbine_bays(scale);
+    let max_rows = if d * 0.8 >= 2.0 * depth + ROW_GAP { 2 } else { 1 };
+    let share = if max_rows == 1 { 0.92 } else { 0.75 };
+    let per = ((w * share) / bay).floor().max(1.0) as u32;
+    let rows = total.div_ceil(per).min(max_rows).max(1);
+    let shown = total.min(per * rows);
+    (0..rows).map(|r| shown / rows + u32::from(r < shown % rows)).collect()
+}
+
+/// Turbine hall at the back by the water, one bay per turbine with a
+/// penstock into each, switchyard in front.
 pub fn hydro(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
     let yard = yard(g, c, 0.5, Concrete, mul(pal.concrete(0), 0.8));
     let (lo, hi) = bounds(&c.poly);
     let (w, d) = (hi.x - lo.x, hi.y - lo.y);
-    let hall = fit_inside(c, &rect((lo.x + hi.x) * 0.5, hi.y - d * 0.22, w * 0.4, d * 0.18));
+    // [freight] Bays of a set width, as many as the station's size: the
+    // hall grows in length (and a second hall stands in front on a narrow
+    // lot), its depth and height stay a turbine hall's.
+    let hd = (d * 0.18).clamp(3.0, 7.0);
+    let rows = bay_rows(c.plant_scale, w, d, HYDRO_BAY, 2.0 * hd);
     let h = 12.0;
     let wall = mul(pal.concrete(1), 0.85);
-    extrude(g, f, Concrete, &hall, 0.0, h, wall);
-    cornice(g, c, &hall, h - 0.4, 0.8, 0.3, Concrete, mul(wall, 0.85));
-    for face in c.faces(&hall) {
-        if face.len > 6.0 {
-            band_windows(g, c, rng, &face, 3.0, 2, 3.6);
-            grime(g, c, rng, &face, 0.0, h, 2.0);
+    for (r, &bays) in rows.iter().enumerate() {
+        let cv = hi.y - hd - (d * 0.04).max(0.8) - r as f32 * (2.0 * hd + ROW_GAP);
+        let hall = fit_inside(c, &rect((lo.x + hi.x) * 0.5, cv, bays as f32 * HYDRO_BAY * 0.5, hd));
+        extrude(g, f, Concrete, &hall, 0.0, h, wall);
+        cornice(g, c, &hall, h - 0.4, 0.8, 0.3, Concrete, mul(wall, 0.85));
+        for face in c.faces(&hall) {
+            if face.len > 6.0 {
+                band_windows(g, c, rng, &face, 3.0, 2, 3.6);
+                grime(g, c, rng, &face, 0.0, h, 2.0);
+            }
+        }
+        let hc = poly_center(&hall);
+        let (hlo, hhi) = bounds(&hall);
+        let bay_w = (hhi.x - hlo.x) / bays as f32;
+        for k in 0..bays {
+            let u = hlo.x + (k as f32 + 0.5) * bay_w;
+            // A generator housing on the roof over each turbine.
+            f.bx(g, Metal, u, h + 0.9, hc.y, Vec3::new((bay_w * 0.45).min(3.6), 1.8, (hhi.y - hlo.y) * 0.4), mul(pal.metal_paint(1), 0.85));
+            // A pilaster between bays on the long faces.
+            if k > 0 {
+                let x = hlo.x + k as f32 * bay_w;
+                for v in [hlo.y - 0.25, hhi.y + 0.25] {
+                    f.bx(g, Concrete, x, h * 0.5, v, Vec3::new(0.7, h, 0.5), mul(wall, 0.9));
+                }
+            }
+            // Its penstock: a big pipe from the back edge into the hall
+            // (beside the bay in the back row's for the front row).
+            let u = if r == 0 { u } else { u + bay_w * 0.3 };
+            let back = Vec2::new(u, hi.y - 0.8);
+            if !c.inside_local(back) || distance_to_boundary(back, &c.lot_poly) < 1.3 {
+                continue;
+            }
+            let a = f.at(u, 1.6, hi.y - 0.8);
+            let b = f.at(u, 1.6, hc.y);
+            g.part(Metal).tube(a, b, 1.1, 10, rgba(mul(pal.steel, 0.7)));
+        }
+        // Gantry crane over the hall roof for the turbines.
+        f.bx(g, Metal, hc.x, h + 2.4, hc.y, Vec3::new(hhi.x - hlo.x, 0.6, 0.6), mul(pal.metal_paint(2), 0.9));
+        for x in [hlo.x + 0.3, hhi.x - 0.3] {
+            f.bx(g, Metal, x, h + 1.2, hc.y, Vec3::new(0.4, 2.4, 0.4), mul(pal.metal_paint(2), 0.8));
         }
     }
-    // Penstocks: three big pipes from the back edge into the hall.
-    let hc = poly_center(&hall);
-    for k in 0..3 {
-        let u = hc.x + (k as f32 - 1.0) * w * 0.14;
-        let back = Vec2::new(u, hi.y - 0.8);
-        if !c.inside_local(back) || distance_to_boundary(back, &c.lot_poly) < 1.3 {
-            continue;
-        }
-        let a = f.at(u, 1.6, hi.y - 0.8);
-        let b = f.at(u, 1.6, hc.y);
-        g.part(Metal).tube(a, b, 1.1, 10, rgba(mul(pal.steel, 0.7)));
-    }
-    // Gantry crane over the hall roof for the turbines.
-    f.bx(g, Metal, hc.x, h + 2.0, hc.y, Vec3::new(w * 0.5, 0.6, 0.6), mul(pal.metal_paint(2), 0.9));
     // Switchyard in front: transformers and a lattice of bus bars.
     let sy = Vec2::new(lo.x + w * 0.25, lo.y + d * 0.28);
     let pen = rect(sy.x, sy.y, (w * 0.18).min(9.0), (d * 0.14).min(6.0));
@@ -68,23 +117,30 @@ pub fn tidal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let yard = yard(g, c, 0.5, Concrete, mul(pal.concrete(2), 0.75));
     let (lo, hi) = bounds(&c.poly);
     let (w, d) = (hi.x - lo.x, hi.y - lo.y);
-    let house = fit_inside(c, &rect((lo.x + hi.x) * 0.5, hi.y - d * 0.2, w * 0.45, d * 0.15));
+    // [freight] One module per turbine: a longer house, not a stretched
+    // one (a second house in front on a narrow lot).
+    let hd = (d * 0.15).clamp(2.5, 5.0);
+    let rows = bay_rows(c.plant_scale, w, d, TIDAL_BAY, 2.0 * hd);
     let h = 8.0;
     let wall = mul(pick(rng, &pal.panel), 0.8);
-    extrude(g, f, Panel, &house, 0.0, h, wall);
-    for face in c.faces(&house) {
-        if face.len > 6.0 {
-            band_windows(g, c, rng, &face, 2.5, 1, 3.5);
+    for (r, &bays) in rows.iter().enumerate() {
+        let cv = hi.y - hd - (d * 0.05).max(0.8) - r as f32 * (2.0 * hd + ROW_GAP);
+        let house = fit_inside(c, &rect((lo.x + hi.x) * 0.5, cv, bays as f32 * TIDAL_BAY * 0.5, hd));
+        extrude(g, f, Panel, &house, 0.0, h, wall);
+        for face in c.faces(&house) {
+            if face.len > 6.0 {
+                band_windows(g, c, rng, &face, 2.5, 1, 3.5);
+            }
         }
-    }
-    // Sluice gates along the back: tall frames with a lifting gear each.
-    let (hlo, hhi) = bounds(&house);
-    let gates = ((hhi.x - hlo.x) / 7.0).floor().max(1.0) as i32;
-    for k in 0..gates {
-        let u = hlo.x + (k as f32 + 0.5) * (hhi.x - hlo.x) / gates as f32;
-        let v = hhi.y.min(hi.y - 0.6);
-        f.bx(g, Metal, u, h + 2.0, v, Vec3::new(4.5, 4.0, 0.6), mul(pal.steel, 0.65));
-        f.bx(g, Metal, u, h + 4.4, v, Vec3::new(1.4, 0.8, 1.2), mul(pal.metal_paint(3), 0.9));
+        // Sluice gates along the back, one per turbine: tall frames with a
+        // lifting gear each.
+        let (hlo, hhi) = bounds(&house);
+        for k in 0..bays {
+            let u = hlo.x + (k as f32 + 0.5) * (hhi.x - hlo.x) / bays as f32;
+            let v = hhi.y.min(hi.y - 0.6);
+            f.bx(g, Metal, u, h + 2.0, v, Vec3::new((TIDAL_BAY * 0.64).min((hhi.x - hlo.x) / bays as f32 - 0.6), 4.0, 0.6), mul(pal.steel, 0.65));
+            f.bx(g, Metal, u, h + 4.4, v, Vec3::new(1.4, 0.8, 1.2), mul(pal.metal_paint(3), 0.9));
+        }
     }
     // Cable drum and a transformer out front.
     let p = Vec2::new(lo.x + w * 0.3, lo.y + d * 0.3);
@@ -269,4 +325,68 @@ pub fn ferry_terminal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         vehicle(g, f, pal, rng, taxi, 0.0, 0.0, Vehicle::Car, [0.9, 0.75, 0.1]);
     }
     sign_board(g, c, rng, &front, -front.len * 0.25, 3.0, (front.len * 0.3).min(9.0), 0.9);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::surface::Surface;
+
+    /// A street along y = 0 and a lot `w` wide and `d` deep fronting it.
+    fn lot(w: f32, d: f32) -> nd_sim::Lot {
+        let mut roads = nd_sim::RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+        let poly = vec![Vec2::new(-w * 0.5, 6.0), Vec2::new(w * 0.5, 6.0), Vec2::new(w * 0.5, 6.0 + d), Vec2::new(-w * 0.5, 6.0 + d)];
+        nd_sim::zoning::make_lot(nd_sim::zoning::ZoneId::default(), nd_sim::LandUse::Industrial, poly, Vec2::new(0.0, 6.0 + d * 0.5), &roads).expect("a lot")
+    }
+
+    fn mesh(kind: nd_sim::PowerPlantKind, lot: &nd_sim::Lot, scale: f32) -> Geometry {
+        let extras = super::super::Extras { plant: Some(kind), plant_scale: scale, ..Default::default() };
+        super::super::generate_building(lot, nd_sim::LandUse::Industrial, 1, nd_sim::Tier::Mid, 1.0, 11, &super::super::BuildingRules::default(), &crate::palette::Palette::default(), &extras)
+    }
+
+    /// Length along the street and top of what `s` draws above `y0`.
+    fn extent(g: &Geometry, s: Surface, y0: f32) -> (f32, f32) {
+        let pts: Vec<[f32; 3]> = g.iter().filter(|(k, _)| *k == s).flat_map(|(_, m)| m.positions.iter().copied()).filter(|p| p[1] > y0).collect();
+        let lo = pts.iter().map(|p| p[0]).fold(f32::MAX, f32::min);
+        let hi = pts.iter().map(|p| p[0]).fold(f32::MIN, f32::max);
+        (hi - lo, pts.iter().map(|p| p[1]).fold(0.0, f32::max))
+    }
+
+    /// [freight] On the same lot a bigger station is a longer hall of the
+    /// same bays, the same height: composed, not stretched.
+    #[test]
+    fn hydro_and_tidal_stations_grow_by_bays_not_by_stretching() {
+        let site = lot(120.0, 40.0);
+        for (kind, surface, y0, bay) in [(nd_sim::PowerPlantKind::Hydro, Surface::Concrete, 11.0, HYDRO_BAY), (nd_sim::PowerPlantKind::Tidal, Surface::Panel, 7.0, TIDAL_BAY)] {
+            let (lo, hi) = kind.size_range();
+            let mut last = 0.0;
+            let mut top = None;
+            for scale in [lo, 1.0, hi] {
+                let g = mesh(kind, &site, scale);
+                assert_eq!(g.triangle_count(), mesh(kind, &site, scale).triangle_count(), "deterministic");
+                let (len, h) = extent(&g, surface, y0);
+                // Every bay fits across this lot in one row: the hall is
+                // exactly its bays long.
+                assert_eq!(bay_rows(scale, 114.0, 40.0, bay, 8.0).len(), 1);
+                let bays = nd_sim::PowerPlantKind::turbine_bays(scale) as f32;
+                assert!((len - bays * bay).abs() < 2.5, "{kind:?} at {scale}: hall {len} m for {bays} bays");
+                assert!(len > last, "{kind:?}: longer with more bays");
+                last = len;
+                let t = *top.get_or_insert(h);
+                assert!((h - t).abs() < 0.5, "{kind:?}: the same height ({h} and {t})");
+            }
+        }
+        // A narrow lot: the bays in two rows, as many as fit across it.
+        let hi = nd_sim::PowerPlantKind::Hydro.size_range().1;
+        assert_eq!(bay_rows(1.0, 80.0, 40.0, HYDRO_BAY, 12.0), vec![3]);
+        assert_eq!(bay_rows(1.0, 24.0, 60.0, HYDRO_BAY, 12.0), vec![2, 1], "three bays, two to a row");
+        assert_eq!(bay_rows(hi, 24.0, 60.0, HYDRO_BAY, 12.0), vec![2, 2], "only what fits");
+        assert_eq!(bay_rows(1.0, 24.0, 20.0, HYDRO_BAY, 12.0), vec![2], "too shallow for a second row");
+        assert_eq!(bay_rows(1.0, 27.0, 20.0, HYDRO_BAY, 12.0), vec![3], "one row across more of the lot instead");
+        // A bigger station on a narrow, deep lot draws more halls.
+        let narrow = lot(26.0, 70.0);
+        let (one, two) = (mesh(nd_sim::PowerPlantKind::Hydro, &narrow, 0.45), mesh(nd_sim::PowerPlantKind::Hydro, &narrow, 1.0));
+        assert!(two.triangle_count() > one.triangle_count());
+    }
 }

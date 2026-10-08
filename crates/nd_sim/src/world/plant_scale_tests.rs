@@ -72,7 +72,7 @@ fn sites_on_unzoned_ground_join_only_what_the_building_needs() {
 
 #[test]
 fn thermal_plants_are_sized_to_their_site_within_a_cap() {
-    for kind in [PowerPlantKind::Coal, PowerPlantKind::Nuclear, PowerPlantKind::Geothermal] {
+    for kind in [PowerPlantKind::Coal, PowerPlantKind::Nuclear, PowerPlantKind::Geothermal, PowerPlantKind::Hydro, PowerPlantKind::Tidal] {
         let (lo, hi) = kind.size_range();
         assert!(lo < 1.0 && hi > 1.5, "{kind:?}: {lo} {hi}");
         assert_eq!(kind.size_scale(kind.min_area()), lo);
@@ -80,8 +80,14 @@ fn thermal_plants_are_sized_to_their_site_within_a_cap() {
         assert!(kind.size_scale(kind.reference_area().unwrap()) == 1.0);
         assert!(kind.jobs_at(hi) > kind.jobs() && kind.jobs_at(lo) < kind.jobs());
     }
-    // Hydro and tidal stay fixed.
-    assert_eq!(PowerPlantKind::Hydro.size_range(), (1.0, 1.0));
+    // [freight] Hydro and tidal grow by whole turbine bays: three at the
+    // nameplate, from one on the smallest site to eight on the largest.
+    for kind in [PowerPlantKind::Hydro, PowerPlantKind::Tidal] {
+        let (lo, hi) = kind.size_range();
+        assert_eq!(PowerPlantKind::turbine_bays(1.0), 3);
+        assert_eq!(PowerPlantKind::turbine_bays(lo), 1, "{kind:?}");
+        assert_eq!(PowerPlantKind::turbine_bays(hi), 8, "{kind:?}");
+    }
     // A bigger industrial lot, a bigger coal plant, at the same price per MW.
     let w = town();
     let mut lots: Vec<(LotId, f32)> = w.lots.iter().filter(|(_, l)| l.usable() && l.area() >= PowerPlantKind::Coal.min_area()).map(|(id, l)| (id, l.area())).collect();
@@ -200,4 +206,44 @@ fn a_coal_plant_is_not_put_on_a_strip_along_the_kerb() {
             assert!(crate::zoning::site_thickness(&site.outline) >= PowerPlantKind::Coal.min_thickness(), "a coal site at {p} is a strip");
         }
     }
+}
+
+/// [freight] A river along the back of the industrial lots, fast enough
+/// for hydro.
+fn river_town() -> World {
+    let mut w = town();
+    let back = w.lots.values().filter(|l| l.usable()).flat_map(|l| l.polygon.iter().map(|p| p.y)).fold(0.0f32, f32::min);
+    w.landscape.rivers.push(crate::landscape::River { points: vec![Vec2::new(-700.0, back - 15.0), Vec2::new(700.0, back - 15.0)], width: 20.0, current: 2.0, stream: false });
+    w
+}
+
+#[test]
+fn hydro_plants_are_sized_to_their_site_and_old_ones_keep_their_output() {
+    let kind = PowerPlantKind::Hydro;
+    let w = river_town();
+    let mut lots: Vec<(LotId, f32)> = w.lots.iter().filter(|(id, l)| l.usable() && l.area() >= kind.min_area() && w.plant_preview(kind, *id).is_some_and(|p| p.problem.is_none())).map(|(id, l)| (id, l.area())).collect();
+    lots.sort_by(|a, b| a.1.total_cmp(&b.1));
+    assert!(lots.len() >= 2, "lots on the river: {}", lots.len());
+    let (small, big) = (lots[0], *lots.last().unwrap());
+    assert!(big.1 > small.1 * 1.1, "lots differ: {} {}", small.1, big.1);
+    let (ps, pb) = (w.plant_preview(kind, small.0).unwrap(), w.plant_preview(kind, big.0).unwrap());
+    assert!(ps.problem.is_none() && pb.problem.is_none(), "{:?} {:?}", ps.problem, pb.problem);
+    assert!(pb.capacity_mw > ps.capacity_mw && pb.cost > ps.cost, "{ps:?} {pb:?}");
+    assert!((ps.site - 1.25).abs() < 0.01, "the current still counts: {}", ps.site);
+    let mut w = w;
+    let a = w.build_power(small.0, kind).unwrap();
+    let b = w.build_power(big.0, kind).unwrap();
+    assert_eq!(w.buildings[a].plant_scale, Some(ps.scale), "the size is kept on the plant");
+    assert!((w.plant_capacity_mw(&w.buildings[b]) - pb.capacity_mw).abs() < 0.01);
+    assert!((w.plant_output_mw(&w.buildings[b]) - pb.capacity_mw * 1.25).abs() < 0.05, "output is the nameplate times the current");
+    // Saved before hydro had a size: the plant keeps its 70 MW.
+    let mut old = w.clone();
+    old.buildings[b].plant_scale = None;
+    let text = old.to_ron().unwrap().replace("plant_scale:None,", "").replace("plant_scale: None,", "");
+    let loaded = World::from_ron(&text).unwrap();
+    assert_eq!(loaded.plant_capacity_mw(&loaded.buildings[b]), kind.capacity_mw());
+    assert_eq!(loaded.plant_upkeep(&loaded.buildings[b]), kind.upkeep_per_day());
+    // A new one keeps the size it was built at.
+    let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+    assert_eq!(back.buildings[a].plant_scale, Some(ps.scale));
 }

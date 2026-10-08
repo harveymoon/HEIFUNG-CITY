@@ -131,6 +131,15 @@ pub fn diurnal(hour: f32) -> f32 {
     -(phase * TAU).cos()
 }
 
+/// [dirty-industry] The way the wind blows (unit vector in the sim plane,
+/// the direction the air moves): a prevailing direction that veers slowly
+/// over the days. Smoke, smog and soot drift along it (`render/haze.rs`),
+/// and so does contamination on the ground (`Contamination::drift`).
+pub fn wind_dir(tick: u64) -> Vec2 {
+    let a = 0.55 + 0.9 * ((tick as f32 / 1440.0) * 0.7).sin();
+    Vec2::new(a.cos(), a.sin())
+}
+
 /// Sky, wind and temperature, stepped once a sim hour. Cloud dims solar;
 /// wind drives the turbines; heat and cold drive the city's demand.
 #[derive(Clone, Debug, Serialize, Deserialize)]

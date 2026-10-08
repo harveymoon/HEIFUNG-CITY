@@ -191,6 +191,10 @@ pub struct ToolState {
     /// [free-placement] Bulldoze tool: the city building under the pointer
     /// (a click bulldozes it).
     pub hover_city_building: Option<nd_sim::BuildingId>,
+    /// [dirty-industry] Bulldoze tool: clean up contaminated ground
+    /// instead of removing things, over a circle of `cleanup_radius` metres.
+    pub cleanup: bool,
+    pub cleanup_radius: f32,
     /// [free-placement] Buildings tool: what a click here would do (true:
     /// it can go down) and the site's outline.
     pub build_here: Option<(bool, String, Vec<SVec2>)>,
@@ -256,6 +260,12 @@ pub struct ToolState {
     pub industry: &'static str,
     /// Road tool: stamp roundabouts instead of drawing roads.
     pub roundabout: bool,
+    /// [interchange] Road tool, Interchange preset: two clicks across the
+    /// highway lay a diamond interchange (`World::plan_diamond`).
+    pub interchange: bool,
+    /// [interchange] Why the diamond under the pointer would be refused, and
+    /// where (refreshed with its hologram).
+    pub interchange_refusal: Option<(String, SVec2)>,
     /// Roundabout radius (centre to the middle of the ring road), metres.
     pub ring_radius: f32,
     /// Roundabout ring lanes, 1 to 3 (`roads::RING_MAX_LANES`).
@@ -396,6 +406,28 @@ impl ToolState {
     /// the depth it is built at; the view follows (tunnels underground,
     /// everything else on the ground).
     pub fn pick_preset(&mut self, label: &str) -> bool {
+        if label.eq_ignore_ascii_case("interchange") {
+            // [interchange] A diamond: the cross street is a two-way street
+            // of the lanes set (a Street unless two-way lanes are set).
+            self.roundabout = false;
+            self.interchange = true;
+            self.kind = RoadKind::Street;
+            if self.lanes_fwd == 0 || self.lanes_bwd == 0 {
+                self.lanes_fwd = 2;
+                self.lanes_bwd = 2;
+            }
+            if self.tunnel {
+                self.tunnel = false;
+            }
+            self.elevation = 0.0;
+            self.points.clear();
+            self.point_levels.clear();
+            if self.depth == Depth::Underground {
+                self.depth = Depth::Ground;
+            }
+            return true;
+        }
+        self.interchange = false;
         if label.eq_ignore_ascii_case("tunnel") {
             self.roundabout = false;
             self.kind = RoadKind::Street;
@@ -469,6 +501,8 @@ impl Default for ToolState {
             hover_point: None,
             hover_gesture: None,
             hover_city_building: None,
+            cleanup: false,
+            cleanup_radius: 80.0,
             build_here: None,
             build_site: None,
             build_verdict: None,
@@ -498,6 +532,8 @@ impl Default for ToolState {
             rename: None,
             industry: "auto",
             roundabout: false,
+            interchange: false,
+            interchange_refusal: None,
             ring_radius: 20.0,
             ring_lanes: 1,
             ring_hover: None,
@@ -644,6 +680,8 @@ pub enum Selection {
     /// [fire-scene] An emergency unit: a fire engine, police car or
     /// ambulance, on the road or standing on scene (`fire_scene`).
     Unit(nd_sim::UnitId),
+    /// [ferry-routes] A ferry or freighter on the water (`world.ports.ships`).
+    Ship(nd_sim::ports::ShipId),
 }
 
 pub struct ToolsPlugin;
@@ -937,12 +975,36 @@ pub(crate) fn tool_input(
                     let first = tools.points.is_empty();
                     let (p, snapped, level) = ToolState::road_snap_level(&sim, p, tools.kind, tools.elevation, first);
                     tools.push_point(p, level);
-                    if snapped {
+                    if snapped && !tools.interchange {
                         tools.status = format!("Snapped to the road at {}: a junction forms there.", elevation_label(level));
                     }
                 }
             }
-            if finish {
+            // [interchange] The Interchange preset: the second click lays the
+            // diamond (or says why not, with the spot pinned on the map).
+            if tools.interchange {
+                if tools.points.len() == 1 && click {
+                    tools.status = "Interchange: now click the other side of the highway, where the cross street ends.".into();
+                }
+                if tools.points.len() >= 2 {
+                    let (a, b) = (tools.points[0], tools.points[tools.points.len() - 1]);
+                    let lanes = (tools.lanes_fwd.max(1), tools.lanes_bwd.max(1));
+                    tools.status = match sim.world.add_diamond(a, b, lanes) {
+                        Ok((plan, ids)) => format!(
+                            "Diamond interchange added to the project: {}{} ramps, a signalled junction where they meet the street on each side. Ctrl+Z undoes, Ctrl+Enter implements.",
+                            if plan.kept_street { "the street under the highway kept, " } else { "the cross street under the highway, " },
+                            ids.len() - usize::from(!plan.kept_street)
+                        ),
+                        Err(r) => format!("No interchange: {} (pinned in red at {:.0}, {:.0}).", r.why, r.at.x, r.at.y),
+                    };
+                    tools.points.clear();
+                    tools.point_levels.clear();
+                } else if finish {
+                    tools.points.clear();
+                    tools.point_levels.clear();
+                }
+            }
+            if finish && !tools.interchange {
                 if tools.points.len() >= 2 {
                     let kind = tools.kind;
                     let (lf, lb) = if kind != RoadKind::Street { (0, 0) } else { (tools.lanes_fwd, tools.lanes_bwd) };
@@ -1099,6 +1161,20 @@ pub(crate) fn tool_input(
         }
         // [districts] input in `district_tool::district_input`
         Tool::District => {}
+        // [dirty-industry] Clean-up: the hover label shows area, cost and
+        // days (`render::plot_hover`); a click sends the crew.
+        Tool::Bulldoze if tools.cleanup => {
+            tools.hover_gesture = None;
+            tools.hover_city_building = None;
+            if click {
+                if let Some(p) = ground {
+                    tools.status = match sim.world.start_cleanup(p, tools.cleanup_radius) {
+                        Ok(q) => format!("Clean-up crew sent: {:.0} m round, {} stained cells, paid {:.0}; digging for {} days.", q.radius, q.cells, q.cost, q.days),
+                        Err(e) => format!("Cannot clean up: {e}."),
+                    };
+                }
+            }
+        }
         Tool::Bulldoze => {
             tools.hover_gesture = ground.and_then(|p| nearest_gesture(plan, p)).map(|(id, _)| id);
             // [free-placement] A city building under the pointer is what a
@@ -1106,7 +1182,7 @@ pub(crate) fn tool_input(
             tools.hover_city_building = ground.and_then(|p| {
                 let w = &sim.world;
                 let l = w.lots.values().find(|l| l.contains(p))?;
-                l.building.filter(|&b| w.is_city_building(b) && w.buildings.get(b).is_some_and(|b| b.rail.is_none() && b.port.is_none()))
+                l.building.filter(|&b| w.is_city_building(b) && w.buildings.get(b).is_some_and(|b| b.rail.is_none()))
             });
             if tools.hover_city_building.is_some() {
                 tools.hover_gesture = None;
@@ -1229,7 +1305,7 @@ pub(crate) fn tool_input(
                         *selection = Selection::Building(id);
                         match sim.world.ports.port_of(id) {
                             Some(port) if port.works() => format!("{} built with its pier. Ships call from the next sailing.", dock.label()),
-                            Some(port) if !port.road_connected => format!("{} built with its pier. Join its street stub to the city's roads and it opens.", dock.label()),
+                            Some(port) if !port.road_connected => format!("{} built with its pier and an access road. Not connected to the road network yet: draw a road to the marked end.", dock.label()),
                             _ => format!("{} built, but no ship can reach it from off the map.", dock.label()),
                         }
                     }
@@ -1246,7 +1322,7 @@ pub(crate) fn tool_input(
                             let link = sim.world.buildings.get(id).and_then(|b| b.rail.as_ref()).map(|l| (l.rail_connected, l.road_connected));
                             match link {
                                 Some((true, true)) => format!("{} placed and connected. Trains call from the next headway.", kind.label()),
-                                Some((true, false)) => format!("{} placed on the track. Join a road to its street stub and it opens.", kind.label()),
+                                Some((true, false)) => format!("{} placed on the track; trains call. Not connected to the road network yet: draw a road to the marked end.", kind.label()),
                                 Some((false, true)) => format!("{} placed by the street. Lay track onto its rail stub and it opens.", kind.label()),
                                 Some((false, false)) => format!("{} placed. Lay track to its rail stub and a road to its street stub.", kind.label()),
                                 None => format!("{} placed, but it reports no rail link; select it to check.", kind.label()),
@@ -1327,6 +1403,8 @@ pub(crate) fn tool_input(
                                     }
                                     s
                                 }
+                                // [dock-access] A dock or station off the roads says so.
+                                None if sim.world.road_access(id) == Some(false) => format!("{} built for {:.0}. Not connected to the road network yet: draw a road to the marked end of its street stub.", what.label(), paid),
                                 None => format!("{} built for {:.0}; {:.0}/day to run.", what.label(), paid, what.upkeep()),
                             }
                         }
@@ -1450,6 +1528,10 @@ fn pick_any(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
         (Some((_, id, _)), None) => return Selection::Car(id),
         (_, Some((_, id))) => return Selection::Citizen(id),
         _ => {}
+    }
+    // [ferry-routes] A ferry or freighter, by its drawn hull.
+    if let Some((_, id)) = crate::ferry_select::pick(w, p, f) {
+        return Selection::Ship(id);
     }
     // [toll-inspect] A toll booth (a vehicle in it was picked above).
     if let Some(id) = crate::toll_select::pick(w, p) {
@@ -1746,8 +1828,10 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                         let [a, b] = port.pier;
                         gizmos.line(lift(a), lift(b), white);
                         gizmos.line(lift(b), lift(port.berth), cyan);
-                        let [sa, sb] = port.road_line();
+                        // [dock-access] The access road it would lay inland.
+                        let [sa, sb] = sim.world.dock_stub(&port);
                         gizmos.line(lift(sa), lift(sb), cyan);
+                        gizmos.circle(Isometry3d::new(lift(sb), flat), 6.0, cyan);
                     }
                     Err(_) => {
                         gizmos.circle(Isometry3d::new(lift(c), flat), 12.0, red);
@@ -1849,6 +1933,8 @@ fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
         }
         // [train-inspect] drawn by `crate::train_select::draw`.
         Selection::Train(_) | Selection::Metro(_) => {}
+        // [ferry-routes] drawn by `crate::ferry_select`, with its route.
+        Selection::Ship(_) => {}
         Selection::Building(b) => {
             lot_outline(gizmos, w, b, 1.6, gold);
             // [plant-groups] A Sunfield or Wind Park is selected whole.
@@ -2229,6 +2315,14 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
                 gizmos.linestrip(pts, green);
                 let [a, b] = port.pier;
                 gizmos.line(lift(a), lift(b), Color::linear_rgb(3.0, 3.0, 3.0));
+                // [dock-access] The access road it would lay, and its free end.
+                let probe = port.front_mid() - port.seaward * nd_sim::rail::ROAD_GAP;
+                if !w.roads.nearest_street(probe).is_some_and(|(_, _, q)| q.distance(probe) <= nd_sim::rail::ROAD_EDGE_FUSE) {
+                    let [sa, sb] = w.dock_stub(&port);
+                    let cyan = Color::linear_rgb(0.3, 2.0, 3.0);
+                    gizmos.line(lift(sa), lift(sb), cyan);
+                    gizmos.circle(Isometry3d::new(lift(sb), flat), 6.0, cyan);
+                }
             }
             Err(_) => {
                 gizmos.circle(Isometry3d::new(lift(c), flat), 12.0, red);

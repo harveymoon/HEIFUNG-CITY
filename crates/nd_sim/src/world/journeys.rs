@@ -202,7 +202,7 @@ impl World {
     }
 
     /// "the street by Habitat 21F", for a point with no building of its own.
-    fn street_name_near(&self, p: Vec2) -> String {
+    pub(super) fn street_name_near(&self, p: Vec2) -> String {
         match self.building_nearest(p).filter(|b| self.building_lot(*b).is_some_and(|l| l.center.distance(p) < 150.0)).and_then(|b| self.buildings.get(b)) {
             Some(b) => format!("the street by {}", b.name),
             None => "the street".into(),

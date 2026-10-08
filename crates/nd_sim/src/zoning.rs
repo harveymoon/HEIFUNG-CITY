@@ -1171,6 +1171,14 @@ pub fn make_placed_lot(zone_id: ZoneId, poly: Vec<Vec2>, center: Vec2, roads: &R
     Some(lot)
 }
 
+/// [free-placement] Does an outline front a street or footpath at all,
+/// whatever its shape? A city building's recut lot keeps the building as
+/// long as it does (a sliver or a sharp corner makes ground unfit to grow
+/// on, not a placed plant or station any less reachable).
+pub fn fronts_a_way(poly: &[Vec2], roads: &RoadNetwork) -> bool {
+    poly.len() >= 3 && frontage_edge(poly, roads, true).1.is_some()
+}
+
 /// [free-placement] One outline for a set of touching parcels: their union
 /// (the largest piece, should they not all touch), straight runs merged so
 /// a frontage is one edge.
@@ -1643,7 +1651,13 @@ fn simplify_collinear(poly: &[Vec2]) -> Vec<Vec2> {
             let c = pts[(i + 1) % n];
             let d1 = (b - a).normalize_or_zero();
             let d2 = (c - b).normalize_or_zero();
-            d1.dot(d2) > 0.9985 || a.distance(b) < 0.05
+            // A straight run, a doubled point, or the tip of a spike: the
+            // union of parcels whose shared edge did not quite match
+            // leaves a slit, out to a tip and straight back. A slit counts
+            // twice in the perimeter, so the ground read as a sliver
+            // (`MIN_COMPACTNESS`): a city building's recut lot came out
+            // landlocked and the building was lost.
+            d1.dot(d2) > 0.9985 || d1.dot(d2) < -0.9985 || a.distance(b) < 0.05
         });
         match drop {
             Some(i) => {
@@ -1859,6 +1873,22 @@ thread_local! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [tools] The outline Harvey's geothermal plant's parcels joined into
+    /// on a recut: a slit out to a tip and straight back where two shared
+    /// edges did not quite match. It read as a sliver, the recut lot was
+    /// landlocked, and the plant was lost to a road 100 m away.
+    #[test]
+    fn a_joined_outline_has_no_slit() {
+        let v = |x: f32, y: f32| Vec2::new(x, y);
+        let slit = vec![v(-516.75287, -221.87045), v(-507.64688, -247.44885), v(-467.52332, -231.34691), v(-470.71185, -222.39044), v(-503.92023, -234.21283), v(-470.71185, -222.39044), v(-474.94632, -210.49606)];
+        let compact = |p: &[Vec2]| polygon_area(p).abs() / perimeter(p).powi(2);
+        assert!(compact(&slit) < MIN_COMPACTNESS, "the slit reads as a sliver");
+        let clean = simplify_collinear(&slit);
+        assert_eq!(clean.len(), 4, "{clean:?}");
+        assert!(compact(&clean) > MIN_COMPACTNESS && reflex_vertex(&clean, 0.6).is_none(), "{clean:?}");
+        assert!((polygon_area(&clean).abs() - polygon_area(&slit).abs()).abs() < 1.0, "no ground lost");
+    }
 
     fn roads_cross() -> RoadNetwork {
         let mut r = RoadNetwork::default();

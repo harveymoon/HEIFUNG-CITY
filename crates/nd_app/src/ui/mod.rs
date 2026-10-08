@@ -9,6 +9,8 @@
 /// [concerns] City Data's People, Complaints and concerns.
 /// The Build window: every road, zone and building in one catalogue.
 pub mod build;
+/// [ferry-routes] A dock's routes and the ship card in the inspector.
+mod ferry;
 /// [committee] The Committee window.
 pub mod committee;
 /// [voices] A citizen's diary, on demand.

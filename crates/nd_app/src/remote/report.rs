@@ -697,7 +697,10 @@ pub fn power_json(w: &World, with_hours: bool) -> Value {
                     "income_today": round(p.export_income_today), "income_yesterday": round(w.economy.ledger.yesterday_of(Flow::GridExport)) },
         "battery_totals": { "count": p.batteries, "charge_mwh": round(p.battery_charge_mwh), "capacity_mwh": round(p.battery_capacity_mwh), "level": round(level),
                             "charging_mw": round(p.battery_in_mw), "discharging_mw": round(p.battery_out_mw),
-                            "round_trip_efficiency": round(nd_sim::power::BATTERY_CHARGE_EFF * nd_sim::power::BATTERY_DISCHARGE_EFF) },
+                            "round_trip_efficiency": round(nd_sim::power::BATTERY_CHARGE_EFF * nd_sim::power::BATTERY_DISCHARGE_EFF),
+                            "rule": format!("{:?}", p.battery_mode), "rule_text": p.battery_mode.label(), "cheap_price": round(p.price_bands.cheap), "dear_price": round(p.price_bands.dear),
+                            "grid_charge_mw": round(p.battery_grid_charge_mw), "savings_today": round(p.battery_savings_today),
+                            "savings_yesterday": round(w.economy.history.days.back().map_or(0.0, |d| d.battery_savings)) },
         "weather": super::land::weather_json(w),
         "grid": super::land::grid_json(w),
         "plants": plants,
@@ -764,7 +767,7 @@ fn services(w: &World) -> Value {
             json!({
                 "id": key_str(id), "name": b.name, "kind": rail_name(l.kind), "rail_connected": l.rail_connected, "road_connected": l.road_connected,
                 "works": l.works() && !b.is_derelict(), "waiting_passengers": station_waiting.get(&id).copied().unwrap_or(0),
-                "inbound_units": round(b.rail_inbound.iter().map(|c| c.amount).sum()), "outbound_units": round(b.rail_outbound), "pos": building_pos(w, b).map_or(Value::Null, v2),
+                "inbound_units": round(w.rail.orders_for(id).1), "aboard_units": round(w.rail.aboard_for(id)), "outbound_units": round(b.rail_outbound), "pos": building_pos(w, b).map_or(Value::Null, v2),
             })
         })
         .collect();
@@ -1041,7 +1044,9 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     let mut broke = Alert::new("broke_businesses", 2, "businesses losing money; they close after several broke days");
     let mut unpowered = Alert::new("unpowered_buildings", 3, "build power plants (status.power, report services.power)");
     let mut crowded = Alert::new("overcrowded_homes", 1, "more residents than homes");
-    let mut rail_broken = Alert::new("rail_facility_not_connected", 3, "a station or yard needs both its rail stub joined to the track and its street stub joined to a road");
+    let mut rail_broken = Alert::new("rail_facility_not_connected", 3, "a station or yard needs its rail stub joined to the track and its street stub joined to a road (draw one to the marked end; a station on the track alone sees trains call but serves nobody)");
+    // [dock-access] Docks off the roads (ferries still sail; nothing lands).
+    let mut dock_off = Alert::new("dock_not_connected", 2, "not connected to the road network: draw a road to the marked end of the dock's access road (inspect road_access.stub_ends)");
     let mut route_broken = Alert::new("bus_route_broken", 2, "a leg of the line has no road between its stops, or it has fewer than two stops; move or remove stops");
     let mut sites = Alert::new("construction_waiting_for_materials", 1, "sites wait for parts deliveries each quarter; many waiting means parts are short (economy.resources parts)");
     let mut stuck = Alert::new("stuck_vehicles", 2, "vehicles standing still for minutes: a gridlock ring (listed with its junctions) or a street over capacity; add lanes, another route or transit there");
@@ -1102,6 +1107,11 @@ pub fn alerts(w: &World) -> Vec<Alert> {
             }
         }
     }
+    for p in w.ports.ports.values().filter(|p| !p.road_connected) {
+        if let Some(b) = p.building {
+            dock_off.add(key_str(b), Some(p.center));
+        }
+    }
     let mut rail_missing = (0, 0);
     for b in w.buildings.values() {
         if let Some(l) = &b.rail {
@@ -1147,6 +1157,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     broke.message = format!("{} of {open_businesses} open businesses are in the red past their overdraft (they close after 5 such days)", broke.count);
     unpowered.message = format!("{} buildings get less than {:.0}% of their power (served {:.0}% of demand)", unpowered.count, UNPOWERED_BELOW * 100.0, e.power.served * 100.0);
     crowded.message = format!("{} buildings house more people than they have homes", crowded.count);
+    dock_off.message = format!("{} docks are not connected to the road network", dock_off.count);
     rail_broken.message = format!("{} stations/yards do not work: {} lack a track connection, {} a street connection", rail_broken.count, rail_missing.0, rail_missing.1);
     route_broken.message = format!("{} bus lines cannot run", route_broken.count);
     sites.message = format!("{} building sites are waiting for materials", sites.count);
@@ -1207,7 +1218,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
         a.message = format!("no dispatcher on duty: jobs go out {} minutes after the call", w.dispatcher().1);
         uncovered.push(a);
     }
-    let mut out = vec![fires, hungry, starving, unhoused, rent, food_staff, food_empty, closed, broke, unpowered, crowded, rail_broken, route_broken, sites, stuck, derelict, vacant_demand];
+    let mut out = vec![fires, hungry, starving, unhoused, rent, food_staff, food_empty, closed, broke, unpowered, crowded, rail_broken, dock_off, route_broken, sites, stuck, derelict, vacant_demand];
     // City-wide conditions with no single place.
     // Only working-age adults look for work: children and retirees are not
     // unemployed.
@@ -1483,13 +1494,14 @@ pub fn parking_enforcement(w: &World) -> Value {
         .filter_map(|(id, l)| w.buildings.get(*id).map(|b| json!({ "id": key_str(*id), "name": b.name, "size": l.size.key(), "capacity": b.parking_capacity, "used": b.parking_used, "occupancy": share(b.parking_used as usize, b.parking_capacity as usize), "price": round(l.price) })))
         .collect();
     json!({
-        "rule": format!("kerb parking {KERB_LIMIT} min on every street (per-street overrides: {}); residents within {PERMIT_RADIUS:.0} m of home exempt; a ticket ({FINE:.0}) over the limit, the tow truck {GRACE} min later or at once for illegal parking; release fee {TOW_FEE:.0} in town, {OUT_OF_TOWN_TOW_FEE:.0} out of town, plus {STORAGE_PER_DAY:.0} a day; auction after {} days", w.vehicles.kerb_rules.len(), AUCTION_AFTER / 1440),
+        "rule": format!("kerb parking {KERB_LIMIT} min on every street (per-street overrides: {}); residents within {PERMIT_RADIUS:.0} m of home exempt; a ticket ({FINE:.0}) over the limit, a clamp ({CLAMP_FINE:.0}) {GRACE} min later, towed if unpaid after {} h, the tow truck at once for illegal parking; release fee {TOW_FEE:.0} in town, {OUT_OF_TOWN_TOW_FEE:.0} out of town, plus {STORAGE_PER_DAY:.0} a day; auction after {} days", CLAMP_LIMIT / 60, w.vehicles.kerb_rules.len(), AUCTION_AFTER / 1440),
         "offices": offices, "patrol_cars_now": w.enforcement.patrols.len(),
         "coverage": { "kerb_slots": slots, "within_patrol_reach": covered, "share": share(covered as usize, slots as usize) },
         "tickets_today": s.tickets_today, "fines_today": round(s.fines_today), "tickets_total": s.tickets_total, "fines_total": round(s.fines_total),
         "on_street_now": { "over_limit": over_limit, "ticketed": ticketed },
         "tows_today": s.tows_today, "tows_out_of_town_today": s.tows_out_of_town_today, "tows_total": s.tows_total, "tows_out_of_town_total": s.tows_out_of_town_total,
         "boots_today": s.boots_today, "boots_total": s.boots_total,
+        "clamps": { "today": s.clamps_today, "total": s.clamps_total, "paid_today": s.clamps_paid_today, "paid_total": s.clamps_paid_total, "fines_today": round(s.clamp_fines_today), "towed_unpaid_total": s.clamps_towed_total, "clamped_now": w.enforcement.jobs.iter().filter(|j| j.reason == nd_sim::enforcement::TowReason::Unpaid && matches!(j.state, nd_sim::enforcement::TowState::Waiting { .. })).count() },
         "tow_jobs_open": w.enforcement.jobs.len(), "tow_trucks_on_road": w.enforcement.jobs.iter().filter(|j| j.truck.is_some()).count(), "wrecks_towed_total": s.wrecks_towed_total,
         "pound": { "cars": impounded, "in_town": in_town, "out_of_town": impounded - in_town, "released_today": s.released_today, "release_fees_today": round(s.release_fees_today), "released_total": s.released_total, "auctioned_today": s.auctioned_today, "auctioned_total": s.auctioned_total },
         "tow_companies": companies,

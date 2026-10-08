@@ -2,7 +2,12 @@
 //! branches off it and puts stations and freight yards on lots beside the
 //! track. Passenger trains run the line end to end on a headway, calling
 //! at every station; freight trains come when a yard has goods waiting.
-//! Trains are not saved: they are back on the next headway after a load.
+//! [freight] Imports ordered by rail wait out of town ([`Rail::orders`]),
+//! are loaded onto the next freight train as it sets off from the edge of
+//! the map, ride in on it and come off at their yard; exports are picked
+//! up at the yards and leave on it. Wagons hold [`WAGON_CAPACITY`] each.
+//! Trains are not saved: they are back on the next headway after a load,
+//! and goods that were aboard go back to wait for it.
 
 use crate::buildings::BuildingId;
 use crate::citizens::CitizenId;
@@ -84,6 +89,19 @@ pub const RAIL_EXPORT_BONUS: f32 = 1.2;
 pub const LOCO_LEN: f32 = 18.0;
 pub const COACH_LEN: f32 = 19.0;
 pub const WAGON_LEN: f32 = 14.0;
+/// [freight] Units of goods one wagon carries, and the shortest and
+/// longest freight trains. The longest holds more than the largest single
+/// order (400 units), so every order fits an empty train.
+pub const WAGON_CAPACITY: f32 = 50.0;
+pub const MIN_WAGONS: u8 = 5;
+pub const MAX_WAGONS: u8 = 12;
+/// [freight] An extra freight train may follow this soon after the last
+/// when goods are left behind: more waiting than a train holds, or an order
+/// that already missed a train.
+pub const EXTRA_FREIGHT_GAP: u64 = 45;
+/// [freight] An order still waiting out of town after this long goes by
+/// road instead (a yard no train reaches, say).
+pub const ORDER_GIVE_UP: u64 = FREIGHT_HEADWAY * 4;
 pub const COUPLING: f32 = 1.2;
 /// A train keeps this much clear track ahead.
 pub const BLOCK: f32 = 90.0;
@@ -434,6 +452,45 @@ pub struct Train {
     pub unloaded: f32,
 }
 
+/// [freight] Imports ordered by rail, waiting out of town for a freight
+/// train: the load (`from` is the yard it comes off at) and the tick it was
+/// ordered.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct RailOrder {
+    pub cargo: Cargo,
+    #[serde(default)]
+    pub since: u64,
+}
+
+/// [freight] Load a freight train at the edge of the map: the orders for
+/// `yards` (the ones it calls at), oldest first, as many as fit in
+/// `capacity`. An order that does not fit is left for the next train and
+/// smaller ones behind it may go instead; an empty train always takes the
+/// first, so no order is too big to ever leave. Orders for other yards stay.
+pub fn fill_wagons(orders: &mut Vec<RailOrder>, yards: &[BuildingId], capacity: f32) -> Vec<Cargo> {
+    let mut aboard: Vec<Cargo> = Vec::new();
+    let mut load = 0.0f32;
+    orders.sort_by_key(|o| o.since);
+    orders.retain(|o| {
+        if !yards.contains(&o.cargo.from) {
+            return true;
+        }
+        if load + o.cargo.amount <= capacity + 1e-3 || aboard.is_empty() {
+            load += o.cargo.amount;
+            aboard.push(o.cargo);
+            false
+        } else {
+            true
+        }
+    });
+    aboard
+}
+
+/// [freight] Wagons for a freight train with `units` to carry.
+pub fn wagons_for(units: f32) -> u8 {
+    ((units / WAGON_CAPACITY).ceil().max(0.0) as u32).clamp(MIN_WAGONS as u32, MAX_WAGONS as u32) as u8
+}
+
 impl Train {
     pub fn car_len(&self) -> f32 {
         match self.kind {
@@ -444,6 +501,16 @@ impl Train {
 
     pub fn length(&self) -> f32 {
         LOCO_LEN + self.cars as f32 * (self.car_len() + COUPLING)
+    }
+
+    /// [freight] Units a freight train's wagons hold, and how much is
+    /// aboard now (imports still to set down and exports picked up).
+    pub fn freight_capacity(&self) -> f32 {
+        self.cars as f32 * WAGON_CAPACITY
+    }
+
+    pub fn freight_aboard(&self) -> f32 {
+        self.cargo.iter().map(|c| c.amount).sum::<f32>() + self.exports
     }
 
     pub fn total(&self) -> f32 {
@@ -588,11 +655,17 @@ pub struct FreightLoad {
 /// [train-inspect] Everything on a freight train and still to be picked up.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FreightManifest {
-    /// Imports aboard, to be set down at the yards ahead, in call order.
+    /// [freight] Imports aboard (loaded at the edge of the map), to be set
+    /// down at the yards ahead, in call order.
     pub loads: Vec<FreightLoad>,
+    /// [freight] Wagons, the units they hold and the units aboard.
+    pub wagons: u8,
+    pub capacity: f32,
+    pub aboard: f32,
     /// Units of the town's exports aboard, going out of town.
     pub exports_aboard: f32,
-    /// Exports waiting at the yards ahead, picked up when it calls.
+    /// Exports waiting at the yards ahead, picked up when it calls (as
+    /// much as the wagons have room for then).
     pub exports_to_collect: Vec<(BuildingId, f32)>,
     /// Units of imports already set down at the yards it called at.
     pub unloaded: f32,
@@ -645,15 +718,48 @@ pub struct RailStats {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(from = "RailSave", into = "RailSave")]
 pub struct Rail {
-    #[serde(skip)]
     pub trains: SlotMap<TrainId, Train>,
-    #[serde(default)]
     pub stats: RailStats,
-    #[serde(default)]
     pub last_passenger_tick: u64,
-    #[serde(default)]
     pub last_freight_tick: u64,
+    /// [freight] Imports ordered by rail, waiting out of town for the next
+    /// freight train to their yard.
+    pub orders: Vec<RailOrder>,
+}
+
+/// [freight] What a save keeps of the railway. Trains are not saved, but
+/// the imports aboard them are: they go back to wait out of town and ride
+/// in on the next train, so a save never loses an order.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct RailSave {
+    #[serde(default)]
+    stats: RailStats,
+    #[serde(default)]
+    last_passenger_tick: u64,
+    #[serde(default)]
+    last_freight_tick: u64,
+    #[serde(default)]
+    orders: Vec<RailOrder>,
+}
+
+impl From<RailSave> for Rail {
+    fn from(s: RailSave) -> Self {
+        Rail { trains: SlotMap::with_key(), stats: s.stats, last_passenger_tick: s.last_passenger_tick, last_freight_tick: s.last_freight_tick, orders: s.orders }
+    }
+}
+
+impl From<Rail> for RailSave {
+    fn from(r: Rail) -> Self {
+        let mut orders = r.orders;
+        // Aboard a train: back in the queue, ordered when that train left.
+        let since = r.last_freight_tick;
+        for t in r.trains.values() {
+            orders.extend(t.cargo.iter().map(|c| RailOrder { cargo: *c, since }));
+        }
+        RailSave { stats: r.stats, last_passenger_tick: r.last_passenger_tick, last_freight_tick: r.last_freight_tick, orders }
+    }
 }
 
 impl Rail {
@@ -697,6 +803,17 @@ impl Rail {
 
     /// [train-inspect] What train `id` is doing: standing at a stop, held
     /// at a signal or at the branch switch, running, or leaving town.
+    /// [freight] Units of imports waiting out of town for `yard`, and the
+    /// number of orders.
+    pub fn orders_for(&self, yard: BuildingId) -> (usize, f32) {
+        self.orders.iter().filter(|o| o.cargo.from == yard).fold((0, 0.0), |(n, u), o| (n + 1, u + o.cargo.amount))
+    }
+
+    /// [freight] Units of imports aboard freight trains for `yard`.
+    pub fn aboard_for(&self, yard: BuildingId) -> f32 {
+        self.trains.values().flat_map(|t| t.cargo.iter()).filter(|c| c.from == yard).fold(0.0, |a, c| a + c.amount)
+    }
+
     pub fn state(&self, id: TrainId) -> Option<TrainState> {
         let t = self.trains.get(id)?;
         if let Some(at) = t.dwelling_at() {
@@ -838,6 +955,29 @@ mod tests {
 
     fn train(poly: Vec<Vec2>, s: f32, branch: Option<(f32, f32)>) -> Train {
         Train { kind: TrainKind::Passenger, cars: 2, nodes: Vec::new(), poly, s, prev_s: s, speed: 0.0, stops: Vec::new(), next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo: Vec::new(), color: 0, held: false, branch, exports: 0.0, unloaded: 0.0 }
+    }
+
+    /// [freight] Wagons fill oldest first up to capacity; what does not
+    /// fit waits, smaller loads behind may go, other yards' orders stay,
+    /// and an empty train always takes the first however big.
+    #[test]
+    fn wagons_fill_to_capacity_oldest_first() {
+        let mut ids: SlotMap<BuildingId, ()> = SlotMap::with_key();
+        let (y1, y2, buyer) = (ids.insert(()), ids.insert(()), ids.insert(()));
+        let order = |yard, amount, since| RailOrder { cargo: Cargo { from: yard, to: buyer, resource: crate::market::Resource::Parts, amount, price: 1.0 }, since };
+        let mut q = vec![order(y1, 120.0, 5), order(y1, 150.0, 1), order(y2, 30.0, 0), order(y1, 40.0, 7), order(y1, 10.0, 9)];
+        let aboard = fill_wagons(&mut q, &[y1], 200.0);
+        let got: Vec<f32> = aboard.iter().map(|c| c.amount).collect();
+        assert_eq!(got, vec![150.0, 40.0, 10.0], "oldest first; the 120 does not fit and smaller ones go");
+        assert!(got.iter().sum::<f32>() <= 200.0);
+        assert_eq!(q.len(), 2, "the 120 and the other yard's order wait");
+        assert!(q.iter().any(|o| o.cargo.from == y2) && q.iter().any(|o| o.cargo.amount == 120.0));
+        let mut big = vec![order(y1, 400.0, 0)];
+        assert_eq!(fill_wagons(&mut big, &[y1], 200.0).len(), 1, "an empty train takes an order bigger than itself");
+        assert_eq!(wagons_for(0.0), MIN_WAGONS);
+        assert_eq!(wagons_for(260.0), 6);
+        assert_eq!(wagons_for(1e6), MAX_WAGONS);
+        assert!(MAX_WAGONS as f32 * WAGON_CAPACITY >= 400.0, "the largest order fits a full-length train");
     }
 
     #[test]

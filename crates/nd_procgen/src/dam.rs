@@ -30,9 +30,20 @@ pub fn arch(c: Vec2, across: Vec2, upstream: Vec2, half: f32, bow: f32, n: usize
         .collect()
 }
 
-/// Draw the dam for a hydro plant on `lot_center`, across river centre
-/// point `c` of a river `width` wide flowing along `flow` (unit).
-pub fn hydro_dam(g: &mut Geometry, c: Vec2, flow: Vec2, width: f32, lot_center: Vec2, ground: &dyn Fn(Vec2) -> f32, concrete: [f32; 3], steel: [f32; 3]) {
+/// [freight] Intake towers and spillway gates for a station of `scale`
+/// (its share of the nameplate): two towers and three gates at the
+/// nameplate, a tower for every two turbine bays and a gate more for every
+/// three. The arch itself spans the river whatever the station's size.
+pub fn dam_parts(scale: f32) -> (usize, usize) {
+    let bays = nd_sim::PowerPlantKind::turbine_bays(scale) as usize;
+    (bays.div_ceil(2).clamp(1, 4), (2 + bays / 3).clamp(2, 4))
+}
+
+/// Draw the dam for a hydro plant of size `scale` on `lot_center`, across
+/// river centre point `c` of a river `width` wide flowing along `flow` (unit).
+#[allow(clippy::too_many_arguments)]
+pub fn hydro_dam(g: &mut Geometry, c: Vec2, flow: Vec2, width: f32, lot_center: Vec2, scale: f32, ground: &dyn Fn(Vec2) -> f32, concrete: [f32; 3], steel: [f32; 3]) {
+    let (towers, gates) = dam_parts(scale);
     let across = Vec2::new(-flow.y, flow.x);
     let upstream = -flow;
     // Into the banks on both sides, so the abutments sit in the ground.
@@ -108,7 +119,6 @@ pub fn hydro_dam(g: &mut Geometry, c: Vec2, flow: Vec2, width: f32, lot_center: 
         g.part(Surface::Glow).slab(Vec3::new(a.x, top + 0.72, a.y), Vec3::new(b.x, WATER_LEVEL + 1.52, b.y), 0.7, 0.12, rgba(CYAN));
     }
     // Radial gates over the spillway crest: steel arcs between piers.
-    let gates = 3;
     for k in 0..=gates {
         let t = k as f32 / gates as f32;
         let p = sa.lerp(sb, t);
@@ -147,7 +157,11 @@ pub fn hydro_dam(g: &mut Geometry, c: Vec2, flow: Vec2, width: f32, lot_center: 
     // Intake towers on the plant's side, in the reservoir upstream of the
     // arch, with a penstock from each under the bank to the turbine hall.
     let plant_side = if (lot_center - c).dot(across) >= 0.0 { 1.0 } else { -1.0 };
-    for (j, t) in [0.42f32, 0.66].into_iter().enumerate() {
+    // Spread between the spillway's edge and the abutment (0.42 and 0.66
+    // for the nameplate's two).
+    let span = if towers <= 2 { 0.24 } else { 0.36 };
+    let spots: Vec<f32> = (0..towers).map(|j| if towers == 1 { 0.54 } else { 0.42 + span * j as f32 / (towers - 1) as f32 }).collect();
+    for (j, t) in spots.into_iter().enumerate() {
         let k = ((0.5 + plant_side * t * 0.5) * n as f32).round() as usize;
         let k = k.min(n);
         let base = crest[k] + upstream * 6.5;
@@ -183,8 +197,25 @@ mod tests {
         assert!((pts[20] - Vec2::new(40.0, 5.0)).length() < 1e-4);
         assert!((pts[10] - Vec2::new(10.0, -3.0)).length() < 1e-4, "the middle is furthest upstream");
         let mut g = Geometry::default();
-        hydro_dam(&mut g, c, Vec2::Y, 40.0, Vec2::new(60.0, 0.0), &|_| BANK_HEIGHT, [0.5, 0.5, 0.5], [0.4, 0.4, 0.45]);
+        hydro_dam(&mut g, c, Vec2::Y, 40.0, Vec2::new(60.0, 0.0), 1.0, &|_| BANK_HEIGHT, [0.5, 0.5, 0.5], [0.4, 0.4, 0.45]);
         assert!(g.iter().any(|(s, m)| s == Surface::Glow && !m.positions.is_empty()), "neon on the dam");
         assert!(g.iter().any(|(s, m)| s == Surface::Concrete && m.positions.len() > 100), "a concrete arch");
+    }
+
+    #[test]
+    fn a_bigger_station_adds_towers_and_gates_not_a_bigger_arch() {
+        assert_eq!(dam_parts(1.0), (2, 3), "the nameplate dam as before");
+        let (t_lo, g_lo) = dam_parts(0.4);
+        let (t_hi, g_hi) = dam_parts(2.6);
+        assert!(t_lo < 2 && t_hi > 2 && g_lo <= 3 && g_hi > 3, "{t_lo} {g_lo} {t_hi} {g_hi}");
+        // The arch spans the same river either way: only the parts differ.
+        let concrete_extent = |scale: f32| {
+            let mut g = Geometry::default();
+            hydro_dam(&mut g, Vec2::ZERO, Vec2::Y, 40.0, Vec2::new(60.0, 0.0), scale, &|_| BANK_HEIGHT, [0.5, 0.5, 0.5], [0.4, 0.4, 0.45]);
+            let xs: Vec<f32> = g.iter().filter(|(s, _)| *s == Surface::Concrete).flat_map(|(_, m)| m.positions.iter().map(|p| p[0])).collect();
+            (xs.iter().copied().fold(f32::MAX, f32::min), xs.iter().copied().fold(f32::MIN, f32::max))
+        };
+        let (a, b) = (concrete_extent(0.4), concrete_extent(2.6));
+        assert!((a.0 - b.0).abs() < 0.5 && (a.1 - b.1).abs() < 0.5, "{a:?} {b:?}");
     }
 }

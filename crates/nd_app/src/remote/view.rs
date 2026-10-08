@@ -232,6 +232,7 @@ pub fn selection(w: &World, sel: Selection) -> Value {
         Selection::Bot(id) => json!({ "kind": "bot", "id": key_str(id), "name": nd_sim::bots::bot_name(w, id) }),
         Selection::Train(id) => json!({ "kind": "train", "id": key_str(id), "headcode": w.rail.trains.get(id).map(|t| crate::train_select::headcode(id, t.kind)) }),
         Selection::Unit(id) => json!({ "kind": "unit", "id": key_str(id), "label": crate::fire_scene::unit_title(w, id), "doing": crate::fire_scene::unit_doing(w, id) }),
+        Selection::Ship(id) => json!({ "kind": "ship", "id": key_str(id), "label": crate::ferry_select::ship_title(w, id), "doing": crate::ferry_select::ship_doing(w, id) }),
         Selection::Metro(id) => json!({ "kind": "metro_train", "id": key_str(id), "headcode": crate::train_select::metro_code(id), "line": w.subway.trains.get(id).and_then(|t| w.subway.lines.get(t.line)).map(|l| l.name.clone()) }),
     }
 }
@@ -355,6 +356,9 @@ pub fn citizen_detail(w: &World, id: CitizenId, c: &Citizen, favourite: bool) ->
     // [tools] On a raised walkway (a footbridge), how high (outside the
     // literal above: it is at the json! macro's recursion limit).
     v["raised_level"] = json!(round(w.walker_level(c, c.pos)));
+    // [footbridge] On an elevated path, viaduct or bridge: the deck's height
+    // they are drawn at (null at grade).
+    v["way_height"] = json!(w.walker_way_height(c, c.pos).map(round));
     v["appearance"] = appearance(c);
     // [clarity] What they are doing in words, and their pose outdoors.
     v["doing"] = json!(w.activity_line(id));
@@ -414,8 +418,8 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
     let rail = b.rail.as_ref().map(|l| {
         json!({
             "kind": rail_name(l.kind), "rail_connected": l.rail_connected, "road_connected": l.road_connected, "works": l.works(),
-            "platform": points(&l.platform), "inbound_orders": b.rail_inbound.len(),
-            "inbound_units": round(b.rail_inbound.iter().map(|c| c.amount).sum::<f32>()), "outbound_units": round(b.rail_outbound),
+            "platform": points(&l.platform), "inbound_orders": w.rail.orders_for(id).0,
+            "inbound_units": round(w.rail.orders_for(id).1), "aboard_units": round(w.rail.aboard_for(id)), "outbound_units": round(b.rail_outbound),
         })
     });
     let business = b.business.as_ref().map(|z| {
@@ -478,7 +482,17 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
     });
     // [free-placement] The building's own use (power, wages, venues); `land_use` is Civic for a city building.
     v["use"] = json!(b.land_use.label());
+    // [dock-access] A dock, station or yard: on the road network or not, and
+    // where to draw a road to join it.
+    if let Some(connected) = w.road_access(id) {
+        v["road_access"] = access_json(w, id, connected);
+    }
+    if let Some(p) = w.ports.port_of(id) {
+        v["dock"] = json!({ "kind": p.kind.label(), "road_connected": p.road_connected, "reaches_elsewhere": p.reaches_elsewhere, "works": p.works(), "ferries_sail": p.sails(), "berth": v2(p.berth), "stub": points(&p.road_line()) });
+    }
     v["dirt"] = dirt_json(w, id);
+    // [fishing] A fishing port's boats and grounds.
+    v["fishing"] = super::economy::fishing(w, id);
     v
 }
 
@@ -745,8 +759,8 @@ pub fn car_traffic(w: &World, c: &Car) -> Value {
         "driver_drunkenness_now": w.citizens.get(c.citizen).map(|x| round(x.drunk)),
         "weave_m": round(c.drive.weave), "running_red": c.drive.running.is_some(),
         "crash": c.drive.crash.map(|s| json!({ "crash": s.id, "wrecked": s.wrecked, "hold_s": if s.wrecked { Value::Null } else { json!(round(s.hold)) } })),
-        "takeover": c.drive.gang.map(|g| json!({ "takeover": g.takeover, "phase": format!("{:?}", g.phase).to_lowercase() })),
-        "stunt": c.drive.stunt.map(|s| if s.is_donut() { "donut" } else { "ring" }),
+        "takeover": c.drive.gang.map(|g| json!({ "takeover": g.takeover, "phase": format!("{:?}", g.phase).to_lowercase(), "race": g.race, "moto_pack": g.pack })),
+        "stunt": c.drive.stunt.map(|s| if s.is_donut() { "donut" } else if matches!(s.kind, nd_sim::traffic::StuntKind::Manoeuvre { .. }) { "manoeuvre" } else { "ring" }),
     })
 }
 
@@ -805,7 +819,8 @@ pub fn train_row(w: &World, id: TrainId, t: &Train) -> Value {
     json!({
         "id": key_str(id), "headcode": crate::train_select::headcode(id, t.kind), "kind": match t.kind { TrainKind::Passenger => "passenger", TrainKind::Freight => "freight" },
         "cars": t.cars, "pos": v2(head), "speed": round(t.speed), "held": t.held, "dwell": round(t.dwell),
-        "passengers": t.passengers.len(), "cargo_units": round(t.cargo.iter().map(|c| c.amount).sum::<f32>()),
+        "passengers": t.passengers.len(), "cargo_units": round(t.cargo.iter().map(|c| c.amount).sum::<f32>()), "exports_units": round(t.exports),
+        "capacity_units": if t.kind == TrainKind::Freight { round(t.freight_capacity()) } else { 0.0 },
         "next_stop": opt_key(next), "next_stop_name": building_name(w, next), "stops": t.stops.len(),
     })
 }
@@ -992,4 +1007,15 @@ pub fn vehicle_detail(w: &World, vid: nd_sim::VehicleId) -> Option<Value> {
         nd_sim::CarPlace::Driving(cid) => json!({ "driving": key_str(cid), "errand": format!("{:?}", w.traffic.cars.get(cid).map(|t| t.errand)) }),
     };
     Some(json!({ "id": key_str(vid), "owner": key_str(car.owner), "owner_name": w.citizens.get(car.owner).map(|c| c.name.clone()), "body": car.model.body.label(), "class": format!("{:?}", car.model.class), "price": round(car.model.price()), "place": place }))
+}
+
+/// [dock-access] A dock's or station's road connection for the API: whether
+/// it is on the network, the free ends of its street stub to draw a road
+/// onto, and what is held up meanwhile.
+pub fn access_json(w: &World, id: nd_sim::BuildingId, connected: bool) -> Value {
+    json!({
+        "connected": connected,
+        "stub_ends": w.stub_ends_of(id).into_iter().map(v2).collect::<Vec<_>>(),
+        "problem": w.access_problem(id),
+    })
 }

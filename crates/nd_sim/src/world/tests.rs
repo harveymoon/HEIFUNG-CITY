@@ -531,32 +531,38 @@ fn trains_call_at_stations_and_yards_bring_freight() {
     let buyer = shop;
     assert!(w.buildings[buyer].business.is_some(), "the shop is a business that imports");
     let money0 = w.buildings[buyer].business.as_ref().unwrap().money;
-    let queued0 = w.buildings[yard].rail_inbound.len();
+    let queued0 = w.rail.orders_for(yard).0;
     w.import(buyer, Resource::Parts, 10.0, 100.0);
-    assert_eq!(w.buildings[yard].rail_inbound.len(), queued0 + 1, "the order waits at the yard");
-    assert!(w.buildings[lone].rail_inbound.is_empty(), "the unconnected yard gets nothing");
+    assert_eq!(w.rail.orders_for(yard).0, queued0 + 1, "the order waits out of town for a train to the yard");
+    assert_eq!(w.rail.orders_for(lone).0, 0, "the unconnected yard gets nothing");
     assert!((w.buildings[buyer].business.as_ref().unwrap().money - money0 - 20.0).abs() < 0.01, "rail import refunds a fifth");
     let mut freight_seen = false;
-    // [train-inspect] While it is on its way the train's manifest lists the
-    // load: for the shop, off at the yard; a passenger train has none.
+    // [train-inspect] [freight] While it is on its way the load rides the
+    // train and the manifest lists it: for the shop, off at the yard; a
+    // passenger train has none.
     let mut manifest_seen = false;
+    let mut aboard_seen = false;
     for _ in 0..900 {
         w.tick(&mut minds);
-        if let Some((tid, _)) = w.rail.trains.iter().find(|(_, t)| t.kind == TrainKind::Freight) {
+        if let Some((tid, t)) = w.rail.trains.iter().find(|(_, t)| t.kind == TrainKind::Freight) {
             freight_seen = true;
-            if !w.buildings[yard].rail_inbound.is_empty() {
+            let aboard = t.cargo.iter().any(|c| c.to == buyer && c.from == yard);
+            if aboard {
+                aboard_seen = true;
+                assert_eq!(w.rail.orders_for(yard).0, 0, "loaded at the edge of the map, not left waiting");
                 let m = w.freight_manifest(tid).expect("a freight train has a manifest");
+                assert!(m.aboard >= 10.0 && m.capacity >= m.aboard && m.wagons >= crate::rail::MIN_WAGONS, "{m:?}");
                 manifest_seen |= m.loads.iter().any(|l| l.buyer == buyer && l.yard == yard && l.resource == Resource::Parts && (l.amount - 10.0).abs() < 0.01 && l.hub.is_none());
             }
         }
         if let Some((pid, _)) = w.rail.trains.iter().find(|(_, t)| t.kind == TrainKind::Passenger) {
             assert!(w.freight_manifest(pid).is_none());
         }
-        if w.buildings[yard].rail_inbound.is_empty() && freight_seen {
+        if aboard_seen && w.rail.aboard_for(yard) == 0.0 {
             break;
         }
     }
-    assert!(freight_seen && w.buildings[yard].rail_inbound.is_empty(), "freight train {freight_seen}, waiting {}", w.buildings[yard].rail_inbound.len());
+    assert!(freight_seen && aboard_seen && w.rail.orders_for(yard).0 == 0 && w.rail.aboard_for(yard) == 0.0, "freight train {freight_seen}, aboard {aboard_seen}, waiting {:?}", w.rail.orders_for(yard));
     assert!(manifest_seen, "the freight train's manifest listed the shop's parts");
     if let Some((tid, _)) = w.rail.trains.iter().find(|(_, t)| t.kind == TrainKind::Freight) {
         let m = w.freight_manifest(tid).unwrap();
@@ -1187,13 +1193,13 @@ fn imports_stranded_at_a_disconnected_yard_go_by_truck_and_sites_never_wait() {
     let shop = w.lots[shop_lot].building.unwrap();
     w.finish_construction(shop);
     // A site's parts never queue for a train.
-    let queued0 = w.buildings[yard].rail_inbound.len();
+    let queued0 = w.rail.orders_for(yard).0;
     let site_lot = lot_near(&w, Vec2::new(700.0, 40.0), LandUse::Commercial);
     w.build_on(site_lot);
-    assert_eq!(w.buildings[yard].rail_inbound.len(), queued0, "construction parts came by truck");
+    assert_eq!(w.rail.orders_for(yard).0, queued0, "construction parts came by truck");
     // A shop's order does, and it is stranded when the branch goes.
     w.import(shop, Resource::Parts, 10.0, 100.0);
-    assert_eq!(w.buildings[yard].rail_inbound.len(), queued0 + 1);
+    assert_eq!(w.rail.orders_for(yard).0, queued0 + 1);
     let stock0 = w.buildings[shop].business.as_ref().unwrap().stock_of(Resource::Parts);
     w.start_project();
     w.remove_gesture(branch);
@@ -1203,7 +1209,7 @@ fn imports_stranded_at_a_disconnected_yard_go_by_truck_and_sites_never_wait() {
     for _ in 0..60 {
         w.tick(&mut minds);
     }
-    assert!(w.buildings[yard].rail_inbound.is_empty(), "the stranded order left the yard within the hour");
+    assert_eq!(w.rail.orders_for(yard).0, 0, "the stranded order came by road within the hour");
     let delivered = w.buildings[shop].business.as_ref().unwrap().stock_of(Resource::Parts) > stock0;
     let on_the_road = w.traffic.cars.values().any(|c| c.cargo.is_some_and(|k| k.to == shop && k.resource == Resource::Parts));
     assert!(delivered || on_the_road, "the parts are on a truck or on the shelf");
@@ -1217,10 +1223,67 @@ fn imports_stranded_at_a_disconnected_yard_go_by_truck_and_sites_never_wait() {
         w.tick(&mut minds);
     }
     w.import(shop, Resource::Parts, 10.0, 100.0);
-    assert_eq!(w.buildings[yard].rail_inbound.len(), 1);
+    assert_eq!(w.rail.orders_for(yard).0, 1);
     w.rail.last_freight_tick = 0;
     w.tick(&mut minds);
-    assert!(w.buildings[yard].rail_inbound.is_empty(), "two headways without a freight train and the goods go by road");
+    assert_eq!(w.rail.orders_for(yard).0, 0, "two headways without a freight train and the goods go by road");
+}
+
+/// [freight] More goods than one train holds: each train is loaded to its
+/// wagons' capacity at the edge of the map and no fuller, extra trains
+/// follow for what was left, and everything is in town within hours, not
+/// days. A save with goods aboard keeps them (back in the queue), and an
+/// older save's orders waiting at the yard move to the queue.
+#[test]
+fn freight_trains_carry_what_fits_and_extra_trains_take_the_rest() {
+    use crate::rail::{TrainKind, MAX_WAGONS, WAGON_CAPACITY};
+    let (mut w, _, _, _, yard) = rail_city();
+    let shop_lot = lot_near(&w, Vec2::new(815.0, 40.0), LandUse::Commercial);
+    w.build_on(shop_lot);
+    let shop = w.lots[shop_lot].building.unwrap();
+    w.finish_construction(shop);
+    let full = MAX_WAGONS as f32 * WAGON_CAPACITY;
+    for _ in 0..16 {
+        w.import(shop, Resource::Parts, 100.0, 500.0);
+    }
+    let ordered = w.rail.orders_for(yard).1;
+    assert!(ordered > full * 2.0, "{ordered} units, more than two trains hold");
+    let mut minds = IdleMind;
+    let start = w.clock.tick;
+    let mut trains_seen: Vec<crate::rail::TrainId> = Vec::new();
+    let mut saved_mid_run = false;
+    for _ in 0..900 {
+        w.tick(&mut minds);
+        for (id, t) in w.rail.trains.iter().filter(|(_, t)| t.kind == TrainKind::Freight) {
+            assert!(t.freight_aboard() <= t.freight_capacity() + 0.01, "loaded past capacity: {} of {}", t.freight_aboard(), t.freight_capacity());
+            if !trains_seen.contains(&id) {
+                trains_seen.push(id);
+            }
+        }
+        // Save while goods are aboard: none are lost.
+        if !saved_mid_run && w.rail.aboard_for(yard) > 0.0 {
+            saved_mid_run = true;
+            let (queued, aboard) = (w.rail.orders_for(yard).1, w.rail.aboard_for(yard));
+            let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+            assert!(back.rail.trains.is_empty());
+            assert!((back.rail.orders_for(yard).1 - (queued + aboard)).abs() < 0.01, "goods aboard are saved back into the queue");
+        }
+        if w.rail.orders_for(yard).0 == 0 && w.rail.aboard_for(yard) == 0.0 {
+            break;
+        }
+    }
+    assert!(saved_mid_run, "a train carried goods");
+    assert_eq!((w.rail.orders_for(yard).0, w.rail.aboard_for(yard)), (0, 0.0), "all of it came in within {} minutes", w.clock.tick - start);
+    assert!(trains_seen.len() >= 3, "{} freight trains for {ordered} units", trains_seen.len());
+    assert!(w.clock.tick - start < 600, "within ten hours: {}", w.clock.tick - start);
+    // An older save: an order waiting at the yard itself.
+    let mut old = w.clone();
+    old.buildings[yard].rail_inbound.push(Cargo { from: yard, to: shop, resource: Resource::Parts, amount: 7.0, price: 5.0 });
+    let text = old.to_ron().unwrap();
+    assert!(text.contains("rail_inbound"));
+    let back = World::from_ron(&text).unwrap();
+    assert!(back.buildings[yard].rail_inbound.is_empty());
+    assert_eq!(back.rail.orders_for(yard), (1, 7.0), "migrated to wait out of town for the next train");
 }
 
 #[test]
@@ -2733,6 +2796,6 @@ fn solar_and_wind_scale_with_their_lot_at_a_steady_cost_per_megawatt() {
         assert!((paid_a / mw_a - paid_b / mw_b).abs() < 1.0, "{kind:?}: the same build cost per MW ({} and {})", paid_a / mw_a, paid_b / mw_b);
         assert!((w.plant_upkeep(ba) / mw_a - w.plant_upkeep(bb) / mw_b).abs() < 0.01, "{kind:?}: the same upkeep per MW");
     }
-    // A fixed-size plant is not scaled.
-    assert_eq!(PowerPlantKind::Hydro.size_scale(10_000.0), 1.0);
+    // [freight] Hydro and tidal are capped like the thermal plants.
+    assert_eq!(PowerPlantKind::Hydro.size_scale(10_000.0), PowerPlantKind::Hydro.size_range().1);
 }

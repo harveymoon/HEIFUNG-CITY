@@ -92,6 +92,7 @@ impl World {
             battery_out_mw: e.power.battery_out_mw,
             battery_charge_mwh: e.power.battery_charge_mwh,
             battery_capacity_mwh: e.power.battery_capacity_mwh,
+            battery_savings: e.power.battery_savings_hour,
             served: e.power.served,
             import_price: e.power.import_price,
             temp_c: self.weather.temp_c,

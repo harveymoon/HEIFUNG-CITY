@@ -46,6 +46,10 @@ pub const MAX_LOT_SCALE: f32 = 6.0;
 pub const COAL_REFERENCE_AREA: f32 = 1000.0;
 pub const NUCLEAR_REFERENCE_AREA: f32 = 1500.0;
 pub const GEOTHERMAL_REFERENCE_AREA: f32 = 700.0;
+/// [freight] Hydro and tidal plants are sized to their site too: a lot of
+/// this many m² holds the nameplate station (three turbine bays).
+pub const HYDRO_REFERENCE_AREA: f32 = 700.0;
+pub const TIDAL_REFERENCE_AREA: f32 = 700.0;
 
 impl PowerPlantKind {
     pub const ALL: [PowerPlantKind; 7] = [PowerPlantKind::Coal, PowerPlantKind::Solar, PowerPlantKind::Wind, PowerPlantKind::Nuclear, PowerPlantKind::Hydro, PowerPlantKind::Tidal, PowerPlantKind::Geothermal];
@@ -210,12 +214,12 @@ impl PowerPlantKind {
     /// [clarity] Panels and turbines fill the lot they stand on: a solar
     /// field or wind farm's output, build cost and upkeep scale with the
     /// lot's area, so every megawatt costs the same whatever the lot. The
-    /// nameplate figures (`capacity_mw`, `build_cost`, `upkeep_per_day`)
     /// are for a lot of this many square metres. [plant-scale] Coal,
     /// nuclear and geothermal plants are sized to their site too, in a
     /// narrower range ([`Self::size_range`]), fixed when they are built
-    /// ([`Self::sized_when_built`]). `None`: a plant of fixed size (hydro
-    /// and tidal, sized by their water).
+    /// ([`Self::sized_when_built`]); [freight] so are hydro and tidal
+    /// (more turbine bays on a bigger site; hydro's output still follows
+    /// the river's current as well). `None`: a plant of fixed size.
     pub fn reference_area(self) -> Option<f32> {
         match self {
             PowerPlantKind::Solar => Some(SOLAR_REFERENCE_AREA),
@@ -223,7 +227,8 @@ impl PowerPlantKind {
             PowerPlantKind::Coal => Some(COAL_REFERENCE_AREA),
             PowerPlantKind::Nuclear => Some(NUCLEAR_REFERENCE_AREA),
             PowerPlantKind::Geothermal => Some(GEOTHERMAL_REFERENCE_AREA),
-            PowerPlantKind::Hydro | PowerPlantKind::Tidal => None,
+            PowerPlantKind::Hydro => Some(HYDRO_REFERENCE_AREA),
+            PowerPlantKind::Tidal => Some(TIDAL_REFERENCE_AREA),
         }
     }
 
@@ -231,9 +236,16 @@ impl PowerPlantKind {
     /// worked out from its site when it is built and kept on the building
     /// (`Building::plant_scale`), so it never changes under it; a plant from
     /// an older save, built at the fixed size, keeps that (scale 1). Solar
-    /// and wind follow their lot's area as they always have.
+    /// and wind follow their lot's area as they always have. [freight]
+    /// Hydro and tidal stations too.
     pub fn sized_when_built(self) -> bool {
-        matches!(self, PowerPlantKind::Coal | PowerPlantKind::Nuclear | PowerPlantKind::Geothermal)
+        matches!(self, PowerPlantKind::Coal | PowerPlantKind::Nuclear | PowerPlantKind::Geothermal | PowerPlantKind::Hydro | PowerPlantKind::Tidal)
+    }
+
+    /// [freight] Turbine bays in a hydro or tidal station of this size:
+    /// three at the nameplate, one more for each further third of it.
+    pub fn turbine_bays(scale: f32) -> u32 {
+        ((scale * 3.0).round() as u32).clamp(1, 8)
     }
 
     /// [plant-scale] Most ground a plant of this kind puts to use, m²: a
@@ -246,8 +258,8 @@ impl PowerPlantKind {
             PowerPlantKind::Geothermal => 1600.0,
             PowerPlantKind::Solar => SOLAR_REFERENCE_AREA * MAX_LOT_SCALE,
             PowerPlantKind::Wind => WIND_REFERENCE_AREA * MAX_LOT_SCALE,
-            // Fixed size: a works yard's worth.
-            PowerPlantKind::Hydro | PowerPlantKind::Tidal => 1500.0,
+            // [freight] Up to eight turbine bays (2.67× the nameplate).
+            PowerPlantKind::Hydro | PowerPlantKind::Tidal => 1866.0,
         }
     }
 
@@ -264,7 +276,7 @@ impl PowerPlantKind {
     }
 
     /// [plant-scale] The range of `size_scale`: (smallest, largest) share of
-    /// the nameplate one plant can be. (1, 1) for the fixed-size kinds.
+    /// the nameplate one plant can be. (1, 1) for a fixed-size kind.
     pub fn size_range(self) -> (f32, f32) {
         match self.reference_area() {
             Some(r) if self.sized_when_built() => (self.min_area() / r, self.max_area() / r),
@@ -274,8 +286,8 @@ impl PowerPlantKind {
     }
 
     /// [clarity] What a lot of `area` square metres makes of the nameplate:
-    /// area over the reference area, within [`Self::size_range`]; 1 for
-    /// hydro and tidal.
+    /// area over the reference area, within [`Self::size_range`]; 1 for a
+    /// fixed-size kind.
     pub fn size_scale(self, area: f32) -> f32 {
         match self.reference_area() {
             // [plant-groups] Capped: past six reference lots a single lot
@@ -304,7 +316,8 @@ impl PowerPlantKind {
     }
 
     /// [plant-scale] Jobs at a plant of this size: a bigger plant has more
-    /// shifts on the boilers and the coal yard (never fewer than a third).
+    /// shifts on the boilers and the coal yard, or more turbines to mind
+    /// (never fewer than a third).
     pub fn jobs_at(self, scale: f32) -> u16 {
         if !self.sized_when_built() {
             return self.jobs();
@@ -445,6 +458,21 @@ pub struct PowerStats {
     pub import_price: f32,
     #[serde(default)]
     pub export_price: f32,
+    /// [batteries] The batteries' rule this hour and the day's price bands
+    /// it was read from ([`PriceBands`]).
+    #[serde(default)]
+    pub battery_mode: BatteryMode,
+    #[serde(default)]
+    pub price_bands: PriceBands,
+    /// [batteries] Of `imported_mw`, bought this hour to charge the batteries.
+    #[serde(default)]
+    pub battery_grid_charge_mw: f32,
+    /// [batteries] What the batteries saved today and this hour
+    /// ([`Dispatch::battery_savings`]).
+    #[serde(default)]
+    pub battery_savings_today: f32,
+    #[serde(default)]
+    pub battery_savings_hour: f32,
 }
 
 /// Power the regional grid will sell the city, in megawatts, and its mean
@@ -586,11 +614,17 @@ pub struct Battery {
     /// grid, negative charging from it.
     #[serde(default)]
     pub flow_mw: f32,
+    /// [batteries] Its share of what the batteries saved today and
+    /// yesterday (by its share of the hour's flow).
+    #[serde(default)]
+    pub savings_today: f32,
+    #[serde(default)]
+    pub savings_yesterday: f32,
 }
 
 impl Battery {
     pub fn new(kind: BatteryKind) -> Self {
-        Self { kind, charge_mwh: 0.0, flow_mw: 0.0 }
+        Self { kind, charge_mwh: 0.0, flow_mw: 0.0, savings_today: 0.0, savings_yesterday: 0.0 }
     }
 
     /// Share full, `0..1`.
@@ -641,6 +675,9 @@ pub struct Dispatch {
     pub exported_mw: f32,
     pub imported_mw: f32,
     pub curtailed_mw: f32,
+    /// [batteries] Of `imported_mw`, what was bought to charge the
+    /// batteries (part of `charge_mw` too).
+    pub grid_charge_mw: f32,
 }
 
 /// The merit order: a surplus charges the batteries first, is exported
@@ -665,6 +702,127 @@ pub fn dispatch(supply: f32, demand: f32, room: f32, available: f32) -> Dispatch
         d.imported_mw = (need - d.discharge_mw).min(GRID_IMPORT_MW);
     }
     d
+}
+
+/// [batteries] How many of the day's hours count as cheap (the batteries
+/// buy from the regional grid) and as dear (they deliver first).
+pub const ARBITRAGE_HOURS: usize = 6;
+/// Buying cheap to give back dear must clear the round-trip losses and
+/// this margin on top, or the batteries do not buy from the grid at all.
+pub const ARBITRAGE_MARGIN: f32 = 0.9;
+
+/// [batteries] What the batteries do with the grid this hour, read off the
+/// day's price curve ([`PriceBands::mode`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BatteryMode {
+    /// A cheap hour: take surplus, and buy from the regional grid to fill up.
+    Charge,
+    /// A middle hour: take surplus, keep the charge for the dear hours (give
+    /// only what keeps the lights on past the import line).
+    #[default]
+    Hold,
+    /// A dear hour: deliver before anything is imported.
+    Deliver,
+}
+
+impl BatteryMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            BatteryMode::Charge => "cheap hour: charging from the grid",
+            BatteryMode::Hold => "middle hour: holding for the peak",
+            BatteryMode::Deliver => "dear hour: delivering first",
+        }
+    }
+}
+
+/// [batteries] The day's price thresholds: an hour at or under `cheap`
+/// (the [`ARBITRAGE_HOURS`]th cheapest of the day) is for charging, one at
+/// or over `dear` (the [`ARBITRAGE_HOURS`]th dearest) is for delivering.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PriceBands {
+    pub cheap: f32,
+    pub dear: f32,
+}
+
+impl PriceBands {
+    /// The bands of a day's hourly prices (any length; 24 in the game).
+    pub fn of(prices: &[f32]) -> Self {
+        if prices.is_empty() {
+            return Self::default();
+        }
+        let mut s = prices.to_vec();
+        s.sort_by(f32::total_cmp);
+        let k = ARBITRAGE_HOURS.min(s.len()).max(1);
+        Self { cheap: s[k - 1], dear: s[s.len() - k] }
+    }
+
+    /// Whether power bought in the cheap hours is worth giving back in the
+    /// dear ones, after the round trip's losses and a margin.
+    pub fn worth_storing(&self) -> bool {
+        self.cheap < self.dear * BATTERY_CHARGE_EFF * BATTERY_DISCHARGE_EFF * ARBITRAGE_MARGIN
+    }
+
+    /// The rule for an hour at `price`.
+    pub fn mode(&self, price: f32) -> BatteryMode {
+        if price >= self.dear && self.dear > self.cheap {
+            BatteryMode::Deliver
+        } else if price <= self.cheap && self.worth_storing() {
+            BatteryMode::Charge
+        } else if self.dear <= self.cheap {
+            // A flat day: nothing to play, the old merit order.
+            BatteryMode::Deliver
+        } else {
+            BatteryMode::Hold
+        }
+    }
+}
+
+/// [batteries] [`dispatch`] with the batteries playing the day's prices
+/// (`mode`): a surplus always charges them first; in a cheap hour they
+/// also buy from the regional grid (within its import line) to fill up;
+/// in a shortfall they deliver first only in a dear hour, otherwise the
+/// city imports first and they give only what the import line cannot
+/// (reliability before money: nobody sits in the dark to save a charge).
+pub fn dispatch_tou(supply: f32, demand: f32, room: f32, available: f32, mode: BatteryMode) -> Dispatch {
+    if mode == BatteryMode::Deliver {
+        return dispatch(supply, demand, room, available);
+    }
+    let mut d = Dispatch::default();
+    let net = supply - demand;
+    if net >= 0.0 {
+        d = dispatch(supply, demand, room, available);
+        if mode == BatteryMode::Charge {
+            let buy = (room - d.charge_mw).max(0.0).min(GRID_IMPORT_MW);
+            d.grid_charge_mw = buy;
+            d.imported_mw += buy;
+            d.charge_mw += buy;
+        }
+    } else {
+        let need = -net;
+        d.imported_mw = need.min(GRID_IMPORT_MW);
+        d.discharge_mw = (need - d.imported_mw).min(available);
+        if mode == BatteryMode::Charge && d.discharge_mw <= 0.0 {
+            let buy = room.min(GRID_IMPORT_MW - d.imported_mw).max(0.0);
+            d.grid_charge_mw = buy;
+            d.imported_mw += buy;
+            d.charge_mw = buy;
+        }
+    }
+    d.charge_share = if room > 0.0 { (d.charge_mw / room).min(1.0) } else { 0.0 };
+    d.discharge_share = if available > 0.0 { (d.discharge_mw / available).min(1.0) } else { 0.0 };
+    d
+}
+
+impl Dispatch {
+    /// [batteries] What the batteries saved this hour, in money: imports
+    /// they spared (what they delivered, at the import price) less what
+    /// was bought from the grid to charge them, less the exports they
+    /// cost (surplus they took that the export line could have sold).
+    pub fn battery_savings(&self, import_price: f32, export_price: f32) -> f32 {
+        let from_surplus = (self.charge_mw - self.grid_charge_mw).max(0.0);
+        let forgone = from_surplus.min((GRID_EXPORT_MW - self.exported_mw).max(0.0));
+        self.discharge_mw * import_price - self.grid_charge_mw * import_price - forgone * export_price
+    }
 }
 
 /// Where the sun is at `day_fraction` (0 midnight, 0.5 noon), as a unit
@@ -888,6 +1046,55 @@ mod tests {
         // The import line still caps what is bought.
         assert_eq!(dispatch(0.0, 500.0, 0.0, 0.0).imported_mw, GRID_IMPORT_MW);
         assert!(GRID_EXPORT_PRICE < GRID_IMPORT_PRICE, "selling back never pays for buying");
+    }
+
+    /// [batteries] The day's six cheapest hours charge, its six dearest
+    /// deliver; a flat day plays nothing; buying cheap only when the round
+    /// trip pays.
+    #[test]
+    fn price_bands_split_the_day_and_the_rule_is_explainable() {
+        let mild = crate::weather::Weather::default();
+        let prices: Vec<f32> = (0..24).map(|h| import_price(h as f32, mild.temp_at(h as f32))).collect();
+        let b = PriceBands::of(&prices);
+        assert!(b.cheap < b.dear && b.worth_storing(), "{b:?}");
+        let modes: Vec<BatteryMode> = prices.iter().map(|p| b.mode(*p)).collect();
+        assert_eq!(modes.iter().filter(|m| **m == BatteryMode::Charge).count(), ARBITRAGE_HOURS, "{prices:?}");
+        assert_eq!(modes.iter().filter(|m| **m == BatteryMode::Deliver).count(), ARBITRAGE_HOURS, "{prices:?}");
+        // Charging in the small hours, delivering in the evening.
+        assert_eq!(modes[3], BatteryMode::Charge, "{modes:?}");
+        assert_eq!(modes[19], BatteryMode::Deliver, "{modes:?}");
+        // A flat price: the old merit order (deliver in any shortfall).
+        let flat = PriceBands::of(&[2.0; 24]);
+        assert_eq!(flat.mode(2.0), BatteryMode::Deliver);
+        assert!(!flat.worth_storing());
+        // Barely different prices do not pay the losses: no buying.
+        let tight = PriceBands { cheap: 2.0, dear: 2.1 };
+        assert_ne!(tight.mode(2.0), BatteryMode::Charge);
+    }
+
+    #[test]
+    fn the_hour_rule_charges_holds_and_delivers() {
+        // A shortfall of 30 MW with 20 MW of battery room and output.
+        let hold = dispatch_tou(100.0, 130.0, 20.0, 20.0, BatteryMode::Hold);
+        assert_eq!((hold.imported_mw, hold.discharge_mw, hold.charge_mw), (30.0, 0.0, 0.0), "holding imports first");
+        let deliver = dispatch_tou(100.0, 130.0, 20.0, 20.0, BatteryMode::Deliver);
+        assert_eq!((deliver.discharge_mw, deliver.imported_mw), (20.0, 10.0), "a dear hour delivers first");
+        let cheap = dispatch_tou(100.0, 130.0, 20.0, 20.0, BatteryMode::Charge);
+        assert_eq!((cheap.imported_mw, cheap.grid_charge_mw, cheap.charge_mw, cheap.discharge_mw), (50.0, 20.0, 20.0, 0.0), "a cheap hour buys to fill up");
+        // Past the import line the battery keeps the lights on, whatever the hour.
+        let short = dispatch_tou(0.0, GRID_IMPORT_MW + 15.0, 20.0, 20.0, BatteryMode::Hold);
+        assert_eq!((short.imported_mw, short.discharge_mw), (GRID_IMPORT_MW, 15.0));
+        let short = dispatch_tou(0.0, GRID_IMPORT_MW + 15.0, 20.0, 20.0, BatteryMode::Charge);
+        assert_eq!((short.discharge_mw, short.grid_charge_mw), (15.0, 0.0), "never buys to charge while it must give");
+        // A surplus always charges first; a cheap hour tops up from the grid.
+        let sun = dispatch_tou(130.0, 100.0, 50.0, 20.0, BatteryMode::Charge);
+        assert_eq!((sun.charge_mw, sun.grid_charge_mw, sun.imported_mw, sun.exported_mw), (50.0, 20.0, 20.0, 0.0));
+        // Savings: imports spared at the price, less what was bought, less
+        // the exports the surplus would have earned.
+        assert_eq!(deliver.battery_savings(4.0, 0.8), 20.0 * 4.0);
+        assert_eq!(cheap.battery_savings(1.0, 0.2), -20.0);
+        let s = dispatch_tou(130.0, 100.0, 10.0, 0.0, BatteryMode::Hold);
+        assert!((s.battery_savings(2.0, 0.4) + 10.0 * 0.4).abs() < 1e-4);
     }
 
     #[test]

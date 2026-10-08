@@ -274,6 +274,10 @@ pub struct Building {
     pub parking_capacity: u16,
     #[serde(default)]
     pub parking_used: u16,
+    /// [parking-market] The most spaces taken at once today (reset at
+    /// midnight, when a parking business sets its fee by it).
+    #[serde(default)]
+    pub parking_peak: u16,
     /// Fee per visit for paying customers (parking businesses).
     #[serde(default)]
     pub parking_price: f32,
@@ -305,7 +309,9 @@ pub struct Building {
     #[serde(default)]
     pub rail: Option<crate::rail::RailLink>,
     /// Goods ordered by rail, waiting for the next freight train (yards).
-    #[serde(default)]
+    /// [freight] Legacy: only read from old saves, whose orders move to
+    /// `Rail::orders` on load (`World::validate`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rail_inbound: Vec<crate::traffic::Cargo>,
     /// Export units waiting on the apron (yards).
     #[serde(default)]
@@ -370,6 +376,7 @@ impl Building {
             business: None,
             parking_capacity: 0,
             parking_used: 0,
+            parking_peak: 0,
             parking_price: 0.0,
             city_parking: false,
             plant: None,

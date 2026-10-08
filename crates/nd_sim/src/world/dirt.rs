@@ -38,6 +38,52 @@ pub const PARK_CLEANUP_PER_DAY: f32 = 0.03;
 pub const CLEANUP_COST: f32 = 450.0;
 /// The widest area one clean-up order covers, metres.
 pub const CLEANUP_MAX_RADIUS: f32 = 300.0;
+/// The smallest clean-up the Bulldoze tool orders, metres.
+pub const CLEANUP_MIN_RADIUS: f32 = 20.0;
+
+/// [dirty-industry] A clean-up crew at work: paid for when ordered, it digs
+/// out the ground from the middle outwards over `hours`, so the stain
+/// shrinks ring by ring (`World::hourly_cleanups`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CleanupJob {
+    pub id: u32,
+    pub center: Vec2,
+    pub radius: f32,
+    pub start_tick: u64,
+    pub hours: u32,
+    /// Hours dug so far.
+    pub done: u32,
+    pub cost: f32,
+    /// Contamination it was ordered to remove (cells of full contamination).
+    pub amount: f32,
+}
+
+impl CleanupJob {
+    /// `0..1`: how far the dig has got.
+    pub fn progress(&self) -> f32 {
+        (self.done as f32 / self.hours.max(1) as f32).clamp(0.0, 1.0)
+    }
+
+    /// Radius dug out so far: the area grows evenly with the hours.
+    pub fn dug_radius(&self) -> f32 {
+        self.radius * self.progress().sqrt()
+    }
+}
+
+/// [dirty-industry] What a clean-up order would be, before it is placed:
+/// the Bulldoze tool's hover label and the click both read it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CleanupQuote {
+    pub center: Vec2,
+    pub radius: f32,
+    /// Contamination under it, cells of full contamination.
+    pub amount: f32,
+    /// Stained cells under it.
+    pub cells: usize,
+    pub cost: f32,
+    /// Days the crew will dig.
+    pub days: u32,
+}
 /// A home this exposed (or on ground this contaminated) feels it.
 pub const HOME_EXPOSED: f32 = 0.12;
 /// Mood a resident loses a day at full exposure.
@@ -227,6 +273,54 @@ impl World {
             self.concerns.said(tick, p, cz, crate::concerns::Concern::Noise, (0.25 + 0.5 * felt).min(0.9), text);
             said += 1;
         }
+    }
+
+    /// [dirty-industry] What cleaning up within `radius` of `center` would
+    /// take: `Err` (why not) where the ground is clean, a crew is already
+    /// at work or the treasury cannot pay. Read by the tool's hover label
+    /// and by [`World::start_cleanup`], so the two always agree.
+    pub fn cleanup_quote(&self, center: Vec2, radius: f32) -> Result<CleanupQuote, String> {
+        let radius = radius.clamp(self.contamination.cell * 0.5, CLEANUP_MAX_RADIUS);
+        if let Some(j) = self.cleanups.iter().find(|j| j.center.distance(center) < j.radius + radius * 0.5) {
+            return Err(format!("a crew is already cleaning up here ({:.0}% done)", j.progress() * 100.0));
+        }
+        let amount = self.contamination.within(center, radius);
+        if amount < 0.01 {
+            return Err("the ground here is clean".into());
+        }
+        let cells = self.contamination.cells_over_within(center, radius, 0.02);
+        let cost = amount * CLEANUP_COST;
+        let days = (1.0 + amount / 20.0 + radius / 150.0).ceil().clamp(2.0, 6.0) as u32;
+        let quote = CleanupQuote { center, radius, amount, cells, cost, days };
+        if self.economy.treasury < cost {
+            return Err(format!("cleaning up costs {cost:.0}; the treasury has {:.0}", self.economy.treasury));
+        }
+        Ok(quote)
+    }
+
+    /// [dirty-industry] Order a clean-up: paid now, dug over the quoted days
+    /// by a crew on site. Returns the quote it was placed on.
+    pub fn start_cleanup(&mut self, center: Vec2, radius: f32) -> Result<CleanupQuote, String> {
+        let q = self.cleanup_quote(center, radius)?;
+        self.economy.debit_item(Flow::Construction, q.cost, Item::Named(format!("ground clean-up, {:.0} m round ({:.0}, {:.0})", q.radius, center.x, center.y)));
+        let id = self.cleanups.iter().map(|j| j.id + 1).max().unwrap_or(1);
+        self.cleanups.push(CleanupJob { id, center, radius: q.radius, start_tick: self.clock.tick, hours: q.days * 24, done: 0, cost: q.cost, amount: q.amount });
+        Ok(q)
+    }
+
+    /// [dirty-industry] An hour's digging: each crew clears out to the
+    /// radius it has reached (what seeped back in too) and leaves when done.
+    pub(super) fn hourly_cleanups(&mut self) {
+        if self.cleanups.is_empty() {
+            return;
+        }
+        let mut jobs = std::mem::take(&mut self.cleanups);
+        for j in &mut jobs {
+            j.done = (j.done + 1).min(j.hours);
+            self.contamination.scale_within(j.center, j.dug_radius(), 0.0);
+        }
+        jobs.retain(|j| j.done < j.hours);
+        self.cleanups = jobs;
     }
 
     /// Clean up the ground within `radius` of `center`: the contamination

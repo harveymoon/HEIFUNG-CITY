@@ -28,6 +28,14 @@ pub const CONTAMINATION_DECAY_PER_DAY: f32 = 0.01;
 pub const CONTAMINATION_SPREAD_PER_DAY: f32 = 0.12;
 /// Cells below this are forgotten (kept sparse in the save).
 const CONTAMINATION_EPS: f32 = 0.002;
+/// [dirty-industry] Share of a cell carried one cell downwind a day in a
+/// full gale (dust off poisoned ground; an ordinary day's wind about half).
+pub const CONTAMINATION_WIND_DRIFT: f32 = 0.05;
+/// Share of a cell over (or on the bank of) a river or stream carried one
+/// cell downstream a day, at a current of 1 m/s or more (half that in still water).
+pub const CONTAMINATION_RIVER_DRIFT: f32 = 0.3;
+/// Below this a cell is left where it is: drift moves the stains, not the traces.
+const DRIFT_MIN: f32 = 0.01;
 
 /// What the ground is, for the map and the inspector.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -280,10 +288,99 @@ impl Contamination {
         self.version += 1;
     }
 
+    /// [dirty-industry] One day's drift: dust off poisoned ground blows a
+    /// cell downwind (`wind`: the direction the air moves, its length the
+    /// wind's strength `0..1`), and what lies in or on the bank of a river
+    /// or stream is carried a cell downstream. Moves contamination without
+    /// making any; what leaves the map is gone. Deterministic (cells in
+    /// order), and cheap: only cells with a stain are looked at, and the
+    /// rivers through a bounding-box test first.
+    pub fn drift(&mut self, wind: Vec2, rivers: &[crate::landscape::River]) {
+        if self.cells.is_empty() {
+            return;
+        }
+        let n = self.n as i64;
+        let strength = wind.length().min(1.0);
+        let dir = wind.normalize_or_zero();
+        let (wx, wy) = (dir.x.abs(), dir.y.abs());
+        let wsum = (wx + wy).max(1e-6);
+        let (sx, sy) = (dir.x.signum() as i64, dir.y.signum() as i64);
+        // Rivers' reach, boxed once.
+        let reach = |r: &crate::landscape::River| r.width * 0.5 + self.cell * 0.75;
+        let boxes: Vec<(Vec2, Vec2)> = rivers
+            .iter()
+            .map(|r| {
+                let e = Vec2::splat(reach(r));
+                let lo = r.points.iter().copied().fold(Vec2::splat(f32::MAX), Vec2::min) - e;
+                let hi = r.points.iter().copied().fold(Vec2::splat(f32::MIN), Vec2::max) + e;
+                (lo, hi)
+            })
+            .collect();
+        let mut moves: Vec<(u32, Option<u32>, f32)> = Vec::new();
+        let index = |x: i64, y: i64| if x < 0 || y < 0 || x >= n || y >= n { None } else { Some((y * n + x) as u32) };
+        for (&i, &v) in &self.cells {
+            if v < DRIFT_MIN {
+                continue;
+            }
+            let (x, y) = ((i as i64) % n, (i as i64) / n);
+            let c = self.cell_center(x as usize, y as usize);
+            let mut left = v;
+            // Downstream first: water carries more than air.
+            for (r, (lo, hi)) in rivers.iter().zip(&boxes) {
+                if r.points.len() < 2 || c.x < lo.x || c.y < lo.y || c.x > hi.x || c.y > hi.y {
+                    continue;
+                }
+                let (seg, _, d) = r.nearest(c);
+                if d > reach(r) {
+                    continue;
+                }
+                let flow = r.flow(seg);
+                let to = c + flow * self.cell;
+                let (tx, ty) = (((to.x + self.half) / self.cell).floor() as i64, ((to.y + self.half) / self.cell).floor() as i64);
+                if (tx, ty) == (x, y) {
+                    break;
+                }
+                let share = CONTAMINATION_RIVER_DRIFT * (0.5 + 0.5 * r.current.clamp(0.0, 1.0));
+                let amount = left * share;
+                moves.push((i, index(tx, ty), amount));
+                left -= amount;
+                break;
+            }
+            if strength > 0.0 && dir != Vec2::ZERO {
+                let amount = left * CONTAMINATION_WIND_DRIFT * strength;
+                if wx > 1e-3 {
+                    moves.push((i, index(x + sx, y), amount * wx / wsum));
+                }
+                if wy > 1e-3 {
+                    moves.push((i, index(x, y + sy), amount * wy / wsum));
+                }
+            }
+        }
+        if moves.is_empty() {
+            return;
+        }
+        for (from, to, amount) in moves {
+            if let Some(v) = self.cells.get_mut(&from) {
+                *v -= amount;
+            }
+            if let Some(t) = to {
+                let e = self.cells.entry(t).or_insert(0.0);
+                *e = (*e + amount).min(1.0);
+            }
+        }
+        self.cells.retain(|_, v| *v >= CONTAMINATION_EPS);
+        self.version += 1;
+    }
+
     /// [dirty-industry] Contamination in the cells whose centres lie within
     /// `radius` of `center`, summed (cell units).
     pub fn within(&self, center: Vec2, radius: f32) -> f32 {
         self.cells_within(center, radius).into_iter().filter_map(|i| self.cells.get(&i)).sum()
+    }
+
+    /// [dirty-industry] Cells within `radius` of `center` at or above `level`.
+    pub fn cells_over_within(&self, center: Vec2, radius: f32, level: f32) -> usize {
+        self.cells_within(center, radius).into_iter().filter(|i| self.cells.get(i).is_some_and(|v| *v >= level)).count()
     }
 
     /// [dirty-industry] Multiply the cells within `radius` of `center` by

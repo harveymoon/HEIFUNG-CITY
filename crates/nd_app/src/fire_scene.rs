@@ -39,6 +39,10 @@ pub const LADDER_FLOW: f32 = 1900.0;
 const PACE: f32 = 2.2;
 /// Climbing pace on the ladder (m/s).
 const CLIMB: f32 = 3.5;
+/// [fire-scene] The hose crew stands at least this far (m) from the
+/// engine's middle towards the building: on the pavement side, never out in
+/// the traffic lanes (the engine stands at the kerb).
+const CREW_OFF_ENGINE: f32 = 2.4;
 
 /// What a crew member is there for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -305,7 +309,10 @@ pub fn engine_scene(w: &World, uid: UnitId, frac: f32, rules: &BuildingRules, to
     if perp.dot(fwd) < 0.0 {
         perp = -perp;
     }
-    let nozzle_at = face - to_b * (dist * 0.45).clamp(5.0, 11.0) + perp * 3.5;
+    // Never on the road side of the engine (in the traffic): at least
+    // `CREW_OFF_ENGINE` towards the building from its middle.
+    let back_off = |want: f32| want.min((dist - CREW_OFF_ENGINE).max(0.0));
+    let nozzle_at = face - to_b * back_off((dist * 0.45).clamp(5.0, 11.0)) + perp * 3.5;
     // Where the hand line's water lands: over a low roof, else the facade
     // a few floors up.
     let hand_goal = if height <= 16.0 { world(face + (centre - face).normalize_or_zero() * depth.min(3.0), face_ground + height + 0.3) } else { world(face, face_ground + height.min(13.0)) };
@@ -340,7 +347,7 @@ pub fn engine_scene(w: &World, uid: UnitId, frac: f32, rules: &BuildingRules, to
         let station = match role {
             Role::Pump => pump_at,
             Role::Nozzle => nozzle_at,
-            Role::Backup => nozzle_at - to_b * (1.3 * (i - 2) as f32) + perp * 0.4,
+            Role::Backup => face - to_b * back_off((dist * 0.45).clamp(5.0, 11.0) + 1.3 * (i - 2) as f32) + perp * 3.9,
             Role::Ladder => rear,
         };
         let leg = from.distance(station).max(0.1);
