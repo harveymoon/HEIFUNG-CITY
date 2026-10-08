@@ -1107,7 +1107,8 @@ pub fn alerts(w: &World) -> Vec<Alert> {
             }
         }
     }
-    for p in w.ports.ports.values().filter(|p| !p.road_connected) {
+    // [sweep-sim] A ferry terminal people can walk to is not off the network.
+    for p in w.ports.ports.values().filter(|p| !p.road_connected && !p.walk_only()) {
         if let Some(b) = p.building {
             dock_off.add(key_str(b), Some(p.center));
         }

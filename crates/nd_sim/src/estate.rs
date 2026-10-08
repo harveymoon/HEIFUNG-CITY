@@ -384,6 +384,25 @@ impl Pressure {
         Self { half, n, value: vec![0.0; n * n], congestion: vec![0.0; n * n], mobility: vec![1.0; n * n], samples: 0, always: false }
     }
 
+    /// [sweep-sim] Grow the grid to `half` (an old save's smaller grid),
+    /// cells kept in place when the growth is whole cells; new cells start
+    /// cold. Returns whether it changed.
+    pub fn grow_to(&mut self, half: f32) -> bool {
+        let off = (half - self.half) / PRESSURE_CELL;
+        if !self.ready() || off < 0.5 || (off - off.round()).abs() > 1e-3 {
+            return false;
+        }
+        let off = off.round() as usize;
+        let n = ((half * 2.0) / PRESSURE_CELL).ceil().max(1.0) as usize;
+        let pad = crate::land_value::pad_square;
+        self.value = pad(&self.value, self.n, n, off, 0.0);
+        self.congestion = pad(&self.congestion, self.n, n, off, 0.0);
+        self.mobility = pad(&self.mobility, self.n, n, off, 1.0);
+        self.half = half;
+        self.n = n;
+        true
+    }
+
     pub fn ready(&self) -> bool {
         self.n > 0 && self.value.len() == self.n * self.n && self.mobility.len() == self.n * self.n && self.congestion.len() == self.n * self.n
     }

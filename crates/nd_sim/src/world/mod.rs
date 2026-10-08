@@ -449,6 +449,10 @@ pub struct World {
     /// segments (index = node id), rebuilt with the roads.
     #[serde(skip)]
     road_component: Vec<u32>,
+    /// [sweep-sim] The same over street segments alone: where a car or a
+    /// lorry can get (a footpath joins walkers, not drivers).
+    #[serde(skip)]
+    drive_component: Vec<u32>,
     /// Late mind answers (`MindProvider::poll`) for citizens who were
     /// travelling when they came, with the tick they came: acted on at the
     /// citizen's next decision (`step_citizens`) if still fresh. Not saved:
@@ -722,6 +726,7 @@ impl World {
             events: Vec::new(),
             next_seed: 1,
             road_component: Vec::new(),
+            drive_component: Vec::new(),
             stations: Vec::new(),
             yards: Vec::new(),
             halts: Vec::new(),
@@ -781,8 +786,10 @@ impl World {
             path_links: Default::default(),
             corps: Default::default(),
         };
-        w.estate.pressure = crate::estate::Pressure::new(half + 200.0);
         w.landscape = Landscape::new(&w.config.landscape);
+        // [sweep-sim] Grids over the whole buildable land (far islands too).
+        w.land_value = LandValue::new(w.grid_half(32.0), 32.0);
+        w.estate.pressure = crate::estate::Pressure::new(w.grid_half(crate::estate::PRESSURE_CELL));
         // [grid-weather] The climate's ordinary weather to start.
         w.weather = Weather::for_climate(w.landscape.params.climate);
         w.plan_changed();
@@ -896,8 +903,12 @@ impl World {
         // [land] A save from before the land market: a cold pressure grid
         // (it warms on the first hourly sample); stale references dropped.
         if !self.estate.pressure.ready() {
-            self.estate.pressure = crate::estate::Pressure::new(self.config.half_extent + 200.0);
+            self.estate.pressure = crate::estate::Pressure::new(self.grid_half(crate::estate::PRESSURE_CELL));
         }
+        // [sweep-sim] A save from before the grids covered far islands:
+        // grown (cells keep their place; land value refills on its next
+        // pass, pressure warms again).
+        self.grow_grids();
         self.prune_estate();
         self.subway_after_load();
         self.seats_after_load();

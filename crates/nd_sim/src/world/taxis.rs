@@ -807,7 +807,8 @@ impl World {
                 }
             }
         };
-        for &s in &self.stations {
+        // [sweep-sim] Not at a station people only walk to: no road for the cabs.
+        for &s in self.stations.iter().filter(|&&s| self.road_access(s) != Some(false)) {
             push(s, self);
         }
         let mut venues: Vec<(BuildingId, u16)> = self

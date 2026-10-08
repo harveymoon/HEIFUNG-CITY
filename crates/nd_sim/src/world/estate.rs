@@ -32,7 +32,7 @@ impl World {
     /// cars standing, folded into the running averages.
     pub(super) fn hourly_pressure(&mut self) {
         if !self.estate.pressure.ready() {
-            self.estate.pressure = Pressure::new(self.config.half_extent + 200.0);
+            self.estate.pressure = Pressure::new(self.grid_half(crate::estate::PRESSURE_CELL));
         }
         let p = &self.estate.pressure;
         let cells = p.value.len();

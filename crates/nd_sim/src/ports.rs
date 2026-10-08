@@ -281,9 +281,14 @@ pub struct Port {
     pub building: Option<BuildingId>,
     #[serde(default)]
     pub lot: Option<LotId>,
-    /// The street side reaches the city's roads.
+    /// The street side reaches the city's roads (streets alone: a lorry
+    /// can get there).
     #[serde(default)]
     pub road_connected: bool,
+    /// [sweep-sim] People can walk to it from the city: the street side
+    /// reaches it over streets or paths. A ferry terminal needs no more.
+    #[serde(default)]
+    pub walk_connected: bool,
     /// Ships can reach the berth from off the map.
     #[serde(default)]
     pub reaches_elsewhere: bool,
@@ -319,9 +324,17 @@ impl Port {
     }
 
     /// Works when the street reaches the city and ships can get to it.
+    /// [sweep-sim] A ferry terminal carries people, so a path from the city
+    /// to its gate is enough; a dock that lands goods needs a road.
     pub fn works(&self) -> bool {
         // [economy] Marinas and fishing ports work any water they are on.
-        self.road_connected && (self.reaches_elsewhere || self.kind != PortKind::ShippingPort)
+        let reached = self.road_connected || (self.kind == PortKind::FerryTerminal && self.walk_connected);
+        reached && (self.reaches_elsewhere || self.kind != PortKind::ShippingPort)
+    }
+
+    /// [sweep-sim] Working, but reached on foot only (no road yet).
+    pub fn walk_only(&self) -> bool {
+        self.works() && !self.road_connected
     }
 
     /// Towards the water, like `Facility::inward`.
@@ -400,7 +413,7 @@ impl Port {
         let root = shore.point - seaward * (back + 1.0);
         let tip = shore.point + seaward * reach;
         let berth = shore.point + seaward * (reach + if matches!(kind, PortKind::ShippingPort | PortKind::FishingPortLarge) { 9.0 } else { 5.0 }).min(if w.width.is_finite() { w.width * 0.5 } else { f32::MAX });
-        let port = Port { kind, center, along, seaward, pier: [root, tip], berth, water: w.kind, building: None, lot: None, road_connected: false, reaches_elsewhere: false, last_sailing: 0, remote: Vec::new(), sailings: 0, stub: None };
+        let port = Port { kind, center, along, seaward, pier: [root, tip], berth, water: w.kind, building: None, lot: None, road_connected: false, walk_connected: false, reaches_elsewhere: false, last_sailing: 0, remote: Vec::new(), sailings: 0, stub: None };
         for c in port.corners().iter().chain(std::iter::once(&center)) {
             if land.is_water(*c) {
                 return Err("the shore is too ragged here: part of the dock would stand in the water".into());

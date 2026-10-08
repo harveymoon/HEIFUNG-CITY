@@ -130,6 +130,33 @@ impl LandValue {
         Self { cell, half, n, values: vec![0.3; n * n], version: 0, nuisance: Vec::new(), under: Vec::new(), park_min: Vec::new(), nightlife_min: Vec::new(), access: Vec::new() }
     }
 
+    /// [sweep-sim] Grow the grid to `half` (an old save's smaller grid),
+    /// keeping every cell where it was when the growth is a whole number of
+    /// cells per side; new cells start at the default. Returns whether it
+    /// changed.
+    pub fn grow_to(&mut self, half: f32) -> bool {
+        let off = (half - self.half) / self.cell;
+        if off < 0.5 || (off - off.round()).abs() > 1e-3 {
+            return false;
+        }
+        let off = off.round() as usize;
+        let n = ((half * 2.0) / self.cell).ceil() as usize;
+        let old = self.n;
+        self.values = pad_square(&self.values, old, n, off, 0.3);
+        if self.values.len() != n * n {
+            self.values = vec![0.3; n * n];
+        }
+        self.nuisance = pad_square(&self.nuisance, old, n, off, 0.0);
+        self.under = pad_square(&self.under, old, n, off, 0.0);
+        self.park_min = pad_square(&self.park_min, old, n, off, NO_DATA);
+        self.nightlife_min = pad_square(&self.nightlife_min, old, n, off, NO_DATA);
+        self.access = pad_square(&self.access, old, n, off, 0.0);
+        self.half = half;
+        self.n = n;
+        self.version = self.version.wrapping_add(1);
+        true
+    }
+
     /// Set every cell (tests and scenarios).
     pub fn fill(&mut self, v: f32) {
         self.values.iter_mut().for_each(|x| *x = v);
@@ -466,4 +493,27 @@ mod tests {
         assert!(old.access_at(near).is_none() && old.access_value_at(near) == 0.0);
         assert_eq!(old.for_use(near, LandUse::Residential), 0.3);
     }
+}
+
+/// [sweep-sim] An `old_n`-square row-major grid copied into an `n`-square
+/// one, `off` cells in from each side, the rest `fill`. Empty in, empty out
+/// (a layer an old save lacks stays absent).
+pub fn pad_square(v: &[f32], old_n: usize, n: usize, off: usize, fill: f32) -> Vec<f32> {
+    if v.len() != old_n * old_n || v.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec![fill; n * n];
+    for y in 0..old_n {
+        let ty = y + off;
+        if ty >= n {
+            break;
+        }
+        for x in 0..old_n {
+            let tx = x + off;
+            if tx < n {
+                out[ty * n + tx] = v[y * old_n + x];
+            }
+        }
+    }
+    out
 }

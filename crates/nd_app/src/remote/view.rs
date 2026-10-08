@@ -417,7 +417,7 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
     });
     let rail = b.rail.as_ref().map(|l| {
         json!({
-            "kind": rail_name(l.kind), "rail_connected": l.rail_connected, "road_connected": l.road_connected, "works": l.works(),
+            "kind": rail_name(l.kind), "rail_connected": l.rail_connected, "road_connected": l.road_connected, "walk_connected": l.walk_connected, "works": l.works(),
             "platform": points(&l.platform), "inbound_orders": w.rail.orders_for(id).0,
             "inbound_units": round(w.rail.orders_for(id).1), "aboard_units": round(w.rail.aboard_for(id)), "outbound_units": round(b.rail_outbound),
         })
@@ -488,7 +488,7 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         v["road_access"] = access_json(w, id, connected);
     }
     if let Some(p) = w.ports.port_of(id) {
-        v["dock"] = json!({ "kind": p.kind.label(), "road_connected": p.road_connected, "reaches_elsewhere": p.reaches_elsewhere, "works": p.works(), "ferries_sail": p.sails(), "berth": v2(p.berth), "stub": points(&p.road_line()) });
+        v["dock"] = json!({ "kind": p.kind.label(), "road_connected": p.road_connected, "walk_connected": p.walk_connected, "reaches_elsewhere": p.reaches_elsewhere, "works": p.works(), "ferries_sail": p.sails(), "berth": v2(p.berth), "stub": points(&p.road_line()) });
     }
     v["dirt"] = dirt_json(w, id);
     // [waterfront] its beach, its jetty, its edge on the water
@@ -1020,6 +1020,9 @@ pub fn vehicle_detail(w: &World, vid: nd_sim::VehicleId) -> Option<Value> {
 pub fn access_json(w: &World, id: nd_sim::BuildingId, connected: bool) -> Value {
     json!({
         "connected": connected,
+        // [sweep-sim] Reached on foot (a path) and whether that is enough.
+        "serves": w.access_serves(id),
+        "note": w.access_note(id),
         "stub_ends": w.stub_ends_of(id).into_iter().map(v2).collect::<Vec<_>>(),
         "problem": w.access_problem(id),
     })

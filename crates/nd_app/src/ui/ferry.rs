@@ -38,7 +38,7 @@ pub fn dock_routes(ui: &mut egui::Ui, w: &World, id: BuildingId) {
         }
     }
     if w.ports.port_of(id).is_some_and(|p| !p.works()) {
-        let why = if w.ports.port_of(id).is_some_and(|p| !p.road_connected) { "join its street stub to the city's roads" } else { "no ship can reach it from off the map" };
+        let why = if w.ports.port_of(id).is_some_and(|p| !p.road_connected && !p.walk_connected) { "join its street stub to the city's roads" } else if w.ports.port_of(id).is_some_and(|p| !p.road_connected) { "goods need a road to its street stub (a path is not enough)" } else { "no ship can reach it from off the map" };
         ui.label(egui::RichText::new(format!("not running: {why}")).color(WARN));
     }
     let (_, net) = crate::ferry_select::net(w);

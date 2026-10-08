@@ -313,6 +313,34 @@ impl World {
         (self.parcel_half() + 200.0).min(crate::landscape::LAND_HALF)
     }
 
+    /// [sweep-sim] Half extent of the land-value and estate-pressure grids
+    /// with `cell`-sized cells: the old `half_extent + 200` on a flat map,
+    /// out to the whole buildable land otherwise (lots on far islands, see
+    /// [`parcel_half`](Self::parcel_half)). Grown by whole cells so the
+    /// cells of the old grid stay where they were. Fixed per map, so the
+    /// grids are not resized as roads reach further out.
+    pub fn grid_half(&self, cell: f32) -> f32 {
+        let base = self.config.half_extent + 200.0;
+        let reach = crate::landscape::LAND_HALF;
+        if self.landscape.is_flat() || reach <= base || cell <= 0.0 {
+            return base;
+        }
+        base + ((reach - base) / cell).ceil() * cell
+    }
+
+    /// [sweep-sim] Grow an old save's land-value and pressure grids to
+    /// [`grid_half`](Self::grid_half).
+    pub(super) fn grow_grids(&mut self) {
+        let lv = self.grid_half(self.land_value.cell);
+        if lv > self.land_value.half + 1.0 && !self.land_value.grow_to(lv) {
+            self.land_value = crate::land_value::LandValue::new(lv, self.land_value.cell);
+        }
+        let pr = self.grid_half(crate::estate::PRESSURE_CELL);
+        if pr > self.estate.pressure.half + 1.0 && !self.estate.pressure.grow_to(pr) {
+            self.estate.pressure = crate::estate::Pressure::new(pr);
+        }
+    }
+
     /// Heights of the road nodes, then the built ground from them.
     ///
     /// Every node starts on the ground plus the level it was drawn at. Nodes
@@ -848,15 +876,19 @@ impl World {
     /// components that hold zoned lots (a city at the other end) or reach
     /// off the map (the highway, a road out to elsewhere). A street in an
     /// empty field is neither.
-    pub(super) fn network_components(&self) -> std::collections::HashSet<u32> {
-        let mut comps: std::collections::HashSet<u32> = self.lots.values().filter(|l| self.zones.contains_key(l.zone) && l.zone != ZoneId::default()).filter_map(|l| self.road_component(l.access_node)).collect();
-        comps.extend(self.roads.leaf_nodes().into_iter().filter(|&n| crate::landscape::is_elsewhere(self.roads.node(n).pos)).filter_map(|n| self.road_component(n)));
-        comps
+    /// [sweep-sim] `.0` over streets and paths (walkers), `.1` over
+    /// streets alone (drivers).
+    pub(super) fn network_components(&self) -> (std::collections::HashSet<u32>, std::collections::HashSet<u32>) {
+        let lots: Vec<NodeId> = self.lots.values().filter(|l| self.zones.contains_key(l.zone) && l.zone != ZoneId::default()).map(|l| l.access_node).collect();
+        let outs: Vec<NodeId> = self.roads.leaf_nodes().into_iter().filter(|&n| crate::landscape::is_elsewhere(self.roads.node(n).pos)).collect();
+        let walk = lots.iter().chain(&outs).filter_map(|&n| self.road_component(n)).collect();
+        let drive = lots.iter().chain(&outs).filter_map(|&n| self.drive_component(n)).collect();
+        (walk, drive)
     }
 
     /// [dock-access] For a dock, station or yard: whether its street
-    /// reaches the road network (`network_components`). None for any other
-    /// building.
+    /// reaches the road network (`network_components`) for drivers. None
+    /// for any other building.
     pub fn road_access(&self, b: BuildingId) -> Option<bool> {
         if let Some(p) = self.ports.port_of(b) {
             return Some(p.road_connected);
@@ -864,19 +896,42 @@ impl World {
         self.buildings.get(b).and_then(|x| x.rail.as_ref()).map(|l| l.road_connected)
     }
 
+    /// [sweep-sim] For a dock, station or yard: whether its access is
+    /// enough for its work (a road; for passengers a path will do). None
+    /// for any other building.
+    pub fn access_serves(&self, b: BuildingId) -> Option<bool> {
+        if let Some(p) = self.ports.port_of(b) {
+            return Some(p.road_connected || (p.kind == PortKind::FerryTerminal && p.walk_connected));
+        }
+        self.buildings.get(b).and_then(|x| x.rail.as_ref()).map(|l| l.road_connected || (l.kind.is_passenger() && l.walk_connected))
+    }
+
+    /// [sweep-sim] A ferry terminal or passenger station people can walk to
+    /// but no road reaches yet: it serves passengers; taxis, buses and
+    /// deliveries cannot get there. The line the inspector and API show.
+    pub fn access_note(&self, b: BuildingId) -> Option<String> {
+        if self.road_access(b)? || !self.access_serves(b)? {
+            return None;
+        }
+        Some("reached on foot only: a path joins it to the city, so passengers walk in and out; no road reaches it yet for taxis, buses or deliveries".to_string())
+    }
+
     /// [dock-access] What the player is told about a dock or station off
     /// the roads, for the inspector, the alerts and the API.
     pub fn access_problem(&self, b: BuildingId) -> Option<String> {
-        if self.road_access(b)? {
+        if self.road_access(b)? || self.access_serves(b)? {
             return None;
         }
         let joined = self.stub_ends_of(b).is_empty();
-        let what = if self.ports.port_of(b).is_some_and(|p| p.kind == PortKind::FerryTerminal) {
-            "ferries sail, but carry no one until people can get to the pier"
+        let walk = self.ports.port_of(b).map(|p| p.walk_connected).or_else(|| self.buildings.get(b).and_then(|x| x.rail.as_ref()).map(|l| l.walk_connected)).unwrap_or(false);
+        let what = if walk {
+            "a path reaches it, but goods need a road: lorries cannot get there on foot"
+        } else if self.ports.port_of(b).is_some_and(|p| p.kind == PortKind::FerryTerminal) {
+            "ferries sail, but carry no one until people can get to the pier (a road or a path)"
         } else if self.ports.port_of(b).is_some() {
             "nothing lands or is sold until lorries can reach it"
         } else if self.buildings.get(b).and_then(|x| x.rail.as_ref()).is_some_and(|l| l.kind.is_passenger() && l.rail_connected) {
-            "trains call, but nobody gets on or off until it is on the roads"
+            "trains call, but nobody gets on or off until a road or a path reaches it"
         } else {
             "it opens once it is on the roads"
         };
@@ -1144,14 +1199,17 @@ impl World {
         for id in gone {
             self.ports.ports.remove(id);
         }
-        let comps = self.network_components();
+        let (walk_comps, drive_comps) = self.network_components();
         let ids: Vec<PortId> = self.ports.ports.keys().collect();
         for id in ids {
             let (lot, berth) = (self.ports.ports[id].lot, self.ports.ports[id].berth);
-            let road = lot.and_then(|l| self.lots.get(l)).and_then(|l| self.road_component(l.access_node)).is_some_and(|c| comps.contains(&c));
+            let node = lot.and_then(|l| self.lots.get(l)).map(|l| l.access_node);
+            let road = node.and_then(|n| self.drive_component(n)).is_some_and(|c| drive_comps.contains(&c));
+            let walk = node.and_then(|n| self.road_component(n)).is_some_and(|c| walk_comps.contains(&c));
             let out = self.landscape.water_route(berth, None).is_some();
             let p = &mut self.ports.ports[id];
             p.road_connected = road;
+            p.walk_connected = walk;
             p.reaches_elsewhere = out;
             // [ferries] A terminal from a save before remote towns gets its own.
             if p.kind == PortKind::FerryTerminal && p.remote.is_empty() && out {

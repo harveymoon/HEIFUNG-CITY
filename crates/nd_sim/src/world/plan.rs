@@ -1394,13 +1394,20 @@ impl World {
             }
             x
         }
-        for (_, seg) in self.roads.alive_segments() {
-            if seg.is_rail() {
-                continue;
+        // [sweep-sim] Streets first: their union is the drive network,
+        // then the paths join the walkers' network on top of it.
+        for street in [true, false] {
+            for (_, seg) in self.roads.alive_segments() {
+                if seg.is_rail() || seg.is_street() != street {
+                    continue;
+                }
+                let (a, b) = (find(&mut parent, seg.a.0), find(&mut parent, seg.b.0));
+                if a != b {
+                    parent[a as usize] = b;
+                }
             }
-            let (a, b) = (find(&mut parent, seg.a.0), find(&mut parent, seg.b.0));
-            if a != b {
-                parent[a as usize] = b;
+            if street {
+                self.drive_component = (0..n as u32).map(|i| find(&mut parent, i)).collect();
             }
         }
         self.road_component = (0..n as u32).map(|i| find(&mut parent, i)).collect();
@@ -1409,6 +1416,11 @@ impl World {
     /// Component id of a road node, if the node exists.
     pub(super) fn road_component(&self, n: NodeId) -> Option<u32> {
         self.road_component.get(n.0 as usize).copied()
+    }
+
+    /// [sweep-sim] Component id of a road node over streets alone.
+    pub(super) fn drive_component(&self, n: NodeId) -> Option<u32> {
+        self.drive_component.get(n.0 as usize).copied()
     }
 
     /// Take every train off the line; its passengers stand where it was
