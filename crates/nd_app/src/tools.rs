@@ -772,7 +772,11 @@ impl Plugin for ToolsPlugin {
             .init_resource::<Selection>()
             .init_resource::<EffectivePlan>()
             .configure_sets(Update, (SimSet::Input, SimSet::Step, SimSet::Sync).chain())
-            .add_systems(Update, (tool_input, crate::road_select::keep_on_rebuild, draw_gizmos).chain().in_set(SimSet::Input))
+            .add_systems(Update, (tool_input, crate::road_select::keep_on_rebuild).chain().in_set(SimSet::Input))
+            // [fix/review-app] After the sim step, like the meshes: drawn in
+            // Input, outlines and rings used the pre-tick state and last
+            // frame's `frac`, so at speed the gold box trailed its car.
+            .add_systems(Update, draw_gizmos.in_set(SimSet::Sync))
             .add_systems(Update, path_trim_toasts.in_set(SimSet::Sync));
     }
 }
