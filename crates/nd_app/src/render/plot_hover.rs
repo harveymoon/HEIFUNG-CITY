@@ -118,7 +118,13 @@ pub fn hover_site(w: &World, tools: &ToolState, p: SVec2) -> Option<HoverSite> {
         Tool::Bulldoze if tools.cleanup => Some(cleanup_site(w, tools, p)),
         Tool::Zone if tools.zone_mode != ZoneMode::Polygon => {
             let lu = tools.paint_use(tools.stroke.as_ref().map_or(tools.unzone, |s| s.erase))?;
-            let i = w.parcels.at(p)?;
+            // [island-lots] No parcel under the pointer: say why at the
+            // cursor (water, too far from a road, past the buildable land)
+            // rather than show nothing, as a click there does nothing.
+            let Some(i) = w.parcels.at(p) else {
+                let why = w.no_parcel_why(p)?;
+                return Some(HoverSite { outline: Vec::new(), verdict: Err(why.to_string()), zone: true, warning: None, cleanup: false });
+            };
             let parcel = w.parcels.parcels.get(i)?;
             let verdict = match w.parcel_refusal(i, Some(lu)) {
                 Some(why) => Err(why.to_string()),
@@ -367,15 +373,26 @@ pub fn plot_hover_label(mut contexts: bevy_egui::EguiContexts, hover: Res<PlotHo
         Ok(_) if site.zone => return Ok(()),
         Ok(note) => (note.clone(), egui::Color32::from_rgba_unmultiplied(18, 110, 52, 225)),
         Err(why) if site.cleanup => (format!("Can't clean up: {why}"), egui::Color32::from_rgba_unmultiplied(150, 20, 28, 230)),
+        Err(why) if site.zone => (format!("Can't zone here: {why}"), egui::Color32::from_rgba_unmultiplied(150, 20, 28, 230)),
         Err(why) => (format!("Can't build: {why}"), egui::Color32::from_rgba_unmultiplied(150, 20, 28, 230)),
     };
     let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };
     let ctx = contexts.ctx_mut()?;
+    // [city-data] The map is covered: nothing to label.
+    if crate::ui::city_data::is_open(ctx) {
+        return Ok(());
+    }
     let Ok(v) = camera.world_to_viewport(gt, Vec3::new(at.x, sim.world.ground_height(at), at.y)) else { return Ok(()) };
     let v = crate::ui::theme::to_points(ctx, v);
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("plot_hover_label")));
     let galley = painter.layout(text, crate::ui::theme::small(), egui::Color32::WHITE, 440.0);
-    let pos = egui::pos2(v.x + 18.0, v.y + 16.0);
+    // Beside the pointer, flipped to its left (or above it) where it would
+    // run off the screen, so a long reason is never cut off.
+    let screen = ctx.content_rect();
+    let size = galley.size();
+    let x = if v.x + 18.0 + size.x + 8.0 > screen.right() { v.x - 18.0 - size.x } else { v.x + 18.0 };
+    let y = if v.y + 16.0 + size.y + 6.0 > screen.bottom() { v.y - 16.0 - size.y } else { v.y + 16.0 };
+    let pos = egui::pos2(x.max(screen.left() + 8.0), y.max(screen.top() + 6.0));
     let r = egui::Rect::from_min_size(pos, galley.size()).expand2(egui::vec2(7.0, 4.0));
     painter.rect_filled(r, 4.0, bg);
     painter.galley(pos, galley, egui::Color32::WHITE);

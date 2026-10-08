@@ -241,11 +241,15 @@ pub struct Geometry {
     /// Tower crane heads left out of the mesh for the renderer to slew
     /// (`Ctx::animated_cranes`), in world position.
     pub cranes: Vec<crate::buildings::CraneRig>,
+    /// [look] Lamp heads drawn (`lamp_post_world`): the centre under the
+    /// lantern, world coordinates. The renderer hangs real lights on the
+    /// ones near the camera at night.
+    pub lamps: Vec<glam::Vec3>,
 }
 
 impl Default for Geometry {
     fn default() -> Self {
-        Self { parts: (0..Surface::ALL.len()).map(|_| MeshData::default()).collect(), pads: Vec::new(), cranes: Vec::new() }
+        Self { parts: (0..Surface::ALL.len()).map(|_| MeshData::default()).collect(), pads: Vec::new(), cranes: Vec::new(), lamps: Vec::new() }
     }
 }
 
@@ -268,6 +272,7 @@ impl Geometry {
         }
         self.pads.extend_from_slice(&other.pads);
         self.cranes.extend(other.cranes.iter().cloned());
+        self.lamps.extend_from_slice(&other.lamps);
     }
 
     /// Move every surface that has a weathered variant onto it: the whole
