@@ -77,6 +77,7 @@ pub use nights::road_wear_color;
 pub use mapview::{zone_tint as map_zone_tint, PIN_KEY as MAP_PIN_KEY, ROAD_KEY as MAP_ROAD_KEY};
 /// The sky dome: light pollution at night, glare round the sun by day.
 mod sky;
+mod street_look;
 /// [looks] Citizens drawn with their own look.
 mod people;
 pub use people::MESH_CAP as PEOPLE_MESH_CAP;
@@ -489,6 +490,11 @@ impl Plugin for RenderPlugin {
         app.init_resource::<air::AirState>().add_systems(Update, air::sync_air.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, check_car_bodies.after(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, sky::sync_sky.after(update_daylight).in_set(SimSet::Sync));
+        // [look] Street lamps that light the road at night, wet roads in
+        // the rain, and the fog's reach by climate and weather.
+        app.init_resource::<street_look::StreetLamps>()
+            .add_systems(Update, (street_look::sync_lamp_lights, street_look::sync_wet_roads).after(update_daylight).in_set(SimSet::Sync))
+            .add_systems(PostUpdate, street_look::sync_fog_reach.before(heat::apply_heat));
         // Tower cranes slewing on building sites.
         app.add_systems(Update, animate_cranes.after(sync_buildings).in_set(SimSet::Sync));
         app.add_plugins(heat::HeatPlugin);
@@ -624,6 +630,23 @@ fn spawn_glow<T: Component>(commands: &mut Commands, meshes: &mut Assets<Mesh>, 
 /// Spawn a translucent overlay mesh (heat map, haze): no shadows either way.
 fn spawn_overlay<T: Component>(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, data: &MeshData, tag: T) {
     commands.spawn((Mesh3d(meshes.add(to_mesh(data, false))), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, tag));
+}
+
+/// [island-lots] `pts` with points added along every leg longer than
+/// `step`, so a line lifted onto the ground vertex by vertex follows it.
+fn densify(pts: &[SVec2], step: f32) -> Vec<SVec2> {
+    let mut out = Vec::with_capacity(pts.len());
+    for (k, &p) in pts.iter().enumerate() {
+        if k > 0 {
+            let a = pts[k - 1];
+            let n = (a.distance(p) / step).floor() as usize;
+            for i in 1..=n.min(256) {
+                out.push(a.lerp(p, i as f32 / (n + 1) as f32));
+            }
+        }
+        out.push(p);
+    }
+    out
 }
 
 /// Hash helper for change detection on generated geometry inputs.
@@ -970,6 +993,7 @@ fn sync_roads(
     mats: Res<Materials>,
     mut state: ResMut<RenderState>,
     mut stats: ResMut<RenderStats>,
+    mut lamps: ResMut<street_look::StreetLamps>,
     existing: Query<Entity, Or<(With<RoadsTag>, With<holo::TunnelTag>, With<holo::GhostRoadTag>)>>,
 ) {
     let version = sim.world.roads.version;
@@ -989,6 +1013,7 @@ fn sync_roads(
     let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
     let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Surface, closed: &closed });
     stats.street_triangles = geo.triangle_count();
+    lamps.lamps.clone_from(&geo.lamps);
     for (s, data) in geo.iter() {
         let mesh = meshes.add(to_mesh(data, !s.is_glow()));
         let mut e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, RoadsTag));
@@ -1355,9 +1380,15 @@ fn sync_lots(
     }
     if show_parcels {
         let grey = [0.5f32, 0.5, 0.56];
+        // [island-lots] On a hillside the outline is lifted onto the ground
+        // vertex by vertex: long edges get points every few metres so they
+        // follow the slope rather than cut through it (dark dashes and
+        // spikes on the island hills).
+        let step = if w.landscape.is_flat() { f32::INFINITY } else { 4.0 };
         for p in w.parcels.parcels.iter().filter(|p| p.lot.is_none() && p.polygon.len() >= 3) {
-            let mut outline = p.polygon.clone();
-            outline.push(p.polygon[0]);
+            let mut closed = p.polygon.clone();
+            closed.push(p.polygon[0]);
+            let outline = densify(&closed, step);
             let k = if p.landlocked() { 0.18 } else { 0.32 };
             glow.ground_strip(&outline, 0.16, 0.03, scale(grey, k));
         }
@@ -2842,7 +2873,11 @@ fn update_daylight(
     // Quantised to 1/4096 of a day (about 20 sim seconds, a 0.09 degree
     // step of the sun), so at 1x speed the lighting is written a few times a
     // second rather than every frame.
-    let daylight_key = (t * 4096.0).round() as i32;
+    // [look] The fog's tint follows the climate and the rain or snow too.
+    let climate = sim.world.landscape.params.climate;
+    let precip = climate::precip_now(&sim.world).map(|(_, i)| i).unwrap_or(0.0);
+    let climate_ix = nd_sim::Climate::ALL.iter().position(|c| *c == climate).unwrap_or(0) as i32;
+    let daylight_key = (t * 4096.0).round() as i32 + 8192 * (climate_ix * 16 + (precip * 15.0).round() as i32);
     if state.daylight_key == Some(daylight_key) && !assets.palette_changed {
         return;
     }
@@ -2881,6 +2916,7 @@ fn update_daylight(
     let fog_c = lerp3(lerp3(pal.fog, pal.fog_day, daylight), pal.sky_dusk, dusk * 0.5);
     // At night the haze is lit from below by the city.
     let fog_c = [fog_c[0] + glow_color[0] * 0.15 * pollution, fog_c[1] + glow_color[1] * 0.15 * pollution, fog_c[2] + glow_color[2] * 0.15 * pollution];
+    let fog_c = street_look::tint_fog(fog_c, climate, daylight, precip);
     // The zenith stays dark and a little blue at night.
     let zenith = lerp3(sky, [0.003, 0.004, 0.016], night * 0.85);
     clear.0 = Color::linear_rgb(zenith[0], zenith[1], zenith[2]);
