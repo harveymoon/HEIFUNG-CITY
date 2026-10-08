@@ -490,12 +490,36 @@ Citizens are rendered from their simulated positions every frame.
   over an area (or with `None` hands it back to the ground); standing industry of another kind
   retools on the spot. The ground is read from the landscape seed: fertility (river banks,
   plains), oil patches (about a tenth of the land), rock (noise and slope), sand (sea shore)
-  and water proximity. Contamination is a saved 32 m raster (0..1): oil wells pour 0.01 per
-  working hour within 60 m, refineries 0.004 within 80 m, coal plants 0.003 within 120 m;
-  each day an eighth of every cell seeps into its neighbours and 3.5% fades, so a closed field
-  takes months to recover. Grain farms yield 0.6 + 0.8 x fertility and lose up to 90% on fouled
-  ground; container yards and truck lots burn fuel and earn handling fees (2 per filled job
-  hour, more near a port or yard), truck lots a bay fee per parked lorry.
+  and water proximity. Contamination is a saved 32 m raster (0..1): per working hour at full
+  staff oil wells pour 0.01 within 60 m, refineries 0.004 within 80 m, chemical works 0.008
+  within 140 m, strip mines 0.004 within 120 m, smelters 0.006 within 130 m, factory farms
+  0.004 within 110 m, coal plants 0.003 within 120 m; each day an eighth of every cell seeps
+  into its neighbours and 1% fades (half-life about ten weeks), parks take another 3% a day
+  off the ground under them, and the player can pay to dig it out (`remediate`, 450 per cell
+  of full contamination, at most 300 m round). Grain farms yield 0.6 + 0.8 x fertility and lose
+  up to 90% on fouled ground (pasture farms and dairies 70%, vertical farms, chicken farms and
+  fisheries 50%); container yards and truck lots burn fuel and earn handling fees (2 per filled
+  job hour, more near a port or yard), truck lots a bay fee per parked lorry.
+- **Dirty industry** (`industry::IndustryKind::dirtiness`, `world/dirt.rs`): strip mining
+  (0.75), oil extraction (0.55), refineries (0.8; a chemical works with mercury cells 1.0),
+  smelting (0.9: smelters turn 1.5 ore and 0.1 fuel into 1 metal, base 75, shipped out as soon as 8 hours of it stand in the yard) and factory
+  farming (0.6: feedlots turn 2 grain into 12 livestock; still food) are dirty (coal
+  plants keep their own pollution and nuisance figures and are not on this table). A dirty plant is felt out to 150 + 250 x dirtiness
+  metres (about 290..400 m); what a neighbour suffers is level x sensitivity x (1 - d/reach)^1.5
+  per plant, combined as 1 - prod(1 - hit), capped at 0.9 (its *exposure*). Level is the
+  dirtiness times 0.6 + 0.4 x staffing (0.35 when shut). The compatibility table
+  (`industry::sensitivity`): farming 1.0 (0.6 against a feedlot), fishing 0.9, clean tech 0.8,
+  factory farming 0.3, manufacturing 0.25, logistics 0.1, the dirty kinds 0; homes 1.0, shops
+  0.7, nightlife and civic 0.6, parks 0.5. Exposure takes up to 0.3 off a lot's value (so rent
+  and tier), up to half a farm's or fishery's output, and up to 85% of the chance homes, shops
+  or nightlife are built on a lot; new industry squares its weights by (1 - exposure), so a farm
+  by a smelter is rare and a fab or a yard is not. Residents of exposed or poisoned homes (over
+  0.12) lose up to 0.04 mood a day and some complain (Noise & pollution). Smelters only come
+  with a working strip mine within 1500 m, two to a mine at most. Loaded lorries wear the road by their load:
+  ore and metal 2.5, crude 2, livestock 1.6 times an ordinary lorry (`road_wear::vehicle_load`).
+  The looks: sooty stained yards, slag and ore heaps, a manure lagoon, a poisoned settling pond,
+  smoke, fumes and dust from their vents, and the contamination stains the ground in the city
+  (sickly yellow-green to dead brown) and has its own map layer.
 - **Truck and bus lots**: a logistics building with one bay per 90 m² (4..40). A lorry that
   has delivered parks at the nearest lot with room within 700 m, else drives back to the
   business that sent it, else to the nearest lot with room at any distance, else out of town by
@@ -903,11 +927,24 @@ Citizens are rendered from their simulated positions every frame.
   Every building draws megawatts by land use, floors and tier (industry most, homes
   least, high tiers more); plants draw none. Four kinds of plant go on any lot or unzoned
   ground by a road with the Power tool (no zoning needed: see Free placement below), paid
-  from the treasury: coal (120 MW, cheap, steady,
+  from the treasury: coal (120 MW per 1,000 m² of site, cheap, steady,
   a brown haze, ash on the ground and a heavy land value penalty for 360 m), solar (25 MW nameplate,
   output follows the sun and is dimmed by cloud), wind (40 MW nameplate,
-  output follows the wind) and nuclear (400 MW, steady, very expensive to build and
-  run, a smaller penalty for the nervous neighbours). Weather is a
+  output follows the wind) and nuclear (400 MW per 1,500 m², steady, very expensive to build and
+  run, a smaller penalty for the nervous neighbours). [plant-scale] Coal, nuclear and geothermal
+  plants are sized to their site in a capped range (`PowerPlantKind::size_range`: coal 600 to
+  2,400 m², 72 to 288 MW; nuclear 900 to 3,000 m², 240 to 800 MW; geothermal 400 to 1,600 m²),
+  output, cost, upkeep and jobs alike (land-value cone and ash by the square root of the size);
+  the size is fixed when built (`Building::plant_scale`; plants from older saves keep the
+  standard size). A bigger site past the cap makes it no bigger: the station stands on part of it
+  and the rest is coal yard. On unzoned ground free placement joins just enough parcels to reach
+  the plant's minimum, never past its cap (`zoning::grow_site`). The coal station is composed of
+  units, not stretched (`buildings::power::coal_layout`): one to four black boiler houses with
+  orange-lit slits, each with its own smokestack of its own height, a start-up stack, a tall
+  common stack and cooling towers (steam) on the big ones, a turbine hall, ash filters, conveyor
+  galleries and coal heaps; the renderer's plumes start at the same stacks (`coal_vents`). The
+  Build hover label shows a plant's MW, cost and upkeep on the site before the click, and for
+  solar and wind the Sunfield or Wind Park it would join with the combined output. Weather is a
   slow random walk of cloud and wind, stepped hourly. Each hour the supply is summed, the
   regional grid sells up to 60 MW at a price to cover any shortfall, and what is left is
   shared out highest tier first, so brownouts land on the cheap districts. A building

@@ -30,10 +30,17 @@ pub enum IndustryKind {
     /// [economy] Strip mining over rocky ground: an open pit, ore for
     /// export, dust, noise and a heavy land value hit. Appended.
     Mining,
+    /// [dirty-industry] Smelters and foundries: ore in, metal out; slag
+    /// heaps, soot and heavy metals in the ground. Appended.
+    Smelting,
+    /// [dirty-industry] Factory farming: feedlots and battery sheds, grain
+    /// in, livestock out by the thousand; manure lagoons and the smell.
+    /// Still food. Appended.
+    FactoryFarming,
 }
 
 impl IndustryKind {
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 10;
     pub const ALL: [IndustryKind; Self::COUNT] = [
         IndustryKind::Farming,
         IndustryKind::OilExtraction,
@@ -43,6 +50,8 @@ impl IndustryKind {
         IndustryKind::Fishing,
         IndustryKind::Tech,
         IndustryKind::Mining,
+        IndustryKind::Smelting,
+        IndustryKind::FactoryFarming,
     ];
 
     pub fn index(self) -> usize {
@@ -59,6 +68,8 @@ impl IndustryKind {
             IndustryKind::Fishing => "fishing",
             IndustryKind::Tech => "clean tech",
             IndustryKind::Mining => "strip mining",
+            IndustryKind::Smelting => "smelting",
+            IndustryKind::FactoryFarming => "factory farming",
         }
     }
 
@@ -73,6 +84,8 @@ impl IndustryKind {
             IndustryKind::Fishing => "fishing",
             IndustryKind::Tech => "tech",
             IndustryKind::Mining => "mining",
+            IndustryKind::Smelting => "smelting",
+            IndustryKind::FactoryFarming => "factory_farming",
         }
     }
 
@@ -87,6 +100,8 @@ impl IndustryKind {
             "fishing" | "fish" => IndustryKind::Fishing,
             "tech" | "clean" | "clean_tech" => IndustryKind::Tech,
             "mining" | "mine" | "strip_mining" | "quarry" => IndustryKind::Mining,
+            "smelting" | "smelter" | "foundry" | "metal" | "metals" => IndustryKind::Smelting,
+            "factory_farming" | "factoryfarming" | "factory_farm" | "feedlot" | "intensive" | "livestock" => IndustryKind::FactoryFarming,
             _ => return None,
         })
     }
@@ -96,12 +111,14 @@ impl IndustryKind {
         match self {
             IndustryKind::Farming => &[BusinessKind::VertFarm, BusinessKind::GrainFarm, BusinessKind::ProteinVat, BusinessKind::Dairy, BusinessKind::Mill, BusinessKind::CowFarm, BusinessKind::ChickenFarm, BusinessKind::Slaughterhouse],
             IndustryKind::OilExtraction => &[BusinessKind::OilWell],
-            IndustryKind::Refinery => &[BusinessKind::Refinery],
+            IndustryKind::Refinery => &[BusinessKind::Refinery, BusinessKind::ChemicalWorks],
             IndustryKind::Manufacturing => &[BusinessKind::Fab],
             IndustryKind::Logistics => &[BusinessKind::ContainerYard, BusinessKind::FleetLot, BusinessKind::TowYard, BusinessKind::TrashCompany],
             IndustryKind::Fishing => &[BusinessKind::Fishery, BusinessKind::FishPlant, BusinessKind::FishGutting, BusinessKind::FishStickFactory],
             IndustryKind::Tech => &[BusinessKind::Assembly],
             IndustryKind::Mining => &[BusinessKind::StripMine],
+            IndustryKind::Smelting => &[BusinessKind::Smelter],
+            IndustryKind::FactoryFarming => &[BusinessKind::Feedlot],
         }
     }
 
@@ -124,6 +141,10 @@ impl IndustryKind {
             IndustryKind::Tech => (120.0, 0.05),
             // Blasting, dust and a scarred hillside: the worst neighbour.
             IndustryKind::Mining => (340.0, 0.42),
+            // [dirty-industry] Soot, fumes and the glow of the furnaces.
+            IndustryKind::Smelting => (340.0, 0.42),
+            // The smell carries.
+            IndustryKind::FactoryFarming => (280.0, 0.3),
         }
     }
 
@@ -136,6 +157,8 @@ impl IndustryKind {
             IndustryKind::Manufacturing | IndustryKind::Logistics => (200.0, 0.07),
             IndustryKind::Tech => (200.0, 0.09),
             IndustryKind::Mining => (160.0, 0.03),
+            IndustryKind::Smelting => (180.0, 0.04),
+            IndustryKind::FactoryFarming => (150.0, 0.03),
         }
     }
 
@@ -145,16 +168,48 @@ impl IndustryKind {
         match self {
             IndustryKind::OilExtraction => Some((60.0, 0.010)),
             IndustryKind::Refinery => Some((80.0, 0.004)),
-            // Dust and run-off from the pit.
-            IndustryKind::Mining => Some((90.0, 0.002)),
+            // Dust and run-off from the pit, tailings.
+            IndustryKind::Mining => Some((120.0, 0.004)),
+            // [dirty-industry] Heavy metals in the soot and the slag.
+            IndustryKind::Smelting => Some((130.0, 0.006)),
+            // Manure lagoons seeping nitrates.
+            IndustryKind::FactoryFarming => Some((110.0, 0.004)),
             _ => None,
         }
+    }
+
+    /// [dirty-industry] How dirty a working plant of this kind is, `0..1`:
+    /// what it does to the look of the place, the ground and the
+    /// neighbours. Clean kinds are 0; see [`IndustryKind::is_dirty`].
+    pub fn dirtiness(self) -> f32 {
+        match self {
+            IndustryKind::Farming | IndustryKind::Fishing | IndustryKind::Tech => 0.0,
+            IndustryKind::Logistics => 0.05,
+            IndustryKind::Manufacturing => 0.15,
+            IndustryKind::OilExtraction => 0.55,
+            IndustryKind::FactoryFarming => 0.6,
+            IndustryKind::Mining => 0.75,
+            IndustryKind::Refinery => 0.8,
+            IndustryKind::Smelting => 0.9,
+        }
+    }
+
+    /// [dirty-industry] Mining, oil, refining, smelting and factory farming:
+    /// sooty looks, poisoned ground, heavy trucks and neighbours who hate it.
+    pub fn is_dirty(self) -> bool {
+        self.dirtiness() >= DIRTY
+    }
+
+    /// [dirty-industry] How far its neighbours feel a dirty plant, metres
+    /// (zero for clean kinds).
+    pub fn dirt_reach(self) -> f32 {
+        dirt_reach(self.dirtiness())
     }
 
     /// Floors a building of this kind is built with, at most.
     pub fn max_floors(self) -> u8 {
         match self {
-            IndustryKind::OilExtraction | IndustryKind::Farming | IndustryKind::Logistics | IndustryKind::Mining => 1,
+            IndustryKind::OilExtraction | IndustryKind::Farming | IndustryKind::Logistics | IndustryKind::Mining | IndustryKind::FactoryFarming => 1,
             IndustryKind::Fishing => 2,
             _ => 3,
         }
@@ -199,6 +254,121 @@ pub struct IndustrySite {
     /// [economy] A working fishing port (`0..1`, 1 on the quay): gutting
     /// sheds and the fish-stick factory gather round the catch.
     pub fishing_port: f32,
+    /// [dirty-industry] Working strip mines within [`ORE_REACH`]: a smelter
+    /// wants ore close by.
+    pub ore_mines: u32,
+    /// [dirty-industry] Smelters already within [`ORE_REACH`]: two to a
+    /// mine, no more.
+    pub smelters: u32,
+    /// [dirty-industry] Dirty plants whose reach covers the site: kind and
+    /// distance (see [`exposure`]). Unlike `neighbours` this reaches as far
+    /// as each plant's [`IndustryKind::dirt_reach`].
+    pub dirty: Vec<(IndustryKind, f32)>,
+}
+
+/// [dirty-industry] A dirty plant as its neighbours feel it: where, how
+/// dirty right now (its business's dirtiness, less when idle or shut) and
+/// how far that carries. `as_kind` is the kind the compatibility table
+/// reads it as (a coal plant reads as a refinery).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DirtySource {
+    pub building: crate::buildings::BuildingId,
+    pub pos: glam::Vec2,
+    pub as_kind: IndustryKind,
+    pub level: f32,
+    pub reach: f32,
+}
+
+/// [dirty-industry] Strip mines this close feed a smelter.
+pub const ORE_REACH: f32 = 1500.0;
+
+/// [dirty-industry] A kind this dirty (see [`IndustryKind::dirtiness`])
+/// counts as dirty industry.
+pub const DIRTY: f32 = 0.5;
+
+/// [dirty-industry] How far neighbours feel a plant of dirtiness `d`.
+pub fn dirt_reach(d: f32) -> f32 {
+    if d < DIRTY {
+        0.0
+    } else {
+        150.0 + 250.0 * d
+    }
+}
+
+/// [dirty-industry] Who is next door to dirty industry: an industry kind,
+/// or a land use (homes, shops, a park) without one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Neighbour {
+    Industry(IndustryKind),
+    Land(crate::zoning::LandUse),
+}
+
+impl Neighbour {
+    pub fn label(self) -> &'static str {
+        match self {
+            Neighbour::Industry(k) => k.label(),
+            Neighbour::Land(lu) => lu.label(),
+        }
+    }
+}
+
+/// [dirty-industry] The compatibility table: how much `who` suffers from a
+/// dirty plant of kind `source` next door, `0..1`. Farms, fishing, homes,
+/// shops and clean tech hate it; manufacturing and logistics shrug; the
+/// dirty kinds tolerate each other (a feedlot minds the chemicals a little).
+pub fn sensitivity(who: Neighbour, source: IndustryKind) -> f32 {
+    use crate::zoning::LandUse;
+    use IndustryKind::*;
+    if !source.is_dirty() {
+        return 0.0;
+    }
+    match who {
+        Neighbour::Industry(k) => match (k, source) {
+            (Farming, FactoryFarming) => 0.6,
+            (Farming, _) => 1.0,
+            (Fishing, _) => 0.9,
+            (Tech, _) => 0.8,
+            (FactoryFarming, FactoryFarming) => 0.0,
+            (FactoryFarming, _) => 0.3,
+            (Manufacturing, _) => 0.25,
+            (Logistics, _) => 0.1,
+            (OilExtraction | Refinery | Mining | Smelting, _) => 0.0,
+        },
+        Neighbour::Land(lu) => match lu {
+            LandUse::Residential => 1.0,
+            LandUse::Commercial => 0.7,
+            LandUse::Entertainment | LandUse::Civic => 0.6,
+            LandUse::Park => 0.5,
+            LandUse::Industrial => 0.25,
+        },
+    }
+}
+
+/// [dirty-industry] What one dirty plant of `level` (its dirtiness, scaled
+/// by how hard it is working) and `reach` does to a neighbour of
+/// sensitivity `sens` at distance `d`: `0..1`, falling off to nothing at
+/// the reach.
+pub fn hit(level: f32, reach: f32, sens: f32, d: f32) -> f32 {
+    if reach <= 0.0 || d >= reach || !d.is_finite() {
+        return 0.0;
+    }
+    (level * sens * (1.0 - d / reach).max(0.0).powf(1.5)).clamp(0.0, 1.0)
+}
+
+/// [dirty-industry] Several hits combined: each takes its share of what
+/// the others left, capped at [`MAX_EXPOSURE`]. Order-independent.
+pub fn combine(hits: impl IntoIterator<Item = f32>) -> f32 {
+    let left: f32 = hits.into_iter().fold(1.0, |acc, h| acc * (1.0 - h.clamp(0.0, 1.0)));
+    (1.0 - left).clamp(0.0, MAX_EXPOSURE)
+}
+
+/// [dirty-industry] The most a neighbour can suffer.
+pub const MAX_EXPOSURE: f32 = 0.9;
+
+/// [dirty-industry] How exposed `who` is to the dirty plants in `dirty`
+/// (kind and distance, each at its kind's dirtiness and reach).
+pub fn exposure(who: Neighbour, dirty: &[(IndustryKind, f32)]) -> f32 {
+    combine(dirty.iter().map(|(k, d)| hit(k.dirtiness(), k.dirt_reach(), sensitivity(who, *k), *d)))
 }
 
 /// [economy] Livestock farms this close count for a slaughterhouse.
@@ -226,6 +396,8 @@ pub fn affinity(kind: IndustryKind, other: IndustryKind) -> f32 {
             Manufacturing => 0.3,
             Tech => 0.35,
             Mining => 0.5,
+            Smelting => 0.1,
+            FactoryFarming => 0.2,
         };
     }
     match (kind, other) {
@@ -245,6 +417,14 @@ pub fn affinity(kind: IndustryKind, other: IndustryKind) -> f32 {
         (Fishing, Mining) | (Tech, Mining) => -0.5,
         (Logistics, Mining) => 0.2,
         (Mining, Logistics) => 0.1,
+        // [dirty-industry] Smelters follow the mines; the hauliers follow both.
+        (Smelting, Mining) => 0.6,
+        (Mining, Smelting) => 0.3,
+        (Logistics, Smelting) => 0.25,
+        (Smelting, Logistics) => 0.1,
+        (Farming, Smelting) | (Farming, FactoryFarming) => -1.0,
+        (Fishing, Smelting) | (Tech, Smelting) | (Fishing, FactoryFarming) => -0.6,
+        (FactoryFarming, Farming) => 0.15,
         _ => 0.0,
     }
 }
@@ -276,9 +456,25 @@ pub fn weights(site: &IndustrySite) -> [f32; IndustryKind::COUNT] {
     // [economy] A strip mine only where the rock is near the surface; it
     // takes the cheap land like the wells do.
     w[Mining.index()] = 2.4 * smoothstep(0.62, 0.9, g.rock);
+    // [dirty-industry] A smelter only with ore to hand: mines in reach or
+    // a port to land it.
+    // One smelter or two per mine: imported ore costs more than the
+    // ingots fetch out of town.
+    w[Smelting.index()] = if site.ore_mines == 0 || site.smelters >= 2 * site.ore_mines { 0.0 } else { 0.05 + 0.5 * (site.ore_mines.min(3) as f32) + 0.2 * site.port };
+    // Feedlots: cheap open country, near the grain; a sideline next to
+    // ordinary farming, never the bread and butter.
+    w[FactoryFarming.index()] = 0.12 + 0.3 * g.fertility * clean;
     let cheap = 1.3 - lv;
-    for k in [OilExtraction, Refinery, Farming, Mining] {
+    for k in [OilExtraction, Refinery, Farming, Mining, Smelting, FactoryFarming] {
         w[k.index()] *= cheap;
+    }
+    // [dirty-industry] Dirty plants within their reach keep the kinds that
+    // hate them away (`sensitivity`), much further out than neighbours.
+    if !site.dirty.is_empty() {
+        for k in IndustryKind::ALL {
+            let e = exposure(Neighbour::Industry(k), &site.dirty);
+            w[k.index()] *= (1.0 - e).powi(2).max(0.02);
+        }
     }
     // Neighbours: exp of the summed affinities, nearer counting more.
     for k in IndustryKind::ALL {
@@ -363,6 +559,12 @@ pub fn business_weights(kind: IndustryKind, site: &IndustrySite) -> Vec<(Busines
                 (BusinessKind::FishStickFactory, 0.6 * site.fishing_port),
             ]
         }
+        IndustryKind::Refinery => {
+            // [dirty-industry] A chemical works now and then, more where
+            // refineries already stand.
+            let refineries = site.neighbours.iter().filter(|(k, _)| *k == IndustryKind::Refinery).count() as f32;
+            vec![(BusinessKind::Refinery, 1.0), (BusinessKind::ChemicalWorks, 0.2 + 0.2 * refineries.min(2.0))]
+        }
         k => k.businesses().iter().map(|b| (*b, 1.0)).collect(),
     }
 }
@@ -439,7 +641,7 @@ mod tests {
 
     #[test]
     fn picks_are_deterministic_and_cover_the_weights() {
-        let w = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 2.0, 0.0];
+        let w = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0];
         assert_eq!(pick(&w, 0.1), IndustryKind::Farming);
         assert_eq!(pick(&w, 0.3), IndustryKind::Manufacturing);
         assert_eq!(pick(&w, 0.9), IndustryKind::Tech);

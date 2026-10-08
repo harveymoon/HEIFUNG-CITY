@@ -207,6 +207,10 @@ impl TaxCategory {
             IndustryKind::Tech => TaxCategory::Tech,
             // [economy] Strip mines are taxed with the other extraction.
             IndustryKind::Mining => TaxCategory::Oil,
+            // [dirty-industry] Smelters with the heavy processing, feedlots
+            // with the farms.
+            IndustryKind::Smelting => TaxCategory::Refinery,
+            IndustryKind::FactoryFarming => TaxCategory::Farming,
         }
     }
 

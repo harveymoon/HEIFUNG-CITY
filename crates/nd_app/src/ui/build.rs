@@ -109,6 +109,11 @@ impl Item {
             // [plant-groups] Solar and wind are sized to the lot: no flat MW
             // (the tile's price line and the figures quote them per m²).
             Item::Place(Placeable::Plant(k)) => match k.reference_area() {
+                // [plant-scale] Coal, nuclear, geothermal: sized to the site.
+                Some(_) if k.sized_when_built() => {
+                    let (lo, hi) = k.size_range();
+                    format!("{} {:.0}–{:.0} MW", k.label(), k.capacity_at(lo), k.capacity_at(hi))
+                }
                 Some(_) => k.label().to_string(),
                 None => format!("{} {:.0} MW", k.label(), k.capacity_mw()),
             },
@@ -779,6 +784,11 @@ fn figures(ui: &mut egui::Ui, what: Placeable) {
         }
         if let Placeable::Plant(k) = what {
             match per {
+                // [plant-scale] Thermal plants: sized to their site, capped.
+                Some(f) if k.sized_when_built() => {
+                    let (lo, hi) = k.size_range();
+                    r("output", format!("{:.0} MW per 1000 m²: {:.0} MW on {:.0} m² up to {:.0} MW on {:.0} m² (more ground is yard)", k.capacity_mw() * f, k.capacity_at(lo), k.min_area(), k.capacity_at(hi), k.max_area()));
+                }
                 Some(f) => {
                     r("output", format!("{:.0} MW per 1000 m², up to {:.0} MW a lot", k.capacity_mw() * f, k.capacity_mw() * nd_sim::power::MAX_LOT_SCALE));
                     r("groups", format!("touching lots join one {} (+{:.0}% a lot, up to +{:.0}%)", if k == nd_sim::PowerPlantKind::Solar { "Sunfield" } else { "Wind Park" }, nd_sim::world::plant_groups::PLANT_GROUP_BONUS_PER_LOT * 100.0, nd_sim::world::plant_groups::PLANT_GROUP_BONUS_MAX * 100.0));

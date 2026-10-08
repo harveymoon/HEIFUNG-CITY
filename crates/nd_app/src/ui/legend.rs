@@ -65,6 +65,11 @@ pub fn land_legend(ui: &mut egui::Ui, l: LandLayer) {
             let h = land_hue(l);
             ramp(ui, |t| { let c = land_color(h, t); linear([c[0], c[1], c[2]]) }, "weak sun", "desert sun");
         }
+        // [dirty-industry] Trace to poison, on its own ramp.
+        LandLayer::Contamination => {
+            ramp(ui, |t| { let c = nd_procgen::overlay::contamination_color(t.max(0.03)); linear([c[0], c[1], c[2]]) }, "trace", "poisoned");
+            hint(ui, "crops: field yield −90% at full; homes lose value and mood");
+        }
         _ => {
             let h = land_hue(l);
             ramp(ui, |t| { let c = land_color(h, t); linear([c[0], c[1], c[2]]) }, "none", "rich");
@@ -88,6 +93,13 @@ pub fn land_here(w: &nd_sim::World, l: LandLayer, p: nd_sim::Vec2) -> String {
         }
         LandLayer::Solar => {
             return format!("under the pointer: sun {:.0}% of the desert's ({} climate)", nd_sim::weather::sun_at(&w.landscape, p) * 100.0, w.landscape.params.climate.label());
+        }
+        // [dirty-industry] The ground's figure and who poisoned it.
+        LandLayer::Contamination => {
+            let c = w.contamination.at(p);
+            let src = w.dirty.iter().filter(|s| s.pos.distance(p) < s.reach).min_by(|a, b| a.pos.distance(p).total_cmp(&b.pos.distance(p)));
+            let near = src.and_then(|s| w.buildings.get(s.building).map(|b| format!(" · {} {:.0} m away", b.name, s.pos.distance(p)))).unwrap_or_default();
+            return format!("under the pointer: contamination {:.0}%{near}", c * 100.0);
         }
         _ => {}
     }

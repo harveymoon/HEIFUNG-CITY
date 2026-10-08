@@ -87,6 +87,11 @@ pub(super) fn land_mesh(w: &World, s: &LandSurvey, layer: LandLayer, weights: &[
             let hue = land_hue(layer);
             g.mesh_by(WASH_Y, |k| land_color(hue, g.values[k]), |k| g.values[k] < 0.04, height)
         }
+        // [dirty-industry] Contamination on its own ramp, trace to poison.
+        LandLayer::Contamination => {
+            let g = grid(s, w.survey_values(s, layer, None));
+            g.mesh_by(WASH_Y + 0.05, |k| nd_procgen::overlay::contamination_color(g.values[k]), |k| g.values[k] < 0.02, height)
+        }
         // [grid-weather] Wind on its own ramp so the field's pattern reads.
         LandLayer::Wind => {
             let g = grid(s, w.survey_values(s, layer, None));
@@ -151,7 +156,7 @@ pub(super) fn sync_land_layer(
     let contamination = w.contamination.version;
     let stale = match st.shown {
         None => true,
-        Some((l, k, c)) => l != layer || sim.full_rebuild || (layer.is_industry() && k != key) || (layer == LandLayer::Farmland && c != contamination),
+        Some((l, k, c)) => l != layer || sim.full_rebuild || (layer.is_industry() && k != key) || (matches!(layer, LandLayer::Farmland | LandLayer::Contamination) && c != contamination),
     };
     let changed_layer = st.shown.is_none_or(|(l, _, _)| l != layer) || sim.full_rebuild;
     if !stale || (!changed_layer && now - st.last_build < MIN_REBUILD_SECS) {

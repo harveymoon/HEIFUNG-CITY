@@ -82,12 +82,14 @@ impl World {
         if !crate::services::Placeable::Plant(kind).allowed_on(lot.land_use) {
             return Err(format!("that is park land: unzone it before putting a {} there", kind.label()));
         }
-        if lot.area() < kind.min_area() && self.small_plant_lot_joins(kind, lot_id).is_none() {
+        if lot.area() < kind.min_area() && self.small_plant_site_joins(kind, &lot.polygon, Some(lot_id)).is_none() {
             return Err(format!("too small: a {} needs {:.0} m²", kind.label(), kind.min_area()));
         }
         self.power_site(lot_id, kind)?;
-        // [clarity] Solar and wind are priced by the lot they fill.
-        let cost = kind.build_cost() * kind.size_scale(lot.area());
+        // [clarity] Solar and wind are priced by the lot they fill;
+        // [plant-scale] coal, nuclear and geothermal by the site, capped.
+        let scale = kind.size_scale(lot.area());
+        let cost = kind.cost_at(scale);
         if self.economy.treasury < cost {
             return Err(format!("the treasury has {:.0}; a {} here costs {:.0}", self.economy.treasury, kind.label(), cost));
         }
@@ -102,7 +104,11 @@ impl World {
             PowerPlantKind::Tidal => "Tiderace",
             PowerPlantKind::Geothermal => "Hotwell",
         }, self.rng.random_range(1..9));
-        let id = self.place_special(lot_id, name, kind.jobs(), kind.jobs() / 2, |b| b.plant = Some(kind));
+        let jobs = kind.jobs_at(scale);
+        let id = self.place_special(lot_id, name, jobs, jobs / 2, |b| {
+            b.plant = Some(kind);
+            b.plant_scale = kind.sized_when_built().then_some(scale);
+        });
         self.clear_for_light_works(id, kind.merges_with_neighbours());
         self.refresh_power();
         Ok(id)
@@ -138,9 +144,14 @@ impl World {
     }
 
     /// [clarity] How much of its kind's nameplate a plant is: its lot's
-    /// area over the reference for solar and wind, 1 for the others.
+    /// area over the reference for solar and wind; [plant-scale] the size
+    /// fixed when it was built for coal, nuclear and geothermal (1 for one
+    /// from an older save, built at the fixed size); 1 for hydro and tidal.
     pub fn plant_scale(&self, b: &Building) -> f32 {
         let Some(k) = b.plant else { return 1.0 };
+        if k.sized_when_built() {
+            return b.plant_scale.unwrap_or(1.0);
+        }
         self.lots.get(b.lot).map_or(1.0, |l| k.size_scale(l.area()))
     }
 
@@ -152,12 +163,12 @@ impl World {
 
     /// [clarity] A plant's own daily upkeep (scaled by its lot).
     pub fn plant_upkeep(&self, b: &Building) -> f32 {
-        b.plant.map_or(0.0, |k| k.upkeep_per_day() * self.plant_scale(b))
+        b.plant.map_or(0.0, |k| k.upkeep_at(self.plant_scale(b)))
     }
 
     /// [clarity] What a plant of `kind` on `lot` would cost to build.
     pub fn plant_cost_on(&self, kind: PowerPlantKind, lot: LotId) -> f32 {
-        kind.build_cost() * self.lots.get(lot).map_or(1.0, |l| kind.size_scale(l.area()))
+        kind.cost_at(self.lots.get(lot).map_or(1.0, |l| kind.size_scale(l.area())))
     }
 
     /// Every plant and battery as a table row, plants in kind order then
@@ -183,7 +194,7 @@ impl World {
                     co2_t_per_day: mean * 24.0 * k.co2_t_per_mwh(),
                     air: k.air_index() * (now / self.plant_capacity_mw(b).max(0.01)).clamp(0.0, 1.0),
                     noise_db: (now > 0.0).then(|| k.noise_db()),
-                    nuisance: k.pollution(),
+                    nuisance: k.pollution_at(if k.sized_when_built() { self.plant_scale(b) } else { 1.0 }),
                     charge_mwh: 0.0,
                     capacity_mwh: 0.0,
                     derelict: b.is_derelict(),

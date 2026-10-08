@@ -18,6 +18,10 @@ Open work: `todo.md` (sorted by area; tick items with "→ DONE [branch]: what")
 - **Never touch Harvey's running game:** remote API port 4817, and `target/release`
   (including `target/release/saves`). Read-only API calls on 4817 only when asked. Never kill
   a `neon_district.exe` you did not start.
+- Stop your own instance only by its PID or by a copy of the exe with your own unique file name
+  (e.g. `taskkill //PID <pid>` or `taskkill //IM nd_<yourbranch>.exe`). Never use filter-based
+  kills (`taskkill //FI ...`, `//IM neon_district.exe`, `Stop-Process -Name ...`): they can hit
+  Harvey's game.
 - Never send scripted clicks or keys to other windows. Never use Ctrl+Shift+G (a system
   shortcut on this machine).
 - Billionaires and other "named rich" people are fictional, from the game's name generator.

@@ -339,11 +339,13 @@ within 80 m is used, as before.
   for the quoted figures, capped at 6× on one lot); the reply's message gives the MW, what was paid
   and the Sunfield or Wind Park it joined. A lot below the kind's minimum may still take one when it
   joins plants of its kind next door and the joined lots reach the minimum.
-- `plant_preview {kind, x, y}` (read-only): what a plant would be on the lot there before placing
-  it: `area_m2`, `size_scale`, `capacity_mw` (its own, group bonus included), `site`, `cost`,
-  `upkeep_per_day`, `min_area`, `joins` (the Sunfield / Wind Park it would join, or null),
-  `joined_lots`, `joined_area_m2`, `joined_capacity_mw`, `small_lot_joins` (allowed only by joining),
-  `ok`, `problem`.
+- `plant_preview {kind, x, y}` (read-only): what a plant would be on the site a click there takes
+  (a lot, or unzoned parcels joined into one: `lot` null, `unzoned_parcels`, `outline`) before
+  placing it: `area_m2`, `size_scale`, `capacity_mw` (its own, group bonus included), `site`, `cost`,
+  `upkeep_per_day`, `min_area`, `max_area`, `joins` (the Sunfield / Wind Park it would join, or null),
+  `joined_lots`, `joined_area_m2`, `joined_capacity_mw`, `adds_mw` (what placing it adds to the
+  joined installation), `small_lot_joins` (allowed only by joining), `ok`, `problem`. The same
+  figures are in the Buildings tool's hover `note` (`tool {hover}`).
 - `shipping_port` (or `port`), `ferry_terminal` (or `ferry`): at the water's edge within 90 m of the
   point (`World::place_port`). Ports need a river at least 40 m wide or the sea; ferries any water
   16 m or wider. Each builds a pier and, unless a street is already along its landward side, a
@@ -440,7 +442,8 @@ revenue}). Saves from before this keep their booths with the new books empty.
 ### Industry sub-zones
 
 `industry {lot | pos | polygon, kind}` sets the player's industry bias (`World::set_industry_bias`):
-`kind` is `farming`, `oil`, `refinery`, `manufacturing`, `logistics`, `fishing`, `tech`, or `none`
+`kind` is `farming`, `oil`, `refinery`, `manufacturing`, `logistics`, `fishing`, `tech`, `mining`,
+`smelting`, `factory_farming`, or `none`
 (hand the area back to the ground over an older bias). `lot` is a lot id, `pos: [x, y]` the lot
 under the point, `polygon: [[x, y], ...]` an area (the bias belongs to the ground, so it survives
 the lots being recut). New industrial buildings there take that kind; standing industry of another
@@ -455,6 +458,27 @@ would draw) and `building` (the kind standing there).
 {"cmd": "industry", "pos": [-210, -210], "kind": "farming"}
 {"cmd": "industry", "polygon": [[-280, -280], [-140, -280], [-140, -140], [-280, -140]], "kind": "none"}
 {"cmd": "industry", "pos": [-210, -210]}
+```
+
+### Dirty industry
+
+Mining, oil, refineries (and chemical works), smelters and factory farms are dirty (see DESIGN,
+"Dirty industry"). `inspect {building}` has `dirt`: `dirty` (for a dirty plant: `level`,
+`reach_m`, `reads_as`, `spill` {radius_m, per_hour}), `dirtiness`, `as_neighbour` (the row of the
+compatibility table it reads), `exposure` (0..1), `unhappy_neighbours` ([{building, name, what,
+distance_m, hit}], worst first), `costs` ("food output −30%, land value −0.09") and
+`ground_contamination`. `terrain_at` has `contamination` and `dirty_nearby` {plants ([{building,
+name, what, distance_m, level, reach_m}] whose reach covers the point), home_exposure,
+farm_exposure}; `dirt_at {x, y}` returns just those. `report {section: "industry"}` lists `dirty`
+plants and the count of `suffering_neighbours`.
+
+`remediate {x, y, radius}` (also `cleanup`) pays to dig out the contamination within `radius`
+(default 100, at most 300 m) at 450 per cell of full contamination, booked as construction.
+Reply: `cost`, `removed_cells`, `treasury`; an error when the ground is clean or the treasury short.
+
+```json
+{"cmd": "dirt_at", "x": 120, "y": -40}
+{"cmd": "remediate", "x": 120, "y": -40, "radius": 120}
 ```
 
 ### Buses
@@ -624,7 +648,7 @@ A citizen's `inspect` carries `raised_level`: how high they stand on a raised wa
 footbridge's stairs or deck), 0 at grade. Dev: `walk_to {citizen, to: [x, y], from?}` sends a
 citizen out on foot along the walk graph (footbridges included).
 
-`inspect` with one of `citizen`, `building`, `lot`, `car`, `drone`, `vehicle` (a private car's record: owner, model, place with minutes_here, limit_min, illegal, ticketed_tick, impounded {pound, out_of_town, release_fee, auction_in_min} and tow_job), `train`, `metro` (a metro train; see **Trains** below), `toll` (a booth id; see Taxes and tolls), `route` (ids) or `gesture` (int). A building that is a parking office adds `parking_office` {officers, patrol cars}, a tow company `tow_company` {trucks, jobs_open, pound}, a lot the city runs `parking.city_run`; a tow truck's `car` adds `tow` {job, state, reason, vehicle, company, out_of_town}, an officer's car `patrol`; [services] a recovery truck going to a wreck (errand `Recover`) adds `recovery` {wreck, metres_to_go, amber, off_law_allowed (within 250 m), move (its off-law move: Lane, Overtake, Kerb, Wait), company, out_of_town, sent_tick}, a written-off car `wreck` {since_tick, incident, tow_due_tick, truck, truck_sent_tick, pushed_aside_m, flipped (0 upright, 1 side, 2 roof), righted_at_tick}, and a car easing past a crash on the shoulder `passing_hazard` (the crashed car's id). `parking_price {building, price}` sets the fee at a city-run lot. [boot] `tow_car {car | vehicle}` (also `tow`, `boot`) clamps a private car and calls the tow truck, as the inspector's "Tow this car" button does: `car` is a car on the road (it pulls over to a kerb slot, or the street's edge, is taken off the lanes, and its driver and passengers walk on), `vehicle` a car's record (parked at a kerb, or driving). Reply {tow_job, vehicle, company, out_of_town}; an error says why not (not a resident's car, off the street, already towed, leaving town). A clamped car's place has `booted: true`; the owner's mood drops, they remember it, and they pay the release fee at the pound as for any tow. The enforcement report adds `boots_today` and `boots_total`. [passengers] A car row of kind car carries `occupants` ([{id, name}]: everyone riding along besides the driver, `citizen`) and `vehicle` (its record); a passenger's activity has `driver`, `driver_name`, `in_car`, `car`, `to`, `purpose`. `report` traffic.private_cars adds `passengers` {riding_now, walking_to_a_car, cars_with_passengers, today, outings_today, carpools_today, school_runs_today, lifts_today, yesterday, total, fullest_car, drop_offs_pending}. `place` takes `parking_enforcement[:tier]`, `parking_small`, `parking_large`, `parking_garage`;
+`inspect` with one of `citizen`, `building`, `lot`, `car`, `drone`, `vehicle` (a private car's record: owner, model, place with minutes_here, limit_min, illegal, ticketed_tick, impounded {pound, out_of_town, release_fee, auction_in_min} and tow_job), `train`, `metro` (a metro train; see **Trains** below), `toll` (a booth id; see Taxes and tolls), `road` (a street piece: id or [x, y]; see Street races, raves and the roads), `route` (ids) or `gesture` (int). A building that is a parking office adds `parking_office` {officers, patrol cars}, a tow company `tow_company` {trucks, jobs_open, pound}, a lot the city runs `parking.city_run`; a tow truck's `car` adds `tow` {job, state, reason, vehicle, company, out_of_town}, an officer's car `patrol`; [services] a recovery truck going to a wreck (errand `Recover`) adds `recovery` {wreck, metres_to_go, amber, off_law_allowed (within 250 m), move (its off-law move: Lane, Overtake, Kerb, Wait), company, out_of_town, sent_tick}, a written-off car `wreck` {since_tick, incident, tow_due_tick, truck, truck_sent_tick, pushed_aside_m, flipped (0 upright, 1 side, 2 roof), righted_at_tick}, and a car easing past a crash on the shoulder `passing_hazard` (the crashed car's id). `parking_price {building, price}` sets the fee at a city-run lot. [boot] `tow_car {car | vehicle}` (also `tow`, `boot`) clamps a private car and calls the tow truck, as the inspector's "Tow this car" button does: `car` is a car on the road (it pulls over to a kerb slot, or the street's edge, is taken off the lanes, and its driver and passengers walk on), `vehicle` a car's record (parked at a kerb, or driving). Reply {tow_job, vehicle, company, out_of_town}; an error says why not (not a resident's car, off the street, already towed, leaving town). A clamped car's place has `booted: true`; the owner's mood drops, they remember it, and they pay the release fee at the pound as for any tow. The enforcement report adds `boots_today` and `boots_total`. [passengers] A car row of kind car carries `occupants` ([{id, name}]: everyone riding along besides the driver, `citizen`) and `vehicle` (its record); a passenger's activity has `driver`, `driver_name`, `in_car`, `car`, `to`, `purpose`. `report` traffic.private_cars adds `passengers` {riding_now, walking_to_a_car, cars_with_passengers, today, outings_today, carpools_today, school_runs_today, lifts_today, yesterday, total, fullest_car, drop_offs_pending}. `place` takes `parking_enforcement[:tier]`, `parking_small`, `parking_large`, `parking_garage`;
 with none, the current selection. The detail matches what the inspector and the person pane show:
 A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price, place: parked (home / building / parking lot / kerb / street (no space) / dealer, building, pos, since_tick) or driving (car id, errand)}} and `commute` {pain per mode with recent_trips, parking_pain, trip_mode_now, last_trip {mode, minutes, pain}}: what the mode choice weighs and what the daily habits (buy a bike, sell the car, buy one) act on.
 
@@ -669,7 +693,7 @@ several plots), home, business, form. A billionaire's other homes and businesses
 
 | Command | Fields |
 | --- | --- |
-| `select` | `citizen` / `building` / `car` / `vehicle` (a parked car) / `bot` (a delivery robot) / `train` / `metro` (a metro train) id, `toll` (a booth id, an integer), or `at: [x, y]` (picks like a click: on a train's car it picks the train; a metro train only with the Underground view on), or nothing to clear |
+| `select` | `citizen` / `building` / `car` / `vehicle` (a parked car) / `bot` (a delivery robot) / `train` / `metro` (a metro train) id, `toll` (a booth id, an integer), `road` / `segment` (a street piece: id or [x, y]), or `at: [x, y]` (picks like a click: on a train's car it picks the train; a metro train only with the Underground view on; a road piece when nothing else is there), or nothing to clear |
 | `selected` | full detail of the player's selection (see below) |
 | `flags` / `flag` | the player's "Flag for Claude" bookmarks (see below) |
 | `favourite` | `citizen`, `on` (omit to toggle). Favourites wear a gold ring and diamond in the world (their car, driving or parked, a gold box) |
@@ -696,8 +720,9 @@ in the game; the top bar's Layer button and the View window list them;
 | `shipping` | shore where a shipping port fits: the sea or a river 40 m wide |
 | `wind` | what a wind farm makes on an ordinary day there (the map's wind field times the climate's wind, through the power curve) |
 | `solar` | the sun a solar field gets (the climate's, a little more on high open ground) |
+| `contamination` | the poisoned ground (0..1, the saved raster), trace yellow-green to poisoned purple; the legend reads the figure and the nearest dirty plant under the pointer. Aliases `toxic`, `poison`, `soil_contamination` |
 | `best_industry` | each spot coloured by the industry kind the ground favours most |
-| `best_farming`, `best_oil`, `best_refinery`, `best_manufacturing`, `best_logistics`, `best_fishing`, `best_tech` | the chance a new industrial lot there takes the kind, from the sim's own industry weights (the player's area bias left out) |
+| `best_farming`, `best_oil`, `best_refinery`, `best_manufacturing`, `best_logistics`, `best_fishing`, `best_tech`, `best_mining`, `best_smelting`, `best_factory_farming` | the chance a new industrial lot there takes the kind, from the sim's own industry weights (the player's area bias left out) |
 
 Aliases: `fertility`, `hot_spots`, `quarry`, `port`, `industry`, and `land_<key>`. `terrain_at`
 returns every layer's value at a point under `survey`.
@@ -718,6 +743,7 @@ window, with its buses) and `clock`. So when the player says "this car", ask `se
 - **citizen**: as `inspect {citizen}`, plus `driving_car` (the car's full detail) while they drive.
 - **building**, **parked_car**: as `inspect {building}` / `inspect {vehicle}`.
 - **toll**: as `inspect {toll}` (Taxes and tolls, above).
+- **road**: the road card, as `inspect {road}` gives under `road` (Street races, raves and the roads, below).
 
 A car's detail (`inspect {car}`, `selected`) carries:
 
@@ -1288,6 +1314,7 @@ Warehouse raves, Road wear and maintenance).
 | `street_events` (or `nights`) | `limit` (rows of history and news, default 10), `fresh` (bool: weigh the warehouses now instead of the last 22:00 roll) | `race` (below, or null), `race_planned` (time), `race_crew` (locals with a fast car free now), `rave` (below), `rave_planned` {building, name, doors}, `rave_spots` (warehouses best first: building, name, pos, `pull` {youth, artists, art_scene, neighbours, culture, has_scene, night_chance, why}, last_rave_day), `history` (newest first: id, kind, place, pos, finish, started, ended, minutes, people, crowd, winner, police, arrests, fines, complaints, chase, culture), `news` (seq, tick, time, kind, headline, pos), `totals` {races, raves, busts, fines} |
 | `race` | `at` [x,y] optional: meet at the empty lot or surface car park nearest it | `race` id and `detail`; refused with fewer than two free locals with a fast car, or no lot pair 450 m-2.4 km apart (550 m by road) |
 | `rave` | `building` id, or `at` [x,y] (the old warehouse nearest it); neither: the one with the strongest scene | `rave` id and `detail`. Forcing one skips the scene check and the day-10 start (the roll at 22:00 does not) |
+| `repair_road` | `road` (a segment id, or [x,y]: the piece a click there picks); default the selected road | [road-inspect] "Repair now": the piece is resurfaced at once for the crews' price (lane-metres x wear x 6), paid from the treasury and booked as road maintenance. `repaired`, `cost`, `treasury`, `road` (the card, below). Refused for ways the crews do not mend, a piece like new, or a treasury short of the cost |
 | `roads` (or `road_condition`, `road_budget`) | `funding` 0..1.5 (sets the road maintenance level; 1 = what the network needs), `age_days` (dev: wear every street that many days at yesterday's traffic, the crews working each night at the funding level unless `crews: false`; nothing charged), `near` [x,y], `limit` (default 10) | `pieces`, `lane_km`, `mean_wear`, `worn` (0.5+), `crumbling` (0.8+), `waiting_for_repair`, `mean_wear_by_land_value` {cheap, middle, dear} (tier cuts of land value), `budget` {funding, max_funding, need_per_day, allowance_per_day, spent_yesterday, repaired_yesterday, repaired_land_value_yesterday, ledger_today, ledger_yesterday, repaired_total}, `days` (the last 7: allowance, spent, repaired, repaired_lane_m, repaired_land_value, waiting), `pieces_listed` (worst first, or nearest `near`: segment, pos and the `condition` fields of `inspect {segment}`) |
 
 A race `detail`: id, `stage` (gathering / racing / party), `meet` and `finish` {name, pos, lot},
@@ -1299,6 +1326,40 @@ peak, complaints, incident, takings (on the door), pull.
 `report.traffic` carries `street_events` {race, rave, races_total, raves_total, busts_total,
 last_news} and `road_condition` (the `roads` reply without the list). The ledger has two more flows,
 `road maintenance` and `fines`. `overlay {layer: "road_condition"}` shows the Road condition layer.
+**Inspecting a road.** [road-inspect] A click with the Inspect tool on a road (not on a vehicle,
+person, toll booth or parked car, and not inside a junction) selects the street piece under the
+pointer: at a crossing of two levels the upper one, and in the Underground view only pieces below
+ground. In Edit mode, clicking a road to upgrade it selects the piece clicked too, and a compact card
+opens beside the ROAD UPGRADE panel. The piece is outlined in gold along both edges; the rest of its
+run between junctions is traced faintly. `select {road: id}` (or `segment`, or `road: [x, y]`, or
+`select {at}`) selects one; `inspect {road: id | [x, y]}`, `inspect {segment}` or `inspect` / `selected`
+with a road selected returns the `segment` record plus `road`, the card:
+
+- `name` (the street's), `road_kind` (street, avenue, highway, ramp, roundabout, path, rail), `level`
+  (at grade, embankment, cutting, bridge, viaduct, tunnel), `lanes_fwd`, `lanes_bwd`, `one_way`,
+  `speed_limit_kmh`, `length_m`, `from`, `to`, `run` {pieces, index, length_m} (the pieces between
+  the junctions at either end; the figures are this piece's);
+- `now`: `vehicles`, `cars`, `lorries`, `buses`, `emergency_or_city`, `bikes` and `walkers` (on it and
+  its pavements), `mean_speed_kmh`, `allowed_kmh` (the limit less a rough surface's slowdown),
+  `congestion` (empty, free-flowing, busy, slow, jammed), `queued`, `queue_m`, `per_lane_km`;
+- `flow` {this_hour, last_hour, today, yesterday, peak {day, hour, vehicles}}: vehicles that drove
+  onto the piece, both ways; `hourly`: the last 72 hours, oldest first (the last is the hour under
+  way), from `hourly_from` {day, hour, before_start}. Kept per piece as 72 `u16` (made on the first
+  vehicle) and saved with the city; old saves start empty;
+- `decay` (null for ways the city's crews do not mend): `wear`, `condition`, `speed_factor`,
+  `crash_factor`, `wear_per_day` (`wear_per_day_measured`: over its last whole day, else reckoned
+  from its age and yesterday's traffic), `next_condition` {label, days}, `repair_cost`, `land_value`,
+  `queued_for_repair`, `queue_place`, `queue_length`, `priority`, `last_repaired_day`,
+  `last_repair_whole`, `last_repair_ordered`, `funding`;
+- `tolls` [{id, name, price}], `crossings` {junction, zebra, push_button, footbridge}, `bus_stops`
+  (line names), `kerb_parking`, `kerb_parked`.
+
+```json
+{"cmd": "select", "at": [120, -40]}
+{"cmd": "inspect", "road": 57}
+{"cmd": "repair_road", "road": 57}
+```
+
 Racer cars show `takeover {phase: "racing", ...}` in `inspect {car}` (the gang role they share with
 takeover crews); crimes of kind `street race` and `illegal rave` appear in `incidents`.
 

@@ -55,14 +55,18 @@ pub enum LandLayer {
     Industry(IndustryKind),
     /// The kind of industry the ground favours most, coloured by kind.
     BestIndustry,
+    /// [dirty-industry] What industry has done to the ground: the saved
+    /// contamination (`crate::ground::Contamination`), not a resource but
+    /// shown with them.
+    Contamination,
 }
 
 impl LandLayer {
     /// The resource layers, in picker order.
-    pub const RESOURCES: [LandLayer; 9] = [LandLayer::Farmland, LandLayer::Oil, LandLayer::Geothermal, LandLayer::Rock, LandLayer::Sand, LandLayer::Water, LandLayer::Shipping, LandLayer::Wind, LandLayer::Solar];
+    pub const RESOURCES: [LandLayer; 10] = [LandLayer::Farmland, LandLayer::Oil, LandLayer::Geothermal, LandLayer::Rock, LandLayer::Sand, LandLayer::Water, LandLayer::Shipping, LandLayer::Wind, LandLayer::Solar, LandLayer::Contamination];
 
     /// Every layer, in the order the K key steps through them.
-    pub const ALL: [LandLayer; 18] = [
+    pub const ALL: [LandLayer; 21] = [
         LandLayer::Farmland,
         LandLayer::Oil,
         LandLayer::Geothermal,
@@ -72,6 +76,7 @@ impl LandLayer {
         LandLayer::Shipping,
         LandLayer::Wind,
         LandLayer::Solar,
+        LandLayer::Contamination,
         LandLayer::BestIndustry,
         LandLayer::Industry(IndustryKind::Farming),
         LandLayer::Industry(IndustryKind::OilExtraction),
@@ -81,6 +86,8 @@ impl LandLayer {
         LandLayer::Industry(IndustryKind::Fishing),
         LandLayer::Industry(IndustryKind::Tech),
         LandLayer::Industry(IndustryKind::Mining),
+        LandLayer::Industry(IndustryKind::Smelting),
+        LandLayer::Industry(IndustryKind::FactoryFarming),
     ];
 
     /// Name for the API (`overlay {layer}`) and settings.
@@ -96,6 +103,7 @@ impl LandLayer {
             LandLayer::Wind => "wind",
             LandLayer::Solar => "solar",
             LandLayer::BestIndustry => "best_industry",
+            LandLayer::Contamination => "contamination",
             LandLayer::Industry(k) => match k {
                 IndustryKind::Farming => "best_farming",
                 IndustryKind::OilExtraction => "best_oil",
@@ -105,6 +113,8 @@ impl LandLayer {
                 IndustryKind::Fishing => "best_fishing",
                 IndustryKind::Tech => "best_tech",
                 IndustryKind::Mining => "best_mining",
+                IndustryKind::Smelting => "best_smelting",
+                IndustryKind::FactoryFarming => "best_factory_farming",
             },
         }
     }
@@ -124,6 +134,7 @@ impl LandLayer {
             "wind_resource" | "winds" | "wind_map" => Some(LandLayer::Wind),
             "sun" | "solar_resource" | "sunshine" => Some(LandLayer::Solar),
             "industry" | "best" => Some(LandLayer::BestIndustry),
+            "toxic" | "toxicity" | "pollution_ground" | "soil_contamination" | "poison" => Some(LandLayer::Contamination),
             _ => s.strip_prefix("best_").and_then(IndustryKind::from_key).map(LandLayer::Industry),
         }
     }
@@ -140,6 +151,7 @@ impl LandLayer {
             LandLayer::Wind => "Wind resource",
             LandLayer::Solar => "Solar resource",
             LandLayer::BestIndustry => "Best industry here",
+            LandLayer::Contamination => "Contamination",
             LandLayer::Industry(k) => match k {
                 IndustryKind::Farming => "Best for farming",
                 IndustryKind::OilExtraction => "Best for oil wells",
@@ -149,6 +161,8 @@ impl LandLayer {
                 IndustryKind::Fishing => "Best for fishing",
                 IndustryKind::Tech => "Best for clean tech",
                 IndustryKind::Mining => "Best for strip mining",
+                IndustryKind::Smelting => "Best for smelting",
+                IndustryKind::FactoryFarming => "Best for factory farming",
             },
         }
     }
@@ -166,6 +180,7 @@ impl LandLayer {
             LandLayer::Wind => "what a wind farm makes on an ordinary day: windy on hills, ridges and by wide water, sheltered in valleys; storms shut exposed farms down",
             LandLayer::Solar => "the sun a solar field gets: set by the climate, a little more on high open ground",
             LandLayer::BestIndustry => "the kind a new industrial lot here is most likely to take",
+            LandLayer::Contamination => "poisoned ground round mines, oil wells, refineries, smelters, chemical works, factory farms and coal plants: spoils crops, costs land value, makes residents ill; fades over months, faster under parks",
             LandLayer::Industry(k) => match k {
                 IndustryKind::Farming => "chance a new industrial lot farms: good soil, clean and cheap ground",
                 IndustryKind::OilExtraction => "chance of oil wells: over a deposit, on cheap land",
@@ -175,6 +190,8 @@ impl LandLayer {
                 IndustryKind::Fishing => "chance of fisheries: on the shore, clean water, a port helps",
                 IndustryKind::Tech => "chance of clean tech: dear land, away from heavy industry",
                 IndustryKind::Mining => "chance of a strip mine: rock near the surface, on cheap land",
+                IndustryKind::Smelting => "chance of a smelter: strip mines in reach or a shipping port for ore, on cheap land",
+                IndustryKind::FactoryFarming => "chance of a factory farm: cheap open country, away from homes that would object",
             },
         }
     }
@@ -338,6 +355,7 @@ pub fn resource_value(layer: LandLayer, g: &GroundSample, r: PointResources) -> 
         LandLayer::Shipping => shipping,
         LandLayer::Wind => wind,
         LandLayer::Solar => solar,
+        LandLayer::Contamination => contamination.clamp(0.0, 1.0),
         LandLayer::Industry(_) | LandLayer::BestIndustry => 0.0,
     }
 }
@@ -421,7 +439,7 @@ mod tests {
         assert_eq!(resource_value(LandLayer::BestIndustry, &g, r(1.0, 1.0, 0.0)), 0.0);
         assert_eq!(resource_value(LandLayer::Wind, &g, PointResources { wind: 0.6, ..Default::default() }), 0.6);
         assert_eq!(resource_value(LandLayer::Solar, &g, PointResources { solar: 0.9, ..Default::default() }), 0.9);
-        let sh = shares(&[1.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        let sh = shares(&[1.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
         assert!((sh[1] - 0.75).abs() < 1e-6 && (sh.iter().sum::<f32>() - 1.0).abs() < 1e-6);
         assert_eq!(shares(&[0.0; crate::industry::IndustryKind::COUNT]), [0.0; crate::industry::IndustryKind::COUNT]);
     }

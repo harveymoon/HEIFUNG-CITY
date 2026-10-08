@@ -39,6 +39,8 @@ pub mod saves;
 mod taxes;
 /// [toll-inspect] The inspector on a toll booth.
 mod toll;
+/// [road-inspect] The card on a selected street piece.
+mod road;
 /// [fonts] The HUD's fonts and type scale.
 pub mod theme;
 /// The title screen: saved games with their map pictures.
@@ -233,6 +235,7 @@ pub(crate) fn side_panel(
     build::window(ctx, &mut p, content);
     inspector::window(ctx, &mut p, content);
     toll::window(ctx, &mut p, content);
+    road::window(ctx, &mut p, content);
     newgame::window(ctx, &mut p, content);
     history::window(ctx, &mut p, content);
     title::screen(ctx, &mut p);
@@ -261,7 +264,7 @@ pub(crate) fn side_panel(
     }
     // [plant-groups] What the picked building would be on the lot under the pointer.
     if tools.tool == Tool::Buildings && *mode == CameraMode::Orbit && !ctx.is_pointer_over_egui() {
-        hover::build_card(ctx, &sim, &cursor, tools.build_item());
+        hover::build_card(ctx, &sim, &cursor, &tools);
     }
 
     // egui keeps keyboard focus on the last clicked widget and re-clicks it
