@@ -284,7 +284,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Ferry terminal on a civic zone took the zone's shape/look: unzone first, own footprint [feat/dock-access]
 - [ ] Fishing boats actually go out, fish at grounds for hours, return and unload; berths empty while at sea [feat/fishing]
 - [ ] Selecting a ferry terminal highlights its routes; other routes dim; route list in the inspector [feat/ferry-routes]
-- [ ] FLAG (day 24): no lots along roads on a hilly island (slope ~0.42); zoning there impossible, no reason shown [fix/island-lots]
+- [x] FLAG (day 24): no lots along roads on a hilly island (slope ~0.42); zoning there impossible, no reason shown [fix/island-lots] → DONE [fix/island-lots]: parcels were clipped to `half_extent` (900 m) so streets past it (his island at y 1140-1340) had none; the clip and the built-ground raster now grow to take in every fronting street (to the map edge). Lots go on hillsides up to 70% (cut and filled to a pad at their street) with at most 18 m of rise across one lot; only cliffs/water are rough, with the reason shown. The Zone tool hover says why at the cursor where there is no parcel (water, too far from a road, past the buildable land).
 - [ ] People on an elevated path walk at ground level (even over water) under it; walkers/cars on raised ways must be drawn on the deck [fix/footbridge]
 - [x] People window grew every frame until it filled the screen → DONE [main 53c3a89]: histogram reserves the Lorenz chart's width; compact windows capped
 - [x] Speech bubbles around town off → DONE [main 2b7c892]: off by default, View window checkbox, saved in settings.ron
@@ -299,6 +299,10 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Park paths are real paths (Cities: Skylines style): parks and some buildings/structures with grounds (plazas, campuses, stations, stadiums) expose path junction points on their internal walkways; the path tool snaps to them so a player path connects straight into the park's walkway network, which joins the walk graph. When the park/building changes or goes, the player path segment attached to a vanished junction is removed (or left dead-ended with a clear marker).
 - [ ] LAST, after every other item: a comprehensive code review and refactor of the whole codebase (Harvey 2026-10-08)
 - [ ] "Public beach" zone paintable on any waterfront; people walk/relax on it if they can reach it (from a park, a road or a path)
+
+- [ ] Land-value and estate-pressure grids stop at half_extent+200; Walk camera clamped to half_extent+150 (island-lots leftovers)
+- [ ] A big generated city (2,168 lots) hit "memory allocation of 268435456 bytes failed" at day 10 under heavy machine load (committee agent) — check memory growth
+- [ ] fix/ped-highway merged with 2 failing tests (its last test; society_demo 911 borderline) — agent fixing
 
 ## Follow-ups noted in agent reports (not started)
 - [ ] Batteries charge on cheap night power and discharge at the evening peak (grid-weather)
@@ -327,8 +331,6 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Delete old todo2.md–todo5.md (their items were carried into todo.md)?
 
 ## Agents running (update when starting/merging; survives context compaction)
-- feat/committee: AI committee, mock backend first, Ollama/Claude connectors (started 2026-10-07 evening)
-- fix/ped-highway: pedestrians/taxis stranded on the highway (started 2026-10-07 23:20)
 - fix/interchange: clean interchanges, ramp+street logic (started 2026-10-07 23:25)
 - fix/footbridge: footbridge replaces crosswalk (started 2026-10-08 00:00)
 - feat/city-data: full-screen City Data pane with tabs (started 2026-10-08 00:05)
@@ -336,12 +338,10 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - feat/dock-access: docks/stations without road access, road stubs (started 2026-10-08 00:25)
 - feat/fishing: fishing trips (started 2026-10-08 00:35)
 - feat/ferry-routes: ferry route highlight (started 2026-10-08 00:40)
-- fix/island-lots: no lots on hilly island roads (started 2026-10-08 00:50)
 - feat/econ-followups: batteries arbitrage, parking pressure → lots, industry lifts cheap land, relocating businesses, rich owners' holdings, wind small-lot check (started 2026-10-08)
 - feat/street-followups: tow trucks on a job (one-ways/U-turns), booted cars towed, murder, moto packs, fire engines park at the kerb (started 2026-10-08)
 - feat/freight: freight trains carry cargo, hydro/tidal scale (started 2026-10-08)
 - feat/mural-cleanup: murals on facades, clean-up tool, contamination spread (started 2026-10-08)
 - fix/haze (extended): + look-dev: normal maps, sky/atmosphere/fog, lamp light, wet roads, coal smoke in walk view
 - fix/interchange (extended): + road-polish leftovers: abutments, gore deck, signal arms, stop line, town street tapers
-- feat/committee (extended): + LLM dialogue for spotlit citizens and on-demand diaries
 - fix/false-block: false road refusal by a far plant; blockers in the plan preview (started 2026-10-08)

@@ -34,8 +34,18 @@ pub const BASIN_RADIUS: f32 = 1000.0;
 pub const OUTER_HILLS: f32 = 160.0;
 /// The middle of the map stays dry so a new city always has room to start.
 pub const CLEAR_RADIUS: f32 = 240.0;
-/// Steepest ground a lot may be built on (rise over run across the lot).
+/// Steepest bank a dock or port may stand on (rise over run across its
+/// footprint). Lots go steeper: see [`MAX_GRADED_SLOPE`].
 pub const MAX_LOT_SLOPE: f32 = 0.2;
+/// [island-lots] Steepest ground a lot is still built on (rise over run
+/// between any two points of it): its pad is levelled to its street and
+/// the ground round it cut and filled (`Ground`), terraced down a hillside
+/// lot by lot. Anything steeper is a cliff.
+pub const MAX_GRADED_SLOPE: f32 = 0.7;
+/// [island-lots] Most the natural ground may rise or fall across one lot
+/// and still be levelled into a terrace: on a steep hillside only shallow
+/// lots fit, on gentle ground deep yards do.
+pub const MAX_LOT_RELIEF: f32 = 18.0;
 /// Slowest water a hydro plant can use, in metres per second.
 pub const MIN_HYDRO_CURRENT: f32 = 0.8;
 /// Height of a bridge deck above the water.
@@ -1009,6 +1019,22 @@ impl Landscape {
         self.raster.get_or_init(|| self.build_raster())
     }
 
+    /// [island-lots] Tests: replace the natural heights with `f(point,
+    /// generated height)` (the water stays where it was generated).
+    #[cfg(test)]
+    pub(crate) fn reshape_for_test(&mut self, f: impl Fn(Vec2, f32) -> f32) {
+        let mut r = self.raster().clone();
+        let n = r.n;
+        for j in 0..n {
+            for i in 0..n {
+                let p = Vec2::new(-LAND_HALF + i as f32 * CELL, -LAND_HALF + j as f32 * CELL);
+                r.h[j * n + i] = f(p, r.h[j * n + i]);
+            }
+        }
+        self.raster = OnceLock::new();
+        let _ = self.raster.set(r);
+    }
+
     fn build_raster(&self) -> Raster {
         let n = (LAND_HALF * 2.0 / CELL) as usize + 1;
         let at = |i: usize, j: usize| Vec2::new(-LAND_HALF + i as f32 * CELL, -LAND_HALF + j as f32 * CELL);
@@ -1183,6 +1209,35 @@ impl Landscape {
             return FAR;
         }
         self.sample(|r| &r.d, p)
+    }
+
+    /// [island-lots] Why a lot (or parcel) with outline `polygon` and
+    /// inner point `center` cannot be built on, in plain words, or None if
+    /// it can be levelled: standing in the water, a cliff steeper than
+    /// [`MAX_GRADED_SLOPE`], or more than [`MAX_LOT_RELIEF`] of rise across
+    /// it to cut and fill. Ordinary hillsides pass: their lots are graded.
+    pub fn lot_ground_problem(&self, polygon: &[Vec2], center: Vec2) -> Option<&'static str> {
+        if self.is_flat() {
+            return None;
+        }
+        if self.is_water(center) {
+            return Some("under water");
+        }
+        let n = polygon.len();
+        let mut pts: Vec<Vec2> = Vec::with_capacity(n * 2 + 1);
+        for k in 0..n {
+            pts.push(polygon[k]);
+            pts.push(polygon[k].lerp(polygon[(k + 1) % n], 0.5));
+        }
+        pts.push(center);
+        if self.slope_over(&pts) > MAX_GRADED_SLOPE {
+            return Some("a cliff: too steep to level for building");
+        }
+        let (lo, hi) = pts.iter().map(|p| self.height(*p)).fold((f32::MAX, f32::MIN), |(lo, hi), h| (lo.min(h), hi.max(h)));
+        if hi - lo > MAX_LOT_RELIEF {
+            return Some("the hillside drops too far across this ground to terrace it");
+        }
+        None
     }
 
     /// Steepest rise over run between any two of `pts`.
@@ -2786,7 +2841,7 @@ mod tests {
     fn built_ground_has_no_cliffs_spikes_or_seams() {
         let w = demo_ground_world();
         let t0 = std::time::Instant::now();
-        let again = Ground::build(&w.landscape, &w.roads, &w.road_z, &w.road_inner, &w.lots, w.config.half_extent + 200.0);
+        let again = Ground::build(&w.landscape, &w.roads, &w.road_z, &w.road_inner, &w.lots, w.ground_half());
         println!("ground built in {:?}", t0.elapsed());
         assert_eq!(again.h, w.ground.h);
         let g = &w.ground;

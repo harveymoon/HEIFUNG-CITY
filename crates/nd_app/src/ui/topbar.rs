@@ -211,20 +211,24 @@ fn more_width(ui: &egui::Ui) -> f32 {
     label_width(ui, MORE)
 }
 
-/// The toggles in bar order: City Data, then the tool windows with
-/// `New game…` before Saves; a separator after City Data, before New game
-/// and before Dev.
+/// The toggles in bar order: City Data and the Committee, then the tool
+/// windows with `New game…` before Saves; a separator before Lines, before
+/// New game and before Dev.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Toggle {
     /// [city-data] The full-screen City Data view.
     CityData,
     Window(Info),
     NewGame,
+    /// [committee] The Committee window (`ui/committee.rs`).
+    Committee,
 }
 
 impl Toggle {
     fn all() -> Vec<Toggle> {
-        let mut out = vec![Toggle::CityData];
+        // [committee] The Committee sits by City Data: both are about running
+        // the city, not tools for the map; it stays its own floating window.
+        let mut out = vec![Toggle::CityData, Toggle::Committee];
         for info in Info::ALL {
             if info == Info::Saves {
                 out.push(Toggle::NewGame);
@@ -243,6 +247,7 @@ impl Toggle {
             Toggle::CityData => "City Data",
             Toggle::Window(info) => info.title(),
             Toggle::NewGame => "New game…",
+            Toggle::Committee => "Committee",
         }
     }
 
@@ -251,6 +256,7 @@ impl Toggle {
             Toggle::CityData => super::city_data::is_open(ctx),
             Toggle::Window(info) => info.is_open(ctx),
             Toggle::NewGame => super::newgame::is_open(ctx),
+            Toggle::Committee => super::committee::is_open(ctx),
         }
     }
 
@@ -264,6 +270,7 @@ impl Toggle {
                     super::city_data::set_open(ui.ctx(), !open);
                 }
             }
+            Toggle::Committee => super::committee::toggle(ui),
             Toggle::Window(info) => {
                 let open = info.is_open(ui.ctx());
                 if ui.selectable_label(open, info.title()).clicked() {

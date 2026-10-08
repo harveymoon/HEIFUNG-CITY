@@ -622,6 +622,23 @@ fn spawn_overlay<T: Component>(commands: &mut Commands, meshes: &mut Assets<Mesh
     commands.spawn((Mesh3d(meshes.add(to_mesh(data, false))), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, tag));
 }
 
+/// [island-lots] `pts` with points added along every leg longer than
+/// `step`, so a line lifted onto the ground vertex by vertex follows it.
+fn densify(pts: &[SVec2], step: f32) -> Vec<SVec2> {
+    let mut out = Vec::with_capacity(pts.len());
+    for (k, &p) in pts.iter().enumerate() {
+        if k > 0 {
+            let a = pts[k - 1];
+            let n = (a.distance(p) / step).floor() as usize;
+            for i in 1..=n.min(256) {
+                out.push(a.lerp(p, i as f32 / (n + 1) as f32));
+            }
+        }
+        out.push(p);
+    }
+    out
+}
+
 /// Hash helper for change detection on generated geometry inputs.
 fn hash_f32s<H: Hasher>(h: &mut H, pts: impl IntoIterator<Item = SVec2>) {
     for p in pts {
@@ -1332,9 +1349,15 @@ fn sync_lots(
     }
     if show_parcels {
         let grey = [0.5f32, 0.5, 0.56];
+        // [island-lots] On a hillside the outline is lifted onto the ground
+        // vertex by vertex: long edges get points every few metres so they
+        // follow the slope rather than cut through it (dark dashes and
+        // spikes on the island hills).
+        let step = if w.landscape.is_flat() { f32::INFINITY } else { 4.0 };
         for p in w.parcels.parcels.iter().filter(|p| p.lot.is_none() && p.polygon.len() >= 3) {
-            let mut outline = p.polygon.clone();
-            outline.push(p.polygon[0]);
+            let mut closed = p.polygon.clone();
+            closed.push(p.polygon[0]);
+            let outline = densify(&closed, step);
             let k = if p.landlocked() { 0.18 } else { 0.32 };
             glow.ground_strip(&outline, 0.16, 0.03, scale(grey, k));
         }

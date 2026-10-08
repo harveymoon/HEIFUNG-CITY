@@ -9,6 +9,10 @@
 /// [concerns] City Data's People, Complaints and concerns.
 /// The Build window: every road, zone and building in one catalogue.
 pub mod build;
+/// [committee] The Committee window.
+pub mod committee;
+/// [voices] A citizen's diary, on demand.
+pub mod diary;
 mod concerns;
 /// [city-data] The full-screen City Data view: tabs, sub-tabs, pages.
 pub mod city_data;

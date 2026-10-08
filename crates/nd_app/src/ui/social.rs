@@ -278,7 +278,7 @@ const MAX_BUBBLES: usize = 40;
 /// Speech bubbles over people talking (or over the door of the place they
 /// are talking in), a gig's note over the venue, a protest's fist: when the
 /// camera is close.
-pub fn bubbles(mut contexts: EguiContexts, sim: Res<Sim>, mode: Res<CameraMode>, flags: Res<UiFlags>, cams: Query<(&Camera, &GlobalTransform, &OrbitCamera)>, mut seen: Local<std::collections::BTreeMap<u64, f64>>) -> Result {
+pub fn bubbles(mut contexts: EguiContexts, sim: Res<Sim>, voices: Res<crate::committee::CommitteeRt>, mode: Res<CameraMode>, flags: Res<UiFlags>, cams: Query<(&Camera, &GlobalTransform, &OrbitCamera)>, mut seen: Local<std::collections::BTreeMap<u64, f64>>) -> Result {
     let Some((camera, gt, orbit)) = cams.iter().next() else { return Ok(()) };
     let ctx = contexts.ctx_mut()?;
     // [city-data] The map is covered: nothing to label.
@@ -328,7 +328,7 @@ pub fn bubbles(mut contexts: EguiContexts, sim: Res<Sim>, mode: Res<CameraMode>,
         if !screen.contains(pos) {
             continue;
         }
-        let text = if t.outcome == Outcome::Fight { format!("{} FIGHT", t.outcome.icon()) } else if d < 90.0 { format!("{} {}", t.outcome.icon(), t.line) } else { format!("{} {}", t.outcome.icon(), t.topic.label()) };
+        let text = if t.outcome == Outcome::Fight { format!("{} FIGHT", t.outcome.icon()) } else if d < 90.0 { format!("{} {}", t.outcome.icon(), voices.voices.line(t.serial).unwrap_or(&t.line)) } else { format!("{} {}", t.outcome.icon(), t.topic.label()) };
         let fade = (1.0 - ((age - (BUBBLE_SECS - 1.0)).max(0.0))) as f32;
         items.push((d, pos, text, outcome_color(t.outcome), fade.clamp(0.0, 1.0)));
     }

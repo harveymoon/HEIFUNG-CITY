@@ -271,6 +271,11 @@ Citizens are rendered from their simulated positions every frame.
   (backland and rough ground too), homes on a street or a footpath, everything else on
   a street, industry and civic sites not on scraps under 200 m², with their deep
   yards allowed to take the backland behind them; nothing but parks on rough ground.
+  Rough ground is water or a cliff: hillsides up to `MAX_GRADED_SLOPE` (0.7) take lots,
+  each levelled to a pad at its street and cut and filled into the ground, as long as
+  the land rises no more than `MAX_LOT_RELIEF` (18 m) across it. Parcels are cut within
+  the configured square, grown on a landscape to take in every street drawn past it (an
+  island off the coast) up to the map edge (`World::parcel_half`).
   Every zoned parcel becomes a lot; uses with lots bigger than a home's join small
   neighbouring parcels (works yards and civic sites two or three, a shop a small
   neighbour) and industry and civic grounds fold in the backland behind them
