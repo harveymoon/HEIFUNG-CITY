@@ -353,3 +353,14 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 ## Agents running (update when starting/merging; survives context compaction)
 - fix/under-construction: buildings under construction don't function (started 2026-10-08)
 - fix/memory: memory growth / 256 MiB allocation crash (started 2026-10-08)
+
+## Next steps (Harvey 2026-10-08) — start only after the current phase and the final code review are done
+- [ ] City rating: liveability, prosperity, safety, environment — measured, with history charts (no challenges/scenarios yet)
+- [ ] Banks and debt: bank businesses open and lend to other businesses (loans can go bad, defaults, failures like real life); broke people can fall into debt (hospital bills, gambling, etc.) with consequences
+- [ ] Cable cars (on hilly maps)
+- [ ] Monorail: a new elevated train type running above the road, hanging (suspended) design like Wuppertal / Shonan; stations need no zoning but must connect to a road or path at their connection points to work
+- [ ] Transit economics: ridership per line, fare/fee settings per line and info
+- [ ] Performance with big cities (20k–50k people): profile and fix — a must
+- [ ] Faster save and load (and smaller saves)
+- [ ] Settings menu (graphics, controls, UI scale, etc.)
+- (Later / skipped for now: challenges and scenarios, elections and disasters, water and sewage, seasons and events, advisor and heat maps, neighbouring towns, sound, tutorial)
