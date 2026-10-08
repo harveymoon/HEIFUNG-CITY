@@ -354,7 +354,6 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [x] Old todo2.md–todo5.md deleted after checking every request is in todo.md
 
 ## Agents running (update when starting/merging; survives context compaction)
-- fix/memory: memory growth / 256 MiB allocation crash (started 2026-10-08)
 
 ## Next steps (Harvey 2026-10-08) — start only after the current phase and the final code review are done
 - [ ] City rating: liveability, prosperity, safety, environment — measured, with history charts (no challenges/scenarios yet)
@@ -363,7 +362,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Monorail: a new elevated train type running above the road, hanging (suspended) design like Wuppertal / Shonan; stations need no zoning but must connect to a road or path at their connection points to work
 - [ ] Transit economics: ridership per line, fare/fee settings per line and info
 - [ ] Performance with big cities (20k–50k people): profile and fix — a must
-- [ ] Faster save and load (and smaller saves)
+- [ ] Faster save and load (and smaller saves); history autosaves keep 24 × ~150 MB per big city (~3.6 GB) — fewer or compressed
 - [ ] Settings menu (graphics, controls, UI scale, etc.)
 - (Later / skipped for now: challenges and scenarios, elections and disasters, water and sewage, seasons and events, advisor and heat maps, neighbouring towns, sound, tutorial)
 - fix/sweep-sim: leftovers sweep (land-value grids, docks via footpath, ferry estimates, econ/megacorp leftovers, crash log) (started 2026-10-08)
