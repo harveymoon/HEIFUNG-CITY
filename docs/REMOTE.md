@@ -373,6 +373,42 @@ Reply: `building` id, `message`, `row`, `treasury`; or the sim's reason as `erro
 {"cmd": "place", "kind": "dispatch:low", "x": -80, "y": 40}
 ```
 
+#### What is already on the map: `build_highlight` [build-highlight]
+
+Picking a Build window section that puts down buildings (Power, Services and its sub-sections
+Safety / Health and education / Sanitation, Transit's Buses / Metro / Air / Parking / Freight,
+Rail's stations, Water, Attractions; not roads, zones, districts, lines or tolls) highlights every
+building of that section on the map: a coloured outline and light wall on its lot and a marker
+over it in its kind's colour (police blue, fire orange, health green, schools yellow...). A picked
+item (a tile clicked: Hospital) shows its kind strongly and the rest of the section faintly. With
+them the service areas the sim uses: police, fire, health and schools tint the lots each station
+reaches **by road** (`World::service_reach`, one station's share of the coverage), additively, so
+overlap is brighter; trash depots, parking wardens, metro stations (and the Central Station),
+vertiports and cargo hubs show their straight-line reach as a ring (lots inside tinted, but for
+the hub's city-wide one); bus depots show every stop's 110 m walk-in ring. When one home-serving
+kind is shown, homes it leaves out are red. Power plants carry their output (`out / built MW`)
+instead of an area: the grid is one network. The Build window's info column says it in a line
+("2 hospitals · 84% of homes covered by road · 3 areas uncovered"), with a colour key and the
+uncovered places as buttons that fly the camera there. It is worked out again only when the
+roads, the matching buildings, homes, districts or bus stops change (checked twice a second).
+It goes when the section changes to one without buildings or the window closes.
+
+`build_highlight {category}` opens the Build window there: a section key (`power`, `services`,
+`transit`, `rail`, `water`, `attractions`), a sub-section name (`safety`, `health and education`,
+`sanitation`, `parking`, `metro`, `buses`...) or a kind (`health`/`hospital`, `police`, `fire`,
+`school`, `trash`, `metro_station`, `coal`...; a kind also picks its tile, so the Buildings tool
+is in hand). `build_highlight {off: true}` closes the window. With no fields it reports what is
+shown now: `{on, section, sub, focus, buildings: [{building, name, kind, level, label}], summary, detail, homes_covered, uncovered:
+[{name, at, homes}]}` (worked out the frame after a change, so read it after a `step` or a
+moment).
+
+```json
+{"cmd": "build_highlight", "category": "health"}
+{"cmd": "build_highlight", "category": "safety"}
+{"cmd": "build_highlight"}
+{"cmd": "build_highlight", "off": true}
+```
+
 ### Taxes and tolls
 
 `taxes {}` reads the tax schedule; the same reply comes back from every setting form below.

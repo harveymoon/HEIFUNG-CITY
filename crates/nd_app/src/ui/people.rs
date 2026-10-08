@@ -184,7 +184,9 @@ fn inequality(ui: &mut egui::Ui, w: &World) {
         hint(ui, &format!("median {median:.0}/day · mean {:.0}/day · top 10% earn {:.0}% of all income", total / n as f32, top_decile * 100.0));
     });
     ui.horizontal_top(|ui| {
-        let width = (ui.available_width() - 140.0).max(220.0);
+        // The Lorenz chart beside it is LORENZ_SIZE wide; reserving less made
+        // the window grow a little every frame until it filled the screen.
+        let width = (ui.available_width() - LORENZ_SIZE - ui.spacing().item_spacing.x).max(220.0);
         histogram(ui, &incomes, width);
         lorenz(ui, &incomes, total);
     });
@@ -259,8 +261,10 @@ fn dashed_vline(painter: &egui::Painter, x: f32, y: egui::Rangef, color: egui::C
 /// Lorenz curve: cumulative share of income against cumulative share of
 /// people, poorest first, sampled at 48 points however many citizens there
 /// are. The gap below the diagonal is the Gini index, drawn.
+const LORENZ_SIZE: f32 = 160.0;
+
 fn lorenz(ui: &mut egui::Ui, sorted: &[f32], total: f32) {
-    let (resp, painter) = ui.allocate_painter(egui::vec2(160.0, 160.0), egui::Sense::hover());
+    let (resp, painter) = ui.allocate_painter(egui::vec2(LORENZ_SIZE, LORENZ_SIZE), egui::Sense::hover());
     let rect = resp.rect;
     let plot = egui::Rect::from_min_max(rect.min + egui::vec2(6.0, 6.0), rect.max - egui::vec2(6.0, 34.0));
     painter.rect_filled(plot, 2.0, egui::Color32::from_rgba_unmultiplied(20, 22, 34, 220));

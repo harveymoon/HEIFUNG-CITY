@@ -294,6 +294,8 @@ struct Ctx<'w, 's> {
     diagnostics: Res<'w, DiagnosticsStore>,
     commands: Commands<'w, 's>,
     claude: ResMut<'w, crate::flags::ClaudeFlags>,
+    /// [build-highlight] What the Build window's section shows on the map.
+    highlight: Res<'w, crate::build_highlight::BuildHighlight>,
 }
 
 fn remote_commands(inbox: Res<Inbox>, mut ctx: Ctx) {
@@ -842,6 +844,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(v)
         }
         "export" => export(cmd, ctx),
+        "build_highlight" => build_highlight(cmd, ctx),
         "window" if req_str(cmd, "name").is_ok_and(|n| n.trim().eq_ignore_ascii_case("new_game") || n.trim().eq_ignore_ascii_case("new game")) => {
             let open = opt_bool(cmd, "open")?.unwrap_or(true);
             ctx.windows.new_game = Some(open);
@@ -2659,6 +2662,50 @@ fn export(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
 
 // ── help ────────────────────────────────────────────────────────────────────
 
+/// [build-highlight] `build_highlight {category, off}`: open the Build
+/// window on a section, sub-section or kind so its buildings and service
+/// areas show on the map; with no fields, what shows now.
+fn build_highlight(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    use crate::ui::build;
+    let now = |ctx: &Ctx| {
+        let sel = ctx.highlight.sel;
+        let view = ctx.highlight.view.as_ref();
+        json!({
+            "on": sel.is_some(),
+            "section": sel.map(|s| s.cat.key()),
+            "sub": sel.and_then(|s| s.sub),
+            "focus": sel.and_then(|s| s.focus).map(|p| p.label()),
+            "buildings": view.map_or(Vec::new(), |v| v.marked.iter().map(|m| json!({ "building": key_str(m.id), "name": m.name, "kind": format!("{:?}", m.family).to_lowercase(), "level": format!("{:?}", m.level).to_lowercase(), "label": m.label })).collect()),
+            "summary": view.map(|v| v.summary.headline.clone()),
+            "detail": view.map(|v| v.summary.detail.clone()),
+            "homes_covered": view.and_then(|v| v.homes_covered),
+            "uncovered": view.map(|v| v.summary.spots.iter().map(|s| json!({ "name": s.name, "at": [s.at.x, s.at.y], "homes": s.homes })).collect::<Vec<_>>()),
+        })
+    };
+    if opt_bool(cmd, "off")? == Some(true) {
+        ctx.windows.build = Some((false, None));
+        if build::is_build_tool(ctx.tools.tool) {
+            ctx.tools.tool = Tool::Inspect;
+            ctx.tools.points.clear();
+            ctx.tools.drag = None;
+        }
+        return Ok(json!({ "on": false }));
+    }
+    let Some(name) = opt_str(cmd, "category")?.or(opt_str(cmd, "item")?) else { return Ok(now(ctx)) };
+    let (cat, sub, item) = build::resolve_highlight(name).ok_or_else(|| format!("nothing to highlight for {name:?}: a section (power, services, transit, rail, water, attractions), a sub-section (safety, sanitation, parking, metro...) or a kind (health, police, fire, school, metro_station...)"))?;
+    if build::highlight_kinds(cat, sub).is_empty() {
+        return Err(format!("{} has no buildings to highlight (roads, zones, districts, lines and tolls have none)", sub.unwrap_or(cat.label())));
+    }
+    if let Some(item) = item {
+        build::activate(item, &mut ctx.tools);
+    } else if build::is_build_tool(ctx.tools.tool) && build::current_item(&ctx.tools).and_then(|i| i.placeable()).is_none_or(|p| !build::highlight_kinds(cat, sub).contains(&build::norm(p))) {
+        // A tool for something else would keep the window elsewhere.
+        ctx.tools.tool = Tool::Inspect;
+    }
+    ctx.windows.build_sub = Some((cat, sub));
+    Ok(json!({ "on": true, "section": cat.key(), "sub": sub, "item": item.map(|i| i.label()), "note": "the highlight and its summary are worked out next frame: build_highlight {} reads them" }))
+}
+
 fn help() -> Value {
     let mut v = json!({
         "transport": "POST http://127.0.0.1:<port>/cmd (default port 4817) with JSON {\"cmd\": name, ...fields} and Content-Type: application/json (or the header X-ND-Remote: 1); GET /status, GET /help. Replies {ok: true, ...} or {ok: false, error} with HTTP 400. Requests from web pages (an Origin or Sec-Fetch-Site header from another site, a foreign Host) get 403; bodies over 1 MB 413; a 504 means the command was withdrawn unrun. See docs/REMOTE.md.",
@@ -2741,6 +2788,7 @@ fn help() -> Value {
         "taxes": { "set": "{line: rate, ...} where line is a key (residential_low|residential_mid|residential_high|grocery|bakery|gadget_shop|parking|nightlife_low|nightlife_mid|nightlife_high|farming|oil|refinery|manufacturing|logistics|fishing|tech) or a land use for its whole group; rate 0.2 or 20 (= 20%)", "category": "one line (with rate)", "import_duty": "share of import prices (0..1)", "reset": "bool: back to the standard rates", "returns": "every line: rate, default, pull, buildings, homes/jobs, today, yesterday, recent_per_day; by_land_use; duty" },
         "tolls": { "action": "list (default) | price | remove | inspect", "id": "booth id (or at: [x,y])", "price": "toll per car (lorries pay double)", "returns": "booths with cars and revenue today/yesterday/total, paid/free today, upkeep" },
         "export": { "path": "optional .json (see files); default exports/city-<unix>.json: report + map + history + every row of every list" },
+        "build_highlight": { "category": "a Build section (power|services|transit|rail|water|attractions), a sub-section (safety, health and education, sanitation, parking, metro, buses...) or a kind (health, police, fire, school, metro_station, coal...): opens the Build window there (a kind also picks it, as a click on its tile) and highlights those buildings on the map with their service areas", "off": "bool: close the Build window (the highlight goes with it)", "note": "no fields: what is highlighted now and the summary (worked out the frame after a change)" },
         "window": { "name": "city|economy|taxes|market|people|power|transit|emergencies|view (or land)|districts|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), or title (the title screen), or history (the Game history window)", "open": "bool, omitted toggles", "expanded": "bool: the large view with charts (opens the window; only one is expanded at a time); not saves/help/dev", "tab": "people only: overview|concerns|social" },
         "concerns": { "days": "daily counts and happiness over the last n days (default 30)", "concern": "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other", "quotes": "recent quotes per concern (default 5)", "note": "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)" },
         "social": { "days": "daily history to include (default 7)", "talks": "latest conversations to list (default 10)", "group": "optional group id: that group in full, with its members", "note": "people talking: today's and yesterday's conversations, friendships, feuds, fights, meet-ups, jobs and flats through friends, couples moving in; pairs by bond city-wide; every crew and club with momentum, reputation, base and works (gigs, matches, readings, murals, gardens, businesses, petitions, protests); petitions to the player; murals, gardens, gigs; news. inspect {citizen} has a social block (ties with bond and how they met, groups, recent conversations)" }
