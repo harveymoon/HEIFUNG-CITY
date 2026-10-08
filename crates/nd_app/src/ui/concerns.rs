@@ -84,16 +84,12 @@ pub fn tab(ui: &mut egui::Ui, p: &mut UiCtx) {
         hint(ui, "Nobody lives here yet.");
         return;
     }
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(format!("{:.0}%", now.mean * 100.0)).strong().font(crate::ui::theme::title()).color(mood_color(now.mean)));
-        ui.label(egui::RichText::new(format!("mean mood   {:.0}% unhappy   {:.0}% happy", now.unhappy * 100.0, now.happy * 100.0)).small());
-        if let Some(prev) = w.concerns.mood_days.back() {
-            let d = (now.mean - prev.mean) * 100.0;
-            if d.abs() >= 0.5 {
-                ui.label(egui::RichText::new(format!("{}{:.0} pts", if d > 0.0 { "+" } else { "-" }, d.abs())).small().color(if d > 0.0 { CALM } else { WARN })).on_hover_text("since midnight");
-            }
+    if let Some(prev) = w.concerns.mood_days.back() {
+        let d = (now.mean - prev.mean) * 100.0;
+        if d.abs() >= 0.5 {
+            ui.label(egui::RichText::new(format!("mean mood {}{:.0} pts since midnight", if d > 0.0 { "+" } else { "-" }, d.abs())).color(if d > 0.0 { CALM } else { WARN }));
         }
-    });
+    }
     let ctx = ui.ctx().clone();
     let mut range: Range = ctx.data(|d| d.get_temp(mem_id("range"))).unwrap_or_default();
     ui.horizontal(|ui| {

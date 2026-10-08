@@ -388,6 +388,9 @@ pub fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
         series.retain(|s| s.values.iter().any(|v| *v != 0.0) || used.iter().any(|k| k.short() == s.name));
         let demand = Series::new("demand", DEMAND, pane::col(&days, |d| d.demand_mwh));
         pane::stacked_bars(ui, &pane::day_labels(&days), &series, 130.0, false, Some(&demand), &|x| format!("{x:.0} MWh"));
+        let mut lg: Vec<(&str, Color32)> = series.iter().map(|s| (s.name.as_str(), s.color)).collect();
+        lg.push(("demand (line)", DEMAND));
+        pane::legend(ui, &lg);
         heading(ui, "Money for power per day");
         let series = [
             Series::new("export income", EXPORT, pane::col(&days, |d| d.flow(nd_sim::economy::Flow::GridExport))),
@@ -686,15 +689,15 @@ pub fn transit_figures(ui: &mut egui::Ui, p: &mut UiCtx) {
     row(ui, "network", format!("{} station{}   {} yard{}   {} train{} out", r.stations, if r.stations == 1 { "" } else { "s" }, r.yards, if r.yards == 1 { "" } else { "s" }, r.trains, if r.trains == 1 { "" } else { "s" }));
     row(ui, "passengers", format!("{} waiting   {} riding   {} today   next train in {} min", r.waiting, r.riding, r.riders_today, r.next_passenger_in));
     row(ui, "trains today", format!("{} passenger   {} freight", r.passenger_trains_today, r.freight_trains_today));
-    row(ui, "freight", format!("{:.0} units in today   {:.0} waiting at yards", r.freight_in_today, r.freight_waiting));
-    row(ui, "money", format!("fares {:.0} today   upkeep {:.0}/day", r.fares_today, r.upkeep_today));
+    row(ui, "freight", format!("{:.0} units in today   {:.0} waiting at yards", r.freight_in_today, r.freight_waiting + 0.0));
+    row(ui, "money", format!("fares {:.0} today   upkeep {:.0}/day", r.fares_today, r.upkeep_today + 0.0));
     // [subway]
     let s = &w.subway.stats;
     heading(ui, "Metro");
     if s.lines == 0 {
         hint(ui, "No metro line yet: place metro stations (Build window, Transit, Metro), then Metro lines joins them station by station.");
     }
-    row(ui, "network", format!("{} station{}   {} line{}   {:.1} km   {} train{} running", s.stations, if s.stations == 1 { "" } else { "s" }, s.lines, if s.lines == 1 { "" } else { "s" }, s.tunnel_m / 1000.0, s.trains, if s.trains == 1 { "" } else { "s" }));
+    row(ui, "network", format!("{} station{}   {} line{}   {:.1} km   {} train{} running", s.stations, if s.stations == 1 { "" } else { "s" }, s.lines, if s.lines == 1 { "" } else { "s" }, s.tunnel_m / 1000.0 + 0.0, s.trains, if s.trains == 1 { "" } else { "s" }));
     row(ui, "riders", format!("{} waiting   {} riding   {} today   {} yesterday", s.waiting, s.riding, s.riders_today, s.riders_yesterday));
     row(ui, "money", format!("fares {:.0} today ({:.0} yesterday)   upkeep {:.0} yesterday", s.fares_today, s.fares_yesterday, s.upkeep_today));
     for l in w.subway.lines.values() {

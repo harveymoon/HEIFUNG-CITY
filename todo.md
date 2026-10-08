@@ -277,7 +277,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] FLAG (day 23): pedestrians and taxis stuck on the highway near (590, 408); Cass Baptiste waits for a cab that never comes for days [fix/ped-highway]
 - [ ] FLAG (day 23): interchange with a street underpass came out as garbage, ramps re-routed, artifacts; clean interchanges (maybe a diamond tool) [fix/interchange]
 - [ ] FLAG (day 23): footbridge over Umbra Parade left the crosswalk; nobody uses the bridge; cars stop for people on it [fix/footbridge]
-- [ ] One full-screen City Data pane (tabs City/Economy/Market/People/... with sub-tabs), consistent page style; tools stay floating [feat/city-data]
+- [x] One full-screen City Data pane (tabs City/Economy/Market/People/... with sub-tabs), consistent page style; tools stay floating → DONE [feat/city-data]: City Data view (J, top bar), 5 tabs × 19 pages, one page style in ui/pane.rs; Lines/View/Saves/Help/Dev stay windows; API city_data {tab, sub, open, scroll}, old window names map to pages
 - [ ] High quality: near-camera geometry washes out white in walk/close orbit [fix/haze]
 - [ ] Fire engines park mid-road/junction at a scene; crew stand in traffic (from feat/fire-scene leftovers)
 - [ ] Ferry/docks need only water access, rail stations only track; each gets a connectable road stub to join the network later [feat/dock-access]
