@@ -684,14 +684,16 @@ pub fn autosave(mut sim: ResMut<Sim>, mut saves: ResMut<Saves>, mut flags: ResMu
     debug!("autosave: world copied in {hitch:.1} ms on the main thread");
     let day = world.clock.day() + 1;
     // [identity] The same autosave into the game's history: serialised
-    // once, written twice.
+    // once, then copied.
     let entry = super::history::entry_path(Path::new(DIR), &world.identity.game_id, day, now_unix_ms());
     let entry_bg = entry.clone();
     let job = std::thread::Builder::new().name("nd-autosave".into()).spawn(move || {
         let t = std::time::Instant::now();
-        let text = world.to_ron().map_err(|e| e.to_string())?;
-        crate::sim::write_atomic(&entry_bg, text.as_bytes()).map_err(|e| e.to_string())?;
-        crate::sim::write_atomic(Path::new(AUTOSAVE), text.as_bytes()).map_err(|e| e.to_string())?;
+        // [memory] Streamed to the history entry, then copied: never the
+        // whole save as one string (over 128 MiB for a big city).
+        crate::sim::save_world(&world, &entry_bg)?;
+        drop(world);
+        crate::sim::copy_atomic(&entry_bg, Path::new(AUTOSAVE)).map_err(|e| e.to_string())?;
         Ok((day, t.elapsed().as_secs_f64() * 1000.0))
     });
     match job {
@@ -737,6 +739,33 @@ mod tests {
             assert_eq!(file_stem(id), *id, "an id is its own file stem");
             assert!(id.len() >= 20);
         }
+    }
+
+    /// [memory] A save is streamed to its file (never built as one string)
+    /// and the autosave's second copy is a file copy: both hold exactly the
+    /// RON `to_ron` gives, and load back.
+    #[test]
+    fn streamed_saves_are_the_ron_byte_for_byte() {
+        let mut sim = Sim::new();
+        sim.seed_demo_district();
+        for _ in 0..600 {
+            sim.world.tick(&mut sim.minds);
+        }
+        let dir = std::env::temp_dir().join(format!("nd_stream_save_{}_{}", std::process::id(), new_game_id()));
+        let a = dir.join("a.ron");
+        let b = dir.join("sub").join("b.ron");
+        crate::sim::save_world(&sim.world, &a).expect("save");
+        crate::sim::copy_atomic(&a, &b).expect("copy");
+        let want = sim.world.to_ron().unwrap();
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), want);
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), want);
+        let back = nd_sim::World::from_ron(&std::fs::read_to_string(&b).unwrap()).expect("loads");
+        assert_eq!(back.citizens.len(), sim.world.citizens.len());
+        assert_eq!(back.buildings.len(), sim.world.buildings.len());
+        assert_eq!(back.clock.tick, sim.world.clock.tick);
+        let leftovers: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "tmp")).collect();
+        assert!(leftovers.is_empty(), "no temporary files left behind");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The RON of a world as a build from before identities wrote it.
