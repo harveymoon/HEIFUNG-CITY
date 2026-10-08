@@ -1220,7 +1220,10 @@ impl World {
             let entrance = lot.entrance();
             return Some((lot.front_segment, entrance, lot.access_node));
         }
-        let (sid, t, q) = self.roads.nearest_on_network(c.pos)?;
+        // [ped-highway] From the nearest way people walk: never a highway
+        // or ramp (no foot path starts there; standing beside one, every
+        // trip used to fail with "No way through").
+        let (sid, t, q) = self.roads.nearest_where(c.pos, |s| !s.is_rail() && !s.fronts_nothing()).or_else(|| self.roads.nearest_on_network(c.pos))?;
         Some((sid, q, self.roads.nearest_endpoint(sid, t)))
     }
 
@@ -1250,6 +1253,17 @@ impl World {
         }
         if fresh {
             self.citizens[id].pending_footfall.clear();
+        }
+        // [ped-highway] Someone out on a highway or ramp steps onto the
+        // pavement before setting off.
+        if self.citizens[id].inside.is_none() {
+            let p = self.citizens[id].pos;
+            let to = self.kerbside(p);
+            if to != p {
+                let c = &mut self.citizens[id];
+                c.pos = to;
+                c.prev_pos = to;
+            }
         }
         let Some((_from_seg, from_pt, from_node)) = self.origin_for(id) else {
             self.citizens[id].activity = Activity::Idle;
