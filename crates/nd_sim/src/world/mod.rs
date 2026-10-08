@@ -64,6 +64,7 @@ mod plan;
 /// [free-placement] City buildings on any usable parcel; their ground out of the zoning.
 mod placement;
 pub use placement::PlacementSite;
+pub(crate) use placement::SiteRule;
 #[cfg(test)]
 mod placement_tests;
 #[cfg(test)]
@@ -668,7 +669,9 @@ pub struct World {
     #[serde(default)]
     pub social: crate::social::Social,
     /// [social] The city's concern of the week, for small talk (hourly).
-    #[serde(skip)]
+    /// [review] Saved: skipped, a loaded game talked of nothing else until
+    /// the next :25. A save from before it reads it in `after_load`.
+    #[serde(default)]
     social_concern: Option<crate::concerns::Concern>,
     /// [committee] The mayor's committee: the pool, the seats, alerts,
     /// meetings and their projects (`crate::committee`). The sim never
@@ -935,6 +938,9 @@ impl World {
         // pass, pressure warms again).
         self.grow_grids();
         self.prune_estate();
+        if self.config.social && self.social_concern.is_none() {
+            self.social_concern = self.concern_of_the_week();
+        }
         self.subway_after_load();
         self.seats_after_load();
         // [dirty-industry] A save from before the dirty plants were kept
@@ -1443,6 +1449,17 @@ impl World {
 }
 
 /// RON cannot encode the RNG's 128-bit counter, so persist it as seed + position.
+/// [review] A save in the oldest format still met (every field added
+/// since left out, as in `saves/flags/flag_patch.ron`, which is gitignored
+/// and 40 MB): a small town two days in, cut down by field path to what
+/// that save has. The old-save tests read it; they used to read the
+/// gitignored file and pass "skipped" when it was missing.
+#[cfg(test)]
+pub(crate) fn legacy_save_text() -> String {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/legacy_town.ron");
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("the committed legacy fixture {} is missing: {e}", path.display()))
+}
+
 mod rng_serde {
     use crate::SimRng;
     use rand::SeedableRng;

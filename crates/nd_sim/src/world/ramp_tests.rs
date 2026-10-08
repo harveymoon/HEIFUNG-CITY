@@ -3,7 +3,7 @@
 //! street speed along them. Also where cars are drawn on them.
 
 use super::*;
-use crate::traffic::{LaneKind, HIGHWAY_SPEED};
+use crate::traffic::HIGHWAY_SPEED;
 
 fn flat_world() -> World {
     World::new(WorldConfig { landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::default() })

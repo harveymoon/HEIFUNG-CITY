@@ -1148,6 +1148,7 @@ impl World {
         let stranded: Vec<Cargo> = self.ports.inbound.iter().filter(|(p, _)| *p == bid).map(|(_, c)| *c).collect();
         self.ports.inbound.retain(|(p, _)| *p != bid);
         self.ports.boarding.remove(&bid);
+        self.ports.prepaid.remove(&bid);
         self.demolish(bid);
         let had_project = self.project.take();
         self.rebuild_from_master();
@@ -1422,14 +1423,28 @@ impl World {
                     // [dock-access] Nobody can get to or away from a pier
                     // whose terminal is off the roads: those boats sail empty.
                     let reachable = |x: BuildingId| ports_now.iter().any(|(_, o)| o.building == Some(x) && o.works());
-                    let mut riders = if reachable(b) && to.is_none_or(reachable) { self.ferry_riders(b, to) } else { 0 };
+                    let locals = if reachable(b) && to.is_none_or(reachable) { self.ferry_riders(b, to) } else { 0 };
+                    // [review] Whoever waits on the pier boards first; the
+                    // day-trippers among them paid both legs at the terminal
+                    // (`board_day_trip`) and pay nothing more. Those the boat
+                    // cannot take wait for the next run (they vanished).
+                    let (mut out, mut out_prepaid) = (0, 0);
                     if remote.is_some() {
                         let leaving = self.ports.boarding.remove(&b).unwrap_or(0);
-                        riders += leaving;
+                        let prepaid = self.ports.prepaid.remove(&b).unwrap_or(0).min(leaving);
+                        out = leaving.min(ports::FERRY_CAPACITY);
+                        out_prepaid = prepaid.min(out);
+                        if leaving > out {
+                            self.ports.boarding.insert(b, leaving - out);
+                        }
+                        if prepaid > out_prepaid {
+                            self.ports.prepaid.insert(b, prepaid - out_prepaid);
+                        }
                         self.ports.stats.remote_sailings_today += 1;
                     }
-                    let riders = riders.min(ports::FERRY_CAPACITY);
-                    let fares = riders as f32 * ports::FERRY_FARE;
+                    let locals = locals.min(ports::FERRY_CAPACITY - out);
+                    let riders = out + locals;
+                    let fares = (riders - out_prepaid) as f32 * ports::FERRY_FARE;
                     // Ferry fares are public transport income, booked with the bus fares.
                     self.economy.credit_item(Flow::BusFares, fares, Item::Building(b));
                     self.ports.stats.ferry_riders_today += riders;

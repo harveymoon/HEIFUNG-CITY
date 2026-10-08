@@ -305,7 +305,7 @@ impl World {
     // ── a conversation ─────────────────────────────────────────────────────
 
     /// The city's top concern this week, for small talk (refreshed hourly).
-    fn concern_of_the_week(&self) -> Option<crate::concerns::Concern> {
+    pub(super) fn concern_of_the_week(&self) -> Option<crate::concerns::Concern> {
         self.concerns.ranked(self.clock.day()).first().map(|r| r.concern)
     }
 
@@ -1157,27 +1157,54 @@ impl World {
         }
     }
 
+    /// The money a citizen can lend or must borrow against: their
+    /// household's purse (pockets are pooled into it every midnight, before
+    /// this runs), or their own savings when they have no household.
+    fn loan_purse(&self, id: CitizenId) -> Option<(Option<HouseholdId>, f32)> {
+        let c = self.citizens.get(id)?;
+        Some(match c.household.and_then(|h| self.households.get(h).map(|x| (h, x.money))) {
+            Some((h, m)) => (Some(h), m),
+            None => (None, c.savings),
+        })
+    }
+
+    fn add_to_loan_purse(&mut self, id: CitizenId, amount: f32) {
+        let Some(c) = self.citizens.get_mut(id) else { return };
+        match c.household.and_then(|h| self.households.get_mut(h)) {
+            Some(h) => h.money += amount,
+            None => c.savings += amount,
+        }
+    }
+
     /// The broke borrow from friends who trust them; debts are paid back
     /// when they can be, and a debt left too long sours the friendship.
+    /// [review] Money is read from the household purse: `daily_household`
+    /// pools every pocket into it first, so pockets alone never qualified.
     pub(super) fn loans(&mut self) {
         let tick = self.clock.tick;
-        let broke: Vec<CitizenId> = self.social.circles.keys().copied().filter(|id| self.citizens.get(*id).is_some_and(|c| c.savings < -10.0 && c.age >= 18)).collect();
+        let broke: Vec<CitizenId> = self.social.circles.keys().copied().filter(|id| self.citizens.get(*id).is_some_and(|c| c.age >= 18) && self.loan_purse(*id).is_some_and(|p| p.1 < -10.0)).collect();
         for id in broke {
-            let need = (-self.citizens[id].savings + 20.0).min(120.0);
+            // A household member may already have borrowed for it.
+            let Some((own_hh, purse)) = self.loan_purse(id) else { continue };
+            if purse >= -10.0 {
+                continue;
+            }
+            let need = (-purse + 20.0).min(120.0);
             let lender = self.social.circles[&id]
                 .ties
                 .iter()
                 .filter(|t| t.bond().is_friendly())
                 .filter_map(|t| {
                     let trust = self.social.circles.get(&t.who).and_then(|c| c.tie(id)).map_or(0.0, |x| if x.lent > 0.0 { 0.0 } else { x.trust });
-                    let savings = self.citizens.get(t.who).map_or(0.0, |c| c.savings);
-                    (trust >= 0.4 && savings > need + 100.0).then_some((t.who, savings))
+                    let (their_hh, money) = self.loan_purse(t.who)?;
+                    let same = own_hh.is_some() && their_hh == own_hh;
+                    (!same && trust >= 0.4 && money > need + 100.0).then_some((t.who, money))
                 })
                 .max_by(|a, b| a.1.total_cmp(&b.1).then(b.0.cmp(&a.0)))
                 .map(|x| x.0);
             let Some(l) = lender else { continue };
-            self.citizens[l].savings -= need;
-            self.citizens[id].savings += need;
+            self.add_to_loan_purse(l, -need);
+            self.add_to_loan_purse(id, need);
             if let Some(t) = self.social.circles.get_mut(&l).and_then(|c| c.tie_mut(id)) {
                 t.lent += need;
             }
@@ -1189,12 +1216,10 @@ impl World {
         // Paying back.
         let debts: Vec<(CitizenId, CitizenId, f32, u64)> = self.social.circles.iter().flat_map(|(l, c)| c.ties.iter().filter(|t| t.lent > 0.0).map(move |t| (*l, t.who, t.lent, t.last))).collect();
         for (l, b, owed, _) in debts {
-            let Some(savings) = self.citizens.get(b).map(|c| c.savings) else { continue };
-            if savings > owed + 60.0 {
-                self.citizens[b].savings -= owed;
-                if let Some(c) = self.citizens.get_mut(l) {
-                    c.savings += owed;
-                }
+            let Some((_, money)) = self.loan_purse(b) else { continue };
+            if money > owed + 60.0 {
+                self.add_to_loan_purse(b, -owed);
+                self.add_to_loan_purse(l, owed);
                 if let Some(t) = self.social.circles.get_mut(&l).and_then(|c| c.tie_mut(b)) {
                     t.lent = 0.0;
                     t.trust = (t.trust + 0.1).min(1.0);
@@ -1784,8 +1809,8 @@ impl World {
         let lot = self
             .lots
             .iter()
-            .filter(|(id, l)| l.usable() && l.building.is_none() && !used.contains(id) && l.area() >= 150.0 && l.land_use != LandUse::Park && l.center.distance(at) <= 700.0)
-            .filter(|(id, _)| !self.estate.reserved.contains_key(id))
+            .filter(|(id, l)| !used.contains(id) && l.area() >= 150.0 && l.land_use != LandUse::Park && l.center.distance(at) <= 700.0)
+            .filter(|(id, _)| self.lot_free_for(*id, SiteRule::STREET))
             .min_by(|a, b| a.1.center.distance(at).total_cmp(&b.1.center.distance(at)).then(a.0.cmp(&b.0)))
             .map(|(id, l)| (id, l.center));
         let Some((lot, pos)) = lot else { return false };
@@ -1841,7 +1866,7 @@ impl World {
         let lot = self
             .lots
             .iter()
-            .filter(|(id, l)| l.usable() && l.building.is_none() && l.land_use == lu && l.car_access() && !self.estate.reserved.contains_key(id) && !self.social.gardens.iter().any(|g| g.lot == *id))
+            .filter(|(id, l)| l.land_use == lu && l.car_access() && self.lot_free_for(*id, SiteRule::STREET) && !self.social.gardens.iter().any(|g| g.lot == *id))
             .map(|(id, l)| (id, l.center.distance(at)))
             .filter(|x| x.1 <= 1500.0)
             .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))

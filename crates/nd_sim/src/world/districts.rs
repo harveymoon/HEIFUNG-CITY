@@ -298,7 +298,7 @@ impl World {
         let mut lv_sum = vec![0.0f32; out.len()];
         let mut rent_n = vec![0u32; out.len()];
         let mut rent_sum = vec![0.0f32; out.len()];
-        for lot in self.lots.values() {
+        for (lot_id, lot) in self.lots.iter() {
             let id = self.districts.grid.at(lot.center);
             let Some(&i) = index.get(&id) else { continue };
             let s = &mut out[i];
@@ -310,6 +310,11 @@ impl World {
                 }
                 continue;
             };
+            // [review] A merged building spans several lots: counted once,
+            // at its own (it was counted once per plot, two to four times).
+            if b.lot != lot_id {
+                continue;
+            }
             if b.construction.is_some() {
                 s.under_construction += 1;
                 continue;

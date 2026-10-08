@@ -237,3 +237,26 @@ fn tourism_is_deterministic() {
     };
     assert_eq!(run(), run());
 }
+
+/// [review] A merged building spans several lots and was counted once per
+/// lot in the district figures.
+#[test]
+fn a_merged_building_counts_once_in_its_district() {
+    let mut w = town();
+    w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+    let lots = vacant(&w, LandUse::Residential);
+    w.build_on(lots[0]);
+    finish_all(&mut w);
+    let b = w.lots[lots[0]].building.unwrap();
+    // Spread over two more plots.
+    for &l in &lots[1..3] {
+        w.buildings[b].plot.extra_lots.push(l);
+        w.lots[l].building = Some(b);
+    }
+    let id = district_over_street(&mut w);
+    let stats = w.district_stats();
+    let s = stats.iter().find(|s| s.id == id).unwrap();
+    assert_eq!(s.buildings, 1);
+    assert_eq!(s.homes, w.buildings[b].homes as u32);
+    assert_eq!(s.residents, w.buildings[b].residents.len() as u32);
+}

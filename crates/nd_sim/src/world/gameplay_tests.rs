@@ -486,3 +486,30 @@ fn ferry_terminals_from_old_saves_get_their_towns() {
     assert!(!back.ferry_towns(id).is_empty());
     let _ = &mut w;
 }
+
+/// [review] A day-tripper pays both legs at the terminal; the boat out
+/// charged them a third fare from the pier count.
+#[test]
+fn a_day_tripper_pays_two_fares_not_three() {
+    let (mut w, id) = ferry_town();
+    run(&mut w, 6 * 60);
+    finish_sites(&mut w);
+    // Five day-trippers on the pier, paid up, and nobody else.
+    w.ports.boarding.insert(id, 5);
+    w.ports.prepaid.insert(id, 5);
+    let mut sailed = false;
+    for _ in 0..(24 * 60) {
+        let (sail0, fares0, riders0) = (w.ports.stats.remote_sailings_today, w.ports.stats.ferry_fares_today, w.ports.stats.ferry_riders_today);
+        run(&mut w, 1);
+        if w.ports.stats.remote_sailings_today > sail0 && w.clock.minute_of_day() != 0 {
+            let riders = w.ports.stats.ferry_riders_today - riders0;
+            let fares = w.ports.stats.ferry_fares_today - fares0;
+            assert!(riders >= 5, "the day-trippers sailed: {riders}");
+            assert!((fares - (riders - 5) as f32 * crate::ports::FERRY_FARE).abs() < 1e-3, "only the others pay: {fares} for {riders}");
+            sailed = true;
+            break;
+        }
+    }
+    assert!(sailed, "a boat ran off the map");
+    assert!(w.ports.prepaid.get(&id).is_none_or(|n| *n == 0));
+}

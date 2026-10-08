@@ -496,16 +496,12 @@ fn the_land_market_is_deterministic_and_saved() {
     assert_eq!(back.estate.owners.len(), a.estate.owners.len());
 }
 
-/// A real save from before the land market (`saves/flags/flag_patch.ron`,
-/// copied into the worktree; skipped when absent): it loads with an empty
+/// A real save from before the land market (the committed legacy
+/// fixture, `legacy_save_text`): it loads with an empty
 /// market and a cold grid that warms in an hour, and runs through a day.
 #[test]
 fn an_old_save_loads_and_runs_with_the_land_market() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../saves/flags/flag_patch.ron");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        eprintln!("skipped: no {}", path.display());
-        return;
-    };
+    let text = super::legacy_save_text();
     let mut w = World::from_ron(&text).expect("the old save loads");
     assert!(w.estate.pressure.ready());
     assert!(w.estate.owners.is_empty() && w.estate.elites.is_empty());
@@ -519,4 +515,87 @@ fn an_old_save_loads_and_runs_with_the_land_market() {
     let text = w.to_ron().unwrap();
     let again = World::from_ron(&text).expect("and saves again");
     assert_eq!(again.estate.pressure.samples, w.estate.pressure.samples);
+}
+
+/// [review] The city taking over a merged building: `take_clearing` removed
+/// the demolition site without the estate clean-up, so its extra plots and
+/// its owner kept the dead id.
+#[test]
+fn a_structure_taking_a_merged_site_frees_every_plot() {
+    let (mut w, firm, _) = works();
+    assert!(w.expand_into_neighbours(firm), "it buys");
+    w.finish_construction(firm);
+    let mine = w.buildings[firm].lot;
+    let all = w.buildings[firm].plot.lots(mine);
+    assert!(all.len() >= 2);
+    let (owner, _) = w.owner_of(firm).expect("owned");
+    w.take_over_lot(mine, "depot").unwrap();
+    assert!(w.buildings[firm].being_demolished(), "a demolition site first");
+    let depot = w.place_special(mine, "Depot".into(), 4, 0, |b| b.depot = true);
+    assert!(!w.buildings.contains_key(firm));
+    for l in &all {
+        assert_ne!(w.lots[*l].building, Some(firm), "no plot keeps the dead id");
+    }
+    assert_eq!(w.lots[mine].building, Some(depot));
+    assert!(w.estate.owners.get(owner).is_none_or(|o| !o.properties.contains(&firm)), "the owner lets it go");
+    assert!(!w.estate.reserved.values().any(|b| *b == firm));
+}
+
+/// [review] The owner of a building the market buys is paid for it: an
+/// investor's home bought for a firm's expansion went for nothing.
+#[test]
+fn an_investor_is_paid_when_a_firm_buys_their_building() {
+    let (mut w, firm, lots) = works();
+    let mine = w.buildings[firm].lot;
+    let neighbours: Vec<LotId> = lots.iter().copied().filter(|l| *l != mine && lots_touch(&w.lots[mine], &w.lots[*l])).collect();
+    let mut theirs = Vec::new();
+    for l in &neighbours {
+        if let Some(b) = built(&mut w, *l) {
+            w.buildings[b].floors = 1;
+            w.buildings[b].recompute_capacity();
+            theirs.push(b);
+        }
+    }
+    let empty: Vec<LotId> = w.lots.iter().filter(|(id, l)| *id != mine && l.building.is_none() && lots_touch(&w.lots[mine], l)).map(|(id, _)| id).collect();
+    for l in empty {
+        w.estate.reserved.insert(l, BuildingId::default());
+    }
+    // Every neighbour belongs to one investor.
+    let hid = w.households.insert(Household { money: 100.0, ..Default::default() });
+    let cid = w.citizens.insert(crate::citizens::Citizen::newcomer("Ivy Investor".into(), 77, 40, None, Some(hid), Vec2::ZERO, 0));
+    w.households[hid].members.push(cid);
+    let owner = w.new_owner("Ivy Investor".into(), OwnerKind::Person { citizen: cid });
+    for b in &theirs {
+        w.give_to(*b, owner, 0.0);
+    }
+    let prices: f64 = theirs.iter().map(|b| w.sale_price(*b)).sum();
+    assert!(w.expand_into_neighbours(firm));
+    let sold: Vec<BuildingId> = theirs.iter().copied().filter(|b| !w.estate.owners[owner].properties.contains(b)).collect();
+    assert!(!sold.is_empty(), "a building was bought");
+    let paid = w.households[hid].money - 100.0;
+    assert!(paid > 0.0 && paid as f64 <= prices + 1.0, "the investor was paid: {paid}");
+}
+
+/// [review] A billionaire who died kept their mansion and firms forever
+/// through their owner record; the NIMBY and the escort stayed too.
+#[test]
+fn a_dead_billionaires_estate_goes_on_the_market() {
+    let (mut w, _) = rich_poor(1000, |i| if i % 20 == 0 { 2500.0 } else if i % 6 == 0 { 160.0 } else { 45.0 });
+    let mut rng = crate::rng_for(3, 4);
+    let cid = w.spawn_elite(&mut rng).expect("a billionaire");
+    let e = w.estate.elites.iter().find(|e| e.citizen == cid).unwrap().clone();
+    let mansion = e.mansion.expect("a mansion");
+    let props = w.estate.owners[e.owner].properties.clone();
+    assert!(!props.is_empty());
+    w.estate.nimby.push(Nimby { mansion, center: Vec2::ZERO, radius: 50.0, strength: 0.5, price_out_left: 0 });
+    w.citizens.remove(cid);
+    w.prune_estate();
+    assert!(w.estate.elites.is_empty(), "the billionaire is gone");
+    assert!(!w.estate.owners.contains_key(e.owner), "and so is their owner record");
+    for p in props {
+        if let Some(b) = w.buildings.get(p) {
+            assert_eq!(b.plot.owner, None, "{} is nobody's now", b.name);
+        }
+    }
+    assert!(w.estate.nimby.iter().all(|n| n.mansion != mansion), "the NIMBY leaves with them");
 }

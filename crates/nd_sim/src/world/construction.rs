@@ -504,9 +504,17 @@ impl World {
                 self.lay_off(cid, None);
             }
         }
-        self.buildings.remove(old);
+        let (plot, primary) = self.buildings.remove(old).map(|b| (b.plot, b.lot)).unwrap_or_default();
         self.lots[lot_id].building = None;
+        if self.lots.get(primary).is_some_and(|l| l.building == Some(old)) {
+            self.lots[primary].building = None;
+        }
         self.events.push(SimEvent::BuildingRemoved(old, lot_id));
+        // [review] The structure takes this plot whoever had bought it; the
+        // site's extra plots, owner, reservations and mansion entry are
+        // released as for any building gone (they kept the dead id).
+        self.drop_reservation(lot_id);
+        self.estate_building_gone(old, &plot, primary);
         d.clear_lot = false;
         d.own_lot = false;
         Some(d)

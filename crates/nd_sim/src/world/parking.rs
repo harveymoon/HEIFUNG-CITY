@@ -43,10 +43,11 @@ impl World {
     /// cheap, a multi-storey car park in the middle. The cheapest business
     /// there is: two to four jobs and a little float.
     pub fn build_parking(&mut self, lot_id: LotId) -> Option<BuildingId> {
-        let lot = self.lots.get(lot_id)?;
-        if lot.building.is_some() || lot.landlocked || self.under_facility(lot.center) {
+        // [review] Not on a plot an owner bought, nor on rubble.
+        if !self.lot_free_for(lot_id, SiteRule::STREET) {
             return None;
         }
+        let lot = self.lots.get(lot_id)?;
         let area = lot.area();
         let value = self.land_value.at(lot.center);
         let tier = Tier::for_land_value(value).min(Tier::Mid);

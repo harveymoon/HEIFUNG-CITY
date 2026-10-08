@@ -63,7 +63,7 @@ impl World {
 
     /// Once a day: one well-off household buys a business or a second home.
     pub(super) fn invest_rich(&mut self) {
-        let mut rng = self.erng(4);
+        let mut rng = self.erng(super::estate::erng_salt::INVEST_RICH);
         if !rng.random_bool(0.35) {
             return;
         }
