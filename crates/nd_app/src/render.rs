@@ -473,6 +473,9 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, (turbines::sync_turbines, solar::sync_solar, haze::sync_haze, grime::sync_grime, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.add_systems(Update, (climate::sync_precipitation, climate::sync_steam).in_set(SimSet::Sync).after(sync_landscape));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
+        // [sweep-visual] The sun's shadow cascades reach as far as the
+        // orbit camera looks.
+        app.add_systems(Update, sun_cascades_follow_camera);
         app.add_systems(Update, fishing::sync_trawlers.in_set(SimSet::Sync).after(sync_ships));
         // The ground and water out past the map, into the fog.
         app.init_resource::<far::FarRender>().add_systems(Update, far::sync_far.in_set(SimSet::Sync).after(sync_landscape));
@@ -495,6 +498,7 @@ impl Plugin for RenderPlugin {
         app.init_resource::<society::SocietyRender>().add_systems(Update, society::sync_society.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
         // [waterfront] jetties, piers and pontoons off the waterfront lots
         app.init_resource::<shore::JettyRender>().add_systems(Update, shore::sync_jetties.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
+        app.add_systems(Update, shore::sync_coasters.in_set(SimSet::Sync).after(update_daylight));
         // [social] Murals and gardens.
         app.init_resource::<social::SocialRender>().add_systems(Update, social::sync_social.after(sync_vacant).after(sync_buildings).before(update_daylight).in_set(SimSet::Sync));
         // [dirty-industry] Clean-up crews.
@@ -851,10 +855,38 @@ fn setup(
     commands.insert_resource(GlobalAmbientLight { color: Color::linear_rgb(0.35, 0.45, 0.9), brightness: 70.0, ..default() });
     commands.spawn((
         DirectionalLight { color: Color::linear_rgb(0.45, 0.55, 1.0), illuminance: 700.0, shadow_maps_enabled: true, ..default() },
-        CascadeShadowConfigBuilder { num_cascades: 3, minimum_distance: 0.5, maximum_distance: 650.0, first_cascade_far_bound: 45.0, ..default() }.build(),
+        CascadeShadowConfigBuilder { num_cascades: 3, minimum_distance: 0.5, maximum_distance: SHADOW_FAR, first_cascade_far_bound: SHADOW_FIRST, ..default() }.build(),
         Transform::from_xyz(300.0, 500.0, -200.0).looking_at(Vec3::ZERO, Vec3::Y),
         SunTag,
     ));
+}
+
+/// Near shadow cascade bounds (m): the defaults, kept while the orbit
+/// camera is close enough for them to cover what it sees.
+const SHADOW_FAR: f32 = 650.0;
+const SHADOW_FIRST: f32 = 45.0;
+
+/// [sweep-visual] The sun's cascades for the camera: the defaults up close;
+/// zoomed out past where the 650 m cascade reaches, they stretch with the
+/// orbit distance (to 3 km), so a long view over the skyline keeps its
+/// towers' shadows instead of losing every shadow at once. Walk view keeps
+/// the defaults. Only rewritten when the reach moves by a tenth.
+fn sun_cascades_follow_camera(
+    mode: Res<crate::camera::CameraMode>,
+    cams: Query<&crate::camera::OrbitCamera>,
+    mut sun: Query<&mut bevy::light::CascadeShadowConfig, With<SunTag>>,
+    mut last: Local<f32>,
+) {
+    let d = if *mode == crate::camera::CameraMode::Walk { 0.0 } else { cams.iter().next().map_or(0.0, |c| c.distance) };
+    let far = (d * 1.9).clamp(SHADOW_FAR, 3000.0);
+    if *last > 0.0 && (far / *last - 1.0).abs() < 0.1 {
+        return;
+    }
+    *last = far;
+    let first = SHADOW_FIRST * far / SHADOW_FAR;
+    for mut c in sun.iter_mut() {
+        *c = CascadeShadowConfigBuilder { num_cascades: 3, minimum_distance: 0.5, maximum_distance: far, first_cascade_far_bound: first, ..default() }.build();
+    }
 }
 
 fn despawn_all<F: bevy::ecs::query::QueryFilter>(commands: &mut Commands, q: &Query<Entity, F>) {

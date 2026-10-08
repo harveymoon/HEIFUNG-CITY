@@ -422,6 +422,30 @@ fn arc_points(points: &[Vec2], centre: Vec2, radius: f32) -> Vec<Vec2> {
     out
 }
 
+/// [sweep-visual] Distance from a polyline's start (`path`, from a
+/// junction outward) at or past `from` where every point at the lateral
+/// `offsets` (left of travel positive, as `offset_path`) lies clear of each
+/// of `others` (a polyline and its half width): where a sharp-angled arm
+/// stops overlapping its neighbours, followed round its bends past its
+/// first piece. Searched in half-metre steps over at most `limit`; `from`
+/// when nothing clears by then.
+fn clear_along(path: &[Vec2], from: f32, limit: f32, offsets: &[f32], others: &[(Vec<Vec2>, f32)]) -> f32 {
+    if others.is_empty() || path.len() < 2 {
+        return from;
+    }
+    let near = |c: Vec2, q: &[Vec2]| q.windows(2).map(|w| nd_sim::geom::project_on_segment(c, w[0], w[1]).1.distance(c)).fold(f32::MAX, f32::min);
+    let mut s = from;
+    while s <= limit {
+        let (p, d) = point_along(path, s);
+        let n = Vec2::new(-d.y, d.x);
+        if offsets.iter().all(|o| others.iter().all(|(q, hw)| near(p + n * *o, q) >= *hw + 0.05)) {
+            return s;
+        }
+        s += 0.5;
+    }
+    from
+}
+
 /// Trim a polyline by `start` at the beginning and `end` at the end.
 fn trim(points: &[Vec2], start: f32, end: f32) -> Vec<Vec2> {
     let total = path_length(points);
@@ -852,6 +876,18 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             _ => (0.0, 0.0),
         }
     };
+    // [sweep-visual] The other arms of a pad junction, as polylines with
+    // their half widths (only those that front nothing, a ramp or a
+    // highway, with `ramps_only`); and whether an arm's overlap with them
+    // runs on past its first piece.
+    let others_at = |node: NodeId, seg: Option<SegmentId>, ramps_only: bool| -> Vec<(Vec<Vec2>, f32)> {
+        let Some(list) = pad_mouths.get(&node.0) else { return Vec::new() };
+        list.iter()
+            .filter(|m| Some(m.seg) != seg && (!ramps_only || roads.segment(m.seg).fronts_nothing()))
+            .filter_map(|m| arm_run.get(&(node.0, m.seg.0)).map(|&ri| (runs[ri].points.clone(), roads.segment(m.seg).half_width())))
+            .collect()
+    };
+    let overlaps_on = |node: NodeId, seg: Option<SegmentId>| pad_mouths.get(&node.0).and_then(|v| seg.and_then(|s| v.iter().find(|m| m.seg == s))).is_some_and(|m| m.want > m.at + 0.5);
     let kerb_cols = KerbColours { kerb: kerb_c, paving: paving_c, tactile: rgba(pal.tactile) };
     // A street that just ends (no other street, path or track at its end):
     // kerbed round its end, no pad.
@@ -928,10 +964,26 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
         let (c0, m0) = end_trim(run.start_node, segment_between(roads, run.nodes[0], run.nodes[1]));
         let (c1, m1) = end_trim(run.end_node, segment_between(roads, run.nodes[nn - 1], run.nodes[nn - 2]));
         let cut = |a: f32, b: f32| if a == 0.0 && b == 0.0 { pts.clone() } else { trim(pts, a, b) };
-        let carriage = cut(c0, c1);
-        let marked = cut(m0, m1);
+        // [sweep-visual] An arm meeting a neighbour at so sharp an angle
+        // that they overlap past its first piece (a ramp drawn into a
+        // street): its own strip starts where it is clear of them, its
+        // stretch over them drawn a little under their asphalt (no
+        // coplanar flicker; it shows only where it runs out beside them)
+        // and unmarked.
+        let run_len = path_length(pts);
+        let rev: Vec<Vec2> = pts.iter().rev().copied().collect();
+        let (seg0, seg1) = (segment_between(roads, run.nodes[0], run.nodes[1]), segment_between(roads, run.nodes[nn - 1], run.nodes[nn - 2]));
+        let s0 = if overlaps_on(run.start_node, seg0) { clear_along(pts, c0, run_len * 0.45, &[-hw, 0.0, hw], &others_at(run.start_node, seg0, false)) } else { c0 };
+        let s1 = if overlaps_on(run.end_node, seg1) { clear_along(&rev, c1, run_len * 0.45, &[-hw, 0.0, hw], &others_at(run.end_node, seg1, false)) } else { c1 };
+        let carriage = cut(s0, s1);
+        let marked = cut(m0.max(s0), m1.max(s1));
         if carriage.len() >= 2 {
             g.part(Asphalt).path_strip(&carriage, 0.0, hw * 2.0, ASPHALT_Y, asphalt_c);
+        }
+        for under in [(s0 > c0 + 0.1).then(|| trim(pts, c0, (run_len - s0).max(0.0))), (s1 > c1 + 0.1).then(|| trim(pts, (run_len - s1).max(0.0), c1))].into_iter().flatten() {
+            if under.len() >= 2 {
+                g.part(Asphalt).path_strip(&under, 0.0, hw * 2.0, ASPHALT_Y - 0.03, asphalt_c);
+            }
         }
         // Round a ring only the outer edge line is broken at the arms.
         let ring_lines = if ring_out.is_some() { pts.clone() } else { marked.clone() };
@@ -1077,21 +1129,46 @@ pub fn generate_street(inp: &StreetInput) -> Geometry {
             // the end, where `cul_de_sac` closes it.
             let end = |node: NodeId, start: bool, t: f32| {
                 if dead_end(node) {
-                    return 0.0;
+                    return (0.0, None);
                 }
-                match corners.trims.get(&(ri, start, side > 0.0)) {
+                // [sweep-visual] Past a ramp or highway joined at a sharp
+                // angle (which has no pavement or corner of its own on this
+                // side) the kerb and pavement wait until they are clear of
+                // its carriageway, however far round its bends that is.
+                let seg = if start { segment_between(roads, run.nodes[0], run.nodes[1]) } else { segment_between(roads, run.nodes[nn - 1], run.nodes[nn - 2]) };
+                let ramps = others_at(node, seg, true);
+                let clear = if ramps.is_empty() {
+                    0.0
+                } else {
+                    let (path, sgn) = if start { (pts.clone(), side) } else { (pts.iter().rev().copied().collect::<Vec<_>>(), -side) };
+                    let from = node_r(node);
+                    let c = clear_along(&path, from, path_length(&path) * 0.45, &[sgn * hw, sgn * (hw + SIDEWALK)], &ramps);
+                    if c > from { c } else { 0.0 }
+                };
+                let e = match corners.trims.get(&(ri, start, side > 0.0)) {
                     Some(&e) => e,
                     None => {
-                        let seg = if start { segment_between(roads, run.nodes[0], run.nodes[1]) } else { segment_between(roads, run.nodes[nn - 1], run.nodes[nn - 2]) };
                         // The run's +1 side is counter-clockwise of the way
                         // out where it starts here, clockwise where it ends.
                         let ccw = (side > 0.0) == start;
                         t.max(seg.map_or(0.0, |s| junction::kerb_clearance(pad_mouths.get(&node.0).map(|v| v.as_slice()).unwrap_or(&[]), s, ccw)))
                     }
-                }
+                };
+                (e.max(clear), (clear > e).then_some(e))
             };
-            let (e0, e1) = (end(run.start_node, true, t0), end(run.end_node, false, t1));
+            let ((e0, held0), (e1, held1)) = (end(run.start_node, true, t0), end(run.end_node, false, t1));
             kerb_ends[(side > 0.0) as usize] = (e0, e1);
+            // [sweep-visual] Where the kerb waits for a ramp to clear, the
+            // stretch the pavement would have taken is surfaced like the
+            // junction (under the ramp's own asphalt), not left bare.
+            let total = path_length(pts);
+            for (start, held, e) in [(true, held0, e0), (false, held1, e1)] {
+                let Some(h) = held else { continue };
+                let band = if start { trim(pts, h, (total - e).max(0.0)) } else { trim(pts, (total - e).max(0.0), h) };
+                if band.len() >= 2 {
+                    g.part(Asphalt).path_strip(&band, side * (hw + SIDEWALK * 0.5), SIDEWALK, ASPHALT_Y - 0.03, asphalt_c);
+                }
+            }
             let line = if (e0, e1) == (t0, t1) { walk.clone() } else { trim(pts, e0, e1) };
             if line.len() >= 2 {
                 kerb_ribbon(&mut g, &offset_path(&line, side * hw), None, side, SIDEWALK, true, true, &run_cuts, &kerb_cols);
@@ -3328,5 +3405,30 @@ mod arrow_tests {
         assert!(s0 > -0.7 && s1 < 0.7, "straight stays in line: {s0} {s1}");
         let (b0, b1) = extent(LEFT | STRAIGHT | RIGHT);
         assert!(b0 < -0.9 && b1 > 0.9);
+    }
+}
+
+#[cfg(test)]
+mod sweep_visual_tests {
+    use super::*;
+
+    /// [sweep-visual] `clear_along` follows an arm past its first piece to
+    /// where it stops overlapping a neighbour at a sharp angle, and leaves
+    /// an arm that never overlaps at its start.
+    #[test]
+    fn clear_along_finds_where_a_sharp_arm_parts_from_its_neighbour() {
+        // The neighbour: a street along +x, half width 5.
+        let street = vec![(vec![Vec2::ZERO, Vec2::new(200.0, 0.0)], 5.0)];
+        // A ramp leaving at 15 degrees in short pieces, half width 3.
+        let d = Vec2::from_angle(15f32.to_radians());
+        let ramp: Vec<Vec2> = (0..10).map(|k| d * (k as f32 * 6.0)).collect();
+        let s = clear_along(&ramp, 4.0, 50.0, &[-3.0, 0.0, 3.0], &street);
+        // Its near edge (3 m in) clears the street's 5 m once sin(15)*s - 3 cos(15) >= 5.
+        let want = (5.0 + 3.0 * 15f32.to_radians().cos()) / 15f32.to_radians().sin();
+        assert!((s - want).abs() < 0.6, "{s} vs {want}");
+        assert!(s > 6.0, "past the first piece");
+        // Square to it: clear at once.
+        let square: Vec<Vec2> = (0..10).map(|k| Vec2::new(0.0, 6.0 + k as f32 * 6.0)).collect();
+        assert_eq!(clear_along(&square, 4.0, 50.0, &[-3.0, 0.0, 3.0], &street), 4.0);
     }
 }

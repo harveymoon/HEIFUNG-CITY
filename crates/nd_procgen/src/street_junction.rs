@@ -30,6 +30,11 @@ pub(crate) struct Mouth {
     /// A roundabout's ring: its centre and radius. The arm follows the
     /// circle (`dir` is its tangent at the node).
     pub ring: Option<(Vec2, f32)>,
+    /// [sweep-visual] How far out the arm would have to start to clear its
+    /// sharpest neighbour, before `at` was held to its first piece: more
+    /// than `at` where the overlap runs on past that piece (a ramp drawn
+    /// into a street at a sharp angle).
+    pub want: f32,
 }
 
 impl Mouth {
@@ -125,7 +130,7 @@ pub(crate) fn mouths(roads: &RoadNetwork, net: &LaneNetwork, n: NodeId) -> Vec<M
             } else {
                 at
             };
-            Mouth { seg: sid, dir: d, hw, at, marks: marks.max(at), ring }
+            Mouth { seg: sid, dir: d, hw, at, marks: marks.max(at), ring, want: r.max(sep) }
         })
         .collect()
 }

@@ -66,14 +66,43 @@ fn site_poly(c: &Ctx) -> Vec<Vec2> {
     if s.len() >= 3 { s } else { c.poly.clone() }
 }
 
-/// Podium height by class: four floors for a skyscraper, six for the
-/// tallest.
+/// Podium height by class: the glass lobby and a floor or two of stone
+/// over it, lower than the old full-site block so the tower, not its base,
+/// carries the mass.
 fn podium_h(t: &Tower) -> f32 {
     match t.league() {
-        nd_sim::towers::League::Skyscraper => 16.0,
-        nd_sim::towers::League::Supertall => 20.0,
-        nd_sim::towers::League::Megatall => 26.0,
+        nd_sim::towers::League::Skyscraper => 12.0,
+        nd_sim::towers::League::Supertall => 13.0,
+        nd_sim::towers::League::Megatall => 15.0,
     }
+}
+
+/// [sweep-visual] The podium's setback tier: this much higher, stepped in
+/// from the lower tier's edge.
+const SETBACK_H: f32 = 2.0 * FH;
+const SETBACK_IN: f32 = 4.0;
+/// How far the podium reaches past the tower's base on each side (a lobby
+/// round it); a bigger site beyond that is open plaza.
+const PODIUM_WRAP: f32 = 5.0;
+
+/// How far the tower's base reaches from its seat along the lot's axes:
+/// the half width of its widest plan, as the four forms size it.
+fn foot(t: &Tower, room: f32) -> f32 {
+    match t.design {
+        TowerDesign::DecoSpire => (t.height / 15.0).max(10.0).min(room * 0.92),
+        TowerDesign::Bundled => (t.height / 11.0).max(12.0).min(room * 0.95),
+        TowerDesign::Twist => (t.height / 15.0).max(10.0).min(room * 0.95),
+        TowerDesign::Needle => (t.height / 16.0).max(9.0).min(room * 0.95),
+    }
+}
+
+/// [sweep-visual] The podium's plan: the site round the tower's base, a
+/// lobby's depth beyond it. On a site of one or two plots that is the whole
+/// site; on an assembled megatall site the rest is plaza.
+fn podium_plan(site: &[Vec2], seat: Vec2, reach: f32) -> Vec<Vec2> {
+    let a = reach + PODIUM_WRAP;
+    let p = clip_box(site, seat.x - a, seat.x + a, seat.y - a, seat.y + a);
+    if p.len() >= 3 { p } else { site.to_vec() }
 }
 
 /// Spire share of the height by design.
@@ -92,8 +121,10 @@ pub fn tower(g: &mut Geometry, c: &Ctx, t: &Tower) {
     let rng = &mut rng;
     let site = site_poly(c);
     let ph = podium_h(t);
-    podium(g, c, rng, &site, ph);
     let (seat, room) = tower_seat(c, &site);
+    let pod = podium_plan(&site, seat, foot(t, room));
+    podium(g, c, rng, &pod, ph);
+    plaza(g, c, t.seed, &site, &pod);
     let neon = neon_colour(c, t.seed);
     match t.design {
         TowerDesign::DecoSpire => deco_spire(g, c, rng, t, seat, room, ph, neon),
@@ -155,10 +186,95 @@ fn podium(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, site: &[Vec2], h: f32) 
             bollards(g, c, face, 6, 1.2);
         }
     }
-    // A roof garden on the podium.
-    let roof = offset_poly(site, 2.0);
-    if roof.len() >= 3 {
-        ground(g, f, Foliage, &roof, h + 0.05, mul(pal.foliage, 0.8));
+    // [sweep-visual] A setback tier: glass between stone bands, stepped in
+    // from the edge, with a planted terrace on the ledge round it.
+    let upper = offset_poly(site, SETBACK_IN);
+    let terrace = offset_poly(site, 1.0);
+    if terrace.len() >= 3 {
+        ground(g, f, Foliage, &terrace, h + 0.05, mul(pal.foliage, 0.8));
+    }
+    if upper.len() >= 3 && nd_sim::zoning::polygon_area(&upper).abs() > 60.0 {
+        extrude(g, f, Glass, &upper, h, h + SETBACK_H, mul(pal.glass_dark, 1.35));
+        cornice(g, c, &upper, h + SETBACK_H, 0.6, 0.4, Stone, mul(stone, 0.85));
+        curtain_lights(g, c, rng, &upper, h, 2, FH);
+        // Low hedges along the terrace edge.
+        for face in c.faces(&offset_poly(site, 1.6)) {
+            if face.len > 3.0 {
+                face.bx(g, f, Foliage, 0.0, h + 0.35, 0.0, Vec3::new(face.len * 0.9, 0.7, 0.6), pal.foliage);
+            }
+        }
+    }
+}
+
+/// [sweep-visual] The open part of a tower's site round its podium: paving
+/// with tree planters, lawn beds, benches and lamps in a grid, and a
+/// fountain when there is room for one. Nothing goes within a few metres of
+/// the podium or the site's edge.
+fn plaza(g: &mut Geometry, c: &Ctx, seed: u64, site: &[Vec2], pod: &[Vec2]) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let near_pod = offset_poly(pod, -2.0);
+    let near_pod = if near_pod.len() >= 3 { near_pod } else { pod.to_vec() };
+    let (lo, hi) = bounds(site);
+    let step = 6.5;
+    let nu = ((hi.x - lo.x) / step).floor() as i32;
+    let nv = ((hi.y - lo.y) / step).floor() as i32;
+    let (pad_u, pad_v) = (((hi.x - lo.x) - nu as f32 * step) * 0.5, ((hi.y - lo.y) - nv as f32 * step) * 0.5);
+    let mut open: Vec<(Vec2, i32)> = Vec::new();
+    for j in 0..nv.max(0) {
+        for i in 0..nu.max(0) {
+            let p = Vec2::new(lo.x + pad_u + (i as f32 + 0.5) * step, lo.y + pad_v + (j as f32 + 0.5) * step);
+            if !point_in(site, p) || distance_to_boundary(p, site) < 2.2 || point_in(&near_pod, p) || distance_to_boundary(p, &near_pod) < 1.2 {
+                continue;
+            }
+            open.push((p, (i + 2 * j).rem_euclid(5)));
+        }
+    }
+    if open.is_empty() {
+        return;
+    }
+    // A fountain at the open cell furthest from the podium, on a big plaza.
+    let fountain = if open.len() >= 14 { open.iter().map(|(p, _)| *p).max_by(|a, b| distance_to_boundary(*a, pod).total_cmp(&distance_to_boundary(*b, pod))) } else { None };
+    if let Some(q) = fountain {
+        pool(g, c, q.x, q.y, 9.0, 9.0);
+        for k in 0..4 {
+            let a = k as f32 * FRAC_PI_2 + 0.4;
+            let p = q + Vec2::new(a.cos(), a.sin()) * 2.6;
+            f.bx(g, Glow, p.x, 0.9, p.y, Vec3::new(0.18, 1.4, 0.18), mul(pal.window_cold, 0.9));
+        }
+    }
+    let kerb = mul(pal.stone, 1.15);
+    let mut trees = 0;
+    for (k, (p, pat)) in open.iter().enumerate() {
+        if fountain.is_some_and(|q| q.distance(*p) < 9.0) {
+            continue;
+        }
+        let h = nd_sim::fishing::hash(seed, k as u64);
+        match pat {
+            // A tree in a raised planter.
+            0 | 2 if trees < 60 => {
+                trees += 1;
+                let bed = rect(p.x, p.y, 1.7, 1.7);
+                extrude(g, f, Stone, &bed, 0.0, 0.5, kerb);
+                ground(g, f, Foliage, &offset_poly(&bed, 0.2), 0.52, mul(pal.foliage, 0.7));
+                tree_in(g, f, pal, *p, 7.0 + (h % 5) as f32, 2.6 + ((h >> 8) & 3) as f32 * 0.3, pal.foliage);
+            }
+            // A lawn bed with a low kerb.
+            1 => {
+                let bed = rect(p.x, p.y, 2.4, 2.4);
+                extrude(g, f, Stone, &bed, 0.0, 0.18, kerb);
+                ground(g, f, Foliage, &offset_poly(&bed, 0.25), 0.2, mul(pal.foliage, 0.95));
+            }
+            // A bench, with a lamp by every other one.
+            3 => {
+                let w = f.to_world(p.x, p.y);
+                bench_world(g, w, f.yaw() + if h & 1 == 0 { 0.0 } else { PI }, mul(pal.paving, 0.6), pal.steel);
+                if (h >> 3) & 1 == 0 {
+                    lamp_post_in(g, c, *p + Vec2::new(1.6, 0.0), 4.5, pal.lamp);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -187,6 +303,34 @@ fn lights(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], y0: f32,
     } else {
         curtain_lights(g, c, rng, poly, y0, (floors / 2).max(1), FH * 2.0);
     }
+}
+
+/// [sweep-visual] Floors of a landmark that stay lit all night (a sky
+/// lobby, the floors under the crown): plain glow, not window lights, so
+/// the renderer never switches them off and the skyline keeps its shape
+/// after the offices empty. `floors` floors from `y0`, a few bays dark.
+fn lit_band(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y0: f32, floors: i32, color: [f32; 3]) {
+    let f = &c.frame;
+    for (fi, face) in c.faces(poly).iter().enumerate() {
+        let segs = (face.len / 3.2).floor().max(1.0) as i32;
+        let seg = face.len / segs as f32;
+        for k in 0..floors {
+            let y = y0 + k as f32 * FH + FH * 0.5;
+            for i in 0..segs {
+                if (i * 7 + k * 3 + fi as i32 * 5) % 9 == 0 {
+                    continue;
+                }
+                let t = -face.len * 0.5 + (i as f32 + 0.5) * seg;
+                face.decal(g, f, Glow, t, y, 0.12, seg * 0.85, FH * 0.5, color);
+            }
+        }
+    }
+}
+
+/// The colour of a landmark's always-lit floors: warm white, a touch of
+/// its neon.
+fn landmark_light(c: &Ctx, neon: [f32; 3]) -> [f32; 3] {
+    mul(mix(mix(c.palette.window_warm, [1.0, 0.95, 0.85], 0.4), neon, 0.15), 1.1)
 }
 
 /// Red aviation lights at the corners of `poly` at height `y`.
@@ -260,6 +404,10 @@ fn deco_spire(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Ve
             }
         }
         lights(g, c, rng, &plan, y0, y1);
+        // [sweep-visual] The floors under each setback stay lit.
+        if y1 - y0 > 4.0 * FH {
+            lit_band(g, c, &plan, y1 - 3.0 * FH, 2, landmark_light(c, gold));
+        }
         // The setback: a stone cornice and gold neon along its edge.
         cornice(g, c, &plan, y1, 0.9, 0.35, Stone, mul(stone, 0.92));
         glow_outline(g, c, &offset_poly(&plan, -0.5), y1 + 1.0, 1.0, gold);
@@ -312,6 +460,15 @@ fn bundled(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2,
     // The core: a hexagon to the top of the shaft.
     let core = ngon(seat.x, seat.y, half_w * 1.15, 6, rot);
     shaft(g, c, rng, &core, base, core_top, Glass, glass, steel);
+    // [sweep-visual] Sky lobbies every 120 m and the floors under the crown
+    // stay lit all night.
+    let warm = landmark_light(c, neon);
+    let mut y = base + 120.0;
+    while y < core_top - 40.0 {
+        lit_band(g, c, &core, y, 1, warm);
+        y += 120.0;
+    }
+    lit_band(g, c, &core, core_top - 5.0 * FH, 3, warm);
     // Three wings stepping back in turn: each in `steps` segments, the
     // wings' steps staggered a third of a segment, so the setbacks spiral.
     let steps = match t.league() {
@@ -332,6 +489,11 @@ fn bundled(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2,
             let len = reach * (1.0 - 0.6 * s as f32 / steps as f32);
             let plan = wing(seat, dir, len, half_w * (1.0 - 0.15 * s as f32 / steps as f32));
             shaft(g, c, rng, &plan, y0, y1, Glass, mul(glass, 1.0 - 0.04 * s as f32), steel);
+            // Each wing's floors under every setback stay lit: a spiral of
+            // light up the tower at night.
+            if y1 - y0 > 3.0 * FH {
+                lit_band(g, c, &plan, y1 - 3.0 * FH, if s == steps - 1 { 2 } else { 1 }, warm);
+            }
             // The setback lights up.
             let nose = &plan[1..5];
             for k in 0..nose.len() - 1 {
@@ -392,6 +554,10 @@ fn twist(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2, r
         loft(g, f, Glass, &prev, &next, y0, y0 + sh, glass);
         loft(g, f, Panel, &offset_poly(&next, -0.2), &offset_poly(&next, -0.2), y0 + sh - 0.4, y0 + sh, band);
         lights(g, c, rng, &prev, y0, y0 + sh);
+        // [sweep-visual] The top sections and a band every quarter stay lit.
+        if k >= sections - 2 || (k > 0 && k % (sections / 4).max(2) == 0) {
+            lit_band(g, c, &prev, y0, ((sh / FH) as i32).clamp(1, 2), landmark_light(c, neon));
+        }
         prev = next;
     }
     aviation_up(g, c, &plate(0.0), base, top);
@@ -435,6 +601,10 @@ fn needle(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2, 
         let next = plan((k + 1) as f32 / sections as f32);
         loft(g, f, Glass, &prev, &next, y0, y0 + sh, glass);
         lights(g, c, rng, &prev, y0, y0 + sh);
+        // [sweep-visual] The top sections and a band every quarter stay lit.
+        if k >= sections - 2 || (k > 0 && k % (sections / 4).max(2) == 0) {
+            lit_band(g, c, &prev, y0, ((sh / FH) as i32).clamp(1, 2), landmark_light(c, neon));
+        }
         // Neon edges up the chamfered corners.
         for i in (0..8).step_by(2) {
             let (a, b) = (prev[i], next[i]);
@@ -466,6 +636,8 @@ pub fn site(g: &mut Geometry, c: &Ctx, t: &Tower, progress: f32) {
     let site = site_poly(c);
     let ph = podium_h(t);
     let (seat, room) = tower_seat(c, &site);
+    // [sweep-visual] The podium goes up on its own plan (`podium_plan`).
+    let pod_plan = podium_plan(&site, seat, foot(t, room));
     let top = t.height * (1.0 - spire_share(t.design));
     // The ground and the hoarding round the plots.
     ground(g, f, Dirt, &c.lot_poly, 0.03, pal.dirt);
@@ -489,9 +661,9 @@ pub fn site(g: &mut Geometry, c: &Ctx, t: &Tower, progress: f32) {
     let pod = ph.min(core_h);
     extrude(g, f, Concrete, &site, 0.0, 0.4, mul(pal.concrete(0), 0.7));
     if glazed_h > ph {
-        extrude(g, f, Stone, &site, 0.0, ph, mix(pal.stone, [0.86, 0.84, 0.8], 0.35));
+        extrude(g, f, Stone, &pod_plan, 0.0, ph, mix(pal.stone, [0.86, 0.84, 0.8], 0.35));
     } else {
-        slabs(g, c, &site, 0.0, pod, concrete);
+        slabs(g, c, &pod_plan, 0.0, pod, concrete);
     }
     // The tower's plan at the base, as the design will have it.
     let r = match t.design {
@@ -597,6 +769,23 @@ mod tests {
         let mut lots = slotmap::SlotMap::with_key();
         generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[]);
         lots.values().filter(|l| l.usable()).cloned().collect()
+    }
+
+    /// [sweep-visual] On an assembled site the podium wraps the tower's
+    /// base and leaves the rest as plaza; on a site of a plot or two it
+    /// still fills the site.
+    #[test]
+    fn the_podium_covers_the_tower_not_the_whole_big_site() {
+        use super::podium_plan as plan;
+        use nd_sim::zoning::polygon_area;
+        let big = vec![Vec2::new(-60.0, -35.0), Vec2::new(60.0, -35.0), Vec2::new(60.0, 35.0), Vec2::new(-60.0, 35.0)];
+        let pod = plan(&big, Vec2::ZERO, 25.0);
+        let (a_pod, a_site) = (polygon_area(&pod).abs(), polygon_area(&big).abs());
+        assert!(a_pod < a_site * 0.65, "podium {a_pod} of site {a_site}");
+        assert!(pod.iter().all(|p| p.x.abs() <= 30.01 && p.y.abs() <= 35.01), "round the tower: {pod:?}");
+        let small = vec![Vec2::new(-20.0, -18.0), Vec2::new(20.0, -18.0), Vec2::new(20.0, 18.0), Vec2::new(-20.0, 18.0)];
+        let pod = plan(&small, Vec2::ZERO, 17.0);
+        assert!((polygon_area(&pod).abs() - polygon_area(&small).abs()).abs() < 1.0, "a small site is all podium");
     }
 
     /// Every form on every plot (slivers and triangles among them), built
