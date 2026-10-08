@@ -43,7 +43,7 @@ fn big_city() -> World {
     world.economy.treasury = 2_000_000.0;
     world.link_to_highway(Vec2::new(0.0, span));
     for _ in 0..3 {
-        let lot = world.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial && l.building.is_none() && l.area() >= 600.0).max_by(|a, b| a.1.area().total_cmp(&b.1.area())).map(|(id, _)| id);
+        let lot = world.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial && l.building.is_none() && l.area() >= 600.0).min_by(|a, b| (a.1.area() - nd_sim::power::COAL_REFERENCE_AREA).abs().total_cmp(&(b.1.area() - nd_sim::power::COAL_REFERENCE_AREA).abs())).map(|(id, _)| id);
         if let Some(lot) = lot {
             let _ = world.build_power(lot, PowerPlantKind::Coal);
         }
