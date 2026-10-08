@@ -100,7 +100,7 @@ pub use mind::{Decision, Intent, MindContext, MindProvider};
 pub use plan::{Gesture, GestureId, Plan, PlanPreview, Project};
 pub use roads::{NodeId, RoadNetwork, Segment, SegmentId};
 pub use traffic::{Car, CarId, Cargo, LaneId, Traffic};
-pub use walk::WalkGraph;
+pub use walk::{GroundsJunction, GroundsKind, WalkGraph};
 pub use vehicle::{BodyType, CarEvent, CarPlace, Errand, Livery, OwnedCar, ParkKind, ParkSpot, VehicleClass, VehicleId, VehicleModel, Vehicles};
 pub use bots::{BotId, Bots, DeliveryBot};
 pub use power::{Battery, BatteryKind, PlantSite, PowerPlantKind, PowerStats, Weather};

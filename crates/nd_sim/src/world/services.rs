@@ -70,11 +70,28 @@ impl World {
         if let Placeable::Toll(_) = what {
             return Err("a toll booth goes on a road, not a lot (World::place_toll)".into());
         }
-        self.place_on_site(what, p)
+        let id = self.place_on_site(what, p)?;
+        self.placed_grounds(what);
+        Ok(id)
+    }
+
+    /// [park-paths] A stadium, plaza, campus or station just put down
+    /// shows its gates to the Path tool at once.
+    fn placed_grounds(&mut self, what: Placeable) {
+        use crate::rail::RailFacility;
+        if matches!(what, Placeable::Service(ServiceKind::Stadium | ServiceKind::Monument | ServiceKind::School, _) | Placeable::Rail(RailFacility::Station | RailFacility::Central)) {
+            self.build_walk_graph();
+        }
     }
 
     /// Put down `what` on a lot (rail pieces at the lot's centre).
     pub fn place_on_lot(&mut self, what: Placeable, lot: LotId) -> Result<BuildingId, String> {
+        let id = self.place_on_lot_inner(what, lot)?;
+        self.placed_grounds(what);
+        Ok(id)
+    }
+
+    fn place_on_lot_inner(&mut self, what: Placeable, lot: LotId) -> Result<BuildingId, String> {
         match what {
             Placeable::Plant(k) => self.build_power(lot, k),
             Placeable::Battery(k) => self.build_battery(lot, k),

@@ -160,6 +160,10 @@ pub use fishing::BoatReport;
 pub use dirt::{CleanupJob, CleanupQuote, DirtyNeighbour, ADJACENCY_OUTPUT_HIT, ADJACENCY_VALUE_HIT, CLEANUP_COST, CLEANUP_MAX_RADIUS, CLEANUP_MIN_RADIUS};
 // [road-inspect] the road inspector's traffic counts, live read-out and Repair now
 mod road_inspect;
+pub mod grounds;
+pub use grounds::{PathLink, PathLinks};
+#[cfg(test)]
+mod grounds_tests;
 #[cfg(test)]
 mod events_tests;
 #[cfg(test)]
@@ -647,6 +651,11 @@ pub struct World {
     /// reads it; old saves load with none and set one up when first used.
     #[serde(default)]
     pub committee: crate::committee::Committee,
+    /// [park-paths] Player paths drawn to a park's (or other grounds')
+    /// walkways, and what they are joined to (`world/grounds.rs`). Old
+    /// saves load with none.
+    #[serde(default)]
+    pub path_links: grounds::PathLinks,
 }
 
 impl World {
@@ -748,6 +757,7 @@ impl World {
             social: Default::default(),
             social_concern: None,
             committee: Default::default(),
+            path_links: Default::default(),
         };
         w.estate.pressure = crate::estate::Pressure::new(half + 200.0);
         w.landscape = Landscape::new(&w.config.landscape);
@@ -769,9 +779,12 @@ impl World {
     }
 
     fn rebuild_walk(&mut self) {
-        crate::park::plan_parks(&mut self.lots, &self.land_value);
-        self.walk = WalkGraph::build(&self.roads, &self.lots, &self.land_value, self.walk.version + 1);
-        self.walk.apply_upgrades(&self.crosswalks.rules, &self.roads);
+        // [park-paths] Paths just drawn to a park's gate are joined to it,
+        // and the parks lay their walkways out to meet them.
+        self.note_path_links();
+        let links: Vec<Vec2> = self.path_links.links.iter().map(|l| l.pos).collect();
+        crate::park::plan_parks_with(&mut self.lots, &self.land_value, &links);
+        self.build_walk_graph();
     }
 
     pub fn to_ron(&self) -> Result<String, ron::Error> {
@@ -822,14 +835,15 @@ impl World {
         // must survive a load), so they are only planned again when a save
         // from before parks were serialised has park lots without one.
         if self.lots.values().any(|l| l.land_use == LandUse::Park && l.polygon.len() >= 3 && l.park.is_none()) {
-            crate::park::plan_parks(&mut self.lots, &self.land_value);
+            let links: Vec<Vec2> = self.path_links.links.iter().map(|l| l.pos).collect();
+            crate::park::plan_parks_with(&mut self.lots, &self.land_value, &links);
         }
         // [free-placement] A save from before city ground: the lots under
         // the city's buildings leave their zones (nothing moves).
         self.settle_city_ground(&[], false);
-        self.walk = WalkGraph::build(&self.roads, &self.lots, &self.land_value, self.walk.version + 1);
-        // [tools] Footbridges and push buttons on the crossings.
-        self.walk.apply_upgrades(&self.crosswalks.rules, &self.roads);
+        // [tools] Footbridges and push buttons on the crossings; [park-paths]
+        // paths joined to the parks.
+        self.build_walk_graph();
         // [tools] Columns for raised roads from a save without them.
         self.pillars_after_load();
         for (_, car) in self.traffic.reattach_cars() {
@@ -1099,6 +1113,8 @@ impl World {
     }
 
     pub fn tick(&mut self, minds: &mut dyn MindProvider) {
+        // [park-paths] A path whose park went since the last tick is cut back.
+        self.settle_path_links();
         self.clock.advance();
         let tick = self.clock.tick;
         if self.clock.minute_of_day() == 0 {

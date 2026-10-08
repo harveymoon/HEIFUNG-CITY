@@ -51,4 +51,8 @@ pub enum SimEvent {
     /// [events] A line of city news about a street race or a rave
     /// (`World::street_events.news`, by its `seq`).
     News(u32),
+    /// [park-paths] A path joined to a park (or other grounds) lost its
+    /// end there when the grounds went: cut back, or removed if nothing
+    /// was left (`world/grounds.rs`).
+    PathTrimmed { gesture: crate::plan::GestureId, removed: bool, grounds: crate::walk::GroundsKind },
 }

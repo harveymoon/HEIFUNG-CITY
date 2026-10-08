@@ -769,6 +769,20 @@ Citizens are rendered from their simulated positions every frame.
   sends the visitor to the nearest park with room within 600 m, or home. Strangers who sat
   side by side for 15 minutes or more may get talking (10% plus 30% of their mean sociability)
   and become acquaintances (`PlaceBook::meet`), as regulars of a bar do.
+  **Paths into parks** (`world/grounds.rs`, `walk::add_grounds`, Cities: Skylines style): every
+  park, and the grounds of a stadium, a monument's plaza, a school's campus and a railway station,
+  shows gates on its outer edges (one per 40 m of edge, 1.6 m outside it; none on edges shared
+  with more of the park, in the water, or within a road end's snap reach of a road). With the Path
+  tool they show as small amber rings (green where a path is joined); a path point near one snaps
+  onto it, the pointer ring and the gate glow green. A path built with an end on a gate is joined
+  there (`World::path_links`, saved): the park takes the end as an entrance and lays a walkway from
+  its hub out to it (`park::plan_parks_with`), and the walk graph gets an edge from the path's end
+  to the grounds' nearest walk node (a park path, or the lot loop of a stadium or station), so
+  people walk from the path into the park. The path stays the player's gesture. When the grounds go
+  (rezoned, bulldozed, the lot re-cut away: nothing within 4 m of the end) the join is dropped and
+  the path cut back to its last point before that end, or removed when fewer than two points are
+  left, with a toast (`SimEvent::PathTrimmed`); no walk edge is left dangling. Other ground with a
+  walkway network (a public beach) registers through `walk::Grounds`.
 - **Construction** (`buildings::Construction`): nothing pops into existence. `build_on` opens
   a site with a build time of (1 + 0.4 × floors) days scaled by tier, clamped to 1–12 days;
   it offers no homes and a temporary crew of jobs that the unemployed commute to. Progress
