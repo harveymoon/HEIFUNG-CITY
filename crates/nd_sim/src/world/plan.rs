@@ -916,6 +916,14 @@ impl World {
         Some(id)
     }
 
+    /// [interchange] Rebuild roads, lots and lanes from the master plan as
+    /// implementing does, with nothing changed in the plan: the network is
+    /// laid again with the current road-building rules (the `rebuild_roads`
+    /// dev command, and probes comparing old saves).
+    pub fn rebuild_from_plan(&mut self) {
+        self.rebuild_from_master();
+    }
+
     pub(super) fn rebuild_from_master(&mut self) {
         self.plan_changed();
 
