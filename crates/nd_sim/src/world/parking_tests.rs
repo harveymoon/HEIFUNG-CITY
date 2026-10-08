@@ -408,3 +408,19 @@ fn an_hour_of_hunting_for_a_space_ends_with_the_car_left_somewhere() {
     assert!(w.traffic.cars.contains_key(fresh) && w.vehicles.cars[vid2].spot().is_none(), "the fresh one drives on to look: {:?} {:?}", w.traffic.cars.get(fresh).map(|c| c.errand), w.vehicles.cars[vid2].spot().map(|s| (s.kind, s.pos)));
     assert_no_car_lost(&w);
 }
+
+#[test]
+fn a_road_stops_at_a_parking_lot_the_player_placed() {
+    let mut w = town();
+    let lot = w.lots.iter().filter(|(_, l)| l.usable() && l.car_access() && l.land_use != LandUse::Park && l.area() >= LotSize::Small.min_area()).map(|(id, _)| id).next().expect("a lot");
+    let b = w.place_on_lot(crate::services::Placeable::ParkingLot(LotSize::Small), lot).expect("placed");
+    assert!(w.buildings[b].city_parking && World::is_civic_structure(&w.buildings[b]));
+    let lot = w.buildings[b].lot;
+    let c = w.lots[lot].center;
+    let pts = [c - Vec2::new(40.0, 0.0), c + Vec2::new(40.0, 0.0)];
+    assert!(w.structures_in_way(&pts, &[0.0, 0.0], 1, 1, crate::roads::RoadKind::Street).contains(&b), "the player's lot blocks a road through it");
+    // A save from before the flag: the city's lots learn it on load.
+    w.buildings[b].city_parking = false;
+    let w = World::from_ron(&w.to_ron().expect("saves")).expect("loads");
+    assert!(w.buildings[b].city_parking);
+}
