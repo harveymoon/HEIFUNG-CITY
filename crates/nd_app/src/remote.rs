@@ -19,6 +19,8 @@
 mod committee;
 /// [megacorp] Mega-corps and universities.
 mod corp;
+/// [rail-crossing] Level crossings.
+mod crossings;
 mod concerns;
 /// [districts] [tourism] `district` and `tourism`.
 mod districts;
@@ -724,6 +726,8 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "inspect" => inspect(cmd, ctx),
         "lane_use" => lane_use(cmd, ctx),
         "intersection" => junction::command(cmd, &mut ctx.sim.world, &mut ctx.tools),
+        // [rail-crossing] Level crossings: cycle, trains coming, waits.
+        "level_crossings" | "level_crossing" | "crossings" | "rail_crossings" => crossings::command(cmd, &ctx.sim.world),
         // [boot] Clamp a private car and have it towed: `car` (on the road:
         // it pulls over first) or `vehicle` (its record, parked or driving).
         "tow_car" | "tow" | "boot" => {
@@ -3054,7 +3058,7 @@ fn help() -> Value {
     });
     // Kept out of the literal above: it is at the json! recursion limit.
     v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
-    v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
+    v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "crossings": "level_crossings", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
     // [road-inspect]
     // [committee]
     v["commands"]["committee"] = json!({ "action": "state (default)|members|appoint {id, seat?}|dismiss {id}|alerts {limit, mark_seen}|check_alerts|projects|implement {project}|dismiss_project {project}|pick_site {project, option}|refresh_sites {project}|report|minutes {meeting?}|settings {backend: mock|local|claude, local_url, local_model, claude_model, claude_effort, claude_fallbacks, timeout_s, auto_meetings, veto_allowed, save, test}", "note": "the mayor's AI committee (docs/AI_COMMITTEE.md): fictional politicians, six seats, alerts, projects; never takes or returns an API key" });
@@ -3139,6 +3143,7 @@ fn help() -> Value {
     v["commands"]["flag"] = json!({ "note": "text: flag the current selection, as F8 does in game" });
     v["commands"]["walk_to"] = json!({ "citizen": "id", "to": "[x,y]", "from": "[x,y] (default: where they are)", "note": "dev: sends the citizen out on foot by the walk graph (footbridges included)" });
     v["commands"]["intersection"] = json!({ "at": "[x,y] near a junction or crosswalk (default: the editor's)", "signal": "auto|signals|none", "greens": "[seconds per phase, ...] (phases as listed) or \"default\"", "left_arrow": "auto|always|never", "arrow_seconds": "3..30", "left_turns": "bool: allow (true) or forbid every left", "no_left": "[approach index or [x,y], ...]: approaches with the left forbidden (the rest allowed)", "approach": "index or [x,y] (with lanes)", "lanes": "[\"L\", \"S+R\", ...] leftmost first, or \"reset\"", "crossing": "index or [x,y]", "upgrade": "none|button|footbridge (with crossing; a footbridge replaces the crosswalk under it)", "keep_crosswalk": "bool (with crossing): keep the crosswalk at grade under its footbridge (default false: the bridge replaces it)", "open": "bool: show the Intersection editor modal", "close": "bool", "select_approach": "index (open)", "select_crossing": "walk crossing index (open)", "returns": "intersection: at, signalized, rule, approaches (lanes, offered, left_forbidden), phases (green_s, running), crossings (upgrade, signalised, button_light, crosswalk_kept, crosswalk_removed); done; editor_open" });
+    v["commands"]["level_crossings"] = json!({ "at": "[x,y]: the nearest level crossing (within radius, default 60 m)", "index": "int: that crossing", "returns": "count, shut_now, crossings: index, node, at, guard (barriers|lights|footpath gates: barriers on streets of 3+ lanes), phase (open|warning|lowering|closed|raising), lights_flashing, closed_to_traffic, barrier_down (0 up..1 down), train_over, eta_s, trains_coming [{train, seconds}], vehicles_waiting, people_waiting, trains_last_hour, trains_per_hour, trains_total, closures, closure_s, average_closure_s, vehicles_held, average_wait_s, trains_held, arms [{segment, away, lanes_in, lanes_out, stop_line_m, barrier, barrier_length_m}]" });
     v["commands"]["society"] = json!({ "action": "report (default)|evict|offend|trash", "building": "id (evict: its households go on the street; offend: the target; trash: one building's bins)", "citizen": "id (offend)", "kind": "theft|burglary|assault|murder|vandalism (offend, with building)", "kg": "trash to add, default 100" });
     // Planning: several projects, and painting parcels.
     let planning = json!({

@@ -4,6 +4,8 @@
 pub mod buildings;
 /// [climate] Each climate's ground, plants, water, snow and weather looks.
 pub mod climate;
+/// [rail-crossing] Level crossing posts, lamps and barrier arms.
+pub mod crossing;
 /// [plants] The hydro plant's arch dam.
 pub mod dam;
 pub mod footbridge;

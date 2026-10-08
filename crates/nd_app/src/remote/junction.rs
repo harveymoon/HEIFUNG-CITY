@@ -92,7 +92,11 @@ pub fn command(cmd: &Value, w: &mut World, tools: &mut ToolState) -> Result<Valu
         Some(p) => p,
         None => tools.junction_editor.as_ref().map(|e| e.at).ok_or("missing field \"at\": [x, y] near a junction or crosswalk (or open the editor first)")?,
     };
-    let view = w.intersection_view(at).ok_or("no junction or crosswalk there")?;
+    let Some(view) = w.intersection_view(at) else {
+        // [rail-crossing] A level crossing is no junction, but it is a
+        // crossing: read it.
+        return super::crossings::near_json(w, at, 40.0).map(|c| json!({ "intersection": null, "level_crossing": c })).ok_or_else(|| "no junction or crosswalk there".into());
+    };
     let mut done: Vec<String> = Vec::new();
     // The junction's rule.
     let mut rule = view.rule.clone();
@@ -196,7 +200,8 @@ pub fn command(cmd: &Value, w: &mut World, tools: &mut ToolState) -> Result<Valu
         tools.junction_editor = None;
     }
     let view = w.intersection_view(at).ok_or("the junction is gone")?;
-    Ok(json!({ "intersection": view_json(w, &view), "done": done, "editor_open": tools.junction_editor.is_some() }))
+    let level = view.node.and_then(|n| w.level_crossings().iter().position(|c| c.node == n)).map(|k| super::crossings::crossing_json(w, k, &w.level_crossings()[k]));
+    Ok(json!({ "intersection": view_json(w, &view), "level_crossing": level, "done": done, "editor_open": tools.junction_editor.is_some() }))
 }
 
 /// A stretch with no room for a column.
