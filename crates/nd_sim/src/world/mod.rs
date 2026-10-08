@@ -118,6 +118,8 @@ mod tourism;
 mod trips;
 mod water;
 mod ferry;
+/// [ferry-routes] Ferry routes and shipping lanes as lines on the water.
+pub mod ferry_routes;
 mod rides;
 // [economy] business pressure, the new trades, the waterfront and the art scene
 mod pressure;

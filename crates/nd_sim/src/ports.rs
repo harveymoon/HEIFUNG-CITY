@@ -504,6 +504,20 @@ pub struct Ports {
     pub commuters_today: std::collections::BTreeMap<BuildingId, u32>,
     #[serde(default)]
     pub trips_today: std::collections::BTreeMap<BuildingId, u32>,
+    /// [ferry-routes] People carried today on each ferry route, by the
+    /// terminal a run sailed from and where it went (`world/ferry_routes.rs`).
+    #[serde(default)]
+    pub line_riders: Vec<LineRiders>,
+}
+
+/// [ferry-routes] Riders today on the runs from `from` to another
+/// terminal (`to`) or to a town off the map (`town`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LineRiders {
+    pub from: BuildingId,
+    pub to: Option<BuildingId>,
+    pub town: Option<u8>,
+    pub riders: u32,
 }
 
 /// [ferries] A resident heading for a terminal to take the ferry to a
@@ -519,6 +533,15 @@ pub struct DayTrip {
 }
 
 impl Ports {
+    /// [ferry-routes] Count `n` riders on a run from `from` to `to` (a
+    /// terminal) or `town` (off the map).
+    pub fn count_line_riders(&mut self, from: BuildingId, to: Option<BuildingId>, town: Option<u8>, n: u32) {
+        match self.line_riders.iter_mut().find(|l| l.from == from && l.to == to && l.town == town) {
+            Some(l) => l.riders += n,
+            None => self.line_riders.push(LineRiders { from, to, town, riders: n }),
+        }
+    }
+
     pub fn port_of(&self, b: BuildingId) -> Option<&Port> {
         self.ports.values().find(|p| p.building == Some(b))
     }

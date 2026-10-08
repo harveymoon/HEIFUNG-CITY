@@ -9,6 +9,8 @@
 /// [concerns] The People window's complaints tab.
 /// The Build window: every road, zone and building in one catalogue.
 pub mod build;
+/// [ferry-routes] A dock's routes and the ship card in the inspector.
+mod ferry;
 mod concerns;
 mod detail;
 mod economy;

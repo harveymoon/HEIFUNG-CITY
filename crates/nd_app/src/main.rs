@@ -22,6 +22,8 @@ mod render;
 mod sim;
 mod tools;
 mod train_select;
+/// [ferry-routes] Ferry routes on the water when a terminal or ship is selected.
+mod ferry_select;
 mod ui;
 
 use bevy::prelude::*;
@@ -68,6 +70,7 @@ fn main() {
             marks::MarksPlugin,
             metro_ux::MetroUxPlugin,
             build_highlight::BuildHighlightPlugin,
+            ferry_select::FerrySelectPlugin,
         ))
         .run();
 }

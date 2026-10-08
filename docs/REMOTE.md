@@ -205,6 +205,23 @@ main thread, then serialises and writes it on a worker thread.
 {"cmd": "grid"}
 ```
 
+**Ferry routes.** [ferry-routes] `landscape.ships` rows carry `id`. `select {ship: id}` selects a
+ferry or freighter (a click on its hull with the Inspect tool does too; `camera {follow}` and the
+inspector's Follow work on it); `inspect {ship: id}` (or `inspect` with one selected) gives `id`,
+`kind`, `title`, `doing`, `at`, `passengers`, `cargo`, `home` (its terminal) and `route` {from, to,
+colour}. `inspect {building}` of a ferry terminal or shipping port adds `routes`: one row per route
+calling there, `kind` (ferry / freight), `to` (the far end's name), `end` ({kind: terminal, building}
+/ {kind: town_off_map, index, edge} / {kind: open_sea}), `end_at` (its berth, or where the route
+leaves sight), `running`, `colour`, `ships` [{id, doing, passengers}], `headway_min` (both ends'
+boats together, on the rotation as it stands), `next_departure` (the next boat out from this dock on
+it, as `tick_time`), `passengers_today` (both ways) and `length_m`. With a dock or ship selected the
+map draws its routes bright with direction chevrons and the city's other routes dim.
+
+```json
+{"cmd": "select", "ship": "3:1"}
+{"cmd": "inspect", "building": "120:4"}
+```
+
 **Climates** (`nd_sim::Climate` on the landscape's levers; old saves are Desert). Each adds to
 the generated map from its own random stream, so the river, lakes and hot spots the preset makes
 stay where they are: Desert is the original generator (the driest); Temperate adds a stream or
