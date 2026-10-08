@@ -745,7 +745,7 @@ pub fn car_traffic(w: &World, c: &Car) -> Value {
         "driver_drunkenness_now": w.citizens.get(c.citizen).map(|x| round(x.drunk)),
         "weave_m": round(c.drive.weave), "running_red": c.drive.running.is_some(),
         "crash": c.drive.crash.map(|s| json!({ "crash": s.id, "wrecked": s.wrecked, "hold_s": if s.wrecked { Value::Null } else { json!(round(s.hold)) } })),
-        "takeover": c.drive.gang.map(|g| json!({ "takeover": g.takeover, "phase": format!("{:?}", g.phase).to_lowercase() })),
+        "takeover": c.drive.gang.map(|g| json!({ "takeover": g.takeover, "phase": format!("{:?}", g.phase).to_lowercase(), "race": g.race, "moto_pack": g.pack })),
         "stunt": c.drive.stunt.map(|s| if s.is_donut() { "donut" } else { "ring" }),
     })
 }

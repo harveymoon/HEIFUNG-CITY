@@ -863,6 +863,9 @@ pub struct GangRole {
     /// [events] A street racer (`crate::street_events`), not a takeover crew.
     #[serde(default)]
     pub race: bool,
+    /// [moto] A rider in a moto pack (`World::start_moto_pack`).
+    #[serde(default)]
+    pub pack: bool,
 }
 
 /// What a car in a takeover show does, off the lanes.

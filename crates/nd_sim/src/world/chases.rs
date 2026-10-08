@@ -21,7 +21,7 @@ use crate::vehicle::{Errand, ParkKind, VehicleId};
 use rand::Rng;
 
 /// How a suspect gets away.
-enum Getaway {
+pub(super) enum Getaway {
     /// Already at the wheel of their own car.
     Driving(CarId),
     /// Their car (or motorbike) is parked within reach.
@@ -101,7 +101,7 @@ impl World {
     }
 
     /// Put the suspect at the wheel, fleeing, and the unit after them.
-    fn start_chase(&mut self, id: u32, uid: UnitId, s: CitizenId, g: Getaway) -> bool {
+    pub(super) fn start_chase(&mut self, id: u32, uid: UnitId, s: CitizenId, g: Getaway) -> bool {
         let tick = self.clock.tick;
         let police_at = self.services.units[uid].pos;
         // Where the chase starts: the car on the road, or the parked one.

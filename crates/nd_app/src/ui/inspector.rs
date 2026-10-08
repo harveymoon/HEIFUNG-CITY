@@ -106,6 +106,8 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 ui.label(format!("{:.0} km/h", car.v * 3.6));
                 // [events] A street racer: the race and their place.
                 super::nights::racer_line(ui, w, id);
+                // [moto] A pack rider.
+                super::nights::moto_line(ui, w, id);
                 driver_shown = driver_card(ui, w, id, selection);
                 // (Crews and strangers are named by the journey card below.)
                 // [boot] Clamp it: it pulls over and waits for the tow truck.

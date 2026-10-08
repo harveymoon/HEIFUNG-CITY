@@ -864,6 +864,8 @@ pub enum CrimeKind {
     StreetRace,
     /// [events] A noise complaint about a warehouse rave.
     Rave,
+    /// [moto] A motorbike pack tearing through town.
+    RecklessRiding,
 }
 
 impl CrimeKind {
@@ -883,6 +885,7 @@ impl CrimeKind {
             CrimeKind::StreetTakeover => "street takeover",
             CrimeKind::StreetRace => "street race",
             CrimeKind::Rave => "illegal rave",
+            CrimeKind::RecklessRiding => "reckless riding",
         }
     }
 }
