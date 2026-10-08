@@ -684,20 +684,22 @@ impl RoadNetwork {
     /// the deck overhead (it used to take the nearest node of any level).
     /// Only with nothing at its level in reach does it come up or down to
     /// a way at another level (a raised road ramps down to the road it is
-    /// dropped on). A path never lands on the highway or a slip road
-    /// (nobody may walk on them: a footpath dropped by an on-ramp used to
-    /// split the ramp and lead walkers onto the carriageway).
+    /// dropped on). A path lands on the highway or a slip road only with no
+    /// other way in reach (a footpath dropped by an on-ramp beside the
+    /// street the ramp leaves used to split the ramp, leading walkers onto
+    /// it; it now joins the street).
     fn end_target(&self, p: Vec2, radius: f32, kind: RoadKind, level: f32, own_nodes: &[NodeId]) -> Option<EndTarget> {
         let foot = kind == RoadKind::Path;
-        let seg_ok = |s: &Segment| s.alive && Self::joins(s.kind, kind) && !(foot && s.is_motorway()) && !(own_nodes.contains(&s.a) || own_nodes.contains(&s.b));
-        // A node is a target when some way of it may take the end.
-        let node_ok = |net: &Self, n: NodeId| {
+        let seg_ok = |s: &Segment| s.alive && Self::joins(s.kind, kind) && !(own_nodes.contains(&s.a) || own_nodes.contains(&s.b));
+        // A node is a target when some way of it may take the end (for a
+        // path on the walkers' pass, a way that is not a motorway).
+        let node_ok = |net: &Self, n: NodeId, walk: bool| {
             if own_nodes.contains(&n) {
                 return false;
             }
             let node = net.node(n);
             let mut alive = node.segments.iter().map(|&s| net.segment(s)).filter(|s| s.alive).peekable();
-            alive.peek().is_none() || alive.any(|s| Self::joins(s.kind, kind) && !(foot && s.is_motorway()))
+            alive.peek().is_none() || alive.any(|s| Self::joins(s.kind, kind) && !(walk && s.is_motorway()))
         };
         let at_level = |l: f32| (l - level).abs() < GRADE_SEPARATION;
         let node_level = |net: &Self, n: NodeId| {
@@ -722,14 +724,18 @@ impl RoadNetwork {
             .filter(|w| w.0 <= radius)
             .collect();
         ways.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
-        for same_level in [true, false] {
+        // Passes: at its own level first; for a path, a way that is not
+        // the highway or a slip road first (it lands on one only with
+        // nothing else in reach; the walk graph stops short of it).
+        let passes: &[(bool, bool)] = if foot { &[(true, true), (true, false), (false, true), (false, false)] } else { &[(true, false), (false, false)] };
+        for &(same_level, walk) in passes {
             let level_ok = |l: Option<f32>| l.is_none_or(|l| !same_level || at_level(l));
-            if let Some(id) = self.node_near_kind_where(p, SNAP_RADIUS, kind, |net, n| node_ok(net, n) && level_ok(node_level(net, n))) {
+            if let Some(id) = self.node_near_kind_where(p, SNAP_RADIUS, kind, |net, n| node_ok(net, n, walk) && level_ok(node_level(net, n))) {
                 return Some(EndTarget::Node(id));
             }
-            if let Some(&(_, sid, t, q)) = ways.iter().find(|w| level_ok(Some(self.segment_level(w.1, w.2)))) {
+            if let Some(&(_, sid, t, q)) = ways.iter().find(|w| level_ok(Some(self.segment_level(w.1, w.2))) && !(walk && self.segment(w.1).is_motorway())) {
                 let l = self.segment_level(sid, t);
-                if let Some(id) = self.node_near_kind_where(q, SNAP_RADIUS, kind, |net, n| node_ok(net, n) && node_level(net, n).is_none_or(|nl| (nl - l).abs() < GRADE_SEPARATION)) {
+                if let Some(id) = self.node_near_kind_where(q, SNAP_RADIUS, kind, |net, n| node_ok(net, n, walk) && node_level(net, n).is_none_or(|nl| (nl - l).abs() < GRADE_SEPARATION)) {
                     return Some(EndTarget::Node(id));
                 }
                 return Some(EndTarget::On(sid, t, q));

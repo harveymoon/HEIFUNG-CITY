@@ -1267,7 +1267,7 @@ Citizens are rendered from their simulated positions every frame.
   ends (`RoadNetwork::end_target`) prefer a way at their own level (within 4.5 m) of everything in
   reach, so an end dropped where a viaduct passes over a street joins the one at its level; only
   with none at its level does it come up or down to another (a raised road ramps down to the
-  road it is dropped on). A path end never lands on the highway or a ramp. Ramp easing
+  road it is dropped on). A path end lands on the highway or a ramp only with no other way in reach. Ramp easing
   (`ease_ramp_ends`) scales the lead to the ramp: 45% of how far the ramp's next point lies along
   the highway, 15 to 40 m, then rounds the bend with a few points; it is idempotent and the
   holograms ease what they draw (`ease_ramp_way`), so the preview is what is built (a fixed 40 m

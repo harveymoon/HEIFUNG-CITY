@@ -269,9 +269,9 @@ fn snapping_never_joins_ways_at_different_levels() {
     assert!(n.level >= GRADE_SEPARATION, "the raised end joins the viaduct: level {}", n.level);
 }
 
-/// A footpath whose end is dropped beside an on-ramp, near the street the
-/// ramp leaves (Harvey's path, day 23): it lands on the street, never on
-/// the ramp, so nobody is led onto the slip road.
+/// A footpath whose end is dropped on an on-ramp, near the street the ramp
+/// leaves (Harvey's path, day 23): it lands on the street, not on the ramp,
+/// so nobody is led onto the slip road.
 #[test]
 fn a_path_end_never_lands_on_a_ramp() {
     let mut w = flat_world();
@@ -279,15 +279,17 @@ fn a_path_end_never_lands_on_a_ramp() {
     w.add_diamond(Vec2::new(0.0, -220.0), Vec2::new(0.0, 220.0), (2, 2)).unwrap();
     w.try_implement().unwrap();
     // The westbound on-ramp leaves the south terminal westwards; drop a
-    // path end right on it a little way from the terminal.
-    let (sid, _, q) = w.roads.nearest_where(Vec2::new(-30.0, -60.0), |s| s.ramp).unwrap();
+    // path end right on it 7 m from the street.
+    let (sid, _, q) = w.roads.nearest_where(Vec2::new(-7.0, -64.0), |s| s.ramp).unwrap();
     assert!(w.roads.segment(sid).ramp);
     w.add_path(&[Vec2::new(-200.0, -150.0), q]);
     for (i, _) in w.roads.nodes.iter().enumerate() {
         let segs = alive_at(&w, NodeId(i as u32));
         let path_end = segs.iter().filter(|&&s| w.roads.segment(s).kind == RoadKind::Path).count() == 1;
         if path_end && segs.len() > 1 {
-            assert!(!segs.iter().any(|&s| w.roads.segment(s).is_motorway()), "a path joins a ramp or the highway at {:?}", w.roads.node(NodeId(i as u32)).pos);
+            // On the street (its node may be the ramps' terminal), never on
+            // a ramp alone.
+            assert!(segs.iter().any(|&s| { let x = w.roads.segment(s); x.is_street() && !x.is_motorway() }), "a path joins only a ramp or the highway at {:?}", w.roads.node(NodeId(i as u32)).pos);
         }
     }
     check_diamond(&w);
