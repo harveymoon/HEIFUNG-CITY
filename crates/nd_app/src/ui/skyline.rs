@@ -144,7 +144,7 @@ pub fn page(ui: &mut egui::Ui, p: &mut UiCtx) {
 
     heading(ui, "The tallest buildings");
     let ranking = w.skyline_ranking();
-    pane::table(ui, "skyline_rank", &["#", "building", "height", "class", "developer", ""], |ui| {
+    pane::table(ui, "skyline_rank", &["#", "building", "height", "class", "owner", ""], |ui| {
         for (i, (id, h)) in ranking.iter().take(15).enumerate() {
             let b = &w.buildings[*id];
             ui.label(egui::RichText::new(format!("{}", i + 1)).color(if i == 0 { GOLD } else { IVORY }));

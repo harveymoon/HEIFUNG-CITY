@@ -194,7 +194,7 @@ fn aviation(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32) {
     let f = &c.frame;
     let step = (poly.len() / 4).max(1);
     for p in poly.iter().step_by(step) {
-        f.bx(g, Glow, p.x, y, p.y, Vec3::splat(0.6), c.palette.aviation_light);
+        f.bx(g, Glow, p.x, y, p.y, Vec3::splat(1.4), c.palette.aviation_light);
     }
 }
 
@@ -213,10 +213,10 @@ fn mast(g: &mut Geometry, c: &Ctx, p: Vec2, r0: f32, y0: f32, y1: f32, neon: [f3
         let yb = y0 + (y1 - y0) * b;
         loft(g, f, Metal, &ngon(p.x, p.y, ra, 8, PI / 8.0), &ngon(p.x, p.y, rb, 8, PI / 8.0), ya, yb, steel);
         if rings && k > 0 {
-            g.part(Glow).frustum(&f.poly3(&ngon(p.x, p.y, ra + 0.08, 8, PI / 8.0), ya - 0.25), &f.poly3(&ngon(p.x, p.y, ra + 0.08, 8, PI / 8.0), ya + 0.25), rgba(neon));
+            g.part(Glow).frustum(&f.poly3(&ngon(p.x, p.y, ra + 0.35, 8, PI / 8.0), ya - 0.9), &f.poly3(&ngon(p.x, p.y, ra + 0.35, 8, PI / 8.0), ya + 0.9), rgba(neon));
         }
     }
-    f.bx(g, Glow, p.x, y1 + 0.5, p.y, Vec3::splat(0.9), c.palette.aviation_light);
+    f.bx(g, Glow, p.x, y1 + 1.0, p.y, Vec3::splat(2.0), c.palette.aviation_light);
     f.bx(g, Glow, p.x, y0 + (y1 - y0) * 0.5, p.y, Vec3::splat(r0 * 0.6 + 0.5), c.palette.aviation_light);
 }
 
@@ -236,7 +236,7 @@ fn deco_spire(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Ve
     let f = &c.frame;
     let pal = c.palette;
     let top = t.height * (1.0 - spire_share(t.design));
-    let hw = (t.height / 15.0).clamp(10.0, room * 0.92);
+    let hw = (t.height / 15.0).max(10.0).min(room * 0.92);
     let hd = hw * 0.78;
     let stone = mix(pal.stone, [0.88, 0.84, 0.74], 0.45);
     let pier = mul(stone, 1.12);
@@ -262,14 +262,14 @@ fn deco_spire(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Ve
         lights(g, c, rng, &plan, y0, y1);
         // The setback: a stone cornice and gold neon along its edge.
         cornice(g, c, &plan, y1, 0.9, 0.35, Stone, mul(stone, 0.92));
-        glow_outline(g, c, &offset_poly(&plan, -0.3), y1 + 0.6, 0.22, gold);
+        glow_outline(g, c, &offset_poly(&plan, -0.5), y1 + 1.0, 1.0, gold);
         if i == tiers.len() - 1 {
             // The crown: floodlit fins and a lantern.
             for face in c.faces(&plan) {
                 let n = ((face.len / 2.6) as i32).max(2);
                 for j in 0..n {
                     let tt = -face.len * 0.45 + (j as f32 + 0.5) * face.len * 0.9 / n as f32;
-                    face.decal(g, f, Glow, tt, y1 - (y1 - y0) * 0.3, 0.3, 0.5, (y1 - y0) * 0.55, mul(gold, 0.9));
+                    face.decal(g, f, Glow, tt, y1 - (y1 - y0) * 0.3, 0.3, 1.3, (y1 - y0) * 0.55, mul(gold, 1.2));
                 }
             }
         }
@@ -280,7 +280,8 @@ fn deco_spire(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Ve
     // A stepped lantern and the mast.
     let lantern = rect(seat.x, seat.y, hw * 0.24, hd * 0.24 / 0.78 * 0.78);
     extrude(g, f, Stone, &lantern, top, top + 8.0, stone);
-    glow_outline(g, c, &lantern, top + 8.2, 0.2, gold);
+    glow_outline(g, c, &lantern, top + 8.4, 0.8, gold);
+    extrude(g, f, Glow, &scale_poly(&lantern, 1.02), top + 2.0, top + 5.0, mul(gold, 0.8));
     let _ = last;
     mast(g, c, seat, (hw * 0.12).clamp(0.8, 3.0), top + 8.0, t.height, gold, true);
 }
@@ -303,7 +304,7 @@ fn bundled(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2,
     let f = &c.frame;
     let pal = c.palette;
     let core_top = t.height * (1.0 - spire_share(t.design));
-    let reach = (t.height / 11.0).clamp(12.0, room * 0.95);
+    let reach = (t.height / 11.0).max(12.0).min(room * 0.95);
     let half_w = (reach * 0.3).max(4.0);
     let glass = mix(pick(rng, &pal.glass), [0.75, 0.82, 0.9], 0.35);
     let steel = mul(pal.steel, 1.2);
@@ -337,9 +338,9 @@ fn bundled(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2,
                 let (a, b) = (nose[k], nose[k + 1]);
                 let m = (a + b) * 0.5;
                 let yaw = (b - a).y.atan2((b - a).x);
-                f.bx_yaw(g, Glow, m.x, y1 + 0.3, m.y, Vec3::new(a.distance(b), 0.25, 0.25), neon, yaw);
+                f.bx_yaw(g, Glow, m.x, y1 + 0.5, m.y, Vec3::new(a.distance(b), 0.9, 0.9), neon, yaw);
             }
-            f.bx(g, Glow, plan[2].lerp(plan[3], 0.5).x, y1 + 0.8, plan[2].lerp(plan[3], 0.5).y, Vec3::splat(0.5), pal.aviation_light);
+            f.bx(g, Glow, plan[2].lerp(plan[3], 0.5).x, y1 + 0.8, plan[2].lerp(plan[3], 0.5).y, Vec3::splat(1.3), pal.aviation_light);
             y0 = y1;
         }
         // Vertical fins up the wing's nose.
@@ -349,8 +350,9 @@ fn bundled(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2,
     }
     aviation_up(g, c, &core, base, core_top);
     // The crown: the core's last floors lit, then the needle.
-    glow_outline(g, c, &core, core_top - 2.0, 0.3, neon);
-    glow_outline(g, c, &core, core_top - 6.0, 0.2, mul(neon, 0.7));
+    glow_outline(g, c, &offset_poly(&core, -0.3), core_top - 2.0, 1.2, neon);
+    glow_outline(g, c, &offset_poly(&core, -0.3), core_top - 7.0, 0.8, mul(neon, 0.8));
+    glow_outline(g, c, &offset_poly(&core, -0.3), core_top - 12.0, 0.6, mul(neon, 0.6));
     let cap = ngon(seat.x, seat.y, half_w * 0.8, 6, rot);
     loft(g, f, Glass, &core, &cap, core_top, core_top + 10.0, mul(glass, 1.1));
     mast(g, c, seat, (half_w * 0.55).clamp(1.0, 5.0), core_top + 10.0, t.height, neon, true);
@@ -363,7 +365,7 @@ fn twist(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2, r
     let f = &c.frame;
     let pal = c.palette;
     let top = t.height * (1.0 - spire_share(t.design));
-    let r = (t.height / 15.0).clamp(10.0, room * 0.95);
+    let r = (t.height / 15.0).max(10.0).min(room * 0.95);
     let glass = mix(pick(rng, &pal.glass), [0.6, 0.8, 0.95], 0.25);
     let band = mul(pal.steel, 1.25);
     let turn = (0.9 + 0.8 * nd_sim::towers::unit(t.seed ^ 0x7715)) * if t.seed & 1 == 0 { 1.0 } else { -1.0 };
@@ -396,7 +398,7 @@ fn twist(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2, r
     // A halo crown: rings of neon over an open frame, and a short mast.
     for (i, k) in [0.0f32, 6.0, 12.0].iter().enumerate() {
         let ring = scale_poly(&prev, 1.0 - 0.08 * i as f32);
-        glow_outline(g, c, &ring, top + k + 0.6, 0.35, if i == 1 { mul(neon, 0.8) } else { neon });
+        glow_outline(g, c, &offset_poly(&ring, -0.3), top + k + 0.6, 1.1, if i == 1 { mul(neon, 0.8) } else { neon });
         for p in ring.iter().step_by(2) {
             f.bx(g, Metal, p.x, top + k * 0.5 + 3.0, p.y, Vec3::new(0.35, 6.0 + k, 0.35), band);
         }
@@ -411,7 +413,7 @@ fn needle(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2, 
     let f = &c.frame;
     let pal = c.palette;
     let top = t.height * (1.0 - spire_share(t.design));
-    let r = (t.height / 16.0).clamp(9.0, room * 0.95);
+    let r = (t.height / 16.0).max(9.0).min(room * 0.95);
     let glass = mix(pick(rng, &pal.glass), [0.3, 0.35, 0.45], 0.4);
     let edge = mul(neon, 1.0);
     let rot = PI / 4.0 + (t.seed % 7) as f32 * 0.05;
@@ -436,16 +438,17 @@ fn needle(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2, 
         // Neon edges up the chamfered corners.
         for i in (0..8).step_by(2) {
             let (a, b) = (prev[i], next[i]);
-            g.part(Glow).tube(f.at2(a, y0), f.at2(b, y0 + sh), 0.18, 4, rgba(edge));
+            g.part(Glow).tube(f.at2(a, y0), f.at2(b, y0 + sh), 0.5, 4, rgba(edge));
         }
         prev = next;
     }
     aviation_up(g, c, &plan(0.0), base, top);
-    glow_outline(g, c, &prev, top + 0.3, 0.35, neon);
+    glow_outline(g, c, &offset_poly(&prev, -0.3), top + 0.6, 1.2, neon);
     // A sky deck: a glass drum with a lit rim, then the long needle.
     let deck = ngon(seat.x, seat.y, inradius(&prev).max(3.0) * 1.15, 12, 0.0);
     extrude(g, f, Glass, &deck, top, top + 7.0, mul(glass, 1.3));
-    glow_outline(g, c, &deck, top + 7.2, 0.3, mul(pal.window_cold, 1.0));
+    glow_outline(g, c, &offset_poly(&deck, -0.3), top + 7.4, 1.0, mul(pal.window_cold, 1.2));
+    extrude(g, f, Glow, &scale_poly(&deck, 0.98), top + 2.0, top + 4.5, mul(neon, 0.7));
     mast(g, c, seat, (r * 0.14).clamp(0.8, 3.5), top + 7.0, t.height, neon, true);
 }
 
@@ -492,10 +495,10 @@ pub fn site(g: &mut Geometry, c: &Ctx, t: &Tower, progress: f32) {
     }
     // The tower's plan at the base, as the design will have it.
     let r = match t.design {
-        TowerDesign::DecoSpire => (t.height / 15.0).clamp(10.0, room * 0.92),
-        TowerDesign::Bundled => (t.height / 11.0).clamp(12.0, room * 0.95) * 0.75,
-        TowerDesign::Twist => (t.height / 15.0).clamp(10.0, room * 0.95),
-        TowerDesign::Needle => (t.height / 16.0).clamp(9.0, room * 0.95),
+        TowerDesign::DecoSpire => (t.height / 15.0).max(10.0).min(room * 0.92),
+        TowerDesign::Bundled => (t.height / 11.0).max(12.0).min(room * 0.95) * 0.75,
+        TowerDesign::Twist => (t.height / 15.0).max(10.0).min(room * 0.95),
+        TowerDesign::Needle => (t.height / 16.0).max(9.0).min(room * 0.95),
     };
     let plan = match t.design {
         TowerDesign::DecoSpire => rect(seat.x, seat.y, r, r * 0.78),
@@ -576,5 +579,50 @@ fn slabs(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y0: f32, y1: f32, concrete: [
     for p in poly {
         let q = p.lerp(poly_center(poly), 0.06);
         f.bx(g, Concrete, q.x, (y0 + y1) * 0.5, q.y, Vec3::new(0.9, (y1 - y0).max(0.1), 0.9), mul(concrete, 0.9));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::*;
+    use nd_sim::towers::{Tower, TowerDesign};
+
+    fn lots() -> Vec<Lot> {
+        use nd_sim::roads::RoadNetwork;
+        use nd_sim::zoning::{generate_lots, Zone, ZoneId};
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-300.0, -40.0), Vec2::new(300.0, -40.0)], 1, 1);
+        roads.add_polyline(&[Vec2::new(-120.0, -300.0), Vec2::new(60.0, 300.0)], 1, 1);
+        let zone = Zone { polygon: vec![Vec2::new(-100.0, -20.0), Vec2::new(100.0, -20.0), Vec2::new(100.0, 120.0), Vec2::new(-100.0, 120.0)], land_use: LandUse::Commercial };
+        let mut lots = slotmap::SlotMap::with_key();
+        generate_lots(ZoneId::default(), &zone, &roads, &mut lots, &[]);
+        lots.values().filter(|l| l.usable()).cloned().collect()
+    }
+
+    /// Every form on every plot (slivers and triangles among them), built
+    /// and at every stage of its site, without a panic, inside a sane
+    /// height, with lights and a red light at the top.
+    #[test]
+    fn every_design_draws_on_any_plot() {
+        let rules = BuildingRules::default();
+        let pal = Palette::default();
+        for lot in lots() {
+            for (i, design) in TowerDesign::ALL.into_iter().enumerate() {
+                for height in [160.0f32, 420.0, 820.0] {
+                    let t = Tower { height, design, seed: 7 + i as u64, started_day: 0, topped_out_day: None, record_bid: false };
+                    let floors = t.floors();
+                    for progress in [None, Some(0.0), Some(0.02), Some(0.3), Some(0.7), Some(0.99)] {
+                        let ex = Extras { tower: Some(t), form: Some(nd_sim::estate::Form::Tower), construction: progress, dynamic_lights: true, ..Extras::default() };
+                        let g = generate_building(&lot, LandUse::Commercial, floors, Tier::High, 1.0, 3, &rules, &pal, &ex);
+                        let top = g.parts.iter().flat_map(|m| m.positions.iter().map(|p| p[1])).fold(0.0f32, f32::max);
+                        assert!(top.is_finite() && top < height + 80.0, "{design:?} {height} {progress:?}: top {top}");
+                        if progress.is_none() {
+                            assert!(top > height * 0.95, "{design:?} reaches its height: {top} of {height}");
+                            assert!(g.triangle_count() < 400_000, "{design:?} {height}: {} triangles", g.triangle_count());
+                        }
+                    }
+                }
+            }
+        }
     }
 }

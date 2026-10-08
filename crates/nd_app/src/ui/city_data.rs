@@ -531,7 +531,7 @@ mod tests {
                 assert_eq!(Page::parse(None, t.key(), Some(p.key())), Ok(*p));
             }
         }
-        assert_eq!(seen.len(), 19);
+        assert_eq!(seen.len(), 20);
     }
 
     /// The old window names still find their pages.
