@@ -180,7 +180,9 @@ impl World {
                 && b.rail.is_none()
                 && b.port.is_none()
                 && !b.is_parking()
-                && !b.is_derelict();
+                && !b.is_derelict()
+                // [supertall] no drone pad on a 400 m roof
+                && b.plot.tower.is_none();
             if !tower {
                 continue;
             }

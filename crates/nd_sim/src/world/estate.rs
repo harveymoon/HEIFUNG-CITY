@@ -182,7 +182,9 @@ impl World {
             return Some(Cow::Borrowed(lot));
         }
         let others: Vec<&Lot> = b.plot.extra_lots.iter().filter_map(|l| self.lots.get(*l)).collect();
-        Some(match merged_lot(lot, &others) {
+        // [supertall] A tower's assembled site may be a little less compact.
+        let slack = if b.plot.form == Some(Form::Tower) { crate::towers::TOWER_HULL_SLACK } else { MERGE_HULL_SLACK };
+        Some(match merged_lot_within(lot, &others, slack) {
             Some(m) => Cow::Owned(m),
             None => Cow::Borrowed(lot),
         })
@@ -305,6 +307,10 @@ impl World {
             return false;
         }
         if b.plot.form.is_some_and(|f| f.owner_occupied()) || !b.plot.pending_lots.is_empty() {
+            return false;
+        }
+        // [supertall] A league tower is nobody's teardown.
+        if b.plot.tower.is_some() {
             return false;
         }
         if let Some((_, o)) = self.owner_of(bid) {
@@ -704,7 +710,7 @@ impl World {
         let Some(b) = self.buildings.get(bid) else { return false };
         let Some(kind) = b.business.as_ref().map(|z| z.kind) else { return false };
         let Some(form) = expansion_form(kind) else { return false };
-        if !b.plot.pending_lots.is_empty() || b.construction.is_some() {
+        if !b.plot.pending_lots.is_empty() || b.construction.is_some() || b.plot.tower.is_some() {
             return false;
         }
         let ours = b.plot.lots(b.lot);
@@ -735,6 +741,7 @@ impl World {
         let new_floors = match form {
             Form::MegaHotel => floors.max(5) + 3,
             Form::Museum => floors.clamp(2, 4) + 1,
+            Form::Tower => floors,
             _ if lu == LandUse::Industrial => floors,
             _ => floors + 1,
         };
@@ -891,6 +898,8 @@ impl World {
     /// A building finished: whoever bought it moves in; a mansion starts
     /// its NIMBY pull. Called from `finish_construction`.
     pub(super) fn estate_finished(&mut self, bid: BuildingId) {
+        // [supertall] A league tower tops out: the record book and the news.
+        self.tower_finished(bid);
         let Some(b) = self.buildings.get(bid) else { return };
         let (form, buyer) = (b.plot.form, b.plot.buyer);
         if let Some(hid) = buyer.filter(|h| self.households.contains_key(*h)) {

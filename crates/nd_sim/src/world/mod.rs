@@ -91,6 +91,8 @@ pub use plant_groups::{PlantGroup, PlantJoin, PlantPreview};
 mod plant_groups_tests;
 #[cfg(test)]
 mod plant_scale_tests;
+mod scenes;
+pub mod tow_moves;
 #[cfg(test)]
 mod blocker_tests;
 mod services;
@@ -122,7 +124,12 @@ mod tests;
 mod gameplay_tests;
 mod taxes;
 pub use taxes::TaxRow;
+pub use towers::{TowerOrder, TowerSite};
 mod tolls;
+/// [supertall] The skyscraper league on the `World`.
+mod towers;
+#[cfg(test)]
+mod towers_tests;
 mod taxis;
 #[cfg(test)]
 mod taxi_tests;
@@ -142,6 +149,7 @@ mod fishing;
 mod fishing_tests;
 // [events] street races and warehouse raves; road wear and maintenance
 mod nights;
+mod moto;
 mod roadworks;
 mod relocate;
 mod rich;
@@ -158,6 +166,10 @@ pub use fishing::BoatReport;
 pub use dirt::{CleanupJob, CleanupQuote, DirtyNeighbour, ADJACENCY_OUTPUT_HIT, ADJACENCY_VALUE_HIT, CLEANUP_COST, CLEANUP_MAX_RADIUS, CLEANUP_MIN_RADIUS};
 // [road-inspect] the road inspector's traffic counts, live read-out and Repair now
 mod road_inspect;
+pub mod grounds;
+pub use grounds::{PathLink, PathLinks};
+#[cfg(test)]
+mod grounds_tests;
 #[cfg(test)]
 mod events_tests;
 #[cfg(test)]
@@ -597,6 +609,11 @@ pub struct World {
     /// with an empty one.
     #[serde(default)]
     pub estate: crate::estate::EstateMarket,
+    /// [supertall] The skyscraper league: height limits, the tower
+    /// developers' money, the record book and its news (`crate::towers`,
+    /// `world/towers.rs`). Old saves load with no limit and no records.
+    #[serde(default)]
+    pub skyline: crate::towers::Skyline,
     /// [economy] Business pressure: the city's needs, read daily, and the
     /// trades opened to meet them (`crate::pressure`, `world/pressure.rs`).
     #[serde(default)]
@@ -640,6 +657,11 @@ pub struct World {
     /// reads it; old saves load with none and set one up when first used.
     #[serde(default)]
     pub committee: crate::committee::Committee,
+    /// [park-paths] Player paths drawn to a park's (or other grounds')
+    /// walkways, and what they are joined to (`world/grounds.rs`). Old
+    /// saves load with none.
+    #[serde(default)]
+    pub path_links: grounds::PathLinks,
     /// [megacorp] Mega-corporations and universities: brands, HQs, campus
     /// annexes, students and the player's rules (`crate::corp`,
     /// `world/corp.rs`, `world/campus.rs`). Old saves load with none.
@@ -735,6 +757,7 @@ impl World {
             pillar_gaps: Vec::new(),
             crosswalks: Default::default(),
             estate: Default::default(),
+            skyline: Default::default(),
             pressure: Default::default(),
             scene: Default::default(),
             identity: Default::default(),
@@ -745,6 +768,7 @@ impl World {
             social: Default::default(),
             social_concern: None,
             committee: Default::default(),
+            path_links: Default::default(),
             corps: Default::default(),
         };
         w.estate.pressure = crate::estate::Pressure::new(half + 200.0);
@@ -767,9 +791,12 @@ impl World {
     }
 
     fn rebuild_walk(&mut self) {
-        crate::park::plan_parks(&mut self.lots, &self.land_value);
-        self.walk = WalkGraph::build(&self.roads, &self.lots, &self.land_value, self.walk.version + 1);
-        self.walk.apply_upgrades(&self.crosswalks.rules, &self.roads);
+        // [park-paths] Paths just drawn to a park's gate are joined to it,
+        // and the parks lay their walkways out to meet them.
+        self.note_path_links();
+        let links: Vec<Vec2> = self.path_links.links.iter().map(|l| l.pos).collect();
+        crate::park::plan_parks_with(&mut self.lots, &self.land_value, &links);
+        self.build_walk_graph();
     }
 
     pub fn to_ron(&self) -> Result<String, ron::Error> {
@@ -820,14 +847,15 @@ impl World {
         // must survive a load), so they are only planned again when a save
         // from before parks were serialised has park lots without one.
         if self.lots.values().any(|l| l.land_use == LandUse::Park && l.polygon.len() >= 3 && l.park.is_none()) {
-            crate::park::plan_parks(&mut self.lots, &self.land_value);
+            let links: Vec<Vec2> = self.path_links.links.iter().map(|l| l.pos).collect();
+            crate::park::plan_parks_with(&mut self.lots, &self.land_value, &links);
         }
         // [free-placement] A save from before city ground: the lots under
         // the city's buildings leave their zones (nothing moves).
         self.settle_city_ground(&[], false);
-        self.walk = WalkGraph::build(&self.roads, &self.lots, &self.land_value, self.walk.version + 1);
-        // [tools] Footbridges and push buttons on the crossings.
-        self.walk.apply_upgrades(&self.crosswalks.rules, &self.roads);
+        // [tools] Footbridges and push buttons on the crossings; [park-paths]
+        // paths joined to the parks.
+        self.build_walk_graph();
         // [tools] Columns for raised roads from a save without them.
         self.pillars_after_load();
         for (_, car) in self.traffic.reattach_cars() {
@@ -1046,6 +1074,12 @@ impl World {
         // built round it, and a busy, well-served block may rise a few
         // floors over its neighbours (`estate::Pressure::floors_at`).
         let cap = if self.pressure_active() { self.pressure_floors(lot_id).min(neighbours.saturating_add(crate::estate::PRESSURE_OVER_NEIGHBOURS)).max(1) } else { neighbours };
+        // [supertall] The city's or the district's height limit holds
+        // ordinary buildings too.
+        let cap = match self.height_limit_at(lot_id) {
+            Some(m) => cap.min((m / crate::towers::FLOOR_M[lot.land_use.index()]).floor().clamp(1.0, 255.0) as u8),
+            None => cap,
+        };
         // [tools] Under a deck spanning over the lot: what fits beneath it.
         match self.deck_cap(lot_id) {
             Some(deck) => cap.min(deck),
@@ -1091,6 +1125,8 @@ impl World {
     }
 
     pub fn tick(&mut self, minds: &mut dyn MindProvider) {
+        // [park-paths] A path whose park went since the last tick is cut back.
+        self.settle_path_links();
         self.clock.advance();
         let tick = self.clock.tick;
         if self.clock.minute_of_day() == 0 {
@@ -1127,6 +1163,8 @@ impl World {
             crate::prof!("close_day_record", self.close_day_record(record));
             // [land] Buyouts, branches, merges, McMansions, billionaires.
             self.daily_estate();
+            // [supertall] Tower developers' money, and maybe a new project.
+            crate::prof!("daily_towers", self.daily_towers());
             // [megacorp] Mega-corps and campuses grow.
             crate::prof!("daily_corps", self.daily_corps());
         }
@@ -1283,6 +1321,8 @@ impl World {
     }
 
     fn step_traffic(&mut self) {
+        // [fire-scene] What stands at the roadside for the traffic to pass.
+        self.set_traffic_scenes();
         let arrived = self.traffic.step(self.config.traffic_seconds_per_tick, self.config.traffic_substeps);
         // [tolls] Before anyone arriving is taken off the road.
         self.settle_tolls();

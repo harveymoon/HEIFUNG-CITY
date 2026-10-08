@@ -68,6 +68,8 @@ pub mod takeover;
 pub mod tax;
 /// [tolls] Toll booths on the roads.
 pub mod tolls;
+/// [supertall] The skyscraper league: skyscrapers, supertalls and megatalls.
+pub mod towers;
 /// [taxis] Taxi companies, their cabs and the riders who hail them.
 pub mod taxi;
 pub mod society;
@@ -100,7 +102,7 @@ pub use mind::{Decision, Intent, MindContext, MindProvider};
 pub use plan::{Gesture, GestureId, Plan, PlanPreview, Project};
 pub use roads::{NodeId, RoadNetwork, Segment, SegmentId};
 pub use traffic::{Car, CarId, Cargo, LaneId, Traffic};
-pub use walk::WalkGraph;
+pub use walk::{GroundsJunction, GroundsKind, WalkGraph};
 pub use vehicle::{BodyType, CarEvent, CarPlace, Errand, Livery, OwnedCar, ParkKind, ParkSpot, VehicleClass, VehicleId, VehicleModel, Vehicles};
 pub use bots::{BotId, Bots, DeliveryBot};
 pub use power::{Battery, BatteryKind, PlantSite, PowerPlantKind, PowerStats, Weather};
@@ -117,6 +119,7 @@ pub use world::{GridAsset, PlacementSite, PlantGroup, PlantJoin, PlantPreview, P
 pub use world::{ApproachView, Blocker, CrossingView, IntersectionView, PhaseView, ProjectCheck};
 /// [camera]
 pub use world::{Gift, Holding, GIFT_AMOUNT};
+pub use world::{TowerOrder, TowerSite};
 pub use zoning::{LandUse, Lot, LotId, Parcel, ParcelKey, ParcelMap, Zone, ZoneId};
 
 pub use glam::Vec2;

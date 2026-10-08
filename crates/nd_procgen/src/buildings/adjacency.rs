@@ -463,6 +463,7 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
         // [megacorp] the owner's brand; a campus annex's own look
         brand: world.brand_mark(id),
         annex: b.annex,
+        tower: b.plot.tower,
         ..Extras::default()
     }
 }

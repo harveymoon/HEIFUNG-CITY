@@ -82,6 +82,15 @@ pub const DISPATCH_ON_CALL: u64 = 8;
 pub const DISPATCH_REGIONAL: u64 = 20;
 /// Ticks of work on scene: a crime, a patient (fires burn until out).
 pub const CRIME_WORK: f32 = 25.0;
+/// [murder] Minutes the police spend on a homicide scene: the
+/// investigation (the scene held, witnesses, the neighbours asked).
+pub const HOMICIDE_WORK: f32 = 150.0;
+/// [murder] Chance the investigation ends in an arrest: the killer known
+/// (a feud), or a stranger (an offender's job gone wrong).
+pub const HOMICIDE_ARREST_KNOWN: f32 = 0.8;
+pub const HOMICIDE_ARREST_UNKNOWN: f32 = 0.45;
+/// [murder] Days in jail for a killing (`SENTENCE_DAYS` for the rest).
+pub const HOMICIDE_SENTENCE_DAYS: (u64, u64) = (12, 20);
 pub const MEDICAL_WORK: f32 = 12.0;
 /// [driving] Ticks the police spend at a crash scene, by the case: someone
 /// hurt (statements, the scene kept while the paramedics work); a driver to
@@ -155,6 +164,17 @@ pub const PULL_UP: f32 = 25.0;
 /// building is lost): the crew shuts the water off, rolls the hoses, lowers
 /// the ladder and climbs back in before it drives home.
 pub const PACK_UP_TICKS: u64 = 3;
+/// [fire-scene] A fire burning this hard once the first engine is called
+/// (or on scene) sounds a second alarm: a second engine with its own crew.
+pub const SECOND_ALARM: f32 = 0.6;
+/// [fire-scene] Where an engine pulls up: at least this far (m) from the
+/// junctions at either end of the street, and this far behind the first
+/// engine for a second.
+pub const SCENE_JUNCTION_CLEAR: f32 = 18.0;
+pub const SECOND_ENGINE_GAP: f32 = 11.0;
+/// [fire-scene] An engine's half length and half width, for where it
+/// stands at the kerb and what traffic steers round.
+pub const ENGINE_HALF: (f32, f32) = (4.1, 1.4);
 /// A kind counts as saturated while it has no unit free; the report raises
 /// an alert after this many saturated minutes in a day.
 pub const SATURATED_ALERT_MIN: u32 = 60;
@@ -886,6 +906,11 @@ pub enum CrimeKind {
     StreetRace,
     /// [events] A noise complaint about a warehouse rave.
     Rave,
+    /// [murder] Someone was killed: a long investigation on scene
+    /// (`HOMICIDE_WORK`), a likelier arrest when the killer is known.
+    Homicide,
+    /// [moto] A motorbike pack tearing through town.
+    RecklessRiding,
 }
 
 impl CrimeKind {
@@ -893,7 +918,7 @@ impl CrimeKind {
 
     /// Robbery and assault put people in danger: they jump the queue.
     pub fn violent(self) -> bool {
-        matches!(self, CrimeKind::Robbery | CrimeKind::Assault)
+        matches!(self, CrimeKind::Robbery | CrimeKind::Assault | CrimeKind::Homicide)
     }
 
     pub fn label(self) -> &'static str {
@@ -905,6 +930,8 @@ impl CrimeKind {
             CrimeKind::StreetTakeover => "street takeover",
             CrimeKind::StreetRace => "street race",
             CrimeKind::Rave => "illegal rave",
+            CrimeKind::Homicide => "homicide",
+            CrimeKind::RecklessRiding => "reckless riding",
         }
     }
 }
@@ -1063,6 +1090,16 @@ pub struct Incident {
     /// [emergency] The car chase, if the suspect fled by car.
     #[serde(default)]
     pub chase: Option<ChaseRecord>,
+    /// [fire-scene] A big fire's second engine (the second alarm), and
+    /// when it was sounded (only once a fire).
+    #[serde(default)]
+    pub second: Option<UnitId>,
+    #[serde(default)]
+    pub second_alarm: Option<u64>,
+    /// [murder] The police know who did it (a feud everyone knew about):
+    /// a homicide arrest is likelier.
+    #[serde(default)]
+    pub known_suspect: bool,
 }
 
 impl Incident {
@@ -1286,6 +1323,9 @@ pub struct ServiceStats {
     pub chases_lost_today: u32,
     pub chases_total: u32,
     pub chases_tagged_total: u32,
+    /// [fire-scene] Second alarms answered by a second engine.
+    pub second_alarms_today: u32,
+    pub second_alarms_total: u32,
 }
 
 /// Why calls went unanswered.

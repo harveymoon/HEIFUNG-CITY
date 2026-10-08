@@ -182,6 +182,23 @@ Citizens are rendered from their simulated positions every frame.
   cars ring it and the flashiest spin donuts in tyre smoke, a crowd walks over, a neighbour calls
   the police; police on scene break it up (some arrests, cars impounded), else it ends after
   45-80 minutes and everyone leaves in convoy.
+- **Moto packs** (`world/moto.rs`, `street_events::MotoPack`): from day 10, at 20:00 on 25% of
+  evenings with no takeover planned (by a hash of the seed and the day), when the takeover crew
+  has members who ride a two-wheeler, a pack ride is planned 20-150 minutes later. Up to four
+  local gang members on bikes ride to a road end at the city's edge (the meet) and wait at the
+  kerb; once they are in (or after 45 minutes) a club of 3-7 riders from out of town rolls in
+  there as a column, two abreast where the street has two lanes in, and the locals pull out
+  into it. They all take the same route through town: past the nightlife nearest the middle of
+  town (else the lot nearest it), then off the map at the farthest road end. Riders drive a pack
+  profile (`moto_profile`: 1.3-1.45x the limit, close, hard on the throttle, overtaking and
+  changing lanes through ordinary traffic); the leader runs every light, the rest a late red
+  now and then. The column stays loose but together: a rider more than 60 m ahead of the pack
+  eases off, one as far behind opens up. Locals peel off home once through the nightlife.
+  Three ticks after they set off a witness calls it in on most rides (`CrimeKind::RecklessRiding`);
+  a police car on patrol, or the one sent, that comes within 150 m of a local rider gives chase
+  (60%, once a ride) with the chase system, the rider fleeing on their bike. Riders are marked
+  `GangRole::pack` ("MOTO PACK" in the car inspector, `moto_pack` in the API); the ride is in the
+  news and the event record (reds run, chase). API: `incident {kind: "moto_pack", at}`.
 - **Street races** (`nd_sim::street_events`, `world/nights.rs`): a young town has no scene, so
   neither races nor raves happen on their own before day 10 (`SCENE_FROM_DAY`; the API forces one
   any time). From then, at 23:00, on 35% of nights when three or more locals aged 18-42 at home
@@ -618,9 +635,25 @@ Citizens are rendered from their simulated positions every frame.
   150 m of home hold a permit. A parking enforcement office (Services, three tiers) sends officers,
   two a car, round the streets within its reach from 07:00 to 21:00: a car over its limit gets a 35
   ticket (household to treasury, ledger "parking fines"); an hour later, or at once if parked where
-  parking is banned, the tow truck is called. A company in town sends a truck only when one is free; the company from out of town has four on the city's roads at most, the other jobs wait their turn (uncapped, a city short of parking had 170 tow trucks in its jam). Tow companies are businesses on industrial land
+  parking is banned, the tow truck is called. *Clamps* (`[clamp]`): a car still over its limit when
+  the grace runs out is clamped instead (`ParkSpot::booted`, the orange clamp) with a 90 clamp fine
+  (`CLAMP_FINE`) and the tow booked for six hours later (`CLAMP_LIMIT`, `TowReason::Unpaid`); the owner
+  pays it by phone when awake and able (35% an hour by a hash, 07:00-23:00, the household's money),
+  the clamp comes off and the tow is cancelled; unpaid (or broke) the truck comes when the time runs
+  out and the fine is owed at the pound on top of the tow fee. The inspector shows the time left;
+  `report`'s parking block counts clamps, fines paid and cars towed unpaid. A car parked where
+  parking is banned is still towed at once. A company in town sends a truck only when one is free; the company from out of town has four on the city's roads at most, the other jobs wait their turn (uncapped, a city short of parking had 170 tow trucks in its jam). Tow companies are businesses on industrial land
   (logistics); the nearest with a truck free sends one, which hooks the car where it stands and
-  carries it to its pound (drawn on the truck as wrecks are). With none in town a company from out
+  carries it to its pound (drawn on the truck as wrecks are). *Tow trucks at work* (`world/tow_moves.rs`):
+  a car on a one-way street whose legal way in is a long loop (150 m+ longer than coming in from the
+  far end, and at most 160 m up the street) is reached from the far junction: the truck leaves the
+  lanes there and creeps up the kerb side against the traffic at 3 m/s with its ambers flashing
+  (`StuntKind::Manoeuvre`), stops nose to nose with the car, hooks it and turns round in the street
+  to leave the right way. A truck that has hooked its car (or a wreck) facing away from its pound or
+  yard turns round in the road (a slow arc onto the other lane) when that is 120 m+ shorter than
+  driving on. Traffic meeting a truck on such a move slows and eases round it, or waits where there
+  is no room (the scene zones, `traffic/scene.rs`); `enforcement` counts `contraflow_total` and
+  `u_turns_total`. With none in town a company from out
   of town comes in from the edge 45 minutes later and charges 180 instead of 80. The owner pays the
   fee plus 15 a day and goes to fetch the car (a pound out of town delivers it), or after three days
   it is auctioned and driven away. Crash wrecks go to the same companies. The player places parking
@@ -736,6 +769,20 @@ Citizens are rendered from their simulated positions every frame.
   sends the visitor to the nearest park with room within 600 m, or home. Strangers who sat
   side by side for 15 minutes or more may get talking (10% plus 30% of their mean sociability)
   and become acquaintances (`PlaceBook::meet`), as regulars of a bar do.
+  **Paths into parks** (`world/grounds.rs`, `walk::add_grounds`, Cities: Skylines style): every
+  park, and the grounds of a stadium, a monument's plaza, a school's campus and a railway station,
+  shows gates on its outer edges (one per 40 m of edge, 1.6 m outside it; none on edges shared
+  with more of the park, in the water, or within a road end's snap reach of a road). With the Path
+  tool they show as small amber rings (green where a path is joined); a path point near one snaps
+  onto it, the pointer ring and the gate glow green. A path built with an end on a gate is joined
+  there (`World::path_links`, saved): the park takes the end as an entrance and lays a walkway from
+  its hub out to it (`park::plan_parks_with`), and the walk graph gets an edge from the path's end
+  to the grounds' nearest walk node (a park path, or the lot loop of a stadium or station), so
+  people walk from the path into the park. The path stays the player's gesture. When the grounds go
+  (rezoned, bulldozed, the lot re-cut away: nothing within 4 m of the end) the join is dropped and
+  the path cut back to its last point before that end, or removed when fewer than two points are
+  left, with a toast (`SimEvent::PathTrimmed`); no walk edge is left dangling. Other ground with a
+  walkway network (a public beach) registers through `walk::Grounds`.
 - **Construction** (`buildings::Construction`): nothing pops into existence. `build_on` opens
   a site with a build time of (1 + 0.4 × floors) days scaled by tier, clamped to 1–12 days;
   it offers no homes and a temporary crew of jobs that the unemployed commute to. Progress
@@ -1108,7 +1155,7 @@ Citizens are rendered from their simulated positions every frame.
   calls it in after a few minutes; the dispatcher (a worker at a dispatch centre who is at the desk:
   2 min; staffed but nobody in: 8; no centre: 20, the regional line) sends the nearest idle unit whose
   station has the crew; the vehicle is a car of the traffic model, drives over the lanes, parks on
-  scene, works (engines knock fire down 0.012 a minute; crimes 25 min, patients 12), resolves (fire
+  scene, works (engines knock fire down 0.012 a minute each; crimes 25 min, patients 12), resolves (fire
   out, arrest 75 % if quick else 40 %, patient driven to the nearest hospital with a free bed for
   6-24 h) and drives home. Unanswered crimes go unsolved after 3 h, patients recover alone after 8 h;
   unanswered fires grow, jump to buildings on touching lots (4 % x intensity per neighbour every 20 min) and burn a building down at condition 0.08,
@@ -1125,6 +1172,20 @@ Citizens are rendered from their simulated positions every frame.
   taken, unit and whether it came from out of town, fee, fire damage per building), the last 500
   resolved ones on file, shown live in City Data's Services › Emergencies and by the `incidents` API command.
   Services draw from their own random stream so the rest of the simulation is not perturbed.
+- **Fire engines at the scene** (`world/scenes.rs`, `traffic/scene.rs`): an engine is sent to the
+  burning building's street, clear of the junctions at either end (18 m, `SCENE_JUNCTION_CLEAR`), up
+  whichever side is quicker, and on arrival pulls in to the kerb on the building's side (crossing
+  over if it came up the far side), its body flush with the road's edge and nose the way it came, so the crew climbs out on the pavement side; the hose crew stands between
+  the engine and the building, never on the road side (`fire_scene.rs`, `CREW_OFF_ENGINE`). (It used
+  to stand where its route ended, mid-lane and sometimes in the junction, with traffic driving
+  through it.) The world tells the traffic each tick what stands at the roadside (`Traffic::scenes`):
+  drivers coming up to an engine at work crawl past at 4.5 m/s and ease sideways round its body (up
+  to 1.9 m, a little over the centre line), or stop short where there is no room; sirens are not
+  held. *Second alarm*: a fire still burning at 0.6 or more once its first engine is on the way
+  sounds a second alarm (once a fire): the nearest other free engine comes with its own crew,
+  pulls in 11 m behind the first (`SECOND_ENGINE_GAP`) and each engine at work knocks the fire down,
+  so two put it out twice as fast. Either may arrive first; if the first engine is lost the second
+  takes the fire over. Counted in `ServiceStats::second_alarms_*`.
 - **Lights and sirens, and car chases** (`traffic/siren.rs`, `world/chases.rs`): drivers up to
   60 m ahead of an emergency vehicle on its lane or the next lane of its route (and oncoming drivers
   on a lane it overtakes in) pull right, onto the kerb edge from a kerb lane, and slow to a crawl,
@@ -1225,7 +1286,16 @@ Citizens are rendered from their simulated positions every frame.
   `report_crime`; the services arrest. A jail term ends a career at 20% + 8% a day served, an early
   release from a police cell at 5% (and emboldens); released offenders who strike again make the
   reoffending rate. Offences leave decaying heat at hot spots, which take land value off the block
-  and frighten the neighbours (mood; rich households near heat 4+ leave). *Homelessness*: a
+  and frighten the neighbours (mood; rich households near heat 4+ leave). *Homicide*
+  (`World::murder`): rare. Besides the 6% of offenders' assaults, a fight between enemies (social
+  layer, `Bond::Enemy`) ends in a death 3% of the time (a hash of the pair and the minute, no
+  draws). Before the victim leaves the city their household and friends remember it (mood down a
+  lot, a heavy Safety concern), the place's regulars and the neighbours within 150 m are shaken, a
+  sober line goes in the city news ("Police are investigating") and the spot takes triple heat. It
+  is reported as a `Homicide` (a violent crime, ahead in the queue): the police hold the scene for a
+  150-minute investigation, then arrest 80% of the time when the killer is known (a feud), 45%
+  when not (an offender), for 12-20 days in jail; an arrest is in the news and the grieving hear.
+  No gore: nothing is drawn but the police at work. *Homelessness*: a
   household evicted with nowhere cheaper and no money stays on the street 70% of the time if any
   land is cheap (value < 0.36): camps of up to six households on cheap pavements, vacant lots and
   unzoned parcels, or (with a car) an RV or van at the kerb; they eat charity meals, walk back to
@@ -1241,6 +1311,36 @@ Citizens are rendered from their simulated positions every frame.
   19 offenders and about 10 offences a day, 103 of ~350 buildings overflowing, the hauler with 88
   clients; with a police station, jail, dispatch and depot, 11 offenders, 5 arrests, nothing
   overflowing.
+- **The skyline league** (`nd_sim::towers`, `world/towers.rs`, [supertall]): towers far above the
+  ordinary growth, in three classes: skyscrapers (150 m up), supertalls (300 m up), megatalls (600 m
+  up). Tower developers (fictional firms) gather capital daily with the city (900 per person, more
+  with demand for offices or homes; one more firm per 5,000 people, four at most). Once a city has
+  1,200 people, with at most one project rising (plus one per 10,000 people) and three days since the
+  last, a 40% roll a day lets the richest break ground. Sites: commercial or residential plots on land
+  worth 0.6+, pressure for 9+ floors and 50+ floors of neighbours within 160 m, under every height
+  limit, scored by value x (pressure floors + neighbour floors / 12). The height: 6-24% over the
+  tallest standing or rising (the record) when demand is 0.2+ and the money (height² x $900 plus the
+  plots) is there, else a skyscraper under the record; never over the limit or what the town can
+  carry (110 m + 0.05 m a person). The site: a supertall needs two plots and 1,500 m², a megatall
+  three and 2,600 m² (a skyscraper one and 700 m²): touching plots of its land use are bought, vacant
+  first then cheapest, never the city's, a home bought outright, a billionaire's, a merged building
+  or another tower, as long as they make one compact block (hull within 18%). The grown buildings
+  come down (residents move with a memory), the plots join as their rubble goes, and the podium and
+  tower go up over 12 + height/15 days (a month for a skyscraper, two for a megatall). The sim counts
+  floors at 4 m (88% of the height: the spire is not floors); homes (2 a floor) or offices (6 a floor)
+  count all of the first 40 floors, half of the next 80 and a quarter above, capped at 900 homes or
+  1,500 jobs; power is the usual per floor x 1.25 (lifts, cooling). A finished tower lifts the land
+  round it (up to 460 m, by its height). Topping out writes the record book when it is the tallest and
+  a line of news either way ("Kestrel Group tops out Meridian Spire at 412 m, the city's tallest").
+  Towers are never bought out, refitted to a district's look, retiered into a redevelopment, given a
+  drone pad or demolished for a failed tenant (offices take the floors). Height limits: the city's
+  (City Data, City, Skyline), a district's (the District tool) and 120 m within 350 m of a vertiport
+  the player placed; they hold ordinary buildings too (`height_cap`). Drawn by
+  `nd_procgen::buildings::supertall`: a stone podium with a glass lobby and roof garden, and one of
+  four forms: a stepped Art Deco spire, bundled tubes on a Y plan stepping back in a spiral to a
+  needle (the Burj type), a twisting tower with a halo crown, a needle tower with neon edges; gold or
+  neon on every setback, lit crowns, red aviation lights every 90 m. The site shows the concrete core
+  leading, bare floor plates, glazing behind, netting and a jump crane on the core.
 - **Districts** (`nd_sim::districts`, `world/districts.rs`, the District tool 9): named areas painted
   over the map with a brush or a polygon, as in Cities: Skylines, on a 16 m raster of district ids
   (saved run-length encoded). Painting applies at once, outside projects: it moves no road, lot or

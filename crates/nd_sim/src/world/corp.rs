@@ -461,12 +461,46 @@ impl World {
 
     // ── headquarters ───────────────────────────────────────────────────────
 
-    /// Floors for an HQ on `lot`: tall, above what the pressure would build,
-    /// within the pressure ceiling.
-    ///
-    /// Hook for feat/supertall: once the league towers are on main, an HQ in
-    /// a city whose height limit allows it should be ordered as a league
-    /// tower (`World::start_tower` with the corp as developer) instead.
+    /// [supertall] Where the city allows one (1,200 people, a downtown
+    /// tower site, a height limit over 150 m there), the HQ is a league
+    /// tower: a supertall (320 m) if the limit lets it, else as tall a
+    /// skyscraper as it does. Built by a tower developer on the corp's
+    /// order and handed to the corp. `None` when the city does not allow it.
+    pub(super) fn hq_league_tower(&mut self, ci: usize) -> Option<BuildingId> {
+        use crate::towers::{SKYSCRAPER_M, SUPERTALL_M, TOWER_MAX_M, TOWER_MIN_POP};
+        if self.citizens.len() < TOWER_MIN_POP {
+            return None;
+        }
+        let site = self.tower_sites(false).into_iter().find(|t| self.lots.get(t.lot).is_some_and(|l| l.land_use == LandUse::Commercial))?;
+        let limit = site.limit.unwrap_or(TOWER_MAX_M);
+        let height = if limit >= SUPERTALL_M + 20.0 {
+            SUPERTALL_M + 20.0
+        } else if limit >= SKYSCRAPER_M {
+            limit.min(240.0)
+        } else {
+            return None;
+        };
+        let near = self.lots.get(site.lot).map(|l| l.center);
+        let bid = self.start_tower(super::TowerOrder { height: Some(height), design: None, near, force: true }).ok()?;
+        let (owner, name) = (self.corps.corps[ci].owner, self.corps.corps[ci].brand.name.clone());
+        let short = name.split_whitespace().next().unwrap_or(&name).to_string();
+        self.give_to(bid, owner, 0.0);
+        let jobs = self.buildings[bid].planned_capacity().1;
+        let b = &mut self.buildings[bid];
+        b.name = format!("{short} Tower");
+        if b.land_use == LandUse::Commercial {
+            b.business = Some(Business::new(BusinessKind::Office, jobs));
+        }
+        self.corps.corps[ci].hq = Some(bid);
+        let tick = self.clock.tick;
+        let pos = self.lots.get(self.buildings[bid].lot).map_or(Vec2::ZERO, |l| l.center);
+        self.social.push_news(tick, format!("🏗 {name} broke ground on {short} Tower, a {height:.0} m headquarters."), pos, None);
+        self.events.push(SimEvent::BuildingChanged(bid));
+        Some(bid)
+    }
+
+    /// Floors for an HQ on `lot` when it is not a league tower: tall, above
+    /// what the pressure would build, within the pressure ceiling.
     pub fn hq_floors(&self, lot: LotId) -> u8 {
         let base = self.height_cap(lot).max(self.pressure_floors(lot));
         base.saturating_add(10).clamp(HQ_MIN_FLOORS, HQ_MAX_FLOORS)
@@ -531,6 +565,9 @@ impl World {
     /// Build the corp's headquarters downtown: buy the site, pull down what
     /// stands, raise an office tower in its name. The HQ's building.
     pub(super) fn build_hq(&mut self, ci: usize) -> Option<BuildingId> {
+        if let Some(t) = self.hq_league_tower(ci) {
+            return Some(t);
+        }
         let plots = self.hq_site()?;
         let (owner, name) = {
             let c = &self.corps.corps[ci];

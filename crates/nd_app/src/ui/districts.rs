@@ -109,11 +109,21 @@ fn policy_editor(ui: &mut egui::Ui, sim: &mut Sim, id: u16, rename: &mut String)
         if ui.checkbox(&mut historic, "Historic").on_hover_text("Freeze growth: no upgrades, no redevelopment; new homes and shops in old brick; draws visitors").changed() {
             change.historic = Some(historic);
         }
+        // [supertall] The district's height limit.
+        let mut capped = d.height_limit.is_some();
+        if ui.checkbox(&mut capped, "Height limit").on_hover_text("Nothing new rises over it here: towers and ordinary buildings alike (standing ones stay)").changed() {
+            change.height_limit = Some(capped.then_some(d.height_limit.unwrap_or(120.0)));
+        }
+        if let Some(mut m) = d.height_limit {
+            if ui.add(egui::DragValue::new(&mut m).range(10.0..=1000.0).speed(5.0).suffix(" m")).changed() {
+                change.height_limit = Some(Some(m));
+            }
+        }
         if ui.button("Delete").on_hover_text("Remove the district and its policies (buildings stay)").clicked() {
             sim.world.remove_district(id);
         }
     });
-    if change.name.is_some() || change.residential.is_some() || change.commercial.is_some() || change.industry.is_some() || change.historic.is_some() {
+    if change.name.is_some() || change.residential.is_some() || change.commercial.is_some() || change.industry.is_some() || change.historic.is_some() || change.height_limit.is_some() {
         let _ = sim.world.set_district_policy(id, change);
     }
 }

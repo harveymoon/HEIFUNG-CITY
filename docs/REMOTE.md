@@ -293,13 +293,14 @@ them a land use.
 | Command | Fields |
 | --- | --- |
 | `plan` | none: every gesture in the effective plan (id, kind, points, lanes, land_use), `pending_gesture_ids`, project steps |
-| `add_road` | `points` `[[x,y],...]` or `[[x,y,level],...]` (2+; level metres above the ground, negative below), `elevation` (a level for every point without its own, or a list), `tunnel` (default level -8 m), `kind` street (default) / path / rail, `lanes_fwd`, `lanes_bwd` (0..4, default 1/1, streets only), `curved`, `snap` (default true: points snap to a road at about their level; an end with no level of its own snaps to any road and takes its level), `implement`. Reply adds `grade_warnings` (too steep, crossing at an awkward height). Refused (400) if it would meet the railway at a level neither at grade nor clear of it, e.g. a portal ramp part way down: the error says how far to lower or raise it |
+| `add_road` | `points` `[[x,y],...]` or `[[x,y,level],...]` (2+; level metres above the ground, negative below), `elevation` (a level for every point without its own, or a list), `tunnel` (default level -8 m), `kind` street (default) / path / rail, `lanes_fwd`, `lanes_bwd` (0..4, default 1/1, streets only), `curved`, `snap` (default true: points snap to a road at about their level; an end with no level of its own snaps to any road and takes its level; a path end also snaps onto a park or grounds gate nearer than any road), `from_junction` / `to_junction` (paths only: start or end on that `grounds_junctions` index), `implement`. Reply adds `joined` (paths: the gates its ends are on, see `grounds_junctions`) and `grade_warnings` (too steep, crossing at an awkward height). Refused (400) if it would meet the railway at a level neither at grade nor clear of it, e.g. a portal ramp part way down: the error says how far to lower or raise it |
 | `add_roundabout` | `center` `[x,y]` (or `pos` / `x`,`y`; snaps onto a junction within 12 m or a street within 6 m), `radius` 12..120 m to the ring centreline or `diameter` 24..240 (default the tool's), `lanes` 1 / 2 / 3, `implement`. Reply adds `roundabout` {`center`, `radius`, `diameter`, `lanes`, `joins`, `cuts_roads` (gesture ids), `takes_buildings`}; refused where it would partly overlap another roundabout (nesting one wholly inside another, with a lane and pavement between, is fine) |
 | `add_interchange` (alias `interchange`) | `from`, `to` `[x,y]`: the cross street's ends, one each side of the highway; `lanes_fwd`, `lanes_bwd` (default 2, 2), `check` (only plan it), `implement` | [interchange] a diamond interchange as the Road tool's Interchange preset lays it: the street under the highway (kept when one runs along the line already) and four ramps meeting it at a signalled junction each side. Reply adds `gesture_ids`, `interchange` {`kept_street`, `terminals`, `crossings`, `roads` [{points, lanes_fwd, lanes_bwd}]}, or `refused` {`why`, `at`} (the spot). `tool {preset: "Interchange"}` picks the preset; with `draw` [[a],[b]] its hologram and `interchange_refusal` show. Dev: `rebuild_roads` lays the roads again from the plan with the current rules |
 | `add_zone` | `polygon` `[[x,y],...]` (3+), `land_use` residential / commercial / industrial / entertainment / civic / park, `implement` |
 | `bulldoze` | `gesture_id`, `implement`; or `building` (id): a city building (plant, battery, service, attraction, depot, metro station, cargo hub, city parking) goes at once and its lot goes back to the zoning plan (or unzoned ground). Grown buildings, stations, yards and docks refuse |
 | `paint` | `land_use` (or `none` to unzone), then `at` `[x,y]` + `radius` (the brush), `rect` `[[x0,y0],[x1,y1]]` (the marquee) or `polygon`; `industry` (industrial only: auto / farming / oil / refinery / manufacturing / logistics / fishing / tech), `implement`. Reply: `painted`, `touched`, `refused` (`[{parcel, center, why}]`), `gesture_id`; `no_parcel` (why, when `at` touched no parcel: water, too far from a road, past the buildable land) |
 | `project` | `action`: list / new / switch / rename / delete / park / start / implement / undo / redo / discard; `id` (default the active project) or `name` to pick one; `name` for new and rename. Reply: `projects` (`id`, `name`, `active`, `steps`, `redo`, `conflicts` `[{gesture, project}]`, `shared_parcels`), `warnings` from the last implement |
+| `grounds_junctions` (or `park_junctions`) | optional `lot`, `kind` (park / plaza / stadium / campus / station / beach), `near` `[x,y]` + `radius` (default 150 m). [park-paths] The gates on the edges of parks and other public grounds (a stadium, a monument's plaza, a school's campus, a station) where a path may join their walkways: the Path tool's snap rings. Reply `junctions` `[{index, pos, kind, label, lot, attached, walk_node, gesture_id}]` (`attached`: a path is joined there, `walk_node` the grounds' walk node it joins, `gesture_id` the path) and `links` (every joined path end). A path whose end is on a gate when its project is implemented is joined: the park lays a walkway out to meet it and walkers route through. When the grounds go (rezoned, bulldozed, re-cut away) the path is cut back to its last point before that end, or removed if fewer than two points are left; the event log gets `PathTrimmed` {`gesture_id`, `removed`, `grounds`} and the game a toast |
 | `find` `{what: "parcels"}` | per parcel: `index`, `center`, `area`, `land_use` (built), `planned`, `landlocked`, `street`, `rough`, `accepts`, `lot`; filter `land_use`, `zoned`, `landlocked` |
 
 ```json
@@ -309,6 +310,8 @@ them a land use.
 {"cmd": "project", "action": "new", "name": "Harbour"}
 {"cmd": "paint", "land_use": "industrial", "industry": "logistics", "rect": [[300, 10], [420, 60]]}
 {"cmd": "project", "action": "switch", "id": 1}
+{"cmd": "grounds_junctions", "kind": "park", "near": [120, 40]}
+{"cmd": "add_road", "kind": "path", "points": [[150, 220], [0, 0]], "to_junction": 3, "implement": true}
 ```
 
 Reply: `gesture_id`, `implemented`, `project` (`id`, `name`, `steps`, `redo`), `projects`, `plan_version`.
@@ -738,7 +741,7 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
 - [land] building `land`: `owner` ({id, name, properties, spent, detail {kind: firm (business) |
   developer | household | elite (citizen)}}, or {kind: independent}), `sale_price`, `lots` (every
   plot it spans, primary first), `merged`, `pending_lots` (bought, still clearing), `form`
-  (mcmansion | mansion | merged | mega_hotel | museum | null), `pressure` and `pressure_floors` at
+  (mcmansion | mansion | merged | mega_hotel | museum | tower | null), `pressure` and `pressure_floors` at
   its lot, `height_cap`, `wants_to_expand`, `owned_with` (every property of its owner)
 
 ### Land market
@@ -798,6 +801,40 @@ A University is placed like any service: `place {kind: "university", tier, x, y}
 {"cmd": "corps", "action": "promote", "building": "88:1"}
 {"cmd": "corps", "action": "rules", "max_share": 0.05, "levy": 0.1}
 {"cmd": "campus", "action": "grow", "days": 10}
+```
+
+### Skyline: skyscrapers, supertalls, megatalls [supertall]
+
+League towers rise over everything the ordinary growth builds: skyscrapers from 150 m, supertalls
+from 300 m, megatalls from 600 m. A tower developer (fictional firm) with the money breaks ground on
+the densest, dearest downtown land (commercial or residential, land value 0.6+, busy streets, 50+
+floors of neighbours within 160 m) in a city of 1,200 people or more; a supertall needs two plots
+(1,500 m²), a megatall three (2,600 m²), so it buys out the grown buildings next door (never the
+city's, a home bought outright, a billionaire's or another tower) and builds a podium and tower over
+one to three months. A record attempt aims 6-24% over the tallest standing or rising when demand and
+money allow; the city's height limit, a district's and the clear approach round a vertiport (120 m
+within 350 m) hold it.
+
+`skyline {action?}` (also `towers`; `height_limit {limit}` sets the limit):
+
+| action | fields | reply |
+| --- | --- | --- |
+| `summary` (default) | `limit_rows` (default 15) | `limit_m`, `vertiport_clearance`, `classes_m`, `record_m`, `tallest_planned_m`, `population_cap_m`, `demand`, `classes` (standing/rising per class), `towers` (id, name, height_m, league, design, developer, lots, pos, under_construction, progress, rank, land_use, homes, jobs), `ranking` (tallest standing: rank, id, name, height_m, league, pos), `records` (newest first), `news`, `developers` (name, capital, pull, owner), `totals` |
+| `limit` | `limit` (m; null or 0: none), `vertiport_clearance` bool | the settings |
+| `sites` | `force` bool | where a tower could go: lot, pos, score, value, neighbour_floors, limit_m |
+| `start` | `height` (m), `design` deco_spire / bundled / twist / needle, `at` [x,y], `force` (default true: skip the money, demand, population and downtown tests; limits and site rules hold), `rich` | dev: break ground now; `tower` row, or why not |
+| `finish` | | dev: clear the bought plots and top out every tower site now |
+| `fund` | `amount` (default 1e9) | dev: money to every tower developer |
+
+Building `inspect` carries `tower`: `height_m`, `rank`, `rank_label`, `height_limit_m`, and for a
+league tower `league`, `design`, `design_label`, `developer`, `lots`, `pending_lots`, `site_m2`,
+`floors`, `started_day`, `topped_out_day`, `record_bid`, `progress`, `days_left`. City Data's City,
+Skyline page (`city_data {tab: "city", sub: "skyline"}`) shows the same.
+
+```json
+{"cmd": "skyline"}
+{"cmd": "skyline", "action": "start", "height": 520, "design": "bundled", "at": [0, 0]}
+{"cmd": "height_limit", "limit": 300}
 ```
 
 ### Selection and the player's UI
@@ -1265,7 +1302,9 @@ minutes. `incidents {kind}` filters by fire, crime or
 medical (crash victims are medical incidents).
 `incident {kind: "crash", car? | at?: [x, y], speed? (m/s, default 25 = written off)}` crashes a car
 (the next tick turns it into injuries and 911 calls); `incident {kind: "takeover", at?: [x, y]}`
-starts a street takeover at the junction nearest `at`.
+starts a street takeover at the junction nearest `at`; `incident {kind: "moto_pack", at?: [x, y]}`
+starts a moto pack ride meeting at the road end nearest `at` (car `inspect` shows
+`takeover.moto_pack: true` for its riders).
 `incident {kind: "chase"}` stages a car chase: a free police car comes for someone whose car is
 parked near home (a robbery on the record) and they run for it; `chases` in `incidents` follows it.
 
@@ -1353,11 +1392,11 @@ Reply:
 
 | action | fields | reply |
 | --- | --- | --- |
-| `list` (default) | | `districts`: id, name, policy, residential, commercial, industry, historic, landmark, area_m2, centroid, lots, vacant_lots, buildings, under_construction, by_land_use, by_tier, in_look (buildings already in the district's look), homes, residents, jobs, workers, businesses_open, hotels, beds, tourists_staying, land_value_avg, rent_avg, attraction |
+| `list` (default) | | `districts`: id, name, policy, residential, commercial, industry, historic, height_limit, landmark, area_m2, centroid, lots, vacant_lots, buildings, under_construction, by_land_use, by_tier, in_look (buildings already in the district's look), homes, residents, jobs, workers, businesses_open, hotels, beds, tourists_staying, land_value_avg, rent_avg, attraction |
 | `create` | `name` optional (generated otherwise) | `id`, `name` |
 | `paint` | `id` (or `district`: id or name; none starts a new district, `new_name`), then `at` `[x,y]` + `radius` (default 40), `polygon`, or `rect` `[[x0,y0],[x1,y1]]`; `erase` | `id`, `cells_changed` (16 m cells) |
 | `erase` | `at` + `radius`, `polygon` or `rect` | `cells_changed` |
-| `set` | `id` / `district`; any of `residential` kowloon / suburban / eco / none, `commercial` neon_strip / tech_campus / night_market / tourist / none, `industry` farming / oil / refinery / manufacturing / logistics / fishing / tech / none, `historic` bool, `rename` | `id`, `name`, `policy` |
+| `set` | `id` / `district`; any of `residential` kowloon / suburban / eco / none, `commercial` neon_strip / tech_campus / night_market / tourist / none, `industry` farming / oil / refinery / manufacturing / logistics / fishing / tech / none, `historic` bool, `height_limit` (m; null or 0 lifts it), `rename` | `id`, `name`, `policy` |
 | `remove` | `id` / `district` | `removed` |
 | `at` | `at` `[x,y]` | the district there |
 | `select` | `id` / `district` (none clears) | the District tool's selected district |

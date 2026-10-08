@@ -1280,6 +1280,8 @@ impl World {
         self.events.push(SimEvent::RoadsChanged);
         self.events.push(SimEvent::LotsChanged);
         self.events.push(SimEvent::PlanChanged);
+        // [park-paths] Paths whose park went with these works are cut back.
+        self.settle_path_links();
     }
 
     /// Lanes for the new roads, with every vehicle carried across them
