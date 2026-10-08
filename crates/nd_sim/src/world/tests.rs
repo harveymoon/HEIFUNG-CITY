@@ -2807,3 +2807,45 @@ fn solar_and_wind_scale_with_their_lot_at_a_steady_cost_per_megawatt() {
     // [freight] Hydro and tidal are capped like the thermal plants.
     assert_eq!(PowerPlantKind::Hydro.size_scale(10_000.0), PowerPlantKind::Hydro.size_range().1);
 }
+
+/// [review] The services', society's and air's own random streams are
+/// saved: a loaded game draws exactly what the running one would (they
+/// were reseeded from the seed and the load tick). A save from before
+/// them still loads and reseeds. The saving itself is on
+/// fix/review-sim-core (288900c, `rng_save::opt`, outside `world/`): run
+/// this once both branches are in.
+#[test]
+#[ignore = "needs fix/review-sim-core 288900c (the streams saved); un-ignore after both merge"]
+fn the_per_system_random_streams_survive_a_save() {
+    use rand::Rng;
+    let mut w = flat_world();
+    w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    let _ = w.srng().random::<u64>();
+    let _ = w.society_rng().random::<u64>();
+    let _ = w.arng().random::<u64>();
+    for _ in 0..90 {
+        w.tick(&mut IdleMind);
+    }
+    let text = w.to_ron().unwrap();
+    let mut b = World::from_ron(&text).unwrap();
+    let draws = |w: &mut World| -> Vec<u64> { (0..4).flat_map(|_| [w.srng().random::<u64>(), w.society_rng().random::<u64>(), w.arng().random::<u64>()]).collect() };
+    assert_eq!(draws(&mut w), draws(&mut b), "the streams carry on where they were");
+    // An older save has none of them: it loads and reseeds.
+    assert!(text.contains("rng: Some("), "the streams are in the save");
+    let mut out = String::new();
+    let mut depth = 0i32;
+    for l in text.lines() {
+        if depth == 0 && l.trim_start().starts_with("rng: Some(") {
+            depth = l.matches('(').count() as i32 - l.matches(')').count() as i32;
+            continue;
+        }
+        if depth > 0 {
+            depth += l.matches('(').count() as i32 - l.matches(')').count() as i32;
+            continue;
+        }
+        out.push_str(l);
+        out.push('\n');
+    }
+    let mut c = World::from_ron(&out).expect("a save without the streams loads");
+    let _ = c.srng().random::<u64>();
+}

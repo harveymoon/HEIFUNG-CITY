@@ -6,7 +6,7 @@
 
 use crate::roads::{RoadNetwork, SegmentId};
 use crate::traffic::{CarId, LaneNetwork};
-use std::collections::HashMap;
+
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use slotmap::{new_key_type, SlotMap};
@@ -257,9 +257,10 @@ pub struct Transit {
     /// Each bus's last stop and the tick it pulled in there, to time the
     /// leg to the next one ([`StopStats::leg_minutes`]). A bus missing here
     /// has not served a stop yet: it is still on its way from the depot.
-    /// Not saved: a load loses one leg's timing per bus, nothing more.
-    #[serde(skip)]
-    pub departures: HashMap<CarId, (usize, u64)>,
+    /// [review] Saved (ordered, so the save is stable), so a loaded game
+    /// times the leg under way as the running one does.
+    #[serde(default)]
+    pub departures: std::collections::BTreeMap<CarId, (usize, u64)>,
 }
 
 impl Transit {

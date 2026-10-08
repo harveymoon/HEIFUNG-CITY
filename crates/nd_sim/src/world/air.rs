@@ -27,7 +27,7 @@ fn critical(age: u8, incident: u32) -> bool {
 }
 
 impl World {
-    fn arng(&mut self) -> &mut SimRng {
+    pub(super) fn arng(&mut self) -> &mut SimRng {
         let (seed, tick) = (self.config.seed, self.clock.tick);
         self.air.rng.get_or_insert_with(|| crate::rng_for(seed ^ 0xA1_2D_0E, tick))
     }
