@@ -138,10 +138,13 @@ metres; "scene" means the flat-map test scene.
 26. **Wooden utility poles and their wires on viaduct and bridge decks.** scene (-450, -100).
     **Fixed**: they stand in the ground. Pair `18_overpass_poles`.
 27. **Bridge deck ends show as concrete blocks on the bank** (no abutment, the deck slab simply
-    stops). coastal_river (-493, -170) low view. **Not fixed**: needs an abutment model; noted.
+    stops). coastal_river (-493, -170) low view. **Fixed** [fix/interchange]: a bank seat under the deck's end and
+    stepped wing walls back into the embankment (`terrain::abutment`). Pair
+    `interchange_2026-10-08/05_bridge_abutment`.
 28. **A ramp's gore on a highway bridge is a thin asphalt sheet over the water** with no deck
-    under it, seen from below. coastal_river (-452, 411). **Not fixed**: rare; the bridge deck is
-    per segment and the gore lies between two of them.
+    under it, seen from below. coastal_river (-452, 411). **Partly** [fix/interchange]: where a ramp's
+    own bridge piece leaves a highway bridge node, deck now fills under the gore between the two
+    (`terrain::waterworks`); at this spot the gore itself lies on the bank, so it looks the same.
 29. **Cutting walls of a tunnel ramp stand about 3.4 m behind the pavement** with a strip of
     earth between (river_valley (60, -500)). Reads as a cutting; **not changed** (the offset
     hides the terrain grid's slope; `tunnel_works`).
@@ -163,11 +166,14 @@ metres; "scene" means the flat-map test scene.
     volumetric haze near the camera (`render/haze.rs`, `look.rs`). **Not fixed**: renderer, not
     road geometry; worth its own look. Medium is fine.
 34. **Signal arms on a steep approach hang low** (3.2 to 3.5 m over the lanes): the post is set
-    at the junction's height and the road rises beside it. **Not fixed**: would need the arm set
-    on the approach's height.
+    at the junction's height and the road rises beside it. **Fixed** [fix/interchange]: the pole
+    grows and the arm and heads rise by how far the road under the heads stands above the
+    junction. Pair `interchange_2026-10-08/06_signal_arm_slope`.
 35. **At a sharp fork the painted stop line is beyond the crosswalk set-back while cars stop at
     the junction's radius** (nd_sim lanes end there), metres inside it. Signals moved to the
-    painted line. **Not fixed**: traffic, not drawing.
+    painted line. **Fixed** [fix/interchange]: an arm's lanes end `walk::stop_back` further out
+    (`LaneNetwork::stop_back`), 4 m in from the painted line as at any junction; arrows and signals
+    follow. Test `cars_stop_at_a_sharp_forks_painted_line`.
 36. **Busy junctions of near-parallel arms** (coastal_river (-353, -456)): much better (no lines
     through, corners fitted) but still two zebras side by side and a wide asphalt area. **Partly.**
 

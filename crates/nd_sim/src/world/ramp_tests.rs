@@ -121,7 +121,10 @@ fn ramp_limits_ease_from_highway_to_street_speed() {
     assert!(on_ramp.len() >= 3, "the route uses the ramp: {limits:?}");
     // Starts near highway speed, ends at street speed, never rises, and
     // no step between one lane's end and the next one's start.
-    assert!(on_ramp[0].0 > HIGHWAY_SPEED - 3.0, "{on_ramp:?}");
+    // [interchange] The ramp's bend after its lead is rounded (a curve of
+    // short pieces, `ease_ramp_ends`), whose radius caps the limit sooner
+    // than the single kink did: drivers ease off from the taper on.
+    assert!(on_ramp[0].0 > HIGHWAY_SPEED - 6.0, "{on_ramp:?}");
     assert!(on_ramp.last().unwrap().1 < 14.0, "{on_ramp:?}");
     for w2 in on_ramp.windows(2) {
         assert!(w2[1].0 <= w2[0].1 + 0.5 && (w2[1].0 - w2[0].1).abs() < 3.0, "a step in the limit: {on_ramp:?}");
@@ -137,7 +140,7 @@ fn ramp_limits_ease_from_highway_to_street_speed() {
     let (route, ..) = net.find_route(fs, from, ts, to).expect("on-ramp route");
     let on_ramp: Vec<(f32, f32)> = route_limits(&w, &route).iter().filter(|l| l.2).map(|l| (l.0, l.1)).collect();
     assert!(on_ramp.len() >= 3);
-    assert!(on_ramp[0].0 < 14.0 && on_ramp.last().unwrap().1 > HIGHWAY_SPEED - 3.0, "{on_ramp:?}");
+    assert!(on_ramp[0].0 < 14.0 && on_ramp.last().unwrap().1 > HIGHWAY_SPEED - 6.0, "{on_ramp:?}");
     for l in &on_ramp {
         assert!(l.1 >= l.0 - 0.01, "the limit rises along the on-ramp: {on_ramp:?}");
     }

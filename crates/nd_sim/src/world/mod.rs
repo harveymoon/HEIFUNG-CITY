@@ -52,6 +52,10 @@ mod districts;
 mod districts_tests;
 mod driving;
 mod industry;
+// [interchange] The Road tool's Interchange preset: diamond interchanges.
+pub mod interchange;
+#[cfg(test)]
+mod interchange_tests;
 mod market;
 mod parking;
 mod pedestrians;
