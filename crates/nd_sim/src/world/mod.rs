@@ -126,6 +126,7 @@ mod pressure;
 mod waterfront;
 // [events] street races and warehouse raves; road wear and maintenance
 mod nights;
+mod moto;
 mod roadworks;
 mod dirt;
 pub use dirt::{DirtyNeighbour, ADJACENCY_OUTPUT_HIT, ADJACENCY_VALUE_HIT};

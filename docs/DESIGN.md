@@ -182,6 +182,23 @@ Citizens are rendered from their simulated positions every frame.
   cars ring it and the flashiest spin donuts in tyre smoke, a crowd walks over, a neighbour calls
   the police; police on scene break it up (some arrests, cars impounded), else it ends after
   45-80 minutes and everyone leaves in convoy.
+- **Moto packs** (`world/moto.rs`, `street_events::MotoPack`): from day 10, at 20:00 on 25% of
+  evenings with no takeover planned (by a hash of the seed and the day), when the takeover crew
+  has members who ride a two-wheeler, a pack ride is planned 20-150 minutes later. Up to four
+  local gang members on bikes ride to a road end at the city's edge (the meet) and wait at the
+  kerb; once they are in (or after 45 minutes) a club of 3-7 riders from out of town rolls in
+  there as a column, two abreast where the street has two lanes in, and the locals pull out
+  into it. They all take the same route through town: past the nightlife nearest the middle of
+  town (else the lot nearest it), then off the map at the farthest road end. Riders drive a pack
+  profile (`moto_profile`: 1.3-1.45x the limit, close, hard on the throttle, overtaking and
+  changing lanes through ordinary traffic); the leader runs every light, the rest a late red
+  now and then. The column stays loose but together: a rider more than 60 m ahead of the pack
+  eases off, one as far behind opens up. Locals peel off home once through the nightlife.
+  Three ticks after they set off a witness calls it in on most rides (`CrimeKind::RecklessRiding`);
+  a police car on patrol, or the one sent, that comes within 150 m of a local rider gives chase
+  (60%, once a ride) with the chase system, the rider fleeing on their bike. Riders are marked
+  `GangRole::pack` ("MOTO PACK" in the car inspector, `moto_pack` in the API); the ride is in the
+  news and the event record (reds run, chase). API: `incident {kind: "moto_pack", at}`.
 - **Street races** (`nd_sim::street_events`, `world/nights.rs`): a young town has no scene, so
   neither races nor raves happen on their own before day 10 (`SCENE_FROM_DAY`; the API forces one
   any time). From then, at 23:00, on 35% of nights when three or more locals aged 18-42 at home

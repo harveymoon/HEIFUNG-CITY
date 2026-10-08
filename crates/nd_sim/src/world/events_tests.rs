@@ -379,3 +379,129 @@ fn wear_and_tonights_events_survive_a_save() {
     assert_eq!((a.id, a.cars.len(), a.stage), (b.id, b.cars.len(), b.stage));
     assert_eq!(back.street_events.news.len(), w.street_events.news.len());
 }
+
+// ── [moto] packs ───────────────────────────────────────────────────────────
+
+/// Gang members on motorbikes: the race crew's wild young, on two wheels.
+fn bikers(w: &mut World, who: &[CitizenId]) {
+    racers(w, who);
+    for &c in who {
+        let vid = w.citizens[c].car.unwrap();
+        w.vehicles.cars[vid].model = VehicleModel::new(VehicleClass::Mid, BodyType::Motorcycle);
+    }
+}
+
+/// A pack ride from the west end with police in town (`police`). Returns
+/// the world once it is over, the riders at set-off, the widest the
+/// column got in its first ticks, and whether everyone was reckless.
+fn pack_night(seed: u64, police: bool) -> (World, usize, f32) {
+    let mut w = town(seed, false);
+    let folk: Vec<CitizenId> = w.citizens.keys().collect();
+    if police {
+        station(&mut w, ServiceKind::Police, -450.0, &folk[0..4]);
+        station(&mut w, ServiceKind::Dispatch, 0.0, &folk[4..6]);
+    }
+    bikers(&mut w, &folk[8..11]);
+    let id = w.start_moto_pack(Some(Vec2::new(-700.0, 0.0))).expect("a pack rides");
+    let p = w.moto_pack().unwrap();
+    assert_eq!((p.id, p.locals), (id, 3), "the three bikers ride to the meet");
+    assert!(run(&mut w, 200, |w| w.moto_pack().is_some_and(|p| p.stage == crate::street_events::MotoStage::Riding)), "the pack set off");
+    let p = w.moto_pack().unwrap().clone();
+    let n = p.riders.len();
+    assert!(n >= 6, "locals and the club ride together: {n}");
+    for r in &p.riders {
+        let c = &w.traffic.cars[r.car];
+        assert!(c.model.body.two_wheeler(), "on two wheels: {:?}", c.model.body);
+        assert!(c.drive.gang.is_some_and(|g| g.pack));
+        let pr = c.drive.profile;
+        assert!(pr.assigned && pr.speed > 1.25 && pr.aggression >= 1.0 && pr.compliance < 0.4, "reckless: {pr:?}");
+    }
+    assert_eq!(p.riders.iter().filter(|r| w.traffic.cars[r.car].drive.profile.ignores_signals).count(), 1, "only the leader ignores every light");
+    // Together: a loose column, not a string of strangers.
+    let mut spread = 0.0f32;
+    for _ in 0..5 {
+        run(&mut w, 1, |_| false);
+        if let Some(p) = w.moto_pack() {
+            let pos: Vec<Vec2> = p.riders.iter().filter_map(|r| w.traffic.cars.get(r.car).map(|c| c.pos)).collect();
+            for a in &pos {
+                for b in &pos {
+                    spread = spread.max(a.distance(*b));
+                }
+            }
+        }
+    }
+    assert!(run(&mut w, 600, |w| w.moto_pack().is_none()), "the ride ended");
+    (w, n, spread)
+}
+
+#[test]
+fn a_moto_pack_rides_through_town_together_and_breaks_up() {
+    let (w, _, spread) = pack_night(21, false);
+    assert!(spread < 260.0, "the pack stays together: {spread:.0} m");
+    let rec = w.street_events.history.iter().rev().find(|r| r.kind == EventKind::MotoPack).expect("recorded").clone();
+    assert!(rec.people >= 6, "{rec:?}");
+    assert!(w.street_events.news.iter().any(|n| n.kind == EventKind::MotoPack && n.headline.contains("tearing through town")), "in the news");
+    // Nobody left in the pack, nobody left stuck: the club rode off the
+    // map, the locals home.
+    assert!(w.traffic.cars.values().all(|c| !c.drive.gang.is_some_and(|g| g.pack)), "no pack riders left on the road");
+    assert_eq!(w.street_events.packs_total, 1);
+    // Deterministic.
+    let (again, _, spread2) = pack_night(21, false);
+    let rec2 = again.street_events.history.iter().rev().find(|r| r.kind == EventKind::MotoPack).unwrap();
+    assert_eq!((rec.ended, rec.people, spread.to_bits()), (rec2.ended, rec2.people, spread2.to_bits()));
+}
+
+#[test]
+fn a_moto_pack_runs_reds_and_weaves_through_traffic() {
+    let mut reds = 0;
+    let mut weaves = 0;
+    for seed in [31u64, 32, 33] {
+        let mut w = town(seed, false);
+        let folk: Vec<CitizenId> = w.citizens.keys().collect();
+        bikers(&mut w, &folk[8..11]);
+        w.start_moto_pack(Some(Vec2::new(-700.0, 0.0))).unwrap();
+        run(&mut w, 400, |w| {
+            if let Some(p) = w.moto_pack() {
+                reds = reds.max(p.red_runs);
+                weaves = weaves.max(p.lane_changes);
+            }
+            w.moto_pack().is_none()
+        });
+        let last = w.street_events.news.iter().rev().find(|n| n.kind == EventKind::MotoPack).unwrap();
+        assert!(last.headline.contains("reds run"), "{}", last.headline);
+        if reds > 0 {
+            break;
+        }
+    }
+    assert!(reds > 0, "the pack ran a red (weaves {weaves})");
+}
+
+#[test]
+fn a_police_car_near_the_pack_chases_a_local_rider() {
+    let mut chased = None;
+    for seed in 41u64..60 {
+        let mut w = town(seed, false);
+        let folk: Vec<CitizenId> = w.citizens.keys().collect();
+        station(&mut w, ServiceKind::Police, -450.0, &folk[0..4]);
+        station(&mut w, ServiceKind::Dispatch, 0.0, &folk[4..6]);
+        bikers(&mut w, &folk[8..11]);
+        w.start_moto_pack(Some(Vec2::new(-700.0, 0.0))).unwrap();
+        let mut started = false;
+        run(&mut w, 600, |w| {
+            started |= w.moto_pack().is_some_and(|p| p.chase.is_some());
+            started || w.moto_pack().is_none()
+        });
+        if started {
+            chased = Some(w);
+            break;
+        }
+    }
+    let w = chased.expect("a police car went after a rider");
+    let p = w.moto_pack().unwrap();
+    let inc = w.services.incident(p.chase.unwrap()).unwrap();
+    assert_eq!(inc.crime, Some(crate::services::CrimeKind::RecklessRiding));
+    assert_eq!(inc.stage, crate::services::Stage::Pursuit);
+    let ch = w.services.chases.iter().find(|c| c.incident == inc.id).expect("a chase under way");
+    assert!(w.traffic.cars[ch.car].drive.fleeing && w.traffic.cars[ch.car].model.body.two_wheeler());
+    assert!(w.street_events.pack_chases_total >= 1);
+}

@@ -887,6 +887,8 @@ pub enum CrimeKind {
     /// [murder] Someone was killed: a long investigation on scene
     /// (`HOMICIDE_WORK`), a likelier arrest when the killer is known.
     Homicide,
+    /// [moto] A motorbike pack tearing through town.
+    RecklessRiding,
 }
 
 impl CrimeKind {
@@ -907,6 +909,7 @@ impl CrimeKind {
             CrimeKind::StreetRace => "street race",
             CrimeKind::Rave => "illegal rave",
             CrimeKind::Homicide => "homicide",
+            CrimeKind::RecklessRiding => "reckless riding",
         }
     }
 }

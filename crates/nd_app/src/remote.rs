@@ -1569,7 +1569,13 @@ fn incident(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let id = w.start_takeover(at)?;
             return Ok(json!({ "takeover": id }));
         }
-        _ => return Err(format!("unknown incident kind {kind:?}; fire, crime, medical, crash or takeover")),
+        // [moto] A moto pack meeting at the road end nearest `at`.
+        "moto_pack" | "moto" => {
+            let at = cmd.get("at").and_then(|v| v.as_array()).and_then(|a| Some(nd_sim::Vec2::new(a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32)));
+            let id = w.start_moto_pack(at)?;
+            return Ok(json!({ "moto_pack": id }));
+        }
+        _ => return Err(format!("unknown incident kind {kind:?}; fire, crime, medical, crash, takeover or moto_pack")),
     };
     Ok(json!({ "incident": id }))
 }

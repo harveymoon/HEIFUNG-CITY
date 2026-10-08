@@ -320,6 +320,8 @@ impl World {
         match self.citizens.get(c.citizen) {
             Some(p) => format!("{}'s {body}", p.name),
             None if c.siren || self.services.unit_of_car(id).is_some() => format!("emergency {body}"),
+            // [moto] A rider from out of town in a moto pack.
+            None if c.drive.gang.is_some_and(|g| g.pack) => format!("a {body} with the moto pack"),
             None => {
                 let an = if body.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
                 format!("{an} {body} passing through")
@@ -731,7 +733,7 @@ impl World {
 
     /// Locals who would join a takeover: young, rebellious, with wheels,
     /// free right now. Best candidates (flashiest rides) first.
-    fn takeover_crew(&self) -> Vec<CitizenId> {
+    pub(super) fn takeover_crew(&self) -> Vec<CitizenId> {
         let mut out: Vec<(CitizenId, f32)> = self
             .citizens
             .iter()
@@ -906,7 +908,7 @@ impl World {
         let car = self.drive_from_spot(vid, segment, to_pt, cid, crate::vehicle::Errand::Trip)?;
         self.leave_building(cid);
         let tc = &mut self.traffic.cars[car];
-        tc.drive.gang = Some(GangRole { takeover: t.id, phase: GangPhase::Joining, race: false });
+        tc.drive.gang = Some(GangRole { takeover: t.id, phase: GangPhase::Joining, race: false, pack: false });
         let (pos, model) = (tc.pos, tc.model);
         let c = &mut self.citizens[cid];
         c.pos = pos;
@@ -951,7 +953,7 @@ impl World {
             };
             let tc = &mut self.traffic.cars[car];
             tc.model = VehicleModel { class: VehicleClass::Expensive, body, wear: 0, tuned: !body.two_wheeler(), livery: Livery::None, paint: rng.random_range(0..crate::vehicle::PAINTS) };
-            tc.drive.gang = Some(GangRole { takeover: t.id, phase: GangPhase::Joining, race: false });
+            tc.drive.gang = Some(GangRole { takeover: t.id, phase: GangPhase::Joining, race: false, pack: false });
             t.cars.push(car);
             t.outsiders += 1;
             t.to_spawn -= 1;
