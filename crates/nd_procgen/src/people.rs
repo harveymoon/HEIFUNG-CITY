@@ -326,6 +326,99 @@ pub fn person_mesh(k: &PersonKey) -> MeshData {
     m
 }
 
+// ── [fire-scene] firefighters ──────────────────────────────────────────────
+
+/// What a firefighter on scene is doing with their arms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum FirePose {
+    /// Walking or standing by: arms at the sides.
+    Stand,
+    /// On a hose line or the ladder's nozzle: both hands forward on the
+    /// branch pipe, braced.
+    Nozzle,
+    /// At the pump panel: one hand on the levers.
+    Pump,
+}
+
+impl FirePose {
+    pub const ALL: [FirePose; 3] = [FirePose::Stand, FirePose::Nozzle, FirePose::Pump];
+}
+
+/// Most triangles a firefighter takes (a few on screen at a time, so
+/// richer than a passer-by).
+pub const MAX_FIREFIGHTER_TRIS: usize = 280;
+
+/// A firefighter in turnout gear: a dark coat and trousers banded with
+/// reflective stripes (lit at night, on the acid-green trim cell), boots, a
+/// breathing-air cylinder on the back and a yellow helmet with a brim. At
+/// the origin facing +X, about 1.85 m tall: scale it by stature. `skin` is
+/// a step of `SKIN_STEPS`.
+pub fn firefighter_mesh(skin: u8, pose: FirePose) -> MeshData {
+    let mut m = MeshData::default();
+    let mut b = Builder { m: &mut m };
+    let skin = linear(skin_srgb((skin.min(SKIN_STEPS - 1) as f32 + 0.5) / SKIN_STEPS as f32));
+    let coat = [0.03, 0.032, 0.036];
+    let coat_cell = dim_cell(9);
+    let stripe = [0.75, 0.95, 0.08];
+    // Acid green: the stripes glow at night like the real retroreflectors.
+    let stripe_cell = bright_cell(5);
+    let silver = [0.6, 0.62, 0.65];
+    let boots = [0.012, 0.012, 0.014];
+    let helmet = [0.95, 0.68, 0.04];
+    let (tw, td) = (0.5, 0.3);
+    let hip = 0.84;
+    let top = 1.46;
+    // Legs, boots and the trouser stripe.
+    for s in [-1.0f32, 1.0] {
+        let z = s * 0.1;
+        let lean = if pose == FirePose::Nozzle { s * 0.06 } else { 0.0 };
+        b.part(Vec3::new(-0.09 + lean, 0.16, z - 0.085), Vec3::new(0.09 + lean, hip, z + 0.085), coat, coat_cell, false);
+        b.part(Vec3::new(-0.1 + lean, 0.0, z - 0.09), Vec3::new(0.13 + lean, 0.18, z + 0.09), boots, 0, false);
+        b.part(Vec3::new(-0.095 + lean, 0.3, z - 0.09), Vec3::new(0.095 + lean, 0.36, z + 0.09), stripe, stripe_cell, false);
+    }
+    // The coat: long, over the hips.
+    b.part(Vec3::new(-td / 2.0, 0.62, -tw / 2.0), Vec3::new(td / 2.0, top, tw / 2.0), coat, coat_cell, true);
+    // Stripes round the hem and the chest, silver between yellow.
+    let band = |b: &mut Builder, y0: f32, y1: f32, c: [f32; 3], cell: usize| b.part(Vec3::new(-td / 2.0 - 0.012, y0, -tw / 2.0 - 0.012), Vec3::new(td / 2.0 + 0.012, y1, tw / 2.0 + 0.012), c, cell, false);
+    band(&mut b, 0.68, 0.75, stripe, stripe_cell);
+    band(&mut b, 0.75, 0.78, silver, stripe_cell);
+    band(&mut b, 1.17, 1.24, stripe, stripe_cell);
+    // The air cylinder on the back.
+    b.part(Vec3::new(-td / 2.0 - 0.17, 0.92, -0.09), Vec3::new(-td / 2.0, 1.42, 0.09), silver, 0, true);
+    // Arms, by what they are doing; cuffs striped.
+    for s in [-1.0f32, 1.0] {
+        let z = s * (tw / 2.0 + 0.06);
+        let forward = match pose {
+            FirePose::Stand => false,
+            FirePose::Nozzle => true,
+            FirePose::Pump => s > 0.0,
+        };
+        if forward {
+            // Upper arm down, forearm out in front at chest height.
+            b.part(Vec3::new(-0.06, 1.1, z - 0.06), Vec3::new(0.08, top - 0.02, z + 0.06), coat, coat_cell, true);
+            let zf = if pose == FirePose::Nozzle { z * 0.55 } else { z };
+            b.part(Vec3::new(0.0, 1.06, zf - 0.06), Vec3::new(0.52, 1.18, zf + 0.06), coat, coat_cell, true);
+            b.part(Vec3::new(0.4, 1.05, zf - 0.065), Vec3::new(0.46, 1.19, zf + 0.065), stripe, stripe_cell, false);
+        } else {
+            b.part(Vec3::new(-0.065, 0.78, z - 0.06), Vec3::new(0.065, top - 0.02, z + 0.06), coat, coat_cell, true);
+            b.part(Vec3::new(-0.07, 0.84, z - 0.065), Vec3::new(0.07, 0.9, z + 0.065), stripe, stripe_cell, false);
+        }
+    }
+    if pose == FirePose::Nozzle {
+        // The branch pipe in the hands, and the hose falling away behind.
+        b.part(Vec3::new(0.3, 1.08, -0.045), Vec3::new(0.95, 1.17, 0.045), silver, 0, true);
+        b.part(Vec3::new(-0.1, 1.06, -0.06), Vec3::new(0.32, 1.16, 0.06), [0.75, 0.55, 0.12], 0, true);
+    }
+    // Collar up, head, then the helmet with its brim and a reflective band.
+    b.part(Vec3::new(-td / 2.0, top - 0.04, -0.17), Vec3::new(td / 2.0 - 0.04, top + 0.08, 0.17), coat, coat_cell, false);
+    let hb = top + 0.03;
+    b.part(Vec3::new(-0.12, hb, -0.11), Vec3::new(0.12, hb + 0.25, 0.11), skin, 0, false);
+    b.part(Vec3::new(-0.2, hb + 0.17, -0.18), Vec3::new(0.22, hb + 0.2, 0.18), helmet, 0, true);
+    b.part(Vec3::new(-0.15, hb + 0.2, -0.14), Vec3::new(0.15, hb + 0.37, 0.14), helmet, 0, true);
+    b.part(Vec3::new(-0.155, hb + 0.24, -0.145), Vec3::new(0.155, hb + 0.28, 0.145), silver, stripe_cell, false);
+    m
+}
+
 // ── the figure cache ───────────────────────────────────────────────────────
 
 /// Figures (meshes, or anything a renderer makes of one) by look, bounded
@@ -441,6 +534,23 @@ mod tests {
             assert!(m.colors.iter().flatten().all(|v| v.is_finite() && *v >= 0.0 && *v <= 1.0));
             for uv in &m.uvs {
                 assert!(uv[0] > 0.0 && uv[0] < 1.0);
+            }
+        }
+    }
+
+    #[test]
+    fn firefighters_are_finite_lit_and_within_budget() {
+        for skin in 0..SKIN_STEPS {
+            for pose in FirePose::ALL {
+                let m = firefighter_mesh(skin, pose);
+                let tris = m.indices.len() / 3;
+                assert!(tris > 40 && tris <= MAX_FIREFIGHTER_TRIS, "{pose:?}: {tris} triangles");
+                assert_eq!(m.uvs.len(), m.positions.len());
+                assert!(m.positions.iter().flatten().all(|v| v.is_finite()));
+                let top = m.positions.iter().map(|p| p[1]).fold(0.0, f32::max);
+                assert!((1.8..2.0).contains(&top), "{top}");
+                let lit = m.uvs.iter().filter(|uv| (uv[0] * EMISSIVE_CELLS as f32) as usize == bright_cell(5)).count();
+                assert!(lit > 0, "the stripes glow");
             }
         }
     }

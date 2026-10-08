@@ -53,6 +53,8 @@ mod road;
 /// [taxis] Taxi companies and cargo hubs in the report and inspector.
 mod taxis;
 mod trains;
+// [fire-scene] Emergency units: inspect, select, list.
+mod units;
 mod view;
 mod window;
 
@@ -606,6 +608,7 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "tolls" | "toll" => taxes::tolls(cmd, &mut ctx.sim.world),
         "incident" => incident(cmd, ctx),
         "incidents" => incidents(cmd, ctx),
+        "units" => Ok(units::units_list(&ctx.sim.world, opt_str(cmd, "kind")?, opt_bool(cmd, "out")?.unwrap_or(false), ctx.sim.frac())),
         "society" => society::command(cmd, &mut ctx.sim.world),
         // [social]
         "social" => social::command(cmd, &ctx.sim.world),
@@ -1542,7 +1545,15 @@ fn incident(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             if !w.buildings.contains_key(b) {
                 return Err("no such building".into());
             }
-            if kind == "fire" { w.start_fire(b) } else { w.start_crime(b) }.ok_or("cannot start that here (already burning, a site, a park or a station)")?
+            let id = if kind == "fire" { w.start_fire(b) } else { w.start_crime(b) }.ok_or("cannot start that here (already burning, a site, a park or a station)")?;
+            // [fire-scene] Dev: start it already this big (0..1), for a fire
+            // that takes the engine a while to knock down.
+            if let Some(k) = opt_f32(cmd, "intensity")?.filter(|_| kind == "fire") {
+                if let Some(i) = w.services.incident_mut(id) {
+                    i.intensity = k.clamp(0.01, 1.0);
+                }
+            }
+            id
         }
         "medical" | "sick" => {
             let c = match field(cmd, "citizen") {
@@ -2017,7 +2028,16 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(v) = field(cmd, "car") {
         let id = key_from(v)?;
         let c = w.traffic.cars.get(id).ok_or("no such car")?;
-        return Ok(json!({ "car": car_detail(w, id, c) }));
+        let mut v = json!({ "car": car_detail(w, id, c) });
+        // [fire-scene] An emergency unit's car: the unit card as well.
+        if let Some(uid) = w.services.unit_of_car(id) {
+            v["unit"] = units::unit_detail(&ctx.sim, uid, &ctx.assets.rules).unwrap_or(Value::Null);
+        }
+        return Ok(v);
+    }
+    if let Some(v) = field(cmd, "unit") {
+        let id = key_from(v)?;
+        return Ok(json!({ "unit": units::unit_detail(&ctx.sim, id, &ctx.assets.rules).ok_or("no such unit")? }));
     }
     if let Some(v) = field(cmd, "vehicle") {
         let id = key_from(v)?;
@@ -2096,6 +2116,7 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Selection::Bot(id) => inspect(&json!({ "bot": key_str(id) }), ctx),
         Selection::Train(id) => inspect(&json!({ "train": key_str(id) }), ctx),
         Selection::Metro(id) => inspect(&json!({ "metro": key_str(id) }), ctx),
+        Selection::Unit(id) => inspect(&json!({ "unit": key_str(id) }), ctx),
         Selection::None => Err("inspect needs one of citizen, building, lot, car, bot, train, metro, toll, road, segment, route, gesture (an id), or a selection".into()),
     }
 }
@@ -2154,6 +2175,7 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
         Selection::Bot(id) => follow::bot_detail(w, id).unwrap_or(Value::Null),
         Selection::Train(id) => trains::train_detail(w, id, &assets.palette.car_colors).unwrap_or(Value::Null),
         Selection::Metro(id) => trains::metro_detail(w, id).unwrap_or(Value::Null),
+        Selection::Unit(id) => units::unit_detail(sim, id, &assets.rules).unwrap_or(Value::Null),
     };
     let bus_line = route_sel.and_then(|r| w.transit.routes.get(r).map(|route| {
         let mut v = route_row(r, route);
@@ -2254,6 +2276,13 @@ fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             return Err("no such metro train".into());
         }
         Selection::Metro(id)
+    } else if let Some(v) = field(cmd, "unit") {
+        // [fire-scene] An emergency unit (`units` lists them), driving or on scene.
+        let id = key_from(v)?;
+        if crate::fire_scene::unit_pose(w, id, ctx.sim.frac()).is_none() {
+            return Err(if w.services.units.contains_key(id) { "that unit is in its station".into() } else { "no such unit".into() });
+        }
+        Selection::Unit(id)
     } else if let Some(p) = opt_vec2(cmd, "at")? {
         // Pick exactly as a click with the Inspect tool does.
         crate::tools::pick(&*ctx.sim, p, ctx.tools.depth)
@@ -2483,6 +2512,14 @@ fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     return Err("follow: no such delivery bot".into());
                 }
                 Selection::Bot(id)
+            }
+            // [fire-scene]
+            "unit" => {
+                let id = key_from(id)?;
+                if crate::fire_scene::unit_pose(w, id, ctx.sim.frac()).is_none() {
+                    return Err("follow: no such unit out of its station".into());
+                }
+                Selection::Unit(id)
             }
             // [train-inspect]
             "train" => {
@@ -2717,13 +2754,13 @@ fn help() -> Value {
             "terrain_at": { "x": "f", "y": "f", "returns": "natural/ground/surface heights, slope, water (kind, current, width), nearest shore, hot spot, power sites and dock placement for the lot there, survey (every land layer's value 0..1 there: resources, and the chance of each industry kind)" },
             "grant": { "amount": "money added to the treasury (dev), default 100000" },
             "landscape": { "returns": "preset and levers, rivers (width, current, hydro_ok), lakes, sea, hot spots, highway ends and through cars, bridges, docks, ships" },
-            "incident": { "kind": "fire|crime|medical|crash|takeover|chase", "building": "id (fire, crime; medical without citizen)", "citizen": "id (medical)", "car": "id (crash; default the car nearest at)", "at": "[x,y] (crash, takeover: the junction nearest)", "speed": "m/s (crash, default 25 = written off)" },
+            "incident": { "kind": "fire|crime|medical|crash|takeover|chase", "building": "id (fire, crime; medical without citizen)", "intensity": "fire, dev: start it this big (0..1; one engine knocks off 0.012 a minute)", "citizen": "id (medical)", "car": "id (crash; default the car nearest at)", "at": "[x,y] (crash, takeover: the junction nearest)", "speed": "m/s (crash, default 25 = written off)" },
             "incidents": { "active": "bool (only those under way)", "limit": "default 50, newest first", "kind": "fire|crime|medical|crash" },
             "bus": { "action": "select|new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|rename|recolour|line|select_stop|list", "route": "id", "x": "f", "y": "f", "index": "stop index", "n": "buses", "name": "rename", "color": "0..7", "look": "select_stop: point the camera" },
             "find": { "what": "citizens|buildings|lots|parcels|cars|trains|drones|routes|gestures", "near": "[x,y]", "radius": "m (default 100 with near)", "filter": "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind", "limit": "default 50" },
-            "inspect": { "citizen|building|lot|car|train|drone|vehicle|route": "id (vehicle: a private car's record)", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "id, or [x,y]: the piece a click there picks (else the nearest), as segment, plus road: the road card (kind, lanes, limit, level, run, now {vehicles by kind, bikes, walkers, speed, congestion, queue}, flow, hourly (72 h), decay {wear, condition, effects, wear_per_day, next_condition, repair_cost, queue_place, last_repaired_day}, tolls, crossings, bus_stops, kerb parking)", "toll": "int: a toll booth in full (traffic, lorries, free, avoided, queue, hourly)" },
+            "inspect": { "citizen|building|lot|car|train|drone|vehicle|route": "id (vehicle: a private car's record; a unit's car also gets unit)", "unit": "id: an emergency unit: title, kind, station, state, doing, crew (citizen, name, role, out, pos, pose), incident (fire: how_bad, intensity, minutes_to_out, progress, damage; else patient, suspect, people), and for a fire engine at work scene (seconds, water_litres, aim, ladder {yaw_deg, pitch_deg, length, outriggers, tip}, hoses, streams)", "gesture": "int; with no id, the current selection", "junction": "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits", "segment": "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under", "road": "id, or [x,y]: the piece a click there picks (else the nearest), as segment, plus road: the road card (kind, lanes, limit, level, run, now {vehicles by kind, bikes, walkers, speed, congestion, queue}, flow, hourly (72 h), decay {wear, condition, effects, wear_per_day, next_condition, repair_cost, queue_place, last_repaired_day}, tolls, crossings, bus_stops, kerb parking)", "toll": "int: a toll booth in full (traffic, lorries, free, avoided, queue, hourly)" },
             "lane_use": { "junction": "[x,y]", "approach": "[x,y] on the arriving street", "lanes": "[\"L\", \"S+R\", ...] leftmost first (L, S, R joined with +), or \"reset\" for the demand-chosen default" },
-            "select": { "citizen|building|car|vehicle|bot": "id (vehicle: a parked car; bot: a delivery robot)", "toll": "int: a toll booth", "road|segment": "id or [x,y]: a street piece", "at": "[x,y] picks like a click (vehicles, people, booths, parked cars, then the road piece, then lots); nothing clears" },
+            "select": { "citizen|building|car|vehicle|bot": "id (vehicle: a parked car; bot: a delivery robot)", "unit": "id: an emergency unit (fire engine, police car, ambulance) driving or standing on scene (see units); a click on one picks it the same way", "toll": "int: a toll booth", "road|segment": "id or [x,y]: a street piece", "at": "[x,y] picks like a click (vehicles, people, booths, parked cars, then the road piece, then lots); nothing clears" },
             "favourite": { "citizen": "id", "on": "bool, omitted toggles" },
             "camera": { "look_at": "[x,y]", "x": "", "z": "", "distance": "12..2500", "yaw": "rad", "pitch": "rad", "follow": "citizen/car id or {citizen|car|bot|building: id}; any camera command ends a follow", "mode": "orbit|walk" },
             "overlay": { "active": "the map layer to show, or none (layers are exclusive: showing one hides the others)", "layer": "zoning|land_value|districts|traffic|traffic_types|paths|people|pollution, a land survey layer (farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech), or projects (the dim other-projects switch, not a layer)", "on": "bool, omitted toggles; on hides every other layer", "land": "a land survey layer key, or none", "<layer name>": "bool (older form): true shows it alone, false hides it if it shows" },
@@ -2738,6 +2775,8 @@ fn help() -> Value {
     v["files"] = json!("save, load, export and screenshot paths must lie inside saves/, screenshots/ or exports/ under the game's working directory, or the OS temp folder; no '..'; extensions .ron, .json, .png");
     v["aliases"] = json!({ "tax": "taxes", "toll": "tolls", "districts": "district", "tourists": "tourism", "metro": "subway", "heat": "heat_vision", "favorite": "favourite", "quality": "graphics" });
     // [road-inspect]
+    // [fire-scene]
+    v["commands"]["units"] = json!({ "kind": "optional: fire_engine|police_car|ambulance (or Engine|Car|Medic)", "out": "bool: only units out of the station", "returns": "units: unit id, title, kind, state, doing, pos, incident; select {unit} / inspect {unit} take the id" });
     v["commands"]["repair_road"] = json!({ "road": "id or [x,y]; default the selected road", "returns": "repaired, cost, treasury, road (the card); pays the crews' price (lane-m x wear x 6) from the treasury as road maintenance" });
     // [plant-groups]
     // [dirty-industry]
