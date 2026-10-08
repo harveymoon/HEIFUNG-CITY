@@ -80,6 +80,8 @@ pub use plant_groups::{PlantGroup, PlantJoin, PlantPreview};
 mod plant_groups_tests;
 #[cfg(test)]
 mod plant_scale_tests;
+mod scenes;
+pub mod tow_moves;
 mod services;
 mod society;
 /// [social] Encounters, conversations, friends and feuds, crews and clubs.
@@ -1194,6 +1196,8 @@ impl World {
     }
 
     fn step_traffic(&mut self) {
+        // [fire-scene] What stands at the roadside for the traffic to pass.
+        self.set_traffic_scenes();
         let arrived = self.traffic.step(self.config.traffic_seconds_per_tick, self.config.traffic_substeps);
         // [tolls] Before anyone arriving is taken off the road.
         self.settle_tolls();

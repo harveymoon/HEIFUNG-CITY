@@ -56,6 +56,12 @@ pub enum StopReason {
     Takeover,
     /// In a takeover show, off the lanes.
     InShow,
+    /// [scene] Held up by something at the roadside with no room to pass
+    /// (a fire engine at a fire, a tow truck at work).
+    Scene,
+    /// [scene] A tow truck at work off the lanes (against a one-way, or
+    /// turning round).
+    AtWork,
     /// Standing still for none of the reasons above. Should not happen: a
     /// car showing this is a bug worth reporting.
     Unexplained,
@@ -96,6 +102,8 @@ impl StopReason {
             StopReason::Crashed { .. } => "crashed",
             StopReason::Takeover => "takeover",
             StopReason::InShow => "in_show",
+            StopReason::Scene => "scene",
+            StopReason::AtWork => "at_work",
             StopReason::Unexplained => "unexplained",
         }
     }
@@ -123,6 +131,8 @@ impl StopReason {
             StopReason::Crashed { wrecked: false } => "stopped after a bump, exchanging details".into(),
             StopReason::Takeover => "a street takeover is blocking the junction".into(),
             StopReason::InShow => "in a street takeover show".into(),
+            StopReason::Scene => "held up at an emergency scene or a tow truck at work, no room to pass".into(),
+            StopReason::AtWork => "a tow truck at work, slowly, hazard lights on".into(),
             StopReason::Unexplained => "stopped for no reason the sim knows (a bug: please report it)".into(),
         }
     }
@@ -175,7 +185,7 @@ impl Traffic {
     pub fn stop_reason(&self, id: CarId) -> StopReason {
         let Some(c) = self.cars.get(id) else { return StopReason::Unexplained };
         if c.in_stunt() {
-            return StopReason::InShow;
+            return if matches!(c.drive.stunt, Some(Stunt { kind: StuntKind::Manoeuvre { .. }, .. })) { StopReason::AtWork } else { StopReason::InShow };
         }
         if let Some(cr) = c.drive.crash {
             return StopReason::Crashed { wrecked: cr.wrecked };
@@ -215,6 +225,7 @@ impl Traffic {
             Wait::Dwell => StopReason::Unloading,
             Wait::Arriving => StopReason::Arriving,
             Wait::Crashed => StopReason::Crashed { wrecked: false },
+            Wait::Blocked if self.scene_zones().iter().any(|z| z.pos.distance(c.pos) < 60.0) => StopReason::Scene,
             Wait::Blocked => StopReason::Takeover,
         };
         // A car rolling along behind another is not "held up" in any way a

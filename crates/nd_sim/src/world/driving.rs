@@ -129,6 +129,9 @@ pub struct Driving {
     pub tows: Vec<Tow>,
     pub recent: Vec<CrashRecord>,
     pub takeovers: Takeovers,
+    /// [tow-moves] Tow trucks off the lanes against a one-way or turning
+    /// round (`world/tow_moves.rs`).
+    pub moves: Vec<super::tow_moves::TowMove>,
 }
 
 /// A stable `0..1` from a car id, for its weave phase and a stranger's traits.
@@ -628,6 +631,16 @@ impl World {
         self.traffic.remove_car(wreck);
         self.enforcement.stats.wrecks_towed_total += 1;
         self.driving.tows.push(Tow { truck, model, yard: company });
+        // [tow-moves] Turned round in the street when the yard lies back
+        // the other way.
+        if let Some(goal) = self.yard_goal(company) {
+            if let Some(t) = self.traffic.cars.get_mut(truck) {
+                t.drive.recovering = false;
+            }
+            if self.maybe_u_turn(truck, goal, super::tow_moves::AfterMove::Home { company }) {
+                return;
+            }
+        }
         self.recovery_truck_home(truck, company);
     }
 
@@ -635,7 +648,7 @@ impl World {
     /// with its load to its yard (put away there, `unclaimed_arrival`), or
     /// off the map for one from out of town or one going back empty. With
     /// no road there it pulls in and tries again (`retire_vehicle`).
-    fn recovery_truck_home(&mut self, truck: CarId, company: Option<BuildingId>) {
+    pub(super) fn recovery_truck_home(&mut self, truck: CarId, company: Option<BuildingId>) {
         let Some(t) = self.traffic.cars.get_mut(truck) else { return };
         t.drive.amber = false;
         t.drive.recovering = false;

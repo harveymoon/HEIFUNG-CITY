@@ -155,6 +155,17 @@ pub const PULL_UP: f32 = 25.0;
 /// building is lost): the crew shuts the water off, rolls the hoses, lowers
 /// the ladder and climbs back in before it drives home.
 pub const PACK_UP_TICKS: u64 = 3;
+/// [fire-scene] A fire burning this hard once the first engine is called
+/// (or on scene) sounds a second alarm: a second engine with its own crew.
+pub const SECOND_ALARM: f32 = 0.6;
+/// [fire-scene] Where an engine pulls up: at least this far (m) from the
+/// junctions at either end of the street, and this far behind the first
+/// engine for a second.
+pub const SCENE_JUNCTION_CLEAR: f32 = 18.0;
+pub const SECOND_ENGINE_GAP: f32 = 11.0;
+/// [fire-scene] An engine's half length and half width, for where it
+/// stands at the kerb and what traffic steers round.
+pub const ENGINE_HALF: (f32, f32) = (4.1, 1.4);
 /// A kind counts as saturated while it has no unit free; the report raises
 /// an alert after this many saturated minutes in a day.
 pub const SATURATED_ALERT_MIN: u32 = 60;
@@ -1041,6 +1052,12 @@ pub struct Incident {
     /// [emergency] The car chase, if the suspect fled by car.
     #[serde(default)]
     pub chase: Option<ChaseRecord>,
+    /// [fire-scene] A big fire's second engine (the second alarm), and
+    /// when it was sounded (only once a fire).
+    #[serde(default)]
+    pub second: Option<UnitId>,
+    #[serde(default)]
+    pub second_alarm: Option<u64>,
 }
 
 impl Incident {
@@ -1264,6 +1281,9 @@ pub struct ServiceStats {
     pub chases_lost_today: u32,
     pub chases_total: u32,
     pub chases_tagged_total: u32,
+    /// [fire-scene] Second alarms answered by a second engine.
+    pub second_alarms_today: u32,
+    pub second_alarms_total: u32,
 }
 
 /// Why calls went unanswered.

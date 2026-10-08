@@ -746,7 +746,7 @@ pub fn car_traffic(w: &World, c: &Car) -> Value {
         "weave_m": round(c.drive.weave), "running_red": c.drive.running.is_some(),
         "crash": c.drive.crash.map(|s| json!({ "crash": s.id, "wrecked": s.wrecked, "hold_s": if s.wrecked { Value::Null } else { json!(round(s.hold)) } })),
         "takeover": c.drive.gang.map(|g| json!({ "takeover": g.takeover, "phase": format!("{:?}", g.phase).to_lowercase() })),
-        "stunt": c.drive.stunt.map(|s| if s.is_donut() { "donut" } else { "ring" }),
+        "stunt": c.drive.stunt.map(|s| if s.is_donut() { "donut" } else if matches!(s.kind, nd_sim::traffic::StuntKind::Manoeuvre { .. }) { "manoeuvre" } else { "ring" }),
     })
 }
 

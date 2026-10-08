@@ -48,6 +48,9 @@ impl World {
             s.auctioned_today = 0;
             s.city_lot_fees_today = 0.0;
             s.boots_today = 0;
+            s.clamps_today = 0;
+            s.clamps_paid_today = 0;
+            s.clamp_fines_today = 0.0;
         }
         if tick % 10 == 3 {
             self.staff_patrols();
@@ -56,6 +59,8 @@ impl World {
             self.patrols_look();
         }
         self.step_tow_jobs();
+        // [tow-moves] Trucks against a one-way or turning round.
+        self.step_tow_moves();
         if tick % 60 == 47 {
             self.hourly_pound();
         }
@@ -196,8 +201,9 @@ impl World {
     }
 
     /// An officer checks a parked car: a ticket when it is over its limit
-    /// or parked illegally; the tow truck once the grace has run out, or at
-    /// once for an illegal one.
+    /// or parked illegally; [clamp] the clamp once the grace has run out
+    /// (towed if the fine goes unpaid), or the tow truck at once for an
+    /// illegal one.
     pub(super) fn check_parked(&mut self, vid: VehicleId) {
         let tick = self.clock.tick;
         if self.enforcement.job_for(vid).is_some() {
@@ -217,7 +223,7 @@ impl World {
         } else if illegal {
             self.call_tow(vid, TowReason::Illegal);
         } else if tick >= spot.ticketed + GRACE {
-            self.call_tow(vid, TowReason::Overstay);
+            self.clamp(vid);
         }
     }
 
@@ -284,16 +290,22 @@ impl World {
 
     /// Call a tow truck for a parked car.
     pub(super) fn call_tow(&mut self, vid: VehicleId, reason: TowReason) -> Option<u32> {
+        self.call_tow_after(vid, reason, 0)
+    }
+
+    /// Call a tow truck that sets off no sooner than `wait` minutes from
+    /// now ([clamp] the clamp fine's time limit).
+    fn call_tow_after(&mut self, vid: VehicleId, reason: TowReason, wait: u64) -> Option<u32> {
         if self.enforcement.job_for(vid).is_some() {
             return None;
         }
         let pos = self.vehicles.cars.get(vid)?.spot()?.pos;
         let company = self.tow_company_near(pos);
-        let delay = if company.is_some() { 3 } else { OUT_OF_TOWN_DELAY };
+        let delay = wait.max(if company.is_some() { 3 } else { OUT_OF_TOWN_DELAY });
         let id = self.enforcement.next_job;
         self.enforcement.next_job += 1;
         let tick = self.clock.tick;
-        self.enforcement.jobs.push(TowJob { id, car: vid, company, truck: None, state: TowState::Waiting { until: tick + delay }, reason, since: tick });
+        self.enforcement.jobs.push(TowJob { id, car: vid, company, truck: None, state: TowState::Waiting { until: tick + delay }, reason, since: tick, contra: None });
         Some(id)
     }
 
@@ -379,6 +391,21 @@ impl World {
             Some(c) => self.truck_stop(c).and_then(|(fs, fp)| self.route_any_lane(fs, fp, seg, pt)),
             None => self.route_from_edge(seg, pt),
         };
+        // [tow-moves] On a one-way street with a long way round: in from
+        // the far end, the last stretch against the traffic.
+        let start = match (&route, company) {
+            (Some(r), _) => Some((r.0[0], r.1)),
+            (None, Some(c)) => self.truck_stop(c).and_then(|(s, p)| self.traffic.net.nearest_lane_on(s, p)).map(|(l, s, _)| (l, s)),
+            _ => None,
+        };
+        let contra = start.and_then(|(l0, s0)| {
+            let net = &self.traffic.net;
+            self.plan_contraflow(seg, spot.pos, route.as_ref(), &|l, s| net.route_lanes(l0, s0, l, s))
+        });
+        let (route, contra) = match contra {
+            Some((alt, c)) => (Some(alt), Some(c)),
+            None => (route, None),
+        };
         let Some((route, s0, s1)) = route else {
             if let Some(j) = self.enforcement.jobs.iter_mut().find(|j| j.id == job_id) {
                 j.state = TowState::Waiting { until: tick + 30 };
@@ -393,45 +420,37 @@ impl World {
             j.company = company;
             j.truck = Some(truck);
             j.state = TowState::ToCar;
+            j.contra = contra;
         }
     }
 
     /// A tow truck reached the car (hook it, off to the pound) or the
     /// pound (in it goes).
     pub(super) fn tow_truck_arrived(&mut self, truck: CarId, job_id: u32) {
-        let tick = self.clock.tick;
         let Some(job) = self.enforcement.job(job_id).copied() else {
             self.tow_truck_home(truck, None);
             return;
         };
         match job.state {
             TowState::ToCar => {
-                let spot = self.vehicles.cars.get(job.car).and_then(|c| c.spot().copied()).filter(|s| s.kind.on_street());
-                let Some(spot) = spot else {
-                    // Gone before the truck came.
-                    self.enforcement.jobs.retain(|j| j.id != job_id);
+                // [tow-moves] In from the far end of a one-way: up the
+                // street to the car first, against the traffic.
+                if let Some(c) = job.contra.filter(|_| !self.tow_moving(truck)) {
+                    if self.traffic.cars.get(truck).is_some_and(|t| t.pos.distance(c.stop) > 15.0) && self.vehicles.cars.get(job.car).and_then(|c| c.spot()).is_some_and(|s| s.kind.on_street()) {
+                        self.begin_contraflow(truck, job_id, c);
+                        return;
+                    }
+                }
+                if !self.hook_parked(truck, job_id) {
                     self.tow_truck_home(truck, job.company);
                     return;
-                };
-                let (pos, heading) = {
-                    let t = &self.traffic.cars[truck];
-                    (t.pos, t.heading)
-                };
-                self.unpark(job.car);
-                let model = self.vehicles.cars[job.car].model;
-                self.vehicles.cars[job.car].place = CarPlace::Parked(ParkSpot { kind: ParkKind::Hooked, building: job.company, pos, heading, since: tick, ..Default::default() });
-                // Drawn on the truck, as the wreck trucks carry theirs.
-                self.driving.tows.push(super::driving::Tow { truck, model, yard: job.company });
-                let owner = self.vehicles.cars[job.car].owner;
-                if let Some(c) = self.citizens.get_mut(owner) {
-                    c.remember(tick, format!("My car was towed ({}).", job.reason.label()));
-                    c.mood = (c.mood - 0.05).max(0.0);
-                    c.commute.parking_pain += 1.0;
                 }
-                let _ = spot;
-                // On to the pound.
-                if let Some(j) = self.enforcement.jobs.iter_mut().find(|j| j.id == job_id) {
-                    j.state = TowState::ToPound;
+                // [tow-moves] Turned round in the street when the way to
+                // the pound lies back the other way.
+                if let Some(goal) = self.pound_goal(truck, job_id) {
+                    if self.maybe_u_turn(truck, goal, super::tow_moves::AfterMove::ToPound { job: job_id }) {
+                        return;
+                    }
                 }
                 // [services] With no road there yet it waits at the kerb with
                 // the car on the hook and tries again (it used to vanish, the
@@ -454,14 +473,55 @@ impl World {
                 let company = self.enforcement.job(job_id).and_then(|j| j.company);
                 self.traffic.remove_car(truck);
                 self.impound(job.car, company);
+                // [clamp] The unpaid clamp fine is owed at the pound too.
+                if job.reason == TowReason::Unpaid {
+                    if let Some(CarPlace::Parked(s)) = self.vehicles.cars.get_mut(job.car).map(|c| &mut c.place) {
+                        s.fee += CLAMP_FINE;
+                    }
+                    self.enforcement.stats.clamps_towed_total += 1;
+                }
                 self.enforcement.jobs.retain(|j| j.id != job_id);
             }
             TowState::Waiting { .. } => self.tow_truck_home(truck, job.company),
         }
     }
 
+    /// The truck at the car of job `job_id`: hook it on (the car rides on
+    /// the truck to the pound). False, and the job dropped, when the car
+    /// went before the truck came.
+    pub(super) fn hook_parked(&mut self, truck: CarId, job_id: u32) -> bool {
+        let tick = self.clock.tick;
+        let Some(job) = self.enforcement.job(job_id).copied() else { return false };
+        if job.state != TowState::ToCar {
+            return false;
+        }
+        let spot = self.vehicles.cars.get(job.car).and_then(|c| c.spot().copied()).filter(|s| s.kind.on_street());
+        let (Some(_), Some(t)) = (spot, self.traffic.cars.get(truck)) else {
+            // Gone before the truck came.
+            self.enforcement.jobs.retain(|j| j.id != job_id);
+            return false;
+        };
+        let (pos, heading) = (t.pos, t.heading);
+        self.unpark(job.car);
+        let model = self.vehicles.cars[job.car].model;
+        self.vehicles.cars[job.car].place = CarPlace::Parked(ParkSpot { kind: ParkKind::Hooked, building: job.company, pos, heading, since: tick, ..Default::default() });
+        // Drawn on the truck, as the wreck trucks carry theirs.
+        self.driving.tows.push(super::driving::Tow { truck, model, yard: job.company });
+        let owner = self.vehicles.cars[job.car].owner;
+        if let Some(c) = self.citizens.get_mut(owner) {
+            c.remember(tick, format!("My car was towed ({}).", job.reason.label()));
+            c.mood = (c.mood - 0.05).max(0.0);
+            c.commute.parking_pain += 1.0;
+        }
+        // On to the pound.
+        if let Some(j) = self.enforcement.jobs.iter_mut().find(|j| j.id == job_id) {
+            j.state = TowState::ToPound;
+        }
+        true
+    }
+
     /// An idle tow truck goes back to its yard, or off the map.
-    fn tow_truck_home(&mut self, truck: CarId, company: Option<BuildingId>) {
+    pub(super) fn tow_truck_home(&mut self, truck: CarId, company: Option<BuildingId>) {
         let home = company.and_then(|c| self.truck_stop(c)).and_then(|(s, p)| self.traffic.net.nearest_lane_on(s, p));
         if let (Some(c), Some((goal, s_end, _))) = (company, home) {
             if self.traffic.redirect(truck, goal, s_end) {
@@ -492,7 +552,7 @@ impl World {
     /// [services] Send the tow truck of job `job_id` on to its pound: the
     /// company's yard, or (the company gone, or none in town) the pound
     /// out of town past the map edge. False when no road leads there.
-    fn route_to_pound(&mut self, truck: CarId, job_id: u32) -> bool {
+    pub(super) fn route_to_pound(&mut self, truck: CarId, job_id: u32) -> bool {
         let company = self.enforcement.job(job_id).and_then(|j| j.company);
         if let Some(c) = company {
             if self.buildings.contains_key(c) {
@@ -566,6 +626,7 @@ impl World {
     /// has the time) or, after `AUCTION_AFTER`, auctioned.
     pub(super) fn hourly_pound(&mut self) {
         let tick = self.clock.tick;
+        self.settle_clamps();
         self.rebook_booted();
         let impounded: Vec<(VehicleId, ParkSpot)> = self.vehicles.cars.iter().filter_map(|(id, c)| c.spot().filter(|s| s.kind == ParkKind::Pound).map(|s| (id, *s))).collect();
         for (vid, spot) in impounded {
@@ -747,6 +808,83 @@ impl World {
             self.concerns.said(tick, owner, c, crate::concerns::Concern::Parking, 0.6, "They clamped my car and towed it.");
         }
         job
+    }
+
+    /// [clamp] An officer clamps a car still over its limit after the
+    /// ticket's grace: a clamp fine, and the tow truck booked for when
+    /// `CLAMP_LIMIT` runs out unless the owner pays first (`settle_clamps`).
+    pub(super) fn clamp(&mut self, vid: VehicleId) -> Option<u32> {
+        let tick = self.clock.tick;
+        let owner = {
+            let car = self.vehicles.cars.get_mut(vid)?;
+            let CarPlace::Parked(s) = &mut car.place else { return None };
+            if s.booted || !s.kind.on_street() {
+                return None;
+            }
+            s.booted = true;
+            car.owner
+        };
+        let job = self.call_tow_after(vid, TowReason::Unpaid, CLAMP_LIMIT);
+        let s = &mut self.enforcement.stats;
+        s.clamps_today += 1;
+        s.clamps_total += 1;
+        if let Some(c) = self.citizens.get_mut(owner) {
+            c.remember(tick, format!("My car got clamped. {CLAMP_FINE:.0} to get it off, or they tow it."));
+            c.thought = "Clamped. Of course it's clamped.".to_string();
+            c.mood = (c.mood - 0.05).max(0.0);
+            c.commute.parking_pain += 0.8;
+            self.concerns.said(tick, owner, c, crate::concerns::Concern::Parking, 0.4, "They clamped my car for overstaying.");
+        }
+        job
+    }
+
+    /// [clamp] Hourly: owners of clamped cars who can pay may settle the
+    /// fine (awake, by day, the money in the household purse, and getting
+    /// round to it: `CLAMP_PAY_CHANCE` an hour by a hash of car and hour).
+    /// The clamp comes off and the tow is cancelled. The rest are towed
+    /// when their time runs out.
+    fn settle_clamps(&mut self) {
+        let tick = self.clock.tick;
+        let hour = self.clock.hour() as u8;
+        if !(7..23).contains(&hour) {
+            return;
+        }
+        let waiting: Vec<(u32, VehicleId)> = self.enforcement.jobs.iter().filter(|j| j.reason == TowReason::Unpaid && matches!(j.state, TowState::Waiting { .. })).map(|j| (j.id, j.car)).collect();
+        for (job, vid) in waiting {
+            let Some(car) = self.vehicles.cars.get(vid) else { continue };
+            if !car.spot().is_some_and(|s| s.booted) {
+                continue;
+            }
+            let owner = car.owner;
+            let Some(c) = self.citizens.get(owner) else { continue };
+            if c.asleep || self.services.in_custody(owner) {
+                continue;
+            }
+            let purse = c.household.and_then(|h| self.households.get(h)).map_or(c.savings, |h| h.money);
+            let key = slotmap::Key::data(&vid).as_ffi();
+            if purse < CLAMP_FINE || crate::pedestrians::hash01(key, tick / 60, 0xC1A3) >= CLAMP_PAY_CHANCE {
+                continue;
+            }
+            self.charge(owner, CLAMP_FINE);
+            self.economy.credit(Flow::ParkingFines, CLAMP_FINE);
+            if let Some(CarPlace::Parked(s)) = self.vehicles.cars.get_mut(vid).map(|c| &mut c.place) {
+                s.booted = false;
+                // A fresh start at the kerb: the ticket is settled.
+                s.ticketed = 0;
+                s.since = tick;
+            }
+            self.enforcement.jobs.retain(|j| j.id != job);
+            let s = &mut self.enforcement.stats;
+            s.clamps_paid_today += 1;
+            s.clamps_paid_total += 1;
+            s.clamp_fines_today += CLAMP_FINE;
+            s.fines_today += CLAMP_FINE;
+            s.fines_total += CLAMP_FINE;
+            if let Some(c) = self.citizens.get_mut(owner) {
+                c.remember(tick, format!("Paid {CLAMP_FINE:.0} to get the clamp off the car."));
+                c.commute.parking_pain += 0.3;
+            }
+        }
     }
 
     /// [boot] Clamped cars whose tow job was lost (a truck taken off the

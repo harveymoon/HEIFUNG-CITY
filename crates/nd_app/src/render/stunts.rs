@@ -131,7 +131,7 @@ pub(super) fn sync_stunts(
                     let (p, h) = c.pose_at(f);
                     Some((id, p, h, centre))
                 }
-                StuntKind::Ring { .. } => None,
+                StuntKind::Ring { .. } | StuntKind::Manoeuvre { .. } => None,
             },
             _ => None,
         })

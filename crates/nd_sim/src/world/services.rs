@@ -417,6 +417,8 @@ impl World {
             damage: Vec::new(),
             on_road: false,
             chase: None,
+            second: None,
+            second_alarm: None,
         });
         if let Some(n) = self.services.stats.incidents_today.get_mut(kind.index()) {
             *n += 1;
@@ -801,7 +803,7 @@ impl World {
     }
 
     /// Units out of the station (crews aboard), per station.
-    fn units_out(&self) -> HashMap<BuildingId, usize> {
+    pub(super) fn units_out(&self) -> HashMap<BuildingId, usize> {
         let mut out: HashMap<BuildingId, usize> = HashMap::new();
         for u in self.services.units.values().filter(|u| u.out()) {
             *out.entry(u.station).or_default() += 1;
@@ -811,7 +813,7 @@ impl World {
 
     /// Free for the next call: a unit in the station counts only while the
     /// station has a crew for one more vehicle; units already out have theirs.
-    fn unit_available(&self, u: &Unit, out: &HashMap<BuildingId, usize>) -> bool {
+    pub(super) fn unit_available(&self, u: &Unit, out: &HashMap<BuildingId, usize>) -> bool {
         // A unit leaving town with its station gone takes no more calls.
         if u.leaving || !self.station_alive(u.station) {
             return false;
@@ -936,7 +938,10 @@ impl World {
         let inc = self.services.incident(id)?;
         // Street incidents (crashes, the hurt in them, takeovers): at the spot.
         let on_street = if inc.on_road { self.roads.nearest_street(inc.pos).map(|(s, _, q)| (s, q)) } else { None };
-        on_street.or_else(|| self.building_lot(inc.building).and_then(|l| self.lot_access(l))).or_else(|| self.roads.nearest_street(inc.pos).map(|(s, _, q)| (s, q)))
+        // [fire-scene] An engine pulls up on the building's side, clear of
+        // the junctions.
+        let fire = if inc.kind == IncidentKind::Fire && !inc.on_road { self.fire_access(inc.building) } else { None };
+        on_street.or(fire).or_else(|| self.building_lot(inc.building).and_then(|l| self.lot_access(l))).or_else(|| self.roads.nearest_street(inc.pos).map(|(s, _, q)| (s, q)))
     }
 
     /// Take a unit's car off the road, leaving the unit where the car was.
@@ -1127,6 +1132,12 @@ impl World {
                 UnitState::Responding => {
                     let inc = self.services.units[uid].incident.take();
                     self.park_at_station(uid);
+                    // [fire-scene] A second engine lost on the way: the fire
+                    // carries on with the first.
+                    if let Some(i) = inc.and_then(|i| self.services.incident_mut(i)).filter(|i| i.second == Some(uid)) {
+                        i.second = None;
+                        continue;
+                    }
                     if let Some(i) = inc.and_then(|i| self.services.incident_mut(i)) {
                         i.stage = Stage::Reported;
                         i.unit = None;
@@ -1246,6 +1257,28 @@ impl World {
         by_unit || self.air.drones.values().any(|d| matches!(d.job, crate::air::Job::Medic { incident, .. } if incident == inc.id))
     }
 
+    /// [fire-scene] Fire `id` lost its first engine: its second (on scene
+    /// or on the way) becomes its unit. False when there is none.
+    fn promote_second(&mut self, id: u32) -> bool {
+        let Some(sec) = self.services.incident(id).and_then(|i| i.second) else { return false };
+        let state = self.services.units.get(sec).filter(|u| u.incident == Some(id) && !u.leaving).map(|u| u.state);
+        let stage = match state {
+            Some(UnitState::OnScene) => Stage::OnScene,
+            Some(UnitState::Responding) => Stage::Dispatched,
+            _ => {
+                if let Some(i) = self.services.incident_mut(id) {
+                    i.second = None;
+                }
+                return false;
+            }
+        };
+        let i = self.services.incident_mut(id).unwrap();
+        i.unit = Some(sec);
+        i.second = None;
+        i.stage = stage;
+        true
+    }
+
     /// [services] An active call whose unit or aircraft is gone: a patient
     /// who was being driven to hospital is delivered to the nearest free bed
     /// (or treated where they are); anything else goes back in the queue.
@@ -1342,6 +1375,11 @@ impl World {
         // Such incidents used to stay active for ever, pinning the patient,
         // the crime scene or the wrecks.
         if !inc.outside && matches!(inc.stage, Stage::Dispatched | Stage::OnScene | Stage::Transporting) && !self.incident_served(&inc) {
+            // [fire-scene] The second engine is still on it: it takes the
+            // fire over.
+            if self.promote_second(id) {
+                return;
+            }
             self.orphaned(id);
             return;
         }
@@ -1406,11 +1444,15 @@ impl World {
     /// damage, spread and burning down. True when the incident ended.
     fn step_fire(&mut self, id: u32) -> bool {
         let tick = self.clock.tick;
+        // [fire-scene] Each engine at work knocks it down (a fire from out
+        // of town has its one engine).
+        let engines = self.engines_on_scene(id).max(1) as f32;
+        self.maybe_second_alarm(id);
         let (bid, fighting, intensity) = {
             let i = self.services.incident_mut(id).unwrap();
             let fighting = i.stage == Stage::OnScene;
             if fighting {
-                i.intensity -= ENGINE_RATE;
+                i.intensity -= ENGINE_RATE * engines;
             } else {
                 i.intensity = (i.intensity + FIRE_GROWTH).min(1.0);
             }
@@ -1625,6 +1667,8 @@ impl World {
                 None => vec![p],
             }
         };
+        // ([fire-scene] A fire engine may come up either side: it crosses
+        // to the building's kerb as it pulls in, `park_engine`.)
         let ends = sides(to);
         sides(from)
             .into_iter()
@@ -1698,6 +1742,43 @@ impl World {
         true
     }
 
+    /// [fire-scene] Send `uid` to fire `id` as its second engine (the
+    /// second alarm): lights and sirens, the incident's own unit and stage
+    /// left as they are. False if no road leads there.
+    pub(super) fn send_second(&mut self, uid: UnitId, id: u32, to: (SegmentId, Vec2)) -> bool {
+        let tick = self.clock.tick;
+        let Some(u) = self.services.units.get(uid) else { return false };
+        let (station, state) = (u.station, u.state);
+        let here = u.car.and_then(|c| self.traffic.cars.get(c)).map_or(u.pos, |c| c.pos);
+        let from = if state == UnitState::Idle { self.building_lot(station).and_then(|l| self.lot_access(l)) } else { self.roads.nearest_street(here).map(|(s, _, _)| (s, here)) };
+        let Some(from) = from else { return false };
+        let Some((lanes, s0, s1)) = self.siren_route(from, to) else { return false };
+        self.pull_off_road(uid);
+        let car = self.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, 0);
+        self.traffic.cars[car].siren = true;
+        self.services.by_car.insert(car, uid);
+        let (call, number) = {
+            let u = &mut self.services.units[uid];
+            u.state = UnitState::Responding;
+            u.car = Some(car);
+            u.incident = Some(id);
+            u.hospital = None;
+            u.patrol_until = 0;
+            (u.kind.call_sign(), u.number)
+        };
+        let sname = self.buildings.get(station).map(|b| b.name.clone()).unwrap_or_default();
+        let (bid, dispatcher) = {
+            let i = self.services.incident_mut(id).unwrap();
+            i.second = Some(uid);
+            (i.building, i.dispatcher)
+        };
+        let bname = self.buildings.get(bid).map(|b| b.name.clone()).unwrap_or_default();
+        if let Some(d) = dispatcher.and_then(|d| self.citizens.get_mut(d)) {
+            d.remember(tick, format!("Second alarm at {bname}. Sent {call} {number} from {sname} as well."));
+        }
+        true
+    }
+
     // ── units on the road ──────────────────────────────────────────────────
 
     /// An emergency vehicle reached the end of its route (called from
@@ -1729,12 +1810,23 @@ impl World {
         match state {
             UnitState::Responding => {
                 let inc = u.incident;
-                let live = inc.and_then(|i| self.services.incident(i)).is_some_and(|i| i.stage == Stage::Dispatched);
+                // [fire-scene] At a fire either engine (the first or the
+                // second alarm's) may get there first; the other joins it.
+                let fire = inc.and_then(|i| self.services.incident(i)).filter(|i| i.kind == IncidentKind::Fire && (i.unit == Some(uid) || i.second == Some(uid))).map(|i| (i.stage, i.building, i.unit, i.second));
+                let live = inc.and_then(|i| self.services.incident(i)).is_some_and(|i| i.stage == Stage::Dispatched) || fire.is_some_and(|f| f.0 == Stage::OnScene);
                 if !live {
                     self.send_home(uid);
                     return;
                 }
                 self.services.units[uid].state = UnitState::OnScene;
+                if let Some((stage, b, first, second)) = fire {
+                    // Pulled in to the kerb, behind an engine already there.
+                    let other = [first, second].into_iter().flatten().find(|&o| o != uid).and_then(|o| self.services.units.get(o)).filter(|o| o.state == UnitState::OnScene && o.car.is_none() && o.incident == inc).map(|o| (o.pos, o.heading));
+                    self.park_engine(uid, b, other);
+                    if stage == Stage::OnScene {
+                        return;
+                    }
+                }
                 self.on_scene(inc.unwrap());
             }
             UnitState::Transporting => self.deliver_patient(uid),
@@ -2101,7 +2193,7 @@ impl World {
         inc.stage = Stage::Resolved;
         inc.resolved = Some(tick);
         inc.outcome = Some(outcome);
-        let (kind, unit, citizen, bid, answered) = (inc.kind, inc.unit, inc.citizen, inc.building, inc.arrived.is_some());
+        let (kind, unit, citizen, bid, answered, second) = (inc.kind, inc.unit, inc.citizen, inc.building, inc.arrived.is_some(), inc.second);
         if let Some(n) = self.services.stats.resolved_today.get_mut(kind.index()) {
             *n += 1;
         }
@@ -2140,7 +2232,7 @@ impl World {
             }
             _ => {}
         }
-        if let Some(uid) = unit {
+        for uid in [unit, second.filter(|s| Some(*s) != unit)].into_iter().flatten() {
             let u = self.services.units.get(uid).filter(|u| u.incident == Some(id)).map(|u| u.state);
             if u == Some(UnitState::OnScene) && kind == IncidentKind::Fire {
                 // [fire-scene] The crew packs up first (`step_packing`).
@@ -2280,6 +2372,7 @@ impl World {
         st.mutual_aid_today = 0;
         st.diverted_today = 0;
         st.chases_today = 0;
+        st.second_alarms_today = 0;
         st.chases_tagged_today = 0;
         st.chases_lost_today = 0;
         st.unreachable_today = 0;
@@ -3074,5 +3167,112 @@ mod tests {
             run_until(&mut w, 1, |_| false);
         }
         assert!(w.buildings[station].condition >= before, "{} -> {}", before, w.buildings[station].condition);
+    }
+
+    /// [fire-scene] The engine pulls in to the kerb on the burning
+    /// building's side, out of the lanes and clear of the junction, and
+    /// passing traffic crawls past it, easing out round it, without
+    /// stopping for good.
+    #[test]
+    fn a_fire_engine_parks_at_the_kerb_and_traffic_eases_past() {
+        let mut w = town();
+        let crew = people(&mut w, 8);
+        let station = w.build_service(civic_lot(&w, -350.0), ServiceKind::Fire, Tier::Low).unwrap();
+        let desk = w.build_service(civic_lot(&w, -150.0), ServiceKind::Dispatch, Tier::Mid).unwrap();
+        staff(&mut w, station, &crew[..3], false);
+        staff(&mut w, desk, &crew[6..7], true);
+        // Just past the junction at x = 0: its frontage begins at the corner.
+        let target = building_at(&mut w, 15.0);
+        let id = w.start_fire(target).unwrap();
+        run_until(&mut w, 300, |w| w.services.incident(id).unwrap().stage == Stage::OnScene);
+        let uid = w.services.incident(id).unwrap().unit.expect("an engine");
+        let u = w.services.units[uid].clone();
+        assert_eq!(u.state, UnitState::OnScene);
+        let (seg, _, q) = w.roads.nearest_street(u.pos).unwrap();
+        let half = w.roads.segment(seg).half_width();
+        // On the building's side (north, y > 0), its body against the edge
+        // of the road: off the lanes but for a little.
+        assert!(u.pos.y > 0.0, "on the building's side: {}", u.pos);
+        assert!((u.pos.distance(q) - (half - ENGINE_HALF.1 - 0.1)).abs() < 0.3, "at the kerb: {} m off the centre line (half width {half})", u.pos.distance(q));
+        assert!(u.heading.cos().abs() > 0.99, "along the street");
+        for n in [w.roads.segment(seg).a, w.roads.segment(seg).b] {
+            let p = w.roads.node(n).pos;
+            assert!(u.pos.distance(p) >= SCENE_JUNCTION_CLEAR, "clear of the junction: {} m", u.pos.distance(p));
+        }
+        run_until(&mut w, 1, |_| false);
+        assert_eq!(w.traffic.scenes.len(), 1, "traffic told about it (set before every traffic step)");
+        // A car along the avenue past the engine, in the lane beside it.
+        let fwd = Vec2::new(u.heading.cos(), u.heading.sin());
+        let lane_y = u.pos.y.signum() * 1.75;
+        let from = Vec2::new((u.pos - fwd * 120.0).x, lane_y);
+        let to = Vec2::new((u.pos + fwd * 160.0).x, lane_y);
+        let (fs, _, _) = w.roads.nearest_street(from).unwrap();
+        let (ts, _, _) = w.roads.nearest_street(to).unwrap();
+        let (route, s0, s1) = w.traffic.net.find_route(fs, from, ts, to).expect("a route along the avenue");
+        let car = w.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, 2);
+        let (mut passed, mut fastest_by, mut closest, mut dodged) = (false, 0.0f32, f32::MAX, 0.0f32);
+        for _ in 0..200 {
+            run_until(&mut w, 1, |_| false);
+            let Some(c) = w.traffic.cars.get(car) else { break };
+            for &(p, _) in &c.drive.poses {
+                closest = closest.min(p.distance(u.pos));
+            }
+            let along = (c.pos - u.pos).dot(fwd);
+            // (A tick is a few seconds of driving: look over its length.)
+            if along.abs() < 15.0 {
+                fastest_by = fastest_by.max(c.v);
+                dodged = dodged.max(c.drive.dodge.abs());
+            }
+            if along > 15.0 {
+                passed = true;
+                break;
+            }
+        }
+        assert!(passed, "the car got past the engine");
+        assert!(fastest_by <= 5.0, "slowed going past: {fastest_by} m/s");
+        assert!(dodged > 0.3, "eased out round it: {dodged} m");
+        assert!(closest > ENGINE_HALF.1 + 0.6, "never through the engine: centres {closest} m apart");
+    }
+
+    /// [fire-scene] A fire burning hard sounds a second alarm: a second
+    /// engine with its own crew pulls in behind the first and the two put
+    /// it out sooner.
+    #[test]
+    fn a_big_fire_brings_a_second_engine() {
+        let mut w = town();
+        let crew = people(&mut w, 8);
+        let station = w.build_service(civic_lot(&w, -350.0), ServiceKind::Fire, Tier::Mid).unwrap();
+        let desk = w.build_service(civic_lot(&w, -150.0), ServiceKind::Dispatch, Tier::Mid).unwrap();
+        staff(&mut w, station, &crew[..6], false);
+        staff(&mut w, desk, &crew[6..7], true);
+        assert_eq!(w.crewed_units(station), 2);
+        let target = building_at(&mut w, 150.0);
+        let id = w.start_fire(target).unwrap();
+        w.services.incident_mut(id).unwrap().intensity = 0.85;
+        let mut both = false;
+        let mut apart = 0.0f32;
+        for _ in 0..400 {
+            run_until(&mut w, 1, |_| false);
+            let i = w.services.incident(id).unwrap();
+            if !i.active() {
+                break;
+            }
+            let engines: Vec<&Unit> = w.services.units.values().filter(|u| u.incident == Some(id) && u.state == UnitState::OnScene && u.car.is_none()).collect();
+            if engines.len() == 2 {
+                both = true;
+                apart = engines[0].pos.distance(engines[1].pos);
+                assert_eq!(w.engines_on_scene(id), 2);
+            }
+        }
+        let i = w.services.incident(id).unwrap();
+        assert!(i.second_alarm.is_some(), "the second alarm sounded");
+        assert!(i.second.is_some() && i.second != i.unit, "a second engine: {:?} {:?}", i.unit, i.second);
+        assert!(both, "both engines at work together");
+        assert!(apart >= SECOND_ENGINE_GAP - 1.0, "one behind the other, not on top: {apart} m");
+        assert_eq!(w.services.stats.second_alarms_total, 1);
+        assert_eq!(i.outcome, Some(Outcome::Extinguished));
+        // Both go home afterwards.
+        run_until(&mut w, 20, |w| w.services.units.values().all(|u| u.incident != Some(id)));
+        assert!(w.services.units.values().all(|u| u.incident != Some(id)), "everyone packed up and left");
     }
 }
