@@ -216,6 +216,8 @@ fn more_width(ui: &egui::Ui) -> f32 {
 enum Toggle {
     Window(Info),
     NewGame,
+    /// [committee] The Committee window (`ui/committee.rs`).
+    Committee,
 }
 
 impl Toggle {
@@ -224,6 +226,9 @@ impl Toggle {
         for info in Info::ALL {
             if info == Info::Saves {
                 out.push(Toggle::NewGame);
+            }
+            if info == Info::Districts {
+                out.push(Toggle::Committee);
             }
             out.push(Toggle::Window(info));
         }
@@ -238,6 +243,7 @@ impl Toggle {
         match self {
             Toggle::Window(info) => info.title(),
             Toggle::NewGame => "New game…",
+            Toggle::Committee => "Committee",
         }
     }
 
@@ -245,12 +251,14 @@ impl Toggle {
         match self {
             Toggle::Window(info) => info.is_open(ctx),
             Toggle::NewGame => super::newgame::is_open(ctx),
+            Toggle::Committee => super::committee::is_open(ctx),
         }
     }
 
     fn show(self, ui: &mut egui::Ui) {
         match self {
             Toggle::NewGame => super::newgame::toggle(ui),
+            Toggle::Committee => super::committee::toggle(ui),
             Toggle::Window(info) => {
                 let open = info.is_open(ui.ctx());
                 if ui.selectable_label(open, info.title()).clicked() {
