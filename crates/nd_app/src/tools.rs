@@ -2036,7 +2036,9 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 // The piece as it would land: footprint, track side, street side.
                 let (f, rail_fused, road_fused) = nd_sim::Facility::plan(tools.rail_kind, c, &sim.world.roads);
                 let fp = f.footprint();
-                let blocked = sim.world.buildings.values().any(|b| sim.world.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp)));
+                // [fix/review-app] Red by the game's own rule, as the
+                // Buildings tool's preview and placing it decide.
+                let blocked = sim.world.piece_verdict(nd_sim::Placeable::Rail(tools.rail_kind), c).is_some_and(|v| v.is_err());
                 let col = if blocked { red } else { Color::linear_rgb(0.3, 2.5, 0.6) };
                 let mut pts: Vec<Vec3> = fp.iter().map(|&p| lift(p)).collect();
                 if let Some(&first) = pts.first() { pts.push(first); }
@@ -2545,7 +2547,7 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
     if let nd_sim::Placeable::Rail(kind) = what {
         let (f, _, _) = nd_sim::Facility::plan(kind, c, &w.roads);
         let fp = f.footprint();
-        let blocked = w.buildings.values().any(|b| b.is_special() && w.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp)));
+        let blocked = w.piece_verdict(what, c).is_some_and(|v| v.is_err());
         let mut pts: Vec<Vec3> = fp.iter().map(|&p| lift(p)).collect();
         if let Some(&first) = pts.first() { pts.push(first); }
         gizmos.linestrip(pts, if blocked { red } else { green });
