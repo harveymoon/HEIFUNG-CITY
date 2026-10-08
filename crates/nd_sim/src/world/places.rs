@@ -153,7 +153,8 @@ impl World {
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };
             // [benches] A park with every seat taken is no place to go now.
-            if lu == LandUse::Park && self.park_full(b.lot) {
+            // [waterfront] nor a beach that is shut, out of reach or deserted by the weather
+            if lu == LandUse::Park && (self.park_full(b.lot) || !self.park_open_for_visits(b.lot)) {
                 continue;
             }
             let d = lot.center.distance(here);
@@ -166,6 +167,10 @@ impl World {
             let mut social = 0.08 * regular_friends.min(3) as f32 + 0.15 * friends_there.min(2) as f32;
             // [social] Friends draw, enemies repel, a friend's band tonight.
             social += self.social_pull(id, bid, inside);
+            // [waterfront] A beach on a hot day.
+            if lu == LandUse::Park {
+                social += self.beach_pull(b.lot);
+            }
             // [economy] An opening tonight draws a crowd, and the guests most.
             if let Some(o) = self.scene.opening_at(bid, tick) {
                 social += if o.invited.contains(&id) { 1.2 } else { 0.4 };
@@ -237,7 +242,7 @@ impl World {
         let mut cands: Vec<(BuildingId, f32, f32, f32)> = Vec::new(); // id, cost, distance, price
         for (bid, b) in self.buildings.iter() {
             let Some(bz) = &b.business else { continue };
-            if b.construction.is_some() || bz.closed || !bz.sells(r) || bz.stock_of(r) < 1.0 || !b.serves_at(hour) {
+            if !b.operating() || bz.closed || !bz.sells(r) || bz.stock_of(r) < 1.0 || !b.serves_at(hour) {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };

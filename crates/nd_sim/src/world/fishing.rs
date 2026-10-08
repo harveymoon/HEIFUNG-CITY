@@ -145,7 +145,7 @@ impl World {
         for b in ids {
             let Some(port) = self.ports.port_of(b).cloned() else { continue };
             let Some(bld) = self.buildings.get(b) else { continue };
-            let open = port.works() && bld.construction.is_none() && bld.business.as_ref().is_some_and(|z| !z.closed && z.kind == BusinessKind::FishingPort);
+            let open = port.works() && bld.operating() && bld.business.as_ref().is_some_and(|z| !z.closed && z.kind == BusinessKind::FishingPort);
             let staffing = bld.staffing();
             let jobs = bld.jobs;
             let mut fleet = std::mem::take(self.fishing.fleets.get_mut(&b).expect("listed"));

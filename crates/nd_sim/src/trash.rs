@@ -290,7 +290,7 @@ impl World {
         self.buildings
             .iter()
             .filter_map(|(id, b)| b.service.filter(|s| s.kind == ServiceKind::TrashDepot).map(|s| (id, b, s)))
-            .filter(|(_, b, _)| !b.is_derelict() && b.construction.is_none())
+            .filter(|(_, b, _)| !b.is_derelict() && b.operating())
             .filter_map(|(id, b, s)| self.lots.get(b.lot).map(|l| (id, l.center, s.kind.radius(s.tier), TRUCKS[s.tier.index()].min(b.workers.len() / TRUCK_CREW))))
             .collect()
     }
@@ -309,7 +309,7 @@ impl World {
     /// Kilograms a building throws out a day, and its bin size.
     fn trash_rate(&self, id: BuildingId) -> (f32, f32) {
         let Some(b) = self.buildings.get(id) else { return (0.0, 0.0) };
-        if b.construction.is_some() || b.land_use == LandUse::Park || b.is_power() || b.rail.is_some() || b.is_parking() {
+        if !b.operating() || b.land_use == LandUse::Park || b.is_power() || b.rail.is_some() || b.is_parking() {
             return (0.0, 0.0);
         }
         let mut daily = 0.0;
@@ -329,7 +329,7 @@ impl World {
     pub fn trash_companies(&self) -> Vec<(BuildingId, Vec2, usize)> {
         self.buildings
             .iter()
-            .filter(|(_, b)| b.construction.is_none() && !b.is_derelict() && b.business.as_ref().is_some_and(|z| z.kind == crate::market::BusinessKind::TrashCompany && !z.closed))
+            .filter(|(_, b)| b.operating() && !b.is_derelict() && b.business.as_ref().is_some_and(|z| z.kind == crate::market::BusinessKind::TrashCompany && !z.closed))
             .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, l.center, (b.workers.len() / TRUCK_CREW).min(COMPANY_TRUCKS))))
             .collect()
     }

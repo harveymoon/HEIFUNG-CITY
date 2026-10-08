@@ -82,6 +82,8 @@ mod riders;
 mod places;
 #[cfg(test)]
 mod places_tests;
+#[cfg(test)]
+mod under_construction_tests;
 mod industry_bridge;
 pub use plan::{Blocker, ProjectCheck, ProjectInfo, ProjectPreview};
 mod power;
@@ -145,6 +147,10 @@ mod rides;
 // [economy] business pressure, the new trades, the waterfront and the art scene
 mod pressure;
 mod waterfront;
+/// [waterfront] Waterfront lots, public beaches and private jetties.
+mod shore;
+#[cfg(test)]
+mod shore_tests;
 mod fishing;
 #[cfg(test)]
 mod fishing_tests;
@@ -658,6 +664,11 @@ pub struct World {
     /// reads it; old saves load with none and set one up when first used.
     #[serde(default)]
     pub committee: crate::committee::Committee,
+    /// [waterfront] Waterfront parcels, public beaches and private jetties
+    /// (`crate::shore`, `world/shore.rs`). Old saves load with none, and
+    /// keep the parcels they were cut with.
+    #[serde(default)]
+    pub shore: crate::shore::ShoreState,
     /// [park-paths] Player paths drawn to a park's (or other grounds')
     /// walkways, and what they are joined to (`world/grounds.rs`). Old
     /// saves load with none.
@@ -769,6 +780,7 @@ impl World {
             social: Default::default(),
             social_concern: None,
             committee: Default::default(),
+            shore: crate::shore::ShoreState { reach_water: true, ..Default::default() },
             path_links: Default::default(),
             corps: Default::default(),
         };
@@ -915,6 +927,8 @@ impl World {
         // A save from before named projects: number and name the one it has.
         self.name_active_project();
         self.recut_parcels();
+        // [waterfront] frontage on the water, for a save from before
+        self.mark_shore_lots();
         self.plan_changed();
         self.events.push(SimEvent::PlanChanged);
     }
@@ -1133,7 +1147,7 @@ impl World {
 
     fn available_land_uses(&self) -> [bool; 6] {
         let mut out = [false; 6];
-        for b in self.buildings.values().filter(|b| b.construction.is_none()) {
+        for b in self.buildings.values().filter(|b| b.operating()) {
             out[b.land_use.index()] = true;
         }
         out
@@ -1142,6 +1156,9 @@ impl World {
     pub fn tick(&mut self, minds: &mut dyn MindProvider) {
         // [park-paths] A path whose park went since the last tick is cut back.
         self.settle_path_links();
+        // [under-construction] Park walkways and gates shut while their
+        // building is a site.
+        self.refresh_closed_grounds();
         self.clock.advance();
         let tick = self.clock.tick;
         if self.clock.minute_of_day() == 0 {
@@ -1175,6 +1192,8 @@ impl World {
             // [districts] facelifts; [tourism] hotel nights and the books.
             crate::prof!("daily_districts", self.daily_districts());
             crate::prof!("daily_tourism", self.daily_tourism());
+            // [waterfront] beach tallies, and the households near a good one
+            self.daily_shore();
             crate::prof!("close_day_record", self.close_day_record(record));
             // [land] Buyouts, branches, merges, McMansions, billionaires.
             self.daily_estate();
@@ -1199,6 +1218,10 @@ impl World {
         }
         if tick % 60 == 30 {
             crate::prof!("step_construction", self.step_construction());
+        }
+        // [waterfront] beaches (access, weather, crowds), private jetties
+        if tick % 60 == 33 {
+            crate::prof!("hourly_shore", self.hourly_shore());
         }
         // [land] People present and moving, at :13 clear of the rest.
         if tick % 60 == 13 {

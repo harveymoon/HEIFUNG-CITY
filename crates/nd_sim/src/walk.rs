@@ -120,6 +120,10 @@ pub struct WalkEdge {
     /// street, so nobody on it holds up traffic. Footbridges are the first;
     /// skywalks between buildings can join them (`WalkGraph::raised`).
     pub raised: bool,
+    /// [under-construction] A player path's join onto public grounds
+    /// (`add_grounds`): shut, like a park's walkways, while the grounds'
+    /// building is still a site (`WalkGraph::closed`).
+    pub gate: bool,
 }
 
 /// What kind of place a walker crosses a street.
@@ -204,6 +208,11 @@ pub struct WalkGraph {
     /// other public grounds (`add_grounds`): the Path tool's snap points,
     /// and the ones a path is joined to.
     pub junctions: Vec<GroundsJunction>,
+    /// [under-construction] Lots whose building is not open yet (a site,
+    /// or coming down), sorted: their park walkways and grounds gates are
+    /// shut to anyone not already inside (`route_nodes_with`). Kept by
+    /// `World::refresh_closed_grounds`, not by `build`.
+    pub closed: Vec<LotId>,
 }
 
 /// [park-paths] What kind of public ground a walkway network belongs to.
@@ -299,6 +308,13 @@ pub fn walkable_through(lot: &Lot, land_value: &LandValue) -> bool {
         LandUse::Residential => tier != Tier::High,
         _ => true,
     }
+}
+
+/// [waterfront] May two neighbouring lots share a gate? A public beach is
+/// reached from a street or path it fronts, or through a park next to
+/// it, never across a private lot.
+pub fn beach_gate_ok(a: &Lot, b: &Lot) -> bool {
+    !(a.shore.beach || b.shore.beach) || (a.land_use == LandUse::Park && b.land_use == LandUse::Park)
 }
 
 /// Live streets at a node.
@@ -488,8 +504,8 @@ impl WalkGraph {
             return;
         }
         let len = self.nodes[a as usize].pos.distance(self.nodes[b as usize].pos).max(0.05);
-        self.adj[a as usize].push(WalkEdge { to: b, len, interior, park, cross: NO_CROSSING, raised: false });
-        self.adj[b as usize].push(WalkEdge { to: a, len, interior, park, cross: NO_CROSSING, raised: false });
+        self.adj[a as usize].push(WalkEdge { to: b, len, interior, park, cross: NO_CROSSING, raised: false, gate: false });
+        self.adj[b as usize].push(WalkEdge { to: a, len, interior, park, cross: NO_CROSSING, raised: false, gate: false });
     }
 
     /// Join two pavement nodes across a street.
@@ -504,8 +520,8 @@ impl WalkGraph {
         let k = self.crossings.len() as u32;
         self.crossings.push(Crossing { a, b, segment, node, kind, mid, button: false, bridged: false, closed: false });
         let len = pa.distance(pb).max(0.05);
-        self.adj[a as usize].push(WalkEdge { to: b, len, interior: false, park: false, cross: k, raised: false });
-        self.adj[b as usize].push(WalkEdge { to: a, len, interior: false, park: false, cross: k, raised: false });
+        self.adj[a as usize].push(WalkEdge { to: b, len, interior: false, park: false, cross: k, raised: false, gate: false });
+        self.adj[b as usize].push(WalkEdge { to: a, len, interior: false, park: false, cross: k, raised: false, gate: false });
     }
 
     /// The crossing a walker takes going from `p` to `q`, two consecutive
@@ -922,6 +938,10 @@ impl WalkGraph {
                             if lj <= li || !loops[lj].through {
                                 continue;
                             }
+                            // [waterfront] A public beach opens only onto a park.
+                            if !beach_gate_ok(&lots[info.lot], &lots[loops[lj].lot]) {
+                                continue;
+                            }
                             let other = &lots[loops[lj].lot].polygon;
                             let (c, d) = (other[j], other[(j + 1) % other.len()]);
                             if let Some((lo, hi)) = geom::shared_stretch(a, b, c, d) {
@@ -1120,8 +1140,8 @@ impl WalkGraph {
         let (na, nb) = (&self.nodes[a as usize], &self.nodes[b as usize]);
         let len = (na.pos.distance(nb.pos).powi(2) + (na.level - nb.level).powi(2)).sqrt().max(0.05);
         let (lo, hi) = if na.level <= nb.level { (a, b) } else { (b, a) };
-        self.adj[a as usize].push(WalkEdge { to: b, len, interior: false, park: false, cross: NO_CROSSING, raised: true });
-        self.adj[b as usize].push(WalkEdge { to: a, len, interior: false, park: false, cross: NO_CROSSING, raised: true });
+        self.adj[a as usize].push(WalkEdge { to: b, len, interior: false, park: false, cross: NO_CROSSING, raised: true, gate: false });
+        self.adj[b as usize].push(WalkEdge { to: a, len, interior: false, park: false, cross: NO_CROSSING, raised: true, gate: false });
         self.raised.push((lo, hi));
     }
 
@@ -1223,6 +1243,18 @@ impl WalkGraph {
         best.map(|(_, i)| i)
     }
 
+    /// [under-construction] Is node `n` on a lot whose building is not open
+    /// yet (`closed`)?
+    pub fn node_closed(&self, n: u32) -> bool {
+        !self.closed.is_empty() && self.nodes.get(n as usize).and_then(|x| x.lot).is_some_and(|l| self.closed.binary_search(&l).is_ok())
+    }
+
+    /// Is the edge `e` a park walkway or grounds gate into a shut lot?
+    /// Nobody walks in; whoever was inside when it shut walks out.
+    fn shut(&self, e: &WalkEdge) -> bool {
+        (e.park || e.gate) && self.node_closed(e.to)
+    }
+
     /// A* between two nodes with the edge costs of [`PARK_FACTOR`] and
     /// [`INTERIOR_FACTOR`]. The heuristic is the straight-line distance
     /// scaled by the cheapest factor, so it never overestimates and the
@@ -1255,12 +1287,18 @@ impl WalkGraph {
         let mut heap = BinaryHeap::new();
         dist[from as usize] = 0.0;
         heap.push(Item(h(from), from));
+        // [under-construction] Park walkways and gates of a site are shut,
+        // unless the walk starts in there (someone leaving).
+        let keep_out = !self.closed.is_empty() && !self.node_closed(from);
         while let Some(Item(_, u)) = heap.pop() {
             if u == to {
                 break;
             }
             let du = dist[u as usize];
             for e in &self.adj[u as usize] {
+                if keep_out && self.shut(e) {
+                    continue;
+                }
                 let mut cost = e.len * if e.park { PARK_FACTOR } else if e.interior { INTERIOR_FACTOR } else { 1.0 };
                 if e.cross != NO_CROSSING && self.crossings[e.cross as usize].kind == CrossingKind::Jay {
                     if !jaywalk {
@@ -1307,6 +1345,9 @@ impl WalkGraph {
     pub fn route_with(&self, from: Vec2, to: Vec2, jaywalk: bool) -> Option<(Vec<Vec2>, Vec<u32>)> {
         let a = self.nearest(from, 60.0)?;
         let b = self.nearest(to, 60.0)?;
+        // [under-construction] Not to a spot inside a shut park: the
+        // nearest node outside it instead.
+        let b = if self.node_closed(b) && !self.node_closed(a) { self.nearest_matching(to, 60.0, |n| !self.node_closed(n)).unwrap_or(b) } else { b };
         let nodes = self.route_nodes_with(a, b, jaywalk)?;
         let pts = nodes.iter().map(|&i| self.nodes[i as usize].pos).collect();
         Some((pts, nodes))
@@ -1348,6 +1389,9 @@ impl WalkGraph {
             }
             for e in &self.adj[u as usize] {
                 if e.cross != NO_CROSSING && self.crossings[e.cross as usize].kind == CrossingKind::Jay {
+                    continue;
+                }
+                if self.shut(e) {
                     continue;
                 }
                 let nd = d + e.len;
@@ -1407,6 +1451,12 @@ impl WalkGraph {
             let target = self.nearest_matching(p, 40.0, |n| inside(n) && on_paths(n) && Some(n) != end).or_else(|| self.nearest_matching(p, 40.0, |n| inside(n) && Some(n) != end));
             if let (Some(a), Some(b)) = (end, target) {
                 self.link_kind(a, b, true, g.kind == GroundsKind::Park);
+                // [under-construction] Marked, so it shuts with the grounds.
+                for (x, y) in [(a, b), (b, a)] {
+                    if let Some(e) = self.adj[x as usize].iter_mut().rev().find(|e| e.to == y) {
+                        e.gate = true;
+                    }
+                }
             }
             self.junctions.push(GroundsJunction { pos: p, kind: g.kind, lot: g.lot, attached: true, node: target });
             joined.push(true);
@@ -1498,6 +1548,38 @@ mod tests {
         }
         g.index = Grid::new(NODE_CELL, g.nodes.iter().map(|n| (n.pos, n.pos)));
         g
+    }
+
+    /// [under-construction] A park walkway and a path's gate into a lot
+    /// whose building is still a site are shut to walkers coming from
+    /// outside; whoever is inside walks out; once open, both are used.
+    #[test]
+    fn walkways_and_gates_of_a_site_are_shut_until_it_opens() {
+        // 0-1 pavement; 1-2 a park path into the park (2, 3 on its lot);
+        // 0-4 a player path, 4-3 its gate onto the park's walkway.
+        let mut g = graph(
+            &[Vec2::ZERO, Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0), Vec2::new(0.0, 10.0), Vec2::new(-5.0, 5.0)],
+            &[(0, 1, false, false), (1, 2, true, true), (2, 3, true, true), (0, 4, false, false), (4, 3, true, false)],
+        );
+        let mut lots: SlotMap<LotId, ()> = SlotMap::with_key();
+        let park = lots.insert(());
+        g.nodes[2].lot = Some(park);
+        g.nodes[3].lot = Some(park);
+        for (from, to) in [(4usize, 3u32), (3, 4)] {
+            for e in g.adj[from].iter_mut().filter(|e| e.to == to) {
+                e.gate = true;
+            }
+        }
+        assert!(g.route_nodes(0, 3).is_some(), "open: in by the park path or the gate");
+        g.closed = vec![park];
+        assert!(g.node_closed(2) && !g.node_closed(1));
+        assert_eq!(g.route_nodes(0, 3), None, "a site: neither the walkway nor the gate lets anyone in");
+        assert_eq!(g.route_nodes(4, 2), None);
+        assert!(g.route_nodes(3, 0).is_some(), "someone inside walks out");
+        let d = g.distances_from(&[0]);
+        assert!(d[2].is_infinite() && d[3].is_infinite(), "nor does the park count as within walking reach");
+        g.closed.clear();
+        assert!(g.route_nodes(4, 2).is_some(), "open again");
     }
 
     #[test]

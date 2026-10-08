@@ -278,8 +278,12 @@ fn buses_need_a_depot_run_a_loop_and_carry_riders() {
     }
     assert_eq!(w.traffic.cars.values().filter(|c| c.bus.is_some()).count(), 0, "buses need a depot");
     let depot_lot = w.lots.iter().find(|(_, l)| l.usable() && l.building.is_none() && l.land_use == LandUse::Industrial && l.area() >= transit::DEPOT_MIN_AREA).map(|(id, _)| id).expect("industrial lot");
+    // A lot too small for a depot refuses it ([free-placement]: any zone
+    // will do otherwise; [waterfront] the homes here run down to the river
+    // and are big, so the smallest lot in town is tried).
+    let small = w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none() && l.area() < transit::DEPOT_MIN_AREA).min_by(|a, b| a.1.area().total_cmp(&b.1.area())).map(|(id, _)| id).expect("a small lot");
+    assert!(w.build_depot(small).is_err(), "too small for a depot");
     let home_lot = w.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Residential).min_by(|a, b| a.1.center.distance(Vec2::new(-320.0, 70.0)).total_cmp(&b.1.center.distance(Vec2::new(-320.0, 70.0)))).map(|(id, _)| id).unwrap();
-    assert!(w.build_depot(home_lot).is_err(), "no depots on homes");
     let depot = w.build_depot(depot_lot).expect("depot built");
     assert!(w.buildings[depot].depot && w.economy.treasury < 60_000.0);
     let mut bus_seen = false;

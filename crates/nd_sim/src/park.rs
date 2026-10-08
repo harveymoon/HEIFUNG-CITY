@@ -151,7 +151,7 @@ pub fn plan_parks(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue) {
 /// (inside it or within `walk::GROUNDS_REACH` of its edge), so the park's
 /// walkways run out to meet the path.
 pub fn plan_parks_with(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue, links: &[Vec2]) {
-    let ids: Vec<LotId> = lots.iter().filter(|(_, l)| l.land_use == LandUse::Park && l.polygon.len() >= 3).map(|(id, _)| id).collect();
+    let ids: Vec<LotId> = lots.iter().filter(|(_, l)| l.land_use == LandUse::Park && l.polygon.len() >= 3 && !l.shore.beach).map(|(id, _)| id).collect();
     for (id, l) in lots.iter_mut() {
         if !ids.contains(&id) {
             l.park = None;
@@ -217,6 +217,12 @@ pub fn plan_parks_with(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue, l
             layout.seams = seams[*i].clone();
             lots[ids[*i]].park = Some(layout);
         }
+    }
+    // [waterfront] Public beaches are sand, each lot its own: a boardwalk
+    // down to the water and towel spots (`crate::shore::plan_beach`).
+    for l in lots.values_mut().filter(|l| l.land_use == LandUse::Park && l.shore.beach && l.polygon.len() >= 3) {
+        let tier = Tier::for_land_value(land_value.at(l.center));
+        l.park = Some(crate::shore::plan_beach(l, tier));
     }
 }
 

@@ -17,7 +17,7 @@ use crate::events::SimEvent;
 use crate::plan::{Gesture, GestureId};
 use crate::roads::RoadKind;
 use crate::walk::{edge_gates, Grounds, GroundsJunction, GroundsKind};
-use crate::zoning::LandUse;
+use crate::zoning::{LandUse, LotId};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
@@ -64,7 +64,8 @@ impl World {
                 continue;
             }
             let kind = if lot.land_use == LandUse::Park && lot.park.is_some() {
-                Some(GroundsKind::Park)
+                // [waterfront] a public beach is grounds of its own kind
+                Some(if lot.shore.beach { GroundsKind::Beach } else { GroundsKind::Park })
             } else {
                 lot.building.and_then(|b| self.buildings.get(b)).filter(|b| b.lot == lid).and_then(|b| {
                     use crate::services::ServiceKind;
@@ -128,11 +129,30 @@ impl World {
         let grounds = self.grounds();
         let links: Vec<Vec2> = self.path_links.links.iter().map(|l| l.pos).collect();
         let joined = self.walk.add_grounds(&self.roads, &grounds, &links);
+        self.refresh_closed_grounds();
         let gone: Vec<PathLink> = self.path_links.links.iter().zip(&joined).filter(|(_, ok)| !**ok).map(|(l, _)| l.clone()).collect();
         for l in gone {
             if !self.path_links.vanished.contains(&l) {
                 self.path_links.vanished.push(l);
             }
+        }
+    }
+
+    /// [under-construction] The lots whose park walkways and grounds gates
+    /// are shut because their building is not open yet (a park still being
+    /// laid out, a stadium going up, anything coming down). A scan of the
+    /// buildings, run every tick: sites are few and the check is two
+    /// fields, so the walk graph never lags the building it belongs to.
+    pub fn refresh_closed_grounds(&mut self) {
+        let mut closed: Vec<LotId> = Vec::new();
+        for b in self.buildings.values().filter(|b| !b.operating()) {
+            closed.push(b.lot);
+            closed.extend(b.plot.extra_lots.iter().copied());
+        }
+        closed.sort_unstable();
+        closed.dedup();
+        if closed != self.walk.closed {
+            self.walk.closed = closed;
         }
     }
 

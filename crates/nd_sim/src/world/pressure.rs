@@ -107,7 +107,7 @@ impl World {
             .values()
             .filter(|p| f(p.kind) && p.works())
             .filter_map(|p| p.building.map(|b| (b, p.kind, p.center)))
-            .filter(|(b, _, _)| self.buildings.get(*b).is_some_and(|x| x.construction.is_none() && x.business.as_ref().is_none_or(|z| !z.closed)))
+            .filter(|(b, _, _)| self.buildings.get(*b).is_some_and(|x| x.operating() && x.business.as_ref().is_none_or(|z| !z.closed)))
             .collect()
     }
 
@@ -115,7 +115,7 @@ impl World {
     fn daily_output(&self, kinds: &[BusinessKind]) -> f32 {
         self.buildings
             .values()
-            .filter(|b| b.construction.is_none())
+            .filter(|b| b.operating())
             .filter_map(|b| b.business.as_ref().filter(|z| !z.closed && kinds.contains(&z.kind)).map(|z| (b, z)))
             .map(|(b, z)| {
                 let per = z.kind.recipe().outputs.first().map_or(0.0, |o| o.1);
@@ -221,6 +221,12 @@ impl World {
             rich_adults: rich_adults as f32,
             rich_near_water: rich_near_water as f32,
             has_water,
+            // [waterfront]
+            tourists: self.tourism.tourists.len() as f32,
+            beach_visits: self.shore.beaches.values().map(|b| b.visits_yesterday as f32).sum(),
+            beaches_open: self.shore.beaches.values().filter(|b| b.usable()).count() as f32,
+            beach_appeal: self.beach_appeal_season(),
+            waterfront_sites: self.lots.values().filter(|l| l.building.is_none() && l.usable() && l.shore.is_waterfront() && !l.shore.beach && l.land_use != LandUse::Park).count() as f32,
         }
     }
 
@@ -256,6 +262,10 @@ impl World {
         let l = self.lots.get(lot).ok_or("no such lot")?;
         if l.building.is_some() {
             return Err("the lot is built on".into());
+        }
+        // [waterfront] The shore's trades stand on the water.
+        if kind.wants_waterfront() && !l.shore.is_waterfront() {
+            return Err(format!("a {} must stand on a lot that runs down to the water", kind.label()));
         }
         let id = self.build_on_as(lot, Some(kind)).ok_or("nothing can be built on that lot")?;
         if let Some(z) = self.buildings[id].business.as_mut() {
@@ -353,7 +363,7 @@ impl World {
         let dealers: Vec<(BuildingId, Vec2)> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.construction.is_none() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::CarDealer && !z.closed))
+            .filter(|(_, b)| b.operating() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::CarDealer && !z.closed))
             .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, l.center)))
             .collect();
         if dealers.is_empty() {
@@ -404,7 +414,7 @@ impl World {
             let Some(bk) = kind.business() else { continue };
             let Some(lot) = self.pressure_lot(kind, vacant) else {
                 if let Some(r) = self.pressure.readings.iter_mut().find(|r| r.kind == kind) {
-                    r.held = Some("no vacant lot that suits it".to_string());
+                    r.held = Some(if bk.wants_waterfront() { "no vacant lot on the water that suits it: zone the land between a road and the shore" } else { "no vacant lot that suits it" }.to_string());
                 }
                 continue;
             };
@@ -464,6 +474,7 @@ impl World {
         let crash_spots: Vec<Vec2> = self.driving.recent.iter().map(|r| r.pos).collect();
         let fishing: Vec<Vec2> = self.working_docks(|k| k.is_fishing()).into_iter().map(|d| d.2).collect();
         let marinas: Vec<Vec2> = self.working_docks(|k| k.is_marina()).into_iter().map(|d| d.2).collect();
+        let marinas_for_rental = marinas.clone();
         let p = match kind {
             PressureKind::TowCompany => Placement { uses: &[Industrial, Commercial], anchors: vec![self.centroid(&crash_spots)], reach: f32::INFINITY, min_area: 500.0, value: -1.0, needs_street: true },
             PressureKind::Mechanic => Placement { uses: &[Commercial, Industrial], anchors: vec![self.centroid(&crash_spots)], reach: f32::INFINITY, min_area: 350.0, value: -1.0, needs_street: true },
@@ -520,6 +531,30 @@ impl World {
                 let studios = self.sites_of(&[BusinessKind::ArtStudio]);
                 Placement { uses: &[Commercial, Entertainment], anchors: if studios.is_empty() { vec![self.city_centre()] } else { studios }, reach: 1800.0, min_area: 0.0, value: 0.4, needs_street: false }
             }
+            // [waterfront] On lots that run down to the water (`pressure_lot`).
+            PressureKind::BeachResort => {
+                let beaches = self.usable_beach_centres();
+                Placement { uses: &[Commercial, Entertainment], anchors: if beaches.is_empty() { vec![self.city_centre()] } else { beaches }, reach: f32::INFINITY, min_area: 1200.0, value: 0.8, needs_street: true }
+            }
+            PressureKind::PierRestaurant => {
+                let comfortable = self.homes_of(|c| c.class() >= Tier::Mid);
+                Placement { uses: &[Commercial, Entertainment], anchors: vec![self.centroid(&comfortable)], reach: f32::INFINITY, min_area: 0.0, value: 0.6, needs_street: false }
+            }
+            PressureKind::BeachBar => {
+                let beaches = self.usable_beach_centres();
+                if beaches.is_empty() {
+                    return None;
+                }
+                Placement { uses: &[Entertainment, Commercial], anchors: beaches, reach: 700.0, min_area: 0.0, value: 0.0, needs_street: false }
+            }
+            PressureKind::BoatRental => {
+                let mut anchors = self.usable_beach_centres();
+                anchors.extend(marinas_for_rental);
+                if anchors.is_empty() {
+                    anchors.push(self.city_centre());
+                }
+                Placement { uses: &[Commercial, Entertainment], anchors, reach: f32::INFINITY, min_area: 0.0, value: 0.2, needs_street: false }
+            }
             PressureKind::Marina => return None,
         };
         Some(p)
@@ -528,7 +563,7 @@ impl World {
     /// The vacant lot a pressure's business opens on: allowed land use,
     /// big enough, near its anchors, on the land value it likes. Ties to
     /// the lower lot id.
-    fn pressure_lot(&self, kind: PressureKind, vacant: &[LotId]) -> Option<LotId> {
+    pub(super) fn pressure_lot(&self, kind: PressureKind, vacant: &[LotId]) -> Option<LotId> {
         let p = self.placement(kind)?;
         let mut best: Option<(f32, LotId)> = None;
         for &id in vacant {
@@ -537,6 +572,20 @@ impl World {
                 continue;
             }
             let Some(rank) = p.uses.iter().position(|u| *u == lot.land_use) else { continue };
+            // [waterfront] The shore's trades only on the water; a pier or a
+            // pontoon only where boats can work.
+            let mut view = 0.0;
+            if let Some(bk) = kind.business().filter(|b| b.wants_waterfront()) {
+                if !lot.shore.is_waterfront() || lot.shore.beach {
+                    continue;
+                }
+                if let Some(jk) = Self::jetty_kind_for(bk) {
+                    if crate::shore::plan_jetty(lot, &self.landscape, jk).is_err() {
+                        continue;
+                    }
+                }
+                view = -(lot.shore.frontage / 40.0).min(1.5);
+            }
             if lot.area() < p.min_area || (p.needs_street && !lot.car_access()) {
                 continue;
             }
@@ -549,7 +598,7 @@ impl World {
             // Bigger lots suit the yards and ranges; the land use's order says
             // which it prefers.
             let room = if p.min_area > 0.0 { -(lot.area() / p.min_area).min(3.0) * 0.3 } else { 0.0 };
-            let score = if d.is_finite() { d / 150.0 } else { 0.0 } + value + rank as f32 * 0.8 + room;
+            let score = if d.is_finite() { d / 150.0 } else { 0.0 } + value + rank as f32 * 0.8 + room + view;
             if best.is_none_or(|(s, b)| score < s || (score == s && id < b)) {
                 best = Some((score, id));
             }
@@ -578,7 +627,7 @@ impl World {
             let shops: Vec<(BuildingId, f32)> = self
                 .buildings
                 .iter()
-                .filter(|(_, b)| b.construction.is_none() && b.opening_hours().contains(hour) && b.business.as_ref().is_some_and(|z| z.kind == kind && !z.closed))
+                .filter(|(_, b)| b.operating() && b.opening_hours().contains(hour) && b.business.as_ref().is_some_and(|z| z.kind == kind && !z.closed))
                 .map(|(id, b)| {
                     let staffing = if b.jobs == 0 { 0.0 } else { b.workers.len() as f32 / b.jobs as f32 };
                     let per_shop = if kind == BusinessKind::Mechanic { pressure::REPAIRS_PER_SHOP } else { 12.0 };
@@ -628,7 +677,7 @@ impl World {
         let galleries: Vec<(BuildingId, Vec2, String)> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.construction.is_none() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Gallery && !z.closed))
+            .filter(|(_, b)| b.operating() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Gallery && !z.closed))
             .filter(|(id, _)| mix(key_of(*id), day) % pressure::OPENING_EVERY_DAYS == 0)
             .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, l.center, b.name.clone())))
             .collect();
@@ -776,7 +825,7 @@ impl World {
         let mut studios: Vec<(BuildingId, u16)> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.construction.is_none() && b.free_jobs() > 0 && b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::ArtStudio | BusinessKind::Gallery) && !z.closed))
+            .filter(|(_, b)| b.operating() && b.free_jobs() > 0 && b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::ArtStudio | BusinessKind::Gallery) && !z.closed))
             .map(|(id, b)| (id, b.free_jobs()))
             .collect();
         if !studios.is_empty() {
@@ -833,7 +882,7 @@ impl World {
                 let best = self
                     .buildings
                     .iter()
-                    .filter(|(id, b)| *id != old && b.land_use == LandUse::Residential && b.construction.is_none() && b.free_homes() > 0 && b.tier == Tier::Low && b.rent <= old_rent)
+                    .filter(|(id, b)| *id != old && b.land_use == LandUse::Residential && b.operating() && b.free_homes() > 0 && b.tier == Tier::Low && b.rent <= old_rent)
                     .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, near_warehouse(l.center))))
                     .filter(|(_, d)| *d <= 500.0)
                     .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
@@ -893,7 +942,7 @@ impl World {
             format!("Paying its way: {:.0} a day in, {:.0} out.", rev / days, spend / days)
         };
         // What it is up against or short of.
-        if !z.closed && b.construction.is_none() {
+        if !z.closed && b.operating() {
             let staff = if b.jobs > 0 { b.workers.len() as f32 / b.jobs as f32 } else { 1.0 };
             if staff < 0.5 {
                 doing.push_str(&format!(" Short-staffed: {} of {} jobs filled.", b.workers.len(), b.jobs));

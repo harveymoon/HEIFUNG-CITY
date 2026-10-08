@@ -57,7 +57,7 @@ impl World {
     pub fn refresh_pads(&mut self) {
         let mut pads: Vec<Pad> = Vec::new();
         for (id, b) in self.buildings.iter() {
-            if b.construction.is_some() || b.demolition.is_some() || b.is_derelict() {
+            if !b.operating() || b.is_derelict() {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };
@@ -172,8 +172,7 @@ impl World {
             let tower = matches!(b.land_use, LandUse::Residential | LandUse::Commercial)
                 && b.tier == Tier::High
                 && b.floors >= air::ROOFTOP_MIN_FLOORS
-                && b.construction.is_none()
-                && b.demolition.is_none()
+                && b.operating()
                 && b.service.is_none()
                 && !b.is_power()
                 && !b.depot
@@ -451,7 +450,7 @@ impl World {
             if !critical(age, id) {
                 continue;
             }
-            let nearest = self.buildings.values().filter(|b| b.service.is_some_and(|s| s.kind == ServiceKind::Health) && !b.is_derelict()).filter_map(|b| self.lots.get(b.lot)).map(|l| l.center.distance(pos)).fold(f32::MAX, f32::min);
+            let nearest = self.buildings.values().filter(|b| b.service.is_some_and(|s| s.kind == ServiceKind::Health) && !b.is_derelict() && b.operating()).filter_map(|b| self.lots.get(b.lot)).map(|l| l.center.distance(pos)).fold(f32::MAX, f32::min);
             if nearest <= air::AMBULANCE_MIN_DIST {
                 continue;
             }
@@ -878,7 +877,7 @@ impl World {
                 let mut options: Vec<(bool, f32, BuildingId)> = self
                     .buildings
                     .iter()
-                    .filter_map(|(hid, b)| b.service.filter(|s| s.kind == ServiceKind::Health && !b.is_derelict() && beds(self, hid, *s)).map(|_| (hid, b)))
+                    .filter_map(|(hid, b)| b.service.filter(|s| s.kind == ServiceKind::Health && !b.is_derelict() && b.operating() && beds(self, hid, *s)).map(|_| (hid, b)))
                     .filter_map(|(hid, b)| self.lots.get(b.lot).map(|l| (self.air.pad(hid).is_none(), l.center.distance(pos), hid)))
                     .collect();
                 options.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));

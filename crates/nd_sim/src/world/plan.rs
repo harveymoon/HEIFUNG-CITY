@@ -62,7 +62,7 @@ impl Blocker {
         }
     }
 }
-use crate::zoning::{generate_parcels, inner_center, join_parcels, make_lot, Parcel, ParcelKey, ParcelMap};
+use crate::zoning::{inner_center, join_parcels, make_lot, Parcel, ParcelKey, ParcelMap};
 
 /// One pending project as the UI and the remote API list it.
 #[derive(Clone, Debug)]
@@ -356,15 +356,21 @@ impl World {
     /// on implement. With a sub-zone, parcels already planned industrial are
     /// painted again so their sub-zone changes.
     pub fn paint_parcels_with(&mut self, ids: &[usize], land_use: Option<LandUse>, industry: Option<&str>, stroke: Option<GestureId>) -> (Option<GestureId>, usize) {
-        let industry = industry.filter(|_| land_use == Some(LandUse::Industrial)).map(str::to_string);
+        // [waterfront] A park may be painted as a public beach (its
+        // sub-zone), on parcels that run down to the water.
+        let beach = land_use == Some(LandUse::Park) && industry == Some(crate::shore::BEACH_SUBZONE);
+        let industry = industry.filter(|k| land_use == Some(LandUse::Industrial) || (beach && *k == crate::shore::BEACH_SUBZONE)).map(str::to_string);
+        // Plain park over a beach turns it back into a park.
+        let beaches_now = if land_use == Some(LandUse::Park) && !beach { self.planned_beaches() } else { Vec::new() };
         let planned = self.planned_zoning();
         let mut keys: Vec<ParcelKey> = Vec::new();
         for &i in ids {
             let Some(p) = self.parcels.parcels.get(i) else { continue };
             let now = planned.get(i).copied().flatten();
-            let wanted = self.parcel_refusal(i, land_use).is_none()
+            let allowed = if beach { self.beach_refusal(i).is_none() } else { self.parcel_refusal(i, land_use).is_none() };
+            let wanted = allowed
                 && match land_use {
-                    Some(lu) => now != Some(lu) || industry.is_some(),
+                    Some(lu) => now != Some(lu) || industry.is_some() || beaches_now.get(i).copied().unwrap_or(false),
                     None => now.is_some(),
                 };
             if wanted {
@@ -412,6 +418,16 @@ impl World {
                 changes.push((id, Some(Gesture::ParcelZone { parcels: keys, land_use: Some(land_use), industry: Some(ind.to_string()) })));
             }
         }
+        // [waterfront] A beach drawn as a polygon: its parcels on the water.
+        if land_use == LandUse::Park && industry == Some(crate::shore::BEACH_SUBZONE) {
+            let mut keys: Vec<ParcelKey> = self.parcels.in_polygon(&polygon).into_iter().filter(|&i| self.beach_refusal(i).is_none()).map(|i| self.parcels.parcels[i].key).collect();
+            keys.sort();
+            if !keys.is_empty() {
+                let id = GestureId(self.next_gesture);
+                self.next_gesture += 1;
+                changes.push((id, Some(Gesture::ParcelZone { parcels: keys, land_use: Some(land_use), industry: Some(crate::shore::BEACH_SUBZONE.to_string()) })));
+            }
+        }
         self.edit_project(|p| p.push_many(changes));
         zone
     }
@@ -442,7 +458,9 @@ impl World {
         // configured one (an island off the coast): parcels used to be cut
         // off at `half_extent`, so such a road had no land to zone at all.
         let h = self.parcel_half();
-        let mut parcels = generate_parcels(&self.roads, &water, Some((Vec2::splat(-h), Vec2::splat(h))));
+        // [waterfront] Down to the water along roads near it (cities since).
+        let shore = self.shore.reach_water.then_some(crate::zoning::SHORE_REACH);
+        let mut parcels = crate::zoning::generate_parcels_with(&self.roads, &water, Some((Vec2::splat(-h), Vec2::splat(h))), shore);
         if !self.landscape.is_flat() {
             let land = &self.landscape;
             for p in &mut parcels {
@@ -1128,6 +1146,8 @@ impl World {
         let pinned = self.build_lots_from_parcels(&pins, &parks);
         // Lots on ground too steep to level are left as rough land.
         self.grade_lots();
+        // [waterfront] frontage on the water, and the beaches
+        self.mark_shore_lots();
         // Facilities: their footprints are lots of their own, and zoned lots
         // under them give way.
         // A lot whose centre is under a footprint, or whose outline crosses

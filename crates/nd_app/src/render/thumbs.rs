@@ -112,6 +112,7 @@ fn lot(w: f32, d: f32, land_use: LandUse) -> Lot {
         car_segment: Some(SegmentId(0)),
         car_point: SVec2::new(0.0, -hd - 3.0),
         park: None,
+        shore: Default::default(),
     }
 }
 

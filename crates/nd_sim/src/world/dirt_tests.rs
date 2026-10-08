@@ -306,7 +306,8 @@ fn saves_from_before_dirty_industry_load() {
     assert_eq!(again.dirty, w.dirty);
     // Old kinds keep their places: new kinds were appended.
     assert_eq!(BusinessKind::ALL[30], BusinessKind::StripMine);
-    assert_eq!(*BusinessKind::ALL.last().unwrap(), BusinessKind::ChemicalWorks);
+    assert_eq!(BusinessKind::ALL[BusinessKind::ChemicalWorks.index()], BusinessKind::ChemicalWorks);
+    assert_eq!(BusinessKind::ChemicalWorks.index(), 42, "[waterfront] kinds appended after it");
     assert_eq!(IndustryKind::ALL[7], IndustryKind::Mining);
     assert_eq!(Resource::ALL[17], Resource::Art);
 }

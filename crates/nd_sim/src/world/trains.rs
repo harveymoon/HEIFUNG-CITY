@@ -6,7 +6,7 @@ use super::*;
 impl World {
     /// Stations and yards that run: connected both ways and standing.
     pub(super) fn facilities(&self, kind: RailFacility) -> Vec<BuildingId> {
-        self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == kind && l.works()) && !b.is_derelict()).map(|(id, _)| id).collect()
+        self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == kind && l.works()) && !b.is_derelict() && b.operating()).map(|(id, _)| id).collect()
     }
 
     /// Recompute the working station and yard lists. Called when links,
@@ -129,6 +129,7 @@ impl World {
             car_segment: Some(front_segment),
             car_point,
             park: None,
+            shore: Default::default(),
         })
     }
 
