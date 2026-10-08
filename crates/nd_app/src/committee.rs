@@ -41,6 +41,10 @@ pub struct CommitteeRt {
     /// [voices] Model lines for spotlit and favourite citizens'
     /// conversations, and diaries on demand (display only).
     pub voices: nd_minds::committee::voices::Voices,
+    /// [fix/review-app] The player let the remote API change the backend
+    /// and its connection (this run only). Off, a script cannot switch the
+    /// committee to a paid model or point it at another server.
+    pub remote_may_switch: bool,
 }
 
 impl Default for CommitteeRt {
@@ -61,6 +65,7 @@ impl Default for CommitteeRt {
             shown: (0, 0),
             fast_forward: false,
             voices: Default::default(),
+            remote_may_switch: false,
         };
         rt.apply_settings();
         rt
@@ -122,6 +127,37 @@ impl Plugin for CommitteePlugin {
     }
 }
 
+/// A new day: the committee's samples and alerts, and the meeting when one
+/// is due (it pauses the city). Called once a frame, and by the remote
+/// `step` after each chunk of ticks so a step of many days runs every day's
+/// round, not one. Returns true when a meeting started.
+pub fn daily(sim: &mut Sim, rt: &mut CommitteeRt, flags: &mut UiFlags) -> bool {
+    let day = sim.world.clock.day();
+    if rt.last_day == Some(day) {
+        return false;
+    }
+    let first = rt.last_day.is_none();
+    rt.last_day = Some(day);
+    // Not on the frame a city appears: only when a day has passed.
+    if first || sim.world.buildings.is_empty() {
+        return false;
+    }
+    let ids = sim.world.committee_daily();
+    for id in &ids {
+        rt.driver.phrase_alert(&sim.world, *id, &mut rt.courier);
+    }
+    if let Some(a) = ids.last().and_then(|id| sim.world.committee.alerts.iter().find(|a| a.id == *id)) {
+        let who = sim.world.committee.member(a.member).map_or_else(String::new, |p| format!("{} ({})", p.name, p.scope.label()));
+        flags.message = format!("Committee alert from {who}: {}", a.text);
+    }
+    if sim.world.committee.meeting_due(day as u32) && start_meeting(&mut sim.world, false).is_ok() {
+        rt.begin(sim);
+        flags.message = "The committee meets: the city is paused for the meeting".into();
+        return true;
+    }
+    false
+}
+
 /// Once a frame: alerts on a new day, the calendar, the meeting.
 fn committee_tick(mut sim: ResMut<Sim>, mut rt: ResMut<CommitteeRt>, mut flags: ResMut<UiFlags>, tools: Res<crate::tools::ToolState>) {
     let rt = &mut *rt;
@@ -144,26 +180,7 @@ fn committee_tick(mut sim: ResMut<Sim>, mut rt: ResMut<CommitteeRt>, mut flags: 
             rt.test = None;
         }
     }
-    let day = sim.world.clock.day();
-    if rt.last_day != Some(day) {
-        let first = rt.last_day.is_none();
-        rt.last_day = Some(day);
-        // Not on the frame a city appears: only when a day has passed.
-        if !first && !sim.world.buildings.is_empty() {
-            let ids = sim.world.committee_daily();
-            for id in &ids {
-                rt.driver.phrase_alert(&sim.world, *id, &mut rt.courier);
-            }
-            if let Some(a) = ids.last().and_then(|id| sim.world.committee.alerts.iter().find(|a| a.id == *id)) {
-                let who = sim.world.committee.member(a.member).map_or_else(String::new, |p| format!("{} ({})", p.name, p.scope.label()));
-                flags.message = format!("Committee alert from {who}: {}", a.text);
-            }
-            if sim.world.committee.meeting_due(day as u32) && start_meeting(&mut sim.world, false).is_ok() {
-                rt.begin(&mut *sim);
-                flags.message = "The committee meets: the city is paused for the meeting".into();
-            }
-        }
-    }
+    daily(&mut sim, rt, &mut flags);
     // Replies: the meeting's and the alerts'.
     for d in rt.courier.poll() {
         // Neither: an answer to something forgotten (a reload).

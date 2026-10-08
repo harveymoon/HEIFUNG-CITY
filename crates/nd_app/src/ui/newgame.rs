@@ -182,9 +182,6 @@ fn start(p: &mut UiCtx, params: LandscapeParams, city: Option<CityPreset>, name:
         None => p.sim.new_game(params),
     }
     p.sim.set_city_name(name);
-    *p.tools = crate::tools::ToolState::default();
-    *p.selection = crate::tools::Selection::None;
-    p.plan.invalidate();
     let named = p.sim.world.identity.display_name().to_string();
     p.flags.message = match city {
         Some(c) => format!("New city {named}: {} on a {label} landscape", c.label()),

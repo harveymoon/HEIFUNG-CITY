@@ -159,14 +159,10 @@ fn smooth(x: f32) -> f32 {
     x * x * (3.0 - 2.0 * x)
 }
 
-fn wrap(mut a: f32) -> f32 {
-    while a > std::f32::consts::PI {
-        a -= std::f32::consts::TAU;
-    }
-    while a < -std::f32::consts::PI {
-        a += std::f32::consts::TAU;
-    }
-    a
+/// An angle into -π..π. [fix/review-app] Not by repeated subtraction: that
+/// never ended for an infinite angle.
+fn wrap(a: f32) -> f32 {
+    (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
 fn heading_of(v: SVec2) -> f32 {

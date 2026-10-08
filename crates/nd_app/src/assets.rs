@@ -69,6 +69,24 @@ fn load_or_write<T: serde::Serialize + serde::de::DeserializeOwned + Default>(
 }
 
 impl GameAssets {
+    /// The built-in palette and rules, touching no files (tests).
+    #[cfg(test)]
+    pub fn for_tests() -> Self {
+        let palette = Palette::default();
+        Self {
+            file_palette: palette.clone(),
+            climate: nd_sim::Climate::default(),
+            palette: nd_procgen::climate::palette_for(&palette, nd_sim::Climate::default()),
+            rules: BuildingRules::default(),
+            palette_mtime: None,
+            rules_mtime: None,
+            poll_timer: 0.0,
+            palette_changed: false,
+            rules_changed: false,
+            last_error: None,
+        }
+    }
+
     pub fn load() -> Self {
         let (palette, palette_mtime, e1) = load_or_write::<Palette>(PALETTE_PATH);
         let (rules, rules_mtime, e2) = load_or_write::<BuildingRules>(RULES_PATH);

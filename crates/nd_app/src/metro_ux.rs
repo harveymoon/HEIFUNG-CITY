@@ -49,7 +49,7 @@ impl Plugin for MetroUxPlugin {
     fn build(&self, app: &mut App) {
         app.insert_gizmo_config(MetroGizmos, GizmoConfig { depth_bias: -1.0, line: GizmoLineConfig { width: 5.0, ..default() }, ..default() })
             .add_systems(Update, (layer_key, follow_tool, metro_gizmos).chain().in_set(SimSet::Input).after(crate::tools::tool_input))
-            .add_systems(EguiPrimaryContextPass, (station_labels, panel));
+            .add_systems(EguiPrimaryContextPass, (station_labels, panel).after(crate::ui::side_panel));
     }
 }
 

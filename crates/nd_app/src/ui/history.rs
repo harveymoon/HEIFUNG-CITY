@@ -218,7 +218,7 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, st: &mut ViewState) {
         ui.label(egui::RichText::new(format!("Revert to {what}? The running city (day {}, {}) is replaced. Its newer autosaves stay in this list.", p.sim.world.clock.day() + 1, p.sim.world.clock.format_hhmm())).color(WARN));
         ui.horizontal(|ui| {
             if ui.button(egui::RichText::new("Revert").strong()).clicked() {
-                super::saves::revert(&target, p.sim, p.tools, p.selection, p.plan, p.saves, p.flags);
+                let _ = super::saves::revert(&target, p.sim, p.saves, p.flags);
                 st.confirm = None;
             }
             if ui.button("Cancel").clicked() {

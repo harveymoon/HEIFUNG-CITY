@@ -520,9 +520,12 @@ fn control_camera(
             cam.pitch = 0.75;
         }
     }
-    // F7 / F8 / F9: jump to a random low, middle or high tier building.
-    for (k, tier) in [(KeyCode::F7, Tier::Low), (KeyCode::F8, Tier::Mid), (KeyCode::F9, Tier::High)] {
-        if key(k) && !locked {
+    // F7 / Shift+F8 / F9: jump to a random low, middle or high tier
+    // building. [fix/review-app] Plain F8 is "Flag for Claude" (flags.rs):
+    // jumping there too made every F8 flag record the wrong view.
+    let shifted = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    for (k, tier, needs_shift) in [(KeyCode::F7, Tier::Low, false), (KeyCode::F8, Tier::Mid, true), (KeyCode::F9, Tier::High, false)] {
+        if key(k) && (!needs_shift || shifted) && !locked {
             let candidates: Vec<_> = sim.world.buildings.values().filter(|b| b.tier == tier && b.land_use != nd_sim::LandUse::Park).filter_map(|b| sim.world.lots.get(b.lot)).map(|l| l.center).collect();
             if let Some(c) = candidates.choose(&mut rand::rng()) {
                 cam.target = Vec3::new(c.x, 0.0, c.y);

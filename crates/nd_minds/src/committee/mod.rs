@@ -219,6 +219,10 @@ pub trait CommitteeBackend: Send + Sync {
     fn submit(&mut self, id: u64, req: TurnRequest);
     fn poll(&mut self) -> Vec<(u64, Result<TurnReply, String>)>;
     fn name(&self) -> String;
+    /// The courier gave up on turn `id` (it timed out and the stand-in
+    /// answered): a backend that has not sent it yet should not, since a
+    /// late answer is thrown away and a paid call would be wasted.
+    fn cancel(&mut self, _id: u64) {}
     /// True for the stand-in (no model, no network).
     fn is_mock(&self) -> bool {
         false
@@ -444,7 +448,9 @@ impl Courier {
         }
         let late: Vec<u64> = self.open.iter().filter(|(_, (_, at))| at.elapsed() > self.timeout).map(|(id, _)| *id).collect();
         for id in late {
-            let (req, _) = self.open.remove(&id).unwrap();
+            let Some((req, _)) = self.open.remove(&id) else { continue };
+            // [fix/review-app] Not sent later by a backend still queueing it.
+            self.backend.cancel(id);
             let why = format!("no answer within {} s", self.timeout.as_secs());
             self.note_error(why.clone());
             out.push(self.stand_in(id, req, why));
