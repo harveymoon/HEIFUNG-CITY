@@ -17,6 +17,8 @@
 /// [concerns] complaints by category and city happiness.
 /// [committee] `committee`, `committee_meeting`.
 mod committee;
+/// [megacorp] Mega-corps and universities.
+mod corp;
 mod concerns;
 /// [districts] [tourism] `district` and `tourism`.
 mod districts;
@@ -697,6 +699,9 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         // [land] the land market; ownership highlight data
         "estate" | "land_market" => property::command(cmd, &mut ctx.sim.world),
         "ownership" => property::ownership(cmd, &ctx.sim.world),
+        // [megacorp] mega-corps and universities
+        "corps" | "corp" | "megacorp" => corp::command(cmd, &mut ctx.sim.world),
+        "campus" | "university" => corp::campus(cmd, &mut ctx.sim.world),
         // [supertall] the skyline, height limits, the record book; dev tower starts
         "skyline" | "towers" | "height_limit" => skyline::command(cmd, &mut ctx.sim.world),
         "pressure" | "pressures" => economy::command(cmd, &mut ctx.sim.world),
@@ -2208,6 +2213,8 @@ fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         v["place"] = places::building_place(w, id);
         // [land] owner, sale price, plots, form, pressure
         v["land"] = property::building_land(w, id);
+        // [megacorp] the owning corp or university and its logo
+        v["brand"] = corp::building_brand(w, id);
         // [supertall] height, rank in the skyline, and a league tower's record
         v["tower"] = skyline::building_tower(w, id);
         // [ferry-routes] a terminal's routes, a shipping port's lane
@@ -3066,6 +3073,8 @@ fn help() -> Value {
     }
     // [mapgen] (out of the literal above: it is at the json! recursion limit)
     // [land]
+    v["commands"]["corps"] = json!({ "action": "summary (default: corps with brand/logo, HQ, holdings by use and industry, staff, housing, market share; campuses; rules; biggest companies vs thresholds) | rules {allowed, max_share 0.02-0.25, levy 0-0.2} | promote {building} (dev: its company becomes a mega-corp now) | buy {corp|building, n} (dev) | finish {corp} (dev: HQ now, sites finished) | drive {corp, lot} (road metres from HQ)" });
+    v["commands"]["campus"] = json!({ "action": "summary (default) | grow {building, days} (dev: run the campus's days with one annex each, sites finished)" });
     v["commands"]["estate"] = json!({ "action": "summary (default: counters, floors histogram, the billionaire gate, elites with their convoys, NIMBY zones, forms, owners) | pressure ({at: [x,y]} for one point, else every busy cell) | spawn_elite (dev: a billionaire now, needs quiet land) | expand {building} (dev: branch or merge now) | buyout {building} (dev) | drive {citizen, to} (dev)" });
     v["commands"]["ownership"] = json!({ "building": "id: what to highlight when it is selected: the owner and every property with its outline (a rich person's other homes and businesses too)" });
     v["commands"]["set_weather"] = json!({ "cloud": "0..1 (rain or snow above 0.6, by climate)", "wind": "0.05..1", "temp_c": "-50..55", "note": "dev: sets the sky now; it drifts again hour by hour" });

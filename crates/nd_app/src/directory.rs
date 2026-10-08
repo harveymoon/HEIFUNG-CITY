@@ -358,14 +358,14 @@ fn capitalise(s: &str) -> String {
 
 /// What kind of owner, in a word.
 pub fn owner_kind_label(k: &OwnerKind) -> &'static str {
-    #[allow(unreachable_patterns)]
     match k {
         OwnerKind::Firm { .. } => "chain",
         OwnerKind::Developer => "developer",
         OwnerKind::Household { .. } => "household",
         OwnerKind::Elite { .. } => "billionaire",
         OwnerKind::Person { .. } => "person",
-        _ => "corporation",
+        OwnerKind::MegaCorp { .. } => "mega-corp",
+        OwnerKind::University { .. } => "university",
     }
 }
 
@@ -407,7 +407,7 @@ pub fn businesses(w: &World) -> Vec<BizRow> {
             let district = w.district_of_lot(b.lot).map_or(String::new(), |d| d.name.clone());
             let street = lot.map_or(String::new(), |l| street_of(w, l));
             let rep = w.reputation(id).filter(|r| r.rated > 0);
-            let hay = hay_of(&[&b.name, &kind_label, &owner, &street, &district, state.label()]);
+            let hay = hay_of(&[&b.name, &kind_label, &owner, owner_kind, &street, &district, state.label()]);
             BizRow {
                 id,
                 name: b.name.clone(),

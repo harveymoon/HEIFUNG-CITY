@@ -49,7 +49,8 @@ fn dirty_styles_build_at_every_tier_and_are_deterministic() {
         assert!(!style.label().is_empty());
     }
     // Indices of older styles are untouched: the block is at the end.
-    assert_eq!(Style::ALL.len(), 111, "[supertall] appends one after this block");
+    // [supertall] and [megacorp] append one style each after this block.
+    assert_eq!(Style::ALL.len(), 112);
     for (k, s) in NEW.iter().enumerate() {
         assert_eq!(s.index(), 107 + k);
         assert_eq!(Style::ALL[107 + k], *s);

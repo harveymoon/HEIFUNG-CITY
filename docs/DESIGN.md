@@ -898,6 +898,54 @@ Citizens are rendered from their simulated positions every frame.
   *Garages*: a finished mansion takes the billionaire's supercars beyond the one they drive, a
   McMansion a second car, as real cars in the house's own spaces (`OwnedCar::spare`), never driven,
   sold when the owner is gone.
+- **Mega-corps** (`nd_sim::corp`, `world/corp.rs`, [megacorp]). *Growing into one*: daily (25%
+  roll) the biggest company (an owner record of a firm or a founder, or a lone business) whose
+  holdings take 9,000 a day (last three days' average), employ 30 and number two (or twice the
+  takings and staff in one building) becomes a mega-corp, in a town of 600 people or more, one
+  per 3,000 people, four at most. It gets a coined fictional name (two syllables nobody trades
+  under and a sector word), a brand colour (12, a free one first) and a logo: a shape (circle,
+  ring, hexagon, diamond, triangle, square, chevron) with its initial cut into it, an 11x11
+  pixel mark (`Brand::logo_bitmap`) the renderer, the trucks and the UI all draw the same.
+  *Its day*: it skims 40% of each holding's profit (a till keeps 500) into its purse and pays
+  the player's levy; with no HQ it buys the dearest, most pressed commercial plots downtown it
+  can assemble (up to three touching, 900 m²) and raises a tower there (pressure floors + 10,
+  18..40 floors; hook for feat/supertall: order it as a league tower when the city's height
+  limit allows). It buys up to three things a day nearest its HQ *by road* (one Dijkstra per HQ,
+  cached against the road network's version): businesses in profit (over their last three days) of any kind (a kind it does
+  not own counts as 30% nearer, so it spreads into every industry), blocks of homes for its staff
+  while it has under 0.6 homes a head, and vacant land of any zoning (a branded office, shop,
+  hotel, bar or works on it, a kind it lacks first; at most one buy in four is land). Staff move into its housing (six households a day, nearest their work)
+  and pay 30% less rent. *Balance*: the player caps how much of the town's ordinary buildings
+  one corp may own (8% by default, 2-25%, at least four) and sets a levy (0-20% of its daily
+  takings, booked as business tax) or bans new corps (City Data › Economy › Corporations); a
+  corp over the cap sells its newest holdings, two a day, never the HQ. Its holdings are off the
+  market (developers, the rich and billionaires leave them alone). *On the map*: a lit rooftop
+  sign with the logo on every holding, a facade banner on the taller ones, a smaller banner on
+  staff housing, and on the HQ (a twist or slab tower) two bands of light, a screen wall with the
+  logo on all four sides and a spire; its lorries and vans wear a dark brand-tinted livery with
+  the logo lit on the box (`Livery::Corp`). The inspector shows the owner corp with its logo.
+- **Universities** (`ServiceKind::University`, `world/campus.rs`). Placed under Services
+  (community college, university, institute of technology; 825 m² at least): a stone hall with a
+  portico, a clock tower and a lawn quad. It founds a campus (`OwnerKind::University`, a crest
+  in a free colour). Daily it enrols the town's 18-24 year olds (about two in three, nearest
+  first) up to its places (120/320/800), takes 6 a day tuition, lets students arrive from out of
+  town into free dorm rooms (four a day), claims parks within 336 m as campus plaza (flags in
+  its colour, the crest at the gate, coloured paving bands) and, every other day, grows one
+  annex within 420 m: a first dorm (a block of homes nearby bought as it stands, else a new one
+  on the nearest plot, bought and cleared if need be), then administration offices, a sports
+  centre, a theatre and a frat house, then dorms until 35% of its places are housed and more
+  frats, up to 4/7/12 annexes by tier. Dorm rooms are let only to students (45% off the rent).
+  Offices, theatre and sports centre are the campus's own (special: never sold or rebuilt).
+  *Students* go to class at 09:00 and stay till 15:00; at 20:30 about a third go out to a bar,
+  a pizza place or the campus theatre within 600 m. Pizza places, cafés (bakeries) and bookshops
+  (gadget shops) near campus see 0.05 walk-ins an hour per student (full at the gate, none at
+  600 m), and a new shop or bar within 420 m of a campus with 20 students opens as a pizza
+  place or a bar half the time.
+- **Schools and families** [megacorp]: a household with children takes a home a school covers
+  (coverage 0.3+) when one of its tier is free, and a family living out of reach of any school
+  moves to a covered home of its tier or better (12% a day, while the town has a school); the
+  childless choose as before. A school's land value lift follows its staffing (x0.8 empty to
+  x1.2 full).
 - **Railway** (`RoadKind::Rail`, `nd_sim::rail`): track is a third kind of way in the road
   network, single track 4.8 m wide. A trunk line crosses the map 480 m south of the
   centre from the start, edge to edge and on out of sight; the player lays branches off it with the Road tool's Rail
@@ -2190,7 +2238,7 @@ tab's sub-tabs:
 
 The Directory lists every business and every person in one table each, with a column per thing
 the player asks of them. Businesses: name, kind (and industry), owner (chain, developer,
-billionaire, founder; "independent" when nobody holds it), district, the street it fronts,
+billionaire, founder, mega-corp, university; "independent" when nobody holds it), district, the street it fronts,
 staff of jobs, takings today and yesterday, yesterday's net, cash, rating (stars) and today's
 footfall, and its state (under construction, out of business, broke, no staff, open, closed for
 the night). People: name, age, class, income, workplace (or unemployed, child, retired), home and

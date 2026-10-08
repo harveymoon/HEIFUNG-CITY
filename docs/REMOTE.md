@@ -767,6 +767,42 @@ several plots), home, business, form. A billionaire's other homes and businesses
 {"cmd": "estate", "action": "pressure", "at": [0, 0]}
 ```
 
+### Mega-corps and universities [megacorp]
+
+`inspect {building}` carries `brand` for a building a mega-corp or a university owns (null
+otherwise): `kind` (`mega_corp` or `university`), `corp` / `campus` id, `role` (headquarters,
+holding, staff housing; main building, dorm, administration, theatre, sports centre, frat house,
+campus plaza), `rent_discount` for staff housing, and `brand`: `name`, `colour` (hex),
+`colour_index`, `shape` (circle, ring, hexagon, diamond, triangle, square, chevron, shield),
+`monogram` and `logo`: the 11x11 pixel mark as text rows (`#` shape, `x` letter cut into the
+shape, `o` letter on empty ground, `.` empty), the same mark the renderer lights on roofs,
+banners, the HQ crown and the fleet's trucks. `ownership` and `inspect.building.land` show the
+owner's kind as `mega_corp` (with the business it grew out of) or `university`.
+
+`corps {action?}` (also `corp`, `megacorp`):
+
+| action | fields | reply |
+| --- | --- | --- |
+| `summary` (default) | | `corps` (id, brand, origin, origin_kind, founded_day, `hq` {id, name, floors, building, pos}, cash, holdings, holdings_by_use, industries, staff, `housing` {blocks, homes, staff_housed}, revenue_yesterday, market_share, bought_total, levy_total, properties), `campuses` (as `campus`), `rules` {allowed, max_share, levy, cap_per_corp, room}, `thresholds`, `biggest_companies` (flagship, name, kind, holdings, staff, revenue, qualifies), `stats` |
+| `rules` | `allowed` (bool), `max_share` (0.02-0.25), `levy` (0-0.2) | the rules as set (clamped) |
+| `promote` | `building` (a business) | dev: its company becomes a mega-corp now (brand, HQ site bought); the corp |
+| `buy` | `corp` or `building`, `n` | dev: the corp buys what it would buy next, `n` times (cash topped up); `bought` |
+| `finish` | `corp` | dev: HQ now if none, every building site of the corp finished |
+| `drive` | `corp`, `lot` | road metres from the corp's HQ (the cached table its buys sort by) |
+
+`campus {action?}` (also `university`): `summary` (default) lists `campuses`: id, owner, brand,
+name, tier, pos, places, students, dorm_homes, funds, `annexes` [{id, kind, name, building}],
+`pending` [{lot, kind}], expansions_total. `grow {building?, days}` (dev) runs the campus's daily
+round `days` times with one annex each day and every site finished.
+
+A University is placed like any service: `place {kind: "university", tier, x, y}` (Services; also `campus`, `college`; needs about 825 m² at its lowest tier).
+
+```json
+{"cmd": "corps", "action": "promote", "building": "88:1"}
+{"cmd": "corps", "action": "rules", "max_share": 0.05, "levy": 0.1}
+{"cmd": "campus", "action": "grow", "days": 10}
+```
+
 ### Skyline: skyscrapers, supertalls, megatalls [supertall]
 
 League towers rise over everything the ordinary growth builds: skyscrapers from 150 m, supertalls
@@ -1212,8 +1248,8 @@ favourite place, status (people). Pickers: `district` (both), `business_kind` (a
 settings. Reply: `kind`, `sort`, `desc`, `total`, `matched`, `offset`, `rows`, `took_ms`.
 
 - Businesses' columns: `name`, `kind` (key) and `kind_label` ("Mill · farming"), `owner` and
-  `owner_kind` (chain, developer, billionaire, person, household, corporation; empty for an
-  independent), `district`, `street` (the street the lot fronts), `staff`/`jobs`,
+  `owner_kind` (chain, developer, billionaire, person, household, mega-corp, university;
+  empty for an independent), `district`, `street` (the street the lot fronts), `staff`/`jobs`,
   `revenue_today`, `spend_today`, `revenue_yesterday` and `profit_yesterday` (the closed books;
   null on the first day), `money`, `rating` (1-5 stars, null before anyone rated it), `rated`,
   `footfall` (passers-by today), `state` (building, shut = out of business, broke, no_staff, open,

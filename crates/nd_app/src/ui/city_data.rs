@@ -67,7 +67,7 @@ impl Tab {
         use Page::*;
         match self {
             Tab::City => &[CityOverview, CityLand, CityDistricts, CitySkyline, CityTourism],
-            Tab::Economy => &[EconomyOverview, EconomyCashFlow, EconomyLedger, EconomyTaxes],
+            Tab::Economy => &[EconomyOverview, EconomyCashFlow, EconomyLedger, EconomyTaxes, EconomyCorporations],
             Tab::Market => &[MarketGoods, MarketBusinesses, MarketTrade],
             Tab::People => &[PeoplePopulation, PeopleInequality, PeopleConcerns, PeopleSocial, PeopleFavourites],
             Tab::Services => &[ServicesPower, ServicesTransit, ServicesEmergencies],
@@ -93,6 +93,8 @@ pub enum Page {
     EconomyCashFlow,
     EconomyLedger,
     EconomyTaxes,
+    /// [megacorp] Mega-corps, universities and the rules on them.
+    EconomyCorporations,
     MarketGoods,
     MarketBusinesses,
     MarketTrade,
@@ -125,6 +127,7 @@ impl Page {
             EconomyCashFlow => "Cash flow",
             EconomyLedger => "Ledger",
             EconomyTaxes => "Taxes",
+            EconomyCorporations => "Corporations",
             MarketGoods => "Goods and prices",
             MarketBusinesses => "Businesses",
             MarketTrade => "Trade",
@@ -153,6 +156,7 @@ impl Page {
             EconomyCashFlow => "cash_flow",
             EconomyLedger => "ledger",
             EconomyTaxes => "taxes",
+            EconomyCorporations => "corporations",
             MarketGoods => "goods",
             MarketBusinesses => "businesses",
             MarketTrade => "trade",
@@ -182,6 +186,7 @@ impl Page {
             EconomyCashFlow => "Cash flow",
             EconomyLedger => "The ledger",
             EconomyTaxes => "Taxes",
+            EconomyCorporations => "Mega-corporations and universities",
             MarketGoods => "Goods and prices",
             MarketBusinesses => "Businesses",
             MarketTrade => "Trade",
@@ -211,6 +216,7 @@ impl Page {
             EconomyCashFlow => "Money in and out of the treasury day by day, by flow.",
             EconomyLedger => "Every line of the books, opened onto the buildings, lines and classes behind it.",
             EconomyTaxes => "What each tax brings in, and the rates: set them here.",
+            EconomyCorporations => "Mega-corps with their logos, HQs, holdings and market share; universities; the cap and the levy.",
             MarketGoods => "Every good's price against its base and the stock in town.",
             MarketBusinesses => "How many businesses trade, how each kind pays, and the demand for new buildings.",
             MarketTrade => "Goods bought from and sold out of town by the city's businesses.",
@@ -243,6 +249,7 @@ impl Page {
                 let s = match s.as_str() {
                     "cashflow" | "flows" => "cash_flow",
                     "budget" | "tax" => "taxes",
+                    "corps" | "corp" | "megacorps" | "mega_corps" | "universities" => "corporations",
                     "prices" | "goods_and_prices" => "goods",
                     "industry" => "businesses",
                     "imports" | "exports" => "trade",
@@ -516,6 +523,7 @@ fn body_of(ui: &mut egui::Ui, p: &mut UiCtx, page: Page) {
         EconomyCashFlow => super::economy::cash_flow(ui, p),
         EconomyLedger => super::economy::ledger(ui, p),
         EconomyTaxes => super::economy::taxes(ui, p),
+        EconomyCorporations => super::estate::corporations_page(ui, p),
         MarketGoods => super::detail::market_goods(ui, p),
         MarketBusinesses => super::detail::market_businesses(ui, p),
         MarketTrade => super::detail::market_trade(ui, p),
@@ -551,7 +559,7 @@ mod tests {
                 assert_eq!(Page::parse(None, t.key(), Some(p.key())), Ok(*p));
             }
         }
-        assert_eq!(seen.len(), 22);
+        assert_eq!(seen.len(), 23);
     }
 
     /// The old window names still find their pages.
