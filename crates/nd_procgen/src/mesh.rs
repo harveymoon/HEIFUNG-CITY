@@ -442,12 +442,26 @@ impl MeshData {
         if n < 3 {
             return;
         }
+        let axis = self.band(bottom, top, color);
+        self.cap(&top[..n], axis, color);
+        self.cap(&bottom[..n], -axis, color);
+    }
+
+    /// The sides of a frustum without its caps: a floor band or a ring of
+    /// light round a shaft whose own caps would lie in the shaft's (and
+    /// fight with them). Returns the axis, bottom to top.
+    pub fn band(&mut self, bottom: &[Vec3], top: &[Vec3], color: [f32; 4]) -> Vec3 {
+        let n = bottom.len().min(top.len());
+        let (bottom, top) = (&bottom[..n], &top[..n]);
         let top_c = centroid(top);
         let bot_c = centroid(bottom);
         let axis = {
             let a = top_c - bot_c;
             if a.length_squared() > 1e-8 { a.normalize() } else { Vec3::Y }
         };
+        if n < 3 {
+            return axis;
+        }
         // Which way round the ring goes, seen along the axis. A ring whose
         // Newell normal points along the axis has its quads [b_i, b_j, t_j,
         // t_i] facing out; the other winding needs them reversed.
@@ -465,8 +479,7 @@ impl MeshData {
                 self.quad([bottom[i], top[i], top[j], bottom[j]], color);
             }
         }
-        self.cap(top, axis, color);
-        self.cap(bottom, -axis, color);
+        axis
     }
 
     /// Smooth tube through a chain of rings: a wire, a hose, a bent pipe.

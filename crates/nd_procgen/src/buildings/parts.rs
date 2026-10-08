@@ -411,6 +411,16 @@ pub fn loft(g: &mut Geometry, f: &Frame, s: Surface, bottom: &[Vec2], top: &[Vec
     g.part(s).frustum(&f.poly3(bottom, y0), &f.poly3(top, y1), rgba(color));
 }
 
+/// The sides of a solid between two polygons, without its caps: a floor
+/// band proud of a shaft, whose caps would lie in the shaft's own.
+#[allow(clippy::too_many_arguments)]
+pub fn band(g: &mut Geometry, f: &Frame, s: Surface, bottom: &[Vec2], top: &[Vec2], y0: f32, y1: f32, color: [f32; 3]) {
+    if bottom.len() < 3 || bottom.len() != top.len() {
+        return;
+    }
+    g.part(s).band(&f.poly3(bottom, y0), &f.poly3(top, y1), rgba(color));
+}
+
 pub fn ground(g: &mut Geometry, f: &Frame, s: Surface, poly: &[Vec2], y: f32, color: [f32; 3]) {
     let world: Vec<Vec2> = poly.iter().map(|p| f.to_world(p.x, p.y)).collect();
     g.part(s).ground_polygon(&world, y, rgba(color));

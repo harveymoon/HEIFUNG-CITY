@@ -311,9 +311,13 @@ pub fn twist_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let plate = fit_inside(c, &rotate_poly(&scale_poly(&base, 1.0 - (1.0 - taper) * t), total_twist * t));
         loft(g, f, Glass, &prev, &plate, y, y + fh, glass);
         // floor plate edge
-        loft(g, f, Panel, &offset_poly(&prev, -0.12), &offset_poly(&plate, -0.12), y + fh - 0.25, y + fh, mul(pick(rng, &pal.panel), 0.8));
+        // The plate's edge: a band without caps, which would lie in the
+        // glass's own top and the next floor's bottom.
+        band(g, f, Panel, &offset_poly(&prev, -0.12), &offset_poly(&plate, -0.12), y + fh - 0.25, y + fh, mul(pick(rng, &pal.panel), 0.8));
         if k % 2 == 0 {
-            curtain_lights(g, c, rng, &prev, y, 1, fh);
+            // Lit at mid-floor, on the facade where the glass is there.
+            let mid: Vec<Vec2> = if prev.len() == plate.len() { prev.iter().zip(&plate).map(|(a, b)| a.lerp(*b, 0.5)).collect() } else { prev.clone() };
+            curtain_lights(g, c, rng, &mid, y, 1, fh);
         }
         prev = plate;
         y += fh;
@@ -322,7 +326,7 @@ pub fn twist_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // A cut glass crown, not a needle.
     let top = super::kit::crystal_crown(g, c, rng, &prev, y + 0.6, glass);
     g.part(Glow).boxed(f.at2(poly_center(&prev), top + 0.3), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
-    extrude(g, f, Glow, &offset_poly(&prev, -0.05), y - 0.6, y, mul(c.style.window_color(0), 0.9));
+    band(g, f, Glow, &offset_poly(&prev, -0.05), &offset_poly(&prev, -0.05), y - 0.6, y, mul(c.style.window_color(0), 0.9));
     let front = c.front_face(&c.poly);
     entrance(g, c, rng, &front, 0.0, 3.5, podium_h * 0.8);
     bollards(g, c, &front, 5, 1.6);
