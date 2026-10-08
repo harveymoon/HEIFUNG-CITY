@@ -502,3 +502,81 @@ fn settings_never_show_the_key_and_claude_needs_one() {
     assert!(extract_json("Sure! ```json\n{\"choice\": 2, \"reason\": \"a {brace} in a string\"}\n```").is_some_and(|v| v["choice"] == 2));
     assert!(extract_json("no json here").is_none());
 }
+
+// ── voices: conversation lines and diaries ──────────────────────────────────
+
+use super::voices::{clean_line, Voices};
+
+#[test]
+fn diaries_come_from_memories_and_the_stand_in_is_deterministic() {
+    let w = grown();
+    let id = w.citizens.iter().filter(|(_, c)| c.memories.len() >= 2).map(|(id, _)| id).next().expect("someone remembers something");
+    let write = || {
+        let mut v = Voices::default();
+        let mut c = Courier::mock();
+        v.ask_diary(&w, id, &mut c, false);
+        assert!(v.diary(id).unwrap().pending);
+        for d in c.poll() {
+            assert!(v.take(&d));
+        }
+        v.diary(id).unwrap().clone()
+    };
+    let a = write();
+    assert!(!a.pending && !a.by_model, "the stand-in wrote it");
+    assert!(a.text.starts_with(&format!("Day {}.", w.clock.day() + 1)), "{}", a.text);
+    assert!(a.text.len() > 40, "{}", a.text);
+    assert_eq!(a, write(), "same city, same diary");
+    println!("{}: {}", w.citizens[id].name, a.text);
+}
+
+#[test]
+fn conversation_lines_are_asked_only_for_watched_people_and_never_touch_the_sim() {
+    let w = grown();
+    assert!(!w.social.recent.is_empty(), "people talked in three days");
+    let before = w.to_ron().unwrap();
+    // The stand-in keeps the sim's template: nothing is asked.
+    let mut v = Voices::default();
+    let mut c = Courier::mock();
+    v.pump(&w, &mut c, &|_| true);
+    assert_eq!(c.calls, 0);
+    // A model is asked for lines of watched people only.
+    let (url, rx) = fake_server(200, r#"{"choices":[{"message":{"content":"Kai: \"Rent here would make a saint swear.\""}}]}"#);
+    let s = CommitteeSettings { backend: BackendChoice::Local, local_url: format!("{url}/v1"), ..Default::default() };
+    let mut c = Courier::new(backend_from(&s).unwrap(), Duration::from_secs(10));
+    let t = w.social.recent.back().unwrap().clone();
+    let mut v = Voices::default();
+    v.pump(&w, &mut c, &|x| x == t.a);
+    let asked = c.calls;
+    assert!(asked >= 1 && asked as usize <= super::voices::MAX_LINES_IN_FLIGHT);
+    let mut got = 0;
+    for _ in 0..500 {
+        for d in c.poll() {
+            assert!(v.take(&d));
+            got += 1;
+        }
+        if got == asked {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let (_, _, sent) = rx.recv().unwrap();
+    assert!(sent.contains("one line of dialogue"), "{sent}");
+    let line = w.social.recent.iter().rev().find_map(|x| v.line(x.serial)).expect("a model line arrived");
+    assert_eq!(line, "Rent here would make a saint swear.");
+    // The sim's own line is untouched, and so is the world.
+    assert_eq!(w.social.recent.back().unwrap().line, t.line);
+    assert_eq!(w.to_ron().unwrap(), before);
+    // Seen conversations are not asked again.
+    let calls = c.calls;
+    v.pump(&w, &mut c, &|_| true);
+    assert_eq!(c.calls, calls);
+}
+
+#[test]
+fn model_lines_are_cleaned() {
+    assert_eq!(clean_line("Mira: \"Hello there.\""), "Hello there.");
+    assert_eq!(clean_line("\n\n  Nice night.  \nSecond line"), "Nice night.");
+    assert_eq!(clean_line("Note: this is a line: with colons"), "this is a line: with colons");
+    let long = (0..40).map(|_| "word").collect::<Vec<_>>().join(" ");
+    assert!(clean_line(&long).ends_with("..."));
+}

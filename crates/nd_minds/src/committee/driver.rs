@@ -364,7 +364,7 @@ impl Driver {
                             let facts = m.report.scope_facts(p.scope, w.committee.baseline.as_ref());
                             let since = w.committee.baseline.as_ref().map_or(0, |b| b.day);
                             let alerts = w.committee.alerts.iter().filter(|a| a.member == id && a.day >= since).map(|a| a.text.clone()).take(3).collect();
-                            Some((submit(w, Some(id), Task::Status { facts, alerts }, 100 + cursor as u64, 250), Step::Status(id)))
+                            Some((submit(w, Some(id), Task::Status { facts, alerts, first: w.committee.baseline.is_none() }, 100 + cursor as u64, 250), Step::Status(id)))
                         }
                         None => {
                             w.committee.meeting.as_mut().unwrap().advance(Stage::Responses);
@@ -380,7 +380,7 @@ impl Driver {
                             let pb = w.committee.member(b).unwrap();
                             let said = m.transcript.iter().find(|l| l.speaker == Speaker::Member(b) && l.kind == LineKind::Speech).map(|l| l.text.clone()).unwrap_or_default();
                             let facts = m.report.scope_facts(w.committee.member(a).unwrap().scope, w.committee.baseline.as_ref());
-                            let task = Task::Response { to: pb.name.clone(), to_scope: pb.scope.label().into(), said, agree, facts };
+                            let task = Task::Response { to: pb.name.clone(), to_scope: pb.scope.label().into(), said, agree, facts, first: w.committee.baseline.is_none() };
                             Some((submit(w, Some(a), task, 200 + cursor as u64, 200), Step::Response(a)))
                         }
                         None => {

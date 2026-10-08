@@ -65,12 +65,12 @@ fn is_bad(f: &Fact) -> bool {
     }
 }
 
-fn trend(f: &Fact) -> Option<String> {
+fn trend(f: &Fact, since: &str) -> Option<String> {
     let ch = f.change()?;
     if ch.abs() < 0.03 {
-        return Some("flat since we last met".into());
+        return Some(format!("flat {since}"));
     }
-    Some(format!("{} {:.0}% since we last met", if ch > 0.0 { "up" } else { "down" }, ch.abs() * 100.0))
+    Some(format!("{} {:.0}% {since}", if ch > 0.0 { "up" } else { "down" }, ch.abs() * 100.0))
 }
 
 fn opener(p: &PersonaCard, seed: u64) -> &'static str {
@@ -109,9 +109,9 @@ fn verdict(p: &PersonaCard, bad: bool, seed: u64) -> &'static str {
     pick(seed, 2, list)
 }
 
-fn fact_sentence(f: &Fact, seed: u64, salt: u64) -> String {
+fn fact_sentence(f: &Fact, seed: u64, salt: u64, since: &str) -> String {
     let base = f.line();
-    match trend(f) {
+    match trend(f, since) {
         Some(t) if f.before.is_some() => {
             let base = format!("{} {}", f.label, f.show(f.value));
             match mix(seed, salt) % 3 {
@@ -132,6 +132,8 @@ impl MockCommittee {
         let text = |t: String| TurnReply { text: t, json: None };
         match &req.task {
             Task::Ping => text("ready".into()),
+            Task::Dialogue { template, .. } => text(super::voices::mock_dialogue(template)),
+            Task::Diary { who, day, entries, talks } => TurnReply { text: super::voices::mock_diary(who, *day, entries, talks, seed), json: Some(json!({ "stand_in": true })) },
             Task::Opening { meeting, members, alerts, on_demand } => {
                 let open = pick(seed, 3, &["The committee is in session.", "Order, please. We are in session.", "Good evening. The committee is in session."]);
                 let called = if *on_demand { " This meeting was called by the mayor." } else { "" };
@@ -169,7 +171,7 @@ impl MockCommittee {
                     "welfare_school_coverage" => "Children are too far from a school.",
                     _ => "Something in my portfolio needs your eye.",
                 };
-                let figures = facts.iter().enumerate().map(|(i, f)| fact_sentence(f, seed, 10 + i as u64)).collect::<Vec<_>>().join("; ");
+                let figures = facts.iter().enumerate().map(|(i, f)| fact_sentence(f, seed, 10 + i as u64, "on the week before")).collect::<Vec<_>>().join("; ");
                 let ask = match severity {
                     3 => pick(seed, 4, &["This cannot wait for the meeting.", "Mayor, I need a decision now.", "Act on this before it spreads."]),
                     2 => pick(seed, 4, &["I want it on the next agenda.", "We should talk about this soon.", "Please keep an eye on it."]),
@@ -184,12 +186,13 @@ impl MockCommittee {
                 };
                 text(format!("{lead}{hook} {figures}. {ask}"))
             }
-            Task::Status { facts, alerts } => {
+            Task::Status { facts, alerts, first } => {
+                let since = if *first { "on the week before" } else { "since we last met" };
                 let Some(p) = &req.speaker else { return text(String::new()) };
                 let mut parts = vec![opener(p, seed).to_string()];
                 let shown: Vec<&Fact> = facts.iter().take(3).collect();
                 for (i, f) in shown.iter().enumerate() {
-                    parts.push(format!("{}.", fact_sentence(f, seed, 20 + i as u64)));
+                    parts.push(format!("{}.", fact_sentence(f, seed, 20 + i as u64, since)));
                 }
                 let bad = facts.iter().take(3).any(is_bad);
                 parts.push(verdict(p, bad, seed).to_string());
@@ -203,9 +206,10 @@ impl MockCommittee {
                 }
                 text(parts.join(" "))
             }
-            Task::Response { to, to_scope, agree, facts, .. } => {
+            Task::Response { to, to_scope, agree, facts, first, .. } => {
+                let since = if *first { "on the week before" } else { "since we last met" };
                 let Some(p) = &req.speaker else { return text(String::new()) };
-                let mine = facts.first().map(|f| fact_sentence(f, seed, 30)).unwrap_or_default();
+                let mine = facts.first().map(|f| fact_sentence(f, seed, 30, since)).unwrap_or_default();
                 let first = to.split_whitespace().next().unwrap_or(to);
                 let t = if *agree {
                     pick(seed, 7, &["{first} is right, and from {mine_scope} it looks the same: {mine}.", "I'll back {first} on this. {mine}, and the two are connected.", "Agreed. {mine}; {to_scope} and {mine_scope} rise or fall together."])

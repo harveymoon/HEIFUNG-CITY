@@ -3,6 +3,8 @@
 
 mod assets;
 mod camera;
+/// [committee] The mayor's AI committee in the running game.
+mod committee;
 mod district_tool;
 mod flags;
 mod map_layers;
@@ -64,6 +66,7 @@ fn main() {
             map_layers::MapLayersPlugin,
             marks::MarksPlugin,
             metro_ux::MetroUxPlugin,
+            committee::CommitteePlugin,
         ))
         .run();
 }

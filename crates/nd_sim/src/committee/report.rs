@@ -38,6 +38,7 @@ impl Fact {
         match self.unit.as_str() {
             "%" => format!("{:.0}%", v * 100.0),
             "credits" => format!("{} credits", thousands(v)),
+            "/day" if v.abs() >= 10.0 || v.fract().abs() < 0.05 => format!("{:.0} a day", v),
             "/day" => format!("{v:.1} a day"),
             "" => thousands(v),
             u => format!("{} {u}", thousands(v)),
@@ -55,7 +56,7 @@ impl Fact {
 
     /// "rent burden 41% (was 33%)".
     pub fn line(&self) -> String {
-        match self.before {
+        match self.before.filter(|b| self.show(*b) != self.show(self.value)) {
             Some(b) => format!("{} {} (was {})", self.label, self.show(self.value), self.show(b)),
             None => format!("{} {}", self.label, self.show(self.value)),
         }

@@ -21,6 +21,7 @@ pub mod driver;
 pub mod http;
 pub mod mock;
 pub mod settings;
+pub mod voices;
 
 #[cfg(test)]
 mod tests;
@@ -93,9 +94,10 @@ pub enum Task {
     /// The secretary opens the meeting (text).
     Opening { meeting: u32, members: Vec<String>, alerts: usize, on_demand: bool },
     /// A member's status report on their scope (text).
-    Status { facts: Vec<Fact>, alerts: Vec<String> },
+    /// `first`: no earlier meeting, so the figures compare with the week before.
+    Status { facts: Vec<Fact>, alerts: Vec<String>, first: bool },
     /// A member answers another's report (text).
-    Response { to: String, to_scope: String, said: String, agree: bool, facts: Vec<Fact> },
+    Response { to: String, to_scope: String, said: String, agree: bool, facts: Vec<Fact>, first: bool },
     /// A member tables a topic (JSON `{proposal, rationale}`); the rules'
     /// suggestion is offered, the model may table its own.
     Propose { suggestion: Option<(Action, String)>, areas: Vec<String> },
@@ -107,6 +109,11 @@ pub enum Task {
     Closing { results: Vec<String>, projects: usize, next_day: u32 },
     /// "Test connection".
     Ping,
+    /// [voices] One line `a` says to `b` in a conversation (text); the
+    /// sim's own template line is the stand-in's answer.
+    Dialogue { a: voices::CitizenCard, b: voices::CitizenCard, bond: String, topic: String, outcome: String, setting: String, place: Option<String>, template: String },
+    /// [voices] A citizen's diary of the day, from their memories (text).
+    Diary { who: voices::CitizenCard, day: u32, entries: Vec<String>, talks: Vec<String> },
 }
 
 impl Task {
@@ -121,6 +128,8 @@ impl Task {
             Task::Pick { .. } => "pick",
             Task::Closing { .. } => "closing",
             Task::Ping => "ping",
+            Task::Dialogue { .. } => "dialogue",
+            Task::Diary { .. } => "diary",
         }
     }
 
@@ -220,6 +229,15 @@ pub trait CommitteeBackend: Send + Sync {
 
 /// The system prompt: who is speaking and the rules of the room.
 pub fn system_prompt(req: &TurnRequest) -> String {
+    match &req.task {
+        Task::Dialogue { a, .. } => {
+            return format!("You write one line of dialogue for {}, a fictional citizen of {}, a cyberpunk city in the game Neon District. Who they are: {}. Reply with the line only: one short spoken sentence (at most 20 words), no quotes, no name, no stage directions.", a.name, req.city, a.describe());
+        }
+        Task::Diary { who, .. } => {
+            return format!("You write the private diary of {}, a fictional citizen of {}, a cyberpunk city in the game Neon District. Who they are: {}. Write in the first person, in their voice, 60 to 120 words, plain prose. Use only the events you are given; never invent places, people or numbers.", who.name, req.city, who.describe());
+        }
+        _ => {}
+    }
     let mut s = String::new();
     s.push_str(&format!("This is a turn in a city-builder game, Neon District: a meeting of the mayor's committee of {}, a fictional cyberpunk city. Everyone in the room is fictional.\n", req.city));
     match &req.speaker {
@@ -251,13 +269,13 @@ pub fn user_prompt(req: &TurnRequest) -> String {
             if *on_demand { ", called by the mayor" } else { "" },
             members.join(", ")
         )),
-        Task::Status { facts: f, alerts } => {
-            s.push_str(&format!("Agenda item 1: give your status report on your scope. Your figures: {}.", facts(f)));
+        Task::Status { facts: f, alerts, first } => {
+            s.push_str(&format!("Agenda item 1: give your status report on your scope. Your figures ({}): {}.", if *first { "\"was\" is the week before" } else { "\"was\" is at the last meeting" }, facts(f)));
             if !alerts.is_empty() {
                 s.push_str(&format!(" Alerts you raised since the last meeting: {}.", alerts.join("; ")));
             }
         }
-        Task::Response { to, to_scope, said, agree, facts: f } => s.push_str(&format!(
+        Task::Response { to, to_scope, said, agree, facts: f, .. } => s.push_str(&format!(
             "{to} ({to_scope}) just said: \"{said}\". Respond briefly from your own scope and leanings; you lean towards {}. Your figures: {}.",
             if *agree { "agreeing" } else { "disagreeing" },
             facts(f)
@@ -287,6 +305,36 @@ pub fn user_prompt(req: &TurnRequest) -> String {
         }
         Task::Closing { results, projects, next_day } => s.push_str(&format!("Close the meeting. Results: {}. {projects} project(s) go to the mayor for review. The next meeting is on day {next_day}.", if results.is_empty() { "nothing was voted".into() } else { results.join("; ") })),
         Task::Ping => s.push_str("Reply with the single word: ready."),
+        Task::Dialogue { a, b, bond, topic, outcome, setting, place, template } => {
+            s = format!(
+                "{} talks to {} ({}; {bond}) about {topic}, {}. How it goes: {outcome}. The game's own line was: \"{template}\". Write {}'s line instead, in their voice.",
+                a.name,
+                b.name,
+                b.describe(),
+                match place {
+                    Some(p) => format!("at {p}"),
+                    None => format!("in the {setting}"),
+                },
+                a.name
+            );
+        }
+        Task::Diary { day, entries, talks, .. } => {
+            s = format!("Day {}. What happened today:
+", day + 1);
+            for e in entries {
+                s.push_str(&format!("- {e}
+"));
+            }
+            for t in talks {
+                s.push_str(&format!("- {t}
+"));
+            }
+            if entries.is_empty() && talks.is_empty() {
+                s.push_str("- nothing much
+");
+            }
+            s.push_str("Write tonight's diary entry.");
+        }
     }
     s
 }

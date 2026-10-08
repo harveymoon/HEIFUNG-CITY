@@ -414,7 +414,7 @@ impl Politician {
     }
 
     pub fn bio(&self) -> String {
-        format!("{}, {}. Former {}. {} Stands for: {}.", self.name, self.age, self.background, capitalise(self.temper.describe()), self.goals().join("; "))
+        format!("{}, {}. Former {}. {}. Stands for: {}.", self.name, self.age, self.background, capitalise(self.temper.describe()), self.goals().join("; "))
     }
 
     pub fn remember(&mut self, m: MemoryEntry) {
@@ -1037,7 +1037,10 @@ impl World {
     /// before the committee).
     pub fn committee_ensure(&mut self) {
         let today = self.committee_today();
-        let seed = mix(self.config.seed, self.landscape.params.seed);
+        // The game id makes each new game's pool its own; a hash, not the
+        // world's RNG, so the sim is untouched.
+        let id = self.identity.game_id.bytes().fold(0xCBF2_9CE4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01B3));
+        let seed = mix(mix(self.config.seed, self.landscape.params.seed), id);
         self.committee.ensure(seed, today);
     }
 

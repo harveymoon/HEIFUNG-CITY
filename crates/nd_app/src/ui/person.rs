@@ -191,6 +191,8 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
                 if ui.selectable_label(is_fav, star).on_hover_text("Keep this person in the favourites list of the People window").clicked() {
                     toggle_fav = true;
                 }
+                // [voices] Their diary of today, beside the pane.
+                super::diary::button(ui);
                 if ui.small_button("Flag for Claude (F8)").on_hover_text("Bookmark this person with a note; the remote API's `flags` command lists it").clicked() {
                     flags.want_flag = true;
                 }

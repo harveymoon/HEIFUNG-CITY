@@ -207,7 +207,9 @@ impl Action {
                     Some(c) => c.label().to_string(),
                     None => format!("{category} taxes"),
                 };
-                format!("{} {what} by {:.1} points", if *delta_pct >= 0.0 { "Raise" } else { "Cut" }, delta_pct.abs())
+                let d = delta_pct.abs();
+                let pts = if (d - d.round()).abs() < 0.05 { format!("{d:.0} point{}", if (d - 1.0).abs() < 0.05 { "" } else { "s" }) } else { format!("{d:.1} points") };
+                format!("{} {what} by {pts}", if *delta_pct >= 0.0 { "Raise" } else { "Cut" })
             }
             Action::SetToll { toll, price } => match toll {
                 Some(id) => format!("Toll {id} at {price:.0} credits"),
@@ -440,11 +442,11 @@ pub fn suggest(member: &Politician, r: &CityReport) -> Option<(Action, String)> 
         Scope::Safety => {
             if r.population >= 150 && r.coverage[0] < 0.6 {
                 let near = worst_area(r, |a| a.coverage[0]).unwrap_or_default();
-                return Some((Action::BuildService { service: "police".into(), tier: "low".into(), near }, format!("only {} of homes have police cover", pct(r.coverage[0]))));
+                return Some((Action::BuildService { service: "police".into(), tier: "low".into(), near }, share_of_homes(r.coverage[0], "have police cover")));
             }
             if r.population >= 150 && r.coverage[1] < 0.6 {
                 let near = worst_area(r, |a| a.coverage[1]).unwrap_or_default();
-                return Some((Action::BuildService { service: "fire".into(), tier: "low".into(), near }, format!("only {} of homes have fire cover", pct(r.coverage[1]))));
+                return Some((Action::BuildService { service: "fire".into(), tier: "low".into(), near }, share_of_homes(r.coverage[1], "have fire cover")));
             }
             if r.crime_per_day >= 1.0 && r.crime_per_day > r.crime_prev * 1.2 {
                 let near = most(r, |a| a.homes as f32).unwrap_or_default();
@@ -454,7 +456,7 @@ pub fn suggest(member: &Politician, r: &CityReport) -> Option<(Action, String)> 
         }
         Scope::Environment => {
             if let Some(a) = r.areas.iter().filter(|a| a.contamination >= 1.0).max_by(|a, b| a.contamination.total_cmp(&b.contamination)) {
-                return Some((Action::Remediate { area: a.name.clone() }, format!("{:.1} cells' worth of poisoned ground in {}", a.contamination, a.name)));
+                return Some((Action::Remediate { area: a.name.clone() }, format!("{:.0} cells' worth of poisoned ground in {}", a.contamination, a.name)));
             }
             if r.population >= 150 && (r.demand[5] > 0.4 || l.growth < -0.3) {
                 let area = most(r, free)?;
@@ -491,14 +493,23 @@ pub fn suggest(member: &Politician, r: &CityReport) -> Option<(Action, String)> 
         Scope::Welfare => {
             if r.population >= 150 && r.coverage[2] < 0.6 {
                 let near = worst_area(r, |a| a.coverage[2]).unwrap_or_default();
-                return Some((Action::BuildService { service: "health".into(), tier: "low".into(), near }, format!("only {} of homes are near a clinic", pct(r.coverage[2]))));
+                return Some((Action::BuildService { service: "health".into(), tier: "low".into(), near }, share_of_homes(r.coverage[2], "are near a clinic")));
             }
             if r.population >= 150 && r.coverage[3] < 0.5 {
                 let near = worst_area(r, |a| a.coverage[3]).unwrap_or_default();
-                return Some((Action::BuildService { service: "school".into(), tier: "low".into(), near }, format!("only {} of homes are near a school", pct(r.coverage[3]))));
+                return Some((Action::BuildService { service: "school".into(), tier: "low".into(), near }, share_of_homes(r.coverage[3], "are near a school")));
             }
             None
         }
+    }
+}
+
+/// "no homes have police cover" / "only 34% of homes have police cover".
+fn share_of_homes(x: f32, what: &str) -> String {
+    if x < 0.005 {
+        format!("no homes {what}")
+    } else {
+        format!("only {:.0}% of homes {what}", x * 100.0)
     }
 }
 
@@ -589,7 +600,27 @@ pub fn lean(member: &Politician, p: &Proposal, proposer: Option<&Politician>, r:
         Vote::Abstain => None,
     }
     .map_or_else(|| "the case is not made either way".to_string(), |r| r.1.clone());
-    (vote, reason)
+    (vote, vary(&reason, mix(seed, (member.id as u64) << 20 | p.id as u64)))
+}
+
+/// Other ways of saying the stock reasons, so a table of six does not
+/// sound like one voice.
+fn vary(reason: &str, h: u64) -> String {
+    let alts: &[&str] = match reason {
+        "it helps ordinary people" => &["it helps ordinary people", "people on my street need this", "it makes life easier for working families", "it is the decent thing to do"],
+        "the case is not made either way" => &["the case is not made either way", "I am not convinced, one way or the other", "I need to see more before I commit", "it could go either way"],
+        "somebody has to say no" => &["somebody has to say no", "too easy a consensus", "I do not trust a vote this comfortable", "nobody has asked what it breaks"],
+        "it does no harm" => &["it does no harm", "no reason to stand in the way", "fine by me"],
+        "people want to feel safe" => &["people want to feel safe", "safe streets come first", "my voters want a patrol car they can see"],
+        "it is my portfolio and it is overdue" => &["it is my portfolio and it is overdue", "this is my brief, and it is late", "I have asked for this for weeks"],
+        "we have tried new things before" => &["we have tried new things before", "untested, and I have seen how that ends", "the old way worked well enough"],
+        _ => &[],
+    };
+    if alts.is_empty() {
+        reason.to_string()
+    } else {
+        alts[(h % alts.len() as u64) as usize].to_string()
+    }
 }
 
 // ── sites ───────────────────────────────────────────────────────────────────
