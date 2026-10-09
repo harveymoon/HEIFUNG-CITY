@@ -46,34 +46,53 @@ pub use crate::depth::LIGHT_GLASS_BEHIND;
 pub fn window_light(g: &mut Geometry, c: &Ctx, emit: impl FnOnce(&mut Geometry)) {
     let (vstart, istart) = (g.get(Glow).positions.len(), g.get(Glow).indices.len());
     emit(g);
-    if !c.dynamic_lights {
+    if !c.dynamic_lights || g.get(Glow).positions.len() == vstart {
         return;
     }
-    let m = g.part(Glow);
-    if m.positions.len() == vstart {
-        return;
-    }
-    let rank = crate::hash::rank01(m.positions[vstart]);
-    for col in &mut m.colors[vstart..] {
+    let (glow, glass) = glow_and_glass(g);
+    let rank = crate::hash::rank01(glow.positions[vstart]);
+    for col in &mut glow.colors[vstart..] {
         col[3] = WINDOW_LIGHT_MARK + rank;
     }
-    let mut glass = MeshData {
-        positions: m.positions[vstart..].to_vec(),
-        normals: m.normals[vstart..].to_vec(),
-        colors: vec![rgba(c.palette.glass_dark); m.positions.len() - vstart],
-        uvs: m.uvs[vstart..].to_vec(),
-        tangents: m.tangents[vstart..].to_vec(),
-        indices: m.indices[istart..].iter().map(|i| i - vstart as u32).collect(),
-    };
-    for (pos, n) in glass.positions.iter_mut().zip(&glass.normals) {
-        for k in 0..3 {
-            pos[k] -= n[k] * LIGHT_GLASS_BEHIND;
-        }
+    // The dark glass copy goes straight onto the glass mesh, no temporary.
+    let dark = rgba(c.palette.glass_dark);
+    let base = glass.positions.len() as u32;
+    for i in vstart..glow.positions.len() {
+        let (p, n) = (glow.positions[i], glow.normals[i]);
+        glass.positions.push([p[0] - n[0] * LIGHT_GLASS_BEHIND, p[1] - n[1] * LIGHT_GLASS_BEHIND, p[2] - n[2] * LIGHT_GLASS_BEHIND]);
+        glass.normals.push(n);
+        glass.colors.push(dark);
+        glass.uvs.push(glow.uvs[i]);
+        glass.tangents.push(glow.tangents[i]);
     }
-    g.part(Glass).append(&glass);
+    glass.indices.extend(glow.indices[istart..].iter().map(|i| i - vstart as u32 + base));
+}
+
+/// The glow and glass meshes of a geometry, both borrowed at once.
+fn glow_and_glass(g: &mut Geometry) -> (&mut MeshData, &mut MeshData) {
+    let (a, b) = (Glow.index(), Glass.index());
+    if a < b {
+        let (lo, hi) = g.parts.split_at_mut(b);
+        (&mut lo[a], &mut hi[0])
+    } else {
+        let (lo, hi) = g.parts.split_at_mut(a);
+        (&mut hi[0], &mut lo[b])
+    }
 }
 
 pub use crate::color::{mix, mul, pick, rgba, CHARCOAL, DARK};
+
+/// A red aviation light: a glowing cube of side `size` centred on the world
+/// point `at`, square to the world axes.
+pub fn aviation_light(g: &mut Geometry, pal: &Palette, at: Vec3, size: f32) {
+    g.part(Glow).boxed(at, Vec3::splat(size), 0.0, rgba(pal.aviation_light));
+}
+
+/// A red aviation light at lot-local (u, y, v), turned with the frame.
+#[allow(clippy::too_many_arguments)]
+pub fn aviation_light_local(g: &mut Geometry, f: &Frame, pal: &Palette, u: f32, y: f32, v: f32, size: f32) {
+    f.bx(g, Glow, u, y, v, Vec3::splat(size), pal.aviation_light);
+}
 
 // ── polygons (lot-local) ─────────────────────────────────────────────────────
 
@@ -884,7 +903,7 @@ pub fn antenna_mast(g: &mut Geometry, c: &Ctx, p: Vec2, y: f32, h: f32) {
     let f = &c.frame;
     f.bx(g, Matte, p.x, y + h * 0.5, p.y, Vec3::new(0.25, h, 0.25), c.palette.steel);
     f.bx(g, Matte, p.x, y + h * 0.7, p.y, Vec3::new(1.4, 0.06, 0.06), c.palette.steel);
-    f.bx(g, Glow, p.x, y + h + 0.15, p.y, Vec3::new(0.35, 0.35, 0.35), c.palette.aviation_light);
+    aviation_light_local(g, f, c.palette, p.x, y + h + 0.15, p.y, 0.35);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1624,7 +1643,7 @@ pub fn gantry_crane(g: &mut Geometry, c: &Ctx, u: f32, v0: f32, v1: f32, h: f32)
     f.bx(g, Metal, u, h + 0.5, (v0 + v1) * 0.5, Vec3::new(1.2, 1.0, span + 2.0), steel);
     f.bx(g, Matte, u, h - 0.3, (v0 + v1) * 0.4, Vec3::new(1.6, 0.6, 2.0), CHARCOAL);
     f.bx(g, Matte, u, h * 0.6, (v0 + v1) * 0.4, Vec3::new(0.05, h * 0.5, 0.05), DARK);
-    f.bx(g, Glow, u, h + 1.1, v0, Vec3::new(0.3, 0.3, 0.3), c.palette.aviation_light);
+    aviation_light_local(g, f, c.palette, u, h + 1.1, v0, 0.3);
 }
 
 // ── graffiti ─────────────────────────────────────────────────────────────────

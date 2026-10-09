@@ -267,7 +267,7 @@ pub fn smelter(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             let b = f.at(bf.x + bf_r * 0.6, bh * 0.92, bf.y);
             g.part(Metal).slab(a, b, 1.6, 0.6, rgba(mul(pal.steel, 0.6)));
         }
-        f.bx(g, Glow, bf.x, bh + 0.6, bf.y, Vec3::splat(0.35), pal.aviation_light);
+        aviation_light_local(g, f, pal, bf.x, bh + 0.6, bf.y, 0.35);
     }
     // Stacks along the back: tall, soot-streaked, red lights at the top.
     for (p, sh) in smelter_stacks(&c.lot_poly) {
@@ -277,7 +277,7 @@ pub fn smelter(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         for y in [sh * 0.45, sh * 0.7] {
             g.part(Matte).cylinder(w, 1.4, 1.35, y, y + 0.5, 12, rgba([0.75, 0.12, 0.08]));
         }
-        g.part(Glow).boxed(Vec3::new(w.x, sh + 0.4, w.y), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
+        aviation_light(g, pal, Vec3::new(w.x, sh + 0.4, w.y), 0.4);
     }
     // Ore heap by the gate, slag heaps at the back.
     let ore = front.at(front.len * 0.28, -(area.d() * 0.14).clamp(5.0, 9.0));

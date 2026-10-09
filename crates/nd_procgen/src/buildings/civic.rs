@@ -202,7 +202,7 @@ pub fn courthouse(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     g.part(Glass).frustum(&MeshData::ngon(dw, dr * 0.6, 16, 0.0, 1.0 + h + 2.5 + dr * 0.6), &MeshData::ngon(dw, dr * 0.15, 16, 0.0, 1.0 + h + 2.5 + dr * 0.95), rgba(pick(rng, &pal.glass)));
     g.part(Glow).frustum(&MeshData::ngon(dw, dr * 0.99, 16, 0.0, 1.0 + h + 2.6), &MeshData::ngon(dw, dr * 0.9, 16, 0.0, 1.0 + h + 3.2), rgba(mul(pal.window_warm, 0.6)));
     g.part(Matte).cylinder(dw, 0.3, 0.1, 1.0 + h + 2.5 + dr * 0.95, 1.0 + h + 2.5 + dr * 0.95 + 3.0, 8, rgba(pal.steel));
-    g.part(Glow).boxed(Vec3::new(dw.x, 1.0 + h + 2.5 + dr * 0.95 + 3.2, dw.y), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
+    aviation_light(g, pal, Vec3::new(dw.x, 1.0 + h + 2.5 + dr * 0.95 + 3.2, dw.y), 0.4);
     // Forecourt: lamps, hedges, flag masts, a statue.
     let pf = c.front_face(poly);
     for k in 0..4 {

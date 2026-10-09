@@ -248,7 +248,7 @@ pub fn shipping_port(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         // The boom reaches back over the land only as far as the lot allows;
         // the seaward part is drawn with the pier.
         f.bx(g, Metal, cu, 31.0, hi.y - 12.0, Vec3::new(2.0, 1.2, 18.0), mul(crane, 0.9));
-        g.part(Glow).boxed(f.at(cu, 32.0, hi.y - 3.0), Vec3::splat(0.6), f.yaw(), rgba(pal.aviation_light));
+        aviation_light_local(g, f, pal, cu, 32.0, hi.y - 3.0, 0.6);
     }
     // Straddle carriers and a lorry at the gate.
     for k in 0..2 {

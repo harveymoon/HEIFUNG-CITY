@@ -337,7 +337,7 @@ pub fn dispatch_center(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             dish(g, f, p, h, 1.0 + k as f32 * 0.4, [0.85, 0.85, 0.85]);
         }
     }
-    g.part(Glow).boxed(f.at2(a, h + mast + 0.3), Vec3::splat(0.5), 0.0, rgba(pal.aviation_light));
+    aviation_light(g, pal, f.at2(a, h + mast + 0.3), 0.5);
     fence_lot(g, c, &offset_poly(&c.lot_poly, 0.4), 2.4, true);
     floodlight(g, c, front.at(front.len * 0.4, -1.2), 6.0);
 }

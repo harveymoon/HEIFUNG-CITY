@@ -754,9 +754,9 @@ pub fn crystal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             g.part(Glass).frustum(&top, &cap_top, rgba(mul(glass, 1.15)));
             g.part(Glow).frustum(&top.iter().map(|p| *p + Vec3::Y * 0.02).collect::<Vec<_>>(), &top.iter().map(|p| *p + Vec3::Y * 0.22).collect::<Vec<_>>(), rgba(mul(pal.window_cold, 0.8)));
             let top_y = cap_top[0].y;
-            g.part(Glow).boxed(Vec3::new(crown.x, top_y + 0.15, crown.z), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
+            aviation_light(g, pal, Vec3::new(crown.x, top_y + 0.15, crown.z), 0.4);
         } else {
-            g.part(Glow).boxed(Vec3::new(crown.x, podium_h + h + 0.15, crown.z), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
+            aviation_light(g, pal, Vec3::new(crown.x, podium_h + h + 0.15, crown.z), 0.4);
         }
     }
     if shard_centers.len() >= 2 && rng.random_bool(0.6) {

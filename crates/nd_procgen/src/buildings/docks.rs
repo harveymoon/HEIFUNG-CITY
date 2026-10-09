@@ -313,7 +313,7 @@ pub fn fishing_port_large(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let hook = f.at(cp.x + reach - 1.0, 6.0, cp.y);
         g.part(Matte).beam(f.at(cp.x + reach - 1.0, ch + 2.3, cp.y), hook, 0.05, rgba(DARK));
         g.part(Metal).boxed(hook - Vec3::Y * 0.3, Vec3::new(0.5, 0.6, 0.5), f.yaw(), rgba(CHARCOAL));
-        g.part(Glow).boxed(b + Vec3::Y * 0.4, Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
+        aviation_light(g, pal, b + Vec3::Y * 0.4, 0.4);
     }
     // Crate stacks in blocks, nets, a forklift and a reefer lorry.
     let mut placed = 0;

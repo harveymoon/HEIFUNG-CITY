@@ -346,7 +346,7 @@ pub fn tank_farm(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let rusty = coin(rng, 0.3 + 0.6 * c.wear);
         tank_vertical(g, f, p, rr, 0.0, h, if rusty { Rust } else { Metal }, if rusty { pal.rust } else { pick(rng, &pal.metal_paint) });
         let w = f.to_world(p.x, p.y);
-        g.part(Glow).boxed(Vec3::new(w.x, h + 1.3, w.y), Vec3::splat(0.3), 0.0, rgba(pal.aviation_light));
+        aviation_light(g, pal, Vec3::new(w.x, h + 1.3, w.y), 0.3);
         tanks.push((p, rr));
     }
     // Pipe runs linking tank tops and running to a manifold by the gate.
@@ -785,7 +785,7 @@ fn derrick(g: &mut Geometry, c: &Ctx, p: Vec2, h: f32) {
         }
     }
     f.bx(g, Metal, p.x, h + 0.4, p.y, Vec3::new(1.6, 0.8, 1.6), steel);
-    f.bx(g, Glow, p.x, h + 1.0, p.y, Vec3::new(0.3, 0.3, 0.3), c.palette.aviation_light);
+    aviation_light_local(g, f, c.palette, p.x, h + 1.0, p.y, 0.3);
     f.bx(g, Concrete, p.x, 0.3, p.y, Vec3::new(5.0, 0.6, 5.0), mul(c.palette.concrete(0), 0.75));
 }
 
@@ -819,7 +819,7 @@ pub fn refinery(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         for k in 1..(h / 6.0) as i32 {
             g.part(Matte).cylinder(w, r + 0.6, r + 0.6, k as f32 * 6.0, k as f32 * 6.0 + 0.15, 12, rgba(mul(pal.warning_light, 0.35)));
         }
-        f.bx(g, Glow, p.x, h + 0.4, p.y, Vec3::splat(0.3), pal.aviation_light);
+        aviation_light_local(g, f, pal, p.x, h + 0.4, p.y, 0.3);
         tops.push(Vec3::new(p.x, h * 0.6, p.y));
     }
     if tops.len() >= 2 {

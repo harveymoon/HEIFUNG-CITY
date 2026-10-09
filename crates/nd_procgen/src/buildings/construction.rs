@@ -587,8 +587,8 @@ fn tower_crane(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], bui
         }
     }
     // Aviation lights.
-    f.bx(h, Glow, base.x, jib_y + 5.8, base.y, Vec3::new(0.3, 0.3, 0.3), c.palette.aviation_light);
-    f.bx(h, Glow, tip.x, jib_y + 0.6, tip.y, Vec3::new(0.3, 0.3, 0.3), c.palette.aviation_light);
+    aviation_light_local(h, f, c.palette, base.x, jib_y + 5.8, base.y, 0.3);
+    aviation_light_local(h, f, c.palette, tip.x, jib_y + 0.6, tip.y, 0.3);
     // Some carry an LED billboard on the counter-jib, by the counterweight:
     // its own random stream, so the rest of the site is drawn as before.
     let mut ad = nd_sim::rng_for(c.seed, 93);

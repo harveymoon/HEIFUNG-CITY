@@ -396,7 +396,7 @@ fn aviation(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32) {
     let f = &c.frame;
     let step = (poly.len() / 4).max(1);
     for p in poly.iter().step_by(step) {
-        f.bx(g, Glow, p.x, y, p.y, Vec3::splat(1.4), c.palette.aviation_light);
+        aviation_light_local(g, f, c.palette, p.x, y, p.y, 1.4);
     }
 }
 
@@ -419,8 +419,8 @@ fn mast(g: &mut Geometry, c: &Ctx, p: Vec2, r0: f32, y0: f32, y1: f32, neon: [f3
             g.part(Glow).band(&f.poly3(&ngon(p.x, p.y, ra + 0.35, 8, PI / 8.0), ya - 0.9), &f.poly3(&ngon(p.x, p.y, ra + 0.35, 8, PI / 8.0), ya + 0.9), rgba(neon));
         }
     }
-    f.bx(g, Glow, p.x, y1 + 1.0, p.y, Vec3::splat(2.0), c.palette.aviation_light);
-    f.bx(g, Glow, p.x, y0 + (y1 - y0) * 0.5, p.y, Vec3::splat(r0 * 0.6 + 0.5), c.palette.aviation_light);
+    aviation_light_local(g, f, c.palette, p.x, y1 + 1.0, p.y, 2.0);
+    aviation_light_local(g, f, c.palette, p.x, y0 + (y1 - y0) * 0.5, p.y, r0 * 0.6 + 0.5);
 }
 
 /// Aviation lights up the shaft: every ninety metres or so, on the plan
@@ -571,7 +571,7 @@ fn bundled(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2,
                 let yaw = (b - a).y.atan2((b - a).x);
                 f.bx_yaw(g, Glow, m.x, y1 + 0.5, m.y, Vec3::new(a.distance(b), 0.9, 0.9), neon, yaw);
             }
-            f.bx(g, Glow, plan[2].lerp(plan[3], 0.5).x, y1 + 0.8, plan[2].lerp(plan[3], 0.5).y, Vec3::splat(1.3), pal.aviation_light);
+            aviation_light_local(g, f, pal, plan[2].lerp(plan[3], 0.5).x, y1 + 0.8, plan[2].lerp(plan[3], 0.5).y, 1.3);
             y0 = y1;
         }
         // Vertical fins up the wing's nose.
@@ -786,9 +786,9 @@ pub fn site(g: &mut Geometry, c: &Ctx, t: &Tower, progress: f32) {
         f.bx_yaw(g, Matte, mid.x, mast_top, mid.y, Vec3::new(jib, 1.2, 1.2), paint, d.y.atan2(d.x));
         let back = mp - d * 7.0;
         f.bx_yaw(g, Concrete, back.x, mast_top - 0.8, back.y, Vec3::new(4.0, 1.8, 2.0), mul(pal.concrete(0), 0.8), d.y.atan2(d.x));
-        f.bx(g, Glow, mp.x, mast_top + 2.0, mp.y, Vec3::splat(0.6), pal.aviation_light);
+        aviation_light_local(g, f, pal, mp.x, mast_top + 2.0, mp.y, 0.6);
         let tip = mp + d * jib * 0.9;
-        f.bx(g, Glow, tip.x, mast_top + 0.8, tip.y, Vec3::splat(0.5), pal.aviation_light);
+        aviation_light_local(g, f, pal, tip.x, mast_top + 0.8, tip.y, 0.5);
         // A second crane low down on the podium for the first months.
         if p < 0.45 {
             let q = site.iter().copied().fold(Vec2::ZERO, |a, b| a + b) / site.len() as f32;

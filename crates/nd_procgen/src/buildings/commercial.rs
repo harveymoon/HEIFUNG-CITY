@@ -274,7 +274,7 @@ pub fn slab_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let crown = offset_poly(&poly, 1.0);
     extrude(g, f, Panel, &crown, y, y + 2.5, mul(pick(rng, &pal.panel), 0.7));
     for p in &poly {
-        g.part(Glow).boxed(f.at2(*p, y + 0.3), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
+        aviation_light(g, pal, f.at2(*p, y + 0.3), 0.4);
     }
     // With a helipad on top the mast stands at the edge, not through the pad.
     // A pad needs a roof wide enough for its 2 m minimum radius.
@@ -325,7 +325,7 @@ pub fn twist_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     extrude(g, f, Panel, &prev, y, y + 0.6, mul(pal.steel, 0.8));
     // A cut glass crown, not a needle.
     let top = super::kit::crystal_crown(g, c, rng, &prev, y + 0.6, glass);
-    g.part(Glow).boxed(f.at2(poly_center(&prev), top + 0.3), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
+    aviation_light(g, pal, f.at2(poly_center(&prev), top + 0.3), 0.4);
     band(g, f, Glow, &offset_poly(&prev, -0.05), &offset_poly(&prev, -0.05), y - 0.6, y, mul(c.style.window_color(0), 0.9));
     let front = c.front_face(&c.poly);
     entrance(g, c, rng, &front, 0.0, 3.5, podium_h * 0.8);

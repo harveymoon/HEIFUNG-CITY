@@ -197,7 +197,7 @@ fn crown(g: &mut Geometry, c: &Ctx, m: &BrandMark, top: f32, lo: Vec2, hi: Vec2)
     }
     let spire = (top * 0.18).clamp(6.0, 30.0);
     g.part(Metal).cylinder(f.to_world(mid.x, mid.y), 0.6, 0.12, top + 0.6, top + 0.6 + spire + wall, 8, rgba(POLE));
-    f.bx(g, Glow, mid.x, top + 0.6 + spire + wall, mid.y, Vec3::splat(0.5), c.palette.aviation_light);
+    aviation_light_local(g, f, c.palette, mid.x, top + 0.6 + spire + wall, mid.y, 0.5);
     f.bx(g, Glow, mid.x, top + 0.6 + wall + 0.3, mid.y, Vec3::new(1.4, 0.25, 1.4), lit(m, 2.6));
 }
 

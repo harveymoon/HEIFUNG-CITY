@@ -365,7 +365,7 @@ pub fn central_station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     f.bx(g, Metal, tcen.x, tower_h + 2.0, tcen.y, Vec3::new(tower_s * 0.5, 4.0, tower_s * 0.5), mul(pal.steel, 0.6));
     f.bx(g, Glow, tcen.x, tower_h + 4.2, tcen.y, Vec3::new(tower_s * 0.55, 0.3, tower_s * 0.55), NEON_MAGENTA);
     f.bx(g, Metal, tcen.x, tower_h + 7.0, tcen.y, Vec3::new(0.25, 6.0, 0.25), mul(pal.steel, 0.5));
-    f.bx(g, Glow, tcen.x, tower_h + 10.1, tcen.y, Vec3::new(0.4, 0.4, 0.4), pal.aviation_light);
+    aviation_light_local(g, f, pal, tcen.x, tower_h + 10.1, tcen.y, 0.4);
     // The bus terminal: saw-tooth canopies over drive-through bays.
     let term = fit_inside(c, &rect((lo.x + w * 0.64 + hi.x - 1.0) * 0.5, lo.y + d * 0.4, (hi.x - 1.0 - lo.x - w * 0.64) * 0.5, d * 0.28));
     let (tlo, thi) = bounds(&term);
