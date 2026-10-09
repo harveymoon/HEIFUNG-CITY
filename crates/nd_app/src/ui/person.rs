@@ -7,6 +7,7 @@ use nd_sim::citizens::TravelMode;
 use nd_sim::{Activity, Citizen, CitizenId, World};
 
 use super::hint;
+use super::fmt::capitalise;
 use crate::camera::{CameraFly, CameraFollow, CameraMode};
 use crate::sim::Sim;
 use crate::tools::{Selection, ToolState};
@@ -14,7 +15,7 @@ use crate::tools::{Selection, ToolState};
 /// Who they are, what they are doing and where they are going, their means
 /// and their current thought: the block both the inspector and the person
 /// pane open with.
-pub fn citizen_summary(ui: &mut egui::Ui, w: &World, c: &Citizen) {
+fn citizen_summary(ui: &mut egui::Ui, w: &World, c: &Citizen) {
     let name_of = |b: Option<nd_sim::BuildingId>| b.and_then(|b| w.buildings.get(b)).map(|b| b.name.as_str());
     let home = name_of(c.home).unwrap_or("none");
     let work = name_of(c.work).unwrap_or("unemployed");
@@ -41,7 +42,7 @@ pub fn citizen_summary(ui: &mut egui::Ui, w: &World, c: &Citizen) {
         c.mood * 100.0,
         c.satiety * 100.0,
         c.class().label(),
-        c.arrived_tick / 1440 + 1
+        super::fmt::day(c.arrived_tick)
     ));
     ui.label(format!(
         "income {:.0}/day  ·  rent {:.0}/day  ·  savings {:.0}{}",
@@ -64,14 +65,14 @@ pub fn citizen_summary(ui: &mut egui::Ui, w: &World, c: &Citizen) {
 /// [clarity] What they are doing, large: "Going home to Habitat 21F", the
 /// place a button that selects it, and where they set off from. Returns
 /// the building picked.
-pub fn activity_heading(ui: &mut egui::Ui, w: &World, id: CitizenId) -> Option<nd_sim::BuildingId> {
+fn activity_heading(ui: &mut egui::Ui, w: &World, id: CitizenId) -> Option<nd_sim::BuildingId> {
     let line = w.activity_line(id);
     if line.is_empty() {
         return None;
     }
     let mut pick = None;
     let col = egui::Color32::from_rgb(120, 220, 255);
-    ui.label(egui::RichText::new(capital(&line)).font(crate::ui::theme::lead()).color(col).strong());
+    ui.label(egui::RichText::new(capitalise(&line)).font(crate::ui::theme::lead()).color(col).strong());
     let from = w.citizen_origin(id);
     let to = w.citizen_destination(id);
     if from.is_some() || to.is_some() {
@@ -98,7 +99,7 @@ pub fn activity_heading(ui: &mut egui::Ui, w: &World, id: CitizenId) -> Option<n
 /// building or a vehicle), or plain text. True when clicked.
 pub fn place_button(ui: &mut egui::Ui, p: &nd_sim::world::Place) -> bool {
     if p.building.is_some() || p.car.is_some() {
-        ui.add(egui::Button::new(egui::RichText::new(&p.label).small().color(egui::Color32::from_rgb(230, 225, 210))).small()).on_hover_text("Select it").clicked()
+        ui.add(egui::Button::new(egui::RichText::new(&p.label).small().color(super::IVORY)).small()).on_hover_text("Select it").clicked()
     } else {
         ui.label(egui::RichText::new(&p.label).small());
         false
@@ -107,10 +108,10 @@ pub fn place_button(ui: &mut egui::Ui, p: &nd_sim::world::Place) -> bool {
 
 /// [looks] A small painted figure in their colours beside a line saying
 /// what they look like.
-pub fn look_line(ui: &mut egui::Ui, c: &Citizen) {
+fn look_line(ui: &mut egui::Ui, c: &Citizen) {
     use nd_sim::looks::{skin_srgb, Outfit, HairStyle, COLORS};
     let a = c.appearance();
-    let rgb = |c: [u8; 3]| egui::Color32::from_rgb(c[0], c[1], c[2]);
+    let rgb = super::theme::rgb_u8;
     let fav = a.fav.map(|i| rgb(COLORS[(i as usize).min(COLORS.len() - 1)].srgb));
     let skin = rgb(skin_srgb(a.genes.skin));
     let hair = rgb(a.shown_hair(c.age).srgb());
@@ -147,7 +148,7 @@ pub fn look_line(ui: &mut egui::Ui, c: &Citizen) {
 }
 
 /// The spotlight checkbox, written back only when it changes.
-pub fn spotlight_toggle(ui: &mut egui::Ui, w: &mut World, id: CitizenId, label: &str) {
+fn spotlight_toggle(ui: &mut egui::Ui, w: &mut World, id: CitizenId, label: &str) {
     let Some(was) = w.citizens.get(id).map(|c| c.spotlight) else { return };
     let mut spotlight = was;
     if ui.checkbox(&mut spotlight, label).changed() {
@@ -158,8 +159,8 @@ pub fn spotlight_toggle(ui: &mut egui::Ui, w: &mut World, id: CitizenId, label: 
 }
 
 /// One memory line: day, time, text.
-pub fn memory_line(ui: &mut egui::Ui, m: &nd_sim::Memory) {
-    ui.label(egui::RichText::new(format!("d{} {:02}:{:02}  {}", m.tick / 1440 + 1, (m.tick % 1440) / 60, m.tick % 60, m.text)).small());
+fn memory_line(ui: &mut egui::Ui, m: &nd_sim::Memory) {
+    ui.label(egui::RichText::new(format!("d{} {}  {}", super::fmt::day(m.tick), super::fmt::hhmm(m.tick), m.text)).small());
 }
 
 /// A draggable window on the selected citizen: who they are, what they are
@@ -178,7 +179,7 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
     let mut go_person: Option<CitizenId> = None;
     let mut open = true;
     let title = sim.world.citizens[id].name.clone();
-    egui::Window::new(egui::RichText::new(title).color(egui::Color32::from_rgb(230, 225, 210)).strong())
+    egui::Window::new(egui::RichText::new(title).color(super::IVORY).strong())
         .id(egui::Id::new("person_pane"))
         .open(&mut open)
         .default_pos(egui::pos2(content.right() - 372.0, content.top() + 12.0))
@@ -249,11 +250,6 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
     }
 }
 
-fn capital(s: &str) -> String {
-    let mut c = s.chars();
-    c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
-}
-
 /// [camera] Home, work and anything they own as buttons in the pins'
 /// colours, each selecting its building (the same as clicking its pin).
 fn places_row(ui: &mut egui::Ui, w: &World, id: CitizenId) -> Option<nd_sim::BuildingId> {
@@ -269,7 +265,7 @@ fn places_row(ui: &mut egui::Ui, w: &World, id: CitizenId) -> Option<nd_sim::Bui
             let [r, g, bl] = crate::marks::holding_rgb(h);
             let col = egui::Color32::from_rgb(r, g, bl);
             let icon = if h == nd_sim::Holding::Owns { "★ " } else { "" };
-            let text = egui::RichText::new(format!("{icon}{}: {name}", capital(h.label()))).small().color(col);
+            let text = egui::RichText::new(format!("{icon}{}: {name}", capitalise(h.label()))).small().color(col);
             if ui.add(egui::Button::new(text).stroke(egui::Stroke::new(1.0, col.gamma_multiply(0.6)))).on_hover_text("Select this building (its pin is on the map)").clicked() {
                 pick = Some(b);
             }
@@ -291,7 +287,7 @@ fn places_row(ui: &mut egui::Ui, w: &World, id: CitizenId) -> Option<nd_sim::Bui
         if !spares.is_empty() {
             let at = garage.map_or(String::new(), |g| format!(" at {g}"));
             let k = spares.len();
-            bits.push(if drives { format!("{} cars: one driven, {k} in the garage{at}", k + 1) } else { format!("{k} car{} in the garage{at}", if k == 1 { "" } else { "s" }) });
+            bits.push(if drives { format!("{} cars: one driven, {k} in the garage{at}", k + 1) } else { format!("{k} car{} in the garage{at}", super::fmt::s(k)) });
         }
         ui.label(egui::RichText::new(bits.join("  ·  ")).small().color(egui::Color32::from_rgb(255, 215, 120)));
     }

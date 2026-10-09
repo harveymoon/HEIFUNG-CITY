@@ -43,21 +43,21 @@
 
 | # | Sev | Where | Action |
 |---|---|---|---|
-| 11 | H | `render.rs:3259-3292` (`lift_movers`) | **On relief maps, every `Grounded`, citizen, car and train entity gets `surface_height_near` and a Transform write every frame.** That includes parked cars, clamps, cabs and rubble, which never move. The write dirties transform propagation for thousands of static entities. **Fix:** lift static things once (`Added<Grounded>` plus a `Static` marker), and use `set_if_neq` elsewhere. |
-| 12 | H | `render.rs:1396-1404`, `1557-1562`, `1615-1626`, `3100-3131`; `render/far.rs:44-81`; `render/mapview.rs:173-196` | **Signature hashing over the whole world every frame:** lots, parks, vacant land plus land value, the landscape signature (all buildings plus `format!("{:?}")`), `far_key` (all segments twice) and the map signature. **Fix:** gate each on sim version counters (`roads.version`, `parcels.version`, a lots/buildings revision, `land_value.version`). Add the missing counters to nd_sim, then hash only when a counter moves. |
-| 13 | M | `render.rs:1096`, `2821`, `2519` | **Rebuild-every-frame traps:** <br>- `sync_lane_arrows` rebuilds every frame when a network has no arrows (`!existing.is_empty()` in the skip test). <br>- `sync_transit` rebuilds whenever routes exist without live stops. <br>- `sync_parked_cars` rescans every vehicle each tick. <br>**Fix:** key them on version counters only. |
-| 14 | M | `ui/history.rs:236`, `ui/saves.rs:187`, `ui/title.rs:75-93` | **Disk I/O every frame:** the history window reads `read_dir` plus every JSON sidecar, and the title screen and saves panel call `fs::metadata` per card. **Fix:** cache the listing in `Saves`, keyed on the save generation, and keep the mtime from the scan. |
-| 15 | M | `render/crossings.rs:177`, `haze.rs:282`, `grime.rs:287`, `climate.rs:308` (suspected) | **Material swap ping-pong under the heat and focus views:** these compare against the original material instead of `SwapOriginal`, so they rewrite the material every frame and the swapper swaps it back. **Fix:** compare the way `render.rs:1147` does: `heat_original.map_or(&mat.0, \|h\| &h.0)`. |
-| 16 | M | `remote.rs:503-509,523-529`, `remote/identity.rs:96-103`, `ui/newgame.rs:184`, `ui/saves.rs:422`; `render.rs:1775-1797` | **City-replacement resets are copied four times, and the copies have drifted.** They also wipe favourites and tool preferences (`ToolState::default()`). **Fix:** one `on_city_replaced` system keyed on `sim.generation`. It resets the Selection, the id fields of `ToolState`, `EffectivePlan`, follow and flight, and despawns every entity with a `CityScoped` marker. Keep favourites in `World` (`#[serde(default)]`). **PARTLY FIXED 7c7a3f8: one `city_reset` system keyed on `Sim::generation` replaces the four copies and keeps the tool preferences. Not done: the `CityScoped` despawn marker (renderers still reset on `full_rebuild`) and favourites in `World` (an nd_sim field)** |
-| 17 | M | `remote.rs:3016-3162` vs `execute` `:425-1038`; `docs/REMOTE.md` | **`help` and REMOTE.md have drifted from the dispatcher.** Not in help: `tow_car`, `pressure`, and `bulldoze {building}`. About 19 aliases are undocumented. `contaminate` and `paint_mural` are missing from REMOTE.md. **Fix:** the command registry in section 3.2, with help generated from it, plus a uniqueness and coverage unit test. **FIXED 91c0184 (one `ALIASES` table feeds help; `help_matches_the_dispatcher` reads the dispatch arms; the full registry is phase 2b)** |
-| 18 | M | `remote.rs:1320`; `remote.rs:2005-2190`, `remote/list.rs:28`; `remote.rs:173-194,323` | **Remote API costs on the main thread:** <br>- `status` runs the full `report::alerts` scan on every poll. <br>- `find` and `list` build JSON for every match before applying `limit`, and `find`'s `limit` is uncapped. <br>- `remote_commands` borrows about 25 resources every frame even with an empty inbox. <br>**Fix:** cache alerts per sim hour; sort ids first and serialise only the survivors; add `run_if(inbox non-empty)`. |
+| 11 | H | `render.rs:3259-3292` (`lift_movers`) | **On relief maps, every `Grounded`, citizen, car and train entity gets `surface_height_near` and a Transform write every frame.** That includes parked cars, clamps, cabs and rubble, which never move. The write dirties transform propagation for thousands of static entities. **Fix:** lift static things once (`Added<Grounded>` plus a `Static` marker), and use `set_if_neq` elsewhere. **REFACTORED eea8d73 (`lift_movers` skips an entity whose Transform and WayHeight did not change, on unchanged surfaces (ground and landscape `Versioned` counters): the lift is idempotent, so the result is the same and static things no longer dirty their transforms)** |
+| 12 | H | `render.rs:1396-1404`, `1557-1562`, `1615-1626`, `3100-3131`; `render/far.rs:44-81`; `render/mapview.rs:173-196` | **Signature hashing over the whole world every frame:** lots, parks, vacant land plus land value, the landscape signature (all buildings plus `format!("{:?}")`), `far_key` (all segments twice) and the map signature. **Fix:** gate each on sim version counters (`roads.version`, `parcels.version`, a lots/buildings revision, `land_value.version`). Add the missing counters to nd_sim, then hash only when a counter moves. **REFACTORED e4c9159, eea8d73 (`nd_sim::versioned::Versioned<T>` counters on lots, buildings, roads, landscape, ground and land value; a `render::Gate` in sync_lots, sync_parks, sync_vacant, sync_landscape, far::sync_far and mapview::sync_map hashes only when a counter it reads moved)** |
+| 13 | M | `render.rs:1096`, `2821`, `2519` | **Rebuild-every-frame traps:** <br>- `sync_lane_arrows` rebuilds every frame when a network has no arrows (`!existing.is_empty()` in the skip test). <br>- `sync_transit` rebuilds whenever routes exist without live stops. <br>- `sync_parked_cars` rescans every vehicle each tick. <br>**Fix:** key them on version counters only. **PARTLY REFACTORED eea8d73 (lane arrows and bus stops that come out empty no longer rebuild every frame; `sync_parked_cars` still rescans per tick: it needs a parking counter in nd_sim)** |
+| 14 | M | `ui/history.rs:236`, `ui/saves.rs:187`, `ui/title.rs:75-93` | **Disk I/O every frame:** the history window reads `read_dir` plus every JSON sidecar, and the title screen and saves panel call `fs::metadata` per card. **Fix:** cache the listing in `Saves`, keyed on the save generation, and keep the mtime from the scan. **REFACTORED 05c3765 (`saves::disk_changed` write counter; `Saves::history` caches the listing with mtimes, re-read on open; pictures re-stat only when the counter moves or while one is due)** |
+| 15 | M | `render/crossings.rs:177`, `haze.rs:282`, `grime.rs:287`, `climate.rs:308` (suspected) | **Material swap ping-pong under the heat and focus views:** these compare against the original material instead of `SwapOriginal`, so they rewrite the material every frame and the swapper swaps it back. **Fix:** compare the way `render.rs:1147` does: `heat_original.map_or(&mat.0, \|h\| &h.0)`. **REFACTORED eea8d73 (all four compare against `SwapOriginal`; the puffs also write Visibility only on change)** |
+| 16 | M | `remote.rs:503-509,523-529`, `remote/identity.rs:96-103`, `ui/newgame.rs:184`, `ui/saves.rs:422`; `render.rs:1775-1797` | **City-replacement resets are copied four times, and the copies have drifted.** They also wipe favourites and tool preferences (`ToolState::default()`). **Fix:** one `on_city_replaced` system keyed on `sim.generation`. It resets the Selection, the id fields of `ToolState`, `EffectivePlan`, follow and flight, and despawns every entity with a `CityScoped` marker. Keep favourites in `World` (`#[serde(default)]`). **PARTLY FIXED 7c7a3f8: one `city_reset` system keyed on `Sim::generation` replaces the four copies and keeps the tool preferences. Not done: the `CityScoped` despawn marker (renderers still reset on `full_rebuild`) and favourites in `World` (an nd_sim field)** **Phase 2b: the `CityScoped` despawn marker is still not done (see the phase 2b report: renderers that keep entity maps would despawn twice)** |
+| 17 | M | `remote.rs:3016-3162` vs `execute` `:425-1038`; `docs/REMOTE.md` | **`help` and REMOTE.md have drifted from the dispatcher.** Not in help: `tow_car`, `pressure`, and `bulldoze {building}`. About 19 aliases are undocumented. `contaminate` and `paint_mural` are missing from REMOTE.md. **Fix:** the command registry in section 3.2, with help generated from it, plus a uniqueness and coverage unit test. **FIXED 91c0184 (one `ALIASES` table feeds help; `help_matches_the_dispatcher` reads the dispatch arms; the full registry is phase 2b)** **REFACTORED a0478a3 (the `COMMANDS` registry in `remote/dispatch.rs`: name, aliases, effect, handler, help; `help` generated from it, byte-identical; `confirm` checked centrally from the `Replace` effect; REMOTE.md not generated)** |
+| 18 | M | `remote.rs:1320`; `remote.rs:2005-2190`, `remote/list.rs:28`; `remote.rs:173-194,323` | **Remote API costs on the main thread:** <br>- `status` runs the full `report::alerts` scan on every poll. <br>- `find` and `list` build JSON for every match before applying `limit`, and `find`'s `limit` is uncapped. <br>- `remote_commands` borrows about 25 resources every frame even with an empty inbox. <br>**Fix:** cache alerts per sim hour; sort ids first and serialise only the survivors; add `run_if(inbox non-empty)`. **REFACTORED 81490c2, 3c4f0a0 (`find` and `list` build only the rows they return; alerts format only the example ids; `remote_commands` runs only when a request waits). Not done: an alerts cache in `status`: `Sim` is taken mutably every frame and the clock does not move on paused edits, so no cheap key is exact (noted in `remote/status.rs`); `find`'s uncapped `limit` kept (a behaviour change)** |
 
 ### (c) Bigger restructures
 
 | # | Sev | Where | Action |
 |---|---|---|---|
-| 19 | M | `tools.rs:1618-2373`, `build_highlight.rs`, `ferry_select.rs`, `toll_select.rs`, `train_select.rs`, `road_select.rs`, `marks.rs`, `stub_marks.rs`, `render/{plot_hover,layers,mapview,survey}.rs` | **Overlay framework** (section 2.1): an `OverlaySet { Validate, Build, Draw }` after `SimSet::Step`, a `MeshOverlay` trait plus a generic plugin, one `SelectionDraw` dispatcher that matches every `Selection` variant exhaustively, a `validate_selection` system, and shared terrain-aware shape builders. It fixes items 6 and 16 and B11, B12, B16 and B17 in one place, and removes about 250-300 lines. |
-| 20 | M | `render.rs` (3.2k), `remote.rs` (3.2k), `tools.rs` (2.5k), `ui/inspector.rs` (1.2k) | **Split the four oversized files** along the concrete line ranges in section 3, starting with `RenderSet` sub-sets and per-feature render resources in place of one `RenderState` behind an 18-system `.chain()`. That chain serialises the whole static pipeline. |
+| 19 | M | `tools.rs:1618-2373`, `build_highlight.rs`, `ferry_select.rs`, `toll_select.rs`, `train_select.rs`, `road_select.rs`, `marks.rs`, `stub_marks.rs`, `render/{plot_hover,layers,mapview,survey}.rs` | **Overlay framework** (section 2.1): an `OverlaySet { Validate, Build, Draw }` after `SimSet::Step`, a `MeshOverlay` trait plus a generic plugin, one `SelectionDraw` dispatcher that matches every `Selection` variant exhaustively, a `validate_selection` system, and shared terrain-aware shape builders. It fixes items 6 and 16 and B11, B12, B16 and B17 in one place, and removes about 250-300 lines. **REFACTORED 170677e, 8b08b48, daf9860 (`overlay/`, `selection.rs`; behaviour kept, so B16, B17, L8 are not fixed yet)** |
+| 20 | M | `render.rs` (3.2k), `remote.rs` (3.2k), `tools.rs` (2.5k), `ui/inspector.rs` (1.2k) | **Split the four oversized files** along the concrete line ranges in section 3, starting with `RenderSet` sub-sets and per-feature render resources in place of one `RenderState` behind an 18-system `.chain()`. That chain serialises the whole static pipeline. **PARTLY REFACTORED: render.rs split 59198c7 (3,459 to 458 lines); remote.rs a565747/a0478a3; tools.rs daf9860 (into tools/*, see #19 and 3.3); inspector.rs 4f72db6 (see 3.4). The `RenderSet` sets, per-feature resources and the end of the 18-system chain are not done (changing the order could change a frame)** |
 
 ---
 
@@ -80,7 +80,7 @@
 | B11 | M | `district_tool.rs:132`, `tools.rs:591` | A right-drag with the District brush erases and orbits the camera at once, because `captures_right_drag` only knows the Zone tool. | Include `Tool::District` in brush mode. **FIXED 7e5b705** |
 | B12 | M (likely) | `ui/toolbar.rs:232`, `ui/road.rs:94` | Implement from the toolbar drops a road selection: the road card sees no segment before `keep_on_rebuild` can re-point it. Ctrl+Enter works. | Make re-pointing a function and call it from the road card and from `validate_selection`. **FIXED a47a393** |
 | B13 | M | `remote.rs:2477-2543` vs `tools.rs:1270,1511` | Remote `select` does not behave like a click. It never sets `route_sel` for a bus and never maps a unit's car to `Selection::Unit`. | Use one `apply_pick(sim, tools, sel)` for both. **FIXED a47a393** |
-| B14 | M | `ui/inspector.rs:47-76` | Four unreachable arms (None, Citizen, Toll, Road), excluded by the guard at line 16. The Road arm discards `road::show`'s message. | Delete them and make `show` private. |
+| B14 | M | `ui/inspector.rs:47-76` | Four unreachable arms (None, Citizen, Toll, Road), excluded by the guard at line 16. The Road arm discards `road::show`'s message. | Delete them and make `show` private. **REFACTORED 05c3765 (one explicit no-op arm; `show` private)** |
 | B15 | M | `committee.rs:136-139`, `remote.rs:453` | After a reload with a meeting in session, `paused_before = Some(false)`, so the city always unpauses when the meeting adjourns. Remote `step` and `pause` ignore the meeting pause. | Persist `paused_before` with the meeting; make `step` and `pause` warn while a meeting is on. **PARTLY FIXED 6555cee (remote `step` stops when a meeting is called; persisting `paused_before` needs an nd_sim field)** |
 | B16 | L | `marks.rs:107-108` | The bot's heading is interpolated linearly, so the outline spins at ±π. | Use the shared `lerp_angle`, which has three copies today: `camera.rs:298`, `render.rs:2140` and the bot code. |
 | B17 | L | `ferry_select.rs:327-394` | The ship outline is drawn around the camera when you follow a ship from its deck. | Check `pov_in_vehicle`. |
@@ -125,7 +125,7 @@
 
 **Gaps:**
 - **FIXED 0e7f729 (`render::lifts`, one exhaustive match):** **Render highlight/lift only knows `Citizen` and `Car`** (`render.rs:2118,2394`). A clicked emergency vehicle becomes `Unit`: its generic car is hidden (`emergency.rs:276-283`) and the unit body ignores selection, so a selected ambulance gets no lift or highlight. **Fix:** a `selected_entities(&Selection, &RenderMaps) -> SmallVec<Entity>` with no `_` arm.
-- **Selection drawing is spread over five systems:** `tools::draw_selection`, `train_select::draw`, `ferry_select::draw`, `marks` (Bot), and fire_scene poses. A new variant has to be wired into several of them. The `SelectionDraw` dispatcher in section 2.1 makes the compiler enforce coverage.
+- **Selection drawing is spread over five systems:** `tools::draw_selection`, `train_select::draw`, `ferry_select::draw`, `marks` (Bot), and fire_scene poses. A new variant has to be wired into several of them. The `SelectionDraw` dispatcher in section 2.1 makes the compiler enforce coverage. **REFACTORED 170677e (`overlay::selection::draw_selection`, no `_` arm)**
 - **The selection is cleared on every city-replacement path** (`remote.rs:503,523`, `ui/newgame.rs:184`, `ui/saves.rs:422`), but by four copies of the code (#16).
 
 ### 1.4 Resource and entity leaks
@@ -194,6 +194,8 @@
 
 ### 2.1 A common overlay framework
 
+**REFACTORED 170677e, 8b08b48 (`overlay/{mod,shapes,selection,mesh,routes}.rs`: OverlaySet, OverlayPiece, OverlayMaterials, MeshOverlay + MeshOverlayPlugin for build_highlight, plot_hover and the ferry bands; mapview, layers, survey and footbridges not moved; the fixes listed under Gains are left for a later phase).**
+
 **The pattern each overlay module repeats by hand:** a cache resource holding (key, entities, materials); read `Sim`, `Selection` and `ToolState`; compute a hash key; return early if it is unchanged and `!full_rebuild`; otherwise despawn, build `MeshData` and spawn with a lazily created unlit additive material. Gizmos are drawn separately. This holds for `build_highlight` (`:523-716`), `render/plot_hover` (`:298-361`), `ferry_select::sync_lines` (`:256-301`), `render/mapview::sync_map`, `render/layers::sync_layers`, `render/survey` and `junction_view` footbridges.
 
 **Selection gizmos are spread out:** `tools::draw_selection` (`tools.rs:1970-2226`), `toll_select::draw`, `road_select::draw`, `train_select::draw`, `ferry_select::draw` (ship), `marks` (Bot and pins) and the `fire_scene` unit outline. They are scheduled in Input, Sync or after Sync, depending on the module.
@@ -260,6 +262,8 @@ pub fn draw_selection(g: &mut Gizmos, cx: &OverlayCtx) { match cx.sel { /* every
 
 ### 2.3 UI helpers
 
+**REFACTORED 05c3765:** `ui/fmt.rs` (all helpers below except a shared `money`: the copies disagree, B28, so only estate's moved; `minutes` is two named wordings, `hours_min` and `hours_min_long`, plus `secs_or_min`, `minutes_or_under`, `minutes_or_dash`), the colours and converters in `theme.rs` (GOOD shades kept apart: `GOOD`, `GOOD_LIGHT`, `GOOD_BRIGHT`; `lerp` and `lerp_floor`; `rgb_f`, `rgb_u8`, `rgb_linear`, `rgb_gamma`), and `pane::tag` (4f72db6). The other cards/charts helpers below are still open.
+
 **New `ui/fmt.rs`** (pure, unit-testable):
 
 | Helper | Replaces |
@@ -295,6 +299,8 @@ pub fn draw_selection(g: &mut Gizmos, cx: &OverlayCtx) { match cx.sel { /* every
 
 ### 2.4 Remote helpers
 
+**REFACTORED a565747, a0478a3:** `window` parses its name once (`Named` in `remote/window.rs`); `opt_strings`, `ms`, `str_filter`, `bool_filter` are in `view.rs`; `help` is generated. Not done: the `timed` helper and `now_unix` reuse.
+
 - **The city-reset block, four copies:** see #16.
 - **The `window` command:** six guard arms re-parse and lowercase `name` (`remote.rs:944-1011`). Parse it once and match on an enum in `window.rs`.
 - **Repeated code:** `SystemTime::now()...as_secs()` (`remote.rs:2912,2948,2955`, `flags.rs:59`; use `ui::saves::now_unix`), and the `Instant` plus `took_ms` timing, 6 times with integer and float variants. Use one `timed(|| ..)` helper.
@@ -311,6 +317,8 @@ pub fn draw_selection(g: &mut Gizmos, cx: &OverlayCtx) { match cx.sel { /* every
 - `RenderPlugin::build` makes 45 `add_systems` calls and registers about 80 systems, plus about 10 more in the heat, look, mapview and thumbs sub-plugins.
 - The only set is `SimSet::Sync`, held together by about 40 ad-hoc `.after`/`.before` edges against concrete functions.
 - An 18-system `.chain()` (`:462-466`), almost all on `ResMut<RenderState>`, makes the static pipeline run serially.
+
+**Phase 2b: the file split below is REFACTORED 59198c7 (by function into mesh_util, materials, daylight, ground, streets, preview, lots, buildings, reset, citizens, vehicles, parked, overlays, trains, landscape, lift); steps 1-3 of the plan are not done.**
 
 **Plan:**
 1. Introduce `RenderSet::{Reset, Static, Movers, Lift, Light}`.
@@ -339,6 +347,8 @@ pub fn draw_selection(g: &mut Gizmos, cx: &OverlayCtx) { match cx.sel { /* every
 | 3063-3212 | `render/landscape.rs` |
 
 ### 3.2 remote.rs (3,175 lines) to a command registry
+
+**REFACTORED a565747, a0478a3:** split along this plan (`remote.rs` 147 lines); `incident`/`incidents` went to `remote/incidents.rs`, `report`/`map`/`history`/`list` to `remote/review.rs`, `flag`/`favourite` to `remote/flags.rs`, `events`/`thoughts` to `remote/events.rs`; the stale mod docs and empty `// [tag]` markers (3.6) are gone. No read-only mode, token or budget yet (the `Effect` flag is there for them).
 
 ```rust
 pub enum Effect { Read, View, Game, Replace, Files, Dev, Paid }
@@ -382,6 +392,8 @@ pub static COMMANDS: &[Cmd] = &[ /* per-module consts concatenated */ ];
 
 ### 3.3 tools.rs (2,484 lines) to `tools/*`
 
+**REFACTORED daf9860 (`tools/*`, `selection.rs`, `overlay/{selection,shapes,routes}.rs`; largest file `tools/state.rs`, 495 lines).**
+
 | Lines | Target |
 |---|---|
 | 1-180 | `tools/kinds.rs` |
@@ -402,7 +414,7 @@ After the split, the largest file is about 300 lines.
 
 ### 3.4 ui
 
-- **`inspector.rs` (1,229 lines):** `inspector/{mod,building,vehicle,unit,bot}.rs`.
+- **`inspector.rs` (1,229 lines):** `inspector/{mod,building,vehicle,unit,bot}.rs`. **REFACTORED 4f72db6**
 - **`build.rs`:** split the catalogue model (lines 1-450, pure and tested) from the window (lines 450-1000).
 - **`saves.rs`:** `saves/io.rs` (scan, meta, write, load, revert, autosave) and `saves/panel.rs`.
 - **`detail.rs`:** split by City Data tab into city, market, power and transit.
@@ -411,25 +423,25 @@ After the split, the largest file is about 300 lines.
 
 `main.rs` holds a 12-plugin tuple plus a 5-plugin tuple. The comment notes the 15-element tuple limit. `train_select`, `toll_select` and `road_select` have no plugin: their systems are wired through `tools.rs:729` and direct calls.
 
-**Proposal:** a few domain `PluginGroup`s, so main.rs adds about 4 groups and new modules register inside their group, never in main.rs:
+**Proposal:** a few domain `PluginGroup`s, so main.rs adds about 4 groups and new modules register inside their group, never in main.rs: **REFACTORED 39d95c9 (`CorePlugins`, `WorldViewPlugins`, `PlayerPlugins` in main.rs plus `RemotePlugin`; the overlay plugins register inside render and the select modules)**
 - `CorePlugins`: assets, sim, crash, flags
 - `WorldViewPlugins`: render, camera, map_layers, marks, the overlay framework (which takes build_highlight, stub_marks, ferry_select, metro_ux and the select modules)
 - `PlayerPlugins`: tools, district_tool, ui, committee
 - `RemotePlugin`
 
-Also move `configure_sets(Update, (Input, Step, Sync).chain())` from `ToolsPlugin` (`tools.rs:728`) into `SimPlugin`, which owns `SimSet`.
+Also move `configure_sets(Update, (Input, Step, Sync).chain())` from `ToolsPlugin` (`tools.rs:728`) into `SimPlugin`, which owns `SimSet`. **REFACTORED daf9860**
 
 ### 3.6 Dead code and stale comments
 
 **Dead code:**
-- Unreachable inspector arms (B14).
-- `detail.rs:232` `plant_table(.., wide)`: the only caller passes `true`, so the compact branch is dead.
+- Unreachable inspector arms (B14). **REFACTORED 05c3765**
+- `detail.rs:232` `plant_table(.., wide)`: the only caller passes `true`, so the compact branch is dead. **REFACTORED 05c3765**
 - `road_select.rs:120-121` has a leftover `let _ = s;`.
-- `inspector.rs:302` has an empty `if car.is_some() { }`.
-- `theme.rs:190-196` `saved_scale` duplicates the parse in `load_settings`.
+- `inspector.rs:302` has an empty `if car.is_some() { }`. **REFACTORED 05c3765**
+- `theme.rs:190-196` `saved_scale` duplicates the parse in `load_settings`. **REFACTORED 05c3765**
 
 **Over-wide visibility:**
-- About 26 UI `pub fn`s are used only in their own file.
+- About 26 UI `pub fn`s are used only in their own file. **REFACTORED 05c3765 (29 made private)**
 - Render tags (`InTunnel`, `SelfLifted`, `BotTag`, `WayHeight`, `Grounded`, `CarTag`, `CitizenTag`, `BuildingTag`) and `offstage`, `plant_field` and `building_geometry` are `pub` or `pub(crate)` but used only in render.
 - **Fix:** demote them to `pub(super)` or private.
 
@@ -437,14 +449,14 @@ Also move `configure_sets(Update, (Input, Step, Sync).chain())` from `ToolsPlugi
 
 | Where | Problem |
 |---|---|
-| `render.rs:33` | The emergency doc is on `mod thumbs`. |
-| `render.rs:1653` | The `append_building` doc is on `plant_field`. |
-| `render.rs:1375` | Says "two meshes"; there are three. |
-| `render.rs:3218` | A parameter named `arrows` filters tolls. |
+| `render.rs:33` | The emergency doc is on `mod thumbs`. **REFACTORED e950b39** |
+| `render.rs:1653` | The `append_building` doc is on `plant_field`. **REFACTORED e950b39** |
+| `render.rs:1375` | Says "two meshes"; there are three. **REFACTORED e950b39** |
+| `render.rs:3218` | A parameter named `arrows` filters tolls. **REFACTORED e950b39** |
 | `remote.rs:17-19` | The `[concerns]` doc is on `mod committee`. |
 | `remote.rs:33-36` | The guard doc is on `mod grounds`. |
 | `remote.rs:3062,3073,3133` | Empty `// [tag]` markers. |
-| `ui/mod.rs:9-11` | The `[concerns]` doc is on `mod build`. |
+| `ui/mod.rs:9-11` | The `[concerns]` doc is on `mod build`. **REFACTORED 05c3765** |
 | `render/nights.rs:227-231` | A stale 5-second rebuild comment and term. |
 | `render/stunts.rs:79` | A local `despawn_all` shadows `super::despawn_all` with a different signature. |
 
@@ -464,17 +476,17 @@ High and medium items are in the Top 20: #11-#15 and #18. The rest:
 | P-R6 | L | `render/layers.rs:291-296` | The people, pollution and crime grids rebuild every 1-2 s even while paused. | Also gate on the tick. |
 | P-R7 | L | `render.rs:1996` | The walk-detail key uses `buildings.len()`, which is both stale and a scan. | A buildings revision. |
 | P-O1 | M | `tools.rs:678-684,1152` | `EffectivePlan::sync` clones the whole plan every frame of an Edit drag, because `amend` bumps the version. | Patch the dragged gesture in place. |
-| P-O2 | L | `stub_marks.rs:31,60` | `unjoined_stubs()` runs twice every frame, unconditionally. | Compute once into a resource keyed on versions. |
-| P-O3 | L | `ferry_select.rs:268,337` | `net()` (signature plus lock) runs three times a frame; `visible()` and `offset_polyline` run per line per frame. | Cache once per frame and with the network. |
+| P-O2 | L | `stub_marks.rs:31,60` | `unjoined_stubs()` runs twice every frame, unconditionally. | Compute once into a resource keyed on versions. **REFACTORED 170677e (the labels reuse the rings' list while the Sim change tick holds)** |
+| P-O3 | L | `ferry_select.rs:268,337` | `net()` (signature plus lock) runs three times a frame; `visible()` and `offset_polyline` run per line per frame. | Cache once per frame and with the network. **REFACTORED 170677e (`WaterFrame`, reused while the Sim change tick holds; `visible()` per frame left)** |
 | P-O4 | L | `tools.rs:1236`, `ui/hover.rs:17` | Linear point-in-polygon over every lot while hovering. | `parcels.at(p)`. |
 | P-O5 | L | `tools.rs:1925,1941,2014,2021,2061` | Rail-preview O(B·F) scans; `plant_group_of`, `owned_with` and `jam_chain` every frame for a selection. | Cache by (selection, tick). |
 | P-O6 | L | `build_highlight.rs:696`, `render/plot_hover.rs:342` | `materials.get_mut` every frame re-prepares a material. | One pulse material driven by a time uniform. |
 | P-O7 | L | `render/junction_view.rs:69-79` | `ResMut<ToolState>` is mutated every frame, so `ToolState` is always "changed". | Write only on change. |
-| P-UI1 | M | `ui/skyline.rs:43,50,76` | The building inspector sorts the whole skyline every frame, twice for a tower. | Cache the ranking per (generation, tick). |
+| P-UI1 | M | `ui/skyline.rs:43,50,76` | The building inspector sorts the whole skyline every frame, twice for a tower. | Cache the ranking per (generation, tick). **PARTLY REFACTORED 05c3765: one ranking per frame, not two (a cache needs a buildings revision counter: bulldozing while paused keeps the tick)** |
 | P-UI2 | M | `ui/inspector.rs:546,562,748,753,1174` | The building inspector scans all citizens, cars or buildings every frame. | Occupancy indexes, or cache by (id, tick). |
 | P-UI3 | M | `ui/people.rs:91,146`; `ui/detail.rs:553-617,672` | Incomes are sorted twice per frame; the land page does a full lot scan per land use; `grid_day_ahead` runs every frame. | Compute in one pass and cache by tick or hour. |
-| P-UI4 | M | `ui/committee.rs:225,242,365,500,536` | The meeting, minutes, the whole `Committee` and the settings are cloned every frame. | Borrow and collect the actions. |
-| P-UI5 | L | `ui/emergencies.rs:136-145`, `ui/directory.rs:154-232`, `ui/build.rs:704`, `ui/portrait.rs:121` | Collecting before `take(200)`; 6-8 KPI passes per frame; the build catalogue rebuilt each frame; eager tooltip `format!`s. | `take` first; cache the KPIs in the directory snapshot; `OnceLock` the catalogue; `on_hover_ui`. |
+| P-UI4 | M | `ui/committee.rs:225,242,365,500,536` | The meeting, minutes, the whole `Committee` and the settings are cloned every frame. | Borrow and collect the actions. **REFACTORED 05c3765 (meeting, minutes, committee and projects borrowed; votes cast after the loop; the settings edit buffer still clones)** |
+| P-UI5 | L | `ui/emergencies.rs:136-145`, `ui/directory.rs:154-232`, `ui/build.rs:704`, `ui/portrait.rs:121` | Collecting before `take(200)`; 6-8 KPI passes per frame; the build catalogue rebuilt each frame; eager tooltip `format!`s. | `take` first; cache the KPIs in the directory snapshot; `OnceLock` the catalogue; `on_hover_ui`. **PARTLY REFACTORED 05c3765: `take` first, `OnceLock` groups, portrait `on_hover_ui`; directory KPIs still open** |
 
 **System count and change detection:**
 - Render alone registers about 90 systems, all in `Update` and most without run conditions.

@@ -184,12 +184,18 @@ fn map_signature(w: &World) -> u64 {
 
 /// Build the map while the view is on (again when roads or lots change),
 /// drop it when it goes off.
-fn sync_map(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, sim: Res<Sim>, overlays: Res<Overlays>, existing: Query<Entity, With<MapTag>>, mut built: Local<Option<u64>>, mut mat: Local<Option<Handle<StandardMaterial>>>) {
+#[allow(clippy::too_many_arguments)]
+fn sync_map(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, sim: Res<Sim>, overlays: Res<Overlays>, existing: Query<Entity, With<MapTag>>, mut built: Local<Option<u64>>, mut mat: Local<Option<Handle<StandardMaterial>>>, mut gate: Local<super::Gate<(u64, u64, u64, bool)>>) {
     if !overlays.map {
         if built.is_some() {
             despawn_all(&mut commands, &existing);
             *built = None;
         }
+        return;
+    }
+    // [refactor/app] Hash the lots only when a counter the signature reads has moved.
+    let w = &sim.world;
+    if gate.same((sim.generation, w.roads.version, w.lots.version(), w.relief)) && built.is_some() && !sim.full_rebuild {
         return;
     }
     let sig = map_signature(&sim.world);

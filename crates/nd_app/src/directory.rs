@@ -18,6 +18,7 @@ use bevy::math::Vec2;
 use nd_sim::citizens::{LifeStage, TripMode};
 use nd_sim::estate::{Class, OwnerKind};
 use nd_sim::{Activity, BuildingId, BusinessKind, CitizenId, IncidentKind, World};
+use crate::ui::fmt::capitalise;
 
 // ── what a column sorts by ─────────────────────────────────────────────────
 
@@ -350,11 +351,6 @@ impl Row for BizRow {
     fn matches(&self, f: &Filter) -> bool {
         f.kind.is_none_or(|k| k == self.kind) && f.state.is_none_or(|s| s == self.state) && f.district.as_ref().is_none_or(|d| *d == self.district) && found(&self.hay, &f.search)
     }
-}
-
-fn capitalise(s: &str) -> String {
-    let mut c = s.chars();
-    c.next().map_or(String::new(), |f| f.to_uppercase().collect::<String>() + c.as_str())
 }
 
 /// What kind of owner, in a word.

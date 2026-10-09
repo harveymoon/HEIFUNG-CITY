@@ -121,7 +121,7 @@ pub(super) fn sync_air(
             continue;
         }
         let model = model_of(d.craft, d.number);
-        let v = vr.variant(&mut meshes, &model);
+        let v = vr.variant(&mut meshes, &model, &assets.palette);
         let finish = vr.finish_of(model.class);
         let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), super::offstage(), Visibility::Visible, AirTag)).id();
         let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), super::offstage(), Visibility::Visible, NotShadowCaster, NotShadowReceiver, AirTag)).id();

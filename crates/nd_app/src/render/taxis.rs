@@ -24,7 +24,7 @@ pub(super) struct TaxiRender {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn sync_taxis(mut commands: Commands, sim: Res<Sim>, mats: Res<Materials>, mut tr: ResMut<TaxiRender>, mut vr: ResMut<VehicleRender>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+pub(super) fn sync_taxis(mut commands: Commands, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut tr: ResMut<TaxiRender>, mut vr: ResMut<VehicleRender>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
     let w = &sim.world;
     let companies = w.taxi_companies();
     let key = (w.clock.tick, w.taxis.cabs.len(), companies.len());
@@ -70,7 +70,7 @@ pub(super) fn sync_taxis(mut commands: Commands, sim: Res<Sim>, mats: Res<Materi
                 commands.entity(e).despawn();
             }
         }
-        let v = vr.variant(&mut meshes, &model);
+        let v = vr.variant(&mut meshes, &model, &assets.palette);
         let finish = vr.finish_of(model.class);
         let pose = Transform::from_translation(Vec3::new(p.x, 0.05, p.y)).with_rotation(Quat::from_rotation_y(-heading));
         let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, ParkedCabTag, Grounded)).id();

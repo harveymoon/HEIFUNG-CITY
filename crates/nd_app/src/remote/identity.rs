@@ -7,7 +7,10 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use super::view::*;
-use super::{absolute, allowed_path, clock, slash, Ctx};
+use super::ctx::Ctx;
+use super::dispatch::Replaces;
+use super::files::{absolute, allowed_path, slash};
+use super::status::clock;
 use crate::ui::history;
 use crate::ui::saves::{self, DIR};
 
@@ -62,6 +65,21 @@ fn entry_of(cmd: &Value, ctx: &Ctx) -> Result<history::Entry, String> {
     history::find(dir, game, &path).ok_or_else(|| format!("{} is not an entry of this game's history (game_history lists them)", path.display()))
 }
 
+/// What `game_history` checks before it asks for `confirm`: only
+/// `revert` replaces the city, and it always asks.
+pub(super) fn replaces(cmd: &Value, ctx: &Ctx) -> Result<Replaces, String> {
+    if opt_str(cmd, "action")?.unwrap_or("list").trim().to_ascii_lowercase() != "revert" {
+        return Ok(Replaces::No);
+    }
+    let e = entry_of(cmd, ctx)?;
+    Ok(Replaces::Always(format!(
+        "revert replaces the running city (day {}) with day {}{}; send confirm: true to do it",
+        ctx.sim.world.clock.day() + 1,
+        e.meta.day,
+        e.bookmark().map_or(String::new(), |b| format!(" (\"{b}\")"))
+    )))
+}
+
 /// `game_history {action?}`: list (default), bookmark, mark, revert.
 pub fn game_history(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let action = opt_str(cmd, "action")?.unwrap_or("list").trim().to_ascii_lowercase();
@@ -88,15 +106,8 @@ pub fn game_history(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Ok(json!({ "entry": entry_json(&e), "note": "the thumbnail is written about half a second later" }))
         }
         "revert" => {
+            // `confirm` was checked first (`replaces`).
             let e = entry_of(cmd, ctx)?;
-            if opt_bool(cmd, "confirm")? != Some(true) {
-                return Err(format!(
-                    "revert replaces the running city (day {}) with day {}{}; send confirm: true to do it",
-                    ctx.sim.world.clock.day() + 1,
-                    e.meta.day,
-                    e.bookmark().map_or(String::new(), |b| format!(" (\"{b}\")"))
-                ));
-            }
             saves::revert(&e.path, &mut ctx.sim, &mut ctx.saves, &mut ctx.flags)?;
             ctx.saves.title = false;
             ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "reverted");

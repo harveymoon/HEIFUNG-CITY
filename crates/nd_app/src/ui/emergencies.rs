@@ -10,11 +10,12 @@ use bevy_egui::egui;
 use nd_sim::services::{Incident, IncidentKind, Stage};
 
 use super::pane::heading;
+use super::fmt::day_time;
 use super::{hint, UiCtx};
 
 const FIRE: egui::Color32 = egui::Color32::from_rgb(255, 120, 60);
 const CRIME: egui::Color32 = egui::Color32::from_rgb(110, 160, 255);
-const MEDICAL: egui::Color32 = egui::Color32::from_rgb(120, 230, 150);
+const MEDICAL: egui::Color32 = super::theme::GOOD_BRIGHT;
 
 fn kind_color(k: IncidentKind) -> egui::Color32 {
     match k {
@@ -40,22 +41,13 @@ fn charts(ui: &mut egui::Ui, p: &mut UiCtx) {
     pane::legend(ui, &series.iter().map(|s| (s.name.as_str(), s.color)).collect::<Vec<_>>());
     heading(ui, "Response");
     let series = [
-        Series::new("avg minutes to arrive", egui::Color32::from_rgb(235, 180, 90), pane::col(&days, |d| d.avg_response_min)),
+        Series::new("avg minutes to arrive", super::GOLD, pane::col(&days, |d| d.avg_response_min)),
         Series::new("unanswered", egui::Color32::from_rgb(255, 90, 90), pane::col(&days, |d| d.unanswered as f32)),
         Series::new("help from the next town", egui::Color32::from_rgb(200, 120, 230), pane::col(&days, |d| d.out_of_town_calls as f32)),
     ];
     pane::line_chart(ui, &labels, &series, 100.0, &|x| format!("{x:.0}"));
     pane::legend(ui, &series.iter().map(|s| (s.name.as_str(), s.color)).collect::<Vec<_>>());
     hint(ui, "The out-of-town fees are itemised under service upkeep in Economy, Ledger.");
-}
-
-/// "day 3 14:05" for a tick.
-pub fn when(tick: u64) -> String {
-    format!("day {} {:02}:{:02}", tick / 1440 + 1, (tick % 1440) / 60, tick % 60)
-}
-
-fn minutes(t: Option<u64>) -> String {
-    t.map_or("-".to_string(), |m| format!("{m} min"))
 }
 
 /// Which kinds the history shows; kept in egui memory.
@@ -136,12 +128,12 @@ pub fn page(ui: &mut egui::Ui, p: &mut UiCtx) {
     let past: Vec<&Incident> = s.incidents.iter().rev().filter(|i| !i.active()).filter(|i| match filter {
         Filter::All => true,
         Filter::Kind(k) => i.kind == k,
-    }).collect();
+    }).take(200).collect();
     if past.is_empty() {
         hint(ui, "Nothing on record yet.");
     }
     // The page scrolls; the record shows its newest 200.
-    for inc in past.into_iter().take(200) {
+    for inc in past {
         incident_row(ui, p.sim.world.clock.tick, inc, false, &mut fly);
     }
     if let Some(at) = fly {
@@ -155,7 +147,7 @@ fn incident_row(ui: &mut egui::Ui, now: u64, inc: &Incident, live: bool, fly: &m
         Some(o) => o.label().to_string(),
         None => inc.stage.label().to_string(),
     };
-    let head = egui::RichText::new(format!("#{} {} · {} at {} · {}", inc.id, when(inc.reported.unwrap_or(inc.started)), inc.title().to_uppercase(), inc.place, status)).color(kind_color(inc.kind));
+    let head = egui::RichText::new(format!("#{} {} · {} at {} · {}", inc.id, day_time(inc.reported.unwrap_or(inc.started)), inc.title().to_uppercase(), inc.place, status)).color(kind_color(inc.kind));
     ui.horizontal(|ui| {
         if ui.small_button("go").on_hover_text("Fly the camera to the scene").clicked() {
             *fly = Some(inc.pos);
@@ -166,12 +158,12 @@ fn incident_row(ui: &mut egui::Ui, now: u64, inc: &Incident, live: bool, fly: &m
 
 fn details(ui: &mut egui::Ui, now: u64, inc: &Incident) {
     let name_of = |role: &str| inc.people.iter().filter(|p| p.role == role).map(|p| p.name.clone()).collect::<Vec<_>>().join(", ");
-    ui.label(format!("started {} · called in {} by {}", when(inc.started), inc.reported.map_or("not yet".to_string(), when), {
+    ui.label(format!("started {} · called in {} by {}", day_time(inc.started), inc.reported.map_or("not yet".to_string(), day_time), {
         let c = name_of("caller");
         if c.is_empty() { "a passer-by".to_string() } else { c }
     }));
     let d = name_of("dispatcher");
-    ui.label(format!("dispatcher: {} · sent {}", if d.is_empty() { "none (regional line)".to_string() } else { d }, inc.dispatched.map_or("not yet".to_string(), when)));
+    ui.label(format!("dispatcher: {} · sent {}", if d.is_empty() { "none (regional line)".to_string() } else { d }, inc.dispatched.map_or("not yet".to_string(), day_time)));
     let unit = match (&inc.unit_name, inc.outside) {
         (Some(u), true) => format!("{u} · fee {:.0}", inc.fee),
         (Some(u), false) => format!("{u} (city)"),
@@ -182,12 +174,12 @@ fn details(ui: &mut egui::Ui, now: u64, inc: &Incident) {
     let live_work = if inc.stage == Stage::OnScene { inc.arrived.map(|t| now.saturating_sub(t)) } else { None };
     ui.label(format!(
         "call to dispatch {} · dispatch to scene {}{} · on scene {}{} · call to arrival {}",
-        minutes(inc.dispatched.zip(inc.reported).map(|(a, b)| a.saturating_sub(b))),
-        minutes(inc.travel_ticks().or(live_travel)),
+        super::fmt::minutes_or_dash(inc.dispatched.zip(inc.reported).map(|(a, b)| a.saturating_sub(b))),
+        super::fmt::minutes_or_dash(inc.travel_ticks().or(live_travel)),
         if live_travel.is_some() { " so far" } else { "" },
-        minutes(inc.work_ticks().or(live_work)),
+        super::fmt::minutes_or_dash(inc.work_ticks().or(live_work)),
         if live_work.is_some() { " so far" } else { "" },
-        minutes(inc.response_ticks()),
+        super::fmt::minutes_or_dash(inc.response_ticks()),
     ));
     if inc.kind == IncidentKind::Fire && inc.active() {
         ui.label(egui::RichText::new(format!("burning at {:.0}%", inc.intensity * 100.0)).color(FIRE));
@@ -206,13 +198,13 @@ fn details(ui: &mut egui::Ui, now: u64, inc: &Incident) {
         ui.label(egui::RichText::new(format!(
             "car chase: fled in {} at {} · {:.0} m driven{so_far} · closest {:.0} m · {}",
             ch.vehicle,
-            when(ch.started),
+            day_time(ch.started),
             ch.metres,
             ch.closest,
             ch.result.map_or("still running".to_string(), |r| format!("{} after {} min", r.label(), ch.ended.unwrap_or(now).saturating_sub(ch.started)))
         )).color(CRIME));
     }
     if let Some(o) = inc.outcome {
-        ui.label(egui::RichText::new(format!("outcome: {} at {}", o.label(), inc.resolved.map_or("-".to_string(), when))).strong());
+        ui.label(egui::RichText::new(format!("outcome: {} at {}", o.label(), inc.resolved.map_or("-".to_string(), day_time))).strong());
     }
 }

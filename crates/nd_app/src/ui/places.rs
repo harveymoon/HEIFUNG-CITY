@@ -18,7 +18,7 @@ pub fn citizen_places(ui: &mut egui::Ui, w: &World, id: CitizenId) {
     hint(ui, &format!("places ({} known)", c.places.places.len()));
     for (b, m) in w.favourite_places(id).iter().take(5) {
         let tag = if m.regular { "regular" } else if m.score >= 0.4 { "liked" } else if m.score < 0.0 { "meh" } else { "been" };
-        ui.label(egui::RichText::new(format!("{}  ·  {tag}  ·  {} visit{}  ·  {:+.2}", name(*b), m.visits, if m.visits == 1 { "" } else { "s" }, m.score)).small());
+        ui.label(egui::RichText::new(format!("{}  ·  {tag}  ·  {} visit{}  ·  {:+.2}", name(*b), m.visits, super::fmt::s(m.visits), m.score)).small());
     }
     let never: Vec<&str> = c.places.places.iter().filter(|p| p.never).map(|p| name(p.place)).collect();
     if !never.is_empty() {

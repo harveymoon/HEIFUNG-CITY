@@ -17,23 +17,23 @@ use nd_sim::{Building, LandUse, Tier, World};
 use super::pane::{self, Series, Span};
 use super::tools::warn_if;
 use super::pane::{heading, row};
-use super::{hint, zone_color32, UiCtx, GOLD, WARN};
+use super::{hint, UiCtx, GOLD, WARN};
 use crate::tools::Selection;
 
-const INCOME: Color32 = Color32::from_rgb(110, 200, 140);
+const INCOME: Color32 = super::theme::GOOD;
 
 /// A fixed colour per flow: greens and blues for income, reds, oranges and
 /// purples for spending, so the stacked chart reads by temperature.
 pub fn flow_color(f: Flow) -> Color32 {
     match f {
-        Flow::IncomeTax => Color32::from_rgb(110, 200, 140),
+        Flow::IncomeTax => super::theme::GOOD,
         Flow::BusinessTax => Color32::from_rgb(70, 170, 210),
         Flow::BusFares => Color32::from_rgb(120, 230, 200),
         Flow::RailFares => Color32::from_rgb(150, 200, 255),
         Flow::Tickets => Color32::from_rgb(230, 210, 110),
         Flow::ParkingFines => Color32::from_rgb(200, 170, 250),
         Flow::ParkingFees => Color32::from_rgb(170, 230, 120),
-        Flow::PlantUpkeep => Color32::from_rgb(255, 120, 90),
+        Flow::PlantUpkeep => super::WARN,
         Flow::GridImport => Color32::from_rgb(255, 175, 80),
         Flow::TransitUpkeep => Color32::from_rgb(220, 90, 150),
         Flow::RailUpkeep => Color32::from_rgb(170, 100, 210),
@@ -54,7 +54,7 @@ pub fn flow_color(f: Flow) -> Color32 {
 
 /// What a ledger line holds, in words: the answer to "what exactly is in
 /// service upkeep".
-pub fn flow_note(f: Flow) -> &'static str {
+fn flow_note(f: Flow) -> &'static str {
     match f {
         Flow::IncomeTax => "12% of every citizen's daily income, taken at midnight; by the payer's income class.",
         Flow::BusinessTax => "5% of every open business's takings, at midnight, by the land use it stands on; plus the levy on air-taxi fares.",
@@ -195,7 +195,7 @@ pub fn taxes(ui: &mut egui::Ui, p: &mut UiCtx) {
             pane::kpi(ui, "import duty rate", egui::RichText::new(format!("{:.0}%", w.economy.taxes.import_duty * 100.0)));
         });
         let assets = p.assets;
-        let zone = |lu: LandUse| zone_color32(assets.palette.zone_color(lu));
+        let zone = |lu: LandUse| super::theme::rgb_f(assets.palette.zone_color(lu));
         let days = pane::days(&w.economy.history, span);
         tax_take(ui, w, &days, &zone);
     }
@@ -339,7 +339,7 @@ fn share_bar(ui: &mut egui::Ui, v: f32, scale: f32, col: Color32) {
 }
 
 /// What a building is, for the drill-down's second column.
-pub fn building_kind(b: &Building) -> String {
+fn building_kind(b: &Building) -> String {
     if let Some(s) = b.service {
         return s.kind.tier_label(s.tier).to_string();
     }
@@ -362,7 +362,7 @@ pub fn building_kind(b: &Building) -> String {
 }
 
 /// An item's name and kind.
-pub fn item_label(w: &World, it: &Item) -> (String, String) {
+fn item_label(w: &World, it: &Item) -> (String, String) {
     match it {
         Item::Building(id) => match w.buildings.get(*id) {
             Some(b) => (b.name.clone(), building_kind(b)),

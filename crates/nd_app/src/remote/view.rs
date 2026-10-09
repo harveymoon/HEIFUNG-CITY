@@ -1,7 +1,7 @@
 //! JSON views of the simulation for the remote API: the id codec, field
 //! parsers, and the row/detail serialisers shared by `find`, `inspect` and
-//! `status`. Everything here is read-only; the command handlers in
-//! `remote.rs` do the mutating.
+//! `status`. Everything here is read-only; the command handlers (the
+//! registry in `dispatch.rs`) do the mutating.
 
 use nd_minds::Personality;
 use nd_sim::citizens::TravelMode;
@@ -1040,6 +1040,31 @@ pub fn access_json(w: &World, id: nd_sim::BuildingId, connected: bool) -> Value 
         "stub_ends": w.stub_ends_of(id).into_iter().map(v2).collect::<Vec<_>>(),
         "problem": w.access_problem(id),
     })
+}
+
+// ── find / inspect / select ─────────────────────────────────────────────────
+
+pub fn str_filter(filter: Option<&Value>, name: &str) -> Option<String> {
+    filter.and_then(|f| f.get(name)).and_then(Value::as_str).map(|s| s.to_ascii_lowercase())
+}
+
+pub fn bool_filter(filter: Option<&Value>, name: &str) -> Option<bool> {
+    filter.and_then(|f| f.get(name)).and_then(Value::as_bool)
+}
+
+/// Milliseconds since `start`, to two decimals.
+pub fn ms(start: std::time::Instant) -> f64 {
+    (start.elapsed().as_secs_f64() * 100_000.0).round() / 100.0
+}
+
+/// An optional array of strings, e.g. `sections`, `keys`, `fields`.
+pub fn opt_strings(cmd: &Value, name: &str) -> Result<Option<Vec<String>>, String> {
+    match field(cmd, name) {
+        None => Ok(None),
+        Some(Value::Array(a)) => a.iter().map(|v| v.as_str().map(str::to_string).ok_or_else(|| format!("{name:?} must be an array of strings"))).collect::<Result<Vec<_>, _>>().map(Some),
+        Some(Value::String(s)) => Ok(Some(vec![s.clone()])),
+        Some(_) => Err(format!("{name:?} must be an array of strings")),
+    }
 }
 
 #[cfg(test)]

@@ -133,7 +133,7 @@ fn card(ui: &mut egui::Ui, label: &str, kind: SlotKind, figures: &str, age: &str
     let painter = ui.painter_at(rect);
     let hot = resp.hovered();
     painter.rect_filled(rect, 6.0, if hot { Color32::from_rgb(40, 34, 28) } else { Color32::from_rgb(16, 18, 30) });
-    painter.rect_stroke(rect, 6.0, egui::Stroke::new(if hot { 2.0 } else { 1.0 }, if hot { GOLD } else { Color32::from_rgb(60, 60, 72) }), egui::StrokeKind::Inside);
+    painter.rect_stroke(rect, 6.0, egui::Stroke::new(if hot { 2.0 } else { 1.0 }, if hot { GOLD } else { super::theme::EDGE_IDLE }), egui::StrokeKind::Inside);
     let img = Rect::from_min_size(rect.min + egui::vec2((CARD.x - PICTURE) * 0.5, 8.0), egui::vec2(PICTURE, PICTURE));
     match pic {
         Some(tex) => {

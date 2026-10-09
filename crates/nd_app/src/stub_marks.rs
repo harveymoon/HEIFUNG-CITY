@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
 use nd_sim::Vec2 as SVec2;
 
+use crate::overlay::shapes::flat_at;
 use crate::sim::Sim;
 use crate::ui::UiFlags;
 
@@ -15,8 +16,18 @@ pub struct StubMarksPlugin;
 
 impl Plugin for StubMarksPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, stub_rings.after(crate::sim::SimSet::Sync)).add_systems(EguiPrimaryContextPass, stub_labels);
+        app.init_resource::<Stubs>().add_systems(Update, stub_rings.in_set(crate::overlay::OverlaySet::Draw)).add_systems(EguiPrimaryContextPass, stub_labels);
     }
+}
+
+/// [overlay] The unjoined stubs as `stub_rings` last listed them, with the
+/// `Sim` change tick they were read at: the labels reuse the list while
+/// the tick holds (nothing has touched the sim since) rather than walk
+/// every building again (review P-O2).
+#[derive(Resource, Default)]
+struct Stubs {
+    at: Option<bevy::ecs::change_detection::Tick>,
+    list: Vec<(nd_sim::BuildingId, Vec<SVec2>)>,
 }
 
 /// The marks' colour: the amber of an unfinished connection.
@@ -24,22 +35,23 @@ fn amber(pulse: f32) -> Color {
     Color::linear_rgb(3.6 + pulse, 1.6 + pulse * 0.5, 0.2)
 }
 
-fn stub_rings(mut gizmos: Gizmos, sim: Res<Sim>, time: Res<Time>) {
+fn stub_rings(mut gizmos: Gizmos, sim: Res<Sim>, time: Res<Time>, mut stubs: ResMut<Stubs>) {
     let w = &sim.world;
-    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+    stubs.list = w.unjoined_stubs();
+    stubs.at = Some(sim.last_changed());
     let t = time.elapsed_secs();
     let pulse = (t * 2.6).sin() * 0.5 + 0.5;
     let col = amber(pulse);
-    for (b, ends) in w.unjoined_stubs() {
-        let gate = w.building_entrance(b);
-        for e in ends {
+    for (b, ends) in &stubs.list {
+        let gate = w.building_entrance(*b);
+        for &e in ends {
             let y = w.surface_height(e) + 0.4;
             let at = Vec3::new(e.x, y, e.y);
             // A steady ring the size of a road end, and one that swells
             // out from it like a sonar ping.
-            gizmos.circle(Isometry3d::new(at, flat), 6.0, col);
+            gizmos.circle(flat_at(at), 6.0, col);
             let ping = (t * 0.9).fract();
-            gizmos.circle(Isometry3d::new(at, flat), 6.0 + 12.0 * ping, Color::linear_rgba(3.6, 1.6, 0.2, 1.0 - ping));
+            gizmos.circle(flat_at(at), 6.0 + 12.0 * ping, Color::linear_rgba(3.6, 1.6, 0.2, 1.0 - ping));
             gizmos.line(at, at + Vec3::Y * (14.0 + 2.0 * pulse), col);
             // A dotted lead from the gate along the stub, so the end reads as
             // belonging to that dock or station.
@@ -54,9 +66,15 @@ fn stub_rings(mut gizmos: Gizmos, sim: Res<Sim>, time: Res<Time>) {
     }
 }
 
-fn stub_labels(mut contexts: EguiContexts, sim: Res<Sim>, flags: Res<UiFlags>, cams: Query<(&Camera, &GlobalTransform), With<crate::camera::OrbitCamera>>) -> Result {
+fn stub_labels(mut contexts: EguiContexts, sim: Res<Sim>, flags: Res<UiFlags>, cams: Query<(&Camera, &GlobalTransform), With<crate::camera::OrbitCamera>>, cache: Res<Stubs>) -> Result {
     let w = &sim.world;
-    let stubs = w.unjoined_stubs();
+    let fresh;
+    let stubs = if cache.at == Some(sim.last_changed()) {
+        &cache.list
+    } else {
+        fresh = w.unjoined_stubs();
+        &fresh
+    };
     if stubs.is_empty() {
         return Ok(());
     }
@@ -70,8 +88,8 @@ fn stub_labels(mut contexts: EguiContexts, sim: Res<Sim>, flags: Res<UiFlags>, c
     };
     let text_col = egui::Color32::from_rgb(255, 196, 90);
     for (b, ends) in stubs {
-        let name = w.buildings.get(b).map_or("", |x| x.name.as_str());
-        for e in ends {
+        let name = w.buildings.get(*b).map_or("", |x| x.name.as_str());
+        for &e in ends {
             let Some(at) = to_screen(e, 16.0) else { continue };
             if !screen.contains(at) {
                 continue;
