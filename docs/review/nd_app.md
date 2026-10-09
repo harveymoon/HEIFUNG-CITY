@@ -56,8 +56,8 @@
 
 | # | Sev | Where | Action |
 |---|---|---|---|
-| 19 | M | `tools.rs:1618-2373`, `build_highlight.rs`, `ferry_select.rs`, `toll_select.rs`, `train_select.rs`, `road_select.rs`, `marks.rs`, `stub_marks.rs`, `render/{plot_hover,layers,mapview,survey}.rs` | **Overlay framework** (section 2.1): an `OverlaySet { Validate, Build, Draw }` after `SimSet::Step`, a `MeshOverlay` trait plus a generic plugin, one `SelectionDraw` dispatcher that matches every `Selection` variant exhaustively, a `validate_selection` system, and shared terrain-aware shape builders. It fixes items 6 and 16 and B11, B12, B16 and B17 in one place, and removes about 250-300 lines. |
-| 20 | M | `render.rs` (3.2k), `remote.rs` (3.2k), `tools.rs` (2.5k), `ui/inspector.rs` (1.2k) | **Split the four oversized files** along the concrete line ranges in section 3, starting with `RenderSet` sub-sets and per-feature render resources in place of one `RenderState` behind an 18-system `.chain()`. That chain serialises the whole static pipeline. **PARTLY REFACTORED: render.rs split 59198c7 (3,459 to 458 lines); remote.rs a565747/a0478a3; tools.rs and inspector.rs see their rows. The `RenderSet` sets, per-feature resources and the end of the 18-system chain are not done (changing the order could change a frame)** |
+| 19 | M | `tools.rs:1618-2373`, `build_highlight.rs`, `ferry_select.rs`, `toll_select.rs`, `train_select.rs`, `road_select.rs`, `marks.rs`, `stub_marks.rs`, `render/{plot_hover,layers,mapview,survey}.rs` | **Overlay framework** (section 2.1): an `OverlaySet { Validate, Build, Draw }` after `SimSet::Step`, a `MeshOverlay` trait plus a generic plugin, one `SelectionDraw` dispatcher that matches every `Selection` variant exhaustively, a `validate_selection` system, and shared terrain-aware shape builders. It fixes items 6 and 16 and B11, B12, B16 and B17 in one place, and removes about 250-300 lines. **REFACTORED 170677e, 8b08b48, daf9860 (`overlay/`, `selection.rs`; behaviour kept, so B16, B17, L8 are not fixed yet)** |
+| 20 | M | `render.rs` (3.2k), `remote.rs` (3.2k), `tools.rs` (2.5k), `ui/inspector.rs` (1.2k) | **Split the four oversized files** along the concrete line ranges in section 3, starting with `RenderSet` sub-sets and per-feature render resources in place of one `RenderState` behind an 18-system `.chain()`. That chain serialises the whole static pipeline. **PARTLY REFACTORED: render.rs split 59198c7 (3,459 to 458 lines); remote.rs a565747/a0478a3; tools.rs daf9860 (into tools/*, see #19 and 3.3); inspector.rs 4f72db6 (see 3.4). The `RenderSet` sets, per-feature resources and the end of the 18-system chain are not done (changing the order could change a frame)** |
 
 ---
 
@@ -125,7 +125,7 @@
 
 **Gaps:**
 - **FIXED 0e7f729 (`render::lifts`, one exhaustive match):** **Render highlight/lift only knows `Citizen` and `Car`** (`render.rs:2118,2394`). A clicked emergency vehicle becomes `Unit`: its generic car is hidden (`emergency.rs:276-283`) and the unit body ignores selection, so a selected ambulance gets no lift or highlight. **Fix:** a `selected_entities(&Selection, &RenderMaps) -> SmallVec<Entity>` with no `_` arm.
-- **Selection drawing is spread over five systems:** `tools::draw_selection`, `train_select::draw`, `ferry_select::draw`, `marks` (Bot), and fire_scene poses. A new variant has to be wired into several of them. The `SelectionDraw` dispatcher in section 2.1 makes the compiler enforce coverage.
+- **Selection drawing is spread over five systems:** `tools::draw_selection`, `train_select::draw`, `ferry_select::draw`, `marks` (Bot), and fire_scene poses. A new variant has to be wired into several of them. The `SelectionDraw` dispatcher in section 2.1 makes the compiler enforce coverage. **REFACTORED 170677e (`overlay::selection::draw_selection`, no `_` arm)**
 - **The selection is cleared on every city-replacement path** (`remote.rs:503,523`, `ui/newgame.rs:184`, `ui/saves.rs:422`), but by four copies of the code (#16).
 
 ### 1.4 Resource and entity leaks
@@ -193,6 +193,8 @@
 ## 2. Duplication
 
 ### 2.1 A common overlay framework
+
+**REFACTORED 170677e, 8b08b48 (`overlay/{mod,shapes,selection,mesh,routes}.rs`: OverlaySet, OverlayPiece, OverlayMaterials, MeshOverlay + MeshOverlayPlugin for build_highlight, plot_hover and the ferry bands; mapview, layers, survey and footbridges not moved; the fixes listed under Gains are left for a later phase).**
 
 **The pattern each overlay module repeats by hand:** a cache resource holding (key, entities, materials); read `Sim`, `Selection` and `ToolState`; compute a hash key; return early if it is unchanged and `!full_rebuild`; otherwise despawn, build `MeshData` and spawn with a lazily created unlit additive material. Gizmos are drawn separately. This holds for `build_highlight` (`:523-716`), `render/plot_hover` (`:298-361`), `ferry_select::sync_lines` (`:256-301`), `render/mapview::sync_map`, `render/layers::sync_layers`, `render/survey` and `junction_view` footbridges.
 
@@ -390,6 +392,8 @@ pub static COMMANDS: &[Cmd] = &[ /* per-module consts concatenated */ ];
 
 ### 3.3 tools.rs (2,484 lines) to `tools/*`
 
+**REFACTORED daf9860 (`tools/*`, `selection.rs`, `overlay/{selection,shapes,routes}.rs`; largest file `tools/state.rs`, 495 lines).**
+
 | Lines | Target |
 |---|---|
 | 1-180 | `tools/kinds.rs` |
@@ -425,7 +429,7 @@ After the split, the largest file is about 300 lines.
 - `PlayerPlugins`: tools, district_tool, ui, committee
 - `RemotePlugin`
 
-Also move `configure_sets(Update, (Input, Step, Sync).chain())` from `ToolsPlugin` (`tools.rs:728`) into `SimPlugin`, which owns `SimSet`.
+Also move `configure_sets(Update, (Input, Step, Sync).chain())` from `ToolsPlugin` (`tools.rs:728`) into `SimPlugin`, which owns `SimSet`. **REFACTORED daf9860**
 
 ### 3.6 Dead code and stale comments
 
@@ -472,8 +476,8 @@ High and medium items are in the Top 20: #11-#15 and #18. The rest:
 | P-R6 | L | `render/layers.rs:291-296` | The people, pollution and crime grids rebuild every 1-2 s even while paused. | Also gate on the tick. |
 | P-R7 | L | `render.rs:1996` | The walk-detail key uses `buildings.len()`, which is both stale and a scan. | A buildings revision. |
 | P-O1 | M | `tools.rs:678-684,1152` | `EffectivePlan::sync` clones the whole plan every frame of an Edit drag, because `amend` bumps the version. | Patch the dragged gesture in place. |
-| P-O2 | L | `stub_marks.rs:31,60` | `unjoined_stubs()` runs twice every frame, unconditionally. | Compute once into a resource keyed on versions. |
-| P-O3 | L | `ferry_select.rs:268,337` | `net()` (signature plus lock) runs three times a frame; `visible()` and `offset_polyline` run per line per frame. | Cache once per frame and with the network. |
+| P-O2 | L | `stub_marks.rs:31,60` | `unjoined_stubs()` runs twice every frame, unconditionally. | Compute once into a resource keyed on versions. **REFACTORED 170677e (the labels reuse the rings' list while the Sim change tick holds)** |
+| P-O3 | L | `ferry_select.rs:268,337` | `net()` (signature plus lock) runs three times a frame; `visible()` and `offset_polyline` run per line per frame. | Cache once per frame and with the network. **REFACTORED 170677e (`WaterFrame`, reused while the Sim change tick holds; `visible()` per frame left)** |
 | P-O4 | L | `tools.rs:1236`, `ui/hover.rs:17` | Linear point-in-polygon over every lot while hovering. | `parcels.at(p)`. |
 | P-O5 | L | `tools.rs:1925,1941,2014,2021,2061` | Rail-preview O(B·F) scans; `plant_group_of`, `owned_with` and `jam_chain` every frame for a selection. | Cache by (selection, tick). |
 | P-O6 | L | `build_highlight.rs:696`, `render/plot_hover.rs:342` | `materials.get_mut` every frame re-prepares a material. | One pulse material driven by a time uniform. |

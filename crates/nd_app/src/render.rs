@@ -442,7 +442,7 @@ impl Plugin for RenderPlugin {
         // [tools] A label at each spot with no room for a column.
         app.add_systems(bevy_egui::EguiPrimaryContextPass, holo::gap_labels);
         // [plot-hover] The plot under the pointer while placing, and its verdict.
-        app.init_resource::<plot_hover::PlotHover>().add_systems(Update, plot_hover::sync_plot_hover.in_set(SimSet::Sync).after(sync_preview));
+        app.init_resource::<plot_hover::PlotHover>().add_plugins(crate::overlay::mesh::MeshOverlayPlugin::<plot_hover::PlotHoverMesh>::default());
         app.add_systems(bevy_egui::EguiPrimaryContextPass, plot_hover::plot_hover_label);
         // [tools] Footbridges, and the Intersection editor's road view.
         app.init_resource::<junction_view::JunctionCam>()

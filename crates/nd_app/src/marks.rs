@@ -1,20 +1,21 @@
 //! [camera] Marks in the world that are about people the player cares
-//! for: a gold halo on favourites (and the cars they drive or own), tall
-//! posts under the home / work / owned-business pins of a selected person
-//! (the pins' heads are drawn by `ui::pins`), and a selected delivery
-//! robot's outline, route, destination and shop.
+//! for: a gold halo on favourites (and the cars they drive or own). The
+//! posts under a selected person's pins (whose heads `ui::pins` draws) and
+//! a selected delivery robot's route are the selection's
+//! (`overlay::selection`), with the colours and heights from here.
 
 use bevy::prelude::*;
 use nd_sim::{Activity, BuildingId, Holding, Vec2 as SVec2, World};
 
 use crate::sim::Sim;
-use crate::tools::{lot_outline, vehicle_outline, Selection, ToolState};
+use crate::overlay::shapes::{flat_at, vehicle_box};
+use crate::tools::{Selection, ToolState};
 
 pub struct MarksPlugin;
 
 impl Plugin for MarksPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, draw_marks.after(crate::sim::SimSet::Sync));
+        app.add_systems(Update, draw_marks.in_set(crate::overlay::OverlaySet::Draw));
     }
 }
 
@@ -41,12 +42,11 @@ pub fn pin_top(w: &World, b: BuildingId) -> Option<Vec3> {
     Some(Vec3::new(c.x, w.surface_height(c) + roof + 14.0, c.y))
 }
 
-fn draw_marks(mut gizmos: Gizmos, sim: Res<Sim>, selection: Res<Selection>, tools: Res<ToolState>, time: Res<Time>, (mode, follow): (Res<crate::camera::CameraMode>, Res<crate::camera::CameraFollow>)) {
+fn draw_marks(mut gizmos: Gizmos, sim: Res<Sim>, tools: Res<ToolState>, time: Res<Time>, (mode, follow): (Res<crate::camera::CameraMode>, Res<crate::camera::CameraFollow>)) {
     let w = &sim.world;
     // Through a followed person's eyes their own halo would fill the view.
     let pov = *mode == crate::camera::CameraMode::Walk && follow.target.is_some();
     let f = sim.frac();
-    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
     let pulse = (time.elapsed_secs() * 2.2).sin() * 0.5 + 0.5;
     let gold = favourite_gold(pulse);
     let blend = |a: SVec2, b: SVec2| if a.distance(b) < 30.0 { a.lerp(b, f) } else { b };
@@ -71,54 +71,16 @@ fn draw_marks(mut gizmos: Gizmos, sim: Res<Sim>, selection: Res<Selection>, tool
         if let Some(car) = car {
             let (p, h) = car.pose_at(f);
             let y = w.car_height_at(car, p);
-            vehicle_outline(&mut gizmos, p, h, car.length() + 1.0, 3.0, y + 0.2, gold);
+            vehicle_box(&mut gizmos, p, h, car.length() + 1.0, 3.0, y + 0.2, gold);
             diamond(&mut gizmos, Vec3::new(p.x, y + 4.2, p.y), 0.9, gold);
         } else if c.is_visible() {
             let here = blend(c.prev_pos, c.pos);
-            gizmos.circle(Isometry3d::new(at(here, 0.12), flat), 1.3 + 0.25 * pulse, gold);
+            gizmos.circle(flat_at(at(here, 0.12)), 1.3 + 0.25 * pulse, gold);
             diamond(&mut gizmos, at(here, 3.0), 0.55, gold);
         }
         if let Some(spot) = c.car.and_then(|v| w.vehicles.cars.get(v)).and_then(|v| v.spot()) {
-            vehicle_outline(&mut gizmos, spot.pos, spot.heading, 5.4, 2.8, w.surface_height(spot.pos) + 0.2, gold);
+            vehicle_box(&mut gizmos, spot.pos, spot.heading, 5.4, 2.8, w.surface_height(spot.pos) + 0.2, gold);
         }
-    }
-
-    match *selection {
-        // A selected person's places: a post from the lot up to its pin.
-        Selection::Citizen(id) => {
-            for (b, h) in w.holdings_of(id) {
-                let Some(top) = pin_top(w, b) else { continue };
-                let [r, g, bl] = holding_rgb(h);
-                let col = Color::srgb_u8(r, g, bl).to_linear() * 3.0;
-                let col = Color::LinearRgba(col);
-                let foot = Vec3::new(top.x, w.surface_height(SVec2::new(top.x, top.z)), top.z);
-                gizmos.line(foot, top - Vec3::Y * 4.0, col);
-                gizmos.circle(Isometry3d::new(foot + Vec3::Y * 0.5, flat), 4.0, col);
-                lot_outline(&mut gizmos, w, b, 1.0, col);
-            }
-        }
-        // A delivery robot: its outline, the pavement ahead in its fleet's
-        // colour, the door it is heading for and the shop it belongs to.
-        Selection::Bot(id) if !pov => {
-            let Some(b) = w.bots.bots.get(id) else { return };
-            let [r, g, bl] = nd_sim::bots::fleet_colour(b.shop);
-            let fleet = Color::linear_rgb(r * 3.0, g * 3.0, bl * 3.0);
-            let selected = Color::linear_rgb(3.2, 2.4, 0.7);
-            let p = blend(b.prev_pos, b.pos);
-            let heading = b.prev_heading + (b.heading - b.prev_heading) * f;
-            vehicle_outline(&mut gizmos, p, heading, 1.4, 1.0, at(p, 0.1).y, selected);
-            let mut pts: Vec<Vec3> = vec![at(p, 0.6)];
-            pts.extend(b.path.iter().skip(b.idx).map(|&q| at(q, 0.6)));
-            if pts.len() >= 2 {
-                gizmos.linestrip(pts.iter().map(|v| *v + Vec3::Y * 0.3), fleet);
-                gizmos.linestrip(pts, fleet);
-            }
-            lot_outline(&mut gizmos, w, b.destination(), 1.2, Color::linear_rgb(2.8, 1.0, 3.0));
-            if b.destination() != b.shop {
-                lot_outline(&mut gizmos, w, b.shop, 1.0, fleet);
-            }
-        }
-        _ => {}
     }
 }
 
