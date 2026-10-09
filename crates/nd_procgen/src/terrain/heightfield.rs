@@ -105,101 +105,282 @@ pub fn build_terrain(cfg: &TerrainConfig, palette: &Palette) -> MeshData {
     // Normals from finite differences.
     for j in 0..n {
         for i in 0..n {
-            let h = |ii: isize, jj: isize| {
-                let ii = ii.clamp(0, n as isize - 1) as usize;
-                let jj = jj.clamp(0, n as isize - 1) as usize;
-                heights[jj * n + ii]
-            };
-            let dx = h(i as isize + 1, j as isize) - h(i as isize - 1, j as isize);
-            let dz = h(i as isize, j as isize + 1) - h(i as isize, j as isize - 1);
-            let nrm = glam::Vec3::new(-dx, 2.0 * cfg.cell, -dz).normalize();
-            mesh.normals[j * n + i] = nrm.to_array();
+            mesh.normals[j * n + i] = grid_normal(&heights, n, cfg.cell, i, j);
         }
     }
-
-    for j in 0..n - 1 {
-        for i in 0..n - 1 {
-            let a = (j * n + i) as u32;
-            let b = a + 1;
-            let c = a + n as u32;
-            let d = c + 1;
-            mesh.indices.extend_from_slice(&[a, c, b, b, c, d]);
-        }
-    }
+    grid_indices(&mut mesh, 0, n, n);
     mesh
 }
 
 /// The ground mesh for a world with a landscape: the built ground (roads
 /// cut and filled in, lots levelled) inside the city, natural terrain
 /// beyond, sand along the water, mud under it, sulphur at the hot spots.
-/// For the flat map use [`build_terrain`].
+/// For the flat map use [`build_terrain`]. The renderer draws the same
+/// ground in tiles it rebuilds one by one ([`LandscapeTiles`]).
 pub fn build_landscape_terrain(world: &World, palette: &Palette, cell: f32) -> MeshData {
-    let land = &world.landscape;
-    let half = LAND_HALF;
-    let n = ((half * 2.0) / cell).ceil() as usize + 1;
-    let detail = Fbm::<Perlin>::new(land.params.seed as u32 ^ 99).set_octaves(3);
+    let n = landscape_n(cell);
+    let colours = LandColours::new(world, palette);
+    let spots = ground_spots(world, cell, n);
+    let (raw, kept) = landscape_heights(world, cell, n);
     let mut mesh = MeshData::default();
-    let mut heights = vec![0.0f32; n * n];
-    // [climate] The shore and the hot ground from the climate's row.
-    let look = climate::look(land.params.climate);
-    let sand = look.shore.unwrap_or_else(|| mix(palette.ground, [0.62, 0.56, 0.42], 0.6));
-    let mud = mul(mix(palette.ground, [0.25, 0.22, 0.16], 0.6), 0.7);
-    let sulphur = look.hot_ground;
     for j in 0..n {
         for i in 0..n {
-            let x = -half + i as f32 * cell;
-            let z = -half + j as f32 * cell;
-            let p = Vec2::new(x, z);
-            // A hair under the graded ground so road and lot meshes win.
-            let h = world.ground_height(p) - 0.08;
-            heights[j * n + i] = h;
-            let v = detail.get([x as f64 * 0.02, z as f64 * 0.02]) as f32 * 0.5 + 0.5;
-            let hill_t = ((h - 12.0) / 120.0).clamp(0.0, 1.0);
-            let mut flat = [0.0f32; 3];
-            for k in 0..3 {
-                let f = palette.ground[k] + palette.ground_variation[k] * v;
-                flat[k] = f * (1.0 - hill_t) + palette.hills[k] * hill_t;
-            }
-            let d = land.water_distance(p);
-            let rgb = if d < 0.0 {
-                mud
-            } else if d < 14.0 {
-                mix(sand, flat, d / 14.0)
-            } else {
-                flat
-            };
-            let rgb = match land.hot_spots.iter().find(|s| s.pos.distance(p) < s.radius) {
-                Some(s) => mix(rgb, sulphur, (1.0 - s.pos.distance(p) / s.radius) * 0.7),
-                None => rgb,
-            };
-            mesh.positions.push([x, h, z]);
-            mesh.normals.push([0.0, 1.0, 0.0]);
+            let k = j * n + i;
+            let (x, z) = grid_xz(cell, i, j);
+            let rgb = colours.rgb(spots[k], raw[k]);
+            mesh.positions.push([x, kept[k], z]);
+            mesh.normals.push(grid_normal(&kept, n, cell, i, j));
             mesh.colors.push([rgb[0], rgb[1], rgb[2], 1.0]);
             mesh.uvs.push([x, -z]);
         }
     }
-    keep_under_streets(world, cell, n, &mut heights);
-    for (p, h) in mesh.positions.iter_mut().zip(&heights) {
-        p[1] = *h;
-    }
-    for j in 0..n {
-        for i in 0..n {
-            let h = |ii: isize, jj: isize| heights[(jj.clamp(0, n as isize - 1) as usize) * n + ii.clamp(0, n as isize - 1) as usize];
-            let dx = h(i as isize + 1, j as isize) - h(i as isize - 1, j as isize);
-            let dz = h(i as isize, j as isize + 1) - h(i as isize, j as isize - 1);
-            mesh.normals[j * n + i] = glam::Vec3::new(-dx, 2.0 * cell, -dz).normalize().to_array();
+    grid_indices(&mut mesh, 0, n, n);
+    mesh
+}
+
+/// Vertices along a side of the landscape's ground at `cell`.
+fn landscape_n(cell: f32) -> usize {
+    ((LAND_HALF * 2.0) / cell).ceil() as usize + 1
+}
+
+/// World x, z of grid vertex (i, j).
+fn grid_xz(cell: f32, i: usize, j: usize) -> (f32, f32) {
+    (-LAND_HALF + i as f32 * cell, -LAND_HALF + j as f32 * cell)
+}
+
+/// What a vertex's colour takes from the map alone (fixed for a landscape):
+/// the detail noise, the distance to water and how far into a hot spot.
+#[derive(Clone, Copy)]
+struct GroundSpot {
+    v: f32,
+    d: f32,
+    hot: Option<f32>,
+}
+
+fn ground_spots(world: &World, cell: f32, n: usize) -> Vec<GroundSpot> {
+    let land = &world.landscape;
+    let detail = Fbm::<Perlin>::new(land.params.seed as u32 ^ 99).set_octaves(3);
+    by_rows(n, |i, j| {
+        let (x, z) = grid_xz(cell, i, j);
+        let p = Vec2::new(x, z);
+        let v = detail.get([x as f64 * 0.02, z as f64 * 0.02]) as f32 * 0.5 + 0.5;
+        let d = land.water_distance(p);
+        let hot = land.hot_spots.iter().find(|s| s.pos.distance(p) < s.radius).map(|s| (1.0 - s.pos.distance(p) / s.radius) * 0.7);
+        GroundSpot { v, d, hot }
+    })
+}
+
+/// `f` at every vertex of an `n` by `n` grid, row by row, the rows shared
+/// out over a few threads (each vertex stands alone, so the result is the
+/// same however they are shared).
+fn by_rows<T: Send + Clone>(n: usize, f: impl Fn(usize, usize) -> T + Sync) -> Vec<T> {
+    let threads = std::thread::available_parallelism().map_or(1, |t| t.get()).clamp(1, 8);
+    let rows_per = n.div_ceil(threads);
+    let mut parts: Vec<Vec<T>> = Vec::new();
+    std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads)
+            .map(|t| {
+                let f = &f;
+                s.spawn(move || {
+                    let rows = (t * rows_per)..((t + 1) * rows_per).min(n);
+                    let mut out = Vec::with_capacity(rows.len() * n);
+                    for j in rows {
+                        for i in 0..n {
+                            out.push(f(i, j));
+                        }
+                    }
+                    out
+                })
+            })
+            .collect();
+        parts = handles.into_iter().map(|h| h.join().expect("landscape rows")).collect();
+    });
+    parts.concat()
+}
+
+/// The landscape's colours: ground and hills from the palette, the shore
+/// and the hot ground from the climate's row.
+struct LandColours {
+    ground: [f32; 3],
+    variation: [f32; 3],
+    hills: [f32; 3],
+    sand: [f32; 3],
+    mud: [f32; 3],
+    sulphur: [f32; 3],
+}
+
+impl LandColours {
+    fn new(world: &World, palette: &Palette) -> Self {
+        let look = climate::look(world.landscape.params.climate);
+        Self {
+            ground: palette.ground,
+            variation: palette.ground_variation,
+            hills: palette.hills,
+            sand: look.shore.unwrap_or_else(|| mix(palette.ground, [0.62, 0.56, 0.42], 0.6)),
+            mud: mul(mix(palette.ground, [0.25, 0.22, 0.16], 0.6), 0.7),
+            sulphur: look.hot_ground,
         }
     }
-    for j in 0..n - 1 {
-        for i in 0..n - 1 {
-            let a = (j * n + i) as u32;
+
+    /// A vertex's colour at height `h` (the graded ground's, before it is
+    /// held under the streets): hills up high, sand along the water, mud
+    /// under it, sulphur at the hot spots.
+    fn rgb(&self, s: GroundSpot, h: f32) -> [f32; 3] {
+        let hill_t = ((h - 12.0) / 120.0).clamp(0.0, 1.0);
+        let mut flat = [0.0f32; 3];
+        for k in 0..3 {
+            let f = self.ground[k] + self.variation[k] * s.v;
+            flat[k] = f * (1.0 - hill_t) + self.hills[k] * hill_t;
+        }
+        let rgb = if s.d < 0.0 {
+            self.mud
+        } else if s.d < 14.0 {
+            mix(self.sand, flat, s.d / 14.0)
+        } else {
+            flat
+        };
+        match s.hot {
+            Some(t) => mix(rgb, self.sulphur, t),
+            None => rgb,
+        }
+    }
+}
+
+/// The graded ground's height at every vertex (a hair under it, so road
+/// and lot meshes win), and the same held under the streets.
+fn landscape_heights(world: &World, cell: f32, n: usize) -> (Vec<f32>, Vec<f32>) {
+    let raw = by_rows(n, |i, j| {
+        let (x, z) = grid_xz(cell, i, j);
+        world.ground_height(Vec2::new(x, z)) - 0.08
+    });
+    let mut kept = raw.clone();
+    keep_under_streets(world, cell, n, &mut kept);
+    (raw, kept)
+}
+
+/// The normal at grid vertex (i, j) of an `n` by `n` height field, from
+/// central differences (one-sided at the edges).
+fn grid_normal(heights: &[f32], n: usize, cell: f32, i: usize, j: usize) -> [f32; 3] {
+    let h = |ii: isize, jj: isize| heights[(jj.clamp(0, n as isize - 1) as usize) * n + ii.clamp(0, n as isize - 1) as usize];
+    let dx = h(i as isize + 1, j as isize) - h(i as isize - 1, j as isize);
+    let dz = h(i as isize, j as isize + 1) - h(i as isize, j as isize - 1);
+    glam::Vec3::new(-dx, 2.0 * cell, -dz).normalize().to_array()
+}
+
+/// Two triangles per cell of a `w` by `h` grid of vertices starting at
+/// `base`, row by row.
+fn grid_indices(mesh: &mut MeshData, base: u32, w: usize, h: usize) {
+    for j in 0..h - 1 {
+        for i in 0..w - 1 {
+            let a = base + (j * w + i) as u32;
             let b = a + 1;
-            let c = a + n as u32;
+            let c = a + w as u32;
             let d = c + 1;
             mesh.indices.extend_from_slice(&[a, c, b, b, c, d]);
         }
     }
-    mesh
+}
+
+/// The landscape's ground in square tiles of [`LandscapeTiles::TILE`]
+/// cells, for the renderer: what depends on the map alone (each vertex's
+/// noise, distance to water and hot ground) is worked out once, and after
+/// a road or lot edit [`LandscapeTiles::update`] re-reads only the graded
+/// heights and rebuilds the tiles whose vertices (or their neighbours, for
+/// the normals) moved. Together the tiles hold exactly the triangles of
+/// [`build_landscape_terrain`] at the same cell.
+pub struct LandscapeTiles {
+    cell: f32,
+    n: usize,
+    per_side: usize,
+    colours: LandColours,
+    spots: Vec<GroundSpot>,
+    raw: Vec<f32>,
+    kept: Vec<f32>,
+    meshes: Vec<MeshData>,
+}
+
+impl LandscapeTiles {
+    /// Cells along a tile's side: 128 m at the renderer's 8 m cell.
+    pub const TILE: usize = 16;
+
+    pub fn new(world: &World, palette: &Palette, cell: f32) -> Self {
+        let n = landscape_n(cell);
+        let per_side = (n - 1).div_ceil(Self::TILE);
+        let (raw, kept) = landscape_heights(world, cell, n);
+        let mut t = Self { cell, n, per_side, colours: LandColours::new(world, palette), spots: ground_spots(world, cell, n), raw, kept, meshes: Vec::new() };
+        t.meshes = (0..per_side * per_side).map(|k| t.build_tile(k)).collect();
+        t
+    }
+
+    /// Re-read the graded ground and rebuild the tiles it changed; returns
+    /// their indices (ascending).
+    pub fn update(&mut self, world: &World) -> Vec<usize> {
+        let (raw, kept) = landscape_heights(world, self.cell, self.n);
+        let mut dirty = vec![false; self.meshes.len()];
+        let n = self.n;
+        for k in 0..n * n {
+            if raw[k].to_bits() == self.raw[k].to_bits() && kept[k].to_bits() == self.kept[k].to_bits() {
+                continue;
+            }
+            // The tiles holding the vertex or one of its four neighbours
+            // (whose normals read it): vertex u is in tiles
+            // (u - 1) / TILE ..= u / TILE.
+            let (i, j) = (k % n, k / n);
+            let tiles = |v: usize| (v.saturating_sub(2) / Self::TILE).min(self.per_side - 1)..=((v + 1).min(n - 1) / Self::TILE).min(self.per_side - 1);
+            for tj in tiles(j) {
+                for ti in tiles(i) {
+                    dirty[tj * self.per_side + ti] = true;
+                }
+            }
+        }
+        self.raw = raw;
+        self.kept = kept;
+        let changed: Vec<usize> = (0..dirty.len()).filter(|&t| dirty[t]).collect();
+        for &t in &changed {
+            self.meshes[t] = self.build_tile(t);
+        }
+        changed
+    }
+
+    /// How many tiles there are (some may be empty).
+    pub fn len(&self) -> usize {
+        self.meshes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.meshes.is_empty()
+    }
+
+    pub fn mesh(&self, tile: usize) -> &MeshData {
+        &self.meshes[tile]
+    }
+
+    /// The vertex range of a tile, inclusive: its cells and the shared edge.
+    fn range(&self, tile: usize) -> ((usize, usize), (usize, usize)) {
+        let (ti, tj) = (tile % self.per_side, tile / self.per_side);
+        let i0 = ti * Self::TILE;
+        let j0 = tj * Self::TILE;
+        ((i0, (i0 + Self::TILE).min(self.n - 1)), (j0, (j0 + Self::TILE).min(self.n - 1)))
+    }
+
+    fn build_tile(&self, tile: usize) -> MeshData {
+        let ((i0, i1), (j0, j1)) = self.range(tile);
+        let (n, cell) = (self.n, self.cell);
+        let mut mesh = MeshData::default();
+        for j in j0..=j1 {
+            for i in i0..=i1 {
+                let k = j * n + i;
+                let (x, z) = grid_xz(cell, i, j);
+                let rgb = self.colours.rgb(self.spots[k], self.raw[k]);
+                mesh.positions.push([x, self.kept[k], z]);
+                mesh.normals.push(grid_normal(&self.kept, n, cell, i, j));
+                mesh.colors.push([rgb[0], rgb[1], rgb[2], 1.0]);
+                mesh.uvs.push([x, -z]);
+            }
+        }
+        grid_indices(&mut mesh, 0, i1 - i0 + 1, j1 - j0 + 1);
+        mesh
+    }
 }
 
 /// Lower the terrain mesh's vertices round every street on the ground so no
@@ -236,6 +417,124 @@ fn keep_under_streets(world: &World, cell: f32, n: usize, heights: &mut [f32]) {
                 let k = j * n + i;
                 heights[k] = heights[k].min(world.road_height(sid, t) - 0.08);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tile_tests {
+    use super::*;
+    use nd_sim::roads::RoadKind;
+    use nd_sim::{Gesture, WorldConfig};
+
+    fn world() -> World {
+        let mut w = World::new(WorldConfig { landscape: nd_sim::landscape::LandscapeParams { relief: 0.8, ..nd_sim::landscape::LandscapeParams::default() }, ..WorldConfig::default() });
+        w.economy.treasury = 1.0e9;
+        w.add_gesture(Gesture::Road { points: vec![Vec2::new(-300.0, -200.0), Vec2::new(250.0, -150.0)], lanes_fwd: 2, lanes_bwd: 2, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        w.implement();
+        w
+    }
+
+    /// The tiles hold the whole mesh's triangles, and after an edit the
+    /// tiles `update` rebuilt (and only those) differ, matching tiles built
+    /// afresh.
+    #[test]
+    fn tiles_match_the_whole_mesh_and_follow_an_edit() {
+        let pal = Palette::default();
+        let mut w = world();
+        let mut tiles = LandscapeTiles::new(&w, &pal, 8.0);
+        let whole = build_landscape_terrain(&w, &pal, 8.0);
+        let tris = |m: &MeshData| {
+            let mut v: Vec<[u32; 36]> = m
+                .indices
+                .chunks_exact(3)
+                .map(|t| {
+                    let mut out = [0u32; 36];
+                    for (c, &i) in t.iter().enumerate() {
+                        let i = i as usize;
+                        let a = [m.positions[i].as_slice(), m.normals[i].as_slice(), m.colors[i].as_slice(), m.uvs[i].as_slice()].concat();
+                        for (k, x) in a.iter().enumerate() {
+                            out[c * 12 + k] = x.to_bits();
+                        }
+                    }
+                    out
+                })
+                .collect();
+            v.sort();
+            v
+        };
+        let mut union = MeshData::default();
+        for t in 0..tiles.len() {
+            union.append(tiles.mesh(t));
+        }
+        assert_eq!(tris(&union), tris(&whole));
+        assert!(tiles.update(&w).is_empty(), "nothing changed");
+        let before: Vec<MeshData> = (0..tiles.len()).map(|t| tiles.mesh(t).clone()).collect();
+        w.add_gesture(Gesture::Road { points: vec![Vec2::new(100.0, 200.0), Vec2::new(180.0, 330.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        w.implement();
+        let changed = tiles.update(&w);
+        let fresh = LandscapeTiles::new(&w, &pal, 8.0);
+        assert!(!changed.is_empty() && changed.len() < tiles.len() / 4, "{} of {} tiles rebuilt", changed.len(), tiles.len());
+        for t in 0..tiles.len() {
+            assert!(*tiles.mesh(t) == *fresh.mesh(t), "tile {t} is stale");
+            if !changed.contains(&t) {
+                assert!(*tiles.mesh(t) == before[t]);
+            }
+        }
+    }
+
+    /// Timings for the review (§4.1, #19): the whole landscape and water
+    /// sheet, against the tiles' update, after one road is added to a
+    /// generated city.
+    /// `cargo test --profile fast -p nd_procgen landscape_rebuild_timing -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn landscape_rebuild_timing() {
+        use std::time::Instant;
+        let pal = Palette::default();
+        let (mut w, _, _) = crate::citygen::generate_world(crate::citygen::CityPreset::CoastalRiver, 1);
+        let mut tiles = LandscapeTiles::new(&w, &pal, 8.0);
+        let c = w.lots.values().map(|l| l.center).fold(Vec2::ZERO, |a, p| a + p) / w.lots.len().max(1) as f32;
+        w.economy.treasury = 1.0e9;
+        w.add_gesture(Gesture::Road { points: vec![c + Vec2::new(-60.0, 40.0), c + Vec2::new(70.0, 90.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        w.implement();
+        let t0 = Instant::now();
+        let whole = build_landscape_terrain(&w, &pal, 8.0);
+        let t1 = Instant::now();
+        let water = crate::terrain::build_water(&w, &pal);
+        let t2 = Instant::now();
+        let changed = tiles.update(&w);
+        let t3 = Instant::now();
+        let fresh = LandscapeTiles::new(&w, &pal, 8.0);
+        let t4 = Instant::now();
+        let rebuilt: usize = changed.iter().map(|&t| tiles.mesh(t).indices.len() / 3).sum();
+        eprintln!(
+            "whole landscape {:.1} ms ({} tris), water sheet {:.1} ms ({} tris); tiles update {:.1} ms ({} of {} tiles, {} tris rebuilt); tiles from scratch {:.1} ms",
+            (t1 - t0).as_secs_f64() * 1e3,
+            whole.indices.len() / 3,
+            (t2 - t1).as_secs_f64() * 1e3,
+            water.indices.len() / 3,
+            (t3 - t2).as_secs_f64() * 1e3,
+            changed.len(),
+            tiles.len(),
+            rebuilt,
+            (t4 - t3).as_secs_f64() * 1e3
+        );
+        let t5 = Instant::now();
+        let n = landscape_n(8.0);
+        let mut raw = Vec::with_capacity(n * n);
+        for j in 0..n {
+            for i in 0..n {
+                let (x, z) = grid_xz(8.0, i, j);
+                raw.push(w.ground_height(Vec2::new(x, z)) - 0.08);
+            }
+        }
+        let t6 = Instant::now();
+        keep_under_streets(&w, 8.0, n, &mut raw);
+        let t7 = Instant::now();
+        eprintln!("of which ground heights {:.1} ms, held under the streets {:.1} ms", (t6 - t5).as_secs_f64() * 1e3, (t7 - t6).as_secs_f64() * 1e3);
+        for t in 0..tiles.len() {
+            assert!(*tiles.mesh(t) == *fresh.mesh(t));
         }
     }
 }

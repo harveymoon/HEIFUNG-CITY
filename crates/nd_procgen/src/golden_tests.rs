@@ -118,6 +118,13 @@ impl Out {
     /// over all of them (a triangle on another surface still counts as
     /// moved), and the extras the renderer reads (pads, cranes, lamps).
     fn geo(&self, name: impl Into<String>, g: &Geometry) {
+        let name = name.into();
+        // ND_GOLDEN_DUMP=<case name>: write that case's meshes out in full,
+        // to find what moved when a hash changes.
+        if std::env::var("ND_GOLDEN_DUMP").is_ok_and(|d| d == name) {
+            let path = format!("{}.dump", std::env::var("ND_GOLDEN_OUT").unwrap_or_default());
+            std::fs::write(&path, format!("{:#?}", g.parts)).unwrap();
+        }
         let mut h = Fnv::new();
         let mut soup = 0u64;
         let mut tris = 0;
@@ -130,7 +137,7 @@ impl Out {
         }
         let mut x = Fnv::new();
         x.bytes(format!("{:?}{:?}{:?}", g.pads, g.cranes, g.lamps).as_bytes());
-        self.line(name.into(), format!("exact={:016x} soup={soup:016x} tris={tris} extras={:016x}", h.0, x.0));
+        self.line(name, format!("exact={:016x} soup={soup:016x} tris={tris} extras={:016x}", h.0, x.0));
     }
     fn debug(&self, name: impl Into<String>, v: &impl std::fmt::Debug) {
         let mut h = Fnv::new();
@@ -395,6 +402,12 @@ fn world_meshes(out: &Out, tag: &str, w: &World, walk_at: &[Vec2], previews: &[V
     out.mesh(format!("{tag} retaining caps"), &caps);
     if !w.landscape.is_flat() {
         out.mesh(format!("{tag} landscape"), &crate::terrain::build_landscape_terrain(w, &pal, 8.0));
+        let tiles = crate::terrain::LandscapeTiles::new(w, &pal, 8.0);
+        let mut union = MeshData::default();
+        for t in 0..tiles.len() {
+            union.append(tiles.mesh(t));
+        }
+        out.mesh(format!("{tag} landscape tiles"), &union);
         out.mesh(format!("{tag} water"), &crate::terrain::build_water(w, &pal));
         out.mesh(format!("{tag} far water"), &crate::terrain::build_far_water(w, &pal));
         out.mesh(format!("{tag} far ground"), &crate::terrain::build_far_ground(nd_sim::landscape::LAND_HALF, 3000.0, 25.0, &|p| w.ground_height(p), &|p| w.landscape.is_water(p), &pal));
