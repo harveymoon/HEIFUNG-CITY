@@ -345,3 +345,21 @@ fn dump_lots(roads: &RoadNetwork, lots: &SlotMap<LotId, Lot>, var: &str) {
     }
     let _ = std::fs::write(path, out);
 }
+
+/// [review] A memoised cut is the cut: the same inputs give parcels equal
+/// to a fresh cut, and a changed road misses the memo.
+#[test]
+fn memoised_parcels_match_a_fresh_cut() {
+    let mut roads = roads_cross();
+    let water = WaterMask::default();
+    let clip = Some((Vec2::splat(-400.0), Vec2::splat(400.0)));
+    let fresh = format!("{:?}", cut_parcels(&roads, &water, clip, None));
+    let first = format!("{:?}", generate_parcels_with(&roads, &water, clip, None));
+    let again = format!("{:?}", generate_parcels_with(&roads, &water, clip, None));
+    assert_eq!(fresh, first);
+    assert_eq!(fresh, again);
+    roads.add_polyline(&[Vec2::new(-150.0, 120.0), Vec2::new(150.0, 120.0)], 1, 1);
+    let changed = format!("{:?}", generate_parcels_with(&roads, &water, clip, None));
+    assert_eq!(changed, format!("{:?}", cut_parcels(&roads, &water, clip, None)));
+    assert_ne!(changed, fresh, "a new road recuts");
+}

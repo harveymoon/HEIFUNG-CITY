@@ -196,7 +196,76 @@ pub const SHORE_REACH: f32 = 80.0;
 /// parcelled too, and blocks that touch the water are cut into lots that
 /// run from the road the whole way to the shore (frontage-wide slices, not
 /// rows a lot deep). Every parcel learns its frontage on the water.
+///
+/// [review] Memoised: the cut is a pure function of the roads, the water,
+/// `clip` and `shore_reach`, so a call with exactly the same inputs as a
+/// recent one (a zoning-only edit, the implement after its project check,
+/// a check repeated while nothing changed) returns that result again
+/// instead of recutting the map. The inputs are compared in full, bit for
+/// bit, not by a hash.
 pub fn generate_parcels_with(roads: &RoadNetwork, water: &WaterMask, clip: Option<(Vec2, Vec2)>, shore_reach: Option<f32>) -> Vec<Parcel> {
+    use std::sync::{Arc, Mutex};
+    /// Recent cuts kept, newest last.
+    const KEEP: usize = 3;
+    static RECENT: Mutex<Vec<(Vec<u64>, Arc<Vec<Parcel>>)>> = Mutex::new(Vec::new());
+    let key = parcel_inputs(roads, water, clip, shore_reach);
+    if let Ok(recent) = RECENT.lock() {
+        if let Some((_, hit)) = recent.iter().find(|(k, _)| *k == key) {
+            return (**hit).clone();
+        }
+    }
+    let out = cut_parcels(roads, water, clip, shore_reach);
+    if let Ok(mut recent) = RECENT.lock() {
+        recent.retain(|(k, _)| *k != key);
+        if recent.len() >= KEEP {
+            recent.remove(0);
+        }
+        recent.push((key, Arc::new(out.clone())));
+    }
+    out
+}
+
+/// Every input [`cut_parcels`] reads, as words: the nodes, segments and
+/// rings of the road network, the water outlines, the clip and the shore
+/// reach (floats by their bits).
+pub(super) fn parcel_inputs(roads: &RoadNetwork, water: &WaterMask, clip: Option<(Vec2, Vec2)>, shore_reach: Option<f32>) -> Vec<u64> {
+    let f = |x: f32| x.to_bits() as u64;
+    let mut k = Vec::with_capacity(4 * roads.nodes.len() + 3 * roads.segments.len() + 16);
+    k.push(roads.nodes.len() as u64);
+    for n in &roads.nodes {
+        k.extend([f(n.pos.x), f(n.pos.y), f(n.level), n.segments.len() as u64]);
+        k.extend(n.segments.iter().map(|s| s.0 as u64));
+    }
+    k.push(roads.segments.len() as u64);
+    for s in &roads.segments {
+        let flags = [s.alive, s.bridge, s.viaduct, s.tunnel, s.ring, s.ramp].iter().enumerate().fold(0u64, |acc, (i, &b)| acc | (b as u64) << i);
+        k.extend([s.a.0 as u64, s.b.0 as u64, (s.lanes_fwd as u64) << 8 | s.lanes_bwd as u64, s.kind as u64, flags]);
+    }
+    k.push(roads.rings.len() as u64);
+    for r in &roads.rings {
+        k.extend([f(r.center.x), f(r.center.y), f(r.radius), r.lanes as u64]);
+    }
+    k.push(water.polys.len() as u64);
+    for ((lo, hi), p) in &water.polys {
+        k.extend([f(lo.x), f(lo.y), f(hi.x), f(hi.y)]);
+        for ring in std::iter::once(p.exterior()).chain(p.interiors()) {
+            k.push(ring.0.len() as u64);
+            k.extend(ring.0.iter().flat_map(|c| [c.x.to_bits(), c.y.to_bits()]));
+        }
+    }
+    match clip {
+        Some((lo, hi)) => k.extend([1, f(lo.x), f(lo.y), f(hi.x), f(hi.y)]),
+        None => k.push(0),
+    }
+    match shore_reach {
+        Some(r) => k.extend([1, f(r)]),
+        None => k.push(0),
+    }
+    k
+}
+
+/// The cut itself (see [`generate_parcels_with`]).
+pub(super) fn cut_parcels(roads: &RoadNetwork, water: &WaterMask, clip: Option<(Vec2, Vec2)>, shore_reach: Option<f32>) -> Vec<Parcel> {
     let mut out = Vec::new();
     if roads.is_empty() {
         return out;
