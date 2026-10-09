@@ -14,7 +14,7 @@ pub(crate) use roofs::*;
 
 use super::parts::*;
 use super::{Ctx, Face};
-use crate::surface::{Geometry, Surface::*};
+use crate::surface::{Geometry, Surface, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::zoning::{point_in_polygon, polygon_area};
 use rand::Rng;
@@ -209,6 +209,20 @@ pub fn sky_bridge(g: &mut Geometry, c: &Ctx, a: Vec2, b: Vec2, y: f32, w: f32, h
     g.part(Glow).boxed(Vec3::new(mid.x, y - 0.52, mid.y), Vec3::new(d.length(), 0.06, w * 0.3), yaw, rgba(mul(pal.led(0), 0.8)));
 }
 
+
+/// An open crown frame on a roof at `y`: a post `post_h` tall and
+/// `post_w` square at every corner of `ring`, and a glowing outline at
+/// each (height above `y`, thickness, colour) of `rings`.
+#[allow(clippy::too_many_arguments)]
+pub fn crown_frame(g: &mut Geometry, c: &Ctx, ring: &[Vec2], y: f32, post_h: f32, post_w: f32, s: Surface, post_col: [f32; 3], rings: &[(f32, f32, [f32; 3])]) {
+    let f = &c.frame;
+    for p in ring {
+        f.bx(g, s, p.x, y + post_h * 0.5, p.y, Vec3::new(post_w, post_h, post_w), post_col);
+    }
+    for &(dy, thick, col) in rings {
+        glow_outline(g, c, ring, y + dy, thick, col);
+    }
+}
 
 /// Glowing line along the edges of a footprint at height `y`: crown
 /// frames, terrace edges and the light lines of a lit-up skyline.

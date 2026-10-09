@@ -383,11 +383,8 @@ pub fn neon_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Crown: a lit billboard frame, or a ring of light when tall.
     if form == Form::High {
         let ring = offset_poly(&body, 0.3);
-        for p in &ring {
-            f.bx(g, Matte, p.x, h + 2.5, p.y, Vec3::new(0.25, 5.0, 0.25), CHARCOAL);
-        }
-        glow_outline(g, c, &ring, h + 5.0, 0.35, mul(pick(rng, &pal.sign_colors), 1.0));
-        glow_outline(g, c, &ring, h + 1.0, 0.2, mul(pick(rng, &pal.sign_colors), 0.8));
+        let lit = [mul(pick(rng, &pal.sign_colors), 1.0), mul(pick(rng, &pal.sign_colors), 0.8)];
+        crown_frame(g, c, &ring, h, 5.0, 0.25, Matte, CHARCOAL, &[(5.0, 0.35, lit[0]), (1.0, 0.2, lit[1])]);
     } else {
         let p = poly_center(&body);
         let bw = (front.len * 0.8).min(9.0);

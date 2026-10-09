@@ -109,11 +109,8 @@ pub fn pencil_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         top += set_floors as f32 * fh;
         roof = upper;
         let crown = offset_poly(&roof, -0.2);
-        for p in &crown {
-            f.bx(g, Panel, p.x, top + 2.0, p.y, Vec3::new(0.3, 4.0, 0.3), mul(pal.steel, 0.8));
-        }
-        glow_outline(g, c, &crown, top + 4.0, 0.25, mul(pick(rng, &pal.sign_colors), 0.9));
-        glow_outline(g, c, &crown, top + 2.0, 0.12, mul(pick(rng, &pal.sign_colors), 0.7));
+        let lit = [mul(pick(rng, &pal.sign_colors), 0.9), mul(pick(rng, &pal.sign_colors), 0.7)];
+        crown_frame(g, c, &crown, top, 4.0, 0.3, Panel, mul(pal.steel, 0.8), &[(4.0, 0.25, lit[0]), (2.0, 0.12, lit[1])]);
     } else {
         parapet(g, c, &tower, top, 0.9, 0.25, wall_s, mul(wall, 0.9));
     }
@@ -241,11 +238,7 @@ pub fn twin_slab(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             1 => {
                 // Open crown frame: posts and two lit rings.
                 let ring = offset_poly(slab, 0.4);
-                for p in &ring {
-                    f.bx(g, Panel, p.x, h + 2.5, p.y, Vec3::new(0.35, 5.0, 0.35), trim);
-                }
-                glow_outline(g, c, &ring, h + 5.0, 0.3, crown_col);
-                glow_outline(g, c, &ring, h + 2.5, 0.15, mul(crown_col, 0.7));
+                crown_frame(g, c, &ring, h, 5.0, 0.35, Panel, trim, &[(5.0, 0.3, crown_col), (2.5, 0.15, mul(crown_col, 0.7))]);
                 roof_gear(g, c, rng, slab, h, 0.5);
                 tops.push((centre, h));
             }
