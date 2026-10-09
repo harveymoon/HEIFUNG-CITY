@@ -151,7 +151,7 @@ pub fn marina_large(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 let tt = -face.len * 0.5 + (k as f32 + 0.5) * face.len / n as f32;
                 if coin(rng, c.lit_chance()) {
                     let col = mul(pal.window_warm, 0.8);
-                    window_light(g, c, |g| face.decal(g, f, Glow, tt, fh * 1.5, 0.06, face.len / n as f32 * 0.85, fh * 0.7, col));
+                    face.glaze(g, c, tt, fh * 1.5, 0.06, face.len / n as f32 * 0.85, fh * 0.7, Pane::Lit(col));
                 }
             }
         }

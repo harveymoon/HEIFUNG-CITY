@@ -599,9 +599,9 @@ pub fn balcony_slab(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 face.decal(g, f, Matte, t, y + 1.2, 0.03, 2.2, 2.3, c.style.trim_color);
                 if coin(rng, c.lit_chance()) {
                     let col = mul(pick(rng, &c.style.window_colors), 0.8);
-                    window_light(g, c, |g| face.decal(g, f, Glow, t, y + 1.2, 0.05, 2.0, 2.1, col));
+                    face.glaze(g, c, t, y + 1.2, 0.05, 2.0, 2.1, Pane::Lit(col));
                 } else {
-                    face.decal(g, f, Glass, t, y + 1.2, 0.05, 2.0, 2.1, pal.glass_dark);
+                    face.glaze(g, c, t, y + 1.2, 0.05, 2.0, 2.1, Pane::Dark);
                 }
                 if coin(rng, c.style.clutter * 0.5) {
                     face.bx(g, f, Tarp, t + step * 0.2, y + 0.9, 1.0, Vec3::new(0.6, 0.5, 0.6), pick(rng, &pal.tarp_colors));

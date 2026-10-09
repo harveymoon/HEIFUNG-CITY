@@ -547,7 +547,7 @@ pub fn boat_rental(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, look: Option<S
         block(g, c, Paint, &r, 0.0, 3.0, pick(rng, &pal.metal_paint));
         f.bx(g, Metal, r.c().x, 3.15, r.c().y, Vec3::new(r.w() + 0.6, 0.3, r.d() + 0.6), WHITE);
         let fr = r.front();
-        fr.decal(g, f, Glass, 0.0, 1.6, 0.05, r.w() * 0.6, 1.0, pal.glass_dark);
+        fr.glaze(g, c, 0.0, 1.6, 0.05, r.w() * 0.6, 1.0, Pane::Dark);
         neon_board(g, c, &fr, 0.0, 3.8, (r.w() * 0.9).min(5.5), 0.8, accent);
         if c.reach_out(&r.back()) > 2.5 {
             awning(g, c, rng, &r.back(), 0.0, 2.5, r.w());

@@ -104,7 +104,7 @@ pub fn pencil_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             let t = side * tf.len;
             tf.bx(g, f, wall_s, t, y0 + shaft as f32 * fh * 0.5, proud * 0.5, Vec3::new(2.2, shaft as f32 * fh, proud.max(0.05) + 0.02), mul(wall, 1.12));
             for k in 0..shaft {
-                tf.decal(g, f, Glass, t, y0 + k as f32 * fh + fh * 0.55, proud + 0.04, 1.8, fh * 0.5, pal.glass_dark);
+                tf.glaze(g, c, t, y0 + k as f32 * fh + fh * 0.55, proud + 0.04, 1.8, fh * 0.5, Pane::Dark);
             }
         }
     }

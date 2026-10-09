@@ -127,9 +127,9 @@ pub fn capsule_hotel(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                     face.decal(g, f, Matte, t, y, depth + 0.02, 1.3, 1.3, DARK);
                     if coin(rng, c.lit_chance()) {
                         let col = mul(pick(rng, &c.style.window_colors), 0.8);
-                        window_light(g, c, |g| face.decal(g, f, Glow, t, y, depth + 0.04, 0.95, 0.95, col));
+                        face.glaze(g, c, t, y, depth + 0.04, 0.95, 0.95, Pane::Lit(col));
                     } else {
-                        face.decal(g, f, Glass, t, y, depth + 0.04, 0.95, 0.95, pal.glass_dark);
+                        face.glaze(g, c, t, y, depth + 0.04, 0.95, 0.95, Pane::Dark);
                     }
                 }
             }

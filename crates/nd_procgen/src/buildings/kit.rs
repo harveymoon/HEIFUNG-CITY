@@ -101,13 +101,13 @@ pub fn dense_windows(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face,
             let t = -usable * 0.5 + (i as f32 + 0.5) * step;
             let r: f32 = rng.random();
             if r < c.wear * 0.25 {
-                face.decal(g, f, Wood, t, y, 0.04, w, h, c.palette.plywood);
+                face.glaze(g, c, t, y, 0.04, w, h, Pane::Boarded);
             } else if coin(rng, lit) {
                 let wc = pick(rng, &c.style.window_colors);
                 let col = mul(wc, rng.random_range(0.45..0.95));
-                window_light(g, c, |g| face.decal(g, f, Glow, t, y, 0.04, w, h, col));
+                face.glaze(g, c, t, y, 0.04, w, h, Pane::Lit(col));
             } else {
-                face.decal(g, f, Glass, t, y, 0.04, w, h, c.palette.glass_dark);
+                face.glaze(g, c, t, y, 0.04, w, h, Pane::Dark);
             }
             if room > -0.3 && coin(rng, cages) {
                 // Birdcage over the window: a steel box proud of the wall.

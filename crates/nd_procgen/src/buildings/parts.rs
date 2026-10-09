@@ -11,6 +11,7 @@
 
 use super::{Ctx, Face, Frame};
 use crate::mesh::MeshData;
+use crate::depth::{FRAME, PANE};
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface};
 use glam::{Vec2, Vec3};
@@ -36,6 +37,40 @@ pub fn coin(rng: &mut impl Rng, p: f32) -> bool {
 pub const WINDOW_LIGHT_MARK: f32 = 2.0;
 
 pub use crate::depth::LIGHT_GLASS_BEHIND;
+
+/// What fills one window opening.
+#[derive(Clone, Copy, Debug)]
+pub enum Pane {
+    /// A light in this colour (switched by the renderer with dynamic lights).
+    Lit([f32; 3]),
+    /// Dark glass.
+    Dark,
+    /// Plywood over the opening.
+    Boarded,
+}
+
+impl Face {
+    /// One window opening `w` by `h`, centred `t` along the face at height
+    /// `y` and `d` proud of it: a light (through [`window_light`]), dark
+    /// glass or plywood. Every facade's glazing goes through here, so the
+    /// light's dark glass, its mark and the depths are decided in one place.
+    #[allow(clippy::too_many_arguments)]
+    pub fn glaze(&self, g: &mut Geometry, c: &Ctx, t: f32, y: f32, d: f32, w: f32, h: f32, pane: Pane) {
+        let f = &c.frame;
+        match pane {
+            Pane::Lit(col) => window_light(g, c, |g| self.decal(g, f, Glow, t, y, d, w, h, col)),
+            Pane::Dark => self.decal(g, f, Glass, t, y, d, w, h, c.palette.glass_dark),
+            Pane::Boarded => self.decal(g, f, Wood, t, y, d, w, h, c.palette.plywood),
+        }
+    }
+
+    /// A window's frame: `pad` wider and taller than its opening, at the
+    /// frame depth.
+    #[allow(clippy::too_many_arguments)]
+    pub fn window_frame(&self, g: &mut Geometry, c: &Ctx, t: f32, y: f32, w: f32, h: f32, pad: f32, color: [f32; 3]) {
+        self.decal(g, &c.frame, Matte, t, y, crate::depth::FRAME, w + pad, h + pad, color);
+    }
+}
 
 /// Draw a window light with `emit` (which adds Glow). With
 /// [`Ctx::dynamic_lights`] the new glow vertices are marked with
@@ -523,21 +558,20 @@ pub fn windows(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0: f
     }
     let step = usable / count as f32;
     let w = spec.w.min(step * 0.8);
-    let f = &c.frame;
     for k in 0..floors {
         let y = y0 + k as f32 * fh + spec.sill + spec.h * 0.5;
         for i in 0..count {
             let t = -usable * 0.5 + (i as f32 + 0.5) * step;
-            face.decal(g, f, Matte, t, y, 0.03, w + 0.24, spec.h + 0.24, spec.frame);
+            face.window_frame(g, c, t, y, w, spec.h, 0.24, spec.frame);
             let r: f32 = rng.random();
             if r < spec.boarded {
-                face.decal(g, f, Wood, t, y, 0.05, w, spec.h, c.palette.plywood);
+                face.glaze(g, c, t, y, PANE, w, spec.h, Pane::Boarded);
             } else if coin(rng, spec.lit) {
                 let wc = pick(rng, &c.style.window_colors);
                 let col = mul(wc, rng.random_range(0.55..1.0));
-                window_light(g, c, |g| face.decal(g, f, Glow, t, y, 0.05, w, spec.h, col));
+                face.glaze(g, c, t, y, PANE, w, spec.h, Pane::Lit(col));
             } else {
-                face.decal(g, f, Glass, t, y, 0.05, w, spec.h, c.palette.glass_dark);
+                face.glaze(g, c, t, y, PANE, w, spec.h, Pane::Dark);
             }
             if coin(rng, spec.ac) {
                 ac_unit(g, c, face, t + w * 0.25, y - spec.h * 0.5 - 0.35, 0.32);
@@ -555,7 +589,7 @@ pub fn band_windows(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, 
     let seg = len / segs as f32;
     for k in 0..floors {
         let y = y0 + k as f32 * fh + fh * 0.55;
-        face.decal(g, f, Glass, 0.0, y, 0.03, len, fh * 0.46, c.palette.glass_dark);
+        face.glaze(g, c, 0.0, y, FRAME, len, fh * 0.46, Pane::Dark);
         face.bx(g, f, Matte, 0.0, y - fh * 0.26, 0.05, Vec3::new(len, 0.12, 0.12), c.style.trim_color);
         for i in 0..segs {
             if !coin(rng, lit) {
@@ -564,7 +598,7 @@ pub fn band_windows(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, 
             let t = -len * 0.5 + (i as f32 + 0.5) * seg;
             let wc = pick(rng, &c.style.window_colors);
             let col = mul(wc, rng.random_range(0.5..0.95));
-            window_light(g, c, |g| face.decal(g, f, Glow, t, y, 0.05, seg * 0.9, fh * 0.38, col));
+            face.glaze(g, c, t, y, PANE, seg * 0.9, fh * 0.38, Pane::Lit(col));
         }
     }
 }
@@ -573,7 +607,6 @@ pub fn band_windows(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, 
 /// facets so they read through the glazing.
 pub fn curtain_lights(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], y0: f32, floors: i32, fh: f32) {
     let lit = c.lit_chance();
-    let f = &c.frame;
     for face in c.faces(poly) {
         let segs = (face.len / 3.2).floor().max(1.0) as i32;
         let seg = face.len / segs as f32;
@@ -586,7 +619,7 @@ pub fn curtain_lights(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec
                 let t = -face.len * 0.5 + (i as f32 + 0.5) * seg;
                 let wc = pick(rng, &c.style.window_colors);
                 let col = mul(wc, rng.random_range(0.35..0.8));
-                window_light(g, c, |g| face.decal(g, f, Glow, t, y, 0.05, seg * 0.85, fh * 0.42, col));
+                face.glaze(g, c, t, y, PANE, seg * 0.85, fh * 0.42, Pane::Lit(col));
             }
         }
     }
@@ -606,10 +639,10 @@ pub fn storefront(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0
             face.decal(g, f, Metal, t, y0 + h * 0.45, 0.06, unit * 0.9, h * 0.9, mul(pick(rng, &c.palette.metal_paint), 0.8));
             grime(g, c, rng, face, y0, y0 + h, 2.0);
         } else {
-            face.decal(g, f, Glass, t, y0 + h * 0.45, 0.04, unit * 0.9, h * 0.8, c.palette.glass_dark);
+            face.glaze(g, c, t, y0 + h * 0.45, 0.04, unit * 0.9, h * 0.8, Pane::Dark);
             if coin(rng, 0.5 + 0.4 * c.lit_chance()) {
                 let wc = pick(rng, &c.palette.glow_colors);
-                window_light(g, c, |g| face.decal(g, f, Glow, t, y0 + h * 0.45, 0.06, unit * 0.86, h * 0.72, mul(wc, 0.6)));
+                face.glaze(g, c, t, y0 + h * 0.45, 0.06, unit * 0.86, h * 0.72, Pane::Lit(mul(wc, 0.6)));
             }
             // door
             face.decal(g, f, Matte, t + unit * 0.3, y0 + 1.1, 0.08, 1.0, 2.2, DARK);
@@ -639,11 +672,11 @@ pub fn entrance(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f
     face.bx(g, f, Matte, t, h * 0.5, -0.3, Vec3::new(w + 0.6, h, 0.8), DARK);
     // Half a centimetre off the grid: mullions 12 cm deep (podium office)
     // put their faces at exactly 12 cm, and the door glass flickered on them.
-    face.decal(g, f, Glass, t, h * 0.5, 0.125, w, h * 0.95, c.palette.glass_dark);
+    face.glaze(g, c, t, h * 0.5, 0.125, w, h * 0.95, Pane::Dark);
     let lit = coin(rng, 0.6 + 0.4 * c.lit_chance());
     if lit {
         let col = mul(pick(rng, &c.style.window_colors), 0.7);
-        window_light(g, c, |g| face.decal(g, f, Glow, t, h * 0.5, 0.145, w * 0.9, h * 0.85, col));
+        face.glaze(g, c, t, h * 0.5, 0.145, w * 0.9, h * 0.85, Pane::Lit(col));
     }
     canopy(g, c, face, t, h + 0.3, w + 1.6, 2.0, mul(c.style.trim_color, 0.9));
     // Doorstep paving, as deep as the forecourt allows.

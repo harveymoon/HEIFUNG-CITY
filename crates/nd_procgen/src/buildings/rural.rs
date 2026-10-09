@@ -685,7 +685,7 @@ pub fn fish_stick_factory(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         band_windows(g, c, rng, &fr, 0.4, (h / 4.0) as i32, 4.0);
         // The glass door 13 mm behind the window lights (0.05) so the two
         // never share a plane where a lit band crosses it.
-        fr.decal(g, f, Glass, -fr.len * 0.3, 1.3, 0.037, 2.0, 2.6, pal.glass_dark);
+        fr.glaze(g, c, -fr.len * 0.3, 1.3, 0.037, 2.0, 2.6, Pane::Dark);
         fr.bx(g, f, Glow, -fr.len * 0.3, 2.9, 0.15, Vec3::new(1.0, 0.12, 0.2), pal.lamp);
         for face in [r.left(), r.back()] {
             band_windows(g, c, rng, &face, 0.4, 1, 4.0);

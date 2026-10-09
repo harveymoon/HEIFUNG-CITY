@@ -10,6 +10,7 @@
 
 use super::parts::*;
 use super::{Ctx, Face, Frame};
+use crate::depth::PANE;
 use crate::surface::{Geometry, Surface, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::rng_for;
@@ -145,13 +146,12 @@ pub(super) fn block(g: &mut Geometry, c: &Ctx, s: Surface, r: &R, y0: f32, y1: f
 /// chance, with a frame.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn pane(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f32, y: f32, w: f32, h: f32, warm: bool) {
-    let f = &c.frame;
-    face.decal(g, f, Matte, t, y, 0.03, w + 0.2, h + 0.2, c.style.trim_color);
+    face.window_frame(g, c, t, y, w, h, 0.2, c.style.trim_color);
     if coin(rng, c.lit_chance()) {
         let col = if warm { mul(c.palette.window_warm, rng.random_range(0.6..1.0)) } else { mul(pick(rng, &c.style.window_colors), rng.random_range(0.55..0.95)) };
-        window_light(g, c, |g| face.decal(g, f, Glow, t, y, 0.05, w, h, col));
+        face.glaze(g, c, t, y, PANE, w, h, Pane::Lit(col));
     } else {
-        face.decal(g, f, Glass, t, y, 0.05, w, h, c.palette.glass_dark);
+        face.glaze(g, c, t, y, PANE, w, h, Pane::Dark);
     }
 }
 
@@ -535,7 +535,7 @@ pub fn car_dealer(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                     // The showroom lit bright inside.
                     let tc = tt + r.w() / mull as f32 * 0.5;
                     let col = mul([1.25, 1.2, 1.1], 0.6 + 0.3 * c.lit_chance());
-                    window_light(g, c, |g| fr.decal(g, f, Glow, tc, sh * 0.45, 0.07, r.w() / mull as f32 * 0.85, sh * 0.75, col));
+                    fr.glaze(g, c, tc, sh * 0.45, 0.07, r.w() / mull as f32 * 0.85, sh * 0.75, Pane::Lit(col));
                 }
             }
             // The brand along the roof plate.
@@ -666,9 +666,9 @@ pub fn bike_shop(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let fr = r.front();
         // Shop window, lit warm, wheels hung in it.
         let gw = (r.w() - 2.2).max(1.0);
-        fr.decal(g, f, Glass, -r.w() * 0.5 + 1.0 + gw * 0.5, 1.5, 0.04, gw, 2.2, pal.glass_dark);
+        fr.glaze(g, c, -r.w() * 0.5 + 1.0 + gw * 0.5, 1.5, 0.04, gw, 2.2, Pane::Dark);
         let col = mul(pal.window_warm, 0.7);
-        window_light(g, c, |g| fr.decal(g, f, Glow, -r.w() * 0.5 + 1.0 + gw * 0.5, 1.5, 0.06, gw * 0.95, 2.0, col));
+        fr.glaze(g, c, -r.w() * 0.5 + 1.0 + gw * 0.5, 1.5, 0.06, gw * 0.95, 2.0, Pane::Lit(col));
         for k in 0..((gw / 1.2) as i32).min(5) {
             fr.decal(g, f, Matte, -r.w() * 0.5 + 1.6 + k as f32 * 1.2, 2.0, 0.08, 0.6, 0.6, DARK);
         }
@@ -1134,9 +1134,9 @@ pub fn art_studio(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                         let gt = tt - w / 3.0 + gi as f32 * w / 3.0;
                         if lit {
                             let col = mul(pal.window_warm, rng.random_range(0.55..0.9));
-                            window_light(g, c, |g| face.decal(g, f, Glow, gt, y, 0.05, w / 3.0 - 0.1, wh - 0.1, col));
+                            face.glaze(g, c, gt, y, 0.05, w / 3.0 - 0.1, wh - 0.1, Pane::Lit(col));
                         } else {
-                            face.decal(g, f, Glass, gt, y, 0.05, w / 3.0 - 0.1, wh - 0.1, pal.glass_dark);
+                            face.glaze(g, c, gt, y, 0.05, w / 3.0 - 0.1, wh - 0.1, Pane::Dark);
                         }
                     }
                     face.decal(g, f, Matte, tt, y + wh * 0.15, 0.07, w, 0.06, mul(DARK, 1.4));
@@ -1209,9 +1209,9 @@ pub fn gallery(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         // The glass front, lit warm from inside.
         let gl = fr.len * [0.6, 0.7, 0.8][t];
         let gt = -fr.len * 0.5 + 0.6 + gl * 0.5;
-        fr.decal(g, f, Glass, gt, (h - 0.8) * 0.5, 0.04, gl, h - 1.0, pal.glass_dark);
+        fr.glaze(g, c, gt, (h - 0.8) * 0.5, 0.04, gl, h - 1.0, Pane::Dark);
         let lit = mul(warm, 0.55 + 0.4 * c.lit_chance());
-        window_light(g, c, |g| fr.decal(g, f, Glow, gt, (h - 0.8) * 0.5, 0.06, gl * 0.96, h - 1.2, lit));
+        fr.glaze(g, c, gt, (h - 0.8) * 0.5, 0.06, gl * 0.96, h - 1.2, Pane::Lit(lit));
         // Mullions and a dark frame.
         for k in 0..=((gl / 2.5) as i32).max(1) {
             let tt = gt - gl * 0.5 + k as f32 * gl / ((gl / 2.5) as i32).max(1) as f32;
@@ -1240,8 +1240,8 @@ pub fn gallery(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             if poly_inside(c, &up.poly()) {
                 block(g, c, Plaster, &up, h, h + 4.0, white);
                 let uf = up.front();
-                uf.decal(g, f, Glass, 0.0, h + 2.0, 0.04, uf.len * 0.8, 1.2, pal.glass_dark);
-                window_light(g, c, |g| uf.decal(g, f, Glow, 0.0, h + 2.0, 0.06, uf.len * 0.78, 1.0, mul(warm, 0.6)));
+                uf.glaze(g, c, 0.0, h + 2.0, 0.04, uf.len * 0.8, 1.2, Pane::Dark);
+                uf.glaze(g, c, 0.0, h + 2.0, 0.06, uf.len * 0.78, 1.0, Pane::Lit(mul(warm, 0.6)));
             } else {
                 block(g, c, Plaster, &r.inset(r.w().min(r.d()) * 0.2), h, h + 3.0, white);
             }

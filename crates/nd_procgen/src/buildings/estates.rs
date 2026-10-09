@@ -155,7 +155,7 @@ pub fn shacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             let front = c.front_face(&p);
             front.decal(g, f, Matte, 0.0, 0.95, 0.03, 0.85, 1.85, CHARCOAL);
             if rng.random_bool(0.6) {
-                front.decal(g, f, Glass, front.len * 0.28, 1.4, 0.03, 0.6, 0.5, pal.glass_dark);
+                front.glaze(g, c, front.len * 0.28, 1.4, 0.03, 0.6, 0.5, Pane::Dark);
             }
             if rng.random_bool(0.3) {
                 f.bx(g, Tarp, poly_center(&p).x, h + 0.2, poly_center(&p).y, Vec3::new(1.2, 0.05, 1.0), pick(rng, &pal.tarp_colors));
@@ -223,10 +223,10 @@ pub fn trailer_park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                     let n = (face.len / 2.6) as i32;
                     for i in 0..n {
                         let t = -face.len * 0.5 + (i as f32 + 0.5) * face.len / n as f32;
-                        face.decal(g, f, Glass, t, 1.9, 0.03, 0.9, 0.7, pal.glass_dark);
+                        face.glaze(g, c, t, 1.9, 0.03, 0.9, 0.7, Pane::Dark);
                         if coin(rng, c.lit_chance() * 0.6) {
                             let lc = mul(pick(rng, &c.style.window_colors), 0.6);
-                            window_light(g, c, |g| face.decal(g, f, Glow, t, 1.9, 0.05, 0.8, 0.6, lc));
+                            face.glaze(g, c, t, 1.9, 0.05, 0.8, 0.6, Pane::Lit(lc));
                         }
                     }
                 }
