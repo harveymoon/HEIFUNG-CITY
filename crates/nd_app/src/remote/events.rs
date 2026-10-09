@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use nd_sim::SimEvent;
 use serde_json::{json, Value};
 
+use super::ctx::Ctx;
 use super::history::History;
 use super::view::*;
 use crate::sim::Sim;
@@ -22,7 +23,7 @@ pub(super) const EVENT_RING: usize = 2000;
 #[derive(Resource, Default)]
 pub(super) struct EventLog {
     pub(super) seq: u64,
-    pub(super) ring: VecDeque<Value>,
+    ring: VecDeque<Value>,
     last_message: String,
     last_status: String,
 }
@@ -110,4 +111,27 @@ pub(super) fn log_events(sim: Res<Sim>, flags: Res<UiFlags>, tools: Res<ToolStat
 pub(super) fn record_history(sim: Res<Sim>, mut history: ResMut<History>) {
     history.follow_city(sim.generation, &sim.world, "city replaced");
     history.observe(&sim.world);
+}
+
+/// `events {since?, limit?}`: the events after `since`, oldest first.
+pub(super) fn events(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let since = opt_u64(cmd, "since")?.unwrap_or(0);
+    let limit = opt_u64(cmd, "limit")?.unwrap_or(500) as usize;
+    let log = &ctx.log;
+    let events: Vec<Value> = log.ring.iter().filter(|e| e["seq"].as_u64().unwrap_or(0) > since).take(limit).cloned().collect();
+    // [fix/review-app] From 0 too: events 1.. are gone once the ring
+    // has turned over.
+    let dropped = log.ring.front().and_then(|e| e["seq"].as_u64()).is_some_and(|first| since + 1 < first);
+    Ok(json!({ "seq": log.seq, "events": events, "dropped": dropped, "message": ctx.flags.message, "tool_status": ctx.tools.status }))
+}
+
+/// `thoughts {limit?}`: the newest memories and the thoughts people have now.
+pub(super) fn thoughts(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let limit = opt_u64(cmd, "limit")?.unwrap_or(50) as usize;
+    let w = &ctx.sim.world;
+    let mut rows: Vec<(u64, Value)> = w.citizens.iter().flat_map(|(id, c)| c.memories.iter().map(move |m| (m.tick, json!({ "citizen": key_str(id), "name": c.name, "tick": m.tick, "text": m.text })))).collect();
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    let memories: Vec<Value> = rows.into_iter().take(limit).map(|(_, v)| v).collect();
+    let thoughts: Vec<Value> = w.citizens.iter().filter(|(_, c)| !c.thought.is_empty()).take(limit).map(|(id, c)| json!({ "citizen": key_str(id), "name": c.name, "thought": c.thought })).collect();
+    Ok(json!({ "memories": memories, "thoughts": thoughts }))
 }

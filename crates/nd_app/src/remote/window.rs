@@ -8,7 +8,7 @@
 //! `apply_window_requests`, in `EguiPrimaryContextPass`, applies it before
 //! the windows are drawn that frame; the same system mirrors which windows
 //! are open and what City Data shows, for `status` and the replies.
-//! This keeps `remote.rs` free of egui.
+//! This keeps the command handlers free of egui.
 
 use std::collections::HashMap;
 
@@ -186,6 +186,129 @@ pub fn apply_window_requests(mut contexts: EguiContexts, mut req: ResMut<WindowR
         let p = crate::ui::city_data::last_of(ctx, t);
         req.data_last.insert(t, p);
     }
+}
+
+/// What a `window` command's `name` names, parsed once.
+enum Named {
+    NewGame,
+    Build,
+    Committee,
+    GameHistory,
+    Title,
+    /// [city-data] An old report window's name: its City Data tab or page.
+    CityData(Target),
+    /// A tool window, or an unknown name (`info_of` says which).
+    Tool,
+}
+
+impl Named {
+    fn parse(name: &str) -> Self {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "new_game" | "new game" => Self::NewGame,
+            "build" => Self::Build,
+            "committee" => Self::Committee,
+            "history" | "game_history" | "game history" => Self::GameHistory,
+            "title" | "title_screen" | "title screen" => Self::Title,
+            _ => Page::from_window(name).map_or(Self::Tool, Self::CityData),
+        }
+    }
+}
+
+/// `window {name, open?}`.
+pub(super) fn window(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let named = req_str(cmd, "name").map(Named::parse);
+    match named {
+        Ok(Named::NewGame) => {
+            let open = opt_bool(cmd, "open")?.unwrap_or(true);
+            ctx.windows.new_game = Some(open);
+            Ok(json!({ "window": "new game", "open": open }))
+        }
+        Ok(Named::Build) => {
+            // The Build window, optionally at a section.
+            let section = match opt_str(cmd, "section")? {
+                Some(k) => Some(crate::ui::build::Cat::parse(k).ok_or_else(|| format!("unknown section {k:?}; one of {}", crate::ui::build::Cat::ALL.iter().map(|c| c.key()).collect::<Vec<_>>().join(", ")))?),
+                None => None,
+            };
+            let open = opt_bool(cmd, "open")?.unwrap_or(if section.is_some() { true } else { !ctx.windows.build_open });
+            ctx.windows.build = Some((open, section));
+            Ok(json!({ "window": "build", "open": open, "section": section.map(|c| c.key()).or(ctx.windows.build_section) }))
+        }
+        Ok(Named::Committee) => {
+            // [committee] The Committee window, optionally at a tab.
+            let open = opt_bool(cmd, "open")?.unwrap_or(true);
+            let tab = match opt_str(cmd, "tab")? {
+                Some(t) => Some(crate::ui::committee::Tab::parse(t).ok_or_else(|| format!("unknown tab {t:?}; meeting, members, alerts, projects, settings"))?),
+                None => None,
+            };
+            ctx.committee.open_request = Some(open);
+            ctx.committee.tab_request = tab;
+            Ok(json!({ "window": "committee", "open": open, "tab": opt_str(cmd, "tab")? }))
+        }
+        Ok(Named::GameHistory) => {
+            // [identity] The Game history window.
+            let open = opt_bool(cmd, "open")?.unwrap_or(true);
+            ctx.saves.history_requested = Some(open);
+            Ok(json!({ "window": "game history", "open": open }))
+        }
+        Ok(Named::Title) => {
+            let open = opt_bool(cmd, "open")?.unwrap_or(!ctx.saves.title);
+            ctx.saves.title = open;
+            if !open {
+                // As "Play this map": the city behind runs again.
+                ctx.sim.paused = false;
+            }
+            Ok(json!({ "window": "title", "open": open }))
+        }
+        Ok(Named::CityData(mut target)) => {
+            // [city-data] The report windows are City Data pages now: the old
+            // name opens its tab (at its last sub-tab) or its page; People's
+            // old `tab` and a `sub` pick a sub-tab. `expanded` is accepted and
+            // means open: every page is full size.
+            if let Some(sub) = opt_str(cmd, "sub")?.or(opt_str(cmd, "tab")?) {
+                let tab = match target {
+                    Target::Tab(t) => t,
+                    Target::Page(p) => p.tab(),
+                };
+                let sub = if sub.trim().eq_ignore_ascii_case("overview") && tab == Tab::People { "population" } else { sub };
+                target = Target::Page(Page::parse(None, tab.key(), Some(sub))?);
+            }
+            let open = if opt_bool(cmd, "expanded")? == Some(true) { Some(true) } else { opt_bool(cmd, "open")? };
+            let mut v = ctx.windows.request_data(Some(target), open);
+            v["window"] = json!("city data");
+            v["note"] = json!("the report windows are tabs of the City Data view now; see city_data");
+            Ok(v)
+        }
+        Ok(Named::Tool) | Err(_) => {
+            let info = info_of(req_str(cmd, "name")?)?;
+            let (open, list) = ctx.windows.request(info, opt_bool(cmd, "open")?);
+            Ok(json!({ "window": info.title().to_ascii_lowercase(), "open": open, "windows_open": list }))
+        }
+    }
+}
+
+/// [city-data] `city_data {tab?, sub?, open?, scroll?}`: the full-screen
+/// City Data view.
+pub(super) fn city_data(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let tab = opt_str(cmd, "tab")?;
+    let sub = opt_str(cmd, "sub")?;
+    let open = opt_bool(cmd, "open")?;
+    if let Some(y) = opt_f32(cmd, "scroll")? {
+        ctx.windows.data_scroll = Some(y.max(0.0));
+    }
+    if tab.is_none() && sub.is_some() {
+        return Err("sub needs a tab".into());
+    }
+    if tab.is_none() && open.is_none() {
+        return Ok(ctx.windows.data_json());
+    }
+    let target = match (tab, sub) {
+        (Some(t), Some(s)) => Some(Target::Page(Page::parse(None, t, Some(s))?)),
+        (Some(t), None) => Some(Target::Tab(Tab::parse(t).ok_or_else(|| format!("unknown tab {t:?}; one of city, economy, market, people, services, directory"))?)),
+        _ => None,
+    };
+    // Naming a page opens it unless told otherwise.
+    let open = open.or(target.map(|_| true));
+    Ok(ctx.windows.request_data(target, open))
 }
 
 /// [build-highlight] `build_highlight {category, off}`: open the Build

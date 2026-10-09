@@ -1,45 +1,79 @@
-//! The command dispatcher: `remote_commands` drains the queue once a frame
-//! and runs each command against the ECS.
+//! The command registry and the dispatcher. `COMMANDS` is the one list of
+//! commands: each has its name, its other names, what it may change, its
+//! help (`help` is generated from here) and its handler. `remote_commands`
+//! drains the queue once a frame; `execute` looks a command up, asks for
+//! `confirm` before one that replaces the city, and runs it.
 
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
+use std::sync::OnceLock;
 
 use bevy::prelude::*;
-use nd_sim::GestureId;
-use nd_sim::Vec2 as SVec2;
 use serde_json::{json, Value};
 
 use super::ctx::Ctx;
-use super::server::{Inbox, Pending, Reply, QUEUED, TAKEN};
+use super::server::{Inbox, Reply, QUEUED, TAKEN};
 use super::view::*;
 use super::*;
-use crate::render::Overlays;
-use crate::sim::SPEEDS;
-use crate::ui::load_now;
-use nd_sim::survey::LandLayer;
 
-/// Upper bound for `step`, so a typo cannot freeze the game for minutes.
-pub(super) const MAX_STEP: u64 = 100_000;
+/// A command's handler.
+pub(super) type Handler = fn(&Value, &mut Ctx) -> Result<Value, String>;
 
-/// [fix/review-app] `load`, `new_game` and `generate_city` throw the running
-/// city away. When it has play time no save holds (`Sim::unsaved_play`)
-/// they ask for `"confirm": true`, so an agent cannot wipe a player's game
-/// by accident; a city just saved, just loaded, not yet run or untouched
-/// (no building, project or new road) needs none.
-pub(super) fn confirm_replace(cmd: &Value, ctx: &Ctx, what: &str) -> Result<(), String> {
-    if !ctx.sim.unsaved_play() || opt_bool(cmd, "confirm")? == Some(true) {
-        return Ok(());
-    }
-    let clock = &ctx.sim.world.clock;
-    Err(format!(
-        "{what} replaces the running city (day {}, {}), which has play time no save holds; save it first, or send confirm: true to replace it anyway",
-        clock.day() + 1,
-        clock.format_hhmm()
-    ))
+/// What a command may change. Only `Replace` is acted on today (it asks
+/// for `confirm`); the rest say what a read-only or restricted mode of
+/// the API would have to refuse.
+#[derive(Clone, Copy)]
+pub(super) enum Effect {
+    /// Reads only.
+    Read,
+    /// What the player sees, not the city: camera, windows, map layers,
+    /// tools, the selection.
+    View,
+    /// Changes the city.
+    Game,
+    /// Writes files (saves, exports, screenshots, flags).
+    Files,
+    /// Dev and testing levers (money, contamination, staged incidents).
+    Dev,
+    /// May call the committee's model backend, which can cost money.
+    Paid,
+    /// May throw the running city away; the check says whether this call
+    /// does, after validating what the command validates first.
+    Replace(fn(&Value, &Ctx) -> Result<Replaces, String>),
+}
+
+/// Whether one call of a `Replace` command replaces the city.
+pub(super) enum Replaces {
+    /// It does not (e.g. `game_history` listing).
+    No,
+    /// It does: `confirm: true` is needed when the city has play time no
+    /// save holds (`Sim::unsaved_play`).
+    IfUnsaved,
+    /// It does, and always needs `confirm: true`; the refusal says why.
+    Always(String),
+}
+
+pub(super) struct Cmd {
+    pub name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub effect: Effect,
+    pub run: Handler,
+    /// Field name and what it means, as `help` lists them.
+    pub help: &'static [(&'static str, &'static str)],
+}
+
+/// A command by its name or one of its aliases.
+fn lookup(name: &str) -> Option<&'static Cmd> {
+    static BY_NAME: OnceLock<HashMap<&'static str, &'static Cmd>> = OnceLock::new();
+    BY_NAME
+        .get_or_init(|| COMMANDS.iter().flat_map(|c| std::iter::once(c.name).chain(c.aliases.iter().copied()).map(move |n| (n, c))).collect())
+        .get(name)
+        .copied()
 }
 
 pub(super) fn remote_commands(inbox: Res<Inbox>, mut ctx: Ctx) {
     // Take the batch out first: the lock must not be held while commands run.
-    let batch: Vec<Pending> = match inbox.0.lock() {
+    let batch: Vec<_> = match inbox.0.lock() {
         Ok(rx) => rx.try_iter().collect(),
         Err(_) => return,
     };
@@ -76,630 +110,683 @@ pub(super) fn run_one(cmd: &Value, ctx: &mut Ctx) -> Reply {
     }
 }
 
-pub(super) fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let name = cmd.get("cmd").and_then(Value::as_str).ok_or("missing \"cmd\" field; try {\"cmd\": \"help\"}")?;
-    match name {
-        "help" => Ok(help::help()),
-        "status" => Ok(status::status(ctx)),
-        // [memory] The process's memory and what the renderer and the world hold.
-        "memory" => Ok(status::memory_json(ctx)),
-        "pause" => {
-            let paused = opt_bool(cmd, "paused")?.unwrap_or(!ctx.sim.paused);
-            ctx.sim.paused = paused;
-            Ok(json!({ "paused": paused }))
-        }
-        "speed" => {
-            let sim = &mut ctx.sim;
-            if let Some(i) = opt_u64(cmd, "index")? {
-                if i as usize >= SPEEDS.len() {
-                    return Err(format!("speed index must be 0..{}", SPEEDS.len() - 1));
-                }
-                sim.speed_index = i as usize;
-            } else if let Some(v) = opt_f32(cmd, "value")? {
-                // The nearest step on a log scale: 10 picks 16×, 1.5 picks 1×.
-                let v = v.max(0.01).ln();
-                sim.speed_index = SPEEDS.iter().enumerate().min_by(|a, b| ((a.1).1.ln() - v).abs().total_cmp(&((b.1).1.ln() - v).abs())).map_or(1, |(i, _)| i);
-            } else {
-                return Err("speed needs {index: 0..5} or {value: multiple of real time}".into());
-            }
-            Ok(json!({ "speed_index": sim.speed_index, "speed": SPEEDS[sim.speed_index].1, "ticks_per_second": sim.speed(), "label": SPEEDS[sim.speed_index].0 }))
-        }
-        "step" => {
-            let n = opt_u64(cmd, "ticks")?.unwrap_or(1);
-            if n > MAX_STEP {
-                return Err(format!("ticks must be at most {MAX_STEP}"));
-            }
-            let start = std::time::Instant::now();
-            // Hour by hour, each chunk ending at minute 59, so history sees
-            // every hour and reads the day's counters before midnight
-            // resets them, however many days one request covers.
-            // [fix/review-app] The committee's round runs for every new day
-            // (not once per request), and a meeting it calls ends the step
-            // there: the city waits for the meeting, as in game.
-            let mut left = n;
-            let mut meeting = false;
-            while left > 0 {
-                let r = ctx.sim.world.clock.tick % 60;
-                let chunk = left.min(if r < 59 { 59 - r } else { 60 });
-                ctx.sim.step_ticks(chunk as u32);
-                ctx.history.observe(&ctx.sim.world);
-                left -= chunk;
-                if crate::committee::daily(&mut ctx.sim, &mut ctx.committee, &mut ctx.flags) {
-                    meeting = true;
-                    break;
-                }
-            }
-            let mut v = json!({ "ticks": n - left, "clock": status::clock(&ctx.sim), "took_ms": start.elapsed().as_millis() as u64 });
-            if meeting {
-                v["stopped"] = json!("the committee meets: the city is paused for the meeting (committee_meeting to run it)");
-            }
-            Ok(v)
-        }
-        "seed_demo" => {
-            ctx.saves.title = false;
-            ctx.sim.seed_demo_district();
-            ctx.tools.status = "Demo district laid out around the centre".into();
-            Ok(json!({ "buildings": ctx.sim.world.buildings.len(), "lots": ctx.sim.world.lots.len() }))
-        }
-        "save" => files::save(cmd, ctx),
-        "city_name" | "city_identity" => identity::city_name(cmd, ctx),
-        "game_history" => identity::game_history(cmd, ctx),
-        "load" => {
-            let path = files::allowed_path(req_str(cmd, "path")?, "ron", false)?;
-            confirm_replace(cmd, ctx, "load")?;
-            let message = load_now(&path, &mut ctx.sim, &mut ctx.flags)?;
-            ctx.saves.mark_dirty();
-            ctx.saves.title = false;
-            ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "city loaded");
-            Ok(json!({ "message": message, "clock": status::clock(&ctx.sim), "paused": ctx.sim.paused }))
-        }
-        "new_game" => {
-            let params = land::params_from(cmd)?;
-            let name = opt_str(cmd, "name")?;
-            confirm_replace(cmd, ctx, "new_game")?;
-            ctx.saves.title = false;
-            ctx.sim.paused = false;
-            ctx.sim.new_game(params);
-            if let Some(name) = name {
-                ctx.sim.set_city_name(name);
-            }
-            ctx.tools.status = format!("New city: {} {} landscape", ctx.sim.world.landscape.params.climate.label(), ctx.sim.world.landscape.params.preset.label());
-            ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "new game");
-            let mut v = land::summary(&ctx.sim.world);
-            v["identity"] = identity::identity_json(&ctx.sim.world);
-            Ok(v)
-        }
-        "generate_city" => {
-            let (preset, params) = land::city_params_from(cmd)?;
-            let name = opt_str(cmd, "name")?;
-            confirm_replace(cmd, ctx, "generate_city")?;
-            ctx.saves.title = false;
-            ctx.sim.paused = false;
-            let start = std::time::Instant::now();
-            let (plan, laid) = ctx.sim.generate_city(preset, params);
-            if let Some(name) = name {
-                ctx.sim.set_city_name(name);
-            }
-            ctx.tools.status = format!("New city: {} on a {} landscape", preset.label(), ctx.sim.world.landscape.params.preset.label());
-            ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "generated city");
-            let mut v = land::summary(&ctx.sim.world);
-            let class = |c: nd_procgen::citygen::RoadClass| json!({ "roads": plan.roads.iter().filter(|r| r.class == c).count(), "length_m": round(plan.road_length(c)) });
-            v["city"] = json!({
-                "preset": preset.key(),
-                "seed": plan.seed,
-                "arterial": class(nd_procgen::citygen::RoadClass::Arterial),
-                "collector": class(nd_procgen::citygen::RoadClass::Collector),
-                "local": class(nd_procgen::citygen::RoadClass::Local),
-                "zones": laid.zones,
-                "lots": laid.lots,
-                "interchanges": laid.links,
-                "way_in": laid.way_in,
-                "centres": plan.cores.iter().map(|c| v2(*c)).collect::<Vec<_>>(),
-                "took_ms": start.elapsed().as_millis() as u64,
-            });
-            v["identity"] = identity::identity_json(&ctx.sim.world);
-            Ok(v)
-        }
-        "terrain_at" => Ok(land::terrain_at(&ctx.sim.world, req_point(cmd)?)),
-        // [dirty-industry] Pay to clean up poisoned ground: {x, y, radius}.
-        "remediate" => {
-            let p = req_point(cmd)?;
-            let r = opt_f32(cmd, "radius")?.unwrap_or(100.0);
-            let (cost, removed) = ctx.sim.world.remediate(p, r)?;
-            Ok(json!({ "ok": true, "cost": round(cost), "removed_cells": round(removed), "treasury": round(ctx.sim.world.economy.treasury) }))
-        }
-        // [dirty-industry] The Bulldoze tool's clean-up: a crew digs it out
-        // over a few days (`quote: true` only prices it).
-        "cleanup" | "clean_up" => {
-            let p = req_point(cmd)?;
-            let r = opt_f32(cmd, "radius")?.unwrap_or(100.0);
-            let w = &mut ctx.sim.world;
-            let q = if opt_bool(cmd, "quote")?.unwrap_or(false) { w.cleanup_quote(p, r)? } else { w.start_cleanup(p, r)? };
-            let crews: Vec<_> = w.cleanups.iter().map(|j| json!({ "id": j.id, "at": [round(j.center.x), round(j.center.y)], "radius": round(j.radius), "progress": round(j.progress()), "days": j.hours / 24, "cost": round(j.cost) })).collect();
-            Ok(json!({ "ok": true, "radius": round(q.radius), "cells": q.cells, "amount": round(q.amount), "cost": round(q.cost), "days": q.days, "treasury": round(w.economy.treasury), "crews": crews }))
-        }
-        // [dirty-industry] Testing: pour contamination onto the ground.
-        "contaminate" => {
-            let p = req_point(cmd)?;
-            let r = opt_f32(cmd, "radius")?.unwrap_or(60.0).clamp(0.0, 400.0);
-            let a = opt_f32(cmd, "amount")?.unwrap_or(0.6).clamp(0.0, 1.0);
-            ctx.sim.world.contamination.add(p, r, a);
-            Ok(json!({ "ok": true, "at": [p.x, p.y], "contamination": round(ctx.sim.world.contamination.at(p)) }))
-        }
-        // [social] Testing: a street-art crew's mural on a building now.
-        "paint_mural" => {
-            let bid: nd_sim::BuildingId = key_from(field(cmd, "building").ok_or("missing building")?)?;
-            let w = &mut ctx.sim.world;
-            let b = w.buildings.get(bid).ok_or("no such building")?;
-            let lot = b.lot;
-            let l = w.lots.get(lot).ok_or("no lot")?;
-            let along = (l.front_edge[1] - l.front_edge[0]).normalize_or_zero();
-            let mid = (l.front_edge[0] + l.front_edge[1]) * 0.5;
-            let inward = (l.center - mid).normalize_or_zero();
-            let group = match opt_u64(cmd, "group")? {
-                Some(g) => g as u32,
-                None => w.social.groups.iter().find(|g| g.kind == nd_sim::social::GroupKind::StreetArt).map_or(0, |g| g.id),
-            };
-            let quality = opt_f32(cmd, "quality")?.unwrap_or(0.6).clamp(-1.0, 1.0);
-            let seed = opt_u64(cmd, "seed")?.unwrap_or((l.center.x * 31.0 + l.center.y * 17.0).abs() as u64 ^ 0x5EED);
-            w.social.murals.retain(|m| m.lot != lot);
-            w.social.murals.push(nd_sim::social::Mural { group, lot, building: Some(bid), seed, day: w.clock.day(), quality, pos: mid + inward * 0.9, along, facing: -inward, width: 6.0, height: 3.4 });
-            Ok(json!({ "ok": true, "group": group, "at": [mid.x, mid.y], "facing": [-inward.x, -inward.y] }))
-        }
-        // [dirty-industry] Dirty plants and contamination near a point.
-        "dirt_at" | "contamination_at" => {
-            let p = req_point(cmd)?;
-            let w = &ctx.sim.world;
-            Ok(json!({ "at": [p.x, p.y], "contamination": round(w.contamination.at(p)), "dirty_nearby": land::dirty_near(w, p) }))
-        }
-        // [grid-weather] Wind and sun at a point; y may be given as z (the
-        // renderer's name for the sim's y).
-        "resource" => {
-            let p = match (opt_f32(cmd, "x")?, opt_f32(cmd, "y")?.or(opt_f32(cmd, "z")?)) {
-                (Some(x), Some(y)) => SVec2::new(x, y),
-                _ => req_point(cmd)?,
-            };
-            Ok(land::resource_at(&ctx.sim.world, p))
-        }
-        "grid" => Ok(land::grid_json(&ctx.sim.world)),
-        "weather" => Ok(land::weather_json(&ctx.sim.world)),
-        "landscape" => Ok(land::summary(&ctx.sim.world)),
-        "ships" => Ok(economy::ships(&ctx.sim.world)),
-        // [climate] Dev: set the sky, to see rain, snow or sun on demand.
-        "set_weather" => {
-            let w = &mut ctx.sim.world;
-            if let Some(c) = opt_f32(cmd, "cloud")? {
-                w.weather.cloud = c.clamp(0.0, 1.0);
-            }
-            if let Some(v) = opt_f32(cmd, "wind")? {
-                w.weather.wind = v.clamp(0.05, 1.0);
-            }
-            if let Some(t) = opt_f32(cmd, "temp_c")? {
-                w.weather.temp_c = t.clamp(-50.0, 55.0);
-            }
-            Ok(json!({ "cloud": round(w.weather.cloud), "wind": round(w.weather.wind), "temp_c": round(w.weather.temp_c), "spell": format!("{:?}", w.weather.spell).to_lowercase(), "label": w.weather.label(), "climate": w.landscape.params.climate.key(), "weather_climate": w.weather.climate.key(), "precipitation": crate::render::climate::precip_now(w).map(|(k, i)| json!({ "kind": k, "intensity": round(i) })) }))
-        }
-        "grant" => {
-            // Dev: money for trying things out.
-            let amount = opt_f32(cmd, "amount")?.unwrap_or(100_000.0);
-            ctx.sim.world.economy.treasury += amount;
-            Ok(json!({ "treasury": round(ctx.sim.world.economy.treasury) }))
-        }
-        "walk_to" => {
-            // Dev: send a citizen out on foot (to try crossings and footbridges).
-            let id = key_from(field(cmd, "citizen").ok_or("missing field \"citizen\": id")?)?;
-            let to = opt_vec2(cmd, "to")?.ok_or("missing field \"to\": [x, y]")?;
-            let from = opt_vec2(cmd, "from")?;
-            let n = ctx.sim.world.dev_walk(id, from, to)?;
-            Ok(json!({ "citizen": key_str(id), "route_points": n }))
-        }
-        "list_saves" => Ok(files::list_saves()),
-        "plan" => Ok(planning::plan(ctx)),
-        "add_road" => planning::add_road(cmd, ctx),
-        "grounds_junctions" | "park_junctions" => {
-            let lot: Option<nd_sim::LotId> = field(cmd, "lot").map(key_from).transpose()?;
-            let near = opt_vec2(cmd, "near")?;
-            let radius = opt_f32(cmd, "radius")?.unwrap_or(150.0);
-            Ok(grounds::list(&ctx.sim.world, lot, opt_str(cmd, "kind")?, near, radius))
-        }
-        "add_roundabout" => planning::add_roundabout(cmd, ctx),
-        // [interchange] A diamond interchange across the highway.
-        "add_interchange" | "interchange" => planning::add_interchange(cmd, ctx),
-        "add_zone" => planning::add_zone(cmd, ctx),
-        "paint" => planning::paint(cmd, ctx),
-        "bulldoze" => {
-            // [free-placement] A city building goes at once, its ground back
-            // to the zoning plan.
-            if let Some(v) = field(cmd, "building") {
-                let bid: nd_sim::BuildingId = key_from(v)?;
-                let msg = ctx.sim.world.bulldoze_building(bid)?;
-                ctx.tools.status = format!("{msg}; its ground goes back to the zoning plan.");
-                return Ok(json!({ "message": ctx.tools.status, "treasury": round(ctx.sim.world.economy.treasury) }));
-            }
-            let id = GestureId(opt_u64(cmd, "gesture_id")?.ok_or("missing gesture_id (or building)")?);
-            if ctx.sim.world.gesture(id).is_none() {
-                return Err(format!("no gesture {}", id.0));
-            }
-            ctx.sim.world.remove_gesture(id);
-            if opt_bool(cmd, "implement")?.unwrap_or(false) {
-                ctx.sim.world.implement();
-            }
-            ctx.tools.status = "Marked for removal. Ctrl+Enter implements.".into();
-            Ok(planning::project_state(ctx))
-        }
-        "project" => planning::project(cmd, ctx),
-        "place" => place::place(cmd, ctx),
-        "plant_preview" => place::plant_preview(cmd, ctx),
-        // [tax] [tolls]
-        "taxes" | "tax" => taxes::command(cmd, &mut ctx.sim.world),
-        "tolls" | "toll" => taxes::tolls(cmd, &mut ctx.sim.world),
-        "incident" => incidents::incident(cmd, ctx),
-        "incidents" => incidents::incidents(cmd, ctx),
-        "units" => Ok(units::units_list(&ctx.sim.world, opt_str(cmd, "kind")?, opt_bool(cmd, "out")?.unwrap_or(false), ctx.sim.frac())),
-        "society" => society::command(cmd, &mut ctx.sim.world),
-        // [social]
-        "social" => social::command(cmd, &ctx.sim.world),
-        // [events]
-        "street_events" | "nights" => nights::command(cmd, &ctx.sim.world),
-        "race" => nights::race(cmd, &mut ctx.sim.world),
-        "rave" => nights::rave(cmd, &mut ctx.sim.world),
-        "roads" | "road_condition" | "road_budget" => nights::roads(cmd, &mut ctx.sim.world),
-        "repair_road" => road::repair_road(cmd, ctx),
-        // [interchange] dev: lay the roads again from the plan (as an
-        // implement does) with the current rules, nothing in the plan changed.
-        "rebuild_roads" => {
-            let w = &mut ctx.sim.world;
-            let before = w.roads.alive_segments().count();
-            w.rebuild_from_plan();
-            Ok(json!({ "segments_before": before, "segments": w.roads.alive_segments().count(), "roads_version": w.roads.version }))
-        }
-        "district" | "districts" => districts::district(cmd, &mut ctx.sim.world, &mut ctx.overlays, &mut ctx.tools),
-        "tourism" | "tourists" => districts::tourism(cmd, &mut ctx.sim.world),
-        "concerns" => concerns::command(cmd, &ctx.sim.world),
-        // [committee] The mayor's committee and its meetings.
-        "committee" => committee::command(cmd, &mut ctx.sim, &mut ctx.committee),
-        "committee_meeting" | "meeting" => committee::meeting_command(cmd, &mut ctx.sim, &mut ctx.committee),
-        // [voices] Diaries on demand; model-written conversation lines.
-        "diary" => committee::diary(cmd, &mut ctx.sim, &mut ctx.committee),
-        "voices" => committee::voices(cmd, &ctx.sim, &ctx.committee),
-        // [land] the land market; ownership highlight data
-        "estate" | "land_market" => property::command(cmd, &mut ctx.sim.world),
-        "ownership" => property::ownership(cmd, &ctx.sim.world),
-        // [megacorp] mega-corps and universities
-        "corps" | "corp" | "megacorp" => corp::command(cmd, &mut ctx.sim.world),
-        "campus" | "university" => corp::campus(cmd, &mut ctx.sim.world),
-        // [supertall] the skyline, height limits, the record book; dev tower starts
-        "skyline" | "towers" | "height_limit" => skyline::command(cmd, &mut ctx.sim.world),
-        "pressure" | "pressures" => economy::command(cmd, &mut ctx.sim.world),
-        // [waterfront] waterfront lots, beaches and private jetties
-        "shore" | "waterfront" | "beaches" | "jetties" | "waterfront_parcels" => shore::command(name, cmd, &mut ctx.sim.world),
-        "bus" => bus::bus(cmd, ctx),
-        "subway" | "metro" => subway::command(cmd, &mut ctx.sim.world),
-        // [metro-ux] The metro line tool, click by click.
-        "metro_line" => subway::metro_line(cmd, &mut ctx.sim.world, &mut ctx.tools),
-        "find" => inspect::find(cmd, ctx),
-        "inspect" => inspect::inspect(cmd, ctx),
-        "lane_use" => junction::lane_use(cmd, ctx),
-        "intersection" => junction::command(cmd, &mut ctx.sim.world, &mut ctx.tools),
-        // [rail-crossing] Level crossings: cycle, trains coming, waits.
-        "level_crossings" | "level_crossing" | "crossings" | "rail_crossings" => crossings::command(cmd, &ctx.sim.world),
-        // [boot] Clamp a private car and have it towed: `car` (on the road:
-        // it pulls over first) or `vehicle` (its record, parked or driving).
-        "tow_car" | "tow" | "boot" => {
-            let w = &mut ctx.sim.world;
-            let job = if let Some(v) = field(cmd, "car") {
-                w.order_tow_car(key_from(v)?)?
-            } else {
-                let v = field(cmd, "vehicle").ok_or("car or vehicle is required")?;
-                w.order_tow(key_from(v)?)?
-            };
-            let j = w.enforcement.job(job).copied();
-            Ok(json!({ "tow_job": job, "vehicle": j.map(|j| key_str(j.car)), "company": j.and_then(|j| j.company).map(key_str), "out_of_town": j.is_some_and(|j| j.company.is_none()) }))
-        }
-        "parking_price" => {
-            // [parking] The fee at a lot the city runs.
-            let id = key_from(field(cmd, "building").ok_or("missing building id")?)?;
-            let price = opt_f32(cmd, "price")?.ok_or("missing price")?;
-            let set = ctx.sim.world.set_parking_price(id, price)?;
-            Ok(json!({ "building": key_str(id), "price": set }))
-        }
-        "select" => inspect::select(cmd, ctx),
-        "selected" => Ok(inspect::selected_detail(&ctx.sim, *ctx.selection, ctx.tools.route_sel, &ctx.assets, &ctx.tools.favorites)),
-        "flags" => flags::flags_cmd(cmd, ctx),
-        "flag" => {
-            // Flag the current selection from the API, as F8 does in game.
-            let note = opt_str(cmd, "note")?.unwrap_or_default().to_string();
-            let w = &ctx.sim.world;
-            let sel = *ctx.selection;
-            let look = ctx.cams.iter().next().map_or([0.0, 0.0], |c| [c.target.x, c.target.z]);
-            let snapshot = inspect::selected_detail(&ctx.sim, sel, ctx.tools.route_sel, &ctx.assets, &ctx.tools.favorites);
-            let brief = inspect::selection_json_brief(w, sel);
-            let f = ctx.claude.add(w.clock.tick, sel, brief, note, look, snapshot).clone();
-            Ok(json!({ "flag": crate::flags::flag_json(&f, None) }))
-        }
-        "favourite" | "favorite" => {
-            let id = key_from(field(cmd, "citizen").ok_or("missing citizen id")?)?;
-            if !ctx.sim.world.citizens.contains_key(id) {
-                return Err("no such citizen".into());
-            }
-            let on = opt_bool(cmd, "on")?.unwrap_or(!ctx.tools.favorites.contains(&id));
-            ctx.tools.favorites.retain(|f| *f != id);
-            if on {
-                ctx.tools.favorites.push(id);
-            }
-            Ok(json!({ "citizen": key_str(id), "favourite": on, "favourites": ctx.tools.favorites.iter().map(|&f| key_str(f)).collect::<Vec<_>>() }))
-        }
-        "tool" => tool::tool(cmd, ctx),
-        "camera" => camera::camera(cmd, ctx),
-        // [camera] The inspector's Follow, Zoom to and gift buttons.
-        "follow" => follow::follow(cmd, ctx),
-        "zoom_to" | "zoom" => follow::zoom_to(cmd, ctx),
-        "gift" => follow::gift(cmd, ctx),
-        "overlay" => {
-            // Map layers are exclusive (`crate::map_layers`): turning one on
-            // turns every other off; turning the one showing off leaves none.
-            use crate::map_layers::{self as ml, LayerId};
-            let o = &mut ctx.overlays;
-            let unknown = |k: &str| format!("unknown layer {k:?}; one of none, {}", ml::keys().join(", "));
-            let parse = |k: &str| -> Result<Option<LayerId>, String> {
-                if k.is_empty() || k.eq_ignore_ascii_case("none") || k.eq_ignore_ascii_case("off") {
-                    Ok(None)
-                } else {
-                    LayerId::parse(k).map(Some).ok_or_else(|| unknown(k))
-                }
-            };
-            let switch = |o: &mut Overlays, l: LayerId, on: bool| {
-                if on {
-                    ml::set_active(o, Some(l));
-                } else if ml::active(o) == Some(l) {
-                    ml::set_active(o, None);
-                }
-            };
-            // `{active: "traffic" | "none"}`: the layer to show.
-            match cmd.get("active") {
-                None => {}
-                Some(Value::Null) => ml::set_active(o, None),
-                Some(_) => {
-                    let k = opt_str(cmd, "active")?.unwrap_or("none");
-                    ml::set_active(o, parse(k)?);
-                }
-            }
-            // `{layer, on}` (on omitted toggles).
-            if let Some(layer) = opt_str(cmd, "layer")? {
-                let on = opt_bool(cmd, "on")?;
-                if layer == "projects" {
-                    o.projects = on.unwrap_or(!o.projects);
-                } else {
-                    match parse(layer)? {
-                        Some(l) => {
-                            let now = ml::active(o) == Some(l);
-                            switch(o, l, on.unwrap_or(!now));
-                        }
-                        None => ml::set_active(o, None),
-                    }
-                }
-            }
-            // `{land: "oil"}` shows a land layer, `"none"` (or null) hides
-            // whichever land layer shows.
-            match cmd.get("land") {
-                None => {}
-                Some(Value::Null) => {
-                    if o.land.is_some() {
-                        o.land = None;
-                    }
-                }
-                Some(_) => {
-                    let k = opt_str(cmd, "land")?.unwrap_or("none");
-                    match parse(k)? {
-                        Some(l @ LayerId::Land(_)) => ml::set_active(o, Some(l)),
-                        Some(_) => return Err(format!("{k:?} is not a land layer; one of none, {}", LandLayer::ALL.iter().map(|l| l.key()).collect::<Vec<_>>().join(", "))),
-                        None => o.land = None,
-                    }
-                }
-            }
-            // The older form, a bool per layer name: true shows it (alone).
-            for l in ml::MAP_LAYERS {
-                if let Some(b) = opt_bool(cmd, l.key)? {
-                    switch(o, LayerId::parse(l.key).expect("registry key"), b);
-                }
-            }
-            if let Some(b) = opt_bool(cmd, "projects")? {
-                o.projects = b;
-            }
-            Ok(look::overlays_json(o))
-        }
-        "lighting" => {
-            let l = &mut ctx.lighting;
-            if let Some(h) = opt_f32(cmd, "hour")? {
-                l.hour = h.clamp(0.0, 24.0);
-                // Asking for an hour means wanting to see it.
-                l.follow_clock = false;
-            }
-            if let Some(b) = opt_bool(cmd, "follow_clock")? {
-                l.follow_clock = b;
-            }
-            Ok(json!({ "follow_clock": l.follow_clock, "hour": l.hour, "heat_vision": l.heat }))
-        }
-        "heat_vision" | "heat" => {
-            let l = &mut ctx.lighting;
-            l.heat = opt_bool(cmd, "on")?.unwrap_or(!l.heat);
-            Ok(json!({ "heat_vision": l.heat }))
-        }
-        "graphics" | "quality" => {
-            // [look] `{quality: auto|low|medium|high}` pins the tier (for
-            // screenshots that must compare) or hands it back to Auto.
-            if let Some(q) = opt_str(cmd, "quality")?.or(opt_str(cmd, "tier")?) {
-                ctx.lighting.quality = crate::render::QualitySetting::parse(q).ok_or_else(|| format!("unknown quality {q:?}; auto, low, medium or high"))?;
-            }
-            Ok(look::graphics_json(ctx))
-        }
-        "screenshot" => files::screenshot(cmd, ctx),
-        "events" => {
-            let since = opt_u64(cmd, "since")?.unwrap_or(0);
-            let limit = opt_u64(cmd, "limit")?.unwrap_or(500) as usize;
-            let log = &ctx.log;
-            let events: Vec<Value> = log.ring.iter().filter(|e| e["seq"].as_u64().unwrap_or(0) > since).take(limit).cloned().collect();
-            // [fix/review-app] From 0 too: events 1.. are gone once the ring
-            // has turned over.
-            let dropped = log.ring.front().and_then(|e| e["seq"].as_u64()).is_some_and(|first| since + 1 < first);
-            Ok(json!({ "seq": log.seq, "events": events, "dropped": dropped, "message": ctx.flags.message, "tool_status": ctx.tools.status }))
-        }
-        "thoughts" => {
-            let limit = opt_u64(cmd, "limit")?.unwrap_or(50) as usize;
-            let w = &ctx.sim.world;
-            let mut rows: Vec<(u64, Value)> = w.citizens.iter().flat_map(|(id, c)| c.memories.iter().map(move |m| (m.tick, json!({ "citizen": key_str(id), "name": c.name, "tick": m.tick, "text": m.text })))).collect();
-            rows.sort_by(|a, b| b.0.cmp(&a.0));
-            let memories: Vec<Value> = rows.into_iter().take(limit).map(|(_, v)| v).collect();
-            let thoughts: Vec<Value> = w.citizens.iter().filter(|(_, c)| !c.thought.is_empty()).take(limit).map(|(id, c)| json!({ "citizen": key_str(id), "name": c.name, "thought": c.thought })).collect();
-            Ok(json!({ "memories": memories, "thoughts": thoughts }))
-        }
-        "report" => {
-            let start = std::time::Instant::now();
-            let sections = opt_strings(cmd, "sections")?.unwrap_or_default();
-            let mut v = report::report(&ctx.sim.world, &sections)?;
-            // The sim's own history rings: asked for by name only, as they
-            // are long.
-            if sections.iter().any(|s| s == "history") {
-                let days = opt_u64(cmd, "history_days")?.unwrap_or(30).clamp(1, 365) as usize;
-                v["history"] = report::sim_history(&ctx.sim.world, days);
-            }
-            v["clock"] = status::clock(&ctx.sim);
-            v["took_ms"] = json!(ms(start));
-            Ok(v)
-        }
-        "industry" => map::industry(cmd, &mut ctx.sim.world),
-        "map" => {
-            let start = std::time::Instant::now();
-            let layer = opt_str(cmd, "layer")?.unwrap_or("summary");
-            let mut v = map::map(&ctx.sim.world, opt_f32(cmd, "cell_m")?, layer)?;
-            v["took_ms"] = json!(ms(start));
-            Ok(v)
-        }
-        "history" => {
-            let keys = opt_strings(cmd, "keys")?;
-            let days = opt_u64(cmd, "days")?.map(|d| d as usize);
-            ctx.history.to_json(keys.as_deref(), days)
-        }
-        "list" => {
-            let start = std::time::Instant::now();
-            let args = list::ListArgs {
-                what: req_str(cmd, "what")?,
-                sort: opt_str(cmd, "sort")?,
-                desc: opt_bool(cmd, "desc")?.unwrap_or(false),
-                filter: field(cmd, "filter"),
-                fields: opt_strings(cmd, "fields")?,
-                offset: opt_u64(cmd, "offset")?.unwrap_or(0) as usize,
-                limit: (opt_u64(cmd, "limit")?.unwrap_or(list::DEFAULT_LIMIT as u64) as usize).min(list::MAX_LIMIT),
-            };
-            let mut v = list::list(&ctx.sim.world, &args)?;
-            v["took_ms"] = json!(ms(start));
-            Ok(v)
-        }
-        "export" => files::export(cmd, ctx),
-        "directory" => directory::directory(&ctx.sim.world, &mut ctx.windows, cmd),
-        "build_highlight" => window::build_highlight(cmd, ctx),
-        "window" if req_str(cmd, "name").is_ok_and(|n| n.trim().eq_ignore_ascii_case("new_game") || n.trim().eq_ignore_ascii_case("new game")) => {
-            let open = opt_bool(cmd, "open")?.unwrap_or(true);
-            ctx.windows.new_game = Some(open);
-            Ok(json!({ "window": "new game", "open": open }))
-        }
-        "window" if req_str(cmd, "name").is_ok_and(|n| n.trim().eq_ignore_ascii_case("build")) => {
-            // The Build window, optionally at a section.
-            let section = match opt_str(cmd, "section")? {
-                Some(k) => Some(crate::ui::build::Cat::parse(k).ok_or_else(|| format!("unknown section {k:?}; one of {}", crate::ui::build::Cat::ALL.iter().map(|c| c.key()).collect::<Vec<_>>().join(", ")))?),
-                None => None,
-            };
-            let open = opt_bool(cmd, "open")?.unwrap_or(if section.is_some() { true } else { !ctx.windows.build_open });
-            ctx.windows.build = Some((open, section));
-            Ok(json!({ "window": "build", "open": open, "section": section.map(|c| c.key()).or(ctx.windows.build_section) }))
-        }
-        "window" if req_str(cmd, "name").is_ok_and(|n| n.trim().eq_ignore_ascii_case("committee")) => {
-            // [committee] The Committee window, optionally at a tab.
-            let open = opt_bool(cmd, "open")?.unwrap_or(true);
-            let tab = match opt_str(cmd, "tab")? {
-                Some(t) => Some(crate::ui::committee::Tab::parse(t).ok_or_else(|| format!("unknown tab {t:?}; meeting, members, alerts, projects, settings"))?),
-                None => None,
-            };
-            ctx.committee.open_request = Some(open);
-            ctx.committee.tab_request = tab;
-            Ok(json!({ "window": "committee", "open": open, "tab": opt_str(cmd, "tab")? }))
-        }
-        "window" if req_str(cmd, "name").is_ok_and(|n| matches!(n.trim().to_ascii_lowercase().as_str(), "history" | "game_history" | "game history")) => {
-            // [identity] The Game history window.
-            let open = opt_bool(cmd, "open")?.unwrap_or(true);
-            ctx.saves.history_requested = Some(open);
-            Ok(json!({ "window": "game history", "open": open }))
-        }
-        "window" if req_str(cmd, "name").is_ok_and(|n| matches!(n.trim().to_ascii_lowercase().as_str(), "title" | "title_screen" | "title screen")) => {
-            let open = opt_bool(cmd, "open")?.unwrap_or(!ctx.saves.title);
-            ctx.saves.title = open;
-            if !open {
-                // As "Play this map": the city behind runs again.
-                ctx.sim.paused = false;
-            }
-            Ok(json!({ "window": "title", "open": open }))
-        }
-        "window" if req_str(cmd, "name").is_ok_and(|n| crate::ui::city_data::Page::from_window(n).is_some()) => {
-            // [city-data] The report windows are City Data pages now: the old
-            // name opens its tab (at its last sub-tab) or its page; People's
-            // old `tab` and a `sub` pick a sub-tab. `expanded` is accepted and
-            // means open: every page is full size.
-            use crate::ui::city_data::{Page, Target};
-            let name = req_str(cmd, "name")?;
-            let mut target = Page::from_window(name).ok_or("unreachable")?;
-            if let Some(sub) = opt_str(cmd, "sub")?.or(opt_str(cmd, "tab")?) {
-                let tab = match target {
-                    Target::Tab(t) => t,
-                    Target::Page(p) => p.tab(),
-                };
-                let sub = if sub.trim().eq_ignore_ascii_case("overview") && tab == crate::ui::city_data::Tab::People { "population" } else { sub };
-                target = Target::Page(Page::parse(None, tab.key(), Some(sub))?);
-            }
-            let open = if opt_bool(cmd, "expanded")? == Some(true) { Some(true) } else { opt_bool(cmd, "open")? };
-            let mut v = ctx.windows.request_data(Some(target), open);
-            v["window"] = json!("city data");
-            v["note"] = json!("the report windows are tabs of the City Data view now; see city_data");
-            Ok(v)
-        }
-        "window" => {
-            let info = window::info_of(req_str(cmd, "name")?)?;
-            let (open, list) = ctx.windows.request(info, opt_bool(cmd, "open")?);
-            Ok(json!({ "window": info.title().to_ascii_lowercase(), "open": open, "windows_open": list }))
-        }
-        "city_data" => {
-            // [city-data] The full-screen City Data view.
-            use crate::ui::city_data::{Page, Target};
-            let tab = opt_str(cmd, "tab")?;
-            let sub = opt_str(cmd, "sub")?;
-            let open = opt_bool(cmd, "open")?;
-            if let Some(y) = opt_f32(cmd, "scroll")? {
-                ctx.windows.data_scroll = Some(y.max(0.0));
-            }
-            if tab.is_none() && sub.is_some() {
-                return Err("sub needs a tab".into());
-            }
-            if tab.is_none() && open.is_none() {
-                return Ok(ctx.windows.data_json());
-            }
-            let target = match (tab, sub) {
-                (Some(t), Some(s)) => Some(Target::Page(Page::parse(None, t, Some(s))?)),
-                (Some(t), None) => Some(Target::Tab(crate::ui::city_data::Tab::parse(t).ok_or_else(|| format!("unknown tab {t:?}; one of city, economy, market, people, services, directory"))?)),
-                _ => None,
-            };
-            // Naming a page opens it unless told otherwise.
-            let open = open.or(target.map(|_| true));
-            Ok(ctx.windows.request_data(target, open))
-        }
-        other => Err(format!("unknown command {other:?}; try {{\"cmd\": \"help\"}}")),
+    let c = lookup(name).ok_or_else(|| format!("unknown command {name:?}; try {{\"cmd\": \"help\"}}"))?;
+    if let Effect::Replace(check) = c.effect {
+        confirm_replace(cmd, ctx, c.name, check)?;
     }
+    (c.run)(cmd, ctx)
 }
+
+/// [fix/review-app] A command that throws the running city away asks for
+/// `"confirm": true`, so an agent cannot wipe a player's game by accident:
+/// `load`, `new_game` and `generate_city` when the city has play time no
+/// save holds (a city just saved, just loaded, not yet run or untouched
+/// needs none), `game_history {action: revert}` always. The command's own
+/// argument checks come first.
+fn confirm_replace(cmd: &Value, ctx: &Ctx, name: &str, check: fn(&Value, &Ctx) -> Result<Replaces, String>) -> Result<(), String> {
+    let why = match check(cmd, ctx)? {
+        Replaces::No => return Ok(()),
+        Replaces::IfUnsaved if !ctx.sim.unsaved_play() => return Ok(()),
+        Replaces::IfUnsaved => {
+            let clock = &ctx.sim.world.clock;
+            format!(
+                "{name} replaces the running city (day {}, {}), which has play time no save holds; save it first, or send confirm: true to replace it anyway",
+                clock.day() + 1,
+                clock.format_hhmm()
+            )
+        }
+        Replaces::Always(why) => why,
+    };
+    if opt_bool(cmd, "confirm")? == Some(true) {
+        return Ok(());
+    }
+    Err(why)
+}
+
+/// [waterfront] `shore`, `beaches`, `jetties` and `waterfront_parcels`
+/// share one handler, which goes by the name it was called by.
+fn shore_command(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    shore::command(cmd.get("cmd").and_then(Value::as_str).unwrap_or(""), cmd, &mut ctx.sim.world)
+}
+
+use Effect::*;
+
+pub(super) static COMMANDS: &[Cmd] = &[
+    Cmd { name: "help", aliases: &[], effect: Read, run: |_, _| Ok(help::help()), help: &[] },
+    Cmd { name: "status", aliases: &[], effect: Read, run: |_, ctx| Ok(status::status(ctx)), help: &[] },
+    Cmd { name: "memory", aliases: &[], effect: Read, run: |_, ctx| Ok(status::memory_json(ctx)), help: &[
+        ("note", "[memory] the process working set, peak and commit charge (MB), the renderer's mesh/material/image and entity counts, and the world's big counts"),
+    ] },
+    Cmd { name: "pause", aliases: &[], effect: Game, run: time::pause, help: &[
+        ("paused", "bool, omitted toggles"),
+    ] },
+    Cmd { name: "speed", aliases: &[], effect: Game, run: time::speed, help: &[
+        ("index", "0..5"),
+        ("value", "multiple of real time for what moves (1 = people walk at their true pace; the clock runs 15x faster than that), snapped to the nearest step"),
+    ] },
+    Cmd { name: "step", aliases: &[], effect: Game, run: time::step, help: &[
+        ("ticks", "advance n sim minutes now, even while paused (default 1, max 100000); the committee's round runs each new day, and a meeting it calls stops the step there (reply `stopped`)"),
+    ] },
+    Cmd { name: "seed_demo", aliases: &[], effect: Game, run: city::seed_demo, help: &[] },
+    Cmd { name: "save", aliases: &[], effect: Files, run: files::save, help: &[
+        ("name", "optional: save as a named game, saves/<name>.ron (file-safe) with a sidecar <name>.meta.json and a map picture <name>.png"),
+        ("path", "optional; neither: writes saves/city.ron and a dated slot (with a picture)"),
+    ] },
+    Cmd { name: "city_name", aliases: &["city_identity"], effect: Game, run: identity::city_name, help: &[
+        ("name", "optional: rename the city (tidied, at most 40 characters; empty leaves it unnamed)"),
+        ("returns", "name, display_name, game_id (null for a legacy save until it is next saved), history_entries"),
+    ] },
+    Cmd { name: "game_history", aliases: &[], effect: Replace(identity::replaces), run: identity::game_history, help: &[
+        ("action", "list (default)|bookmark|unmark|mark|revert"),
+        ("game_id", "list: another game's history"),
+        ("marked_only", "list: bool"),
+        ("path", "bookmark/unmark/revert: an entry's path from list (or file: its file name)"),
+        ("label", "bookmark/mark: the moment's name"),
+        ("confirm", "revert: must be true (the running city is replaced, as Load)"),
+        ("returns", "entries newest first: path, file, day, population, treasury, buildings, saved_unix, city, bookmark, thumbnail"),
+    ] },
+    Cmd { name: "load", aliases: &[], effect: Replace(files::load_replaces), run: files::load, help: &[
+        ("path", "a .ron save (see files)"),
+        ("confirm", "true to replace a city with play time no save holds (refused without it)"),
+    ] },
+    Cmd { name: "new_game", aliases: &[], effect: Replace(city::new_game_replaces), run: city::new_game, help: &[
+        ("preset", "river_valley|islands|coast|delta|plains|flat (default river_valley)"),
+        ("seed", "u64"),
+        ("water", "0..1"),
+        ("relief", "0..1 height variation"),
+        ("branching", "0..1"),
+        ("islands", "0..8"),
+        ("climate", "temperate|desert|tropical|arctic|volcanic (default desert; iceland = volcanic)"),
+        ("highway", "ignored: every new game has the highway and the trunk line"),
+        ("confirm", "true to replace a city with play time no save holds (refused without it)"),
+        ("note", "throws the city away; omitted levers take the preset's"),
+    ] },
+    Cmd { name: "generate_city", aliases: &[], effect: Replace(city::generate_city_replaces), run: city::generate_city, help: &[
+        ("preset", "grid_plaza|coastal_river|old_town|twin_centres (default grid_plaza)"),
+        ("seed", "u64 (default 1): the city and its landscape"),
+        ("landscape", "optional landscape preset to lay it on instead of the city preset's own (river_valley|islands|coast|delta|plains|flat)"),
+        ("water", "0..1"),
+        ("relief", "0..1"),
+        ("branching", "0..1"),
+        ("climate", "temperate|desert|tropical|arctic|volcanic (default: the city preset's, desert)"),
+        ("confirm", "true to replace a city with play time no save holds (refused without it)"),
+        ("note", "throws the city away: a new game with a whole generated city (tensor-field streets, zoning, highway interchanges, a coal plant); returns the landscape summary and city {arterial, collector, local, zones, lots, interchanges, way_in, centres}"),
+    ] },
+    Cmd { name: "terrain_at", aliases: &[], effect: Read, run: |cmd, ctx| Ok(land::terrain_at(&ctx.sim.world, req_point(cmd)?)), help: &[
+        ("x", "f"),
+        ("y", "f"),
+        ("returns", "natural/ground/surface heights, slope, water (kind, current, width), nearest shore, hot spot, power sites and dock placement for the lot there, survey (every land layer's value 0..1 there: resources, and the chance of each industry kind)"),
+    ] },
+    Cmd { name: "remediate", aliases: &[], effect: Game, run: city::remediate, help: &[
+        ("x", "f"),
+        ("y", "f"),
+        ("radius", "m, default 100, at most 300"),
+        ("note", "pay to dig out the contamination there at once (450 per cell of full contamination)"),
+    ] },
+    Cmd { name: "cleanup", aliases: &["clean_up"], effect: Game, run: city::cleanup, help: &[
+        ("x", "f"),
+        ("y", "f"),
+        ("radius", "m, default 100, at most 300"),
+        ("quote", "bool: only price it"),
+        ("note", "the Bulldoze tool's Clean up ground: paid up front (450 per cell of full contamination), a crew digs it out from the middle over 2-6 days; returns the quote and the crews at work. tool {tool: bulldoze, kind: cleanup, radius, hover: [x, y]} shows the preview"),
+    ] },
+    Cmd { name: "contaminate", aliases: &[], effect: Dev, run: dev::contaminate, help: &[
+        ("x", "f"),
+        ("y", "f"),
+        ("radius", "m, default 60"),
+        ("amount", "0..1, default 0.6"),
+        ("note", "testing: pour contamination onto the ground"),
+    ] },
+    Cmd { name: "paint_mural", aliases: &[], effect: Dev, run: dev::paint_mural, help: &[
+        ("building", "id"),
+        ("group", "crew id (default: the first street-art crew)"),
+        ("quality", "-1..1, default 0.6"),
+        ("seed", "u64"),
+        ("note", "testing: a mural on that building's street face now"),
+    ] },
+    Cmd { name: "dirt_at", aliases: &["contamination_at"], effect: Read, run: city::dirt_at, help: &[
+        ("x", "f"),
+        ("y", "f"),
+        ("returns", "contamination, dirty_nearby {plants [{building, name, what, distance_m, level, reach_m}], home_exposure, farm_exposure}"),
+    ] },
+    Cmd { name: "resource", aliases: &[], effect: Read, run: city::resource, help: &[
+        ("x", "f"),
+        ("y", "f (or z)"),
+        ("returns", "wind (site_factor, mean_ms, now_ms, typical_yield, yield_now, cut_out_now) and solar (site_factor, climate_sun, sun, yield_now) at the point, and the climate"),
+    ] },
+    Cmd { name: "grid", aliases: &[], effect: Read, run: |_, ctx| Ok(land::grid_json(&ctx.sim.world)), help: &[
+        ("returns", "time-of-use import/export price now, demand now vs the full draw, weather, day_ahead (24 h: hour, temp_c, demand_mw, import_price, export_price if the weather holds), last_24h (recorded demand, supply, imports, exports, price, temperature)"),
+    ] },
+    Cmd { name: "weather", aliases: &[], effect: Read, run: |_, ctx| Ok(land::weather_json(&ctx.sim.world)), help: &[
+        ("returns", "label, cloud, wind (0..1), wind_ms, temp_c, spell (normal|heat wave|cold snap|storm), spell_hours_left, climate, turbine cut-in/rated/cut-out m/s"),
+    ] },
+    Cmd { name: "landscape", aliases: &[], effect: Read, run: |_, ctx| Ok(land::summary(&ctx.sim.world)), help: &[
+        ("returns", "preset and levers, rivers (width, current, hydro_ok), lakes, sea, hot spots, highway ends and through cars, bridges, docks, ships"),
+    ] },
+    Cmd { name: "ships", aliases: &[], effect: Read, run: |_, ctx| Ok(economy::ships(&ctx.sim.world)), help: &[
+        ("returns", "every ship and boat: freighters, ferries, marina boats and (fishing) trawlers with name, port, at, heading_deg, state (in_port|outbound|fishing|hauling|returning|unloading), at_sea, nets_out, fish_aboard, catch_today; count, trawlers_at_sea"),
+    ] },
+    Cmd { name: "set_weather", aliases: &[], effect: Dev, run: dev::set_weather, help: &[
+        ("cloud", "0..1 (rain or snow above 0.6, by climate)"),
+        ("wind", "0.05..1"),
+        ("temp_c", "-50..55"),
+        ("note", "dev: sets the sky now; it drifts again hour by hour"),
+    ] },
+    Cmd { name: "grant", aliases: &[], effect: Dev, run: dev::grant, help: &[
+        ("amount", "money added to the treasury (dev), default 100000"),
+    ] },
+    Cmd { name: "walk_to", aliases: &[], effect: Dev, run: dev::walk_to, help: &[
+        ("citizen", "id"),
+        ("to", "[x,y]"),
+        ("from", "[x,y] (default: where they are)"),
+        ("note", "dev: sends the citizen out on foot by the walk graph (footbridges included)"),
+    ] },
+    Cmd { name: "list_saves", aliases: &[], effect: Read, run: |_, _| Ok(files::list_saves()), help: &[
+        ("note", "newest first: path, name, kind (named|latest|autosave|dated), modified_unix, bytes, day, population, treasury, buildings, landscape (null for saves without a sidecar), thumbnail (absolute path of the PNG, or null), city (\"Unnamed city\" when none), game_id; by_city groups the paths by city name"),
+    ] },
+    Cmd { name: "plan", aliases: &[], effect: Read, run: |_, ctx| Ok(planning::plan(ctx)), help: &[] },
+    Cmd { name: "add_road", aliases: &[], effect: Game, run: planning::add_road, help: &[
+        ("points", "[[x,y] or [x,y,level],...] (2+; level metres above ground, negative below)"),
+        ("elevation", "level for points without one (number), or a list"),
+        ("tunnel", "bool: default level -8 m"),
+        ("lanes_fwd", "0..4 (streets)"),
+        ("lanes_bwd", "0..4"),
+        ("kind", "street|path|rail"),
+        ("curved", "bool"),
+        ("snap", "bool, default true (a path end also snaps onto a park gate)"),
+        ("from_junction", "path only: start on this grounds_junctions index"),
+        ("to_junction", "path only: end on this index"),
+        ("implement", "bool, default false (pending in the project)"),
+        ("returns", "gesture_id, joined (path ends on a grounds gate), project state"),
+    ] },
+    Cmd { name: "grounds_junctions", aliases: &["park_junctions"], effect: Read, run: planning::grounds_junctions, help: &[
+        ("lot", "optional lot id"),
+        ("kind", "park|plaza|stadium|campus|station|beach"),
+        ("near", "[x,y]"),
+        ("radius", "m around near (default 150)"),
+        ("returns", "junctions [{index, pos, kind, lot, attached, walk_node, gesture_id}] (the Path tool's snap rings) and links (paths joined to grounds)"),
+    ] },
+    Cmd { name: "add_roundabout", aliases: &[], effect: Game, run: planning::add_roundabout, help: &[
+        ("center", "[x,y] (snaps onto a junction within 12 m or a street within 6 m)"),
+        ("radius", "m to the ring centreline, 12..120 (or diameter 24..240)"),
+        ("lanes", "1|2|3 ring lanes"),
+        ("implement", "bool"),
+        ("returns", "gesture_id, roundabout {joins, cuts_roads, takes_buildings}, project state"),
+    ] },
+    Cmd { name: "add_interchange", aliases: &["interchange"], effect: Game, run: planning::add_interchange, help: &[
+        ("from", "[x,y]: one end of the cross street, on one side of the highway"),
+        ("to", "[x,y]: the other end, across the highway"),
+        ("lanes_fwd", "cross street lanes (default 2)"),
+        ("lanes_bwd", "(default 2)"),
+        ("check", "bool: only plan it, add nothing"),
+        ("implement", "bool"),
+        ("returns", "gesture_ids, interchange {kept_street, terminals, crossings, roads [{points, lanes}]}, or refused {why, at}; project state"),
+    ] },
+    Cmd { name: "add_zone", aliases: &[], effect: Game, run: planning::add_zone, help: &[
+        ("polygon", "[[x,y],...] (3+)"),
+        ("land_use", "residential|commercial|industrial|entertainment|civic|park"),
+        ("implement", "bool"),
+    ] },
+    Cmd { name: "paint", aliases: &[], effect: Game, run: planning::paint, help: &[
+        ("land_use", "residential|...|park, beach (a public beach: a park on parcels that run down to the water), or none to unzone"),
+        ("at", "[x,y] brush centre"),
+        ("radius", "m (default the tool's)"),
+        ("industry", "industrial only: auto|farming|oil|refinery|manufacturing|logistics|fishing|tech|mining|smelting|factory_farming, the sub-zone set on implement"),
+        ("rect", "[[x0,y0],[x1,y1]] marquee"),
+        ("polygon", "[[x,y],...]"),
+        ("implement", "bool"),
+        ("note", "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step"),
+    ] },
+    Cmd { name: "bulldoze", aliases: &[], effect: Game, run: planning::bulldoze, help: &[
+        ("gesture_id", "int"),
+        ("implement", "bool"),
+        ("building", "or a city building's id: it goes at once, its ground back to the zoning plan"),
+    ] },
+    Cmd { name: "project", aliases: &[], effect: Game, run: planning::project, help: &[
+        ("action", "list|new|switch|rename|delete|park|start|implement|undo|redo|discard"),
+        ("id", "project id (default: the active one)"),
+        ("name", "for new/rename, or to pick a project by name"),
+        ("note", "several named projects; the active one is edited, the rest previewed dim; implement builds one at a time, the later one wins where two change the same gesture or parcel (warnings in the reply)"),
+    ] },
+    Cmd { name: "place", aliases: &[], effect: Game, run: place::place, help: &[
+        ("kind", "toll_booth|toll_plaza (on a road: across the carriageway)|station|freight_yard|depot|parking|coal|solar|wind|nuclear|hydro|tidal|geothermal|shipping_port|ferry_terminal|police|fire|hospital|clinic|school|dispatch|monument|stadium|jail|trash_depot (services: tier or kind:tier)"),
+        ("tier", "low|mid|high"),
+        ("x", "f"),
+        ("y", "f"),
+        ("note", "hydro beside a river or stream with a current >= 0.8 m/s, tidal on the sea shore, geothermal over a hot spot; docks at the water's edge (they build a pier and a street stub)"),
+    ] },
+    Cmd { name: "plant_preview", aliases: &[], effect: Read, run: place::plant_preview, help: &[
+        ("kind", "solar|wind|coal|..."),
+        ("x", "f"),
+        ("y", "f"),
+        ("note", "read-only: MW, cost and upkeep on the site a click there takes (a lot, or unzoned ground joined into one), the Sunfield / Wind Park it would join and what it adds, and any problem"),
+    ] },
+    Cmd { name: "taxes", aliases: &["tax"], effect: Game, run: |cmd, ctx| taxes::command(cmd, &mut ctx.sim.world), help: &[
+        ("set", "{line: rate, ...} where line is a key (residential_low|residential_mid|residential_high|grocery|bakery|gadget_shop|parking|nightlife_low|nightlife_mid|nightlife_high|farming|oil|refinery|manufacturing|logistics|fishing|tech) or a land use for its whole group; rate 0.2 or 20 (= 20%)"),
+        ("category", "one line (with rate)"),
+        ("import_duty", "share of import prices (0..1)"),
+        ("reset", "bool: back to the standard rates"),
+        ("returns", "every line: rate, default, pull, buildings, homes/jobs, today, yesterday, recent_per_day; by_land_use; duty"),
+    ] },
+    Cmd { name: "tolls", aliases: &["toll"], effect: Game, run: |cmd, ctx| taxes::tolls(cmd, &mut ctx.sim.world), help: &[
+        ("action", "list (default) | price | remove | inspect"),
+        ("id", "booth id (or at: [x,y])"),
+        ("price", "toll per car (lorries pay double)"),
+        ("returns", "booths with cars and revenue today/yesterday/total, paid/free today, upkeep"),
+    ] },
+    Cmd { name: "incident", aliases: &[], effect: Dev, run: incidents::incident, help: &[
+        ("kind", "fire|crime|medical|crash|takeover|chase"),
+        ("building", "id (fire, crime; medical without citizen)"),
+        ("intensity", "fire, dev: start it this big (0..1; one engine knocks off 0.012 a minute)"),
+        ("citizen", "id (medical)"),
+        ("car", "id (crash; default the car nearest at)"),
+        ("at", "[x,y] (crash, takeover: the junction nearest)"),
+        ("speed", "m/s (crash, default 25 = written off)"),
+    ] },
+    Cmd { name: "incidents", aliases: &[], effect: Read, run: incidents::incidents, help: &[
+        ("active", "bool (only those under way)"),
+        ("limit", "default 50, newest first"),
+        ("kind", "fire|crime|medical|crash"),
+    ] },
+    Cmd { name: "units", aliases: &[], effect: Read, run: |cmd, ctx| Ok(units::units_list(&ctx.sim.world, opt_str(cmd, "kind")?, opt_bool(cmd, "out")?.unwrap_or(false), ctx.sim.frac())), help: &[
+        ("kind", "optional: fire_engine|police_car|ambulance (or Engine|Car|Medic)"),
+        ("out", "bool: only units out of the station"),
+        ("returns", "units: unit id, title, kind, state, doing, pos, incident; select {unit} / inspect {unit} take the id"),
+    ] },
+    Cmd { name: "society", aliases: &[], effect: Game, run: |cmd, ctx| society::command(cmd, &mut ctx.sim.world), help: &[
+        ("action", "report (default)|evict|offend|trash"),
+        ("building", "id (evict: its households go on the street; offend: the target; trash: one building's bins)"),
+        ("citizen", "id (offend)"),
+        ("kind", "theft|burglary|assault|murder|vandalism (offend, with building)"),
+        ("kg", "trash to add, default 100"),
+    ] },
+    Cmd { name: "social", aliases: &[], effect: Read, run: |cmd, ctx| social::command(cmd, &ctx.sim.world), help: &[
+        ("days", "daily history to include (default 7)"),
+        ("talks", "latest conversations to list (default 10)"),
+        ("group", "optional group id: that group in full, with its members"),
+        ("note", "people talking: today's and yesterday's conversations, friendships, feuds, fights, meet-ups, jobs and flats through friends, couples moving in; pairs by bond city-wide; every crew and club with momentum, reputation, base and works (gigs, matches, readings, murals, gardens, businesses, petitions, protests); petitions to the player; murals, gardens, gigs; news. inspect {citizen} has a social block (ties with bond and how they met, groups, recent conversations)"),
+    ] },
+    Cmd { name: "street_events", aliases: &["nights"], effect: Read, run: |cmd, ctx| nights::command(cmd, &ctx.sim.world), help: &[
+        ("limit", "rows of history and news (default 10)"),
+        ("fresh", "bool: weigh the warehouses for a rave now (else the last 22:00 roll's)"),
+        ("returns", "race (stage, meet, finish, route_m, racers with place and speed, crowd, incident, arrests, fines), race_planned, race_crew, rave (place, door, guests, queue, queue_at_door, inside, peak, complaints, incident, pull), rave_planned, rave_spots (warehouses with youth, artists, art_scene, neighbours, culture, has_scene, night_chance, why), history, news, totals"),
+    ] },
+    Cmd { name: "race", aliases: &[], effect: Game, run: |cmd, ctx| nights::race(cmd, &mut ctx.sim.world), help: &[
+        ("at", "[x,y] optional: meet at the empty lot or surface car park nearest it"),
+        ("returns", "race id and detail; errors if fewer than two locals with a fast car are free, or no lot pair 0.9-2.4 km apart"),
+    ] },
+    Cmd { name: "rave", aliases: &[], effect: Game, run: |cmd, ctx| nights::rave(cmd, &mut ctx.sim.world), help: &[
+        ("building", "id optional: the warehouse"),
+        ("at", "[x,y] optional: the old warehouse nearest it"),
+        ("returns", "rave id and detail (with no field: the warehouse with the strongest scene)"),
+    ] },
+    Cmd { name: "roads", aliases: &["road_condition", "road_budget"], effect: Game, run: |cmd, ctx| nights::roads(cmd, &mut ctx.sim.world), help: &[
+        ("funding", "optional 0..1.5: road maintenance funding level (1 = what the network needs to stand still)"),
+        ("age_days", "dev, optional: wear every street that many days at yesterday's traffic (the crews work each night unless crews: false; nothing is charged)"),
+        ("near", "[x,y] optional: list the pieces nearest it"),
+        ("limit", "pieces listed (default 10, worst first)"),
+        ("returns", "pieces, lane_km, mean_wear, worn, crumbling, waiting_for_repair, mean_wear_by_land_value {cheap, middle, dear}, budget {funding, need_per_day, allowance_per_day, spent_yesterday, repaired_yesterday, repaired_land_value_yesterday, ledger_today/yesterday, repaired_total}, days, pieces_listed (wear, condition, label, speed_factor, crash_factor, land_value, repair_cost, queue_place, street)"),
+    ] },
+    Cmd { name: "repair_road", aliases: &[], effect: Game, run: road::repair_road, help: &[
+        ("road", "id or [x,y]; default the selected road"),
+        ("returns", "repaired, cost, treasury, road (the card); pays the crews' price (lane-m x wear x 6) from the treasury as road maintenance"),
+    ] },
+    Cmd { name: "rebuild_roads", aliases: &[], effect: Dev, run: dev::rebuild_roads, help: &[
+        ("returns", "segments_before, segments, roads_version"),
+        ("note", "dev: lays the roads, lots and lanes again from the plan as an implement does, with the current road-building rules (nothing in the plan changes)"),
+    ] },
+    Cmd { name: "district", aliases: &["districts"], effect: Game, run: |cmd, ctx| districts::district(cmd, &mut ctx.sim.world, &mut ctx.overlays, &mut ctx.tools), help: &[
+        ("action", "list (default)|create|paint|erase|set|remove|at|select|layer"),
+        ("id", "district id (or district: id or name)"),
+        ("at", "[x,y] brush centre"),
+        ("radius", "m, default 40"),
+        ("polygon", "[[x,y],...]"),
+        ("rect", "[[x0,y0],[x1,y1]]"),
+        ("residential", "kowloon|suburban|eco|none"),
+        ("commercial", "neon_strip|tech_campus|night_market|tourist|none"),
+        ("industry", "farming|oil|refinery|manufacturing|logistics|fishing|tech|none"),
+        ("historic", "bool"),
+        ("height_limit", "metres (null or 0 lifts it): nothing new rises over it in the district"),
+        ("rename", "new name"),
+        ("on", "bool (layer)"),
+    ] },
+    Cmd { name: "tourism", aliases: &["tourists"], effect: Game, run: |cmd, ctx| districts::tourism(cmd, &mut ctx.sim.world), help: &[
+        ("action", "refresh (re-read attractions now)"),
+        ("limit", "tourists listed, default 20"),
+        ("returns", "attractiveness, demand, ways in, today's and yesterday's arrivals, spending and tourist tax, hotels, attractions, tourists"),
+    ] },
+    Cmd { name: "concerns", aliases: &[], effect: Read, run: |cmd, ctx| concerns::command(cmd, &ctx.sim.world), help: &[
+        ("days", "daily counts and happiness over the last n days (default 30)"),
+        ("concern", "optional one of housing|food|jobs|safety|trash|noise|commute|parking|power|services|nightlife|displacement|other"),
+        ("quotes", "recent quotes per concern (default 5)"),
+        ("note", "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)"),
+    ] },
+    Cmd { name: "committee", aliases: &[], effect: Paid, run: |cmd, ctx| committee::command(cmd, &mut ctx.sim, &mut ctx.committee), help: &[
+        ("action", "state (default)|members|appoint {id, seat?}|dismiss {id}|alerts {limit, mark_seen}|check_alerts|projects|implement {project}|dismiss_project {project}|pick_site {project, option}|refresh_sites {project}|report|minutes {meeting?}|settings {backend: mock|local|claude, local_url, local_model, claude_model, claude_effort, claude_fallbacks, timeout_s, auto_meetings, veto_allowed, save, test}"),
+        ("note", "the mayor's AI committee (docs/AI_COMMITTEE.md): fictional politicians, six seats, alerts, projects; never takes or returns an API key; the backend fields need the player's leave (the Committee window's settings)"),
+    ] },
+    Cmd { name: "committee_meeting", aliases: &["meeting"], effect: Paid, run: |cmd, ctx| committee::meeting_command(cmd, &mut ctx.sim, &mut ctx.committee), help: &[
+        ("start", "bool: call a meeting now (pauses the sim)"),
+        ("vote", "{proposal, vote: yes|no|abstain|veto} (the mayor's vote)"),
+        ("abstain_rest", "bool"),
+        ("fast_forward", "bool: show all; with the stand-in, run to the mayor's vote or the end now"),
+        ("transcript_from", "line index"),
+        ("returns", "the meeting in session (stage, transcript, proposals with votes and tally) or the last minutes"),
+    ] },
+    Cmd { name: "diary", aliases: &[], effect: Paid, run: |cmd, ctx| committee::diary(cmd, &mut ctx.sim, &mut ctx.committee), help: &[
+        ("citizen", "id"),
+        ("refresh", "bool: write it again"),
+        ("returns", "day, text, pending (a model still writing: call again), by_model, backend; display only, never in the save"),
+    ] },
+    Cmd { name: "voices", aliases: &[], effect: Read, run: |cmd, ctx| committee::voices(cmd, &ctx.sim, &ctx.committee), help: &[
+        ("limit", "default 20"),
+        ("returns", "conversations of spotlit or favourite citizens that got a model's line (template and line), lines_written, diaries_written, backend"),
+    ] },
+    Cmd { name: "estate", aliases: &["land_market"], effect: Game, run: |cmd, ctx| property::command(cmd, &mut ctx.sim.world), help: &[
+        ("action", "summary (default: counters, floors histogram, the billionaire gate, elites with their convoys, NIMBY zones, forms, owners) | pressure ({at: [x,y]} for one point, else every busy cell) | spawn_elite (dev: a billionaire now, needs quiet land) | expand {building} (dev: branch or merge now) | buyout {building} (dev) | drive {citizen, to} (dev)"),
+    ] },
+    Cmd { name: "ownership", aliases: &[], effect: Read, run: |cmd, ctx| property::ownership(cmd, &ctx.sim.world), help: &[
+        ("building", "id: what to highlight when it is selected: the owner and every property with its outline (a rich person's other homes and businesses too)"),
+    ] },
+    Cmd { name: "corps", aliases: &["corp", "megacorp"], effect: Game, run: |cmd, ctx| corp::command(cmd, &mut ctx.sim.world), help: &[
+        ("action", "summary (default: corps with brand/logo, HQ, holdings by use and industry, staff, housing, market share; campuses; rules; biggest companies vs thresholds) | rules {allowed, max_share 0.02-0.25, levy 0-0.2} | promote {building} (dev: its company becomes a mega-corp now) | buy {corp|building, n} (dev) | finish {corp} (dev: HQ now, sites finished) | drive {corp, lot} (road metres from HQ)"),
+    ] },
+    Cmd { name: "campus", aliases: &["university"], effect: Game, run: |cmd, ctx| corp::campus(cmd, &mut ctx.sim.world), help: &[
+        ("action", "summary (default) | grow {building, days} (dev: run the campus's days with one annex each, sites finished)"),
+    ] },
+    Cmd { name: "skyline", aliases: &["towers", "height_limit"], effect: Game, run: |cmd, ctx| skyline::command(cmd, &mut ctx.sim.world), help: &[
+        ("action", "summary (default) | limit | sites | start | finish | fund"),
+        ("limit", "limit: the city's height limit in metres, null or 0 for none (also cmd height_limit {limit})"),
+        ("vertiport_clearance", "limit: bool, keep the approach round the player's vertiports clear (towers there held to 120 m)"),
+        ("height", "start: metres (else the developer decides: over the record when demand and money allow)"),
+        ("design", "start: deco_spire|bundled|twist|needle"),
+        ("at", "start: [x,y] build as near here as a site allows"),
+        ("force", "start (dev, default true): skip the money, demand, population and downtown tests (height limits and site rules still hold); sites: list every site that passes the limits"),
+        ("rich", "start: give the developers $2B first"),
+        ("amount", "fund (dev): dollars to every tower developer (default 1e9)"),
+        ("limit_rows", "rows of the ranking and sites (default 15)"),
+        ("returns", "summary: limit_m, vertiport_clearance, classes_m, record_m, tallest_planned_m, population_cap_m, demand, classes (standing/rising), towers (id, name, height_m, league, design, developer, lots, pos, under_construction, progress, rank, homes, jobs), ranking (the tallest standing), records, news, developers (name, capital), totals; inspect {building} has a tower block (height_m, rank, rank_label, height_limit_m; for a league tower league, design, developer, lots, pending_lots, site_m2, floors, started_day, topped_out_day, record_bid, progress, days_left)"),
+    ] },
+    Cmd { name: "pressure", aliases: &["pressures"], effect: Game, run: |cmd, ctx| economy::command(cmd, &mut ctx.sim.world), help: &[
+        ("note", "the pressures report section (what the city lacks, by kind)"),
+        ("open", "optional: a business kind key (mechanic, car_dealer, golf_range, ...) to open on the vacant lot at `at`"),
+        ("at", "[x, y] with open"),
+        ("finish", "bool: built at once"),
+    ] },
+    Cmd { name: "shore", aliases: &["waterfront"], effect: Read, run: shore_command, help: &[
+        ("returns", "[waterfront] waterfront lots (vacant ones), their frontage, public beaches (open, bathers now), private jetties, the waterfront trades open (beach resorts, pier restaurants, beach bars, boat rentals, waterfront hotels) and their pressures; whether parcels reach the water"),
+    ] },
+    Cmd { name: "beaches", aliases: &[], effect: Read, run: shore_command, help: &[
+        ("returns", "[waterfront] every public beach: access, open (fouled water closes it), note, visitors, swimmers, people_here (the sim's own), draw, capacity, crowded, catchment, appeal (weather and hour), contamination, today's peak and visits"),
+    ] },
+    Cmd { name: "jetties", aliases: &[], effect: Read, run: shore_command, help: &[
+        ("returns", "[waterfront] every private jetty: owner, kind (fishing jetty, cargo quay, restaurant pier, boat pontoon), root, tip, berth, water, loads landed and coming"),
+    ] },
+    Cmd { name: "waterfront_parcels", aliases: &[], effect: Game, run: shore_command, help: &[
+        ("on", "bool, omitted reads: parcels along a road near the water run down to it (on for new cities; a save from before has it off; lots follow at the next implement)"),
+    ] },
+    Cmd { name: "bus", aliases: &[], effect: Game, run: bus::bus, help: &[
+        ("action", "select|new_route|add_stop|move_stop|remove_stop|set_buses|remove_route|rename|recolour|line|select_stop|list"),
+        ("route", "id"),
+        ("x", "f"),
+        ("y", "f"),
+        ("index", "stop index"),
+        ("n", "buses"),
+        ("name", "rename"),
+        ("color", "0..7"),
+        ("look", "select_stop: point the camera"),
+    ] },
+    Cmd { name: "subway", aliases: &["metro"], effect: Game, run: |cmd, ctx| subway::command(cmd, &mut ctx.sim.world), help: &[
+        ("action", "status (default)|station|line|preview|headway|remove_line|inspect_line|inspect_station"),
+        ("x", "f (station)"),
+        ("y", "f (station)"),
+        ("stations", "[id or [x,y], ...] (line, preview)"),
+        ("points", "[[x,y], ...] (line: places stations where none is near)"),
+        ("loop", "bool (line, preview): back to the first station"),
+        ("line", "id"),
+        ("minutes", "headway"),
+        ("headway", "minutes (line)"),
+        ("station", "id or [x,y]"),
+    ] },
+    Cmd { name: "metro_line", aliases: &[], effect: Game, run: |cmd, ctx| subway::metro_line(cmd, &mut ctx.sim.world, &mut ctx.tools), help: &[
+        ("stations", "[id or [x,y], ...]: clicked in order, as the player does"),
+        ("click", "id or [x,y]: one more"),
+        ("loop", "bool: click the first station again"),
+        ("undo", "bool or n: take back stops"),
+        ("finish", "bool: lay the line"),
+        ("cancel", "bool: drop the draft first"),
+        ("headway", "minutes (finish)"),
+        ("tool", "bool (default true): pick the metro line tool, which shows the Metro layer"),
+    ] },
+    Cmd { name: "find", aliases: &[], effect: Read, run: inspect::find, help: &[
+        ("what", "citizens|buildings|lots|parcels|cars|trains|drones|routes|gestures"),
+        ("near", "[x,y]"),
+        ("radius", "m (default 100 with near)"),
+        ("filter", "object; citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind"),
+        ("limit", "default 50"),
+    ] },
+    Cmd { name: "inspect", aliases: &[], effect: Read, run: inspect::inspect, help: &[
+        ("citizen|building|lot|car|train|drone|vehicle|route", "id (vehicle: a private car's record; a unit's car also gets unit)"),
+        ("unit", "id: an emergency unit: title, kind, station, state, doing, crew (citizen, name, role, out, pos, pose), incident (fire: how_bad, intensity, minutes_to_out, progress, damage; else patient, suspect, people), and for a fire engine at work scene (seconds, water_litres, aim, ladder {yaw_deg, pitch_deg, length, outriggers, tip}, hoses, streams)"),
+        ("gesture", "int; with no id, the current selection"),
+        ("junction", "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits"),
+        ("segment", "id: a road piece: level (ground, viaduct, cutting, tunnel, bridge), levels, heights, flags, the ways it passes over or under"),
+        ("road", "id, or [x,y]: the piece a click there picks (else the nearest), as segment, plus road: the road card (kind, lanes, limit, level, run, now {vehicles by kind, bikes, walkers, speed, congestion, queue}, flow, hourly (72 h), decay {wear, condition, effects, wear_per_day, next_condition, repair_cost, queue_place, last_repaired_day}, tolls, crossings, bus_stops, kerb parking)"),
+        ("toll", "int: a toll booth in full (traffic, lorries, free, avoided, queue, hourly)"),
+        ("ship", "id (landscape.ships): a ferry or freighter: title, doing, passengers, cargo, route; a ferry terminal or shipping port building also gets routes (to, ships, headway_min, next_departure, passengers_today)"),
+    ] },
+    Cmd { name: "lane_use", aliases: &[], effect: Game, run: junction::lane_use, help: &[
+        ("junction", "[x,y]"),
+        ("approach", "[x,y] on the arriving street"),
+        ("lanes", "[\"L\", \"S+R\", ...] leftmost first (L, S, R joined with +), or \"reset\" for the demand-chosen default"),
+    ] },
+    Cmd { name: "intersection", aliases: &[], effect: Game, run: |cmd, ctx| junction::command(cmd, &mut ctx.sim.world, &mut ctx.tools), help: &[
+        ("at", "[x,y] near a junction or crosswalk (default: the editor's)"),
+        ("signal", "auto|signals|none"),
+        ("greens", "[seconds per phase, ...] (phases as listed) or \"default\""),
+        ("left_arrow", "auto|always|never"),
+        ("arrow_seconds", "3..30"),
+        ("left_turns", "bool: allow (true) or forbid every left"),
+        ("no_left", "[approach index or [x,y], ...]: approaches with the left forbidden (the rest allowed)"),
+        ("approach", "index or [x,y] (with lanes)"),
+        ("lanes", "[\"L\", \"S+R\", ...] leftmost first, or \"reset\""),
+        ("crossing", "index or [x,y]"),
+        ("upgrade", "none|button|footbridge (with crossing; a footbridge replaces the crosswalk under it)"),
+        ("keep_crosswalk", "bool (with crossing): keep the crosswalk at grade under its footbridge (default false: the bridge replaces it)"),
+        ("open", "bool: show the Intersection editor modal"),
+        ("close", "bool"),
+        ("select_approach", "index (open)"),
+        ("select_crossing", "walk crossing index (open)"),
+        ("returns", "intersection: at, signalized, rule, approaches (lanes, offered, left_forbidden), phases (green_s, running), crossings (upgrade, signalised, button_light, crosswalk_kept, crosswalk_removed); done; editor_open"),
+    ] },
+    Cmd { name: "level_crossings", aliases: &["level_crossing", "crossings", "rail_crossings"], effect: Read, run: |cmd, ctx| crossings::command(cmd, &ctx.sim.world), help: &[
+        ("at", "[x,y]: the nearest level crossing (within radius, default 60 m)"),
+        ("index", "int: that crossing"),
+        ("returns", "count, shut_now, crossings: index, node, at, guard (barriers|lights|footpath gates: barriers on streets of 3+ lanes), phase (open|warning|lowering|closed|raising), lights_flashing, closed_to_traffic, barrier_down (0 up..1 down), train_over, eta_s, trains_coming [{train, seconds}], vehicles_waiting, people_waiting, trains_last_hour, trains_per_hour, trains_total, closures, closure_s, average_closure_s, vehicles_held, average_wait_s, trains_held, arms [{segment, away, lanes_in, lanes_out, stop_line_m, barrier, barrier_length_m}]"),
+    ] },
+    Cmd { name: "tow_car", aliases: &["tow", "boot"], effect: Game, run: city::tow_car, help: &[
+        ("car", "a car id on the road (it pulls over first)"),
+        ("vehicle", "or a vehicle record id (parked or driving)"),
+        ("returns", "tow_job, vehicle, company (null: an out-of-town firm)"),
+    ] },
+    Cmd { name: "parking_price", aliases: &[], effect: Game, run: city::parking_price, help: &[
+        ("building", "id of a parking lot the city runs"),
+        ("price", "the fee, 0..50"),
+        ("returns", "building, price (as set, clamped)"),
+    ] },
+    Cmd { name: "select", aliases: &[], effect: View, run: inspect::select, help: &[
+        ("citizen|building|car|vehicle|bot", "id (vehicle: a parked car; bot: a delivery robot)"),
+        ("unit", "id: an emergency unit (fire engine, police car, ambulance) driving or standing on scene (see units); a click on one picks it the same way"),
+        ("toll", "int: a toll booth"),
+        ("road|segment", "id or [x,y]: a street piece"),
+        ("ship", "id: a ferry or freighter (landscape.ships)"),
+        ("at", "[x,y] picks like a click (vehicles, people, booths, parked cars, then the road piece, then lots); nothing clears"),
+    ] },
+    Cmd { name: "selected", aliases: &[], effect: Read, run: |_, ctx| Ok(inspect::selected_detail(&ctx.sim, *ctx.selection, ctx.tools.route_sel, &ctx.assets, &ctx.tools.favorites)), help: &[
+        ("", "full detail of what the player has selected: a car with why (reason, text, by), jam (chain to the head of the queue, head_reason, cycle), trip (elapsed_min, expected_min, anger), lanes, driver, cargo; a citizen (and driving_car); a building; a parked car; the bus line picked (bus_line)"),
+    ] },
+    Cmd { name: "flags", aliases: &[], effect: View, run: flags::flags, help: &[
+        ("since", "flag id: only newer ones"),
+        ("clear", "bool: empty the list after reading"),
+    ] },
+    Cmd { name: "flag", aliases: &[], effect: Files, run: flags::flag, help: &[
+        ("note", "text: flag the current selection, as F8 does in game"),
+    ] },
+    Cmd { name: "favourite", aliases: &["favorite"], effect: View, run: flags::favourite, help: &[
+        ("citizen", "id"),
+        ("on", "bool, omitted toggles"),
+    ] },
+    Cmd { name: "tool", aliases: &[], effect: View, run: tool::tool, help: &[
+        ("name", "inspect|road|zone|edit|bulldoze|power|transit|rail"),
+        ("preset", "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway|Tunnel|Roundabout (Tunnel switches the view underground, the others back to ground)"),
+        ("elevation", "road tool level for the next point, m (-20..24)"),
+        ("depth", "underground|ground|sky: the view layer"),
+        ("draw", "[[x,y,level?],...]: the road being drawn, for its preview"),
+        ("cursor", "[x,y]: where the pointer stands for the road preview (until the mouse is used)"),
+        ("diameter", "roundabout 24..240 m"),
+        ("ring_lanes", "roundabout 1|2|3"),
+        ("ring_at", "[x,y]: show the roundabout preview there as if hovered (until the mouse is used)"),
+        ("kind", "sub-mode of the active tool"),
+        ("mode", "zone tool: polygon|brush|marquee"),
+        ("radius", "zone brush radius m"),
+        ("unzone", "bool"),
+        ("industry", "zone tool sub-zone for industrial land: auto|farming|oil|..."),
+        ("land_use", "(or none: the brush unzones)"),
+        ("lanes_fwd", ""),
+        ("lanes_bwd", ""),
+        ("curved", ""),
+        ("show_routes", ""),
+        ("route", "id"),
+    ] },
+    Cmd { name: "camera", aliases: &[], effect: View, run: camera::camera, help: &[
+        ("look_at", "[x,y]"),
+        ("x", ""),
+        ("z", ""),
+        ("distance", "12..2500"),
+        ("yaw", "rad"),
+        ("pitch", "rad"),
+        ("follow", "citizen/car id or {citizen|car|bot|building: id}; any camera command ends a follow"),
+        ("mode", "orbit|walk"),
+    ] },
+    Cmd { name: "follow", aliases: &[], effect: View, run: follow::follow, help: &[
+        ("citizen|car|bot|building|vehicle", "id, or the selection"),
+        ("stop", "bool: end the follow (also on: false)"),
+        ("pov", "bool: look through their eyes (Walk view) or back to orbit"),
+        ("fly", "bool, default true: fly in smoothly first"),
+        ("note", "the camera stays on it (pan locked, rotate and zoom free) until stopped, Esc, or it is gone"),
+    ] },
+    Cmd { name: "zoom_to", aliases: &["zoom"], effect: View, run: follow::zoom_to, help: &[
+        ("citizen|car|bot|building|vehicle", "id, or the selection"),
+        ("at", "[x,y] instead of a thing"),
+        ("distance", "m (default by kind)"),
+        ("pitch", "rad (default 0.62)"),
+        ("note", "a smooth move of 0.7..2.2 s; replies at once"),
+    ] },
+    Cmd { name: "gift", aliases: &[], effect: Game, run: follow::gift, help: &[
+        ("citizen", "id, or the selected citizen"),
+        ("amount", "default 1000"),
+        ("note", "from the treasury to their household (booked as gifts to residents)"),
+    ] },
+    Cmd { name: "overlay", aliases: &[], effect: View, run: look::overlay, help: &[
+        ("active", "the map layer to show, or none (layers are exclusive: showing one hides the others)"),
+        ("layer", "zoning|land_value|districts|traffic|traffic_types|paths|people|pollution, a land survey layer (farmland|oil|geothermal|rock|sand|water|shipping|best_industry|best_farming|best_oil|best_refinery|best_manufacturing|best_logistics|best_fishing|best_tech), or projects (the dim other-projects switch, not a layer)"),
+        ("on", "bool, omitted toggles; on hides every other layer"),
+        ("land", "a land survey layer key, or none"),
+        ("<layer name>", "bool (older form): true shows it alone, false hides it if it shows"),
+    ] },
+    Cmd { name: "lighting", aliases: &[], effect: View, run: look::lighting, help: &[
+        ("follow_clock", "bool"),
+        ("hour", "0..24 (also unpins from the clock)"),
+    ] },
+    Cmd { name: "heat_vision", aliases: &["heat"], effect: View, run: look::heat_vision, help: &[
+        ("on", "bool, omitted toggles: the drone thermal camera view (also key H)"),
+    ] },
+    Cmd { name: "graphics", aliases: &["quality"], effect: View, run: look::graphics, help: &[
+        ("quality", "auto|low|medium|high: pin the graphics tier (pin one before screenshots that must compare) or hand it back to the frame-rate throttler; omitted reports the setting, the tier in force, the smoothed frame time and the effects on the camera"),
+    ] },
+    Cmd { name: "screenshot", aliases: &[], effect: Files, run: files::screenshot, help: &[
+        ("path", "optional .png (see files); default screenshots/shot-<unix ms>.png; written a frame or two later"),
+    ] },
+    Cmd { name: "events", aliases: &[], effect: Read, run: events::events, help: &[
+        ("since", "seq"),
+        ("limit", "default 500"),
+    ] },
+    Cmd { name: "thoughts", aliases: &[], effect: Read, run: events::thoughts, help: &[
+        ("limit", "default 50"),
+    ] },
+    Cmd { name: "report", aliases: &[], effect: Read, run: review::report, help: &[
+        ("sections", "optional subset of overview, people, economy, land, services, industry, society, alerts, history (default all but history): the one-call city review"),
+        ("history_days", "days of the history section (default 30, max 365)"),
+    ] },
+    Cmd { name: "industry", aliases: &[], effect: Game, run: |cmd, ctx| map::industry(cmd, &mut ctx.sim.world), help: &[
+        ("lot", "lot id, or"),
+        ("polygon", "[[x, y], ...] area, or"),
+        ("pos", "[x, y] (query only)"),
+        ("kind", "farming | oil | refinery | manufacturing | logistics | fishing | tech | mining | smelting | factory_farming | none: sets the industry sub-zone bias (none hands the area back to the ground); omit to query the ground, contamination and industry weights of the lot"),
+    ] },
+    Cmd { name: "map", aliases: &[], effect: Read, run: review::map, help: &[
+        ("cell_m", "cell size in metres, default 100 (grown to keep at most 400 cells)"),
+        ("layer", "summary (table of cells) | population | land_value | jobs | hunger | vacancy | power | traffic | fertility | oil | contamination | industry | crime | homeless | trash (grid + ASCII heat map)"),
+    ] },
+    Cmd { name: "history", aliases: &[], effect: Read, run: review::history, help: &[
+        ("keys", "optional daily/hourly series names (default all)"),
+        ("days", "last n days (default all kept, up to 365)"),
+    ] },
+    Cmd { name: "list", aliases: &[], effect: Read, run: review::list, help: &[
+        ("what", "businesses|buildings|citizens|lots|routes|plants|facilities"),
+        ("sort", "column"),
+        ("desc", "bool"),
+        ("filter", "{column: substring | value | {min, max}}"),
+        ("fields", "[columns] (id always kept)"),
+        ("offset", "default 0"),
+        ("limit", "default 50, max 1000"),
+    ] },
+    Cmd { name: "export", aliases: &[], effect: Files, run: files::export, help: &[
+        ("path", "optional .json (see files); default exports/city-<unix ms>.json: report + map + history + every row of every list"),
+    ] },
+    Cmd { name: "directory", aliases: &[], effect: View, run: |cmd, ctx| directory::directory(&ctx.sim.world, &mut ctx.windows, cmd), help: &[
+        ("kind", "businesses|people (default businesses)"),
+        ("sort", "businesses: name|kind|owner|district|street|staff|revenue_today|revenue_yesterday|profit_yesterday|money|rating|footfall|state; people: name|age|class|income|job|home|household|mood|health|commute|favourite|friends|status"),
+        ("desc", "bool"),
+        ("search", "words to find in name, kind, owner, street, district, workplace, home"),
+        ("district", "district name"),
+        ("business_kind", "businesses: a kind key"),
+        ("state", "businesses: building|shut|broke|no_staff|open|closed"),
+        ("class", "people: low|middle|high|elite"),
+        ("status", "people: working|at_home|asleep|out|travelling|ill|homeless|arriving|away"),
+        ("offset", "default 0"),
+        ("limit", "default 50, max 1000"),
+        ("show", "bool: also open City Data's Directory page with these settings"),
+        ("note", "the rows of City Data's Directory tab, sorted and filtered by the page's own code; missing values sort last"),
+    ] },
+    Cmd { name: "build_highlight", aliases: &[], effect: View, run: window::build_highlight, help: &[
+        ("category", "a Build section (power|services|transit|rail|water|attractions), a sub-section (safety, health and education, sanitation, parking, metro, buses...) or a kind (health, police, fire, school, metro_station, coal...): opens the Build window there (a kind also picks it, as a click on its tile) and highlights those buildings on the map with their service areas"),
+        ("off", "bool: close the Build window (the highlight goes with it)"),
+        ("note", "no fields: what is highlighted now and the summary (worked out the frame after a change)"),
+    ] },
+    Cmd { name: "window", aliases: &[], effect: View, run: window::window, help: &[
+        ("name", "a tool window: lines|view (or land)|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), new_game, title (the title screen), history (the Game history window); the old report names city|economy|taxes|market|people|power|transit|emergencies|districts|tourism open their City Data tab or page"),
+        ("open", "bool, omitted toggles"),
+        ("sub", "with a City Data name: the sub-tab (people's old tab overview|concerns|social works too)"),
+    ] },
+    Cmd { name: "city_data", aliases: &[], effect: View, run: window::city_data, help: &[
+        ("tab", "city|economy|market|people|services|directory (omitted with open: the page it was on)"),
+        ("sub", "the tab's sub-tab: city overview|land|districts|skyline|tourism; economy overview|cash_flow|ledger|taxes; market goods|businesses|trade; people population|inequality|concerns|social|favourites; services power|transit|emergencies; directory businesses|people (omitted: the tab's last one)"),
+        ("open", "bool; omitted with a tab opens; no fields reports the view and the list of tabs"),
+        ("scroll", "points from the page's top to scroll to (for screenshots of long pages)"),
+        ("note", "the full-screen City Data view (J in the game, Esc closes); status.city_data says what it shows"),
+    ] },
+];
 
 #[cfg(test)]
 mod dispatch_tests {
     use super::*;
     use crate::assets::GameAssets;
     use crate::camera::{CameraMode, WalkState};
-    use crate::render::{Lighting, RenderStats};
+    use crate::render::{Lighting, Overlays, RenderStats};
+    use nd_sim::GestureId;
     use crate::sim::Sim;
     use crate::tools::{EffectivePlan, Selection, ToolState};
     use crate::ui::{Saves, UiFlags};
@@ -840,44 +927,76 @@ mod dispatch_tests {
         assert_eq!(status, 200, "{body}");
     }
 
-    /// Every name `execute` matches, read from its source: the arms
-    /// `"name" | "other" =>` at the match's own indent.
-    fn dispatched() -> std::collections::BTreeSet<String> {
-        let src = include_str!("dispatch.rs").replace("\r\n", "\n");
-        let body = &src[src.find("fn execute(").expect("execute")..];
-        let body = &body[..body.find("\n}\n").expect("end of execute")];
-        let mut out = std::collections::BTreeSet::new();
-        for line in body.lines() {
-            // An arm: names, then a guard (` if ...`) or ` =>`.
-            let Some(rest) = line.strip_prefix("        \"") else { continue };
-            let names = rest.split(" if ").next().unwrap_or("").split(" =>").next().unwrap_or("");
-            for name in format!("\"{names}").split(" | ") {
-                let name = name.trim().trim_matches('"');
-                if !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_') {
-                    out.insert(name.to_string());
-                }
+    /// Names and aliases are unique across the registry.
+    #[test]
+    fn names_and_aliases_are_unique() {
+        let mut seen = std::collections::BTreeSet::new();
+        for c in COMMANDS {
+            for n in std::iter::once(c.name).chain(c.aliases.iter().copied()) {
+                assert!(seen.insert(n), "{n} is named twice");
+                assert!(!n.is_empty() && n.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'), "{n:?} is not a command name");
             }
         }
-        out
+        assert!(seen.len() > 100, "{}", seen.len());
     }
 
-    /// [fix/review-app] `help` documents every command the dispatcher
-    /// knows (or names it as an alias), and nothing it does not.
+    /// Every command documents its fields, but for the few that take none.
     #[test]
-    fn help_matches_the_dispatcher() {
+    fn every_command_has_help() {
+        let bare: Vec<&str> = COMMANDS.iter().filter(|c| c.help.is_empty()).map(|c| c.name).collect();
+        assert_eq!(bare, ["help", "status", "seed_demo", "plan"], "commands with no help");
+        // A field may go without text (`tool`'s `curved`), but not both.
+        for c in COMMANDS {
+            for (field, text) in c.help {
+                assert!(!field.is_empty() || !text.is_empty(), "{} has an empty help row", c.name);
+            }
+        }
+    }
+
+    /// Every command that can replace the city refuses to without
+    /// `confirm` once the city has play time no save holds.
+    #[test]
+    fn replacing_commands_refuse_without_confirm() {
+        let mut app = app();
+        send(&mut app, json!({ "cmd": "seed_demo" }));
+        send(&mut app, json!({ "cmd": "step", "ticks": 30 }));
+        let generation = app.world().resource::<Sim>().generation;
+        let replacing: Vec<&str> = COMMANDS.iter().filter(|c| matches!(c.effect, Effect::Replace(_))).map(|c| c.name).collect();
+        assert_eq!(replacing, ["game_history", "load", "new_game", "generate_city"]);
+        for c in COMMANDS.iter().filter(|c| matches!(c.effect, Effect::Replace(_))) {
+            let cmd = match c.name {
+                "load" => json!({ "cmd": "load", "path": "saves/none.ron" }),
+                // Revert needs an entry of this game's history on disk;
+                // the check names the city's day in its refusal.
+                "game_history" => {
+                    let Effect::Replace(check) = c.effect else { unreachable!() };
+                    let ok = app.world_mut().run_system_once(move |ctx: Ctx| matches!(check(&json!({ "cmd": "game_history" }), &ctx), Ok(Replaces::No))).expect("runs");
+                    assert!(ok, "listing the history replaces nothing");
+                    continue;
+                }
+                n => json!({ "cmd": n }),
+            };
+            let (status, body) = send(&mut app, cmd.clone());
+            assert_eq!(status, 400, "{cmd}: {body}");
+            assert!(body["error"].as_str().unwrap().contains("send confirm: true"), "{body}");
+        }
+        assert_eq!(app.world().resource::<Sim>().generation, generation, "nothing replaced");
+    }
+
+    /// `help` lists exactly the registry: every command under its name,
+    /// every alias pointing at its command.
+    #[test]
+    fn help_matches_the_registry() {
         let mut app = app();
         let (_, body) = send(&mut app, json!({ "cmd": "help" }));
-        let listed: std::collections::BTreeSet<String> = body["commands"].as_object().expect("commands").keys().cloned().collect();
-        let aliases: std::collections::BTreeSet<String> = help::ALIASES.iter().map(|(a, _)| a.to_string()).collect();
-        let known = dispatched();
-        assert!(known.len() > 100, "the parse found the arms: {known:?}");
-        let missing: Vec<_> = known.iter().filter(|n| !listed.contains(*n) && !aliases.contains(*n)).collect();
-        let extra: Vec<_> = listed.iter().chain(&aliases).filter(|n| !known.contains(*n)).collect();
-        assert!(missing.is_empty(), "dispatched but not in help: {missing:?}");
-        assert!(extra.is_empty(), "in help but not dispatched: {extra:?}");
-        for (a, c) in help::ALIASES {
-            assert!(listed.contains(*c), "alias {a} points at {c}, which help does not list");
-            assert!(!listed.contains(*a), "{a} is both a command and an alias");
+        let listed: Vec<&String> = body["commands"].as_object().expect("commands").keys().collect();
+        let mut names: Vec<&str> = COMMANDS.iter().map(|c| c.name).collect();
+        names.sort_unstable();
+        assert_eq!(listed, names);
+        let aliases = body["aliases"].as_object().expect("aliases");
+        assert_eq!(aliases.len(), COMMANDS.iter().map(|c| c.aliases.len()).sum::<usize>());
+        for (a, c) in aliases {
+            assert_eq!(lookup(a).map(|x| x.name), c.as_str(), "alias {a}");
         }
     }
 }

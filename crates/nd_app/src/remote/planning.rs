@@ -2,7 +2,7 @@
 //! parcels and bulldozing gestures.
 
 use nd_sim::roads::RoadKind;
-use nd_sim::Gesture;
+use nd_sim::{Gesture, GestureId};
 use serde_json::{json, Value};
 
 use super::ctx::Ctx;
@@ -385,4 +385,35 @@ pub(super) fn add_zone(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     v["gesture_id"] = json!(id.0);
     v["implemented"] = json!(implemented && ctx.sim.world.implement_refused.is_none());
     Ok(v)
+}
+
+/// [park-paths] `grounds_junctions {lot?, kind?, near?, radius?}`: the gates
+/// a path may join.
+pub(super) fn grounds_junctions(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let lot: Option<nd_sim::LotId> = field(cmd, "lot").map(key_from).transpose()?;
+    let near = opt_vec2(cmd, "near")?;
+    let radius = opt_f32(cmd, "radius")?.unwrap_or(150.0);
+    Ok(grounds::list(&ctx.sim.world, lot, opt_str(cmd, "kind")?, near, radius))
+}
+
+/// `bulldoze {gesture_id, implement?}` marks a gesture for removal;
+/// [free-placement] `bulldoze {building}` takes a city building at once,
+/// its ground back to the zoning plan.
+pub(super) fn bulldoze(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    if let Some(v) = field(cmd, "building") {
+        let bid: nd_sim::BuildingId = key_from(v)?;
+        let msg = ctx.sim.world.bulldoze_building(bid)?;
+        ctx.tools.status = format!("{msg}; its ground goes back to the zoning plan.");
+        return Ok(json!({ "message": ctx.tools.status, "treasury": round(ctx.sim.world.economy.treasury) }));
+    }
+    let id = GestureId(opt_u64(cmd, "gesture_id")?.ok_or("missing gesture_id (or building)")?);
+    if ctx.sim.world.gesture(id).is_none() {
+        return Err(format!("no gesture {}", id.0));
+    }
+    ctx.sim.world.remove_gesture(id);
+    if opt_bool(cmd, "implement")?.unwrap_or(false) {
+        ctx.sim.world.implement();
+    }
+    ctx.tools.status = "Marked for removal. Ctrl+Enter implements.".into();
+    Ok(project_state(ctx))
 }

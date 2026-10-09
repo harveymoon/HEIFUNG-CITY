@@ -11,7 +11,8 @@ use super::ctx::Ctx;
 use super::view::*;
 use super::{guard, identity, list, map, report};
 use super::status::clock;
-use crate::ui::save_now;
+use super::dispatch::Replaces;
+use crate::ui::{load_now, save_now};
 
 pub(super) fn save(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(name) = opt_str(cmd, "name")? {
@@ -152,4 +153,20 @@ pub(super) fn export(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let text = serde_json::to_string(&doc).map_err(|e| e.to_string())?;
     crate::sim::write_atomic(&path, text.as_bytes()).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     Ok(json!({ "path": path.to_string_lossy().replace('\\', "/"), "bytes": text.len(), "took_ms": ms(start) }))
+}
+
+/// What `load` checks before it asks for `confirm`.
+pub(super) fn load_replaces(cmd: &Value, _: &Ctx) -> Result<Replaces, String> {
+    allowed_path(req_str(cmd, "path")?, "ron", false)?;
+    Ok(Replaces::IfUnsaved)
+}
+
+/// `load {path, confirm?}`.
+pub(super) fn load(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let path = allowed_path(req_str(cmd, "path")?, "ron", false)?;
+    let message = load_now(&path, &mut ctx.sim, &mut ctx.flags)?;
+    ctx.saves.mark_dirty();
+    ctx.saves.title = false;
+    ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "city loaded");
+    Ok(json!({ "message": message, "clock": clock(&ctx.sim), "paused": ctx.sim.paused }))
 }

@@ -29,6 +29,8 @@ mod view;
 // Commands, by area.
 mod bus;
 mod camera;
+mod city;
+mod dev;
 mod files;
 mod flags;
 mod incidents;
@@ -36,7 +38,9 @@ mod inspect;
 mod look;
 mod place;
 mod planning;
+mod review;
 mod status;
+mod time;
 mod tool;
 mod window;
 
