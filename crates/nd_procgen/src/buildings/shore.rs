@@ -17,7 +17,7 @@
 
 use super::parts::*;
 use super::kit::clip_box;
-use super::trades::{block, fit, flagpole, pane_row, table, R};
+use super::kit::{block, fit, flagpole, pane_row, table, R};
 use super::{Ctx, Face, Frame};
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};

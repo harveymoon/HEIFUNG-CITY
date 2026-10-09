@@ -3,6 +3,13 @@
 //! cages and AC boxes, signs hung out over the pavement, antenna forests,
 //! sky bridges, glowing crown outlines and laundry poles.
 
+mod fences;
+mod layout;
+mod props;
+pub(crate) use fences::*;
+pub(crate) use layout::*;
+pub(crate) use props::*;
+
 use super::parts::*;
 use super::{Ctx, Face};
 use crate::surface::{Geometry, Surface::*};

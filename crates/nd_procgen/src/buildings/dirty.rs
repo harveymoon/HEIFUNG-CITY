@@ -10,8 +10,7 @@
 //! where each style's stacks stand without drawing it.
 
 use super::parts::*;
-use super::rural::{cow, haul_truck, heap};
-use super::trades::{block, fit, R};
+use super::kit::{block, cow, fit, haul_truck, heap, rail_fence, R};
 use super::Ctx;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
@@ -356,12 +355,12 @@ pub fn feedlot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         // Above every soot stain layer (0.045..0.115), not in one of them.
         ground(g, f, Dirt, &p.poly(), 0.125, mix(mud, SOOT, 0.25));
         for face in p.faces() {
-            super::rural::rail_fence(g, c, face.a, face.b, 1.4, rail);
+            rail_fence(g, c, face.a, face.b, 1.4, rail);
         }
         let cols = ((p.w() / 8.0) as i32).max(1);
         for k in 1..cols {
             let u = p.u0 + k as f32 * p.w() / cols as f32;
-            super::rural::rail_fence(g, c, Vec2::new(u, p.v0), Vec2::new(u, p.v1), 1.4, rail);
+            rail_fence(g, c, Vec2::new(u, p.v0), Vec2::new(u, p.v1), 1.4, rail);
         }
         // A feed trough along the front of the pens.
         f.bx(g, Concrete, p.c().x, 0.4, p.v0 + 0.8, Vec3::new(p.w() - 1.0, 0.8, 0.8), mul(pal.concrete(0), 0.7));

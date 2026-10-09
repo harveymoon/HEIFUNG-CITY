@@ -7,7 +7,7 @@
 //! The lot's street side is `v0`; the water lies past `v1`.
 
 use super::parts::*;
-use super::trades::{block, fish_crates, fit, pane, pane_row, table, R};
+use super::kit::{block, fish_crates, fish_sign, fit, flagpole, pane, pane_row, table, R};
 use super::{Ctx, Frame};
 use crate::surface::{Geometry, Surface::*};
 use crate::terrain::boat_mesh;
@@ -74,7 +74,7 @@ fn flags(g: &mut Geometry, f: &Frame, a: Vec2, b: Vec2, n: i32, h: f32) {
     let cols = [[0.1, 0.2, 0.6], [0.9, 0.9, 0.9], [0.8, 0.1, 0.1], [0.95, 0.75, 0.1]];
     for k in 0..n {
         let p = a.lerp(b, if n > 1 { k as f32 / (n - 1) as f32 } else { 0.5 });
-        super::trades::flagpole(g, f, p, h, cols[k as usize % cols.len()], false);
+        flagpole(g, f, p, h, cols[k as usize % cols.len()], false);
     }
 }
 
@@ -280,7 +280,7 @@ pub fn fishing_port_large(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         band_windows(g, c, rng, &r.front(), 0.5, 1, 3.0);
         super::parts::sign_board(g, c, rng, &r.front(), 0.0, h - 0.8, (r.w() * 0.4).min(10.0), 0.7);
-        super::trades::fish_sign(g, c, &r.front(), r.w() * 0.35, h - 0.9, 0.3, 1.5, [0.3, 0.9, 1.4]);
+        fish_sign(g, c, &r.front(), r.w() * 0.35, h - 0.9, 0.3, 1.5, [0.3, 0.9, 1.4]);
     }
     // The ice house: white, chillers, a chute out to the quay.
     let iw = (area.w() * 0.18).clamp(5.0, 12.0);
