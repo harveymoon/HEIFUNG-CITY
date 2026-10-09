@@ -105,19 +105,61 @@ fn soup_sum(m: &MeshData) -> u64 {
 
 struct Out(Mutex<BTreeMap<String, String>>);
 
+/// With `ND_GOLDEN_DUMP_LIST=<file of case names>` and
+/// `ND_GOLDEN_DUMP_DIR=<dir>`, the raw meshes of those cases are written
+/// out (`tools`-free: little-endian u32 counts then the arrays), so two
+/// builds can be compared value by value (`golden_ulps.py`): which
+/// attributes differ, and by how many units in the last place.
+fn dump(name: &str, parts: &[MeshData]) {
+    static LIST: std::sync::OnceLock<Option<(std::collections::BTreeSet<String>, String)>> = std::sync::OnceLock::new();
+    let list = LIST.get_or_init(|| {
+        let l = std::env::var("ND_GOLDEN_DUMP_LIST").ok()?;
+        let dir = std::env::var("ND_GOLDEN_DUMP_DIR").ok()?;
+        Some((std::fs::read_to_string(l).ok()?.lines().map(|s| s.trim().to_string()).collect(), dir))
+    });
+    let Some((names, dir)) = list else { return };
+    if !names.contains(name) {
+        return;
+    }
+    let mut b: Vec<u8> = Vec::new();
+    let mut w = |v: u32| b.extend_from_slice(&v.to_le_bytes());
+    w(parts.len() as u32);
+    for m in parts {
+        for (n, it) in [
+            (m.positions.len() * 3, m.positions.iter().flatten().map(|v| v.to_bits()).collect::<Vec<_>>()),
+            (m.normals.len() * 3, m.normals.iter().flatten().map(|v| v.to_bits()).collect()),
+            (m.colors.len() * 4, m.colors.iter().flatten().map(|v| v.to_bits()).collect()),
+            (m.uvs.len() * 2, m.uvs.iter().flatten().map(|v| v.to_bits()).collect()),
+            (m.tangents.len() * 4, m.tangents.iter().flatten().map(|v| v.to_bits()).collect()),
+            (m.indices.len(), m.indices.clone()),
+        ] {
+            w(n as u32);
+            for v in it {
+                w(v);
+            }
+        }
+    }
+    let file: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '.' { c } else { '_' }).collect();
+    std::fs::write(format!("{dir}/{file}.bin"), b).unwrap();
+}
+
 impl Out {
     fn line(&self, name: String, v: String) {
         let mut m = self.0.lock().unwrap();
         assert!(m.insert(name.clone(), v).is_none(), "golden case {name} twice");
     }
     fn mesh(&self, name: impl Into<String>, m: &MeshData) {
+        let name = name.into();
+        dump(&name, std::slice::from_ref(m));
         let (e, s, t) = mesh_hashes(m);
-        self.line(name.into(), format!("exact={e:016x} soup={s:016x} tris={t}"));
+        self.line(name, format!("exact={e:016x} soup={s:016x} tris={t}"));
     }
     /// A geometry: the exact hash over every surface, the order-free sum
     /// over all of them (a triangle on another surface still counts as
     /// moved), and the extras the renderer reads (pads, cranes, lamps).
     fn geo(&self, name: impl Into<String>, g: &Geometry) {
+        let name: String = name.into();
+        dump(&name, &g.parts);
         let mut h = Fnv::new();
         let mut soup = 0u64;
         let mut tris = 0;
