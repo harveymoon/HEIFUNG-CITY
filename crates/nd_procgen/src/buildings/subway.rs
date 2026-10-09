@@ -272,7 +272,7 @@ pub fn central_station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let (v0, v1) = (lo.y + d * 0.2, lo.y + d * 0.72);
     let hall = fit_inside(c, &vec![Vec2::new(u0, v0), Vec2::new(u1, v0), Vec2::new(u1, v1), Vec2::new(u0, v1)]);
     let (hlo, hhi) = bounds(&hall);
-    let (hw, hd) = (hhi.x - hlo.x, hhi.y - hlo.y);
+    let hd = hhi.y - hlo.y;
     let wall = (hd * 0.28).clamp(5.0, 11.0);
     let stone = mul(pal.stone, 1.25);
     // Stone base, glass clerestory above it.
@@ -289,7 +289,62 @@ pub fn central_station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
     }
     cornice(g, c, &hall, wall - 0.4, 0.8, 0.5, Stone, mul(stone, 0.9));
-    // The vault: ribs every 7 m along the hall, glass between, a neon ridge.
+    let rise = station_vault(g, c, rng, &hall, wall);
+    // The front pavilion: stone, the great clock, the name in neon.
+    let front = c.front_face(&hall);
+    let pav_w = (front.len * 0.38).clamp(8.0, 28.0);
+    let pav_h = wall + rise * 0.9;
+    let pav = fit_inside(c, &rect(front.mid().x, front.mid().y - 1.5, pav_w * 0.5, 4.0));
+    extrude(g, f, Stone, &pav, 0.0, pav_h, stone);
+    cornice(g, c, &pav, pav_h - 0.6, 1.0, 0.6, Stone, mul(stone, 0.85));
+    let pf = c.front_face(&pav);
+    // Three tall arched doorways, lit from inside.
+    for k in [-1.0f32, 0.0, 1.0] {
+        let t = k * pf.len * 0.28;
+        pf.bx(g, f, Glow, t, wall * 0.42, 0.05, Vec3::new(pf.len * 0.18, wall * 0.8, 0.1), mul(pal.window_warm, 0.75));
+        pf.bx(g, f, Stone, t, wall * 0.84, 0.15, Vec3::new(pf.len * 0.2, 0.6, 0.3), mul(stone, 0.8));
+    }
+    canopy(g, c, &pf, 0.0, 4.2, pf.len * 0.9, 3.5, mul(pal.steel, 0.9));
+    let clock_r = (pav_w * 0.16).clamp(1.2, 3.4);
+    clock(g, f, &pf, 0.0, pav_h - clock_r - 1.4, clock_r, 0.12, pal);
+    neon_text(g, f, &pf, "CENTRAL", 0.0, wall * 0.98, (pav_w / 9.0).clamp(0.6, 2.6), 0.4, NEON_MAGENTA);
+    // A thin cyan frame round the name.
+    let nw = pav_w * 0.86;
+    let nh = (pav_w / 9.0).clamp(0.6, 2.6) * 1.5;
+    for (a, b) in [((-0.5f32, -0.5f32), (0.5f32, -0.5f32)), ((0.5, -0.5), (0.5, 0.5)), ((0.5, 0.5), (-0.5, 0.5)), ((-0.5, 0.5), (-0.5, -0.5))] {
+        let pa = pf.at(a.0 * nw, 0.35);
+        let pb = pf.at(b.0 * nw, 0.35);
+        g.part(Glow).beam(f.at(pa.x, wall * 0.98 + a.1 * nh, pa.y), f.at(pb.x, wall * 0.98 + b.1 * nh, pb.y), 0.1, rgba(METRO_CYAN));
+    }
+    clock_tower(g, c, &hall, pav_h);
+    bus_terminal(g, c, rng, lo, hi);
+    // The metro entrance in the forecourt, its pylon by the kerb.
+    let mk = clamp_into(&c.poly, Vec2::new(lo.x + w * 0.62 - 3.0, lo.y + 1.0));
+    if kiosk_fits(c, mk, 0.0, 5.0) {
+        kiosk(g, f, mk, 0.0, 5.0, pal);
+    }
+    metro_pylon(g, f, clamp_into(&c.poly, Vec2::new(lo.x + w * 0.62 + 0.5, lo.y + 0.8)), 5.0, pal);
+    // Taxi rank and lamps along the front.
+    let gate = c.front_face(&offset_poly(&c.lot_poly, 0.3));
+    for k in 0..3 {
+        let p = gate.at(-gate.len * 0.12 + k as f32 * 5.0, -4.0);
+        if vehicle_fits(c, p, 0.0, Vehicle::Car) {
+            vehicle(g, f, pal, rng, p, 0.0, 0.0, Vehicle::Car, [0.95, 0.75, 0.1]);
+        }
+    }
+    for k in 0..5 {
+        lamp_post(g, f, gate.at(-gate.len * 0.45 + gate.len * 0.22 * k as f32, -1.4), 6.0, pal.lamp);
+    }
+    // Platforms along the track, as at any station.
+    super::rail::platform(g, c, rng, poly_center(&hall));
+}
+
+/// The Central Station's vault: ribs every 7 m along the hall, glass
+/// between, a neon ridge and glass fans closing its ends. Its rise.
+fn station_vault(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, hall: &[Vec2], wall: f32) -> f32 {
+    let (f, pal) = (&c.frame, c.palette);
+    let (hlo, hhi) = bounds(hall);
+    let (hw, hd) = (hhi.x - hlo.x, hhi.y - hlo.y);
     let span = hd * 0.5;
     let rise = (span * 0.75).min(16.0);
     let mid_v = (hlo.y + hhi.y) * 0.5;
@@ -321,33 +376,15 @@ pub fn central_station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             g.part(Glow).tri_facing(centre, a, b, -out, tint);
         }
     }
-    // The front pavilion: stone, the great clock, the name in neon.
-    let front = c.front_face(&hall);
-    let pav_w = (front.len * 0.38).clamp(8.0, 28.0);
-    let pav_h = wall + rise * 0.9;
-    let pav = fit_inside(c, &rect(front.mid().x, front.mid().y - 1.5, pav_w * 0.5, 4.0));
-    extrude(g, f, Stone, &pav, 0.0, pav_h, stone);
-    cornice(g, c, &pav, pav_h - 0.6, 1.0, 0.6, Stone, mul(stone, 0.85));
-    let pf = c.front_face(&pav);
-    // Three tall arched doorways, lit from inside.
-    for k in [-1.0f32, 0.0, 1.0] {
-        let t = k * pf.len * 0.28;
-        pf.bx(g, f, Glow, t, wall * 0.42, 0.05, Vec3::new(pf.len * 0.18, wall * 0.8, 0.1), mul(pal.window_warm, 0.75));
-        pf.bx(g, f, Stone, t, wall * 0.84, 0.15, Vec3::new(pf.len * 0.2, 0.6, 0.3), mul(stone, 0.8));
-    }
-    canopy(g, c, &pf, 0.0, 4.2, pf.len * 0.9, 3.5, mul(pal.steel, 0.9));
-    let clock_r = (pav_w * 0.16).clamp(1.2, 3.4);
-    clock(g, f, &pf, 0.0, pav_h - clock_r - 1.4, clock_r, 0.12, pal);
-    neon_text(g, f, &pf, "CENTRAL", 0.0, wall * 0.98, (pav_w / 9.0).clamp(0.6, 2.6), 0.4, NEON_MAGENTA);
-    // A thin cyan frame round the name.
-    let nw = pav_w * 0.86;
-    let nh = (pav_w / 9.0).clamp(0.6, 2.6) * 1.5;
-    for (a, b) in [((-0.5f32, -0.5f32), (0.5f32, -0.5f32)), ((0.5, -0.5), (0.5, 0.5)), ((0.5, 0.5), (-0.5, 0.5)), ((-0.5, 0.5), (-0.5, -0.5))] {
-        let pa = pf.at(a.0 * nw, 0.35);
-        let pb = pf.at(b.0 * nw, 0.35);
-        g.part(Glow).beam(f.at(pa.x, wall * 0.98 + a.1 * nh, pa.y), f.at(pb.x, wall * 0.98 + b.1 * nh, pb.y), 0.1, rgba(METRO_CYAN));
-    }
-    // The clock tower at the hall's left front corner.
+    rise
+}
+
+/// The clock tower at the hall's left front corner.
+fn clock_tower(g: &mut Geometry, c: &Ctx, hall: &[Vec2], pav_h: f32) {
+    let (f, pal) = (&c.frame, c.palette);
+    let (hlo, hhi) = bounds(hall);
+    let hw = hhi.x - hlo.x;
+    let stone = mul(pal.stone, 1.25);
     let tower_s = (hw * 0.08).clamp(4.0, 8.0);
     let tc = clamp_into(&c.poly, Vec2::new(hlo.x + tower_s * 0.5 + 0.5, hlo.y - tower_s * 0.2));
     let tower = fit_inside(c, &rect(tc.x, tc.y, tower_s * 0.5, tower_s * 0.5));
@@ -365,7 +402,13 @@ pub fn central_station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     f.bx(g, Glow, tcen.x, tower_h + 4.2, tcen.y, Vec3::new(tower_s * 0.55, 0.3, tower_s * 0.55), NEON_MAGENTA);
     f.bx(g, Metal, tcen.x, tower_h + 7.0, tcen.y, Vec3::new(0.25, 6.0, 0.25), mul(pal.steel, 0.5));
     aviation_light_local(g, f, pal, tcen.x, tower_h + 10.1, tcen.y, 0.4);
-    // The bus terminal: saw-tooth canopies over drive-through bays.
+}
+
+/// The bus terminal beside the hall: saw-tooth canopies over drive-through
+/// bays, islands with shelters, buses in every other bay.
+fn bus_terminal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, lo: Vec2, hi: Vec2) {
+    let (f, pal) = (&c.frame, c.palette);
+    let (w, d) = (hi.x - lo.x, hi.y - lo.y);
     let term = fit_inside(c, &rect((lo.x + w * 0.64 + hi.x - 1.0) * 0.5, lo.y + d * 0.4, (hi.x - 1.0 - lo.x - w * 0.64) * 0.5, d * 0.28));
     let (tlo, thi) = bounds(&term);
     let (b0, b1) = (tlo.x, thi.x);
@@ -409,23 +452,4 @@ pub fn central_station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let sign = Face::new(Vec2::new(b0, bv0 - 0.2), Vec2::new(b1, bv0 - 0.2), Vec2::new(0.0, -1.0));
         neon_text(g, f, &sign, "BUS", 0.0, 8.6, 1.2, 0.0, NEON_AMBER);
     }
-    // The metro entrance in the forecourt, its pylon by the kerb.
-    let mk = clamp_into(&c.poly, Vec2::new(lo.x + w * 0.62 - 3.0, lo.y + 1.0));
-    if kiosk_fits(c, mk, 0.0, 5.0) {
-        kiosk(g, f, mk, 0.0, 5.0, pal);
-    }
-    metro_pylon(g, f, clamp_into(&c.poly, Vec2::new(lo.x + w * 0.62 + 0.5, lo.y + 0.8)), 5.0, pal);
-    // Taxi rank and lamps along the front.
-    let gate = c.front_face(&offset_poly(&c.lot_poly, 0.3));
-    for k in 0..3 {
-        let p = gate.at(-gate.len * 0.12 + k as f32 * 5.0, -4.0);
-        if vehicle_fits(c, p, 0.0, Vehicle::Car) {
-            vehicle(g, f, pal, rng, p, 0.0, 0.0, Vehicle::Car, [0.95, 0.75, 0.1]);
-        }
-    }
-    for k in 0..5 {
-        lamp_post(g, f, gate.at(-gate.len * 0.45 + gate.len * 0.22 * k as f32, -1.4), 6.0, pal.lamp);
-    }
-    // Platforms along the track, as at any station.
-    super::rail::platform(g, c, rng, poly_center(&hall));
 }
