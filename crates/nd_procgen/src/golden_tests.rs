@@ -611,3 +611,36 @@ fn golden_hashes() {
     std::fs::write(&path, s).unwrap();
     eprintln!("{} cases in {:.1}s -> {path}", m.len(), t0.elapsed().as_secs_f32());
 }
+
+/// One case of the first building sweep, surface by surface, and its first
+/// triangles: `ND_GOLDEN_CASE="<style> <lot> <floors>"`, for tracking down
+/// which part of a mesh a refactor changed.
+#[test]
+#[ignore]
+fn golden_case() {
+    let case = std::env::var("ND_GOLDEN_CASE").expect("ND_GOLDEN_CASE");
+    let w: Vec<&str> = case.split(' ').collect();
+    let (si, style) = Style::ALL.into_iter().enumerate().find(|(_, s)| format!("{s:?}") == w[0]).expect("style");
+    let lots = odd_lots();
+    let (li, (_, lot)) = lots.iter().enumerate().find(|(_, (n, _))| *n == w[1]).expect("lot");
+    let (fi, floors) = [1u8, 2, 6, 12, 40, 250].into_iter().enumerate().find(|(_, f)| f.to_string() == w[2]).expect("floors");
+    let k = si * 31 + li * 7 + fi * 3;
+    let tier = Tier::ALL[k % 3];
+    let cond = [0.0f32, 0.5, 1.0][(k / 3) % 3];
+    let lu = LandUse::ALL[k % LandUse::ALL.len()];
+    let look = if k % 4 == 0 { None } else { Some(nd_sim::districts::Look::ALL[k % 8]) };
+    let brand = (k % 5 == 0).then(hq);
+    let tower = (style == Style::Supertall).then(|| tower_on(lot, floors, k)).flatten();
+    let extras = Extras { dynamic_lights: k % 2 == 0, look, brand, tower, ..Extras::default() };
+    let g = generate_styled_extras(lot, lu, floors, tier, cond, 1000 + k as u64, style, &BuildingRules::default(), &Palette::default(), &extras);
+    for (s, m) in g.iter() {
+        let (e, _, t) = mesh_hashes(m);
+        let first = m.positions.iter().zip(&m.colors).enumerate().find(|_| true).map(|(_, (p, c))| (*p, *c));
+        eprintln!("{s:?}: {t} tris exact {e:016x} first {first:?}");
+        if std::env::var("ND_GOLDEN_DUMP").is_ok_and(|d| d == format!("{s:?}")) {
+            for (i, p) in m.positions.iter().enumerate() {
+                eprintln!("  {i} {p:?} {:?} {:?}", m.normals[i], m.colors[i]);
+            }
+        }
+    }
+}
