@@ -246,11 +246,9 @@ pub struct Fishing {
     pub key: u64,
 }
 
+/// The fishing fleet's hash: [`crate::hash::mix2`] salted.
 pub fn hash(a: u64, b: u64) -> u64 {
-    let mut x = a.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ 0xF15F_15F1;
-    x ^= x >> 31;
-    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x ^ (x >> 29)
+    crate::hash::mix2_salted(a, b, 0xF15F_15F1)
 }
 
 const NAMES: [&str; 24] = [

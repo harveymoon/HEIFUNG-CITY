@@ -960,14 +960,7 @@ fn merge_backland(mut parcels: Vec<Vec<Vec2>>, lu: LandUse, roads: &RoadNetwork)
 }
 
 fn polygon_seed(poly: &[Vec2]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for p in poly {
-        for v in [p.x, p.y] {
-            h ^= v.to_bits() as u64;
-            h = h.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    }
-    h
+    crate::hash::fnv_words(poly.iter().flat_map(|p| [p.x.to_bits() as u64, p.y.to_bits() as u64]))
 }
 
 /// Carve `zone` into parcels: subtract every road corridor and the ground
@@ -1720,12 +1713,7 @@ fn canonical(p: Polygon<f64>) -> Polygon<f64> {
 fn block_seed(p: &Polygon<f64>) -> u64 {
     let ring = from_geo(p);
     let (lo, hi) = bounds_of(&ring);
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for v in [area_f(p), lo.x, lo.y, hi.x, hi.y] {
-        h ^= v.round() as i64 as u64;
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    h
+    crate::hash::fnv_words([area_f(p), lo.x, lo.y, hi.x, hi.y].map(|v| v.round() as i64 as u64))
 }
 
 /// Halve big landlocked pieces across their long axis until each is a few

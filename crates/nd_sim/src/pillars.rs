@@ -173,26 +173,9 @@ impl PillarPlan {
 /// quantised numbers, then a splitmix finish) and never changes with the
 /// toolchain, as `std`'s `DefaultHasher` may.
 pub fn way_key(pts: &[Vec2], levels: &[f32]) -> u64 {
-    const PRIME: u64 = 0x0000_0100_0000_01B3;
-    let mut h: u64 = 0xCBF2_9CE4_8422_2325;
-    let mut eat = |x: i64| {
-        for b in x.to_le_bytes() {
-            h ^= b as u64;
-            h = h.wrapping_mul(PRIME);
-        }
-    };
-    eat(pts.len() as i64);
-    for p in pts {
-        eat((p.x * 10.0).round() as i64);
-        eat((p.y * 10.0).round() as i64);
-    }
-    for l in levels {
-        eat((l * 10.0).round() as i64);
-    }
-    let mut z = h;
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
+    let q = |v: f32| (v * 10.0).round() as i64;
+    let words = std::iter::once(pts.len() as i64).chain(pts.iter().flat_map(|p| [q(p.x), q(p.y)])).chain(levels.iter().map(|l| q(*l)));
+    crate::hash::finish(crate::hash::fnv_bytes(words.flat_map(i64::to_le_bytes)))
 }
 
 /// The key saves made before `way_key` was spelled out hold (`std`'s

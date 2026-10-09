@@ -2722,7 +2722,7 @@ mod tests {
             l.sea.as_ref().map(|s| (s.outline.clone(), s.islands.clone())),
             l.hot_spots.iter().map(|s| (s.pos, s.radius, s.heat)).collect::<Vec<_>>()
         );
-        text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
+        crate::hash::fnv_bytes(text.bytes())
     }
 
     #[test]

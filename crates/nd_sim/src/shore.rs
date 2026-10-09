@@ -134,12 +134,7 @@ pub fn trade_name(kind: crate::market::BusinessKind, seed: u64) -> Option<String
     })
 }
 
-fn mix(a: u64, b: u64) -> u64 {
-    let mut x = a.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
-    x ^= x >> 31;
-    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x ^ (x >> 29)
-}
+use crate::hash::mix2 as mix;
 
 /// The way down to the water on a beach lot, and the towel spots: a
 /// boardwalk from the entrance (the street side, or the side nearest the

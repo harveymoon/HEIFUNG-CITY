@@ -88,14 +88,7 @@ const STREET_SUFFIX: &[&str] = &["Street", "Street", "Street", "Road", "Lane", "
 const AVENUE_SUFFIX: &[&str] = &["Avenue", "Avenue", "Boulevard", "Parade", "Broadway", "Esplanade"];
 const HIGHWAY_FORMS: &[&str] = &["Expressway", "Freeway", "Skyway", "Parkway", "Highway"];
 
-fn mix(a: u64, b: u64) -> u64 {
-    let mut h = a ^ b.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    h ^= h >> 30;
-    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    h ^= h >> 27;
-    h = h.wrapping_mul(0x94D0_49BB_1331_11EB);
-    h ^ (h >> 31)
-}
+use crate::hash::mix;
 
 /// The `serial`th name drawn for a street of `class` in a city of `seed`.
 pub fn generate_name(seed: u64, serial: u64, class: StreetClass) -> String {

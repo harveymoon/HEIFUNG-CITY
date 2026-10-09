@@ -965,12 +965,7 @@ impl Committee {
 }
 
 /// A stable 64-bit mix (splitmix64), for seeds from seeds.
-pub fn mix(a: u64, b: u64) -> u64 {
-    let mut z = a ^ b.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
-}
+pub use crate::hash::mix;
 
 /// The pool: every scope at least once, fictional names from the game's
 /// name generator, distinct.
@@ -1039,7 +1034,7 @@ impl World {
         let today = self.committee_today();
         // The game id makes each new game's pool its own; a hash, not the
         // world's RNG, so the sim is untouched.
-        let id = self.identity.game_id.bytes().fold(0xCBF2_9CE4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01B3));
+        let id = crate::hash::fnv_bytes(self.identity.game_id.bytes());
         let seed = mix(mix(self.config.seed, self.landscape.params.seed), id);
         self.committee.ensure(seed, today);
     }

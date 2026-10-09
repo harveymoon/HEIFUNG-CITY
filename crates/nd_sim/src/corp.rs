@@ -315,18 +315,8 @@ fn srgb(c: u8) -> f32 {
     }
 }
 
-/// A stable 64-bit mix.
-pub fn mix(a: u64, b: u64) -> u64 {
-    let mut x = a ^ b.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    x ^ (x >> 31)
-}
-
-/// `0..1` from a hash.
-pub fn unit(h: u64) -> f32 {
-    (h >> 40) as f32 / (1u64 << 24) as f32
-}
+/// A stable 64-bit mix, and `0..1` from a hash.
+pub use crate::hash::{mix, unit};
 
 const SYL_A: &[&str] = &["Vor", "Kal", "Thes", "Quen", "Oru", "Zan", "Ilm", "Dra", "Syl", "Mor", "Pyr", "Cael", "Brix", "Nym", "Tov", "Jur", "Ferr", "Ost", "Hal", "Xan"];
 const SYL_B: &[&str] = &["ion", "ari", "exa", "ora", "ynth", "eth", "ux", "ivo", "arc", "enne", "ova", "ith", "ane", "eon", "ilo", "ark"];

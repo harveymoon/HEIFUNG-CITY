@@ -3767,12 +3767,8 @@ impl Traffic {
     /// The next number from the traffic model's own random stream
     /// (splitmix64), `0..1`. Only profiled drivers draw from it.
     fn roll(&mut self) -> f32 {
-        self.rng = self.rng.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.rng;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^= z >> 31;
-        (z >> 40) as f32 / (1u64 << 24) as f32
+        self.rng = self.rng.wrapping_add(crate::hash::PHI);
+        crate::hash::unit(crate::hash::finish(self.rng))
     }
 
     /// Would this driver go through the red on `nl`, `dist` metres ahead?

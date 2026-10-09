@@ -26,6 +26,8 @@ pub mod enforcement;
 pub mod estate;
 pub mod events;
 pub mod geom;
+/// Stable hashes (splitmix, FNV) for seeds, names and stream-free decisions.
+pub mod hash;
 pub mod history;
 pub mod homeless;
 /// [identity] The city's name and game id.
