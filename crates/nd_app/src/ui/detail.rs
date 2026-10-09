@@ -12,10 +12,10 @@ use nd_sim::{BusinessKind, LandUse, PowerPlantKind, Resource as Good, Tier};
 
 use super::pane::{self, heading, row, Series, Span};
 use super::tools::warn_if;
-use super::{hint, zone_color32, Info, UiCtx, GOLD, IVORY, WARN};
+use super::theme::GOOD;
+use super::{hint, Info, UiCtx, GOLD, IVORY, WARN};
 use crate::tools::Selection;
 
-const GOOD: Color32 = Color32::from_rgb(110, 200, 140);
 
 // ── City ───────────────────────────────────────────────────────────────────
 
@@ -38,7 +38,7 @@ pub fn city_overview(ui: &mut egui::Ui, p: &mut UiCtx) {
     let labels = pane::day_labels(&days);
     heading(ui, "Homes and jobs");
     let series = [
-        Series::new("homes", Color32::from_rgb(110, 200, 220), pane::col(&days, |d| d.homes as f32)),
+        Series::new("homes", super::theme::TEAL, pane::col(&days, |d| d.homes as f32)),
         Series::new("homes filled", Color32::from_rgb(60, 130, 160), pane::col(&days, |d| d.homes_filled as f32)),
         Series::new("jobs", GOLD, pane::col(&days, |d| d.jobs as f32)),
         Series::new("jobs filled", Color32::from_rgb(170, 120, 50), pane::col(&days, |d| d.jobs_filled as f32)),
@@ -128,7 +128,7 @@ pub fn market_businesses(ui: &mut egui::Ui, p: &mut UiCtx) {
     let days = pane::days(&e.history, span);
     let labels = pane::day_labels(&days);
     heading(ui, "Businesses and deals");
-    let series = [Series::new("businesses", GOLD, pane::col(&days, |d| d.businesses as f32)), Series::new("deals that day", Color32::from_rgb(110, 200, 220), pane::col(&days, |d| d.deals as f32))];
+    let series = [Series::new("businesses", GOLD, pane::col(&days, |d| d.businesses as f32)), Series::new("deals that day", super::theme::TEAL, pane::col(&days, |d| d.deals as f32))];
     pane::line_chart(ui, &labels, &series, 120.0, &|x| format!("{x:.0}"));
     legend(ui, &series);
     heading(ui, "How each kind of business pays");
@@ -159,11 +159,11 @@ pub fn market_businesses(ui: &mut egui::Ui, p: &mut UiCtx) {
     heading(ui, "Demand for new buildings");
     hint(ui, "How quickly vacant lots of each land use develop: now, and over the range.");
     for lu in LandUse::ALL {
-        let col = zone_color32(p.assets.palette.zone_color(lu));
+        let col = super::theme::rgb_f(p.assets.palette.zone_color(lu));
         ui.add(egui::ProgressBar::new(e.demand_for(lu)).text(lu.label()).fill(col.gamma_multiply(0.7)).desired_height(18.0).desired_width(BAR_WIDTH));
     }
     ui.add_space(6.0);
-    let series: Vec<Series> = LandUse::ALL.iter().map(|&lu| Series::new(lu.label(), zone_color32(p.assets.palette.zone_color(lu)), pane::col(&days, |d| d.demand[lu.index()] * 100.0))).collect();
+    let series: Vec<Series> = LandUse::ALL.iter().map(|&lu| Series::new(lu.label(), super::theme::rgb_f(p.assets.palette.zone_color(lu)), pane::col(&days, |d| d.demand[lu.index()] * 100.0))).collect();
     pane::line_chart(ui, &labels, &series, 120.0, &|x| format!("{x:.0}%"));
     legend(ui, &series);
 }
@@ -225,19 +225,14 @@ pub const BATTERY: Color32 = Color32::from_rgb(90, 235, 170);
 /// Batteries charging (below the axis).
 const CHARGING: Color32 = Color32::from_rgb(40, 140, 110);
 
-/// The plant table, compact or wide: a row per plant and battery with what
+/// The plant table: a row per plant and battery with what
 /// it puts out, what it costs to run and per MWh, and what it does to the
 /// air and the ears; batteries show their charge and flow instead. The
 /// figures come from `World::plant_rows`, the same as the API's.
-pub fn plant_table(ui: &mut egui::Ui, w: &nd_sim::World, rows: &[nd_sim::PlantRow], wide: bool) -> Option<(nd_sim::BuildingId, Vec2)> {
+fn plant_table(ui: &mut egui::Ui, w: &nd_sim::World, rows: &[nd_sim::PlantRow]) -> Option<(nd_sim::BuildingId, Vec2)> {
     let mut act = None;
-    let cols = if wide { 9 } else { 6 };
-    egui::Grid::new(if wide { "power_plants_wide" } else { "power_plants" }).num_columns(cols).spacing(egui::vec2(16.0, 4.0)).striped(true).show(ui, |ui| {
-        let heads: &[(&str, &str)] = if wide {
-            &[("plant", ""), ("now", "output now / nameplate"), ("24 h mean", "mean output over the last 24 hours"), ("upkeep", "running cost per day"), ("cost/MWh", "upkeep over the last 24 hours' energy"), ("CO2 t/day", "carbon dioxide at the last 24 hours' rate"), ("smog", "air at the fence now, 0 to 1 (coal at full output is 1)"), ("noise", "at the fence while running"), ("", "")]
-        } else {
-            &[("plant", ""), ("now", "output now"), ("upkeep", "running cost per day"), ("cost/MWh", "upkeep over the last 24 hours' energy"), ("air", "CO2 per day; smog at the fence now"), ("noise", "at the fence while running")]
-        };
+    egui::Grid::new("power_plants_wide").num_columns(9).spacing(egui::vec2(16.0, 4.0)).striped(true).show(ui, |ui| {
+        let heads: &[(&str, &str)] = &[("plant", ""), ("now", "output now / nameplate"), ("24 h mean", "mean output over the last 24 hours"), ("upkeep", "running cost per day"), ("cost/MWh", "upkeep over the last 24 hours' energy"), ("CO2 t/day", "carbon dioxide at the last 24 hours' rate"), ("smog", "air at the fence now, 0 to 1 (coal at full output is 1)"), ("noise", "at the fence while running"), ("", "")];
         for (h, tip) in heads {
             let l = pane::th(ui, h);
             if !tip.is_empty() {
@@ -261,39 +256,27 @@ pub fn plant_table(ui: &mut egui::Ui, w: &nd_sim::World, rows: &[nd_sim::PlantRo
                 nd_sim::GridAsset::Plant(_) => {
                     let pct = if r.capacity_mw > 0.0 { r.now_mw / r.capacity_mw * 100.0 } else { 0.0 };
                     let smog = egui::RichText::new(format!("{:.2}", r.air));
-                    ui.label(egui::RichText::new(if wide { format!("{:.1} MW · {pct:.0}% of {:.0}", r.now_mw, r.capacity_mw) } else { format!("{:.1} MW", r.now_mw) }));
-                    if wide {
-                        ui.label(egui::RichText::new(format!("{:.1} MW", r.mean_mw)).weak());
-                    }
+                    ui.label(egui::RichText::new(format!("{:.1} MW · {pct:.0}% of {:.0}", r.now_mw, r.capacity_mw)));
+                    ui.label(egui::RichText::new(format!("{:.1} MW", r.mean_mw)).weak());
                     ui.label(egui::RichText::new(format!("{:.0}", r.upkeep_per_day)));
                     ui.label(egui::RichText::new(cost));
-                    if wide {
-                        ui.label(warn_if(r.co2_t_per_day > 100.0, format!("{:.0}", r.co2_t_per_day)));
-                        ui.label(if r.air > 0.5 { smog.color(WARN) } else { smog });
-                    } else {
-                        ui.label(warn_if(r.co2_t_per_day > 100.0, if r.co2_t_per_day > 0.0 { format!("{:.0} t CO2 · smog {:.1}", r.co2_t_per_day, r.air) } else { "clean".to_string() }));
-                    }
+                    ui.label(warn_if(r.co2_t_per_day > 100.0, format!("{:.0}", r.co2_t_per_day)));
+                    ui.label(if r.air > 0.5 { smog.color(WARN) } else { smog });
                     ui.label(warn_if(r.noise_db.is_some_and(|d| d >= 60.0), noise));
                 }
                 nd_sim::GridAsset::Battery(_) => {
                     let level = if r.capacity_mwh > 0.0 { r.charge_mwh / r.capacity_mwh } else { 0.0 };
                     let flow = if r.now_mw > 0.05 { format!("gives {:.1} MW", r.now_mw) } else if r.now_mw < -0.05 { format!("takes {:.1} MW", -r.now_mw) } else { "holding".to_string() };
-                    ui.label(egui::RichText::new(if wide { format!("{:.0}% of {:.0} MWh · {flow}", level * 100.0, r.capacity_mwh) } else { format!("{:.0}% · {flow}", level * 100.0) }));
-                    if wide {
-                        ui.label(egui::RichText::new(format!("{:.0} MWh out", r.mean_mw * 24.0)).weak());
-                    }
+                    ui.label(egui::RichText::new(format!("{:.0}% of {:.0} MWh · {flow}", level * 100.0, r.capacity_mwh)));
+                    ui.label(egui::RichText::new(format!("{:.0} MWh out", r.mean_mw * 24.0)).weak());
                     ui.label(egui::RichText::new(format!("{:.0}", r.upkeep_per_day)));
                     ui.label(egui::RichText::new(cost));
-                    if wide {
-                        ui.label(egui::RichText::new("0").weak());
-                        ui.label(egui::RichText::new("0.00").weak());
-                    } else {
-                        ui.label(egui::RichText::new("clean").weak());
-                    }
+                    ui.label(egui::RichText::new("0").weak());
+                    ui.label(egui::RichText::new("0.00").weak());
                     ui.label(egui::RichText::new(noise));
                 }
             }
-            if wide && ui.small_button("go").on_hover_text("Select it and fly there").clicked() {
+            if ui.small_button("go").on_hover_text("Select it and fly there").clicked() {
                 if let Some(l) = w.buildings.get(r.id).and_then(|b| w.lots.get(b.lot)) {
                     act = Some((r.id, Vec2::new(l.center.x, l.center.y)));
                 }
@@ -405,7 +388,7 @@ pub fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
         let series = [
             Series::new("export income", EXPORT, pane::col(&days, |d| d.flow(nd_sim::economy::Flow::GridExport))),
             Series::new("import cost", IMPORT, pane::col(&days, |d| d.flow(nd_sim::economy::Flow::GridImport))),
-            Series::new("upkeep", Color32::from_rgb(255, 120, 90), pane::col(&days, |d| d.flow(nd_sim::economy::Flow::PlantUpkeep))),
+            Series::new("upkeep", super::WARN, pane::col(&days, |d| d.flow(nd_sim::economy::Flow::PlantUpkeep))),
         ];
         pane::stacked_bars(ui, &pane::day_labels(&days), &series, 100.0, true, None, &|x| format!("{x:.0}"));
         legend(ui, &series);
@@ -428,7 +411,7 @@ pub fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
         if rows.is_empty() {
             hint(ui, "No plants: the city buys what the regional grid will sell. Buildings, Power places plants and battery packs.");
         }
-        act = plant_table(ui, w, &rows, true);
+        act = plant_table(ui, w, &rows);
         if !rows.is_empty() {
             heading(ui, "Each plant, last 72 hours");
             let n = hours.len();
@@ -575,7 +558,7 @@ pub fn city_land(ui: &mut egui::Ui, p: &mut UiCtx) {
                     continue;
                 }
                 let built = lots.iter().filter(|l| l.building.is_some()).count();
-                ui.label(egui::RichText::new(lu.label()).color(zone_color32(p.assets.palette.zone_color(lu))));
+                ui.label(egui::RichText::new(lu.label()).color(super::theme::rgb_f(p.assets.palette.zone_color(lu))));
                 ui.label(egui::RichText::new(format!("{}", lots.len())));
                 ui.label(egui::RichText::new(format!("{built}")));
                 ui.label(egui::RichText::new(format!("{}", lots.iter().filter(|l| l.building.is_none() && l.usable()).count())));
@@ -583,7 +566,7 @@ pub fn city_land(ui: &mut egui::Ui, p: &mut UiCtx) {
             }
             let city = w.lots.values().filter(|l| w.is_city_ground(l)).count();
             if city > 0 {
-                ui.label(egui::RichText::new("City buildings").color(zone_color32(p.assets.palette.zone_color(LandUse::Civic))));
+                ui.label(egui::RichText::new("City buildings").color(super::theme::rgb_f(p.assets.palette.zone_color(LandUse::Civic))));
                 ui.label(egui::RichText::new(format!("{city}")));
                 ui.label(egui::RichText::new(format!("{city}")));
                 ui.label(egui::RichText::new("0"));
@@ -608,7 +591,7 @@ fn land_figures(ui: &mut egui::Ui, p: &mut UiCtx) {
 // ── figures (what the compact windows showed) ─────────────────────────────
 
 /// The city's standing figures, under the charts on City, Overview.
-pub fn city_figures(ui: &mut egui::Ui, p: &mut UiCtx) {
+fn city_figures(ui: &mut egui::Ui, p: &mut UiCtx) {
     let w = &p.sim.world;
     let e = &w.economy;
     let sites = w.buildings.values().filter(|b| b.construction.is_some()).count();
@@ -629,12 +612,12 @@ pub fn city_figures(ui: &mut egui::Ui, p: &mut UiCtx) {
 }
 
 /// The grid now, the batteries, the plants, costs, the next day and the weather.
-pub fn power_figures(ui: &mut egui::Ui, p: &mut UiCtx) {
+fn power_figures(ui: &mut egui::Ui, p: &mut UiCtx) {
     let w = &p.sim.world;
     let pw = &w.economy.power;
     heading(ui, "Grid");
-    ui.add(egui::ProgressBar::new(pw.served).text(format!("served {:.0}%", pw.served * 100.0)).fill(if pw.served < 0.98 { WARN.gamma_multiply(0.8) } else { egui::Color32::from_rgb(110, 200, 140).gamma_multiply(0.8) }).desired_height(18.0).desired_width(BAR_WIDTH));
-    row(ui, "supply", format!("{:.0} MW from {} plant{}", pw.supply_mw, pw.plants, if pw.plants == 1 { "" } else { "s" }));
+    ui.add(egui::ProgressBar::new(pw.served).text(format!("served {:.0}%", pw.served * 100.0)).fill(if pw.served < 0.98 { WARN.gamma_multiply(0.8) } else { super::theme::GOOD.gamma_multiply(0.8) }).desired_height(18.0).desired_width(BAR_WIDTH));
+    row(ui, "supply", format!("{:.0} MW from {} plant{}", pw.supply_mw, pw.plants, super::fmt::s(pw.plants)));
     row(ui, "demand", format!("{:.0} MW", pw.demand_mw));
     // Where the balance went this hour: the merit order of `power::dispatch`.
     let mut balance = Vec::new();
@@ -690,7 +673,7 @@ pub fn power_figures(ui: &mut egui::Ui, p: &mut UiCtx) {
 }
 
 /// Buses, rail, metro, taxis and cargo hubs now.
-pub fn transit_figures(ui: &mut egui::Ui, p: &mut UiCtx) {
+fn transit_figures(ui: &mut egui::Ui, p: &mut UiCtx) {
     let w = &p.sim.world;
     let t = &w.economy.transit;
     heading(ui, "Buses");
@@ -705,7 +688,7 @@ pub fn transit_figures(ui: &mut egui::Ui, p: &mut UiCtx) {
     }
     let r = &w.rail.stats;
     heading(ui, "Rail");
-    row(ui, "network", format!("{} station{}   {} yard{}   {} train{} out", r.stations, if r.stations == 1 { "" } else { "s" }, r.yards, if r.yards == 1 { "" } else { "s" }, r.trains, if r.trains == 1 { "" } else { "s" }));
+    row(ui, "network", format!("{} station{}   {} yard{}   {} train{} out", r.stations, super::fmt::s(r.stations), r.yards, super::fmt::s(r.yards), r.trains, super::fmt::s(r.trains)));
     row(ui, "passengers", format!("{} waiting   {} riding   {} today   next train in {} min", r.waiting, r.riding, r.riders_today, r.next_passenger_in));
     row(ui, "trains today", format!("{} passenger   {} freight", r.passenger_trains_today, r.freight_trains_today));
     row(ui, "freight", format!("{:.0} units in today   {:.0} waiting at yards", r.freight_in_today, r.freight_waiting + 0.0));
@@ -716,7 +699,7 @@ pub fn transit_figures(ui: &mut egui::Ui, p: &mut UiCtx) {
     if s.lines == 0 {
         hint(ui, "No metro line yet: place metro stations (Build window, Transit, Metro), then Metro lines joins them station by station.");
     }
-    row(ui, "network", format!("{} station{}   {} line{}   {:.1} km   {} train{} running", s.stations, if s.stations == 1 { "" } else { "s" }, s.lines, if s.lines == 1 { "" } else { "s" }, s.tunnel_m / 1000.0 + 0.0, s.trains, if s.trains == 1 { "" } else { "s" }));
+    row(ui, "network", format!("{} station{}   {} line{}   {:.1} km   {} train{} running", s.stations, super::fmt::s(s.stations), s.lines, super::fmt::s(s.lines), s.tunnel_m / 1000.0 + 0.0, s.trains, super::fmt::s(s.trains)));
     row(ui, "riders", format!("{} waiting   {} riding   {} today   {} yesterday", s.waiting, s.riding, s.riders_today, s.riders_yesterday));
     row(ui, "money", format!("fares {:.0} today ({:.0} yesterday)   upkeep {:.0} yesterday", s.fares_today, s.fares_yesterday, s.upkeep_today));
     for l in w.subway.lines.values() {
@@ -742,7 +725,7 @@ fn taxis_and_freight(ui: &mut egui::Ui, w: &nd_sim::World) {
     if companies.is_empty() {
         hint(ui, &format!("No taxi company yet. One opens when people want cabs: {} of {} trips today would have taken one.", t.latent_today, nd_sim::taxi::FOUND_DEMAND));
     } else {
-        row(ui, "fleet", format!("{} cab{} · {} on duty · {} on the road · {} at ranks · {} in the yard", k.cabs, if k.cabs == 1 { "" } else { "s" }, k.on_duty, k.on_road, k.at_ranks + k.at_kerb, k.in_yard));
+        row(ui, "fleet", format!("{} cab{} · {} on duty · {} on the road · {} at ranks · {} in the yard", k.cabs, super::fmt::s(k.cabs), k.on_duty, k.on_road, k.at_ranks + k.at_kerb, k.in_yard));
         row(ui, "rides", format!("{} today ({} yesterday) · {} carrying now · {} waiting at the kerb", s.rides_today, s.rides_yesterday, k.carrying, t.requests.len()));
         row(ui, "riders", format!("{} drunk · {} late at night · {} gave up waiting", s.drunk_rides_today, s.night_rides_today, s.gave_up_today));
         let wait = if s.rides_today > 0 { s.wait_minutes_today / s.rides_today as f32 } else { 0.0 };

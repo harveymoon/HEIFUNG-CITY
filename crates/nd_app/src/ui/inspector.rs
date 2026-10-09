@@ -4,7 +4,8 @@
 
 use bevy_egui::egui;
 
-use super::person::{citizen_summary, memory_line, spotlight_toggle};
+use super::fmt::{self, capitalise};
+use super::theme::GOOD;
 use super::{hint, neon, section, UiCtx, GOLD, IVORY, WARN};
 use crate::assets::GameAssets;
 use crate::sim::Sim;
@@ -43,37 +44,8 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
     }
 }
 
-pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets: &GameAssets) {
+fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets: &GameAssets) {
     match *selection {
-        Selection::None => {
-            ui.label(egui::RichText::new("Nothing selected.").weak());
-        }
-        // [toll-inspect] (its own window, `super::toll`, is the same one)
-        Selection::Toll(id) => super::toll::show(ui, sim, selection, id),
-        // [road-inspect] (its own window, `super::road`, is the same one)
-        Selection::Road(sid) => {
-            let _ = super::road::show(ui, sim, selection, sid, false);
-        }
-        Selection::Citizen(id) => {
-            if !sim.world.citizens.contains_key(id) {
-                *selection = Selection::None;
-                return;
-            }
-            neon(ui, &sim.world.citizens[id].name);
-            if let Some(b) = super::person::activity_heading(ui, &sim.world, id) {
-                *selection = Selection::Building(b);
-                return;
-            }
-            citizen_summary(ui, &sim.world, &sim.world.citizens[id]);
-            super::estate::citizen_line(ui, &sim.world, id);
-            ui.add_space(4.0);
-            spotlight_toggle(ui, &mut sim.world, id, "Spotlight: route this citizen through the LLM mind");
-            super::places::citizen_places(ui, &sim.world, id);
-            hint(ui, "memories");
-            for m in sim.world.citizens[id].memories.iter().rev().take(8) {
-                memory_line(ui, m);
-            }
-        }
         Selection::Building(id) => {
             if !sim.world.buildings.contains_key(id) {
                 *selection = Selection::None;
@@ -92,7 +64,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 let line = w.transit.routes.get(bus.route).map(|r| r.name.clone()).unwrap_or_else(|| "a line that was removed".into());
                 neon(ui, &format!("Bus on {line}"));
                 let going = if bus.to_depot || bus.next_stop == usize::MAX { "heading back to the depot".to_string() } else { format!("next stop {}", bus.next_stop + 1) };
-                ui.label(format!("{} passenger{}  ·  {going}  ·  {:.0} km/h{}", bus.passengers.len(), if bus.passengers.len() == 1 { "" } else { "s" }, car.v * 3.6, if car.hold > 0.0 { "  ·  at a stop" } else { "" }));
+                ui.label(format!("{} passenger{}  ·  {going}  ·  {:.0} km/h{}", bus.passengers.len(), super::fmt::s(bus.passengers.len()), car.v * 3.6, if car.hold > 0.0 { "  ·  at a stop" } else { "" }));
                 if ui.small_button("Open the line in the Lines window").clicked() {
                     super::Info::Lines.set_open(ui.ctx(), true);
                 }
@@ -177,7 +149,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 let now = sim.world.clock.tick;
                 let truck = sim.world.enforcement.job_for(vid).map(|j| match j.state {
                     // [clamp] An officer's clamp: the fine or the tow truck.
-                    nd_sim::enforcement::TowState::Waiting { until } if j.reason == nd_sim::enforcement::TowReason::Unpaid => format!("fine {:.0} unpaid  ·  towed in {}", nd_sim::enforcement::CLAMP_FINE, minutes_label(until.saturating_sub(now))),
+                    nd_sim::enforcement::TowState::Waiting { until } if j.reason == nd_sim::enforcement::TowReason::Unpaid => format!("fine {:.0} unpaid  ·  towed in {}", nd_sim::enforcement::CLAMP_FINE, fmt::hours_min_long(until.saturating_sub(now))),
                     _ if j.truck.is_some() => "the tow truck is on its way".to_string(),
                     _ if j.company.is_none() => "a tow truck is coming from out of town".to_string(),
                     _ => "waiting for a tow truck".to_string(),
@@ -190,6 +162,9 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
             }
             show_tow_refusal(ui);
         }
+        // The window opens on the kinds above only (its guard); citizens
+        // get the person pane, tolls and roads their own windows.
+        Selection::None | Selection::Citizen(_) | Selection::Toll(_) | Selection::Road(_) => {}
     }
 }
 
@@ -271,11 +246,11 @@ fn unit(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets: &Ga
                 }
                 if let Some(s) = &scene {
                     let lines = s.streams.len();
-                    figure(ui, "water used", format!("{:.0} L", (s.litres / 100.0).round() * 100.0), egui::Color32::from_rgb(120, 200, 255));
+                    figure(ui, "water used", format!("{:.0} L", (s.litres / 100.0).round() * 100.0), super::theme::SERVICE_BLUE);
                     hint(ui, &if s.packing {
                         "the water is off; the crew is rolling up the hoses and lowering the ladder".to_string()
                     } else {
-                        format!("{} line{} flowing  ·  ladder {:.0} m at {:.0}°", lines, if lines == 1 { "" } else { "s" }, s.ladder.length, s.ladder.pitch.to_degrees())
+                        format!("{} line{} flowing  ·  ladder {:.0} m at {:.0}°", lines, super::fmt::s(lines), s.ladder.length, s.ladder.pitch.to_degrees())
                     });
                 }
             }
@@ -298,23 +273,22 @@ fn unit(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets: &Ga
     // (Driving, the journey card below shows them.)
     if car.is_none() {
         section(ui, &format!("CREW  ·  {}", crew.len().max(u.kind.crew())));
-    }
-    if car.is_some() {
-    } else if crew.is_empty() {
-        hint(ui, &format!("the crew of {} {} (nobody on the station's payroll by name)", u.kind.call_sign(), u.number));
-    } else {
-        super::portrait::grid(ui, w, &crew, 8, selection);
-        if let Some(s) = &scene {
-            for (i, c) in crew.iter().enumerate() {
-                let Some(fig) = s.figures.get(i) else { continue };
-                let name = w.citizens.get(*c).map_or("someone", |x| x.name.as_str());
-                let what = if !fig.out { "aboard".to_string() } else if fig.walking { format!("{} (on the way)", fig.role.label()) } else { fig.role.label().to_string() };
-                ui.horizontal(|ui| {
-                    if ui.small_button(name).clicked() {
-                        picked = Some(Selection::Citizen(*c));
-                    }
-                    ui.label(egui::RichText::new(what).small().weak());
-                });
+        if crew.is_empty() {
+            hint(ui, &format!("the crew of {} {} (nobody on the station's payroll by name)", u.kind.call_sign(), u.number));
+        } else {
+            super::portrait::grid(ui, w, &crew, 8, selection);
+            if let Some(s) = &scene {
+                for (i, c) in crew.iter().enumerate() {
+                    let Some(fig) = s.figures.get(i) else { continue };
+                    let name = w.citizens.get(*c).map_or("someone", |x| x.name.as_str());
+                    let what = if !fig.out { "aboard".to_string() } else if fig.walking { format!("{} (on the way)", fig.role.label()) } else { fig.role.label().to_string() };
+                    ui.horizontal(|ui| {
+                        if ui.small_button(name).clicked() {
+                            picked = Some(Selection::Citizen(*c));
+                        }
+                        ui.label(egui::RichText::new(what).small().weak());
+                    });
+                }
             }
         }
     }
@@ -423,7 +397,7 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
     }
     // [free-placement] A city building reads Civic (its ground is out of the zoning).
     let shown = w.shown_use(id);
-    let zone_col = super::zone_color32(assets.palette.zone_color(shown));
+    let zone_col = super::theme::rgb_f(assets.palette.zone_color(shown));
     let style = nd_procgen::building_style(w, id, &assets.rules, Some(&sim.styles));
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
@@ -434,7 +408,7 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
                 tag(ui, ind.label(), egui::Color32::from_gray(150));
             }
         } else if let Some(s) = b.service {
-            tag(ui, &capitalise(s.kind.label()), egui::Color32::from_rgb(120, 200, 255));
+            tag(ui, &capitalise(s.kind.label()), super::theme::SERVICE_BLUE);
         } else if let Some(k) = b.plant {
             tag(ui, &capitalise(k.label()), super::detail::plant_color(k));
         } else if b.depot {
@@ -448,7 +422,7 @@ fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets:
         }
     });
     let started = if b.construction.is_some() { "started" } else { "built" };
-    hint(ui, &format!("{}  ·  {} floor{}  ·  {started} day {}", style.map_or("unknown style", |s| s.label()), b.floors, if b.floors == 1 { "" } else { "s" }, b.built_tick / 1440 + 1));
+    hint(ui, &format!("{}  ·  {} floor{}  ·  {started} day {}", style.map_or("unknown style", |s| s.label()), b.floors, super::fmt::s(b.floors), fmt::day(b.built_tick)));
     // [free-placement] The city's own: its ground is out of the zoning, and
     // the player may bulldoze it (a second click confirms).
     if w.is_city_building(id) && b.rail.is_none() && b.port.is_none() {
@@ -606,7 +580,7 @@ fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildin
             line += &format!("  ·  beds {}/{}", w.services.admissions.iter().filter(|a| a.hospital == id).count(), s.kind.capacity(s.tier));
         }
         section(ui, "SERVICE");
-        ui.label(egui::RichText::new(line).color(egui::Color32::from_rgb(120, 200, 255)));
+        ui.label(egui::RichText::new(line).color(super::theme::SERVICE_BLUE));
     }
     if let Some(kind) = b.plant {
         // [plant-groups] A Sunfield or Wind Park: the whole park's figures.
@@ -783,7 +757,6 @@ fn figure(ui: &mut egui::Ui, caption: &str, value: String, col: egui::Color32) {
     ui.add_space(6.0);
 }
 
-const GOOD: egui::Color32 = egui::Color32::from_rgb(110, 200, 140);
 
 /// The cash-flow sparkline: a pair of bars per day, takings up in green and
 /// spending down in red, with the net as a gold line; today, still open, is
@@ -824,7 +797,7 @@ fn cashflow(ui: &mut egui::Ui, books: &[nd_sim::market::DayBook], today: (f32, f
     }
     let closed = &days[..n - 1];
     let total: f32 = closed.iter().map(|d| d.0 - d.1).sum();
-    hint(ui, &format!("cash flow, last {} day{}: net {total:+.0}  (green in, red out, gold net)", closed.len(), if closed.len() == 1 { "" } else { "s" }));
+    hint(ui, &format!("cash flow, last {} day{}: net {total:+.0}  (green in, red out, gold net)", closed.len(), super::fmt::s(closed.len())));
 }
 
 /// Everyone in a vehicle: the driver of a private car first, then its
@@ -983,7 +956,7 @@ fn temperament(ui: &mut egui::Ui, boldness: f32, calm: Option<f32>) {
     let n = 24;
     for i in 0..n {
         let t = i as f32 / (n - 1) as f32;
-        let col = if t < 0.5 { lerp(slow, normal, t * 2.0) } else { lerp(normal, reckless, t * 2.0 - 1.0) };
+        let col = if t < 0.5 { super::theme::lerp(slow, normal, t * 2.0) } else { super::theme::lerp(normal, reckless, t * 2.0 - 1.0) };
         let x0 = track.left() + track.width() * i as f32 / n as f32;
         let x1 = track.left() + track.width() * (i + 1) as f32 / n as f32;
         p.rect_filled(egui::Rect::from_min_max(egui::pos2(x0, track.top()), egui::pos2(x1, track.bottom())), 0.0, col.gamma_multiply(0.7));
@@ -999,11 +972,6 @@ fn temperament(ui: &mut egui::Ui, boldness: f32, calm: Option<f32>) {
     p.text(egui::pos2(track.center().x, rect.bottom()), egui::Align2::CENTER_BOTTOM, "normal", font.clone(), weak);
     p.text(egui::pos2(track.right(), rect.bottom()), egui::Align2::RIGHT_BOTTOM, "reckless", font, weak);
     resp.on_hover_text(format!("Driving style {:+.2} (−1 slow and careful, 0 ordinary, +1 reckless): speed, overtaking, ambers and following distance{}", boldness, if calm.is_some() { "; the ring is how they drive when calm" } else { "" }));
-}
-
-fn lerp(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
-    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
-    egui::Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
 }
 
 /// Why the car is standing (or crawling), the car it waits for, the head of
@@ -1035,7 +1003,7 @@ fn why_and_trip(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selecti
             }
         });
         if car.stalled > 1.0 {
-            ui.label(egui::RichText::new(format!("standing {}", duration(car.stalled))).small().weak());
+            ui.label(egui::RichText::new(format!("standing {}", fmt::secs_or_min(car.stalled))).small().weak());
         }
     }
     let chain = t.jam_chain(id);
@@ -1105,16 +1073,6 @@ fn show_tow_refusal(ui: &mut egui::Ui) {
     }
 }
 
-fn capitalise(s: &str) -> String {
-    let mut c = s.chars();
-    c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
-}
-
-/// Traffic seconds as "45 s" or "3 min".
-fn duration(secs: f32) -> String {
-    if secs < 90.0 { format!("{secs:.0} s") } else { format!("{:.0} min", secs / 60.0) }
-}
-
 /// [services] A written-off car: how long it has waited for the tow, and
 /// once a recovery truck is on its way, "truck inbound" with a button that
 /// selects it (the truck's road to the wreck is drawn while the wreck is
@@ -1128,7 +1086,7 @@ fn tow_status(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selection
         match wr.truck.and_then(|t| w.traffic.cars.get(t).map(|c| (t, c))) {
             Some((t, truck)) => {
                 let d = w.traffic.cars.get(id).map_or(0.0, |c| c.pos.distance(truck.pos));
-                ui.label(egui::RichText::new(format!("Truck inbound  ·  {d:.0} m away  ·  sent {} ago", duration_min(tick.saturating_sub(wr.sent)))).color(WARN));
+                ui.label(egui::RichText::new(format!("Truck inbound  ·  {d:.0} m away  ·  sent {} ago", fmt::hours_min(tick.saturating_sub(wr.sent)))).color(WARN));
                 ui.horizontal_wrapped(|ui| {
                     hint(ui, if wr.company.is_some() { "from a tow company in town" } else { "from out of town" });
                     if ui.small_button("locate").on_hover_text("Select the tow truck").clicked() {
@@ -1141,12 +1099,12 @@ fn tow_status(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selection
             }
             None => {
                 let called = if wr.due > 0 { "called, finding a truck" } else { "waiting for the police to call it in" };
-                ui.label(egui::RichText::new(format!("Waiting for a tow  ·  {}", duration_min(waited))).color(WARN));
+                ui.label(egui::RichText::new(format!("Waiting for a tow  ·  {}", fmt::hours_min(waited))).color(WARN));
                 hint(ui, called);
             }
         }
         if wr.truck.is_some() {
-            hint(ui, &format!("waiting {} so far", duration_min(waited)));
+            hint(ui, &format!("waiting {} so far", fmt::hours_min(waited)));
         }
         if wr.flipped > 0 {
             let how = if wr.flipped == 1 { "on its side" } else { "on its roof" };
@@ -1166,11 +1124,6 @@ fn tow_status(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarId, selection
         return *selection == Selection::Car(wreck);
     }
     false
-}
-
-/// Game minutes as "12 min" or "2 h 05".
-fn duration_min(m: u64) -> String {
-    if m < 60 { format!("{m} min") } else { format!("{} h {:02}", m / 60, m % 60) }
 }
 
 /// [dirty-industry] What dirty industry means for this building: a dirty
@@ -1228,13 +1181,4 @@ fn dirt_lines(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId) -> O
         }
     }
     clicked
-}
-
-/// [clamp] "2 h 15 min", "40 min".
-fn minutes_label(m: u64) -> String {
-    if m >= 60 {
-        format!("{} h {:02} min", m / 60, m % 60)
-    } else {
-        format!("{m} min")
-    }
 }

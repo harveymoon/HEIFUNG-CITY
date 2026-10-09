@@ -14,9 +14,9 @@ use nd_sim::tax::TaxCategory;
 use nd_sim::LandUse;
 
 use super::pane::heading;
-use super::{hint, zone_color32, UiCtx, GOLD, WARN};
+use super::{hint, UiCtx, GOLD, WARN};
 
-const LESS: egui::Color32 = egui::Color32::from_rgb(110, 200, 140);
+const LESS: egui::Color32 = super::theme::GOOD;
 const AVG_TICK: egui::Color32 = egui::Color32::from_rgb(235, 225, 200);
 
 pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
@@ -98,7 +98,7 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
             continue;
         }
         let w = rect.width() * sum / total_today;
-        painter.rect_filled(egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(x + w, rect.bottom())), 0.0, zone_color32(palette.zone_color(lu)).gamma_multiply(0.85));
+        painter.rect_filled(egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(x + w, rect.bottom())), 0.0, super::theme::rgb_f(palette.zone_color(lu)).gamma_multiply(0.85));
         x += w;
     }
     resp.on_hover_text(tip.join("\n"));
@@ -115,7 +115,7 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
     });
 
     for lu in groups {
-        let col = zone_color32(palette.zone_color(lu));
+        let col = super::theme::rgb_f(palette.zone_color(lu));
         let mine: Vec<_> = rows.iter().filter(|r| r.category.land_use() == lu).collect();
         // Each group's longest bar sets its scale: incomes dwarf the tax on
         // takings, and the stacked bar above already compares the groups.

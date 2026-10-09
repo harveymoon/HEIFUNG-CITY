@@ -55,7 +55,7 @@ impl Entry {
 
 /// The folder of one game's history. The id is made file-safe: a save may
 /// carry any text there.
-pub fn game_dir(saves: &Path, game_id: &str) -> PathBuf {
+fn game_dir(saves: &Path, game_id: &str) -> PathBuf {
     saves.join(SUBDIR).join(file_stem(game_id))
 }
 
@@ -110,6 +110,7 @@ pub fn set_bookmark(entry: &Path, label: Option<&str>) -> Result<SaveMeta, Strin
     meta.bookmark = label;
     let text = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
     crate::sim::write_atomic(&mp, text.as_bytes()).map_err(|e| e.to_string())?;
+    super::saves::disk_changed();
     Ok(meta)
 }
 
@@ -130,6 +131,9 @@ pub fn prune(saves: &Path, game_id: &str, kept: usize) -> usize {
             let _ = std::fs::remove_file(e.picture());
             gone += 1;
         }
+    }
+    if gone > 0 {
+        super::saves::disk_changed();
     }
     gone
 }
@@ -171,6 +175,8 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
         set_open(ctx, open);
     }
     if !is_open(ctx) {
+        // Read the folder afresh when the window next opens.
+        p.saves.forget_history();
         return;
     }
     let sid = egui::Id::new("game_history_state");
@@ -194,7 +200,6 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
 }
 
 fn body(ui: &mut egui::Ui, p: &mut UiCtx, st: &mut ViewState) {
-    let saves_dir = Path::new(super::saves::DIR);
     let game_id = p.sim.world.identity.game_id.clone();
     hint(ui, &format!("Every day's autosave is kept here (the newest {KEPT}, and every marked one). Mark the moments that matter; revert to go back to one."));
     section(ui, "MARK THIS MOMENT");
@@ -212,8 +217,10 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, st: &mut ViewState) {
         }
     });
     if let Some(target) = st.confirm.clone() {
-        let entry = find(saves_dir, &game_id, &target);
-        let what = entry.as_ref().map_or_else(|| "that autosave".to_string(), |e| e.bookmark().map_or_else(|| format!("day {}", e.meta.day), |b| format!("\"{b}\" (day {})", e.meta.day)));
+        // `target` is the path of a listed entry: no need to ask the disk.
+        let entries = p.saves.history(&game_id);
+        let entry = entries.iter().map(|(e, _)| e).find(|e| e.path == target);
+        let what = entry.map_or_else(|| "that autosave".to_string(), |e| e.bookmark().map_or_else(|| format!("day {}", e.meta.day), |b| format!("\"{b}\" (day {})", e.meta.day)));
         ui.add_space(6.0);
         ui.label(egui::RichText::new(format!("Revert to {what}? The running city (day {}, {}) is replaced. Its newer autosaves stay in this list.", p.sim.world.clock.day() + 1, p.sim.world.clock.format_hhmm())).color(WARN));
         ui.horizontal(|ui| {
@@ -229,13 +236,14 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, st: &mut ViewState) {
     }
     section(ui, "AUTOSAVES");
     ui.checkbox(&mut st.marked_only, "marked moments only");
-    let entries = list(saves_dir, &game_id);
+    // The listing as of the last write to the saves folder (`Saves::history`).
+    let entries = p.saves.history(&game_id);
     if entries.is_empty() {
         hint(ui, "Nothing yet: the first autosave comes at the start of the next day.");
         return;
     }
     egui::ScrollArea::vertical().id_salt("game_history_list").auto_shrink([false, false]).show(ui, |ui| {
-        for e in entries.iter().filter(|e| !st.marked_only || e.bookmark().is_some()) {
+        for (e, modified) in entries.iter().filter(|(e, _)| !st.marked_only || e.bookmark().is_some()) {
             ui.horizontal(|ui| {
                 match p.saves.picture(ui.ctx(), &e.picture()) {
                     Some(tex) => {
@@ -243,7 +251,7 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, st: &mut ViewState) {
                     }
                     None => {
                         let (r, _) = ui.allocate_exact_size(egui::vec2(56.0, 56.0), egui::Sense::hover());
-                        ui.painter().rect_filled(r, 3.0, egui::Color32::from_rgb(20, 22, 34));
+                        ui.painter().rect_filled(r, 3.0, super::theme::NO_PICTURE);
                     }
                 }
                 ui.vertical(|ui| {
@@ -251,8 +259,7 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, st: &mut ViewState) {
                         Some(b) => ui.label(egui::RichText::new(format!("★ {b}")).color(GOLD).strong()),
                         None => ui.label(egui::RichText::new(format!("Day {}", e.meta.day)).color(IVORY)),
                     };
-                    let modified = std::fs::metadata(&e.path).and_then(|m| m.modified()).ok();
-                    hint(ui, &format!("{} · {}", e.figures(), age(modified)));
+                    hint(ui, &format!("{} · {}", e.figures(), age(*modified)));
                     let naming_this = st.naming.as_ref().is_some_and(|(p, _)| *p == e.path);
                     ui.horizontal(|ui| {
                         if naming_this {

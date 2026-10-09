@@ -66,7 +66,7 @@ fn build_button(ui: &mut egui::Ui, open: bool, building: bool) -> egui::Response
     } else {
         egui::Color32::from_rgba_unmultiplied(30, 32, 46, 230)
     };
-    let stroke = if open || building { GOLD } else { egui::Color32::from_rgb(60, 60, 72) };
+    let stroke = if open || building { GOLD } else { super::theme::EDGE_IDLE };
     let text = if building { egui::Color32::WHITE } else { IVORY };
     let painter = ui.painter();
     painter.rect_filled(rect, 4.0, fill);
@@ -122,7 +122,7 @@ fn tool_button(ui: &mut egui::Ui, tool: Tool, active: bool) -> egui::Response {
     } else {
         egui::Color32::from_rgba_unmultiplied(30, 32, 46, 230)
     };
-    let stroke = if active { GOLD } else { egui::Color32::from_rgb(60, 60, 72) };
+    let stroke = if active { GOLD } else { super::theme::EDGE_IDLE };
     let text = if active { egui::Color32::WHITE } else { IVORY };
     let painter = ui.painter();
     painter.rect_filled(rect, 4.0, fill);
@@ -155,7 +155,7 @@ fn project(ui: &mut egui::Ui, p: &mut UiCtx) {
             egui::ComboBox::from_id_salt("projects").selected_text(label).width(130.0).show_ui(ui, |ui| {
                 for i in &projects {
                     let warn = !i.conflicts.is_empty() || i.shared_parcels > 0;
-                    let text = format!("{} · {} step{}{}", i.name, i.steps, if i.steps == 1 { "" } else { "s" }, if warn { "  ⚠ overlaps" } else { "" });
+                    let text = format!("{} · {} step{}{}", i.name, i.steps, super::fmt::s(i.steps), if warn { "  ⚠ overlaps" } else { "" });
                     if ui.selectable_label(i.active, text).clicked() && !i.active {
                         switch_to = Some(i.id);
                     }
@@ -172,7 +172,7 @@ fn project(ui: &mut egui::Ui, p: &mut UiCtx) {
             });
             match &active {
                 Some(i) => {
-                    let txt = format!("{} step{}{}", i.steps, if i.steps == 1 { "" } else { "s" }, if i.redo > 0 { format!(", {} redoable", i.redo) } else { String::new() });
+                    let txt = format!("{} step{}{}", i.steps, super::fmt::s(i.steps), if i.redo > 0 { format!(", {} redoable", i.redo) } else { String::new() });
                     ui.label(egui::RichText::new(txt).small());
                 }
                 None => hint(ui, help::PROJECT_NONE),
@@ -197,7 +197,7 @@ fn project(ui: &mut egui::Ui, p: &mut UiCtx) {
                         }
                         if !i.conflicts.is_empty() || i.shared_parcels > 0 {
                             let n = i.conflicts.len();
-                            ui.label(egui::RichText::new(format!("overlaps another project ({n} gesture{}, {} parcel{})", if n == 1 { "" } else { "s" }, i.shared_parcels, if i.shared_parcels == 1 { "" } else { "s" })).small().color(WARN))
+                            ui.label(egui::RichText::new(format!("overlaps another project ({n} gesture{}, {} parcel{})", super::fmt::s(n), i.shared_parcels, super::fmt::s(i.shared_parcels))).small().color(WARN))
                                 .on_hover_text(help::PROJECTS);
                         }
                     });

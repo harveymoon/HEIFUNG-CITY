@@ -6,15 +6,16 @@
 
 use bevy_egui::egui::{self, Color32, Stroke};
 
+use super::theme::PLOT_BG;
 use super::{hint, section, UiCtx, GOLD, IVORY, WARN};
+use super::fmt::capitalise;
 use crate::sim::Sim;
 use crate::tools::Selection;
 use nd_sim::tolls::{TollHour, MAX_PRICE, TRUCK_FACTOR};
 
 const LORRY: Color32 = Color32::from_rgb(240, 140, 60);
-const FREE: Color32 = Color32::from_rgb(110, 200, 220);
+const FREE: Color32 = super::theme::TEAL;
 const ROUND: Color32 = Color32::from_rgb(255, 90, 110);
-const PLOT_BG: Color32 = Color32::from_rgba_premultiplied(20, 22, 34, 220);
 
 /// The inspector window on a selected booth: the same window (id, place
 /// and size) the inspector opens on anything else. Closing it deselects.
@@ -54,7 +55,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, id: u32
     let (road, ways) = crate::toll_select::road(w, b);
     let lanes: u8 = ways.iter().map(|(_, n)| n).sum();
     let kiosks = b.size.booths(lanes);
-    hint(ui, &format!("{}  ·  {kiosks} kiosk{} across  ·  on a {road}", capitalise(b.size.label()), if kiosks == 1 { "" } else { "s" }));
+    hint(ui, &format!("{}  ·  {kiosks} kiosk{} across  ·  on a {road}", capitalise(b.size.label()), super::fmt::s(kiosks)));
     let charges = ways.iter().map(|(d, n)| format!("{n} lane{} {d}bound", if *n == 1 { "" } else { "s" })).collect::<Vec<_>>().join(", ");
     ui.label(format!("Charges {}: {charges}", if ways.len() > 1 { "both ways" } else { "one way" }));
 
@@ -107,7 +108,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, id: u32
     let full_day = b.cars_yesterday > 0 || b.revenue_yesterday > 0.0;
     ui.horizontal(|ui| {
         ui.label(format!("Upkeep {upkeep:.0}/day  ·  net"));
-        ui.label(egui::RichText::new(format!("{net:+.0}/day")).color(if net >= 0.0 { Color32::from_rgb(120, 230, 150) } else { WARN }).strong())
+        ui.label(egui::RichText::new(format!("{net:+.0}/day")).color(if net >= 0.0 { super::theme::GOOD_BRIGHT } else { WARN }).strong())
             .on_hover_text(if full_day { "Yesterday's takings less the staff and upkeep paid at midnight." } else { "Today's takings so far less the staff and upkeep paid at midnight (no full day yet)." });
     });
     if b.avoided_today > 0 {
@@ -120,7 +121,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, id: u32
     match w.toll_queue(id) {
         Some((n, back, mins)) if n > 0 => {
             let col = if mins >= 5.0 { WARN } else { IVORY };
-            ui.label(egui::RichText::new(format!("{n} vehicle{} waiting, back {back:.0} m  ·  about {} for the last", if n == 1 { "" } else { "s" }, minutes(mins))).color(col));
+            ui.label(egui::RichText::new(format!("{n} vehicle{} waiting, back {back:.0} m  ·  about {} for the last", super::fmt::s(n), super::fmt::minutes_or_under(mins))).color(col));
         }
         _ => hint(ui, "nobody waiting: traffic rolls through"),
     }
@@ -144,14 +145,6 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, id: u32
     if remove {
         let _ = sim.world.remove_toll(id);
         *selection = Selection::None;
-    }
-}
-
-fn minutes(m: f32) -> String {
-    if m < 1.0 {
-        "under a minute".into()
-    } else {
-        format!("{m:.0} min")
     }
 }
 
@@ -216,9 +209,4 @@ fn hour_chart(ui: &mut egui::Ui, hours: &[TollHour], now: &TollHour, day_now: u3
         let when = if i + 1 == n { format!("Day {}, {:02}:00, so far", h.day, h.hour) } else { format!("Day {}, {:02}:00", h.day, h.hour) };
         resp.on_hover_text(format!("{when}\n{} through ({} lorries, {} free)\n{} went round\n{:.0} taken", h.cars, h.trucks, h.free, h.avoided, h.revenue));
     }
-}
-
-fn capitalise(s: &str) -> String {
-    let mut c = s.chars();
-    c.next().map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
 }

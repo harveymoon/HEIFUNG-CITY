@@ -18,6 +18,7 @@
 use bevy_egui::egui::{self, Color32, Pos2, Rect, Stroke};
 use nd_sim::history::{DayRecord, HourRecord, History};
 
+use super::theme::PLOT_BG;
 use super::{Info, GOLD, IVORY};
 
 // ── tool window header ─────────────────────────────────────────────────────
@@ -246,25 +247,8 @@ impl Series {
     }
 }
 
-const PLOT_BG: Color32 = Color32::from_rgba_premultiplied(20, 22, 34, 220);
 const AXIS: Color32 = Color32::from_gray(110);
 const TICK: Color32 = Color32::from_gray(170);
-
-/// A compact number: 1234 → "1.2k", 2.5e6 → "2.5M".
-pub fn short(x: f32) -> String {
-    let a = x.abs();
-    if a >= 1e6 {
-        format!("{:.1}M", x / 1e6)
-    } else if a >= 1e4 {
-        format!("{:.0}k", x / 1e3)
-    } else if a >= 1e3 {
-        format!("{:.1}k", x / 1e3)
-    } else if a >= 10.0 || a == 0.0 {
-        format!("{x:.0}")
-    } else {
-        format!("{x:.1}")
-    }
-}
 
 /// A "nice" axis top above `x`: 1, 2 or 5 times a power of ten.
 fn nice(x: f32) -> f32 {
@@ -363,8 +347,8 @@ pub fn line_chart(ui: &mut egui::Ui, labels: &[String], series: &[Series], heigh
         painter.hline(plot.x_range(), y_of(0.0), Stroke::new(1.0, AXIS));
     }
     let small = crate::ui::theme::small();
-    painter.text(egui::pos2(plot.left() - 3.0, plot.top()), egui::Align2::RIGHT_TOP, short(top), small.clone(), TICK);
-    painter.text(egui::pos2(plot.left() - 3.0, plot.bottom()), egui::Align2::RIGHT_BOTTOM, short(bottom), small, TICK);
+    painter.text(egui::pos2(plot.left() - 3.0, plot.top()), egui::Align2::RIGHT_TOP, super::fmt::compact(top), small.clone(), TICK);
+    painter.text(egui::pos2(plot.left() - 3.0, plot.bottom()), egui::Align2::RIGHT_BOTTOM, super::fmt::compact(bottom), small, TICK);
     x_labels(&painter, plot, labels);
     for s in series {
         let pts: Vec<Pos2> = s.values.iter().take(n).enumerate().map(|(i, v)| egui::pos2(x_of(i), y_of(*v))).collect();
@@ -446,8 +430,8 @@ pub fn stacked_bars(ui: &mut egui::Ui, labels: &[String], series: &[Series], hei
         }
     }
     let small = crate::ui::theme::small();
-    painter.text(egui::pos2(plot.left() - 3.0, plot.top()), egui::Align2::RIGHT_TOP, short(top), small.clone(), TICK);
-    painter.text(egui::pos2(plot.left() - 3.0, plot.bottom()), egui::Align2::RIGHT_BOTTOM, short(bottom), small, TICK);
+    painter.text(egui::pos2(plot.left() - 3.0, plot.top()), egui::Align2::RIGHT_TOP, super::fmt::compact(top), small.clone(), TICK);
+    painter.text(egui::pos2(plot.left() - 3.0, plot.bottom()), egui::Align2::RIGHT_BOTTOM, super::fmt::compact(bottom), small, TICK);
     x_labels(&painter, plot, labels);
     if let Some(i) = hovered_slot(&resp, plot, n) {
         let x0 = plot.left() + i as f32 * bw;
@@ -477,7 +461,7 @@ pub fn sparkline(ui: &mut egui::Ui, values: &[f32], color: Color32, height: f32,
     let inner = rect.shrink2(egui::vec2(4.0, 4.0));
     let pts: Vec<Pos2> = values.iter().enumerate().map(|(i, v)| egui::pos2(inner.left() + inner.width() * i as f32 / (values.len() - 1) as f32, inner.bottom() - inner.height() * (v - lo) / span)).collect();
     painter.line(pts, Stroke::new(1.5, color));
-    painter.text(rect.right_top() + egui::vec2(-4.0, 2.0), egui::Align2::RIGHT_TOP, short(max), crate::ui::theme::small(), TICK);
+    painter.text(rect.right_top() + egui::vec2(-4.0, 2.0), egui::Align2::RIGHT_TOP, super::fmt::compact(max), crate::ui::theme::small(), TICK);
     resp.on_hover_text(tip);
 }
 
@@ -494,10 +478,10 @@ pub fn hcol<'a>(hours: &[&'a HourRecord], f: impl Fn(&'a HourRecord) -> f32) -> 
 /// Fixed colours for up to a dozen series in order (lines, routes).
 pub fn palette(i: usize) -> Color32 {
     const P: [Color32; 12] = [
-        Color32::from_rgb(235, 180, 90),
-        Color32::from_rgb(110, 200, 220),
+        super::GOLD,
+        super::theme::TEAL,
         Color32::from_rgb(210, 95, 70),
-        Color32::from_rgb(120, 230, 150),
+        super::theme::GOOD_BRIGHT,
         Color32::from_rgb(190, 130, 230),
         Color32::from_rgb(240, 230, 120),
         Color32::from_rgb(90, 140, 240),

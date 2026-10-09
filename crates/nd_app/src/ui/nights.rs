@@ -62,7 +62,7 @@ pub fn news(ui: &mut egui::Ui, p: &mut UiCtx) {
             if ui.small_button("go").clicked() {
                 fly = Some(n.pos);
             }
-            ui.label(egui::RichText::new(format!("{} · {}", super::emergencies::when(n.tick), n.headline)).small().color(kind_color(n.kind)));
+            ui.label(egui::RichText::new(format!("{} · {}", super::fmt::day_time(n.tick), n.headline)).small().color(kind_color(n.kind)));
         });
     }
     if let Some(at) = fly {

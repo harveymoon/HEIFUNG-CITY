@@ -19,10 +19,6 @@ pub fn take_fly(ctx: &egui::Context) -> Option<Vec2> {
     ctx.data_mut(|d| d.remove_temp::<[f32; 2]>(egui::Id::new(FLY_KEY))).map(|[x, y]| Vec2::new(x, y))
 }
 
-fn hhmm(tick: u64) -> String {
-    format!("{:02}:{:02}", (tick % 1440) / 60, tick % 60)
-}
-
 /// The FERRIES / SHIPPING LANE section of a dock's inspector.
 pub fn dock_routes(ui: &mut egui::Ui, w: &World, id: BuildingId) {
     let Some(kind) = w.ports.kind_of(id).filter(|_| crate::ferry_select::is_route_dock(w, id)) else { return };
@@ -80,8 +76,8 @@ pub fn dock_routes(ui: &mut egui::Ui, w: &World, id: BuildingId) {
             }
             match i.next_departure {
                 Some(t) if t <= now + 1 => line += "  ·  next boat due now",
-                Some(t) if t / 1440 != now / 1440 => line += &format!("  ·  next boat tomorrow {}", hhmm(t)),
-                Some(t) => line += &format!("  ·  next boat {}", hhmm(t)),
+                Some(t) if t / 1440 != now / 1440 => line += &format!("  ·  next boat tomorrow {}", super::fmt::hhmm(t)),
+                Some(t) => line += &format!("  ·  next boat {}", super::fmt::hhmm(t)),
                 None if i.kind == LineKind::Ferry => line += "  ·  no boat from here soon",
                 None => {}
             }
@@ -104,10 +100,10 @@ pub fn ship_card(ui: &mut egui::Ui, w: &World, selection: &mut Selection, id: nd
     ui.label(crate::ferry_select::ship_doing(w, id));
     match s.kind {
         nd_sim::ShipKind::Freighter => {
-            ui.label(format!("{} load{} aboard  ·  {:.0} m long", s.cargo.len(), if s.cargo.len() == 1 { "" } else { "s" }, s.length()));
+            ui.label(format!("{} load{} aboard  ·  {:.0} m long", s.cargo.len(), super::fmt::s(s.cargo.len()), s.length()));
         }
         _ => {
-            ui.label(format!("{} passenger{} aboard of {}  ·  {:.0} m long", s.passengers, if s.passengers == 1 { "" } else { "s" }, nd_sim::ports::FERRY_CAPACITY, s.length()));
+            ui.label(format!("{} passenger{} aboard of {}  ·  {:.0} m long", s.passengers, super::fmt::s(s.passengers), nd_sim::ports::FERRY_CAPACITY, s.length()));
         }
     }
     let (_, net) = crate::ferry_select::net(w);

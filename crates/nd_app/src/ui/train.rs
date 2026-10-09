@@ -17,14 +17,8 @@ use crate::assets::GameAssets;
 use crate::tools::Selection;
 use crate::train_select::{body_rgb, glow_rgb, headcode, metro_code};
 
-const RUNNING: egui::Color32 = egui::Color32::from_rgb(110, 200, 140);
+const RUNNING: egui::Color32 = super::theme::GOOD;
 const CYAN: egui::Color32 = egui::Color32::from_rgb(120, 220, 255);
-
-/// Linear colour to an sRGB swatch.
-fn swatch_colour(rgb: [f32; 3]) -> egui::Color32 {
-    let c = |x: f32| (x.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0) as u8;
-    egui::Color32::from_rgb(c(rgb[0]), c(rgb[1]), c(rgb[2]))
-}
 
 fn name_of(w: &World, b: BuildingId) -> String {
     w.buildings.get(b).map_or_else(|| "a stop that is gone".into(), |b| b.name.clone())
@@ -33,7 +27,7 @@ fn name_of(w: &World, b: BuildingId) -> String {
 /// "in 4 min (14:32)" for a call `minutes` from now.
 fn eta(w: &World, minutes: f32) -> String {
     let at = w.clock.tick + minutes.round().max(0.0) as u64;
-    let when = format!("{:02}:{:02}", (at % 1440) / 60, at % 60);
+    let when = super::fmt::hhmm(at);
     if minutes < 1.0 {
         format!("arriving now ({when})")
     } else {
@@ -75,10 +69,10 @@ pub fn show(ui: &mut egui::Ui, w: &World, selection: &mut Selection, assets: &Ga
 fn surface(ui: &mut egui::Ui, w: &World, id: nd_sim::TrainId, t: &Train, assets: &GameAssets) -> Option<Selection> {
     let mut picked = None;
     let body = body_rgb(&assets.palette.car_colors, t.color);
-    let glow = swatch_colour(glow_rgb(body).map(|x| x / 3.0));
+    let glow = super::theme::rgb_gamma(glow_rgb(body).map(|x| x / 3.0));
     let (kind, cars) = match t.kind {
         TrainKind::Passenger => ("Passenger train", format!("{} coach{}", t.cars, if t.cars == 1 { "" } else { "es" })),
-        TrainKind::Freight => ("Freight train", format!("{} wagon{}", t.cars, if t.cars == 1 { "" } else { "s" })),
+        TrainKind::Freight => ("Freight train", format!("{} wagon{}", t.cars, super::fmt::s(t.cars))),
     };
     ui.label(egui::RichText::new(format!("{kind} {}", headcode(id, t.kind))).font(crate::ui::theme::lead()).color(IVORY).strong());
     ui.horizontal_wrapped(|ui| {
@@ -86,7 +80,7 @@ fn surface(ui: &mut egui::Ui, w: &World, id: nd_sim::TrainId, t: &Train, assets:
         tag(ui, if t.kind == TrainKind::Passenger { "Passengers" } else { "Freight" }, if t.kind == TrainKind::Passenger { CYAN } else { GOLD });
         tag(ui, &format!("locomotive + {cars}"), egui::Color32::from_gray(170));
         let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
-        ui.painter().rect_filled(rect, 3.0, swatch_colour(body));
+        ui.painter().rect_filled(rect, 3.0, super::theme::rgb_gamma(body));
         ui.painter().rect_stroke(rect, 3.0, egui::Stroke::new(1.5, glow), egui::StrokeKind::Outside);
         hint(ui, "livery");
     });
@@ -146,7 +140,7 @@ fn ends(t: &Train) -> (&'static str, &'static str) {
 fn metro(ui: &mut egui::Ui, w: &World, id: nd_sim::MetroTrainId, t: &nd_sim::MetroTrain) -> Option<Selection> {
     let mut picked = None;
     let line = w.subway.lines.get(t.line);
-    let colour = swatch_colour(nd_procgen::metro::line_colour(t.run.color).map(|x| x / 2.0));
+    let colour = super::theme::rgb_gamma(nd_procgen::metro::line_colour(t.run.color).map(|x| x / 2.0));
     let line_name = line.map_or("A metro line".to_string(), |l| l.name.clone());
     ui.label(egui::RichText::new(format!("{line_name} train {}", metro_code(id))).font(crate::ui::theme::lead()).color(IVORY).strong());
     ui.horizontal_wrapped(|ui| {

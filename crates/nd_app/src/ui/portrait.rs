@@ -14,16 +14,12 @@ use nd_sim::{Citizen, CitizenId, World};
 
 use crate::tools::Selection;
 
-fn rgb(c: [u8; 3]) -> Color32 {
-    Color32::from_rgb(c[0], c[1], c[2])
-}
-
 /// Paint a citizen's bust into `rect` (square works best).
 pub fn paint(painter: &egui::Painter, rect: Rect, c: &Citizen) {
     let a = c.appearance();
-    let fav = a.fav.map(|i| rgb(COLORS[(i as usize).min(COLORS.len() - 1)].srgb));
-    let skin = rgb(skin_srgb(a.genes.skin));
-    let hair = rgb(a.shown_hair(c.age).srgb());
+    let fav = a.fav.map(|i| super::theme::rgb_u8(COLORS[(i as usize).min(COLORS.len() - 1)].srgb));
+    let skin = super::theme::rgb_u8(skin_srgb(a.genes.skin));
+    let hair = super::theme::rgb_u8(a.shown_hair(c.age).srgb());
     let s = rect.width().min(rect.height());
     let cx = rect.center().x;
     // A dark disc of their main colour behind them, so a row of faces
@@ -117,7 +113,11 @@ pub fn button(ui: &mut egui::Ui, c: &Citizen, size: f32) -> egui::Response {
             ui.painter().rect_stroke(rect, 4.0, Stroke::new(1.5, super::GOLD), egui::StrokeKind::Inside);
         }
     }
-    resp.on_hover_text(format!("{}, {}: {}. Click to select.", c.name, c.age, c.activity.label()))
+    // The tooltip text is made only while it shows (as `on_hover_text` lays it out).
+    resp.on_hover_ui(|ui| {
+        ui.set_max_width(ui.spacing().tooltip_width);
+        ui.add(egui::Label::new(format!("{}, {}: {}. Click to select.", c.name, c.age, c.activity.label())));
+    })
 }
 
 /// A wrapping grid of portraits with the first name under each; clicking

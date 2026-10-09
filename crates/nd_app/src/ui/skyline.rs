@@ -15,7 +15,7 @@ use crate::tools::Selection;
 
 /// Steel blue for skyscrapers, violet for supertalls, hot pink for
 /// megatalls.
-pub fn league_color(l: League) -> egui::Color32 {
+fn league_color(l: League) -> egui::Color32 {
     match l {
         League::Skyscraper => egui::Color32::from_rgb(120, 190, 255),
         League::Supertall => egui::Color32::from_rgb(190, 130, 255),
@@ -31,6 +31,12 @@ fn money(v: f64) -> String {
     }
 }
 
+/// A standing building's place in `ranking` (`World::skyline_ranking`), 1
+/// for the tallest: `World::skyline_rank` on a ranking already made.
+fn rank_in(ranking: &[(nd_sim::BuildingId, f32)], id: nd_sim::BuildingId, h: f32) -> usize {
+    1 + ranking.iter().take_while(|(other, x)| *x > h || (*x == h && *other < id)).count()
+}
+
 /// The inspector's line for any standing building; a league tower's
 /// record in full.
 pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId, selection: &mut Selection) {
@@ -39,15 +45,17 @@ pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildi
         return;
     }
     let h = w.building_height(id);
+    // One ranking per frame (`World::skyline_rank` sorts the skyline again).
+    let ranking = b.operating().then(|| w.skyline_ranking());
+    let rank = ranking.as_deref().map(|ranking| rank_in(ranking, id, h));
     let Some(t) = b.plot.tower else {
-        if let Some(r) = w.skyline_rank(id).filter(|r| *r <= 10) {
+        if let Some(r) = rank.filter(|r| *r <= 10) {
             hint(ui, &format!("about {h:.0} m high · the city's {} tallest", if r == 1 { String::new() } else { ordinal(r) }).replace("  ", " "));
         }
         return;
     };
     section(ui, "SKYLINE");
     let league = t.league();
-    let rank = w.skyline_rank(id);
     let place = match rank {
         Some(1) => "the city's tallest".to_string(),
         Some(r) => format!("the city's {} tallest", ordinal(r)),
@@ -57,7 +65,7 @@ pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildi
     let dev = w.owner_of(id).map_or("a developer".to_string(), |(_, o)| o.name.clone());
     let lots = 1 + b.plot.extra_lots.len() + b.plot.pending_lots.len();
     let area = w.footprint(id).map_or(0.0, |l| l.area());
-    let mut bits = vec![format!("built by {dev}"), format!("{lots} plot{} assembled ({area:.0} m²)", if lots == 1 { "" } else { "s" })];
+    let mut bits = vec![format!("built by {dev}"), format!("{lots} plot{} assembled ({area:.0} m²)", super::fmt::s(lots))];
     if !b.plot.pending_lots.is_empty() {
         bits.push(format!("{} still being cleared", b.plot.pending_lots.len()));
     }
@@ -71,8 +79,7 @@ pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildi
     }
     hint(ui, &bits.join(" · "));
     // The towers it outranks or trails, a click away.
-    if let Some(r) = rank {
-        let ranking = w.skyline_ranking();
+    if let (Some(r), Some(ranking)) = (rank, ranking) {
         ui.horizontal_wrapped(|ui| {
             for (other, oh) in ranking.iter().skip(r.saturating_sub(2)).take(3) {
                 if *other == id {
@@ -208,7 +215,7 @@ pub fn page(ui: &mut egui::Ui, p: &mut UiCtx) {
             if ui.small_button("go").clicked() {
                 fly = Some(Vec2::new(n.pos.x, n.pos.y));
             }
-            ui.label(egui::RichText::new(format!("{} · {}", super::emergencies::when(n.tick), n.headline)).small());
+            ui.label(egui::RichText::new(format!("{} · {}", super::fmt::day_time(n.tick), n.headline)).small());
         });
     }
     if let Some(id) = pick {

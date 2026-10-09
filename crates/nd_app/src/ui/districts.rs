@@ -17,7 +17,7 @@ use crate::tools::ToolState;
 
 fn color_of(c: u8) -> egui::Color32 {
     let c = COLORS[c as usize % COLORS.len()];
-    egui::Color32::from_rgb((c[0].min(1.0) * 255.0) as u8, (c[1].min(1.0) * 255.0) as u8, (c[2].min(1.0) * 255.0) as u8)
+    super::theme::rgb_f(c)
 }
 
 pub const TOOL_HINT: &str = "Drag to paint the selected district (a new one starts on the first stroke when none is picked); right-drag erases. Shift-click picks the district under the pointer. Polygon: click corners, Enter or right-click fills. Policies change what grows there and how it looks; standing buildings follow over a few days.";

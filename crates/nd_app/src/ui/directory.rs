@@ -20,6 +20,7 @@ use bevy_egui::egui::{self, Color32};
 use nd_sim::estate::Class;
 
 use super::pane::{self, CAPTION};
+use super::fmt::capitalise;
 use super::{UiCtx, GOLD, IVORY, WARN};
 use crate::directory::{self as dir, BizCol, BizRow, BizState, Filter, PersonCol, PersonRow, Row, Status};
 use crate::tools::Selection;
@@ -31,7 +32,7 @@ const ROW_H: f32 = 22.0;
 /// The "go" column at the right.
 const GO_W: f32 = 34.0;
 
-const GOOD: Color32 = Color32::from_rgb(120, 220, 140);
+const GOOD: Color32 = super::theme::GOOD_LIGHT;
 const QUIET: Color32 = Color32::from_gray(150);
 
 // ── settings and caches, in egui memory ───────────────────────────────────
@@ -161,8 +162,8 @@ pub fn businesses(ui: &mut egui::Ui, p: &mut UiCtx) {
         pane::kpi(ui, "open now", egui::RichText::new(format!("{}", count(BizState::Open))).color(GOOD));
         pane::kpi(ui, "broke or out of business", egui::RichText::new(format!("{}", count(BizState::Broke) + count(BizState::Shut))).color(if count(BizState::Broke) + count(BizState::Shut) > 0 { WARN } else { IVORY }));
         pane::kpi(ui, "under construction", egui::RichText::new(format!("{}", count(BizState::Building))));
-        pane::kpi(ui, "staff of jobs", egui::RichText::new(format!("{} / {}", pane::short(staff as f32), pane::short(jobs as f32))));
-        pane::kpi(ui, "takings today", egui::RichText::new(pane::short(takings)).color(GOOD));
+        pane::kpi(ui, "staff of jobs", egui::RichText::new(format!("{} / {}", super::fmt::compact(staff as f32), super::fmt::compact(jobs as f32))));
+        pane::kpi(ui, "takings today", egui::RichText::new(super::fmt::compact(takings)).color(GOOD));
     });
     ui.add_space(8.0);
 
@@ -171,7 +172,7 @@ pub fn businesses(ui: &mut egui::Ui, p: &mut UiCtx) {
     ui.horizontal_wrapped(|ui| {
         search_box(ui, &mut st.filter.search, "search names, kinds, owners, streets");
         egui::ComboBox::from_id_salt("directory_biz_kind")
-            .selected_text(st.filter.kind.map_or("every kind".to_string(), |k| capital(k.label())))
+            .selected_text(st.filter.kind.map_or("every kind".to_string(), |k| capitalise(k.label())))
             .height(420.0)
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut st.filter.kind, None, "every kind");
@@ -180,7 +181,7 @@ pub fn businesses(ui: &mut egui::Ui, p: &mut UiCtx) {
                 kinds.dedup();
                 for k in kinds {
                     let n = rows.iter().filter(|r| r.kind == k).count();
-                    ui.selectable_value(&mut st.filter.kind, Some(k), format!("{} ({n})", capital(k.label())));
+                    ui.selectable_value(&mut st.filter.kind, Some(k), format!("{} ({n})", capitalise(k.label())));
                 }
             });
         district_picker(ui, "directory_biz_district", &mut st.filter.district, rows.iter().map(|r| r.district.as_str()));
@@ -237,9 +238,9 @@ pub fn people(ui: &mut egui::Ui, p: &mut UiCtx) {
     let ill = rows.iter().filter(|r| r.ill).count();
     let mood = if rows.is_empty() { 0.0 } else { rows.iter().map(|r| r.mood).sum::<f32>() / rows.len() as f32 };
     pane::cards(ui, |ui| {
-        pane::kpi(ui, "people", egui::RichText::new(pane::short(rows.len() as f32)).color(GOLD));
-        pane::kpi(ui, "adults in work", egui::RichText::new(pane::short(working as f32)).color(GOOD));
-        pane::kpi(ui, "adults out of work", egui::RichText::new(pane::short(jobless as f32)).color(if jobless > 0 { WARN } else { IVORY }));
+        pane::kpi(ui, "people", egui::RichText::new(super::fmt::compact(rows.len() as f32)).color(GOLD));
+        pane::kpi(ui, "adults in work", egui::RichText::new(super::fmt::compact(working as f32)).color(GOOD));
+        pane::kpi(ui, "adults out of work", egui::RichText::new(super::fmt::compact(jobless as f32)).color(if jobless > 0 { WARN } else { IVORY }));
         pane::kpi(ui, "without a home", egui::RichText::new(format!("{homeless}")).color(if homeless > 0 { WARN } else { IVORY }));
         pane::kpi(ui, "ill", egui::RichText::new(format!("{ill}")));
         pane::kpi(ui, "average mood", egui::RichText::new(format!("{:.0}%", mood * 100.0)).color(mood_color(mood)));
@@ -374,7 +375,7 @@ fn table<R: Row>(
             arrow(ui.painter(), egui::pos2(ax, rect.center().y), *desc, GOLD);
         }
     }
-    ui.painter().hline(head_rect.x_range(), head_rect.bottom(), egui::Stroke::new(1.0, Color32::from_rgb(95, 75, 45)));
+    ui.painter().hline(head_rect.x_range(), head_rect.bottom(), egui::Stroke::new(1.0, super::theme::EDGE));
 
     if order.is_empty() {
         ui.add_space(10.0);
@@ -447,39 +448,30 @@ fn arrow(p: &egui::Painter, at: egui::Pos2, down: bool, color: Color32) {
 
 // ── cells ──────────────────────────────────────────────────────────────────
 
-fn capital(s: &str) -> String {
-    let mut c = s.chars();
-    c.next().map_or(String::new(), |f| f.to_uppercase().collect::<String>() + c.as_str())
-}
-
-fn money(v: f32) -> String {
-    pane::short(v)
-}
-
 fn signed(v: f32) -> (String, Color32) {
-    (if v > 0.0 { format!("+{}", money(v)) } else { money(v) }, if v < 0.0 { WARN } else if v > 0.0 { GOOD } else { IVORY })
+    (super::fmt::signed(v), if v < 0.0 { WARN } else if v > 0.0 { GOOD } else { IVORY })
 }
 
-pub fn state_color(s: BizState) -> Color32 {
+fn state_color(s: BizState) -> Color32 {
     match s {
         BizState::Open => GOOD,
         BizState::AfterHours => QUIET,
-        BizState::NoStaff => Color32::from_rgb(240, 200, 100),
+        BizState::NoStaff => super::theme::AMBER,
         BizState::Broke => WARN,
         BizState::Shut => Color32::from_rgb(200, 90, 80),
         BizState::Building => Color32::from_rgb(200, 150, 60),
     }
 }
 
-pub fn status_color(s: Status) -> Color32 {
+fn status_color(s: Status) -> Color32 {
     match s {
-        Status::Working => Color32::from_rgb(120, 200, 255),
+        Status::Working => super::theme::SERVICE_BLUE,
         Status::AtHome => IVORY,
         Status::Asleep => QUIET,
         Status::Out => Color32::from_rgb(220, 150, 255),
         Status::Travelling => Color32::from_rgb(150, 220, 200),
         Status::Ill => WARN,
-        Status::Homeless => Color32::from_rgb(240, 200, 100),
+        Status::Homeless => super::theme::AMBER,
         Status::Arriving | Status::Away => QUIET,
     }
 }
@@ -507,7 +499,7 @@ fn mood_color(m: f32) -> Color32 {
     if m < 0.35 {
         WARN
     } else if m < 0.55 {
-        Color32::from_rgb(240, 200, 100)
+        super::theme::AMBER
     } else {
         GOOD
     }
@@ -521,10 +513,10 @@ fn biz_cell(r: &BizRow, c: BizCol) -> (String, Color32) {
         BizCol::District => (r.district.clone(), Color32::from_rgb(200, 140, 230)),
         BizCol::Street => (r.street.clone(), Color32::from_gray(200)),
         BizCol::Staff => (format!("{}/{}", r.staff, r.jobs), if r.jobs > 0 && r.staff < r.jobs / 2 { WARN } else { IVORY }),
-        BizCol::Today => (money(r.revenue_today), IVORY),
-        BizCol::Yesterday => (r.revenue_yesterday.map_or("-".into(), money), IVORY),
+        BizCol::Today => (super::fmt::compact(r.revenue_today), IVORY),
+        BizCol::Yesterday => (r.revenue_yesterday.map_or("-".into(), super::fmt::compact), IVORY),
         BizCol::Profit => r.profit_yesterday.map_or(("-".into(), QUIET), signed),
-        BizCol::Money => (money(r.money), if r.money < 0.0 { WARN } else { IVORY }),
+        BizCol::Money => (super::fmt::compact(r.money), if r.money < 0.0 { WARN } else { IVORY }),
         BizCol::Rating => (r.rating.map_or("-".into(), |s| format!("{s:.1}★")), r.rating.map_or(QUIET, |s| if s >= 3.5 { GOOD } else if s < 2.5 { WARN } else { IVORY })),
         BizCol::Footfall => (format!("{}", r.footfall), IVORY),
         BizCol::State => (r.state.label().into(), state_color(r.state)),
@@ -536,7 +528,7 @@ fn person_cell(r: &PersonRow, c: PersonCol) -> (String, Color32) {
         PersonCol::Name => (r.name.clone(), IVORY),
         PersonCol::Age => (format!("{}", r.age), IVORY),
         PersonCol::Class => (crate::directory::class_key(r.class).into(), class_color(r.class)),
-        PersonCol::Income => (format!("{}/d", money(r.income)), IVORY),
+        PersonCol::Income => (format!("{}/d", super::fmt::compact(r.income)), IVORY),
         PersonCol::Job => (r.work_label.clone(), if r.work.is_some() { Color32::from_gray(210) } else if r.stage == nd_sim::citizens::LifeStage::Adult { WARN } else { QUIET }),
         PersonCol::Home => (if r.street.is_empty() { r.home_label.clone() } else { format!("{}, {}", r.home_label, r.street) }, if r.home.is_some() { Color32::from_gray(210) } else { WARN }),
         PersonCol::Household => (format!("{}", r.household), IVORY),
@@ -545,9 +537,9 @@ fn person_cell(r: &PersonRow, c: PersonCol) -> (String, Color32) {
             if r.ill {
                 ("ill".into(), WARN)
             } else if r.hungry_days > 0 {
-                (format!("hungry {}d", r.hungry_days), Color32::from_rgb(240, 200, 100))
+                (format!("hungry {}d", r.hungry_days), super::theme::AMBER)
             } else {
-                (format!("fed {:.0}%", r.satiety * 100.0), if r.satiety < 0.3 { Color32::from_rgb(240, 200, 100) } else { IVORY })
+                (format!("fed {:.0}%", r.satiety * 100.0), if r.satiety < 0.3 { super::theme::AMBER } else { IVORY })
             }
         }
         PersonCol::Commute => (r.commute.map_or("-".into(), |m| m.key().into()), Color32::from_gray(200)),
