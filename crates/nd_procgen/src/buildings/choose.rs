@@ -152,19 +152,28 @@ pub fn business_look_wins(kind: nd_sim::BusinessKind) -> bool {
     )
 }
 
-/// Weighted pick among an industry's looks, clustering by neighbours.
+/// Weighted pick among an industry's looks, clustering by neighbours (not
+/// weighed by the site: a business's look is what it is).
 pub(crate) fn pick_industry_style(options: &[(Style, f32)], near: &[Neighbour], rng: &mut impl Rng) -> Style {
     let weights: Vec<f32> = options.iter().map(|(s, w)| w * adjacency::neighbour_factor(*s, near)).collect();
+    weighted_index(&weights, rng).map_or(options[0].0, |i| options[i].0)
+}
+
+/// One draw from `rng` picks an index by weight: `None` (and no draw) when
+/// the weights do not add up to a positive finite total. Every weighted
+/// style pick (the land use menus, district menus, industry looks) goes
+/// through here.
+pub(crate) fn weighted_index(weights: &[f32], rng: &mut impl Rng) -> Option<usize> {
     let total: f32 = weights.iter().sum();
-    if total <= 0.0 || !total.is_finite() {
-        return options[0].0;
+    if !(total > 0.0 && total.is_finite()) {
+        return None;
     }
     let mut r = rng.random_range(0.0..total);
-    for ((s, _), w) in options.iter().zip(&weights) {
+    for (i, w) in weights.iter().enumerate() {
         if r < *w {
-            return *s;
+            return Some(i);
         }
         r -= w;
     }
-    options[options.len() - 1].0
+    Some(weights.len() - 1)
 }

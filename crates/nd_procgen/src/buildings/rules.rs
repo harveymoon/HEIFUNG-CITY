@@ -147,18 +147,7 @@ impl BuildingRules {
     pub fn pick_style_near(&self, lu: LandUse, tier: Tier, site: &adjacency::Site, near: &[Neighbour], rng: &mut impl Rng) -> Style {
         let options = self.options(lu, tier);
         let weights: Vec<f32> = options.iter().map(|o| o.weight * adjacency::site_fit(o.style, site) * adjacency::neighbour_factor(o.style, near)).collect();
-        let total: f32 = weights.iter().sum();
-        if options.is_empty() || !(total > 0.0 && total.is_finite()) {
-            return default_style(lu, tier);
-        }
-        let mut r = rng.random_range(0.0..total);
-        for (o, w) in options.iter().zip(&weights) {
-            if r < *w {
-                return o.style;
-            }
-            r -= w;
-        }
-        options.last().unwrap().style
+        weighted_index(&weights, rng).map_or_else(|| default_style(lu, tier), |i| options[i].style)
     }
 }
 
