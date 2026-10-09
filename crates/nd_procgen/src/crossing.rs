@@ -23,7 +23,7 @@ use nd_sim::zoning::SIDEWALK;
 /// The pavement's top, as the street mesh lays it.
 pub use crate::depth::KERB_H;
 /// Height of a barrier's pivot over the ground (a footpath gate's lower).
-pub const PIVOT_Y: f32 = 1.0;
+pub(crate) const PIVOT_Y: f32 = 1.0;
 pub const GATE_PIVOT_Y: f32 = 0.85;
 /// Height of the flashing lamps' centres.
 pub const LAMP_Y: f32 = 2.75;

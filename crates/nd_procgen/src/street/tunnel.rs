@@ -17,7 +17,7 @@ pub(super) const BORE_RIB_EVERY: f32 = 14.0;
 /// (offset right of travel, height). A horseshoe: straight walls
 /// `TUNNEL_WALL` outside the carriageway to [`BORE_SPRING`], then a half
 /// ellipse whose rise grows with the width (a wide bore is not a slot).
-pub fn bore_profile(hw: f32) -> Vec<(f32, f32)> {
+pub(crate) fn bore_profile(hw: f32) -> Vec<(f32, f32)> {
     let r = hw + TUNNEL_WALL;
     let rise = (r * 0.75).clamp(2.6, 4.6);
     let n = 12;

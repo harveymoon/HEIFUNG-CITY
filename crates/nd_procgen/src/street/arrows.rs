@@ -118,3 +118,34 @@ pub fn lane_arrow(m: &mut crate::mesh::MeshData, front: Vec2, d: Vec2, arrows: u
         head(m, elbow - dir * 0.05, dir, 1.05, 0.5);
     }
 }
+
+/// Arrows painted along a lane every 45 m (none within 12 m of its ends),
+/// pointing the way traffic runs: `forward` along the path.
+pub(crate) fn travel_arrows(m: &mut crate::mesh::MeshData, path: &[Vec2], forward: bool, color: [f32; 4]) {
+    let len = path_length(path);
+    let mut s = 20.0;
+    while s < len - 12.0 {
+        let (p, d) = point_along(path, s);
+        let d = if forward { d } else { -d };
+        let side = Vec2::new(-d.y, d.x);
+        let tail = p - d * 2.0;
+        let tip = p + d * 2.2;
+        m.ground_strip(&[tail, p + d * 0.9], 0.22, MARK_Y + 0.003, color);
+        for sgn in [-1.0f32, 1.0] {
+            m.ground_strip(&[p + d * 0.6 + side * sgn * 0.75, tip], 0.22, MARK_Y + 0.003, color);
+        }
+        s += 45.0;
+    }
+}
+
+pub(super) fn dashes_along(mesh: &mut crate::mesh::MeshData, path: &[Vec2], width: f32, y: f32, dash: f32, gap: f32, color: [f32; 4]) {
+    let line = Polyline::new(path);
+    let len = path_length(path);
+    let mut t = gap * 0.5;
+    while t + dash <= len {
+        let (a, _) = line.at(t);
+        let (b, _) = line.at(t + dash);
+        mesh.ground_strip(&[a, b], width, y, color);
+        t += dash + gap;
+    }
+}
