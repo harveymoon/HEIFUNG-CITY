@@ -12,7 +12,8 @@
 //! (triangles, slivers, concave corners) get the same treatment as a
 //! rectangle without spilling onto the street.
 
-use crate::buildings::parts::{bench_world, bin_world, coin, distance_to_boundary, graffiti_world, mix, mul, ngon, offset_poly, pick, random_in_poly, rgba, rock_world, scrub_world, CHARCOAL, DARK};
+use crate::buildings::kit::{fence_run, hedge_run};
+use crate::buildings::parts::{bench_world, bin_world, distance_to_boundary, graffiti_world, mix, mul, ngon, offset_poly, pick, random_in_poly, rgba, rock_world, scrub_world, CHARCOAL, DARK};
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
@@ -147,51 +148,6 @@ fn patch(g: &mut Geometry, site: &Site, s: crate::surface::Surface, p: Vec2, r: 
         return;
     }
     g.part(s).ground_polygon(&ngon(p.x, p.y, r, 7, rng.random_range(0.0..TAU)), y, rgba(col));
-}
-
-/// Chain-link fence from `a` to `b`. `broken` (0..1) removes posts and
-/// panels; a missing panel sometimes lies on the ground just inside.
-#[allow(clippy::too_many_arguments)]
-fn fence_run(g: &mut Geometry, rng: &mut impl Rng, a: Vec2, b: Vec2, inward: Vec2, h: f32, broken: f32, post: [f32; 3], mesh: [f32; 3]) {
-    let len = a.distance(b);
-    if len < 1.0 {
-        return;
-    }
-    let t = (b - a) / len;
-    let yaw = t.y.atan2(t.x);
-    let bays = (len / 2.6).ceil().max(1.0) as i32;
-    let bay = len / bays as f32;
-    for i in 0..=bays {
-        if coin(rng, broken * 0.25) {
-            continue;
-        }
-        let p = a + t * (i as f32 * bay);
-        bx(g, Matte, p, h * 0.5, Vec3::new(0.08, h, 0.08), yaw, post);
-    }
-    for i in 0..bays {
-        let m = a + t * ((i as f32 + 0.5) * bay);
-        if coin(rng, broken * 0.5) {
-            if rng.random_bool(0.5) {
-                let q = m + inward * rng.random_range(0.8..1.6);
-                bx(g, Matte, q, 0.03, Vec3::new(bay * 0.9, 0.03, h * 0.9), yaw + rng.random_range(-0.4..0.4), mesh);
-            }
-            continue;
-        }
-        bx(g, Matte, m, h * 0.3, Vec3::new(bay, 0.04, 0.04), yaw, post);
-        bx(g, Matte, m, h * 0.92, Vec3::new(bay, 0.04, 0.04), yaw, post);
-        bx(g, Matte, m, h * 0.5, Vec3::new(bay, h * 0.9, 0.015), yaw, mesh);
-    }
-}
-
-/// Clipped hedge from `a` to `b`, `w` thick, standing on the inward side.
-fn hedge_run(g: &mut Geometry, a: Vec2, b: Vec2, inward: Vec2, h: f32, w: f32, col: [f32; 3]) {
-    let len = a.distance(b);
-    if len < 0.8 {
-        return;
-    }
-    let t = (b - a) / len;
-    let m = (a + b) * 0.5 + inward * (w * 0.5 + 0.1);
-    bx(g, Foliage, m, h * 0.5, Vec3::new(len, h, w), t.y.atan2(t.x), col);
 }
 
 /// Estate agent's board on a post, facing the road just inside the frontage.

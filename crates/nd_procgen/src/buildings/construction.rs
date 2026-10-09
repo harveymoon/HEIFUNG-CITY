@@ -4,15 +4,16 @@
 //! scaffolding climbing beside it, a tower crane on the taller jobs, and the
 //! clutter of pallets, a site cabin, a mixer truck and the crew.
 
+use super::kit::hoarding;
 use super::parts::*;
-use super::{Ctx, Face};
+use super::Ctx;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::zoning::{point_in_polygon, polygon_area};
 use nd_sim::LandUse;
 use rand::Rng;
 
-const HOARDING_H: f32 = 2.3;
+use super::kit::HOARDING_H;
 
 /// A stream of its own for one block of a site, so the blocks whose draw
 /// counts change with progress (the structure, the crane, the stacks that
@@ -158,52 +159,6 @@ pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress
                     worker(g, c, rng, p, 0.04);
                 }
             }
-        }
-    }
-}
-
-/// Plywood hoarding along one edge, with a gate gap of `gate` metres in the
-/// middle when given.
-fn hoarding(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, gate: Option<f32>) {
-    let f = &c.frame;
-    if face.len < 0.6 {
-        return;
-    }
-    let ply = mul(c.palette.plywood, rng.random_range(0.85..1.05));
-    let post = mul(c.palette.steel, 0.55);
-    let h = HOARDING_H;
-    let spans: Vec<(f32, f32)> = match gate {
-        Some(gw) if face.len > gw + 2.0 => vec![(-face.len * 0.5, -gw * 0.5), (gw * 0.5, face.len * 0.5)],
-        _ => vec![(-face.len * 0.5, face.len * 0.5)],
-    };
-    for (a, b) in &spans {
-        let len = b - a;
-        let mid = (a + b) * 0.5;
-        face.bx(g, f, Wood, mid, h * 0.5, 0.0, Vec3::new(len, h, 0.06), ply);
-        // Rail along the top and posts behind.
-        face.bx(g, f, Matte, mid, h + 0.03, -0.05, Vec3::new(len, 0.08, 0.14), post);
-        let posts = (len / 2.4).ceil().max(1.0) as i32;
-        for k in 0..=posts {
-            let t = a + k as f32 * (len / posts as f32);
-            face.bx(g, f, Matte, t, h * 0.5, -0.08, Vec3::new(0.1, h, 0.1), post);
-        }
-        // Posters and a warning stripe.
-        if rng.random_bool(0.5) && len > 4.0 {
-            let t = rng.random_range(a + 1.0..b - 1.0);
-            face.decal(g, f, Glow, t, 1.3, 0.04, 1.2, 1.6, mul(pick(rng, &c.palette.sign_colors), 0.6));
-        }
-        face.decal(g, f, Matte, mid, 0.45, 0.035, len, 0.25, c.palette.hi_vis);
-    }
-    if let Some(gw) = gate {
-        if face.len > gw + 2.0 {
-            // Gate posts and a sliding mesh gate, part open.
-            for side in [-1.0f32, 1.0] {
-                face.bx(g, f, Matte, side * gw * 0.5, (h + 0.3) * 0.5, 0.0, Vec3::new(0.22, h + 0.3, 0.22), post);
-            }
-            face.bx(g, f, Matte, -gw * 0.5 - gw * 0.3, h * 0.5, -0.25, Vec3::new(gw * 0.6, h * 0.92, 0.04), [0.30, 0.31, 0.33]);
-            face.bx(g, f, Matte, gw * 0.5 - gw * 0.15, h * 0.5, 0.25, Vec3::new(gw * 0.3, h * 0.92, 0.04), [0.30, 0.31, 0.33]);
-            // A barrier across the opening.
-            face.bx(g, f, Matte, 0.0, 0.9, 0.4, Vec3::new(gw * 0.8, 0.12, 0.08), c.palette.hi_vis);
         }
     }
 }

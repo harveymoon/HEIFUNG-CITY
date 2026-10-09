@@ -129,6 +129,8 @@ pub fn aviation_light_local(g: &mut Geometry, f: &Frame, pal: &Palette, u: f32, 
     f.bx(g, Glow, u, y, v, Vec3::splat(size), pal.aviation_light);
 }
 
+pub(crate) use super::kit::{fence, fence_lot, fence_poly, gate, hedge};
+
 // ── polygons (lot-local) ─────────────────────────────────────────────────────
 
 pub fn bounds(poly: &[Vec2]) -> (Vec2, Vec2) {
@@ -1097,62 +1099,6 @@ pub fn bollard_world(g: &mut Geometry, w: Vec2, color: [f32; 3]) {
     g.part(Matte).cylinder(w, 0.14, 0.12, 0.0, 0.9, 8, rgba(color));
 }
 
-/// Rail fence between two lot-local points, optionally topped with barbed wire.
-pub fn fence(g: &mut Geometry, c: &Ctx, a: Vec2, b: Vec2, h: f32, barbed: bool) {
-    let f = &c.frame;
-    let len = a.distance(b);
-    if len < 0.5 {
-        return;
-    }
-    let face = Face::from_edge(a, b);
-    let posts = (len / 2.6).ceil().max(1.0) as i32;
-    let color = mul(c.palette.steel, 0.5);
-    for i in 0..=posts {
-        let t = -len * 0.5 + i as f32 * (len / posts as f32);
-        face.bx(g, f, Matte, t, h * 0.5, 0.0, Vec3::new(0.08, h, 0.08), color);
-    }
-    for k in 0..3 {
-        let y = h * (0.25 + 0.35 * k as f32);
-        face.bx(g, f, Matte, 0.0, y, 0.0, Vec3::new(len, 0.04, 0.04), color);
-    }
-    // mesh panel: thin, dark, slightly translucent-looking grey; a box, not
-    // a decal, because a fence is seen from both sides
-    face.bx(g, f, Matte, 0.0, h * 0.5, 0.0, Vec3::new(len, h * 0.96, 0.015), c.palette.fence_mesh);
-    if barbed {
-        let wa = f.at2(a, h + 0.2);
-        let wb = f.at2(b, h + 0.2);
-        g.part(Rust).tube(wa, wb, 0.12, 5, rgba(c.palette.rust));
-    }
-}
-
-/// Fence round a yard with the gate on the face that looks at the road:
-/// the perimeter every depot, plant and compound shares.
-pub fn fence_lot(g: &mut Geometry, c: &Ctx, poly: &[Vec2], h: f32, barbed: bool) {
-    fence_poly(g, c, poly, h, c.front_face_index(poly), barbed);
-}
-
-/// Fence around a polygon, leaving one face open as a gate.
-pub fn fence_poly(g: &mut Geometry, c: &Ctx, poly: &[Vec2], h: f32, skip_face: Option<usize>, barbed: bool) {
-    let n = poly.len();
-    for i in 0..n {
-        if skip_face == Some(i) {
-            gate(g, c, poly[i], poly[(i + 1) % n], h);
-            continue;
-        }
-        fence(g, c, poly[i], poly[(i + 1) % n], h, barbed);
-    }
-}
-
-/// Gate posts at both ends of a lot-local edge and a sliding gate half open.
-pub fn gate(g: &mut Geometry, c: &Ctx, a: Vec2, b: Vec2, h: f32) {
-    let face = Face::from_edge(a, b);
-    let f = &c.frame;
-    for side in [-1.0f32, 1.0] {
-        face.bx(g, f, Matte, side * face.len * 0.5, h * 0.6, 0.0, Vec3::new(0.2, h * 1.2, 0.2), mul(c.palette.steel, 0.6));
-    }
-    face.bx(g, f, Matte, -face.len * 0.2, h * 0.5, 0.15, Vec3::new(face.len * 0.55, h * 0.9, 0.05), mul(c.palette.steel, 0.5));
-}
-
 /// Bollards `d` out from a face, pulled back to the lot edge when the
 /// forecourt is shallower than asked for.
 pub fn bollards(g: &mut Geometry, c: &Ctx, face: &Face, n: i32, d: f32) {
@@ -1626,11 +1572,6 @@ pub fn ladder(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y0: f32, y1: f32, 
     for k in 0..rungs {
         face.bx(g, f, s, t, y0 + (k as f32 + 0.5) * 0.3, 0.2, Vec3::new(0.5, 0.04, 0.04), color);
     }
-}
-
-pub fn hedge(g: &mut Geometry, c: &Ctx, a: Vec2, b: Vec2, h: f32, w: f32, color: [f32; 3]) {
-    let face = Face::from_edge(a, b);
-    face.bx(g, &c.frame, Foliage, 0.0, h * 0.5, 0.0, Vec3::new(face.len, h, w), color);
 }
 
 pub fn pool(g: &mut Geometry, c: &Ctx, cu: f32, cv: f32, w: f32, d: f32) {
