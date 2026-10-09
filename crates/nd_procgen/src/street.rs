@@ -72,6 +72,7 @@ impl StreetLayer {
 
 /// Where a signal lamp hangs over the end of a lane, for the renderer to
 /// swap its colour at runtime.
+#[derive(Debug)]
 pub struct SignalPost {
     pub lane: LaneId,
     pub lamp: Vec3,
@@ -81,6 +82,7 @@ pub struct SignalPost {
 /// [pedestrians] A walk / don't walk lamp at one end of a signalised
 /// crosswalk, facing the people at the other end: the renderer colours it
 /// from `Traffic::peds` (`walk_shown(inter, approach)`).
+#[derive(Debug)]
 pub struct PedSignalPost {
     pub inter: usize,
     pub approach: usize,

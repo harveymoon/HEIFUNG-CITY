@@ -1478,7 +1478,7 @@ pub fn generate_styled(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn generate_styled_extras(
+pub(crate) fn generate_styled_extras(
     lot: &Lot,
     land_use: LandUse,
     floors: u8,
@@ -1720,7 +1720,7 @@ fn back_edge_link(lot: &Lot, kind: RailFacility) -> RailLink {
 mod coplanar_tests;
 
 #[cfg(test)]
-mod sweep_tests;
+pub(crate) mod sweep_tests;
 
 #[cfg(test)]
 mod tests {

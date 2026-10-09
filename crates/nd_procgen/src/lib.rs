@@ -33,6 +33,9 @@ pub mod vehicles;
 pub mod vacant;
 pub mod walk;
 
+#[cfg(test)]
+mod golden_tests;
+
 pub use buildings::transit::bus_stops;
 pub use buildings::dirty;
 pub use toll::{toll_booths, TollDraw};
