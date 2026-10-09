@@ -103,31 +103,6 @@ fn soup_sum(m: &MeshData) -> u64 {
     sum
 }
 
-/// `ND_GOLDEN_DUMP=a,b` writes every case whose name contains `a` or `b`
-/// (all its attributes and indices, one value per line) next to the hash
-/// file, for comparing two builds value by value.
-fn dump(name: &str, parts: &[MeshData]) {
-    let Ok(pat) = std::env::var("ND_GOLDEN_DUMP") else { return };
-    if !pat.split(',').any(|p| !p.is_empty() && name.contains(p)) {
-        return;
-    }
-    let dir = format!("{}.dump", std::env::var("ND_GOLDEN_OUT").unwrap_or_default());
-    let _ = std::fs::create_dir_all(&dir);
-    let mut s = String::new();
-    for (k, m) in parts.iter().enumerate() {
-        for (tag, vals) in [("p", m.positions.iter().flatten().copied().collect::<Vec<f32>>()), ("n", m.normals.iter().flatten().copied().collect()), ("c", m.colors.iter().flatten().copied().collect()), ("u", m.uvs.iter().flatten().copied().collect()), ("t", m.tangents.iter().flatten().copied().collect())] {
-            for (i, v) in vals.iter().enumerate() {
-                let _ = writeln!(s, "{k} {tag} {i} {v:?}");
-            }
-        }
-        for (i, v) in m.indices.iter().enumerate() {
-            let _ = writeln!(s, "{k} i {i} {v}");
-        }
-    }
-    let file: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
-    let _ = std::fs::write(format!("{dir}/{file}.txt"), s);
-}
-
 struct Out(Mutex<BTreeMap<String, String>>);
 
 /// With `ND_GOLDEN_DUMP_LIST=<file of case names>` and
@@ -197,7 +172,7 @@ impl Out {
         }
         let mut x = Fnv::new();
         x.bytes(format!("{:?}{:?}{:?}", g.pads, g.cranes, g.lamps).as_bytes());
-        self.line(name.into(), format!("exact={:016x} soup={soup:016x} tris={tris} extras={:016x}", h.0, x.0));
+        self.line(name, format!("exact={:016x} soup={soup:016x} tris={tris} extras={:016x}", h.0, x.0));
     }
     fn debug(&self, name: impl Into<String>, v: &impl std::fmt::Debug) {
         let mut h = Fnv::new();
@@ -462,6 +437,12 @@ fn world_meshes(out: &Out, tag: &str, w: &World, walk_at: &[Vec2], previews: &[V
     out.mesh(format!("{tag} retaining caps"), &caps);
     if !w.landscape.is_flat() {
         out.mesh(format!("{tag} landscape"), &crate::terrain::build_landscape_terrain(w, &pal, 8.0));
+        let tiles = crate::terrain::LandscapeTiles::new(w, &pal, 8.0);
+        let mut union = MeshData::default();
+        for t in 0..tiles.len() {
+            union.append(tiles.mesh(t));
+        }
+        out.mesh(format!("{tag} landscape tiles"), &union);
         out.mesh(format!("{tag} water"), &crate::terrain::build_water(w, &pal));
         out.mesh(format!("{tag} far water"), &crate::terrain::build_far_water(w, &pal));
         out.mesh(format!("{tag} far ground"), &crate::terrain::build_far_ground(nd_sim::landscape::LAND_HALF, 3000.0, 25.0, &|p| w.ground_height(p), &|p| w.landscape.is_water(p), &pal));
