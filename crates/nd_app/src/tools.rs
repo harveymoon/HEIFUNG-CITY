@@ -789,6 +789,9 @@ impl Plugin for ToolsPlugin {
 
 const POINT_PICK_RADIUS: f32 = 8.0;
 
+/// [rage] How close the camera must be for angry drivers' "!" marks.
+const RAGE_MARK_RANGE: f32 = 260.0;
+
 /// [fix/review-app] What the selection should be now that the sim has
 /// moved: the same, `None` when the thing is gone, or the station for an
 /// emergency unit back home. One exhaustive match, so a new kind of
@@ -1745,17 +1748,27 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
     let lift = |p: SVec2| Vec3::new(p.x, 0.8 + sim.world.surface_height(p), p.y);
     let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
 
-    // [rage] Drivers who have lost their temper flash and lean on the horn:
-    // a red ring blinking over the car, faster the angrier they are.
-    {
+    // [rage] Drivers who have lost their temper: a small red "!" pulsing
+    // over the car, quicker the angrier they are. Only when the camera is
+    // close; from afar it would just be noise.
+    if let Some(cam) = cams.iter().next().filter(|c| *cam_mode == crate::camera::CameraMode::Walk || c.distance < RAGE_MARK_RANGE) {
         let f = sim.frac();
         let t = time.elapsed_secs();
+        let near = SVec2::new(cam.target.x, cam.target.z);
         for (id, car) in sim.world.traffic.cars.iter().filter(|(_, c)| c.drive.anger >= 0.5) {
-            let phase = (slotmap::Key::data(&id).as_ffi() % 97) as f32 * 0.13;
-            if ((t * (3.0 + 5.0 * car.drive.anger) + phase) as i64) % 2 == 0 {
-                let (p, _) = car.pose_at(f);
-                gizmos.circle(Isometry3d::new(Vec3::new(p.x, sim.world.car_height(car) + 2.4, p.y), flat), 1.1 + car.drive.anger, Color::linear_rgb(4.0, 0.3, 0.15));
+            let (p, _) = car.pose_at(f);
+            if p.distance(near) > RAGE_MARK_RANGE {
+                continue;
             }
+            let phase = (slotmap::Key::data(&id).as_ffi() % 97) as f32 * 0.13;
+            let pulse = 0.55 + 0.45 * (t * (3.0 + 4.0 * car.drive.anger) + phase).sin();
+            let col = Color::linear_rgb(4.0 * pulse, 0.25 * pulse, 0.15 * pulse);
+            let base = Vec3::new(p.x, sim.world.car_height(car) + 2.2, p.y);
+            // The stroke (three lines so it reads thicker) and the dot.
+            for dx in [-0.06, 0.0, 0.06] {
+                gizmos.line(base + Vec3::new(dx, 0.55, 0.0), base + Vec3::new(dx, 1.5, 0.0), col);
+            }
+            gizmos.sphere(Isometry3d::from_translation(base + Vec3::Y * 0.22), 0.11, col);
         }
     }
 
