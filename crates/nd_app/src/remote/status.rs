@@ -88,6 +88,12 @@ pub(super) fn status(ctx: &Ctx) -> Value {
     // [looks] The figure cache: meshes alive, people outdoors and their distinct looks.
     let st = &ctx.stats;
     v["render"]["people"] = json!({ "meshes": st.people_meshes, "mesh_cap": crate::render::PEOPLE_MESH_CAP, "visible": st.people_visible, "distinct_looks_visible": st.people_looks_visible, "built_total": st.people_built, "borrowed": st.people_borrowed, "materials": 1 });
+    // The full alerts scan on every poll. Not cached: nothing cheap says
+    // the world is unchanged (`step_sim` and other per-frame systems take
+    // `Sim` mutably every frame, paused or not, so Bevy's change ticks
+    // move each frame; the clock does not move when the player edits a
+    // paused city), and a cache per sim hour would answer stale alerts.
+    // The scan itself spells out ids only for the examples it keeps.
     v["alerts_top"] = report::alerts_json(&report::alerts(w), 5);
     // [districts] [tourism]
     let ts = &w.tourism;

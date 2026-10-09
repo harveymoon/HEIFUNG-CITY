@@ -17,8 +17,9 @@ pub(super) fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let limit = opt_u64(cmd, "limit")?.unwrap_or(50) as usize;
     let filter = field(cmd, "filter");
     let w = &ctx.sim.world;
-    // (distance, row) so results can be sorted nearest-first when asked.
-    let mut rows: Vec<(f32, Value)> = Vec::new();
+    // (distance, row) so results can be sorted nearest-first when asked;
+    // a row is built only if it is returned (`limit` keeps the first).
+    let mut rows: Vec<(f32, Box<dyn FnOnce() -> Value + '_>)> = Vec::new();
     let within = |p: SVec2| -> Option<f32> {
         let d = near.map_or(0.0, |n| n.distance(p));
         (d <= radius).then_some(d)
@@ -39,7 +40,7 @@ pub(super) fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     continue;
                 }
                 if let Some(d) = within(c.pos) {
-                    rows.push((d, citizen_row(w, id, c)));
+                    rows.push((d, Box::new(move || citizen_row(w, id, c))));
                 }
             }
         }
@@ -65,7 +66,7 @@ pub(super) fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
                 let Some(lot) = w.lots.get(b.lot) else { continue };
                 if let Some(d) = within(lot.center) {
-                    rows.push((d, building_row(w, id, b)));
+                    rows.push((d, Box::new(move || building_row(w, id, b))));
                 }
             }
         }
@@ -82,7 +83,7 @@ pub(super) fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     continue;
                 }
                 if let Some(d) = within(l.center) {
-                    rows.push((d, lot_row(w, id, l)));
+                    rows.push((d, Box::new(move || lot_row(w, id, l))));
                 }
             }
         }
@@ -93,7 +94,7 @@ pub(super) fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     continue;
                 }
                 if let Some(d) = within(c.pos) {
-                    rows.push((d, car_row(w, id, c)));
+                    rows.push((d, Box::new(move || car_row(w, id, c))));
                 }
             }
         }
@@ -106,7 +107,7 @@ pub(super) fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 }
                 let head = nd_sim::rail::point_along(&t.poly, t.s).0;
                 if let Some(d) = within(head) {
-                    rows.push((d, row));
+                    rows.push((d, Box::new(move || row)));
                 }
             }
         }
@@ -114,7 +115,7 @@ pub(super) fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         "metro_trains" | "metro_train" | "metros" => {
             for (id, t) in w.subway.trains.iter() {
                 if let Some(d) = within(t.head()) {
-                    rows.push((d, trains::metro_row(w, id)));
+                    rows.push((d, Box::new(move || trains::metro_row(w, id))));
                 }
             }
         }
@@ -127,7 +128,7 @@ pub(super) fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     continue;
                 }
                 if let Some(d) = within(b.pos) {
-                    rows.push((d, follow::bot_row(w, id)));
+                    rows.push((d, Box::new(move || follow::bot_row(w, id))));
                 }
             }
         }
@@ -138,7 +139,7 @@ pub(super) fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     continue;
                 }
                 if let (Some(dist), Some(row)) = (within(d.pos), drone_detail(w, id)) {
-                    rows.push((dist, row));
+                    rows.push((dist, Box::new(move || row)));
                 }
             }
         }
@@ -146,7 +147,7 @@ pub(super) fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             for (id, r) in w.transit.routes.iter() {
                 let d = near.map_or(0.0, |n| r.stops.iter().map(|s| s.pos.distance(n)).fold(f32::INFINITY, f32::min));
                 if d <= radius {
-                    rows.push((d, route_row(id, r)));
+                    rows.push((d, Box::new(move || route_row(id, r))));
                 }
             }
         }
@@ -161,12 +162,14 @@ pub(super) fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     continue;
                 }
                 if let Some(d) = within(p.center) {
-                    let accepts: Vec<&str> = nd_sim::LandUse::ALL.iter().filter(|l| p.accepts(**l)).map(|l| l.label()).collect();
                     let plan = planned.get(i).copied().flatten().map_or("unzoned", |l| l.label());
-                    rows.push((d, json!({
-                        "index": i, "center": v2(p.center), "area": round(p.area), "land_use": built, "planned": plan,
-                        "landlocked": p.landlocked(), "street": p.street_frontage, "rough": p.rough, "rough_why": p.rough_why, "accepts": accepts, "water_frontage_m": round(p.water_frontage),
-                        "lot": p.lot.map(key_str), "key": [p.key.center.0, p.key.center.1],
+                    rows.push((d, Box::new(move || {
+                        let accepts: Vec<&str> = nd_sim::LandUse::ALL.iter().filter(|l| p.accepts(**l)).map(|l| l.label()).collect();
+                        json!({
+                            "index": i, "center": v2(p.center), "area": round(p.area), "land_use": built, "planned": plan,
+                            "landlocked": p.landlocked(), "street": p.street_frontage, "rough": p.rough, "rough_why": p.rough_why, "accepts": accepts, "water_frontage_m": round(p.water_frontage),
+                            "lot": p.lot.map(key_str), "key": [p.key.center.0, p.key.center.1],
+                        })
                     })));
                 }
             }
@@ -175,7 +178,7 @@ pub(super) fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             for (id, g) in &w.effective_plan().gestures {
                 let d = near.map_or(0.0, |n| g.points().iter().map(|p| p.distance(n)).fold(f32::INFINITY, f32::min));
                 if d <= radius {
-                    rows.push((d, gesture(*id, g)));
+                    rows.push((d, Box::new(move || gesture(*id, g))));
                 }
             }
         }
@@ -188,7 +191,8 @@ pub(super) fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let rows: Vec<Value> = rows
         .into_iter()
         .take(limit)
-        .map(|(d, mut r)| {
+        .map(|(d, row)| {
+            let mut r = row();
             if near.is_some() {
                 r["distance"] = json!(round(d));
             }
