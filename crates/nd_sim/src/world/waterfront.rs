@@ -130,10 +130,6 @@ impl World {
         self.scene.berth_fees_today = fees_total;
     }
 
-    /// A boat is home. ([fishing] Trawlers land their catch in
-    /// `world/fishing.rs`.)
-    pub(super) fn boat_home(&mut self, _ship: &Ship) {}
-
     /// Every ten minutes: pleasure boats go out by day, a few from each
     /// marina, never more than its berths.
     pub(super) fn step_boats(&mut self) {

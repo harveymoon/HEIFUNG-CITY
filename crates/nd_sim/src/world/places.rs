@@ -140,7 +140,7 @@ impl World {
             LandUse::Entertainment => REACH_NIGHT,
             _ => REACH_SHOP,
         };
-        // (building, utility, known, distance)
+        // (building, utility, distance)
         let mut known: Vec<(BuildingId, f32, f32)> = Vec::new();
         let mut fresh: Vec<(BuildingId, f32, f32)> = Vec::new();
         let empty: Vec<CitizenId> = Vec::new();

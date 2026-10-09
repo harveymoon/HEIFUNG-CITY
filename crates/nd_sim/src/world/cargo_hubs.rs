@@ -63,11 +63,7 @@ impl World {
             _ => (Via::Road, hub::ROAD_IMPORT_FACTOR),
         };
         let refund = cargo.price * (1.0 - factor);
-        if let Some(bz) = self.buildings.get_mut(cargo.to).and_then(|b| b.business.as_mut()) {
-            bz.money += refund;
-            bz.spend_today -= refund;
-        }
-        self.economy.market.imports_today -= refund;
+        self.refund_import(cargo.to, refund);
         let price = cargo.price * factor;
         let load = HubLoad { buyer: cargo.to, resource: cargo.resource, amount: cargo.amount, price, since: tick, via };
         let to_hub = Cargo { to: hub_id, price, ..cargo };
@@ -313,12 +309,6 @@ impl World {
                 }
             }
         }
-    }
-
-    /// Working hubs near a point (for the freight yards and ports that are
-    /// beside one).
-    pub fn hubs_near(&self, p: Vec2, reach: f32) -> Vec<BuildingId> {
-        self.cargo_hubs.hubs.keys().copied().filter(|h| self.cargo_hub_works(*h) && self.building_entrance(*h).is_some_and(|q| q.distance(p) <= reach)).collect()
     }
 
     /// Ports that work, for the hub inspector.

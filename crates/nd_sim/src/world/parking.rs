@@ -118,7 +118,8 @@ impl World {
     /// [parking-market] Where drivers have most been circling: the concerns'
     /// Parking hotspot of the last three days, else where the last driver
     /// gave up looking.
-    pub fn parking_trouble_spot(&self) -> Option<Vec2> {
+    #[cfg(test)]
+    pub(crate) fn parking_trouble_spot(&self) -> Option<Vec2> {
         self.concerns.hotspot(crate::concerns::Concern::Parking, self.clock.day(), 3).map(|(p, _)| p).or(self.economy.parking_shortage_at)
     }
 

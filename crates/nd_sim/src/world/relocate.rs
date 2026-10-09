@@ -11,8 +11,9 @@
 //! the new building opens. A business that cannot afford it, or finds no
 //! lot within [`MOVE_WAIT_TICKS`], is gone, as before.
 //!
-//! No draws: the lot is the nearest (ties by key) and the new building's
-//! name is the old one.
+//! No draws of its own: the lot is the nearest (ties by key) and the new
+//! building's name is the old one. (`build_on_named` picks the new
+//! building's floors from the world's stream, as for any new building.)
 
 use super::*;
 use crate::estate::{Moving, OwnerKind};

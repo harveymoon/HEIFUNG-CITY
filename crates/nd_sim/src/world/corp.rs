@@ -122,7 +122,7 @@ impl World {
 
     /// Buildings the market trades in: not the city's, not parks.
     pub fn ordinary_buildings(&self) -> usize {
-        self.buildings.values().filter(|b| !b.is_special() && !b.is_parking() && b.land_use != LandUse::Park).count()
+        self.buildings.values().filter(|b| b.is_grown() && b.land_use != LandUse::Park).count()
     }
 
     /// Most properties one corp may hold under the player's rule.
@@ -579,7 +579,7 @@ impl World {
         let primary = plots[0];
         let floors = self.hq_floors(primary);
         let value = self.lot_value(primary);
-        let price: f64 = plots.iter().filter_map(|l| self.lots.get(*l).and_then(|x| x.building)).map(|b| self.sale_price(b)).sum();
+        let price: f64 = self.plots_price(&plots);
         let memory = format!("{name} bought the block for its headquarters. We had to go.");
         let bid = match self.lots[primary].building {
             Some(b) => {
