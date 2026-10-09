@@ -1169,8 +1169,9 @@ pub(super) fn roundabout_arm(g: &mut Geometry, pal: &Palette, at: Vec2, d: Vec2,
 pub(super) fn street_grit(g: &mut Geometry, pal: &Palette, walk: &[Vec2], hw: f32, len: f32, rng: &mut impl Rng) {
     let pothole = rgba(mul(pal.asphalt, 0.5));
     let crack = rgba(mul(pal.paving, 0.35));
+    let walk_line = Polyline::new(walk);
     let at = |s: f32| {
-        let (p, d) = point_along(walk, s);
+        let (p, d) = walk_line.at(s);
         (p, d, Vec2::new(-d.y, d.x))
     };
     // Potholes.

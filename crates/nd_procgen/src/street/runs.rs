@@ -237,9 +237,10 @@ pub(super) fn clear_along(path: &[Vec2], from: f32, limit: f32, offsets: &[f32],
         return from;
     }
     let near = |c: Vec2, q: &[Vec2]| q.windows(2).map(|w| nd_sim::geom::project_on_segment(c, w[0], w[1]).1.distance(c)).fold(f32::MAX, f32::min);
+    let line = Polyline::new(path);
     let mut s = from;
     while s <= limit {
-        let (p, d) = point_along(path, s);
+        let (p, d) = line.at(s);
         let n = Vec2::new(-d.y, d.x);
         if offsets.iter().all(|o| others.iter().all(|(q, hw)| near(p + n * *o, q) >= *hw + 0.05)) {
             return s;

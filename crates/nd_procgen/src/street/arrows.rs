@@ -122,10 +122,11 @@ pub fn lane_arrow(m: &mut crate::mesh::MeshData, front: Vec2, d: Vec2, arrows: u
 /// Arrows painted along a lane every 45 m (none within 12 m of its ends),
 /// pointing the way traffic runs: `forward` along the path.
 pub(crate) fn travel_arrows(m: &mut crate::mesh::MeshData, path: &[Vec2], forward: bool, color: [f32; 4]) {
+    let line = Polyline::new(path);
     let len = path_length(path);
     let mut s = 20.0;
     while s < len - 12.0 {
-        let (p, d) = point_along(path, s);
+        let (p, d) = line.at(s);
         let d = if forward { d } else { -d };
         let side = Vec2::new(-d.y, d.x);
         let tail = p - d * 2.0;

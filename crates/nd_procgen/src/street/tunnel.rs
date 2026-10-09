@@ -85,11 +85,12 @@ pub fn bore_shell(g: &mut Geometry, walk: &[Vec2], hw: f32, lining: [f32; 4], ri
         }
     }
     // Lining bands: a ring of quads standing a little proud of the lining.
+    let line = Polyline::new(walk);
     let len = path_length(walk);
     let mut s = BORE_RIB_EVERY * 0.5;
     while s < len - 1.0 {
-        let (p0, d0) = point_along(walk, (s - 0.35).max(0.0));
-        let (p1, d1) = point_along(walk, (s + 0.35).min(len));
+        let (p0, d0) = line.at((s - 0.35).max(0.0));
+        let (p1, d1) = line.at((s + 0.35).min(len));
         let (r0, r1) = (Vec2::new(-d0.y, d0.x), Vec2::new(-d1.y, d1.x));
         let ring = |p: Vec2, right: Vec2, k: usize| {
             let (x, y) = profile[k];

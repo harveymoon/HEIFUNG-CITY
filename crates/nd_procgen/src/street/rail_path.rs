@@ -123,8 +123,9 @@ pub(super) fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run
     // Centre line for bikes to keep to one side.
     g.part(Paint).path_strip(pts, 0.0, 0.08, MARK_Y, rgba(mul(pal.lane_divider, 0.6)));
     let len = path_length(pts);
+    let line = Polyline::new(pts);
     let at = |s: f32, off: f32| {
-        let (p, d) = point_along(pts, s);
+        let (p, d) = line.at(s);
         let right = Vec2::new(-d.y, d.x);
         (p + right * off, d)
     };
