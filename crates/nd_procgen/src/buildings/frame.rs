@@ -10,7 +10,7 @@ use super::*;
 /// Generators work in two coordinate systems: lot-local (`Ctx::lot_poly`,
 /// `Face`, `Frame::bx`) and world (`ParkLayout`, `RailLink`, the `*_world`
 /// helpers). The identity frame from [`Frame::world`] lets a frame-taking
-/// helper draw in world space; [`Frame::is_world`] tells which one a frame is.
+/// helper draw in world space.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Frame {
     pub center: Vec2,
@@ -57,10 +57,6 @@ impl Frame {
     /// vacant lots lay out from world polygons).
     pub fn world() -> Self {
         Self { center: Vec2::ZERO, along: Vec2::X, inward: Vec2::Y, width: 0.0, depth: 0.0 }
-    }
-
-    pub fn is_world(&self) -> bool {
-        self.center == Vec2::ZERO && self.along == Vec2::X && self.inward == Vec2::Y
     }
 
     pub fn yaw(&self) -> f32 {

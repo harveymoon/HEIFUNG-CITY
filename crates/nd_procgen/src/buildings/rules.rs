@@ -86,10 +86,6 @@ impl TierStyle {
     pub fn window_color(&self, i: usize) -> [f32; 3] {
         crate::palette::at(&self.window_colors, i)
     }
-
-    pub fn wall_color(&self, i: usize) -> [f32; 3] {
-        crate::palette::at(&self.wall_colors, i)
-    }
 }
 
 impl BuildingRules {
