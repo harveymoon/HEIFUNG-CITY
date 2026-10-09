@@ -5,20 +5,9 @@
 
 use bevy_egui::egui;
 use super::{hint, section, GOLD, IVORY};
+use super::fmt::money;
 use crate::tools::Selection;
 use nd_sim::estate::OwnerKind;
-
-fn money(v: f64) -> String {
-    if v >= 1e9 {
-        format!("${:.1}B", v / 1e9)
-    } else if v >= 1e6 {
-        format!("${:.1}M", v / 1e6)
-    } else if v >= 1e3 {
-        format!("${:.0}k", v / 1e3)
-    } else {
-        format!("${v:.0}")
-    }
-}
 
 pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId, selection: &mut Selection) {
     let Some(b) = w.buildings.get(id) else { return };
@@ -51,7 +40,7 @@ pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildi
         bits.push(format!("spans {} plots", 1 + b.plot.extra_lots.len()));
     }
     if !b.plot.pending_lots.is_empty() {
-        bits.push(format!("{} bought plot{} still clearing", b.plot.pending_lots.len(), if b.plot.pending_lots.len() == 1 { "" } else { "s" }));
+        bits.push(format!("{} bought plot{} still clearing", b.plot.pending_lots.len(), super::fmt::s(b.plot.pending_lots.len())));
     }
     if let Some(lot) = w.lots.get(b.lot) {
         let p = w.estate.pressure.at(lot.center);
@@ -88,14 +77,14 @@ pub fn citizen_line(ui: &mut egui::Ui, w: &nd_sim::World, cid: nd_sim::CitizenId
 // ── [megacorp] brands, corps and campuses ───────────────────────────────────
 
 /// The brand colour as egui's.
-pub fn brand_color(b: &nd_sim::corp::Brand) -> egui::Color32 {
+fn brand_color(b: &nd_sim::corp::Brand) -> egui::Color32 {
     let [r, g, bl] = b.rgb();
     egui::Color32::from_rgb(r, g, bl)
 }
 
 /// Paint a brand's logo (the same pixel mark as on the buildings), `size`
 /// points square.
-pub fn paint_logo(ui: &mut egui::Ui, b: &nd_sim::corp::Brand, size: f32) -> egui::Response {
+fn paint_logo(ui: &mut egui::Ui, b: &nd_sim::corp::Brand, size: f32) -> egui::Response {
     use nd_sim::corp::{LogoPixel, LOGO_N};
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
     let painter = ui.painter_at(rect);

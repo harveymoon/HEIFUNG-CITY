@@ -128,6 +128,9 @@ impl Slot {
     }
 }
 
+/// [identity] A game's history entries, newest first, each with its file time.
+pub type HistoryList = std::sync::Arc<Vec<(super::history::Entry, Option<SystemTime>)>>;
+
 #[derive(Resource)]
 pub struct Saves {
     slots: Vec<Slot>,
@@ -143,6 +146,18 @@ pub struct Saves {
     /// Pictures loaded as egui textures, by path, with the file time they
     /// were read at.
     pictures: HashMap<PathBuf, (Option<SystemTime>, egui::TextureHandle)>,
+    /// When each picture's file was last looked at, as a [`disk_generation`],
+    /// and whether it had one: the lists ask every frame, the disk is asked
+    /// again only after the game wrote to the folder.
+    pictures_checked: HashMap<PathBuf, (u64, bool)>,
+    /// Pictures asked for and not yet seen on disk newer than the asking
+    /// (the renderer writes them a few frames later): looked at every frame
+    /// until they land.
+    pictures_due: HashMap<PathBuf, SystemTime>,
+    /// [identity] The game history listing (`history::list`) with each
+    /// entry's file time, for the game id and [`disk_generation`] it was
+    /// read at; the Game history window shows it every frame.
+    history: Option<(u64, String, HistoryList)>,
     /// The name typed into "Save as".
     pub name: String,
     /// The title screen is up (at startup unless `ND_TITLE=0`).
@@ -157,14 +172,44 @@ pub struct Saves {
 impl Default for Saves {
     fn default() -> Self {
         let title = !std::env::var("ND_TITLE").is_ok_and(|v| v == "0");
-        Self { slots: Vec::new(), dirty: true, pending_load: None, autosave: None, shots: Vec::new(), pictures: HashMap::new(), name: String::new(), title, history_requested: None, new_city_name: String::new() }
+        Self { slots: Vec::new(), dirty: true, pending_load: None, autosave: None, shots: Vec::new(), pictures: HashMap::new(), pictures_checked: HashMap::new(), pictures_due: HashMap::new(), history: None, name: String::new(), title, history_requested: None, new_city_name: String::new() }
     }
 }
 
 impl Saves {
-    /// The directory changed behind the panel's back (the remote API saved).
+    /// The directory changed (a save, a picture, the remote API): rescan
+    /// before the lists show it again.
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
+        disk_changed();
+    }
+
+    /// Ask for a save's picture: rendered offscreen and written a few frames
+    /// later (`render/thumbs.rs`).
+    fn want_picture(&mut self, png: PathBuf) {
+        self.pictures_due.insert(png.clone(), SystemTime::now());
+        self.shots.push(png);
+    }
+
+    /// [identity] Every entry of a game's history, newest first, with the
+    /// entry's file time: read from disk once per [`disk_generation`] (and
+    /// after [`Self::forget_history`]), not every frame.
+    pub fn history(&mut self, game_id: &str) -> HistoryList {
+        let gen = disk_generation();
+        if !self.history.as_ref().is_some_and(|(g, id, _)| *g == gen && id == game_id) {
+            let entries = super::history::list(Path::new(DIR), game_id).into_iter().map(|e| {
+                let modified = std::fs::metadata(&e.path).and_then(|m| m.modified()).ok();
+                (e, modified)
+            });
+            self.history = Some((gen, game_id.to_string(), std::sync::Arc::new(entries.collect())));
+        }
+        self.history.as_ref().map_or_else(Default::default, |(_, _, v)| v.clone())
+    }
+
+    /// [identity] Drop the cached history listing: the next look reads the
+    /// folder again (the window does this while closed, so it opens fresh).
+    pub fn forget_history(&mut self) {
+        self.history = None;
     }
 
     /// The pictures asked for since the last call.
@@ -182,8 +227,30 @@ impl Saves {
     }
 
     /// The picture of a save as an egui texture, loaded once per file time.
+    /// The file is looked at again only after the game wrote to the saves
+    /// folder ([`disk_generation`]), or every frame while a picture asked
+    /// for has not landed yet.
     pub fn picture(&mut self, ctx: &egui::Context, path: &Path) -> Option<egui::TextureHandle> {
+        let gen = disk_generation();
+        if !self.pictures_due.contains_key(path) {
+            if let Some(&(checked, found)) = self.pictures_checked.get(path) {
+                if checked == gen {
+                    return if found { self.pictures.get(path).map(|(_, tex)| tex.clone()) } else { None };
+                }
+            }
+        }
+        let tex = self.load_picture(ctx, path);
+        self.pictures_checked.insert(path.to_path_buf(), (gen, tex.is_some()));
+        tex
+    }
+
+    /// [`Self::picture`] from disk: the file's time, and the texture again
+    /// when it changed.
+    fn load_picture(&mut self, ctx: &egui::Context, path: &Path) -> Option<egui::TextureHandle> {
         let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
+        if self.pictures_due.get(path).is_some_and(|asked| mtime >= *asked) {
+            self.pictures_due.remove(path);
+        }
         let mtime = Some(mtime);
         if let Some((t, tex)) = self.pictures.get(path) {
             if *t == mtime {
@@ -207,7 +274,28 @@ impl Saves {
             let _ = std::fs::remove_file(&p);
             let _ = std::fs::remove_file(meta_path(&p));
         }
+        if excess > 0 {
+            disk_changed();
+        }
     }
+}
+
+/// Bumped whenever the game writes, deletes or renames something in the
+/// saves folder (a save, its sidecar or picture, a history entry, a
+/// bookmark, a prune), so what is read from the folder can be kept until it
+/// moves. A process-wide counter: the history functions and the remote API
+/// write without a `Saves` at hand.
+static DISK_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The saves folder changed: see [`disk_generation`].
+pub fn disk_changed() {
+    DISK_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The saves folder's write counter: equal values mean nothing the game
+/// wrote has changed there in between.
+fn disk_generation() -> u64 {
+    DISK_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Every save in `saves/`, newest first.
@@ -364,8 +452,8 @@ fn write_save(sim: &mut Sim, saves: &mut Saves, path: &Path, name: &str) -> Resu
     if let Ok(text) = serde_json::to_string_pretty(&meta_of(sim, name)) {
         let _ = std::fs::write(meta_path(path), text);
     }
-    saves.shots.push(path.with_extension("png"));
-    saves.dirty = true;
+    saves.want_picture(path.with_extension("png"));
+    saves.mark_dirty();
     Ok(())
 }
 
@@ -388,7 +476,7 @@ pub fn save_as(sim: &mut Sim, saves: &mut Saves, flags: &mut UiFlags, name: &str
 
 /// Write the latest slot and a dated copy of it.
 pub fn save_now(sim: &mut Sim, saves: &mut Saves, flags: &mut UiFlags) {
-    saves.dirty = true;
+    saves.mark_dirty();
     flags.message = match write_save(sim, saves, Path::new(LATEST), "") {
         Ok(()) => {
             let slot = format!("{DIR}/city-{:012}-day{}.ron", now_unix(), sim.world.clock.day() + 1);
@@ -435,7 +523,7 @@ pub fn load_now(path: &Path, sim: &mut Sim, flags: &mut UiFlags) -> Result<Strin
 /// name as typed (its sidecar), or else its file name with spaces. None for
 /// the quick save slots, the autosave and history entries, which have no
 /// name of their own.
-pub fn legacy_city_name(path: &Path) -> Option<String> {
+fn legacy_city_name(path: &Path) -> Option<String> {
     if path.components().any(|c| c.as_os_str() == super::history::SUBDIR) || slot_kind(path) != SlotKind::Named {
         return None;
     }
@@ -457,8 +545,8 @@ pub fn mark_now(sim: &mut Sim, saves: &mut Saves, label: &str) -> Result<PathBuf
     if let Ok(text) = serde_json::to_string_pretty(&meta) {
         let _ = std::fs::write(meta_path(&path), text);
     }
-    saves.shots.push(path.with_extension("png"));
-    saves.dirty = true;
+    saves.want_picture(path.with_extension("png"));
+    saves.mark_dirty();
     Ok(path)
 }
 
@@ -467,7 +555,7 @@ pub fn mark_now(sim: &mut Sim, saves: &mut Saves, label: &str) -> Result<PathBuf
 pub fn revert(path: &Path, sim: &mut Sim, saves: &mut Saves, flags: &mut UiFlags) -> Result<String, String> {
     let day = super::history::list(Path::new(DIR), &sim.world.identity.game_id).into_iter().find(|e| e.path == path).map(|e| e.meta.day);
     load_now(path, sim, flags)?;
-    saves.dirty = true;
+    saves.mark_dirty();
     flags.message = match day {
         Some(d) => format!("reverted to day {d} (paused)"),
         None => format!("reverted to {} (paused)", path.display()),
@@ -536,13 +624,7 @@ fn load_png(path: &Path) -> Option<egui::ColorImage> {
 
 /// How long ago, in words.
 pub fn age(modified: Option<SystemTime>) -> String {
-    let Some(secs) = modified.and_then(|m| SystemTime::now().duration_since(m).ok()).map(|d| d.as_secs()) else { return String::new() };
-    match secs {
-        0..=59 => "just now".into(),
-        60..=3599 => format!("{} min ago", secs / 60),
-        3600..=86_399 => format!("{} h ago", secs / 3600),
-        _ => format!("{} d ago", secs / 86_400),
-    }
+    super::fmt::age_since(modified, SystemTime::now())
 }
 
 /// The body of the Saves window: save as a name, quick save, the list with
@@ -572,7 +654,7 @@ pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, saves: &mut Saves, flags: &mut Ui
             save_now(sim, saves, flags);
         }
         if ui.small_button("refresh list").clicked() {
-            saves.dirty = true;
+            saves.mark_dirty();
         }
         if ui.small_button("title screen").on_hover_text("Back to the list of saved games").clicked() {
             saves.title = true;
@@ -618,7 +700,7 @@ pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, saves: &mut Saves, flags: &mut Ui
                 }
                 None => {
                     let (r, _) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), egui::Sense::hover());
-                    ui.painter().rect_filled(r, 3.0, egui::Color32::from_rgb(20, 22, 34));
+                    ui.painter().rect_filled(r, 3.0, super::theme::NO_PICTURE);
                 }
             }
             ui.vertical(|ui| {
@@ -654,7 +736,7 @@ pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, saves: &mut Saves, flags: &mut Ui
 pub fn autosave(mut sim: ResMut<Sim>, mut saves: ResMut<Saves>, mut flags: ResMut<UiFlags>) {
     if saves.autosave.as_ref().is_some_and(|j| j.is_finished()) {
         let job = saves.autosave.take().expect("checked above");
-        saves.dirty = true;
+        saves.mark_dirty();
         flags.message = match job.join() {
             Ok(Ok((day, ms))) => {
                 debug!("autosave of day {day} written in {ms:.0} ms off the main thread");
@@ -709,9 +791,9 @@ pub fn autosave(mut sim: ResMut<Sim>, mut saves: ResMut<Saves>, mut flags: ResMu
         }
         let _ = std::fs::write(meta_path(&entry), text);
     }
-    saves.shots.push(Path::new(AUTOSAVE).with_extension("png"));
-    saves.shots.push(entry.with_extension("png"));
-    saves.dirty = true;
+    saves.want_picture(Path::new(AUTOSAVE).with_extension("png"));
+    saves.want_picture(entry.with_extension("png"));
+    saves.mark_dirty();
 }
 
 #[cfg(test)]

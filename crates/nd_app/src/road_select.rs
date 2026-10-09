@@ -13,6 +13,7 @@ use nd_sim::streets::StreetClass;
 use nd_sim::{SegmentId, Vec2 as SVec2, World};
 
 use crate::sim::Sim;
+use crate::overlay::shapes::GOLD;
 use crate::tools::{Depth, Selection};
 
 /// A click this far outside a piece's half width still picks it.
@@ -56,13 +57,12 @@ pub fn draw(gizmos: &mut Gizmos, w: &World, sid: SegmentId) {
     if w.roads.try_segment(sid).is_none_or(|s| !s.alive) {
         return;
     }
-    let gold = Color::linear_rgb(3.2, 2.4, 0.7);
     for other in w.road_run(sid) {
         if other != sid {
-            edges(gizmos, w, other, 0.0, gold.with_alpha(0.3), false);
+            edges(gizmos, w, other, 0.0, GOLD.with_alpha(0.3), false);
         }
     }
-    edges(gizmos, w, sid, 0.4, gold, true);
+    edges(gizmos, w, sid, 0.4, GOLD, true);
 }
 
 fn edges(gizmos: &mut Gizmos, w: &World, sid: SegmentId, out: f32, colour: Color, caps: bool) {

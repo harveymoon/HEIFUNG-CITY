@@ -1,4 +1,5 @@
-//! The HUD's fonts and its type scale: one place for every text size.
+//! The HUD's fonts, its type scale and its shared colours: one place for
+//! every text size and for the colours more than one panel paints.
 //!
 //! Two faces, both SIL OFL 1.1 (licences in `assets/fonts/`):
 //! - **IBM Plex Sans** for running text, figures and small print: an
@@ -17,7 +18,7 @@
 //! `.small()`, `.heading()` and plain labels follow the scale; painters and
 //! `RichText::font` take the `FontId`s from the functions here.
 
-use bevy_egui::egui::{self, FontData, FontDefinitions, FontFamily, FontId, TextStyle};
+use bevy_egui::egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, TextStyle};
 use std::sync::Arc;
 
 /// Small print: hints, captions, chart ticks, hotkeys. The smallest text
@@ -42,7 +43,7 @@ const DISPLAY: &str = "display";
 const DISPLAY_MEDIUM: &str = "display-medium";
 
 /// The display face: headings, titles, buttons, names on the map.
-pub fn display_family() -> FontFamily {
+fn display_family() -> FontFamily {
     FontFamily::Name(DISPLAY.into())
 }
 
@@ -187,15 +188,15 @@ fn clamp_scale(s: f32) -> f32 {
 }
 
 /// The UI scale to start with: `ND_UI_SCALE`, else the saved one, else 1.
-pub fn saved_scale() -> f32 {
+fn saved_scale() -> f32 {
     if let Some(s) = std::env::var("ND_UI_SCALE").ok().and_then(|v| v.trim().parse::<f32>().ok()) {
         return clamp_scale(s);
     }
-    std::fs::read_to_string(SETTINGS_PATH).ok().and_then(|t| ron::from_str::<Settings>(&t).ok()).and_then(|s| s.ui_scale).map_or(1.0, clamp_scale)
+    load_settings().ui_scale.map_or(1.0, clamp_scale)
 }
 
 /// Set the UI scale now and save it for the next run.
-pub fn set_scale(ctx: &egui::Context, scale: f32) {
+fn set_scale(ctx: &egui::Context, scale: f32) {
     let scale = clamp_scale(scale);
     ctx.set_zoom_factor(scale);
     let mut settings = load_settings();
@@ -228,9 +229,95 @@ pub fn scale_setting(ui: &mut egui::Ui) {
     }
 }
 
+// ── colours ────────────────────────────────────────────────────────────────
+
+/// The accent colour of the HUD: headings, the active tool, window titles.
+pub const GOLD: Color32 = Color32::from_rgb(235, 180, 90);
+/// Light, slightly warm text for names and figures that should stand out.
+pub const IVORY: Color32 = Color32::from_rgb(230, 225, 210);
+/// Colour for a figure that should worry the player.
+pub const WARN: Color32 = Color32::from_rgb(255, 120, 90);
+/// Good news, in three shades that grew up apart; each panel keeps its own.
+/// The plain one: incomes, the employed, a served grid.
+pub const GOOD: Color32 = Color32::from_rgb(110, 200, 140);
+/// A lighter green: the directory's open businesses, the committee's yes.
+pub const GOOD_LIGHT: Color32 = Color32::from_rgb(120, 220, 140);
+/// The brightest green: a road in good repair, close friends, "click to build".
+pub const GOOD_BRIGHT: Color32 = Color32::from_rgb(120, 230, 150);
+/// A caution, short of [`WARN`]: no staff, homeless, hungry.
+pub const AMBER: Color32 = Color32::from_rgb(240, 200, 100);
+/// Services and their water: a service building's tag, people at work.
+pub const SERVICE_BLUE: Color32 = Color32::from_rgb(120, 200, 255);
+/// Homes and households in charts, bus lines, free toll passage.
+pub const TEAL: Color32 = Color32::from_rgb(110, 200, 220);
+/// The backdrop of a chart's plot area.
+pub const PLOT_BG: Color32 = Color32::from_rgba_premultiplied(20, 22, 34, 220);
+/// The same colour given as unmultiplied (so a little darker): the People
+/// page's charts.
+pub const PLOT_BG_UNMULTIPLIED: Color32 = Color32::from_rgba_unmultiplied_const(20, 22, 34, 220);
+/// The bars' and the toast's fill.
+pub const PANEL_FILL: Color32 = Color32::from_rgba_unmultiplied_const(8, 10, 20, 235);
+/// A window's edge and the rule under a header.
+pub const EDGE: Color32 = Color32::from_rgb(95, 75, 45);
+/// The edge of a card or tool button that is not lit.
+pub const EDGE_IDLE: Color32 = Color32::from_rgb(60, 60, 72);
+/// The square shown where a save has no picture (yet).
+pub const NO_PICTURE: Color32 = Color32::from_rgb(20, 22, 34);
+
+/// Between two colours, each channel rounded to the nearest step.
+pub fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {
+    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
+}
+
+/// [`lerp`] with each channel rounded down (the concerns chart's).
+pub fn lerp_floor(a: Color32, b: Color32, t: f32) -> Color32 {
+    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t) as u8;
+    Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
+}
+
+/// An sRGB colour given as 0..1 floats (zone and district colours), each
+/// channel capped at 1 and rounded down.
+pub fn rgb_f(c: [f32; 3]) -> Color32 {
+    Color32::from_rgb((c[0].min(1.0) * 255.0) as u8, (c[1].min(1.0) * 255.0) as u8, (c[2].min(1.0) * 255.0) as u8)
+}
+
+/// An sRGB colour given as bytes.
+pub fn rgb_u8(c: [u8; 3]) -> Color32 {
+    Color32::from_rgb(c[0], c[1], c[2])
+}
+
+/// A linear colour (as the map's materials take them), capped at 1,
+/// converted to sRGB by egui.
+pub fn rgb_linear(c: [f32; 3]) -> Color32 {
+    Color32::from(egui::Rgba::from_rgb(c[0].min(1.0), c[1].min(1.0), c[2].min(1.0)))
+}
+
+/// A linear colour to sRGB by a plain 2.2 gamma, clamped to 0..1 and
+/// rounded down (the train swatches).
+pub fn rgb_gamma(c: [f32; 3]) -> Color32 {
+    let g = |x: f32| (x.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0) as u8;
+    Color32::from_rgb(g(c[0]), g(c[1]), g(c[2]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colour_helpers_keep_their_rounding() {
+        let (a, b) = (Color32::from_rgb(0, 0, 0), Color32::from_rgb(255, 255, 255));
+        // 255 * 0.3 = 76.5: one rounds up, the other down.
+        assert_eq!(lerp(a, b, 0.3), Color32::from_rgb(77, 77, 77));
+        assert_eq!(lerp_floor(a, b, 0.3), Color32::from_rgb(76, 76, 76));
+        assert_eq!(lerp(GOLD, WARN, 0.0), GOLD);
+        assert_eq!(rgb_f([1.5, 0.5, 0.0]), Color32::from_rgb(255, 127, 0));
+        assert_eq!(rgb_u8([1, 2, 3]), Color32::from_rgb(1, 2, 3));
+        assert_eq!(rgb_linear([1.0, 0.0, 2.0]), Color32::from_rgb(255, 0, 255));
+        assert_eq!(rgb_gamma([1.0, 0.0, -1.0]), Color32::from_rgb(255, 0, 0));
+        assert_eq!(PANEL_FILL, Color32::from_rgba_unmultiplied(8, 10, 20, 235));
+        assert_eq!(PLOT_BG_UNMULTIPLIED, Color32::from_rgba_unmultiplied(20, 22, 34, 220));
+    }
 
     /// Every non-ASCII character in a string or char literal of the app's
     /// source and the sim's (whose labels the HUD shows), with the file it came from.

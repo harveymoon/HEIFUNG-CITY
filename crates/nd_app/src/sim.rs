@@ -269,7 +269,9 @@ pub struct SimPlugin;
 
 impl Plugin for SimPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Sim::new()).add_systems(Update, (sim_hotkeys.in_set(SimSet::Input), step_sim.in_set(SimSet::Step)));
+        app.insert_resource(Sim::new())
+            .configure_sets(Update, (SimSet::Input, SimSet::Step, SimSet::Sync).chain())
+            .add_systems(Update, (sim_hotkeys.in_set(SimSet::Input), step_sim.in_set(SimSet::Step)));
     }
 }
 

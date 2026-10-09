@@ -372,7 +372,7 @@ fn junction_controls(ui: &mut egui::Ui, w: &mut World, st: &mut EditorState, v: 
             continue;
         }
         let sel = st.approach == Some(i);
-        let head = format!("{} from the {} ({} lane{}{})", a.name, compass(a.dir), a.arrows.len(), if a.arrows.len() == 1 { "" } else { "s" }, if a.fixed { ", set" } else { "" });
+        let head = format!("{} from the {} ({} lane{}{})", a.name, compass(a.dir), a.arrows.len(), super::fmt::s(a.arrows.len()), if a.fixed { ", set" } else { "" });
         if ui.selectable_label(sel, head).clicked() {
             st.approach = if sel { None } else { Some(i) };
         }

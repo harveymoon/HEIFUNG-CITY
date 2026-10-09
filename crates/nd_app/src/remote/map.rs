@@ -50,7 +50,7 @@ struct Cell {
     oil: f32,
     contamination: f32,
     /// Industrial buildings in the cell by sub-zone.
-    industry: [u32; 7],
+    industry: [u32; nd_sim::IndustryKind::COUNT],
 }
 
 impl Cell {
@@ -348,7 +348,7 @@ pub fn industry(cmd: &Value, w: &mut World) -> Result<Value, String> {
                 if k.eq_ignore_ascii_case("none") || k.eq_ignore_ascii_case("natural") || k.is_empty() {
                     None
                 } else {
-                    Some(IndustryKind::from_key(k).ok_or_else(|| format!("unknown industry kind {k:?}; one of farming, oil, refinery, manufacturing, logistics, fishing, tech, none"))?)
+                    Some(IndustryKind::from_key(k).ok_or_else(|| format!("unknown industry kind {k:?}; one of farming, oil, refinery, manufacturing, logistics, fishing, tech, mining, smelting, factory_farming, none"))?)
                 }
             }
         };

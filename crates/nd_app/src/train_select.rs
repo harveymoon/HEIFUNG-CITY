@@ -11,7 +11,8 @@ use nd_sim::subway::{self as metro, MetroTrainId};
 use nd_sim::{TrainId, Vec2 as SVec2, World};
 
 use crate::sim::Sim;
-use crate::tools::{route_ends, vehicle_outline, Selection};
+use crate::overlay::shapes::{flat_at, route_ends, vehicle_box, GOLD};
+use crate::tools::Selection;
 
 /// A headcode for a train, as railway timetables write them: the class
 /// digit (1 for an express passenger train, 6 for freight), a district
@@ -134,13 +135,11 @@ pub fn draw(gizmos: &mut Gizmos, sim: &Sim, sel: Selection, palette: &[[f32; 3]]
     let below = is_metro && under;
     let ground = |p: SVec2| if below { (if w.relief { w.ground_height(p) } else { 0.0 }) - metro::DEPTH } else { w.surface_height(p) };
     let at = |p: SVec2, y: f32| Vec3::new(p.x, ground(p) + y, p.y);
-    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
     let col = |k: f32| Color::linear_rgb(glow[0] * k, glow[1] * k, glow[2] * k);
-    let gold = Color::linear_rgb(3.2, 2.4, 0.7);
 
     // Every car, boxed.
     for (c, h, len) in car_poses(w, sel, f) {
-        vehicle_outline(gizmos, c, h, len + 0.8, 3.6, ground(c) + 0.4, gold);
+        vehicle_box(gizmos, c, h, len + 0.8, 3.6, ground(c) + 0.4, GOLD);
     }
 
     let s = t.prev_s + (t.s - t.prev_s) * f;
@@ -169,24 +168,24 @@ pub fn draw(gizmos: &mut Gizmos, sim: &Sim, sel: Selection, palette: &[[f32; 3]]
         let next = i == 0 && standing.is_none();
         let (h, r) = if next { (26.0, 9.0) } else { (14.0, 6.0) };
         gizmos.line(at(q, 0.2), at(q, h), col(if next { 1.2 } else { 0.8 }));
-        gizmos.circle(Isometry3d::new(at(q, 1.0), flat), r, col(1.0));
-        gizmos.circle(Isometry3d::new(at(q, h), flat), r * 0.35, col(1.0));
+        gizmos.circle(flat_at(at(q, 1.0)), r, col(1.0));
+        gizmos.circle(flat_at(at(q, h)), r * 0.35, col(1.0));
         if next {
             let pulse = (time * 3.0).sin() * 0.5 + 0.5;
-            gizmos.circle(Isometry3d::new(at(q, 1.2), flat), r + 2.0 + pulse * 4.0, Color::linear_rgb(3.4, 3.2, 2.6));
+            gizmos.circle(flat_at(at(q, 1.2)), r + 2.0 + pulse * 4.0, Color::linear_rgb(3.4, 3.2, 2.6));
         }
     }
     if let Some(b) = standing {
         // Standing at a stop: a gold ring and post there.
         if let Some(&(_, sb)) = t.stops.iter().find(|(x, _)| *x == b) {
             let q = rail::point_along(&t.poly, sb).0;
-            gizmos.circle(Isometry3d::new(at(q, 1.2), flat), 11.0, gold);
-            gizmos.line(at(q, 0.2), at(q, 26.0), gold);
+            gizmos.circle(flat_at(at(q, 1.2)), 11.0, GOLD);
+            gizmos.line(at(q, 0.2), at(q, 26.0), GOLD);
         }
     }
     for &(_, sb) in t.calls_made().iter().filter(|(b, _)| Some(*b) != standing) {
         let q = rail::point_along(&t.poly, sb).0;
-        gizmos.circle(Isometry3d::new(at(q, 0.9), flat), 4.0, col(0.25));
+        gizmos.circle(flat_at(at(q, 0.9)), 4.0, col(0.25));
     }
     // An "o" where it came in, an "x" where its run ends (on the surface).
     if !below {

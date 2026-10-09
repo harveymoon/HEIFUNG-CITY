@@ -7,6 +7,7 @@ use nd_sim::traffic::{arrows_label, parse_arrows};
 use nd_sim::{IntersectionView, World};
 use serde_json::{json, Value};
 
+use super::ctx::Ctx;
 use super::view::*;
 use crate::tools::ToolState;
 
@@ -216,4 +217,39 @@ pub fn pillars_json(n: &crate::tools::PillarNote) -> Value {
         "gaps": n.gaps.iter().map(gap_json).collect::<Vec<_>>(),
         "at": n.at.iter().map(|p| v2(*p)).collect::<Vec<_>>(),
     })
+}
+
+/// Set or reset the lane arrows of one street arriving at a junction.
+pub(super) fn lane_use(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let at = opt_vec2(cmd, "junction")?.ok_or("missing field \"junction\": [x, y]")?;
+    let w = &mut ctx.sim.world;
+    let k = junction_near(w, at).ok_or("no junctions")?;
+    let node = w.traffic.net.intersections[k].node;
+    let from = opt_vec2(cmd, "approach")?.ok_or("missing field \"approach\": [x, y] on the arriving street")?;
+    let segment = w
+        .traffic
+        .net
+        .approaches
+        .iter()
+        .filter(|a| a.node == node)
+        .min_by(|a, b| {
+            let d = |s| {
+                let (p, q) = w.roads.segment_points(s);
+                nd_sim::roads::project_on_segment(from, p, q).1.distance(from)
+            };
+            d(a.segment).total_cmp(&d(b.segment))
+        })
+        .map(|a| a.segment)
+        .ok_or("no street arrives at that junction")?;
+    let arrows = match field(cmd, "lanes") {
+        Some(Value::String(s)) if s == "reset" || s == "default" => None,
+        Some(Value::Array(a)) => Some(
+            a.iter()
+                .map(|x| x.as_str().and_then(nd_sim::traffic::parse_arrows).ok_or_else(|| format!("lane arrows like \"L\", \"S+R\", \"L+S\", got {x}")))
+                .collect::<Result<Vec<u8>, String>>()?,
+        ),
+        _ => return Err("field \"lanes\": [\"L\", \"S+R\", ...] leftmost first, or \"reset\"".into()),
+    };
+    w.traffic.set_lane_use(segment, node, arrows)?;
+    Ok(json!({ "junction": junction_detail(w, k) }))
 }

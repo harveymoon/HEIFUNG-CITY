@@ -461,13 +461,7 @@ pub(super) fn layer_gizmos(sim: Res<Sim>, overlays: Res<Overlays>, lighting: Res
             let (p, heading) = car.pose_at(f);
             let y = w.car_height_at(car, p) + 1.0;
             let (half_l, half_w) = if car.bus.is_some() { (6.0, 1.4) } else if car.cargo.is_some() { (4.2, 1.3) } else { (2.3, 1.0) };
-            let d = SVec2::new(heading.cos(), heading.sin());
-            let r = SVec2::new(-d.y, d.x);
-            let corner = |a: f32, b: f32| {
-                let q = p + d * a + r * b;
-                Vec3::new(q.x, y, q.y)
-            };
-            let c = [corner(half_l, half_w), corner(half_l, -half_w), corner(-half_l, -half_w), corner(-half_l, half_w)];
+            let c = crate::overlay::shapes::box_corners(p, heading, half_l, half_w, y);
             gizmos.linestrip([c[0], c[1], c[2], c[3], c[0]], car_col);
             gizmos.line(c[0], c[2], car_col);
             gizmos.line(c[1], c[3], car_col);

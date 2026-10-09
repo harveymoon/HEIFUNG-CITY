@@ -12,10 +12,6 @@ use crate::assets::GameAssets;
 use crate::map_layers::{self, ramp, LayerId, LegendCtx};
 use crate::render::Overlays;
 
-fn linear(c: [f32; 3]) -> Color32 {
-    Color32::from(egui::Rgba::from_rgb(c[0].min(1.0), c[1].min(1.0), c[2].min(1.0)))
-}
-
 /// The key of the layer showing, if any, at the bottom right of the map:
 /// its name, colour key and (for land layers) the reading under the pointer.
 pub fn show(ctx: &egui::Context, o: &Overlays, assets: &GameAssets, world: &nd_sim::World, area: egui::Rect, here: Option<&str>) {
@@ -48,7 +44,7 @@ pub fn land_legend(ui: &mut egui::Ui, l: LandLayer) {
             ui.horizontal_wrapped(|ui| {
                 for k in IndustryKind::ALL {
                     let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-                    ui.painter().rect_filled(r, 2.0, linear(industry_hue(k)));
+                    ui.painter().rect_filled(r, 2.0, super::theme::rgb_linear(industry_hue(k)));
                     hint(ui, k.key());
                 }
             });
@@ -56,23 +52,23 @@ pub fn land_legend(ui: &mut egui::Ui, l: LandLayer) {
         }
         LandLayer::Industry(_) => {
             let h = land_hue(l);
-            ramp(ui, |t| { let c = land_color(h, t); linear([c[0], c[1], c[2]]) }, "unlikely", "likely");
+            ramp(ui, |t| { let c = land_color(h, t); super::theme::rgb_linear([c[0], c[1], c[2]]) }, "unlikely", "likely");
         }
         LandLayer::Wind => {
-            ramp(ui, |t| { let c = nd_procgen::overlay::wind_color(t); linear([c[0], c[1], c[2]]) }, "becalmed", "full output");
+            ramp(ui, |t| { let c = nd_procgen::overlay::wind_color(t); super::theme::rgb_linear([c[0], c[1], c[2]]) }, "becalmed", "full output");
         }
         LandLayer::Solar => {
             let h = land_hue(l);
-            ramp(ui, |t| { let c = land_color(h, t); linear([c[0], c[1], c[2]]) }, "weak sun", "desert sun");
+            ramp(ui, |t| { let c = land_color(h, t); super::theme::rgb_linear([c[0], c[1], c[2]]) }, "weak sun", "desert sun");
         }
         // [dirty-industry] Trace to poison, on its own ramp.
         LandLayer::Contamination => {
-            ramp(ui, |t| { let c = nd_procgen::overlay::contamination_color(t.max(0.03)); linear([c[0], c[1], c[2]]) }, "trace", "poisoned");
+            ramp(ui, |t| { let c = nd_procgen::overlay::contamination_color(t.max(0.03)); super::theme::rgb_linear([c[0], c[1], c[2]]) }, "trace", "poisoned");
             hint(ui, "crops: field yield −90% at full; homes lose value and mood");
         }
         _ => {
             let h = land_hue(l);
-            ramp(ui, |t| { let c = land_color(h, t); linear([c[0], c[1], c[2]]) }, "none", "rich");
+            ramp(ui, |t| { let c = land_color(h, t); super::theme::rgb_linear([c[0], c[1], c[2]]) }, "none", "rich");
         }
     }
     hint(ui, l.hint());

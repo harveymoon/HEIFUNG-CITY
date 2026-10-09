@@ -126,7 +126,7 @@ pub(super) fn sync_haze(
     time: Res<Time>,
     mut state: Local<HazeState>,
     cams: Query<&GlobalTransform, With<crate::camera::OrbitCamera>>,
-    mut puffs: Query<(&Puff, &mut Transform, &mut MeshMaterial3d<StandardMaterial>, &mut Visibility)>,
+    mut puffs: Query<(&Puff, &mut Transform, &mut MeshMaterial3d<StandardMaterial>, &mut Visibility, Option<&super::swap::SwapOriginal>)>,
 ) {
     let w = &sim.world;
     if state.quad.is_none() {
@@ -235,7 +235,7 @@ pub(super) fn sync_haze(
     let along = Vec3::new(dir.x, 0.0, dir.y);
     let side = Vec3::new(-dir.y, 0.0, dir.x);
     let reach = 70.0 + 190.0 * wind;
-    for (puff, mut tf, mut mat, mut vis) in &mut puffs {
+    for (puff, mut tf, mut mat, mut vis, orig) in &mut puffs {
         let Some(plant) = state.plants.get(&puff.plant) else { continue };
         let seed = puff.plant_seed();
         let (pos, size, alpha, smog) = match puff.stack {
@@ -273,13 +273,14 @@ pub(super) fn sync_haze(
         };
         let a = alpha * plant.intensity * near_fade(eye.distance(pos), size);
         if a < 0.5 / ALPHA_STEPS as f32 {
-            *vis = Visibility::Hidden;
+            vis.set_if_neq(Visibility::Hidden);
             continue;
         }
-        *vis = Visibility::Inherited;
+        vis.set_if_neq(Visibility::Inherited);
         let step = ((a * ALPHA_STEPS as f32).round() as usize).clamp(1, ALPHA_STEPS) - 1;
         let want = &state.materials[smog * ALPHA_STEPS + step];
-        if mat.0 != *want {
+        // [refactor/app] Against the original under heat or focus (no swap ping-pong).
+        if orig.map_or(&mat.0, |o| &o.0) != want {
             mat.0 = want.clone();
         }
         tf.translation = pos;

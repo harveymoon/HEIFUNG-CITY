@@ -102,7 +102,7 @@ pub(super) fn sync_grime(
     time: Res<Time>,
     mut state: Local<GrimeState>,
     cams: Query<&GlobalTransform, With<crate::camera::OrbitCamera>>,
-    mut puffs: Query<(&DirtyPuff, &mut Transform, &mut MeshMaterial3d<StandardMaterial>, &mut Visibility)>,
+    mut puffs: Query<(&DirtyPuff, &mut Transform, &mut MeshMaterial3d<StandardMaterial>, &mut Visibility, Option<&super::swap::SwapOriginal>)>,
     stains: Query<Entity, With<StainTag>>,
 ) {
     let w = &sim.world;
@@ -239,7 +239,7 @@ pub(super) fn sync_grime(
     let wind = w.weather.wind.clamp(0.05, 1.0);
     let along = Vec3::new(dir.x, 0.0, dir.y);
     let side = Vec3::new(-dir.y, 0.0, dir.x);
-    for (puff, mut tf, mut mat, mut vis) in &mut puffs {
+    for (puff, mut tf, mut mat, mut vis, orig) in &mut puffs {
         let Some(src) = state.sources.get(&puff.source) else { continue };
         let Some(&(top, kind)) = src.vents.get(puff.vent) else { continue };
         let (_, _, count) = vent_look(kind);
@@ -278,13 +278,14 @@ pub(super) fn sync_grime(
         };
         let a = alpha * src.intensity * near_fade(eye.distance(pos), size);
         if a < 0.5 / ALPHA_STEPS as f32 {
-            *vis = Visibility::Hidden;
+            vis.set_if_neq(Visibility::Hidden);
             continue;
         }
-        *vis = Visibility::Inherited;
+        vis.set_if_neq(Visibility::Inherited);
         let step = ((a * ALPHA_STEPS as f32).round() as usize).clamp(1, ALPHA_STEPS) - 1;
         let want = &state.materials[kind_index(kind) * ALPHA_STEPS + step];
-        if mat.0 != *want {
+        // [refactor/app] Against the original under heat or focus (no swap ping-pong).
+        if orig.map_or(&mat.0, |o| &o.0) != want {
             mat.0 = want.clone();
         }
         tf.translation = pos;

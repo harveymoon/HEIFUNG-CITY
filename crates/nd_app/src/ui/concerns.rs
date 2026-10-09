@@ -17,7 +17,7 @@ use crate::tools::Selection;
 
 const CALM: egui::Color32 = egui::Color32::from_rgb(120, 210, 140);
 const GRID: egui::Color32 = egui::Color32::from_gray(80);
-const PANEL: egui::Color32 = egui::Color32::from_rgba_premultiplied(20, 22, 34, 220);
+const PANEL: egui::Color32 = super::theme::PLOT_BG;
 
 /// How far back the chart looks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -279,7 +279,7 @@ fn concerns(ui: &mut egui::Ui, p: &mut UiCtx) {
                         }
                         jump = Some(q.pos);
                     }
-                    hint(ui, &format!("{who}, day {} {:02}:{:02}", q.tick / 1440 + 1, (q.tick % 1440) / 60, q.tick % 60));
+                    hint(ui, &format!("{who}, {}", super::fmt::day_time(q.tick)));
                 });
             }
             if !any {
@@ -303,13 +303,8 @@ fn bar(ui: &mut egui::Ui, r: &Ranked, peak: u32) {
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 2.0, PANEL);
     let wv = rect.width() * r.this_week as f32 / peak as f32;
-    let color = lerp(GOLD, WARN, r.severity.clamp(0.0, 1.0));
+    let color = super::theme::lerp_floor(GOLD, WARN, r.severity.clamp(0.0, 1.0));
     painter.rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(wv.max(1.0), rect.height())), 2.0, color);
     let lx = rect.left() + rect.width() * r.last_week as f32 / peak as f32;
     painter.line_segment([egui::pos2(lx, rect.top() - 1.0), egui::pos2(lx, rect.bottom() + 1.0)], egui::Stroke::new(1.5, IVORY));
-}
-
-fn lerp(a: egui::Color32, b: egui::Color32, t: f32) -> egui::Color32 {
-    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t) as u8;
-    egui::Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
 }

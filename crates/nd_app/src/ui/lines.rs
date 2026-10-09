@@ -16,10 +16,10 @@ use super::{hint, section, UiCtx, GOLD, IVORY, WARN};
 
 /// The line colours as the map draws them (the gizmo palette in
 /// `tools.rs`, brought into display range), by `BusRoute::color`.
-pub fn line_color(i: u8) -> Color32 {
+fn line_color(i: u8) -> Color32 {
     const C: [[u8; 3]; 8] = [[60, 170, 255], [255, 90, 60], [80, 230, 90], [240, 200, 50], [220, 80, 240], [60, 130, 255], [250, 140, 80], [200, 200, 200]];
     let c = C[i as usize % C.len()];
-    Color32::from_rgb(c[0], c[1], c[2])
+    super::theme::rgb_u8(c)
 }
 
 /// What the window asks of the world after drawing (it reads the world
@@ -255,7 +255,7 @@ fn line(ui: &mut egui::Ui, p: &UiCtx, rid: RouteId, act: &mut Option<Act>) {
                     let on = s.stats.on_today as f32 / busiest as f32;
                     let off = s.stats.off_today as f32 / busiest as f32;
                     let pnt = ui.painter();
-                    pnt.rect_filled(egui::Rect::from_min_max(egui::pos2(bars.center().x - half * on, bars.top()), egui::pos2(bars.center().x, bars.bottom())), 1.0, Color32::from_rgb(110, 200, 140));
+                    pnt.rect_filled(egui::Rect::from_min_max(egui::pos2(bars.center().x - half * on, bars.top()), egui::pos2(bars.center().x, bars.bottom())), 1.0, super::theme::GOOD);
                     pnt.rect_filled(egui::Rect::from_min_max(egui::pos2(bars.center().x, bars.top()), egui::pos2(bars.center().x + half * off, bars.bottom())), 1.0, WARN);
                     pnt.vline(bars.center().x, bars.y_range(), egui::Stroke::new(1.0, Color32::from_gray(90)));
                     resp.on_hover_text(format!("today {} on, {} off · yesterday {} on, {} off", s.stats.on_today, s.stats.off_today, s.stats.on_yesterday, s.stats.off_yesterday));

@@ -97,6 +97,7 @@ pub mod traffic;
 pub mod transit;
 pub mod trash;
 pub mod vehicle;
+pub mod versioned;
 pub mod walk;
 /// [grid-weather] Weather by climate; the wind and sun on the map.
 pub mod weather;
