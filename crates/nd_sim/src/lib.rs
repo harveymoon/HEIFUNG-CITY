@@ -46,6 +46,8 @@ pub mod names;
 pub mod park;
 pub mod pedestrians;
 pub mod pillars;
+/// What the Buildings tool places: the catalogue, its categories and costs.
+pub mod placeable;
 pub mod places;
 pub mod plan;
 pub mod fishing;
