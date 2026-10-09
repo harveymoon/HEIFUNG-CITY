@@ -25,6 +25,8 @@ pub struct Patch {
     pub edge: f32,
     /// 0..1: near the railway, the highway or a works district.
     pub industry: f32,
+    /// 0..1: inside a works district or the farms the plan names.
+    pub works: f32,
     /// The square at a centre.
     pub plaza: bool,
     /// 0..1, the block's own throw of the dice.
@@ -33,6 +35,19 @@ pub struct Patch {
 
 /// Each use's share of the frontage, in the order they are handed out.
 const SHARES: [(LandUse, f32); 5] = [(LandUse::Industrial, 0.15), (LandUse::Commercial, 0.19), (LandUse::Entertainment, 0.06), (LandUse::Civic, 0.04), (LandUse::Park, 0.07)];
+/// [perfect-city] The planned city: its works and farms are zoned whole
+/// on top of this (`zone`), and its services stand on lots of their own,
+/// so fewer shops and offices than a grown town: more of the frontage is
+/// homes (a jobs surplus brings people who then have nowhere to live).
+const PERFECT_SHARES: [(LandUse, f32); 5] = [(LandUse::Industrial, 0.10), (LandUse::Commercial, 0.14), (LandUse::Entertainment, 0.04), (LandUse::Civic, 0.02), (LandUse::Park, 0.08)];
+
+/// Each use's share of the frontage for a preset.
+pub fn shares(preset: super::CityPreset) -> &'static [(LandUse, f32)] {
+    match preset {
+        super::CityPreset::PerfectCity => &PERFECT_SHARES,
+        _ => &SHARES,
+    }
+}
 
 fn score(lu: LandUse, p: &Patch) -> f32 {
     let art = if p.on_arterial { 1.0 } else if p.on_collector { 0.4 } else { 0.0 };
@@ -56,10 +71,10 @@ fn score(lu: LandUse, p: &Patch) -> f32 {
 }
 
 /// A use for every patch.
-pub fn allocate(patches: &[Patch]) -> Vec<LandUse> {
+pub fn allocate(patches: &[Patch], shares: &[(LandUse, f32)]) -> Vec<LandUse> {
     let total: f32 = patches.iter().map(|p| p.frontage).sum();
     let mut out: Vec<Option<LandUse>> = patches.iter().map(|p| p.plaza.then_some(LandUse::Park)).collect();
-    for (lu, share) in SHARES {
+    for &(lu, share) in shares {
         let mut taken: f32 = out.iter().zip(patches).filter(|(u, _)| **u == Some(lu)).map(|(_, p)| p.frontage).sum();
         let mut order: Vec<(usize, f32)> = (0..patches.len()).filter(|&i| out[i].is_none()).map(|i| (i, score(lu, &patches[i]))).filter(|(_, s)| s.is_finite()).collect();
         order.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));

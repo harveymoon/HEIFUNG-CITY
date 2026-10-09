@@ -92,6 +92,8 @@ pub struct Site<'a> {
     /// Plazas: open squares that streets keep out of (`PLAZA_CLEAR` round
     /// each) until a few of them are run in to the centre at the end.
     pub plazas: Vec<Vec2>,
+    /// The lowest class of street that may cross the railway (at grade).
+    pub rail_cross: Level,
 }
 
 /// Traced streets stay this far from a plaza's centre.
@@ -302,8 +304,9 @@ impl<'a> Tracer<'a> {
             match self.site.ground(next) {
                 Ground::Ok => {}
                 Ground::Rail => {
-                    // Only collectors and arterials cross, and only squarely.
-                    if level == Level::Minor || nd.y.abs() < 0.85 {
+                    // Only the classes the site lets cross (collectors and
+                    // arterials, or arterials alone), and only squarely.
+                    if level > self.site.rail_cross || nd.y.abs() < 0.85 {
                         break;
                     }
                 }
