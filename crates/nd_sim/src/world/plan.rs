@@ -470,7 +470,7 @@ impl World {
                 p.rough = p.rough_why.is_some();
             }
         }
-        let footprints: Vec<Vec<Vec2>> = self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect();
+        let footprints = self.structure_footprints();
         parcels.retain(|p| !footprints.iter().any(|fp| point_in_polygon(p.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.995), &p.polygon)));
         parcels
     }
@@ -784,14 +784,6 @@ impl World {
             Some(p) => self.road_blockers(p),
             None => Vec::new(),
         }
-    }
-
-    /// Everything that would refuse `project`: the structures its roads run
-    /// over, and (for a project that changes roads at all) any the rebuild
-    /// itself would lose, found by implementing it on a copy of the world:
-    /// a structure left with no street to front loses its lot too.
-    pub fn implement_blockers(&self, project: &Project) -> Vec<BuildingId> {
-        self.project_check(project).blockers
     }
 
     /// [tools] Why `project` cannot be built for want of room for the
@@ -1152,7 +1144,7 @@ impl World {
         // under them give way.
         // A lot whose centre is under a footprint, or whose outline crosses
         // one, would share ground with the station or yard.
-        let footprints: Vec<Vec<Vec2>> = self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect();
+        let footprints = self.structure_footprints();
         self.lots.retain(|_, l| !footprints.iter().any(|fp| point_in_polygon(l.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.995), &l.polygon)));
         // [tools] A column takes its lot from the zoning, and so does a deck
         // too low over a lot for a storey under it (parks and the city's
@@ -1480,7 +1472,9 @@ impl World {
         if self.under_facility(p.center) {
             return true;
         }
-        self.lots.values().any(|l| l.contains(p.center) && self.is_city_ground(l))
+        // [review] The cheap test first: a lot under a city structure (few),
+        // then whether it holds the parcel's centre.
+        self.lots.values().any(|l| self.is_city_ground(l) && l.contains(p.center))
     }
 
     /// Why parcel `i` cannot be zoned `lu` (or unzoned, with None): a city
@@ -1504,7 +1498,7 @@ impl World {
         if !self.landscape.is_flat() && self.landscape.is_water(p) {
             return Some("open water: only the land along a road is zoned");
         }
-        if self.under_facility(p) || self.ports.ports.values().any(|d| point_in_polygon(p, &d.footprint())) {
+        if self.under_facility(p) || self.ports.ports.values().any(|d| point_in_polygon(p, &d.corners())) {
             return Some("a station, yard or dock takes this ground");
         }
         let h = self.parcel_half();
@@ -1543,18 +1537,11 @@ impl World {
         if Self::is_civic_structure(b) {
             return Err(format!("{} stands there; bulldoze it first", b.name));
         }
-        self.check_take_over(bid)?;
         let memory = format!("The city bought out {} to build a {for_what}. Had to move on.", b.name);
         // [relocate] The business looks for a new place.
         self.pack_business(bid, &format!("the city's new {for_what}"));
         self.events.push(SimEvent::Expropriated(bid, lot_id));
         self.demolish_with(bid, None, Some(&memory));
-        Ok(())
-    }
-
-    /// Hook for refusing a take-over (none today: the city may take any
-    /// grown building).
-    fn check_take_over(&self, _bid: BuildingId) -> Result<(), String> {
         Ok(())
     }
 
@@ -1650,6 +1637,12 @@ impl World {
     /// Personal skill factor, fixed per person, spreading incomes within a job.
     pub(super) fn skill_of(seed: u64) -> f32 {
         0.75 + (seed % 1000) as f32 / 1000.0 * 0.6
+    }
+
+    /// [review] What a job at `work` pays someone with this seed: the wage
+    /// times their skill (before any school bonus, `daily_services`).
+    pub(super) fn base_income(work: &Building, seed: u64) -> f32 {
+        work.wage() * Self::skill_of(seed)
     }
 
     /// A car taken off the road: its driver, or a bus's riders, stand there.
@@ -1768,8 +1761,6 @@ impl LotGrid {
     }
 }
 
-/// A polygon scaled about its centroid, to test overlap without counting
-/// outlines that merely touch.
 /// The point of a polyline nearest `p`.
 fn closest_on(p: Vec2, pts: &[Vec2]) -> Vec2 {
     let mut best = pts.first().copied().unwrap_or(p);
@@ -1784,6 +1775,8 @@ fn closest_on(p: Vec2, pts: &[Vec2]) -> Vec2 {
     best
 }
 
+/// A polygon scaled about its centroid, to test overlap without counting
+/// outlines that merely touch.
 pub(super) fn shrink_about_centroid(poly: &[Vec2], factor: f32) -> Vec<Vec2> {
     let c = crate::zoning::polygon_centroid(poly);
     poly.iter().map(|&p| c + (p - c) * factor).collect()

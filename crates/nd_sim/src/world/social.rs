@@ -112,8 +112,7 @@ fn mix(a: u64, b: u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// What a spot is: the setting, the building (if any) and a point for the
-/// bubble.
+/// What a spot is: the setting and the building (if any).
 #[derive(Clone, Copy)]
 pub(super) struct Spot {
     pub(super) setting: Setting,
@@ -624,7 +623,7 @@ impl World {
             }
         }
         let Some(circle) = self.social.circles.get(&id) else { return pull };
-        let (mut friends_here, mut friends_regular, mut foe_here, mut foe_regular) = (0, 0, false, false);
+        let (mut friends_here, mut foe_here, mut foe_regular) = (0, false, false);
         for t in &circle.ties {
             let bond = t.bond();
             if !bond.is_friendly() && bond != Bond::Enemy {
@@ -637,7 +636,6 @@ impl World {
             let regular = self.citizens.get(t.who).is_some_and(|x| x.places.get(place).is_some_and(|m| m.regular));
             if bond.is_friendly() {
                 friends_here += here as u32;
-                friends_regular += regular as u32;
             } else {
                 foe_here |= here;
                 foe_regular |= regular;
@@ -645,7 +643,6 @@ impl World {
         }
         // Friends who are regulars already draw through the acquaintances
         // in `choose_place`; here only friends there now count.
-        let _ = friends_regular;
         pull += 0.1 * friends_here.min(2) as f32;
         if foe_here {
             pull -= 0.6;
@@ -764,7 +761,6 @@ impl World {
             if !bld.serves_at(hour) || (p.land_use == LandUse::Park && self.park_full(bld.lot)) {
                 continue;
             }
-            // Never where an enemy of either is now.
             best = Some((score, p.place, p.land_use));
         }
         best.map(|(_, b, lu)| (b, lu))
@@ -2084,7 +2080,8 @@ impl World {
     }
 
     /// For tests: a tie between two people as `a` sees it.
-    pub fn tie_between(&self, a: CitizenId, b: CitizenId) -> Option<&Tie> {
+    #[cfg(test)]
+    pub(crate) fn tie_between(&self, a: CitizenId, b: CitizenId) -> Option<&Tie> {
         self.social.circles.get(&a)?.tie(b)
     }
 }

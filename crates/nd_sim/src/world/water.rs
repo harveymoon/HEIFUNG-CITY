@@ -1114,7 +1114,7 @@ impl World {
             .filter(|l| !(point_in_polygon(l.center, &own) || polygons_overlap(&own, &l.polygon)))
             .map(|l| l.polygon.clone())
             .collect();
-        let others: Vec<Vec<Vec2>> = self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect();
+        let others = self.structure_footprints();
         let clear = |end: Vec2| {
             let n = (gate.distance(end) / 3.0).ceil().max(1.0) as usize;
             (0..=n).all(|i| {
@@ -1231,8 +1231,18 @@ impl World {
 
     /// The working shipping port nearest a building, for imports by sea.
     pub(super) fn nearest_port(&self, to: BuildingId) -> Option<BuildingId> {
-        let p = self.building_entrance(to)?;
-        self.ports.working(PortKind::ShippingPort).into_iter().filter_map(|b| self.building_entrance(b).map(|q| (b, q.distance(p)))).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(b, _)| b)
+        self.nearest_by_entrance(to, self.ports.working(PortKind::ShippingPort))
+    }
+
+    /// [review] An import cheaper than the road price (by sea, rail, quay or
+    /// hub): the difference goes back to the buyer, who paid the road price
+    /// when ordering, and off the day's import bill.
+    pub(super) fn refund_import(&mut self, buyer: BuildingId, refund: f32) {
+        if let Some(bz) = self.buildings.get_mut(buyer).and_then(|b| b.business.as_mut()) {
+            bz.money += refund;
+            bz.spend_today -= refund;
+        }
+        self.economy.market.imports_today -= refund;
     }
 
     /// Order goods by sea: the buyer pays the cheaper sea price and the load
@@ -1240,11 +1250,7 @@ impl World {
     pub(super) fn import_by_sea(&mut self, to: BuildingId, cargo: Cargo) -> bool {
         let Some(port) = self.nearest_port(to) else { return false };
         let refund = cargo.price * (1.0 - ports::SHIP_IMPORT_FACTOR);
-        if let Some(bz) = self.buildings.get_mut(to).and_then(|b| b.business.as_mut()) {
-            bz.money += refund;
-            bz.spend_today -= refund;
-        }
-        self.economy.market.imports_today -= refund;
+        self.refund_import(to, refund);
         self.ports.inbound.push((port, Cargo { from: port, price: cargo.price * ports::SHIP_IMPORT_FACTOR, ..cargo }));
         true
     }
@@ -1314,18 +1320,14 @@ impl World {
             self.ship_docked(id);
         }
         for id in returned {
-            let (port, town, passengers) = {
+            let (port, town) = {
                 let s = &self.ports.ships[id];
-                (s.port, s.remote.unwrap_or(0), s.passengers)
+                (s.port, s.remote.unwrap_or(0))
             };
-            let _ = passengers;
             self.ferry_returned(port, town);
         }
         for id in done {
-            if let Some(ship) = self.ports.ships.remove(id) {
-                // [economy] A trawler back at the quay lands its catch.
-                self.boat_home(&ship);
-            }
+            self.ports.ships.remove(id);
         }
         self.ports.stats.ships_out = self.ports.ships.len() as u32;
     }

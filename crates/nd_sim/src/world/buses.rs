@@ -235,7 +235,7 @@ impl World {
             if let Some(route) = want {
                 // The depot with room nearest the first stop.
                 let first = self.transit.routes[route].stops[0];
-                let depots: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.depot && !b.is_derelict() && b.operating()).map(|(id, _)| id).collect();
+                let depots: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.working_depot()).map(|(id, _)| id).collect();
                 let depot = depots
                     .iter()
                     .copied()
@@ -245,7 +245,7 @@ impl World {
                     .min_by(|a, b| a.1.total_cmp(&b.1))
                     .map(|(d, _)| d);
                 if let Some(depot) = depot {
-                    if let Some((seg, pt)) = self.building_lot(depot).and_then(|l| l.car_segment.map(|s| (s, l.car_point))) {
+                    if let Some((seg, pt)) = self.car_stop(depot) {
                         if let Some((lanes, s0, s1)) = self.traffic.net.find_route(seg, pt, first.segment, first.pos) {
                             let color = self.transit.routes[route].color;
                             let id = self.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, color);
@@ -305,11 +305,11 @@ impl World {
         let Some(car) = self.traffic.cars.get(car_id) else { return };
         let pos = car.pos;
         let own = car.bus.as_ref().map(|b| b.depot).filter(|d| self.buildings.get(*d).is_some_and(|b| b.depot));
-        let mut others: Vec<(f32, BuildingId)> = self.buildings.iter().filter(|(id, b)| b.depot && !b.is_derelict() && b.operating() && Some(*id) != own).filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (l.car_point.distance(pos), id))).collect();
+        let mut others: Vec<(f32, BuildingId)> = self.buildings.iter().filter(|(id, b)| b.working_depot() && Some(*id) != own).filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (l.car_point.distance(pos), id))).collect();
         others.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
         let depots: Vec<BuildingId> = own.into_iter().chain(others.into_iter().map(|d| d.1)).collect();
         for d in depots {
-            let Some((seg, pt)) = self.building_lot(d).and_then(|l| l.car_segment.map(|s| (s, l.car_point))) else { continue };
+            let Some((seg, pt)) = self.car_stop(d) else { continue };
             let Some((goal, s_end, _)) = self.traffic.net.nearest_lane_on(seg, pt) else { continue };
             if self.traffic.redirect(car_id, goal, s_end) {
                 if let Some(b) = self.traffic.cars[car_id].bus.as_mut() {
@@ -399,7 +399,7 @@ impl World {
         }
         // On to the next stop, or home.
         let (next_idx, to_seg, to_pos) = if bus.to_depot {
-            match self.building_lot(bus.depot).and_then(|l| l.car_segment.map(|s| (s, l.car_point))) {
+            match self.car_stop(bus.depot) {
                 Some((s, p)) => (usize::MAX, s, p),
                 None => {
                     gone(self, car_id);

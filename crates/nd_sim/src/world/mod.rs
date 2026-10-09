@@ -53,6 +53,10 @@ mod districts;
 mod districts_tests;
 mod driving;
 mod industry;
+mod kinds;
+mod streams;
+use streams::Stream;
+mod floors_grid;
 // [interchange] The Road tool's Interchange preset: diamond interchanges.
 pub mod interchange;
 #[cfg(test)]
@@ -537,12 +541,14 @@ pub struct World {
     /// and people hit (`world/pedestrians.rs`).
     #[serde(default)]
     pub peds: crate::pedestrians::Pedestrians,
+    /// [perf] Who is waiting at a station or stop, built at most once a
+    /// tick (`world/trains.rs`).
+    #[serde(skip)]
+    waiting_cache: Option<(u64, Vec<CitizenId>)>,
     /// [perf] Who is inside each place, built at most once a tick for
     /// everyone choosing or rating a place (`world/places.rs`), instead of a
     /// scan of every citizen per decision. Arrivals later in the same tick
     /// show from the next one.
-    #[serde(skip)]
-    waiting_cache: Option<(u64, Vec<CitizenId>)>,
     #[serde(skip)]
     crowds_cache: Option<(u64, HashMap<BuildingId, Vec<CitizenId>>)>,
     /// [benches] Who sits (or is on the way to sit) on which park bench seat.
@@ -1100,10 +1106,24 @@ impl World {
         self.building_lot(b).map(|l| l.entrance())
     }
 
+    /// [review] Where a car stops for building `b`: its lot's street and
+    /// the kerb point on it (None for a lot with no street to drive to).
+    pub(super) fn car_stop(&self, b: BuildingId) -> Option<(SegmentId, Vec2)> {
+        self.building_lot(b).and_then(|l| l.car_segment.map(|s| (s, l.car_point)))
+    }
+
     /// Is `p` inside a station's or yard's footprint? Nothing but the
     /// facility itself is ever built on that ground.
     pub fn under_facility(&self, p: Vec2) -> bool {
-        self.facilities.values().any(|f| point_in_polygon(p, &f.footprint()))
+        // [review] The corners as they are (`footprint()` copies them into
+        // a new Vec per facility per call; this runs per lot in many loops).
+        self.facilities.values().any(|f| point_in_polygon(p, &f.corners()))
+    }
+
+    /// The ground every station, yard and dock stands on, facilities first
+    /// (in slot order), then docks.
+    pub(super) fn structure_footprints(&self) -> Vec<Vec<Vec2>> {
+        self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect()
     }
 
     /// How tall the surroundings of a lot justify building: the floors of
@@ -1117,7 +1137,7 @@ impl World {
         let near_floors: u32 = self
             .buildings
             .values()
-            .filter(|b| b.lot != lot_id && b.land_use != LandUse::Park && !b.is_parking() && !b.is_power() && !b.depot && b.rail.is_none() && b.service.is_none())
+            .filter(|b| b.lot != lot_id && b.counts_for_height_cap())
             .filter_map(|b| self.lots.get(b.lot).map(|l| (b.floors as u32, l.center)))
             .filter(|(_, c)| c.distance(center) <= DENSITY_RADIUS)
             .map(|(f, _)| f)

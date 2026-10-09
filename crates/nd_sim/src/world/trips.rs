@@ -711,8 +711,7 @@ impl World {
 
     pub(super) fn assign_job(&mut self, id: CitizenId, job: BuildingId) {
         self.citizens[id].work = Some(job);
-        let skill = Self::skill_of(self.citizens[id].seed);
-        self.citizens[id].income = self.buildings[job].wage() * skill;
+        self.citizens[id].income = Self::base_income(&self.buildings[job], self.citizens[id].seed);
         self.buildings[job].workers.push(id);
         let name = self.buildings[job].name.clone();
         let tick = self.clock.tick;

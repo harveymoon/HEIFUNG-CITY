@@ -14,7 +14,6 @@ use crate::estate::*;
 use std::borrow::Cow;
 use crate::vehicle::VehicleModel;
 
-const ESTATE_SALT: u64 = 0x5E57_A7E0_1A4D;
 
 /// Fictional property developers.
 const DEVELOPERS: &[&str] = &["Kessler Land", "Halcyon Developments", "Argent Holdings", "Meridian Estates", "Nocturne Property", "Zenith Build", "Fulcrum Realty"];
@@ -40,7 +39,7 @@ impl World {
     /// independent of the world's own stream. Small salts come from
     /// [`erng_salt`]; the others are distinct hex tags.
     pub(super) fn erng(&self, salt: u64) -> SimRng {
-        crate::rng_for(self.config.seed ^ ESTATE_SALT ^ salt.wrapping_mul(0x51_7C_C1_B7), self.clock.tick)
+        crate::rng_for(self.stream_seed(Stream::Estate) ^ salt.wrapping_mul(0x51_7C_C1_B7), self.clock.tick)
     }
 
     // ── pressure ───────────────────────────────────────────────────────────
@@ -102,8 +101,6 @@ impl World {
         }
     }
 
-    /// Floors the pressure on a lot justifies (two where it is quiet), held
-    /// to `NIMBY_HEIGHT_CAP` inside a billionaire's NIMBY radius.
     /// Does pressure cap heights yet? Measured at least once, in a town of
     /// `PRESSURE_MIN_POP` people.
     pub fn pressure_active(&self) -> bool {
@@ -111,6 +108,8 @@ impl World {
         p.samples > 0 && (p.always || self.citizens.len() >= PRESSURE_MIN_POP)
     }
 
+    /// Floors the pressure on a lot justifies (two where it is quiet), held
+    /// to `NIMBY_HEIGHT_CAP` inside a billionaire's NIMBY radius.
     pub fn pressure_floors(&self, lot_id: LotId) -> u8 {
         let Some(lot) = self.lots.get(lot_id) else { return PRESSURE_MAX_FLOORS };
         let f = self.estate.pressure.floors_at(lot.center);
@@ -122,6 +121,12 @@ impl World {
     }
 
     // ── prices and owners ──────────────────────────────────────────────────
+
+    /// [review] What the buildings standing on `plots` sell for, summed
+    /// (`sale_price` each; a vacant plot costs nothing here).
+    pub(super) fn plots_price(&self, plots: &[LotId]) -> f64 {
+        plots.iter().filter_map(|l| self.lots.get(*l).and_then(|x| x.building)).map(|b| self.sale_price(b)).sum()
+    }
 
     /// What it would take to buy a building and its plots: the land at its
     /// value, the structure by size, tier and condition, and a business's
@@ -355,7 +360,7 @@ impl World {
     /// historic district, not a home bought outright, not a billionaire's.
     pub(super) fn buyable(&self, bid: BuildingId) -> bool {
         let Some(b) = self.buildings.get(bid) else { return false };
-        if !b.operating() || b.is_special() || b.is_parking() || b.land_use == LandUse::Park || b.land_use == LandUse::Civic {
+        if !b.operating() || !b.is_grown() || b.land_use == LandUse::Park || b.land_use == LandUse::Civic {
             return false;
         }
         if b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::TaxiCompany | BusinessKind::CargoHub)) {
@@ -836,7 +841,7 @@ impl World {
         if picked.is_empty() {
             return false;
         }
-        let price: f64 = picked.iter().filter_map(|l| self.lots[*l].building).map(|b| self.sale_price(b)).sum();
+        let price: f64 = self.plots_price(&picked);
         let name = self.buildings[bid].name.clone();
         let tier = self.buildings[bid].tier.max(Tier::for_land_value(self.lot_value(self.buildings[bid].lot)));
         let new_floors = match form {
@@ -894,9 +899,8 @@ impl World {
         let hid = rich[0].1;
         let family = self.households[hid].members.first().and_then(|m| self.citizens.get(*m)).map(|c| c.name.split_whitespace().last().unwrap_or("").to_string()).unwrap_or_default();
         let owner = self.new_owner(format!("the {family} family"), OwnerKind::Household { household: hid });
-        if let Some(bid) = self.acquire(&pair, Form::McMansion, owner, Some(hid), 2, &format!("The {family} family bought our place to build a big house. We had to go.")) {
+        if self.acquire(&pair, Form::McMansion, owner, Some(hid), 2, &format!("The {family} family bought our place to build a big house. We had to go.")).is_some() {
             self.estate.stats.mcmansions_total += 1;
-            let _ = bid;
         }
     }
 
@@ -950,7 +954,7 @@ impl World {
     /// when it is done.
     fn acquire(&mut self, plots: &[LotId], form: Form, owner: OwnerId, buyer: Option<HouseholdId>, floors: u8, memory: &str) -> Option<BuildingId> {
         let primary = plots.iter().copied().find(|l| self.lots.get(*l).is_some_and(|x| x.building.is_some() && !x.landlocked)).or_else(|| plots.iter().copied().find(|l| self.lots.get(*l).is_some_and(|x| !x.landlocked)))?;
-        let price: f64 = plots.iter().filter_map(|l| self.lots.get(*l).and_then(|x| x.building)).map(|b| self.sale_price(b)).sum();
+        let price: f64 = self.plots_price(&plots);
         let value = self.lot_value(primary);
         let bid = match self.lots[primary].building {
             Some(b) => {

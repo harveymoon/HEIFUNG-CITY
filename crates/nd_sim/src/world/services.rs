@@ -52,8 +52,8 @@ impl World {
     /// shift what the other systems draw. Not saved: a loaded world reseeds
     /// it from the seed and the clock.
     pub(super) fn srng(&mut self) -> &mut crate::SimRng {
-        let (seed, tick) = (self.config.seed, self.clock.tick);
-        self.services.rng.get_or_insert_with(|| crate::rng_for(seed ^ 0x5E7_1CE5, tick))
+        let (seed, tick) = (self.stream_seed(Stream::Services), self.clock.tick);
+        self.services.rng.get_or_insert_with(|| crate::rng_for(seed, tick))
     }
 
     // ── placing ────────────────────────────────────────────────────────────
@@ -782,10 +782,10 @@ impl World {
         if self.clock.minute_of_day() == SCHOOL_MINUTE {
             self.send_children_to_school();
         }
-        // Pupils stay until the school closes.
         if tick % 10 == 1 {
             self.step_custody();
         }
+        // Pupils stay until the school closes.
         if tick % 10 == 5 {
             let hour = self.clock.hour() as u8;
             let buildings = &self.buildings;
@@ -820,7 +820,7 @@ impl World {
         s.stats.in_hospital = s.admissions.len() as u32;
     }
 
-    /// Units free for a call, per incident kind (`IncidentKind::index`): in
+    /// Units free for a call, per unit kind (`u.kind as usize`): in
     /// the station with a crew to spare, on patrol or standby, or driving home.
     fn free_units(&self) -> [usize; 3] {
         let out = self.units_out();
@@ -2381,7 +2381,7 @@ impl World {
             let (Some(work), Some(home)) = (c.work, c.home) else { continue };
             let (Some(wb), Some(hb)) = (self.buildings.get(work), self.buildings.get(home)) else { continue };
             let cov = self.services.coverage_of(hb.lot, ServiceKind::School);
-            let base = wb.wage() * Self::skill_of(c.seed);
+            let base = Self::base_income(wb, c.seed);
             let income = base * (1.0 + EDUCATION_BONUS * cov);
             bonus += income - base;
             self.citizens[cid].income = income;

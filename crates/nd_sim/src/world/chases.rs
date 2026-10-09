@@ -326,7 +326,7 @@ impl World {
             }
             let home = self.citizens.get(s).and_then(|c| c.home);
             if at_wheel && self.traffic.cars.contains_key(ch.car) {
-                let to = home.and_then(|h| self.building_lot(h)).and_then(|l| l.car_segment.map(|seg| (seg, l.car_point)));
+                let to = home.and_then(|h| self.car_stop(h));
                 if let Some((seg, p)) = to {
                     if let Some((goal, s_end, _)) = self.traffic.net.nearest_lane_on(seg, p) {
                         self.traffic.redirect(ch.car, goal, s_end);
@@ -399,11 +399,6 @@ impl World {
             self.resolve(id, Outcome::Escaped);
             Err("no road for the chase".into())
         }
-    }
-
-    /// Chases under way: (incident, fugitive's car, police car).
-    pub fn chases_now(&self) -> Vec<(u32, CarId, Option<CarId>)> {
-        self.services.chases.iter().map(|c| (c.incident, c.car, self.services.units.get(c.unit).and_then(|u| u.car))).collect()
     }
 }
 

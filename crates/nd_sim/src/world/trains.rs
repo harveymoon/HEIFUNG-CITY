@@ -26,8 +26,14 @@ impl World {
     }
 
     pub(super) fn nearest_yard(&self, to: BuildingId) -> Option<BuildingId> {
+        self.nearest_by_entrance(to, self.yards.iter().copied())
+    }
+
+    /// [review] Of `ids`, the building whose entrance is nearest `to`'s
+    /// (the first of equals, in the order given).
+    pub(super) fn nearest_by_entrance(&self, to: BuildingId, ids: impl IntoIterator<Item = BuildingId>) -> Option<BuildingId> {
         let p = self.building_entrance(to)?;
-        self.yards.iter().copied().filter_map(|y| self.building_entrance(y).map(|q| (y, q.distance(p)))).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(y, _)| y)
+        ids.into_iter().filter_map(|y| self.building_entrance(y).map(|q| (y, q.distance(p)))).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(y, _)| y)
     }
 
     /// Set down a station or freight yard at `p`: it fuses to track or

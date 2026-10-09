@@ -673,7 +673,7 @@ impl World {
             }
             None => {
                 // Delivered from out of town, for the fee.
-                let Some((seg, pt)) = self.building_lot(home).and_then(|l| l.car_segment.map(|s| (s, l.car_point))) else { return };
+                let Some((seg, pt)) = self.car_stop(home) else { return };
                 let Some((route, s0, s1)) = self.route_from_edge(seg, pt) else { return };
                 self.pay_release(owner, spot);
                 let (model, color) = (car_model(self, vid), self.vehicles.cars[vid].color);

@@ -597,17 +597,12 @@ impl World {
 
     // ── arriving ────────────────────────────────────────────────────────
 
-    /// A vehicle of ours reached the end of its route. True when handled
-    /// (anything but a through car, a bus or a service unit).
+    /// A vehicle of ours reached the end of its route. True when handled.
+    /// (`step_traffic` in `mod.rs` hands through cars, buses,
+    /// service units, convoys, garbage trucks and lorries elsewhere first.)
     pub(super) fn vehicle_arrived(&mut self, car_id: CarId) -> bool {
         let Some(car) = self.traffic.cars.get(car_id) else { return true };
-        let (errand, owned, cargo, citizen) = (car.errand, car.owned, car.cargo, car.citizen);
-        if let Some(_) = cargo {
-            // Lorries are `world/industry`'s: deliver, unload at the kerb,
-            // then a truck lot, their business or the map edge.
-            self.lorry_arrived(car_id);
-            return true;
-        }
+        let (errand, owned, citizen) = (car.errand, car.owned, car.citizen);
         match errand {
             Errand::Haul { base } => {
                 self.send_back(car_id, base);
@@ -747,7 +742,7 @@ impl World {
                 if own {
                     let kind = if Some(b) == home { ParkKind::Home } else { ParkKind::Building };
                     if let Some(spot) = self.building_spot(kind, b) {
-                        self.finish_park(car_id, vid, spot, target, 0);
+                        self.finish_park(car_id, vid, spot, 0);
                         return;
                     }
                 }
@@ -762,7 +757,7 @@ impl World {
             if self.lot_open(b) {
                 if let Some(spot) = self.building_spot(ParkKind::Lot, b) {
                     self.pay_lot(driver, b);
-                    self.finish_park(car_id, vid, spot, target, tries);
+                    self.finish_park(car_id, vid, spot, tries);
                     return;
                 }
             }
@@ -770,7 +765,7 @@ impl World {
         if errand == Errand::ToKerb {
             if let Some(k) = self.free_kerb_near(pos, 16.0).or_else(|| self.free_illegal_slots_near(pos, 16.0, 1).into_iter().next()) {
                 let spot = self.kerb_spot(k);
-                self.finish_park(car_id, vid, spot, target, tries);
+                self.finish_park(car_id, vid, spot, tries);
                 return;
             }
         }
@@ -883,7 +878,7 @@ impl World {
         if let Some((_, route, s_end, errand, here)) = best {
             if let Some(k) = here {
                 let spot = self.kerb_spot(k);
-                self.finish_park(car_id, vid, spot, target, tries);
+                self.finish_park(car_id, vid, spot, tries);
                 return;
             }
             if self.traffic.follow(car_id, route, s_end) {
@@ -928,7 +923,7 @@ impl World {
             self.economy.parking_shortage_at = Some(target);
         }
         match self.overflow_spot(pos) {
-            Some(spot) => self.finish_park(car_id, vid, spot, target, tries.max(1)),
+            Some(spot) => self.finish_park(car_id, vid, spot, tries.max(1)),
             None if !worn_out => {
                 // Not one free slot within reach: keep driving round.
                 if let Some(c) = self.traffic.cars.get_mut(car_id) {
@@ -942,7 +937,7 @@ impl World {
                 // to drive round for good: drivers hunting two to ten hours
                 // for a space, through the jam they were part of).
                 let spot = ParkSpot { kind: ParkKind::Overflow, pos, slot: u16::MAX, since: self.clock.tick, ..Default::default() };
-                self.finish_park(car_id, vid, spot, target, tries.max(1));
+                self.finish_park(car_id, vid, spot, tries.max(1));
             }
         }
     }
@@ -995,7 +990,7 @@ impl World {
 
     /// The car is in its space: off the road, into the record; the driver
     /// gets out and walks the rest.
-    fn finish_park(&mut self, car_id: CarId, vid: VehicleId, spot: ParkSpot, target: Vec2, tries: u8) {
+    fn finish_park(&mut self, car_id: CarId, vid: VehicleId, spot: ParkSpot, tries: u8) {
         let Some(car) = self.traffic.remove_car(car_id) else { return };
         self.park_at(vid, spot);
         let slot = match spot.kind {
@@ -1042,7 +1037,6 @@ impl World {
             c.remember(tick, "Went round the block twice before I found a space.");
             self.concerns.heard(driver, c, crate::concerns::Concern::Parking, 0.2);
         }
-        let _ = target;
         self.walk_from_car(driver, spot.pos);
     }
 

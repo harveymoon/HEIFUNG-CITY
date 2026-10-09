@@ -511,11 +511,7 @@ impl World {
             return false;
         }
         let refund = cargo.price * (1.0 - crate::ports::SHIP_IMPORT_FACTOR);
-        if let Some(bz) = self.buildings.get_mut(to).and_then(|b| b.business.as_mut()) {
-            bz.money += refund;
-            bz.spend_today -= refund;
-        }
-        self.economy.market.imports_today -= refund;
+        self.refund_import(to, refund);
         let due = self.clock.tick + shore::JETTY_LEAD_HOURS * 60;
         self.shore.inbound.push((to, Cargo { from: to, price: cargo.price * crate::ports::SHIP_IMPORT_FACTOR, ..cargo }, due));
         true

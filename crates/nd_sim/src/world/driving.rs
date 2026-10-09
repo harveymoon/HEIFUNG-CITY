@@ -5,7 +5,9 @@
 //! The physics lives in `traffic.rs` (`DriverProfile`, crashes, stunts);
 //! takeover data in `takeover.rs`. This file is the glue that reads and
 //! writes the rest of the world. It draws from its own random streams
-//! (`rng_for`), never the world's, so it does not shift anything else.
+//! (`rng_for`), with one exception: a recovery truck sent in from the map
+//! edge (`send_recovery`) is routed by `route_from_edge_to`, which
+//! shuffles the world's stream.
 
 use super::*;
 use crate::citizens::{driver_traits, rebelliousness, DRUNK};
@@ -360,7 +362,7 @@ impl World {
     /// witness calling 911 and police and ambulances on their way.
     fn handle_crash(&mut self, r: CrashReport) {
         let tick = self.clock.tick;
-        let mut rng = crate::rng_for(self.config.seed ^ 0xC2A5_4ED1, r.id as u64);
+        let mut rng = crate::rng_for(self.stream_seed(Stream::Crash), r.id as u64);
         let cars: Vec<CarId> = r.cars.iter().copied().filter(|&c| self.traffic.cars.contains_key(c)).collect();
         if cars.is_empty() {
             return;
@@ -704,7 +706,7 @@ impl World {
         // [parking] The city's tow companies haul wrecks too; with none in
         // town (or no road to it), one from out of town takes it off the map.
         let mut yard = self.tow_company_near(pos);
-        let to_yard = yard.and_then(|y| self.building_lot(y)).and_then(|l| l.car_segment.map(|s| (s, l.car_point))).and_then(|(seg, p)| {
+        let to_yard = yard.and_then(|y| self.car_stop(y)).and_then(|(seg, p)| {
             let (gl, gs, _) = self.traffic.net.nearest_lane_on(seg, p)?;
             self.traffic.net.route_lanes(lane, s, gl, gs)
         });
@@ -800,7 +802,7 @@ impl World {
         let day = self.clock.day();
         if self.clock.minute_of_day() == 22 * 60 && self.driving.takeovers.rolled_day != day && self.driving.takeovers.active.is_none() {
             self.driving.takeovers.rolled_day = day;
-            let mut rng = crate::rng_for(self.config.seed ^ 0x7A4E_0FE5, day);
+            let mut rng = crate::rng_for(self.stream_seed(Stream::TakeoverDay), day);
             let crew = self.takeover_crew().len();
             let chance = if crew >= 2 { takeover::NIGHT_CHANCE + 0.1 } else { takeover::NIGHT_CHANCE * 0.5 };
             if self.citizens.len() >= 100 && rng.random_bool(chance) {
@@ -824,7 +826,7 @@ impl World {
         }
         let tick = self.clock.tick;
         let Some(&(node, centre, jr)) = self.takeover_junctions(near).first() else { return Err("no junction to hold".into()) };
-        let mut rng = crate::rng_for(self.config.seed ^ 0x7A4E_0FE6, tick);
+        let mut rng = crate::rng_for(self.stream_seed(Stream::TakeoverStart), tick);
         let id = self.driving.takeovers.next_id;
         self.driving.takeovers.next_id += 1;
         let place = self.building_near(centre).and_then(|b| self.buildings.get(b)).map(|b| b.name.clone()).unwrap_or_else(|| "a junction".to_string());
@@ -944,7 +946,7 @@ impl World {
             return;
         };
         let tick = self.clock.tick;
-        let mut rng = crate::rng_for(self.config.seed ^ 0x0575_1DE5, tick);
+        let mut rng = crate::rng_for(self.stream_seed(Stream::TakeoverOutsiders), tick);
         let Some(&sid) = self.roads.node(entry).segments.iter().find(|&&s| self.roads.segment(s).alive && self.roads.segment(s).is_street()) else {
             t.to_spawn = 0;
             return;
@@ -982,7 +984,7 @@ impl World {
     fn run_takeover(&mut self) {
         let Some(mut t) = self.driving.takeovers.active.take() else { return };
         let tick = self.clock.tick;
-        let mut rng = crate::rng_for(self.config.seed ^ 0x7A4E_0FE7, tick);
+        let mut rng = crate::rng_for(self.stream_seed(Stream::TakeoverRun), tick);
         t.cars.retain(|&c| self.traffic.cars.contains_key(c));
         if t.to_spawn > 0 {
             self.spawn_outsiders(&mut t);
@@ -1182,7 +1184,7 @@ impl World {
             let Some(c) = self.traffic.cars.get(car) else { continue };
             let driver = c.citizen;
             let home = self.citizens.get(driver).and_then(|p| p.home);
-            let dest = match home.and_then(|h| self.building_lot(h)).and_then(|l| l.car_segment.map(|s| (s, l.car_point))) {
+            let dest = match home.and_then(|h| self.car_stop(h)) {
                 Some(d) => Some(d),
                 None => exit_to,
             };
@@ -1232,7 +1234,7 @@ impl World {
         }
         // The crowd drifts off; the neighbours remember the noise.
         let crowd_n = t.crowd.iter().filter(|&&c| self.citizens.get(c).is_some_and(|c| c.pos.distance(t.centre) < t.radius + 20.0)).count();
-        let mut rng = crate::rng_for(self.config.seed ^ 0x7A4E_0FE8, tick);
+        let mut rng = crate::rng_for(self.stream_seed(Stream::TakeoverEnd), tick);
         for &cid in &t.crowd {
             if let Some(c) = self.citizens.get_mut(cid) {
                 if c.pos.distance(t.centre) < t.radius + 25.0 {

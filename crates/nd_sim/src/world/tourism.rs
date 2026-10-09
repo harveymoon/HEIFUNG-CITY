@@ -14,7 +14,7 @@ use crate::services::ServiceKind;
 use crate::tourism::{self as tm, Arrival, Attraction, AttractionKind, Goal, Tourist, TouristId, TouristState};
 
 /// Salt for the tourism random streams.
-const SALT: u64 = 0x7015_7000;
+const SALT: u64 = Stream::Tourism.salt();
 /// Metres a taxi covers per tick (about 10 m/s for 4 s of motion).
 const TAXI_M_PER_TICK: f32 = 40.0;
 
@@ -221,7 +221,7 @@ impl World {
                 self.tourism.stats.turned_away_today += (n - k) as u32;
                 break;
             }
-            let seed = crate::rng_for(self.config.seed ^ SALT, tick.wrapping_mul(131) + k as u64).random::<u64>();
+            let seed = crate::rng_for(self.stream_seed(Stream::Tourism), tick.wrapping_mul(131) + k as u64).random::<u64>();
             let mut rng = crate::rng_for(seed, SALT);
             let class = match rng.random::<f32>() {
                 x if x < 0.35 => Tier::Low,
@@ -361,7 +361,7 @@ impl World {
         if self.economy.cover_of(BusinessKind::Hotel).is_some_and(|c| c < 0.85) {
             return;
         }
-        let mut rng = crate::rng_for(self.config.seed ^ SALT ^ 0x407E1, self.clock.tick);
+        let mut rng = crate::rng_for(self.stream_seed(Stream::Tourism) ^ 0x407E1, self.clock.tick);
         if !rng.random_bool(0.5) {
             return;
         }
