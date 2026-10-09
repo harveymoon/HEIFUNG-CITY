@@ -185,7 +185,25 @@ fn best_rect(free: &[bool], cols: usize, rows: usize, y0: f32) -> Option<(usize,
 /// the street (all glass, or nothing faces it).
 pub fn facade_spot(building: &Geometry, front: Vec2, facing: Vec2) -> Option<FacadeSpot> {
     let out2 = facing.try_normalize()?;
-    // Walls facing the street, grouped by plane.
+    let mut planes = wall_planes(building, out2);
+    planes.retain(|p| p.area >= MURAL_MIN_W * MURAL_MIN_H);
+    planes.sort_by(|a, b| b.area.total_cmp(&a.area));
+    planes.truncate(6);
+    let front3 = Vec3::new(front.x, 0.0, front.y);
+    let mut best: Option<(f32, FacadeSpot)> = None;
+    for p in &planes {
+        // The best scoring spot (the first of equals).
+        if let Some((score, spot)) = plane_spot(building, p, front3) {
+            if !best.as_ref().is_some_and(|b| b.0 >= score) {
+                best = Some((score, spot));
+            }
+        }
+    }
+    best.map(|b| b.1)
+}
+
+/// The building's paintable walls facing `out2`, grouped by plane.
+fn wall_planes(building: &Geometry, out2: Vec2) -> Vec<Plane> {
     let mut planes: Vec<Plane> = Vec::new();
     for s in PAINTABLE {
         for t in triangles(building.get(s)) {
@@ -213,129 +231,125 @@ pub fn facade_spot(building: &Geometry, front: Vec2, facing: Vec2) -> Option<Fac
             }
         }
     }
-    planes.retain(|p| p.area >= MURAL_MIN_W * MURAL_MIN_H);
-    planes.sort_by(|a, b| b.area.total_cmp(&a.area));
-    planes.truncate(6);
-    let front3 = Vec3::new(front.x, 0.0, front.y);
-    let mut best: Option<(f32, FacadeSpot)> = None;
-    for p in &planes {
-        let out = p.n;
-        let along = Vec3::new(out.z, 0.0, -out.x);
-        let tf = |q: Vec3| Vec2::new(q.dot(along), q.y);
-        // The wall's extent, kept within reach of the lot's front.
-        let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
-        for t in &p.tris {
-            for q in t {
-                lo = lo.min(tf(*q));
-                hi = hi.max(tf(*q));
-            }
+    planes
+}
+
+/// The best rectangle to paint on one wall plane and its score: clear wall
+/// if there is enough, else the wall painted round its windows, kept within
+/// reach of the lot's front (`front3`).
+fn plane_spot(building: &Geometry, p: &Plane, front3: Vec3) -> Option<(f32, FacadeSpot)> {
+    let out = p.n;
+    let along = Vec3::new(out.z, 0.0, -out.x);
+    let tf = |q: Vec3| Vec2::new(q.dot(along), q.y);
+    // The wall's extent, kept within reach of the lot's front.
+    let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+    for t in &p.tris {
+        for q in t {
+            lo = lo.min(tf(*q));
+            hi = hi.max(tf(*q));
         }
-        let mid_t = front3.dot(along);
-        lo.x = lo.x.max(mid_t - 120.0);
-        hi.x = hi.x.min(mid_t + 120.0);
-        hi.y = hi.y.min(lo.y + 150.0);
-        if hi.x - lo.x < MURAL_MIN_W || hi.y - lo.y < MURAL_MIN_H {
-            continue;
-        }
-        let cols = ((hi.x - lo.x) / WALL_CELL).ceil() as usize;
-        let rows = ((hi.y - lo.y) / WALL_CELL).ceil() as usize;
-        let centre = |c: usize, r: usize| Vec2::new(lo.x + (c as f32 + 0.5) * WALL_CELL, lo.y + (r as f32 + 0.5) * WALL_CELL);
-        let cell_range = |a: f32, b: f32, base: f32, n: usize| {
-            let i0 = (((a - base) / WALL_CELL).floor().max(0.0) as usize).min(n);
-            let i1 = (((b - base) / WALL_CELL).ceil().max(0.0) as usize).min(n);
-            i0..i1
-        };
-        // Wall where a cell's middle is on one of the plane's triangles.
-        let mut wall = vec![false; cols * rows];
-        for t in &p.tris {
-            let (a, b, c) = (tf(t[0]), tf(t[1]), tf(t[2]));
-            let (tlo, thi) = (a.min(b).min(c), a.max(b).max(c));
-            for r in cell_range(tlo.y, thi.y, lo.y, rows) {
-                for col in cell_range(tlo.x, thi.x, lo.x, cols) {
-                    if inside_tri(centre(col, r), a, b, c) {
-                        wall[r * cols + col] = true;
-                    }
-                }
-            }
-        }
-        // The cells whose middles lie in `a..b` (the one under the middle
-        // when that is narrower than a cell).
-        let centres = |a: f32, b: f32, base: f32, n: usize| {
-            let i0 = ((a - base) / WALL_CELL - 0.5).ceil().max(0.0) as usize;
-            let i1 = ((b - base) / WALL_CELL - 0.5).floor();
-            if i1 < i0 as f32 {
-                let m = (((a + b) * 0.5 - base) / WALL_CELL).floor();
-                return if m >= 0.0 && (m as usize) < n { m as usize..m as usize + 1 } else { 0..0 };
-            }
-            i0.min(n)..((i1 as usize) + 1).min(n)
-        };
-        // Anything drawn just in front of the wall keeps the paint off.
-        let mut blocked = vec![false; cols * rows];
-        for (_, m) in building.iter() {
-            for t in triangles(m) {
-                let s = t.map(|q| q.dot(out) - p.d);
-                let (smin, smax) = (s[0].min(s[1]).min(s[2]), s[0].max(s[1]).max(s[2]));
-                if smax < 0.005 || smin > 3.0 {
-                    continue;
-                }
-                let (a, b, c) = (tf(t[0]), tf(t[1]), tf(t[2]));
-                let (tlo, thi) = (a.min(b).min(c) - Vec2::splat(0.1), a.max(b).max(c) + Vec2::splat(0.1));
-                for r in centres(tlo.y, thi.y, lo.y, rows) {
-                    for col in centres(tlo.x, thi.x, lo.x, cols) {
-                        blocked[r * cols + col] = true;
-                    }
-                }
-            }
-        }
-        let free: Vec<bool> = wall.iter().zip(&blocked).map(|(w, b)| *w && !*b).collect();
-        // Clear wall if there is enough; else the wall, painted round the windows.
-        let (rect, around) = match best_rect(&free, cols, rows, lo.y) {
-            Some(r) => (r, false),
-            None => match best_rect(&wall, cols, rows, lo.y) {
-                Some(r) => (r, true),
-                None => continue,
-            },
-        };
-        let (c0, r0, wc, hc, score) = rect;
-        let setback = (front3.dot(out) - p.d).max(0.0);
-        let mut score = score / (1.0 + (setback - SETBACK_FREE).max(0.0) / 8.0);
-        if around {
-            score *= 0.35 * free.iter().zip(&wall).filter(|(f, w)| **f && **w).count() as f32 / wall.iter().filter(|w| **w).count().max(1) as f32 + 0.05;
-        }
-        if best.as_ref().is_some_and(|b| b.0 >= score) {
-            continue;
-        }
-        // The painted rectangle: centred in the clear stretch, a margin
-        // round it, off the pavement.
-        let rw = wc as f32 * WALL_CELL;
-        let width = (rw - 0.3).min(MURAL_MAX_W);
-        let mut bottom = lo.y + r0 as f32 * WALL_CELL + 0.15;
-        if bottom < 0.3 {
-            bottom = 0.3;
-        }
-        let top = (lo.y + (r0 + hc) as f32 * WALL_CELL - 0.15).min(bottom + MURAL_MAX_H);
-        let height = top - bottom;
-        if width < MURAL_MIN_W * 0.9 || height < MURAL_MIN_H * 0.8 {
-            continue;
-        }
-        let left = lo.x + c0 as f32 * WALL_CELL + (rw - width) * 0.5;
-        let origin = along * left + Vec3::Y * bottom + out * p.d;
-        let mut spot = FacadeSpot::open(origin, along, out, width, height);
-        for r in 0..spot.rows {
-            for c in 0..spot.cols {
-                let u = left + (c as f32 + 0.5) * WALL_CELL;
-                let v = bottom + (r as f32 + 0.5) * WALL_CELL;
-                let gc = (((u - lo.x) / WALL_CELL) as usize).min(cols - 1);
-                let gr = (((v - lo.y) / WALL_CELL) as usize).min(rows - 1);
-                spot.paint[r * spot.cols + c] = free[gr * cols + gc];
-            }
-        }
-        if spot.clear_share() < 0.3 {
-            continue;
-        }
-        best = Some((score, spot));
     }
-    best.map(|b| b.1)
+    let mid_t = front3.dot(along);
+    lo.x = lo.x.max(mid_t - 120.0);
+    hi.x = hi.x.min(mid_t + 120.0);
+    hi.y = hi.y.min(lo.y + 150.0);
+    if hi.x - lo.x < MURAL_MIN_W || hi.y - lo.y < MURAL_MIN_H {
+        return None;
+    }
+    let cols = ((hi.x - lo.x) / WALL_CELL).ceil() as usize;
+    let rows = ((hi.y - lo.y) / WALL_CELL).ceil() as usize;
+    let centre = |c: usize, r: usize| Vec2::new(lo.x + (c as f32 + 0.5) * WALL_CELL, lo.y + (r as f32 + 0.5) * WALL_CELL);
+    let cell_range = |a: f32, b: f32, base: f32, n: usize| {
+        let i0 = (((a - base) / WALL_CELL).floor().max(0.0) as usize).min(n);
+        let i1 = (((b - base) / WALL_CELL).ceil().max(0.0) as usize).min(n);
+        i0..i1
+    };
+    // Wall where a cell's middle is on one of the plane's triangles.
+    let mut wall = vec![false; cols * rows];
+    for t in &p.tris {
+        let (a, b, c) = (tf(t[0]), tf(t[1]), tf(t[2]));
+        let (tlo, thi) = (a.min(b).min(c), a.max(b).max(c));
+        for r in cell_range(tlo.y, thi.y, lo.y, rows) {
+            for col in cell_range(tlo.x, thi.x, lo.x, cols) {
+                if inside_tri(centre(col, r), a, b, c) {
+                    wall[r * cols + col] = true;
+                }
+            }
+        }
+    }
+    // The cells whose middles lie in `a..b` (the one under the middle
+    // when that is narrower than a cell).
+    let centres = |a: f32, b: f32, base: f32, n: usize| {
+        let i0 = ((a - base) / WALL_CELL - 0.5).ceil().max(0.0) as usize;
+        let i1 = ((b - base) / WALL_CELL - 0.5).floor();
+        if i1 < i0 as f32 {
+            let m = (((a + b) * 0.5 - base) / WALL_CELL).floor();
+            return if m >= 0.0 && (m as usize) < n { m as usize..m as usize + 1 } else { 0..0 };
+        }
+        i0.min(n)..((i1 as usize) + 1).min(n)
+    };
+    // Anything drawn just in front of the wall keeps the paint off.
+    let mut blocked = vec![false; cols * rows];
+    for (_, m) in building.iter() {
+        for t in triangles(m) {
+            let s = t.map(|q| q.dot(out) - p.d);
+            let (smin, smax) = (s[0].min(s[1]).min(s[2]), s[0].max(s[1]).max(s[2]));
+            if smax < 0.005 || smin > 3.0 {
+                continue;
+            }
+            let (a, b, c) = (tf(t[0]), tf(t[1]), tf(t[2]));
+            let (tlo, thi) = (a.min(b).min(c) - Vec2::splat(0.1), a.max(b).max(c) + Vec2::splat(0.1));
+            for r in centres(tlo.y, thi.y, lo.y, rows) {
+                for col in centres(tlo.x, thi.x, lo.x, cols) {
+                    blocked[r * cols + col] = true;
+                }
+            }
+        }
+    }
+    let free: Vec<bool> = wall.iter().zip(&blocked).map(|(w, b)| *w && !*b).collect();
+    // Clear wall if there is enough; else the wall, painted round the windows.
+    let (rect, around) = match best_rect(&free, cols, rows, lo.y) {
+        Some(r) => (r, false),
+        None => match best_rect(&wall, cols, rows, lo.y) {
+            Some(r) => (r, true),
+            None => return None,
+        },
+    };
+    let (c0, r0, wc, hc, score) = rect;
+    let setback = (front3.dot(out) - p.d).max(0.0);
+    let mut score = score / (1.0 + (setback - SETBACK_FREE).max(0.0) / 8.0);
+    if around {
+        score *= 0.35 * free.iter().zip(&wall).filter(|(f, w)| **f && **w).count() as f32 / wall.iter().filter(|w| **w).count().max(1) as f32 + 0.05;
+    }
+    // The painted rectangle: centred in the clear stretch, a margin
+    // round it, off the pavement.
+    let rw = wc as f32 * WALL_CELL;
+    let width = (rw - 0.3).min(MURAL_MAX_W);
+    let mut bottom = lo.y + r0 as f32 * WALL_CELL + 0.15;
+    if bottom < 0.3 {
+        bottom = 0.3;
+    }
+    let top = (lo.y + (r0 + hc) as f32 * WALL_CELL - 0.15).min(bottom + MURAL_MAX_H);
+    let height = top - bottom;
+    if width < MURAL_MIN_W * 0.9 || height < MURAL_MIN_H * 0.8 {
+        return None;
+    }
+    let left = lo.x + c0 as f32 * WALL_CELL + (rw - width) * 0.5;
+    let origin = along * left + Vec3::Y * bottom + out * p.d;
+    let mut spot = FacadeSpot::open(origin, along, out, width, height);
+    for r in 0..spot.rows {
+        for c in 0..spot.cols {
+            let u = left + (c as f32 + 0.5) * WALL_CELL;
+            let v = bottom + (r as f32 + 0.5) * WALL_CELL;
+            let gc = (((u - lo.x) / WALL_CELL) as usize).min(cols - 1);
+            let gr = (((v - lo.y) / WALL_CELL) as usize).min(rows - 1);
+            spot.paint[r * spot.cols + c] = free[gr * cols + gc];
+        }
+    }
+    if spot.clear_share() < 0.3 {
+        return None;
+    }
+    Some((score, spot))
 }
 
 /// The paint: what a crew keeps from wall to wall.
