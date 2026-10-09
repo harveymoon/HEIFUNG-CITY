@@ -8,8 +8,8 @@ use super::*;
 impl World {
     /// The society systems' own random stream (see `Society::rng`).
     pub(crate) fn society_rng(&mut self) -> &mut SimRng {
-        let (seed, tick) = (self.config.seed, self.clock.tick);
-        self.society.rng.get_or_insert_with(|| crate::rng_for(seed ^ 0x50C1_E7A1, tick))
+        let (seed, tick) = (self.stream_seed(Stream::Society), self.clock.tick);
+        self.society.rng.get_or_insert_with(|| crate::rng_for(seed, tick))
     }
 
     /// Hourly at :40, clear of the services' :50 roll.

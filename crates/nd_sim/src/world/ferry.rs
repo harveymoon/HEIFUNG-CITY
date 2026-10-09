@@ -21,8 +21,10 @@
 //! (`plan_day_trips`): they travel to the terminal like anywhere else, board
 //! (`board_day_trip`, paying the fare both ways) and are `Abroad` until an
 //! evening boat brings them back. Everyone leaving waits on the pier
-//! (`Ports::boarding`) for the next run out. All draws are seeded by
-//! citizen or terminal and tick, so replays repeat.
+//! (`Ports::boarding`) for the next run out. Its own draws are seeded by
+//! citizen or terminal and tick, so replays repeat; the trip to the
+//! terminal itself (`travel_to`) draws from the world's stream like any
+//! other trip.
 
 use super::*;
 use crate::landscape::MapEdge;
@@ -30,7 +32,7 @@ use crate::ports::{self, DayTrip, PortId, PortKind, RemoteTerminal};
 use crate::tourism::{self as tm, Arrival, Goal, Tourist, TouristId, TouristState};
 
 /// Salt for the ferry draws.
-const SALT: u64 = 0xFE44_7001;
+const SALT: u64 = Stream::Ferry.salt();
 
 impl World {
     /// Give a ferry terminal its towns off the map: one or two, beyond the
@@ -166,7 +168,7 @@ impl World {
             return;
         }
         let want = ((total as f32 * 0.35).ceil() as u32).min(ports::MAX_COMMUTERS - done).min(12);
-        let mut rng = crate::rng_for(self.config.seed ^ SALT, tick.wrapping_mul(977) ^ slotmap::Key::data(&terminal).as_ffi());
+        let mut rng = crate::rng_for(self.stream_seed(Stream::Ferry), tick.wrapping_mul(977) ^ slotmap::Key::data(&terminal).as_ffi());
         let day = self.clock.day();
         for _ in 0..want {
             let total: u32 = gaps.iter().map(|g| g.1).sum();

@@ -31,22 +31,22 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
     - `build_parking` and `build_taxi_company` ignore `estate.reserved` and rubble (`parking.rs:47`, `taxis.rs:57`; the `vacant` list in `develop.rs:531` does not filter either). They can build on a plot an owner bought. **FIXED 36a7595**
 
 ### (b) Safe refactors (behaviour identical)
-11. **One building-classification module.** Replace `Building::is_special`, `World::is_civic_structure`, `is_city_building`, `city_use` and about 8 inline chains with explicit, documented predicates. Doing this exposes the drift listed in §2.1, which can then be fixed in deliberate follow-up commits. **FIXED 36a7595 (the three city-building checks: `Building::is_city_structure`; the inline chains remain)**
+11. **One building-classification module.** Replace `Building::is_special`, `World::is_civic_structure`, `is_city_building`, `city_use` and about 8 inline chains with explicit, documented predicates. Doing this exposes the drift listed in §2.1, which can then be fixed in deliberate follow-up commits. **FIXED 36a7595 (the three city-building checks: `Building::is_city_structure`; the inline chains remain)** **REFACTORED 94c36c7 (`world/kinds.rs`: `Building::is_grown`, `working_depot` and `counts_for_height_cap` where inline chains were the same: towers, corps, districts, develop, estate, buses, survey, `height_cap`, `update_economy`. The chains in `air.rs`, `industry.rs`, `plan.rs`, `corp.rs:278` differ in what they leave out and stay inline: unifying them changes outcomes)**
 12. **One "vacant buildable lot" or "site plot ok" predicate** in place of about 20 copies that disagree on reserved, rubble, frozen and under-facility (§2.2). The disagreements are what cause item 10. **FIXED 36a7595 (`World::site_clear` / `lot_free_for` with a `SiteRule`)**
-13. **One `crate::hash` module.** It replaces 9 copies of `mix`, `unit`, `key_of` and `hash01`, plus a `Stream` salt registry for the 6 ad-hoc sub-RNGs (`erng`, `srng`, `society_rng`, `arng`, `trng`, `rng_for`). This also removes the `erng(4)` collision between `rich.rs:66` and `estate.rs:965`. (§2.3) **FIXED 36a7595 (the `erng(4)` collision only: `estate::erng_salt`)**
+13. **One `crate::hash` module.** It replaces 9 copies of `mix`, `unit`, `key_of` and `hash01`, plus a `Stream` salt registry for the 6 ad-hoc sub-RNGs (`erng`, `srng`, `society_rng`, `arng`, `trng`, `rng_for`). This also removes the `erng(4)` collision between `rich.rs:66` and `estate.rs:965`. (§2.3) **FIXED 36a7595 (the `erng(4)` collision only: `estate::erng_salt`)** **REFACTORED 94c36c7 (`world/streams.rs`: the 17 salted streams of `world/` registered with the salts they had, so every stream draws what it drew, and a test that keeps them distinct. The `mix`/`unit`/`key_of` copies are left: several live outside `world/`, refactor/sim-core's)**
 14. **Integration-test fixture.** Move `demo_world` and its helpers into `tests/common/mod.rs`. Today `demo_city.rs` is pulled in with `#[path]` by 4 other test files, so its 8 tests run in **5 binaries**. Also add a `world/test_support.rs` (§5.3). **FIXED 7a2ba59 (`tests/common`; `world/test_support.rs` not yet)**
-15. **Remove dead code and fix wrong comments** (§3.3 and §3.4).
+15. **Remove dead code and fix wrong comments** (§3.3 and §3.4). **REFACTORED 94c36c7 (`world/` only; see §3.3 and §3.4)**
 
 ### (c) Bigger restructures
-16. **Move world-RNG draws off the shared stream** (§4.1 and §5.2). First: the weather (`market.rs:127`, which every system then feels), through-traffic (`water.rs:787-804`, every tick), per-citizen trip draws (`trips.rs`, 34 sites), `power.rs:556`, parking (`cars.rs:907`, `952`, `982`, `1014`), `enforcement.rs:98` and `market.rs:818`. This is the root cause of the flaky demo tests.
+16. **Move world-RNG draws off the shared stream** (§4.1 and §5.2). First: the weather (`market.rs:127`, which every system then feels), through-traffic (`water.rs:787-804`, every tick), per-citizen trip draws (`trips.rs`, 34 sites), `power.rs:556`, parking (`cars.rs:907`, `952`, `982`, `1014`), `enforcement.rs:98` and `market.rs:818`. This is the root cause of the flaky demo tests. **NOT DONE (refactor/sim-world): every step moves golden outcomes, which phase 2b had to keep identical. The plan stands as §5.2 has it; `world/streams.rs` is the registry the keyed streams would join: add `Stream::Weather`, `Through`, `Trip`, ... and `World::rng_at(stream, key) = rng_for(stream_seed(s) ^ key, tick)`, migrate the sites in §5.2's order in one commit, re-baseline the demo tests once.**
 17. **Save the per-system RNG streams.** `Services`, `Society` and `Air` hold `Option<SimRng>` streams marked `serde(skip)`, so a save/load mid-run diverges from an uninterrupted run. Then add a save → load → continue determinism test and an exhaustive `from_ron(to_ron(w)).to_ron() == to_ron(w)` round-trip test (§5.4). **FIXED b96a96e+fd6698e (streams saved; the save/load/continue test is in `tests/determinism.rs` but `#[ignore]`d: traffic, rail and land-value work in progress are not saved yet)**
 18. **Make the multi-seed harness robust.** Pool the society_demo 911 drill over 5 clones of a day-7 world, and run demo_city over 5 seeds, instead of tuning thresholds against a single seed (§5.1).
-19. **Speed up the per-frame and per-hour hot spots** (§4):
+19. **Speed up the per-frame and per-hour hot spots** (§4): **PARTLY REFACTORED 94c36c7 (plant groups, tower sites, `update_economy`, `under_facility`, `parcel_holds_civic`; `project_check` measured, see §4)**
     - `project_check` clones the whole `World` and rebuilds on every `plan_version` bump, and `holo.rs` calls it.
     - The plant-group bonus is O(P³) per grid hour and per Power-window frame.
     - `height_cap` and the other "floors within R" scans are O(buildings) per lot.
     - `parcel_holds_civic` is O(lots) per parcel per frame.
-20. **Split the large files** along the lines in §3.1: `services.rs`, `social.rs`, `trips.rs`, `plan.rs`, `water.rs`, `estate.rs`, `cars.rs`, `driving.rs`. Do it after items 11–13 so that the moves are pure moves.
+20. **Split the large files** along the lines in §3.1: `services.rs`, `social.rs`, `trips.rs`, `plan.rs`, `water.rs`, `estate.rs`, `cars.rs`, `driving.rs`. Do it after items 11–13 so that the moves are pure moves. **REFACTORED services 01b7e18, social 4da06de, trips 58184b6, plan 2bd12da, estate 3a48259, water 5360b1c, cars 94a5965, driving e736279; `mod.rs` (save code, tick) 894fa95**
 
 ---
 
@@ -183,7 +183,7 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
   - `city_use` (`placement.rs:213`) and `civic_value` (`services.rs:1328`): each has its own case list, and the latter has the bug above.
 - **Inline "ordinary grown building" chains, each slightly different:** `mod.rs:1114` (`height_cap`; misses port, metro and cargo hub, so docks count towards density), `air.rs:171-183`, `industry.rs:142`, `services.rs:2737`, `plan.rs:973`, `corp.rs:124`, `corp.rs:278`, `towers.rs:203`, `districts.rs:217` (redundant `port` check), `develop.rs:435`, `estate.rs:303`.
 - **Working depot:** `b.depot && !b.is_derelict() && b.operating()` appears 4 times (`buses.rs:238`, `308`, `develop.rs:96`, `survey.rs:92`). `committee/report.rs:277` and `proposals.rs:301` drop `!is_derelict`.
-- **Home:** a `world/kinds.rs` (or methods on `Building`) with `is_city_structure()`, `is_grown()`, `counts_for_density()`, `working_depot()`, `is_free_home()` and `placed_as()`. Make `city_parking` the only source of truth and keep `vehicles.city_lots` for its data only. **FIXED 36a7595 (`is_city_structure`, `is_special`, `is_civic_structure`, `is_city_building` now agree)**
+- **Home:** a `world/kinds.rs` (or methods on `Building`) with `is_city_structure()`, `is_grown()`, `counts_for_density()`, `working_depot()`, `is_free_home()` and `placed_as()`. Make `city_parking` the only source of truth and keep `vehicles.city_lots` for its data only. **FIXED 36a7595 (`is_city_structure`, `is_special`, `is_civic_structure`, `is_city_building` now agree)** **REFACTORED 94c36c7 (`world/kinds.rs`: `is_grown`, `working_depot`, `counts_for_height_cap`; `is_free_home` not added: its six copies differ on `annex` and `rent` vs `rent_due`, a behaviour change)**
 
 ### 2.2 "Can something be built or bought here?"
 - **Vacant buildable lot:** about 20 copies. Some forget `reserved`, `is_rubble`, `district_frozen` or `landlocked`:
@@ -198,7 +198,7 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
 - **Free home:** 6 copies: `trips.rs:210`, `241`, `social.rs:1146`, `campus.rs:722`, `pressure.rs:885`, `estate.rs:1059`.
 - **Placement checks:** `build_power` (`power.rs:68-88`) copies `lot_problem` (`services.rs:124`). `structures_in_way_at` (`plan.rs:936`), `road_takes` (`pillars.rs:241`) and `roundabout_takes` (`plan.rs:509`) use three different road widths. Use `deck_half_width` with one `lots_under_way(..)`.
 - **Facility and port footprints:** the footprint union appears at `plan.rs:473`, `1155` and `pillars.rs:116`. `under_facility` (`mod.rs:1099`) rebuilds every footprint per call and ignores ports; `no_parcel_why` adds ports by hand.
-- **Home:** `fn lot_free_for(&self, lid, &SiteRule) -> bool` in `world/placement.rs`, plus cached `structure_footprints()` in `refresh_facility_cache`. **FIXED 36a7595 (`site_clear` / `lot_free_for`; footprints not cached yet)**
+- **Home:** `fn lot_free_for(&self, lid, &SiteRule) -> bool` in `world/placement.rs`, plus cached `structure_footprints()` in `refresh_facility_cache`. **FIXED 36a7595 (`site_clear` / `lot_free_for`; footprints not cached yet)** **REFACTORED 94c36c7 (`World::structure_footprints`, one copy of the footprint union for `cut_parcels`, the rebuild, pillars and docks; `under_facility` tests the corners in place. Not cached: facilities are few and change through many paths)**
 
 ### 2.3 Hashing and RNG
 - **Splitmix-style mixers:** `committee/mod.rs:968`, `corp.rs:319`, `streets.rs:91`, `world/nights.rs:14` and `world/social.rs:108` are identical. `fishing.rs:249`, `shore.rs:137` and `world/waterfront.rs:52` are another identical trio. `world/pressure.rs:47` is a murmur variant. `pedestrians.rs:92` has `hash01`.
@@ -208,12 +208,12 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
 - **Home:** `crate::hash` with `mix`, `unit`, `key64`, `hash01`, and a `Stream` enum of registered salts plus `World::rng_at(stream, key)`. See §5.2.
 
 ### 2.4 Flows re-implemented per branch
-- **Buyout and take-over:** `take_over_lot` (`plan.rs:1510`), rebuild expropriation (`plan.rs:1258-1271`) and pillar buyouts (`plan.rs:1228`). Merge into one `buy_out(bid, at, why, memory)`. `check_take_over` (`plan.rs:1527`) is an empty hook.
+- **Buyout and take-over:** `take_over_lot` (`plan.rs:1510`), rebuild expropriation (`plan.rs:1258-1271`) and pillar buyouts (`plan.rs:1228`). Merge into one `buy_out(bid, at, why, memory)`. `check_take_over` (`plan.rs:1527`) is an empty hook. **REFACTORED 2bd12da (`World::buy_out(bid, lot, at, memory)`: the end of `take_over_lot` and of the rebuild's eminent domain; `check_take_over` removed in 94c36c7. Pillar buyouts go through the rebuild's path already)**
 - **Nearest building or service:**
   - nearest working service: 8 copies (`services.rs:2079`, `2151`, `2304`, `1594`, `air.rs:453`, `876`, `journeys.rs:497`, `enforcement.rs:73`)
   - nearest building to a point: `concerns.rs:494`, `driving.rs:341`, `pedestrians.rs:727`
   - witness search: `driving.rs:348` and `pedestrians.rs:736`
-  - nearest port or yard: `trains.rs:28` and `water.rs:1232` are the same function
+  - nearest port or yard: `trains.rs:28` and `water.rs:1232` are the same function **REFACTORED 94c36c7 (`World::nearest_by_entrance`)**
   - `cargo_hubs.rs:38`, `industry.rs:396`, `shore.rs:395`, `taxis.rs:197` (which equals `free_cabs_near(p, 1)`)
   - Many of these have no id tie-break. Add one `nearest_of(ids, p, reach)` with an id tie-break, plus `nearest_service(kind, p, accept)`.
 - **Car handling:**
@@ -222,14 +222,14 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
   - release to home: `moto.rs:319`, `nights.rs:594`, `driving.rs:1197`
   - first street at a node: 8 copies in `cars`, `driving` and `moto`
   - lanes into or out of a node: about 8 copies
-  - `building_lot(x).and_then(car_segment..)`: 14 or more copies
+  - `building_lot(x).and_then(car_segment..)`: 14 or more copies **REFACTORED 94c36c7 (`World::car_stop`, 12 copies)**
   - Homes: `cars.rs` and `driving.rs` for the first three, `RoadNetwork::street_at` for streets, `TrafficNet::lanes_from` and `lanes_into` for lanes, and `car_stop(b)` next to `truck_stop` in `market.rs` for the last.
 - **Services:** `send_unit` and `send_second` share about 30 lines (`services.rs:1735-1807`). `return_to_station` and the `send_home` tail are the same. `open_incident` and `requeue` both set `work_left`. The `city_has` check is inlined at `services.rs:1444`.
 - **Money:**
   - The purse has three conventions: household first (`enforcement.rs:255`), savings first (`air.rs:798`), and clamped (`services.rs:2125`). `air.rs:248` re-implements `wealth_of`.
-  - The income formula appears at `trips.rs:745` and `services.rs:2390`, the latter with an education bonus the hire path lacks.
-  - The import refund appears 4 times: `water.rs:1239`, `shore.rs:509`, `cargo_hubs.rs:65`, `market.rs:626`.
-  - Sum of plot prices appears 4 times: `estate.rs:741`, `855`, `towers.rs:375`, `corp.rs:580`.
+  - The income formula appears at `trips.rs:745` and `services.rs:2390`, the latter with an education bonus the hire path lacks. **REFACTORED 94c36c7 (`World::base_income`; the school bonus stays in `daily_services`)**
+  - The import refund appears 4 times: `water.rs:1239`, `shore.rs:509`, `cargo_hubs.rs:65`, `market.rs:626`. **REFACTORED 94c36c7 (`World::refund_import`)**
+  - Sum of plot prices appears 4 times: `estate.rs:741`, `855`, `towers.rs:375`, `corp.rs:580`. **REFACTORED 94c36c7 (`World::plots_price`)**
   - `sale_price` and `value_of_new` share a table.
 - **Ownership lookups:** 8 functions: `owner_of`, `owner_for_citizen` (a linear scan), `properties_of`, `firm_of`, `investment_income`, `corp_of`, `campus_of`, `holdings_of`. There are also two sources of truth, `Business::owner` and `plot.owner`. Add one `owners_of_citizen(cid)` and retire `Business::owner`.
 - **Floors within R:** `mod.rs:1111`, `towers.rs:200`, `estate.rs:1198`. Add one `floors_within(center, r, except)` over a cell grid.
@@ -245,15 +245,15 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
 
 | File | Lines | Proposed split |
 |---|---|---|
-| `services.rs` | 3427 | `services/{mod (srng, hourly, step, step_incident, resolve, daily), coverage (232-398), incidents (399-625), staffing (631, 1097-1143), dispatch (823-984, 1589-1808), units (985-1092, 1144-1323, 1376, 1809-1977), fire (1324-1375, 1472-1588, + scenes.rs), care (1978-2234), events (2300-2374), tests (~1000 lines from 2438)}`. Placement code (59-230, 362) moves to `placement.rs`. |
-| `social.rs` | 2117 | `social/{mod, encounters, talk, outings, ties, groups, works, petitions}` (line ranges in the social slice: 1-158, 160-306, 308-607 + 2068-2117, 609-905, 1022-1288, 907-986 + 1290-1630, 1632-1885, 988-1020 + 1887-2034). |
-| `trips.rs` | 1809 | `trips/{household, population, decide, arrive, travel, modes}`. `arrive` (252 lines) splits further into park arrival, turned away at the door, and seat arrival. |
-| `plan.rs` | 1761 | `projects.rs` (105-323), `parcels.rs`, `project_check.rs`, `rebuild.rs` (`rebuild_from_master`, remap, `LotGrid`, `same_layout`, `carry_traffic`). Removal lifecycle goes to `construction.rs`, and `strand_*` to the traffic code. `rebuild_from_master` (244 lines) becomes `lay_master_roads`, `swap_network`, `recut_lots`, `carry_buildings` (two passes), `pull_down_for_works` and `after_relayout`. |
-| `water.rs` | 1733 | `heights`, `bridges`, `land_extent`, `highway`, `dock_access`, `docks`, `ships`. |
-| `estate.rs` | 1453 | `estate/{density, owners, growth, elite, convoys}`. |
-| `cars.rs` | 1646 | `kerbs`, `vehicle_routes` (generic exits and retire, used by 5 systems), `parking_hunt`, `car_market`, `commute` (`begin_trip`, `end_trip`). |
-| `driving.rs` | 1740 | `drivers`, `wrecks` (beside `tow_moves`), `takeovers`, `driving_tests`. |
-| `mod.rs` | 1471 | `tick()` (181 lines) could become `daily()`, `hourly()` and `per_tick()` with the minute phases as named constants. Move the save code (`to_ron`, `after_load`, `validate`, `rng_serde`) to `world/save.rs`. |
+| `services.rs` | 3427 | `services/{mod (srng, hourly, step, step_incident, resolve, daily), coverage (232-398), incidents (399-625), staffing (631, 1097-1143), dispatch (823-984, 1589-1808), units (985-1092, 1144-1323, 1376, 1809-1977), fire (1324-1375, 1472-1588, + scenes.rs), care (1978-2234), events (2300-2374), tests (~1000 lines from 2438)}`. Placement code (59-230, 362) moves to `placement.rs`. **REFACTORED 01b7e18** |
+| `social.rs` | 2117 | `social/{mod, encounters, talk, outings, ties, groups, works, petitions}` (line ranges in the social slice: 1-158, 160-306, 308-607 + 2068-2117, 609-905, 1022-1288, 907-986 + 1290-1630, 1632-1885, 988-1020 + 1887-2034). **REFACTORED 4da06de** |
+| `trips.rs` | 1809 | `trips/{household, population, decide, arrive, travel, modes}`. `arrive` (252 lines) splits further into park arrival, turned away at the door, and seat arrival. **REFACTORED 58184b6** |
+| `plan.rs` | 1761 | `projects.rs` (105-323), `parcels.rs`, `project_check.rs`, `rebuild.rs` (`rebuild_from_master`, remap, `LotGrid`, `same_layout`, `carry_traffic`). Removal lifecycle goes to `construction.rs`, and `strand_*` to the traffic code. `rebuild_from_master` (244 lines) becomes `lay_master_roads`, `swap_network`, `recut_lots`, `carry_buildings` (two passes), `pull_down_for_works` and `after_relayout`. **REFACTORED 2bd12da** |
+| `water.rs` | 1733 | `heights`, `bridges`, `land_extent`, `highway`, `dock_access`, `docks`, `ships`. **REFACTORED 5360b1c** |
+| `estate.rs` | 1453 | `estate/{density, owners, growth, elite, convoys}`. **REFACTORED 3a48259** |
+| `cars.rs` | 1646 | `kerbs`, `vehicle_routes` (generic exits and retire, used by 5 systems), `parking_hunt`, `car_market`, `commute` (`begin_trip`, `end_trip`). **REFACTORED 94a5965** |
+| `driving.rs` | 1740 | `drivers`, `wrecks` (beside `tow_moves`), `takeovers`, `driving_tests`. **REFACTORED e736279** |
+| `mod.rs` | 1471 | `tick()` (181 lines) could become `daily()`, `hourly()` and `per_tick()` with the minute phases as named constants. Move the save code (`to_ron`, `after_load`, `validate`, `rng_serde`) to `world/save.rs`. **REFACTORED 894fa95 (`world/save.rs`: `to_ron`, `write_ron`, `from_ron`, `after_load`, `validate`; `world/tick.rs`: `tick` with `daily()` and `periodic()` factored out, and `step_traffic`; the minute phases are still literals)** |
 
 **Long functions**, in addition to the above:
 - `pedestrians.rs:377` `step_walker` (287 lines)
@@ -275,7 +275,7 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
 
 ### 3.3 Dead code (grep across `crates/`, nd_app included)
 
-**No callers:**
+**No callers:** **REFACTORED 94c36c7 (removed in `world/`: `implement_blockers`, `plant_cost_on`, `hubs_near`, `arrows_from`, `MOVES`, `World::is_student`, `chases_now`; the `crate::` items outside `world/` are left to refactor/sim-core)**
 - `plan.rs:793` `implement_blockers`
 - `power.rs:171` `plant_cost_on`
 - `cargo_hubs.rs:320` `hubs_near`
@@ -286,16 +286,16 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
 - `crate::air` `is_pad` and `noise_at`
 - `crate::taxi` `cab_of_car`
 
-**Test-only `pub`:** `tie_between`, `car_occupants`, `best_shop`, `parking_trouble_spot`, `has_project`. Make them `pub(crate)` or `#[cfg(test)]`.
+**Test-only `pub`:** `tie_between`, `car_occupants`, `best_shop`, `parking_trouble_spot`, `has_project`. Make them `pub(crate)` or `#[cfg(test)]`. **REFACTORED 94c36c7 (`#[cfg(test)] pub(crate)`; `has_project` is the app's, kept)**
 
-**Unreachable:**
+**Unreachable:** **REFACTORED 94c36c7 (the cargo branch of `vehicle_arrived`, `boat_home`, `check_take_over`; the `FishingBoat` arms stay while `ShipKind` has the variant (outside `world/`), and the `unhappy_neighbours` arm was left)**
 - the cargo branch in `vehicle_arrived` (`cars.rs:605`; `mod.rs:1413` routes cargo first)
 - the `(None, Some(k))` arm of `unhappy_neighbours` (`dirt.rs:185`)
 - `ShipKind::FishingBoat` arms (never spawned): `waterfront.rs:45`, `175`, `184`
 - the empty `boat_home` (`waterfront.rs:135`)
 - `check_take_over` (`plan.rs:1527`)
 
-**`let _ = x;` leftovers:**
+**`let _ = x;` leftovers:** **REFACTORED 94c36c7 (the unused bindings and parameters, `_for_chase` included; `let _ =` on a discarded `Result` stays)**
 - `develop.rs:34`, `campus.rs:591`, `estate.rs:801`
 - `rich.rs:150-189`, `market.rs:247`
 - `cars.rs:994`, `1041` (unused `target` parameter)
@@ -303,7 +303,7 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
 - `water.rs:1316-1320`, `construction.rs:144`, `junctions.rs:144`
 - `social.rs:648` (`friends_regular`, computed at a cost per tie per candidate, then discarded)
 
-### 3.4 Comments that are now wrong (house `[branch]` tags kept)
+### 3.4 Comments that are now wrong (house `[branch]` tags kept) — **REFACTORED 94c36c7** (the doc comments on the wrong items, and the claims about RNG draws, `remap_lot_keys`, Historic refits, coal in `dirty`, `truck_arrived`, `fleet_parked`, `kind_availability_at`, `vehicle_arrived`, the taxi rota, `Pupils stay`, `free_units`, `Holding::Owns`, `Spot`, `choose_place`'s tuple, `road_name_at`, `release_racer`. The "No bus is coming" line is a citizen's thought, saved with them: left)
 - **Doc comments on the wrong item:**
   - `plan.rs:1445-1449`: the `is_civic_structure` doc sits on `parcel_holds_civic`.
   - `plan.rs:1738-1740`: the `shrink_about_centroid` doc sits on `closest_on`.
@@ -338,11 +338,11 @@ Each finding has a severity (**H**igh, **M**edium, **L**ow) and is marked as one
 
 | Sev | Where | Cost | Fix |
 |---|---|---|---|
-| H | `plan.rs:818` `project_check` ← `nd_app/src/render/holo.rs:362` | Clones the **entire World** (citizens, traffic) and runs `rebuild_from_master` on every `plan_version` bump, including every drag amend. | Cache by `(plan_version, roads.version)`. Run the trial on a slim clone (plan, roads, lots and civic buildings only), or debounce the trial to drag-end and the implement. |
-| H | `plant_groups.rs:165` via `power.rs:162`, `401` | `plant_group_bonus` per plant = `plants_of` O(B) + `flood` O(P²) `lots_touch` (0.5 m sampling) → about O(P³) per grid hour. `plant_rows` does it about 3× per plant every frame while the Power window is open (`nd_app/src/ui/detail.rs:427`). | One union-find grouping, cached on a `serde(skip)` field keyed on `roads.version` plus a building or lot change counter. |
-| M | `mod.rs:1108` `height_cap`, `towers.rs:200`, `228-264`, `estate.rs:1198` | O(buildings) per lot, called per candidate lot by develop, estate, corp, campus and towers. `tower_sites` also rescans for vertiports per lot (`towers.rs:113`). | A per-day floors grid of `DENSITY_RADIUS` cells, with vertiport centres cached. |
-| M | `plan.rs:1450` `parcel_holds_civic`, `mod.rs:1099` `under_facility` | O(lots) per parcel, called per frame for about 400 parcels (`nd_app/src/tools.rs:1751`). `under_facility` rebuilds every footprint per call and runs per lot in about 15 loops. | Use `p.lot` (O(1)) and cached footprints. |
-| M | `develop.rs:16` `update_economy` | About 15 full passes over buildings and 5 over citizens, every 10 ticks. | One pass each. |
+| H | `plan.rs:818` `project_check` ← `nd_app/src/render/holo.rs:362` | Clones the **entire World** (citizens, traffic) and runs `rebuild_from_master` on every `plan_version` bump, including every drag amend. | Cache by `(plan_version, roads.version)`. Run the trial on a slim clone (plan, roads, lots and civic buildings only), or debounce the trial to drag-end and the implement. **MEASURED (refactor/sim-world): on a generated city (about 2000 lots) a check takes 1.3-1.8 s, of which the clone is about 12 ms; `rebuild_from_master` is the rest, and 1.0-1.4 s of it is `zoning::generate_parcels_with` (re-cutting every parcel, outside `world/`). A slim clone would save under 1%. The win is cutting parcels only along the roads that changed (refactor/sim-core's `zoning.rs`), or reusing the trial's parcels when the implement that follows lays the same roads. Not changed.** |
+| H | `plant_groups.rs:165` via `power.rs:162`, `401` | `plant_group_bonus` per plant = `plants_of` O(B) + `flood` O(P²) `lots_touch` (0.5 m sampling) → about O(P³) per grid hour. `plant_rows` does it about 3× per plant every frame while the Power window is open (`nd_app/src/ui/detail.rs:427`). | One union-find grouping, cached on a `serde(skip)` field keyed on `roads.version` plus a building or lot change counter. **REFACTORED 94c36c7 (`plant_group_bonuses`: the touch test once per pair for the hourly dispatch, the hourly plant record and the plant table; single-plant calls from the app are one flood, O(P²))** |
+| M | `mod.rs:1108` `height_cap`, `towers.rs:200`, `228-264`, `estate.rs:1198` | O(buildings) per lot, called per candidate lot by develop, estate, corp, campus and towers. `tower_sites` also rescans for vertiports per lot (`towers.rs:113`). | A per-day floors grid of `DENSITY_RADIUS` cells, with vertiport centres cached. **PARTLY REFACTORED 94c36c7 (`tower_sites` sums neighbour floors from a `FloorsGrid` built once per pass. `height_cap` itself runs once per new building and is left a scan: a standing index would need a version bumped at every place floors or buildings change)** |
+| M | `plan.rs:1450` `parcel_holds_civic`, `mod.rs:1099` `under_facility` | O(lots) per parcel, called per frame for about 400 parcels (`nd_app/src/tools.rs:1751`). `under_facility` rebuilds every footprint per call and runs per lot in about 15 loops. | Use `p.lot` (O(1)) and cached footprints. **REFACTORED 94c36c7 (the city-ground test first, then the polygon; `under_facility` without the per-call Vecs. `p.lot` is not used: a parcel's lot need not be the lot holding its centre, so the answer could change)** |
+| M | `develop.rs:16` `update_economy` | About 15 full passes over buildings and 5 over citizens, every 10 ticks. | One pass each. **REFACTORED 94c36c7 (one pass over citizens, one over buildings)** |
 | M | `services.rs:1488` `incident(id)` | Linear over up to 500 resolved incidents, called many times per active incident per tick. `step_incident` and others `.cloned()` whole incidents every tick. | `binary_search_by_key` (ids ascend). Copy out only the fields needed. |
 | M | `services.rs:672`, `729` | `refresh_coverage` (4 Dijkstras + per-lot pass) runs hourly regardless of `coverage_signature`. `by_car` is rebuilt every tick (`812`) though it is maintained incrementally. | Gate on the signature, and drop the per-tick rebuild. |
 | M | `enforcement.rs:163` `patrols_look` | O(vehicles × patrols) every 2 ticks. | Segment index over kerb spots. |

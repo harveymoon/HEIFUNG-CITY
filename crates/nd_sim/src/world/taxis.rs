@@ -30,7 +30,7 @@ impl World {
     fn trng(&mut self) -> SimRng {
         // A fresh generator per draw site keyed by the tick: deterministic,
         // and never shifts the world's own stream.
-        crate::rng_for(self.config.seed ^ 0x7A_C1_CA_B5, self.clock.tick)
+        crate::rng_for(self.stream_seed(Stream::Taxis), self.clock.tick)
     }
 
     // ── companies ──────────────────────────────────────────────────────────
@@ -531,7 +531,7 @@ impl World {
     fn board(&mut self, id: CabId, rider: CitizenId) {
         let tick = self.clock.tick;
         let Some(trip) = self.citizens.get(rider).and_then(|c| c.transit) else { return };
-        let Some((seg, pt)) = self.building_lot(trip.target).and_then(|l| l.car_segment.map(|s| (s, l.car_point))) else {
+        let Some((seg, pt)) = self.car_stop(trip.target) else {
             self.cab_free(id);
             return;
         };
@@ -859,7 +859,7 @@ impl World {
             let fleet: Vec<CabId> = self.taxis.fleet(company).filter(|(_, c)| c.job != CabJob::Leaving).map(|(id, _)| id).collect();
             let want = ((fleet.len() as f32 * taxi::on_duty_share(hour)).ceil() as usize).clamp(1, fleet.len().max(1));
             let mut on: Vec<CabId> = fleet.iter().copied().filter(|id| self.taxis.cabs[*id].on_duty).collect();
-            // Off duty: the free ones longest out first; busy ones finish their fare.
+            // Off duty: free ones from the end of the fleet first; busy ones finish their fare.
             while on.len() > want {
                 let Some(pos) = on.iter().rposition(|id| self.taxis.cabs[*id].job.free() || self.taxis.cabs[*id].job == CabJob::Idle) else { break };
                 let id = on.remove(pos);
@@ -999,7 +999,7 @@ impl World {
                     self.taxis.stats.cabs_bought_total += 1;
                 }
             } else if missed == 0 && fleet > taxi::START_CABS && (rides as f32) < fleet as f32 * 1.5 {
-                // The idlest cab in the yard goes; half its price comes back.
+                // The last idle cab in the yard (fleet order) goes; half its price comes back.
                 if let Some(id) = self.taxis.fleet(company).filter(|(_, c)| c.place == CabPlace::Yard && c.job == CabJob::Idle).map(|(id, _)| id).last() {
                     if let Some(z) = self.buildings[company].business.as_mut() {
                         z.money += taxi::CAB_PRICE * 0.5;

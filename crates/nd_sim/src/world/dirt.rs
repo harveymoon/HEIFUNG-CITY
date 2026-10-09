@@ -1,5 +1,6 @@
 //! [dirty-industry] Dirty industry and its neighbours: mines, oil wells,
-//! refineries and chemical works, smelters, factory farms and coal plants.
+//! refineries and chemical works, smelters and factory farms (coal plants
+//! carry their own pollution figures, `PowerPlantKind::pollution`).
 //!
 //! - The dirty plants (dirty *industry*: power plants keep their own
 //!   pollution figures) are read off the buildings every hour into
@@ -105,7 +106,7 @@ pub struct DirtyNeighbour {
 
 impl World {
     /// Read the dirty plants off the buildings: every business of a dirty
-    /// kind (shut ones still scar the place, at half) and every coal plant.
+    /// kind (shut ones still scar the place, at half).
     pub fn refresh_dirty(&mut self) {
         let mut out = Vec::new();
         for (id, b) in self.buildings.iter() {
