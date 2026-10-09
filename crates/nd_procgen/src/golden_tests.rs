@@ -103,6 +103,31 @@ fn soup_sum(m: &MeshData) -> u64 {
     sum
 }
 
+/// `ND_GOLDEN_DUMP=a,b` writes every case whose name contains `a` or `b`
+/// (all its attributes and indices, one value per line) next to the hash
+/// file, for comparing two builds value by value.
+fn dump(name: &str, parts: &[MeshData]) {
+    let Ok(pat) = std::env::var("ND_GOLDEN_DUMP") else { return };
+    if !pat.split(',').any(|p| !p.is_empty() && name.contains(p)) {
+        return;
+    }
+    let dir = format!("{}.dump", std::env::var("ND_GOLDEN_OUT").unwrap_or_default());
+    let _ = std::fs::create_dir_all(&dir);
+    let mut s = String::new();
+    for (k, m) in parts.iter().enumerate() {
+        for (tag, vals) in [("p", m.positions.iter().flatten().copied().collect::<Vec<f32>>()), ("n", m.normals.iter().flatten().copied().collect()), ("c", m.colors.iter().flatten().copied().collect()), ("u", m.uvs.iter().flatten().copied().collect()), ("t", m.tangents.iter().flatten().copied().collect())] {
+            for (i, v) in vals.iter().enumerate() {
+                let _ = writeln!(s, "{k} {tag} {i} {v:?}");
+            }
+        }
+        for (i, v) in m.indices.iter().enumerate() {
+            let _ = writeln!(s, "{k} i {i} {v}");
+        }
+    }
+    let file: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    let _ = std::fs::write(format!("{dir}/{file}.txt"), s);
+}
+
 struct Out(Mutex<BTreeMap<String, String>>);
 
 impl Out {
@@ -111,13 +136,17 @@ impl Out {
         assert!(m.insert(name.clone(), v).is_none(), "golden case {name} twice");
     }
     fn mesh(&self, name: impl Into<String>, m: &MeshData) {
+        let name = name.into();
+        dump(&name, std::slice::from_ref(m));
         let (e, s, t) = mesh_hashes(m);
-        self.line(name.into(), format!("exact={e:016x} soup={s:016x} tris={t}"));
+        self.line(name, format!("exact={e:016x} soup={s:016x} tris={t}"));
     }
     /// A geometry: the exact hash over every surface, the order-free sum
     /// over all of them (a triangle on another surface still counts as
     /// moved), and the extras the renderer reads (pads, cranes, lamps).
     fn geo(&self, name: impl Into<String>, g: &Geometry) {
+        let name: String = name.into();
+        dump(&name, &g.parts);
         let mut h = Fnv::new();
         let mut soup = 0u64;
         let mut tris = 0;
