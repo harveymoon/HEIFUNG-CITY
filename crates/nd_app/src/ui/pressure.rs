@@ -8,9 +8,10 @@ use nd_sim::pressure::{Pressure, PressureKind};
 use nd_sim::{BuildingId, World};
 
 use super::pane::heading;
+use super::fmt::capitalise;
+use super::theme::GOOD;
 use super::{hint, GOLD, IVORY, WARN};
 
-const GOOD: Color32 = Color32::from_rgb(110, 200, 140);
 
 /// A pressure's bar colour: hot when it wants more, grey when met.
 fn heat(p: &Pressure) -> Color32 {
@@ -44,7 +45,7 @@ fn bar(ui: &mut egui::Ui, value: f32, col: Color32) {
 
 fn row(ui: &mut egui::Ui, p: &Pressure, full: bool) {
     ui.horizontal(|ui| {
-        ui.add_sized(egui::vec2(130.0, 14.0), egui::Label::new(egui::RichText::new(capital(p.kind.label())).small().color(IVORY)));
+        ui.add_sized(egui::vec2(130.0, 14.0), egui::Label::new(egui::RichText::new(capitalise(p.kind.label())).small().color(IVORY)));
         bar(ui, p.strength, heat(p));
         let status = if p.wants_more() {
             match &p.held {
@@ -69,14 +70,6 @@ fn row(ui: &mut egui::Ui, p: &Pressure, full: bool) {
         if let Some(h) = &p.held {
             ui.label(egui::RichText::new(format!("    held: {h}")).small().color(Color32::from_rgb(200, 160, 90)));
         }
-    }
-}
-
-fn capital(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-        None => String::new(),
     }
 }
 

@@ -22,10 +22,10 @@ use crate::tools::Selection;
 pub const ICONS: [&str; 16] = ["💬", "😂", "❤", "✔", "😠", "💢", "💥", "♪", "⚽", "📖", "🎨", "💡", "🌱", "🏠", "✊", "★"];
 
 /// The colour of a bond.
-pub fn bond_color(b: Bond) -> egui::Color32 {
+fn bond_color(b: Bond) -> egui::Color32 {
     match b {
         Bond::Partner => egui::Color32::from_rgb(255, 110, 170),
-        Bond::CloseFriend => egui::Color32::from_rgb(120, 230, 150),
+        Bond::CloseFriend => super::theme::GOOD_BRIGHT,
         Bond::Friend => egui::Color32::from_rgb(150, 210, 170),
         Bond::Acquaintance => egui::Color32::from_rgb(180, 180, 175),
         Bond::Stranger => egui::Color32::from_rgb(140, 140, 140),
@@ -38,7 +38,7 @@ fn outcome_color(o: Outcome) -> egui::Color32 {
     match o {
         Outcome::Flirted => egui::Color32::from_rgb(255, 110, 170),
         Outcome::Laughed | Outcome::Agreed => egui::Color32::from_rgb(120, 220, 255),
-        Outcome::Favour => egui::Color32::from_rgb(120, 230, 150),
+        Outcome::Favour => super::theme::GOOD_BRIGHT,
         Outcome::Argued => egui::Color32::from_rgb(240, 170, 90),
         Outcome::Insulted | Outcome::Fight => WARN,
     }
@@ -83,7 +83,7 @@ pub fn citizen_social(ui: &mut egui::Ui, w: &World, id: CitizenId) -> Option<Pic
                     Some(p) if matches!(t.met, nd_sim::social::Met::Venue | nd_sim::social::Met::Park | nd_sim::social::Met::Bench | nd_sim::social::Met::Work) => format!("met at {p}"),
                     _ => format!("met {}", t.met.label()),
                 };
-                ui.label(egui::RichText::new(format!("{} · {met} · day {}", bond.label(), t.since / 1440 + 1)).small().color(col.gamma_multiply(0.85)));
+                ui.label(egui::RichText::new(format!("{} · {met} · day {}", bond.label(), super::fmt::day(t.since))).small().color(col.gamma_multiply(0.85)));
             });
         }
     }
@@ -245,7 +245,7 @@ pub fn tab(ui: &mut egui::Ui, p: &mut UiCtx) {
             if ui.small_button("go").clicked() {
                 fly = Some(x.pos);
             }
-            ui.label(egui::RichText::new(format!("{} · {}", super::emergencies::when(x.tick), x.text)).small());
+            ui.label(egui::RichText::new(format!("{} · {}", super::fmt::day_time(x.tick), x.text)).small());
         });
     }
     if let Some(sel) = select {

@@ -68,7 +68,7 @@ fn meet(w: &mut World) -> (Driver, Courier) {
     let mut d = Driver::default();
     let mut c = Courier::mock();
     start_meeting(w, true).expect("a meeting starts");
-    d.run(w, &mut c, 400);
+    let _ = d.run(w, &mut c, 400);
     (d, c)
 }
 
@@ -317,7 +317,7 @@ fn a_meeting_in_session_resumes_after_a_load() {
     let mut back = World::from_ron(&w.to_ron().unwrap()).unwrap();
     let mut d2 = Driver::default();
     let mut c2 = Courier::mock();
-    d2.run(&mut back, &mut c2, 400);
+    let _ = d2.run(&mut back, &mut c2, 400);
     assert_eq!(back.committee.meeting.as_ref().map(|m| m.stage), Some(Stage::MayorVote));
 }
 

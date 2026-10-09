@@ -339,7 +339,7 @@ pub fn last_of(ctx: &egui::Context, t: Tab) -> Page {
 }
 
 /// Show a page (without opening the view).
-pub fn set_page(ctx: &egui::Context, p: Page) {
+fn set_page(ctx: &egui::Context, p: Page) {
     ctx.data_mut(|d| {
         d.insert_temp(page_id(), p);
         d.insert_temp(last_id(p.tab()), p);
@@ -455,7 +455,7 @@ pub fn show(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) -> Option<e
                 ui.add_space(4.0);
             });
             let under = rows.response.rect.bottom();
-            ui.painter().hline(content.x_range(), under, egui::Stroke::new(1.0, egui::Color32::from_rgb(95, 75, 45)));
+            ui.painter().hline(content.x_range(), under, egui::Stroke::new(1.0, super::theme::EDGE));
             set_page(ctx, page);
             // The page, scrolling, centred when the screen is wider than a page.
             let body = egui::Rect::from_min_max(egui::pos2(content.left(), under + 1.0), content.max);

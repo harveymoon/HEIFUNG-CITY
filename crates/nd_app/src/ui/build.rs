@@ -16,7 +16,7 @@ use bevy_egui::egui::{self, Color32, Rect};
 use nd_sim::roads::RoadKind;
 use nd_sim::{BuildCategory, LandUse, Placeable, PortKind, RailFacility, ServiceKind, Tier};
 
-use super::{help, hint, icons, pane, section, zone_color32, UiCtx, GOLD, IVORY};
+use super::{help, hint, icons, pane, section, UiCtx, GOLD, IVORY};
 use crate::tools::{Tool, ToolState, TransitMode, ROAD_PRESETS};
 
 /// The road presets offered under Roads, in menu order (Rail track is
@@ -216,8 +216,16 @@ pub fn all_placeables() -> Vec<Placeable> {
     placeables().into_iter().filter_map(|(_, i)| i.placeable()).collect()
 }
 
-/// A section's sub-sections and items, in menu order.
-pub fn groups(cat: Cat) -> Vec<Group> {
+/// A section's sub-sections and items, in menu order. The catalogue is
+/// fixed, so it is worked out once.
+pub fn groups(cat: Cat) -> &'static [Group] {
+    static ALL: std::sync::OnceLock<Vec<Vec<Group>>> = std::sync::OnceLock::new();
+    let all = ALL.get_or_init(|| Cat::ALL.into_iter().map(make_groups).collect());
+    let i = Cat::ALL.iter().position(|c| *c == cat).expect("Cat::ALL lists every section");
+    &all[i]
+}
+
+fn make_groups(cat: Cat) -> Vec<Group> {
     let mut groups: Vec<Group> = Vec::new();
     let mut add = |name: &'static str, item: Item| match groups.iter_mut().find(|g| g.name == name) {
         Some(g) => g.items.push(item),
@@ -310,7 +318,7 @@ pub fn current_item(t: &ToolState) -> Option<Item> {
 }
 
 /// The section an item is listed in.
-pub fn cat_of(item: Item) -> Cat {
+fn cat_of(item: Item) -> Cat {
     match item {
         Item::Road(_) => Cat::Roads,
         Item::Track | Item::RailPiece(_) => Cat::Rail,
@@ -403,9 +411,9 @@ pub fn norm(p: Placeable) -> Placeable {
 /// track. Roads, zones, districts, lines and toll booths have none.
 pub fn highlight_kinds(cat: Cat, sub: Option<&str>) -> Vec<Placeable> {
     groups(cat)
-        .into_iter()
+        .iter()
         .filter(|g| sub.is_none_or(|s| s == g.name))
-        .flat_map(|g| g.items)
+        .flat_map(|g| g.items.iter().copied())
         .filter_map(|i| i.placeable())
         .filter(|p| !matches!(p, Placeable::Toll(_)))
         .map(norm)
@@ -519,7 +527,7 @@ pub fn section_of(ctx: &egui::Context) -> Option<Cat> {
 
 /// Follow the tools: a building tool picked by key or by the API opens the
 /// window at its section. Called every frame, open or not.
-pub fn follow_tools(ctx: &egui::Context, tools: &ToolState) {
+fn follow_tools(ctx: &egui::Context, tools: &ToolState) {
     let mut st: State = ctx.data(|d| d.get_temp(state_id())).unwrap_or_default();
     let now = current_item(tools);
     if st.last_tool != Some(tools.tool) && st.last_tool.is_some() {
@@ -679,7 +687,7 @@ fn tree(ui: &mut egui::Ui, st: &mut State) {
         if on {
             let groups = groups(cat);
             if groups.len() > 1 {
-                for g in &groups {
+                for g in groups {
                     ui.horizontal(|ui| {
                         ui.add_space(SUB_INDENT);
                         let sub = egui::Button::selectable(st.sub == Some(g.name), egui::RichText::new(g.name).small()).right_text("").min_size(egui::vec2(TREE_WIDTH - 14.0 - SUB_INDENT, 22.0));
@@ -706,7 +714,7 @@ fn grid(ui: &mut egui::Ui, p: &mut UiCtx, st: &State) -> Option<Item> {
         section(ui, &g.name.to_uppercase());
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-            for item in g.items {
+            for item in g.items.iter().copied() {
                 let on = current.is_some_and(|c| c.same(item));
                 let resp = tile(ui, p, item, on);
                 if resp.hovered() {
@@ -736,7 +744,7 @@ fn tile(ui: &mut egui::Ui, p: &UiCtx, item: Item, on: bool) -> egui::Response {
         Color32::from_rgb(22, 24, 36)
     };
     painter.rect_filled(rect, 4.0, fill);
-    painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0, if on { GOLD } else { Color32::from_rgb(60, 60, 72) }), egui::StrokeKind::Inside);
+    painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0, if on { GOLD } else { super::theme::EDGE_IDLE }), egui::StrokeKind::Inside);
     let img = Rect::from_center_size(egui::pos2(rect.center().x, rect.top() + 4.0 + THUMB * 0.5), egui::vec2(THUMB, THUMB));
     let thumb = item.placeable().and_then(|pl| p.thumbs.get(pl));
     match thumb {
@@ -758,19 +766,11 @@ fn tile(ui: &mut egui::Ui, p: &UiCtx, item: Item, on: bool) -> egui::Response {
         _ => format!("{:.0}", pl.cost()),
     });
     let font = crate::ui::theme::small();
-    painter.text(egui::pos2(rect.center().x, img.bottom() + 3.0), egui::Align2::CENTER_TOP, elide(&name, 14), font.clone(), if on { Color32::WHITE } else { IVORY });
+    painter.text(egui::pos2(rect.center().x, img.bottom() + 3.0), egui::Align2::CENTER_TOP, super::fmt::elide(&name, 14), font.clone(), if on { Color32::WHITE } else { IVORY });
     if let Some(price) = price {
         painter.text(egui::pos2(rect.center().x, img.bottom() + 20.0), egui::Align2::CENTER_TOP, format!("$ {price}"), crate::ui::theme::small(), Color32::from_rgb(170, 160, 140));
     }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
-fn elide(s: &str, n: usize) -> String {
-    if s.chars().count() <= n {
-        s.to_string()
-    } else {
-        format!("{}…", s.chars().take(n.saturating_sub(1)).collect::<String>())
-    }
 }
 
 /// An icon for items with no building to show (and while thumbnails render).
@@ -788,7 +788,7 @@ fn icon(painter: &egui::Painter, r: Rect, item: Item, p: &UiCtx, col: Color32) {
             }
         }
         Item::Track => icons::road(painter, r, RoadKind::Rail, 0, 0, col),
-        Item::Zone(lu) => icons::land_use(painter, r, lu, zone_color32(p.assets.palette.zone_color(lu))),
+        Item::Zone(lu) => icons::land_use(painter, r, lu, super::theme::rgb_f(p.assets.palette.zone_color(lu))),
         Item::Beach => {
             // Sand down to a blue sea, a red and white umbrella.
             let sand = Color32::from_rgb(222, 196, 140);
@@ -807,7 +807,7 @@ fn icon(painter: &egui::Painter, r: Rect, item: Item, p: &UiCtx, col: Color32) {
             painter.rect_filled(r.shrink(10.0), 4.0, c.gamma_multiply(0.35));
         }
         Item::BusLines | Item::MetroLines => {
-            let c = if item == Item::BusLines { Color32::from_rgb(110, 200, 220) } else { Color32::from_rgb(190, 130, 230) };
+            let c = if item == Item::BusLines { super::theme::TEAL } else { Color32::from_rgb(190, 130, 230) };
             let pts = [r.left_bottom() + egui::vec2(4.0, -6.0), r.center() + egui::vec2(-6.0, 6.0), r.center() + egui::vec2(8.0, -8.0), r.right_top() + egui::vec2(-4.0, 6.0)];
             painter.line(pts.to_vec(), egui::Stroke::new(3.0, c));
             for q in pts {
@@ -878,7 +878,7 @@ fn info(ui: &mut egui::Ui, p: &mut UiCtx, item: Item, hovered: bool) {
         }
         Item::Zone(lu) => {
             let demand = p.sim.world.economy.demand_for(lu);
-            let col = zone_color32(p.assets.palette.zone_color(lu));
+            let col = super::theme::rgb_f(p.assets.palette.zone_color(lu));
             ui.add(egui::ProgressBar::new(demand).text(format!("demand {:.0}%", demand * 100.0)).fill(col.gamma_multiply(0.7)).desired_height(18.0));
             hint(ui, zone_note(lu));
         }
@@ -1011,7 +1011,7 @@ mod tests {
     fn picking_an_item_selects_it() {
         for cat in Cat::ALL {
             for g in groups(cat) {
-                for item in g.items {
+                for item in g.items.iter().copied() {
                     let mut t = ToolState::default();
                     activate(item, &mut t);
                     let now = current_item(&t).expect("a build tool");

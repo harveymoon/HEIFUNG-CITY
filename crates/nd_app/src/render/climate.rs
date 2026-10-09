@@ -218,7 +218,7 @@ pub(super) fn sync_steam(
     time: Res<Time>,
     mut state: Local<SteamState>,
     cams: Query<&GlobalTransform, With<crate::camera::OrbitCamera>>,
-    mut puffs: Query<(&Steam, &mut Transform, &mut MeshMaterial3d<StandardMaterial>, &mut Visibility)>,
+    mut puffs: Query<(&Steam, &mut Transform, &mut MeshMaterial3d<StandardMaterial>, &mut Visibility, Option<&super::swap::SwapOriginal>)>,
 ) {
     let w = &sim.world;
     if state.quad.is_none() {
@@ -290,7 +290,7 @@ pub(super) fn sync_steam(
     let wind = w.weather.wind.clamp(0.05, 1.0);
     let along = Vec3::new(dir.x, 0.0, dir.y);
     let scale = state.scale;
-    for (s, mut tf, mut mat, mut vis) in &mut puffs {
+    for (s, mut tf, mut mat, mut vis, orig) in &mut puffs {
         let Some(vent) = state.vents.get(s.vent) else { continue };
         let (k, per) = (s.k, s.per.max(1));
         let age = (now / STEAM_LIFE + k as f32 / per as f32 + hash(s.vent as u32) * 3.0).fract();
@@ -299,12 +299,13 @@ pub(super) fn sync_steam(
         let size = 1.5 + (4.0 + 5.0 * scale) * age.powf(0.8);
         let a = smoothstep(0.0, 0.1, age) * (1.0 - age).powf(1.5) * (0.6 + 0.25 * scale).min(1.0) * haze::near_fade(eye.distance(pos), size);
         if a < 0.5 / STEAM_STEPS as f32 {
-            *vis = Visibility::Hidden;
+            vis.set_if_neq(Visibility::Hidden);
             continue;
         }
-        *vis = Visibility::Inherited;
+        vis.set_if_neq(Visibility::Inherited);
         let step = ((a * STEAM_STEPS as f32).round() as usize).clamp(1, STEAM_STEPS) - 1;
-        if mat.0 != state.materials[step] {
+        // [refactor/app] Against the original under heat or focus (no swap ping-pong).
+        if *orig.map_or(&mat.0, |o| &o.0) != state.materials[step] {
             mat.0 = state.materials[step].clone();
         }
         tf.translation = pos;

@@ -6,6 +6,8 @@ use bevy::prelude::*;
 use nd_sim::tolls::{TollBooth, TollSize};
 use nd_sim::{Vec2 as SVec2, World};
 
+use crate::overlay::shapes::GOLD;
+
 /// The booth's footprint: its centre, its direction along the road, and
 /// its depth along and width across the road (a plaza's flare included).
 pub fn footprint(w: &World, b: &TollBooth) -> (SVec2, SVec2, f32, f32) {
@@ -37,16 +39,15 @@ pub fn pick(w: &World, p: SVec2) -> Option<u32> {
 /// waiting for it boxed in red.
 pub fn draw(gizmos: &mut Gizmos, w: &World, id: u32) {
     let Some(b) = w.tolls.get(id) else { return };
-    let gold = Color::linear_rgb(3.2, 2.4, 0.7);
     let (c, dir, depth, wide) = footprint(w, b);
     let y = w.surface_height(c);
-    crate::tools::vehicle_outline(gizmos, c, dir.y.atan2(dir.x), depth + 1.0, wide + 1.0, y + 0.35, gold);
+    crate::overlay::shapes::vehicle_box(gizmos, c, dir.y.atan2(dir.x), depth + 1.0, wide + 1.0, y + 0.35, GOLD);
     // Ticks along the road where drivers start braking for it, both ways.
     let right = SVec2::new(-dir.y, dir.x);
     let lift = |p: SVec2| Vec3::new(p.x, w.surface_height(p) + 0.6, p.y);
     for side in [-1.0f32, 1.0] {
         let at = c + dir * side * nd_sim::tolls::APPROACH_M;
-        gizmos.line(lift(at - right * wide * 0.5), lift(at + right * wide * 0.5), gold.with_alpha(0.45));
+        gizmos.line(lift(at - right * wide * 0.5), lift(at + right * wide * 0.5), GOLD.with_alpha(0.45));
     }
 }
 

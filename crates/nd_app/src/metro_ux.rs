@@ -32,6 +32,7 @@ use crate::camera::Cursor;
 use crate::map_layers::{self, LayerId};
 use crate::render::Overlays;
 use crate::sim::{Sim, SimSet};
+use crate::overlay::shapes::flat_at;
 use crate::tools::{Tool, ToolState, TransitMode};
 use crate::ui::{UiFlags, GOLD, IVORY, WARN};
 
@@ -178,10 +179,6 @@ fn follow_tool(mut tools: ResMut<ToolState>, mut overlays: ResMut<Overlays>, mut
     }
 }
 
-fn flat(at: Vec3) -> Isometry3d {
-    Isometry3d::new(at, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2))
-}
-
 /// Station marker cyan (linear), as in the legend.
 const STATION: [f32; 3] = [0.35, 1.6, 2.2];
 
@@ -201,13 +198,13 @@ fn metro_gizmos(sim: Res<Sim>, tools: Res<ToolState>, overlays: Res<Overlays>, t
         let Some(p) = w.metro_platform(s) else { continue };
         let at = lift(p, 3.2);
         let base = Color::linear_rgb(STATION[0], STATION[1], STATION[2]);
-        g.circle(flat(at), 22.0, base);
-        g.circle(flat(at), 16.0, base.with_alpha(0.6));
+        g.circle(flat_at(at), 22.0, base);
+        g.circle(flat_at(at), 16.0, base.with_alpha(0.6));
         if draft.stations.contains(&s) {
-            g.circle(flat(at), 11.0, Color::WHITE);
+            g.circle(flat_at(at), 11.0, Color::WHITE);
         }
         if tools.metro_hover == Some(s) && drawing {
-            g.circle(flat(at), 27.0 + 5.0 * pulse, Color::linear_rgb(2.5, 2.5, 2.5));
+            g.circle(flat_at(at), 27.0 + 5.0 * pulse, Color::linear_rgb(2.5, 2.5, 2.5));
         }
     }
 }

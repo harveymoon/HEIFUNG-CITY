@@ -7,7 +7,7 @@ use nd_sim::{BotId, Vec2 as SVec2, World};
 use serde_json::{json, Value};
 
 use super::view::{building_name, field, key_from, key_str, opt_bool, opt_f32, opt_vec2, round, selection, v2};
-use super::Ctx;
+use super::ctx::Ctx;
 use crate::camera::{thing_pose, zoom_distance, CameraMode, FlyGoal};
 use crate::tools::Selection;
 
@@ -79,7 +79,7 @@ pub(super) fn follow(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         if *ctx.mode == CameraMode::Walk {
             *ctx.mode = CameraMode::Orbit;
         }
-        return Ok(json!({ "following": Value::Null, "camera": super::camera_pose(ctx) }));
+        return Ok(json!({ "following": Value::Null, "camera": super::camera::camera_pose(ctx) }));
     }
     let sel = target_of(cmd, ctx, "follow")?;
     let generation = ctx.sim.generation;
@@ -97,7 +97,7 @@ pub(super) fn follow(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     }
     Ok(json!({
         "following": selection(&ctx.sim.world, sel), "pov": *ctx.mode == CameraMode::Walk,
-        "at": pose.map(|p| v2(p.pos)), "flying": ctx.fly.flying(), "camera": super::camera_pose(ctx),
+        "at": pose.map(|p| v2(p.pos)), "flying": ctx.fly.flying(), "camera": super::camera::camera_pose(ctx),
     }))
 }
 

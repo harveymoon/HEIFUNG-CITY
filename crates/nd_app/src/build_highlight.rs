@@ -24,14 +24,17 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::prelude::*;
 use bevy_egui::egui;
 use nd_procgen::MeshData;
 use nd_sim::services::{COVERAGE_FADE, COVERED};
 use nd_sim::{BuildingId, LotId, Placeable, RailFacility, ServiceKind, Vec2 as SVec2, World};
 
-use crate::sim::{Sim, SimSet};
+use crate::overlay::shapes::{fill, flat_at, light_wall, outline_band};
+use crate::overlay::mesh::{sync, MeshOverlay, MeshOverlayPlugin, OverlayCx, OverlayMat, Pieces, Wanted};
+use crate::overlay::OverlaySet;
+use bevy::ecs::system::SystemParamItem;
+use crate::sim::Sim;
 use crate::ui::build::{norm, Cat};
 
 /// What to highlight: a Build window section, optionally one of its
@@ -550,76 +553,13 @@ fn refresh(sim: Res<Sim>, mut hl: ResMut<BuildHighlight>, time: Res<Time>) {
 
 // ── drawing ─────────────────────────────────────────────────────────────────
 
-#[derive(Component)]
+#[derive(Component, Default)]
 struct HighlightTag;
 
 /// Wall height for a camera this far out, in steps (a zoom rebuilds the
 /// mesh only now and then).
 fn wall_height(distance: f32) -> f32 {
     ((distance * 0.025).clamp(6.0, 30.0) / 3.0).round() * 3.0
-}
-
-fn push(m: &mut MeshData, p: Vec3, nrm: Vec3, color: [f32; 4]) {
-    m.positions.push(p.to_array());
-    m.normals.push(nrm.to_array());
-    m.colors.push(color);
-    m.uvs.push([0.0, 0.0]);
-    m.tangents.push([1.0, 0.0, 0.0, 1.0]);
-}
-
-/// A band along a closed outline, `width` wide, at the ground.
-fn outline_band(m: &mut MeshData, w: &World, poly: &[SVec2], width: f32, lift: f32, color: [f32; 4]) {
-    let n = poly.len();
-    for k in 0..n {
-        let (a, b) = (poly[k], poly[(k + 1) % n]);
-        let d = (b - a).normalize_or_zero();
-        if d == SVec2::ZERO {
-            continue;
-        }
-        let side = SVec2::new(-d.y, d.x) * width * 0.5;
-        let (a2, b2) = (a - d * width * 0.5, b + d * width * 0.5);
-        let (ya, yb) = (w.ground_height(a) + lift, w.ground_height(b) + lift);
-        let base = m.positions.len() as u32;
-        push(m, Vec3::new(a2.x + side.x, ya, a2.y + side.y), Vec3::Y, color);
-        push(m, Vec3::new(b2.x + side.x, yb, b2.y + side.y), Vec3::Y, color);
-        push(m, Vec3::new(b2.x - side.x, yb, b2.y - side.y), Vec3::Y, color);
-        push(m, Vec3::new(a2.x - side.x, ya, a2.y - side.y), Vec3::Y, color);
-        m.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-    }
-}
-
-/// A wall of light up from an outline, fading to nothing at `height`.
-fn light_wall(m: &mut MeshData, w: &World, poly: &[SVec2], height: f32, c: [f32; 3], strength: f32) {
-    const ROWS: [(f32, f32); 4] = [(0.0, 0.8), (0.15, 0.45), (0.5, 0.12), (1.0, 0.0)];
-    let n = poly.len();
-    for k in 0..n {
-        let (a, b) = (poly[k], poly[(k + 1) % n]);
-        let d = (b - a).normalize_or_zero();
-        if d == SVec2::ZERO {
-            continue;
-        }
-        let nrm = Vec3::new(-d.y, 0.0, d.x);
-        let (ya, yb) = (w.ground_height(a) + 0.3, w.ground_height(b) + 0.3);
-        let base = m.positions.len() as u32;
-        for (t, alpha) in ROWS {
-            let col = [c[0], c[1], c[2], alpha * strength];
-            push(m, Vec3::new(a.x, ya + t * height, a.y), nrm, col);
-            push(m, Vec3::new(b.x, yb + t * height, b.y), nrm, col);
-        }
-        for r in 0..ROWS.len() as u32 - 1 {
-            let (i0, i1, i2, i3) = (base + r * 2, base + r * 2 + 1, base + r * 2 + 3, base + r * 2 + 2);
-            m.indices.extend_from_slice(&[i0, i1, i2, i0, i2, i3]);
-        }
-    }
-}
-
-/// A lot's polygon filled just above the ground.
-fn fill(m: &mut MeshData, w: &World, poly: &[SVec2], lift: f32, color: [f32; 4]) {
-    if poly.len() < 3 {
-        return;
-    }
-    let y = poly.iter().map(|&p| w.ground_height(p)).fold(f32::MIN, f32::max) + lift;
-    m.ground_polygon(poly, y, color);
 }
 
 /// The service areas: lots tinted by how many buildings reach them (the
@@ -675,57 +615,51 @@ fn building_mesh(w: &World, v: &HighlightView, height: f32) -> MeshData {
     m
 }
 
-#[allow(clippy::too_many_arguments)]
-fn sync_meshes(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    sim: Res<Sim>,
-    hl: Res<BuildHighlight>,
-    cams: Query<&crate::camera::OrbitCamera>,
-    time: Res<Time>,
-    mut state: Local<(Option<(u64, u32)>, Option<Handle<StandardMaterial>>, Option<Handle<StandardMaterial>>)>,
-    existing: Query<Entity, With<HighlightTag>>,
-) {
-    let (last, area_mat, wall_mat) = &mut *state;
-    let area_mat = area_mat.get_or_insert_with(|| materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, alpha_mode: AlphaMode::Add, cull_mode: None, fog_enabled: false, depth_bias: 4.0, ..default() })).clone();
-    let wall_mat = wall_mat.get_or_insert_with(|| materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, alpha_mode: AlphaMode::Add, cull_mode: None, fog_enabled: false, depth_bias: 6.0, ..default() })).clone();
-    let distance = cams.iter().next().map_or(400.0, |c| c.distance);
-    let h = wall_height(distance);
-    if hl.view.is_some() {
-        if let Some(mut m) = materials.get_mut(&wall_mat) {
-            m.base_color = Color::linear_rgba(1.0, 1.0, 1.0, 0.8 + 0.2 * (time.elapsed_secs() * 3.0).sin());
+/// [overlay] The highlight's meshes: the service areas, and outlines and
+/// light walls on the marked buildings' lots (the walls' height steps
+/// with the camera's distance).
+struct HighlightMeshes;
+
+impl MeshOverlay for HighlightMeshes {
+    type Key = (u64, u32);
+    type Param = (Res<'static, BuildHighlight>, Query<'static, 'static, &'static crate::camera::OrbitCamera>, Res<'static, Time>);
+    type Marker = HighlightTag;
+
+    fn key((hl, cams, time): &mut SystemParamItem<Self::Param>, cx: &mut OverlayCx) -> Wanted<Self::Key> {
+        cx.mat(OverlayMat::HighlightArea);
+        let wall_mat = cx.mat(OverlayMat::HighlightWall);
+        let h = wall_height(cams.iter().next().map_or(400.0, |c| c.distance));
+        if hl.view.is_some() {
+            if let Some(mut m) = cx.materials.get_mut(&wall_mat) {
+                m.base_color = Color::linear_rgba(1.0, 1.0, 1.0, 0.8 + 0.2 * (time.elapsed_secs() * 3.0).sin());
+            }
+        }
+        match hl.view {
+            Some(_) => Wanted::Show((hl.version, h.to_bits())),
+            None => Wanted::Nothing,
         }
     }
-    let key = hl.view.as_ref().map(|_| (hl.version, h.to_bits()));
-    if key == *last && !sim.full_rebuild {
-        return;
-    }
-    *last = key;
-    for e in existing.iter() {
-        commands.entity(e).despawn();
-    }
-    let Some(v) = &hl.view else { return };
-    let w = &sim.world;
-    for (data, mat) in [(area_mesh(w, v), area_mat), (building_mesh(w, v, h), wall_mat)] {
-        if !data.is_empty() {
-            commands.spawn((Mesh3d(meshes.add(crate::render::to_mesh(&data, false))), MeshMaterial3d(mat), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, HighlightTag));
-        }
+
+    fn build((hl, _, _): &mut SystemParamItem<Self::Param>, cx: &mut OverlayCx, &(_, h): &Self::Key, out: &mut Pieces) {
+        let Some(v) = &hl.view else { return };
+        let w = &cx.sim.world;
+        let (area, walls) = (area_mesh(w, v), building_mesh(w, v, f32::from_bits(h)));
+        out.add(area, cx.mat(OverlayMat::HighlightArea));
+        out.add(walls, cx.mat(OverlayMat::HighlightWall));
     }
 }
 
 /// The straight-line reaches as rings on the ground.
 fn rings(mut gizmos: Gizmos, hl: Res<BuildHighlight>, sim: Res<Sim>) {
     let Some(v) = &hl.view else { return };
-    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
     let w = &sim.world;
     for (c, r, fam) in &v.rings {
         let [a, b, cc] = fam.linear();
         let col = Color::linear_rgb(a * 2.5, b * 2.5, cc * 2.5);
         let at = Vec3::new(c.x, w.surface_height(*c) + 1.0, c.y);
-        gizmos.circle(Isometry3d::new(at, flat), *r, col);
+        gizmos.circle(flat_at(at), *r, col);
         if *r > 60.0 {
-            gizmos.circle(Isometry3d::new(at, flat), (*r - (*r * 0.2).min(COVERAGE_FADE)).max(1.0), col.with_alpha(0.4));
+            gizmos.circle(flat_at(at), (*r - (*r * 0.2).min(COVERAGE_FADE)).max(1.0), col.with_alpha(0.4));
         }
     }
 }
@@ -881,7 +815,9 @@ pub struct BuildHighlightPlugin;
 impl Plugin for BuildHighlightPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BuildHighlight>()
-            .add_systems(Update, (refresh, sync_meshes, rings).chain().in_set(SimSet::Sync))
+            .add_plugins(MeshOverlayPlugin::<HighlightMeshes>::default())
+            .add_systems(Update, refresh.in_set(OverlaySet::Build).before(sync::<HighlightMeshes>))
+            .add_systems(Update, rings.in_set(OverlaySet::Draw))
             .add_systems(bevy_egui::EguiPrimaryContextPass, markers);
     }
 }

@@ -5,6 +5,7 @@ use nd_sim::zoning::{point_in_polygon, polygon_area};
 use nd_sim::Tier;
 
 use super::neon;
+use super::fmt::capitalise;
 use crate::camera::Cursor;
 use crate::sim::Sim;
 
@@ -94,7 +95,7 @@ fn is_park(lot: &nd_sim::Lot) -> bool {
 }
 
 /// The card's title for a lot with no building on it.
-pub fn ground_label(lot: &nd_sim::Lot) -> &'static str {
+fn ground_label(lot: &nd_sim::Lot) -> &'static str {
     if lot.shore.beach {
         "Public beach"
     } else if is_park(lot) {
@@ -126,8 +127,8 @@ pub fn build_card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor, tools: &crate
         let mut lines = vec![small(format!("costs {:.0}  ·  {:.0}/day", what.cost(), what.upkeep()))];
         match v {
             Ok(note) => {
-                lines.push(small(note).color(egui::Color32::from_rgb(120, 230, 150)));
-                lines.push(small("click to build".to_string()).color(egui::Color32::from_rgb(120, 230, 150)));
+                lines.push(small(note).color(super::theme::GOOD_BRIGHT));
+                lines.push(small("click to build".to_string()).color(super::theme::GOOD_BRIGHT));
             }
             Err(e) => lines.push(small(format!("cannot build: {e}")).color(egui::Color32::from_rgb(255, 120, 110))),
         }
@@ -146,7 +147,7 @@ pub fn build_card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor, tools: &crate
     let Ok(site) = site else { return };
     let area = polygon_area(&site.outline).abs();
     let small = |t: String| egui::RichText::new(t).small();
-    let good = egui::Color32::from_rgb(120, 230, 150);
+    let good = super::theme::GOOD_BRIGHT;
     let bad = egui::Color32::from_rgb(255, 120, 110);
     let mut lines: Vec<egui::RichText> = Vec::new();
     let title;
@@ -202,9 +203,4 @@ fn show_card(ctx: &egui::Context, pointer: egui::Pos2, title: &str, lines: Vec<e
             }
         });
     });
-}
-
-fn capitalise(s: &str) -> String {
-    let mut c = s.chars();
-    c.next().map_or(String::new(), |f| f.to_uppercase().collect::<String>() + c.as_str())
 }

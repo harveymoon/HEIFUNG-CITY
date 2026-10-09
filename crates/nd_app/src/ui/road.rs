@@ -19,15 +19,16 @@
 
 use bevy_egui::egui::{self, Color32, Stroke};
 
+use super::theme::PLOT_BG;
 use super::{hint, section, UiCtx, GOLD, IVORY, WARN};
+use super::fmt::{capitalise, days_text, plural};
 use crate::road_select::Card;
 use crate::sim::Sim;
 use crate::tools::{Selection, Tool};
 
-const GOOD: Color32 = Color32::from_rgb(120, 230, 150);
+const GOOD: Color32 = super::theme::GOOD_BRIGHT;
 const FAIR: Color32 = Color32::from_rgb(230, 210, 110);
 const BAD: Color32 = Color32::from_rgb(255, 150, 70);
-const PLOT_BG: Color32 = Color32::from_rgba_premultiplied(20, 22, 34, 220);
 
 /// The road card's window: the inspector's (same id, place and size) in
 /// Inspect mode; a compact one over the toolbar in Edit mode. Closing it
@@ -80,10 +81,6 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
     if !open {
         *p.selection = Selection::None;
     }
-}
-
-fn plural(n: u32, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 /// The card. `compact` (Edit mode) leaves out the chart and the list of
@@ -313,18 +310,6 @@ fn identity_line(c: &Card) -> String {
     parts.join(" · ")
 }
 
-fn days_text(d: f32) -> String {
-    if d < 1.0 {
-        "under a day".into()
-    } else if d < 1.5 {
-        "a day".into()
-    } else if d > 999.0 {
-        "over 999 days".into()
-    } else {
-        format!("{d:.0} days")
-    }
-}
-
 fn wear_bar(ui: &mut egui::Ui, wear: f32) {
     let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width().min(300.0), 8.0), egui::Sense::hover());
     let p = ui.painter();
@@ -379,9 +364,4 @@ fn hour_chart(ui: &mut egui::Ui, hours: &[u16], hour_now: u32) {
         let so_far = if i + 1 == n { ", so far" } else { "" };
         resp.on_hover_text(format!("Day {}, {:02}:00{so_far}\n{} vehicles onto it", h / 24 + 1, h % 24, hours[i]));
     }
-}
-
-fn capitalise(s: &str) -> String {
-    let mut c = s.chars();
-    c.next().map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
 }

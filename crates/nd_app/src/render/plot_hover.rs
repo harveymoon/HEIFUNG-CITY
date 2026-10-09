@@ -17,9 +17,12 @@
 //! (also `hover`): it holds until the real pointer moves over the map.
 
 use super::*;
+use crate::overlay::mesh::{MeshOverlay, OverlayCx, OverlayMat, Pieces, Wanted};
+use crate::overlay::shapes::push_vertex;
+use bevy::ecs::system::SystemParamItem;
 use crate::tools::{Tool, ToolState, ZoneMode};
 
-#[derive(Component)]
+#[derive(Component, Default)]
 pub struct PlotHoverTag;
 
 /// A site the pointer is over and what a click there would do.
@@ -253,13 +256,6 @@ fn highlight_mesh(w: &World, site: &HoverSite, height: f32, line_w: f32) -> Mesh
     let centre = poly.iter().copied().sum::<SVec2>() / poly.len() as f32;
     m.ground_polygon(poly, poly.iter().map(|&p| y(p)).fold(y(centre), f32::max) + 0.02, col(0.08));
     let n = poly.len();
-    let push = |m: &mut MeshData, p: Vec3, nrm: Vec3, color: [f32; 4]| {
-        m.positions.push(p.to_array());
-        m.normals.push(nrm.to_array());
-        m.colors.push(color);
-        m.uvs.push([0.0, 0.0]);
-        m.tangents.push([1.0, 0.0, 0.0, 1.0]);
-    };
     // Rows up the wall: (fraction of the height, alpha). Bright at the
     // foot, mostly gone a third of the way up, nothing at the top.
     const ROWS: [(f32, f32); 5] = [(0.0, 1.0), (0.1, 0.7), (0.35, 0.32), (0.7, 0.1), (1.0, 0.0)];
@@ -275,8 +271,8 @@ fn highlight_mesh(w: &World, site: &HoverSite, height: f32, line_w: f32) -> Mesh
         // The wall.
         let base = m.positions.len() as u32;
         for (t, alpha) in ROWS {
-            push(&mut m, Vec3::new(a.x, ya + t * height, a.y), nrm, col(alpha));
-            push(&mut m, Vec3::new(b.x, yb + t * height, b.y), nrm, col(alpha));
+            push_vertex(&mut m, Vec3::new(a.x, ya + t * height, a.y), nrm, col(alpha));
+            push_vertex(&mut m, Vec3::new(b.x, yb + t * height, b.y), nrm, col(alpha));
         }
         for r in 0..ROWS.len() as u32 - 1 {
             let (i0, i1, i2, i3) = (base + r * 2, base + r * 2 + 1, base + r * 2 + 3, base + r * 2 + 2);
@@ -290,78 +286,79 @@ fn highlight_mesh(w: &World, site: &HoverSite, height: f32, line_w: f32) -> Mesh
         let hot = [c[0] * 1.5 + 2.0, c[1] * 1.5 + 2.0, c[2] * 1.5 + 2.0, 1.0];
         for p in [a2 + o, b2 + o, b2 - o, a2 - o] {
             let h = if p.distance_squared(a2) < p.distance_squared(b2) { ya } else { yb };
-            push(&mut m, Vec3::new(p.x, h + 0.08, p.y), Vec3::Y, hot);
+            push_vertex(&mut m, Vec3::new(p.x, h + 0.08, p.y), Vec3::Y, hot);
         }
         m.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
     m
 }
 
-/// Keep the highlight in step with the pointer and the verdict.
-#[allow(clippy::too_many_arguments)]
-pub fn sync_plot_hover(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    sim: Res<Sim>,
-    mut tools: ResMut<ToolState>,
-    cursor: Res<crate::camera::Cursor>,
-    cams: Query<&crate::camera::OrbitCamera>,
-    time: Res<Time>,
-    lighting: Res<Lighting>,
-    mut hover: ResMut<PlotHover>,
-    mut state: Local<(Option<u64>, Option<Handle<StandardMaterial>>, Option<SVec2>)>,
-    existing: Query<Entity, With<PlotHoverTag>>,
-) {
-    let (last, mat, last_ground) = &mut *state;
-    // The real pointer moving over the map takes over from a remote pin.
-    if matches!(tools.tool, Tool::Buildings | Tool::Zone | Tool::Bulldoze) && tools.cursor_pin.is_some() && cursor.ground.is_some() && last_ground.is_some() && cursor.ground != *last_ground {
-        tools.cursor_pin = None;
-    }
-    *last_ground = cursor.ground;
-    let w = &sim.world;
-    let at = hover_point(&tools, &cursor);
-    // The Buildings tool's verdict was worked out this frame in
-    // `tool_input` (`build_here`, from the same point): not again here.
-    let site = at.and_then(|p| match (&tools.build_here, tools.tool) {
-        (Some((ok, text, outline)), Tool::Buildings) if on_a_plot(tools.build_item()) => buildings_site(w, &tools, p, *ok, text.clone(), outline.clone()),
-        _ => hover_site(w, &tools, p),
-    });
-    let distance = cams.iter().next().map_or(400.0, |c| c.distance);
-    let key = site.as_ref().map(|s| {
-        let (h, lw) = sizes(distance, s.zone);
-        let mut hs = DefaultHasher::new();
-        hash_f32s(&mut hs, s.outline.iter().copied());
-        (format!("{:?}", s.verdict), s.zone, h.to_bits(), lw.to_bits(), w.relief).hash(&mut hs);
-        hs.finish()
-    });
-    let mat = mat.get_or_insert_with(|| materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, alpha_mode: AlphaMode::Add, cull_mode: None, fog_enabled: false, ..default() })).clone();
-    if site.is_some() {
-        // A soft pulse, a little quicker on a refusal.
-        let speed = if site.as_ref().is_some_and(|s| s.verdict.is_err()) { 5.0 } else { 3.0 };
-        if let Some(mut m) = materials.get_mut(&mat) {
-            // Dimmer at night, when the glow has nothing to compete with.
-            let t = if lighting.follow_clock { w.clock.day_fraction() } else { (lighting.hour / 24.0).rem_euclid(1.0) };
-            let daylight = smoothstep(-0.12, 0.30, ((t - 0.25) * std::f32::consts::TAU).sin());
-            let k = 0.45 + 0.55 * daylight;
-            m.base_color = Color::linear_rgba(k, k, k, 0.8 + 0.2 * (time.elapsed_secs() * speed).sin());
+/// [overlay] The highlight as a mesh overlay, kept in step with the
+/// pointer and the verdict: rebuilt only when the site, its verdict or the
+/// wall's size step changes; the pulse is the material's alpha.
+pub struct PlotHoverMesh;
+
+impl MeshOverlay for PlotHoverMesh {
+    type Key = u64;
+    type Param = (
+        ResMut<'static, ToolState>,
+        Res<'static, crate::camera::Cursor>,
+        Query<'static, 'static, &'static crate::camera::OrbitCamera>,
+        Res<'static, Time>,
+        Res<'static, Lighting>,
+        ResMut<'static, PlotHover>,
+        Local<'static, Option<SVec2>>,
+    );
+    type Marker = PlotHoverTag;
+
+    fn key((tools, cursor, cams, time, lighting, hover, last_ground): &mut SystemParamItem<Self::Param>, cx: &mut OverlayCx) -> Wanted<u64> {
+        // The real pointer moving over the map takes over from a remote pin.
+        if matches!(tools.tool, Tool::Buildings | Tool::Zone | Tool::Bulldoze) && tools.cursor_pin.is_some() && cursor.ground.is_some() && last_ground.is_some() && cursor.ground != **last_ground {
+            tools.cursor_pin = None;
         }
-    }
-    hover.at = at;
-    if key == *last && !sim.full_rebuild {
+        **last_ground = cursor.ground;
+        let w = &cx.sim.world;
+        let at = hover_point(tools, cursor);
+        // The Buildings tool's verdict was worked out this frame in
+        // `tool_input` (`build_here`, from the same point): not again here.
+        let site = at.and_then(|p| match (&tools.build_here, tools.tool) {
+            (Some((ok, text, outline)), Tool::Buildings) if on_a_plot(tools.build_item()) => buildings_site(w, tools, p, *ok, text.clone(), outline.clone()),
+            _ => hover_site(w, tools, p),
+        });
+        let distance = cams.iter().next().map_or(400.0, |c| c.distance);
+        let key = site.as_ref().map(|s| {
+            let (h, lw) = sizes(distance, s.zone);
+            let mut hs = DefaultHasher::new();
+            hash_f32s(&mut hs, s.outline.iter().copied());
+            (format!("{:?}", s.verdict), s.zone, h.to_bits(), lw.to_bits(), w.relief).hash(&mut hs);
+            hs.finish()
+        });
+        let mat = cx.mat(OverlayMat::PlotHover);
+        if site.is_some() {
+            // A soft pulse, a little quicker on a refusal.
+            let speed = if site.as_ref().is_some_and(|s| s.verdict.is_err()) { 5.0 } else { 3.0 };
+            if let Some(mut m) = cx.materials.get_mut(&mat) {
+                // Dimmer at night, when the glow has nothing to compete with.
+                let t = if lighting.follow_clock { w.clock.day_fraction() } else { (lighting.hour / 24.0).rem_euclid(1.0) };
+                let daylight = smoothstep(-0.12, 0.30, ((t - 0.25) * std::f32::consts::TAU).sin());
+                let k = 0.45 + 0.55 * daylight;
+                m.base_color = Color::linear_rgba(k, k, k, 0.8 + 0.2 * (time.elapsed_secs() * speed).sin());
+            }
+        }
+        hover.at = at;
         hover.site = site;
-        return;
-    }
-    *last = key;
-    despawn_all(&mut commands, &existing);
-    if let Some(s) = &site {
-        let (h, lw) = sizes(distance, s.zone);
-        let data = highlight_mesh(w, s, h, lw);
-        if !data.is_empty() {
-            commands.spawn((Mesh3d(meshes.add(to_mesh(&data, false))), MeshMaterial3d(mat), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, PlotHoverTag));
+        match key {
+            Some(k) => Wanted::Show(k),
+            None => Wanted::Nothing,
         }
     }
-    hover.site = site;
+
+    fn build((_, _, cams, _, _, hover, _): &mut SystemParamItem<Self::Param>, cx: &mut OverlayCx, _: &u64, out: &mut Pieces) {
+        let Some(s) = &hover.site else { return };
+        let distance = cams.iter().next().map_or(400.0, |c| c.distance);
+        let (h, lw) = sizes(distance, s.zone);
+        out.add(highlight_mesh(&cx.sim.world, s, h, lw), cx.mat(OverlayMat::PlotHover));
+    }
 }
 
 /// The verdict beside the pointer: what a click would do, or why not.

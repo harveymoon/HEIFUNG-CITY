@@ -6,8 +6,7 @@
 //! input flags the rest of the app reads, and the frame skeleton; each piece
 //! of the HUD lives in its own module.
 
-/// [concerns] City Data's People, Complaints and concerns.
-/// The Build window: every road, zone and building in one catalogue.
+// The Build window: every road, zone and building in one catalogue.
 pub mod build;
 /// [ferry-routes] A dock's routes and the ship card in the inspector.
 mod ferry;
@@ -17,6 +16,7 @@ mod shore;
 pub mod committee;
 /// [voices] A citizen's diary, on demand.
 pub mod diary;
+/// [concerns] City Data's People, Complaints and concerns.
 mod concerns;
 /// [city-data] The full-screen City Data view: tabs, sub-tabs, pages.
 pub mod city_data;
@@ -29,6 +29,8 @@ mod districts;
 mod emergencies;
 /// [camera] Follow / Zoom to buttons, the gift button, the locked banner.
 pub mod follow;
+/// Pure text formats: numbers, money, plurals, times.
+pub mod fmt;
 /// [land] Ownership, sale price and merged plots in the inspector.
 mod estate;
 mod help;
@@ -350,7 +352,7 @@ fn toast(ctx: &egui::Context, flags: &mut UiFlags, above: f32) {
         .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -(above + 10.0)))
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style())
-                .fill(egui::Color32::from_rgba_unmultiplied(8, 10, 20, 235).gamma_multiply(alpha))
+                .fill(theme::PANEL_FILL.gamma_multiply(alpha))
                 .stroke(egui::Stroke::new(1.0, GOLD.gamma_multiply(alpha)))
                 .show(ui, |ui| {
                     ui.add(egui::Label::new(egui::RichText::new(text).color(IVORY.gamma_multiply(alpha))).wrap_mode(egui::TextWrapMode::Extend));
@@ -360,15 +362,11 @@ fn toast(ctx: &egui::Context, flags: &mut UiFlags, above: f32) {
 
 /// The bars' frame: the panel fill, a little tighter than egui's default.
 fn bar_frame() -> egui::Frame {
-    egui::Frame::new().fill(egui::Color32::from_rgba_unmultiplied(8, 10, 20, 235)).inner_margin(egui::Margin::symmetric(10, 4))
+    egui::Frame::new().fill(theme::PANEL_FILL).inner_margin(egui::Margin::symmetric(10, 4))
 }
 
-/// The accent colour of the HUD: headings, the active tool, window titles.
-pub const GOLD: egui::Color32 = egui::Color32::from_rgb(235, 180, 90);
-/// Light, slightly warm text for names and figures that should stand out.
-pub const IVORY: egui::Color32 = egui::Color32::from_rgb(230, 225, 210);
-/// Colour for a figure that should worry the player.
-pub const WARN: egui::Color32 = egui::Color32::from_rgb(255, 120, 90);
+/// The HUD's accent, standout and worry colours (`theme`), for every panel.
+pub use theme::{GOLD, IVORY, WARN};
 
 fn neon(ui: &mut egui::Ui, text: &str) {
     ui.label(egui::RichText::new(text).color(IVORY).strong());
@@ -384,18 +382,14 @@ fn hint(ui: &mut egui::Ui, text: &str) {
     ui.label(egui::RichText::new(text).small().weak());
 }
 
-fn zone_color32(c: [f32; 3]) -> egui::Color32 {
-    egui::Color32::from_rgb((c[0].min(1.0) * 255.0) as u8, (c[1].min(1.0) * 255.0) as u8, (c[2].min(1.0) * 255.0) as u8)
-}
-
 fn style(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
-    visuals.panel_fill = egui::Color32::from_rgba_unmultiplied(8, 10, 20, 235);
+    visuals.panel_fill = theme::PANEL_FILL;
     // Windows overlap each other, so they are opaque: egui blends in linear
     // space here, where even a 2% leak shows the text of the window behind
     // as legible grey. The bars sit over the map only and may stay sheer.
     visuals.window_fill = egui::Color32::from_rgb(8, 10, 20);
-    visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(95, 75, 45));
+    visuals.window_stroke = egui::Stroke::new(1.0, theme::EDGE);
     visuals.selection.bg_fill = egui::Color32::from_rgb(120, 85, 30);
     visuals.hyperlink_color = GOLD;
     visuals.widgets.active.bg_fill = egui::Color32::from_rgb(150, 105, 40);

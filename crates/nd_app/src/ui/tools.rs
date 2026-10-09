@@ -6,7 +6,7 @@ use nd_sim::roads::RoadKind;
 use nd_sim::{BuildCategory, Gesture, LandUse, Placeable, RailFacility, ServiceKind, Tier};
 
 use super::help;
-use super::{hint, icons, section, zone_color32, WARN};
+use super::{hint, icons, section, WARN};
 use crate::assets::GameAssets;
 use crate::sim::Sim;
 use crate::tools::{EffectivePlan, Tool, ToolState, TransitMode, ZoneMode, BRUSH_MAX, BRUSH_MIN, ROAD_PRESETS};
@@ -61,7 +61,7 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
             }
             ui.separator();
             for n in 1..=nd_sim::roads::RING_MAX_LANES {
-                if ui.selectable_label(tools.ring_lanes == n, format!("{n} lane{}", if n == 1 { "" } else { "s" })).clicked() {
+                if ui.selectable_label(tools.ring_lanes == n, format!("{n} lane{}", super::fmt::s(n))).clicked() {
                     tools.ring_lanes = n;
                 }
             }
@@ -122,7 +122,7 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
         let n = &tools.pillars;
         let mut line = format!("{} pillars", n.count);
         if n.lots > 0 {
-            line.push_str(&format!(", {} empty lot{} taken", n.lots, if n.lots == 1 { "" } else { "s" }));
+            line.push_str(&format!(", {} empty lot{} taken", n.lots, super::fmt::s(n.lots)));
         }
         ui.label(egui::RichText::new(line).small()).on_hover_text("Pillars stand about 24 m apart, shifted along the road to clear the roads and buildings under it (at most 42 m between supports).");
         if !n.buyouts.is_empty() {
@@ -146,7 +146,7 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
 fn zone(ui: &mut egui::Ui, sim: &Sim, tools: &mut ToolState, assets: &GameAssets) {
     // The land use is picked in the Build window (Zoning, Parks).
     ui.horizontal_wrapped(|ui| {
-        let colour = zone_color32(assets.palette.zone_color(tools.land_use));
+        let colour = super::theme::rgb_f(assets.palette.zone_color(tools.land_use));
         let text = if tools.unzone { egui::RichText::new("Unzoning").strong() } else { egui::RichText::new(format!("Zoning: {}", if tools.painting_beach() { "Public beach" } else { tools.land_use.label() })).strong().color(colour) };
         ui.label(text);
         if tools.zone_mode != ZoneMode::Polygon && ui.selectable_label(tools.unzone, "Unzone").on_hover_text("Left button erases parcels back to unzoned (the right button always does)").clicked() {
@@ -278,7 +278,7 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
             ui.horizontal(|ui| {
                 changed |= ui.add(egui::Slider::new(&mut d, nd_sim::roads::RING_MIN_RADIUS * 2.0..=nd_sim::roads::RING_MAX_RADIUS * 2.0).step_by(2.0).suffix(" m").text("across")).changed();
                 for k in [1u8, 2] {
-                    if ui.selectable_label(n == k, format!("{k} lane{}", if k == 1 { "" } else { "s" })).clicked() && n != k {
+                    if ui.selectable_label(n == k, format!("{k} lane{}", super::fmt::s(k))).clicked() && n != k {
                         n = k;
                         changed = true;
                     }
@@ -305,7 +305,7 @@ fn transit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
     if t.depots == 0 {
         ui.label(egui::RichText::new(format!("No depot: buses cannot run. Place one (Build window, Transit, Bus depot) on a vacant lot by a street ({:.0} to build, {:.0}/day, {} buses).", nd_sim::transit::DEPOT_COST, nd_sim::transit::DEPOT_UPKEEP_PER_DAY, nd_sim::transit::DEPOT_CAPACITY)).small().color(egui::Color32::from_rgb(255, 160, 90)));
     } else {
-        hint(ui, &format!("{} depot{} for {} buses · {} out · {} waiting · {} riding · {} riders today · fares {:.0} · upkeep {:.0}/day", t.depots, if t.depots == 1 { "" } else { "s" }, t.depot_capacity, t.buses, t.waiting, t.riding, t.riders_today, t.fares_today, t.upkeep_today));
+        hint(ui, &format!("{} depot{} for {} buses · {} out · {} waiting · {} riding · {} riders today · fares {:.0} · upkeep {:.0}/day", t.depots, super::fmt::s(t.depots), t.depot_capacity, t.buses, t.waiting, t.riding, t.riders_today, t.fares_today, t.upkeep_today));
     }
     match tools.transit_mode {
         TransitMode::Route => {
@@ -342,7 +342,7 @@ fn metro(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
     let s = &sim.world.subway.stats;
     // [metro-ux] Lines join stations placed beforehand; the Metro line panel walks through it.
     hint(ui, &format!("Click stations in order (the Metro layer marks them); each click draws the tunnel to it. Click the first station again for a loop; Enter or Finish lays the line, right-click or Backspace takes back a stop, Esc cancels. Tunnel {:.0}/m and {:.0}/km/day; trains every {} min each way, 05:00 to midnight; fare {:.1}. New stations: Transit, Metro, Metro station ({:.0} each, {:.0}/day).", m::TUNNEL_COST_PER_M, m::TUNNEL_UPKEEP_PER_KM, m::DEFAULT_HEADWAY, m::FARE, m::STATION_COST, m::STATION_UPKEEP_PER_DAY));
-    hint(ui, &format!("{} station{} · {} line{} · {} train{} · {} waiting · {} riding · {} riders today ({} yesterday) · fares {:.0}", s.stations, if s.stations == 1 { "" } else { "s" }, s.lines, if s.lines == 1 { "" } else { "s" }, s.trains, if s.trains == 1 { "" } else { "s" }, s.waiting, s.riding, s.riders_today, s.riders_yesterday, s.fares_today));
+    hint(ui, &format!("{} station{} · {} line{} · {} train{} · {} waiting · {} riding · {} riders today ({} yesterday) · fares {:.0}", s.stations, super::fmt::s(s.stations), s.lines, super::fmt::s(s.lines), s.trains, super::fmt::s(s.trains), s.waiting, s.riding, s.riders_today, s.riders_yesterday, s.fares_today));
     if !tools.metro_draft.is_empty() {
         let names: Vec<String> = tools.metro_draft.stations.iter().filter_map(|b| sim.world.buildings.get(*b).map(|b| b.name.clone())).collect();
         hint(ui, &format!("laying: {}{}", names.join(" > "), if tools.metro_draft.looped { " > back to the first (loop)" } else { "" }));
@@ -411,7 +411,7 @@ fn rail(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         RailFacility::FreightYard => format!("A yard with sidings along one side and a street for lorries along the other, {w:.0} by {d:.0} m, anywhere you like. {:.0} to build, {:.0}/day. Once connected, imports come by rail at {:.0}% of the price and exports earn {:.0}% more.", nd_sim::rail::YARD_COST, nd_sim::rail::YARD_UPKEEP_PER_DAY, nd_sim::rail::RAIL_IMPORT_FACTOR * 100.0, (nd_sim::rail::RAIL_EXPORT_BONUS - 1.0) * 100.0),
     });
     hint(ui, help::tool_hint(Tool::Rail));
-    hint(ui, &format!("{} station{} · {} yard{} · {} train{} out · next passenger train in {} min · {} waiting · {} riding · {} riders today · fares {:.0} · {:.0} units of freight in today, {:.0} waiting at yards · upkeep {:.0}/day", r.stations, if r.stations == 1 { "" } else { "s" }, r.yards, if r.yards == 1 { "" } else { "s" }, r.trains, if r.trains == 1 { "" } else { "s" }, r.next_passenger_in, r.waiting, r.riding, r.riders_today, r.fares_today, r.freight_in_today, r.freight_waiting, r.upkeep_today));
+    hint(ui, &format!("{} station{} · {} yard{} · {} train{} out · next passenger train in {} min · {} waiting · {} riding · {} riders today · fares {:.0} · {:.0} units of freight in today, {:.0} waiting at yards · upkeep {:.0}/day", r.stations, super::fmt::s(r.stations), r.yards, super::fmt::s(r.yards), r.trains, super::fmt::s(r.trains), r.next_passenger_in, r.waiting, r.riding, r.riders_today, r.fares_today, r.freight_in_today, r.freight_waiting, r.upkeep_today));
 }
 
 /// The Buildings tool: a row of sub-categories, the items in the open one,
@@ -492,7 +492,7 @@ pub fn placeable_info(ui: &mut egui::Ui, sim: &mut Sim, what: Placeable) {
                 line += &format!(", covers {:.0} m {}", k.radius(t), if matches!(k, nd_sim::ServiceKind::TrashDepot | nd_sim::ServiceKind::ParkingEnforcement) { "around" } else { "by road" });
             }
             if k.units(t) > 0 {
-                line += &format!(", {} {}{}", k.units(t), k.unit_kind().map_or("", |u| u.label()), if k.units(t) == 1 { "" } else { "s" });
+                line += &format!(", {} {}{}", k.units(t), k.unit_kind().map_or("", |u| u.label()), super::fmt::s(k.units(t)));
             }
             let cap = k.capacity(t);
             if cap > 0 {
@@ -552,7 +552,7 @@ fn dock_hint(ui: &mut egui::Ui, sim: &mut Sim, k: nd_sim::PortKind) {
             nd_sim::PortKind::MarinaSmall | nd_sim::PortKind::MarinaLarge => format!("A recreational marina, {w:.0} by {d:.0} m, at the water's edge (a lake will do; rivers {:.0} m wide): {} berths let to the wealthy households around{}. Lifts the land value nearby and draws seafood restaurants. The city builds the quay ({:.0}, {:.0}/day); an operator runs it on the berth fees.", k.min_width(), k.berths(), if k.is_large() { ", yachts from all over town, and a clubhouse to go out to" } else { "" }, k.cost(), k.upkeep_per_day()),
             nd_sim::PortKind::FishingPortSmall | nd_sim::PortKind::FishingPortLarge => format!("A fishing port, {w:.0} by {d:.0} m, at the water's edge: {} trawlers put out before dawn and land fish by early afternoon. Fish gutting sheds, a fish-stick factory and fish markets open near it. The city builds the quay ({:.0}, {:.0}/day); an operator sells the catch.", k.berths(), k.cost(), k.upkeep_per_day()),
         });
-        hint(ui, &format!("{} port{} · {} terminal{} · {} ship{} out · {} loads landed today, {} waiting · {} ferry riders today, fares {:.0}", s.ports, if s.ports == 1 { "" } else { "s" }, s.terminals, if s.terminals == 1 { "" } else { "s" }, s.ships_out, if s.ships_out == 1 { "" } else { "s" }, s.freight_landed_today, s.waiting_cargo, s.ferry_riders_today, s.ferry_fares_today));
+        hint(ui, &format!("{} port{} · {} terminal{} · {} ship{} out · {} loads landed today, {} waiting · {} ferry riders today, fares {:.0}", s.ports, super::fmt::s(s.ports), s.terminals, super::fmt::s(s.terminals), s.ships_out, super::fmt::s(s.ships_out), s.freight_landed_today, s.waiting_cargo, s.ferry_riders_today, s.ferry_fares_today));
 }
 
 /// Tooltip for a road preset button.
