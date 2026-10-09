@@ -17,7 +17,6 @@
 use std::sync::{Arc, Mutex};
 
 use bevy::gizmos::config::{GizmoConfig, GizmoConfigGroup, GizmoLineConfig};
-use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::prelude::*;
 use bevy_egui::egui;
 use nd_procgen::MeshData;
@@ -25,7 +24,9 @@ use nd_sim::ports::{Ship, ShipId, ShipKind};
 use nd_sim::world::ferry_routes::{LineEnd, LineKind, WaterLine, WaterNet};
 use nd_sim::{BuildingId, PortKind, Vec2 as SVec2, World};
 
+use crate::overlay::mesh::{MeshOverlay, MeshOverlayPlugin, OverlayCx, OverlayMat, Pieces, Wanted};
 use crate::overlay::OverlaySet;
+use bevy::ecs::system::SystemParamItem;
 use crate::sim::Sim;
 use crate::overlay::shapes::{flat_at, ribbon, vehicle_box, GOLD};
 use crate::tools::Selection;
@@ -34,11 +35,11 @@ pub struct FerrySelectPlugin;
 
 impl Plugin for FerrySelectPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<LineMeshes>()
+        app.init_resource::<BandStyle>()
             .init_resource::<WaterFrame>()
             .insert_gizmo_config(LitGizmos, GizmoConfig { depth_bias: -0.5, line: GizmoLineConfig { width: 4.0, ..default() }, ..default() })
             .insert_gizmo_config(DimGizmos, GizmoConfig { depth_bias: -0.5, line: GizmoLineConfig { width: 2.0, ..default() }, ..default() })
-            .add_systems(Update, sync_lines.in_set(OverlaySet::Build))
+            .add_plugins(MeshOverlayPlugin::<WaterBands>::default())
             .add_systems(Update, draw.in_set(OverlaySet::Draw)).add_systems(bevy_egui::EguiPrimaryContextPass, labels);
     }
 }
@@ -229,19 +230,13 @@ pub fn ship_doing(w: &World, id: ShipId) -> String {
 
 // ── the bands ───────────────────────────────────────────────────────────────
 
-#[derive(Component)]
+#[derive(Component, Default)]
 struct LineTag;
 
+/// The focus the bands were last styled for (signature, lines lit; None
+/// when hidden).
 #[derive(Resource, Default)]
-struct LineMeshes {
-    sig: Option<u64>,
-    /// One entity per line, in `WaterNet::lines` order.
-    ents: Vec<Entity>,
-    bright: Option<Handle<StandardMaterial>>,
-    dim: Option<Handle<StandardMaterial>>,
-    /// The focus the bands were last styled for.
-    styled: Option<(u64, Option<Vec<usize>>)>,
-}
+struct BandStyle(Option<(u64, Option<Vec<usize>>)>);
 
 /// A glowing band along `pts`: a bright core and a soft halo fading out to
 /// either side, flat on the water. Vertex colours carry the glow; the
@@ -252,56 +247,67 @@ fn band(pts: &[SVec2], rgb: [f32; 3]) -> MeshData {
     ribbon(pts, &PROFILE, LIFT, crate::train_select::glow_rgb(rgb))
 }
 
-/// Rebuild the bands when the network changes; restyle them when the
-/// selection does.
-#[allow(clippy::too_many_arguments)]
-fn sync_lines(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, sim: Res<Sim>, selection: Res<Selection>, mut st: ResMut<LineMeshes>, mut frame: ResMut<WaterFrame>, mut q: Query<(&mut Visibility, &mut MeshMaterial3d<StandardMaterial>), With<LineTag>>) {
-    let w = &sim.world;
-    frame.at = None;
-    let unlit = |k: f32| StandardMaterial { base_color: Color::linear_rgba(k, k, k, 1.0), unlit: true, alpha_mode: AlphaMode::Add, cull_mode: None, fog_enabled: false, depth_bias: 3.0, ..default() };
-    let bright = st.bright.get_or_insert_with(|| materials.add(unlit(1.0))).clone();
-    let dim = st.dim.get_or_insert_with(|| materials.add(unlit(0.16))).clone();
-    // Only look at the network when something could show it.
-    let wants = match *selection {
-        Selection::Building(b) => is_route_dock(w, b),
-        Selection::Ship(_) => true,
-        _ => false,
-    };
-    if !wants && st.styled.as_ref().is_some_and(|s| s.1.is_none()) {
-        return;
+/// [overlay] The bands as a mesh overlay: rebuilt (hidden, one per line)
+/// when the network changes, restyled (bright, dim, hidden) when the
+/// selection does. The network is looked at only when something could
+/// show it.
+struct WaterBands;
+
+impl MeshOverlay for WaterBands {
+    /// The network's signature.
+    type Key = u64;
+    type Param = (Res<'static, Selection>, ResMut<'static, WaterFrame>, ResMut<'static, BandStyle>, Query<'static, 'static, (&'static mut Visibility, &'static mut MeshMaterial3d<StandardMaterial>), With<LineTag>>);
+    type Marker = LineTag;
+
+    fn key((selection, frame, style, _): &mut SystemParamItem<Self::Param>, cx: &mut OverlayCx) -> Wanted<u64> {
+        let w = &cx.sim.world;
+        cx.mat(OverlayMat::WaterBright);
+        cx.mat(OverlayMat::WaterDim);
+        frame.at = None;
+        // Only look at the network when something could show it.
+        let wants = match **selection {
+            Selection::Building(b) => is_route_dock(w, b),
+            Selection::Ship(_) => true,
+            _ => false,
+        };
+        if !wants && style.0.as_ref().is_some_and(|s| s.1.is_none()) {
+            return Wanted::Unchanged;
+        }
+        let (sig, net) = net(w);
+        frame.at = Some((cx.sim_tick, net));
+        Wanted::Show(sig)
     }
-    let (sig, net) = net(w);
-    frame.at = Some((sim.last_changed(), net.clone()));
-    if st.sig != Some(sig) || sim.full_rebuild {
-        for e in st.ents.drain(..) {
-            commands.entity(e).despawn();
-        }
-        st.sig = Some(sig);
-        st.styled = None;
-        for l in &net.lines {
-            let data = band(&l.visible(), line_rgb(l));
-            let e = commands.spawn((Mesh3d(meshes.add(crate::render::to_mesh(&data, false))), MeshMaterial3d(dim.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, NotShadowReceiver, LineTag)).id();
-            st.ents.push(e);
-        }
+
+    fn build((_, frame, style, _): &mut SystemParamItem<Self::Param>, cx: &mut OverlayCx, _: &u64, out: &mut Pieces) {
+        let Some((_, net)) = &frame.at else { return };
         // Freshly spawned: styled next frame, once they exist.
-        return;
+        style.0 = None;
+        let dim = cx.mat(OverlayMat::WaterDim);
+        for l in &net.lines {
+            out.add_hidden(band(&l.visible(), line_rgb(l)), dim.clone());
+        }
     }
-    let lit = focus(w, &net, *selection).map(|(l, _)| l);
-    let key = (sig, lit.clone());
-    if st.styled.as_ref() == Some(&key) {
-        return;
-    }
-    for (i, e) in st.ents.iter().enumerate() {
-        let Ok((mut vis, mut mat)) = q.get_mut(*e) else { continue };
-        match &lit {
-            None => *vis = Visibility::Hidden,
-            Some(on) => {
-                *vis = Visibility::Visible;
-                mat.0 = if on.contains(&i) { bright.clone() } else { dim.clone() };
+
+    fn restyle((selection, frame, style, q): &mut SystemParamItem<Self::Param>, cx: &mut OverlayCx, &sig: &u64, ents: &[Entity]) {
+        let Some((_, net)) = &frame.at else { return };
+        let lit = focus(&cx.sim.world, net, **selection).map(|(l, _)| l);
+        let key = (sig, lit.clone());
+        if style.0.as_ref() == Some(&key) {
+            return;
+        }
+        let (bright, dim) = (cx.mat(OverlayMat::WaterBright), cx.mat(OverlayMat::WaterDim));
+        for (i, e) in ents.iter().enumerate() {
+            let Ok((mut vis, mut mat)) = q.get_mut(*e) else { continue };
+            match &lit {
+                None => *vis = Visibility::Hidden,
+                Some(on) => {
+                    *vis = Visibility::Visible;
+                    mat.0 = if on.contains(&i) { bright.clone() } else { dim.clone() };
+                }
             }
         }
+        style.0 = Some(key);
     }
-    st.styled = Some(key);
 }
 
 /// Chevrons along `pts` pointing forward, sliding with time.

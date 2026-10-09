@@ -24,7 +24,6 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::prelude::*;
 use bevy_egui::egui;
 use nd_procgen::MeshData;
@@ -32,7 +31,9 @@ use nd_sim::services::{COVERAGE_FADE, COVERED};
 use nd_sim::{BuildingId, LotId, Placeable, RailFacility, ServiceKind, Vec2 as SVec2, World};
 
 use crate::overlay::shapes::{fill, flat_at, light_wall, outline_band};
+use crate::overlay::mesh::{sync, MeshOverlay, MeshOverlayPlugin, OverlayCx, OverlayMat, Pieces, Wanted};
 use crate::overlay::OverlaySet;
+use bevy::ecs::system::SystemParamItem;
 use crate::sim::Sim;
 use crate::ui::build::{norm, Cat};
 
@@ -552,7 +553,7 @@ fn refresh(sim: Res<Sim>, mut hl: ResMut<BuildHighlight>, time: Res<Time>) {
 
 // ── drawing ─────────────────────────────────────────────────────────────────
 
-#[derive(Component)]
+#[derive(Component, Default)]
 struct HighlightTag;
 
 /// Wall height for a camera this far out, in steps (a zoom rebuilds the
@@ -614,42 +615,37 @@ fn building_mesh(w: &World, v: &HighlightView, height: f32) -> MeshData {
     m
 }
 
-#[allow(clippy::too_many_arguments)]
-fn sync_meshes(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    sim: Res<Sim>,
-    hl: Res<BuildHighlight>,
-    cams: Query<&crate::camera::OrbitCamera>,
-    time: Res<Time>,
-    mut state: Local<(Option<(u64, u32)>, Option<Handle<StandardMaterial>>, Option<Handle<StandardMaterial>>)>,
-    existing: Query<Entity, With<HighlightTag>>,
-) {
-    let (last, area_mat, wall_mat) = &mut *state;
-    let area_mat = area_mat.get_or_insert_with(|| materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, alpha_mode: AlphaMode::Add, cull_mode: None, fog_enabled: false, depth_bias: 4.0, ..default() })).clone();
-    let wall_mat = wall_mat.get_or_insert_with(|| materials.add(StandardMaterial { base_color: Color::WHITE, unlit: true, alpha_mode: AlphaMode::Add, cull_mode: None, fog_enabled: false, depth_bias: 6.0, ..default() })).clone();
-    let distance = cams.iter().next().map_or(400.0, |c| c.distance);
-    let h = wall_height(distance);
-    if hl.view.is_some() {
-        if let Some(mut m) = materials.get_mut(&wall_mat) {
-            m.base_color = Color::linear_rgba(1.0, 1.0, 1.0, 0.8 + 0.2 * (time.elapsed_secs() * 3.0).sin());
+/// [overlay] The highlight's meshes: the service areas, and outlines and
+/// light walls on the marked buildings' lots (the walls' height steps
+/// with the camera's distance).
+struct HighlightMeshes;
+
+impl MeshOverlay for HighlightMeshes {
+    type Key = (u64, u32);
+    type Param = (Res<'static, BuildHighlight>, Query<'static, 'static, &'static crate::camera::OrbitCamera>, Res<'static, Time>);
+    type Marker = HighlightTag;
+
+    fn key((hl, cams, time): &mut SystemParamItem<Self::Param>, cx: &mut OverlayCx) -> Wanted<Self::Key> {
+        cx.mat(OverlayMat::HighlightArea);
+        let wall_mat = cx.mat(OverlayMat::HighlightWall);
+        let h = wall_height(cams.iter().next().map_or(400.0, |c| c.distance));
+        if hl.view.is_some() {
+            if let Some(mut m) = cx.materials.get_mut(&wall_mat) {
+                m.base_color = Color::linear_rgba(1.0, 1.0, 1.0, 0.8 + 0.2 * (time.elapsed_secs() * 3.0).sin());
+            }
+        }
+        match hl.view {
+            Some(_) => Wanted::Show((hl.version, h.to_bits())),
+            None => Wanted::Nothing,
         }
     }
-    let key = hl.view.as_ref().map(|_| (hl.version, h.to_bits()));
-    if key == *last && !sim.full_rebuild {
-        return;
-    }
-    *last = key;
-    for e in existing.iter() {
-        commands.entity(e).despawn();
-    }
-    let Some(v) = &hl.view else { return };
-    let w = &sim.world;
-    for (data, mat) in [(area_mesh(w, v), area_mat), (building_mesh(w, v, h), wall_mat)] {
-        if !data.is_empty() {
-            commands.spawn((Mesh3d(meshes.add(crate::render::to_mesh(&data, false))), MeshMaterial3d(mat), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, HighlightTag));
-        }
+
+    fn build((hl, _, _): &mut SystemParamItem<Self::Param>, cx: &mut OverlayCx, &(_, h): &Self::Key, out: &mut Pieces) {
+        let Some(v) = &hl.view else { return };
+        let w = &cx.sim.world;
+        let (area, walls) = (area_mesh(w, v), building_mesh(w, v, f32::from_bits(h)));
+        out.add(area, cx.mat(OverlayMat::HighlightArea));
+        out.add(walls, cx.mat(OverlayMat::HighlightWall));
     }
 }
 
@@ -819,7 +815,8 @@ pub struct BuildHighlightPlugin;
 impl Plugin for BuildHighlightPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BuildHighlight>()
-            .add_systems(Update, (refresh, sync_meshes).chain().in_set(OverlaySet::Build))
+            .add_plugins(MeshOverlayPlugin::<HighlightMeshes>::default())
+            .add_systems(Update, refresh.in_set(OverlaySet::Build).before(sync::<HighlightMeshes>))
             .add_systems(Update, rings.in_set(OverlaySet::Draw))
             .add_systems(bevy_egui::EguiPrimaryContextPass, markers);
     }

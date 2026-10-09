@@ -13,6 +13,7 @@ use bevy::prelude::*;
 
 use crate::sim::SimSet;
 
+pub mod mesh;
 pub mod selection;
 pub mod shapes;
 

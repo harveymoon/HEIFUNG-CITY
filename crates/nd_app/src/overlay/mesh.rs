@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
+use bevy::ecs::change_detection::Tick;
 use bevy::ecs::system::{StaticSystemParam, SystemParam, SystemParamItem};
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::prelude::*;
@@ -99,6 +100,8 @@ impl OverlayMaterials {
 /// What the overlay hooks get besides their own parameters.
 pub struct OverlayCx<'a> {
     pub sim: &'a Sim,
+    /// When the sim last changed (`DetectChanges::last_changed`).
+    pub sim_tick: Tick,
     pub materials: &'a mut Assets<StandardMaterial>,
     pub mats: &'a mut OverlayMaterials,
 }
@@ -170,7 +173,7 @@ pub fn sync<T: MeshOverlay>(
     mut st: ResMut<OverlayState<T>>,
     mut p: StaticSystemParam<T::Param>,
 ) {
-    let mut cx = OverlayCx { sim: &sim, materials: &mut materials, mats: &mut mats };
+    let mut cx = OverlayCx { sim: &sim, sim_tick: sim.last_changed(), materials: &mut materials, mats: &mut mats };
     let key = match T::key(&mut p, &mut cx) {
         Wanted::Unchanged => return,
         Wanted::Nothing => None,
