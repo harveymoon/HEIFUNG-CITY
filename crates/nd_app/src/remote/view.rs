@@ -1,7 +1,7 @@
 //! JSON views of the simulation for the remote API: the id codec, field
 //! parsers, and the row/detail serialisers shared by `find`, `inspect` and
-//! `status`. Everything here is read-only; the command handlers in
-//! `remote.rs` do the mutating.
+//! `status`. Everything here is read-only; the command handlers (the
+//! registry in `dispatch.rs`) do the mutating.
 
 use nd_minds::Personality;
 use nd_sim::citizens::TravelMode;

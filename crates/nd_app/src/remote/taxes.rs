@@ -1,6 +1,6 @@
 //! [tax] [tolls] `taxes` and `tolls`: read and set the tax schedule and the
 //! import duty, and list, price and remove toll booths. Placing a booth is
-//! `place {kind: "toll_booth" | "toll_plaza"}` (`remote.rs`).
+//! `place {kind: "toll_booth" | "toll_plaza"}` (`place.rs`).
 
 use nd_sim::tax::TaxCategory;
 use nd_sim::tolls::TollBooth;
