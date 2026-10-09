@@ -19,6 +19,10 @@ use serde_json::{json, Value};
 use crate::ui::city_data::{Page, Tab, Target};
 use crate::ui::Info;
 
+use super::ctx::Ctx;
+use super::view::*;
+use crate::tools::Tool;
+
 /// A change to the City Data view.
 #[derive(Clone, Copy, Debug)]
 pub enum DataReq {
@@ -182,4 +186,48 @@ pub fn apply_window_requests(mut contexts: EguiContexts, mut req: ResMut<WindowR
         let p = crate::ui::city_data::last_of(ctx, t);
         req.data_last.insert(t, p);
     }
+}
+
+/// [build-highlight] `build_highlight {category, off}`: open the Build
+/// window on a section, sub-section or kind so its buildings and service
+/// areas show on the map; with no fields, what shows now.
+pub(super) fn build_highlight(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    use crate::ui::build;
+    let now = |ctx: &Ctx| {
+        let sel = ctx.highlight.sel;
+        let view = ctx.highlight.view.as_ref();
+        json!({
+            "on": sel.is_some(),
+            "section": sel.map(|s| s.cat.key()),
+            "sub": sel.and_then(|s| s.sub),
+            "focus": sel.and_then(|s| s.focus).map(|p| p.label()),
+            "buildings": view.map_or(Vec::new(), |v| v.marked.iter().map(|m| json!({ "building": key_str(m.id), "name": m.name, "kind": format!("{:?}", m.family).to_lowercase(), "level": format!("{:?}", m.level).to_lowercase(), "label": m.label })).collect()),
+            "summary": view.map(|v| v.summary.headline.clone()),
+            "detail": view.map(|v| v.summary.detail.clone()),
+            "homes_covered": view.and_then(|v| v.homes_covered),
+            "uncovered": view.map(|v| v.summary.spots.iter().map(|s| json!({ "name": s.name, "at": [s.at.x, s.at.y], "homes": s.homes })).collect::<Vec<_>>()),
+        })
+    };
+    if opt_bool(cmd, "off")? == Some(true) {
+        ctx.windows.build = Some((false, None));
+        if build::is_build_tool(ctx.tools.tool) {
+            ctx.tools.tool = Tool::Inspect;
+            ctx.tools.points.clear();
+            ctx.tools.drag = None;
+        }
+        return Ok(json!({ "on": false }));
+    }
+    let Some(name) = opt_str(cmd, "category")?.or(opt_str(cmd, "item")?) else { return Ok(now(ctx)) };
+    let (cat, sub, item) = build::resolve_highlight(name).ok_or_else(|| format!("nothing to highlight for {name:?}: a section (power, services, transit, rail, water, attractions), a sub-section (safety, sanitation, parking, metro...) or a kind (health, police, fire, school, metro_station...)"))?;
+    if build::highlight_kinds(cat, sub).is_empty() {
+        return Err(format!("{} has no buildings to highlight (roads, zones, districts, lines and tolls have none)", sub.unwrap_or(cat.label())));
+    }
+    if let Some(item) = item {
+        build::activate(item, &mut ctx.tools);
+    } else if build::is_build_tool(ctx.tools.tool) && build::current_item(&ctx.tools).and_then(|i| i.placeable()).is_none_or(|p| !build::highlight_kinds(cat, sub).contains(&build::norm(p))) {
+        // A tool for something else would keep the window elsewhere.
+        ctx.tools.tool = Tool::Inspect;
+    }
+    ctx.windows.build_sub = Some((cat, sub));
+    Ok(json!({ "on": true, "section": cat.key(), "sub": sub, "item": item.map(|i| i.label()), "note": "the highlight and its summary are worked out next frame: build_highlight {} reads them" }))
 }
