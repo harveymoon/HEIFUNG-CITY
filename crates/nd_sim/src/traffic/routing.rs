@@ -75,24 +75,33 @@ impl LaneNetwork {
             return Some((vec![start], s_start, s_end));
         }
         let to = self.lanes.get(goal as usize)?.point_at(s_end).0;
+        SEARCH.with(|cell| {
+            let mut scratch = cell.borrow_mut();
+            scratch.begin(self.lanes.len());
+            self.route_search_in(&mut scratch, start, s_start, goal, s_end, to, avoid_lane, avoid_step, tolls)
+        })
+    }
+
+    /// [`Self::route_search`] on reused scratch (the costs and parents of
+    /// the lanes reached, by lane index).
+    #[allow(clippy::too_many_arguments)]
+    fn route_search_in(&self, sc: &mut SearchScratch, start: LaneId, s_start: f32, goal: LaneId, s_end: f32, to: Vec2, avoid_lane: Option<LaneId>, avoid_step: Option<(LaneId, LaneId)>, tolls: bool) -> Option<(Vec<LaneId>, f32, f32)> {
         let mut open = BinaryHeap::new();
-        let mut came: HashMap<LaneId, LaneId> = HashMap::new();
-        let mut g: HashMap<LaneId, f32> = HashMap::new();
         let start_cost = self.lanes[start as usize].length - s_start;
-        g.insert(start, start_cost);
+        sc.set(start, start_cost, None);
         open.push(Open { f: start_cost + self.lanes[start as usize].end().distance(to), g: start_cost, lane: start, expanded: 0 });
         let mut expansions = 0usize;
         while let Some(Open { lane, expanded, g: popped_g, .. }) = open.pop() {
             // A lane reached again more cheaply leaves its older entry in
             // the heap: skip it rather than expand it (and count it toward
             // the cap) a second time.
-            if popped_g > g[&lane] {
+            if popped_g > sc.g(lane).unwrap() {
                 continue;
             }
             if lane == goal && expanded > 0 {
                 let mut route = vec![goal];
                 let mut cur = goal;
-                while let Some(&prev) = came.get(&cur) {
+                while let Some(prev) = sc.came(cur) {
                     route.push(prev);
                     if prev == start {
                         break;
@@ -106,7 +115,7 @@ impl LaneNetwork {
             if expansions > 20_000 {
                 return None;
             }
-            let gl = g[&lane];
+            let gl = sc.g(lane).unwrap();
             let here = &self.lanes[lane as usize];
             // [tolls] A toll counts as the detour a driver would take to avoid it.
             let ahead = here.next.iter().filter(|&&n| self.lanes[n as usize].permitted).map(|&n| (n, self.lanes[n as usize].length + self.rings.penalty(n) + if tolls { self.toll_penalty(n) } else { 0.0 }));
@@ -136,9 +145,8 @@ impl LaneNetwork {
                     continue;
                 }
                 let cost = gl + step + QUEUE_COST * self.lanes[next as usize].cars.len() as f32;
-                if g.get(&next).map_or(true, |&old| cost < old) {
-                    g.insert(next, cost);
-                    came.insert(next, lane);
+                if sc.g(next).map_or(true, |old| cost < old) {
+                    sc.set(next, cost, Some(lane));
                     open.push(Open { f: cost + self.lanes[next as usize].end().distance(to), g: cost, lane: next, expanded: expanded + 1 });
                 }
             }
@@ -217,6 +225,55 @@ impl LaneNetwork {
             };
         }
         total
+    }
+}
+
+thread_local! {
+    /// [review] Scratch for the lane A*, reused across searches instead of
+    /// two fresh hash maps per call.
+    static SEARCH: std::cell::RefCell<SearchScratch> = std::cell::RefCell::new(SearchScratch::default());
+}
+
+/// Per-lane cost and parent, valid for the lanes stamped with the current
+/// search's number (so nothing is cleared between searches).
+#[derive(Default)]
+pub(super) struct SearchScratch {
+    search: u32,
+    stamp: Vec<u32>,
+    cost: Vec<f32>,
+    parent: Vec<LaneId>,
+}
+
+impl SearchScratch {
+    const NONE: LaneId = LaneId::MAX;
+
+    fn begin(&mut self, lanes: usize) {
+        if self.stamp.len() < lanes {
+            self.stamp.resize(lanes, 0);
+            self.cost.resize(lanes, 0.0);
+            self.parent.resize(lanes, Self::NONE);
+        }
+        self.search = self.search.wrapping_add(1);
+        if self.search == 0 {
+            // Wrapped: forget every old stamp.
+            self.stamp.iter_mut().for_each(|s| *s = 0);
+            self.search = 1;
+        }
+    }
+
+    fn g(&self, lane: LaneId) -> Option<f32> {
+        (self.stamp[lane as usize] == self.search).then(|| self.cost[lane as usize])
+    }
+
+    fn came(&self, lane: LaneId) -> Option<LaneId> {
+        (self.stamp[lane as usize] == self.search && self.parent[lane as usize] != Self::NONE).then(|| self.parent[lane as usize])
+    }
+
+    fn set(&mut self, lane: LaneId, cost: f32, parent: Option<LaneId>) {
+        let i = lane as usize;
+        self.stamp[i] = self.search;
+        self.cost[i] = cost;
+        self.parent[i] = parent.unwrap_or(Self::NONE);
     }
 }
 
