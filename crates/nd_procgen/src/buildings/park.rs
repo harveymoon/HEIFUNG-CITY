@@ -19,15 +19,15 @@ use rand::Rng;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 pub fn scrub_lot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
-    park(g, c, rng, Tier::Low);
+    park(g, c, rng);
 }
 
 pub fn garden(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
-    park(g, c, rng, Tier::Mid);
+    park(g, c, rng);
 }
 
 pub fn plaza(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
-    park(g, c, rng, Tier::High);
+    park(g, c, rng);
 }
 
 /// Everything a park needs to know while it is being drawn.
@@ -95,7 +95,7 @@ fn project(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
     a + ab * ((p - a).dot(ab) / l2).clamp(0.0, 1.0)
 }
 
-fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, _style_tier: Tier) {
+fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let Some(layout) = c.park.as_ref() else { return };
     // The park's own tier, planned once for all its lots (from their
     // area-weighted land value), not the style the lot's building drew:

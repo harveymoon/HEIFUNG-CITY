@@ -303,7 +303,7 @@ pub fn suburb(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
     let lawn = if c.tier == Tier::Low { mix(LAWN, pal.foliage_dry, 0.5) } else { LAWN };
-    let yard_poly = yard(g, c, 0.2, Foliage, lawn);
+    yard(g, c, 0.2, Foliage, lawn);
     let (w, d) = (c.fw, c.fd);
     let n = ((w / 17.0) as i32).clamp(1, 3);
     let bay = w / n as f32;
@@ -392,7 +392,6 @@ pub fn suburb(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             f.bx(g, Metal, hu + 1.2, 0.6, -d * 0.5 + 1.0, Vec3::new(0.3, 1.2, 0.3), mul(pick(rng, &pal.metal_paint), 0.8));
         }
     }
-    let _ = yard_poly;
 }
 
 // ── McMansion ────────────────────────────────────────────────────────────────

@@ -43,7 +43,7 @@ pub fn metro_entrance(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let anchor = interior_anchor(&c.lot_poly);
     let tries = [(at, turn, len), (at, turn, 4.0), (at, turn + PI * 0.5, 4.0), (anchor, turn, 4.0), (anchor, turn + PI * 0.5, 4.0), (anchor, turn, 3.0)];
     if let Some(&(p, t, l)) = tries.iter().find(|(p, t, l)| kiosk_fits(c, *p, *t, *l)) {
-        kiosk(g, f, c, p, t, l, pal);
+        kiosk(g, f, p, t, l, pal);
     }
     // The pylon by the kerb: the M that says "metro" from down the street.
     let pylon = clamp_into(&c.poly, Vec2::new(lo.x + w * 0.2, lo.y + 1.2));
@@ -79,7 +79,7 @@ pub fn metro_entrance(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
 /// balustrades and an arched glass canopy over it, its edge lit in the
 /// metro's cyan. `at` is the head of the stairs (lot-local), `turn` the
 /// extra yaw (0: the stairs run inward from the street), `len` their run.
-pub fn kiosk(g: &mut Geometry, f: &Frame, c: &Ctx, at: Vec2, turn: f32, len: f32, pal: &crate::palette::Palette) {
+pub fn kiosk(g: &mut Geometry, f: &Frame, at: Vec2, turn: f32, len: f32, pal: &crate::palette::Palette) {
     let (sin, cos) = turn.sin_cos();
     let rot = |u: f32, v: f32| at + Vec2::new(u * cos - v * sin, u * sin + v * cos);
     let half_w = 1.5;
@@ -129,7 +129,6 @@ pub fn kiosk(g: &mut Geometry, f: &Frame, c: &Ctx, at: Vec2, turn: f32, len: f32
     // Facing the street: the stairs run away from it along +v.
     let m = rot(0.0, -0.05);
     let face = Face::new(m - rot_dir(turn), m + rot_dir(turn), Vec2::new(sin, -cos));
-    let _ = c;
     neon_text(g, f, &face, "M", 0.0, base + rise * 0.45, 0.7, 0.05, METRO_CYAN);
 }
 
@@ -413,7 +412,7 @@ pub fn central_station(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // The metro entrance in the forecourt, its pylon by the kerb.
     let mk = clamp_into(&c.poly, Vec2::new(lo.x + w * 0.62 - 3.0, lo.y + 1.0));
     if kiosk_fits(c, mk, 0.0, 5.0) {
-        kiosk(g, f, c, mk, 0.0, 5.0, pal);
+        kiosk(g, f, mk, 0.0, 5.0, pal);
     }
     metro_pylon(g, f, clamp_into(&c.poly, Vec2::new(lo.x + w * 0.62 + 0.5, lo.y + 0.8)), 5.0, pal);
     // Taxi rank and lamps along the front.

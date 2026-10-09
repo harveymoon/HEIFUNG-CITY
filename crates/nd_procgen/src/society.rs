@@ -16,7 +16,7 @@ use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::rng_for;
 use rand::Rng;
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::TAU;
 
 /// Height of the pavement surface (as the street generator lays it).
 pub const PAVE_Y: f32 = 0.155;
@@ -271,7 +271,6 @@ pub fn rv(p: Vec2, heading: f32, camper: bool, seed: u64, pal: &Palette) -> Geom
     if rng.random_bool(0.6) {
         g.part(Metal).boxed(f.v3(1.2, side * (w * 0.5 + 0.8), 0.3), Vec3::new(0.6, 0.45, 0.4), yaw, rgba(mul([0.75, 0.55, 0.1], 0.9)));
     }
-    let _ = PI;
     g
 }
 

@@ -35,7 +35,7 @@ const FH: f32 = TOWER_FLOOR_M;
 /// Where the tower stands on its site and how much room it has: the
 /// deepest point of the podium and the radius of the circle round it that
 /// stays on the site.
-fn tower_seat(c: &Ctx, site: &[Vec2]) -> (Vec2, f32) {
+fn tower_seat(site: &[Vec2]) -> (Vec2, f32) {
     let anchor = interior_anchor(site);
     // Search a little round the anchor for a deeper seat.
     let mut best = (distance_to_boundary(anchor, site), anchor);
@@ -52,7 +52,6 @@ fn tower_seat(c: &Ctx, site: &[Vec2]) -> (Vec2, f32) {
             }
         }
     }
-    let _ = c;
     (best.1, best.0.max(5.0))
 }
 
@@ -118,7 +117,7 @@ pub fn tower(g: &mut Geometry, c: &Ctx, t: &Tower) {
     let rng = &mut rng;
     let site = site_poly(c);
     let ph = podium_h(t);
-    let (seat, room) = tower_seat(c, &site);
+    let (seat, room) = tower_seat(&site);
     let pod = podium_plan(&site, seat, foot(t, room));
     podium(g, c, rng, &pod, ph);
     plaza(g, c, t.seed, &site, &pod);
@@ -446,7 +445,6 @@ fn deco_spire(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Ve
     // Tiers: share of the height to the top of each, and its scale.
     let tiers: [(f32, f32); 4] = [(0.52, 1.0), (0.72, 0.8), (0.86, 0.62), (1.0, 0.44)];
     let mut y0 = base;
-    let mut last = rect(seat.x, seat.y, hw, hd);
     for (i, (share, k)) in tiers.iter().enumerate() {
         let y1 = base + (top - base) * share;
         let plan = rect(seat.x, seat.y, hw * k, hd * k);
@@ -481,7 +479,6 @@ fn deco_spire(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Ve
                 }
             }
         }
-        last = plan;
         y0 = y1;
     }
     // The tier standing at each height.
@@ -496,7 +493,6 @@ fn deco_spire(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Ve
     glow_outline(g, c, &lantern, top + 8.4, 0.8, gold);
     let lit = scale_poly(&lantern, 1.02);
     super::parts::band(g, f, Glow, &lit, &lit, top + 2.0, top + 5.0, mul(gold, 0.8));
-    let _ = last;
     mast(g, c, seat, (hw * 0.12).clamp(0.8, 3.0), top + 8.0, t.height, gold, true);
 }
 
@@ -705,7 +701,7 @@ pub fn site(g: &mut Geometry, c: &Ctx, t: &Tower, progress: f32) {
     let p = progress.clamp(0.0, 1.0);
     let site = site_poly(c);
     let ph = podium_h(t);
-    let (seat, room) = tower_seat(c, &site);
+    let (seat, room) = tower_seat(&site);
     // [sweep-visual] The podium goes up on its own plan (`podium_plan`).
     let pod_plan = podium_plan(&site, seat, foot(t, room));
     let top = t.height * (1.0 - spire_share(t.design));

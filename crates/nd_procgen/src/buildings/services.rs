@@ -279,7 +279,7 @@ pub fn school(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         roof_gear(g, c, rng, &wing, h, 0.2);
     }
     // The yard: a court with lines and hoops, a fence, trees on the edge.
-    let (lo, hi) = bounds(&wing);
+    let (_, hi) = bounds(&wing);
     let (llo, lhi) = bounds(&c.lot_poly);
     let yv = (hi.y + lhi.y) * 0.5;
     let court = fit_inside(c, &rect((llo.x + lhi.x) * 0.5, yv, ((lhi.x - llo.x) * 0.3).min(14.0), ((lhi.y - hi.y) * 0.3).clamp(1.0, 8.0)));
@@ -301,7 +301,6 @@ pub fn school(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             tree_in(g, f, pal, p, 4.0, 2.6, pal.foliage);
         }
     }
-    let _ = lo;
     fence_lot(g, c, &offset_poly(&c.lot_poly, 0.4), 1.8, false);
 }
 

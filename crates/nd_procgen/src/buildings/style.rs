@@ -265,7 +265,7 @@ styles! {
     // -- [waterfront] the shore's looks (`buildings/shore.rs`), appended so
     // `ALL` keeps its order. --
     /// A public beach: sand, towels, umbrellas, a lifeguard tower, bathers.
-    Beach { label: "public beach", family: Special, cluster: 0.0, draw: |g, c, r, _| shore::beach(g, c, r, c.shore) },
+    Beach { label: "public beach", family: Special, cluster: 0.0, draw: |g, c, _, _| shore::beach(g, c, c.shore) },
     // [waterfront] The shore's trades line the water together.
     /// Lobby block, wings stepping down to the water round a lit pool, cabanas.
     BeachResort { label: "beach resort", family: Night, cluster: 0.4, draw: |g, c, r, _| shore::beach_resort(g, c, r, c.shore) },

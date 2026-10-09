@@ -85,7 +85,7 @@ fn umbrella(g: &mut Geometry, f: &Frame, p: Vec2, y: f32, color: [f32; 3]) {
 fn lounger(g: &mut Geometry, f: &Frame, p: Vec2, y: f32, yaw: f32, color: [f32; 3]) {
     f.bx_yaw(g, Matte, p.x, y + 0.3, p.y, Vec3::new(1.9, 0.08, 0.65), color, yaw);
     let back = Vec2::new(yaw.cos(), yaw.sin()) * 0.8;
-    f.bx_yaw(g, Matte, p.x + back.x, y + 0.5, p.y + back.y, Vec3::new(0.45, 0.06, 0.65), color, yaw + 0.0);
+    f.bx_yaw(g, Matte, p.x + back.x, y + 0.5, p.y + back.y, Vec3::new(0.45, 0.06, 0.65), color, yaw);
     f.bx_yaw(g, Matte, p.x, y + 0.14, p.y, Vec3::new(1.6, 0.28, 0.08), mul(color, 0.6), yaw);
 }
 
@@ -602,7 +602,7 @@ pub fn boat_rental(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, look: Option<S
 /// the hour lying in the sun, swimmers off the shore, a lifeguard tower
 /// at the water's edge, and when it is fouled a sign and tape across the
 /// way in.
-pub fn beach(g: &mut Geometry, c: &Ctx, _rng: &mut impl Rng, look: Option<ShoreLook>) {
+pub fn beach(g: &mut Geometry, c: &Ctx, look: Option<ShoreLook>) {
     // The sim plans the sand (`plan_beach`); without a plan, bare sand.
     let (paths, benches, entrances): (&[Vec<Vec2>], &[(Vec2, f32)], &[Vec2]) = c.park.as_ref().map_or((&[], &[], &[]), |l| (&l.paths[..], &l.benches[..], &l.entrances[..]));
     let f = &c.frame;
