@@ -4,7 +4,7 @@
 //! the business on the lot; size, materials and condition follow the tier.
 
 use super::parts::*;
-use super::kit::{block, cow, fish_crates, fish_sign, fit, haul_truck, heap, pane, pane_row, rail_fence, R};
+use super::kit::{block, cow, gable_on, fish_crates, fish_sign, fit, haul_truck, heap, pane, pane_row, rail_fence, R};
 use super::{Ctx, Face, Frame};
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
@@ -28,20 +28,6 @@ fn fence_round(g: &mut Geometry, c: &Ctx, poly: &[Vec2], h: f32, color: [f32; 3]
     for i in 0..n {
         rail_fence(g, c, poly[i], poly[(i + 1) % n], h, color);
     }
-}
-
-/// A gabled roof whose ridge runs along `v` (for buildings deep in `v`).
-fn ridge_v(g: &mut Geometry, c: &Ctx, r: &R, y: f32, rise: f32, color: [f32; 3]) {
-    let bottom = rect(r.c().x, r.c().y, r.w() * 0.5 + 0.3, r.d() * 0.5 + 0.2);
-    let top = rect(r.c().x, r.c().y, 0.08, r.d() * 0.5 + 0.2);
-    loft(g, &c.frame, Metal, &bottom, &top, y, y + rise, color);
-}
-
-/// Gabled roof whose ridge runs along `u`.
-fn ridge_u(g: &mut Geometry, c: &Ctx, r: &R, y: f32, rise: f32, color: [f32; 3]) {
-    let bottom = rect(r.c().x, r.c().y, r.w() * 0.5 + 0.2, r.d() * 0.5 + 0.3);
-    let top = rect(r.c().x, r.c().y, r.w() * 0.5 + 0.2, 0.08);
-    loft(g, &c.frame, Metal, &bottom, &top, y, y + rise, color);
 }
 
 /// A silo: a tank with a domed cap.
@@ -113,7 +99,7 @@ pub fn cow_farm(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     if let Some(r) = fit(c, want, 3.5) {
         let h = [4.0, 5.0, 6.0][t];
         block(g, c, if t == 0 { Wood } else { Panel }, &r, 0.0, h, barn_red);
-        ridge_u(g, c, &r, h, (r.d() * 0.3).clamp(1.2, 3.5), [0.2, 0.2, 0.22]);
+        gable_on(g, c, &r, h, (r.d() * 0.3).clamp(1.2, 3.5), true, [0.2, 0.2, 0.22]);
         let fr = r.front();
         fr.decal(g, f, Wood, 0.0, h * 0.4, 0.05, (fr.len * 0.4).min(4.0), h * 0.75, mul(barn_red, 0.7));
         // The white X on the barn doors.
@@ -139,7 +125,7 @@ pub fn cow_farm(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         if let Some(r) = fit(c, R::new(area.u1 - 0.5 - hw * 2.0, area.u1 - 0.5, area.v0 + 1.5, area.v0 + (yard_d - 1.0).min(8.0)), 3.5) {
             let wall = pick(rng, &pal.plaster);
             block(g, c, Plaster, &r, 0.0, 3.0 * t as f32, wall);
-            ridge_u(g, c, &r, 3.0 * t as f32, 1.8, [0.3, 0.18, 0.12]);
+            gable_on(g, c, &r, 3.0 * t as f32, 1.8, true, [0.3, 0.18, 0.12]);
             pane_row(g, c, rng, &r.front(), 0.0, t as i32, 3.0, 2.4, 1.0, 1.2, true);
         }
     }
@@ -200,7 +186,7 @@ pub fn chicken_farm(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         let h = 2.6;
         block(g, c, if t == 0 { WornPanel } else { Panel }, &r, 0.0, h, wall);
-        ridge_v(g, c, &r, h, (r.w() * 0.15).clamp(0.8, 1.6), mul(pal.steel, [0.55, 0.7, 0.8][t]));
+        gable_on(g, c, &r, h, (r.w() * 0.15).clamp(0.8, 1.6), false, mul(pal.steel, [0.55, 0.7, 0.8][t]));
         // Ridge vents.
         let vents = (r.d() / 6.0) as i32;
         for i in 0..vents {

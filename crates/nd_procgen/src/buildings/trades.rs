@@ -457,7 +457,7 @@ pub fn fish_market(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         1 => {
             f.bx(g, Metal, r.c().x, h, r.c().y, Vec3::new(r.w() + 0.4, 0.3, r.d() + 0.4), mul(pick(rng, &pal.metal_paint), 0.8));
-            super::industrial::gable_roof(g, c, &r.poly(), h + 0.15, (r.d() * 0.12).clamp(0.8, 2.5), mul(pal.steel, 0.75));
+            super::kit::gable_roof(g, c, &r.poly(), h + 0.15, (r.d() * 0.12).clamp(0.8, 2.5), mul(pal.steel, 0.75));
         }
         _ => {
             // A glazed vault in strips over brick gable ends.
@@ -532,7 +532,7 @@ pub fn seafood_restaurant(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         deck_v1 = r.v0;
         block(g, c, s, &r, 0.0, h, wall);
         if t < 2 {
-            super::industrial::gable_roof(g, c, &r.poly(), h, (r.d() * 0.18).clamp(1.0, 3.0), if t == 0 { mul(pal.rust, 0.9) } else { [0.2, 0.3, 0.45] });
+            super::kit::gable_roof(g, c, &r.poly(), h, (r.d() * 0.18).clamp(1.0, 3.0), if t == 0 { mul(pal.rust, 0.9) } else { [0.2, 0.3, 0.45] });
         } else {
             parapet(g, c, &r.poly(), h, 1.0, 0.15, Glass, pick(rng, &pal.glass));
         }
@@ -793,7 +793,7 @@ pub fn art_studio(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 glass.decal(g, f, Glass, 0.0, h + 1.0, 0.12, r.w() * 0.95, 1.7, pick(rng, &pal.glass));
             }
         } else {
-            super::industrial::gable_roof(g, c, &r.poly(), h, (r.d() * 0.15).clamp(1.0, 3.5), mul(pal.steel, 0.55));
+            super::kit::gable_roof(g, c, &r.poly(), h, (r.d() * 0.15).clamp(1.0, 3.5), mul(pal.steel, 0.55));
         }
         // Big steel-framed windows: panes in a grid, some lit.
         for (fi, face) in r.faces().iter().enumerate() {

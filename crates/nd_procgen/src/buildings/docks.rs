@@ -95,7 +95,7 @@ pub fn marina_small(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     if let Some(r) = fit(c, R::new(area.u0, area.u0 + bw, area.v1 - bd, area.v1), 4.0) {
         let h = 4.5;
         block(g, c, Wood, &r, 0.0, h, wall);
-        super::industrial::gable_roof(g, c, &r.poly(), h, (r.d() * 0.25).clamp(1.2, 2.8), [0.2, 0.22, 0.25]);
+        super::kit::gable_roof(g, c, &r.poly(), h, (r.d() * 0.25).clamp(1.2, 2.8), [0.2, 0.22, 0.25]);
         let back = r.back();
         back.decal(g, f, Wood, 0.0, 1.8, 0.05, (back.len * 0.6).min(5.0), 3.6, mul(pal.wood, 0.7));
         let fr = r.front();

@@ -6,9 +6,11 @@
 mod fences;
 mod layout;
 mod props;
+mod roofs;
 pub(crate) use fences::*;
 pub(crate) use layout::*;
 pub(crate) use props::*;
+pub(crate) use roofs::*;
 
 use super::parts::*;
 use super::{Ctx, Face};

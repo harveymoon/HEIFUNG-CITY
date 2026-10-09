@@ -2,32 +2,12 @@
 //! factories and tank farms in the middle, datacentres and container depots
 //! where it is dear.
 
+use super::kit::{gable_roof, squash};
 use super::parts::*;
 use super::{Ctx, Face};
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use rand::Rng;
-
-/// Shrink a polygon towards its centroid along one axis only, which turns a
-/// footprint into a roof ridge.
-fn squash(poly: &[Vec2], axis: Vec2, k: f32) -> Vec<Vec2> {
-    let c = poly_center(poly);
-    poly.iter()
-        .map(|p| {
-            let d = *p - c;
-            let along = d.dot(axis);
-            c + d - axis * along * (1.0 - k)
-        })
-        .collect()
-}
-
-pub(super) fn gable_roof(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32, ridge: f32, color: [f32; 3]) {
-    let f = &c.frame;
-    let front = c.front_face(poly);
-    let axis = front.out;
-    let top: Vec<Vec2> = squash(poly, axis, 0.04).into_iter().map(|p| clamp_into(poly, p)).collect();
-    loft(g, f, Metal, &offset_poly(poly, -0.4), &top, y, y + ridge, color);
-}
 
 // ── junkyard ─────────────────────────────────────────────────────────────────
 
@@ -225,10 +205,10 @@ pub fn factory(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         if inner.len() < 3 {
             continue;
         }
-        let top = squash(&inner, axis, 0.08);
+        let top = squash(&inner, axis, 1.0 - 0.08);
         loft(g, f, Metal, &inner, &shift_poly(&top, Vec2::new(0.0, -(v1 - v0) * 0.46)), h, h + 2.2, mul(wall, 0.9));
         if coin(rng, 0.6 * (1.0 - c.wear)) {
-            let lit = squash(&inner, axis, 0.5);
+            let lit = squash(&inner, axis, 1.0 - 0.5);
             extrude(g, f, Glow, &shift_poly(&lit, Vec2::new(0.0, (v1 - v0) * 0.2)), h + 0.6, h + 1.6, mul(c.style.window_color(0), 0.6));
         }
     }

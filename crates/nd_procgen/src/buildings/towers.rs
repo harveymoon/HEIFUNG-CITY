@@ -8,24 +8,10 @@ use super::kit::*;
 use super::parts::*;
 use super::{Ctx, Face};
 use crate::mesh::MeshData;
-use crate::surface::{Geometry, Surface, Surface::*};
+use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use rand::seq::IndexedRandom;
 use rand::Rng;
-
-/// Pitched roof over a footprint with its ridge across `axis`.
-fn pitched_roof(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32, ridge: f32, axis: Vec2, s: Surface, color: [f32; 3]) {
-    let centre = poly_center(poly);
-    let top: Vec<Vec2> = poly
-        .iter()
-        .map(|p| {
-            let d = *p - centre;
-            let along = d.dot(axis);
-            clamp_into(poly, centre + d - axis * along * 0.94)
-        })
-        .collect();
-    loft(g, &c.frame, s, &offset_poly(poly, -0.35), &top, y, y + ridge, color);
-}
 
 // ── pencil tower ─────────────────────────────────────────────────────────────
 
@@ -167,7 +153,7 @@ pub fn twin_slab(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 let h = floors as f32 * fh;
                 extrude(g, f, Brick, &cell, 0.0, h, brick);
                 cornice(g, c, &cell, h - 0.2, 0.3, 0.15, Concrete, trim);
-                pitched_roof(g, c, &cell, h, 1.8, Vec2::new(0.0, 1.0), Brick, mul(pal.rust, 0.7));
+                super::kit::ridge_roof(g, c, &cell, h, 1.8, Vec2::new(0.0, 1.0), 0.94, 0.35, Brick, mul(pal.rust, 0.7));
                 for face in c.faces(&cell) {
                     if face.len > 3.0 && face_is_outer(&face, poly) || (face.len > 3.0 && (face.mid().x - mid).abs() < lane + 0.6) {
                         let mut spec = WindowSpec::from_ctx(c);
