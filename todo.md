@@ -330,7 +330,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 - [ ] Footpath-only rail crossings still draw paving over the rails; crossing lamps have no real light at night (rail-crossing)
 
-- [ ] "Perfect AI City": a New Game preset + save, fully planned and built at day 1 (roads, interchange, zones, services, transit, power), unlimited money, validated to grow big without collapse [feat/perfect-city]
+- [x] "Perfect AI City": a New Game preset + save, fully planned and built at day 1 (roads, interchange, zones, services, transit, power), unlimited money, validated to grow big without collapse [feat/perfect-city]   → DONE [feat/perfect-city]: CityPreset::PerfectCity (New game > Starting town, generate_city perfect_city, seed 5): temperate coast, square avenue grid, 3 diamond interchanges, works downwind round the river, farms upwind, every service/plant/transit line/district laid by citygen::furnish, 50M treasury; example perfect_city writes saves/perfect_ai_city.ron and runs it headless; tests citygen_perfect_city
 
 - [ ] Save → load → continue drifts: traffic lane network/signals, car blocked_by/offlaw/dodge, traffic pedestrians, trains in motion, land-value work in progress, road wear aren't fully saved (ignored test in tests/determinism.rs lists them) — phase 2b
 

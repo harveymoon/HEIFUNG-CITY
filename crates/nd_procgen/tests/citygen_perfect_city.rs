@@ -40,7 +40,9 @@ fn furnished_and_saved() {
     let refused: Vec<&String> = laid.furnished.iter().filter(|l| l.contains("REFUSED") || l.contains("STILL OFF")).collect();
     assert!(refused.is_empty(), "refused placements: {refused:?}");
     assert!(w.implement_refused.is_none(), "{:?}", w.implement_refused);
-    assert_eq!(plan.links.len(), 2, "two interchanges");
+    assert_eq!(plan.links.len(), 3, "three interchanges");
+    let diamonds = laid.furnished.iter().filter(|l| l.starts_with("diamond interchange") && !l.contains("refused") && !l.contains("REFUSED")).count();
+    assert_eq!(diamonds, 3, "three diamonds");
     assert!(w.citizens.is_empty(), "day 1 starts empty");
     assert!(w.economy.treasury >= 10_000_000.0, "a deep treasury: {}", w.economy.treasury);
     for kind in [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School] {

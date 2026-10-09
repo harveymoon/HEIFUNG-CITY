@@ -280,22 +280,38 @@ fn bridges(cx: &mut Ctx) {
         let Some(rp) = river.points.iter().copied().filter(|p| (p.y - here).abs() < 40.0).min_by(|a, b| (a.y - here).abs().total_cmp(&(b.y - here).abs())) else { continue };
         let half = river.width * 0.5;
         let bank = |side: f32| {
-            cx.street_nodes_near(rp, half + 320.0)
-                .into_iter()
-                .filter(|q| (q.x - rp.x) * side > half + 15.0 && (q.y - here).abs() < 60.0)
-                .min_by(|a, b| a.distance(rp).total_cmp(&b.distance(rp)))
+            let mut v: Vec<Vec2> = cx.street_nodes_near(rp, half + 320.0).into_iter().filter(|q| (q.x - rp.x) * side > half + 15.0 && (q.y - here).abs() < 60.0).collect();
+            v.sort_by(|a, b| a.distance(rp).total_cmp(&b.distance(rp)).then(a.x.total_cmp(&b.x)));
+            v.truncate(4);
+            v
         };
-        let (Some(w), Some(e)) = (bank(-1.0), bank(1.0)) else { continue };
-        if (w.y - e.y).abs() > 70.0 {
-            continue;
-        }
-        let ok = cx.w.roads.segments_in_box(w.min(e) - Vec2::splat(2.0), w.max(e) + Vec2::splat(2.0)).all(|s| {
-            let (a, b) = cx.w.roads.segment_points(s);
-            a.distance(w) < 1.0 || a.distance(e) < 1.0 || b.distance(w) < 1.0 || b.distance(e) < 1.0 || !segments_cross(a, b, w, e)
-        });
-        if !ok {
-            continue;
-        }
+        let (ws, es) = (bank(-1.0), bank(1.0));
+        // Each end becomes a junction: none other within 25 m of it, and
+        // the bridge meets every street there at 40 degrees or more.
+        let roads = &cx.w.roads;
+        let fits = |p: Vec2, other: Vec2| {
+            let dir = (other - p).normalize_or_zero();
+            roads.nodes.iter().all(|n| {
+                let d = n.pos.distance(p);
+                if d < 0.5 {
+                    return n.segments.iter().filter_map(|&s| roads.try_segment(s)).filter(|s| s.alive).all(|s| {
+                        let (a, b) = (roads.node(s.a).pos, roads.node(s.b).pos);
+                        let out = if a.distance(p) < 0.5 { b - a } else { a - b };
+                        out.normalize_or_zero().dot(dir) < 40f32.to_radians().cos()
+                    });
+                }
+                let junction = n.segments.iter().filter(|&&s| roads.try_segment(s).is_some_and(|s| s.alive)).count() != 2;
+                d >= 25.0 || !junction
+            })
+        };
+        let clear = |w: Vec2, e: Vec2| {
+            roads.segments_in_box(w.min(e) - Vec2::splat(2.0), w.max(e) + Vec2::splat(2.0)).all(|s| {
+                let (a, b) = roads.segment_points(s);
+                a.distance(w) < 1.0 || a.distance(e) < 1.0 || b.distance(w) < 1.0 || b.distance(e) < 1.0 || !segments_cross(a, b, w, e)
+            })
+        };
+        let pair = ws.iter().flat_map(|&w| es.iter().map(move |&e| (w, e))).find(|&(w, e)| (w.y - e.y).abs() <= 70.0 && fits(w, e) && fits(e, w) && clear(w, e));
+        let Some((w, e)) = pair else { continue };
         cx.w.add_road(&[w, e], 2, 2);
         if cx.w.implement_refused.is_some() {
             continue;
@@ -513,15 +529,17 @@ fn services(cx: &mut Ctx) {
     cx.place("jail", Placeable::Service(ServiceKind::Jail, Tier::High), industrial, move |c, _| nearest(c, &w2));
     // Trash depots on works and civic ground, each where it reaches most of
     // what is still out of reach.
-    let r = ServiceKind::TrashDepot.radius(Tier::High) * 0.9;
+    // (Each depot's trucks serve only so many bins a day: a reach well short
+    // of its radius, so a big city gets several.)
+    let r = ServiceKind::TrashDepot.radius(Tier::High) * 0.55;
     let mut depots: Vec<Vec2> = Vec::new();
-    for _ in 0..4 {
+    for _ in 0..7 {
         let left: Vec<Vec2> = cx.serve.iter().copied().filter(|p| nearest(*p, &depots) > r).collect();
         if left.len() * 50 < cx.serve.len() {
             break;
         }
         let gain = |c: Vec2| left.iter().filter(|p| p.distance(c) <= r).count() as f32;
-        match cx.place("trash depot", Placeable::Service(ServiceKind::TrashDepot, Tier::High), industrial, |c, _| -gain(c)) {
+        match cx.place("trash depot", Placeable::Service(ServiceKind::TrashDepot, Tier::High), |l| matches!(l.land_use, LandUse::Industrial | LandUse::Civic), |c, _| -gain(c)) {
             Some(b) => depots.push(cx.centre_of(b)),
             None => break,
         }
@@ -635,7 +653,7 @@ fn beach(cx: &mut Ctx) {
     cx.note(format!("public beach: {n} parcels of sand along the sea front"));
 }
 
-/// Districts with their policies: eco towers up to 50 m across the north,
+/// Districts with their policies: plain mid-rise homes up to 60 m across the north,
 /// a strip of garden suburbs by the farms, dense housing and night markets
 /// by the railway, a tourist sea front, a neon midtown and a downtown with
 /// no height limit, the works and the farms.
@@ -649,9 +667,11 @@ fn districts(cx: &mut Ctx) {
     let works_x = cx.works.iter().map(|f| f.x - 280.0).fold(hi.x - 300.0, f32::min);
     let ds: Vec<(&str, Vec<Vec2>, PolicyChange)> = vec![
         // Painted in order: later districts take the cells they share.
-        ("Northside", rect(Vec2::new(farm_x, rail + 60.0), Vec2::new(works_x, hi.y + 60.0)), PolicyChange { residential: Some(Some(ResidentialSpec::Eco)), height_limit: Some(Some(50.0)), ..Default::default() }),
+        // Plain homes at every tier (no look pulling the rents up), mid-rise.
+        ("Northside", rect(Vec2::new(farm_x, rail + 60.0), Vec2::new(works_x, hi.y + 60.0)), PolicyChange { height_limit: Some(Some(60.0)), ..Default::default() }),
         ("Garden Suburbs", rect(Vec2::new(farm_x, rail + 60.0), Vec2::new(farm_x + 260.0, hi.y + 60.0)), PolicyChange { residential: Some(Some(ResidentialSpec::Suburban)), height_limit: Some(Some(24.0)), ..Default::default() }),
-        ("Railside", rect(Vec2::new(farm_x, rail - 120.0), Vec2::new(works_x, rail + 60.0)), PolicyChange { residential: Some(Some(ResidentialSpec::Kowloon)), commercial: Some(Some(CommercialSpec::NightMarket)), ..Default::default() }),
+        // Cheap dense housing for the works' and the shops' staff.
+        ("Railside", rect(Vec2::new(farm_x, rail - 120.0), Vec2::new(works_x, rail + 260.0)), PolicyChange { residential: Some(Some(ResidentialSpec::Kowloon)), commercial: Some(Some(CommercialSpec::NightMarket)), ..Default::default() }),
         ("Sea Front", rect(Vec2::new(farm_x, lo.y - 80.0), Vec2::new(works_x, rail - 120.0)), PolicyChange { residential: Some(Some(ResidentialSpec::Eco)), commercial: Some(Some(CommercialSpec::Tourist)), height_limit: Some(Some(60.0)), ..Default::default() }),
         ("Midtown", circle(mt, 240.0), PolicyChange { commercial: Some(Some(CommercialSpec::NeonStrip)), residential: Some(Some(ResidentialSpec::Kowloon)), height_limit: Some(None), ..Default::default() }),
         ("Downtown", circle(dt + Vec2::new(0.0, 130.0), 300.0), PolicyChange { commercial: Some(Some(CommercialSpec::TechCampus)), residential: Some(Some(ResidentialSpec::Eco)), height_limit: Some(None), ..Default::default() }),

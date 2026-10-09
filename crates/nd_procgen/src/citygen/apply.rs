@@ -49,6 +49,22 @@ pub fn lay_city(world: &mut World, plan: &CityPlan) -> LaidCity {
         }
     }
     world.implement();
+    if planned {
+        // [perfect-city] Its diamonds come with the furnishing; only if none
+        // took does it fall back on a street off the east edge.
+        let f = super::furnish::furnish(world, plan);
+        if !world.has_way_in() {
+            let east = world.roads.alive_segments().filter(|(_, s)| s.is_street() && !s.is_highway()).flat_map(|(id, _)| { let (a, b) = world.roads.segment_points(id); [a, b] }).filter(|p| p.y < super::NORTH_LIMIT && p.x < nd_sim::landscape::MAP_EDGE).max_by(|a, b| a.x.total_cmp(&b.x));
+            if let Some(p) = east {
+                world.add_road(&[p, Vec2::new(nd_sim::landscape::MAP_EDGE, p.y)], 1, 1);
+            }
+        }
+        out.links = plan.links.len();
+        out.furnished = f.log;
+        out.lots = world.lots.len();
+        out.way_in = world.has_way_in();
+        return out;
+    }
     if !world.has_way_in() {
         // No interchange took: a road off the east edge of the map from the
         // easternmost street end.
@@ -56,14 +72,6 @@ pub fn lay_city(world: &mut World, plan: &CityPlan) -> LaidCity {
         if let Some(p) = east {
             world.add_road(&[p, Vec2::new(nd_sim::landscape::MAP_EDGE, p.y)], 1, 1);
         }
-    }
-    if planned {
-        let f = super::furnish::furnish(world, plan);
-        out.links = plan.links.len();
-        out.furnished = f.log;
-        out.lots = world.lots.len();
-        out.way_in = world.has_way_in();
-        return out;
     }
     // A starting town has the money for its plant.
     world.economy.treasury = world.economy.treasury.max(150_000.0);
