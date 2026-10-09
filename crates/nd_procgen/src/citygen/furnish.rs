@@ -252,7 +252,7 @@ fn interchanges(cx: &mut Ctx, plan: &CityPlan) {
 /// skew. A straight 2+2 bridge joins the nearest junctions on either bank
 /// wherever a crossing is more than `GAP` from the next.
 fn bridges(cx: &mut Ctx) {
-    const GAP: f32 = 170.0;
+    const GAP: f32 = 150.0;
     let Some(river) = cx.w.landscape.rivers.iter().filter(|r| !r.stream).max_by(|a, b| a.width.total_cmp(&b.width)).cloned() else { return };
     let lo = cx.w.lots.values().map(|l| l.center).fold(Vec2::splat(f32::INFINITY), Vec2::min);
     let hi = cx.w.lots.values().map(|l| l.center).fold(Vec2::splat(f32::NEG_INFINITY), Vec2::max);
@@ -280,13 +280,13 @@ fn bridges(cx: &mut Ctx) {
         let Some(rp) = river.points.iter().copied().filter(|p| (p.y - here).abs() < 40.0).min_by(|a, b| (a.y - here).abs().total_cmp(&(b.y - here).abs())) else { continue };
         let half = river.width * 0.5;
         let bank = |side: f32| {
-            cx.street_nodes_near(rp, half + 200.0)
+            cx.street_nodes_near(rp, half + 320.0)
                 .into_iter()
-                .filter(|q| (q.x - rp.x) * side > half + 15.0 && (q.y - here).abs() < 45.0)
+                .filter(|q| (q.x - rp.x) * side > half + 15.0 && (q.y - here).abs() < 60.0)
                 .min_by(|a, b| a.distance(rp).total_cmp(&b.distance(rp)))
         };
         let (Some(w), Some(e)) = (bank(-1.0), bank(1.0)) else { continue };
-        if (w.y - e.y).abs() > 50.0 {
+        if (w.y - e.y).abs() > 70.0 {
             continue;
         }
         let ok = cx.w.roads.segments_in_box(w.min(e) - Vec2::splat(2.0), w.max(e) + Vec2::splat(2.0)).all(|s| {

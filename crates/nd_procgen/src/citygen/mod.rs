@@ -386,10 +386,10 @@ fn resample(pts: &[Vec2], step: f32) -> Vec<Vec2> {
 
 /// Waterfront streets: along both banks of each river and inland along
 /// the coast, kept where the ground is good.
-fn waterfronts(site: &Site) -> Vec<Line> {
+fn waterfronts(site: &Site, rivers: bool) -> Vec<Line> {
     let land = site.landscape;
     let mut shores: Vec<(Vec<Vec2>, f32)> = Vec::new();
-    for r in land.rivers.iter().filter(|r| !r.stream) {
+    for r in land.rivers.iter().filter(|r| rivers && !r.stream) {
         let pts: Vec<Vec2> = r.points.iter().copied().filter(|p| p.x.abs() < HALF + 300.0 && p.y.abs() < HALF + 300.0).collect();
         if pts.len() >= 2 {
             shores.push((pts.clone(), r.width * 0.5 + 30.0));
@@ -455,7 +455,10 @@ pub fn generate(preset: CityPreset, seed: u64, land: &Landscape) -> CityPlan {
     };
     let raster = FieldRaster::new(&field, site.lo - Vec2::splat(20.0), site.hi + Vec2::splat(20.0), 6.0);
     let mut tracer = Tracer::new(&site, &raster);
-    for l in waterfronts(&site) {
+    // [perfect-city] A planned city keeps its river banks to parks and the
+    // works: no winding riverside streets, whose tangles of close
+    // junctions with the grid jam once the works are busy.
+    for l in waterfronts(&site, preset != CityPreset::PerfectCity) {
         tracer.add_line(l);
     }
     // Arterials start just off the centres (clear of the plazas).
