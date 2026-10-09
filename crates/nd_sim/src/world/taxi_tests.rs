@@ -251,3 +251,41 @@ impl World {
         self.taxis.cabs.insert(crate::taxi::Cab { company, number, model: taxi::cab_model(number), place: CabPlace::Yard, job: CabJob::Idle, on_duty: false, last_pos: pos, since: 0 });
     }
 }
+
+/// [review] A cab sent to a full rank waited at the kerb still `ToRank`:
+/// counted at the rank and never moved on by the rota again.
+#[test]
+fn a_cab_at_a_full_rank_is_free_for_the_rota() {
+    let (mut w, shop) = town();
+    let yard = w.build_taxi_company(yard_lot(&w), "Test Cabs".into()).expect("a yard");
+    finish_all(&mut w);
+    run(&mut w, 15);
+    // A rider hails one: a cab comes out on the road.
+    let c = resident(&mut w);
+    w.citizens[c].drunk = 0.8;
+    let from = w.building_entrance(w.citizens[c].home.unwrap()).unwrap();
+    let to = w.building_entrance(shop).unwrap();
+    let q = TripQuery { from, to, target: shop, purpose: Purpose::Visit(LandUse::Commercial), allow_transit: true, allow_car: true, allow_bike: true };
+    let opts = w.mode_options(c, &q);
+    let ModePlan::Taxi { segment, at, wait_at } = opts.iter().find(|o| o.mode == TripMode::Taxi).expect("a taxi option").plan else { panic!() };
+    w.hail_taxi(c, segment, at, wait_at, shop, Purpose::Visit(LandUse::Commercial), true);
+    let mut on_road = None;
+    for _ in 0..400 {
+        run(&mut w, 1);
+        on_road = w.taxis.cabs.iter().find_map(|(id, c)| if let CabPlace::Road(car) = c.place { Some((id, car)) } else { None });
+        if on_road.is_some() {
+            break;
+        }
+    }
+    let (id, car) = on_road.expect("a cab on the road");
+    // The shop's rank, every slot taken.
+    let model = w.taxis.cabs[id].model;
+    let (segment, _) = w.roads.alive_segments().next().unwrap();
+    for slot in 0..taxi::RANK_SLOTS as u8 {
+        w.taxis.cabs.insert(crate::taxi::Cab { company: yard, number: 90 + slot as u16, model, place: CabPlace::Rank { rank: shop, slot, segment, pos: Vec2::ZERO, heading: 0.0 }, job: CabJob::Idle, on_duty: true, last_pos: Vec2::ZERO, since: 0 });
+    }
+    w.taxis.cabs[id].job = CabJob::ToRank { rank: shop };
+    w.cab_arrived(car, id);
+    assert!(!matches!(w.taxis.cabs[id].place, CabPlace::Rank { .. } | CabPlace::Road(_)), "waits at the kerb");
+    assert_eq!(w.taxis.cabs[id].job, CabJob::Idle, "and the rota may send it on");
+}

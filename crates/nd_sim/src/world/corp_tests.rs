@@ -292,6 +292,26 @@ fn the_levy_takes_a_share_of_the_corps_takings_for_the_treasury() {
     assert!(!w.corps.rules.allowed);
 }
 
+/// [review] The levy counted the day's skim twice (`cash` already held it),
+/// so a corp short of cash paid more than it had.
+#[test]
+fn a_corp_short_of_cash_pays_no_more_levy_than_it_holds() {
+    let mut w = two_streets();
+    let (a, b) = firm(&mut w, 1000.0, 0);
+    let ci = w.promote_to_corp(a).unwrap();
+    for bid in [a, b] {
+        let z = w.buildings[bid].business.as_mut().unwrap();
+        z.books = vec![DayBook { revenue: 1000.0, spend: 990.0 }];
+        z.money = 5_000.0;
+    }
+    w.corps.corps[ci].cash = 0.0;
+    w.set_corp_rules(None, None, Some(MAX_LEVY));
+    w.corp_books(ci);
+    let c = &w.corps.corps[ci];
+    assert!(c.cash >= -1e-6, "the levy left the corp in debt: {}", c.cash);
+    assert!(c.levy_total > 0.0);
+}
+
 // ── universities ─────────────────────────────────────────────────────────
 
 /// A campus road: a big civic plot in the middle, homes either side, a
@@ -541,11 +561,7 @@ fn corps_and_campuses_are_saved_and_deterministic() {
 
 #[test]
 fn an_old_save_loads_with_no_corps_and_runs() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../saves/flags/flag_patch.ron");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        eprintln!("skipped: no {}", path.display());
-        return;
-    };
+    let text = super::legacy_save_text();
     assert!(!text.contains("corps:"), "a save from before mega-corps");
     let mut w = World::from_ron(&text).expect("the old save loads");
     assert!(w.corps.corps.is_empty() && w.corps.campuses.is_empty());
@@ -633,4 +649,51 @@ fn a_corp_opens_varied_trades_on_land_it_buys() {
     assert_eq!(BusinessKind::Cafe.walk_in_sale(), Some(Resource::BakedGoods));
     assert_eq!(BusinessKind::Bookshop.walk_in_sale(), Some(Resource::Goods));
     assert!(BusinessKind::Cafe.student_trade() && BusinessKind::Bookshop.student_trade());
+}
+
+/// [review] A plot a campus bought with a building on it: once cleared,
+/// `claim_reserved` merged it into the university building itself and the
+/// annex stayed pending forever (counting toward the cap).
+#[test]
+fn a_campus_annex_goes_up_on_a_plot_that_had_a_building() {
+    let (mut w, uni) = campus_town();
+    let at = w.lots[w.buildings[uni].lot].center;
+    let lot = free_lots(&w, LandUse::Commercial).into_iter().min_by(|a, b| w.lots[*a].center.distance(at).total_cmp(&w.lots[*b].center.distance(at))).unwrap();
+    let shop = business(&mut w, lot, BusinessKind::Grocery, 200.0);
+    // As `grow_campus` does for a standing building.
+    w.demolish_with(shop, None, Some("bought for the campus"));
+    assert!(w.lots[lot].building.is_some(), "a demolition site first");
+    w.estate.reserved.insert(lot, uni);
+    w.corps.campuses[0].pending.push((lot, Annex::Theatre));
+    w.finish_demolition(shop);
+    let b = w.lots[lot].building.expect("the annex site");
+    assert_ne!(b, uni, "not merged into the university");
+    assert_eq!(w.buildings[b].annex, Some(Annex::Theatre));
+    assert!(!w.buildings[uni].plot.extra_lots.contains(&lot));
+    assert!(w.corps.campuses[0].pending.is_empty(), "no longer pending");
+    assert!(w.corps.campuses[0].annexes.iter().any(|(x, a)| *x == b && *a == Annex::Theatre));
+}
+
+/// [review] New students were built from a clone of a random adult and
+/// arrived drunk, asleep or with their commute if that adult was.
+#[test]
+fn a_new_student_arrives_fresh_whoever_lives_in_town() {
+    let (mut w, _) = campus_town();
+    people(&mut w);
+    assert!(!w.citizens.is_empty());
+    for c in w.citizens.values_mut() {
+        c.drunk = 1.0;
+        c.asleep = true;
+        c.wakefulness = 0.0;
+        c.packed_meal = 0.0;
+        c.commute.parking_pain = 9.0;
+    }
+    let dorm = w.buildings.iter().find(|(_, b)| b.land_use == LandUse::Residential && b.operating()).map(|(id, _)| id).unwrap();
+    let s = w.student_arrives(0, dorm).expect("a student");
+    let c = &w.citizens[s];
+    assert_eq!(c.drunk, 0.0);
+    assert!(!c.asleep && c.wakefulness > 0.5 && c.packed_meal > 0.0);
+    assert_eq!(c.commute.parking_pain, 0.0);
+    assert_eq!(c.home, Some(dorm));
+    assert_eq!(c.memories.len(), 1, "only their own arrival");
 }

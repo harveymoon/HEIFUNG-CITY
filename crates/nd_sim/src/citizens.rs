@@ -522,6 +522,57 @@ pub fn night_for(seed: u64, hour: u64) -> bool {
 pub const EXHAUSTED: f32 = 0.12;
 
 impl Citizen {
+    /// [review] Someone new in town, fresh: at `pos` by `home`, idle, awake,
+    /// sober, with a packed meal, no car, no memories and a blank commute.
+    /// Callers set what differs (income, savings, mood, wheels, looks).
+    /// Newcomers used to be built from `..template`, a clone of a random
+    /// adult, and inherited their drunkenness, sleep and commute.
+    pub fn newcomer(name: String, seed: u64, age: u8, home: Option<BuildingId>, household: Option<HouseholdId>, pos: Vec2, tick: u64) -> Self {
+        Citizen {
+            name,
+            seed,
+            home,
+            work: None,
+            pos,
+            heading: 0.0,
+            prev_pos: pos,
+            prev_heading: 0.0,
+            mode: TravelMode::Walk,
+            owns_car: false,
+            owns_bike: false,
+            vehicle: None,
+            parked_at: None,
+            transit: None,
+            activity: Activity::Idle,
+            memories: Vec::new(),
+            places: Default::default(),
+            thought: String::new(),
+            spotlight: false,
+            next_decision_tick: tick + 5,
+            arrived_tick: tick,
+            inside: None,
+            mood: 0.6,
+            income: 0.0,
+            savings: 0.0,
+            rent_stress_days: 0,
+            satiety: 0.8,
+            groceries: 0.0,
+            hungry_days: 0,
+            trail: Vec::new(),
+            pending_footfall: Vec::new(),
+            household,
+            age,
+            wakefulness: 0.9,
+            asleep: false,
+            packed_meal: 1.0,
+            drunk: 0.0,
+            car: None,
+            to_car: None,
+            commute: Default::default(),
+            look: None,
+        }
+    }
+
     /// Record the current position if the citizen has moved on since the
     /// last point. Called once per tick after every system has moved people.
     pub fn push_trail(&mut self) {

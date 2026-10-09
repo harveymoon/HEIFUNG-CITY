@@ -348,12 +348,8 @@ fn pressure_and_scene_round_trip_and_old_saves_load() {
 /// The player's flagged save from before this work loads and runs a day of
 /// pressure. Skipped where the save is not copied in.
 #[test]
-fn the_flag_patch_save_loads_and_reads_its_pressures() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../saves/flags/flag_patch.ron");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        eprintln!("skipped: {} not found", path.display());
-        return;
-    };
+fn an_old_save_loads_and_reads_its_pressures() {
+    let text = super::legacy_save_text();
     let mut w = World::from_ron(&text).expect("the old save loads");
     assert!(w.pressure.readings.is_empty(), "nothing read before this work");
     let mut minds = IdleMind;

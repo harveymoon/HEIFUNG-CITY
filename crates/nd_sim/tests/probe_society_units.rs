@@ -10,24 +10,14 @@
 
 use nd_minds::RuleBasedMind;
 use nd_sim::services::{CrimeKind, IncidentKind, Outcome, Stage};
-use nd_sim::{Activity, BuildingId, LandUse, Placeable, ServiceKind, Tier, World};
+use nd_sim::{Activity, BuildingId, LandUse, ServiceKind, Tier, World};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-#[path = "demo_city.rs"]
-#[allow(dead_code)]
-mod demo;
+mod common;
 
+/// A station of `kind`, working at once.
 fn place(w: &mut World, kind: ServiceKind, tier: Tier, uses: &[LandUse]) -> BuildingId {
-    let what = Placeable::Service(kind, tier);
-    let lot = w
-        .lots
-        .iter()
-        .filter(|(id, l)| uses.contains(&l.land_use) && l.building.is_none() && w.placement_problem(what, *id).is_none())
-        .map(|(id, _)| id)
-        .next()
-        .or_else(|| w.lots.iter().filter(|(id, l)| uses.contains(&l.land_use) && w.placement_problem(what, *id).is_none()).map(|(id, _)| id).next())
-        .expect("a lot");
-    let id = w.build_service(lot, kind, tier).unwrap();
+    let id = common::place(w, kind, tier, uses);
     // [under-construction] A station works once what stood on its lot is
     // cleared: skip the wait.
     w.finish_demolition(id);
@@ -35,7 +25,7 @@ fn place(w: &mut World, kind: ServiceKind, tier: Tier, uses: &[LandUse]) -> Buil
 }
 
 fn warm_world() -> (World, RuleBasedMind) {
-    let mut w = demo::demo_world();
+    let mut w = common::demo_world();
     w.economy.treasury = 1e7;
     let mut minds = RuleBasedMind::default();
     // Grow a town first.

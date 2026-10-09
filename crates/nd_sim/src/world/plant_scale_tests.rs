@@ -247,3 +247,21 @@ fn hydro_plants_are_sized_to_their_site_and_old_ones_keep_their_output() {
     let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
     assert_eq!(back.buildings[a].plant_scale, Some(ps.scale));
 }
+
+/// [review] `build_power` copied the preview's site checks minus the
+/// thickness one, so the click put heavy plants where the hover refused.
+#[test]
+fn building_a_plant_refuses_what_the_preview_refuses() {
+    let mut w = town();
+    // A lot squeezed to a long strip along the kerb: big enough, too thin.
+    let lot = w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none() && l.car_access()).map(|(id, _)| id).next().unwrap();
+    let c = w.lots[lot].center;
+    w.lots[lot].polygon = square(c.x - 60.0, -18.0, 120.0, 10.0);
+    let strip = &w.lots[lot];
+    assert!(strip.area() >= PowerPlantKind::Coal.min_area() && crate::zoning::site_thickness(&strip.polygon) < PowerPlantKind::Coal.min_thickness());
+    let problem = w.placement_problem(Placeable::Plant(PowerPlantKind::Coal), lot);
+    assert!(problem.as_deref().is_some_and(|p| p.contains("too narrow")), "{problem:?}");
+    let built = w.build_power(lot, PowerPlantKind::Coal);
+    assert!(built.is_err(), "the click refuses it too: {built:?}");
+    assert_eq!(built.err(), problem);
+}

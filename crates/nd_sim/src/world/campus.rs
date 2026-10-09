@@ -128,8 +128,17 @@ impl World {
     pub(super) fn claim_pending(&mut self, ki: usize) {
         let pending = self.corps.campuses[ki].pending.clone();
         for (lot, annex) in pending {
-            let Some(l) = self.lots.get(lot) else { continue };
+            let Some(l) = self.lots.get(lot) else {
+                self.corps.campuses[ki].pending.retain(|(x, _)| *x != lot);
+                continue;
+            };
             if l.building.is_some() {
+                // [review] Still being cleared while the plot stays reserved;
+                // a plot no longer reserved (older saves merged it into the
+                // university itself) is not getting its annex.
+                if !self.estate.reserved.contains_key(&lot) {
+                    self.corps.campuses[ki].pending.retain(|(x, _)| *x != lot);
+                }
                 continue;
             }
             self.estate.reserved.remove(&lot);
@@ -259,7 +268,6 @@ impl World {
     /// A student from out of town moves into a dorm room: a household of
     /// one, a little money, no car. Names and looks from hashes.
     pub(super) fn student_arrives(&mut self, ki: usize, dorm: BuildingId) -> Option<CitizenId> {
-        let template = self.citizens.values().find(|c| c.stage() == crate::citizens::LifeStage::Adult)?.clone();
         let seed = self.fresh_seed();
         let mut rng = crate::rng_for(seed ^ 0x57_0D_E7, self.clock.tick);
         let family = names::family_name(&mut rng);
@@ -271,43 +279,14 @@ impl World {
         let look = crate::looks::family_looks(&[(seed, age)], Tier::Low).into_iter().next();
         let campus = self.buildings[self.corps.campuses[ki].building].name.clone();
         let mut c = Citizen {
-            name,
-            seed,
-            home: Some(dorm),
-            work: None,
-            pos,
-            prev_pos: pos,
-            heading: 0.0,
-            prev_heading: 0.0,
-            mode: TravelMode::Walk,
-            owns_car: false,
             owns_bike: unit(mix(seed, 4)) < 0.5,
-            vehicle: None,
-            parked_at: None,
-            transit: None,
-            activity: Activity::Idle,
-            memories: Vec::new(),
-            places: Default::default(),
             thought: "First week on campus.".to_string(),
-            spotlight: false,
-            next_decision_tick: tick + 5,
-            arrived_tick: tick,
-            inside: None,
             mood: 0.75,
             income: GIG_INCOME * 0.6,
             savings: 60.0,
-            rent_stress_days: 0,
-            satiety: 0.8,
             groceries: 1.0,
-            hungry_days: 0,
-            trail: Vec::new(),
-            pending_footfall: Vec::new(),
-            household: Some(hid),
-            age,
-            car: None,
-            to_car: None,
             look,
-            ..template
+            ..Citizen::newcomer(name, seed, age, Some(dorm), Some(hid), pos, tick)
         };
         c.memories.clear();
         c.remember(tick, format!("Came to Neon District to study at {campus}. Moved into the dorm."));
@@ -415,6 +394,7 @@ impl World {
             Some(b) => {
                 let memory = format!("{name} bought our building for its campus. We had to go.");
                 self.pack_business(b, &format!("{name}'s campus"));
+                self.settle_sale(b);
                 self.demolish_with(b, None, Some(&memory));
                 if self.lots.get(lot).is_some_and(|l| l.building.is_none()) {
                     self.build_annex(ki, lot, annex);
@@ -444,7 +424,7 @@ impl World {
         };
         let mut best: Option<(f32, LotId, Option<BuildingId>)> = None;
         for (lid, l) in self.lots.iter() {
-            if !uses.contains(&l.land_use) || !l.usable() || l.landlocked || l.area() < min_area || self.estate.reserved.contains_key(&lid) || self.under_facility(l.center) || self.district_frozen(lid) || self.services.is_rubble(lid) {
+            if !uses.contains(&l.land_use) || l.area() < min_area || !self.site_clear(lid, SiteRule::STREET_NOT_HISTORIC) {
                 continue;
             }
             let d = l.center.distance(at);

@@ -54,7 +54,8 @@ impl World {
     /// with a few cabs to start. `None` when the lot will not do.
     pub fn build_taxi_company(&mut self, lot_id: LotId, name: String) -> Option<BuildingId> {
         let lot = self.lots.get(lot_id)?;
-        if lot.building.is_some() || lot.landlocked || lot.car_segment.is_none() || self.under_facility(lot.center) || lot.area() < taxi::YARD_MIN_AREA {
+        // [review] Not on a plot an owner bought, nor on rubble.
+        if lot.car_segment.is_none() || lot.area() < taxi::YARD_MIN_AREA || !self.lot_free_for(lot_id, SiteRule::STREET) {
             return None;
         }
         let jobs = taxi::COMPANY_JOBS;
@@ -777,12 +778,16 @@ impl World {
             _ => None,
         }).collect();
         let Some(slot) = (0..taxi::RANK_SLOTS as u8).find(|s| !taken.contains(s)) else {
-            // Full: wait at the kerb here instead.
+            // Full: wait at the kerb here instead. [review] Idle there, so
+            // the rota sends it on: kept `ToRank`, it blocked the rank's
+            // count and was never moved again.
             self.park_cab_at_kerb(id, car);
+            self.taxis.cabs[id].job = CabJob::Idle;
             return;
         };
         let Some((segment, head, heading)) = self.cab_kerb_pose(car) else {
             self.park_cab_at_kerb(id, car);
+            self.taxis.cabs[id].job = CabJob::Idle;
             return;
         };
         let back = Vec2::new(heading.cos(), heading.sin()) * (-6.5 * slot as f32);

@@ -417,12 +417,26 @@ impl Building {
         self.plant.is_some() || self.battery.is_some()
     }
 
-    /// Placed by the player: a plant, battery, depot, station, yard, dock, service or
-    /// attraction. Never upgraded, redeveloped or counted towards density.
-    /// (A dock was missing here: the daily market update retiered shipping
-    /// ports and recomputed their jobs as an ordinary industrial building.)
+    /// [review] One of the city's own structures, put down by the player
+    /// with the Build window: a plant or battery, bus depot, rail yard or
+    /// station, dock, service or attraction, metro station, city car park
+    /// or cargo hub. Its ground is the city's; the market never buys it,
+    /// and only the player removes it. The one source of truth behind
+    /// `World::is_civic_structure` and `World::is_city_building`, which
+    /// disagreed with each other and with [`Building::is_special`] (city
+    /// car parks and cargo hubs were missing here, annexes there).
+    pub fn is_city_structure(&self) -> bool {
+        self.is_power() || self.depot || self.rail.is_some() || self.port.is_some() || self.service.is_some() || self.metro || self.city_parking || self.business.as_ref().is_some_and(|z| z.kind == crate::market::BusinessKind::CargoHub)
+    }
+
+    /// Not an ordinary grown building: a city structure
+    /// ([`Building::is_city_structure`]) or a campus's special annex. Never
+    /// upgraded, redeveloped or counted towards density. (A dock was
+    /// missing here once: the daily market update retiered shipping ports
+    /// and recomputed their jobs as an ordinary industrial building; city
+    /// car parks and cargo hubs were, until the review.)
     pub fn is_special(&self) -> bool {
-        self.is_power() || self.depot || self.rail.is_some() || self.port.is_some() || self.service.is_some() || self.metro || self.annex.is_some_and(|a| a.special())
+        self.is_city_structure() || self.annex.is_some_and(|a| a.special())
     }
 
     pub fn parking_free(&self) -> u16 {

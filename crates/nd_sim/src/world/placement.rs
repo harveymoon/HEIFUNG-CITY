@@ -50,12 +50,57 @@ impl PlacementSite {
     }
 }
 
+/// [review] What a new-building search tolerates on a lot besides the
+/// fixed bars (promised to an owner, under a station or yard, rubble):
+/// see [`World::site_clear`] and [`World::lot_free_for`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SiteRule {
+    /// Backland with no road frontage (`landlocked`) may be taken (it is
+    /// joined to a plot that has a street).
+    pub backland: bool,
+    /// A historic district's lot may be taken (`district_frozen`).
+    pub historic: bool,
+}
+
+impl SiteRule {
+    /// A lot on a street, in any district: ordinary growth and businesses.
+    pub const STREET: SiteRule = SiteRule { backland: false, historic: true };
+    /// A lot on a street, not in a historic district (corps, campuses).
+    pub const STREET_NOT_HISTORIC: SiteRule = SiteRule { backland: false, historic: false };
+    /// Any lot, backland too, in any district (plots joined to a site).
+    pub const ANY: SiteRule = SiteRule { backland: true, historic: true };
+    /// Backland too, but not in a historic district (merged sites: towers,
+    /// McMansions, mansions).
+    pub const ANY_NOT_HISTORIC: SiteRule = SiteRule { backland: true, historic: false };
+}
+
 impl World {
+    /// [review] The one test of whether something new may be put on a lot,
+    /// whatever stands there now (a buyout may clear it): it exists, is
+    /// not promised to an owner (`estate.reserved`), not under a station or
+    /// yard, not rubble, and passes `rule` on backland and historic
+    /// districts. About twenty searches each had their own copy, some
+    /// missing the reserved or rubble checks (parking and taxi yards went
+    /// up on plots an owner had bought).
+    pub(crate) fn site_clear(&self, lid: LotId, rule: SiteRule) -> bool {
+        let Some(l) = self.lots.get(lid) else { return false };
+        (rule.backland || !l.landlocked) && !self.estate.reserved.contains_key(&lid) && !self.services.is_rubble(lid) && (rule.historic || !self.district_frozen(lid)) && !self.under_facility(l.center)
+    }
+
+    /// [review] A vacant lot something new may go on: nothing stands there
+    /// and [`World::site_clear`].
+    pub(crate) fn lot_free_for(&self, lid: LotId, rule: SiteRule) -> bool {
+        self.lots.get(lid).is_some_and(|l| l.building.is_none()) && self.site_clear(lid, rule)
+    }
+
     /// One of the buildings the player puts down on a lot (a plant,
     /// battery, depot, service, attraction, station, cargo hub or a parking
     /// lot the city runs): its ground is the city's, out of the zoning.
+    /// [review] [`Building::is_city_structure`]: a city car park carries
+    /// `city_parking` (set on load for older saves), so `city_lots` is no
+    /// second test.
     pub fn is_city_building(&self, id: BuildingId) -> bool {
-        self.buildings.get(id).is_some_and(|b| Self::is_civic_structure(b) || self.vehicles.city_lots.contains_key(&id))
+        self.buildings.get(id).is_some_and(|b| b.is_city_structure())
     }
 
     /// A lot under a city building ([`World::is_city_building`]).

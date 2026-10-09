@@ -369,8 +369,7 @@ impl World {
         let mut lots: Vec<(LotId, f32)> = self
             .lots
             .iter()
-            .filter(|(_, l)| l.land_use == LandUse::Commercial && l.building.is_none() && l.usable() && !l.landlocked)
-            .filter(|(_, l)| !self.under_facility(l.center))
+            .filter(|(id, l)| l.land_use == LandUse::Commercial && self.lot_free_for(*id, SiteRule::STREET))
             .map(|(id, l)| {
                 let quarter = self.districts.at(l.center).is_some_and(|d| d.commercial == Some(crate::districts::CommercialSpec::Tourist));
                 let pull: f32 = sights.iter().map(|(p, s)| s / (1.0 + p.distance(l.center) / 300.0)).sum();

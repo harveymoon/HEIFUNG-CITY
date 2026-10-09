@@ -115,7 +115,7 @@ impl World {
         self.lots
             .iter()
             .filter(|(id, l)| {
-                l.building.is_none() && l.usable() && !l.landlocked && l.land_use == m.land_use && l.area() >= m.area * 0.5 && !self.estate.reserved.contains_key(id) && !self.under_facility(l.center) && !self.services.is_rubble(*id)
+                l.land_use == m.land_use && l.area() >= m.area * 0.5 && self.lot_free_for(*id, SiteRule::STREET)
             })
             .map(|(id, l)| (l.center.distance(m.from), id))
             .filter(|(d, _)| *d <= RELOCATE_REACH)

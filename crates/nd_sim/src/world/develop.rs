@@ -528,7 +528,9 @@ impl World {
     pub(super) fn develop(&mut self) {
         // [relocate] Businesses bought out of their buildings move first.
         self.relocate_waiting();
-        let vacant: Vec<LotId> = self.lots.iter().filter(|(_, l)| (l.building.is_none() || self.rezoned_park(l).is_some()) && l.usable()).map(|(id, _)| id).collect();
+        // [review] Only lots something may go on (not promised, rubble or
+        // under a yard): parking and taxi yards took these as they were.
+        let vacant: Vec<LotId> = self.lots.iter().filter(|(id, l)| (l.building.is_none() || self.rezoned_park(l).is_some()) && self.site_clear(*id, SiteRule::STREET)).map(|(id, _)| id).collect();
         if vacant.is_empty() {
             return;
         }
@@ -750,14 +752,16 @@ impl World {
         // A park on ground rezoned for building goes when building begins.
         if let Some(park) = self.rezoned_park(lot) {
             self.vacate(park, Some("The park was cleared for new building after a rezoning.".to_string()), None);
-            self.buildings.remove(park);
+            let plot = self.buildings.remove(park).map(|b| b.plot).unwrap_or_default();
             self.lots[lot_id].building = None;
             self.lots[lot_id].park = None;
             self.events.push(SimEvent::BuildingRemoved(park, lot_id));
+            // [review] Extra plots and owner records go with it.
+            self.estate_building_gone(park, &plot, lot_id);
         }
         let Some(lot) = self.lots.get(lot_id) else { return None };
         // [land] a plot someone bought is theirs
-        if lot.landlocked || lot.building.is_some() || self.under_facility(lot.center) || self.services.is_rubble(lot_id) || self.estate.reserved.contains_key(&lot_id) {
+        if lot.building.is_some() || !self.site_clear(lot_id, SiteRule::STREET) {
             return None;
         }
         let lu = self.lots[lot_id].land_use;

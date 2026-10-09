@@ -8,24 +8,11 @@
 
 use nd_minds::RuleBasedMind;
 use nd_sim::services::{Outcome, BURNED_DOWN};
-use nd_sim::{BuildingId, LandUse, Placeable, ServiceKind, Tier, World};
+use nd_sim::{BuildingId, LandUse, ServiceKind, Tier, World};
 
-#[path = "demo_city.rs"]
-#[allow(dead_code)]
-mod demo;
+mod common;
 
-fn place(w: &mut World, kind: ServiceKind, tier: Tier, uses: &[LandUse]) -> BuildingId {
-    let what = Placeable::Service(kind, tier);
-    let lot = w
-        .lots
-        .iter()
-        .filter(|(id, l)| uses.contains(&l.land_use) && l.building.is_none() && w.placement_problem(what, *id).is_none())
-        .map(|(id, _)| id)
-        .next()
-        .or_else(|| w.lots.iter().filter(|(id, l)| uses.contains(&l.land_use) && w.placement_problem(what, *id).is_none()).map(|(id, _)| id).next())
-        .expect("a lot");
-    w.build_service(lot, kind, tier).unwrap()
-}
+use common::place;
 
 fn to_midnight(w: &mut World, minds: &mut RuleBasedMind) {
     loop {
@@ -38,7 +25,7 @@ fn to_midnight(w: &mut World, minds: &mut RuleBasedMind) {
 
 #[test]
 fn civic_structures_never_decay_or_burn_down_and_fire_damage_is_repaired() {
-    let mut w = demo::demo_world();
+    let mut w = common::demo_world();
     w.economy.treasury = 1e7;
     let mut minds = RuleBasedMind::default();
     let police = place(&mut w, ServiceKind::Police, Tier::Low, &[LandUse::Civic, LandUse::Commercial]);

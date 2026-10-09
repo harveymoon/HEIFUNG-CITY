@@ -541,6 +541,10 @@ pub struct Ports {
     /// count, taken aboard by the next run to a town off the map.
     #[serde(default)]
     pub boarding: std::collections::BTreeMap<BuildingId, u32>,
+    /// [review] Of `boarding`, the day-trippers who paid both legs at the
+    /// terminal: carried without a fare.
+    #[serde(default)]
+    pub prepaid: std::collections::BTreeMap<BuildingId, u32>,
     /// [ferries] Residents on their way to a terminal for a day trip.
     /// On arrival they board.
     #[serde(default)]

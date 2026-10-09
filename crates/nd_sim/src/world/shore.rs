@@ -216,7 +216,7 @@ impl World {
         let bare: Vec<LotId> = self
             .lots
             .iter()
-            .filter(|(id, l)| l.shore.beach && l.land_use == LandUse::Park && l.building.is_none() && l.landlocked && !self.under_facility(l.center) && !self.services.is_rubble(*id))
+            .filter(|(id, l)| l.shore.beach && l.land_use == LandUse::Park && l.landlocked && self.lot_free_for(*id, SiteRule::ANY))
             .map(|(id, _)| id)
             .collect();
         for lot in bare {
