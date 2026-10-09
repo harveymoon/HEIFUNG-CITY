@@ -5,13 +5,10 @@
 use super::*;
 
 /// Live streets at a node.
-pub(super) fn street_arms(roads: &RoadNetwork, n: NodeId) -> usize {
-    roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive && roads.segment(s).is_street()).count()
-}
 
 /// Widest half width of the streets at a node.
 pub(super) fn widest(roads: &RoadNetwork, n: NodeId) -> f32 {
-    roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive && roads.segment(s).is_street()).map(|&s| roads.segment(s).half_width()).fold(0.0, f32::max)
+    roads.streets_at(n).map(|s| roads.segment(s).half_width()).fold(0.0, f32::max)
 }
 
 /// [interchange] How much further out than the junction's radius
@@ -23,7 +20,7 @@ pub(super) fn widest(roads: &RoadNetwork, n: NodeId) -> f32 {
 /// gore, the highway and its slip roads.
 pub fn stop_back(roads: &RoadNetwork, node: NodeId, seg: SegmentId, r: f32) -> f32 {
     let s = roads.segment(seg);
-    if street_arms(roads, node) < 3 || s.fronts_nothing() || roads.ring_of_node(node).is_some() {
+    if roads.street_degree(node) < 3 || s.fronts_nothing() || roads.ring_of_node(node).is_some() {
         return 0.0;
     }
     if roads.node(node).segments.iter().any(|&o| roads.segment(o).alive && (roads.segment(o).is_motorway() || roads.segment(o).is_rail())) {
@@ -37,7 +34,7 @@ pub fn stop_back(roads: &RoadNetwork, node: NodeId, seg: SegmentId, r: f32) -> f
 
 /// A junction of three or more streets: its arms get crosswalks.
 pub fn is_junction(roads: &RoadNetwork, n: NodeId) -> bool {
-    street_arms(roads, n) >= 3
+    roads.street_degree(n) >= 3
 }
 
 /// Distance from a junction's centre to the middle of the crosswalk
@@ -94,7 +91,7 @@ pub(super) fn acute_setback(roads: &RoadNetwork, node: NodeId, seg: SegmentId) -
 /// tunnels: nobody crosses a carriageway in the bore, they walk to a portal
 /// or a junction (a zebra there was also drawn on the surface above).
 pub fn midblock_crossings(roads: &RoadNetwork) -> Vec<(SegmentId, f32)> {
-    let plain = |n: NodeId| roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive).count() == 2 && street_arms(roads, n) == 2;
+    let plain = |n: NodeId| roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive).count() == 2 && roads.street_degree(n) == 2;
     let ok = |s: SegmentId| {
         let sg = roads.segment(s);
         sg.alive && sg.is_street() && !sg.fronts_nothing()

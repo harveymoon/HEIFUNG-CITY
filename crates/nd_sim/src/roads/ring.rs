@@ -68,7 +68,7 @@ impl Ring {
     }
 
     pub fn half_width(&self) -> f32 {
-        self.lanes as f32 * LANE_WIDTH * 0.5 + SHOULDER
+        half_width_spec(RoadKind::Street, self.lanes, 0)
     }
 
     /// Radius of the ring's inner kerb: inside it the ground is open land.

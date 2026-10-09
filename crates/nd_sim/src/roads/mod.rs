@@ -159,11 +159,24 @@ impl Segment {
     }
 
     pub fn half_width(&self) -> f32 {
-        match self.kind {
-            RoadKind::Street => self.lanes() as f32 * LANE_WIDTH * 0.5 + SHOULDER,
-            RoadKind::Path => PATH_HALF_WIDTH,
-            RoadKind::Rail => RAIL_HALF_WIDTH,
-        }
+        half_width_spec(self.kind, self.lanes_fwd, self.lanes_bwd)
+    }
+
+    /// Half the corridor the way takes from the land: the carriageway and
+    /// its pavement (streets), or a metre of verge. Where parcels start and
+    /// how wide the built ground is graded.
+    pub fn corridor_half_width(&self) -> f32 {
+        self.half_width() + if self.is_street() { crate::zoning::SIDEWALK } else { 1.0 }
+    }
+}
+
+/// Half the width of a way of `kind` with these lanes, as built
+/// ([`Segment::half_width`]); also a ring's and a planned road's.
+pub fn half_width_spec(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> f32 {
+    match kind {
+        RoadKind::Street => (lanes_fwd + lanes_bwd) as f32 * LANE_WIDTH * 0.5 + SHOULDER,
+        RoadKind::Path => PATH_HALF_WIDTH,
+        RoadKind::Rail => RAIL_HALF_WIDTH,
     }
 }
 
@@ -299,7 +312,20 @@ impl RoadNetwork {
 
     /// Number of alive streets at a node (paths do not count).
     pub fn street_degree(&self, n: NodeId) -> usize {
-        self.node(n).segments.iter().filter(|&&s| self.segment(s).alive && self.segment(s).is_street()).count()
+        self.streets_at(n).count()
+    }
+
+    /// The alive streets at a node (paths and track left out), in the
+    /// node's own order.
+    pub fn streets_at(&self, n: NodeId) -> impl Iterator<Item = SegmentId> + '_ {
+        self.node(n).segments.iter().copied().filter(|&s| self.segment(s).alive && self.segment(s).is_street())
+    }
+
+    /// The unit direction of segment `sid` away from `node`: from its `a`
+    /// end when `node` is `a`, else from its `b` end.
+    pub fn away_dir(&self, sid: SegmentId, node: NodeId) -> Vec2 {
+        let (a, b) = self.segment_points(sid);
+        (if self.segment(sid).a == node { b - a } else { a - b }).normalize_or_zero()
     }
 
     /// Closest point on any alive street (paths excluded): where a car can be.

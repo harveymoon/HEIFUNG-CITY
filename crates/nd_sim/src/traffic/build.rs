@@ -214,7 +214,7 @@ impl LaneNetwork {
 
         for (ni, node) in roads.nodes.iter().enumerate() {
             let nid = NodeId(ni as u32);
-            let approaches: Vec<SegmentId> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_street()).collect();
+            let approaches: Vec<SegmentId> = roads.streets_at(nid).collect();
             if approaches.is_empty() {
                 continue;
             }
@@ -288,7 +288,7 @@ impl LaneNetwork {
                         continue;
                     }
                     lanes.sort_by_key(|&l| lane_index(&self.lanes[l as usize]));
-                    let exits = lanes.iter().flat_map(|&l| self.lanes[l as usize].next.iter()).fold(0u8, |acc, &c| acc | turn_bit(self.lanes[c as usize].turn));
+                    let exits = self.exits_of(&lanes);
                     let arrows = default_arrows(lanes.len(), exits, None, None);
                     let idx = self.approaches.len() as u32;
                     for &l in &lanes {
@@ -333,7 +333,7 @@ impl LaneNetwork {
                 }
             }
             // One incoming approach (or one opposed pair) has nobody to yield to.
-            let signalized = ((approaches.len() >= 3 && two_way >= 3) || approaches.len() >= 4) && phases.len() >= 2;
+            let signalized = default_signalized(approaches.len(), two_way, phases.len());
             self.node_intersection[ni] = self.intersections.len();
             let incoming = incoming.iter().map(|&(l, s)| (l, approaches.iter().position(|&a| a == s).unwrap_or(0))).collect();
             let greens = vec![GREEN_SECONDS; phases.len()];
@@ -372,6 +372,22 @@ impl LaneNetwork {
 
     /// Give an approach new lane arrows: its lanes' `arrows` and which of
     /// their connectors are permitted.
+    /// The lane running the other way beside a single-lane carriageway:
+    /// the opposing direction's leftmost lane, beside `lane`'s leftmost.
+    pub fn opposing(&self, lane: &Lane) -> Option<LaneId> {
+        let LaneKind::Road { segment, forward, index } = lane.kind else { return None };
+        if index != 0 {
+            return None;
+        }
+        self.segment_lanes.get(&segment)?.iter().copied().find(|&l| matches!(self.lanes[l as usize].kind, LaneKind::Road { forward: f, index: 0, .. } if f != forward))
+    }
+
+    /// The turns the connectors out of `lanes` (an approach) make, as a
+    /// `LEFT | STRAIGHT | RIGHT` mask.
+    pub fn exits_of(&self, lanes: &[LaneId]) -> u8 {
+        lanes.iter().flat_map(|&l| self.lanes[l as usize].next.iter()).fold(0u8, |acc, &c| acc | turn_bit(self.lanes[c as usize].turn))
+    }
+
     pub fn set_arrows(&mut self, approach: usize, arrows: Vec<u8>) {
         let Some(ap) = self.approaches.get_mut(approach) else { return };
         if ap.arrows == arrows {

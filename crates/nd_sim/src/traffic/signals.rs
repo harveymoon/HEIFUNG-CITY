@@ -17,6 +17,13 @@ pub struct SignalDemand {
     pub left_yielding: Vec<bool>,
 }
 
+/// Whether a junction gets signals by default from its shape: three
+/// two-way streets or four streets of any kind, with at least two phases
+/// to run.
+pub fn default_signalized(approaches: usize, two_way: usize, phases: usize) -> bool {
+    ((approaches >= 3 && two_way >= 3) || approaches >= 4) && phases >= 2
+}
+
 impl LaneNetwork {
     pub(super) fn apply_signals(&mut self) {
         for inter in &self.intersections {

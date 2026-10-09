@@ -166,16 +166,6 @@ impl Car {
 }
 
 impl Traffic {
-    /// The lane running the other way beside this one: the opposing
-    /// direction's leftmost lane, beside our leftmost.
-    fn opposing(&self, lane: &Lane) -> Option<LaneId> {
-        let LaneKind::Road { segment, forward, index } = lane.kind else { return None };
-        if index != 0 {
-            return None;
-        }
-        self.net.segment_lanes.get(&segment)?.iter().copied().find(|&l| matches!(self.net.lanes[l as usize].kind, LaneKind::Road { forward: f, index: 0, .. } if f != forward))
-    }
-
     /// The first vehicle in the off-law car's way: on its lane from
     /// alongside onward, else the first on the next lane of its route,
     /// skipping cars pulled over, other sirens and anything behind. Its
@@ -254,7 +244,7 @@ impl Traffic {
             if self.lane_clear(left, from, to, false, c.v) {
                 return Some((OffLawMove::Overtake, PASS_SIDE));
             }
-        } else if let Some(opp) = self.opposing(lane) {
+        } else if let Some(opp) = self.net.opposing(lane) {
             if self.lane_clear(opp, from, to, true, c.v.max(PASS_SPEED)) {
                 return Some((OffLawMove::Overtake, PASS_SIDE));
             }
@@ -461,7 +451,7 @@ impl Traffic {
                 }
             }
             if sc.drive.offlaw.mode == OffLawMove::Overtake && lane.left.is_none() {
-                if let Some(opp) = self.opposing(lane) {
+                if let Some(opp) = self.net.opposing(lane) {
                     let ol = &self.net.lanes[opp as usize];
                     for &o in &ol.cars {
                         let d = ol.length - self.cars[o].s - sc.s;
@@ -625,7 +615,7 @@ mod tests {
             let s = &t.cars[siren];
             if s.drive.offlaw.mode == OffLawMove::Overtake {
                 let lane = &t.net.lanes[s.route[s.idx] as usize];
-                let opp = t.opposing(lane).unwrap();
+                let opp = t.net.opposing(lane).unwrap();
                 let ol = &t.net.lanes[opp as usize];
                 seen_overtake_with_traffic |= ol.cars.iter().any(|&o| {
                     let front = ol.length - t.cars[o].s;

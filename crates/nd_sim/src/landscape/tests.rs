@@ -261,8 +261,8 @@ fn corner_lots_over_a_lower_side_street_get_a_retaining_wall() {
                 }
                 let (p, q) = w.roads.segment_points(sid);
                 let (t, on) = project_on_segment(mid, p, q);
-                let ends = [a, b].iter().all(|&e| project_on_segment(e, p, q).1.distance(e) <= corridor_half_width(s) + 0.5);
-                on.distance(mid) <= corridor_half_width(s) + 0.5 && ends && pad - w.road_height(sid, t) > RETAIN_MIN + 0.2
+                let ends = [a, b].iter().all(|&e| project_on_segment(e, p, q).1.distance(e) <= s.corridor_half_width() + 0.5);
+                on.distance(mid) <= s.corridor_half_width() + 0.5 && ends && pad - w.road_height(sid, t) > RETAIN_MIN + 0.2
             });
             if low {
                 expected += 1;

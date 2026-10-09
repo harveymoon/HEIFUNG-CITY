@@ -200,7 +200,7 @@ impl RoadNetwork {
             self.segments[sid.0 as usize].ramp = true;
             let (a, b) = (self.segments[sid.0 as usize].a, self.segments[sid.0 as usize].b);
             for n in [a, b] {
-                let alive: Vec<SegmentId> = self.nodes[n.0 as usize].segments.iter().copied().filter(|&s| self.segments[s.0 as usize].alive && self.segments[s.0 as usize].is_street()).collect();
+                let alive: Vec<SegmentId> = self.streets_at(n).collect();
                 if alive.len() > 3 || !alive.iter().all(|&s| one_way(&self.segments[s.0 as usize])) {
                     continue;
                 }

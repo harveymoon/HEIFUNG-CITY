@@ -95,12 +95,6 @@ pub fn embankment_falloff(rise: f32) -> f32 {
     GROUND_FALLOFF.max(rise * EMBANKMENT_SLOPE * 1.5).min(160.0)
 }
 
-/// Half the corridor a way grades the ground for: carriageway plus pavement
-/// (streets) or a metre of verge.
-pub(super) fn corridor_half_width(seg: &crate::roads::Segment) -> f32 {
-    seg.half_width() + if seg.is_street() { crate::zoning::SIDEWALK } else { 1.0 }
-}
-
 /// Every grade-separated crossing where neither way is on a deck of its
 /// own (a viaduct or a bridge over water) and one runs well above the other.
 pub(super) fn find_underpasses(land: &Landscape, roads: &RoadNetwork, node_z: &[f32]) -> Vec<Underpass> {
@@ -148,8 +142,8 @@ pub(super) fn find_underpasses(land: &Landscape, roads: &RoadNetwork, node_z: &[
         } else {
             (along, along)
         };
-        let over_core = corridor_half_width(os);
-        let under_core = corridor_half_width(us);
+        let over_core = os.corridor_half_width();
+        let under_core = us.corridor_half_width();
         let mut u = Underpass {
             at: c.at,
             over_dir,
@@ -457,7 +451,7 @@ impl Ground {
             .filter_map(|(id, s)| {
                 let (a, b) = roads.segment_points(id);
                 (chebyshev(a).max(chebyshev(b)) > half - OUTER_NEAR).then(|| {
-                    (a, b, node_z.get(s.a.0 as usize).copied().unwrap_or(0.0), node_z.get(s.b.0 as usize).copied().unwrap_or(0.0), corridor_half_width(s))
+                    (a, b, node_z.get(s.a.0 as usize).copied().unwrap_or(0.0), node_z.get(s.b.0 as usize).copied().unwrap_or(0.0), s.corridor_half_width())
                 })
             })
             .collect();
@@ -513,7 +507,7 @@ impl Ground {
             let walled = roads.node(seg.a).level < 0.0 || roads.node(seg.b).level < 0.0;
             let (a, b) = (roads.node(seg.a).pos, roads.node(seg.b).pos);
             let (za, zb) = (node_z.get(seg.a.0 as usize).copied().unwrap_or(0.0), node_z.get(seg.b.0 as usize).copied().unwrap_or(0.0));
-            let core = corridor_half_width(seg) + if walled { GROUND_CELL } else { 0.0 };
+            let core = seg.corridor_half_width() + if walled { GROUND_CELL } else { 0.0 };
             // A road the player sank is held by retaining walls: it holds its
             // own cells and grades nothing beside it.
             let reach = if walled { core } else { core + seed_band };
@@ -538,7 +532,7 @@ impl Ground {
                     // Past a portal only the road's own corridor is held,
                     // and only `PORTAL_HOLD` in, under the portal's lid.
                     let past = if portal_b { (p - b).dot(dir) } else { f32::MIN }.max(if portal_a { (a - p).dot(dir) } else { f32::MIN });
-                    if past > 0.0 && (past > PORTAL_HOLD || d > corridor_half_width(seg) + 0.5) {
+                    if past > 0.0 && (past > PORTAL_HOLD || d > seg.corridor_half_width() + 0.5) {
                         continue;
                     }
                     let k = j * n + i;
@@ -656,7 +650,7 @@ impl Ground {
                             let (p, q) = roads.segment_points(sid);
                             let (t, on) = project_on_segment(x, p, q);
                             let d = on.distance(x);
-                            (d <= corridor_half_width(roads.segment(sid)) + 1.0).then_some((d, sid, t, on))
+                            (d <= roads.segment(sid).corridor_half_width() + 1.0).then_some((d, sid, t, on))
                         })
                         .min_by(|u, v| u.0.total_cmp(&v.0))
                 };

@@ -88,14 +88,12 @@ impl WalkGraph {
         }
         let mut arms: Vec<Arm> = Vec::new();
         for s in segs {
-            let sg = roads.segment(s);
-            let (a, b) = roads.segment_points(s);
-            let away = (if sg.a == nid { b - a } else { a - b }).normalize_or_zero();
+            let away = roads.away_dir(s, nid);
             let ends: Vec<u32> = e.iter().filter(|x| x.1 == s).map(|x| x.0).collect();
             let side = |n: &u32| away.perp_dot(self.nodes[*n as usize].pos - centre);
             let ccw = *ends.iter().max_by(|x, y| side(x).total_cmp(&side(y))).unwrap();
             let cw = *ends.iter().min_by(|x, y| side(x).total_cmp(&side(y))).unwrap();
-            arms.push(Arm { seg: s, ang: away.y.atan2(away.x), ccw, cw, street: sg.is_street() });
+            arms.push(Arm { seg: s, ang: away.y.atan2(away.x), ccw, cw, street: roads.segment(s).is_street() });
         }
         arms.sort_by(|x, y| x.ang.total_cmp(&y.ang).then(x.seg.cmp(&y.seg)));
         let ring = roads.ring_of_node(nid).is_some();
@@ -119,9 +117,7 @@ impl WalkGraph {
                 sg.alive && sg.is_street() && sg.fronts_nothing() && !sg.tunnel
             })
             .map(|s| {
-                let sg = roads.segment(s);
-                let (a, b) = roads.segment_points(s);
-                let away = (if sg.a == nid { b - a } else { a - b }).normalize_or_zero();
+                let away = roads.away_dir(s, nid);
                 (away.y.atan2(away.x), s)
             })
             .collect();
@@ -218,7 +214,7 @@ impl WalkGraph {
         // crosswalk of a junction, at the node elsewhere.
         let setback = |n: NodeId, s: SegmentId| if is_junction(roads, n) { crosswalk_setback(roads, n, s) } else { 0.0 };
         // A footpath meeting streets ends on their pavement.
-        let path_setback = |n: NodeId| if street_arms(roads, n) > 0 { widest(roads, n) + SIDEWALK * 0.55 } else { 0.0 };
+        let path_setback = |n: NodeId| if roads.street_degree(n) > 0 { widest(roads, n) + SIDEWALK * 0.55 } else { 0.0 };
         for (sid, seg) in roads.alive_segments() {
             // No one walks in a road tunnel, nor along a highway or its
             // slip roads: they have hard shoulders, not pavements.

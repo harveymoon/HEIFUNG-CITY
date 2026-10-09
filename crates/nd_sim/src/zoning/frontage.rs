@@ -10,7 +10,7 @@ pub(super) fn road_chains(roads: &RoadNetwork) -> Vec<(Vec<Vec2>, f32, bool, boo
     let degree = |n: NodeId| roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive).count();
     let hw_of = |s: SegmentId| {
         let seg = roads.segment(s);
-        if seg.is_street() { seg.half_width() + SIDEWALK } else { seg.half_width() + 1.0 }
+        seg.corridor_half_width()
     };
     let next_of = |node: NodeId, from: SegmentId| -> Option<SegmentId> {
         if degree(node) != 2 {
@@ -83,11 +83,6 @@ pub(super) fn chain_corridor(pts: &[Vec2], hw: f32, ext_start: bool, ext_end: bo
     Some(to_geo(&ring))
 }
 
-/// Corridor edge distance of a road: where parcels start.
-pub(super) fn corridor_edge(seg: &crate::roads::Segment) -> f32 {
-    if seg.is_street() { seg.half_width() + SIDEWALK } else { seg.half_width() + 1.0 }
-}
-
 /// Distance from a point to the nearest road centreline, with that
 /// segment. Paths count only when `allow_paths` (homes may line a path).
 pub(super) fn nearest_road(roads: &RoadNetwork, p: Vec2, allow_paths: bool) -> Option<(SegmentId, f32, f32)> {
@@ -110,7 +105,7 @@ pub(super) fn edge_on_road(roads: &RoadNetwork, a: Vec2, b: Vec2, allow_paths: b
     let rd = (p1 - p0).normalize_or_zero();
     let ed = (b - a) / len;
     let parallel = rd.dot(ed).abs() > 0.8;
-    let on_line = (dist - corridor_edge(seg)).abs() < 2.5;
+    let on_line = (dist - seg.corridor_half_width()).abs() < 2.5;
     if parallel && on_line {
         Some((sid, t))
     } else {

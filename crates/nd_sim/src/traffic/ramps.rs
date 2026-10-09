@@ -98,7 +98,7 @@ impl LaneNetwork {
         // they stand for caps the limit around it.
         let bend_cap = |node: NodeId| -> f32 {
             let nd = roads.node(node);
-            let segs: Vec<SegmentId> = nd.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_street()).collect();
+            let segs: Vec<SegmentId> = roads.streets_at(node).collect();
             if segs.len() != 2 {
                 return f32::INFINITY;
             }
