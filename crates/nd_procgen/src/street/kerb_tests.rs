@@ -378,3 +378,54 @@ fn street_triangles_of_a_save() {
         }
     }
 }
+
+/// #9 (vi) Where a street carries on with fewer lanes round a bend, the
+/// two carriageways are cut along the bend's bisector: no asphalt at the
+/// carriageway's height lies twice anywhere round the joint (both used to
+/// run on to the node with square ends, and on the inside of the bend the
+/// two z-fought), and none is missing across the narrower street.
+#[test]
+fn a_lane_count_joint_at_a_bend_does_not_overlap() {
+    for bend in [20.0f32, 45.0] {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-150.0, 0.0), Vec2::ZERO], 2, 2);
+        let e = Vec2::from_angle(bend.to_radians());
+        roads.add_polyline(&[Vec2::ZERO, e * 150.0], 1, 1);
+        let mut net = LaneNetwork::default();
+        net.rebuild(&roads);
+        let g = draw(&roads, &net, &[]);
+        let m = g.get(Asphalt);
+        let tris: Vec<[Vec2; 3]> = m
+            .indices
+            .chunks(3)
+            .filter(|t| t.iter().all(|&i| (m.positions[i as usize][1] - ASPHALT_Y).abs() < 1e-4))
+            .map(|t| [t[0], t[1], t[2]].map(|i| Vec2::new(m.positions[i as usize][0], m.positions[i as usize][2])))
+            .collect();
+        // Strictly inside: points on a shared edge do not count twice.
+        let inside = |t: &[Vec2; 3], p: Vec2| {
+            let s = |a: Vec2, b: Vec2| (b - a).perp_dot(p - a);
+            let (d0, d1, d2) = (s(t[0], t[1]), s(t[1], t[2]), s(t[2], t[0]));
+            (d0 > 1e-3 && d1 > 1e-3 && d2 > 1e-3) || (d0 < -1e-3 && d1 < -1e-3 && d2 < -1e-3)
+        };
+        let mut twice = Vec::new();
+        for i in -60..=60 {
+            for j in -60..=60 {
+                let p = Vec2::new(i as f32 * 0.2, j as f32 * 0.2);
+                if tris.iter().filter(|t| inside(t, p)).count() > 1 {
+                    twice.push(p);
+                }
+            }
+        }
+        assert!(twice.is_empty(), "{bend} deg: asphalt laid twice at {} points, e.g. {:?}", twice.len(), &twice[..twice.len().min(5)]);
+        // Across the narrower street just past the joint, and across the
+        // wider one just before it, the carriageway is whole.
+        let narrow_hw = LANE_WIDTH + SHOULDER;
+        let n = e.perp();
+        for k in -4..=4 {
+            let off = k as f32 / 4.0 * (narrow_hw - 0.3);
+            for p in [e * 0.3 + n * off, Vec2::new(-0.3, off)] {
+                assert!(tris.iter().any(|t| inside(t, p) || (t[0] - p).length() < 1e-3), "{bend} deg: no asphalt at {p:?}");
+            }
+        }
+    }
+}

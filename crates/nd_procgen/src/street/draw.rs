@@ -41,6 +41,10 @@ pub(super) struct StreetCtx<'a> {
     /// Each ramp's join with a highway: the ramp and where its own strips
     /// and markings begin.
     pub(super) gores: HashMap<u32, (SegmentId, f32)>,
+    /// Plain joints: nodes where two runs of street meet end to end
+    /// without carrying on as one (the lanes change, or a one-way street
+    /// turns round), and the two run ends there (run, at its start).
+    pub(super) joints: HashMap<u32, [(usize, bool); 2]>,
 }
 
 impl<'a> StreetCtx<'a> {
@@ -79,6 +83,21 @@ impl<'a> StreetCtx<'a> {
                 Some((i, (ramp, if gl.clear.is_finite() { gl.clear } else { gl.parted })))
             })
             .collect();
+        let mut joints: HashMap<u32, [(usize, bool); 2]> = HashMap::new();
+        for i in 0..roads.nodes.len() as u32 {
+            let n = NodeId(i);
+            if pad_mouths.contains_key(&i) || gores.contains_key(&i) || tapers.iter().any(|t| t.0 == n) {
+                continue;
+            }
+            let alive: Vec<SegmentId> = roads.node(n).segments.iter().copied().filter(|&s| roads.segment(s).alive).collect();
+            if alive.len() != 2 || alive.iter().any(|&s| !roads.segment(s).is_street() || roads.segment(s).ring || roads.segment(s).tunnel) {
+                continue;
+            }
+            let ends: Vec<(usize, bool)> = alive.iter().filter_map(|&s| arm_run.get(&(i, s.0)).map(|&ri| (ri, runs[ri].start_node == n && runs[ri].end_segs[0] == Some(s)))).collect();
+            if ends.len() == 2 && ends[0].0 != ends[1].0 {
+                joints.insert(i, [ends[0], ends[1]]);
+            }
+        }
         let (paving_c, kerb_c) = (rgba(pal.paving), rgba(pal.curb));
         Self {
             inp,
@@ -103,7 +122,37 @@ impl<'a> StreetCtx<'a> {
             cuts,
             pad_mouths,
             gores,
+            joints,
         }
+    }
+
+    /// #9 (vi) At a plain joint where run `ri` ends (at its start or
+    /// not) and the road bends, the line through the node its carriageway
+    /// is cut along: the bisector of the bend, which the other run's
+    /// carriageway is cut along too, so the two meet edge to edge instead
+    /// of both running on to the node with square ends and overlapping
+    /// in the same plane on the inside of the bend. `None` on a straight
+    /// joint (square ends already meet) or a hairpin.
+    pub(super) fn joint_cut(&self, ri: usize, start: bool) -> Option<(Vec2, Vec2)> {
+        let run = &self.runs[ri];
+        let node = if start { run.start_node } else { run.end_node };
+        let ends = self.joints.get(&node.0)?;
+        let &(oi, ostart) = ends.iter().find(|e| **e != (ri, start))?;
+        let other = &self.runs[oi];
+        let (n, k) = (run.points.len(), other.points.len());
+        if n < 2 || k < 2 {
+            return None;
+        }
+        let here = self.roads.node(node).pos;
+        let mine = if start { run.points[1] } else { run.points[n - 2] };
+        let away = if ostart { other.points[1] } else { other.points[k - 2] };
+        let (din, dout) = ((here - mine).normalize_or_zero(), (away - here).normalize_or_zero());
+        let bend = din.dot(dout);
+        if !(bend < 0.9999 && bend > 0.5) {
+            return None;
+        }
+        let w = (din.perp() + dout.perp()).normalize_or_zero();
+        (w != Vec2::ZERO).then_some((here, w))
     }
 
     pub(super) fn node_r(&self, n: NodeId) -> f32 {
@@ -299,7 +348,7 @@ pub(super) fn draw_run(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &Run, d
         let (mid, d) = point_along(pts, path_length(pts) * 0.5);
         if (mid + Vec2::new(-d.y, d.x) * hw).distance(ring.center) > ring.radius { 1.0f32 } else { -1.0 }
     });
-    draw_carriageway(cx, g, run, pts, hw, grit, ring_out);
+    draw_carriageway(cx, g, ri, run, pts, hw, grit, ring_out);
 
     // Kerbs and pavements stop short of the junction pads, each side as
     // far back as the rounded corner it runs into needs
@@ -363,7 +412,7 @@ pub(super) fn draw_run(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &Run, d
 /// ramp's gore), with its edge lines, lane lines, centre line and, on a
 /// one-way road, travel arrows.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn draw_carriageway(cx: &StreetCtx, g: &mut Geometry, run: &Run, pts: &Vec<Vec2>, hw: f32, grit: bool, ring_out: Option<f32>) {
+pub(super) fn draw_carriageway(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &Run, pts: &Vec<Vec2>, hw: f32, grit: bool, ring_out: Option<f32>) {
     let total = run.lanes_fwd as f32 + run.lanes_bwd as f32;
     let fade = |c: [f32; 4]| if grit { [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5, c[3]] } else { c };
     // The carriageway stops at each junction's mouth, where the pad takes
@@ -386,7 +435,12 @@ pub(super) fn draw_carriageway(cx: &StreetCtx, g: &mut Geometry, run: &Run, pts:
     let carriage = cut(s0, s1);
     let marked = cut(m0.max(s0), m1.max(s1));
     if carriage.len() >= 2 {
-        g.part(Asphalt).path_strip(&carriage, 0.0, hw * 2.0, ASPHALT_Y, cx.asphalt_c);
+        let cuts = [(s0 == 0.0).then(|| cx.joint_cut(ri, true)).flatten(), (s1 == 0.0).then(|| cx.joint_cut(ri, false)).flatten()];
+        if cuts.iter().any(|c| c.is_some()) {
+            mitred_strip(g.part(Asphalt), &carriage, hw, ASPHALT_Y, cx.asphalt_c, cuts);
+        } else {
+            g.part(Asphalt).path_strip(&carriage, 0.0, hw * 2.0, ASPHALT_Y, cx.asphalt_c);
+        }
     }
     for under in [(s0 > c0 + 0.1).then(|| trim(pts, c0, (run_len - s0).max(0.0))), (s1 > c1 + 0.1).then(|| trim(pts, (run_len - s1).max(0.0), c1))].into_iter().flatten() {
         if under.len() >= 2 {
@@ -422,6 +476,29 @@ pub(super) fn draw_carriageway(cx: &StreetCtx, g: &mut Geometry, run: &Run, pts:
                 travel_arrows(g.part(Paint), &path, forward, fade(cx.edge_c));
             }
         }
+    }
+}
+
+/// A carriageway `hw` either side of `pts` (as `path_strip` lays it), its
+/// first and last edges cut along the line through `cuts[0]` / `cuts[1]`
+/// (a point and a direction) where given.
+fn mitred_strip(m: &mut crate::mesh::MeshData, pts: &[Vec2], hw: f32, y: f32, color: [f32; 4], cuts: [Option<(Vec2, Vec2)>; 2]) {
+    let mut l = offset_path(pts, -hw);
+    let mut r = offset_path(pts, hw);
+    let n = l.len();
+    for (end, cut) in cuts.into_iter().enumerate() {
+        let Some((at, w)) = cut else { continue };
+        let (i, j) = if end == 0 { (0, 1) } else { (n - 1, n - 2) };
+        for line in [&mut l, &mut r] {
+            let (p, e) = (line[i], line[i] - line[j]);
+            let den = e.perp_dot(w);
+            if den.abs() > 1e-6 {
+                line[i] = p + e * ((at - p).perp_dot(w) / den);
+            }
+        }
+    }
+    for i in 0..n.saturating_sub(1) {
+        m.ground_polygon(&[l[i], l[i + 1], r[i + 1], r[i]], y, color);
     }
 }
 
