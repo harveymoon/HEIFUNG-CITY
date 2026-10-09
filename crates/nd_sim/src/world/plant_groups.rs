@@ -172,6 +172,44 @@ impl World {
         }
     }
 
+    /// [review] Every plant's group bonus at once (`plant_group_bonus` for
+    /// each), for the hourly dispatch and the plant table: each pair of
+    /// plant lots is tested for touching at most once, where asking plant
+    /// by plant floods the field again for every plant (O(plants³) touch
+    /// tests). The same floods, so the same answers.
+    pub(super) fn plant_group_bonuses(&self) -> HashMap<BuildingId, f32> {
+        let mut out: HashMap<BuildingId, f32> = HashMap::new();
+        for kind in PowerPlantKind::ALL.iter().copied().filter(|k| k.merges_with_neighbours()) {
+            let all = self.plants_of(kind);
+            let n = all.len();
+            let mut memo: Vec<Option<bool>> = vec![None; n * n];
+            let index_of = |l: LotId| all.iter().position(|x| x.1 == l);
+            for i in 0..n {
+                // `flood(&all, &[all[i].1])`, with the touch tests memoised.
+                let start = all[i].1;
+                let mut field: Vec<LotId> = vec![start];
+                let mut members = all.iter().filter(|x| x.1 == start).count();
+                let mut next = 0;
+                while next < field.len() {
+                    let here = index_of(field[next]).expect("every lot in the field is a plant's");
+                    next += 1;
+                    for (j, &(_, l)) in all.iter().enumerate() {
+                        if field.contains(&l) {
+                            continue;
+                        }
+                        let touch = *memo[here * n + j].get_or_insert_with(|| self.plant_lots_touch(all[here].1, l));
+                        if touch {
+                            field.push(l);
+                            members += 1;
+                        }
+                    }
+                }
+                out.insert(all[i].0, group_bonus(members));
+            }
+        }
+        out
+    }
+
     /// What a solar or wind farm on `lot` would join, and the joined
     /// installation's area and nameplate. `None` for other kinds.
     pub fn plant_join(&self, kind: PowerPlantKind, lot: LotId) -> Option<PlantJoin> {

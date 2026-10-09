@@ -1,0 +1,261 @@
+//! Citizens' decisions each tick: the minds' answers applied.
+
+use super::*;
+
+impl World {
+    pub(in crate::world) fn step_citizens(&mut self, minds: &mut dyn MindProvider) {
+        let tick = self.clock.tick;
+        // Tallied by `update_economy`, not every tick.
+        let available = self.available;
+        let population = self.citizens.len() as u32;
+        let groceries_for_sale = self.groceries_for_sale;
+        let meals_for_sale = self.meals_for_sale;
+        let hour = self.clock.hour() as u8;
+        let ids: Vec<CitizenId> = self.citizens.keys().collect();
+        // [pedestrians] Walkers keep right, keep their distance and mind the
+        // crossings (`world/pedestrians.rs`).
+        let mut feet = self.feet_begin();
+
+        for id in ids {
+            // Walking.
+            let on_foot = self.citizens[id].mode == TravelMode::Walk && matches!(self.citizens[id].activity, Activity::Traveling { .. });
+            // [cyclists] Bikes stop for red lights and people on crossings.
+            let riding = self.citizens[id].mode == TravelMode::Bike && matches!(self.citizens[id].activity, Activity::Traveling { .. });
+            let arrived = if on_foot {
+                self.step_walker(id, &mut feet)
+            } else if riding {
+                self.step_rider(id, &mut feet)
+            } else {
+                let c = &mut self.citizens[id];
+                c.prev_pos = c.pos;
+                c.prev_heading = c.heading;
+                let speed = if c.mode == TravelMode::Bike { self.config.bike_speed } else { self.config.walk_speed };
+                if let Activity::Traveling { path, idx, .. } = &mut c.activity {
+                    let mut remaining = speed;
+                    while remaining > 0.0 && *idx < path.len() {
+                        let target = path[*idx];
+                        let d = c.pos.distance(target);
+                        if d <= remaining {
+                            c.pos = target;
+                            *idx += 1;
+                            remaining -= d;
+                        } else {
+                            let dir = (target - c.pos) / d;
+                            c.pos += dir * remaining;
+                            c.heading = dir.y.atan2(dir.x);
+                            remaining = 0.0;
+                        }
+                    }
+                    *idx >= path.len()
+                } else {
+                    false
+                }
+            };
+            if arrived {
+                self.arrive(id);
+                continue;
+            }
+
+            // Decisions.
+            if self.citizens[id].next_decision_tick > tick || self.citizens[id].activity.is_traveling() {
+                continue;
+            }
+            // A late answer that came while they were on their way.
+            if let Some((intent, at)) = self.deferred_intents.remove(&id) {
+                if tick.saturating_sub(at) <= DEFERRED_INTENT_TTL {
+                    self.citizens[id].next_decision_tick = tick + 20 + self.rng.random_range(0..40);
+                    self.apply_decision(id, Decision { intent, thought: String::new(), memory: None });
+                    continue;
+                }
+            }
+            let decision = {
+                let c = &self.citizens[id];
+                let hh = c.household.and_then(|h| self.households.get(h));
+                let on_shift = c.work.and_then(|w| self.buildings.get(w)).is_some_and(|b| b.business.as_ref().is_none_or(|z| !z.closed) && b.shift_for(c.seed).contains(hour));
+                let ctx = MindContext {
+                    id,
+                    citizen: c,
+                    clock: &self.clock,
+                    has_home: c.home.is_some(),
+                    has_work: c.work.is_some(),
+                    home_name: c.home.and_then(|h| self.buildings.get(h)).map(|b| b.name.as_str()),
+                    work_name: c.work.and_then(|w| self.buildings.get(w)).map(|b| b.name.as_str()),
+                    available,
+                    population,
+                    satiety: c.satiety,
+                    groceries: c.groceries,
+                    groceries_for_sale,
+                    meals_for_sale,
+                    stage: c.stage(),
+                    wakefulness: c.wakefulness,
+                    asleep: c.asleep,
+                    at_home: c.home.is_some() && c.inside == c.home,
+                    on_shift,
+                    household_size: hh.map_or(1, |h| h.size()),
+                    pantry_low: hh.is_some_and(|h| h.groceries < h.pantry_target() * 0.5),
+                    regular_spot: c.places.regular_of(LandUse::Entertainment).and_then(|p| self.buildings.get(p.place)).filter(|b| b.serves_at(hour)).map(|b| b.name.as_str()),
+                    places_known: c.places.known(LandUse::Entertainment),
+                };
+                minds.decide(&ctx)
+            };
+            match decision {
+                Some(d) => {
+                    self.citizens[id].next_decision_tick = tick + 20 + self.rng.random_range(0..40);
+                    self.apply_decision(id, d);
+                }
+                None => self.citizens[id].next_decision_tick = tick + 5,
+            }
+        }
+        self.feet_end(feet);
+    }
+
+    /// A mind's late answer (`MindProvider::poll`, an LLM thinking it over
+    /// while the citizen carried on). Someone driving, riding or walking a
+    /// trip cannot act on it now: setting off on foot would leave their car
+    /// driving on empty or them still on the bus's list. So they think the
+    /// thought now and act at their next decision, if the answer is still
+    /// fresh then (`DEFERRED_INTENT_TTL`).
+    pub(in crate::world) fn apply_late_decision(&mut self, id: CitizenId, d: Decision) {
+        let busy = self.citizens.get(id).is_some_and(|c| c.activity.is_traveling() || c.to_car.is_some());
+        if !busy {
+            self.apply_decision(id, d);
+            return;
+        }
+        let tick = self.clock.tick;
+        let c = &mut self.citizens[id];
+        if !d.thought.is_empty() && d.thought != c.thought {
+            c.thought = d.thought;
+            self.events.push(SimEvent::NewThought(id));
+        }
+        if let Some(m) = d.memory {
+            c.remember(tick, m);
+        }
+        self.deferred_intents.insert(id, (d.intent, tick));
+    }
+
+    pub(in crate::world) fn apply_decision(&mut self, id: CitizenId, d: Decision) {
+        let tick = self.clock.tick;
+        {
+            let c = &mut self.citizens[id];
+            if !d.thought.is_empty() && d.thought != c.thought {
+                c.thought = d.thought.clone();
+                self.events.push(SimEvent::NewThought(id));
+            }
+            if let Some(m) = d.memory {
+                c.remember(tick, m);
+            }
+        }
+        let (home, work, inside) = {
+            let c = &self.citizens[id];
+            (c.home, c.work, c.inside)
+        };
+        match d.intent {
+            Intent::Stay => {}
+            Intent::GoHome => {
+                if let Some(h) = home {
+                    if inside != Some(h) {
+                        self.travel_to(id, Some(h), Purpose::Home);
+                    }
+                }
+            }
+            Intent::GoWork => {
+                if let Some(w) = work {
+                    if inside != Some(w) {
+                        self.travel_to(id, Some(w), Purpose::Work);
+                    }
+                }
+            }
+            Intent::Visit(lu) => {
+                // Somewhere that is open: not a site, not a shut business,
+                // not a derelict shell.
+                // Somewhere that is open now and has room: not a site, not a
+                // shut business, not a derelict shell, not packed.
+                // [places] Favourites, sometimes somewhere new, never a
+                // place sworn off; sometimes with company.
+                let target = self.choose_place(id, lu, false);
+                if let Some(b) = target {
+                    if inside != Some(b) {
+                        self.travel_to(id, Some(b), Purpose::Visit(lu));
+                        self.bring_company(id, b, Purpose::Visit(lu));
+                    }
+                }
+            }
+            Intent::Explore(lu) => match self.choose_place(id, lu, true) {
+                Some(b) if inside != Some(b) => self.travel_to(id, Some(b), Purpose::Visit(lu)),
+                Some(_) => {}
+                None => self.wander(id),
+            },
+            Intent::Wander => self.wander(id),
+            Intent::Shop(r) => {
+                let here = self.citizens[id].pos;
+                if let Some(b) = self.choose_shop(id, r, here) {
+                    if inside != Some(b) {
+                        self.travel_to(id, Some(b), Purpose::Shop(r));
+                    } else {
+                        self.buy(id, b, r);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Someone leaving home takes a meal from the pantry for later, if the
+    /// pantry has one to spare.
+    pub(in crate::world) fn pack_meal(&mut self, id: CitizenId) {
+        crate::prof_scope!("pack_meal");
+        let c = &self.citizens[id];
+        if c.packed_meal >= 1.0 || c.home.is_none() || c.inside != c.home {
+            return;
+        }
+        let Some(hh) = c.household.and_then(|h| self.households.get_mut(h)) else { return };
+        if hh.groceries >= 1.0 {
+            hh.groceries -= 1.0;
+            let left = hh.groceries;
+            let c = &mut self.citizens[id];
+            c.packed_meal += 1.0;
+            c.groceries = left;
+        }
+    }
+
+    pub(in crate::world) fn wander(&mut self, id: CitizenId) {
+        let Some((_, _, start)) = self.origin_for(id) else { return };
+        if self.roads.nodes.is_empty() {
+            return;
+        }
+        // Bike owners who are comfortable take joy rides to a park when there is one.
+        let (owns_bike, class) = {
+            let c = &self.citizens[id];
+            (c.owns_bike, c.class())
+        };
+        if owns_bike && (class == Tier::High || self.rng.random_bool(0.35)) {
+            if let Some(park) = self.choose_place(id, LandUse::Park, false) {
+                self.travel_to(id, Some(park), Purpose::Visit(LandUse::Park));
+                return;
+            }
+        }
+        let mode = if owns_bike && self.rng.random_bool(0.5) { TravelMode::Bike } else { TravelMode::Walk };
+        let here = self.citizens[id].pos;
+        let walk_route = if mode == TravelMode::Walk && !self.walk.nodes.is_empty() {
+            let target = self.walk.nodes[self.rng.random_range(0..self.walk.nodes.len())].pos;
+            self.walk_route_for(id, here, target, Purpose::Wander)
+        } else {
+            None
+        };
+        let path = match walk_route {
+            Some((pts, walk_nodes)) => {
+                self.note_footfall(id, &walk_nodes);
+                self.leave_building(id);
+                pts
+            }
+            None => {
+                let end = NodeId(self.rng.random_range(0..self.roads.nodes.len() as u32));
+                let Some(nodes) = self.roads.foot_path(start, end) else { return };
+                self.leave_building(id);
+                self.route_path(&nodes, mode)
+            }
+        };
+        let c = &mut self.citizens[id];
+        c.mode = mode;
+        c.activity = Activity::Traveling { to: None, purpose: Purpose::Wander, path, idx: 0 };
+    }
+}

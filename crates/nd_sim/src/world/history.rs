@@ -104,12 +104,13 @@ impl World {
         self.economy.history.push_hour(h);
         // Every plant's output and every battery's flow and charge, in slot
         // order; records of buildings gone or changed are dropped.
+        let bonuses = self.plant_group_bonuses();
         let rows: Vec<(BuildingId, f32, Option<f32>)> = self
             .buildings
             .iter()
             .filter_map(|(id, b)| {
                 if b.plant.is_some() {
-                    Some((id, self.plant_dispatched_mw(b), None))
+                    Some((id, self.plant_dispatched_mw_by(&bonuses, id, b), None))
                 } else {
                     b.battery.as_ref().map(|bat| (id, bat.flow_mw, Some(bat.charge_mwh)))
                 }

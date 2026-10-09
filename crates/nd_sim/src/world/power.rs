@@ -146,7 +146,21 @@ impl World {
     /// [clarity] A plant's own nameplate output (scaled by its lot).
     pub fn plant_capacity_mw(&self, b: &Building) -> f32 {
         // [plant-groups] times the shared-connection bonus of its group.
-        b.plant.map_or(0.0, |k| k.capacity_mw() * self.plant_scale(b) * self.plant_group_bonus(b))
+        self.plant_capacity_mw_with(b, self.plant_group_bonus(b))
+    }
+
+    /// `plant_capacity_mw` with the group bonus already known.
+    fn plant_capacity_mw_with(&self, b: &Building, bonus: f32) -> f32 {
+        b.plant.map_or(0.0, |k| k.capacity_mw() * self.plant_scale(b) * bonus)
+    }
+
+    /// [review] A plant's group bonus out of `plant_group_bonuses` (a plant
+    /// not in the table, such as one being cleared, works it out alone).
+    fn bonus_of(&self, bonuses: &HashMap<BuildingId, f32>, id: BuildingId, b: &Building) -> f32 {
+        match bonuses.get(&id) {
+            Some(x) => *x,
+            None => self.plant_group_bonus(b),
+        }
     }
 
     /// [clarity] A plant's own daily upkeep (scaled by its lot).
@@ -154,33 +168,31 @@ impl World {
         b.plant.map_or(0.0, |k| k.upkeep_at(self.plant_scale(b)))
     }
 
-    /// [clarity] What a plant of `kind` on `lot` would cost to build.
-    pub fn plant_cost_on(&self, kind: PowerPlantKind, lot: LotId) -> f32 {
-        kind.cost_at(self.lots.get(lot).map_or(1.0, |l| kind.size_scale(l.area())))
-    }
-
     /// Every plant and battery as a table row, plants in kind order then
     /// batteries, each group by name.
     pub fn plant_rows(&self) -> Vec<PlantRow> {
         let mut rows: Vec<PlantRow> = Vec::new();
+        let bonuses = self.plant_group_bonuses();
         for (id, b) in self.buildings.iter() {
             let log = self.economy.history.plant(id);
             let mean = log.map_or(0.0, |l| l.mean_mw(24));
             let pending = b.construction.is_some();
             if let Some(k) = b.plant {
-                let now = self.plant_dispatched_mw(b);
+                let bonus = self.bonus_of(&bonuses, id, b);
+                let now = self.plant_dispatched_mw_with(b, bonus);
                 let mean = if log.is_some_and(|l| !l.hours.is_empty()) { mean } else { now };
+                let capacity = self.plant_capacity_mw_with(b, bonus);
                 rows.push(PlantRow {
                     id,
                     name: b.name.clone(),
                     asset: GridAsset::Plant(k),
                     now_mw: now,
-                    capacity_mw: self.plant_capacity_mw(b),
+                    capacity_mw: capacity,
                     mean_mw: mean,
                     upkeep_per_day: self.plant_upkeep(b),
                     cost_per_mwh: (mean > 0.05).then(|| self.plant_upkeep(b) / (mean * 24.0)),
                     co2_t_per_day: mean * 24.0 * k.co2_t_per_mwh(),
-                    air: k.air_index() * (now / self.plant_capacity_mw(b).max(0.01)).clamp(0.0, 1.0),
+                    air: k.air_index() * (now / capacity.max(0.01)).clamp(0.0, 1.0),
                     noise_db: (now > 0.0).then(|| k.noise_db()),
                     nuisance: k.pollution_at(if k.sized_when_built() { self.plant_scale(b) } else { 1.0 }),
                     charge_mwh: 0.0,
@@ -267,8 +279,13 @@ impl World {
         if b.is_derelict() || !b.operating() {
             return 0.0;
         }
+        self.plant_output_mw_with(b, kind, self.plant_group_bonus(b))
+    }
+
+    /// `plant_output_mw` of a working plant with its group bonus known.
+    fn plant_output_mw_with(&self, b: &Building, kind: PowerPlantKind, bonus: f32) -> f32 {
         let site = self.power_site(b.lot, kind).unwrap_or(0.0);
-        self.plant_capacity_mw(b) * self.plant_availability(b) * site
+        self.plant_capacity_mw_with(b, bonus) * self.plant_availability(b) * site
     }
 
     /// [grid-weather] The wind and sun a plant at `p` would get: the map's
@@ -295,8 +312,8 @@ impl World {
     }
 
     /// [grid-weather] Share of nameplate a plant of `kind` on a lot at `p`
-    /// would make right now, and on an ordinary day's average (for the
-    /// placement preview): wind on the map's wind there, solar on the sun.
+    /// would make right now (for the placement preview): wind on the map's
+    /// wind there, solar on the sun.
     pub fn kind_availability_at(&self, kind: PowerPlantKind, p: Vec2) -> f32 {
         kind.availability(&self.weather, self.clock.day_fraction(), self.site_resource_at(p))
     }
@@ -347,9 +364,29 @@ impl World {
     /// any curtailment (surplus with nowhere to go; every plant turns down
     /// by the same share). This is what the plant table and its record show.
     pub fn plant_dispatched_mw(&self, b: &Building) -> f32 {
+        self.plant_output_mw(b) * self.dispatched_share()
+    }
+
+    /// `plant_dispatched_mw` with the group bonuses worked out together
+    /// (`plant_group_bonuses`).
+    pub(super) fn plant_dispatched_mw_by(&self, bonuses: &HashMap<BuildingId, f32>, id: BuildingId, b: &Building) -> f32 {
+        self.plant_dispatched_mw_with(b, self.bonus_of(bonuses, id, b))
+    }
+
+    /// `plant_dispatched_mw` with the plant's group bonus known.
+    fn plant_dispatched_mw_with(&self, b: &Building, bonus: f32) -> f32 {
+        let out = match b.plant {
+            Some(kind) if !b.is_derelict() && b.operating() => self.plant_output_mw_with(b, kind, bonus),
+            _ => 0.0,
+        };
+        out * self.dispatched_share()
+    }
+
+    /// The share of their output the plants ran at this hour (1 less the
+    /// curtailed share).
+    fn dispatched_share(&self) -> f32 {
         let p = &self.economy.power;
-        let share = if p.supply_mw > 0.0 { ((p.supply_mw - p.curtailed_mw) / p.supply_mw).clamp(0.0, 1.0) } else { 1.0 };
-        self.plant_output_mw(b) * share
+        if p.supply_mw > 0.0 { ((p.supply_mw - p.curtailed_mw) / p.supply_mw).clamp(0.0, 1.0) } else { 1.0 }
     }
 
     /// Whether a battery on this building takes part in the grid: built,
@@ -382,10 +419,11 @@ impl World {
         let mut supply: f32 = 0.0;
         let mut plants = 0;
         let mut by_kind = [0.0f32; 7];
-        for b in self.buildings.values() {
+        let bonuses = self.plant_group_bonuses();
+        for (id, b) in self.buildings.iter() {
             if let Some(kind) = b.plant {
                 if !b.is_derelict() && b.operating() {
-                    let mw = self.plant_output_mw(b);
+                    let mw = self.plant_output_mw_with(b, kind, self.bonus_of(&bonuses, id, b));
                     supply += mw;
                     by_kind[kind.index()] += mw;
                     plants += 1;

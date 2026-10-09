@@ -41,7 +41,8 @@ impl World {
     }
 
     /// [passengers] Everyone in a car on the road besides the driver.
-    pub fn car_occupants(&self, car: CarId) -> Vec<CitizenId> {
+    #[cfg(test)]
+    pub(crate) fn car_occupants(&self, car: CarId) -> Vec<CitizenId> {
         self.traffic.cars.get(car).map_or(Vec::new(), |c| c.occupants.clone())
     }
 
@@ -380,7 +381,7 @@ impl World {
             }
         }
         // On to the next place, after a moment at the kerb.
-        let next = self.building_lot(leg.to).and_then(|l| l.car_segment.map(|s| (s, l.car_point))).and_then(|(s, p)| self.traffic.net.nearest_lane_on(s, p));
+        let next = self.car_stop(leg.to).and_then(|(s, p)| self.traffic.net.nearest_lane_on(s, p));
         if let Some((goal, s_end, _)) = next {
             if self.traffic.redirect(car_id, goal, s_end) {
                 self.traffic.cars[car_id].errand = crate::vehicle::Errand::Trip;

@@ -242,7 +242,7 @@ impl World {
         if race.cars.len() < 2 {
             // Nobody could get there: call it off quietly.
             for &car in &race.cars {
-                self.release_racer(car, None);
+                self.release_racer(car);
             }
             return Err("nobody could drive to the meet".into());
         }
@@ -397,7 +397,7 @@ impl World {
         r.route_m = len;
         for &car in &r.cars.clone() {
             if !self.traffic.cars[car].in_stunt() {
-                self.release_racer(car, None);
+                self.release_racer(car);
                 continue;
             }
             self.traffic.end_stunt(car, route.clone(), s0, s1);
@@ -495,7 +495,7 @@ impl World {
     fn bust_race(&mut self, r: &mut Race) {
         let tick = self.clock.tick;
         let Some(inc) = r.incident else { return };
-        let mut rng = crate::rng_for(self.config.seed ^ 0x5ACE_B057, tick);
+        let mut rng = crate::rng_for(self.stream_seed(Stream::RaceBust), tick);
         let place = r.finish.name.clone();
         let mut runner: Option<(CitizenId, CarId)> = None;
         for k in 0..r.cars.len() {
@@ -538,7 +538,7 @@ impl World {
         retain_pairs(r, &keep);
         // One floors it: the chase system takes it from here.
         if let Some((cid, car)) = runner {
-            if self.release_racer(car, Some(cid)) {
+            if self.release_racer(car) {
                 if let Some(i) = self.services.incident_mut(inc) {
                     i.suspect = Some(cid);
                 }
@@ -557,14 +557,12 @@ impl World {
     }
 
     /// Back to normal driving, bound for home: out of the lot onto the
-    /// lanes, or turned round on the road. With `keep_role` the gang role
-    /// stays off (a chase wants the car as an ordinary one). True when the
-    /// car is on its way.
-    fn release_racer(&mut self, car: CarId, _for_chase: Option<CitizenId>) -> bool {
+    /// lanes, or turned round on the road. True when the car is on its way.
+    fn release_racer(&mut self, car: CarId) -> bool {
         let Some(c) = self.traffic.cars.get(car) else { return false };
         let driver = c.citizen;
         let home = self.citizens.get(driver).and_then(|p| p.home);
-        let dest = home.and_then(|h| self.building_lot(h)).and_then(|l| l.car_segment.map(|s| (s, l.car_point)));
+        let dest = home.and_then(|h| self.car_stop(h));
         let goal = dest.and_then(|(seg, p)| self.traffic.net.nearest_lane_on(seg, p));
         let mut ok = false;
         if c.in_stunt() {
@@ -616,7 +614,7 @@ impl World {
         let tick = self.clock.tick;
         for &car in &r.cars {
             if self.traffic.cars.get(car).is_some_and(|c| !c.drive.fleeing) {
-                self.release_racer(car, None);
+                self.release_racer(car);
             }
         }
         for &cid in &r.racers {
@@ -753,8 +751,7 @@ impl World {
         if rave.guests.is_empty() {
             return Err("nobody in reach wants to come".into());
         }
-        if let Some((p, c)) = rave.promoter.and_then(|p| self.citizens.get_mut(p).map(|c| (p, c))) {
-            let _ = p;
+        if let Some(c) = rave.promoter.and_then(|p| self.citizens.get_mut(p)) {
             c.remember(tick, format!("Opened up {place} for a night. Sound system, lights, the lot."));
         }
         let n = rave.guests.len();

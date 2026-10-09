@@ -330,9 +330,13 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 - [ ] Footpath-only rail crossings still draw paving over the rails; crossing lamps have no real light at night (rail-crossing)
 
-- [ ] "Perfect AI City": a New Game preset + save, fully planned and built at day 1 (roads, interchange, zones, services, transit, power), unlimited money, validated to grow big without collapse [feat/perfect-city]
+- [x] "Perfect AI City": a New Game preset + save, fully planned and built at day 1 (roads, interchange, zones, services, transit, power), unlimited money, validated to grow big without collapse [feat/perfect-city]   → DONE [feat/perfect-city]: CityPreset::PerfectCity (New game > Starting town, generate_city perfect_city, seed 5): temperate coast, square avenue grid, 3 diamond interchanges, works downwind round the river, farms upwind, every service/plant/transit line/district laid by citygen::furnish, 50M treasury; example perfect_city writes saves/perfect_ai_city.ron and runs it headless; tests citygen_perfect_city
+- [ ] Perfect AI City tops out at ~13k people by day 18 (every lot built; redevelopment adds homes slowly) and from day ~20 vehicles grow ~300-500/day at a flat population (stuck 170 -> 860 by day 30, population drifting back to 12k): the same vehicle build-up as grid_plaza seed 3 above, a sim issue rather than the plan; also ~650 homeless with homes free (rents) once lots run out [feat/perfect-city]
 
 - [ ] Save → load → continue drifts: traffic lane network/signals, car blocked_by/offlaw/dodge, traffic pedestrians, trains in motion, land-value work in progress, road wear aren't fully saved (ignored test in tests/determinism.rs lists them) — phase 2b
+
+- [ ] citygen::dry asks for 200–250 m water clearance but the water-distance lookup caps at ~161 m, so older presets drag plazas to the map middle (worked around for the Perfect AI City only)
+- [ ] Perfect AI City: levels off ~13k (all lots built by day 18); ~650 priced-out homeless after lots run out; vehicle build-up after day 20 (same as the grid_plaza jam item); no tidal plant; one beach has no access
 
 ## Follow-ups noted in agent reports (not started)
 - [x] Waterfront leftovers: the fishing fleet (world/fishing.rs) does not sail a trawler from a private fishing jetty yet (berth is `Jetty::berth`); cargo-quay coasters are not drawn sailing; old saves keep their parcels unless `waterfront_parcels {on}` (no in-game toggle); beach crowds beyond the sim's own visitors are drawn as props (feat/waterfront) → trawlers and coasters DONE [fix/sweep-visual]: a fishery with its own jetty gets a one-boat fleet (`Fleet::jetty`) on the same grounds/out/home logic (its catch replaces its hourly fish like a port's; inspector FISHING FLEET, `inspect.fishing`, `ships`); the jetty's static boat is drawn only when no fleet sails it; a cargo quay's coaster sails in by water from the map's edge ahead of each load (`shore.inbound`), lies alongside 75 min after landing (`Jetty::last_load`), then sails out (renderer only). The parcels toggle and beach props remain
@@ -365,7 +369,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 ## Agents running (update when starting/merging; survives context compaction)
 
-## Next steps (Harvey 2026-10-08) — start only after the current phase and the final code review are done
+## Next steps (Harvey 2026-10-08) — ON HOLD: Harvey said pause after the code review; start these another day only when he asks
 - [ ] City rating: liveability, prosperity, safety, environment — measured, with history charts (no challenges/scenarios yet)
 - [ ] Banks and debt: bank businesses open and lend to other businesses (loans can go bad, defaults, failures like real life); broke people can fall into debt (hospital bills, gambling, etc.) with consequences
 - [ ] Large ferry terminal + car ferries: a bigger terminal (vehicle ramps, marshalling lanes, needs a road connection) whose ferries carry cars and trucks as well as passengers; routing treats car-ferry links as part of the road network (with a fare and a wait), so drivers and freight can cross water
@@ -386,5 +390,4 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [ ] Settings menu (graphics, controls, UI scale, etc.)
 - (Later / skipped for now: challenges and scenarios, elections and disasters, water and sewage, seasons and events, advisor and heat maps, neighbouring towns, sound, tutorial)
 - [x] Level crossings: a crossing signal bar that comes down and stops traffic when a train passes (on streets of more than 2 lanes), alternating red flashing lights, a pole going down and up → DONE [feat/rail-crossing]: each crossing runs a cycle from the trains coming (lights 15 s out, arms down 3 s later over 5 s, down while a train is over it and 2 s after, up over 5 s; saved with serde defaults); vehicles stop at a stop line clear of the track (lanes end there), walkers and cyclists at the track's edge; trains wait for a crossing not closed with its box clear; half-barriers + pavement gates on 3+ lane streets, lights/bell/crossbuck only on 1+1, lights and gates on footpaths; posts with twin lamps flashing in turn, crossbucks, bells, striped arms with tip lamps swinging smoothly; road inspector section; `level_crossings` API (and in `intersection`)
-- feat/perfect-city: Perfect AI City preset and save (started 2026-10-08)
 - refactor/sim-core, refactor/sim-world, refactor/procgen, refactor/app: phase 2b refactors (started 2026-10-08 17:00)

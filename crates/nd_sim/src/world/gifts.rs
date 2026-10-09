@@ -25,7 +25,8 @@ pub struct Gift {
 pub enum Holding {
     Home,
     Work,
-    /// A business they own (a firm they founded).
+    /// Anything they own (`World::properties_of`): a firm they founded,
+    /// a billionaire's other homes and firms.
     Owns,
 }
 

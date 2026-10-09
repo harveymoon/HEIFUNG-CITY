@@ -306,7 +306,7 @@ impl World {
             .collect()
     }
 
-    /// A road's name for a message: the street name at `p`, else where.
+    /// A road for a message: where it is (no street-name lookup).
     fn road_name_at(&self, p: Vec2) -> String {
         format!("a road at ({:.0}, {:.0})", p.x, p.y)
     }

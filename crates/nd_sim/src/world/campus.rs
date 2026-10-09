@@ -67,11 +67,6 @@ impl World {
         self.corps.campuses.push(Campus { building: bid, owner, brand, founded_day: day, annexes: Vec::new(), pending: Vec::new(), students: Vec::new(), funds: 0.0, expansions_total: 0 });
     }
 
-    /// Whether `cid` is enrolled at a university.
-    pub fn is_student(&self, cid: CitizenId) -> bool {
-        self.corps.is_student(cid)
-    }
-
     pub(super) fn campus_centre(&self, ki: usize) -> Option<Vec2> {
         self.building_lot(self.corps.campuses.get(ki)?.building).map(|l| l.center)
     }
@@ -553,7 +548,6 @@ impl World {
     }
 
     pub(super) fn send_students_to_class(&mut self) {
-        let tick = self.clock.tick;
         let list: Vec<(BuildingId, Vec<CitizenId>)> = self.corps.campuses.iter().filter(|k| self.buildings.get(k.building).is_some_and(|b| b.operating() && !b.is_derelict())).map(|k| (k.building, k.students.clone())).collect();
         for (campus, students) in list {
             let name = self.buildings[campus].name.clone();
@@ -568,7 +562,6 @@ impl World {
                 self.corps.stats.students_to_class_today += 1;
                 self.travel_to(cid, Some(campus), Purpose::Visit(LandUse::Civic));
             }
-            let _ = tick;
         }
     }
 
