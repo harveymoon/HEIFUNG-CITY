@@ -73,11 +73,7 @@ fn lookup(name: &str) -> Option<&'static Cmd> {
 
 pub(super) fn remote_commands(inbox: Res<Inbox>, mut ctx: Ctx) {
     // Take the batch out first: the lock must not be held while commands run.
-    let batch: Vec<_> = match inbox.0.lock() {
-        Ok(rx) => rx.try_iter().collect(),
-        Err(_) => return,
-    };
-    for p in batch {
+    for p in inbox.drain() {
         // Withdrawn after a 504: running it now would surprise a client
         // that was told it did not run.
         if p.state.compare_exchange(QUEUED, TAKEN, Ordering::SeqCst, Ordering::SeqCst).is_err() {

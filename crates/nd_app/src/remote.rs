@@ -99,16 +99,13 @@ mod trains;
 /// [fire-scene] Emergency units: inspect, select, list.
 mod units;
 
-use std::sync::mpsc;
-use std::sync::Mutex;
-
 use bevy::prelude::*;
 
 use crate::sim::SimSet;
 use dispatch::remote_commands;
 use events::{log_events, record_history, EventLog};
 use history::History;
-use server::{serve, Inbox, Pending};
+use server::{inbox_waiting, serve};
 use window::WindowRequests;
 
 pub use inspect::{selected_detail, selection_json_brief, tick_time_json};
@@ -124,22 +121,22 @@ impl Plugin for RemotePlugin {
             return;
         }
         let port = std::env::var("ND_REMOTE_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(DEFAULT_PORT);
-        let (tx, rx) = mpsc::channel::<Pending>();
+        let (queue, inbox) = server::queue();
         match tiny_http::Server::http(("127.0.0.1", port)) {
             Ok(server) => {
                 info!("remote API listening on http://127.0.0.1:{port}  (POST /cmd, GET /status)");
-                std::thread::Builder::new().name("nd-remote-http".into()).spawn(move || serve(server, tx, port)).expect("spawn remote http thread");
+                std::thread::Builder::new().name("nd-remote-http".into()).spawn(move || serve(server, queue, port)).expect("spawn remote http thread");
             }
             Err(e) => {
                 warn!("remote API could not bind 127.0.0.1:{port}: {e}; set ND_REMOTE_PORT or ND_REMOTE=0");
                 return;
             }
         }
-        app.insert_resource(Inbox(Mutex::new(rx)))
+        app.insert_resource(inbox)
             .init_resource::<EventLog>()
             .init_resource::<History>()
             .init_resource::<WindowRequests>()
-            .add_systems(Update, remote_commands.in_set(SimSet::Input).before(crate::tools::tool_input).before(crate::city_reset::on_city_replaced))
+            .add_systems(Update, remote_commands.run_if(inbox_waiting).in_set(SimSet::Input).before(crate::tools::tool_input).before(crate::city_reset::on_city_replaced))
             .add_systems(Update, (log_events, record_history).in_set(SimSet::Sync))
             // Before the panel draws, so a request shows the same frame.
             .add_systems(bevy_egui::EguiPrimaryContextPass, window::apply_window_requests.before(crate::ui::side_panel));

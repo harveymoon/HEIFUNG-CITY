@@ -39,13 +39,61 @@ pub(super) struct Reply {
     pub(super) body: Value,
 }
 
-/// `Receiver` is `Send` but not `Sync`; a resource must be both, so the
-/// mutex makes the compiler happy. Only `remote_commands` ever locks it,
-/// and only for the length of a non-blocking drain.
+/// The main thread's end of the queue.
 #[derive(Resource)]
-pub(super) struct Inbox(pub(super) Mutex<Receiver<Pending>>);
+pub(super) struct Inbox {
+    /// `Receiver` is `Send` but not `Sync`; a resource must be both, so
+    /// the mutex makes the compiler happy. Only `remote_commands` ever
+    /// locks it, and only for the length of a non-blocking drain.
+    rx: Mutex<Receiver<Pending>>,
+    /// Requests queued and not yet taken: counted up before a send, down
+    /// after the drain, so it is never below what the channel holds.
+    waiting: Arc<AtomicUsize>,
+}
 
-pub(super) fn serve(server: tiny_http::Server, tx: Sender<Pending>, port: u16) {
+/// The HTTP threads' end of the queue.
+#[derive(Clone)]
+pub(super) struct Queue {
+    tx: Sender<Pending>,
+    waiting: Arc<AtomicUsize>,
+}
+
+/// A new queue: the HTTP side and the main thread's side.
+pub(super) fn queue() -> (Queue, Inbox) {
+    let (tx, rx) = mpsc::channel();
+    let waiting = Arc::new(AtomicUsize::new(0));
+    (Queue { tx, waiting: waiting.clone() }, Inbox { rx: Mutex::new(rx), waiting })
+}
+
+impl Queue {
+    /// Park a request; false if the app is shutting down.
+    fn send(&self, p: Pending) -> bool {
+        self.waiting.fetch_add(1, Ordering::SeqCst);
+        let sent = self.tx.send(p).is_ok();
+        if !sent {
+            self.waiting.fetch_sub(1, Ordering::SeqCst);
+        }
+        sent
+    }
+}
+
+impl Inbox {
+    /// Everything queued now, without blocking.
+    pub(super) fn drain(&self) -> Vec<Pending> {
+        let Ok(rx) = self.rx.lock() else { return Vec::new() };
+        let batch: Vec<Pending> = rx.try_iter().collect();
+        self.waiting.fetch_sub(batch.len(), Ordering::SeqCst);
+        batch
+    }
+}
+
+/// Run condition for `remote_commands`: a request is waiting (most frames
+/// have none, and the command bundle borrows some 25 resources).
+pub(super) fn inbox_waiting(inbox: Res<Inbox>) -> bool {
+    inbox.waiting.load(Ordering::SeqCst) > 0
+}
+
+pub(super) fn serve(server: tiny_http::Server, tx: Queue, port: u16) {
     let in_flight = Arc::new(AtomicUsize::new(0));
     for req in server.incoming_requests() {
         // One thread per request, so a client that trickles its body holds
@@ -85,7 +133,7 @@ fn respond(req: tiny_http::Request, reply: Reply) {
 
 /// One request, on its own thread: check who is asking (before reading the
 /// body), read a bounded body, queue the command and wait for its reply.
-fn handle(mut req: tiny_http::Request, tx: &Sender<Pending>, port: u16) {
+fn handle(mut req: tiny_http::Request, tx: &Queue, port: u16) {
     // Owned copies: reading the body borrows the request mutably.
     let method = req.method().as_str().to_string();
     let url = req.url().split('?').next().unwrap_or("").to_string();
@@ -104,7 +152,7 @@ fn handle(mut req: tiny_http::Request, tx: &Sender<Pending>, port: u16) {
         Ok(cmd) => {
             let (reply_tx, reply_rx) = mpsc::channel();
             let state = Arc::new(AtomicU8::new(QUEUED));
-            if tx.send(Pending { cmd, reply: reply_tx, state: state.clone() }).is_err() {
+            if !tx.send(Pending { cmd, reply: reply_tx, state: state.clone() }) {
                 // The app is shutting down; the receiver is gone.
                 return;
             }
