@@ -323,7 +323,7 @@ pub fn vehicle_fits(c: &Ctx, p: Vec2, yaw: f32, kind: Vehicle) -> bool {
     let d = Vec2::new(yaw.cos(), yaw.sin());
     let n = Vec2::new(-d.y, d.x);
     let centre = p + d * ahead;
-    [centre + d * hl + n * hw, centre + d * hl - n * hw, centre - d * hl + n * hw, centre - d * hl - n * hw, centre].iter().all(|q| c.inside_local(*q))
+    c.all_inside(&[centre + d * hl + n * hw, centre + d * hl - n * hw, centre - d * hl + n * hw, centre - d * hl - n * hw, centre])
 }
 
 /// A vehicle standing on a surface at height `y` (a deck, the ground),

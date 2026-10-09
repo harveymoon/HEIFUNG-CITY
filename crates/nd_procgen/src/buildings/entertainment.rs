@@ -21,7 +21,7 @@ pub fn shack_bar(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let (mut w, mut d) = (w, d);
         let mut fits = false;
         for _ in 0..8 {
-            if rect(p.x, p.y, w * 0.5 + 0.8, d * 0.5 + 0.9).iter().all(|q| c.inside_local(*q)) {
+            if c.all_inside(&rect(p.x, p.y, w * 0.5 + 0.8, d * 0.5 + 0.9)) {
                 fits = true;
                 break;
             }
@@ -313,7 +313,7 @@ pub fn arena(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     led_screen(g, c, rng, &gate, 0.0, h * 0.55, (r * 0.9).min(16.0), (r * 0.5).min(8.0));
     // Pylons with floodlights, trees and bollards on the plaza.
     for p in &plaza {
-        let inset = *p + (center - *p).normalize_or_zero() * 2.5;
+        let inset = toward(*p, center, 2.5);
         if c.inside_local(inset) && inset.distance(center) > r * 1.2 + 2.0 {
             floodlight(g, c, inset, 14.0);
         }

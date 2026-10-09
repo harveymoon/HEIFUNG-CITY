@@ -25,6 +25,7 @@ use super::Ctx;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::towers::{Tower, TowerDesign, TOWER_FLOOR_M};
+use nd_sim::zoning::point_in_polygon;
 use rand::Rng;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
@@ -43,7 +44,7 @@ fn tower_seat(c: &Ctx, site: &[Vec2]) -> (Vec2, f32) {
         let a = k as f32 / 16.0 * TAU;
         for s in [0.25f32, 0.5] {
             let p = anchor + Vec2::new(a.cos(), a.sin()) * r0 * s;
-            if point_in(site, p) {
+            if point_in_polygon(p, site) {
                 let d = distance_to_boundary(p, site);
                 if d > best.0 {
                     best = (d, p);
@@ -53,10 +54,6 @@ fn tower_seat(c: &Ctx, site: &[Vec2]) -> (Vec2, f32) {
     }
     let _ = c;
     (best.1, best.0.max(5.0))
-}
-
-fn point_in(poly: &[Vec2], p: Vec2) -> bool {
-    nd_sim::zoning::point_in_polygon(p, poly)
 }
 
 /// The site the tower and podium stand on: the parcel (the merged plots)
@@ -224,7 +221,7 @@ fn plaza(g: &mut Geometry, c: &Ctx, seed: u64, site: &[Vec2], pod: &[Vec2]) {
     for j in 0..nv.max(0) {
         for i in 0..nu.max(0) {
             let p = Vec2::new(lo.x + pad_u + (i as f32 + 0.5) * step, lo.y + pad_v + (j as f32 + 0.5) * step);
-            if !point_in(site, p) || distance_to_boundary(p, site) < 2.2 || point_in(&near_pod, p) || distance_to_boundary(p, &near_pod) < 1.2 {
+            if !point_in_polygon(p, site) || distance_to_boundary(p, site) < 2.2 || point_in_polygon(p, &near_pod) || distance_to_boundary(p, &near_pod) < 1.2 {
                 continue;
             }
             open.push((p, (i + 2 * j).rem_euclid(5)));

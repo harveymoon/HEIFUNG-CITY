@@ -239,7 +239,7 @@ pub fn shipping_port(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Ship-to-shore crane straddling the quay: legs, boom out over the water.
     let cu = lo.x + w * 0.62;
     let legs = [Vec2::new(cu - 8.0, hi.y - 3.0), Vec2::new(cu + 8.0, hi.y - 3.0), Vec2::new(cu - 8.0, hi.y - 15.0), Vec2::new(cu + 8.0, hi.y - 15.0)];
-    if legs.iter().all(|p| c.inside_local(*p)) && poly_inside(c, &rect(cu, hi.y - 11.0, 9.5, 10.5)) {
+    if c.all_inside(&legs) && poly_inside(c, &rect(cu, hi.y - 11.0, 9.5, 10.5)) {
         let crane = mul(pal.metal_paint(0), 1.0);
         for p in legs {
             f.bx(g, Metal, p.x, 14.0, p.y, Vec3::new(1.0, 28.0, 1.0), crane);

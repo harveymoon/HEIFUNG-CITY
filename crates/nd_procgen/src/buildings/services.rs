@@ -577,7 +577,7 @@ pub fn prison(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // Watchtowers at the corners of the wall and floodlights on the yard.
     for p in wall.iter() {
-        let inset = *p + (poly_center(&wall) - *p).normalize_or_zero() * 1.6;
+        let inset = toward(*p, poly_center(&wall), 1.6);
         if !c.inside_local(inset) || distance_to_boundary(inset, &c.lot_poly) < 1.0 {
             continue;
         }

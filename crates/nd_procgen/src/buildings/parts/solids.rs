@@ -94,7 +94,7 @@ pub fn plinth(g: &mut Geometry, c: &Ctx, poly: &[Vec2], steps: usize, rise: f32,
     for k in 0..steps {
         let p = offset_poly(poly, -(tread * (steps - k) as f32));
         // Steps that would spill over the lot edge are dropped.
-        let p = if p.iter().all(|q| c.inside_local(*q)) { p } else { fit_inside(c, &p) };
+        let p = if c.all_inside(&p) { p } else { fit_inside(c, &p) };
         extrude(g, &c.frame, s, &p, 0.0, rise * (k + 1) as f32, color);
     }
 }

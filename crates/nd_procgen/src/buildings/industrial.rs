@@ -70,7 +70,7 @@ pub fn junkyard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Gate sign on the fence line.
     sign_board(g, c, rng, &front, -front.len * 0.25, 2.9, (front.len * 0.3).min(6.0), 0.7);
     // Crane claw on a small gantry over the biggest pile.
-    if c.fw > 18.0 && c.fd > 14.0 && [Vec2::new(-6.0, -c.fd * 0.2), Vec2::new(6.0, -c.fd * 0.2), Vec2::new(-6.0, c.fd * 0.25), Vec2::new(6.0, c.fd * 0.25)].iter().all(|p| c.inside_local(*p)) {
+    if c.fw > 18.0 && c.fd > 14.0 && c.all_inside(&[Vec2::new(-6.0, -c.fd * 0.2), Vec2::new(6.0, -c.fd * 0.2), Vec2::new(-6.0, c.fd * 0.25), Vec2::new(6.0, c.fd * 0.25)]) {
         gantry_crane(g, c, 0.0, -c.fd * 0.2, c.fd * 0.25, 7.0);
     }
     for k in 0..2 {
@@ -895,7 +895,7 @@ pub fn container_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // A rail-mounted gantry over the stacks.
     let (gu, gv0, gv1) = ((lo.x + hi.x) * 0.5, lane_v + 4.0, hi.y - 1.0);
     let posts = [Vec2::new(gu - 2.0, gv0), Vec2::new(gu + 2.0, gv0), Vec2::new(gu - 2.0, gv1 + 1.0), Vec2::new(gu + 2.0, gv1 + 1.0), Vec2::new(gu, gv0 - 1.0)];
-    if hi.y - lane_v > 14.0 && hi.x - lo.x > 14.0 && posts.iter().all(|p| c.inside_local(*p)) {
+    if hi.y - lane_v > 14.0 && hi.x - lo.x > 14.0 && c.all_inside(&posts) {
         gantry_crane(g, c, gu, gv0, gv1, 14.0);
     }
     // Gatehouse and lights.
@@ -986,7 +986,7 @@ pub fn truck_lot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let mut u = lo.x + bay_w * 0.5;
         while u + bay_w * 0.5 <= hi.x {
             let p = Vec2::new(u, v + bay_d * 0.5);
-            if [Vec2::new(-bay_w * 0.5, -bay_d * 0.5), Vec2::new(bay_w * 0.5, bay_d * 0.5), Vec2::new(-bay_w * 0.5, bay_d * 0.5), Vec2::new(bay_w * 0.5, -bay_d * 0.5)].iter().all(|q| c.inside_local(p + *q)) {
+            if c.all_inside(&[Vec2::new(-bay_w * 0.5, -bay_d * 0.5), Vec2::new(bay_w * 0.5, bay_d * 0.5), Vec2::new(-bay_w * 0.5, bay_d * 0.5), Vec2::new(bay_w * 0.5, -bay_d * 0.5)].map(|q| p + q)) {
                 bays.push(p);
             }
             u += bay_w;

@@ -249,7 +249,7 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for unit in units.iter().filter(|x| x.level > 0) {
         let mut props: [Option<(Vec2, f32)>; 4] = [None; 4];
         for (ci, corner) in unit.corners().into_iter().enumerate() {
-            let inset = corner + (Vec2::new(unit.u, unit.v) - corner).normalize_or_zero() * 0.35;
+            let inset = toward(corner, Vec2::new(unit.u, unit.v), 0.35);
             if units.iter().any(|o| o.level == unit.level - 1 && o.contains(inset)) {
                 continue;
             }
@@ -287,7 +287,7 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                         if unit.y0 - base > 3.2 {
                             // Raking strut from two-thirds up to the ground (or roof)
                             // a metre and a half in under the unit.
-                            let foot = p + (Vec2::new(unit.u, unit.v) - p).normalize_or_zero() * 1.5;
+                            let foot = toward(p, Vec2::new(unit.u, unit.v), 1.5);
                             if units.iter().filter(|o| o.level < unit.level && o.contains(foot)).map(|o| o.top()).fold(0.0, f32::max) == base {
                                 let n = f.dir3((foot - p).perp()).normalize_or_zero();
                                 flat_bar(g.part(Rust), f.at2(p, base + (unit.y0 - base) * 0.66), f.at2(foot, base + 0.05), 0.12, n, brace);
@@ -327,7 +327,7 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         // Against a unit on the lot's edge, wherever the lot actually is.
         let sv = rng.random_range((lo.y + hi.y) * 0.5 - 3.0..(lo.y + hi.y) * 0.5 + 3.0);
         let mut su = lo.x + 1.4;
-        while su < hi.x - 2.0 && !(c.inside_local(Vec2::new(su - 1.0, sv - 2.0)) && c.inside_local(Vec2::new(su + 2.5, sv + 2.0)) && c.inside_local(Vec2::new(su - 1.0, sv + 2.0)) && c.inside_local(Vec2::new(su + 2.5, sv - 2.0))) {
+        while su < hi.x - 2.0 && !c.all_inside(&[Vec2::new(su - 1.0, sv - 2.0), Vec2::new(su + 2.5, sv + 2.0), Vec2::new(su - 1.0, sv + 2.0), Vec2::new(su + 2.5, sv - 2.0)]) {
             su += 1.0;
         }
         if su < hi.x - 2.0 {

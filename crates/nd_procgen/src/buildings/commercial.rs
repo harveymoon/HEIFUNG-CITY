@@ -391,7 +391,7 @@ pub fn cantilever_mall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         // Columns under corners that overhang the box below.
         if i > 0 {
             for p in &plate {
-                let inset = *p + (poly_center(&plate) - *p).normalize_or_zero() * 0.8;
+                let inset = toward(*p, poly_center(&plate), 0.8);
                 if !nd_sim::zoning::point_in_polygon(inset, &below) {
                     let base_y = if c.inside_local(inset) { 0.0 } else { y };
                     f.bx(g, Matte, inset.x, (base_y + y) * 0.5, inset.y, Vec3::new(0.5, y - base_y, 0.5), mul(pal.steel, 0.8));

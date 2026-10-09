@@ -70,7 +70,7 @@ fn mass(g: &Geometry, c: &Ctx) -> Option<(f32, Vec2, Vec2)> {
 /// corners are off the parcel.
 fn on_lot(c: &Ctx, at: Vec2, out: Vec2, half: f32, proud: f32) -> bool {
     let right = Vec2::new(out.y, -out.x);
-    [at + right * half, at - right * half, at + right * half + out * proud, at - right * half + out * proud].iter().all(|p| c.inside_local(*p))
+    c.all_inside(&[at + right * half, at - right * half, at + right * half + out * proud, at - right * half + out * proud])
 }
 
 /// The logo, `size` metres square, standing in the vertical plane through

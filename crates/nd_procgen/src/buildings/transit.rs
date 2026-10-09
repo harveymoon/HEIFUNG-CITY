@@ -55,7 +55,7 @@ pub fn bus_depot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // Fuel island and wash arch by one side, office by the gate.
     let fuel = Vec2::new(hi.x - 6.0, lo.y + d * 0.5);
-    if [Vec2::new(3.0, 4.8), Vec2::new(-3.0, 4.8), Vec2::new(3.0, -4.8), Vec2::new(-3.0, -4.8)].iter().all(|o| c.inside_local(fuel + *o)) {
+    if c.all_inside(&[Vec2::new(3.0, 4.8), Vec2::new(-3.0, 4.8), Vec2::new(3.0, -4.8), Vec2::new(-3.0, -4.8)].map(|o| fuel + o)) {
         f.bx(g, Concrete, fuel.x, 0.1, fuel.y, Vec3::new(2.0, 0.2, 7.0), mul(pal.concrete(0), 1.1));
         for k in 0..2 {
             f.bx(g, Metal, fuel.x, 0.9, fuel.y - 2.0 + k as f32 * 4.0, Vec3::new(0.8, 1.6, 0.6), mul(pal.metal_paint(1), 0.9));

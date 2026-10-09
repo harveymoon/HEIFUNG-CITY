@@ -49,7 +49,7 @@ pub fn precinct(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Mast, cameras, floodlights, yard with vans behind a barbed fence.
     antenna_mast(g, c, poly_center(poly) + Vec2::new(c.fw * 0.25, 0.0), h + 1.2, 14.0);
     for p in &c.poly {
-        let inset = *p + (poly_center(poly) - *p).normalize_or_zero() * 0.6;
+        let inset = toward(*p, poly_center(poly), 0.6);
         f.bx(g, Matte, inset.x, h + 1.0, inset.y, Vec3::new(0.08, 0.6, 0.08), CHARCOAL);
         f.bx(g, Matte, inset.x, h + 1.3, inset.y, Vec3::new(0.25, 0.15, 0.4), DARK);
     }
@@ -119,7 +119,7 @@ pub fn library(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     curtain_lights(g, c, rng, &offset_poly(&upper, 0.3), base_h + 0.5, 1, upper_h);
     extrude(g, f, Concrete, &upper, base_h + 0.5 + upper_h, base_h + 1.0 + upper_h, mul(pick(rng, &pal.concrete), 1.1));
     for p in &upper {
-        let inset = *p + (poly_center(&upper) - *p).normalize_or_zero() * 0.8;
+        let inset = toward(*p, poly_center(&upper), 0.8);
         if !nd_sim::zoning::point_in_polygon(inset, poly) {
             f.bx(g, Matte, inset.x, base_h * 0.5, inset.y, Vec3::new(0.4, base_h, 0.4), pal.steel);
         }

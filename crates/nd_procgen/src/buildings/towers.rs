@@ -539,7 +539,7 @@ pub fn glass_castle(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // Gatehouse: a glass box with a lit canopy.
     let gt = gate_w * 0.5 + 2.0;
-    if [(-1.6f32, -0.8f32), (1.6, -0.8), (1.6, -4.0), (-1.6, -4.0)].iter().all(|(dt, dd)| c.inside_local(front.at(gt + dt, *dd))) {
+    if c.all_inside(&[(-1.6f32, -0.8f32), (1.6, -0.8), (1.6, -4.0), (-1.6, -4.0)].map(|(dt, dd)| front.at(gt + dt, dd))) {
         front.bx(g, f, Glass, gt, 1.6, -2.4, Vec3::new(2.6, 3.2, 2.6), pal.glass(1));
         front.bx(g, f, Glow, gt, 3.3, -2.4, Vec3::new(3.0, 0.15, 3.0), mul(pal.lamp, 0.9));
     }

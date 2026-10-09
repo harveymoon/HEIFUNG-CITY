@@ -295,3 +295,15 @@ pub fn interior_anchor(poly: &[Vec2]) -> Vec2 {
     }
     best.1
 }
+
+/// `p` moved `d` towards `target` (a corner pulled in towards the middle).
+pub fn toward(p: Vec2, target: Vec2, d: f32) -> Vec2 {
+    p + (target - p).normalize_or_zero() * d
+}
+
+impl Ctx<'_> {
+    /// Whether every point lies on the lot (lot-local).
+    pub fn all_inside(&self, pts: &[Vec2]) -> bool {
+        pts.iter().all(|p| self.inside_local(*p))
+    }
+}
