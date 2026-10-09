@@ -12,6 +12,7 @@ use nd_sim::rail::{self, FreightLoad, Train, TrainKind, TrainState};
 use nd_sim::transit::TransitLeg;
 use nd_sim::{BuildingId, CitizenId, World};
 
+use super::pane::tag;
 use super::{hint, section, GOLD, IVORY, WARN};
 use crate::assets::GameAssets;
 use crate::tools::Selection;
@@ -33,13 +34,6 @@ fn eta(w: &World, minutes: f32) -> String {
     } else {
         format!("in ~{:.0} min ({when})", minutes)
     }
-}
-
-/// A small coloured tag, as the inspector's headers use.
-fn tag(ui: &mut egui::Ui, text: &str, col: egui::Color32) {
-    egui::Frame::new().fill(col.gamma_multiply(0.22)).stroke(egui::Stroke::new(1.0, col.gamma_multiply(0.8))).corner_radius(4.0).inner_margin(egui::Margin::symmetric(6, 1)).show(ui, |ui| {
-        ui.label(egui::RichText::new(text).color(col).strong());
-    });
 }
 
 /// The inspector body for `Selection::Train` / `Selection::Metro`.

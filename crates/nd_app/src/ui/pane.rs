@@ -247,6 +247,14 @@ impl Series {
     }
 }
 
+/// A small rounded tag in a colour: the inspector's header (zone, business,
+/// district) and a train's kind.
+pub fn tag(ui: &mut egui::Ui, text: &str, col: Color32) {
+    egui::Frame::new().fill(col.gamma_multiply(0.22)).stroke(Stroke::new(1.0, col.gamma_multiply(0.8))).corner_radius(4.0).inner_margin(egui::Margin::symmetric(6, 1)).show(ui, |ui| {
+        ui.label(egui::RichText::new(text).color(col).strong());
+    });
+}
+
 const AXIS: Color32 = Color32::from_gray(110);
 const TICK: Color32 = Color32::from_gray(170);
 
