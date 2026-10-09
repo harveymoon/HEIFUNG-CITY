@@ -38,6 +38,7 @@ mod train_select;
 mod ferry_select;
 mod ui;
 
+use bevy::app::PluginGroupBuilder;
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
 
@@ -69,23 +70,48 @@ fn main() {
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
         .add_systems(Update, window_icon)
         .add_plugins(bevy_egui::EguiPlugin::default())
-        .add_plugins((
-            assets::GameAssetsPlugin,
-            sim::SimPlugin,
-            camera::CameraPlugin,
-            tools::ToolsPlugin,
-            render::RenderPlugin,
-            ui::UiPlugin,
-            flags::FlagsPlugin,
-            remote::RemotePlugin,
-            district_tool::DistrictToolPlugin,
-            map_layers::MapLayersPlugin,
-            marks::MarksPlugin,
-            metro_ux::MetroUxPlugin,
-        ))
-        // A plugin tuple holds at most 15: the rest go in a second one.
-        .add_plugins((committee::CommitteePlugin, build_highlight::BuildHighlightPlugin, stub_marks::StubMarksPlugin, ferry_select::FerrySelectPlugin, crash::CrashPlugin, city_reset::CityResetPlugin))
+        .add_plugins((CorePlugins, WorldViewPlugins, PlayerPlugins, remote::RemotePlugin))
         .run();
+}
+
+/// [refactor/app] The game's plugins by domain (review 3.5): a new module
+/// registers in its group, not in `main`.
+///
+/// The simulation and what keeps it: assets, the sim, flags, crash logs and
+/// the reset when a different city starts.
+struct CorePlugins;
+
+impl PluginGroup for CorePlugins {
+    fn build(self) -> PluginGroupBuilder {
+        PluginGroupBuilder::start::<Self>().add(assets::GameAssetsPlugin).add(sim::SimPlugin).add(flags::FlagsPlugin).add(crash::CrashPlugin).add(city_reset::CityResetPlugin)
+    }
+}
+
+/// What is drawn: the camera, the renderer, map layers, marks and the
+/// overlays over the city.
+struct WorldViewPlugins;
+
+impl PluginGroup for WorldViewPlugins {
+    fn build(self) -> PluginGroupBuilder {
+        PluginGroupBuilder::start::<Self>()
+            .add(camera::CameraPlugin)
+            .add(render::RenderPlugin)
+            .add(map_layers::MapLayersPlugin)
+            .add(marks::MarksPlugin)
+            .add(metro_ux::MetroUxPlugin)
+            .add(build_highlight::BuildHighlightPlugin)
+            .add(stub_marks::StubMarksPlugin)
+            .add(ferry_select::FerrySelectPlugin)
+    }
+}
+
+/// What the player works with: tools, the UI, the committee.
+struct PlayerPlugins;
+
+impl PluginGroup for PlayerPlugins {
+    fn build(self) -> PluginGroupBuilder {
+        PluginGroupBuilder::start::<Self>().add(tools::ToolsPlugin).add(ui::UiPlugin).add(district_tool::DistrictToolPlugin).add(committee::CommitteePlugin)
+    }
 }
 
 /// The District 2040 icon on the window and its taskbar button, set once the
