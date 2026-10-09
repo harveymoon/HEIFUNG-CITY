@@ -1007,6 +1007,19 @@ impl Alert {
         }
     }
 
+    /// As `add`, for a slotmap id: the id is spelled out only while
+    /// examples are still wanted (the scan sees every citizen and building
+    /// and keeps five ids per alert).
+    fn add_id<K: slotmap::Key>(&mut self, id: K, at: Option<SVec2>) {
+        self.count += 1;
+        if let Some(p) = at {
+            self.points.push(p);
+        }
+        if self.examples.len() < ALERT_EXAMPLES {
+            self.examples.push(key_str(id));
+        }
+    }
+
     /// Ranking: severity first, then (logarithmically) how many.
     fn score(&self) -> f32 {
         self.severity as f32 * 10.0 + (self.count as f32).ln_1p()
@@ -1053,64 +1066,62 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     let mut derelict = Alert::new("derelict_buildings", 1, "condition below 0.3; they are redeveloped or demolished in time");
     let mut vacant_demand = Alert::new("vacant_lots_with_high_demand", 1, "demand is high but lots stand empty: they may lack road access or the area may be unattractive");
     for (id, c) in w.citizens.iter() {
-        let k = key_str(id);
         if c.satiety < HUNGRY_SATIETY {
-            hungry.add(k.clone(), Some(c.pos));
+            hungry.add_id(id, Some(c.pos));
         }
         if c.hungry_days >= STARVING_DAYS {
-            starving.add(k.clone(), Some(c.pos));
+            starving.add_id(id, Some(c.pos));
         }
         if c.home.is_none() {
-            unhoused.add(k.clone(), Some(c.pos));
+            unhoused.add_id(id, Some(c.pos));
         }
         if let Some(home) = c.home.and_then(|h| w.buildings.get(h)) {
             if c.rent_stress_days > 0 || w.rent_share_of(id).unwrap_or(home.rent / c.income.max(0.01)) > RENT_STRESS_SHARE {
-                rent.add(k, building_pos(w, home));
+                rent.add_id(id, building_pos(w, home));
             }
         }
     }
     for (id, b) in w.buildings.iter() {
-        let k = key_str(id);
         let at = building_pos(w, b);
         if b.construction.is_none() {
             if let Some(z) = &b.business {
                 let food = matches!(z.kind, BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::Cafe);
                 if z.closed {
-                    closed.add(k.clone(), at);
+                    closed.add_id(id, at);
                 } else {
                     if food && b.staffing() < FOOD_SELLER_MIN_STAFFING {
-                        food_staff.add(k.clone(), at);
+                        food_staff.add_id(id, at);
                     }
                     if food && z.kind.recipe().outputs.iter().all(|(r, _)| z.stock_of(*r) < FOOD_STOCK_EMPTY) {
-                        food_empty.add(k.clone(), at);
+                        food_empty.add_id(id, at);
                     }
                     if z.broke_days > 0 {
-                        broke.add(k.clone(), at);
+                        broke.add_id(id, at);
                     }
                 }
             }
             if b.households.len() > b.homes as usize && b.homes > 0 {
-                crowded.add(k.clone(), at);
+                crowded.add_id(id, at);
             }
             if b.is_derelict() {
-                derelict.add(k.clone(), at);
+                derelict.add_id(id, at);
             }
         } else if b.demolition.is_none() && b.construction.as_ref().is_some_and(|c| c.waiting_for_materials()) {
-            sites.add(k.clone(), at);
+            sites.add_id(id, at);
         }
         if b.powered < UNPOWERED_BELOW && nd_sim::power::demand_mw(b) > 0.0 {
-            unpowered.add(k.clone(), at);
+            unpowered.add_id(id, at);
         }
         if let Some(l) = &b.rail {
             if !l.works() {
-                rail_broken.add(k, at);
+                rail_broken.add_id(id, at);
             }
         }
     }
     // [sweep-sim] A ferry terminal people can walk to is not off the network.
     for p in w.ports.ports.values().filter(|p| !p.road_connected && !p.walk_only()) {
         if let Some(b) = p.building {
-            dock_off.add(key_str(b), Some(p.center));
+            dock_off.add_id(b, Some(p.center));
         }
     }
     let mut rail_missing = (0, 0);
@@ -1122,14 +1133,14 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     }
     for (id, r) in w.transit.routes.iter() {
         if !r.runnable() {
-            route_broken.add(key_str(id), r.stops.first().map(|s| s.pos));
+            route_broken.add_id(id, r.stops.first().map(|s| s.pos));
         }
     }
     let gridlocks = w.traffic.gridlocks();
     let mut kerb = 0;
     for (id, c) in w.traffic.cars.iter() {
         if is_stuck(c) {
-            stuck.add(key_str(id), Some(c.pos));
+            stuck.add_id(id, Some(c.pos));
         } else if c.entering && c.stalled > STUCK_STALL_S {
             kerb += 1;
         }
@@ -1142,7 +1153,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     let high: Vec<LandUse> = LandUse::ALL.iter().copied().filter(|&lu| lu != LandUse::Park && e.demand_for(lu) >= HIGH_DEMAND).collect();
     for (id, l) in w.lots.iter() {
         if l.building.is_none() && l.usable() && high.contains(&l.land_use) && !w.under_facility(l.center) {
-            vacant_demand.add(key_str(id), Some(l.center));
+            vacant_demand.add_id(id, Some(l.center));
         }
     }
 
@@ -1193,7 +1204,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
             let mut a = Alert::new(kind, sev, hint);
             for (id, b) in &homes {
                 if w.services.coverage.get(&b.lot).is_none_or(|c| c[k] < nd_sim::services::COVERED) {
-                    a.add(key_str(*id), building_pos(w, b));
+                    a.add_id(*id, building_pos(w, b));
                 }
             }
             a.message = format!("{} of {} residential buildings are outside {} coverage", a.count, homes.len(), ["police", "fire", "health", "school"][k]);
@@ -1202,7 +1213,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     }
     let mut fires = Alert::new("fires_burning", 3, "fire engines on the way show in services.emergency.active_incidents; with no fire station in reach they burn until the building is gone");
     for i in w.services.active().filter(|i| i.kind == nd_sim::IncidentKind::Fire) {
-        fires.add(key_str(i.building), Some(i.pos));
+        fires.add_id(i.building, Some(i.pos));
     }
     fires.message = format!("{} buildings are on fire", fires.count);
     let st = &w.services.stats;

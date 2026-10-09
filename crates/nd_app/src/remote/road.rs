@@ -1,7 +1,9 @@
 //! [road-inspect] A street piece in full, for `inspect {road}`, a selected
 //! road and `repair_road`: the road card's figures (`road_select::Card`).
 
-use super::view::{round, v2, vec2_of};
+use super::ctx::Ctx;
+use super::view::{field, round, v2, vec2_of};
+use crate::tools::Selection;
 use crate::road_select::Card;
 use crate::tools::Depth;
 use nd_sim::{SegmentId, World};
@@ -59,4 +61,19 @@ pub fn road_detail(w: &World, sid: SegmentId) -> Option<Value> {
         "bus_stops": c.bus_stops, "kerb_parking": c.kerb_parking, "kerb_parked": c.kerb_parked,
         "note": "figures are for this piece (a run between junctions may be several pieces: `run`); flow counts vehicles driving onto it, both ways; hourly: the last 72 hours, oldest first, the last the hour under way; decay is null for ways the city's crews do not mend",
     }))
+}
+
+/// [road-inspect] `repair_road {road?}`: "Repair now" on a piece (by id or
+/// [x, y]; else the selected one): resurfaced at once, paid from the
+/// treasury as road maintenance.
+pub(super) fn repair_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let sid = match field(cmd, "road").or_else(|| field(cmd, "segment")) {
+        Some(v) => road_id(&ctx.sim.world, v, ctx.tools.depth)?,
+        None => match *ctx.selection {
+            Selection::Road(sid) => sid,
+            _ => return Err("missing field \"road\": an id or [x, y] (or select a road first)".into()),
+        },
+    };
+    let cost = ctx.sim.world.repair_road_now(sid)?;
+    Ok(json!({ "repaired": sid.0, "cost": round(cost), "treasury": round(ctx.sim.world.economy.treasury), "road": road_detail(&ctx.sim.world, sid) }))
 }
