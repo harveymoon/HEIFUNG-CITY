@@ -7,7 +7,6 @@
 
 use super::*;
 use crate::junctions::{CrossingUpgrade, JunctionRule};
-use crate::traffic::{LEFT, RIGHT, STRAIGHT};
 use crate::walk::CrossingKind;
 
 /// One street arriving at the junction.
@@ -141,8 +140,7 @@ impl World {
 
     fn crossing_view(&self, k: u32) -> Option<CrossingView> {
         let c = self.walk.crossings.get(k as usize)?;
-        let seg = self.roads.try_segment(c.segment)?;
-        let _ = seg;
+        self.roads.try_segment(c.segment)?;
         let (s0, s1) = self.roads.segment_points(c.segment);
         let dir = (s1 - s0).normalize_or_zero();
         let nodes = &self.walk.nodes;
@@ -316,14 +314,6 @@ impl World {
         self.events.push(SimEvent::RoadsChanged);
         Ok(())
     }
-
-    /// Arrow bits from a lane permission list like ["L", "S+R"].
-    pub fn arrows_from(labels: &[&str]) -> Option<Vec<u8>> {
-        labels.iter().map(|l| crate::traffic::parse_arrows(l)).collect()
-    }
-
-    /// The three movement bits, for callers that build arrows by hand.
-    pub const MOVES: [u8; 3] = [LEFT, STRAIGHT, RIGHT];
 
     /// Dev: send a citizen out on foot from `from` (default: where they
     /// are) to `to`, by the walk graph (raised walkways included). Returns

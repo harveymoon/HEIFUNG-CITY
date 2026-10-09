@@ -147,20 +147,20 @@ impl World {
                 *rent.entry(home).or_default() += self.rent_due(hid, home);
             }
         }
-        let owners: Vec<(crate::estate::OwnerId, HouseholdId, Option<CitizenId>, Vec<BuildingId>)> = self
+        let owners: Vec<(crate::estate::OwnerId, HouseholdId, Vec<BuildingId>)> = self
             .estate
             .owners
             .iter()
             .filter_map(|(oid, o)| {
-                let (hid, cid) = match o.kind {
-                    OwnerKind::Household { household } => (household, None),
-                    OwnerKind::Person { citizen } => (self.citizens.get(citizen)?.household?, Some(citizen)),
+                let hid = match o.kind {
+                    OwnerKind::Household { household } => household,
+                    OwnerKind::Person { citizen } => self.citizens.get(citizen)?.household?,
                     _ => return None,
                 };
-                self.households.contains_key(hid).then(|| (oid, hid, cid, o.properties.clone()))
+                self.households.contains_key(hid).then(|| (oid, hid, o.properties.clone()))
             })
             .collect();
-        for (oid, hid, cid, props) in owners {
+        for (oid, hid, props) in owners {
             let home = self.households[hid].home;
             let mut paid = 0.0f32;
             for b in props {
@@ -186,7 +186,6 @@ impl World {
                 o.income_day = paid;
                 o.earned += paid as f64;
             }
-            let _ = cid;
         }
     }
 

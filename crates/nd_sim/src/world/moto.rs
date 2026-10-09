@@ -164,7 +164,7 @@ impl World {
         let (entry, meet_lane, meet_s, exit) = plan.ok_or("no way through town for a pack")?;
         let meet = self.traffic.net.lanes[meet_lane as usize].point_at(meet_s).0;
         let place = self.building_near(meet).and_then(|b| self.buildings.get(b)).map(|b| b.name.clone()).unwrap_or_else(|| "the edge of town".into());
-        let mut rng = crate::rng_for(self.config.seed ^ 0x070_70C5, tick);
+        let mut rng = crate::rng_for(self.stream_seed(Stream::MotoStart), tick);
         let outsiders = rng.random_range(MOTO_OUTSIDERS.0..=MOTO_OUTSIDERS.1);
         let mut pack = MotoPack { id, stage: MotoStage::Gathering, entry, meet_lane, meet_s, meet, via, via_name, exit, place: place.clone(), started: tick, set_off: None, riders: Vec::new(), to_spawn: outsiders, outsiders: 0, incident: None, chase: None, chase_tried: false, red_runs: 0, lane_changes: 0, locals: 0 };
         let LaneKind::Road { segment: meet_seg, .. } = self.traffic.net.lanes[meet_lane as usize].kind else { return Err("the meet is not on a street".into()) };
@@ -263,7 +263,7 @@ impl World {
     /// (two abreast where the street has two lanes in).
     fn spawn_club(&mut self, p: &mut MotoPack) {
         let tick = self.clock.tick;
-        let mut rng = crate::rng_for(self.config.seed ^ 0x070_7C1B, tick);
+        let mut rng = crate::rng_for(self.stream_seed(Stream::MotoClub), tick);
         let lanes: Vec<LaneId> = std::iter::once(p.meet_lane).chain(self.traffic.net.lanes[p.meet_lane as usize].left).collect();
         let via = self.roads.nearest_street(p.via).and_then(|(s, _, _)| self.traffic.net.nearest_lane_on(s, p.via)).map(|(l, s, _)| (l, s));
         let Some(via) = via else {
@@ -295,7 +295,7 @@ impl World {
     fn set_off_local(&mut self, car: CarId, cid: CitizenId, p: &MotoPack) -> bool {
         let Some(c) = self.traffic.cars.get(car) else { return false };
         let from = (c.route[c.idx], c.s);
-        let home = self.citizens.get(cid).and_then(|x| x.home).and_then(|h| self.building_lot(h)).and_then(|l| l.car_segment.map(|s| (s, l.car_point)));
+        let home = self.citizens.get(cid).and_then(|x| x.home).and_then(|h| self.car_stop(h));
         let Some(home) = home.and_then(|(s, q)| self.traffic.net.nearest_lane_on(s, q)).map(|(l, s, _)| (l, s)) else { return false };
         let Some(via) = self.roads.nearest_street(p.via).and_then(|(s, _, _)| self.traffic.net.nearest_lane_on(s, p.via)).map(|(l, s, _)| (l, s)) else { return false };
         let Some((route, _, s_end)) = self.route_via(from, via, home) else { return false };
@@ -320,7 +320,7 @@ impl World {
         let Some(c) = self.traffic.cars.get(car) else { return };
         let driver = c.citizen;
         let home = self.citizens.get(driver).and_then(|p| p.home);
-        let goal = home.and_then(|h| self.building_lot(h)).and_then(|l| l.car_segment.map(|s| (s, l.car_point))).and_then(|(s, q)| self.traffic.net.nearest_lane_on(s, q));
+        let goal = home.and_then(|h| self.car_stop(h)).and_then(|(s, q)| self.traffic.net.nearest_lane_on(s, q));
         let (here, s, entering) = (c.route[c.idx], c.s, c.entering);
         let on_home_route = goal.is_some_and(|(g, _, _)| c.route.last() == Some(&g));
         if !on_home_route {

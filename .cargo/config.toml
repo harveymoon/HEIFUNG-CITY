@@ -1,8 +1,5 @@
-# Build speed (see CLAUDE.md). sccache shares compiled crates across every
-# worktree and target dir; it cannot cache incremental builds, so those are off.
-[build]
-rustc-wrapper = "C:/Users/Harvey/AppData/Local/Microsoft/WinGet/Packages/Mozilla.sccache_Microsoft.Winget.Source_8wekyb3d8bbwe/sccache-v0.18.0-x86_64-pc-windows-msvc/sccache.exe"
-incremental = false
+# Build speed (see CLAUDE.md). sccache was tried and dropped: with every agent
+# building its own branch it hit ~0% of the time and serialised the builds.
 
 # rust-lld links much faster than MSVC's link.exe.
 [target.x86_64-pc-windows-msvc]

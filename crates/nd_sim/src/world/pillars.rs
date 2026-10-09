@@ -113,10 +113,6 @@ impl World {
         out
     }
 
-    fn structure_footprints(&self) -> Vec<Vec<Vec2>> {
-        self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect()
-    }
-
     /// The columns a raised way along `pts` at `levels` would stand on,
     /// placed against the city as it is (the Road tool's preview and the
     /// project's check). `held`: columns already standing that carry it.

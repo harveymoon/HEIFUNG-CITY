@@ -2237,6 +2237,33 @@ trait MindProvider {
   picker, Play this map starts on the landscape already loaded under the name typed beside it.
   The city behind is paused while it is up; `ND_TITLE=0` skips it, and the API's `load`,
   `new_game` and `seed_demo` close it.
+- **Perfect AI City** [perfect-city] (`nd_procgen::citygen::perfect` and `furnish`): a New game
+  starting town ("Perfect AI City", `generate_city {preset: "perfect_city"}`, default seed 5)
+  that is planned and built before day 1 and then left to grow. The site is a temperate coast:
+  sea to the south, the river east of downtown, two lakes and the farms to the west, hot spots
+  beyond the highway. The streets are the tensor-field tracer with one strong square grid (no
+  radial plaza, no riverside streets), avenues about 300 m apart, collectors laid 2+2 as well,
+  only the avenues crossing the railway (level crossings far apart, stations between them) and
+  three diamond interchanges (`World::add_diamond`). The prevailing wind blows east, so the works
+  (manufacturing, logistics by the highway, the coal plant, two nuclear plants, solar fields,
+  batteries, the freight yard and the shipping port) are zoned whole round the river to the east,
+  the farms and wind parks upwind to the west, homes between, a downtown of offices and shops by
+  the sea with a park square, a public beach and parks along the shore. `furnish` then puts down,
+  through the ordinary placement calls with every result checked and logged (`LaidCity::furnished`,
+  the `generate_city` reply's `furnished`): straight 2+2 bridges where the river crossings are far
+  apart, hydro on the river, geothermal on the hot spots (an access road out past the highway),
+  police, fire, health and schools placed greedily until 99% of homes and shops are within reach,
+  a university, 911 dispatch, jail, trash depots, a monument, a stadium, car parks round the core,
+  parking wardens, a vertiport, a cargo hub, a central station and two stations, a ferry terminal,
+  two metro lines, two bus depots and five bus lines, districts with policies (Downtown tech
+  campus and Midtown neon strip with no height limit, Northside eco towers to 50 m, garden suburbs
+  by the farms, Kowloon blocks and night markets by the railway, a tourist sea front, Eastworks and
+  West Farms), footbridges over the avenues by the station, and a treasury of 50 million
+  (`STARTING_TREASURY`; taxes stay standard). It takes 20-30 s to lay out. Load it from New game
+  (Starting town: Perfect AI City), or regenerate the day-1 save with
+  `cargo run --profile fast -p nd_procgen --example perfect_city -- 0` (writes
+  `saves/perfect_ai_city.ron`; with a day count it also runs the city headless and prints a row per
+  day). Tests: `crates/nd_procgen/tests/citygen_perfect_city.rs`.
 - **City identity** (`nd_sim::identity`, `World::identity`): the city's name and a game id, saved
   with the world. A new game gets an id at once (`saves::new_game_id`: the time and 64 bits from a
   randomly keyed hasher, so the sim stays deterministic); the New game window and the title

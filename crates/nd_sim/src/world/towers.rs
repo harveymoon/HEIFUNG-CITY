@@ -197,14 +197,16 @@ impl World {
 
     // ── where ──────────────────────────────────────────────────────────────
 
-    fn neighbour_floors(&self, center: Vec2, except: LotId) -> u32 {
-        self.buildings
+    /// The floors round a tower site that count (`TOWER_DENSITY_RADIUS`):
+    /// the grown buildings standing open, no parks. Sorted into a grid
+    /// once for a whole `tower_sites` pass.
+    fn neighbour_floors_grid(&self) -> super::floors_grid::FloorsGrid {
+        let items = self
+            .buildings
             .values()
-            .filter(|b| b.lot != except && b.land_use != LandUse::Park && !b.is_parking() && !b.is_special() && b.operating())
-            .filter_map(|b| self.lots.get(b.lot).map(|l| (b.floors as u32, l.center)))
-            .filter(|(_, c)| c.distance(center) <= TOWER_DENSITY_RADIUS)
-            .map(|(f, _)| f)
-            .sum()
+            .filter(|b| b.land_use != LandUse::Park && b.is_grown() && b.operating())
+            .filter_map(|b| self.lots.get(b.lot).map(|l| (b.lot, l.center, b.floors as u32)));
+        super::floors_grid::FloorsGrid::new(TOWER_DENSITY_RADIUS, items)
     }
 
     /// May the market build on this plot as part of a tower site? Vacant,
@@ -229,6 +231,7 @@ impl World {
         let pressure = self.pressure_active();
         let mut out: Vec<TowerSite> = Vec::new();
         let towers: Vec<Vec2> = self.buildings.values().filter(|b| b.plot.tower.is_some()).filter_map(|b| self.lots.get(b.lot).map(|l| l.center)).collect();
+        let mut grid = None;
         for (lid, l) in self.lots.iter() {
             if !matches!(l.land_use, LandUse::Commercial | LandUse::Residential) || !l.usable() || !l.car_access() || l.landlocked {
                 continue;
@@ -252,7 +255,7 @@ impl World {
             if towers.iter().any(|t| t.distance(l.center) < 45.0) {
                 continue;
             }
-            let nf = self.neighbour_floors(l.center, lid);
+            let nf = grid.get_or_insert_with(|| self.neighbour_floors_grid()).floors_within(l.center, TOWER_DENSITY_RADIUS, lid);
             if !force && nf < TOWER_MIN_NEIGHBOUR_FLOORS {
                 continue;
             }
@@ -372,7 +375,7 @@ impl World {
                 why = format!("no {} site could be assembled", league.label());
                 continue;
             };
-            let price: f64 = plots.iter().filter_map(|l| self.lots[*l].building).map(|b| self.sale_price(b)).sum();
+            let price: f64 = self.plots_price(&plots);
             let cost = structure_cost(height) + price;
             if !order.force && cost > capital {
                 why = format!("the richest developer has ${:.0}M of the ${:.0}M it would take", capital / 1e6, cost / 1e6);
