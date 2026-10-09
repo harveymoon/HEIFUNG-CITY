@@ -419,11 +419,6 @@ impl Air {
         self.rooftops.contains(&b)
     }
 
-    /// Is the building a vertiport, a rooftop or a helipad?
-    pub fn is_pad(&self, b: BuildingId) -> bool {
-        self.pads.iter().any(|p| p.building == b)
-    }
-
     /// Drones holding a slot of pad `b`.
     pub fn slots_used(&self, b: BuildingId) -> usize {
         self.drones.values().filter(|d| d.at == Some(b)).count()

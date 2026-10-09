@@ -20,6 +20,27 @@ pub enum Tier {
 impl Tier {
     pub const ALL: [Tier; 3] = [Tier::Low, Tier::Mid, Tier::High];
 
+    /// The tier's key in commands and saves of proposals: `low`, `mid`,
+    /// `high`.
+    pub fn key(self) -> &'static str {
+        match self {
+            Tier::Low => "low",
+            Tier::Mid => "mid",
+            Tier::High => "high",
+        }
+    }
+
+    /// A tier from its key or a common synonym (`1`/`small`,
+    /// `middle`/`2`/`medium`, `3`/`large`), any case.
+    pub fn from_key(s: &str) -> Option<Tier> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "low" | "1" | "small" => Some(Tier::Low),
+            "mid" | "middle" | "2" | "medium" => Some(Tier::Mid),
+            "high" | "3" | "large" => Some(Tier::High),
+            _ => None,
+        }
+    }
+
     pub fn index(self) -> usize {
         self as usize
     }

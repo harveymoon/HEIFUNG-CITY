@@ -246,11 +246,9 @@ pub struct Fishing {
     pub key: u64,
 }
 
+/// The fishing fleet's hash: [`crate::hash::mix2`] salted.
 pub fn hash(a: u64, b: u64) -> u64 {
-    let mut x = a.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ 0xF15F_15F1;
-    x ^= x >> 31;
-    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x ^ (x >> 29)
+    crate::hash::mix2_salted(a, b, 0xF15F_15F1)
 }
 
 const NAMES: [&str; 24] = [
@@ -564,9 +562,7 @@ impl WaterGrid {
 }
 
 /// Distance from `p` to a polyline.
-fn to_line(p: Vec2, line: &[Vec2]) -> f32 {
-    line.windows(2).map(|w| crate::geom::project_on_segment(p, w[0], w[1]).1.distance(p)).fold(f32::INFINITY, f32::min)
-}
+use crate::geom::distance_to_polyline as to_line;
 
 /// The fishing grounds for a port whose boats set out from `offing`:
 /// up to `MAX_GROUNDS` spots of open water reachable from there by water,
@@ -633,8 +629,7 @@ fn pick_grounds(land: &Landscape, grid: &WaterGrid, offing: Vec2, lanes: &[Vec<V
 }
 
 fn smooth(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+    crate::geom::smoothstep(0.0, 1.0, t)
 }
 
 /// One sweep over a ground: from the middle out in a zig-zag across it and

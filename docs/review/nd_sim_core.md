@@ -39,20 +39,20 @@ These are the real save hazards, and they are listed in §1.3.
 
 | # | Where | What |
 |---|---|---|
-| 12 | `tests/sim_checks.rs:8`, `society_demo.rs:16`, `probe_society_civic.rs:13`, `probe_society_units.rs:16` | Each of these does `#[path = "demo_city.rs"] mod demo;`, which also pulls in demo_city's **8 heavy `#[test]`s**. About 20 sim-days of tests therefore run in 5 binaries instead of 1. Move `demo_world()` and the shared helpers into `tests/common/mod.rs`. This is probably the single biggest test-time saving available. |
-| 13 | new `src/hash.rs` | Gather the copies of splitmix / `mix` / `hash01` / FNV into one module, bit-identical to each version they replace (see §2.1). |
-| 14 | `geom.rs` | Make geom actually "the one place a formula lives" by moving in: `smoothstep` (×3 in scope), `distance_to_polyline` (×4), `segment_distance` (byte-identical copy at `landscape.rs:2071`), `segments_cross`, `segment_intersection*` (today geom calls back *into* roads), `wrap_angle` / `lerp_angle`, `extents`, `convex_hull` and `bounds` (§2.2). |
-| 15 | dead code | Delete the functions with no callers anywhere in the workspace (list in §3.3), and fix the misplaced or stale doc comments (§3.4). |
-| 16 | `RoadNetwork` | Add `streets_at(node)`, `away_dir(seg, node)` and `corridor_half_width()`, and `LaneNetwork::opposing(lane)` and `exits_of(lanes)`. Each replaces 3 to 25 hand-rolled copies (§2.3). |
+| 12 | `tests/sim_checks.rs:8`, `society_demo.rs:16`, `probe_society_civic.rs:13`, `probe_society_units.rs:16` | Each of these does `#[path = "demo_city.rs"] mod demo;`, which also pulls in demo_city's **8 heavy `#[test]`s**. About 20 sim-days of tests therefore run in 5 binaries instead of 1. Move `demo_world()` and the shared helpers into `tests/common/mod.rs`. This is probably the single biggest test-time saving available. **REFACTORED (phase 2a: tests/common); demo layout now `scenarios::demo_district` 4b1e5e1** |
+| 13 | new `src/hash.rs` | Gather the copies of splitmix / `mix` / `hash01` / FNV into one module, bit-identical to each version they replace (see §2.1). **REFACTORED 263e37a** (world/ copies left to refactor/sim-world) |
+| 14 | `geom.rs` | Make geom actually "the one place a formula lives" by moving in: `smoothstep` (×3 in scope), `distance_to_polyline` (×4), `segment_distance` (byte-identical copy at `landscape.rs:2071`), `segments_cross`, `segment_intersection*` (today geom calls back *into* roads), `wrap_angle` / `lerp_angle`, `extents`, `convex_hull` and `bounds` (§2.2). **REFACTORED e0215dd** (bilinear HeightGrid and the water-grid merge not done) |
+| 15 | dead code | Delete the functions with no callers anywhere in the workspace (list in §3.3), and fix the misplaced or stale doc comments (§3.4). **REFACTORED ab77c31, 9c0ea86** (fishing::path_len kept: world/fishing.rs uses it; power's None arms kept, doc fixed) |
+| 16 | `RoadNetwork` | Add `streets_at(node)`, `away_dir(seg, node)` and `corridor_half_width()`, and `LaneNetwork::opposing(lane)` and `exits_of(lanes)`. Each replaces 3 to 25 hand-rolled copies (§2.3). **REFACTORED 458c7fe** (away_dir only where the copies used the `seg.a == node` rule) |
 
 ### (c) Bigger restructures
 
 | # | What |
 |---|---|
-| 17 | **Parcel cutting cache.** `rebuild_from_plan` reruns `zoning::generate_parcels_with` over the whole map on *every* plan rebuild, including zoning-only edits (`world/plan.rs:553, 1146`). As step 1, cache the result on `World`, keyed by `(roads.version, water/landscape id, parcel_half)`. As step 2, memoise per chunk: the chunks are already world-stable by design (`chunk_block`, `block_seed`). |
+| 17 | **Parcel cutting cache.** `rebuild_from_plan` reruns `zoning::generate_parcels_with` over the whole map on *every* plan rebuild, including zoning-only edits (`world/plan.rs:553, 1146`). As step 1, cache the result on `World`, keyed by `(roads.version, water/landscape id, parcel_half)`. As step 2, memoise per chunk: the chunks are already world-stable by design (`chunk_block`, `block_seed`). **Step 1 REFACTORED 6335575** (memo on exact inputs; per-chunk memo not done) |
 | 18 | **Road rebuild is O(P·S).** `link` and `split_segment` drop the `OnceLock` grid, so every added piece rebuilds the segment grid. Node lookups scan every node per vertex, and `classify()` runs after every polyline (`roads.rs:486, 601, 833, 878-1036, 939, 958`). Make `geom::Grid` insertable, add a node grid, and run `classify()` once at the end of the rebuild. |
-| 19 | **Split the oversized files.** `traffic.rs` (5.3k lines) into about 15 submodules, `zoning.rs` and `landscape.rs` into folders, and `roads.rs`, `walk.rs`, `services.rs`, `power.rs`, `social.rs`, `market.rs` and `committee/proposals.rs` (§3.1-3.2). Do the hash/geom moves (#13, #14) first so the splits are pure moves. |
-| 20 | **Determinism and save-compat tests.** Add (i) run `demo_world()` twice and compare `to_ron()` or a hash; (ii) save at N, load, run to N+M, and compare with a straight run (this catches #5); (iii) a checked-in old-save fixture under `tests/fixtures/`, loaded and ticked for a day. Also add a test that every per-kind array covers `Enum::ALL`; it would have caught #1. |
+| 19 | **Split the oversized files.** `traffic.rs` (5.3k lines) into about 15 submodules, `zoning.rs` and `landscape.rs` into folders, and `roads.rs`, `walk.rs`, `services.rs`, `power.rs`, `social.rs`, `market.rs` and `committee/proposals.rs` (§3.1-3.2). Do the hash/geom moves (#13, #14) first so the splits are pure moves. **REFACTORED 581579b, 6c1e157, 66aa1fc, 0786168, ee55592, ca2f1b5, c726f5f, ef5c3d0, ed59ead, 78aa4c3, d3e5810, 5d4485a, b447bf4** (bots.rs impl World left: world/ territory; landscape::Ground not renamed) |
+| 20 | **Determinism and save-compat tests.** Add (i) run `demo_world()` twice and compare `to_ron()` or a hash; (ii) save at N, load, run to N+M, and compare with a straight run (this catches #5); (iii) a checked-in old-save fixture under `tests/fixtures/`, loaded and ticked for a day. Also add a test that every per-kind array covers `Enum::ALL`; it would have caught #1. **Save→load→continue still ignored: findings and a parked patch in tests/determinism.rs / docs/review/save_determinism_wip.patch** |
 
 ---
 
@@ -166,6 +166,9 @@ Proposal: `hash::{mix, mix2 /* shore variant */, hash01, unit, fnv}`. Keep each 
 
 ### 2.4 Other
 
+**REFACTORED 4108b85** (traits, Tier keys, COVERED, ledger_row, capitalise_first, MINUTES_PER_DAY; household class left: lives in world/pressure.rs).
+
+
 - **Personality traits from a seed:** `places.rs:253`, `vehicle.rs:697` `traits_of`, `vehicle.rs:201` `hedonism_of` (equal to `traits_of[2]`), `looks.rs:273`, `citizens.rs:467, 477`. `social::compatibility` reseeds ChaCha four times per conversation. Keep one version, and cache the traits on `Citizen`.
 - **Household class by income:** hand-rolled at `trash.rs:318, 351`, `crime.rs:795` and `world/trips.rs:405, 632, 653`. Make `world/pressure.rs:97` `household_class` `pub(crate)` and use it everywhere.
 - **Tier parsing:** `services.rs:800`, `committee/proposals.rs:86, 95`. Move to `Tier::from_key` and `Tier::key` in `buildings.rs`.
@@ -179,7 +182,10 @@ Proposal: `hash::{mix, mix2 /* shore variant */, hash01, unit, fnv}`. Keep each 
 
 ## 3. Structure
 
-### 3.1 traffic.rs (5349 lines: ~4140 code, ~1210 tests)
+### 3.1 traffic.rs
+
+**REFACTORED 581579b, 6c1e157** (traffic.rs 5427 → 426 lines; `step` → `traffic/substep.rs` phases).
+ (5349 lines: ~4140 code, ~1210 tests)
 
 Keep `traffic.rs` as the module root: constants, `Traffic`, ids, re-exports and a slimmed `step`. Move the rest out by topic.
 
@@ -253,6 +259,9 @@ Each item was grepped across all of `crates/`, including nd_app and the examples
 ## 4. Performance hot spots
 
 ### Traffic and pathfinding
+
+**A* scratch REFACTORED d8ee159.** Water graph and sea-way grid cached **REFACTORED 9ae8434**. Custody set and camp lot grid **REFACTORED bcc687a** (World::coverage_at is world/: not done).
+
 
 - **Routes:** a route is planned once per trip and kept in `Car::route`. That is good: A* is not rerun every tick.
 - **Replans** happen on a stall (backed off up to 320 s), at the solid line (see the Low bug in §1.1), once per overtake candidate per substep after the gain test, and at `REPLAN_AFTER`.

@@ -461,13 +461,21 @@ pub const DRUNK: f32 = 0.35;
 /// Rebelliousness at which a drunk drives anyway.
 pub const REBEL: f32 = 0.55;
 
+/// The five personality traits, `[sociability, ambition, hedonism,
+/// caution, curiosity]`, drawn from the seed exactly as
+/// `nd_minds::Personality::from_seed` does. [review] The one copy: places,
+/// vehicles, looks and driving all read it.
+pub fn traits_of(seed: u64) -> [f32; 5] {
+    use rand::{Rng, SeedableRng};
+    let mut rng = crate::SimRng::seed_from_u64(seed);
+    [rng.random(), rng.random(), rng.random(), rng.random(), rng.random()]
+}
+
 /// The personality traits that matter behind the wheel, `(caution,
 /// hedonism)`, as `nd_minds::Personality` derives them from the seed (the
 /// fourth and third draws).
 pub fn driver_traits(seed: u64) -> (f32, f32) {
-    use rand::{Rng, SeedableRng};
-    let mut rng = crate::SimRng::seed_from_u64(seed);
-    let t: [f32; 5] = [rng.random(), rng.random(), rng.random(), rng.random(), rng.random()];
+    let t = traits_of(seed);
     (t[3], t[2])
 }
 
@@ -475,9 +483,7 @@ pub fn driver_traits(seed: u64) -> (f32, f32) {
 /// draws as `driver_traits`: the cautious and the unambitious sit a jam
 /// out; the driven and the pleasure-seeking do not.
 pub fn patience(seed: u64) -> f32 {
-    use rand::{Rng, SeedableRng};
-    let mut rng = crate::SimRng::seed_from_u64(seed);
-    let t: [f32; 5] = [rng.random(), rng.random(), rng.random(), rng.random(), rng.random()];
+    let t = traits_of(seed);
     let (ambition, hedonism, caution) = (t[1], t[2], t[3]);
     (0.5 * caution + 0.3 * (1.0 - ambition) + 0.2 * (1.0 - hedonism)).clamp(0.0, 1.0)
 }

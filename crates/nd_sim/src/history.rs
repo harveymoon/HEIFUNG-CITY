@@ -139,10 +139,6 @@ impl DayRecord {
     pub fn riders_on(&self, route: RouteId) -> u32 {
         self.route_riders.iter().find(|(r, _)| *r == route).map_or(0, |(_, n)| *n)
     }
-
-    pub fn supply_total_mwh(&self) -> f32 {
-        self.supply_mwh.iter().sum()
-    }
 }
 
 /// One hour, sampled on the hour after power is shared out.

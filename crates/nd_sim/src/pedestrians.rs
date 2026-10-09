@@ -89,13 +89,7 @@ pub fn gap_needed(caution: f32, late: bool) -> f32 {
 
 /// A stable `0..1` from a few numbers, for decisions that must not draw
 /// from (and so shift) the world's random stream.
-pub fn hash01(a: u64, b: u64, c: u64) -> f32 {
-    let mut z = a.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ b.rotate_left(21).wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ c.rotate_left(42).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^= z >> 31;
-    (z >> 40) as f32 / (1u64 << 24) as f32
-}
+pub use crate::hash::hash01;
 
 /// One walker's state on the move. Saved with `Pedestrians::walkers`, so
 /// every field defaults (`#[serde(default)]`): add new ones the same way.

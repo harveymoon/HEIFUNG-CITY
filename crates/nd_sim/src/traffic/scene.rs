@@ -166,7 +166,7 @@ pub(super) fn step_manoeuvre(st: &mut Stunt, path: &mut Vec<Vec2>, pos: Vec2, he
     let dir = d / len;
     let want = dir.y.atan2(dir.x);
     // Slow while the nose is still coming round.
-    let off = ((want - heading + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI).abs();
+    let off = crate::geom::wrap_angle(want - heading).abs();
     let turn = (1.0 - off / std::f32::consts::PI).max(0.3);
     let v = speed * turn;
     let step = (v * dt).min(len);

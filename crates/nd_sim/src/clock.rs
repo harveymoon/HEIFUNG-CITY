@@ -68,6 +68,69 @@ impl SimClock {
     }
 }
 
+/// Opening hours on the clock, `open..close`; a close earlier than the open
+/// runs past midnight, and equal hours mean round the clock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Hours {
+    pub open: u8,
+    pub close: u8,
+}
+
+impl Hours {
+    pub const ALWAYS: Hours = Hours { open: 0, close: 0 };
+
+    pub const fn new(open: u8, close: u8) -> Self {
+        Self { open, close }
+    }
+
+    pub fn always(self) -> bool {
+        self.open == self.close
+    }
+
+    /// Is the hour `h` (0..24) inside?
+    pub fn contains(self, h: u8) -> bool {
+        if self.always() {
+            true
+        } else if self.open < self.close {
+            (self.open..self.close).contains(&h)
+        } else {
+            h >= self.open || h < self.close
+        }
+    }
+
+    /// Hours open per day.
+    pub fn span(self) -> u8 {
+        if self.always() {
+            24
+        } else {
+            (self.close + 24 - self.open) % 24
+        }
+    }
+
+    /// The shift a worker with `seed` works: the whole day when it is ten
+    /// hours or less, else one of two or three back-to-back shifts.
+    pub fn shift(self, seed: u64) -> Hours {
+        let span = self.span();
+        if span <= 10 {
+            return self;
+        }
+        let n = span.div_ceil(8);
+        let len = span / n;
+        let i = (seed % n as u64) as u8;
+        let open = (self.open + i * len) % 24;
+        let close = if i + 1 == n { self.close } else { (open + len) % 24 };
+        Hours { open, close }
+    }
+
+    pub fn label(self) -> String {
+        if self.always() {
+            "24h".to_string()
+        } else {
+            format!("{:02}:00-{:02}:00", self.open, self.close)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

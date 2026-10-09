@@ -81,10 +81,7 @@ pub fn beach_weather(temp_c: f32, cloud: f32, spell: Spell, hour: f32) -> f32 {
     if spell == Spell::Storm {
         return 0.0;
     }
-    let smooth = |a: f32, b: f32, x: f32| {
-        let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
-        t * t * (3.0 - 2.0 * t)
-    };
+    let smooth = crate::geom::smoothstep;
     let warm = smooth(12.0, 26.0, temp_c) * (1.0 - 0.6 * smooth(38.0, 46.0, temp_c));
     // Heavy cloud reads as rain.
     let sky = if cloud > 0.82 { 0.15 } else if cloud > 0.6 { 0.55 } else { 1.0 - 0.3 * cloud };
@@ -134,12 +131,7 @@ pub fn trade_name(kind: crate::market::BusinessKind, seed: u64) -> Option<String
     })
 }
 
-fn mix(a: u64, b: u64) -> u64 {
-    let mut x = a.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
-    x ^= x >> 31;
-    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x ^ (x >> 29)
-}
+use crate::hash::mix2 as mix;
 
 /// The way down to the water on a beach lot, and the towel spots: a
 /// boardwalk from the entrance (the street side, or the side nearest the
@@ -162,7 +154,7 @@ pub fn plan_beach(lot: &Lot, tier: Tier) -> ParkLayout {
     let cap = (area / 26.0).clamp(4.0, 90.0) as usize;
     let (spacing_u, spacing_v) = (4.2f32, 4.8f32);
     let (u0, u1) = poly.iter().map(|p| p.dot(along)).fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(v), b.max(v)));
-    let (v0, v1) = poly.iter().map(|p| p.dot(sea)).fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(v), b.max(v)));
+    let (v0, v1) = crate::geom::extents(poly, sea);
     let seed = (lot.center.x.to_bits() as u64) << 32 | lot.center.y.to_bits() as u64;
     // Rows from the water's edge back up the sand, staggered.
     let mut row = 0;

@@ -377,7 +377,7 @@ impl World {
                     }
                 }
                 (true, None) => {
-                    let days = tick.saturating_sub(o.custody_since) as f32 / 1440.0;
+                    let days = tick.saturating_sub(o.custody_since) as f32 / crate::clock::MINUTES_PER_DAY as f32;
                     let chance = if o.jailed { JAIL_REFORM_BASE + JAIL_REFORM_PER_DAY * days } else { HELD_REFORM };
                     let roll: f32 = self.society_rng().random();
                     let s = &mut self.society.crime;
@@ -426,6 +426,9 @@ impl World {
         let cell_of = |p: Vec2| ((p.x / PEER_RADIUS).floor() as i32, (p.y / PEER_RADIUS).floor() as i32);
         let mut homes: HashMap<(i32, i32), Vec<(CitizenId, Vec2)>> = HashMap::new();
         let mut offenders: HashSet<CitizenId> = HashSet::new();
+        // [review] Who is in custody, once, rather than a scan of the
+        // custody list per adult (nobody is taken in during recruitment).
+        let held: HashSet<CitizenId> = self.services.custody.iter().map(|x| x.citizen).collect();
         for o in &self.society.crime.offenders {
             offenders.insert(o.citizen);
             if let Some(p) = self.home_point(o.citizen) {
@@ -436,7 +439,7 @@ impl World {
             if self.society.crime.offenders.len() >= cap {
                 break;
             }
-            if offenders.contains(&cid) || self.services.in_custody(cid) {
+            if offenders.contains(&cid) || held.contains(&cid) {
                 continue;
             }
             let Some(at) = self.home_point(cid) else { continue };

@@ -195,7 +195,7 @@ impl LaneNetwork {
                 _ => 0,
             });
             let on_ring = lanes.first().is_some_and(|&l| ring_lane[l as usize]);
-            let turns = lanes.iter().flat_map(|&l| self.lanes[l as usize].next.iter()).fold(0u8, |acc, &c| acc | turn_bit(self.lanes[c as usize].turn));
+            let turns = self.exits_of(&lanes);
             let n = lanes.len();
             let arrows: Vec<u8> = if on_ring {
                 (0..n)

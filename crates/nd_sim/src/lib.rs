@@ -26,6 +26,8 @@ pub mod enforcement;
 pub mod estate;
 pub mod events;
 pub mod geom;
+/// Stable hashes (splitmix, FNV) for seeds, names and stream-free decisions.
+pub mod hash;
 pub mod history;
 pub mod homeless;
 /// [identity] The city's name and game id.
@@ -44,6 +46,8 @@ pub mod names;
 pub mod park;
 pub mod pedestrians;
 pub mod pillars;
+/// What the Buildings tool places: the catalogue, its categories and costs.
+pub mod placeable;
 pub mod places;
 pub mod plan;
 pub mod fishing;
@@ -63,6 +67,8 @@ pub mod roads;
 pub(crate) mod rng_save;
 /// Which old street piece a new one continues, through a road rebuild.
 pub(crate) mod seg_match;
+/// Ready-made cities (the demo district) for the app, tests and probes.
+pub mod scenarios;
 pub mod services;
 /// [waterfront] Waterfront lots, public beaches and private jetties.
 pub mod shore;

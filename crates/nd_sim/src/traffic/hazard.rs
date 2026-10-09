@@ -110,22 +110,13 @@ impl Traffic {
         let side = (right - half).min(0.0);
         // The far side: a little of the lane beside or over the centre line,
         // else the shoulder of a one-way road.
-        let beside = lane.left.is_some() || self.opposing_of(lane).is_some();
+        let beside = lane.left.is_some() || self.net.opposing(lane).is_some();
         let left = -LANE_WIDTH * 0.5 - if beside { INTO_NEXT_LANE } else { SHOULDER - EDGE_CLEAR };
         if side - half < left {
             return None;
         }
         let cap = if right - half > EASY_ROOM { HAZARD_EASY } else { HAZARD_CRAWL };
         Some((side, cap))
-    }
-
-    /// The lane running the other way beside a single-lane carriageway.
-    fn opposing_of(&self, lane: &Lane) -> Option<LaneId> {
-        let LaneKind::Road { segment, forward, index } = lane.kind else { return None };
-        if index != 0 {
-            return None;
-        }
-        self.net.segment_lanes.get(&segment)?.iter().copied().find(|&l| matches!(self.net.lanes[l as usize].kind, LaneKind::Road { forward: f, index: 0, .. } if f != forward))
     }
 
     /// The hazard `id` is coming up to, if any: the vehicle right ahead on

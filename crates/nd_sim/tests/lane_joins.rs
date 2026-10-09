@@ -7,15 +7,7 @@ use nd_sim::plan::Gesture;
 use nd_sim::roads::RoadKind;
 use nd_sim::{Vec2, World, WorldConfig};
 
-fn dist_to_polyline(p: Vec2, pts: &[Vec2]) -> f32 {
-    pts.windows(2)
-        .map(|w| {
-            let d = w[1] - w[0];
-            let t = ((p - w[0]).dot(d) / d.length_squared()).clamp(0.0, 1.0);
-            p.distance(w[0] + d * t)
-        })
-        .fold(f32::INFINITY, f32::min)
-}
+use nd_sim::geom::distance_to_polyline as dist_to_polyline;
 
 /// Every alive piece lying along `pts` (midpoint on it, both ends on it).
 fn lanes_along(w: &World, pts: &[Vec2]) -> Vec<(u8, u8)> {

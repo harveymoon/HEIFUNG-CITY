@@ -6,7 +6,7 @@
 //! master plan, so implementing a project is "apply deltas, rebuild".
 //!
 //! Parcels are cut along every road whether or not anyone zoned them
-//! ([`crate::zoning::generate_parcels`]); zoning only gives them a land use.
+//! ([`crate::zoning::generate_parcels_with`]); zoning only gives them a land use.
 //! [`parcel_zoning`] folds the plan's zone gestures over the parcels, oldest
 //! first, so the newest gesture that covers a parcel decides it.
 
@@ -318,7 +318,7 @@ pub fn ring_effect(plan: &Plan, ring: Ring) -> RingEffect {
     // to be stamped is the newest gesture of all.
     let age = plan.roundabouts().find(|(_, r)| *r == ring).map_or(u64::MAX, |(id, _)| id.0);
     let rings = [(ring, age)];
-    let roads: Vec<(GestureId, Vec<Vec2>, bool, f32)> = plan.roads().map(|(id, pts, f, b, k)| (id, pts, ring_cuts(k, f, b), crate::roads::Segment { a: crate::roads::NodeId(0), b: crate::roads::NodeId(0), lanes_fwd: f, lanes_bwd: b, alive: true, kind: k, bridge: false, viaduct: false, tunnel: false, ring: false, ramp: false }.half_width() * 2.0)).collect();
+    let roads: Vec<(GestureId, Vec<Vec2>, bool, f32)> = plan.roads().map(|(id, pts, f, b, k)| (id, pts, ring_cuts(k, f, b), crate::roads::half_width_spec(k, f, b) * 2.0)).collect();
     let raised = |id: &GestureId| plan.gestures.get(id).is_some_and(Gesture::is_elevated);
     let input: Vec<(Vec<Vec2>, bool, u64)> = roads.iter().map(|(id, p, c, _)| (p.clone(), *c && near_ring(p, &ring) && !raised(id), id.0)).collect();
     let layout = crate::roads::layout_rings(&rings, &input);

@@ -88,14 +88,7 @@ const STREET_SUFFIX: &[&str] = &["Street", "Street", "Street", "Road", "Lane", "
 const AVENUE_SUFFIX: &[&str] = &["Avenue", "Avenue", "Boulevard", "Parade", "Broadway", "Esplanade"];
 const HIGHWAY_FORMS: &[&str] = &["Expressway", "Freeway", "Skyway", "Parkway", "Highway"];
 
-fn mix(a: u64, b: u64) -> u64 {
-    let mut h = a ^ b.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    h ^= h >> 30;
-    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    h ^= h >> 27;
-    h = h.wrapping_mul(0x94D0_49BB_1331_11EB);
-    h ^ (h >> 31)
-}
+use crate::hash::mix;
 
 /// The `serial`th name drawn for a street of `class` in a city of `seed`.
 pub fn generate_name(seed: u64, serial: u64, class: StreetClass) -> String {
@@ -252,13 +245,7 @@ fn samples(pts: &[Vec2], step: f32) -> Vec<Vec2> {
     out
 }
 
-fn distance_to_polyline(p: Vec2, pts: &[Vec2]) -> f32 {
-    pts.windows(2).map(|w| crate::geom::project_on_segment(p, w[0], w[1]).1.distance(p)).fold(f32::MAX, f32::min)
-}
-
-fn bounds(pts: &[Vec2]) -> (Vec2, Vec2) {
-    pts.iter().fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(lo, hi), p| (lo.min(*p), hi.max(*p)))
-}
+use crate::geom::{bounds, distance_to_polyline};
 
 /// Share of `samples` within `dist` of `pts`.
 fn overlap(samples: &[Vec2], pts: &[Vec2], dist: f32) -> f32 {

@@ -147,10 +147,6 @@ impl Homeless {
         self.since.len()
     }
 
-    pub fn camp_people(&self) -> u32 {
-        self.camps.iter().map(|c| c.people as u32).sum()
-    }
-
     /// Camps growing: more now than at the midnight two days ago.
     pub fn growing(&self) -> bool {
         let h = &self.stats.camps_history;
@@ -412,12 +408,16 @@ impl World {
         let lv = &self.land_value;
         let lots = &self.lots;
         let h = &mut self.society.homeless;
+        // [review] Lots by bounding box, for the camps on unzoned parcels
+        // (a point is only inside a lot whose box holds it).
+        let lot_list: Vec<&crate::zoning::Lot> = if h.camps.iter().any(|c| c.lot.is_none()) { lots.values().collect() } else { Vec::new() };
+        let lot_grid = crate::geom::Grid::new(64.0, lot_list.iter().map(|l| crate::geom::bounds(&l.polygon)));
         let mut displaced: Vec<HouseholdId> = Vec::new();
         h.camps.retain(|c| {
             let ground = match c.lot {
                 Some(l) => lots.get(l).is_some_and(|l| c.sidewalk || l.building.is_none()),
                 // An unzoned parcel: until a lot is laid over it.
-                None => !lots.values().any(|l| l.contains(c.pos)),
+                None => !lot_grid.in_box(c.pos, c.pos).into_iter().any(|i| lot_list[i as usize].contains(c.pos)),
             };
             let ok = lv.at(c.pos) < SKID_ROW_LV + 0.08 && ground;
             if !ok {
@@ -496,7 +496,7 @@ impl World {
     pub(crate) fn daily_homeless(&mut self) {
         crate::prof_scope!("daily_homeless");
         let tick = self.clock.tick;
-        let day = tick / 1440;
+        let day = tick / crate::clock::MINUTES_PER_DAY;
         let list: Vec<(HouseholdId, u64)> = self.society.homeless.since.clone();
         for (hid, since) in list {
             let Some(hh) = self.households.get(hid) else { continue };
@@ -517,7 +517,7 @@ impl World {
                 }
             }
             // Long enough on the street and some give up on the town.
-            if day.saturating_sub(since / 1440) >= GIVE_UP_DAYS && self.society_rng().random::<f32>() < GIVE_UP_CHANCE {
+            if day.saturating_sub(since / crate::clock::MINUTES_PER_DAY) >= GIVE_UP_DAYS && self.society_rng().random::<f32>() < GIVE_UP_CHANCE {
                 for m in &members {
                     if let Some(c) = self.citizens.get_mut(*m) {
                         c.remember(tick, "Nothing for us here. Hitching out.");

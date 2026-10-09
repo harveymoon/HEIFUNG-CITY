@@ -57,6 +57,24 @@ fn the_same_seed_runs_to_the_same_world() {
 ///   (`rail.stats.trains` is 0 straight after a load);
 /// - `land_value_work`: an access pass in progress restarts differently;
 /// - `road_wear`, which follows the traffic.
+///
+/// [refactor/sim-core, phase 2b] Tried and parked as
+/// `docs/review/save_determinism_wip.patch`: saving the trains in motion
+/// (`RailSave::trains`, riders of a saved train kept aboard) fixes the rail
+/// drift; saving the lane network's live state (`traffic/live.rs`:
+/// signals, phases, timers, approach counts and arrows, applied after the
+/// rebuild when the shape matches), `Traffic::left_waits`, `adapt_clock`,
+/// `peds` and the cars' `blocked_by`/`offlaw`/`dodge` makes a fresh
+/// `traffic.net` equal to the running one, yet cars still differ after one
+/// tick. Still differing straight after a load (a Debug diff of the two
+/// worlds): the walk graph (rebuilt with different node and edge order:
+/// `walk.nodes`/`adj` lengths differ, `walk.junctions` filled only on
+/// load), `journeys.car_from`/`left_from`, `road_wear.last_load`,
+/// `peds.crossings`/`occupants`, the seller and crowd caches, `Car::drive
+/// .poses` and `Citizen::trail`. Copying the walk graph alone did not
+/// close the first-tick gap, so the culprit is among the rest; bisect by
+/// copying each from the running world into the loaded one
+/// (`FIX=walk,journeys,wear` in the scratch `loaddiff` probe the patch notes).
 /// Run it with `--ignored` once those are saved.
 #[test]
 #[ignore = "traffic, rail and land-value work in progress are not saved yet (see the doc comment)"]

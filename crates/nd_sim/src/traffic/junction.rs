@@ -35,17 +35,7 @@ impl LaneNetwork {
     /// node's alive streets).
     pub fn approach_dirs(&self, roads: &RoadNetwork, k: usize) -> Vec<(SegmentId, Vec2)> {
         let Some(inter) = self.intersections.get(k) else { return Vec::new() };
-        let node = roads.node(inter.node);
-        node.segments
-            .iter()
-            .copied()
-            .filter(|&s| roads.segment(s).alive && roads.segment(s).is_street())
-            .map(|s| {
-                let (a, b) = roads.segment_points(s);
-                let away = if roads.segment(s).a == inter.node { b - a } else { a - b };
-                (s, away.normalize_or_zero())
-            })
-            .collect()
+        roads.streets_at(inter.node).map(|s| (s, roads.away_dir(s, inter.node))).collect()
     }
 }
 
@@ -78,13 +68,13 @@ impl Traffic {
         let node = self.net.intersections[k].node;
         let (approaches, two_way, phases) = {
             let inter = &self.net.intersections[k];
-            let streets: Vec<SegmentId> = roads.node(node).segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_street()).collect();
+            let streets: Vec<SegmentId> = roads.streets_at(node).collect();
             let two_way = streets.iter().filter(|&&s| roads.segment(s).lanes_fwd > 0 && roads.segment(s).lanes_bwd > 0).count();
             (inter.approaches, two_way, inter.phases.len())
         };
         let ring = self.net.rings.nodes.contains_key(&node);
         let inter = &mut self.net.intersections[k];
-        inter.signalized = !ring && ((approaches >= 3 && two_way >= 3) || approaches >= 4) && phases >= 2;
+        inter.signalized = !ring && default_signalized(approaches, two_way, phases);
         inter.greens = vec![GREEN_SECONDS; phases];
         inter.arrow_mode = Default::default();
         inter.arrow_len = ARROW_SECONDS;
@@ -95,7 +85,7 @@ impl Traffic {
                 continue;
             }
             let lanes = self.net.approaches[ai].lanes.clone();
-            let exits = lanes.iter().flat_map(|&l| self.net.lanes[l as usize].next.iter()).fold(0u8, |acc, &c| acc | turn_bit(self.net.lanes[c as usize].turn));
+            let exits = self.net.exits_of(&lanes);
             if exits != self.net.approaches[ai].exits {
                 self.net.approaches[ai].exits = exits;
                 self.net.approaches[ai].fixed = false;

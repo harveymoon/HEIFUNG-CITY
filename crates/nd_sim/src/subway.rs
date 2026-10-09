@@ -325,8 +325,9 @@ impl Subway {
     /// The best single-line ride for a walk from `from` to `to`: an
     /// entrance within reach of each end on the same line (`entrance` gives
     /// each station's entrance and how far people walk to it), the walks
-    /// short enough that riding saves real distance. Ties go to the
-    /// shorter walk, so the plan is the same whatever the map's order.
+    /// short enough that riding saves real distance. Of near-equal plans
+    /// (within a thousandth of a minute) the first found, in line and
+    /// station order, is kept.
     pub fn plan_trip(&self, from: Vec2, to: Vec2, seconds_per_tick: f32, walk_per_tick: f32, entrance: impl Fn(BuildingId) -> Option<(Vec2, f32)>) -> Option<MetroPlan> {
         let direct = from.distance(to);
         if direct < TRIP_MIN {
@@ -338,13 +339,13 @@ impl Subway {
             if line.stations.len() < 2 || line.stops.len() != line.stations.len() {
                 continue;
             }
-            let ends: Vec<(usize, Vec2, f32, f32)> = line.stations.iter().enumerate().filter_map(|(i, &s)| entrance(s).map(|(p, reach)| (i, p, reach, 0.0))).collect();
-            for &(i, pi, ri, _) in &ends {
+            let ends: Vec<(usize, Vec2, f32)> = line.stations.iter().enumerate().filter_map(|(i, &s)| entrance(s).map(|(p, reach)| (i, p, reach))).collect();
+            for &(i, pi, ri) in &ends {
                 let d_in = from.distance(pi);
                 if d_in > ri {
                     continue;
                 }
-                for &(j, pj, rj, _) in &ends {
+                for &(j, pj, rj) in &ends {
                     if i == j {
                         continue;
                     }

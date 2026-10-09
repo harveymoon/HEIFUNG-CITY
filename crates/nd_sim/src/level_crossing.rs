@@ -468,9 +468,7 @@ impl LevelCrossings {
 
 /// The unit direction of `sid` away from `node`.
 fn away_from(roads: &RoadNetwork, node: NodeId, sid: SegmentId) -> Vec2 {
-    let s = roads.segment(sid);
-    let (a, b) = roads.segment_points(sid);
-    if s.a == node { (b - a).normalize_or_zero() } else { (a - b).normalize_or_zero() }
+    roads.away_dir(sid, node)
 }
 
 /// The track's direction at `node` (an alive rail piece there), if any.
@@ -495,11 +493,8 @@ fn stop_distance(away: Vec2, rail: Vec2, hw: f32) -> f32 {
 /// track, and the street mesh paints the stop lines there.
 pub fn stop_radius(roads: &RoadNetwork, node: NodeId) -> Option<f32> {
     let rail = rail_dir_at(roads, node)?;
-    let n = roads.node(node);
-    n.segments
-        .iter()
-        .copied()
-        .filter(|&s| roads.segment(s).alive && roads.segment(s).is_street())
+    roads
+        .streets_at(node)
         .map(|s| stop_distance(away_from(roads, node, s), rail, roads.segment(s).half_width()))
         .reduce(f32::max)
 }
