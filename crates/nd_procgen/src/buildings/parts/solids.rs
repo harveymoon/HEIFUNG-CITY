@@ -21,6 +21,16 @@ pub fn loft(g: &mut Geometry, f: &Frame, s: Surface, bottom: &[Vec2], top: &[Vec
     g.part(s).frustum(&f.poly3(bottom, y0), &f.poly3(top, y1), rgba(color));
 }
 
+/// [`loft`] with only the caps asked for: a section of a stack whose
+/// neighbours share its end rings.
+#[allow(clippy::too_many_arguments)]
+pub fn loft_capped(g: &mut Geometry, f: &Frame, s: Surface, bottom: &[Vec2], top: &[Vec2], y0: f32, y1: f32, cap_bottom: bool, cap_top: bool, color: [f32; 3]) {
+    if bottom.len() < 3 || bottom.len() != top.len() {
+        return;
+    }
+    g.part(s).frustum_capped(&f.poly3(bottom, y0), &f.poly3(top, y1), cap_bottom, cap_top, rgba(color));
+}
+
 /// The sides of a solid between two polygons, without its caps: a floor
 /// band proud of a shaft, whose caps would lie in the shaft's own.
 #[allow(clippy::too_many_arguments)]

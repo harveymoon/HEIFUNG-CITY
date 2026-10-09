@@ -309,6 +309,8 @@ pub fn twist_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for k in 0..floors {
         let t = (k + 1) as f32 / floors as f32;
         let plate = fit_inside(c, &rotate_poly(&scale_poly(&base, 1.0 - (1.0 - taper) * t), total_twist * t));
+        // Each floor keeps its caps: the rooftop deck (`air::roof_site`)
+        // reads the roof heights off them.
         loft(g, f, Glass, &prev, &plate, y, y + fh, glass);
         // floor plate edge
         // The plate's edge: a band without caps, which would lie in the

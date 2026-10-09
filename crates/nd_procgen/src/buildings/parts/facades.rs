@@ -94,6 +94,21 @@ pub fn band_windows(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, 
 /// Lit segments around a glass tower, per floor, standing just proud of the
 /// facets so they read through the glazing.
 pub fn curtain_lights(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], y0: f32, floors: i32, fh: f32) {
+    curtain_lights_hiding(g, c, rng, poly, y0, floors, fh, None);
+}
+
+/// Whether a stretch of a face from `a` to `b` lies wholly inside `solid`
+/// (lot-local), where nothing on it is ever seen.
+pub fn buried(solid: &[Vec2], a: Vec2, b: Vec2) -> bool {
+    [a, b, (a + b) * 0.5].iter().all(|p| point_in_polygon(*p, solid) && distance_to_boundary(*p, solid) > 0.05)
+}
+
+/// [`curtain_lights`] leaving out the lights that would lie inside the
+/// solid `hidden` (a wing's faces inside the core it grows from). The
+/// random draws are made for them all the same, so every light that is
+/// drawn is the one that was drawn before.
+#[allow(clippy::too_many_arguments)]
+pub fn curtain_lights_hiding(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], y0: f32, floors: i32, fh: f32, hidden: Option<&[Vec2]>) {
     let lit = c.lit_chance();
     for face in c.faces(poly) {
         let segs = (face.len / 3.2).floor().max(1.0) as i32;
@@ -107,6 +122,9 @@ pub fn curtain_lights(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec
                 let t = -face.len * 0.5 + (i as f32 + 0.5) * seg;
                 let wc = pick(rng, &c.style.window_colors);
                 let col = mul(wc, rng.random_range(0.35..0.8));
+                if hidden.is_some_and(|h| buried(h, face.at(t - seg * 0.425, 0.0), face.at(t + seg * 0.425, 0.0))) {
+                    continue;
+                }
                 face.glaze(g, c, t, y, PANE, seg * 0.85, fh * 0.42, Pane::Lit(col));
             }
         }

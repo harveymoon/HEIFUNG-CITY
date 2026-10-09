@@ -280,14 +280,15 @@ fn plaza(g: &mut Geometry, c: &Ctx, seed: u64, site: &[Vec2], pod: &[Vec2]) {
 /// `s`, a floor-plate band at its top, and window lights per floor (or per
 /// two floors high up, where nobody can count them).
 #[allow(clippy::too_many_arguments)]
-fn shaft(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], y0: f32, y1: f32, s: crate::surface::Surface, wall: [f32; 3], band: [f32; 3]) {
+#[allow(clippy::too_many_arguments)]
+fn shaft(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], y0: f32, y1: f32, s: crate::surface::Surface, wall: [f32; 3], band: [f32; 3], hidden: Option<&[Vec2]>) {
     let f = &c.frame;
     extrude(g, f, s, poly, y0, y1, wall);
     // Sides only: its caps would lie in the shaft's top and the next
     // section's bottom.
     let edge = offset_poly(poly, -0.15);
     super::parts::band(g, f, Panel, &edge, &edge, y1 - 0.5, y1, band);
-    lights(g, c, rng, poly, y0, y1);
+    lights(g, c, rng, poly, y0, y1, hidden);
 }
 
 /// `a` and `b` (same vertex count) mixed `t` of the way: the plan of a
@@ -345,7 +346,9 @@ fn lofted_lit_band(g: &mut Geometry, c: &Ctx, prev: &[Vec2], next: &[Vec2], ys0:
     }
 }
 
-fn lights(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], y0: f32, y1: f32) {
+/// Window lights up a shaft, leaving out those inside `hidden`.
+#[allow(clippy::too_many_arguments)]
+fn lights(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], y0: f32, y1: f32, hidden: Option<&[Vec2]>) {
     let floors = ((y1 - y0) / FH).floor() as i32;
     if floors < 1 {
         return;
@@ -353,9 +356,9 @@ fn lights(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], y0: f32,
     // Every floor low down; every other floor above 200 m (a band two
     // floors high), so a megatall is not ten thousand quads of light.
     if y0 < 200.0 {
-        curtain_lights(g, c, rng, poly, y0, floors, FH);
+        curtain_lights_hiding(g, c, rng, poly, y0, floors, FH, hidden);
     } else {
-        curtain_lights(g, c, rng, poly, y0, (floors / 2).max(1), FH * 2.0);
+        curtain_lights_hiding(g, c, rng, poly, y0, (floors / 2).max(1), FH * 2.0, hidden);
     }
 }
 
@@ -364,6 +367,12 @@ fn lights(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], y0: f32,
 /// the renderer never switches them off and the skyline keeps its shape
 /// after the offices empty. `floors` floors from `y0`, a few bays dark.
 fn lit_band(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y0: f32, floors: i32, color: [f32; 3]) {
+    lit_band_hiding(g, c, poly, y0, floors, color, None);
+}
+
+/// [`lit_band`] leaving out the bays inside `hidden`.
+#[allow(clippy::too_many_arguments)]
+fn lit_band_hiding(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y0: f32, floors: i32, color: [f32; 3], hidden: Option<&[Vec2]>) {
     let f = &c.frame;
     for (fi, face) in c.faces(poly).iter().enumerate() {
         let segs = (face.len / 3.2).floor().max(1.0) as i32;
@@ -375,6 +384,9 @@ fn lit_band(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y0: f32, floors: i32, colo
                     continue;
                 }
                 let t = -face.len * 0.5 + (i as f32 + 0.5) * seg;
+                if hidden.is_some_and(|h| buried(h, face.at(t - seg * 0.425, 0.0), face.at(t + seg * 0.425, 0.0))) {
+                    continue;
+                }
                 face.decal(g, f, Glow, t, y, 0.12, seg * 0.85, FH * 0.5, color);
             }
         }
@@ -461,7 +473,7 @@ fn deco_spire(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Ve
                 face.bx(g, f, Stone, tt - step * 0.5, (y0 + y1) * 0.5, 0.2, Vec3::new(0.7, y1 - y0, 0.4), pier);
             }
         }
-        lights(g, c, rng, &plan, y0, y1);
+        lights(g, c, rng, &plan, y0, y1, None);
         // [sweep-visual] The floors under each setback stay lit.
         if y1 - y0 > 4.0 * FH {
             lit_band(g, c, &plan, y1 - 3.0 * FH, 2, landmark_light(c, gold));
@@ -521,7 +533,7 @@ fn bundled(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2,
     let rot = (t.seed % 360) as f32 / 360.0 * TAU;
     // The core: a hexagon to the top of the shaft.
     let core = ngon(seat.x, seat.y, half_w * 1.15, 6, rot);
-    shaft(g, c, rng, &core, base, core_top, Glass, glass, steel);
+    shaft(g, c, rng, &core, base, core_top, Glass, glass, steel, None);
     // [sweep-visual] Sky lobbies every 120 m and the floors under the crown
     // stay lit all night.
     let warm = landmark_light(c, neon);
@@ -550,11 +562,12 @@ fn bundled(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2,
             }
             let len = reach * (1.0 - 0.6 * s as f32 / steps as f32);
             let plan = wing(seat, dir, len, half_w * (1.0 - 0.15 * s as f32 / steps as f32));
-            shaft(g, c, rng, &plan, y0, y1, Glass, mul(glass, 1.0 - 0.04 * s as f32), steel);
+            // The wing's lights on its faces inside the core are never seen.
+            shaft(g, c, rng, &plan, y0, y1, Glass, mul(glass, 1.0 - 0.04 * s as f32), steel, Some(&core));
             // Each wing's floors under every setback stay lit: a spiral of
             // light up the tower at night.
             if y1 - y0 > 3.0 * FH {
-                lit_band(g, c, &plan, y1 - 3.0 * FH, if s == steps - 1 { 2 } else { 1 }, warm);
+                lit_band_hiding(g, c, &plan, y1 - 3.0 * FH, if s == steps - 1 { 2 } else { 1 }, warm, Some(&core));
             }
             // The setback lights up.
             let nose = &plan[1..5];
@@ -613,7 +626,8 @@ fn twist(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2, r
     for k in 0..sections {
         let y0 = base + k as f32 * sh;
         let next = plate((k + 1) as f32 / sections as f32);
-        loft(g, f, Glass, &prev, &next, y0, y0 + sh, glass);
+        // Section on section: only the shaft's two ends are capped.
+        loft_capped(g, f, Glass, &prev, &next, y0, y0 + sh, k == 0, k + 1 == sections, glass);
         // The floor band round the section's top: on the glass there, and
         // without caps.
         let low = offset_poly(&lerp_plan(&prev, &next, 1.0 - 0.4 / sh), -0.2);
@@ -664,7 +678,8 @@ fn needle(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, t: &Tower, seat: Vec2, 
     for k in 0..sections {
         let y0 = base + k as f32 * sh;
         let next = plan((k + 1) as f32 / sections as f32);
-        loft(g, f, Glass, &prev, &next, y0, y0 + sh, glass);
+        // Section on section: only the shaft's two ends are capped.
+        loft_capped(g, f, Glass, &prev, &next, y0, y0 + sh, k == 0, k + 1 == sections, glass);
         lofted_lights(g, c, rng, &prev, &next, y0, y0 + sh);
         // [sweep-visual] The top sections and a band every quarter stay lit.
         if k >= sections - 2 || (k > 0 && k % (sections / 4).max(2) == 0) {
@@ -757,7 +772,7 @@ pub fn site(g: &mut Geometry, c: &Ctx, t: &Tower, progress: f32) {
     if glazed_h > ph {
         let glass = mix(pick(rng, &pal.glass), [0.6, 0.75, 0.9], 0.3);
         extrude(g, f, Glass, &offset_poly(&plan, 0.15), ph, glazed_h, glass);
-        lights(g, c, rng, &offset_poly(&plan, 0.15), ph, glazed_h);
+        lights(g, c, rng, &offset_poly(&plan, 0.15), ph, glazed_h, None);
     }
     // Safety netting at the working floors.
     if frame_h > ph {

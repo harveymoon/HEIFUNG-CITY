@@ -198,9 +198,11 @@ pub(super) fn smokestack(g: &mut Geometry, f: &crate::buildings::Frame, p: Vec2,
     let w = f.to_world(p.x, p.y);
     let top_r = r * 0.72;
     g.part(Concrete).cylinder(w, r * 1.3, r * 1.18, 0.0, 2.5, 14, rgba(mul(SOOT_CONCRETE, 1.3)));
-    g.part(Concrete).cylinder(w, r, top_r * 1.03, 2.5, h * 0.88, 14, rgba(mul(SOOT_CONCRETE, tone)));
-    g.part(Matte).cylinder(w, top_r * 1.03, top_r, h * 0.88, h, 14, rgba(COAL_BLACK));
-    g.part(Matte).cylinder(w, top_r * 0.86, top_r * 0.86, h, h + 0.5, 14, rgba([0.01, 0.01, 0.01]));
+    // The shaft stands on the drum, the lip on the shaft and the mouth in
+    // the lip: the caps between them are hidden and left out.
+    g.part(Concrete).cylinder_capped(w, r, top_r * 1.03, 2.5, h * 0.88, 14, false, false, rgba(mul(SOOT_CONCRETE, tone)));
+    g.part(Matte).cylinder_capped(w, top_r * 1.03, top_r, h * 0.88, h, 14, false, true, rgba(COAL_BLACK));
+    g.part(Matte).cylinder_capped(w, top_r * 0.86, top_r * 0.86, h, h + 0.5, 14, false, true, rgba([0.01, 0.01, 0.01]));
     let mut gallery = |y: f32| {
         let rr = r + (top_r - r) * (y / h) + 0.7;
         g.part(Matte).cylinder(w, rr, rr, y, y + 0.35, 14, rgba(BLACK_STEEL));
@@ -273,10 +275,12 @@ pub(super) fn cooling_tower(g: &mut Geometry, f: &crate::buildings::Frame, p: Ve
     let w = f.to_world(p.x, p.y);
     let profile = [(0.0f32, 1.0f32), (0.12, 0.9), (0.3, 0.77), (0.55, 0.64), (0.78, 0.6), (0.92, 0.63), (1.0, 0.66)];
     let shade = |t: f32| mul(SOOT_CONCRETE, 2.6 - 1.6 * t * t);
-    for seg in profile.windows(2) {
+    // One shell: the caps between its sections are hidden.
+    let last = profile.len() - 2;
+    for (k, seg) in profile.windows(2).enumerate() {
         let a = MeshData::ngon(w, rb * seg[0].1, 24, 0.0, th * seg[0].0);
         let b = MeshData::ngon(w, rb * seg[1].1, 24, 0.0, th * seg[1].0);
-        g.part(Concrete).frustum(&a, &b, rgba(shade(seg[1].0)));
+        g.part(Concrete).frustum_capped(&a, &b, k == 0, k == last, rgba(shade(seg[1].0)));
     }
     // The dark mouth and the shadowed ring of legs at the foot.
     g.part(Matte).cylinder(w, rb * 0.62, rb * 0.62, th - 0.2, th + 0.05, 24, rgba([0.012, 0.012, 0.014]));

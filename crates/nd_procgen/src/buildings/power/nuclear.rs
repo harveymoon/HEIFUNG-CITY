@@ -64,17 +64,19 @@ pub fn nuclear(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Containment: a cylinder with a dome.
     for &(cc, r) in &lay.reactors {
         let w = f.to_world(cc.x, cc.y);
-        g.part(Concrete).cylinder(w, r, r, 0.0, r * 1.8, 20, rgba(concrete));
+        // The dome stands on the drum: the caps between them, and between
+        // the dome's rings, are hidden and left out.
+        g.part(Concrete).cylinder_capped(w, r, r, 0.0, r * 1.8, 20, true, false, rgba(concrete));
         let mut prev = MeshData::ngon(w, r, 20, 0.0, r * 1.8);
         for k in 1..=5 {
             let t = k as f32 / 5.0;
             let a = t * std::f32::consts::FRAC_PI_2;
             // The last ring keeps a small radius so no side quad collapses.
             let ring = MeshData::ngon(w, (r * a.cos()).max(r * 0.05), 20, 0.0, r * 1.8 + r * 0.9 * a.sin());
-            g.part(Concrete).frustum(&prev, &ring, rgba(mul(concrete, 1.0 - 0.05 * k as f32)));
+            g.part(Concrete).frustum_capped(&prev, &ring, false, k == 5, rgba(mul(concrete, 1.0 - 0.05 * k as f32)));
             prev = ring;
         }
-        g.part(Glow).boxed(Vec3::new(w.x, r * 2.75, w.y), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
+        aviation_light(g, pal, Vec3::new(w.x, r * 2.75, w.y), 0.4);
     }
     // Turbine and reactor service halls.
     for &(p, h, hh) in &lay.halls {
@@ -92,10 +94,11 @@ pub fn nuclear(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let w = f.to_world(p.x, p.y);
         let profile = [(0.0f32, 1.0f32), (0.3, 0.78), (0.6, 0.62), (0.8, 0.6), (1.0, 0.68)];
         let th = rb * 3.6;
-        for seg in profile.windows(2) {
+        let last = profile.len() - 2;
+        for (k, seg) in profile.windows(2).enumerate() {
             let a = MeshData::ngon(w, rb * seg[0].1, 18, 0.0, th * seg[0].0);
             let b = MeshData::ngon(w, rb * seg[1].1, 18, 0.0, th * seg[1].0);
-            g.part(Concrete).frustum(&a, &b, rgba(mul(concrete, 0.95)));
+            g.part(Concrete).frustum_capped(&a, &b, k == 0, k == last, rgba(mul(concrete, 0.95)));
         }
         for s in 0..4 {
             let y = th + 1.0 + s as f32 * 4.0;
