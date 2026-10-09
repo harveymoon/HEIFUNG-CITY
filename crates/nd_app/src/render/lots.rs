@@ -16,7 +16,7 @@ pub(super) fn is_vacant_lot(lot: &nd_sim::Lot) -> bool {
 }
 
 /// Lot ground fills and (with the zoning overlay, toggled with O) the zone
-/// outline glows and vacant-lot outlines: two meshes for the whole city,
+/// outline glows and vacant-lot outlines: three meshes for the whole city,
 /// rebuilt when a lot appears, disappears, or changes between built, vacant
 /// and park. Land value does not reach them, so the periodic land-value
 /// recompute no longer touches any ground mesh.

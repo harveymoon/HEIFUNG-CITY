@@ -29,13 +29,13 @@ use crate::assets::GameAssets;
 use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
 
-/// Emergency vehicles, fires and rubble (render/emergency.rs).
 /// Offscreen renders: Build window thumbnails, save pictures.
 mod thumbs;
 pub use thumbs::Thumbs;
 mod air;
 /// [districts] The district layer; [tourism] visitors on foot.
 mod districts;
+/// Emergency vehicles, fires and rubble.
 mod emergency;
 // [fire-scene] Firefighters, hoses and water at a fire.
 mod fire_scene;

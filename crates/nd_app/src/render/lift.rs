@@ -36,7 +36,7 @@ pub(super) fn lift_spawned(
     sim: Res<Sim>,
     mut meshes: ResMut<Assets<Mesh>>,
     q: Query<&Mesh3d, Or<(Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<ScatterTag>, Added<RingPreviewTag>)>>,
-    arrows: Query<&Mesh3d, Added<TollTag>>,
+    tolls: Query<&Mesh3d, Added<TollTag>>,
     mut signals: Query<&mut Transform, Added<SignalTag>>,
 ) {
     let w = &sim.world;
@@ -50,7 +50,7 @@ pub(super) fn lift_spawned(
         Some((sid, t, q)) if q.distance(p) < 25.0 => w.road_height(sid, t),
         _ => w.surface_height(p),
     };
-    for m in &arrows {
+    for m in &tolls {
         let Some(mut mesh) = meshes.get_mut(&m.0) else { continue };
         if let Some(bevy::mesh::VertexAttributeValues::Float32x3(pos)) = mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
             for p in pos.iter_mut() {

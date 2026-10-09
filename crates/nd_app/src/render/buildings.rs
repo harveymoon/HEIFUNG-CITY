@@ -4,7 +4,6 @@
 
 use super::*;
 
-/// Generate one building's geometry into the chunk's merged geometry.
 /// The field a solar or wind plant is drawn as part of, when its parcel
 /// touches others of its kind (`World::plant_cluster`); `None` for a lone
 /// plant or anything else.
@@ -38,6 +37,7 @@ pub(super) fn mass_top(g: &Geometry) -> f32 {
         .fold(0.0, f32::max)
 }
 
+/// Generate one building's geometry into the chunk's merged geometry.
 pub(super) fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<f32> {
     let b = world.buildings.get(id)?;
     let mut g = building_geometry(world, assets, styles, id)?;
