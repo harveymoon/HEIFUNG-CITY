@@ -10,6 +10,7 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
+use crate::overlay::shapes::lerp_angle;
 use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
 use crate::ui::UiFlags;
@@ -295,10 +296,6 @@ pub fn thing_pose(sim: &Sim, sel: Selection) -> Option<ThingPose> {
     }
 }
 
-fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
-    let d = (b - a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
-    a + d * t
-}
 
 /// The walk camera's yaw (forward = (sin, cos) in x, z) for a sim heading.
 fn yaw_of_heading(h: f32) -> f32 {

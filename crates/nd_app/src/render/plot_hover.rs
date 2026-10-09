@@ -17,6 +17,7 @@
 //! (also `hover`): it holds until the real pointer moves over the map.
 
 use super::*;
+use crate::overlay::shapes::push_vertex;
 use crate::tools::{Tool, ToolState, ZoneMode};
 
 #[derive(Component)]
@@ -253,13 +254,6 @@ fn highlight_mesh(w: &World, site: &HoverSite, height: f32, line_w: f32) -> Mesh
     let centre = poly.iter().copied().sum::<SVec2>() / poly.len() as f32;
     m.ground_polygon(poly, poly.iter().map(|&p| y(p)).fold(y(centre), f32::max) + 0.02, col(0.08));
     let n = poly.len();
-    let push = |m: &mut MeshData, p: Vec3, nrm: Vec3, color: [f32; 4]| {
-        m.positions.push(p.to_array());
-        m.normals.push(nrm.to_array());
-        m.colors.push(color);
-        m.uvs.push([0.0, 0.0]);
-        m.tangents.push([1.0, 0.0, 0.0, 1.0]);
-    };
     // Rows up the wall: (fraction of the height, alpha). Bright at the
     // foot, mostly gone a third of the way up, nothing at the top.
     const ROWS: [(f32, f32); 5] = [(0.0, 1.0), (0.1, 0.7), (0.35, 0.32), (0.7, 0.1), (1.0, 0.0)];
@@ -275,8 +269,8 @@ fn highlight_mesh(w: &World, site: &HoverSite, height: f32, line_w: f32) -> Mesh
         // The wall.
         let base = m.positions.len() as u32;
         for (t, alpha) in ROWS {
-            push(&mut m, Vec3::new(a.x, ya + t * height, a.y), nrm, col(alpha));
-            push(&mut m, Vec3::new(b.x, yb + t * height, b.y), nrm, col(alpha));
+            push_vertex(&mut m, Vec3::new(a.x, ya + t * height, a.y), nrm, col(alpha));
+            push_vertex(&mut m, Vec3::new(b.x, yb + t * height, b.y), nrm, col(alpha));
         }
         for r in 0..ROWS.len() as u32 - 1 {
             let (i0, i1, i2, i3) = (base + r * 2, base + r * 2 + 1, base + r * 2 + 3, base + r * 2 + 2);
@@ -290,7 +284,7 @@ fn highlight_mesh(w: &World, site: &HoverSite, height: f32, line_w: f32) -> Mesh
         let hot = [c[0] * 1.5 + 2.0, c[1] * 1.5 + 2.0, c[2] * 1.5 + 2.0, 1.0];
         for p in [a2 + o, b2 + o, b2 - o, a2 - o] {
             let h = if p.distance_squared(a2) < p.distance_squared(b2) { ya } else { yb };
-            push(&mut m, Vec3::new(p.x, h + 0.08, p.y), Vec3::Y, hot);
+            push_vertex(&mut m, Vec3::new(p.x, h + 0.08, p.y), Vec3::Y, hot);
         }
         m.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }

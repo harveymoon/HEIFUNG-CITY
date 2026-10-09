@@ -2,6 +2,8 @@
 //! crate renders it, drives it, and gives the player tools.
 
 mod assets;
+/// [overlay] What is drawn over the city: the selection, previews, highlights.
+mod overlay;
 /// [build-highlight] A Build window section's buildings and service areas on the map.
 mod build_highlight;
 mod camera;
@@ -29,6 +31,8 @@ mod toll_select;
 mod road_select;
 mod remote;
 mod render;
+/// [overlay] What the player has selected, checked after every step.
+mod selection;
 mod sim;
 /// [dock-access] "Connect here" marks on unjoined dock and station street stubs.
 mod stub_marks;

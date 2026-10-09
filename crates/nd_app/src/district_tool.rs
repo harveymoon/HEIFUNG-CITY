@@ -16,6 +16,7 @@ use nd_sim::Vec2 as SVec2;
 use crate::camera::{CameraMode, Cursor};
 use crate::render::Overlays;
 use crate::sim::{Sim, SimSet};
+use crate::overlay::shapes::flat_at;
 use crate::tools::{Tool, ToolState};
 use crate::ui::UiFlags;
 
@@ -183,17 +184,16 @@ fn district_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor
     let lift = |p: SVec2| Vec3::new(p.x, w.surface_height(p) + 0.8, p.y);
     let c = tools.district.selected.map_or([0.6, 1.6, 1.8], |id| district_color(&sim, id));
     let col = if tools.district.erase { Color::linear_rgb(2.2, 1.2, 0.4) } else { Color::linear_rgb(c[0] * 1.4, c[1] * 1.4, c[2] * 1.4) };
-    let flat = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     match tools.district.mode {
         DistrictMode::Brush => {
             if let Some(p) = cursor.ground {
-                gizmos.circle(Isometry3d::new(lift(p), flat), tools.district.radius, col);
+                gizmos.circle(flat_at(lift(p)), tools.district.radius, col);
             }
         }
         DistrictMode::Polygon => {
             let mut pts: Vec<Vec3> = tools.district.points.iter().map(|&p| lift(p)).collect();
             for p in &pts {
-                gizmos.circle(Isometry3d::new(*p, flat), 2.0, col);
+                gizmos.circle(flat_at(*p), 2.0, col);
             }
             if let Some(p) = cursor.ground {
                 pts.push(lift(p));

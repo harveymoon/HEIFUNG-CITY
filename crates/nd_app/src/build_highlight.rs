@@ -31,7 +31,9 @@ use nd_procgen::MeshData;
 use nd_sim::services::{COVERAGE_FADE, COVERED};
 use nd_sim::{BuildingId, LotId, Placeable, RailFacility, ServiceKind, Vec2 as SVec2, World};
 
-use crate::sim::{Sim, SimSet};
+use crate::overlay::shapes::{fill, flat_at, light_wall, outline_band};
+use crate::overlay::OverlaySet;
+use crate::sim::Sim;
 use crate::ui::build::{norm, Cat};
 
 /// What to highlight: a Build window section, optionally one of its
@@ -559,69 +561,6 @@ fn wall_height(distance: f32) -> f32 {
     ((distance * 0.025).clamp(6.0, 30.0) / 3.0).round() * 3.0
 }
 
-fn push(m: &mut MeshData, p: Vec3, nrm: Vec3, color: [f32; 4]) {
-    m.positions.push(p.to_array());
-    m.normals.push(nrm.to_array());
-    m.colors.push(color);
-    m.uvs.push([0.0, 0.0]);
-    m.tangents.push([1.0, 0.0, 0.0, 1.0]);
-}
-
-/// A band along a closed outline, `width` wide, at the ground.
-fn outline_band(m: &mut MeshData, w: &World, poly: &[SVec2], width: f32, lift: f32, color: [f32; 4]) {
-    let n = poly.len();
-    for k in 0..n {
-        let (a, b) = (poly[k], poly[(k + 1) % n]);
-        let d = (b - a).normalize_or_zero();
-        if d == SVec2::ZERO {
-            continue;
-        }
-        let side = SVec2::new(-d.y, d.x) * width * 0.5;
-        let (a2, b2) = (a - d * width * 0.5, b + d * width * 0.5);
-        let (ya, yb) = (w.ground_height(a) + lift, w.ground_height(b) + lift);
-        let base = m.positions.len() as u32;
-        push(m, Vec3::new(a2.x + side.x, ya, a2.y + side.y), Vec3::Y, color);
-        push(m, Vec3::new(b2.x + side.x, yb, b2.y + side.y), Vec3::Y, color);
-        push(m, Vec3::new(b2.x - side.x, yb, b2.y - side.y), Vec3::Y, color);
-        push(m, Vec3::new(a2.x - side.x, ya, a2.y - side.y), Vec3::Y, color);
-        m.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-    }
-}
-
-/// A wall of light up from an outline, fading to nothing at `height`.
-fn light_wall(m: &mut MeshData, w: &World, poly: &[SVec2], height: f32, c: [f32; 3], strength: f32) {
-    const ROWS: [(f32, f32); 4] = [(0.0, 0.8), (0.15, 0.45), (0.5, 0.12), (1.0, 0.0)];
-    let n = poly.len();
-    for k in 0..n {
-        let (a, b) = (poly[k], poly[(k + 1) % n]);
-        let d = (b - a).normalize_or_zero();
-        if d == SVec2::ZERO {
-            continue;
-        }
-        let nrm = Vec3::new(-d.y, 0.0, d.x);
-        let (ya, yb) = (w.ground_height(a) + 0.3, w.ground_height(b) + 0.3);
-        let base = m.positions.len() as u32;
-        for (t, alpha) in ROWS {
-            let col = [c[0], c[1], c[2], alpha * strength];
-            push(m, Vec3::new(a.x, ya + t * height, a.y), nrm, col);
-            push(m, Vec3::new(b.x, yb + t * height, b.y), nrm, col);
-        }
-        for r in 0..ROWS.len() as u32 - 1 {
-            let (i0, i1, i2, i3) = (base + r * 2, base + r * 2 + 1, base + r * 2 + 3, base + r * 2 + 2);
-            m.indices.extend_from_slice(&[i0, i1, i2, i0, i2, i3]);
-        }
-    }
-}
-
-/// A lot's polygon filled just above the ground.
-fn fill(m: &mut MeshData, w: &World, poly: &[SVec2], lift: f32, color: [f32; 4]) {
-    if poly.len() < 3 {
-        return;
-    }
-    let y = poly.iter().map(|&p| w.ground_height(p)).fold(f32::MIN, f32::max) + lift;
-    m.ground_polygon(poly, y, color);
-}
-
 /// The service areas: lots tinted by how many buildings reach them (the
 /// material adds, so overlaps of different kinds mix too), homes left out
 /// in red.
@@ -717,15 +656,14 @@ fn sync_meshes(
 /// The straight-line reaches as rings on the ground.
 fn rings(mut gizmos: Gizmos, hl: Res<BuildHighlight>, sim: Res<Sim>) {
     let Some(v) = &hl.view else { return };
-    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
     let w = &sim.world;
     for (c, r, fam) in &v.rings {
         let [a, b, cc] = fam.linear();
         let col = Color::linear_rgb(a * 2.5, b * 2.5, cc * 2.5);
         let at = Vec3::new(c.x, w.surface_height(*c) + 1.0, c.y);
-        gizmos.circle(Isometry3d::new(at, flat), *r, col);
+        gizmos.circle(flat_at(at), *r, col);
         if *r > 60.0 {
-            gizmos.circle(Isometry3d::new(at, flat), (*r - (*r * 0.2).min(COVERAGE_FADE)).max(1.0), col.with_alpha(0.4));
+            gizmos.circle(flat_at(at), (*r - (*r * 0.2).min(COVERAGE_FADE)).max(1.0), col.with_alpha(0.4));
         }
     }
 }
@@ -881,7 +819,8 @@ pub struct BuildHighlightPlugin;
 impl Plugin for BuildHighlightPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BuildHighlight>()
-            .add_systems(Update, (refresh, sync_meshes, rings).chain().in_set(SimSet::Sync))
+            .add_systems(Update, (refresh, sync_meshes).chain().in_set(OverlaySet::Build))
+            .add_systems(Update, rings.in_set(OverlaySet::Draw))
             .add_systems(bevy_egui::EguiPrimaryContextPass, markers);
     }
 }

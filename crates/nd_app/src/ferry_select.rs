@@ -25,17 +25,21 @@ use nd_sim::ports::{Ship, ShipId, ShipKind};
 use nd_sim::world::ferry_routes::{LineEnd, LineKind, WaterLine, WaterNet};
 use nd_sim::{BuildingId, PortKind, Vec2 as SVec2, World};
 
-use crate::sim::{Sim, SimSet};
-use crate::tools::{vehicle_outline, Selection};
+use crate::overlay::OverlaySet;
+use crate::sim::Sim;
+use crate::overlay::shapes::{flat_at, ribbon, vehicle_box, GOLD};
+use crate::tools::Selection;
 
 pub struct FerrySelectPlugin;
 
 impl Plugin for FerrySelectPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LineMeshes>()
+            .init_resource::<WaterFrame>()
             .insert_gizmo_config(LitGizmos, GizmoConfig { depth_bias: -0.5, line: GizmoLineConfig { width: 4.0, ..default() }, ..default() })
             .insert_gizmo_config(DimGizmos, GizmoConfig { depth_bias: -0.5, line: GizmoLineConfig { width: 2.0, ..default() }, ..default() })
-            .add_systems(Update, (sync_lines, draw).chain().in_set(SimSet::Sync)).add_systems(bevy_egui::EguiPrimaryContextPass, labels);
+            .add_systems(Update, sync_lines.in_set(OverlaySet::Build))
+            .add_systems(Update, draw.in_set(OverlaySet::Draw)).add_systems(bevy_egui::EguiPrimaryContextPass, labels);
     }
 }
 
@@ -64,6 +68,30 @@ pub fn net(w: &World) -> (u64, Arc<WaterNet>) {
     let n = Arc::new(w.water_net());
     *g = Some((sig, n.clone()));
     (sig, n)
+}
+
+/// [overlay] The water network as `sync_lines` last worked it out, with
+/// the `Sim` change tick it was read at: while the tick holds (nothing has
+/// touched the sim since), the draws and labels after it reuse it rather
+/// than ask `net` again (review P-O3).
+#[derive(Resource, Default)]
+pub struct WaterFrame {
+    at: Option<(bevy::ecs::change_detection::Tick, Arc<WaterNet>)>,
+}
+
+impl WaterFrame {
+    /// The network, if read since the sim last changed.
+    pub fn fresh(&self, sim: &Res<Sim>) -> Option<&WaterNet> {
+        self.at.as_ref().filter(|(t, _)| *t == sim.last_changed()).map(|(_, n)| &**n)
+    }
+
+    /// The network, from this frame's copy when it is still good.
+    fn get(&self, sim: &Res<Sim>) -> Arc<WaterNet> {
+        match &self.at {
+            Some((t, n)) if *t == sim.last_changed() => n.clone(),
+            _ => net(&sim.world).1,
+        }
+    }
 }
 
 /// Is `b` a dock with routes to show: a ferry terminal or shipping port?
@@ -219,42 +247,17 @@ struct LineMeshes {
 /// either side, flat on the water. Vertex colours carry the glow; the
 /// material scales it bright or dim.
 fn band(pts: &[SVec2], rgb: [f32; 3]) -> MeshData {
-    let mut m = MeshData::default();
-    if pts.len() < 2 {
-        return m;
-    }
     // (offset across, alpha): halo, core, halo.
     const PROFILE: [(f32, f32); 6] = [(-9.0, 0.0), (-3.0, 0.45), (-1.6, 1.0), (1.6, 1.0), (3.0, 0.45), (9.0, 0.0)];
-    let g = crate::train_select::glow_rgb(rgb);
-    for (i, &p) in pts.iter().enumerate() {
-        let a = pts[i.saturating_sub(1)];
-        let b = pts[(i + 1).min(pts.len() - 1)];
-        let d = (b - a).normalize_or_zero();
-        let side = SVec2::new(-d.y, d.x);
-        for (off, alpha) in PROFILE {
-            let q = p + side * off;
-            m.positions.push([q.x, LIFT, q.y]);
-            m.normals.push([0.0, 1.0, 0.0]);
-            m.colors.push([g[0], g[1], g[2], alpha]);
-            m.uvs.push([0.0, 0.0]);
-            m.tangents.push([1.0, 0.0, 0.0, 1.0]);
-        }
-    }
-    let n = PROFILE.len() as u32;
-    for i in 0..pts.len() as u32 - 1 {
-        for k in 0..n - 1 {
-            let (a, b) = (i * n + k, (i + 1) * n + k);
-            m.indices.extend_from_slice(&[a, b, a + 1, a + 1, b, b + 1]);
-        }
-    }
-    m
+    ribbon(pts, &PROFILE, LIFT, crate::train_select::glow_rgb(rgb))
 }
 
 /// Rebuild the bands when the network changes; restyle them when the
 /// selection does.
 #[allow(clippy::too_many_arguments)]
-fn sync_lines(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, sim: Res<Sim>, selection: Res<Selection>, mut st: ResMut<LineMeshes>, mut q: Query<(&mut Visibility, &mut MeshMaterial3d<StandardMaterial>), With<LineTag>>) {
+fn sync_lines(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, sim: Res<Sim>, selection: Res<Selection>, mut st: ResMut<LineMeshes>, mut frame: ResMut<WaterFrame>, mut q: Query<(&mut Visibility, &mut MeshMaterial3d<StandardMaterial>), With<LineTag>>) {
     let w = &sim.world;
+    frame.at = None;
     let unlit = |k: f32| StandardMaterial { base_color: Color::linear_rgba(k, k, k, 1.0), unlit: true, alpha_mode: AlphaMode::Add, cull_mode: None, fog_enabled: false, depth_bias: 3.0, ..default() };
     let bright = st.bright.get_or_insert_with(|| materials.add(unlit(1.0))).clone();
     let dim = st.dim.get_or_insert_with(|| materials.add(unlit(0.16))).clone();
@@ -268,6 +271,7 @@ fn sync_lines(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut mate
         return;
     }
     let (sig, net) = net(w);
+    frame.at = Some((sim.last_changed(), net.clone()));
     if st.sig != Some(sig) || sim.full_rebuild {
         for e in st.ents.drain(..) {
             commands.entity(e).despawn();
@@ -324,7 +328,7 @@ fn chevrons(gizmos: &mut Gizmos, pts: &[SVec2], side: f32, time: f32, col: Color
 /// the network reads from any height), chevrons both ways on the routes in
 /// focus, posts at their far ends, a ring at the selected dock, and an
 /// outline round each boat on them.
-fn draw(mut gizmos: Gizmos, mut lit_g: Gizmos<LitGizmos>, mut dim_g: Gizmos<DimGizmos>, sim: Res<Sim>, selection: Res<Selection>, time: Res<Time>) {
+fn draw(mut gizmos: Gizmos, mut lit_g: Gizmos<LitGizmos>, mut dim_g: Gizmos<DimGizmos>, sim: Res<Sim>, selection: Res<Selection>, time: Res<Time>, frame: Res<WaterFrame>) {
     let w = &sim.world;
     let Some(_) = (match *selection {
         Selection::Building(b) if is_route_dock(w, b) => Some(()),
@@ -333,12 +337,10 @@ fn draw(mut gizmos: Gizmos, mut lit_g: Gizmos<LitGizmos>, mut dim_g: Gizmos<DimG
     }) else {
         return;
     };
-    let (_, net) = net(w);
+    let net = frame.get(&sim);
     let Some((lit, dock)) = focus(w, &net, *selection) else { return };
     let t = time.elapsed_secs();
-    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
     let at = |p: SVec2, y: f32| Vec3::new(p.x, LIFT + y, p.y);
-    let gold = Color::linear_rgb(3.2, 2.4, 0.7);
     let f = sim.frac();
     for (i, l) in net.lines.iter().enumerate() {
         let pts = l.visible();
@@ -361,40 +363,49 @@ fn draw(mut gizmos: Gizmos, mut lit_g: Gizmos<LitGizmos>, mut dim_g: Gizmos<DimG
         let far = *out.last().unwrap();
         let near = out[0];
         gizmos.line(at(far, 0.0), at(far, 30.0), glow(l, 1.2));
-        gizmos.circle(Isometry3d::new(at(far, 0.6), flat), 12.0, glow(l, 1.0));
-        gizmos.circle(Isometry3d::new(at(far, 30.0), flat), 4.0, glow(l, 1.0));
+        gizmos.circle(flat_at(at(far, 0.6)), 12.0, glow(l, 1.0));
+        gizmos.circle(flat_at(at(far, 30.0)), 4.0, glow(l, 1.0));
         if matches!(l.to, LineEnd::Town(_) | LineEnd::Elsewhere) && from_here {
             // Off the map: a second ring, wider, where it leaves sight.
-            gizmos.circle(Isometry3d::new(at(far, 0.6), flat), 20.0, glow(l, 0.5));
+            gizmos.circle(flat_at(at(far, 0.6)), 20.0, glow(l, 0.5));
         }
-        gizmos.circle(Isometry3d::new(at(near, 0.6), flat), 8.0, glow(l, 0.8));
-        // Boats on the route.
+        gizmos.circle(flat_at(at(near, 0.6)), 8.0, glow(l, 0.8));
+        // Boats on the route (a selected one is the selection's to draw:
+        // `draw_ship`).
         for (sid, s) in w.ports.ships.iter().filter(|(_, s)| l.carries(s)) {
+            if *selection == Selection::Ship(sid) {
+                continue;
+            }
             let (p, h) = ship_pose(s, f);
-            let mine = *selection == Selection::Ship(sid);
-            vehicle_outline(&mut gizmos, p, h, s.length() + 4.0, ship_width(s) + 3.0, LIFT + 1.0, if mine { gold } else { glow(l, 0.9) });
+            vehicle_box(&mut gizmos, p, h, s.length() + 4.0, ship_width(s) + 3.0, LIFT + 1.0, glow(l, 0.9));
         }
     }
     if let Some(b) = dock {
         if let Some(port) = w.ports.port_of(b) {
             let pulse = (t * 3.0).sin() * 0.5 + 0.5;
-            gizmos.circle(Isometry3d::new(at(port.berth, 0.8), flat), 16.0 + pulse * 5.0, gold);
-            gizmos.line(at(port.berth, 0.0), at(port.berth, 36.0), gold);
-        }
-    }
-    // A selected ship off every line (a fishing boat, or a route since gone).
-    if let Selection::Ship(id) = *selection {
-        if let Some(s) = w.ports.ships.get(id) {
-            if lit.is_empty() {
-                let (p, h) = ship_pose(s, f);
-                vehicle_outline(&mut gizmos, p, h, s.length() + 4.0, ship_width(s) + 3.0, LIFT + 1.0, gold);
-            }
+            gizmos.circle(flat_at(at(port.berth, 0.8)), 16.0 + pulse * 5.0, GOLD);
+            gizmos.line(at(port.berth, 0.0), at(port.berth, 36.0), GOLD);
         }
     }
 }
 
+/// [overlay] A selected ferry or freighter, outlined in gold: on its line
+/// where that line shows on the map (none where it does not), or on its own
+/// when it is on no line (a fishing boat, or a route since gone).
+pub fn draw_ship(gizmos: &mut Gizmos, w: &World, net: &WaterNet, id: ShipId, f: f32) {
+    let Some(s) = w.ports.ships.get(id) else { return };
+    let shown = match net.of_ship(s) {
+        None => true,
+        Some(i) => net.lines[i].visible().len() >= 2,
+    };
+    if shown {
+        let (p, h) = ship_pose(s, f);
+        vehicle_box(gizmos, p, h, s.length() + 4.0, ship_width(s) + 3.0, LIFT + 1.0, GOLD);
+    }
+}
+
 /// Names at the far ends of the routes in focus, the same size at any zoom.
-fn labels(mut contexts: bevy_egui::EguiContexts, sim: Res<Sim>, selection: Res<Selection>, mode: Res<crate::camera::CameraMode>, flags: Res<crate::ui::UiFlags>, cams: Query<(&Camera, &GlobalTransform)>) -> Result {
+fn labels(mut contexts: bevy_egui::EguiContexts, sim: Res<Sim>, selection: Res<Selection>, mode: Res<crate::camera::CameraMode>, flags: Res<crate::ui::UiFlags>, cams: Query<(&Camera, &GlobalTransform)>, frame: Res<WaterFrame>) -> Result {
     let w = &sim.world;
     let wants = match *selection {
         Selection::Building(b) => is_route_dock(w, b),
@@ -404,7 +415,7 @@ fn labels(mut contexts: bevy_egui::EguiContexts, sim: Res<Sim>, selection: Res<S
     if !wants || *mode == crate::camera::CameraMode::Walk {
         return Ok(());
     }
-    let (_, net) = net(w);
+    let net = frame.get(&sim);
     let Some((lit, dock)) = focus(w, &net, *selection) else { return Ok(()) };
     let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };
     let ctx = contexts.ctx_mut()?;

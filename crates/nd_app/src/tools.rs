@@ -7,10 +7,14 @@ use bevy::window::PrimaryWindow;
 use nd_sim::roads::project_on_segment;
 use nd_sim::zoning::point_in_polygon;
 use nd_sim::roads::RoadKind;
-use nd_sim::{Activity, BuildingId, CarId, CitizenId, Gesture, GestureId, LandUse, Plan, Vec2 as SVec2, World};
+use nd_sim::{Activity, BuildingId, CitizenId, Gesture, GestureId, LandUse, Plan, Vec2 as SVec2, World};
 
 use crate::camera::{CameraMode, Cursor, OrbitCamera};
 use crate::sim::{Sim, SimSet};
+use crate::overlay::shapes::flat_at;
+use crate::overlay::OverlaySet;
+pub use crate::selection::Selection;
+pub(crate) use crate::selection::apply_pick;
 use crate::ui::UiFlags;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -736,94 +740,24 @@ impl EffectivePlan {
     }
 }
 
-#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
-pub enum Selection {
-    #[default]
-    None,
-    Citizen(CitizenId),
-    Building(BuildingId),
-    /// A vehicle on the road: a car, a truck or a bus (a car's driver is a
-    /// click away in the inspector).
-    Car(CarId),
-    /// A private car standing parked (`world.vehicles`).
-    Parked(nd_sim::VehicleId),
-    /// [toll-inspect] A toll booth or plaza (`world.tolls`, by its id).
-    Toll(u32),
-    /// [camera] A pavement delivery robot (`world.bots`).
-    Bot(nd_sim::BotId),
-    /// [train-inspect] A train on the railway (`world.rail.trains`).
-    Train(nd_sim::TrainId),
-    /// [train-inspect] A metro train in its tunnel (`world.subway.trains`).
-    Metro(nd_sim::MetroTrainId),
-    /// [road-inspect] A street piece (kept on its piece through rebuilds by
-    /// `road_select::keep_on_rebuild`).
-    Road(nd_sim::SegmentId),
-    /// [fire-scene] An emergency unit: a fire engine, police car or
-    /// ambulance, on the road or standing on scene (`fire_scene`).
-    Unit(nd_sim::UnitId),
-    /// [ferry-routes] A ferry or freighter on the water (`world.ports.ships`).
-    Ship(nd_sim::ports::ShipId),
-}
-
 pub struct ToolsPlugin;
 
 impl Plugin for ToolsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ToolState>()
-            .init_resource::<Selection>()
             .init_resource::<EffectivePlan>()
             .configure_sets(Update, (SimSet::Input, SimSet::Step, SimSet::Sync).chain())
+            .add_plugins(crate::overlay::OverlayPlugin)
             .add_systems(Update, (tool_input, crate::road_select::keep_on_rebuild).chain().in_set(SimSet::Input))
             // [fix/review-app] After the sim step, like the meshes: drawn in
             // Input, outlines and rings used the pre-tick state and last
             // frame's `frac`, so at speed the gold box trailed its car.
-            .add_systems(Update, draw_gizmos.in_set(SimSet::Sync))
-            // [fix/review-app] The selection checked once, right after the
-            // sim moved, for every reader after it (overlays, the remote
-            // API's `selected`, a flag's snapshot), not only by the
-            // inspector's egui pass.
-            .add_systems(Update, validate_selection.after(SimSet::Step).before(SimSet::Sync))
+            .add_systems(Update, draw_gizmos.in_set(OverlaySet::Draw))
             .add_systems(Update, path_trim_toasts.in_set(SimSet::Sync));
     }
 }
 
 const POINT_PICK_RADIUS: f32 = 8.0;
-
-/// [fix/review-app] What the selection should be now that the sim has
-/// moved: the same, `None` when the thing is gone, or the station for an
-/// emergency unit back home. One exhaustive match, so a new kind of
-/// selection has to say how it can vanish.
-pub fn validated(sel: Selection, sim: &Sim) -> Selection {
-    let w = &sim.world;
-    let alive = match sel {
-        Selection::None => true,
-        Selection::Citizen(id) => w.citizens.contains_key(id),
-        Selection::Building(id) => w.buildings.contains_key(id),
-        Selection::Car(id) => w.traffic.cars.contains_key(id),
-        Selection::Parked(id) => w.vehicles.cars.get(id).is_some_and(|c| c.spot().is_some()),
-        Selection::Toll(id) => w.tolls.get(id).is_some(),
-        Selection::Bot(id) => w.bots.bots.contains_key(id),
-        Selection::Train(id) => w.rail.trains.contains_key(id),
-        Selection::Metro(id) => w.subway.trains.contains_key(id),
-        // A street piece is re-pointed across rebuilds by
-        // `road_select::keep_on_rebuild` and the road card: left to them.
-        Selection::Road(_) => true,
-        Selection::Unit(id) => match w.services.units.get(id) {
-            None => false,
-            Some(u) if crate::fire_scene::unit_pose(w, id, sim.frac()).is_none() => return Selection::Building(u.station),
-            Some(_) => true,
-        },
-        Selection::Ship(id) => w.ports.ships.contains_key(id),
-    };
-    if alive { sel } else { Selection::None }
-}
-
-fn validate_selection(sim: Res<Sim>, mut selection: ResMut<Selection>) {
-    let now = validated(*selection, &sim);
-    if now != *selection {
-        *selection = now;
-    }
-}
 
 /// [park-paths] A path cut back because the park (or other grounds) it was
 /// joined to went: say so.
@@ -1612,25 +1546,6 @@ pub(crate) fn pick(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
     }
 }
 
-/// [fix/review-app] Select `sel` as a click with the Inspect tool does,
-/// for the click and the remote API's `select` alike: an emergency unit's
-/// car is the unit, and a bus shows its whole line (path, stops, its
-/// sister buses). With the Inspect tool, anything else lets the line go.
-pub(crate) fn apply_pick(sim: &Sim, tools: &mut ToolState, selection: &mut Selection, sel: Selection) {
-    let sel = match sel {
-        Selection::Car(id) => sim.world.services.unit_of_car(id).map_or(sel, Selection::Unit),
-        s => s,
-    };
-    *selection = sel;
-    let line = match sel {
-        Selection::Car(id) => sim.world.traffic.cars.get(id).and_then(|c| c.bus.as_ref()).map(|b| b.route),
-        _ => None,
-    };
-    if line.is_some() || tools.tool == Tool::Inspect {
-        tools.route_sel = line;
-    }
-}
-
 fn pick_any(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
     let w = &sim.world;
     let f = sim.frac();
@@ -1729,21 +1644,13 @@ fn pick_any(sim: &Sim, p: SVec2, depth: Depth) -> Selection {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>, selection: Res<Selection>, mut eplan: ResMut<EffectivePlan>, cams: Query<&OrbitCamera>, time: Res<Time>, (cam_mode, follow, assets): (Res<crate::camera::CameraMode>, Res<crate::camera::CameraFollow>, Res<crate::assets::GameAssets>)) {
+fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>, mut eplan: ResMut<EffectivePlan>, cams: Query<&OrbitCamera>, time: Res<Time>) {
     // Re-sync so a point dragged by `tool_input` this frame draws where it is.
     let plan = eplan.sync(&sim.world);
-    // [camera] Not from inside the followed vehicle: its outline box would
-    // be drawn round the eye.
-    if !follow.pov_in_vehicle(&sim, *cam_mode) {
-        draw_selection(&mut gizmos, &sim, *selection);
-        // [train-inspect] A train: its cars, the run ahead in its colour, its stops.
-        crate::train_select::draw(&mut gizmos, &sim, *selection, &assets.palette.car_colors, tools.depth == Depth::Underground, time.elapsed_secs());
-    }
     let cyan = Color::linear_rgb(1.4, 1.6, 1.8);
     let red = Color::linear_rgb(3.0, 0.2, 0.4);
     let white = Color::linear_rgb(3.0, 3.0, 3.0);
     let lift = |p: SVec2| Vec3::new(p.x, 0.8 + sim.world.surface_height(p), p.y);
-    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
 
     // [rage] Drivers who have lost their temper flash and lean on the horn:
     // a red ring blinking over the car, faster the angrier they are.
@@ -1754,7 +1661,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             let phase = (slotmap::Key::data(&id).as_ffi() % 97) as f32 * 0.13;
             if ((t * (3.0 + 5.0 * car.drive.anger) + phase) as i64) % 2 == 0 {
                 let (p, _) = car.pose_at(f);
-                gizmos.circle(Isometry3d::new(Vec3::new(p.x, sim.world.car_height(car) + 2.4, p.y), flat), 1.1 + car.drive.anger, Color::linear_rgb(4.0, 0.3, 0.15));
+                gizmos.circle(flat_at(Vec3::new(p.x, sim.world.car_height(car) + 2.4, p.y)), 1.1 + car.drive.anger, Color::linear_rgb(4.0, 0.3, 0.15));
             }
         }
     }
@@ -1794,17 +1701,17 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             for (i, s) in route.stops.iter().enumerate() {
                 let hovered = tools.hover_stop == Some((id, i));
                 let at = road_lift(s.pos);
-                gizmos.circle(Isometry3d::new(at, flat), if hovered { 4.0 } else if sel { 3.2 } else { 2.4 }, if hovered { white } else { col });
+                gizmos.circle(flat_at(at), if hovered { 4.0 } else if sel { 3.2 } else { 2.4 }, if hovered { white } else { col });
                 if sel {
                     gizmos.line(at, at + Vec3::Y * 9.0, col);
-                    gizmos.circle(Isometry3d::new(at + Vec3::Y * 9.0, flat), 1.0, col);
+                    gizmos.circle(flat_at(at + Vec3::Y * 9.0), 1.0, col);
                 }
                 // [lines] The stop picked in the Lines window: a pulsing
                 // white ring and a post three times as tall.
                 if tools.stop_sel == Some((id, i)) {
-                    gizmos.circle(Isometry3d::new(at, flat), 5.0 + 2.0 * pulse, white);
+                    gizmos.circle(flat_at(at), 5.0 + 2.0 * pulse, white);
                     gizmos.line(at, at + Vec3::Y * 28.0, white);
-                    gizmos.circle(Isometry3d::new(at + Vec3::Y * 28.0, flat), 2.0, white);
+                    gizmos.circle(flat_at(at + Vec3::Y * 28.0), 2.0, white);
                 }
             }
             if sel {
@@ -1813,7 +1720,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 for car in sim.world.traffic.cars.values().filter(|car| car.bus.as_ref().is_some_and(|b| b.route == id)) {
                     let p = car.prev_pos.lerp(car.pos, f);
                     let at = Vec3::new(p.x, sim.world.car_height(car) + 0.3, p.y);
-                    gizmos.circle(Isometry3d::new(at, flat), 7.0 + 1.5 * pulse, bright);
+                    gizmos.circle(flat_at(at), 7.0 + 1.5 * pulse, bright);
                     gizmos.line(at + Vec3::Y * 4.0, at + Vec3::Y * 16.0, bright);
                 }
             }
@@ -1827,7 +1734,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                 gizmos.linestrip(l.path.iter().map(|&p| lift(p) + Vec3::Y * 0.5), col);
                 for &s in &l.stations {
                     if let Some(p) = sim.world.metro_platform(s) {
-                        gizmos.circle(Isometry3d::new(lift(p) + Vec3::Y * 0.5, flat), 6.0, col);
+                        gizmos.circle(flat_at(lift(p) + Vec3::Y * 0.5), 6.0, col);
                     }
                 }
             }
@@ -1838,7 +1745,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             if let Some(c) = cursor.ground {
                 let on_street = sim.world.roads.nearest_street(c).is_some_and(|(_, _, q)| q.distance(c) <= nd_sim::transit::STOP_SNAP);
                 if tools.transit_mode == TransitMode::Route && on_street && tools.hover_stop.is_none() {
-                    gizmos.circle(Isometry3d::new(lift(c), flat), 2.0, cyan);
+                    gizmos.circle(flat_at(lift(c)), 2.0, cyan);
                 }
             }
         }
@@ -1871,7 +1778,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             };
             if let Some(c) = cursor.ground {
                 if tools.zone_mode == ZoneMode::Brush {
-                    gizmos.circle(Isometry3d::new(lift(c), flat), tools.brush_radius, if erasing { erase_col } else { cyan });
+                    gizmos.circle(flat_at(lift(c)), tools.brush_radius, if erasing { erase_col } else { cyan });
                     mark(&mut gizmos, &parcels.in_circle(c, tools.brush_radius));
                 } else if let Some(a) = tools.stroke.as_ref().and_then(|s| s.from) {
                     let yaw = cams.iter().next().map_or(0.0, |c| c.yaw);
@@ -1887,8 +1794,8 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
         // here only a ring of the outer edge, lifted onto the ground.
         Tool::Road if tools.roundabout => {
             if let Some(r) = tools.ring_preview() {
-                gizmos.circle(Isometry3d::new(lift(r.center), flat), r.radius + r.half_width(), cyan);
-                gizmos.circle(Isometry3d::new(lift(r.center), flat), 1.2, white);
+                gizmos.circle(flat_at(lift(r.center)), r.radius + r.half_width(), cyan);
+                gizmos.circle(flat_at(lift(r.center)), 1.2, white);
             }
         }
         Tool::Road => {
@@ -1909,19 +1816,19 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                         continue;
                     }
                     let col = if j.attached { green } else { Color::linear_rgb(2.4, 1.6, 0.4) };
-                    gizmos.circle(Isometry3d::new(lift(j.pos), flat), 1.4, col);
-                    gizmos.circle(Isometry3d::new(lift(j.pos), flat), 0.6, col);
+                    gizmos.circle(flat_at(lift(j.pos)), 1.4, col);
+                    gizmos.circle(flat_at(lift(j.pos)), 0.6, col);
                 }
                 if let Some(g) = gate_snap {
                     let pulse = 1.0 + 0.25 * (time.elapsed_secs() * 5.0).sin();
-                    gizmos.circle(Isometry3d::new(lift(g), flat), 2.6 * pulse, green);
+                    gizmos.circle(flat_at(lift(g)), 2.6 * pulse, green);
                 }
             }
             if let Some(c) = tools.cursor_pin.or(cursor.ground) {
                 let (c, snapped, level) = ToolState::road_snap_level(&sim, c, tools.kind, tools.elevation, tools.points.is_empty());
                 let top = at(c, level);
                 let ring = if gate_snap.is_some() { green } else if snapped { white } else { cyan };
-                gizmos.circle(Isometry3d::new(top, flat), if snapped { 4.5 } else { 3.0 }, ring);
+                gizmos.circle(flat_at(top), if snapped { 4.5 } else { 3.0 }, ring);
                 if level != 0.0 {
                     gizmos.line(at(c, 0.0), top, cyan);
                 }
@@ -1929,7 +1836,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             }
             for (i, &p) in tools.points.iter().enumerate() {
                 let l = levels.get(i).copied().unwrap_or(0.0);
-                gizmos.circle(Isometry3d::new(at(p, l), flat), 2.0, cyan);
+                gizmos.circle(flat_at(at(p, l)), 2.0, cyan);
                 if l != 0.0 {
                     gizmos.line(at(p, 0.0), at(p, l), cyan);
                 }
@@ -1944,11 +1851,11 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
         Tool::Zone => {
             let mut ctrl: Vec<SVec2> = tools.points.clone();
             if let Some(c) = cursor.ground {
-                gizmos.circle(Isometry3d::new(lift(c), flat), 3.0, cyan);
+                gizmos.circle(flat_at(lift(c)), 3.0, cyan);
                 ctrl.push(c);
             }
             for &p in &tools.points {
-                gizmos.circle(Isometry3d::new(lift(p), flat), 2.0, cyan);
+                gizmos.circle(flat_at(lift(p)), 2.0, cyan);
             }
             let mut pts: Vec<Vec3> = ctrl.iter().map(|&p| lift(p)).collect();
             if pts.len() >= 2 {
@@ -1962,7 +1869,7 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
             for (id, g) in &plan.gestures {
                 for (i, &p) in g.points().iter().enumerate() {
                     let hovered = tools.hover_point == Some((*id, i)) || tools.drag == Some((*id, i));
-                    gizmos.circle(Isometry3d::new(lift(p), flat), if hovered { 5.0 } else { 2.5 }, if hovered { white } else { cyan });
+                    gizmos.circle(flat_at(lift(p)), if hovered { 5.0 } else { 2.5 }, if hovered { white } else { cyan });
                 }
             }
             for (id, colour) in [(tools.hover_gesture, Color::linear_rgb(0.0, 1.2, 1.5)), (tools.selected_gesture, Color::linear_rgb(2.5, 1.6, 0.4))] {
@@ -2018,10 +1925,10 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
                         // [dock-access] The access road it would lay inland.
                         let [sa, sb] = sim.world.dock_stub(&port);
                         gizmos.line(lift(sa), lift(sb), cyan);
-                        gizmos.circle(Isometry3d::new(lift(sb), flat), 6.0, cyan);
+                        gizmos.circle(flat_at(lift(sb)), 6.0, cyan);
                     }
                     Err(_) => {
-                        gizmos.circle(Isometry3d::new(lift(c), flat), 12.0, red);
+                        gizmos.circle(flat_at(lift(c)), 12.0, red);
                     }
                 }
             }
@@ -2079,264 +1986,6 @@ fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, s
     }
 }
 
-/// The selected thing, bright: a building's lot raised off the ground, a
-/// ring round a person or vehicle. For a person also the road ahead (the
-/// rest of their route, the lane path of their car or bus, the line to
-/// their station), the destination's lot, and the route so far, dimmer.
-fn draw_selection(gizmos: &mut Gizmos, sim: &Sim, selection: Selection) {
-    let w = &sim.world;
-    let f = sim.frac();
-    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-    let gold = Color::linear_rgb(3.2, 2.4, 0.7);
-    let route = Color::linear_rgb(0.5, 2.6, 3.2);
-    let trail = Color::linear_rgb(0.18, 0.55, 0.75);
-    let dest = Color::linear_rgb(2.8, 1.0, 3.0);
-    // Heights are above the ground there, so lines never sink into hills.
-    let at = |p: SVec2, y: f32| Vec3::new(p.x, y + w.surface_height(p), p.y);
-    // The same blend as the renderer, so the ring sits under the figure.
-    let blend = |a: SVec2, b: SVec2| if a.distance(b) < 30.0 { a.lerp(b, f) } else { b };
-
-    match selection {
-        Selection::None => {}
-        Selection::Toll(id) => crate::toll_select::draw(gizmos, w, id),
-        Selection::Road(sid) => crate::road_select::draw(gizmos, w, sid),
-        // [camera] drawn by `crate::marks`, with its route and its shop.
-        Selection::Bot(_) => {}
-        // [fire-scene] A unit: its car's outline and route while it drives;
-        // standing, its body, and the building it is working at.
-        Selection::Unit(uid) => {
-            let Some(u) = w.services.units.get(uid) else { return };
-            if let Some(car) = u.car.filter(|c| w.traffic.cars.contains_key(*c)) {
-                draw_selection(gizmos, sim, Selection::Car(car));
-            } else if let Some((p, h)) = crate::fire_scene::unit_pose(w, uid, f) {
-                let (len, wid, tall) = match u.kind {
-                    nd_sim::UnitKind::FireEngine => (8.4, 2.9, 3.2),
-                    nd_sim::UnitKind::Ambulance => (6.3, 2.6, 2.7),
-                    nd_sim::UnitKind::PoliceCar => (5.0, 2.3, 1.9),
-                };
-                vehicle_outline(gizmos, p, h, len, wid, tall + w.surface_height(p), gold);
-            }
-            if let Some(i) = crate::fire_scene::unit_incident(w, uid).filter(|i| w.buildings.contains_key(i.building)) {
-                lot_outline(gizmos, w, i.building, 1.3, Color::linear_rgb(3.0, 0.9, 0.2));
-            }
-        }
-        // [train-inspect] drawn by `crate::train_select::draw`.
-        Selection::Train(_) | Selection::Metro(_) => {}
-        // [ferry-routes] drawn by `crate::ferry_select`, with its route.
-        Selection::Ship(_) => {}
-        Selection::Building(b) => {
-            lot_outline(gizmos, w, b, 1.6, gold);
-            // [plant-groups] A Sunfield or Wind Park is selected whole.
-            if let Some(g) = w.plant_group_of(b) {
-                for m in g.members.into_iter().filter(|&m| m != b) {
-                    lot_outline(gizmos, w, m, 1.6, gold);
-                }
-            }
-            // [land] Everything its owner owns (a rich person's other homes
-            // and businesses), outlined and tied to it by a line.
-            let owned = w.owned_with(b);
-            if owned.len() > 1 {
-                let teal = Color::linear_rgb(0.4, 2.6, 2.2);
-                let from = w.footprint(b).map(|l| l.center);
-                for p in owned.into_iter().skip(1) {
-                    lot_outline(gizmos, w, p, 1.3, teal);
-                    if let (Some(a), Some(c)) = (from, w.footprint(p).map(|l| l.center)) {
-                        gizmos.line(at(a, 6.0), at(c, 6.0), teal);
-                    }
-                }
-            }
-        }
-        Selection::Car(id) => {
-            let Some(car) = w.traffic.cars.get(id) else { return };
-            let (p, heading) = car.pose_at(f);
-            let width = if car.bus.is_some() || car.cargo.is_some() { 2.7 } else { 2.1 };
-            vehicle_outline(gizmos, p, heading, car.length() + 0.6, width + 0.5, w.car_height(car) + 0.35, gold);
-            car_route(gizmos, w, car, route);
-            // [clarity] An "o" where it set off, an "x" where it is going.
-            let origin = w.car_journey(id).and_then(|j| j.from.pos);
-            route_ends(gizmos, w, origin, car_route_end(w, car));
-            // [services] A wreck with its recovery truck on the way: the
-            // truck's road to it, in amber, and a ring round the truck.
-            if let Some(t) = w.driving.wrecks.iter().find(|x| x.car == id).and_then(|x| x.truck).and_then(|t| w.traffic.cars.get(t)) {
-                let amber = Color::linear_rgb(3.0, 1.4, 0.1);
-                car_route(gizmos, w, t, amber);
-                let (tp, th) = t.pose_at(f);
-                vehicle_outline(gizmos, tp, th, t.length() + 0.6, 2.6, w.car_height(t) + 0.35, amber);
-            }
-            // Where it is going: the cargo's buyer, or the driver's errand.
-            let to = car.cargo.as_ref().map(|c| c.to).or_else(|| match w.citizens.get(car.citizen).map(|c| &c.activity) {
-                Some(Activity::Driving { to, .. }) => *to,
-                _ => None,
-            });
-            if let Some(b) = to {
-                lot_outline(gizmos, w, b, 1.2, dest);
-            }
-            // Who it waits for, back to the head of the jam: a red line from
-            // car to car and a box round the head (red for a car standing
-            // for no reason the sim knows, orange otherwise).
-            let chain = w.traffic.jam_chain(id);
-            if chain.cars.len() >= 2 {
-                let jam = Color::linear_rgb(3.0, 0.35, 0.25);
-                let pts: Vec<Vec3> = chain.cars.iter().filter_map(|&c| w.traffic.cars.get(c)).map(|c| {
-                    let p = c.pose_at(f).0;
-                    Vec3::new(p.x, w.car_height(c) + 1.6, p.y)
-                }).collect();
-                gizmos.linestrip(pts, jam);
-                for &c in &chain.cars[1..chain.cars.len() - 1] {
-                    if let Some(x) = w.traffic.cars.get(c) {
-                        let (p, h) = x.pose_at(f);
-                        vehicle_outline(gizmos, p, h, x.length() + 0.3, 2.3, w.car_height(x) + 0.3, Color::linear_rgb(1.4, 0.25, 0.2));
-                    }
-                }
-                if let Some(head) = chain.head().and_then(|h| w.traffic.cars.get(h).map(|x| (h, x))) {
-                    let (p, h) = head.1.pose_at(f);
-                    let bad = !w.traffic.stop_reason(head.0).is_good();
-                    let col = if bad { Color::linear_rgb(4.0, 0.2, 0.2) } else { Color::linear_rgb(3.4, 1.4, 0.2) };
-                    vehicle_outline(gizmos, p, h, head.1.length() + 1.0, 3.0, w.car_height(head.1) + 0.6, col);
-                }
-            }
-        }
-        Selection::Parked(vid) => {
-            let Some(spot) = w.vehicles.cars.get(vid).and_then(|c| c.spot()) else { return };
-            vehicle_outline(gizmos, spot.pos, spot.heading, 5.2, 2.6, w.surface_height(spot.pos) + 0.35, gold);
-        }
-        Selection::Citizen(id) => {
-            let Some(c) = w.citizens.get(id) else { return };
-            let here = blend(c.prev_pos, c.pos);
-            if !c.trail.is_empty() {
-                let mut pts: Vec<Vec3> = c.trail.iter().map(|&q| at(q, 0.7)).collect();
-                pts.push(at(here, 0.7));
-                if pts.len() >= 2 {
-                    gizmos.linestrip(pts, trail);
-                }
-            }
-            let mut destination = c.transit.map(|t| t.target);
-            match &c.activity {
-                Activity::Traveling { to, path, idx, .. } => {
-                    destination = to.or(destination);
-                    let mut pts = vec![at(here, 1.0)];
-                    pts.extend(path.iter().skip(*idx).map(|&q| at(q, 1.0)));
-                    if pts.len() >= 2 {
-                        gizmos.linestrip(pts.iter().map(|p| *p + Vec3::Y * 0.4), route);
-                        gizmos.linestrip(pts, route);
-                    }
-                    person_outline(gizmos, at(here, 0.0), gold);
-                }
-                Activity::Driving { car, to, .. } => {
-                    destination = to.or(destination);
-                    if let Some(car) = w.traffic.cars.get(*car) {
-                        // At the wheel: the car's outline and its route, as a
-                        // selected car shows.
-                        let (p, heading) = car.pose_at(f);
-                        let width = if car.bus.is_some() || car.cargo.is_some() { 2.7 } else { 2.1 };
-                        vehicle_outline(gizmos, p, heading, car.length() + 0.6, width + 0.5, w.car_height(car) + 0.35, gold);
-                        car_route(gizmos, w, car, route);
-                    }
-                }
-                Activity::Flying { drone } => {
-                    if let Some(d) = w.air.drones.get(*drone) {
-                        let p = blend(d.prev_pos, d.pos);
-                        let alt = d.prev_alt + (d.alt - d.prev_alt) * f;
-                        gizmos.circle(Isometry3d::new(at(p, alt), flat), 6.0, gold);
-                        gizmos.line(at(p, alt), at(d.goal, d.goal_alt + 1.0), route);
-                    }
-                }
-                // [passengers] In someone's car: the car and its route.
-                Activity::Passenger { driver, to, seated, .. } => {
-                    destination = to.or(destination);
-                    let car = w.citizens.get(*driver).and_then(|d| match d.activity {
-                        Activity::Driving { car, .. } => w.traffic.cars.get(car),
-                        _ => None,
-                    });
-                    match car.filter(|_| *seated) {
-                        Some(car) => {
-                            let (p, heading) = car.pose_at(f);
-                            vehicle_outline(gizmos, p, heading, car.length() + 0.6, 2.6, w.car_height(car) + 0.35, gold);
-                            car_route(gizmos, w, car, route);
-                        }
-                        None => person_outline(gizmos, at(here, 0.0), gold),
-                    }
-                }
-                // [ferries] Away off the map: nothing to draw.
-                Activity::Abroad { .. } => {}
-                Activity::Riding { bus } => {
-                    if let Some(bus) = w.traffic.cars.get(*bus) {
-                        let p = bus.pose_at(f).0;
-                        gizmos.circle(Isometry3d::new(at(p, 0.5), flat), 7.5, gold);
-                        car_route(gizmos, w, bus, route);
-                    }
-                }
-                // [subway] Underground: a ring where the train is, its line ahead.
-                Activity::OnMetro { train } => {
-                    if let Some(t) = w.subway.trains.get(*train) {
-                        let s = t.run.prev_s + (t.run.s - t.run.prev_s) * f;
-                        let head = nd_sim::rail::point_along(&t.run.poly, s).0;
-                        gizmos.circle(Isometry3d::new(at(head, 0.5), flat), 8.0, gold);
-                        let alight = match c.transit.map(|t| t.leg) {
-                            Some(nd_sim::transit::TransitLeg::Subway { alight, .. }) => Some(alight),
-                            _ => None,
-                        };
-                        let s_end = alight.and_then(|b| t.run.stops.iter().find(|(stop, _)| *stop == b)).map_or_else(|| nd_sim::rail::path_length(&t.run.poly), |&(_, s1)| s1);
-                        let pts: Vec<Vec3> = sub_polyline(&t.run.poly, s, s_end).iter().map(|&q| at(q, 1.0)).collect();
-                        if pts.len() >= 2 {
-                            gizmos.linestrip(pts, route);
-                        }
-                    }
-                }
-                Activity::OnTrain { train } => {
-                    if let Some(t) = w.rail.trains.get(*train) {
-                        let s = t.prev_s + (t.s - t.prev_s) * f;
-                        let head = nd_sim::rail::point_along(&t.poly, s).0;
-                        gizmos.circle(Isometry3d::new(at(head, 0.5), flat), 8.0, gold);
-                        // The line ahead as far as the rider's station.
-                        let alight = match c.transit.map(|t| t.leg) {
-                            Some(nd_sim::transit::TransitLeg::Rail { alight, .. }) => Some(alight),
-                            _ => None,
-                        };
-                        let s_end = alight.and_then(|b| t.stops.iter().find(|(stop, _)| *stop == b)).map_or_else(|| nd_sim::rail::path_length(&t.poly), |&(_, s1)| s1);
-                        let pts: Vec<Vec3> = sub_polyline(&t.poly, s, s_end).iter().map(|&q| at(q, 1.0)).collect();
-                        if pts.len() >= 2 {
-                            gizmos.linestrip(pts, route);
-                        }
-                    }
-                }
-                Activity::Waiting { at: q } => {
-                    person_outline(gizmos, at(*q, 0.0), gold);
-                }
-                Activity::Idle | Activity::Sitting { .. } => {
-                    person_outline(gizmos, at(here, 0.0), gold);
-                }
-                Activity::AtHome | Activity::Working | Activity::Visiting(_) | Activity::Arriving => {
-                    // Indoors: show the building they are in.
-                    if let Some(b) = c.inside {
-                        lot_outline(gizmos, w, b, 1.6, gold);
-                    }
-                }
-            }
-            // [clarity] An "o" where the trip began, an "x" at its end.
-            let origin = c.trail.first().copied().or_else(|| w.citizen_origin(id).and_then(|p| p.pos));
-            let end = match &c.activity {
-                Activity::Traveling { path, .. } => path.last().copied(),
-                Activity::Driving { car, .. } => w.traffic.cars.get(*car).and_then(|car| car_route_end(w, car)),
-                _ => None,
-            }
-            .or_else(|| destination.and_then(|b| w.building_entrance(b)));
-            if c.activity.is_traveling() || matches!(c.activity, Activity::Driving { .. } | Activity::Passenger { .. } | Activity::Riding { .. } | Activity::Waiting { .. }) {
-                route_ends(gizmos, w, origin, end);
-            }
-            if let Some(b) = destination {
-                lot_outline(gizmos, w, b, 1.2, dest);
-                // A thin line from where they are to where they are going,
-                // so the goal reads even when the route turns away from it.
-                if let Some(goal) = w.buildings.get(b).and_then(|b| w.lots.get(b.lot)).map(|l| l.center) {
-                    let faint = Color::linear_rgb(1.2, 0.4, 1.3);
-                    gizmos.line(at(here, 3.0), at(goal, 3.0), faint);
-                }
-            }
-        }
-    }
-}
-
 /// [clarity] Big arrows along a road, one per lane, pointing the way its
 /// traffic runs: lanes forward (along the drawing) on the right of the
 /// line, lanes back on the left (right-hand traffic); a one-way road's
@@ -2388,106 +2037,6 @@ fn lane_arrows(gizmos: &mut Gizmos, line: &[SVec2], fwd: u8, bwd: u8, lift: &dyn
     }
 }
 
-/// An upright box round a person standing at `base` (ground level).
-fn person_outline(gizmos: &mut Gizmos, base: Vec3, col: Color) {
-    let (r, h) = (0.7, 2.2);
-    let ring = |y: f32| [Vec3::new(-r, y, -r), Vec3::new(r, y, -r), Vec3::new(r, y, r), Vec3::new(-r, y, r), Vec3::new(-r, y, -r)].map(|v| v + base);
-    gizmos.linestrip(ring(0.05), col);
-    gizmos.linestrip(ring(h), col);
-    for (x, z) in [(-r, -r), (r, -r), (r, r), (-r, r)] {
-        gizmos.line(base + Vec3::new(x, 0.05, z), base + Vec3::new(x, h, z), col);
-    }
-}
-
-/// A rectangle round a vehicle's body, a little above the road, drawn twice
-/// so it reads as a box.
-pub(crate) fn vehicle_outline(gizmos: &mut Gizmos, p: SVec2, heading: f32, length: f32, width: f32, y: f32, col: Color) {
-    let fwd = SVec2::new(heading.cos(), heading.sin());
-    let right = SVec2::new(-fwd.y, fwd.x);
-    let (hl, hw) = (length * 0.5, width * 0.5);
-    let corner = |a: f32, b: f32| {
-        let q = p + fwd * (hl * a) + right * (hw * b);
-        Vec3::new(q.x, y, q.y)
-    };
-    let pts = [corner(1.0, 1.0), corner(1.0, -1.0), corner(-1.0, -1.0), corner(-1.0, 1.0), corner(1.0, 1.0)];
-    gizmos.linestrip(pts, col);
-    gizmos.linestrip(pts.iter().map(|v| *v + Vec3::Y * 1.4), col);
-}
-
-/// `y` metres above the built ground at each corner. [fix/review-app] It
-/// was an absolute height: on relief maps outlines sank under the terrain.
-pub(crate) fn lot_outline(gizmos: &mut Gizmos, w: &nd_sim::World, b: BuildingId, y: f32, col: Color) {
-    // [land] the whole footprint of a building over merged plots
-    let Some(lot) = w.footprint(b) else { return };
-    let ground = |p: SVec2| if w.relief { w.ground_height(p) } else { 0.0 };
-    let mut pts: Vec<Vec3> = lot.polygon.iter().map(|&p| Vec3::new(p.x, y + ground(p), p.y)).collect();
-    if pts.len() >= 3 {
-        if let Some(&first) = pts.first() { pts.push(first); }
-        gizmos.linestrip(pts, col);
-    }
-}
-
-/// [clarity] The ends of a selected route: a small "o" (a ring) where the
-/// trip began and an "x" where it ends, standing a little above the road
-/// so they read from any height.
-pub(crate) fn route_ends(gizmos: &mut Gizmos, w: &nd_sim::World, origin: Option<SVec2>, end: Option<SVec2>) {
-    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-    let at = |p: SVec2, y: f32| Vec3::new(p.x, y + w.surface_height(p), p.y);
-    if let Some(o) = origin {
-        let col = Color::linear_rgb(0.6, 3.0, 1.2);
-        for y in [1.2, 1.5] {
-            gizmos.circle(Isometry3d::new(at(o, y), flat), 3.0, col);
-        }
-        gizmos.line(at(o, 0.1), at(o, 1.2), col);
-    }
-    if let Some(e) = end {
-        let col = Color::linear_rgb(3.2, 0.6, 2.4);
-        let r = 3.2;
-        for y in [1.2, 1.5] {
-            gizmos.line(at(e + SVec2::new(-r, -r), y), at(e + SVec2::new(r, r), y), col);
-            gizmos.line(at(e + SVec2::new(-r, r), y), at(e + SVec2::new(r, -r), y), col);
-        }
-        gizmos.line(at(e, 0.1), at(e, 1.2), col);
-    }
-}
-
-/// Where a car's lane route ends.
-fn car_route_end(w: &nd_sim::World, car: &nd_sim::Car) -> Option<SVec2> {
-    let net = &w.traffic.net;
-    if car.idx >= car.route.len() || car.route.iter().any(|&l| l as usize >= net.lanes.len()) {
-        return None;
-    }
-    net.polyline(&car.route[car.idx..], car.s, car.s_end).last().copied()
-}
-
-/// The rest of a car's lane route, from where it is to where it stops.
-fn car_route(gizmos: &mut Gizmos, w: &nd_sim::World, car: &nd_sim::Car, col: Color) {
-    let net = &w.traffic.net;
-    // Routes outlive lane rebuilds for a tick; never index past the lanes.
-    if car.idx >= car.route.len() || car.route.iter().any(|&l| l as usize >= net.lanes.len()) {
-        return;
-    }
-    let pts: Vec<Vec3> = net.polyline(&car.route[car.idx..], car.s, car.s_end).iter().map(|&q| Vec3::new(q.x, 1.0 + w.surface_height(q), q.y)).collect();
-    if pts.len() >= 2 {
-        gizmos.linestrip(pts, col);
-    }
-}
-
-/// The stretch of a polyline between two arc lengths.
-fn sub_polyline(pts: &[SVec2], s0: f32, s1: f32) -> Vec<SVec2> {
-    let (s0, s1) = if s0 <= s1 { (s0, s1) } else { (s1, s0) };
-    let mut out = vec![nd_sim::rail::point_along(pts, s0).0];
-    let mut acc = 0.0;
-    for w in pts.windows(2) {
-        acc += w[0].distance(w[1]);
-        if acc > s0 && acc < s1 {
-            out.push(w[1]);
-        }
-    }
-    out.push(nd_sim::rail::point_along(pts, s1).0);
-    out
-}
-
 /// The Buildings tool's preview: the lot under the cursor green or red,
 /// the coverage radius round it for services (road distance; the ring is
 /// the straight-line bound), and for rail pieces the footprint as placed.
@@ -2496,7 +2045,6 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
     let w = &sim.world;
     let what = tools.build_item();
     let lift = |p: SVec2| Vec3::new(p.x, 0.8, p.y);
-    let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
     let green = Color::linear_rgb(0.3, 2.5, 0.6);
     let red = Color::linear_rgb(3.0, 0.2, 0.4);
     if let nd_sim::Placeable::Dock(kind) = what {
@@ -2513,11 +2061,11 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
                     let [sa, sb] = w.dock_stub(&port);
                     let cyan = Color::linear_rgb(0.3, 2.0, 3.0);
                     gizmos.line(lift(sa), lift(sb), cyan);
-                    gizmos.circle(Isometry3d::new(lift(sb), flat), 6.0, cyan);
+                    gizmos.circle(flat_at(lift(sb)), 6.0, cyan);
                 }
             }
             Err(_) => {
-                gizmos.circle(Isometry3d::new(lift(c), flat), 12.0, red);
+                gizmos.circle(flat_at(lift(c)), 12.0, red);
             }
         }
         return;
@@ -2539,7 +2087,7 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
                 gizmos.line(y(at - dir * flare), y(at + dir * flare), col.with_alpha(0.4));
             }
             Err(_) => {
-                gizmos.circle(Isometry3d::new(lift(c), flat), 6.0, red);
+                gizmos.circle(flat_at(lift(c)), 6.0, red);
             }
         }
         return;
@@ -2565,8 +2113,8 @@ fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, s
     if r > 0.0 {
         let centre = nd_sim::zoning::inner_center(outline);
         let col = Color::linear_rgb(0.4, 1.4, 2.4);
-        gizmos.circle(Isometry3d::new(lift(centre), flat), r, col);
-        gizmos.circle(Isometry3d::new(lift(centre), flat), (r - nd_sim::services::COVERAGE_FADE).max(1.0), col.with_alpha(0.5));
+        gizmos.circle(flat_at(lift(centre)), r, col);
+        gizmos.circle(flat_at(lift(centre)), (r - nd_sim::services::COVERAGE_FADE).max(1.0), col.with_alpha(0.5));
     }
 }
 
