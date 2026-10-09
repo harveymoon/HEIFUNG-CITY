@@ -24,6 +24,9 @@ pub(super) struct FarTag;
 #[derive(Resource, Default)]
 pub(super) struct FarRender {
     key: Option<u64>,
+    /// [refactor/app] The counters `key` was hashed under: the landscape,
+    /// the roads, and the built ground (set with the roads' heights).
+    gate: super::Gate<(u64, u64, u64, u64, u32)>,
     water_mat: Option<Handle<StandardMaterial>>,
 }
 
@@ -78,6 +81,9 @@ pub(super) fn sync_far(
     existing: Query<Entity, With<FarTag>>,
 ) {
     let w = &sim.world;
+    if state.gate.same((sim.generation, w.landscape.version(), w.roads.version(), w.ground.version(), w.config.half_extent.to_bits())) && state.key.is_some() && !assets.palette_changed && !sim.full_rebuild && !existing.is_empty() {
+        return;
+    }
     let key = far_key(w);
     if state.key == Some(key) && !assets.palette_changed && !sim.full_rebuild && !existing.is_empty() {
         return;

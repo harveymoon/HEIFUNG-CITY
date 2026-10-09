@@ -421,10 +421,22 @@ struct RenderState {
     /// version, whether parked projects are shown.
     preview_key: Option<(u64, u64, bool)>,
     arrows_version: u64,
+    /// [refactor/app] What the lane arrows were last built from when they
+    /// came out empty (a network with no arrows draws nothing, and the
+    /// version check alone rebuilt it every frame).
+    arrows_empty: Gate<(u64, u64, u64, u64, u64, bool)>,
+    /// [refactor/app] Likewise for bus stops: routes with no stop drawn.
+    transit_empty: Gate<(u64, u64, u64)>,
     /// What the lot ground meshes were built for: lot and zone counts, roads
     /// version, zoning overlay, and a hash of every lot's built/park/
     /// landlocked state.
     lots_signature: Option<(usize, usize, u64, bool, u64)>,
+    /// [refactor/app] The counters `lots_signature` was hashed under.
+    lots_gate: Gate<(u64, u64, u64, usize, u64, bool, bool)>,
+    /// [refactor/app] The lots version the parks, and the lots and land
+    /// value versions the vacant dressing, were last checked against.
+    parks_gate: Gate<(u64, u64)>,
+    vacant_gate: Gate<(u64, u64, u64, u64)>,
     /// Park lots drawn, with a hash of the layout and polygon they show.
     parks: HashMap<LotId, (u64, Vec<Entity>)>,
     /// Vacant dressing per chunk, with a hash of the lots and land-value
@@ -453,6 +465,22 @@ struct RenderState {
     daylight_key: Option<i32>,
     /// Quantised glow strength last written to the shared Glow material.
     glow_key: Option<i32>,
+}
+
+/// [refactor/app] The sim version counters a hashed signature was last
+/// worked out under. While they stay put the signature cannot have moved,
+/// so a renderer skips hashing the whole world (lots, parks, the
+/// landscape) every frame and hashes only when a counter moves.
+#[derive(Default)]
+pub(crate) struct Gate<K>(Option<K>);
+
+impl<K: PartialEq> Gate<K> {
+    /// True when `key` is the one passed last time; remembers it.
+    pub(crate) fn same(&mut self, key: K) -> bool {
+        let same = self.0.as_ref() == Some(&key);
+        self.0 = Some(key);
+        same
+    }
 }
 
 /// Street-level props drawn only around the walker (`nd_procgen::walk`).
@@ -1118,9 +1146,16 @@ fn sync_lane_arrows(
     existing: Query<Entity, With<LaneArrowsTag>>,
 ) {
     let net = &sim.world.traffic.net;
-    if net.arrows_version == state.arrows_version && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
-        return;
+    let w = &sim.world;
+    let inputs = (sim.generation, net.arrows_version, net.version, w.roads.version(), w.ground.version(), w.relief);
+    if net.arrows_version == state.arrows_version && !assets.palette_changed && !sim.full_rebuild {
+        // Nothing drawn means the last build came out empty: build again
+        // only when something it was built from has moved.
+        if !existing.is_empty() || state.arrows_empty.same(inputs) {
+            return;
+        }
     }
+    state.arrows_empty = Gate(Some(inputs));
     state.arrows_version = net.arrows_version;
     despawn_all(&mut commands, &existing);
     // Set at their own road's height (not lifted in `lift_spawned`).
@@ -1417,14 +1452,18 @@ fn sync_lots(
     tools: Res<crate::tools::ToolState>,
 ) {
     let w = &sim.world;
+    // Unzoned parcels are outlined grey with the zoning overlay, and always
+    // while the Zone tool is out (they are what it paints).
+    let show_parcels = overlays.zoning || tools.tool == crate::tools::Tool::Zone;
+    let fresh = !assets.palette_changed && !sim.full_rebuild;
+    if state.lots_gate.same((sim.generation, w.lots.version(), w.parcels.version, w.zones.len(), w.roads.version, overlays.zoning, show_parcels)) && state.lots_signature.is_some() && fresh {
+        return;
+    }
     let mut h = DefaultHasher::new();
     for (id, lot) in w.lots.iter() {
         id.hash(&mut h);
         (lot.building.is_some(), lot.park.is_some(), lot.landlocked).hash(&mut h);
     }
-    // Unzoned parcels are outlined grey with the zoning overlay, and always
-    // while the Zone tool is out (they are what it paints).
-    let show_parcels = overlays.zoning || tools.tool == crate::tools::Tool::Zone;
     (w.parcels.version, show_parcels).hash(&mut h);
     let signature = (w.lots.len(), w.zones.len(), w.roads.version, overlays.zoning, h.finish());
     if state.lots_signature == Some(signature) && !assets.palette_changed && !sim.full_rebuild {
@@ -1580,6 +1619,9 @@ fn sync_parks(
 ) {
     let w = &sim.world;
     let rebuild_all = assets.palette_changed || assets.rules_changed || sim.full_rebuild;
+    if state.parks_gate.same((sim.generation, w.lots.version())) && !rebuild_all {
+        return;
+    }
     // Drop parks that are gone, built on, or stale.
     let mut wanted: HashMap<LotId, u64> = HashMap::new();
     for (id, lot) in w.lots.iter() {
@@ -1635,6 +1677,9 @@ fn sync_vacant(
 ) {
     let w = &sim.world;
     let rebuild_all = assets.palette_changed || sim.full_rebuild;
+    if state.vacant_gate.same((sim.generation, w.lots.version(), w.land_value.version(), w.config.seed)) && !rebuild_all {
+        return;
+    }
     // Per chunk: the lots in it and a hash of what their dressing depends on.
     let mut per_chunk: HashMap<ChunkKey, (DefaultHasher, Vec<LotId>)> = HashMap::new();
     for (id, lot) in w.lots.iter() {
@@ -2842,9 +2887,18 @@ fn sync_transit(
     existing: Query<Entity, With<TransitTag>>,
 ) {
     let w = &sim.world;
-    if w.transit.version == state.transit_version && existing.is_empty() == w.transit.routes.is_empty() && !assets.palette_changed && !sim.full_rebuild {
-        return;
+    let inputs = (sim.generation, w.transit.version, w.roads.version());
+    if w.transit.version == state.transit_version && !assets.palette_changed && !sim.full_rebuild {
+        if existing.is_empty() == w.transit.routes.is_empty() {
+            return;
+        }
+        // Routes but nothing drawn: the last build found no stop to draw.
+        // Build again only when the routes or the roads have moved.
+        if existing.is_empty() && state.transit_empty.same(inputs) {
+            return;
+        }
     }
+    state.transit_empty = Gate(Some(inputs));
     state.transit_version = w.transit.version;
     despawn_all(&mut commands, &existing);
     let mut stops: Vec<(SVec2, SVec2, SVec2)> = Vec::new();
@@ -3115,6 +3169,8 @@ struct ShipTag;
 struct LandscapeRender {
     /// What the ground, water and works were built for.
     signature: Option<u64>,
+    /// [refactor/app] The counters `signature` was hashed under.
+    gate: Gate<(u64, u64, u64, usize, usize, u64, bool)>,
     water_mat: Option<Handle<StandardMaterial>>,
     /// [economy] One mesh per `ShipKind` (freighter, ferry, trawler, yacht, sailboat).
     ship_meshes: Option<[Handle<Mesh>; 5]>,
@@ -3188,6 +3244,10 @@ fn sync_landscape(
     works: Query<Entity, With<WaterworksTag>>,
 ) {
     let w = &sim.world;
+    let fresh = !assets.palette_changed && !sim.full_rebuild;
+    if state.gate.same((sim.generation, w.landscape.version(), w.roads.version, w.lots.len(), w.ports.ports.len(), w.buildings.version(), w.relief)) && state.signature.is_some() && fresh {
+        return;
+    }
     let sig = landscape_signature(w);
     if state.signature == Some(sig) && !assets.palette_changed && !sim.full_rebuild {
         return;
@@ -3314,12 +3374,28 @@ fn lift_spawned(
 
 /// Raise movers onto the ground after their poses are written.
 #[allow(clippy::type_complexity)]
-fn lift_movers(mut commands: Commands, sim: Res<Sim>, mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>, Option<&WayHeight>), (Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>, Without<SelfLifted>)>) {
+fn lift_movers(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    mut surfaces: Local<Option<(u64, u64, u64)>>,
+    mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>, Option<Ref<WayHeight>>), (Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>, Without<SelfLifted>)>,
+) {
     let w = &sim.world;
     if !w.relief {
+        *surfaces = None;
         return;
     }
+    // [refactor/app] Lifting is idempotent: a pose not rewritten since the
+    // last lift, on surfaces that have not changed (the built ground, the
+    // landscape), would get the same lift again. Skip those, so parked
+    // cars, clamps and rubble no longer dirty their transforms every frame.
+    let key = (sim.generation, w.ground.version(), w.landscape.version());
+    let same_surfaces = *surfaces == Some(key);
+    *surfaces = Some(key);
     for (e, mut tf, lifted, way) in &mut q {
+        if same_surfaces && lifted.is_some() && !tf.is_changed() && way.as_ref().is_none_or(|h| !h.is_changed()) {
+            continue;
+        }
         let base = match &lifted {
             // Not rewritten since the last lift: take the old lift off.
             Some(l) if tf.translation.y == l.after => tf.translation.y - l.lift,

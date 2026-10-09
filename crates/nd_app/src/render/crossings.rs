@@ -101,7 +101,7 @@ pub(super) fn sync_crossings(
     assets: Res<GameAssets>,
     time: Res<Time>,
     mut state: Local<CrossingRender>,
-    mut lamps: Query<(&CrossingLamp, &mut MeshMaterial3d<StandardMaterial>)>,
+    mut lamps: Query<(&CrossingLamp, &mut MeshMaterial3d<StandardMaterial>, Option<&super::swap::SwapOriginal>)>,
     mut arms: Query<(&CrossingArm, &mut Transform)>,
 ) {
     let w = &sim.world;
@@ -170,11 +170,13 @@ pub(super) fn sync_crossings(
     // The lamps: the post's pair in turn, the arms' steady.
     let (on, off) = state.mats.clone().unwrap();
     let beat = (time.elapsed_secs() / FLASH) as u64 % 2;
-    for (l, mut m) in &mut lamps {
+    for (l, mut m, orig) in &mut lamps {
         let Some(c) = list.get(l.crossing) else { continue };
         let lit = c.flashing() && (l.side == 2 || l.side as u64 == beat);
         let want = if lit { &on } else { &off };
-        if m.0 != *want {
+        // [refactor/app] Against the original under a stand-in view, so heat
+        // and focus do not swap the lamp back and forth every frame.
+        if orig.map_or(&m.0, |o| &o.0) != want {
             m.0 = want.clone();
         }
     }
