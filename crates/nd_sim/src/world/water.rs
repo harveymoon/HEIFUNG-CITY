@@ -333,7 +333,7 @@ impl World {
     pub(super) fn grow_grids(&mut self) {
         let lv = self.grid_half(self.land_value.cell);
         if lv > self.land_value.half + 1.0 && !self.land_value.grow_to(lv) {
-            self.land_value = crate::land_value::LandValue::new(lv, self.land_value.cell);
+            self.land_value.set(crate::land_value::LandValue::new(lv, self.land_value.cell));
         }
         let pr = self.grid_half(crate::estate::PRESSURE_CELL);
         if pr > self.estate.pressure.half + 1.0 && !self.estate.pressure.grow_to(pr) {
@@ -429,7 +429,7 @@ impl World {
         self.relief = !flat || z.iter().any(|h| h.abs() > 1e-3) || self.roads.alive_segments().any(|(_, s)| s.bridge);
         self.road_z = z;
         self.road_inner = inner_heights(&self.landscape, &self.roads, &self.road_z, floor, &crossings);
-        self.ground = crate::landscape::Ground::build(&self.landscape, &self.roads, &self.road_z, &self.road_inner, &self.lots, self.ground_half());
+        self.ground.set(crate::landscape::Ground::build(&self.landscape, &self.roads, &self.road_z, &self.road_inner, &self.lots, self.ground_half()));
     }
 
     /// Legs (by their first point) of a road drawn along `points` at

@@ -421,10 +421,10 @@ pub struct World {
     /// built at; refreshed whenever the plan changes, so reads are free.
     #[serde(skip)]
     plan_cache: Option<(u64, Plan)>,
-    pub roads: RoadNetwork,
+    pub roads: crate::versioned::Versioned<RoadNetwork>,
     pub zones: SlotMap<ZoneId, Zone>,
-    pub lots: SlotMap<LotId, Lot>,
-    pub buildings: SlotMap<BuildingId, Building>,
+    pub lots: crate::versioned::Versioned<SlotMap<LotId, Lot>>,
+    pub buildings: crate::versioned::Versioned<SlotMap<BuildingId, Building>>,
     pub citizens: SlotMap<CitizenId, Citizen>,
     /// [people] Households: who lives together and shares money and a
     /// pantry. Saves before version 2 get one per citizen in `after_load`.
@@ -450,7 +450,7 @@ pub struct World {
     /// City services, emergencies and their vehicles (`world/services.rs`).
     #[serde(default)]
     pub services: crate::services::Services,
-    pub land_value: LandValue,
+    pub land_value: crate::versioned::Versioned<LandValue>,
     #[serde(default)]
     land_value_work: LandValueWork,
     #[serde(skip)]
@@ -495,7 +495,7 @@ pub struct World {
     meals_for_sale: bool,
     /// Heightfield, rivers, lakes, sea and hot spots. Old saves load flat.
     #[serde(default)]
-    pub landscape: Landscape,
+    pub landscape: crate::versioned::Versioned<Landscape>,
     /// Shipping ports, ferry terminals and the ships between them.
     #[serde(default)]
     pub ports: Ports,
@@ -520,7 +520,7 @@ pub struct World {
     pub relief: bool,
     /// The ground as built, for drawing and for setting things on it.
     #[serde(skip)]
-    pub ground: Ground,
+    pub ground: crate::versioned::Versioned<Ground>,
     /// Metres of bridge already paid for.
     #[serde(default)]
     pub bridge_metres: f32,
@@ -704,7 +704,7 @@ impl World {
         let half = config.half_extent;
         let mut w = Self {
             version: SAVE_VERSION,
-            land_value,
+            land_value: land_value.into(),
             rng: SimRng::seed_from_u64(config.seed),
             config,
             clock: SimClock::starting_at(0, 7, 0),
@@ -721,10 +721,10 @@ impl World {
             plan_cache: None,
             implement_refused: None,
             deferred_intents: BTreeMap::new(),
-            roads: RoadNetwork::default(),
+            roads: Default::default(),
             zones: SlotMap::with_key(),
-            lots: SlotMap::with_key(),
-            buildings: SlotMap::with_key(),
+            lots: Default::default(),
+            buildings: Default::default(),
             citizens: SlotMap::with_key(),
             households: SlotMap::with_key(),
             traffic: Traffic::default(),
@@ -749,13 +749,13 @@ impl World {
             available: [false; 6],
             groceries_for_sale: false,
             meals_for_sale: false,
-            landscape: Landscape::default(),
+            landscape: Default::default(),
             ports: Ports::default(),
             fishing: Default::default(),
             road_z: Vec::new(),
             road_inner: Vec::new(),
             relief: false,
-            ground: Ground::default(),
+            ground: Default::default(),
             bridge_metres: 0.0,
             bots: Default::default(),
             driving: Driving::default(),
@@ -800,9 +800,9 @@ impl World {
             path_links: Default::default(),
             corps: Default::default(),
         };
-        w.landscape = Landscape::new(&w.config.landscape);
+        w.landscape.set(Landscape::new(&w.config.landscape));
         // [sweep-sim] Grids over the whole buildable land (far islands too).
-        w.land_value = LandValue::new(w.grid_half(32.0), 32.0);
+        w.land_value.set(LandValue::new(w.grid_half(32.0), 32.0));
         w.estate.pressure = crate::estate::Pressure::new(w.grid_half(crate::estate::PRESSURE_CELL));
         // [grid-weather] The climate's ordinary weather to start.
         w.weather = Weather::for_climate(w.landscape.params.climate);

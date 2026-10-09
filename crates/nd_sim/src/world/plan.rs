@@ -1114,7 +1114,7 @@ impl World {
             // Player arrows note where they stand before ids are renumbered.
             self.traffic.anchor_lane_use(&self.roads);
             roads.version = self.roads.version + 1;
-            self.roads = roads;
+            self.roads.set(roads);
             self.mark_bridges();
             self.rebuild_road_components();
             self.streets.update(&self.roads, self.config.seed);
@@ -1134,7 +1134,7 @@ impl World {
         // to the new ones. A save from before parcels were cut ahead of
         // zoning has lots of other shapes: its first rebuild moves every
         // building onto the lot that now holds it, without eminent domain.
-        let old_lots = std::mem::replace(&mut self.lots, SlotMap::with_key());
+        let old_lots = std::mem::replace(&mut *self.lots, SlotMap::with_key());
         let lenient = !self.parcel_lots;
         self.parcel_lots = true;
         let pins: Vec<Vec<Vec2>> = old_lots.values().filter(|l| l.building.is_some_and(|b| self.is_city_building(b))).map(|l| l.polygon.clone()).collect();

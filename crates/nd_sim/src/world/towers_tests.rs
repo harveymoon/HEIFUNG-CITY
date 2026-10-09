@@ -42,7 +42,7 @@ fn downtown() -> World {
             bld.recompute_capacity();
         }
     }
-    let lv = &mut w.land_value;
+    let lv = &mut *w.land_value;
     for iy in 0..lv.n {
         for ix in 0..lv.n {
             let c = lv.cell_center(ix, iy);

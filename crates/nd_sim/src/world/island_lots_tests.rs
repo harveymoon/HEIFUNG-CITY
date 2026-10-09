@@ -152,7 +152,7 @@ fn the_value_grids_reach_the_far_islands() {
     }
     let probe = Vec2::new(123.0, -456.0);
     let before = lv.at(probe);
-    w.land_value = lv;
+    w.land_value.set(lv);
     w.estate.pressure = crate::estate::Pressure::new(old);
     w.grow_grids();
     assert_eq!(w.land_value.half, w.grid_half(32.0));
