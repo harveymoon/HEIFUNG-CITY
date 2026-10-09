@@ -131,71 +131,55 @@ pub(crate) fn generate_styled_extras(
     palette: &Palette,
     extras: &Extras,
 ) -> Geometry {
-    // A truck lot shows its fleet the way a car park shows its cars.
-    let parking = extras.parking.or((style == Style::TruckLot).then_some(extras.fleet));
-    let mut g = Geometry::default();
     let mut rng = rng_for(seed, 13);
-    let (frame, lot_poly) = Frame::lot_local(lot);
     let r = rules.for_land_use(land_use);
-    let poly = parts::offset_poly(&lot_poly, r.inset);
     // [districts] A look re-tints the walls, windows and signs.
     let tinted = extras.look.filter(|_| extras.service.is_none() && extras.plant.is_none()).map(|l| district::apply(l, rules.style(tier), r, palette));
-    let (r, tier_style, palette) = match &tinted {
-        Some((ts, lr, p)) => (lr, ts, p),
-        None => (r, rules.style(tier), palette),
+    let finish = match &tinted {
+        Some((ts, lr, p)) => Finish { rules: lr, style: ts, palette: p },
+        None => Finish { rules: r, style: rules.style(tier), palette },
     };
-    let ctx = Ctx {
-        fw: (frame.width - 2.0 * r.inset).max(4.0),
-        fd: (frame.depth - 2.0 * r.inset).max(4.0),
-        frame,
-        rules: r,
-        style: tier_style,
-        palette,
-        land_use,
-        tier,
-        floors: floors.max(1),
-        wear: (1.0 - condition).clamp(0.0, 1.0),
-        lot_poly,
-        poly,
-        seed,
-        parking,
-        powered: extras.powered,
-        rail: extras.rail.cloned().or_else(|| style.rail_kind().map(|k| back_edge_link(lot, k))),
-        park: if land_use == LandUse::Park || matches!(style, Style::ScrubLot | Style::Garden | Style::Plaza) { Some(extras.park.cloned().unwrap_or_else(|| nd_sim::park::plan_single(lot, tier))) } else { None },
-        animated_rotors: extras.animated_rotors,
-        field: extras.field,
-        animated_cranes: extras.animated_cranes,
-        dynamic_lights: extras.dynamic_lights,
-        battery: extras.battery,
-        plant_scale: extras.plant_scale,
-        shore: extras.shore,
-    };
+    let ctx = Ctx::new(lot, style, land_use, floors, tier, condition, seed, finish, extras);
     if let Some(progress) = extras.demolition {
+        // What stood there, cut down to what is left, in its site.
         let mut g = generate_styled_extras(lot, land_use, floors, tier, condition, seed, style, rules, palette, &Extras { demolition: None, construction: None, ..*extras });
         construction::demolition_site(&mut g, &ctx, &mut rng, progress);
         return g;
     }
     if let Some(progress) = extras.construction {
-        // [supertall] A league tower's site: the core leading, a jump crane.
-        if let Some(t) = extras.tower.filter(|_| style == Style::Supertall) {
-            supertall::site(&mut g, &ctx, &t, progress);
-            return g;
-        }
-        construction::construction_site(&mut g, &ctx, &mut rng, progress);
-        if weathered(tier, ctx.wear) {
-            g.weather();
-        }
+        return building_site(&ctx, style, &mut rng, extras, progress);
+    }
+    finished(&ctx, style, &mut rng, extras)
+}
+
+/// A building still going up: its site at `progress`.
+fn building_site(ctx: &Ctx, style: Style, rng: &mut nd_sim::SimRng, extras: &Extras, progress: f32) -> Geometry {
+    let mut g = Geometry::default();
+    // [supertall] A league tower's site: the core leading, a jump crane.
+    if let Some(t) = extras.tower.filter(|_| style == Style::Supertall) {
+        supertall::site(&mut g, ctx, &t, progress);
         return g;
     }
-    (style.def().draw)(&mut g, &ctx, &mut rng, extras);
+    construction::construction_site(&mut g, ctx, rng, progress);
+    if weathered(ctx.tier, ctx.wear) {
+        g.weather();
+    }
+    g
+}
+
+/// A finished building: its style, a rooftop deck, the owner's brand, and
+/// the weathered materials if it is cheap or decaying.
+fn finished(ctx: &Ctx, style: Style, rng: &mut nd_sim::SimRng, extras: &Extras) -> Geometry {
+    let mut g = Geometry::default();
+    (style.def().draw)(&mut g, ctx, rng, extras);
     if extras.rooftop_pad && style.pad_capable() && g.pads.is_empty() {
-        air::rooftop_deck(&mut g, &ctx);
+        air::rooftop_deck(&mut g, ctx);
     }
     // [megacorp] The owner's brand: rooftop signs, banners, the HQ crown.
     if let Some(m) = &extras.brand {
-        brand::decorate(&mut g, &ctx, m);
+        brand::decorate(&mut g, ctx, m);
     }
-    if weathered(tier, ctx.wear) {
+    if weathered(ctx.tier, ctx.wear) {
         g.weather();
     }
     g

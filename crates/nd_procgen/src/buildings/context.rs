@@ -122,6 +122,56 @@ impl Default for Extras<'_> {
     }
 }
 
+/// The rules, tier look and palette a building is drawn with: the land
+/// use's and the tier's own, or a district look's tint of them.
+#[derive(Clone, Copy)]
+pub struct Finish<'a> {
+    pub rules: &'a LandUseRules,
+    pub style: &'a TierStyle,
+    pub palette: &'a Palette,
+}
+
+impl<'a> Ctx<'a> {
+    /// The context `style` is drawn in on `lot`: the lot's frame and
+    /// outline, the footprint inset by the land use's setback, and the
+    /// extras that change the look. Rail styles without a railway get a
+    /// stand-in track behind the lot, parks without a plan the sim's
+    /// single-lot plan.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(lot: &Lot, style: Style, land_use: LandUse, floors: u8, tier: Tier, condition: f32, seed: u64, finish: Finish<'a>, extras: &Extras<'a>) -> Self {
+        let (frame, lot_poly) = Frame::lot_local(lot);
+        let r = finish.rules;
+        let poly = parts::offset_poly(&lot_poly, r.inset);
+        Ctx {
+            fw: (frame.width - 2.0 * r.inset).max(4.0),
+            fd: (frame.depth - 2.0 * r.inset).max(4.0),
+            frame,
+            rules: r,
+            style: finish.style,
+            palette: finish.palette,
+            land_use,
+            tier,
+            floors: floors.max(1),
+            wear: (1.0 - condition).clamp(0.0, 1.0),
+            lot_poly,
+            poly,
+            seed,
+            // A truck lot shows its fleet the way a car park shows its cars.
+            parking: extras.parking.or((style == Style::TruckLot).then_some(extras.fleet)),
+            powered: extras.powered,
+            rail: extras.rail.cloned().or_else(|| style.rail_kind().map(|k| super::back_edge_link(lot, k))),
+            park: if land_use == LandUse::Park || matches!(style, Style::ScrubLot | Style::Garden | Style::Plaza) { Some(extras.park.cloned().unwrap_or_else(|| nd_sim::park::plan_single(lot, tier))) } else { None },
+            animated_rotors: extras.animated_rotors,
+            field: extras.field,
+            animated_cranes: extras.animated_cranes,
+            dynamic_lights: extras.dynamic_lights,
+            battery: extras.battery,
+            plant_scale: extras.plant_scale,
+            shore: extras.shore,
+        }
+    }
+}
+
 impl Ctx<'_> {
     pub fn fh(&self) -> f32 {
         self.rules.floor_height

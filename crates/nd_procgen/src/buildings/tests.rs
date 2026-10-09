@@ -731,35 +731,8 @@ fn extras_paths_stay_on_their_lot() {
 
 /// A bare context on a lot, for driving one part generator directly.
 fn ctx_on<'a>(lot: &Lot, rules: &'a BuildingRules, pal: &'a Palette, tier: Tier, wear: f32) -> Ctx<'a> {
-    let (frame, lot_poly) = Frame::lot_local(lot);
-    let r = rules.for_land_use(LandUse::Residential);
-    let poly = parts::offset_poly(&lot_poly, r.inset);
-    Ctx {
-        fw: frame.width,
-        fd: frame.depth,
-        frame,
-        rules: r,
-        style: rules.style(tier),
-        palette: pal,
-        land_use: LandUse::Residential,
-        tier,
-        floors: 3,
-        wear,
-        lot_poly,
-        poly,
-        seed: 1,
-        parking: None,
-        powered: 1.0,
-        park: None,
-        rail: None,
-        animated_rotors: false,
-        field: None,
-        animated_cranes: false,
-        dynamic_lights: false,
-        battery: None,
-        plant_scale: 1.0,
-        shore: None,
-    }
+    let finish = Finish { rules: rules.for_land_use(LandUse::Residential), style: rules.style(tier), palette: pal };
+    Ctx::new(lot, Style::Stacks, LandUse::Residential, 3, tier, 1.0 - wear, 1, finish, &Extras::default())
 }
 
 /// Triangles per shipping container and per Stacks building, printed
