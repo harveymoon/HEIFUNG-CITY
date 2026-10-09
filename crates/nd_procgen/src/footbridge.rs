@@ -23,7 +23,7 @@ pub fn footbridges(world: &World, palette: &Palette) -> Geometry {
     let mut g = Geometry::default();
     let concrete = mul(palette.concrete(0), 0.9);
     let steel = palette.steel;
-    let neon = [0.25, 1.4, 1.8];
+    let neon = palette.footbridge_neon;
     let ground = |p: Vec2| world.surface_height(p);
     for fb in &world.walk.footbridges {
         let w = fb.width;
@@ -40,7 +40,7 @@ pub fn footbridges(world: &World, palette: &Palette) -> Geometry {
         for s in [1.0f32, -1.0] {
             let o = side * s;
             // Glass panels, the steel top rail and posts, a neon strip.
-            g.part(Surface::Glass).slab(a - ext + o + Vec3::Y * (RAIL * 0.5 + 0.05), b + ext + o + Vec3::Y * (RAIL * 0.5 + 0.05), 0.04, RAIL * 0.5, [0.55, 0.75, 0.85, 1.0]);
+            g.part(Surface::Glass).slab(a - ext + o + Vec3::Y * (RAIL * 0.5 + 0.05), b + ext + o + Vec3::Y * (RAIL * 0.5 + 0.05), 0.04, RAIL * 0.5, rgba(palette.footbridge_glass));
             g.part(Surface::Metal).beam(a - ext + o + Vec3::Y * RAIL, b + ext + o + Vec3::Y * RAIL, 0.08, rgba(steel));
             g.part(Surface::Glow).beam(a - ext + o - Vec3::Y * (DECK_DEPTH - 0.05), b + ext + o - Vec3::Y * (DECK_DEPTH - 0.05), 0.07, rgba(neon));
             let len = (b - a).length() + w;

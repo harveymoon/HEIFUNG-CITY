@@ -969,7 +969,7 @@ pub(super) fn draw_midblock(cx: &StreetCtx, g: &mut Geometry) {
             for side in [-1.0f32, 1.0] {
                 let p = at + right * side * (hw + 0.45) + d * (nd_sim::walk::CROSSWALK_HALF + 0.3);
                 g.part(Matte).cylinder(p, 0.06, 0.05, 0.0, 2.6, 6, rgba(CHARCOAL));
-                g.part(Glow).boxed(Vec3::new(p.x, 2.75, p.y), Vec3::splat(0.3), 0.0, rgba([1.0, 0.62, 0.15]));
+                g.part(Glow).boxed(Vec3::new(p.x, 2.75, p.y), Vec3::splat(0.3), 0.0, rgba(pal.beacon));
             }
         });
     }
@@ -1145,7 +1145,7 @@ pub(super) fn street_grit(g: &mut Geometry, pal: &Palette, walk: &[Vec2], hw: f3
         let yaw = d.y.atan2(d.x) + rng.random_range(0.0..std::f32::consts::TAU);
         let base = KERB_H - 0.01;
         match rng.random_range(0..4) {
-            0 => g.part(Tarp).boxed(Vec3::new(c.x, base + 0.14, c.y), Vec3::new(0.4, 0.28, 0.32), yaw, rgba([0.07, 0.07, 0.08])),
+            0 => g.part(Tarp).boxed(Vec3::new(c.x, base + 0.14, c.y), Vec3::new(0.4, 0.28, 0.32), yaw, rgba(pal.litter_bag)),
             1 => g.part(Matte).boxed(Vec3::new(c.x, base + 0.06, c.y), Vec3::new(0.1, 0.12, 0.1), yaw, rgba(mul(pal.paving, 1.4))),
             2 => g.part(Tarp).boxed(Vec3::new(c.x, base + 0.01, c.y), Vec3::new(0.5, 0.02, 0.4), yaw, rgba(mul(pick(rng, &pal.tarp_colors), 0.8))),
             _ => g.part(Wood).boxed(Vec3::new(c.x, base + 0.025, c.y), Vec3::new(0.6, 0.05, 0.45), yaw, rgba(mul(pal.plywood, 0.75))),

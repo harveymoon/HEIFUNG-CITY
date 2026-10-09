@@ -113,7 +113,7 @@ fn board(g: &mut Geometry, center: Vec3, along: Vec3, up: Vec3, w: f32, h: f32, 
 pub fn furniture(g: &mut Geometry, pal: &Palette, rigs: &[CrossingRig]) {
     let white = rgba(mul(pal.chalk, 0.95));
     let grey = rgba(mul(pal.steel, 0.7));
-    let black = rgba([0.02, 0.02, 0.025]);
+    let black = rgba(pal.signal_black);
     let red = rgba(STRIPE_RED);
     for r in rigs {
         let f3 = Vec3::new(r.facing.x, 0.0, r.facing.y);

@@ -106,6 +106,35 @@ pub struct Palette {
     /// Tactile paving at a dropped kerb: the classic warning yellow, lit
     /// like the slabs round it (not a glow).
     pub tactile: [f32; 3],
+    // [refactor/procgen-streets] street furniture colours
+    /// Amber beacons on the posts of a mid-block crossing.
+    pub beacon: [f32; 3],
+    /// Red paper lanterns hung on cables across a street.
+    pub lantern: [f32; 3],
+    /// A street food cart's lamp.
+    pub cart_lamp: [f32; 3],
+    /// Red plastic stools by a food cart.
+    pub stool: [f32; 3],
+    /// Steam wisps over carts and manholes (unlit, faint).
+    pub steam: [f32; 3],
+    /// Bin bags heaped on the pavement.
+    pub bin_bag: [f32; 3],
+    /// A bin bag blown against the kerb of a neglected street.
+    pub litter_bag: [f32; 3],
+    /// A fire burning in a rusted drum.
+    pub fire: [f32; 3],
+    /// Traffic cones.
+    pub cone: [f32; 3],
+    /// The neon strip under a footbridge's walkway.
+    pub footbridge_neon: [f32; 3],
+    /// A footbridge's glass balustrade.
+    pub footbridge_glass: [f32; 3],
+    /// Hazard yellow on a toll island's nose.
+    pub hazard: [f32; 3],
+    /// A toll or barrier arm's red.
+    pub barrier_red: [f32; 3],
+    /// The black of a level crossing's lamp hoods and backboards.
+    pub signal_black: [f32; 3],
     /// [climate] What grows in streets, parks and on open ground; set from
     /// the map's climate by `climate::palette_for`, never from the file.
     #[serde(skip)]
@@ -233,6 +262,20 @@ impl Default for Palette {
             police_light: [0.3, 0.6, 2.6],
             platform_line: [1.4, 1.2, 0.2],
             tactile: [0.78, 0.52, 0.04],
+            beacon: [1.0, 0.62, 0.15],
+            lantern: [2.0, 0.35, 0.18],
+            cart_lamp: [2.0, 0.4, 0.2],
+            stool: [0.75, 0.16, 0.12],
+            steam: [0.16, 0.17, 0.19],
+            bin_bag: [0.06, 0.06, 0.07],
+            litter_bag: [0.07, 0.07, 0.08],
+            fire: [2.0, 0.9, 0.3],
+            cone: [1.0, 0.35, 0.05],
+            footbridge_neon: [0.25, 1.4, 1.8],
+            footbridge_glass: [0.55, 0.75, 0.85],
+            hazard: [0.95, 0.75, 0.1],
+            barrier_red: [0.9, 0.15, 0.12],
+            signal_black: [0.02, 0.02, 0.025],
             flora: crate::climate::Flora::Dry,
             snow: 0.0,
         }
