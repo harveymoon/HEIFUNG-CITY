@@ -529,14 +529,14 @@ fn misc(out: &Out) {
         }
     }
     for c in 0..8u8 {
-        out.geo(format!("metro car {c}"), &crate::metro::metro_car(c));
+        out.geo(format!("metro car {c}"), &crate::metro::metro_car(c, &pal));
     }
     {
         let a: Vec<Vec2> = vec![Vec2::new(-300.0, -100.0), Vec2::new(0.0, -100.0), Vec2::new(200.0, 50.0), Vec2::new(400.0, 50.0)];
         let b: Vec<Vec2> = vec![Vec2::new(0.0, -300.0), Vec2::new(0.0, 300.0)];
         let lines = [crate::metro::TunnelLine { path: &a, colour: 1 }, crate::metro::TunnelLine { path: &b, colour: 3 }];
         let sites = [crate::metro::PlatformSite { at: Vec2::new(-150.0, -100.0), dir: Vec2::X, entrance: Vec2::new(-150.0, -80.0), colour: 1 }, crate::metro::PlatformSite { at: Vec2::new(0.0, 100.0), dir: Vec2::Y, entrance: Vec2::new(20.0, 100.0), colour: 7 }];
-        out.geo("metro tunnels", &crate::metro::tunnels(&lines, &sites, &|p: Vec2| 4.0 + 0.02 * p.x + 3.0 * (p.y * 0.01).sin()));
+        out.geo("metro tunnels", &crate::metro::tunnels(&lines, &sites, &|p: Vec2| 4.0 + 0.02 * p.x + 3.0 * (p.y * 0.01).sin(), &pal));
     }
     for small in [false, true] {
         out.geo(format!("crossing arm {small}"), &crate::crossing::arm_geometry(&pal, 6.5, small));
@@ -549,7 +549,7 @@ fn misc(out: &Out) {
         out.geo(format!("rv {k}"), &crate::society::rv(p, 0.4 * k as f32, k % 2 == 1, 200 + k, &pal));
         out.geo(format!("trash {k}"), &crate::society::trash_pile(p, along, outv, k as f32 / 5.0, k % 3 == 0, 300 + k, &pal));
         out.geo(format!("garden {k}"), &crate::social::garden(p, along, 8.0 + 4.0 * k as f32, 400 + k));
-        let (a, b) = crate::social::mural_wall(p, along, outv, 10.0 + k as f32, 4.0, k as f32 / 5.0, 500 + k, k, "NEON");
+        let (a, b) = crate::social::mural_wall(p, along, outv, 10.0 + k as f32, 4.0, k as f32 / 5.0, 500 + k, k, "NEON", &pal);
         out.geo(format!("mural wall {k} a"), &a);
         out.geo(format!("mural wall {k} b"), &b);
     }
@@ -561,7 +561,7 @@ fn misc(out: &Out) {
             let spot = crate::social::facade_spot(&g, lot.center + lot.front_dir * 10.0, -lot.front_dir);
             out.debug(format!("facade spot {name}"), &spot.as_ref().map(|s| (s.clear_share(), s.at(0.5, 0.5, 0.1))));
             if let Some(s) = spot {
-                let (a, b) = crate::social::paint_mural(&s, 0.7, 33, 2, "CREW");
+                let (a, b) = crate::social::paint_mural(&s, 0.7, 33, 2, "CREW", &pal);
                 out.geo(format!("mural {name} a"), &a);
                 out.geo(format!("mural {name} b"), &b);
             }

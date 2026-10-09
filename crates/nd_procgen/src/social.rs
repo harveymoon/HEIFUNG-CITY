@@ -17,7 +17,8 @@
 //!
 //! Laid out in world coordinates from a seed, so each keeps its look.
 
-use crate::color::{mix, mul, pick, rgba};
+use crate::color::{at, mix, mul, pick, rgba};
+use crate::palette::Palette;
 use crate::mesh::MeshData;
 use crate::surface::{Geometry, Surface, Surface::*};
 use glam::{Vec2, Vec3};
@@ -28,7 +29,7 @@ use rand::Rng;
 const LOT_Y: f32 = 0.04;
 
 /// The paint: neon and street colours (linear).
-const PAINT: [[f32; 3]; 10] = [
+pub(crate) const PAINT: [[f32; 3]; 10] = [
     [0.95, 0.12, 0.45],
     [0.1, 0.75, 0.95],
     [0.98, 0.75, 0.08],
@@ -365,22 +366,23 @@ enum Motif {
 const MOTIFS: [Motif; 6] = [Motif::Sun, Motif::Figure, Motif::Face, Motif::Eye, Motif::Waves, Motif::Rings];
 
 /// Bright neon paint and deep grounds (linear).
-const NEON: [[f32; 3]; 7] = [[0.95, 0.12, 0.45], [0.1, 0.75, 0.95], [0.98, 0.75, 0.08], [0.35, 0.95, 0.25], [0.6, 0.2, 0.95], [0.98, 0.35, 0.08], [0.1, 0.9, 0.75]];
-const DEEP: [[f32; 3]; 6] = [[0.05, 0.03, 0.18], [0.02, 0.1, 0.22], [0.18, 0.02, 0.15], [0.03, 0.12, 0.1], [0.12, 0.04, 0.25], [0.2, 0.06, 0.04]];
+pub(crate) const NEON: [[f32; 3]; 7] = [[0.95, 0.12, 0.45], [0.1, 0.75, 0.95], [0.98, 0.75, 0.08], [0.35, 0.95, 0.25], [0.6, 0.2, 0.95], [0.98, 0.35, 0.08], [0.1, 0.9, 0.75]];
+pub(crate) const DEEP: [[f32; 3]; 6] = [[0.05, 0.03, 0.18], [0.02, 0.1, 0.22], [0.18, 0.02, 0.15], [0.03, 0.12, 0.1], [0.12, 0.04, 0.25], [0.2, 0.06, 0.04]];
 
 impl Crew {
-    fn of(crew: u64) -> Self {
+    fn of(crew: u64, pal: &Palette) -> Self {
+        let (neon, deep) = (&pal.mural_neon, &pal.mural_deep);
         let mut rng = rng_for(crew, 0xC2E7);
-        let main0 = pick(&mut rng, &NEON);
-        let mut main1 = pick(&mut rng, &NEON);
+        let main0 = pick(&mut rng, neon);
+        let mut main1 = pick(&mut rng, neon);
         if main1 == main0 {
-            main1 = NEON[(NEON.iter().position(|c| *c == main0).unwrap_or(0) + 3) % NEON.len()];
+            main1 = at(neon, neon.iter().position(|c| *c == main0).unwrap_or(0) + 3);
         }
         Self {
-            bg: [pick(&mut rng, &DEEP), pick(&mut rng, &DEEP)],
+            bg: [pick(&mut rng, deep), pick(&mut rng, deep)],
             main: [main0, main1],
-            accent: pick(&mut rng, &NEON),
-            neon: pick(&mut rng, &NEON),
+            accent: pick(&mut rng, neon),
+            neon: pick(&mut rng, neon),
             motif: MOTIFS[rng.random_range(0..MOTIFS.len())],
             rays: rng.random_bool(0.5),
             ground: rng.random_range(0..3),
@@ -788,11 +790,11 @@ fn lettering(day: &mut MeshData, night: &mut MeshData, spot: &FacadeSpot, tag: &
 /// design unlit and floodlit, for the app to show after dark). `crew`
 /// seeds the crew's palette, motif and style, `seed` this mural's layout;
 /// `quality` (`-1..1`) is art or a tag: poor crews scrawl.
-pub fn paint_mural(spot: &FacadeSpot, quality: f32, seed: u64, crew: u64, tag: &str) -> (Geometry, Geometry) {
+pub fn paint_mural(spot: &FacadeSpot, quality: f32, seed: u64, crew: u64, tag: &str, pal: &Palette) -> (Geometry, Geometry) {
     let mut day = Geometry::default();
     let mut night = Geometry::default();
     let mut rng = rng_for(seed, 0x3A1A);
-    let style = Crew::of(crew);
+    let style = Crew::of(crew, pal);
     let (w, h) = (spot.width, spot.height);
     if quality < -0.2 {
         // A tag: scrawls and the crew's name on the bare wall.
@@ -800,7 +802,7 @@ pub fn paint_mural(spot: &FacadeSpot, quality: f32, seed: u64, crew: u64, tag: &
             let a = Vec2::new(rng.random_range(0.0..w), rng.random_range(0.3..(h * 0.7).max(0.4)));
             let b = a + Vec2::new(rng.random_range(0.6..2.2), rng.random_range(-0.4..0.4));
             if spot.paintable(a.x, a.y) && spot.paintable(b.x.min(w), b.y.clamp(0.0, h)) {
-                stroke(day.part(Matte), spot, a, b, rng.random_range(0.1..0.25), STANDOFF, pick(&mut rng, &PAINT));
+                stroke(day.part(Matte), spot, a, b, rng.random_range(0.1..0.25), STANDOFF, pick(&mut rng, &pal.mural_paint));
             }
         }
         lettering(day.part(Matte), night.part(Glow), spot, tag, false, style.main[0]);
@@ -861,7 +863,7 @@ pub fn paint_mural(spot: &FacadeSpot, quality: f32, seed: u64, crew: u64, tag: &
 /// mural on a vacant lot (or where a building has no wall to the street).
 /// Returns the day and night geometry, as [`paint_mural`].
 #[allow(clippy::too_many_arguments)]
-pub fn mural_wall(pos: Vec2, along: Vec2, facing: Vec2, width: f32, height: f32, quality: f32, seed: u64, crew: u64, tag: &str) -> (Geometry, Geometry) {
+pub fn mural_wall(pos: Vec2, along: Vec2, facing: Vec2, width: f32, height: f32, quality: f32, seed: u64, crew: u64, tag: &str, pal: &Palette) -> (Geometry, Geometry) {
     let along = along.try_normalize().unwrap_or(Vec2::X);
     let mut out = facing.try_normalize().unwrap_or(Vec2::new(-along.y, along.x));
     out = (out - along * out.dot(along)).try_normalize().unwrap_or(Vec2::new(-along.y, along.x));
@@ -877,7 +879,7 @@ pub fn mural_wall(pos: Vec2, along: Vec2, facing: Vec2, width: f32, height: f32,
     let right = Vec3::new(o3.z, 0.0, -o3.x);
     let origin = base + o3 * (thick * 0.5) - right * (width * 0.5) + Vec3::Y * 0.1;
     let spot = FacadeSpot::open(origin, right, o3, width, height - 0.2);
-    let (day, night) = paint_mural(&spot, quality, seed, crew, tag);
+    let (day, night) = paint_mural(&spot, quality, seed, crew, tag, pal);
     wall.append(&day);
     (wall, night)
 }
@@ -922,7 +924,7 @@ mod mural_tests {
             assert!(p.x >= -12.01);
         }
         // Painted: day paint on the wall plane in front of it, a night copy.
-        let (day, night) = paint_mural(&spot, 0.6, 7, 3, "VOLT");
+        let (day, night) = paint_mural(&spot, 0.6, 7, 3, "VOLT", &Palette::default());
         assert!(day.get(Matte).positions.len() > 100);
         assert!(!night.get(Glow).is_empty());
         // (The lamps over the top stand out on arms.)
@@ -948,7 +950,7 @@ mod mural_tests {
         let spot = facade_spot(&g, Vec2::new(0.0, -4.0), Vec2::new(0.0, -1.0)).expect("still painted");
         let share = spot.clear_share();
         assert!(share > 0.3 && share < 1.0, "paint round the windows: {share}");
-        let (day, _) = paint_mural(&spot, 0.6, 1, 1, "AB");
+        let (day, _) = paint_mural(&spot, 0.6, 1, 1, "AB", &Palette::default());
         // No painted cell lies well inside a window.
         let m = day.get(Matte);
         let mut painted = 0;
@@ -983,16 +985,16 @@ mod mural_tests {
     #[test]
     fn a_crew_keeps_its_style_and_each_wall_its_own_layout() {
         let spot = FacadeSpot::open(Vec3::ZERO, Vec3::X, Vec3::NEG_Z, 10.0, 6.0);
-        let (a, _) = paint_mural(&spot, 0.5, 11, 4, "NEON");
-        let (b, _) = paint_mural(&spot, 0.5, 11, 4, "NEON");
+        let (a, _) = paint_mural(&spot, 0.5, 11, 4, "NEON", &Palette::default());
+        let (b, _) = paint_mural(&spot, 0.5, 11, 4, "NEON", &Palette::default());
         assert_eq!(a.get(Matte).colors, b.get(Matte).colors, "deterministic");
-        let (c, _) = paint_mural(&spot, 0.5, 12, 4, "NEON");
+        let (c, _) = paint_mural(&spot, 0.5, 12, 4, "NEON", &Palette::default());
         assert_ne!(a.get(Matte).colors, c.get(Matte).colors, "another wall, another layout");
-        assert_eq!(Crew::of(4).bg, Crew::of(4).bg);
+        assert_eq!(Crew::of(4, &Palette::default()).bg, Crew::of(4, &Palette::default()).bg);
         assert_eq!(crew_tag("The Volt Saints"), "VOLT");
         assert_eq!(crew_tag("Kru-9 Collective"), "KRU9");
         // A tag is scrawls and letters, no painted ground.
-        let (t, _) = paint_mural(&spot, -0.6, 11, 4, "NEON");
+        let (t, _) = paint_mural(&spot, -0.6, 11, 4, "NEON", &Palette::default());
         assert!(t.get(Matte).positions.len() < a.get(Matte).positions.len() / 4);
     }
 }

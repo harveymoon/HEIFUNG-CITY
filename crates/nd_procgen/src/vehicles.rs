@@ -132,8 +132,8 @@ fn corp_logo(b: &mut B, x: f32, y: f32, hw: f32, size: f32, colour: u8, mark: u8
 }
 
 /// Livery colours: body, accent, lit sign.
-pub fn livery_colors(l: Livery, paint: u8) -> Option<([f32; 3], [f32; 3], [f32; 3])> {
-    let neon = NEON[paint as usize % NEON.len()];
+pub fn livery_colors(l: Livery, paint: u8, pal: &Palette) -> Option<([f32; 3], [f32; 3], [f32; 3])> {
+    let neon = at(&pal.vehicle_neon, paint as usize);
     Some(match l {
         Livery::None => return None,
         Livery::Pizza => ([0.55, 0.04, 0.03], [0.9, 0.62, 0.05], [2.6, 1.3, 0.2]),
@@ -207,19 +207,26 @@ pub fn catalogue() -> Vec<VehicleModel> {
     out
 }
 
-/// Build a variant.
+/// Build a variant in the default palette's paints (see
+/// [`vehicle_mesh_with`]).
 pub fn vehicle_mesh(model: &VehicleModel) -> VehicleMesh {
+    vehicle_mesh_with(model, crate::palette::default_palette())
+}
+
+/// Build a variant, its paint and neon from the palette.
+pub fn vehicle_mesh_with(model: &VehicleModel, pal: &Palette) -> VehicleMesh {
     let m = variant_key(model);
-    let paint = PAINT[m.paint as usize];
-    build(&m, paint, true)
+    let paint = at(&pal.vehicle_paint, m.paint as usize);
+    build(&m, paint, true, pal)
 }
 
 // ── builder ─────────────────────────────────────────────────────────────────
 
-use crate::color::{mix, mul, rgba as c4};
+use crate::color::{at, mix, mul, rgba as c4};
 
 struct B<'a> {
     m: &'a VehicleModel,
+    pal: &'a Palette,
     body: MeshData,
     lights: MeshData,
     fx: MeshData,
@@ -325,7 +332,7 @@ fn slope_quad(mesh: &mut MeshData, p0: (f32, f32), p1: (f32, f32), hw: f32, col:
     mesh.quad_facing([a, b, c, e], Vec3::new(out.x, out.y, 0.0), c4(col));
 }
 
-fn build(m: &VehicleModel, paint: [f32; 3], detail: bool) -> VehicleMesh {
+fn build(m: &VehicleModel, paint: [f32; 3], detail: bool, pal: &Palette) -> VehicleMesh {
     let seed = {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         for v in [m.body as u64, m.class as u64, m.wear as u64, m.tuned as u64, livery_code(m.livery), m.paint as u64] {
@@ -333,9 +340,9 @@ fn build(m: &VehicleModel, paint: [f32; 3], detail: bool) -> VehicleMesh {
         }
         h
     };
-    let mut b = B { m, body: MeshData::default(), lights: MeshData::default(), fx: MeshData::default(), rng: rand_chacha::ChaCha8Rng::seed_from_u64(seed), detail };
+    let mut b = B { m, pal, body: MeshData::default(), lights: MeshData::default(), fx: MeshData::default(), rng: rand_chacha::ChaCha8Rng::seed_from_u64(seed), detail };
     // Body colour: livery first, else paint, dulled by wear.
-    let livery = livery_colors(m.livery, m.paint);
+    let livery = livery_colors(m.livery, m.paint, pal);
     let mut col = livery.map(|l| l.0).unwrap_or(paint);
     if m.wear >= 2 {
         col = mix(col, [0.3, 0.29, 0.27], 0.35);
@@ -463,7 +470,7 @@ fn car(b: &mut B, col: [f32; 3]) {
     }
     // Beat-up: a primer door, rust round the arches, dents.
     if m.class == VehicleClass::Cheap && m.wear >= 1 && b.detail {
-        let door = if b.rng.random_bool(0.5) { PRIMER } else { mul(PAINT[b.rng.random_range(0..PAINT.len())], 0.85) };
+        let door = if b.rng.random_bool(0.5) { PRIMER } else { { let n = b.pal.vehicle_paint.len().max(1); mul(at(&b.pal.vehicle_paint, b.rng.random_range(0..n)), 0.85) } };
         let side = if b.rng.random_bool(0.5) { 1.0 } else { -1.0 };
         let dx = (cab_f + cab_r) * 0.5 + 0.35;
         b.body.decal(Vec3::new(dx, (sill + belt) * 0.5 + 0.04, side * (hw + 0.012)), Vec3::X, Vec3::Y, 0.9, belt - sill - 0.12, Vec3::Z * side, c4(door));
@@ -476,7 +483,7 @@ fn car(b: &mut B, col: [f32; 3]) {
         for z in [hw - 0.2, -(hw - 0.2)] {
             b.bx((rx + 0.3, (rear_top + sy) * 0.5, z), (0.08, sy - rear_top, 0.05), TRIM);
         }
-        let neon = NEON[m.paint as usize % NEON.len()];
+        let neon = at(&b.pal.vehicle_neon, m.paint as usize);
         b.lit_sides(0.0, sill + 0.04, hw, len * 0.7, 0.04, neon);
         b.underglow(len * 0.85, hw * 1.05, neon);
     }
@@ -503,7 +510,7 @@ fn cyber_truck(b: &mut B, col: [f32; 3]) {
     b.lamp(fx + 0.02, 0.98, 0.0, hw * 1.9, 0.05, 1.0, HEAD);
     b.lamp(rx, 1.22, 0.0, hw * 1.9, 0.06, -1.0, TAIL);
     if m.tuned {
-        let neon = NEON[m.paint as usize % NEON.len()];
+        let neon = at(&b.pal.vehicle_neon, m.paint as usize);
         b.underglow(len * 0.85, hw * 1.05, neon);
         b.lit_sides(0.0, 0.66, hw + 0.02, len * 0.6, 0.04, neon);
     }
@@ -576,7 +583,7 @@ fn semi(b: &mut B, col: [f32; 3]) {
     let hw = 1.22;
     // Cab-over tractor, flat face.
     let cr = fx - 2.2;
-    let cab_col = if m.livery == Livery::None { col } else { livery_colors(m.livery, m.paint).map_or(col, |l| l.0) };
+    let cab_col = if m.livery == Livery::None { col } else { livery_colors(m.livery, m.paint, b.pal).map_or(col, |l| l.0) };
     b.ext(&[(cr, 0.7), (fx, 0.7), (fx + 0.05, 2.6), (fx - 0.3, 3.15), (cr, 3.2)], hw - 0.05, cab_col);
     b.body.decal(Vec3::new(fx + 0.07, 2.05, 0.0), Vec3::Z, Vec3::Y, hw * 1.7, 0.8, Vec3::X, c4(GLASS));
     b.sides(fx - 0.6, 2.2, hw - 0.05, 0.6, 0.55, GLASS);
@@ -666,7 +673,7 @@ fn bubble_bus(b: &mut B, col: [f32; 3], x0: f32, len: f32, ends: bool) {
     ext_into(&mut b.body, &band, hw + 0.015, GLASS);
     // Roof crown and the route-colour skirt stripe.
     b.ext(&[(rx + 1.2, 3.0), (fx - 1.2, 3.0), (fx - 1.6, 3.22), (rx + 1.6, 3.22)], hw - 0.3, mul(col, 0.95));
-    let accent = livery_colors(Livery::Transit, m.paint).map_or(NEON[0], |l| l.2);
+    let accent = livery_colors(Livery::Transit, m.paint, b.pal).map_or(at(&b.pal.vehicle_neon, 0), |l| l.2);
     b.sides(x0, 0.9, hw, len - 1.2, 0.12, mul(accent, 0.35));
     b.lit_sides(x0, 2.62, hw, len - 1.4, 0.05, accent);
     // Wheels behind skirts.
@@ -735,13 +742,13 @@ fn bike(b: &mut B, col: [f32; 3]) {
         b.ext(&[(fx - 0.5, 0.28), (fx - 0.3, 0.3), (fx - 0.42, 1.0), (fx - 0.55, 1.0)], 0.2, col);
         b.ext(&[(rx + 0.1, 0.3), (rx + 0.8, 0.3), (rx + 0.75, 0.62), (rx + 0.2, 0.66)], 0.18, col);
         b.bx((fx - 0.45, 1.05, 0.0), (0.06, 0.06, 0.6), TRIM);
-        let helmet = if m.livery == Livery::None { mix(col, [0.8, 0.8, 0.8], 0.4) } else { livery_colors(m.livery, m.paint).map_or(col, |l| l.1) };
+        let helmet = if m.livery == Livery::None { mix(col, [0.8, 0.8, 0.8], 0.4) } else { livery_colors(m.livery, m.paint, b.pal).map_or(col, |l| l.1) };
         rider(b, rx + 0.5, 0.66, 0.0, helmet);
         b.lamp(fx - 0.28, 0.85, 0.0, 0.14, 0.1, 1.0, HEAD);
         b.lamp(rx + 0.08, 0.55, 0.0, 0.14, 0.08, -1.0, TAIL);
         // A delivery top box.
         if m.livery != Livery::None {
-            b.bx((rx + 0.25, 0.95, 0.0), (0.42, 0.4, 0.42), livery_colors(m.livery, m.paint).map_or(col, |l| l.0));
+            b.bx((rx + 0.25, 0.95, 0.0), (0.42, 0.4, 0.42), livery_colors(m.livery, m.paint, b.pal).map_or(col, |l| l.0));
         }
     } else {
         // Tank, seat and tail; engine block; forks; bars.
@@ -754,7 +761,7 @@ fn bike(b: &mut B, col: [f32; 3]) {
         b.lamp(0.66, 0.9, 0.0, 0.16, 0.14, 1.0, HEAD);
         b.lamp(-0.86, 0.86, 0.0, 0.14, 0.06, -1.0, TAIL);
         if m.tuned {
-            let neon = NEON[m.paint as usize % NEON.len()];
+            let neon = at(&b.pal.vehicle_neon, m.paint as usize);
             b.underglow(1.5, 0.3, neon);
         }
     }
@@ -794,7 +801,7 @@ fn akira(b: &mut B) {
 fn bot(b: &mut B, col: [f32; 3]) {
     let m = *b.m;
     let shell = if m.livery == Livery::None { [0.82, 0.82, 0.8] } else { mix(col, [0.85, 0.85, 0.85], 0.35) };
-    let accent = livery_colors(m.livery, m.paint).map_or(NEON[m.paint as usize % NEON.len()], |l| l.2);
+    let accent = livery_colors(m.livery, m.paint, b.pal).map_or(at(&b.pal.vehicle_neon, m.paint as usize), |l| l.2);
     let hw = 0.27;
     b.ext(&[(-0.4, 0.14), (0.4, 0.14), (0.42, 0.3), (0.36, 0.5), (0.25, 0.56), (-0.36, 0.56), (-0.42, 0.42)], hw, shell);
     b.ext(&[(-0.34, 0.56), (0.24, 0.56), (0.2, 0.6), (-0.3, 0.6)], hw - 0.04, mul(shell, 0.85));
@@ -827,7 +834,7 @@ const STROBE: [f32; 3] = [3.0, 3.0, 3.0];
 /// night. Drawn on its skids; the renderer lifts it.
 fn air_taxi(b: &mut B, col: [f32; 3]) {
     let hw = 0.8;
-    let accent = NEON[b.m.paint as usize % NEON.len()];
+    let accent = at(&b.pal.vehicle_neon, b.m.paint as usize);
     b.ext(&[(-1.7, 0.55), (1.3, 0.55), (1.9, 0.95), (1.75, 1.35), (0.6, 1.85), (-1.1, 1.8), (-1.75, 1.2)], hw, col);
     // Canopy: glass across the front and down both sides.
     slope_quad(&mut b.body, (1.75, 1.35), (0.6, 1.85), hw * 0.85, GLASS);
@@ -1014,7 +1021,7 @@ fn taxi_marks(b: &mut B, dark: [f32; 3], sign: [f32; 3]) {
     }
     b.lights.boxed(Vec3::new(-0.25, roof + 0.2, 0.0), Vec3::new(0.75, 0.26, 0.6), 0.0, c4(sign));
     // Neon sill strip and underglow in the cab's accent.
-    let neon = NEON[m.paint as usize % NEON.len()];
+    let neon = at(&b.pal.vehicle_neon, m.paint as usize);
     b.lit_sides(0.0, if tall { 0.46 } else { 0.32 }, hw, len * 0.7, 0.05, neon);
     b.underglow(len * 0.85, hw * 1.05, neon);
 }
@@ -1056,7 +1063,7 @@ pub fn draw_parked(g: &mut Geometry, pal: &Palette, rng: &mut impl Rng, at: Vec2
     };
     let model = VehicleModel { class, body, wear, tuned: false, livery, paint: rng.random_range(0..PAINTS) };
     let paint = if kind == Parked::Wreck { mix(color, pal.rust, 0.5) } else { color };
-    let v = build(&model, paint, false);
+    let v = build(&model, paint, false, pal);
     let surface = if kind == Parked::Wreck { Surface::Rust } else { Surface::Metal };
     let (s, c) = yaw.sin_cos();
     let xf = |p: [f32; 3]| -> [f32; 3] { [at.x + p[0] * c - p[2] * s, y + p[1], at.y + p[0] * s + p[2] * c] };
@@ -1167,7 +1174,7 @@ mod tests {
         let pizza = vehicle_mesh(&VehicleModel { body: BodyType::DeliveryVan, livery: Livery::Pizza, ..Default::default() });
         let plain = vehicle_mesh(&VehicleModel { body: BodyType::DeliveryVan, ..Default::default() });
         assert!(pizza.lights.indices.len() > plain.lights.indices.len(), "a lit sign panel");
-        let red = livery_colors(Livery::Pizza, 0).unwrap().0;
+        let red = livery_colors(Livery::Pizza, 0, &Palette::default()).unwrap().0;
         assert!(pizza.body.colors.iter().any(|c| (c[0] - red[0]).abs() < 0.05 && (c[1] - red[1]).abs() < 0.05));
     }
 }

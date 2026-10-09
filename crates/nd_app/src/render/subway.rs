@@ -13,6 +13,7 @@ use nd_sim::Vec2 as SVec2;
 use std::collections::HashMap;
 
 use super::holo::TunnelTag;
+use crate::assets::GameAssets;
 use super::{shared_mesh, to_mesh, Materials};
 use crate::sim::Sim;
 
@@ -36,7 +37,7 @@ fn ground(w: &nd_sim::World, p: SVec2) -> f32 {
 }
 
 /// Redraw the tunnels when the subway changes.
-pub(super) fn sync_metro_tunnels(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, mats: Res<Materials>, mut state: Local<Option<u64>>, existing: Query<Entity, With<MetroTunnelTag>>) {
+pub(super) fn sync_metro_tunnels(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut state: Local<Option<u64>>, existing: Query<Entity, With<MetroTunnelTag>>) {
     let w = &sim.world;
     // Bumped on every edit; the line count guards a load (version restarts).
     let version = w.subway.version.wrapping_add(w.subway.lines.len() as u64 * 7919);
@@ -73,7 +74,7 @@ pub(super) fn sync_metro_tunnels(mut commands: Commands, mut meshes: ResMut<Asse
     if lines.is_empty() && sites.is_empty() {
         return;
     }
-    let geo = tunnels(&lines, &sites, &|p| ground(w, p));
+    let geo = tunnels(&lines, &sites, &|p| ground(w, p), &assets.palette);
     for (s, data) in geo.iter() {
         let mut e = commands.spawn((Mesh3d(meshes.add(to_mesh(data, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, TunnelTag, MetroTunnelTag, Visibility::Hidden, NotShadowCaster));
         if s.is_glow() {
@@ -84,7 +85,7 @@ pub(super) fn sync_metro_tunnels(mut commands: Commands, mut meshes: ResMut<Asse
 
 /// Metro trains: a set of cars along the line, blended between ticks,
 /// on the bore of their direction.
-pub(super) fn sync_metro_trains(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, mats: Res<Materials>, mut state: Local<MetroState>, mut q: Query<&mut Transform, With<MetroCarTag>>) {
+pub(super) fn sync_metro_trains(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut state: Local<MetroState>, mut q: Query<&mut Transform, With<MetroCarTag>>) {
     let w = &sim.world;
     let sub = &w.subway;
     if sim.full_rebuild {
@@ -100,7 +101,7 @@ pub(super) fn sync_metro_trains(mut commands: Commands, mut meshes: ResMut<Asset
         }
         let colour = t.run.color;
         if !state.cars.contains_key(&colour) {
-            let g = metro_car(colour);
+            let g = metro_car(colour, &assets.palette);
             let parts = g.iter().map(|(s, m)| (s, meshes.add(shared_mesh(m, !s.is_glow())))).collect();
             state.cars.insert(colour, parts);
         }
