@@ -1,0 +1,342 @@
+diff --git a/crates/nd_sim/src/rail/mod.rs b/crates/nd_sim/src/rail/mod.rs
+index 32a249e..8cf5a09 100644
+--- a/crates/nd_sim/src/rail/mod.rs
++++ b/crates/nd_sim/src/rail/mod.rs
+@@ -160,23 +160,22 @@ struct RailSave {
+     last_freight_tick: u64,
+     #[serde(default)]
+     orders: Vec<RailOrder>,
++    /// [review] Trains in motion, so a loaded game goes on as the running
++    /// one would. Saves from before them have none: their trains' cargo is
++    /// in `orders` instead, and their riders are set down on load.
++    #[serde(default)]
++    trains: SlotMap<TrainId, Train>,
+ }
+ 
+ impl From<RailSave> for Rail {
+     fn from(s: RailSave) -> Self {
+-        Rail { trains: SlotMap::with_key(), stats: s.stats, last_passenger_tick: s.last_passenger_tick, last_freight_tick: s.last_freight_tick, orders: s.orders }
++        Rail { trains: s.trains, stats: s.stats, last_passenger_tick: s.last_passenger_tick, last_freight_tick: s.last_freight_tick, orders: s.orders }
+     }
+ }
+ 
+ impl From<Rail> for RailSave {
+     fn from(r: Rail) -> Self {
+-        let mut orders = r.orders;
+-        // Aboard a train: back in the queue, ordered when that train left.
+-        let since = r.last_freight_tick;
+-        for t in r.trains.values() {
+-            orders.extend(t.cargo.iter().map(|c| RailOrder { cargo: *c, since }));
+-        }
+-        RailSave { stats: r.stats, last_passenger_tick: r.last_passenger_tick, last_freight_tick: r.last_freight_tick, orders }
++        RailSave { stats: r.stats, last_passenger_tick: r.last_passenger_tick, last_freight_tick: r.last_freight_tick, orders: r.orders, trains: r.trains }
+     }
+ }
+ 
+diff --git a/crates/nd_sim/src/traffic.rs b/crates/nd_sim/src/traffic.rs
+index 36b0da0..6a261ec 100644
+--- a/crates/nd_sim/src/traffic.rs
++++ b/crates/nd_sim/src/traffic.rs
+@@ -42,6 +42,7 @@ mod junction;
+ mod kerb;
+ mod lane;
+ mod lane_change;
++mod live;
+ mod place;
+ mod ramps;
+ mod remap;
+@@ -68,6 +69,7 @@ pub use driver::*;
+ use follow::idm_with;
+ pub use gridlock::*;
+ pub use lane::*;
++pub use live::{ApproachLive, JunctionLive, LaneLive, NetLive};
+ pub use signals::*;
+ use stunt::step_stunt;
+ pub use vehicle::*;
+@@ -226,7 +228,9 @@ pub use crate::geom::lerp_angle;
+ 
+ #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+ pub struct Traffic {
+-    #[serde(skip)]
++    /// The lane network: rebuilt from the roads on load; a save holds only
++    /// its live state (`traffic/live.rs`).
++    #[serde(default, serialize_with = "live::save_net", deserialize_with = "live::load_net")]
+     pub net: LaneNetwork,
+     pub cars: SlotMap<CarId, Car>,
+     /// Lane arrows set by the player, per approach; reapplied whenever the
+@@ -235,9 +239,9 @@ pub struct Traffic {
+     #[serde(default)]
+     pub lane_use: Vec<LaneUseRule>,
+     /// The most recent left turns' waits, seconds.
+-    #[serde(skip)]
++    #[serde(default)]
+     pub left_waits: VecDeque<f32>,
+-    #[serde(skip)]
++    #[serde(default)]
+     adapt_clock: f32,
+     /// [driving] Crashes decided since the world last drained them.
+     #[serde(skip)]
+@@ -252,7 +256,7 @@ pub struct Traffic {
+     pub red_runs: u32,
+     /// [pedestrians] Walk lights, crossings in use and who drove over one
+     /// (`traffic/crosswalk.rs`).
+-    #[serde(skip)]
++    #[serde(default)]
+     pub peds: PedTraffic,
+     /// [tolls] Vehicles that drove through a toll booth since the world
+     /// last drained them.
+@@ -282,6 +286,8 @@ pub struct Traffic {
+ 
+ impl Traffic {
+     pub fn rebuild(&mut self, roads: &RoadNetwork) {
++        // [review] A network just loaded carries its saved live state.
++        let live = self.net.pending_live.take();
+         self.net.rebuild(roads);
+         // [tools] The player's junction settings first: a banned left
+         // takes the movement away before the arrows are fitted.
+@@ -289,6 +295,9 @@ impl Traffic {
+         // Player arrows go back on their approaches by geometry
+         // (`traffic/remap.rs`): ids are renumbered by every rebuild.
+         self.resolve_lane_use(roads);
++        if let Some(live) = live {
++            live.apply(&mut self.net);
++        }
+     }
+ 
+     /// After loading a save the lane network is rebuilt; put cars back on
+diff --git a/crates/nd_sim/src/traffic/build.rs b/crates/nd_sim/src/traffic/build.rs
+index 78b735a..2cabfbd 100644
+--- a/crates/nd_sim/src/traffic/build.rs
++++ b/crates/nd_sim/src/traffic/build.rs
+@@ -98,6 +98,9 @@ pub struct LaneNetwork {
+     /// [rail-crossing] Some connector is closed for a level crossing (skips
+     /// the crossing checks when none is).
+     pub rail_closed_any: bool,
++    /// [review] Live state from a save, put back by the next
++    /// `Traffic::rebuild` (`traffic/live.rs`).
++    pub pending_live: Option<Box<NetLive>>,
+ }
+ 
+ impl LaneNetwork {
+diff --git a/crates/nd_sim/src/traffic/crosswalk.rs b/crates/nd_sim/src/traffic/crosswalk.rs
+index 782fcfe..cf33060 100644
+--- a/crates/nd_sim/src/traffic/crosswalk.rs
++++ b/crates/nd_sim/src/traffic/crosswalk.rs
+@@ -43,7 +43,7 @@ pub const SIREN_WARNING: f32 = 90.0;
+ const HOLD_DEPTH_MAX: f32 = 8.0;
+ 
+ /// A stop point on a lane in front of a crossing.
+-#[derive(Clone, Copy, Debug)]
++#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+ pub struct Hold {
+     /// Distance along the lane where the crossing begins (less a margin).
+     pub s: f32,
+@@ -54,7 +54,11 @@ pub struct Hold {
+ }
+ 
+ /// Pedestrian state of the lane network, refreshed by the world every tick.
+-#[derive(Clone, Debug, Default)]
++/// Saved (all but the stop lines, which are rebuilt with the crossings):
++/// the walk lights and who stands on a crossing decide the first tick
++/// after a load.
++#[derive(Clone, Debug, Default, Serialize, Deserialize)]
++#[serde(default)]
+ pub struct PedTraffic {
+     /// Per intersection, per approach: the walk light on the crosswalk
+     /// across that arm.
+@@ -69,6 +73,7 @@ pub struct PedTraffic {
+     pub watch: BTreeMap<LaneId, Vec<Hold>>,
+     /// Stop lines before signalised crosswalks, per incoming lane: where
+     /// a car waiting at a red stops.
++    #[serde(skip)]
+     pub stop_lines: HashMap<LaneId, f32>,
+     /// Cars that went over an occupied crossing at speed since the world
+     /// last drained this: (car, crossing, speed).
+diff --git a/crates/nd_sim/src/traffic/driver.rs b/crates/nd_sim/src/traffic/driver.rs
+index bccbad9..8891107 100644
+--- a/crates/nd_sim/src/traffic/driver.rs
++++ b/crates/nd_sim/src/traffic/driver.rs
+@@ -262,7 +262,7 @@ pub struct DriveState {
+     /// [emergency] The move of a vehicle driving off-law (lights and
+     /// sirens, or fleeing them): round a queue, on the kerb, through a red
+     /// (`traffic/siren.rs`). Planned afresh every step.
+-    #[serde(skip)]
++    #[serde(default)]
+     pub offlaw: OffLaw,
+     /// [emergency] A suspect fleeing the police in this car: reckless,
+     /// off-law, never pulls over (`world/chases.rs`).
+@@ -282,7 +282,7 @@ pub struct DriveState {
+     pub path: Vec<Vec2>,
+     /// [scene] Sideways ease (m, + right) round a scene at the roadside
+     /// (`traffic/scene.rs`), drawn on top of the lane.
+-    #[serde(skip)]
++    #[serde(default)]
+     pub dodge: f32,
+ }
+ 
+diff --git a/crates/nd_sim/src/traffic/live.rs b/crates/nd_sim/src/traffic/live.rs
+new file mode 100644
+index 0000000..cdea4aa
+--- /dev/null
++++ b/crates/nd_sim/src/traffic/live.rs
+@@ -0,0 +1,105 @@
++//! [review] The lane network's live state in a save. The network itself is
++//! derived (rebuilt from the roads on load), but its signals, turn counts,
++//! adapted arrows and closures are not: without them a loaded game's cars
++//! met different lights from the first tick and the run drifted from the
++//! one left going. Only that state is saved, by lane, junction and
++//! approach index, and put back on the rebuilt network when its shape
++//! matches (a save from before carries none and starts afresh, as before).
++
++use super::*;
++
++/// One lane's live state.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
++#[serde(default)]
++pub struct LaneLive {
++    pub green: bool,
++    pub red_for: f32,
++    pub arrows: u8,
++    pub permitted: bool,
++    pub blocked: bool,
++    pub rail_closed: bool,
++}
++
++/// One junction's live state.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
++#[serde(default)]
++pub struct JunctionLive {
++    pub phase: usize,
++    pub arrow: f32,
++    pub timer: f32,
++    pub left_turns: u32,
++    pub left_wait_sum: f32,
++    pub left_wait_max: f32,
++}
++
++/// One approach's live state.
++#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
++#[serde(default)]
++pub struct ApproachLive {
++    pub arrows: Vec<u8>,
++    pub fixed: bool,
++    pub counts: [f32; 3],
++}
++
++/// The live state of a whole lane network.
++#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
++#[serde(default)]
++pub struct NetLive {
++    pub lanes: Vec<LaneLive>,
++    pub junctions: Vec<JunctionLive>,
++    pub approaches: Vec<ApproachLive>,
++    pub version: u64,
++    pub arrows_version: u64,
++    pub rail_closed_any: bool,
++}
++
++impl NetLive {
++    pub fn of(net: &LaneNetwork) -> NetLive {
++        NetLive {
++            lanes: net.lanes.iter().map(|l| LaneLive { green: l.green, red_for: l.red_for, arrows: l.arrows, permitted: l.permitted, blocked: l.blocked, rail_closed: l.rail_closed }).collect(),
++            junctions: net.intersections.iter().map(|i| JunctionLive { phase: i.phase, arrow: i.arrow, timer: i.timer, left_turns: i.left_turns, left_wait_sum: i.left_wait_sum, left_wait_max: i.left_wait_max }).collect(),
++            approaches: net.approaches.iter().map(|a| ApproachLive { arrows: a.arrows.clone(), fixed: a.fixed, counts: a.counts }).collect(),
++            version: net.version,
++            arrows_version: net.arrows_version,
++            rail_closed_any: net.rail_closed_any,
++        }
++    }
++
++    /// Put the state back on `net`, when it has the shape the state was
++    /// taken from (the same lanes, junctions, approaches and phases);
++    /// otherwise leave the fresh network as it is. Whether it was applied.
++    pub fn apply(&self, net: &mut LaneNetwork) -> bool {
++        let fits = self.lanes.len() == net.lanes.len()
++            && self.junctions.len() == net.intersections.len()
++            && self.approaches.len() == net.approaches.len()
++            && self.junctions.iter().zip(&net.intersections).all(|(j, i)| j.phase < i.phases.len().max(1))
++            && self.approaches.iter().zip(&net.approaches).all(|(s, a)| s.arrows.len() == a.arrows.len());
++        if !fits {
++            return false;
++        }
++        for (l, s) in net.lanes.iter_mut().zip(&self.lanes) {
++            (l.green, l.red_for, l.arrows, l.permitted, l.blocked, l.rail_closed) = (s.green, s.red_for, s.arrows, s.permitted, s.blocked, s.rail_closed);
++        }
++        for (i, s) in net.intersections.iter_mut().zip(&self.junctions) {
++            (i.phase, i.arrow, i.timer, i.left_turns, i.left_wait_sum, i.left_wait_max) = (s.phase, s.arrow, s.timer, s.left_turns, s.left_wait_sum, s.left_wait_max);
++        }
++        for (a, s) in net.approaches.iter_mut().zip(&self.approaches) {
++            a.arrows.clone_from(&s.arrows);
++            (a.fixed, a.counts) = (s.fixed, s.counts);
++        }
++        (net.version, net.arrows_version, net.rail_closed_any) = (self.version, self.arrows_version, self.rail_closed_any);
++        true
++    }
++}
++
++/// `Traffic::net` in a save: its live state only.
++pub(super) fn save_net<S: serde::Serializer>(net: &LaneNetwork, s: S) -> Result<S::Ok, S::Error> {
++    NetLive::of(net).serialize(s)
++}
++
++/// `Traffic::net` from a save: an empty network holding the saved state
++/// until `Traffic::rebuild` builds the real one and puts it back.
++pub(super) fn load_net<'de, D: serde::Deserializer<'de>>(d: D) -> Result<LaneNetwork, D::Error> {
++    let live = NetLive::deserialize(d)?;
++    Ok(LaneNetwork { pending_live: Some(Box::new(live)), ..LaneNetwork::default() })
++}
+diff --git a/crates/nd_sim/src/traffic/siren.rs b/crates/nd_sim/src/traffic/siren.rs
+index 0c233c1..e359521 100644
+--- a/crates/nd_sim/src/traffic/siren.rs
++++ b/crates/nd_sim/src/traffic/siren.rs
+@@ -74,7 +74,7 @@ const OFFLAW_LATERAL: f32 = 2.2;
+ pub const PURSUIT_SPEED_FACTOR: f32 = 1.4;
+ 
+ /// What an off-law car is doing this step.
+-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+ pub enum OffLawMove {
+     /// In its lane: nobody in the way, or someone far enough ahead to follow.
+     #[default]
+@@ -95,9 +95,10 @@ pub enum OffLawMove {
+     Hazard,
+ }
+ 
+-/// The plan of a vehicle driving off-law, refreshed every substep (never
+-/// saved: a loaded siren plans afresh).
+-#[derive(Clone, Copy, Debug, Default)]
++/// The plan of a vehicle driving off-law, refreshed every substep. Saved
++/// (a loaded siren goes on with the move it was making).
++#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
++#[serde(default)]
+ pub struct OffLaw {
+     pub mode: OffLawMove,
+     /// Sideways offset drawn on top of the lane (m, + right), easing to
+diff --git a/crates/nd_sim/src/traffic/vehicle.rs b/crates/nd_sim/src/traffic/vehicle.rs
+index 9e8e8ac..fa932d1 100644
+--- a/crates/nd_sim/src/traffic/vehicle.rs
++++ b/crates/nd_sim/src/traffic/vehicle.rs
+@@ -61,7 +61,7 @@ pub struct Car {
+     /// The vehicle this one is waiting for (its leader, the tail of a full
+     /// exit, the car it lets out of the kerb, the car covering its kerb
+     /// spot), for finding wait-for cycles.
+-    #[serde(skip)]
++    #[serde(default)]
+     pub blocked_by: Option<CarId>,
+     /// Tries at another way since it last moved (backs the next one off).
+     #[serde(default)]
+diff --git a/crates/nd_sim/src/world/save.rs b/crates/nd_sim/src/world/save.rs
+index c03d502..432fb6d 100644
+--- a/crates/nd_sim/src/world/save.rs
++++ b/crates/nd_sim/src/world/save.rs
+@@ -92,7 +92,9 @@ impl World {
+             }
+         }
+         self.transit.refresh_legs(&self.traffic.net);
+-        let on_trains: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::OnTrain { .. })).map(|(id, _)| id).collect();
++        // Riders of a train the save does not hold (one from before trains
++        // were saved) are set down where they are.
++        let on_trains: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::OnTrain { train } if !self.rail.trains.contains_key(train))).map(|(id, _)| id).collect();
+         for id in on_trains {
+             let pos = self.citizens[id].pos;
+             self.citizens[id].transit = None;
