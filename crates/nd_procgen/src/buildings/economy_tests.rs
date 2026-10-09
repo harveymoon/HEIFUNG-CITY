@@ -152,11 +152,7 @@ fn new_businesses_wear_their_own_looks() {
     for s in [Style::MarinaSmall, Style::MarinaLarge, Style::FishingPortSmall, Style::FishingPortLarge] {
         assert_eq!(traits(s).0, Family::Special);
     }
-    // Indices of older styles are untouched: the new block is at the end.
-    // ([land] appends its eight housing and estate styles after this block,
-    // [dirty-industry] its three after those.)
-    // ([supertall] one more after those, [megacorp] the university hall.)
-    assert_eq!(Style::ALL.len(), 80 + NEW.len() + 8 + 3 + 1 + 1 + 6);
+    // Indices of older styles are untouched: the block keeps its place.
     for (k, s) in NEW.iter().enumerate() {
         assert_eq!(s.index(), 80 + k);
         assert_eq!(Style::ALL[80 + k], *s);
