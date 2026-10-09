@@ -220,7 +220,8 @@ impl PowerPlantKind {
     /// narrower range ([`Self::size_range`]), fixed when they are built
     /// ([`Self::sized_when_built`]); [freight] so are hydro and tidal
     /// (more turbine bays on a bigger site; hydro's output still follows
-    /// the river's current as well). `None`: a plant of fixed size.
+    /// the river's current as well). Every kind has one today; `None` would
+    /// be a plant of fixed size.
     pub fn reference_area(self) -> Option<f32> {
         match self {
             PowerPlantKind::Solar => Some(SOLAR_REFERENCE_AREA),

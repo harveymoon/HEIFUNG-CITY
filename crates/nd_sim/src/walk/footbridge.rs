@@ -18,9 +18,6 @@ pub struct Footbridge {
 }
 
 impl WalkGraph {
-    /// A footbridge over crossing `k`: the walkway a little to one side of
-    /// the crosswalk at `FOOTBRIDGE_LEVEL`, stairs from each end along the
-    /// pavement (`along`), and the feet joined to the pavement both ways.
     /// [tools] Where a footbridge over crossing `k` would stand: its
     /// walkway's ends and the stairs' feet (`add_footbridge`).
     pub fn footbridge_shape(&self, k: u32, roads: &RoadNetwork) -> Option<([Vec2; 2], [Vec2; 2])> {
@@ -43,6 +40,9 @@ impl WalkGraph {
         }
     }
 
+    /// A footbridge over crossing `k`: the walkway a little to one side of
+    /// the crosswalk at `FOOTBRIDGE_LEVEL`, stairs from each end along the
+    /// pavement (`along`), and the feet joined to the pavement both ways.
     pub(super) fn add_footbridge(&mut self, k: u32, along: Vec2) {
         use crate::junctions::{FOOTBRIDGE_LEVEL, FOOTBRIDGE_RUN, FOOTBRIDGE_WIDTH};
         let c = self.crossings[k as usize].clone();

@@ -118,6 +118,8 @@ pub struct Tie {
     pub lent: f32,
 }
 
+/// A tie as saved: a tuple, so a new field breaks every old save. Never
+/// add one here; add it to a new container with `#[serde(default)]`.
 pub(super) type TieRepr = (u64, f32, f32, f32, u64, u64, Met, Option<u64>, u16, bool, f32, f32);
 
 impl From<TieRepr> for Tie {

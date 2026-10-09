@@ -134,7 +134,6 @@ impl Lane {
         (self.points[i].lerp(self.points[i + 1], t), if dir == Vec2::ZERO { Vec2::X } else { dir })
     }
 
-    /// Closest point on the lane to `p`: `(distance along, distance from)`.
     /// Points of the lane from `s0` to `s1`, the ends interpolated.
     pub fn points_between(&self, s0: f32, s1: f32) -> Vec<Vec2> {
         let (s0, s1) = (s0.clamp(0.0, self.length), s1.clamp(0.0, self.length));
@@ -148,6 +147,7 @@ impl Lane {
         out
     }
 
+    /// Closest point on the lane to `p`: `(distance along, distance from)`.
     pub fn project(&self, p: Vec2) -> (f32, f32) {
         let mut best = (0.0, f32::MAX);
         for (i, w) in self.points.windows(2).enumerate() {

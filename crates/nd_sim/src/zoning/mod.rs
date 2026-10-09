@@ -87,12 +87,12 @@ impl LandUse {
         LandUse::ALL.iter().position(|&l| l == self).unwrap()
     }
 
-    /// Typical frontage along the road, in metres.
     /// Homes and parks may line a footpath; everything else needs a street.
     pub fn fronts_paths(self) -> bool {
         matches!(self, LandUse::Residential | LandUse::Park)
     }
 
+    /// Typical frontage along the road, in metres.
     pub fn lot_width(self) -> f32 {
         match self {
             LandUse::Residential => 14.0,

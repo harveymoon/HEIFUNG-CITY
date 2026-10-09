@@ -57,7 +57,7 @@ pub struct Ring {
     pub center: Vec2,
     /// Centre of the island to the middle of the ring road.
     pub radius: f32,
-    /// Ring lanes, 1 or 2.
+    /// Ring lanes, 1 to [`RING_MAX_LANES`].
     pub lanes: u8,
 }
 

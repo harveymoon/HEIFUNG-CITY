@@ -228,11 +228,6 @@ impl Traffic {
         }
     }
 
-    /// Seconds before the first moving vehicle reaches the stretch
-    /// `[s, s + depth]` of `lane`, looking back up to two lanes along the
-    /// routes that lead onto it; 0 when one is on it. Standing vehicles
-    /// (at a red, giving way) do not count. Lights and sirens count as four
-    /// times nearer: walkers keep out of their way.
     /// [services] A vehicle with lights and sirens on `lane` short of the
     /// crossing at `s`, or on the lanes leading to it, within
     /// `SIREN_WARNING` metres (one already over the crossing does not count).
@@ -258,6 +253,11 @@ impl Traffic {
         false
     }
 
+    /// Seconds before the first moving vehicle reaches the stretch
+    /// `[s, s + depth]` of `lane`, looking back up to two lanes along the
+    /// routes that lead onto it; 0 when one is on it. Standing vehicles
+    /// (at a red, giving way) do not count. Lights and sirens count as four
+    /// times nearer: walkers keep out of their way.
     pub fn time_to_crossing(&self, lane: LaneId, s: f32, depth: f32) -> f32 {
         self.time_to_crossing_above(lane, s, depth, 0.5)
     }

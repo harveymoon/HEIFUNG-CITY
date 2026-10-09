@@ -47,8 +47,6 @@ impl Traffic {
         self.net.node_intersection.get(node.0 as usize).and_then(|&i| self.net.intersections.get(i)).is_some_and(|i| i.approaches >= 3)
     }
 
-    /// Gap, leader speed and the reason for a car with no leader on its
-    /// own lane: look down the route for the next car or a red light.
     /// The speed limit a driver drives to: the limit where it is, or lower
     /// when a lane ahead on its route has a lower one it must brake for
     /// now to meet it at `ANTICIPATE_BRAKE` (a ramp easing down, a turn).
@@ -77,6 +75,8 @@ impl Traffic {
         limit
     }
 
+    /// Gap, leader speed and the reason for a car with no leader on its
+    /// own lane: look down the route for the next car or a red light.
     pub(super) fn lookahead(&self, car: &Car, lane: &Lane) -> (f32, f32, Wait, Option<LaneId>) {
         let mut dist = lane.length - car.s;
         let route = &car.route;

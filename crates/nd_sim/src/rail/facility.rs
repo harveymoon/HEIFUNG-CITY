@@ -183,9 +183,8 @@ impl Facility {
             let (a, b) = roads.segment_points(sid);
             let dir = (b - a).normalize_or_zero();
             let n = Vec2::new(-dir.y, dir.x);
-            // The rail lies on the inward side: pick `along` so inward points
-            // from the track towards the click side's opposite... the
-            // building sits on the click's side of the track, rail inward.
+            // The building sits on the click's side of the track, with the
+            // rail on its inward side.
             let side = if (p - q).dot(n) >= 0.0 { 1.0 } else { -1.0 };
             // inward must point from the building to the track: -side * n.
             let inward = -n * side;
@@ -279,7 +278,8 @@ impl RailLink {
 
 /// How far the track runs straight on either side of `segment`'s start,
 /// along its direction: rail segments joined end to end and in line with it
-/// (within a degree and half a metre). Metres from its `a` end.
+/// (each next node within half a metre of its line). Metres from its `a`
+/// end.
 pub(super) fn straight_run(roads: &RoadNetwork, segment: SegmentId) -> (f32, f32) {
     let (a, b) = roads.segment_points(segment);
     let len = a.distance(b);

@@ -4,7 +4,9 @@
 //!
 //! Everything here is pure and allocation-light; the modules that own the
 //! data (roads, zoning, walk, park, rail) re-export what their callers
-//! already import, so this module is the one place a formula lives.
+//! already import. [review] The shared formulas (smoothstep, polyline and
+//! segment distances, segment crossings, extents, angles, the convex hull)
+//! were gathered here from their copies; add new ones here too.
 
 use glam::Vec2;
 

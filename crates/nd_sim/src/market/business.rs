@@ -41,8 +41,8 @@ pub struct Business {
     #[serde(default)]
     pub donations: f32,
     /// [economy] Doing well enough to want the plots next door: the land
-    /// agent's hook for growth (a gallery into a museum). Nothing acts on
-    /// it yet.
+    /// agent's hook for growth (a gallery into a museum), read by
+    /// `World::wants_to_expand` (`world/estate.rs`).
     #[serde(default)]
     pub wants_expand: bool,
     /// [camera] The resident who owns it, when one put their money in (a

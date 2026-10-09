@@ -252,6 +252,8 @@ pub struct TalkNote {
     pub setting: Setting,
 }
 
+/// A talk note as saved: a tuple, so a new field breaks every old save
+/// (see `TieRepr`).
 pub(super) type NoteRepr = (u64, u64, Topic, Outcome, Option<u64>, Setting);
 
 impl From<NoteRepr> for TalkNote {

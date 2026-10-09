@@ -219,8 +219,6 @@ impl Rail {
         None
     }
 
-    /// [train-inspect] What train `id` is doing: standing at a stop, held
-    /// at a signal or at the branch switch, running, or leaving town.
     /// [freight] Units of imports waiting out of town for `yard`, and the
     /// number of orders.
     pub fn orders_for(&self, yard: BuildingId) -> (usize, f32) {

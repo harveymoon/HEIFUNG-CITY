@@ -239,13 +239,13 @@ impl Car {
         idm_with(self.v, v0, gap, dv, p.headway, p.accel)
     }
 
-    /// The route asks for a change into the lane beside this one next.
     /// The sideways offset a glide under way puts the car at now.
     pub(super) fn glide_at(&self) -> f32 {
         let u = (self.glide_done / self.glide_len.max(0.1)).min(1.0);
         self.glide_from * 0.5 * (1.0 + (std::f32::consts::PI * u).cos())
     }
 
+    /// The route asks for a change into the lane beside this one next.
     pub(super) fn change_pending(&self, net: &LaneNetwork) -> Option<LaneId> {
         let next = *self.route.get(self.idx + 1)?;
         net.lanes[self.route[self.idx] as usize].is_beside(next).then_some(next)

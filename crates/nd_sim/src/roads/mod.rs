@@ -64,9 +64,9 @@ pub enum RoadKind {
     Rail,
 }
 
-/// Half the width of a path, in metres.
 /// Half the corridor of a single track: ballast shoulder to ballast shoulder.
 pub const RAIL_HALF_WIDTH: f32 = 2.4;
+/// Half the width of a path, in metres.
 pub const PATH_HALF_WIDTH: f32 = 1.6;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -213,9 +213,6 @@ const WAIT_GRAPH_STALL: f32 = 60.0;
 const DEAD_END_GIVE_UP: f32 = 5.0;
 /// Trucks cruise a little below the limit, which is what gets them overtaken.
 const TRUCK_SPEED_FACTOR: f32 = 0.85;
-/// Trips older than this (traffic seconds) end where the car stands. A bus
-/// is never ended this way (its riders would be teleported with it): it is
-/// re-planned from where it stands instead.
 /// [services] Emergency vehicles drive this much over the limit; cars
 /// pulled over for one stand this far to the right (`traffic/siren.rs`).
 const SIREN_SPEED_FACTOR: f32 = 1.25;
