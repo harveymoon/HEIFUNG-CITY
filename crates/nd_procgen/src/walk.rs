@@ -21,9 +21,7 @@ use nd_sim::{rng_for, LandUse};
 use rand::Rng;
 use std::collections::HashMap;
 
-/// Pavement top, matching the street generator's kerb.
-const PAVE_Y: f32 = 0.155;
-const ROAD_Y: f32 = 0.05;
+use crate::depth::{WALK_PAVE_Y as PAVE_Y, WALK_ROAD_Y as ROAD_Y};
 
 /// The radius the app should draw walk detail in, and how far the walker
 /// may stray before it is redrawn.
@@ -40,11 +38,9 @@ struct Frontage {
     side: f32,
 }
 
-/// Street-level detail within `radius` of `centre` (sim coordinates).
-pub fn walk_detail(world: &World, pal: &Palette, centre: Vec2, radius: f32) -> Geometry {
-    let mut g = Geometry::default();
+/// Which lots front each segment, and on which side.
+fn frontages(world: &World) -> HashMap<u32, Vec<Frontage>> {
     let roads = &world.roads;
-    // Which lots front each segment, and on which side.
     let mut fronts: HashMap<u32, Vec<Frontage>> = HashMap::new();
     for lot in world.lots.values() {
         if !lot.usable() {
@@ -66,9 +62,63 @@ pub fn walk_detail(world: &World, pal: &Palette, centre: Vec2, radius: f32) -> G
         let built = lot.building.and_then(|id| world.buildings.get(id)).is_some_and(|b| b.construction.is_none());
         fronts.entry(lot.front_segment.0).or_default().push(Frontage { land_use: lot.land_use, built, s0, s1, side });
     }
-    let near = |p: Vec2| p.distance(centre) < radius;
-    let heights: &[f32] = if world.relief { &world.road_z } else { &[] };
-    let inner: &[Vec<(f32, f32)>] = if world.relief { &world.road_inner } else { &[] };
+    fronts
+}
+
+/// One street segment being dressed: its frame, its stretch clear of the
+/// junctions at its ends, and what fronts it.
+struct WalkSeg<'a> {
+    world: &'a World,
+    pal: &'a Palette,
+    sid: nd_sim::SegmentId,
+    a: Vec2,
+    b: Vec2,
+    d: Vec2,
+    right: Vec2,
+    yaw: f32,
+    hw: f32,
+    len: f32,
+    trim0: f32,
+    trim1: f32,
+    lv_mid: f32,
+    fronts: &'a [Frontage],
+    centre: Vec2,
+    radius: f32,
+}
+
+impl WalkSeg<'_> {
+    fn at(&self, s: f32, side: f32, off: f32) -> Vec2 {
+        self.a + self.d * s + self.right * side * off
+    }
+
+    fn near(&self, p: Vec2) -> bool {
+        p.distance(self.centre) < self.radius
+    }
+
+    fn frontage(&self, s: f32, side: f32) -> Option<Frontage> {
+        self.fronts.iter().find(|f| f.side == side && s >= f.s0 - 1.0 && s <= f.s1 + 1.0).copied()
+    }
+
+    /// The road's own height beside `p` (0 on a flat city).
+    fn seg_z(&self, p: Vec2) -> f32 {
+        if self.world.relief { self.world.road_height(self.sid, nd_sim::roads::project_on_segment(p, self.a, self.b).0) } else { 0.0 }
+    }
+
+    /// Not on another street's lanes (a sharp fork, a tight corner): the
+    /// pavement is laid out from this piece alone.
+    fn clear(&self, p: Vec2) -> bool {
+        let w = self.world;
+        let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
+        let inner: &[Vec<(f32, f32)>] = if w.relief { &w.road_inner } else { &[] };
+        !crate::street::on_carriageway(&w.roads, heights, inner, p, self.seg_z(p))
+    }
+}
+
+/// Street-level detail within `radius` of `centre` (sim coordinates).
+pub fn walk_detail(world: &World, pal: &Palette, centre: Vec2, radius: f32) -> Geometry {
+    let mut g = Geometry::default();
+    let roads = &world.roads;
+    let fronts = frontages(world);
     for (sid, seg) in roads.alive_segments() {
         // Only streets with pavements: the highway, its ramps and a
         // roundabout's ring have hard shoulders (nobody walks them), and a
@@ -87,176 +137,201 @@ pub fn walk_detail(world: &World, pal: &Palette, centre: Vec2, radius: f32) -> G
             continue;
         }
         let d = (b - a) / len;
-        let right = Vec2::new(-d.y, d.x);
-        let yaw = d.y.atan2(d.x);
-        let hw = seg.half_width();
         let node_r = |n: nd_sim::NodeId| world.traffic.net.node_radius.get(n.0 as usize).copied().unwrap_or(4.0);
-        let trim0 = if roads.street_degree(seg.a) >= 3 { node_r(seg.a) + 1.5 } else { 1.0 };
-        let trim1 = if roads.street_degree(seg.b) >= 3 { node_r(seg.b) + 1.5 } else { 1.0 };
+        let ws = WalkSeg {
+            world,
+            pal,
+            sid,
+            a,
+            b,
+            d,
+            right: Vec2::new(-d.y, d.x),
+            yaw: d.y.atan2(d.x),
+            hw: seg.half_width(),
+            len,
+            trim0: if roads.street_degree(seg.a) >= 3 { node_r(seg.a) + 1.5 } else { 1.0 },
+            trim1: if roads.street_degree(seg.b) >= 3 { node_r(seg.b) + 1.5 } else { 1.0 },
+            lv_mid: world.land_value.at((a + b) * 0.5),
+            fronts: fronts.get(&sid.0).map(|v| v.as_slice()).unwrap_or(&[]),
+            centre,
+            radius,
+        };
         let mut rng = rng_for(world.config.seed ^ (sid.0 as u64).wrapping_mul(0x9e37_79b9), 41);
-        let at = |s: f32, side: f32, off: f32| a + d * s + right * side * off;
-        let segment_fronts = fronts.get(&sid.0).map(|v| v.as_slice()).unwrap_or(&[]);
-        let frontage = |s: f32, side: f32| segment_fronts.iter().find(|f| f.side == side && s >= f.s0 - 1.0 && s <= f.s1 + 1.0).copied();
-        let lv_mid = world.land_value.at((a + b) * 0.5);
         // Everything below is drawn on a flat datum and then set on the
         // road's own height along the segment (`World::road_height`), so a
         // viaduct's pavement carries its clutter up with it and a street on
         // a hillside is not buried. The renderer does not lift this mesh.
         let from = crate::street::marks(&g);
-        let seg_z = |p: Vec2| if world.relief { world.road_height(sid, nd_sim::roads::project_on_segment(p, a, b).0) } else { 0.0 };
-
-        // Things on the pavement, both sides, every few metres.
         for side in [-1.0f32, 1.0] {
-            let mut s = trim0 + rng.random_range(0.0..3.0);
-            while s < len - trim1 {
-                let step = rng.random_range(3.5..8.0);
-                // Each feature of the slot draws from its own stream.
-                let slot: u64 = rng.random();
-                let mut rng = rng_for(slot, 1);
-                let p_back = at(s, side, hw + SIDEWALK - 0.45);
-                let roll: f32 = rng.random();
-                let front = frontage(s, side);
-                let lu = front.map(|f| f.land_use);
-                let built = front.is_some_and(|f| f.built);
-                let lv = world.land_value.at(p_back);
-                // Facing the road from the back of the pavement.
-                let to_road = -right * side;
-                // Nothing on another street's lanes (a sharp fork, a tight
-                // corner): the pavement is laid out from this piece alone.
-                let clear = |p: Vec2| !crate::street::on_carriageway(roads, heights, inner, p, seg_z(p));
-                if near(p_back) && clear(p_back) && clear(at(s, side, hw + SIDEWALK * 0.55)) {
-                    match (lu, built) {
-                        (Some(LandUse::Commercial | LandUse::Entertainment), true) => {
-                            if roll < 0.32 {
-                                shop_sign(&mut g, pal, &mut rng, p_back, d, to_road);
-                            } else if roll < 0.46 && lv < 0.75 {
-                                food_cart(&mut g, pal, &mut rng, at(s, side, hw + SIDEWALK * 0.55), yaw, to_road);
-                            } else if roll < 0.56 {
-                                vending(&mut g, pal, &mut rng, p_back, yaw, to_road);
-                            } else if roll < 0.66 {
-                                clutter(&mut g, pal, &mut rng, p_back, yaw, lv);
-                            }
-                        }
-                        (Some(LandUse::Residential), _) => {
-                            if roll < 0.12 {
-                                vending(&mut g, pal, &mut rng, p_back, yaw, to_road);
-                            } else if roll < 0.32 {
-                                clutter(&mut g, pal, &mut rng, p_back, yaw, lv);
-                            } else if roll < 0.40 && lv > 0.5 {
-                                planter(&mut g, pal, &mut rng, p_back);
-                            }
-                        }
-                        (Some(LandUse::Industrial), _) => {
-                            if roll < 0.3 {
-                                clutter(&mut g, pal, &mut rng, p_back, yaw, 0.0);
-                            }
-                        }
-                        _ => {
-                            if roll < 0.08 {
-                                clutter(&mut g, pal, &mut rng, p_back, yaw, lv);
-                            }
-                        }
-                    }
-                }
-                // Scooters parked in the gutter, in little rows.
-                let mut rng = rng_for(slot, 2);
-                if rng.random::<f32>() < 0.12 && lv < 0.8 {
-                    let n = rng.random_range(1..=4);
-                    for k in 0..n {
-                        let p = at(s + k as f32 * 0.9, side, hw - SHOULDER * 0.5);
-                        if near(p) && s + k as f32 * 0.9 < len - trim1 {
-                            scooter(&mut g, pal, &mut rng_for(slot, 10 + k as u64), p, yaw + std::f32::consts::FRAC_PI_2 * 0.85 * side);
-                        }
-                    }
-                }
-                // Puddles in the gutter and on sunken slabs: dark glass
-                // with a smear of sign colour in it.
-                let mut rng = rng_for(slot, 3);
-                let wet = 0.08 + 0.25 * (1.0 - lv).clamp(0.0, 1.0);
-                if rng.random::<f32>() < wet {
-                    let on_road = rng.random_bool(0.6);
-                    let p = if on_road { at(s, side, hw - rng.random_range(0.3..1.2)) } else { at(s, side, hw + rng.random_range(0.8..SIDEWALK - 0.6)) };
-                    if near(p) {
-                        puddle(&mut g, pal, &mut rng, p, yaw, if on_road { ROAD_Y + 0.025 } else { PAVE_Y + 0.012 });
-                    }
-                }
-                // Cracks, stains and gum on the slabs: dense where cheap.
-                let crack_n = ((1.0 - lv) * 3.0).round() as i32;
-                for k in 0..crack_n.max(0) {
-                    let mut rng = rng_for(slot, 20 + k as u64);
-                    let p = at(s + rng.random_range(-2.0..2.0), side, hw + rng.random_range(0.5..SIDEWALK - 0.2));
-                    if near(p) {
-                        slab_mark(&mut g, pal, &mut rng, p, yaw, lv);
-                    }
-                }
-                s += step;
-            }
+            pavement(&mut g, &ws, side, &mut rng);
         }
-        // Steam from vents and manholes in the carriageway.
-        let mut s = trim0 + rng.random_range(5.0..25.0);
-        while s < len - trim1 {
-            let step = rng.random_range(25.0..55.0);
-            let mut rng = rng_for(rng.random::<u64>(), 4);
-            let lane = rng.random_range(-(hw - SHOULDER - 0.8).max(0.1)..(hw - SHOULDER - 0.8).max(0.2));
-            let p = at(s, 1.0, lane);
-            if near(p) {
-                let venting = rng.random::<f32>() < 0.45 + 0.3 * (1.0 - lv_mid).clamp(0.0, 1.0);
-                manhole(&mut g, pal, p, venting, &mut rng);
-            }
-            s += step;
-        }
+        manholes(&mut g, &ws, &mut rng);
         // Cables across the street on cheap blocks, a banner or lanterns now and then.
-        if lv_mid < 0.65 {
-            let mut s = trim0 + rng.random_range(3.0..12.0);
-            while s < len - trim1 {
-                let step = rng.random_range(10.0..26.0);
-                let mut rng = rng_for(rng.random::<u64>(), 5);
-                let pa = at(s, -1.0, hw + SIDEWALK - 0.2);
-                let pb = at(s + rng.random_range(-3.0..3.0), 1.0, hw + SIDEWALK - 0.2);
-                if near((pa + pb) * 0.5) {
-                    let ya = rng.random_range(6.0..8.5);
-                    let yb = rng.random_range(6.0..8.5);
-                    let wa = Vec3::new(pa.x, ya, pa.y);
-                    let wb = Vec3::new(pb.x, yb, pb.y);
-                    for k in 0..rng.random_range(1..=3) {
-                        let off = Vec3::Y * (k as f32 * 0.25);
-                        g.part(Matte).wire(wa + off, wb + off, rng.random_range(0.6..1.4), 0.03, rgba(DARK));
-                    }
-                    for (p, y) in [(pa, ya), (pb, yb)] {
-                        g.part(Matte).boxed(Vec3::new(p.x, y - 0.1, p.y), Vec3::new(0.15, 0.4, 0.15), yaw, rgba(CHARCOAL));
-                    }
-                    match rng.random_range(0..4) {
-                        0 => {
-                            // Lanterns hung along the cable.
-                            let col = if rng.random_bool(0.6) { [2.0, 0.35, 0.18] } else { pal.lamp };
-                            for i in 1..6 {
-                                let t = i as f32 / 6.0;
-                                let q = wa.lerp(wb, t) - Vec3::Y * (4.0 * t * (1.0 - t) * 1.0 + 0.5);
-                                g.part(Glow).boxed(q, Vec3::new(0.35, 0.5, 0.35), 0.0, rgba(col));
-                            }
-                        }
-                        1 => {
-                            // A cloth banner over the middle of the road, lettered in light.
-                            let m = wa.lerp(wb, 0.5) - Vec3::Y * 1.6;
-                            let across = Vec3::new(right.x, 0.0, right.y);
-                            let along = Vec3::new(d.x, 0.0, d.y);
-                            g.part(Tarp).decal(m, across, Vec3::Y, 4.0, 1.0, along, rgba(mul(pick(&mut rng, &pal.awning_colors), 0.9)));
-                            g.part(Tarp).decal(m, -across, Vec3::Y, 4.0, 1.0, -along, rgba(mul(pick(&mut rng, &pal.awning_colors), 0.9)));
-                            let sc = mul(pick(&mut rng, &pal.sign_colors), 0.8);
-                            g.part(Glow).decal(m + along * 0.02, across, Vec3::Y, 3.0, 0.5, along, rgba(sc));
-                            g.part(Glow).decal(m - along * 0.02, -across, Vec3::Y, 3.0, 0.5, -along, rgba(sc));
-                        }
-                        _ => {}
-                    }
-                }
-                s += step;
-            }
+        if ws.lv_mid < 0.65 {
+            cables(&mut g, &ws, &mut rng);
         }
         if world.relief {
             crate::street::lift_since(&mut g, &from, |p| world.road_height(sid, nd_sim::roads::project_on_segment(p, a, b).0));
         }
     }
     g
+}
+
+/// Things on one side's pavement, every few metres: each slot spaced by
+/// the segment's stream and drawn from a seed of its own.
+fn pavement(g: &mut Geometry, ws: &WalkSeg, side: f32, rng: &mut impl Rng) {
+    let mut s = ws.trim0 + rng.random_range(0.0..3.0);
+    while s < ws.len - ws.trim1 {
+        let step = rng.random_range(3.5..8.0);
+        // Each feature of the slot draws from its own stream.
+        let slot: u64 = rng.random();
+        pavement_slot(g, ws, s, side, slot);
+        s += step;
+    }
+}
+
+fn pavement_slot(g: &mut Geometry, ws: &WalkSeg, s: f32, side: f32, slot: u64) {
+    let (pal, hw, yaw) = (ws.pal, ws.hw, ws.yaw);
+    let mut rng = rng_for(slot, 1);
+    let p_back = ws.at(s, side, hw + SIDEWALK - 0.45);
+    let roll: f32 = rng.random();
+    let front = ws.frontage(s, side);
+    let lu = front.map(|f| f.land_use);
+    let built = front.is_some_and(|f| f.built);
+    let lv = ws.world.land_value.at(p_back);
+    // Facing the road from the back of the pavement.
+    let to_road = -ws.right * side;
+    if ws.near(p_back) && ws.clear(p_back) && ws.clear(ws.at(s, side, hw + SIDEWALK * 0.55)) {
+        match (lu, built) {
+            (Some(LandUse::Commercial | LandUse::Entertainment), true) => {
+                if roll < 0.32 {
+                    shop_sign(g, pal, &mut rng, p_back, ws.d, to_road);
+                } else if roll < 0.46 && lv < 0.75 {
+                    food_cart(g, pal, &mut rng, ws.at(s, side, hw + SIDEWALK * 0.55), yaw, to_road);
+                } else if roll < 0.56 {
+                    vending(g, pal, &mut rng, p_back, yaw, to_road);
+                } else if roll < 0.66 {
+                    clutter(g, pal, &mut rng, p_back, yaw, lv);
+                }
+            }
+            (Some(LandUse::Residential), _) => {
+                if roll < 0.12 {
+                    vending(g, pal, &mut rng, p_back, yaw, to_road);
+                } else if roll < 0.32 {
+                    clutter(g, pal, &mut rng, p_back, yaw, lv);
+                } else if roll < 0.40 && lv > 0.5 {
+                    planter(g, pal, &mut rng, p_back);
+                }
+            }
+            (Some(LandUse::Industrial), _) => {
+                if roll < 0.3 {
+                    clutter(g, pal, &mut rng, p_back, yaw, 0.0);
+                }
+            }
+            _ => {
+                if roll < 0.08 {
+                    clutter(g, pal, &mut rng, p_back, yaw, lv);
+                }
+            }
+        }
+    }
+    // Scooters parked in the gutter, in little rows.
+    let mut rng = rng_for(slot, 2);
+    if rng.random::<f32>() < 0.12 && lv < 0.8 {
+        let n = rng.random_range(1..=4);
+        for k in 0..n {
+            let p = ws.at(s + k as f32 * 0.9, side, hw - SHOULDER * 0.5);
+            if ws.near(p) && s + k as f32 * 0.9 < ws.len - ws.trim1 {
+                scooter(g, pal, &mut rng_for(slot, 10 + k as u64), p, yaw + std::f32::consts::FRAC_PI_2 * 0.85 * side);
+            }
+        }
+    }
+    // Puddles in the gutter and on sunken slabs: dark glass
+    // with a smear of sign colour in it.
+    let mut rng = rng_for(slot, 3);
+    let wet = 0.08 + 0.25 * (1.0 - lv).clamp(0.0, 1.0);
+    if rng.random::<f32>() < wet {
+        let on_road = rng.random_bool(0.6);
+        let p = if on_road { ws.at(s, side, hw - rng.random_range(0.3..1.2)) } else { ws.at(s, side, hw + rng.random_range(0.8..SIDEWALK - 0.6)) };
+        if ws.near(p) {
+            puddle(g, pal, &mut rng, p, yaw, if on_road { ROAD_Y + 0.025 } else { PAVE_Y + 0.012 });
+        }
+    }
+    // Cracks, stains and gum on the slabs: dense where cheap.
+    let crack_n = ((1.0 - lv) * 3.0).round() as i32;
+    for k in 0..crack_n.max(0) {
+        let mut rng = rng_for(slot, 20 + k as u64);
+        let p = ws.at(s + rng.random_range(-2.0..2.0), side, hw + rng.random_range(0.5..SIDEWALK - 0.2));
+        if ws.near(p) {
+            slab_mark(g, pal, &mut rng, p, yaw, lv);
+        }
+    }
+}
+
+/// Steam from vents and manholes in the carriageway.
+fn manholes(g: &mut Geometry, ws: &WalkSeg, rng: &mut impl Rng) {
+    let hw = ws.hw;
+    let mut s = ws.trim0 + rng.random_range(5.0..25.0);
+    while s < ws.len - ws.trim1 {
+        let step = rng.random_range(25.0..55.0);
+        let mut rng = rng_for(rng.random::<u64>(), 4);
+        let lane = rng.random_range(-(hw - SHOULDER - 0.8).max(0.1)..(hw - SHOULDER - 0.8).max(0.2));
+        let p = ws.at(s, 1.0, lane);
+        if ws.near(p) {
+            let venting = rng.random::<f32>() < 0.45 + 0.3 * (1.0 - ws.lv_mid).clamp(0.0, 1.0);
+            manhole(g, ws.pal, p, venting, &mut rng);
+        }
+        s += step;
+    }
+}
+
+/// Cables strung across the street, now and then with lanterns hung along
+/// them or a banner over the middle of the road.
+fn cables(g: &mut Geometry, ws: &WalkSeg, rng: &mut impl Rng) {
+    let (pal, hw) = (ws.pal, ws.hw);
+    let mut s = ws.trim0 + rng.random_range(3.0..12.0);
+    while s < ws.len - ws.trim1 {
+        let step = rng.random_range(10.0..26.0);
+        let mut rng = rng_for(rng.random::<u64>(), 5);
+        let pa = ws.at(s, -1.0, hw + SIDEWALK - 0.2);
+        let pb = ws.at(s + rng.random_range(-3.0..3.0), 1.0, hw + SIDEWALK - 0.2);
+        if ws.near((pa + pb) * 0.5) {
+            let ya = rng.random_range(6.0..8.5);
+            let yb = rng.random_range(6.0..8.5);
+            let wa = Vec3::new(pa.x, ya, pa.y);
+            let wb = Vec3::new(pb.x, yb, pb.y);
+            for k in 0..rng.random_range(1..=3) {
+                let off = Vec3::Y * (k as f32 * 0.25);
+                g.part(Matte).wire(wa + off, wb + off, rng.random_range(0.6..1.4), 0.03, rgba(DARK));
+            }
+            for (p, y) in [(pa, ya), (pb, yb)] {
+                g.part(Matte).boxed(Vec3::new(p.x, y - 0.1, p.y), Vec3::new(0.15, 0.4, 0.15), ws.yaw, rgba(CHARCOAL));
+            }
+            match rng.random_range(0..4) {
+                0 => {
+                    // Lanterns hung along the cable.
+                    let col = if rng.random_bool(0.6) { pal.lantern } else { pal.lamp };
+                    for i in 1..6 {
+                        let t = i as f32 / 6.0;
+                        let q = wa.lerp(wb, t) - Vec3::Y * (4.0 * t * (1.0 - t) * 1.0 + 0.5);
+                        g.part(Glow).boxed(q, Vec3::new(0.35, 0.5, 0.35), 0.0, rgba(col));
+                    }
+                }
+                1 => {
+                    // A cloth banner over the middle of the road, lettered in light.
+                    let m = wa.lerp(wb, 0.5) - Vec3::Y * 1.6;
+                    let across = Vec3::new(ws.right.x, 0.0, ws.right.y);
+                    let along = Vec3::new(ws.d.x, 0.0, ws.d.y);
+                    let awning = [(); 2].map(|_| rgba(mul(pick(&mut rng, &pal.awning_colors), 0.9)));
+                    g.part(Tarp).decal2(m, across, Vec3::Y, 4.0, 1.0, along, 0.0, awning);
+                    let sc = mul(pick(&mut rng, &pal.sign_colors), 0.8);
+                    g.part(Glow).decal2(m, across, Vec3::Y, 3.0, 0.5, along, 0.02, [rgba(sc); 2]);
+                }
+                _ => {}
+            }
+        }
+        s += step;
+    }
 }
 
 /// Eye-level signage for a shop: an A-frame board, a standing lightbox or a
@@ -272,8 +347,7 @@ fn shop_sign(g: &mut Geometry, pal: &Palette, rng: &mut impl Rng, p: Vec2, d: Ve
             // A-frame: two boards leaning together, a lit menu on the street face.
             let c = base + out * 0.35 + Vec3::Y * 0.5;
             g.part(Matte).boxed(c, Vec3::new(0.7, 1.0, 0.45), yaw, rgba(DARK));
-            g.part(Glow).decal(c + out * 0.24, along, Vec3::Y, 0.55, 0.75, out, rgba(mul(sc, 0.8)));
-            g.part(Glow).decal(c - out * 0.24, -along, Vec3::Y, 0.55, 0.75, -out, rgba(mul(sc, 0.6)));
+            g.part(Glow).decal2(c, along, Vec3::Y, 0.55, 0.75, out, 0.24, [rgba(mul(sc, 0.8)), rgba(mul(sc, 0.6))]);
         }
         1 => {
             // Standing lightbox, two lit faces along the pavement.
@@ -325,31 +399,30 @@ fn food_cart(g: &mut Geometry, pal: &Palette, rng: &mut impl Rng, p: Vec2, yaw: 
     }
     g.part(Tarp).boxed(base + Vec3::Y * 2.35 + out * 0.2, Vec3::new(2.1, 0.08, 1.4), yaw, rgba(pick(rng, &pal.awning_colors)));
     g.part(Glow).decal(base + Vec3::Y * 2.2 + out * 0.91, along, Vec3::Y, 1.8, 0.22, out, rgba(mul(pick(rng, &pal.sign_colors), 0.9)));
-    g.part(Glow).boxed(base + Vec3::Y * 2.0 + out * 0.5, Vec3::new(0.3, 0.4, 0.3), 0.0, rgba(if rng.random_bool(0.5) { [2.0, 0.4, 0.2] } else { pal.lamp }));
+    g.part(Glow).boxed(base + Vec3::Y * 2.0 + out * 0.5, Vec3::new(0.3, 0.4, 0.3), 0.0, rgba(if rng.random_bool(0.5) { pal.cart_lamp } else { pal.lamp }));
     // Pot and steam.
     let pot = base + Vec3::Y * 1.15 - along * 0.4;
     g.part(Metal).cylinder(Vec2::new(pot.x, pot.z), 0.25, 0.25, pot.y - 0.1, pot.y + 0.15, 8, rgba(mul(pal.steel, 0.8)));
-    steam(g, pot + Vec3::Y * 0.2, 0.25, 3);
+    steam(g, pal, pot + Vec3::Y * 0.2, 0.25, 3);
     // Stools on the pavement.
     for k in 0..rng.random_range(1..=3) {
         let q = base + out * 1.0 + along * (k as f32 * 0.6 - 0.6);
-        g.part(Matte).boxed(q + Vec3::Y * 0.22, Vec3::new(0.3, 0.44, 0.3), 0.0, rgba([0.75, 0.16, 0.12]));
+        g.part(Matte).boxed(q + Vec3::Y * 0.22, Vec3::new(0.3, 0.44, 0.3), 0.0, rgba(pal.stool));
     }
 }
 
 /// Steam: a few thin, faint wisps curling up, unlit so they read as a
 /// haze at night. Solid puffs looked like white boxes; wisps do not.
-fn steam(g: &mut Geometry, at: Vec3, r: f32, puffs: i32) {
+fn steam(g: &mut Geometry, pal: &Palette, at: Vec3, r: f32, puffs: i32) {
     for k in 0..puffs {
         let t = k as f32;
         let a = t * 2.1;
         let off = Vec3::new(a.cos(), 0.0, a.sin()) * r * 0.5;
         let c = at + off + Vec3::Y * (0.5 + t * 0.35);
         let h = 0.9 + 0.3 * t;
-        let col = rgba(mul([0.16, 0.17, 0.19], 1.0 - 0.15 * t));
+        let col = rgba(mul(pal.steam, 1.0 - 0.15 * t));
         for (along, out) in [(Vec3::X, Vec3::Z), (Vec3::Z, -Vec3::X)] {
-            g.part(Glow).decal(c, along, Vec3::Y, 0.12 + 0.05 * t, h, out, col);
-            g.part(Glow).decal(c, -along, Vec3::Y, 0.12 + 0.05 * t, h, -out, col);
+            g.part(Glow).decal2(c, along, Vec3::Y, 0.12 + 0.05 * t, h, out, 0.0, [col; 2]);
         }
     }
 }
@@ -359,7 +432,7 @@ fn manhole(g: &mut Geometry, pal: &Palette, p: Vec2, venting: bool, rng: &mut im
     let ring: Vec<Vec2> = (0..10).map(|k| p + Vec2::from_angle(k as f32 / 10.0 * std::f32::consts::TAU) * 0.45).collect();
     g.part(Metal).ground_polygon(&ring, ROAD_Y + 0.03, rgba(mul(pal.steel, 0.45)));
     if venting {
-        steam(g, Vec3::new(p.x, ROAD_Y, p.y), rng.random_range(0.35..0.6), 4);
+        steam(g, pal, Vec3::new(p.x, ROAD_Y, p.y), rng.random_range(0.35..0.6), 4);
     }
 }
 
@@ -441,7 +514,7 @@ fn clutter(g: &mut Geometry, pal: &Palette, rng: &mut impl Rng, p: Vec2, yaw: f3
             // Bin bags piled against the wall.
             for k in 0..rng.random_range(2..=5) {
                 let q = base + dir * (k as f32 * 0.45 - 0.6) + Vec3::Y * 0.22;
-                g.part(Tarp).boxed(q, Vec3::new(0.5, 0.45, 0.45), yaw + k as f32, rgba([0.06, 0.06, 0.07]));
+                g.part(Tarp).boxed(q, Vec3::new(0.5, 0.45, 0.45), yaw + k as f32, rgba(pal.bin_bag));
             }
         }
         1 => {
@@ -465,11 +538,11 @@ fn clutter(g: &mut Geometry, pal: &Palette, rng: &mut impl Rng, p: Vec2, yaw: f3
             // Rusted drum with a fire in it, or traffic cones.
             if rng.random_bool(0.4) {
                 g.part(Rust).cylinder(p, 0.3, 0.3, PAVE_Y, PAVE_Y + 0.9, 10, rgba(pal.rust));
-                g.part(Glow).boxed(base + Vec3::Y * 1.0, Vec3::new(0.3, 0.25, 0.3), 0.0, rgba([2.0, 0.9, 0.3]));
+                g.part(Glow).boxed(base + Vec3::Y * 1.0, Vec3::new(0.3, 0.25, 0.3), 0.0, rgba(pal.fire));
             } else {
                 for k in 0..3 {
                     let q = p + Vec2::new(dir.x, dir.z) * (k as f32 * 0.6);
-                    g.part(Matte).cylinder(q, 0.16, 0.03, PAVE_Y, PAVE_Y + 0.6, 6, rgba([1.0, 0.35, 0.05]));
+                    g.part(Matte).cylinder(q, 0.16, 0.03, PAVE_Y, PAVE_Y + 0.6, 6, rgba(pal.cone));
                 }
             }
         }

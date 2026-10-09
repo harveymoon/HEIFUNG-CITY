@@ -106,6 +106,35 @@ pub struct Palette {
     /// Tactile paving at a dropped kerb: the classic warning yellow, lit
     /// like the slabs round it (not a glow).
     pub tactile: [f32; 3],
+    // [refactor/procgen-streets] street furniture colours
+    /// Amber beacons on the posts of a mid-block crossing.
+    pub beacon: [f32; 3],
+    /// Red paper lanterns hung on cables across a street.
+    pub lantern: [f32; 3],
+    /// A street food cart's lamp.
+    pub cart_lamp: [f32; 3],
+    /// Red plastic stools by a food cart.
+    pub stool: [f32; 3],
+    /// Steam wisps over carts and manholes (unlit, faint).
+    pub steam: [f32; 3],
+    /// Bin bags heaped on the pavement.
+    pub bin_bag: [f32; 3],
+    /// A bin bag blown against the kerb of a neglected street.
+    pub litter_bag: [f32; 3],
+    /// A fire burning in a rusted drum.
+    pub fire: [f32; 3],
+    /// Traffic cones.
+    pub cone: [f32; 3],
+    /// The neon strip under a footbridge's walkway.
+    pub footbridge_neon: [f32; 3],
+    /// A footbridge's glass balustrade.
+    pub footbridge_glass: [f32; 3],
+    /// Hazard yellow on a toll island's nose.
+    pub hazard: [f32; 3],
+    /// A toll or barrier arm's red.
+    pub barrier_red: [f32; 3],
+    /// The black of a level crossing's lamp hoods and backboards.
+    pub signal_black: [f32; 3],
     /// [climate] What grows in streets, parks and on open ground; set from
     /// the map's climate by `climate::palette_for`, never from the file.
     #[serde(skip)]
@@ -113,6 +142,20 @@ pub struct Palette {
     /// [climate] 0..1 snow on roofs and up-facing surfaces (from the climate).
     #[serde(skip)]
     pub snow: f32,
+    // -- [refactor/procgen] colour tables that were constants in their
+    // generators: now part of the palette (themes and hot reload reach
+    // them), with the old values as defaults. --
+    /// Murals: the street paint of strokes and tags (`social`).
+    pub mural_paint: Vec<[f32; 3]>,
+    /// Murals: a crew's bright neon paints and deep grounds (`social`).
+    pub mural_neon: Vec<[f32; 3]>,
+    pub mural_deep: Vec<[f32; 3]>,
+    /// Vehicle body paints and their neon accents, by
+    /// `VehicleModel::paint` (`vehicles`).
+    pub vehicle_paint: Vec<[f32; 3]>,
+    pub vehicle_neon: Vec<[f32; 3]>,
+    /// Metro line colours, by `MetroLine::color` (`metro`).
+    pub metro_lines: Vec<[f32; 3]>,
 }
 
 impl Default for Palette {
@@ -233,20 +276,39 @@ impl Default for Palette {
             police_light: [0.3, 0.6, 2.6],
             platform_line: [1.4, 1.2, 0.2],
             tactile: [0.78, 0.52, 0.04],
+            beacon: [1.0, 0.62, 0.15],
+            lantern: [2.0, 0.35, 0.18],
+            cart_lamp: [2.0, 0.4, 0.2],
+            stool: [0.75, 0.16, 0.12],
+            steam: [0.16, 0.17, 0.19],
+            bin_bag: [0.06, 0.06, 0.07],
+            litter_bag: [0.07, 0.07, 0.08],
+            fire: [2.0, 0.9, 0.3],
+            cone: [1.0, 0.35, 0.05],
+            footbridge_neon: [0.25, 1.4, 1.8],
+            footbridge_glass: [0.55, 0.75, 0.85],
+            hazard: [0.95, 0.75, 0.1],
+            barrier_red: [0.9, 0.15, 0.12],
+            signal_black: [0.02, 0.02, 0.025],
             flora: crate::climate::Flora::Dry,
             snow: 0.0,
+            mural_paint: crate::social::PAINT.to_vec(),
+            mural_neon: crate::social::NEON.to_vec(),
+            mural_deep: crate::social::DEEP.to_vec(),
+            vehicle_paint: crate::vehicles::PAINT.to_vec(),
+            vehicle_neon: crate::vehicles::NEON.to_vec(),
+            metro_lines: crate::metro::LINE_COLOURS.to_vec(),
         }
     }
 }
 
-/// Neutral grey an emptied colour list falls back to.
-pub const FALLBACK: [f32; 3] = [0.5, 0.5, 0.5];
+pub use crate::color::{at, FALLBACK};
 
-/// Entry `i` of a colour list, wrapping round, or the fallback grey when the
-/// list is empty. Every fixed-index read of a palette list goes through
-/// here so a hot-reloaded palette with a shortened list cannot panic.
-pub fn at(list: &[[f32; 3]], i: usize) -> [f32; 3] {
-    if list.is_empty() { FALLBACK } else { list[i % list.len()] }
+/// The built-in palette, built once: for callers with no palette of their
+/// own at hand (the metro line swatches in the UI, `vehicle_mesh`).
+pub fn default_palette() -> &'static Palette {
+    static P: std::sync::OnceLock<Palette> = std::sync::OnceLock::new();
+    P.get_or_init(Palette::default)
 }
 
 impl Palette {
@@ -282,6 +344,11 @@ impl Palette {
         }
         if self.awning_colors.is_empty() {
             self.awning_colors = d.awning_colors;
+        }
+        for (list, default) in [(&mut self.mural_paint, d.mural_paint), (&mut self.mural_neon, d.mural_neon), (&mut self.mural_deep, d.mural_deep), (&mut self.vehicle_paint, d.vehicle_paint), (&mut self.vehicle_neon, d.vehicle_neon), (&mut self.metro_lines, d.metro_lines)] {
+            if list.is_empty() {
+                *list = default;
+            }
         }
     }
 
@@ -323,6 +390,10 @@ impl Palette {
     }
     pub fn container(&self, i: usize) -> [f32; 3] {
         at(&self.container_colors, i)
+    }
+    /// Metro line `i`'s colour (wrapping).
+    pub fn metro_line(&self, i: u8) -> [f32; 3] {
+        at(&self.metro_lines, i as usize)
     }
     pub fn container_mark(&self, i: usize) -> [f32; 3] {
         at(&self.container_marks, i)

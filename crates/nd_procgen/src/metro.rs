@@ -4,7 +4,8 @@
 //! cars themselves. The entrances at street level are buildings
 //! (`buildings::subway`).
 
-use crate::buildings::parts::{mul, rgba};
+use crate::color::{mul, rgba};
+use crate::palette::Palette;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::subway::{CAR_LEN, DEPTH, TRACK_OFFSET};
@@ -21,8 +22,10 @@ pub const LINE_COLOURS: [[f32; 3]; 8] = [
     [1.4, 1.5, 1.5],   // silver
 ];
 
+/// Line `i`'s colour in the default palette (the UI's swatches);
+/// meshes take [`Palette::metro_line`] from the palette they are drawn in.
 pub fn line_colour(i: u8) -> [f32; 3] {
-    LINE_COLOURS[i as usize % LINE_COLOURS.len()]
+    crate::palette::default_palette().metro_line(i)
 }
 
 /// One line as the renderer hands it over.
@@ -47,13 +50,13 @@ pub const PLATFORM_LEN: f32 = 90.0;
 
 /// The tunnels and platforms, with the ground height under any point from
 /// `ground` (tunnels follow it at `DEPTH` below).
-pub fn tunnels(lines: &[TunnelLine], stations: &[PlatformSite], ground: &dyn Fn(Vec2) -> f32) -> Geometry {
+pub fn tunnels(lines: &[TunnelLine], stations: &[PlatformSite], ground: &dyn Fn(Vec2) -> f32, pal: &Palette) -> Geometry {
     let mut g = Geometry::default();
     let wall = rgba([0.32, 0.33, 0.36]);
     let floor = rgba([0.2, 0.2, 0.22]);
     let rail = rgba([0.55, 0.55, 0.6]);
     for line in lines {
-        let glow = rgba(mul(line_colour(line.colour), 0.8));
+        let glow = rgba(mul(pal.metro_line(line.colour), 0.8));
         // The whole line as one mitred path, its floor at `DEPTH` under the
         // ground at every vertex: no steps on a slope, no gaps or overlaps
         // at a bend (each leg used to be a box at its own middle's depth).
@@ -85,7 +88,7 @@ pub fn tunnels(lines: &[TunnelLine], stations: &[PlatformSite], ground: &dyn Fn(
         let y = ground(s.at) - DEPTH;
         let d = s.dir.normalize_or_zero();
         let (a, b) = (s.at - d * PLATFORM_LEN * 0.5, s.at + d * PLATFORM_LEN * 0.5);
-        let glow = rgba(mul(line_colour(s.colour), 0.9));
+        let glow = rgba(mul(pal.metro_line(s.colour), 0.9));
         // An island platform between the bores, lit edges, a hall box round it.
         g.part(Paving).strip_box(a, b, 0.0, TRACK_OFFSET * 2.0 - 1.6, y, y + 1.0, rgba([0.62, 0.6, 0.56]));
         for side in [-1.0f32, 1.0] {
@@ -138,10 +141,10 @@ fn sloped_box(m: &mut crate::mesh::MeshData, pts: &[Vec2], ys: &[f32], offset: f
 /// One metro car at the origin along +x, `CAR_LEN` long: a dark body, a
 /// band of windows lit from inside, a stripe and the head and tail lamps in
 /// the line's colour.
-pub fn metro_car(colour: u8) -> Geometry {
+pub fn metro_car(colour: u8, pal: &Palette) -> Geometry {
     let mut g = Geometry::default();
     let (l, w, h) = (CAR_LEN, 2.8, 3.3);
-    let line = line_colour(colour);
+    let line = pal.metro_line(colour);
     g.part(Panel).boxed(Vec3::new(0.0, h * 0.5 + 0.3, 0.0), Vec3::new(l, h, w), 0.0, rgba([0.75, 0.77, 0.8]));
     g.part(Metal).boxed(Vec3::new(0.0, 0.25, 0.0), Vec3::new(l * 0.9, 0.5, w * 0.8), 0.0, rgba([0.15, 0.15, 0.17]));
     for side in [-1.0f32, 1.0] {
@@ -165,7 +168,7 @@ mod tests {
         let path = [Vec2::ZERO, Vec2::new(100.0, 0.0), Vec2::new(200.0, 50.0)];
         let lines = [TunnelLine { path: &path, colour: 1 }];
         let stations = [PlatformSite { at: Vec2::new(100.0, 0.0), dir: Vec2::X, entrance: Vec2::new(110.0, 30.0), colour: 1 }];
-        let g = tunnels(&lines, &stations, &|_| 5.0);
+        let g = tunnels(&lines, &stations, &|_| 5.0, &Palette::default());
         assert!(g.triangle_count() > 100);
         let mut top = f32::MIN;
         for (s, m) in g.iter() {
@@ -177,7 +180,7 @@ mod tests {
             }
         }
         assert!(top < 5.0 - DEPTH + 6.5, "bores and platforms stay underground: {top}");
-        assert!(metro_car(3).triangle_count() > 20);
+        assert!(metro_car(3, &Palette::default()).triangle_count() > 20);
         assert_eq!(line_colour(9), LINE_COLOURS[1]);
     }
 
@@ -190,7 +193,7 @@ mod tests {
         let path = [Vec2::ZERO, Vec2::new(60.0, 0.0), Vec2::new(110.0, 45.0), Vec2::new(120.0, 120.0)];
         let lines = [TunnelLine { path: &path, colour: 2 }];
         let ground = |p: Vec2| 20.0 + p.x * 0.12 + p.y * 0.05;
-        let g = tunnels(&lines, &[], &ground);
+        let g = tunnels(&lines, &[], &ground, &Palette::default());
         let m = g.get(Concrete);
         let tops: Vec<[Vec3; 3]> = m
             .indices

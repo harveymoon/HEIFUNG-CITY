@@ -13,7 +13,7 @@
 //! gets a small gate across the path. Lamps and arms are the app's to
 //! light and move.
 
-use crate::buildings::parts::{mul, rgba};
+use crate::color::{mul, rgba};
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
@@ -21,9 +21,9 @@ use nd_sim::level_crossing::{CrossingGuard, LevelCrossing};
 use nd_sim::zoning::SIDEWALK;
 
 /// The pavement's top, as the street mesh lays it.
-pub const KERB_H: f32 = 0.16;
+pub use crate::depth::KERB_H;
 /// Height of a barrier's pivot over the ground (a footpath gate's lower).
-pub const PIVOT_Y: f32 = 1.0;
+pub(crate) const PIVOT_Y: f32 = 1.0;
 pub const GATE_PIVOT_Y: f32 = 0.85;
 /// Height of the flashing lamps' centres.
 pub const LAMP_Y: f32 = 2.75;
@@ -113,7 +113,7 @@ fn board(g: &mut Geometry, center: Vec3, along: Vec3, up: Vec3, w: f32, h: f32, 
 pub fn furniture(g: &mut Geometry, pal: &Palette, rigs: &[CrossingRig]) {
     let white = rgba(mul(pal.chalk, 0.95));
     let grey = rgba(mul(pal.steel, 0.7));
-    let black = rgba([0.02, 0.02, 0.025]);
+    let black = rgba(pal.signal_black);
     let red = rgba(STRIPE_RED);
     for r in rigs {
         let f3 = Vec3::new(r.facing.x, 0.0, r.facing.y);

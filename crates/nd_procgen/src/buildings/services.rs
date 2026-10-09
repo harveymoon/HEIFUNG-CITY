@@ -279,7 +279,7 @@ pub fn school(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         roof_gear(g, c, rng, &wing, h, 0.2);
     }
     // The yard: a court with lines and hoops, a fence, trees on the edge.
-    let (lo, hi) = bounds(&wing);
+    let (_, hi) = bounds(&wing);
     let (llo, lhi) = bounds(&c.lot_poly);
     let yv = (hi.y + lhi.y) * 0.5;
     let court = fit_inside(c, &rect((llo.x + lhi.x) * 0.5, yv, ((lhi.x - llo.x) * 0.3).min(14.0), ((lhi.y - hi.y) * 0.3).clamp(1.0, 8.0)));
@@ -301,7 +301,6 @@ pub fn school(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             tree_in(g, f, pal, p, 4.0, 2.6, pal.foliage);
         }
     }
-    let _ = lo;
     fence_lot(g, c, &offset_poly(&c.lot_poly, 0.4), 1.8, false);
 }
 
@@ -337,7 +336,7 @@ pub fn dispatch_center(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             dish(g, f, p, h, 1.0 + k as f32 * 0.4, [0.85, 0.85, 0.85]);
         }
     }
-    g.part(Glow).boxed(f.at2(a, h + mast + 0.3), Vec3::splat(0.5), 0.0, rgba(pal.aviation_light));
+    aviation_light(g, pal, f.at2(a, h + mast + 0.3), 0.5);
     fence_lot(g, c, &offset_poly(&c.lot_poly, 0.4), 2.4, true);
     floodlight(g, c, front.at(front.len * 0.4, -1.2), 6.0);
 }
@@ -577,7 +576,7 @@ pub fn prison(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // Watchtowers at the corners of the wall and floodlights on the yard.
     for p in wall.iter() {
-        let inset = *p + (poly_center(&wall) - *p).normalize_or_zero() * 1.6;
+        let inset = toward(*p, poly_center(&wall), 1.6);
         if !c.inside_local(inset) || distance_to_boundary(inset, &c.lot_poly) < 1.0 {
             continue;
         }

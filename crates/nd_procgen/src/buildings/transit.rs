@@ -55,7 +55,7 @@ pub fn bus_depot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // Fuel island and wash arch by one side, office by the gate.
     let fuel = Vec2::new(hi.x - 6.0, lo.y + d * 0.5);
-    if [Vec2::new(3.0, 4.8), Vec2::new(-3.0, 4.8), Vec2::new(3.0, -4.8), Vec2::new(-3.0, -4.8)].iter().all(|o| c.inside_local(fuel + *o)) {
+    if c.all_inside(&[Vec2::new(3.0, 4.8), Vec2::new(-3.0, 4.8), Vec2::new(3.0, -4.8), Vec2::new(-3.0, -4.8)].map(|o| fuel + o)) {
         f.bx(g, Concrete, fuel.x, 0.1, fuel.y, Vec3::new(2.0, 0.2, 7.0), mul(pal.concrete(0), 1.1));
         for k in 0..2 {
             f.bx(g, Metal, fuel.x, 0.9, fuel.y - 2.0 + k as f32 * 4.0, Vec3::new(0.8, 1.6, 0.6), mul(pal.metal_paint(1), 0.9));
@@ -102,7 +102,24 @@ pub fn bus_stops(stops: &[(Vec2, Vec2, Vec2)], pal: &Palette) -> Geometry {
         // Kerb marking: one painted quad.
         let mark = p + out * 0.1;
         g.part(Matte).decal(Vec3::new(mark.x, 0.058, mark.y), Vec3::new(d.x, 0.0, d.y), Vec3::new(-d.y, 0.0, d.x), 12.0, 0.12, Vec3::Y, rgba(mul(pal.lane_marker, 0.9)));
-        crate::street::shelter(&mut g, pal, p + out * 2.4 - d * 1.5, d, out);
+        shelter(&mut g, pal, p + out * 2.4 - d * 1.5, d, out);
     }
     g
+}
+
+/// Bus shelter: two posts, a roof, a back panel and a lit advert.
+fn shelter(g: &mut Geometry, pal: &Palette, p: Vec2, d: Vec2, out: Vec2) {
+    let yaw = d.y.atan2(d.x);
+    for s in [-1.6f32, 1.6] {
+        let q = p + d * s;
+        g.part(Matte).boxed(Vec3::new(q.x, 1.3, q.y), Vec3::new(0.1, 2.6, 0.1), yaw, rgba(CHARCOAL));
+    }
+    g.part(Panel).boxed(Vec3::new(p.x, 2.65, p.y), Vec3::new(3.8, 0.12, 1.8), yaw, rgba(mul(pal.steel, 0.9)));
+    let back = p + out * 0.8;
+    g.part(Glass).boxed(Vec3::new(back.x, 1.4, back.y), Vec3::new(3.6, 2.2, 0.05), yaw, rgba(pal.glass_dark));
+    let ad = p + out * 0.78 + d * 1.0;
+    g.part(Glow).decal(Vec3::new(ad.x, 1.5, ad.y), Vec3::new(d.x, 0.0, d.y), Vec3::Y, 1.2, 1.6, Vec3::new(-out.x, 0.0, -out.y), rgba(mul(pal.led(2), 0.45)));
+    g.part(Glow).boxed(Vec3::new(p.x, 2.57, p.y), Vec3::new(2.0, 0.05, 0.4), yaw, rgba(mul(pal.lamp, 0.6)));
+    let seat = p + out * 0.4;
+    g.part(Wood).boxed(Vec3::new(seat.x, 0.5, seat.y), Vec3::new(2.4, 0.08, 0.4), yaw, rgba(pal.wood));
 }

@@ -8,7 +8,7 @@ use nd_sim::survey::LandLayer;
 use nd_sim::IndustryKind;
 
 /// Length of road one queued car takes up, bumper to bumper plus a gap.
-pub const CAR_SPACE_M: f32 = 7.5;
+pub(crate) const CAR_SPACE_M: f32 = 7.5;
 
 /// Load of a lane in `0..1`: how full it is (cars times the space a queued
 /// car needs over the lane length) and, while anyone is on it, how far below

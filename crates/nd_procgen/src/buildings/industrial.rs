@@ -2,32 +2,12 @@
 //! factories and tank farms in the middle, datacentres and container depots
 //! where it is dear.
 
+use super::kit::{gable_roof, squash};
 use super::parts::*;
 use super::{Ctx, Face};
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use rand::Rng;
-
-/// Shrink a polygon towards its centroid along one axis only, which turns a
-/// footprint into a roof ridge.
-fn squash(poly: &[Vec2], axis: Vec2, k: f32) -> Vec<Vec2> {
-    let c = poly_center(poly);
-    poly.iter()
-        .map(|p| {
-            let d = *p - c;
-            let along = d.dot(axis);
-            c + d - axis * along * (1.0 - k)
-        })
-        .collect()
-}
-
-pub(super) fn gable_roof(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32, ridge: f32, color: [f32; 3]) {
-    let f = &c.frame;
-    let front = c.front_face(poly);
-    let axis = front.out;
-    let top: Vec<Vec2> = squash(poly, axis, 0.04).into_iter().map(|p| clamp_into(poly, p)).collect();
-    loft(g, f, Metal, &offset_poly(poly, -0.4), &top, y, y + ridge, color);
-}
 
 // ── junkyard ─────────────────────────────────────────────────────────────────
 
@@ -90,7 +70,7 @@ pub fn junkyard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Gate sign on the fence line.
     sign_board(g, c, rng, &front, -front.len * 0.25, 2.9, (front.len * 0.3).min(6.0), 0.7);
     // Crane claw on a small gantry over the biggest pile.
-    if c.fw > 18.0 && c.fd > 14.0 && [Vec2::new(-6.0, -c.fd * 0.2), Vec2::new(6.0, -c.fd * 0.2), Vec2::new(-6.0, c.fd * 0.25), Vec2::new(6.0, c.fd * 0.25)].iter().all(|p| c.inside_local(*p)) {
+    if c.fw > 18.0 && c.fd > 14.0 && c.all_inside(&[Vec2::new(-6.0, -c.fd * 0.2), Vec2::new(6.0, -c.fd * 0.2), Vec2::new(-6.0, c.fd * 0.25), Vec2::new(6.0, c.fd * 0.25)]) {
         gantry_crane(g, c, 0.0, -c.fd * 0.2, c.fd * 0.25, 7.0);
     }
     for k in 0..2 {
@@ -225,10 +205,10 @@ pub fn factory(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         if inner.len() < 3 {
             continue;
         }
-        let top = squash(&inner, axis, 0.08);
+        let top = squash(&inner, axis, 1.0 - 0.08);
         loft(g, f, Metal, &inner, &shift_poly(&top, Vec2::new(0.0, -(v1 - v0) * 0.46)), h, h + 2.2, mul(wall, 0.9));
         if coin(rng, 0.6 * (1.0 - c.wear)) {
-            let lit = squash(&inner, axis, 0.5);
+            let lit = squash(&inner, axis, 1.0 - 0.5);
             extrude(g, f, Glow, &shift_poly(&lit, Vec2::new(0.0, (v1 - v0) * 0.2)), h + 0.6, h + 1.6, mul(c.style.window_color(0), 0.6));
         }
     }
@@ -346,7 +326,7 @@ pub fn tank_farm(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let rusty = coin(rng, 0.3 + 0.6 * c.wear);
         tank_vertical(g, f, p, rr, 0.0, h, if rusty { Rust } else { Metal }, if rusty { pal.rust } else { pick(rng, &pal.metal_paint) });
         let w = f.to_world(p.x, p.y);
-        g.part(Glow).boxed(Vec3::new(w.x, h + 1.3, w.y), Vec3::splat(0.3), 0.0, rgba(pal.aviation_light));
+        aviation_light(g, pal, Vec3::new(w.x, h + 1.3, w.y), 0.3);
         tanks.push((p, rr));
     }
     // Pipe runs linking tank tops and running to a manifold by the gate.
@@ -785,7 +765,7 @@ fn derrick(g: &mut Geometry, c: &Ctx, p: Vec2, h: f32) {
         }
     }
     f.bx(g, Metal, p.x, h + 0.4, p.y, Vec3::new(1.6, 0.8, 1.6), steel);
-    f.bx(g, Glow, p.x, h + 1.0, p.y, Vec3::new(0.3, 0.3, 0.3), c.palette.aviation_light);
+    aviation_light_local(g, f, c.palette, p.x, h + 1.0, p.y, 0.3);
     f.bx(g, Concrete, p.x, 0.3, p.y, Vec3::new(5.0, 0.6, 5.0), mul(c.palette.concrete(0), 0.75));
 }
 
@@ -819,7 +799,7 @@ pub fn refinery(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         for k in 1..(h / 6.0) as i32 {
             g.part(Matte).cylinder(w, r + 0.6, r + 0.6, k as f32 * 6.0, k as f32 * 6.0 + 0.15, 12, rgba(mul(pal.warning_light, 0.35)));
         }
-        f.bx(g, Glow, p.x, h + 0.4, p.y, Vec3::splat(0.3), pal.aviation_light);
+        aviation_light_local(g, f, pal, p.x, h + 0.4, p.y, 0.3);
         tops.push(Vec3::new(p.x, h * 0.6, p.y));
     }
     if tops.len() >= 2 {
@@ -915,7 +895,7 @@ pub fn container_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // A rail-mounted gantry over the stacks.
     let (gu, gv0, gv1) = ((lo.x + hi.x) * 0.5, lane_v + 4.0, hi.y - 1.0);
     let posts = [Vec2::new(gu - 2.0, gv0), Vec2::new(gu + 2.0, gv0), Vec2::new(gu - 2.0, gv1 + 1.0), Vec2::new(gu + 2.0, gv1 + 1.0), Vec2::new(gu, gv0 - 1.0)];
-    if hi.y - lane_v > 14.0 && hi.x - lo.x > 14.0 && posts.iter().all(|p| c.inside_local(*p)) {
+    if hi.y - lane_v > 14.0 && hi.x - lo.x > 14.0 && c.all_inside(&posts) {
         gantry_crane(g, c, gu, gv0, gv1, 14.0);
     }
     // Gatehouse and lights.
@@ -1006,7 +986,7 @@ pub fn truck_lot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let mut u = lo.x + bay_w * 0.5;
         while u + bay_w * 0.5 <= hi.x {
             let p = Vec2::new(u, v + bay_d * 0.5);
-            if [Vec2::new(-bay_w * 0.5, -bay_d * 0.5), Vec2::new(bay_w * 0.5, bay_d * 0.5), Vec2::new(-bay_w * 0.5, bay_d * 0.5), Vec2::new(bay_w * 0.5, -bay_d * 0.5)].iter().all(|q| c.inside_local(p + *q)) {
+            if c.all_inside(&[Vec2::new(-bay_w * 0.5, -bay_d * 0.5), Vec2::new(bay_w * 0.5, bay_d * 0.5), Vec2::new(-bay_w * 0.5, bay_d * 0.5), Vec2::new(bay_w * 0.5, -bay_d * 0.5)].map(|q| p + q)) {
                 bays.push(p);
             }
             u += bay_w;

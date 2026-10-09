@@ -16,7 +16,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 /// A lot from an outline in its own frame (frontage along +x at y = 0,
 /// inward +y, counter-clockwise), turned by `yaw` and moved to `at`, so
 /// nothing in the generators can lean on world axes.
-fn lot_of(local: &[Vec2], yaw: f32, at: Vec2) -> Lot {
+pub(crate) fn lot_of(local: &[Vec2], yaw: f32, at: Vec2) -> Lot {
     let (s, c) = yaw.sin_cos();
     let w = |p: Vec2| at + Vec2::new(p.x * c - p.y * s, p.x * s + p.y * c);
     let (lo, hi) = parts::bounds(local);
@@ -46,13 +46,13 @@ fn lot_of(local: &[Vec2], yaw: f32, at: Vec2) -> Lot {
     }
 }
 
-fn rect(w: f32, d: f32) -> Vec<Vec2> {
+pub(crate) fn rect(w: f32, d: f32) -> Vec<Vec2> {
     vec![Vec2::new(-w * 0.5, 0.0), Vec2::new(w * 0.5, 0.0), Vec2::new(w * 0.5, d), Vec2::new(-w * 0.5, d)]
 }
 
 /// The odd parcels: narrow and deep, a small square, long and shallow
 /// (the coal crash), short and very deep, a triangle, a sliver and an L.
-fn odd_lots() -> Vec<(&'static str, Lot)> {
+pub(crate) fn odd_lots() -> Vec<(&'static str, Lot)> {
     let yaw = 0.37;
     let at = Vec2::new(310.0, -170.0);
     vec![
@@ -192,7 +192,7 @@ fn run(r: &mut Report, what: &str, lot: &Lot, lu: LandUse, floors: u8, tier: Tie
 
 /// A league tower only goes up on a lot with room for its base; on a
 /// smaller one the style draws its plain slab.
-fn tower_on(lot: &Lot, floors: u8, k: usize) -> Option<nd_sim::towers::Tower> {
+pub(crate) fn tower_on(lot: &Lot, floors: u8, k: usize) -> Option<nd_sim::towers::Tower> {
     (lot.width().min(lot.depth()) >= 20.0).then(|| tower_for(floors, k))
 }
 
@@ -200,7 +200,7 @@ fn tower_for(floors: u8, k: usize) -> nd_sim::towers::Tower {
     nd_sim::towers::Tower { height: (floors as f32 * 4.0).clamp(120.0, 900.0), design: nd_sim::towers::TowerDesign::ALL[k % 4], seed: 77 + k as u64, started_day: 0, topped_out_day: Some(1), record_bid: false }
 }
 
-fn hq() -> nd_sim::corp::BrandMark {
+pub(crate) fn hq() -> nd_sim::corp::BrandMark {
     nd_sim::corp::BrandMark { colour: [0.9, 0.2, 0.6], shape: Default::default(), monogram: 'N', role: nd_sim::corp::BrandRole::Headquarters, colour_index: 1 }
 }
 

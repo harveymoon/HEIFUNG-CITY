@@ -5,7 +5,7 @@
 //! cyan light line along the crest parapets, lit lamp posts, magenta lights
 //! on the intake towers and glowing edges down the spillway.
 
-use crate::buildings::parts::{mul, rgba};
+use crate::color::{mul, rgba};
 use crate::surface::{Geometry, Surface};
 use glam::{Vec2, Vec3};
 use nd_sim::landscape::{BANK_HEIGHT, WATER_LEVEL};
@@ -178,8 +178,9 @@ pub fn hydro_dam(g: &mut Geometry, c: Vec2, flow: Vec2, width: f32, lot_center: 
         let to = bank + (lot_center - bank).normalize_or_zero() * 10.0;
         let yb = ground(bank).max(BANK_HEIGHT) + 1.2;
         let yt = ground(to).max(BANK_HEIGHT) + 1.2;
-        g.part(Surface::Metal).tube(Vec3::new(base.x, WATER_LEVEL + 1.0, base.y), Vec3::new(bank.x, yb, bank.y), 1.0, 10, rgba(mul(steel, 0.75)));
-        g.part(Surface::Metal).tube(Vec3::new(bank.x, yb, bank.y), Vec3::new(to.x, yt, to.y), 1.0, 10, rgba(mul(steel, 0.75)));
+        // Two lengths of penstock meeting at the bank: no caps at the joint.
+        g.part(Surface::Metal).tube_capped(Vec3::new(base.x, WATER_LEVEL + 1.0, base.y), Vec3::new(bank.x, yb, bank.y), 1.0, 10, true, false, rgba(mul(steel, 0.75)));
+        g.part(Surface::Metal).tube_capped(Vec3::new(bank.x, yb, bank.y), Vec3::new(to.x, yt, to.y), 1.0, 10, false, true, rgba(mul(steel, 0.75)));
         g.part(Surface::Glow).tube(Vec3::new(bank.x, yb + 1.02, bank.y), Vec3::new(to.x, yt + 1.02, to.y), 0.06, 4, rgba(CYAN));
     }
 }

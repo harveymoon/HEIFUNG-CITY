@@ -12,6 +12,7 @@ use super::parts::*;
 use super::Ctx;
 use crate::surface::{Geometry, Surface, Surface::*};
 use glam::{Vec2, Vec3};
+use nd_sim::zoning::point_in_polygon;
 use nd_sim::Tier;
 use rand::Rng;
 
@@ -81,10 +82,6 @@ fn house(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, cu: f32, cv: f32, hw: f3
     Some(p)
 }
 
-/// Is there lot under every point?
-fn all_in(c: &Ctx, pts: &[Vec2]) -> bool {
-    pts.iter().all(|p| c.inside_local(*p))
-}
 
 /// Is there lot in front of `face` from `t0` to `t1` along it, `d` out?
 fn room(c: &Ctx, face: &super::Face, t0: f32, t1: f32, d: f32) -> bool {
@@ -155,7 +152,7 @@ pub fn shacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             let front = c.front_face(&p);
             front.decal(g, f, Matte, 0.0, 0.95, 0.03, 0.85, 1.85, CHARCOAL);
             if rng.random_bool(0.6) {
-                front.decal(g, f, Glass, front.len * 0.28, 1.4, 0.03, 0.6, 0.5, pal.glass_dark);
+                front.glaze(g, c, front.len * 0.28, 1.4, 0.03, 0.6, 0.5, Pane::Dark);
             }
             if rng.random_bool(0.3) {
                 f.bx(g, Tarp, poly_center(&p).x, h + 0.2, poly_center(&p).y, Vec3::new(1.2, 0.05, 1.0), pick(rng, &pal.tarp_colors));
@@ -223,10 +220,10 @@ pub fn trailer_park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                     let n = (face.len / 2.6) as i32;
                     for i in 0..n {
                         let t = -face.len * 0.5 + (i as f32 + 0.5) * face.len / n as f32;
-                        face.decal(g, f, Glass, t, 1.9, 0.03, 0.9, 0.7, pal.glass_dark);
+                        face.glaze(g, c, t, 1.9, 0.03, 0.9, 0.7, Pane::Dark);
                         if coin(rng, c.lit_chance() * 0.6) {
                             let lc = mul(pick(rng, &c.style.window_colors), 0.6);
-                            window_light(g, c, |g| face.decal(g, f, Glow, t, 1.9, 0.05, 0.8, 0.6, lc));
+                            face.glaze(g, c, t, 1.9, 0.05, 0.8, 0.6, Pane::Lit(lc));
                         }
                     }
                 }
@@ -306,7 +303,7 @@ pub fn suburb(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
     let lawn = if c.tier == Tier::Low { mix(LAWN, pal.foliage_dry, 0.5) } else { LAWN };
-    let yard_poly = yard(g, c, 0.2, Foliage, lawn);
+    yard(g, c, 0.2, Foliage, lawn);
     let (w, d) = (c.fw, c.fd);
     let n = ((w / 17.0) as i32).clamp(1, 3);
     let bay = w / n as f32;
@@ -360,21 +357,21 @@ pub fn suburb(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let gap_l = Vec2::new(hu - 0.9, a.y);
         let gap_r = Vec2::new(if garage { right + 3.6 } else { hu + 0.9 }, a.y);
         match c.tier {
-            Tier::Low if all_in(c, &[a, b]) => fence(g, c, a, b, 1.2, false),
+            Tier::Low if c.all_inside(&[a, b]) => fence(g, c, a, b, 1.2, false),
             Tier::Low => {}
             Tier::Mid => {
-                if all_in(c, &[a, gap_l]) {
+                if c.all_inside(&[a, gap_l]) {
                     picket(g, c, a, gap_l, 1.0, WHITE);
                 }
-                if all_in(c, &[gap_r, b]) {
+                if c.all_inside(&[gap_r, b]) {
                     picket(g, c, gap_r, b, 1.0, WHITE);
                 }
             }
             Tier::High => {
-                if all_in(c, &[a, gap_l]) {
+                if c.all_inside(&[a, gap_l]) {
                     hedge(g, c, a, gap_l, 1.4, 0.8, pal.foliage);
                 }
-                if all_in(c, &[gap_r, b]) {
+                if c.all_inside(&[gap_r, b]) {
                     hedge(g, c, gap_r, b, 1.4, 0.8, pal.foliage);
                 }
             }
@@ -395,7 +392,6 @@ pub fn suburb(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             f.bx(g, Metal, hu + 1.2, 0.6, -d * 0.5 + 1.0, Vec3::new(0.3, 1.2, 0.3), mul(pick(rng, &pal.metal_paint), 0.8));
         }
     }
-    let _ = yard_poly;
 }
 
 // ── McMansion ────────────────────────────────────────────────────────────────
@@ -486,22 +482,18 @@ pub fn mcmansion(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     for _ in 0..rng.random_range(4..8) {
         if let Some(p) = c.random_inside(rng, 2.5) {
-            if main.iter().all(|q| q.distance(p) > 4.0) && !point_in_poly(&loop_outer, p) {
+            if main.iter().all(|q| q.distance(p) > 4.0) && !point_in_polygon(p, &loop_outer) {
                 tree_in(g, f, pal, p, rng.random_range(3.5..6.0), rng.random_range(1.6..2.6), mul(pal.foliage, 1.1));
             }
         }
     }
     for s in [-1.0f32, 1.0] {
         let p = Vec2::new(s * 3.0, front_v + 0.3);
-        if all_in(c, &rect(p.x, p.y, 0.5, 0.5)) {
+        if c.all_inside(&rect(p.x, p.y, 0.5, 0.5)) {
             f.bx(g, Stone, p.x, 1.2, p.y, Vec3::new(0.7, 2.4, 0.7), WHITE);
             f.bx(g, Glow, p.x, 2.5, p.y, Vec3::new(0.4, 0.3, 0.4), mul(pal.lamp, 0.8));
         }
     }
-}
-
-fn point_in_poly(poly: &[Vec2], p: Vec2) -> bool {
-    nd_sim::zoning::point_in_polygon(p, poly)
 }
 
 // ── mansion ──────────────────────────────────────────────────────────────────
@@ -641,7 +633,7 @@ pub fn mansion(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     for _ in 0..rng.random_range(6..12) {
         if let Some(p) = c.random_inside(rng, 3.0) {
-            if main.iter().all(|q| q.distance(p) > 6.0) && !point_in_poly(&court, p) && !point_in_poly(&drive, p) {
+            if main.iter().all(|q| q.distance(p) > 6.0) && !point_in_polygon(p, &court) && !point_in_polygon(p, &drive) {
                 tree_in(g, f, pal, p, rng.random_range(6.0..10.0), rng.random_range(2.5..4.5), pal.foliage);
             }
         }
@@ -804,7 +796,14 @@ pub fn museum(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let a1 = (k + 1) as f32 / steps as f32 * std::f32::consts::FRAC_PI_2;
         let (r0, r1) = (r * a0.cos(), (r * a1.cos()).max(0.3));
         let (y0, y1) = (h + 1.0 + r * a0.sin(), h + 1.0 + r * a1.sin());
-        loft(g, f, Glass, &ngon(hc.x, hc.y, r0, 16, 0.0), &ngon(hc.x, hc.y, r1, 16, 0.0), y0, y1, mix(pal.glass_dark, WHITE, 0.15));
+        // Sides only: the sections meet ring to ring, the first stands on
+        // the drum, and only the last is capped.
+        let (lo, hi) = (ngon(hc.x, hc.y, r0, 16, 0.0), ngon(hc.x, hc.y, r1, 16, 0.0));
+        let glass = mix(pal.glass_dark, WHITE, 0.15);
+        band(g, f, Glass, &lo, &hi, y0, y1, glass);
+        if k + 1 == steps {
+            g.part(Glass).cap(&f.poly3(&hi, y1), glam::Vec3::Y, rgba(glass));
+        }
     }
     extrude(g, f, Stone, &ngon(hc.x, hc.y, r + 0.4, 16, 0.0), h, h + 1.0, WHITE);
     f.bx(g, Glow, hc.x, h + 1.0 + r + 0.3, hc.y, Vec3::new(0.6, 0.6, 0.6), mul(pal.lamp, 1.2));
@@ -839,7 +838,7 @@ pub fn museum(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     for _ in 0..4 {
         if let Some(p) = c.random_inside(rng, 2.0) {
-            if !point_in_poly(&hall, p) && !point_in_poly(&wing, p) {
+            if !point_in_polygon(p, &hall) && !point_in_polygon(p, &wing) {
                 tree_in(g, f, pal, p, 5.0, 2.0, pal.foliage);
             }
         }

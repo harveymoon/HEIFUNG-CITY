@@ -187,7 +187,7 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for off in [near_off, far_off] {
         g.part(Metal).beam(Vec3::new(pa.x + out.x * off, 8.4, pa.y + out.y * off), Vec3::new(pb.x + out.x * off, 8.4, pb.y + out.y * off), 0.4, rgba(steel));
     }
-    g.part(Glow).boxed(Vec3::new(pa.x + out.x * near_off, 8.9, pa.y + out.y * near_off), Vec3::splat(0.35), 0.0, rgba(pal.aviation_light));
+    aviation_light(g, pal, Vec3::new(pa.x + out.x * near_off, 8.9, pa.y + out.y * near_off), 0.35);
     // Container stacks on the apron's far edge, towards the shed.
     let n = ((length / 7.0) as i32).clamp(1, 10);
     for k in 0..n {

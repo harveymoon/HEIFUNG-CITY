@@ -56,7 +56,7 @@ pub(super) fn sync_social(mut commands: Commands, mut meshes: ResMut<Assets<Mesh
     w.landscape.is_flat().hash(&mut h);
     let key = h.finish();
     let touched = sim.events.iter().any(|e| matches!(e, SimEvent::BuildingChanged(id) | SimEvent::BuildingBuilt(id) if state.walls.contains(id)));
-    if state.key == Some(key) && !sim.full_rebuild && !touched && !assets.rules_changed {
+    if state.key == Some(key) && !sim.full_rebuild && !touched && !assets.rules_changed && !assets.palette_changed {
         return;
     }
     state.key = Some(key);
@@ -88,7 +88,7 @@ pub(super) fn sync_social(mut commands: Commands, mut meshes: ResMut<Assets<Mesh
             // The lot's street edge: the mural's record stands just inside it.
             let front = m.pos + m.facing.normalize_or_zero() * 0.9;
             let spot = facade_spot(&geo, front, m.facing)?;
-            let (mut day, mut night) = paint_mural(&spot, m.quality, m.seed, crew, &tag);
+            let (mut day, mut night) = paint_mural(&spot, m.quality, m.seed, crew, &tag, &assets.palette);
             let pad = w.lot_pad(b.lot);
             nd_procgen::terrain::raise_geometry(&mut day, pad);
             nd_procgen::terrain::raise_geometry(&mut night, pad);
@@ -100,7 +100,7 @@ pub(super) fn sync_social(mut commands: Commands, mut meshes: ResMut<Assets<Mesh
                 raised_night.append(&night);
             }
             None => {
-                let (day, night) = mural_wall(m.pos, m.along, m.facing, m.width, m.height, m.quality, m.seed, crew, &tag);
+                let (day, night) = mural_wall(m.pos, m.along, m.facing, m.width, m.height, m.quality, m.seed, crew, &tag, &assets.palette);
                 ground.append(&day);
                 ground_night.append(&night);
             }

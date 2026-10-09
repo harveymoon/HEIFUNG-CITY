@@ -76,14 +76,25 @@ fn units_overlap(a: &Unit, b: &Unit, margin: f32) -> bool {
     true
 }
 
+/// The Stacks: shipping containers and trailers piled into homes, tied
+/// together with planks, wires and props.
 pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let (lo, hi) = bounds(&c.lot_poly);
+    stack_alleys(g, c, lo, hi);
+    let units = place_units(c, rng, lo, hi);
+    for unit in &units {
+        dress_unit(g, c, rng, unit, &units);
+    }
+    prop_units(g, c, rng, &units);
+    plank_units(g, c, &units);
+    stack_utilities(g, c, rng, &units, lo, hi);
+    stack_street(g, c, rng);
+}
+
+/// The ground and the trodden alleys through the middle of the lot.
+fn stack_alleys(g: &mut Geometry, c: &Ctx, lo: Vec2, hi: Vec2) {
     let f = &c.frame;
     let pal = c.palette;
-    let steel = mul(pal.steel, 0.45 - 0.15 * c.wear);
-    let lit_chance = c.lit_chance();
-    let (lo, hi) = bounds(&c.lot_poly);
-    let area = nd_sim::zoning::polygon_area(&c.lot_poly).abs();
-
     ground(g, f, Dirt, &c.lot_poly, 0.03, pal.dirt);
     // Alleys: trodden paving through the middle of the lot both ways.
     // Laid in 2 m pieces so they stop at the edge of odd-shaped lots.
@@ -101,7 +112,13 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         u += 2.0;
     }
+}
 
+/// The units, level by level: the ground ones scattered clear of the
+/// alleys, each upper one resting mostly on the level below.
+fn place_units(c: &Ctx, rng: &mut impl Rng, lo: Vec2, hi: Vec2) -> Vec<Unit> {
+    let pal = c.palette;
+    let area = nd_sim::zoning::polygon_area(&c.lot_poly).abs();
     let mut units: Vec<Unit> = Vec::new();
     let ground_target = ((area / 40.0) as i32).clamp(2, 10);
     let levels = ((c.floors as f32 * 1.3) as i32).clamp(2, 8);
@@ -167,80 +184,91 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         prev_count = placed;
     }
+    units
+}
 
-    for unit in &units {
-        // Each unit jitters and fades its own paint in `container_unit`.
-        let col = mul(unit.color, 1.0 - 0.3 * c.wear);
-        let yc = unit.y0 + unit.h * 0.5;
-        container_unit(g, c, rng, unit.u, unit.v, unit.yaw, unit.len, unit.wid, unit.h, unit.y0, col);
-        // Tags along a long side of the lower units, where a spray can reaches.
-        if unit.level <= 1 && rng.random_bool(0.55) {
-            let s = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
-            let ga = unit.local_to_lot(s * unit.len * 0.5, s * unit.wid * 0.5);
-            let gb = unit.local_to_lot(-s * unit.len * 0.5, s * unit.wid * 0.5);
-            graffiti(g, c, rng, &Face::from_edge(ga, gb), unit.y0 + 0.15, unit.y0 + unit.h - 0.15, 1.6);
+/// One unit: its shell, tags, window, door, boarding, tarps and roof gear.
+fn dress_unit(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, unit: &Unit, units: &[Unit]) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let lit_chance = c.lit_chance();
+    // Each unit jitters and fades its own paint in `container_unit`.
+    let col = mul(unit.color, 1.0 - 0.3 * c.wear);
+    let yc = unit.y0 + unit.h * 0.5;
+    container_unit(g, c, rng, unit.u, unit.v, unit.yaw, unit.len, unit.wid, unit.h, unit.y0, col);
+    // Tags along a long side of the lower units, where a spray can reaches.
+    if unit.level <= 1 && rng.random_bool(0.55) {
+        let s = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
+        let ga = unit.local_to_lot(s * unit.len * 0.5, s * unit.wid * 0.5);
+        let gb = unit.local_to_lot(-s * unit.len * 0.5, s * unit.wid * 0.5);
+        graffiti(g, c, rng, &Face::from_edge(ga, gb), unit.y0 + 0.15, unit.y0 + unit.h - 0.15, 1.6);
+    }
+    let place = |g: &mut Geometry, s, lu: f32, y: f32, lv: f32, size: Vec3, color: [f32; 3]| {
+        let p = unit.local_to_lot(lu, lv);
+        f.bx_yaw(g, s, p.x, y, p.y, size, color, unit.yaw);
+    };
+    let side = if rng.random_bool(0.5) { -1.0 } else { 1.0 };
+    // Openings cut in the long side: a window and a door, as decals
+    // proud of the corrugation (the frame, then the pane or leaf).
+    let along = f.dir3(Vec2::new(unit.yaw.cos(), unit.yaw.sin()));
+    let out = f.dir3(Vec2::new(-unit.yaw.sin(), unit.yaw.cos())) * side;
+    let opening = |g: &mut Geometry, s, lu: f32, y: f32, d: f32, w: f32, h: f32, color: [f32; 3]| {
+        g.part(s).decal(f.at2(unit.local_to_lot(lu, side * (unit.wid * 0.5 + d)), y), along, Vec3::Y, w, h, out, rgba(color));
+    };
+    let win_u = rng.random_range(-unit.len * 0.3..unit.len * 0.3);
+    if coin(rng, lit_chance) {
+        let wc = if rng.random_bool(0.3) { [0.5, 0.75, 1.1] } else { pick(rng, &c.style.window_colors) };
+        opening(g, Matte, win_u, yc + 0.3, 0.05, 1.1, 0.9, DARK);
+        window_light(g, c, |g| opening(g, Glow, win_u, yc + 0.3, 0.06, 0.9, 0.7, mul(wc, 0.9)));
+    }
+    if unit.len > 5.0 && coin(rng, 0.7) {
+        // The front door, at the other end of the wall from the window.
+        let du = -win_u.signum() * (unit.len * 0.5 - 1.0);
+        let dh = (unit.h - 0.6).min(2.0);
+        let door_col = if rng.random_bool(0.5) { mul(col, 0.7) } else { mul(pick(rng, &pal.tarp_colors), 0.6) };
+        opening(g, Matte, du, unit.y0 + 0.16 + dh * 0.5 + 0.03, 0.05, 1.0, dh + 0.06, DARK);
+        opening(g, Matte, du, unit.y0 + 0.16 + dh * 0.5, 0.06, 0.82, dh, door_col);
+    }
+    if coin(rng, 0.25 + 0.4 * c.wear) {
+        place(g, Wood, rng.random_range(-unit.len * 0.3..unit.len * 0.3), yc + rng.random_range(-0.5..0.5), -side * (unit.wid * 0.5 + 0.05), Vec3::new(rng.random_range(0.6..1.4), rng.random_range(0.6..1.2), 0.05), pal.plywood);
+    }
+    if rng.random_bool(0.25) {
+        let tc = mul(pick(rng, &pal.tarp_colors), 0.8);
+        let lu = rng.random_range(-unit.len * 0.25..unit.len * 0.25);
+        let tl = rng.random_range(2.0..(unit.len - 2.0 * lu.abs()).clamp(2.1, 4.0));
+        place(g, Tarp, lu, yc + unit.h * 0.15, side * (unit.wid * 0.5 + 0.1), Vec3::new(tl, unit.h * 0.75, 0.08), tc);
+    }
+    let exposed = !units.iter().any(|o| o.level == unit.level + 1 && o.contains(unit.local_to_lot(0.0, 0.0)));
+    if exposed {
+        if rng.random_bool(0.45) {
+            let tc = mul(pick(rng, &pal.tarp_colors), 0.85);
+            // A sheet no longer than the roof it lies on.
+            let lu = rng.random_range(-unit.len * 0.2..unit.len * 0.2);
+            let tl = rng.random_range(2.5..(unit.len - 2.0 * lu.abs()).max(2.6));
+            place(g, Tarp, lu, unit.top() + 0.08, 0.0, Vec3::new(tl, 0.1, unit.wid * 0.9), tc);
         }
-        let place = |g: &mut Geometry, s, lu: f32, y: f32, lv: f32, size: Vec3, color: [f32; 3]| {
-            let p = unit.local_to_lot(lu, lv);
-            f.bx_yaw(g, s, p.x, y, p.y, size, color, unit.yaw);
-        };
-        let side = if rng.random_bool(0.5) { -1.0 } else { 1.0 };
-        // Openings cut in the long side: a window and a door, as decals
-        // proud of the corrugation (the frame, then the pane or leaf).
-        let along = f.dir3(Vec2::new(unit.yaw.cos(), unit.yaw.sin()));
-        let out = f.dir3(Vec2::new(-unit.yaw.sin(), unit.yaw.cos())) * side;
-        let opening = |g: &mut Geometry, s, lu: f32, y: f32, d: f32, w: f32, h: f32, color: [f32; 3]| {
-            g.part(s).decal(f.at2(unit.local_to_lot(lu, side * (unit.wid * 0.5 + d)), y), along, Vec3::Y, w, h, out, rgba(color));
-        };
-        let win_u = rng.random_range(-unit.len * 0.3..unit.len * 0.3);
-        if coin(rng, lit_chance) {
-            let wc = if rng.random_bool(0.3) { [0.5, 0.75, 1.1] } else { pick(rng, &c.style.window_colors) };
-            opening(g, Matte, win_u, yc + 0.3, 0.05, 1.1, 0.9, DARK);
-            window_light(g, c, |g| opening(g, Glow, win_u, yc + 0.3, 0.06, 0.9, 0.7, mul(wc, 0.9)));
+        if rng.random_bool(0.4) {
+            let p = unit.local_to_lot(rng.random_range(-unit.len * 0.35..unit.len * 0.35), 0.0);
+            dish(g, f, p, unit.top(), 0.7, pal.steel);
         }
-        if unit.len > 5.0 && coin(rng, 0.7) {
-            // The front door, at the other end of the wall from the window.
-            let du = -win_u.signum() * (unit.len * 0.5 - 1.0);
-            let dh = (unit.h - 0.6).min(2.0);
-            let door_col = if rng.random_bool(0.5) { mul(col, 0.7) } else { mul(pick(rng, &pal.tarp_colors), 0.6) };
-            opening(g, Matte, du, unit.y0 + 0.16 + dh * 0.5 + 0.03, 0.05, 1.0, dh + 0.06, DARK);
-            opening(g, Matte, du, unit.y0 + 0.16 + dh * 0.5, 0.06, 0.82, dh, door_col);
-        }
-        if coin(rng, 0.25 + 0.4 * c.wear) {
-            place(g, Wood, rng.random_range(-unit.len * 0.3..unit.len * 0.3), yc + rng.random_range(-0.5..0.5), -side * (unit.wid * 0.5 + 0.05), Vec3::new(rng.random_range(0.6..1.4), rng.random_range(0.6..1.2), 0.05), pal.plywood);
-        }
-        if rng.random_bool(0.25) {
-            let tc = mul(pick(rng, &pal.tarp_colors), 0.8);
-            let lu = rng.random_range(-unit.len * 0.25..unit.len * 0.25);
-            let tl = rng.random_range(2.0..(unit.len - 2.0 * lu.abs()).clamp(2.1, 4.0));
-            place(g, Tarp, lu, yc + unit.h * 0.15, side * (unit.wid * 0.5 + 0.1), Vec3::new(tl, unit.h * 0.75, 0.08), tc);
-        }
-        let exposed = !units.iter().any(|o| o.level == unit.level + 1 && o.contains(unit.local_to_lot(0.0, 0.0)));
-        if exposed {
-            if rng.random_bool(0.45) {
-                let tc = mul(pick(rng, &pal.tarp_colors), 0.85);
-                // A sheet no longer than the roof it lies on.
-                let lu = rng.random_range(-unit.len * 0.2..unit.len * 0.2);
-                let tl = rng.random_range(2.5..(unit.len - 2.0 * lu.abs()).max(2.6));
-                place(g, Tarp, lu, unit.top() + 0.08, 0.0, Vec3::new(tl, 0.1, unit.wid * 0.9), tc);
-            }
-            if rng.random_bool(0.4) {
-                let p = unit.local_to_lot(rng.random_range(-unit.len * 0.35..unit.len * 0.35), 0.0);
-                dish(g, f, p, unit.top(), 0.7, pal.steel);
-            }
-            if rng.random_bool(0.35) {
-                place(g, Metal, rng.random_range(-unit.len * 0.35..unit.len * 0.35), unit.top() + 0.45, rng.random_range(-0.6..0.6), Vec3::new(0.9, 0.9, 0.9), if rng.random_bool(0.5) { c.palette.rust } else { [0.2, 0.3, 0.6] });
-            }
-        }
-        if rng.random_bool(0.25) {
-            let lu = rng.random_range(-unit.len * 0.3..unit.len * 0.3);
-            let lv = side * (unit.wid * 0.5 + 0.35);
-            if c.inside_local(unit.local_to_lot(lu, lv + side * 0.3)) {
-                place(g, Metal, lu, yc - 0.6, lv, Vec3::new(0.8, 0.5, 0.6), if rng.random_bool(0.4) { c.palette.rust } else { [0.5, 0.5, 0.5] });
-            }
+        if rng.random_bool(0.35) {
+            place(g, Metal, rng.random_range(-unit.len * 0.35..unit.len * 0.35), unit.top() + 0.45, rng.random_range(-0.6..0.6), Vec3::new(0.9, 0.9, 0.9), if rng.random_bool(0.5) { c.palette.rust } else { [0.2, 0.3, 0.6] });
         }
     }
+    if rng.random_bool(0.25) {
+        let lu = rng.random_range(-unit.len * 0.3..unit.len * 0.3);
+        let lv = side * (unit.wid * 0.5 + 0.35);
+        if c.inside_local(unit.local_to_lot(lu, lv + side * 0.3)) {
+            place(g, Metal, lu, yc - 0.6, lv, Vec3::new(0.8, 0.5, 0.6), if rng.random_bool(0.4) { c.palette.rust } else { [0.5, 0.5, 0.5] });
+        }
+    }
+}
 
+/// Rusted I-beam props (and cribbing) under the upper units' unsupported
+/// corners, tied into frames or raked.
+fn prop_units(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, units: &[Unit]) {
+    let f = &c.frame;
+    let pal = c.palette;
     // Rusted I-beam props under unsupported corners; timber cribbing where
     // the gap is too short for a beam. Two tall props at one end of a unit
     // are tied into a frame (a header and, higher up, a cross brace); a lone
@@ -249,7 +277,7 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for unit in units.iter().filter(|x| x.level > 0) {
         let mut props: [Option<(Vec2, f32)>; 4] = [None; 4];
         for (ci, corner) in unit.corners().into_iter().enumerate() {
-            let inset = corner + (Vec2::new(unit.u, unit.v) - corner).normalize_or_zero() * 0.35;
+            let inset = toward(corner, Vec2::new(unit.u, unit.v), 0.35);
             if units.iter().any(|o| o.level == unit.level - 1 && o.contains(inset)) {
                 continue;
             }
@@ -287,7 +315,7 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                         if unit.y0 - base > 3.2 {
                             // Raking strut from two-thirds up to the ground (or roof)
                             // a metre and a half in under the unit.
-                            let foot = p + (Vec2::new(unit.u, unit.v) - p).normalize_or_zero() * 1.5;
+                            let foot = toward(p, Vec2::new(unit.u, unit.v), 1.5);
                             if units.iter().filter(|o| o.level < unit.level && o.contains(foot)).map(|o| o.top()).fold(0.0, f32::max) == base {
                                 let n = f.dir3((foot - p).perp()).normalize_or_zero();
                                 flat_bar(g.part(Rust), f.at2(p, base + (unit.y0 - base) * 0.66), f.at2(foot, base + 0.05), 0.12, n, brace);
@@ -298,6 +326,12 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             }
         }
     }
+}
+
+/// Planks between neighbouring upper units.
+fn plank_units(g: &mut Geometry, c: &Ctx, units: &[Unit]) {
+    let f = &c.frame;
+    let pal = c.palette;
     // Planks between neighbours.
     for i in 0..units.len() {
         for j in (i + 1)..units.len() {
@@ -321,13 +355,21 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             f.bx_yaw(g, Wood, mid.x, a.y0 + 0.08, mid.y, Vec3::new(span, 0.12, 0.9), pal.wood, d.y.atan2(d.x));
         }
     }
+}
+
+/// A stair up one side, a utility pole and wires (and washing) between
+/// the upper units.
+fn stack_utilities(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, units: &[Unit], lo: Vec2, hi: Vec2) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let steel = mul(pal.steel, 0.45 - 0.15 * c.wear);
     // Stair up one side.
     let top_level = units.iter().map(|x| x.level).max().unwrap_or(0);
     if top_level >= 1 {
         // Against a unit on the lot's edge, wherever the lot actually is.
         let sv = rng.random_range((lo.y + hi.y) * 0.5 - 3.0..(lo.y + hi.y) * 0.5 + 3.0);
         let mut su = lo.x + 1.4;
-        while su < hi.x - 2.0 && !(c.inside_local(Vec2::new(su - 1.0, sv - 2.0)) && c.inside_local(Vec2::new(su + 2.5, sv + 2.0)) && c.inside_local(Vec2::new(su - 1.0, sv + 2.0)) && c.inside_local(Vec2::new(su + 2.5, sv - 2.0))) {
+        while su < hi.x - 2.0 && !c.all_inside(&[Vec2::new(su - 1.0, sv - 2.0), Vec2::new(su + 2.5, sv + 2.0), Vec2::new(su - 1.0, sv + 2.0), Vec2::new(su + 2.5, sv - 2.0)]) {
             su += 1.0;
         }
         if su < hi.x - 2.0 {
@@ -381,6 +423,12 @@ pub fn stacks(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             }
         }
     }
+}
+
+/// Street level: a drum fire and a wreck.
+fn stack_street(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let f = &c.frame;
+    let pal = c.palette;
     // Street level: a drum fire and junk.
     let front = c.front_face(&c.lot_poly);
     if rng.random_bool(0.5) {
@@ -599,9 +647,9 @@ pub fn balcony_slab(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 face.decal(g, f, Matte, t, y + 1.2, 0.03, 2.2, 2.3, c.style.trim_color);
                 if coin(rng, c.lit_chance()) {
                     let col = mul(pick(rng, &c.style.window_colors), 0.8);
-                    window_light(g, c, |g| face.decal(g, f, Glow, t, y + 1.2, 0.05, 2.0, 2.1, col));
+                    face.glaze(g, c, t, y + 1.2, 0.05, 2.0, 2.1, Pane::Lit(col));
                 } else {
-                    face.decal(g, f, Glass, t, y + 1.2, 0.05, 2.0, 2.1, pal.glass_dark);
+                    face.glaze(g, c, t, y + 1.2, 0.05, 2.0, 2.1, Pane::Dark);
                 }
                 if coin(rng, c.style.clutter * 0.5) {
                     face.bx(g, f, Tarp, t + step * 0.2, y + 0.9, 1.0, Vec3::new(0.6, 0.5, 0.6), pick(rng, &pal.tarp_colors));
@@ -754,9 +802,9 @@ pub fn crystal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             g.part(Glass).frustum(&top, &cap_top, rgba(mul(glass, 1.15)));
             g.part(Glow).frustum(&top.iter().map(|p| *p + Vec3::Y * 0.02).collect::<Vec<_>>(), &top.iter().map(|p| *p + Vec3::Y * 0.22).collect::<Vec<_>>(), rgba(mul(pal.window_cold, 0.8)));
             let top_y = cap_top[0].y;
-            g.part(Glow).boxed(Vec3::new(crown.x, top_y + 0.15, crown.z), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
+            aviation_light(g, pal, Vec3::new(crown.x, top_y + 0.15, crown.z), 0.4);
         } else {
-            g.part(Glow).boxed(Vec3::new(crown.x, podium_h + h + 0.15, crown.z), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
+            aviation_light(g, pal, Vec3::new(crown.x, podium_h + h + 0.15, crown.z), 0.4);
         }
     }
     if shard_centers.len() >= 2 && rng.random_bool(0.6) {

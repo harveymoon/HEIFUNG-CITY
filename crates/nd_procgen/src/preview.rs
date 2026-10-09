@@ -60,7 +60,7 @@ pub fn road_preview_with(world: &World, points: &[Vec2], levels: &[f32], lanes_f
     let mut net = world.roads.clone();
     let made = net.add_polyline_levels(points, levels, lanes_fwd, lanes_bwd, kind);
     let class = nd_sim::roads::WayClass::laying(kind, lanes_fwd, lanes_bwd, false);
-    let separated = net.grade_crossings();
+    let separated = crossings_near(&net, &made);
     for &sid in &made {
         let s = net.segment(sid);
         for n in [s.a, s.b] {
@@ -163,6 +163,60 @@ pub fn road_preview_with(world: &World, points: &[Vec2], levels: &[f32], lanes_f
     out
 }
 
+/// How far round the new road's pieces `crossings_near` looks. A crossing
+/// of the road is dropped as a duplicate only by an earlier one within a
+/// metre of it (`RoadNetwork::grade_crossings`), which may itself have
+/// been dropped by one within a metre of that: 25 m covers any such chain
+/// a real junction makes.
+const CROSSING_REACH: f32 = 25.0;
+
+/// `net.grade_crossings()` as it bears on the new road (`made`): the same
+/// scan over only the pieces near it, in the same order, so the crossings
+/// of the road and the duplicates dropped among them come out the same,
+/// without walking the whole city's network on every cursor move.
+fn crossings_near(net: &RoadNetwork, made: &[nd_sim::SegmentId]) -> Vec<nd_sim::roads::Crossing> {
+    use nd_sim::roads::{passes_over_class, segment_intersection_closed, separated, Crossing};
+    let mut near: Vec<nd_sim::SegmentId> = Vec::new();
+    for &m in made {
+        let (a, b) = net.segment_points(m);
+        near.extend(net.segments_in_box(a.min(b) - Vec2::splat(CROSSING_REACH), a.max(b) + Vec2::splat(CROSSING_REACH)));
+    }
+    near.sort();
+    near.dedup();
+    let mut out: Vec<Crossing> = Vec::new();
+    const EPS: f32 = 1e-3;
+    for sid in near {
+        let s = net.segment(sid);
+        let (p0, p1) = net.segment_points(sid);
+        for oid in net.segments_in_box(p0.min(p1), p0.max(p1)) {
+            if oid <= sid {
+                continue;
+            }
+            let o = net.segment(oid);
+            if !o.alive || o.a == s.a || o.a == s.b || o.b == s.a || o.b == s.b {
+                continue;
+            }
+            let (q0, q1) = net.segment_points(oid);
+            let Some((t, u)) = segment_intersection_closed(p0, p1, q0, q1, EPS) else { continue };
+            let (ls, lo) = (net.segment_level(sid, t), net.segment_level(oid, u));
+            if !separated(s.class(), ls, o.class(), lo) {
+                continue;
+            }
+            let at = p0.lerp(p1, t);
+            let (upper, lower) = if passes_over_class(s.class(), ls, o.class(), lo) { ((sid, t), (oid, u)) } else { ((oid, u), (sid, t)) };
+            let shares = |x: nd_sim::SegmentId, y: nd_sim::SegmentId| {
+                let (a, b) = (net.segment(x), net.segment(y));
+                x == y || a.a == b.a || a.a == b.b || a.b == b.a || a.b == b.b
+            };
+            if out.iter().any(|c| c.at.distance(at) < 1.0 && shares(c.upper.0, upper.0) && shares(c.lower.0, lower.0)) {
+                continue;
+            }
+            out.push(Crossing { at, upper, lower });
+        }
+    }
+    out
+}
+
 /// One translucent mesh from the generated road: markings and lights
 /// bright, surfaces dim, everything near a steep leg or a stretch with no
 /// room for a column (`gaps`) in the warning colour.
@@ -239,5 +293,63 @@ mod tests {
         let pv = road_preview(&w, &[Vec2::new(-60.0, -100.0), Vec2::new(-60.0, 100.0)], &[], 1, 1, RoadKind::Street, &pal, &[0], [0.3, 0.6, 1.0], [1.0, 0.2, 0.2], 0.5);
         assert_eq!(pv.junctions.len(), 1);
         assert!(pv.mesh.colors.iter().any(|c| c[0] > c[2]), "the steep leg is tinted");
+    }
+
+    /// Timings for the review (§4.1): a hologram on a generated city, and
+    /// the part spent laying it into the network.
+    /// `cargo test --profile fast -p nd_procgen preview_timing -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn preview_timing() {
+        use std::time::Instant;
+        let pal = Palette::default();
+        let (w, _, _) = crate::citygen::generate_world(crate::citygen::CityPreset::CoastalRiver, 1);
+        let c = w.lots.values().map(|l| l.center).fold(Vec2::ZERO, |a, p| a + p) / w.lots.len().max(1) as f32;
+        let pts = [c + Vec2::new(-200.0, -30.0), c + Vec2::new(0.0, 20.0), c + Vec2::new(200.0, 30.0)];
+        let levels = [0.0, 0.0, 0.0];
+        let runs = 60;
+        let t0 = Instant::now();
+        for _ in 0..runs {
+            std::hint::black_box(road_preview(&w, &pts, &levels, 1, 1, RoadKind::Street, &pal, &[], [0.3, 0.6, 1.0], [1.0, 0.2, 0.2], 0.5));
+        }
+        let t1 = Instant::now();
+        for _ in 0..runs {
+            let mut net = w.roads.clone();
+            let made = net.add_polyline_levels(&pts, &levels, 1, 1, RoadKind::Street);
+            std::hint::black_box((made, net.grade_crossings()));
+        }
+        let t2 = Instant::now();
+        for _ in 0..runs {
+            std::hint::black_box(w.roads.clone());
+        }
+        let t3 = Instant::now();
+        for _ in 0..runs {
+            let mut net = w.roads.clone();
+            let made = net.add_polyline_levels(&pts, &levels, 1, 1, RoadKind::Street);
+            std::hint::black_box(crossings_near(&net, &made));
+        }
+        let t4 = Instant::now();
+        let ms = |a: Instant, b: Instant| (b - a).as_secs_f64() * 1e3 / runs as f64;
+        eprintln!("preview {:.2} ms per move; clone+lay+grade_crossings {:.2} ms, clone+lay+crossings_near {:.2} ms, clone alone {:.2} ms ({} segments)", ms(t0, t1), ms(t1, t2), ms(t3, t4), ms(t2, t3), w.roads.segments.len());
+    }
+
+    /// The local scan finds the road's crossings exactly as the whole
+    /// network's does.
+    #[test]
+    fn crossings_near_the_road_match_the_whole_scan() {
+        let (w, _, _) = crate::citygen::generate_world(crate::citygen::CityPreset::OldTown, 2);
+        let c = w.lots.values().map(|l| l.center).fold(Vec2::ZERO, |a, p| a + p) / w.lots.len().max(1) as f32;
+        for (k, levels) in [[0.0f32, 0.0, 0.0], [0.0, 9.0, 0.0], [0.0, -9.0, 0.0]].iter().enumerate() {
+            for d in 0..6 {
+                let a = Vec2::from_angle(d as f32 * 0.55 + k as f32);
+                let pts = [c - a * 260.0, c + a.perp() * 15.0, c + a * 260.0];
+                let mut net = w.roads.clone();
+                let made = net.add_polyline_levels(&pts, levels, 1, 1, RoadKind::Street);
+                let pick = |v: Vec<nd_sim::roads::Crossing>| -> Vec<(u32, u32, u32, u32, u32, u32)> {
+                    v.into_iter().filter(|c| made.contains(&c.upper.0) || made.contains(&c.lower.0)).map(|c| (c.at.x.to_bits(), c.at.y.to_bits(), c.upper.0 .0, c.upper.1.to_bits(), c.lower.0 .0, c.lower.1.to_bits())).collect()
+                };
+                assert_eq!(pick(crossings_near(&net, &made)), pick(net.grade_crossings()), "levels {levels:?} direction {d}");
+            }
+        }
     }
 }

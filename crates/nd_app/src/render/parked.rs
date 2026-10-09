@@ -23,7 +23,7 @@ pub(super) struct ParkedRender {
 pub(super) struct ParkedTag;
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn sync_parked_cars(mut commands: Commands, sim: Res<Sim>, mut pr: ResMut<ParkedRender>, mut vr: ResMut<VehicleRender>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+pub(super) fn sync_parked_cars(mut commands: Commands, sim: Res<Sim>, assets: Res<GameAssets>, mut pr: ResMut<ParkedRender>, mut vr: ResMut<VehicleRender>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
     let w = &sim.world;
     let key = (w.clock.tick, w.vehicles.cars.len());
     if pr.key == Some(key) && !sim.full_rebuild {
@@ -55,7 +55,7 @@ pub(super) fn sync_parked_cars(mut commands: Commands, sim: Res<Sim>, mut pr: Re
                 commands.entity(c).despawn();
             }
         }
-        let v = vr.variant(&mut meshes, &car.model);
+        let v = vr.variant(&mut meshes, &car.model, &assets.palette);
         let finish = vr.finish_of(car.model.class);
         let pose = Transform::from_translation(Vec3::new(spot.pos.x, 0.05, spot.pos.y)).with_rotation(Quat::from_rotation_y(-spot.heading));
         let e = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, ParkedTag, Grounded)).id();

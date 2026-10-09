@@ -274,7 +274,7 @@ pub fn slab_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let crown = offset_poly(&poly, 1.0);
     extrude(g, f, Panel, &crown, y, y + 2.5, mul(pick(rng, &pal.panel), 0.7));
     for p in &poly {
-        g.part(Glow).boxed(f.at2(*p, y + 0.3), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
+        aviation_light(g, pal, f.at2(*p, y + 0.3), 0.4);
     }
     // With a helipad on top the mast stands at the edge, not through the pad.
     // A pad needs a roof wide enough for its 2 m minimum radius.
@@ -309,6 +309,8 @@ pub fn twist_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for k in 0..floors {
         let t = (k + 1) as f32 / floors as f32;
         let plate = fit_inside(c, &rotate_poly(&scale_poly(&base, 1.0 - (1.0 - taper) * t), total_twist * t));
+        // Each floor keeps its caps: the rooftop deck (`air::roof_site`)
+        // reads the roof heights off them.
         loft(g, f, Glass, &prev, &plate, y, y + fh, glass);
         // floor plate edge
         // The plate's edge: a band without caps, which would lie in the
@@ -325,7 +327,7 @@ pub fn twist_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     extrude(g, f, Panel, &prev, y, y + 0.6, mul(pal.steel, 0.8));
     // A cut glass crown, not a needle.
     let top = super::kit::crystal_crown(g, c, rng, &prev, y + 0.6, glass);
-    g.part(Glow).boxed(f.at2(poly_center(&prev), top + 0.3), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
+    aviation_light(g, pal, f.at2(poly_center(&prev), top + 0.3), 0.4);
     band(g, f, Glow, &offset_poly(&prev, -0.05), &offset_poly(&prev, -0.05), y - 0.6, y, mul(c.style.window_color(0), 0.9));
     let front = c.front_face(&c.poly);
     entrance(g, c, rng, &front, 0.0, 3.5, podium_h * 0.8);
@@ -391,7 +393,7 @@ pub fn cantilever_mall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         // Columns under corners that overhang the box below.
         if i > 0 {
             for p in &plate {
-                let inset = *p + (poly_center(&plate) - *p).normalize_or_zero() * 0.8;
+                let inset = toward(*p, poly_center(&plate), 0.8);
                 if !nd_sim::zoning::point_in_polygon(inset, &below) {
                     let base_y = if c.inside_local(inset) { 0.0 } else { y };
                     f.bx(g, Matte, inset.x, (base_y + y) * 0.5, inset.y, Vec3::new(0.5, y - base_y, 0.5), mul(pal.steel, 0.8));

@@ -69,12 +69,14 @@ impl VehicleRender {
         self.fx = Some(materials.add(StandardMaterial { base_color: Color::BLACK, unlit: true, alpha_mode: AlphaMode::Add, ..default() }));
     }
 
-    pub(super) fn variant(&mut self, meshes: &mut Assets<Mesh>, model: &nd_sim::VehicleModel) -> VariantMeshes {
+    /// The meshes of a model's variant in the palette's paints, built once
+    /// per variant.
+    pub(super) fn variant(&mut self, meshes: &mut Assets<Mesh>, model: &nd_sim::VehicleModel, pal: &nd_procgen::Palette) -> VariantMeshes {
         let key = nd_procgen::vehicles::variant_key(model);
         self.variants
             .entry(key)
             .or_insert_with(|| {
-                let v = nd_procgen::vehicle_mesh(&key);
+                let v = nd_procgen::vehicles::vehicle_mesh_with(&key, pal);
                 VariantMeshes { body: meshes.add(shared_mesh(&v.body, true)), lights: meshes.add(shared_mesh(&v.lights, false)), fx: (!v.fx.is_empty()).then(|| meshes.add(shared_mesh(&v.fx, false))) }
             })
             .clone()
@@ -146,6 +148,7 @@ pub(super) fn write_trail(mesh: &mut Mesh, data: &MeshData) {
 pub(super) fn sync_cars(
     mut commands: Commands,
     sim: Res<Sim>,
+    assets: Res<GameAssets>,
     mats: Res<Materials>,
     selection: Res<Selection>,
     lighting: Res<Lighting>,
@@ -181,7 +184,7 @@ pub(super) fn sync_cars(
                 vr.spare_trails.push((e, h));
             }
             let model = car_model(car);
-            let v = vr.variant(&mut meshes, &model);
+            let v = vr.variant(&mut meshes, &model, &assets.palette);
             let finish = vr.finish_of(model.class);
             // [carlife] Spawned where the car is. Entities spawned through
             // `Commands` are not in this frame's query below, so a car
@@ -356,6 +359,7 @@ pub(super) fn car_pose(car: &nd_sim::Car, f: f32, w: &nd_sim::World) -> Transfor
 pub(super) fn sync_bots(
     mut commands: Commands,
     sim: Res<Sim>,
+    assets: Res<GameAssets>,
     mats: Res<Materials>,
     mut vr: ResMut<VehicleRender>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -382,7 +386,7 @@ pub(super) fn sync_bots(
         // share the grocery livery).
         let paint = (slotmap::Key::data(&bot.shop).as_ffi() % nd_sim::vehicle::PAINTS as u64) as u8;
         let model = nd_sim::VehicleModel { body: nd_sim::BodyType::DeliveryBot, livery: nd_sim::Livery::None, paint, ..Default::default() };
-        let v = vr.variant(&mut meshes, &model);
+        let v = vr.variant(&mut meshes, &model, &assets.palette);
         let finish = vr.fleet_paint.entry(bot.shop).or_insert_with(|| {
             let [r, g, b] = nd_sim::bots::fleet_colour(bot.shop);
             materials.add(StandardMaterial { base_color: Color::srgb(r, g, b), perceptual_roughness: 0.45, metallic: 0.2, reflectance: 0.5, ..default() })

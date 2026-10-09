@@ -37,7 +37,7 @@ All paths are relative to `crates/nd_procgen/src/` unless stated.
 | 6 | M | `buildings/construction.rs:106-147, 259, 274, 519, 569-576, 771` | Site clutter shares one stream with `structure()`, whose draw count depends on the floors done, and with the crane and scaffold draws. Stacks, spoil, the mixer truck and the crew jump at every progress rebuild. `demolition_site` has the same problem. | Give each block its own `rng_for(c.seed, SALT)`, as the crane billboard already does (:578). **FIXED 8501486** |
 | 7 | M | `buildings/supertall.rs:427, 563, 615` (aviation); `:556/559, 603/606`; `commercial.rs:315`; `towers.rs:590-605` | Aviation lights are placed on the base plan at every height, but the deco, twist and needle shafts taper or rotate: up to about 10 m in the air on a 420 m needle. Window lights and lit bands on twisting or tapering sections sit on `prev` while the glass lofts to `next`: up to 1 m proud or buried. The glass-castle seams ignore the ±0.15 rad rotation. | Pass a `height -> plan` closure to `aviation_up`. Emit per-floor lights on `lerp(prev, next, t)` as `residential.rs:719-741` already does (factor it out: action 14). **FIXED e2fbd56** (aviation_up takes the plan at each height; lofted lights per row; twist tower and glass castle seams) |
 | 8 | M | `buildings/adjacency.rs:319, 387` | The StyleBook key (`key_of`, `role`) leaves out brand HQ and annex, which force a style (`mod.rs:1297-1299`). The book's label (inspector, remote API) can then disagree with the mesh. `role + 8` for a rooftop pad can also collide with other role ranges. | Make the key a struct with separate fields for role, rooftop, look, brand role and annex. **FIXED 03e25ab** |
-| 9 | M | see list | Z-fighting cluster. Each item is 0 to 3 mm apart, or coplanar with mismatched UVs: (i) floor-band loft caps coplanar with the section's top cap: `supertall.rs:290, 555`, `commercial.rs:313`, `commercial.rs:329`; (ii) junction corner fill over the pavement ribbon, both at `KERB_H-0.01` with different UV bases: `street.rs:2541-2565`; (iii) soot stain k=5 at exactly 0.08, the feedlot pen height: `buildings/dirty.rs:159` vs `:354`; (iv) graffiti at 0.02/0.03/0.035, the same as window frames (0.03) and grime (0.02): `buildings/parts.rs:1690-1735`; (v) toll plaza lines at 0.085 = the road's `MARK_Y`: `toll.rs:102,123`; (vi) a lane-count joint with a bend leaves two untrimmed carriageways at `ASPHALT_Y`: `street.rs:259, 981`; (vii) deco pier glass 3 mm from the dynamic-light dark-glass copy: `supertall.rs:400`; (viii) balcony decal on its slab face: `towers.rs:229-230`; (ix) mechanic oil stains vs bay floor at 0.05: `trades.rs:356,394`. | Introduce named depth layers (action 15) and move each item off them. Use an uncapped `band` for floor bands (action 14). **FIXED** except (vi): (i) e2fbd56; (ii) fce8ae7; (iii) (iv) (v) (vii) (viii) (ix) 4a20490. (vi) NOT fixed: the lane-count joint needs the run/joint trimming reworked (phase 2b, with #17) |
+| 9 | M | see list | Z-fighting cluster. Each item is 0 to 3 mm apart, or coplanar with mismatched UVs: (i) floor-band loft caps coplanar with the section's top cap: `supertall.rs:290, 555`, `commercial.rs:313`, `commercial.rs:329`; (ii) junction corner fill over the pavement ribbon, both at `KERB_H-0.01` with different UV bases: `street.rs:2541-2565`; (iii) soot stain k=5 at exactly 0.08, the feedlot pen height: `buildings/dirty.rs:159` vs `:354`; (iv) graffiti at 0.02/0.03/0.035, the same as window frames (0.03) and grime (0.02): `buildings/parts.rs:1690-1735`; (v) toll plaza lines at 0.085 = the road's `MARK_Y`: `toll.rs:102,123`; (vi) a lane-count joint with a bend leaves two untrimmed carriageways at `ASPHALT_Y`: `street.rs:259, 981`; (vii) deco pier glass 3 mm from the dynamic-light dark-glass copy: `supertall.rs:400`; (viii) balcony decal on its slab face: `towers.rs:229-230`; (ix) mechanic oil stains vs bay floor at 0.05: `trades.rs:356,394`. | Introduce named depth layers (action 15) and move each item off them. Use an uncapped `band` for floor bands (action 14). **FIXED** except (vi): (i) e2fbd56; (ii) fce8ae7; (iii) (iv) (v) (vii) (viii) (ix) 4a20490. (vi) NOT fixed: the lane-count joint needs the run/joint trimming reworked (phase 2b, with #17) (vi) **FIXED 33d6a10** (both carriageways cut on the bend's bisector). |
 | 10 | M | `metro.rs:56-73` | Each tunnel leg is a `strip_box` at its own midpoint depth, so tunnels step and gap on slopes and gap or overlap at bends. `:95` `p + n * 0.0` is dead. | `path_box` (it mitres) with per-vertex heights, or a `slab` per leg. **FIXED 2bf878e** |
 | 11 | M | `buildings/mod.rs:745`; `services.rs:496`; `waterworks.rs:231`; `terrain.rs:40` | Robustness. `pick_style_near` checks for NaN and ≤0 but not infinity (`random_range(0..inf)` panics). `x[i % len.max(1)]` panics on an empty palette list. `terrain_height` divides by `half_size - basin_radius`. | `!(total > 0.0 && total.is_finite())`; use `palette::at` or `pick`; `.max(1e-3)`. **FIXED 56bcd7b** |
 
@@ -45,20 +45,20 @@ All paths are relative to `crates/nd_procgen/src/` unless stated.
 
 | # | Sev | Where | What |
 |---|---|---|---|
-| 12 | M | `buildings/mod.rs:1490`, `dirty.rs:50`, `parking.rs:58`, `power.rs:884`, test `ctx_on` `mod.rs:2390` | One `Frame::local_poly(lot)` (cleaned at 0.3, rectangle fallback, counter-clockwise). Five copies of the lot→local outline feed things drawn outside the mesh (smoke vents, solar trackers, parking bays) that must match it exactly. `ctx_on` skips `clean_poly`, so tests use a different polygon. Also make the refinery vent share `refinery_stack(poly)` (`dirty.rs:125` vs `industrial.rs:844`). |
+| 12 | M | `buildings/mod.rs:1490`, `dirty.rs:50`, `parking.rs:58`, `power.rs:884`, test `ctx_on` `mod.rs:2390` | One `Frame::local_poly(lot)` (cleaned at 0.3, rectangle fallback, counter-clockwise). Five copies of the lot→local outline feed things drawn outside the mesh (smoke vents, solar trackers, parking bays) that must match it exactly. `ctx_on` skips `clean_poly`, so tests use a different polygon. Also make the refinery vent share `refinery_stack(poly)` (`dirty.rs:125` vs `industrial.rs:844`). **REFACTORED 38d5a67** (`Frame::local_poly` / `Frame::lot_local`; `ctx_on` now cleans too). `refinery_stack` NOT shared: the mesh stack and the vent stand at different spots, so sharing it would move one. |
 | 13 | M | whole crate | **A property sweep test** (`tests/style_sweep.rs`). Cover every `Style::ALL` × floors {1, 2, 6, 12, 40, 250} × tier × condition {0, 0.5, 1} × dynamic lights on/off × district look × brand HQ. Use synthetic lots: 6×30, 9×9, 150×24, 24×150, triangle, sliver, L. Also: plant scales {0.3, 1, 2.4, 3} for coal, nuclear and geothermal; rules at the validate limits (`floor_height` 2.2 and 12; `window_size > fh`); an empty-list palette; and construction and demolition at stages 0..1. Assert: no panic (collect failures with `catch_unwind`), finite attributes, valid indices, equal attribute lengths, no zero-area triangles, normals agree with winding, output byte-identical on a second run, and inside the lot. Each of bugs 1, 2, 3, 11 and the B2 graffiti fights would have been caught. **DONE 56bcd7b** (`buildings/sweep_tests.rs`; in-crate so it can force styles and extras) |
-| 14 | M | `mesh.rs` | **Grow the MeshData toolkit**, then port the call sites (listed in §2):<ul><li>`band(bottom, top)`: sides only.</li><li>`lathe(center, &[(r, y)], sides)` on `strip()`.</li><li>`decal2`: double-sided.</li><li>`append_transformed(src, at, yaw)`.</li><li>`frustum` cap flags.</li><li>`ground_fan` moved here from `street_junction.rs:202`.</li><li>`stations(path, a, b, step)`: a monotonic polyline cursor.</li></ul>Per-floor `loft_lights` belongs in `kit.rs`. **PARTLY e2fbd56**: `MeshData::band` / `parts::band` added and used for floor bands and hidden-cap rings; the rest is phase 2b |
-| 15 | M | `buildings/parts.rs:86-96` plus copies | **One `color.rs`** for `rgba`, `mul`, `mix` and `at`, replacing `vehicles.rs:219-229`, `people.rs:135`, `social.rs:463` `lerp3`, `society.rs:278` `mix_dim`, `kit.rs:203` `pick_led` and `toll.rs:61-62`. **One `depth.rs`** with the named decal and ground layers (frame 0.03, pane 0.05, light-glass −0.013, graffiti band, ground 0.02/0.045/0.08 …), and the street constants made `pub(crate)` (`walk.rs:23-24` and `crossing.rs:24` copy them, and `PAVE_Y` is 5 mm off). |
-| 16 | L | `buildings/trades.rs:19-200` | Move the de facto toolkit (`R`, `fit`, `block`, `pane`, `pane_row`, `flagpole`, `table`, `fish_sign`) and `rural::{rail_fence, heap, cow, haul_truck}` into `kit.rs`. Add `parts::aviation_light` (13 copies), `parts::toward` (8), `Ctx::all_inside` (5), and `kit::crown_frame` (5). Delete `supertall.rs:58 point_in` and `estates.rs:498 point_in_poly`. |
+| 14 | M | `mesh.rs` | **Grow the MeshData toolkit**, then port the call sites (listed in §2):<ul><li>`band(bottom, top)`: sides only.</li><li>`lathe(center, &[(r, y)], sides)` on `strip()`.</li><li>`decal2`: double-sided.</li><li>`append_transformed(src, at, yaw)`.</li><li>`frustum` cap flags.</li><li>`ground_fan` moved here from `street_junction.rs:202`.</li><li>`stations(path, a, b, step)`: a monotonic polyline cursor.</li></ul>Per-floor `loft_lights` belongs in `kit.rs`. **PARTLY e2fbd56**: `MeshData::band` / `parts::band` added and used for floor bands and hidden-cap rings; the rest is phase 2b **REFACTORED** 573e0e1 (`frustum_capped`, `cylinder_capped`, `tube_capped` 4f37a50, `lathe`, `decal2`, `append_transformed`, `ground_fan` moved to mesh.rs, `Polyline` cursor; ported: street loops cd7bf52 06f2019, walk decals, boats). `blob` not added. |
+| 15 | M | `buildings/parts.rs:86-96` plus copies | **One `color.rs`** for `rgba`, `mul`, `mix` and `at`, replacing `vehicles.rs:219-229`, `people.rs:135`, `social.rs:463` `lerp3`, `society.rs:278` `mix_dim`, `kit.rs:203` `pick_led` and `toll.rs:61-62`. **One `depth.rs`** with the named decal and ground layers (frame 0.03, pane 0.05, light-glass −0.013, graffiti band, ground 0.02/0.045/0.08 …), and the street constants made `pub(crate)` (`walk.rs:23-24` and `crossing.rs:24` copy them, and `PAVE_Y` is 5 mm off). **REFACTORED d4a5077** (`color.rs`, `depth.rs`, `hash.rs`; street constants from `depth`; walk keeps its 5 mm-low `WALK_PAVE_Y` as a named constant so nothing moves). |
+| 16 | L | `buildings/trades.rs:19-200` | Move the de facto toolkit (`R`, `fit`, `block`, `pane`, `pane_row`, `flagpole`, `table`, `fish_sign`) and `rural::{rail_fence, heap, cow, haul_truck}` into `kit.rs`. Add `parts::aviation_light` (13 copies), `parts::toward` (8), `Ctx::all_inside` (5), and `kit::crown_frame` (5). Delete `supertall.rs:58 point_in` and `estates.rs:498 point_in_poly`. **REFACTORED** b453732 (kit/layout.rs, kit/props.rs), e6edff2 (kit/fences.rs), eb852a6 (kit/roofs.rs), 8738e72 (`parts::aviation_light`, 28 copies), c95d15d (`parts::toward`, `Ctx::all_inside`, point_in wrappers gone), 7588c80 (`kit::crown_frame`). |
 
 ### (c) Bigger restructures
 
 | # | Sev | Where | What |
 |---|---|---|---|
-| 17 | M | `street.rs:796-1653` | `generate_street` is a single 858-line function. Split it into a `StreetCtx` (runs, profiles, lifts, corners, tapers, cuts, pad_mouths, gores) plus `draw_run`, `draw_aprons`, `draw_nodes`, `draw_corners`, `draw_midblock` and `draw_signals`. Make `street/` a directory: kerb, signals, rail_path, arrows, tunnel, tests. |
-| 18 | M | `buildings/mod.rs` (2,430 lines) | Split it into `style.rs`, `rules.rs`, `frame.rs` and `choose.rs`, plus `tests.rs` (about 820 lines). Generate the enum, `ALL`, `label`, the dispatch and the trait tables from one `styles!{}` macro: five parallel 118-entry tables today. Remove the `_ =>` arm in `adjacency::traits` (`adjacency.rs:176`): it silently makes about 25 styles neutral. Split `power.rs` (packer, coal, nuclear, solar, wind, battery, field), `terrain.rs` (heightfield, water, works, docks, retaining) and `parts.rs` (polygons, facades, roofs, site, props, graffiti). |
-| 19 | **H** (perf) | `nd_app/src/render.rs:3100-3112` → `terrain.rs:324, 434`, `waterworks` | Every road edit rebuilds the whole landscape: about 405k triangles, with a `ground_height` per vertex. It also rebuilds the water sheet, which does not depend on roads (about 774k `water_distance` calls, one `Vec` per cell at `terrain.rs:465`), and every port and boat. Fixes: give the water its own landscape-only signature; cache corners into an (n+1)² array; chunk the terrain into 128 m tiles and rebuild only those touched (this also enables frustum culling). `sync_scatter` has the same problem: every cell already has its own RNG, so make it incremental. |
-| 20 | M (perf) | `buildings/parts.rs:54-84`; supertall; hidden caps | `window_light` allocates a 6-Vec temporary mesh per window, and doubles every lit window with a glass copy. A Bundled megatall carries 65-75k triangles of lights, with about 25% of the wing lights inside the core (`supertall.rs:470`). Stacked capped cylinders (cooling towers, domes, twist sections) spend about 45% of their triangles on invisible caps. Copy Glow→Glass in place; skip faces whose midpoint is inside the core; use `band` and `lathe`; then add a far LOD: rows halved above 100 m when not dynamic, and no grit, litter or furniture beyond about 300 m. |
+| 17 | M | `street.rs:796-1653` | `generate_street` is a single 858-line function. Split it into a `StreetCtx` (runs, profiles, lifts, corners, tapers, cuts, pad_mouths, gores) plus `draw_run`, `draw_aprons`, `draw_nodes`, `draw_corners`, `draw_midblock` and `draw_signals`. Make `street/` a directory: kerb, signals, rail_path, arrows, tunnel, tests. **REFACTORED** e6949e4 (street/ directory, junction.rs without `#[path]`, `shelter` to transit.rs), cd7bf52 (`StreetCtx` + draw passes). |
+| 18 | M | `buildings/mod.rs` (2,430 lines) | Split it into `style.rs`, `rules.rs`, `frame.rs` and `choose.rs`, plus `tests.rs` (about 820 lines). Generate the enum, `ALL`, `label`, the dispatch and the trait tables from one `styles!{}` macro: five parallel 118-entry tables today. Remove the `_ =>` arm in `adjacency::traits` (`adjacency.rs:176`): it silently makes about 25 styles neutral. Split `power.rs` (packer, coal, nuclear, solar, wind, battery, field), `terrain.rs` (heightfield, water, works, docks, retaining) and `parts.rs` (polygons, facades, roofs, site, props, graffiti). **REFACTORED** a3626f9 (mod.rs split: style, rules, frame, context, choose, tests), 5b92424 (one `styles!{}` table; `traits` has no `_` arm, the 29 styles it caught declare `(Special, 0.0)`), ca9e0c4 (power/ split). parts/ 32384cc, terrain/ 94df6f2. |
+| 19 | **H** (perf) | `nd_app/src/render.rs:3100-3112` → `terrain.rs:324, 434`, `waterworks` | Every road edit rebuilds the whole landscape: about 405k triangles, with a `ground_height` per vertex. It also rebuilds the water sheet, which does not depend on roads (about 774k `water_distance` calls, one `Vec` per cell at `terrain.rs:465`), and every port and boat. Fixes: give the water its own landscape-only signature; cache corners into an (n+1)² array; chunk the terrain into 128 m tiles and rebuild only those touched (this also enables frustum culling). `sync_scatter` has the same problem: every cell already has its own RNG, so make it incremental. **REFACTORED** 6b633a3 + a86a37c: the ground in 128 m tiles (`terrain::LandscapeTiles`), only changed tiles rebuilt; the water sheet on a landscape-only signature. A road edit on CoastalRiver: ground 97-116 ms (405k tris) + water 162-248 ms (132k tris) before, 62-96 ms and 6 of 841 tiles (3k tris) after. `sync_scatter` and waterworks still rebuild in full. |
+| 20 | M (perf) | `buildings/parts.rs:54-84`; supertall; hidden caps | `window_light` allocates a 6-Vec temporary mesh per window, and doubles every lit window with a glass copy. A Bundled megatall carries 65-75k triangles of lights, with about 25% of the wing lights inside the core (`supertall.rs:470`). Stacked capped cylinders (cooling towers, domes, twist sections) spend about 45% of their triangles on invisible caps. Copy Glow→Glass in place; skip faces whose midpoint is inside the core; use `band` and `lathe`; then add a far LOD: rows halved above 100 m when not dynamic, and no grit, litter or furniture beyond about 300 m. **REFACTORED** 8738e72 (window_light copies glow to glass in place), 4f37a50 + 28f099a (hidden caps dropped; bundled megatall wing lights inside the core dropped, their draws kept). LOD NOT done. |
 
 ---
 
@@ -136,7 +136,7 @@ The root cause in every case is the same: depths are bare literals. Many land on
   - walk detail (Top-20 #5) **FIXED 8501486**
   - construction stages (Top-20 #6) **FIXED 8501486**
   - `terrain.rs:150/215`: the scatter cap is a running count, so clearing one cell can make a later cell appear. Decide survival per cell by hash instead. **FIXED 551fba8**
-- **Fragile salts:**
+- **Fragile salts:** (`crate::hash` holds `hash2`, `hash2_salted` + `SALT_FISHING`, `rank01`, `hash01_sin`: **REFACTORED d4a5077**; the salts and citygen were not touched)
   - `industrial.rs:1024` uses `91+i`, overlapping the crane's 91-93.
   - `supertall.rs:252` borrows `nd_sim::fishing::hash`, and `shore.rs:73` re-implements it.
   - `citygen/mod.rs:574` and `climate.rs:252` have two different `hash01`s. The climate one is `fract(sin(x)*43758)` on f32: it depends on libm, and is badly quantised at city coordinates × 78.
@@ -165,18 +165,18 @@ The root cause in every case is the same: depths are bare literals. Many land on
 
 ### 2.2 Duplication clusters (every site)
 
-- **Aviation light box (13 copies):** `supertall.rs:338-345, 364-365`, `commercial.rs:277, 323`, `residential.rs:752, 754`, `civic.rs:205`, `services.rs:340`, `air.rs:154, 293`, `rail.rs:190`, `subway.rs:368`, `waterworks.rs:251`.
-- **Window and glazing loops (6 implementations), each with its own depth numbers:** `parts::windows :516`, `band_windows :548`, `curtain_lights :572`, `storefront :595`, `kit::dense_windows :86`, `trades::pane/pane_row :147,160`. Unify them behind one `glazing(..., &GlazeSpec)` that owns the frame, pane and light depths and the `window_light` call.
+- **Aviation light box (13 copies):** `supertall.rs:338-345, 364-365`, `commercial.rs:277, 323`, `residential.rs:752, 754`, `civic.rs:205`, `services.rs:340`, `air.rs:154, 293`, `rail.rs:190`, `subway.rs:368`, `waterworks.rs:251`. **REFACTORED 8738e72** (`aviation_light`, `aviation_light_local`; power in 28f099a)
+- **Window and glazing loops (6 implementations), each with its own depth numbers:** `parts::windows :516`, `band_windows :548`, `curtain_lights :572`, `storefront :595`, `kit::dense_windows :86`, `trades::pane/pane_row :147,160`. Unify them behind one `glazing(..., &GlazeSpec)` that owns the frame, pane and light depths and the `window_light` call. **REFACTORED 4993db0**: `Face::glaze(t, y, depth, w, h, Pane::{Lit, Dark, Boarded})` and `Face::window_frame` own the decals and `window_light`; each loop keeps its own layout and draws (merging those would move windows).
 - **Per-floor lights on a lofted shaft (5 implementations; only one is correct):** `supertall` twist and needle, `commercial::twist_tower`, the `towers` glass_castle seams, `residential` crystal (correct).
 - **Tower base size `(t.height/K).max(M).min(room·x)`:** `supertall.rs:94-99` (`foot`), plus copies at `:384, 465, 530, 584, 671-676`.
-- **Inset a corner toward the centre (8 copies):** `commercial.rs:389`, `civic.rs:52, 122`, `entertainment.rs:310`, `services.rs:580`, `residential.rs:252, 290`, `estates.rs:277`.
-- **All corners inside the lot (5 copies):** `estates.rs:82`, `dense.rs:~299`, `residential.rs:331`, `towers.rs:542`, `entertainment.rs:22`.
-- **Crown frame (posts plus `glow_outline`):** `towers.rs:131-137, 246-253, 512-515`, `supertall.rs:564-570`, the `dense.rs` neon_tower crown.
+- **Inset a corner toward the centre (8 copies):** `commercial.rs:389`, `civic.rs:52, 122`, `entertainment.rs:310`, `services.rs:580`, `residential.rs:252, 290`, `estates.rs:277`. **REFACTORED c95d15d** (`parts::toward`, 7 of 8; services:502 is a different formula)
+- **All corners inside the lot (5 copies):** `estates.rs:82`, `dense.rs:~299`, `residential.rs:331`, `towers.rs:542`, `entertainment.rs:22`. **REFACTORED c95d15d** (`Ctx::all_inside`, 15 sites)
+- **Crown frame (posts plus `glow_outline`):** `towers.rs:131-137, 246-253, 512-515`, `supertall.rs:564-570`, the `dense.rs` neon_tower crown. **REFACTORED 7588c80** (`kit::crown_frame`; the supertall crowns are outlines only)
 - **Lamps along a face:** `towers.rs:288-291, 525-527`, `commercial.rs:338-340`, `supertall.rs:178-185`.
 - **Wall-finish pickers:** `dense.rs:15 patchwork`, `commercial.rs:28-32`, `towers.rs:39-40` (the buggy one).
-- **Gable roofs (4):** `industrial.rs:24`, `rural.rs:70, 77`, `towers.rs:17`.
-- **Fences (4):** `parts::fence :1061`, `rural::rail_fence :47`, `vacant::fence_run :155` (and `hedge_run :187` vs `parts::hedge :1591`), `construction::hoarding :152`.
-- **Site perimeter:** `construction.rs:43-68` is a verbatim copy of `:739-762`.
+- **Gable roofs (4):** `industrial.rs:24`, `rural.rs:70, 77`, `towers.rs:17`. **REFACTORED eb852a6** (`kit::ridge_roof` / `gable_roof` / `gable_on`)
+- **Fences (4):** `parts::fence :1061`, `rural::rail_fence :47`, `vacant::fence_run :155` (and `hedge_run :187` vs `parts::hedge :1591`), `construction::hoarding :152`. **REFACTORED e6edff2**: all in `kit/fences.rs` with one `bays()`; their looks differ (rails, breakage, plywood), so they stay four drawings.
+- **Site perimeter:** `construction.rs:43-68` is a verbatim copy of `:739-762`. **REFACTORED a30bf8d** (`site_perimeter`)
 - **Café table:** `trades::table :254` = `shore::world_table :912`.
 - **Boats:**
   - `shore::boat :927` is a box version of `terrain::boat_mesh :1438`.
@@ -188,16 +188,16 @@ The root cause in every case is the same: depths are bare literals. Many land on
   - `supertall.rs:58` and `estates.rs:498` are wrappers of `nd_sim::zoning::point_in_polygon`.
   - `society.rs:58 ring` = `MeshData::ngon`.
   - `park.rs:555 circle`, `park.rs:566 rail` (= `beam`), `estates.rs:92 picket` (≈ `fence`).
-- **Bridge and viaduct deck (slab, rails and parapets, with drifting constants):** `terrain.rs:579-588, 950-958, 1017-1024`. Viaduct columns `:966-977` and bridge piers `:1066-1074` re-do `pillar_column :681-693`. Consolidating them also fixes the yaw bug in one place.
-- **Height-field builders:** `terrain.rs:72, 226, 324` repeat the colour mix, the finite-difference normals and the index loop. `mud` is defined twice (`:98`, `:333`). Water sheets `:434` / `:506`. Use one `heightfield_mesh(n, cell, origin, h, colour_fn)`.
-- **Weighted pick (3):** `mod.rs:742`, `mod.rs:1439` (`pick_industry_style`, which also ignores `site_fit`), `district.rs:77`. Use one `weighted_pick`, which also fixes the infinity check.
+- **Bridge and viaduct deck (slab, rails and parapets, with drifting constants):** `terrain.rs:579-588, 950-958, 1017-1024`. Viaduct columns `:966-977` and bridge piers `:1066-1074` re-do `pillar_column :681-693`. Consolidating them also fixes the yaw bug in one place. **REFACTORED 94df6f2** (one `deck()` with two specs)
+- **Height-field builders:** `terrain.rs:72, 226, 324` repeat the colour mix, the finite-difference normals and the index loop. `mud` is defined twice (`:98`, `:333`). Water sheets `:434` / `:506`. Use one `heightfield_mesh(n, cell, origin, h, colour_fn)`. **REFACTORED 6b633a3** (`grid_normal`, `grid_indices`, `LandColours`; `build_far_ground` keeps its own sparse index)
+- **Weighted pick (3):** `mod.rs:742`, `mod.rs:1439` (`pick_industry_style`, which also ignores `site_fit`), `district.rs:77`. Use one `weighted_pick`, which also fixes the infinity check. **REFACTORED a914870** (`weighted_index`; `pick_industry_style` still ignores `site_fit`)
 - **Streets:**
-  - Zebra stripes 4×: `street.rs:1371-1375, 1471-1475, 1578-1582, 1687-1693`.
+  - Zebra stripes 4×: `street.rs:1371-1375, 1471-1475, 1578-1582, 1687-1693`. **REFACTORED cd7bf52**
   - Live street arms at a node 7×: `street.rs:539, 849, 1350, 2031, 2172`, `street_junction.rs:60, 103`. Use `RoadNetwork::live_streets_at` in nd_sim.
-  - Run end segments recomputed: `:837-840, 964-965, 975, 1138`. Store them on `Run`.
-  - Lift-since blocks: `:1326-1332, 1575-1590, 1602-1610, 1621-1650`.
+  - Run end segments recomputed: `:837-840, 964-965, 975, 1138`. Store them on `Run`. **REFACTORED cd7bf52** (`Run::end_segs`)
+  - Lift-since blocks: `:1326-1332, 1575-1590, 1602-1610, 1621-1650`. **REFACTORED cd7bf52** (`at_height`)
   - Cracks as 12-triangle boxes (`street.rs:1747, 1750`) vs 2-triangle decals (`walk.rs:388-390`).
-- **Ctx mirrors Extras field by field:** `mod.rs:1505-1530`, and again in `ctx_on :2390`. Hold `&Extras`, or use one `Ctx::new`.
+- **Ctx mirrors Extras field by field:** `mod.rs:1505-1530`, and again in `ctx_on :2390`. Hold `&Extras`, or use one `Ctx::new`. **REFACTORED b6ca240** (`Ctx::new`)
 - **Test helpers:**
   - mesh checks 3×: `check_mesh` in mod.rs, `economy_tests::valid`, inline in `dirty_tests`.
   - lot builders 4×.
@@ -207,11 +207,11 @@ The root cause in every case is the same: depths are bare literals. Many land on
 ### 2.3 Palette bypasses
 
 These hard-coded colour tables ignore themes and climate, and a palette hot reload never changes them:
-- `social.rs:31 PAINT`, `:368 NEON`, `:369 DEEP`.
-- `vehicles.rs:48 PAINT`, `:60 NEON`. `draw_parked` also builds the model with a random paint and discards the `color` it is given.
-- `metro.rs:13 LINE_COLOURS`.
-- Street, walk, toll and footbridge literals: `street.rs:1586, 1764`, `walk.rs:219, 316, 324, 456, 460`, `footbridge.rs:26, 43`, `toll.rs:64, 182`, `crossing.rs:116`.
-- Direct `pal.concrete[0]` indexing: `industrial.rs:743, 789, 1038`, `crossing.rs:124`.
+- `social.rs:31 PAINT`, `:368 NEON`, `:369 DEEP`. **REFACTORED a650088** (`Palette::mural_paint/neon/deep`)
+- `vehicles.rs:48 PAINT`, `:60 NEON`. `draw_parked` also builds the model with a random paint and discards the `color` it is given. **REFACTORED a650088** (`Palette::vehicle_paint/neon`, `vehicle_mesh_with`; the app still calls `vehicle_mesh`, which reads the default palette)
+- `metro.rs:13 LINE_COLOURS`. **REFACTORED a650088** (`Palette::metro_lines`; tunnels and cars take the palette, `line_colour` reads the default one for the UI)
+- Street, walk, toll and footbridge literals: `street.rs:1586, 1764`, `walk.rs:219, 316, 324, 456, 460`, `footbridge.rs:26, 43`, `toll.rs:64, 182`, `crossing.rs:116`. **REFACTORED 15edc07** (a street furniture block in the palette)
+- Direct `pal.concrete[0]` indexing: `industrial.rs:743, 789, 1038`, `crossing.rs:124`. (already `palette::at` since 56bcd7b)
 
 Add named palette entries (`beacon`, `cone`, `lantern`, `hazard`, `barrier_red`, `line_colours`) and always go through `palette::at` / `pick`.
 
@@ -223,18 +223,18 @@ Add named palette entries (`beacon`, `cone`, `lantern`, `hazard`, `barrier_red`,
 
 | Lines | Function | Split into |
 |---|---|---|
-| 858 | `street.rs:796 generate_street` | Top-20 #17 |
-| 316 | `buildings/residential.rs:79 stacks` | place_units, dress_unit, props, planks, utilities |
+| 858 | `street.rs:796 generate_street` | Top-20 #17 **REFACTORED cd7bf52** |
+| 316 | `buildings/residential.rs:79 stacks` | place_units, dress_unit, props, planks, utilities **REFACTORED 8815b60** |
 | 235 | `textures.rs:94 sample` | one fn per surface (acceptable as is) |
-| 228 | `terrain.rs:985 waterworks` | bridges, docks, water_plants, vents |
-| 213 | `buildings/park.rs:98 park` | layout, paths, planting, furniture |
-| 213 | `buildings/mod.rs:1472 generate_styled_extras` | ctx build, demolition branch, dispatch |
-| 207 | `walk.rs:42 walk_detail` | fronts, the per-side pavement loop, lifting |
-| 179 | `buildings/construction.rs:722 demolition_site` | perimeter (shared), cut structure, rubble |
-| 169 | `toll.rs:54 toll` | `plaza_apron`, booths, canopy |
-| 168 | `buildings/subway.rs:265 central_station` | |
-| 161 | `buildings/shore.rs:610 beach` | |
-| 154 | `social.rs:185 facade_spot` | wall_planes, wall_grid, blocked_grid, spot_from_rect |
+| 228 | `terrain.rs:985 waterworks` | bridges, docks, water_plants, vents **REFACTORED 94df6f2** |
+| 213 | `buildings/park.rs:98 park` | layout, paths, planting, furniture **REFACTORED 9470763** |
+| 213 | `buildings/mod.rs:1472 generate_styled_extras` | ctx build, demolition branch, dispatch **REFACTORED b6ca240** |
+| 207 | `walk.rs:42 walk_detail` | fronts, the per-side pavement loop, lifting **REFACTORED 15edc07** |
+| 179 | `buildings/construction.rs:722 demolition_site` | perimeter (shared), cut structure, rubble **REFACTORED a30bf8d** |
+| 169 | `toll.rs:54 toll` | `plaza_apron`, booths, canopy **REFACTORED 15edc07** |
+| 168 | `buildings/subway.rs:265 central_station` | **REFACTORED 47da353** |
+| 161 | `buildings/shore.rs:610 beach` | **REFACTORED 69d02af** |
+| 154 | `social.rs:185 facade_spot` | wall_planes, wall_grid, blocked_grid, spot_from_rect **REFACTORED 904daaa** |
 
 Also near the limit:
 - about 150 lines: `trades.rs:345 mechanic`, `towers.rs:146 twin_slab`, `towers.rs:295 megastructure`, `estates.rs:754 museum`
@@ -243,22 +243,22 @@ Also near the limit:
 
 ### 3.2 Files to split
 
-- `street.rs` (3,315 lines, about 750 of them tests). Use `street/{mod, kerb (:2091-2672), signals (:1949-2089), rail_path (:1773-1930), arrows (:3245-3370), tunnel (:99-203), tests}.rs`. This replaces the `#[path]` include of `street_junction.rs`. `shelter` (`:1932-1947`) is used only by `buildings/transit.rs:105`; move it there.
-- `buildings/mod.rs` (2,430): `style`, `rules`, `frame`, `choose`, `tests`, plus the `styles!{}` macro (Top-20 #18).
+- `street.rs` (3,315 lines, about 750 of them tests). Use `street/{mod, kerb (:2091-2672), signals (:1949-2089), rail_path (:1773-1930), arrows (:3245-3370), tunnel (:99-203), tests}.rs`. This replaces the `#[path]` include of `street_junction.rs`. `shelter` (`:1932-1947`) is used only by `buildings/transit.rs:105`; move it there. **REFACTORED e6949e4**
+- `buildings/mod.rs` (2,430): `style`, `rules`, `frame`, `choose`, `tests`, plus the `styles!{}` macro (Top-20 #18). **REFACTORED a3626f9, 5b92424**
   - The `dirty_tests.rs:51-53` assertion `ALL.len() == 112 + 6` exists because the tables are parallel.
   - No test catches a variant missing from `ALL`.
-- `buildings/parts.rs` (1,695): polygons, facades, roofs, site, props, graffiti and ground.
-- `buildings/power.rs` (1,451): packer, coal, nuclear, solar, wind, battery, field.
-- `terrain.rs` (1,540): heightfield, water, works (viaducts, portals, abutments), docks (boats, moorings, stamp), retaining.
-- `buildings/trades.rs` (1,221): move its shared kit out (Top-20 #16).
+- `buildings/parts.rs` (1,695): polygons, facades, roofs, site, props, graffiti and ground. **REFACTORED 32384cc**
+- `buildings/power.rs` (1,451): packer, coal, nuclear, solar, wind, battery, field. **REFACTORED ca9e0c4**
+- `terrain.rs` (1,540): heightfield, water, works (viaducts, portals, abutments), docks (boats, moorings, stamp), retaining. **REFACTORED 94df6f2**
+- `buildings/trades.rs` (1,221): move its shared kit out (Top-20 #16). **REFACTORED b453732** (941 lines now)
 
 ### 3.3 Dead code (grepped across all crates, nd_app included)
 
-- `terrain.rs:288-300` `lift_geometry`, `lift_mesh`: no callers, and their doc is stale. Delete.
-- `buildings/mod.rs:949` `Frame::is_world` (still advertised at `:924`); `mod.rs:685` `TierStyle::wall_color`.
+- `terrain.rs:288-300` `lift_geometry`, `lift_mesh`: no callers, and their doc is stale. Delete. **REFACTORED 94df6f2** (deleted)
+- `buildings/mod.rs:949` `Frame::is_world` (still advertised at `:924`); `mod.rs:685` `TierStyle::wall_color`. **REFACTORED ca9e0c4** (both deleted)
 - `preview.rs:36` `road_preview`: called only by its own test; the app uses `road_preview_with`.
-- Public but module-only: `street::travel_arrows :469`, `street::bore_profile :117`, `overlay::CAR_SPACE_M`, `crossing::PIVOT_Y`. Make them `pub(crate)`.
-- Dead bindings:
+- Public but module-only: `street::travel_arrows :469`, `street::bore_profile :117`, `overlay::CAR_SPACE_M`, `crossing::PIVOT_Y`. Make them `pub(crate)`. **REFACTORED cd7bf52**
+- Dead bindings: **REFACTORED 293a38c** (supertall `c`/`last`, estates, services, subway, park, beach, society, shore `yaw + 0.0`; power ca9e0c4; `parapets` 94df6f2; street `offset_path(..0.0)` and `degree()` cd7bf52). Kept: `hd*0.24/0.78*0.78` (not the same float), `trash_pile`'s `_pal` (app API).
   - `supertall.rs:54` `let _ = c;` (drop the parameter), `:410/433` `last`, `:429` `hd*0.24/0.78*0.78`
   - `estates.rs:395`, `services.rs:304`, `subway.rs:132` (`let _ = ...`)
   - `power.rs:629` (rng discarded)
@@ -287,9 +287,9 @@ Also near the limit:
 
 | Sev | Where | Cost | Fix |
 |---|---|---|---|
-| H | landscape on every road edit | Top-20 #19 | separate water signature; chunked terrain |
+| H | landscape on every road edit | Top-20 #19 | separate water signature; chunked terrain **REFACTORED 6b633a3, a86a37c** |
 | M | `terrain` `sync_scatter` (app) | regenerates all 3,500 pieces (about 40k Fbm cells with a ChaCha each) per road version | per-cell cache, or regenerate only cells near the changed segments |
-| M | `preview.rs:60-63` | the road hologram clones the whole `RoadNetwork` and runs `grade_crossings()` on every cursor move (the holo cache key includes the cursor) | test the new legs against `segments_in_box` without cloning, or keep the clone between moves |
+| M | `preview.rs:60-63` | the road hologram clones the whole `RoadNetwork` and runs `grade_crossings()` on every cursor move (the holo cache key includes the cursor) | test the new legs against `segments_in_box` without cloning, or keep the clone between moves **REFACTORED 2f76ea7**: `crossings_near` scans only the pieces within 25 m of the new road (1.08 ms to 0.62 ms per move on CoastalRiver); the clone itself (0.22 ms) stays, `add_polyline_levels` mutates the network. |
 | M | `street.rs:2020-2022` `ped_signal_posts` | rebuilds runs and all junction corners on every lane-version change, repeating what `generate_street` just did | return `StreetOutput { geo, ped_posts, signal_groups }` |
 | M | `street_junction.rs:342` `extra_stop_back`, `street.rs:3273/3280` `lane_arrows`, `street_junction.rs:310` `place_pole` | `mouths()` / `pad_outline` recomputed per lane or pole (O(arms²) each) | pass the `pad_mouths` map built at `street.rs:860` |
 | M | `point_along` loops (`street.rs:1073-1077, 432-447, 375-384` + the about 14 furniture loops) | O(samples × legs); the barrier `blocked()` closure (`:1046-1069`) also recomputes `path_length` per taper per call and does a full-scan `profile_height` | the `stations()` cursor; precompute taper lengths; use `lifts[ri]` |
@@ -310,8 +310,8 @@ The per-frame cost is fine: `crane_slew` is cheap; `wind_turbines`, `solar_track
 
 ### 4.2 Triangle counts and hidden geometry
 
-- **Lights:** `window_light` (`parts.rs:54-84`) allocates 6 Vecs per window, and with dynamic lights adds a dark-glass copy, so every lit window costs 4 triangles. A Bundled megatall has about 65-75k triangles of lights. The only budget check is `< 400_000` per building (`supertall.rs:820`). About 25% of the wing curtain lights are on faces inside the core (`supertall.rs:448-470`). `lit_band` stacks on curtain lights for the same floors (`:301-307`).
-- **Hidden caps:** `frustum` always caps both ends, and `Frame::bx` always draws its bottom. Stacked cylinders therefore carry internal caps: a coal cooling tower has about 264 hidden triangles against 288 visible; each nuclear dome about 180; the twist shaft up to 48 sections × 2 octagon caps; the museum dome has 5 capped 16-gons inside opaque glass. `band`, `lathe` and cap flags remove most of them.
+- **Lights:** `window_light` (`parts.rs:54-84`) allocates 6 Vecs per window, and with dynamic lights adds a dark-glass copy, so every lit window costs 4 triangles. A Bundled megatall has about 65-75k triangles of lights. The only budget check is `< 400_000` per building (`supertall.rs:820`). About 25% of the wing curtain lights are on faces inside the core (`supertall.rs:448-470`). `lit_band` stacks on curtain lights for the same floors (`:301-307`). **REFACTORED 8738e72, 28f099a** (no temporary mesh; buried wing lights dropped).
+- **Hidden caps:** `frustum` always caps both ends, and `Frame::bx` always draws its bottom. Stacked cylinders therefore carry internal caps: a coal cooling tower has about 264 hidden triangles against 288 visible; each nuclear dome about 180; the twist shaft up to 48 sections × 2 octagon caps; the museum dome has 5 capped 16-gons inside opaque glass. `band`, `lathe` and cap flags remove most of them. **REFACTORED 4f37a50, 28f099a** (156,568 triangles dropped across the golden cases, none added; the commercial twist tower keeps its floor caps, which `air::roof_site` reads for the rooftop deck).
 - **Grit:** cheap-street cracks are `boxed` slivers of 12 triangles each, every 4-9 m on both sides (`street.rs:1747, 1750`); decals would save about 10 triangles each, tens of thousands in a poor district. Footbridge posts every 2.5 m are 12 triangles each (`footbridge.rs:47-51`).
 - **Allocation:** every cylinder or frustum allocates several small Vecs (`ngon`, `tube` rings). Use `SmallVec` or stack arrays for n ≤ 16.
 
@@ -378,3 +378,29 @@ The property sweep (`buildings/sweep_tests.rs`) turned up, and the branch fixed:
 - Brand pieces on concave or triangular lots (logos, banners, crown bands, the spire over an L's notch); wires and string lights across a lot's notch (`Ctx::spans_lot`); vertiport pads drawn at 4.6 m where only a 3 m spot was found; McMansion garage doors past the end of a fitted wing; villa and estate porch canopies off the lot; a 2 m helipad on a slab roof narrower than that: 56bcd7b.
 - `BuildingRules::validate` let windows be taller than a floor and wider than their spacing (AC units then sank into the ground): 56bcd7b.
 - Scaffold netting changed sides at every floor and its foot moved with the scaffold's top: 8501486.
+
+## Phase 2b (refactor/procgen): how "identical" was checked
+
+`golden_tests::golden_hashes` (ignored; `ND_GOLDEN_OUT=<file>`) hashes
+23,035 cases: every style on the sweep's odd lots at every height, tier,
+condition, look and brand, the rules at their limits, plants at every
+scale, building and demolition sites, every forced style, the per-style
+tables, beaches, the street scene (with lane joints at a bend) and two
+generated cities (streets, arrows, signals, landscape and its tiles,
+water, works, walk detail, holograms, every building and vacant lot) and
+the other generators. Each line has an exact hash (every attribute and
+index in order) and an order-free one. `ND_GOLDEN_DUMP_LIST` +
+`ND_GOLDEN_DUMP_DIR` dump chosen cases raw for a value-by-value or
+triangle-subset comparison of two builds.
+
+Every refactor commit left all exact hashes unchanged, except:
+- the perf commits that drop hidden geometry (4f37a50, 28f099a): every
+  changed case was dumped from both builds and every new triangle is an
+  old triangle, bit for bit; only caps and buried lights went;
+- the lane-joint fix (33d6a10): 4 scene street meshes and 3 holograms;
+- the palette's Debug lines (new fields), and new golden cases;
+- 1-ulp noise from the compiler: a few cases (a McMansion's fountain, a
+  coal plant, twin slabs) flip by one unit in the last place with no
+  change on their path, as LLVM constant-folds `sin`/`cos` of a constant
+  angle in some codegen-unit layouts and calls the CRT in others. Such
+  flips were checked as same topology, positions within 1 ulp.

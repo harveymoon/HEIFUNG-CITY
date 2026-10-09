@@ -17,7 +17,8 @@
 //!
 //! Laid out in world coordinates from a seed, so each keeps its look.
 
-use crate::buildings::parts::{mul, pick, rgba};
+use crate::color::{at, mix, mul, pick, rgba};
+use crate::palette::Palette;
 use crate::mesh::MeshData;
 use crate::surface::{Geometry, Surface, Surface::*};
 use glam::{Vec2, Vec3};
@@ -28,7 +29,7 @@ use rand::Rng;
 const LOT_Y: f32 = 0.04;
 
 /// The paint: neon and street colours (linear).
-const PAINT: [[f32; 3]; 10] = [
+pub(crate) const PAINT: [[f32; 3]; 10] = [
     [0.95, 0.12, 0.45],
     [0.1, 0.75, 0.95],
     [0.98, 0.75, 0.08],
@@ -184,7 +185,25 @@ fn best_rect(free: &[bool], cols: usize, rows: usize, y0: f32) -> Option<(usize,
 /// the street (all glass, or nothing faces it).
 pub fn facade_spot(building: &Geometry, front: Vec2, facing: Vec2) -> Option<FacadeSpot> {
     let out2 = facing.try_normalize()?;
-    // Walls facing the street, grouped by plane.
+    let mut planes = wall_planes(building, out2);
+    planes.retain(|p| p.area >= MURAL_MIN_W * MURAL_MIN_H);
+    planes.sort_by(|a, b| b.area.total_cmp(&a.area));
+    planes.truncate(6);
+    let front3 = Vec3::new(front.x, 0.0, front.y);
+    let mut best: Option<(f32, FacadeSpot)> = None;
+    for p in &planes {
+        // The best scoring spot (the first of equals).
+        if let Some((score, spot)) = plane_spot(building, p, front3) {
+            if !best.as_ref().is_some_and(|b| b.0 >= score) {
+                best = Some((score, spot));
+            }
+        }
+    }
+    best.map(|b| b.1)
+}
+
+/// The building's paintable walls facing `out2`, grouped by plane.
+fn wall_planes(building: &Geometry, out2: Vec2) -> Vec<Plane> {
     let mut planes: Vec<Plane> = Vec::new();
     for s in PAINTABLE {
         for t in triangles(building.get(s)) {
@@ -212,129 +231,125 @@ pub fn facade_spot(building: &Geometry, front: Vec2, facing: Vec2) -> Option<Fac
             }
         }
     }
-    planes.retain(|p| p.area >= MURAL_MIN_W * MURAL_MIN_H);
-    planes.sort_by(|a, b| b.area.total_cmp(&a.area));
-    planes.truncate(6);
-    let front3 = Vec3::new(front.x, 0.0, front.y);
-    let mut best: Option<(f32, FacadeSpot)> = None;
-    for p in &planes {
-        let out = p.n;
-        let along = Vec3::new(out.z, 0.0, -out.x);
-        let tf = |q: Vec3| Vec2::new(q.dot(along), q.y);
-        // The wall's extent, kept within reach of the lot's front.
-        let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
-        for t in &p.tris {
-            for q in t {
-                lo = lo.min(tf(*q));
-                hi = hi.max(tf(*q));
-            }
+    planes
+}
+
+/// The best rectangle to paint on one wall plane and its score: clear wall
+/// if there is enough, else the wall painted round its windows, kept within
+/// reach of the lot's front (`front3`).
+fn plane_spot(building: &Geometry, p: &Plane, front3: Vec3) -> Option<(f32, FacadeSpot)> {
+    let out = p.n;
+    let along = Vec3::new(out.z, 0.0, -out.x);
+    let tf = |q: Vec3| Vec2::new(q.dot(along), q.y);
+    // The wall's extent, kept within reach of the lot's front.
+    let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+    for t in &p.tris {
+        for q in t {
+            lo = lo.min(tf(*q));
+            hi = hi.max(tf(*q));
         }
-        let mid_t = front3.dot(along);
-        lo.x = lo.x.max(mid_t - 120.0);
-        hi.x = hi.x.min(mid_t + 120.0);
-        hi.y = hi.y.min(lo.y + 150.0);
-        if hi.x - lo.x < MURAL_MIN_W || hi.y - lo.y < MURAL_MIN_H {
-            continue;
-        }
-        let cols = ((hi.x - lo.x) / WALL_CELL).ceil() as usize;
-        let rows = ((hi.y - lo.y) / WALL_CELL).ceil() as usize;
-        let centre = |c: usize, r: usize| Vec2::new(lo.x + (c as f32 + 0.5) * WALL_CELL, lo.y + (r as f32 + 0.5) * WALL_CELL);
-        let cell_range = |a: f32, b: f32, base: f32, n: usize| {
-            let i0 = (((a - base) / WALL_CELL).floor().max(0.0) as usize).min(n);
-            let i1 = (((b - base) / WALL_CELL).ceil().max(0.0) as usize).min(n);
-            i0..i1
-        };
-        // Wall where a cell's middle is on one of the plane's triangles.
-        let mut wall = vec![false; cols * rows];
-        for t in &p.tris {
-            let (a, b, c) = (tf(t[0]), tf(t[1]), tf(t[2]));
-            let (tlo, thi) = (a.min(b).min(c), a.max(b).max(c));
-            for r in cell_range(tlo.y, thi.y, lo.y, rows) {
-                for col in cell_range(tlo.x, thi.x, lo.x, cols) {
-                    if inside_tri(centre(col, r), a, b, c) {
-                        wall[r * cols + col] = true;
-                    }
-                }
-            }
-        }
-        // The cells whose middles lie in `a..b` (the one under the middle
-        // when that is narrower than a cell).
-        let centres = |a: f32, b: f32, base: f32, n: usize| {
-            let i0 = ((a - base) / WALL_CELL - 0.5).ceil().max(0.0) as usize;
-            let i1 = ((b - base) / WALL_CELL - 0.5).floor();
-            if i1 < i0 as f32 {
-                let m = (((a + b) * 0.5 - base) / WALL_CELL).floor();
-                return if m >= 0.0 && (m as usize) < n { m as usize..m as usize + 1 } else { 0..0 };
-            }
-            i0.min(n)..((i1 as usize) + 1).min(n)
-        };
-        // Anything drawn just in front of the wall keeps the paint off.
-        let mut blocked = vec![false; cols * rows];
-        for (_, m) in building.iter() {
-            for t in triangles(m) {
-                let s = t.map(|q| q.dot(out) - p.d);
-                let (smin, smax) = (s[0].min(s[1]).min(s[2]), s[0].max(s[1]).max(s[2]));
-                if smax < 0.005 || smin > 3.0 {
-                    continue;
-                }
-                let (a, b, c) = (tf(t[0]), tf(t[1]), tf(t[2]));
-                let (tlo, thi) = (a.min(b).min(c) - Vec2::splat(0.1), a.max(b).max(c) + Vec2::splat(0.1));
-                for r in centres(tlo.y, thi.y, lo.y, rows) {
-                    for col in centres(tlo.x, thi.x, lo.x, cols) {
-                        blocked[r * cols + col] = true;
-                    }
-                }
-            }
-        }
-        let free: Vec<bool> = wall.iter().zip(&blocked).map(|(w, b)| *w && !*b).collect();
-        // Clear wall if there is enough; else the wall, painted round the windows.
-        let (rect, around) = match best_rect(&free, cols, rows, lo.y) {
-            Some(r) => (r, false),
-            None => match best_rect(&wall, cols, rows, lo.y) {
-                Some(r) => (r, true),
-                None => continue,
-            },
-        };
-        let (c0, r0, wc, hc, score) = rect;
-        let setback = (front3.dot(out) - p.d).max(0.0);
-        let mut score = score / (1.0 + (setback - SETBACK_FREE).max(0.0) / 8.0);
-        if around {
-            score *= 0.35 * free.iter().zip(&wall).filter(|(f, w)| **f && **w).count() as f32 / wall.iter().filter(|w| **w).count().max(1) as f32 + 0.05;
-        }
-        if best.as_ref().is_some_and(|b| b.0 >= score) {
-            continue;
-        }
-        // The painted rectangle: centred in the clear stretch, a margin
-        // round it, off the pavement.
-        let rw = wc as f32 * WALL_CELL;
-        let width = (rw - 0.3).min(MURAL_MAX_W);
-        let mut bottom = lo.y + r0 as f32 * WALL_CELL + 0.15;
-        if bottom < 0.3 {
-            bottom = 0.3;
-        }
-        let top = (lo.y + (r0 + hc) as f32 * WALL_CELL - 0.15).min(bottom + MURAL_MAX_H);
-        let height = top - bottom;
-        if width < MURAL_MIN_W * 0.9 || height < MURAL_MIN_H * 0.8 {
-            continue;
-        }
-        let left = lo.x + c0 as f32 * WALL_CELL + (rw - width) * 0.5;
-        let origin = along * left + Vec3::Y * bottom + out * p.d;
-        let mut spot = FacadeSpot::open(origin, along, out, width, height);
-        for r in 0..spot.rows {
-            for c in 0..spot.cols {
-                let u = left + (c as f32 + 0.5) * WALL_CELL;
-                let v = bottom + (r as f32 + 0.5) * WALL_CELL;
-                let gc = (((u - lo.x) / WALL_CELL) as usize).min(cols - 1);
-                let gr = (((v - lo.y) / WALL_CELL) as usize).min(rows - 1);
-                spot.paint[r * spot.cols + c] = free[gr * cols + gc];
-            }
-        }
-        if spot.clear_share() < 0.3 {
-            continue;
-        }
-        best = Some((score, spot));
     }
-    best.map(|b| b.1)
+    let mid_t = front3.dot(along);
+    lo.x = lo.x.max(mid_t - 120.0);
+    hi.x = hi.x.min(mid_t + 120.0);
+    hi.y = hi.y.min(lo.y + 150.0);
+    if hi.x - lo.x < MURAL_MIN_W || hi.y - lo.y < MURAL_MIN_H {
+        return None;
+    }
+    let cols = ((hi.x - lo.x) / WALL_CELL).ceil() as usize;
+    let rows = ((hi.y - lo.y) / WALL_CELL).ceil() as usize;
+    let centre = |c: usize, r: usize| Vec2::new(lo.x + (c as f32 + 0.5) * WALL_CELL, lo.y + (r as f32 + 0.5) * WALL_CELL);
+    let cell_range = |a: f32, b: f32, base: f32, n: usize| {
+        let i0 = (((a - base) / WALL_CELL).floor().max(0.0) as usize).min(n);
+        let i1 = (((b - base) / WALL_CELL).ceil().max(0.0) as usize).min(n);
+        i0..i1
+    };
+    // Wall where a cell's middle is on one of the plane's triangles.
+    let mut wall = vec![false; cols * rows];
+    for t in &p.tris {
+        let (a, b, c) = (tf(t[0]), tf(t[1]), tf(t[2]));
+        let (tlo, thi) = (a.min(b).min(c), a.max(b).max(c));
+        for r in cell_range(tlo.y, thi.y, lo.y, rows) {
+            for col in cell_range(tlo.x, thi.x, lo.x, cols) {
+                if inside_tri(centre(col, r), a, b, c) {
+                    wall[r * cols + col] = true;
+                }
+            }
+        }
+    }
+    // The cells whose middles lie in `a..b` (the one under the middle
+    // when that is narrower than a cell).
+    let centres = |a: f32, b: f32, base: f32, n: usize| {
+        let i0 = ((a - base) / WALL_CELL - 0.5).ceil().max(0.0) as usize;
+        let i1 = ((b - base) / WALL_CELL - 0.5).floor();
+        if i1 < i0 as f32 {
+            let m = (((a + b) * 0.5 - base) / WALL_CELL).floor();
+            return if m >= 0.0 && (m as usize) < n { m as usize..m as usize + 1 } else { 0..0 };
+        }
+        i0.min(n)..((i1 as usize) + 1).min(n)
+    };
+    // Anything drawn just in front of the wall keeps the paint off.
+    let mut blocked = vec![false; cols * rows];
+    for (_, m) in building.iter() {
+        for t in triangles(m) {
+            let s = t.map(|q| q.dot(out) - p.d);
+            let (smin, smax) = (s[0].min(s[1]).min(s[2]), s[0].max(s[1]).max(s[2]));
+            if smax < 0.005 || smin > 3.0 {
+                continue;
+            }
+            let (a, b, c) = (tf(t[0]), tf(t[1]), tf(t[2]));
+            let (tlo, thi) = (a.min(b).min(c) - Vec2::splat(0.1), a.max(b).max(c) + Vec2::splat(0.1));
+            for r in centres(tlo.y, thi.y, lo.y, rows) {
+                for col in centres(tlo.x, thi.x, lo.x, cols) {
+                    blocked[r * cols + col] = true;
+                }
+            }
+        }
+    }
+    let free: Vec<bool> = wall.iter().zip(&blocked).map(|(w, b)| *w && !*b).collect();
+    // Clear wall if there is enough; else the wall, painted round the windows.
+    let (rect, around) = match best_rect(&free, cols, rows, lo.y) {
+        Some(r) => (r, false),
+        None => match best_rect(&wall, cols, rows, lo.y) {
+            Some(r) => (r, true),
+            None => return None,
+        },
+    };
+    let (c0, r0, wc, hc, score) = rect;
+    let setback = (front3.dot(out) - p.d).max(0.0);
+    let mut score = score / (1.0 + (setback - SETBACK_FREE).max(0.0) / 8.0);
+    if around {
+        score *= 0.35 * free.iter().zip(&wall).filter(|(f, w)| **f && **w).count() as f32 / wall.iter().filter(|w| **w).count().max(1) as f32 + 0.05;
+    }
+    // The painted rectangle: centred in the clear stretch, a margin
+    // round it, off the pavement.
+    let rw = wc as f32 * WALL_CELL;
+    let width = (rw - 0.3).min(MURAL_MAX_W);
+    let mut bottom = lo.y + r0 as f32 * WALL_CELL + 0.15;
+    if bottom < 0.3 {
+        bottom = 0.3;
+    }
+    let top = (lo.y + (r0 + hc) as f32 * WALL_CELL - 0.15).min(bottom + MURAL_MAX_H);
+    let height = top - bottom;
+    if width < MURAL_MIN_W * 0.9 || height < MURAL_MIN_H * 0.8 {
+        return None;
+    }
+    let left = lo.x + c0 as f32 * WALL_CELL + (rw - width) * 0.5;
+    let origin = along * left + Vec3::Y * bottom + out * p.d;
+    let mut spot = FacadeSpot::open(origin, along, out, width, height);
+    for r in 0..spot.rows {
+        for c in 0..spot.cols {
+            let u = left + (c as f32 + 0.5) * WALL_CELL;
+            let v = bottom + (r as f32 + 0.5) * WALL_CELL;
+            let gc = (((u - lo.x) / WALL_CELL) as usize).min(cols - 1);
+            let gr = (((v - lo.y) / WALL_CELL) as usize).min(rows - 1);
+            spot.paint[r * spot.cols + c] = free[gr * cols + gc];
+        }
+    }
+    if spot.clear_share() < 0.3 {
+        return None;
+    }
+    Some((score, spot))
 }
 
 /// The paint: what a crew keeps from wall to wall.
@@ -365,22 +380,23 @@ enum Motif {
 const MOTIFS: [Motif; 6] = [Motif::Sun, Motif::Figure, Motif::Face, Motif::Eye, Motif::Waves, Motif::Rings];
 
 /// Bright neon paint and deep grounds (linear).
-const NEON: [[f32; 3]; 7] = [[0.95, 0.12, 0.45], [0.1, 0.75, 0.95], [0.98, 0.75, 0.08], [0.35, 0.95, 0.25], [0.6, 0.2, 0.95], [0.98, 0.35, 0.08], [0.1, 0.9, 0.75]];
-const DEEP: [[f32; 3]; 6] = [[0.05, 0.03, 0.18], [0.02, 0.1, 0.22], [0.18, 0.02, 0.15], [0.03, 0.12, 0.1], [0.12, 0.04, 0.25], [0.2, 0.06, 0.04]];
+pub(crate) const NEON: [[f32; 3]; 7] = [[0.95, 0.12, 0.45], [0.1, 0.75, 0.95], [0.98, 0.75, 0.08], [0.35, 0.95, 0.25], [0.6, 0.2, 0.95], [0.98, 0.35, 0.08], [0.1, 0.9, 0.75]];
+pub(crate) const DEEP: [[f32; 3]; 6] = [[0.05, 0.03, 0.18], [0.02, 0.1, 0.22], [0.18, 0.02, 0.15], [0.03, 0.12, 0.1], [0.12, 0.04, 0.25], [0.2, 0.06, 0.04]];
 
 impl Crew {
-    fn of(crew: u64) -> Self {
+    fn of(crew: u64, pal: &Palette) -> Self {
+        let (neon, deep) = (&pal.mural_neon, &pal.mural_deep);
         let mut rng = rng_for(crew, 0xC2E7);
-        let main0 = pick(&mut rng, &NEON);
-        let mut main1 = pick(&mut rng, &NEON);
+        let main0 = pick(&mut rng, neon);
+        let mut main1 = pick(&mut rng, neon);
         if main1 == main0 {
-            main1 = NEON[(NEON.iter().position(|c| *c == main0).unwrap_or(0) + 3) % NEON.len()];
+            main1 = at(neon, neon.iter().position(|c| *c == main0).unwrap_or(0) + 3);
         }
         Self {
-            bg: [pick(&mut rng, &DEEP), pick(&mut rng, &DEEP)],
+            bg: [pick(&mut rng, deep), pick(&mut rng, deep)],
             main: [main0, main1],
-            accent: pick(&mut rng, &NEON),
-            neon: pick(&mut rng, &NEON),
+            accent: pick(&mut rng, neon),
+            neon: pick(&mut rng, neon),
             motif: MOTIFS[rng.random_range(0..MOTIFS.len())],
             rays: rng.random_bool(0.5),
             ground: rng.random_range(0..3),
@@ -460,9 +476,6 @@ struct Layer {
     alpha: f32,
 }
 
-fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
-}
 
 /// A mural's design on a `w` by `h` wall: a background and its layers.
 struct Design {
@@ -476,13 +489,13 @@ impl Design {
     fn color(&self, p: Vec2) -> Option<[f32; 3]> {
         let mut col = self.bg.map(|(a, b, dir)| {
             let q = Vec2::new(p.x / self.w - 0.5, p.y / self.h - 0.5);
-            lerp3(a, b, (q.dot(dir) + 0.5).clamp(0.0, 1.0))
+            mix(a, b, (q.dot(dir) + 0.5).clamp(0.0, 1.0))
         });
         for l in &self.layers {
             if l.shape.contains(p) {
-                let c = lerp3(l.lo, l.hi, l.shape.rise(p));
+                let c = mix(l.lo, l.hi, l.shape.rise(p));
                 col = Some(match col {
-                    Some(under) if l.alpha < 1.0 => lerp3(under, c, l.alpha),
+                    Some(under) if l.alpha < 1.0 => mix(under, c, l.alpha),
                     _ => c,
                 });
             }
@@ -791,11 +804,11 @@ fn lettering(day: &mut MeshData, night: &mut MeshData, spot: &FacadeSpot, tag: &
 /// design unlit and floodlit, for the app to show after dark). `crew`
 /// seeds the crew's palette, motif and style, `seed` this mural's layout;
 /// `quality` (`-1..1`) is art or a tag: poor crews scrawl.
-pub fn paint_mural(spot: &FacadeSpot, quality: f32, seed: u64, crew: u64, tag: &str) -> (Geometry, Geometry) {
+pub fn paint_mural(spot: &FacadeSpot, quality: f32, seed: u64, crew: u64, tag: &str, pal: &Palette) -> (Geometry, Geometry) {
     let mut day = Geometry::default();
     let mut night = Geometry::default();
     let mut rng = rng_for(seed, 0x3A1A);
-    let style = Crew::of(crew);
+    let style = Crew::of(crew, pal);
     let (w, h) = (spot.width, spot.height);
     if quality < -0.2 {
         // A tag: scrawls and the crew's name on the bare wall.
@@ -803,7 +816,7 @@ pub fn paint_mural(spot: &FacadeSpot, quality: f32, seed: u64, crew: u64, tag: &
             let a = Vec2::new(rng.random_range(0.0..w), rng.random_range(0.3..(h * 0.7).max(0.4)));
             let b = a + Vec2::new(rng.random_range(0.6..2.2), rng.random_range(-0.4..0.4));
             if spot.paintable(a.x, a.y) && spot.paintable(b.x.min(w), b.y.clamp(0.0, h)) {
-                stroke(day.part(Matte), spot, a, b, rng.random_range(0.1..0.25), STANDOFF, pick(&mut rng, &PAINT));
+                stroke(day.part(Matte), spot, a, b, rng.random_range(0.1..0.25), STANDOFF, pick(&mut rng, &pal.mural_paint));
             }
         }
         lettering(day.part(Matte), night.part(Glow), spot, tag, false, style.main[0]);
@@ -864,7 +877,7 @@ pub fn paint_mural(spot: &FacadeSpot, quality: f32, seed: u64, crew: u64, tag: &
 /// mural on a vacant lot (or where a building has no wall to the street).
 /// Returns the day and night geometry, as [`paint_mural`].
 #[allow(clippy::too_many_arguments)]
-pub fn mural_wall(pos: Vec2, along: Vec2, facing: Vec2, width: f32, height: f32, quality: f32, seed: u64, crew: u64, tag: &str) -> (Geometry, Geometry) {
+pub fn mural_wall(pos: Vec2, along: Vec2, facing: Vec2, width: f32, height: f32, quality: f32, seed: u64, crew: u64, tag: &str, pal: &Palette) -> (Geometry, Geometry) {
     let along = along.try_normalize().unwrap_or(Vec2::X);
     let mut out = facing.try_normalize().unwrap_or(Vec2::new(-along.y, along.x));
     out = (out - along * out.dot(along)).try_normalize().unwrap_or(Vec2::new(-along.y, along.x));
@@ -880,7 +893,7 @@ pub fn mural_wall(pos: Vec2, along: Vec2, facing: Vec2, width: f32, height: f32,
     let right = Vec3::new(o3.z, 0.0, -o3.x);
     let origin = base + o3 * (thick * 0.5) - right * (width * 0.5) + Vec3::Y * 0.1;
     let spot = FacadeSpot::open(origin, right, o3, width, height - 0.2);
-    let (day, night) = paint_mural(&spot, quality, seed, crew, tag);
+    let (day, night) = paint_mural(&spot, quality, seed, crew, tag, pal);
     wall.append(&day);
     (wall, night)
 }
@@ -925,7 +938,7 @@ mod mural_tests {
             assert!(p.x >= -12.01);
         }
         // Painted: day paint on the wall plane in front of it, a night copy.
-        let (day, night) = paint_mural(&spot, 0.6, 7, 3, "VOLT");
+        let (day, night) = paint_mural(&spot, 0.6, 7, 3, "VOLT", &Palette::default());
         assert!(day.get(Matte).positions.len() > 100);
         assert!(!night.get(Glow).is_empty());
         // (The lamps over the top stand out on arms.)
@@ -951,7 +964,7 @@ mod mural_tests {
         let spot = facade_spot(&g, Vec2::new(0.0, -4.0), Vec2::new(0.0, -1.0)).expect("still painted");
         let share = spot.clear_share();
         assert!(share > 0.3 && share < 1.0, "paint round the windows: {share}");
-        let (day, _) = paint_mural(&spot, 0.6, 1, 1, "AB");
+        let (day, _) = paint_mural(&spot, 0.6, 1, 1, "AB", &Palette::default());
         // No painted cell lies well inside a window.
         let m = day.get(Matte);
         let mut painted = 0;
@@ -986,16 +999,16 @@ mod mural_tests {
     #[test]
     fn a_crew_keeps_its_style_and_each_wall_its_own_layout() {
         let spot = FacadeSpot::open(Vec3::ZERO, Vec3::X, Vec3::NEG_Z, 10.0, 6.0);
-        let (a, _) = paint_mural(&spot, 0.5, 11, 4, "NEON");
-        let (b, _) = paint_mural(&spot, 0.5, 11, 4, "NEON");
+        let (a, _) = paint_mural(&spot, 0.5, 11, 4, "NEON", &Palette::default());
+        let (b, _) = paint_mural(&spot, 0.5, 11, 4, "NEON", &Palette::default());
         assert_eq!(a.get(Matte).colors, b.get(Matte).colors, "deterministic");
-        let (c, _) = paint_mural(&spot, 0.5, 12, 4, "NEON");
+        let (c, _) = paint_mural(&spot, 0.5, 12, 4, "NEON", &Palette::default());
         assert_ne!(a.get(Matte).colors, c.get(Matte).colors, "another wall, another layout");
-        assert_eq!(Crew::of(4).bg, Crew::of(4).bg);
+        assert_eq!(Crew::of(4, &Palette::default()).bg, Crew::of(4, &Palette::default()).bg);
         assert_eq!(crew_tag("The Volt Saints"), "VOLT");
         assert_eq!(crew_tag("Kru-9 Collective"), "KRU9");
         // A tag is scrawls and letters, no painted ground.
-        let (t, _) = paint_mural(&spot, -0.6, 11, 4, "NEON");
+        let (t, _) = paint_mural(&spot, -0.6, 11, 4, "NEON", &Palette::default());
         assert!(t.get(Matte).positions.len() < a.get(Matte).positions.len() / 4);
     }
 }

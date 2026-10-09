@@ -17,7 +17,7 @@
 
 use super::parts::*;
 use super::kit::clip_box;
-use super::trades::{block, fit, flagpole, pane_row, table, R};
+use super::kit::{block, fit, flagpole, pane_row, table, R};
 use super::{Ctx, Face, Frame};
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
@@ -70,12 +70,7 @@ pub fn sea_local(c: &Ctx, look: Option<ShoreLook>) -> Vec2 {
     Vec2::new(s.dot(f.along), s.dot(f.inward)).normalize_or(Vec2::Y)
 }
 
-fn hash(a: u64, b: u64) -> u64 {
-    let mut x = a.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
-    x ^= x >> 31;
-    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x ^ (x >> 29)
-}
+use crate::hash::hash2 as hash;
 
 // ── small props (lot frame) ──────────────────────────────────────────────
 
@@ -90,7 +85,7 @@ fn umbrella(g: &mut Geometry, f: &Frame, p: Vec2, y: f32, color: [f32; 3]) {
 fn lounger(g: &mut Geometry, f: &Frame, p: Vec2, y: f32, yaw: f32, color: [f32; 3]) {
     f.bx_yaw(g, Matte, p.x, y + 0.3, p.y, Vec3::new(1.9, 0.08, 0.65), color, yaw);
     let back = Vec2::new(yaw.cos(), yaw.sin()) * 0.8;
-    f.bx_yaw(g, Matte, p.x + back.x, y + 0.5, p.y + back.y, Vec3::new(0.45, 0.06, 0.65), color, yaw + 0.0);
+    f.bx_yaw(g, Matte, p.x + back.x, y + 0.5, p.y + back.y, Vec3::new(0.45, 0.06, 0.65), color, yaw);
     f.bx_yaw(g, Matte, p.x, y + 0.14, p.y, Vec3::new(1.6, 0.28, 0.08), mul(color, 0.6), yaw);
 }
 
@@ -552,7 +547,7 @@ pub fn boat_rental(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, look: Option<S
         block(g, c, Paint, &r, 0.0, 3.0, pick(rng, &pal.metal_paint));
         f.bx(g, Metal, r.c().x, 3.15, r.c().y, Vec3::new(r.w() + 0.6, 0.3, r.d() + 0.6), WHITE);
         let fr = r.front();
-        fr.decal(g, f, Glass, 0.0, 1.6, 0.05, r.w() * 0.6, 1.0, pal.glass_dark);
+        fr.glaze(g, c, 0.0, 1.6, 0.05, r.w() * 0.6, 1.0, Pane::Dark);
         neon_board(g, c, &fr, 0.0, 3.8, (r.w() * 0.9).min(5.5), 0.8, accent);
         if c.reach_out(&r.back()) > 2.5 {
             awning(g, c, rng, &r.back(), 0.0, 2.5, r.w());
@@ -607,7 +602,7 @@ pub fn boat_rental(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, look: Option<S
 /// the hour lying in the sun, swimmers off the shore, a lifeguard tower
 /// at the water's edge, and when it is fouled a sign and tape across the
 /// way in.
-pub fn beach(g: &mut Geometry, c: &Ctx, _rng: &mut impl Rng, look: Option<ShoreLook>) {
+pub fn beach(g: &mut Geometry, c: &Ctx, look: Option<ShoreLook>) {
     // The sim plans the sand (`plan_beach`); without a plan, bare sand.
     let (paths, benches, entrances): (&[Vec<Vec2>], &[(Vec2, f32)], &[Vec2]) = c.park.as_ref().map_or((&[], &[], &[]), |l| (&l.paths[..], &l.benches[..], &l.entrances[..]));
     let f = &c.frame;
@@ -654,9 +649,27 @@ pub fn beach(g: &mut Geometry, c: &Ctx, _rng: &mut impl Rng, look: Option<ShoreL
             }
         }
     }
-    // Towels, umbrellas and loungers; the crowd on them.
     let seed = c.seed;
-    let mut lying = state.bathers as usize;
+    beach_crowd(g, benches, seed, state.bathers as usize);
+    beach_water(g, look.is_some(), &state, seed, drop, sea, across, (u0, u1), v1);
+    lifeguard_tower(g, pal, &state, &lot, sea, across, (u0, u1), v1);
+    if state.closed {
+        beach_closed(g, paths, entrances, &lot, sea, across);
+    }
+    // A few palms at the back of the sand on a warm beach.
+    for i in 0..((u1 - u0) / 14.0) as i32 {
+        let h = hash(seed ^ 0x9A1, i as u64);
+        let p = across * (u0 + 4.0 + i as f32 * 14.0 + (h % 4) as f32) + sea * (v0 + 3.0);
+        if nd_sim::zoning::point_in_polygon(p, &lot) && nd_sim::geom::distance_to_outline(p, &lot) > 4.2 && paths.iter().all(|path| path.windows(2).all(|s| nd_sim::geom::project_on_segment(p, s[0], s[1]).1.distance(p) > 3.0)) {
+            tree_kind(g, p, 0.0, TreeKind::Palm, 6.5 + (h % 3) as f32, 3.6, pal.bark, mul(pal.foliage, 1.1));
+        }
+    }
+}
+
+/// A beach's towels, umbrellas and loungers, and `bathers` of the crowd
+/// lying on them.
+fn beach_crowd(g: &mut Geometry, benches: &[(Vec2, f32)], seed: u64, bathers: usize) {
+    let mut lying = bathers;
     for (i, (p, yaw)) in benches.iter().enumerate() {
         let h = hash(seed, i as u64);
         let col = BRIGHT[(h % BRIGHT.len() as u64) as usize];
@@ -688,9 +701,14 @@ pub fn beach(g: &mut Geometry, c: &Ctx, _rng: &mut impl Rng, look: Option<ShoreL
             g.part(Matte).boxed(Vec3::new(p.x - along.x * 0.85, y + 0.06, p.y - along.y * 0.85), Vec3::new(0.22, 0.2, 0.24), towel_yaw, rgba(skin));
         }
     }
-    // Swimmers off the shore.
+}
+
+/// Swimmers off the shore and the buoys of the swimming area (only on a
+/// real shore, with the water off the lot).
+#[allow(clippy::too_many_arguments)]
+fn beach_water(g: &mut Geometry, shore: bool, state: &BeachLook, seed: u64, drop: f32, sea: Vec2, across: Vec2, (u0, u1): (f32, f32), v1: f32) {
     // (Only on a real shore: the water is off the lot.)
-    let n = if look.is_some() { state.swimmers.min(60) as usize } else { 0 };
+    let n = if shore { state.swimmers.min(60) as usize } else { 0 };
     for i in 0..n {
         let h = hash(seed ^ 0x5717, i as u64);
         let s = ((h % 1000) as f32 / 1000.0) * (u1 - u0 - 6.0) + u0 + 3.0;
@@ -705,7 +723,7 @@ pub fn beach(g: &mut Geometry, c: &Ctx, _rng: &mut impl Rng, look: Option<ShoreL
         }
     }
     // Buoys marking the swimming area.
-    let buoys = if look.is_some() { ((u1 - u0) / 9.0).floor() as i32 } else { -1 };
+    let buoys = if shore { ((u1 - u0) / 9.0).floor() as i32 } else { -1 };
     for i in 0..=buoys {
         let p = across * (u0 + i as f32 * (u1 - u0) / buoys.max(1) as f32) + sea * (v1 + 30.0);
         g.part(Paint).cylinder(p, 0.3, 0.3, -drop - 0.1, -drop + 0.35, 8, rgba([0.95, 0.75, 0.1]));
@@ -713,9 +731,13 @@ pub fn beach(g: &mut Geometry, c: &Ctx, _rng: &mut impl Rng, look: Option<ShoreL
             g.part(Glow).boxed(Vec3::new(p.x, -drop + 0.45, p.y), Vec3::splat(0.12), 0.0, rgba([1.6, 1.0, 0.2]));
         }
     }
-    // The lifeguard tower near the water, in the middle.
+}
+
+/// The lifeguard tower near the water, in the middle of the beach.
+#[allow(clippy::too_many_arguments)]
+fn lifeguard_tower(g: &mut Geometry, pal: &crate::palette::Palette, state: &BeachLook, lot: &[Vec2], sea: Vec2, across: Vec2, (u0, u1): (f32, f32), v1: f32) {
     let tower = across * ((u0 + u1) * 0.5 + (u1 - u0) * 0.18) + sea * (v1 - 7.0);
-    if nd_sim::zoning::point_in_polygon(tower, &lot) && nd_sim::geom::distance_to_outline(tower, &lot) > 2.0 {
+    if nd_sim::zoning::point_in_polygon(tower, lot) && nd_sim::geom::distance_to_outline(tower, lot) > 2.0 {
         let yaw = across.y.atan2(across.x);
         for (du, dv) in [(-0.9f32, -0.9f32), (0.9, -0.9), (0.9, 0.9), (-0.9, 0.9)] {
             let q = tower + across * du + sea * dv;
@@ -736,36 +758,29 @@ pub fn beach(g: &mut Geometry, c: &Ctx, _rng: &mut impl Rng, look: Option<ShoreL
         let foot = tower - sea * 3.0;
         g.part(Wood).slab(Vec3::new(foot.x, 0.1, foot.y), Vec3::new(tower.x - sea.x, 2.45, tower.y - sea.y), 0.8, 0.08, rgba(mul(pal.wood, 1.1)));
     }
-    // Shut: a sign at the way in and tape across it.
-    if state.closed {
-        let entry = entrances.first().copied().or_else(|| paths.first().and_then(|p| p.first().copied())).unwrap_or(lot[0]);
-        let post = entry + across * 1.8;
-        g.part(Metal).boxed(Vec3::new(post.x, 1.2, post.y), Vec3::new(0.12, 2.4, 0.12), 0.0, rgba([0.3, 0.3, 0.32]));
-        let yaw = across.y.atan2(across.x);
-        g.part(Paint).boxed(Vec3::new(post.x, 2.3, post.y), Vec3::new(1.6, 1.0, 0.06), yaw, rgba([0.92, 0.9, 0.85]));
-        g.part(Glow).boxed(Vec3::new(post.x - sea.x * 0.05, 2.45, post.y - sea.y * 0.05), Vec3::new(1.4, 0.3, 0.07), yaw, rgba([1.8, 0.15, 0.1]));
-        g.part(Glow).boxed(Vec3::new(post.x - sea.x * 0.05, 2.05, post.y - sea.y * 0.05), Vec3::new(1.0, 0.12, 0.07), yaw, rgba([1.8, 0.15, 0.1]));
-        // Tape between posts across the boardwalk.
-        let a = entry - across * 2.5;
-        let b = entry + across * 2.5;
-        for q in [a, b] {
-            g.part(Matte).boxed(Vec3::new(q.x, 0.5, q.y), Vec3::new(0.1, 1.0, 0.1), 0.0, rgba([0.95, 0.4, 0.1]));
-        }
-        let n = 8;
-        for i in 0..n {
-            let t0 = i as f32 / n as f32;
-            let q = a.lerp(b, t0 + 0.5 / n as f32);
-            let col = if i % 2 == 0 { [0.95, 0.15, 0.1] } else { [0.95, 0.92, 0.88] };
-            g.part(Paint).boxed(Vec3::new(q.x, 0.9, q.y), Vec3::new(a.distance(b) / n as f32, 0.08, 0.02), yaw, rgba(col));
-        }
+}
+
+/// A shut beach: a sign at the way in and tape across it.
+fn beach_closed(g: &mut Geometry, paths: &[Vec<Vec2>], entrances: &[Vec2], lot: &[Vec2], sea: Vec2, across: Vec2) {
+    let entry = entrances.first().copied().or_else(|| paths.first().and_then(|p| p.first().copied())).unwrap_or(lot[0]);
+    let post = entry + across * 1.8;
+    g.part(Metal).boxed(Vec3::new(post.x, 1.2, post.y), Vec3::new(0.12, 2.4, 0.12), 0.0, rgba([0.3, 0.3, 0.32]));
+    let yaw = across.y.atan2(across.x);
+    g.part(Paint).boxed(Vec3::new(post.x, 2.3, post.y), Vec3::new(1.6, 1.0, 0.06), yaw, rgba([0.92, 0.9, 0.85]));
+    g.part(Glow).boxed(Vec3::new(post.x - sea.x * 0.05, 2.45, post.y - sea.y * 0.05), Vec3::new(1.4, 0.3, 0.07), yaw, rgba([1.8, 0.15, 0.1]));
+    g.part(Glow).boxed(Vec3::new(post.x - sea.x * 0.05, 2.05, post.y - sea.y * 0.05), Vec3::new(1.0, 0.12, 0.07), yaw, rgba([1.8, 0.15, 0.1]));
+    // Tape between posts across the boardwalk.
+    let a = entry - across * 2.5;
+    let b = entry + across * 2.5;
+    for q in [a, b] {
+        g.part(Matte).boxed(Vec3::new(q.x, 0.5, q.y), Vec3::new(0.1, 1.0, 0.1), 0.0, rgba([0.95, 0.4, 0.1]));
     }
-    // A few palms at the back of the sand on a warm beach.
-    for i in 0..((u1 - u0) / 14.0) as i32 {
-        let h = hash(seed ^ 0x9A1, i as u64);
-        let p = across * (u0 + 4.0 + i as f32 * 14.0 + (h % 4) as f32) + sea * (v0 + 3.0);
-        if nd_sim::zoning::point_in_polygon(p, &lot) && nd_sim::geom::distance_to_outline(p, &lot) > 4.2 && paths.iter().all(|path| path.windows(2).all(|s| nd_sim::geom::project_on_segment(p, s[0], s[1]).1.distance(p) > 3.0)) {
-            tree_kind(g, p, 0.0, TreeKind::Palm, 6.5 + (h % 3) as f32, 3.6, pal.bark, mul(pal.foliage, 1.1));
-        }
+    let n = 8;
+    for i in 0..n {
+        let t0 = i as f32 / n as f32;
+        let q = a.lerp(b, t0 + 0.5 / n as f32);
+        let col = if i % 2 == 0 { [0.95, 0.15, 0.1] } else { [0.95, 0.92, 0.88] };
+        g.part(Paint).boxed(Vec3::new(q.x, 0.9, q.y), Vec3::new(a.distance(b) / n as f32, 0.08, 0.02), yaw, rgba(col));
     }
 }
 

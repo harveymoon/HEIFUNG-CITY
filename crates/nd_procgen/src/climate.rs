@@ -249,10 +249,7 @@ pub fn vent_clear(world: &nd_sim::World, p: Vec2) -> bool {
 }
 
 /// 0..1 from a position, for picks that must not draw from an RNG.
-pub fn hash01(w: Vec2) -> f32 {
-    let x = (w.x * 12.9898 + w.y * 78.233).sin() * 43_758.547;
-    x - x.floor()
-}
+pub use crate::hash::hash01_sin as hash01;
 
 #[cfg(test)]
 mod tests {

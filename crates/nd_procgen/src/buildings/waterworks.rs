@@ -239,7 +239,7 @@ pub fn shipping_port(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Ship-to-shore crane straddling the quay: legs, boom out over the water.
     let cu = lo.x + w * 0.62;
     let legs = [Vec2::new(cu - 8.0, hi.y - 3.0), Vec2::new(cu + 8.0, hi.y - 3.0), Vec2::new(cu - 8.0, hi.y - 15.0), Vec2::new(cu + 8.0, hi.y - 15.0)];
-    if legs.iter().all(|p| c.inside_local(*p)) && poly_inside(c, &rect(cu, hi.y - 11.0, 9.5, 10.5)) {
+    if c.all_inside(&legs) && poly_inside(c, &rect(cu, hi.y - 11.0, 9.5, 10.5)) {
         let crane = mul(pal.metal_paint(0), 1.0);
         for p in legs {
             f.bx(g, Metal, p.x, 14.0, p.y, Vec3::new(1.0, 28.0, 1.0), crane);
@@ -248,7 +248,7 @@ pub fn shipping_port(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         // The boom reaches back over the land only as far as the lot allows;
         // the seaward part is drawn with the pier.
         f.bx(g, Metal, cu, 31.0, hi.y - 12.0, Vec3::new(2.0, 1.2, 18.0), mul(crane, 0.9));
-        g.part(Glow).boxed(f.at(cu, 32.0, hi.y - 3.0), Vec3::splat(0.6), f.yaw(), rgba(pal.aviation_light));
+        aviation_light_local(g, f, pal, cu, 32.0, hi.y - 3.0, 0.6);
     }
     // Straddle carriers and a lorry at the gate.
     for k in 0..2 {

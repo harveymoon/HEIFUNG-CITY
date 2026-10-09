@@ -19,15 +19,15 @@ use rand::Rng;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 pub fn scrub_lot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
-    park(g, c, rng, Tier::Low);
+    park(g, c, rng);
 }
 
 pub fn garden(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
-    park(g, c, rng, Tier::Mid);
+    park(g, c, rng);
 }
 
 pub fn plaza(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
-    park(g, c, rng, Tier::High);
+    park(g, c, rng);
 }
 
 /// Everything a park needs to know while it is being drawn.
@@ -95,7 +95,7 @@ fn project(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
     a + ab * ((p - a).dot(ab) / l2).clamp(0.0, 1.0)
 }
 
-fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, _style_tier: Tier) {
+fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let Some(layout) = c.park.as_ref() else { return };
     // The park's own tier, planned once for all its lots (from their
     // area-weighted land value), not the style the lot's building drew:
@@ -122,11 +122,24 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, _style_tier: Tier) {
     // park's other lots, so their ground meets without a seam; it keeps the
     // usual inset from the street and the neighbours.
     let lawn = if layout.shared_edges.is_empty() { inner.clone() } else { inset_edges(&c.lot_poly, |i| if layout.shared_edges.contains(&i) { -0.05 } else { 0.3 }) };
+    park_ground(g, c, rng, &park, &inner, &lawn);
+    park_paths(g, c, &park);
+    park_benches(g, c, rng, &park);
+    for slot in &layout.features {
+        feature(g, rng, &park, slot, pal);
+    }
 
-    // ── ground ───────────────────────────────────────────────────────────
+    // ── trees ────────────────────────────────────────────────────────────
+    trees(g, rng, &park, pal);
+    park_edges(g, c, rng, &park, &inner);
+}
+
+/// The lawn (or dirt and scrapes, or a lawn and a forecourt) by tier.
+fn park_ground(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, park: &Park, inner: &[Vec2], lawn: &[Vec2]) {
+    let (f, pal, layout, tier) = (&c.frame, c.palette, park.layout, park.tier);
     match tier {
         Tier::Low => {
-            ground(g, f, Dirt, &lawn, 0.03, mul(pal.dirt, 0.92));
+            ground(g, f, Dirt, lawn, 0.03, mul(pal.dirt, 0.92));
             // Patches of dry grass and bare scrapes.
             for _ in 0..rng.random_range(6..14) {
                 if let Some(p) = c.random_inside(rng, 2.0) {
@@ -135,20 +148,24 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, _style_tier: Tier) {
                     ground(g, f, Foliage, &blob, 0.04, mul(pal.foliage_dry, rng.random_range(0.8..1.1)));
                 }
             }
-            weeds(g, c, rng, &inner, 24);
+            weeds(g, c, rng, inner, 24);
         }
-        Tier::Mid => ground(g, f, Foliage, &lawn, 0.03, mul(pal.foliage, 0.9)),
+        Tier::Mid => ground(g, f, Foliage, lawn, 0.03, mul(pal.foliage, 0.9)),
         Tier::High => {
-            ground(g, f, Foliage, &lawn, 0.03, mul(pal.foliage, 1.05));
+            ground(g, f, Foliage, lawn, 0.03, mul(pal.foliage, 1.05));
             // A paved forecourt just inside the gate (of the park's main lot).
-            let front = c.front_face(&inner);
+            let front = c.front_face(inner);
             if front.len > 6.0 && layout.anchor {
                 front.bx(g, f, Paving, 0.0, 0.04, -1.2, Vec3::new((front.len * 0.6).min(14.0), 0.04, 2.4), mul(pal.paving, 1.15));
             }
         }
     }
+}
 
-    // ── paths ────────────────────────────────────────────────────────────
+/// The paths, and the lamps and bins along them (one lamp by the gate of
+/// a run-down park).
+fn park_paths(g: &mut Geometry, c: &Ctx, park: &Park) {
+    let (pal, layout, tier) = (c.palette, park.layout, park.tier);
     let (surface, color, y) = match tier {
         Tier::Low => (Dirt, mul(pal.dirt, 0.72), 0.05),
         Tier::Mid => (Paving, pal.paving, 0.06),
@@ -206,8 +223,11 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, _style_tier: Tier) {
             lamp_post_world(g, w, 4.5, mul(pal.street_lamp, 0.4));
         }
     }
+}
 
-    // ── benches ──────────────────────────────────────────────────────────
+/// The benches (broken ones and litter in a run-down park, and a drum fire).
+fn park_benches(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, park: &Park) {
+    let (f, pal, layout, tier) = (&c.frame, c.palette, park.layout, park.tier);
     for (i, (w, facing)) in layout.benches.iter().enumerate() {
         let yaw = facing + FRAC_PI_2;
         if tier == Tier::Low && (i + c.seed as usize) % 3 == 0 {
@@ -232,18 +252,14 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, _style_tier: Tier) {
             }
         }
     }
+}
 
-    // ── features ─────────────────────────────────────────────────────────
-    for slot in &layout.features {
-        feature(g, rng, &park, slot, pal);
-    }
-
-    // ── trees ────────────────────────────────────────────────────────────
-    trees(g, rng, &park, pal);
-
-    // ── edges and the gate ───────────────────────────────────────────────
-    let faces = c.faces(&inner);
-    let front = c.front_face(&inner);
+/// What lines the edges (chain-link and tagged walls, hedges, railings)
+/// with gaps at the entrances, and the gate.
+fn park_edges(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, park: &Park, inner: &[Vec2]) {
+    let (f, pal, layout, tier) = (&c.frame, c.palette, park.layout, park.tier);
+    let faces = c.faces(inner);
+    let front = c.front_face(inner);
     // Every entrance (the street gate and the gaps to neighbouring park
     // lots) gets an opening in whatever lines the edge.
     let gaps: Vec<Vec2> = layout.entrances.iter().map(|e| f.to_local(*e)).collect();

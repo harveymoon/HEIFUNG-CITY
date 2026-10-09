@@ -4,7 +4,7 @@
 //! the business on the lot; size, materials and condition follow the tier.
 
 use super::parts::*;
-use super::trades::{block, fish_crates, fit, pane, pane_row, R};
+use super::kit::{block, cow, gable_on, fish_crates, fish_sign, fit, haul_truck, heap, pane, pane_row, rail_fence, R};
 use super::{Ctx, Face, Frame};
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
@@ -14,47 +14,11 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 
 // ── shared props ─────────────────────────────────────────────────────────────
 
-/// A cow as a few boxes: body, head, two leg slabs and a patch on the coat.
-pub(super) fn cow(g: &mut Geometry, f: &Frame, p: Vec2, yaw: f32, coat: [f32; 3], patch: Option<[f32; 3]>) {
-    let d = Vec2::new(yaw.cos(), yaw.sin());
-    f.bx_yaw(g, Matte, p.x, 1.05, p.y, Vec3::new(1.9, 0.75, 0.8), coat, yaw);
-    let head = p + d * 1.15;
-    f.bx_yaw(g, Matte, head.x, 1.25, head.y, Vec3::new(0.5, 0.45, 0.4), mul(coat, 0.9), yaw);
-    for s in [-0.65f32, 0.65] {
-        let q = p + d * s;
-        f.bx_yaw(g, Matte, q.x, 0.35, q.y, Vec3::new(0.2, 0.7, 0.66), mul(coat, 0.8), yaw);
-    }
-    if let Some(pc) = patch {
-        let q = p - d * 0.2;
-        f.bx_yaw(g, Matte, q.x, 1.08, q.y, Vec3::new(0.6, 0.78, 0.84), pc, yaw);
-    }
-}
-
-/// A cow's coat: Holstein, brown or black.
 fn coat(rng: &mut impl Rng) -> ([f32; 3], Option<[f32; 3]>) {
     match rng.random_range(0..4) {
         0 | 1 => ([0.85, 0.84, 0.8], Some([0.08, 0.08, 0.08])),
         2 => ([0.42, 0.24, 0.12], None),
         _ => ([0.1, 0.09, 0.08], Some([0.85, 0.84, 0.8])),
-    }
-}
-
-/// Post-and-rail fence from `a` to `b` (lot-local).
-pub(super) fn rail_fence(g: &mut Geometry, c: &Ctx, a: Vec2, b: Vec2, h: f32, color: [f32; 3]) {
-    let f = &c.frame;
-    let len = a.distance(b);
-    if len < 0.5 {
-        return;
-    }
-    let n = (len / 3.0).ceil() as i32;
-    for k in 0..=n {
-        let p = a.lerp(b, k as f32 / n as f32);
-        f.bx(g, Wood, p.x, h * 0.5, p.y, Vec3::new(0.14, h, 0.14), color);
-    }
-    let yaw = (b - a).y.atan2((b - a).x);
-    let m = (a + b) * 0.5;
-    for y in [h * 0.45, h * 0.85] {
-        f.bx_yaw(g, Wood, m.x, y, m.y, Vec3::new(len, 0.1, 0.06), color, yaw);
     }
 }
 
@@ -66,20 +30,6 @@ fn fence_round(g: &mut Geometry, c: &Ctx, poly: &[Vec2], h: f32, color: [f32; 3]
     }
 }
 
-/// A gabled roof whose ridge runs along `v` (for buildings deep in `v`).
-fn ridge_v(g: &mut Geometry, c: &Ctx, r: &R, y: f32, rise: f32, color: [f32; 3]) {
-    let bottom = rect(r.c().x, r.c().y, r.w() * 0.5 + 0.3, r.d() * 0.5 + 0.2);
-    let top = rect(r.c().x, r.c().y, 0.08, r.d() * 0.5 + 0.2);
-    loft(g, &c.frame, Metal, &bottom, &top, y, y + rise, color);
-}
-
-/// Gabled roof whose ridge runs along `u`.
-fn ridge_u(g: &mut Geometry, c: &Ctx, r: &R, y: f32, rise: f32, color: [f32; 3]) {
-    let bottom = rect(r.c().x, r.c().y, r.w() * 0.5 + 0.2, r.d() * 0.5 + 0.3);
-    let top = rect(r.c().x, r.c().y, r.w() * 0.5 + 0.2, 0.08);
-    loft(g, &c.frame, Metal, &bottom, &top, y, y + rise, color);
-}
-
 /// A silo: a tank with a domed cap.
 fn silo(g: &mut Geometry, c: &Ctx, p: Vec2, r: f32, h: f32, color: [f32; 3]) {
     if !c.inside_local(p) || distance_to_boundary(p, &c.lot_poly) < r + 0.3 {
@@ -88,7 +38,7 @@ fn silo(g: &mut Geometry, c: &Ctx, p: Vec2, r: f32, h: f32, color: [f32; 3]) {
     let f = &c.frame;
     tank_vertical(g, f, p, r, 0.0, h, Metal, color);
     let w = f.to_world(p.x, p.y);
-    g.part(Metal).cylinder(w, r * 1.02, r * 0.25, h, h + r * 0.7, 12, rgba(mul(color, 0.9)));
+    g.part(Metal).cylinder_capped(w, r * 1.02, r * 0.25, h, h + r * 0.7, 12, false, true, rgba(mul(color, 0.9)));
 }
 
 /// A feed silo on legs with a cone below: the chicken-farm kind.
@@ -101,9 +51,10 @@ fn feed_silo(g: &mut Geometry, c: &Ctx, p: Vec2, color: [f32; 3]) {
     for (du, dv) in [(-0.9, -0.9), (0.9, -0.9), (0.9, 0.9), (-0.9, 0.9)] {
         f.bx(g, Metal, p.x + du, 1.2, p.y + dv, Vec3::new(0.12, 2.4, 0.12), mul(color, 0.7));
     }
-    g.part(Metal).cylinder(w, 0.15, 1.25, 0.7, 2.2, 10, rgba(color));
-    g.part(Metal).cylinder(w, 1.25, 1.25, 2.2, 7.0, 10, rgba(color));
-    g.part(Metal).cylinder(w, 1.25, 0.2, 7.0, 7.8, 10, rgba(mul(color, 0.9)));
+    // One stack: only its two ends capped.
+    g.part(Metal).cylinder_capped(w, 0.15, 1.25, 0.7, 2.2, 10, true, false, rgba(color));
+    g.part(Metal).cylinder_capped(w, 1.25, 1.25, 2.2, 7.0, 10, false, false, rgba(color));
+    g.part(Metal).cylinder_capped(w, 1.25, 0.2, 7.0, 7.8, 10, false, true, rgba(mul(color, 0.9)));
 }
 
 /// A hay bale (round, stood on end).
@@ -122,36 +73,6 @@ fn dumpster(g: &mut Geometry, f: &Frame, p: Vec2, yaw: f32, color: [f32; 3], ski
         f.bx_yaw(g, Metal, p.x, 0.65, p.y, Vec3::new(1.9, 1.2, 1.1), color, yaw);
         f.bx_yaw(g, Matte, p.x, 1.3, p.y, Vec3::new(1.95, 0.08, 1.15), mul(color, 0.6), yaw);
     }
-}
-
-/// A big dump truck for the mine: wheels, chassis, tipper and cab.
-pub(super) fn haul_truck(g: &mut Geometry, f: &Frame, p: Vec2, y: f32, yaw: f32, paint: [f32; 3]) {
-    let d = Vec2::new(yaw.cos(), yaw.sin());
-    let n = Vec2::new(-d.y, d.x);
-    for (a, s) in [(2.0f32, 1.3f32), (2.0, -1.3), (-1.8, 1.3), (-1.8, -1.3)] {
-        let q = p + d * a + n * s;
-        f.bx_yaw(g, Matte, q.x, y + 0.85, q.y, Vec3::new(1.7, 1.7, 0.7), DARK, yaw);
-    }
-    f.bx_yaw(g, Matte, p.x, y + 1.6, p.y, Vec3::new(6.0, 0.6, 2.0), CHARCOAL, yaw);
-    let bed = p - d * 0.6;
-    f.bx_yaw(g, Metal, bed.x, y + 2.6, bed.y, Vec3::new(4.6, 1.6, 3.2), paint, yaw);
-    let cab = p + d * 2.4 + n * 0.7;
-    f.bx_yaw(g, Metal, cab.x, y + 2.7, cab.y, Vec3::new(1.2, 1.6, 1.4), mul(paint, 0.9), yaw);
-    f.bx_yaw(g, Glass, cab.x + d.x * 0.62, y + 3.0, cab.y + d.y * 0.62, Vec3::new(0.04, 0.7, 1.1), c_glass(), yaw);
-}
-
-fn c_glass() -> [f32; 3] {
-    [0.1, 0.13, 0.16]
-}
-
-/// A cone heap.
-pub(super) fn heap(g: &mut Geometry, c: &Ctx, p: Vec2, r: f32, h: f32, color: [f32; 3]) {
-    if !c.inside_local(p) || distance_to_boundary(p, &c.lot_poly) < r * 0.8 {
-        return;
-    }
-    let f = &c.frame;
-    let w = f.to_world(p.x, p.y);
-    g.part(Dirt).cylinder(w, r, r * 0.15, 0.0, h, 9, rgba(color));
 }
 
 // ── cattle farm ──────────────────────────────────────────────────────────────
@@ -179,7 +100,7 @@ pub fn cow_farm(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     if let Some(r) = fit(c, want, 3.5) {
         let h = [4.0, 5.0, 6.0][t];
         block(g, c, if t == 0 { Wood } else { Panel }, &r, 0.0, h, barn_red);
-        ridge_u(g, c, &r, h, (r.d() * 0.3).clamp(1.2, 3.5), [0.2, 0.2, 0.22]);
+        gable_on(g, c, &r, h, (r.d() * 0.3).clamp(1.2, 3.5), true, [0.2, 0.2, 0.22]);
         let fr = r.front();
         fr.decal(g, f, Wood, 0.0, h * 0.4, 0.05, (fr.len * 0.4).min(4.0), h * 0.75, mul(barn_red, 0.7));
         // The white X on the barn doors.
@@ -205,7 +126,7 @@ pub fn cow_farm(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         if let Some(r) = fit(c, R::new(area.u1 - 0.5 - hw * 2.0, area.u1 - 0.5, area.v0 + 1.5, area.v0 + (yard_d - 1.0).min(8.0)), 3.5) {
             let wall = pick(rng, &pal.plaster);
             block(g, c, Plaster, &r, 0.0, 3.0 * t as f32, wall);
-            ridge_u(g, c, &r, 3.0 * t as f32, 1.8, [0.3, 0.18, 0.12]);
+            gable_on(g, c, &r, 3.0 * t as f32, 1.8, true, [0.3, 0.18, 0.12]);
             pane_row(g, c, rng, &r.front(), 0.0, t as i32, 3.0, 2.4, 1.0, 1.2, true);
         }
     }
@@ -266,7 +187,7 @@ pub fn chicken_farm(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         let h = 2.6;
         block(g, c, if t == 0 { WornPanel } else { Panel }, &r, 0.0, h, wall);
-        ridge_v(g, c, &r, h, (r.w() * 0.15).clamp(0.8, 1.6), mul(pal.steel, [0.55, 0.7, 0.8][t]));
+        gable_on(g, c, &r, h, (r.w() * 0.15).clamp(0.8, 1.6), false, mul(pal.steel, [0.55, 0.7, 0.8][t]));
         // Ridge vents.
         let vents = (r.d() / 6.0) as i32;
         for i in 0..vents {
@@ -609,7 +530,7 @@ pub fn fish_gutting(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let fr = r.front();
         pane_row(g, c, rng, &fr, 0.0, 1, h, 4.0, 2.0, 0.9, false);
         sign_board(g, c, rng, &fr, fr.len * 0.3, h - 0.7, (fr.len * 0.25).min(5.0), 0.5);
-        super::trades::fish_sign(g, c, &fr, -fr.len * 0.3, h - 0.9, 0.3, 1.2, [0.3, 0.9, 1.3]);
+        fish_sign(g, c, &fr, -fr.len * 0.3, h - 0.9, 0.3, 1.2, [0.3, 0.9, 1.3]);
     }
     // The gutting canopy: roof on posts over tables and tubs.
     let cw = (area.w() * 0.5).clamp(5.0, 14.0);
@@ -685,7 +606,7 @@ pub fn fish_stick_factory(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         band_windows(g, c, rng, &fr, 0.4, (h / 4.0) as i32, 4.0);
         // The glass door 13 mm behind the window lights (0.05) so the two
         // never share a plane where a lit band crosses it.
-        fr.decal(g, f, Glass, -fr.len * 0.3, 1.3, 0.037, 2.0, 2.6, pal.glass_dark);
+        fr.glaze(g, c, -fr.len * 0.3, 1.3, 0.037, 2.0, 2.6, Pane::Dark);
         fr.bx(g, f, Glow, -fr.len * 0.3, 2.9, 0.15, Vec3::new(1.0, 0.12, 0.2), pal.lamp);
         for face in [r.left(), r.back()] {
             band_windows(g, c, rng, &face, 0.4, 1, 4.0);
@@ -740,7 +661,7 @@ pub fn fish_stick_factory(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             face.decal(g, f, Glow, tt - sw * 0.2, y, 0.03, sw * 0.03, sh * 0.13, mul([1.2, 0.6, 0.15], k));
         }
         // A fish beside them.
-        super::trades::fish_sign(g, c, &face, sw * 0.3, y0 + sh * 0.5, 0.03, sh * 0.6, [0.3, 0.9, 1.4]);
+        fish_sign(g, c, &face, sw * 0.3, y0 + sh * 0.5, 0.03, sh * 0.6, [0.3, 0.9, 1.4]);
     }
     let front = c.front_face(&lot);
     for p in [front.at(-front.len * 0.45, -1.2), front.at(front.len * 0.45, -1.2)] {

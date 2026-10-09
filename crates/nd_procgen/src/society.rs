@@ -9,14 +9,14 @@
 //! "along" direction (the kerb) and an "out" direction (towards the street),
 //! from a seed, so a camp keeps its look as long as its size does not change.
 
-use crate::buildings::parts::{mul, pick, rgba, DARK};
+use crate::color::{mix, mul, pick, rgba, DARK};
 use crate::mesh::MeshData;
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::rng_for;
 use rand::Rng;
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::TAU;
 
 /// Height of the pavement surface (as the street generator lays it).
 pub const PAVE_Y: f32 = 0.155;
@@ -228,7 +228,7 @@ pub fn rv(p: Vec2, heading: f32, camper: bool, seed: u64, pal: &Palette) -> Geom
     let right = Vec2::new(along.y, -along.x);
     let f = Frame::new(p, along, right, 0.0);
     let yaw = f.yaw();
-    let body = mix_dim(pick(&mut rng, &pal.car_colors), [0.75, 0.72, 0.66], if camper { 0.75 } else { 0.35 });
+    let body = mix(pick(&mut rng, &pal.car_colors), [0.75, 0.72, 0.66], if camper { 0.75 } else { 0.35 });
     let (len, w, h) = if camper { (7.0, 2.4, 2.9) } else { (5.2, 2.0, 2.2) };
     // Body and cab.
     let cab = if camper { 1.4 } else { 1.0 };
@@ -271,13 +271,9 @@ pub fn rv(p: Vec2, heading: f32, camper: bool, seed: u64, pal: &Palette) -> Geom
     if rng.random_bool(0.6) {
         g.part(Metal).boxed(f.v3(1.2, side * (w * 0.5 + 0.8), 0.3), Vec3::new(0.6, 0.45, 0.4), yaw, rgba(mul([0.75, 0.55, 0.1], 0.9)));
     }
-    let _ = PI;
     g
 }
 
-fn mix_dim(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
-}
 
 /// Bins on the pavement at a building's front, overflowing by `level` (0
 /// = full to the lid, 1 = as much again on the ground, 2+ a heap):

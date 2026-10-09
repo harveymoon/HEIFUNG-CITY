@@ -3,9 +3,18 @@
 //! cages and AC boxes, signs hung out over the pavement, antenna forests,
 //! sky bridges, glowing crown outlines and laundry poles.
 
+mod fences;
+mod layout;
+mod props;
+mod roofs;
+pub(crate) use fences::*;
+pub(crate) use layout::*;
+pub(crate) use props::*;
+pub(crate) use roofs::*;
+
 use super::parts::*;
 use super::{Ctx, Face};
-use crate::surface::{Geometry, Surface::*};
+use crate::surface::{Geometry, Surface, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::zoning::{point_in_polygon, polygon_area};
 use rand::Rng;
@@ -101,13 +110,13 @@ pub fn dense_windows(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face,
             let t = -usable * 0.5 + (i as f32 + 0.5) * step;
             let r: f32 = rng.random();
             if r < c.wear * 0.25 {
-                face.decal(g, f, Wood, t, y, 0.04, w, h, c.palette.plywood);
+                face.glaze(g, c, t, y, 0.04, w, h, Pane::Boarded);
             } else if coin(rng, lit) {
                 let wc = pick(rng, &c.style.window_colors);
                 let col = mul(wc, rng.random_range(0.45..0.95));
-                window_light(g, c, |g| face.decal(g, f, Glow, t, y, 0.04, w, h, col));
+                face.glaze(g, c, t, y, 0.04, w, h, Pane::Lit(col));
             } else {
-                face.decal(g, f, Glass, t, y, 0.04, w, h, c.palette.glass_dark);
+                face.glaze(g, c, t, y, 0.04, w, h, Pane::Dark);
             }
             if room > -0.3 && coin(rng, cages) {
                 // Birdcage over the window: a steel box proud of the wall.
@@ -197,11 +206,22 @@ pub fn sky_bridge(g: &mut Geometry, c: &Ctx, a: Vec2, b: Vec2, y: f32, w: f32, h
     let yaw = d.y.atan2(d.x);
     g.part(Glass).boxed(Vec3::new(mid.x, y + h * 0.5, mid.y), Vec3::new(d.length(), h, w), yaw, rgba(pal.glass(1)));
     g.part(Panel).boxed(Vec3::new(mid.x, y - 0.25, mid.y), Vec3::new(d.length(), 0.5, w + 0.3), yaw, rgba(mul(pal.steel, 0.7)));
-    g.part(Glow).boxed(Vec3::new(mid.x, y - 0.52, mid.y), Vec3::new(d.length(), 0.06, w * 0.3), yaw, rgba(mul(pick_led(pal, 0), 0.8)));
+    g.part(Glow).boxed(Vec3::new(mid.x, y - 0.52, mid.y), Vec3::new(d.length(), 0.06, w * 0.3), yaw, rgba(mul(pal.led(0), 0.8)));
 }
 
-fn pick_led(pal: &crate::palette::Palette, i: usize) -> [f32; 3] {
-    crate::palette::at(&pal.led_colors, i)
+
+/// An open crown frame on a roof at `y`: a post `post_h` tall and
+/// `post_w` square at every corner of `ring`, and a glowing outline at
+/// each (height above `y`, thickness, colour) of `rings`.
+#[allow(clippy::too_many_arguments)]
+pub fn crown_frame(g: &mut Geometry, c: &Ctx, ring: &[Vec2], y: f32, post_h: f32, post_w: f32, s: Surface, post_col: [f32; 3], rings: &[(f32, f32, [f32; 3])]) {
+    let f = &c.frame;
+    for p in ring {
+        f.bx(g, s, p.x, y + post_h * 0.5, p.y, Vec3::new(post_w, post_h, post_w), post_col);
+    }
+    for &(dy, thick, col) in rings {
+        glow_outline(g, c, ring, y + dy, thick, col);
+    }
 }
 
 /// Glowing line along the edges of a footprint at height `y`: crown

@@ -199,44 +199,6 @@ pub(crate) fn pad_outline_with(here: Vec2, m: &[Mouth], corner: &dyn Fn(SegmentI
     out
 }
 
-impl crate::mesh::MeshData {
-    /// A fan of triangles from `centre` round the closed `ring`, facing up,
-    /// with the ground's world-axis texture (as `ground_polygon`), so a pad
-    /// whose points stand at different heights still matches the asphalt
-    /// strips' texture.
-    pub(crate) fn ground_fan(&mut self, centre: Vec3, ring: &[Vec3], color: [f32; 4]) {
-        let n = ring.len();
-        if n < 2 {
-            return;
-        }
-        let basis = (Vec3::X, Vec3::NEG_Z);
-        let base = self.positions.len() as u32;
-        self.positions.push(centre.to_array());
-        for p in ring {
-            self.positions.push(p.to_array());
-        }
-        for k in 0..=n {
-            let p = if k == 0 { centre } else { ring[k - 1] };
-            self.normals.push([0.0, 1.0, 0.0]);
-            self.colors.push(color);
-            self.uvs.push([p.dot(basis.0), p.dot(basis.1)]);
-            self.tangents.push([1.0, 0.0, 0.0, 1.0]);
-        }
-        for k in 0..n as u32 {
-            let (a, b) = (base + 1 + k, base + 1 + (k + 1) % n as u32);
-            // Counter-clockwise in (x, z) seen from +Y winds clockwise once y
-            // becomes z (as `ground_polygon` has it).
-            let (pa, pb) = (ring[k as usize], ring[((k + 1) % n as u32) as usize]);
-            let ccw = (pa - centre).x * (pb - centre).z - (pa - centre).z * (pb - centre).x > 0.0;
-            if ccw {
-                self.indices.extend_from_slice(&[base, b, a]);
-            } else {
-                self.indices.extend_from_slice(&[base, a, b]);
-            }
-        }
-    }
-}
-
 /// How far along arm `seg` of a junction (arms `m`) a kerb on its
 /// counter-clockwise (`ccw`) or clockwise side must stay back for the kerb
 /// and the pavement behind it to be clear of every neighbour on that side:

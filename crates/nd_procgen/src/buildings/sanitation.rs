@@ -113,7 +113,7 @@ pub fn trash_depot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         f.bx(g, Panel, gate.x, 1.3, gate.y, Vec3::new(2.4, 2.6, 2.0), mul(pal.panel(0), 0.9));
         f.bx(g, Glass, gate.x, 1.6, gate.y - 1.01, Vec3::new(1.6, 0.8, 0.04), pal.glass_dark);
         let plate = Vec2::new(gate.x - 4.5, gate.y + 2.0);
-        if [Vec2::new(-1.7, -3.6), Vec2::new(1.7, -3.6), Vec2::new(-1.7, 3.6), Vec2::new(1.7, 3.6)].iter().all(|o| c.inside_local(plate + *o)) {
+        if c.all_inside(&[Vec2::new(-1.7, -3.6), Vec2::new(1.7, -3.6), Vec2::new(-1.7, 3.6), Vec2::new(1.7, 3.6)].map(|o| plate + o)) {
             f.bx(g, Metal, plate.x, 0.08, plate.y, Vec3::new(3.2, 0.16, 7.0), mul(pal.steel, 0.6));
         }
     }

@@ -77,104 +77,11 @@ pub enum Family {
     Special,
 }
 
-/// Family and same-style cluster score of a style.
+/// Family and same-style cluster score of a style: its row of the style
+/// table (`buildings/style.rs`), where every style declares both.
 pub fn traits(style: Style) -> (Family, f32) {
-    use Family::*;
-    match style {
-        Style::Stacks => (Slum, 1.4),
-        Style::WalledCity => (Slum, 1.1),
-        Style::CapsuleHotel => (Slum, 0.3),
-        Style::Tenement => (Walkup, 0.6),
-        Style::Courtyard => (Walkup, 0.2),
-        Style::HillsideSteps => (Walkup, 0.7),
-        Style::Brutalist => (Slab, 0.4),
-        Style::BalconySlab => (Slab, 0.7),
-        Style::TwinSlab => (Slab, 0.9),
-        Style::PencilTower => (Slab, 0.6),
-        Style::Crystal => (Spire, -2.0),
-        Style::GardenTower => (Spire, -0.8),
-        Style::SlabTower => (Spire, -0.8),
-        Style::TwistTower => (Spire, -2.0),
-        Style::CantileverMall => (Spire, -1.0),
-        Style::Megastructure => (Spire, -2.2),
-        Style::GlassTerraces => (Spire, -1.0),
-        Style::Fortress => (Luxury, -1.8),
-        Style::Villas => (Luxury, 0.5),
-        Style::Shophouse => (Retail, 0.8),
-        Style::MarketHall => (Retail, -0.4),
-        Style::RetailBlock => (Retail, 0.2),
-        Style::PodiumOffice => (Office, 0.1),
-        Style::NightMarket => (Night, 0.7),
-        Style::NeonTower => (Night, 0.2),
-        Style::ShackBar => (Night, 0.6),
-        Style::Club => (Night, 0.0),
-        Style::Cinema => (Night, -0.6),
-        Style::Casino => (Night, -1.0),
-        Style::Arena => (Night, -2.0),
-        Style::Junkyard => (Heavy, 0.8),
-        Style::RustyWarehouse => (Heavy, 0.6),
-        Style::Workshops => (Heavy, 0.9),
-        Style::Factory => (Heavy, 0.4),
-        Style::TankFarm => (Heavy, 0.5),
-        Style::FlattedFactory => (Heavy, 0.5),
-        Style::Datacenter => (Tech, 0.3),
-        Style::Depot => (Tech, 0.3),
-        Style::FabPlant => (Tech, -0.3),
-        // Water and hot-ground plants and docks: the city's own, neutral;
-        // a container port sits with heavy industry.
-        Style::PowerHydro | Style::PowerTidal | Style::PowerGeothermal => (Special, 0.0),
-        Style::ShippingPort => (Heavy, -0.5),
-        Style::FerryTerminal => (Special, 0.0),
-        // City services and attractions are placed by the player, never
-        // picked by weight: neutral neighbours, and a landmark or stadium
-        // should not repeat next door.
-        Style::PoliceStation | Style::FireStation | Style::Hospital | Style::School | Style::DispatchCenter => (Special, 0.0),
-        Style::Landmark | Style::Stadium => (Special, -1.5),
-        Style::Prison => (Special, -1.0),
-        Style::University => (Special, -1.0),
-        // [society] Lorries and bins: it sits with the dirty industry.
-        Style::TrashDepot => (Heavy, -0.5),
-        // A vertiport serves the towers: an office-district neighbour that
-        // should not repeat next door.
-        Style::Vertiport => (Office, -1.2),
-        // Industry sub-zones: farms spread in big patches, oil and
-        // refineries are heavy, yards and lots line up together.
-        Style::Farmstead => (Farm, 0.9),
-        Style::OilField => (Heavy, 0.9),
-        Style::Refinery => (Heavy, 0.3),
-        Style::ContainerYard => (Logistics, 0.8),
-        Style::FishProcessing => (Logistics, 0.6),
-        Style::TruckLot => (Logistics, 0.2),
-        // [economy] The new trades. Farms spread, the dirty trades sit with
-        // heavy industry, yards with logistics, shops and nights out with
-        // their kind; docks are the city's own.
-        Style::CowFarm => (Farm, 0.8),
-        Style::ChickenFarm => (Farm, 0.6),
-        Style::Slaughterhouse => (Heavy, -0.3),
-        Style::StripMine => (Heavy, 0.4),
-        // [dirty-industry] with the heavy industry; feedlots with the farms
-        // they feed off, but never repeating in a row of looks.
-        Style::Smelter => (Heavy, 0.3),
-        Style::ChemicalWorks => (Heavy, 0.2),
-        Style::Feedlot => (Farm, -0.2),
-        Style::FishStickFactory => (Heavy, 0.0),
-        Style::TrashCompany => (Logistics, -0.2),
-        Style::FishGutting => (Logistics, 0.5),
-        Style::Mechanic => (Retail, 0.3),
-        Style::CarDealer => (Retail, 0.5),
-        Style::BikeShop => (Retail, 0.2),
-        Style::FishMarket => (Retail, -0.5),
-        Style::SeafoodRestaurant => (Night, 0.3),
-        Style::GolfRange => (Night, -1.5),
-        Style::Gallery => (Night, 0.4),
-        Style::ArtStudio => (Night, 0.6),
-        Style::MarinaSmall | Style::MarinaLarge | Style::FishingPortSmall | Style::FishingPortLarge => (Special, 0.0),
-        // [waterfront] The shore's trades line the water together.
-        Style::BeachResort | Style::WaterfrontHotel => (Night, 0.4),
-        Style::PierRestaurant | Style::BeachBar | Style::BoatRental => (Night, 0.6),
-        Style::Beach => (Special, 0.0),
-        _ => (Special, 0.0),
-    }
+    let d = style.def();
+    (d.family, d.cluster)
 }
 
 /// Affinity between two different families, symmetric.

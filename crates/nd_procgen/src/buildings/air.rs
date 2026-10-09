@@ -151,7 +151,7 @@ pub fn rooftop_deck(g: &mut Geometry, c: &Ctx) -> bool {
     let w = local + Vec2::new(r * 0.8, 0.0);
     f.bx(g, Metal, w.x, deck + 1.2, w.y, Vec3::new(0.08, 2.4, 0.08), steel);
     f.bx(g, Tarp, w.x + 0.45, deck + 2.25, w.y, Vec3::new(0.9, 0.3, 0.3), SOCK);
-    f.bx(g, Glow, w.x, deck + 2.5, w.y, Vec3::splat(0.14), pal.aviation_light);
+    aviation_light_local(g, f, pal, w.x, deck + 2.5, w.y, 0.14);
     true
 }
 
@@ -293,7 +293,7 @@ pub fn vertiport(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             extrude(g, f, Glow, &offset_poly(&cab, 0.02), top + 1.4, top + 1.6, PAD_GREEN);
             extrude(g, f, Panel, &cab, top + 3.0, top + 3.4, [0.85, 0.86, 0.88]);
             let tc = poly_center(&t);
-            f.bx(g, Glow, tc.x, top + 4.0, tc.y, Vec3::splat(0.4), pal.aviation_light);
+            aviation_light_local(g, f, pal, tc.x, top + 4.0, tc.y, 0.4);
         }
     }
     floodlight(g, c, front.at(-front.len * 0.45, -1.2), 6.0);

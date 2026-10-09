@@ -8,24 +8,10 @@ use super::kit::*;
 use super::parts::*;
 use super::{Ctx, Face};
 use crate::mesh::MeshData;
-use crate::surface::{Geometry, Surface, Surface::*};
+use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use rand::seq::IndexedRandom;
 use rand::Rng;
-
-/// Pitched roof over a footprint with its ridge across `axis`.
-fn pitched_roof(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32, ridge: f32, axis: Vec2, s: Surface, color: [f32; 3]) {
-    let centre = poly_center(poly);
-    let top: Vec<Vec2> = poly
-        .iter()
-        .map(|p| {
-            let d = *p - centre;
-            let along = d.dot(axis);
-            clamp_into(poly, centre + d - axis * along * 0.94)
-        })
-        .collect();
-    loft(g, &c.frame, s, &offset_poly(poly, -0.35), &top, y, y + ridge, color);
-}
 
 // ── pencil tower ─────────────────────────────────────────────────────────────
 
@@ -104,7 +90,7 @@ pub fn pencil_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             let t = side * tf.len;
             tf.bx(g, f, wall_s, t, y0 + shaft as f32 * fh * 0.5, proud * 0.5, Vec3::new(2.2, shaft as f32 * fh, proud.max(0.05) + 0.02), mul(wall, 1.12));
             for k in 0..shaft {
-                tf.decal(g, f, Glass, t, y0 + k as f32 * fh + fh * 0.55, proud + 0.04, 1.8, fh * 0.5, pal.glass_dark);
+                tf.glaze(g, c, t, y0 + k as f32 * fh + fh * 0.55, proud + 0.04, 1.8, fh * 0.5, Pane::Dark);
             }
         }
     }
@@ -123,11 +109,8 @@ pub fn pencil_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         top += set_floors as f32 * fh;
         roof = upper;
         let crown = offset_poly(&roof, -0.2);
-        for p in &crown {
-            f.bx(g, Panel, p.x, top + 2.0, p.y, Vec3::new(0.3, 4.0, 0.3), mul(pal.steel, 0.8));
-        }
-        glow_outline(g, c, &crown, top + 4.0, 0.25, mul(pick(rng, &pal.sign_colors), 0.9));
-        glow_outline(g, c, &crown, top + 2.0, 0.12, mul(pick(rng, &pal.sign_colors), 0.7));
+        let lit = [mul(pick(rng, &pal.sign_colors), 0.9), mul(pick(rng, &pal.sign_colors), 0.7)];
+        crown_frame(g, c, &crown, top, 4.0, 0.3, Panel, mul(pal.steel, 0.8), &[(4.0, 0.25, lit[0]), (2.0, 0.12, lit[1])]);
     } else {
         parapet(g, c, &tower, top, 0.9, 0.25, wall_s, mul(wall, 0.9));
     }
@@ -167,7 +150,7 @@ pub fn twin_slab(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 let h = floors as f32 * fh;
                 extrude(g, f, Brick, &cell, 0.0, h, brick);
                 cornice(g, c, &cell, h - 0.2, 0.3, 0.15, Concrete, trim);
-                pitched_roof(g, c, &cell, h, 1.8, Vec2::new(0.0, 1.0), Brick, mul(pal.rust, 0.7));
+                super::kit::ridge_roof(g, c, &cell, h, 1.8, Vec2::new(0.0, 1.0), 0.94, 0.35, Brick, mul(pal.rust, 0.7));
                 for face in c.faces(&cell) {
                     if face.len > 3.0 && face_is_outer(&face, poly) || (face.len > 3.0 && (face.mid().x - mid).abs() < lane + 0.6) {
                         let mut spec = WindowSpec::from_ctx(c);
@@ -255,11 +238,7 @@ pub fn twin_slab(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             1 => {
                 // Open crown frame: posts and two lit rings.
                 let ring = offset_poly(slab, 0.4);
-                for p in &ring {
-                    f.bx(g, Panel, p.x, h + 2.5, p.y, Vec3::new(0.35, 5.0, 0.35), trim);
-                }
-                glow_outline(g, c, &ring, h + 5.0, 0.3, crown_col);
-                glow_outline(g, c, &ring, h + 2.5, 0.15, mul(crown_col, 0.7));
+                crown_frame(g, c, &ring, h, 5.0, 0.35, Panel, trim, &[(5.0, 0.3, crown_col), (2.5, 0.15, mul(crown_col, 0.7))]);
                 roof_gear(g, c, rng, slab, h, 0.5);
                 tops.push((centre, h));
             }
@@ -553,7 +532,7 @@ pub fn glass_castle(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // Gatehouse: a glass box with a lit canopy.
     let gt = gate_w * 0.5 + 2.0;
-    if [(-1.6f32, -0.8f32), (1.6, -0.8), (1.6, -4.0), (-1.6, -4.0)].iter().all(|(dt, dd)| c.inside_local(front.at(gt + dt, *dd))) {
+    if c.all_inside(&[(-1.6f32, -0.8f32), (1.6, -0.8), (1.6, -4.0), (-1.6, -4.0)].map(|(dt, dd)| front.at(gt + dt, dd))) {
         front.bx(g, f, Glass, gt, 1.6, -2.4, Vec3::new(2.6, 3.2, 2.6), pal.glass(1));
         front.bx(g, f, Glow, gt, 3.3, -2.4, Vec3::new(3.0, 0.15, 3.0), mul(pal.lamp, 0.9));
     }

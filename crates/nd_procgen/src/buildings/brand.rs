@@ -70,7 +70,7 @@ fn mass(g: &Geometry, c: &Ctx) -> Option<(f32, Vec2, Vec2)> {
 /// corners are off the parcel.
 fn on_lot(c: &Ctx, at: Vec2, out: Vec2, half: f32, proud: f32) -> bool {
     let right = Vec2::new(out.y, -out.x);
-    [at + right * half, at - right * half, at + right * half + out * proud, at - right * half + out * proud].iter().all(|p| c.inside_local(*p))
+    c.all_inside(&[at + right * half, at - right * half, at + right * half + out * proud, at - right * half + out * proud])
 }
 
 /// The logo, `size` metres square, standing in the vertical plane through
@@ -197,7 +197,7 @@ fn crown(g: &mut Geometry, c: &Ctx, m: &BrandMark, top: f32, lo: Vec2, hi: Vec2)
     }
     let spire = (top * 0.18).clamp(6.0, 30.0);
     g.part(Metal).cylinder(f.to_world(mid.x, mid.y), 0.6, 0.12, top + 0.6, top + 0.6 + spire + wall, 8, rgba(POLE));
-    f.bx(g, Glow, mid.x, top + 0.6 + spire + wall, mid.y, Vec3::splat(0.5), c.palette.aviation_light);
+    aviation_light_local(g, f, c.palette, mid.x, top + 0.6 + spire + wall, mid.y, 0.5);
     f.bx(g, Glow, mid.x, top + 0.6 + wall + 0.3, mid.y, Vec3::new(1.4, 0.25, 1.4), lit(m, 2.6));
 }
 

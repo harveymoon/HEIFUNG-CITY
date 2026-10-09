@@ -10,8 +10,7 @@
 //! where each style's stacks stand without drawing it.
 
 use super::parts::*;
-use super::rural::{cow, haul_truck, heap};
-use super::trades::{block, fit, R};
+use super::kit::{block, cow, fit, haul_truck, heap, rail_fence, R};
 use super::Ctx;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
@@ -44,20 +43,6 @@ pub enum VentKind {
 pub struct Vent {
     pub pos: Vec3,
     pub kind: VentKind,
-}
-
-/// The lot in its own frame, as the styles see it.
-fn local_lot(lot: &nd_sim::Lot) -> (super::Frame, Vec<Vec2>) {
-    let frame = super::Frame::from_lot(lot);
-    let mut poly = clean_poly(&lot.polygon.iter().map(|p| frame.to_local(*p)).collect::<Vec<_>>(), 0.3);
-    if poly.len() < 3 {
-        let (hw, hd) = (frame.width * 0.5, frame.depth * 0.5);
-        poly = vec![Vec2::new(-hw, -hd), Vec2::new(hw, -hd), Vec2::new(hw, hd), Vec2::new(-hw, hd)];
-    }
-    if nd_sim::zoning::polygon_area(&poly) < 0.0 {
-        poly.reverse();
-    }
-    (frame, poly)
 }
 
 fn ok_site(p: Vec2, poly: &[Vec2], margin: f32) -> bool {
@@ -108,7 +93,7 @@ fn chemical_vents(poly: &[Vec2]) -> Vec<(Vec2, f32, VentKind)> {
 /// world coordinates (add the lot's pad height). Empty for clean kinds.
 pub fn dirty_vents(lot: &nd_sim::Lot, kind: nd_sim::BusinessKind) -> Vec<Vent> {
     use nd_sim::BusinessKind as B;
-    let (frame, poly) = local_lot(lot);
+    let (frame, poly) = crate::buildings::Frame::lot_local(lot);
     let at = |p: Vec2, h: f32, kind: VentKind| {
         let w = frame.to_world(p.x, p.y);
         Vent { pos: Vec3::new(w.x, h, w.y), kind }
@@ -267,7 +252,7 @@ pub fn smelter(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             let b = f.at(bf.x + bf_r * 0.6, bh * 0.92, bf.y);
             g.part(Metal).slab(a, b, 1.6, 0.6, rgba(mul(pal.steel, 0.6)));
         }
-        f.bx(g, Glow, bf.x, bh + 0.6, bf.y, Vec3::splat(0.35), pal.aviation_light);
+        aviation_light_local(g, f, pal, bf.x, bh + 0.6, bf.y, 0.35);
     }
     // Stacks along the back: tall, soot-streaked, red lights at the top.
     for (p, sh) in smelter_stacks(&c.lot_poly) {
@@ -277,7 +262,7 @@ pub fn smelter(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         for y in [sh * 0.45, sh * 0.7] {
             g.part(Matte).cylinder(w, 1.4, 1.35, y, y + 0.5, 12, rgba([0.75, 0.12, 0.08]));
         }
-        g.part(Glow).boxed(Vec3::new(w.x, sh + 0.4, w.y), Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
+        aviation_light(g, pal, Vec3::new(w.x, sh + 0.4, w.y), 0.4);
     }
     // Ore heap by the gate, slag heaps at the back.
     let ore = front.at(front.len * 0.28, -(area.d() * 0.14).clamp(5.0, 9.0));
@@ -356,12 +341,12 @@ pub fn feedlot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         // Above every soot stain layer (0.045..0.115), not in one of them.
         ground(g, f, Dirt, &p.poly(), 0.125, mix(mud, SOOT, 0.25));
         for face in p.faces() {
-            super::rural::rail_fence(g, c, face.a, face.b, 1.4, rail);
+            rail_fence(g, c, face.a, face.b, 1.4, rail);
         }
         let cols = ((p.w() / 8.0) as i32).max(1);
         for k in 1..cols {
             let u = p.u0 + k as f32 * p.w() / cols as f32;
-            super::rural::rail_fence(g, c, Vec2::new(u, p.v0), Vec2::new(u, p.v1), 1.4, rail);
+            rail_fence(g, c, Vec2::new(u, p.v0), Vec2::new(u, p.v1), 1.4, rail);
         }
         // A feed trough along the front of the pens.
         f.bx(g, Concrete, p.c().x, 0.4, p.v0 + 0.8, Vec3::new(p.w() - 1.0, 0.8, 0.8), mul(pal.concrete(0), 0.7));

@@ -13,8 +13,15 @@ pub(super) struct ShipTag;
 
 #[derive(Resource, Default)]
 pub(super) struct LandscapeRender {
-    /// What the ground, water and works were built for.
+    /// What the ground and works were built for.
     pub(super) signature: Option<u64>,
+    /// What the water sheet was built for: the map alone, so a road edit
+    /// leaves it be.
+    pub(super) water_signature: Option<u64>,
+    /// [refactor/procgen] The ground in tiles, each its own entity (culled
+    /// on its own): an edit rebuilds only the tiles it moved.
+    pub(super) tiles: Option<nd_procgen::terrain::LandscapeTiles>,
+    pub(super) tile_ents: Vec<Option<Entity>>,
     /// [refactor/app] The counters `signature` was hashed under.
     pub(super) gate: Gate<(u64, u64, u64, usize, usize, u64, bool)>,
     pub(super) water_mat: Option<Handle<StandardMaterial>>,
@@ -59,6 +66,16 @@ pub(super) fn reconcile<K: Copy + Eq + Hash, V: Copy + PartialEq>(drawn: &mut Ha
     (despawn, spawn)
 }
 
+/// The map alone (its parameters and rivers): what the water sheet and
+/// the ground tiles' colours are built from.
+pub(super) fn map_signature(w: &World) -> u64 {
+    let mut h = DefaultHasher::new();
+    format!("{:?}", w.landscape.params).hash(&mut h);
+    w.landscape.rivers.len().hash(&mut h);
+    w.landscape.is_flat().hash(&mut h);
+    h.finish()
+}
+
 pub(super) fn landscape_signature(w: &World) -> u64 {
     let mut h = DefaultHasher::new();
     w.landscape.params.seed.hash(&mut h);
@@ -74,8 +91,10 @@ pub(super) fn landscape_signature(w: &World) -> u64 {
 }
 
 /// The ground of a landscape (graded to the roads and lots), the water
-/// sheet, and the bridges, piers, weirs and vents. Rebuilt when roads, lots,
-/// docks or plants change, since the ground is graded to them.
+/// sheet, and the bridges, piers, weirs and vents. The ground and works are
+/// redrawn when roads, lots, docks or plants change, since the ground is
+/// graded to them, but only the ground's tiles that moved; the water only
+/// when the map (or the palette) does.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn sync_landscape(
     mut commands: Commands,
@@ -99,9 +118,15 @@ pub(super) fn sync_landscape(
         return;
     }
     state.signature = Some(sig);
-    despawn_all(&mut commands, &water);
+    let map = map_signature(w);
+    let fresh = assets.palette_changed || sim.full_rebuild;
     despawn_all(&mut commands, &works);
     if w.landscape.is_flat() {
+        despawn_all(&mut commands, &water);
+        despawn_all(&mut commands, &terrain);
+        state.water_signature = None;
+        state.tiles = None;
+        state.tile_ents.clear();
         // No terrain or water to draw, but viaducts and flyovers the
         // player built stand on the flat ground.
         if w.relief {
@@ -110,25 +135,48 @@ pub(super) fn sync_landscape(
         }
         return;
     }
-    despawn_all(&mut commands, &terrain);
-    let ground = nd_procgen::terrain::build_landscape_terrain(w, &assets.palette, 8.0);
-    commands.spawn((Mesh3d(meshes.add(to_mesh(&ground, true))), MeshMaterial3d(mats.surface(Surface::Dirt)), Transform::IDENTITY, TerrainTag));
-    let water_mat = state
-        .water_mat
-        .get_or_insert_with(|| {
-            materials.add(StandardMaterial {
-                base_color: Color::WHITE,
-                alpha_mode: AlphaMode::Blend,
-                perceptual_roughness: 0.06,
-                reflectance: 0.6,
-                metallic: 0.1,
-                ..default()
+    // The ground: every tile afresh for a new map or palette, else only
+    // the tiles the edit moved.
+    let dirt = mats.surface(Surface::Dirt);
+    let spawn_tile = |commands: &mut Commands, meshes: &mut Assets<Mesh>, m: &nd_procgen::MeshData| (!m.is_empty()).then(|| commands.spawn((Mesh3d(meshes.add(to_mesh(m, true))), MeshMaterial3d(dirt.clone()), Transform::IDENTITY, TerrainTag)).id());
+    let reuse = !fresh && state.water_signature == Some(map);
+    match state.tiles.as_mut().filter(|_| reuse) {
+        Some(tiles) => {
+            let changed = tiles.update(w);
+            let made: Vec<(usize, Option<Entity>)> = changed.iter().map(|&t| (t, spawn_tile(&mut commands, &mut meshes, tiles.mesh(t)))).collect();
+            for (t, e) in made {
+                if let Some(old) = std::mem::replace(&mut state.tile_ents[t], e) {
+                    commands.entity(old).despawn();
+                }
+            }
+        }
+        None => {
+            despawn_all(&mut commands, &terrain);
+            let tiles = nd_procgen::terrain::LandscapeTiles::new(w, &assets.palette, 8.0);
+            state.tile_ents = (0..tiles.len()).map(|t| spawn_tile(&mut commands, &mut meshes, tiles.mesh(t))).collect();
+            state.tiles = Some(tiles);
+        }
+    }
+    if state.water_signature != Some(map) || fresh {
+        state.water_signature = Some(map);
+        despawn_all(&mut commands, &water);
+        let water_mat = state
+            .water_mat
+            .get_or_insert_with(|| {
+                materials.add(StandardMaterial {
+                    base_color: Color::WHITE,
+                    alpha_mode: AlphaMode::Blend,
+                    perceptual_roughness: 0.06,
+                    reflectance: 0.6,
+                    metallic: 0.1,
+                    ..default()
+                })
             })
-        })
-        .clone();
-    let sheet = nd_procgen::terrain::build_water(w, &assets.palette);
-    if !sheet.is_empty() {
-        commands.spawn((Mesh3d(meshes.add(to_mesh(&sheet, false))), MeshMaterial3d(water_mat), Transform::IDENTITY, NotShadowCaster, WaterTag));
+            .clone();
+        let sheet = nd_procgen::terrain::build_water(w, &assets.palette);
+        if !sheet.is_empty() {
+            commands.spawn((Mesh3d(meshes.add(to_mesh(&sheet, false))), MeshMaterial3d(water_mat), Transform::IDENTITY, NotShadowCaster, WaterTag));
+        }
     }
     let geo = nd_procgen::terrain::waterworks(w, &assets.palette);
     spawn_geometry(&mut commands, &mut meshes, &mats, &geo, WaterworksTag);

@@ -7,10 +7,10 @@
 //! The lot's street side is `v0`; the water lies past `v1`.
 
 use super::parts::*;
-use super::trades::{block, fish_crates, fit, pane, pane_row, table, R};
+use super::kit::{block, fish_crates, fish_sign, fit, flagpole, pane, pane_row, table, R};
 use super::{Ctx, Frame};
 use crate::surface::{Geometry, Surface::*};
-use crate::terrain::{boat_mesh, stamp_mesh};
+use crate::terrain::boat_mesh;
 use glam::{Vec2, Vec3};
 use nd_sim::ShipKind;
 use rand::Rng;
@@ -23,7 +23,7 @@ fn boat_on_land(g: &mut Geometry, c: &Ctx, kind: ShipKind, p: Vec2, y: f32, yaw:
     let mesh = boat_mesh(kind, c.palette);
     let w = f.to_world(p.x, p.y);
     // The keel sits about a metre under the waterline.
-    stamp_mesh(g.part(Panel), &mesh, Vec3::new(w.x, y + 1.0, w.y), f.yaw() + yaw);
+    g.part(Panel).append_transformed(&mesh, Vec3::new(w.x, y + 1.0, w.y), f.yaw() + yaw);
 }
 
 /// A boat trailer: frame, wheels and a small boat on it.
@@ -74,7 +74,7 @@ fn flags(g: &mut Geometry, f: &Frame, a: Vec2, b: Vec2, n: i32, h: f32) {
     let cols = [[0.1, 0.2, 0.6], [0.9, 0.9, 0.9], [0.8, 0.1, 0.1], [0.95, 0.75, 0.1]];
     for k in 0..n {
         let p = a.lerp(b, if n > 1 { k as f32 / (n - 1) as f32 } else { 0.5 });
-        super::trades::flagpole(g, f, p, h, cols[k as usize % cols.len()], false);
+        flagpole(g, f, p, h, cols[k as usize % cols.len()], false);
     }
 }
 
@@ -95,7 +95,7 @@ pub fn marina_small(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     if let Some(r) = fit(c, R::new(area.u0, area.u0 + bw, area.v1 - bd, area.v1), 4.0) {
         let h = 4.5;
         block(g, c, Wood, &r, 0.0, h, wall);
-        super::industrial::gable_roof(g, c, &r.poly(), h, (r.d() * 0.25).clamp(1.2, 2.8), [0.2, 0.22, 0.25]);
+        super::kit::gable_roof(g, c, &r.poly(), h, (r.d() * 0.25).clamp(1.2, 2.8), [0.2, 0.22, 0.25]);
         let back = r.back();
         back.decal(g, f, Wood, 0.0, 1.8, 0.05, (back.len * 0.6).min(5.0), 3.6, mul(pal.wood, 0.7));
         let fr = r.front();
@@ -151,7 +151,7 @@ pub fn marina_large(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 let tt = -face.len * 0.5 + (k as f32 + 0.5) * face.len / n as f32;
                 if coin(rng, c.lit_chance()) {
                     let col = mul(pal.window_warm, 0.8);
-                    window_light(g, c, |g| face.decal(g, f, Glow, tt, fh * 1.5, 0.06, face.len / n as f32 * 0.85, fh * 0.7, col));
+                    face.glaze(g, c, tt, fh * 1.5, 0.06, face.len / n as f32 * 0.85, fh * 0.7, Pane::Lit(col));
                 }
             }
         }
@@ -280,7 +280,7 @@ pub fn fishing_port_large(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         band_windows(g, c, rng, &r.front(), 0.5, 1, 3.0);
         super::parts::sign_board(g, c, rng, &r.front(), 0.0, h - 0.8, (r.w() * 0.4).min(10.0), 0.7);
-        super::trades::fish_sign(g, c, &r.front(), r.w() * 0.35, h - 0.9, 0.3, 1.5, [0.3, 0.9, 1.4]);
+        fish_sign(g, c, &r.front(), r.w() * 0.35, h - 0.9, 0.3, 1.5, [0.3, 0.9, 1.4]);
     }
     // The ice house: white, chillers, a chute out to the quay.
     let iw = (area.w() * 0.18).clamp(5.0, 12.0);
@@ -313,7 +313,7 @@ pub fn fishing_port_large(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let hook = f.at(cp.x + reach - 1.0, 6.0, cp.y);
         g.part(Matte).beam(f.at(cp.x + reach - 1.0, ch + 2.3, cp.y), hook, 0.05, rgba(DARK));
         g.part(Metal).boxed(hook - Vec3::Y * 0.3, Vec3::new(0.5, 0.6, 0.5), f.yaw(), rgba(CHARCOAL));
-        g.part(Glow).boxed(b + Vec3::Y * 0.4, Vec3::splat(0.4), 0.0, rgba(pal.aviation_light));
+        aviation_light(g, pal, b + Vec3::Y * 0.4, 0.4);
     }
     // Crate stacks in blocks, nets, a forklift and a reefer lorry.
     let mut placed = 0;
