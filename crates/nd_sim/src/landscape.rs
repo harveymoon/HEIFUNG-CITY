@@ -510,10 +510,7 @@ impl Clone for Raster {
     }
 }
 
-fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
-    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
+use crate::geom::smoothstep;
 
 fn hash2(seed: u64, x: i32, y: i32) -> f32 {
     let mut h = seed ^ (x as i64 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (y as i64 as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
@@ -600,7 +597,7 @@ fn meander(rng: &mut impl Rng, dir: Vec2, offset: f32, s0: f32, s1: f32, amp: f3
 
 /// Distance from `p` to a polyline.
 fn polyline_distance(pts: &[Vec2], p: Vec2) -> f32 {
-    pts.windows(2).map(|w| project_on_segment(p, w[0], w[1]).1.distance(p)).fold(f32::INFINITY, f32::min)
+    crate::geom::distance_to_polyline(p, pts)
 }
 
 /// What one try at a tributary gave.
@@ -937,8 +934,7 @@ impl Landscape {
     pub fn base_height(&self, p: Vec2) -> f32 {
         let seed = self.params.seed;
         let r = p.length();
-        let t = ((r - BASIN_RADIUS) / (LAND_HALF - BASIN_RADIUS)).clamp(0.0, 1.0);
-        let ramp = t * t * (3.0 - 2.0 * t);
+        let ramp = smoothstep(BASIN_RADIUS, LAND_HALF, r);
         let n = fbm(seed ^ 0x51, p * 0.0025, 4);
         if self.params.preset == LandscapePreset::Flat {
             return ramp * OUTER_HILLS * (0.4 + 0.6 * n);
@@ -2067,14 +2063,6 @@ fn index_outer(outer: &[(Vec2, Vec2, f32, f32, f32)]) -> Vec<Vec<u32>> {
     index
 }
 
-/// Least distance between the segments `p0`-`p1` and `q0`-`q1`.
-fn segment_distance(p0: Vec2, p1: Vec2, q0: Vec2, q1: Vec2) -> f32 {
-    if crate::roads::segment_intersection(p0, p1, q0, q1).is_some() {
-        return 0.0;
-    }
-    let d = |p: Vec2, a: Vec2, b: Vec2| project_on_segment(p, a, b).1.distance(p);
-    d(p0, q0, q1).min(d(p1, q0, q1)).min(d(q0, p0, p1)).min(d(q1, p0, p1))
-}
 
 /// Polynomial smooth maximum: `max(a, b)` with the corner rounded over `k`.
 fn smooth_max(a: f32, b: f32, k: f32) -> f32 {
@@ -2548,7 +2536,7 @@ impl Ground {
         // the near one.
         let shielded = |k: usize| {
             let q = near[k].3;
-            near.iter().enumerate().any(|(m, &(a, b, other_core, _, _))| m != k && project_on_segment(q, a, b).1.distance(q) > other_core && segment_distance(p, q, a, b) < other_core)
+            near.iter().enumerate().any(|(m, &(a, b, other_core, _, _))| m != k && project_on_segment(q, a, b).1.distance(q) > other_core && crate::geom::segment_distance_between(p, q, a, b) < other_core)
         };
         // The highest embankment and the deepest cutting not shielded.
         let mut cones: Vec<(f32, usize)> = near.iter().enumerate().map(|(k, &(_, _, core, q, _))| ((p.distance(q) - core) * rise, k)).collect();

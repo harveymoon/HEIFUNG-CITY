@@ -562,9 +562,7 @@ impl WaterGrid {
 }
 
 /// Distance from `p` to a polyline.
-fn to_line(p: Vec2, line: &[Vec2]) -> f32 {
-    line.windows(2).map(|w| crate::geom::project_on_segment(p, w[0], w[1]).1.distance(p)).fold(f32::INFINITY, f32::min)
-}
+use crate::geom::distance_to_polyline as to_line;
 
 /// The fishing grounds for a port whose boats set out from `offing`:
 /// up to `MAX_GROUNDS` spots of open water reachable from there by water,
@@ -631,8 +629,7 @@ fn pick_grounds(land: &Landscape, grid: &WaterGrid, offing: Vec2, lanes: &[Vec<V
 }
 
 fn smooth(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+    crate::geom::smoothstep(0.0, 1.0, t)
 }
 
 /// One sweep over a ground: from the middle out in a zig-zag across it and

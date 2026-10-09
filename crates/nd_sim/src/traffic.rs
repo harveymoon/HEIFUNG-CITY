@@ -1050,15 +1050,7 @@ const AMBER: f32 = 2.0;
 const BUMP_SPEED: f32 = 1.5;
 
 /// Angle `a` to `b` by `t`, the short way round.
-pub fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
-    let mut d = (b - a) % std::f32::consts::TAU;
-    if d > std::f32::consts::PI {
-        d -= std::f32::consts::TAU;
-    } else if d < -std::f32::consts::PI {
-        d += std::f32::consts::TAU;
-    }
-    a + d * t
-}
+pub use crate::geom::lerp_angle;
 
 impl Car {
     /// Where to draw the car a fraction `f` of the way through the last

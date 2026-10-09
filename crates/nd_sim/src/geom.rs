@@ -192,13 +192,6 @@ pub fn self_intersects(poly: &[Vec2]) -> bool {
     if n < 4 {
         return false;
     }
-    let crosses = |a: Vec2, b: Vec2, c: Vec2, d: Vec2| {
-        let d1 = (b - a).perp_dot(c - a);
-        let d2 = (b - a).perp_dot(d - a);
-        let d3 = (d - c).perp_dot(a - c);
-        let d4 = (d - c).perp_dot(b - c);
-        d1 * d2 < 0.0 && d3 * d4 < 0.0
-    };
     for i in 0..n {
         for j in (i + 2)..n {
             // Edges i and j are adjacent when j follows i, or when j is the
@@ -206,7 +199,7 @@ pub fn self_intersects(poly: &[Vec2]) -> bool {
             if i == 0 && j == n - 1 {
                 continue;
             }
-            if crosses(poly[i], poly[(i + 1) % n], poly[j], poly[(j + 1) % n]) {
+            if segments_cross(poly[i], poly[(i + 1) % n], poly[j], poly[(j + 1) % n]) {
                 return true;
             }
         }
@@ -438,6 +431,124 @@ impl Grid {
     }
 }
 
+// ── scalar, angle and segment helpers ───────────────────────────────────────
+
+/// Hermite smoothstep of `x` between the edges `e0` and `e1`, `0..1`.
+pub fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// An angle wrapped into `-PI..PI`.
+pub fn wrap_angle(a: f32) -> f32 {
+    (a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+}
+
+/// Angle `a` to `b` by `t`, the short way round.
+pub fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
+    let mut d = (b - a) % std::f32::consts::TAU;
+    if d > std::f32::consts::PI {
+        d -= std::f32::consts::TAU;
+    } else if d < -std::f32::consts::PI {
+        d += std::f32::consts::TAU;
+    }
+    a + d * t
+}
+
+/// Distance from `p` to a polyline (`INFINITY` with fewer than two points).
+pub fn distance_to_polyline(p: Vec2, pts: &[Vec2]) -> f32 {
+    pts.windows(2).map(|w| project_on_segment(p, w[0], w[1]).1.distance(p)).fold(f32::INFINITY, f32::min)
+}
+
+/// The span `(lo, hi)` of a point set projected on `axis`.
+pub fn extents(poly: &[Vec2], axis: Vec2) -> (f32, f32) {
+    poly.iter().map(|p| p.dot(axis)).fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)))
+}
+
+/// Do segments `ab` and `cd` cross properly (each strictly straddling the
+/// other's line)?
+pub fn segments_cross(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> bool {
+    let d1 = (b - a).perp_dot(c - a);
+    let d2 = (b - a).perp_dot(d - a);
+    let d3 = (d - c).perp_dot(a - c);
+    let d4 = (d - c).perp_dot(b - c);
+    d1 * d2 < 0.0 && d3 * d4 < 0.0
+}
+
+/// Parameters `(t, u)` of the intersection of `p0p1` and `q0q1` within
+/// both segments, their ends included (to `eps`).
+pub fn segment_intersection_closed(p0: Vec2, p1: Vec2, q0: Vec2, q1: Vec2, eps: f32) -> Option<(f32, f32)> {
+    let r = p1 - p0;
+    let s = q1 - q0;
+    let denom = r.perp_dot(s);
+    if denom.abs() < 1e-6 {
+        return None;
+    }
+    let qp = q0 - p0;
+    let t = qp.perp_dot(s) / denom;
+    let u = qp.perp_dot(r) / denom;
+    (t >= -eps && t <= 1.0 + eps && u >= -eps && u <= 1.0 + eps).then(|| (t.clamp(0.0, 1.0), u.clamp(0.0, 1.0)))
+}
+
+/// Parameters `(t, u)` of the intersection of `p0p1` and `q0q1`, when it is
+/// strictly inside both segments.
+pub fn segment_intersection(p0: Vec2, p1: Vec2, q0: Vec2, q1: Vec2) -> Option<(f32, f32)> {
+    let r = p1 - p0;
+    let s = q1 - q0;
+    let denom = r.perp_dot(s);
+    if denom.abs() < 1e-6 {
+        return None;
+    }
+    let qp = q0 - p0;
+    let t = qp.perp_dot(s) / denom;
+    let u = qp.perp_dot(r) / denom;
+    let eps = 1e-4;
+    if t > eps && t < 1.0 - eps && u > eps && u < 1.0 - eps {
+        Some((t, u))
+    } else {
+        None
+    }
+}
+
+/// Shortest distance between segments `p0`-`p1` and `q0`-`q1` (0 when
+/// they cross).
+pub fn segment_distance_between(p0: Vec2, p1: Vec2, q0: Vec2, q1: Vec2) -> f32 {
+    if segment_intersection(p0, p1, q0, q1).is_some() {
+        return 0.0;
+    }
+    let d = |p: Vec2, a: Vec2, b: Vec2| project_on_segment(p, a, b).1.distance(p);
+    d(p0, q0, q1).min(d(p1, q0, q1)).min(d(q0, p0, p1)).min(d(q1, p0, p1))
+}
+
+/// Convex hull, counter-clockwise (Andrew's monotone chain).
+pub fn convex_hull(points: &[Vec2]) -> Vec<Vec2> {
+    let mut pts: Vec<Vec2> = points.iter().copied().filter(|p| p.is_finite()).collect();
+    pts.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    pts.dedup_by(|a, b| a.distance(*b) < 1e-3);
+    if pts.len() < 3 {
+        return pts;
+    }
+    let cross = |o: Vec2, a: Vec2, b: Vec2| (a - o).perp_dot(b - o);
+    let mut lower: Vec<Vec2> = Vec::new();
+    for &p in &pts {
+        while lower.len() >= 2 && cross(lower[lower.len() - 2], lower[lower.len() - 1], p) <= 0.0 {
+            lower.pop();
+        }
+        lower.push(p);
+    }
+    let mut upper: Vec<Vec2> = Vec::new();
+    for &p in pts.iter().rev() {
+        while upper.len() >= 2 && cross(upper[upper.len() - 2], upper[upper.len() - 1], p) <= 0.0 {
+            upper.pop();
+        }
+        upper.push(p);
+    }
+    lower.pop();
+    upper.pop();
+    lower.extend(upper);
+    lower
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,14 +664,4 @@ mod tests {
         assert_eq!(hits, vec![0, 1, 20, 21]);
         assert!(Grid::new(10.0, std::iter::empty()).nearest(Vec2::ZERO, |_| 0.0).is_none());
     }
-}
-
-/// Shortest distance between segments `p0`-`p1` and `q0`-`q1` (0 when
-/// they cross).
-pub fn segment_distance_between(p0: Vec2, p1: Vec2, q0: Vec2, q1: Vec2) -> f32 {
-    if crate::roads::segment_intersection(p0, p1, q0, q1).is_some() {
-        return 0.0;
-    }
-    let d = |p: Vec2, a: Vec2, b: Vec2| project_on_segment(p, a, b).1.distance(p);
-    d(p0, q0, q1).min(d(p1, q0, q1)).min(d(q0, p0, p1)).min(d(q1, p0, p1))
 }

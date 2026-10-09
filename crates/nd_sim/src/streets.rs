@@ -245,13 +245,7 @@ fn samples(pts: &[Vec2], step: f32) -> Vec<Vec2> {
     out
 }
 
-fn distance_to_polyline(p: Vec2, pts: &[Vec2]) -> f32 {
-    pts.windows(2).map(|w| crate::geom::project_on_segment(p, w[0], w[1]).1.distance(p)).fold(f32::MAX, f32::min)
-}
-
-fn bounds(pts: &[Vec2]) -> (Vec2, Vec2) {
-    pts.iter().fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(lo, hi), p| (lo.min(*p), hi.max(*p)))
-}
+use crate::geom::{bounds, distance_to_polyline};
 
 /// Share of `samples` within `dist` of `pts`.
 fn overlap(samples: &[Vec2], pts: &[Vec2], dist: f32) -> f32 {

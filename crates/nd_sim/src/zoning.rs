@@ -258,13 +258,7 @@ pub fn outlines_differ(a: &[Vec2], b: &[Vec2], area_tol: f32, dist_tol: f32) -> 
     a.iter().any(|&p| distance_to_outline(p, b) > dist_tol) || b.iter().any(|&p| distance_to_outline(p, a) > dist_tol)
 }
 
-fn segments_cross(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> bool {
-    let d1 = (b - a).perp_dot(c - a);
-    let d2 = (b - a).perp_dot(d - a);
-    let d3 = (d - c).perp_dot(a - c);
-    let d4 = (d - c).perp_dot(b - c);
-    d1 * d2 < 0.0 && d3 * d4 < 0.0
-}
+use crate::geom::segments_cross;
 
 /// Do two simple polygons share ground (a vertex of one inside the other, or
 /// crossing edges)? Outlines that merely touch do not count.
@@ -325,9 +319,7 @@ fn ccw(poly: &[Vec2]) -> Vec<Vec2> {
     }
 }
 
-fn extents(poly: &[Vec2], axis: Vec2) -> (f32, f32) {
-    poly.iter().map(|p| p.dot(axis)).fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)))
-}
+use crate::geom::extents;
 
 // ── geo bridges ──────────────────────────────────────────────────────────────
 

@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 
-pub use crate::geom::project_on_segment;
+pub use crate::geom::{project_on_segment, segment_intersection, segment_intersection_closed};
 
 /// Cell size of the segment index. Road pieces are 7 m (curves) to a few
 /// hundred metres (straight roads); a nearest query reads a 3x3 block of
@@ -1423,9 +1423,7 @@ impl Ring {
     }
 }
 
-fn path_len(pts: &[Vec2]) -> f32 {
-    pts.windows(2).map(|w| w[0].distance(w[1])).sum()
-}
+use crate::geom::path_length as path_len;
 
 /// Roads reshaped by roundabouts, as built.
 #[derive(Clone, Debug, Default)]
@@ -1527,40 +1525,6 @@ impl Ord for Open {
     }
 }
 
-/// Parameters `(t, u)` of the intersection of `p0p1` and `q0q1` within
-/// both segments, their ends included (to `eps`).
-pub fn segment_intersection_closed(p0: Vec2, p1: Vec2, q0: Vec2, q1: Vec2, eps: f32) -> Option<(f32, f32)> {
-    let r = p1 - p0;
-    let s = q1 - q0;
-    let denom = r.perp_dot(s);
-    if denom.abs() < 1e-6 {
-        return None;
-    }
-    let qp = q0 - p0;
-    let t = qp.perp_dot(s) / denom;
-    let u = qp.perp_dot(r) / denom;
-    (t >= -eps && t <= 1.0 + eps && u >= -eps && u <= 1.0 + eps).then(|| (t.clamp(0.0, 1.0), u.clamp(0.0, 1.0)))
-}
-
-/// Parameters `(t, u)` of the intersection of `p0p1` and `q0q1`, when it is
-/// strictly inside both segments.
-pub fn segment_intersection(p0: Vec2, p1: Vec2, q0: Vec2, q1: Vec2) -> Option<(f32, f32)> {
-    let r = p1 - p0;
-    let s = q1 - q0;
-    let denom = r.perp_dot(s);
-    if denom.abs() < 1e-6 {
-        return None;
-    }
-    let qp = q0 - p0;
-    let t = qp.perp_dot(s) / denom;
-    let u = qp.perp_dot(r) / denom;
-    let eps = 1e-4;
-    if t > eps && t < 1.0 - eps && u > eps && u < 1.0 - eps {
-        Some((t, u))
-    } else {
-        None
-    }
-}
 
 #[cfg(test)]
 mod tests {
