@@ -176,6 +176,12 @@ impl ParcelMap {
     }
 }
 
+/// [waterfront] How far behind a road's corridor its parcels may reach to
+/// meet the water: where a street or path runs within this of a river,
+/// lake or the sea, the land between it and the water is all parcelled,
+/// lots running the whole way down to the waterline.
+pub const SHORE_REACH: f32 = 80.0;
+
 /// Cut parcels along every street and path: the land within
 /// [`PARCEL_REACH`] of the corridors, minus every corridor (track and
 /// highway included) and the water, clipped to `clip`, each block sliced as
@@ -184,17 +190,8 @@ impl ParcelMap {
 /// chunk draws its own random stream from its own shape, so road works
 /// elsewhere never move a parcel here: the same road gives the same
 /// parcels.
-pub fn generate_parcels(roads: &RoadNetwork, water: &WaterMask, clip: Option<(Vec2, Vec2)>) -> Vec<Parcel> {
-    generate_parcels_with(roads, water, clip, None)
-}
-
-/// [waterfront] How far behind a road's corridor its parcels may reach to
-/// meet the water: where a street or path runs within this of a river,
-/// lake or the sea, the land between it and the water is all parcelled,
-/// lots running the whole way down to the waterline.
-pub const SHORE_REACH: f32 = 80.0;
-
-/// [`generate_parcels`], and with `shore_reach` ([waterfront]) the land
+///
+/// With `shore_reach` ([waterfront]) the land
 /// between a road and water within that reach of its corridor is
 /// parcelled too, and blocks that touch the water are cut into lots that
 /// run from the road the whole way to the shore (frontage-wide slices, not

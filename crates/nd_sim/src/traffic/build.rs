@@ -212,7 +212,6 @@ impl LaneNetwork {
             self.segment_lanes.insert(sid, ids);
         }
 
-        let road_lane_count = self.lanes.len();
         for (ni, node) in roads.nodes.iter().enumerate() {
             let nid = NodeId(ni as u32);
             let approaches: Vec<SegmentId> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).is_street()).collect();
@@ -335,13 +334,11 @@ impl LaneNetwork {
             }
             // One incoming approach (or one opposed pair) has nobody to yield to.
             let signalized = ((approaches.len() >= 3 && two_way >= 3) || approaches.len() >= 4) && phases.len() >= 2;
-            self.node_intersection.resize(roads.nodes.len().max(self.node_intersection.len()), usize::MAX);
             self.node_intersection[ni] = self.intersections.len();
             let incoming = incoming.iter().map(|&(l, s)| (l, approaches.iter().position(|&a| a == s).unwrap_or(0))).collect();
             let greens = vec![GREEN_SECONDS; phases.len()];
             self.intersections.push(Intersection { node: nid, radius, approaches: approaches.len(), phases, phase: 0, opposite, arrow: 0.0, left_turns: 0, left_wait_sum: 0.0, left_wait_max: 0.0, timer: 0.0, connectors, incoming, signalized, greens, arrow_mode: Default::default(), arrow_len: ARROW_SECONDS, ruled: false });
         }
-        let _ = road_lane_count;
         for id in 0..self.lanes.len() {
             for k in 0..self.lanes[id].next.len() {
                 let next = self.lanes[id].next[k] as usize;

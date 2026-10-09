@@ -17,18 +17,6 @@ pub fn generate_lots(
     lots: &mut SlotMap<LotId, Lot>,
     covering: &[Zone],
 ) -> Vec<LotId> {
-    generate_lots_wet(zone_id, zone, roads, lots, covering, &WaterMask::default())
-}
-
-/// [`generate_lots`] that also keeps parcels off the water.
-pub fn generate_lots_wet(
-    zone_id: ZoneId,
-    zone: &Zone,
-    roads: &RoadNetwork,
-    lots: &mut SlotMap<LotId, Lot>,
-    covering: &[Zone],
-    water: &WaterMask,
-) -> Vec<LotId> {
     let lu = zone.land_use;
     let mut created = Vec::new();
     if zone.polygon.len() < 3 || roads.is_empty() || geom::self_intersects(&zone.polygon) {
@@ -73,10 +61,6 @@ pub fn generate_lots_wet(
     }
     if let Some(c) = &covered {
         blocks = blocks.difference(c);
-    }
-    // Rivers, lakes and the sea are nobody's parcel.
-    if let Some(w) = water.near(zlo, zhi) {
-        blocks = blocks.difference(&w);
     }
 
     let mut parcels: Vec<Vec<Vec2>> = Vec::new();

@@ -139,8 +139,8 @@ impl Lane {
     pub fn points_between(&self, s0: f32, s1: f32) -> Vec<Vec2> {
         let (s0, s1) = (s0.clamp(0.0, self.length), s1.clamp(0.0, self.length));
         let mut out = vec![self.point_at(s0).0];
-        for (i, p) in self.points.iter().enumerate() {
-            if i < self.cum.len() && self.cum[i] > s0 && self.cum[i] < s1 {
+        for (p, &c) in self.points.iter().zip(&self.cum) {
+            if c > s0 && c < s1 {
                 out.push(*p);
             }
         }

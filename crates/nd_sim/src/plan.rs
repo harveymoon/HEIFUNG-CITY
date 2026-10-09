@@ -6,7 +6,7 @@
 //! master plan, so implementing a project is "apply deltas, rebuild".
 //!
 //! Parcels are cut along every road whether or not anyone zoned them
-//! ([`crate::zoning::generate_parcels`]); zoning only gives them a land use.
+//! ([`crate::zoning::generate_parcels_with`]); zoning only gives them a land use.
 //! [`parcel_zoning`] folds the plan's zone gestures over the parcels, oldest
 //! first, so the newest gesture that covers a parcel decides it.
 

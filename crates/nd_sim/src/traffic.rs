@@ -294,15 +294,6 @@ impl Traffic {
         self.resolve_lane_use(roads);
     }
 
-    /// Drop every car; used when the road network changes shape.
-    pub fn clear_cars(&mut self) -> Vec<(CarId, Car)> {
-        let out: Vec<(CarId, Car)> = self.cars.drain().collect();
-        for lane in &mut self.net.lanes {
-            lane.cars.clear();
-        }
-        out
-    }
-
     /// After loading a save the lane network is rebuilt; put cars back on
     /// their lanes and drop any whose route no longer exists.
     pub fn reattach_cars(&mut self) -> Vec<(CarId, Car)> {

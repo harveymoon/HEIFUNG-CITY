@@ -297,11 +297,6 @@ impl Politician {
         out
     }
 
-    /// "Mira Okafor, Housing commissioner (Populist, Grid Labour)".
-    pub fn title_line(&self) -> String {
-        format!("{}, {} ({}, {})", self.name, self.scope.title(), self.temper.label(), self.party)
-    }
-
     pub fn bio(&self) -> String {
         format!("{}, {}. Former {}. {}. Stands for: {}.", self.name, self.age, self.background, capitalise(self.temper.describe()), self.goals().join("; "))
     }

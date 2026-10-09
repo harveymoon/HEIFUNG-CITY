@@ -816,13 +816,6 @@ impl Ground {
         out
     }
 
-    /// Height of a water bridge at `p`, ignoring the underpass decks that
-    /// carry the highway over streets: what drives along the street below
-    /// stays down in its cutting.
-    pub fn bridge_at(&self, p: Vec2) -> Option<f32> {
-        self.deck_in(&self.decks[..self.bridge_decks.min(self.decks.len())], p)
-    }
-
     pub(super) fn deck_in(&self, decks: &[(Vec2, Vec2, f32, f32, f32)], p: Vec2) -> Option<f32> {
         // A deck whose span `p` is alongside wins over one it is only past
         // the end of (two halves of a deck meet over a crossing).

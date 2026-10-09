@@ -85,16 +85,6 @@ impl WalkGraph {
         idx.iter().map(|&k| &self.benches[k as usize]).chain(scan)
     }
 
-    /// A bench in a lot, as a position and facing; `pick` chooses which.
-    pub fn bench_in(&self, lot: LotId, pick: usize) -> Option<(Vec2, f32)> {
-        let here: Vec<(Vec2, f32)> = self.benches.iter().filter(|(_, l, _)| *l == lot).map(|(n, _, f)| (self.nodes[*n as usize].pos, *f)).collect();
-        if here.is_empty() {
-            None
-        } else {
-            Some(here[pick % here.len()])
-        }
-    }
-
     /// [park-paths] Join player paths to the public grounds they were drawn
     /// to, and list every grounds' snap points. `links` are the path ends
     /// attached to grounds; each is joined (a walk edge from the path's end

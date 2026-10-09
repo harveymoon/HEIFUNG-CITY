@@ -482,14 +482,6 @@ impl World {
         self.concerns.note(k)
     }
 
-    /// As `complain`, about a building (placed at its lot).
-    pub fn complain_about(&mut self, cid: CitizenId, concern: Concern, severity: f32, text: impl Into<String>, b: BuildingId) -> bool {
-        let at = self.building_lot(b).map(|l| (b, l.center));
-        let Some(c) = self.citizens.get(cid) else { return false };
-        let k = complaint(self.clock.tick, cid, c, concern, severity, text.into(), at);
-        self.concerns.note(k)
-    }
-
     /// The building nearest a point (by lot centre), to name a hot spot.
     pub fn building_nearest(&self, p: Vec2) -> Option<BuildingId> {
         self.buildings.iter().filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, l.center.distance_squared(p)))).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(id, _)| id)

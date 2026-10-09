@@ -246,11 +246,6 @@ impl Services {
         self.incidents.iter().filter(|i| i.active())
     }
 
-    /// [emergency] The chase `car` is in, as the fugitive or the police.
-    pub fn chase_of_car(&self, car: CarId) -> Option<&Chase> {
-        self.chases.iter().find(|c| c.car == car || self.units.get(c.unit).is_some_and(|u| u.car == Some(car)))
-    }
-
     /// The unit driving `car`, if it is an emergency vehicle.
     pub fn unit_of_car(&self, car: CarId) -> Option<UnitId> {
         self.by_car.get(&car).copied()

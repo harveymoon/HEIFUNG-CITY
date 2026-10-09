@@ -235,11 +235,4 @@ impl Traffic {
         }
         self.crashes.push(CrashReport { id, cars, pos, speed, cause, severity });
     }
-
-    /// Write a crashed car off (`wrecked`) or let it drive on (`None`).
-    pub fn clear_crash(&mut self, id: CarId) {
-        if let Some(c) = self.cars.get_mut(id) {
-            c.drive.crash = None;
-        }
-    }
 }

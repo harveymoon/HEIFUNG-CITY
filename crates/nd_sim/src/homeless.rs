@@ -147,10 +147,6 @@ impl Homeless {
         self.since.len()
     }
 
-    pub fn camp_people(&self) -> u32 {
-        self.camps.iter().map(|c| c.people as u32).sum()
-    }
-
     /// Camps growing: more now than at the midnight two days ago.
     pub fn growing(&self) -> bool {
         let h = &self.stats.camps_history;

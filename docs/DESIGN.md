@@ -1473,7 +1473,7 @@ Citizens are rendered from their simulated positions every frame.
   vertices cut its parcels, so parcel keys stay as they were. Decks, tunnels, cuttings, set levels
   and ways in a grade crossing keep the straight line. The renderer draws the terrain from it, lifts flat-datum meshes
   onto it, raises buildings to their pad and movers to `surface_height` (decks over water). Water cuts
-  parcels (`zoning::generate_lots_wet`); lots steeper than 0.2 are unusable. A one-way street of three
+  parcels (`zoning::generate_parcels_with`); lots steeper than 0.2 are unusable. A one-way street of three
   or more lanes is a highway: 25 m/s, no frontage, grade-separated (crossings make no junction, only
   dropped ends join, so ramps merge with priority to the mainline). Embankments and cuttings
   slope no steeper than 1 in 2.5 (the blend to the terrain widens with the height, up to 160 m).

@@ -547,16 +547,6 @@ impl EstateMarket {
         self.elite_of(c).is_some()
     }
 
-    /// The convoy a car belongs to (as boss, escort or police).
-    pub fn convoy_of_car(&self, car: CarId) -> Option<&Convoy> {
-        self.convoys.iter().find(|c| c.boss == car || c.cars().any(|x| x == car))
-    }
-
-    /// The NIMBY lift at `p`: strongest at the centre, nothing at the edge.
-    pub fn nimby_at(&self, p: Vec2) -> f32 {
-        self.nimby.iter().map(|n| if p.distance(n.center) < n.radius { n.strength * (1.0 - p.distance(n.center) / n.radius) } else { 0.0 }).fold(0.0, f32::max)
-    }
-
     pub fn in_nimby(&self, p: Vec2) -> bool {
         self.nimby.iter().any(|n| p.distance(n.center) < n.radius)
     }

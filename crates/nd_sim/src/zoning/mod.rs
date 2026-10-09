@@ -1,7 +1,7 @@
 //! Parcels, zones (land-use polygons) and lots.
 //!
 //! Parcels are cut along every street and path as soon as it is built,
-//! zoned or not ([`generate_parcels`]): the road corridors are subtracted
+//! zoned or not ([`generate_parcels_with`]): the road corridors are subtracted
 //! from the land within reach of the roads with real polygon booleans, so a
 //! curved road removes exactly its own strip and nothing else, and each
 //! remaining block is sliced along its road frontage into parcels of a

@@ -26,16 +26,6 @@ pub fn grade_separated(highway_a: bool, level_a: f32, highway_b: bool, level_b: 
     highway_a != highway_b || (level_a - level_b).abs() >= GRADE_SEPARATION
 }
 
-/// Of two separated ways, does the first pass over? The one drawn higher
-/// does; at the same level the highway goes over the street.
-pub fn passes_over(highway_a: bool, level_a: f32, highway_b: bool, level_b: f32) -> bool {
-    if (level_a - level_b).abs() >= 1.0 {
-        level_a > level_b
-    } else {
-        highway_a && !highway_b
-    }
-}
-
 /// [interchange] The part a way plays where it crosses another: what it
 /// may meet at a junction without an end dropped on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,7 +103,9 @@ pub fn separated(a: WayClass, level_a: f32, b: WayClass, level_b: f32) -> bool {
     }
 }
 
-/// [interchange] [`passes_over`] with slip roads: the way drawn higher goes
+/// [interchange] Of two separated ways, does the first pass over? The one
+/// drawn higher does; at the same level the highway goes over the street,
+/// with slip roads: the way drawn higher goes
 /// over; at about the same level the highway goes over a slip road and
 /// either over a street or a path.
 pub fn passes_over_class(a: WayClass, level_a: f32, b: WayClass, level_b: f32) -> bool {
