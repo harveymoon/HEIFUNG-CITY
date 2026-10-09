@@ -10,7 +10,7 @@ use super::parts::*;
 use super::trades::{block, fish_crates, fit, pane, pane_row, table, R};
 use super::{Ctx, Frame};
 use crate::surface::{Geometry, Surface::*};
-use crate::terrain::{boat_mesh, stamp_mesh};
+use crate::terrain::boat_mesh;
 use glam::{Vec2, Vec3};
 use nd_sim::ShipKind;
 use rand::Rng;
@@ -23,7 +23,7 @@ fn boat_on_land(g: &mut Geometry, c: &Ctx, kind: ShipKind, p: Vec2, y: f32, yaw:
     let mesh = boat_mesh(kind, c.palette);
     let w = f.to_world(p.x, p.y);
     // The keel sits about a metre under the waterline.
-    stamp_mesh(g.part(Panel), &mesh, Vec3::new(w.x, y + 1.0, w.y), f.yaw() + yaw);
+    g.part(Panel).append_transformed(&mesh, Vec3::new(w.x, y + 1.0, w.y), f.yaw() + yaw);
 }
 
 /// A boat trailer: frame, wheels and a small boat on it.

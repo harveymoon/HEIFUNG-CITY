@@ -238,11 +238,10 @@ pub fn walk_detail(world: &World, pal: &Palette, centre: Vec2, radius: f32) -> G
                             let m = wa.lerp(wb, 0.5) - Vec3::Y * 1.6;
                             let across = Vec3::new(right.x, 0.0, right.y);
                             let along = Vec3::new(d.x, 0.0, d.y);
-                            g.part(Tarp).decal(m, across, Vec3::Y, 4.0, 1.0, along, rgba(mul(pick(&mut rng, &pal.awning_colors), 0.9)));
-                            g.part(Tarp).decal(m, -across, Vec3::Y, 4.0, 1.0, -along, rgba(mul(pick(&mut rng, &pal.awning_colors), 0.9)));
+                            let awning = [(); 2].map(|_| rgba(mul(pick(&mut rng, &pal.awning_colors), 0.9)));
+                            g.part(Tarp).decal2(m, across, Vec3::Y, 4.0, 1.0, along, 0.0, awning);
                             let sc = mul(pick(&mut rng, &pal.sign_colors), 0.8);
-                            g.part(Glow).decal(m + along * 0.02, across, Vec3::Y, 3.0, 0.5, along, rgba(sc));
-                            g.part(Glow).decal(m - along * 0.02, -across, Vec3::Y, 3.0, 0.5, -along, rgba(sc));
+                            g.part(Glow).decal2(m, across, Vec3::Y, 3.0, 0.5, along, 0.02, [rgba(sc); 2]);
                         }
                         _ => {}
                     }
@@ -270,8 +269,7 @@ fn shop_sign(g: &mut Geometry, pal: &Palette, rng: &mut impl Rng, p: Vec2, d: Ve
             // A-frame: two boards leaning together, a lit menu on the street face.
             let c = base + out * 0.35 + Vec3::Y * 0.5;
             g.part(Matte).boxed(c, Vec3::new(0.7, 1.0, 0.45), yaw, rgba(DARK));
-            g.part(Glow).decal(c + out * 0.24, along, Vec3::Y, 0.55, 0.75, out, rgba(mul(sc, 0.8)));
-            g.part(Glow).decal(c - out * 0.24, -along, Vec3::Y, 0.55, 0.75, -out, rgba(mul(sc, 0.6)));
+            g.part(Glow).decal2(c, along, Vec3::Y, 0.55, 0.75, out, 0.24, [rgba(mul(sc, 0.8)), rgba(mul(sc, 0.6))]);
         }
         1 => {
             // Standing lightbox, two lit faces along the pavement.
@@ -346,8 +344,7 @@ fn steam(g: &mut Geometry, at: Vec3, r: f32, puffs: i32) {
         let h = 0.9 + 0.3 * t;
         let col = rgba(mul([0.16, 0.17, 0.19], 1.0 - 0.15 * t));
         for (along, out) in [(Vec3::X, Vec3::Z), (Vec3::Z, -Vec3::X)] {
-            g.part(Glow).decal(c, along, Vec3::Y, 0.12 + 0.05 * t, h, out, col);
-            g.part(Glow).decal(c, -along, Vec3::Y, 0.12 + 0.05 * t, h, -out, col);
+            g.part(Glow).decal2(c, along, Vec3::Y, 0.12 + 0.05 * t, h, out, 0.0, [col; 2]);
         }
     }
 }

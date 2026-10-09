@@ -447,6 +447,106 @@ impl MeshData {
         self.cap(&bottom[..n], -axis, color);
     }
 
+    /// A frustum with only the caps asked for: a section of a stack whose
+    /// neighbours cover its ends needs neither. Caps as [`MeshData::frustum`]
+    /// lays them (top, then bottom).
+    pub fn frustum_capped(&mut self, bottom: &[Vec3], top: &[Vec3], cap_bottom: bool, cap_top: bool, color: [f32; 4]) {
+        let n = bottom.len().min(top.len());
+        if n < 3 {
+            return;
+        }
+        let axis = self.band(bottom, top, color);
+        if cap_top {
+            self.cap(&top[..n], axis, color);
+        }
+        if cap_bottom {
+            self.cap(&bottom[..n], -axis, color);
+        }
+    }
+
+    /// A turned solid round a vertical axis at `center`: `profile` is
+    /// (radius, height) from the bottom up, each pair of rings one flat
+    /// sided band (as stacked [`MeshData::cylinder`]s draw them), capped
+    /// only at the two ends (not where the radius is zero). Cooling towers,
+    /// domes, silos and chimneys: stacked cylinders spent nearly half their
+    /// triangles on caps hidden inside the stack.
+    pub fn lathe(&mut self, center: Vec2, profile: &[(f32, f32)], sides: usize, color: [f32; 4]) {
+        if profile.len() < 2 || sides < 3 {
+            return;
+        }
+        let rings: Vec<Vec<Vec3>> = profile.iter().map(|&(r, y)| MeshData::ngon(center, r, sides, 0.0, y)).collect();
+        let last = rings.len() - 1;
+        for k in 0..last {
+            self.frustum_capped(&rings[k], &rings[k + 1], k == 0 && profile[0].0 > 1e-4, k + 1 == last && profile[last].0 > 1e-4, color);
+        }
+    }
+
+    /// A flat sign or awning seen from both sides: two decals back to back,
+    /// `gap` either side of `center` along `facing`, the back one turned
+    /// round (its `along` reversed) so both read the right way, each in its
+    /// own colour.
+    #[allow(clippy::too_many_arguments)]
+    pub fn decal2(&mut self, center: Vec3, along: Vec3, up: Vec3, w: f32, h: f32, facing: Vec3, gap: f32, colors: [[f32; 4]; 2]) {
+        self.decal(center + facing * gap, along, up, w, h, facing, colors[0]);
+        self.decal(center - facing * gap, -along, up, w, h, -facing, colors[1]);
+    }
+
+    /// Copy `src` in turned by `yaw` about the vertical (its +x along
+    /// `(cos yaw, sin yaw)` in world x, z) and moved to `at`: a boat at its
+    /// mooring, a part built once and stamped many times.
+    pub fn append_transformed(&mut self, src: &MeshData, at: Vec3, yaw: f32) {
+        let (s, c) = yaw.sin_cos();
+        let rot = |p: [f32; 3]| -> [f32; 3] { [p[0] * c - p[2] * s, p[1], p[0] * s + p[2] * c] };
+        let base = self.positions.len() as u32;
+        for (i, p) in src.positions.iter().enumerate() {
+            let r = rot(*p);
+            self.positions.push([r[0] + at.x, r[1] + at.y, r[2] + at.z]);
+            self.normals.push(rot(src.normals[i]));
+            self.colors.push(src.colors.get(i).copied().unwrap_or([1.0; 4]));
+            self.uvs.push(src.uvs.get(i).copied().unwrap_or([0.0; 2]));
+            let t = src.tangents.get(i).copied().unwrap_or([1.0, 0.0, 0.0, 1.0]);
+            let tr = rot([t[0], t[1], t[2]]);
+            self.tangents.push([tr[0], tr[1], tr[2], t[3]]);
+        }
+        self.indices.extend(src.indices.iter().map(|i| i + base));
+    }
+
+    /// A fan of triangles from `centre` round the closed `ring`, facing up,
+    /// with the ground's world-axis texture (as `ground_polygon`), so a pad
+    /// whose points stand at different heights still matches the asphalt
+    /// strips' texture.
+    pub fn ground_fan(&mut self, centre: Vec3, ring: &[Vec3], color: [f32; 4]) {
+        let n = ring.len();
+        if n < 2 {
+            return;
+        }
+        let basis = (Vec3::X, Vec3::NEG_Z);
+        let base = self.positions.len() as u32;
+        self.positions.push(centre.to_array());
+        for p in ring {
+            self.positions.push(p.to_array());
+        }
+        for k in 0..=n {
+            let p = if k == 0 { centre } else { ring[k - 1] };
+            self.normals.push([0.0, 1.0, 0.0]);
+            self.colors.push(color);
+            self.uvs.push([p.dot(basis.0), p.dot(basis.1)]);
+            self.tangents.push([1.0, 0.0, 0.0, 1.0]);
+        }
+        for k in 0..n as u32 {
+            let (a, b) = (base + 1 + k, base + 1 + (k + 1) % n as u32);
+            // Counter-clockwise in (x, z) seen from +Y winds clockwise once y
+            // becomes z (as `ground_polygon` has it).
+            let (pa, pb) = (ring[k as usize], ring[((k + 1) % n as u32) as usize]);
+            let ccw = (pa - centre).x * (pb - centre).z - (pa - centre).z * (pb - centre).x > 0.0;
+            if ccw {
+                self.indices.extend_from_slice(&[base, b, a]);
+            } else {
+                self.indices.extend_from_slice(&[base, a, b]);
+            }
+        }
+    }
+
     /// The sides of a frustum without its caps: a floor band or a ring of
     /// light round a shaft whose own caps would lie in the shaft's (and
     /// fight with them). Returns the axis, bottom to top.
@@ -677,6 +777,44 @@ impl MeshData {
         let (p1, p2) = (p1 * thickness * 0.5, p2 * thickness * 0.5);
         let rings: Vec<Vec<Vec3>> = pts.iter().map(|p| vec![*p + p1 + p2, *p - p1 + p2, *p - p1 - p2, *p + p1 - p2]).collect();
         self.strip(&rings, color);
+    }
+}
+
+/// A polyline with its leg lengths measured once, for the many
+/// `point_along` reads of furniture and dash loops: [`Polyline::at`] gives
+/// exactly what `point_along` does (the same subtractions in the same
+/// order) without measuring every leg again on every read.
+pub struct Polyline<'a> {
+    pub points: &'a [Vec2],
+    lens: Vec<f32>,
+    /// Total length (as `path_length`).
+    pub length: f32,
+}
+
+impl<'a> Polyline<'a> {
+    pub fn new(points: &'a [Vec2]) -> Self {
+        let lens: Vec<f32> = points.windows(2).map(|w| w[0].distance(w[1])).collect();
+        let length = lens.iter().sum();
+        Self { points, lens, length }
+    }
+
+    /// Point and unit direction at arc length `s` (clamped to both ends; a
+    /// single point faces +x), as [`point_along`].
+    pub fn at(&self, s: f32) -> (Vec2, Vec2) {
+        let pts = self.points;
+        if pts.len() < 2 {
+            return (pts.first().copied().unwrap_or(Vec2::ZERO), Vec2::X);
+        }
+        let mut s = s.max(0.0);
+        for (i, &len) in self.lens.iter().enumerate() {
+            if s <= len {
+                let d = (pts[i + 1] - pts[i]).normalize_or_zero();
+                return (pts[i] + d * s, d);
+            }
+            s -= len;
+        }
+        let n = pts.len();
+        (pts[n - 1], (pts[n - 1] - pts[n - 2]).normalize_or_zero())
     }
 }
 

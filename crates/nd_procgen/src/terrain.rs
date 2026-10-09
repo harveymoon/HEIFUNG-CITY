@@ -1183,7 +1183,7 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
                         ShipKind::FishingBoat => &meshes[2],
                         _ => &meshes[0],
                     };
-                    stamp_mesh(g.part(Surface::Panel), mesh, Vec3::new(m.pos.x, WATER_LEVEL, m.pos.y), m.yaw);
+                    g.part(Surface::Panel).append_transformed(mesh, Vec3::new(m.pos.x, WATER_LEVEL, m.pos.y), m.yaw);
                 }
             }
         }
@@ -1368,25 +1368,6 @@ pub fn dock_layout(port: &nd_sim::ports::Port, land: &nd_sim::landscape::Landsca
         out.boats = nd_sim::fishing::quay_moorings(port, land).into_iter().map(|(pos, yaw)| Mooring { pos, yaw, kind: ShipKind::FishingBoat }).collect();
     }
     out
-}
-
-/// Copy `src` into `dst` turned by `yaw` about the vertical (its +x along
-/// `(cos yaw, sin yaw)` in world x, z) and moved to `at`.
-pub fn stamp_mesh(dst: &mut MeshData, src: &MeshData, at: glam::Vec3, yaw: f32) {
-    let (s, c) = yaw.sin_cos();
-    let rot = |p: [f32; 3]| -> [f32; 3] { [p[0] * c - p[2] * s, p[1], p[0] * s + p[2] * c] };
-    let base = dst.positions.len() as u32;
-    for (i, p) in src.positions.iter().enumerate() {
-        let r = rot(*p);
-        dst.positions.push([r[0] + at.x, r[1] + at.y, r[2] + at.z]);
-        dst.normals.push(rot(src.normals[i]));
-        dst.colors.push(src.colors.get(i).copied().unwrap_or([1.0; 4]));
-        dst.uvs.push(src.uvs.get(i).copied().unwrap_or([0.0; 2]));
-        let t = src.tangents.get(i).copied().unwrap_or([1.0, 0.0, 0.0, 1.0]);
-        let tr = rot([t[0], t[1], t[2]]);
-        dst.tangents.push([tr[0], tr[1], tr[2], t[3]]);
-    }
-    dst.indices.extend(src.indices.iter().map(|i| i + base));
 }
 
 /// A hull from keel to gunwale with a pointed bow, bow along +x, and a
