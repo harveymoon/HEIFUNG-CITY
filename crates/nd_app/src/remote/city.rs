@@ -72,6 +72,7 @@ pub(super) fn generate_city(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String>
         "interchanges": laid.links,
         "way_in": laid.way_in,
         "centres": plan.cores.iter().map(|c| v2(*c)).collect::<Vec<_>>(),
+        "furnished": laid.furnished,
         "took_ms": start.elapsed().as_millis() as u64,
     });
     v["identity"] = identity::identity_json(&ctx.sim.world);

@@ -132,10 +132,17 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, draft: &mut Draft) {
                     // A town comes with the landscape it was made for; the
                     // levers may still be changed after.
                     draft.city = Some(city);
-                    draft.params = LandscapeParams { climate: draft.params.climate, ..city.landscape(draft.params.seed) };
+                    draft.params = if city.furnished() {
+                        // [perfect-city] The planned city comes with its own
+                        // site and climate (the seed may still be changed).
+                        city.landscape(city.default_seed())
+                    } else {
+                        LandscapeParams { climate: draft.params.climate, ..city.landscape(draft.params.seed) }
+                    };
                 }
             }
             match draft.city {
+                Some(city) if city.furnished() => hint(ui, &format!("{} Streets, zoning, diamond interchanges, power, police, fire, health, schools, a university, metro, buses, rail, docks, districts and 50 million in the treasury; population 0. Laying it all out takes about half a minute (the window waits).", city.blurb())),
                 Some(city) => hint(ui, &format!("{} Streets, zoning, interchanges and a power plant are laid out; it grows from there.", city.blurb())),
                 None => hint(ui, "Every map starts with the highway and the trunk line, edge to edge; the rest is yours to build."),
             }

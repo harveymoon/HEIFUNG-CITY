@@ -200,8 +200,8 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("note", "throws the city away; omitted levers take the preset's"),
     ] },
     Cmd { name: "generate_city", aliases: &[], effect: Replace(city::generate_city_replaces), run: city::generate_city, help: &[
-        ("preset", "grid_plaza|coastal_river|old_town|twin_centres (default grid_plaza)"),
-        ("seed", "u64 (default 1): the city and its landscape"),
+        ("preset", "grid_plaza|coastal_river|old_town|twin_centres|perfect_city (default grid_plaza)"),
+        ("seed", "u64 (default 1; perfect_city 5): the city and its landscape"),
         ("landscape", "optional landscape preset to lay it on instead of the city preset's own (river_valley|islands|coast|delta|plains|flat)"),
         ("water", "0..1"),
         ("relief", "0..1"),

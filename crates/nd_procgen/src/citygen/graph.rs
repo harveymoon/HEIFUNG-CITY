@@ -209,7 +209,7 @@ pub fn join_ends(lines: &mut [Line], site: &Site, lookahead: [f32; 3]) {
             let steps = (dist / STEP).ceil() as usize;
             let ok = (1..steps).all(|k| {
                 let g = site.ground(p + d * (k as f32 * STEP));
-                g == Ground::Ok || (g == Ground::Rail && level != Level::Minor)
+                g == Ground::Ok || (g == Ground::Rail && level <= site.rail_cross)
             });
             if !ok {
                 continue;
