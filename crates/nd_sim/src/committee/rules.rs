@@ -215,12 +215,9 @@ pub fn raise_alerts(c: &mut Committee, report: &CityReport, today: u32) -> Vec<u
             continue;
         }
         c.rule_last.insert(rule.key.to_string(), today);
-        let text = format!("{}: {}.", capitalise_first(rule.when), facts.iter().map(Fact::line).collect::<Vec<_>>().join(", "));
+        let text = format!("{}: {}.", super::capitalise(rule.when), facts.iter().map(Fact::line).collect::<Vec<_>>().join(", "));
         out.push(c.push_alert(Alert { day: today, member, rule: rule.key.into(), severity, facts, text, ..Default::default() }));
     }
     out
 }
 
-fn capitalise_first(s: &str) -> String {
-    super::capitalise(s)
-}

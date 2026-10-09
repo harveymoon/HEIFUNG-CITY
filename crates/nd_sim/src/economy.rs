@@ -139,38 +139,14 @@ pub struct ItemEntry {
 /// so the lists are bounded by the buildings, lines and classes in town.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Ledger {
-    #[serde(deserialize_with = "ledger_row")]
+    #[serde(deserialize_with = "padded")]
     pub today: [f32; FLOWS],
-    #[serde(deserialize_with = "ledger_row")]
+    #[serde(deserialize_with = "padded")]
     pub yesterday: [f32; FLOWS],
     #[serde(default)]
     pub items_today: Vec<ItemEntry>,
     #[serde(default)]
     pub items_yesterday: Vec<ItemEntry>,
-}
-
-/// A ledger row from a save, which may predate the newer flows: shorter
-/// rows are padded with zeros.
-fn ledger_row<'de, D: serde::Deserializer<'de>>(d: D) -> Result<[f32; FLOWS], D::Error> {
-    struct Row;
-    impl<'de> serde::de::Visitor<'de> for Row {
-        type Value = [f32; FLOWS];
-        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            write!(f, "up to {FLOWS} numbers")
-        }
-        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-            let mut out = [0.0; FLOWS];
-            let mut i = 0;
-            while let Some(x) = seq.next_element::<f32>()? {
-                if i < FLOWS {
-                    out[i] = x;
-                }
-                i += 1;
-            }
-            Ok(out)
-        }
-    }
-    d.deserialize_tuple(FLOWS, Row)
 }
 
 /// A fixed-size array saved when the enum it is indexed by was shorter

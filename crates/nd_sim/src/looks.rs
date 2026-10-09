@@ -270,10 +270,7 @@ const KIN_SALT: u64 = 0x0A11_E4ED_4A57;
 
 /// The five personality draws (`nd_minds::Personality::from_seed`):
 /// sociability, ambition, hedonism, caution, curiosity.
-fn traits(seed: u64) -> [f32; 5] {
-    let mut rng = SimRng::seed_from_u64(seed);
-    [rng.random(), rng.random(), rng.random(), rng.random(), rng.random()]
-}
+use crate::citizens::traits_of as traits;
 
 fn pick<T: Copy>(rng: &mut SimRng, items: &[(T, f32)]) -> T {
     let total: f32 = items.iter().map(|i| i.1.max(0.0)).sum();

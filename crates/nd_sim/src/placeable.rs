@@ -315,10 +315,5 @@ impl Placeable {
 }
 
 pub fn parse_tier(s: &str) -> Option<Tier> {
-    match s.trim().to_ascii_lowercase().as_str() {
-        "low" | "1" | "small" => Some(Tier::Low),
-        "mid" | "middle" | "2" | "medium" => Some(Tier::Mid),
-        "high" | "3" | "large" => Some(Tier::High),
-        _ => None,
-    }
+    Tier::from_key(s)
 }

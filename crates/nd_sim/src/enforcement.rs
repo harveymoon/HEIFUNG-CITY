@@ -60,7 +60,7 @@ pub const CLAMP_PAY_CHANCE: f32 = 0.35;
 /// Tow trucks the out-of-town company has on the city's roads at once.
 pub const OUT_OF_TOWN_TOW_TRUCKS: usize = 4;
 /// Minutes a towed car waits in the pound before it is auctioned.
-pub const AUCTION_AFTER: u64 = 3 * 1440;
+pub const AUCTION_AFTER: u64 = 3 * crate::clock::MINUTES_PER_DAY;
 /// Tow trucks a tow company runs per four staff (at least one).
 pub const TRUCKS_PER_STAFF: usize = 4;
 /// How close an officer passes to spot a car.

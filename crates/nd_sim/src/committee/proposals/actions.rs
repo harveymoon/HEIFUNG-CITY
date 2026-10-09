@@ -3,20 +3,13 @@
 
 use super::*;
 
+/// [`Tier::from_key`], where a model may also leave the tier out (low)
+/// or say "big" (high).
 pub(super) fn parse_tier(s: &str) -> Option<Tier> {
     match s.trim().to_ascii_lowercase().as_str() {
-        "" | "low" | "small" | "1" => Some(Tier::Low),
-        "mid" | "middle" | "medium" | "2" => Some(Tier::Mid),
-        "high" | "large" | "big" | "3" => Some(Tier::High),
-        _ => None,
-    }
-}
-
-pub(super) fn tier_key(t: Tier) -> &'static str {
-    match t {
-        Tier::Low => "low",
-        Tier::Mid => "mid",
-        Tier::High => "high",
+        "" => Some(Tier::Low),
+        "big" => Some(Tier::High),
+        other => Tier::from_key(other),
     }
 }
 
@@ -198,7 +191,7 @@ impl Action {
                 let k = ServiceKind::from_key(&service.trim().to_ascii_lowercase()).filter(|k| SERVICES.contains(k)).ok_or_else(|| format!("unknown service {service:?}; one of police, fire, health, school, trash_depot, dispatch"))?;
                 let t = parse_tier(tier).ok_or_else(|| format!("unknown tier {tier:?}; low, mid or high"))?;
                 afford(Placeable::Service(k, t).cost())?;
-                Ok(Action::BuildService { service: k.key().into(), tier: tier_key(t).into(), near: near(n)? })
+                Ok(Action::BuildService { service: k.key().into(), tier: Tier::key(t).into(), near: near(n)? })
             }
             Action::BuildPower { plant, near: n } => {
                 let k = parse_plant(plant).ok_or_else(|| format!("unknown plant {plant:?}; solar, wind or coal"))?;

@@ -199,10 +199,7 @@ pub fn model_rng(a: u64, b: u64) -> SimRng {
 /// The hedonism trait of a citizen's personality, as `nd_minds::Personality`
 /// derives it from the seed (the third draw).
 pub fn hedonism_of(seed: u64) -> f32 {
-    let mut rng = SimRng::seed_from_u64(seed);
-    let _: f32 = rng.random();
-    let _: f32 = rng.random();
-    rng.random()
+    traits_of(seed)[2]
 }
 
 impl VehicleModel {
@@ -694,10 +691,7 @@ impl Vehicles {
 /// The five traits of `nd_minds::Personality` (sociability, ambition,
 /// hedonism, caution, curiosity), drawn from the seed the same way, for
 /// choices the sim makes itself (how to travel).
-pub fn traits_of(seed: u64) -> [f32; 5] {
-    let mut rng = SimRng::seed_from_u64(seed);
-    [rng.random(), rng.random(), rng.random(), rng.random(), rng.random()]
-}
+pub use crate::citizens::traits_of;
 
 /// What a bike costs at a shop.
 pub const BIKE_PRICE: f32 = 45.0;

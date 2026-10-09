@@ -10,7 +10,7 @@ use crate::buildings::{Building, BuildingId, Tier};
 use crate::citizens::CitizenId;
 use crate::market::BusinessKind;
 use crate::zoning::LandUse;
-use rand::{Rng, SeedableRng};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -250,10 +250,7 @@ pub fn character(b: &Building, s: Surroundings) -> PlaceCharacter {
 /// The five personality traits, `[sociability, ambition, hedonism,
 /// caution, curiosity]`, drawn from the seed exactly as
 /// `nd_minds::Personality::from_seed` does.
-pub fn traits(seed: u64) -> [f32; 5] {
-    let mut rng = crate::SimRng::seed_from_u64(seed);
-    [rng.random(), rng.random(), rng.random(), rng.random(), rng.random()]
-}
+pub use crate::citizens::traits_of as traits;
 
 /// What a citizen likes in a place. The likings run `-1..1` (negative is
 /// a dislike), the needs `0..1.5` (how much a shortfall hurts).

@@ -231,7 +231,7 @@ pub struct CityReport {
     pub areas: Vec<AreaSummary>,
 }
 
-const COVERED: f32 = 0.5;
+use crate::services::COVERED;
 
 impl CityReport {
     pub fn build(w: &World) -> CityReport {

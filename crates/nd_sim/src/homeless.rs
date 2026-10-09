@@ -492,7 +492,7 @@ impl World {
     pub(crate) fn daily_homeless(&mut self) {
         crate::prof_scope!("daily_homeless");
         let tick = self.clock.tick;
-        let day = tick / 1440;
+        let day = tick / crate::clock::MINUTES_PER_DAY;
         let list: Vec<(HouseholdId, u64)> = self.society.homeless.since.clone();
         for (hid, since) in list {
             let Some(hh) = self.households.get(hid) else { continue };
@@ -513,7 +513,7 @@ impl World {
                 }
             }
             // Long enough on the street and some give up on the town.
-            if day.saturating_sub(since / 1440) >= GIVE_UP_DAYS && self.society_rng().random::<f32>() < GIVE_UP_CHANCE {
+            if day.saturating_sub(since / crate::clock::MINUTES_PER_DAY) >= GIVE_UP_DAYS && self.society_rng().random::<f32>() < GIVE_UP_CHANCE {
                 for m in &members {
                     if let Some(c) = self.citizens.get_mut(*m) {
                         c.remember(tick, "Nothing for us here. Hitching out.");

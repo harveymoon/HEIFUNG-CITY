@@ -377,7 +377,7 @@ impl World {
                     }
                 }
                 (true, None) => {
-                    let days = tick.saturating_sub(o.custody_since) as f32 / 1440.0;
+                    let days = tick.saturating_sub(o.custody_since) as f32 / crate::clock::MINUTES_PER_DAY as f32;
                     let chance = if o.jailed { JAIL_REFORM_BASE + JAIL_REFORM_PER_DAY * days } else { HELD_REFORM };
                     let roll: f32 = self.society_rng().random();
                     let s = &mut self.society.crime;

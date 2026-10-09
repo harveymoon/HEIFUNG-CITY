@@ -190,7 +190,7 @@ pub const ENGINE_HALF: (f32, f32) = (4.1, 1.4);
 /// an alert after this many saturated minutes in a day.
 pub const SATURATED_ALERT_MIN: u32 = 60;
 /// Rubble stays on a burned lot this many ticks before it can be rebuilt.
-pub const RUBBLE_TICKS: u64 = 2 * 1440;
+pub const RUBBLE_TICKS: u64 = 2 * crate::clock::MINUTES_PER_DAY;
 /// Resolved incidents kept for the record (the Emergencies window's history).
 pub const KEEP_RESOLVED: usize = 500;
 
