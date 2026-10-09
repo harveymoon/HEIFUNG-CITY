@@ -207,7 +207,7 @@ impl World {
         let grocery_share = self.grocery_share_per_day();
         let grocery_short = grocery_share > 0.0 && self.town_grocery_stock() < self.citizens.len() as f32 * crate::citizens::GROCERIES_PER_PERSON_DAY * 0.25;
         for &bid in &ids {
-            let (kind, jobs, needs, at, closed) = {
+            let (kind, needs, at, closed) = {
                 let b = &self.buildings[bid];
                 if !b.operating() {
                     continue;
@@ -242,9 +242,8 @@ impl World {
                         needs.push((Resource::Groceries, grocery_share * 0.5 - have, 0.0));
                     }
                 }
-                (bz.kind, b.jobs, needs, lot.center, bz.closed)
+                (bz.kind, needs, lot.center, bz.closed)
             };
-            let _ = (kind, jobs);
             if closed {
                 continue;
             }
@@ -624,11 +623,7 @@ impl World {
         if !site {
             if let Some(yard) = self.nearest_yard(to) {
                 let refund = price * (1.0 - rail::RAIL_IMPORT_FACTOR);
-                if let Some(bz) = self.buildings.get_mut(to).and_then(|b| b.business.as_mut()) {
-                    bz.money += refund;
-                    bz.spend_today -= refund;
-                }
-                self.economy.market.imports_today -= refund;
+                self.refund_import(to, refund);
                 // [freight] Out of town until a freight train brings it in.
                 self.rail.orders.push(rail::RailOrder { cargo: Cargo { from: yard, to, resource, amount, price: price * rail::RAIL_IMPORT_FACTOR }, since: self.clock.tick });
                 return;
@@ -727,11 +722,10 @@ impl World {
         self.buildings.values().any(|b| b.operating() && b.business.as_ref().map_or(false, |bz| !bz.closed && bz.sells(r) && bz.stock_of(r) >= 1.0))
     }
 
-    /// Nearest well-stocked shop for a resource, cheapest within reach,
-    /// among those open now with room inside.
     /// The cheapest shop for `r` counting the walk, open and stocked; the
-    /// plain market answer (citizens choose with `choose_shop`).
-    pub fn best_shop(&self, r: Resource, at: Vec2) -> Option<BuildingId> {
+    /// plain market answer (citizens choose with `choose_shop`). For tests.
+    #[cfg(test)]
+    pub(crate) fn best_shop(&self, r: Resource, at: Vec2) -> Option<BuildingId> {
         let hour = self.clock.hour() as u8;
         let mut best: Option<(f32, BuildingId)> = None;
         for (id, b) in self.buildings.iter() {

@@ -95,11 +95,12 @@ struct Preview<'a> {
 
 /// The tools' gizmos: the bus lines and rage marks (`overlay::routes`),
 /// then the active tool's preview.
-fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>, mut eplan: ResMut<EffectivePlan>, cams: Query<&OrbitCamera>, time: Res<Time>) {
+#[allow(clippy::too_many_arguments)]
+fn draw_gizmos(mut gizmos: Gizmos, tools: Res<ToolState>, cursor: Res<Cursor>, sim: Res<Sim>, mut eplan: ResMut<EffectivePlan>, cams: Query<&OrbitCamera>, time: Res<Time>, cam_mode: Res<crate::camera::CameraMode>) {
     // Re-sync so a point dragged by `tool_input` this frame draws where it is.
     let plan = eplan.sync(&sim.world);
     let t = time.elapsed_secs();
-    crate::overlay::routes::rage_marks(&mut gizmos, &sim, t);
+    crate::overlay::routes::rage_marks(&mut gizmos, &sim, t, cams.iter().next(), *cam_mode == crate::camera::CameraMode::Walk);
     crate::overlay::routes::bus_lines(&mut gizmos, &tools, &cursor, &sim, t);
     let p = Preview { tools: &tools, cursor: &cursor, sim: &sim, plan, yaw: cams.iter().next().map_or(0.0, |c| c.yaw), t };
     let g = &mut gizmos;

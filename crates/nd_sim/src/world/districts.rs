@@ -10,8 +10,9 @@
 //! - **Standing buildings** are refitted to the district's look a few at a
 //!   time (a quarter a day): a district changes its face over days, not in
 //!   one frame, the way Cities: Skylines replaces buildings after a
-//!   specialisation is set. Historic districts are never refitted: the
-//!   point is to keep what is there.
+//!   specialisation is set. Historic districts keep their look (an
+//!   industrial sub-zone still retools its businesses there: the check for
+//!   Historic comes after the industry branch in `daily_districts`).
 //! - **Historic** freezes the tier: no upgrades, no decay of tier, no
 //!   redevelopment (`district_frozen`, read by the daily update).
 //! - **Industry** policy is an industry bias that follows the district's
@@ -179,7 +180,7 @@ impl World {
         }
         let weights: Vec<f32> = viable.iter().map(|k| favours.iter().find(|(f, _)| f == k).map_or(1.0, |(_, w)| *w)).collect();
         let total: f32 = weights.iter().sum();
-        let mut r = crate::rng_for(self.config.seed ^ 0xD157, self.clock.tick ^ lot_key(lot)).random_range(0.0..total);
+        let mut r = crate::rng_for(self.stream_seed(Stream::DistrictBusiness), self.clock.tick ^ lot_key(lot)).random_range(0.0..total);
         for (k, w) in viable.iter().zip(&weights) {
             if r < *w {
                 return Some(*k);
@@ -214,7 +215,7 @@ impl World {
         for id in ids {
             let b = &self.buildings[id];
             // [supertall] a league tower keeps its own architecture
-            if !b.operating() || b.is_special() || b.is_parking() || b.port.is_some() || b.plot.tower.is_some() {
+            if !b.operating() || !b.is_grown() || b.plot.tower.is_some() {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };

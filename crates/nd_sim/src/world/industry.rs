@@ -10,7 +10,7 @@
 //!   [`World::lot_value`] (land value as the lot's land use feels it).
 //! - `mod.rs`: `tick` runs [`World::industry_hourly`] after the hourly
 //!   economy and [`World::industry_daily`] after the daily update; arrived
-//!   trucks go through [`World::truck_arrived`].
+//!   lorries go through [`World::lorry_arrived`].
 //! - `market.rs`: `ship` sends the truck from [`World::fleet_origin`].
 //! - `buses.rs`: a depot's room grows by [`World::depot_overflow`].
 
@@ -55,15 +55,15 @@ pub(super) fn near(d: f32, full: f32, none: f32) -> f32 {
     1.0 - ((d - full) / (none - full)).clamp(0.0, 1.0)
 }
 
-/// An empty lorry on its way to park, home or out of town: no load, no
-/// price, and fuel as the marker (rubble trucks also run empty, as parts).
-/// `from` is the lorry's home business, `to` where it is going (null: out
-/// of town by the edge).
 /// Seconds a lorry stands at the kerb unloading after a delivery.
 pub const UNLOAD_SECONDS: f32 = 90.0;
 /// Seconds a lorry with no road anywhere waits before trying again.
 pub const STRANDED_RETRY_SECONDS: f32 = 120.0;
 
+/// An empty lorry on its way to park, home or out of town: no load, no
+/// price, and fuel as the marker (rubble trucks also run empty, as parts).
+/// `from` is the lorry's home business, `to` where it is going (null: out
+/// of town by the edge).
 pub fn is_return_trip(c: &Cargo) -> bool {
     c.amount == 0.0 && c.price == 0.0 && c.resource == Resource::Fuel
 }
@@ -377,7 +377,7 @@ impl World {
         }
     }
 
-    /// Trucks parked at a lot plus those on their way there to park.
+    /// Trucks parked at a lot (`Business::fleet_trucks`).
     pub fn fleet_parked(&self, b: BuildingId) -> u16 {
         self.buildings.get(b).and_then(|x| x.business.as_ref()).map_or(0, |z| z.fleet_trucks)
     }

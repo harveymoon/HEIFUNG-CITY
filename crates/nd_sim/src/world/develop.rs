@@ -14,72 +14,30 @@ const TRIAL_MAX_JOBS: u16 = 20;
 
 impl World {
     pub(super) fn update_economy(&mut self) {
+        // [review] One pass over the citizens and one over the buildings
+        // (there were about twenty); every tally adds up in the same slot
+        // order as before, so the figures are the same to the bit.
         let e = &mut self.economy;
         e.population = self.citizens.len() as u32;
-        e.unhoused = self.citizens.values().filter(|c| c.home.is_none()).count() as u32;
-        // Children and retirees are not looking for work.
-        e.working_age = self.citizens.values().filter(|c| c.can_work()).count() as u32;
-        e.unemployed = self.citizens.values().filter(|c| c.work.is_none() && c.can_work()).count() as u32;
-        e.jobs_permanent = self.buildings.values().filter(|b| b.operating()).map(|b| b.jobs as u32).sum();
-        e.households = self.households.len() as u32;
-        e.household_sizes = [0; 6];
-        let mut stressed = 0;
-        for (hid, h) in self.households.iter() {
-            e.household_sizes[h.size().min(5)] += 1;
-            let rent = h.home.and_then(|b| self.buildings.get(b)).map(|b| b.rent);
-            let income: f32 = h.members.iter().filter_map(|m| self.citizens.get(*m)).map(|c| c.income).sum();
-            if rent.is_some_and(|r| r > income * super::trips::RENT_STRESS_SHARE) {
-                stressed += 1;
-            }
-            let _ = hid;
-        }
-        e.rent_stressed_households = stressed;
-        e.homes_total = self.buildings.values().map(|b| b.homes as u32).sum();
-        e.homes_free = self.buildings.values().map(|b| b.free_homes() as u32).sum();
-        e.jobs_total = self.buildings.values().map(|b| b.jobs as u32).sum();
-        e.jobs_free = self.buildings.values().map(|b| b.free_jobs() as u32).sum();
-        e.parking_capacity = self.buildings.values().map(|b| b.parking_capacity as u32).sum();
-        e.parking_used = self.buildings.values().map(|b| b.parking_used as u32).sum();
-        e.parking_lots = self.buildings.values().filter(|b| b.is_parking()).count() as u32;
-        // [parking-market] Each lot's busiest moment today.
-        for b in self.buildings.values_mut() {
-            if b.parking_used > b.parking_peak {
-                b.parking_peak = b.parking_used;
-            }
-        }
-        e.sites = self.buildings.values().filter(|b| b.construction.is_some()).count() as u32;
-        let (hb, jb) = self.buildings.values().filter(|b| b.construction.is_some()).fold((0u32, 0u32), |(h, j), b| {
-            let (homes, jobs) = b.planned_capacity();
-            (h + homes as u32, j + jobs as u32)
-        });
-        e.homes_building = hb;
-        e.jobs_building = jb;
-        let mut tier_counts = [0u32; 3];
-        let mut rent_sum = [0.0f32; 3];
-        for b in self.buildings.values().filter(|b| b.land_use == LandUse::Residential) {
-            tier_counts[b.tier.index()] += 1;
-            rent_sum[b.tier.index()] += b.rent;
-        }
-        e.tier_counts = tier_counts;
-        for i in 0..3 {
-            e.avg_rent[i] = if tier_counts[i] > 0 { rent_sum[i] / tier_counts[i] as f32 } else { 0.0 };
-        }
+        let (mut unhoused, mut working_age, mut unemployed) = (0u32, 0u32, 0u32);
         let mut class_counts = [0u32; 3];
         let mut incomes: Vec<f32> = Vec::with_capacity(self.citizens.len());
-        // Classes and inequality are about earners: children have no income.
-        for c in self.citizens.values().filter(|c| c.stage() != crate::citizens::LifeStage::Child) {
-            class_counts[c.class().index()] += 1;
-            incomes.push(c.income);
-        }
-        e.class_counts = class_counts;
-        e.gini = Economy::gini(&mut incomes);
-        e.avg_land_value = self.land_value.average();
-        e.recompute();
         // Transit and rail counts, and what minds may ask for: read every
         // tick, so they are tallied here rather than in each step.
         let (mut bus_wait, mut rail_wait, mut riding, mut on_train) = (0u32, 0u32, 0u32, 0u32);
         let (mut metro_wait, mut on_metro) = (0u32, 0u32);
         for c in self.citizens.values() {
+            unhoused += c.home.is_none() as u32;
+            // Children and retirees are not looking for work.
+            if c.can_work() {
+                working_age += 1;
+                unemployed += c.work.is_none() as u32;
+            }
+            // Classes and inequality are about earners: children have no income.
+            if c.stage() != crate::citizens::LifeStage::Child {
+                class_counts[c.class().index()] += 1;
+                incomes.push(c.income);
+            }
             match c.activity {
                 Activity::Waiting { .. } => match c.transit.map(|t| t.leg) {
                     Some(TransitLeg::Rail { .. }) => rail_wait += 1,
@@ -92,8 +50,73 @@ impl World {
                 _ => {}
             }
         }
+        e.unhoused = unhoused;
+        e.working_age = working_age;
+        e.unemployed = unemployed;
+        e.households = self.households.len() as u32;
+        e.household_sizes = [0; 6];
+        let mut stressed = 0;
+        for h in self.households.values() {
+            e.household_sizes[h.size().min(5)] += 1;
+            let rent = h.home.and_then(|b| self.buildings.get(b)).map(|b| b.rent);
+            let income: f32 = h.members.iter().filter_map(|m| self.citizens.get(*m)).map(|c| c.income).sum();
+            if rent.is_some_and(|r| r > income * super::trips::RENT_STRESS_SHARE) {
+                stressed += 1;
+            }
+        }
+        e.rent_stressed_households = stressed;
+        let (mut jobs_permanent, mut homes_total, mut homes_free, mut jobs_total, mut jobs_free) = (0u32, 0u32, 0u32, 0u32, 0u32);
+        let (mut parking_capacity, mut parking_used, mut parking_lots, mut sites, mut homes_building, mut jobs_building) = (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
+        let mut tier_counts = [0u32; 3];
+        let mut rent_sum = [0.0f32; 3];
+        let mut depots = 0u32;
+        for b in self.buildings.values_mut() {
+            if b.operating() {
+                jobs_permanent += b.jobs as u32;
+            }
+            homes_total += b.homes as u32;
+            homes_free += b.free_homes() as u32;
+            jobs_total += b.jobs as u32;
+            jobs_free += b.free_jobs() as u32;
+            parking_capacity += b.parking_capacity as u32;
+            parking_used += b.parking_used as u32;
+            parking_lots += b.is_parking() as u32;
+            // [parking-market] Each lot's busiest moment today.
+            if b.parking_used > b.parking_peak {
+                b.parking_peak = b.parking_used;
+            }
+            if b.construction.is_some() {
+                sites += 1;
+                let (homes, jobs) = b.planned_capacity();
+                homes_building += homes as u32;
+                jobs_building += jobs as u32;
+            }
+            if b.land_use == LandUse::Residential {
+                tier_counts[b.tier.index()] += 1;
+                rent_sum[b.tier.index()] += b.rent;
+            }
+            depots += b.working_depot() as u32;
+        }
+        e.jobs_permanent = jobs_permanent;
+        e.homes_total = homes_total;
+        e.homes_free = homes_free;
+        e.jobs_total = jobs_total;
+        e.jobs_free = jobs_free;
+        e.parking_capacity = parking_capacity;
+        e.parking_used = parking_used;
+        e.parking_lots = parking_lots;
+        e.sites = sites;
+        e.homes_building = homes_building;
+        e.jobs_building = jobs_building;
+        e.tier_counts = tier_counts;
+        for i in 0..3 {
+            e.avg_rent[i] = if tier_counts[i] > 0 { rent_sum[i] / tier_counts[i] as f32 } else { 0.0 };
+        }
+        e.class_counts = class_counts;
+        e.gini = Economy::gini(&mut incomes);
+        e.avg_land_value = self.land_value.average();
+        e.recompute();
         self.tally_subway(metro_wait, on_metro);
-        let depots = self.buildings.values().filter(|b| b.depot && !b.is_derelict() && b.operating()).count() as u32;
         let t = &mut self.economy.transit;
         t.buses = self.traffic.cars.values().filter(|c| c.bus.is_some()).count() as u32;
         t.depots = depots;
@@ -432,7 +455,7 @@ impl World {
                 // [industry] land value as the land use feels it
                 let value = if self.lots.contains_key(b.lot) { self.lot_value(b.lot) } else { b.land_value };
                 // [districts] a Historic district holds what stands as it is
-                let special = b.is_parking() || b.is_special() || self.district_frozen(b.lot)
+                let special = !b.is_grown() || self.district_frozen(b.lot)
                     // [supertall] a league tower is never torn down for a tier
                     || b.plot.tower.is_some()
                     // [taxis] a taxi yard and a cargo hub are what they are

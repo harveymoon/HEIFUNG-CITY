@@ -53,6 +53,12 @@ mod districts;
 mod districts_tests;
 mod driving;
 mod industry;
+mod kinds;
+mod save;
+mod tick;
+mod streams;
+use streams::Stream;
+mod floors_grid;
 // [interchange] The Road tool's Interchange preset: diamond interchanges.
 pub mod interchange;
 #[cfg(test)]
@@ -537,12 +543,14 @@ pub struct World {
     /// and people hit (`world/pedestrians.rs`).
     #[serde(default)]
     pub peds: crate::pedestrians::Pedestrians,
+    /// [perf] Who is waiting at a station or stop, built at most once a
+    /// tick (`world/trains.rs`).
+    #[serde(skip)]
+    waiting_cache: Option<(u64, Vec<CitizenId>)>,
     /// [perf] Who is inside each place, built at most once a tick for
     /// everyone choosing or rating a place (`world/places.rs`), instead of a
     /// scan of every citizen per decision. Arrivals later in the same tick
     /// show from the next one.
-    #[serde(skip)]
-    waiting_cache: Option<(u64, Vec<CitizenId>)>,
     #[serde(skip)]
     crowds_cache: Option<(u64, HashMap<BuildingId, Vec<CitizenId>>)>,
     /// [benches] Who sits (or is on the way to sit) on which park bench seat.
@@ -830,259 +838,6 @@ impl World {
         self.build_walk_graph();
     }
 
-    /// The save format: pretty RON, nested six deep.
-    fn ron_config() -> ron::ser::PrettyConfig {
-        ron::ser::PrettyConfig::default().depth_limit(6)
-    }
-
-    pub fn to_ron(&self) -> Result<String, ron::Error> {
-        ron::ser::to_string_pretty(self, Self::ron_config())
-    }
-
-    /// [memory] The save, byte for byte as [`World::to_ron`], streamed into
-    /// `out` (wrap a file in a `BufWriter`). A big city's save runs past
-    /// 128 MiB, and building it as one `String` first needs a single 256 MiB
-    /// block when the string doubles: the "memory allocation of 268435456
-    /// bytes failed" crash.
-    pub fn write_ron(&self, out: impl std::io::Write) -> Result<(), ron::Error> {
-        ron::Options::default().to_io_writer_pretty(out, self, Self::ron_config())
-    }
-
-    pub fn from_ron(text: &str) -> Result<Self, ron::error::SpannedError> {
-        let mut w: World = ron::from_str(text)?;
-        w.after_load();
-        Ok(w)
-    }
-
-    /// Rebuild derived state that is not serialised, and make a save from
-    /// any earlier version safe to run.
-    fn after_load(&mut self) {
-        // Speeds follow the time scale, so a save from before a retune
-        // walks at today's pace.
-        self.config.derive_speeds();
-        self.config.landscape = self.landscape.params.clone();
-        // [grid-weather] A save from before the climates keeps its weather
-        // but learns which climate it is in.
-        self.weather.climate = self.landscape.params.climate;
-        self.validate();
-        self.migrate_through_cars();
-        // [people] Saves from before households: one per citizen. Detected
-        // per citizen (no household), so no version bump is needed.
-        self.migrate_households();
-        // A parking lot the player placed before the flag existed is one of
-        // the city's own: roads stop at it instead of buying it out.
-        let city_lots: Vec<BuildingId> = self.vehicles.city_lots.keys().copied().collect();
-        for id in city_lots {
-            if let Some(b) = self.buildings.get_mut(id) {
-                b.city_parking = true;
-            }
-        }
-        self.version = SAVE_VERSION;
-        // Ring pieces and slip roads are flagged from the network's shape;
-        // a save from before the flags has them unset.
-        self.roads.classify();
-        self.rebuild_road_components();
-        self.streets.relink(&self.roads, self.config.seed);
-        self.rebuild_ground();
-        self.traffic.rebuild(&self.roads);
-        self.apply_tolls();
-        // [events] Worn streets are rough again for the traffic.
-        self.apply_road_wear();
-        // Park layouts are saved with their lots (the benches people sit on
-        // must survive a load), so they are only planned again when a save
-        // from before parks were serialised has park lots without one.
-        if self.lots.values().any(|l| l.land_use == LandUse::Park && l.polygon.len() >= 3 && l.park.is_none()) {
-            let links: Vec<Vec2> = self.path_links.links.iter().map(|l| l.pos).collect();
-            crate::park::plan_parks_with(&mut self.lots, &self.land_value, &links);
-        }
-        // [free-placement] A save from before city ground: the lots under
-        // the city's buildings leave their zones (nothing moves).
-        self.settle_city_ground(&[], false);
-        // [tools] Footbridges and push buttons on the crossings; [park-paths]
-        // paths joined to the parks.
-        self.build_walk_graph();
-        // [tools] Columns for raised roads from a save without them.
-        self.pillars_after_load();
-        for (_, car) in self.traffic.reattach_cars() {
-            self.strand_car(car);
-        }
-        self.vehicles_after_load();
-        // [services] Which car is which unit's is not saved: without it the
-        // first unit car to arrive after a load went unclaimed.
-        self.services.by_car = self.services.units.iter().filter_map(|(id, u)| u.car.map(|c| (c, id))).collect();
-        // [services] Docks retiered by the daily update before `is_special`
-        // knew them (an older save): their jobs back.
-        for b in self.buildings.values_mut() {
-            if let Some(kind) = b.port.filter(|_| b.construction.is_none()) {
-                b.jobs = kind.jobs();
-            }
-        }
-        self.transit.refresh_legs(&self.traffic.net);
-        let on_trains: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::OnTrain { .. })).map(|(id, _)| id).collect();
-        for id in on_trains {
-            let pos = self.citizens[id].pos;
-            self.citizens[id].transit = None;
-            self.strand_driver(id, pos);
-        }
-        // [ped-highway] People a save left standing on a highway or ramp
-        // walk to the pavement.
-        self.rescue_stranded();
-        self.refresh_facility_cache();
-        // [land] A save from before the land market: a cold pressure grid
-        // (it warms on the first hourly sample); stale references dropped.
-        if !self.estate.pressure.ready() {
-            self.estate.pressure = crate::estate::Pressure::new(self.grid_half(crate::estate::PRESSURE_CELL));
-        }
-        // [sweep-sim] A save from before the grids covered far islands:
-        // grown (cells keep their place; land value refills on its next
-        // pass, pressure warms again).
-        self.grow_grids();
-        self.prune_estate();
-        if self.config.social && self.social_concern.is_none() {
-            self.social_concern = self.concern_of_the_week();
-        }
-        self.subway_after_load();
-        self.seats_after_load();
-        // [dirty-industry] A save from before the dirty plants were kept
-        // (or a stale entry): read them off the buildings.
-        if self.dirty.is_empty() || self.dirty.iter().any(|d| !self.buildings.contains_key(d.building)) {
-            self.refresh_dirty();
-        }
-        self.update_economy();
-        // A save from before named projects: number and name the one it has.
-        self.name_active_project();
-        self.recut_parcels();
-        // [waterfront] frontage on the water, for a save from before
-        self.mark_shore_lots();
-        self.plan_changed();
-        self.events.push(SimEvent::PlanChanged);
-    }
-
-    /// Drop every reference to something that is not there: a hand-edited
-    /// or truncated save must never index a missing building or citizen.
-    fn validate(&mut self) {
-        let tick = self.clock.tick;
-        // Lots and buildings must agree about who stands where.
-        for l in self.lots.values_mut() {
-            if l.building.is_some_and(|b| !self.buildings.contains_key(b)) {
-                l.building = None;
-            }
-        }
-        let building_ids: std::collections::HashSet<BuildingId> = self.buildings.keys().collect();
-        for b in self.buildings.values_mut() {
-            b.residents.retain(|c| self.citizens.contains_key(*c));
-            b.workers.retain(|c| self.citizens.contains_key(*c));
-            b.rail_inbound.retain(|c| building_ids.contains(&c.to));
-        }
-        self.rail.orders.retain(|o| building_ids.contains(&o.cargo.to));
-        // [freight] Saves from before freight rode the trains kept rail
-        // orders on the yard, waiting for any train to call: they are out of
-        // town now, first in the queue for the next freight train.
-        let mut legacy: Vec<crate::rail::RailOrder> = Vec::new();
-        for (_, b) in self.buildings.iter_mut() {
-            legacy.extend(std::mem::take(&mut b.rail_inbound).into_iter().map(|cargo| crate::rail::RailOrder { cargo, since: tick }));
-        }
-        self.rail.orders.extend(legacy);
-        for f in self.facilities.values_mut() {
-            if f.building.is_some_and(|b| !self.buildings.contains_key(b)) {
-                f.building = None;
-            }
-            if f.lot.is_some_and(|l| !self.lots.contains_key(l)) {
-                f.lot = None;
-            }
-        }
-        // [people] Households and citizens must agree about who belongs where.
-        for h in self.households.values_mut() {
-            h.members.retain(|c| self.citizens.contains_key(*c));
-            if h.home.is_some_and(|b| !self.buildings.contains_key(b)) {
-                h.home = None;
-            }
-        }
-        self.households.retain(|_, h| !h.members.is_empty());
-        for b in self.buildings.values_mut() {
-            b.households.retain(|h| self.households.contains_key(*h));
-        }
-        for c in self.citizens.values_mut() {
-            if c.household.is_some_and(|h| !self.households.contains_key(h)) {
-                c.household = None;
-            }
-        }
-        let buildings = &self.buildings;
-        let routes = &self.transit.routes;
-        for c in self.citizens.values_mut() {
-            let mut lost = false;
-            for slot in [&mut c.home, &mut c.work, &mut c.inside, &mut c.parked_at] {
-                if slot.is_some_and(|b| !buildings.contains_key(b)) {
-                    *slot = None;
-                    lost = true;
-                }
-            }
-            let trip_ok = match c.transit.map(|t| t.leg) {
-                None => true,
-                Some(TransitLeg::Bus { route, board, alight }) => routes.get(route).is_some_and(|r| board < r.stops.len() && alight < r.stops.len()),
-                Some(TransitLeg::Rail { board, alight }) => buildings.contains_key(board) && buildings.contains_key(alight),
-                Some(TransitLeg::Air { from, to }) => buildings.contains_key(from) && buildings.contains_key(to),
-                Some(TransitLeg::Subway { line, board, alight }) => self.subway.lines.get(line).is_some_and(|l| l.index_of(board).is_some() && l.index_of(alight).is_some()),
-                Some(TransitLeg::Taxi) => true,
-            } && c.transit.is_none_or(|t| buildings.contains_key(t.target));
-            if !trip_ok {
-                c.transit = None;
-                lost = true;
-            }
-            let target_gone = match &c.activity {
-                Activity::Visiting(b) | Activity::Sitting { park: b, .. } => !buildings.contains_key(*b),
-                Activity::Traveling { to: Some(b), .. } | Activity::Driving { to: Some(b), .. } => !buildings.contains_key(*b),
-                Activity::AtHome => c.home.is_none(),
-                Activity::Working => c.work.is_none(),
-                Activity::Waiting { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } => c.transit.is_none(),
-                Activity::Flying { drone } => !self.air.drones.contains_key(*drone),
-                // Trains are not saved: `subway_after_load` sets riders down.
-                Activity::OnMetro { .. } => c.transit.is_none(),
-                _ => false,
-            };
-            if lost || target_gone {
-                c.activity = Activity::Idle;
-                c.inside = None;
-                c.next_decision_tick = tick + 1;
-            }
-        }
-        // Vehicles whose ends no longer exist are not deleted where they
-        // stand: a lorry bound for a building that is gone drives on when
-        // it gets there (`lorry_arrived` looks every building up), and a bus
-        // whose line is gone lets its riders off (`validate` above already
-        // set them to decide again) and heads for its depot when it reaches
-        // the end of this leg. Riders who no longer exist get off.
-        for car in self.traffic.cars.values_mut() {
-            if let Some(bus) = car.bus.as_mut() {
-                if !routes.contains_key(bus.route) {
-                    bus.passengers.clear();
-                    bus.to_depot = true;
-                    bus.next_stop = usize::MAX;
-                }
-                bus.passengers.retain(|p| self.citizens.contains_key(*p));
-            }
-        }
-    }
-
-    /// [services] Saves from before `Errand::Through` marked through traffic
-    /// only by having no driver, owner, cargo or bus, which also matched
-    /// service units, tow and garbage trucks and takeover outsiders. Those
-    /// tracked by their own system are left as they are; the rest are
-    /// through cars.
-    fn migrate_through_cars(&mut self) {
-        use crate::vehicle::Errand;
-        let mut tracked: std::collections::HashSet<CarId> = self.services.units.values().filter_map(|u| u.car).collect();
-        tracked.extend(self.society.trash.trucks.values().filter_map(|t| t.car));
-        tracked.extend(self.driving.tows.iter().map(|t| t.truck));
-        let citizens = &self.citizens;
-        for (id, car) in self.traffic.cars.iter_mut() {
-            let legacy = car.errand == Errand::Trip && !citizens.contains_key(car.citizen) && car.cargo.is_none() && car.bus.is_none() && car.owned.is_none() && !car.siren && car.drive.gang.is_none();
-            if legacy && !tracked.contains(&id) {
-                car.errand = Errand::Through;
-            }
-        }
-    }
-
     fn fresh_seed(&mut self) -> u64 {
         self.next_seed = self.next_seed.wrapping_add(1);
         self.next_seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ self.config.seed
@@ -1100,10 +855,24 @@ impl World {
         self.building_lot(b).map(|l| l.entrance())
     }
 
+    /// [review] Where a car stops for building `b`: its lot's street and
+    /// the kerb point on it (None for a lot with no street to drive to).
+    pub(super) fn car_stop(&self, b: BuildingId) -> Option<(SegmentId, Vec2)> {
+        self.building_lot(b).and_then(|l| l.car_segment.map(|s| (s, l.car_point)))
+    }
+
     /// Is `p` inside a station's or yard's footprint? Nothing but the
     /// facility itself is ever built on that ground.
     pub fn under_facility(&self, p: Vec2) -> bool {
-        self.facilities.values().any(|f| point_in_polygon(p, &f.footprint()))
+        // [review] The corners as they are (`footprint()` copies them into
+        // a new Vec per facility per call; this runs per lot in many loops).
+        self.facilities.values().any(|f| point_in_polygon(p, &f.corners()))
+    }
+
+    /// The ground every station, yard and dock stands on, facilities first
+    /// (in slot order), then docks.
+    pub(super) fn structure_footprints(&self) -> Vec<Vec<Vec2>> {
+        self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect()
     }
 
     /// How tall the surroundings of a lot justify building: the floors of
@@ -1117,7 +886,7 @@ impl World {
         let near_floors: u32 = self
             .buildings
             .values()
-            .filter(|b| b.lot != lot_id && b.land_use != LandUse::Park && !b.is_parking() && !b.is_power() && !b.depot && b.rail.is_none() && b.service.is_none())
+            .filter(|b| b.lot != lot_id && b.counts_for_height_cap())
             .filter_map(|b| self.lots.get(b.lot).map(|l| (b.floors as u32, l.center)))
             .filter(|(_, c)| c.distance(center) <= DENSITY_RADIUS)
             .map(|(f, _)| f)
@@ -1177,278 +946,8 @@ impl World {
         }
         out
     }
-
-    pub fn tick(&mut self, minds: &mut dyn MindProvider) {
-        // [park-paths] A path whose park went since the last tick is cut back.
-        self.settle_path_links();
-        // [under-construction] Park walkways and gates shut while their
-        // building is a site.
-        self.refresh_closed_grounds();
-        self.clock.advance();
-        let tick = self.clock.tick;
-        if self.clock.minute_of_day() == 0 {
-            self.events.push(SimEvent::NewDay(self.clock.day()));
-            // The day's counters, read before anything below resets them.
-            let record = self.open_day_record();
-            // Services settle their upkeep before the books close.
-            crate::prof!("daily_services", self.daily_services());
-            // [subway] Upkeep before the books close.
-            crate::prof!("daily_subway", self.daily_subway());
-            // [events] Roads wear and the crews resurface, before the books close.
-            crate::prof!("daily_roads", self.daily_roads());
-            // [road-inspect] Each piece's wear a day and its repairs, read off.
-            self.note_road_day();
-            // [society] crime, the street and the bins settle their day.
-            self.daily_society();
-            // [clarity] Dangerous streets and far hospitals, complained of.
-            self.daily_dangerous_streets();
-            self.daily_healthcare();
-            self.daily_update();
-            // [economy] the city's needs read and met, before the vehicles' day rolls
-            crate::prof!("daily_pressure", self.daily_pressure());
-            self.daily_vehicles();
-            self.industry_daily();
-            self.daily_places();
-            // [social] ties fade, friends help, groups form and make things
-            crate::prof!("daily_social", self.daily_social());
-            self.rides.stats.roll();
-            // [benches] seats and bench-neighbour tallies
-            self.daily_benches();
-            // [districts] facelifts; [tourism] hotel nights and the books.
-            crate::prof!("daily_districts", self.daily_districts());
-            crate::prof!("daily_tourism", self.daily_tourism());
-            // [waterfront] beach tallies, and the households near a good one
-            self.daily_shore();
-            crate::prof!("close_day_record", self.close_day_record(record));
-            // [land] Buyouts, branches, merges, McMansions, billionaires.
-            self.daily_estate();
-            // [supertall] Tower developers' money, and maybe a new project.
-            crate::prof!("daily_towers", self.daily_towers());
-            // [megacorp] Mega-corps and campuses grow.
-            crate::prof!("daily_corps", self.daily_corps());
-        }
-        // Periodic work is staggered so no tick carries more than one heavy
-        // job: the hour starts at :00, sites advance at :30, land value runs
-        // in strips from :20, development and immigration sit between.
-        if tick % 60 == 0 {
-            crate::prof!("hourly_economy", self.hourly_economy());
-            crate::prof!("industry_hourly", self.industry_hourly());
-            // [dirty-industry] Clean-up crews dig on.
-            self.hourly_cleanups();
-            // [economy] repair shops, bike shops, galleries and boats
-            crate::prof!("trades_hourly", self.trades_hourly());
-            crate::prof!("record_hour", self.record_hour());
-            // [toll-inspect] each booth's hour on its chart
-            self.hourly_tolls();
-        }
-        if tick % 60 == 30 {
-            crate::prof!("step_construction", self.step_construction());
-        }
-        // [waterfront] beaches (access, weather, crowds), private jetties
-        if tick % 60 == 33 {
-            crate::prof!("hourly_shore", self.hourly_shore());
-        }
-        // [land] People present and moving, at :13 clear of the rest.
-        if tick % 60 == 13 {
-            crate::prof!("hourly_pressure", self.hourly_pressure());
-        }
-        let lv = tick % 120;
-        if (LAND_VALUE_PHASE..LAND_VALUE_PHASE + LAND_VALUE_STRIPS).contains(&lv) {
-            crate::prof!("update_land_value_strip", self.update_land_value_strip((lv - LAND_VALUE_PHASE) as u8));
-        }
-        if tick % 10 == 7 {
-            crate::prof!("update_economy", self.update_economy());
-        }
-        if (tick + 5) % self.config.development_interval == 0 {
-            crate::prof!("develop", self.develop());
-        }
-        if (tick + 15) % self.config.immigration_interval == 0 {
-            crate::prof!("immigrate", self.immigrate());
-        }
-        if tick % 120 == 90 {
-            crate::prof!("job_search", self.job_search());
-        }
-        // Fires, crimes and illness roll hourly at :50, clear of the rest.
-        if tick % 60 == 50 {
-            crate::prof!("hourly_services", self.hourly_services());
-        }
-        // [society] Bins, camps and crime at :40.
-        if tick % 60 == 40 {
-            crate::prof!("hourly_society", self.hourly_society());
-        }
-        if tick % 60 == 45 {
-            crate::prof!("hourly_vehicles", self.hourly_vehicles());
-        }
-        // [social] Outings, group nights, gigs and protests at :25.
-        if tick % 60 == 25 {
-            self.hourly_social();
-        }
-        // [megacorp] Students to class and out at night.
-        self.step_campus();
-        // [parking] Drivers worn out by the hunt and stuck in a queue leave
-        // the car where it stands.
-        if tick % 5 == 2 {
-            self.hunters_give_up();
-        }
-        // Answers a mind worked out in the background (an LLM's) land
-        // whenever they are ready. Someone mid-journey (driving, on a bus or
-        // train, waiting at the stop) keeps going: only the thought and the
-        // memory are taken now, and the next decision asks again (REVIEW2
-        // M4: acting on it stranded cars and bus riders).
-        for (id, decision) in minds.poll() {
-            if self.citizens.contains_key(id) {
-                self.apply_late_decision(id, decision);
-            }
-        }
-        // Late answers nobody came back for (they are still out, or gone).
-        if tick % 60 == 0 {
-            self.deferred_intents.retain(|_, (_, at)| tick.saturating_sub(*at) <= trips::DEFERRED_INTENT_TTL);
-        }
-        self.step_traffic();
-        // [road-inspect] The vehicles that drove onto each piece, counted.
-        self.log_road_traffic();
-        // [land] Billionaires' convoys form and follow.
-        self.step_convoys();
-        self.step_air();
-        self.step_taxis();
-        // [ped-highway] Nobody stands about on a highway or ramp.
-        if tick % kerbside::STRANDED_SWEEP_EVERY == 7 {
-            self.rescue_stranded();
-        }
-        self.step_driving();
-        self.step_journeys();
-        // [events] Street races and warehouse raves.
-        self.step_nights();
-        if tick % crate::road_wear::SAMPLE_EVERY == 3 {
-            self.sample_road_load();
-        }
-        self.step_enforcement();
-        self.step_services();
-        // [society] Trash trucks.
-        self.step_society();
-        self.step_through_traffic();
-        self.step_transit();
-        self.step_rail();
-        self.step_subway();
-        self.step_ships();
-        // [economy] marina boats out on the water
-        self.step_boats();
-        // [fishing] trawlers out to the grounds and home
-        self.step_fishing();
-        // [ferries] Day trips out, and anyone stranded abroad.
-        self.step_ferry_people();
-        self.step_cargo_hubs();
-        if self.clock.minute_of_day() == 0 {
-            self.bots.delivered_today = 0;
-            self.bots.van_orders_today = 0;
-        }
-        if tick % crate::bots::ROUND_TICKS == 11 {
-            crate::prof!("dispatch_deliveries", self.dispatch_deliveries());
-        }
-        crate::prof!("step_bots", self.step_bots());
-        // [tourism] Arrivals on the hour, visitors' days, departures.
-        self.step_tourism();
-        self.step_citizens(minds);
-        // [passengers] With their drivers, in or out of the car.
-        self.step_passengers();
-        // [social] Who gets talking, and friends calling round.
-        self.step_social();
-        // [concerns] Happiness on the hour and at midnight.
-        crate::prof!("step_concerns", self.step_concerns());
-        // Every system that moves people has run: lay the breadcrumbs.
-        for c in self.citizens.values_mut() {
-            c.push_trail();
-        }
-    }
-
-    /// A vehicle no system claimed reached the end of its route. Wreck tow
-    /// trucks are home at their yard (or off the map), takeover outsiders
-    /// and through cars from older saves are at their exit: they leave the
-    /// world. Anything else is not deleted where it stands (that used to
-    /// make vehicles vanish mid-street): it drives off the map
-    /// (`retire_vehicle`).
-    fn unclaimed_arrival(&mut self, car_id: CarId) {
-        let Some(car) = self.traffic.cars.get(car_id) else { return };
-        let gang = car.drive.gang.is_some();
-        let tow = self.driving.tows.iter().find(|t| t.truck == car_id).map(|t| t.yard);
-        let home = match tow {
-            Some(Some(yard)) => self.buildings.contains_key(yard),
-            Some(None) => true,
-            None => false,
-        };
-        if home || gang || self.at_map_edge(car_id) {
-            self.traffic.remove_car(car_id);
-        } else {
-            self.retire_vehicle(car_id);
-        }
-    }
-
-    fn step_traffic(&mut self) {
-        // [fire-scene] What stands at the roadside for the traffic to pass.
-        self.set_traffic_scenes();
-        // [rail-crossing] Lights and barriers for the trains coming.
-        self.step_level_crossings();
-        let arrived = self.traffic.step(self.config.traffic_seconds_per_tick, self.config.traffic_substeps);
-        // [tolls] Before anyone arriving is taken off the road.
-        self.settle_tolls();
-        for car_id in arrived {
-            // [emergency] A fugitive got where it was running: on it runs.
-            if self.chase_car_arrived(car_id) {
-                continue;
-            }
-            // [land] A convoy's escort or police car at the end of its run.
-            if self.convoy_car_arrived(car_id) {
-                continue;
-            }
-            // Fire engines, police cars and ambulances: services handle them.
-            if self.services.unit_of_car(car_id).is_some() {
-                self.unit_car_arrived(car_id);
-                continue;
-            }
-            if self.traffic.cars.get(car_id).is_some_and(|c| c.bus.is_some()) {
-                self.bus_arrived(car_id);
-                continue;
-            }
-            // [society] Garbage trucks.
-            if self.society_car_arrived(car_id) {
-                continue;
-            }
-            let Some(car) = self.traffic.cars.get(car_id) else { continue };
-            // Lorries deliver and head back to a truck lot, their business
-            // or out of town (`world/industry`).
-            if let Some(_) = car.cargo {
-                self.lorry_arrived(car_id);
-                continue;
-            }
-            // [carlife] Private cars park (or go on looking), trucks and
-            // vans head back to base, cars sold or emigrating leave.
-            if self.vehicle_arrived(car_id) {
-                continue;
-            }
-            self.unclaimed_arrival(car_id);
-        }
-        // Keep citizen positions in sync with their cars for inspection.
-        for (cid, car) in self.traffic.cars.iter() {
-            // [carlife] Only someone actually in it (not a driver who got
-            // out while it was taken elsewhere).
-            if let Some(c) = self.citizens.get_mut(car.citizen).filter(|c| matches!(c.activity, Activity::Driving { car, .. } if car == cid)) {
-                c.pos = car.pos;
-                c.heading = car.heading;
-            }
-            if let Some(bus) = &car.bus {
-                for &p in &bus.passengers {
-                    if let Some(c) = self.citizens.get_mut(p) {
-                        c.pos = car.pos;
-                        c.prev_pos = car.pos;
-                        c.heading = car.heading;
-                    }
-                }
-            }
-        }
-    }
 }
 
-/// RON cannot encode the RNG's 128-bit counter, so persist it as seed + position.
 /// [review] A save in the oldest format still met (every field added
 /// since left out, as in `saves/flags/flag_patch.ron`, which is gitignored
 /// and 40 MB): a small town two days in, cut down by field path to what
