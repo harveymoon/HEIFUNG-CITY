@@ -20,7 +20,7 @@ pub(super) fn tier_color(t: Tier) -> egui::Color32 {
     match t {
         Tier::Low => egui::Color32::from_rgb(210, 95, 70),
         Tier::Mid => GOLD,
-        Tier::High => egui::Color32::from_rgb(110, 200, 220),
+        Tier::High => super::theme::TEAL,
     }
 }
 
@@ -51,8 +51,8 @@ pub fn population(ui: &mut egui::Ui, p: &mut UiCtx) {
         let labels = pane::day_labels(&days);
         let series = [
             Series::new("people", GOLD, pane::col(&days, |d| d.population as f32)),
-            Series::new("households", Color32::from_rgb(110, 200, 220), pane::col(&days, |d| d.households as f32)),
-            Series::new("employed", Color32::from_rgb(110, 200, 140), pane::col(&days, |d| d.employed as f32)),
+            Series::new("households", super::theme::TEAL, pane::col(&days, |d| d.households as f32)),
+            Series::new("employed", super::theme::GOOD, pane::col(&days, |d| d.employed as f32)),
             Series::new("unemployed", WARN, pane::col(&days, |d| d.unemployed as f32)),
             Series::new("unhoused", Color32::from_rgb(200, 120, 230), pane::col(&days, |d| d.unhoused as f32)),
             Series::new("waiting to move in", Color32::from_gray(160), pane::col(&days, |d| d.waiting_immigrants as f32)),
@@ -184,7 +184,7 @@ fn histogram(ui: &mut egui::Ui, sorted: &[f32], width: f32) {
     let (resp, painter) = ui.allocate_painter(egui::vec2(width, 150.0), egui::Sense::hover());
     let rect = resp.rect;
     let plot = egui::Rect::from_min_max(rect.min + egui::vec2(36.0, 8.0), rect.max - egui::vec2(6.0, 19.0));
-    painter.rect_filled(plot, 2.0, egui::Color32::from_rgba_unmultiplied(20, 22, 34, 220));
+    painter.rect_filled(plot, 2.0, super::theme::PLOT_BG_UNMULTIPLIED);
     let axis = egui::Stroke::new(1.0, egui::Color32::from_gray(110));
     painter.line_segment([plot.left_bottom(), plot.right_bottom()], axis);
     painter.line_segment([plot.left_top(), plot.left_bottom()], axis);
@@ -241,7 +241,7 @@ fn lorenz(ui: &mut egui::Ui, sorted: &[f32], total: f32) {
     let (resp, painter) = ui.allocate_painter(egui::vec2(LORENZ_SIZE, LORENZ_SIZE), egui::Sense::hover());
     let rect = resp.rect;
     let plot = egui::Rect::from_min_max(rect.min + egui::vec2(6.0, 6.0), rect.max - egui::vec2(6.0, 34.0));
-    painter.rect_filled(plot, 2.0, egui::Color32::from_rgba_unmultiplied(20, 22, 34, 220));
+    painter.rect_filled(plot, 2.0, super::theme::PLOT_BG_UNMULTIPLIED);
     painter.line_segment([plot.left_bottom(), plot.right_top()], egui::Stroke::new(1.0, egui::Color32::from_gray(110)));
 
     const SAMPLES: usize = 48;

@@ -228,7 +228,7 @@ fn draw_city(image: &mut egui::ColorImage, city: CityPreset, params: &LandscapeP
 }
 
 /// The mini-map for a set of levers, and a one-line summary of the map.
-pub fn preview_image(params: &LandscapeParams) -> (egui::ColorImage, String) {
+fn preview_image(params: &LandscapeParams) -> (egui::ColorImage, String) {
     let land = Landscape::new(params);
     let mut pixels = Vec::with_capacity(PREVIEW * PREVIEW);
     let span = LAND_HALF * 2.0;
@@ -274,11 +274,11 @@ pub fn preview_image(params: &LandscapeParams) -> (egui::ColorImage, String) {
     let streams = land.rivers.iter().filter(|r| r.stream).count();
     let rivers = land.rivers.len() - streams;
     let islands = land.sea.as_ref().map_or(0, |s| s.islands.len());
-    let mut summary = format!("{rivers} river{}, {streams} stream{}, {} lake{}", if rivers == 1 { "" } else { "s" }, if streams == 1 { "" } else { "s" }, land.lakes.len(), if land.lakes.len() == 1 { "" } else { "s" });
+    let mut summary = format!("{rivers} river{}, {streams} stream{}, {} lake{}", super::fmt::s(rivers), super::fmt::s(streams), land.lakes.len(), super::fmt::s(land.lakes.len()));
     if land.sea.is_some() {
-        summary.push_str(&format!(", sea, {islands} island{}", if islands == 1 { "" } else { "s" }));
+        summary.push_str(&format!(", sea, {islands} island{}", super::fmt::s(islands)));
     }
-    summary.push_str(&format!(", {} hot spot{}", land.hot_spots.len(), if land.hot_spots.len() == 1 { "" } else { "s" }));
+    summary.push_str(&format!(", {} hot spot{}", land.hot_spots.len(), super::fmt::s(land.hot_spots.len())));
     if let Some(r) = land.rivers.first() {
         summary.push_str(&format!(". Main river {:.0} m wide, {:.1} m/s.", r.width, r.current));
     }

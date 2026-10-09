@@ -16,7 +16,7 @@ use crate::sim::Sim;
 
 const CYAN: egui::Color32 = egui::Color32::from_rgb(90, 210, 230);
 const MAYOR: egui::Color32 = egui::Color32::from_rgb(240, 120, 200);
-const OK: egui::Color32 = egui::Color32::from_rgb(120, 220, 140);
+const OK: egui::Color32 = super::theme::GOOD_LIGHT;
 /// Characters typed per second while a meeting is shown.
 const TYPE_RATE: f32 = 260.0;
 
@@ -222,7 +222,7 @@ fn transcript(ui: &mut egui::Ui, sim: &Sim, m: &Meeting, shown: Option<(usize, u
 
 fn meeting_tab(ui: &mut egui::Ui, sim: &mut Sim, rt: &mut CommitteeRt, asks: &mut Asks) {
     let today = sim.world.committee_today();
-    let Some(m) = sim.world.committee.meeting.clone() else {
+    let Some(m) = sim.world.committee.meeting.as_ref() else {
         // Between meetings.
         let c = &sim.world.committee;
         ui.horizontal(|ui| {
@@ -239,8 +239,7 @@ fn meeting_tab(ui: &mut egui::Ui, sim: &mut Sim, rt: &mut CommitteeRt, asks: &mu
         }
         let auto = sim.world.committee.auto_meetings;
         hint(ui, &format!("Day {}. Meetings come every 30 days{}.", today + 1, if auto { "" } else { " (switched off: only when you call one)" }));
-        let minutes = sim.world.committee.minutes.clone();
-        if let Some(last) = minutes.last() {
+        if let Some(last) = sim.world.committee.minutes.last() {
             ui.separator();
             heading(ui, &format!("Minutes of meeting {} (day {})", last.number, last.day + 1));
             hint(ui, &format!("{} backend calls", last.calls));
@@ -281,10 +280,13 @@ fn meeting_tab(ui: &mut egui::Ui, sim: &mut Sim, rt: &mut CommitteeRt, asks: &mu
     });
     hint(ui, &format!("{} · {} calls so far{}", rt.courier.backend_name(), m.calls, if rt.driver.busy() { " · waiting for the next speaker..." } else { "" }));
     ui.separator();
-    transcript(ui, sim, &m, if rt.fast_forward { None } else { Some(rt.shown) });
+    transcript(ui, sim, m, if rt.fast_forward { None } else { Some(rt.shown) });
     if typing && !rt.fast_forward {
         return;
     }
+    // The mayor's clicks, cast once the meeting is no longer borrowed.
+    let mut votes: Vec<(u32, MayorVote)> = Vec::new();
+    let mut abstain = false;
     if matches!(m.stage, Stage::MayorVote | Stage::Votes) && !m.proposals.is_empty() {
         ui.add_space(8.0);
         heading(ui, "Your vote, mayor");
@@ -308,17 +310,23 @@ fn meeting_tab(ui: &mut egui::Ui, sim: &mut Sim, rt: &mut CommitteeRt, asks: &mu
                             MayorVote::Veto => "Veto",
                         };
                         if ui.selectable_label(on, egui::RichText::new(label).font(theme::button())).clicked() {
-                            if let Err(e) = cast_mayor_vote(&mut sim.world, p.id, v) {
-                                asks.message = Some(e);
-                            }
+                            votes.push((p.id, v));
                         }
                     }
                 });
             });
         }
         if m.stage == Stage::MayorVote && m.waiting_for_mayor() && ui.button("Abstain on the rest").clicked() {
-            let _ = abstain_rest(&mut sim.world);
+            abstain = true;
         }
+    }
+    for (id, v) in votes {
+        if let Err(e) = cast_mayor_vote(&mut sim.world, id, v) {
+            asks.message = Some(e);
+        }
+    }
+    if abstain {
+        let _ = abstain_rest(&mut sim.world);
     }
 }
 
@@ -363,7 +371,7 @@ fn members_tab(ui: &mut egui::Ui, sim: &mut Sim, asks: &mut Asks) {
     sim.world.committee_ensure();
     let today = sim.world.committee_today();
     heading(ui, "The table");
-    let c = sim.world.committee.clone();
+    let c = &sim.world.committee;
     let mut action: Option<(u32, bool)> = None;
     for (i, seat) in c.seats.iter().enumerate() {
         match seat.and_then(|id| c.member(id)) {
@@ -497,7 +505,7 @@ enum ProjectAct {
 }
 
 fn projects_tab(ui: &mut egui::Ui, sim: &mut Sim, asks: &mut Asks) {
-    let projects = sim.world.committee.projects.clone();
+    let projects = &sim.world.committee.projects;
     if projects.is_empty() {
         hint(ui, "Nothing yet. A proposal the committee passes comes here as a named project: the secretary picks a site among those the game finds valid, and you implement it, pick another site, or dismiss it.");
         return;
