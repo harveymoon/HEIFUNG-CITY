@@ -334,6 +334,16 @@ fn buildings(out: &Out) {
             }
         }
     }
+    // Beaches with their planned sand, a crowd, swimmers, shut and at night.
+    for (li, (name, lot)) in lots.iter().enumerate().filter(|(li, _)| [0usize, 3, 6].contains(li)) {
+        let layout = nd_sim::shore::plan_beach(lot, Tier::ALL[li % 3]);
+        for (k, (closed, night)) in [(false, false), (true, true)].into_iter().enumerate() {
+            let beach = shore::BeachLook { bathers: 40, swimmers: 25, closed, night };
+            let look = shore::ShoreLook { seaward: -lot.front_dir.perp(), drop: 1.8, beach: Some(beach) };
+            let extras = Extras { shore: Some(look), park: Some(&layout), ..Extras::default() };
+            out.geo(format!("beach {name} {k}"), &generate_styled_extras(lot, LandUse::Park, 1, Tier::Mid, 0.8, 60 + li as u64, Style::Beach, &rules, &pal, &extras));
+        }
+    }
     out.debug("p solar_head", &0);
     out.geo("p solar_head geo", &solar_head());
     for ph in [0.0f32, 0.7, 2.0] {
