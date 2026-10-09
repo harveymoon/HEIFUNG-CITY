@@ -175,12 +175,16 @@ pub struct Landscape {
     pub hot_spots: Vec<HotSpot>,
     #[serde(skip)]
     raster: OnceLock<Raster>,
+    /// [review] The water graph and the sea-way grid, kept between
+    /// routing calls (they were rebuilt on every one).
+    #[serde(skip)]
+    water_cache: WaterCache,
 }
 
 impl Default for Landscape {
     /// The flat map an old save had: no water, hills only outside the basin.
     fn default() -> Self {
-        Self { params: LandscapeParams::flat(), rivers: Vec::new(), lakes: Vec::new(), sea: None, hot_spots: Vec::new(), raster: OnceLock::new() }
+        Self { params: LandscapeParams::flat(), rivers: Vec::new(), lakes: Vec::new(), sea: None, hot_spots: Vec::new(), raster: OnceLock::new(), water_cache: WaterCache::default() }
     }
 }
 

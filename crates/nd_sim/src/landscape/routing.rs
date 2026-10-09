@@ -2,6 +2,7 @@
 //! sea way between two points.
 
 use super::*;
+use std::sync::{Arc, Mutex};
 
 impl Landscape {
     /// A route by water from `from` to "elsewhere" (off the map), or to
@@ -11,7 +12,7 @@ impl Landscape {
     /// are not on connected water (a lake, or different rivers that never
     /// meet) or `from` is not on or by the water.
     pub fn water_route(&self, from: Vec2, to: Option<Vec2>) -> Option<Vec<Vec2>> {
-        let g = WaterGraph::build(self);
+        let g = self.water_graph();
         g.route(self, from, to)
     }
 
@@ -22,7 +23,7 @@ impl Landscape {
     /// two-coast map is its own way out); one on a lake reaches none. The
     /// routes end out of sight, like `water_route`'s.
     pub fn water_routes_out(&self, from: Vec2) -> Vec<(MapEdge, Vec<Vec2>)> {
-        let g = WaterGraph::build(self);
+        let g = self.water_graph();
         g.routes_out(self, from)
     }
 
@@ -32,7 +33,7 @@ impl Landscape {
         if pairs.is_empty() && outs.is_empty() {
             return (Vec::new(), Vec::new());
         }
-        let g = WaterGraph::build(self);
+        let g = self.water_graph();
         (pairs.iter().map(|(a, b)| g.route(self, *a, *b)).collect(), outs.iter().map(|p| g.routes_out(self, *p)).collect())
     }
 
@@ -58,17 +59,19 @@ impl Landscape {
         let half = LAND_HALF + 2.0 * CELL;
         let n = (2.0 * half / CELL).ceil() as i32;
         let centre = |i: i32, j: i32| Vec2::new(-half + (i as f32 + 0.5) * CELL, -half + (j as f32 + 0.5) * CELL);
-        let water = |p: Vec2| chebyshev(p) > LAND_HALF || self.is_water(p);
-        // A cell is open water when its centre and all four corners are, so
-        // a hop between neighbours never clips a point of land.
-        let corner: Vec<bool> = (0..(n + 1) * (n + 1)).map(|k| water(Vec2::new(-half + (k % (n + 1)) as f32 * CELL, -half + (k / (n + 1)) as f32 * CELL))).collect();
-        let wet: Vec<bool> = (0..n * n)
-            .map(|k| {
-                let (i, j) = (k % n, k / n);
-                let c = |di: i32, dj: i32| corner[((i + di) + (j + dj) * (n + 1)) as usize];
-                c(0, 0) && c(1, 0) && c(0, 1) && c(1, 1) && water(centre(i, j))
-            })
-            .collect();
+        let wet = self.water_cache.sea_grid(self, || {
+            let water = |p: Vec2| chebyshev(p) > LAND_HALF || self.is_water(p);
+            // A cell is open water when its centre and all four corners are, so
+            // a hop between neighbours never clips a point of land.
+            let corner: Vec<bool> = (0..(n + 1) * (n + 1)).map(|k| water(Vec2::new(-half + (k % (n + 1)) as f32 * CELL, -half + (k / (n + 1)) as f32 * CELL))).collect();
+            (0..n * n)
+                .map(|k| {
+                    let (i, j) = (k % n, k / n);
+                    let c = |di: i32, dj: i32| corner[((i + di) + (j + dj) * (n + 1)) as usize];
+                    c(0, 0) && c(1, 0) && c(0, 1) && c(1, 1) && water(centre(i, j))
+                })
+                .collect()
+        });
         let cell_of = |p: Vec2| (((p.x + half) / CELL).floor() as i32).clamp(0, n - 1) + (((p.y + half) / CELL).floor() as i32).clamp(0, n - 1) * n;
         // The nearest wet cell to a point (a berth may sit in a cell whose
         // centre is on the bank).
@@ -193,6 +196,59 @@ impl MapEdge {
 /// Nodes along every river centreline; edges along them and where a
 /// tributary meets the river it flows into. `exit` marks river ends at the
 /// edge of the map; `sea` marks nodes out in the sea.
+/// [review] What the water routes are worked out on, kept between calls:
+/// the river graph and the sea-way grid, each with the water features it
+/// was built from (`water_key`), so a landscape whose water changed (only
+/// tests change one) never reads a stale one. A clone starts empty.
+#[derive(Default)]
+pub(super) struct WaterCache {
+    graph: Mutex<Option<(String, Arc<WaterGraph>)>>,
+    sea: Mutex<Option<(String, Arc<Vec<bool>>)>>,
+}
+
+impl Clone for WaterCache {
+    fn clone(&self) -> Self {
+        WaterCache::default()
+    }
+}
+
+impl WaterCache {
+    fn sea_grid(&self, l: &Landscape, build: impl FnOnce() -> Vec<bool>) -> Arc<Vec<bool>> {
+        let key = l.water_key();
+        let mut slot = self.sea.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((k, g)) = slot.as_ref() {
+            if *k == key {
+                return g.clone();
+            }
+        }
+        let g = Arc::new(build());
+        *slot = Some((key, g.clone()));
+        g
+    }
+}
+
+impl Landscape {
+    /// Everything the water routes read: the parameters and the water
+    /// features, exactly (floats print round-trip).
+    fn water_key(&self) -> String {
+        format!("{:?}|{:?}|{:?}|{:?}", self.params, self.rivers, self.lakes, self.sea)
+    }
+
+    /// The river graph, built once per set of water features.
+    pub(super) fn water_graph(&self) -> Arc<WaterGraph> {
+        let key = self.water_key();
+        let mut slot = self.water_cache.graph.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((k, g)) = slot.as_ref() {
+            if *k == key {
+                return g.clone();
+            }
+        }
+        let g = Arc::new(WaterGraph::build(self));
+        *slot = Some((key, g.clone()));
+        g
+    }
+}
+
 pub(super) struct WaterGraph {
     pub(super) nodes: Vec<Vec2>,
     pub(super) adj: Vec<Vec<usize>>,
