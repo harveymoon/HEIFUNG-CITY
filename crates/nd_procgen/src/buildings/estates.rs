@@ -797,7 +797,14 @@ pub fn museum(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let a1 = (k + 1) as f32 / steps as f32 * std::f32::consts::FRAC_PI_2;
         let (r0, r1) = (r * a0.cos(), (r * a1.cos()).max(0.3));
         let (y0, y1) = (h + 1.0 + r * a0.sin(), h + 1.0 + r * a1.sin());
-        loft(g, f, Glass, &ngon(hc.x, hc.y, r0, 16, 0.0), &ngon(hc.x, hc.y, r1, 16, 0.0), y0, y1, mix(pal.glass_dark, WHITE, 0.15));
+        // Sides only: the sections meet ring to ring, the first stands on
+        // the drum, and only the last is capped.
+        let (lo, hi) = (ngon(hc.x, hc.y, r0, 16, 0.0), ngon(hc.x, hc.y, r1, 16, 0.0));
+        let glass = mix(pal.glass_dark, WHITE, 0.15);
+        band(g, f, Glass, &lo, &hi, y0, y1, glass);
+        if k + 1 == steps {
+            g.part(Glass).cap(&f.poly3(&hi, y1), glam::Vec3::Y, rgba(glass));
+        }
     }
     extrude(g, f, Stone, &ngon(hc.x, hc.y, r + 0.4, 16, 0.0), h, h + 1.0, WHITE);
     f.bx(g, Glow, hc.x, h + 1.0 + r + 0.3, hc.y, Vec3::new(0.6, 0.6, 0.6), mul(pal.lamp, 1.2));

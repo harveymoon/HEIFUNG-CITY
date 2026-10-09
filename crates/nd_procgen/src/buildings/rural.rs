@@ -38,7 +38,7 @@ fn silo(g: &mut Geometry, c: &Ctx, p: Vec2, r: f32, h: f32, color: [f32; 3]) {
     let f = &c.frame;
     tank_vertical(g, f, p, r, 0.0, h, Metal, color);
     let w = f.to_world(p.x, p.y);
-    g.part(Metal).cylinder(w, r * 1.02, r * 0.25, h, h + r * 0.7, 12, rgba(mul(color, 0.9)));
+    g.part(Metal).cylinder_capped(w, r * 1.02, r * 0.25, h, h + r * 0.7, 12, false, true, rgba(mul(color, 0.9)));
 }
 
 /// A feed silo on legs with a cone below: the chicken-farm kind.
@@ -51,9 +51,10 @@ fn feed_silo(g: &mut Geometry, c: &Ctx, p: Vec2, color: [f32; 3]) {
     for (du, dv) in [(-0.9, -0.9), (0.9, -0.9), (0.9, 0.9), (-0.9, 0.9)] {
         f.bx(g, Metal, p.x + du, 1.2, p.y + dv, Vec3::new(0.12, 2.4, 0.12), mul(color, 0.7));
     }
-    g.part(Metal).cylinder(w, 0.15, 1.25, 0.7, 2.2, 10, rgba(color));
-    g.part(Metal).cylinder(w, 1.25, 1.25, 2.2, 7.0, 10, rgba(color));
-    g.part(Metal).cylinder(w, 1.25, 0.2, 7.0, 7.8, 10, rgba(mul(color, 0.9)));
+    // One stack: only its two ends capped.
+    g.part(Metal).cylinder_capped(w, 0.15, 1.25, 0.7, 2.2, 10, true, false, rgba(color));
+    g.part(Metal).cylinder_capped(w, 1.25, 1.25, 2.2, 7.0, 10, false, false, rgba(color));
+    g.part(Metal).cylinder_capped(w, 1.25, 0.2, 7.0, 7.8, 10, false, true, rgba(mul(color, 0.9)));
 }
 
 /// A hay bale (round, stood on end).

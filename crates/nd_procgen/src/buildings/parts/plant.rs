@@ -7,11 +7,13 @@ use super::*;
 #[allow(clippy::too_many_arguments)]
 pub fn tank_vertical(g: &mut Geometry, f: &Frame, p: Vec2, r: f32, y0: f32, h: f32, s: Surface, color: [f32; 3]) {
     let w = f.to_world(p.x, p.y);
-    g.part(s).cylinder(w, r, r, y0, y0 + h, 14, rgba(color));
+    // The shell's top lies under the rim's (and the cupola's bottom on the
+    // rim's top): those caps are left out.
+    g.part(s).cylinder_capped(w, r, r, y0, y0 + h, 14, true, false, rgba(color));
     g.part(Matte).cylinder(w, r * 1.03, r * 1.03, y0 + h, y0 + h + 0.15, 14, rgba(CHARCOAL));
     // ladder and top rail
     g.part(Matte).boxed(Vec3::new(w.x + r, y0 + h * 0.5, w.y), Vec3::new(0.08, h, 0.5), 0.0, rgba(CHARCOAL));
-    g.part(Matte).cylinder(w, r * 0.95, r * 0.95, y0 + h + 0.15, y0 + h + 1.0, 14, rgba(mul(CHARCOAL, 0.5)));
+    g.part(Matte).cylinder_capped(w, r * 0.95, r * 0.95, y0 + h + 0.15, y0 + h + 1.0, 14, false, true, rgba(mul(CHARCOAL, 0.5)));
 }
 
 pub fn tank_horizontal(g: &mut Geometry, f: &Frame, p: Vec2, angle: f32, len: f32, r: f32, y: f32, color: [f32; 3]) {
@@ -27,7 +29,8 @@ pub fn tank_horizontal(g: &mut Geometry, f: &Frame, p: Vec2, angle: f32, len: f3
 
 pub fn chimney(g: &mut Geometry, f: &Frame, p: Vec2, r: f32, y0: f32, h: f32, color: [f32; 3], light: [f32; 3]) {
     let w = f.to_world(p.x, p.y);
-    g.part(Metal).cylinder(w, r, r * 0.75, y0, y0 + h, 10, rgba(color));
+    // Stood on a roof or the ground, and capped by the rim: no end caps.
+    g.part(Metal).cylinder_capped(w, r, r * 0.75, y0, y0 + h, 10, false, false, rgba(color));
     g.part(Matte).cylinder(w, r * 0.8, r * 0.8, y0 + h, y0 + h + 0.4, 10, rgba(DARK));
     g.part(Glow).boxed(Vec3::new(w.x, y0 + h + 0.6, w.y), Vec3::new(0.35, 0.35, 0.35), 0.0, rgba(light));
 }

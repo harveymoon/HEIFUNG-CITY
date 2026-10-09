@@ -635,6 +635,13 @@ impl MeshData {
         self.frustum(&MeshData::ngon(center, r0, sides, 0.0, y0), &MeshData::ngon(center, r1, sides, 0.0, y1), color);
     }
 
+    /// [`MeshData::cylinder`] with only the caps asked for: a section of a
+    /// stack, or one standing on a roof, whose ends nobody sees.
+    #[allow(clippy::too_many_arguments)]
+    pub fn cylinder_capped(&mut self, center: Vec2, r0: f32, r1: f32, y0: f32, y1: f32, sides: usize, cap_bottom: bool, cap_top: bool, color: [f32; 4]) {
+        self.frustum_capped(&MeshData::ngon(center, r0, sides, 0.0, y0), &MeshData::ngon(center, r1, sides, 0.0, y1), cap_bottom, cap_top, color);
+    }
+
     /// Horizontal cylinder along the direction `dir` (unit, in the ground
     /// plane), centred at `center`, at height `y`.
     pub fn pipe(&mut self, center: Vec2, dir: Vec2, len: f32, r: f32, y: f32, sides: usize, color: [f32; 4]) {
@@ -645,6 +652,13 @@ impl MeshData {
 
     /// Round tube between two points in space.
     pub fn tube(&mut self, a: Vec3, b: Vec3, r: f32, sides: usize, color: [f32; 4]) {
+        self.tube_capped(a, b, r, sides, true, true, color);
+    }
+
+    /// [`MeshData::tube`] with only the end caps asked for: two tubes
+    /// meeting at a joint need none there.
+    #[allow(clippy::too_many_arguments)]
+    pub fn tube_capped(&mut self, a: Vec3, b: Vec3, r: f32, sides: usize, cap_a: bool, cap_b: bool, color: [f32; 4]) {
         let d = b - a;
         let len = d.length();
         if len < 1e-3 {
@@ -660,7 +674,7 @@ impl MeshData {
                 })
                 .collect()
         };
-        self.frustum(&ring(a), &ring(b), color);
+        self.frustum_capped(&ring(a), &ring(b), cap_a, cap_b, color);
     }
 
     /// Regular polygon in the XZ plane at height `y`.
