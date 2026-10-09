@@ -13,7 +13,7 @@
 //! gets a small gate across the path. Lamps and arms are the app's to
 //! light and move.
 
-use crate::buildings::parts::{mul, rgba};
+use crate::color::{mul, rgba};
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
@@ -21,7 +21,7 @@ use nd_sim::level_crossing::{CrossingGuard, LevelCrossing};
 use nd_sim::zoning::SIDEWALK;
 
 /// The pavement's top, as the street mesh lays it.
-pub const KERB_H: f32 = 0.16;
+pub use crate::depth::KERB_H;
 /// Height of a barrier's pivot over the ground (a footpath gate's lower).
 pub const PIVOT_Y: f32 = 1.0;
 pub const GATE_PIVOT_Y: f32 = 0.85;

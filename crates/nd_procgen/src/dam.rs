@@ -5,7 +5,7 @@
 //! cyan light line along the crest parapets, lit lamp posts, magenta lights
 //! on the intake towers and glowing edges down the spillway.
 
-use crate::buildings::parts::{mul, rgba};
+use crate::color::{mul, rgba};
 use crate::surface::{Geometry, Surface};
 use glam::{Vec2, Vec3};
 use nd_sim::landscape::{BANK_HEIGHT, WATER_LEVEL};

@@ -4,11 +4,17 @@
 pub mod buildings;
 /// [climate] Each climate's ground, plants, water, snow and weather looks.
 pub mod climate;
+/// Colour helpers (`rgba`, `mul`, `mix`, `at`, `pick`).
+pub mod color;
 /// [rail-crossing] Level crossing posts, lamps and barrier arms.
 pub mod crossing;
 /// [plants] The hydro plant's arch dam.
 pub mod dam;
+/// Named heights and decal depths (what stands proud of what).
+pub mod depth;
 pub mod footbridge;
+/// Stateless hashes and their salts.
+pub mod hash;
 /// [mapgen] Whole example cities traced through a tensor field.
 pub mod citygen;
 pub mod lights;

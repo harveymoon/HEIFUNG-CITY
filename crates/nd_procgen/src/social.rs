@@ -17,7 +17,7 @@
 //!
 //! Laid out in world coordinates from a seed, so each keeps its look.
 
-use crate::buildings::parts::{mul, pick, rgba};
+use crate::color::{mix, mul, pick, rgba};
 use crate::mesh::MeshData;
 use crate::surface::{Geometry, Surface, Surface::*};
 use glam::{Vec2, Vec3};
@@ -460,9 +460,6 @@ struct Layer {
     alpha: f32,
 }
 
-fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
-}
 
 /// A mural's design on a `w` by `h` wall: a background and its layers.
 struct Design {
@@ -476,13 +473,13 @@ impl Design {
     fn color(&self, p: Vec2) -> Option<[f32; 3]> {
         let mut col = self.bg.map(|(a, b, dir)| {
             let q = Vec2::new(p.x / self.w - 0.5, p.y / self.h - 0.5);
-            lerp3(a, b, (q.dot(dir) + 0.5).clamp(0.0, 1.0))
+            mix(a, b, (q.dot(dir) + 0.5).clamp(0.0, 1.0))
         });
         for l in &self.layers {
             if l.shape.contains(p) {
-                let c = lerp3(l.lo, l.hi, l.shape.rise(p));
+                let c = mix(l.lo, l.hi, l.shape.rise(p));
                 col = Some(match col {
-                    Some(under) if l.alpha < 1.0 => lerp3(under, c, l.alpha),
+                    Some(under) if l.alpha < 1.0 => mix(under, c, l.alpha),
                     _ => c,
                 });
             }

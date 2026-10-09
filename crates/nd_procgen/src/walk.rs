@@ -21,9 +21,7 @@ use nd_sim::{rng_for, LandUse};
 use rand::Rng;
 use std::collections::HashMap;
 
-/// Pavement top, matching the street generator's kerb.
-const PAVE_Y: f32 = 0.155;
-const ROAD_Y: f32 = 0.05;
+use crate::depth::{WALK_PAVE_Y as PAVE_Y, WALK_ROAD_Y as ROAD_Y};
 
 /// The radius the app should draw walk detail in, and how far the walker
 /// may stray before it is redrawn.

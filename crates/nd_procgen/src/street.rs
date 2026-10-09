@@ -101,9 +101,7 @@ const PED_HEAD_Y: f32 = 2.55;
 /// How far a tunnel's walls stand outside its carriageway (half width).
 pub const TUNNEL_WALL: f32 = 0.8;
 
-const KERB_H: f32 = 0.16;
-const ASPHALT_Y: f32 = 0.05;
-const MARK_Y: f32 = 0.085;
+use crate::depth::{ASPHALT_Y, KERB_H, MARK_Y};
 
 /// Spring line of a tunnel bore (`bore_shell`): the walls stand straight
 /// up to here, the vault springs from it.

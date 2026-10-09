@@ -5,7 +5,7 @@
 //! a handrail. Built from the walk graph, so what walkers climb is what is
 //! drawn.
 
-use crate::buildings::parts::{mul, rgba};
+use crate::color::{mul, rgba};
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface};
 use glam::{Vec2, Vec3};

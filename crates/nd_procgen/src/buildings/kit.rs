@@ -197,12 +197,9 @@ pub fn sky_bridge(g: &mut Geometry, c: &Ctx, a: Vec2, b: Vec2, y: f32, w: f32, h
     let yaw = d.y.atan2(d.x);
     g.part(Glass).boxed(Vec3::new(mid.x, y + h * 0.5, mid.y), Vec3::new(d.length(), h, w), yaw, rgba(pal.glass(1)));
     g.part(Panel).boxed(Vec3::new(mid.x, y - 0.25, mid.y), Vec3::new(d.length(), 0.5, w + 0.3), yaw, rgba(mul(pal.steel, 0.7)));
-    g.part(Glow).boxed(Vec3::new(mid.x, y - 0.52, mid.y), Vec3::new(d.length(), 0.06, w * 0.3), yaw, rgba(mul(pick_led(pal, 0), 0.8)));
+    g.part(Glow).boxed(Vec3::new(mid.x, y - 0.52, mid.y), Vec3::new(d.length(), 0.06, w * 0.3), yaw, rgba(mul(pal.led(0), 0.8)));
 }
 
-fn pick_led(pal: &crate::palette::Palette, i: usize) -> [f32; 3] {
-    crate::palette::at(&pal.led_colors, i)
-}
 
 /// Glowing line along the edges of a footprint at height `y`: crown
 /// frames, terrace edges and the light lines of a lit-up skyline.

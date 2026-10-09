@@ -216,17 +216,7 @@ pub fn vehicle_mesh(model: &VehicleModel) -> VehicleMesh {
 
 // ── builder ─────────────────────────────────────────────────────────────────
 
-fn c4(c: [f32; 3]) -> [f32; 4] {
-    [c[0], c[1], c[2], 1.0]
-}
-
-fn mul(c: [f32; 3], k: f32) -> [f32; 3] {
-    [c[0] * k, c[1] * k, c[2] * k]
-}
-
-fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
-}
+use crate::color::{mix, mul, rgba as c4};
 
 struct B<'a> {
     m: &'a VehicleModel,

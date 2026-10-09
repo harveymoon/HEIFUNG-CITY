@@ -15,7 +15,6 @@ use crate::palette::Palette;
 use crate::surface::{Geometry, Surface};
 use glam::{Vec2, Vec3};
 use nd_sim::zoning::{point_in_polygon, polygon_area, polygon_centroid};
-use rand::seq::IndexedRandom;
 use rand::Rng;
 
 use Surface::*;
@@ -36,14 +35,7 @@ pub fn coin(rng: &mut impl Rng, p: f32) -> bool {
 /// for that share's lookup (opaque glow ignores alpha anyway).
 pub const WINDOW_LIGHT_MARK: f32 = 2.0;
 
-/// How far (m) the dark glass under a switchable window light sits behind
-/// it. Decals stand off their wall on a whole-centimetre grid (a frame at
-/// 3 cm, the pane or light at 5 cm), so the glass goes 13 mm back, off that
-/// grid: at 2 cm it landed exactly in the plane of the window frame, and
-/// with the light off the frame and the glass z-fought as the camera moved.
-/// 13 mm is far beyond the depth buffer's resolution at any view distance
-/// (reverse-Z float depth resolves well under a millimetre at 2 km).
-pub const LIGHT_GLASS_BEHIND: f32 = 0.013;
+pub use crate::depth::LIGHT_GLASS_BEHIND;
 
 /// Draw a window light with `emit` (which adds Glow). With
 /// [`Ctx::dynamic_lights`] the new glow vertices are marked with
@@ -61,9 +53,7 @@ pub fn window_light(g: &mut Geometry, c: &Ctx, emit: impl FnOnce(&mut Geometry))
     if m.positions.len() == vstart {
         return;
     }
-    let p = m.positions[vstart];
-    let h = (p[0].to_bits() ^ p[1].to_bits().rotate_left(11) ^ p[2].to_bits().rotate_left(22)).wrapping_mul(0x9E37_79B1);
-    let rank = ((h >> 8) as f32 / (1u32 << 24) as f32).min(0.999);
+    let rank = crate::hash::rank01(m.positions[vstart]);
     for col in &mut m.colors[vstart..] {
         col[3] = WINDOW_LIGHT_MARK + rank;
     }
@@ -83,24 +73,7 @@ pub fn window_light(g: &mut Geometry, c: &Ctx, emit: impl FnOnce(&mut Geometry))
     g.part(Glass).append(&glass);
 }
 
-pub fn rgba(c: [f32; 3]) -> [f32; 4] {
-    [c[0], c[1], c[2], 1.0]
-}
-
-pub fn mul(c: [f32; 3], k: f32) -> [f32; 3] {
-    [c[0] * k, c[1] * k, c[2] * k]
-}
-
-pub fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
-}
-
-pub fn pick(rng: &mut impl Rng, v: &[[f32; 3]]) -> [f32; 3] {
-    *v.choose(rng).unwrap_or(&[0.5, 0.5, 0.5])
-}
-
-pub const DARK: [f32; 3] = [0.09, 0.09, 0.10];
-pub const CHARCOAL: [f32; 3] = [0.16, 0.16, 0.17];
+pub use crate::color::{mix, mul, pick, rgba, CHARCOAL, DARK};
 
 // ── polygons (lot-local) ─────────────────────────────────────────────────────
 
@@ -1695,9 +1668,7 @@ pub fn graffiti_world(g: &mut Geometry, rng: &mut impl Rng, a: Vec2, b: Vec2, y0
     // window frames (0.03), off the whole-centimetre grid the other decals
     // use. Pieces are kept apart, so two never share a layer where they
     // overlap.
-    const OUTLINE: f32 = 0.024;
-    const STROKE: f32 = 0.0262;
-    const FILL: f32 = 0.0276;
+    use crate::depth::{GRAFFITI_FILL as FILL, GRAFFITI_OUTLINE as OUTLINE, GRAFFITI_STROKE as STROKE};
     let mut taken: Vec<(f32, f32, f32, f32)> = Vec::new();
     for _ in 0..pieces {
         let w = rng.random_range(1.4f32..3.6).min(len * 0.8);

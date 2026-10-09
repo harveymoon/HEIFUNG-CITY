@@ -239,15 +239,7 @@ impl Default for Palette {
     }
 }
 
-/// Neutral grey an emptied colour list falls back to.
-pub const FALLBACK: [f32; 3] = [0.5, 0.5, 0.5];
-
-/// Entry `i` of a colour list, wrapping round, or the fallback grey when the
-/// list is empty. Every fixed-index read of a palette list goes through
-/// here so a hot-reloaded palette with a shortened list cannot panic.
-pub fn at(list: &[[f32; 3]], i: usize) -> [f32; 3] {
-    if list.is_empty() { FALLBACK } else { list[i % list.len()] }
-}
+pub use crate::color::{at, FALLBACK};
 
 impl Palette {
     pub fn zone_color(&self, land_use: nd_sim::LandUse) -> [f32; 3] {

@@ -132,9 +132,7 @@ pub fn emissive_palette() -> Vec<[f32; 3]> {
 
 // ── the figure ─────────────────────────────────────────────────────────────
 
-fn rgba(c: [f32; 3]) -> [f32; 4] {
-    [c[0], c[1], c[2], 1.0]
-}
+use crate::color::rgba;
 
 /// Clothes by wear: worn ones faded and a little dark.
 fn worn(c: [f32; 3], wear: u8) -> [f32; 3] {

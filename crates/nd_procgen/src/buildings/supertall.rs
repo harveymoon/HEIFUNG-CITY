@@ -249,7 +249,7 @@ fn plaza(g: &mut Geometry, c: &Ctx, seed: u64, site: &[Vec2], pod: &[Vec2]) {
         if fountain.is_some_and(|q| q.distance(*p) < 9.0) {
             continue;
         }
-        let h = nd_sim::fishing::hash(seed, k as u64);
+        let h = crate::hash::hash2_salted(seed, k as u64, crate::hash::SALT_FISHING);
         match pat {
             // A tree in a raised planter.
             0 | 2 if trees < 60 => {

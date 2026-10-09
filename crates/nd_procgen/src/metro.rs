@@ -4,7 +4,7 @@
 //! cars themselves. The entrances at street level are buildings
 //! (`buildings::subway`).
 
-use crate::buildings::parts::{mul, rgba};
+use crate::color::{mul, rgba};
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::subway::{CAR_LEN, DEPTH, TRACK_OFFSET};

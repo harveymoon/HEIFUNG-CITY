@@ -7,7 +7,7 @@
 //! Drawn on the flat datum (the road surface at y = 0) in world
 //! coordinates; the app lifts every vertex onto the road's height.
 
-use crate::buildings::parts::{mul, rgba, DARK};
+use crate::color::{mul, rgba, DARK};
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
