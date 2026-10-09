@@ -135,16 +135,8 @@ pub(crate) fn generate_styled_extras(
     let parking = extras.parking.or((style == Style::TruckLot).then_some(extras.fleet));
     let mut g = Geometry::default();
     let mut rng = rng_for(seed, 13);
-    let frame = Frame::from_lot(lot);
+    let (frame, lot_poly) = Frame::lot_local(lot);
     let r = rules.for_land_use(land_use);
-    let mut lot_poly: Vec<Vec2> = parts::clean_poly(&lot.polygon.iter().map(|p| frame.to_local(*p)).collect::<Vec<_>>(), 0.3);
-    if lot_poly.len() < 3 {
-        let (hw, hd) = (frame.width * 0.5, frame.depth * 0.5);
-        lot_poly = vec![Vec2::new(-hw, -hd), Vec2::new(hw, -hd), Vec2::new(hw, hd), Vec2::new(-hw, hd)];
-    }
-    if polygon_area(&lot_poly) < 0.0 {
-        lot_poly.reverse();
-    }
     let poly = parts::offset_poly(&lot_poly, r.inset);
     // [districts] A look re-tints the walls, windows and signs.
     let tinted = extras.look.filter(|_| extras.service.is_none() && extras.plant.is_none()).map(|l| district::apply(l, rules.style(tier), r, palette));

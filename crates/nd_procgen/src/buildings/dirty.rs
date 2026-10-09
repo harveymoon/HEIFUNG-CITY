@@ -46,20 +46,6 @@ pub struct Vent {
     pub kind: VentKind,
 }
 
-/// The lot in its own frame, as the styles see it.
-fn local_lot(lot: &nd_sim::Lot) -> (super::Frame, Vec<Vec2>) {
-    let frame = super::Frame::from_lot(lot);
-    let mut poly = clean_poly(&lot.polygon.iter().map(|p| frame.to_local(*p)).collect::<Vec<_>>(), 0.3);
-    if poly.len() < 3 {
-        let (hw, hd) = (frame.width * 0.5, frame.depth * 0.5);
-        poly = vec![Vec2::new(-hw, -hd), Vec2::new(hw, -hd), Vec2::new(hw, hd), Vec2::new(-hw, hd)];
-    }
-    if nd_sim::zoning::polygon_area(&poly) < 0.0 {
-        poly.reverse();
-    }
-    (frame, poly)
-}
-
 fn ok_site(p: Vec2, poly: &[Vec2], margin: f32) -> bool {
     nd_sim::zoning::point_in_polygon(p, poly) && distance_to_boundary(p, poly) >= margin
 }
@@ -108,7 +94,7 @@ fn chemical_vents(poly: &[Vec2]) -> Vec<(Vec2, f32, VentKind)> {
 /// world coordinates (add the lot's pad height). Empty for clean kinds.
 pub fn dirty_vents(lot: &nd_sim::Lot, kind: nd_sim::BusinessKind) -> Vec<Vent> {
     use nd_sim::BusinessKind as B;
-    let (frame, poly) = local_lot(lot);
+    let (frame, poly) = crate::buildings::Frame::lot_local(lot);
     let at = |p: Vec2, h: f32, kind: VentKind| {
         let w = frame.to_world(p.x, p.y);
         Vent { pos: Vec3::new(w.x, h, w.y), kind }

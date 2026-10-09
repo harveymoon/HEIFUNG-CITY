@@ -731,12 +731,8 @@ fn extras_paths_stay_on_their_lot() {
 
 /// A bare context on a lot, for driving one part generator directly.
 fn ctx_on<'a>(lot: &Lot, rules: &'a BuildingRules, pal: &'a Palette, tier: Tier, wear: f32) -> Ctx<'a> {
-    let frame = Frame::from_lot(lot);
+    let (frame, lot_poly) = Frame::lot_local(lot);
     let r = rules.for_land_use(LandUse::Residential);
-    let mut lot_poly: Vec<Vec2> = lot.polygon.iter().map(|p| frame.to_local(*p)).collect();
-    if polygon_area(&lot_poly) < 0.0 {
-        lot_poly.reverse();
-    }
     let poly = parts::offset_poly(&lot_poly, r.inset);
     Ctx {
         fw: frame.width,

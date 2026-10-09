@@ -233,7 +233,7 @@ pub(crate) fn coal_layout(poly: &[Vec2], seed: u64, scale: f32) -> CoalLayout {
 /// [plant-scale] The plumes of a coal station on `lot`: every stack's top
 /// (smoke) and every cooling tower's mouth (steam), for the renderer.
 pub fn coal_vents(lot: &nd_sim::Lot, seed: u64, scale: f32) -> Vec<CoalVent> {
-    let (frame, poly) = local_lot(lot);
+    let (frame, poly) = crate::buildings::Frame::lot_local(lot);
     let lay = coal_layout(&poly, seed, scale);
     let world = |p: Vec2| frame.to_world(p.x, p.y);
     let mut out: Vec<CoalVent> = lay
@@ -540,7 +540,7 @@ pub fn solar_trackers(lot: &nd_sim::Lot, field: Option<&PlantField>) -> Vec<Sola
     let sites: Vec<Vec2> = match field {
         Some(field) => field.solar_sites(),
         None => {
-            let (frame, poly) = local_lot(lot);
+            let (frame, poly) = crate::buildings::Frame::lot_local(lot);
             solar_sites(&poly).into_iter().map(|p| frame.to_world(p.x, p.y)).collect()
         }
     };
@@ -877,21 +877,6 @@ const GRAPHITE: [f32; 3] = [0.075, 0.08, 0.085];
 const GUNMETAL: [f32; 3] = [0.16, 0.17, 0.18];
 const MATTE_BLACK: [f32; 3] = [0.025, 0.025, 0.03];
 
-/// The parcel outline in the lot's own frame, cleaned and counter-clockwise,
-/// as the building generators see it.
-fn local_lot(lot: &nd_sim::Lot) -> (super::Frame, Vec<Vec2>) {
-    let frame = super::Frame::from_lot(lot);
-    let mut poly = clean_poly(&lot.polygon.iter().map(|p| frame.to_local(*p)).collect::<Vec<_>>(), 0.3);
-    if poly.len() < 3 {
-        let (hw, hd) = (frame.width * 0.5, frame.depth * 0.5);
-        poly = vec![Vec2::new(-hw, -hd), Vec2::new(hw, -hd), Vec2::new(hw, hd), Vec2::new(-hw, hd)];
-    }
-    if nd_sim::zoning::polygon_area(&poly) < 0.0 {
-        poly.reverse();
-    }
-    (frame, poly)
-}
-
 /// Turbine sites in lot coordinates with a tiny height jitter and a rotor
 /// phase: staggered rows `TURBINE_SPACING` apart, centred on the parcel,
 /// keeping every blade tip `TURBINE_CLEARANCE` inside the lot and the front
@@ -953,7 +938,7 @@ pub fn wind_turbines(lot: &nd_sim::Lot, seed: u64, field: Option<&PlantField>) -
     if let Some(field) = field {
         return field.wind_sites().into_iter().map(|(p, dh, phase)| Turbine { pos: p, hub: TURBINE_MAST + dh, phase }).collect();
     }
-    let (frame, poly) = local_lot(lot);
+    let (frame, poly) = crate::buildings::Frame::lot_local(lot);
     wind_sites(&poly, seed).into_iter().map(|(p, dh, phase)| Turbine { pos: frame.to_world(p.x, p.y), hub: TURBINE_MAST + dh, phase }).collect()
 }
 
@@ -1433,7 +1418,7 @@ mod tests {
         let cases = [(&small, 0.72f32), (&mid, 1.09), (&big, 2.4)];
         let mut last_stacks = 0;
         for (lot, scale) in cases {
-            let (_, poly) = local_lot(lot);
+            let (_, poly) = crate::buildings::Frame::lot_local(lot);
             let a = coal_layout(&poly, 77, scale);
             assert_eq!(a, coal_layout(&poly, 77, scale), "same seed, same station");
             assert!(!a.boilers.is_empty() && !a.stacks.is_empty() && !a.heaps.is_empty(), "{scale}: {a:?}");
@@ -1455,9 +1440,9 @@ mod tests {
             assert_eq!(fingerprint(&g1), fingerprint(&g2), "{scale}: same seed, same mesh");
             check_mesh_ok(&g1);
         }
-        let (_, poly) = local_lot(&big);
+        let (_, poly) = crate::buildings::Frame::lot_local(&big);
         let b = coal_layout(&poly, 77, 2.4);
-        let (_, poly_s) = local_lot(&small);
+        let (_, poly_s) = crate::buildings::Frame::lot_local(&small);
         let s = coal_layout(&poly_s, 77, 0.72);
         assert!(b.stacks.len() >= s.stacks.len() + 3, "big {} stacks, small {}", b.stacks.len(), s.stacks.len());
         assert!(b.boilers.len() > s.boilers.len());
@@ -1468,14 +1453,14 @@ mod tests {
         // A huge lot does not stretch it: the station keeps its size and
         // the rest is coal yard.
         let huge = plant_lot(110.0, 110.0);
-        let (_, poly_h) = local_lot(&huge);
+        let (_, poly_h) = crate::buildings::Frame::lot_local(&huge);
         let h = coal_layout(&poly_h, 77, 2.4);
         assert_eq!(h.boilers.len(), b.boilers.len());
         let size = |l: &CoalLayout| l.boilers.iter().map(|x| x.1.x * x.1.y).sum::<f32>();
         assert!((size(&h) - size(&b)).abs() < 1e-3 || h.boilers.iter().all(|x| x.1.x < 5.5), "boilers keep their size");
         assert!(h.heaps.len() > b.heaps.len(), "more coal yard on the spare ground");
         // Older saves' plants (scale 1) are the two-unit station.
-        let (_, poly_m) = local_lot(&mid);
+        let (_, poly_m) = crate::buildings::Frame::lot_local(&mid);
         assert_eq!(coal_layout(&poly_m, 5, 1.0).boilers.len(), 2);
     }
 
@@ -1490,7 +1475,7 @@ mod tests {
     fn coal_layout_ascii() {
         for (w, d, scale) in [(24.0f32, 30.0f32, 0.72f32), (32.0, 34.0, 1.09), (40.0, 40.0, 1.6), (48.0, 52.0, 2.4), (110.0, 110.0, 2.4)] {
             let lot = plant_lot(w, d);
-            let (_, poly) = local_lot(&lot);
+            let (_, poly) = crate::buildings::Frame::lot_local(&lot);
             let l = coal_layout(&poly, 77, scale);
             let (lo, hi) = bounds(&poly);
             let mut grid = vec![vec!['.'; ((hi.x - lo.x) / 1.0) as usize + 1]; ((hi.y - lo.y) / 2.0) as usize + 1];

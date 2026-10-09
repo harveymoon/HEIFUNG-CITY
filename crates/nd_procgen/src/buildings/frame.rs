@@ -28,6 +28,30 @@ impl Frame {
         Self { center, along, inward, width: lot.width(), depth: lot.depth() }
     }
 
+    /// The parcel's outline in this frame exactly as the styles see it
+    /// (`Ctx::lot_poly`): cleaned at 0.3 m, the frame's own rectangle when
+    /// too little of it survives, counter-clockwise. Everything drawn
+    /// outside the mesh that must line up with it (smoke vents, solar
+    /// trackers, turbines, parking bays) reads the outline from here.
+    pub fn local_poly(&self, lot: &Lot) -> Vec<Vec2> {
+        let mut poly = parts::clean_poly(&lot.polygon.iter().map(|p| self.to_local(*p)).collect::<Vec<_>>(), 0.3);
+        if poly.len() < 3 {
+            let (hw, hd) = (self.width * 0.5, self.depth * 0.5);
+            poly = vec![Vec2::new(-hw, -hd), Vec2::new(hw, -hd), Vec2::new(hw, hd), Vec2::new(-hw, hd)];
+        }
+        if polygon_area(&poly) < 0.0 {
+            poly.reverse();
+        }
+        poly
+    }
+
+    /// A lot's frame and its outline in it ([`Frame::local_poly`]).
+    pub fn lot_local(lot: &Lot) -> (Frame, Vec<Vec2>) {
+        let frame = Frame::from_lot(lot);
+        let poly = frame.local_poly(lot);
+        (frame, poly)
+    }
+
     /// The identity frame: lot-local and world coordinates coincide, so the
     /// frame-taking helpers draw straight into world space (parks, rail and
     /// vacant lots lay out from world polygons).
