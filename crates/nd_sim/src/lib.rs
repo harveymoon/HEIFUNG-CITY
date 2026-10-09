@@ -67,6 +67,8 @@ pub mod roads;
 pub(crate) mod rng_save;
 /// Which old street piece a new one continues, through a road rebuild.
 pub(crate) mod seg_match;
+/// Ready-made cities (the demo district) for the app, tests and probes.
+pub mod scenarios;
 pub mod services;
 /// [waterfront] Waterfront lots, public beaches and private jetties.
 pub mod shore;

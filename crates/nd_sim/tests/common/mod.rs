@@ -6,62 +6,14 @@
 #![allow(dead_code)]
 
 use nd_minds::RuleBasedMind;
-use nd_sim::roads::RoadKind;
-use nd_sim::{Activity, BuildingId, CitizenId, Decision, Gesture, LandUse, MindContext, MindProvider, Placeable, PowerPlantKind, RailFacility, ServiceKind, Tier, Vec2, World, WorldConfig};
+use nd_sim::{Activity, BuildingId, CitizenId, Decision, LandUse, MindContext, MindProvider, Placeable, ServiceKind, Tier, Vec2, World, WorldConfig};
 use std::sync::OnceLock;
 
 /// The same layout as `Sim::new` + `Sim::seed_demo_district` in nd_app.
 pub fn demo_world() -> World {
     let mut world = World::new(WorldConfig::default());
     world.drain_events();
-    world.start_project();
-    for i in -2..=2 {
-        let c = i as f32 * 140.0;
-        world.add_gesture(Gesture::Road { points: vec![Vec2::new(-280.0, c), Vec2::new(280.0, c)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
-        world.add_gesture(Gesture::Road { points: vec![Vec2::new(c, -280.0), Vec2::new(c, 280.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
-    }
-    let cell = |cx: f32, cy: f32| vec![Vec2::new(cx - 65.0, cy - 65.0), Vec2::new(cx + 65.0, cy - 65.0), Vec2::new(cx + 65.0, cy + 65.0), Vec2::new(cx - 65.0, cy + 65.0)];
-    let plan = [
-        (-210.0, -210.0, LandUse::Industrial), (-70.0, -210.0, LandUse::Industrial), (70.0, -210.0, LandUse::Residential), (210.0, -210.0, LandUse::Residential),
-        (-210.0, -70.0, LandUse::Commercial), (-70.0, -70.0, LandUse::Entertainment), (70.0, -70.0, LandUse::Commercial), (210.0, -70.0, LandUse::Residential),
-        (-210.0, 70.0, LandUse::Residential), (-70.0, 70.0, LandUse::Park), (70.0, 70.0, LandUse::Civic), (210.0, 70.0, LandUse::Commercial),
-        (-210.0, 210.0, LandUse::Residential), (-70.0, 210.0, LandUse::Residential), (70.0, 210.0, LandUse::Entertainment), (210.0, 210.0, LandUse::Residential),
-    ];
-    for (x, y, lu) in plan {
-        world.add_gesture(Gesture::Zone { polygon: cell(x, y), land_use: lu });
-    }
-    world.add_gesture(Gesture::Road {
-        points: vec![Vec2::new(-420.0, nd_sim::rail::TRUNK_Y), Vec2::new(-330.0, -410.0), Vec2::new(-280.0, -348.0), Vec2::new(-110.0, -348.0), Vec2::new(-70.0, -324.0), Vec2::new(150.0, -324.0)],
-        lanes_fwd: 0,
-        lanes_bwd: 0,
-        curved: false,
-        kind: RoadKind::Rail,
-        elevation: Vec::new(),
-    });
-    world.implement();
-    world.economy.treasury = world.economy.treasury.max(150_000.0);
-    // The district's way in: a street north from the grid onto the highway.
-    world.link_to_highway(Vec2::new(0.0, 280.0));
-    let _ = world.place_rail_facility(RailFacility::FreightYard, Vec2::new(-200.0, -330.0));
-    let _ = world.place_rail_facility(RailFacility::Station, Vec2::new(80.0, -310.0));
-    let lot = world.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial && l.building.is_none() && l.area() >= 600.0).min_by(|a, b| (a.1.area() - nd_sim::power::COAL_REFERENCE_AREA).abs().total_cmp(&(b.1.area() - nd_sim::power::COAL_REFERENCE_AREA).abs())).map(|(id, _)| id);
-    if let Some(lot) = lot {
-        let _ = world.build_power(lot, PowerPlantKind::Coal);
-    }
-    let lot = world
-        .lots
-        .iter()
-        .filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial && l.building.is_none() && l.car_access() && l.area() >= nd_sim::transit::DEPOT_MIN_AREA)
-        .max_by(|a, b| a.1.area().total_cmp(&b.1.area()))
-        .map(|(id, _)| id);
-    if let Some(lot) = lot {
-        let _ = world.build_depot(lot);
-    }
-    let line = world.add_bus_route();
-    for p in [(-70.0, -136.0), (70.0, -136.0), (136.0, -70.0), (136.0, 70.0), (70.0, 136.0), (-70.0, 136.0), (-136.0, 70.0), (-136.0, -70.0)] {
-        let _ = world.add_bus_stop(line, Vec2::new(p.0, p.1));
-    }
-    world.set_route_buses(line, 2);
+    nd_sim::scenarios::demo_district(&mut world);
     world
 }
 

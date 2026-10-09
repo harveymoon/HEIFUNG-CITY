@@ -5,7 +5,7 @@ use std::path::Path;
 
 use bevy::prelude::*;
 use nd_minds::{HybridMind, MockBackend};
-use nd_sim::{SimEvent, Vec2 as SVec2, World, WorldConfig};
+use nd_sim::{SimEvent, World, WorldConfig};
 
 use crate::camera::CameraMode;
 use crate::ui::UiFlags;
@@ -137,75 +137,7 @@ impl Sim {
     /// Lay out a small grid with mixed zoning in the middle of the map,
     /// joined to the highway by a street and a pair of ramps.
     pub fn seed_demo_district(&mut self) {
-        use nd_sim::{Gesture, LandUse};
-        self.world.start_project();
-        for i in -2..=2 {
-            let c = i as f32 * 140.0;
-            self.world.add_gesture(Gesture::Road { points: vec![SVec2::new(-280.0, c), SVec2::new(280.0, c)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: nd_sim::roads::RoadKind::Street, elevation: Vec::new() });
-            self.world.add_gesture(Gesture::Road { points: vec![SVec2::new(c, -280.0), SVec2::new(c, 280.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: nd_sim::roads::RoadKind::Street, elevation: Vec::new() });
-        }
-        let cell = |cx: f32, cy: f32| {
-            vec![SVec2::new(cx - 65.0, cy - 65.0), SVec2::new(cx + 65.0, cy - 65.0), SVec2::new(cx + 65.0, cy + 65.0), SVec2::new(cx - 65.0, cy + 65.0)]
-        };
-        let plan = [
-            (-210.0, -210.0, LandUse::Industrial), (-70.0, -210.0, LandUse::Industrial), (70.0, -210.0, LandUse::Residential), (210.0, -210.0, LandUse::Residential),
-            (-210.0, -70.0, LandUse::Commercial), (-70.0, -70.0, LandUse::Entertainment), (70.0, -70.0, LandUse::Commercial), (210.0, -70.0, LandUse::Residential),
-            (-210.0, 70.0, LandUse::Residential), (-70.0, 70.0, LandUse::Park), (70.0, 70.0, LandUse::Civic), (210.0, 70.0, LandUse::Commercial),
-            (-210.0, 210.0, LandUse::Residential), (-70.0, 210.0, LandUse::Residential), (70.0, 210.0, LandUse::Entertainment), (210.0, 210.0, LandUse::Residential),
-        ];
-        for (x, y, lu) in plan {
-            self.world.add_gesture(Gesture::Zone { polygon: cell(x, y), land_use: lu });
-        }
-        // A branch off the trunk line (a turnout, eased into curves when built), running behind the southern row.
-        self.world.add_gesture(Gesture::Road { points: vec![SVec2::new(-420.0, nd_sim::rail::TRUNK_Y), SVec2::new(-330.0, -410.0), SVec2::new(-280.0, -348.0), SVec2::new(-110.0, -348.0), SVec2::new(-70.0, -324.0), SVec2::new(150.0, -324.0)], lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: nd_sim::roads::RoadKind::Rail, elevation: Vec::new() });
-        self.world.implement();
-        // The way in: a street north from the grid onto the highway (or,
-        // with no highway, a road off the east edge of the map).
-        if !self.world.link_to_highway(SVec2::new(0.0, 280.0)) {
-            self.world.add_road(&[SVec2::new(280.0, 0.0), SVec2::new(nd_sim::landscape::MAP_EDGE, 0.0)], 1, 1);
-        }
-        // The demo has the money for its showpieces.
-        self.world.economy.treasury = self.world.economy.treasury.max(150_000.0);
-        // A freight yard and a station set down beside the branch; their
-        // street sides land on the southern avenue, so both open at once.
-        if self.world.facilities.is_empty() {
-            use nd_sim::RailFacility;
-            let _ = self.world.place_rail_facility(RailFacility::FreightYard, SVec2::new(-200.0, -330.0));
-            let _ = self.world.place_rail_facility(RailFacility::Station, SVec2::new(80.0, -310.0));
-        }
-        // A coal plant to start with: cheap power and a haze over the industrial corner.
-        if self.world.buildings.values().any(|b| b.plant.is_some()) {
-            return;
-        }
-        let lot = self
-            .world
-            .lots
-            .iter()
-            .filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial && l.building.is_none() && l.area() >= 600.0)
-            // [plant-scale] The lot nearest a standard coal plant's site.
-            .min_by(|a, b| (a.1.area() - nd_sim::power::COAL_REFERENCE_AREA).abs().total_cmp(&(b.1.area() - nd_sim::power::COAL_REFERENCE_AREA).abs()))
-            .map(|(id, _)| id);
-        if let Some(lot) = lot {
-            let _ = self.world.build_power(lot, nd_sim::PowerPlantKind::Coal);
-        }
-        // A bus depot on industrial land and one line round the four central blocks.
-        if self.world.transit.routes.is_empty() {
-            let lot = self
-                .world
-                .lots
-                .iter()
-                .filter(|(_, l)| l.usable() && l.land_use == LandUse::Industrial && l.building.is_none() && l.car_access() && l.area() >= nd_sim::transit::DEPOT_MIN_AREA)
-                .max_by(|a, b| a.1.area().total_cmp(&b.1.area()))
-                .map(|(id, _)| id);
-            if let Some(lot) = lot {
-                let _ = self.world.build_depot(lot);
-            }
-            let line = self.world.add_bus_route();
-            for p in [(-70.0, -136.0), (70.0, -136.0), (136.0, -70.0), (136.0, 70.0), (70.0, 136.0), (-70.0, 136.0), (-136.0, 70.0), (-136.0, -70.0)] {
-                let _ = self.world.add_bus_stop(line, SVec2::new(p.0, p.1));
-            }
-            self.world.set_route_buses(line, 2);
-        }
+        nd_sim::scenarios::demo_district(&mut self.world);
     }
 
     /// Fraction of the way from the last tick to the next, for interpolation.
