@@ -51,7 +51,7 @@ pub fn city_params_from(cmd: &Value) -> Result<(nd_procgen::citygen::CityPreset,
         Some(s) => CityPreset::parse(s).ok_or_else(|| format!("unknown city preset {s:?}; one of {}", CityPreset::ALL.map(|p| p.key()).join(", ")))?,
         None => CityPreset::GridPlaza,
     };
-    let seed = opt_u64(cmd, "seed")?.unwrap_or(1);
+    let seed = opt_u64(cmd, "seed")?.unwrap_or(preset.default_seed());
     let mut p = match opt_str(cmd, "landscape")? {
         Some(s) => LandscapeParams::preset(LandscapePreset::from_label(s).ok_or_else(|| format!("unknown landscape {s:?}; one of river_valley, islands, coast, delta, plains, flat"))?, seed),
         None => preset.landscape(seed),

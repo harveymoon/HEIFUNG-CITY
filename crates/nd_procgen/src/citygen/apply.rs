@@ -16,6 +16,9 @@ pub struct LaidCity {
     pub links: usize,
     pub lots: usize,
     pub way_in: bool,
+    /// [perfect-city] What a planned preset's furnishing put down, one line
+    /// per placement (`furnish::furnish`); empty for the other presets.
+    pub furnished: Vec<String>,
 }
 
 /// Lay `plan` out in `world` (a fresh one, on the landscape the plan was
@@ -23,8 +26,11 @@ pub struct LaidCity {
 pub fn lay_city(world: &mut World, plan: &CityPlan) -> LaidCity {
     let mut out = LaidCity::default();
     world.start_project();
+    let planned = plan.preset.furnished();
     for r in &plan.roads {
-        let (lanes_fwd, lanes_bwd) = r.class.lanes();
+        // [perfect-city] A planned city's collectors are 2+2 avenues too:
+        // the capacity the grid needs when it fills up.
+        let (lanes_fwd, lanes_bwd) = if planned && r.class == super::RoadClass::Collector { (2, 2) } else { r.class.lanes() };
         world.add_gesture(Gesture::Road { points: r.points.clone(), lanes_fwd, lanes_bwd, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
         out.roads += 1;
     }
@@ -32,8 +38,9 @@ pub fn lay_city(world: &mut World, plan: &CityPlan) -> LaidCity {
         world.add_gesture(Gesture::Zone { polygon: z.polygon.clone(), land_use: z.land_use });
         out.zones += 1;
     }
-    // The interchanges go in the same project: one rebuild for the lot.
-    for &l in &plan.links {
+    // The interchanges go in the same project: one rebuild for the lot (a
+    // planned city lays diamonds after, `furnish`).
+    for &l in plan.links.iter().filter(|_| !planned) {
         if let Some(gestures) = world.highway_link(l) {
             for g in gestures {
                 world.add_gesture(g);
@@ -49,6 +56,14 @@ pub fn lay_city(world: &mut World, plan: &CityPlan) -> LaidCity {
         if let Some(p) = east {
             world.add_road(&[p, Vec2::new(nd_sim::landscape::MAP_EDGE, p.y)], 1, 1);
         }
+    }
+    if planned {
+        let f = super::furnish::furnish(world, plan);
+        out.links = plan.links.len();
+        out.furnished = f.log;
+        out.lots = world.lots.len();
+        out.way_in = world.has_way_in();
+        return out;
     }
     // A starting town has the money for its plant.
     world.economy.treasury = world.economy.treasury.max(150_000.0);

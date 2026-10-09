@@ -22,6 +22,8 @@
 
 pub mod apply;
 pub mod field;
+pub mod furnish;
+pub mod perfect;
 pub mod graph;
 pub mod landuse;
 pub mod trace;
@@ -53,10 +55,15 @@ pub enum CityPreset {
     OldTown,
     /// Two radial centres, each with its own grid, grown together.
     TwinCentres,
+    /// [perfect-city] A planned city on a temperate coast: a clean avenue
+    /// grid, a downtown by the sea, works downwind to the east, farms
+    /// upwind to the west, and every service, transit line and plant laid
+    /// down on day one (`perfect::furnish`).
+    PerfectCity,
 }
 
 impl CityPreset {
-    pub const ALL: [CityPreset; 4] = [CityPreset::GridPlaza, CityPreset::CoastalRiver, CityPreset::OldTown, CityPreset::TwinCentres];
+    pub const ALL: [CityPreset; 5] = [CityPreset::GridPlaza, CityPreset::CoastalRiver, CityPreset::OldTown, CityPreset::TwinCentres, CityPreset::PerfectCity];
 
     pub fn key(self) -> &'static str {
         match self {
@@ -64,6 +71,7 @@ impl CityPreset {
             CityPreset::CoastalRiver => "coastal_river",
             CityPreset::OldTown => "old_town",
             CityPreset::TwinCentres => "twin_centres",
+            CityPreset::PerfectCity => "perfect_city",
         }
     }
 
@@ -73,6 +81,7 @@ impl CityPreset {
             CityPreset::CoastalRiver => "Coastal river town",
             CityPreset::OldTown => "Old town, new grid",
             CityPreset::TwinCentres => "Twin centres",
+            CityPreset::PerfectCity => "Perfect AI City",
         }
     }
 
@@ -82,7 +91,23 @@ impl CityPreset {
             CityPreset::CoastalRiver => "A port where a river meets the sea; streets follow the shore.",
             CityPreset::OldTown => "A twisting old town in a river valley, modern grids either side.",
             CityPreset::TwinCentres => "Two radial centres with their own grids, grown together.",
+            CityPreset::PerfectCity => "Fully planned on a temperate coast: zoning, services, transit and power built, deep pockets. Day 1, ready to grow.",
         }
+    }
+
+    /// The seed a new game of this preset starts from when none is given:
+    /// [perfect-city] the planned city's site was chosen on its own.
+    pub fn default_seed(self) -> u64 {
+        match self {
+            CityPreset::PerfectCity => perfect::SEED,
+            _ => 1,
+        }
+    }
+
+    /// Whether the preset furnishes the city (services, transit, power,
+    /// districts) as well as laying out its streets and zoning.
+    pub fn furnished(self) -> bool {
+        self == CityPreset::PerfectCity
     }
 
     /// Parse a key or label ("old_town", "Old town", "oldtown").
@@ -99,6 +124,7 @@ impl CityPreset {
             CityPreset::CoastalRiver => LandscapeParams { water: 0.8, branching: 0.15, ..LandscapeParams::preset(LandscapePreset::Coast, seed) },
             CityPreset::OldTown => LandscapeParams { relief: 0.25, branching: 0.2, ..LandscapeParams::preset(LandscapePreset::RiverValley, seed) },
             CityPreset::TwinCentres => LandscapeParams { water: 0.2, ..LandscapeParams::preset(LandscapePreset::Plains, seed) },
+            CityPreset::PerfectCity => LandscapeParams { water: 0.85, relief: 0.15, branching: 0.1, islands: 1, climate: nd_sim::Climate::Temperate, ..LandscapeParams::preset(LandscapePreset::Coast, seed) },
         }
     }
 }
@@ -157,6 +183,9 @@ pub struct CityPlan {
     pub links: Vec<Vec2>,
     /// The town centres.
     pub cores: Vec<Vec2>,
+    /// Named areas of the plan (`works`, `farms`): (name, centre, radius).
+    #[serde(default)]
+    pub areas: Vec<(String, Vec2, f32)>,
 }
 
 impl CityPlan {
@@ -176,6 +205,11 @@ struct Spec {
     twists: Vec<Twist>,
     /// Works districts: (position, radius).
     industry: Vec<(Vec2, f32)>,
+    /// Farmland: zoned industrial, farmed (position, radius).
+    farms: Vec<(Vec2, f32)>,
+    /// How strongly the railway and the highway draw works yards (1: the
+    /// whole line; a planned city keeps them to its works districts).
+    line_pull: f32,
     levels: [LevelParams; 3],
 }
 
@@ -223,6 +257,8 @@ fn spec(preset: CityPreset, land: &Landscape, rng: &mut impl Rng) -> Spec {
                 bases: vec![Basis::Grid { centre, size: 4000.0, theta, weight: 1.0 }, Basis::Radial { centre: plaza, size: 170.0, weight: 2.4 }],
                 twists: Vec::new(),
                 industry: vec![(works, 260.0)],
+                farms: Vec::new(),
+                line_pull: 1.0,
                 levels: lv,
             }
         }
@@ -241,6 +277,8 @@ fn spec(preset: CityPreset, land: &Landscape, rng: &mut impl Rng) -> Spec {
                 bases: vec![Basis::Grid { centre, size: 3000.0, theta: j(0.1).x, weight: 0.7 }, Basis::Radial { centre: plaza, size: 150.0, weight: 2.0 }],
                 twists: vec![Twist { centre: port, size: 260.0, angle: 0.25, wavelength: 260.0 }],
                 industry: vec![(works, 240.0)],
+                farms: Vec::new(),
+                line_pull: 1.0,
                 levels: lv,
             }
         }
@@ -264,6 +302,8 @@ fn spec(preset: CityPreset, land: &Landscape, rng: &mut impl Rng) -> Spec {
                 ],
                 twists: vec![Twist { centre: old, size: 330.0, angle: 0.75, wavelength: 200.0 }],
                 industry: vec![(works, 240.0)],
+                farms: Vec::new(),
+                line_pull: 1.0,
                 levels: lv,
             }
         }
@@ -286,9 +326,12 @@ fn spec(preset: CityPreset, land: &Landscape, rng: &mut impl Rng) -> Spec {
                 ],
                 twists: Vec::new(),
                 industry: vec![(works, 280.0)],
+                farms: Vec::new(),
+                line_pull: 1.0,
                 levels: lv,
             }
         }
+        CityPreset::PerfectCity => perfect::spec(land),
     }
 }
 
@@ -405,6 +448,10 @@ pub fn generate(preset: CityPreset, seed: u64, land: &Landscape) -> CityPlan {
         rail_y: Some(rail_y),
         cores: spec.cores.clone(),
         plazas: spec.plazas.clone(),
+        // [perfect-city] A planned city keeps level crossings to its
+        // avenues: fewer, farther apart, with room for a train at a
+        // station between them.
+        rail_cross: if preset == CityPreset::PerfectCity { Level::Main } else { Level::Major },
     };
     let raster = FieldRaster::new(&field, site.lo - Vec2::splat(20.0), site.hi + Vec2::splat(20.0), 6.0);
     let mut tracer = Tracer::new(&site, &raster);
@@ -426,11 +473,13 @@ pub fn generate(preset: CityPreset, seed: u64, land: &Landscape) -> CityPlan {
         g.thin_star(c, 4);
     }
     g.clean();
-    let links = add_links(&mut g);
+    let links = if preset == CityPreset::PerfectCity { add_links(&mut g, 3, 480.0) } else { add_links(&mut g, 2, 600.0) };
     let junctions: std::collections::HashSet<(u32, u32)> = g.alive_edges().flat_map(|(_, e)| [e.a, e.b]).map(|n| key(g.nodes[n].pos)).collect();
     let roads = g.ways().into_iter().map(|(pts, level)| CityRoad { points: sample_way(&pts, &junctions, rail_y), class: RoadClass::of(level) }).collect();
-    let zones = zone(&g, &site, &spec, seed);
-    CityPlan { preset, seed, roads, zones, links, cores: spec.cores.iter().map(|c| c.0).collect() }
+    let zones = zone(&g, &site, &spec, seed, preset);
+    let mut areas: Vec<(String, Vec2, f32)> = spec.industry.iter().map(|&(p, r)| ("works".to_string(), p, r)).collect();
+    areas.extend(spec.farms.iter().map(|&(p, r)| ("farms".to_string(), p, r)));
+    CityPlan { preset, seed, roads, zones, links, cores: spec.cores.iter().map(|c| c.0).collect(), areas }
 }
 
 /// A curved street runs straight for this far into a junction.
@@ -507,8 +556,8 @@ fn sample_way(pts: &[Vec2], junctions: &std::collections::HashSet<(u32, u32)>, r
     out
 }
 
-/// Up to two arterial stubs north to the highway's edge, far apart.
-fn add_links(g: &mut graph::Graph) -> Vec<Vec2> {
+/// Up to `max` arterial stubs north to the highway's edge, `spacing` apart.
+fn add_links(g: &mut graph::Graph, max: usize, spacing: f32) -> Vec<Vec2> {
     let mut cands: Vec<(usize, f32)> = (0..g.nodes.len())
         .filter(|&n| g.degree(n) > 0 && g.nodes[n].pos.y > NORTH_LIMIT - 120.0)
         .map(|n| {
@@ -523,11 +572,11 @@ fn add_links(g: &mut graph::Graph) -> Vec<Vec2> {
     cands.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
     let mut links: Vec<Vec2> = Vec::new();
     for (n, _) in cands {
-        if links.len() >= 2 {
+        if links.len() >= max {
             break;
         }
         let p = g.nodes[n].pos;
-        if links.iter().any(|l| (l.x - p.x).abs() < 600.0) || p.x.abs() > 1400.0 {
+        if links.iter().any(|l| (l.x - p.x).abs() < spacing) || p.x.abs() > 1400.0 {
             continue;
         }
         let top = Vec2::new(p.x, NORTH_LIMIT);
@@ -580,7 +629,7 @@ fn hash01(seed: u64, p: Vec2) -> f32 {
 }
 
 /// The blocks and the strips outside the outer streets, zoned.
-fn zone(g: &graph::Graph, site: &Site, spec: &Spec, seed: u64) -> Vec<CityZone> {
+fn zone(g: &graph::Graph, site: &Site, spec: &Spec, seed: u64, preset: CityPreset) -> Vec<CityZone> {
     let land = site.landscape;
     let rail_y = site.rail_y.unwrap_or(f32::NEG_INFINITY);
     let faces = g.faces();
@@ -598,12 +647,12 @@ fn zone(g: &graph::Graph, site: &Site, spec: &Spec, seed: u64) -> Vec<CityZone> 
         let on_collector = edges.iter().any(|&e| g.edges[e].level == Level::Major);
         let waterfront = !land.is_flat() && land.water_distance(c) < 80.0;
         let edge = if strip { 1.0 } else if edges.iter().any(|e| outer_edges.contains(e)) { 0.6 } else { 0.0 };
-        let rail = (-((c.y - rail_y).abs() - 30.0).max(0.0) / 150.0).exp();
-        let highway = (-((HIGHWAY_Y - c.y) - 90.0).max(0.0) / 150.0).exp() * 0.8;
-        let spot = spec.industry.iter().map(|(p, r)| (-(c.distance(*p) / r).powi(2)).exp()).fold(0.0, f32::max);
+        let rail = (-((c.y - rail_y).abs() - 30.0).max(0.0) / 150.0).exp() * spec.line_pull;
+        let highway = (-((HIGHWAY_Y - c.y) - 90.0).max(0.0) / 150.0).exp() * 0.8 * spec.line_pull;
+        let spot = spec.industry.iter().chain(&spec.farms).map(|(p, r)| (-(c.distance(*p) / r).powi(2)).exp()).fold(0.0, f32::max);
         // The blocks round a plaza are its park.
         let plaza = !strip && spec.plazas.iter().any(|p| nd_sim::geom::point_in_polygon(*p, &polygon) || polygon.iter().any(|q| q.distance(*p) < 1.0));
-        landuse::Patch { centroid: c, frontage, area, core: site.core(c), on_arterial, on_collector, waterfront, edge, industry: rail.max(highway).max(spot), plaza, luck: hash01(seed, c), polygon }
+        landuse::Patch { centroid: c, frontage, area, core: site.core(c), on_arterial, on_collector, waterfront, edge, industry: rail.max(highway).max(spot), works: spot, plaza, luck: hash01(seed, c), polygon }
     };
     let mut patches = Vec::new();
     // Strips first: the blocks are painted over them.
@@ -642,6 +691,24 @@ fn zone(g: &graph::Graph, site: &Site, spec: &Spec, seed: u64) -> Vec<CityZone> 
         let edges: Vec<usize> = halves.iter().map(|h| h.0).collect();
         patches.push(feature(ring, frontage, &edges, false));
     }
-    let uses = landuse::allocate(&patches);
+    let mut uses = landuse::allocate(&patches, landuse::shares(preset));
+    if preset == CityPreset::PerfectCity {
+        // [perfect-city] The works and the farms are wholly industrial: no
+        // homes left in among the yards downwind of the plants.
+        for (u, p) in uses.iter_mut().zip(&patches) {
+            if p.works > 0.4 && !p.plaza {
+                *u = LandUse::Industrial;
+            }
+        }
+        // The downtown square: the block just north of the centre is a park.
+        if let Some(&(c, _)) = spec.cores.first() {
+            let sq = c + Vec2::new(0.0, perfect::SQUARE_NORTH);
+            for (u, p) in uses.iter_mut().zip(&patches) {
+                if nd_sim::geom::point_in_polygon(sq, &p.polygon) {
+                    *u = LandUse::Park;
+                }
+            }
+        }
+    }
     patches.into_iter().zip(uses).map(|(p, land_use)| CityZone { polygon: p.polygon, land_use }).collect()
 }
