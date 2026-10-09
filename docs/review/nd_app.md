@@ -423,7 +423,7 @@ After the split, the largest file is about 300 lines.
 
 `main.rs` holds a 12-plugin tuple plus a 5-plugin tuple. The comment notes the 15-element tuple limit. `train_select`, `toll_select` and `road_select` have no plugin: their systems are wired through `tools.rs:729` and direct calls.
 
-**Proposal:** a few domain `PluginGroup`s, so main.rs adds about 4 groups and new modules register inside their group, never in main.rs:
+**Proposal:** a few domain `PluginGroup`s, so main.rs adds about 4 groups and new modules register inside their group, never in main.rs: **REFACTORED 39d95c9 (`CorePlugins`, `WorldViewPlugins`, `PlayerPlugins` in main.rs plus `RemotePlugin`; the overlay plugins register inside render and the select modules)**
 - `CorePlugins`: assets, sim, crash, flags
 - `WorldViewPlugins`: render, camera, map_layers, marks, the overlay framework (which takes build_highlight, stub_marks, ferry_select, metro_ux and the select modules)
 - `PlayerPlugins`: tools, district_tool, ui, committee
