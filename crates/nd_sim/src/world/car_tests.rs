@@ -337,10 +337,23 @@ fn a_mornings_car_sales_are_fetched_through_the_day_not_all_at_once() {
         }
     }
     assert_eq!(started.len(), sold.len(), "every sold car was fetched");
+    // On the dealer's used-car line, or (the line full) driven on out of
+    // town to the trade: gone only at the map edge, counted as sold.
+    let sold0 = w.vehicles.stats.events_total.get("sold").copied().unwrap_or(0);
+    let mut on_court = 0;
+    let mut gone = 0;
     for &vid in &sold {
-        let c = w.vehicles.cars.get(vid).expect("on the forecourt, not gone");
-        assert_eq!(c.spot().map(|s| s.kind), Some(ParkKind::Dealer));
+        match w.vehicles.cars.get(vid).map(|c| c.place) {
+            Some(CarPlace::Parked(s)) => {
+                assert_eq!(s.kind, ParkKind::Dealer, "on the forecourt");
+                on_court += 1;
+            }
+            Some(CarPlace::Driving(cid)) => assert!(matches!(w.traffic.cars[cid].errand, Errand::Sale(_)), "on its way out to the trade"),
+            None => gone += 1,
+        }
     }
+    assert!(on_court >= 1, "the forecourt took some");
+    assert!(sold0 as usize >= gone, "every car gone left town as sold, none vanished");
     assert_consistent(&w);
 }
 
