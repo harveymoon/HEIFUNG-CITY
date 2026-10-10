@@ -533,7 +533,11 @@ fn follow_tools(ctx: &egui::Context, tools: &ToolState) {
     if st.last_tool != Some(tools.tool) && st.last_tool.is_some() {
         // A building tool picked elsewhere opens the window; any other tool
         // (Inspect, Edit, Bulldoze: a button, a key or the API) closes it.
-        set_open(ctx, is_build_tool(tools.tool));
+        // [lines] Editing a line from the Lines window picks the Buses
+        // tool without the Build window over the map.
+        if tools.line_edit.is_none() {
+            set_open(ctx, is_build_tool(tools.tool));
+        }
     }
     if let Some(item) = now {
         if st.last.is_none_or(|l| !l.same(item)) || st.cat.is_none() {
