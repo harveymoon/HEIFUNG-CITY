@@ -37,6 +37,36 @@ pub struct LandValue {
     /// out in [`LandValue::for_use`] by [`access_sensitivity`].
     #[serde(default)]
     pub access: Vec<f32>,
+    /// [pt-growth] The cell's raw score before [`compress`]: the plain sum
+    /// of every term (it can run past 1 in a dense, well-served block, or
+    /// under 0 by a smokestack). `values` is this compressed to `0..1`.
+    /// Empty in old saves until the next update (they read `values`).
+    #[serde(default)]
+    pub raw: Vec<f32>,
+}
+
+/// What land is worth before anything is near it: open ground with a
+/// road to it reads about 0.4 (low tier), every amenity on top.
+pub const BASE: f32 = 0.32;
+
+/// [pt-growth] Raw scores up to this are the value as they are: a field,
+/// a suburb, an ordinary main street read the same as before.
+pub const COMPRESS_KNEE: f32 = 0.45;
+/// Above the knee the score saturates with this scale: each further
+/// `COMPRESS_SCALE` of raw score closes about 63% of the remaining gap to
+/// 1, so 1.0 itself is never reached: 0.66 (high tier) takes a score of
+/// about 0.76, 0.8 about 1.26 and 0.95 about 2.9 (the heart of a big,
+/// rich, well-served downtown), where the old clamp gave 1.0 to anything
+/// past 0.75 (most of a city: the terms summed to 3 or 4 there).
+pub const COMPRESS_SCALE: f32 = 0.8;
+
+/// [pt-growth] The value (`0..1`) of a raw score: itself up to the knee,
+/// then a saturating curve towards 1.
+pub fn compress(raw: f32) -> f32 {
+    if raw <= COMPRESS_KNEE {
+        return raw.max(0.0);
+    }
+    COMPRESS_KNEE + (1.0 - COMPRESS_KNEE) * (1.0 - (-(raw - COMPRESS_KNEE) / COMPRESS_SCALE).exp())
 }
 
 /// `LandValue::park_min` / `nightlife_min` of a cell with no walk node near.
@@ -127,7 +157,7 @@ pub fn nuisance_sensitivity(lu: LandUse) -> f32 {
 impl LandValue {
     pub fn new(half: f32, cell: f32) -> Self {
         let n = ((half * 2.0) / cell).ceil() as usize;
-        Self { cell, half, n, values: vec![0.3; n * n], version: 0, nuisance: Vec::new(), under: Vec::new(), park_min: Vec::new(), nightlife_min: Vec::new(), access: Vec::new() }
+        Self { cell, half, n, values: vec![0.3; n * n], version: 0, nuisance: Vec::new(), under: Vec::new(), park_min: Vec::new(), nightlife_min: Vec::new(), access: Vec::new(), raw: Vec::new() }
     }
 
     /// [sweep-sim] Grow the grid to `half` (an old save's smaller grid),
@@ -151,6 +181,7 @@ impl LandValue {
         self.park_min = pad_square(&self.park_min, old, n, off, NO_DATA);
         self.nightlife_min = pad_square(&self.nightlife_min, old, n, off, NO_DATA);
         self.access = pad_square(&self.access, old, n, off, 0.0);
+        self.raw = pad_square(&self.raw, old, n, off, 0.3);
         self.half = half;
         self.n = n;
         self.version = self.version.wrapping_add(1);
@@ -160,6 +191,8 @@ impl LandValue {
     /// Set every cell (tests and scenarios).
     pub fn fill(&mut self, v: f32) {
         self.values.iter_mut().for_each(|x| *x = v);
+        // The raw scores go: `for_use` reads the values as set.
+        self.raw.clear();
         self.version += 1;
     }
 
@@ -224,15 +257,37 @@ impl LandValue {
     /// power plant lose more than the grid shows, industry less.
     pub fn for_use(&self, p: Vec2, lu: LandUse) -> f32 {
         let n = self.nuisance_at(p);
+        // Homes keep the access term; other uses take it back out.
+        let access = self.access_value_at(p) * (1.0 - access_sensitivity(lu));
+        if self.raw.len() == self.n * self.n {
+            // [pt-growth] The adjustments are in raw units, compressed after
+            // (unless the value was set by hand since: tests, scenarios).
+            let i = self.index(p);
+            let raw = self.raw[i];
+            if (compress(raw) - self.values[i]).abs() < 1e-4 {
+                return compress(raw + n * (1.0 - nuisance_sensitivity(lu)) - access);
+            }
+        }
         let under = if self.under.len() == self.n * self.n {
             let (x, y) = self.coords(p);
             self.under[y.clamp(0, self.n as i32 - 1) as usize * self.n + x.clamp(0, self.n as i32 - 1) as usize]
         } else {
             0.0
         };
-        // Homes keep the access term; other uses take it back out.
-        let access = self.access_value_at(p) * (1.0 - access_sensitivity(lu));
         (self.at(p) + under + n * (1.0 - nuisance_sensitivity(lu)) - access).clamp(0.0, 1.0)
+    }
+
+    /// [pt-growth] The raw score at `p` (see [`LandValue::raw`]); the
+    /// value itself on an old save's grid.
+    pub fn raw_at(&self, p: Vec2) -> f32 {
+        if self.raw.len() != self.n * self.n {
+            return self.at(p);
+        }
+        let i = self.index(p);
+        if (compress(self.raw[i]) - self.values[i]).abs() >= 1e-4 {
+            return self.values[i];
+        }
+        self.raw[i]
     }
 
     pub fn average(&self) -> f32 {
@@ -245,6 +300,64 @@ impl LandValue {
 
 /// Most the activity of working industry can lift run-down land.
 pub const MAX_LIFT: f32 = 0.1;
+
+/// [pt-growth] What a positive influence is, so like adds to like with
+/// diminishing returns: twenty park parcels round a block are one great
+/// park nearby, not twenty times the lift, and a street of high-tier homes
+/// does not pull every street round it to the top. Each channel saturates
+/// at its cap (`cap x tanh(sum / cap)`, both ways); [`Channel::Other`] is
+/// summed as it is (nuisances, crime, contamination, a mansion's NIMBY).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Channel {
+    Other,
+    Roads,
+    Parks,
+    Homes,
+    Civic,
+    Commerce,
+    Services,
+    Transit,
+    Shore,
+    Landmarks,
+    /// Crime hot spots, camps, overflowing bins: a bad block is cheap, a
+    /// bad district is not cheaper than worthless.
+    Blight,
+    /// Plants, works, rotor noise (`splat_nuisance`): one smelter is bad,
+    /// a whole works district is not twenty times worse for the street
+    /// beside it. Stored positive, taken off.
+    Nuisance,
+}
+
+impl Channel {
+    pub const COUNT: usize = 12;
+
+    /// Most the channel adds to (or takes off) a cell, and the scale of the
+    /// curve (`cap x tanh(sum / scale)`: the slope at nothing is
+    /// `cap / scale`, so a scale equal to the cap passes one splat about in
+    /// full); `None`: no cap.
+    pub fn cap(self) -> Option<(f32, f32)> {
+        Some(match self {
+            Channel::Other => return None,
+            // Many splats over a block (every 24 m of road, every park
+            // parcel, shop, home and service): a gentle slope, saturating
+            // over a whole busy quarter.
+            Channel::Roads => (0.25, 1.2),
+            Channel::Homes => (0.15, 1.5),
+            Channel::Parks => (0.3, 0.8),
+            Channel::Civic => (0.2, 0.8),
+            Channel::Commerce => (0.3, 0.6),
+            Channel::Services => (0.25, 0.6),
+            // The few the player places one by one (a station, a marina,
+            // a monument, a beach): one counts about in full (slope 1), a
+            // crowd of them no more than the cap.
+            Channel::Transit => (0.3, 0.3),
+            Channel::Shore => (0.3, 0.3),
+            Channel::Landmarks => (0.25, 0.25),
+            Channel::Blight => (0.1, 0.4),
+            Channel::Nuisance => (0.45, 0.6),
+        })
+    }
+}
 
 /// Accumulates influences and produces the next value grid. Saved with
 /// the world when a save falls mid-cycle.
@@ -260,11 +373,27 @@ pub struct LandValueBuilder {
     /// [`set_access`](Self::set_access) ran (empty: no access term).
     park_min: Vec<f32>,
     nightlife_min: Vec<f32>,
+    /// [pt-growth] Per-channel sums (empty until a channel is used), and
+    /// the channel `splat` writes to.
+    #[serde(default)]
+    channels: Vec<Vec<f32>>,
+    #[serde(skip, default = "other")]
+    channel: usize,
+}
+
+fn other() -> usize {
+    0
 }
 
 impl LandValueBuilder {
     pub fn new(lv: &LandValue) -> Self {
-        Self { n: lv.n, cell: lv.cell, half: lv.half, acc: vec![0.0; lv.n * lv.n], nuisance: vec![0.0; lv.n * lv.n], lift: vec![0.0; lv.n * lv.n], park_min: Vec::new(), nightlife_min: Vec::new() }
+        Self { n: lv.n, cell: lv.cell, half: lv.half, acc: vec![0.0; lv.n * lv.n], nuisance: vec![0.0; lv.n * lv.n], lift: vec![0.0; lv.n * lv.n], park_min: Vec::new(), nightlife_min: Vec::new(), channels: Vec::new(), channel: 0 }
+    }
+
+    /// [pt-growth] Send the following `splat`s to `ch` (until the next
+    /// call); [`Channel::Other`] is the plain sum.
+    pub fn channel(&mut self, ch: Channel) {
+        self.channel = ch as usize;
     }
 
     /// The grid's side in cells, cell size and half extent, for whoever
@@ -283,15 +412,37 @@ impl LandValueBuilder {
         }
     }
 
+    /// [pt-growth] Add a value per cell (row-major, `n * n`) to the plain
+    /// sum; ignored unless it is the size of the grid.
+    pub fn add_cells(&mut self, add: &[f32]) {
+        if add.len() == self.acc.len() {
+            for (a, x) in self.acc.iter_mut().zip(add) {
+                *a += x;
+            }
+        }
+    }
+
     /// Add `weight` at `center`, falling off linearly to zero at `radius`.
     pub fn splat(&mut self, center: Vec2, radius: f32, weight: f32) {
-        Self::splat_into(self.n, self.cell, self.half, &mut self.acc, center, radius, weight);
+        if self.channel == 0 {
+            Self::splat_into(self.n, self.cell, self.half, &mut self.acc, center, radius, weight);
+            return;
+        }
+        let len = self.n * self.n;
+        if self.channels.len() < Channel::COUNT {
+            self.channels.resize(Channel::COUNT, Vec::new());
+        }
+        let buf = &mut self.channels[self.channel];
+        if buf.len() != len {
+            *buf = vec![0.0; len];
+        }
+        Self::splat_into(self.n, self.cell, self.half, buf, center, radius, weight);
     }
 
     /// A nuisance of `weight` (positive): taken off the value like a
     /// negative splat, and remembered so land uses can feel it differently.
     pub fn splat_nuisance(&mut self, center: Vec2, radius: f32, weight: f32) {
-        Self::splat_into(self.n, self.cell, self.half, &mut self.acc, center, radius, -weight);
+        // [pt-growth] Saturating: taken off in `finish` (`Channel::Nuisance`).
         Self::splat_into(self.n, self.cell, self.half, &mut self.nuisance, center, radius, weight);
     }
 
@@ -349,9 +500,26 @@ impl LandValueBuilder {
     /// added after the blur, scaled to nothing on land already worth 0.35.
     pub fn finish(self, base: f32, lv: &mut LandValue) {
         let n = self.n;
-        let acc = Self::blurred(n, &self.acc);
+        let mut acc = Self::blurred(n, &self.acc);
+        // [pt-growth] Each channel blurred, saturated at its cap, added.
+        const CHANNELS: [Channel; Channel::COUNT] = [Channel::Other, Channel::Roads, Channel::Parks, Channel::Homes, Channel::Civic, Channel::Commerce, Channel::Services, Channel::Transit, Channel::Shore, Channel::Landmarks, Channel::Blight, Channel::Nuisance];
+        for (ch, buf) in CHANNELS.iter().zip(&self.channels) {
+            if buf.len() != n * n {
+                continue;
+            }
+            let (cap, scale) = ch.cap().unwrap_or((f32::INFINITY, 1.0));
+            for (a, x) in acc.iter_mut().zip(Self::blurred(n, buf)) {
+                *a += if cap.is_finite() { cap * (x / scale).tanh() } else { x };
+            }
+        }
         let lift = Self::blurred(n, &self.lift);
-        let nuisance = Self::blurred(n, &self.nuisance);
+        // [pt-growth] Nuisance saturates too (`Channel::Nuisance`), and the
+        // saturated amount is what is taken off and remembered.
+        let (ncap, nscale) = Channel::Nuisance.cap().unwrap_or((1.0, 1.0));
+        let nuisance: Vec<f32> = Self::blurred(n, &self.nuisance).into_iter().map(|x| ncap * (x / nscale).tanh()).collect();
+        for (a, x) in acc.iter_mut().zip(&nuisance) {
+            *a -= x;
+        }
         // Walking access is per cell already (a walk, not a radius), so it
         // goes in after the blur, unsmoothed.
         let some = |m: f32| (m < NONE_REACHABLE).then_some(m);
@@ -362,15 +530,20 @@ impl LandValueBuilder {
         };
         let acc: Vec<f32> = if access.is_empty() { acc } else { acc.iter().zip(&access).map(|(a, x)| a + x).collect() };
         lv.under = acc.iter().map(|a| (base + a).min(0.0)).collect();
-        let out: Vec<f32> = acc
+        // [pt-growth] The raw score keeps the whole sum; the value is it
+        // compressed, so a block has to be exceptional to come near 1.
+        let raw: Vec<f32> = acc
             .iter()
             .zip(&lift)
             .map(|(a, l)| {
-                let v = (base + a).clamp(0.0, 1.0);
+                let r = base + a;
+                let v = r.clamp(0.0, 1.0);
                 let low = 1.0 - ((v - 0.1) / 0.25).clamp(0.0, 1.0);
-                (v + l.clamp(0.0, MAX_LIFT) * low).clamp(0.0, 1.0)
+                r + l.clamp(0.0, MAX_LIFT) * low
             })
             .collect();
+        let out: Vec<f32> = raw.iter().map(|r| compress(*r)).collect();
+        lv.raw = raw;
         lv.values = out;
         lv.nuisance = nuisance.into_iter().map(|x| x.clamp(0.0, 1.0)).collect();
         lv.access = access;

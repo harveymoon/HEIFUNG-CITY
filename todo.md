@@ -435,13 +435,13 @@ Sources: docs/playtest/todo_2026-10-10.md (Harvey's list, "T"), docs/playtest/fl
 - [x] citygen::dry water-clearance cap bug → DONE [fix/pt-parcels]: past the raster's 160 m the shore itself is measured (`water_clearance`); the Perfect AI City keeps its 150 m
 
 ### E. Growth, land value and construction [fix/pt-growth]
-- [ ] Land value 1.0 almost everywhere — recalibrate the scale (T)
-- [ ] Growth model: start as low suburbs; "land density" driven by foot traffic; busy main streets densify; lot assembly (buy 5 small lots → apartment), displacement and rent pressure; districts are the only height/rent caps; megatalls still possible (T)
-- [ ] Construction only advances in working hours; randomise when buildings step so the city doesn't jump in sync (T)
-- [ ] Demolition shows a timer and the reason (T)
-- [ ] Universities buy adjacent plots first (T); RVs don't all arrive at once (T)
-- [ ] Building info matches the mesh: "tallest"/"10 floors" on a small building, high-tier "9 floors" hut (F8, F25)
-- [ ] Perfect AI City ceiling ~13k, ~650 priced-out homeless
+- [x] Land value 1.0 almost everywhere — recalibrate the scale (T) → DONE [fix/pt-growth]: saturating channels + compression (1.0 unreachable); Cinder Ridge 71% of lots at 0.95+ → 0% (median 0.72, top 0.83), Perfect AI City 75% → 0% (median ~0.73, top 0.91); tiers/crime/downtown/rooftop thresholds re-read on the new scale; hillsides dearer; old saves recompute on load
+- [x] Growth model: start as low suburbs; "land density" driven by foot traffic; busy main streets densify; lot assembly (buy 5 small lots → apartment), displacement and rent pressure; districts are the only height/rent caps; megatalls still possible (T) → DONE [fix/pt-growth]: foot-traffic grid (smoothed over days) feeds the land density that floors follow; lot assembly of 3-5 small low plots (Perfect: 27 assemblies/115 plots by day 24), developers re-densify their own blocks, step-wise rebuilds, foreclosure of half-empty blocks with rent cut, cheap homes rebuilt cheap while people are priced out; Land density layer (G's) reads it; skyline league unchanged
+- [x] Construction only advances in working hours; randomise when buildings step so the city doesn't jump in sync (T) → DONE [fix/pt-growth]: 08:00-17:00 only, each site in its own 10-minute slot; inspector shows when done
+- [x] Demolition shows a timer and the reason (T) → DONE [fix/pt-growth]: DemolitionReason on every demolition, red bar with clear time in the inspector, API `reason`/`why`/`clear_tick`
+- [x] Universities buy adjacent plots first (T); RVs don't all arrive at once (T) → DONE [fix/pt-growth]: campus prefers plots next door to any campus building; RVs pull up 0.5-14 h after eviction, never 3 within 60 m
+- [x] Building info matches the mesh: "tallest"/"10 floors" on a small building, high-tier "9 floors" hut (F8, F25) → DONE [fix/pt-growth]: civic 2-5 storeys (old saves cut on load, staff by tier); villas/monument/library/precinct never on >3-floor sites; tallest ranked by drawn height; inspector names the building coming down during a rebuild
+- [x] Perfect AI City ceiling ~13k, ~650 priced-out homeless → DONE [fix/pt-growth]: regenerated save grows to 17.8k by day 24 (was 13.4k flat), homeless 155 (was ~700); leftover: unemployment dip in small towns with no free commercial land while blocks rebuild (demo days 7-16, 18-25%)
 
 ### F. Pedestrians and connectivity [fix/pt-walk]
 - [x] Network connectivity: "no route found" alerts and an indicator when a road or path network is disconnected ("! not connected to the rest of the pedestrian grid") (T) → DONE [fix/pt-walk]: walk-graph components (A* refuses cross-component routes at once) + drive components; stranded areas with people counts (`world/connectivity.rs`); "! not connected to the rest of the pedestrian grid / road network" on building, road/path card and lot hover; toast + alert on a new stranded area and on the 3rd/30th/... failed trip to a place in a day; remote `connectivity {segments?}` (overlay hook for G); landlocked lots with no gate now get a way to the pavement (Harvey's save: 69 → 8 walk components)

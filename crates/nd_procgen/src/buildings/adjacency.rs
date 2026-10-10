@@ -181,7 +181,15 @@ pub fn site_fit(style: Style, site: &Site) -> f32 {
         Style::Crystal | Style::TwistTower | Style::SlabTower | Style::Megastructure => tall(10.0),
         Style::GardenTower | Style::GlassTerraces | Style::TwinSlab => tall(7.0),
         Style::PencilTower => tall(5.0) * if w > 0.0 && w < 18.0 { 1.6 } else if w > 30.0 { 0.5 } else { 1.0 },
-        Style::Villas | Style::Fortress => low(8.0) * if w > 24.0 { 1.3 } else { 1.0 },
+        // [pt-growth] (F25) Villas are one or two storeys whatever the site
+        // says: never the look of a site the sim counts more floors on.
+        Style::Villas => if f <= 3.0 { if w > 24.0 { 1.3 } else { 1.0 } } else { 0.0 },
+        Style::Fortress => low(8.0) * if w > 24.0 { 1.3 } else { 1.0 },
+        // [pt-growth] (F8) The civic styles that draw a fixed height: a
+        // monument plaza, the library and the precinct are low, a
+        // courthouse three to five storeys.
+        Style::Monument | Style::Library | Style::Precinct => if f <= 3.0 { 1.0 } else { 0.02 },
+        Style::Courthouse => low(5.0),
         Style::Shophouse | Style::Tenement | Style::ShackBar | Style::NightMarket => low(5.0),
         Style::HillsideSteps => if w > 0.0 && w < 14.0 { 0.5 } else { 1.0 },
         Style::WalledCity | Style::Stacks => if f <= 1.0 { 0.12 } else { 1.0 },
@@ -434,6 +442,18 @@ pub fn building_style(world: &World, id: BuildingId, rules: &BuildingRules, book
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [pt-growth] (F8, F25) Styles that draw a fixed low height are never
+    /// the look of a site the sim counts many floors on.
+    #[test]
+    fn low_styles_are_not_picked_for_tall_sites() {
+        let site = |floors: u8| Site { floors, ..Site::default() };
+        for s in [Style::Villas, Style::Monument, Style::Library, Style::Precinct] {
+            assert!(site_fit(s, &site(2)) >= 1.0, "{s:?} on a low site");
+            assert!(site_fit(s, &site(9)) <= 0.02, "{s:?} on a nine-floor site");
+        }
+        assert!(site_fit(Style::Courthouse, &site(10)) < site_fit(Style::Courthouse, &site(4)));
+    }
     use nd_sim::rng_for;
 
     fn share(rules: &BuildingRules, lu: LandUse, tier: Tier, site: Site, near: &[Neighbour], style: Style) -> f32 {

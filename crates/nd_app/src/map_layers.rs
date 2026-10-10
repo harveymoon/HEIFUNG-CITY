@@ -77,7 +77,7 @@ pub const MAP_LAYERS: &[MapLayer] = &[
     // [pt-ux] (render/pt_layers.rs)
     MapLayer { key: "parking", label: "Parking", group: "Traffic", hotkey: "", hint: "Streets by the legal parking a driver finds (kerbs and public lots in walking reach); every public lot with how full it is", flag: |o| &mut o.parking, legend: legend_parking },
     MapLayer { key: "trails", label: "Trails", group: "People", hotkey: "", hint: "A long exposure: everything that moves leaves a fading streak over a darkened city", flag: |o| &mut o.trails, legend: legend_trails },
-    MapLayer { key: "density", label: "Land density", group: "City", hotkey: "", hint: "How densely each plot is built: suburbs dark, busy main streets and towers hot", flag: |o| &mut o.density, legend: legend_density },
+    MapLayer { key: "density", label: "Land density", group: "City", hotkey: "", hint: "Foot traffic and people per block, smoothed over days: quiet suburbs dark, busy main streets hot, where developers build taller", flag: |o| &mut o.density, legend: legend_density },
     MapLayer { key: "metro", label: "Metro", group: "Transit", hotkey: "M", hint: "The metro: tunnels and lines in their colours, every station a named marker, over a dimmed city", flag: |o| &mut o.metro, legend: legend_metro },
 ];
 
@@ -433,7 +433,7 @@ fn legend_density(ui: &mut egui::Ui, _: &LegendCtx) {
         let c = heat_color(t);
         linear([c[0], c[1], c[2]])
     }, "low", "dense");
-    small(ui, "built floor area per plot for now; the growth model's foot-traffic density will feed it");
+    small(ui, "people out on foot and in the buildings, smoothed over days: where it is hot developers buy up small plots and build taller");
 }
 
 fn legend_people(ui: &mut egui::Ui, _: &LegendCtx) {

@@ -68,10 +68,17 @@ impl Tier {
     }
 
     /// Tier the land value at a lot supports.
+    /// Land value from which a building is middle tier, and high tier.
+    pub const MID_FROM: f32 = 0.38;
+    pub const HIGH_FROM: f32 = 0.58;
+
+    /// [pt-growth] On the compressed land value (`land_value::compress`):
+    /// 0.38 and 0.58 are where the old thresholds, 0.38 and 0.66 on the
+    /// plain sum, fall now.
     pub fn for_land_value(v: f32) -> Tier {
-        if v < 0.38 {
+        if v < Self::MID_FROM {
             Tier::Low
-        } else if v < 0.66 {
+        } else if v < Self::HIGH_FROM {
             Tier::Mid
         } else {
             Tier::High
@@ -156,14 +163,96 @@ impl Construction {
         1.0 / (self.days * 24.0)
     }
 
+    /// [pt-growth] Progress made in one hour of the working day: sites work
+    /// only those hours, so a day's work is done in them and `days` stays
+    /// the calendar time.
+    pub fn work_hour_step(&self) -> f32 {
+        1.0 / (self.days * crate::clock::WORK_HOURS_PER_DAY)
+    }
+
     /// Days of work left, counting stalls as if the truck came now.
     pub fn days_left(&self) -> f32 {
         ((1.0 - self.progress) * self.days).max(0.0)
     }
 
+    /// [pt-growth] Hours of the working day still to go (stalls aside).
+    pub fn work_hours_left(&self) -> f32 {
+        (1.0 - self.progress).max(0.0) / self.work_hour_step()
+    }
+
     /// Site crew for a building of this size.
     pub fn crew(floors: u8) -> u16 {
         3 + floors as u16 / 2
+    }
+}
+
+/// [pt-growth] Why a building is coming down, for the inspector and the
+/// API ("being demolished: new development planned").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DemolitionReason {
+    /// Older saves and anything not told.
+    #[default]
+    Unknown,
+    /// A developer bought it to build bigger (densification, a richer
+    /// rebuild of a cheap building on dear land).
+    Redevelopment,
+    /// One of several small plots a developer bought together for one
+    /// bigger building.
+    Assembly,
+    /// Shut down and empty: a new owner is taking it over.
+    Abandoned,
+    /// A road is being built through it.
+    RoadWorks,
+    /// The city bought it out for one of its own buildings.
+    CityTakeover,
+    /// The player bulldozed it (or its zone).
+    Bulldozed,
+    /// A neighbour bought the plot to expand.
+    Expansion,
+    /// What is left after a fire.
+    Fire,
+    /// Bought for a private house (a McMansion, a billionaire's estate).
+    Estate,
+    /// Cleared for a skyscraper, a corporate headquarters or a campus.
+    Landmark,
+    /// Rebuilt for richer tenants (priced out by a mansion nearby).
+    PricedOut,
+}
+
+impl DemolitionReason {
+    /// "new development planned", for "being demolished: ...".
+    pub fn label(self) -> &'static str {
+        match self {
+            DemolitionReason::Unknown => "being pulled down",
+            DemolitionReason::Redevelopment => "new development planned",
+            DemolitionReason::Assembly => "plots bought together for a new development",
+            DemolitionReason::Abandoned => "abandoned: a new owner is taking over",
+            DemolitionReason::RoadWorks => "road works",
+            DemolitionReason::CityTakeover => "bought out by the city",
+            DemolitionReason::Bulldozed => "bulldozed: the zone was cleared",
+            DemolitionReason::Expansion => "a neighbour is expanding onto the plot",
+            DemolitionReason::Fire => "burned down: clearing the ruins",
+            DemolitionReason::Estate => "bought for a private estate",
+            DemolitionReason::Landmark => "cleared for a landmark building",
+            DemolitionReason::PricedOut => "rebuilt for richer tenants",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            DemolitionReason::Unknown => "unknown",
+            DemolitionReason::Redevelopment => "redevelopment",
+            DemolitionReason::Assembly => "assembly",
+            DemolitionReason::Abandoned => "abandoned",
+            DemolitionReason::RoadWorks => "road_works",
+            DemolitionReason::CityTakeover => "city_takeover",
+            DemolitionReason::Bulldozed => "bulldozed",
+            DemolitionReason::Expansion => "expansion",
+            DemolitionReason::Fire => "fire",
+            DemolitionReason::Estate => "estate",
+            DemolitionReason::Landmark => "landmark",
+            DemolitionReason::PricedOut => "priced_out",
+        }
     }
 }
 
@@ -203,6 +292,9 @@ pub struct Demolition {
     /// looking as it stood.
     #[serde(default)]
     pub look: Option<crate::districts::Look>,
+    /// [pt-growth] Why it is coming down.
+    #[serde(default)]
+    pub reason: DemolitionReason,
 }
 
 impl Demolition {
@@ -236,6 +328,7 @@ impl Demolition {
             clear_lot,
             own_lot: false,
             look: b.look,
+            reason: DemolitionReason::Unknown,
         }
     }
 
@@ -244,8 +337,19 @@ impl Demolition {
         1.0 / (self.days.max(0.05) * 24.0)
     }
 
+    /// [pt-growth] ... in one hour of the working day (the crews work only
+    /// those, `days` stays the calendar time).
+    pub fn work_hour_step(&self) -> f32 {
+        1.0 / (self.days.max(0.05) * crate::clock::WORK_HOURS_PER_DAY)
+    }
+
     pub fn days_left(&self) -> f32 {
         ((1.0 - self.progress) * self.days).max(0.0)
+    }
+
+    /// [pt-growth] Hours of the working day still to go.
+    pub fn work_hours_left(&self) -> f32 {
+        (1.0 - self.progress).max(0.0) / self.work_hour_step()
     }
 
     /// Loads that should have left by now: spread evenly over the work,
@@ -287,6 +391,10 @@ pub struct Building {
     /// three in a row and it is redeveloped at the land's tier.
     #[serde(default)]
     pub high_land_days: u8,
+    /// [pt-growth] Consecutive days a block of homes has stood mostly
+    /// empty (`estate::FORECLOSE_OCCUPANCY`).
+    #[serde(default)]
+    pub empty_days: u8,
     /// The business operating here, for non-residential buildings.
     pub business: Option<Business>,
     /// Car spaces: integrated into towers, a few under middle-tier blocks,
@@ -399,6 +507,7 @@ impl Building {
             rent: 0.0,
             land_value,
             high_land_days: 0,
+            empty_days: 0,
             business: None,
             parking_capacity: 0,
             parking_used: 0,
@@ -532,7 +641,13 @@ impl Building {
             LandUse::Commercial => (0, f * if self.tier == Tier::High { 4 } else { 3 }),
             LandUse::Industrial => (0, f * 8),
             LandUse::Entertainment => (0, f * 2 + 2),
-            LandUse::Civic => (0, f * 4),
+            // [pt-growth] Civic halls are two to five storeys at any tier
+            // (what their styles draw); a grand one holds more staff a floor.
+            LandUse::Civic => (0, f * match self.tier {
+                Tier::Low => 4,
+                Tier::Mid => 5,
+                Tier::High => 8,
+            }),
             LandUse::Park => (0, 1),
         };
         // [land] A one-storey row of cheap homes (shacks, a trailer park,

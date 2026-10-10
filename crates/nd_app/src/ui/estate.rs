@@ -43,8 +43,9 @@ pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildi
         bits.push(format!("{} bought plot{} still clearing", b.plot.pending_lots.len(), super::fmt::s(b.plot.pending_lots.len())));
     }
     if let Some(lot) = w.lots.get(b.lot) {
-        let p = w.estate.pressure.at(lot.center);
-        bits.push(format!("pressure {p:.0} supports {} floors here (height cap {})", w.pressure_floors(b.lot), w.height_cap(b.lot)));
+        // [pt-growth] The land density (people present and out on foot).
+        let d = w.land_density_at(lot.center);
+        bits.push(format!("land density {d:.0} (foot traffic {:.0}) supports {} floors here (height cap {})", w.estate.pressure.foot_at(lot.center), w.pressure_floors(b.lot), w.height_cap(b.lot)));
     }
     if w.wants_to_expand(id) {
         bits.push("doing well enough to expand".to_string());

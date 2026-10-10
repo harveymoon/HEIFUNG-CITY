@@ -11,9 +11,8 @@
 //!   buses gold, lorries amber, sirens blue-white, people cyan, robots
 //!   green.
 //! - **Land density** (`density`): how densely each plot is built, as a
-//!   heat map. [`plot_density`] is the hook for the growth model's land
-//!   density (fix/pt-growth): until that lands it reads the built floor
-//!   area over the plot's area.
+//!   heat map. [`plot_density`] reads the growth model's land density
+//!   (`World::land_density_at`, fix/pt-growth).
 //!
 //! The Pedestrian network layer's extra (every walkway drawn, people
 //! glowing over a dimmed city) is in `overlays::sync_paths` and
@@ -390,11 +389,12 @@ pub(super) struct TrailsTag;
 /// the built floor area over the plot's area (a floor-area ratio), with a
 /// ratio of 8 reading as full.
 pub fn plot_density(w: &World, lot: &nd_sim::Lot) -> Option<f32> {
-    let b = lot.building.and_then(|b| w.buildings.get(b))?;
-    let area = nd_sim::geom::polygon_area(&lot.polygon).abs().max(1.0);
-    // Buildings cover about this much of their plot (taller ones a little less).
-    let cover = if b.floors > 12 { 0.45 } else { 0.6 };
-    Some(floor_area_ratio(area * cover, b.floors as f32, area))
+    lot.building?;
+    // [pt-growth] The growth model's land density (people present and out
+    // on foot, smoothed over days; what developers build taller for) on a
+    // log scale: a quiet suburb low, a busy downtown block (200+) hot.
+    let d = w.land_density_at(lot.center);
+    Some(((1.0 + d.max(0.0)).ln() / (1.0f32 + 200.0).ln()).clamp(0.0, 1.0))
 }
 
 /// Floor area over plot area, as 0..1 of a ratio of 8.

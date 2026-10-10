@@ -111,6 +111,8 @@ impl World {
         }
         for bid in demolish {
             self.demolish(bid);
+            // [pt-growth] Shut a week: the lot changes hands.
+            self.tag_demolition(bid, crate::buildings::DemolitionReason::Abandoned);
         }
         self.economy.market.deals_today = 0;
         self.economy.market.imports_today = 0.0;

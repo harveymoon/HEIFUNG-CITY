@@ -158,6 +158,17 @@ fn fill_lots_near(w: &mut World, at: Vec2) {
 }
 
 fn parking_near(w: &mut World, p: Vec2) -> BuildingId {
+    // [pt-growth] On the rescaled land value the high street is no longer
+    // "dear" ground, so the town may have opened a small lot of its own
+    // there already: clear those, so this is the only one.
+    let others: Vec<BuildingId> = w.buildings.iter().filter(|(id, b)| b.is_parking() && !w.is_city_building(*id)).map(|(id, _)| id).collect();
+    for b in others {
+        let l = w.buildings[b].lot;
+        w.buildings.remove(b);
+        if w.lots.get(l).is_some_and(|x| x.building == Some(b)) {
+            w.lots[l].building = None;
+        }
+    }
     let lot = lots_of(w, LandUse::Commercial).into_iter().min_by(|a, b| w.lots[*a].center.distance(p).total_cmp(&w.lots[*b].center.distance(p))).unwrap();
     let id = w.build_parking(lot).expect("a parking lot");
     w.finish_construction(id);
@@ -189,6 +200,13 @@ fn a_full_lot_raises_its_fee_and_an_empty_one_cuts_it_within_bounds() {
     assert!(cheap < base && cheap >= base * 0.6 - 1e-3, "{base} -> {cheap}");
 }
 
+/// Every parking business at its busiest full (or empty).
+fn peak_all(w: &mut World, full: bool) {
+    for b in w.buildings.values_mut().filter(|b| b.is_parking()) {
+        b.parking_peak = if full { b.parking_capacity } else { 0 };
+    }
+}
+
 #[test]
 fn circling_by_full_lots_draws_a_local_to_open_another_but_not_by_empty_ones() {
     let (mut w, _) = high_street();
@@ -215,7 +233,9 @@ fn circling_by_full_lots_draws_a_local_to_open_another_but_not_by_empty_ones() {
     };
     // The lot near the trouble had room: nobody opens another.
     ready(&mut w);
-    w.buildings[full].parking_peak = 0;
+    // [pt-growth] On the rescaled (cheaper) land the town may have opened a
+    // small lot of its own nearby: every lot round the trouble is set.
+    peak_all(&mut w, false);
     let vacant = lots_of(&w, LandUse::Commercial);
     assert!(!w.maybe_open_parking(&vacant), "drivers circled past free spaces");
     // Full at its busiest: a local opens one nearby. (Every lot near the

@@ -41,6 +41,15 @@ pub const PRESSURE_ALPHA_UP: f32 = 1.0 / 12.0;
 pub const PRESSURE_FLOOR0: f32 = 4.0;
 /// Pressure for each floor above two, at a mobility of one.
 pub const PRESSURE_PER_FLOOR: f32 = 2.5;
+/// [pt-growth] People out on foot (walking, cycling, waiting at a stop,
+/// on a bench, loitering, sightseeing) per cell, smoothed: about a day and
+/// a half to rise and four days to fall, so a busy main street is a busy
+/// main street all week, not just at rush hour.
+pub const FOOT_ALPHA_UP: f32 = 1.0 / 36.0;
+pub const FOOT_ALPHA_DOWN: f32 = 1.0 / 96.0;
+/// What one person out on foot adds to the land density, over what they
+/// add as someone present: the street life developers build for.
+pub const FOOT_WEIGHT: f32 = 2.0;
 /// Floors pressure can justify at most.
 pub const PRESSURE_MAX_FLOORS: u8 = 40;
 /// Floors over the old neighbour-density cap pressure may add: towers rise
@@ -52,6 +61,26 @@ pub const PRESSURE_MIN_POP: usize = 300;
 /// Height at or under which a block counts as low density (shacks,
 /// trailer parks, suburbs, McMansions, mansions).
 pub const LOW_DENSITY_FLOORS: u8 = 3;
+
+/// [pt-growth] Lot assembly: where the land density asks for at least
+/// `ASSEMBLY_MIN_FLOORS`, developers buy a row of small, low plots (each
+/// under `ASSEMBLY_SMALL_LOT` m², at most `ASSEMBLY_MAX_OLD_FLOORS` high,
+/// three to `ASSEMBLY_MAX_LOTS` of them in a compact block) and put one
+/// bigger building across them: five bungalows become a block of flats.
+pub const ASSEMBLY_MIN_FLOORS: u8 = 4;
+pub const ASSEMBLY_SMALL_LOT: f32 = 1100.0;
+pub const ASSEMBLY_MAX_OLD_FLOORS: u8 = 3;
+pub const ASSEMBLY_MIN_LOTS: usize = 3;
+pub const ASSEMBLY_MAX_LOTS: usize = 5;
+/// The assembled block may be this much less compact than a merge.
+pub const ASSEMBLY_HULL_SLACK: f32 = 1.15;
+/// [pt-growth] Foreclosure: a block of homes at most this full ...
+pub const FORECLOSE_OCCUPANCY: f32 = 0.35;
+/// ... for this many days in a row while people wait for homes they can
+/// afford is sold cheap to a developer, who cuts the rent (or rebuilds).
+pub const FORECLOSE_DAYS: u8 = 5;
+/// What a foreclosed building sells for, against its price.
+pub const FORECLOSE_DISCOUNT: f64 = 0.6;
 
 /// Most properties merged into one building (the primary lot included).
 pub const MAX_MERGED_LOTS: usize = 4;
@@ -360,6 +389,14 @@ pub struct EstateStats {
     pub relocate_failed_total: u32,
     /// [rich] Second homes and businesses the well-off bought.
     pub investments_total: u32,
+    /// [pt-growth] Rows of small plots developers bought together and
+    /// rebuilt as one bigger building, and the plots that went into them.
+    pub assemblies_total: u32,
+    pub assembled_lots_total: u32,
+    /// [pt-growth] Developer-owned buildings rebuilt taller again.
+    pub redensified_total: u32,
+    /// [pt-growth] Half-empty blocks their owners lost to a developer.
+    pub foreclosures_total: u32,
 }
 
 // ── the pressure grid ────────────────────────────────────────────────────────
@@ -378,6 +415,11 @@ pub struct Pressure {
     /// flowing. Recomputed daily.
     pub mobility: Vec<f32>,
     pub samples: u32,
+    /// [pt-growth] People out on foot per cell, smoothed over days
+    /// (`FOOT_ALPHA_UP` / `FOOT_ALPHA_DOWN`). Empty in old saves until the
+    /// next hourly sample.
+    #[serde(default)]
+    pub foot: Vec<f32>,
     /// Apply the caps however small the town (tests); otherwise they
     /// wait for `PRESSURE_MIN_POP` people.
     #[serde(default)]
@@ -387,7 +429,7 @@ pub struct Pressure {
 impl Pressure {
     pub fn new(half: f32) -> Self {
         let n = ((half * 2.0) / PRESSURE_CELL).ceil().max(1.0) as usize;
-        Self { half, n, value: vec![0.0; n * n], congestion: vec![0.0; n * n], mobility: vec![1.0; n * n], samples: 0, always: false }
+        Self { half, n, value: vec![0.0; n * n], congestion: vec![0.0; n * n], mobility: vec![1.0; n * n], samples: 0, foot: vec![0.0; n * n], always: false }
     }
 
     /// [sweep-sim] Grow the grid to `half` (an old save's smaller grid),
@@ -404,6 +446,7 @@ impl Pressure {
         self.value = pad(&self.value, self.n, n, off, 0.0);
         self.congestion = pad(&self.congestion, self.n, n, off, 0.0);
         self.mobility = pad(&self.mobility, self.n, n, off, 1.0);
+        self.foot = pad(&self.foot, self.n, n, off, 0.0);
         self.half = half;
         self.n = n;
         true
@@ -449,10 +492,29 @@ impl Pressure {
         self.samples = self.samples.saturating_add(1);
     }
 
-    /// Smoothed pressure at `p`: the cell blended with its eight
-    /// neighbours, so a block and the street beside it agree.
-    pub fn at(&self, p: Vec2) -> f32 {
+    /// [pt-growth] Fold one hour's people out on foot into `foot`. An old
+    /// save's empty grid starts from this sample.
+    pub fn sample_foot(&mut self, on_foot: &[f32]) {
+        if !self.ready() || on_foot.len() != self.value.len() {
+            return;
+        }
+        if self.foot.len() != on_foot.len() {
+            self.foot = on_foot.to_vec();
+            return;
+        }
+        for (v, s) in self.foot.iter_mut().zip(on_foot) {
+            let a = if *s > *v { FOOT_ALPHA_UP } else { FOOT_ALPHA_DOWN };
+            *v += (s - *v) * a;
+        }
+    }
+
+    /// A cell blended with its eight neighbours (half and half), so a
+    /// block and the street beside it agree.
+    fn blended(&self, grid: &[f32], p: Vec2) -> f32 {
         let Some(i) = self.index(p) else { return 0.0 };
+        if grid.len() != self.n * self.n {
+            return 0.0;
+        }
         let (x, y) = ((i % self.n) as i64, (i / self.n) as i64);
         let mut sum = 0.0;
         let mut k = 0.0;
@@ -465,12 +527,35 @@ impl Pressure {
                 if nx < 0 || ny < 0 || nx >= self.n as i64 || ny >= self.n as i64 {
                     continue;
                 }
-                sum += self.value[ny as usize * self.n + nx as usize];
+                sum += grid[ny as usize * self.n + nx as usize];
                 k += 1.0;
             }
         }
         let ring = if k > 0.0 { sum / k } else { 0.0 };
-        self.value[i] * 0.5 + ring * 0.5
+        grid[i] * 0.5 + ring * 0.5
+    }
+
+    /// [pt-growth] People out on foot at `p`, smoothed over days.
+    pub fn foot_at(&self, p: Vec2) -> f32 {
+        self.blended(&self.foot, p)
+    }
+
+    /// [pt-growth] The land density score at `p`: the people present
+    /// (`at`) plus the street life (`FOOT_WEIGHT` x `foot_at`). Developers
+    /// build to it (`floors_at`); the Land density map layer shows it.
+    pub fn density_at(&self, p: Vec2) -> f32 {
+        self.at(p) + FOOT_WEIGHT * self.foot_at(p)
+    }
+
+    /// The density score of cell `i` (unblended), for the map layer.
+    pub fn density_cell(&self, i: usize) -> f32 {
+        self.value.get(i).copied().unwrap_or(0.0) + FOOT_WEIGHT * self.foot.get(i).copied().unwrap_or(0.0)
+    }
+
+    /// Smoothed pressure at `p`: the cell blended with its eight
+    /// neighbours, so a block and the street beside it agree.
+    pub fn at(&self, p: Vec2) -> f32 {
+        self.blended(&self.value, p)
     }
 
     pub fn mobility_at(&self, p: Vec2) -> f32 {
@@ -485,7 +570,8 @@ impl Pressure {
             // Not measured yet (an old save, the first hour): no opinion.
             return PRESSURE_MAX_FLOORS;
         }
-        let over = (self.at(p) - PRESSURE_FLOOR0).max(0.0);
+        // [pt-growth] The land density: people present and street life.
+        let over = (self.density_at(p) - PRESSURE_FLOOR0).max(0.0);
         let floors = 2.0 + over / PRESSURE_PER_FLOOR * self.mobility_at(p);
         floors.clamp(2.0, PRESSURE_MAX_FLOORS as f32) as u8
     }

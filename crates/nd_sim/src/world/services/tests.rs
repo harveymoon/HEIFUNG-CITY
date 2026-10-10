@@ -377,7 +377,10 @@ fn an_unanswered_fire_spreads_and_burns_down() {
     let mut spread = 0;
     let mut burned = Vec::new();
     let mut minds = IdleMind;
-    for _ in 0..(2 * 1440) {
+    // [pt-growth] Up to three days, until the ruins are cleared: the
+    // wrecking crews work 08:00-17:00 only, so the clearing may run into a
+    // second working day (two days of ticks were enough round the clock).
+    for t in 0..(3 * 1440) {
         w.tick(&mut minds);
         for e in w.drain_events() {
             match e {
@@ -385,6 +388,9 @@ fn an_unanswered_fire_spreads_and_burns_down() {
                 SimEvent::BurnedDown(b, _) => burned.push(b),
                 _ => {}
             }
+        }
+        if t >= 2 * 1440 && burned.contains(&first) && !w.buildings.contains_key(first) {
+            break;
         }
     }
     let inc = w.services.incident(id).unwrap();

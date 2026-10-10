@@ -47,8 +47,10 @@ pub const JOBLESS_FACTOR: f32 = 2.5;
 pub const HOMELESS_FACTOR: f32 = 1.6;
 /// Land value at home from which the neighbourhood adds nothing; at
 /// `LV_ZERO - LV_SPAN` and below it adds the full factor of one.
-pub const LV_ZERO: f32 = 0.7;
-pub const LV_SPAN: f32 = 0.5;
+/// [pt-growth] On the rescaled land value (1.0 is rare, a middling street
+/// about 0.5): from 0.6 down, the full factor at 0.2.
+pub const LV_ZERO: f32 = 0.6;
+pub const LV_SPAN: f32 = 0.4;
 /// How much full police coverage at home cuts recruitment.
 pub const POLICE_RECRUIT_CUT: f32 = 0.8;
 /// Contagion: each offender living within `PEER_RADIUS` adds this much

@@ -144,6 +144,7 @@ impl World {
         let center = self.lots.get(lot).map_or(Vec2::ZERO, |l| l.center);
         self.events.push(SimEvent::BurnedDown(bid, lot));
         self.demolish_with(bid, None, Some(&format!("{name} burned down. Lost everything.")));
+        self.tag_demolition(bid, crate::buildings::DemolitionReason::Fire);
         if let Some(l) = self.lots.get_mut(lot) {
             if l.building == Some(bid) {
                 l.building = None;

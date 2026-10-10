@@ -252,8 +252,10 @@ impl World {
             if expropriated {
                 // [review] The old key is stale after the recut: the null key.
                 self.buy_out(bid, LotId::default(), Some(at), "Our block was pulled down for the road works. Homeless again.");
+                self.tag_demolition(bid, crate::buildings::DemolitionReason::RoadWorks);
             } else {
                 self.demolish_with(bid, Some(at), None);
+                self.tag_demolition(bid, crate::buildings::DemolitionReason::Bulldozed);
             }
         }
 

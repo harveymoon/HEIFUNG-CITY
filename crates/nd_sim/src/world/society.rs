@@ -380,8 +380,38 @@ mod tests {
         let mut b = LandValueBuilder::new(&w.land_value);
         w.splat_society(&mut b);
         let mut lv = w.land_value.clone();
-        b.finish(0.5, &mut lv);
-        assert!(lv.at(at) < 0.48 && (lv.at(at + Vec2::new(400.0, 0.0)) - 0.5).abs() < 0.01, "{}", lv.at(at));
+        // [pt-growth] A base under the compression knee, so it reads as is.
+        b.finish(0.4, &mut lv);
+        assert!(lv.at(at) < 0.38 && (lv.at(at + Vec2::new(400.0, 0.0)) - 0.4).abs() < 0.01, "{}", lv.at(at));
+    }
+
+    /// [pt-growth] Households put out on the same night drive round and pull
+    /// up one by one, and a fresh cheap street fills a few at a time.
+    #[test]
+    fn rvs_arrive_one_by_one_and_do_not_pile_up_on_one_street() {
+        let mut w = town(5);
+        populate(&mut w, 80);
+        set_land_value(&mut w, |_| 0.2);
+        for c in w.citizens.values_mut() {
+            c.owns_car = true;
+        }
+        let now = w.clock.tick;
+        let hids: Vec<HouseholdId> = w.households.keys().collect();
+        for hid in hids.into_iter().take(30) {
+            w.force_homeless(hid);
+        }
+        let rvs = w.society.homeless.rvs.clone();
+        assert!(rvs.len() >= 4, "some live in their vehicles: {}", rvs.len());
+        let mut ticks: Vec<u64> = rvs.iter().map(|r| r.parked_tick).collect();
+        assert!(ticks.iter().all(|t| *t > now), "none parked in the same second they lost their home");
+        ticks.sort();
+        ticks.dedup();
+        assert!(ticks.len() * 2 >= rvs.len(), "they arrive at different times: {ticks:?}");
+        assert!(rvs.iter().all(|r| !r.parked(now)), "not drawn yet");
+        for (i, r) in rvs.iter().enumerate() {
+            let near = rvs[..i].iter().filter(|o| o.pos.distance(r.pos) < crate::homeless::RV_CLUSTER_RADIUS).count();
+            assert!(near < crate::homeless::RV_CLUSTER, "rv {i} pulled up beside {near} others");
+        }
     }
 
     /// Make one household broke and stressed with nothing cheaper in town.
@@ -412,7 +442,7 @@ mod tests {
         let hids: Vec<HouseholdId> = w.households.keys().take(2).collect();
         let (gone, living) = (hids[0], hids[1]);
         // `gone` was on the street in its van and has left town.
-        let rv = |household, seed, x: f32| Rv { household, pos: Vec2::new(x, 0.0), heading: 0.0, seed, camper: true, abandoned: None, tow_at: None };
+        let rv = |household, seed, x: f32| Rv { household, pos: Vec2::new(x, 0.0), heading: 0.0, seed, camper: true, abandoned: None, tow_at: None, parked_tick: 0 };
         w.society.homeless.rvs.push(rv(gone, 3, -50.0));
         w.society.homeless.since.push((gone, 0));
         w.households.remove(gone);
