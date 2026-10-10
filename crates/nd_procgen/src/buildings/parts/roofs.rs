@@ -114,3 +114,82 @@ pub fn chiller(g: &mut Geometry, c: &Ctx, p: Vec2, y: f32, w: f32, d: f32, yaw: 
         g.part(Matte).cylinder(wq, fr, fr, y + h, y + h + 0.3, 12, rgba(DARK));
     }
 }
+
+// ── [pt-visual] green and solar roofs ───────────────────────────────────────
+
+/// A planted roof on a flat roof at `y`: sedum over the whole roof inside
+/// the parapet, shrub beds in rows, a gravel path down the middle. No random
+/// draws: high-end buildings that take one keep the rest of their look.
+pub fn green_roof(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let inner = super::offset_poly(poly, 0.7);
+    if inner.len() < 3 || polygon_area(&inner).abs() < 12.0 {
+        return;
+    }
+    super::ground(g, f, Foliage, &inner, y + 0.12, super::mul(pal.foliage, 0.75));
+    let (lo, hi) = super::bounds(&inner);
+    // Shrub beds on a 3 m grid, with a gap row for the path.
+    let mid = (lo.y + hi.y) * 0.5;
+    let mut v = lo.y + 1.5;
+    while v < hi.y - 1.0 {
+        if (v - mid).abs() > 1.2 {
+            let mut u = lo.x + 1.5;
+            while u < hi.x - 1.0 {
+                let p = Vec2::new(u, v);
+                if point_in_polygon(p, &inner) && super::distance_to_boundary(p, &inner) > 0.8 {
+                    let k = ((u * 7.3 + v * 3.1).abs() as i32) % 3;
+                    let s = [0.9f32, 1.2, 0.7][k as usize];
+                    f.bx(g, Foliage, p.x, y + 0.12 + s * 0.3, p.y, Vec3::new(s, s * 0.6, s), super::mul(pal.foliage, 0.9 + 0.1 * k as f32));
+                }
+                u += 4.0;
+            }
+        }
+        v += 4.0;
+    }
+    let path = [Vec2::new(lo.x, mid - 0.5), Vec2::new(hi.x, mid - 0.5), Vec2::new(hi.x, mid + 0.5), Vec2::new(lo.x, mid + 0.5)];
+    let clipped: Vec<Vec2> = path.iter().map(|p| super::clamp_into(&inner, *p)).collect();
+    if polygon_area(&clipped).abs() > 2.0 {
+        super::ground(g, f, Paving, &clipped, y + 0.16, super::mul(pal.paving, 1.1));
+    }
+}
+
+/// Solar panels in rows across a flat roof at `y`, tilted towards the
+/// equator side of the lot, a walkway every few rows. Hash-free and
+/// draw-free like [`green_roof`].
+pub fn solar_roof(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let inner = super::offset_poly(poly, 1.2);
+    if inner.len() < 3 || polygon_area(&inner).abs() < 16.0 {
+        return;
+    }
+    let (lo, hi) = super::bounds(&inner);
+    let (pw, pd) = (1.9f32, 1.1f32);
+    let mut row = 0;
+    let mut v = lo.y + pd;
+    while v < hi.y - pd * 0.5 {
+        row += 1;
+        if row % 4 != 0 {
+            let mut u = lo.x + pw * 0.5 + 0.2;
+            while u < hi.x - pw * 0.5 {
+                let corners = [Vec2::new(u - pw * 0.5, v - pd * 0.5), Vec2::new(u + pw * 0.5, v - pd * 0.5), Vec2::new(u + pw * 0.5, v + pd * 0.5), Vec2::new(u - pw * 0.5, v + pd * 0.5)];
+                if corners.iter().all(|p| point_in_polygon(*p, &inner)) {
+                    // One tilted quad a panel (a roof holds hundreds), low
+                    // edge to the front.
+                    let (x0, x1, v0, v1) = (u - pw * 0.5 + 0.05, u + pw * 0.5 - 0.05, v - pd * 0.5, v + pd * 0.5);
+                    g.part(Glass).quad_facing([f.at(x0, y + 0.3, v0), f.at(x1, y + 0.3, v0), f.at(x1, y + 0.75, v1), f.at(x0, y + 0.75, v1)], Vec3::Y, rgba(pal.glass_dark));
+                }
+                u += pw + 0.15;
+            }
+            // The row's rack: a rail under its high edge.
+            let rv = v + pd * 0.4;
+            let xs: Vec<f32> = (0..=((hi.x - lo.x) as i32)).map(|k| lo.x + k as f32).filter(|x| point_in_polygon(Vec2::new(*x, rv), &inner)).collect();
+            if let (Some(&x0), Some(&x1)) = (xs.first(), xs.last()) {
+                let (a, b) = (Vec2::new(x0, rv), Vec2::new(x1, rv));
+                g.part(Matte).beam(f.at(a.x, y + 0.36, a.y), f.at(b.x, y + 0.36, b.y), 0.12, rgba(CHARCOAL));
+            }
+        }
+        v += pd + 0.55;
+    }
+}

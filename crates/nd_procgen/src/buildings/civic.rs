@@ -2,7 +2,7 @@
 //! courthouses and monuments.
 
 use super::parts::*;
-use super::Ctx;
+use super::{Ctx, Face};
 use crate::mesh::MeshData;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
@@ -276,5 +276,221 @@ pub fn monument(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     for k in 0..3 {
         lamp_post_in(g, c, front.at(-front.len * 0.35 + k as f32 * front.len * 0.35, -1.5), 4.5, pal.lamp);
+    }
+}
+
+// ── [pt-visual] brutalist civic buildings ───────────────────────────────────
+// Harvey: "all civic buildings seem to look the same; in the dystopic future
+// many will be brutalist and offending, less ornate and more intimidating."
+
+/// A cold searchlight on a short mast.
+fn searchlight(g: &mut Geometry, c: &Ctx, p: Vec2, y: f32) {
+    let f = &c.frame;
+    f.bx(g, Matte, p.x, y + 0.6, p.y, Vec3::new(0.18, 1.2, 0.18), CHARCOAL);
+    f.bx(g, Metal, p.x, y + 1.35, p.y, Vec3::new(0.6, 0.45, 0.6), mul(c.palette.steel, 0.6));
+    f.bx(g, Glow, p.x, y + 1.35, p.y - 0.31, Vec3::new(0.42, 0.32, 0.04), [2.2, 2.3, 2.5]);
+}
+
+/// A camera on a bracket off a face.
+fn camera(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32) {
+    let f = &c.frame;
+    face.bx(g, f, Matte, t, y, 0.25, Vec3::new(0.08, 0.08, 0.5), CHARCOAL);
+    face.bx(g, f, Metal, t, y - 0.12, 0.5, Vec3::new(0.22, 0.2, 0.4), mul(c.palette.steel, 0.7));
+    face.bx(g, f, Glow, t, y - 0.12, 0.71, Vec3::new(0.06, 0.06, 0.02), [2.6, 0.2, 0.15]);
+}
+
+/// The state's emblem on a face: a lidless eye in a ring, lit.
+fn emblem(g: &mut Geometry, c: &Ctx, face: &Face, y: f32, r: f32, color: [f32; 3]) {
+    let f = &c.frame;
+    let n = 16;
+    for k in 0..n {
+        let a = k as f32 / n as f32 * std::f32::consts::TAU;
+        face.decal(g, f, Glow, a.cos() * r, y + a.sin() * r, 0.08, r * 0.42, 0.14, color);
+    }
+    face.decal(g, f, Glow, 0.0, y, 0.09, r * 1.1, r * 0.34, mul(color, 0.6));
+    face.decal(g, f, Glow, 0.0, y, 0.1, r * 0.3, r * 0.3, [2.6, 0.3, 0.2]);
+}
+
+/// Civil defence bunker: battered concrete walls, slit windows, a heavy visor
+/// over blast doors, searchlights and cameras behind a barbed fence.
+pub fn bunker(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let fh = c.fh();
+    let poly = &c.poly;
+    let concrete = mul(pick(rng, &pal.concrete), 0.62);
+    let floors = (c.floors as i32).clamp(2, 4);
+    let batter_h = fh * 1.3;
+    let h = floors as f32 * fh;
+    let top = offset_poly(poly, 1.4);
+    let battered = top.len() == poly.len();
+    if battered {
+        loft(g, f, Concrete, poly, &top, 0.0, batter_h, concrete);
+    } else {
+        extrude(g, f, Concrete, poly, 0.0, batter_h, concrete);
+    }
+    let body = if battered { top.clone() } else { poly.clone() };
+    extrude(g, f, Concrete, &body, batter_h, h, mul(concrete, 1.05));
+    // Slit windows: a dark band per floor with a thin lit line in it.
+    for face in c.faces(&body) {
+        if face.len < 4.0 {
+            continue;
+        }
+        for k in 1..floors {
+            let y = k as f32 * fh + fh * 0.55;
+            face.decal(g, f, Matte, 0.0, y, 0.03, face.len * 0.8, 0.45, DARK);
+            if coin(rng, c.lit_chance()) {
+                face.decal(g, f, Glow, 0.0, y, 0.05, face.len * 0.78, 0.08, mul(pal.window_cold, 0.55));
+            }
+        }
+        grime(g, c, rng, &face, 0.0, h, 1.4);
+    }
+    // A heavy visor over the front, blast doors under it, a red line.
+    let front = c.front_face(&body);
+    let visor = (c.reach_out(&front) - 0.5).clamp(0.5, 2.5);
+    front.bx(g, f, Concrete, 0.0, h - 0.6, visor * 0.5, Vec3::new(front.len, 1.2, visor), mul(concrete, 0.9));
+    front.bx(g, f, Glow, 0.0, h - 1.25, visor - 0.1, Vec3::new(front.len * 0.9, 0.08, 0.08), [2.4, 0.15, 0.1]);
+    roller_door(g, c, &front, 0.0, 4.4, (batter_h * 0.85).min(3.6), mul(pal.steel, 0.45));
+    for s in [-1.0f32, 1.0] {
+        camera(g, c, &front, s * front.len * 0.4, h - 1.6);
+    }
+    parapet(g, c, &body, h, 0.6, 0.5, Concrete, concrete);
+    let bc = poly_center(&body);
+    for p in body.iter() {
+        searchlight(g, c, toward(*p, bc, 1.0), h);
+    }
+    antenna_mast(g, c, bc, h, rng.random_range(10.0..18.0));
+    let yard = offset_poly(&c.lot_poly, 0.4);
+    fence_lot(g, c, &yard, 3.0, true);
+    for k in 0..((front.len / 4.0) as i32).max(1) {
+        let t = -front.len * 0.45 + k as f32 * 4.0 + 1.5;
+        barrier(g, c, &front, t, 3.0, 3.0);
+    }
+}
+
+/// Ministry tower: an inverted ziggurat, every floor reaching further out
+/// than the one below over a recessed, columned ground floor; deep concrete
+/// fins, a heavy crown and the emblem over the street.
+pub fn civic_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let fh = c.fh();
+    let poly = &c.poly;
+    let concrete = mul(pick(rng, &pal.concrete), 0.85);
+    let floors = (c.floors as i32).clamp(4, 10);
+    let lobby_h = fh * 1.4;
+    let step = (inradius(poly) * 0.35 / floors as f32).clamp(0.3, 0.9);
+    // The recessed lobby on columns.
+    let lobby = offset_poly(poly, step * floors as f32 + 1.0);
+    extrude(g, f, Glass, &lobby, 0.0, lobby_h, pal.glass_dark);
+    curtain_lights(g, c, rng, &lobby, 0.0, 1, lobby_h);
+    pilotis(g, c, &offset_poly(poly, step * floors as f32 * 0.5 + 0.8), 0.0, lobby_h, 5.0, 1.1, Concrete, concrete);
+    let mut spec = WindowSpec::from_ctx(c);
+    spec.w = 1.0;
+    spec.spacing = 2.4;
+    spec.boarded = 0.0;
+    spec.ac = 0.0;
+    spec.frame = CHARCOAL;
+    let mut y = lobby_h;
+    let mut last = poly.clone();
+    for k in 0..floors {
+        let inset = step * (floors - 1 - k) as f32;
+        let plate = offset_poly(poly, inset);
+        extrude(g, f, Concrete, &plate, y, y + fh, mul(concrete, 1.0 + 0.02 * (k % 2) as f32));
+        for face in c.faces(&plate) {
+            if face.len < 4.0 {
+                continue;
+            }
+            windows(g, c, rng, &face, y, 1, fh, &spec);
+            // Fins every couple of windows.
+            let fins = ((face.len / 4.8) as i32).max(1);
+            for i in 0..=fins {
+                let t = -face.len * 0.5 + i as f32 * face.len / fins as f32;
+                face.bx(g, f, Concrete, t, y + fh * 0.5, 0.35, Vec3::new(0.4, fh, 0.7), mul(concrete, 1.08));
+            }
+        }
+        cornice(g, c, &plate, y + fh - 0.35, 0.35, 0.3, Concrete, mul(concrete, 0.95));
+        y += fh;
+        last = plate;
+    }
+    // The crown: a blind band, the emblem on the road side, cameras.
+    let crown_h = fh * 1.2;
+    extrude(g, f, Concrete, &last, y, y + crown_h, mul(concrete, 0.9));
+    let front = c.front_face(&last);
+    emblem(g, c, &front, y + crown_h * 0.5, (crown_h * 0.38).min(front.len * 0.2), mul(pal.window_cold, 1.2));
+    for face in c.faces(&last) {
+        if face.len > 6.0 {
+            camera(g, c, &face, face.len * 0.4, y + 0.4);
+        }
+    }
+    parapet(g, c, &last, y + crown_h, 0.5, 0.4, Concrete, concrete);
+    let top = y + crown_h;
+    antenna_mast(g, c, poly_center(&last), top, rng.random_range(6.0..14.0));
+    roof_gear(g, c, rng, &last, top, 0.5);
+    entrance(g, c, rng, &c.front_face(&lobby), 0.0, 3.0, lobby_h * 0.8);
+    // Flag masts in the forecourt.
+    let pf = c.front_face(poly);
+    for k in 0..4 {
+        let p = pf.at((k as f32 - 1.5) * 3.2, -1.6);
+        if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.2 {
+            f.bx(g, Matte, p.x, 7.0, p.y, Vec3::new(0.12, 14.0, 0.12), pal.steel);
+            f.bx(g, Matte, p.x + 0.9, 12.8, p.y, Vec3::new(1.6, 1.0, 0.03), [0.35, 0.03, 0.03]);
+        }
+    }
+}
+
+/// Surveillance bureau: a near windowless monolith of dark concrete, thin
+/// lit slits running up it, a ring of cameras and an eye over the door.
+pub fn panopticon(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let fh = c.fh();
+    let concrete = mul(pick(rng, &pal.concrete), 0.45);
+    let floors = (c.floors as i32).clamp(5, 14);
+    let h = floors as f32 * fh;
+    // A plinth the full lot, the monolith set back on it.
+    plinth(g, c, &c.poly, 3, 0.25, 0.8, Concrete, mul(concrete, 1.4));
+    let body = offset_poly(&c.poly, (inradius(&c.poly) * 0.25).clamp(1.5, 6.0));
+    let body = if body.len() >= 3 { body } else { c.poly.clone() };
+    extrude(g, f, Concrete, &body, 0.75, h, concrete);
+    for face in c.faces(&body) {
+        if face.len < 5.0 {
+            continue;
+        }
+        let slits = ((face.len / 3.0) as i32).clamp(2, 12);
+        for i in 0..slits {
+            let t = -face.len * 0.42 + i as f32 * face.len * 0.84 / (slits - 1).max(1) as f32;
+            face.decal(g, f, Matte, t, h * 0.5 + 1.0, 0.03, 0.3, h - fh * 2.0, DARK);
+            if coin(rng, 0.6) {
+                face.decal(g, f, Glow, t, h * 0.5 + 1.0, 0.05, 0.08, h - fh * 2.2, mul(pal.window_cold, 0.5));
+            }
+        }
+        grime(g, c, rng, &face, 0.75, h, 1.0);
+        camera(g, c, &face, 0.0, h - 0.8);
+    }
+    let front = c.front_face(&body);
+    emblem(g, c, &front, h - fh * 1.5, (fh * 1.1).min(front.len * 0.22), [2.4, 0.3, 0.25]);
+    // A deep dark doorway with a lit frame.
+    front.bx(g, f, Matte, 0.0, 0.75 + fh * 0.7, 0.05, Vec3::new(3.0, fh * 1.4, 0.12), DARK);
+    front.decal(g, f, Glow, 0.0, 0.75 + fh * 1.42, 0.13, 3.2, 0.1, mul(pal.window_cold, 0.8));
+    // The roof: a crown of masts and a radar dome.
+    parapet(g, c, &body, h, 1.2, 0.5, Concrete, mul(concrete, 1.1));
+    let cc = poly_center(&body);
+    let cw = f.to_world(cc.x, cc.y);
+    let dr = (inradius(&body) * 0.35).clamp(1.5, 5.0);
+    g.part(Metal).cylinder(cw, dr, dr * 0.95, h, h + 1.0, 12, rgba(mul(pal.steel, 0.9)));
+    g.part(Panel).frustum(&MeshData::ngon(cw, dr * 0.95, 12, 0.0, h + 1.0), &MeshData::ngon(cw, dr * 0.2, 12, 0.0, h + 1.0 + dr * 0.9), rgba([0.85, 0.86, 0.88]));
+    for p in body.iter() {
+        let q = toward(*p, cc, 1.0);
+        antenna_mast(g, c, q, h, rng.random_range(3.0..7.0));
+    }
+    aviation_light(g, pal, Vec3::new(cw.x, h + 1.0 + dr * 0.9 + 0.3, cw.y), 0.35);
+    let pf = c.front_face(&c.poly);
+    bollards(g, c, &pf, 6, 1.4);
+    for s in [-1.0f32, 1.0] {
+        let p = pf.at(s * pf.len * 0.38, -1.2);
+        if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.0 {
+            searchlight(g, c, p, 0.0);
+        }
     }
 }

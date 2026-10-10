@@ -40,6 +40,8 @@ pub mod subway;
 
 pub use adjacency::{building_style, style_extras, Neighbour, StyleBook};
 mod services;
+/// [pt-visual] Player-placed monuments: obelisks, statues, arches, memorials, halos.
+mod monuments;
 /// [society] The trash depot.
 mod sanitation;
 /// [economy] Shops, garages and places to go out opened by the economy.
@@ -58,6 +60,8 @@ pub mod dirty;
 mod dirty_tests;
 #[cfg(test)]
 mod economy_tests;
+#[cfg(test)]
+mod pt_visual_tests;
 pub use parts::WINDOW_LIGHT_MARK;
 pub use construction::{crane_paint, crane_slew, CraneRig, CRANE_LIFT_MINUTES, CRANE_SLEW_RANGE};
 pub use power::{battery_lights, coal_vents, CoalVent, solar_head, solar_trackers, wind_rotor, wind_turbines, PlantField, SolarTracker, Turbine, SOLAR_HUB, SOLAR_MAX_TILT, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};

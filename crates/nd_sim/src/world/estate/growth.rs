@@ -99,6 +99,7 @@ impl World {
             let jobs = self.buildings[bid].planned_capacity().1;
             let kind = self.pick_business_kind(lu, jobs);
             self.buildings[bid].business = kind.map(|k| Business::new(k, jobs));
+            self.fit_business_name(bid);
         }
         self.give_to(bid, dev, price);
         self.estate.stats.buyouts_total += 1;

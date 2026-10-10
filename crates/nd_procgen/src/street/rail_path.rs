@@ -8,7 +8,10 @@ pub(super) fn railway(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run:
     // Stopped at a level crossing's edge, where `level_crossing` lays the
     // rails into the road: the ballast, sleepers and rails used to run on
     // over the asphalt and the kerbs, standing 0.3 m proud of the road.
-    let (t0, t1) = (crossing_reach(roads, run.start_node, points, true, RAIL_HALF_WIDTH), crossing_reach(roads, run.end_node, points, false, RAIL_HALF_WIDTH));
+    // [pt-visual] The same where only a footpath crosses: the track stops at
+    // the path's edges and `path_rail_crossing` lays the rails over it.
+    let reach = |node: NodeId, start: bool| crossing_reach(roads, node, points, start, RAIL_HALF_WIDTH).max(path_crossing_reach(roads, node, points, start, RAIL_HALF_WIDTH));
+    let (t0, t1) = (reach(run.start_node, true), reach(run.end_node, false));
     let pts = if t0 == 0.0 && t1 == 0.0 { points.to_vec() } else { trim(points, t0, t1) };
     railway_track(g, pal, &pts, RAIL_HALF_WIDTH * 2.0);
 }
@@ -35,6 +38,61 @@ pub(super) fn crossing_reach(roads: &RoadNetwork, node: NodeId, points: &[Vec2],
             (roads.segment(s).half_width() + SIDEWALK + half * d.dot(along).abs()) / sin
         })
         .fold(0.0, f32::max)
+}
+
+/// [pt-visual] [`crossing_reach`] for a node where footpaths (and no street)
+/// cross the track: out to the path's edge stones and a little past.
+pub(super) fn path_crossing_reach(roads: &RoadNetwork, node: NodeId, points: &[Vec2], start: bool, half: f32) -> f32 {
+    if roads.street_degree(node) != 0 || points.len() < 2 {
+        return 0.0;
+    }
+    let n = points.len();
+    let d = if start { points[1] - points[0] } else { points[n - 2] - points[n - 1] }.normalize_or_zero();
+    roads
+        .node(node)
+        .segments
+        .iter()
+        .filter(|&&s| roads.segment(s).alive && roads.segment(s).kind == RoadKind::Path)
+        .map(|&s| {
+            let (a, b) = roads.segment_points(s);
+            let along = (b - a).normalize_or_zero();
+            let sin = d.perp_dot(along).abs().max(0.35);
+            (PATH_HALF_WIDTH + 0.5 + half * d.dot(along).abs()) / sin
+        })
+        .fold(0.0, f32::max)
+}
+
+/// [pt-visual] Where a footpath crosses the track with no street: the path's
+/// paving runs through and the rails are laid flush into it over a dark
+/// rubber crossing panel, as at a street's level crossing. The track used to
+/// run on over the node and the paving was drawn across the ballast and the
+/// rails. The gates and lamps are the app's (`crate::crossing`).
+pub(super) fn path_rail_crossing(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, at: Vec2, paths: &[SegmentId], rails: &[SegmentId]) {
+    let Some(&rail) = rails.first() else { return };
+    let (ra, rb) = roads.segment_points(rail);
+    let rd = (ra - rb).normalize_or_zero();
+    let rn = Vec2::new(-rd.y, rd.x);
+    for &path in paths {
+        let (pa, pb) = roads.segment_points(path);
+        let pd = (pb - pa).normalize_or_zero();
+        let p_right = Vec2::new(-pd.y, pd.x);
+        let (cu, cv) = (rd.dot(p_right), rn.dot(p_right));
+        if cu.abs() <= 0.2 {
+            continue;
+        }
+        let at_lat = |lat: f32, v: f32| at + rd * ((lat - v * cv) / cu) + rn * v;
+        let hw = PATH_HALF_WIDTH + 0.1;
+        let half = RAIL_HALF_WIDTH.min(1.6);
+        let panel = [at_lat(-hw, -half), at_lat(hw, -half), at_lat(hw, half), at_lat(-hw, half)];
+        g.part(Matte).ground_polygon(&panel, ASPHALT_Y + 0.03, rgba([0.07, 0.07, 0.08]));
+        for v in [-0.72f32, 0.72] {
+            g.part(Metal).ground_strip(&[at_lat(-hw, v), at_lat(hw, v)], 0.08, ASPHALT_Y + 0.036, rgba(mul(pal.steel, 0.75)));
+        }
+        // Tactile strips on the paving either side, yellow.
+        for v in [-(half + 0.6), half + 0.6] {
+            g.part(Paint).ground_strip(&[at_lat(-PATH_HALF_WIDTH, v), at_lat(PATH_HALF_WIDTH, v)], 0.4, ASPHALT_Y + 0.03, rgba([0.85, 0.7, 0.1]));
+        }
+    }
 }
 
 /// Where track crosses a street: planks between the rails over the

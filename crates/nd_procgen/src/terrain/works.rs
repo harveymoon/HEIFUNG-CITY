@@ -188,6 +188,7 @@ pub fn pillar_column(g: &mut Geometry, at: Vec2, dir: Vec2, top: f32, foot: f32,
 /// a ventilation shaft head on the surface every 150 m or so along it.
 pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32; 3]) {
     use glam::Vec3;
+    use nd_sim::landscape::Hold;
     let roads = &world.roads;
     let z_of = |n: nd_sim::NodeId| world.road_z.get(n.0 as usize).copied().unwrap_or(0.0);
     let wall = rgba(mul(concrete, 0.75));
@@ -195,7 +196,6 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
     for (sid, seg) in roads.alive_segments() {
         let (a, b) = roads.segment_points(sid);
         let (za, zb) = (z_of(seg.a), z_of(seg.b));
-        let hw = seg.half_width() + if seg.is_street() { nd_sim::zoning::SIDEWALK } else { 0.6 };
         let len = a.distance(b);
         if len < 0.5 {
             continue;
@@ -242,33 +242,56 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
             }
             continue;
         }
-        // Open cutting: retaining walls where the way runs well below the
-        // ground beside it (a portal ramp, a sunken road).
+        // [pt-visual] Held earthworks (`earthwork_hold`): a deep cutting or a
+        // high fill is held by a retaining wall filling the band the ground
+        // is held in (`earthwork_band`), its face at the shoulder or the
+        // back of the pavement. A way eased into a gentle slope is graded,
+        // not walled: walls stood free on the slopes there (F11).
+        let Some(hold) = nd_sim::landscape::earthwork_hold(&world.landscape, roads, &world.road_z, &world.road_inner, sid) else { continue };
+        let (face, back) = nd_sim::landscape::earthwork_band(seg);
         let steps = (len / 4.0).ceil().max(1.0) as usize;
         for k in 0..steps {
             let (t0, t1) = (k as f32 / steps as f32, (k + 1) as f32 / steps as f32);
             let (p0, p1) = (a.lerp(b, t0), a.lerp(b, t1));
             let (r0, r1) = (za + (zb - za) * t0, za + (zb - za) * t1);
             for sgn in [-1.0f32, 1.0] {
-                let o = side * sgn * (hw + nd_sim::landscape::GROUND_CELL - 0.6);
-                let probe = side * sgn * (hw + nd_sim::landscape::GROUND_CELL + 4.0);
+                let out2 = side * sgn;
+                // The ground just behind the band, as graded: the wall's
+                // top is flush with it (a neighbouring way's slope may have
+                // cut the hill down), so no block stands proud of the grass.
+                let probe = out2 * (back + 1.0);
                 let (g0, g1) = (world.ground_height(p0 + probe), world.ground_height(p1 + probe));
-                if g0 - r0 < 1.2 && g1 - r1 < 1.2 {
-                    continue;
-                }
-                let (q0, q1) = (p0 + o, p1 + o);
+                let (q0, q1) = (p0 + out2 * face, p1 + out2 * face);
+                let (e0, e1) = (p0 + out2 * back, p1 + out2 * back);
                 // [sweep-visual] Not across another way: at a junction on a
                 // slope the wall along one arm ran on over the next arm's
                 // lanes and pavements, a concrete band across the road.
-                if [q0, q1, (q0 + q1) * 0.5].iter().any(|q| on_other_way(roads, sid, *q)) {
+                if [q0, q1, (q0 + q1) * 0.5, e0, e1].iter().any(|q| on_other_way(roads, sid, *q)) {
                     continue;
                 }
-                let (t0, t1) = (g0.max(r0) + 0.6, g1.max(r1) + 0.6);
-                let out = Vec3::new(side.x * sgn, 0.0, side.y * sgn);
+                let out = Vec3::new(out2.x, 0.0, out2.y);
                 let m = g.part(Surface::Concrete);
-                m.quad_facing([Vec3::new(q0.x, r0 - 0.5, q0.y), Vec3::new(q1.x, r1 - 0.5, q1.y), Vec3::new(q1.x, t1, q1.y), Vec3::new(q0.x, t0, q0.y)], -out, wall);
-                let (b0, b1) = (q0 + o.normalize_or_zero() * 0.4, q1 + o.normalize_or_zero() * 0.4);
-                m.quad_facing([Vec3::new(q0.x, t0, q0.y), Vec3::new(q1.x, t1, q1.y), Vec3::new(b1.x, t1, b1.y), Vec3::new(b0.x, t0, b0.y)], Vec3::Y, coping);
+                match hold {
+                    Hold::Cut => {
+                        if g0 - r0 < 1.2 && g1 - r1 < 1.2 {
+                            continue;
+                        }
+                        let (t0, t1) = (g0.max(r0) + 0.6, g1.max(r1) + 0.6);
+                        m.quad_facing([Vec3::new(q0.x, r0 - 0.5, q0.y), Vec3::new(q1.x, r1 - 0.5, q1.y), Vec3::new(q1.x, t1, q1.y), Vec3::new(q0.x, t0, q0.y)], -out, wall);
+                        m.quad_facing([Vec3::new(q0.x, t0, q0.y), Vec3::new(q1.x, t1, q1.y), Vec3::new(e1.x, t1, e1.y), Vec3::new(e0.x, t0, e0.y)], Vec3::Y, coping);
+                    }
+                    Hold::Fill => {
+                        if r0 - g0 < 1.2 && r1 - g1 < 1.2 {
+                            continue;
+                        }
+                        // A parapet on the road side, the wall face outward
+                        // down to the land.
+                        let (t0, t1) = (r0 + 0.9, r1 + 0.9);
+                        m.quad_facing([Vec3::new(q0.x, r0 - 0.1, q0.y), Vec3::new(q1.x, r1 - 0.1, q1.y), Vec3::new(q1.x, t1, q1.y), Vec3::new(q0.x, t0, q0.y)], -out, wall);
+                        m.quad_facing([Vec3::new(q0.x, t0, q0.y), Vec3::new(q1.x, t1, q1.y), Vec3::new(e1.x, t1, e1.y), Vec3::new(e0.x, t0, e0.y)], Vec3::Y, coping);
+                        m.quad_facing([Vec3::new(e0.x, g0.min(r0) - 0.5, e0.y), Vec3::new(e1.x, g1.min(r1) - 0.5, e1.y), Vec3::new(e1.x, t1, e1.y), Vec3::new(e0.x, t0, e0.y)], out, wall);
+                    }
+                }
             }
         }
     }
@@ -570,7 +593,6 @@ fn port_docks(world: &World, palette: &Palette, g: &mut Geometry, concrete: [f32
     use glam::Vec3;
     let land = &world.landscape;
     // Dock piers.
-    let mut boats: Option<[MeshData; 3]> = None;
     for port in world.ports.ports.values() {
         let (_, width) = port.kind.pier();
         let [root, tip] = port.pier;
@@ -618,7 +640,6 @@ fn port_docks(world: &World, palette: &Palette, g: &mut Geometry, concrete: [f32
             }
             // [economy] Pontoons and quays with their boats moored.
             PortKind::MarinaSmall | PortKind::MarinaLarge | PortKind::FishingPortSmall | PortKind::FishingPortLarge => {
-                let meshes = boats.get_or_insert_with(|| [boat_mesh(ShipKind::Sailboat, palette), boat_mesh(ShipKind::Yacht, palette), boat_mesh(ShipKind::FishingBoat, palette)]);
                 let layout = dock_layout(port, land);
                 let top = if floating { WATER_LEVEL + PONTOON_DECK } else { deck };
                 for (a, b, w) in &layout.decks {
@@ -639,19 +660,7 @@ fn port_docks(world: &World, palette: &Palette, g: &mut Geometry, concrete: [f32
                 let lamp = tip - along * 1.0 + across * (width * 0.5 - 0.4);
                 g.part(Surface::Matte).cylinder(lamp, 0.07, 0.07, top, top + 4.0, 6, rgba([0.2, 0.2, 0.22]));
                 g.part(Surface::Glow).boxed(Vec3::new(lamp.x, top + 4.1, lamp.y), Vec3::new(0.35, 0.22, 0.35), 0.0, rgba(palette.lamp));
-                for m in &layout.boats {
-                    // [fishing] Trawlers are drawn by the app where the
-                    // sim has them: at their berth or out at sea.
-                    if m.kind == ShipKind::FishingBoat {
-                        continue;
-                    }
-                    let mesh = match m.kind {
-                        ShipKind::Yacht => &meshes[1],
-                        ShipKind::FishingBoat => &meshes[2],
-                        _ => &meshes[0],
-                    };
-                    g.part(Surface::Panel).append_transformed(mesh, Vec3::new(m.pos.x, WATER_LEVEL, m.pos.y), m.yaw);
-                }
+                // [pt-visual] The boats are `moored_boats`', drawn apart.
             }
         }
     }

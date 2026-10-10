@@ -149,7 +149,7 @@ styles! {
     Hospital { label: "hospital", family: Special, cluster: 0.0, draw: |g, c, r, _| services::hospital(g, c, r) },
     School { label: "school", family: Special, cluster: 0.0, draw: |g, c, r, _| services::school(g, c, r) },
     DispatchCenter { label: "911 dispatch centre", family: Special, cluster: 0.0, draw: |g, c, r, _| services::dispatch_center(g, c, r) },
-    Landmark { label: "landmark", family: Special, cluster: -1.5, draw: |g, c, r, _| services::landmark(g, c, r) },
+    Landmark { label: "landmark", family: Special, cluster: -1.5, draw: |g, c, r, _| monuments::landmark(g, c, r) },
     Stadium { label: "stadium", family: Special, cluster: -1.5, draw: |g, c, r, _| services::stadium(g, c, r) },
     Prison { label: "jail", family: Special, cluster: -1.0, draw: |g, c, r, _| services::prison(g, c, r) },
     // -- industry sub-zones (`nd_sim::industry`): forced by the business on
@@ -277,6 +277,13 @@ styles! {
     BeachBar { label: "beach bar", family: Night, cluster: 0.6, draw: |g, c, r, _| shore::beach_bar(g, c, r, c.shore) },
     /// A kiosk, kayak racks and pedalos; its pontoon is its jetty.
     BoatRental { label: "boat rental", family: Night, cluster: 0.6, draw: |g, c, r, _| shore::boat_rental(g, c, r, c.shore) },
+    // -- [pt-visual] brutalist civic buildings, appended so `ALL` keeps its order. --
+    /// Battered concrete, slit windows, blast doors under a visor, searchlights.
+    CivicBunker { label: "civil defence bunker", family: Special, cluster: -0.3, draw: |g, c, r, _| civic::bunker(g, c, r) },
+    /// An inverted ziggurat of concrete fins over a columned lobby, the emblem on the crown.
+    CivicTower { label: "ministry tower", family: Special, cluster: -0.6, draw: |g, c, r, _| civic::civic_tower(g, c, r) },
+    /// A near windowless monolith with lit slits, cameras and an eye over the door.
+    Panopticon { label: "surveillance bureau", family: Special, cluster: -0.8, draw: |g, c, r, _| civic::panopticon(g, c, r) },
 }
 
 impl Style {

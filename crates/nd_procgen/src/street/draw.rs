@@ -163,6 +163,27 @@ impl<'a> StreetCtx<'a> {
         self.heights.get(n.0 as usize).copied().unwrap_or(0.0)
     }
 
+    /// [pt-visual] The height of a junction's surface at `p`: the node's,
+    /// plus how far each run arriving there rises beside `p` (each run's
+    /// profile is the node's height at the junction). The pad and every
+    /// corner of the junction are set on this one surface, so at a steep
+    /// junction they meet without the slivers that opened where the pad
+    /// counted one arm and the corner two.
+    pub(super) fn junction_z(&self, nid: NodeId, p: Vec2) -> f32 {
+        let z0 = self.node_z(nid);
+        let mut seen: Vec<usize> = Vec::new();
+        let mut z = z0;
+        for s in &self.roads.node(nid).segments {
+            if let Some(&ri) = self.arm_run.get(&(nid.0, s.0)) {
+                if !seen.contains(&ri) {
+                    seen.push(ri);
+                    z += self.run_z(ri, p) - z0;
+                }
+            }
+        }
+        z
+    }
+
     /// The height of run `ri` beside `p` (0 on the datum).
     pub(super) fn run_z(&self, ri: usize, p: Vec2) -> f32 {
         self.lifts.get(ri).and_then(|l| l.as_ref()).map_or(0.0, |l| l.height(p))
@@ -817,6 +838,12 @@ pub(super) fn draw_node(cx: &StreetCtx, g: &mut Geometry, nid: NodeId, node: &nd
         level_crossing(g, pal, roads, nid, node.pos, &alive, &rails_here);
         return;
     }
+    // [pt-visual] A footpath over the track, no street.
+    if alive.is_empty() && paths_here > 0 && !rails_here.is_empty() {
+        let paths: Vec<SegmentId> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).kind == RoadKind::Path).collect();
+        path_rail_crossing(g, pal, roads, node.pos, &paths, &rails_here);
+        return;
+    }
     if alive.len() == 2 && paths_here > 0 {
         // A path crossing a street: zebra across the carriageway (none
         // where a footbridge replaced it).
@@ -893,7 +920,23 @@ pub(super) fn draw_pad(cx: &StreetCtx, g: &mut Geometry, nid: NodeId, node: &nd_
             rz(pp.arms[0]) + rz(pp.arms[1]) - 2.0 * z0
         }
     };
-    let ring: Vec<Vec3> = outline.iter().map(|pp| Vec3::new(pp.p.x, ASPHALT_Y + 0.01 + local(pp), pp.p.y)).collect();
+    let ring: Vec<Vec3> = if cx.lifts.is_empty() {
+        outline.iter().map(|pp| Vec3::new(pp.p.x, ASPHALT_Y + 0.01 + local(pp), pp.p.y)).collect()
+    } else {
+        // [pt-visual] On a slope: the outline subdivided every 1.5 m, each
+        // point on the junction's surface (`junction_z`), as the corners.
+        let _ = local;
+        let mut ring = Vec::new();
+        for k in 0..outline.len() {
+            let (a, b) = (outline[k].p, outline[(k + 1) % outline.len()].p);
+            let n = (a.distance(b) / 1.5).ceil().max(1.0) as usize;
+            for s in 0..n {
+                let p = a.lerp(b, s as f32 / n as f32);
+                ring.push(Vec3::new(p.x, ASPHALT_Y + 0.01 + cx.junction_z(nid, p) - z0, p.y));
+            }
+        }
+        ring
+    };
     let worn = cx.inp.land_value.at(node.pos) < 0.35;
     let (v, ix) = (g.get(Asphalt).positions.len(), g.get(Asphalt).indices.len());
     g.part(Asphalt).ground_fan(Vec3::new(node.pos.x, ASPHALT_Y + 0.01, node.pos.y), &ring, cx.asphalt_c);
@@ -984,9 +1027,16 @@ pub(super) fn draw_corners(cx: &StreetCtx, g: &mut Geometry) {
                 // rises along the run, so the two together are the height of
                 // the road beside either arm (the other contributing only
                 // the node's), and a plane through both slopes between.
+                // [pt-visual] Every run at the junction counts
+                // (`junction_z`): at an acute corner a third arm's rise
+                // reached the pad but not the corner.
                 let (ra, rb) = (corner.arms[0].0, corner.arms[1].0);
                 let z0 = cx.node_z(nid);
-                lift_since(g, &from, |p| cx.run_z(ra, p) + cx.run_z(rb, p) - z0);
+                if cx.roads.node(nid).segments.len() > 2 {
+                    lift_since(g, &from, |p| cx.junction_z(nid, p));
+                } else {
+                    lift_since(g, &from, |p| cx.run_z(ra, p) + cx.run_z(rb, p) - z0);
+                }
             }
         }
         if cx.inp.land_value.at(centre) < 0.35 {

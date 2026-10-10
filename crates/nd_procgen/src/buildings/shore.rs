@@ -991,3 +991,171 @@ pub fn shore_look(world: &nd_sim::World, id: nd_sim::BuildingId) -> Option<Shore
 fn clear_out(c: &Ctx, face: &Face, d: f32) -> bool {
     [-0.48f32, 0.0, 0.48].iter().all(|t| on_lot(c, face.at(face.len * t, d), 0.2))
 }
+
+// ── [pt-visual] the promenade along a long public beach ─────────────────────
+
+/// Public beach lots touching along their sides from which the sand gets a
+/// boardwalk promenade along its landward edge (Harvey: "if enough public
+/// beach shoreline gets added together it can procedurally generate a
+/// boardwalk; needs like 4 plots").
+pub const BOARDWALK_MIN_LOTS: usize = 4;
+/// Width of the promenade's deck.
+pub const BOARDWALK_WIDTH: f32 = 4.5;
+/// The deck's height over the sand.
+const BOARDWALK_DECK: f32 = 0.6;
+
+/// The beach lots of every run of [`BOARDWALK_MIN_LOTS`] or more public
+/// beach lots that share their sides (world lot ids, run by run).
+pub fn beach_runs(world: &nd_sim::World) -> Vec<Vec<nd_sim::LotId>> {
+    let ids: Vec<nd_sim::LotId> = world.lots.iter().filter(|(_, l)| l.shore.beach && l.polygon.len() >= 3).map(|(id, _)| id).collect();
+    let n = ids.len();
+    let touch = |a: &[Vec2], b: &[Vec2]| {
+        let (na, nb) = (a.len(), b.len());
+        (0..na).any(|i| (0..nb).any(|j| nd_sim::geom::shared_stretch(a[i], a[(i + 1) % na], b[j], b[(j + 1) % nb]).is_some_and(|(lo, hi)| hi - lo >= 2.0)))
+    };
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let (a, b) = (&world.lots[ids[i]].polygon, &world.lots[ids[j]].polygon);
+            if touch(a, b) {
+                adj[i].push(j);
+                adj[j].push(i);
+            }
+        }
+    }
+    let mut seen = vec![false; n];
+    let mut runs = Vec::new();
+    for s in 0..n {
+        if seen[s] {
+            continue;
+        }
+        let mut stack = vec![s];
+        seen[s] = true;
+        let mut run = Vec::new();
+        while let Some(i) = stack.pop() {
+            run.push(ids[i]);
+            for &j in &adj[i] {
+                if !seen[j] {
+                    seen[j] = true;
+                    stack.push(j);
+                }
+            }
+        }
+        if run.len() >= BOARDWALK_MIN_LOTS {
+            run.sort();
+            runs.push(run);
+        }
+    }
+    runs.sort();
+    runs
+}
+
+/// The promenades of the long beaches ([`beach_runs`]): a wooden deck on
+/// posts along each lot's landward edges, the lots' decks meeting at their
+/// seams so the run reads as one boardwalk; a rail on the sand side with a
+/// gap where each lot's path goes down to the water, lamps with a neon band,
+/// benches facing the sea and the odd kiosk with a lit sign. Drawn in world
+/// coordinates at the ground's height.
+pub fn boardwalks(world: &nd_sim::World, palette: &crate::palette::Palette) -> Geometry {
+    let mut g = Geometry::default();
+    let wood = mul(palette.wood, 1.1);
+    let dark = mul(palette.wood, 0.55);
+    let neon = [0.25, 1.4, 1.7];
+    for run in beach_runs(world) {
+        for &id in &run {
+            let lot = &world.lots[id];
+            let poly = &lot.polygon;
+            let m = poly.len();
+            let sea = if lot.shore.seaward != Vec2::ZERO { lot.shore.seaward } else { -lot.front_dir };
+            let ccw = nd_sim::zoning::polygon_area(poly) > 0.0;
+            let entrance = lot.park.as_ref().and_then(|p| p.paths.first()).and_then(|p| p.first().copied());
+            let others: Vec<&Vec<Vec2>> = run.iter().filter(|o| **o != id).map(|o| &world.lots[*o].polygon).collect();
+            for k in 0..m {
+                let (a, b) = (poly[k], poly[(k + 1) % m]);
+                let len = a.distance(b);
+                if len < 3.0 {
+                    continue;
+                }
+                let d = (b - a) / len;
+                let inward = if ccw { Vec2::new(-d.y, d.x) } else { Vec2::new(d.y, -d.x) };
+                // The landward edges: facing away from the water, not a
+                // seam with the next lot of the run.
+                if (-inward).dot(sea) > -0.5 {
+                    continue;
+                }
+                let seam = others.iter().any(|o| {
+                    let n = o.len();
+                    (0..n).any(|j| nd_sim::geom::shared_stretch(a, b, o[j], o[(j + 1) % n]).is_some_and(|(lo, hi)| hi - lo >= 2.0))
+                });
+                if seam {
+                    continue;
+                }
+                let z = |p: Vec2| world.surface_height(p) + BOARDWALK_DECK;
+                let w = BOARDWALK_WIDTH;
+                let (a2, b2) = (a + inward * w, b + inward * w);
+                // The deck, as a run of planks across it.
+                let steps = (len / 2.0).ceil().max(1.0) as usize;
+                for s in 0..steps {
+                    let (t0, t1) = (s as f32 / steps as f32, (s + 1) as f32 / steps as f32);
+                    let (p0, p1) = (a.lerp(b, t0), a.lerp(b, t1));
+                    let (q0, q1) = (a2.lerp(b2, t0), a2.lerp(b2, t1));
+                    let c = rgba(if s % 2 == 0 { wood } else { mul(wood, 0.93) });
+                    g.part(Wood).quad_facing([Vec3::new(p0.x, z(p0), p0.y), Vec3::new(p1.x, z(p1), p1.y), Vec3::new(q1.x, z(q1), q1.y), Vec3::new(q0.x, z(q0), q0.y)], Vec3::Y, c);
+                    // The skirt down to the sand on the water side.
+                    let (f0, f1) = (world.surface_height(q0) - 0.2, world.surface_height(q1) - 0.2);
+                    g.part(Wood).quad_facing([Vec3::new(q0.x, f0, q0.y), Vec3::new(q1.x, f1, q1.y), Vec3::new(q1.x, z(q1), q1.y), Vec3::new(q0.x, z(q0), q0.y)], Vec3::new(inward.x, 0.0, inward.y), rgba(dark));
+                }
+                // Posts and the rail on the sand side, open where the lot's
+                // path goes down to the water.
+                let gap = entrance.map(|e| nd_sim::geom::project_on_segment(e, a2, b2).0).unwrap_or(-1.0);
+                let posts = (len / 2.5).floor().max(1.0) as usize;
+                for s in 0..=posts {
+                    let t = s as f32 / posts as f32;
+                    if (t - gap).abs() * len < 2.0 {
+                        continue;
+                    }
+                    let p = a2.lerp(b2, t) - inward * 0.15;
+                    let y = z(p);
+                    g.part(Wood).boxed(Vec3::new(p.x, y + 0.5, p.y), Vec3::new(0.12, 1.0, 0.12), 0.0, rgba(dark));
+                    if s < posts && ((t + 0.5 / posts as f32) - gap).abs() * len >= 2.0 {
+                        let q = a2.lerp(b2, (s + 1) as f32 / posts as f32) - inward * 0.15;
+                        g.part(Wood).beam(Vec3::new(p.x, y + 1.0, p.y), Vec3::new(q.x, z(q) + 1.0, q.y), 0.1, rgba(wood));
+                    }
+                }
+                // Lamps with a neon band every 12 m, benches facing the sea
+                // between them.
+                let mut s = 6.0;
+                let yaw = sea.y.atan2(sea.x);
+                while s < len - 2.0 {
+                    let p = a + d * s + inward * (w - 0.6);
+                    let y = z(p);
+                    g.part(Matte).cylinder(p, 0.08, 0.06, y, y + 4.2, 6, rgba([0.15, 0.15, 0.17]));
+                    g.part(Glow).boxed(Vec3::new(p.x, y + 4.3, p.y), Vec3::new(0.45, 0.25, 0.45), 0.0, rgba(palette.lamp));
+                    g.part(Glow).boxed(Vec3::new(p.x, y + 3.2, p.y), Vec3::new(0.14, 0.9, 0.14), 0.0, rgba(neon));
+                    let bp = a + d * (s + 6.0) + inward * (w - 1.0);
+                    if s + 6.0 < len - 1.5 {
+                        // A bench stands on 0: drawn apart and lifted onto the deck.
+                        let mut b = Geometry::default();
+                        bench_world(&mut b, bp, yaw - FRAC_PI_2, palette.wood, CHARCOAL);
+                        let lift = Vec3::new(0.0, z(bp), 0.0);
+                        for (surf, mesh) in b.iter() {
+                            g.part(surf).append_transformed(mesh, lift, 0.0);
+                        }
+                    }
+                    s += 12.0;
+                }
+                // A kiosk on the longer edges: a booth with an awning and a sign.
+                let h = ((lot.center.x.to_bits() as u64) << 32 | lot.center.y.to_bits() as u64).wrapping_add(k as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40;
+                if len >= 18.0 && h % 3 == 0 {
+                    let p = a + d * (len * 0.3) + inward * 1.6;
+                    let y = z(p);
+                    let ky = d.y.atan2(d.x);
+                    g.part(Plaster).boxed(Vec3::new(p.x, y + 1.3, p.y), Vec3::new(3.0, 2.6, 2.2), ky, rgba([0.92, 0.9, 0.84]));
+                    g.part(Tarp).boxed(Vec3::new(p.x + inward.x * 1.4, y + 2.5, p.y + inward.y * 1.4), Vec3::new(3.4, 0.08, 1.2), ky, rgba([0.95, 0.3, 0.4]));
+                    g.part(Glow).boxed(Vec3::new(p.x, y + 2.95, p.y), Vec3::new(2.4, 0.4, 0.1), ky, rgba([2.2, 0.4, 1.4]));
+                }
+            }
+        }
+    }
+    g
+}

@@ -323,6 +323,10 @@ pub fn sync_draw_hologram(
         return;
     }
     tools.grade_warnings = w.road_grade_warnings(&ctrl, &ctrl_levels, kind, f, b);
+    // [pt-visual] A curved road bends through its points: no sharp corners.
+    if tools.curved {
+        tools.grade_warnings.retain(|m| !m.starts_with("turns "));
+    }
     let (pts, levels) = built(&ctrl, &ctrl_levels, tools.curved);
     let (mesh, red, plan) = hologram(w, &assets.palette, &pts, &levels, f, b, kind, 0.55);
     // [tools] The columns, for the sub-pane and the remote API.
