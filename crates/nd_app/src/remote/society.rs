@@ -74,7 +74,7 @@ pub fn society(w: &World) -> Value {
             "outreach_total": h.stats.outreach_total, "left_town_total": h.stats.left_town_total, "meals_today": h.stats.meals_today,
             "camps_at_last_midnights": h.stats.camps_history,
             "camp_list": h.camps.iter().map(|x| json!({ "id": x.id, "pos": v2(x.pos), "people": x.people, "tents": x.tents(), "households": x.households.len(), "on": if x.sidewalk { "pavement" } else { "vacant lot" } })).collect::<Vec<_>>(),
-            "rv_list": h.rvs.iter().map(|r| json!({ "pos": v2(r.pos), "kind": if r.camper { "rv" } else { "van" } })).collect::<Vec<_>>(),
+            "rv_list": h.rvs.iter().map(|r| json!({ "id": r.seed, "pos": v2(r.pos), "kind": if r.camper { "rv" } else { "van" }, "abandoned": r.abandoned.is_some() })).collect::<Vec<_>>(),
         },
     })
 }

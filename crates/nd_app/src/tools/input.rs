@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use nd_sim::{Plan, Vec2 as SVec2};
 
-use super::{bulldoze, buildings, edit, elevation_label, pick, rail, refused_text, road, transit, zone, EffectivePlan, Tool, ToolState, TransitMode};
+use super::{bulldoze, buildings, edit, elevation_label, rail, refused_text, road, transit, zone, EffectivePlan, Tool, ToolState, TransitMode};
 use crate::camera::{CameraMode, Cursor, OrbitCamera};
 use crate::selection::{apply_pick, Selection};
 use crate::sim::Sim;
@@ -226,7 +226,10 @@ pub(crate) fn tool_input(
         Tool::Inspect => {
             if click {
                 if let Some(p) = ground {
-                    let picked = pick(sim, p, tools.depth);
+                    // [feat/pt-ux] By the pointer's ray: a tower by its
+                    // walls, an aircraft in the air, and from far out not
+                    // the people.
+                    let picked = super::pick_click(sim, &super::Click { ground: p, depth: tools.depth, ray: cursor.ray, view_dist: cursor.view_dist });
                     apply_pick(sim, tools, selection, picked);
                 }
             }

@@ -618,7 +618,10 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("toll", "int: a toll booth"),
         ("road|segment", "id or [x,y]: a street piece"),
         ("ship", "id: a ferry or freighter (landscape.ships)"),
-        ("at", "[x,y] picks like a click (vehicles, people, booths, parked cars, then the road piece, then lots); nothing clears"),
+        ("drone", "id: a drone taxi or helicopter (find {what: drones} lists them): its card says where it is going and who is aboard"),
+        ("rv", "int: a camper or van at the kerb (society.rv_list id): lived in or abandoned, and its tow"),
+        ("at", "[x,y] picks like a click right there from close by (vehicles, people, booths, campers, parked cars at the kerb, then the road piece, then lots); nothing clears"),
+        ("aim", "[x,y,h]: a click from the camera as it stands at the point h m above the ground at [x,y] (or `at` with `click: true`): picks along the ray, so a tower by its walls and an aircraft in the air; from more than 320 m out no people, robots or parked cars, from more than 700 m no cars"),
     ] },
     Cmd { name: "selected", aliases: &[], effect: Read, run: |_, ctx| Ok(inspect::selected_detail(&ctx.sim, *ctx.selection, ctx.tools.route_sel, &ctx.assets, &ctx.tools.favorites)), help: &[
         ("", "full detail of what the player has selected: a car with why (reason, text, by), jam (chain to the head of the queue, head_reason, cycle), trip (elapsed_min, expected_min, anger), lanes, driver, cargo; a citizen (and driving_car); a building; a parked car; the bus line picked (bus_line)"),

@@ -243,7 +243,7 @@ pub(crate) fn lifts(sel: Selection) -> Lifts {
         Selection::Car(c) => Lifts { car: Some(c), ..Default::default() },
         Selection::Unit(u) => Lifts { unit: Some(u), ..Default::default() },
         // Outlined by their own gizmos or meshes, not lifted.
-        Selection::None | Selection::Building(_) | Selection::Parked(_) | Selection::Toll(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Road(_) | Selection::Ship(_) => Lifts::default(),
+        Selection::None | Selection::Building(_) | Selection::Parked(_) | Selection::Toll(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Road(_) | Selection::Ship(_) | Selection::Drone(_) | Selection::Rv(_) => Lifts::default(),
     }
 }
 
