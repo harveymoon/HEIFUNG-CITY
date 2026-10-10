@@ -288,6 +288,8 @@ impl World {
             Some((pts, nodes)) => {
                 if count {
                     self.note_footfall(id, &nodes);
+                } else {
+                    self.add_footfall(id, &nodes);
                 }
                 pts
             }
@@ -608,6 +610,7 @@ impl World {
         // The counts are tallied in `update_economy`; only the countdown is
         // worth keeping to the minute.
         self.rail.stats.trains = self.rail.trains.len() as u32;
+        self.plan_rail_day_trips();
         self.rail.stats.next_passenger_in = if self.stations.is_empty() && self.halts.is_empty() { 0 } else { rail::PASSENGER_HEADWAY.saturating_sub(tick.saturating_sub(self.rail.last_passenger_tick)) as u32 };
     }
 
@@ -654,6 +657,8 @@ impl World {
                     b.visitors = b.visitors.saturating_add(1);
                 }
                 self.rail.trains[id].passengers = keep;
+                // [pt-transit] And whoever it brings from out of town.
+                self.rail_arrivals(at);
             }
             TrainKind::Freight => {
                 if !self.buildings.contains_key(at) {

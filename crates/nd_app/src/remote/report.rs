@@ -64,7 +64,7 @@ pub const MEMORY_WINDOW_TICKS: u64 = 2 * 1440;
 /// Example ids carried by each alert.
 const ALERT_EXAMPLES: usize = 5;
 
-pub const SECTIONS: &[&str] = &["overview", "people", "economy", "land", "services", "industry", "society", "pressure", "alerts", "history"];
+pub const SECTIONS: &[&str] = &["overview", "people", "economy", "land", "services", "industry", "society", "pressure", "alerts", "history", "ridership"];
 
 const KINDS: [BusinessKind; BusinessKind::COUNT] = BusinessKind::ALL;
 
@@ -166,6 +166,11 @@ pub fn report(w: &World, sections: &[String]) -> Result<Value, String> {
     }
     if want("alerts") {
         out.insert("alerts".into(), alerts_json(&alerts, usize::MAX));
+    }
+    // [pt-transit] Who rides and why not: only when asked for by name
+    // (it weighs every sampled commute's options).
+    if sections.iter().any(|x| x == "ridership") {
+        out.insert("ridership".into(), serde_json::to_value(w.ridership_report(1500)).unwrap_or(Value::Null));
     }
     Ok(Value::Object(out))
 }
@@ -1136,10 +1141,22 @@ pub fn alerts(w: &World) -> Vec<Alert> {
             rail_missing.1 += !l.road_connected as u32;
         }
     }
+    // [pt-transit] Lines that run but get no buses (no depot, none that
+    // reaches them), and more buses wanted than the depots hold.
+    let mut no_buses = Alert::new("bus_line_gets_no_buses", 2, "the line can run but no bus can be sent to it: build a depot, or one with a road to its first stop (bus problems: the line's own list)");
     for (id, r) in w.transit.routes.iter() {
         if !r.runnable() {
             route_broken.add_id(id, r.stops.first().map(|s| s.pos));
+        } else if w.line_problems(id).iter().any(|p| matches!(p, nd_sim::LineProblem::NoDepot | nd_sim::LineProblem::DepotUnreachable)) {
+            no_buses.add_id(id, r.stops.first().map(|s| s.pos));
         }
+    }
+    no_buses.message = format!("{} bus lines get no buses", no_buses.count);
+    let (fleet_wanted, fleet_room) = w.fleet_balance();
+    let mut fleet_short = Alert::new("bus_fleet_short", 2, "the lines want more buses than the depots hold: build another depot or run fewer buses");
+    if fleet_wanted > fleet_room && fleet_room > 0 {
+        fleet_short.count = 1;
+        fleet_short.message = format!("the lines want {fleet_wanted} buses; the depots hold {fleet_room}");
     }
     let gridlocks = w.traffic.gridlocks();
     let mut kerb = 0;
@@ -1235,7 +1252,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
         a.message = format!("no dispatcher on duty: jobs go out {} minutes after the call", w.dispatcher().1);
         uncovered.push(a);
     }
-    let mut out = vec![fires, hungry, starving, unhoused, rent, food_staff, food_empty, closed, broke, unpowered, crowded, rail_broken, dock_off, route_broken, sites, stuck, derelict, vacant_demand];
+    let mut out = vec![fires, hungry, starving, unhoused, rent, food_staff, food_empty, closed, broke, unpowered, crowded, rail_broken, dock_off, route_broken, no_buses, fleet_short, sites, stuck, derelict, vacant_demand];
     // City-wide conditions with no single place.
     // Only working-age adults look for work: children and retirees are not
     // unemployed.

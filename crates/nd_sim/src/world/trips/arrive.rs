@@ -159,9 +159,23 @@ impl World {
             }
             _ => (None, None),
         };
+        // [pt-transit] A metro rider goes in at the entrance and down to
+        // the platform to wait, out of sight of the street (they stood at
+        // the kerb by the kiosk, "waiting for a ride" no car could give).
+        let platform = if purpose == Purpose::ToStop {
+            self.citizens[id].transit.and_then(|t| match t.leg {
+                TransitLeg::Subway { board, .. } => self.metro_platform(board),
+                _ => None,
+            })
+        } else {
+            None
+        };
         let c = &mut self.citizens[id];
         match (purpose, to) {
             (Purpose::ToStop, Some(_)) => {
+                if let Some(p) = platform {
+                    c.pos = p;
+                }
                 c.activity = Activity::Waiting { at: c.pos };
                 c.inside = None;
                 c.prev_pos = c.pos;

@@ -195,6 +195,10 @@ impl World {
             Some((pts, walk_nodes)) => {
                 if fresh {
                     self.note_footfall(id, &walk_nodes);
+                } else {
+                    // [pt-transit] The walk on from a stop or station passes
+                    // shops too (it used to count for nothing).
+                    self.add_footfall(id, &walk_nodes);
                 }
                 pts
             }
@@ -250,8 +254,21 @@ impl World {
             if let Some((route, board, alight)) = self.transit.plan_trip(q.from, q.to) {
                 let r = &self.transit.routes[route];
                 let (s0, s1) = (r.stops[board].pos, r.stops[alight].pos);
-                let minutes = (q.from.distance(s0) + s1.distance(q.to)) / walk + 12.0 + r.ride_length(board, alight) / (7.0 * secs);
+                // [pt-transit] The wait is half the line's headway (more
+                // buses, shorter waits), not a flat twelve minutes.
+                let wait = (r.headway(secs) as f32 * 0.5).clamp(transit::MIN_EXPECTED_WAIT, transit::MAX_EXPECTED_WAIT);
+                let minutes = (q.from.distance(s0) + s1.distance(q.to)) / walk + wait + r.ride_length(board, alight) / (7.0 * secs);
                 push(TripMode::Bus, minutes, r.fare, crowd, ModePlan::Bus { route, board, alight, stop: s0 });
+            } else if let Some((ra, board, x, rb, y, alight)) = self.transit.plan_transfer(q.from, q.to) {
+                // [pt-transit] Two lines with a change between: the first
+                // leg is booked; at its end the rider decides again and the
+                // second line is the direct ride from there.
+                let (a, b) = (&self.transit.routes[ra], &self.transit.routes[rb]);
+                let wait = |r: &crate::transit::BusRoute| (r.headway(secs) as f32 * 0.5).clamp(transit::MIN_EXPECTED_WAIT, transit::MAX_EXPECTED_WAIT);
+                let walking = q.from.distance(a.stops[board].pos) + a.stops[x].pos.distance(b.stops[y].pos) + b.stops[alight].pos.distance(q.to);
+                let riding = (a.ride_length(board, x) + b.ride_length(y, alight)) / (7.0 * secs);
+                let minutes = walking / walk + wait(a) + wait(b) + transit::TRANSFER_PENALTY + riding;
+                push(TripMode::Bus, minutes, a.fare + b.fare, crowd, ModePlan::Bus { route: ra, board, alight: x, stop: a.stops[board].pos });
             }
         }
         if q.allow_transit && Rail::in_service(self.clock.minute_of_day() as u32) {
@@ -355,6 +372,19 @@ impl World {
         let lots = self.walk.lots_passed(walk_nodes);
         if let Some(c) = self.citizens.get_mut(id) {
             c.pending_footfall = lots;
+        }
+    }
+
+    /// [pt-transit] A later walk of the same journey (after a ride): its
+    /// lots join the ones already noted, each counted once.
+    pub(in crate::world) fn add_footfall(&mut self, id: CitizenId, walk_nodes: &[u32]) {
+        let lots = self.walk.lots_passed(walk_nodes);
+        if let Some(c) = self.citizens.get_mut(id) {
+            for l in lots {
+                if !c.pending_footfall.contains(&l) {
+                    c.pending_footfall.push(l);
+                }
+            }
         }
     }
 

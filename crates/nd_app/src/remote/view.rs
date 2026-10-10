@@ -930,7 +930,22 @@ pub fn line_detail(w: &World, id: RouteId) -> Value {
     v["lap_min"] = json!(round((0..n).map(|i| r.leg_minutes(i, tsp).0).sum::<f32>()));
     v["stops"] = json!(stops);
     v["buses_out"] = json!(buses);
+    v["headway_min"] = json!(r.headway(tsp));
+    v["problems"] = line_problems_json(&w.line_problems(id));
+    v["books"] = json!({
+        "riders_today": r.riders_today, "riders_yesterday": r.riders_yesterday,
+        "fares_today": round(r.fares_today), "fares_yesterday": round(r.fares_yesterday),
+        "upkeep_yesterday": round(r.upkeep_yesterday), "net_yesterday": round(r.fares_yesterday - r.upkeep_yesterday),
+        "bus_minutes_today": r.bus_minutes_today,
+    });
     v
+}
+
+/// [pt-transit] A line's problems (`World::line_problems`,
+/// `Transit::check_stops`): kind, the leg it is on (stop index it leaves
+/// from), whether it stops the line running, and the text.
+pub fn line_problems_json(problems: &[nd_sim::LineProblem]) -> Value {
+    json!(problems.iter().map(|p| json!({ "kind": p.kind(), "leg": p.leg(), "blocks": p.blocks(), "text": p.to_string() })).collect::<Vec<_>>())
 }
 
 /// The remote-API name of something the Buildings tool places: a plant

@@ -48,6 +48,8 @@ pub fn metro_color(i: u8) -> Color32 {
 /// What the window asks of the world after drawing (it reads the world
 /// while drawing, so edits wait until the end of the pass).
 enum Act {
+    /// [pt-transit] A line's fare.
+    Fare(RouteId, f32),
     Pick(Option<RouteId>),
     PickMetro(Option<MetroLineId>),
     SelectStop(RouteId, usize, Vec2),
@@ -268,6 +270,16 @@ fn bus_line(ui: &mut egui::Ui, p: &UiCtx, rid: RouteId, probs: &[problems::Probl
     let lap: f32 = (0..n).map(|i| r.leg_minutes(i, tsp).0).sum();
     let waiting = w.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Waiting { .. }) && matches!(c.transit.map(|t| t.leg), Some(nd_sim::transit::TransitLeg::Bus { route, .. }) if route == rid)).count();
     hint(ui, &format!("{} riders today · {} yesterday · {waiting} waiting now · loop {:.2} km, about {:.0} min round", r.riders_today, r.boardings_yesterday(), length / 1000.0, lap));
+    // [pt-transit] The line's books and its fare.
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(format!("fare {:.2} · yesterday {:.0} in fares, {:.0} running costs, {} riders", r.fare, r.fares_yesterday, r.upkeep_yesterday, r.riders_yesterday)).small());
+        if ui.small_button("−").on_hover_text("Cheaper fare: more riders").clicked() {
+            *act = Some(Act::Fare(rid, (r.fare - 0.5).max(0.0)));
+        }
+        if ui.small_button("+").on_hover_text("Dearer fare: fewer riders, more per ride").clicked() {
+            *act = Some(Act::Fare(rid, r.fare + 0.5));
+        }
+    });
     // Problems: all of them while editing; otherwise the ones that stop it.
     let shown: Vec<&problems::Problem> = probs.iter().filter(|p| edit.is_some() || p.blocks).collect();
     if !shown.is_empty() {
@@ -528,6 +540,9 @@ fn apply(p: &mut UiCtx, act: Option<Act>) {
             let _ = w.recolour_bus_route(r, c);
         }
         Act::Buses(r, n) => w.set_route_buses(r, n),
+        Act::Fare(r, f) => {
+            let _ = w.set_route_fare(r, f);
+        }
         Act::DeleteLine(r) => {
             let name = w.transit.routes.get(r).map(|x| x.name.clone()).unwrap_or_default();
             w.remove_bus_route(r);

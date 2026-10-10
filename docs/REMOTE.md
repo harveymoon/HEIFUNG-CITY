@@ -599,16 +599,26 @@ mural on that building's street face now (`group`: a street-art crew id, default
 | --- | --- |
 | `select` | `route` (omit to clear): highlight that line on the map, its path, stops and every bus on it, as clicking it in City Data's Services, Transit or clicking one of its buses does |
 | `new_route` | (none) |
-| `add_stop` | `x`, `y`, `route` optional (default: the line being drawn, or a new one) |
+| `add_stop` | `x`, `y`, `route` optional (default: the line being drawn, or a new one); a click within 10 m of another line's stop shares that stop |
+| `insert_stop` | `route`, `index` (the new stop's place: 0 before the first), `x`, `y`: a stop between two others |
 | `move_stop` | `route`, `index`, `x`, `y` |
 | `remove_stop` | `route`, `index` (the last stop removes the line) |
 | `set_buses` | `route`, `n` |
+| `set_fare` | `route`, `fare` (0..20) |
+| `problems` | `route`: what keeps the line from running or is worth a warning, each `{kind, leg, blocks, text}`; kinds `too_few_stops`, `no_road`, `long_way_round`, `no_buses`, `no_depot`, `depot_unreachable`, `fleet_short`, `depots_full`, `out_of_service` (`leg` i is stop i to the next) |
+| `check` | `points` [[x,y],...]: the problems a line through those stops would have, before it is built |
 | `remove_route` | `route` |
 | `rename` | `route`, `name` |
 | `recolour` (or `recolor`) | `route`, `color` (0..7, the line and its buses) |
 | `line` | `route`: the Lines window's figures: per stop `on_today`, `off_today`, `on_yesterday`, `off_yesterday`, the leg to the next stop (`leg_m`, `leg_min`, `leg_timed`, `leg_runs`, `leg_broken`); `length_m`, `lap_min`; `buses_out` with `state` (on_line, last_lap, from_depot, to_depot), `next_stop`, `progress` (in stops: 2.4 is 40% from the third stop to the fourth), `passengers` |
 | `select_stop` | `route`, `index`, `look` (bool, point the camera there): mark the stop on the map as the Lines window's "show" does; no `route` clears it |
-| `list` | |
+| `list` | every line's row with its `problems`, and `fleet {wanted, depot_capacity}` |
+
+`line` also carries `headway_min` (buses leave the depot this far apart and are held at
+stops to keep it), `problems`, and `books {riders_today, riders_yesterday, fares_today,
+fares_yesterday, upkeep_yesterday, net_yesterday, bus_minutes_today}`: each line pays
+for the bus-minutes it ran. `report {section: "ridership"}` explains who takes the bus and why
+the rest do not.
 
 Rows (`list`, and the `row` the edits return) carry `riders_yesterday` and each stop's
 `on_today`/`off_today`. The Lines window is `window {name: "lines"}`.

@@ -428,7 +428,7 @@ pub fn apply_depth(
     sim: Res<Sim>,
     mut gizmos: Gizmos,
     mut surface: Query<
-        (Entity, &mut Visibility, Has<DepthHidden>, Has<CitizenTag>),
+        (Entity, &mut Visibility, Has<DepthHidden>, Has<CitizenTag>, Has<super::PlatformTag>),
         (
             Or<(
                 Or<(With<TerrainTag>, With<BuildingTag>, With<LotsTag>, With<ScatterTag>, With<ParkTag>, With<VacantTag>, With<RoadsTag>, With<WaterTag>, With<WaterworksTag>, With<LaneArrowsTag>, With<PathsTag>, With<WalkDetailTag>, With<SignalTag>, With<CitizenTag>)>,
@@ -463,9 +463,10 @@ pub fn apply_depth(
             commands.entity(e).try_remove::<DepthHidden>();
         }
     };
-    for (e, mut v, marked, citizen) in &mut surface {
-        // Citizens: `sync_citizens` sets every one, every frame.
-        apply(e, &mut v, marked, !under, !citizen);
+    for (e, mut v, marked, citizen, platform) in &mut surface {
+        // Citizens: `sync_citizens` sets every one, every frame. ([pt-transit]
+        // Those on a metro platform are underground: shown there.)
+        apply(e, &mut v, marked, !under || platform, !citizen);
     }
     for mut v in &mut tunnels {
         let want = if under { Visibility::Inherited } else { Visibility::Hidden };

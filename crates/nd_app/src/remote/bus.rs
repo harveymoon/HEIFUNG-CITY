@@ -85,15 +85,43 @@ pub(super) fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             }
             Ok(json!({ "removed": key_str(id), "routes": w.transit.routes.len() }))
         }
-        "list" => Ok(json!({ "routes": w.transit.routes.iter().map(|(id, r)| route_row(id, r)).collect::<Vec<_>>() })),
+        "list" => {
+            let (wanted, capacity) = w.fleet_balance();
+            let rows: Vec<Value> = w.transit.routes.iter().map(|(id, r)| {
+                let mut row = route_row(id, r);
+                row["problems"] = line_problems_json(&w.line_problems(id));
+                row
+            }).collect();
+            Ok(json!({ "routes": rows, "fleet": { "wanted": wanted, "depot_capacity": capacity } }))
+        }
+        // [pt-transit] What keeps a line from running, or is worth a warning.
+        "problems" => {
+            let id = route_arg(w)?;
+            Ok(json!({ "route": key_str(id), "problems": line_problems_json(&w.line_problems(id)) }))
+        }
+        // [pt-transit] Check a line before committing it: `points` [[x,y],..]
+        // snapped to stops as clicks would be; the problems such a loop has.
+        "check" => {
+            let pts = cmd.get("points").and_then(Value::as_array).ok_or("missing points [[x,y],...]")?;
+            let mut stops = Vec::new();
+            for p in pts {
+                let xy = p.as_array().filter(|a| a.len() == 2).ok_or("points are [x,y] pairs")?;
+                let v = nd_sim::Vec2::new(xy[0].as_f64().unwrap_or(0.0) as f32, xy[1].as_f64().unwrap_or(0.0) as f32);
+                stops.push(w.transit.stop_for_click(&w.roads, v).ok_or_else(|| format!("no street within reach of ({:.0}, {:.0})", v.x, v.y))?);
+            }
+            let problems = nd_sim::Transit::check_stops(&w.traffic.net, &stops);
+            Ok(json!({ "stops": stops.len(), "problems": line_problems_json(&problems) }))
+        }
+        "set_fare" => {
+            let id = route_arg(w)?;
+            let fare = cmd.get("fare").and_then(Value::as_f64).ok_or("missing fare")? as f32;
+            w.set_route_fare(id, fare)?;
+            Ok(json!({ "route": key_str(id), "row": route_row(id, &w.transit.routes[id]) }))
+        }
         // [lines] The Lines window's figures for one line, and its problems.
         "line" => {
             let id = route_arg(w)?;
-            let mut v = line_detail(w, id);
-            let problems: Vec<Value> = crate::ui::lines::problems::bus_line(w, id).into_iter().map(|p| json!({ "text": p.text, "leg": p.leg, "blocks": p.blocks })).collect();
-            if let Some(m) = v.as_object_mut() {
-                m.insert("problems".into(), json!(problems));
-            }
+            let v = line_detail(w, id);
             Ok(v)
         }
         // [lines] Edit mode, as the Lines window's "Edit line" and "Finish
@@ -130,7 +158,7 @@ pub(super) fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let id = route_arg(w)?;
             let p = req_point(cmd)?;
             let at = opt_u64(cmd, "index")?.map(|i| i as usize);
-            let idx = w.edit_insert_stop(id, at, p)?;
+            let idx = w.insert_bus_stop(id, at, p)?;
             Ok(json!({ "route": key_str(id), "stop_index": idx, "row": route_row(id, &w.transit.routes[id]) }))
         }
         // Open a metro line in the Lines window (no line closes it).
@@ -179,6 +207,6 @@ pub(super) fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             }
             Ok(json!({ "route": key_str(id), "index": idx, "pos": [pos.x, pos.y] }))
         }
-        _ => Err(format!("unknown bus action {action:?}; one of select, new_route, add_stop, move_stop, remove_stop, set_buses, remove_route, rename, recolour, line, select_stop, list, edit, finish_edit, click, slot, insert_stop, select_metro")),
+        _ => Err(format!("unknown bus action {action:?}; one of select, new_route, add_stop, insert_stop, move_stop, remove_stop, set_buses, set_fare, remove_route, rename, recolour, line, problems, check, select_stop, list, edit, finish_edit, click, slot, select_metro")),
     }
 }

@@ -127,7 +127,7 @@ pub use industry::{IndustryKind, IndustrySite};
 pub use ports::{Port, PortId, PortKind, Ports, Ship, ShipKind};
 pub use park::{ParkFeature, ParkLayout};
 pub use subway::{MetroLine, MetroLineId, MetroTrain, MetroTrainId, Subway, SubwayStats};
-pub use transit::{BusRoute, BusStop, RouteId, Transit, TransitStats};
+pub use transit::{BusRoute, BusStop, DispatchProblem, LineProblem, RouteId, Transit, TransitStats};
 pub use rail::{Facility, FacilityId, Rail, RailFacility, RailLink, RailStats, Train, TrainId, TrainKind};
 pub use services::{BuildCategory, Incident, IncidentKind, Placeable, ServiceKind, ServiceSite, Services, ServiceStats, Unit, UnitId, UnitKind};
 pub use world::{GridAsset, PlacementSite, PlantGroup, PlantJoin, PlantPreview, PlantRow, World, WorldConfig, RIGHTING_MIN};

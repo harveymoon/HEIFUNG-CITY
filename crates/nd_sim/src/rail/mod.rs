@@ -133,6 +133,12 @@ pub struct RailStats {
     pub upkeep_today: f32,
     /// Sim minutes until the next passenger train enters.
     pub next_passenger_in: u32,
+    /// [pt-transit] Riders today off trains from out of town (visitors,
+    /// commuters, residents back from a day out) and onto trains out.
+    #[serde(default)]
+    pub from_out_of_town_today: u32,
+    #[serde(default)]
+    pub to_out_of_town_today: u32,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

@@ -211,6 +211,9 @@ const REROUTE_AFTER: f32 = 40.0;
 const REROUTE_DETOUR_M: f32 = 350.0;
 const REROUTE_DETOUR_SHARE: f32 = 0.6;
 const REROUTE_LANE_CHANGE_AFTER: f32 = 10.0;
+/// [pt-transit] Seconds a bus stands blocked before it leaves its line to
+/// go another way (round a crash it goes at once).
+const BUS_DETOUR_AFTER: f32 = 240.0;
 /// Seconds a car waits at the kerb before the next driver along lets it
 /// in, if that driver is slow enough to stop comfortably.
 const COURTESY_AFTER: f32 = 15.0;

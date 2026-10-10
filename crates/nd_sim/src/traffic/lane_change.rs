@@ -125,7 +125,10 @@ impl Traffic {
             let zone = if self.net.rings.circulating.contains(&c.route[c.idx]) { SOLID_LINE_MIN } else { (SOLID_LINE_SECONDS * c.v).clamp(SOLID_LINE_MIN, SOLID_LINE_MAX) };
             // ([services] Lights and sirens cross the line: a missed turn
             // would cost an ambulance minutes.)
-            let solid = !c.siren && self.net.to_junction(&c.route, c.idx, c.s, zone + 1.0) <= zone;
+            // ([pt-transit] Nor does a bus give up its turn there: it waits
+            // for its gap, so it keeps to its line instead of finding
+            // another way round the blocks.)
+            let solid = !c.siren && c.bus.is_none() && self.net.to_junction(&c.route, c.idx, c.s, zone + 1.0) <= zone;
             if let Some(target) = c.change_pending(&self.net) {
                 // (Retried every `SOLID_RETRY` when there was no other way;
                 // a longer back-off from elsewhere does not hold it at the

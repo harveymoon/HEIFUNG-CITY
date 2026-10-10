@@ -42,21 +42,186 @@ impl World {
         self.transit.new_route()
     }
 
-    /// Append a stop to a line, snapped to the nearest street.
+    /// Append a stop to a line, snapped to the nearest street (or onto
+    /// another line's stop, when the click is on one: lines share stops).
     pub fn add_bus_stop(&mut self, route: RouteId, p: Vec2) -> Result<usize, String> {
-        let stop = BusStop::snap(&self.roads, p).ok_or("click next to a street")?;
+        let n = self.transit.routes.get(route).ok_or("no such line")?.stops.len();
+        self.insert_bus_stop(route, Some(n), p)
+    }
+
+    /// [pt-transit] Put a stop for a click at `p` into a line: at `at`
+    /// (0 before the first, the number of stops after the last), or, with
+    /// no `at`, where it belongs along the loop (`bus_edit::insert_index`).
+    /// Snapped like `add_bus_stop`. Buses, leg timings and riders bound for
+    /// later stops shift up with the list. The index it took.
+    pub fn insert_bus_stop(&mut self, route: RouteId, at: Option<usize>, p: Vec2) -> Result<usize, String> {
+        let stop = self.transit.stop_for_click(&self.roads, p).ok_or("click next to a street")?;
+        self.put_bus_stop(route, at, stop)
+    }
+
+    /// [lines] Give a line a stop at the very kerb another line's stop
+    /// `from` is at, so riders change there; at `at` or where it belongs.
+    pub fn share_bus_stop(&mut self, route: RouteId, from: (RouteId, usize), at: Option<usize>) -> Result<usize, String> {
+        let src = self.transit.routes.get(from.0).and_then(|r| r.stops.get(from.1)).ok_or("no such stop")?;
+        let stop = BusStop { segment: src.segment, pos: src.pos, stats: transit::StopStats::default() };
+        self.put_bus_stop(route, at, stop)
+    }
+
+    fn put_bus_stop(&mut self, route: RouteId, at: Option<usize>, stop: BusStop) -> Result<usize, String> {
         let r = self.transit.routes.get_mut(route).ok_or("no such line")?;
         if r.stops.iter().any(|s| s.pos.distance(stop.pos) < 3.0) {
-            return Err("there is a stop there already".into());
+            return Err("this line stops there already".into());
         }
-        r.stops.push(stop);
-        let idx = r.stops.len() - 1;
-        // The old last stop now drives to the new one, not round to the first.
-        if idx > 0 {
-            r.stops[idx - 1].stats.forget_leg();
+        let was = r.stops.len();
+        let idx = at.unwrap_or_else(|| bus_edit::insert_index(&r.stops.iter().map(|s| s.pos).collect::<Vec<_>>(), &r.legs, stop.pos)).min(was);
+        r.stops.insert(idx, stop);
+        // The stop before now drives to the new one.
+        let n = r.stops.len();
+        if n > 1 {
+            r.stops[(idx + n - 1) % n].stats.forget_leg();
+        }
+        if idx < was {
+            self.stop_inserted(route, idx);
         }
         self.transit.refresh_legs(&self.traffic.net);
         Ok(idx)
+    }
+
+    /// [pt-transit] A stop went into a line's list at `idx`: buses, leg
+    /// timings and riders bound for it or later shift up with the list. A
+    /// bus on the leg the new stop splits keeps driving to the stop it was
+    /// going to (it calls at the new one next time round).
+    fn stop_inserted(&mut self, route: RouteId, idx: usize) {
+        let on_line: Vec<CarId> = self.traffic.cars.iter().filter(|(_, c)| c.bus.as_ref().is_some_and(|b| b.route == route)).map(|(id, _)| id).collect();
+        for id in on_line {
+            if let Some(bus) = self.traffic.cars[id].bus.as_mut() {
+                if bus.next_stop != usize::MAX && bus.next_stop >= idx {
+                    bus.next_stop += 1;
+                }
+            }
+            if let Some(d) = self.transit.departures.get_mut(&id) {
+                if d.0 >= idx {
+                    d.0 += 1;
+                }
+            }
+        }
+        for c in self.citizens.values_mut() {
+            let Some(t) = c.transit.as_mut() else { continue };
+            let TransitLeg::Bus { route: r, board, alight } = &mut t.leg else { continue };
+            if *r != route {
+                continue;
+            }
+            if *board >= idx {
+                *board += 1;
+            }
+            if *alight >= idx {
+                *alight += 1;
+            }
+        }
+    }
+
+    /// [pt-transit] Set a line's fare (0 to 20). Riders weigh it when they
+    /// choose how to travel.
+    pub fn set_route_fare(&mut self, route: RouteId, fare: f32) -> Result<(), String> {
+        let r = self.transit.routes.get_mut(route).ok_or("no such line")?;
+        if !fare.is_finite() {
+            return Err("not a fare".into());
+        }
+        r.fare = fare.clamp(0.0, transit::MAX_FARE);
+        self.transit.version += 1;
+        Ok(())
+    }
+
+    /// [pt-transit] Everything keeping a line from running as drawn, or
+    /// worth a warning: its route (`BusRoute::route_problems`), no buses
+    /// set, no depot or none that reaches it, more buses wanted than the
+    /// depots hold, all depots' buses out, night. Empty when it runs.
+    pub fn line_problems(&self, route: RouteId) -> Vec<LineProblem> {
+        let Some(r) = self.transit.routes.get(route) else { return Vec::new() };
+        let mut out = r.route_problems();
+        if r.buses == 0 {
+            out.push(LineProblem::NoBuses);
+        }
+        let depots: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.working_depot()).map(|(id, _)| id).collect();
+        if depots.is_empty() {
+            out.push(LineProblem::NoDepot);
+        } else if r.stops.len() >= 2 {
+            let reach = match r.dispatch {
+                Some(DispatchProblem::Unreachable) => false,
+                Some(_) => true,
+                // Not tried yet (or sent fine): look.
+                None => self.traffic.cars.values().any(|c| c.bus.as_ref().is_some_and(|b| b.route == route)) || depots.iter().any(|&d| self.depot_reaches(d, r.stops[0])),
+            };
+            if !reach {
+                out.push(LineProblem::DepotUnreachable);
+            }
+            let (wanted, capacity) = self.fleet_balance();
+            if wanted > capacity {
+                out.push(LineProblem::FleetShort { wanted, capacity });
+            }
+            if r.dispatch == Some(DispatchProblem::DepotsFull) {
+                out.push(LineProblem::DepotsFull);
+            }
+        }
+        if !Transit::in_service(self.clock.minute_of_day() as u32) {
+            out.push(LineProblem::OutOfService);
+        }
+        out
+    }
+
+    /// [pt-transit] Buses wanted across the lines that can run, and how
+    /// many the working depots hold (their own bays and the truck lots
+    /// they overflow into).
+    pub fn fleet_balance(&self) -> (u32, u32) {
+        let wanted = self.transit.routes.values().filter(|r| r.runnable()).map(|r| r.buses as u32).sum();
+        let capacity = self.buildings.iter().filter(|(_, b)| b.working_depot()).map(|(id, _)| transit::DEPOT_CAPACITY + self.depot_overflow(id)).sum();
+        (wanted, capacity)
+    }
+
+    /// Can a bus leave depot `d` and drive to `stop`?
+    fn depot_reaches(&self, d: BuildingId, stop: BusStop) -> bool {
+        self.car_stop(d).is_some_and(|(seg, pt)| self.traffic.net.find_route(seg, pt, stop.segment, stop.pos).is_some())
+    }
+
+    /// [pt-transit] Send out the next bus a line is due, from the nearest
+    /// depot with room that can reach its first stop. `running` and
+    /// `at_depot` count the buses out (per line, per depot) and are kept
+    /// up to date. Returns why none went, if none did.
+    fn dispatch_bus(&mut self, route: RouteId, running: &mut HashMap<RouteId, u32>, at_depot: &mut HashMap<BuildingId, u32>) -> Option<DispatchProblem> {
+        let tick = self.clock.tick;
+        // [pt-transit] The buses join the loop spread round it: the k-th of
+        // n out starts at the stop k/n of the way round, so a long line is
+        // served end to end soon after the morning start, evenly spaced.
+        let start = {
+            let r = &self.transit.routes[route];
+            let out = running.get(&route).copied().unwrap_or(0) as usize;
+            (out * r.stops.len() / (r.buses.max(1) as usize)) % r.stops.len()
+        };
+        let first = self.transit.routes[route].stops[start];
+        let mut depots: Vec<(f32, BuildingId)> = self.buildings.iter().filter(|(_, b)| b.working_depot()).filter_map(|(id, _)| self.building_lot(id).map(|l| (l.car_point.distance(first.pos), id))).collect();
+        if depots.is_empty() {
+            return Some(DispatchProblem::NoDepot);
+        }
+        depots.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let mut any_room = false;
+        for (_, depot) in depots {
+            // [industry] full depots overflow into truck and bus lots nearby
+            if at_depot.get(&depot).copied().unwrap_or(0) >= transit::DEPOT_CAPACITY + self.depot_overflow(depot) {
+                continue;
+            }
+            any_room = true;
+            let Some((seg, pt)) = self.car_stop(depot) else { continue };
+            let Some((lanes, s0, s1)) = self.traffic.net.find_route(seg, pt, first.segment, first.pos) else { continue };
+            let color = self.transit.routes[route].color;
+            let id = self.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, color);
+            self.traffic.cars[id].model = crate::vehicle::VehicleModel::bus(color, &mut crate::vehicle::model_rng(tick, slotmap::Key::data(&id).as_ffi()));
+            self.traffic.cars[id].bus = Some(Bus { route, next_stop: start, passengers: Vec::new(), to_depot: false, depot });
+            self.transit.last_dispatch_tick = tick;
+            *running.entry(route).or_default() += 1;
+            *at_depot.entry(depot).or_default() += 1;
+            return None;
+        }
+        Some(if any_room { DispatchProblem::Unreachable } else { DispatchProblem::DepotsFull })
     }
 
     pub fn move_bus_stop(&mut self, route: RouteId, idx: usize, p: Vec2) -> bool {
@@ -230,31 +395,33 @@ impl World {
                 *at_depot.entry(bus.depot).or_default() += 1;
             }
         }
+        // [pt-transit] Each line's buses for the bus-minutes it is charged.
+        for (route, n) in &running {
+            if let Some(r) = self.transit.routes.get_mut(*route) {
+                r.bus_minutes_today = r.bus_minutes_today.saturating_add(*n);
+            }
+        }
+        // [pt-transit] Every line short of buses is served, each on its own
+        // headway: a line that cannot be served (no depot reaches it) no
+        // longer holds up the lines after it, and a line's buses leave the
+        // depot a headway apart instead of all at once (they bunched).
         if in_service && tick.saturating_sub(self.transit.last_dispatch_tick) >= transit::DISPATCH_GAP {
-            let want: Option<RouteId> = self.transit.routes.iter().filter(|(id, r)| r.runnable() && running.get(id).copied().unwrap_or(0) < r.buses as u32).map(|(id, _)| id).next();
-            if let Some(route) = want {
-                // The depot with room nearest the first stop.
-                let first = self.transit.routes[route].stops[0];
-                let depots: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.working_depot()).map(|(id, _)| id).collect();
-                let depot = depots
-                    .iter()
-                    .copied()
-                    // [industry] full depots overflow into truck and bus lots nearby
-                    .filter(|d| at_depot.get(d).copied().unwrap_or(0) < transit::DEPOT_CAPACITY + self.depot_overflow(*d))
-                    .filter_map(|d| self.building_lot(d).map(|l| (d, l.car_point.distance(first.pos))))
-                    .min_by(|a, b| a.1.total_cmp(&b.1))
-                    .map(|(d, _)| d);
-                if let Some(depot) = depot {
-                    if let Some((seg, pt)) = self.car_stop(depot) {
-                        if let Some((lanes, s0, s1)) = self.traffic.net.find_route(seg, pt, first.segment, first.pos) {
-                            let color = self.transit.routes[route].color;
-                            let id = self.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, color);
-                            self.traffic.cars[id].model = crate::vehicle::VehicleModel::bus(color, &mut crate::vehicle::model_rng(tick, slotmap::Key::data(&id).as_ffi()));
-                            self.traffic.cars[id].bus = Some(Bus { route, next_stop: 0, passengers: Vec::new(), to_depot: false, depot });
-                            self.transit.last_dispatch_tick = tick;
-                        }
-                    }
+            let secs = self.config.traffic_seconds_per_tick;
+            let due: Vec<RouteId> = self.transit.routes.iter().filter(|(id, r)| r.runnable() && running.get(id).copied().unwrap_or(0) < r.buses as u32 && tick >= r.next_release).map(|(id, _)| id).collect();
+            for route in due {
+                let problem = self.dispatch_bus(route, &mut running, &mut at_depot);
+                let r = &mut self.transit.routes[route];
+                r.dispatch = problem;
+                r.next_release = tick + if problem.is_some() { transit::DISPATCH_RETRY } else { r.release_gap(secs) };
+                // One bus a tick from all the depots at most, as before.
+                if problem.is_none() {
+                    break;
                 }
+            }
+        }
+        for (id, r) in self.transit.routes.iter_mut() {
+            if r.dispatch.is_some() && running.get(&id).copied().unwrap_or(0) >= r.buses as u32 {
+                r.dispatch = None;
             }
         }
         if !in_service {
@@ -275,6 +442,14 @@ impl World {
                 .collect();
             for id in tired {
                 let Some(trip) = self.citizens[id].transit.take() else { continue };
+                // [pt-transit] Up from the metro platform to the street first.
+                if let TransitLeg::Subway { board, .. } = trip.leg {
+                    if let Some(p) = self.building_entrance(board) {
+                        let c = &mut self.citizens[id];
+                        c.pos = p;
+                        c.prev_pos = p;
+                    }
+                }
                 self.citizens[id].thought = "No bus is coming. Walking it.".to_string();
                 // [carlife] Remembered when choosing how to travel next time.
                 self.transit_failed(id);
@@ -394,9 +569,27 @@ impl World {
             passengers.push(p);
             self.economy.transit.fares_today += fare;
             self.economy.transit.riders_today += 1;
-            self.transit.routes[bus.route].riders_today += 1;
-            self.transit.routes[bus.route].stops[stop_idx].stats.on_today += 1;
+            let r = &mut self.transit.routes[bus.route];
+            r.riders_today += 1;
+            r.fares_today += fare;
+            r.stops[stop_idx].stats.on_today += 1;
         }
+        // [pt-transit] Spacing: a bus calling less than half a headway
+        // after the last one here waits a little, so the buses behind a
+        // slow one do not all catch it up.
+        // Only where traffic can get past it: a bus standing longer in the
+        // only lane holds up everyone behind, ambulances too.
+        let passable = self.traffic.cars.get(car_id).map(|c| c.route[c.idx]).and_then(|l| self.traffic.net.lanes.get(l as usize)).is_some_and(|l| l.left.is_some() || l.right.is_some());
+        let hold = {
+            let secs = self.config.traffic_seconds_per_tick.max(0.1);
+            let r = &mut self.transit.routes[bus.route];
+            let half = r.headway(secs) as f32 * 0.5;
+            let last = r.stops[stop_idx].stats.last_call;
+            r.stops[stop_idx].stats.last_call = tick;
+            let gap = tick.saturating_sub(last) as f32;
+            let extra = if passable && last > 0 && !bus.to_depot && r.buses > 1 && gap < half { ((half - gap) * secs).min(transit::HOLD_MAX_SECONDS) } else { 0.0 };
+            transit::DWELL_SECONDS + extra
+        };
         // On to the next stop, or home.
         let (next_idx, to_seg, to_pos) = if bus.to_depot {
             match self.car_stop(bus.depot) {
@@ -411,20 +604,32 @@ impl World {
             let s = self.transit.routes[bus.route].stops[k];
             (k, s.segment, s.pos)
         };
-        // On from the lane the bus stands in; only if there is no way from
-        // there is it set on a route from the stop's own street.
-        let goal = self.traffic.net.nearest_lane_on(to_seg, to_pos);
-        let from_here = goal.and_then(|(g, s1, _)| self.traffic.route_from_here(car_id, g, s1).map(|r| (r, s1)));
+        // [pt-transit] On along the leg as drawn, when the bus stands on
+        // the lane it starts from (it does, having driven the leg before);
+        // otherwise from the lane it stands in; only if there is no way
+        // from there is it set on a route from the stop's own street.
         let s_here = self.traffic.cars[car_id].s;
-        match from_here.map(|(r, s1)| (r, s_here, s1)).or_else(|| self.traffic.net.find_route(here.segment, pos, to_seg, to_pos)) {
+        let lane_here = self.traffic.cars[car_id].route[self.traffic.cars[car_id].idx];
+        let drawn = if next_idx == usize::MAX {
+            None
+        } else {
+            self.transit.routes[bus.route].leg_lanes.get(stop_idx).cloned().flatten().filter(|(lanes, s0, s1)| lanes.first() == Some(&lane_here) && (lanes.len() > 1 || *s1 >= s_here) && *s0 <= s_here + 30.0)
+        };
+        let goal = self.traffic.net.nearest_lane_on(to_seg, to_pos);
+        let from_here = || goal.and_then(|(g, s1, _)| self.traffic.route_from_here(car_id, g, s1).map(|r| (r, s_here, s1)));
+        match drawn.map(|(lanes, _, s1)| (lanes, s_here, s1)).or_else(from_here).or_else(|| self.traffic.net.find_route(here.segment, pos, to_seg, to_pos)) {
             Some((lanes, s0, s1)) => {
                 self.traffic.reroute(car_id, lanes, s0, s1);
                 let car = &mut self.traffic.cars[car_id];
-                car.hold = transit::DWELL_SECONDS;
+                car.hold = hold;
                 if let Some(b) = car.bus.as_mut() {
                     b.next_stop = next_idx;
                     b.passengers = passengers;
                 }
+                // [pt-transit] Each leg is a drive of its own: timed from
+                // this stop (the inspector said "568 min on the road" for
+                // a bus out since the morning).
+                self.begin_leg(car_id);
             }
             None => gone(self, car_id),
         }

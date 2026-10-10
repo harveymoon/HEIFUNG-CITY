@@ -5,7 +5,7 @@
 //! both ends. The depot is the condition: no depot, no buses.
 
 use crate::roads::{RoadNetwork, SegmentId};
-use crate::traffic::{CarId, LaneNetwork};
+use crate::traffic::{CarId, LaneId, LaneNetwork};
 
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
@@ -17,8 +17,10 @@ new_key_type! {
 
 /// How far from a street a click still makes a stop.
 pub const STOP_SNAP: f32 = 14.0;
-/// How far people walk to or from a stop.
-pub const STOP_REACH: f32 = 110.0;
+/// How far people walk to or from a stop. [pt-transit] 110 m left two
+/// commutes in five with no stop at the door end, in Harvey's day-67 city;
+/// how long the walk takes is in the rider's sums either way.
+pub const STOP_REACH: f32 = 160.0;
 /// Trips shorter than this are walked, bus or no bus.
 pub const BUS_TRIP_MIN: f32 = 160.0;
 pub const BUS_CAPACITY: usize = 40;
@@ -33,7 +35,37 @@ pub const SERVICE_START: u32 = 5 * 60 + 30;
 pub const SERVICE_END: u32 = 23 * 60 + 30;
 /// Ticks between two buses leaving a depot.
 pub const DISPATCH_GAP: u64 = 4;
+/// [pt-transit] How far riders walk to change from one line to another.
+pub const TRANSFER_WALK: f32 = 90.0;
+/// [pt-transit] Minutes a change of line costs on top of the second wait
+/// (finding the stop, the uncertainty).
+pub const TRANSFER_PENALTY: f32 = 5.0;
+/// [pt-transit] Minutes a rider expects to wait at the stop: half the
+/// line's headway, within these bounds.
+pub const MIN_EXPECTED_WAIT: f32 = 3.0;
+pub const MAX_EXPECTED_WAIT: f32 = 30.0;
+/// [pt-transit] The longest a line's buses are spaced when released from
+/// the depot (ticks).
+pub const MAX_RELEASE_GAP: u64 = 20;
+/// [pt-transit] Ticks before a line whose bus could not be sent (no depot
+/// with room, none that reaches the first stop) is tried again.
+pub const DISPATCH_RETRY: u64 = 15;
+/// [pt-transit] A bus that calls at a stop less than half a headway after
+/// the one before it stands up to this many extra seconds, so buses on a
+/// line spread out instead of bunching (only where other traffic can pass
+/// it).
+pub const HOLD_MAX_SECONDS: f32 = 45.0;
+/// [pt-transit] A leg whose drive is longer than this many times the
+/// distance between its stops, plus [`LONG_WAY_SLACK`] metres, is flagged
+/// as going the long way round (a one-way street, a stop on the far kerb).
+pub const LONG_WAY_FACTOR: f32 = 2.5;
+pub const LONG_WAY_SLACK: f32 = 250.0;
+/// [pt-transit] A click this near an existing stop of any line is that
+/// stop: lines share the kerb.
+pub const SHARE_STOP: f32 = 10.0;
 pub const BUS_FARE: f32 = 2.5;
+/// [pt-transit] The highest fare a line may charge.
+pub const MAX_FARE: f32 = 20.0;
 pub const BUS_UPKEEP_PER_DAY: f32 = 150.0;
 pub const DEPOT_COST: f32 = 15_000.0;
 pub const DEPOT_UPKEEP_PER_DAY: f32 = 250.0;
@@ -76,6 +108,10 @@ pub struct StopStats {
     pub leg_minutes: f32,
     /// Runs timed into `leg_minutes`.
     pub leg_runs: u32,
+    /// [pt-transit] Tick the last bus called here (0: none yet), for
+    /// keeping the buses spaced.
+    #[serde(default)]
+    pub last_call: u64,
 }
 
 impl StopStats {
@@ -139,9 +175,196 @@ pub struct BusRoute {
     /// Legs with no road between their stops.
     #[serde(skip)]
     pub broken: Vec<usize>,
+    /// [pt-transit] The lanes of each leg as the buses drive them (lanes,
+    /// `s` on the first, `s` on the last): worked out with the polylines,
+    /// so a bus drives the line that is drawn. `None` for a broken leg.
+    #[serde(skip)]
+    pub leg_lanes: Vec<Option<(Vec<LaneId>, f32, f32)>>,
+    /// [pt-transit] Tick before which no further bus of this line leaves a
+    /// depot: buses go out a headway apart, not all at once.
+    #[serde(default)]
+    pub next_release: u64,
+    /// [pt-transit] Why the last bus this line wanted was not sent, if it
+    /// was not. Cleared when one goes out.
+    #[serde(skip)]
+    pub dispatch: Option<DispatchProblem>,
+    /// [pt-transit] The line's books: yesterday's riders (boardings),
+    /// fares and running costs, and today's fares so far.
+    #[serde(default)]
+    pub riders_yesterday: u32,
+    #[serde(default)]
+    pub fares_today: f32,
+    #[serde(default)]
+    pub fares_yesterday: f32,
+    /// Bus-minutes run today (one bus out for one tick is one), from which
+    /// the line's share of the fleet's upkeep is charged at midnight.
+    #[serde(default)]
+    pub bus_minutes_today: u32,
+    #[serde(default)]
+    pub upkeep_yesterday: f32,
+}
+
+/// [pt-transit] Why a line that wants a bus did not get one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DispatchProblem {
+    /// No working depot in town.
+    NoDepot,
+    /// Every depot already has its fleet out.
+    DepotsFull,
+    /// No depot with room has a road to the first stop.
+    Unreachable,
+}
+
+/// [pt-transit] Something wrong with a line, as the Lines window and the
+/// remote API report it (`World::line_problems`, `Transit::check_stops`).
+/// Leg `i` runs from stop `i` to stop `i + 1` (the last back to the first).
+#[derive(Clone, Debug, PartialEq)]
+pub enum LineProblem {
+    /// Fewer than two stops: nothing to run.
+    TooFewStops,
+    /// No road from stop `leg` to the next: the line cannot run.
+    NoRoad { leg: usize },
+    /// The bus has to go a long way round between these stops.
+    LongWayRound { leg: usize, metres: f32, direct: f32 },
+    /// The line is set to run no buses.
+    NoBuses,
+    /// No depot to send buses from.
+    NoDepot,
+    /// No depot with room can reach the first stop by road.
+    DepotUnreachable,
+    /// More buses are wanted across the lines than the depots hold.
+    FleetShort { wanted: u32, capacity: u32 },
+    /// Every depot has its fleet out: this line waits for a bus.
+    DepotsFull,
+    /// Night: the buses are home until `SERVICE_START`.
+    OutOfService,
+}
+
+impl LineProblem {
+    /// Stops a line from running at all (as opposed to a warning).
+    pub fn blocks(&self) -> bool {
+        matches!(self, LineProblem::TooFewStops | LineProblem::NoRoad { .. } | LineProblem::NoBuses | LineProblem::NoDepot | LineProblem::DepotUnreachable)
+    }
+
+    /// The leg it is about, for marking on the map or the strip.
+    pub fn leg(&self) -> Option<usize> {
+        match self {
+            LineProblem::NoRoad { leg } | LineProblem::LongWayRound { leg, .. } => Some(*leg),
+            _ => None,
+        }
+    }
+
+    /// A short machine-readable name (the remote API's `kind`).
+    pub fn kind(&self) -> &'static str {
+        match self {
+            LineProblem::TooFewStops => "too_few_stops",
+            LineProblem::NoRoad { .. } => "no_road",
+            LineProblem::LongWayRound { .. } => "long_way_round",
+            LineProblem::NoBuses => "no_buses",
+            LineProblem::NoDepot => "no_depot",
+            LineProblem::DepotUnreachable => "depot_unreachable",
+            LineProblem::FleetShort { .. } => "fleet_short",
+            LineProblem::DepotsFull => "depots_full",
+            LineProblem::OutOfService => "out_of_service",
+        }
+    }
+}
+
+impl std::fmt::Display for LineProblem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let hm = |m: u32| format!("{:02}:{:02}", m / 60, m % 60);
+        match self {
+            LineProblem::TooFewStops => write!(f, "needs at least two stops"),
+            LineProblem::NoRoad { leg } => write!(f, "no road from stop {} to the next: move one of them, or join the streets", leg + 1),
+            LineProblem::LongWayRound { leg, metres, direct } => write!(f, "stop {} to the next is a {:.0} m drive for {:.0} m apart (a one-way street, or a stop on the far kerb?)", leg + 1, metres, direct),
+            LineProblem::NoBuses => write!(f, "set to run no buses"),
+            LineProblem::NoDepot => write!(f, "no bus depot: build one, buses start and end the day there"),
+            LineProblem::DepotUnreachable => write!(f, "no depot can reach the first stop by road"),
+            LineProblem::FleetShort { wanted, capacity } => write!(f, "the lines want {wanted} buses but the depots hold {capacity}: build another depot or run fewer buses"),
+            LineProblem::DepotsFull => write!(f, "every depot has its buses out: this line waits for one"),
+            LineProblem::OutOfService => write!(f, "night: buses run {} to {}", hm(SERVICE_START), hm(SERVICE_END)),
+        }
+    }
 }
 
 impl BusRoute {
+    /// An empty line with one bus at the standard fare.
+    pub fn new(name: String, color: u8) -> BusRoute {
+        BusRoute {
+            name,
+            color,
+            stops: Vec::new(),
+            buses: 1,
+            fare: BUS_FARE,
+            riders_today: 0,
+            legs: Vec::new(),
+            broken: Vec::new(),
+            leg_lanes: Vec::new(),
+            next_release: 0,
+            dispatch: None,
+            riders_yesterday: 0,
+            fares_today: 0.0,
+            fares_yesterday: 0.0,
+            bus_minutes_today: 0,
+            upkeep_yesterday: 0.0,
+        }
+    }
+
+    /// [pt-transit] Sim minutes a bus takes round the whole loop (timed
+    /// legs as timed, the rest estimated).
+    pub fn loop_minutes(&self, traffic_seconds_per_tick: f32) -> f32 {
+        (0..self.stops.len()).map(|i| self.leg_minutes(i, traffic_seconds_per_tick).0).sum()
+    }
+
+    /// [pt-transit] Ticks between this line's buses when all of them are
+    /// out: the loop over the fleet. Buses leave the depot this far apart
+    /// and are held at stops to keep it.
+    pub fn headway(&self, traffic_seconds_per_tick: f32) -> u64 {
+        let n = self.buses.max(1) as f32;
+        ((self.loop_minutes(traffic_seconds_per_tick) / n).round() as u64).max(DISPATCH_GAP)
+    }
+
+    /// [pt-transit] Ticks between two of this line's buses leaving the
+    /// depot: the headway, up to [`MAX_RELEASE_GAP`] (each joins the loop
+    /// at its own stop, spread round it, so a long loop need not wait
+    /// hours for its last bus).
+    pub fn release_gap(&self, traffic_seconds_per_tick: f32) -> u64 {
+        self.headway(traffic_seconds_per_tick).min(MAX_RELEASE_GAP)
+    }
+
+    /// [pt-transit] Problems with the line's route itself: too few stops,
+    /// legs with no road, legs that go a long way round.
+    pub fn route_problems(&self) -> Vec<LineProblem> {
+        let n = self.stops.len();
+        if n < 2 {
+            return vec![LineProblem::TooFewStops];
+        }
+        let mut out = Vec::new();
+        for i in 0..n {
+            if self.broken.contains(&i) {
+                out.push(LineProblem::NoRoad { leg: i });
+                continue;
+            }
+            let direct = self.stops[i].pos.distance(self.stops[(i + 1) % n].pos);
+            let metres = self.leg_length(i);
+            if self.legs.len() == n && metres > direct * LONG_WAY_FACTOR + LONG_WAY_SLACK {
+                out.push(LineProblem::LongWayRound { leg: i, metres, direct });
+            }
+        }
+        out
+    }
+
+    /// [pt-transit] Midnight for the line's books: today's figures become
+    /// yesterday's, with `upkeep` the running cost charged for today.
+    pub fn roll_books(&mut self, upkeep: f32) {
+        self.riders_yesterday = self.riders_today;
+        self.riders_today = 0;
+        self.fares_yesterday = self.fares_today;
+        self.fares_today = 0.0;
+        self.upkeep_yesterday = upkeep;
+        self.bus_minutes_today = 0;
+    }
+
     pub fn runnable(&self) -> bool {
         self.stops.len() >= 2 && self.broken.is_empty()
     }
@@ -268,7 +491,7 @@ impl Transit {
         self.next_line += 1;
         let n = self.next_line;
         self.version += 1;
-        self.routes.insert(BusRoute { name: format!("Line {n}"), color: (n % 8) as u8, stops: Vec::new(), buses: 1, fare: BUS_FARE, riders_today: 0, legs: Vec::new(), broken: Vec::new() })
+        self.routes.insert(BusRoute::new(format!("Line {n}"), (n % 8) as u8))
     }
 
     /// Recompute every leg's lane polyline after stops or roads change.
@@ -277,21 +500,74 @@ impl Transit {
         for route in self.routes.values_mut() {
             route.legs.clear();
             route.broken.clear();
+            route.leg_lanes.clear();
             let n = route.stops.len();
             if n < 2 {
                 continue;
             }
-            for i in 0..n {
+            for (i, leg) in Self::plan_legs(net, &route.stops).into_iter().enumerate() {
                 let a = route.stops[i];
                 let b = route.stops[(i + 1) % n];
-                match net.find_route(a.segment, a.pos, b.segment, b.pos) {
-                    Some((lanes, s0, s1)) => route.legs.push(net.polyline(&lanes, s0, s1)),
+                match leg {
+                    Some((lanes, s0, s1)) => {
+                        route.legs.push(net.polyline(&lanes, s0, s1));
+                        route.leg_lanes.push(Some((lanes, s0, s1)));
+                    }
                     None => {
                         route.legs.push(vec![a.pos, b.pos]);
                         route.broken.push(i);
+                        route.leg_lanes.push(None);
                     }
                 }
             }
+        }
+    }
+
+    /// [pt-transit] The lanes of each leg of a loop through `stops` (stop
+    /// `i` to `i + 1`, the last back to the first), `None` where no road
+    /// joins them. Each leg starts on the lane its stop stands by, so a bus
+    /// that has driven one leg is on the lane the next begins with.
+    pub fn plan_legs(net: &LaneNetwork, stops: &[BusStop]) -> Vec<Option<(Vec<LaneId>, f32, f32)>> {
+        let n = stops.len();
+        if n < 2 {
+            return Vec::new();
+        }
+        (0..n)
+            .map(|i| {
+                let (a, b) = (stops[i], stops[(i + 1) % n]);
+                net.find_route_round(a.segment, a.pos, b.segment, b.pos)
+            })
+            .collect()
+    }
+
+    /// [pt-transit] Check a line before it is committed: the problems a
+    /// loop through `stops` would have (too few stops, no road between two,
+    /// a leg the long way round), as `BusRoute::route_problems` reports
+    /// them for a line. For the Lines window to show while a line is being
+    /// edited, before Finish.
+    pub fn check_stops(net: &LaneNetwork, stops: &[BusStop]) -> Vec<LineProblem> {
+        let mut r = BusRoute::new(String::new(), 0);
+        r.stops = stops.to_vec();
+        for (i, leg) in Self::plan_legs(net, stops).into_iter().enumerate() {
+            match leg {
+                Some((lanes, s0, s1)) => r.legs.push(net.polyline(&lanes, s0, s1)),
+                None => {
+                    r.legs.push(vec![stops[i].pos, stops[(i + 1) % stops.len()].pos]);
+                    r.broken.push(i);
+                }
+            }
+        }
+        r.route_problems()
+    }
+
+    /// [pt-transit] A stop for a click at `p`: an existing stop of any line
+    /// within [`SHARE_STOP`] (lines share the kerb), else a new one snapped
+    /// to the nearest street.
+    pub fn stop_for_click(&self, roads: &RoadNetwork, p: Vec2) -> Option<BusStop> {
+        let shared = self.routes.values().flat_map(|r| r.stops.iter()).filter(|s| s.pos.distance(p) <= SHARE_STOP).min_by(|a, b| a.pos.distance(p).total_cmp(&b.pos.distance(p)));
+        match shared {
+            Some(s) => Some(BusStop { segment: s.segment, pos: s.pos, stats: StopStats::default() }),
+            None => BusStop::snap(roads, p),
         }
     }
 
@@ -309,7 +585,9 @@ impl Transit {
         }
         let mut best: Option<(f32, RouteId, usize, usize)> = None;
         for (id, route) in &self.routes {
-            if !route.runnable() || route.buses == 0 {
+            // [pt-transit] Nor lines no bus can be sent to: riders stood
+            // there for hours and learnt to hate the bus.
+            if !route.runnable() || route.buses == 0 || matches!(route.dispatch, Some(DispatchProblem::NoDepot | DispatchProblem::Unreachable)) {
                 continue;
             }
             let within = |p: Vec2| -> Vec<(usize, f32)> { route.stops.iter().enumerate().map(|(i, s)| (i, s.pos.distance(p))).filter(|(_, d)| *d <= STOP_REACH).collect() };
@@ -333,6 +611,89 @@ impl Transit {
             }
         }
         best.map(|(_, id, a, b)| (id, a, b))
+    }
+
+    /// [pt-transit] A trip on two lines, changing between a stop of the
+    /// first and a stop of the second within [`TRANSFER_WALK`]: `(first
+    /// line, board, alight, second line, board, alight)`, the one with the
+    /// least walking whose rides each pass the same detour rule as
+    /// `plan_trip`. Riders take the first leg; at its end they decide
+    /// again, and the second line is the direct ride from there.
+    pub fn plan_transfer(&self, from: Vec2, to: Vec2) -> Option<(RouteId, usize, usize, RouteId, usize, usize)> {
+        let direct = from.distance(to);
+        if direct < BUS_TRIP_MIN {
+            return None;
+        }
+        let lines: Vec<(RouteId, &BusRoute)> = self.routes.iter().filter(|(_, r)| r.runnable() && r.buses > 0 && !matches!(r.dispatch, Some(DispatchProblem::NoDepot | DispatchProblem::Unreachable))).collect();
+        let mut best: Option<(f32, (RouteId, usize, usize, RouteId, usize, usize))> = None;
+        for &(ia, a) in &lines {
+            let boards: Vec<(usize, f32)> = a.stops.iter().enumerate().map(|(i, s)| (i, s.pos.distance(from))).filter(|(_, d)| *d <= STOP_REACH).collect();
+            if boards.is_empty() {
+                continue;
+            }
+            for &(ib, b) in &lines {
+                if ib == ia {
+                    continue;
+                }
+                let alights: Vec<(usize, f32)> = b.stops.iter().enumerate().map(|(i, s)| (i, s.pos.distance(to))).filter(|(_, d)| *d <= STOP_REACH).collect();
+                if alights.is_empty() {
+                    continue;
+                }
+                for (x, sx) in a.stops.iter().enumerate() {
+                    for (y, sy) in b.stops.iter().enumerate() {
+                        let change = sx.pos.distance(sy.pos);
+                        if change > TRANSFER_WALK {
+                            continue;
+                        }
+                        for &(p, dp) in &boards {
+                            if p == x || a.ride_length(p, x) > from.distance(sx.pos) * RIDE_DETOUR + RIDE_SLACK {
+                                continue;
+                            }
+                            for &(q, dq) in &alights {
+                                if q == y || b.ride_length(y, q) > sy.pos.distance(to) * RIDE_DETOUR + RIDE_SLACK {
+                                    continue;
+                                }
+                                let walking = dp + change + dq;
+                                if walking + 60.0 > direct {
+                                    continue;
+                                }
+                                if best.is_none_or(|(w, _)| walking < w) {
+                                    best = Some((walking, (ia, p, x, ib, y, q)));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        best.map(|b| b.1)
+    }
+
+    /// [pt-transit] Why `plan_trip` finds no bus for a trip, for the
+    /// ridership report: the first reason that rules every line out.
+    pub fn why_no_bus(&self, from: Vec2, to: Vec2) -> Option<NoBus> {
+        if self.plan_trip(from, to).is_some() || self.plan_transfer(from, to).is_some() {
+            return None;
+        }
+        let direct = from.distance(to);
+        if direct < BUS_TRIP_MIN {
+            return Some(NoBus::TooShort);
+        }
+        let lines: Vec<&BusRoute> = self.routes.values().filter(|r| r.runnable() && r.buses > 0).collect();
+        if lines.is_empty() {
+            return Some(NoBus::NoLine);
+        }
+        let near = |r: &BusRoute, p: Vec2| r.stops.iter().any(|s| s.pos.distance(p) <= STOP_REACH);
+        let (start, end) = (lines.iter().any(|r| near(r, from)), lines.iter().any(|r| near(r, to)));
+        Some(match (start, end) {
+            (false, false) => NoBus::NoStopEitherEnd,
+            (false, true) => NoBus::NoStopAtStart,
+            (true, false) => NoBus::NoStopAtEnd,
+            _ if !lines.iter().any(|r| near(r, from) && near(r, to)) => NoBus::NoLineServesBoth,
+            // A line serves both ends: the ride round the loop is too long,
+            // or the stops are as far as walking it.
+            _ => NoBus::LongWayRound,
+        })
     }
 
     /// Nearest stop of any route to a point within `radius`.
@@ -412,6 +773,23 @@ mod tests {
     }
 
     #[test]
+    fn two_lines_with_a_shared_corner_make_a_trip_with_a_change() {
+        // East along y = 0, then north along x = 600: an L the size of two
+        // lines, meeting at the corner.
+        let mut t = Transit::default();
+        let east = line(&mut t, &[Vec2::new(0.0, 0.0), Vec2::new(300.0, 0.0), Vec2::new(600.0, 0.0)], 1);
+        let north = line(&mut t, &[Vec2::new(620.0, 20.0), Vec2::new(620.0, 320.0), Vec2::new(620.0, 620.0)], 1);
+        let (from, to) = (Vec2::new(-20.0, 10.0), Vec2::new(640.0, 630.0));
+        assert_eq!(t.plan_trip(from, to), None, "no one line serves both ends");
+        assert_eq!(t.plan_transfer(from, to), Some((east, 0, 2, north, 0, 2)), "east to the corner, change, north");
+        assert_eq!(t.why_no_bus(from, to), None);
+        // Too far apart to change: no trip.
+        t.routes[north].stops[0].pos = Vec2::new(620.0, 200.0);
+        assert_eq!(t.plan_transfer(from, to), None);
+        assert_eq!(t.why_no_bus(from, to), Some(NoBus::NoLineServesBoth));
+    }
+
+    #[test]
     fn ride_length_falls_back_to_stop_distances_without_legs() {
         let mut t = Transit::default();
         let id = line(&mut t, &block(), 1);
@@ -467,6 +845,40 @@ mod tests {
         assert!(t.stop_near(Vec2::new(0.0, 300.0), 50.0).is_none(), "nothing within 50 m");
         // With several stops in range, the closest wins.
         assert_eq!(t.stop_near(Vec2::new(-200.0, 60.0), 300.0), Some((a, 0)));
+    }
+}
+
+/// [pt-transit] Why a trip has no bus (`Transit::why_no_bus`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum NoBus {
+    /// Short enough to walk, bus or no bus.
+    TooShort,
+    /// No line runs (none drawn, none runnable, none with buses).
+    NoLine,
+    NoStopEitherEnd,
+    NoStopAtStart,
+    NoStopAtEnd,
+    /// Stops near both ends, but on different lines with no change
+    /// between them within a short walk.
+    NoLineServesBoth,
+    /// One line serves both ends but rides the long way round the loop
+    /// (lines run one way), or its stops are no nearer than walking.
+    LongWayRound,
+}
+
+impl NoBus {
+    pub const ALL: [NoBus; 7] = [NoBus::TooShort, NoBus::NoLine, NoBus::NoStopEitherEnd, NoBus::NoStopAtStart, NoBus::NoStopAtEnd, NoBus::NoLineServesBoth, NoBus::LongWayRound];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            NoBus::TooShort => "too_short",
+            NoBus::NoLine => "no_line",
+            NoBus::NoStopEitherEnd => "no_stop_either_end",
+            NoBus::NoStopAtStart => "no_stop_at_start",
+            NoBus::NoStopAtEnd => "no_stop_at_end",
+            NoBus::NoLineServesBoth => "no_line_serves_both",
+            NoBus::LongWayRound => "long_way_round",
+        }
     }
 }
 

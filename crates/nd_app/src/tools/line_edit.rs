@@ -187,7 +187,7 @@ pub fn input(w: &mut nd_sim::World, tools: &mut ToolState, ground: Option<SVec2>
                 tools.stop_sel = Some((edit.route, i));
                 format!("Stop {} picked: drag it along the streets to move it; right-click or Delete removes it.", i + 1)
             }
-            EditOp::Share { from, at } => match w.edit_share_stop(edit.route, from, at) {
+            EditOp::Share { from, at } => match w.share_bus_stop(edit.route, from, at) {
                 Ok(i) => {
                     edit.inserted(i);
                     let other = w.transit.routes.get(from.0).map_or(String::new(), |r| r.name.clone());
@@ -195,7 +195,7 @@ pub fn input(w: &mut nd_sim::World, tools: &mut ToolState, ground: Option<SVec2>
                 }
                 Err(e) => format!("No stop: {e}."),
             },
-            EditOp::Insert { p, at } => match w.edit_insert_stop(edit.route, at, p) {
+            EditOp::Insert { p, at } => match w.insert_bus_stop(edit.route, at, p) {
                 Ok(i) => {
                     edit.inserted(i);
                     let n = w.transit.routes.get(edit.route).map_or(0, |r| r.stops.len());

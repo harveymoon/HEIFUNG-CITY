@@ -113,7 +113,12 @@ impl World {
         let pain = match mode {
             TripMode::Walk => (minutes - 25.0).max(0.0) / 30.0 * if frail { 1.4 } else { 1.0 },
             TripMode::Bike => (minutes - 35.0).max(0.0) / 30.0 + (d / bike - 60.0).max(0.0) / 60.0,
-            TripMode::Bus | TripMode::Train | TripMode::Subway => (minutes - (d / (walk * 4.0) + 20.0)).max(0.0) / 30.0,
+            // [pt-transit] Against twice walking pace door to door, plus
+            // a wait: the walks to and from the stop are part of any ride,
+            // and four times walking pace (the old mark) no bus here could
+            // make on a short trip, so every rider came off it hurting and
+            // chose the bus less next time.
+            TripMode::Bus | TripMode::Train | TripMode::Subway => (minutes - (d / (walk * 2.0) + 25.0)).max(0.0) / 30.0,
             // [taxis] The wait at the kerb and the ride against a drive.
             TripMode::Taxi => (minutes - (d * 1.3 / (9.0 * secs) + 12.0)).max(0.0) / 30.0,
             TripMode::Car => {

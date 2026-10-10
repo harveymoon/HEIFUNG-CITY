@@ -1,6 +1,6 @@
-//! [lines] Editing a bus line in place: a stop inserted between two others
-//! (where it belongs along the loop, not tacked on the end), and a stop of
-//! another line shared, so two lines call at the same kerb.
+//! [lines] Where a stop inserted into a bus line belongs along the loop
+//! (not tacked on the end). The edits themselves are `World::insert_bus_stop`
+//! and `World::share_bus_stop` (`world/buses.rs`).
 
 use super::*;
 use crate::geom::distance_to_polyline;
@@ -44,76 +44,6 @@ pub fn insert_index(stops: &[Vec2], legs: &[Vec<Vec2>], p: Vec2) -> usize {
     }
     let leg = on_route.map(|(_, _, i)| i).or(best.map(|(_, i)| i)).unwrap_or(n - 1);
     leg + 1
-}
-
-impl World {
-    /// Insert a stop into a line at `p` (snapped to the street, as a click
-    /// is): at `at` when given (`0..=n`), else where it belongs along the
-    /// loop ([`insert_index`]). The index it took.
-    pub fn edit_insert_stop(&mut self, route: RouteId, at: Option<usize>, p: Vec2) -> Result<usize, String> {
-        let stop = BusStop::snap(&self.roads, p).ok_or("click next to a street")?;
-        self.edit_put_stop(route, at, stop)
-    }
-
-    /// Give a line a stop at the very kerb another line's stop `from` is
-    /// at (same street, same point), so riders change there; inserted at
-    /// `at` or where it belongs. The index it took.
-    pub fn edit_share_stop(&mut self, route: RouteId, from: (RouteId, usize), at: Option<usize>) -> Result<usize, String> {
-        let src = self.transit.routes.get(from.0).and_then(|r| r.stops.get(from.1)).ok_or("no such stop")?;
-        let stop = BusStop { segment: src.segment, pos: src.pos, stats: transit::StopStats::default() };
-        self.edit_put_stop(route, at, stop)
-    }
-
-    fn edit_put_stop(&mut self, route: RouteId, at: Option<usize>, stop: BusStop) -> Result<usize, String> {
-        let r = self.transit.routes.get_mut(route).ok_or("no such line")?;
-        if r.stops.iter().any(|s| s.pos.distance(stop.pos) < 3.0) {
-            return Err("this line stops there already".into());
-        }
-        let n = r.stops.len();
-        let idx = at.unwrap_or_else(|| insert_index(&r.stops.iter().map(|s| s.pos).collect::<Vec<_>>(), &r.legs, stop.pos)).min(n);
-        r.stops.insert(idx, stop);
-        // The stop before now drives to the new one.
-        if n > 0 {
-            let before = (idx + n) % (n + 1);
-            r.stops[before].stats.forget_leg();
-        }
-        self.edit_stop_inserted(route, idx);
-        self.transit.refresh_legs(&self.traffic.net);
-        Ok(idx)
-    }
-
-    /// Stop `idx` of a line has just been put into its list: buses, leg
-    /// timings and riders bound for the stops after it shift up with the
-    /// list. A bus on the leg the new stop splits keeps driving to the stop
-    /// it was going to (it calls at the new one next time round).
-    fn edit_stop_inserted(&mut self, route: RouteId, idx: usize) {
-        let on_line: Vec<CarId> = self.traffic.cars.iter().filter(|(_, c)| c.bus.as_ref().is_some_and(|b| b.route == route)).map(|(id, _)| id).collect();
-        for id in on_line {
-            if let Some(bus) = self.traffic.cars[id].bus.as_mut() {
-                if bus.next_stop != usize::MAX && bus.next_stop >= idx {
-                    bus.next_stop += 1;
-                }
-            }
-            if let Some(d) = self.transit.departures.get_mut(&id) {
-                if d.0 >= idx {
-                    d.0 += 1;
-                }
-            }
-        }
-        for c in self.citizens.values_mut() {
-            let Some(t) = c.transit.as_mut() else { continue };
-            let TransitLeg::Bus { route: r, board, alight } = &mut t.leg else { continue };
-            if *r != route {
-                continue;
-            }
-            if *board >= idx {
-                *board += 1;
-            }
-            if *alight >= idx {
-                *alight += 1;
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -181,16 +111,16 @@ mod tests {
     fn inserting_puts_the_stop_between_and_shifts_what_comes_after() {
         let (mut w, route) = block();
         w.transit.routes[route].stops[2].stats.on_today = 7;
-        let at = w.edit_insert_stop(route, None, v(0.0, 4.0)).expect("inserted");
+        let at = w.insert_bus_stop(route, None, v(0.0, 4.0)).expect("inserted");
         assert_eq!(at, 1, "between the first two stops on the south street");
         let r = &w.transit.routes[route];
         assert_eq!(r.stops.len(), 5);
         assert_eq!(r.stops[3].stats.on_today, 7, "the figures follow their stop");
         assert!(r.stops[1].pos.distance(v(0.0, 4.0)) < 5.0);
         // Explicitly at a slot.
-        let at = w.edit_insert_stop(route, Some(5), v(-296.0, 70.0)).expect("inserted");
+        let at = w.insert_bus_stop(route, Some(5), v(-296.0, 70.0)).expect("inserted");
         assert_eq!(at, 5);
-        assert!(w.edit_insert_stop(route, None, v(0.0, 4.0)).is_err(), "no second stop at the same kerb");
+        assert!(w.insert_bus_stop(route, None, v(0.0, 4.0)).is_err(), "no second stop at the same kerb");
     }
 
     #[test]
@@ -198,11 +128,11 @@ mod tests {
         let (mut w, a) = block();
         let b = w.add_bus_route();
         w.add_bus_stop(b, v(296.0, 70.0)).unwrap();
-        let at = w.edit_share_stop(b, (a, 1), None).expect("shared");
+        let at = w.share_bus_stop(b, (a, 1), None).expect("shared");
         let (pa, pb) = (w.transit.routes[a].stops[1], w.transit.routes[b].stops[at]);
         assert_eq!(pa.pos, pb.pos);
         assert_eq!(pa.segment, pb.segment);
-        assert!(w.edit_share_stop(b, (a, 1), None).is_err(), "only once");
+        assert!(w.share_bus_stop(b, (a, 1), None).is_err(), "only once");
     }
 
     #[test]
@@ -214,7 +144,7 @@ mod tests {
         let id = w.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, 0);
         w.traffic.cars[id].bus = Some(Bus { route, next_stop: 2, passengers: Vec::new(), to_depot: false, depot: BuildingId::default() });
         w.transit.departures.insert(id, (1, 0));
-        let at = w.edit_insert_stop(route, Some(1), v(0.0, 4.0)).unwrap();
+        let at = w.insert_bus_stop(route, Some(1), v(0.0, 4.0)).unwrap();
         assert_eq!(at, 1);
         assert_eq!(w.traffic.cars[id].bus.as_ref().unwrap().next_stop, 3, "still bound for the same stop");
         assert_eq!(w.transit.departures[&id].0, 2);
