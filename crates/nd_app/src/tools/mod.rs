@@ -48,7 +48,7 @@ impl Plugin for ToolsPlugin {
             // Input, outlines and rings used the pre-tick state and last
             // frame's `frac`, so at speed the gold box trailed its car.
             .add_systems(Update, draw_gizmos.in_set(OverlaySet::Draw))
-            .add_systems(Update, path_trim_toasts.in_set(SimSet::Sync));
+            .add_systems(Update, (path_trim_toasts, connectivity_toasts).in_set(SimSet::Sync));
     }
 }
 
@@ -66,6 +66,24 @@ fn path_trim_toasts(sim: Res<Sim>, mut flags: ResMut<UiFlags>) {
             };
         }
     }
+}
+
+/// [pt-walk] A new connectivity alert (repeated failed trips, a newly
+/// stranded area with people in it): toast it. Alerts already there when
+/// the city loads are not repeated.
+fn connectivity_toasts(sim: Res<Sim>, mut flags: ResMut<UiFlags>, mut seen: Local<Option<(String, u32)>>) {
+    let k = &sim.world.connectivity;
+    let game = sim.world.identity.game_id.clone();
+    let newest = k.next_seq;
+    match seen.as_ref() {
+        Some((g, s)) if *g == game => {
+            if let Some(a) = k.alerts.iter().filter(|a| a.seq >= *s).last() {
+                flags.message = a.text.clone();
+            }
+        }
+        _ => {}
+    }
+    *seen = Some((game, newest));
 }
 
 /// The previews' colours.
