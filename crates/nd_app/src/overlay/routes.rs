@@ -45,30 +45,38 @@ pub fn rage_marks(gizmos: &mut Gizmos, sim: &Sim, t: f32, cam: Option<&OrbitCame
 /// Transit, the Buses list or by clicking one of its buses), drawn bright
 /// with marker posts at its stops and a pulsing ring over each of its
 /// buses. [metro-ux] Not while drawing a metro line: the Metro layer is
-/// about the metro.
+/// about the metro. [lines] While a line is edited the others are dimmed,
+/// the metro is left out, and the pointer shows where a click would put a
+/// stop (the leg it would split, or the slot picked in the Lines window).
 pub fn bus_lines(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, sim: &Sim, t: f32) {
     let cyan = Color::linear_rgb(1.4, 1.6, 1.8);
     let red = Color::linear_rgb(3.0, 0.2, 0.4);
     let white = Color::linear_rgb(3.0, 3.0, 3.0);
     let lift = |p: SVec2| Vec3::new(p.x, 0.8 + sim.world.surface_height(p), p.y);
     let metro_mode = tools.tool == Tool::Transit && tools.transit_mode == TransitMode::Metro;
-    let all_lines = (tools.tool == Tool::Transit && !metro_mode) || tools.show_routes;
+    // [lines] In metro mode no bus lines at all (and no metro in bus mode).
+    if metro_mode {
+        return;
+    }
+    let bus_mode = tools.tool == Tool::Transit && tools.transit_mode == TransitMode::Route;
+    let editing = tools.line_edit.filter(|e| sim.world.transit.routes.contains_key(e.route));
+    let all_lines = bus_mode || tools.show_routes || editing.is_some();
+    let pulse = 0.5 + 0.5 * (t * 4.0).sin();
+    let road_lift = |p: SVec2| Vec3::new(p.x, 1.2 + sim.world.surface_height(p), p.y);
     if all_lines || tools.route_sel.is_some() {
         let palette = [[0.2, 1.4, 2.2], [2.4, 0.5, 0.3], [0.5, 2.2, 0.5], [2.2, 1.8, 0.3], [1.8, 0.4, 2.0], [0.3, 1.0, 2.4], [2.2, 1.0, 0.6], [1.2, 1.2, 1.2]];
-        let road_lift = |p: SVec2| Vec3::new(p.x, 1.2 + sim.world.surface_height(p), p.y);
-        let pulse = 0.5 + 0.5 * (t * 4.0).sin();
         for (id, route) in &sim.world.transit.routes {
-            let sel = tools.route_sel == Some(id);
+            let sel = editing.map_or(tools.route_sel == Some(id), |e| e.route == id);
             if !all_lines && !sel {
                 continue;
             }
             let c = palette[route.color as usize % palette.len()];
-            let k = if sel { 1.6 } else { 0.7 };
+            let k = if sel { 1.6 } else if editing.is_some() { 0.22 } else { 0.7 };
             let col = Color::linear_rgb(c[0] * k, c[1] * k, c[2] * k);
             for (i, leg) in route.legs.iter().enumerate() {
                 let pts: Vec<Vec3> = leg.iter().map(|&p| road_lift(p)).collect();
                 if pts.len() >= 2 {
-                    let leg_col = if route.broken.contains(&i) { red } else { col };
+                    let leg_col = if route.broken.contains(&i) && (sel || editing.is_none()) { red } else { col };
                     if sel {
                         // Gizmo lines are a pixel wide: a second pass just
                         // above makes the selected line read as a band.
@@ -104,9 +112,9 @@ pub fn bus_lines(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, sim: &
                 }
             }
         }
-        // [subway] Metro lines over the map in the Metro mode (or with
-        // the toggle), and the line being laid up to the pointer.
-        if tools.show_routes && !(tools.tool == Tool::Transit && tools.transit_mode == TransitMode::Metro) {
+        // [subway] Metro lines over the map with the toggle; [lines] not
+        // with the Buses tool's Lines mode in hand.
+        if tools.show_routes && !bus_mode {
             for l in sim.world.subway.lines.values() {
                 let c = nd_procgen::metro::line_colour(l.color);
                 let col = Color::linear_rgb(c[0], c[1], c[2]);
@@ -118,15 +126,67 @@ pub fn bus_lines(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, sim: &
                 }
             }
         }
-        // [metro-ux] The Metro mode's stations, lines and the line being
-        // drawn are the Metro layer's (`metro_ux::metro_gizmos`).
-        if tools.tool == Tool::Transit {
+        if bus_mode && editing.is_none() {
             if let Some(c) = cursor.ground {
                 let on_street = sim.world.roads.nearest_street(c).is_some_and(|(_, _, q)| q.distance(c) <= nd_sim::transit::STOP_SNAP);
-                if tools.transit_mode == TransitMode::Route && on_street && tools.hover_stop.is_none() {
+                if on_street && tools.hover_stop.is_none() {
                     gizmos.circle(flat_at(lift(c)), 2.0, cyan);
                 }
             }
         }
     }
+    if let Some(e) = editing {
+        edit_preview(gizmos, tools, cursor, sim, &e, pulse);
+    }
+}
+
+/// [lines] Editing a line: the slot picked in the Lines window (its leg
+/// pulsing white), and under the pointer where a click would put a stop
+/// (green leads from the stops either side and a "+"), the stop that would
+/// be dragged, or the drag under way.
+fn edit_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, sim: &Sim, e: &crate::tools::line_edit::LineEdit, pulse: f32) {
+    use crate::tools::line_edit::{hit_at, preview, Hit};
+    let w = &sim.world;
+    let Some(route) = w.transit.routes.get(e.route) else { return };
+    let white = Color::linear_rgb(3.0, 3.0, 3.0);
+    let green = Color::linear_rgb(0.6, 3.0, 1.0);
+    let lift = |p: SVec2| Vec3::new(p.x, 1.9 + w.surface_height(p), p.y);
+    let n = route.stops.len();
+    if let Some(s) = e.slot.filter(|_| n >= 2) {
+        let leg = (s + n - 1) % n;
+        if let Some(pts) = route.legs.get(leg) {
+            let k = 3.0 * pulse + 0.5;
+            gizmos.linestrip(pts.iter().map(|&p| lift(p)), Color::linear_rgb(k, k, k));
+        }
+    }
+    let Some(c) = cursor.ground.or(tools.cursor_pin) else { return };
+    if let Some((r, i)) = tools.stop_drag {
+        if let Some(s) = w.transit.routes.get(r).and_then(|x| x.stops.get(i)) {
+            gizmos.line(lift(s.pos), lift(c), white);
+            gizmos.circle(flat_at(lift(c)), 3.2, white);
+        }
+        return;
+    }
+    let hit = hit_at(w, e.route, c);
+    if let Hit::Own(i) = hit {
+        // Grab: a ring and four ticks.
+        let at = lift(route.stops[i].pos);
+        gizmos.circle(flat_at(at), 5.0, white);
+        for d in [Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z] {
+            gizmos.line(at + d * 5.5, at + d * 7.5, white);
+        }
+        return;
+    }
+    let Some((at, idx)) = preview(w, e, hit) else { return };
+    let p = lift(at);
+    if n >= 1 {
+        gizmos.line(lift(route.stops[(idx + n - 1) % n].pos), p, green);
+        if n >= 2 {
+            gizmos.line(p, lift(route.stops[idx % n].pos), green);
+        }
+    }
+    // The "+".
+    gizmos.circle(flat_at(p), 3.6, green);
+    gizmos.line(p + Vec3::X * 2.4, p - Vec3::X * 2.4, green);
+    gizmos.line(p + Vec3::Z * 2.4, p - Vec3::Z * 2.4, green);
 }
