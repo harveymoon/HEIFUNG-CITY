@@ -221,19 +221,26 @@ impl World {
         Some(worth)
     }
 
-    /// [carlife] Where the `n`th car stands on dealer `d`'s forecourt: rows
-    /// inside its lot behind the frontage, facing the street.
+    /// [carlife] Cars the used-car line along dealer `d`'s frontage holds
+    /// (its front row; the new cars the dealership is drawn with stand
+    /// behind it).
+    pub(in crate::world) fn forecourt_room(&self, d: BuildingId) -> u16 {
+        self.building_lot(d).map_or(1, |lot| ((lot.front_edge[0].distance(lot.front_edge[1]) - 4.0) / FORECOURT_PITCH).floor().max(1.0) as u16).min(FORECOURT_CARS)
+    }
+
+    /// [carlife] Where the `n`th car stands on dealer `d`'s forecourt: the
+    /// used-car line inside its lot along the frontage, facing the street
+    /// (further rows only for cars squeezed in beyond it).
     pub(in crate::world) fn forecourt_spot(&self, d: BuildingId, n: u16) -> Option<ParkSpot> {
         let mut spot = self.building_spot(ParkKind::Dealer, d)?;
         let lot = self.building_lot(d)?;
         let inward = (-lot.front_dir).normalize_or_zero();
         let along = Vec2::new(-inward.y, inward.x);
         let front = (lot.front_edge[0] + lot.front_edge[1]) * 0.5;
-        let width = lot.front_edge[0].distance(lot.front_edge[1]);
-        let per_row = ((width - 4.0) / FORECOURT_PITCH).floor().max(1.0) as u16;
+        let per_row = self.forecourt_room(d).max(1);
         let (row, col) = (n / per_row, n % per_row);
         let lateral = (col as f32 - (per_row - 1) as f32 * 0.5) * FORECOURT_PITCH;
-        let p = front + inward * (4.0 + row as f32 * 6.0) + along * lateral;
+        let p = front + inward * (3.6 + row as f32 * 6.5) + along * lateral;
         spot.pos = if crate::geom::point_in_polygon(p, &lot.polygon) { p } else { lot.center };
         spot.heading = lot.front_dir.y.atan2(lot.front_dir.x);
         spot.slot = n;
@@ -248,7 +255,7 @@ impl World {
     /// [carlife] A free place on the forecourt of `d`, if there is room.
     fn free_forecourt(&self, d: BuildingId) -> Option<ParkSpot> {
         let taken: std::collections::HashSet<u16> = self.vehicles.cars.values().filter_map(|c| c.spot().filter(|s| s.kind == ParkKind::Dealer && s.building == Some(d)).map(|s| s.slot)).collect();
-        let n = (0..FORECOURT_CARS).find(|n| !taken.contains(n))?;
+        let n = (0..self.forecourt_room(d)).find(|n| !taken.contains(n))?;
         self.forecourt_spot(d, n)
     }
 
