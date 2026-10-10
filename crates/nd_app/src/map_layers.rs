@@ -60,6 +60,8 @@ pub struct MapLayer {
 pub const MAP_LAYERS: &[MapLayer] = &[
     MapLayer { key: "zoning", label: "Zoning", group: "City", hotkey: "O", hint: "Zone outline glows and vacant lots (the ground tint stays)", flag: |o| &mut o.zoning, legend: legend_zoning },
     MapLayer { key: "land_value", label: "Land value", group: "City", hotkey: "V", hint: "What the land is worth: rents and tiers follow it", flag: |o| &mut o.land_value, legend: legend_land_value },
+    // [pt-growth] (render/overlays.rs `sync_overlay`)
+    MapLayer { key: "land_density", label: "Land density", group: "City", hotkey: "", hint: "Foot traffic and people per block, smoothed over days: busy streets are where developers build taller", flag: |o| &mut o.land_density, legend: legend_land_density },
     MapLayer { key: "districts", label: "Districts", group: "City", hotkey: "", hint: "Named districts: areas, borders and names", flag: |o| &mut o.districts, legend: legend_districts },
     MapLayer { key: "traffic", label: "Traffic load", group: "Traffic", hotkey: "L", hint: "Per lane: how full and how slow", flag: |o| &mut o.traffic, legend: legend_traffic },
     MapLayer { key: "traffic_types", label: "Traffic types", group: "Traffic", hotkey: "L", hint: "A disc under every vehicle by type", flag: |o| &mut o.traffic_types, legend: legend_traffic_types },
@@ -286,6 +288,14 @@ fn legend_land_value(ui: &mut egui::Ui, cx: &LegendCtx) {
     let (a, b) = (cx.assets.palette.overlay_low, cx.assets.palette.overlay_high);
     ramp(ui, |t| linear([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]), "low", "high");
     small(ui, "rents and building tiers follow it");
+}
+
+fn legend_land_density(ui: &mut egui::Ui, _: &LegendCtx) {
+    ramp(ui, |t| {
+        let c = heat_color(t);
+        linear([c[0], c[1], c[2]])
+    }, "quiet suburb", "busy downtown");
+    small(ui, "people out on foot and in the buildings, over days; developers buy up small plots where it is high");
 }
 
 fn legend_districts(ui: &mut egui::Ui, cx: &LegendCtx) {

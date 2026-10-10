@@ -335,6 +335,11 @@ impl World {
     /// pulled down first (`memory` for those who must leave) and join when
     /// the rubble is gone.
     pub(in crate::world) fn take_plots(&mut self, bid: BuildingId, plots: &[LotId], memory: &str) {
+        self.take_plots_for(bid, plots, memory, crate::buildings::DemolitionReason::Expansion);
+    }
+
+    /// [pt-growth] `take_plots`, saying why the buildings on them come down.
+    pub(in crate::world) fn take_plots_for(&mut self, bid: BuildingId, plots: &[LotId], memory: &str, reason: crate::buildings::DemolitionReason) {
         for &l in plots {
             let Some(lot) = self.lots.get(l) else { continue };
             match lot.building {
@@ -354,6 +359,7 @@ impl World {
                         b.plot.pending_lots.push(l);
                     }
                     self.demolish_with(other, None, Some(memory));
+                    self.tag_demolition(other, reason);
                     // Cleared at once (a car park, a site at groundworks).
                     self.claim_reserved(l);
                 }

@@ -24,6 +24,7 @@ impl World {
         // [relocate] The business looks for a new place.
         self.pack_business(bid, &format!("the city's new {for_what}"));
         self.buy_out(bid, lot_id, None, &memory);
+        self.tag_demolition(bid, crate::buildings::DemolitionReason::CityTakeover);
         Ok(())
     }
 

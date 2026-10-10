@@ -39,7 +39,7 @@ fn rank_in(ranking: &[(nd_sim::BuildingId, f32)], id: nd_sim::BuildingId, h: f32
 
 /// The inspector's line for any standing building; a league tower's
 /// record in full.
-pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId, selection: &mut Selection) {
+pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId, selection: &mut Selection, tops: &crate::fire_scene::BuildingTops, rules: &nd_procgen::BuildingRules) {
     let Some(b) = w.buildings.get(id) else { return };
     if b.land_use == nd_sim::LandUse::Park || b.is_power() || b.is_parking() {
         return;
@@ -49,8 +49,22 @@ pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildi
     let ranking = b.operating().then(|| w.skyline_ranking());
     let rank = ranking.as_deref().map(|ranking| rank_in(ranking, id, h));
     let Some(t) = b.plot.tower else {
-        if let Some(r) = rank.filter(|r| *r <= 10) {
-            hint(ui, &format!("about {h:.0} m high · the city's {} tallest", if r == 1 { String::new() } else { ordinal(r) }).replace("  ", " "));
+        // [pt-growth] (F8) An ordinary building is ranked by how tall it is
+        // drawn (`BuildingTops`, the renderer's walls and roof), not by its
+        // floors at a storey height: a style can draw a ten-floor civic
+        // site as a low monument, and that is what the player sees.
+        let drawn = |bid: nd_sim::BuildingId| match w.buildings.get(bid).and_then(|x| x.plot.tower) {
+            Some(t) => t.height,
+            None => tops.height(w, bid, rules),
+        };
+        let hd = drawn(id);
+        if let Some(ranking) = ranking.as_deref() {
+            let mut by_drawn: Vec<(nd_sim::BuildingId, f32)> = ranking.iter().map(|(bid, _)| (*bid, drawn(*bid))).collect();
+            by_drawn.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+            let r = rank_in(&by_drawn, id, hd);
+            if r <= 10 {
+                hint(ui, &format!("about {hd:.0} m high · the city's {} tallest", if r == 1 { String::new() } else { ordinal(r) }).replace("  ", " "));
+            }
         }
         return;
     };

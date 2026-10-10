@@ -308,6 +308,8 @@ struct RenderState {
     cars: HashMap<CarId, [Entity; 2]>,
     overlay_version: u64,
     overlay_shown: bool,
+    /// [pt-growth] The heat map shown is the land density, not the value.
+    overlay_density: bool,
     paths_version: u64,
     paths_shown: bool,
     transit_version: u64,

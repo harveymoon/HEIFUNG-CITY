@@ -9,6 +9,10 @@ use super::*;
 #[derive(Resource, Clone)]
 pub struct Overlays {
     pub land_value: bool,
+    /// [pt-growth] Land density: people present and out on foot per block,
+    /// smoothed over days (`Pressure::density_cell`), what developers
+    /// build taller for.
+    pub land_density: bool,
     /// Pedestrian network: lot loops, alleys and gates.
     pub paths: bool,
     /// Zone outline glows and vacant-lot outlines. The ground fills stay.
@@ -50,7 +54,7 @@ pub struct Overlays {
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false }
+        Self { land_value: false, land_density: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false }
     }
 }
 
@@ -100,6 +104,12 @@ impl Overlays {
     }
 }
 
+/// [pt-growth] Where a land density score sits on the layer's ramp: a log
+/// scale, a quiet suburb low, a busy downtown block (200+) at the top.
+pub fn density_t(d: f32) -> f32 {
+    ((1.0 + d.max(0.0)).ln() / (1.0f32 + 200.0).ln()).clamp(0.0, 1.0)
+}
+
 /// Land value heat map over the ground. Toggled with V.
 pub(super) fn sync_overlay(
     mut commands: Commands,
@@ -112,17 +122,42 @@ pub(super) fn sync_overlay(
     existing: Query<Entity, With<OverlayTag>>,
 ) {
     let lv = &sim.world.land_value;
-    if overlays.land_value == state.overlay_shown && lv.version == state.overlay_version && !assets.palette_changed && !sim.full_rebuild {
+    // [pt-growth] The land density layer shares the heat map: redrawn when
+    // the hourly sample moves.
+    let p = &sim.world.estate.pressure;
+    let version = if overlays.land_density { p.samples as u64 } else { lv.version };
+    let shown = overlays.land_value || overlays.land_density;
+    if shown == state.overlay_shown && overlays.land_density == state.overlay_density && version == state.overlay_version && !assets.palette_changed && !sim.full_rebuild {
         return;
     }
-    state.overlay_shown = overlays.land_value;
-    state.overlay_version = lv.version;
+    state.overlay_shown = shown;
+    state.overlay_density = overlays.land_density;
+    state.overlay_version = version;
     despawn_all(&mut commands, &existing);
-    if !overlays.land_value {
+    if !shown {
         return;
     }
     let pal = &assets.palette;
     let mut mesh = MeshData::default();
+    if overlays.land_density {
+        if !p.ready() {
+            return;
+        }
+        let half = nd_sim::estate::PRESSURE_CELL * 0.5;
+        for i in 0..p.n * p.n {
+            let d = p.density_cell(i);
+            if d < 0.5 {
+                continue;
+            }
+            let c = p.cell_center(i);
+            let t = density_t(d);
+            let col = nd_procgen::overlay::heat_color(t);
+            let poly = [SVec2::new(c.x - half, c.y - half), SVec2::new(c.x + half, c.y - half), SVec2::new(c.x + half, c.y + half), SVec2::new(c.x - half, c.y + half)];
+            mesh.ground_polygon(&poly, 0.3, [col[0], col[1], col[2], 0.25 + 0.3 * t]);
+        }
+        spawn_overlay(&mut commands, &mut meshes, &mats, &mesh, OverlayTag);
+        return;
+    }
     let half = lv.cell * 0.5;
     for iy in 0..lv.n {
         for ix in 0..lv.n {

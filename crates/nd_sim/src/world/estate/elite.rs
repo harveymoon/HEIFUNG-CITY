@@ -312,6 +312,7 @@ impl World {
                 let floors = self.buildings[bid].floors.clamp(1, NIMBY_HEIGHT_CAP);
                 let memory = format!("Priced out: {who} built a mansion down the road and the landlord sold up. Rents here are for someone else now.");
                 self.redevelop_with(bid, Tier::Mid, floors, value, memory, false);
+                self.tag_demolition(bid, crate::buildings::DemolitionReason::PricedOut);
                 self.estate.nimby[k].price_out_left -= 1;
                 self.estate.stats.priced_out_total += 1;
                 done += 1;

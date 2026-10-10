@@ -14,14 +14,29 @@ impl World {
             return;
         }
         // A few a day: a town rebuilds a street at a time, not a quarter.
-        let max = (1 + self.buildings.len() / 400).min(4);
+        // [pt-growth] A busy town rebuilds several a day (the old cheap-on-
+        // dear-land rule rebuilt whole districts at once on the saturated
+        // land value; this is where that growth comes from now).
+        let max = (2 + self.buildings.len() / 200).min(6);
         let tick = self.clock.tick;
         let mut cands: Vec<(u8, BuildingId)> = Vec::new();
         for (id, b) in self.buildings.iter() {
-            if !matches!(b.land_use, LandUse::Residential | LandUse::Commercial | LandUse::Entertainment) || b.plot.form.is_some() || b.plot.owner.is_some() {
+            // [pt-growth] A developer's own building (a block it assembled
+            // or rebuilt before) may be rebuilt taller again as the street
+            // gets busier: density feeds on itself.
+            let developers = b.plot.owner.and_then(|o| self.estate.owners.get(o)).is_some_and(|o| o.kind == OwnerKind::Developer);
+            let free = b.plot.owner.is_none() || developers;
+            let form_ok = b.plot.form.is_none() || (developers && b.plot.form == Some(Form::Merged));
+            if !matches!(b.land_use, LandUse::Residential | LandUse::Commercial | LandUse::Entertainment) || !form_ok || !free {
                 continue;
             }
             if tick.saturating_sub(b.built_tick) < 3 * 1440 || !self.buyable(id) {
+                continue;
+            }
+            // [pt-growth] Only uses people want more of: a street of homes
+            // nobody needs no longer crowds the shops the town is short of
+            // out of the day's few tries.
+            if self.economy.demand_for(b.land_use) < 0.2 {
                 continue;
             }
             let pf = self.pressure_floors(b.lot);
@@ -52,9 +67,179 @@ impl World {
             if cap < old + 2 {
                 continue;
             }
-            if self.buy_out_and_rebuild(bid, &mut rng) {
+            // [pt-growth] Small plots are bought up together for one bigger
+            // building; a big plot (or one with no small neighbours to buy)
+            // is rebuilt on its own.
+            if self.assemble_plots(bid, &mut rng) || self.buy_out_and_rebuild(bid, &mut rng) {
                 done += 1;
             }
+        }
+    }
+
+    /// [pt-growth] Lot assembly: `bid` stands on a small plot where the
+    /// land density asks for at least `ASSEMBLY_MIN_FLOORS`; a developer
+    /// buys it with two to four small, low neighbours of the same use
+    /// (vacant ones too) that make one compact block, pulls them all down
+    /// and puts up one building across them, as tall as the land density
+    /// and the neighbours allow. Its residents and its neighbours' move
+    /// out (and remember why), businesses pack up to move. True if it went
+    /// ahead.
+    pub fn assemble_plots(&mut self, bid: BuildingId, rng: &mut SimRng) -> bool {
+        let Some(b) = self.buildings.get(bid) else { return false };
+        let (lu, lot, old_floors) = (b.land_use, b.lot, b.floors);
+        if !matches!(lu, LandUse::Residential | LandUse::Commercial) || b.plot.merged() || old_floors > ASSEMBLY_MAX_OLD_FLOORS || !self.buyable(bid) {
+            return false;
+        }
+        if self.lots.get(lot).is_none_or(|l| l.area() >= ASSEMBLY_SMALL_LOT || l.landlocked) {
+            return false;
+        }
+        let cap = self.height_cap(lot);
+        let want = self.pressure_floors(lot).min(cap);
+        if want < ASSEMBLY_MIN_FLOORS.max(old_floors + 2) {
+            return false;
+        }
+        let owner = b.plot.owner;
+        let tick = self.clock.tick;
+        // Grow the block a plot at a time, cheapest touching plot first.
+        let mut ours = vec![lot];
+        while ours.len() < ASSEMBLY_MAX_LOTS {
+            let mut added = false;
+            for (_, l) in self.plots_next_to(&ours, lu, ASSEMBLY_MAX_OLD_FLOORS, owner) {
+                let Some(x) = self.lots.get(l) else { continue };
+                if x.area() >= ASSEMBLY_SMALL_LOT * 1.5 || self.estate.reserved.contains_key(&l) {
+                    continue;
+                }
+                if let Some(o) = x.building {
+                    let Some(ob) = self.buildings.get(o) else { continue };
+                    if ob.plot.form.is_some() || tick.saturating_sub(ob.built_tick) < 3 * 1440 {
+                        continue;
+                    }
+                }
+                let others: Vec<&Lot> = ours.iter().skip(1).chain(std::iter::once(&l)).filter_map(|i| self.lots.get(*i)).collect();
+                if merged_lot_within(&self.lots[lot], &others, ASSEMBLY_HULL_SLACK).is_none() {
+                    continue;
+                }
+                ours.push(l);
+                added = true;
+                break;
+            }
+            if !added {
+                break;
+            }
+        }
+        if ours.len() < ASSEMBLY_MIN_LOTS {
+            return false;
+        }
+        let picked: Vec<LotId> = ours[1..].to_vec();
+        let value = self.lot_value(lot);
+        let mut tier = Tier::for_land_value(value);
+        if lu == LandUse::Residential {
+            tier = self.residential_tier(tier);
+        }
+        if let Some(l) = self.buildings[bid].look {
+            tier = l.tier(tier);
+        }
+        let floors = self.pick_floors(lot, lu, tier).max(want.min(ASSEMBLY_MIN_FLOORS + 2)).clamp(ASSEMBLY_MIN_FLOORS, cap.max(ASSEMBLY_MIN_FLOORS));
+        // The sum must pay: every plot at its price against the new block
+        // (its land and the homes or jobs across all the plots).
+        let price = self.sale_price(bid) + self.plots_price(&picked);
+        let area: f32 = ours.iter().filter_map(|l| self.lots.get(*l)).map(|l| l.area()).sum();
+        let mut n = self.buildings[bid].clone();
+        n.tier = tier;
+        n.floors = floors;
+        n.construction = None;
+        n.demolition = None;
+        n.business = None;
+        n.plot.form = Some(Form::Merged);
+        n.plot.extra_lots = picked.clone();
+        n.recompute_capacity();
+        let per_unit = match tier {
+            Tier::Low => 15_000.0,
+            Tier::Mid => 40_000.0,
+            Tier::High => 120_000.0,
+        };
+        let worth = area as f64 * (25.0 + 400.0 * value.max(0.0) as f64) + (n.homes as f64 + n.jobs as f64) * per_unit;
+        if worth < price * 1.2 {
+            return false;
+        }
+        let dev = self.developer(rng);
+        let dev_name = self.estate.owners.get(dev).map(|o| o.name.clone()).unwrap_or_default();
+        let (name, had_business) = (self.buildings[bid].name.clone(), self.buildings[bid].business.is_some());
+        let memory = format!("{dev_name} bought up {name} and the houses next to it for a new block of {floors} floors. We had to go.");
+        if had_business {
+            self.pack_business(bid, &format!("{dev_name}'s new block"));
+        }
+        self.settle_sale(bid);
+        self.buildings[bid].plot.form = Some(Form::Merged);
+        self.take_plots_for(bid, &picked, &memory, crate::buildings::DemolitionReason::Assembly);
+        self.redevelop_with(bid, tier, floors, value, memory, false);
+        self.tag_demolition(bid, crate::buildings::DemolitionReason::Assembly);
+        if had_business || lu == LandUse::Commercial {
+            let jobs = self.buildings[bid].planned_capacity().1;
+            let kind = self.pick_business_kind(lu, jobs);
+            self.buildings[bid].business = kind.map(|k| Business::new(k, jobs));
+        }
+        self.give_to(bid, dev, price);
+        let s = &mut self.estate.stats;
+        s.assemblies_total += 1;
+        s.assembled_lots_total += ours.len() as u32;
+        s.buyouts_total += 1;
+        s.buyouts_today += 1;
+        let (tick, pos) = (self.clock.tick, self.lots.get(lot).map(|l| l.center).unwrap_or_default());
+        self.skyline.push_news(tick, format!("{dev_name} buys {} plots round {name} for a {floors}-floor block", ours.len()), pos, Some(bid));
+        true
+    }
+
+    /// [pt-growth] Owners can lose their buildings: a block of homes left
+    /// mostly empty for `FORECLOSE_DAYS` (the rents too dear for the street,
+    /// the tenants gone elsewhere) while people in town wait for a home
+    /// they can afford is sold cheap to a developer, who cuts the rent: one
+    /// tier down, refitted (the rent follows), or rebuilt bigger where the
+    /// land density asks for it. A few a day.
+    pub(in crate::world) fn foreclose_empty(&mut self) {
+        let mut rng = self.erng(erng_salt::FORECLOSE);
+        let waiting = self.economy.waiting_immigrants > 0 || self.homeless_people() > 0;
+        let ids: Vec<BuildingId> = self.buildings.keys().collect();
+        let mut sold = 0;
+        for bid in ids {
+            let b = &self.buildings[bid];
+            if b.land_use != LandUse::Residential || b.homes < 4 || !b.operating() || !b.is_grown() || b.plot.form.is_some_and(|f| f.owner_occupied()) {
+                continue;
+            }
+            let full = b.households.len() as f32 / b.homes.max(1) as f32;
+            let empty = full <= FORECLOSE_OCCUPANCY && b.tier > Tier::Low;
+            let days = if empty { b.empty_days.saturating_add(1) } else { 0 };
+            self.buildings[bid].empty_days = days;
+            if days < FORECLOSE_DAYS || !waiting || sold >= 2 || !self.buyable(bid) {
+                continue;
+            }
+            let developers = self.buildings[bid].plot.owner.and_then(|o| self.estate.owners.get(o)).is_some_and(|o| o.kind == OwnerKind::Developer);
+            if developers && !rng.random_bool(0.3) {
+                // A developer that already holds it tries the market a while.
+                continue;
+            }
+            let price = self.sale_price(bid) * FORECLOSE_DISCOUNT;
+            let dev = self.developer(&mut rng);
+            let name = self.buildings[bid].name.clone();
+            let dev_name = self.estate.owners.get(dev).map(|o| o.name.clone()).unwrap_or_default();
+            self.settle_sale(bid);
+            self.give_to(bid, dev, price);
+            let tier = self.buildings[bid].tier;
+            let b = &mut self.buildings[bid];
+            b.empty_days = 0;
+            b.tier = tier.down();
+            b.condition = b.condition.max(0.8);
+            let seed = self.fresh_seed();
+            let value = self.lot_value(self.buildings[bid].lot);
+            let b = &mut self.buildings[bid];
+            b.seed = seed;
+            b.recompute_capacity();
+            b.update_rent(value);
+            self.events.push(SimEvent::BuildingChanged(bid));
+            self.estate.stats.foreclosures_total += 1;
+            let (tick, pos) = (self.clock.tick, self.building_lot(bid).map(|l| l.center).unwrap_or_default());
+            self.skyline.push_news(tick, format!("{name} stood half empty: its owner lost it to {dev_name}, who is cutting the rents"), pos, Some(bid));
+            sold += 1;
         }
     }
 
@@ -78,12 +263,21 @@ impl World {
         if let Some(l) = self.buildings[bid].look {
             tier = l.tier(tier);
         }
-        let floors = self.pick_floors(lot, lu, tier).max(old_floors + 1).min(self.height_cap(lot).max(old_floors + 1));
+        // [pt-growth] Built towards the land density a step at a time: up
+        // to three times as tall (and two floors) as what stood, never past
+        // what it and the neighbours allow, so a street of walk-ups becomes
+        // mid-rise and only later (rebuilt again as it gets busier) towers.
+        let cap = self.height_cap(lot);
+        let want = self.pressure_floors(lot).min(cap).min(old_floors.saturating_mul(3).saturating_add(2));
+        let floors = self.pick_floors(lot, lu, tier).max(old_floors + 1).max(want).min(cap.max(old_floors + 1)).min(old_floors.saturating_mul(3).saturating_add(2).max(old_floors + 1));
         // A better use, or no sale: what the new building is worth (land
         // and structure, no goodwill yet) must clear the price by a fifth.
         // A thriving business's goodwill keeps it off the market.
         if self.value_of_new(bid, tier, floors) < price * 1.2 {
             return false;
+        }
+        if self.buildings[bid].plot.owner.and_then(|o| self.estate.owners.get(o)).is_some_and(|o| o.kind == OwnerKind::Developer) {
+            self.estate.stats.redensified_total += 1;
         }
         let dev_name = self.estate.owners.get(dev).map(|o| o.name.clone()).unwrap_or_default();
         let memory = format!("{name} was sold to {dev_name} for ${:.0}k and is coming down for something bigger. We had to go.", price / 1000.0);
@@ -93,6 +287,7 @@ impl World {
         }
         self.settle_sale(bid);
         self.redevelop_with(bid, tier, floors, value, memory, false);
+        self.tag_demolition(bid, crate::buildings::DemolitionReason::Redevelopment);
         if had_business {
             // The old business closes with the sale; the new building
             // opens as what the market wants now.
@@ -249,6 +444,7 @@ impl World {
         let memory = format!("{name} bought the plot next door to grow. Our building is coming down.");
         self.take_plots(bid, &picked, &memory);
         self.redevelop_with(bid, tier, new_floors, value, format!("{name} is closed while it rebuilds bigger."), true);
+        self.tag_demolition(bid, crate::buildings::DemolitionReason::Expansion);
         if let Some(o) = owner {
             if let Some(o) = self.estate.owners.get_mut(o) {
                 o.spent += price;
@@ -361,6 +557,7 @@ impl World {
                 self.buildings[b].land_use = LandUse::Residential;
                 self.buildings[b].business = None;
                 self.redevelop_with(b, Tier::High, floors, value, memory.to_string(), false);
+                self.tag_demolition(b, crate::buildings::DemolitionReason::Estate);
                 b
             }
             None => {
@@ -387,7 +584,7 @@ impl World {
             self.buildings[bid].name = format!("{n} Estate");
         }
         let rest: Vec<LotId> = plots.iter().copied().filter(|l| *l != primary).collect();
-        self.take_plots(bid, &rest, memory);
+        self.take_plots_for(bid, &rest, memory, crate::buildings::DemolitionReason::Estate);
         self.give_to(bid, owner, price);
         Some(bid)
     }

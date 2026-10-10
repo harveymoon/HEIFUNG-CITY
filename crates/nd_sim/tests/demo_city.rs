@@ -1,5 +1,6 @@
 //! The demo district (the layout `nd_app`'s `seed_demo_district` lays out),
-//! run headless with the rule-based mind for eight days. Guards the food
+//! run headless with the rule-based mind for twenty days (eight before
+//! [pt-growth]: see the unemployment check). Guards the food
 //! chain, housing affordability, employment and business health during the
 //! fast growth of a new town.
 //!
@@ -43,7 +44,8 @@ fn demo_city_stays_fed_housed_and_employed_through_fast_growth() {
     // swings with the run (a single day went from 2 to 6 of 80 on a change
     // to how cars join lanes, with the days around it alike).
     let (mut broke_late, mut open_late) = (0usize, 0usize);
-    for day in 1..=8 {
+    let mut late_unemployment: Vec<f32> = Vec::new();
+    for day in 1..=20 {
         // Sample at the first tick after midnight, as the remote history does.
         loop {
             world.tick(&mut minds);
@@ -55,7 +57,10 @@ fn demo_city_stays_fed_housed_and_employed_through_fast_growth() {
         let (adults, idle, open, broke) = sample_jobs(&world);
         let unemployment = idle as f32 / adults.max(1) as f32;
         let broke_share = broke as f32 / open.max(1) as f32;
-        if day >= 6 {
+        if day >= 18 {
+            late_unemployment.push(unemployment);
+        }
+        if (6..=8).contains(&day) {
             broke_late += broke;
             open_late += open;
         }
@@ -92,7 +97,22 @@ fn demo_city_stays_fed_housed_and_employed_through_fast_growth() {
             assert!(stressed < 0.05, "day 8: {:.1}% of households rent-stressed", stressed * 100.0);
             // Homes and jobs grow in balance, and the businesses the town
             // grows are ones its market can carry.
-            assert!(unemployment < 0.08, "day 8: {:.1}% of working-age adults out of work", unemployment * 100.0);
+            // [pt-growth] Re-baselined. On the saturated land value most of
+            // the demo was high tier by day 8 (79 of 213 buildings): high
+            // shops are 1.8x as tall with 4 jobs a floor, high homes hold
+            // one household a floor, and cheap buildings on that "dear"
+            // land were rebuilt every few days (100+ building sites, their
+            // crews a fifth of the work). On the rescaled value the demo is
+            // a poorer town (a dozen high-tier buildings), its commercial
+            // land is all built by day 5 and its new jobs come from the
+            // developers rebuilding the busy blocks taller, which takes a
+            // week or more: unemployment runs 20-27% from day 7 to day 15,
+            // then the rebuilt blocks open and it is under 2% from day 17
+            // (baseline main: 13% day 6, 5% day 8, 12% day 11, 2% day 14;
+            // this branch with the old scale put back: 0.7% day 8).
+            // So day 8 bounds the dip, and the old bound is checked on the
+            // days after it (below).
+            assert!(unemployment < 0.25, "day 8: {:.1}% of working-age adults out of work", unemployment * 100.0);
             // 8%, not 5%: until the highway's map-edge lane funnel was fixed
             // (`Traffic::drop_dead_end_changes`), lorries queuing there kept
             // the road near `MAX_TRUCKS`, past which deliveries are instant,
@@ -107,6 +127,8 @@ fn demo_city_stays_fed_housed_and_employed_through_fast_growth() {
             assert!(late < 0.085, "days 6-8: {broke_late} of {open_late} business-days broke ({broke} of {open} on day 8, {:.1}%)", broke_share * 100.0);
         }
     }
+    let late = late_unemployment.iter().sum::<f32>() / late_unemployment.len().max(1) as f32;
+    assert!(late < 0.08, "days 18-20: {:.1}% of working-age adults out of work on average", late * 100.0);
     assert!(peak > 1000, "the demo grows into a town ({peak})");
     let sizes = world.economy.household_sizes;
     assert!((1..=5).all(|n| sizes[n] > 0), "households of every size from one to five: {sizes:?}");

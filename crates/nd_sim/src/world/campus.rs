@@ -28,7 +28,7 @@
 
 use super::*;
 use crate::corp::*;
-use crate::estate::OwnerKind;
+use crate::estate::{lots_touch, OwnerKind};
 use crate::services::ServiceKind;
 use slotmap::Key;
 
@@ -44,8 +44,13 @@ pub const FAMILY_MOVE_CHANCE: f32 = 0.12;
 pub const LOCAL_DORM_SHARE: f32 = 0.4;
 /// [sweep-sim] Land value from which a new shop counts as downtown, and the
 /// share of those that open as a café or a bookshop.
-pub const DOWNTOWN_VALUE: f32 = 0.7;
+/// [pt-growth] On the rescaled land value: about the dearest tenth of a city.
+pub const DOWNTOWN_VALUE: f32 = 0.66;
 pub const DOWNTOWN_SHARE: f32 = 0.2;
+
+/// [pt-growth] Plots this close (corner to corner) count as next door to
+/// the campus.
+const NEXT_DOOR: f32 = 10.5;
 
 impl World {
     // ── founding ───────────────────────────────────────────────────────────
@@ -391,6 +396,7 @@ impl World {
                 self.pack_business(b, &format!("{name}'s campus"));
                 self.settle_sale(b);
                 self.demolish_with(b, None, Some(&memory));
+                self.tag_demolition(b, crate::buildings::DemolitionReason::Landmark);
                 if self.lots.get(lot).is_some_and(|l| l.building.is_none()) {
                     self.build_annex(ki, lot, annex);
                 } else {
@@ -417,6 +423,17 @@ impl World {
             Annex::Dorm | Annex::Frat => &[LandUse::Residential],
             _ => &[LandUse::Commercial, LandUse::Entertainment, LandUse::Civic],
         };
+        // [pt-growth] The campus grows outward from what it has: a plot
+        // touching the hall or an annex comes first (vacant before built),
+        // then the nearest to any of them; the centre's reach still bounds it.
+        let k = &self.corps.campuses[ki];
+        let mine: Vec<&Lot> = std::iter::once(k.building)
+            .chain(k.annexes.iter().map(|(b, _)| *b))
+            .filter_map(|b| self.buildings.get(b).map(|x| (b, x)))
+            .flat_map(|(_, x)| x.plot.lots(x.lot))
+            .chain(k.pending.iter().map(|(l, _)| *l))
+            .filter_map(|l| self.lots.get(l))
+            .collect();
         let mut best: Option<(f32, LotId, Option<BuildingId>)> = None;
         for (lid, l) in self.lots.iter() {
             if !uses.contains(&l.land_use) || l.area() < min_area || !self.site_clear(lid, SiteRule::STREET_NOT_HISTORIC) {
@@ -426,15 +443,20 @@ impl World {
             if d > CAMPUS_REACH {
                 continue;
             }
+            // Next door: a shared edge, or across no more than a path or
+            // a zone gap (corners facing within `NEXT_DOOR` m).
+            let touching = mine.iter().any(|m| m.center.distance(l.center) < 200.0 && (lots_touch(m, l) || m.polygon.iter().any(|p| l.polygon.iter().any(|q| p.distance(*q) < NEXT_DOOR))));
+            let near = mine.iter().map(|m| m.center.distance(l.center)).fold(d, f32::min);
             let (cost, standing) = match l.building {
-                None => (d, None),
+                None => (if touching { near * 0.1 } else { 60.0 + near }, None),
                 Some(b) => {
                     let Some(x) = self.buildings.get(b) else { continue };
                     if !self.buyable(b) || x.plot.owner.is_some() || x.plot.merged() || x.floors > 4 || x.annex.is_some() {
                         continue;
                     }
-                    // A standing building is worth it only twice as near.
-                    (d * 2.0 + 40.0, Some(b))
+                    // A standing building next door before an empty plot
+                    // across town; otherwise worth it only nearer.
+                    (if touching { 20.0 + near * 0.1 } else { 80.0 + near * 1.5 }, Some(b))
                 }
             };
             if best.is_none_or(|(c, bl, _)| cost < c || (cost == c && lid < bl)) {

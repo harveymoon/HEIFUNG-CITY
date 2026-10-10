@@ -150,6 +150,17 @@ fn a_move_waits_for_a_lot_then_gives_up() {
 
 /// A parking business on the commercial lot nearest `p`.
 fn parking_near(w: &mut World, p: Vec2) -> BuildingId {
+    // [pt-growth] On the rescaled land value the high street is no longer
+    // "dear" ground, so the town may have opened a small lot of its own
+    // there already: clear those, so this is the only one.
+    let others: Vec<BuildingId> = w.buildings.iter().filter(|(id, b)| b.is_parking() && !w.is_city_building(*id)).map(|(id, _)| id).collect();
+    for b in others {
+        let l = w.buildings[b].lot;
+        w.buildings.remove(b);
+        if w.lots.get(l).is_some_and(|x| x.building == Some(b)) {
+            w.lots[l].building = None;
+        }
+    }
     let lot = lots_of(w, LandUse::Commercial).into_iter().min_by(|a, b| w.lots[*a].center.distance(p).total_cmp(&w.lots[*b].center.distance(p))).unwrap();
     let id = w.build_parking(lot).expect("a parking lot");
     w.finish_construction(id);
@@ -181,6 +192,13 @@ fn a_full_lot_raises_its_fee_and_an_empty_one_cuts_it_within_bounds() {
     assert!(cheap < base && cheap >= base * 0.6 - 1e-3, "{base} -> {cheap}");
 }
 
+/// Every parking business at its busiest full (or empty).
+fn peak_all(w: &mut World, full: bool) {
+    for b in w.buildings.values_mut().filter(|b| b.is_parking()) {
+        b.parking_peak = if full { b.parking_capacity } else { 0 };
+    }
+}
+
 #[test]
 fn circling_by_full_lots_draws_a_local_to_open_another_but_not_by_empty_ones() {
     let (mut w, _) = high_street();
@@ -207,11 +225,13 @@ fn circling_by_full_lots_draws_a_local_to_open_another_but_not_by_empty_ones() {
     };
     // The lot near the trouble had room: nobody opens another.
     ready(&mut w);
-    w.buildings[full].parking_peak = 0;
+    // [pt-growth] On the rescaled (cheaper) land the town may have opened a
+    // small lot of its own nearby: every lot round the trouble is set.
+    peak_all(&mut w, false);
     let vacant = lots_of(&w, LandUse::Commercial);
     assert!(!w.maybe_open_parking(&vacant), "drivers circled past free spaces");
     // Full at its busiest: a local opens one nearby.
-    w.buildings[full].parking_peak = w.buildings[full].parking_capacity;
+    peak_all(&mut w, true);
     let before: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.is_parking()).map(|(id, _)| id).collect();
     let vacant = lots_of(&w, LandUse::Commercial);
     assert!(w.maybe_open_parking(&vacant), "full lots and circling drivers: another lot");
@@ -244,7 +264,8 @@ fn nobody_with_the_money_means_no_lot_unless_the_trouble_is_bad() {
     let next = lots_of(&w, LandUse::Commercial).into_iter().map(|l| w.lots[l].center).min_by(|a, b| a.distance(here).total_cmp(&b.distance(here))).unwrap();
     let at = here.lerp(next, 0.5);
     w.economy.parking_shortage_at = Some(at);
-    w.buildings[full].parking_peak = w.buildings[full].parking_capacity;
+    let _ = full;
+    peak_all(&mut w, true);
     for c in w.citizens.values_mut() {
         c.savings = 0.0;
     }

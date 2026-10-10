@@ -26,7 +26,8 @@ use std::f32::consts::TAU;
 /// Land value below which a vacant lot is left to rot.
 pub const LOW: f32 = 0.38;
 /// Land value from which a vacant lot is kept as a parklet.
-pub const HIGH: f32 = 0.66;
+/// [pt-growth] The high tier's threshold on the compressed land value.
+pub const HIGH: f32 = nd_sim::Tier::HIGH_FROM;
 
 /// Geometry for a lot with no building and no park plan.
 pub fn generate_vacant(lot: &Lot, land_value: f32, seed: u64, palette: &Palette) -> Geometry {

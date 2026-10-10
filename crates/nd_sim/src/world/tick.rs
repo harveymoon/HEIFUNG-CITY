@@ -157,7 +157,8 @@ impl World {
         // [toll-inspect] each booth's hour on its chart
         self.hourly_tolls();
     }
-    if tick % 60 == 30 {
+    // [pt-growth] A sixth of the sites every ten minutes (each its own slot).
+    if tick % 10 == 0 {
         crate::prof!("step_construction", self.step_construction());
     }
     // [waterfront] beaches (access, weather, crowds), private jetties

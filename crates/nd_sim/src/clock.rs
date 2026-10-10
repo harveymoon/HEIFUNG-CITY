@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 pub const MINUTES_PER_DAY: u64 = 24 * 60;
+/// [pt-growth] Hours in the working day ([`Clock::is_work_hours`], 8:00 to 17:00).
+pub const WORK_HOURS_PER_DAY: f32 = 9.0;
 
 /// Simulation clock. One tick is one simulated minute.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -57,6 +59,32 @@ impl SimClock {
         const START: u64 = 8 * 60;
         const END: u64 = 17 * 60;
         self.day() * (END - START) + self.minute_of_day().clamp(START, END) - START
+    }
+
+    /// [pt-growth] The tick at which `hours` of the working day (8:00 to
+    /// 17:00) from now are done: a site's "ready about" time.
+    pub fn after_work_hours(&self, hours: f32) -> u64 {
+        const START: u64 = 8 * 60;
+        const END: u64 = 17 * 60;
+        let mut left = (hours.max(0.0) * 60.0).round() as u64;
+        let mut t = self.tick;
+        loop {
+            let m = t % MINUTES_PER_DAY;
+            if m < START {
+                t += START - m;
+                continue;
+            }
+            if m >= END {
+                t += MINUTES_PER_DAY - m + START;
+                continue;
+            }
+            let room = END - m;
+            if left <= room {
+                return t + left;
+            }
+            left -= room;
+            t += room;
+        }
     }
 
     pub fn is_evening(&self) -> bool {

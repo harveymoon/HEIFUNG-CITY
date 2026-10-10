@@ -414,6 +414,7 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
     let demolition = b.demolition.as_ref().map(|d| {
         json!({
             "progress": round(d.progress), "days_left": round(d.days_left()), "days": round(d.days),
+            "reason": d.reason.key(), "why": d.reason.label(), "clear_tick": w.clock.after_work_hours(d.work_hours_left()),
             "loads_hauled": d.loads, "loads_total": nd_sim::Demolition::loads_for(d.floors),
             "floors": d.floors, "tier": d.tier.label(), "land_use": d.land_use.label(),
             "crew": b.workers.len(), "crew_wanted": b.jobs,

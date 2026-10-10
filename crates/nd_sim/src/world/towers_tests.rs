@@ -42,6 +42,15 @@ fn downtown() -> World {
             bld.recompute_capacity();
         }
     }
+    fill_downtown(&mut w);
+    w.clock = crate::clock::SimClock::starting_at(5, 1, 0);
+    w.economy.demand[LandUse::Commercial.index()] = 0.8;
+    w.skyline.always = true;
+    w
+}
+
+/// The west of the street at 0.9, the east at 0.3.
+fn fill_downtown(w: &mut World) {
     let lv = &mut *w.land_value;
     for iy in 0..lv.n {
         for ix in 0..lv.n {
@@ -49,10 +58,7 @@ fn downtown() -> World {
             lv.values[iy * lv.n + ix] = if c.x < 0.0 { 0.9 } else { 0.3 };
         }
     }
-    w.clock = crate::clock::SimClock::starting_at(5, 1, 0);
-    w.economy.demand[LandUse::Commercial.index()] = 0.8;
-    w.skyline.always = true;
-    w
+    lv.raw.clear();
 }
 
 fn rich(w: &mut World) {
@@ -207,6 +213,9 @@ fn deterministic_and_saved() {
         let mut w = downtown();
         let mut minds = IdleMind;
         for d in 0..6 {
+            // [pt-growth] The dear downtown stays dear: the recomputed grid
+            // of a test street no longer saturates to 0.9 on its own.
+            fill_downtown(&mut w);
             w.daily_towers();
             for dv in &mut w.skyline.developers {
                 dv.capital += 2e8;

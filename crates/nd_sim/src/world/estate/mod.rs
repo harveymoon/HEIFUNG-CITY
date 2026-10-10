@@ -35,8 +35,9 @@ pub(super) mod erng_salt {
     pub const NIMBY: u64 = 5;
     pub const INVEST_RICH: u64 = 6;
     pub const ACQUIRE_NAME: u64 = 9;
+    pub const FORECLOSE: u64 = 10;
     #[cfg(test)]
-    pub const ALL: [u64; 7] = [DENSIFY, EXPAND_FIRMS, MCMANSIONS, ELITES, NIMBY, INVEST_RICH, ACQUIRE_NAME];
+    pub const ALL: [u64; 8] = [DENSIFY, EXPAND_FIRMS, MCMANSIONS, ELITES, NIMBY, INVEST_RICH, ACQUIRE_NAME, FORECLOSE];
 }
 
 impl World {
@@ -57,6 +58,9 @@ impl World {
         self.estate.stats.buyouts_today = 0;
         self.prune_estate();
         self.daily_mobility();
+        // [pt-growth] Half-empty blocks change hands first, then the
+        // developers build where the land density asks for more.
+        self.foreclose_empty();
         self.densify();
         self.expand_firms();
         self.build_mcmansions();

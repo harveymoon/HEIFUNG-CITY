@@ -122,6 +122,21 @@ impl World {
         if self.dirty.is_empty() || self.dirty.iter().any(|d| !self.buildings.contains_key(d.building)) {
             self.refresh_dirty();
         }
+        // [pt-growth] (F8) Civic halls are two to five storeys now (what
+        // their styles draw): an older save's taller ones are cut down to
+        // that, their staff kept about as they were by the grander tier's
+        // staffing per floor.
+        for b in self.buildings.values_mut() {
+            if b.land_use == LandUse::Civic && b.is_grown() && b.service.is_none() && b.plot.tower.is_none() && b.construction.is_none() && b.floors > 5 {
+                b.floors = 5;
+                b.recompute_capacity();
+            }
+        }
+        // [pt-growth] A save from before the rescaled land value reads 1.0
+        // almost everywhere: recompute it now, not two hours in.
+        if self.land_value.raw.is_empty() && !self.buildings.is_empty() {
+            self.update_land_value();
+        }
         self.update_economy();
         // A save from before named projects: number and name the one it has.
         self.name_active_project();

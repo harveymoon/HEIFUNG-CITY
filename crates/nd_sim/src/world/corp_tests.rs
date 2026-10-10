@@ -340,6 +340,36 @@ fn campus_town() -> (World, BuildingId) {
     (w, uni)
 }
 
+/// [pt-growth] A campus grows outward from what it has: the plot next door
+/// first (even one with a house to buy), not an empty one across the road
+/// that happens to be nearer the hall's centre.
+#[test]
+fn a_university_buys_the_plot_next_door_before_one_across_the_road() {
+    let mut w = town();
+    w.add_road(&[Vec2::new(-600.0, 0.0), Vec2::new(600.0, 0.0)], 1, 1);
+    w.add_zone(rect(-60.0, 8.0, 120.0, 110.0), LandUse::Civic);
+    let big = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Civic && l.usable() && l.car_access()).max_by(|a, b| a.1.area().total_cmp(&b.1.area())).map(|(id, _)| id).unwrap();
+    let uni = w.build_service(big, ServiceKind::University, Tier::Low).expect("a university");
+    // Homes right against the campus's east side, and an empty plot across
+    // the road in front of the hall (nearer its centre than most homes).
+    let campus = w.lots[w.buildings[uni].lot].clone();
+    let east = campus.polygon.iter().map(|p| p.x).fold(f32::MIN, f32::max);
+    w.add_zone(rect(east, 8.0, 160.0, 60.0), LandUse::Residential);
+    w.add_zone(rect(campus.center.x - 20.0, -68.0, 40.0, 60.0), LandUse::Residential);
+    let north: Vec<LotId> = free_lots(&w, LandUse::Residential).into_iter().filter(|l| w.lots[*l].center.y > 0.0).collect();
+    assert!(!north.is_empty());
+    for l in north {
+        let b = homes(&mut w, l);
+        w.buildings[b].floors = 2;
+    }
+    let at = w.lots[w.buildings[uni].lot].center;
+    let vacant = free_lots(&w, LandUse::Residential).into_iter().find(|l| w.lots[*l].center.y < 0.0).expect("the empty plot across the road");
+    let (lot, standing) = w.annex_plot(0, Annex::Dorm).expect("a plot for the first dorm");
+    assert_ne!(lot, vacant, "not the empty plot across the road ({:.0} m from the hall)", w.lots[vacant].center.distance(at));
+    assert!(standing.is_some() && w.lots[lot].center.y > 0.0, "the house next door: {:?}", w.lots[lot].center);
+    assert!(w.lots[lot].center.x - east < 40.0, "right against the campus: {:?} (campus edge {east:.0})", w.lots[lot].center);
+}
+
 #[test]
 fn a_university_buys_dorms_claims_the_park_and_builds_its_annexes_nearby() {
     let (mut w, uni) = campus_town();

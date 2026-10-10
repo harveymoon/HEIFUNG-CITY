@@ -44,6 +44,8 @@ mod construction;
 mod estate;
 #[cfg(test)]
 mod estate_tests;
+#[cfg(test)]
+mod growth_tests;
 pub use estate::{escort_model, police_escort_model, supercar};
 mod history;
 mod memory;
@@ -198,7 +200,7 @@ use crate::citizens::{Activity, Citizen, CitizenId, Household, HouseholdId, Purp
 use crate::clock::SimClock;
 use crate::economy::{Economy, Flow, Item, GIG_INCOME, OVERDRAFT};
 use crate::events::SimEvent;
-use crate::land_value::{LandValue, LandValueBuilder};
+use crate::land_value::{Channel, LandValue, LandValueBuilder};
 use crate::market::{Business, BusinessKind, Resource, EXPORT_DISCOUNT, HAULAGE, IMPORT_MARKUP};
 use crate::traffic::Cargo;
 use crate::mind::{Decision, Intent, MindContext, MindProvider};
@@ -926,9 +928,24 @@ impl World {
         };
         let floors = match (lu, tier) {
             (LandUse::Industrial, _) => base,
+            // [pt-growth] (F8) Civic buildings are halls, courts and
+            // monuments: two to five storeys at any tier (the High
+            // multiplier gave a ten-floor "Data Exchange" drawn as a low
+            // monument, the city's "tallest" by its floors).
+            (LandUse::Civic, _) => base,
             (_, Tier::High) => (base as f32 * 1.8) as u8 + 2,
             (_, Tier::Mid) => base + 1,
             (_, Tier::Low) => base.max(1),
+        };
+        // [pt-growth] On a busy street the town wants more of, developers
+        // build towards what the land density allows: a shop on a crowded
+        // high street opens taller than the tier alone would make it.
+        let floors = if matches!(lu, LandUse::Residential | LandUse::Commercial | LandUse::Entertainment) && self.pressure_active() {
+            let want = self.pressure_floors(lot_id).min(self.height_cap(lot_id));
+            let pull = self.economy.demand_for(lu).clamp(0.0, 1.0);
+            floors.max((want as f32 * 0.6 * pull).round() as u8)
+        } else {
+            floors
         };
         let floors = floors.clamp(1, self.height_cap(lot_id).max(1));
         // [land] Cheap homes on quiet land: one storey (a row of shacks, a

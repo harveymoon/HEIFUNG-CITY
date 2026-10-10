@@ -418,6 +418,7 @@ impl World {
                 self.pack_business(b, &name);
                 self.settle_sale(b);
                 self.redevelop_with(b, Tier::High, floors, value, memory.clone(), false);
+                self.tag_demolition(b, crate::buildings::DemolitionReason::Landmark);
                 let bld = &mut self.buildings[b];
                 bld.land_use = lu;
                 bld.look = None;
@@ -453,7 +454,7 @@ impl World {
             self.buildings[bid].business = Some(Business::new(BusinessKind::Office, jobs));
         }
         let rest: Vec<LotId> = plots[1..].to_vec();
-        self.take_plots(bid, &rest, &memory);
+        self.take_plots_for(bid, &rest, &memory, crate::buildings::DemolitionReason::Landmark);
         self.give_to(bid, owner, price);
         self.skyline.projects_total += 1;
         self.skyline.plots_bought_total += plots.iter().filter(|l| **l != primary).count() as u32;

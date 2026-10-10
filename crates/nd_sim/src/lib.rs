@@ -104,7 +104,7 @@ pub mod weather;
 pub mod world;
 pub mod zoning;
 
-pub use buildings::{Building, BuildingId, Construction, Demolition, Tier};
+pub use buildings::{Building, BuildingId, Construction, Demolition, DemolitionReason, Tier};
 pub use land_value::LandValue;
 pub use market::{Business, BusinessKind, Hours, MarketStats, Resource};
 pub use citizens::{Activity, Citizen, CitizenId, Household, HouseholdId, LifeStage, Memory, Purpose};

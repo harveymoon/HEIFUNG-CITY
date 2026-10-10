@@ -49,6 +49,7 @@ pub fn building_land(w: &World, id: BuildingId) -> Value {
         "pending_lots": b.plot.pending_lots.iter().map(|l| key_str(*l)).collect::<Vec<_>>(),
         "form": b.plot.form.map(form_key),
         "pressure": round(w.lots.get(b.lot).map_or(0.0, |l| w.estate.pressure.at(l.center))),
+        "land_density": round(w.lots.get(b.lot).map_or(0.0, |l| w.land_density_at(l.center))),
         "pressure_floors": w.pressure_floors(b.lot),
         "height_cap": w.height_cap(b.lot),
         "wants_to_expand": w.wants_to_expand(id),
@@ -115,7 +116,7 @@ pub fn command(cmd: &Value, w: &mut World) -> Result<Value, String> {
             if let Some(p) = field(cmd, "at") {
                 let p = vec2_of(p)?;
                 let lot = w.lots.iter().find(|(_, l)| l.contains(p)).map(|(id, _)| id);
-                return Ok(json!({ "at": v2(p), "pressure": round(w.estate.pressure.at(p)), "mobility": round(w.estate.pressure.mobility_at(p)), "floors": w.estate.pressure.floors_at(p), "lot_height_cap": lot.map(|l| w.height_cap(l)) }));
+                return Ok(json!({ "at": v2(p), "pressure": round(w.estate.pressure.at(p)), "land_density": round(w.land_density_at(p)), "foot_traffic": round(w.estate.pressure.foot_at(p)), "mobility": round(w.estate.pressure.mobility_at(p)), "floors": w.estate.pressure.floors_at(p), "lot_height_cap": lot.map(|l| w.height_cap(l)) }));
             }
             let p = &w.estate.pressure;
             let cells: Vec<Value> = (0..p.value.len()).filter(|i| p.value[*i] >= 0.5).map(|i| json!([v2(p.cell_center(i)), round(p.value[i]), round(p.mobility[i])])).collect();
