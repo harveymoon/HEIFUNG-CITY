@@ -447,11 +447,12 @@ mod tests {
         assert_eq!(availability(0, &[]), 0.0);
         assert_eq!(availability(PARK_PLENTY as u32, &[]), 1.0);
         // A lot right there counts in full, one at the walk's end not at all.
-        assert!((availability(0, &[(0.0, 12)]) - 0.5).abs() < 1e-5);
+        let half = (PARK_PLENTY / 2.0) as u32;
+        assert!((availability(0, &[(0.0, half)]) - 0.5).abs() < 1e-5);
         assert_eq!(availability(0, &[(PARK_WALK, 100)]), 0.0);
         assert_eq!(availability(0, &[(PARK_WALK * 2.0, 100)]), 0.0);
         // Halfway, half.
-        assert!((availability(0, &[(PARK_WALK / 2.0, 12)]) - 0.25).abs() < 1e-5);
+        assert!((availability(0, &[(PARK_WALK / 2.0, half)]) - 0.25).abs() < 1e-5);
         // Green when plenty, red when none.
         assert!(availability_color(1.0)[1] > availability_color(1.0)[0]);
         assert!(availability_color(0.0)[0] > availability_color(0.0)[1]);
