@@ -420,9 +420,9 @@ Sources: docs/playtest/todo_2026-10-10.md (Harvey's list, "T"), docs/playtest/fl
 - [ ] Transit economics: ridership per line, fares per line (next steps)
 
 ### C. Lines and transit UI [feat/pt-lines]
-- [ ] Lines window redesign: horizontal stop diagram with buses as boxes below (stats, arrows to position); select a line → expands; "Edit line" / "Finish editing"; add/insert/drag/remove stops; clicking another line's stop adds a stop at that physical stop (T)
-- [ ] Metro lines in the Lines window the same way (T); dim other lines while editing; no bus circles in metro mode and vice versa (T)
-- [ ] Selecting a bus depot shows its lines (F1)
+- [x] Lines window redesign: horizontal stop diagram with buses as boxes below (stats, arrows to position); select a line → expands; "Edit line" / "Finish editing"; add/insert/drag/remove stops; clicking another line's stop adds a stop at that physical stop (T) → DONE [feat/pt-lines]: `ui/lines/` (list → expands; `diagram.rs` track, bus boxes with load/next stop/late/state and arrows; "+" slots while editing); `tools/line_edit.rs` edit mode (insert where it belongs via `nd_sim::world::bus_edit::insert_index`, drag, right-click/Delete removes, another line's stop is shared, Enter/Esc/Finish ends; add-cursor and "+" badge); problems shown while editing (`ui/lines/problems.rs`, adapter until fix/pt-transit's `World::line_problems` is on main); remote `bus {edit, finish_edit, click, slot, insert_stop}`
+- [x] Metro lines in the Lines window the same way (T); dim other lines while editing; no bus circles in metro mode and vice versa (T) → DONE [feat/pt-lines]: metro lines listed and drawn the same (stations, trains with load/next/towards, headway, delete; `bus {select_metro}`); editing dims the other bus lines and hides the metro; metro mode draws no bus lines, bus mode no metro; drafting a metro line dims the others. Metro stops still change only by laying the line again
+- [x] Selecting a bus depot shows its lines (F1) → DONE [feat/pt-lines]: depot inspector "LINES FROM HERE" (buses out from it, lines it is nearest to), each opens in the Lines window
 
 ### D. Plots, parcels and road-edit stability [fix/pt-parcels]
 - [ ] Road edits far away reshape plots, restart buildings from day 1, move/rescale/bury player plants (geothermal output changes, battery under ground), false "loses access"/"breaks the lot" refusals (F12–F14, F17, F24, F26, T)

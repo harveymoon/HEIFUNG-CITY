@@ -50,7 +50,8 @@ impl Info {
     fn width(self) -> f32 {
         match self {
             Info::Help => 440.0,
-            Info::Lines => 430.0,
+            // [lines] Room for the stop diagram.
+            Info::Lines => 580.0,
             Info::Dev => 300.0,
             // [identity] Room for the city name row and the grouped list.
             Info::Saves => 460.0,
@@ -92,10 +93,25 @@ pub fn show_all(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
             .default_pos(cascade)
             .default_width(info.width())
             .max_width(info.width());
+        // [lines] The Lines window is as tall as what it shows (up to the
+        // map's height): the height its content took last frame is its
+        // minimum, so opening a line grows it rather than scrolling it in
+        // the window's first, short height.
+        let fit_id = info.id().with("fit_height");
+        let window = if info == Info::Lines {
+            let fit: f32 = ctx.data(|d| d.get_temp(fit_id)).unwrap_or(0.0);
+            window.resizable([true, false]).min_height(fit.min(content.height() - 60.0))
+        } else {
+            window
+        };
         let mut keep = true;
         window.show(ctx, |ui| {
             keep = pane::header(ui, info);
-            egui::ScrollArea::vertical().id_salt(("info_scroll", info.title())).show(ui, |ui| body(ui, p, info));
+            let out = egui::ScrollArea::vertical().id_salt(("info_scroll", info.title())).show(ui, |ui| body(ui, p, info));
+            if info == Info::Lines {
+                let h = out.content_size.y + 44.0;
+                ui.ctx().data_mut(|d| d.insert_temp(fit_id, h));
+            }
         });
         if !keep {
             info.set_open(ctx, false);

@@ -11,6 +11,7 @@ mod bulldoze;
 mod edit;
 mod input;
 mod kinds;
+pub mod line_edit;
 mod pick;
 mod plan_cache;
 mod rail;
