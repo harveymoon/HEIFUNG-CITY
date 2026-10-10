@@ -287,6 +287,10 @@ impl World {
                 _ => {}
             }
         }
+        // [pt-walk] Not loitering: the last trip found no way there.
+        if let Some(b) = self.stuck_for(id) {
+            return name(b).map_or("stuck: no way to get there".into(), |n| format!("stuck: no way to get to {n}"));
+        }
         match (&c.activity, c.inside) {
             (Activity::AtHome, Some(b)) => name(b).map_or("at home".into(), |n| format!("at home in {n}")),
             (Activity::Working, Some(b)) => name(b).map_or("working".into(), |n| format!("working at {n}")),

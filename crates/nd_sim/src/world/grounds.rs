@@ -129,6 +129,9 @@ impl World {
         let grounds = self.grounds();
         let links: Vec<Vec2> = self.path_links.links.iter().map(|l| l.pos).collect();
         let joined = self.walk.add_grounds(&self.roads, &grounds, &links);
+        // [pt-walk] The graph is complete: label its components.
+        self.walk.compute_components();
+        self.connectivity.mark_dirty();
         self.refresh_closed_grounds();
         let gone: Vec<PathLink> = self.path_links.links.iter().zip(&joined).filter(|(_, ok)| !**ok).map(|(l, _)| l.clone()).collect();
         for l in gone {

@@ -164,6 +164,7 @@ mod tests {
             groceries: 0.0,
             hungry_days: 0,
             trail: Vec::new(),
+            trail_stops: Default::default(),
             pending_footfall: Vec::new(),
             household: Some(hid),
             age: 35,

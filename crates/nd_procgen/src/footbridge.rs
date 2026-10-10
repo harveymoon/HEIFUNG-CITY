@@ -88,6 +88,28 @@ pub fn footbridges(world: &World, palette: &Palette) -> Geometry {
             g.part(Surface::Concrete).boxed(Vec3::new(col.x, (z - DECK_DEPTH + cz) * 0.5, col.y), Vec3::new(0.7, z - DECK_DEPTH - cz, 0.7), yaw, rgba(mul(concrete, 0.8)));
         }
     }
+    // [pt-walk] Corner decks joining two footbridges' ends: the ring round
+    // a junction. Same deck, glass and neon; a column at its middle.
+    let level = nd_sim::junctions::FOOTBRIDGE_LEVEL;
+    let w = nd_sim::junctions::FOOTBRIDGE_WIDTH;
+    for &[p0, p1] in &world.walk.footbridge_links {
+        let z = ground(p0).max(ground(p1)) + level;
+        let (a, b) = (Vec3::new(p0.x, z, p0.y), Vec3::new(p1.x, z, p1.y));
+        let across = (p1 - p0).normalize_or_zero();
+        let ext = Vec3::new(across.x, 0.0, across.y) * (w * 0.5);
+        g.part(Surface::Concrete).slab(a - ext, b + ext, w, DECK_DEPTH, rgba(concrete));
+        g.part(Surface::Paving).slab(a - ext + Vec3::Y * 0.02, b + ext + Vec3::Y * 0.02, w - 0.3, 0.02, rgba(mul(concrete, 1.15)));
+        let side = Vec3::new(-across.y, 0.0, across.x) * (w * 0.5 - 0.06);
+        for s in [1.0f32, -1.0] {
+            let o = side * s;
+            g.part(Surface::Glass).slab(a - ext + o + Vec3::Y * (RAIL * 0.5 + 0.05), b + ext + o + Vec3::Y * (RAIL * 0.5 + 0.05), 0.04, RAIL * 0.5, rgba(palette.footbridge_glass));
+            g.part(Surface::Metal).beam(a - ext + o + Vec3::Y * RAIL, b + ext + o + Vec3::Y * RAIL, 0.08, rgba(steel));
+            g.part(Surface::Glow).beam(a - ext + o - Vec3::Y * (DECK_DEPTH - 0.05), b + ext + o - Vec3::Y * (DECK_DEPTH - 0.05), 0.07, rgba(neon));
+        }
+        let mid = (p0 + p1) * 0.5;
+        let cz = ground(mid);
+        g.part(Surface::Concrete).boxed(Vec3::new(mid.x, (z - DECK_DEPTH + cz) * 0.5, mid.y), Vec3::new(0.7, z - DECK_DEPTH - cz, 0.7), across.y.atan2(across.x), rgba(mul(concrete, 0.8)));
+    }
     g
 }
 
@@ -150,7 +172,7 @@ mod tests {
             let along = Vec2::new(-across.y, across.x);
             let (t0, t1) = (Vec2::new(10.0, 10.0), Vec2::new(10.0, 10.0) + across * 16.0);
             let width = 3.0;
-            w.walk.footbridges.push(nd_sim::walk::Footbridge { crossing: 0, top: [t0, t1], foot: [t0 + along * 9.0, t1 + along * 9.0], level: 5.4, width, nodes: [0; 4] });
+            w.walk.footbridges.push(nd_sim::walk::Footbridge { crossing: 0, top: [t0, t1], foot: [t0 + along * 9.0, t1 + along * 9.0], level: 5.4, width, nodes: [0; 4], joined: [false; 2] });
             let g = footbridges(&w, &Palette::default());
             let steps = crate::terrain::upright_faces(g.get(Surface::Concrete), STEP_RISE);
             crate::terrain::faces_along_are(&steps, along, width - 0.2).map_err(|e| format!("steps at {deg}: {e}")).unwrap();
