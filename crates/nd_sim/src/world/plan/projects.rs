@@ -273,6 +273,64 @@ impl World {
         self.edit_project(|p| p.push(id, None));
     }
 
+    /// [pt-ux] The stretch of road `id` a bulldozer click at `p` takes: from
+    /// junction to junction (or road end), as metres along its built
+    /// polyline. `piece` is the built street piece under the click, if any;
+    /// its run between junctions (`road_run`) is the stretch. A road only
+    /// planned, or a click the network does not back, takes the whole road.
+    pub fn road_piece_span(&self, id: GestureId, piece: Option<crate::roads::SegmentId>, p: Vec2) -> Option<(f32, f32)> {
+        let g = self.gesture(id)?;
+        if !matches!(g, Gesture::Road { .. }) {
+            return None;
+        }
+        let line = g.road_polyline();
+        let total: f32 = line.windows(2).map(|w| w[0].distance(w[1])).sum();
+        let whole = Some((0.0, total));
+        let Some(sid) = piece.filter(|s| self.roads.try_segment(*s).is_some_and(|s| s.alive)) else { return whole };
+        // The piece must lie on this road (not a neighbour met at a joint).
+        let seg = self.roads.segment(sid);
+        let mid = (self.roads.node(seg.a).pos + self.roads.node(seg.b).pos) * 0.5;
+        if crate::geom::distance_to_polyline(mid, &line) > 3.0 || crate::geom::distance_to_polyline(p, &line) > 30.0 {
+            return whole;
+        }
+        let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+        for s in self.road_run(sid) {
+            let s = self.roads.segment(s);
+            for n in [s.a, s.b] {
+                let q = self.roads.node(n).pos;
+                // A run carrying on into another road ends where this one does.
+                if crate::geom::distance_to_polyline(q, &line) > 3.0 {
+                    continue;
+                }
+                let a = crate::plan::arc_of(&line, q);
+                lo = lo.min(a);
+                hi = hi.max(a);
+            }
+        }
+        if !(lo < hi) {
+            return whole;
+        }
+        Some((lo, hi))
+    }
+
+    /// [pt-ux] Take the stretch `s0`..`s1` metres along road `id` out of the
+    /// plan, leaving the road either side (one undo step). The piece after
+    /// the gap is a new gesture. How many roads are left of it.
+    pub fn remove_road_piece(&mut self, id: GestureId, s0: f32, s1: f32) -> usize {
+        let Some(g) = self.gesture(id) else { return 0 };
+        let parts = g.cut_out(s0, s1);
+        let left = parts.len();
+        let mut it = parts.into_iter();
+        let mut changes = vec![(id, it.next())];
+        for rest in it {
+            let nid = GestureId(self.next_gesture);
+            self.next_gesture += 1;
+            changes.push((nid, Some(rest)));
+        }
+        self.edit_project(|p| p.push_many(changes));
+        left
+    }
+
     /// Change the land use of a zone gesture in place.
     /// (Painted parcels are repainted with `paint_parcels`.)
     pub fn repaint_zone(&mut self, id: GestureId, land_use: LandUse) -> bool {

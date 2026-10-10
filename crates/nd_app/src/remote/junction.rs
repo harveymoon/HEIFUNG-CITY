@@ -22,6 +22,8 @@ pub fn view_json(w: &World, v: &IntersectionView) -> Value {
                 "index": i, "segment": a.segment.0, "street": a.name, "dir": v2(a.dir), "from": v2(v.at + a.dir * (v.radius + 25.0)),
                 "lanes": a.arrows.iter().map(|&x| arrows_label(x)).collect::<Vec<_>>(), "offered": arrows_label(a.exits),
                 "set_by_player": a.fixed, "left_forbidden": a.no_left, "left_possible": a.left_possible, "queued": a.queued,
+                // [pt-ux] Each arriving lane's stop line and its moves (the editor's arrows).
+                "lane_ends": a.lanes.iter().map(|l| json!({ "end": v2(l.end), "dir": v2(l.dir), "moves": l.moves.iter().map(|m| json!({ "move": arrows_label(m.bit), "allowed": m.permitted })).collect::<Vec<_>>() })).collect::<Vec<_>>(),
             })
         })
         .collect();
@@ -192,6 +194,23 @@ pub fn command(cmd: &Value, w: &mut World, tools: &mut ToolState) -> Result<Valu
         }
         if let (Some(e), Some(c)) = (tools.junction_editor.as_mut(), opt_u64(cmd, "select_crossing")?) {
             e.crossing = Some(c as u32);
+        }
+    }
+    // [pt-ux] The editor's lane arrows: `lane_menu` / `hover_lane`
+    // [approach, lane] open that lane's menu or show its moves as hovered
+    // (null closes / clears).
+    for (key, menu) in [("lane_menu", true), ("hover_lane", false)] {
+        let Some(x) = field(cmd, key) else { continue };
+        let e = tools.junction_editor.as_mut().ok_or_else(|| format!("{key} needs the editor open (open: true)"))?;
+        let pick = match x {
+            Value::Null => None,
+            Value::Array(a) if a.len() == 2 => Some((a[0].as_u64().ok_or("approach index")? as usize, a[1].as_u64().ok_or("lane index")? as usize)),
+            _ => return Err(format!("{key}: [approach, lane] or null")),
+        };
+        if menu {
+            e.lane_menu = pick;
+        } else {
+            e.hover_lane = pick;
         }
     }
     if let (Some(e), Some(x)) = (tools.junction_editor.as_mut(), opt_f32(cmd, "extent")?) {

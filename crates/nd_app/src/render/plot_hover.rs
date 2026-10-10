@@ -313,7 +313,7 @@ impl MeshOverlay for PlotHoverMesh {
 
     fn key((tools, cursor, cams, time, lighting, hover, last_ground): &mut SystemParamItem<Self::Param>, cx: &mut OverlayCx) -> Wanted<u64> {
         // The real pointer moving over the map takes over from a remote pin.
-        if matches!(tools.tool, Tool::Buildings | Tool::Zone | Tool::Bulldoze) && tools.cursor_pin.is_some() && cursor.ground.is_some() && last_ground.is_some() && cursor.ground != **last_ground {
+        if matches!(tools.tool, Tool::Buildings | Tool::Zone | Tool::Bulldoze | Tool::Edit) && tools.cursor_pin.is_some() && cursor.ground.is_some() && last_ground.is_some() && cursor.ground != **last_ground {
             tools.cursor_pin = None;
         }
         **last_ground = cursor.ground;

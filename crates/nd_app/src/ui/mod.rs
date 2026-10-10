@@ -145,7 +145,7 @@ impl Plugin for UiPlugin {
             .add_systems(PreUpdate, install_fonts.after(EguiPreUpdateSet::InitContexts).before(EguiPreUpdateSet::BeginPass))
             .add_systems(PreUpdate, read_input_flags.after(EguiPreUpdateSet::BeginPass))
             .add_systems(Update, saves::autosave.in_set(SimSet::Sync))
-            .add_systems(EguiPrimaryContextPass, (side_panel, pins::map_pins.after(side_panel), social::bubbles.after(side_panel)));
+            .add_systems(EguiPrimaryContextPass, (side_panel, pins::map_pins.after(side_panel), social::bubbles.after(side_panel), junction::hover_button.after(side_panel)));
     }
 }
 

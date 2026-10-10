@@ -8,6 +8,7 @@
 
 mod buildings;
 mod bulldoze;
+pub(crate) use bulldoze::piece_at as road_piece_at;
 mod edit;
 mod input;
 mod kinds;

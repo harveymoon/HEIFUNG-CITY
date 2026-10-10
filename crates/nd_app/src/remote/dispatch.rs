@@ -336,7 +336,8 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("note", "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step"),
     ] },
     Cmd { name: "bulldoze", aliases: &[], effect: Game, run: planning::bulldoze, help: &[
-        ("gesture_id", "int"),
+        ("gesture_id", "int: the whole gesture"),
+        ("at", "[x,y]: as a Bulldoze click there, the road's piece between its junctions (the rest stays); reply piece {gesture_id, from_m, to_m, roads_left}"),
         ("implement", "bool"),
         ("building", "or a city building's id: it goes at once, its ground back to the zoning plan"),
     ] },
@@ -595,6 +596,8 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("close", "bool"),
         ("select_approach", "index (open)"),
         ("select_crossing", "walk crossing index (open)"),
+        ("lane_menu", "[approach, lane] or null: open that lane's options menu in the editor"),
+        ("hover_lane", "[approach, lane] or null: show that lane's moves as hovered"),
         ("returns", "intersection: at, signalized, rule, approaches (lanes, offered, left_forbidden), phases (green_s, running), crossings (upgrade, signalised, button_light, crosswalk_kept, crosswalk_removed); done; editor_open"),
     ] },
     Cmd { name: "level_crossings", aliases: &["level_crossing", "crossings", "rail_crossings"], effect: Read, run: |cmd, ctx| crossings::command(cmd, &ctx.sim.world), help: &[
