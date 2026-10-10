@@ -487,6 +487,6 @@ Sources: docs/playtest/todo_2026-10-10.md (Harvey's list, "T"), docs/playtest/fl
 - [ ] Big-city performance 20k–50k; faster/smaller saves and load peak; save→load→continue determinism
 
 ## Agents running (playtest round, started 2026-10-10)
-- MERGED: A pt-traffic (+pt-traffic-2), C pt-lines, D pt-parcels, E pt-growth, F pt-walk, G pt-ux, H pt-visual · RUNNING: B fix/pt-transit
+- ALL MERGED (A–H). Wave 2 (I new features, J engine) not started.
 - I (new features) and J (engine) wait for wave 2
 
