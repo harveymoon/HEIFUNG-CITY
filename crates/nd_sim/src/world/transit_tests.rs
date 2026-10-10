@@ -172,7 +172,7 @@ fn a_bus_trip_is_timed_from_its_last_stop() {
 fn lines_take_stops_in_between_and_share_kerbs() {
     let mut w = block_town();
     let line = block_line(&mut w);
-    let at = w.insert_bus_stop(line, 1, Vec2::new(0.0, 4.0)).unwrap();
+    let at = w.insert_bus_stop(line, Some(1), Vec2::new(0.0, 4.0)).unwrap();
     assert_eq!(at, 1);
     let r = &w.transit.routes[line];
     assert_eq!(r.stops.len(), 7);

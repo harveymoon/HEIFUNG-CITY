@@ -46,21 +46,34 @@ impl World {
     /// another line's stop, when the click is on one: lines share stops).
     pub fn add_bus_stop(&mut self, route: RouteId, p: Vec2) -> Result<usize, String> {
         let n = self.transit.routes.get(route).ok_or("no such line")?.stops.len();
-        self.insert_bus_stop(route, n, p)
+        self.insert_bus_stop(route, Some(n), p)
     }
 
-    /// [pt-transit] Put a stop into a line at `idx` (0 before the first,
-    /// the number of stops after the last), so the bus calls there between
-    /// stops `idx - 1` and `idx`. Snapped like `add_bus_stop`. Buses and
-    /// riders bound for later stops shift up with the list.
-    pub fn insert_bus_stop(&mut self, route: RouteId, idx: usize, p: Vec2) -> Result<usize, String> {
+    /// [pt-transit] Put a stop for a click at `p` into a line: at `at`
+    /// (0 before the first, the number of stops after the last), or, with
+    /// no `at`, where it belongs along the loop (`bus_edit::insert_index`).
+    /// Snapped like `add_bus_stop`. Buses, leg timings and riders bound for
+    /// later stops shift up with the list. The index it took.
+    pub fn insert_bus_stop(&mut self, route: RouteId, at: Option<usize>, p: Vec2) -> Result<usize, String> {
         let stop = self.transit.stop_for_click(&self.roads, p).ok_or("click next to a street")?;
+        self.put_bus_stop(route, at, stop)
+    }
+
+    /// [lines] Give a line a stop at the very kerb another line's stop
+    /// `from` is at, so riders change there; at `at` or where it belongs.
+    pub fn share_bus_stop(&mut self, route: RouteId, from: (RouteId, usize), at: Option<usize>) -> Result<usize, String> {
+        let src = self.transit.routes.get(from.0).and_then(|r| r.stops.get(from.1)).ok_or("no such stop")?;
+        let stop = BusStop { segment: src.segment, pos: src.pos, stats: transit::StopStats::default() };
+        self.put_bus_stop(route, at, stop)
+    }
+
+    fn put_bus_stop(&mut self, route: RouteId, at: Option<usize>, stop: BusStop) -> Result<usize, String> {
         let r = self.transit.routes.get_mut(route).ok_or("no such line")?;
         if r.stops.iter().any(|s| s.pos.distance(stop.pos) < 3.0) {
             return Err("this line stops there already".into());
         }
-        let idx = idx.min(r.stops.len());
         let was = r.stops.len();
+        let idx = at.unwrap_or_else(|| bus_edit::insert_index(&r.stops.iter().map(|s| s.pos).collect::<Vec<_>>(), &r.legs, stop.pos)).min(was);
         r.stops.insert(idx, stop);
         // The stop before now drives to the new one.
         let n = r.stops.len();
@@ -74,17 +87,21 @@ impl World {
         Ok(idx)
     }
 
-    /// [pt-transit] A stop went into a line's list at `idx`: buses and
-    /// riders bound for it or later shift up with the list. A bus driving
-    /// to the stop that is now after the new one keeps heading there (it
-    /// does not turn back for the new stop).
+    /// [pt-transit] A stop went into a line's list at `idx`: buses, leg
+    /// timings and riders bound for it or later shift up with the list. A
+    /// bus on the leg the new stop splits keeps driving to the stop it was
+    /// going to (it calls at the new one next time round).
     fn stop_inserted(&mut self, route: RouteId, idx: usize) {
         let on_line: Vec<CarId> = self.traffic.cars.iter().filter(|(_, c)| c.bus.as_ref().is_some_and(|b| b.route == route)).map(|(id, _)| id).collect();
         for id in on_line {
-            self.transit.departures.remove(&id);
             if let Some(bus) = self.traffic.cars[id].bus.as_mut() {
                 if bus.next_stop != usize::MAX && bus.next_stop >= idx {
                     bus.next_stop += 1;
+                }
+            }
+            if let Some(d) = self.transit.departures.get_mut(&id) {
+                if d.0 >= idx {
+                    d.0 += 1;
                 }
             }
         }

@@ -309,6 +309,15 @@ fn transit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
     }
     match tools.transit_mode {
         TransitMode::Route => {
+            // [lines] The line being edited, and the way out.
+            if let Some(e) = tools.line_edit.filter(|e| sim.world.transit.routes.contains_key(e.route)) {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(format!("Editing {}", sim.world.transit.routes[e.route].name)).color(super::GOLD).strong());
+                    if ui.button(egui::RichText::new("Finish editing line").color(super::GOLD)).clicked() {
+                        crate::tools::line_edit::finish(&mut sim.world, tools);
+                    }
+                });
+            }
             hint(ui, help::tool_hint(Tool::Transit));
             let ids: Vec<nd_sim::RouteId> = sim.world.transit.routes.keys().collect();
             let mut remove: Option<nd_sim::RouteId> = None;

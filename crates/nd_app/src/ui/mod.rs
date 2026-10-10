@@ -67,7 +67,7 @@ mod icons;
 pub mod legend;
 pub mod junction;
 /// [lines] The Lines window.
-mod lines;
+pub(crate) mod lines;
 /// [events] Street races, raves and road maintenance in the HUD.
 mod nights;
 mod toolbar;
@@ -264,6 +264,8 @@ pub(crate) fn side_panel(
     city_data::keys(ctx);
     let data_rect = city_data::show(ctx, &mut p, content);
     windows::show_all(ctx, &mut p, content);
+    // [lines] Editing a line: the cursor over the map says what a click does.
+    lines::edit_cursor(ctx, p.sim, p.tools, ctx.is_pointer_over_egui());
     build::window(ctx, &mut p, content);
     inspector::window(ctx, &mut p, content);
     toll::window(ctx, &mut p, content);

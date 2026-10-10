@@ -56,6 +56,11 @@ pub struct ToolState {
     /// [lines] The stop picked in the Lines window (or with the remote
     /// API's `bus select_stop`): marked on the map with a tall post.
     pub stop_sel: Option<(nd_sim::RouteId, usize)>,
+    /// [lines] The bus line being edited (the Lines window's "Edit line"):
+    /// map clicks add, insert, share, drag and remove its stops.
+    pub line_edit: Option<super::line_edit::LineEdit>,
+    /// [lines] The metro line opened in the Lines window.
+    pub metro_sel: Option<nd_sim::subway::MetroLineId>,
     /// Where the right button went down (window pixels); a right *click*
     /// (released within a few pixels) finishes a gesture, a right drag only
     /// orbits the camera. None when it went down over the UI.
@@ -411,6 +416,8 @@ impl Default for ToolState {
             route_sel: None,
             hover_stop: None,
             stop_sel: None,
+            line_edit: None,
+            metro_sel: None,
             stop_drag: None,
             show_routes: false,
             rail_kind: nd_sim::RailFacility::Station,

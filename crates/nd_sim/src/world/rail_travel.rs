@@ -6,9 +6,10 @@
 //!
 //! - visitors who chose to come by rail (`world/tourism.rs` books them
 //!   `Aboard` the next train in) step off and go to their hotel;
-//! - on the morning trains, commuters from out of town come for a shift at
-//!   businesses near the station that are short of staff (as off the
-//!   ferries: `commuters_arriving`), and take a train home after it;
+//! - on the morning trains, while the town has nobody to spare, commuters
+//!   from out of town come for a shift at businesses near the station that
+//!   are short of staff (as off the ferries: `commuters_arriving`), and
+//!   take a train home after it;
 //! - residents back from a day out in the city get off and go home.
 //!
 //! Residents living near a station sometimes take the train out for the
@@ -24,6 +25,10 @@ const SALT: u64 = 0x7A11_0C17_u64;
 /// How far from a station residents set off on a day trip by train, and
 /// commuters off the train walk to a job.
 pub const RAIL_CATCHMENT: f32 = 900.0;
+/// Out-of-town commuters come by train only while fewer than this share of
+/// the town's working-age people are out of work (and there are well more
+/// open jobs than people looking).
+pub const RAIL_COMMUTE_MAX_UNEMPLOYMENT: f32 = 0.015;
 /// Day trips out by train per station per day, at most.
 pub const MAX_RAIL_DAY_TRIPS: u32 = 16;
 /// The cities down the line, by station.
@@ -45,7 +50,12 @@ impl World {
         for id in aboard {
             self.rail_disembark(id, station);
         }
-        self.commuters_arriving(station, Arrival::Rail, RAIL_CATCHMENT);
+        // Commuters come for the jobs the town cannot fill: not while its
+        // own people are looking for work (they would take their jobs).
+        let e = &self.economy;
+        if e.unemployment_share() < RAIL_COMMUTE_MAX_UNEMPLOYMENT && e.jobs_free > 2 * e.unemployed + 20 {
+            self.commuters_arriving(station, Arrival::Rail, RAIL_CATCHMENT);
+        }
         let back: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::Abroad { terminal, until, .. } if terminal == station && until <= tick)).map(|(id, _)| id).collect();
         for id in back {
             self.home_from_day_trip(id);

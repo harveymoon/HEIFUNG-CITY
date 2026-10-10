@@ -112,23 +112,69 @@ pub(super) fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let problems = nd_sim::Transit::check_stops(&w.traffic.net, &stops);
             Ok(json!({ "stops": stops.len(), "problems": line_problems_json(&problems) }))
         }
-        "insert_stop" => {
-            let id = route_arg(w)?;
-            let idx = opt_u64(cmd, "index")?.ok_or("missing index (the new stop's place in the list)")? as usize;
-            let p = req_point(cmd)?;
-            let idx = w.insert_bus_stop(id, idx, p)?;
-            Ok(json!({ "route": key_str(id), "stop_index": idx, "row": route_row(id, &w.transit.routes[id]) }))
-        }
         "set_fare" => {
             let id = route_arg(w)?;
             let fare = cmd.get("fare").and_then(Value::as_f64).ok_or("missing fare")? as f32;
             w.set_route_fare(id, fare)?;
             Ok(json!({ "route": key_str(id), "row": route_row(id, &w.transit.routes[id]) }))
         }
-        // [lines] The Lines window's figures for one line.
+        // [lines] The Lines window's figures for one line, and its problems.
         "line" => {
             let id = route_arg(w)?;
-            Ok(line_detail(w, id))
+            let v = line_detail(w, id);
+            Ok(v)
+        }
+        // [lines] Edit mode, as the Lines window's "Edit line" and "Finish
+        // editing line" and the player's clicks on the map in it.
+        "edit" => {
+            let id = route_arg(w)?;
+            crate::tools::line_edit::start(&mut ctx.tools, id);
+            Ok(json!({ "editing": key_str(id), "status": ctx.tools.status }))
+        }
+        "finish_edit" => {
+            let msg = crate::tools::line_edit::finish(w, &mut ctx.tools);
+            Ok(json!({ "editing": Value::Null, "status": msg }))
+        }
+        // A click on the map while editing: left (add, insert, share, grab)
+        // or right (remove the stop there). A grab is let go at once.
+        "click" => {
+            if ctx.tools.line_edit.is_none() {
+                return Err("not editing a line (bus {action: edit, route})".into());
+            }
+            let p = req_point(cmd)?;
+            let right = cmd.get("right").and_then(Value::as_bool).unwrap_or(false);
+            crate::tools::line_edit::input(w, &mut ctx.tools, Some(p), !right, !right, right);
+            let route = ctx.tools.line_edit.map(|e| e.route);
+            Ok(json!({ "status": ctx.tools.status, "editing": opt_key(route), "row": route.and_then(|r| w.transit.routes.get(r).map(|x| route_row(r, x))) }))
+        }
+        // The diagram's "+": the slot the next stop goes into (none: where it belongs).
+        "slot" => {
+            let e = ctx.tools.line_edit.as_mut().ok_or("not editing a line")?;
+            e.slot = opt_u64(cmd, "index")?.map(|i| i as usize);
+            Ok(json!({ "slot": e.slot }))
+        }
+        // Put a stop into a line where it belongs along the loop (or at index).
+        "insert_stop" => {
+            let id = route_arg(w)?;
+            let p = req_point(cmd)?;
+            let at = opt_u64(cmd, "index")?.map(|i| i as usize);
+            let idx = w.insert_bus_stop(id, at, p)?;
+            Ok(json!({ "route": key_str(id), "stop_index": idx, "row": route_row(id, &w.transit.routes[id]) }))
+        }
+        // Open a metro line in the Lines window (no line closes it).
+        "select_metro" => {
+            let id = match field(cmd, "line") {
+                Some(v) => {
+                    let id: nd_sim::MetroLineId = key_from(v)?;
+                    if !w.subway.lines.contains_key(id) {
+                        return Err("no such metro line".into());
+                    }
+                    Some(id)
+                }
+                None => None,
+            };
+            ctx.tools.metro_sel = id;
+            Ok(json!({ "line": opt_key(id) }))
         }
         "rename" => {
             let id = route_arg(w)?;
@@ -161,6 +207,6 @@ pub(super) fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             }
             Ok(json!({ "route": key_str(id), "index": idx, "pos": [pos.x, pos.y] }))
         }
-        _ => Err(format!("unknown bus action {action:?}; one of select, new_route, add_stop, insert_stop, move_stop, remove_stop, set_buses, set_fare, remove_route, rename, recolour, line, problems, check, select_stop, list")),
+        _ => Err(format!("unknown bus action {action:?}; one of select, new_route, add_stop, insert_stop, move_stop, remove_stop, set_buses, set_fare, remove_route, rename, recolour, line, problems, check, select_stop, list, edit, finish_edit, click, slot, select_metro")),
     }
 }
