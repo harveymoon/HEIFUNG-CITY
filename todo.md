@@ -397,3 +397,91 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - No agents running. "Next steps" are ON HOLD until Harvey asks.
 - Open leftovers worth doing first next time: save→load→continue determinism; the vehicle build-up/jam past ~10k people (grid_plaza and Perfect AI City); first project_check still ~1.3 s (cut parcels only along changed roads).
 
+
+
+## Playtest round 2026-10-10 — everything open, by category
+Sources: docs/playtest/todo_2026-10-10.md (Harvey's list, "T"), docs/playtest/flags_2026-10-09.md (in-game flags F1–F44), and the open items above.
+
+### A. Traffic and vehicles [fix/pt-traffic]
+- [ ] Cars appear/vanish: a line of "on the road" cars with no driver drive to one spot and vanish (F44, T) — cars must always exist somewhere or leave town
+- [ ] Lane choice: drivers in a left-turn-only lane wanting to turn right; 90° lane changes at the stop line block the junction (F20, F21)
+- [ ] Raging driver loops through tunnels for 1,431 min on a simple trip (F18); raging drivers may make illegal U-turns by personality (T)
+- [ ] Vehicle build-up past ~10k people (grid_plaza seed 3, Perfect AI City day 20+): vehicles grow 300–500/day at flat population
+- [ ] Parking: driver "looking for parking" passes three lots with room (F5); lot shows 13/30 with 3 cars visible (F35)
+- [ ] Tow trucks visibly tow (car hooked behind), tow-truck look (F34); big tow trucks for RVs
+
+### B. Transit sim [fix/pt-transit]
+- [ ] Buses never leave depots; lines say "no buses sent" (F3, F4); do lines need to touch a depot? explain + fix
+- [ ] Bus leaves its route / wrong turn, 568 min trip (F6, F7); routes validated while editing (show unreachable legs before Finish)
+- [ ] Buses bunch: release from depot on a schedule (F36); warn when not enough buses/depots for the lines (T)
+- [ ] A single passenger station gets no riders — it must link to out of town like ferries (T)
+- [ ] Metro riders wait at the kerb, should go down into the station (F23)
+- [ ] Explain and fix low bus/metro ridership vs lots of walking + traffic complaints (T)
+- [ ] Transit economics: ridership per line, fares per line (next steps)
+
+### C. Lines and transit UI [feat/pt-lines]
+- [ ] Lines window redesign: horizontal stop diagram with buses as boxes below (stats, arrows to position); select a line → expands; "Edit line" / "Finish editing"; add/insert/drag/remove stops; clicking another line's stop adds a stop at that physical stop (T)
+- [ ] Metro lines in the Lines window the same way (T); dim other lines while editing; no bus circles in metro mode and vice versa (T)
+- [ ] Selecting a bus depot shows its lines (F1)
+
+### D. Plots, parcels and road-edit stability [fix/pt-parcels]
+- [ ] Road edits far away reshape plots, restart buildings from day 1, move/rescale/bury player plants (geothermal output changes, battery under ground), false "loses access"/"breaks the lot" refusals (F12–F14, F17, F24, F26, T)
+- [ ] Plots under player-placed buildings are locked (never resized/reshaped automatically) (T)
+- [ ] Parcel size min/max: cut/join too-big parcels; huge "no street, park/civic only" parcel (F37, T); parking parcel touching two roads says no road access (F27)
+- [ ] Steep hillside and island plots: cliffside luxury allowed (F15); boats underwater / water edge on the mountain island (F16)
+- [ ] Beaches always reach the water; waterfront plots extend to the edge (F32)
+- [ ] Stadiums/large attractions consume several plots to meet their minimum (T)
+- [ ] Adjacent parks/beaches merge into one park designed as one (T); parking lots: one kind that fits the plot and merges with adjacent lots, cost by area (T); toll plaza: one kind fitted to the road, cost by road size, upgrades include it (T)
+- [ ] citygen::dry water-clearance cap bug
+
+### E. Growth, land value and construction [fix/pt-growth]
+- [ ] Land value 1.0 almost everywhere — recalibrate the scale (T)
+- [ ] Growth model: start as low suburbs; "land density" driven by foot traffic; busy main streets densify; lot assembly (buy 5 small lots → apartment), displacement and rent pressure; districts are the only height/rent caps; megatalls still possible (T)
+- [ ] Construction only advances in working hours; randomise when buildings step so the city doesn't jump in sync (T)
+- [ ] Demolition shows a timer and the reason (T)
+- [ ] Universities buy adjacent plots first (T); RVs don't all arrive at once (T)
+- [ ] Building info matches the mesh: "tallest"/"10 floors" on a small building, high-tier "9 floors" hut (F8, F25)
+- [ ] Perfect AI City ceiling ~13k, ~650 priced-out homeless
+
+### F. Pedestrians and connectivity [fix/pt-walk]
+- [ ] Network connectivity: "no route found" alerts and an indicator when a road or path network is disconnected ("! not connected to the rest of the pedestrian grid") (T)
+- [ ] Wrong "no parks within walking reach" next to/on a park (F2, F30); wrong "no way through" on a connected grid; loitering people complaining about commute (F9)
+- [ ] Why people "wander" into the toxic industrial zone (F22)
+- [ ] Paths: steep paths become stairs, zig-zag down hills, no floating (F10); gap between path and junction (F43); footbridges around a junction auto-connect into a circle (F19)
+- [ ] Selected person trail: fade the tail, "o" at each stop, "x" = current target (T); selected car shows where it came from (thin line) (T); path line dashed through tunnels/over buildings (F33)
+
+### G. Views, selection and tools UX [feat/pt-ux]
+- [ ] Underground view: ghost above-ground things (helicopters, player plots; trains semi-transparent); camera may orbit below ground, snaps back on exit; metro stations/platforms/people/tubes visible; hover ignores ground features (T)
+- [ ] Zone tool: zoning layer on automatically, buildings semi-transparent (F29), painted zones raised in their own colours (T)
+- [ ] Picking: tall towers selectable by their shape, whole building pulses (T); from far out prefer buildings/plots over tiny people (T); drones/helicopters selectable with occupants (T); parked RVs selectable, owned/abandoned, towable (T); parked bike empty box (F42); clicking a park gives park info (F28)
+- [ ] Bulldoze removes one road piece, not the whole road (T)
+- [ ] Intersection editor revamp: start from a hover button; clickable arrows on the road per lane; protected-left toggle (T)
+- [ ] Alerts panel (draggable, live) (T); all panes below City Data when open (T); sortable columns on all data pages (T)
+- [ ] Selecting a building shows build-mode info (e.g. parking capacity bubble) (T); first info box explains the building and its benefits (T)
+- [ ] Road tool on the ground shows underground links as transparent overlays (T)
+- [ ] Layers: parking availability heat map + lot usage (T); pedestrian network layer makes people glow and shows all paths (T); "paths" long-exposure dark layer (T); land density layer (with E)
+- [ ] Power page pie chart of sources (T)
+
+### H. Visual polish [fix/pt-visual]
+- [ ] Highway: sunken roads, offset walls, missing highway walls (F11); messy hillside interchange — road-building rules that fit the terrain (F31)
+- [ ] Floating windows (F39); monument should look like a monument (F40); big residential with a courtyard, not a tree on the roof (F41)
+- [ ] Civic buildings: more variation, brutalist and intimidating (T); green roofs on high-end, solar roofs on data centres (T)
+- [ ] Business names match their type (laundromat that is a tow company); cheeky names welcome (F38)
+- [ ] Junction gaps at steep corners; tower windows all-lit bug; footpath rail crossings paving; crossing lamps light
+- [ ] Superyachts for billionaires; marinas grow with more and bigger boats (T); boardwalk along ≥4 plots of public beach (T)
+
+### I. New features [wave 2]
+- [ ] Gas prices, fuel stations, EV pressure, fuel tax (T)
+- [ ] Forests and logging → lumber yard, furniture factory, hardware store (T)
+- [ ] District tax laws and levers (e.g. a student district) (T)
+- [ ] Weekly newspaper (optionally AI) (T)
+- [ ] Several businesses in one building; mall bases in supertalls (T)
+- [ ] Parks: run-down parks (dealers, homeless, trash), paid clean-up displacing camps; Parks page in City Data; nature-preserve parks keeping the terrain (T, F28)
+- [ ] Riots, protests, parades taking over roads (T)
+- [ ] Police gunships, SWAT, armoured trucks, raids (T)
+- [ ] Ownership arcs from an HQ to its properties with pulses (T)
+- [ ] Raised/tunnel roundabouts with [ and ] (T)
+- [ ] Plus the "Next steps" list above (city rating, banks/debt, car ferries, commuters, new business kinds, cable cars, monorail, settings menu)
+
+### J. Engine [wave 2]
+- [ ] Big-city performance 20k–50k; faster/smaller saves and load peak; save→load→continue determinism
