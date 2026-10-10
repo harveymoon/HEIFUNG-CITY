@@ -267,8 +267,9 @@ impl World {
         };
         let (route, s0, s1) = route;
         let truck = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, 3);
+        let towed = self.traffic.cars.get(car).map_or(BodyType::Sedan, |c| c.model.body);
         let t = &mut self.traffic.cars[truck];
-        t.model = super::enforcement::tow_model();
+        t.model = super::enforcement::tow_model_for(towed);
         t.errand = Errand::Recover(car);
         t.drive.profile = DriverProfile::professional(car_hash(truck, 1));
         t.drive.amber = true;
@@ -388,7 +389,7 @@ impl World {
         self.traffic.remove_car(car);
         let truck = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, 0);
         let t = &mut self.traffic.cars[truck];
-        t.model = VehicleModel { class: VehicleClass::Mid, body: BodyType::Pickup, wear: 1, tuned: false, livery: Livery::Utility, paint: 3 };
+        t.model = super::enforcement::tow_model_for(model.body);
         t.drive.profile = DriverProfile::professional(car_hash(truck, 1));
         // [rage] Timed, but a tow driver keeps their head (no calm profile).
         t.drive.trip_start = self.clock.tick;

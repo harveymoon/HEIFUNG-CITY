@@ -44,6 +44,7 @@ pub mod market;
 pub mod mind;
 pub mod names;
 pub mod park;
+pub mod parking_layout;
 pub mod pedestrians;
 pub mod pillars;
 /// What the Buildings tool places: the catalogue, its categories and costs.

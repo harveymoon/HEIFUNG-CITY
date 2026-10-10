@@ -160,7 +160,14 @@ impl World {
             None if c.drive.gang.is_some_and(|g| g.pack) => format!("a {body} with the moto pack"),
             None => {
                 let an = if body.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
-                format!("{an} {body} passing through")
+                match c.errand {
+                    // [carlife] Sold, on its way to the dealer or the trade.
+                    crate::vehicle::Errand::Sale(_) => format!("a used {body} being sold"),
+                    crate::vehicle::Errand::Deliver => format!("{an} {body} being delivered"),
+                    crate::vehicle::Errand::Through => format!("{an} {body} passing through"),
+                    _ if c.owned.is_some() => format!("{an} {body}"),
+                    _ => format!("{an} {body} passing through"),
+                }
             }
         }
     }

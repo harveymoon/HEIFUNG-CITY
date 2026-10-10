@@ -299,6 +299,13 @@ pub struct Commute {
     /// minutes the drive should have taken.
     pub rage: f32,
     pub expected_drive: f32,
+    /// [carlife] The day (plus one; 0: never) this person last bought or
+    /// sold a car. Nobody trades their car again for `WHEELS_HOLD_DAYS`:
+    /// in a jammed city drivers sold for the jams and bought again for
+    /// the buses within days, and every trade was two more vehicles
+    /// crawling through the jam to and from the dealer (the vehicle
+    /// build-up past ~10k people).
+    pub wheels_day: u64,
 }
 
 impl Commute {

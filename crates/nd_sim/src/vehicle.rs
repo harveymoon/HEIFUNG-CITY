@@ -57,10 +57,16 @@ pub enum BodyType {
     AirTaxi,
     /// Air ambulance or police helicopter; the main rotor spins apart.
     Helicopter,
+    /// [tow] A wrecker: a cab, a boom with its hook and a wheel lift at
+    /// the back, an amber light bar.
+    TowTruck,
+    /// [tow] A heavy three-axle wrecker with a long rotator boom, for
+    /// lorries, buses and RVs.
+    HeavyTow,
 }
 
 impl BodyType {
-    pub const ALL: [BodyType; 19] = [
+    pub const ALL: [BodyType; 21] = [
         BodyType::Hatchback,
         BodyType::Sedan,
         BodyType::Coupe,
@@ -80,6 +86,8 @@ impl BodyType {
         BodyType::DeliveryBot,
         BodyType::AirTaxi,
         BodyType::Helicopter,
+        BodyType::TowTruck,
+        BodyType::HeavyTow,
     ];
 
     pub fn two_wheeler(self) -> bool {
@@ -95,7 +103,13 @@ impl BodyType {
     }
 
     pub fn is_truck(self) -> bool {
-        matches!(self, BodyType::BoxVan | BodyType::DeliveryVan | BodyType::PanelTruck | BodyType::Semi | BodyType::GarbageTruck)
+        matches!(self, BodyType::BoxVan | BodyType::DeliveryVan | BodyType::PanelTruck | BodyType::Semi | BodyType::GarbageTruck | BodyType::TowTruck | BodyType::HeavyTow)
+    }
+
+    /// [tow] Too big for an ordinary wrecker's wheel lift: a lorry, a bus,
+    /// an RV. A heavy tow truck comes for it.
+    pub fn needs_heavy_tow(self) -> bool {
+        matches!(self, BodyType::BoxVan | BodyType::PanelTruck | BodyType::Semi | BodyType::GarbageTruck | BodyType::BubbleBus | BodyType::ArticulatedBus | BodyType::HeavyTow)
     }
 
     pub fn label(self) -> &'static str {
@@ -119,6 +133,8 @@ impl BodyType {
             BodyType::DeliveryBot => "delivery_bot",
             BodyType::AirTaxi => "air_taxi",
             BodyType::Helicopter => "helicopter",
+            BodyType::TowTruck => "tow_truck",
+            BodyType::HeavyTow => "heavy_tow_truck",
         }
     }
 }
@@ -489,6 +505,14 @@ pub struct OwnedCar {
     /// is out for the weekend (`World::weekend_cars` swaps it back).
     #[serde(default)]
     pub usual: bool,
+    /// [carlife] Sold to a car dealer (`owner` is then nobody): the dealer
+    /// it belongs to (a null key: a dealer out of town). Parked where its
+    /// old owner left it until the dealer's driver fetches it, then on the
+    /// forecourt (`ParkKind::Dealer`) as used stock until it is sold on or
+    /// driven out of town to the trade (`World::hourly_dealers`). A sold
+    /// car never just vanishes at the dealer's door.
+    #[serde(default)]
+    pub dealer: Option<crate::buildings::BuildingId>,
 }
 
 impl OwnedCar {

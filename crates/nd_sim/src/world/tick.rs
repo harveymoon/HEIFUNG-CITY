@@ -24,6 +24,10 @@ impl World {
         if tick % 5 == 2 {
             self.hunters_give_up();
         }
+        // [parking] Hunters turn into a lot with room they are passing.
+        if tick % 2 == 1 {
+            self.hunters_spot_lots();
+        }
         // Answers a mind worked out in the background (an LLM's) land
         // whenever they are ready. Someone mid-journey (driving, on a bus or
         // train, waiting at the stop) keeps going: only the thought and the

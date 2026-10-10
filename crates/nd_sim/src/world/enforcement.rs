@@ -23,9 +23,20 @@ use rand::seq::IndexedRandom;
 /// at the pound (metres).
 const POUND_REACH: f32 = 25.0;
 
-/// What a tow truck looks like (as the driving agent's wreck trucks do).
+/// What a tow truck looks like (as the driving agent's wreck trucks do): a
+/// wrecker with a boom and a wheel lift.
 pub(super) fn tow_model() -> VehicleModel {
-    VehicleModel { class: VehicleClass::Mid, body: BodyType::Pickup, wear: 1, tuned: false, livery: Livery::Utility, paint: 3 }
+    VehicleModel { class: VehicleClass::Mid, body: BodyType::TowTruck, wear: 1, tuned: false, livery: Livery::Utility, paint: 3 }
+}
+
+/// [tow] The tow truck sent for a vehicle with this body: a heavy wrecker
+/// for a lorry, a bus or an RV, else the ordinary one.
+pub(super) fn tow_model_for(towed: BodyType) -> VehicleModel {
+    let mut m = tow_model();
+    if towed.needs_heavy_tow() {
+        m.body = BodyType::HeavyTow;
+    }
+    m
 }
 
 /// A parking officer's small car.
@@ -413,8 +424,9 @@ impl World {
             return;
         };
         let truck = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, 3);
+        let towed = self.vehicles.cars.get(job.car).map_or(BodyType::Sedan, |c| c.model.body);
         let t = &mut self.traffic.cars[truck];
-        t.model = tow_model();
+        t.model = tow_model_for(towed);
         t.errand = Errand::Tow(job_id);
         if let Some(j) = self.enforcement.jobs.iter_mut().find(|j| j.id == job_id) {
             j.company = company;
