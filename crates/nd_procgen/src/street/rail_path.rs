@@ -17,6 +17,12 @@ pub(super) fn railway(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run:
 /// the streets crossing there: out to the back of their pavements, measured
 /// along it (further at a slant). Zero where no street meets it.
 pub(super) fn crossing_reach(roads: &RoadNetwork, node: NodeId, points: &[Vec2], start: bool, half: f32) -> f32 {
+    crossing_reach_to(roads, node, points, start, half, false)
+}
+
+/// [`crossing_reach`], or (`to_kerb`, for a footpath) out to the kerb lines
+/// only: see below.
+pub(super) fn crossing_reach_to(roads: &RoadNetwork, node: NodeId, points: &[Vec2], start: bool, half: f32, to_kerb: bool) -> f32 {
     if roads.street_degree(node) == 0 || points.len() < 2 {
         return 0.0;
     }
@@ -30,20 +36,29 @@ pub(super) fn crossing_reach(roads: &RoadNetwork, node: NodeId, points: &[Vec2],
         .map(|&s| {
             let (a, b) = roads.segment_points(s);
             let sg = roads.segment(s);
+            if !to_kerb {
+                // Track: out to the back of the pavements, where the
+                // level crossing's rails end.
+                let along = (b - a).normalize_or_zero();
+                let sin = d.perp_dot(along).abs().max(0.35);
+                // Its own width's corners reach further at a slant.
+                return (sg.half_width() + SIDEWALK + half * d.dot(along).abs()) / sin;
+            }
             // The street's way out of the node.
             let along = if sg.a == node { b - a } else { a - b }.normalize_or_zero();
             let sin = d.perp_dot(along).abs();
-            let reach = sg.half_width() + SIDEWALK;
+            // [pt-walk] F43: a path runs out to the street's kerb line, not
+            // the back of its pavement: the pavement (drawn higher) covers
+            // it where there is one, and where the junction's rounded
+            // corner has none it runs on to the kerb instead of stopping
+            // in the dirt metres short. A street behind the path (one that
+            // ends where the path carries on) is left at its kerb across
+            // the path's way.
+            let hw = sg.half_width();
             if d.dot(along) <= 0.0 {
-                // [pt-walk] F43: a street behind the path (one that ends
-                // where the path carries on, or meets it from the far
-                // side) is left at its kerb line across the path's way:
-                // stopping as if it ran alongside left metres of bare
-                // ground between the path and the junction.
-                return reach * sin + half * (1.0 - sin);
+                return hw * sin + half * (1.0 - sin);
             }
-            // Its own width's corners reach further at a slant.
-            (reach + half * d.dot(along).abs()) / sin.max(0.35)
+            (hw + 0.3 + half * d.dot(along).abs()) / sin.max(0.35)
         })
         .fold(0.0, f32::max)
 }
@@ -107,7 +122,7 @@ pub(super) fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run
         if roads.street_degree(node) == 0 || points.len() < 2 {
             continue;
         }
-        let back = crossing_reach(roads, node, &points, end, PATH_HALF_WIDTH);
+        let back = crossing_reach_to(roads, node, &points, end, PATH_HALF_WIDTH, true);
         let (a, b) = if end { (points[1], points[0]) } else { (points[points.len() - 2], points[points.len() - 1]) };
         let len = a.distance(b);
         if len <= back + 1.0 {
@@ -236,26 +251,25 @@ mod pt_walk_tests {
 
     /// [pt-walk] F43: a path carrying straight on from the end of a street
     /// starts right at the street's end (it stopped 27 m short, as if the
-    /// street ran beside it); one leaving a street's side stops at the back
-    /// of the pavement as before, and one running off at a slant along a
-    /// street still clears its pavement.
+    /// street ran beside it); one leaving a street's side or at a slant
+    /// runs to its kerb line (the pavement covers it), clear of the lanes.
     #[test]
     fn a_path_meets_a_junction_without_a_gap() {
         let mut roads = RoadNetwork::default();
         roads.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::ZERO], 1, 1);
         roads.add_polyline_kind(&[Vec2::ZERO, Vec2::new(200.0, 0.0)], 0, 0, RoadKind::Path);
         let n = node_at(&roads, Vec2::ZERO);
-        let on = crossing_reach(&roads, n, &[Vec2::ZERO, Vec2::new(200.0, 0.0)], true, PATH_HALF_WIDTH);
+        let on = crossing_reach_to(&roads, n, &[Vec2::ZERO, Vec2::new(200.0, 0.0)], true, PATH_HALF_WIDTH, true);
         assert!(on < 2.0, "straight on from the street's end: {on} m");
         let mut side = RoadNetwork::default();
         side.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
         side.add_polyline_kind(&[Vec2::ZERO, Vec2::new(0.0, 200.0)], 0, 0, RoadKind::Path);
         let n = node_at(&side, Vec2::ZERO);
         let hw = side.segment(side.node(n).segments[0]).half_width();
-        let off = crossing_reach(&side, n, &[Vec2::ZERO, Vec2::new(0.0, 200.0)], true, PATH_HALF_WIDTH);
-        assert!((off - (hw + SIDEWALK)).abs() < 0.01, "off the side: back of the pavement, {off}");
-        let slant = crossing_reach(&side, n, &[Vec2::ZERO, Vec2::new(150.0, 100.0)], true, PATH_HALF_WIDTH);
-        assert!(slant > hw + SIDEWALK, "along the street at a slant it clears the pavement: {slant}");
+        let off = crossing_reach_to(&side, n, &[Vec2::ZERO, Vec2::new(0.0, 200.0)], true, PATH_HALF_WIDTH, true);
+        assert!((off - hw).abs() < 0.01, "off the side: to the kerb line (under the pavement), {off}");
+        let slant = crossing_reach_to(&side, n, &[Vec2::ZERO, Vec2::new(150.0, 100.0)], true, PATH_HALF_WIDTH, true);
+        assert!(slant > hw / 0.55 && slant < (hw + SIDEWALK) / 0.55, "along the street at a slant it clears the carriageway, not the pavement: {slant}");
     }
 
     /// [pt-walk] F10: a steep path is drawn as steps, level treads one rise
