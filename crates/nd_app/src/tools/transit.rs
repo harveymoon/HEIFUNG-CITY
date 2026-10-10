@@ -17,54 +17,37 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, selection: 
     let map_key = |k: KeyCode| f.map_key(k);
     match tools.transit_mode {
     TransitMode::Route => {
-        tools.hover_stop = ground.and_then(|p| sim.world.transit.stop_near(p, 5.0));
+        // [lines] Editing a line: clicks add, insert, share, drag and
+        // remove its stops (`line_edit`). Enter finishes.
+        if tools.line_edit.is_some() {
+            let remove = right_click || map_key(KeyCode::Delete);
+            super::line_edit::input(&mut sim.world, tools, ground, click, buttons.just_released(MouseButton::Left), remove);
+            if map_key(KeyCode::Enter) && !ctrl {
+                super::line_edit::finish(&mut sim.world, tools);
+            }
+            return;
+        }
+        // Not editing: a click on a stop picks its line; a click on a
+        // street starts a new line and edits it.
+        tools.hover_stop = ground.and_then(|p| sim.world.transit.stop_near(p, super::line_edit::STOP_PICK));
         if click {
-            if let Some((r, i)) = tools.hover_stop {
+            if let Some((r, _)) = tools.hover_stop {
                 tools.route_sel = Some(r);
-                tools.stop_drag = Some((r, i));
-                tools.status = format!("{} selected. Drag the stop to move it, Delete removes it, click a street to add stops.", sim.world.transit.routes[r].name);
+                tools.status = format!("{} picked. The Lines window's Edit line edits it; or click a street to start a new line.", sim.world.transit.routes[r].name);
             } else if let Some(p) = ground {
-                let r = match tools.route_sel {
-                    Some(r) if sim.world.transit.routes.contains_key(r) => r,
-                    _ => {
-                        let r = sim.world.add_bus_route();
-                        tools.route_sel = Some(r);
-                        r
+                if nd_sim::transit::BusStop::snap(&sim.world.roads, p).is_some() {
+                    let r = sim.world.add_bus_route();
+                    super::line_edit::start(tools, r);
+                    if let Some(e) = tools.line_edit.as_mut() {
+                        e.back_to = super::Tool::Transit;
                     }
-                };
-                tools.status = match sim.world.add_bus_stop(r, p) {
-                    Ok(i) => format!("Stop {} added to {}. Keep clicking streets round a loop; Enter or right-click when done.", i + 1, sim.world.transit.routes[r].name),
-                    Err(e) => format!("No stop: {e}."),
-                };
-            }
-        }
-        if buttons.just_released(MouseButton::Left) {
-            if let Some((r, i)) = tools.stop_drag.take() {
-                if let Some(p) = ground {
-                    let moved = sim.world.transit.routes.get(r).and_then(|x| x.stops.get(i)).is_some_and(|s| s.pos.distance(p) > 2.5);
-                    if moved && sim.world.move_bus_stop(r, i, p) {
-                        tools.status = "Stop moved.".into();
-                    }
-                }
-            }
-        }
-        if map_key(KeyCode::Delete) {
-            if let Some((r, i)) = tools.hover_stop.take() {
-                sim.world.remove_bus_stop(r, i);
-                if !sim.world.transit.routes.contains_key(r) {
-                    tools.route_sel = None;
-                    tools.status = "Line removed.".into();
+                    super::line_edit::input(&mut sim.world, tools, ground, true, false, false);
                 } else {
-                    tools.status = "Stop removed.".into();
+                    tools.status = "Click by a street to start a new line, or on a stop to pick its line.".into();
                 }
             }
         }
-        if finish {
-            if let Some(r) = tools.route_sel.take() {
-                let n = sim.world.transit.routes.get(r).map_or(0, |x| x.stops.len());
-                tools.status = if n >= 2 { "Line closed into a loop. Buses leave the depot in the morning.".into() } else { "A line needs at least two stops.".into() };
-            }
-        }
+        let _ = finish;
     }
     TransitMode::Metro => {
         // [metro-ux] Enter finishes; a right-click takes back the last stop.

@@ -28,6 +28,8 @@ mod air;
 /// [benches] Seats on park benches.
 pub mod benches;
 mod buses;
+/// [lines] Inserting and sharing bus stops.
+pub mod bus_edit;
 mod cargo_hubs;
 #[cfg(test)]
 mod cargo_hub_tests;

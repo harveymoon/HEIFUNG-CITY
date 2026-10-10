@@ -105,6 +105,25 @@ pub(crate) fn tool_input(
             tools.stroke = None;
         }
     }
+    // [lines] Editing a line ends with the line, or when another tool or
+    // mode is picked; Esc lets a picked slot go, then finishes.
+    if let Some(e) = tools.line_edit {
+        if !super::line_edit::still_editing(sim.world.transit.routes.contains_key(e.route), tools.tool, tools.transit_mode) {
+            tools.line_edit = None;
+            tools.stop_drag = None;
+            if sim.world.transit.routes.get(e.route).is_some_and(|r| r.stops.is_empty()) {
+                sim.world.remove_bus_route(e.route);
+            }
+        } else if key(KeyCode::Escape) && !flags.data_view {
+            if e.slot.is_some() {
+                tools.line_edit = Some(super::line_edit::LineEdit { slot: None, ..e });
+                tools.status = "Stops go in where they belong again.".into();
+            } else {
+                super::line_edit::finish(&mut sim.world, &mut tools);
+            }
+            return;
+        }
+    }
     if key(KeyCode::Escape) && !flags.data_view {
         tools.points.clear();
         tools.drag = None;
