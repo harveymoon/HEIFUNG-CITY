@@ -314,7 +314,11 @@ fn unclaimed_cars_are_auctioned_never_deleted() {
 #[test]
 fn officers_patrol_and_ticket_overstayers() {
     let mut w = town();
-    let lot = w.lots.iter().filter(|(_, l)| l.usable() && l.car_access() && l.land_use == LandUse::Commercial).map(|(id, _)| id).next().unwrap();
+    // A vacant shop lot, so the office opens at once (on a lot with a shop
+    // the city buys it out and waits for the clearing first). [stable-
+    // parcels] Lots keep their ids through rebuilds now, so "the first
+    // commercial lot" is no longer the same lot as in a fresh cut.
+    let lot = w.lots.iter().filter(|(_, l)| l.usable() && l.car_access() && l.land_use == LandUse::Commercial && l.building.is_none()).map(|(id, _)| id).next().unwrap();
     let office = w.build_service(lot, ServiceKind::ParkingEnforcement, Tier::Mid).expect("office");
     let staff: Vec<CitizenId> = w.citizens.keys().take(6).collect();
     w.buildings[office].workers = staff;
@@ -356,7 +360,7 @@ fn the_city_places_parking_lots_sized_by_their_plots() {
         let area = w.lots[lot].area();
         let treasury = w.economy.treasury;
         let b = w.place_on_lot(crate::services::Placeable::ParkingLot(size), lot).expect("placed");
-        assert!((treasury - w.economy.treasury - size.cost_for(area)).abs() < 1e-2, "paid for by the plot's area");
+        assert!((treasury - w.economy.treasury - size.cost_for(area)).abs() < 1.0, "paid for by the plot's area");
         // [parking-fit] Spaces by the plot.
         assert_eq!(w.buildings[b].parking_capacity, size.capacity_for(area));
         assert_eq!(w.buildings[b].floors, size.floors());

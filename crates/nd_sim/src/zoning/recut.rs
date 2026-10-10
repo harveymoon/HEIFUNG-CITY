@@ -23,13 +23,18 @@ const SAMPLE_STEP: f32 = 8.0;
 
 /// The land round the changes a recut looks at, metres past them: every
 /// chunk the changes reach must lie inside it to be recut whole.
-const CHUNK_WINDOW: f32 = 240.0;
+const CHUNK_WINDOW: f32 = 320.0;
 
 /// Chunks (`chunk_block`) the changes reach are recut whole, as a fresh
 /// cut would cut them, when they are no bigger than this across (their
 /// bounding box's diagonal, m); a bigger one (a long curving block, which
 /// chunks only at its straight stretches) is recut only near the changes.
-const MAX_RECUT_CHUNK: f32 = 220.0;
+const MAX_RECUT_CHUNK: f32 = 300.0;
+
+/// A chunk the changes reach is not recut whole if that would reshape a
+/// built lot this far (m) from every change: it is recut near the changes
+/// only. Empty land (a new district being laid out) is always recut whole.
+const PROTECT: f32 = 110.0;
 
 /// A place where the land may cut differently since the last cut: a
 /// sample along a road piece that came or went (`along`, reaching as far
@@ -188,16 +193,12 @@ impl CutBasis {
             m
         };
         let (old_deg, new_deg) = (count(&self.degrees), count(&new.degrees));
-        for (k, n) in &new_deg {
-            if old_deg.get(k) != Some(n) {
-                out.push(Change { at: Vec2::new(f32::from_bits(k.0), f32::from_bits(k.1)), hw: 0.0, along: false });
-            }
-        }
-        for (k, n) in &old_deg {
-            if new_deg.get(k) != Some(n) {
-                out.push(Change { at: Vec2::new(f32::from_bits(k.0), f32::from_bits(k.1)), hw: 0.0, along: false });
-            }
-        }
+        // (Sorted: a map's order is not the same from run to run, and the
+        // order of the change points must not change the cut.)
+        let mut nodes: Vec<(u32, u32)> = new_deg.iter().filter(|(k, n)| old_deg.get(*k) != Some(*n)).chain(old_deg.iter().filter(|(k, n)| new_deg.get(*k) != Some(*n))).map(|(k, _)| (k.0, k.1)).collect();
+        nodes.sort_unstable();
+        nodes.dedup();
+        out.extend(nodes.into_iter().map(|(x, y)| Change { at: Vec2::new(f32::from_bits(x), f32::from_bits(y)), hw: 0.0, along: false }));
         if std::env::var_os("ND_RECUT_DEBUG").is_some() {
             eprintln!("recut: {} road pieces gone, {} came, {} change points", gone.len(), came.len(), out.len());
         }
@@ -227,6 +228,8 @@ pub struct ParcelCut {
     pub basis: CutBasis,
     /// Outlines read from a save, made into parcels after the load.
     pub saved: Vec<Vec<Vec2>>,
+    /// The last cut made new parcels (not only carried the old ones).
+    pub recut_some: bool,
 }
 
 impl ParcelCut {
@@ -244,7 +247,7 @@ struct SavedCut {
 
 impl From<SavedCut> for ParcelCut {
     fn from(s: SavedCut) -> Self {
-        ParcelCut { raw: Vec::new(), basis: CutBasis::default(), saved: s.outlines }
+        ParcelCut { raw: Vec::new(), basis: CutBasis::default(), saved: s.outlines, recut_some: false }
     }
 }
 
@@ -292,7 +295,7 @@ pub struct Recut {
 ///
 /// Memoised like [`generate_parcels_with`]: the project check's trial
 /// rebuild and the implement after it recut once.
-pub fn recut_parcels(prev: &[Parcel], prev_basis: &CutBasis, roads: &RoadNetwork, water: &WaterMask, clip: Option<(Vec2, Vec2)>, shore_reach: Option<f32>, locked: &[Vec<Vec2>]) -> Recut {
+pub fn recut_parcels(prev: &[Parcel], prev_basis: &CutBasis, roads: &RoadNetwork, water: &WaterMask, clip: Option<(Vec2, Vec2)>, shore_reach: Option<f32>, locked: &[Vec<Vec2>], built: &[Vec2]) -> Recut {
     use std::sync::{Arc, Mutex};
     const KEEP: usize = 3;
     static RECENT: Mutex<Vec<(Vec<u64>, Arc<Recut>)>> = Mutex::new(Vec::new());
@@ -315,6 +318,8 @@ pub fn recut_parcels(prev: &[Parcel], prev_basis: &CutBasis, roads: &RoadNetwork
         Some((lo, hi)) => key.extend([1, f(lo.x), f(lo.y), f(hi.x), f(hi.y)]),
         None => key.push(0),
     }
+    key.push(built.len() as u64);
+    key.extend(built.iter().flat_map(|v| [f(v.x), f(v.y)]));
     key.push(locked.len() as u64);
     for l in locked {
         key.push(l.len() as u64);
@@ -325,7 +330,7 @@ pub fn recut_parcels(prev: &[Parcel], prev_basis: &CutBasis, roads: &RoadNetwork
             return (**hit).clone();
         }
     }
-    let out = recut_now(prev, prev_basis, roads, water, clip, shore_reach, locked);
+    let out = recut_now(prev, prev_basis, roads, water, clip, shore_reach, locked, built);
     if let Ok(mut recent) = RECENT.lock() {
         recent.retain(|(k, _)| *k != key);
         if recent.len() >= KEEP {
@@ -345,7 +350,8 @@ fn geo_union(polys: &[Vec<Vec2>]) -> MultiPolygon<f64> {
     }
 }
 
-fn recut_now(prev: &[Parcel], prev_basis: &CutBasis, roads: &RoadNetwork, water: &WaterMask, clip: Option<(Vec2, Vec2)>, shore_reach: Option<f32>, locked: &[Vec<Vec2>]) -> Recut {
+#[allow(clippy::too_many_arguments)]
+fn recut_now(prev: &[Parcel], prev_basis: &CutBasis, roads: &RoadNetwork, water: &WaterMask, clip: Option<(Vec2, Vec2)>, shore_reach: Option<f32>, locked: &[Vec<Vec2>], built: &[Vec2]) -> Recut {
     use geo::Intersects;
     let basis = CutBasis::of(roads, water, clip, shore_reach);
     let changes = if prev.is_empty() { None } else { prev_basis.changes_to(&basis) };
@@ -428,8 +434,13 @@ fn recut_now(prev: &[Parcel], prev_basis: &CutBasis, roads: &RoadNetwork, water:
         for chunk in chunk_block(block.clone(), roads) {
             let cpts = from_geo(&chunk);
             let (lo, hi) = bounds_of(&cpts);
-            let whole = lo.x >= inner.0.x && lo.y >= inner.0.y && hi.x <= inner.1.x && hi.y <= inner.1.y && lo.distance(hi) <= MAX_RECUT_CHUNK;
             let hit = chunk.intersects(&touched);
+            // Recut whole only where that moves nothing built far from the
+            // changes: a building in the chunk farther than `PROTECT` from
+            // every change keeps its parcel (the chunk is recut near the
+            // changes only).
+            let far_built = || built.iter().any(|b| b.x >= lo.x && b.y >= lo.y && b.x <= hi.x && b.y <= hi.y && point_in_polygon(*b, &cpts) && changes.iter().all(|c| c.at.distance(*b) > PROTECT));
+            let whole = lo.x >= inner.0.x && lo.y >= inner.0.y && hi.x <= inner.1.x && hi.y <= inner.1.y && lo.distance(hi) <= MAX_RECUT_CHUNK && !(hit && far_built());
             if hit && !whole {
                 piecemeal.push(chunk);
                 continue;
@@ -439,29 +450,20 @@ fn recut_now(prev: &[Parcel], prev_basis: &CutBasis, roads: &RoadNetwork, water:
         }
     }
     // A chunk recut whole takes the parcels it holds and any reaching into
-    // it; a parcel so taken whose centre is in a neighbouring chunk of the
-    // same block takes that chunk with it (its ground must be cut again).
-    for _ in 0..3 {
-        let mut grew = false;
-        for (k, (cpts, cb, _)) in chunks.iter().enumerate() {
-            if !fresh[k] {
-                continue;
-            }
-            let shrunk = shrink(cpts, 0.995);
-            for (i, p) in prev.iter().enumerate() {
-                if !drop[i] && boxes_overlap(boxes[i], *cb, 0.0) && (point_in_polygon(p.center, cpts) || polygons_overlap(&shrink(&p.polygon, 0.98), &shrunk)) {
-                    drop[i] = true;
-                    if let Some(j) = chunks.iter().position(|(q, qb, w)| *w && boxes_overlap(*qb, boxes[i], 0.0) && point_in_polygon(p.center, q)) {
-                        if !fresh[j] {
-                            fresh[j] = true;
-                            grew = true;
-                        }
-                    }
-                }
-            }
+    // it. (A parcel taken that reached in from outside leaves the rest of
+    // its ground to be cut again round the parcels that stay, below: the
+    // chunks of a block cut near the changes need not match the chunks the
+    // last cut made, so taking whole neighbouring chunks too would run on
+    // along a block.)
+    for (k, (cpts, cb, _)) in chunks.iter().enumerate() {
+        if !fresh[k] {
+            continue;
         }
-        if !grew {
-            break;
+        let shrunk = shrink(cpts, 0.995);
+        for (i, p) in prev.iter().enumerate() {
+            if !drop[i] && boxes_overlap(boxes[i], *cb, 0.0) && (point_in_polygon(p.center, cpts) || polygons_overlap(&shrink(&p.polygon, 0.98), &shrunk)) {
+                drop[i] = true;
+            }
         }
     }
     // Parcels near the changes whose ground is no longer land (a road over

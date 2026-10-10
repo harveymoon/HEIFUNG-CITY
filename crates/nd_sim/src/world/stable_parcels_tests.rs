@@ -176,11 +176,11 @@ fn a_recut_keeps_every_parcel_away_from_the_change() {
     }
     let water = WaterMask::default();
     let clip = Some((Vec2::splat(-800.0), Vec2::splat(800.0)));
-    let first = recut_parcels(&[], &CutBasis::default(), &roads, &water, clip, None, &[]);
+    let first = recut_parcels(&[], &CutBasis::default(), &roads, &water, clip, None, &[], &[]);
     assert!(first.parcels.len() > 200);
     let mut more = roads.clone();
     more.add_polyline(&[Vec2::new(420.0, 140.0), Vec2::new(560.0, 140.0)], 1, 1);
-    let second = recut_parcels(&first.parcels, &first.basis, &more, &water, clip, None, &[]);
+    let second = recut_parcels(&first.parcels, &first.basis, &more, &water, clip, None, &[], &[]);
     let near = |p: Vec2| crate::geom::project_on_segment(p, Vec2::new(420.0, 140.0), Vec2::new(560.0, 140.0)).1.distance(p) < 200.0;
     let kept = second.kept.iter().filter(|k| **k).count();
     for p in first.parcels.iter().filter(|p| !near(p.center)) {
@@ -189,7 +189,7 @@ fn a_recut_keeps_every_parcel_away_from_the_change() {
     assert!(kept > first.parcels.len() * 3 / 4, "most parcels are carried over ({kept} of {})", first.parcels.len());
     assert!(second.parcels.len() > first.parcels.len(), "the new street has parcels along it");
     // And the same again is the same: no change, no recut.
-    let third = recut_parcels(&second.parcels, &second.basis, &more, &water, clip, None, &[]);
+    let third = recut_parcels(&second.parcels, &second.basis, &more, &water, clip, None, &[], &[]);
     assert!(third.kept.iter().all(|k| *k));
     assert_eq!(third.parcels.len(), second.parcels.len());
 }

@@ -150,8 +150,14 @@ fn an_operator_that_goes_under_is_replaced_and_the_dock_stays() {
 #[test]
 fn a_dock_yard_stands_at_the_waterside() {
     let (mut w, click, flow, road_at) = riverside();
-    // The street up on a terrace 12 m above the river bank.
-    w.landscape.reshape_for_test(move |p, h| if (p - road_at).dot(Vec2::new(-flow.y, flow.x)).abs() < 60.0 { h + 12.0 } else { h });
+    // The street up on a terrace 12 m above the river bank, the bank
+    // itself as it was: the ground rises from 60 m off the street's line
+    // to 25 m off it.
+    let up = Vec2::new(-flow.y, flow.x);
+    w.landscape.reshape_for_test(move |p, h| {
+        let d = (p - road_at).dot(up).abs();
+        h + 12.0 * ((60.0 - d) / 35.0).clamp(0.0, 1.0)
+    });
     w.rebuild_from_plan();
     let marina = w.place_port(PortKind::MarinaLarge, click).expect("a marina on the river bank");
     join_stub(&mut w, marina, road_at, flow);

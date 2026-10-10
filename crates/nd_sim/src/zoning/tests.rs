@@ -406,7 +406,7 @@ fn a_fresh_cut_has_no_parcel_past_the_cap() {
     roads.add_polyline(&[Vec2::new(-300.0, 150.0), Vec2::new(300.0, 150.0)], 1, 1);
     roads.add_polyline(&[Vec2::new(-300.0, -150.0), Vec2::new(-300.0, 150.0)], 1, 1);
     roads.add_polyline(&[Vec2::new(300.0, -150.0), Vec2::new(300.0, 150.0)], 1, 1);
-    let cut = recut_parcels(&[], &CutBasis::default(), &roads, &WaterMask::default(), Some((Vec2::splat(-500.0), Vec2::splat(500.0))), None, &[]);
+    let cut = recut_parcels(&[], &CutBasis::default(), &roads, &WaterMask::default(), Some((Vec2::splat(-500.0), Vec2::splat(500.0))), None, &[], &[]);
     assert!(!cut.parcels.is_empty());
     for p in &cut.parcels {
         assert!(p.area <= MAX_PARCEL_AREA + 1.0, "parcel at {} is {:.0} m²", p.center, p.area);

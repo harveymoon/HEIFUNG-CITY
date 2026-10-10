@@ -222,7 +222,8 @@ fn a_parking_lot_next_to_the_citys_own_joins_it() {
     let area_a = w.lots[a].area();
     let t0 = w.economy.treasury;
     let p = w.place_on_lot(Placeable::ParkingLot(LotSize::Large), a).expect("a surface lot");
-    assert!((t0 - w.economy.treasury - LotSize::Large.cost_for(area_a)).abs() < 1e-2);
+    // (The treasury is an f32 of millions: half a unit is its grain.)
+    assert!((t0 - w.economy.treasury - LotSize::Large.cost_for(area_a)).abs() < 1.0);
     assert_eq!(w.buildings[p].parking_capacity, LotSize::Large.capacity_for(area_a));
     let home = w.buildings[p].lot;
     let b = w.lots.iter().filter(|(id, l)| *id != home && l.land_use == LandUse::Residential && l.usable() && l.building.is_none()).min_by(|x, y| x.1.center.distance(w.lots[home].center).total_cmp(&y.1.center.distance(w.lots[home].center))).map(|(id, _)| id).unwrap();
@@ -232,7 +233,7 @@ fn a_parking_lot_next_to_the_citys_own_joins_it() {
     let q = w.place_on_lot(Placeable::ParkingLot(LotSize::Large), b).expect("next door");
     assert_eq!(q, p, "it joins the lot next door");
     assert_eq!(w.lots.len(), lots0 - 1, "one lot, not two");
-    assert!((t1 - w.economy.treasury - LotSize::Large.cost_for(area_b)).abs() < 1e-2, "paid for the ground it added");
+    assert!((t1 - w.economy.treasury - LotSize::Large.cost_for(area_b)).abs() < 1.0, "paid for the ground it added");
     let area = w.lots[w.buildings[p].lot].area();
     assert!((area - area_a - area_b).abs() < 2.0, "the lot is both plots ({area:.0} m²)");
     assert_eq!(w.buildings[p].parking_capacity, LotSize::Large.capacity_for(area), "with the spaces of both");

@@ -172,13 +172,18 @@ impl World {
     /// under a station, yard or dock footprint.
     pub(super) fn cut_parcels(&mut self, locked: &[Vec<Vec2>]) -> Vec<Parcel> {
         let (water, clip, shore) = self.cut_inputs();
-        let mut cut = crate::prof!("cut.recut", crate::zoning::recut_parcels(&self.parcel_cut.raw, &self.parcel_cut.basis, &self.roads, &water, clip, shore, locked));
+        // Where something stands (the lots as they were): a whole chunk is
+        // not recut under a building far from the works.
+        let mut built: Vec<Vec2> = self.lots.values().filter(|l| l.building.is_some()).map(|l| l.center).collect();
+        built.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+        let mut cut = crate::prof!("cut.recut", crate::zoning::recut_parcels(&self.parcel_cut.raw, &self.parcel_cut.basis, &self.roads, &water, clip, shore, locked, &built));
         for (p, kept) in cut.parcels.iter_mut().zip(&cut.kept) {
             if !*kept {
                 self.mark_rough(p);
             }
         }
-        self.parcel_cut = crate::zoning::ParcelCut { raw: cut.parcels.clone(), basis: cut.basis, saved: Vec::new() };
+        let recut_some = cut.kept.iter().any(|k| !k);
+        self.parcel_cut = crate::zoning::ParcelCut { raw: cut.parcels.clone(), basis: cut.basis, saved: Vec::new(), recut_some };
         self.published_parcels(cut.parcels)
     }
 
@@ -201,7 +206,7 @@ impl World {
             self.mark_rough(p);
         }
         let basis = crate::zoning::CutBasis::of(&self.roads, &water, clip, shore);
-        self.parcel_cut = crate::zoning::ParcelCut { raw: raw.clone(), basis, saved: Vec::new() };
+        self.parcel_cut = crate::zoning::ParcelCut { raw: raw.clone(), basis, saved: Vec::new(), recut_some: false };
         self.published_parcels(raw)
     }
 
@@ -245,6 +250,9 @@ impl World {
         let pins: Vec<Vec<Vec2>> = locked.iter().filter_map(|id| self.lots.get(*id)).map(|l| l.polygon.clone()).collect();
         let parcels = self.cut_parcels(&pins);
         self.parcels = ParcelMap::new(parcels, old_parcels.version + 1);
+        if self.parcel_cut.recut_some {
+            self.rebase_painted_parcels();
+        }
         self.zones.clear();
         let mut zoning = parcel_zoning(&self.parcels, &self.master);
         // [free-placement] Ground under the city's own buildings is not the
@@ -403,6 +411,30 @@ impl World {
         }
         self.refresh_planned_zoning();
         pinned
+    }
+
+    /// [stable-parcels] After a recut, every paint stroke names the parcels
+    /// it now paints: each key is found again (by itself, or by the old
+    /// centre, `ParcelMap::find`) and replaced by the key of the parcel it
+    /// found. Strokes made on different cuts then always name the same
+    /// parcels, so a newer stroke (an unzoning) still wins over an older
+    /// one wherever the works re-cut the ground under both; left on their
+    /// old keys, each found its own pieces of the new parcels, and an old
+    /// park's paint came back on a corner the unzoning's keys missed.
+    fn rebase_painted_parcels(&mut self) {
+        let parcels = &self.parcels;
+        let rebase = |keys: &mut Vec<ParcelKey>| {
+            let mut v: Vec<ParcelKey> = keys.iter().filter_map(|k| parcels.find(k)).map(|i| parcels.parcels[i].key).collect();
+            v.sort();
+            v.dedup();
+            *keys = v;
+        };
+        for g in self.master.gestures.values_mut() {
+            if let Gesture::ParcelZone { parcels: keys, .. } = g {
+                rebase(keys);
+            }
+        }
+        self.plan_changed();
     }
 
     /// [waterfront] A lot's outline with the unzoned backland parcels

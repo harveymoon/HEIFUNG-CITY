@@ -557,7 +557,11 @@ fn trains_call_at_stations_and_yards_bring_freight() {
             let aboard = t.cargo.iter().any(|c| c.to == buyer && c.from == yard);
             if aboard {
                 aboard_seen = true;
-                assert_eq!(w.rail.orders_for(yard).0, 0, "loaded at the edge of the map, not left waiting");
+                // (The shop's order: another business may have ordered by
+                // rail since the train set off, and that order waits for the
+                // next one.)
+                let waiting = w.rail.orders.iter().filter(|o| o.cargo.from == yard && o.cargo.to == buyer).count();
+                assert_eq!(waiting, 0, "loaded at the edge of the map, not left waiting");
                 let m = w.freight_manifest(tid).expect("a freight train has a manifest");
                 assert!(m.aboard >= 10.0 && m.capacity >= m.aboard && m.wagons >= crate::rail::MIN_WAGONS, "{m:?}");
                 manifest_seen |= m.loads.iter().any(|l| l.buyer == buyer && l.yard == yard && l.resource == Resource::Parts && (l.amount - 10.0).abs() < 0.01 && l.hub.is_none());
