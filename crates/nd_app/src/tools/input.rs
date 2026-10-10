@@ -224,12 +224,12 @@ pub(crate) fn tool_input(
         Tool::Bulldoze if tools.cleanup => bulldoze::cleanup_input(&f, sim, tools, selection),
         Tool::Bulldoze => bulldoze::input(&f, sim, tools, selection),
         Tool::Inspect => {
-            if click {
-                if let Some(p) = ground {
-                    // [feat/pt-ux] By the pointer's ray: a tower by its
-                    // walls, an aircraft in the air, and from far out not
-                    // the people.
-                    let picked = super::pick_click(sim, &super::Click { ground: p, depth: tools.depth, ray: cursor.ray, view_dist: cursor.view_dist });
+            // [feat/pt-ux] By the pointer's ray: a tower by its walls, an
+            // aircraft in the air (even against the sky), and from far out
+            // not the people.
+            if click && (ground.is_some() || cursor.ray.is_some()) {
+                {
+                    let picked = super::pick_click(sim, &super::Click { ground, depth: tools.depth, ray: cursor.ray, view_dist: if ground.is_some() { cursor.view_dist } else { f32::INFINITY } });
                     apply_pick(sim, tools, selection, picked);
                 }
             }

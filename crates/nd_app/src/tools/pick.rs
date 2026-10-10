@@ -43,11 +43,12 @@ pub(crate) fn reach(view_dist: f32) -> Reach {
     Reach { small: view_dist <= PEOPLE_REACH, cars: view_dist <= CAR_REACH, person_r }
 }
 
-/// A click: the ground under the pointer, the view layer, the ray from the
-/// eye (Bevy coordinates: y up, z is the sim's y) and how far the eye is.
+/// A click: the ground under the pointer (None: the pointer is on the sky),
+/// the view layer, the ray from the eye (Bevy coordinates: y up, z is the
+/// sim's y) and how far the eye is from that ground.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Click {
-    pub ground: SVec2,
+    pub ground: Option<SVec2>,
     pub depth: Depth,
     pub ray: Option<(Vec3, Vec3)>,
     pub view_dist: f32,
@@ -57,7 +58,7 @@ impl Click {
     /// A click right at `p` from close by and straight above (the remote
     /// API's `select {at}`): everything there can be picked.
     pub fn at(p: SVec2, depth: Depth) -> Self {
-        Click { ground: p, depth, ray: None, view_dist: 0.0 }
+        Click { ground: Some(p), depth, ray: None, view_dist: 0.0 }
     }
 }
 
@@ -76,9 +77,11 @@ pub(crate) fn pick_click(sim: &Sim, click: &Click) -> Selection {
     if let Some(sel) = pick_on_ray(sim, click) {
         return sel;
     }
+    // On the sky only an aircraft or a tower could be hit.
+    let Some(ground) = click.ground else { return Selection::None };
     // [fire-scene] An emergency unit's car is the unit (its card follows it
     // from the road onto the scene and back).
-    match pick_any(sim, click.ground, click.depth, reach(click.view_dist)) {
+    match pick_any(sim, ground, click.depth, reach(click.view_dist)) {
         Selection::Car(id) => sim.world.services.unit_of_car(id).map_or(Selection::Car(id), Selection::Unit),
         s => s,
     }
@@ -92,8 +95,7 @@ fn pick_on_ray(sim: &Sim, click: &Click) -> Option<Selection> {
     }
     let w = &sim.world;
     let d = d.normalize_or_zero();
-    let gy = w.surface_height(click.ground);
-    let ground_t = (Vec3::new(click.ground.x, gy, click.ground.y) - o).length();
+    let ground_t = click.ground.map_or(f32::INFINITY, |g| (Vec3::new(g.x, w.surface_height(g), g.y) - o).length());
     let air = crate::air_select::pick_ray(w, sim.frac(), o, d).filter(|(t, _)| *t < ground_t + 2.0);
     let bld = building_on_ray(w, &sim.building_tops, o, d).filter(|(t, _)| *t < ground_t - 0.5);
     match (air, bld) {
@@ -300,7 +302,65 @@ fn pick_any(sim: &Sim, p: SVec2, depth: Depth, reach: Reach) -> Selection {
             }
         }
     }
+    // [feat/pt-ux] F28: a park plot of its own has no building (a park of
+    // several plots is one building, on the plot by the street): the park
+    // it is part of.
+    if let Some((id, _)) = w.lots.iter().find(|(_, l)| l.building.is_none() && l.land_use == LandUse::Park && point_in_polygon(p, &l.polygon)) {
+        if let Some(b) = park_of_plot(w, id) {
+            return Selection::Building(b);
+        }
+    }
+    // [feat/pt-ux] From far out a click on the pavement between plots
+    // means the plot beside it (a few pixels off is metres there).
+    if !reach.small {
+        let near = w
+            .lots
+            .values()
+            .filter_map(|lot| lot.building.map(|b| (edge_distance(p, &lot.polygon), b)))
+            .filter(|(d, _)| *d < FAR_SLACK)
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((_, b)) = near {
+            return Selection::Building(b);
+        }
+    }
     Selection::None
+}
+
+/// [feat/pt-ux] The park building of the park the plot `start` belongs to:
+/// over touching park plots to the first with a building.
+pub(crate) fn park_of_plot(w: &World, start: nd_sim::LotId) -> Option<BuildingId> {
+    let parks: Vec<(nd_sim::LotId, &nd_sim::Lot)> = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Park && l.polygon.len() >= 3).collect();
+    let touch = |a: &nd_sim::Lot, b: &nd_sim::Lot| a.polygon.iter().any(|&p| edge_distance(p, &b.polygon) < 1.0) || b.polygon.iter().any(|&p| edge_distance(p, &a.polygon) < 1.0);
+    let mut seen = vec![start];
+    let mut queue = std::collections::VecDeque::from([start]);
+    while let Some(id) = queue.pop_front() {
+        let lot = w.lots.get(id)?;
+        if let Some(b) = lot.building.filter(|b| w.buildings.get(*b).is_some_and(|x| x.land_use == LandUse::Park)) {
+            return Some(b);
+        }
+        for &(other, l) in &parks {
+            if !seen.contains(&other) && touch(lot, l) {
+                seen.push(other);
+                queue.push_back(other);
+            }
+        }
+    }
+    None
+}
+
+/// How far off a plot's edge a click from far out still picks it.
+const FAR_SLACK: f32 = 8.0;
+
+/// The distance from `p` to the nearest edge of `poly`.
+fn edge_distance(p: SVec2, poly: &[SVec2]) -> f32 {
+    (0..poly.len())
+        .map(|i| {
+            let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+            let ab = b - a;
+            let t = ((p - a).dot(ab) / ab.length_squared().max(1e-6)).clamp(0.0, 1.0);
+            (a + ab * t).distance(p)
+        })
+        .fold(f32::MAX, f32::min)
 }
 
 #[cfg(test)]
@@ -373,5 +433,18 @@ mod tests {
         let o2 = Vec3::new(0.0, 90.0, -300.0);
         assert!(ray_prism(o2, d, &near, 0.0, 80.0).is_none());
         assert!(ray_prism(o2, d, &far, 0.0, 120.0).is_some());
+    }
+}
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn edge_distance_is_to_the_nearest_side() {
+        let sq = [SVec2::new(0.0, 0.0), SVec2::new(10.0, 0.0), SVec2::new(10.0, 10.0), SVec2::new(0.0, 10.0)];
+        assert!((edge_distance(SVec2::new(5.0, -3.0), &sq) - 3.0).abs() < 1e-4);
+        assert!((edge_distance(SVec2::new(5.0, 2.0), &sq) - 2.0).abs() < 1e-4);
+        assert!((edge_distance(SVec2::new(13.0, 14.0), &sq) - 5.0).abs() < 1e-4);
     }
 }

@@ -606,6 +606,22 @@ impl World {
         Ok(())
     }
 
+    /// [feat/pt-ux] A lever for trying it out (the remote API's `society
+    /// {action: abandon_rv}`): the household walks away from its van (to a
+    /// camp) and the van stands abandoned until the contractor tows it.
+    pub fn abandon_rv(&mut self, seed: u64) -> Result<(), &'static str> {
+        let now = self.clock.tick;
+        let r = self.society.homeless.rvs.iter_mut().find(|r| r.seed == seed).ok_or("no such camper or van")?;
+        if !r.lived_in() {
+            return Err("already abandoned");
+        }
+        r.abandoned = Some(now);
+        r.tow_at = Some(now + RV_ABANDONED_DAYS * 1440);
+        let hid = r.household;
+        self.settle_homeless(hid);
+        Ok(())
+    }
+
     /// Campers and vans whose tow time came: gone. A household that lived
     /// in one is settled again (a camp, most likely).
     fn tow_due_rvs(&mut self, now: u64) {

@@ -516,8 +516,10 @@ pub(super) fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         // its walls and from far out not the people.
         let eye = ctx.cams.iter().next().map(|c| c.eye()).ok_or("no camera")?;
         let dir = (aim - eye).normalize_or_zero();
-        let ground = crate::camera::ray_ground(w, eye, dir).ok_or("that point is above the eye: the ray never meets the ground")?;
-        let view_dist = eye.distance(bevy::math::Vec3::new(ground.x, w.surface_height(ground), ground.y));
+        // Above the horizon the ray meets no ground: only what is in the air
+        // (or a tower) can be hit.
+        let ground = crate::camera::ray_ground(w, eye, dir);
+        let view_dist = ground.map_or(f32::INFINITY, |g| eye.distance(bevy::math::Vec3::new(g.x, w.surface_height(g), g.y)));
         crate::tools::pick_click(&ctx.sim, &crate::tools::Click { ground, depth: ctx.tools.depth, ray: Some((eye, dir)), view_dist })
     } else if let Some(p) = opt_vec2(cmd, "at")? {
         // Pick at the spot as a click there from close by does.

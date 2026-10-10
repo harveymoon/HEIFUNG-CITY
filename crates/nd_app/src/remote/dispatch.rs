@@ -392,7 +392,8 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("returns", "units: unit id, title, kind, state, doing, pos, incident; select {unit} / inspect {unit} take the id"),
     ] },
     Cmd { name: "society", aliases: &[], effect: Game, run: |cmd, ctx| society::command(cmd, &mut ctx.sim.world), help: &[
-        ("action", "report (default)|evict|offend|trash"),
+        ("action", "report (default)|evict|offend|tow_rv|abandon_rv|trash"),
+        ("rv", "id (tow_rv: a camper or van of rv_list, towed within three hours, who lived in it moves to a camp; abandon_rv: its household walks away and it stands abandoned until the contractor tows it)"),
         ("building", "id (evict: its households go on the street; offend: the target; trash: one building's bins)"),
         ("citizen", "id (offend)"),
         ("kind", "theft|burglary|assault|murder|vandalism (offend, with building)"),

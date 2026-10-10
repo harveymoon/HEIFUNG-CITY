@@ -13,6 +13,8 @@ pub fn about(w: &World, id: BuildingId) -> Option<(String, String)> {
     let area = w.footprint(id).map_or(0.0, |l| nd_sim::geom::polygon_area(&l.polygon).abs());
     if b.land_use == LandUse::Park {
         let beach = w.lots.get(b.lot).is_some_and(|l| l.shore.beach);
+        // A park over several plots is one park: its whole area.
+        let area = w.lots.get(b.lot).and_then(|l| l.park.as_ref()).map_or(area, |p| p.cluster_area.max(area));
         let what = if beach { format!("A public beach of {:.0} m².", area) } else { format!("A public park of {:.0} m².", area) };
         return Some((what, "People within walking reach come to walk, sit and play; it lifts land value and moods round it, and costs the city its upkeep.".into()));
     }
@@ -40,7 +42,11 @@ pub fn about(w: &World, id: BuildingId) -> Option<(String, String)> {
     }
     if let Some(z) = &b.business {
         let jobs = format!("{} job{}", b.jobs, s(b.jobs as usize));
-        let what = format!("{}, {jobs}.", capitalise(&a(z.kind.label())));
+        let noun = match z.kind {
+            BusinessKind::Parking => "car park".to_string(),
+            k => k.label().to_string(),
+        };
+        let what = format!("{}, {jobs}.", capitalise(&a(&noun)));
         let gives = match z.kind {
             BusinessKind::Parking => format!("{} parking spaces ({} taken now): drivers coming to this street pay to park here instead of circling the block.", b.parking_capacity, b.parking_used),
             BusinessKind::Office => "Office work: steady, well-paid jobs. Its staff buy lunch and coffee nearby.".into(),

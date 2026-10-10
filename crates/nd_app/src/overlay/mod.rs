@@ -17,6 +17,8 @@ pub mod mesh;
 pub mod routes;
 pub mod selection;
 pub mod shapes;
+/// [feat/pt-ux] The selected building's glowing shell.
+pub mod shell;
 
 /// When the overlays run: see the module docs.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -42,7 +44,9 @@ impl Plugin for OverlayPlugin {
             // API's `selected`, a flag's snapshot), not only by the
             // inspector's egui pass.
             .add_systems(Update, crate::selection::validate_selection.in_set(OverlaySet::Validate))
-            .add_systems(Update, draw_selected.in_set(OverlaySet::Draw));
+            .add_systems(Update, draw_selected.in_set(OverlaySet::Draw))
+            .init_resource::<shell::Shell>()
+            .add_systems(Update, shell::sync_shell.in_set(OverlaySet::Build));
     }
 }
 

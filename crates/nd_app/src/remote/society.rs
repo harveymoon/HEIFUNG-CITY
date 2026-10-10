@@ -158,6 +158,19 @@ pub fn command(cmd: &Value, w: &mut World) -> Result<Value, String> {
             };
             Ok(json!({ "incident": id, "criminals": w.society.crime.offenders.len() }))
         }
+        // [feat/pt-ux] Have a camper or van towed, as its inspector's button.
+        "tow_rv" => {
+            let v = field(cmd, "rv").ok_or("rv (its id, `rv_list`) is required")?;
+            let seed = v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).ok_or("rv: an id (a number)")?;
+            w.order_tow_rv(seed)?;
+            Ok(json!({ "rv": seed, "tow_at": w.society.homeless.rv(seed).and_then(|r| r.tow_at) }))
+        }
+        "abandon_rv" => {
+            let v = field(cmd, "rv").ok_or("rv (its id, `rv_list`) is required")?;
+            let seed = v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).ok_or("rv: an id (a number)")?;
+            w.abandon_rv(seed)?;
+            Ok(json!({ "rv": seed, "tow_at": w.society.homeless.rv(seed).and_then(|r| r.tow_at) }))
+        }
         "trash" => {
             let kg = opt_f32(cmd, "kg")?.unwrap_or(100.0);
             let only = match field(cmd, "building") {
@@ -175,7 +188,7 @@ pub fn command(cmd: &Value, w: &mut World) -> Result<Value, String> {
         }
         _ => {
             let _ = req_str(cmd, "action")?;
-            Err(format!("unknown society action {action:?}; one of report, evict, offend, trash"))
+            Err(format!("unknown society action {action:?}; one of report, evict, offend, tow_rv, abandon_rv, trash"))
         }
     }
 }
