@@ -417,11 +417,23 @@ fn deep_highway_cuttings_and_fills_are_held_by_walls() {
             if w.roads.node(seg.a).level != 0.0 || w.roads.node(seg.b).level != 0.0 {
                 continue;
             }
+            // Inside a held run: the pieces either side are held the same way
+            // (at a run's ends the graded neighbour's slope still reaches in).
+            let held_both = [seg.a, seg.b].iter().all(|&n| w.roads.node(n).segments.iter().any(|&o| o != sid && earthwork_hold(&w.landscape, &w.roads, &w.road_z, &w.road_inner, o) == Some(hold)));
+            if !held_both {
+                continue;
+            }
             let (a, b) = w.roads.segment_points(sid);
             let mid = a.lerp(b, 0.5);
             let side = (b - a).normalize_or_zero().perp();
             let z = way_height(&w.roads, &w.road_z, &w.road_inner, sid, 0.5);
             let (_, back) = earthwork_band(seg);
+            // Inside the graded raster (beyond it the ground is the outer
+            // blend along the ways).
+            let half = w.ground_half() - 60.0;
+            if mid.x.abs() > half || mid.y.abs() > half {
+                continue;
+            }
             for s in [-1.0f32, 1.0] {
                 let near = mid + side * s * (back - 2.0);
                 let beyond = mid + side * s * (back + 10.0);

@@ -936,7 +936,24 @@ pub fn earthwork_hold(land: &Landscape, roads: &RoadNetwork, node_z: &[f32], inn
     if roads.node(seg.a).level < 0.0 || roads.node(seg.b).level < 0.0 {
         return Some(Hold::Cut);
     }
-    if land.is_flat() || seg.kind == crate::roads::RoadKind::Path || seg.ring {
+    if let Some(h) = hold_by_depth(land, roads, node_z, inner, sid, HOLD_DEPTH_MOTORWAY) {
+        return Some(h);
+    }
+    // A piece carrying on from a held one is held too while it is still
+    // a third as deep: a cutting's shallower ends were graded, and their
+    // slopes cut into the hillside the walls next to them hold.
+    let weak = hold_by_depth(land, roads, node_z, inner, sid, HOLD_DEPTH_MOTORWAY / 3.0)?;
+    let carries = [seg.a, seg.b].iter().any(|&n| {
+        roads.node(n).segments.iter().any(|&o| o != sid && roads.segment(o).alive && !roads.segment(o).bridge && !roads.segment(o).tunnel && hold_by_depth(land, roads, node_z, inner, o, HOLD_DEPTH_MOTORWAY) == Some(weak))
+    });
+    carries.then_some(weak)
+}
+
+/// [`earthwork_hold`] by depth alone: `depth` below (above) the land at the
+/// middle and both quarter points of a motorway or railway piece.
+fn hold_by_depth(land: &Landscape, roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], sid: crate::roads::SegmentId, depth: f32) -> Option<Hold> {
+    let seg = roads.segment(sid);
+    if seg.bridge || seg.viaduct || seg.tunnel || !seg.alive || land.is_flat() || seg.kind == crate::roads::RoadKind::Path || seg.ring {
         return None;
     }
     // Town streets keep their graded banks: their lots start at the
@@ -944,7 +961,6 @@ pub fn earthwork_hold(land: &Landscape, roads: &RoadNetwork, node_z: &[f32], inn
     if !(seg.is_motorway() || seg.is_rail()) {
         return None;
     }
-    let depth = HOLD_DEPTH_MOTORWAY;
     let (a, b) = roads.segment_points(sid);
     if a.distance(b) < 8.0 {
         return None;

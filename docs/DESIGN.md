@@ -1896,11 +1896,11 @@ trait MindProvider {
   (walls used to stand free on the slopes 6 m off a highway). The Road tool warns where an
   at-grade leg's land climbs or falls 6 m more than the grade allows (a walled cutting or fill,
   or a tunnel or viaduct instead) and where a straight highway or railway turns more than 35°
-  at a point. Junction pads and corners on a slope are set on one surface, the node's height plus
-  each arriving run's rise (`StreetCtx::junction_z`), the pad outline subdivided every 1.5 m, so
-  steep junctions no longer open slivers beside their corners. A footpath crossing the track
-  (no street) stops the track at its edges and lays the rails flush over a dark rubber panel with
-  tactile strips; the crossings' flashing lamps throw a pulsing red point light on the road at
+  at a point. On a slope a junction pad hangs a 0.9 m asphalt skirt from its edge
+  (`draw_pad`), closing the vertical slivers that opened between the pad's straight edge and the
+  corners' aprons on their arms' profiles at steep junctions. A footpath crossing the track
+  (no street) gets a dark rubber panel at the rails' height over the ballast and sleepers, the
+  rails flush in it, ramps down to the paving and yellow tactile strips; the crossings' flashing lamps throw a pulsing red point light on the road at
   night (a pool beside the street lamps', a third its size, none at Low).
 - Ramps (`roads::is_ramp_spec`: one-way streets narrower than a highway): an end dropped on a
   highway gets a lead point `RAMP_LEAD` (40 m) before a merge or after a diverge, beside the
