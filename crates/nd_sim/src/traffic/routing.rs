@@ -453,15 +453,12 @@ impl Traffic {
             let nl = &self.net.lanes[next as usize];
             let wreck_ahead = nl.cars.iter().any(|&o| self.cars[o].crashed())
                 || c.route.get(c.idx + 2).is_some_and(|&e| self.net.lanes[e as usize].cars.first().is_some_and(|&o| self.cars[o].crashed() && self.cars[o].s < 2.0 * CAR_LENGTH));
-<<<<<<< HEAD
             // [pt-transit] A bus keeps to its line: it waits for the lane
             // change (swapping in at the end of the lane, if need be) and
             // for a full exit to clear, and only goes another way after
             // `BUS_DETOUR_AFTER`, or round a crash.
             let bus_waits = c.bus.is_some() && c.stalled < BUS_DETOUR_AFTER;
-=======
             let mut full_exit = false;
->>>>>>> main
             let (avoid_lane, avoid_step) = if lane.is_beside(next) {
                 if bus_waits {
                     continue;
