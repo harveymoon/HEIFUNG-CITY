@@ -32,6 +32,31 @@ pub struct ApproachView {
     pub left_possible: bool,
     /// Cars queued on its lanes.
     pub queued: usize,
+    /// [pt-ux] Its arriving lanes, leftmost first (as `arrows`): where each
+    /// meets the junction and the moves out of it, for the editor's
+    /// on-road arrows.
+    pub lanes: Vec<LaneView>,
+}
+
+/// [pt-ux] One lane arriving at a junction.
+#[derive(Clone, Debug)]
+pub struct LaneView {
+    /// Its stop line (the lane's end).
+    pub end: Vec2,
+    /// Unit direction of travel there.
+    pub dir: Vec2,
+    /// Every move the lane network has out of it.
+    pub moves: Vec<MoveView>,
+}
+
+/// [pt-ux] A move from a lane through the junction: its arrow bit
+/// (`LEFT`, `STRAIGHT`, `RIGHT`), whether the lane's arrows allow it, and
+/// the way it drives (through the junction and a little into the exit).
+#[derive(Clone, Debug)]
+pub struct MoveView {
+    pub bit: u8,
+    pub permitted: bool,
+    pub path: Vec<Vec2>,
 }
 
 /// One signal phase: the approaches (indices into `approaches`) that share
@@ -235,6 +260,7 @@ impl World {
                     no_left: rule.left_forbidden(dir),
                     left_possible,
                     queued: ap.map_or(0, |a| a.lanes.iter().map(|&l| net.lanes[l as usize].cars.len()).sum()),
+                    lanes: ap.map(|a| a.lanes.iter().map(|&l| lane_view(net, l)).collect()).unwrap_or_default(),
                 }
             })
             .collect();
@@ -455,4 +481,34 @@ impl World {
             _ => 0.0,
         }
     }
+}
+
+/// [pt-ux] Lane `l`'s end and its moves, for the editor.
+fn lane_view(net: &crate::traffic::LaneNetwork, l: crate::traffic::LaneId) -> LaneView {
+    let lane = &net.lanes[l as usize];
+    let n = lane.points.len();
+    let end = lane.points.last().copied().unwrap_or_default();
+    let dir = if n >= 2 { (lane.points[n - 1] - lane.points[n - 2]).normalize_or_zero() } else { Vec2::ZERO };
+    let moves = lane
+        .next
+        .iter()
+        .map(|&c| {
+            let con = &net.lanes[c as usize];
+            let mut path = con.points.clone();
+            // A few metres into the street it leads to, for the direction.
+            if let Some(&out) = con.next.first() {
+                let exit = &net.lanes[out as usize];
+                let mut run = 0.0;
+                for w in exit.points.windows(2) {
+                    path.push(w[1]);
+                    run += w[0].distance(w[1]);
+                    if run > 8.0 {
+                        break;
+                    }
+                }
+            }
+            MoveView { bit: crate::traffic::turn_bit(con.turn), permitted: con.permitted, path }
+        })
+        .collect();
+    LaneView { end, dir, moves }
 }

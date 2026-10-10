@@ -414,6 +414,7 @@ impl World {
         if let Some((purpose, to)) = errand_story {
             let driver = match car.errand {
                 Errand::Taxi(_) if !self.citizens.contains_key(car.citizen) => Driver::Unknown("a cab driver".into()),
+                Errand::Sale(_) if !self.citizens.contains_key(car.citizen) => Driver::Unknown("a car dealer's driver".into()),
                 _ => driver,
             };
             return Some(Journey { purpose, from, to, driver });

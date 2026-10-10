@@ -394,3 +394,58 @@ fn built_ground_has_no_cliffs_spikes_or_seams() {
         }
     }
 }
+
+/// [pt-visual] F11/F31: a highway cut deep into a hill or carried high over
+/// a valley is held by retaining walls (`earthwork_hold`): the ground is
+/// held at the road out to the wall band and stays the natural land just
+/// beyond it, instead of 1-in-2.5 slopes reshaping the hillside.
+#[test]
+fn deep_highway_cuttings_and_fills_are_held_by_walls() {
+    use crate::roads::RoadKind;
+    let mut found = 0;
+    for preset in [LandscapePreset::RiverValley, LandscapePreset::Islands] {
+        let mut w = crate::world::World::new(crate::world::WorldConfig { landscape: LandscapeParams::preset(preset, 4), emergencies: false, society: false, ..crate::world::WorldConfig::default() });
+        w.economy.treasury = 1e9;
+        w.start_project();
+        for k in -3..=3 {
+            let y = k as f32 * 260.0;
+            w.add_gesture(crate::Gesture::Road { points: vec![Vec2::new(-1400.0, y), Vec2::new(1400.0, y + 90.0)], lanes_fwd: 3, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        }
+        w.implement();
+        for (sid, seg) in w.roads.alive_segments() {
+            let Some(hold) = earthwork_hold(&w.landscape, &w.roads, &w.road_z, &w.road_inner, sid) else { continue };
+            if w.roads.node(seg.a).level != 0.0 || w.roads.node(seg.b).level != 0.0 {
+                continue;
+            }
+            // Inside a held run: the pieces either side are held the same way
+            // (at a run's ends the graded neighbour's slope still reaches in).
+            let held_both = [seg.a, seg.b].iter().all(|&n| w.roads.node(n).segments.iter().any(|&o| o != sid && earthwork_hold(&w.landscape, &w.roads, &w.road_z, &w.road_inner, o) == Some(hold)));
+            if !held_both {
+                continue;
+            }
+            let (a, b) = w.roads.segment_points(sid);
+            let mid = a.lerp(b, 0.5);
+            let side = (b - a).normalize_or_zero().perp();
+            let z = way_height(&w.roads, &w.road_z, &w.road_inner, sid, 0.5);
+            let (_, back) = earthwork_band(seg);
+            // Inside the graded raster (beyond it the ground is the outer
+            // blend along the ways).
+            let half = w.ground_half() - 60.0;
+            if mid.x.abs() > half || mid.y.abs() > half {
+                continue;
+            }
+            for s in [-1.0f32, 1.0] {
+                let near = mid + side * s * (back - 2.0);
+                let beyond = mid + side * s * (back + 10.0);
+                if w.roads.segments_in_box(beyond - Vec2::splat(30.0), beyond + Vec2::splat(30.0)).any(|o| o != sid) {
+                    continue;
+                }
+                assert!((w.ground_height(near) - z).abs() < 0.8, "{hold:?}: the band is not held at the road ({} vs {z})", w.ground_height(near));
+                let natural = w.landscape.height(beyond).max(BANK_HEIGHT);
+                assert!((w.ground_height(beyond) - natural).abs() < 2.0, "{hold:?}: graded {} m beyond the wall", (w.ground_height(beyond) - natural).abs());
+                found += 1;
+            }
+        }
+    }
+    assert!(found > 0, "no held highway earthworks to check");
+}

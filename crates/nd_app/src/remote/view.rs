@@ -247,8 +247,41 @@ pub fn selection(w: &World, sel: Selection) -> Value {
         Selection::Train(id) => json!({ "kind": "train", "id": key_str(id), "headcode": w.rail.trains.get(id).map(|t| crate::train_select::headcode(id, t.kind)) }),
         Selection::Unit(id) => json!({ "kind": "unit", "id": key_str(id), "label": crate::fire_scene::unit_title(w, id), "doing": crate::fire_scene::unit_doing(w, id) }),
         Selection::Ship(id) => json!({ "kind": "ship", "id": key_str(id), "label": crate::ferry_select::ship_title(w, id), "doing": crate::ferry_select::ship_doing(w, id) }),
+        Selection::Drone(id) => json!({ "kind": "drone", "id": key_str(id), "label": crate::air_select::title(w, id), "doing": crate::air_select::doing(w, id) }),
+        Selection::Rv(seed) => json!({ "kind": "rv", "id": seed, "label": crate::rv_select::title(w, seed) }),
         Selection::Metro(id) => json!({ "kind": "metro_train", "id": key_str(id), "headcode": crate::train_select::metro_code(id), "line": w.subway.trains.get(id).and_then(|t| w.subway.lines.get(t.line)).map(|l| l.name.clone()) }),
     }
+}
+
+/// [feat/pt-ux] A drone taxi or helicopter: what it is, what it does,
+/// where it is going and who is aboard.
+pub fn drone_json(w: &World, id: nd_sim::air::DroneId) -> Value {
+    let Some(d) = w.air.drones.get(id) else { return Value::Null };
+    let (rider, crew) = crate::air_select::aboard(w, id);
+    json!({
+        "kind": "drone", "id": key_str(id), "craft": d.craft.label(),
+        "label": crate::air_select::title(w, id), "doing": crate::air_select::doing(w, id),
+        "phase": d.phase.label(), "job": d.job.label(),
+        "base": building_name(w, Some(d.base)),
+        "destination": crate::air_select::destination(w, id).map(|(n, p)| json!({ "name": n, "at": [p.x, p.y] })),
+        "altitude": d.alt, "battery": d.battery,
+        "aboard": rider.map(|c| json!({ "id": key_str(c), "name": w.citizens.get(c).map(|c| c.name.as_str()) })),
+        "crew": crew.iter().map(|&c| json!({ "id": key_str(c), "name": w.citizens.get(c).map(|c| c.name.as_str()) })).collect::<Vec<_>>(),
+    })
+}
+
+/// [feat/pt-ux] A camper or van at the kerb: who lives in it, or that it
+/// was left behind, and its tow.
+pub fn rv_json(w: &World, seed: u64) -> Value {
+    let Some(r) = w.society.homeless.rv(seed) else { return Value::Null };
+    json!({
+        "kind": "rv", "id": seed, "label": crate::rv_select::title(w, seed),
+        "vehicle": if r.camper { "camper" } else { "van" }, "at": [r.pos.x, r.pos.y],
+        "abandoned": r.abandoned.is_some(), "abandoned_since": r.abandoned.map(tick_time),
+        "owner": crate::rv_select::owner_name(w, r),
+        "residents": crate::rv_select::residents(w, r).iter().map(|&c| json!({ "id": key_str(c), "name": w.citizens.get(c).map(|c| c.name.as_str()) })).collect::<Vec<_>>(),
+        "tow_at": r.tow_at.map(tick_time),
+    })
 }
 
 pub fn gesture(id: GestureId, g: &Gesture) -> Value {

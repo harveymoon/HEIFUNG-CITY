@@ -337,6 +337,8 @@ pub(super) fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Selection::Metro(id) => inspect(&json!({ "metro": key_str(id) }), ctx),
         Selection::Unit(id) => inspect(&json!({ "unit": key_str(id) }), ctx),
         Selection::Ship(id) => inspect(&json!({ "ship": key_str(id) }), ctx),
+        Selection::Drone(id) => Ok(drone_json(&ctx.sim.world, id)),
+        Selection::Rv(seed) => Ok(rv_json(&ctx.sim.world, seed)),
         Selection::None => Err("inspect needs one of citizen, building, lot, car, bot, train, metro, toll, road, segment, route, gesture (an id), or a selection".into()),
     }
 }
@@ -397,6 +399,8 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
         Selection::Metro(id) => trains::metro_detail(w, id).unwrap_or(Value::Null),
         Selection::Unit(id) => units::unit_detail(sim, id, &assets.rules).unwrap_or(Value::Null),
         Selection::Ship(id) => ferry::ship_json(w, id).unwrap_or(Value::Null),
+        Selection::Drone(id) => drone_json(w, id),
+        Selection::Rv(seed) => rv_json(w, seed),
     };
     let bus_line = route_sel.and_then(|r| w.transit.routes.get(r).map(|route| {
         let mut v = route_row(r, route);
@@ -408,6 +412,23 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
         "kind": brief.get("kind").cloned().unwrap_or(Value::Null), "id": brief.get("id").cloned().unwrap_or(Value::Null),
         "selection": brief, "detail": detail, "bus_line": bus_line, "clock": tick_time(w.clock.tick),
     })
+}
+
+/// [feat/pt-ux] `aim: [x, y, h]` (h metres above the ground), or `at`
+/// with `click: true`: the point a click from the camera is aimed at.
+fn aim_point(cmd: &Value, w: &nd_sim::World) -> Result<Option<bevy::math::Vec3>, String> {
+    if let Some(a) = cmd.get("aim").and_then(|v| v.as_array()) {
+        let n = |i: usize| a.get(i).and_then(|v| v.as_f64()).map(|v| v as f32);
+        let (Some(x), Some(y)) = (n(0), n(1)) else { return Err("aim: [x, y, height]".into()) };
+        let p = nd_sim::Vec2::new(x, y);
+        return Ok(Some(bevy::math::Vec3::new(x, w.surface_height(p) + n(2).unwrap_or(0.0), y)));
+    }
+    if cmd.get("click").and_then(|v| v.as_bool()) == Some(true) {
+        if let Some(p) = opt_vec2(cmd, "at")? {
+            return Ok(Some(bevy::math::Vec3::new(p.x, w.surface_height(p), p.y)));
+        }
+    }
+    Ok(None)
 }
 
 pub(super) fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
@@ -474,8 +495,34 @@ pub(super) fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             return Err("no such ship".into());
         }
         Selection::Ship(id)
+    } else if let Some(v) = field(cmd, "drone") {
+        // [feat/pt-ux] A drone taxi or helicopter (`air` lists them).
+        let id = key_from(v)?;
+        if !w.air.drones.contains_key(id) {
+            return Err("no such drone".into());
+        }
+        Selection::Drone(id)
+    } else if let Some(v) = field(cmd, "rv") {
+        // [feat/pt-ux] A camper or van at the kerb, by its id (`society`'s `rv_list`).
+        let seed = v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).ok_or("rv: an id (a number)")?;
+        if w.society.homeless.rv(seed).is_none() {
+            return Err("no such camper or van".into());
+        }
+        Selection::Rv(seed)
+    } else if let Some(aim) = aim_point(cmd, w)? {
+        // [feat/pt-ux] A click from the camera as it stands at the point
+        // `aim` [x, y, height above the ground] (or the ground at `at` with
+        // `click: true`): by the ray, as the Inspect tool picks, a tower by
+        // its walls and from far out not the people.
+        let eye = ctx.cams.iter().next().map(|c| c.eye()).ok_or("no camera")?;
+        let dir = (aim - eye).normalize_or_zero();
+        // Above the horizon the ray meets no ground: only what is in the air
+        // (or a tower) can be hit.
+        let ground = crate::camera::ray_ground(w, eye, dir);
+        let view_dist = ground.map_or(f32::INFINITY, |g| eye.distance(bevy::math::Vec3::new(g.x, w.surface_height(g), g.y)));
+        crate::tools::pick_click(&ctx.sim, &crate::tools::Click { ground, depth: ctx.tools.depth, ray: Some((eye, dir)), view_dist })
     } else if let Some(p) = opt_vec2(cmd, "at")? {
-        // Pick exactly as a click with the Inspect tool does.
+        // Pick at the spot as a click there from close by does.
         crate::tools::pick(&*ctx.sim, p, ctx.tools.depth)
     } else {
         Selection::None

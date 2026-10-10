@@ -6,8 +6,9 @@ use super::*;
 
 /// [carlife] Parked cars drawn at the kerb: every private car standing on a
 /// street (in a kerb slot, or squeezed in with no space) is a body mesh at
-/// its spot. Cars in a building's spaces are out of sight in its garage; a
-/// parking lot shows its occupancy itself.
+/// its spot, and so is a dealer's used stock on its forecourt. Cars in a
+/// building's spaces are out of sight in its garage; a parking lot shows
+/// its occupancy itself.
 #[derive(Resource, Default)]
 pub(super) struct ParkedRender {
     /// Tick and car count last drawn for.
@@ -43,7 +44,8 @@ pub(super) fn sync_parked_cars(mut commands: Commands, sim: Res<Sim>, assets: Re
     vr.ensure_materials(&mut materials);
     let mut seen: std::collections::HashSet<nd_sim::VehicleId> = std::collections::HashSet::new();
     for (vid, car) in w.vehicles.cars.iter() {
-        let Some(spot) = car.spot().filter(|s| s.kind.on_street()) else { continue };
+        // [carlife] And a dealer's used stock, in rows on its forecourt.
+        let Some(spot) = car.spot().filter(|s| s.kind.on_street() || (s.kind == nd_sim::ParkKind::Dealer && car.dealer.is_some())) else { continue };
         seen.insert(vid);
         let at = ((spot.pos.x * 10.0) as i32, (spot.pos.y * 10.0) as i32, spot.booted);
         if pr.cars.get(&vid).is_some_and(|(k, _, _)| *k == at) {

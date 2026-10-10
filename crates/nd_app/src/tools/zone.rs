@@ -186,3 +186,53 @@ pub(super) fn polygon_preview(gizmos: &mut Gizmos, p: &Preview) {
         gizmos.linestrip(pts, cyan);
     }
 }
+
+/// [pt-ux] What the Zone tool does to the map layer as it is picked or put
+/// down: picking it remembers the layer showing and switches to Zoning
+/// (`set` is the layer to show, if any); putting it down brings back the
+/// remembered one, unless the player picked another layer meanwhile.
+/// Returns (what to remember now, the layer to switch to).
+pub(crate) fn zone_layer_step<L: Copy + PartialEq>(active: bool, remembered: Option<Option<L>>, current: Option<L>, zoning: L) -> (Option<Option<L>>, Option<Option<L>>) {
+    match (active, remembered) {
+        (true, None) => (Some(current), (current != Some(zoning)).then_some(Some(zoning))),
+        (false, Some(prev)) => (None, (current == Some(zoning) && prev != Some(zoning)).then_some(prev)),
+        (_, r) => (r, None),
+    }
+}
+
+/// [pt-ux] The Zone tool shows the Zoning layer while it is in hand (F29;
+/// buildings go see-through meanwhile, `render::swap::Ghost::Zoning`).
+pub(super) fn follow_zone_tool(tools: Res<ToolState>, mut overlays: ResMut<crate::render::Overlays>, mut before: Local<Option<Option<crate::map_layers::LayerId>>>) {
+    let Some(zoning) = crate::map_layers::LayerId::parse("zoning") else { return };
+    let current = crate::map_layers::active(&overlays);
+    let (remember, set) = zone_layer_step(tools.tool == super::Tool::Zone, *before, current, zoning);
+    *before = remember;
+    if let Some(layer) = set {
+        crate::map_layers::set_active(&mut overlays, layer);
+    }
+}
+
+#[cfg(test)]
+mod layer_tests {
+    use super::zone_layer_step;
+
+    #[test]
+    fn the_zone_tool_shows_zoning_and_puts_the_layer_back() {
+        // Picked with Traffic showing: switch to Zoning, remember Traffic.
+        let (r, set) = zone_layer_step(true, None, Some(3), 0);
+        assert_eq!((r, set), (Some(Some(3)), Some(Some(0))));
+        // Held: nothing more.
+        assert_eq!(zone_layer_step(true, r, Some(0), 0), (r, None));
+        // Put down: Traffic again.
+        assert_eq!(zone_layer_step(false, r, Some(0), 0), (None, Some(Some(3))));
+        // Picked with nothing showing, put down: nothing again.
+        let (r, _) = zone_layer_step(true, None, None, 0);
+        assert_eq!(zone_layer_step(false, r, Some(0), 0), (None, Some(None)));
+        // The player picked another layer while zoning: left alone.
+        assert_eq!(zone_layer_step(false, Some(Some(3)), Some(5), 0), (None, None));
+        // Zoning was showing already: stays on after.
+        let (r, set) = zone_layer_step(true, None, Some(0), 0);
+        assert_eq!(set, None);
+        assert_eq!(zone_layer_step(false, r, Some(0), 0), (None, None));
+    }
+}

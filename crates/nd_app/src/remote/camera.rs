@@ -126,6 +126,8 @@ pub(super) fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let distance = opt_f32(cmd, "distance")?;
     let yaw = opt_f32(cmd, "yaw")?;
     let pitch = opt_f32(cmd, "pitch")?;
+    // [pt-ux] Underground the orbit may go below the ground.
+    let min_pitch = crate::camera::min_pitch(ctx.tools.depth);
     let mut applied = false;
     for mut cam in &mut ctx.cams {
         if let Some(p) = look_at {
@@ -144,7 +146,7 @@ pub(super) fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             cam.yaw = y;
         }
         if let Some(p) = pitch {
-            cam.pitch = p.clamp(0.08, 1.5);
+            cam.pitch = p.clamp(min_pitch, 1.5);
         }
         if let Some(sel) = follow {
             // Start on the thing right away rather than one frame later.

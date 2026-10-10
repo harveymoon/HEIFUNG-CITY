@@ -748,6 +748,20 @@ impl World {
         }
         if let Some(new) = self.pick_business_kind(lu, jobs).filter(|k| *k != kind) {
             self.buildings[bid].business = Some(Business::new(new, jobs));
+            self.fit_business_name(bid);
+        }
+    }
+
+    /// [pt-visual] A building still carrying a generic generated name that
+    /// does not fit its business ("Big Sky Laundromat" for a tow company,
+    /// F38) takes a name for its trade. Hash-picked: no random draw.
+    pub(crate) fn fit_business_name(&mut self, bid: BuildingId) {
+        let Some(b) = self.buildings.get_mut(bid) else { return };
+        let Some(kind) = b.business.as_ref().map(|z| z.kind) else { return };
+        if names::name_misfits(&b.name, kind) {
+            if let Some(n) = names::business_name(kind, b.seed) {
+                b.name = n;
+            }
         }
     }
 
@@ -852,6 +866,12 @@ impl World {
             // [waterfront] the shore's trades are named for the water
             if let Some(n) = crate::shore::trade_name(kind, b.seed) {
                 b.name = n;
+            }
+            // [pt-visual] and every other trade by what it is (F38)
+            if names::name_misfits(&b.name, kind) {
+                if let Some(n) = names::business_name(kind, b.seed) {
+                    b.name = n;
+                }
             }
         }
         // Nothing opens overnight: the lot becomes a building site first.

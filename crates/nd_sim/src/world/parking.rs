@@ -37,7 +37,10 @@ impl World {
         let price = size.default_price();
         let jobs = size.jobs_for(area);
         let bz = Business::new(BusinessKind::Parking, jobs);
-        let id = self.place_special(lot_id, name, jobs, size.capacity_for(area), |b| {
+        // [parking] A surface lot has the bays its parcel fits (as drawn);
+        // [parking-fit] a car park its decks' spaces, by the plot's area.
+        let capacity = self.city_lot_spaces(size, lot_id);
+        let id = self.place_special(lot_id, name, jobs, capacity, |b| {
             b.tier = Tier::Mid;
             b.floors = size.floors();
             b.business = Some(bz);
@@ -48,6 +51,17 @@ impl World {
         });
         self.vehicles.city_lots.insert(id, crate::enforcement::CityLot { size, price, area });
         Ok(id)
+    }
+
+    /// Spaces in a city lot of `size` on `lot_id`: a surface lot the bays
+    /// drawn on its ground (`parking_layout`), a car park its decks by the
+    /// plot's area.
+    pub(super) fn city_lot_spaces(&self, size: crate::enforcement::LotSize, lot_id: LotId) -> u16 {
+        match self.lots.get(lot_id) {
+            Some(l) if size.surface() => crate::parking_layout::surface_capacity(l).max(1),
+            Some(l) => size.capacity_for(l.area()),
+            None => size.capacity(),
+        }
     }
 
     /// [parking-fit] One of the city's own parking lots of the same kind
@@ -108,8 +122,9 @@ impl World {
         if let Some(c) = self.vehicles.city_lots.get_mut(&b) {
             c.area = area;
         }
+        let spaces = self.city_lot_spaces(size, home);
         if let Some(x) = self.buildings.get_mut(b) {
-            x.parking_capacity = size.capacity_for(area);
+            x.parking_capacity = spaces;
             x.jobs = size.jobs_for(area);
         }
         self.rebuild_walk();
@@ -131,7 +146,8 @@ impl World {
         let value = self.land_value.at(lot.center);
         let tier = Tier::for_land_value(value).min(Tier::Mid);
         let floors: u8 = if tier == Tier::Mid && area > 500.0 { self.rng.random_range(3..=5) } else { 0 };
-        let capacity = if floors == 0 { (area / 28.0) as u16 } else { ((area / 32.0) as u16) * floors as u16 };
+        // [parking] A surface lot has the bays its parcel fits (as drawn).
+        let capacity = if floors == 0 { crate::parking_layout::surface_capacity(lot) } else { ((area / 32.0) as u16) * floors as u16 };
         if capacity < 4 {
             return None;
         }

@@ -163,6 +163,9 @@ fn after_the_grace_it_is_clamped_and_towed_when_the_fine_goes_unpaid() {
         if k == Some(ParkKind::Hooked) {
             hooked = true;
             assert!(!w.driving.tows.is_empty(), "drawn on the tow truck");
+            // [tow] F34: a wrecker with a boom and a wheel lift, not a pickup.
+            let truck = w.driving.tows[0].truck;
+            assert_eq!(w.traffic.cars[truck].model.body, crate::vehicle::BodyType::TowTruck);
         }
         if k == Some(ParkKind::Pound) {
             break;
@@ -361,8 +364,11 @@ fn the_city_places_parking_lots_sized_by_their_plots() {
         let treasury = w.economy.treasury;
         let b = w.place_on_lot(crate::services::Placeable::ParkingLot(size), lot).expect("placed");
         assert!((treasury - w.economy.treasury - size.cost_for(area)).abs() < 1.0, "paid for by the plot's area");
-        // [parking-fit] Spaces by the plot.
-        assert_eq!(w.buildings[b].parking_capacity, size.capacity_for(area));
+        // [parking] A surface lot has the bays its parcel fits (F35); a car
+        // park its decks' spaces, [parking-fit] by the plot's area.
+        let spaces = if size.floors() == 0 { crate::parking_layout::surface_capacity(&w.lots[lot]) } else { size.capacity_for(area) };
+        assert_eq!(w.buildings[b].parking_capacity, spaces);
+        assert!(spaces >= 4, "{size:?}: {spaces} spaces");
         assert_eq!(w.buildings[b].floors, size.floors());
         assert!(w.buildings[b].is_parking());
         assert_eq!(w.vehicles.city_lots[&b].price, size.default_price());
@@ -601,4 +607,15 @@ fn a_road_stops_at_a_parking_lot_the_player_placed() {
     w.buildings[b].city_parking = false;
     let w = World::from_ron(&w.to_ron().expect("saves")).expect("loads");
     assert!(w.buildings[b].city_parking);
+}
+
+#[test]
+fn big_vehicles_get_a_heavy_tow_truck() {
+    // [tow] Lorries, buses and RVs are too big for a wheel lift.
+    use crate::vehicle::BodyType;
+    assert_eq!(super::enforcement::tow_model_for(BodyType::Sedan).body, BodyType::TowTruck);
+    assert_eq!(super::enforcement::tow_model_for(BodyType::Hatchback).body, BodyType::TowTruck);
+    for big in [BodyType::Semi, BodyType::BubbleBus, BodyType::PanelTruck, BodyType::GarbageTruck] {
+        assert_eq!(super::enforcement::tow_model_for(big).body, BodyType::HeavyTow, "{big:?}");
+    }
 }

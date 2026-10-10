@@ -516,10 +516,13 @@ impl Ground {
             let foot = seg.viaduct;
             // A road the player sank (a cutting, a portal ramp) is held by
             // retaining walls: the ground comes down to it within metres.
-            let walled = roads.node(seg.a).level < 0.0 || roads.node(seg.b).level < 0.0;
+            // [pt-visual] So is a deep cutting or a high fill (`earthwork_hold`).
+            let walled = earthwork_hold(land, roads, node_z, inner, sid).is_some();
             let (a, b) = (roads.node(seg.a).pos, roads.node(seg.b).pos);
             let (za, zb) = (node_z.get(seg.a.0 as usize).copied().unwrap_or(0.0), node_z.get(seg.b.0 as usize).copied().unwrap_or(0.0));
-            let core = seg.corridor_half_width() + if walled { GROUND_CELL } else { 0.0 };
+            // [pt-visual] A walled motorway has no pavement: its wall band
+            // starts at the hard shoulder (`earthwork_band`).
+            let core = if walled { earthwork_band(seg).1 } else { seg.corridor_half_width() };
             // A road the player sank is held by retaining walls: it holds its
             // own cells and grades nothing beside it.
             let reach = if walled { core } else { core + seed_band };
@@ -909,4 +912,93 @@ pub fn way_height(roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>]
         (t0, z0) = (t1, z1);
     }
     zb
+}
+
+// ── [pt-visual] earthworks held by walls ────────────────────────────────────
+// F11 / F31: a way eased deep into a hillside (or high above a valley) used
+// to grade 1-in-2.5 slopes up to 160 m out, reshaping the map round every
+// interchange, while free-standing "cutting walls" were drawn on top of the
+// slopes. Now a deep cutting or a high fill on the highway, a slip road or
+// a railway is held by retaining walls within a few metres, the
+// way the player's own sunken roads always were, and the walls are drawn
+// exactly where the ground is held.
+
+/// How a way's earthworks are held.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hold {
+    /// Below the land: walls hold the hillside back.
+    Cut,
+    /// Above the land: walls hold the fill up.
+    Fill,
+}
+
+/// The cut or fill (metres, either way) from which a motorway (highway or
+/// slip road) or railway is held by walls rather than graded slopes.
+pub const HOLD_DEPTH_MOTORWAY: f32 = 3.0;
+
+/// Whether the way `sid` stands in a held cutting or on a held fill: a
+/// road the player sank always is (a portal ramp, a cutting); otherwise
+/// when the way is that far below (above) the natural land at its middle
+/// and at both quarter points, for motorways and railways. Bridges,
+/// viaducts, tunnels, streets and paths never.
+pub fn earthwork_hold(land: &Landscape, roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], sid: crate::roads::SegmentId) -> Option<Hold> {
+    let seg = roads.segment(sid);
+    if seg.bridge || seg.viaduct || seg.tunnel || !seg.alive {
+        return None;
+    }
+    if roads.node(seg.a).level < 0.0 || roads.node(seg.b).level < 0.0 {
+        return Some(Hold::Cut);
+    }
+    if let Some(h) = hold_by_depth(land, roads, node_z, inner, sid, HOLD_DEPTH_MOTORWAY) {
+        return Some(h);
+    }
+    // A piece carrying on from a held one is held too while it is still
+    // a third as deep: a cutting's shallower ends were graded, and their
+    // slopes cut into the hillside the walls next to them hold.
+    let weak = hold_by_depth(land, roads, node_z, inner, sid, HOLD_DEPTH_MOTORWAY / 3.0)?;
+    let carries = [seg.a, seg.b].iter().any(|&n| {
+        roads.node(n).segments.iter().any(|&o| o != sid && roads.segment(o).alive && !roads.segment(o).bridge && !roads.segment(o).tunnel && hold_by_depth(land, roads, node_z, inner, o, HOLD_DEPTH_MOTORWAY) == Some(weak))
+    });
+    carries.then_some(weak)
+}
+
+/// [`earthwork_hold`] by depth alone: `depth` below (above) the land at the
+/// middle and both quarter points of a motorway or railway piece.
+fn hold_by_depth(land: &Landscape, roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], sid: crate::roads::SegmentId, depth: f32) -> Option<Hold> {
+    let seg = roads.segment(sid);
+    if seg.bridge || seg.viaduct || seg.tunnel || !seg.alive || land.is_flat() || seg.kind == crate::roads::RoadKind::Path || seg.ring {
+        return None;
+    }
+    // Town streets keep their graded banks: their lots start at the
+    // pavement, where a wall band would stand.
+    if !(seg.is_motorway() || seg.is_rail()) {
+        return None;
+    }
+    let (a, b) = roads.segment_points(sid);
+    if a.distance(b) < 8.0 {
+        return None;
+    }
+    let diff = |t: f32| land.height(a.lerp(b, t)).max(BANK_HEIGHT) - way_height(roads, node_z, inner, sid, t);
+    let d = [diff(0.25), diff(0.5), diff(0.75)];
+    if d.iter().all(|&x| x >= depth) {
+        Some(Hold::Cut)
+    } else if d.iter().all(|&x| -x >= depth) {
+        Some(Hold::Fill)
+    } else {
+        None
+    }
+}
+
+/// [pt-visual] Where a held way's retaining wall stands, from its centre
+/// line: `(inner face, back of the held band)`. The ground is held at the
+/// way's height out to the back (`Ground::build`), the wall fills the band
+/// from its face to the back (`nd_procgen::terrain::works`), so the drawn
+/// wall and the held ground are one and the same.
+pub fn earthwork_band(seg: &crate::roads::Segment) -> (f32, f32) {
+    if seg.is_motorway() {
+        (seg.half_width() + 1.2, seg.half_width() + 1.0 + GROUND_CELL)
+    } else {
+        let c = seg.corridor_half_width();
+        (c + 0.3, c + GROUND_CELL)
+    }
 }

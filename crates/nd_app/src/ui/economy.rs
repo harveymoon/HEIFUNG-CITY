@@ -300,8 +300,23 @@ fn item_table(ui: &mut egui::Ui, w: &World, f: Flow, lines: &[&ItemEntry], rest:
         return;
     }
     let scale = lines.iter().map(|e| e.amount.abs()).fold(rest.abs(), f32::max).max(1e-3);
-    egui::Grid::new(("ledger_items", f.index())).num_columns(5).spacing(egui::vec2(10.0, 2.0)).striped(true).show(ui, |ui| {
-        for e in lines {
+    // [pt-ux] Sortable by name, kind, postings or amount; "not itemised"
+    // stays last.
+    let key = |e: &&ItemEntry, c: usize| match c {
+        0 => super::pane::SortKey::text(item_label(w, &e.item).0),
+        1 => super::pane::SortKey::text(item_label(w, &e.item).1),
+        2 => super::pane::SortKey::num(e.count as f64),
+        3 => super::pane::SortKey::num(e.amount),
+        _ => super::pane::SortKey::None,
+    };
+    let heads = [("item", ""), ("what", ""), ("postings", ""), ("amount", ""), ("share", "")];
+    super::pane::sortable_foot(
+        ui,
+        ("ledger_items", f.index()),
+        &heads,
+        lines,
+        key,
+        |ui, e| {
             let (name, what) = item_label(w, &e.item);
             if let Item::Building(b) = e.item {
                 let gone = !w.buildings.contains_key(b);
@@ -316,17 +331,18 @@ fn item_table(ui: &mut egui::Ui, w: &World, f: Flow, lines: &[&ItemEntry], rest:
             ui.label(egui::RichText::new(if e.count > 1 { format!("×{}", e.count) } else { String::new() }).small().weak());
             ui.label(warn_if(e.amount < 0.0, format!("{:+.0}", e.amount)).small());
             share_bar(ui, e.amount, scale, flow_color(f));
-            ui.end_row();
-        }
-        if rest.abs() >= 0.5 {
-            ui.label(egui::RichText::new("not itemised").small().italics());
-            ui.label(egui::RichText::new("postings that named no item").small().weak());
-            ui.label("");
-            ui.label(warn_if(rest < 0.0, format!("{rest:+.0}")).small());
-            share_bar(ui, rest, scale, Color32::from_gray(120));
-            ui.end_row();
-        }
-    });
+        },
+        |ui| {
+            if rest.abs() >= 0.5 {
+                ui.label(egui::RichText::new("not itemised").small().italics());
+                ui.label(egui::RichText::new("postings that named no item").small().weak());
+                ui.label("");
+                ui.label(warn_if(rest < 0.0, format!("{rest:+.0}")).small());
+                share_bar(ui, rest, scale, Color32::from_gray(120));
+                ui.end_row();
+            }
+        },
+    );
     if lines.len() > 1 {
         hint(ui, &format!("{} lines, {:+.0} in all", lines.len() + usize::from(rest.abs() >= 0.5), total));
     }

@@ -149,6 +149,14 @@ fn a_move_waits_for_a_lot_then_gives_up() {
 // ── 2. parking pressure brings more parking ─────────────────────────────
 
 /// A parking business on the commercial lot nearest `p`.
+/// Every parking business within reach of `at` full at its busiest.
+fn fill_lots_near(w: &mut World, at: Vec2) {
+    let near: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.is_parking() && w.lots.get(b.lot).is_some_and(|l| l.center.distance(at) <= 220.0)).map(|(id, _)| id).collect();
+    for b in near {
+        w.buildings[b].parking_peak = w.buildings[b].parking_capacity;
+    }
+}
+
 fn parking_near(w: &mut World, p: Vec2) -> BuildingId {
     let lot = lots_of(w, LandUse::Commercial).into_iter().min_by(|a, b| w.lots[*a].center.distance(p).total_cmp(&w.lots[*b].center.distance(p))).unwrap();
     let id = w.build_parking(lot).expect("a parking lot");
@@ -210,8 +218,9 @@ fn circling_by_full_lots_draws_a_local_to_open_another_but_not_by_empty_ones() {
     w.buildings[full].parking_peak = 0;
     let vacant = lots_of(&w, LandUse::Commercial);
     assert!(!w.maybe_open_parking(&vacant), "drivers circled past free spaces");
-    // Full at its busiest: a local opens one nearby.
-    w.buildings[full].parking_peak = w.buildings[full].parking_capacity;
+    // Full at its busiest: a local opens one nearby. (Every lot near the
+    // trouble: the town may have opened one of its own while it grew.)
+    fill_lots_near(&mut w, at);
     let before: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.is_parking()).map(|(id, _)| id).collect();
     let vacant = lots_of(&w, LandUse::Commercial);
     assert!(w.maybe_open_parking(&vacant), "full lots and circling drivers: another lot");
@@ -245,6 +254,7 @@ fn nobody_with_the_money_means_no_lot_unless_the_trouble_is_bad() {
     let at = here.lerp(next, 0.5);
     w.economy.parking_shortage_at = Some(at);
     w.buildings[full].parking_peak = w.buildings[full].parking_capacity;
+    fill_lots_near(&mut w, at);
     for c in w.citizens.values_mut() {
         c.savings = 0.0;
     }

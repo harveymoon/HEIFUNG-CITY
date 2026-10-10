@@ -196,3 +196,5 @@ pub(super) fn shrink_about_centroid(poly: &[Vec2], factor: f32) -> Vec<Vec2> {
 
 #[cfg(test)]
 mod roundabout_tests;
+#[cfg(test)]
+mod piece_tests;

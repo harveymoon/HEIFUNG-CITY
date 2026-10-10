@@ -323,6 +323,10 @@ pub fn sync_draw_hologram(
         return;
     }
     tools.grade_warnings = w.road_grade_warnings(&ctrl, &ctrl_levels, kind, f, b);
+    // [pt-visual] A curved road bends through its points: no sharp corners.
+    if tools.curved {
+        tools.grade_warnings.retain(|m| !m.starts_with("turns "));
+    }
     let (pts, levels) = built(&ctrl, &ctrl_levels, tools.curved);
     let (mesh, red, plan) = hologram(w, &assets.palette, &pts, &levels, f, b, kind, 0.55);
     // [tools] The columns, for the sub-pane and the remote API.
@@ -491,6 +495,128 @@ pub fn apply_depth(
             }
             let (a, b) = w.roads.segment_points(sid);
             gizmos.line(Vec3::new(a.x, z(s.a) + 0.3, a.y), Vec3::new(b.x, z(s.b) + 0.3, b.y), faint);
+        }
+    }
+}
+
+/// [pt-ux] Hidden by [`hide_surface_extras`], shown again when the view
+/// comes back up.
+#[derive(Component)]
+pub struct UnderHidden;
+
+/// [pt-ux] The rest of the surface in the Underground view: ships and
+/// trawlers, jetties and coasters, fire scenes, convoys, crossings, solar
+/// fields and turbines, cab ranks, retaining walls, footbridges, cracks,
+/// raves, murals, stains and smoke, the far skyline, the zoning plan's
+/// tinted plots. `apply_depth` hides the
+/// city's big layers; these all used to stay drawn at full strength over
+/// the tunnels. Trains and aircraft are not hidden: they go see-through
+/// (`swap::Ghost::Underground`).
+///
+/// Runs in `PostUpdate`, after every owner that sets these each frame (a
+/// trawler at sea, a fire hose spraying), so the view always has the last
+/// word; leaving it restores only what it hid (the owners set the rest
+/// again on their next pass).
+#[allow(clippy::type_complexity)]
+pub fn hide_surface_extras(
+    mut commands: Commands,
+    tools: Res<ToolState>,
+    mut was_under: Local<bool>,
+    mut q: Query<
+        (Entity, &mut Visibility, Has<UnderHidden>),
+        (
+            Or<(
+                Or<(With<super::cleanup::CleanupTag>, With<super::convoys::ConvoyTag>, With<super::crossings::CrossingPart>, With<super::crossings::CrossingLamp>, With<super::crossings::CrossingArm>, With<super::fire_scene::FireSceneTag>, With<super::fishing::TrawlerTag>, With<super::landscape::ShipTag>)>,
+                Or<(With<super::grime::StainTag>, With<super::grime::DirtyPuff>, With<super::haze::Puff>, With<super::shore::JettyTag>, With<super::shore::CoasterTag>, With<super::social::SocialTag>, With<super::social::MuralNightTag>, With<super::solar::SolarPanel>)>,
+                Or<(With<super::turbines::TurbineRotor>, With<super::taxis::ParkedCabTag>, With<super::taxis::TaxiSignTag>, With<super::retaining::RetainingTag>, With<super::junction_view::FootbridgeTag>, With<super::nights::CrackTag>, With<super::nights::RaveTag>, With<super::far::FarTag>)>,
+                Or<(With<super::districts::TouristTag>, With<super::emergency::EmergencyTag>, With<PreviewTag>)>,
+            )>,
+            Without<TunnelTag>,
+            Without<CarTag>,
+            Without<super::focus::UnitTag>,
+        ),
+    >,
+) {
+    let under = tools.depth == Depth::Underground;
+    if under {
+        *was_under = true;
+        for (e, mut v, marked) in &mut q {
+            if *v != Visibility::Hidden {
+                *v = Visibility::Hidden;
+                if !marked {
+                    commands.entity(e).try_insert(UnderHidden);
+                }
+            }
+        }
+    } else if *was_under {
+        *was_under = false;
+        for (e, mut v, marked) in &mut q {
+            if marked {
+                *v = Visibility::Inherited;
+                commands.entity(e).try_remove::<UnderHidden>();
+            }
+        }
+    }
+}
+
+/// [pt-ux] The tunnels as see-through ribbons on the ground, shown while
+/// the Road tool is used at street level, so a tunnel a new road could
+/// join (with a portal ramp) is seen without switching views.
+#[derive(Component)]
+pub struct TunnelHintTag;
+
+/// The ribbons' colour (linear, see-through) and their dashed centre line.
+const TUNNEL_HINT: [f32; 4] = [0.35, 0.75, 1.4, 0.32];
+const TUNNEL_HINT_LINE: [f32; 4] = [0.6, 1.1, 1.8, 0.75];
+
+/// Whether the tunnel hints show: the Road tool, above ground.
+pub(crate) fn tunnel_hints_wanted(tools: &ToolState) -> bool {
+    tools.tool == Tool::Road && tools.depth == Depth::Ground
+}
+
+/// [pt-ux] Keep the tunnel hints' mesh in step with the roads and show it
+/// only while [`tunnel_hints_wanted`].
+pub fn sync_tunnel_hints(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
+    tools: Res<ToolState>,
+    mats: Res<Materials>,
+    mut built: Local<Option<(u64, u64)>>,
+    mut q: Query<(Entity, &mut Visibility), With<TunnelHintTag>>,
+) {
+    let show = tunnel_hints_wanted(&tools);
+    let w = &sim.world;
+    let key = (w.roads.version, sim.generation);
+    if show && (*built != Some(key) || sim.full_rebuild) {
+        *built = Some(key);
+        for (e, _) in &q {
+            commands.entity(e).despawn();
+        }
+        let mut m = MeshData::default();
+        let lie = |p: SVec2| if w.relief { w.surface_height(p) } else { 0.0 };
+        for (sid, s) in w.roads.alive_segments() {
+            if !s.tunnel {
+                continue;
+            }
+            let (a, b) = w.roads.segment_points(sid);
+            let pts = densify(&[a, b], 6.0);
+            let from = m.positions.len();
+            m.ground_strip(&pts, s.half_width() * 2.0, 0.35, TUNNEL_HINT);
+            super::preview::dashes(&mut m, a, b, 0.5, 0.4, 3.0, 3.0, TUNNEL_HINT_LINE);
+            for p in &mut m.positions[from..] {
+                p[1] += lie(SVec2::new(p[0], p[2]));
+            }
+        }
+        if !m.is_empty() {
+            commands.spawn((Mesh3d(meshes.add(to_mesh(&m, false))), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, TunnelHintTag, super::focus::FocusKeep));
+        }
+        return;
+    }
+    let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+    for (_, mut v) in &mut q {
+        if *v != want {
+            *v = want;
         }
     }
 }

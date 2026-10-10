@@ -261,6 +261,16 @@ impl Toggle {
     }
 
     fn show(self, ui: &mut egui::Ui) {
+        // [pt-ux] The panes sit below City Data: opening one from the bar
+        // closes the view so it shows.
+        let was = self != Toggle::CityData && !self.is_open(ui.ctx());
+        self.show_inner(ui);
+        if was && self.is_open(ui.ctx()) {
+            super::city_data::set_open(ui.ctx(), false);
+        }
+    }
+
+    fn show_inner(self, ui: &mut egui::Ui) {
         match self {
             Toggle::NewGame => super::newgame::toggle(ui),
             Toggle::CityData => {

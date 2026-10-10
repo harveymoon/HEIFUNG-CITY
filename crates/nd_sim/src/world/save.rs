@@ -40,6 +40,11 @@ impl World {
         self.weather.climate = self.landscape.params.climate;
         self.validate();
         self.migrate_through_cars();
+        // [pt-visual] Generic names that do not fit the business (F38).
+        let ids: Vec<BuildingId> = self.buildings.keys().collect();
+        for id in ids {
+            self.fit_business_name(id);
+        }
         // [people] Saves from before households: one per citizen. Detected
         // per citizen (no household), so no version bump is needed.
         self.migrate_households();

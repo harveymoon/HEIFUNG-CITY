@@ -246,6 +246,7 @@ impl World {
                 b.floors = b.floors.min(kind.max_floors()).max(1);
                 b.seed = b.seed.wrapping_add(1);
                 b.recompute_capacity();
+                self.fit_business_name(id);
                 self.events.push(SimEvent::BuildingChanged(id));
                 continue;
             }

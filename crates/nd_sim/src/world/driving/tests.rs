@@ -537,3 +537,62 @@ fn a_recovery_truck_close_to_its_wreck_drives_round_the_queue() {
     assert!(!pulled, "nobody pulled over for ambers");
     assert!(!w.traffic.cars.contains_key(car), "and it hooked the wreck");
 }
+
+#[test]
+fn a_seething_driver_may_turn_round_illegally_when_it_is_much_the_quicker_way() {
+    // [rage] T: "if a driver is raging and an illegal U-turn would be the
+    // fastest way to their destination they can do it sometimes based on
+    // their driving personality".
+    let w = town(7);
+    let c = w.citizens.keys().next().unwrap();
+    let seg = w.roads.nearest_street(Vec2::new(-450.0, 0.0)).unwrap().0;
+    let lanes: Vec<crate::traffic::LaneId> = w.traffic.net.segment_lanes[&seg].clone();
+    let dir = |l: crate::traffic::LaneId| {
+        let lane = &w.traffic.net.lanes[l as usize];
+        (lane.end() - lane.start()).normalize()
+    };
+    let east = *lanes.iter().find(|&&l| dir(l).x > 0.9).unwrap();
+    let west = *lanes.iter().find(|&&l| dir(l).x < -0.9).unwrap();
+    // On the eastbound lane mid-block; going to a point just behind it on
+    // the other side of the street: ahead, the way round the block.
+    let (s_here, _) = w.traffic.net.lanes[east as usize].project(Vec2::new(-420.0, 0.0));
+    let (s_goal, _) = w.traffic.net.lanes[west as usize].project(Vec2::new(-520.0, 0.0));
+    let (route, s0, s1) = w.traffic.net.route_lanes(east, s_here, west, s_goal).expect("round the block");
+    assert!(route.len() > 4, "the legal way is round the block");
+    let calm = || {
+        let mut w2 = town(7);
+        let car = w2.traffic.spawn_car(c, None, route.clone(), s0, s1, 0);
+        if w2.traffic.cars[car].entering {
+            w2.traffic.cars[car].entering = false;
+            w2.traffic.insert_sorted(route[0], car);
+        }
+        (w2, car)
+    };
+    // A calm, law-abiding driver keeps going round.
+    let (mut w1, car) = calm();
+    w1.traffic.cars[car].drive.anger = 0.2;
+    w1.rage_u_turns();
+    assert!(!w1.traffic.cars[car].in_stunt(), "calm drivers never turn round in the street");
+    // Seething and no respecter of the law: round it goes.
+    let (mut w2, car) = calm();
+    {
+        let tc = &mut w2.traffic.cars[car];
+        tc.drive.anger = 1.0;
+        tc.drive.profile.assigned = true;
+        tc.drive.profile.compliance = 0.0;
+    }
+    w2.rage_u_turns();
+    assert!(w2.traffic.cars[car].in_stunt(), "turning round");
+    assert_eq!(w2.driving.rage_u_turns_today, 1);
+    let mut minds = IdleMind;
+    for _ in 0..40 {
+        w2.tick(&mut minds);
+        if w2.traffic.cars.get(car).is_none_or(|t| !t.in_stunt()) {
+            break;
+        }
+    }
+    let t = w2.traffic.cars.get(car).expect("still on the road");
+    assert!(!t.in_stunt(), "back on the lanes");
+    assert_eq!(t.route.last(), Some(&west), "on to where it was going");
+    assert!(t.route.len() < route.len(), "the short way now: {:?}", t.route);
+}

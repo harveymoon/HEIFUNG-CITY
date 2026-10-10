@@ -224,7 +224,9 @@ fn a_parking_lot_next_to_the_citys_own_joins_it() {
     let p = w.place_on_lot(Placeable::ParkingLot(LotSize::Large), a).expect("a surface lot");
     // (The treasury is an f32 of millions: half a unit is its grain.)
     assert!((t0 - w.economy.treasury - LotSize::Large.cost_for(area_a)).abs() < 1.0);
-    assert_eq!(w.buildings[p].parking_capacity, LotSize::Large.capacity_for(area_a));
+    // The bays drawn on its ground.
+    let spaces_a = crate::parking_layout::surface_capacity(&w.lots[w.buildings[p].lot]);
+    assert_eq!(w.buildings[p].parking_capacity, spaces_a);
     let home = w.buildings[p].lot;
     let b = w.lots.iter().filter(|(id, l)| *id != home && l.land_use == LandUse::Residential && l.usable() && l.building.is_none()).min_by(|x, y| x.1.center.distance(w.lots[home].center).total_cmp(&y.1.center.distance(w.lots[home].center))).map(|(id, _)| id).unwrap();
     let area_b = w.lots[b].area();
@@ -236,7 +238,8 @@ fn a_parking_lot_next_to_the_citys_own_joins_it() {
     assert!((t1 - w.economy.treasury - LotSize::Large.cost_for(area_b)).abs() < 1.0, "paid for the ground it added");
     let area = w.lots[w.buildings[p].lot].area();
     assert!((area - area_a - area_b).abs() < 2.0, "the lot is both plots ({area:.0} m²)");
-    assert_eq!(w.buildings[p].parking_capacity, LotSize::Large.capacity_for(area), "with the spaces of both");
+    assert_eq!(w.buildings[p].parking_capacity, crate::parking_layout::surface_capacity(&w.lots[w.buildings[p].lot]), "with the bays of both");
+    assert!(w.buildings[p].parking_capacity > spaces_a, "more than one plot's");
     assert!((w.vehicles.city_lots[&p].upkeep_per_day() - LotSize::Large.upkeep_for(area)).abs() < 1e-3);
     // A multi-storey car park is another kind: it does not join a surface lot.
     let c = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Residential && l.usable() && l.building.is_none() && l.area() >= LotSize::MultiStorey.min_area()).min_by(|x, y| x.1.center.distance(w.lots[w.buildings[p].lot].center).total_cmp(&y.1.center.distance(w.lots[w.buildings[p].lot].center))).map(|(id, _)| id);

@@ -249,7 +249,6 @@ fn repeated_pain_changes_how_a_citizen_travels() {
     assert_ne!(after, TripMode::Car, "after the misery, something else: {:?}", w.mode_options(c, &q));
     // Habits follow: with a bike to fall back on, the car is sold.
     let gone0 = w.vehicles.stats.destroyed_total;
-    let cars0 = w.vehicles.cars.len();
     let mut money = 0.0;
     w.citizens[c].owns_bike = true;
     for day in 0..40 {
@@ -261,18 +260,125 @@ fn repeated_pain_changes_how_a_citizen_travels() {
     assert!(w.citizens[c].car.is_none(), "sold the car");
     assert!(money > 0.0, "and got money for it");
     assert!(w.citizens[c].memories.iter().any(|m| m.text.contains("Sold the car")), "and remembers why");
-    assert!(w.vehicles.cars.contains_key(vid) || w.vehicles.stats.events_total.contains_key("scrapped"), "driven away to be sold (or scrapped), never vanished");
-    if let Some(car) = w.vehicles.cars.get(vid) {
-        assert!(matches!(car.place, CarPlace::Driving(cid) if matches!(w.traffic.cars[cid].errand, Errand::Sale(_))), "on its way to the dealer");
-    }
-    for _ in 0..900 {
+    // [carlife] It is the dealer's now, still parked where it was until
+    // the dealer's driver comes for it in working hours.
+    let car = &w.vehicles.cars[vid];
+    let dealer = car.dealer.expect("the dealer's now");
+    assert!(car.spot().is_some(), "waits where it was parked to be fetched");
+    assert!(!w.citizens.contains_key(car.owner), "nobody's car any more");
+    let mut on_road = false;
+    for _ in 0..3000 {
         run(&mut w, 1);
-        if !w.vehicles.cars.contains_key(vid) {
+        let car = w.vehicles.cars.get(vid).expect("a sold car never vanishes in town");
+        if let CarPlace::Driving(cid) = car.place {
+            on_road = true;
+            assert!(matches!(w.traffic.cars[cid].errand, Errand::Sale(_)), "on its way to the dealer: {:?}", w.traffic.cars[cid].errand);
+        }
+        if car.spot().is_some_and(|s| s.kind == ParkKind::Dealer) {
             break;
         }
     }
-    assert!(!w.vehicles.cars.contains_key(vid), "the dealer's driver took it in");
-    assert!(w.vehicles.stats.destroyed_total > gone0 && w.vehicles.cars.len() < cars0 + 5);
+    assert!(on_road, "fetched by the dealer's driver");
+    let spot = *w.vehicles.cars[vid].spot().expect("parked on the forecourt");
+    assert_eq!((spot.kind, spot.building), (ParkKind::Dealer, Some(dealer)), "on the dealer's forecourt as used stock");
+    let lot = w.building_lot(dealer).unwrap();
+    assert!(crate::geom::point_in_polygon(spot.pos, &lot.polygon), "inside the dealer's lot, not on the road");
+    assert_eq!(w.vehicles.stats.destroyed_total, gone0, "still in the city");
+    assert_consistent(&w);
+    // Unsold, it goes to the trade out of town a few days later: driven
+    // off the map, never deleted on the forecourt.
+    // (Or a resident buys it off the forecourt first and it is delivered.)
+    let (mut left_by_road, mut resold) = (false, false);
+    for _ in 0..(6 * 1440) {
+        run(&mut w, 1);
+        match w.vehicles.cars.get(vid).map(|c| c.place) {
+            Some(CarPlace::Driving(cid)) => match w.traffic.cars[cid].errand {
+                Errand::Sale(_) => left_by_road = true,
+                Errand::Deliver => {
+                    resold = true;
+                    break;
+                }
+                e => panic!("a dealer's car on an errand of its own: {e:?}"),
+            },
+            Some(CarPlace::Parked(_)) => {}
+            None => break,
+        }
+    }
+    assert!(resold || (left_by_road && !w.vehicles.cars.contains_key(vid)), "sold on, or driven out of town to the trade");
+    if resold {
+        assert!(w.citizens.contains_key(w.vehicles.cars[vid].owner), "its new owner's");
+        return;
+    }
+    assert!(w.vehicles.stats.destroyed_total > gone0);
+    assert_consistent(&w);
+}
+
+#[test]
+fn a_mornings_car_sales_are_fetched_through_the_day_not_all_at_once() {
+    let (mut w, _shop, _lot) = town();
+    let mut sold = Vec::new();
+    for _ in 0..8 {
+        let c = resident(&mut w);
+        let home = w.citizens[c].home.unwrap();
+        let vid = w.give_car_parked(c, w.building_entrance(home).unwrap());
+        assert!(w.sell_car(c, "Sold the car.").is_some());
+        sold.push(vid);
+    }
+    // Fetched over the working day: never more than a few set off in an hour.
+    let mut started: Vec<u64> = Vec::new();
+    for _ in 0..(2 * 1440) {
+        run(&mut w, 1);
+        for &vid in &sold {
+            if matches!(w.vehicles.cars.get(vid).map(|c| c.place), Some(CarPlace::Driving(_))) && !started.contains(&(slotmap::Key::data(&vid).as_ffi())) {
+                started.push(slotmap::Key::data(&vid).as_ffi());
+                let h = w.clock.hour();
+                assert!((8..19).contains(&h), "fetched in working hours, not at {h}");
+            }
+        }
+    }
+    assert_eq!(started.len(), sold.len(), "every sold car was fetched");
+    // On the dealer's used-car line, or (the line full) driven on out of
+    // town to the trade: gone only at the map edge, counted as sold.
+    let sold0 = w.vehicles.stats.events_total.get("sold").copied().unwrap_or(0);
+    let mut on_court = 0;
+    let mut gone = 0;
+    for &vid in &sold {
+        match w.vehicles.cars.get(vid).map(|c| c.place) {
+            Some(CarPlace::Parked(s)) => {
+                assert_eq!(s.kind, ParkKind::Dealer, "on the forecourt");
+                on_court += 1;
+            }
+            Some(CarPlace::Driving(cid)) => assert!(matches!(w.traffic.cars[cid].errand, Errand::Sale(_)), "on its way out to the trade"),
+            None => gone += 1,
+        }
+    }
+    assert!(on_court >= 1, "the forecourt took some");
+    assert!(sold0 as usize >= gone, "every car gone left town as sold, none vanished");
+    assert_consistent(&w);
+}
+
+#[test]
+fn a_buyer_takes_a_used_car_off_the_forecourt() {
+    let (mut w, _shop, _lot) = town();
+    let a = resident(&mut w);
+    let home = w.citizens[a].home.unwrap();
+    let vid = w.give_car_parked(a, w.building_entrance(home).unwrap());
+    w.sell_car(a, "Sold the car.");
+    for _ in 0..(2 * 1440) {
+        run(&mut w, 1);
+        if w.vehicles.cars[vid].spot().is_some_and(|s| s.kind == ParkKind::Dealer) {
+            break;
+        }
+    }
+    assert_eq!(w.vehicles.cars[vid].spot().map(|s| s.kind), Some(ParkKind::Dealer));
+    let created = w.vehicles.stats.created_total;
+    let b = resident(&mut w);
+    let model = w.vehicles.cars[vid].model;
+    let paid = w.buy_car(b, model, 300.0).expect("bought");
+    assert!(paid <= 300.0);
+    assert_eq!(w.citizens[b].car, Some(vid), "the used car off the forecourt");
+    assert_eq!(w.vehicles.stats.created_total, created, "no new car made");
+    assert!(w.vehicles.cars[vid].dealer.is_none());
     assert_consistent(&w);
 }
 
@@ -389,3 +495,48 @@ fn nobody_parks_on_a_roundabout_ring() {
     assert!(w.roads.alive_segments().any(|(id, s)| s.is_street() && !w.on_ring(id) && w.kerb_allowed(id)));
 }
 
+
+#[test]
+fn a_driver_hunting_for_a_space_turns_into_a_lot_with_room_it_passes() {
+    // [parking] F5: "looking for parking" but driving past lots with room.
+    let (mut w, shop, lot) = town();
+    let c = resident(&mut w);
+    let home = w.citizens[c].home.unwrap();
+    let vid = w.give_car_parked(c, w.building_entrance(home).unwrap());
+    assert!(w.lot_open(lot), "the lot has room");
+    let (seg, pt) = w.truck_stop(lot).unwrap();
+    let (lane, s_gate, _) = w.traffic.net.nearest_lane_on(seg, pt).unwrap();
+    let len = w.traffic.net.lanes[lane as usize].length;
+    let s0 = (s_gate - 50.0).max(0.0);
+    assert!(s_gate - s0 > 5.0 && len - s_gate > 2.0, "room before and after the gate");
+    let spot = *w.vehicles.cars[vid].spot().unwrap();
+    // Circling with a free kerb slot as its goal, past the lot's gate.
+    let car = w.launch(vid, spot, vec![lane], s0, len - 0.5, c, Errand::Search { tries: 1 }).expect("on the road");
+    if w.traffic.cars[car].entering {
+        w.traffic.cars[car].entering = false;
+        w.traffic.insert_sorted(lane, car);
+    }
+    w.citizens[c].activity = Activity::Driving { car, to: Some(shop), purpose: Purpose::Shop(Resource::Goods) };
+    w.citizens[c].inside = None;
+    w.hunters_spot_lots();
+    assert_eq!(w.traffic.cars[car].errand, Errand::ToLot(lot), "turns in at the lot it is passing");
+    let used0 = w.buildings[lot].parking_used;
+    until_parked(&mut w, vid, 300);
+    let spot = *w.vehicles.cars[vid].spot().expect("parked");
+    assert_eq!((spot.kind, spot.building), (ParkKind::Lot, Some(lot)), "in the lot");
+    assert_eq!(w.buildings[lot].parking_used, used0 + 1);
+    assert_consistent(&w);
+}
+
+#[test]
+fn a_surface_lot_has_the_spaces_it_is_drawn_with() {
+    // [parking] F35: "13 of 30 spaces but I only see 3 cars". The lot's
+    // spaces are the bays its parcel fits, the bays it is drawn with.
+    let (w, _shop, lot) = town();
+    let b = &w.buildings[lot];
+    let bays = crate::parking_layout::surface_bays(&w.lots[b.lot]);
+    assert_eq!(b.parking_capacity as usize, bays.len());
+    for (p, _) in &bays {
+        assert!(crate::geom::point_in_polygon(*p, &w.lots[b.lot].polygon));
+    }
+}

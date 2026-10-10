@@ -92,7 +92,7 @@ mod ped_highway_tests;
 mod pillars;
 pub use pillars::deck_half_width;
 mod junctions;
-pub use junctions::{ApproachView, CrossingView, IntersectionView, PhaseView};
+pub use junctions::{ApproachView, CrossingView, IntersectionView, LaneView, MoveView, PhaseView};
 mod riders;
 mod places;
 #[cfg(test)]

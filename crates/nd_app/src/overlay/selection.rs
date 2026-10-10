@@ -105,7 +105,7 @@ pub fn draw_selection(gizmos: &mut Gizmos, pens: &mut Pens, cx: &SelectionCx) {
             // A selected person's places, from any camera.
             places(gizmos, w, id);
         }
-        Selection::Building(b) if outside => building(gizmos, w, b),
+        Selection::Building(b) if outside => building(gizmos, sim, b, cx.t),
         Selection::Building(_) => {}
         Selection::Car(id) if outside => car(gizmos, pens, w, f, id),
         Selection::Car(_) => {}
@@ -131,6 +131,11 @@ pub fn draw_selection(gizmos: &mut Gizmos, pens: &mut Pens, cx: &SelectionCx) {
             Some(net) => crate::ferry_select::draw_ship(gizmos, w, net, id, f),
             None => crate::ferry_select::draw_ship(gizmos, w, &crate::ferry_select::net(w).1, id, f),
         },
+        // [feat/pt-ux] Not from inside the cabin, nor underground.
+        Selection::Drone(id) if outside && !cx.under => crate::air_select::draw(gizmos, w, id, f, cx.t),
+        Selection::Drone(_) => {}
+        Selection::Rv(seed) if outside && !cx.under => crate::rv_select::draw(gizmos, w, seed),
+        Selection::Rv(_) => {}
     }
 }
 
@@ -198,8 +203,13 @@ fn unit(gizmos: &mut Gizmos, pens: &mut Pens, w: &World, f: f32, uid: nd_sim::Un
     }
 }
 
-fn building(gizmos: &mut Gizmos, w: &World, b: BuildingId) {
+fn building(gizmos: &mut Gizmos, sim: &Sim, b: BuildingId, t: f32) {
+    let w = &sim.world;
     lot_outline(gizmos, w, b, 1.6, GOLD);
+    // [feat/pt-ux] The whole building, not only its plot: its shape in
+    // gold, a band of light running up it and the edges pulsing, so a
+    // tower picked by its walls reads as picked from anywhere.
+    building_pulse(gizmos, sim, b, t);
     // [plant-groups] A Sunfield or Wind Park is selected whole.
     if let Some(g) = w.plant_group_of(b) {
         for m in g.members.into_iter().filter(|&m| m != b) {
@@ -219,6 +229,35 @@ fn building(gizmos: &mut Gizmos, w: &World, b: BuildingId) {
             }
         }
     }
+}
+
+/// [feat/pt-ux] The selected building's prism (`tools::building_prism`):
+/// footprint at the foot and the roof, the corners, and a ring of light
+/// sweeping up it, all breathing with `t`.
+fn building_pulse(gizmos: &mut Gizmos, sim: &Sim, b: BuildingId, t: f32) {
+    let Some((poly, base, top)) = crate::tools::building_prism(&sim.world, &sim.building_tops, b) else { return };
+    let breathe = 0.55 + 0.45 * (t * 3.2).sin();
+    let edge = Color::linear_rgb(3.2 * breathe + 0.6, 2.4 * breathe + 0.4, 0.7 * breathe + 0.1);
+    let at = |p: SVec2, y: f32| Vec3::new(p.x, y, p.y);
+    // Pushed out a hair so the lines are not lost in the walls.
+    let c = poly.iter().copied().fold(SVec2::ZERO, |a, p| a + p) / poly.len() as f32;
+    let poly: Vec<SVec2> = poly.iter().map(|&p| p + (p - c).normalize_or_zero() * 0.35).collect();
+    let (base, top) = (base + 0.1, top + 0.3);
+    for y in [base, top] {
+        super::shapes::outline(gizmos, &poly, |p| at(p, y), edge);
+    }
+    for &p in &poly {
+        gizmos.line(at(p, base), at(p, top), edge);
+    }
+    // Floors' worth of faint rings, and one bright one climbing.
+    let h = top - base;
+    let rings = ((h / 12.0) as usize).clamp(1, 14);
+    for i in 1..rings {
+        let y = base + h * i as f32 / rings as f32;
+        super::shapes::outline(gizmos, &poly, |p| at(p, y), GOLD.with_alpha(0.25 * breathe));
+    }
+    let sweep = base + h * (t * 0.45).fract();
+    super::shapes::outline(gizmos, &poly, |p| at(p, sweep), Color::linear_rgb(4.0, 3.2, 1.2));
 }
 
 fn car(gizmos: &mut Gizmos, pens: &mut Pens, w: &World, f: f32, id: CarId) {

@@ -250,3 +250,67 @@ fn a_car_changes_lanes_for_its_turn_before_the_solid_line() {
     let mid = steps[steps.len() / 2];
     assert!(steps[0] < mid && *steps.last().unwrap() < mid, "eased in and out: {steps:?}");
 }
+
+#[test]
+fn a_turn_lane_is_chosen_before_the_short_piece_to_the_junction_not_at_its_stop_line() {
+    // [lanes] F20/F21: a short piece of street (past a bend) before a
+    // junction whose left lane is left-only. Drivers wanting to turn right
+    // planned the change into the last metres of it (counted queues made
+    // the late change look cheaper than joining the right lane's queue
+    // upstream), then stood at the stop line to squeeze across.
+    let mut roads = RoadNetwork::default();
+    roads.add_polyline(&[Vec2::new(-400.0, 0.0), Vec2::new(-46.0, 0.0)], 2, 2);
+    roads.add_polyline(&[Vec2::new(-46.0, 0.0), Vec2::new(400.0, 0.0)], 2, 2);
+    roads.add_polyline(&[Vec2::new(0.0, -400.0), Vec2::new(0.0, 400.0)], 1, 1);
+    let mut t = Traffic::default();
+    t.rebuild(&roads);
+    let w = LANE_WIDTH;
+    let long = roads.nearest_street(Vec2::new(-200.0, 0.0)).unwrap().0;
+    let short = roads.nearest_street(Vec2::new(-20.0, 0.0)).unwrap().0;
+    assert_ne!(long, short, "two pieces meeting at a bend");
+    let (long_in, long_out) = (lane_of(&t, long, Vec2::X, 0), lane_of(&t, long, Vec2::X, 1));
+    let (short_in, short_out) = (lane_of(&t, short, Vec2::X, 0), lane_of(&t, short, Vec2::X, 1));
+    assert_eq!(t.net.lanes[short_in as usize].arrows, LEFT, "the inner lane at the junction is left-only");
+    // A queue in the right lane upstream.
+    for k in 0..10 {
+        let len = t.net.lanes[long_out as usize].length;
+        let id = t.spawn_car(CitizenId::default(), None, vec![long_out], len - 5.0 - 7.0 * k as f32, len - 1.0, 0);
+        if t.cars[id].entering {
+            t.cars[id].entering = false;
+            t.insert_sorted(long_out, id);
+        }
+    }
+    assert_eq!(t.net.lanes[long_out as usize].cars.len(), 10);
+    let north = roads.nearest_street(Vec2::new(0.0, 200.0)).unwrap().0;
+    let (route, _, _) = t.net.find_route(long, Vec2::new(-300.0, 0.5 * w), north, Vec2::new(-0.5 * w, 150.0)).expect("route");
+    assert_eq!(route[0], long_in);
+    assert!(!route.windows(2).any(|p| p == [short_in, short_out]), "no change planned at the stop line: {route:?}");
+    assert!(route.windows(2).any(|p| p == [long_in, long_out]), "it joins the right lane upstream: {route:?}");
+}
+
+#[test]
+fn cars_routed_through_a_turn_the_arrows_now_forbid_plan_again() {
+    // [lanes] F21: arrows adapt to the turns counted; a car routed earlier
+    // through a turn its lane no longer allows replans from where it is.
+    let roads = avenue_cross();
+    let mut t = Traffic::default();
+    t.rebuild(&roads);
+    let w = LANE_WIDTH;
+    let west = roads.nearest_street(Vec2::new(-200.0, 0.0)).unwrap().0;
+    let inner = lane_of(&t, west, Vec2::X, 0);
+    let ai = t.net.lanes[inner as usize].approach as usize;
+    // Both lanes may go straight for now; a car is routed straight on in
+    // the inner lane.
+    t.net.set_arrows(ai, vec![LEFT | STRAIGHT, STRAIGHT | RIGHT]);
+    let east = roads.nearest_street(Vec2::new(200.0, 0.0)).unwrap().0;
+    let (route, s0, s1) = t.net.find_route(west, Vec2::new(-300.0, 0.5 * w), east, Vec2::new(200.0, 0.5 * w)).expect("route");
+    let car = t.spawn_car(CitizenId::default(), None, route, s0, s1, 0);
+    let straight_from_inner = |t: &Traffic| t.cars[car].route.windows(2).any(|p| p[0] == inner && t.net.lanes[p[1] as usize].is_connector() && t.net.lanes[p[1] as usize].turn == 0);
+    assert!(straight_from_inner(&t), "straight on from the inner lane");
+    // The inner lane becomes left-only.
+    t.net.set_arrows(ai, vec![LEFT, STRAIGHT | RIGHT]);
+    t.replan_forbidden_turns();
+    assert!(!straight_from_inner(&t), "no longer straight on from a left-only lane: {:?}", t.cars[car].route);
+    let c = &t.cars[car];
+    assert!(c.route[c.idx..].iter().all(|&l| t.net.lanes[l as usize].permitted), "every turn ahead allowed");
+}
