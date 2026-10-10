@@ -1,5 +1,5 @@
 //! The Edit tool: pick a road to upgrade, drag, insert and delete control
-//! points, open the Intersection editor on a junction; its preview (every
+//! points, offer the Intersection editor on a hovered junction; its preview (every
 //! control point, the hovered and selected gestures, lane arrows).
 
 use bevy::prelude::*;
@@ -105,10 +105,14 @@ pub(super) fn nearest_gesture(plan: &Plan, p: SVec2) -> Option<(GestureId, usize
 
 /// Hover, drag, click, Shift+click and Delete.
 pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection) {
-    let Frame { ctrl, click, ground, shift_click, buttons, plan, .. } = *f;
+    let Frame { click, ground, shift_click, buttons, plan, .. } = *f;
     let map_key = |k: KeyCode| f.map_key(k);
     tools.hover_point = ground.and_then(|p| nearest_control_point(plan, p));
     tools.hover_gesture = ground.and_then(|p| nearest_gesture(plan, p)).map(|(id, _)| id);
+    // [pt-ux] A junction under the pointer (or the remote API's pin) is
+    // offered with an "Edit intersection" button; a click there edits the
+    // roads as anywhere else.
+    tools.junction_hover = if tools.drag.is_some() { None } else { tools.cursor_pin.or(ground).and_then(|p| crate::ui::junction::target_at(&sim.world, p)) };
 
     if let Some((id, idx)) = tools.drag {
         if let (Some(p), Some(mut g)) = (ground, plan.gestures.get(&id).cloned()) {
@@ -128,13 +132,9 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, selection: 
             tools.drag = None;
         }
     } else if click {
-        // [tools] A junction or a crosswalk opens the Intersection
-        // editor (Ctrl+click still grabs a control point there).
-        let target = ground.filter(|_| !ctrl).and_then(|p| crate::ui::junction::target_at(&sim.world, p));
-        if let Some(at) = target {
-            tools.junction_editor = crate::ui::junction::EditorState::open(&sim.world, at);
-            tools.status = "Intersection editor: lanes, left turns, signals and crosswalks.".into();
-        } else if let Some(hp) = tools.hover_point {
+        // [pt-ux] The Intersection editor opens from the button beside a
+        // hovered junction, not from a click on it.
+        if let Some(hp) = tools.hover_point {
             tools.drag = Some(hp);
             tools.drag_moved = false;
             tools.selected_gesture = Some(hp.0);
@@ -200,6 +200,13 @@ pub(super) fn preview(gizmos: &mut Gizmos, p: &Preview) {
                 if let Some(&first) = pts.first() { pts.push(first); }
             }
             gizmos.linestrip(pts, colour);
+        }
+    }
+    // [pt-ux] The junction offered for the Intersection editor: a ring.
+    if let Some(at) = tools.junction_hover.filter(|_| tools.junction_editor.is_none()) {
+        let r = sim.world.junction_at(at, 2.0).and_then(|k| sim.world.traffic.net.intersections.get(k)).map_or(8.0, |i| i.radius + 3.0);
+        for k in 0..2 {
+            gizmos.circle(flat_at(lift(at) + Vec3::Y * (0.6 + 0.3 * k as f32)), r, Color::linear_rgb(0.4, 2.2, 3.0));
         }
     }
     // [clarity] The selected road's lanes as big arrows, one per
