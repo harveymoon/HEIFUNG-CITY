@@ -22,11 +22,16 @@ impl World {
                 }
                 true
             }
-            Errand::Leave | Errand::Sale(_) => {
+            Errand::Leave => {
                 self.traffic.remove_car(car_id);
                 if let Some(vid) = owned {
-                    self.drop_car(vid, if errand == Errand::Leave { CarEvent::Emigrated } else { CarEvent::Sold });
+                    self.drop_car(vid, CarEvent::Emigrated);
                 }
+                true
+            }
+            // [carlife] Onto the dealer's forecourt, or out of town.
+            Errand::Sale(d) => {
+                self.sale_arrived(car_id, d, owned);
                 true
             }
             Errand::Patrol(office) => {
@@ -205,6 +210,58 @@ impl World {
         }
     }
 
+    /// [parking] A driver hunting for a space (circling the blocks, or
+    /// making for a kerb slot further off) who is about to pass the gate of
+    /// an open parking lot with room, within reach of where they are going,
+    /// turns in there instead of driving on past it (a player's city:
+    /// "looking for parking" past three lots with room).
+    pub(in crate::world) fn hunters_spot_lots(&mut self) {
+        let mut gates: std::collections::HashMap<LaneId, Vec<(BuildingId, f32, Vec2)>> = std::collections::HashMap::new();
+        let open: Vec<BuildingId> = self.buildings.keys().filter(|&b| self.lot_open(b)).collect();
+        for b in open {
+            let Some((seg, pt)) = self.truck_stop(b) else { continue };
+            let Some((lane, s, _)) = self.traffic.net.nearest_lane_on(seg, pt) else { continue };
+            let Some(center) = self.building_lot(b).map(|l| l.center) else { continue };
+            gates.entry(lane).or_default().push((b, s, center));
+        }
+        if gates.is_empty() {
+            return;
+        }
+        let hunting: Vec<(CarId, LaneId, f32, Errand, CitizenId, Vec2)> = self
+            .traffic
+            .cars
+            .iter()
+            .filter(|(_, c)| matches!(c.errand, Errand::Search { .. } | Errand::ToKerb) && c.owned.is_some() && !c.entering && c.hold <= 0.0 && !c.crashed() && !c.in_stunt())
+            .filter(|(_, c)| gates.contains_key(&c.route[c.idx]))
+            .map(|(id, c)| {
+                let last = *c.route.last().unwrap();
+                let end = self.traffic.net.lanes[last as usize].point_at(c.s_end).0;
+                (id, c.route[c.idx], c.s, c.errand, c.citizen, end)
+            })
+            .collect();
+        for (id, lane, s, errand, driver, end) in hunting {
+            let target = match self.citizens.get(driver).map(|c| &c.activity) {
+                Some(Activity::Driving { to: Some(b), .. }) => self.building_entrance(*b),
+                _ => None,
+            };
+            let Some(target) = target else { continue };
+            let reach = LOT_WALK * 2.0;
+            let money_w = self.money_weight(driver);
+            let pick = gates[&lane].iter().filter(|(b, gate_s, center)| {
+                let ahead = *gate_s - s;
+                let fee = self.buildings[*b].parking_price * money_w;
+                // Ahead within sight, near enough the destination, and (for
+                // a driver making for a free kerb) no further from it than
+                // that slot or not dear for this driver.
+                (3.0..LOT_SPOT_AHEAD).contains(&ahead) && center.distance(target) <= reach && (matches!(errand, Errand::Search { .. }) || center.distance(target) <= end.distance(target) + 40.0 || fee < 15.0)
+            }).min_by(|a, b| a.1.total_cmp(&b.1)).copied();
+            let Some((b, gate_s, _)) = pick else { continue };
+            if self.traffic.follow(id, vec![lane], gate_s) {
+                self.traffic.cars[id].errand = Errand::ToLot(b);
+            }
+        }
+    }
+
     pub(in crate::world) fn lot_open(&self, b: BuildingId) -> bool {
         self.buildings.get(b).is_some_and(|bld| bld.is_parking() && bld.parking_free() > 0 && bld.business.as_ref().is_some_and(|z| !z.closed))
     }
@@ -270,7 +327,9 @@ impl World {
             .iter()
             .filter(|(id, _)| self.lot_open(*id))
             .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (l.center.distance(target), id, b.parking_price)))
-            .filter(|(d, _, _)| *d <= LOT_WALK && !worn_out)
+            // [parking] A driver who has been at it a while walks further
+            // from a lot, and a lot still beats leaving the car anywhere.
+            .filter(|(d, _, _)| *d <= if desperate { LOT_WALK * 2.0 } else { LOT_WALK })
             .collect();
         lots.sort_by(|a, b| a.0.total_cmp(&b.0));
         for (d, b, fee) in lots.into_iter().take(3) {

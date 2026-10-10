@@ -305,11 +305,21 @@ impl Landscape {
     /// [`MAX_GRADED_SLOPE`], or more than [`MAX_LOT_RELIEF`] of rise across
     /// it to cut and fill. Ordinary hillsides pass: their lots are graded.
     pub fn lot_ground_problem(&self, polygon: &[Vec2], center: Vec2) -> Option<&'static str> {
+        match self.lot_ground(polygon, center) {
+            LotGround::Problem(why) => Some(why),
+            _ => None,
+        }
+    }
+
+    /// [hillside] What the ground of a lot is: level enough to grade, a
+    /// hillside to terrace (homes, shops and clubs only), or a problem (in
+    /// the water, a sheer cliff, too much drop to terrace).
+    pub fn lot_ground(&self, polygon: &[Vec2], center: Vec2) -> LotGround {
         if self.is_flat() {
-            return None;
+            return LotGround::Level;
         }
         if self.is_water(center) {
-            return Some("under water");
+            return LotGround::Problem("under water");
         }
         let n = polygon.len();
         let mut pts: Vec<Vec2> = Vec::with_capacity(n * 2 + 1);
@@ -318,14 +328,18 @@ impl Landscape {
             pts.push(polygon[k].lerp(polygon[(k + 1) % n], 0.5));
         }
         pts.push(center);
-        if self.slope_over(&pts) > MAX_GRADED_SLOPE {
-            return Some("a cliff: too steep to level for building");
+        let slope = self.slope_over(&pts);
+        if slope > MAX_TERRACE_SLOPE {
+            return LotGround::Problem("a sheer cliff: too steep even to terrace");
         }
         let (lo, hi) = pts.iter().map(|p| self.height(*p)).fold((f32::MAX, f32::MIN), |(lo, hi), h| (lo.min(h), hi.max(h)));
-        if hi - lo > MAX_LOT_RELIEF {
-            return Some("the hillside drops too far across this ground to terrace it");
+        if hi - lo > MAX_TERRACE_RELIEF {
+            return LotGround::Problem("the hillside drops too far across this ground to terrace it");
         }
-        None
+        if slope > MAX_GRADED_SLOPE || hi - lo > MAX_LOT_RELIEF {
+            return LotGround::Hillside;
+        }
+        LotGround::Level
     }
 
     /// Steepest rise over run between any two of `pts`.
@@ -400,4 +414,15 @@ impl Landscape {
         }
         out
     }
+}
+
+/// [hillside] The ground of a lot (`Landscape::lot_ground`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LotGround {
+    /// Gentle enough to level the whole lot to its street.
+    Level,
+    /// Steep: terraced, for homes, shops and clubs.
+    Hillside,
+    /// Not to be built on, and why.
+    Problem(&'static str),
 }

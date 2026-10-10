@@ -234,7 +234,11 @@ pub fn car_dealer(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let yaw = -FRAC_PI_2;
     let (cw, cd) = (2.7, 5.3);
     let mut cars = 0;
-    let mut v = court.v0 + cd * 0.5;
+    // [carlife] The front row along the street is the used-car line: the
+    // sim's own stock (cars it bought from residents) stands there
+    // (`World::forecourt_spot`), drawn by the renderer; the new cars start
+    // a row back.
+    let mut v = court.v0 + cd * 0.5 + cd + if t == 0 { 0.4 } else { 1.2 };
     let pitch = if t == 2 { 3.1 } else { cw };
     while v + cd * 0.5 <= court.v1 && cars < 26 {
         let n = ((court.w() / pitch).floor() as i32).max(0);

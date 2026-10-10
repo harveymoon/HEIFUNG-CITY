@@ -55,6 +55,21 @@ impl Plugin for MetroUxPlugin {
 }
 
 /// The metro line tool is in hand.
+/// [pt-ux] The people standing on each metro platform: waiting
+/// (`Activity::Waiting`) for a metro leg that boards there.
+pub fn waiting_by_station(w: &World) -> std::collections::HashMap<BuildingId, Vec<nd_sim::CitizenId>> {
+    let mut out: std::collections::HashMap<BuildingId, Vec<nd_sim::CitizenId>> = std::collections::HashMap::new();
+    for (id, c) in w.citizens.iter() {
+        if !matches!(c.activity, nd_sim::Activity::Waiting { .. }) {
+            continue;
+        }
+        if let Some(nd_sim::transit::TransitLeg::Subway { board, .. }) = c.transit.map(|t| t.leg) {
+            out.entry(board).or_default().push(id);
+        }
+    }
+    out
+}
+
 pub fn tool_active(t: &ToolState) -> bool {
     t.tool == Tool::Transit && t.transit_mode == TransitMode::Metro
 }

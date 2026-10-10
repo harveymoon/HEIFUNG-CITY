@@ -65,6 +65,7 @@ impl World {
     /// The trip under way began: note its mode and when.
     pub(in crate::world) fn begin_trip(&mut self, id: CitizenId, mode: TripMode, distance: f32) {
         crate::prof_scope!("begin_trip");
+        self.clear_stuck(id);
         let tick = self.clock.tick;
         let c = &mut self.citizens[id];
         c.commute.mode = Some(mode);

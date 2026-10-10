@@ -184,6 +184,17 @@ impl Enforcement {
     }
 }
 
+/// [parking-fit] Surface parking: m² a space (aisles included), and what
+/// a m² costs to build and keep a day.
+pub const SURFACE_M2_PER_SPACE: f32 = 21.0;
+pub const SURFACE_COST_PER_M2: f32 = 10.0;
+pub const SURFACE_UPKEEP_PER_M2: f32 = 0.083;
+/// [parking-fit] A multi-storey car park: m² a space on each deck, and
+/// what a m² of its plot costs to build and keep a day.
+pub const DECK_M2_PER_SPACE: f32 = 15.0;
+pub const DECK_COST_PER_M2: f32 = 49.0;
+pub const DECK_UPKEEP_PER_M2: f32 = 0.356;
+
 /// The three sizes of parking lot the player can place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum LotSize {
@@ -197,6 +208,45 @@ pub enum LotSize {
 
 impl LotSize {
     pub const ALL: [LotSize; 3] = [LotSize::Small, LotSize::Large, LotSize::MultiStorey];
+    /// [parking-fit] What the Build window offers: a surface lot that fills
+    /// the plot it is put on, and a multi-storey car park (the same, in
+    /// decks). Spaces, cost and upkeep go by the plot's area; a lot put next
+    /// to one of the city's own joins it. (The small lot is kept for saves
+    /// and the API: it is a surface lot like any other.)
+    pub const OFFERED: [LotSize; 2] = [LotSize::Large, LotSize::MultiStorey];
+
+    /// [parking-fit] A surface lot (either size) rather than decks.
+    pub fn surface(self) -> bool {
+        self != LotSize::MultiStorey
+    }
+
+    /// [parking-fit] Spaces on a plot of `area` m².
+    pub fn capacity_for(self, area: f32) -> u16 {
+        if self.surface() {
+            (area / SURFACE_M2_PER_SPACE).clamp(4.0, 2000.0) as u16
+        } else {
+            ((area / DECK_M2_PER_SPACE) * self.floors() as f32).clamp(8.0, 6000.0) as u16
+        }
+    }
+
+    /// [parking-fit] What it costs to build on a plot of `area` m².
+    pub fn cost_for(self, area: f32) -> f32 {
+        area * if self.surface() { SURFACE_COST_PER_M2 } else { DECK_COST_PER_M2 }
+    }
+
+    /// [parking-fit] Upkeep a day on a plot of `area` m².
+    pub fn upkeep_for(self, area: f32) -> f32 {
+        area * if self.surface() { SURFACE_UPKEEP_PER_M2 } else { DECK_UPKEEP_PER_M2 }
+    }
+
+    /// [parking-fit] Attendants on a plot of `area` m².
+    pub fn jobs_for(self, area: f32) -> u16 {
+        if self.surface() {
+            1 + (area / 500.0) as u16
+        } else {
+            2 + (area / 225.0) as u16
+        }
+    }
 
     pub fn key(self) -> &'static str {
         match self {
@@ -226,7 +276,7 @@ impl LotSize {
     pub fn menu_label(self) -> &'static str {
         match self {
             LotSize::Small => "Parking lot (small)",
-            LotSize::Large => "Parking lot (large)",
+            LotSize::Large => "Parking lot (fills the plot)",
             LotSize::MultiStorey => "Car park (multi-storey)",
         }
     }
@@ -250,8 +300,8 @@ impl LotSize {
 
     pub fn min_area(self) -> f32 {
         match self {
-            LotSize::Small => 250.0,
-            LotSize::Large => 600.0,
+            // [parking-fit] A surface lot fills whatever plot it is put on.
+            LotSize::Small | LotSize::Large => 250.0,
             LotSize::MultiStorey => 450.0,
         }
     }
@@ -295,4 +345,15 @@ impl LotSize {
 pub struct CityLot {
     pub size: LotSize,
     pub price: f32,
+    /// [parking-fit] Its plot's area, m² (0 in a save from before: the
+    /// size's own fixed figures).
+    #[serde(default)]
+    pub area: f32,
+}
+
+impl CityLot {
+    /// [parking-fit] Upkeep a day: by its plot's area.
+    pub fn upkeep_per_day(&self) -> f32 {
+        if self.area > 0.0 { self.size.upkeep_for(self.area) } else { self.size.upkeep_per_day() }
+    }
 }

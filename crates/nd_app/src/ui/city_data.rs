@@ -11,11 +11,12 @@
 //! right of the sub-tab row on pages with charts over time, one setting for
 //! them all.
 //!
-//! The tools stay floating windows above it: the inspector, the Build
-//! window, the Lines editor, View (map layers), Saves, Help, Dev. A name
-//! clicked in a page selects it (the inspector opens over the page); a "go"
-//! button that flies the camera somewhere also closes the view, so the
-//! player sees where it went.
+//! [pt-ux] It sits above every other pane while it is open (the tool
+//! windows, the inspector, the Build window, the Committee: all below it,
+//! where they stay until it closes), on the foreground layer. A name
+//! clicked in a page selects it and closes the view, so the inspector shows
+//! beside the map; a "go" button that flies the camera somewhere also
+//! closes the view, so the player sees where it went.
 //!
 //! Whether it is open and which page shows (and each tab's last sub-tab)
 //! live in egui memory, so they last the session and the UI keeps no state
@@ -411,8 +412,10 @@ pub fn show(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) -> Option<e
     let mut keep = true;
     let flew = p.fly_to.is_some();
     let followed = p.follow.target;
+    let picked = *p.selection;
+    // [pt-ux] Above every pane (they are on the middle layer).
     egui::Area::new(egui::Id::new("city_data_view"))
-        .order(egui::Order::Background)
+        .order(egui::Order::Foreground)
         .fixed_pos(content.min)
         .movable(false)
         .constrain(false)
@@ -484,6 +487,11 @@ pub fn show(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) -> Option<e
         });
     // A "go" pressed on the page: show the map, where the camera went.
     if (!flew && p.fly_to.is_some()) || (p.follow.target.is_some() && p.follow.target != followed) {
+        keep = false;
+    }
+    // [pt-ux] A name picked on the page: show its inspector over the map
+    // (the panes are below the view while it is open).
+    if *p.selection != picked && *p.selection != crate::tools::Selection::None {
         keep = false;
     }
     if !keep {

@@ -262,6 +262,9 @@ fn waterfront_docks_moor_their_boats() {
     }
     assert!(moored > 0, "no boat moored at {placed:?}");
     let g = crate::terrain::waterworks(&w, &pal);
-    assert!(g.get(crate::surface::Surface::Panel).indices.len() > 100, "the moored boats are drawn");
     valid(&g, "waterworks");
+    // [pt-visual] The moored boats are drawn apart from the dock works.
+    let boats = crate::terrain::moored_boats(&w, &pal);
+    assert!(boats.get(crate::surface::Surface::Panel).indices.len() > 100, "the moored boats are drawn");
+    valid(&boats, "moored boats");
 }

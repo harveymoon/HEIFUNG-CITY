@@ -162,11 +162,20 @@ impl World {
         if let Some(exit) = self.leave_building(id) {
             self.citizens[id].pos = exit;
         }
+        // [pt-walk] Say why (a place cut off from the pedestrian grid, or
+        // the walker), log it for the "no route found" alert, and show them
+        // as stuck rather than merely loitering.
+        let why = self.no_route_reason(walk_from, target);
+        let thought = match why.as_str() {
+            "the grid doesn't connect" => "No way through. The grid doesn't connect.".to_string(),
+            w => format!("No way through: {w}."),
+        };
+        self.note_failed_trip(id, walk_from, target, &why);
         let c = &mut self.citizens[id];
-        c.thought = "No way through. The grid doesn't connect.".to_string();
+        c.thought = thought.clone();
         c.activity = Activity::Idle;
         let tick = self.clock.tick;
-        self.concerns.said(tick, id, &self.citizens[id], crate::concerns::Concern::Commute, 0.5, "No way through. The grid doesn't connect.");
+        self.concerns.said(tick, id, &self.citizens[id], crate::concerns::Concern::Commute, 0.5, &thought);
     }
 
     /// On foot or by bike along the streets (walkers through the blocks).

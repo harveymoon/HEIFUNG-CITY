@@ -24,6 +24,9 @@ pub struct ToolState {
     /// [free-placement] Bulldoze tool: the city building under the pointer
     /// (a click bulldozes it).
     pub hover_city_building: Option<nd_sim::BuildingId>,
+    /// [pt-ux] Bulldoze tool: the piece of the hovered road a click takes
+    /// (junction to junction), as metres along its built polyline.
+    pub hover_piece: Option<(GestureId, f32, f32)>,
     /// [dirty-industry] Bulldoze tool: clean up contaminated ground
     /// instead of removing things, over a circle of `cleanup_radius` metres.
     pub cleanup: bool,
@@ -140,6 +143,9 @@ pub struct ToolState {
     pub pillars: PillarNote,
     /// [tools] The Intersection editor, when open.
     pub junction_editor: Option<crate::ui::junction::EditorState>,
+    /// [pt-ux] Edit tool: the junction (or crosswalk) under the pointer,
+    /// offered with an "Edit intersection" button (`ui::junction::hover_button`).
+    pub junction_hover: Option<SVec2>,
     /// [tools] What implementing the active project would refuse on,
     /// refreshed with the plan view (None: nothing).
     pub plan_check: Option<nd_sim::ProjectCheck>,
@@ -401,6 +407,7 @@ impl Default for ToolState {
             hover_point: None,
             hover_gesture: None,
             hover_city_building: None,
+            hover_piece: None,
             cleanup: false,
             cleanup_radius: 80.0,
             build_here: None,
@@ -449,6 +456,7 @@ impl Default for ToolState {
             cursor_pin: None,
             pillars: Default::default(),
             junction_editor: None,
+            junction_hover: None,
             plan_check: None,
         }
     }

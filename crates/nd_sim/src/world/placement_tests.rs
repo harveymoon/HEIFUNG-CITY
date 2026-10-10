@@ -183,3 +183,70 @@ fn a_city_building_keeps_its_own_use_whatever_the_ground() {
     assert_eq!(w.buildings[depot].land_use, LandUse::Industrial, "a rebuild keeps it");
     assert_eq!(crate::power::demand_mw(&w.buildings[depot]), draw);
 }
+
+/// [big-sites] A stadium put on a home's plot takes in as many of the
+/// plots beside it as it needs: what grew there is bought out and the
+/// ground becomes one lot of at least the stadium's size.
+#[test]
+fn a_stadium_takes_several_plots_to_reach_its_size() {
+    let mut w = town();
+    let what = Placeable::Service(ServiceKind::Stadium, Tier::Mid);
+    let lot = home_lot(&w, 0.0);
+    assert!(w.lots[lot].area() < what.min_area(), "one plot is too small ({:.0} m²)", w.lots[lot].area());
+    // Something grew next door: it is bought out.
+    let next = w.lots.iter().filter(|(id, l)| *id != lot && l.land_use == LandUse::Residential && l.usable() && l.center.distance(w.lots[lot].center) < 30.0).map(|(id, _)| id).next().expect("a neighbour");
+    w.build_on(next);
+    let grown = w.lots[next].building.expect("grew");
+    let lots0 = w.lots.len();
+    let site = w.placement_site(what, w.lots[lot].center).unwrap();
+    assert!(!site.joined.is_empty(), "the site joins neighbours: {}", site.note());
+    assert!(w.site_problem(what, &site).is_none(), "{:?}", w.site_problem(what, &site));
+    let id = w.place_building(what, w.lots[lot].center).expect("a stadium over several plots");
+    let l = &w.lots[w.buildings[id].lot];
+    assert!(l.area() >= what.min_area() * 0.98, "its lot is {:.0} m²", l.area());
+    assert!(w.lots.len() < lots0, "plots were joined");
+    assert!(w.buildings.get(grown).is_none_or(|b| b.demolition.is_some()), "what grew there was bought out");
+    // The joined ground stays one lot through road works.
+    let outline = l.polygon.clone();
+    w.add_road(&[Vec2::new(-600.0, 300.0), Vec2::new(600.0, 300.0)], 1, 1);
+    assert_eq!(w.lots[w.buildings[id].lot].polygon, outline);
+}
+
+/// [parking-fit] A parking lot fills its plot (spaces and cost by area),
+/// and one put next to the city's own joins it into one bigger lot.
+#[test]
+fn a_parking_lot_next_to_the_citys_own_joins_it() {
+    use crate::enforcement::LotSize;
+    let mut w = town();
+    let a = home_lot(&w, 0.0);
+    let area_a = w.lots[a].area();
+    let t0 = w.economy.treasury;
+    let p = w.place_on_lot(Placeable::ParkingLot(LotSize::Large), a).expect("a surface lot");
+    // (The treasury is an f32 of millions: half a unit is its grain.)
+    assert!((t0 - w.economy.treasury - LotSize::Large.cost_for(area_a)).abs() < 1.0);
+    // The bays drawn on its ground.
+    let spaces_a = crate::parking_layout::surface_capacity(&w.lots[w.buildings[p].lot]);
+    assert_eq!(w.buildings[p].parking_capacity, spaces_a);
+    let home = w.buildings[p].lot;
+    let b = w.lots.iter().filter(|(id, l)| *id != home && l.land_use == LandUse::Residential && l.usable() && l.building.is_none()).min_by(|x, y| x.1.center.distance(w.lots[home].center).total_cmp(&y.1.center.distance(w.lots[home].center))).map(|(id, _)| id).unwrap();
+    let area_b = w.lots[b].area();
+    let lots0 = w.lots.len();
+    let t1 = w.economy.treasury;
+    let q = w.place_on_lot(Placeable::ParkingLot(LotSize::Large), b).expect("next door");
+    assert_eq!(q, p, "it joins the lot next door");
+    assert_eq!(w.lots.len(), lots0 - 1, "one lot, not two");
+    assert!((t1 - w.economy.treasury - LotSize::Large.cost_for(area_b)).abs() < 1.0, "paid for the ground it added");
+    let area = w.lots[w.buildings[p].lot].area();
+    assert!((area - area_a - area_b).abs() < 2.0, "the lot is both plots ({area:.0} m²)");
+    assert_eq!(w.buildings[p].parking_capacity, crate::parking_layout::surface_capacity(&w.lots[w.buildings[p].lot]), "with the bays of both");
+    assert!(w.buildings[p].parking_capacity > spaces_a, "more than one plot's");
+    assert!((w.vehicles.city_lots[&p].upkeep_per_day() - LotSize::Large.upkeep_for(area)).abs() < 1e-3);
+    // A multi-storey car park is another kind: it does not join a surface lot.
+    let c = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Residential && l.usable() && l.building.is_none() && l.area() >= LotSize::MultiStorey.min_area()).min_by(|x, y| x.1.center.distance(w.lots[w.buildings[p].lot].center).total_cmp(&y.1.center.distance(w.lots[w.buildings[p].lot].center))).map(|(id, _)| id);
+    if let Some(c) = c {
+        let r = w.place_on_lot(Placeable::ParkingLot(LotSize::MultiStorey), c).expect("a car park");
+        assert_ne!(r, p);
+    }
+    // The menu offers one surface lot and the multi-storey.
+    assert_eq!(LotSize::OFFERED.len(), 2);
+}

@@ -39,7 +39,7 @@ fn rank_in(ranking: &[(nd_sim::BuildingId, f32)], id: nd_sim::BuildingId, h: f32
 
 /// The inspector's line for any standing building; a league tower's
 /// record in full.
-pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId, selection: &mut Selection) {
+pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId, selection: &mut Selection, tops: &crate::fire_scene::BuildingTops, rules: &nd_procgen::BuildingRules) {
     let Some(b) = w.buildings.get(id) else { return };
     if b.land_use == nd_sim::LandUse::Park || b.is_power() || b.is_parking() {
         return;
@@ -49,8 +49,22 @@ pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildi
     let ranking = b.operating().then(|| w.skyline_ranking());
     let rank = ranking.as_deref().map(|ranking| rank_in(ranking, id, h));
     let Some(t) = b.plot.tower else {
-        if let Some(r) = rank.filter(|r| *r <= 10) {
-            hint(ui, &format!("about {h:.0} m high · the city's {} tallest", if r == 1 { String::new() } else { ordinal(r) }).replace("  ", " "));
+        // [pt-growth] (F8) An ordinary building is ranked by how tall it is
+        // drawn (`BuildingTops`, the renderer's walls and roof), not by its
+        // floors at a storey height: a style can draw a ten-floor civic
+        // site as a low monument, and that is what the player sees.
+        let drawn = |bid: nd_sim::BuildingId| match w.buildings.get(bid).and_then(|x| x.plot.tower) {
+            Some(t) => t.height,
+            None => tops.height(w, bid, rules),
+        };
+        let hd = drawn(id);
+        if let Some(ranking) = ranking.as_deref() {
+            let mut by_drawn: Vec<(nd_sim::BuildingId, f32)> = ranking.iter().map(|(bid, _)| (*bid, drawn(*bid))).collect();
+            by_drawn.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+            let r = rank_in(&by_drawn, id, hd);
+            if r <= 10 {
+                hint(ui, &format!("about {hd:.0} m high · the city's {} tallest", if r == 1 { String::new() } else { ordinal(r) }).replace("  ", " "));
+            }
         }
         return;
     };
@@ -151,44 +165,62 @@ pub fn page(ui: &mut egui::Ui, p: &mut UiCtx) {
 
     heading(ui, "The tallest buildings");
     let ranking = w.skyline_ranking();
-    pane::table(ui, "skyline_rank", &["#", "building", "height", "class", "owner", ""], |ui| {
-        for (i, (id, h)) in ranking.iter().take(15).enumerate() {
-            let b = &w.buildings[*id];
-            ui.label(egui::RichText::new(format!("{}", i + 1)).color(if i == 0 { GOLD } else { IVORY }));
-            if ui.link(&b.name).clicked() {
-                pick = Some(*id);
-            }
-            ui.label(format!("{h:.0} m"));
-            match b.plot.tower {
-                Some(t) => ui.label(egui::RichText::new(t.league().label()).color(league_color(t.league()))),
-                None => ui.label(egui::RichText::new(format!("{} floors", b.floors)).weak()),
-            };
-            ui.label(w.owner_of(*id).map_or(String::new(), |(_, o)| o.name.clone()));
-            if ui.small_button("go").clicked() {
-                fly = w.footprint(*id).map(|l| Vec2::new(l.center.x, l.center.y));
-            }
-            ui.end_row();
+    // [pt-ux] Sortable; # is the rank by height.
+    let ranked: Vec<(usize, nd_sim::BuildingId, f32)> = ranking.iter().take(15).enumerate().map(|(i, (id, h))| (i, *id, *h)).collect();
+    let key = |r: &(usize, nd_sim::BuildingId, f32), c: usize| {
+        let b = &w.buildings[r.1];
+        match c {
+            0 => pane::SortKey::num(r.0 as f64),
+            1 => pane::SortKey::text(b.name.clone()),
+            2 => pane::SortKey::num(r.2),
+            3 => pane::SortKey::text(b.plot.tower.map_or(format!("{} floors", b.floors), |t| t.league().label().to_string())),
+            4 => w.owner_of(r.1).map_or(pane::SortKey::None, |(_, o)| pane::SortKey::text(o.name.clone())),
+            _ => pane::SortKey::None,
+        }
+    };
+    pane::sortable_plain(ui, "skyline_rank", &["#", "building", "height", "class", "owner", ""], &ranked, key, |ui, &(i, id, h)| {
+        let b = &w.buildings[id];
+        ui.label(egui::RichText::new(format!("{}", i + 1)).color(if i == 0 { GOLD } else { IVORY }));
+        if ui.link(&b.name).clicked() {
+            pick = Some(id);
+        }
+        ui.label(format!("{h:.0} m"));
+        match b.plot.tower {
+            Some(t) => ui.label(egui::RichText::new(t.league().label()).color(league_color(t.league()))),
+            None => ui.label(egui::RichText::new(format!("{} floors", b.floors)).weak()),
+        };
+        ui.label(w.owner_of(id).map_or(String::new(), |(_, o)| o.name.clone()));
+        if ui.small_button("go").clicked() {
+            fly = w.footprint(id).map(|l| Vec2::new(l.center.x, l.center.y));
         }
     });
 
     let rising: Vec<nd_sim::BuildingId> = w.league_towers().into_iter().filter(|id| w.buildings[*id].construction.is_some()).collect();
     if !rising.is_empty() {
         heading(ui, "Rising");
-        pane::table(ui, "skyline_rising", &["tower", "height", "built", "plots", "developer", ""], |ui| {
-            for id in &rising {
-                let b = &w.buildings[*id];
-                let t = b.plot.tower.unwrap();
-                if ui.link(&b.name).clicked() {
-                    pick = Some(*id);
-                }
-                ui.label(egui::RichText::new(format!("{:.0} m {}", t.height, t.league().label())).color(league_color(t.league())));
-                ui.label(format!("{:.0}%", b.construction.as_ref().map_or(1.0, |c| c.progress) * 100.0));
-                ui.label(format!("{}", 1 + b.plot.extra_lots.len() + b.plot.pending_lots.len()));
-                ui.label(w.owner_of(*id).map_or(String::new(), |(_, o)| o.name.clone()));
-                if ui.small_button("go").clicked() {
-                    fly = w.footprint(*id).map(|l| Vec2::new(l.center.x, l.center.y));
-                }
-                ui.end_row();
+        let key = |id: &nd_sim::BuildingId, c: usize| {
+            let b = &w.buildings[*id];
+            match c {
+                0 => pane::SortKey::text(b.name.clone()),
+                1 => pane::SortKey::num(b.plot.tower.map_or(0.0, |t| t.height)),
+                2 => pane::SortKey::num(b.construction.as_ref().map_or(1.0, |c| c.progress)),
+                3 => pane::SortKey::num((1 + b.plot.extra_lots.len() + b.plot.pending_lots.len()) as f64),
+                4 => w.owner_of(*id).map_or(pane::SortKey::None, |(_, o)| pane::SortKey::text(o.name.clone())),
+                _ => pane::SortKey::None,
+            }
+        };
+        pane::sortable_plain(ui, "skyline_rising", &["tower", "height", "built", "plots", "developer", ""], &rising, key, |ui, id| {
+            let b = &w.buildings[*id];
+            let t = b.plot.tower.unwrap();
+            if ui.link(&b.name).clicked() {
+                pick = Some(*id);
+            }
+            ui.label(egui::RichText::new(format!("{:.0} m {}", t.height, t.league().label())).color(league_color(t.league())));
+            ui.label(format!("{:.0}%", b.construction.as_ref().map_or(1.0, |c| c.progress) * 100.0));
+            ui.label(format!("{}", 1 + b.plot.extra_lots.len() + b.plot.pending_lots.len()));
+            ui.label(w.owner_of(*id).map_or(String::new(), |(_, o)| o.name.clone()));
+            if ui.small_button("go").clicked() {
+                fly = w.footprint(*id).map(|l| Vec2::new(l.center.x, l.center.y));
             }
         });
     }
@@ -235,5 +267,6 @@ pub fn news_toast(w: &nd_sim::World, flags: &mut UiFlags) {
     flags.skyline_seen = n.seq;
     if w.clock.tick.saturating_sub(n.tick) <= 30 {
         flags.message = n.headline.clone();
+        flags.message_at = Some(bevy::math::Vec2::new(n.pos.x, n.pos.y));
     }
 }

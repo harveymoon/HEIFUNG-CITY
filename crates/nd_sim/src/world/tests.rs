@@ -557,7 +557,11 @@ fn trains_call_at_stations_and_yards_bring_freight() {
             let aboard = t.cargo.iter().any(|c| c.to == buyer && c.from == yard);
             if aboard {
                 aboard_seen = true;
-                assert_eq!(w.rail.orders_for(yard).0, 0, "loaded at the edge of the map, not left waiting");
+                // (This order of parts: the shop, or another business, may
+                // have ordered something else by rail since the train set
+                // off, and that waits for the next one.)
+                let waiting = w.rail.orders.iter().filter(|o| o.cargo.from == yard && o.cargo.to == buyer && o.cargo.resource == Resource::Parts).count();
+                assert_eq!(waiting, 0, "loaded at the edge of the map, not left waiting");
                 let m = w.freight_manifest(tid).expect("a freight train has a manifest");
                 assert!(m.aboard >= 10.0 && m.capacity >= m.aboard && m.wagons >= crate::rail::MIN_WAGONS, "{m:?}");
                 manifest_seen |= m.loads.iter().any(|l| l.buyer == buyer && l.yard == yard && l.resource == Resource::Parts && (l.amount - 10.0).abs() < 0.01 && l.hub.is_none());
@@ -570,7 +574,8 @@ fn trains_call_at_stations_and_yards_bring_freight() {
             break;
         }
     }
-    assert!(freight_seen && aboard_seen && w.rail.orders_for(yard).0 == 0 && w.rail.aboard_for(yard) == 0.0, "freight train {freight_seen}, aboard {aboard_seen}, waiting {:?}", w.rail.orders_for(yard));
+    let parts_waiting = w.rail.orders.iter().filter(|o| o.cargo.from == yard && o.cargo.to == buyer && o.cargo.resource == Resource::Parts).count();
+    assert!(freight_seen && aboard_seen && parts_waiting == 0 && w.rail.aboard_for(yard) == 0.0, "freight train {freight_seen}, aboard {aboard_seen}, waiting {:?}", w.rail.orders_for(yard));
     assert!(manifest_seen, "the freight train's manifest listed the shop's parts");
     if let Some((tid, _)) = w.rail.trains.iter().find(|(_, t)| t.kind == TrainKind::Freight) {
         let m = w.freight_manifest(tid).unwrap();
@@ -927,6 +932,9 @@ fn buildings_go_up_over_days_and_people_move_in_after() {
     let mut changed = 0usize;
     let mut hours = 0u32;
     w.drain_events();
+    // [pt-growth] Sites work 08:00-17:00 only: the plan's days of work end
+    // that many working hours from now (`Clock::after_work_hours`).
+    let due_h = (w.clock.after_work_hours(Construction::days_for(floors, tier) * crate::clock::WORK_HOURS_PER_DAY) - w.clock.tick) as f32 / 60.0;
     while w.buildings[id].construction.is_some() {
         for _ in 0..60 {
             w.tick(&mut minds);
@@ -941,8 +949,8 @@ fn buildings_go_up_over_days_and_people_move_in_after() {
         assert!(hours < 24 * 20, "construction never finished: {:?}", b.construction);
     }
     let days = Construction::days_for(floors, tier);
-    assert!(hours as f32 >= days * 24.0 - 1.0, "finished in {hours} h, planned {days} days");
-    assert!(hours as f32 <= days * 24.0 + 8.0, "took {hours} h for {days} days of work: stalled too long");
+    assert!(hours as f32 >= due_h - 1.0, "finished in {hours} h, planned {days} days ({due_h:.0} h of the clock)");
+    assert!(hours as f32 <= due_h + 8.0, "took {hours} h for {days} days of work ({due_h:.0} h of the clock): stalled too long");
     assert!(changed >= 9, "the renderer saw the site grow: {changed} redraws");
     let b = &w.buildings[id];
     assert!(b.homes > 0 && b.homes == planned_homes, "homes {} planned {planned_homes}", b.homes);
@@ -2729,7 +2737,7 @@ fn touching_solar_and_wind_plants_form_one_field() {
     w.buildings[pc].plant = Some(PowerPlantKind::Solar);
     assert_eq!(w.plant_cluster(pa).len(), 3);
     // A site still being cleared is not part of the field yet.
-    w.buildings[pc].demolition = Some(crate::buildings::Demolition { progress: 0.5, days: 1.0, loads: 0, floors: 1, tier: Tier::Low, land_use: LandUse::Industrial, seed: 1, condition: 1.0, clear_lot: false, own_lot: false, look: None });
+    w.buildings[pc].demolition = Some(crate::buildings::Demolition { progress: 0.5, days: 1.0, loads: 0, floors: 1, tier: Tier::Low, land_use: LandUse::Industrial, seed: 1, condition: 1.0, clear_lot: false, own_lot: false, look: None, reason: Default::default() });
     assert_eq!(w.plant_cluster(pa), both);
 }
 

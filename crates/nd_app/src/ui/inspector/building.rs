@@ -66,8 +66,29 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
             tag(ui, &d.name, egui::Color32::from_rgb(200, 140, 230));
         }
     });
-    let started = if b.construction.is_some() { "started" } else { "built" };
-    hint(ui, &format!("{}  ·  {} floor{}  ·  {started} day {}", style.map_or("unknown style", |s| s.label()), b.floors, crate::ui::fmt::s(b.floors), fmt::day(b.built_tick)));
+    // [pt-growth] (F25) While the old building comes down the fields
+    // already describe its successor: say which is which, so a hut being
+    // pulled down does not read as "9 floors".
+    match &b.demolition {
+        Some(d) if d.clear_lot => hint(ui, &format!("coming down: {} floor{} {} {}", d.floors, crate::ui::fmt::s(d.floors), d.tier.label().to_lowercase(), d.land_use.label().to_lowercase())),
+        Some(d) => hint(ui, &format!("coming down: {} floor{} {} {}  ·  then {}, {} floor{}", d.floors, crate::ui::fmt::s(d.floors), d.tier.label().to_lowercase(), d.land_use.label().to_lowercase(), style.map_or("a new building", |s| s.label()), b.floors, crate::ui::fmt::s(b.floors))),
+        None => {
+            let started = if b.construction.is_some() { "started" } else { "built" };
+            hint(ui, &format!("{}  ·  {} floor{}  ·  {started} day {}", style.map_or("unknown style", |s| s.label()), b.floors, crate::ui::fmt::s(b.floors), fmt::day(b.built_tick)));
+        }
+    }
+    // [pt-walk] Cut off from the rest of the city on foot or by road.
+    for line in w.lot_link_warnings(b.lot) {
+        ui.label(egui::RichText::new(line).color(egui::Color32::from_rgb(255, 130, 80)).strong());
+    }
+    // [feat/pt-ux] What it is and what it does for the city, first.
+    if let Some((what, gives)) = super::about::about(w, id) {
+        egui::Frame::new().fill(egui::Color32::from_rgba_unmultiplied(40, 34, 20, 140)).corner_radius(4.0).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(egui::RichText::new(what).color(IVORY));
+            ui.label(egui::RichText::new(gives).small().color(egui::Color32::from_gray(190)));
+        });
+    }
     // [free-placement] The city's own: its ground is out of the zoning, and
     // the player may bulldoze it (a second click confirms).
     if w.is_city_building(id) && b.rail.is_none() && b.port.is_none() {
@@ -103,10 +124,18 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
     if b.is_derelict() {
         ui.label(egui::RichText::new("DERELICT").strong().color(WARN));
     }
-    if let Some(c) = &b.construction {
+    // [pt-growth] A demolition: why, how far, and when the lot is clear.
+    if let Some(d) = &b.demolition {
+        let ready = w.clock.after_work_hours(d.work_hours_left());
+        ui.add(egui::ProgressBar::new(d.progress).desired_height(18.0).fill(egui::Color32::from_rgb(190, 90, 60)).text(format!("BEING DEMOLISHED {:.0}%, clear about day {} {}", d.progress * 100.0, fmt::day(ready), fmt::hhmm(ready))));
+        let then = if d.clear_lot { "then a vacant lot" } else { "then the new building goes up" };
+        ui.label(egui::RichText::new(format!("{}  ·  {then}  ·  wrecking crew {}/{}  ·  rubble {} of {} loads hauled  ·  crews work 08:00-17:00", capitalise(d.reason.label()), b.workers.len(), b.jobs, d.loads, nd_sim::Demolition::loads_for(d.floors))).small());
+    }
+    if let Some(c) = b.construction.as_ref().filter(|_| b.demolition.is_none()) {
         let (homes, jobs) = b.planned_capacity();
-        let days_left = c.days_left();
-        let left = if days_left < 1.0 { format!("{:.0} hours left", (days_left * 24.0).ceil().max(1.0)) } else { format!("{:.1} days left", days_left) };
+        // [pt-growth] Sites work the working day only: when it should be done.
+        let ready = w.clock.after_work_hours(c.work_hours_left());
+        let left = format!("done about day {} {}", fmt::day(ready), fmt::hhmm(ready));
         let status = if c.waiting_for_materials() { if c.ordered { ", waiting for materials (truck on its way)" } else { ", waiting for materials" } } else { "" };
         ui.add(egui::ProgressBar::new(c.progress).desired_height(18.0).fill(egui::Color32::from_rgb(200, 150, 60)).text(format!("UNDER CONSTRUCTION {:.0}%, {left}{status}", c.progress * 100.0)));
         ui.label(egui::RichText::new(format!("{} of {} deliveries in  ·  {:.1} days of work in all  ·  site crew {}/{}  ·  will have {} homes and {} jobs", c.deliveries, nd_sim::Construction::DELIVERIES, c.days, b.workers.len(), b.jobs, homes, jobs)).small());
@@ -122,7 +151,7 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
     }
 
     // [supertall] height, rank, and a league tower's record, up top
-    crate::ui::skyline::building_section(ui, w, id, selection);
+    crate::ui::skyline::building_section(ui, w, id, selection, &sim.building_tops, &assets.rules);
 
     // ── The business ──
     if let Some(bz) = &b.business {

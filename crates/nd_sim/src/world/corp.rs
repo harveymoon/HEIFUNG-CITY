@@ -587,6 +587,7 @@ impl World {
                 self.settle_sale(b);
                 self.buildings[b].land_use = LandUse::Commercial;
                 self.redevelop_with(b, Tier::High, floors, value, memory.clone(), true);
+                self.tag_demolition(b, crate::buildings::DemolitionReason::Landmark);
                 b
             }
             None => {
@@ -602,7 +603,7 @@ impl World {
                 id
             }
         };
-        self.take_plots(bid, &plots[1..], &memory);
+        self.take_plots_for(bid, &plots[1..], &memory, crate::buildings::DemolitionReason::Landmark);
         let jobs = self.buildings[bid].planned_capacity().1;
         let b = &mut self.buildings[bid];
         b.name = format!("{short} Tower");

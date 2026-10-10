@@ -31,6 +31,7 @@ mod join;
 mod lots;
 mod parcels;
 mod poly;
+mod recut;
 mod subdivide;
 mod water_mask;
 
@@ -39,7 +40,9 @@ pub use join::*;
 pub use lots::*;
 pub use parcels::*;
 pub use poly::*;
+pub use recut::*;
 use subdivide::*;
+pub use subdivide::{MAX_PARCEL_AREA, MAX_SHORE_PARCEL_AREA};
 pub use water_mask::*;
 
 /// Pavement between the kerb and the parcel line, in metres.
@@ -85,6 +88,13 @@ impl LandUse {
 
     pub fn index(self) -> usize {
         LandUse::ALL.iter().position(|&l| l == self).unwrap()
+    }
+
+    /// [hillside] May go on a steep hillside, terraced: homes (the
+    /// cliffside villa), shops and clubs, and parks; not works yards or
+    /// civic grounds, which want level ground.
+    pub fn terraces(self) -> bool {
+        matches!(self, LandUse::Residential | LandUse::Commercial | LandUse::Entertainment | LandUse::Park)
     }
 
     /// Homes and parks may line a footpath; everything else needs a street.

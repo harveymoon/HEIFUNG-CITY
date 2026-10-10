@@ -77,17 +77,41 @@ fn a_street_on_a_hillside_gets_graded_lots_that_can_be_zoned() {
     }
 }
 
+/// [hillside] Steeper than grading takes, a hillside is terraced: homes,
+/// shops and clubs go there (the cliffside villa), works yards and civic
+/// grounds are refused with a plain reason, and parks go anywhere.
 #[test]
-fn a_cliff_refuses_with_a_plain_reason() {
+fn a_steep_hillside_takes_terraced_homes_but_not_works() {
     let mut w = hilly_world(LandscapePreset::Plains);
     let at = dry_spot(&w, 200.0, 700.0, 150.0);
     hillside(&mut w, at, MAX_GRADED_SLOPE * 1.6, 400.0);
     w.add_road(&[at - Vec2::new(120.0, 0.0), at + Vec2::new(120.0, 0.0)], 1, 1);
     let ids = street_parcels(&w, at);
+    assert!(!ids.is_empty(), "the parcels are cut");
+    let homes = ids.iter().filter(|&&i| w.parcel_refusal(i, Some(LandUse::Residential)).is_none()).count();
+    assert!(homes * 2 >= ids.len(), "most hillside parcels take terraced homes ({homes}/{})", ids.len());
+    for &i in &ids {
+        let why = w.parcel_refusal(i, Some(LandUse::Industrial)).expect("no works yard on a hillside");
+        assert!(why.contains("hillside") || why.contains("cliff"), "says why: {why}");
+        assert!(w.parcel_refusal(i, Some(LandUse::Park)).is_none());
+    }
+    let ok: Vec<usize> = ids.iter().copied().filter(|&i| w.parcel_refusal(i, Some(LandUse::Residential)).is_none()).collect();
+    w.paint_parcels(&ok, Some(LandUse::Residential), None);
+    w.implement();
+    assert!(w.lots.values().filter(|l| l.land_use == LandUse::Residential && l.usable()).count() >= ok.len().min(2), "and they are usable lots");
+}
+
+#[test]
+fn a_cliff_refuses_with_a_plain_reason() {
+    let mut w = hilly_world(LandscapePreset::Plains);
+    let at = dry_spot(&w, 200.0, 700.0, 150.0);
+    hillside(&mut w, at, crate::landscape::MAX_TERRACE_SLOPE * 1.5, 400.0);
+    w.add_road(&[at - Vec2::new(120.0, 0.0), at + Vec2::new(120.0, 0.0)], 1, 1);
+    let ids = street_parcels(&w, at);
     assert!(!ids.is_empty(), "the parcels are cut, only refused");
     for &i in &ids {
         let why = w.parcel_refusal(i, Some(LandUse::Residential)).expect("a cliff is refused");
-        assert!(why.contains("cliff"), "says why: {why}");
+        assert!(why.contains("cliff") || why.contains("drops too far"), "says why: {why}");
         // Parks still go anywhere.
         assert!(w.parcel_refusal(i, Some(LandUse::Park)).is_none());
     }

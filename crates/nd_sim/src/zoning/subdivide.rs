@@ -359,3 +359,124 @@ pub(super) fn chop_backland(poly: Vec<Vec2>, roads: &RoadNetwork, depth: u32, ou
         chop_backland(from_geo(&piece), roads, depth + 1, out);
     }
 }
+
+/// [parcel-size] No parcel inland is bigger than this, m² (about six
+/// homes' lots): anything bigger is halved until it is not.
+pub const MAX_PARCEL_AREA: f32 = 2400.0;
+
+/// [parcel-size] Parcels on the water may be bigger: they run from the
+/// road the whole way down to the shore.
+pub const MAX_SHORE_PARCEL_AREA: f32 = 4800.0;
+
+/// [parcel-size] The cap for a piece: bigger on the water.
+fn size_cap(poly: &[Vec2], water: &WaterMask) -> f32 {
+    if water.touches(poly, 1.2) {
+        MAX_SHORE_PARCEL_AREA
+    } else {
+        MAX_PARCEL_AREA
+    }
+}
+
+/// A parcel a home could be built on as it is: a frontage, no sharp
+/// inward corner, not a sliver.
+fn sound(p: &[Vec2], roads: &RoadNetwork) -> bool {
+    fronted(p, PARCEL_USE, roads) && reflex_vertex(p, 0.6).is_none() && polygon_area(p).abs() / perimeter(p).powi(2) >= MIN_COMPACTNESS
+}
+
+/// [parcel-size] After [`merge_backland`]: what is still unsound is mended
+/// with its neighbours. A sliver along a road and the backland behind it
+/// (neither of any use alone: "no road access" on ground that touches the
+/// road) are joined when the two make a sound parcel, and backland running
+/// down to the water is folded into the parcel in front of it even when
+/// that makes a deep lot (a waterfront lot reaches the shore). Joins stay
+/// under the size cap.
+pub(super) fn mend_parcels(mut parcels: Vec<Vec<Vec2>>, roads: &RoadNetwork, water: &WaterMask) -> Vec<Vec<Vec2>> {
+    for _ in 0..4 {
+        let n = parcels.len();
+        let good: Vec<bool> = parcels.iter().map(|p| sound(p, roads)).collect();
+        let boxes: Vec<(Vec2, Vec2)> = parcels.iter().map(|p| bounds_of(p)).collect();
+        let mut removed = vec![false; n];
+        let mut merged_any = false;
+        for i in 0..n {
+            if good[i] || removed[i] {
+                continue;
+            }
+            let per_i = perimeter(&parcels[i]);
+            let gi = to_geo(&parcels[i]);
+            let wet = water.touches(&parcels[i], 1.2);
+            let mut best: Option<(f32, usize, Vec<Vec2>)> = None;
+            for j in 0..n {
+                if i == j || removed[j] || !boxes_overlap(boxes[i], boxes[j], 0.5) {
+                    continue;
+                }
+                // A sound neighbour takes backland on the water; anything
+                // else only when the two together are sound.
+                if good[j] && !wet {
+                    continue;
+                }
+                let u: MultiPolygon<f64> = gi.union(&to_geo(&parcels[j]));
+                if u.0.len() != 1 || !u.0[0].interiors().is_empty() {
+                    continue;
+                }
+                let up = simplify_collinear(&from_geo(&u.0[0]));
+                if up.len() < 3 || polygon_area(&up).abs() > size_cap(&up, water) || !sound(&up, roads) {
+                    continue;
+                }
+                let shared = (per_i + perimeter(&parcels[j]) - perimeter(&up)) * 0.5;
+                if shared < 3.0 {
+                    continue;
+                }
+                if best.as_ref().is_none_or(|(b, _, _)| shared > *b) {
+                    best = Some((shared, j, up));
+                }
+            }
+            if let Some((_, j, up)) = best {
+                parcels[j] = up;
+                removed[i] = true;
+                merged_any = true;
+            }
+        }
+        parcels = parcels.into_iter().zip(removed).filter(|(_, r)| !r).map(|(p, _)| p).collect();
+        if !merged_any {
+            break;
+        }
+    }
+    parcels
+}
+
+/// [parcel-size] Halve a piece across its long axis until it is under the
+/// size cap (`size_cap`): no parcel is too big to use, fronted or not (a
+/// big odd-shaped piece with a few metres of frontage used to stay one huge
+/// "no street" parcel fit only for a park).
+pub(super) fn cap_parcel(poly: Vec<Vec2>, water: &WaterMask, depth: u32, out: &mut Vec<Vec<Vec2>>) {
+    if depth > 8 || poly.len() < 3 || polygon_area(&poly).abs() <= size_cap(&poly, water) {
+        out.push(poly);
+        return;
+    }
+    let pts = ccw(&poly);
+    let n = pts.len();
+    let (mut li, mut ll) = (0, 0.0);
+    for i in 0..n {
+        let l = pts[i].distance(pts[(i + 1) % n]);
+        if l > ll {
+            li = i;
+            ll = l;
+        }
+    }
+    let edge = (pts[(li + 1) % n] - pts[li]).normalize_or_zero();
+    // The long axis of the piece: the longest edge's direction, or across
+    // it when the piece is deeper than it is long that way.
+    let across = Vec2::new(-edge.y, edge.x);
+    let (u0, u1) = extents(&pts, edge);
+    let (v0, v1) = extents(&pts, across);
+    let axis = if u1 - u0 >= v1 - v0 { edge } else { across };
+    let (a0, a1) = extents(&pts, axis);
+    let pieces = cut(&to_geo(&pts), axis * ((a0 + a1) * 0.5), axis);
+    if pieces.len() < 2 {
+        out.push(pts);
+        return;
+    }
+    for piece in pieces {
+        cap_parcel(from_geo(&piece), water, depth + 1, out);
+    }
+}

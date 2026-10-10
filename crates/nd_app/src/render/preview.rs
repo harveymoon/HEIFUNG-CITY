@@ -40,6 +40,8 @@ pub(super) fn sync_preview(
     let pv = sim.world.preview();
     let pal = &assets.palette;
     let mut glow = MeshData::default();
+    // [pt-ux] The planned zones' see-through fills, raised (`raised_zone`).
+    let mut fills = MeshData::default();
     let w = &sim.world;
     let unzoned = [0.55f32, 0.55, 0.6];
     // Parcels the active project re-zones.
@@ -53,13 +55,18 @@ pub(super) fn sync_preview(
         if want == p.land_use && beach_want == beach_now {
             continue;
         }
+        // [pt-ux] A city building's ground is out of the zoning: the plan
+        // there is not a change anyone painted (these drew as stray tinted
+        // plots under player-built buildings, in plain sight underground).
+        if p.lot.and_then(|l| w.lots.get(l)).is_some_and(|l| w.is_city_ground(l)) {
+            continue;
+        }
         let mut outline = p.polygon.clone();
         if let Some(&first) = p.polygon.first() { outline.push(first); }
         match want {
             Some(lu) => {
                 let c = if beach_want { BEACH_TINT } else { pal.zone_color(lu) };
-                glow.ground_polygon(&p.polygon, 0.05, scale(c, 0.22));
-                glow.ground_strip(&outline, 0.45, 0.21, scale(c, 1.2));
+                raised_zone(&mut glow, &mut fills, &p.polygon, c);
             }
             None => glow.ground_strip(&outline, 0.45, 0.21, scale(unzoned, 0.9)),
         }
@@ -102,7 +109,7 @@ pub(super) fn sync_preview(
         let mut outline = poly.clone();
         if let Some(&first) = poly.first() { outline.push(first); }
         glow.ground_strip(&outline, 0.8, 0.22, scale(c, 1.3));
-        glow.ground_polygon(poly, 0.045, scale(c, 0.12));
+        raised_zone(&mut glow, &mut fills, poly, c);
     }
     for (_, poly) in &pv.removed_zones {
         let mut outline = poly.clone();
@@ -122,6 +129,35 @@ pub(super) fn sync_preview(
     }
     if !glow.is_empty() {
         spawn_glow(&mut commands, &mut meshes, &mats, &glow, PreviewTag);
+    }
+    if !fills.is_empty() {
+        spawn_overlay(&mut commands, &mut meshes, &mats, &fills, PreviewTag);
+    }
+}
+
+/// [pt-ux] How high a zone painted but not built yet floats over its
+/// ground: up off the lots, so it never clips into them on a slope.
+pub(super) const PLAN_RAISE: f32 = 1.6;
+
+/// [pt-ux] A planned zone as a raised plate in the zone's own colour: a
+/// see-through fill (into `fills`, drawn in the blended overlay material)
+/// with a bright rim and short posts down to the ground at its corners
+/// (into `glow`), so the plan reads as the zone it will be, not yet laid.
+pub(super) fn raised_zone(glow: &mut MeshData, fills: &mut MeshData, poly: &[SVec2], c: [f32; 3]) {
+    if poly.len() < 3 {
+        return;
+    }
+    fills.ground_polygon(poly, PLAN_RAISE, [c[0].min(1.0), c[1].min(1.0), c[2].min(1.0), 0.42]);
+    let mut outline = poly.to_vec();
+    outline.push(poly[0]);
+    glow.ground_strip(&outline, 0.4, PLAN_RAISE + 0.02, scale(c, 1.5));
+    for (k, &p) in poly.iter().enumerate() {
+        let next = poly[(k + 1) % poly.len()];
+        let d = (next - p).normalize_or_zero();
+        if d == SVec2::ZERO {
+            continue;
+        }
+        glow.strip_box(p, p + d * 0.3, 0.0, 0.3, 0.0, PLAN_RAISE, scale(c, 1.1));
     }
 }
 

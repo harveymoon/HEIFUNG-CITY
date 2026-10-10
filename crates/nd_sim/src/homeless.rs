@@ -42,6 +42,18 @@ pub const CAMP_GAP: f32 = 24.0;
 pub const RV_SHARE: f32 = 0.75;
 /// RVs park at least this far apart.
 pub const RV_GAP: f32 = 10.0;
+/// [pt-growth] At most this many RVs within `RV_CLUSTER_RADIUS` of a new
+/// one: a fresh cheap street fills a few at a time, not with a row of ten.
+pub const RV_CLUSTER: usize = 2;
+pub const RV_CLUSTER_RADIUS: f32 = 60.0;
+/// [pt-growth] An RV pulls up between half an hour and this many minutes
+/// after its household lost its home (a hash of the household).
+pub const RV_ARRIVAL_SPREAD: u64 = 14 * 60;
+/// [feat/pt-ux] Days an abandoned camper or van stands before the city's
+/// tow contractor hauls it off.
+pub const RV_ABANDONED_DAYS: u64 = 3;
+/// [feat/pt-ux] Ticks from the player's tow order to the van being gone.
+pub const RV_TOW_TICKS: u64 = 3 * 60;
 /// A charity meal brings a hungry homeless person back to this satiety.
 pub const MEAL_SATIETY: f32 = 0.75;
 pub const MEAL_COST: f32 = 3.0;
@@ -97,6 +109,31 @@ pub struct Rv {
     pub seed: u64,
     /// A camper (true) or an old van.
     pub camper: bool,
+    /// [feat/pt-ux] Left at the kerb when its household left town: the
+    /// tick it was abandoned. It stands, shabby, until it is towed.
+    #[serde(default)]
+    pub abandoned: Option<u64>,
+    /// [feat/pt-ux] When the tow truck takes it (the player's order, or an
+    /// abandoned van's turn).
+    #[serde(default)]
+    pub tow_at: Option<u64>,
+    /// [pt-growth] The tick it pulls up at the kerb: households put out on
+    /// the same night drive round for a while and arrive one by one, not
+    /// all in the same second. 0 (older saves): parked already.
+    #[serde(default)]
+    pub parked_tick: u64,
+}
+
+impl Rv {
+    /// Standing at its kerb by `tick` (drawn, felt by the land value).
+    pub fn parked(&self, tick: u64) -> bool {
+        tick >= self.parked_tick
+    }
+
+    /// Someone still lives in it.
+    pub fn lived_in(&self) -> bool {
+        self.abandoned.is_none()
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -135,7 +172,12 @@ impl Homeless {
     }
 
     pub fn rv_of(&self, h: HouseholdId) -> Option<&Rv> {
-        self.rvs.iter().find(|r| r.household == h)
+        self.rvs.iter().find(|r| r.household == h && r.lived_in())
+    }
+
+    /// [feat/pt-ux] The camper or van with this seed (its stable id).
+    pub fn rv(&self, seed: u64) -> Option<&Rv> {
+        self.rvs.iter().find(|r| r.seed == seed)
     }
 
     /// Where a homeless household sleeps.
@@ -291,6 +333,9 @@ impl World {
             if self.society.homeless.rvs.iter().any(|r| r.pos.distance(p) < RV_GAP) {
                 continue;
             }
+            if self.society.homeless.rvs.iter().filter(|r| r.pos.distance(p) < RV_CLUSTER_RADIUS).count() >= RV_CLUSTER {
+                continue;
+            }
             // Parked with the traffic on that side (right-hand traffic).
             let dir = ab.normalize_or_zero();
             let right = Vec2::new(dir.y, -dir.x);
@@ -321,7 +366,9 @@ impl World {
             if let Some((pos, heading)) = self.rv_spot(origin) {
                 let seed = self.society_rng().random::<u64>();
                 let camper = self.society_rng().random_bool(0.55);
-                self.society.homeless.rvs.push(Rv { household: hid, pos, heading, seed, camper });
+                use slotmap::Key;
+                let parked_tick = tick + 30 + crate::hash::mix(hid.data().as_ffi(), tick) % RV_ARRIVAL_SPREAD;
+                self.society.homeless.rvs.push(Rv { household: hid, pos, heading, seed, camper, abandoned: None, tow_at: None, parked_tick });
                 for m in &members {
                     if let Some(c) = self.citizens.get_mut(*m) {
                         c.remember(tick, if camper { "Living in the camper now. Parked where nobody moves us on." } else { "Sleeping in the van. Could be worse." });
@@ -383,7 +430,16 @@ impl World {
             }
             h.since.retain(|s| s.0 != hid);
             h.origin.retain(|o| o.0 != hid);
-            h.rvs.retain(|r| r.household != hid);
+            // [feat/pt-ux] Housed again, they drive it off; gone from town,
+            // one van in three is left behind at the kerb.
+            let left_town = !self.households.get(hid).is_some_and(|x| x.home.is_some());
+            for r in h.rvs.iter_mut().filter(|r| r.household == hid && r.lived_in()) {
+                if left_town && r.seed % 3 == 0 {
+                    r.abandoned = Some(tick);
+                    r.tow_at = Some(tick + RV_ABANDONED_DAYS * 1440);
+                }
+            }
+            h.rvs.retain(|r| r.household != hid || !r.lived_in());
             for c in h.camps.iter_mut() {
                 c.households.retain(|x| *x != hid);
             }
@@ -397,6 +453,7 @@ impl World {
                 }
             }
         }
+        self.tow_due_rvs(tick);
         let h = &mut self.society.homeless;
         h.stats.rehoused_today += rehoused;
         h.stats.rehoused_total += rehoused;
@@ -549,6 +606,64 @@ impl World {
         self.society.homeless.since.iter().filter_map(|(h, _)| self.households.get(*h)).map(|h| h.members.len()).sum()
     }
 
+    /// [feat/pt-ux] Order a camper or van at the kerb towed: the truck
+    /// takes it within `RV_TOW_TICKS`. Who lives in it moves on to a camp.
+    pub fn order_tow_rv(&mut self, seed: u64) -> Result<(), &'static str> {
+        let now = self.clock.tick;
+        let r = self.society.homeless.rvs.iter_mut().find(|r| r.seed == seed).ok_or("no such camper or van")?;
+        if r.tow_at.is_some_and(|t| t <= now + RV_TOW_TICKS) {
+            return Err("a tow truck is already coming for it");
+        }
+        r.tow_at = Some(now + RV_TOW_TICKS);
+        let hid = r.household;
+        if r.lived_in() {
+            let members = self.households.get(hid).map(|h| h.members.clone()).unwrap_or_default();
+            for m in members {
+                if let Some(c) = self.citizens.get_mut(m) {
+                    c.remember(now, "A notice on the windscreen: the van gets towed today. Where do we go now?");
+                    c.mood = (c.mood - 0.1).max(0.0);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// [feat/pt-ux] A lever for trying it out (the remote API's `society
+    /// {action: abandon_rv}`): the household walks away from its van (to a
+    /// camp) and the van stands abandoned until the contractor tows it.
+    pub fn abandon_rv(&mut self, seed: u64) -> Result<(), &'static str> {
+        let now = self.clock.tick;
+        let r = self.society.homeless.rvs.iter_mut().find(|r| r.seed == seed).ok_or("no such camper or van")?;
+        if !r.lived_in() {
+            return Err("already abandoned");
+        }
+        r.abandoned = Some(now);
+        r.tow_at = Some(now + RV_ABANDONED_DAYS * 1440);
+        let hid = r.household;
+        self.settle_homeless(hid);
+        Ok(())
+    }
+
+    /// Campers and vans whose tow time came: gone. A household that lived
+    /// in one is settled again (a camp, most likely).
+    fn tow_due_rvs(&mut self, now: u64) {
+        let due: Vec<(HouseholdId, bool)> = self.society.homeless.rvs.iter().filter(|r| r.tow_at.is_some_and(|t| t <= now)).map(|r| (r.household, r.lived_in())).collect();
+        if due.is_empty() {
+            return;
+        }
+        self.society.homeless.rvs.retain(|r| !r.tow_at.is_some_and(|t| t <= now));
+        for (hid, lived) in due {
+            if lived && self.households.get(hid).is_some_and(|h| h.home.is_none() && !h.members.is_empty()) {
+                for m in self.households[hid].members.clone() {
+                    if let Some(c) = self.citizens.get_mut(m) {
+                        c.remember(now, "They towed the van with everything in it.");
+                    }
+                }
+                self.settle_homeless(hid);
+            }
+        }
+    }
+
     /// Is this citizen living on the street?
     pub fn is_homeless(&self, c: CitizenId) -> bool {
         self.citizens.get(c).and_then(|c| c.household).is_some_and(|h| self.society.homeless.since.iter().any(|s| s.0 == h))
@@ -558,7 +673,7 @@ impl World {
         for c in &self.society.homeless.camps {
             b.splat(c.pos, CAMP_LV_RADIUS, -CAMP_LV * c.tents() as f32);
         }
-        for r in &self.society.homeless.rvs {
+        for r in self.society.homeless.rvs.iter().filter(|r| r.parked(self.clock.tick)) {
             b.splat(r.pos, 50.0, -CAMP_LV);
         }
     }

@@ -143,3 +143,29 @@ fn an_operator_that_goes_under_is_replaced_and_the_dock_stays() {
     assert!(z.origin.as_deref().is_some_and(|o| o.contains("new operator")));
     assert!(w.ports.port_of(marina).is_some());
 }
+
+/// [F16] A dock's yard is levelled at the waterside, not at the height of
+/// the street it is reached by: a marina below a hill road stood metres up
+/// over its own boats.
+#[test]
+fn a_dock_yard_stands_at_the_waterside() {
+    let (mut w, click, flow, road_at) = riverside();
+    // The street up on a terrace 12 m above the river bank, the bank
+    // itself as it was: the ground rises from 60 m off the street's line
+    // to 25 m off it.
+    let up = Vec2::new(-flow.y, flow.x);
+    w.landscape.reshape_for_test(move |p, h| {
+        let d = (p - road_at).dot(up).abs();
+        h + 12.0 * ((60.0 - d) / 35.0).clamp(0.0, 1.0)
+    });
+    w.rebuild_from_plan();
+    let marina = w.place_port(PortKind::MarinaLarge, click).expect("a marina on the river bank");
+    join_stub(&mut w, marina, road_at, flow);
+    let lot = w.buildings[marina].lot;
+    let l = &w.lots[lot];
+    let natural = l.polygon.iter().map(|c| w.landscape.height(*c)).sum::<f32>() / l.polygon.len() as f32;
+    let pad = w.lot_pad(lot);
+    assert!((pad - natural.max(crate::landscape::BANK_HEIGHT)).abs() < 0.01, "the yard's pad {pad:.1} is its own ground's {natural:.1}");
+    let street = w.road_height(l.front_segment, l.front_t);
+    assert!(pad < street - 3.0 || (street - natural).abs() < 3.0, "not the street's {street:.1}");
+}

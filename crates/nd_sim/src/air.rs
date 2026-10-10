@@ -74,8 +74,9 @@ pub const RESERVE: f32 = 0.2;
 pub const SERVICE_START: u32 = 5 * 60;
 pub const SERVICE_END: u32 = 2 * 60;
 /// A tower grows a rooftop pad on land this dear, and loses it below `ROOFTOP_KEEP`.
-pub const ROOFTOP_LAND_VALUE: f32 = 0.8;
-pub const ROOFTOP_KEEP: f32 = 0.72;
+/// [pt-growth] On the rescaled land value (the dearest few percent).
+pub const ROOFTOP_LAND_VALUE: f32 = 0.74;
+pub const ROOFTOP_KEEP: f32 = 0.68;
 pub const ROOFTOP_MIN_FLOORS: u8 = 9;
 /// Rich adults (own residents in full, neighbours within reach at half)
 /// a tower needs before it grows a pad; and roughly how many towers share one.

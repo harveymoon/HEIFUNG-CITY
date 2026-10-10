@@ -103,7 +103,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, id: u32
         row("Went round it", ROUND, "Drivers who set off another way that they would not have taken were there no tolls: the toll sent them round.", [b.avoided_today.to_string(), b.avoided_yesterday.to_string(), b.avoided_total.to_string()]);
         row("Revenue", IVORY, "Tolls taken, into the treasury under road tolls.", [format!("{:.0}", b.revenue_today), format!("{:.0}", b.revenue_yesterday), format!("{:.0}", b.revenue_total)]);
     });
-    let upkeep = b.size.upkeep_per_day();
+    let upkeep = b.upkeep_per_day();
     let net = b.net_per_day();
     let full_day = b.cars_yesterday > 0 || b.revenue_yesterday > 0.0;
     ui.horizontal(|ui| {

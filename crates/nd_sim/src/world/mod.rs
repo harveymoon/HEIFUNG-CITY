@@ -46,6 +46,8 @@ mod construction;
 mod estate;
 #[cfg(test)]
 mod estate_tests;
+#[cfg(test)]
+mod growth_tests;
 pub use estate::{escort_model, police_escort_model, supercar};
 mod history;
 mod memory;
@@ -76,6 +78,8 @@ pub(crate) use placement::SiteRule;
 #[cfg(test)]
 mod placement_tests;
 #[cfg(test)]
+mod stable_parcels_tests;
+#[cfg(test)]
 mod dock_access_tests;
 pub mod poses;
 /// [clarity] Origins and destinations, crews, crash sites.
@@ -90,7 +94,7 @@ mod ped_highway_tests;
 mod pillars;
 pub use pillars::deck_half_width;
 mod junctions;
-pub use junctions::{ApproachView, CrossingView, IntersectionView, PhaseView};
+pub use junctions::{ApproachView, CrossingView, IntersectionView, LaneView, MoveView, PhaseView};
 mod riders;
 mod places;
 #[cfg(test)]
@@ -134,6 +138,9 @@ mod parking_tests;
 mod edge_tests;
 #[cfg(test)]
 mod concerns_tests;
+pub mod connectivity;
+#[cfg(test)]
+mod connectivity_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -207,7 +214,7 @@ use crate::citizens::{Activity, Citizen, CitizenId, Household, HouseholdId, Purp
 use crate::clock::SimClock;
 use crate::economy::{Economy, Flow, Item, GIG_INCOME, OVERDRAFT};
 use crate::events::SimEvent;
-use crate::land_value::{LandValue, LandValueBuilder};
+use crate::land_value::{Channel, LandValue, LandValueBuilder};
 use crate::market::{Business, BusinessKind, Resource, EXPORT_DISCOUNT, HAULAGE, IMPORT_MARKUP};
 use crate::traffic::Cargo;
 use crate::mind::{Decision, Intent, MindContext, MindProvider};
@@ -421,6 +428,11 @@ pub struct World {
     /// roads and rebuilt with them.
     #[serde(skip)]
     pub parcels: crate::zoning::ParcelMap,
+    /// [stable-parcels] The parcels as last cut, and what from: a rebuild
+    /// recuts only the land near roads that changed (`zoning::recut`).
+    /// Saved as outlines; a save from before cuts them afresh on load.
+    #[serde(default)]
+    pub(crate) parcel_cut: crate::zoning::ParcelCut,
     /// Land use of each parcel under the effective plan (`planned_zoning`).
     #[serde(skip)]
     planned: Vec<Option<LandUse>>,
@@ -479,6 +491,10 @@ pub struct World {
     /// lorry can get (a footpath joins walkers, not drivers).
     #[serde(skip)]
     drive_component: Vec<u32>,
+    /// [pt-walk] Stranded areas, failed trips and their alerts
+    /// (`world/connectivity.rs`).
+    #[serde(default)]
+    pub connectivity: connectivity::Connectivity,
     /// Late mind answers (`MindProvider::poll`) for citizens who were
     /// travelling when they came, with the tick they came: acted on at the
     /// citizen's next decision (`step_citizens`) if still fresh. Not saved:
@@ -731,6 +747,7 @@ impl World {
             next_project: 1,
             plan_warnings: Vec::new(),
             parcels: crate::zoning::ParcelMap::default(),
+            parcel_cut: Default::default(),
             planned: Vec::new(),
             parcel_lots: true,
             next_gesture: 1,
@@ -758,6 +775,7 @@ impl World {
             next_seed: 1,
             road_component: Vec::new(),
             drive_component: Vec::new(),
+            connectivity: Default::default(),
             stations: Vec::new(),
             yards: Vec::new(),
             halts: Vec::new(),
@@ -935,9 +953,24 @@ impl World {
         };
         let floors = match (lu, tier) {
             (LandUse::Industrial, _) => base,
+            // [pt-growth] (F8) Civic buildings are halls, courts and
+            // monuments: two to five storeys at any tier (the High
+            // multiplier gave a ten-floor "Data Exchange" drawn as a low
+            // monument, the city's "tallest" by its floors).
+            (LandUse::Civic, _) => base,
             (_, Tier::High) => (base as f32 * 1.8) as u8 + 2,
             (_, Tier::Mid) => base + 1,
             (_, Tier::Low) => base.max(1),
+        };
+        // [pt-growth] On a busy street the town wants more of, developers
+        // build towards what the land density allows: a shop on a crowded
+        // high street opens taller than the tier alone would make it.
+        let floors = if matches!(lu, LandUse::Residential | LandUse::Commercial | LandUse::Entertainment) && self.pressure_active() {
+            let want = self.pressure_floors(lot_id).min(self.height_cap(lot_id));
+            let pull = self.economy.demand_for(lu).clamp(0.0, 1.0);
+            floors.max((want as f32 * 0.6 * pull).round() as u8)
+        } else {
+            floors
         };
         let floors = floors.clamp(1, self.height_cap(lot_id).max(1));
         // [land] Cheap homes on quiet land: one storey (a row of shacks, a

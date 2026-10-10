@@ -32,6 +32,12 @@ pub const SNAP_M: f32 = 15.0;
 pub const SPACING_M: f32 = 40.0;
 /// Highest toll the player may set.
 pub const MAX_PRICE: f32 = 50.0;
+/// [toll-fit] A toll plaza's cost: a fixed part, and a kiosk per lane.
+pub const TOLL_BASE_COST: f32 = 1_500.0;
+pub const TOLL_LANE_COST: f32 = 1_250.0;
+/// [toll-fit] Its upkeep a day: a fixed part, and a kiosk per lane.
+pub const TOLL_BASE_UPKEEP: f32 = 15.0;
+pub const TOLL_LANE_UPKEEP: f32 = 22.5;
 /// [toll-inspect] Hours of passages each booth keeps for its chart.
 pub const HOURS_KEPT: usize = 72;
 /// [toll-inspect] A car counts as queueing for a booth when it is this far
@@ -50,6 +56,27 @@ pub enum TollSize {
 
 impl TollSize {
     pub const ALL: [TollSize; 2] = [TollSize::Booth, TollSize::Plaza];
+    /// [toll-fit] What the Build window offers: one toll plaza, a kiosk for
+    /// every lane of the road it is put on, priced by the road. (The old
+    /// six-booth plaza is kept for saves that have one.)
+    pub const OFFERED: [TollSize; 1] = [TollSize::Booth];
+
+    /// [toll-fit] What a plaza across a road of `lanes` lanes costs to
+    /// build: a kiosk and its canopy for every lane.
+    pub fn cost_for(self, lanes: u8) -> f32 {
+        match self {
+            TollSize::Booth => TOLL_BASE_COST + TOLL_LANE_COST * lanes.max(1) as f32,
+            TollSize::Plaza => self.cost(),
+        }
+    }
+
+    /// [toll-fit] Upkeep a day across a road of `lanes` lanes.
+    pub fn upkeep_for(self, lanes: u8) -> f32 {
+        match self {
+            TollSize::Booth => TOLL_BASE_UPKEEP + TOLL_LANE_UPKEEP * lanes.max(1) as f32,
+            TollSize::Plaza => self.upkeep_per_day(),
+        }
+    }
 
     pub fn key(self) -> &'static str {
         match self {
@@ -75,7 +102,7 @@ impl TollSize {
 
     pub fn menu_label(self) -> &'static str {
         match self {
-            TollSize::Booth => "Toll booth",
+            TollSize::Booth => "Toll plaza (fits the road)",
             TollSize::Plaza => "Toll plaza (6 booths)",
         }
     }
@@ -194,6 +221,11 @@ pub struct TollBooth {
     pub segment: Option<SegmentId>,
     #[serde(skip)]
     pub dir: Vec2,
+    /// [toll-fit] Lanes its kiosks were built (and paid) for: widening the
+    /// road adds kiosks, and the road works pay for them. 0 in a save from
+    /// before (taken as the road it stands on now).
+    #[serde(default)]
+    pub paid_lanes: u8,
 }
 
 /// [toll-inspect] One hour of passages at a booth.
@@ -239,6 +271,7 @@ impl TollBooth {
             hourly: VecDeque::new(),
             segment: None,
             dir: Vec2::X,
+            paid_lanes: 0,
         }
     }
 
@@ -275,7 +308,12 @@ impl TollBooth {
     /// yesterday's takings (today's so far on the first day).
     pub fn net_per_day(&self) -> f32 {
         let take = if self.cars_yesterday > 0 || self.revenue_yesterday > 0.0 { self.revenue_yesterday } else { self.revenue_today };
-        take - self.size.upkeep_per_day()
+        take - self.upkeep_per_day()
+    }
+
+    /// [toll-fit] Its upkeep a day: a kiosk for every lane it was built for.
+    pub fn upkeep_per_day(&self) -> f32 {
+        if self.paid_lanes == 0 { self.size.upkeep_per_day() } else { self.size.upkeep_for(self.paid_lanes) }
     }
 }
 
@@ -316,7 +354,7 @@ impl Tolls {
     }
 
     pub fn upkeep_per_day(&self) -> f32 {
-        self.booths.iter().map(|b| b.size.upkeep_per_day()).sum()
+        self.booths.iter().map(|b| b.upkeep_per_day()).sum()
     }
 
     /// Close the day's counts.

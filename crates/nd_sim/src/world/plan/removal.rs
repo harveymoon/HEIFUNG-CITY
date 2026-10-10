@@ -24,6 +24,7 @@ impl World {
         // [relocate] The business looks for a new place.
         self.pack_business(bid, &format!("the city's new {for_what}"));
         self.buy_out(bid, lot_id, None, &memory);
+        self.tag_demolition(bid, crate::buildings::DemolitionReason::CityTakeover);
         Ok(())
     }
 
@@ -142,7 +143,7 @@ impl World {
 
     /// A car taken off the road: its driver, or a bus's riders, stand there.
     pub(in crate::world) fn strand_car(&mut self, car: crate::traffic::Car) {
-        use crate::vehicle::{CarEvent, Errand};
+        use crate::vehicle::{CarEvent, CarPlace, Errand};
         // A truck taken off the road still delivers: the buyer already counts
         // the load as inbound and would never reorder it otherwise.
         if let Some(cargo) = car.cargo {
@@ -162,7 +163,14 @@ impl World {
         }
         if let Some(vid) = car.owned.filter(|v| self.vehicles.cars.contains_key(*v)) {
             match car.errand {
-                Errand::Sale(_) => self.drop_car(vid, CarEvent::Sold),
+                // [carlife] Still the dealer's: parked here, fetched again.
+                Errand::Sale(d) => {
+                    let c = &mut self.vehicles.cars[vid];
+                    c.owner = CitizenId::default();
+                    c.dealer = Some(c.dealer.unwrap_or(d));
+                    c.place = CarPlace::Driving(Default::default());
+                    self.park_stranded(vid, car.pos);
+                }
                 Errand::Leave => self.drop_car(vid, CarEvent::Emigrated),
                 _ => self.park_stranded(vid, car.pos),
             }

@@ -74,7 +74,10 @@ fn park_benches_seat_one_person_per_seat() {
 fn demo_homes_know_how_far_the_park_and_nightlife_are() {
     let mut w = common::demo_world();
     let mut m = RuleBasedMind::default();
-    for _ in 0..1440 * 3 {
+    // [pt-growth] Four days, not three: building sites work 08:00-17:00 now,
+    // and the demo's first night spot (a 5-floor club on this seed) opens
+    // on day 4.
+    for _ in 0..1440 * 4 {
         w.tick(&mut m);
     }
     let homes: Vec<_> = w.lots.values().filter(|l| l.usable() && l.land_use == LandUse::Residential).map(|l| l.center).collect();

@@ -299,6 +299,13 @@ pub struct Commute {
     /// minutes the drive should have taken.
     pub rage: f32,
     pub expected_drive: f32,
+    /// [carlife] The day (plus one; 0: never) this person last bought or
+    /// sold a car. Nobody trades their car again for `WHEELS_HOLD_DAYS`:
+    /// in a jammed city drivers sold for the jams and bought again for
+    /// the buses within days, and every trade was two more vehicles
+    /// crawling through the jam to and from the dealer (the vehicle
+    /// build-up past ~10k people).
+    pub wheels_day: u64,
 }
 
 impl Commute {
@@ -353,6 +360,22 @@ pub const TRAIL_STEP: f32 = 0.5;
 /// A jump longer than this (arriving by train, a respawn) is not a walk:
 /// the trail starts over rather than drawing a line across the map.
 const TRAIL_BREAK: f32 = 150.0;
+
+/// [pt-walk] The stops along a citizen's trail: each as the trail point it
+/// was made at, counted from the first point ever laid (`base` points have
+/// since dropped off the tail), so a stop leaves with its stretch of trail.
+#[derive(Clone, Debug, Default)]
+pub struct TrailStops {
+    pub base: u32,
+    pub stops: Vec<(u32, Vec2)>,
+}
+
+impl TrailStops {
+    /// The stops still on the trail, oldest first, with their index into it.
+    pub fn on_trail(&self, len: usize) -> impl Iterator<Item = (usize, Vec2)> + '_ {
+        self.stops.iter().filter(move |(i, _)| *i >= self.base && ((*i - self.base) as usize) < len).map(|(i, p)| ((*i - self.base) as usize, *p))
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Citizen {
@@ -413,6 +436,10 @@ pub struct Citizen {
     /// route so far. Rebuilt as they move; never saved.
     #[serde(skip)]
     pub trail: Vec<Vec2>,
+    /// [pt-walk] Where along the trail they stopped (went in somewhere,
+    /// sat down, waited for a ride): the "o"s drawn on it.
+    #[serde(skip)]
+    pub trail_stops: TrailStops,
     /// Lots the current journey walks past, counted as footfall once the
     /// journey ends (not when it is planned, so abandoned trips count for
     /// nothing, and not per leg of a bus or train trip).
@@ -565,6 +592,7 @@ impl Citizen {
             groceries: 0.0,
             hungry_days: 0,
             trail: Vec::new(),
+            trail_stops: TrailStops::default(),
             pending_footfall: Vec::new(),
             household,
             age,
@@ -588,13 +616,32 @@ impl Citizen {
                 return;
             }
             if d > TRAIL_BREAK {
+                let ts = &mut self.trail_stops;
+                ts.base = ts.base.wrapping_add(self.trail.len() as u32);
+                ts.stops.clear();
                 self.trail.clear();
             }
         }
         self.trail.push(self.pos);
         if self.trail.len() > MAX_TRAIL {
             self.trail.remove(0);
+            let ts = &mut self.trail_stops;
+            ts.base = ts.base.wrapping_add(1);
+            let base = ts.base;
+            ts.stops.retain(|(i, _)| *i >= base);
         }
+    }
+
+    /// [pt-walk] Mark the trail's newest point a stop, once: called each
+    /// tick the citizen is indoors, on a bench or waiting for a ride.
+    pub fn mark_stop(&mut self) {
+        let Some(&p) = self.trail.last() else { return };
+        let ts = &mut self.trail_stops;
+        let i = ts.base.wrapping_add(self.trail.len() as u32 - 1);
+        if ts.stops.last().is_some_and(|(j, _)| *j == i) {
+            return;
+        }
+        ts.stops.push((i, p));
     }
 
     pub fn remember(&mut self, tick: u64, text: impl Into<String>) {
@@ -699,6 +746,7 @@ mod tests {
             groceries: 0.0,
             hungry_days: 0,
             trail: Vec::new(),
+            trail_stops: TrailStops::default(),
             pending_footfall: Vec::new(),
             household: None,
             age: 35,
@@ -747,6 +795,33 @@ mod tests {
         assert_eq!(back.age, 35);
         assert_eq!(back.wakefulness, 1.0);
         assert!(back.household.is_none());
+    }
+
+    /// [pt-walk] Each stop along the way is marked once on the trail, and
+    /// drops off the tail with the stretch of trail it was on.
+    #[test]
+    fn trail_stops_are_marked_once_and_fade_with_the_tail() {
+        let mut c = citizen_at(Vec2::ZERO);
+        c.push_trail();
+        c.mark_stop();
+        c.mark_stop();
+        assert_eq!(c.trail_stops.on_trail(c.trail.len()).collect::<Vec<_>>(), vec![(0, Vec2::ZERO)], "one stop, however long they stay");
+        for i in 1..=10 {
+            c.pos = Vec2::new(i as f32, 0.0);
+            c.push_trail();
+        }
+        c.mark_stop();
+        let stops: Vec<_> = c.trail_stops.on_trail(c.trail.len()).collect();
+        assert_eq!(stops, vec![(0, Vec2::ZERO), (10, Vec2::new(10.0, 0.0))]);
+        for i in 11..(11 + MAX_TRAIL) {
+            c.pos = Vec2::new(i as f32, 0.0);
+            c.push_trail();
+        }
+        assert!(c.trail_stops.on_trail(c.trail.len()).next().is_none(), "both stops have left the trail");
+        assert!(c.trail_stops.stops.is_empty());
+        c.mark_stop();
+        let (i, p) = c.trail_stops.on_trail(c.trail.len()).next().unwrap();
+        assert_eq!((i, p), (c.trail.len() - 1, c.pos), "a new stop at the head");
     }
 
     #[test]

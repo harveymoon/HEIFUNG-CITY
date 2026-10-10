@@ -181,3 +181,86 @@ pub(super) fn sync_crossings(
         }
     }
 }
+
+// ── [pt-visual] crossing lamps that light the road ──────────────────────────
+
+#[derive(Component)]
+pub(super) struct CrossingLight;
+
+/// Red light of a crossing's flashing lamps on the road at night: a small
+/// pool of real point lights (no shadows), sized from the street lamps'
+/// pool (`street_look::lamp_pool`), hung on the flashing posts nearest the
+/// view and pulsing with the lamps' beat. None at Low.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn sync_crossing_lights(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    look: Res<super::sky::SkyLook>,
+    stats: Res<super::RenderStats>,
+    lighting: Res<super::Lighting>,
+    mode: Res<crate::camera::CameraMode>,
+    time: Res<Time>,
+    cams: Query<(&GlobalTransform, &crate::camera::OrbitCamera)>,
+    mut pool: Query<(&mut PointLight, &mut Transform, &mut Visibility), With<CrossingLight>>,
+    mut spawned: Local<usize>,
+    mut near: Local<Vec<(f32, Vec3)>>,
+    mut spots: Local<Vec<Vec3>>,
+) {
+    let want = (super::street_look::lamp_pool(stats.graphics.tier) / 3).min(8);
+    if *spawned < want {
+        for _ in *spawned..want {
+            commands.spawn((
+                PointLight { color: Color::linear_rgb(1.0, 0.08, 0.04), intensity: 0.0, range: CROSSING_LIGHT_RANGE, radius: 0.2, shadow_maps_enabled: false, ..default() },
+                super::offstage(),
+                Visibility::Hidden,
+                NotShadowCaster,
+                CrossingLight,
+            ));
+        }
+        *spawned = want;
+        return;
+    }
+    let w = &sim.world;
+    let night = super::street_look::lamp_night(look.daylight);
+    spots.clear();
+    if night > 0.01 && !lighting.heat {
+        for c in w.level_crossings().iter().filter(|c| c.flashing()) {
+            let y = lift(w, c);
+            for r in rigs(c) {
+                // Half a metre in front of the pair, towards the traffic.
+                let mid = (r.lamps[0] + r.lamps[1]) * 0.5;
+                spots.push(mid + Vec3::new(r.facing.x, 0.0, r.facing.y) * 0.5 + Vec3::Y * y);
+            }
+        }
+    }
+    near.clear();
+    if let Some((tf, cam)) = cams.iter().next() {
+        super::street_look::nearest_lamps(&spots, super::street_look::lamp_focus(*mode, tf.translation(), cam), want, &mut near);
+    }
+    // The pair flashes in turn: the light pulses at the beat, never off.
+    let phase = (time.elapsed_secs() / FLASH).fract();
+    let pulse = 0.55 + 0.45 * (phase * std::f32::consts::TAU).cos().abs();
+    let mut lit = near.iter();
+    for (mut light, mut ltf, mut vis) in &mut pool {
+        match lit.next() {
+            Some((_, p)) => {
+                light.intensity = CROSSING_LUMENS * night * pulse;
+                if ltf.translation != *p {
+                    ltf.translation = *p;
+                }
+                if *vis != Visibility::Inherited {
+                    *vis = Visibility::Inherited;
+                }
+            }
+            None => {
+                if *vis != Visibility::Hidden {
+                    *vis = Visibility::Hidden;
+                }
+            }
+        }
+    }
+}
+
+/// A crossing lamp's light: dimmer and shorter than a street lamp's.
+const CROSSING_LUMENS: f32 = 9.0e5;
+const CROSSING_LIGHT_RANGE: f32 = 16.0;

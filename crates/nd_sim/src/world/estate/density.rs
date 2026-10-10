@@ -15,6 +15,8 @@ impl World {
         let mut present = vec![0.0f32; cells];
         let mut cars = vec![0.0f32; cells];
         let mut stalled = vec![0.0f32; cells];
+        // [pt-growth] Street life: everyone out on foot.
+        let mut foot = vec![0.0f32; cells];
         for c in self.citizens.values() {
             if let Some(i) = p.index(c.pos) {
                 present[i] += 1.0;
@@ -22,6 +24,16 @@ impl World {
                 if matches!(c.activity, Activity::Traveling { .. }) {
                     present[i] += 1.0;
                 }
+                // (Not the homeless at their camps: a camp is not a high street.)
+                if c.home.is_some() && matches!(c.activity, Activity::Traveling { .. } | Activity::Idle | Activity::Sitting { .. } | Activity::Waiting { .. }) {
+                    foot[i] += 1.0;
+                }
+            }
+        }
+        // Visitors out sightseeing are street life too.
+        for t in self.tourism.tourists.values().filter(|t| t.is_visible()) {
+            if let Some(i) = p.index(t.pos) {
+                foot[i] += 1.0;
             }
         }
         for car in self.traffic.cars.values() {
@@ -35,6 +47,7 @@ impl World {
         }
         let share: Vec<f32> = cars.iter().zip(&stalled).map(|(c, s)| if *c > 0.0 { s / c } else { 0.0 }).collect();
         self.estate.pressure.sample(&present, &share);
+        self.estate.pressure.sample_foot(&foot);
     }
 
     /// Daily: how well each cell moves people. Bus stops within 300 m and a
@@ -59,6 +72,13 @@ impl World {
             let transit = 0.5 * bus + 0.5 * rail;
             p.mobility[i] = (0.8 + 0.5 * transit - 0.6 * p.congestion[i]).clamp(0.5, 1.5);
         }
+    }
+
+    /// [pt-growth] The land density score at `p` (people present and out
+    /// on foot, smoothed): what developers build to, and the Land density
+    /// map layer.
+    pub fn land_density_at(&self, p: Vec2) -> f32 {
+        self.estate.pressure.density_at(p)
     }
 
     /// Does pressure cap heights yet? Measured at least once, in a town of

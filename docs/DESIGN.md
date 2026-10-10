@@ -288,11 +288,28 @@ Citizens are rendered from their simulated positions every frame.
   (backland and rough ground too), homes on a street or a footpath, everything else on
   a street, industry and civic sites not on scraps under 200 m², with their deep
   yards allowed to take the backland behind them; nothing but parks on rough ground.
-  Rough ground is water or a cliff: hillsides up to `MAX_GRADED_SLOPE` (0.7) take lots,
-  each levelled to a pad at its street and cut and filled into the ground, as long as
-  the land rises no more than `MAX_LOT_RELIEF` (18 m) across it. Parcels are cut within
-  the configured square, grown on a landscape to take in every street drawn past it (an
-  island off the coast) up to the map edge (`World::parcel_half`).
+  Rough ground is water or a sheer cliff: ground up to `MAX_GRADED_SLOPE` (0.7) takes any
+  lot, levelled to a pad at its street and cut and filled into the ground, as long as
+  the land rises no more than `MAX_LOT_RELIEF` (18 m) across it; [hillside] steeper
+  ground, up to `MAX_TERRACE_SLOPE` (1.8) and `MAX_TERRACE_RELIEF` (40 m), is a hillside
+  (`Parcel::hillside`, `Landscape::lot_ground`) terraced for homes, shops and clubs (the
+  cliffside villa, the stair street), not for works yards or civic grounds. Parcels are
+  cut within the configured square, grown on a landscape to take in every street drawn
+  past it (an island off the coast) up to the map edge (`World::parcel_half`).
+  [stable-parcels] Parcels are kept between rebuilds and saved with the city (as
+  outlines, `zoning::ParcelCut`): road works recut only the land within `PARCEL_REACH` +
+  `RECUT_REACH` of a road piece that changed (`zoning::recut_parcels`, which compares the
+  road pieces, node degrees and water the last cut was made from), and every other
+  parcel, lot, building, plant and pad stays exactly as it was. A lot whose parcels all
+  came through unchanged keeps its id, outline and building. The ground under the
+  player's buildings (`World::is_city_building`, not docks or stations) is locked: the
+  parcels around it stop at its outline, it is never reshaped by the zoning or the
+  works (only trimmed where a street or track is laid over it), and it is levelled last
+  so a neighbour's pad never buries it. [parcel-size] Slivers along a road and the
+  backland behind them are mended into one parcel, backland on the water folds into the
+  lot in front, and no parcel is over `MAX_PARCEL_AREA` (2,400 m², 4,800 m² on the
+  water); cuts made before saved parcels (an old save's load) keep the old rules, so
+  its lots and parcels still agree.
   Every zoned parcel becomes a lot; uses with lots bigger than a home's join small
   neighbouring parcels (works yards and civic sites two or three, a shop a small
   neighbour) and industry and civic grounds fold in the backland behind them
@@ -304,7 +321,12 @@ Citizens are rendered from their simulated positions every frame.
   unzoned ground with road access: no zoning first. On unzoned ground a lot is made for
   it on placement, from the parcel under the pointer, or joined with its unzoned
   neighbours as civic ground would be when one parcel is too small
-  (`World::placement_site`). Only physical rules refuse: road access, a street out front
+  (`World::placement_site`). [big-sites] On a lot too small for it (a stadium, which
+  wants 2,400 m², a coal plant) it takes in as few neighbouring lots as it needs
+  (`World::joined_site`): what grew on them is bought out and the ground becomes one
+  lot. A city parking lot fills its plot (spaces, cost and upkeep by area; the
+  multi-storey car park the same in decks), and one put next to the city's own lot of
+  the same kind joins it. Only physical rules refuse: road access, a street out front
   where vehicles come and go, the lot's size, the site (river, coast, hot spot), ground
   under a station; parks are kept (but a metro entrance). The ground under a city
   building (`World::is_city_building`) is the city's own: its lot's use is Civic with a
@@ -322,6 +344,13 @@ Citizens are rendered from their simulated positions every frame.
 - **Buildings**: a vacant lot develops when demand for its land use is high. Floors
   and capacity (homes or jobs) depend on land use and a seed. Geometry is generated
   from the seed, so a save stays small.
+  [pt-growth] What the inspector says matches the mesh (F8, F25): civic buildings are two to
+  five storeys at any tier (the high-tier multiplier gave ten-floor "Data Exchange"s drawn as
+  low monuments); the styles that draw a fixed low height (villas, the monument plaza, the
+  library, the precinct) are never picked for a site of more than three floors and the
+  courthouse fades past five (`adjacency::site_fit`); and "the city's tallest" for an ordinary
+  building is ranked by its drawn height (`BuildingTops`, the renderer's walls and roof), not
+  floors at a storey height.
 - **Homes and jobs in balance**: demand counts working-age adults only (children and
   retirees neither work nor look for work). The job gap (adults the empty and coming homes
   will bring, at the town's adults per household, against permanent and coming jobs) and
@@ -500,7 +529,30 @@ Citizens are rendered from their simulated positions every frame.
   claim figures first, distant overflow borrows one of the same silhouette).
 - **Land value**: a 32 m grid summing road access, parks, civic and commercial
   amenities, industrial and nightlife nuisances, traffic noise, vacant lots and the
-  tier of neighbouring homes, blurred once. Recomputed every two sim hours. Power plants
+  tier of neighbouring homes, blurred once. Recomputed every two sim hours.
+  [pt-growth] *The scale*: the terms used to sum to 3 or 4 in most of a city (every park
+  parcel, every high-tier home, every 24 m of road added its full splat) and were clamped, so
+  most land read 1.0. Now like adds to like with diminishing returns: each kind of term is a
+  channel (`land_value::Channel`: roads, parks, homes, civic, commerce, services, transit,
+  shore, landmarks, blight, nuisance) that saturates at its cap (`cap x tanh(sum / scale)`;
+  roads 0.25, homes 0.15, parks 0.3, civic 0.2, commerce 0.3, services 0.25 on gentle slopes,
+  as they come in many splats over a block; transit 0.3, shore 0.3 and landmarks 0.25 at slope
+  one, so a single station, marina or monument counts in full; crime, camps and bins 0.1, plants
+  and works 0.45 taken off), on a base of 0.32, and the raw sum (`LandValue::raw`, kept for `for_use`) is compressed to the value:
+  itself up to 0.45, then `0.45 + 0.55 x (1 - exp(-(raw - 0.45) / 0.8))`, so 0.66 (high tier)
+  takes a raw score of about 0.76, 0.8 about 1.26 and 0.95 about 2.9; 1.0 is never reached.
+  Measured: Harvey's 6,200-person Cinder Ridge went from 71% of built lots at 0.95+ (median
+  0.96) to none (median 0.72, top 0.83); the Perfect AI City at 13k from 75% to none (median
+  about 0.7, top 0.9); the poorer, industrial demo district reads 0.35-0.45 at the median and
+  0.68 at the top.
+  *The lie of the land* (`World::splat_setting`): ground 30 m above the median lot is worth up
+  to +0.08, the low ground down to -0.03, so hillsides start dearer than the flats before
+  anything is built (the waterfront has its premium in `splat_shore`). Thresholds read on the
+  new scale: tiers 0.38 / 0.66 as before, crime's neighbourhood factor from 0.6 down (full at
+  0.2), downtown cafes and bookshops from 0.66, rooftop drone pads from 0.74 (kept to 0.68),
+  towers from 0.6, McMansions from 0.45; the tiers move to where the old thresholds fall on
+  the compressed scale: middle from 0.38, high from 0.58 (`Tier::MID_FROM`, `HIGH_FROM`; was
+  0.66 on the plain sum). An older save's grid is recomputed on load. Power plants
   and industry are *nuisances*, kept in a second grid so land uses feel them differently
   (`LandValue::for_use`, read through `World::lot_value` for tiers and rents): homes feel
   125% of a nuisance, shops 85%, nightlife 70%, industry 30%. Every plant costs its
@@ -822,8 +874,13 @@ Citizens are rendered from their simulated positions every frame.
   walkway network (a public beach) registers through `walk::Grounds`.
 - **Construction** (`buildings::Construction`): nothing pops into existence. `build_on` opens
   a site with a build time of (1 + 0.4 × floors) days scaled by tier, clamped to 1–12 days;
-  it offers no homes and a temporary crew of jobs that the unemployed commute to. Progress
-  advances hourly and needs four loads of parts, one per quarter, each ordered a quarter
+  it offers no homes and a temporary crew of jobs that the unemployed commute to. [pt-growth]
+  Crews work the working day only (08:00-17:00, `Clock::is_work_hours`, the hours the tower
+  cranes turn), a day's share of the work in those nine hours, so the calendar time is as
+  before but nothing rises at night; and each site reports at its own ten-minute slot of the
+  hour (`site_slot`, a hash of the building), so the city never grows a storey in one
+  synchronised jump. The inspector says when it should be done ("done about day 23 14:00",
+  `Clock::after_work_hours`). Progress needs four loads of parts, one per quarter, each ordered a quarter
   ahead from a local seller or by import; a late truck stalls the site at the next quarter.
   Every 10% the renderer redraws the site; on completion the crew is released, the real
   homes and jobs open, and tenants may move in. Player-placed specials and parking lots
@@ -832,7 +889,16 @@ Citizens are rendered from their simulated positions every frame.
   a tower crane from six floors, pallets, cabin, mixer and hi-vis workers.
 - **Demolition** (`buildings::Demolition`): nothing vanishes either. Whatever pulls a
   building down (a bulldozed zone, road works, a shop shut for a week, a take-over, a
-  redevelopment) turns it into a demolition site: residents, households and staff leave
+  redevelopment) turns it into a demolition site. [pt-growth] It says why
+  (`DemolitionReason`: "new development planned", "plots bought together for a new
+  development", "abandoned: a new owner is taking over", "road works", "bought out by the
+  city", "bulldozed: the zone was cleared", "a neighbour is expanding onto the plot", "burned
+  down: clearing the ruins", "bought for a private estate", "cleared for a landmark building",
+  "rebuilt for richer tenants"), and the inspector shows a red bar with the progress, when the
+  lot will be clear, the reason, the crew and the rubble hauled; the wrecking crews keep the
+  working day too. While the old building comes down the inspector says "coming down: 1 floor
+  low residential · then Brutalist, 9 floors" (the building's fields already describe its
+  successor: a hut being pulled down read as "high tier, 9 floors", F25). The site: residents, households and staff leave
   at once, and a wrecking crew (2 + floors/3 jobs) takes it down over (0.9 + 0.1 × floors)
   days, clamped to 1–3. A pure demolition also carries a placeholder `Construction`, so
   every system that skips building sites skips it, and nothing can be built on the lot
@@ -865,13 +931,47 @@ Citizens are rendered from their simulated positions every frame.
   builds under a footprint.
 - **Redevelopment and density**: a Low-tier building on High-value land for three days is
   rebuilt in place at the land's tier; rents rise and the displacement rules move people on.
+  [pt-growth] *How an area evolves* (Harvey's model): new ground starts as low suburbs (the
+  neighbour rule and quiet land hold the first houses to one or two storeys, cheap homes to
+  one); people walking the streets raise the *land density* (below); where it asks for four
+  floors or more, developers *assemble* plots: a small low building (under 1,100 m², at most
+  three floors) is bought with two to four small low neighbours of its use (vacant ones too,
+  each under 1,650 m², built at least three days, in a compact block, hull within 15%), all
+  pulled down ("plots bought together for a new development"), and one building of at least
+  four floors goes up across them (`World::assemble_plots`, `Form::Merged`, at the land's tier,
+  at least three quarters of what the density and the neighbours allow), so five bungalows
+  become a block of flats. It must pay: the new block's land and homes or jobs at 1.2 x what
+  every plot sells for. The residents and the neighbours' move out with a memory ("Kessler
+  Land bought up ... for a new block of 8 floors. We had to go."), businesses pack up to move,
+  a line of news. A developer's own block may be rebuilt taller again as the street gets
+  busier (densification feeds on itself; `redensified_total`), and a plain buyout now builds to
+  three quarters of what the land density allows, not one storey more. *Owners lose
+  buildings* (`World::foreclose_empty`): a middle or high block of homes at most 35% let for
+  five days while people wait for a home they can afford is sold to a developer at 60% of its
+  price, who cuts the rent (one tier down, refitted). While people cannot afford a home
+  (`World::short_of_cheap_homes`: low-tier housing demand over 2, or 20 people on the street)
+  cheap blocks are rebuilt cheap (taller, more homes) and full ones are not refitted up. A
+  busy town rebuilds a few a day (2 + one per 200 buildings, at most 6; densify tries only uses
+  in demand, so homes nobody needs no longer crowd out the shops). Heights are capped only by the land
+  density and the neighbours, the city's and a district's height limits, a vertiport's
+  clearance and a billionaire's NIMBY; rents are kept low only by a district's look (Kowloon
+  stacks). Supertalls and megatalls still go up through the skyline league where the land is
+  worth 0.6+ and the density asks for nine floors or more. Stats: `EstateStats::
+  assemblies_total`, `assembled_lots_total`, `redensified_total`, `foreclosures_total`.
   New buildings are capped at two floors plus one per ten neighbouring floors within 150 m,
   so high-rises appear only where the block is already dense; the land market below caps
   them again by pressure.
 - **The land market** (`nd_sim::estate`, `world/estate.rs`, [land]). *Pressure*: every hour
   (:13) each 64 m cell counts the people present (walkers twice: they are also moving
   through) and the cars in it, folded into a running average (half a day to rise, two days
-  to fall; an old save's cold grid takes its first sample outright). *Mobility* per cell,
+  to fall; an old save's cold grid takes its first sample outright). [pt-growth] *Foot
+  traffic*: the same hour counts everyone out on foot (walking or cycling, at a stop, on a
+  bench, loitering; sightseeing visitors; not the homeless at their camps) into
+  `Pressure::foot`, smoothed over days (a day and a half to rise, four to fall). The *land
+  density* is the pressure plus twice the foot traffic (`Pressure::density_at`,
+  `World::land_density_at`): what the floors follow, what the Land density map layer shows
+  (a log heat map per 64 m cell, quiet suburb to busy downtown) and what the inspector's
+  estate line and the API (`land_density`, `foot_traffic`) report. *Mobility* per cell,
   daily: 0.8 + 0.5 x transit (bus stops within 300 m, a station or metro entrance within
   600 m) - 0.6 x the share of cars standing, clamped 0.5..1.5. A lot's pressure floors are
   2 + (pressure - 4) / 2.5 x mobility (2..40), so height follows how well the city moves
@@ -971,7 +1071,10 @@ Citizens are rendered from their simulated positions every frame.
   annex within 420 m: a first dorm (a block of homes nearby bought as it stands, else a new one
   on the nearest plot, bought and cleared if need be), then administration offices, a sports
   centre, a theatre and a frat house, then dorms until 35% of its places are housed and more
-  frats, up to 4/7/12 annexes by tier. Dorm rooms are let only to students (45% off the rent).
+  frats, up to 4/7/12 annexes by tier. [pt-growth] The campus grows outward from what it has:
+  a plot next door to the hall or an annex (a shared edge, or corners within 10.5 m across a
+  path or zone gap) comes first, vacant before built (a house next door before an empty plot
+  across the road), then the nearest plot to any campus building, all within the reach. Dorm rooms are let only to students (45% off the rent).
   Offices, theatre and sports centre are the campus's own (special: never sold or rebuilt).
   *Students* go to class at 09:00 and stay till 15:00; at 20:30 about a third go out to a bar,
   a pizza place or the campus theatre within 600 m. Pizza places, cafés (bakeries) and bookshops
@@ -1335,7 +1438,10 @@ Citizens are rendered from their simulated positions every frame.
   No gore: nothing is drawn but the police at work. *Homelessness*: a
   household evicted with nowhere cheaper and no money stays on the street 70% of the time if any
   land is cheap (value < 0.36): camps of up to six households on cheap pavements, vacant lots and
-  unzoned parcels, or (with a car) an RV or van at the kerb; they eat charity meals, walk back to
+  unzoned parcels, or (with a car) an RV or van at the kerb ([pt-growth] each pulls up between
+  half an hour and fourteen hours after its household lost its home, a hash of the household,
+  and never beside two others within 60 m, so a new cheap street does not fill with ten RVs in
+  the same second); they eat charity meals, walk back to
   the camp at night, are housed again by the ordinary daily search when something affordable is
   free, by outreach from a clinic or police post nearby, or give up after ten days. Camps lower land
   value and are drawn only on cheap land. *Trash*: people throw out 1.5/1.8/2.4 kg a day by class,
@@ -1434,8 +1540,11 @@ Citizens are rendered from their simulated positions every frame.
   resource for a few days, and under a duty the industry sub-zones that make what the town imports
   are drawn 1 + 1.5 x duty times harder. Each line books its take (today, yesterday, a running
   average) for the window's bars.
-- **Toll booths** (`nd_sim::tolls`, `world/tolls.rs`, Buildings > Transit): a booth (4,000, 60 a
-  day) or a plaza (15,000, 200 a day) stands across a straight stretch of street or highway, both
+- **Toll booths** (`nd_sim::tolls`, `world/tolls.rs`, Buildings > Transit): [toll-fit] one toll
+  plaza on offer, a kiosk for every lane of the road it is put on and priced by it (1,500 and
+  1,250 a lane; upkeep 15 and 22.5 a lane a day: 4,000 and 60 on a two-lane street); widening
+  the road under it adds kiosks and the road works pay for them (`TollBooth::paid_lanes`). The
+  old six-booth plaza (15,000, 200 a day) is kept for saves that have one. It stands across a straight stretch of street or highway, both
   directions, saved by position and found again on every road rebuild (gone with its road). The
   lanes of its piece carry a `LaneToll`: vehicles slow to 2.5 m/s (plaza 4.5) from 60 m before the
   line to 6 m past it, and pay when they cross it from behind: cars from the driver's pocket (the
@@ -1850,7 +1959,26 @@ trait MindProvider {
     and semiconductor fabs (high).
   - Entertainment: shack bars and night markets, clubs, cinemas and neon towers,
     casinos, arenas and megastructures.
-  - Civic: precinct houses, ministries, libraries, courthouses, monuments.
+  - Civic: precinct houses, ministries, libraries, courthouses, monuments, and the
+    brutalist side of the state [pt-visual]: civil defence bunkers (battered concrete,
+    slit windows, blast doors under a visor, searchlights, a barbed fence), ministry
+    towers (an inverted ziggurat of finned concrete floors over a columned glass lobby,
+    the emblem, a lidless eye in a ring, on the crown) and surveillance bureaus (a near
+    windowless dark monolith with lit slits, a camera ring and a radar dome).
+  - Monuments the player places (`buildings/monuments.rs`) [pt-visual]: by tier a menu of
+    obelisks with glowing pyramidions and neon bands, colossal figures in long coats with
+    a raised torch and a lit visor, triumphal arches facing the road with neon down the
+    piers, memorial plazas (a dark wall of lit names, an eternal flame, a field of
+    stelae) and an upright halo ring round a floating crystal; the seed picks one.
+  - Courtyard blocks are a ring of wings, one quad per lot edge sharing its inner corners
+    with the next (`residential::courtyard_ring`), so every outer and inner face has a
+    wall behind it (wings used to be boxes shortened on a wedge while their windows ran
+    the whole edge). A garden tower on a big lot with under seven floors is a garden
+    courtyard instead: white plaster, tall glass, a pool court and planted wing roofs.
+  - Roofs [pt-visual]: `parts::green_roof` (sedum, shrub beds, a gravel path) on high-end
+    podium offices round the tower and on every setback of a high-end slab;
+    `parts::solar_roof` (rows of panels with a walkway every fourth row) on high-end
+    data centres (one row of chillers kept) and on high-end podium towers.
   - Park: scrub lots, gardens, plazas.
   Everything is attached to a surface: roof gear uses the roof footprint, columns hold
   up overhangs, wires run from poles to real units, jacks prop unsupported corners.
@@ -1867,6 +1995,22 @@ trait MindProvider {
   arenas avoid repeating a neighbour. The renderer keeps a `StyleBook` that resolves
   styles in build order (a building sees only older neighbours), so the result does not
   depend on drawing order and a building keeps its look when a newer neighbour arrives.
+- Earthworks that fit the land [pt-visual] (`landscape::earthwork_hold`, `earthwork_band`): a
+  highway, slip road or railway eased 3 m or more below the natural land along its middle (a
+  cutting) or above it (a fill) is held by retaining walls like a road the player sank: the ground
+  is held at the way's height out to a band 5 m past the hard shoulder (pavement for a street) and
+  is the natural land beyond, instead of 1-in-2.5 slopes graded up to 160 m out. The cutting walls
+  (`terrain::works::tunnel_works`) fill exactly that band, face at the shoulder; a fill's wall
+  stands from the land up to a parapet. Ways eased into a gentle slope are graded, never walled
+  (walls used to stand free on the slopes 6 m off a highway). The Road tool warns where an
+  at-grade leg's land climbs or falls 6 m more than the grade allows (a walled cutting or fill,
+  or a tunnel or viaduct instead) and where a straight highway or railway turns more than 35°
+  at a point. On a slope a junction pad hangs a 0.9 m asphalt skirt from its edge
+  (`draw_pad`), closing the vertical slivers that opened between the pad's straight edge and the
+  corners' aprons on their arms' profiles at steep junctions. A footpath crossing the track
+  (no street) gets a dark rubber panel at the rails' height over the ballast and sleepers, the
+  rails flush in it, ramps down to the paving and yellow tactile strips; the crossings' flashing lamps throw a pulsing red point light on the road at
+  night (a pool beside the street lamps', a third its size, none at Low).
 - Ramps (`roads::is_ramp_spec`: one-way streets narrower than a highway): an end dropped on a
   highway gets a lead point `RAMP_LEAD` (40 m) before a merge or after a diverge, beside the
   carriageway (`roads::ease_ramp_ends`), so the ramp joins nearly tangent; the join is drawn as a
@@ -1994,7 +2138,7 @@ trait MindProvider {
 - Vacant land (`nd_procgen::vacant`) dresses by land value: below 0.38 it is dormant and
   trashy (dead grass, weeds, rubbish, tyres, drums, a broken fence, a tagged wall, sometimes a
   drum fire); in the middle dirt and gravel with wild grass, shrubs, rocks and a young tree or
-  two; from 0.66 a parklet with mown lawn, a hedge with a gap, a path to a bench, bin, lamp and
+  two; from 0.58 (the high tier) a parklet with mown lawn, a hedge with a gap, a path to a bench, bin, lamp and
   trees. Open ground far from roads gets rocks, scrub and dry trees scattered by noise
   (`terrain::scatter_nature`, capped at 3500 pieces, kept 40 m from any way).
 - Grit: `parts::graffiti` paints tags, bubble letters and throw-ups on stacks, tenements,
@@ -2078,7 +2222,9 @@ trait MindProvider {
   Alpha comes from a palette of twelve steps per kind (plume at most 0.85, smog 0.38, both scaled by puff age and a soft texture), so the
   city reads through from above; the colour darkens at night; nothing casts or receives
   shadows. Thickness follows the plant's output: staffing times the grid's draw on supply.
-- Window lights follow occupancy (`render/lights.rs`, `nd_procgen::lights`). In the app every
+- Window lights follow occupancy (`render/lights.rs`, `nd_procgen::lights`). [pt-visual] A jump
+  in sim time of more than a stagger cycle (a long remote `step`) or back in it (a new city)
+  snaps every building to its share, as a load does. In the app every
   window light is generated (`Extras::dynamic_lights`, about 92% of windows) through
   `parts::window_light`, which ranks it by a hash of its position and lays dark glass just
   behind it (`LIGHT_GLASS_BEHIND`, 13 mm: off the whole-centimetre grid the decals stand on, so
@@ -2098,7 +2244,8 @@ trait MindProvider {
   ±0.13 on its own clock (re-rolled every 40..180 sim minutes at its own phase, a sim-time
   uniform on the material), so blocks twinkle room by room.
 - Map layers (`render/layers.rs`, ramps and heat grid in `nd_procgen::overlay`): land value
-  (V), traffic load (a ribbon per lane from cars per metre and speed against the limit, green
+  (V), land density ([pt-growth] the pressure plus foot traffic per 64 m cell, a log heat map,
+  `render/overlays.rs` `sync_overlay`), traffic load (a ribbon per lane from cars per metre and speed against the limit, green
   to magenta), traffic types (a disc under every vehicle: cars cyan, trucks orange, buses
   green; emergency red once the sim has them), people (a heat map of everyone where they
   are, indoors at their building), pollution and noise (plants by pollution radius,
@@ -2138,6 +2285,17 @@ trait MindProvider {
   outlines, saved with serde default) run along the roads, repeated along long streets and
   decluttered on screen, main roads first; pins with a glyph and the name mark services,
   plants, stations, ports, depots, civic buildings and big venues.
+- Beach boardwalks [pt-visual] (`shore::boardwalks`, `render/waterside.rs`): a run of four or
+  more public beach lots sharing their sides gets a wooden promenade along each lot's landward
+  edges, meeting at the seams: deck on a skirt, a rail on the sand side open where each lot's
+  path goes down, lamps with a neon band every 12 m, benches facing the sea, the odd kiosk.
+- Marinas [pt-visual]: `Port::moored` (counted at midnight) is the berths the town's boat owners
+  have let and the billionaires' superyachts lying at a large marina (each billionaire keeps one
+  at the large marina nearest home, at most three a marina). The moored boats are drawn apart
+  from the dock works (`terrain::moored_boats`): the berths let, in berth order, each in a look
+  (`BoatLook`) that grows richer as the marina fills (speedboats among the sailing boats,
+  catamarans among the yachts), and 60 m superyachts (four decks, a helipad, neon) side-to on an
+  outer pontoon off the pier's tip.
 - Parks merge visually: a park of several lots (`park::plan_parks` already plans one cluster)
   lays its lawn up to the seams (no inset on shared edges), keeps trees and lamps clear of the
   park's outside edges only, draws the zone outline only round the outside, and puts the

@@ -3,6 +3,12 @@
 
 use super::*;
 
+/// [stable-parcels] How far a lot's street may move up or down before its
+/// pad follows, m.
+const PAD_HOLD: f32 = 0.3;
+/// [stable-parcels] The same for the ground under the player's buildings.
+const CITY_PAD_HOLD: f32 = 1.0;
+
 impl World {
     /// Insert a vertex wherever a polyline crosses a waterline, set back a
     /// few metres onto the bank, so the stretch over the water becomes its
@@ -236,7 +242,38 @@ impl World {
         self.relief = !flat || z.iter().any(|h| h.abs() > 1e-3) || self.roads.alive_segments().any(|(_, s)| s.bridge);
         self.road_z = z;
         self.road_inner = inner_heights(&self.landscape, &self.roads, &self.road_z, floor, &crossings);
-        self.ground.set(crate::landscape::Ground::build(&self.landscape, &self.roads, &self.road_z, &self.road_inner, &self.lots, self.ground_half()));
+        // [stable-parcels] The player's buildings' ground is levelled last.
+        let mut locked: Vec<LotId> = self.lots.iter().filter(|(_, l)| self.is_city_ground(l)).map(|(id, _)| id).collect();
+        locked.sort();
+        // [F16] A dock's yard is levelled at the waterside (its own ground's
+        // height, at least the bank): levelled to its street, a marina at
+        // the foot of a hill stood metres up in the air over its boats.
+        let mut pad_at: HashMap<LotId, f32> = HashMap::new();
+        if !self.landscape.is_flat() {
+            for l in self.ports.ports.values().filter_map(|p| p.lot) {
+                let Some(lot) = self.lots.get(l) else { continue };
+                let mean = lot.polygon.iter().map(|c| self.landscape.height(*c)).sum::<f32>() / lot.polygon.len().max(1) as f32;
+                pad_at.insert(l, mean.max(crate::landscape::BANK_HEIGHT));
+            }
+        }
+        // [stable-parcels] A lot kept through the works keeps its pad while
+        // its street's height moves by no more than `PAD_HOLD` (the heights
+        // are eased over the whole network, so a road laid far off shifts
+        // them by millimetres): nothing far from the works rises or sinks.
+        for (id, lot) in self.lots.iter() {
+            if pad_at.contains_key(&id) {
+                continue;
+            }
+            let Some(&old) = self.ground.pads.get(&id) else { continue };
+            let now = crate::landscape::lot_pad(&self.roads, &self.road_z, &self.road_inner, lot, &self.landscape);
+            // The player's own buildings hold theirs further: a road
+            // regraded nearby does not lift or sink a plant.
+            let hold = if self.is_city_ground(lot) { CITY_PAD_HOLD } else { PAD_HOLD };
+            if (now - old).abs() <= hold {
+                pad_at.insert(id, old);
+            }
+        }
+        self.ground.set(crate::landscape::Ground::build_with(&self.landscape, &self.roads, &self.road_z, &self.road_inner, &self.lots, self.ground_half(), &locked, &pad_at));
     }
 
     /// Legs (by their first point) of a road drawn along `points` at
@@ -261,6 +298,7 @@ impl World {
     /// height: one warning per problem, for the Road tool and the API.
     /// Steep legs are still built: the end on the ground is raised (or
     /// lowered) until the grade holds, which takes ground beside it.
+    /// [pt-visual] See `TERRAIN_FIT_WARN`.
     pub fn road_grade_warnings(&self, points: &[Vec2], levels: &[f32], kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> Vec<String> {
         let mut out = Vec::new();
         if points.len() < 2 {
@@ -277,8 +315,40 @@ impl World {
             let need = (z(i + 1) - z(i)).abs() / grade;
             out.push(format!("too steep between points {} and {}: {:.0}% over {:.0} m (at most {:.0}%; needs {:.0} m)", i + 1, i + 2, g * 100.0, len, grade * 100.0, need));
         }
-        // Crossings at a height that is neither a junction nor a flyover.
+        // [pt-visual] Fitting the land (F31): an at-grade leg over ground
+        // that climbs or falls far faster than the grade will be cut deep
+        // into the hill or stand high on a fill; a motorway turning sharply
+        // makes the strange corners an interchange should not have.
         let highway = crate::roads::is_highway_spec(kind, lanes_fwd, lanes_bwd);
+        if !land.is_flat() && kind != RoadKind::Path {
+            for i in 0..points.len() - 1 {
+                if lv(i) != 0.0 || lv(i + 1) != 0.0 {
+                    continue;
+                }
+                let e = self.leg_earthwork(points[i], points[i + 1], z(i), z(i + 1), kind, highway);
+                if e.abs() >= TERRAIN_FIT_WARN && e.abs() < TERRAIN_REFUSE {
+                    out.push(format!(
+                        "between points {} and {} it {} up to {:.0} m: it will run in a walled {}; follow the slope, or use a {} there",
+                        i + 1,
+                        i + 2,
+                        if e > 0.0 { "cuts into the land" } else { "stands above the land" },
+                        e.abs(),
+                        if e > 0.0 { "cutting" } else { "fill" },
+                        if e > 0.0 { "tunnel" } else if highway { "viaduct" } else { "bridge" },
+                    ));
+                }
+            }
+        }
+        if highway || kind == RoadKind::Rail {
+            for i in 1..points.len().saturating_sub(1) {
+                let (u, v) = ((points[i] - points[i - 1]).normalize_or_zero(), (points[i + 1] - points[i]).normalize_or_zero());
+                let turn = u.dot(v).clamp(-1.0, 1.0).acos().to_degrees();
+                if turn > SHARP_TURN_WARN {
+                    out.push(format!("turns {turn:.0}° at point {}: a {} wants a curve (C) or gentler bends (at most {SHARP_TURN_WARN:.0}° per point)", i + 1, if highway { "highway" } else { "railway" }));
+                }
+            }
+        }
+        // Crossings at a height that is neither a junction nor a flyover.
         for i in 0..points.len() - 1 {
             let (a, b) = (points[i], points[i + 1]);
             for sid in self.roads.segments_in_box(a.min(b), a.max(b)) {
@@ -313,6 +383,32 @@ impl World {
     pub fn road_refusal(&self, points: &[Vec2], levels: &[f32], kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> Option<String> {
         let lv = |i: usize| levels.get(i).copied().filter(|l| l.is_finite()).unwrap_or(0.0);
         let highway = crate::roads::is_highway_spec(kind, lanes_fwd, lanes_bwd);
+        // [pt-visual] F31: an at-grade way that would carve the land deeper
+        // than `TERRAIN_REFUSE` (or pile it that high) is not built: it
+        // reshaped whole hillsides. A tunnel, a viaduct or a route along
+        // the slope is asked for instead.
+        let land = &self.landscape;
+        if !land.is_flat() && kind != RoadKind::Path {
+            let floor = crate::landscape::BANK_HEIGHT;
+            let z = |i: usize| land.height(points[i]).max(floor) + lv(i);
+            for i in 0..points.len().saturating_sub(1) {
+                if lv(i) != 0.0 || lv(i + 1) != 0.0 {
+                    continue;
+                }
+                let e = self.leg_earthwork(points[i], points[i + 1], z(i), z(i + 1), kind, highway);
+                if e.abs() >= TERRAIN_REFUSE {
+                    return Some(format!(
+                        "between points {} and {} the land {} {:.0} m: too much to {} at grade (at most {TERRAIN_REFUSE:.0} m); follow the slope, or raise or lower the road there ({})",
+                        i + 1,
+                        i + 2,
+                        if e > 0.0 { "rises above it by" } else { "falls below it by" },
+                        e.abs(),
+                        if e > 0.0 { "cut" } else { "fill" },
+                        if e > 0.0 { "a tunnel" } else { "a viaduct or a bridge" },
+                    ));
+                }
+            }
+        }
         for i in 0..points.len().saturating_sub(1) {
             let (a, b) = (points[i], points[i + 1]);
             for sid in self.roads.segments_in_box(a.min(b), a.max(b)) {
@@ -328,6 +424,43 @@ impl World {
             }
         }
         None
+    }
+
+    /// [pt-visual] How deep an at-grade leg from `a` (height `za`) to `b`
+    /// (`zb`) would cut into the land (positive) or stand on a fill above
+    /// it (negative), at its worst: sampled every 8 m against the road the
+    /// sim would build. A highway, a railway or a slip road runs straight
+    /// between its ends' heights; a street follows the land within its
+    /// grade from either end (as `inner_heights` lays it).
+    pub fn leg_earthwork(&self, a: Vec2, b: Vec2, za: f32, zb: f32, kind: RoadKind, highway: bool) -> f32 {
+        let land = &self.landscape;
+        let floor = if land.is_flat() { 0.0 } else { crate::landscape::BANK_HEIGHT };
+        let len = a.distance(b);
+        if len < 1.0 {
+            return 0.0;
+        }
+        let grade = way_grade(kind);
+        let straight = highway || kind == RoadKind::Rail;
+        let n = (len / 8.0).ceil().max(1.0) as usize;
+        let mut worst = 0.0f32;
+        for k in 1..n {
+            let t = k as f32 / n as f32;
+            let p = a.lerp(b, t);
+            let natural = land.height(p).max(floor);
+            let road = if straight {
+                za + (zb - za) * t
+            } else {
+                let (da, db) = (len * t, len * (1.0 - t));
+                let lo = (za - grade * da).max(zb - grade * db);
+                let hi = (za + grade * da).min(zb + grade * db);
+                if lo <= hi { natural.clamp(lo, hi) } else { 0.5 * (lo + hi) }
+            };
+            let e = natural - road;
+            if e.abs() > worst.abs() {
+                worst = e;
+            }
+        }
+        worst
     }
 
     /// Height of the road at a point on a segment.
@@ -449,3 +582,13 @@ impl World {
         self.lots.get(lot).map_or(0.0, |l| crate::landscape::lot_pad(&self.roads, &self.road_z, &self.road_inner, l, &self.landscape))
     }
 }
+
+/// [pt-visual] Metres of cut or fill on an at-grade leg (`leg_earthwork`)
+/// from which the Road tool says the land does not suit it.
+pub const TERRAIN_FIT_WARN: f32 = 6.0;
+/// [pt-visual] Metres of cut or fill on an at-grade leg from which the
+/// Road tool refuses it (`road_refusal`).
+pub const TERRAIN_REFUSE: f32 = 15.0;
+/// [pt-visual] Degrees a highway or railway may turn at one drawn point
+/// before the Road tool calls it a sharp corner.
+pub const SHARP_TURN_WARN: f32 = 35.0;

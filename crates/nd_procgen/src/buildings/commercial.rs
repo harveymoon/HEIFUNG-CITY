@@ -220,7 +220,14 @@ pub fn podium_office(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
     }
     cornice(g, c, &tower, podium_h + 0.6 + th - 0.5, 1.0, 0.4, Panel, mul(panel, 0.8));
-    roof_gear(g, c, rng, &tower, podium_h + 0.6 + th, 0.7);
+    // [pt-visual] High-end offices plant the podium roof round the tower
+    // and put solar panels on the tower's.
+    if c.tier == nd_sim::Tier::High {
+        green_roof(g, c, poly, podium_h + 0.6);
+        solar_roof(g, c, &tower, podium_h + 0.6 + th);
+    } else {
+        roof_gear(g, c, rng, &tower, podium_h + 0.6 + th, 0.7);
+    }
     let tf = c.front_face(&tower);
     sign_board(g, c, rng, &tf, 0.0, podium_h + 0.6 + th - 2.2, (tf.len * 0.5).min(10.0), 1.4);
     // Plaza in the setback: trees, bollards, flagless masts.
@@ -266,6 +273,10 @@ pub fn slab_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         extrude(g, f, Panel, &offset_poly(&poly, -0.3), y + h, y + h + 0.5, mul(pick(rng, &pal.panel), 0.9));
         y += h + 0.5;
         if s < steps - 1 {
+            // [pt-visual] A planted terrace on each setback of a high-end slab.
+            if c.tier == nd_sim::Tier::High {
+                green_roof(g, c, &poly, y);
+            }
             poly = fit_inside(c, &shift_poly(&scale_poly(&poly, rng.random_range(0.65..0.85)), Vec2::new(rng.random_range(-1.5..1.5), rng.random_range(-1.0..1.0))));
             roof_gear(g, c, rng, &poly, y, 0.3);
         }

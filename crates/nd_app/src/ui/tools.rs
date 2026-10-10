@@ -191,6 +191,8 @@ fn zone(ui: &mut egui::Ui, sim: &Sim, tools: &mut ToolState, assets: &GameAssets
         let front = if p.rough { p.rough_why.unwrap_or("rough ground") } else if p.street_frontage { "street frontage" } else if p.path_frontage { "footpath frontage" } else { "landlocked backland" };
         // [waterfront] On the water: its frontage, and a beach's verdict.
         let water = if p.water_frontage >= nd_sim::zoning::LotShore::MIN_FRONTAGE { format!(" · waterfront {:.0} m", p.water_frontage) } else { String::new() };
+        // [hillside] Steep ground, terraced: not for works or civic grounds.
+        let water = if p.hillside { format!("{water} · steep hillside (terraced homes, shops, clubs)") } else { water };
         let verdict = if tools.unzone {
             String::new()
         } else if tools.painting_beach() {
@@ -522,11 +524,11 @@ pub fn placeable_info(ui: &mut egui::Ui, sim: &mut Sim, what: Placeable) {
         Placeable::Rail(_) => line += ". Set beside track or a street it fuses to them; otherwise it lays stubs to join.",
         Placeable::Dock(_) => {}
         Placeable::MetroStation => line += &format!(". An entrance on its plaza, the platform underground; join stations into lines with Transit, Metro lines (tunnel {:.0}/m). Lifts land value round it.", nd_sim::subway::TUNNEL_COST_PER_M),
-        Placeable::ParkingLot(s) => line += &format!(", {} spaces. Run by the city: drivers pay {:.1} a visit to the treasury (set the fee in the inspector or with the API).", s.capacity(), s.default_price()),
+        Placeable::ParkingLot(s) => line += &format!(": it fills the plot it is put on, about {:.0} m² a space{}, priced by the plot's area; one next to the city's own lot joins it. Run by the city: drivers pay {:.1} a visit to the treasury (set the fee in the inspector or with the API).", if s.surface() { nd_sim::enforcement::SURFACE_M2_PER_SPACE } else { nd_sim::enforcement::DECK_M2_PER_SPACE }, if s.surface() { "" } else { " on each of its decks" }, s.default_price()),
         // [tolls]
         Placeable::Toll(s) => {
             line += &format!(
-                ". Click a road: it sits across the carriageway (both ways) on a straight run of {:.0} m or more. Every car pays {:.1} (lorries double, buses and emergencies free) and slows to {:.0} km/h through it; drivers weigh the toll and some take another way. Set prices in City Data, Economy, Taxes.",
+                ". Click a road: it sits across the carriageway (both ways) on a straight run of {:.0} m or more, a kiosk for every lane, priced by the road (widening the road adds kiosks, paid by the works). Every car pays {:.1} (lorries double, buses and emergencies free) and slows to {:.0} km/h through it; drivers weigh the toll and some take another way. Set prices in City Data, Economy, Taxes.",
                 s.clearance() * 2.0 + 2.0,
                 s.default_price(),
                 s.speed() * 3.6

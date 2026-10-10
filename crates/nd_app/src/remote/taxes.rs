@@ -137,7 +137,8 @@ pub fn booth_row(w: &World, b: &TollBooth) -> Value {
         "cars_today": b.cars_today, "revenue_today": round(b.revenue_today),
         "cars_yesterday": b.cars_yesterday, "revenue_yesterday": round(b.revenue_yesterday),
         "cars_total": b.cars_total, "revenue_total": round(b.revenue_total),
-        "upkeep_per_day": b.size.upkeep_per_day(),
+        "upkeep_per_day": b.upkeep_per_day(),
+        "lanes": b.paid_lanes,
     })
 }
 

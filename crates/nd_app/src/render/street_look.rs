@@ -56,7 +56,7 @@ const LAMP_RGB: [f32; 3] = [1.0, 0.72, 0.45];
 /// The point the lamps gather round: the walker's eye, or the orbit
 /// camera's target (what the player is looking at), pulled towards the eye
 /// when it is low.
-fn lamp_focus(mode: CameraMode, eye: Vec3, cam: &OrbitCamera) -> Vec3 {
+pub(super) fn lamp_focus(mode: CameraMode, eye: Vec3, cam: &OrbitCamera) -> Vec3 {
     match mode {
         CameraMode::Walk => eye,
         CameraMode::Orbit => {
@@ -67,7 +67,7 @@ fn lamp_focus(mode: CameraMode, eye: Vec3, cam: &OrbitCamera) -> Vec3 {
 }
 
 /// How much night it is for the lamps, 0..1.
-fn lamp_night(daylight: f32) -> f32 {
+pub(super) fn lamp_night(daylight: f32) -> f32 {
     1.0 - smoothstep(0.2, 0.6, daylight)
 }
 

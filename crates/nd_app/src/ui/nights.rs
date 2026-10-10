@@ -35,6 +35,7 @@ pub fn news_toast(w: &nd_sim::World, flags: &mut UiFlags) {
     flags.news_seen = n.seq;
     if w.clock.tick.saturating_sub(n.tick) <= 30 {
         flags.message = n.headline.clone();
+        flags.message_at = Some(bevy::math::Vec2::new(n.pos.x, n.pos.y));
     }
 }
 

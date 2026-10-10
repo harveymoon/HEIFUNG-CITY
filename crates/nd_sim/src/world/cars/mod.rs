@@ -46,6 +46,8 @@ const KERB_PITCH: f32 = 6.5;
 const KERB_WALK: f32 = 170.0;
 /// And at a parking business.
 const LOT_WALK: f32 = 180.0;
+/// [parking] A hunting driver sees a lot's gate this far ahead (m).
+const LOT_SPOT_AHEAD: f32 = 70.0;
 /// Streets a driver circles through looking for a space.
 const SEARCH_RADIUS: f32 = 240.0;
 /// Places checked before parking anywhere at all.
@@ -88,7 +90,7 @@ impl World {
             .cars
             .iter()
             .filter(|(id, c)| match c.place {
-                CarPlace::Parked(_) => !self.citizens.get(c.owner).is_some_and(|o| o.car == Some(*id)) && !self.spare_kept(c),
+                CarPlace::Parked(_) => !self.citizens.get(c.owner).is_some_and(|o| o.car == Some(*id)) && !self.spare_kept(c) && c.dealer.is_none(),
                 CarPlace::Driving(cid) => !self.traffic.cars.get(cid).is_some_and(|t| t.owned.is_some()),
             })
             .map(|(id, _)| id)
@@ -116,6 +118,28 @@ impl World {
         for c in self.citizens.values_mut() {
             if c.car.is_some_and(|v| !self.vehicles.cars.contains_key(v)) {
                 c.car = None;
+            }
+        }
+        // [parking] Surface lots from older saves: their spaces are the bays
+        // their parcel fits (as drawn); cars beyond them move to the street.
+        let surface: Vec<(BuildingId, u16)> = self
+            .buildings
+            .iter()
+            .filter(|(_, b)| b.is_parking() && b.floors == 0 && b.construction.is_none())
+            .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, crate::parking_layout::surface_capacity(l).max(1))))
+            .collect();
+        if !surface.is_empty() {
+            self.refresh_no_kerb();
+            self.vehicles.reindex_kerbs();
+        }
+        for (bid, cap) in surface {
+            self.buildings[bid].parking_capacity = cap;
+            let inside: Vec<VehicleId> = self.vehicles.cars.iter().filter(|(_, c)| c.spot().is_some_and(|s| s.kind.uses_building() && s.building == Some(bid))).map(|(id, _)| id).collect();
+            for &vid in inside.iter().skip(cap as usize) {
+                let pos = self.vehicles.cars[vid].spot().map(|s| s.pos).unwrap_or_default();
+                self.vehicles.cars[vid].place = CarPlace::Driving(CarId::default());
+                let spot = self.place_near(pos, None).unwrap_or(ParkSpot { kind: ParkKind::Overflow, pos, slot: u16::MAX, ..Default::default() });
+                self.park_at(vid, spot);
             }
         }
         // Building counts follow the cars in them.
@@ -184,10 +208,7 @@ impl World {
             let spot = self.place_near(pos, None).unwrap_or(ParkSpot { kind: ParkKind::Overflow, pos, slot: u16::MAX, ..Default::default() });
             self.park_at(vid, spot);
         }
-        let waiting: Vec<VehicleId> = self.vehicles.cars.iter().filter(|(_, c)| c.spot().is_some_and(|s| s.kind == ParkKind::Dealer)).map(|(id, _)| id).collect();
-        for vid in waiting {
-            self.deliver_car(vid);
-        }
+        self.hourly_dealers();
         let buildings = &self.buildings;
         self.vehicles.fleet_parked.retain(|b, n| *n > 0 && buildings.contains_key(*b));
         // A private car on the road whose record says otherwise, or the

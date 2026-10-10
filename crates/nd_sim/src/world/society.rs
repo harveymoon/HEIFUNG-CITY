@@ -380,8 +380,38 @@ mod tests {
         let mut b = LandValueBuilder::new(&w.land_value);
         w.splat_society(&mut b);
         let mut lv = w.land_value.clone();
-        b.finish(0.5, &mut lv);
-        assert!(lv.at(at) < 0.48 && (lv.at(at + Vec2::new(400.0, 0.0)) - 0.5).abs() < 0.01, "{}", lv.at(at));
+        // [pt-growth] A base under the compression knee, so it reads as is.
+        b.finish(0.4, &mut lv);
+        assert!(lv.at(at) < 0.38 && (lv.at(at + Vec2::new(400.0, 0.0)) - 0.4).abs() < 0.01, "{}", lv.at(at));
+    }
+
+    /// [pt-growth] Households put out on the same night drive round and pull
+    /// up one by one, and a fresh cheap street fills a few at a time.
+    #[test]
+    fn rvs_arrive_one_by_one_and_do_not_pile_up_on_one_street() {
+        let mut w = town(5);
+        populate(&mut w, 80);
+        set_land_value(&mut w, |_| 0.2);
+        for c in w.citizens.values_mut() {
+            c.owns_car = true;
+        }
+        let now = w.clock.tick;
+        let hids: Vec<HouseholdId> = w.households.keys().collect();
+        for hid in hids.into_iter().take(30) {
+            w.force_homeless(hid);
+        }
+        let rvs = w.society.homeless.rvs.clone();
+        assert!(rvs.len() >= 4, "some live in their vehicles: {}", rvs.len());
+        let mut ticks: Vec<u64> = rvs.iter().map(|r| r.parked_tick).collect();
+        assert!(ticks.iter().all(|t| *t > now), "none parked in the same second they lost their home");
+        ticks.sort();
+        ticks.dedup();
+        assert!(ticks.len() * 2 >= rvs.len(), "they arrive at different times: {ticks:?}");
+        assert!(rvs.iter().all(|r| !r.parked(now)), "not drawn yet");
+        for (i, r) in rvs.iter().enumerate() {
+            let near = rvs[..i].iter().filter(|o| o.pos.distance(r.pos) < crate::homeless::RV_CLUSTER_RADIUS).count();
+            assert!(near < crate::homeless::RV_CLUSTER, "rv {i} pulled up beside {near} others");
+        }
     }
 
     /// Make one household broke and stressed with nothing cheaper in town.
@@ -400,6 +430,42 @@ mod tests {
         hh.moved_day = u64::MAX;
     }
 
+
+    /// [feat/pt-ux] A van left behind by a household that left town stands
+    /// abandoned until the tow contractor's turn; a lived-in one the player
+    /// orders towed goes within hours and its household is settled again.
+    #[test]
+    fn abandoned_vans_are_towed_and_ordered_tows_move_people_on() {
+        use crate::homeless::{Rv, RV_ABANDONED_DAYS, RV_TOW_TICKS};
+        let mut w = town(3);
+        populate(&mut w, 30);
+        let hids: Vec<HouseholdId> = w.households.keys().take(2).collect();
+        let (gone, living) = (hids[0], hids[1]);
+        // `gone` was on the street in its van and has left town.
+        let rv = |household, seed, x: f32| Rv { household, pos: Vec2::new(x, 0.0), heading: 0.0, seed, camper: true, abandoned: None, tow_at: None, parked_tick: 0 };
+        w.society.homeless.rvs.push(rv(gone, 3, -50.0));
+        w.society.homeless.since.push((gone, 0));
+        w.households.remove(gone);
+        w.hourly_homeless();
+        let r = w.society.homeless.rv(3).copied().expect("left at the kerb");
+        assert!(r.abandoned.is_some() && !r.lived_in());
+        assert!(w.society.homeless.rv_of(gone).is_none(), "nobody sleeps in it");
+        // `living` is on the street, sleeping in theirs.
+        w.households[living].home = None;
+        w.society.homeless.rvs.push(rv(living, 4, 50.0));
+        w.society.homeless.since.push((living, w.clock.tick));
+        assert_eq!(w.society.homeless.bed_of(living), Some(Vec2::new(50.0, 0.0)));
+        w.order_tow_rv(4).unwrap();
+        assert!(w.order_tow_rv(4).is_err(), "already coming");
+        w.clock.tick += RV_TOW_TICKS;
+        w.hourly_homeless();
+        assert!(w.society.homeless.rv(4).is_none(), "towed");
+        assert!(w.society.homeless.rv(3).is_some(), "the abandoned one waits its turn");
+        assert_ne!(w.society.homeless.bed_of(living), Some(Vec2::new(50.0, 0.0)));
+        w.clock.tick += RV_ABANDONED_DAYS * 1440;
+        w.hourly_homeless();
+        assert!(w.society.homeless.rv(3).is_none(), "the contractor hauled it off");
+    }
     #[test]
     fn evicted_households_camp_on_cheap_ground_and_are_housed_again() {
         let mut w = town(4);

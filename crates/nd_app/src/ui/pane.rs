@@ -1,13 +1,13 @@
 //! What the data pages and the tool windows share: the tool windows' header
 //! (title and close), the City Data view's page furniture (page title,
-//! headline cards, section headings, figure rows, tables), the time-range
+//! headline cards, section headings, figure rows, sortable tables), the time-range
 //! picker, and the charts.
 //!
 //! Every City Data page (`ui/city_data.rs`) is laid out the same way, top
 //! to bottom: a page title with a line saying what the page is for, a row
 //! of headline figures as cards (`kpi`), then sections under one kind of
 //! heading (`heading`), each with full-width charts (`line_chart`,
-//! `stacked_bars`, a `legend` under them), tables (`table`) and labelled
+//! `stacked_bars`, `pie`, a `legend` under them), tables (`sortable`) and labelled
 //! figures (`row`). The sizes come from `ui/theme.rs`.
 //!
 //! The charts are painted by hand (no plotting crate): a line chart and a
@@ -137,19 +137,300 @@ pub fn th(ui: &mut egui::Ui, text: &str) -> egui::Response {
     ui.label(egui::RichText::new(text).small().strong().color(CAPTION))
 }
 
-/// A table: striped rows, the same spacing everywhere, the headings first.
-/// `body` adds the rows (cells, then `ui.end_row()`).
-pub fn table<R>(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, heads: &[&str], body: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    egui::Grid::new(id).num_columns(heads.len().max(1)).spacing(egui::vec2(16.0, 4.0)).striped(true).show(ui, |ui| {
-        if !heads.is_empty() {
-            for h in heads {
-                th(ui, h);
+// ── sortable tables ────────────────────────────────────────────────────────
+
+/// [pt-ux] What a sortable table sorts a column by.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SortKey {
+    /// A figure: the first click sorts biggest first.
+    Num(f64),
+    /// A name: the first click sorts A to Z (ignoring case).
+    Text(String),
+    /// Not sortable (a bar, a button), or a blank cell (sinks to the bottom).
+    None,
+}
+
+impl SortKey {
+    pub fn text(s: impl Into<String>) -> Self {
+        SortKey::Text(s.into())
+    }
+
+    pub fn num(v: impl Into<f64>) -> Self {
+        SortKey::Num(v.into())
+    }
+
+    fn cmp(&self, o: &SortKey) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (self, o) {
+            (SortKey::Num(a), SortKey::Num(b)) => a.total_cmp(b),
+            (SortKey::Text(a), SortKey::Text(b)) => a.to_lowercase().cmp(&b.to_lowercase()),
+            // Mixed: figures before names, blanks last.
+            (SortKey::Num(_), _) => Ordering::Less,
+            (_, SortKey::Num(_)) => Ordering::Greater,
+            (SortKey::Text(_), SortKey::None) => Ordering::Less,
+            (SortKey::None, SortKey::Text(_)) => Ordering::Greater,
+            (SortKey::None, SortKey::None) => Ordering::Equal,
+        }
+    }
+}
+
+/// A table's sort: the column and the direction (`col: None`: as given).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Sort {
+    pub col: Option<usize>,
+    pub desc: bool,
+}
+
+impl Sort {
+    /// A click on column `c`'s heading, whose first key is `first`: a new
+    /// column sorts figures biggest first and names A to Z; the same column
+    /// again reverses; a third click puts the given order back.
+    pub fn click(self, c: usize, first: &SortKey) -> Sort {
+        let numeric = matches!(first, SortKey::Num(_));
+        match self.col {
+            Some(o) if o == c => {
+                if self.desc != numeric {
+                    Sort::default()
+                } else {
+                    Sort { col: Some(c), desc: !self.desc }
+                }
             }
+            _ => Sort { col: Some(c), desc: numeric },
+        }
+    }
+}
+
+/// The order rows show in under `sort` (stable: equal keys keep the given
+/// order; blanks sink to the bottom either way).
+pub fn sort_order<R>(rows: &[R], sort: Sort, key: impl Fn(&R, usize) -> SortKey) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    let Some(c) = sort.col else { return order };
+    let keys: Vec<SortKey> = rows.iter().map(|r| key(r, c)).collect();
+    order.sort_by(|&a, &b| {
+        let (ka, kb) = (&keys[a], &keys[b]);
+        match (ka, kb) {
+            (SortKey::None, SortKey::None) => std::cmp::Ordering::Equal,
+            (SortKey::None, _) => std::cmp::Ordering::Greater,
+            (_, SortKey::None) => std::cmp::Ordering::Less,
+            _ if sort.desc => kb.cmp(ka),
+            _ => ka.cmp(kb),
+        }
+    });
+    order
+}
+
+fn sort_id(id: egui::Id) -> egui::Id {
+    id.with("pt_ux_sort")
+}
+
+/// Set a table's sort (the API's `city_data {sort}`).
+pub fn set_sort(ctx: &egui::Context, id: impl std::hash::Hash + std::fmt::Debug, sort: Sort) {
+    ctx.data_mut(|d| d.insert_temp(sort_id(egui::Id::new(id)), sort));
+}
+
+/// [pt-ux] A table like [`table`] whose headings sort it: click one to sort
+/// by it (figures biggest first, names A to Z), again to reverse, a third
+/// time for the given order. `heads` are (label, hover tip); `key` gives a
+/// row's sort key in a column (`SortKey::None` where a column is not
+/// sortable); `row` draws one row's cells (the table ends the row). The
+/// sort lasts the session, in egui memory under `id`.
+pub fn sortable<R>(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, heads: &[(&str, &str)], rows: &[R], key: impl Fn(&R, usize) -> SortKey, row: impl FnMut(&mut egui::Ui, &R)) {
+    sortable_foot(ui, id, heads, rows, key, row, |_| {});
+}
+
+/// [`sortable`] with a last row that stays last (a total): `foot` adds its
+/// cells.
+pub fn sortable_foot<R>(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, heads: &[(&str, &str)], rows: &[R], key: impl Fn(&R, usize) -> SortKey, mut row: impl FnMut(&mut egui::Ui, &R), foot: impl FnOnce(&mut egui::Ui)) {
+    let id = egui::Id::new(id);
+    let mut sort: Sort = ui.data(|d| d.get_temp(sort_id(id))).unwrap_or_default();
+    let order = sort_order(rows, sort, &key);
+    egui::Grid::new(id).num_columns(heads.len().max(1)).spacing(egui::vec2(16.0, 4.0)).striped(true).show(ui, |ui| {
+        for (c, (h, tip)) in heads.iter().enumerate() {
+            let first = rows.iter().map(|r| key(r, c)).find(|k| *k != SortKey::None).unwrap_or(SortKey::None);
+            if h.is_empty() || first == SortKey::None {
+                let l = th(ui, h);
+                if !tip.is_empty() {
+                    l.on_hover_text(*tip);
+                }
+                continue;
+            }
+            let on = sort.col == Some(c);
+            let arrow = if on { if sort.desc { " ▼" } else { " ▲" } } else { "" };
+            let text = egui::RichText::new(format!("{h}{arrow}")).small().strong().color(if on { GOLD } else { CAPTION });
+            let r = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
+            if r.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            let clicked = r.clicked();
+            r.on_hover_text(if tip.is_empty() { "Click to sort; again to reverse".to_string() } else { format!("{tip}. Click to sort; again to reverse") });
+            if clicked {
+                sort = sort.click(c, &first);
+            }
+        }
+        ui.end_row();
+        for &i in &order {
+            row(ui, &rows[i]);
             ui.end_row();
         }
-        body(ui)
-    })
-    .inner
+        foot(ui);
+    });
+    ui.data_mut(|d| d.insert_temp(sort_id(id), sort));
+}
+
+/// [`sortable`] with plain headings.
+pub fn sortable_plain<R>(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, heads: &[&str], rows: &[R], key: impl Fn(&R, usize) -> SortKey, row: impl FnMut(&mut egui::Ui, &R)) {
+    let heads: Vec<(&str, &str)> = heads.iter().map(|h| (*h, "")).collect();
+    sortable(ui, id, &heads, rows, key, row);
+}
+
+// ── pie ────────────────────────────────────────────────────────────────────
+
+/// [pt-ux] Each slice's start and end angle (radians, clockwise from
+/// twelve o'clock), `None` for a value not over zero.
+pub fn pie_angles(values: &[f32]) -> Vec<Option<(f32, f32)>> {
+    let total: f32 = values.iter().filter(|v| **v > 0.0).sum();
+    let mut at = 0.0;
+    values
+        .iter()
+        .map(|&v| {
+            if v <= 0.0 || total <= 0.0 {
+                return None;
+            }
+            let span = v / total * std::f32::consts::TAU;
+            let s = (at, at + span);
+            at += span;
+            Some(s)
+        })
+        .collect()
+}
+
+/// [pt-ux] A pie chart of `slices` (label, value, colour) with its key
+/// beside it: each slice's value (`fmt`) and share. Hovering a slice lights
+/// it and its key line. Nothing over zero: a line saying so.
+pub fn pie(ui: &mut egui::Ui, title: &str, slices: &[(String, f32, Color32)], radius: f32, fmt: &dyn Fn(f32) -> String) {
+    let values: Vec<f32> = slices.iter().map(|s| s.1).collect();
+    let total: f32 = values.iter().filter(|v| **v > 0.0).sum();
+    let angles = pie_angles(&values);
+    ui.vertical(|ui| {
+        ui.label(egui::RichText::new(title).small().strong().color(CAPTION));
+        if total <= 0.0 {
+            ui.label(egui::RichText::new("Nothing yet").weak());
+            return;
+        }
+        ui.horizontal(|ui| {
+            let (rect, resp) = ui.allocate_exact_size(egui::vec2(radius * 2.0 + 8.0, radius * 2.0 + 8.0), egui::Sense::hover());
+            let c = rect.center();
+            let hover = resp.hover_pos().and_then(|p| {
+                let d = p - c;
+                if d.length() > radius {
+                    return None;
+                }
+                let mut a = d.x.atan2(-d.y);
+                if a < 0.0 {
+                    a += std::f32::consts::TAU;
+                }
+                angles.iter().position(|s| s.is_some_and(|(a0, a1)| a >= a0 && a < a1))
+            });
+            let painter = ui.painter();
+            for (i, s) in angles.iter().enumerate() {
+                let Some((a0, a1)) = *s else { continue };
+                let r = if hover == Some(i) { radius + 3.0 } else { radius };
+                // One convex polygon per half at most (a slice over half the
+                // pie is not convex): no seams inside a slice.
+                let halves = if a1 - a0 > std::f32::consts::PI { 2 } else { 1 };
+                for h in 0..halves {
+                    let (b0, b1) = (a0 + (a1 - a0) * h as f32 / halves as f32, a0 + (a1 - a0) * (h + 1) as f32 / halves as f32);
+                    let steps = ((b1 - b0) / 0.05).ceil().max(1.0) as usize;
+                    let mut pts = vec![c];
+                    for k in 0..=steps {
+                        let t = b0 + (b1 - b0) * k as f32 / steps as f32;
+                        pts.push(c + egui::vec2(t.sin(), -t.cos()) * r);
+                    }
+                    painter.add(egui::Shape::convex_polygon(pts, slices[i].2, Stroke::NONE));
+                }
+            }
+            // Thin dark edges between the slices.
+            if angles.iter().flatten().count() > 1 {
+                for (a0, _) in angles.iter().flatten() {
+                    painter.line_segment([c, c + egui::vec2(a0.sin(), -a0.cos()) * (radius + 3.0)], Stroke::new(1.5, PLOT_BG));
+                }
+            }
+            if let Some(i) = hover {
+                resp.on_hover_text(format!("{}: {} ({:.0}%)", slices[i].0, fmt(slices[i].1), slices[i].1 / total * 100.0));
+            }
+            ui.add_space(8.0);
+            ui.vertical(|ui| {
+                for (i, (label, v, col)) in slices.iter().enumerate() {
+                    if *v <= 0.0 {
+                        continue;
+                    }
+                    ui.horizontal(|ui| {
+                        let (sw, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                        ui.painter().rect_filled(sw, 2.0, *col);
+                        let text = format!("{label}  {}  {:.0}%", fmt(*v), v / total * 100.0);
+                        ui.label(if hover == Some(i) { egui::RichText::new(text).small().color(IVORY).strong() } else { egui::RichText::new(text).small() });
+                    });
+                }
+            });
+        });
+    });
+}
+
+#[cfg(test)]
+mod sort_tests {
+    use super::*;
+
+    fn key(r: &(&str, f64), c: usize) -> SortKey {
+        match c {
+            0 => SortKey::text(r.0),
+            1 if r.1 < 0.0 => SortKey::None,
+            1 => SortKey::num(r.1),
+            _ => SortKey::None,
+        }
+    }
+
+    #[test]
+    fn sorting_by_figures_names_and_blanks() {
+        let rows = [("bakery", 3.0), ("Arcade", 9.0), ("clinic", -1.0), ("dock", 3.0)];
+        assert_eq!(sort_order(&rows, Sort::default(), key), vec![0, 1, 2, 3]);
+        // Names A to Z, ignoring case.
+        assert_eq!(sort_order(&rows, Sort { col: Some(0), desc: false }, key), vec![1, 0, 2, 3]);
+        assert_eq!(sort_order(&rows, Sort { col: Some(0), desc: true }, key), vec![3, 2, 0, 1]);
+        // Figures biggest first; ties keep their order; the blank sinks either way.
+        assert_eq!(sort_order(&rows, Sort { col: Some(1), desc: true }, key), vec![1, 0, 3, 2]);
+        assert_eq!(sort_order(&rows, Sort { col: Some(1), desc: false }, key), vec![0, 3, 1, 2]);
+    }
+
+    #[test]
+    fn heading_clicks_cycle() {
+        let n = SortKey::num(1.0);
+        let t = SortKey::text("a");
+        let s = Sort::default().click(1, &n);
+        assert_eq!(s, Sort { col: Some(1), desc: true });
+        let s = s.click(1, &n);
+        assert_eq!(s, Sort { col: Some(1), desc: false });
+        assert_eq!(s.click(1, &n), Sort::default());
+        let s = Sort::default().click(0, &t);
+        assert_eq!(s, Sort { col: Some(0), desc: false });
+        assert_eq!(s.click(0, &t), Sort { col: Some(0), desc: true });
+        assert_eq!(s.click(0, &t).click(0, &t), Sort::default());
+        // Another column starts afresh.
+        assert_eq!(s.click(1, &n), Sort { col: Some(1), desc: true });
+    }
+
+    #[test]
+    fn pie_slices_cover_the_circle() {
+        let a = pie_angles(&[1.0, 0.0, 3.0, -2.0]);
+        assert_eq!(a[1], None);
+        assert_eq!(a[3], None);
+        let (s0, e0) = a[0].unwrap();
+        let (s2, e2) = a[2].unwrap();
+        assert_eq!(s0, 0.0);
+        assert!((e0 - std::f32::consts::TAU / 4.0).abs() < 1e-5);
+        assert_eq!(e0, s2);
+        assert!((e2 - std::f32::consts::TAU).abs() < 1e-4);
+        assert!(pie_angles(&[0.0, 0.0]).iter().all(Option::is_none));
+    }
 }
 
 // ── time range ─────────────────────────────────────────────────────────────

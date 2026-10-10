@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// [carlife] Days a car bought or sold is kept (or done without) before
+/// its owner trades again.
+pub(in crate::world) const WHEELS_HOLD_DAYS: u64 = 14;
+
 impl World {
     pub(in crate::world) fn daily_citizens(&mut self) {
         let cids: Vec<CitizenId> = self.citizens.keys().collect();
@@ -415,25 +419,31 @@ impl World {
         let transit_used = p.trips[TripMode::Bus.index()] + p.trips[TripMode::Train.index()] + p.trips[TripMode::Subway.index()] > 0.3;
         let cheap_car = self.citizens[m].car.and_then(|v| self.vehicles.cars.get(v)).is_some_and(|v| v.model.class == VehicleClass::Cheap);
         let wants = VehicleModel::for_owner(c.income, c.age, crate::vehicle::hedonism_of(c.seed), &mut crate::vehicle::model_rng(c.seed, today + 2));
+        // [carlife] A car bought or sold lately is kept (or done without)
+        // a while before it is traded again.
+        let settled = p.wheels_day > 0 && today + 1 < p.wheels_day + WHEELS_HOLD_DAYS;
         // A car the poor cannot keep.
         if has_car && class == Tier::Low && *money < -100.0 {
             if let Some(got) = self.sell_car(m, "Sold the car. Couldn't afford to keep it.") {
                 *money += got.min(150.0);
+                self.citizens[m].commute.wheels_day = today + 1;
             }
             return;
         }
         // Parking misery or endless jams, and another way to get about.
-        if has_car && (park_p > 1.5 || car_p > 2.5) && (owns_bike || transit_used || walk_p < 1.0) && self.rng.random_bool(0.25) {
+        if has_car && !settled && (park_p > 1.5 || car_p > 2.5) && (owns_bike || transit_used || walk_p < 1.0) && self.rng.random_bool(0.25) {
             let reason = if park_p >= car_p * 0.6 { "Sick of circling for a space every day. Sold the car." } else { "Hours in traffic, every single day. Sold the car." };
             if let Some(got) = self.sell_car(m, reason) {
                 *money += got;
+                self.citizens[m].commute.wheels_day = today + 1;
             }
             return;
         }
         // The rich trade an old wreck up.
-        if has_car && class == Tier::High && *money > 1500.0 && cheap_car && self.rng.random_bool(0.05) {
+        if has_car && !settled && class == Tier::High && *money > 1500.0 && cheap_car && self.rng.random_bool(0.05) {
             if let Some(got) = self.sell_car(m, "Traded the old wreck in.") {
                 *money += got;
+                self.citizens[m].commute.wheels_day = today + 1;
                 if let Some(paid) = self.buy_car(m, wants, wants.price().min(800.0)) {
                     *money -= paid;
                 }
@@ -452,7 +462,7 @@ impl World {
         }
         // A car: when buses and trains keep failing, or the walks and rides
         // are too long, and it can be afforded; now and then regardless.
-        if !has_car {
+        if !has_car && !settled {
             let afford = (class != Tier::Low && *money > 400.0) || (class == Tier::Low && *money > 150.0);
             let fed_up = transit_p > 1.2 || (walk_p > 1.5 && (!self.citizens[m].owns_bike || bike_p > 1.2));
             let chance = if fed_up { 0.4 } else if class != Tier::Low { 0.04 } else { 0.02 };
@@ -461,6 +471,7 @@ impl World {
                 if let Some(paid) = self.buy_car(m, wants, price) {
                     *money -= paid;
                     let c = &mut self.citizens[m];
+                    c.commute.wheels_day = today + 1;
                     if fed_up {
                         c.remember(tick, if transit_p > 1.2 { "Transit let me down once too often. Got a car." } else { "Too far to walk, too far to ride. Got a car." });
                     }

@@ -140,6 +140,9 @@ pub struct Driving {
     /// [tow-moves] Tow trucks off the lanes against a one-way or turning
     /// round (`world/tow_moves.rs`).
     pub moves: Vec<super::tow_moves::TowMove>,
+    /// [rage] Illegal U-turns by seething drivers, today and in all.
+    pub rage_u_turns_today: u32,
+    pub rage_u_turns_total: u32,
 }
 
 /// A stable `0..1` from a car id, for its weave phase and a stranger's traits.
@@ -160,6 +163,7 @@ impl World {
             d.red_runs_today = 0;
             d.drunk_trips_today = 0;
             d.road_rage_today = 0;
+            d.rage_u_turns_today = 0;
         }
         self.driving.red_runs_today += std::mem::take(&mut self.traffic.red_runs);
         if tick % 5 == 0 {
@@ -167,6 +171,10 @@ impl World {
         }
         self.assign_drivers();
         self.step_rage();
+        // [rage] Some of the seething turn round illegally.
+        if tick % 10 == 6 {
+            self.rage_u_turns();
+        }
         let crashes = std::mem::take(&mut self.traffic.crashes);
         for c in crashes {
             self.handle_crash(c);

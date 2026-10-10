@@ -3,6 +3,13 @@
 
 use super::*;
 
+/// [pt-growth] The lie of the land (`World::splat_setting`): metres above
+/// the town's middle ground for the full hill premium, the premium, and
+/// what the low ground loses at as far below.
+const SETTING_RISE: f32 = 30.0;
+const SETTING_HILL: f32 = 0.08;
+const SETTING_LOW: f32 = 0.03;
+
 /// Takings over costs a kind of business must have shown before more of
 /// it are built (1 is break-even).
 const COVER_TO_EXPAND: f32 = 1.05;
@@ -150,6 +157,9 @@ impl World {
         let Some(mut b) = self.land_value_work.builder.take() else { return };
         match strip {
             0 => {
+                // [pt-growth] Road access saturates: a block on four
+                // streets is not four times as good as on one.
+                b.channel(Channel::Roads);
                 for (sid, seg) in self.roads.alive_segments() {
                     let (a, bp) = self.roads.segment_points(sid);
                     let len = a.distance(bp);
@@ -159,6 +169,7 @@ impl World {
                         b.splat(a.lerp(bp, i as f32 / steps as f32), 110.0, w);
                     }
                 }
+                b.channel(Channel::Other);
             }
             1 | 2 => {
                 let n = self.buildings.len();
@@ -178,7 +189,9 @@ impl World {
                     b.splat(car.pos, 45.0, -0.004);
                 }
                 // [society] Crime hot spots, camps and overflowing bins.
+                b.channel(Channel::Blight);
                 self.splat_society(&mut b);
+                b.channel(Channel::Other);
                 // [social] murals and community gardens
                 self.splat_social(&mut b);
                 // Rotor noise under busy flight paths and round the pads.
@@ -186,25 +199,36 @@ impl World {
                 // [industry] fouled ground
                 self.splat_contamination(&mut b);
                 // [districts] eco and historic districts lift the land
+                b.channel(Channel::Landmarks);
                 self.splat_districts(&mut b);
                 // [waterfront] beaches, and lots on the water
+                b.channel(Channel::Shore);
                 self.splat_shore(&mut b);
+                b.channel(Channel::Other);
                 // [land] NIMBY: the land round a mansion jumps, fading.
                 for n in &self.estate.nimby {
                     b.splat(n.center, n.radius, n.strength);
                 }
                 // [supertall] an address by a landmark tower
+                b.channel(Channel::Landmarks);
                 self.splat_towers(&mut b);
+                b.channel(Channel::Other);
+                // [pt-growth] the lie of the land: the hillsides above
+                // town are dearer from the start, the low ground cheaper
+                self.splat_setting(&mut b);
             }
             4 => {
                 // The player's rule: a long walk to any park or night out
                 // makes a neighbourhood cheaper (`land_value::access_value`).
                 let (n, cell, half) = b.cells();
-                let (park, night) = self.amenity_minutes(n, cell, half);
+                let (dp, dn) = self.amenity_fields();
+                let (park, night) = self.amenity_minutes_from(n, cell, half, &dp, &dn);
                 b.set_access(park, night);
+                // [pt-walk] Kept for each lot's own read-out (`lot_access`).
+                self.connectivity.access = Some(super::connectivity::AccessFields { walk_version: self.walk.version, park: dp, night: dn });
             }
             _ => {
-                b.finish(0.25, &mut self.land_value);
+                b.finish(crate::land_value::BASE, &mut self.land_value);
                 let lv = &self.land_value;
                 for bld in self.buildings.values_mut() {
                     if let Some(lot) = self.lots.get(bld.lot) {
@@ -225,18 +249,11 @@ impl World {
         }
     }
 
-    /// Minutes on foot from every land value cell to the nearest park and
-    /// the nearest open place to go out, along the walk network rather than
-    /// as the crow flies: a park across a river or a motorway with no way
-    /// over is far. Two multi-source Dijkstras over the walk graph (from
-    /// every node in or fronting such a lot), then each cell takes the
-    /// nearest node within `ACCESS_SNAP` plus the straight bit to it.
-    /// Cells with no node near are `NO_DATA` (no access term at all), cells
-    /// that reach none `NONE_REACHABLE`. Cost: O(nodes log nodes) twice and
-    /// one grid lookup per cell, so it stays cheap in a big city.
-    pub(super) fn amenity_minutes(&self, n: usize, cell: f32, half: f32) -> (Vec<f32>, Vec<f32>) {
-        crate::prof_scope!("amenity_minutes");
-        use crate::land_value::{ACCESS_SNAP, NONE_REACHABLE, NO_DATA};
+    /// [pt-walk] Metres on foot from every walk node to the nearest open
+    /// park and the nearest night out (`f32::INFINITY` where none can be
+    /// reached).
+    pub(super) fn amenity_fields(&self) -> (Vec<f32>, Vec<f32>) {
+        crate::prof_scope!("amenity_fields");
         // 1 = park, 2 = nightlife, by lot.
         let mut kind: slotmap::SecondaryMap<LotId, u8> = slotmap::SecondaryMap::new();
         for b in self.buildings.values() {
@@ -248,6 +265,12 @@ impl World {
                 LandUse::Entertainment if !b.is_derelict() && b.business.as_ref().is_none_or(|z| !z.closed) => 2,
                 _ => continue,
             };
+            // [pt-walk] Every lot of a park laid over several.
+            for &l in b.plot.extra_lots.iter() {
+                if self.lots.contains_key(l) {
+                    *kind.entry(l).unwrap().or_insert(0) |= bit;
+                }
+            }
             if self.lots.contains_key(b.lot) {
                 *kind.entry(b.lot).unwrap().or_insert(0) |= bit;
             }
@@ -263,22 +286,63 @@ impl World {
                 nights.push(i as u32);
             }
         }
-        let dp = self.walk.distances_from(&parks);
-        let dn = self.walk.distances_from(&nights);
+        (self.walk.distances_from(&parks), self.walk.distances_from(&nights))
+    }
+
+    /// Minutes on foot (from the fields of `amenity_fields`) from every land value cell to the nearest park and
+    /// the nearest open place to go out, along the walk network rather than
+    /// as the crow flies: a park across a river or a motorway with no way
+    /// over is far. Two multi-source Dijkstras over the walk graph (from
+    /// every node in or fronting such a lot), then each cell takes the
+    /// nearest node within `ACCESS_SNAP` plus the straight bit to it.
+    /// Cells with no node near are `NO_DATA` (no access term at all), cells
+    /// that reach none `NONE_REACHABLE`. Cost: O(nodes log nodes) twice and
+    /// one grid lookup per cell, so it stays cheap in a big city.
+    pub(super) fn amenity_minutes_from(&self, n: usize, cell: f32, half: f32, dp: &[f32], dn: &[f32]) -> (Vec<f32>, Vec<f32>) {
+        crate::prof_scope!("amenity_minutes");
+        use crate::land_value::{ACCESS_SNAP, NONE_REACHABLE, NO_DATA};
         let per_min = WALK_MPS * 60.0;
         let mut park = vec![NO_DATA; n * n];
         let mut night = vec![NO_DATA; n * n];
         for y in 0..n {
             for x in 0..n {
                 let c = Vec2::new(-half + (x as f32 + 0.5) * cell, -half + (y as f32 + 0.5) * cell);
-                let Some(k) = self.walk.nearest_within(c, ACCESS_SNAP) else { continue };
+                // [pt-walk] The nearest node anyone walks from: a lone node
+                // (a lot's loop that joins nothing) read as "no parks within
+                // walking reach" right beside a park (F2, F30).
+                let Some(k) = self.walk.nearest_within(c, ACCESS_SNAP).filter(|&k| !self.walk.adj[k as usize].is_empty()).or_else(|| self.walk.nearest_matching(c, ACCESS_SNAP, |_| true)) else { continue };
                 let off = self.walk.nodes[k as usize].pos.distance(c);
                 let minutes = |d: &[f32]| if d[k as usize].is_finite() { ((d[k as usize] + off) / per_min).min(NONE_REACHABLE - 1.0) } else { NONE_REACHABLE };
-                park[y * n + x] = minutes(&dp);
-                night[y * n + x] = minutes(&dn);
+                park[y * n + x] = minutes(dp);
+                night[y * n + x] = minutes(dn);
             }
         }
         (park, night)
+    }
+
+    /// [pt-growth] Some areas start richer than others before anything is
+    /// built: ground well above the town's middle (views, air, out of the
+    /// flood) is worth up to `SETTING_HILL` more, the low ground down to
+    /// `SETTING_LOW` less. Measured per zoned lot against the median
+    /// ground height of all of them; the waterfront has its own premium
+    /// (`splat_shore`).
+    pub(super) fn splat_setting(&self, b: &mut LandValueBuilder) {
+        if self.lots.len() < 8 {
+            return;
+        }
+        let mut hs: Vec<f32> = self.lots.values().map(|l| self.ground_height(l.center)).collect();
+        hs.sort_by(|a, b| a.total_cmp(b));
+        let mid = hs[hs.len() / 2];
+        let (n, cell, half) = b.cells();
+        let mut add = vec![0.0f32; n * n];
+        for y in 0..n {
+            for x in 0..n {
+                let c = Vec2::new(-half + (x as f32 + 0.5) * cell, -half + (y as f32 + 0.5) * cell);
+                let rise = ((self.ground_height(c) - mid) / SETTING_RISE).clamp(-1.0, 1.0);
+                add[y * n + x] = if rise >= 0.0 { rise * SETTING_HILL } else { rise * SETTING_LOW };
+            }
+        }
+        b.add_cells(&add);
     }
 
     /// One building's pull on the land around it.
@@ -291,29 +355,50 @@ impl World {
         {
             let Some(lot) = lots.get(bld.lot) else { return };
             let c = lot.center;
+            // [pt-growth] Like adds to like with diminishing returns
+            // (`land_value::Channel`); `Other` is the plain sum.
             match bld.land_use {
-                LandUse::Park => b.splat(c, 180.0, 0.35),
-                LandUse::Civic => b.splat(c, 200.0, 0.2),
-                LandUse::Commercial => b.splat(c, 120.0, 0.08),
+                LandUse::Park => {
+                    b.channel(Channel::Parks);
+                    b.splat(c, 180.0, 0.35);
+                }
+                LandUse::Civic => {
+                    b.channel(Channel::Civic);
+                    b.splat(c, 200.0, 0.2);
+                }
+                LandUse::Commercial => {
+                    b.channel(Channel::Commerce);
+                    b.splat(c, 120.0, 0.08);
+                }
                 LandUse::Entertainment => {
+                    b.channel(Channel::Commerce);
                     b.splat(c, 110.0, 0.06);
+                    b.channel(Channel::Other);
                     b.splat(c, 50.0, -0.08);
                 }
                 // [industry] by sub-zone: nuisance plus a lift on cheap land
                 LandUse::Industrial => Self::splat_industry(b, bld, c),
-                LandUse::Residential => match bld.tier {
-                    Tier::High => b.splat(c, 130.0, 0.12),
-                    Tier::Low => b.splat(c, 130.0, -0.07),
-                    Tier::Mid => {}
-                },
+                LandUse::Residential => {
+                    b.channel(Channel::Homes);
+                    match bld.tier {
+                        Tier::High => b.splat(c, 130.0, 0.12),
+                        Tier::Low => b.splat(c, 130.0, -0.07),
+                        Tier::Mid => {}
+                    }
+                }
             }
+            b.channel(Channel::Other);
             if bld.is_derelict() {
                 b.splat(c, 100.0, -0.12);
             }
             // [economy] A marina lifts the streets round it.
             if let Some(k) = bld.port.filter(|k| k.is_marina()) {
                 let (r, w) = super::waterfront::marina_lift(k);
+                // [pt-growth] A landmark, not one more waterfront plot: the
+                // shore channel is often full along a river already.
+                b.channel(Channel::Landmarks);
                 b.splat(c, r, w);
+                b.channel(Channel::Other);
             }
             if let Some(kind) = bld.plant {
                 // [plant-scale] by its size (1 on older saves' plants).
@@ -324,18 +409,30 @@ impl World {
                 }
             }
             if let Some(link) = &bld.rail {
+                b.channel(Channel::Transit);
                 match link.kind {
                     RailFacility::Station => b.splat(c, 220.0, 0.25),
-                    RailFacility::FreightYard => b.splat(c, 160.0, -0.12),
+                    RailFacility::FreightYard => {
+                        b.channel(Channel::Other);
+                        b.splat(c, 160.0, -0.12)
+                    }
                     // [subway] The grand terminus draws the whole district.
                     RailFacility::Central => {
+                        // [pt-growth] The district-wide draw is the city's
+                        // one terminus: summed as it is, not capped with
+                        // the bus stops and metro entrances.
+                        b.channel(Channel::Other);
                         b.splat(c, 480.0, 0.32);
+                        b.channel(Channel::Transit);
                         b.splat(c, 200.0, 0.2);
                     }
                 }
+                b.channel(Channel::Other);
             } else if bld.metro {
                 // [subway] An entrance puts the block on the map.
+                b.channel(Channel::Transit);
                 b.splat(c, crate::subway::LAND_VALUE_RADIUS, crate::subway::LAND_VALUE_LIFT);
+                b.channel(Channel::Other);
             }
             // Services reassure, landmarks draw (`services::ServiceKind::land_value`).
             if let Some(s) = bld.service {
@@ -349,7 +446,11 @@ impl World {
                     // Rotor noise: a nuisance the homes around feel most.
                     b.splat_nuisance(c, r, -w);
                 } else {
+                    // [pt-growth] Landmarks (monuments, stadiums) draw as
+                    // landmarks; the rest reassure as services.
+                    b.channel(if w <= 0.0 { Channel::Other } else if s.kind.is_attraction() { Channel::Landmarks } else { Channel::Services });
                     b.splat(c, r, w);
+                    b.channel(Channel::Other);
                 }
             }
         }
@@ -520,7 +621,10 @@ impl World {
                 // A one-step upgrade in place (refit, tenants stay). A cheap
                 // building on dear land two tiers up is not refitted: it
                 // waits for the redevelopment above, which re-lets it.
-                let refit = target > tier && !(tier == Tier::Low && target == Tier::High);
+                let refit = target > tier && !(tier == Tier::Low && target == Tier::High)
+                    // [pt-growth] A full block of homes is not refitted up
+                    // (fewer, dearer flats) while people cannot afford one.
+                    && !(lu == LandUse::Residential && self.short_of_cheap_homes());
                 if refit && full && self.rng.random::<f32>() < 0.15 {
                     let b = &mut self.buildings[bid];
                     b.tier = tier.up();
@@ -748,6 +852,20 @@ impl World {
         }
         if let Some(new) = self.pick_business_kind(lu, jobs).filter(|k| *k != kind) {
             self.buildings[bid].business = Some(Business::new(new, jobs));
+            self.fit_business_name(bid);
+        }
+    }
+
+    /// [pt-visual] A building still carrying a generic generated name that
+    /// does not fit its business ("Big Sky Laundromat" for a tow company,
+    /// F38) takes a name for its trade. Hash-picked: no random draw.
+    pub(crate) fn fit_business_name(&mut self, bid: BuildingId) {
+        let Some(b) = self.buildings.get_mut(bid) else { return };
+        let Some(kind) = b.business.as_ref().map(|z| z.kind) else { return };
+        if names::name_misfits(&b.name, kind) {
+            if let Some(n) = names::business_name(kind, b.seed) {
+                b.name = n;
+            }
         }
     }
 
@@ -853,6 +971,12 @@ impl World {
             if let Some(n) = crate::shore::trade_name(kind, b.seed) {
                 b.name = n;
             }
+            // [pt-visual] and every other trade by what it is (F38)
+            if names::name_misfits(&b.name, kind) {
+                if let Some(n) = names::business_name(kind, b.seed) {
+                    b.name = n;
+                }
+            }
         }
         // Nothing opens overnight: the lot becomes a building site first.
         b.construction = Some(Construction::new(Construction::days_for(floors, tier)));
@@ -903,3 +1027,82 @@ impl World {
 /// [balance x industry] An industrial kind whose takings cover less than
 /// this share of its costs is not built again unless the player asked for it.
 const INDUSTRY_MIN_COVER: f32 = 0.8;
+
+impl World {
+    /// [pt-growth] For probes: where the land value of the built lots comes
+    /// from, term by term (each summed alone, before the caps), as lines of
+    /// quantiles (`examples/growth_probe.rs`).
+    #[doc(hidden)]
+    pub fn land_value_breakdown(&self) -> String {
+        let w = self;
+        let mut text = String::new();
+        let pts: Vec<Vec2> = w.buildings.values().filter(|b| b.land_use != LandUse::Park).filter_map(|b| w.lots.get(b.lot)).map(|l| l.center).collect();
+        let lv = &w.land_value;
+        let mut report = |name: &str, fill: &dyn Fn(&mut LandValueBuilder)| {
+            let mut b = LandValueBuilder::new(lv);
+            fill(&mut b);
+            let mut out = LandValue::new(lv.half, lv.cell);
+            b.finish(0.0, &mut out);
+            let mut v: Vec<f32> = pts.iter().map(|p| out.raw_at(*p)).collect();
+            v.sort_by(|a, b| a.total_cmp(b));
+            let q = |f: f32| v[((v.len() - 1) as f32 * f) as usize];
+            text.push_str(&format!("{name:<24} p10 {:>6.2} p50 {:>6.2} p90 {:>6.2} max {:>6.2}
+", q(0.1), q(0.5), q(0.9), q(1.0)));
+        };
+        report("roads", &|b| {
+            b.channel(Channel::Roads);
+            for (sid, seg) in w.roads.alive_segments() {
+                let (a, bp) = w.roads.segment_points(sid);
+                let steps = (a.distance(bp) / 24.0).ceil().max(1.0) as usize;
+                let wt = if seg.lanes() >= 4 { 0.04 } else { 0.025 };
+                for i in 0..=steps {
+                    b.splat(a.lerp(bp, i as f32 / steps as f32), 110.0, wt);
+                }
+            }
+        });
+        for lu in LandUse::ALL {
+            report(&format!("{lu:?} (plain)"), &|b| {
+                for bld in w.buildings.values().filter(|x| x.land_use == lu && x.service.is_none() && x.rail.is_none() && !x.metro && x.plant.is_none()) {
+                    World::splat_building(b, bld, &w.lots);
+                }
+            });
+        }
+        report("services", &|b| {
+            for bld in w.buildings.values().filter(|x| x.service.is_some()) {
+                World::splat_building(b, bld, &w.lots);
+            }
+        });
+        report("rail/metro/plants", &|b| {
+            for bld in w.buildings.values().filter(|x| x.rail.is_some() || x.metro || x.plant.is_some()) {
+                World::splat_building(b, bld, &w.lots);
+            }
+        });
+        report("vacant+cars", &|b| {
+            for lot in w.lots.values().filter(|l| l.building.is_none()) {
+                b.splat(lot.center, 60.0, -0.03);
+            }
+            for car in w.traffic.cars.values() {
+                b.splat(car.pos, 45.0, -0.004);
+            }
+        });
+        report("society", &|b| {
+            b.channel(Channel::Blight);
+            w.splat_society(b)
+        });
+        report("social", &|b| w.splat_social(b));
+        report("air", &|b| w.splat_air_noise(b));
+        report("contamination", &|b| w.splat_contamination(b));
+        report("districts", &|b| w.splat_districts(b));
+        report("shore", &|b| w.splat_shore(b));
+        report("towers", &|b| w.splat_towers(b));
+        report("setting", &|b| w.splat_setting(b));
+        report("access", &|b| {
+            let (n, cell, half) = b.cells();
+            let (dp, dn) = w.amenity_fields();
+            let (p, q) = w.amenity_minutes_from(n, cell, half, &dp, &dn);
+            b.set_access(p, q);
+        });
+        drop(report);
+        text
+    }
+}

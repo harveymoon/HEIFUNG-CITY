@@ -74,6 +74,10 @@ pub const MAP_LAYERS: &[MapLayer] = &[
     MapLayer { key: "road_condition", label: "Road condition", group: "Traffic", hotkey: "", hint: "Wear on every street: green is smooth, red is crumbling; crews fix dear land first", flag: |o| &mut o.road_condition, legend: legend_road_condition },
     MapLayer { key: "map", label: "Map view", group: "City", hotkey: "L", hint: "A street map: roads, street names, zones and pins, buildings and people hidden", flag: |o| &mut o.map, legend: legend_map },
     // [metro-ux] (metro_ux.rs, render/focus.rs) The metro line tool shows it.
+    // [pt-ux] (render/pt_layers.rs)
+    MapLayer { key: "parking", label: "Parking", group: "Traffic", hotkey: "", hint: "Streets by the legal parking a driver finds (kerbs and public lots in walking reach); every public lot with how full it is", flag: |o| &mut o.parking, legend: legend_parking },
+    MapLayer { key: "trails", label: "Trails", group: "People", hotkey: "", hint: "A long exposure: everything that moves leaves a fading streak over a darkened city", flag: |o| &mut o.trails, legend: legend_trails },
+    MapLayer { key: "density", label: "Land density", group: "City", hotkey: "", hint: "Foot traffic and people per block, smoothed over days: quiet suburbs dark, busy main streets hot, where developers build taller", flag: |o| &mut o.density, legend: legend_density },
     MapLayer { key: "metro", label: "Metro", group: "Transit", hotkey: "M", hint: "The metro: tunnels and lines in their colours, every station a named marker, over a dimmed city", flag: |o| &mut o.metro, legend: legend_metro },
 ];
 
@@ -372,8 +376,64 @@ fn legend_traffic_types(ui: &mut egui::Ui, _: &LegendCtx) {
 
 fn legend_paths(ui: &mut egui::Ui, cx: &LegendCtx) {
     let p = cx.assets.palette.preview;
-    swatches(ui, &[(linear([p[0] * 0.5, p[1] * 0.5, p[2] * 0.5]), "walkways: lot loops, alleys, gates".into())], false);
-    small(ui, "pavements along streets are always walkable");
+    // [pt-ux] Every walkway, by kind (`render::overlays::path_style`), and
+    // the people glowing.
+    swatches(
+        ui,
+        &[
+            (linear([p[0] * 0.9, p[1] * 0.9, p[2] * 0.9]), "lot loops, alleys, gates".into()),
+            (linear([0.12, 0.45, 0.55]), "pavements".into()),
+            (linear([0.9, 0.9, 0.95]), "crossings".into()),
+            (linear([0.25, 0.9, 0.35]), "park paths".into()),
+            (linear([0.55, 0.3, 1.1]), "footbridges, raised walks".into()),
+            (linear([0.5, 2.4, 3.2]), "people on foot".into()),
+        ],
+        false,
+    );
+    small(ui, &format!("{} walking now", cx.world.citizens.values().filter(|c| c.is_visible() && !matches!(c.activity, nd_sim::Activity::Driving { .. })).count()));
+}
+
+/// [pt-ux] The Parking layer's key.
+fn legend_parking(ui: &mut egui::Ui, cx: &LegendCtx) {
+    ramp(ui, |t| linear(crate::render::parking_color(t)), "no parking", "plenty");
+    small(ui, "free kerb slots plus public lots within a short walk");
+    let w = cx.world;
+    let (mut used, mut cap, mut n) = (0u32, 0u32, 0u32);
+    for (id, b) in w.buildings.iter() {
+        if b.construction.is_none() && b.parking_capacity > 0 && (b.is_parking() || w.vehicles.city_lots.contains_key(&id)) {
+            used += b.parking_used as u32;
+            cap += b.parking_capacity as u32;
+            n += 1;
+        }
+    }
+    let (kt, ku) = w.kerb_occupancy();
+    small(ui, &format!("{n} public lots: {used}/{cap} spaces used"));
+    small(ui, &format!("kerbs: {ku}/{kt} slots taken"));
+    small(ui, "lot outlines: green empty, red full");
+}
+
+/// [pt-ux] The Trails layer's key.
+fn legend_trails(ui: &mut egui::Ui, _: &LegendCtx) {
+    use crate::render::TrailMover as M;
+    let items: Vec<(Color32, String)> = [(M::Car, "cars"), (M::Bus, "buses"), (M::Lorry, "lorries and vans"), (M::Siren, "sirens"), (M::Walker, "people on foot"), (M::Bot, "delivery robots")].into_iter()
+        .map(|(m, l)| {
+            // Over 1 to bloom on the map: scaled to its brightest channel here.
+            let c = m.color();
+            let k = c[0].max(c[1]).max(c[2]).max(1.0);
+            (linear([c[0] / k, c[1] / k, c[2] / k]), l.to_string())
+        })
+        .collect();
+    swatches(ui, &items, false);
+    small(ui, "each streak fades out over about ten seconds");
+}
+
+/// [pt-ux] The Land density layer's key.
+fn legend_density(ui: &mut egui::Ui, _: &LegendCtx) {
+    ramp(ui, |t| {
+        let c = heat_color(t);
+        linear([c[0], c[1], c[2]])
+    }, "low", "dense");
+    small(ui, "people out on foot and in the buildings, smoothed over days: where it is hot developers buy up small plots and build taller");
 }
 
 fn legend_people(ui: &mut egui::Ui, _: &LegendCtx) {

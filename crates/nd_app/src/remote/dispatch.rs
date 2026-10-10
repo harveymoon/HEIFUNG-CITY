@@ -297,6 +297,11 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("implement", "bool, default false (pending in the project)"),
         ("returns", "gesture_id, joined (path ends on a grounds gate), project state"),
     ] },
+    Cmd { name: "connectivity", aliases: &["stranded", "no_route"], effect: Read, run: super::connectivity::connectivity, help: &[
+        ("segments", "bool: also list the streets and paths cut off from the main networks (the connectivity layer's data)"),
+        ("all", "with segments: every street and path, connected or not"),
+        ("returns", "stranded [{net walk|road, center, lots, buildings, residents, workers, here_now, text}], alerts [{seq, kind no_route|stranded_walk|stranded_road, pos, building, count, text}], failed_trips, failed_today, walk_main, drive_main"),
+    ] },
     Cmd { name: "grounds_junctions", aliases: &["park_junctions"], effect: Read, run: planning::grounds_junctions, help: &[
         ("lot", "optional lot id"),
         ("kind", "park|plaza|stadium|campus|station|beach"),
@@ -336,7 +341,8 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("note", "zones pre-cut parcels: brush = parcels the circle touches, rect/polygon = parcels whose centre is inside; parcels that refuse the use are listed with why; one call is one undo step"),
     ] },
     Cmd { name: "bulldoze", aliases: &[], effect: Game, run: planning::bulldoze, help: &[
-        ("gesture_id", "int"),
+        ("gesture_id", "int: the whole gesture"),
+        ("at", "[x,y]: as a Bulldoze click there, the road's piece between its junctions (the rest stays); reply piece {gesture_id, from_m, to_m, roads_left}"),
         ("implement", "bool"),
         ("building", "or a city building's id: it goes at once, its ground back to the zoning plan"),
     ] },
@@ -392,7 +398,8 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("returns", "units: unit id, title, kind, state, doing, pos, incident; select {unit} / inspect {unit} take the id"),
     ] },
     Cmd { name: "society", aliases: &[], effect: Game, run: |cmd, ctx| society::command(cmd, &mut ctx.sim.world), help: &[
-        ("action", "report (default)|evict|offend|trash"),
+        ("action", "report (default)|evict|offend|tow_rv|abandon_rv|trash"),
+        ("rv", "id (tow_rv: a camper or van of rv_list, towed within three hours, who lived in it moves to a camp; abandon_rv: its household walks away and it stands abandoned until the contractor tows it)"),
         ("building", "id (evict: its households go on the street; offend: the target; trash: one building's bins)"),
         ("citizen", "id (offend)"),
         ("kind", "theft|burglary|assault|murder|vandalism (offend, with building)"),
@@ -599,6 +606,8 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("close", "bool"),
         ("select_approach", "index (open)"),
         ("select_crossing", "walk crossing index (open)"),
+        ("lane_menu", "[approach, lane] or null: open that lane's options menu in the editor"),
+        ("hover_lane", "[approach, lane] or null: show that lane's moves as hovered"),
         ("returns", "intersection: at, signalized, rule, approaches (lanes, offered, left_forbidden), phases (green_s, running), crossings (upgrade, signalised, button_light, crosswalk_kept, crosswalk_removed); done; editor_open"),
     ] },
     Cmd { name: "level_crossings", aliases: &["level_crossing", "crossings", "rail_crossings"], effect: Read, run: |cmd, ctx| crossings::command(cmd, &ctx.sim.world), help: &[
@@ -622,7 +631,10 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("toll", "int: a toll booth"),
         ("road|segment", "id or [x,y]: a street piece"),
         ("ship", "id: a ferry or freighter (landscape.ships)"),
-        ("at", "[x,y] picks like a click (vehicles, people, booths, parked cars, then the road piece, then lots); nothing clears"),
+        ("drone", "id: a drone taxi or helicopter (find {what: drones} lists them): its card says where it is going and who is aboard"),
+        ("rv", "int: a camper or van at the kerb (society.rv_list id): lived in or abandoned, and its tow"),
+        ("at", "[x,y] picks like a click right there from close by (vehicles, people, booths, campers, parked cars at the kerb, then the road piece, then lots); nothing clears"),
+        ("aim", "[x,y,h]: a click from the camera as it stands at the point h m above the ground at [x,y] (or `at` with `click: true`): picks along the ray, so a tower by its walls and an aircraft in the air; from more than 320 m out no people, robots or parked cars, from more than 700 m no cars"),
     ] },
     Cmd { name: "selected", aliases: &[], effect: Read, run: |_, ctx| Ok(inspect::selected_detail(&ctx.sim, *ctx.selection, ctx.tools.route_sel, &ctx.assets, &ctx.tools.favorites)), help: &[
         ("", "full detail of what the player has selected: a car with why (reason, text, by), jam (chain to the head of the queue, head_reason, cycle), trip (elapsed_min, expected_min, anger), lanes, driver, cargo; a citizen (and driving_car); a building; a parked car; the bus line picked (bus_line)"),
@@ -776,6 +788,7 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("sub", "the tab's sub-tab: city overview|land|districts|skyline|tourism; economy overview|cash_flow|ledger|taxes; market goods|businesses|trade; people population|inequality|concerns|social|favourites; services power|transit|emergencies; directory businesses|people (omitted: the tab's last one)"),
         ("open", "bool; omitted with a tab opens; no fields reports the view and the list of tabs"),
         ("scroll", "points from the page's top to scroll to (for screenshots of long pages)"),
+        ("sort", "{table, col, desc}: sort a page's table by column col (0-based; omitted: the given order), as clicking its heading does"),
         ("note", "the full-screen City Data view (J in the game, Esc closes); status.city_data says what it shows"),
     ] },
 ];

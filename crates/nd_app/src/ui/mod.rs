@@ -8,6 +8,8 @@
 
 // The Build window: every road, zone and building in one catalogue.
 pub mod build;
+/// [pt-ux] The Alerts window: the toasts as they happened, the problems now.
+pub mod alerts;
 /// [ferry-routes] A dock's routes and the ship card in the inspector.
 mod ferry;
 /// [waterfront] The inspector's waterfront and beach lines.
@@ -123,6 +125,11 @@ pub struct UiFlags {
     /// [city-data] The City Data view covered the map last pass: Esc is
     /// its, not the tools' or the camera's.
     pub data_view: bool,
+    /// [pt-ux] Where the thing `message` is about happened, when its writer
+    /// knows (city news): the Alerts window's "go". Taken with the message.
+    pub message_at: Option<bevy::math::Vec2>,
+    /// [pt-ux] Every toast as it showed, the newest last (the Alerts window).
+    pub log: Vec<alerts::Logged>,
 }
 
 impl UiFlags {
@@ -145,7 +152,7 @@ impl Plugin for UiPlugin {
             .add_systems(PreUpdate, install_fonts.after(EguiPreUpdateSet::InitContexts).before(EguiPreUpdateSet::BeginPass))
             .add_systems(PreUpdate, read_input_flags.after(EguiPreUpdateSet::BeginPass))
             .add_systems(Update, saves::autosave.in_set(SimSet::Sync))
-            .add_systems(EguiPrimaryContextPass, (side_panel, pins::map_pins.after(side_panel), social::bubbles.after(side_panel)));
+            .add_systems(EguiPrimaryContextPass, (side_panel, pins::map_pins.after(side_panel), social::bubbles.after(side_panel), junction::hover_button.after(side_panel)));
     }
 }
 
@@ -285,7 +292,8 @@ pub(crate) fn side_panel(
     nights::news_toast(&sim.world, &mut flags);
     social::news_toast(&sim.world, &mut flags);
     skyline::news_toast(&sim.world, &mut flags);
-    toast(ctx, &mut flags, bottom_rect.height());
+    let tick = sim.world.clock.tick;
+    toast(ctx, &mut flags, bottom_rect.height(), tick);
     // The land layer's reading under the pointer, for the legend.
     let here = overlays.land.zip(cursor.ground).map(|(l, p)| legend::land_here(&sim.world, l, p));
     if data_rect.is_none() {
@@ -304,7 +312,12 @@ pub(crate) fn side_panel(
         follow::banner(ctx, &sim, &mut follow, &mut mode, &mut selection, content);
     }
     if tools.tool == Tool::Inspect && *mode == CameraMode::Orbit && data_rect.is_none() {
-        hover::card(ctx, &sim, &cursor);
+        // [pt-ux] Underground, only what that view draws.
+        if tools.depth == crate::tools::Depth::Underground {
+            hover::under_card(ctx, &sim, &cursor);
+        } else {
+            hover::card(ctx, &sim, &cursor);
+        }
     }
     // [plant-groups] What the picked building would be on the lot under the pointer.
     if tools.tool == Tool::Buildings && *mode == CameraMode::Orbit && !ctx.is_pointer_over_egui() && data_rect.is_none() {
@@ -333,13 +346,16 @@ const TOAST_FADE: f64 = 1.5;
 /// `UiFlags::message` as a toast centred above the toolbar. The message is
 /// never cleared by its writers (saves, hotkeys), so the toast keeps its own
 /// clock: a changed text restarts it, the same text fades out once.
-fn toast(ctx: &egui::Context, flags: &mut UiFlags, above: f32) {
+fn toast(ctx: &egui::Context, flags: &mut UiFlags, above: f32, tick: u64) {
     if flags.message.is_empty() {
         return;
     }
     let now = ctx.input(|i| i.time);
     if flags.toast.as_ref().is_none_or(|(text, _)| *text != flags.message) {
         flags.toast = Some((flags.message.clone(), now));
+        // [pt-ux] Logged for the Alerts window.
+        let at = flags.message_at.take();
+        alerts::push(&mut flags.log, alerts::Logged { text: flags.message.clone(), tick, at });
     }
     let Some((text, at)) = &flags.toast else { return };
     let age = now - at;

@@ -54,6 +54,8 @@ pub struct WindowRequests {
     pub data_last: HashMap<Tab, Page>,
     /// [city-data] Scroll the page to this many points from its top.
     pub data_scroll: Option<f32>,
+    /// [pt-ux] Sort a page's table: its id (as the page names it) and the sort.
+    pub data_sort: Option<(String, crate::ui::pane::Sort)>,
     /// [directory] Settings for the Directory tables (`directory {show}`).
     pub directory_biz: Option<crate::ui::directory::TableState<crate::directory::BizCol>>,
     pub directory_people: Option<crate::ui::directory::TableState<crate::directory::PersonCol>>,
@@ -177,6 +179,9 @@ pub fn apply_window_requests(mut contexts: EguiContexts, mut req: ResMut<WindowR
     if let Some(y) = req.data_scroll.take() {
         crate::ui::city_data::scroll_to(ctx, y);
     }
+    if let Some((table, sort)) = req.data_sort.take() {
+        crate::ui::pane::set_sort(ctx, table.as_str(), sort);
+    }
     req.open = Info::ALL.into_iter().filter(|i| i.is_open(ctx)).map(|i| i.title()).collect();
     req.build_open = crate::ui::build::is_open(ctx);
     req.build_section = crate::ui::build::section_of(ctx).map(|c| c.key());
@@ -295,6 +300,13 @@ pub(super) fn city_data(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(y) = opt_f32(cmd, "scroll")? {
         ctx.windows.data_scroll = Some(y.max(0.0));
     }
+    // [pt-ux] `sort {table, col?, desc?}`: a page table's sort (no col: as given).
+    if let Some(s) = cmd.get("sort").filter(|v| !v.is_null()) {
+        let table = s.get("table").and_then(|v| v.as_str()).ok_or("sort needs table (the table's id, e.g. business_cover, power_plants_wide, transit_lines, land_lots, district_table, tourism_top, skyline_rank, skyline_rising, tax_all, market_prices_all)")?;
+        let col = s.get("col").and_then(|v| v.as_u64()).map(|c| c as usize);
+        let desc = s.get("desc").and_then(|v| v.as_bool()).unwrap_or(false);
+        ctx.windows.data_sort = Some((table.to_string(), crate::ui::pane::Sort { col, desc }));
+    }
     if tab.is_none() && sub.is_some() {
         return Err("sub needs a tab".into());
     }
@@ -321,6 +333,8 @@ pub(super) fn build_highlight(cmd: &Value, ctx: &mut Ctx) -> Result<Value, Strin
         let view = ctx.highlight.view.as_ref();
         json!({
             "on": sel.is_some(),
+            // [feat/pt-ux] A selected building showing its build-mode view.
+            "inspected": ctx.highlight.inspected.map(key_str),
             "section": sel.map(|s| s.cat.key()),
             "sub": sel.and_then(|s| s.sub),
             "focus": sel.and_then(|s| s.focus).map(|p| p.label()),

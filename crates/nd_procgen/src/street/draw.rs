@@ -327,7 +327,7 @@ pub(super) fn draw_run(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &Run, d
         return;
     }
     if run.kind == RoadKind::Path {
-        footpath(g, pal, roads, run, pts, &mut rng);
+        footpath(g, pal, roads, run, pts, &mut rng, cx.lifts.get(ri).and_then(Option::as_ref));
         return;
     }
     if run.kind == RoadKind::Rail {
@@ -817,6 +817,12 @@ pub(super) fn draw_node(cx: &StreetCtx, g: &mut Geometry, nid: NodeId, node: &nd
         level_crossing(g, pal, roads, nid, node.pos, &alive, &rails_here);
         return;
     }
+    // [pt-visual] A footpath over the track, no street.
+    if alive.is_empty() && paths_here > 0 && !rails_here.is_empty() {
+        let paths: Vec<SegmentId> = node.segments.iter().copied().filter(|&s| roads.segment(s).alive && roads.segment(s).kind == RoadKind::Path).collect();
+        path_rail_crossing(g, pal, roads, node.pos, &paths, &rails_here);
+        return;
+    }
     if alive.len() == 2 && paths_here > 0 {
         // A path crossing a street: zebra across the carriageway (none
         // where a footbridge replaced it).
@@ -897,6 +903,22 @@ pub(super) fn draw_pad(cx: &StreetCtx, g: &mut Geometry, nid: NodeId, node: &nd_
     let worn = cx.inp.land_value.at(node.pos) < 0.35;
     let (v, ix) = (g.get(Asphalt).positions.len(), g.get(Asphalt).indices.len());
     g.part(Asphalt).ground_fan(Vec3::new(node.pos.x, ASPHALT_Y + 0.01, node.pos.y), &ring, cx.asphalt_c);
+    // [pt-visual] On a slope the pad's edge runs straight between a few
+    // points while the corners' aprons beside it follow their arms' profiles,
+    // so at a steep junction the two part by a vertical sliver and the
+    // ground showed through. A skirt of asphalt hangs from the pad's edge
+    // down past any such step (hidden on the flat, where there is none).
+    if !cx.lifts.is_empty() {
+        let n = ring.len();
+        let c = Vec3::new(node.pos.x, 0.0, node.pos.y);
+        for k in 0..n {
+            let (a, b) = (ring[k], ring[(k + 1) % n]);
+            let mid = (a + b) * 0.5 - c;
+            let out = Vec3::new(mid.x, 0.0, mid.z).normalize_or_zero();
+            let drop = 0.9;
+            g.part(Asphalt).quad_facing([a - Vec3::Y * drop, b - Vec3::Y * drop, b, a], out, cx.asphalt_c);
+        }
+    }
     if worn {
         weather_tail(g, vec![(Asphalt, v, ix)]);
     }

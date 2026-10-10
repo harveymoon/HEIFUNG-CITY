@@ -158,8 +158,21 @@ const QUEUE_COST: f32 = 6.0;
 const SHORT_CHANGE_COST: f32 = 60.0;
 const SHORT_CHANGE_LEN: f32 = 40.0;
 /// Routing cost of a lane change planned on a piece that lies wholly in
-/// the solid-line zone before a junction: possible only as a last resort.
-const SOLID_CHANGE_COST: f32 = 300.0;
+/// the solid-line zone before a junction, or leaves less than
+/// `CHANGE_ROOM_MIN` metres before it: possible only as a last resort
+/// (round the block is the better way). It was 300 m, and with queues
+/// counted drivers in a player's city planned the change into the last
+/// two metres before a left-only lane's stop line, then stood there to
+/// squeeze across into the right-turn queue (F20/F21).
+const SOLID_CHANGE_COST: f32 = 1000.0;
+/// A change needs at least this much lane before the solid line.
+const CHANGE_ROOM_MIN: f32 = 12.0;
+/// [lanes] Extra cost per vehicle on the lane changed into, the closer to
+/// the solid line the change is planned: cutting into a queue at its head
+/// waits for someone to let you in, so the change is planned upstream
+/// before the queue (and the queue on the far lane counts against the
+/// late change, not only the early one).
+const CUT_IN_COST: f32 = 6.0;
 /// The solid line before a junction (or a roundabout entry): no lane
 /// changes in the last `SOLID_LINE_MIN` metres, more at speed (as far as a
 /// car covers in `SOLID_LINE_SECONDS`, up to `SOLID_LINE_MAX`), nor inside
@@ -189,6 +202,14 @@ const LC_LATERAL_SPEED: f32 = 0.9;
 /// before it looks for another way; a lane change it cannot make (often two
 /// cars that each want the other's full lane) is given up sooner.
 const REROUTE_AFTER: f32 = 40.0;
+/// [rage] A way round a full exit is taken only if it is at most this many
+/// metres, or this share of the drive left, longer (whichever is more):
+/// a far longer one just carries the car back into the jam from another
+/// side. A raging driver in a player's city drove loops through tunnels
+/// for 1,431 minutes on a drive of an hour, rerouted round each full exit
+/// it came to (F18).
+const REROUTE_DETOUR_M: f32 = 350.0;
+const REROUTE_DETOUR_SHARE: f32 = 0.6;
 const REROUTE_LANE_CHANGE_AFTER: f32 = 10.0;
 /// [pt-transit] Seconds a bus stands blocked before it leaves its line to
 /// go another way (round a crash it goes at once).

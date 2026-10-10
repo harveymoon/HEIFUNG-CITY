@@ -17,12 +17,18 @@ impl World {
             self.daily();
         }
         self.periodic(tick);
+        // [pt-walk] Stranded areas, when the networks changed (and hourly).
+        self.step_connectivity();
         // [megacorp] Students to class and out at night.
         self.step_campus();
         // [parking] Drivers worn out by the hunt and stuck in a queue leave
         // the car where it stands.
         if tick % 5 == 2 {
             self.hunters_give_up();
+        }
+        // [parking] Hunters turn into a lot with room they are passing.
+        if tick % 2 == 1 {
+            self.hunters_spot_lots();
         }
         // Answers a mind worked out in the background (an LLM's) land
         // whenever they are ready. Someone mid-journey (driving, on a bus or
@@ -92,6 +98,10 @@ impl World {
         // Every system that moves people has run: lay the breadcrumbs.
         for c in self.citizens.values_mut() {
             c.push_trail();
+            // [pt-walk] An "o" on the trail wherever they stopped.
+            if c.inside.is_some() || matches!(c.activity, Activity::Sitting { .. } | Activity::Waiting { .. }) {
+                c.mark_stop();
+            }
         }
     }
 
@@ -157,7 +167,8 @@ impl World {
         // [toll-inspect] each booth's hour on its chart
         self.hourly_tolls();
     }
-    if tick % 60 == 30 {
+    // [pt-growth] A sixth of the sites every ten minutes (each its own slot).
+    if tick % 10 == 0 {
         crate::prof!("step_construction", self.step_construction());
     }
     // [waterfront] beaches (access, weather, crowds), private jetties

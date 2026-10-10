@@ -8,17 +8,36 @@ use crate::buildings::Demolition;
 /// A site this far into its build is only groundworks: a bulldozed one is
 /// cleared at once rather than demolished.
 const GROUNDWORKS: f32 = 0.08;
+/// [pt-growth] Sites are stepped in this many slots of ten minutes each.
+pub(super) const SITE_SLOTS: u64 = 6;
+
+/// [pt-growth] The ten-minute slot of the hour in which a site's crew
+/// reports progress: a hash of the building, so neighbouring sites step
+/// at different minutes.
+pub(super) fn site_slot(id: BuildingId) -> u64 {
+    use slotmap::Key;
+    crate::hash::mix(id.data().as_ffi(), 0x5173_51DE) % SITE_SLOTS
+}
+
 /// Colour of the dump trucks hauling rubble away.
 const RUBBLE_TRUCK_COLOR: u8 = 5;
 
 impl World {
-    /// Every sim hour: building sites advance, wait for materials at each
-    /// quarter, and open when the work is done.
+    /// Every ten sim minutes, a sixth of the sites (each its own slot in the
+    /// hour, [`site_slot`]): building sites advance, wait for materials at
+    /// each quarter, and open when the work is done. [pt-growth] Crews work
+    /// the working day only ([`Clock::is_work_hours`], when the cranes
+    /// turn), so sites stand still at night; and as each site has its own
+    /// minute, the city does not grow a storey all at once.
     pub(super) fn step_construction(&mut self) {
-        self.step_demolition();
+        let slot = (self.clock.tick / 10) % SITE_SLOTS;
+        let working = self.clock.is_work_hours();
+        // A pure demolition and a site with materials on order still see
+        // the hour pass (trucks are ordered round the clock).
+        self.step_demolition(slot, working);
         // A site still clearing what stood before waits for the wrecking
         // crew; its materials are ordered when the lot is clear.
-        let ids: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.construction.is_some() && b.demolition.is_none()).map(|(id, _)| id).collect();
+        let ids: Vec<BuildingId> = self.buildings.iter().filter(|(id, b)| b.construction.is_some() && b.demolition.is_none() && site_slot(*id) == slot).map(|(id, _)| id).collect();
         for bid in ids {
             let (order, waiting, before, after) = {
                 let c = self.buildings[bid].construction.as_mut().unwrap();
@@ -26,11 +45,11 @@ impl World {
                 // One load is kept on the road ahead of the work, so a
                 // quarter only stalls when its truck is late.
                 let order = !c.ordered && c.deliveries < Construction::DELIVERIES && c.deliveries <= c.stage() + 1;
-                if c.waiting_for_materials() {
+                if c.waiting_for_materials() || !working {
                     (order, true, before, before)
                 } else {
                     let ceiling = (c.stage() as f32 + 1.0) * 0.25;
-                    c.progress = (c.progress + c.hourly_step()).min(ceiling);
+                    c.progress = (c.progress + c.work_hour_step()).min(ceiling);
                     (order, false, before, c.progress)
                 }
             };
@@ -144,13 +163,18 @@ impl World {
     /// Every sim hour: wrecking crews take buildings down from the top,
     /// rubble trucks leave as the debris piles up, and finished sites hand
     /// the lot over (vacant, or to the building waiting for it).
-    pub(super) fn step_demolition(&mut self) {
-        let ids: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.demolition.is_some()).map(|(id, _)| id).collect();
+    /// [pt-growth] In the site's own slot of the hour, and in working hours
+    /// only, as the builders.
+    pub(super) fn step_demolition(&mut self, slot: u64, working: bool) {
+        if !working {
+            return;
+        }
+        let ids: Vec<BuildingId> = self.buildings.iter().filter(|(id, b)| b.demolition.is_some() && site_slot(*id) == slot).map(|(id, _)| id).collect();
         for bid in ids {
             let (before, after, haul) = {
                 let d = self.buildings[bid].demolition.as_mut().unwrap();
                 let before = d.progress;
-                d.progress = (d.progress + d.hourly_step()).min(1.0);
+                d.progress = (d.progress + d.work_hour_step()).min(1.0);
                 let haul = d.loads < d.loads_due();
                 if haul {
                     d.loads += 1;
@@ -164,6 +188,15 @@ impl World {
                 self.finish_demolition(bid);
             } else if (after * 10.0).floor() > (before * 10.0).floor() {
                 self.events.push(SimEvent::BuildingChanged(bid));
+            }
+        }
+    }
+
+    /// [pt-growth] Say why `bid` is coming down, if it is and nobody said.
+    pub(super) fn tag_demolition(&mut self, bid: BuildingId, reason: crate::buildings::DemolitionReason) {
+        if let Some(d) = self.buildings.get_mut(bid).and_then(|b| b.demolition.as_mut()) {
+            if d.reason == crate::buildings::DemolitionReason::Unknown {
+                d.reason = reason;
             }
         }
     }
@@ -450,6 +483,7 @@ impl World {
         let Some(b) = self.buildings.get(bid) else { return };
         let memory = format!("{} was torn down and rebuilt for richer tenants. The rent went up with it.", b.name);
         self.redevelop_with(bid, tier, floors, value, memory, false);
+        self.tag_demolition(bid, crate::buildings::DemolitionReason::Redevelopment);
     }
 
     /// [land] `redevelop` with the residents' `memory` given, and for a
@@ -595,6 +629,10 @@ mod tests {
         // Trucks leave as it comes down; the parcel stays fenced off.
         let mut trucks = 0;
         let mut seen_progress = 0.0f32;
+        // [pt-growth] The crew works 08:00-17:00: the days' work is done in
+        // that many working hours from now.
+        let start = w.clock.tick;
+        let due = w.clock.after_work_hours(days * crate::clock::WORK_HOURS_PER_DAY);
         let ticks = run_until(&mut w, 4 * 1440, |w| {
             if let Some(d) = w.buildings.get(bid).and_then(|b| b.demolition.as_ref()) {
                 assert!(d.progress >= seen_progress, "the work only goes forward");
@@ -603,7 +641,7 @@ mod tests {
             }
             !w.buildings.contains_key(bid)
         });
-        let expected = (days * 1440.0) as u64;
+        let expected = due - start;
         assert!(ticks + 120 >= expected && ticks <= expected + 120, "cleared after {ticks} ticks, expected about {expected}");
         assert!(trucks > 0, "rubble trucks were on the road");
         assert!(!w.lots.contains_key(site_lot), "the parcel made for the site goes with the rubble");

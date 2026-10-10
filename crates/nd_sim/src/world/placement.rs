@@ -35,12 +35,19 @@ pub struct PlacementSite {
     pub outline: Vec<Vec2>,
     /// The zone the ground leaves (None: unzoned, or the city's already).
     pub leaves_zone: Option<LandUse>,
+    /// [big-sites] Neighbouring lots joined to `lot` to make room for
+    /// something bigger than it (a stadium over several plots): whatever
+    /// grew on them is bought out, and the ground becomes one lot.
+    pub joined: Vec<LotId>,
 }
 
 impl PlacementSite {
     /// What placing there does to the zoning, for the preview: "unzoned
     /// parcel: fine", "takes this parcel out of the residential zone".
     pub fn note(&self) -> String {
+        if !self.joined.is_empty() {
+            return format!("takes {} plots, joined into one; what stands on them is bought out", self.joined.len() + 1);
+        }
         match (self.lot, self.leaves_zone) {
             (None, _) if self.parcels.len() > 1 => format!("unzoned ground ({} parcels): fine, a lot is made for it", self.parcels.len()),
             (None, _) => "unzoned parcel: fine, a lot is made for it".into(),
@@ -115,7 +122,11 @@ impl World {
     pub fn placement_site(&self, what: Placeable, p: Vec2) -> Result<PlacementSite, String> {
         if let Some((id, l)) = self.lots.iter().find(|(_, l)| l.contains(p)) {
             let leaves_zone = (!self.is_city_ground(l) && self.zones.contains_key(l.zone)).then_some(l.land_use);
-            return Ok(PlacementSite { lot: Some(id), parcels: Vec::new(), outline: l.polygon.clone(), leaves_zone });
+            // [big-sites] A lot too small for it takes in its neighbours.
+            if let Some((joined, outline)) = self.joined_site(what, id) {
+                return Ok(PlacementSite { lot: Some(id), parcels: Vec::new(), outline, leaves_zone, joined });
+            }
+            return Ok(PlacementSite { lot: Some(id), parcels: Vec::new(), outline: l.polygon.clone(), leaves_zone, joined: Vec::new() });
         }
         let i = self.parcels.at(p).ok_or("no parcel here: click ground along a road")?;
         let parcel = &self.parcels.parcels[i];
@@ -133,7 +144,7 @@ impl World {
         // there is no bigger than its kind's largest (`size_scale`) and
         // stands on part of it.
         if parcel.path_frontage && parcel.area >= need && crate::zoning::site_thickness(&parcel.polygon) >= what.min_thickness() {
-            return Ok(PlacementSite { lot: None, parcels: vec![i], outline: parcel.polygon.clone(), leaves_zone: None });
+            return Ok(PlacementSite { lot: None, parcels: vec![i], outline: parcel.polygon.clone(), leaves_zone: None, joined: Vec::new() });
         }
         // [plant-scale] Too small on its own (or backland): it joins just
         // enough unzoned neighbours to reach what the building needs, and
@@ -143,10 +154,86 @@ impl World {
         near.dedup();
         let polys: Vec<Vec<Vec2>> = near.iter().map(|&k| self.parcels.parcels[k].polygon.clone()).collect();
         let Some(me) = near.iter().position(|&k| k == i) else {
-            return Ok(PlacementSite { lot: None, parcels: vec![i], outline: parcel.polygon.clone(), leaves_zone: None });
+            return Ok(PlacementSite { lot: None, parcels: vec![i], outline: parcel.polygon.clone(), leaves_zone: None, joined: Vec::new() });
         };
         let (idx, outline) = grow_site(&polys, me, need, what.min_thickness(), what.max_site_area().max(need), &self.roads);
-        Ok(PlacementSite { lot: None, parcels: idx.iter().map(|&k| near[k]).collect(), outline, leaves_zone: None })
+        Ok(PlacementSite { lot: None, parcels: idx.iter().map(|&k| near[k]).collect(), outline, leaves_zone: None, joined: Vec::new() })
+    }
+
+    /// [big-sites] Lots near `lot` that may be joined to it for a big
+    /// city building: not the city's (nor a park, nor under a station or
+    /// yard, nor promised to an owner), nothing civic on them.
+    fn joinable_lot(&self, id: LotId) -> bool {
+        let Some(l) = self.lots.get(id) else { return false };
+        l.land_use != LandUse::Park
+            && !self.is_city_ground(l)
+            && self.zones.contains_key(l.zone)
+            && self.site_clear(id, SiteRule::ANY)
+            && !l.building.and_then(|b| self.buildings.get(b)).is_some_and(Self::is_civic_structure)
+    }
+
+    /// [big-sites] Something bigger than the lot it is put on (a stadium,
+    /// a university, a coal plant) takes in as few neighbouring lots as it
+    /// needs to reach its smallest site (`grow_site`, never more than it
+    /// can use): the joined lots and the outline, or None when the lot is
+    /// big enough on its own or has no neighbours to grow into.
+    pub fn joined_site(&self, what: Placeable, lot: LotId) -> Option<(Vec<LotId>, Vec<Vec2>)> {
+        let l = self.lots.get(lot)?;
+        let need = what.min_area();
+        if l.area() >= need || matches!(what, Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_)) || !self.joinable_lot(lot) {
+            return None;
+        }
+        // [plant-groups] A small solar or wind lot joins the farm next door instead.
+        if let Placeable::Plant(k) = what {
+            if self.small_plant_site_joins(k, &l.polygon, Some(lot)).is_some() {
+                return None;
+            }
+        }
+        let reach = SITE_REACH + need.sqrt();
+        let mut near: Vec<LotId> = self.lots.iter().filter(|(id, o)| *id == lot || (o.center.distance(l.center) < reach && self.joinable_lot(*id))).map(|(id, _)| id).collect();
+        near.sort();
+        let polys: Vec<Vec<Vec2>> = near.iter().map(|id| self.lots[*id].polygon.clone()).collect();
+        let me = near.iter().position(|&id| id == lot)?;
+        let (idx, outline) = grow_site(&polys, me, need, what.min_thickness(), what.max_site_area().max(need), &self.roads);
+        if idx.len() < 2 || crate::zoning::polygon_area(&outline).abs() < need * 0.98 {
+            return None;
+        }
+        let joined: Vec<LotId> = idx.iter().map(|&k| near[k]).filter(|&id| id != lot).collect();
+        Some((joined, outline))
+    }
+
+    /// [big-sites] Join the site's lots into its first: what stands on the
+    /// others is bought out and cleared at once, their ground (and parcels)
+    /// becomes the first lot's, which takes the joined outline.
+    pub(super) fn join_site_lots(&mut self, site: &PlacementSite, what: Placeable) -> Result<LotId, String> {
+        let lot = site.lot.ok_or("no lot")?;
+        for &id in &site.joined {
+            if let Some(bid) = self.lots.get(id).and_then(|l| l.building) {
+                self.take_over_lot(id, &what.label())?;
+                if self.buildings.get(bid).is_some_and(|b| b.demolition.is_some()) {
+                    self.finish_demolition(bid);
+                }
+                // Anything still standing there (a site that cannot be
+                // cleared at once) keeps the plot out of the join.
+                if self.lots.get(id).is_some_and(|l| l.building.is_some()) {
+                    return Err("a plot it needs could not be cleared".into());
+                }
+            }
+        }
+        for &id in &site.joined {
+            self.lots.remove(id);
+            for p in self.parcels.parcels.iter_mut().filter(|p| p.lot == Some(id)) {
+                p.lot = Some(lot);
+            }
+        }
+        let roads = &self.roads;
+        let l = &mut self.lots[lot];
+        l.polygon = site.outline.clone();
+        l.center = inner_center(&site.outline);
+        super::plan::refresh_lot_roads(l, roads, false);
+        self.rebuild_walk();
+        self.events.push(SimEvent::LotsChanged);
+        Ok(lot)
     }
 
     /// An unzoned parcel with nothing on it, on open ground.
@@ -180,6 +267,14 @@ impl World {
     /// Why `what` cannot go on a site found by [`World::placement_site`]
     /// (the preview keeps the site while the pointer stays on its parcel).
     pub fn site_problem(&self, what: Placeable, site: &PlacementSite) -> Option<String> {
+        if !site.joined.is_empty() {
+            // [big-sites] The joined ground as one lot.
+            let lot = make_placed_lot(ZoneId::default(), site.outline.clone(), inner_center(&site.outline), &self.roads);
+            return match lot {
+                Some(l) => self.lot_problem(what, &l, None),
+                None => Some("no road access to front".into()),
+            };
+        }
         match site.lot {
             Some(id) => self.placement_problem(what, id),
             None => match self.site_lot(site) {
@@ -194,6 +289,10 @@ impl World {
     pub(super) fn place_on_site(&mut self, what: Placeable, p: Vec2) -> Result<BuildingId, String> {
         let site = self.placement_problem_at(what, p)?;
         if let Some(id) = site.lot {
+            if !site.joined.is_empty() {
+                let id = self.join_site_lots(&site, what)?;
+                return self.place_on_lot(what, id);
+            }
             return self.place_on_lot(what, id);
         }
         let lot = self.make_site_lot(&site).ok_or("no road access to front")?;
