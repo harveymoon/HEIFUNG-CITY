@@ -135,6 +135,9 @@ impl World {
         let mut tier = Tier::for_land_value(value);
         if lu == LandUse::Residential {
             tier = self.residential_tier(tier);
+            if self.short_of_cheap_homes() {
+                tier = tier.min(self.buildings[bid].tier);
+            }
         }
         if let Some(l) = self.buildings[bid].look {
             tier = l.tier(tier);
@@ -188,6 +191,12 @@ impl World {
         let (tick, pos) = (self.clock.tick, self.lots.get(lot).map(|l| l.center).unwrap_or_default());
         self.skyline.push_news(tick, format!("{dev_name} buys {} plots round {name} for a {floors}-floor block", ours.len()), pos, Some(bid));
         true
+    }
+
+    /// [pt-growth] People in town (on the street, or turned away at the
+    /// edge) who could not find a home they can afford.
+    pub fn short_of_cheap_homes(&self) -> bool {
+        self.economy.housing_demand_by_tier[Tier::Low.index()] > 2.0 || self.homeless_people() > 20
     }
 
     /// [pt-growth] Owners can lose their buildings: a block of homes left
@@ -259,6 +268,11 @@ impl World {
         let mut tier = Tier::for_land_value(value);
         if lu == LandUse::Residential {
             tier = self.residential_tier(tier);
+            // [pt-growth] While people cannot afford a home, cheap homes
+            // are rebuilt cheap (taller, more of them), not dearer.
+            if self.short_of_cheap_homes() {
+                tier = tier.min(self.buildings[bid].tier);
+            }
         }
         if let Some(l) = self.buildings[bid].look {
             tier = l.tier(tier);

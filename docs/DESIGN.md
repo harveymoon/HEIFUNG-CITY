@@ -542,8 +542,9 @@ Citizens are rendered from their simulated positions every frame.
   itself up to 0.45, then `0.45 + 0.55 x (1 - exp(-(raw - 0.45) / 0.8))`, so 0.66 (high tier)
   takes a raw score of about 0.76, 0.8 about 1.26 and 0.95 about 2.9; 1.0 is never reached.
   Measured: Harvey's 6,200-person Cinder Ridge went from 71% of built lots at 0.95+ (median
-  0.96) to none (median 0.65, top 0.77); the Perfect AI City at 13k from 75% to none (median
-  0.64, top 0.85); the 3,500-person demo district reads 0.3 at the median, 0.58 at the top.
+  0.96) to none (median 0.72, top 0.83); the Perfect AI City at 13k from 75% to none (median
+  about 0.7, top 0.9); the poorer, industrial demo district reads 0.35-0.45 at the median and
+  0.68 at the top.
   *The lie of the land* (`World::splat_setting`): ground 30 m above the median lot is worth up
   to +0.08, the low ground down to -0.03, so hillsides start dearer than the flats before
   anything is built (the waterfront has its premium in `splat_shore`). Thresholds read on the
@@ -947,7 +948,11 @@ Citizens are rendered from their simulated positions every frame.
   three quarters of what the land density allows, not one storey more. *Owners lose
   buildings* (`World::foreclose_empty`): a middle or high block of homes at most 35% let for
   five days while people wait for a home they can afford is sold to a developer at 60% of its
-  price, who cuts the rent (one tier down, refitted). Heights are capped only by the land
+  price, who cuts the rent (one tier down, refitted). While people cannot afford a home
+  (`World::short_of_cheap_homes`: low-tier housing demand over 2, or 20 people on the street)
+  cheap blocks are rebuilt cheap (taller, more homes) and full ones are not refitted up. A
+  busy town rebuilds a few a day (2 + one per 200 buildings, at most 6; densify tries only uses
+  in demand, so homes nobody needs no longer crowd out the shops). Heights are capped only by the land
   density and the neighbours, the city's and a district's height limits, a vertiport's
   clearance and a billionaire's NIMBY; rents are kept low only by a district's look (Kowloon
   stacks). Supertalls and megatalls still go up through the skyline league where the land is

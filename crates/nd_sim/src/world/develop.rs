@@ -603,7 +603,10 @@ impl World {
                 // A one-step upgrade in place (refit, tenants stay). A cheap
                 // building on dear land two tiers up is not refitted: it
                 // waits for the redevelopment above, which re-lets it.
-                let refit = target > tier && !(tier == Tier::Low && target == Tier::High);
+                let refit = target > tier && !(tier == Tier::Low && target == Tier::High)
+                    // [pt-growth] A full block of homes is not refitted up
+                    // (fewer, dearer flats) while people cannot afford one.
+                    && !(lu == LandUse::Residential && self.short_of_cheap_homes());
                 if refit && full && self.rng.random::<f32>() < 0.15 {
                     let b = &mut self.buildings[bid];
                     b.tier = tier.up();
