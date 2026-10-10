@@ -49,6 +49,39 @@ impl LaneNetwork {
         self.route_lanes(start, s_start, goal, s_end)
     }
 
+    /// [pt-transit] `find_route`, and where the goal lies behind the start
+    /// on its own lane (which `find_route` never routes: it does not
+    /// re-enter its start lane), the drive off the end of the lane and
+    /// round the block back onto it. For bus lines, whose legs may run
+    /// back along the street they started on; other vehicles look for
+    /// another way to start instead.
+    pub fn find_route_round(&self, from_seg: SegmentId, from: Vec2, to_seg: SegmentId, to: Vec2) -> Option<(Vec<LaneId>, f32, f32)> {
+        if let Some(r) = self.find_route(from_seg, from, to_seg, to) {
+            return Some(r);
+        }
+        let (start, s_start, _) = self.nearest_lane_on(from_seg, from)?;
+        let (goal, s_end, _) = self.nearest_lane_on(to_seg, to)?;
+        if start != goal {
+            return None;
+        }
+        let mut best: Option<(f32, Vec<LaneId>)> = None;
+        for &n in &self.lanes.get(start as usize)?.next {
+            if !self.lanes[n as usize].permitted {
+                continue;
+            }
+            let Some((rest, _, _)) = self.route_lanes(n, 0.0, goal, s_end) else { continue };
+            let len: f32 = rest.iter().map(|&l| self.lanes[l as usize].length).sum();
+            if best.as_ref().is_none_or(|(b, _)| len < *b) {
+                best = Some((len, rest));
+            }
+        }
+        best.map(|(_, rest)| {
+            let mut route = vec![start];
+            route.extend(rest);
+            (route, s_start, s_end)
+        })
+    }
+
     /// A* over lanes from `s_start` along `start` to `s_end` along `goal`;
     /// the route begins with `start`. A goal behind the start on the same
     /// lane has no route: lanes are one way and the start is never re-entered.
@@ -419,11 +452,19 @@ impl Traffic {
             let nl = &self.net.lanes[next as usize];
             let wreck_ahead = nl.cars.iter().any(|&o| self.cars[o].crashed())
                 || c.route.get(c.idx + 2).is_some_and(|&e| self.net.lanes[e as usize].cars.first().is_some_and(|&o| self.cars[o].crashed() && self.cars[o].s < 2.0 * CAR_LENGTH));
+            // [pt-transit] A bus keeps to its line: it waits for the lane
+            // change (swapping in at the end of the lane, if need be) and
+            // for a full exit to clear, and only goes another way after
+            // `BUS_DETOUR_AFTER`, or round a crash.
+            let bus_waits = c.bus.is_some() && c.stalled < BUS_DETOUR_AFTER;
             let (avoid_lane, avoid_step) = if lane.is_beside(next) {
+                if bus_waits {
+                    continue;
+                }
                 (None, Some((here, next)))
             } else if wreck_ahead && c.stalled >= REROUTE_AFTER && nl.is_connector() {
                 (Some(next), None)
-            } else if c.stalled < REROUTE_AFTER {
+            } else if c.stalled < REROUTE_AFTER || bus_waits {
                 continue;
             } else {
                 match c.route.get(c.idx + 2) {

@@ -250,7 +250,15 @@ impl World {
                 (Activity::OnTrain { .. }, _) => " (on the train)",
                 (Activity::OnMetro { .. }, _) => " (on the subway)",
                 (Activity::Passenger { .. }, _) => " (getting a lift)",
-                (Activity::Waiting { .. }, _) => " (waiting for a ride)",
+                // [pt-transit] Each kind of wait by its name.
+                (Activity::Waiting { .. }, _) => match c.transit.map(|t| t.leg) {
+                    Some(TransitLeg::Subway { .. }) => " (on the metro platform)",
+                    Some(TransitLeg::Bus { .. }) => " (at the bus stop)",
+                    Some(TransitLeg::Rail { .. }) => " (on the station platform)",
+                    Some(TransitLeg::Taxi) => " (waiting for a cab)",
+                    Some(TransitLeg::Air { .. }) => " (at the drone pad)",
+                    None => " (waiting for a ride)",
+                },
                 (Activity::Traveling { .. }, TravelMode::Bike) => " (cycling)",
                 _ => "",
             };
@@ -352,6 +360,12 @@ impl World {
                 Some(self.place_of_building(bus.depot))
             } else {
                 line.and_then(|r| r.stops.get(bus.next_stop)).map(|s| Place { label: format!("stop {}", bus.next_stop + 1), building: None, car: None, pos: Some(s.pos) })
+            };
+            // [pt-transit] From the stop it last called at (the leg is what
+            // is timed), else from the depot.
+            let from = match (self.transit.departures.get(&id), line) {
+                (Some(&(k, _)), Some(r)) if k < r.stops.len() && !bus.to_depot => Place { label: format!("stop {}", k + 1), building: None, car: None, pos: Some(r.stops[k].pos) },
+                _ => from,
             };
             return Some(Journey { purpose, from, to, driver: Driver::Unknown("a bus driver".into()) });
         }

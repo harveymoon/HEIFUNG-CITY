@@ -642,7 +642,13 @@ impl Citizen {
     }
 
     pub fn is_visible(&self) -> bool {
-        matches!(self.activity, Activity::Traveling { .. } | Activity::Idle | Activity::Sitting { .. } | Activity::Waiting { .. } | Activity::Passenger { seated: false, .. })
+        matches!(self.activity, Activity::Traveling { .. } | Activity::Idle | Activity::Sitting { .. } | Activity::Waiting { .. } | Activity::Passenger { seated: false, .. }) && !self.on_platform()
+    }
+
+    /// [pt-transit] Waiting on a metro platform, underground: not drawn at
+    /// street level (the underground view may show them there).
+    pub fn on_platform(&self) -> bool {
+        matches!(self.activity, Activity::Waiting { .. }) && matches!(self.transit.map(|t| t.leg), Some(crate::transit::TransitLeg::Subway { .. }))
     }
 }
 

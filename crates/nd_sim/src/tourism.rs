@@ -233,6 +233,7 @@ impl Tourist {
             TouristState::Sightseeing { .. } => "sightseeing",
             TouristState::Inside { .. } if self.commuter.is_some() => "at work",
             TouristState::Inside { .. } => "shopping",
+            TouristState::Aboard { .. } if self.via == Arrival::Rail => "on the train in",
             TouristState::Aboard { .. } => "on the ferry in",
         }
     }

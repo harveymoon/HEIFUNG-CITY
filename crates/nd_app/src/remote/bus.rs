@@ -85,7 +85,46 @@ pub(super) fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             }
             Ok(json!({ "removed": key_str(id), "routes": w.transit.routes.len() }))
         }
-        "list" => Ok(json!({ "routes": w.transit.routes.iter().map(|(id, r)| route_row(id, r)).collect::<Vec<_>>() })),
+        "list" => {
+            let (wanted, capacity) = w.fleet_balance();
+            let rows: Vec<Value> = w.transit.routes.iter().map(|(id, r)| {
+                let mut row = route_row(id, r);
+                row["problems"] = line_problems_json(&w.line_problems(id));
+                row
+            }).collect();
+            Ok(json!({ "routes": rows, "fleet": { "wanted": wanted, "depot_capacity": capacity } }))
+        }
+        // [pt-transit] What keeps a line from running, or is worth a warning.
+        "problems" => {
+            let id = route_arg(w)?;
+            Ok(json!({ "route": key_str(id), "problems": line_problems_json(&w.line_problems(id)) }))
+        }
+        // [pt-transit] Check a line before committing it: `points` [[x,y],..]
+        // snapped to stops as clicks would be; the problems such a loop has.
+        "check" => {
+            let pts = cmd.get("points").and_then(Value::as_array).ok_or("missing points [[x,y],...]")?;
+            let mut stops = Vec::new();
+            for p in pts {
+                let xy = p.as_array().filter(|a| a.len() == 2).ok_or("points are [x,y] pairs")?;
+                let v = nd_sim::Vec2::new(xy[0].as_f64().unwrap_or(0.0) as f32, xy[1].as_f64().unwrap_or(0.0) as f32);
+                stops.push(w.transit.stop_for_click(&w.roads, v).ok_or_else(|| format!("no street within reach of ({:.0}, {:.0})", v.x, v.y))?);
+            }
+            let problems = nd_sim::Transit::check_stops(&w.traffic.net, &stops);
+            Ok(json!({ "stops": stops.len(), "problems": line_problems_json(&problems) }))
+        }
+        "insert_stop" => {
+            let id = route_arg(w)?;
+            let idx = opt_u64(cmd, "index")?.ok_or("missing index (the new stop's place in the list)")? as usize;
+            let p = req_point(cmd)?;
+            let idx = w.insert_bus_stop(id, idx, p)?;
+            Ok(json!({ "route": key_str(id), "stop_index": idx, "row": route_row(id, &w.transit.routes[id]) }))
+        }
+        "set_fare" => {
+            let id = route_arg(w)?;
+            let fare = cmd.get("fare").and_then(Value::as_f64).ok_or("missing fare")? as f32;
+            w.set_route_fare(id, fare)?;
+            Ok(json!({ "route": key_str(id), "row": route_row(id, &w.transit.routes[id]) }))
+        }
         // [lines] The Lines window's figures for one line.
         "line" => {
             let id = route_arg(w)?;
@@ -122,6 +161,6 @@ pub(super) fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             }
             Ok(json!({ "route": key_str(id), "index": idx, "pos": [pos.x, pos.y] }))
         }
-        _ => Err(format!("unknown bus action {action:?}; one of select, new_route, add_stop, move_stop, remove_stop, set_buses, remove_route, rename, recolour, line, select_stop, list")),
+        _ => Err(format!("unknown bus action {action:?}; one of select, new_route, add_stop, insert_stop, move_stop, remove_stop, set_buses, set_fare, remove_route, rename, recolour, line, problems, check, select_stop, list")),
     }
 }

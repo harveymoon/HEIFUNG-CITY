@@ -18,9 +18,14 @@ pub(super) fn sync_citizens(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
+    tools: Res<crate::tools::ToolState>,
     mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d, Option<&swap::SwapOriginal>, Option<&mut WayHeight>), With<CitizenTag>>,
 ) {
     let lifted = lifts(*selection);
+    // [pt-transit] Metro riders wait on the platform below the street:
+    // drawn there in the Underground view only.
+    let under = tools.depth == crate::tools::Depth::Underground;
+    let shown = |c: &nd_sim::Citizen| c.is_visible() || (under && c.on_platform());
     let w = &sim.world;
     let f = sim.frac();
     let plain = people::plain();
@@ -49,7 +54,7 @@ pub(super) fn sync_citizens(
     let mut outdoors: Vec<(CitizenId, Entity, nd_procgen::people::PersonKey, f32, f32)> = state
         .citizens
         .iter()
-        .filter_map(|(id, &e)| w.citizens.get(*id).filter(|c| c.is_visible()).map(|c| (*id, e, people::figure_of(c), c.pos.distance_squared(SVec2::new(eye.x, eye.z)))))
+        .filter_map(|(id, &e)| w.citizens.get(*id).filter(|c| shown(c)).map(|c| (*id, e, people::figure_of(c), c.pos.distance_squared(SVec2::new(eye.x, eye.z)))))
         .map(|(id, e, (k, s), d)| (id, e, k, s, d))
         .collect();
     outdoors.sort_by(|a, b| a.4.total_cmp(&b.4));
@@ -84,6 +89,9 @@ pub(super) fn sync_citizens(
             way.0 = w.walker_way_height(c, pos);
         }
         tf.translation = Vec3::new(pos.x, if lying { 0.12 } else if seated { 0.02 } else { 0.16 } + raised, pos.y);
+        if c.on_platform() {
+            tf.translation.y = 0.16 - nd_sim::subway::DEPTH;
+        }
         tf.rotation = Quat::from_rotation_y(-heading);
         if lying {
             tf.rotation *= Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
@@ -108,7 +116,7 @@ pub(super) fn sync_citizens(
     for (id, &e) in state.citizens.iter() {
         let Some(c) = w.citizens.get(*id) else { continue };
         let Ok((_, mut vis, mut mat, mut mesh, heat_original, _)) = q.get_mut(e) else { continue };
-        if !c.is_visible() {
+        if !shown(c) {
             *vis = Visibility::Hidden;
             // Indoors: let go of the figure so the cache can drop it.
             if mesh.0 != mats.citizen_mesh {

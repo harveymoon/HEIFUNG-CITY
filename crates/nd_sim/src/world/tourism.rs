@@ -324,7 +324,7 @@ impl World {
             s.arrivals_today += 1;
             s.arrivals_total += 1;
             s.arrivals_by_mode_today[via.index()] += 1;
-            if let (Arrival::Ferry, Some(terminal)) = (via, port) {
+            if let (Arrival::Ferry | Arrival::Rail, Some(terminal)) = (via, port) {
                 // [ferries] On the next boat in from the town over the
                 // water; they step off when it ties up (`ferry_returned`).
                 let t = &mut self.tourism.tourists[id];
@@ -493,6 +493,10 @@ impl World {
                 // [ferries] At the terminal: wait on the pier for the next
                 // boat out (`Ports::boarding`).
                 if let Some(t) = self.tourism.tourists.remove(id) {
+                    // [pt-transit] Onto the next train out.
+                    if let (Arrival::Rail, Some(p)) = (t.via, t.port) {
+                        self.rail_departure(p);
+                    }
                     if let (Arrival::Ferry, Some(p)) = (t.via, t.port) {
                         *self.ports.boarding.entry(p).or_insert(0) += 1;
                         if t.commuter.is_some() {
@@ -580,6 +584,11 @@ impl World {
             return;
         }
         match t.state {
+            TouristState::Aboard { terminal, .. } if t.via == Arrival::Rail => {
+                // [pt-transit] No train came (the track was cut): off at
+                // the station anyway after a long wait.
+                self.rail_disembark(id, terminal);
+            }
             TouristState::Aboard { terminal, .. } => {
                 // [ferries] The boat never came (the terminal shut, the
                 // water route lost): ashore here anyway after a long wait.

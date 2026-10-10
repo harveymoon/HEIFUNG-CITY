@@ -94,7 +94,7 @@ impl World {
             self.disembark(id, terminal);
         }
         let before = self.ports.commuters_today.get(&terminal).copied().unwrap_or(0);
-        self.commuters_off_the_boat(terminal);
+        self.commuters_arriving(terminal, Arrival::Ferry, ports::FERRY_CATCHMENT);
         let n = n + self.ports.commuters_today.get(&terminal).copied().unwrap_or(0).saturating_sub(before);
         let back: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| matches!(c.activity, Activity::Abroad { terminal: x, until, .. } if x == terminal && until <= tick)).map(|(id, _)| id).collect();
         let n = n + back.len() as u32;
@@ -138,9 +138,10 @@ impl World {
         }
     }
 
-    /// The morning boats bring commuters for businesses near the terminal
-    /// that are short of staff: a share of the gaps, up to the morning's cap.
-    fn commuters_off_the_boat(&mut self, terminal: BuildingId) {
+    /// The morning boats (and, [pt-transit], trains) bring commuters for
+    /// businesses within `catchment` of the terminal or station that are
+    /// short of staff: a share of the gaps, up to the morning's cap.
+    pub(super) fn commuters_arriving(&mut self, terminal: BuildingId, via: Arrival, catchment: f32) {
         let tick = self.clock.tick;
         let hour = self.clock.hour() as u8;
         if !(5..10).contains(&hour) {
@@ -156,7 +157,7 @@ impl World {
             .buildings
             .iter()
             .filter(|(_, b)| b.operating() && !b.is_derelict() && b.business.as_ref().is_some_and(|z| !z.closed))
-            .filter(|(_, b)| self.lots.get(b.lot).is_some_and(|l| l.center.distance(at) <= ports::FERRY_CATCHMENT && l.car_segment.is_some()))
+            .filter(|(_, b)| self.lots.get(b.lot).is_some_and(|l| l.center.distance(at) <= catchment && l.car_segment.is_some()))
             .filter_map(|(id, b)| {
                 let short = (b.jobs as u32).saturating_sub(b.workers.len() as u32 + here.get(&id).copied().unwrap_or(0));
                 // Day jobs only: the boats home stop at ten.
@@ -197,7 +198,7 @@ impl World {
                 heading: 0.0,
                 prev_heading: 0.0,
                 hotel: work,
-                via: Arrival::Ferry,
+                via,
                 port: Some(terminal),
                 arrived_tick: tick,
                 leave_day: day,
@@ -209,7 +210,11 @@ impl World {
                 commuter: Some(work),
             });
             *self.ports.commuters_today.entry(terminal).or_insert(0) += 1;
-            self.disembark(id, terminal);
+            if via == Arrival::Rail {
+                self.rail_disembark(id, terminal);
+            } else {
+                self.disembark(id, terminal);
+            }
         }
     }
 
@@ -345,6 +350,10 @@ impl World {
     pub(super) fn board_day_trip(&mut self, id: CitizenId, b: BuildingId) -> bool {
         let Some(k) = self.ports.trippers.iter().position(|t| t.citizen == id && t.terminal == b) else { return false };
         let trip = self.ports.trippers.remove(k);
+        // [pt-transit] A day out by train.
+        if self.stations.contains(&b) {
+            return self.board_rail_trip(id, b, trip);
+        }
         if !self.ports.remote_terminals().contains(&b) {
             return false;
         }
@@ -374,11 +383,19 @@ impl World {
         let tick = self.clock.tick;
         let Some(c) = self.citizens.get(id) else { return };
         let Activity::Abroad { terminal, town, .. } = c.activity else { return };
-        let name = self.ferry_town_name(terminal, town);
+        // [pt-transit] Back by train, or by boat.
+        let by_rail = self.stations.contains(&terminal);
+        let name = if by_rail { self.rail_town_name(terminal) } else { self.ferry_town_name(terminal, town) };
         let home = c.home;
         let at = self.building_entrance(terminal).or_else(|| home.and_then(|h| self.building_entrance(h))).unwrap_or(c.pos);
-        self.ports.stats.day_trippers_back_today += 1;
-        self.ports.stats.ferry_riders_today += 1;
+        if by_rail {
+            let s = &mut self.rail.stats;
+            s.riders_today += 1;
+            s.from_out_of_town_today += 1;
+        } else {
+            self.ports.stats.day_trippers_back_today += 1;
+            self.ports.stats.ferry_riders_today += 1;
+        }
         let c = &mut self.citizens[id];
         c.pos = at;
         c.prev_pos = at;
@@ -387,7 +404,7 @@ impl World {
         c.mood = (c.mood + 0.06).min(1.0);
         c.thought = format!("Good day out in {name}.");
         c.next_decision_tick = tick + 1;
-        if self.buildings.contains_key(terminal) && self.ports.port_of(terminal).is_some_and(|p| p.works()) {
+        if self.buildings.contains_key(terminal) && (by_rail || self.ports.port_of(terminal).is_some_and(|p| p.works())) {
             self.travel_to(id, home, Purpose::Home);
         } else if let Some(h) = home {
             let door = self.building_entrance(h);

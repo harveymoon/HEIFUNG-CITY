@@ -395,11 +395,25 @@ impl World {
             b.unpowered_hours_today = 0;
         }
         // Buses and depots cost money; yesterday's fares were taken as they came.
-        let bus_days = self.traffic.cars.values().filter(|c| c.bus.is_some()).count() as f32;
+        // [pt-transit] Each line pays for the bus-minutes it ran today (a
+        // bus out all service day is one bus-day): counting the buses on
+        // the road at midnight, after they had gone home, charged next to
+        // nothing.
+        let service = (transit::SERVICE_END - transit::SERVICE_START) as f32;
+        let mut bus_days = 0.0;
+        let lines: Vec<RouteId> = self.transit.routes.keys().collect();
+        let mut line_upkeep: Vec<(RouteId, f32)> = Vec::with_capacity(lines.len());
+        for rid in lines {
+            let days = self.transit.routes[rid].bus_minutes_today as f32 / service;
+            let cost = days * transit::BUS_UPKEEP_PER_DAY;
+            bus_days += days;
+            if cost > 0.0 {
+                self.economy.debit_item(Flow::TransitUpkeep, cost, Item::Route(rid));
+            }
+            line_upkeep.push((rid, cost));
+        }
         let depots: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.depot).map(|(id, _)| id).collect();
         let transit_upkeep = bus_days * transit::BUS_UPKEEP_PER_DAY + depots.len() as f32 * transit::DEPOT_UPKEEP_PER_DAY;
-        let fleet = format!("{bus_days:.0} buses on the lines at {:.0} a day", transit::BUS_UPKEEP_PER_DAY);
-        self.economy.debit_item(Flow::TransitUpkeep, bus_days * transit::BUS_UPKEEP_PER_DAY, Item::Named(fleet));
         for id in depots {
             self.economy.debit_item(Flow::TransitUpkeep, transit::DEPOT_UPKEEP_PER_DAY, Item::Building(id));
         }
@@ -422,14 +436,18 @@ impl World {
         rs.upkeep_today = rail_upkeep;
         rs.riders_today = 0;
         rs.fares_today = 0.0;
+        rs.from_out_of_town_today = 0;
+        rs.to_out_of_town_today = 0;
         rs.passenger_trains_today = 0;
         rs.freight_trains_today = 0;
         rs.freight_in_today = 0.0;
         self.economy.transit.riders_today = 0;
         self.economy.transit.fares_today = 0.0;
-        for r in self.transit.routes.values_mut() {
-            r.riders_today = 0;
-            r.roll_day();
+        for (rid, cost) in line_upkeep {
+            if let Some(r) = self.transit.routes.get_mut(rid) {
+                r.roll_books(cost);
+                r.roll_day();
+            }
         }
         // Buses that left the road without going home leave no timings behind.
         let cars = &self.traffic.cars;

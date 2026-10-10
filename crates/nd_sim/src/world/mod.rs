@@ -148,6 +148,13 @@ mod taxis;
 #[cfg(test)]
 mod taxi_tests;
 mod trains;
+// [pt-transit] The railway to and from out of town.
+mod rail_travel;
+// [pt-transit] Why people do (not) ride.
+mod transit_report;
+#[cfg(test)]
+mod transit_tests;
+pub use transit_report::RidershipReport;
 mod tourism;
 mod trips;
 mod water;
@@ -212,7 +219,7 @@ use crate::power::{Battery, BatteryKind, PowerPlantKind, Weather};
 use crate::power::demand_mw;
 use crate::traffic::{Bus, CarId};
 use std::collections::{BTreeMap, HashMap};
-use crate::transit::{self, BusStop, RouteId, Transit, TransitLeg, TransitTrip};
+use crate::transit::{self, BusStop, DispatchProblem, LineProblem, RouteId, Transit, TransitLeg, TransitTrip};
 use crate::rail::{self, Facility, FacilityId, Rail, RailFacility, RailLink, Train, TrainId, TrainKind};
 use crate::zoning::{outlines_differ, point_in_polygon, polygons_overlap};
 use crate::citizens::TravelMode;

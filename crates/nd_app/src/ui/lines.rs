@@ -31,6 +31,7 @@ enum Act {
     Rename(RouteId, String),
     Recolour(RouteId, u8),
     Buses(RouteId, u8),
+    Fare(RouteId, f32),
     DeleteLine(RouteId),
     SelectBus(nd_sim::CarId),
 }
@@ -133,6 +134,9 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
             let _ = w.recolour_bus_route(r, c);
         }
         Some(Act::Buses(r, n)) => w.set_route_buses(r, n),
+        Some(Act::Fare(r, f)) => {
+            let _ = w.set_route_fare(r, f);
+        }
         Some(Act::DeleteLine(r)) => {
             let name = w.transit.routes.get(r).map(|x| x.name.clone()).unwrap_or_default();
             w.remove_bus_route(r);
@@ -205,8 +209,20 @@ fn line(ui: &mut egui::Ui, p: &UiCtx, rid: RouteId, act: &mut Option<Act>) {
     let lap: f32 = (0..n).map(|i| r.leg_minutes(i, tsp).0).sum();
     let waiting = w.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Waiting { .. }) && matches!(c.transit.map(|t| t.leg), Some(nd_sim::transit::TransitLeg::Bus { route, .. }) if route == rid)).count();
     ui.label(egui::RichText::new(format!("{} riders today · {} yesterday · {waiting} waiting now · loop {:.2} km, about {:.0} min round", r.riders_today, r.boardings_yesterday(), length / 1000.0, lap)).small());
-    if !r.broken.is_empty() {
-        ui.label(egui::RichText::new(format!("NO ROAD between stops {}", r.broken.iter().map(|i| format!("{}→{}", i + 1, (i + 1) % n.max(1) + 1)).collect::<Vec<_>>().join(", "))).color(WARN).small());
+    // [pt-transit] The line's books, and what keeps it from running (or
+    // is worth a warning), from the sim's `line_problems`.
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(format!("fare {:.2} · yesterday {:.0} in fares, {:.0} running costs", r.fare, r.fares_yesterday, r.upkeep_yesterday)).small());
+        if ui.small_button("−").on_hover_text("Cheaper fare: more riders").clicked() {
+            *act = Some(Act::Fare(rid, (r.fare - 0.5).max(0.0)));
+        }
+        if ui.small_button("+").on_hover_text("Dearer fare: fewer riders, more per ride").clicked() {
+            *act = Some(Act::Fare(rid, r.fare + 0.5));
+        }
+    });
+    for problem in w.line_problems(rid) {
+        let color = if problem.blocks() { WARN } else { Color32::from_gray(170) };
+        ui.label(egui::RichText::new(format!("{} {problem}", if problem.blocks() { "!" } else { "·" })).color(color).small());
     }
     if n == 0 {
         return;

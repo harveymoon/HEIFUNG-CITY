@@ -252,7 +252,16 @@ impl World {
             // they set off afresh for where they were going, by other means
             // (someone left walking to a closed entrance would stand there
             // waiting for nothing).
+            // [pt-transit] Up from the platform to the street first.
+            let up = match self.citizens[id].transit.map(|t| t.leg) {
+                Some(TransitLeg::Subway { board, .. }) if self.citizens[id].on_platform() => self.building_entrance(board),
+                _ => None,
+            };
             let c = &mut self.citizens[id];
+            if let Some(p) = up {
+                c.pos = p;
+                c.prev_pos = p;
+            }
             let trip = c.transit.take();
             c.activity = Activity::Idle;
             c.thought = "The metro's closed. Walking it.".into();
@@ -532,6 +541,36 @@ mod tests {
         w.demolish(c);
         w.step_subway();
         assert!(w.subway.lines.is_empty(), "lines with one station left close");
+    }
+
+    /// [pt-transit] F23: a rider for the metro goes in at the entrance and
+    /// waits on the platform below, out of sight of the street, and comes
+    /// back up to the street if they give up.
+    #[test]
+    fn metro_riders_wait_on_the_platform_out_of_sight() {
+        let mut w = town();
+        let mut mind = IdleMind;
+        let a = w.build_metro_station(lot_near(&w, Vec2::new(-900.0, 30.0))).unwrap();
+        let b = w.build_metro_station(lot_near(&w, Vec2::new(900.0, 30.0))).unwrap();
+        let line = w.add_metro_line(&[a, b]).unwrap();
+        let at = w.building_entrance(a).unwrap();
+        let platform = w.metro_platform(a).unwrap();
+        assert!(platform.distance(at) > 3.0, "the platform is not the kerb");
+        let rider = walker(&mut w, at);
+        w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Subway { line, board: a, alight: b }, target: b, purpose: Purpose::Wander, since: 0 });
+        w.citizens[rider].activity = Activity::Traveling { to: Some(b), purpose: Purpose::ToStop, path: vec![at], idx: 0 };
+        w.clock = SimClock::starting_at(0, 3, 0);
+        for _ in 0..5 {
+            w.tick(&mut mind);
+            if matches!(w.citizens[rider].activity, Activity::Waiting { .. }) {
+                break;
+            }
+        }
+        let c = &w.citizens[rider];
+        assert!(matches!(c.activity, Activity::Waiting { .. }), "{}", c.activity.label());
+        assert!(c.pos.distance(platform) < 1.0, "down on the platform, not at the kerb: {:?} vs {:?}", c.pos, platform);
+        assert!(c.on_platform() && !c.is_visible(), "out of sight at street level");
+        assert!(w.activity_line(rider).contains("metro platform"), "{}", w.activity_line(rider));
     }
 
     #[test]
