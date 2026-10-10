@@ -485,3 +485,8 @@ Sources: docs/playtest/todo_2026-10-10.md (Harvey's list, "T"), docs/playtest/fl
 
 ### J. Engine [wave 2]
 - [ ] Big-city performance 20k–50k; faster/smaller saves and load peak; save→load→continue determinism
+
+## Agents running (playtest round, started 2026-10-10)
+- A fix/pt-traffic · B fix/pt-transit · C feat/pt-lines · D fix/pt-parcels · E fix/pt-growth · F fix/pt-walk · G feat/pt-ux · H fix/pt-visual
+- I (new features) and J (engine) wait for wave 2
+
