@@ -333,6 +333,8 @@ pub(super) fn build_highlight(cmd: &Value, ctx: &mut Ctx) -> Result<Value, Strin
         let view = ctx.highlight.view.as_ref();
         json!({
             "on": sel.is_some(),
+            // [feat/pt-ux] A selected building showing its build-mode view.
+            "inspected": ctx.highlight.inspected.map(key_str),
             "section": sel.map(|s| s.cat.key()),
             "sub": sel.and_then(|s| s.sub),
             "focus": sel.and_then(|s| s.focus).map(|p| p.label()),

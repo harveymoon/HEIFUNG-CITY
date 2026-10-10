@@ -65,6 +65,50 @@ const BOUND: f32 = nd_sim::landscape::CAMERA_BOUND;
 #[derive(Resource, Default)]
 pub struct Cursor {
     pub ground: Option<Vec2>,
+    /// [feat/pt-ux] The pointer's ray from the eye (origin, unit
+    /// direction), for picking a tower by its walls and an aircraft in the
+    /// air.
+    pub ray: Option<(Vec3, Vec3)>,
+    /// [feat/pt-ux] How far the eye is from `ground`, for what a click may
+    /// pick from that far out (`tools::pick`).
+    pub view_dist: f32,
+}
+
+impl OrbitCamera {
+    /// Where the eye is (as `place_orbit` puts it, inside the bound).
+    pub fn eye(&self) -> Vec3 {
+        let (sy, cy) = self.yaw.sin_cos();
+        let (sp, cp) = self.pitch.sin_cos();
+        self.target + Vec3::new(sy * cp, sp, cy * cp) * self.distance
+    }
+}
+
+/// [feat/pt-ux] Where the ray from `o` along `dir` meets the ground (on a
+/// landscape, walked onto the terrain), in sim coordinates; None when it
+/// points at the sky.
+pub fn ray_ground(w: &nd_sim::World, o: Vec3, dir: Vec3) -> Option<Vec2> {
+    // [pt-ux] Under the ground (the Underground view's orbit can swing
+    // below it) the pointer meets the ground from below, looking up.
+    if dir.y.abs() < 1e-4 || (dir.y > 0.0) != (o.y < 0.0) {
+        return None;
+    }
+    let t = -o.y / dir.y;
+    let mut hit = o + dir * t;
+    // On a landscape, walk the ray onto the ground: re-intersect at the
+    // height found under the last guess until it settles.
+    if !w.landscape.is_flat() {
+        for _ in 0..6 {
+            let h = w.surface_height(Vec2::new(hit.x, hit.z));
+            let t = (h - o.y) / dir.y;
+            let next = o + dir * t;
+            let settled = next.distance(hit) < 0.2;
+            hit = next;
+            if settled {
+                break;
+            }
+        }
+    }
+    Some(Vec2::new(hit.x, hit.z))
 }
 
 /// [camera] The thing the camera is locked onto: a person, a vehicle, a
@@ -109,7 +153,7 @@ impl CameraFollow {
             return false;
         }
         match self.target {
-            Some(Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_) | Selection::Ship(_)) => true,
+            Some(Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_) | Selection::Ship(_) | Selection::Drone(_) | Selection::Rv(_)) => true,
             Some(Selection::Citizen(id)) => sim.world.citizens.get(id).is_some_and(|c| matches!(c.activity, nd_sim::Activity::Driving { .. } | nd_sim::Activity::Riding { .. } | nd_sim::Activity::Passenger { seated: true, .. })),
             _ => false,
         }
@@ -183,6 +227,9 @@ pub fn zoom_distance(sim: &Sim, sel: Selection) -> f32 {
         Selection::Metro(_) => 70.0,
         // [ferry-routes] The whole boat and some water round it.
         Selection::Ship(id) => sim.world.ports.ships.get(id).map_or(120.0, |s| (s.length() * 3.0).clamp(90.0, 240.0)),
+        // [feat/pt-ux] An aircraft from a little way off; a camper close.
+        Selection::Drone(_) => 70.0,
+        Selection::Rv(_) => 30.0,
         Selection::Building(id) => {
             let w = &sim.world;
             let r = w.buildings.get(id).and_then(|b| w.lots.get(b.lot)).map_or(30.0, |l| l.polygon.iter().map(|p| p.distance(l.center)).fold(0.0, f32::max));
@@ -266,6 +313,9 @@ pub fn thing_pose(sim: &Sim, sel: Selection) -> Option<ThingPose> {
             let (p, h) = crate::ferry_select::ship_pose(s, f);
             ThingPose { pos: p + Vec2::new(h.cos(), h.sin()) * (s.length() * 0.3), heading: Some(h), eye: nd_sim::landscape::WATER_LEVEL + 7.0 }
         }),
+        // [feat/pt-ux] In the cabin; a camper from its driver's seat.
+        Selection::Drone(id) => crate::air_select::pose(w, id, f).map(|(at, h)| ThingPose { pos: Vec2::new(at.x, at.z), heading: Some(h), eye: at.y + 1.2 }),
+        Selection::Rv(seed) => w.society.homeless.rv(seed).map(|r| ThingPose { pos: r.pos, heading: Some(r.heading), eye: ground(r.pos) + 1.8 }),
         Selection::Bot(id) => w.bots.bots.get(id).map(|b| {
             let p = if b.prev_pos.distance(b.pos) < 30.0 { b.prev_pos.lerp(b.pos, f) } else { b.pos };
             ThingPose { pos: p, heading: Some(lerp_angle(b.prev_heading, b.heading, f)), eye: ground(p) + 0.75 }
@@ -782,6 +832,7 @@ fn project_cursor(
     mut cursor: ResMut<Cursor>,
 ) {
     cursor.ground = None;
+    cursor.ray = None;
     if *mode == CameraMode::Walk || flags.pointer_over_ui {
         return;
     }
@@ -790,28 +841,10 @@ fn project_cursor(
     let Some(pos) = window.cursor_position() else { return };
     let Ok(ray) = camera.viewport_to_world(gt, pos) else { return };
     let dir = ray.direction.as_vec3();
-    // [pt-ux] Under the ground (the Underground view's orbit can swing
-    // below it) the pointer meets the ground from below, looking up.
-    if dir.y.abs() < 1e-4 || (dir.y > 0.0) != (ray.origin.y < 0.0) {
-        return;
-    }
-    let t = -ray.origin.y / dir.y;
-    let mut hit = ray.origin + dir * t;
-    // On a landscape, walk the ray onto the ground: re-intersect at the
-    // height found under the last guess until it settles.
-    if !sim.world.landscape.is_flat() {
-        for _ in 0..6 {
-            let h = sim.world.surface_height(Vec2::new(hit.x, hit.z));
-            let t = (h - ray.origin.y) / dir.y;
-            let next = ray.origin + dir * t;
-            let settled = next.distance(hit) < 0.2;
-            hit = next;
-            if settled {
-                break;
-            }
-        }
-    }
-    cursor.ground = Some(Vec2::new(hit.x, hit.z));
+    cursor.ray = Some((ray.origin, dir));
+    let Some(g) = ray_ground(&sim.world, ray.origin, dir) else { return };
+    cursor.view_dist = ray.origin.distance(Vec3::new(g.x, sim.world.surface_height(g), g.y));
+    cursor.ground = Some(g);
 }
 
 #[cfg(test)]

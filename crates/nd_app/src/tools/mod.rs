@@ -30,7 +30,7 @@ use crate::ui::UiFlags;
 
 pub(crate) use input::tool_input;
 pub use kinds::*;
-pub(crate) use pick::pick;
+pub(crate) use pick::{building_prism, pick, pick_click, Click};
 pub use plan_cache::EffectivePlan;
 pub use state::*;
 pub use zone::marquee_rect;

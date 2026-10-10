@@ -222,6 +222,13 @@ pub fn camp(p: Vec2, along: Vec2, out: Vec2, tents: u8, sidewalk: bool, seed: u6
 /// `heading`: rust, a cracked windscreen covered in cardboard, curtains,
 /// a blue tarp over the roof and a chair on the pavement side.
 pub fn rv(p: Vec2, heading: f32, camper: bool, seed: u64, pal: &Palette) -> Geometry {
+    rv_kept(p, heading, camper, seed, false, pal)
+}
+
+/// [feat/pt-ux] An RV or van, lived in or `abandoned`: left at the kerb it
+/// is darker and rustier, with no light inside, nothing on the pavement and
+/// a smashed side window.
+pub fn rv_kept(p: Vec2, heading: f32, camper: bool, seed: u64, abandoned: bool, pal: &Palette) -> Geometry {
     let mut g = Geometry::default();
     let mut rng = rng_for(seed, 0x2F7);
     let along = Vec2::from_angle(heading);
@@ -229,6 +236,7 @@ pub fn rv(p: Vec2, heading: f32, camper: bool, seed: u64, pal: &Palette) -> Geom
     let f = Frame::new(p, along, right, 0.0);
     let yaw = f.yaw();
     let body = mix(pick(&mut rng, &pal.car_colors), [0.75, 0.72, 0.66], if camper { 0.75 } else { 0.35 });
+    let body = if abandoned { mul(mix(body, [0.35, 0.3, 0.25], 0.4), 0.7) } else { body };
     let (len, w, h) = if camper { (7.0, 2.4, 2.9) } else { (5.2, 2.0, 2.2) };
     // Body and cab.
     let cab = if camper { 1.4 } else { 1.0 };
@@ -249,6 +257,16 @@ pub fn rv(p: Vec2, heading: f32, camper: bool, seed: u64, pal: &Palette) -> Geom
             g.part(Glass).boxed(f.v3(u, s * (w * 0.5 + 0.01), h * 0.62), Vec3::new(0.9, 0.55, 0.03), yaw, rgba(pal.glass_dark));
             g.part(Matte).boxed(f.v3(u - 0.2, s * (w * 0.5 + 0.02), h * 0.64), Vec3::new(0.4, 0.5, 0.03), yaw, rgba(pick(&mut rng, &pal.tarp_colors)));
         }
+    }
+    if abandoned {
+        // Rust spreading, a smashed window gaping black, and nobody home.
+        for _ in 0..rng.random_range(4..8) {
+            let u = rng.random_range(-len * 0.45..len * 0.4);
+            let s = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
+            g.part(Rust).boxed(f.v3(u, s * (w * 0.5 + 0.016), rng.random_range(0.4..h * 0.8)), Vec3::new(rng.random_range(0.4..1.2), rng.random_range(0.2..0.6), 0.02), yaw, rgba(pal.rust));
+        }
+        g.part(Matte).boxed(f.v3(-len * 0.35, w * 0.5 + 0.025, h * 0.62), Vec3::new(0.95, 0.6, 0.03), yaw, rgba(DARK));
+        return g;
     }
     // A warm light inside, after dark it reads as somebody home.
     g.part(Glow).boxed(f.v3(-len * 0.35, w * 0.5 + 0.03, h * 0.62), Vec3::new(0.3, 0.2, 0.02), yaw, rgba([1.4, 0.8, 0.35]));
