@@ -21,7 +21,11 @@ pub const BRIDGE_COST_PER_M: f32 = 60.0;
 /// Steepest grade a street keeps; rail and paths have their own.
 pub const STREET_GRADE: f32 = 0.07;
 pub const RAIL_GRADE: f32 = 0.03;
-pub const PATH_GRADE: f32 = 0.10;
+/// [pt-walk] A path may climb as steeply as a flight of stairs (drawn as
+/// steps past `nd_procgen::street::STAIRS_FROM`): it follows the land down
+/// a hillside, or zig-zags, instead of being eased onto a ramp that leaves
+/// it standing on an embankment in the air.
+pub const PATH_GRADE: f32 = 0.6;
 /// At most this many through cars on the highway at once.
 pub const MAX_THROUGH_CARS: usize = 100;
 /// Chance per tick that a through car joins each carriageway.

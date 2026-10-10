@@ -68,6 +68,10 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
     });
     let started = if b.construction.is_some() { "started" } else { "built" };
     hint(ui, &format!("{}  ·  {} floor{}  ·  {started} day {}", style.map_or("unknown style", |s| s.label()), b.floors, crate::ui::fmt::s(b.floors), fmt::day(b.built_tick)));
+    // [pt-walk] Cut off from the rest of the city on foot or by road.
+    for line in w.lot_link_warnings(b.lot) {
+        ui.label(egui::RichText::new(line).color(egui::Color32::from_rgb(255, 130, 80)).strong());
+    }
     // [free-placement] The city's own: its ground is out of the zoning, and
     // the player may bulldoze it (a second click confirms).
     if w.is_city_building(id) && b.rail.is_none() && b.port.is_none() {

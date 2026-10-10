@@ -109,6 +109,11 @@ impl WalkGraph {
             }
         }
         let n = self.nodes.len();
+        // [pt-walk] Different components: no route, and no search of the
+        // whole of the one we start in to find that out.
+        if self.comp.len() == n && self.comp[from as usize] != self.comp[to as usize] {
+            return None;
+        }
         let goal = self.nodes[to as usize].pos;
         let h = |i: u32| self.nodes[i as usize].pos.distance(goal) * PARK_FACTOR;
         let mut dist = vec![f32::INFINITY; n];
@@ -235,6 +240,50 @@ impl WalkGraph {
             }
         }
         dist
+    }
+
+    /// [pt-walk] Label every node with its connected component (the
+    /// lowest node index in it), over every edge in the graph. Call once
+    /// the graph is finished; any later edge would need a fresh call.
+    pub fn compute_components(&mut self) {
+        let n = self.nodes.len();
+        let mut parent: Vec<u32> = (0..n as u32).collect();
+        fn find(parent: &mut [u32], mut x: u32) -> u32 {
+            while parent[x as usize] != x {
+                let p = parent[x as usize];
+                parent[x as usize] = parent[p as usize];
+                x = p;
+            }
+            x
+        }
+        for u in 0..n {
+            for e in &self.adj[u] {
+                let (a, b) = (find(&mut parent, u as u32), find(&mut parent, e.to));
+                // The lower root wins, so a label is its component's lowest node.
+                if a != b {
+                    let (lo, hi) = (a.min(b), a.max(b));
+                    parent[hi as usize] = lo;
+                }
+            }
+        }
+        self.comp = (0..n as u32).map(|i| find(&mut parent, i)).collect();
+    }
+
+    /// [pt-walk] Every node whose position lies in the box, by the grid
+    /// (a scan when the node list has grown since it was built).
+    pub fn nodes_in_box(&self, lo: Vec2, hi: Vec2) -> Vec<u32> {
+        if self.index.len() == self.nodes.len() {
+            return self.index.in_box(lo, hi);
+        }
+        (0..self.nodes.len() as u32).filter(|&i| {
+            let p = self.nodes[i as usize].pos;
+            p.x >= lo.x && p.y >= lo.y && p.x <= hi.x && p.y <= hi.y
+        }).collect()
+    }
+
+    /// [pt-walk] Component of node `n` (None before `compute_components`).
+    pub fn component(&self, n: u32) -> Option<u32> {
+        (self.comp.len() == self.nodes.len()).then(|| self.comp.get(n as usize).copied()).flatten()
     }
 
     /// Lots passed by a route, each once.

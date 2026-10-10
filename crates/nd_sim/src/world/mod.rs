@@ -136,6 +136,9 @@ mod parking_tests;
 mod edge_tests;
 #[cfg(test)]
 mod concerns_tests;
+pub mod connectivity;
+#[cfg(test)]
+mod connectivity_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -479,6 +482,10 @@ pub struct World {
     /// lorry can get (a footpath joins walkers, not drivers).
     #[serde(skip)]
     drive_component: Vec<u32>,
+    /// [pt-walk] Stranded areas, failed trips and their alerts
+    /// (`world/connectivity.rs`).
+    #[serde(default)]
+    pub connectivity: connectivity::Connectivity,
     /// Late mind answers (`MindProvider::poll`) for citizens who were
     /// travelling when they came, with the tick they came: acted on at the
     /// citizen's next decision (`step_citizens`) if still fresh. Not saved:
@@ -759,6 +766,7 @@ impl World {
             next_seed: 1,
             road_component: Vec::new(),
             drive_component: Vec::new(),
+            connectivity: Default::default(),
             stations: Vec::new(),
             yards: Vec::new(),
             halts: Vec::new(),

@@ -492,6 +492,38 @@ impl WalkGraph {
         for (a, b) in gated {
             g.link(a, b, true);
         }
+        // [pt-walk] A landlocked lot whose front is out of reach of the
+        // pavement and whose neighbours give it no gate (industry) was an
+        // island in the walk graph: its workers could not walk in (a
+        // battery plant behind a factory). It gets a way out to the nearest
+        // pavement, as its car has a drive. Not a public beach: one behind
+        // private lots is meant to have no way on (`beach_gate_ok`).
+        for info in &loops {
+            let lot = &lots[info.lot];
+            if !lot.landlocked || lot.shore.beach {
+                continue;
+            }
+            let out = info.mids.iter().any(|&m| g.adj[m as usize].iter().any(|e| g.nodes[e.to as usize].lot != Some(info.lot)));
+            if out {
+                continue;
+            }
+            let Some(&front) = info.mids.iter().min_by(|&&a, &&b| {
+                let (pa, pb) = (g.nodes[a as usize].pos, g.nodes[b as usize].pos);
+                let da = street_grid.nearest(pa, |i| g.nodes[street_nodes[i as usize] as usize].pos.distance(pa)).map_or(f32::INFINITY, |x| x.1);
+                let db = street_grid.nearest(pb, |i| g.nodes[street_nodes[i as usize] as usize].pos.distance(pb)).map_or(f32::INFINITY, |x| x.1);
+                da.total_cmp(&db)
+            }) else { continue };
+            let fp = g.nodes[front as usize].pos;
+            let within = |i: u32| {
+                let d = g.nodes[street_nodes[i as usize] as usize].pos.distance(fp);
+                if d < LANDLOCKED_REACH { d } else { f32::INFINITY }
+            };
+            if let Some((i, _)) = street_grid.nearest(fp, within) {
+                let best = street_nodes[i as usize];
+                g.link(front, best, true);
+                g.nodes[best as usize].near.push(info.lot);
+            }
+        }
 
         // ── parks ────────────────────────────────────────────────────────
         // Park paths are public: every path vertex is a node, each path's

@@ -17,6 +17,12 @@ pub(super) fn railway(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run:
 /// the streets crossing there: out to the back of their pavements, measured
 /// along it (further at a slant). Zero where no street meets it.
 pub(super) fn crossing_reach(roads: &RoadNetwork, node: NodeId, points: &[Vec2], start: bool, half: f32) -> f32 {
+    crossing_reach_to(roads, node, points, start, half, false)
+}
+
+/// [`crossing_reach`], or (`to_kerb`, for a footpath) out to the kerb lines
+/// only: see below.
+pub(super) fn crossing_reach_to(roads: &RoadNetwork, node: NodeId, points: &[Vec2], start: bool, half: f32, to_kerb: bool) -> f32 {
     if roads.street_degree(node) == 0 || points.len() < 2 {
         return 0.0;
     }
@@ -29,10 +35,30 @@ pub(super) fn crossing_reach(roads: &RoadNetwork, node: NodeId, points: &[Vec2],
         .filter(|&&s| roads.segment(s).alive && roads.segment(s).is_street())
         .map(|&s| {
             let (a, b) = roads.segment_points(s);
-            let along = (b - a).normalize_or_zero();
-            let sin = d.perp_dot(along).abs().max(0.35);
-            // Its own width's corners reach further at a slant.
-            (roads.segment(s).half_width() + SIDEWALK + half * d.dot(along).abs()) / sin
+            let sg = roads.segment(s);
+            if !to_kerb {
+                // Track: out to the back of the pavements, where the
+                // level crossing's rails end.
+                let along = (b - a).normalize_or_zero();
+                let sin = d.perp_dot(along).abs().max(0.35);
+                // Its own width's corners reach further at a slant.
+                return (sg.half_width() + SIDEWALK + half * d.dot(along).abs()) / sin;
+            }
+            // The street's way out of the node.
+            let along = if sg.a == node { b - a } else { a - b }.normalize_or_zero();
+            let sin = d.perp_dot(along).abs();
+            // [pt-walk] F43: a path runs out to the street's kerb line, not
+            // the back of its pavement: the pavement (drawn higher) covers
+            // it where there is one, and where the junction's rounded
+            // corner has none it runs on to the kerb instead of stopping
+            // in the dirt metres short. A street behind the path (one that
+            // ends where the path carries on) is left at its kerb across
+            // the path's way.
+            let hw = sg.half_width();
+            if d.dot(along) <= 0.0 {
+                return hw * sin + half * (1.0 - sin);
+            }
+            (hw + 0.3 + half * d.dot(along).abs()) / sin.max(0.35)
         })
         .fold(0.0, f32::max)
 }
@@ -88,7 +114,7 @@ pub(super) fn level_crossing(g: &mut Geometry, pal: &Palette, roads: &RoadNetwor
 
 /// A path for walkers and bikes: paving with edge stones, low lamps, the odd
 /// bench and bin, and bollards where it meets a street so cars stay out.
-pub(super) fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run: &Run, points: &[Vec2], rng: &mut impl Rng) {
+pub(super) fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run: &Run, points: &[Vec2], rng: &mut impl Rng, profile: Option<&RunProfile>) {
     // Where the path meets a street, stop at the back of that street's
     // pavement and flare out onto it, instead of running under the kerb.
     let mut points = points.to_vec();
@@ -96,7 +122,7 @@ pub(super) fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run
         if roads.street_degree(node) == 0 || points.len() < 2 {
             continue;
         }
-        let back = crossing_reach(roads, node, &points, end, PATH_HALF_WIDTH);
+        let back = crossing_reach_to(roads, node, &points, end, PATH_HALF_WIDTH, true);
         let (a, b) = if end { (points[1], points[0]) } else { (points[points.len() - 2], points[points.len() - 1]) };
         let len = a.distance(b);
         if len <= back + 1.0 {
@@ -122,6 +148,10 @@ pub(super) fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run
     g.part(Concrete).path_box(pts, -(PATH_HALF_WIDTH + 0.1), 0.2, 0.0, 0.08, rgba(pal.curb));
     // Centre line for bikes to keep to one side.
     g.part(Paint).path_strip(pts, 0.0, 0.08, MARK_Y, rgba(mul(pal.lane_divider, 0.6)));
+    // [pt-walk] Where it climbs steeply, steps on it.
+    if let Some(prof) = profile {
+        stairs(g, pal, pts, |p| prof.height(p));
+    }
     let len = path_length(pts);
     let line = Polyline::new(pts);
     let at = |s: f32, off: f32| {
@@ -159,5 +189,108 @@ pub(super) fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run
         for off in [-0.9f32, 0.0, 0.9] {
             bollard_world(g, p + right * off, mul(pal.steel, 0.7));
         }
+    }
+}
+
+/// [pt-walk] A path steeper than this is drawn as a flight of steps.
+pub const STAIRS_FROM: f32 = 0.12;
+/// Rise of one step of a path's stairs.
+pub const STAIR_RISE: f32 = 0.17;
+
+/// [pt-walk] Steps on the steep stretches of a path drawn along `pts`
+/// (the geometry is set on the run's profile afterwards, `height` being
+/// that profile): each step a flat tread at the height of its upper edge
+/// and a riser at its lower, set on the sloping paving, so the flight
+/// reads as stairs however the slope runs.
+pub(super) fn stairs(g: &mut Geometry, pal: &Palette, pts: &[Vec2], height: impl Fn(Vec2) -> f32) {
+    let col = rgba(mul(pal.concrete(0), 1.05));
+    let half = PATH_HALF_WIDTH - 0.05;
+    for w in pts.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let len = a.distance(b);
+        if len < 0.3 {
+            continue;
+        }
+        let (ha, hb) = (height(a), height(b));
+        let grade = (hb - ha).abs() / len;
+        if grade < STAIRS_FROM {
+            continue;
+        }
+        let d = (b - a) / len;
+        let right = Vec2::new(-d.y, d.x);
+        let steps = ((hb - ha).abs() / STAIR_RISE).round().max(1.0) as usize;
+        let tread = len / steps as f32;
+        for k in 0..steps {
+            let (p0, p1) = (a + d * (tread * k as f32), a + d * (tread * (k + 1) as f32));
+            // The top is level at the higher edge's height; the riser
+            // stands at the lower edge.
+            let (lo, hi) = if hb > ha { (p0, p1) } else { (p1, p0) };
+            let top = height(hi);
+            // Heights relative to the profile, which lifts every vertex
+            // by its own height later.
+            let v = |p: Vec2, abs: f32| Vec3::new(p.x, ASPHALT_Y + 0.02 + abs - height(p), p.y);
+            let (l0, r0, l1, r1) = (lo + right * half, lo - right * half, hi + right * half, hi - right * half);
+            let up = Vec3::Y;
+            g.part(Concrete).quad_facing([v(l0, top), v(l1, top), v(r1, top), v(r0, top)], up, col);
+            let back = Vec3::new(lo.x - hi.x, 0.0, lo.y - hi.y).normalize_or_zero();
+            g.part(Concrete).quad_facing([v(l0, height(lo)), v(r0, height(lo)), v(r0, top), v(l0, top)], back, rgba(mul(pal.concrete(0), 0.85)));
+            for (e0, e1, n) in [(l0, l1, Vec3::new(right.x, 0.0, right.y)), (r0, r1, Vec3::new(-right.x, 0.0, -right.y))] {
+                g.part(Concrete).quad_facing([v(e0, height(e0)), v(e1, height(e1)), v(e1, top), v(e0, top)], n, rgba(mul(pal.concrete(0), 0.9)));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod pt_walk_tests {
+    use super::*;
+
+    fn node_at(roads: &RoadNetwork, p: Vec2) -> NodeId {
+        NodeId(roads.nodes.iter().position(|n| n.pos.distance(p) < 0.1).unwrap() as u32)
+    }
+
+    /// [pt-walk] F43: a path carrying straight on from the end of a street
+    /// starts right at the street's end (it stopped 27 m short, as if the
+    /// street ran beside it); one leaving a street's side or at a slant
+    /// runs to its kerb line (the pavement covers it), clear of the lanes.
+    #[test]
+    fn a_path_meets_a_junction_without_a_gap() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::ZERO], 1, 1);
+        roads.add_polyline_kind(&[Vec2::ZERO, Vec2::new(200.0, 0.0)], 0, 0, RoadKind::Path);
+        let n = node_at(&roads, Vec2::ZERO);
+        let on = crossing_reach_to(&roads, n, &[Vec2::ZERO, Vec2::new(200.0, 0.0)], true, PATH_HALF_WIDTH, true);
+        assert!(on < 2.0, "straight on from the street's end: {on} m");
+        let mut side = RoadNetwork::default();
+        side.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
+        side.add_polyline_kind(&[Vec2::ZERO, Vec2::new(0.0, 200.0)], 0, 0, RoadKind::Path);
+        let n = node_at(&side, Vec2::ZERO);
+        let hw = side.segment(side.node(n).segments[0]).half_width();
+        let off = crossing_reach_to(&side, n, &[Vec2::ZERO, Vec2::new(0.0, 200.0)], true, PATH_HALF_WIDTH, true);
+        assert!((off - hw).abs() < 0.01, "off the side: to the kerb line (under the pavement), {off}");
+        let slant = crossing_reach_to(&side, n, &[Vec2::ZERO, Vec2::new(150.0, 100.0)], true, PATH_HALF_WIDTH, true);
+        assert!(slant > hw / 0.55 && slant < (hw + SIDEWALK) / 0.55, "along the street at a slant it clears the carriageway, not the pavement: {slant}");
+    }
+
+    /// [pt-walk] F10: a steep path is drawn as steps, level treads one rise
+    /// apart once set on its slope; a gentle one has none.
+    #[test]
+    fn a_steep_path_gets_level_steps() {
+        let pal = Palette::default();
+        let pts = [Vec2::ZERO, Vec2::new(10.0, 0.0)];
+        let slope = |p: Vec2| p.x * 0.5;
+        let mut g = Geometry::default();
+        stairs(&mut g, &pal, &pts, slope);
+        let m = g.get(Surface::Concrete);
+        assert!(!m.positions.is_empty(), "steps drawn");
+        // Set on the profile as the street generator does.
+        let mut tops: Vec<i32> = m.positions.iter().map(|p| ((p[1] + slope(Vec2::new(p[0], p[2]))) / STAIR_RISE).round() as i32).collect();
+        tops.sort();
+        tops.dedup();
+        let steps = (5.0 / STAIR_RISE).round() as i32;
+        assert!(tops.len() as i32 >= steps, "a level for each step: {} of {steps}", tops.len());
+        let mut flat = Geometry::default();
+        stairs(&mut flat, &pal, &pts, |p| p.x * 0.05);
+        assert!(flat.get(Surface::Concrete).positions.is_empty(), "a ramp, not stairs");
     }
 }

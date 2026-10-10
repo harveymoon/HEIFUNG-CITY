@@ -551,7 +551,8 @@ pub fn lot_detail(w: &World, id: LotId, l: &Lot) -> Value {
         "building": opt_key(l.building), "building_name": building_name(w, l.building),
         "vacant": l.building.is_none() && l.usable(), "usable": l.usable(), "landlocked": l.landlocked, "car_access": l.car_access(),
         "park": l.park.is_some(), "land_value": round(value), "land_tier": Tier::for_land_value(value).label(),
-        "land_value_for_use": round(w.lot_value(id)), "access": w.land_value.access_at(l.center).map(|a| json!({ "park_min": a.park_min.map(round), "nightlife_min": a.nightlife_min.map(round), "value_for_homes": round(a.value), "text": a.describe() })),
+        "land_value_for_use": round(w.lot_value(id)), "access": w.lot_walk_access(id).map(|a| json!({ "park_min": a.park_min.map(round), "nightlife_min": a.nightlife_min.map(round), "value_for_homes": round(a.value), "text": w.lot_access_text(id).unwrap_or_else(|| a.describe()) })),
+        "links": w.lot_link_warnings(id),
         "footfall_today": l.footfall_today, "footfall_hour": l.footfall_hour, "zone": zone,
         // [waterfront] its edge on the water, and a beach's state
         "shore": super::shore::lot_shore(w, id),

@@ -431,6 +431,7 @@ impl World {
             }
         }
         self.road_component = (0..n as u32).map(|i| find(&mut parent, i)).collect();
+        self.connectivity.mark_dirty();
     }
 
     /// Component id of a road node, if the node exists.
