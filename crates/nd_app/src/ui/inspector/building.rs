@@ -68,6 +68,10 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
     });
     let started = if b.construction.is_some() { "started" } else { "built" };
     hint(ui, &format!("{}  ·  {} floor{}  ·  {started} day {}", style.map_or("unknown style", |s| s.label()), b.floors, crate::ui::fmt::s(b.floors), fmt::day(b.built_tick)));
+    // [pt-walk] Cut off from the rest of the city on foot or by road.
+    for line in w.lot_link_warnings(b.lot) {
+        ui.label(egui::RichText::new(line).color(egui::Color32::from_rgb(255, 130, 80)).strong());
+    }
     // [feat/pt-ux] What it is and what it does for the city, first.
     if let Some((what, gives)) = super::about::about(w, id) {
         egui::Frame::new().fill(egui::Color32::from_rgba_unmultiplied(40, 34, 20, 140)).corner_radius(4.0).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {

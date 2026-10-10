@@ -23,7 +23,9 @@ pub fn card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
     let building = lot.building.and_then(|b| w.buildings.get(b));
     let value = w.land_value.at(lot.center);
     // [access] Walking time to parks and nightlife, and what it is worth to homes.
-    let access = w.land_value.access_at(lot.center);
+    // [pt-walk] The lot's own (its walk nodes), not its land value cell's.
+    let access = w.lot_walk_access(lot_id);
+    let access_text = w.lot_access_text(lot_id);
     // [free-placement] Under a city building the ground is out of the zoning.
     let zone = if w.is_city_ground(lot) {
         "city ground, out of the zoning".to_string()
@@ -66,7 +68,11 @@ pub fn card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
                 if lot.park.is_some() { "  ·  park" } else { "" }
             )));
             if let Some(a) = access {
-                ui.label(small(format!("{}  ·  {:+.2} for homes", a.describe(), a.value)));
+                ui.label(small(format!("{}  ·  {:+.2} for homes", access_text.clone().unwrap_or_else(|| a.describe()), a.value)));
+            }
+            // [pt-walk] Cut off from the rest of the city.
+            for line in w.lot_link_warnings(lot_id) {
+                ui.label(small(line).color(egui::Color32::from_rgb(255, 130, 80)));
             }
             // [waterfront] On the water: its frontage; a beach's state.
             if lot.shore.is_waterfront() && !lot.shore.beach {

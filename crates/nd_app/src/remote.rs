@@ -64,6 +64,8 @@ mod ferry;
 /// [camera] `follow`, `zoom_to`, `gift`; delivery robots' detail.
 mod follow;
 mod grounds;
+/// [pt-walk] `connectivity`: stranded areas, failed trips, their alerts.
+mod connectivity;
 mod history;
 /// [identity] `city_name` and `game_history`.
 mod identity;
