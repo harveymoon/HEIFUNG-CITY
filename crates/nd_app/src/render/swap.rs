@@ -29,16 +29,70 @@ pub(super) enum View {
     Normal,
     Focus(Focus),
     Heat,
+    /// [pt-ux] Some things drawn see-through over the rest (`Ghost`).
+    Ghost(Ghost),
+}
+
+/// [pt-ux] What a ghost view makes see-through.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(super) enum Ghost {
+    /// The Underground view: the surface is hidden (`holo::apply_depth`)
+    /// but trains and aircraft, which pass over the tunnels, stay as
+    /// ghosts so the city above can still be read.
+    Underground,
+    /// The Zone tool: buildings see-through so the zoning under them shows
+    /// (F29).
+    Zoning,
+}
+
+/// How see-through a ghost is (alpha).
+pub(super) const GHOST_ALPHA: f32 = 0.22;
+
+impl Ghost {
+    /// Which ghost view the tools ask for.
+    pub(super) fn wanted(tools: &crate::tools::ToolState) -> Option<Ghost> {
+        if tools.depth == crate::tools::Depth::Underground {
+            Some(Ghost::Underground)
+        } else if tools.tool == crate::tools::Tool::Zone {
+            Some(Ghost::Zoning)
+        } else {
+            None
+        }
+    }
+
+    /// Whether a mesh with these tags (building, aircraft, train) goes
+    /// see-through.
+    pub(super) fn ghosts(self, (building, air, train): (bool, bool, bool)) -> bool {
+        match self {
+            Ghost::Underground => air || train,
+            Ghost::Zoning => building,
+        }
+    }
+
+    /// Window lights (only buildings wear them) go see-through too.
+    fn ghosts_windows(self) -> bool {
+        self == Ghost::Zoning
+    }
+}
+
+/// [pt-ux] The see-through copy of a material: its own look, blended.
+pub(super) fn ghost_of(o: &StandardMaterial) -> StandardMaterial {
+    let mut m = o.clone();
+    m.base_color.set_alpha(o.base_color.alpha() * GHOST_ALPHA);
+    m.alpha_mode = AlphaMode::Blend;
+    m
 }
 
 impl View {
     /// Heat vision wins over the focus views; the focus views stand down
     /// under it, so the two never stack.
-    pub(super) fn wanted(o: &Overlays, l: &Lighting) -> View {
+    pub(super) fn wanted(o: &Overlays, l: &Lighting, ghost: Option<Ghost>) -> View {
         if l.heat {
             View::Heat
         } else if let Some(f) = Focus::wanted(o, l) {
             View::Focus(f)
+        } else if let Some(g) = ghost {
+            View::Ghost(g)
         } else {
             View::Normal
         }
@@ -57,6 +111,7 @@ pub(super) struct SwapOriginalWindow(pub(super) Handle<WindowMaterial>);
 enum Key {
     Heat(heat::HeatClass),
     Focus(focus::Class),
+    Ghost,
 }
 
 #[derive(Resource, Default)]
@@ -72,6 +127,7 @@ pub(super) struct SwapState {
 
 /// What an entity is, for heat (how hot) and the focus views (what lights up).
 type HeatTags = (Has<CarTag>, Has<CitizenTag>, Has<BotTag>, Has<TrainTag>, Has<ParkedTag>, Has<ShipTag>, Has<super::emergency::EmergencyTag>, Has<super::stunts::StuntTag>, Has<super::air::AirTag>, Has<super::haze::Puff>);
+type GhostTags = (Has<super::BuildingTag>, Has<super::air::AirTag>, Has<TrainTag>);
 type FocusTags = (Has<CarTag>, Has<focus::UnitTag>, Has<focus::PoliceTag>, Has<focus::FocusKeep>, Has<super::emergency::EmergencyTag>);
 
 /// Put every mesh in the material the current view wants: a stand-in of its
@@ -84,20 +140,21 @@ pub(super) fn swap_materials(
     lighting: Res<Lighting>,
     overlays: Res<Overlays>,
     mats: Res<Materials>,
+    tools: Option<Res<crate::tools::ToolState>>,
     mut state: ResMut<SwapState>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut window_materials: ResMut<Assets<WindowMaterial>>,
-    mut q: Query<(Entity, &mut MeshMaterial3d<StandardMaterial>, Option<&SwapOriginal>, HeatTags, FocusTags)>,
+    mut q: Query<(Entity, &mut MeshMaterial3d<StandardMaterial>, Option<&SwapOriginal>, HeatTags, FocusTags, GhostTags)>,
     mut windows: Query<(Entity, &mut MeshMaterial3d<WindowMaterial>, Option<&SwapOriginalWindow>)>,
 ) {
-    let want = View::wanted(&overlays, &lighting);
+    let want = View::wanted(&overlays, &lighting, tools.as_deref().and_then(Ghost::wanted));
     let changed = want != state.active;
     if want == View::Normal && !changed {
         return;
     }
     state.active = want;
     let overlay = mats.overlay.id();
-    for (e, mut mat, orig, heat_tags, focus_tags) in &mut q {
+    for (e, mut mat, orig, heat_tags, focus_tags, ghost_tags) in &mut q {
         if !changed && !mat.is_changed() {
             continue;
         }
@@ -117,6 +174,7 @@ pub(super) fn swap_materials(
             (View::Normal, _) | (_, None) => None,
             (View::Heat, Some(o)) => Some(Key::Heat(heat::class_of(o, heat::temperature(heat_tags)))),
             (View::Focus(f), Some(o)) => focus::classify(f, focus_tags, id == overlay, o).map(Key::Focus),
+            (View::Ghost(g), Some(_)) => (g.ghosts(ghost_tags) && id != overlay).then_some(Key::Ghost),
         };
         let Some(key) = key else {
             if showing_stand_in {
@@ -134,6 +192,7 @@ pub(super) fn swap_materials(
                 let m = match key {
                     Key::Heat(c) => heat::stand_in(o, c),
                     Key::Focus(c) => focus::stand_in(o, c),
+                    Key::Ghost => ghost_of(o),
                 };
                 let h = materials.add(m);
                 state.stand_ins.insert(h.id());
@@ -150,6 +209,9 @@ pub(super) fn swap_materials(
     }
     let window_k = match want {
         View::Normal => None,
+        View::Ghost(g) if !g.ghosts_windows() => None,
+        // A ghost window keeps its colour (the alpha is what changes).
+        View::Ghost(_) => Some(-1.0),
         View::Heat => Some(heat::COOL_WINDOW),
         View::Focus(f) => Some(f.dim().2),
     };
@@ -181,7 +243,11 @@ pub(super) fn swap_materials(
             None => {
                 let Some(o) = window_materials.get(id) else { continue };
                 let mut m = o.clone();
-                m.base.base_color = Color::linear_rgb(k, k, k);
+                if k < 0.0 {
+                    m.base = ghost_of(&o.base);
+                } else {
+                    m.base.base_color = Color::linear_rgb(k, k, k);
+                }
                 let h = window_materials.add(m);
                 state.window_stand_ins.insert(h.id());
                 state.windows.insert((id, want), h.clone());
@@ -200,6 +266,27 @@ pub(super) fn swap_materials(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [pt-ux] What each ghost view makes see-through, and that heat
+    /// vision and the focus layers win over it.
+    #[test]
+    fn ghosts_by_view() {
+        // (building, aircraft, train)
+        assert!(Ghost::Underground.ghosts((false, true, false)));
+        assert!(Ghost::Underground.ghosts((false, false, true)));
+        assert!(!Ghost::Underground.ghosts((true, false, false)));
+        assert!(Ghost::Zoning.ghosts((true, false, false)));
+        assert!(!Ghost::Zoning.ghosts((false, true, true)));
+        let o = Overlays::default();
+        let mut l = Lighting::default();
+        assert_eq!(View::wanted(&o, &l, Some(Ghost::Zoning)), View::Ghost(Ghost::Zoning));
+        assert_eq!(View::wanted(&o, &l, None), View::Normal);
+        l.heat = true;
+        assert_eq!(View::wanted(&o, &l, Some(Ghost::Zoning)), View::Heat);
+        let m = ghost_of(&StandardMaterial::default());
+        assert!(matches!(m.alpha_mode, AlphaMode::Blend));
+        assert!((m.base_color.alpha() - GHOST_ALPHA).abs() < 1e-6);
+    }
 
     /// Heat vision on and off with the Traffic layer on, in every order:
     /// every mesh ends up in its own material, never a stand-in.

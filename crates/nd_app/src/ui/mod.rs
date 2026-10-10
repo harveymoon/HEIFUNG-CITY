@@ -302,7 +302,12 @@ pub(crate) fn side_panel(
         follow::banner(ctx, &sim, &mut follow, &mut mode, &mut selection, content);
     }
     if tools.tool == Tool::Inspect && *mode == CameraMode::Orbit && data_rect.is_none() {
-        hover::card(ctx, &sim, &cursor);
+        // [pt-ux] Underground, only what that view draws.
+        if tools.depth == crate::tools::Depth::Underground {
+            hover::under_card(ctx, &sim, &cursor);
+        } else {
+            hover::card(ctx, &sim, &cursor);
+        }
     }
     // [plant-groups] What the picked building would be on the lot under the pointer.
     if tools.tool == Tool::Buildings && *mode == CameraMode::Orbit && !ctx.is_pointer_over_egui() && data_rect.is_none() {
