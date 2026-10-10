@@ -317,7 +317,11 @@ fn unclaimed_cars_are_auctioned_never_deleted() {
 #[test]
 fn officers_patrol_and_ticket_overstayers() {
     let mut w = town();
-    let lot = w.lots.iter().filter(|(_, l)| l.usable() && l.car_access() && l.land_use == LandUse::Commercial).map(|(id, _)| id).next().unwrap();
+    // A vacant shop lot, so the office opens at once (on a lot with a shop
+    // the city buys it out and waits for the clearing first). [stable-
+    // parcels] Lots keep their ids through rebuilds now, so "the first
+    // commercial lot" is no longer the same lot as in a fresh cut.
+    let lot = w.lots.iter().filter(|(_, l)| l.usable() && l.car_access() && l.land_use == LandUse::Commercial && l.building.is_none()).map(|(id, _)| id).next().unwrap();
     let office = w.build_service(lot, ServiceKind::ParkingEnforcement, Tier::Mid).expect("office");
     let staff: Vec<CitizenId> = w.citizens.keys().take(6).collect();
     w.buildings[office].workers = staff;
@@ -347,19 +351,22 @@ fn officers_patrol_and_ticket_overstayers() {
 }
 
 #[test]
-fn the_city_places_parking_lots_of_three_sizes() {
+fn the_city_places_parking_lots_sized_by_their_plots() {
     let mut w = town();
     let mut lots: Vec<(f32, LotId)> = w.lots.iter().filter(|(_, l)| l.usable() && l.car_access() && l.land_use != LandUse::Park).map(|(id, l)| (l.area(), id)).collect();
     lots.sort_by(|a, b| b.0.total_cmp(&a.0));
     let mut placed = Vec::new();
     for size in LotSize::ALL {
-        let lot = lots.iter().find(|(a, l)| *a >= size.min_area() && !placed.iter().any(|(p, _)| p == l)).map(|(_, l)| *l).expect("a lot big enough");
+        // (Apart from each other: a lot next to the city's own joins it.)
+        let apart = |l: LotId, w: &World, placed: &Vec<(LotId, BuildingId)>| placed.iter().all(|(p, _)| w.lots.get(*p).is_none_or(|q| q.center.distance(w.lots[l].center) > 80.0));
+        let lot = lots.iter().find(|(a, l)| *a >= size.min_area() && w.lots.contains_key(*l) && apart(*l, &w, &placed)).map(|(_, l)| *l).expect("a lot big enough");
+        let area = w.lots[lot].area();
         let treasury = w.economy.treasury;
         let b = w.place_on_lot(crate::services::Placeable::ParkingLot(size), lot).expect("placed");
-        assert!(w.economy.treasury < treasury, "paid for");
+        assert!((treasury - w.economy.treasury - size.cost_for(area)).abs() < 1.0, "paid for by the plot's area");
         // [parking] A surface lot has the bays its parcel fits (F35); a car
-        // park its decks' spaces.
-        let spaces = if size.floors() == 0 { crate::parking_layout::surface_capacity(&w.lots[lot]) } else { size.capacity() };
+        // park its decks' spaces, [parking-fit] by the plot's area.
+        let spaces = if size.floors() == 0 { crate::parking_layout::surface_capacity(&w.lots[lot]) } else { size.capacity_for(area) };
         assert_eq!(w.buildings[b].parking_capacity, spaces);
         assert!(spaces >= 4, "{size:?}: {spaces} spaces");
         assert_eq!(w.buildings[b].floors, size.floors());

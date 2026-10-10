@@ -99,6 +99,8 @@ impl World {
     pub fn set_waterfront_parcels(&mut self, on: bool) {
         if self.shore.reach_water != on {
             self.shore.reach_water = on;
+            // [stable-parcels] A full cut, not a local one.
+            self.parcel_cut = Default::default();
             self.recut_parcels();
         }
     }

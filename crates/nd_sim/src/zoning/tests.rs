@@ -363,3 +363,52 @@ fn memoised_parcels_match_a_fresh_cut() {
     assert_eq!(changed, format!("{:?}", cut_parcels(&roads, &water, clip, None)));
     assert_ne!(changed, fresh, "a new road recuts");
 }
+
+/// [parcel-size] F27: a sliver along a street and the backland behind it,
+/// neither usable alone ("no road access" on ground touching the road), are
+/// mended into one sound parcel.
+#[test]
+fn a_sliver_and_the_backland_behind_it_are_mended_into_one_parcel() {
+    let mut roads = RoadNetwork::default();
+    roads.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
+    let hw = roads.segment(roads.alive_segments().next().unwrap().0).corridor_half_width();
+    let sliver = rect(0.0, hw, 30.0, hw + 3.0);
+    let back = rect(0.0, hw + 3.0, 30.0, hw + 33.0);
+    assert!(!fronted(&back, PARCEL_USE, &roads), "the backland has no frontage");
+    let sliver_lot = make_lot(ZoneId::default(), PARCEL_USE, ccw(&sliver), inner_center(&sliver), &roads).unwrap();
+    assert!(sliver_lot.landlocked, "the sliver alone is no lot");
+    let out = mend_parcels(vec![sliver, back], &roads, &WaterMask::default());
+    assert_eq!(out.len(), 1, "one parcel");
+    let lot = make_lot(ZoneId::default(), PARCEL_USE, ccw(&out[0]), inner_center(&out[0]), &roads).unwrap();
+    assert!(!lot.landlocked, "with a frontage on the street");
+    assert!((polygon_area(&out[0]).abs() - 30.0 * 33.0).abs() < 1.0);
+}
+
+/// [parcel-size] F37: no parcel is past the size cap, fronted or not.
+#[test]
+fn a_huge_piece_is_cut_down_to_the_size_cap() {
+    let big = rect(0.0, 0.0, 160.0, 90.0);
+    let mut out = Vec::new();
+    cap_parcel(big, &WaterMask::default(), 0, &mut out);
+    assert!(out.len() >= 6);
+    let total: f32 = out.iter().map(|p| polygon_area(p).abs()).sum();
+    assert!((total - 160.0 * 90.0).abs() < 1.0, "nothing lost");
+    for p in &out {
+        assert!(polygon_area(p).abs() <= MAX_PARCEL_AREA + 1.0, "{} m²", polygon_area(p).abs());
+    }
+}
+
+/// [parcel-size] A real cut of a big block leaves nothing over the cap.
+#[test]
+fn a_fresh_cut_has_no_parcel_past_the_cap() {
+    let mut roads = RoadNetwork::default();
+    roads.add_polyline(&[Vec2::new(-300.0, -150.0), Vec2::new(300.0, -150.0)], 1, 1);
+    roads.add_polyline(&[Vec2::new(-300.0, 150.0), Vec2::new(300.0, 150.0)], 1, 1);
+    roads.add_polyline(&[Vec2::new(-300.0, -150.0), Vec2::new(-300.0, 150.0)], 1, 1);
+    roads.add_polyline(&[Vec2::new(300.0, -150.0), Vec2::new(300.0, 150.0)], 1, 1);
+    let cut = recut_parcels(&[], &CutBasis::default(), &roads, &WaterMask::default(), Some((Vec2::splat(-500.0), Vec2::splat(500.0))), None, &[], &[]);
+    assert!(!cut.parcels.is_empty());
+    for p in &cut.parcels {
+        assert!(p.area <= MAX_PARCEL_AREA + 1.0, "parcel at {} is {:.0} m²", p.center, p.area);
+    }
+}

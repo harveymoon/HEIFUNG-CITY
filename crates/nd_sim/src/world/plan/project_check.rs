@@ -95,10 +95,10 @@ impl World {
         let civic = self.buildings.values().any(Self::is_civic_structure);
         let check_pillars = raised_new || !self.pillars.is_empty();
         if roads_change && (civic || check_pillars) {
-            let mut trial = self.clone();
+            let mut trial = crate::prof!("check.clone", self.clone());
             trial.project = None;
             trial.master = project.apply_to(&trial.master);
-            trial.rebuild_from_master();
+            trial.rebuild_from_master_with(true);
             for (id, b) in self.buildings.iter() {
                 if Self::is_civic_structure(b) && !trial.buildings.contains_key(id) && !out.blocks.iter().any(|k| k.building == id) {
                     out.blocks.push(self.lost_block(id, &pv));

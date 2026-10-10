@@ -382,11 +382,21 @@ fn a_university_buys_dorms_claims_the_park_and_builds_its_annexes_nearby() {
 #[test]
 fn students_bring_trade_to_pizza_places_and_bars_by_campus() {
     let (mut w, uni) = campus_town();
-    people(&mut w);
     let at = w.lots[w.buildings[uni].lot].center;
+    // The shop lots nearest and farthest from the campus are kept for the
+    // test's bakeries while the town fills: what grows where in the first
+    // hours follows the order lots are kept in, which a road rebuild no
+    // longer reshuffles ([stable-parcels]).
     let shops = free_lots(&w, LandUse::Commercial);
     let near_lot = *shops.iter().min_by(|a, b| w.lots[**a].center.distance(at).total_cmp(&w.lots[**b].center.distance(at))).unwrap();
     let far_lot = *shops.iter().max_by(|a, b| w.lots[**a].center.distance(at).total_cmp(&w.lots[**b].center.distance(at))).unwrap();
+    for l in [near_lot, far_lot] {
+        w.estate.reserved.insert(l, BuildingId::default());
+    }
+    people(&mut w);
+    for l in [near_lot, far_lot] {
+        w.estate.reserved.remove(&l);
+    }
     assert!(w.lots[far_lot].center.distance(at) > STUDENT_TRADE_REACH);
     let near = business(&mut w, near_lot, BusinessKind::Bakery, 100.0);
     let far = business(&mut w, far_lot, BusinessKind::Bakery, 100.0);

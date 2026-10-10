@@ -105,7 +105,8 @@ impl Ctx<'_> {
         let mut cands: Vec<(f32, LotId)> = self
             .open_lots()
             .into_iter()
-            .filter(|&(id, _, area)| area >= need && self.w.lots.get(id).is_some_and(&ok))
+            // [big-sites] Or a lot its neighbours join to make room.
+            .filter(|&(id, _, area)| (area >= need || self.w.joined_site(what, id).is_some()) && self.w.lots.get(id).is_some_and(&ok))
             .map(|(id, c, area)| (cost(c, area), id))
             .filter(|(c, _)| c.is_finite())
             .collect();

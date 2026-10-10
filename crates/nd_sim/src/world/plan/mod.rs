@@ -66,6 +66,7 @@ use crate::zoning::{inner_center, join_parcels, make_lot, Parcel, ParcelKey, Par
 
 mod projects;
 mod parcels;
+pub(in crate::world) use parcels::refresh_lot_roads;
 mod project_check;
 mod rebuild;
 mod removal;

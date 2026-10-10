@@ -80,8 +80,8 @@ impl BuildCategory {
             BuildCategory::Services => [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::University, ServiceKind::Dispatch, ServiceKind::Jail, ServiceKind::TrashDepot, ServiceKind::ParkingEnforcement].iter().map(|&k| Placeable::Service(k, Tier::Mid)).collect(),
             BuildCategory::Transit => {
                 let mut v = vec![Placeable::BusDepot, Placeable::MetroStation, Placeable::Service(ServiceKind::Vertiport, Tier::Mid)];
-                v.extend(crate::enforcement::LotSize::ALL.iter().map(|&s| Placeable::ParkingLot(s)));
-                v.extend(crate::tolls::TollSize::ALL.iter().map(|&s| Placeable::Toll(s)));
+                v.extend(crate::enforcement::LotSize::OFFERED.iter().map(|&s| Placeable::ParkingLot(s)));
+                v.extend(crate::tolls::TollSize::OFFERED.iter().map(|&s| Placeable::Toll(s)));
                 v
             }
             BuildCategory::Rail => vec![Placeable::Rail(RailFacility::Station), Placeable::Rail(RailFacility::Central), Placeable::Rail(RailFacility::FreightYard), Placeable::CargoHub],

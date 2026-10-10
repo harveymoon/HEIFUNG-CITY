@@ -392,12 +392,12 @@ fn a_small_unzoned_site_may_join_the_wind_park_next_door() {
     let outline = rect(hi.x, lo.y, 12.0, 20.0_f32.min(hi.y - lo.y));
     let alone = crate::geom::polygon_area(&outline).abs();
     assert!(alone < kind.min_area());
-    let site = super::placement::PlacementSite { lot: None, parcels: Vec::new(), outline: outline.clone(), leaves_zone: None };
+    let site = super::placement::PlacementSite { lot: None, parcels: Vec::new(), outline: outline.clone(), leaves_zone: None, joined: Vec::new() };
     assert!(w.small_plant_site_joins(kind, &outline, None).is_some(), "it touches the farm");
     assert_eq!(w.site_problem(Placeable::Plant(kind), &site), None, "joining the park lets it go in");
     // The same scrap away from any farm is refused for its size.
     let lone = rect(hi.x + 200.0, lo.y, 12.0, 20.0_f32.min(hi.y - lo.y));
-    let site = super::placement::PlacementSite { lot: None, parcels: Vec::new(), outline: lone, leaves_zone: None };
+    let site = super::placement::PlacementSite { lot: None, parcels: Vec::new(), outline: lone, leaves_zone: None, joined: Vec::new() };
     let why = w.site_problem(Placeable::Plant(kind), &site).expect("refused alone");
     assert!(why.contains("too small"), "{why}");
 }

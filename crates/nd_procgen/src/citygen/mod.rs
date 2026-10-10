@@ -228,16 +228,31 @@ fn dry(land: &Landscape, mut p: Vec2, clear: f32) -> Vec2 {
         return p;
     }
     for _ in 0..40 {
-        let d = land.water_distance(p);
+        let Some((d, away)) = water_clearance(land, p, clear) else { break };
         if d >= clear {
             break;
         }
-        let e = 10.0;
-        let g = Vec2::new(land.water_distance(p + Vec2::X * e) - land.water_distance(p - Vec2::X * e), land.water_distance(p + Vec2::Y * e) - land.water_distance(p - Vec2::Y * e));
-        let step = g.normalize_or(-p.normalize_or(Vec2::X)) * 20.0;
+        let step = away.normalize_or(-p.normalize_or(Vec2::X)) * 20.0;
         p = (p + step).clamp(Vec2::splat(-HALF + 150.0), Vec2::new(HALF - 150.0, NORTH_LIMIT - 150.0));
     }
     p
+}
+
+/// How far `p` is from the water, and which way is away from it; None when
+/// no water is within `clear` metres. The raster's distance stops at about
+/// 160 m (`BANK_REACH`): a clearance asked past that used to read every
+/// point beyond it as 161 m from the water, never clear, so `dry` walked a
+/// plaza 800 m towards the middle of the map. Past the raster's reach the
+/// shore itself is measured.
+fn water_clearance(land: &Landscape, p: Vec2, clear: f32) -> Option<(f32, Vec2)> {
+    let d = land.water_distance(p);
+    if d < 150.0 {
+        let e = 10.0;
+        let g = Vec2::new(land.water_distance(p + Vec2::X * e) - land.water_distance(p - Vec2::X * e), land.water_distance(p + Vec2::Y * e) - land.water_distance(p - Vec2::Y * e));
+        return Some((d, g));
+    }
+    let shore = land.nearest_shore(p, clear)?;
+    Some((shore.distance, -shore.seaward))
 }
 
 fn spec(preset: CityPreset, land: &Landscape, rng: &mut impl Rng) -> Spec {
@@ -714,4 +729,37 @@ fn zone(g: &graph::Graph, site: &Site, spec: &Spec, seed: u64, preset: CityPrese
         }
     }
     patches.into_iter().zip(uses).map(|(p, land_use)| CityZone { polygon: p.polygon, land_use }).collect()
+}
+
+#[cfg(test)]
+mod dry_tests {
+    use super::*;
+
+    /// [citygen-dry] A clearance asked past the raster's 160 m reach is
+    /// measured, not read as "161 m, never clear": a point 200 m from the
+    /// water asked for 220 m moves a few steps, not to the middle of the map.
+    #[test]
+    fn dry_measures_clearance_past_the_rasters_reach() {
+        let land = Landscape::new(&LandscapeParams::preset(LandscapePreset::Coast, 3));
+        let mut found = None;
+        'scan: for y in (-1200..=1200).step_by(40) {
+            for x in (-1200..=1200).step_by(40) {
+                let p = Vec2::new(x as f32, y as f32);
+                if let Some(s) = land.nearest_shore(p, 400.0) {
+                    if (195.0..205.0).contains(&s.distance) && p.length() > 400.0 {
+                        found = Some((p, s.distance));
+                        break 'scan;
+                    }
+                }
+            }
+        }
+        let (p, d) = found.expect("a point about 200 m from the water");
+        let (got, _) = water_clearance(&land, p, 400.0).expect("water within reach");
+        assert!((got - d).abs() < 1.0, "measured {got:.0} m, the shore is {d:.0} m off");
+        let q = dry(&land, p, 220.0);
+        assert!(q.distance(p) < 100.0, "moved {:.0} m for 20 m more clearance", q.distance(p));
+        assert!(water_clearance(&land, q, 400.0).is_none_or(|(c, _)| c >= 215.0), "and is clear");
+        // Already clear: stays.
+        assert_eq!(dry(&land, p, 150.0), p);
+    }
 }

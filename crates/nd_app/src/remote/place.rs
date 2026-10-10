@@ -49,7 +49,10 @@ pub(super) fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let size = nd_sim::tolls::TollSize::from_key(other).unwrap();
             let id = w.place_toll(p, size)?;
             let row = w.tolls.get(id).map(|b| taxes::booth_row(w, b)).unwrap_or(Value::Null);
-            let note = format!("{} built for {:.0}; {:.0}/day; toll {:.1} (lorries double)", size.label(), size.cost(), size.upkeep_per_day(), size.default_price());
+            // [toll-fit] Priced by the lanes of its road.
+            let lanes = w.tolls.get(id).map_or(2, |b| b.paid_lanes);
+            let upkeep = w.tolls.get(id).map_or(size.upkeep_per_day(), |b| b.upkeep_per_day());
+            let note = format!("{} across {lanes} lanes built for {:.0}; {:.0}/day; toll {:.1} (lorries double)", size.label(), size.cost_for(lanes), upkeep, size.default_price());
             ctx.tools.status = note.clone();
             return Ok(json!({ "toll": id, "message": note, "row": row, "treasury": round(w.economy.treasury) }));
         }

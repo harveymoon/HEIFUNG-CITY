@@ -76,6 +76,8 @@ pub(crate) use placement::SiteRule;
 #[cfg(test)]
 mod placement_tests;
 #[cfg(test)]
+mod stable_parcels_tests;
+#[cfg(test)]
 mod dock_access_tests;
 pub mod poses;
 /// [clarity] Origins and destinations, crews, crash sites.
@@ -417,6 +419,11 @@ pub struct World {
     /// roads and rebuilt with them.
     #[serde(skip)]
     pub parcels: crate::zoning::ParcelMap,
+    /// [stable-parcels] The parcels as last cut, and what from: a rebuild
+    /// recuts only the land near roads that changed (`zoning::recut`).
+    /// Saved as outlines; a save from before cuts them afresh on load.
+    #[serde(default)]
+    pub(crate) parcel_cut: crate::zoning::ParcelCut,
     /// Land use of each parcel under the effective plan (`planned_zoning`).
     #[serde(skip)]
     planned: Vec<Option<LandUse>>,
@@ -731,6 +738,7 @@ impl World {
             next_project: 1,
             plan_warnings: Vec::new(),
             parcels: crate::zoning::ParcelMap::default(),
+            parcel_cut: Default::default(),
             planned: Vec::new(),
             parcel_lots: true,
             next_gesture: 1,
