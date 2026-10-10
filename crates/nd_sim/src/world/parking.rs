@@ -14,10 +14,20 @@ impl World {
         if let Some(problem) = self.placement_problem(what, lot_id) {
             return Err(problem);
         }
+        // [parking-fit] Next to one of the city's own lots of the same kind:
+        // the plot joins it, and pays for the ground it adds.
+        if let Some(next) = self.city_parking_beside(lot_id, size) {
+            return self.extend_city_parking(next, lot_id);
+        }
+        let area = self.lots[lot_id].area();
+        let cost = size.cost_for(area);
+        if self.economy.treasury < cost {
+            return Err(format!("the treasury has {:.0}; a {} on {:.0} m² costs {:.0}", self.economy.treasury, size.label(), area, cost));
+        }
         self.take_over_lot(lot_id, size.label())?;
         // [free-placement] The city's own lot: out of the zone.
         self.take_for_city(lot_id);
-        self.economy.debit_item(Flow::Construction, size.cost(), Item::Named(size.label().to_string()));
+        self.economy.debit_item(Flow::Construction, cost, Item::Named(size.label().to_string()));
         let n = self.fresh_seed() % 90 + 1;
         let name = match size {
             crate::enforcement::LotSize::Small => format!("City Lot {n}"),
@@ -25,8 +35,9 @@ impl World {
             crate::enforcement::LotSize::MultiStorey => format!("City Car Park {n}"),
         };
         let price = size.default_price();
-        let bz = Business::new(BusinessKind::Parking, size.jobs());
-        let id = self.place_special(lot_id, name, size.jobs(), size.capacity(), |b| {
+        let jobs = size.jobs_for(area);
+        let bz = Business::new(BusinessKind::Parking, jobs);
+        let id = self.place_special(lot_id, name, jobs, size.capacity_for(area), |b| {
             b.tier = Tier::Mid;
             b.floors = size.floors();
             b.business = Some(bz);
@@ -35,8 +46,76 @@ impl World {
             // [free-placement] Its own use (the ground is the city's).
             b.land_use = LandUse::Commercial;
         });
-        self.vehicles.city_lots.insert(id, crate::enforcement::CityLot { size, price });
+        self.vehicles.city_lots.insert(id, crate::enforcement::CityLot { size, price, area });
         Ok(id)
+    }
+
+    /// [parking-fit] One of the city's own parking lots of the same kind
+    /// (surface, or decks) sharing a boundary with `lot_id`, whose ground
+    /// and the plot's join into one piece.
+    pub(super) fn city_parking_beside(&self, lot_id: LotId, size: crate::enforcement::LotSize) -> Option<BuildingId> {
+        let lot = self.lots.get(lot_id)?;
+        let mut ids: Vec<BuildingId> = self.vehicles.city_lots.iter().filter(|(_, c)| c.size.surface() == size.surface()).map(|(b, _)| *b).collect();
+        ids.sort();
+        ids.into_iter().find(|&b| {
+            let Some(other) = self.buildings.get(b).filter(|x| x.demolition.is_none()).and_then(|x| self.lots.get(x.lot)) else { return false };
+            if other.center.distance(lot.center) > 200.0 {
+                return false;
+            }
+            let Some(o) = crate::zoning::joined_outline(&[other.polygon.clone(), lot.polygon.clone()]) else { return false };
+            let shared = (crate::geom::perimeter(&other.polygon) + crate::geom::perimeter(&lot.polygon) - crate::geom::perimeter(&o)) * 0.5;
+            shared >= 4.0 && crate::geom::polygon_area(&o).abs() > other.area() + lot.area() * 0.9
+        })
+    }
+
+    /// [parking-fit] Grow the city's lot `b` over the plot `lot_id` next to
+    /// it: whatever stood there is bought out and cleared, the ground joins
+    /// the lot (and its spaces, jobs and upkeep grow with it), and the city
+    /// pays for the added area.
+    pub(super) fn extend_city_parking(&mut self, b: BuildingId, lot_id: LotId) -> Result<BuildingId, String> {
+        let size = self.vehicles.city_lots.get(&b).map(|c| c.size).ok_or("not a parking lot the city runs")?;
+        let home = self.buildings.get(b).map(|x| x.lot).ok_or("no such building")?;
+        let outline = crate::zoning::joined_outline(&[self.lots[home].polygon.clone(), self.lots[lot_id].polygon.clone()]).ok_or("the plots do not join")?;
+        let added = self.lots[lot_id].area();
+        let cost = size.cost_for(added);
+        if self.economy.treasury < cost {
+            return Err(format!("the treasury has {:.0}; {:.0} m² more of {} costs {:.0}", self.economy.treasury, added, size.label(), cost));
+        }
+        if let Some(old) = self.lots[lot_id].building {
+            self.take_over_lot(lot_id, size.label())?;
+            if self.buildings.get(old).is_some_and(|x| x.demolition.is_some()) {
+                self.finish_demolition(old);
+            }
+            if self.lots.get(lot_id).is_some_and(|l| l.building.is_some()) {
+                return Err("the plot could not be cleared".into());
+            }
+        }
+        self.economy.debit_item(Flow::Construction, cost, Item::Named(size.label().to_string()));
+        self.lots.remove(lot_id);
+        for p in self.parcels.parcels.iter_mut().filter(|p| p.lot == Some(lot_id)) {
+            p.lot = Some(home);
+            p.land_use = Some(LandUse::Civic);
+        }
+        let roads = &self.roads;
+        let l = &mut self.lots[home];
+        l.polygon = outline;
+        l.center = crate::zoning::inner_center(&l.polygon);
+        super::plan::refresh_lot_roads(l, roads, true);
+        let area = l.area();
+        if let Some(z) = self.zones.get_mut(l.zone) {
+            z.polygon = l.polygon.clone();
+        }
+        if let Some(c) = self.vehicles.city_lots.get_mut(&b) {
+            c.area = area;
+        }
+        if let Some(x) = self.buildings.get_mut(b) {
+            x.parking_capacity = size.capacity_for(area);
+            x.jobs = size.jobs_for(area);
+        }
+        self.rebuild_walk();
+        self.events.push(SimEvent::LotsChanged);
+        self.events.push(SimEvent::BuildingChanged(b));
+        Ok(b)
     }
 
     /// Open a parking business on a vacant lot: a surface lot where land is

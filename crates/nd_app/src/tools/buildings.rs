@@ -136,7 +136,8 @@ pub(super) fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor:
                 let right = SVec2::new(-dir.y, dir.x);
                 let y = |p: SVec2| Vec3::new(p.x, 1.0 + w.surface_height(p), p.y);
                 let near = w.tolls.booths.iter().any(|b| b.pos.distance(at) < nd_sim::tolls::SPACING_M);
-                let col = if near || w.economy.treasury < size.cost() { red } else { green };
+                // [toll-fit] Priced by the road it would stand on.
+                let col = if near || w.economy.treasury < size.cost_for(w.roads.segment(sid).lanes()) { red } else { green };
                 gizmos.line(y(at - right * hw), y(at + right * hw), col);
                 for u in [-4.0f32, 4.0] {
                     gizmos.line(y(at + dir * u - right * hw), y(at + dir * u + right * hw), col.with_alpha(0.5));

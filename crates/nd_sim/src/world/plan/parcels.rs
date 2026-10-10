@@ -129,9 +129,8 @@ impl World {
         }
     }
 
-    /// Cut the parcels for today's roads: rough ground marked, nothing
-    /// under a station, yard or dock footprint.
-    pub(super) fn cut_parcels(&self) -> Vec<Parcel> {
+    /// The square parcels are cut in, the water and the shore reach.
+    fn cut_inputs(&self) -> (crate::zoning::WaterMask, Option<(Vec2, Vec2)>, Option<f32>) {
         let water = self.water_mask();
         // [island-lots] The square grows to take in streets drawn past the
         // configured one (an island off the coast): parcels used to be cut
@@ -139,25 +138,77 @@ impl World {
         let h = self.parcel_half();
         // [waterfront] Down to the water along roads near it (cities since).
         let shore = self.shore.reach_water.then_some(crate::zoning::SHORE_REACH);
-        let mut parcels = crate::zoning::generate_parcels_with(&self.roads, &water, Some((Vec2::splat(-h), Vec2::splat(h))), shore);
-        if !self.landscape.is_flat() {
-            let land = &self.landscape;
-            for p in &mut parcels {
-                // [island-lots] Hillsides are graded (terraced lot by lot);
-                // only cliffs and water are rough.
-                p.rough_why = land.lot_ground_problem(&p.polygon, p.center);
-                p.rough = p.rough_why.is_some();
-            }
-        }
-        let footprints = self.structure_footprints();
-        parcels.retain(|p| !footprints.iter().any(|fp| point_in_polygon(p.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.995), &p.polygon)));
-        parcels
+        (water, Some((Vec2::splat(-h), Vec2::splat(h))), shore)
     }
 
-    /// Cut the parcels again and tie each to the saved lot holding its
-    /// centre (after a load: lots are saved, parcels are derived).
+    /// [island-lots] Hillsides are graded (terraced lot by lot); only
+    /// cliffs and water are rough.
+    fn mark_rough(&self, p: &mut Parcel) {
+        if !self.landscape.is_flat() {
+            let ground = self.landscape.lot_ground(&p.polygon, p.center);
+            p.rough_why = match ground {
+                crate::landscape::LotGround::Problem(why) => Some(why),
+                _ => None,
+            };
+            p.rough = p.rough_why.is_some();
+            p.hillside = ground == crate::landscape::LotGround::Hillside;
+        }
+    }
+
+    /// The parcels the city has, less those under a station, yard or dock
+    /// footprint.
+    fn published_parcels(&self, raw: Vec<Parcel>) -> Vec<Parcel> {
+        let footprints = self.structure_footprints();
+        if footprints.is_empty() {
+            return raw;
+        }
+        raw.into_iter().filter(|p| !footprints.iter().any(|fp| point_in_polygon(p.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.995), &p.polygon))).collect()
+    }
+
+    /// [stable-parcels] Cut the parcels for today's roads where they
+    /// changed since the last cut (`zoning::recut_parcels`), keeping every
+    /// other parcel exactly as it was and leaving the `locked` ground (lots
+    /// under the player's buildings) whole: rough ground marked, nothing
+    /// under a station, yard or dock footprint.
+    pub(super) fn cut_parcels(&mut self, locked: &[Vec<Vec2>]) -> Vec<Parcel> {
+        let (water, clip, shore) = self.cut_inputs();
+        let mut cut = crate::prof!("cut.recut", crate::zoning::recut_parcels(&self.parcel_cut.raw, &self.parcel_cut.basis, &self.roads, &water, clip, shore, locked));
+        for (p, kept) in cut.parcels.iter_mut().zip(&cut.kept) {
+            if !*kept {
+                self.mark_rough(p);
+            }
+        }
+        self.parcel_cut = crate::zoning::ParcelCut { raw: cut.parcels.clone(), basis: cut.basis, saved: Vec::new() };
+        self.published_parcels(cut.parcels)
+    }
+
+    /// The parcels after a load: the saved outlines made into parcels
+    /// again, or (a save from before they were saved) a full cut.
+    fn restore_parcels(&mut self) -> Vec<Parcel> {
+        let (water, clip, shore) = self.cut_inputs();
+        let saved = std::mem::take(&mut self.parcel_cut.saved);
+        let mut raw = if saved.is_empty() {
+            let cut = crate::prof!("cut.generate", crate::zoning::generate_parcels_with(&self.roads, &water, clip, shore));
+            // [parcel-size] Slivers, scraps and huge pieces nothing stands
+            // on are tidied now; under the lots nothing changes.
+            let grid = LotGrid::new(&self.lots);
+            let free: Vec<bool> = cut.iter().map(|p| !grid.near(p.center, 0.0).into_iter().any(|id| self.lots[id].contains(p.center))).collect();
+            crate::zoning::tidy_free_parcels(cut, &free, &self.roads, &water)
+        } else {
+            crate::zoning::parcels_from_outlines(&saved, &self.roads, &water)
+        };
+        for p in &mut raw {
+            self.mark_rough(p);
+        }
+        let basis = crate::zoning::CutBasis::of(&self.roads, &water, clip, shore);
+        self.parcel_cut = crate::zoning::ParcelCut { raw: raw.clone(), basis, saved: Vec::new() };
+        self.published_parcels(raw)
+    }
+
+    /// Parcels for a load (saved, else cut afresh) tied to the saved lot
+    /// holding each centre: lots are saved, parcels were derived.
     pub(in crate::world) fn recut_parcels(&mut self) {
-        let parcels = self.cut_parcels();
+        let parcels = self.restore_parcels();
         self.parcels = ParcelMap::new(parcels, self.parcels.version + 1);
         let grid = LotGrid::new(&self.lots);
         for p in &mut self.parcels.parcels {
@@ -176,15 +227,24 @@ impl World {
     /// Parcels from the roads, zoning from the master plan, a lot for every
     /// zoned parcel (or run of joined parcels). Zone polygons keep their
     /// zone; painted lots get a zone of their own outline.
-    /// `pins` are lots under city buildings: their parcels are the city's
-    /// ground whatever is planned, one Civic lot per pin with a zone of its
-    /// own (returned), out of the zoning until the building is bulldozed.
-    /// `parks` are lots with a park: their parcels
-    /// stay park only where the plan leaves them unzoned (a park rezoned
-    /// for building is left for development to clear).
-    pub(super) fn build_lots_from_parcels(&mut self, pins: &[Vec<Vec2>], parks: &[Vec<Vec2>]) -> Vec<LotId> {
-        let parcels = self.cut_parcels();
-        self.parcels = ParcelMap::new(parcels, self.parcels.version + 1);
+    ///
+    /// [stable-parcels] `self.lots` holds the old lots when this is called.
+    /// With `keep_lots`, a lot whose parcels all came through the recut
+    /// unchanged and are still planned for its use stays exactly as it is,
+    /// under the same id with its building on it; only the rest are cut
+    /// and joined again. `locked` are the lots under city buildings: their
+    /// ground is never recut or reshaped (the parcels round them stop at
+    /// their outline); each stays the one Civic lot it is, with a zone of
+    /// its own, out of the zoning until the building is bulldozed (returned,
+    /// unless a road now runs over it or it fronts no way at all). `parks`
+    /// are lots with a park: their parcels stay park only where the plan
+    /// leaves them unzoned (a park rezoned for building is left for
+    /// development to clear).
+    pub(super) fn build_lots_from_parcels(&mut self, locked: &[LotId], parks: &[Vec<Vec2>], keep_lots: bool) -> Vec<LotId> {
+        let old_parcels = std::mem::take(&mut self.parcels);
+        let pins: Vec<Vec<Vec2>> = locked.iter().filter_map(|id| self.lots.get(*id)).map(|l| l.polygon.clone()).collect();
+        let parcels = self.cut_parcels(&pins);
+        self.parcels = ParcelMap::new(parcels, old_parcels.version + 1);
         self.zones.clear();
         let mut zoning = parcel_zoning(&self.parcels, &self.master);
         // [free-placement] Ground under the city's own buildings is not the
@@ -206,8 +266,74 @@ impl World {
         for (gid, polygon, land_use) in zones.into_iter().rev() {
             zone_of.insert(gid, self.zones.insert(Zone { polygon, land_use }));
         }
+        // [stable-parcels] Which old lot each unchanged parcel was part of,
+        // and which old lots kept every parcel they had.
+        let mut keep: Vec<LotId> = Vec::new();
+        let mut members_of: HashMap<LotId, Vec<usize>> = HashMap::new();
+        if keep_lots {
+            let old_by_key: HashMap<ParcelKey, usize> = old_parcels.parcels.iter().enumerate().map(|(i, p)| (p.key, i)).collect();
+            let mut old_count: HashMap<LotId, usize> = HashMap::new();
+            for p in &old_parcels.parcels {
+                if let Some(l) = p.lot {
+                    *old_count.entry(l).or_default() += 1;
+                }
+            }
+            for (i, p) in self.parcels.parcels.iter().enumerate() {
+                let Some(&j) = old_by_key.get(&p.key) else { continue };
+                let o = &old_parcels.parcels[j];
+                if let Some(l) = o.lot.filter(|_| o.polygon == p.polygon) {
+                    members_of.entry(l).or_default().push(i);
+                }
+            }
+            let mut ids: Vec<LotId> = members_of.keys().copied().collect();
+            ids.sort();
+            for lid in ids {
+                let m = &members_of[&lid];
+                let Some(l) = self.lots.get(lid) else { continue };
+                if locked.contains(&lid) || old_count.get(&lid) != Some(&m.len()) {
+                    continue;
+                }
+                if m.iter().all(|&i| pinned_to[i].is_none() && zoning[i].is_some_and(|(lu, _)| lu == l.land_use)) {
+                    keep.push(lid);
+                }
+            }
+        }
+        // Everything else goes; the kept lots and the locked ones stay.
+        self.lots.retain(|id, _| keep.binary_search(&id).is_ok() || locked.contains(&id));
+        let mut done = vec![false; zoning.len()];
+        for &lid in &keep {
+            let m = members_of[&lid].clone();
+            let first = *m.iter().min().unwrap();
+            let Some((lu, gid)) = zoning[first] else { continue };
+            let zid = match zone_of.get(&gid) {
+                Some(z) => *z,
+                None => self.zones.insert(Zone { polygon: self.lots[lid].polygon.clone(), land_use: lu }),
+            };
+            let rough = m.iter().any(|&k| self.parcels.parcels[k].rough);
+            let roads = &self.roads;
+            let lot = &mut self.lots[lid];
+            lot.zone = zid;
+            refresh_lot_roads(lot, roads, false);
+            lot.landlocked |= rough;
+            for &k in &m {
+                let p = &mut self.parcels.parcels[k];
+                p.lot = Some(lid);
+                p.land_use = Some(lu);
+                done[k] = true;
+            }
+        }
+        // [waterfront] Unzoned backland between a lot and the water: a lot
+        // in front of it takes it in, so waterfront lots (and beaches) run
+        // the whole way down to the shore.
+        let shore_back: Vec<usize> = (0..zoning.len())
+            .filter(|&i| {
+                let p = &self.parcels.parcels[i];
+                zoning[i].is_none() && pinned_to[i].is_none() && !p.path_frontage && !p.rough && p.water_frontage >= crate::zoning::LotShore::MIN_FRONTAGE
+            })
+            .collect();
+        let mut shore_taken = vec![false; shore_back.len()];
         for lu in LandUse::ALL {
-            let members: Vec<usize> = (0..zoning.len()).filter(|&i| zoning[i].is_some_and(|(l, _)| l == lu)).collect();
+            let members: Vec<usize> = (0..zoning.len()).filter(|&i| !done[i] && zoning[i].is_some_and(|(l, _)| l == lu)).collect();
             if members.is_empty() {
                 continue;
             }
@@ -215,7 +341,8 @@ impl World {
             for (idx, poly) in join_parcels(&polys, lu, &self.roads) {
                 let first = members[idx[0]];
                 let Some((_, gid)) = zoning[first] else { continue };
-                let center = if idx.len() == 1 { self.parcels.parcels[first].center } else { inner_center(&poly) };
+                let (poly, shore) = self.reach_the_water(poly, &shore_back, &mut shore_taken);
+                let center = if idx.len() == 1 && shore.is_empty() { self.parcels.parcels[first].center } else { inner_center(&poly) };
                 let zid = match zone_of.get(&gid) {
                     Some(z) => *z,
                     None => self.zones.insert(Zone { polygon: poly.clone(), land_use: lu }),
@@ -230,36 +357,90 @@ impl World {
                     p.lot = Some(id);
                     p.land_use = Some(lu);
                 }
+                for &k in &shore {
+                    let p = &mut self.parcels.parcels[k];
+                    p.lot = Some(id);
+                    p.land_use = Some(lu);
+                }
             }
         }
-        // [free-placement] One city lot per pin, from the parcels under it.
+        // [free-placement] [stable-parcels] The city's lots stay as they
+        // are, outline and all; only what hangs off the roads is refreshed.
         let mut pinned = Vec::new();
-        for k in 0..pins.len() {
+        for (k, &lid) in locked.iter().enumerate() {
+            let Some(lot) = self.lots.get(lid) else { continue };
+            // A street or track run over it (widened, or an older save's
+            // lot cut before the road was): what is left, if enough is.
+            if crate::zoning::corridor_over(&lot.polygon, &self.roads) {
+                if let Some(rest) = crate::zoning::trim_corridors(&lot.polygon, &self.roads) {
+                    let l = &mut self.lots[lid];
+                    l.center = inner_center(&rest);
+                    l.polygon = rest;
+                }
+            }
+            let lot = &self.lots[lid];
+            if crate::zoning::corridor_over(&lot.polygon, &self.roads) || !crate::zoning::fronts_a_way(&lot.polygon, &self.roads) {
+                // Taken by the works (a project refuses this for the city's
+                // structures) or cut off from every way: the building
+                // finds another lot below, or goes.
+                self.lots.remove(lid);
+                continue;
+            }
             let members: Vec<usize> = (0..pinned_to.len()).filter(|&i| pinned_to[i] == Some(k)).collect();
-            if members.is_empty() {
-                continue;
-            }
-            let polys: Vec<Vec<Vec2>> = members.iter().map(|&i| self.parcels.parcels[i].polygon.clone()).collect();
-            let Some(poly) = crate::zoning::joined_outline(&polys) else { continue };
-            let center = if members.len() == 1 { self.parcels.parcels[members[0]].center } else { inner_center(&poly) };
-            let zid = self.zones.insert(Zone { polygon: poly.clone(), land_use: LandUse::Civic });
-            let Some(mut lot) = crate::zoning::make_placed_lot(zid, poly, center, &self.roads) else {
-                self.zones.remove(zid);
-                continue;
-            };
-            if members.iter().any(|&i| self.parcels.parcels[i].rough) {
-                lot.landlocked = true;
-            }
-            let id = self.lots.insert(lot);
+            let zid = self.zones.insert(Zone { polygon: lot.polygon.clone(), land_use: LandUse::Civic });
+            let rough = members.iter().any(|&i| self.parcels.parcels[i].rough);
+            let roads = &self.roads;
+            let lot = &mut self.lots[lid];
+            lot.zone = zid;
+            refresh_lot_roads(lot, roads, true);
+            lot.landlocked |= rough;
             for &i in &members {
                 let p = &mut self.parcels.parcels[i];
-                p.lot = Some(id);
+                p.lot = Some(lid);
                 p.land_use = Some(LandUse::Civic);
             }
-            pinned.push(id);
+            pinned.push(lid);
         }
         self.refresh_planned_zoning();
         pinned
+    }
+
+    /// [waterfront] A lot's outline with the unzoned backland parcels
+    /// (`cands`, indices into the parcels; `taken` marks those used) that
+    /// lie between it and the water joined on, while it stays one piece
+    /// under the shore size cap; and the parcels it took.
+    fn reach_the_water(&self, mut poly: Vec<Vec2>, cands: &[usize], taken: &mut [bool]) -> (Vec<Vec2>, Vec<usize>) {
+        let mut took = Vec::new();
+        if cands.is_empty() {
+            return (poly, took);
+        }
+        for _ in 0..3 {
+            let bounds = crate::geom::bounds(&poly);
+            let mut grew = false;
+            for (k, &i) in cands.iter().enumerate() {
+                if taken[k] {
+                    continue;
+                }
+                let p = &self.parcels.parcels[i];
+                if !crate::geom::boxes_overlap(bounds, crate::geom::bounds(&p.polygon), 0.5) {
+                    continue;
+                }
+                let Some(u) = crate::zoning::joined_outline(&[poly.clone(), p.polygon.clone()]) else { continue };
+                let area = crate::geom::polygon_area(&u).abs();
+                let shared = (crate::geom::perimeter(&poly) + crate::geom::perimeter(&p.polygon) - crate::geom::perimeter(&u)) * 0.5;
+                if shared < 3.0 || area < (crate::geom::polygon_area(&poly).abs() + p.area) * 0.98 || area > crate::zoning::MAX_SHORE_PARCEL_AREA {
+                    continue;
+                }
+                poly = u;
+                taken[k] = true;
+                took.push(i);
+                grew = true;
+            }
+            if !grew {
+                break;
+            }
+        }
+        (poly, took)
     }
 
     /// A parcel under one of the city's own structures (or a station or
@@ -317,4 +498,26 @@ impl World {
             None => Some("no street or path here: draw a road to zone along it"),
         }
     }
+}
+
+/// [stable-parcels] A lot kept through a rebuild: its outline, centre and
+/// everything on it stay; its frontage is found again on the new roads
+/// (their ids change) the way it was made (`placed`: a city building's
+/// lot, `make_placed_lot`).
+pub(in crate::world) fn refresh_lot_roads(lot: &mut Lot, roads: &RoadNetwork, placed: bool) {
+    let fresh = if placed {
+        crate::zoning::make_placed_lot(lot.zone, lot.polygon.clone(), lot.center, roads)
+    } else {
+        make_lot(lot.zone, lot.land_use, lot.polygon.clone(), lot.center, roads)
+    };
+    let Some(f) = fresh else { return };
+    lot.corners = f.corners;
+    lot.front_edge = f.front_edge;
+    lot.front_dir = f.front_dir;
+    lot.front_segment = f.front_segment;
+    lot.front_t = f.front_t;
+    lot.access_node = f.access_node;
+    lot.car_segment = f.car_segment;
+    lot.car_point = f.car_point;
+    lot.landlocked = f.landlocked;
 }

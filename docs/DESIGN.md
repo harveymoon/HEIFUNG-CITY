@@ -288,11 +288,28 @@ Citizens are rendered from their simulated positions every frame.
   (backland and rough ground too), homes on a street or a footpath, everything else on
   a street, industry and civic sites not on scraps under 200 m², with their deep
   yards allowed to take the backland behind them; nothing but parks on rough ground.
-  Rough ground is water or a cliff: hillsides up to `MAX_GRADED_SLOPE` (0.7) take lots,
-  each levelled to a pad at its street and cut and filled into the ground, as long as
-  the land rises no more than `MAX_LOT_RELIEF` (18 m) across it. Parcels are cut within
-  the configured square, grown on a landscape to take in every street drawn past it (an
-  island off the coast) up to the map edge (`World::parcel_half`).
+  Rough ground is water or a sheer cliff: ground up to `MAX_GRADED_SLOPE` (0.7) takes any
+  lot, levelled to a pad at its street and cut and filled into the ground, as long as
+  the land rises no more than `MAX_LOT_RELIEF` (18 m) across it; [hillside] steeper
+  ground, up to `MAX_TERRACE_SLOPE` (1.8) and `MAX_TERRACE_RELIEF` (40 m), is a hillside
+  (`Parcel::hillside`, `Landscape::lot_ground`) terraced for homes, shops and clubs (the
+  cliffside villa, the stair street), not for works yards or civic grounds. Parcels are
+  cut within the configured square, grown on a landscape to take in every street drawn
+  past it (an island off the coast) up to the map edge (`World::parcel_half`).
+  [stable-parcels] Parcels are kept between rebuilds and saved with the city (as
+  outlines, `zoning::ParcelCut`): road works recut only the land within `PARCEL_REACH` +
+  `RECUT_REACH` of a road piece that changed (`zoning::recut_parcels`, which compares the
+  road pieces, node degrees and water the last cut was made from), and every other
+  parcel, lot, building, plant and pad stays exactly as it was. A lot whose parcels all
+  came through unchanged keeps its id, outline and building. The ground under the
+  player's buildings (`World::is_city_building`, not docks or stations) is locked: the
+  parcels around it stop at its outline, it is never reshaped by the zoning or the
+  works (only trimmed where a street or track is laid over it), and it is levelled last
+  so a neighbour's pad never buries it. [parcel-size] Slivers along a road and the
+  backland behind them are mended into one parcel, backland on the water folds into the
+  lot in front, and no parcel is over `MAX_PARCEL_AREA` (2,400 m², 4,800 m² on the
+  water); cuts made before saved parcels (an old save's load) keep the old rules, so
+  its lots and parcels still agree.
   Every zoned parcel becomes a lot; uses with lots bigger than a home's join small
   neighbouring parcels (works yards and civic sites two or three, a shop a small
   neighbour) and industry and civic grounds fold in the backland behind them
@@ -304,7 +321,12 @@ Citizens are rendered from their simulated positions every frame.
   unzoned ground with road access: no zoning first. On unzoned ground a lot is made for
   it on placement, from the parcel under the pointer, or joined with its unzoned
   neighbours as civic ground would be when one parcel is too small
-  (`World::placement_site`). Only physical rules refuse: road access, a street out front
+  (`World::placement_site`). [big-sites] On a lot too small for it (a stadium, which
+  wants 2,400 m², a coal plant) it takes in as few neighbouring lots as it needs
+  (`World::joined_site`): what grew on them is bought out and the ground becomes one
+  lot. A city parking lot fills its plot (spaces, cost and upkeep by area; the
+  multi-storey car park the same in decks), and one put next to the city's own lot of
+  the same kind joins it. Only physical rules refuse: road access, a street out front
   where vehicles come and go, the lot's size, the site (river, coast, hot spot), ground
   under a station; parks are kept (but a metro entrance). The ground under a city
   building (`World::is_city_building`) is the city's own: its lot's use is Civic with a
@@ -1434,8 +1456,11 @@ Citizens are rendered from their simulated positions every frame.
   resource for a few days, and under a duty the industry sub-zones that make what the town imports
   are drawn 1 + 1.5 x duty times harder. Each line books its take (today, yesterday, a running
   average) for the window's bars.
-- **Toll booths** (`nd_sim::tolls`, `world/tolls.rs`, Buildings > Transit): a booth (4,000, 60 a
-  day) or a plaza (15,000, 200 a day) stands across a straight stretch of street or highway, both
+- **Toll booths** (`nd_sim::tolls`, `world/tolls.rs`, Buildings > Transit): [toll-fit] one toll
+  plaza on offer, a kiosk for every lane of the road it is put on and priced by it (1,500 and
+  1,250 a lane; upkeep 15 and 22.5 a lane a day: 4,000 and 60 on a two-lane street); widening
+  the road under it adds kiosks and the road works pay for them (`TollBooth::paid_lanes`). The
+  old six-booth plaza (15,000, 200 a day) is kept for saves that have one. It stands across a straight stretch of street or highway, both
   directions, saved by position and found again on every road rebuild (gone with its road). The
   lanes of its piece carry a `LaneToll`: vehicles slow to 2.5 m/s (plaza 4.5) from 60 m before the
   line to 6 m past it, and pay when they cross it from behind: cars from the driver's pocket (the

@@ -33,6 +33,17 @@ impl World {
 
     /// Put down `what` on a lot (rail pieces at the lot's centre).
     pub fn place_on_lot(&mut self, what: Placeable, lot: LotId) -> Result<BuildingId, String> {
+        // [big-sites] Too small on its own: the neighbours it needs join it.
+        let lot = match self.joined_site(what, lot) {
+            Some((joined, outline)) => {
+                let site = super::super::placement::PlacementSite { lot: Some(lot), parcels: Vec::new(), outline, leaves_zone: None, joined };
+                if let Some(why) = self.site_problem(what, &site) {
+                    return Err(why);
+                }
+                self.join_site_lots(&site, what)?
+            }
+            _ => lot,
+        };
         let id = self.place_on_lot_inner(what, lot)?;
         self.placed_grounds(what);
         Ok(id)

@@ -288,3 +288,74 @@ pub(super) fn frontage_width(poly: &[Vec2], lu: LandUse, roads: &RoadNetwork) ->
     let (u0, u1) = extents(poly, along);
     Some(u1 - u0)
 }
+
+/// [stable-parcels] Does the corridor of a street or track that takes
+/// ground (not a tunnel, not a deck high enough to span lots) run over this outline by
+/// more than a metre and a half? A lot kept through a rebuild that a new
+/// road crosses is lost to it.
+pub fn corridor_over(poly: &[Vec2], roads: &RoadNetwork) -> bool {
+    corridor_over_at(poly, roads).is_some()
+}
+
+/// [`corridor_over`] with the piece of road and the point of it found over
+/// the outline.
+pub fn corridor_over_at(poly: &[Vec2], roads: &RoadNetwork) -> Option<(SegmentId, Vec2)> {
+    if poly.len() < 3 {
+        return None;
+    }
+    let (lo, hi) = bounds_of(poly);
+    let pad = Vec2::splat(40.0);
+    for sid in roads.segments_in_box(lo - pad, hi + pad) {
+        let s = roads.segment(sid);
+        // Footpaths may run into grounds (a park's or a monument's paths).
+        if !s.alive || s.tunnel || s.kind == crate::roads::RoadKind::Path || roads.spans_lots(sid) {
+            continue;
+        }
+        let into = s.corridor_half_width() - 1.5;
+        let (a, b) = roads.segment_points(sid);
+        let n = (a.distance(b) / 1.0).ceil().max(1.0) as usize;
+        for k in 0..=n {
+            let p = a.lerp(b, k as f32 / n as f32);
+            if p.x < lo.x - into || p.y < lo.y - into || p.x > hi.x + into || p.y > hi.y + into {
+                continue;
+            }
+            if point_in_polygon(p, poly) || (into > 0.0 && distance_to_outline(p, poly) < into) {
+                return Some((sid, p));
+            }
+        }
+    }
+    None
+}
+
+/// [stable-parcels] An outline less the corridors of the streets and track
+/// that run over it ([`corridor_over`]): its biggest piece left, or None
+/// when nothing runs over it or too little is left.
+pub fn trim_corridors(poly: &[Vec2], roads: &RoadNetwork) -> Option<Vec<Vec2>> {
+    corridor_over_at(poly, roads)?;
+    let (lo, hi) = bounds_of(poly);
+    let pad = Vec2::splat(40.0);
+    let mut cuts: Vec<Polygon<f64>> = Vec::new();
+    for sid in roads.segments_in_box(lo - pad, hi + pad) {
+        let s = roads.segment(sid);
+        if !s.alive || s.tunnel || s.kind == crate::roads::RoadKind::Path || roads.spans_lots(sid) {
+            continue;
+        }
+        let (a, b) = roads.segment_points(sid);
+        let hw = s.corridor_half_width();
+        let d = (b - a).normalize_or_zero();
+        if d == Vec2::ZERO {
+            continue;
+        }
+        let n = Vec2::new(-d.y, d.x) * hw;
+        cuts.push(to_geo(&[a - n, b - n, b + n, a + n]));
+        for c in [a, b] {
+            let ring: Vec<Vec2> = (0..16).map(|k| c + Vec2::from_angle(k as f32 / 16.0 * std::f32::consts::TAU) * hw).collect();
+            cuts.push(to_geo(&ring));
+        }
+    }
+    let cut: MultiPolygon<f64> = geo::unary_union(&cuts);
+    let left = to_geo(poly).difference(&cut);
+    let best = left.0.iter().max_by(|a, b| a.unsigned_area().total_cmp(&b.unsigned_area()))?;
+    let out = from_geo(best);
+    (out.len() >= 3 && polygon_area(&out).abs() >= polygon_area(poly).abs() * 0.4).then_some(out)
+}

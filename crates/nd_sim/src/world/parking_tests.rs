@@ -344,17 +344,21 @@ fn officers_patrol_and_ticket_overstayers() {
 }
 
 #[test]
-fn the_city_places_parking_lots_of_three_sizes() {
+fn the_city_places_parking_lots_sized_by_their_plots() {
     let mut w = town();
     let mut lots: Vec<(f32, LotId)> = w.lots.iter().filter(|(_, l)| l.usable() && l.car_access() && l.land_use != LandUse::Park).map(|(id, l)| (l.area(), id)).collect();
     lots.sort_by(|a, b| b.0.total_cmp(&a.0));
     let mut placed = Vec::new();
     for size in LotSize::ALL {
-        let lot = lots.iter().find(|(a, l)| *a >= size.min_area() && !placed.iter().any(|(p, _)| p == l)).map(|(_, l)| *l).expect("a lot big enough");
+        // (Apart from each other: a lot next to the city's own joins it.)
+        let apart = |l: LotId, w: &World, placed: &Vec<(LotId, BuildingId)>| placed.iter().all(|(p, _)| w.lots.get(*p).is_none_or(|q| q.center.distance(w.lots[l].center) > 80.0));
+        let lot = lots.iter().find(|(a, l)| *a >= size.min_area() && w.lots.contains_key(*l) && apart(*l, &w, &placed)).map(|(_, l)| *l).expect("a lot big enough");
+        let area = w.lots[lot].area();
         let treasury = w.economy.treasury;
         let b = w.place_on_lot(crate::services::Placeable::ParkingLot(size), lot).expect("placed");
-        assert!(w.economy.treasury < treasury, "paid for");
-        assert_eq!(w.buildings[b].parking_capacity, size.capacity());
+        assert!((treasury - w.economy.treasury - size.cost_for(area)).abs() < 1e-2, "paid for by the plot's area");
+        // [parking-fit] Spaces by the plot.
+        assert_eq!(w.buildings[b].parking_capacity, size.capacity_for(area));
         assert_eq!(w.buildings[b].floors, size.floors());
         assert!(w.buildings[b].is_parking());
         assert_eq!(w.vehicles.city_lots[&b].price, size.default_price());

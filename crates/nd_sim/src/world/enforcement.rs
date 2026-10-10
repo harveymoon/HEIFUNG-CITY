@@ -913,7 +913,7 @@ impl World {
     pub(super) fn daily_city_lots(&mut self) {
         let buildings = &self.buildings;
         self.vehicles.city_lots.retain(|b, _| buildings.contains_key(*b));
-        let lots: Vec<(BuildingId, f32)> = self.vehicles.city_lots.iter().map(|(b, l)| (*b, l.size.upkeep_per_day())).collect();
+        let lots: Vec<(BuildingId, f32)> = self.vehicles.city_lots.iter().map(|(b, l)| (*b, l.upkeep_per_day())).collect();
         for (b, upkeep) in lots {
             self.economy.debit_item(Flow::ServiceUpkeep, upkeep, Item::Building(b));
         }

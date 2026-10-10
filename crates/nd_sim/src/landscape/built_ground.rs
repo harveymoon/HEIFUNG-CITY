@@ -432,9 +432,21 @@ impl std::fmt::Debug for Ground {
 impl Ground {
     /// Build over the square of half-side `half`.
     pub fn build(land: &Landscape, roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], lots: &SlotMap<LotId, Lot>, half: f32) -> Ground {
+        Self::build_with(land, roads, node_z, inner, lots, half, &[], &Default::default())
+    }
+
+    /// [`Ground::build`] with `last` lots levelled after all the others
+    /// ([stable-parcels] the ground under the player's buildings): where
+    /// two lots' margins meet, theirs holds, so a neighbour's pad never
+    /// buries a plant.
+    /// `pad_at` sets some lots' pads outright ([F16] a dock's yard stands
+    /// at the waterside, not at the height of the street it is reached by).
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_with(land: &Landscape, roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], lots: &SlotMap<LotId, Lot>, half: f32, last: &[LotId], pad_at: &std::collections::HashMap<LotId, f32>) -> Ground {
         let mut pads = std::collections::HashMap::new();
         for (id, lot) in lots.iter() {
-            pads.insert(id, lot_pad(roads, node_z, inner, lot, land));
+            let pad = pad_at.get(&id).copied().unwrap_or_else(|| lot_pad(roads, node_z, inner, lot, land));
+            pads.insert(id, pad);
         }
         let mut decks: Vec<(Vec2, Vec2, f32, f32, f32)> = roads
             .alive_segments()
@@ -587,7 +599,8 @@ impl Ground {
                 }
             }
         }
-        for (id, lot) in lots.iter() {
+        let order = lots.iter().filter(|(id, _)| !last.contains(id)).chain(last.iter().filter_map(|id| lots.get(*id).map(|l| (*id, l))));
+        for (id, lot) in order {
             let pad = pads[&id];
             let (lo_b, hi_b) = crate::geom::bounds(&lot.polygon);
             let (i0, i1) = range(lo_b.x - 2.0, hi_b.x + 2.0);

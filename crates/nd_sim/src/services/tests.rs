@@ -24,7 +24,7 @@ fn buildings_tool_categories_hold_every_placeable_once() {
         assert!(seen.iter().any(|p| matches!(p, Placeable::Service(s, _) if *s == k)), "{k:?} is not on the menu");
     }
     assert!(seen.contains(&Placeable::BusDepot));
-    assert!(crate::tolls::TollSize::ALL.iter().all(|&t| BuildCategory::Transit.items().contains(&Placeable::Toll(t))), "toll booths under Transit");
+    assert!(crate::tolls::TollSize::OFFERED.iter().all(|&t| BuildCategory::Transit.items().contains(&Placeable::Toll(t))), "toll booths under Transit");
     assert!(seen.contains(&Placeable::Rail(RailFacility::Station)) && seen.contains(&Placeable::Rail(RailFacility::FreightYard)));
     assert!(seen.contains(&Placeable::Dock(PortKind::ShippingPort)) && seen.contains(&Placeable::Dock(PortKind::FerryTerminal)), "docks live under Water");
     assert_eq!(BuildCategory::Attractions.items().len(), 2);

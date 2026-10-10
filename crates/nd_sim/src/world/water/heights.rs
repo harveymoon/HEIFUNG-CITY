@@ -3,6 +3,12 @@
 
 use super::*;
 
+/// [stable-parcels] How far a lot's street may move up or down before its
+/// pad follows, m.
+const PAD_HOLD: f32 = 0.3;
+/// [stable-parcels] The same for the ground under the player's buildings.
+const CITY_PAD_HOLD: f32 = 1.0;
+
 impl World {
     /// Insert a vertex wherever a polyline crosses a waterline, set back a
     /// few metres onto the bank, so the stretch over the water becomes its
@@ -236,7 +242,38 @@ impl World {
         self.relief = !flat || z.iter().any(|h| h.abs() > 1e-3) || self.roads.alive_segments().any(|(_, s)| s.bridge);
         self.road_z = z;
         self.road_inner = inner_heights(&self.landscape, &self.roads, &self.road_z, floor, &crossings);
-        self.ground.set(crate::landscape::Ground::build(&self.landscape, &self.roads, &self.road_z, &self.road_inner, &self.lots, self.ground_half()));
+        // [stable-parcels] The player's buildings' ground is levelled last.
+        let mut locked: Vec<LotId> = self.lots.iter().filter(|(_, l)| self.is_city_ground(l)).map(|(id, _)| id).collect();
+        locked.sort();
+        // [F16] A dock's yard is levelled at the waterside (its own ground's
+        // height, at least the bank): levelled to its street, a marina at
+        // the foot of a hill stood metres up in the air over its boats.
+        let mut pad_at: HashMap<LotId, f32> = HashMap::new();
+        if !self.landscape.is_flat() {
+            for l in self.ports.ports.values().filter_map(|p| p.lot) {
+                let Some(lot) = self.lots.get(l) else { continue };
+                let mean = lot.polygon.iter().map(|c| self.landscape.height(*c)).sum::<f32>() / lot.polygon.len().max(1) as f32;
+                pad_at.insert(l, mean.max(crate::landscape::BANK_HEIGHT));
+            }
+        }
+        // [stable-parcels] A lot kept through the works keeps its pad while
+        // its street's height moves by no more than `PAD_HOLD` (the heights
+        // are eased over the whole network, so a road laid far off shifts
+        // them by millimetres): nothing far from the works rises or sinks.
+        for (id, lot) in self.lots.iter() {
+            if pad_at.contains_key(&id) {
+                continue;
+            }
+            let Some(&old) = self.ground.pads.get(&id) else { continue };
+            let now = crate::landscape::lot_pad(&self.roads, &self.road_z, &self.road_inner, lot, &self.landscape);
+            // The player's own buildings hold theirs further: a road
+            // regraded nearby does not lift or sink a plant.
+            let hold = if self.is_city_ground(lot) { CITY_PAD_HOLD } else { PAD_HOLD };
+            if (now - old).abs() <= hold {
+                pad_at.insert(id, old);
+            }
+        }
+        self.ground.set(crate::landscape::Ground::build_with(&self.landscape, &self.roads, &self.road_z, &self.road_inner, &self.lots, self.ground_half(), &locked, &pad_at));
     }
 
     /// Legs (by their first point) of a road drawn along `points` at
