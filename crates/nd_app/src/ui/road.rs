@@ -94,6 +94,10 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, sid: nd
     let w = &sim.world;
     ui.label(egui::RichText::new(&card.name).font(crate::ui::theme::lead()).color(IVORY).strong());
     hint(ui, &identity_line(&card));
+    // [pt-walk] A piece of network cut off from the rest.
+    for line in w.segment_link_warnings(sid) {
+        ui.label(egui::RichText::new(line).color(WARN).strong());
+    }
     if card.run.len() > 1 {
         hint(ui, &format!("Piece {} of {} between junctions ({:.0} m in all; the rest traced faintly). Figures are for this piece.", card.run_index + 1, card.run.len(), card.run_length));
     }

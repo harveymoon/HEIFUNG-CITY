@@ -2,6 +2,11 @@
 
 use super::*;
 
+/// [pt-walk] How far a stroll goes, as the crow flies, and how many
+/// places are weighed for it.
+pub const WANDER_REACH: f32 = 450.0;
+pub const WANDER_CANDIDATES: u64 = 12;
+
 impl World {
     pub(in crate::world) fn step_citizens(&mut self, minds: &mut dyn MindProvider) {
         let tick = self.clock.tick;
@@ -235,9 +240,14 @@ impl World {
         }
         let mode = if owns_bike && self.rng.random_bool(0.5) { TravelMode::Bike } else { TravelMode::Walk };
         let here = self.citizens[id].pos;
+        // [pt-walk] One draw, as before, seeds the choice of where to go
+        // (`wander_target`): somewhere pleasant within a stroll, not any
+        // node in town (which sent people across the city into the
+        // industrial estates).
+        let draw = self.rng.random_range(0..self.walk.nodes.len().max(1) as u64);
+        let target = self.wander_target(id, here, draw);
         let walk_route = if mode == TravelMode::Walk && !self.walk.nodes.is_empty() {
-            let target = self.walk.nodes[self.rng.random_range(0..self.walk.nodes.len())].pos;
-            self.walk_route_for(id, here, target, Purpose::Wander)
+            target.and_then(|t| self.walk_route_for(id, here, t, Purpose::Wander))
         } else {
             None
         };
@@ -248,7 +258,7 @@ impl World {
                 pts
             }
             None => {
-                let end = NodeId(self.rng.random_range(0..self.roads.nodes.len() as u32));
+                let Some(end) = self.wander_road_end(start, target.unwrap_or(here), draw) else { return };
                 let Some(nodes) = self.roads.foot_path(start, end) else { return };
                 self.leave_building(id);
                 self.route_path(&nodes, mode)
@@ -257,5 +267,81 @@ impl World {
         let c = &mut self.citizens[id];
         c.mode = mode;
         c.activity = Activity::Traveling { to: None, purpose: Purpose::Wander, path, idx: 0 };
+    }
+
+    /// [pt-walk] Where a stroll from `here` heads: a dozen walk nodes on
+    /// the walker's own network within [`WANDER_REACH`], picked by hashes
+    /// of `draw`, and the most pleasant of them taken: by a park best, by
+    /// shops and night life, homes fine, industry and nuisance (fumes,
+    /// noise, fouled ground) shunned. None when nothing is in reach.
+    pub(in crate::world) fn wander_target(&self, id: CitizenId, here: Vec2, draw: u64) -> Option<Vec2> {
+        let seed = self.citizens.get(id).map_or(0, |c| c.seed);
+        let from = self.walk.nearest_within(here, 60.0);
+        let comp = from.and_then(|k| self.walk.component(k));
+        let r = Vec2::splat(WANDER_REACH);
+        let near: Vec<u32> = self
+            .walk
+            .nodes_in_box(here - r, here + r)
+            .into_iter()
+            .filter(|&i| {
+                let n = &self.walk.nodes[i as usize];
+                n.level == 0.0 && !self.walk.adj[i as usize].is_empty() && n.pos.distance(here) <= WANDER_REACH && n.pos.distance(here) >= 40.0 && (comp.is_none() || self.walk.component(i) == comp) && !self.walk.node_closed(i)
+            })
+            .collect();
+        if near.is_empty() {
+            return None;
+        }
+        let mut best: Option<(f32, u32)> = None;
+        for k in 0..WANDER_CANDIDATES {
+            let h = crate::hash::mix2_salted(seed ^ draw, k, 0x3a7d_e7);
+            let i = near[(h % near.len() as u64) as usize];
+            let score = self.stroll_appeal(i) + crate::hash::hash01(h, draw, 0x51) * 0.8;
+            if best.is_none_or(|(s, _)| score > s) {
+                best = Some((score, i));
+            }
+        }
+        best.map(|(_, i)| self.walk.nodes[i as usize].pos)
+    }
+
+    /// [pt-walk] How pleasant walk node `i` is to stroll to.
+    pub(in crate::world) fn stroll_appeal(&self, i: u32) -> f32 {
+        let n = &self.walk.nodes[i as usize];
+        let mut s = 0.0f32;
+        for l in n.lot.iter().chain(n.near.iter()) {
+            let Some(lot) = self.lots.get(*l) else { continue };
+            let open = lot.building.and_then(|b| self.buildings.get(b)).is_some_and(|b| b.operating());
+            s += match (lot.land_use, open) {
+                (LandUse::Park, true) => 3.0,
+                (LandUse::Entertainment, true) => 1.5,
+                (LandUse::Commercial, true) => 1.2,
+                (LandUse::Civic, _) => 0.6,
+                (LandUse::Residential, _) => 0.3,
+                (LandUse::Industrial, _) => -3.0,
+                _ => 0.0,
+            };
+        }
+        s - 6.0 * self.land_value.nuisance_at(n.pos)
+    }
+
+    /// [pt-walk] A road node for a ride or a walk by the streets: near
+    /// `to`, picked by `draw` among the few closest, on the way from
+    /// `start`'s network.
+    pub(in crate::world) fn wander_road_end(&self, start: NodeId, to: Vec2, draw: u64) -> Option<NodeId> {
+        let comp = self.road_component(start);
+        let mut near: Vec<(f32, u32)> = self
+            .roads
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(i, n)| !n.segments.is_empty() && *i as u32 != start.0 && (comp.is_none() || self.road_component(NodeId(*i as u32)) == comp))
+            .map(|(i, n)| (n.pos.distance(to), i as u32))
+            .filter(|(d, _)| *d <= WANDER_REACH)
+            .collect();
+        near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        near.truncate(6);
+        if near.is_empty() {
+            return None;
+        }
+        Some(NodeId(near[(draw % near.len() as u64) as usize].1))
     }
 }

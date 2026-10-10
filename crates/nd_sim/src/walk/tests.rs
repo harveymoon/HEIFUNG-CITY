@@ -275,3 +275,23 @@ fn distances_from_the_nearest_of_several_sources_along_the_graph() {
     assert_eq!(g.nearest_within(Vec2::new(12.0, 3.0), 5.0), Some(ids[1]));
     assert_eq!(g.nearest_within(Vec2::new(60.0, 0.0), 20.0), None);
 }
+
+/// [pt-walk] Components: two pieces of graph get two labels (each its
+/// lowest node), a route between them is refused without a search, and
+/// one within a piece is found as before.
+#[test]
+fn components_label_the_pieces_and_refuse_routes_between_them() {
+    let mut g = graph(
+        &[Vec2::ZERO, Vec2::new(10.0, 0.0), Vec2::new(20.0, 0.0), Vec2::new(500.0, 0.0), Vec2::new(510.0, 0.0), Vec2::new(900.0, 0.0)],
+        &[(0, 1, false, false), (1, 2, false, false), (4, 3, false, false)],
+    );
+    assert_eq!(g.component(0), None, "none before they are worked out");
+    g.compute_components();
+    assert_eq!(g.comp, vec![0, 0, 0, 3, 3, 5]);
+    assert_eq!(g.component(4), Some(3));
+    assert!(g.route_nodes(0, 2).is_some());
+    assert_eq!(g.route_nodes(0, 4), None);
+    assert_eq!(g.route_nodes(5, 0), None, "a lone node reaches nothing");
+    let near: Vec<u32> = g.nodes_in_box(Vec2::new(-1.0, -1.0), Vec2::new(15.0, 1.0));
+    assert_eq!(near.len(), 2);
+}

@@ -17,6 +17,8 @@ impl World {
             self.daily();
         }
         self.periodic(tick);
+        // [pt-walk] Stranded areas, when the networks changed (and hourly).
+        self.step_connectivity();
         // [megacorp] Students to class and out at night.
         self.step_campus();
         // [parking] Drivers worn out by the hunt and stuck in a queue leave
@@ -96,6 +98,10 @@ impl World {
         // Every system that moves people has run: lay the breadcrumbs.
         for c in self.citizens.values_mut() {
             c.push_trail();
+            // [pt-walk] An "o" on the trail wherever they stopped.
+            if c.inside.is_some() || matches!(c.activity, Activity::Sitting { .. } | Activity::Waiting { .. }) {
+                c.mark_stop();
+            }
         }
     }
 

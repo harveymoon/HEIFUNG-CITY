@@ -286,17 +286,14 @@ impl World {
             _ => {}
         }
         // Two footbridges may not stand in each other's way (at a corner
-        // where two arms' stairs would meet).
+        // where two arms' stairs would meet). [pt-walk] Ends that meet at a
+        // corner are joined by a deck instead (`walk::CORNER_JOIN`), the
+        // new bridge's end without stairs there: only what stands clear
+        // of such a corner must keep its distance.
         if upgrade == CrossingUpgrade::Footbridge {
             if let Some((top, foot)) = self.walk.footbridge_shape(k, &self.roads) {
-                let mine = [(top[0], top[1]), (top[0], foot[0]), (top[1], foot[1])];
-                let clear = crate::junctions::FOOTBRIDGE_WIDTH + 0.5;
-                for f in self.walk.footbridges.iter().filter(|f| f.crossing != k) {
-                    let theirs = [(f.top[0], f.top[1]), (f.top[0], f.foot[0]), (f.top[1], f.foot[1])];
-                    let close = mine.iter().any(|&(a, b)| theirs.iter().any(|&(c, d)| crate::geom::segment_distance_between(a, b, c, d) < clear));
-                    if close {
-                        return Err("it would stand in the way of the footbridge next to it".into());
-                    }
+                if let Some(e) = self.footbridge_clash(k, top, foot) {
+                    return Err(e);
                 }
             }
         }
@@ -313,6 +310,63 @@ impl World {
         self.refresh_crossings_now();
         self.events.push(SimEvent::RoadsChanged);
         Ok(())
+    }
+
+    /// [pt-walk] Would a footbridge with walkway `top` and stair feet `foot`
+    /// over crossing `k` stand in the way of another? Ends within
+    /// `CORNER_JOIN` of another's end join it (no stairs there), and the
+    /// ground round such a corner is shared, so it is not counted.
+    fn footbridge_clash(&self, k: u32, top: [Vec2; 2], foot: [Vec2; 2]) -> Option<String> {
+        use crate::walk::CORNER_JOIN;
+        let clear = crate::junctions::FOOTBRIDGE_WIDTH + 0.5;
+        let others: Vec<&crate::walk::Footbridge> = self.walk.footbridges.iter().filter(|f| f.crossing != k).collect();
+        // My ends that join another's, and the corners they make.
+        let mut corners: Vec<Vec2> = Vec::new();
+        let mut joined = [false; 2];
+        for i in 0..2 {
+            if let Some(q) = others.iter().flat_map(|f| f.top).filter(|q| q.distance(top[i]) < CORNER_JOIN).min_by(|a, b| a.distance(top[i]).total_cmp(&b.distance(top[i]))) {
+                joined[i] = true;
+                corners.push((q + top[i]) * 0.5);
+            }
+        }
+        for f in &others {
+            for i in 0..2 {
+                for j in 0..2 {
+                    if f.joined[j] && f.top[j].distance(top[i]) < CORNER_JOIN * 2.0 {
+                        corners.push(f.top[j]);
+                    }
+                }
+            }
+        }
+        let mut mine = vec![(top[0], top[1])];
+        for i in 0..2 {
+            if !joined[i] {
+                mine.push((top[i], foot[i]));
+            }
+        }
+        let shared = |p: Vec2| corners.iter().any(|c| c.distance(p) < CORNER_JOIN * 0.5 + clear);
+        for f in others {
+            let mut theirs = vec![(f.top[0], f.top[1])];
+            for j in 0..2 {
+                if !f.joined[j] {
+                    theirs.push((f.top[j], f.foot[j]));
+                }
+            }
+            // Sample my pieces every half metre, away from shared corners.
+            for &(a, b) in &mine {
+                let n = (a.distance(b) / 0.5).ceil().max(1.0) as usize;
+                for s in 0..=n {
+                    let p = a.lerp(b, s as f32 / n as f32);
+                    if shared(p) {
+                        continue;
+                    }
+                    if theirs.iter().any(|&(c, d)| crate::geom::project_on_segment(p, c, d).1.distance(p) < clear) {
+                        return Some("it would stand in the way of the footbridge next to it".into());
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Dev: send a citizen out on foot from `from` (default: where they

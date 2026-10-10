@@ -6,6 +6,7 @@
 //! `train_select`), a ship (from `ferry_select`), a toll booth, a street
 //! piece, a delivery robot's route and shop.
 
+use bevy::gizmos::config::GizmoConfigGroup;
 use bevy::prelude::*;
 use nd_sim::world::ferry_routes::WaterNet;
 use nd_sim::{Activity, BuildingId, CarId, CitizenId, Vec2 as SVec2, World};
@@ -33,8 +34,62 @@ pub struct SelectionCx<'a> {
     pub water: Option<&'a WaterNet>,
 }
 
+/// [pt-walk] Route lines drawn over everything (a route's dashes show
+/// through the buildings it passes behind and the tunnels it runs in).
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub struct RouteTopGizmos;
+
+/// [pt-walk] Thin lines: where a selected vehicle came from.
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub struct RouteThinGizmos;
+
+/// The extra pens a selection draws with besides the default gizmos.
+pub struct Pens<'a, 'w, 's> {
+    pub top: &'a mut Gizmos<'w, 's, RouteTopGizmos>,
+    pub thin: &'a mut Gizmos<'w, 's, RouteThinGizmos>,
+    /// Where each car has been (`overlay::trails`).
+    pub trails: &'a super::trails::CarTrails,
+}
+
+/// Dash length and gap of an on-top route line, metres.
+const DASH: f32 = 3.0;
+const GAP: f32 = 2.5;
+
+/// [pt-walk] The pieces of a dashed line along `pts`: `DASH` drawn, `GAP`
+/// left out, from the start.
+pub fn dashes(pts: &[Vec3]) -> Vec<(Vec3, Vec3)> {
+    let mut out = Vec::new();
+    let (mut on, mut left) = (true, DASH);
+    for w in pts.windows(2) {
+        let (mut a, b) = (w[0], w[1]);
+        let mut len = a.distance(b);
+        while len > 1e-4 {
+            let step = left.min(len);
+            let c = a + (b - a) * (step / len);
+            if on {
+                out.push((a, c));
+            }
+            left -= step;
+            len -= step;
+            a = c;
+            if left <= 1e-4 {
+                on = !on;
+                left = if on { DASH } else { GAP };
+            }
+        }
+    }
+    out
+}
+
+/// A dashed line over everything.
+fn dashed_on_top(top: &mut Gizmos<RouteTopGizmos>, pts: &[Vec3], col: Color) {
+    for (a, b) in dashes(pts) {
+        top.line(a, b, col);
+    }
+}
+
 /// Draw the selection: every variant, no `_` arm.
-pub fn draw_selection(gizmos: &mut Gizmos, cx: &SelectionCx) {
+pub fn draw_selection(gizmos: &mut Gizmos, pens: &mut Pens, cx: &SelectionCx) {
     let sim = cx.sim;
     let w = &sim.world;
     let f = sim.frac();
@@ -45,14 +100,14 @@ pub fn draw_selection(gizmos: &mut Gizmos, cx: &SelectionCx) {
         Selection::None => {}
         Selection::Citizen(id) => {
             if outside {
-                citizen(gizmos, sim, id);
+                citizen(gizmos, pens, sim, id);
             }
             // A selected person's places, from any camera.
             places(gizmos, w, id);
         }
         Selection::Building(b) if outside => building(gizmos, w, b),
         Selection::Building(_) => {}
-        Selection::Car(id) if outside => car(gizmos, w, f, id),
+        Selection::Car(id) if outside => car(gizmos, pens, w, f, id),
         Selection::Car(_) => {}
         Selection::Parked(vid) if outside => {
             let Some(spot) = w.vehicles.cars.get(vid).and_then(|c| c.spot()) else { return };
@@ -69,7 +124,7 @@ pub fn draw_selection(gizmos: &mut Gizmos, cx: &SelectionCx) {
         Selection::Train(_) | Selection::Metro(_) => {}
         Selection::Road(sid) if outside => crate::road_select::draw(gizmos, w, sid),
         Selection::Road(_) => {}
-        Selection::Unit(uid) if outside => unit(gizmos, w, f, uid),
+        Selection::Unit(uid) if outside => unit(gizmos, pens, w, f, uid),
         Selection::Unit(_) => {}
         // [ferry-routes] Drawn from any camera (its route is `ferry_select`'s).
         Selection::Ship(id) => match cx.water {
@@ -82,6 +137,37 @@ pub fn draw_selection(gizmos: &mut Gizmos, cx: &SelectionCx) {
 const ROUTE: Color = Color::linear_rgb(0.5, 2.6, 3.2);
 const TRAIL: Color = Color::linear_rgb(0.18, 0.55, 0.75);
 const DEST: Color = Color::linear_rgb(2.8, 1.0, 3.0);
+/// [pt-walk] A route's dashes over everything, and a vehicle's way so far.
+const ROUTE_TOP: Color = Color::linear_rgba(0.5, 2.6, 3.2, 0.55);
+const PAST: Color = Color::linear_rgba(0.35, 1.1, 1.5, 0.8);
+/// [pt-walk] A stop on a person's trail: the "o" of the route's ends.
+const STOP: Color = Color::linear_rgb(0.6, 3.0, 1.2);
+
+/// [pt-walk] How strongly a point `t` along the trail (0 its oldest, 1
+/// where they are) is drawn: nothing at the tail, full over the newer half.
+pub fn trail_fade(t: f32) -> f32 {
+    (t * 2.0).clamp(0.0, 1.0).powf(1.3)
+}
+
+fn trail_colour(t: f32) -> Color {
+    let a = trail_fade(t);
+    let c = TRAIL.to_linear();
+    Color::linear_rgba(c.red * a, c.green * a, c.blue * a, a)
+}
+
+/// An "o" standing a little above a stop, faded with its stretch of trail.
+fn stop_mark(gizmos: &mut Gizmos, w: &World, p: SVec2, fade: f32) {
+    if fade <= 0.02 {
+        return;
+    }
+    let c = STOP.to_linear();
+    let col = Color::linear_rgba(c.red * fade, c.green * fade, c.blue * fade, fade);
+    let at = |y: f32| Vec3::new(p.x, y + w.surface_height(p), p.y);
+    for y in [1.2, 1.5] {
+        super::shapes::ring(gizmos, at(y), 3.0, col);
+    }
+    gizmos.line(at(0.1), at(1.2), col);
+}
 
 /// Heights are above the ground there, so lines never sink into hills.
 fn at(w: &World, p: SVec2, y: f32) -> Vec3 {
@@ -95,10 +181,10 @@ fn blend(f: f32, a: SVec2, b: SVec2) -> SVec2 {
 
 /// [fire-scene] A unit: its car's outline and route while it drives;
 /// standing, its body, and the building it is working at.
-fn unit(gizmos: &mut Gizmos, w: &World, f: f32, uid: nd_sim::UnitId) {
+fn unit(gizmos: &mut Gizmos, pens: &mut Pens, w: &World, f: f32, uid: nd_sim::UnitId) {
     let Some(u) = w.services.units.get(uid) else { return };
     if let Some(c) = u.car.filter(|c| w.traffic.cars.contains_key(*c)) {
-        car(gizmos, w, f, c);
+        car(gizmos, pens, w, f, c);
     } else if let Some((p, h)) = crate::fire_scene::unit_pose(w, uid, f) {
         let (len, wid, tall) = match u.kind {
             nd_sim::UnitKind::FireEngine => (8.4, 2.9, 3.2),
@@ -135,12 +221,14 @@ fn building(gizmos: &mut Gizmos, w: &World, b: BuildingId) {
     }
 }
 
-fn car(gizmos: &mut Gizmos, w: &World, f: f32, id: CarId) {
+fn car(gizmos: &mut Gizmos, pens: &mut Pens, w: &World, f: f32, id: CarId) {
     let Some(car) = w.traffic.cars.get(id) else { return };
     let (p, heading) = car.pose_at(f);
     let width = if car.bus.is_some() || car.cargo.is_some() { 2.7 } else { 2.1 };
     vehicle_box(gizmos, p, heading, car.length() + 0.6, width + 0.5, w.car_height(car) + 0.35, GOLD);
-    car_route(gizmos, w, car, ROUTE);
+    car_route(gizmos, pens, w, car, ROUTE);
+    // [pt-walk] Where it came from: the road behind it, thin and dim.
+    car_past(pens, w, id, car, f);
     // [clarity] An "o" where it set off, an "x" where it is going.
     let origin = w.car_journey(id).and_then(|j| j.from.pos);
     route_ends(gizmos, w, origin, car_route_end(w, car));
@@ -148,7 +236,7 @@ fn car(gizmos: &mut Gizmos, w: &World, f: f32, id: CarId) {
     // truck's road to it, in amber, and a ring round the truck.
     if let Some(t) = w.driving.wrecks.iter().find(|x| x.car == id).and_then(|x| x.truck).and_then(|t| w.traffic.cars.get(t)) {
         let amber = Color::linear_rgb(3.0, 1.4, 0.1);
-        car_route(gizmos, w, t, amber);
+        car_route(gizmos, pens, w, t, amber);
         let (tp, th) = t.pose_at(f);
         vehicle_box(gizmos, tp, th, t.length() + 0.6, 2.6, w.car_height(t) + 0.35, amber);
     }
@@ -189,17 +277,23 @@ fn car(gizmos: &mut Gizmos, w: &World, f: f32, id: CarId) {
 /// A person: where they are (or the vehicle they are in), the road ahead
 /// (the rest of their route, the lane path of their car or bus, the line
 /// to their station), the destination's lot, and the route so far, dimmer.
-fn citizen(gizmos: &mut Gizmos, sim: &Sim, id: CitizenId) {
+fn citizen(gizmos: &mut Gizmos, pens: &mut Pens, sim: &Sim, id: CitizenId) {
     let w = &sim.world;
     let f = sim.frac();
     let at = |p: SVec2, y: f32| at(w, p, y);
     let Some(c) = w.citizens.get(id) else { return };
     let here = blend(f, c.prev_pos, c.pos);
+    // [pt-walk] The way so far, fading out towards its tail, with an "o"
+    // at every stop along it (the trip under way began at the last one).
     if !c.trail.is_empty() {
-        let mut pts: Vec<Vec3> = c.trail.iter().map(|&q| at(q, 0.7)).collect();
-        pts.push(at(here, 0.7));
+        let n = c.trail.len();
+        let mut pts: Vec<(Vec3, Color)> = c.trail.iter().enumerate().map(|(i, &q)| (at(q, 0.7), trail_colour(i as f32 / n as f32))).collect();
+        pts.push((at(here, 0.7), trail_colour(1.0)));
         if pts.len() >= 2 {
-            gizmos.linestrip(pts, TRAIL);
+            gizmos.linestrip_gradient(pts);
+        }
+        for (i, p) in c.trail_stops.on_trail(n) {
+            stop_mark(gizmos, w, p, trail_fade(i as f32 / n as f32));
         }
     }
     let mut destination = c.transit.map(|t| t.target);
@@ -210,6 +304,8 @@ fn citizen(gizmos: &mut Gizmos, sim: &Sim, id: CitizenId) {
             pts.extend(path.iter().skip(*idx).map(|&q| at(q, 1.0)));
             if pts.len() >= 2 {
                 gizmos.linestrip(pts.iter().map(|p| *p + Vec3::Y * 0.4), ROUTE);
+                // [pt-walk] Dashed over whatever it passes behind.
+                dashed_on_top(pens.top, &pts, ROUTE_TOP);
                 gizmos.linestrip(pts, ROUTE);
             }
             person_box(gizmos, at(here, 0.0), GOLD);
@@ -222,7 +318,7 @@ fn citizen(gizmos: &mut Gizmos, sim: &Sim, id: CitizenId) {
                 let (p, heading) = car.pose_at(f);
                 let width = if car.bus.is_some() || car.cargo.is_some() { 2.7 } else { 2.1 };
                 vehicle_box(gizmos, p, heading, car.length() + 0.6, width + 0.5, w.car_height(car) + 0.35, GOLD);
-                car_route(gizmos, w, car, ROUTE);
+                car_route(gizmos, pens, w, car, ROUTE);
             }
         }
         Activity::Flying { drone } => {
@@ -244,7 +340,7 @@ fn citizen(gizmos: &mut Gizmos, sim: &Sim, id: CitizenId) {
                 Some(car) => {
                     let (p, heading) = car.pose_at(f);
                     vehicle_box(gizmos, p, heading, car.length() + 0.6, 2.6, w.car_height(car) + 0.35, GOLD);
-                    car_route(gizmos, w, car, ROUTE);
+                    car_route(gizmos, pens, w, car, ROUTE);
                 }
                 None => person_box(gizmos, at(here, 0.0), GOLD),
             }
@@ -255,7 +351,7 @@ fn citizen(gizmos: &mut Gizmos, sim: &Sim, id: CitizenId) {
             if let Some(bus) = w.traffic.cars.get(*bus) {
                 let p = bus.pose_at(f).0;
                 gizmos.circle(flat_at(at(p, 0.5)), 7.5, GOLD);
-                car_route(gizmos, w, bus, ROUTE);
+                car_route(gizmos, pens, w, bus, ROUTE);
             }
         }
         // [subway] Underground: a ring where the train is, its line ahead.
@@ -305,8 +401,10 @@ fn citizen(gizmos: &mut Gizmos, sim: &Sim, id: CitizenId) {
             }
         }
     }
-    // [clarity] An "o" where the trip began, an "x" at its end.
-    let origin = c.trail.first().copied().or_else(|| w.citizen_origin(id).and_then(|p| p.pos));
+    // [clarity] An "x" at the trip's end. [pt-walk] Its "o" is the last
+    // stop on the trail (drawn with the trail): only with no trail yet is
+    // one drawn where they set off.
+    let origin = if c.trail.is_empty() { w.citizen_origin(id).and_then(|p| p.pos) } else { None };
     let end = match &c.activity {
         Activity::Traveling { path, .. } => path.last().copied(),
         Activity::Driving { car, .. } => w.traffic.cars.get(*car).and_then(|car| car_route_end(w, car)),
@@ -375,16 +473,80 @@ fn car_route_end(w: &World, car: &nd_sim::Car) -> Option<SVec2> {
     net.polyline(&car.route[car.idx..], car.s, car.s_end).last().copied()
 }
 
-/// The rest of a car's lane route, from where it is to where it stops.
-fn car_route(gizmos: &mut Gizmos, w: &World, car: &nd_sim::Car, col: Color) {
+/// [pt-walk] A car's lane route between two places on it (lane `k0` at
+/// `s0` to lane `k1` at `s1`, indices into `car.route`) as pieces, each
+/// marked whether it runs in a tunnel (a junction between tunnels counts).
+fn route_pieces(w: &World, car: &nd_sim::Car, k0: usize, s0: f32, k1: usize, s1: f32) -> Vec<(Vec<SVec2>, bool)> {
+    let net = &w.traffic.net;
+    let tunnel = |l: u32| match net.lanes.get(l as usize).map(|x| &x.kind) {
+        Some(nd_sim::traffic::LaneKind::Road { segment, .. }) => Some(w.roads.try_segment(*segment).is_some_and(|s| s.tunnel)),
+        _ => None,
+    };
+    let mut out: Vec<(Vec<SVec2>, bool)> = Vec::new();
+    let mut last = false;
+    for k in k0..=k1.min(car.route.len().saturating_sub(1)) {
+        let l = car.route[k];
+        let Some(lane) = net.lanes.get(l as usize) else { break };
+        let a = if k == k0 { s0 } else { 0.0 };
+        let b = if k == k1 { s1 } else { lane.length };
+        let hid = tunnel(l).unwrap_or_else(|| last && car.route.get(k + 1).and_then(|&n| tunnel(n)).unwrap_or(last));
+        last = hid;
+        let pts = lane.points_between(a.min(b), b.max(a));
+        match out.last_mut() {
+            Some((p, h)) if *h == hid => p.extend(pts),
+            _ => {
+                // Start where the last piece ended, so there is no gap.
+                let mut p: Vec<SVec2> = out.last().and_then(|(q, _)| q.last().copied()).into_iter().collect();
+                p.extend(pts);
+                out.push((p, hid));
+            }
+        }
+    }
+    out
+}
+
+/// The rest of a car's lane route, from where it is to where it stops:
+/// solid where it runs in the open, and dashed over everything along all
+/// of it (through the buildings it passes behind, and in a tunnel, where
+/// only the dashes are drawn).
+fn car_route(gizmos: &mut Gizmos, pens: &mut Pens, w: &World, car: &nd_sim::Car, col: Color) {
     let net = &w.traffic.net;
     // Routes outlive lane rebuilds for a tick; never index past the lanes.
     if car.idx >= car.route.len() || car.route.iter().any(|&l| l as usize >= net.lanes.len()) {
         return;
     }
-    let pts: Vec<Vec3> = net.polyline(&car.route[car.idx..], car.s, car.s_end).iter().map(|&q| Vec3::new(q.x, 1.0 + w.surface_height(q), q.y)).collect();
-    if pts.len() >= 2 {
-        gizmos.linestrip(pts, col);
+    let lift = |q: SVec2| Vec3::new(q.x, 1.0 + w.surface_height(q), q.y);
+    let top = col.with_alpha(0.55);
+    for (pts, tunnel) in route_pieces(w, car, car.idx, car.s, car.route.len() - 1, car.s_end) {
+        let pts: Vec<Vec3> = pts.into_iter().map(lift).collect();
+        if pts.len() < 2 {
+            continue;
+        }
+        if !tunnel {
+            gizmos.linestrip(pts.iter().copied(), col);
+        }
+        dashed_on_top(pens.top, &pts, if tunnel { col } else { top });
+    }
+}
+
+/// [pt-walk] Where a car came from: the trail it left since it took to
+/// the road, a thin dim line (dashed where it ran in a tunnel), up to the
+/// car.
+fn car_past(pens: &mut Pens, w: &World, id: CarId, car: &nd_sim::Car, f: f32) {
+    let Some(trail) = pens.trails.trails.get(&id) else { return };
+    let lift = |q: SVec2| Vec3::new(q.x, 0.8 + w.surface_height(q), q.y);
+    let here = car.pose_at(f).0;
+    let mut pts: Vec<(Vec3, bool)> = trail.iter().map(|&(q, t)| (lift(q), t)).collect();
+    pts.push((lift(here), w.car_in_tunnel(car)));
+    for pair in pts.windows(2) {
+        let ((a, ta), (b, tb)) = (pair[0], pair[1]);
+        if ta || tb {
+            for (p, q) in dashes(&[a, b]) {
+                pens.thin.line(p, q, PAST);
+            }
+        } else {
+            pens.thin.line(a, b, PAST);
+        }
     }
 }
 
@@ -401,4 +563,29 @@ fn sub_polyline(pts: &[SVec2], s0: f32, s1: f32) -> Vec<SVec2> {
     }
     out.push(nd_sim::rail::point_along(pts, s1).0);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dashes_alternate_along_the_line() {
+        let d = dashes(&[Vec3::ZERO, Vec3::new(11.0, 0.0, 0.0)]);
+        // 0-3 on, 3-5.5 off, 5.5-8.5 on, 8.5-11 off.
+        assert_eq!(d.len(), 2);
+        assert!((d[0].1.x - 3.0).abs() < 1e-4 && (d[1].0.x - 5.5).abs() < 1e-4 && (d[1].1.x - 8.5).abs() < 1e-4);
+        // Across a corner the dash carries on round it.
+        let d = dashes(&[Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 2.0)]);
+        assert_eq!(d.len(), 2, "one dash in two pieces: {d:?}");
+        assert!((d[1].1.z - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn the_trail_fades_to_nothing_at_its_tail() {
+        assert_eq!(trail_fade(0.0), 0.0);
+        assert!(trail_fade(0.25) > 0.0 && trail_fade(0.25) < trail_fade(0.45));
+        assert_eq!(trail_fade(0.6), 1.0);
+        assert_eq!(trail_fade(1.0), 1.0);
+    }
 }

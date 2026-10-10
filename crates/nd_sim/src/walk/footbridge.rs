@@ -13,9 +13,18 @@ pub struct Footbridge {
     pub foot: [Vec2; 2],
     pub level: f32,
     pub width: f32,
-    /// Walk nodes: the two feet and the two tops.
+    /// Walk nodes: the two feet and the two tops (a joined end's "foot"
+    /// is its top).
     pub nodes: [u32; 4],
+    /// [pt-walk] An end that meets another footbridge's end at a corner
+    /// joins its deck (`WalkGraph::footbridge_links`) instead of having
+    /// stairs of its own: footbridges round a junction make a ring.
+    pub joined: [bool; 2],
 }
+
+/// [pt-walk] Two footbridge ends at most this far apart (at a junction's
+/// corner) are joined by a corner deck.
+pub const CORNER_JOIN: f32 = 9.0;
 
 impl WalkGraph {
     /// [tools] Where a footbridge over crossing `k` would stand: its
@@ -50,12 +59,32 @@ impl WalkGraph {
         let mut nodes = [0u32; 4];
         let mut tops = [Vec2::ZERO; 2];
         let mut feet = [Vec2::ZERO; 2];
+        let mut joined = [false; 2];
         for (i, &end) in ends.iter().enumerate() {
             let p = self.nodes[end as usize].pos;
             let top = p + along * (FOOTBRIDGE_WIDTH + 0.5);
             let foot = top + along * FOOTBRIDGE_RUN;
             let t = self.add_node(top, None);
             self.nodes[t as usize].level = FOOTBRIDGE_LEVEL;
+            // [pt-walk] Another footbridge's end at this corner: a corner
+            // deck over to it, and no stairs of our own here.
+            let near = self
+                .footbridges
+                .iter()
+                .flat_map(|f| [(f.top[0], f.nodes[2]), (f.top[1], f.nodes[3])])
+                .map(|(q, n)| (q.distance(top), q, n))
+                .filter(|(d, _, _)| *d < CORNER_JOIN)
+                .min_by(|a, b| a.0.total_cmp(&b.0));
+            if let Some((_, q, n)) = near {
+                self.link_raised(t, n);
+                self.footbridge_links.push([q, top]);
+                joined[i] = true;
+                nodes[i * 2] = t;
+                nodes[i * 2 + 1] = t;
+                tops[i] = top;
+                feet[i] = top;
+                continue;
+            }
             let f = self.add_node(foot, None);
             // The stairs.
             self.link_raised(f, t);
@@ -79,7 +108,7 @@ impl WalkGraph {
         // The walkway.
         self.link_raised(nodes[1], nodes[3]);
         self.crossings[k as usize].bridged = true;
-        self.footbridges.push(Footbridge { crossing: k, top: tops, foot: feet, level: FOOTBRIDGE_LEVEL, width: FOOTBRIDGE_WIDTH, nodes: [nodes[0], nodes[2], nodes[1], nodes[3]] });
+        self.footbridges.push(Footbridge { crossing: k, top: tops, foot: feet, level: FOOTBRIDGE_LEVEL, width: FOOTBRIDGE_WIDTH, nodes: [nodes[0], nodes[2], nodes[1], nodes[3]], joined });
     }
 
     /// [footbridge] Take crossing `k`'s at-grade edge out of the walk graph
