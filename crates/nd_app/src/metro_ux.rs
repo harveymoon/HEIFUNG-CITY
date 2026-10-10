@@ -237,10 +237,12 @@ fn paint_path(painter: &egui::Painter, to_screen: &dyn Fn(SVec2) -> Option<egui:
 /// station under the pointer would take it, or a dashed lead to the
 /// pointer when it is on no station.
 fn paint_lines(painter: &egui::Painter, to_screen: &dyn Fn(SVec2) -> Option<egui::Pos2>, w: &World, tools: &ToolState, cursor: Option<SVec2>, pulse: f32) {
+    // [lines] While a line is being drawn the others step back.
+    let drafting = tool_active(tools) && !tools.metro_draft.is_empty();
     for l in w.subway.lines.values() {
         let c = nd_procgen::metro::line_colour(l.color);
-        paint_path(painter, to_screen, &l.path, egui::Stroke::new(7.0, egui::Color32::from_black_alpha(140)));
-        paint_path(painter, to_screen, &l.path, egui::Stroke::new(4.5, c32(c, 1.6)));
+        paint_path(painter, to_screen, &l.path, egui::Stroke::new(7.0, egui::Color32::from_black_alpha(if drafting { 60 } else { 140 })));
+        paint_path(painter, to_screen, &l.path, egui::Stroke::new(4.5, if drafting { c32(c, 0.6).gamma_multiply(0.45) } else { c32(c, 1.6) }));
     }
     if !tool_active(tools) {
         return;
