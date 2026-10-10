@@ -23,6 +23,11 @@ pub(super) enum Focus {
     Crime,
     /// [metro-ux] The Metro layer: everything dimmed under the lines.
     Metro,
+    /// [pt-ux] The Pedestrian network layer: the city dimmed, every person
+    /// glowing, the walkways lit.
+    Walk,
+    /// [pt-ux] The Trails layer: the city nearly black under the streaks.
+    Trails,
 }
 
 impl Focus {
@@ -37,6 +42,10 @@ impl Focus {
             Some(Focus::Traffic)
         } else if o.metro {
             Some(Focus::Metro)
+        } else if o.trails {
+            Some(Focus::Trails)
+        } else if o.paths {
+            Some(Focus::Walk)
         } else {
             None
         }
@@ -48,6 +57,8 @@ impl Focus {
             Focus::Traffic => (0.05, 0.035, 0.05),
             Focus::Crime => (0.075, 0.05, 0.08),
             Focus::Metro => (0.07, 0.045, 0.07),
+            Focus::Walk => (0.09, 0.06, 0.08),
+            Focus::Trails => (0.03, 0.02, 0.03),
         }
     }
 }
@@ -57,6 +68,8 @@ impl Focus {
 pub const TRAFFIC_BLUE: [f32; 3] = [0.55, 1.3, 2.9];
 /// Police cars in the Crime view: a hot blue-white.
 pub const POLICE_GLOW: [f32; 3] = [0.6, 0.95, 2.6];
+/// [pt-ux] People in the Pedestrian network view: a bright cyan.
+pub const WALKER_GLOW: [f32; 3] = [0.5, 2.4, 3.2];
 
 /// A police unit's body and light bar (set by `emergency`).
 #[derive(Component)]
@@ -103,12 +116,15 @@ fn glow(c: [f32; 3]) -> Class {
 /// How a mesh is drawn in a focus view: `None` keeps its own material (the
 /// layer's own meshes, fires and smoke, a police light bar in the Crime
 /// view).
-pub(super) fn classify(focus: Focus, tags: (bool, bool, bool, bool, bool), overlay: bool, o: &StandardMaterial) -> Option<Class> {
+pub(super) fn classify(focus: Focus, tags: (bool, bool, bool, bool, bool), citizen: bool, overlay: bool, o: &StandardMaterial) -> Option<Class> {
     let (car, unit, police, keep, emergency) = tags;
     if overlay || keep {
         return None;
     }
     let class = match focus {
+        // [pt-ux] Everyone on foot lights up.
+        Focus::Walk if citizen => glow(WALKER_GLOW),
+        Focus::Walk if emergency => return None,
         Focus::Traffic if car || unit => glow(TRAFFIC_BLUE),
         // Fires and smoke stay as they are: they are part of the story.
         Focus::Traffic if emergency => return None,

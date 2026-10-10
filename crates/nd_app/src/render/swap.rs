@@ -116,7 +116,7 @@ pub(super) fn swap_materials(
         let key = match (want, materials.get(id)) {
             (View::Normal, _) | (_, None) => None,
             (View::Heat, Some(o)) => Some(Key::Heat(heat::class_of(o, heat::temperature(heat_tags)))),
-            (View::Focus(f), Some(o)) => focus::classify(f, focus_tags, id == overlay, o).map(Key::Focus),
+            (View::Focus(f), Some(o)) => focus::classify(f, focus_tags, heat_tags.1, id == overlay, o).map(Key::Focus),
         };
         let Some(key) = key else {
             if showing_stand_in {

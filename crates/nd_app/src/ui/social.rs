@@ -266,6 +266,7 @@ pub fn news_toast(w: &World, flags: &mut UiFlags) {
     flags.social_seen = n.seq;
     if w.clock.tick.saturating_sub(n.tick) <= 30 {
         flags.message = n.text.clone();
+        flags.message_at = Some(bevy::math::Vec2::new(n.pos.x, n.pos.y));
     }
 }
 

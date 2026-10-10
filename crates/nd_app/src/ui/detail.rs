@@ -10,7 +10,7 @@ use bevy::prelude::Vec2;
 use bevy_egui::egui::{self, Color32};
 use nd_sim::{BusinessKind, LandUse, PowerPlantKind, Resource as Good, Tier};
 
-use super::pane::{self, heading, row, Series, Span};
+use super::pane::{self, heading, row, Series, SortKey, Span};
 use super::tools::warn_if;
 use super::theme::GOOD;
 use super::{hint, Info, UiCtx, GOLD, IVORY, WARN};
@@ -75,21 +75,30 @@ pub fn market_goods(ui: &mut egui::Ui, p: &mut UiCtx) {
     });
     heading(ui, "Every good");
     hint(ui, "The average price paid in town against the good's base price, and the stock in town; red is scarce (over 125% of base).");
-    pane::table(ui, "market_prices_all", &["good", "price", "base", "vs base", "stock"], |ui| {
-        for r in Good::ALL {
+    // [pt-ux] Sortable: (good, price, stock, price over base).
+    let rows: Vec<(Good, f32, f32, f32)> = Good::ALL
+        .into_iter()
+        .map(|r| {
             let price = m.avg_price.get(&r).copied().unwrap_or(r.base_price());
-            let stock = m.stock.get(&r).copied().unwrap_or(0.0);
-            let ratio = price / r.base_price().max(1e-3);
-            ui.label(r.label());
-            ui.label(warn_if(ratio > 1.25, format!("{price:.1}")));
-            ui.label(egui::RichText::new(format!("{:.1}", r.base_price())).weak());
-            ui.horizontal(|ui| {
-                ui.label(warn_if(ratio > 1.25, format!("{:.0}%", ratio * 100.0)));
-                ratio_bar(ui, ratio);
-            });
-            ui.label(egui::RichText::new(format!("{stock:.0}")).weak());
-            ui.end_row();
-        }
+            (r, price, m.stock.get(&r).copied().unwrap_or(0.0), price / r.base_price().max(1e-3))
+        })
+        .collect();
+    let key = |r: &(Good, f32, f32, f32), c: usize| match c {
+        0 => SortKey::text(r.0.label()),
+        1 => SortKey::num(r.1),
+        2 => SortKey::num(r.0.base_price()),
+        3 => SortKey::num(r.3),
+        _ => SortKey::num(r.2),
+    };
+    pane::sortable_plain(ui, "market_prices_all", &["good", "price", "base", "vs base", "stock"], &rows, key, |ui, &(r, price, stock, ratio)| {
+        ui.label(r.label());
+        ui.label(warn_if(ratio > 1.25, format!("{price:.1}")));
+        ui.label(egui::RichText::new(format!("{:.1}", r.base_price())).weak());
+        ui.horizontal(|ui| {
+            ui.label(warn_if(ratio > 1.25, format!("{:.0}%", ratio * 100.0)));
+            ratio_bar(ui, ratio);
+        });
+        ui.label(egui::RichText::new(format!("{stock:.0}")).weak());
     });
 }
 
@@ -133,12 +142,17 @@ pub fn market_businesses(ui: &mut egui::Ui, p: &mut UiCtx) {
     legend(ui, &series);
     heading(ui, "How each kind of business pays");
     hint(ui, "Takings over costs, smoothed over a few days; under 100% loses money. The bar's middle tick is 100%.");
-    pane::table(ui, "business_cover", &["kind", "open", "takings / costs", ""], |ui| {
-        for k in BusinessKind::ALL {
+    // [pt-ux] Sortable by kind, how many open, and cover.
+    let kinds: Vec<BusinessKind> = BusinessKind::ALL.into_iter().filter(|k| count[k.index()] > 0 || e.cover_of(*k).is_some()).collect();
+    let key = |k: &BusinessKind, c: usize| match c {
+        0 => SortKey::text(k.label()),
+        1 => SortKey::num(open[k.index()]),
+        2 => e.cover_of(*k).map_or(SortKey::None, SortKey::num),
+        _ => SortKey::None,
+    };
+    pane::sortable_plain(ui, "business_cover", &["kind", "open", "takings / costs", ""], &kinds, key, |ui, &k| {
+        {
             let i = k.index();
-            if count[i] == 0 && e.cover_of(k).is_none() {
-                continue;
-            }
             ui.label(k.label());
             ui.label(egui::RichText::new(format!("{} of {}", open[i], count[i])).weak());
             match e.cover_of(k) {
@@ -153,7 +167,6 @@ pub fn market_businesses(ui: &mut egui::Ui, p: &mut UiCtx) {
                     ui.label("");
                 }
             }
-            ui.end_row();
         }
     });
     heading(ui, "Demand for new buildings");
@@ -231,16 +244,21 @@ const CHARGING: Color32 = Color32::from_rgb(40, 140, 110);
 /// figures come from `World::plant_rows`, the same as the API's.
 fn plant_table(ui: &mut egui::Ui, w: &nd_sim::World, rows: &[nd_sim::PlantRow]) -> Option<(nd_sim::BuildingId, Vec2)> {
     let mut act = None;
-    egui::Grid::new("power_plants_wide").num_columns(9).spacing(egui::vec2(16.0, 4.0)).striped(true).show(ui, |ui| {
-        let heads: &[(&str, &str)] = &[("plant", ""), ("now", "output now / nameplate"), ("24 h mean", "mean output over the last 24 hours"), ("upkeep", "running cost per day"), ("cost/MWh", "upkeep over the last 24 hours' energy"), ("CO2 t/day", "carbon dioxide at the last 24 hours' rate"), ("smog", "air at the fence now, 0 to 1 (coal at full output is 1)"), ("noise", "at the fence while running"), ("", "")];
-        for (h, tip) in heads {
-            let l = pane::th(ui, h);
-            if !tip.is_empty() {
-                l.on_hover_text(*tip);
-            }
-        }
-        ui.end_row();
-        for r in rows {
+    let heads: &[(&str, &str)] = &[("plant", ""), ("now", "output now / nameplate"), ("24 h mean", "mean output over the last 24 hours"), ("upkeep", "running cost per day"), ("cost/MWh", "upkeep over the last 24 hours' energy"), ("CO2 t/day", "carbon dioxide at the last 24 hours' rate"), ("smog", "air at the fence now, 0 to 1 (coal at full output is 1)"), ("noise", "at the fence while running"), ("", "")];
+    // [pt-ux] Sortable by any figure.
+    let key = |r: &nd_sim::PlantRow, c: usize| match c {
+        0 => SortKey::text(r.name.clone()),
+        1 => SortKey::num(r.now_mw),
+        2 => SortKey::num(r.mean_mw),
+        3 => SortKey::num(r.upkeep_per_day),
+        4 => r.cost_per_mwh.map_or(SortKey::None, SortKey::num),
+        5 => SortKey::num(r.co2_t_per_day),
+        6 => SortKey::num(r.air),
+        7 => SortKey::num(r.noise_db.unwrap_or(0.0)),
+        _ => SortKey::None,
+    };
+    pane::sortable(ui, "power_plants_wide", heads, rows, key, |ui, r| {
+        {
             let (color, kind) = match r.asset {
                 nd_sim::GridAsset::Plant(k) => (plant_color(k), k.label().to_string()),
                 nd_sim::GridAsset::Battery(k) => (BATTERY, k.label().to_string()),
@@ -281,7 +299,6 @@ fn plant_table(ui: &mut egui::Ui, w: &nd_sim::World, rows: &[nd_sim::PlantRow]) 
                     act = Some((r.id, Vec2::new(l.center.x, l.center.y)));
                 }
             }
-            ui.end_row();
         }
     });
     act
@@ -323,6 +340,27 @@ pub fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
             }
             pane::kpi(ui, "in the dark", warn_if(pw.unpowered_buildings > 0, format!("{}", pw.unpowered_buildings)));
         });
+        // [pt-ux] Where the power comes from: now, and over the last 24 hours.
+        heading(ui, "Where the power comes from");
+        {
+            let rows = w.plant_rows();
+            let mut now: Vec<(String, f32, Color32)> = PowerPlantKind::ALL
+                .into_iter()
+                .map(|k| (k.short().to_string(), rows.iter().filter(|r| r.asset == nd_sim::GridAsset::Plant(k)).map(|r| r.now_mw.max(0.0)).sum::<f32>(), plant_color(k)))
+                .collect();
+            now.push(("batteries".into(), rows.iter().filter(|r| matches!(r.asset, nd_sim::GridAsset::Battery(_))).map(|r| r.now_mw.max(0.0)).sum(), BATTERY));
+            now.push(("imported".into(), pw.imported_mw.max(0.0), IMPORT));
+            let last: Vec<&nd_sim::history::HourRecord> = h.hours.iter().rev().take(24).collect();
+            let mut day: Vec<(String, f32, Color32)> = PowerPlantKind::ALL.into_iter().map(|k| (k.short().to_string(), last.iter().map(|r| r.supply_by_kind[k.index()].max(0.0)).sum::<f32>(), plant_color(k))).collect();
+            day.push(("batteries".into(), last.iter().map(|r| r.battery_out_mw.max(0.0)).sum(), BATTERY));
+            day.push(("imported".into(), last.iter().map(|r| r.imported_mw.max(0.0)).sum(), IMPORT));
+            ui.horizontal_top(|ui| {
+                pane::pie(ui, "NOW", &now, 62.0, &|x| format!("{x:.1} MW"));
+                ui.add_space(40.0);
+                pane::pie(ui, &format!("LAST {} HOURS", last.len()), &day, 62.0, &|x| format!("{x:.0} MWh"));
+            });
+            hint(ui, "Each source's share of what fed the city: the plants by kind, the batteries giving back and what was bought from the regional grid. Hover a slice for its figure.");
+        }
         let used: Vec<PowerPlantKind> = PowerPlantKind::ALL.into_iter().filter(|k| h.hours.iter().any(|r| r.supply_by_kind[k.index()] > 0.0) || h.days.iter().any(|d| d.supply_mwh[k.index()] > 0.0)).collect();
         heading(ui, "Supply and demand, last 72 hours");
         let hours = pane::hours(h);
@@ -503,20 +541,34 @@ pub fn transit(ui: &mut egui::Ui, p: &mut UiCtx) {
             heading(ui, "Bus lines");
             hint(ui, "Click a line to pick it: it shows on the map when the view closes. The Lines window (top bar) edits it stop by stop.");
             let fares_of = |id: nd_sim::RouteId| l.items_yesterday.iter().filter(|e| e.item == nd_sim::economy::Item::Route(id)).map(|e| e.amount).sum::<f32>();
-            pane::table(ui, "transit_lines", &["line", "stops", "buses", "riders today", "yesterday", "avg/day", "fares yesterday"], |ui| {
-                for (id, r) in &w.transit.routes {
-                    let sel = p.tools.route_sel == Some(id);
-                    if ui.selectable_label(sel, egui::RichText::new(&r.name)).clicked() {
-                        pick = Some(if sel { None } else { Some(id) });
-                    }
-                    ui.label(egui::RichText::new(format!("{}", r.stops.len())));
-                    ui.label(egui::RichText::new(format!("{}", r.buses)));
-                    ui.label(egui::RichText::new(format!("{}", r.riders_today)));
-                    ui.label(egui::RichText::new(format!("{}", days.last().map_or(0, |d| d.riders_on(id)))));
-                    ui.label(egui::RichText::new(format!("{:.0}", days.iter().map(|d| d.riders_on(id) as f32).sum::<f32>() / days.len().max(1) as f32)));
-                    ui.label(egui::RichText::new(format!("{:.0}", fares_of(id))));
-                    ui.end_row();
+            // [pt-ux] Sortable: (id, name, stops, buses, today, yesterday, avg/day, fares).
+            let rows: Vec<(nd_sim::RouteId, &str, usize, u32, u32, u32, f32, f32)> = w
+                .transit
+                .routes
+                .iter()
+                .map(|(id, r)| (id, r.name.as_str(), r.stops.len(), r.buses as u32, r.riders_today as u32, days.last().map_or(0, |d| d.riders_on(id)) as u32, days.iter().map(|d| d.riders_on(id) as f32).sum::<f32>() / days.len().max(1) as f32, fares_of(id)))
+                .collect();
+            let key = |r: &(nd_sim::RouteId, &str, usize, u32, u32, u32, f32, f32), c: usize| match c {
+                0 => SortKey::text(r.1),
+                1 => SortKey::num(r.2 as f64),
+                2 => SortKey::num(r.3),
+                3 => SortKey::num(r.4),
+                4 => SortKey::num(r.5),
+                5 => SortKey::num(r.6),
+                _ => SortKey::num(r.7),
+            };
+            pane::sortable_plain(ui, "transit_lines", &["line", "stops", "buses", "riders today", "yesterday", "avg/day", "fares yesterday"], &rows, key, |ui, r| {
+                let id = r.0;
+                let sel = p.tools.route_sel == Some(id);
+                if ui.selectable_label(sel, egui::RichText::new(r.1)).clicked() {
+                    pick = Some(if sel { None } else { Some(id) });
                 }
+                ui.label(egui::RichText::new(format!("{}", r.2)));
+                ui.label(egui::RichText::new(format!("{}", r.3)));
+                ui.label(egui::RichText::new(format!("{}", r.4)));
+                ui.label(egui::RichText::new(format!("{}", r.5)));
+                ui.label(egui::RichText::new(format!("{:.0}", r.6)));
+                ui.label(egui::RichText::new(format!("{:.0}", r.7)));
             });
         }
     }
@@ -550,28 +602,33 @@ pub fn city_land(ui: &mut egui::Ui, p: &mut UiCtx) {
         pane::line_chart(ui, &labels, &series, 100.0, &|x| format!("{x:.0}"));
         legend(ui, &series);
         heading(ui, "Lots by land use");
-        pane::table(ui, "land_lots", &["land use", "lots", "built", "vacant"], |ui| {
-            for lu in LandUse::ALL {
-                // [free-placement] City ground is out of the zones: its own row below.
-                let lots: Vec<&nd_sim::Lot> = w.lots.values().filter(|l| l.land_use == lu && !w.is_city_ground(l)).collect();
-                if lots.is_empty() {
-                    continue;
-                }
-                let built = lots.iter().filter(|l| l.building.is_some()).count();
-                ui.label(egui::RichText::new(lu.label()).color(super::theme::rgb_f(p.assets.palette.zone_color(lu))));
-                ui.label(egui::RichText::new(format!("{}", lots.len())));
-                ui.label(egui::RichText::new(format!("{built}")));
-                ui.label(egui::RichText::new(format!("{}", lots.iter().filter(|l| l.building.is_none() && l.usable()).count())));
-                ui.end_row();
+        // [pt-ux] Sortable: (label, colour, lots, built, vacant).
+        let mut rows: Vec<(&str, Color32, usize, usize, usize)> = Vec::new();
+        for lu in LandUse::ALL {
+            // [free-placement] City ground is out of the zones: its own row below.
+            let lots: Vec<&nd_sim::Lot> = w.lots.values().filter(|l| l.land_use == lu && !w.is_city_ground(l)).collect();
+            if lots.is_empty() {
+                continue;
             }
-            let city = w.lots.values().filter(|l| w.is_city_ground(l)).count();
-            if city > 0 {
-                ui.label(egui::RichText::new("City buildings").color(super::theme::rgb_f(p.assets.palette.zone_color(LandUse::Civic))));
-                ui.label(egui::RichText::new(format!("{city}")));
-                ui.label(egui::RichText::new(format!("{city}")));
-                ui.label(egui::RichText::new("0"));
-                ui.end_row();
-            }
+            let built = lots.iter().filter(|l| l.building.is_some()).count();
+            let vacant = lots.iter().filter(|l| l.building.is_none() && l.usable()).count();
+            rows.push((lu.label(), super::theme::rgb_f(p.assets.palette.zone_color(lu)), lots.len(), built, vacant));
+        }
+        let city = w.lots.values().filter(|l| w.is_city_ground(l)).count();
+        if city > 0 {
+            rows.push(("City buildings", super::theme::rgb_f(p.assets.palette.zone_color(LandUse::Civic)), city, city, 0));
+        }
+        let key = |r: &(&str, Color32, usize, usize, usize), c: usize| match c {
+            0 => SortKey::text(r.0),
+            1 => SortKey::num(r.2 as f64),
+            2 => SortKey::num(r.3 as f64),
+            _ => SortKey::num(r.4 as f64),
+        };
+        pane::sortable_plain(ui, "land_lots", &["land use", "lots", "built", "vacant"], &rows, key, |ui, r| {
+            ui.label(egui::RichText::new(r.0).color(r.1));
+            ui.label(egui::RichText::new(format!("{}", r.2)));
+            ui.label(egui::RichText::new(format!("{}", r.3)));
+            ui.label(egui::RichText::new(format!("{}", r.4)));
         });
     }
     land_figures(ui, p);

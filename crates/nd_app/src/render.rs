@@ -61,6 +61,9 @@ mod plot_hover;
 pub use plot_hover::{hover_site, site_verdict};
 mod junction_view;
 mod layers;
+/// [pt-ux] Parking, Trails and Land density layers.
+mod pt_layers;
+pub use pt_layers::{availability_color as parking_color, Mover as TrailMover};
 mod lights;
 // [review] retaining walls at corner lots over a lower side street
 mod retaining;
@@ -432,6 +435,7 @@ impl Plugin for RenderPlugin {
         app.insert_gizmo_config(layers::LoadGizmos, bevy::gizmos::config::GizmoConfig { depth_bias: -1.0, line: bevy::gizmos::config::GizmoLineConfig { width: 5.0, ..default() }, ..default() });
         app.add_systems(Update, layers::load_gizmos.in_set(SimSet::Sync).after(lift_movers));
         app.add_systems(Update, layers::danger_gizmos.in_set(SimSet::Sync).after(lift_movers));
+        app.add_plugins(pt_layers::PtLayersPlugin);
         app.add_plugins(mapview::MapViewPlugin);
         // [districts] The district layer; [tourism] visitors on foot, after
         // the citizens whose figure cache they share.

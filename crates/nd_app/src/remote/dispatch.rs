@@ -772,6 +772,7 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("sub", "the tab's sub-tab: city overview|land|districts|skyline|tourism; economy overview|cash_flow|ledger|taxes; market goods|businesses|trade; people population|inequality|concerns|social|favourites; services power|transit|emergencies; directory businesses|people (omitted: the tab's last one)"),
         ("open", "bool; omitted with a tab opens; no fields reports the view and the list of tabs"),
         ("scroll", "points from the page's top to scroll to (for screenshots of long pages)"),
+        ("sort", "{table, col, desc}: sort a page's table by column col (0-based; omitted: the given order), as clicking its heading does"),
         ("note", "the full-screen City Data view (J in the game, Esc closes); status.city_data says what it shows"),
     ] },
 ];

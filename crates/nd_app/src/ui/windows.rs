@@ -28,10 +28,12 @@ pub enum Info {
     Saves,
     Help,
     Dev,
+    /// [pt-ux] The Alerts window (ui/alerts.rs).
+    Alerts,
 }
 
 impl Info {
-    pub const ALL: [Info; 5] = [Info::Lines, Info::Land, Info::Saves, Info::Help, Info::Dev];
+    pub const ALL: [Info; 6] = [Info::Lines, Info::Land, Info::Alerts, Info::Saves, Info::Help, Info::Dev];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -40,6 +42,7 @@ impl Info {
             Info::Saves => "Saves",
             Info::Help => "Help",
             Info::Dev => "Dev",
+            Info::Alerts => "Alerts",
         }
     }
 
@@ -52,6 +55,7 @@ impl Info {
             // [identity] Room for the city name row and the grouped list.
             Info::Saves => 460.0,
             Info::Land => 380.0,
+            Info::Alerts => 420.0,
         }
     }
 
@@ -106,6 +110,7 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, info: Info) {
         Info::Saves => saves::panel(ui, p.sim, p.saves, p.flags),
         Info::Help => help_window(ui),
         Info::Dev => dev(ui, p),
+        Info::Alerts => super::alerts::body(ui, p),
     }
 }
 
