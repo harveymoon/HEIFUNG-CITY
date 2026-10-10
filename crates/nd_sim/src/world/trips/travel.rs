@@ -186,6 +186,10 @@ impl World {
             Some((pts, walk_nodes)) => {
                 if fresh {
                     self.note_footfall(id, &walk_nodes);
+                } else {
+                    // [pt-transit] The walk on from a stop or station passes
+                    // shops too (it used to count for nothing).
+                    self.add_footfall(id, &walk_nodes);
                 }
                 pts
             }
@@ -359,6 +363,19 @@ impl World {
         let lots = self.walk.lots_passed(walk_nodes);
         if let Some(c) = self.citizens.get_mut(id) {
             c.pending_footfall = lots;
+        }
+    }
+
+    /// [pt-transit] A later walk of the same journey (after a ride): its
+    /// lots join the ones already noted, each counted once.
+    pub(in crate::world) fn add_footfall(&mut self, id: CitizenId, walk_nodes: &[u32]) {
+        let lots = self.walk.lots_passed(walk_nodes);
+        if let Some(c) = self.citizens.get_mut(id) {
+            for l in lots {
+                if !c.pending_footfall.contains(&l) {
+                    c.pending_footfall.push(l);
+                }
+            }
         }
     }
 

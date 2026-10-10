@@ -577,6 +577,9 @@ impl World {
         // [pt-transit] Spacing: a bus calling less than half a headway
         // after the last one here waits a little, so the buses behind a
         // slow one do not all catch it up.
+        // Only where traffic can get past it: a bus standing longer in the
+        // only lane holds up everyone behind, ambulances too.
+        let passable = self.traffic.cars.get(car_id).map(|c| c.route[c.idx]).and_then(|l| self.traffic.net.lanes.get(l as usize)).is_some_and(|l| l.left.is_some() || l.right.is_some());
         let hold = {
             let secs = self.config.traffic_seconds_per_tick.max(0.1);
             let r = &mut self.transit.routes[bus.route];
@@ -584,7 +587,7 @@ impl World {
             let last = r.stops[stop_idx].stats.last_call;
             r.stops[stop_idx].stats.last_call = tick;
             let gap = tick.saturating_sub(last) as f32;
-            let extra = if last > 0 && !bus.to_depot && r.buses > 1 && gap < half { ((half - gap) * secs).min(transit::HOLD_MAX_SECONDS) } else { 0.0 };
+            let extra = if passable && last > 0 && !bus.to_depot && r.buses > 1 && gap < half { ((half - gap) * secs).min(transit::HOLD_MAX_SECONDS) } else { 0.0 };
             transit::DWELL_SECONDS + extra
         };
         // On to the next stop, or home.

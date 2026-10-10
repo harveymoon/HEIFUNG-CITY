@@ -52,8 +52,9 @@ pub const MAX_RELEASE_GAP: u64 = 20;
 pub const DISPATCH_RETRY: u64 = 15;
 /// [pt-transit] A bus that calls at a stop less than half a headway after
 /// the one before it stands up to this many extra seconds, so buses on a
-/// line spread out instead of bunching.
-pub const HOLD_MAX_SECONDS: f32 = 60.0;
+/// line spread out instead of bunching (only where other traffic can pass
+/// it).
+pub const HOLD_MAX_SECONDS: f32 = 45.0;
 /// [pt-transit] A leg whose drive is longer than this many times the
 /// distance between its stops, plus [`LONG_WAY_SLACK`] metres, is flagged
 /// as going the long way round (a one-way street, a stop on the far kerb).

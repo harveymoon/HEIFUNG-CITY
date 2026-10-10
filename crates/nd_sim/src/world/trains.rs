@@ -288,6 +288,8 @@ impl World {
             Some((pts, nodes)) => {
                 if count {
                     self.note_footfall(id, &nodes);
+                } else {
+                    self.add_footfall(id, &nodes);
                 }
                 pts
             }
