@@ -335,14 +335,18 @@ pub fn pie(ui: &mut egui::Ui, title: &str, slices: &[(String, f32, Color32)], ra
             for (i, s) in angles.iter().enumerate() {
                 let Some((a0, a1)) = *s else { continue };
                 let r = if hover == Some(i) { radius + 3.0 } else { radius };
-                // A fan of thin triangles: a slice over half the pie is not convex.
-                let steps = ((a1 - a0) / 0.05).ceil().max(1.0) as usize;
-                for k in 0..steps {
-                    let t0 = a0 + (a1 - a0) * k as f32 / steps as f32;
-                    let t1 = a0 + (a1 - a0) * (k + 1) as f32 / steps as f32;
-                    let p0 = c + egui::vec2(t0.sin(), -t0.cos()) * r;
-                    let p1 = c + egui::vec2(t1.sin(), -t1.cos()) * r;
-                    painter.add(egui::Shape::convex_polygon(vec![c, p0, p1], slices[i].2, Stroke::new(0.6, slices[i].2)));
+                // One convex polygon per half at most (a slice over half the
+                // pie is not convex): no seams inside a slice.
+                let halves = if a1 - a0 > std::f32::consts::PI { 2 } else { 1 };
+                for h in 0..halves {
+                    let (b0, b1) = (a0 + (a1 - a0) * h as f32 / halves as f32, a0 + (a1 - a0) * (h + 1) as f32 / halves as f32);
+                    let steps = ((b1 - b0) / 0.05).ceil().max(1.0) as usize;
+                    let mut pts = vec![c];
+                    for k in 0..=steps {
+                        let t = b0 + (b1 - b0) * k as f32 / steps as f32;
+                        pts.push(c + egui::vec2(t.sin(), -t.cos()) * r);
+                    }
+                    painter.add(egui::Shape::convex_polygon(pts, slices[i].2, Stroke::NONE));
                 }
             }
             // Thin dark edges between the slices.

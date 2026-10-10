@@ -26,10 +26,10 @@ use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use nd_procgen::overlay::{heat_color, traffic_color, HeatGrid};
+use nd_procgen::overlay::{heat_color, traffic_color};
 use nd_sim::{Activity, Vec2 as SVec2, World};
 
-use super::{despawn_all, focus::FocusKeep, Overlays};
+use super::{focus::FocusKeep, Overlays};
 use crate::sim::{Sim, SimSet};
 
 pub(super) struct PtLayersPlugin;
@@ -37,7 +37,7 @@ pub(super) struct PtLayersPlugin;
 impl Plugin for PtLayersPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Trails>()
-            .add_systems(Update, (parking_gizmos, sync_trails, sync_density).in_set(SimSet::Sync).after(super::lift_movers))
+            .add_systems(Update, (parking_gizmos, sync_trails, density_gizmos).in_set(SimSet::Sync).after(super::lift_movers))
             .add_systems(bevy_egui::EguiPrimaryContextPass, parking_labels.after(crate::ui::side_panel));
     }
 }
@@ -48,7 +48,7 @@ impl Plugin for PtLayersPlugin {
 /// the streets this close, less the farther.
 pub const PARK_WALK: f32 = 220.0;
 /// Free spaces at which a street reads as fully green.
-pub const PARK_PLENTY: f32 = 24.0;
+pub const PARK_PLENTY: f32 = 12.0;
 
 /// A public parking lot (a parking business or a city lot) that is open.
 fn public_lot(w: &World, id: nd_sim::BuildingId, b: &nd_sim::Building) -> bool {
@@ -402,51 +402,40 @@ pub fn floor_area_ratio(footprint: f32, floors: f32, plot: f32) -> f32 {
     (footprint * floors.max(0.0) / plot.max(1.0) / 8.0).clamp(0.0, 1.0)
 }
 
-#[derive(Component)]
-pub(super) struct DensityTag;
-
-/// The Land density layer: a heat map of [`plot_density`], rebuilt every
-/// few seconds while it is on.
-fn sync_density(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mats: Res<super::Materials>, sim: Res<Sim>, overlays: Res<Overlays>, time: Res<Time>, mut at: Local<Option<f32>>, q: Query<Entity, With<DensityTag>>) {
-    if !overlays.density {
-        if at.take().is_some() {
-            despawn_all(&mut commands, &q);
-        }
+/// The Land density layer: every built plot outlined in its density's
+/// colour over everything (the ground wash would hide under the buildings),
+/// over a dimmed city (`focus::Focus::Density`); rebuilt every few seconds.
+fn density_gizmos(sim: Res<Sim>, overlays: Res<Overlays>, lighting: Res<super::Lighting>, time: Res<Time>, mut cache: Local<Option<(f32, Vec<(Vec<Vec3>, Color)>)>>, mut gizmos: Gizmos<super::layers::LoadGizmos>) {
+    if lighting.heat || !overlays.density {
+        *cache = None;
         return;
     }
     let now = time.elapsed_secs();
-    if at.is_some_and(|t| now - t < 4.0) && !sim.full_rebuild {
-        return;
+    if cache.as_ref().is_none_or(|(at, _)| now - at >= 4.0) || sim.full_rebuild {
+        let w = &sim.world;
+        let mut out = Vec::new();
+        for l in w.lots.values() {
+            let Some(d) = plot_density(w, l) else { continue };
+            let c = heat_color(d.max(0.02));
+            // Pulled in a little so neighbours' outlines do not overlap.
+            let pts: Vec<Vec3> = l
+                .polygon
+                .iter()
+                .chain(l.polygon.first())
+                .map(|p| {
+                    let q = *p + (l.center - *p).normalize_or_zero() * 1.2;
+                    Vec3::new(q.x, w.surface_height(q) + 0.8, q.y)
+                })
+                .collect();
+            out.push((pts, Color::linear_rgb(c[0] * 1.8, c[1] * 1.8, c[2] * 1.8)));
+        }
+        *cache = Some((now, out));
     }
-    *at = Some(now);
-    despawn_all(&mut commands, &q);
-    let w = &sim.world;
-    let mut lo = SVec2::splat(f32::MAX);
-    let mut hi = SVec2::splat(f32::MIN);
-    for l in w.lots.values() {
-        lo = lo.min(l.center);
-        hi = hi.max(l.center);
-    }
-    if lo.x > hi.x {
-        return;
-    }
-    let mut g = HeatGrid::covering(lo - SVec2::splat(60.0), hi + SVec2::splat(60.0), 12.0, 30_000);
-    for l in w.lots.values() {
-        if let Some(d) = plot_density(w, l) {
-            g.splat_radius(l.center, 16.0, d);
+    if let Some((_, v)) = cache.as_ref() {
+        for (pts, c) in v {
+            gizmos.linestrip(pts.iter().copied(), *c);
         }
     }
-    g.blur();
-    let mut m = g.mesh(g.max().max(0.15), 0.62, heat_color, |_| 0.0);
-    if !w.landscape.is_flat() {
-        for p in &mut m.positions {
-            p[1] += w.surface_height(SVec2::new(p[0], p[2]));
-        }
-    }
-    if m.is_empty() {
-        return;
-    }
-    commands.spawn((Mesh3d(meshes.add(super::to_mesh(&m, false))), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, DensityTag));
 }
 
 #[cfg(test)]

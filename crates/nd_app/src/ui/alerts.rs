@@ -88,7 +88,7 @@ pub fn body(ui: &mut egui::Ui, p: &mut UiCtx) {
     if p.flags.log.is_empty() {
         hint(ui, "Nothing yet: news and messages land here as they pop up.");
     }
-    egui::ScrollArea::vertical().id_salt("alerts_feed").max_height(260.0).auto_shrink([false, true]).show(ui, |ui| {
+    egui::ScrollArea::vertical().id_salt("alerts_feed").max_height(300.0).auto_shrink([false, true]).show(ui, |ui| {
         for (i, l) in p.flags.log.iter().enumerate().rev().take(60) {
             let fresh = w.clock.tick.saturating_sub(l.tick) <= 60;
             ui.horizontal(|ui| {
@@ -110,6 +110,7 @@ pub fn body(ui: &mut egui::Ui, p: &mut UiCtx) {
     if problems.rows.is_empty() {
         hint(ui, "No problems: the city is running smoothly.");
     }
+    egui::ScrollArea::vertical().id_salt("alerts_problems").max_height(240.0).auto_shrink([false, true]).show(ui, |ui| {
     for pr in &problems.rows {
         ui.horizontal(|ui| {
             let (dot, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
@@ -123,6 +124,7 @@ pub fn body(ui: &mut egui::Ui, p: &mut UiCtx) {
             ui.add(egui::Label::new(egui::RichText::new(msg).color(if pr.severity >= 3 { WARN } else { IVORY })).wrap()).on_hover_text(pr.hint);
         });
     }
+    });
     ui.add_space(4.0);
     hint(ui, "Drag the window by any empty part. Hover a problem for what to do about it.");
     if let Some(at) = fly {

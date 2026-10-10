@@ -28,6 +28,8 @@ pub(super) enum Focus {
     Walk,
     /// [pt-ux] The Trails layer: the city nearly black under the streaks.
     Trails,
+    /// [pt-ux] The Land density layer: the city dimmed under the plot outlines.
+    Density,
 }
 
 impl Focus {
@@ -44,6 +46,8 @@ impl Focus {
             Some(Focus::Metro)
         } else if o.trails {
             Some(Focus::Trails)
+        } else if o.density {
+            Some(Focus::Density)
         } else if o.paths {
             Some(Focus::Walk)
         } else {
@@ -59,6 +63,7 @@ impl Focus {
             Focus::Metro => (0.07, 0.045, 0.07),
             Focus::Walk => (0.09, 0.06, 0.08),
             Focus::Trails => (0.03, 0.02, 0.03),
+            Focus::Density => (0.16, 0.1, 0.12),
         }
     }
 }

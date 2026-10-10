@@ -415,7 +415,14 @@ fn legend_parking(ui: &mut egui::Ui, cx: &LegendCtx) {
 /// [pt-ux] The Trails layer's key.
 fn legend_trails(ui: &mut egui::Ui, _: &LegendCtx) {
     use crate::render::TrailMover as M;
-    let items: Vec<(Color32, String)> = [(M::Car, "cars"), (M::Bus, "buses"), (M::Lorry, "lorries and vans"), (M::Siren, "sirens"), (M::Walker, "people on foot"), (M::Bot, "delivery robots")].into_iter().map(|(m, l)| (linear(m.color()), l.to_string())).collect();
+    let items: Vec<(Color32, String)> = [(M::Car, "cars"), (M::Bus, "buses"), (M::Lorry, "lorries and vans"), (M::Siren, "sirens"), (M::Walker, "people on foot"), (M::Bot, "delivery robots")].into_iter()
+        .map(|(m, l)| {
+            // Over 1 to bloom on the map: scaled to its brightest channel here.
+            let c = m.color();
+            let k = c[0].max(c[1]).max(c[2]).max(1.0);
+            (linear([c[0] / k, c[1] / k, c[2] / k]), l.to_string())
+        })
+        .collect();
     swatches(ui, &items, false);
     small(ui, "each streak fades out over about ten seconds");
 }

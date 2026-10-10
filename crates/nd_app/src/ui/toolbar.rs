@@ -18,8 +18,12 @@ const ICON: f32 = 26.0;
 const SUB_PANE_MAX_WIDTH: f32 = 900.0;
 
 pub fn show(ui: &mut egui::Ui, p: &mut UiCtx) {
-    sub_pane(ui, p);
-    ui.add_space(4.0);
+    // [pt-ux] The tool's sub-pane waits below City Data while it is open
+    // (the view runs down to the toolbar).
+    if !super::city_data::is_open(ui.ctx()) {
+        sub_pane(ui, p);
+        ui.add_space(4.0);
+    }
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         // Inspect, the Build button, then the other quick tools (Edit,
