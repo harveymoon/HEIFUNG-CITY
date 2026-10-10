@@ -166,6 +166,7 @@ impl World {
                 b.recompute_capacity();
             }
             n += 1;
+            self.fit_business_name(id);
             self.events.push(SimEvent::BuildingChanged(id));
         }
         Ok(n)

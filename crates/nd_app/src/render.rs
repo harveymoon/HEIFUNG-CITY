@@ -67,6 +67,8 @@ pub use pt_layers::{availability_color as parking_color, Mover as TrailMover};
 mod lights;
 // [review] retaining walls at corner lots over a lower side street
 mod retaining;
+// [pt-visual] moored boats and beach boardwalks
+mod waterside;
 /// [look] Graphics quality, camera effects (SSAO, TAA, volumetric fog,
 /// reflections of the sky) and the frame-rate throttler.
 mod look;
@@ -393,6 +395,7 @@ impl Plugin for RenderPlugin {
         // The ground and water out past the map, into the fog.
         app.init_resource::<far::FarRender>().add_systems(Update, far::sync_far.in_set(SimSet::Sync).after(sync_landscape));
         app.add_systems(Update, retaining::sync_retaining.in_set(SimSet::Sync).after(sync_landscape));
+        app.add_systems(Update, (waterside::sync_moored_boats, waterside::sync_boardwalks).in_set(SimSet::Sync).after(sync_landscape));
         // [carlife] Cars parked at the kerb, after the cars on the road.
         app.init_resource::<ParkedRender>().add_systems(Update, sync_parked_cars.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // [taxis] Cabs standing in yards, at ranks and kerbs.
@@ -421,6 +424,8 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, check_car_bodies.after(lift_movers).in_set(SimSet::Sync));
         // [rail-crossing] Level crossing gear: flashing lamps, swinging arms.
         app.add_systems(Update, crossings::sync_crossings.after(sync_trains).before(update_daylight).in_set(SimSet::Sync));
+        // [pt-visual] The crossings' red light on the road at night.
+        app.add_systems(Update, crossings::sync_crossing_lights.after(update_daylight).in_set(SimSet::Sync));
         app.add_systems(Update, sky::sync_sky.after(update_daylight).in_set(SimSet::Sync));
         // [look] Street lamps that light the road at night, wet roads in
         // the rain, and the fog's reach by climate and weather.

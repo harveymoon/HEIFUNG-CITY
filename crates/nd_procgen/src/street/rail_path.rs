@@ -8,6 +8,8 @@ pub(super) fn railway(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run:
     // Stopped at a level crossing's edge, where `level_crossing` lays the
     // rails into the road: the ballast, sleepers and rails used to run on
     // over the asphalt and the kerbs, standing 0.3 m proud of the road.
+    // [pt-visual] The same where only a footpath crosses: the track stops at
+    // the path's edges and `path_rail_crossing` lays the rails over it.
     let (t0, t1) = (crossing_reach(roads, run.start_node, points, true, RAIL_HALF_WIDTH), crossing_reach(roads, run.end_node, points, false, RAIL_HALF_WIDTH));
     let pts = if t0 == 0.0 && t1 == 0.0 { points.to_vec() } else { trim(points, t0, t1) };
     railway_track(g, pal, &pts, RAIL_HALF_WIDTH * 2.0);
@@ -61,6 +63,56 @@ pub(super) fn crossing_reach_to(roads: &RoadNetwork, node: NodeId, points: &[Vec
             (hw + 0.3 + half * d.dot(along).abs()) / sin.max(0.35)
         })
         .fold(0.0, f32::max)
+}
+
+/// [pt-visual] Where a footpath crosses the track with no street: a dark
+/// rubber crossing panel at the rails' height over the ballast and the
+/// sleepers, the rails flush in it, ramps down to the path either side and
+/// yellow tactile strips; the path's paving used to run flat across the
+/// ballast between the sleepers. The gates and lamps are the app's
+/// (`crate::crossing`).
+pub(super) fn path_rail_crossing(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, at: Vec2, paths: &[SegmentId], rails: &[SegmentId]) {
+    let Some(&rail) = rails.first() else { return };
+    let (ra, rb) = roads.segment_points(rail);
+    let rd = (ra - rb).normalize_or_zero();
+    let rn = Vec2::new(-rd.y, rd.x);
+    for &path in paths {
+        let (pa, pb) = roads.segment_points(path);
+        let pd = (pb - pa).normalize_or_zero();
+        let p_right = Vec2::new(-pd.y, pd.x);
+        let (cu, cv) = (rd.dot(p_right), rn.dot(p_right));
+        if cu.abs() <= 0.2 {
+            continue;
+        }
+        let at_lat = |lat: f32, v: f32| at + rd * ((lat - v * cv) / cu) + rn * v;
+        let hw = PATH_HALF_WIDTH + 0.1;
+        let half = RAIL_HALF_WIDTH.min(1.6);
+        // The panel stands at the rails' height over the ballast and the
+        // sleepers (the track runs on under it), the path ramping up to it.
+        const TOP: f32 = 0.35;
+        let rubber = rgba([0.07, 0.07, 0.08]);
+        let panel = [at_lat(-hw, -half), at_lat(hw, -half), at_lat(hw, half), at_lat(-hw, half)];
+        g.part(Matte).ground_polygon(&panel, TOP, rubber);
+        let v3 = |p: Vec2, y: f32| Vec3::new(p.x, y, p.y);
+        for sgn in [-1.0f32, 1.0] {
+            let (e, f) = (half * sgn, (half + 1.2) * sgn);
+            let q = [v3(at_lat(-hw, e), TOP), v3(at_lat(hw, e), TOP), v3(at_lat(hw, f), ASPHALT_Y + 0.02), v3(at_lat(-hw, f), ASPHALT_Y + 0.02)];
+            g.part(Matte).quad_facing(q, Vec3::Y, rubber);
+            // The panel's sides down to the ground.
+            for lat in [-hw, hw] {
+                let (a, b) = (at_lat(lat, -half), at_lat(lat, half));
+                let out = (at_lat(lat * 2.0, 0.0) - at_lat(0.0, 0.0)).normalize_or_zero();
+                g.part(Matte).quad_facing([v3(a, 0.0), v3(b, 0.0), v3(b, TOP), v3(a, TOP)], Vec3::new(out.x, 0.0, out.y), rubber);
+            }
+        }
+        for v in [-0.72f32, 0.72] {
+            g.part(Metal).ground_strip(&[at_lat(-hw, v), at_lat(hw, v)], 0.08, TOP + 0.02, rgba(mul(pal.steel, 0.75)));
+        }
+        // Tactile strips on the paving either side, yellow.
+        for v in [-(half + 1.7), half + 1.7] {
+            g.part(Paint).ground_strip(&[at_lat(-PATH_HALF_WIDTH, v), at_lat(PATH_HALF_WIDTH, v)], 0.4, ASPHALT_Y + 0.03, rgba([0.85, 0.7, 0.1]));
+        }
+    }
 }
 
 /// Where track crosses a street: planks between the rails over the

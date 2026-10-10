@@ -310,7 +310,23 @@ pub struct Port {
     /// or came from a save that laid the old street along its landward side.
     #[serde(default)]
     pub stub: Option<[Vec2; 2]>,
+    /// [pt-visual] A marina's moorings as the last midnight let them: berths
+    /// taken by the town's boat owners, and billionaires' superyachts
+    /// lying at its outer pontoon (`World::waterfront_daily`). `None` until
+    /// the first count (an older save): every berth drawn taken.
+    #[serde(default)]
+    pub moored: Option<Moored>,
 }
+
+/// [pt-visual] See [`Port::moored`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Moored {
+    pub berths_let: u16,
+    pub superyachts: u8,
+}
+
+/// [pt-visual] Superyachts one large marina takes at its outer pontoon.
+pub const MAX_SUPERYACHTS: u8 = 3;
 
 impl Port {
     /// [dock-access] Ships sail from it: a ferry terminal runs its boats on
@@ -413,7 +429,7 @@ impl Port {
         let root = shore.point - seaward * (back + 1.0);
         let tip = shore.point + seaward * reach;
         let berth = shore.point + seaward * (reach + if matches!(kind, PortKind::ShippingPort | PortKind::FishingPortLarge) { 9.0 } else { 5.0 }).min(if w.width.is_finite() { w.width * 0.5 } else { f32::MAX });
-        let port = Port { kind, center, along, seaward, pier: [root, tip], berth, water: w.kind, building: None, lot: None, road_connected: false, walk_connected: false, reaches_elsewhere: false, last_sailing: 0, remote: Vec::new(), sailings: 0, stub: None };
+        let port = Port { kind, center, along, seaward, pier: [root, tip], berth, water: w.kind, building: None, lot: None, road_connected: false, walk_connected: false, reaches_elsewhere: false, last_sailing: 0, remote: Vec::new(), sailings: 0, stub: None, moored: None };
         for c in port.corners().iter().chain(std::iter::once(&center)) {
             if land.is_water(*c) {
                 return Err("the shore is too ragged here: part of the dock would stand in the water".into());

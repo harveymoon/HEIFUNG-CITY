@@ -405,7 +405,12 @@ fn keep_under_streets(world: &World, cell: f32, n: usize, heights: &mut [f32]) {
             continue;
         }
         let (a, b) = roads.segment_points(sid);
-        let r = s.half_width() + reach;
+        // [pt-visual] A way held between retaining walls (`earthwork_hold`)
+        // holds only its band: the vertices past the wall stay the land the
+        // wall holds back (pulled down, they sank the grass beside it and
+        // left the wall standing proud, F11).
+        let held = nd_sim::landscape::earthwork_hold(&world.landscape, roads, &world.road_z, &world.road_inner, sid).is_some();
+        let r = if held { nd_sim::landscape::earthwork_band(s).1 } else { s.half_width() + reach };
         let (lo, hi) = (a.min(b) - Vec2::splat(r), a.max(b) + Vec2::splat(r));
         for j in index(lo.y)..=(index(hi.y) + 1).min(n - 1) {
             for i in index(lo.x)..=(index(hi.x) + 1).min(n - 1) {

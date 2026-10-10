@@ -9,6 +9,7 @@ use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use rand::seq::IndexedRandom;
 use rand::Rng;
+use nd_sim::zoning::{point_in_polygon, polygon_area};
 
 // ── the Stacks ───────────────────────────────────────────────────────────────
 //
@@ -675,31 +676,67 @@ pub fn balcony_slab(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
 // ── courtyard block ──────────────────────────────────────────────────────────
 
 pub fn courtyard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    courtyard_with(g, c, rng, false);
+}
+
+/// [pt-visual] A courtyard block; `luxe` is the high-end version a big
+/// garden-tower lot gets (F41): white plaster, tall glass, a planted roof
+/// on every wing and a pool in the garden court.
+fn courtyard_with(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, luxe: bool) {
     let f = &c.frame;
     let pal = c.palette;
     let fh = c.fh();
     let floors = (c.floors as i32).clamp(3, 8);
     let h = floors as f32 * fh;
-    let wall = mul(pick(rng, &pal.brick), 1.0 - 0.2 * c.wear);
+    let wall = if luxe { mul(pick(rng, &pal.plaster), 1.25) } else { mul(pick(rng, &pal.brick), 1.0 - 0.2 * c.wear) };
+    let skin = if luxe { Plaster } else { Brick };
     let poly = &c.poly;
-    let depth = (inradius(poly) * 0.42).clamp(5.0, 10.0);
-    let inner = offset_poly(poly, depth);
     let mut spec = WindowSpec::from_ctx(c);
     spec.spacing = 2.6;
     spec.w = 1.2;
     spec.h = 1.6;
-    // Wings along every edge. A wing is a box behind its face; where the
-    // lot narrows (a wedge, a notch) the box is shortened until its back
-    // corners are on the lot.
+    if luxe {
+        spec.w = 2.0;
+        spec.h = fh * 0.62;
+        spec.spacing = 2.8;
+        spec.sill = (fh - spec.h) * 0.4;
+        spec.ac = 0.0;
+        spec.boarded = 0.0;
+    }
+    // [pt-visual] The wings are the ring between the lot's outline and the
+    // courtyard: one quad per edge, sharing its inner corners with the next
+    // wing, so every outer and inner face has a wall behind it (F39: wings
+    // were boxes shortened on a wedge while their windows ran the whole
+    // edge, so windows floated in the air at the sharp corners). A lot too
+    // small or too twisted for a ring is one solid block.
+    let Some((inner, depth)) = courtyard_ring(poly) else {
+        extrude(g, f, skin, poly, 0.0, h, wall);
+        for face in c.faces(poly) {
+            if face.len >= 4.0 {
+                windows(g, c, rng, &face, 0.0, floors, fh, &spec);
+                grime(g, c, rng, &face, 0.0, h, 1.2);
+            }
+        }
+        cornice(g, c, poly, h - 0.3, 0.5, 0.3, Concrete, mul(c.style.trim_color, 1.2));
+        parapet(g, c, poly, h, 0.7, 0.3, skin, wall);
+        let front = c.front_face(poly);
+        entrance(g, c, rng, &front, 0.0, 2.4, 2.8);
+        if luxe {
+            green_roof(g, c, poly, h);
+        } else {
+            roof_gear(g, c, rng, poly, h, 0.8);
+        }
+        return;
+    };
+    let n = poly.len();
+    let wings: Vec<Vec<Vec2>> = (0..n).map(|i| vec![poly[i], poly[(i + 1) % n], inner[(i + 1) % n], inner[i]]).collect();
+    for wing in &wings {
+        extrude(g, f, skin, wing, 0.0, h, wall);
+    }
     for face in c.faces(poly) {
         if face.len < 4.0 {
             continue;
         }
-        let mut half = face.len * 0.5 + 0.2;
-        while half > 1.5 && !(c.inside_local(face.at(-half, -depth)) && c.inside_local(face.at(half, -depth))) {
-            half -= 0.5;
-        }
-        face.bx(g, f, Brick, 0.0, h * 0.5, -depth * 0.5, Vec3::new(half * 2.0, h, depth), wall);
         windows(g, c, rng, &face, 0.0, floors, fh, &spec);
         grime(g, c, rng, &face, 0.0, h, 1.2);
     }
@@ -715,16 +752,31 @@ pub fn courtyard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
     }
     cornice(g, c, poly, h - 0.3, 0.5, 0.3, Concrete, mul(c.style.trim_color, 1.2));
-    parapet(g, c, poly, h, 0.7, 0.3, Brick, wall);
+    parapet(g, c, poly, h, 0.7, 0.3, skin, wall);
+    // The courtyard's own parapet, the wall seen from inside.
+    let inner_rev: Vec<Vec2> = inner.iter().rev().copied().collect();
+    parapet(g, c, &inner_rev, h, 0.7, 0.3, skin, wall);
     // Courtyard garden.
     ground(g, f, Paving, &inner, 0.05, pal.paving);
     let cc = poly_center(&inner);
     let r = inradius(&inner);
-    if r > 3.0 {
+    if luxe && r > 6.0 && point_in_polygon(cc, &inner) {
+        pool(g, c, cc.x, cc.y, (r * 0.9).min(14.0), (r * 0.5).min(6.0));
+        for k in 0..6 {
+            let a = k as f32 / 6.0 * std::f32::consts::TAU + 0.3;
+            let p = cc + Vec2::new(a.cos(), a.sin()) * r * 0.75;
+            if point_in_polygon(p, &inner) && distance_to_boundary(p, &inner) > 1.5 {
+                tree_in(g, f, pal, p, 4.0, 3.0, pal.foliage);
+            }
+        }
+    } else if r > 3.0 && point_in_polygon(cc, &inner) {
         tree_in(g, f, pal, cc, 4.5, 4.0, pal.foliage);
         for k in 0..3 {
             let a = k as f32 / 3.0 * std::f32::consts::TAU;
             let p = cc + Vec2::new(a.cos(), a.sin()) * r * 0.55;
+            if !point_in_polygon(p, &inner) {
+                continue;
+            }
             lamp_post(g, f, p, 3.2, pal.lamp);
             bench_world(g, f.to_world(p.x + 0.8, p.y), f.yaw() + a, pal.wood, CHARCOAL);
         }
@@ -733,7 +785,55 @@ pub fn courtyard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let front = c.front_face(poly);
     front.bx(g, f, Matte, 0.0, 2.2, -depth * 0.5, Vec3::new(3.4, 4.4, depth + 0.3), DARK);
     front.bx(g, f, Glow, 0.0, 4.0, -depth * 0.5, Vec3::new(2.0, 0.1, 1.0), mul(pal.lamp, 0.8));
-    roof_gear(g, c, rng, poly, h, 0.8);
+    // Roof gear on the wings' roofs, not over the courtyard: the two
+    // longest wings carry it.
+    let mut by_len: Vec<usize> = (0..n).collect();
+    by_len.sort_by(|&a, &b| poly[(b + 1) % n].distance(poly[b]).total_cmp(&poly[(a + 1) % n].distance(poly[a])));
+    if luxe {
+        for wing in &wings {
+            green_roof(g, c, wing, h);
+        }
+        return;
+    }
+    for &i in by_len.iter().take(2) {
+        roof_gear(g, c, rng, &wings[i], h, 0.8);
+    }
+}
+
+/// [pt-visual] The courtyard of a courtyard block: the lot's outline offset
+/// inward by the wing depth, every vertex kept so edge `i` of the courtyard
+/// is the back of wing `i`. Shallower wings are tried before giving up;
+/// `None` when no ring fits (the courtyard would turn inside out, cross
+/// itself or leave the lot).
+pub(crate) fn courtyard_ring(poly: &[Vec2]) -> Option<(Vec<Vec2>, f32)> {
+    let n = poly.len();
+    if n < 3 {
+        return None;
+    }
+    let area = polygon_area(poly);
+    let ir = inradius(poly);
+    let depth0 = (ir * 0.42).clamp(5.0, 10.0);
+    for depth in [depth0, depth0 * 0.8, 5.0f32.min(depth0)] {
+        if depth > ir * 0.7 {
+            continue;
+        }
+        let inner = offset_edges(poly, &vec![depth; n]);
+        let a = polygon_area(&inner);
+        if a.signum() != area.signum() || a.abs() < 30.0 || a.abs() >= area.abs() {
+            continue;
+        }
+        if nd_sim::geom::self_intersects(&inner) || !inner.iter().all(|q| point_in_polygon(*q, poly) && distance_to_boundary(*q, poly) > 2.0) {
+            continue;
+        }
+        // Every wing must keep its own side of the courtyard: no wing quad
+        // may fold over (inner edge running backwards against its outer one).
+        let folded = (0..n).any(|i| (poly[(i + 1) % n] - poly[i]).dot(inner[(i + 1) % n] - inner[i]) <= 0.0);
+        if folded {
+            continue;
+        }
+        return Some((inner, depth));
+    }
+    None
 }
 
 // ── crystal towers ───────────────────────────────────────────────────────────
@@ -828,6 +928,12 @@ pub fn crystal(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
 // ── garden tower ─────────────────────────────────────────────────────────────
 
 pub fn garden_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    // [pt-visual] A big lot with few floors is a garden courtyard, not a
+    // squat terraced pile with a tree on its roof (F41).
+    if c.floors < 7 && inradius(&c.poly) > 11.0 && courtyard_ring(&c.poly).is_some() {
+        courtyard_with(g, c, rng, true);
+        return;
+    }
     let f = &c.frame;
     let pal = c.palette;
     let fh = c.fh();

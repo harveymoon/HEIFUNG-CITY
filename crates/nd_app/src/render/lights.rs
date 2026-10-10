@@ -247,7 +247,13 @@ pub(super) fn update_window_lights(
     if *last == Some(key) && !sim.full_rebuild {
         return;
     }
-    let first = last.is_none() || sim.full_rebuild;
+    // [pt-visual] A jump in time (a long remote `step`, a fast-forward that
+    // skips frames) or back in it (a new city from `generate_city` or New
+    // game, whose clock starts again) snaps every building to its share:
+    // the lights eased one turn per frame, so after a big step a new city's
+    // towers stayed fully lit at night until a save and reload.
+    let jumped = last.is_some_and(|(s, _)| step < s || step > s + STAGGER);
+    let first = last.is_none() || sim.full_rebuild || jumped;
     *last = Some(key);
     let n = (LIGHT_TEX * LIGHT_TEX) as usize;
     // awake at home, asleep at home, staff in
