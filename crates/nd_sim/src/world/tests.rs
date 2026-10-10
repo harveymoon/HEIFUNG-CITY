@@ -557,10 +557,10 @@ fn trains_call_at_stations_and_yards_bring_freight() {
             let aboard = t.cargo.iter().any(|c| c.to == buyer && c.from == yard);
             if aboard {
                 aboard_seen = true;
-                // (The shop's order: another business may have ordered by
-                // rail since the train set off, and that order waits for the
-                // next one.)
-                let waiting = w.rail.orders.iter().filter(|o| o.cargo.from == yard && o.cargo.to == buyer).count();
+                // (This order of parts: the shop, or another business, may
+                // have ordered something else by rail since the train set
+                // off, and that waits for the next one.)
+                let waiting = w.rail.orders.iter().filter(|o| o.cargo.from == yard && o.cargo.to == buyer && o.cargo.resource == Resource::Parts).count();
                 assert_eq!(waiting, 0, "loaded at the edge of the map, not left waiting");
                 let m = w.freight_manifest(tid).expect("a freight train has a manifest");
                 assert!(m.aboard >= 10.0 && m.capacity >= m.aboard && m.wagons >= crate::rail::MIN_WAGONS, "{m:?}");
@@ -574,7 +574,8 @@ fn trains_call_at_stations_and_yards_bring_freight() {
             break;
         }
     }
-    assert!(freight_seen && aboard_seen && w.rail.orders_for(yard).0 == 0 && w.rail.aboard_for(yard) == 0.0, "freight train {freight_seen}, aboard {aboard_seen}, waiting {:?}", w.rail.orders_for(yard));
+    let parts_waiting = w.rail.orders.iter().filter(|o| o.cargo.from == yard && o.cargo.to == buyer && o.cargo.resource == Resource::Parts).count();
+    assert!(freight_seen && aboard_seen && parts_waiting == 0 && w.rail.aboard_for(yard) == 0.0, "freight train {freight_seen}, aboard {aboard_seen}, waiting {:?}", w.rail.orders_for(yard));
     assert!(manifest_seen, "the freight train's manifest listed the shop's parts");
     if let Some((tid, _)) = w.rail.trains.iter().find(|(_, t)| t.kind == TrainKind::Freight) {
         let m = w.freight_manifest(tid).unwrap();
