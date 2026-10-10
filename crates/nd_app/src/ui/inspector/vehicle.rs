@@ -18,7 +18,7 @@ pub(super) fn car(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, i
         let going = if bus.to_depot || bus.next_stop == usize::MAX { "heading back to the depot".to_string() } else { format!("next stop {}", bus.next_stop + 1) };
         ui.label(format!("{} passenger{}  ·  {going}  ·  {:.0} km/h{}", bus.passengers.len(), crate::ui::fmt::s(bus.passengers.len()), car.v * 3.6, if car.hold > 0.0 { "  ·  at a stop" } else { "" }));
         if ui.small_button("Open the line in the Lines window").clicked() {
-            crate::ui::Info::Lines.set_open(ui.ctx(), true);
+            crate::ui::lines::request_pick(ui.ctx(), bus.route);
         }
     } else if let Some(cargo) = &car.cargo {
         neon(ui, "Delivery truck");
