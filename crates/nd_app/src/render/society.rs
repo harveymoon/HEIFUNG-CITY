@@ -11,7 +11,7 @@
 //! camp shows only where land value is low).
 
 use super::*;
-use nd_procgen::society::{camp, rv, trash_pile};
+use nd_procgen::society::{camp, trash_pile};
 use nd_sim::homeless::SKID_ROW_LV;
 
 #[derive(Component, Clone)]
@@ -48,7 +48,7 @@ pub(super) fn sync_society(mut commands: Commands, mut meshes: ResMut<Assets<Mes
     // [pt-growth] An RV shows once it has pulled up.
     let tick = w.clock.tick;
     for r in &s.homeless.rvs {
-        (r.seed, r.camper, r.parked(tick)).hash(&mut h);
+        (r.seed, r.camper, r.abandoned.is_some(), r.parked(tick)).hash(&mut h);
     }
     for (id, bin) in &s.trash.bins {
         let step = overflow_step(bin.overflow());
@@ -75,7 +75,7 @@ pub(super) fn sync_society(mut commands: Commands, mut meshes: ResMut<Assets<Mes
         geo.append(&camp(c.pos, c.dir, out, c.tents(), c.sidewalk, w.config.seed ^ c.id as u64 * 0x9E37, pal));
     }
     for r in s.homeless.rvs.iter().filter(|r| r.parked(tick)) {
-        geo.append(&rv(r.pos, r.heading, r.camper, r.seed, pal));
+        geo.append(&nd_procgen::society::rv_kept(r.pos, r.heading, r.camper, r.seed, r.abandoned.is_some(), pal));
     }
     for (id, bin) in &s.trash.bins {
         let step = overflow_step(bin.overflow());

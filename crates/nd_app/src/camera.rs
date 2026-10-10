@@ -65,6 +65,50 @@ const BOUND: f32 = nd_sim::landscape::CAMERA_BOUND;
 #[derive(Resource, Default)]
 pub struct Cursor {
     pub ground: Option<Vec2>,
+    /// [feat/pt-ux] The pointer's ray from the eye (origin, unit
+    /// direction), for picking a tower by its walls and an aircraft in the
+    /// air.
+    pub ray: Option<(Vec3, Vec3)>,
+    /// [feat/pt-ux] How far the eye is from `ground`, for what a click may
+    /// pick from that far out (`tools::pick`).
+    pub view_dist: f32,
+}
+
+impl OrbitCamera {
+    /// Where the eye is (as `place_orbit` puts it, inside the bound).
+    pub fn eye(&self) -> Vec3 {
+        let (sy, cy) = self.yaw.sin_cos();
+        let (sp, cp) = self.pitch.sin_cos();
+        self.target + Vec3::new(sy * cp, sp, cy * cp) * self.distance
+    }
+}
+
+/// [feat/pt-ux] Where the ray from `o` along `dir` meets the ground (on a
+/// landscape, walked onto the terrain), in sim coordinates; None when it
+/// points at the sky.
+pub fn ray_ground(w: &nd_sim::World, o: Vec3, dir: Vec3) -> Option<Vec2> {
+    // [pt-ux] Under the ground (the Underground view's orbit can swing
+    // below it) the pointer meets the ground from below, looking up.
+    if dir.y.abs() < 1e-4 || (dir.y > 0.0) != (o.y < 0.0) {
+        return None;
+    }
+    let t = -o.y / dir.y;
+    let mut hit = o + dir * t;
+    // On a landscape, walk the ray onto the ground: re-intersect at the
+    // height found under the last guess until it settles.
+    if !w.landscape.is_flat() {
+        for _ in 0..6 {
+            let h = w.surface_height(Vec2::new(hit.x, hit.z));
+            let t = (h - o.y) / dir.y;
+            let next = o + dir * t;
+            let settled = next.distance(hit) < 0.2;
+            hit = next;
+            if settled {
+                break;
+            }
+        }
+    }
+    Some(Vec2::new(hit.x, hit.z))
 }
 
 /// [camera] The thing the camera is locked onto: a person, a vehicle, a
@@ -109,7 +153,7 @@ impl CameraFollow {
             return false;
         }
         match self.target {
-            Some(Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_) | Selection::Ship(_)) => true,
+            Some(Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_) | Selection::Ship(_) | Selection::Drone(_) | Selection::Rv(_)) => true,
             Some(Selection::Citizen(id)) => sim.world.citizens.get(id).is_some_and(|c| matches!(c.activity, nd_sim::Activity::Driving { .. } | nd_sim::Activity::Riding { .. } | nd_sim::Activity::Passenger { seated: true, .. })),
             _ => false,
         }
@@ -183,6 +227,9 @@ pub fn zoom_distance(sim: &Sim, sel: Selection) -> f32 {
         Selection::Metro(_) => 70.0,
         // [ferry-routes] The whole boat and some water round it.
         Selection::Ship(id) => sim.world.ports.ships.get(id).map_or(120.0, |s| (s.length() * 3.0).clamp(90.0, 240.0)),
+        // [feat/pt-ux] An aircraft from a little way off; a camper close.
+        Selection::Drone(_) => 70.0,
+        Selection::Rv(_) => 30.0,
         Selection::Building(id) => {
             let w = &sim.world;
             let r = w.buildings.get(id).and_then(|b| w.lots.get(b.lot)).map_or(30.0, |l| l.polygon.iter().map(|p| p.distance(l.center)).fold(0.0, f32::max));
@@ -266,6 +313,9 @@ pub fn thing_pose(sim: &Sim, sel: Selection) -> Option<ThingPose> {
             let (p, h) = crate::ferry_select::ship_pose(s, f);
             ThingPose { pos: p + Vec2::new(h.cos(), h.sin()) * (s.length() * 0.3), heading: Some(h), eye: nd_sim::landscape::WATER_LEVEL + 7.0 }
         }),
+        // [feat/pt-ux] In the cabin; a camper from its driver's seat.
+        Selection::Drone(id) => crate::air_select::pose(w, id, f).map(|(at, h)| ThingPose { pos: Vec2::new(at.x, at.z), heading: Some(h), eye: at.y + 1.2 }),
+        Selection::Rv(seed) => w.society.homeless.rv(seed).map(|r| ThingPose { pos: r.pos, heading: Some(r.heading), eye: ground(r.pos) + 1.8 }),
         Selection::Bot(id) => w.bots.bots.get(id).map(|b| {
             let p = if b.prev_pos.distance(b.pos) < 30.0 { b.prev_pos.lerp(b.pos, f) } else { b.pos };
             ThingPose { pos: p, heading: Some(lerp_angle(b.prev_heading, b.heading, f)), eye: ground(p) + 0.75 }
@@ -565,7 +615,7 @@ fn control_camera(
     // The zone brush and marquee erase with a right-drag: no orbit then.
     if buttons.pressed(MouseButton::Right) && !tools.captures_right_drag() {
         cam.yaw -= motion.delta.x * 0.005;
-        cam.pitch = (cam.pitch + motion.delta.y * 0.005).clamp(0.08, 1.5);
+        cam.pitch = (cam.pitch + motion.delta.y * 0.005).clamp(min_pitch(tools.depth), MAX_PITCH);
     } else if !locked && (buttons.pressed(MouseButton::Middle) || (shift && buttons.pressed(MouseButton::Left))) {
         let (s, c) = cam.yaw.sin_cos();
         let right = Vec3::new(c, 0.0, -s);
@@ -622,10 +672,35 @@ fn control_camera(
         cam.yaw -= 1.2 * dt;
     }
 
+    // [pt-ux] Back above the ground once the view leaves Underground.
+    cam.pitch = settle_pitch(cam.pitch, tools.depth, dt);
     // The orbit centre rides on the ground, eased so hills do not jolt it.
     let ground = sim.world.surface_height(Vec2::new(cam.target.x, cam.target.z));
     cam.target.y += (ground - cam.target.y) * (dt * 6.0).min(1.0);
     place_orbit(&mut cam, &mut tf);
+}
+
+/// The steepest the orbit looks down.
+const MAX_PITCH: f32 = 1.5;
+/// The lowest the orbit eye goes above ground: just over the horizon.
+const GROUND_MIN_PITCH: f32 = 0.08;
+
+/// [pt-ux] How low the orbit may swing: in the Underground view the eye
+/// may go below the ground plane and look up at the tunnels from under
+/// them; elsewhere it stays just above the horizon.
+pub(crate) fn min_pitch(depth: crate::tools::Depth) -> f32 {
+    if depth == crate::tools::Depth::Underground { -1.2 } else { GROUND_MIN_PITCH }
+}
+
+/// [pt-ux] A pitch below what the view allows (the Underground view was
+/// left with the eye under the ground) swings back up within a few frames.
+pub(crate) fn settle_pitch(pitch: f32, depth: crate::tools::Depth, dt: f32) -> f32 {
+    let lo = min_pitch(depth);
+    if pitch >= lo {
+        return pitch;
+    }
+    let next = pitch + (lo - pitch).max(0.05) * (dt * 10.0).min(1.0);
+    next.min(lo)
 }
 
 /// The camera stays over the map: target and eye within the bound. Then
@@ -757,6 +832,7 @@ fn project_cursor(
     mut cursor: ResMut<Cursor>,
 ) {
     cursor.ground = None;
+    cursor.ray = None;
     if *mode == CameraMode::Walk || flags.pointer_over_ui {
         return;
     }
@@ -765,24 +841,38 @@ fn project_cursor(
     let Some(pos) = window.cursor_position() else { return };
     let Ok(ray) = camera.viewport_to_world(gt, pos) else { return };
     let dir = ray.direction.as_vec3();
-    if dir.y >= -1e-4 {
-        return;
+    cursor.ray = Some((ray.origin, dir));
+    let Some(g) = ray_ground(&sim.world, ray.origin, dir) else { return };
+    cursor.view_dist = ray.origin.distance(Vec3::new(g.x, sim.world.surface_height(g), g.y));
+    cursor.ground = Some(g);
+}
+
+#[cfg(test)]
+mod pitch_tests {
+    use super::*;
+    use crate::tools::Depth;
+
+    #[test]
+    fn only_underground_goes_below_the_horizon() {
+        assert!(min_pitch(Depth::Underground) < 0.0);
+        assert_eq!(min_pitch(Depth::Ground), GROUND_MIN_PITCH);
+        assert_eq!(min_pitch(Depth::Sky), GROUND_MIN_PITCH);
     }
-    let t = -ray.origin.y / dir.y;
-    let mut hit = ray.origin + dir * t;
-    // On a landscape, walk the ray onto the ground: re-intersect at the
-    // height found under the last guess until it settles.
-    if !sim.world.landscape.is_flat() {
-        for _ in 0..6 {
-            let h = sim.world.surface_height(Vec2::new(hit.x, hit.z));
-            let t = (h - ray.origin.y) / dir.y;
-            let next = ray.origin + dir * t;
-            let settled = next.distance(hit) < 0.2;
-            hit = next;
-            if settled {
-                break;
-            }
+
+    #[test]
+    fn leaving_underground_swings_back_up() {
+        // Allowed underground: untouched.
+        assert_eq!(settle_pitch(-0.9, Depth::Underground, 0.016), -0.9);
+        // Above ground it rises, never past the limit, and gets there.
+        let mut p = -0.9;
+        let mut last = p;
+        for _ in 0..120 {
+            p = settle_pitch(p, Depth::Ground, 1.0 / 60.0);
+            assert!(p >= last && p <= GROUND_MIN_PITCH);
+            last = p;
         }
+        assert_eq!(p, GROUND_MIN_PITCH);
+        // A pitch already allowed stays.
+        assert_eq!(settle_pitch(0.7, Depth::Ground, 0.016), 0.7);
     }
-    cursor.ground = Some(Vec2::new(hit.x, hit.z));
 }

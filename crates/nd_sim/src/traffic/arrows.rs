@@ -149,8 +149,39 @@ impl Traffic {
     }
 
     /// Revise the default arrows of approaches the player has not set from
-    /// their recent turning counts.
+    /// their recent turning counts. [lanes] Cars whose route was planned
+    /// through a turn the new arrows no longer allow plan again from where
+    /// they are: a car routed right from a lane that has since become
+    /// left-only stood at its stop line waiting to turn right (F21).
     pub(super) fn adapt_arrows(&mut self) {
+        let version = self.net.arrows_version;
+        self.adapt_arrows_now();
+        if self.net.arrows_version != version {
+            self.replan_forbidden_turns();
+        }
+    }
+
+    /// [lanes] Every car with a turn ahead on its route that its lane's
+    /// arrows no longer allow plans afresh from where it is (keeping its
+    /// destination); with no other way it keeps its route.
+    pub fn replan_forbidden_turns(&mut self) {
+        let ids: Vec<CarId> = self
+            .cars
+            .iter()
+            .filter(|(_, c)| !c.entering && !c.in_stunt() && c.route.get(c.idx + 1..).is_some_and(|r| r.iter().any(|&l| self.net.lanes.get(l as usize).is_some_and(|x| x.is_connector() && !x.permitted))))
+            .map(|(id, _)| id)
+            .collect();
+        for id in ids {
+            // A car already inside the junction (on the connector) goes on.
+            let c = &self.cars[id];
+            if self.net.lanes[c.route[c.idx] as usize].is_connector() {
+                continue;
+            }
+            self.replan_from_here(id);
+        }
+    }
+
+    fn adapt_arrows_now(&mut self) {
         for ai in 0..self.net.approaches.len() {
             let ap = &self.net.approaches[ai];
             let total: f32 = ap.counts.iter().sum();

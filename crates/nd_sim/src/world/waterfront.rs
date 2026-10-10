@@ -96,8 +96,26 @@ impl World {
             .filter_map(|(h, hh)| hh.home.and_then(|b| self.building_lot(b)).map(|l| (h, l.center)))
             .collect();
         let mut fees_total = 0.0;
+        // [pt-visual] Each billionaire keeps a superyacht at the large
+        // marina nearest home (fictional people: the town's own elite).
+        let large: Vec<(BuildingId, Vec2)> = docks.iter().filter(|(b, k, _)| *k == PortKind::MarinaLarge && self.buildings.get(*b).and_then(|x| x.business.as_ref()).is_some_and(|z| !z.closed)).map(|(b, _, at)| (*b, *at)).collect();
+        let mut supers: std::collections::HashMap<BuildingId, u8> = std::collections::HashMap::new();
+        if !large.is_empty() {
+            for e in &self.estate.elites {
+                let home = self.citizens.get(e.citizen).and_then(|c| c.home).or(e.mansion).and_then(|b| self.building_lot(b)).map(|l| l.center);
+                let Some(home) = home else { continue };
+                if let Some((b, _)) = large.iter().min_by(|x, y| x.1.distance(home).total_cmp(&y.1.distance(home)).then(x.0.cmp(&y.0))) {
+                    let n = supers.entry(*b).or_insert(0);
+                    *n = (*n + 1).min(crate::ports::MAX_SUPERYACHTS);
+                }
+            }
+        }
+        let mut moored: Vec<(BuildingId, crate::ports::Moored)> = Vec::new();
         for (b, kind, at) in docks {
             if !kind.is_marina() || self.buildings.get(b).and_then(|x| x.business.as_ref()).is_none_or(|z| z.closed) {
+                if kind.is_marina() {
+                    moored.push((b, crate::ports::Moored::default()));
+                }
                 continue;
             }
             let berths = kind.berths() as usize;
@@ -112,6 +130,7 @@ impl World {
                 far.sort_by_key(|h| hash(slotmap::Key::data(h).as_ffi(), slotmap::Key::data(&b).as_ffi()));
                 owners.extend(far.into_iter().take(yachts).map(|h| (h, YACHT_FEE)));
             }
+            moored.push((b, crate::ports::Moored { berths_let: owners.len().min(berths) as u16, superyachts: supers.get(&b).copied().unwrap_or(0) }));
             let mut fees = 0.0;
             for (h, fee) in owners {
                 if let Some(hh) = self.households.get_mut(h) {
@@ -128,6 +147,11 @@ impl World {
             fees_total += fees;
         }
         self.scene.berth_fees_today = fees_total;
+        for p in self.ports.ports.values_mut() {
+            if let Some(m) = p.building.and_then(|b| moored.iter().find(|(x, _)| *x == b)) {
+                p.moored = Some(m.1);
+            }
+        }
     }
 
     /// Every ten minutes: pleasure boats go out by day, a few from each

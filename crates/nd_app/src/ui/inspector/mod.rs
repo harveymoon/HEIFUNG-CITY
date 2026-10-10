@@ -2,6 +2,8 @@
 //! (a selected citizen opens the person pane instead), and the read-out
 //! shared with it.
 
+mod about;
+mod air;
 mod bot;
 mod building;
 mod unit;
@@ -25,7 +27,7 @@ pub use vehicle::occupants;
 /// The inspector window on a selected building or car, on the right where
 /// the person pane opens too. Closing it deselects.
 pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
-    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_) | Selection::Ship(_)) {
+    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_) | Selection::Ship(_) | Selection::Drone(_) | Selection::Rv(_)) {
         return;
     }
     let mut open = true;
@@ -73,6 +75,9 @@ fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets: &Ga
         // [train-inspect]
         Selection::Train(_) | Selection::Metro(_) => super::train::show(ui, &sim.world, selection, assets),
         Selection::Parked(vid) => parked(ui, sim, selection, vid),
+        // [feat/pt-ux]
+        Selection::Drone(id) => air::drone(ui, &sim.world, selection, id),
+        Selection::Rv(seed) => air::rv(ui, sim, selection, seed),
         // The window opens on the kinds above only (its guard); citizens
         // get the person pane, tolls and roads their own windows.
         Selection::None | Selection::Citizen(_) | Selection::Toll(_) | Selection::Road(_) => {}

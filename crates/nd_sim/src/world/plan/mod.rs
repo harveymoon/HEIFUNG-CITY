@@ -66,6 +66,7 @@ use crate::zoning::{inner_center, join_parcels, make_lot, Parcel, ParcelKey, Par
 
 mod projects;
 mod parcels;
+pub(in crate::world) use parcels::refresh_lot_roads;
 mod project_check;
 mod rebuild;
 mod removal;
@@ -195,3 +196,5 @@ pub(super) fn shrink_about_centroid(poly: &[Vec2], factor: f32) -> Vec<Vec2> {
 
 #[cfg(test)]
 mod roundabout_tests;
+#[cfg(test)]
+mod piece_tests;

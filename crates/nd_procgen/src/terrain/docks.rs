@@ -16,6 +16,10 @@ pub struct Mooring {
     pub pos: Vec2,
     pub yaw: f32,
     pub kind: ShipKind,
+    /// [pt-visual] How the boat there looks.
+    pub look: BoatLook,
+    /// [pt-visual] Taken: an owner keeps a boat there (`Port::moored`).
+    pub present: bool,
 }
 
 /// The water side of a marina or fishing port beyond its main pier: extra
@@ -45,7 +49,7 @@ pub fn boat_size(kind: ShipKind) -> (f32, f32) {
 /// alongside a fishing port's quay and its T-head. Deterministic from the
 /// port. Other kinds of dock have none.
 pub fn moorings(port: &nd_sim::ports::Port, land: &nd_sim::landscape::Landscape) -> Vec<Mooring> {
-    dock_layout(port, land).boats
+    dock_layout(port, land).boats.into_iter().filter(|m| m.look != BoatLook::Superyacht).collect()
 }
 
 /// The decks and moorings of a waterfront dock (see [`moorings`]).
@@ -96,7 +100,7 @@ pub fn dock_layout(port: &nd_sim::ports::Port, land: &nd_sim::landscape::Landsca
                 let base = root + along * mid;
                 let p = base + across * side * (width * 0.5 + l * 0.5 + 0.4);
                 if afloat(p, across, k) {
-                    out.boats.push(Mooring { pos: p, yaw: yaw_of(-across * side), kind: k });
+                    out.boats.push(Mooring { pos: p, yaw: yaw_of(-across * side), kind: k, look: BoatLook::Sailboat, present: true });
                     // The finger beside it.
                     let fs = root + along * (mid + spacing * 0.5);
                     let a = fs + across * side * width * 0.5;
@@ -118,18 +122,33 @@ pub fn dock_layout(port: &nd_sim::ports::Port, land: &nd_sim::landscape::Landsca
             while x + l * 0.5 <= head * 0.5 && out.boats.len() < berths {
                 let p = tip + along * (width * 0.5 + b * 0.5 + 0.4) + across * x;
                 if afloat(p, across, ShipKind::Sailboat) {
-                    out.boats.push(Mooring { pos: p, yaw: yaw_of(across), kind: ShipKind::Sailboat });
+                    out.boats.push(Mooring { pos: p, yaw: yaw_of(across), kind: ShipKind::Sailboat, look: BoatLook::Sailboat, present: true });
                 }
                 x += l + 1.0;
             }
         }
+        // [pt-visual] Who keeps a boat here and what it is: the berths let
+        // at the last count, in berth order, each in its look; a large
+        // marina's superyachts at its outer pontoon.
+        let moored = port.moored.unwrap_or(nd_sim::ports::Moored { berths_let: berths as u16, superyachts: 0 });
+        let fill = (moored.berths_let as f32 / berths.max(1) as f32).clamp(0.0, 1.0);
+        for (i, m) in out.boats.iter_mut().enumerate() {
+            m.look = berth_look(port, i, m.kind, fill);
+            m.present = i < moored.berths_let as usize;
+        }
+        let (decks, mut supers) = superyacht_berths(port, land);
+        out.decks.extend(decks);
+        for (k, m) in supers.iter_mut().enumerate() {
+            m.present = k < moored.superyachts as usize;
+        }
+        out.boats.extend(supers);
     } else {
         // A quay with a T-head; the trawlers' berths are the sim's
         // (`nd_sim::fishing::quay_moorings`), so a boat out at sea leaves
         // its own berth empty.
         let head = nd_sim::fishing::quay_head(kind);
         out.decks.push((tip - across * head * 0.5, tip + across * head * 0.5, width));
-        out.boats = nd_sim::fishing::quay_moorings(port, land).into_iter().map(|(pos, yaw)| Mooring { pos, yaw, kind: ShipKind::FishingBoat }).collect();
+        out.boats = nd_sim::fishing::quay_moorings(port, land).into_iter().map(|(pos, yaw)| Mooring { pos, yaw, kind: ShipKind::FishingBoat, look: BoatLook::Yacht, present: true }).collect();
     }
     out
 }
@@ -288,4 +307,194 @@ pub fn ship_mesh(freighter: bool, palette: &Palette) -> MeshData {
         m.boxed(Vec3::new(-2.0, 4.0, 0.0), Vec3::new(len * 0.62, 0.6, beam * 0.82), 0.0, rgba([0.9, 0.25, 0.2]));
     }
     m
+}
+
+// ── [pt-visual] marina looks: boats by owner, superyachts ───────────────────
+
+/// How a moored boat looks. The berth's size class is its `Mooring::kind`
+/// (a yacht's berth or a small boat's); the look varies within it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BoatLook {
+    Sailboat,
+    /// A low open motor boat with a windscreen and twin outboards.
+    Speedboat,
+    Yacht,
+    /// Two hulls, a wide deck, a low saloon.
+    Catamaran,
+    /// A billionaire's: 60 m, four decks, a helipad, lit in neon at night.
+    Superyacht,
+}
+
+/// Length and beam of a superyacht.
+pub const SUPERYACHT: (f32, f32) = (60.0, 11.0);
+
+fn mix_look(a: u64, b: u64) -> u64 {
+    let mut x = a.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+    x ^= x >> 31;
+    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x ^ (x >> 29)
+}
+
+/// The look of berth `i` of a marina, by its place and how full the
+/// marina is: the fuller (the richer the town round it), the more of the
+/// small berths take a speedboat and the yacht berths a catamaran.
+pub fn berth_look(port: &nd_sim::ports::Port, i: usize, kind: ShipKind, fill: f32) -> BoatLook {
+    let h = mix_look((port.center.x.to_bits() as u64) << 32 | port.center.y.to_bits() as u64, i as u64);
+    let roll = (h % 1000) as f32 / 1000.0;
+    match kind {
+        ShipKind::Yacht => {
+            if roll < 0.2 + 0.25 * fill {
+                BoatLook::Catamaran
+            } else {
+                BoatLook::Yacht
+            }
+        }
+        _ => {
+            if roll < 0.15 + 0.35 * fill {
+                BoatLook::Speedboat
+            } else {
+                BoatLook::Sailboat
+            }
+        }
+    }
+}
+
+/// The meshes of a boat look, bow along +x, waterline at 0: the lit body,
+/// and its glow (navigation lights, the superyacht's neon).
+pub fn boat_look_mesh(look: BoatLook, palette: &Palette) -> (MeshData, MeshData) {
+    use glam::Vec3;
+    let mut m = MeshData::default();
+    let mut glow = MeshData::default();
+    let white = [0.92, 0.92, 0.9];
+    let glass = palette.glass_dark;
+    match look {
+        BoatLook::Sailboat => return (boat_mesh(ShipKind::Sailboat, palette), glow),
+        BoatLook::Yacht => return (boat_mesh(ShipKind::Yacht, palette), glow),
+        BoatLook::Speedboat => {
+            let (len, beam) = (8.0f32, 2.8f32);
+            hull(&mut m, len, beam, 2.6, -0.5, 0.6, [0.08, 0.12, 0.22], [0.85, 0.82, 0.76]);
+            m.boxed(Vec3::new(0.6, 0.95, 0.0), Vec3::new(0.15, 0.6, beam * 0.8), 0.0, rgba(glass));
+            m.boxed(Vec3::new(-0.8, 0.8, 0.0), Vec3::new(1.6, 0.4, beam * 0.6), 0.0, rgba([0.8, 0.3, 0.2]));
+            for s in [-0.45f32, 0.45] {
+                m.boxed(Vec3::new(-len * 0.5 - 0.3, 0.4, s), Vec3::new(0.6, 1.0, 0.4), 0.0, rgba([0.12, 0.12, 0.14]));
+            }
+            glow.boxed(Vec3::new(len * 0.5 - 1.0, 0.65, 0.0), Vec3::new(0.12, 0.12, 0.12), 0.0, rgba([2.0, 2.0, 1.8]));
+        }
+        BoatLook::Catamaran => {
+            let (len, beam) = (18.0f32, 8.0f32);
+            for s in [-1.0f32, 1.0] {
+                let mut h = MeshData::default();
+                hull(&mut h, len, 2.4, 3.0, -0.9, 1.3, white, [0.75, 0.65, 0.5]);
+                m.append_transformed(&h, Vec3::new(0.0, 0.0, s * (beam * 0.5 - 1.2)), 0.0);
+            }
+            m.boxed(Vec3::new(-1.0, 1.55, 0.0), Vec3::new(len * 0.8, 0.5, beam * 0.9), 0.0, rgba(white));
+            m.boxed(Vec3::new(-2.0, 2.6, 0.0), Vec3::new(len * 0.36, 1.6, beam * 0.75), 0.0, rgba(white));
+            m.boxed(Vec3::new(-2.0, 2.75, 0.0), Vec3::new(len * 0.365, 0.8, beam * 0.755), 0.0, rgba(glass));
+            m.boxed(Vec3::new(-3.0, 3.6, 0.0), Vec3::new(len * 0.2, 0.25, beam * 0.6), 0.0, rgba([0.85, 0.85, 0.83]));
+            glow.boxed(Vec3::new(len * 0.45, 1.9, 0.0), Vec3::new(0.15, 0.15, 0.15), 0.0, rgba([2.0, 2.0, 1.8]));
+        }
+        BoatLook::Superyacht => {
+            let (len, beam) = SUPERYACHT;
+            let hull_c = [0.06, 0.07, 0.09];
+            hull(&mut m, len, beam, beam * 1.8, -3.0, 3.2, hull_c, [0.62, 0.5, 0.36]);
+            // White superstructure in four decks stepping back from the bow,
+            // each with a band of dark glass, and a swim deck astern.
+            let decks = [(0.0f32, 0.62f32, 0.86f32), (2.7, 0.5, 0.8), (5.2, 0.36, 0.7), (7.5, 0.2, 0.55)];
+            for (k, (dy, l, b)) in decks.iter().enumerate() {
+                let y = 3.2 + dy;
+                let x = -len * 0.08 - k as f32 * 2.0;
+                m.boxed(Vec3::new(x, y + 1.25, 0.0), Vec3::new(len * l, 2.5, beam * b), 0.0, rgba(white));
+                m.boxed(Vec3::new(x, y + 1.35, 0.0), Vec3::new(len * l + 0.06, 1.1, beam * b + 0.06), 0.0, rgba(glass));
+                // A neon line under each deck's overhang.
+                glow.boxed(Vec3::new(x, y + 0.05, 0.0), Vec3::new(len * l * 0.98, 0.08, beam * b + 0.1), 0.0, rgba([0.2, 1.3, 2.2]));
+            }
+            m.boxed(Vec3::new(-len * 0.5 - 1.2, 0.5, 0.0), Vec3::new(2.4, 0.3, beam * 0.8), 0.0, rgba([0.62, 0.5, 0.36]));
+            // A helipad on the foredeck, a mast and radar dome on top.
+            let pad = Vec3::new(len * 0.28, 3.35, 0.0);
+            m.cylinder(Vec2::new(pad.x, pad.z), beam * 0.36, beam * 0.36, 3.2, 3.4, 16, rgba([0.18, 0.2, 0.22]));
+            glow.frustum(&MeshData::ngon(Vec2::new(pad.x, pad.z), beam * 0.33, 16, 0.0, 3.42), &MeshData::ngon(Vec2::new(pad.x, pad.z), beam * 0.33, 16, 0.0, 3.47), rgba([1.6, 1.4, 0.5]));
+            m.boxed(Vec3::new(-len * 0.12, 14.5, 0.0), Vec3::new(0.3, 4.0, 0.3), 0.0, rgba(white));
+            m.cylinder(Vec2::new(-len * 0.12 - 1.5, 0.0), 0.9, 0.9, 12.7, 13.6, 10, rgba(white));
+            // Underwater lights round the stern, a neon stripe on the hull.
+            glow.boxed(Vec3::new(-2.0, 1.6, 0.0), Vec3::new(len * 0.82, 0.12, beam * 1.006), 0.0, rgba([1.8, 0.2, 1.4]));
+            glow.boxed(Vec3::new(-len * 0.45, -0.25, 0.0), Vec3::new(4.0, 0.05, beam * 0.9), 0.0, rgba([0.2, 1.1, 1.8]));
+        }
+    }
+    (m, glow)
+}
+
+/// [pt-visual] The boats moored at every marina, drawn apart from the dock
+/// works so a marina filling up (or a billionaire arriving) redraws only
+/// its boats: the berths the town's owners have let (`Port::moored`), in
+/// berth order, each in its look, and a large marina's superyachts on the
+/// outer side of its T-head pontoon (`superyacht_berths`).
+pub fn moored_boats(world: &nd_sim::World, palette: &Palette) -> Geometry {
+    use glam::Vec3;
+    let mut g = Geometry::default();
+    let mut cache: Vec<(BoatLook, MeshData, MeshData)> = Vec::new();
+    let land = &world.landscape;
+    for port in world.ports.ports.values() {
+        if !port.kind.is_marina() {
+            continue;
+        }
+        let layout = dock_layout(port, land);
+        for m in layout.boats.iter().filter(|m| m.present) {
+            let i = match cache.iter().position(|c| c.0 == m.look) {
+                Some(i) => i,
+                None => {
+                    let (a, b) = boat_look_mesh(m.look, palette);
+                    cache.push((m.look, a, b));
+                    cache.len() - 1
+                }
+            };
+            let at = Vec3::new(m.pos.x, WATER_LEVEL, m.pos.y);
+            g.part(Surface::Panel).append_transformed(&cache[i].1, at, m.yaw);
+            g.part(Surface::Glow).append_transformed(&cache[i].2, at, m.yaw);
+        }
+    }
+    g
+}
+
+/// [pt-visual] Where a large marina's superyachts lie: side-to along an
+/// outer pontoon beyond the pier's tip, in water deep and wide enough.
+pub fn superyacht_berths(port: &nd_sim::ports::Port, land: &nd_sim::landscape::Landscape) -> (Vec<(Vec2, Vec2, f32)>, Vec<Mooring>) {
+    let mut decks = Vec::new();
+    let mut boats = Vec::new();
+    if port.kind != nd_sim::ports::PortKind::MarinaLarge {
+        return (decks, boats);
+    }
+    let [root, tip] = port.pier;
+    let len = root.distance(tip);
+    if len < 2.0 {
+        return (decks, boats);
+    }
+    let along = (tip - root) / len;
+    let across = Vec2::new(-along.y, along.x);
+    let (l, b) = SUPERYACHT;
+    let afloat = |p: Vec2| {
+        [p, p + across * l * 0.5, p - across * l * 0.5, p + along * b * 0.5, p - along * b * 0.5, p + along * (b * 0.5 + 6.0)].iter().all(|q| land.is_water(*q))
+    };
+    // An outer pontoon off the tip, the yachts lying along its far side.
+    let out = tip + along * 8.0;
+    let head = l + 6.0;
+    let n = nd_sim::ports::MAX_SUPERYACHTS as usize;
+    let mut placed = 0;
+    for k in 0..n {
+        let off = (k as f32 - (n as f32 - 1.0) * 0.5) * (l + 4.0);
+        let p = out + across * off + along * (b * 0.5 + 1.5);
+        if !afloat(p) {
+            continue;
+        }
+        let a = out + across * (off - head * 0.5);
+        let e = out + across * (off + head * 0.5);
+        if land.is_water(a) && land.is_water(e) {
+            decks.push((a, e, 3.0));
+        }
+        boats.push(Mooring { pos: p, yaw: across.y.atan2(across.x), kind: ShipKind::Yacht, look: BoatLook::Superyacht, present: true });
+        placed += 1;
+    }
+    if placed > 0 {
+        decks.push((tip, out, 3.0));
+    }
+    (decks, boats)
 }

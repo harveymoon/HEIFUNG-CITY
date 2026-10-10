@@ -245,7 +245,9 @@ impl ServiceKind {
     pub fn min_area(self, tier: Tier) -> f32 {
         let base = match self {
             ServiceKind::Monument => 250.0,
-            ServiceKind::Stadium => 900.0,
+            // [big-sites] A stadium wants a big footprint: several plots,
+            // joined when it is put down.
+            ServiceKind::Stadium => 2400.0,
             ServiceKind::Jail => 450.0,
             ServiceKind::Dispatch => 250.0,
             ServiceKind::TrashDepot => 500.0,

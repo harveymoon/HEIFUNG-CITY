@@ -12,18 +12,23 @@ impl World {
     /// Put a toll booth (or plaza) on the road at `p`, paid from the
     /// treasury. It sits across the whole carriageway, both directions.
     pub fn place_toll(&mut self, p: Vec2, size: TollSize) -> Result<u32, String> {
-        let (_, at, _) = tolls::site(&self.roads, p, size)?;
+        let (sid, at, _) = tolls::site(&self.roads, p, size)?;
         if let Some(b) = self.tolls.booths.iter().find(|b| b.pos.distance(at) < tolls::SPACING_M) {
             return Err(format!("too close to {} ({:.0} m); keep {:.0} m between booths", b.name, b.pos.distance(at), tolls::SPACING_M));
         }
-        if self.economy.treasury < size.cost() {
-            return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, size.label(), size.cost()));
+        // [toll-fit] Priced by the road: a kiosk for every lane.
+        let lanes = self.roads.segment(sid).lanes();
+        let cost = size.cost_for(lanes);
+        if self.economy.treasury < cost {
+            return Err(format!("the treasury has {:.0}; a {} across {lanes} lanes costs {:.0}", self.economy.treasury, size.label(), cost));
         }
-        self.economy.debit(Flow::Construction, size.cost());
+        self.economy.debit(Flow::Construction, cost);
         self.tolls.next_id = self.tolls.next_id.max(self.tolls.booths.iter().map(|b| b.id).max().unwrap_or(0)) + 1;
         let id = self.tolls.next_id;
         let name = format!("{} {}", if size == TollSize::Plaza { "Toll Plaza" } else { "Toll Gate" }, id);
-        self.tolls.booths.push(TollBooth::new(id, size, at, name));
+        let mut booth = TollBooth::new(id, size, at, name);
+        booth.paid_lanes = lanes;
+        self.tolls.booths.push(booth);
         self.apply_tolls();
         Ok(id)
     }
@@ -60,6 +65,14 @@ impl World {
                     b.segment = Some(sid);
                     b.pos = at;
                     b.dir = dir;
+                    // [toll-fit] The road was widened under it: the works pay
+                    // for the kiosks across the new lanes.
+                    let lanes = self.roads.segment(sid).lanes();
+                    if b.paid_lanes > 0 && lanes > b.paid_lanes {
+                        let more = b.size.cost_for(lanes) - b.size.cost_for(b.paid_lanes);
+                        self.economy.debit_item(Flow::Construction, more, Item::Named(format!("{} kiosks", b.name)));
+                    }
+                    b.paid_lanes = lanes;
                     keep.push(b);
                 }
                 // The road went, or no longer has room for it.
@@ -229,6 +242,34 @@ mod tests {
         let (ts, _, tp) = w.roads.nearest_where(to, |s| s.is_street()).unwrap();
         let (route, s0, s1) = w.traffic.net.find_route(fs, fp, ts, tp).expect("route");
         w.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, 0)
+    }
+
+    /// [toll-fit] One toll plaza, fitted to the road: it costs a kiosk a
+    /// lane, and widening the road under it pays for the new kiosks.
+    #[test]
+    fn a_toll_is_priced_by_its_road_and_widening_pays_for_kiosks() {
+        let mut w = flat();
+        let narrow = w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+        w.add_road(&[Vec2::new(-300.0, 200.0), Vec2::new(300.0, 200.0)], 2, 2);
+        let t0 = w.economy.treasury;
+        let a = w.place_toll(Vec2::new(0.0, 0.0), TollSize::Booth).unwrap();
+        assert!((t0 - w.economy.treasury - TollSize::Booth.cost_for(2)).abs() < 1e-3, "two lanes: {}", t0 - w.economy.treasury);
+        let t1 = w.economy.treasury;
+        w.place_toll(Vec2::new(0.0, 200.0), TollSize::Booth).unwrap();
+        assert!((t1 - w.economy.treasury - TollSize::Booth.cost_for(4)).abs() < 1e-3, "four lanes cost more");
+        assert!(TollSize::Booth.cost_for(4) > TollSize::Booth.cost_for(2));
+        let up0 = w.tolls.get(a).unwrap().upkeep_per_day();
+        // The narrow road widened to four lanes: the plaza grows with it.
+        let Some(Gesture::Road { points, curved, kind, elevation, .. }) = w.gesture(narrow) else { panic!("the road") };
+        w.set_gesture(narrow, Gesture::Road { points, lanes_fwd: 2, lanes_bwd: 2, curved, kind, elevation }, true);
+        let t2 = w.economy.treasury;
+        w.implement();
+        let b = w.tolls.get(a).expect("the booth stays on the widened road");
+        assert_eq!(b.paid_lanes, 4);
+        let paid = t2 - w.economy.treasury;
+        assert!(paid >= TollSize::Booth.cost_for(4) - TollSize::Booth.cost_for(2) - 1e-3, "the works paid for the new kiosks ({paid:.0})");
+        assert!(b.upkeep_per_day() > up0, "and their upkeep");
+        assert_eq!(TollSize::OFFERED.len(), 1, "one kind of toll on offer");
     }
 
     #[test]

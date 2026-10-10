@@ -77,6 +77,18 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
             hint(ui, &format!("{}  ·  {} floor{}  ·  {started} day {}", style.map_or("unknown style", |s| s.label()), b.floors, crate::ui::fmt::s(b.floors), fmt::day(b.built_tick)));
         }
     }
+    // [pt-walk] Cut off from the rest of the city on foot or by road.
+    for line in w.lot_link_warnings(b.lot) {
+        ui.label(egui::RichText::new(line).color(egui::Color32::from_rgb(255, 130, 80)).strong());
+    }
+    // [feat/pt-ux] What it is and what it does for the city, first.
+    if let Some((what, gives)) = super::about::about(w, id) {
+        egui::Frame::new().fill(egui::Color32::from_rgba_unmultiplied(40, 34, 20, 140)).corner_radius(4.0).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(egui::RichText::new(what).color(IVORY));
+            ui.label(egui::RichText::new(gives).small().color(egui::Color32::from_gray(190)));
+        });
+    }
     // [free-placement] The city's own: its ground is out of the zoning, and
     // the player may bulldoze it (a second click confirms).
     if w.is_city_building(id) && b.rail.is_none() && b.port.is_none() {
@@ -400,6 +412,7 @@ pub(super) fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_s
         let out = w.traffic.cars.values().filter(|c| c.bus.as_ref().is_some_and(|x| x.depot == id)).count();
         section(ui, "BUS DEPOT");
         ui.label(format!("room for {} buses, {} out on the lines, {:.0}/day", nd_sim::transit::DEPOT_CAPACITY, out, nd_sim::transit::DEPOT_UPKEEP_PER_DAY));
+        depot_lines(ui, w, id);
     }
 }
 
@@ -500,4 +513,39 @@ pub(super) fn dirt_lines(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Build
         }
     }
     clicked
+}
+
+/// [lines] F1: a depot's lines. Buses go out from the working depot with
+/// room nearest a line's first stop, so these are the lines it sends buses
+/// to now and the ones it is nearest to; each opens in the Lines window.
+fn depot_lines(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId) {
+    let depots: Vec<(nd_sim::BuildingId, nd_sim::Vec2)> = w.buildings.iter().filter(|(_, b)| b.working_depot()).filter_map(|(d, b)| w.lots.get(b.lot).map(|l| (d, l.car_point))).collect();
+    let mut rows: Vec<(nd_sim::RouteId, &nd_sim::transit::BusRoute, usize, bool)> = Vec::new();
+    for (rid, r) in &w.transit.routes {
+        let from_here = w.traffic.cars.values().filter(|c| c.bus.as_ref().is_some_and(|b| b.route == rid && b.depot == id)).count();
+        let nearest = r.stops.first().and_then(|s| depots.iter().min_by(|a, b| a.1.distance(s.pos).total_cmp(&b.1.distance(s.pos)))).is_some_and(|(d, _)| *d == id);
+        if from_here > 0 || nearest {
+            rows.push((rid, r, from_here, nearest));
+        }
+    }
+    if rows.is_empty() {
+        hint(ui, if w.transit.routes.is_empty() { "No bus lines yet: the Lines window (top bar) or the Buses tool draws one." } else { "No line runs from here: buses leave from the depot nearest each line's first stop." });
+        return;
+    }
+    ui.label(egui::RichText::new("LINES FROM HERE").small().weak());
+    for (rid, r, from_here, nearest) in rows {
+        ui.horizontal(|ui| {
+            let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+            ui.painter().circle_filled(dot.center(), 4.5, crate::ui::lines::line_color(r.color));
+            if ui.small_button(&r.name).on_hover_text("Open the line in the Lines window").clicked() {
+                crate::ui::lines::request_pick(ui.ctx(), rid);
+            }
+            let what = match (from_here, nearest) {
+                (0, _) => format!("its depot ({} buses wanted)", r.buses),
+                (k, true) => format!("{k} of its {} buses out from here", r.buses),
+                (k, false) => format!("{k} bus{} out from here (an overflow)", if k == 1 { "" } else { "es" }),
+            };
+            ui.label(egui::RichText::new(format!("{} stops · {what} · {} riders today", r.stops.len(), r.riders_today)).small());
+        });
+    }
 }

@@ -28,6 +28,8 @@ mod air;
 /// [benches] Seats on park benches.
 pub mod benches;
 mod buses;
+/// [lines] Inserting and sharing bus stops.
+pub mod bus_edit;
 mod cargo_hubs;
 #[cfg(test)]
 mod cargo_hub_tests;
@@ -76,6 +78,8 @@ pub(crate) use placement::SiteRule;
 #[cfg(test)]
 mod placement_tests;
 #[cfg(test)]
+mod stable_parcels_tests;
+#[cfg(test)]
 mod dock_access_tests;
 pub mod poses;
 /// [clarity] Origins and destinations, crews, crash sites.
@@ -90,7 +94,7 @@ mod ped_highway_tests;
 mod pillars;
 pub use pillars::deck_half_width;
 mod junctions;
-pub use junctions::{ApproachView, CrossingView, IntersectionView, PhaseView};
+pub use junctions::{ApproachView, CrossingView, IntersectionView, LaneView, MoveView, PhaseView};
 mod riders;
 mod places;
 #[cfg(test)]
@@ -134,6 +138,9 @@ mod parking_tests;
 mod edge_tests;
 #[cfg(test)]
 mod concerns_tests;
+pub mod connectivity;
+#[cfg(test)]
+mod connectivity_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -414,6 +421,11 @@ pub struct World {
     /// roads and rebuilt with them.
     #[serde(skip)]
     pub parcels: crate::zoning::ParcelMap,
+    /// [stable-parcels] The parcels as last cut, and what from: a rebuild
+    /// recuts only the land near roads that changed (`zoning::recut`).
+    /// Saved as outlines; a save from before cuts them afresh on load.
+    #[serde(default)]
+    pub(crate) parcel_cut: crate::zoning::ParcelCut,
     /// Land use of each parcel under the effective plan (`planned_zoning`).
     #[serde(skip)]
     planned: Vec<Option<LandUse>>,
@@ -472,6 +484,10 @@ pub struct World {
     /// lorry can get (a footpath joins walkers, not drivers).
     #[serde(skip)]
     drive_component: Vec<u32>,
+    /// [pt-walk] Stranded areas, failed trips and their alerts
+    /// (`world/connectivity.rs`).
+    #[serde(default)]
+    pub connectivity: connectivity::Connectivity,
     /// Late mind answers (`MindProvider::poll`) for citizens who were
     /// travelling when they came, with the tick they came: acted on at the
     /// citizen's next decision (`step_citizens`) if still fresh. Not saved:
@@ -724,6 +740,7 @@ impl World {
             next_project: 1,
             plan_warnings: Vec::new(),
             parcels: crate::zoning::ParcelMap::default(),
+            parcel_cut: Default::default(),
             planned: Vec::new(),
             parcel_lots: true,
             next_gesture: 1,
@@ -751,6 +768,7 @@ impl World {
             next_seed: 1,
             road_component: Vec::new(),
             drive_component: Vec::new(),
+            connectivity: Default::default(),
             stations: Vec::new(),
             yards: Vec::new(),
             halts: Vec::new(),

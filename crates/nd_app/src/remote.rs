@@ -64,6 +64,8 @@ mod ferry;
 /// [camera] `follow`, `zoom_to`, `gift`; delivery robots' detail.
 mod follow;
 mod grounds;
+/// [pt-walk] `connectivity`: stranded areas, failed trips, their alerts.
+mod connectivity;
 mod history;
 /// [identity] `city_name` and `game_history`.
 mod identity;
@@ -78,6 +80,8 @@ mod places;
 /// [land] Owners, prices, merged plots, pressure and the super-elite.
 mod property;
 mod report;
+/// [pt-ux] The city's alerts, for the Alerts window.
+pub use report::{alerts as city_alerts, Alert as CityAlert};
 /// [road-inspect] A street piece in full for `inspect {road}`.
 mod road;
 /// [waterfront] Waterfront lots, public beaches and private jetties.

@@ -32,6 +32,31 @@ pub struct ApproachView {
     pub left_possible: bool,
     /// Cars queued on its lanes.
     pub queued: usize,
+    /// [pt-ux] Its arriving lanes, leftmost first (as `arrows`): where each
+    /// meets the junction and the moves out of it, for the editor's
+    /// on-road arrows.
+    pub lanes: Vec<LaneView>,
+}
+
+/// [pt-ux] One lane arriving at a junction.
+#[derive(Clone, Debug)]
+pub struct LaneView {
+    /// Its stop line (the lane's end).
+    pub end: Vec2,
+    /// Unit direction of travel there.
+    pub dir: Vec2,
+    /// Every move the lane network has out of it.
+    pub moves: Vec<MoveView>,
+}
+
+/// [pt-ux] A move from a lane through the junction: its arrow bit
+/// (`LEFT`, `STRAIGHT`, `RIGHT`), whether the lane's arrows allow it, and
+/// the way it drives (through the junction and a little into the exit).
+#[derive(Clone, Debug)]
+pub struct MoveView {
+    pub bit: u8,
+    pub permitted: bool,
+    pub path: Vec<Vec2>,
 }
 
 /// One signal phase: the approaches (indices into `approaches`) that share
@@ -235,6 +260,7 @@ impl World {
                     no_left: rule.left_forbidden(dir),
                     left_possible,
                     queued: ap.map_or(0, |a| a.lanes.iter().map(|&l| net.lanes[l as usize].cars.len()).sum()),
+                    lanes: ap.map(|a| a.lanes.iter().map(|&l| lane_view(net, l)).collect()).unwrap_or_default(),
                 }
             })
             .collect();
@@ -286,17 +312,14 @@ impl World {
             _ => {}
         }
         // Two footbridges may not stand in each other's way (at a corner
-        // where two arms' stairs would meet).
+        // where two arms' stairs would meet). [pt-walk] Ends that meet at a
+        // corner are joined by a deck instead (`walk::CORNER_JOIN`), the
+        // new bridge's end without stairs there: only what stands clear
+        // of such a corner must keep its distance.
         if upgrade == CrossingUpgrade::Footbridge {
             if let Some((top, foot)) = self.walk.footbridge_shape(k, &self.roads) {
-                let mine = [(top[0], top[1]), (top[0], foot[0]), (top[1], foot[1])];
-                let clear = crate::junctions::FOOTBRIDGE_WIDTH + 0.5;
-                for f in self.walk.footbridges.iter().filter(|f| f.crossing != k) {
-                    let theirs = [(f.top[0], f.top[1]), (f.top[0], f.foot[0]), (f.top[1], f.foot[1])];
-                    let close = mine.iter().any(|&(a, b)| theirs.iter().any(|&(c, d)| crate::geom::segment_distance_between(a, b, c, d) < clear));
-                    if close {
-                        return Err("it would stand in the way of the footbridge next to it".into());
-                    }
+                if let Some(e) = self.footbridge_clash(k, top, foot) {
+                    return Err(e);
                 }
             }
         }
@@ -313,6 +336,63 @@ impl World {
         self.refresh_crossings_now();
         self.events.push(SimEvent::RoadsChanged);
         Ok(())
+    }
+
+    /// [pt-walk] Would a footbridge with walkway `top` and stair feet `foot`
+    /// over crossing `k` stand in the way of another? Ends within
+    /// `CORNER_JOIN` of another's end join it (no stairs there), and the
+    /// ground round such a corner is shared, so it is not counted.
+    fn footbridge_clash(&self, k: u32, top: [Vec2; 2], foot: [Vec2; 2]) -> Option<String> {
+        use crate::walk::CORNER_JOIN;
+        let clear = crate::junctions::FOOTBRIDGE_WIDTH + 0.5;
+        let others: Vec<&crate::walk::Footbridge> = self.walk.footbridges.iter().filter(|f| f.crossing != k).collect();
+        // My ends that join another's, and the corners they make.
+        let mut corners: Vec<Vec2> = Vec::new();
+        let mut joined = [false; 2];
+        for i in 0..2 {
+            if let Some(q) = others.iter().flat_map(|f| f.top).filter(|q| q.distance(top[i]) < CORNER_JOIN).min_by(|a, b| a.distance(top[i]).total_cmp(&b.distance(top[i]))) {
+                joined[i] = true;
+                corners.push((q + top[i]) * 0.5);
+            }
+        }
+        for f in &others {
+            for i in 0..2 {
+                for j in 0..2 {
+                    if f.joined[j] && f.top[j].distance(top[i]) < CORNER_JOIN * 2.0 {
+                        corners.push(f.top[j]);
+                    }
+                }
+            }
+        }
+        let mut mine = vec![(top[0], top[1])];
+        for i in 0..2 {
+            if !joined[i] {
+                mine.push((top[i], foot[i]));
+            }
+        }
+        let shared = |p: Vec2| corners.iter().any(|c| c.distance(p) < CORNER_JOIN * 0.5 + clear);
+        for f in others {
+            let mut theirs = vec![(f.top[0], f.top[1])];
+            for j in 0..2 {
+                if !f.joined[j] {
+                    theirs.push((f.top[j], f.foot[j]));
+                }
+            }
+            // Sample my pieces every half metre, away from shared corners.
+            for &(a, b) in &mine {
+                let n = (a.distance(b) / 0.5).ceil().max(1.0) as usize;
+                for s in 0..=n {
+                    let p = a.lerp(b, s as f32 / n as f32);
+                    if shared(p) {
+                        continue;
+                    }
+                    if theirs.iter().any(|&(c, d)| crate::geom::project_on_segment(p, c, d).1.distance(p) < clear) {
+                        return Some("it would stand in the way of the footbridge next to it".into());
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Dev: send a citizen out on foot from `from` (default: where they
@@ -401,4 +481,34 @@ impl World {
             _ => 0.0,
         }
     }
+}
+
+/// [pt-ux] Lane `l`'s end and its moves, for the editor.
+fn lane_view(net: &crate::traffic::LaneNetwork, l: crate::traffic::LaneId) -> LaneView {
+    let lane = &net.lanes[l as usize];
+    let n = lane.points.len();
+    let end = lane.points.last().copied().unwrap_or_default();
+    let dir = if n >= 2 { (lane.points[n - 1] - lane.points[n - 2]).normalize_or_zero() } else { Vec2::ZERO };
+    let moves = lane
+        .next
+        .iter()
+        .map(|&c| {
+            let con = &net.lanes[c as usize];
+            let mut path = con.points.clone();
+            // A few metres into the street it leads to, for the direction.
+            if let Some(&out) = con.next.first() {
+                let exit = &net.lanes[out as usize];
+                let mut run = 0.0;
+                for w in exit.points.windows(2) {
+                    path.push(w[1]);
+                    run += w[0].distance(w[1]);
+                    if run > 8.0 {
+                        break;
+                    }
+                }
+            }
+            MoveView { bit: crate::traffic::turn_bit(con.turn), permitted: con.permitted, path }
+        })
+        .collect();
+    LaneView { end, dir, moves }
 }

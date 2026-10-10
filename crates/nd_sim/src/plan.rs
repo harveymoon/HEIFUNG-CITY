@@ -654,6 +654,123 @@ pub fn preview(master: &Plan, project: &Project) -> PlanPreview {
     out
 }
 
+/// [pt-ux] Pieces shorter than this left by [`Gesture::cut_out`] go too.
+pub const CUT_MIN_PIECE: f32 = 1.0;
+
+/// How far along `pts` (metres) the point nearest `p` lies.
+pub fn arc_of(pts: &[Vec2], p: Vec2) -> f32 {
+    let mut best = (f32::INFINITY, 0.0f32);
+    let mut run = 0.0f32;
+    for w in pts.windows(2) {
+        let len = w[0].distance(w[1]);
+        let (t, q) = crate::geom::project_on_segment(p, w[0], w[1]);
+        let d = q.distance(p);
+        if d < best.0 {
+            best = (d, run + t * len);
+        }
+        run += len;
+    }
+    best.1
+}
+
+/// The point and level `s` metres along `pts`.
+fn at_arc(pts: &[Vec2], levels: &[f32], s: f32) -> (Vec2, f32) {
+    let lv = |i: usize| levels.get(i).copied().unwrap_or(0.0);
+    let mut run = 0.0f32;
+    for (i, w) in pts.windows(2).enumerate() {
+        let len = w[0].distance(w[1]);
+        if run + len >= s && len > 0.0 {
+            let t = ((s - run) / len).clamp(0.0, 1.0);
+            return (w[0].lerp(w[1], t), lv(i) + (lv(i + 1) - lv(i)) * t);
+        }
+        run += len;
+    }
+    (pts.last().copied().unwrap_or(Vec2::ZERO), lv(pts.len().saturating_sub(1)))
+}
+
+/// [pt-ux] The stretch of `pts` from `s0` to `s1` metres along it.
+pub fn polyline_between(pts: &[Vec2], s0: f32, s1: f32) -> Vec<Vec2> {
+    let (s0, s1) = (s0.min(s1), s0.max(s1));
+    let mut out = vec![at_arc(pts, &[], s0).0];
+    let mut run = 0.0f32;
+    for (i, p) in pts.iter().enumerate() {
+        if i > 0 {
+            run += pts[i - 1].distance(*p);
+        }
+        if run > s0 && run < s1 {
+            out.push(*p);
+        }
+    }
+    out.push(at_arc(pts, &[], s1).0);
+    out
+}
+
+/// [pt-ux] `pts` (with a level per point) with the stretch from `s0` to
+/// `s1` metres along it taken out: what is left before and after, each
+/// with its levels; pieces under [`CUT_MIN_PIECE`] are dropped.
+pub fn cut_polyline(pts: &[Vec2], levels: &[f32], s0: f32, s1: f32) -> Vec<(Vec<Vec2>, Vec<f32>)> {
+    let (s0, s1) = (s0.min(s1), s0.max(s1));
+    let lv = |i: usize| levels.get(i).copied().unwrap_or(0.0);
+    let total: f32 = pts.windows(2).map(|w| w[0].distance(w[1])).sum();
+    let mut arcs = Vec::with_capacity(pts.len());
+    let mut run = 0.0f32;
+    for (i, p) in pts.iter().enumerate() {
+        if i > 0 {
+            run += pts[i - 1].distance(*p);
+        }
+        arcs.push(run);
+    }
+    let mut out = Vec::new();
+    if s0 >= CUT_MIN_PIECE {
+        let mut a: Vec<Vec2> = Vec::new();
+        let mut al = Vec::new();
+        for i in 0..pts.len() {
+            if arcs[i] < s0 - 0.05 {
+                a.push(pts[i]);
+                al.push(lv(i));
+            }
+        }
+        let (q, l) = at_arc(pts, levels, s0);
+        a.push(q);
+        al.push(l);
+        if a.len() >= 2 {
+            out.push((a, al));
+        }
+    }
+    if total - s1 >= CUT_MIN_PIECE {
+        let (q, l) = at_arc(pts, levels, s1);
+        let mut b = vec![q];
+        let mut bl = vec![l];
+        for i in 0..pts.len() {
+            if arcs[i] > s1 + 0.05 {
+                b.push(pts[i]);
+                bl.push(lv(i));
+            }
+        }
+        if b.len() >= 2 {
+            out.push((b, bl));
+        }
+    }
+    out
+}
+
+impl Gesture {
+    /// [pt-ux] A road with the stretch `s0`..`s1` metres along its built
+    /// polyline ([`Gesture::road_polyline`]) taken out: the roads left
+    /// (none, one or two), same kind, lanes and levels. A curved road's
+    /// pieces keep its exact built shape (the sampled spline, straight
+    /// legs), so the ground along what is left is cut the same way. A
+    /// roundabout or a zone has no pieces: nothing is left.
+    pub fn cut_out(&self, s0: f32, s1: f32) -> Vec<Gesture> {
+        let Gesture::Road { lanes_fwd, lanes_bwd, kind, .. } = self else { return Vec::new() };
+        let raised = self.is_elevated();
+        cut_polyline(&self.road_polyline(), &self.road_levels(), s0, s1)
+            .into_iter()
+            .map(|(points, levels)| Gesture::Road { points, lanes_fwd: *lanes_fwd, lanes_bwd: *lanes_bwd, curved: false, kind: *kind, elevation: if raised { levels } else { Vec::new() } })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -746,5 +863,49 @@ mod tests {
         assert!(g.road_polyline().len() > pts.len());
         assert_eq!(g.min_points(), 2);
         assert_eq!(Gesture::Zone { polygon: Vec::new(), land_use: LandUse::Park }.min_points(), 3);
+    }
+
+    fn assert_close(a: &[Vec2], b: &[Vec2]) {
+        assert!(a.len() == b.len() && a.iter().zip(b).all(|(p, q)| p.distance(*q) < 1e-3), "{a:?} != {b:?}");
+    }
+
+    #[test]
+    fn cut_out_leaves_the_road_either_side() {
+        let g = Gesture::Road { points: vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0), Vec2::new(200.0, 0.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() };
+        // The middle piece out: two roads left, ending at the cut.
+        let left = g.cut_out(60.0, 140.0);
+        assert_eq!(left.len(), 2);
+        assert_close(left[0].points(), &[Vec2::new(0.0, 0.0), Vec2::new(60.0, 0.0)]);
+        assert_close(left[1].points(), &[Vec2::new(140.0, 0.0), Vec2::new(200.0, 0.0)]);
+        // An end piece: one road, keeping the control point before the cut.
+        let left = g.cut_out(150.0, 200.0);
+        assert_eq!(left.len(), 1);
+        assert_close(left[0].points(), &[Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0), Vec2::new(150.0, 0.0)]);
+        // The whole road: nothing.
+        assert!(g.cut_out(0.0, 200.0).is_empty());
+        // The order of the ends does not matter; a cut on a control point keeps it once.
+        let left = g.cut_out(140.0, 100.0);
+        assert_close(left[0].points(), &[Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)]);
+        assert_close(left[1].points(), &[Vec2::new(140.0, 0.0), Vec2::new(200.0, 0.0)]);
+    }
+
+    #[test]
+    fn cut_out_keeps_levels_and_the_curve_shape() {
+        let g = Gesture::Road { points: vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)], lanes_fwd: 2, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: vec![0.0, 10.0] };
+        let left = g.cut_out(40.0, 60.0);
+        assert_eq!(left.len(), 2);
+        assert!((left[0].level(1) - 4.0).abs() < 1e-3 && (left[1].level(0) - 6.0).abs() < 1e-3);
+        assert!(matches!(left[1], Gesture::Road { lanes_fwd: 2, lanes_bwd: 0, .. }));
+        let curve = Gesture::Road { points: vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 40.0), Vec2::new(200.0, 0.0)], lanes_fwd: 1, lanes_bwd: 1, curved: true, kind: RoadKind::Street, elevation: Vec::new() };
+        let built = curve.road_polyline();
+        let total: f32 = built.windows(2).map(|w| w[0].distance(w[1])).sum();
+        let left = curve.cut_out(total * 0.4, total * 0.6);
+        // Every point kept lies on the built curve.
+        for g in &left {
+            for p in g.points() {
+                assert!(crate::geom::distance_to_polyline(*p, &built) < 0.01);
+            }
+        }
+        assert!((arc_of(&built, built[3]) - built[..4].windows(2).map(|w| w[0].distance(w[1])).sum::<f32>()).abs() < 1e-2);
     }
 }

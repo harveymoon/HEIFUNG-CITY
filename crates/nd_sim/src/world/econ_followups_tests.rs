@@ -149,6 +149,14 @@ fn a_move_waits_for_a_lot_then_gives_up() {
 // ── 2. parking pressure brings more parking ─────────────────────────────
 
 /// A parking business on the commercial lot nearest `p`.
+/// Every parking business within reach of `at` full at its busiest.
+fn fill_lots_near(w: &mut World, at: Vec2) {
+    let near: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.is_parking() && w.lots.get(b.lot).is_some_and(|l| l.center.distance(at) <= 220.0)).map(|(id, _)| id).collect();
+    for b in near {
+        w.buildings[b].parking_peak = w.buildings[b].parking_capacity;
+    }
+}
+
 fn parking_near(w: &mut World, p: Vec2) -> BuildingId {
     // [pt-growth] On the rescaled land value the high street is no longer
     // "dear" ground, so the town may have opened a small lot of its own
@@ -230,8 +238,9 @@ fn circling_by_full_lots_draws_a_local_to_open_another_but_not_by_empty_ones() {
     peak_all(&mut w, false);
     let vacant = lots_of(&w, LandUse::Commercial);
     assert!(!w.maybe_open_parking(&vacant), "drivers circled past free spaces");
-    // Full at its busiest: a local opens one nearby.
-    peak_all(&mut w, true);
+    // Full at its busiest: a local opens one nearby. (Every lot near the
+    // trouble: the town may have opened one of its own while it grew.)
+    fill_lots_near(&mut w, at);
     let before: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.is_parking()).map(|(id, _)| id).collect();
     let vacant = lots_of(&w, LandUse::Commercial);
     assert!(w.maybe_open_parking(&vacant), "full lots and circling drivers: another lot");
@@ -264,8 +273,8 @@ fn nobody_with_the_money_means_no_lot_unless_the_trouble_is_bad() {
     let next = lots_of(&w, LandUse::Commercial).into_iter().map(|l| w.lots[l].center).min_by(|a, b| a.distance(here).total_cmp(&b.distance(here))).unwrap();
     let at = here.lerp(next, 0.5);
     w.economy.parking_shortage_at = Some(at);
-    let _ = full;
-    peak_all(&mut w, true);
+    w.buildings[full].parking_peak = w.buildings[full].parking_capacity;
+    fill_lots_near(&mut w, at);
     for c in w.citizens.values_mut() {
         c.savings = 0.0;
     }
@@ -403,12 +412,12 @@ fn a_small_unzoned_site_may_join_the_wind_park_next_door() {
     let outline = rect(hi.x, lo.y, 12.0, 20.0_f32.min(hi.y - lo.y));
     let alone = crate::geom::polygon_area(&outline).abs();
     assert!(alone < kind.min_area());
-    let site = super::placement::PlacementSite { lot: None, parcels: Vec::new(), outline: outline.clone(), leaves_zone: None };
+    let site = super::placement::PlacementSite { lot: None, parcels: Vec::new(), outline: outline.clone(), leaves_zone: None, joined: Vec::new() };
     assert!(w.small_plant_site_joins(kind, &outline, None).is_some(), "it touches the farm");
     assert_eq!(w.site_problem(Placeable::Plant(kind), &site), None, "joining the park lets it go in");
     // The same scrap away from any farm is refused for its size.
     let lone = rect(hi.x + 200.0, lo.y, 12.0, 20.0_f32.min(hi.y - lo.y));
-    let site = super::placement::PlacementSite { lot: None, parcels: Vec::new(), outline: lone, leaves_zone: None };
+    let site = super::placement::PlacementSite { lot: None, parcels: Vec::new(), outline: lone, leaves_zone: None, joined: Vec::new() };
     let why = w.site_problem(Placeable::Plant(kind), &site).expect("refused alone");
     assert!(why.contains("too small"), "{why}");
 }

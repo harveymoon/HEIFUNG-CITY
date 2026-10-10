@@ -36,6 +36,11 @@ pub enum Selection {
     Unit(nd_sim::UnitId),
     /// [ferry-routes] A ferry or freighter on the water (`world.ports.ships`).
     Ship(nd_sim::ports::ShipId),
+    /// [feat/pt-ux] A drone taxi or a helicopter (`world.air.drones`).
+    Drone(nd_sim::air::DroneId),
+    /// [feat/pt-ux] A camper or van at the kerb that a household lives in
+    /// (or left behind): `world.society.homeless.rvs`, by its seed.
+    Rv(u64),
 }
 
 /// [fix/review-app] What the selection should be now that the sim has
@@ -63,6 +68,8 @@ pub fn validated(sel: Selection, sim: &Sim) -> Selection {
             Some(_) => true,
         },
         Selection::Ship(id) => w.ports.ships.contains_key(id),
+        Selection::Drone(id) => w.air.drones.contains_key(id),
+        Selection::Rv(seed) => w.society.homeless.rv(seed).is_some(),
     };
     if alive { sel } else { Selection::None }
 }

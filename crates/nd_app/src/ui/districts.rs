@@ -143,22 +143,30 @@ pub fn page(ui: &mut egui::Ui, p: &mut UiCtx) {
         hint(ui, "No districts yet. Pick the District tool (9) and paint one over the map.");
     } else {
         hint(ui, "Click a district to pick it: its detail and policies show below and the District tool paints it.");
-        pane::table(ui, "district_table", &["district", "policy", "ha", "buildings (+sites)", "residents (homes)", "workers/jobs", "visitors"], |ui| {
-            for s in &stats {
-                let color = p.sim.world.districts.get(s.id).map_or(IVORY, |d| color_of(d.color));
-                let picked = p.tools.district.selected == Some(s.id);
-                if ui.selectable_label(picked, egui::RichText::new(&s.name).color(color).strong()).on_hover_text("Pick it to see its detail and edit its policies").clicked() {
-                    p.tools.district.selected = Some(s.id);
-                    p.tools.district.rename = s.name.clone();
-                }
-                ui.label(&s.policy);
-                ui.label(format!("{:.1}", s.area_m2 / 10_000.0));
-                ui.label(format!("{} (+{})", s.buildings, s.under_construction));
-                ui.label(format!("{} ({})", s.residents, s.homes));
-                ui.label(format!("{}/{}", s.workers, s.jobs));
-                ui.label(format!("{}", s.tourists_staying));
-                ui.end_row();
+        // [pt-ux] Sortable by any column.
+        let key = |s: &&nd_sim::world::DistrictStats, c: usize| match c {
+            0 => pane::SortKey::text(s.name.clone()),
+            1 => pane::SortKey::text(s.policy.clone()),
+            2 => pane::SortKey::num(s.area_m2),
+            3 => pane::SortKey::num(s.buildings as f64),
+            4 => pane::SortKey::num(s.residents as f64),
+            5 => pane::SortKey::num(s.workers as f64),
+            _ => pane::SortKey::num(s.tourists_staying as f64),
+        };
+        let rows: Vec<&nd_sim::world::DistrictStats> = stats.iter().collect();
+        pane::sortable_plain(ui, "district_table", &["district", "policy", "ha", "buildings (+sites)", "residents (homes)", "workers/jobs", "visitors"], &rows, key, |ui, s| {
+            let color = p.sim.world.districts.get(s.id).map_or(IVORY, |d| color_of(d.color));
+            let picked = p.tools.district.selected == Some(s.id);
+            if ui.selectable_label(picked, egui::RichText::new(&s.name).color(color).strong()).on_hover_text("Pick it to see its detail and edit its policies").clicked() {
+                p.tools.district.selected = Some(s.id);
+                p.tools.district.rename = s.name.clone();
             }
+            ui.label(&s.policy);
+            ui.label(format!("{:.1}", s.area_m2 / 10_000.0));
+            ui.label(format!("{} (+{})", s.buildings, s.under_construction));
+            ui.label(format!("{} ({})", s.residents, s.homes));
+            ui.label(format!("{}/{}", s.workers, s.jobs));
+            ui.label(format!("{}", s.tourists_staying));
         });
         if let Some(s) = p.tools.district.selected.and_then(|id| stats.iter().find(|s| s.id == id)) {
             heading(ui, &s.name);
@@ -216,13 +224,16 @@ pub fn tourism_page(ui: &mut egui::Ui, p: &mut UiCtx) {
     let mut top: Vec<_> = t.attractions.iter().collect();
     top.sort_by(|a, b| b.score.total_cmp(&a.score));
     if !top.is_empty() {
-        pane::table(ui, "tourism_top", &["attraction", "kind", "points"], |ui| {
-            for a in top.into_iter().take(12) {
-                ui.label(&a.name);
-                ui.label(egui::RichText::new(a.kind.label()).weak());
-                ui.label(format!("{:.1}", a.score));
-                ui.end_row();
-            }
+        top.truncate(12);
+        let key = |a: &&nd_sim::tourism::Attraction, c: usize| match c {
+            0 => pane::SortKey::text(a.name.clone()),
+            1 => pane::SortKey::text(a.kind.label()),
+            _ => pane::SortKey::num(a.score),
+        };
+        pane::sortable_plain(ui, "tourism_top", &["attraction", "kind", "points"], &top, key, |ui, a| {
+            ui.label(&a.name);
+            ui.label(egui::RichText::new(a.kind.label()).weak());
+            ui.label(format!("{:.1}", a.score));
         });
     }
     hint(ui, "Monuments, stadiums, good parks, nightlife, landmark districts (historic, neon strip, night market, tourist quarter) and the waterfront draw visitors. They need a way in and a bed: hotels open on commercial land when visitors are turned away.");

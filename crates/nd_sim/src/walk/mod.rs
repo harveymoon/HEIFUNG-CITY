@@ -38,6 +38,9 @@ const LOOP_INSET: f32 = 1.2;
 const GATE_MIN_SHARED: f32 = 4.0;
 /// How far a lot's front node may be from the pavement to connect.
 const FRONT_REACH: f32 = 14.0;
+/// [pt-walk] How far a landlocked lot with no other way out reaches for
+/// the pavement.
+const LANDLOCKED_REACH: f32 = 90.0;
 /// Cell size of the node index; pavement nodes are a lot's width apart.
 const NODE_CELL: f32 = 20.0;
 /// Route cost multipliers. Park paths are pleasant, so routes prefer them
@@ -213,6 +216,8 @@ pub struct WalkGraph {
     pub raised: Vec<(u32, u32)>,
     /// [tools] The footbridges: one per bridged crossing.
     pub footbridges: Vec<Footbridge>,
+    /// [pt-walk] Corner decks joining two footbridges' ends (their tops).
+    pub footbridge_links: Vec<[Vec2; 2]>,
     /// [tools] Level of each raised node by its exact position.
     raised_at: HashMap<(u32, u32), f32>,
     /// [park-paths] Where a player path may join the walkways of a park or
@@ -224,6 +229,11 @@ pub struct WalkGraph {
     /// shut to anyone not already inside (`route_nodes_with`). Kept by
     /// `World::refresh_closed_grounds`, not by `build`.
     pub closed: Vec<LotId>,
+    /// [pt-walk] Connected component of each node over every edge (jaywalks
+    /// and gates included), from `compute_components` once the graph is
+    /// complete (`World::build_walk_graph`); empty until then. A route
+    /// between two components is refused without a search.
+    pub comp: Vec<u32>,
 }
 
 #[cfg(test)]

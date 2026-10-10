@@ -23,7 +23,9 @@ pub fn card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
     let building = lot.building.and_then(|b| w.buildings.get(b));
     let value = w.land_value.at(lot.center);
     // [access] Walking time to parks and nightlife, and what it is worth to homes.
-    let access = w.land_value.access_at(lot.center);
+    // [pt-walk] The lot's own (its walk nodes), not its land value cell's.
+    let access = w.lot_walk_access(lot_id);
+    let access_text = w.lot_access_text(lot_id);
     // [free-placement] Under a city building the ground is out of the zoning.
     let zone = if w.is_city_ground(lot) {
         "city ground, out of the zoning".to_string()
@@ -66,7 +68,11 @@ pub fn card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
                 if lot.park.is_some() { "  ·  park" } else { "" }
             )));
             if let Some(a) = access {
-                ui.label(small(format!("{}  ·  {:+.2} for homes", a.describe(), a.value)));
+                ui.label(small(format!("{}  ·  {:+.2} for homes", access_text.clone().unwrap_or_else(|| a.describe()), a.value)));
+            }
+            // [pt-walk] Cut off from the rest of the city.
+            for line in w.lot_link_warnings(lot_id) {
+                ui.label(small(line).color(egui::Color32::from_rgb(255, 130, 80)));
             }
             // [waterfront] On the water: its frontage; a beach's state.
             if lot.shore.is_waterfront() && !lot.shore.beach {
@@ -203,4 +209,28 @@ fn show_card(ctx: &egui::Context, pointer: egui::Pos2, title: &str, lines: Vec<e
             }
         });
     });
+}
+
+/// [pt-ux] The Underground view's read-out: only what that view draws. A
+/// metro station's platform (its lines, who is waiting), else a tunnel
+/// piece; never the lots and buildings up on the surface, which the view
+/// hides.
+pub fn under_card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
+    let (Some(ground), Some(pointer)) = (cursor.ground, ctx.pointer_latest_pos()) else { return };
+    let w = &sim.world;
+    let small = |t: String| egui::RichText::new(t).small();
+    if let Some(s) = w.metro_stations().into_iter().find(|&s| w.metro_platform(s).is_some_and(|p| p.distance(ground) < nd_procgen::metro::PLATFORM_LEN * 0.5)) {
+        let name = w.buildings.get(s).map_or_else(|| "Metro station".to_string(), |b| b.name.clone());
+        let lines: Vec<&str> = w.subway.lines.values().filter(|l| l.index_of(s).is_some()).map(|l| l.name.as_str()).collect();
+        let waiting = crate::metro_ux::waiting_by_station(w).get(&s).map_or(0, |v| v.len());
+        let mut out = vec![small(if lines.is_empty() { "metro platform  ·  no line calls here yet".to_string() } else { format!("metro platform  ·  {}", lines.join(", ")) })];
+        out.push(small(format!("{waiting} waiting on the platform")));
+        show_card(ctx, pointer, &name, out);
+        return;
+    }
+    if let Some(sid) = crate::road_select::pick(w, ground, crate::tools::Depth::Underground) {
+        let seg = w.roads.segment(sid);
+        let name = w.streets.of(sid).map_or_else(|| "Tunnel".to_string(), |s| s.name.clone());
+        show_card(ctx, pointer, &name, vec![small(format!("{}  ·  {} lanes", if seg.tunnel { "tunnel" } else { "below ground" }, seg.lanes_fwd + seg.lanes_bwd))]);
+    }
 }

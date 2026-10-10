@@ -44,6 +44,7 @@ pub mod market;
 pub mod mind;
 pub mod names;
 pub mod park;
+pub mod parking_layout;
 pub mod pedestrians;
 pub mod pillars;
 /// What the Buildings tool places: the catalogue, its categories and costs.
@@ -130,7 +131,7 @@ pub use transit::{BusRoute, BusStop, RouteId, Transit, TransitStats};
 pub use rail::{Facility, FacilityId, Rail, RailFacility, RailLink, RailStats, Train, TrainId, TrainKind};
 pub use services::{BuildCategory, Incident, IncidentKind, Placeable, ServiceKind, ServiceSite, Services, ServiceStats, Unit, UnitId, UnitKind};
 pub use world::{GridAsset, PlacementSite, PlantGroup, PlantJoin, PlantPreview, PlantRow, World, WorldConfig, RIGHTING_MIN};
-pub use world::{ApproachView, Blocker, CrossingView, IntersectionView, PhaseView, ProjectCheck};
+pub use world::{ApproachView, Blocker, CrossingView, IntersectionView, LaneView, MoveView, PhaseView, ProjectCheck};
 /// [camera]
 pub use world::{Gift, Holding, GIFT_AMOUNT};
 pub use world::{TowerOrder, TowerSite};

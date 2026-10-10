@@ -408,17 +408,27 @@ pub fn datacenter(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         // Louvre bands low down.
         face.decal(g, f, Matte, 0.0, 2.2, 0.06, face.len * 0.9, 1.0, mul(panel, 0.5));
     }
-    // Roof plant: rows of chillers.
+    // Roof plant: rows of chillers. [pt-visual] A high-end data centre
+    // keeps one row of chillers along the front and covers the rest of the
+    // roof in solar panels.
+    let solar = c.tier == nd_sim::Tier::High && nd_sim::zoning::polygon_area(&hall).abs() > 400.0;
     let (lo, hi) = bounds(&offset_poly(&hall, 3.0));
-    let rows = ((hi.y - lo.y) / 6.0).floor().max(1.0) as i32;
+    let rows = if solar { 1 } else { ((hi.y - lo.y) / 6.0).floor().max(1.0) as i32 };
     let cols = ((hi.x - lo.x) / 5.0).floor().max(1.0) as i32;
     for r in 0..rows {
         for col in 0..cols {
             let p = Vec2::new(lo.x + (col as f32 + 0.5) * (hi.x - lo.x) / cols as f32, lo.y + (r as f32 + 0.5) * (hi.y - lo.y) / rows as f32);
             if nd_sim::zoning::point_in_polygon(p, &offset_poly(&hall, 2.5)) && distance_to_boundary(p, &hall) > 2.2 {
+                let p = if solar { Vec2::new(p.x, lo.y + 1.5) } else { p };
                 chiller(g, c, p, h, 4.0, 2.0, 0.0, mul(pal.steel, 0.9));
             }
         }
+    }
+    if solar {
+        let (blo, bhi) = bounds(&hall);
+        let back = [Vec2::new(blo.x, lo.y + 4.0), Vec2::new(bhi.x, lo.y + 4.0), Vec2::new(bhi.x, bhi.y), Vec2::new(blo.x, bhi.y)];
+        let roof: Vec<Vec2> = back.iter().map(|q| clamp_into(&hall, *q)).collect();
+        solar_roof(g, c, &roof, h);
     }
     let hc = poly_center(&hall);
     let roof = offset_poly(&hall, 2.0);

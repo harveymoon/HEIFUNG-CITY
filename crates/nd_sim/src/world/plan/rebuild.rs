@@ -14,7 +14,17 @@ impl World {
     }
 
     pub(in crate::world) fn rebuild_from_master(&mut self) {
-        self.plan_changed();
+        self.rebuild_from_master_with(false);
+    }
+
+    /// [stable-parcels] `rebuild_from_master`; a `trial` (the project
+    /// check's copy of the world) stops once the lots and buildings are
+    /// settled: what it asks (the structures lost, the columns' room) is
+    /// known by then, and the ground, lanes, walks and coverage after it
+    /// were most of its cost.
+    pub(in crate::world) fn rebuild_from_master_with(&mut self, trial: bool) {
+        crate::prof_scope!("rebuild");
+        crate::prof!("rb.plan_changed", self.plan_changed());
 
         // Roads.
         let mut roads = RoadNetwork::default();
@@ -89,20 +99,26 @@ impl World {
         // to the new ones. A save from before parcels were cut ahead of
         // zoning has lots of other shapes: its first rebuild moves every
         // building onto the lot that now holds it, without eminent domain.
-        let old_lots = std::mem::replace(&mut *self.lots, SlotMap::with_key());
+        // [stable-parcels] The lots stay in place while they are rebuilt:
+        // those the works do not touch keep their ids, outlines and
+        // buildings; `old_lots` is how everything was.
+        let old_lots: SlotMap<LotId, Lot> = (*self.lots).clone();
         let lenient = !self.parcel_lots;
         self.parcel_lots = true;
-        let pins: Vec<Vec<Vec2>> = old_lots.values().filter(|l| l.building.is_some_and(|b| self.is_city_building(b))).map(|l| l.polygon.clone()).collect();
+        // (Docks, stations and yards stand on lots of their footprints, made
+        // again below.)
+        let lockable = |b: BuildingId| self.is_city_building(b) && self.buildings.get(b).is_some_and(|x| x.port.is_none() && x.rail.is_none());
+        let locked: Vec<LotId> = old_lots.iter().filter(|(_, l)| l.building.is_some_and(lockable)).map(|(id, _)| id).collect();
         let parks: Vec<Vec<Vec2>> = old_lots
             .values()
             .filter(|l| l.building.and_then(|b| self.buildings.get(b)).is_some_and(|b| b.land_use == LandUse::Park))
             .map(|l| l.polygon.clone())
             .collect();
-        let pinned = self.build_lots_from_parcels(&pins, &parks);
+        let pinned = crate::prof!("rb.lots", self.build_lots_from_parcels(&locked, &parks, !lenient));
         // Lots on ground too steep to level are left as rough land.
-        self.grade_lots();
+        crate::prof!("rb.grade", self.grade_lots());
         // [waterfront] frontage on the water, and the beaches
-        self.mark_shore_lots();
+        crate::prof!("rb.shore", self.mark_shore_lots());
         // Facilities: their footprints are lots of their own, and zoned lots
         // under them give way.
         // A lot whose centre is under a footprint, or whose outline crosses
@@ -148,6 +164,25 @@ impl World {
         let mut extras: HashMap<BuildingId, Vec<LotId>> = HashMap::new();
         for (old_id, old) in old_lots.iter() {
             let Some(bid) = old.building else { continue };
+            // [stable-parcels] Still on its lot, which the works left as it
+            // was: it stays, unless a column or a deck now takes it.
+            if self.lots.get(old_id).is_some_and(|l| l.building == Some(bid)) {
+                let floors = self.buildings.get(bid).map_or(0, |b| b.floors);
+                let taken = !self.is_city_building(bid) && (pillar_taken.contains(&bid) || self.deck_cap(old_id).is_some_and(|cap| floors > cap));
+                if !taken {
+                    carried.insert(old_id, old_id);
+                    if primary_of.get(&bid).is_some_and(|p| *p != old_id) {
+                        extras.entry(bid).or_default().push(old_id);
+                    }
+                    continue;
+                }
+                self.lots[old_id].building = None;
+                if primary_of.get(&bid).is_some_and(|p| *p != old_id) {
+                    continue;
+                }
+                demolish.push((bid, old.center, true));
+                continue;
+            }
             if primary_of.get(&bid).is_some_and(|p| *p != old_id) {
                 let found = grid
                     .near(old.center, 6.0)
@@ -225,18 +260,21 @@ impl World {
         }
 
         // Everything else that names a lot by key follows it to its new key.
-        self.remap_lot_keys(&old_lots, &grid, &carried);
+        crate::prof!("rb.remap", self.remap_lot_keys(&old_lots, &grid, &carried));
         // [free-placement] City buildings' lots are the city's (an older
         // save's first rebuild switches them); city ground whose building did
         // not survive the works goes back to the plan.
         self.settle_city_ground(&pinned, false);
+        if trial {
+            return;
+        }
 
         // Road heights and the ground they are graded into; new bridges are paid for.
-        self.rebuild_ground();
+        crate::prof!("rb.ground", self.rebuild_ground());
         self.charge_bridges();
 
         if roads_changed {
-            self.carry_traffic();
+            crate::prof!("rb.traffic", self.carry_traffic());
             // Trains ran on track that may be gone or re-laid, and their stops
             // and node ids are stale either way: everyone gets off where the
             // train stands and the next headway brings fresh ones.
@@ -244,18 +282,17 @@ impl World {
             self.resnap_bus_stops();
         }
         // [carlife] Parked cars on streets that changed find a kerb again.
-        self.refresh_kerbs();
-        self.refresh_rail_links();
-        self.refresh_port_links();
-        self.rebuild_walk();
+        crate::prof!("rb.kerbs", self.refresh_kerbs());
+        crate::prof!("rb.links", { self.refresh_rail_links(); self.refresh_port_links() });
+        crate::prof!("rb.walk", self.rebuild_walk());
         // Coverage is per lot key: the old map names other lots now.
-        self.refresh_coverage();
+        crate::prof!("rb.coverage", self.refresh_coverage());
 
         self.events.push(SimEvent::RoadsChanged);
         self.events.push(SimEvent::LotsChanged);
         self.events.push(SimEvent::PlanChanged);
         // [park-paths] Paths whose park went with these works are cut back.
-        self.settle_path_links();
+        crate::prof!("rb.paths", self.settle_path_links());
     }
 
     /// Lanes for the new roads, with every vehicle carried across them
@@ -396,6 +433,7 @@ impl World {
             }
         }
         self.road_component = (0..n as u32).map(|i| find(&mut parent, i)).collect();
+        self.connectivity.mark_dirty();
     }
 
     /// Component id of a road node, if the node exists.

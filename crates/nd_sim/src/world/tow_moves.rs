@@ -34,9 +34,15 @@ pub const CONTRA_SPEED: f32 = 3.0;
 pub const UTURN_SPEED: f32 = 2.4;
 /// Metres saved before a truck turns round in the street.
 pub const UTURN_SAVING: f32 = 120.0;
+/// [rage] Anger from which a driver may turn round illegally in the street,
+/// and the metres (queues counted as `RAGE_QUEUE_M` a vehicle) it must
+/// save them.
+pub const RAGE_UTURN_ANGER: f32 = 0.6;
+pub const RAGE_UTURN_SAVING: f32 = 150.0;
+const RAGE_QUEUE_M: f32 = 25.0;
 
 /// What a truck does once its move is done.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum AfterMove {
     /// Up to the car against the one-way: hook it (tow job).
     Hook { job: u32 },
@@ -44,6 +50,9 @@ pub enum AfterMove {
     ToPound { job: u32 },
     /// Turned round with a wreck on: back to the yard, or off the map.
     Home { company: Option<BuildingId> },
+    /// [rage] A seething driver turned round illegally: on to where it
+    /// was going (`s_end` along lane `goal`).
+    Resume { goal: LaneId, s_end: f32 },
 }
 
 /// A tow truck off the lanes on a move.
@@ -169,6 +178,73 @@ impl World {
         true
     }
 
+    /// [rage] Drivers seething in a jam may break the law to get out of it:
+    /// one whose anger is past `RAGE_UTURN_ANGER`, slowed or stood in the
+    /// traffic in the middle of a two-way street, turns round across it
+    /// when the way from the other side is much the quicker (queues on the
+    /// way counted), the more readily the less law-abiding it is (a roll
+    /// per trip on its compliance and anger). Gone round, it drives on to
+    /// where it was going.
+    pub(in crate::world) fn rage_u_turns(&mut self) {
+        let net = &self.traffic.net;
+        let cands: Vec<(CarId, LaneId, f32, Vec2, f32, LaneId, f32)> = self
+            .traffic
+            .cars
+            .iter()
+            .filter(|(_, c)| c.drive.anger >= RAGE_UTURN_ANGER && c.v < 4.0 && c.bus.is_none() && c.cargo.is_none() && !c.siren && !c.entering && c.hold <= 0.0 && !c.crashed() && !c.in_stunt() && c.drive.gang.is_none() && self.citizens.contains_key(c.citizen))
+            .filter(|(id, c)| {
+                // By temperament: the less law-abiding and the angrier, the likelier.
+                let roll = crate::hash::hash01(slotmap::Key::data(id).as_ffi(), c.drive.trip_start, 0x7a11);
+                roll < (1.0 - c.drive.profile.compliance).max(0.05) * c.drive.anger
+            })
+            .filter_map(|(id, c)| {
+                let lane = *c.route.get(c.idx)?;
+                let l = net.lanes.get(lane as usize)?;
+                // Mid-block, not at the junction or just past it.
+                (matches!(l.kind, LaneKind::Road { .. }) && c.s > 8.0 && l.length - c.s > 12.0).then(|| (id, lane, c.s, c.pos, c.heading, *c.route.last().unwrap(), c.s_end))
+            })
+            .collect();
+        for (id, lane, s, pos, heading, goal, s_end) in cands {
+            if self.tow_moving(id) {
+                continue;
+            }
+            let LaneKind::Road { segment, forward, .. } = self.traffic.net.lanes[lane as usize].kind else { continue };
+            if !self.roads.try_segment(segment).is_some_and(|g| g.alive && g.is_street() && !g.is_highway() && !g.ramp && !g.ring && g.lanes_fwd > 0 && g.lanes_bwd > 0) {
+                continue;
+            }
+            let net = &self.traffic.net;
+            let cost = |r: &(Vec<LaneId>, f32, f32)| self.route_len(r) + r.0.iter().take(8).map(|&l| net.lanes[l as usize].cars.len() as f32 * RAGE_QUEUE_M).sum::<f32>();
+            let Some(here) = net.route_lanes(lane, s, goal, s_end) else { continue };
+            let opp = net
+                .segment_lanes
+                .get(&segment)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|&l| matches!(net.lanes[l as usize].kind, LaneKind::Road { forward: f, .. } if f != forward))
+                .map(|l| {
+                    let (os, d) = net.lanes[l as usize].project(pos);
+                    (l, os, d)
+                })
+                .min_by(|x, y| x.2.total_cmp(&y.2).then(x.0.cmp(&y.0)));
+            let Some((ol, os, _)) = opp else { continue };
+            let olane = &net.lanes[ol as usize];
+            let os = (os + 4.0).min(olane.length - 0.5).max(0.5);
+            // Only into a gap in the oncoming traffic.
+            if olane.cars.iter().any(|&o| (self.traffic.cars[o].s - os).abs() < 15.0) {
+                continue;
+            }
+            let Some(there) = net.route_lanes(ol, os, goal, s_end) else { continue };
+            if cost(&here) <= cost(&there) + RAGE_UTURN_SAVING {
+                continue;
+            }
+            let to = net.lanes[ol as usize].point_at(os).0;
+            self.turn_round(id, pos, heading, Some(to), AfterMove::Resume { goal, s_end });
+            self.driving.rage_u_turns_today += 1;
+            self.driving.rage_u_turns_total += 1;
+        }
+    }
+
     /// [tow-moves] Turn round where it stands (a three-point turn drawn as
     /// a slow arc) to end at `to` (or across the street) facing back.
     fn turn_round(&mut self, truck: CarId, pos: Vec2, heading: f32, to: Option<Vec2>, then: AfterMove) {
@@ -184,11 +260,15 @@ impl World {
         let p2 = pos + fwd * 2.0 + side * across;
         let p3 = target - fwd * 1.5;
         self.traffic.begin_manoeuvre(truck, vec![p1, p2, p3], heading + std::f32::consts::PI, UTURN_SPEED);
+        let rage = matches!(then, AfterMove::Resume { .. });
         if let Some(t) = self.traffic.cars.get_mut(truck) {
-            t.drive.amber = true;
+            // A tow truck's ambers flash; a seething driver just goes.
+            t.drive.amber = !rage;
         }
         self.driving.moves.push(TowMove { truck, then, since: self.clock.tick });
-        self.enforcement.stats.u_turns_total += 1;
+        if !rage {
+            self.enforcement.stats.u_turns_total += 1;
+        }
     }
 
     /// [tow-moves] Every tick: moves that are done go on to what comes
@@ -239,6 +319,14 @@ impl World {
                     self.back_on_lanes(m.truck);
                     if self.traffic.cars.get(m.truck).is_some_and(|c| !c.in_stunt()) {
                         self.recovery_truck_home(m.truck, company);
+                    }
+                }
+                AfterMove::Resume { goal, s_end } => {
+                    self.back_on_lanes(m.truck);
+                    // On to where it was going (with no way from this side
+                    // after all, it arrives where it is and looks again).
+                    if self.traffic.cars.get(m.truck).is_some_and(|c| !c.in_stunt()) {
+                        self.traffic.redirect(m.truck, goal, s_end);
                     }
                 }
             }

@@ -36,6 +36,7 @@ pub use features::*;
 pub use noise::*;
 pub use params::*;
 use raster::*;
+pub use raster::LotGround;
 pub use routing::*;
 
 /// Height of every water surface.
@@ -61,6 +62,13 @@ pub const MAX_GRADED_SLOPE: f32 = 0.7;
 /// and still be levelled into a terrace: on a steep hillside only shallow
 /// lots fit, on gentle ground deep yards do.
 pub const MAX_LOT_RELIEF: f32 = 18.0;
+/// [hillside] Steeper than [`MAX_GRADED_SLOPE`] is a hillside, not yet a
+/// cliff: homes, shops and clubs are built there on terraces (a cliffside
+/// villa, a Hong Kong stair street), not works yards or civic grounds. Past
+/// this it is a sheer cliff and nothing is built.
+pub const MAX_TERRACE_SLOPE: f32 = 1.8;
+/// [hillside] Most rise across a terraced hillside lot.
+pub const MAX_TERRACE_RELIEF: f32 = 40.0;
 /// Slowest water a hydro plant can use, in metres per second.
 pub const MIN_HYDRO_CURRENT: f32 = 0.8;
 /// Height of a bridge deck above the water.

@@ -9,10 +9,6 @@ use super::*;
 #[derive(Resource, Clone)]
 pub struct Overlays {
     pub land_value: bool,
-    /// [pt-growth] Land density: people present and out on foot per block,
-    /// smoothed over days (`Pressure::density_cell`), what developers
-    /// build taller for.
-    pub land_density: bool,
     /// Pedestrian network: lot loops, alleys and gates.
     pub paths: bool,
     /// Zone outline glows and vacant-lot outlines. The ground fills stay.
@@ -50,11 +46,19 @@ pub struct Overlays {
     /// colours over it and every station a big named marker
     /// (`metro_ux`, `focus::Focus::Metro`). The metro line tool shows it.
     pub metro: bool,
+    /// [pt-ux] Parking: streets by the legal parking a driver finds there,
+    /// public lots by how full they are (`pt_layers`).
+    pub parking: bool,
+    /// [pt-ux] Trails: a long exposure of everything moving over a dark
+    /// city (`pt_layers`, `focus::Focus::Trails`).
+    pub trails: bool,
+    /// [pt-ux] Land density: how densely each plot is built (`pt_layers`).
+    pub density: bool,
 }
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, land_density: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false }
+        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false, parking: false, trails: false, density: false }
     }
 }
 
@@ -104,12 +108,6 @@ impl Overlays {
     }
 }
 
-/// [pt-growth] Where a land density score sits on the layer's ramp: a log
-/// scale, a quiet suburb low, a busy downtown block (200+) at the top.
-pub fn density_t(d: f32) -> f32 {
-    ((1.0 + d.max(0.0)).ln() / (1.0f32 + 200.0).ln()).clamp(0.0, 1.0)
-}
-
 /// Land value heat map over the ground. Toggled with V.
 pub(super) fn sync_overlay(
     mut commands: Commands,
@@ -122,42 +120,17 @@ pub(super) fn sync_overlay(
     existing: Query<Entity, With<OverlayTag>>,
 ) {
     let lv = &sim.world.land_value;
-    // [pt-growth] The land density layer shares the heat map: redrawn when
-    // the hourly sample moves.
-    let p = &sim.world.estate.pressure;
-    let version = if overlays.land_density { p.samples as u64 } else { lv.version };
-    let shown = overlays.land_value || overlays.land_density;
-    if shown == state.overlay_shown && overlays.land_density == state.overlay_density && version == state.overlay_version && !assets.palette_changed && !sim.full_rebuild {
+    if overlays.land_value == state.overlay_shown && lv.version == state.overlay_version && !assets.palette_changed && !sim.full_rebuild {
         return;
     }
-    state.overlay_shown = shown;
-    state.overlay_density = overlays.land_density;
-    state.overlay_version = version;
+    state.overlay_shown = overlays.land_value;
+    state.overlay_version = lv.version;
     despawn_all(&mut commands, &existing);
-    if !shown {
+    if !overlays.land_value {
         return;
     }
     let pal = &assets.palette;
     let mut mesh = MeshData::default();
-    if overlays.land_density {
-        if !p.ready() {
-            return;
-        }
-        let half = nd_sim::estate::PRESSURE_CELL * 0.5;
-        for i in 0..p.n * p.n {
-            let d = p.density_cell(i);
-            if d < 0.5 {
-                continue;
-            }
-            let c = p.cell_center(i);
-            let t = density_t(d);
-            let col = nd_procgen::overlay::heat_color(t);
-            let poly = [SVec2::new(c.x - half, c.y - half), SVec2::new(c.x + half, c.y - half), SVec2::new(c.x + half, c.y + half), SVec2::new(c.x - half, c.y + half)];
-            mesh.ground_polygon(&poly, 0.3, [col[0], col[1], col[2], 0.25 + 0.3 * t]);
-        }
-        spawn_overlay(&mut commands, &mut meshes, &mats, &mesh, OverlayTag);
-        return;
-    }
     let half = lv.cell * 0.5;
     for iy in 0..lv.n {
         for ix in 0..lv.n {
@@ -195,10 +168,38 @@ pub(super) fn sync_paths(
     }
     let pal = &assets.palette;
     let mut mesh = MeshData::default();
-    for (a, b) in walk.interior_edges() {
-        mesh.ground_strip(&[a, b], 0.7, 0.25, scale(pal.preview, 0.5));
+    // [pt-ux] Every walkway, not only the ones inside blocks: pavements
+    // faint teal, crossings white, park paths green, lot loops, alleys and
+    // gates in the preview colour (brightest), footbridges and raised
+    // walks violet. People glow over a dimmed city meanwhile
+    // (`focus::Focus::Walk`).
+    for (i, edges) in walk.adj.iter().enumerate() {
+        for e in edges {
+            if (i as u32) >= e.to {
+                continue;
+            }
+            let (Some(a), Some(b)) = (walk.nodes.get(i), walk.nodes.get(e.to as usize)) else { continue };
+            let (col, width) = path_style(e, pal.preview);
+            mesh.ground_strip(&[a.pos, b.pos], width, 0.25, col);
+        }
     }
     if !mesh.is_empty() {
-        spawn_glow(&mut commands, &mut meshes, &mats, &mesh, PathsTag);
+        let data = mesh;
+        commands.spawn((Mesh3d(meshes.add(to_mesh(&data, false))), MeshMaterial3d(mats.glow()), Transform::IDENTITY, bevy::light::NotShadowCaster, bevy::light::NotShadowReceiver, PathsTag, super::focus::FocusKeep));
+    }
+}
+
+/// [pt-ux] A walkway's colour and width in the Pedestrian network layer.
+pub(super) fn path_style(e: &nd_sim::walk::WalkEdge, preview: [f32; 3]) -> ([f32; 4], f32) {
+    if e.interior || e.gate {
+        (scale(preview, 0.9), 0.8)
+    } else if e.raised {
+        ([0.55, 0.3, 1.1, 1.0], 0.8)
+    } else if e.cross != nd_sim::walk::NO_CROSSING {
+        ([0.9, 0.9, 0.95, 1.0], 0.7)
+    } else if e.park {
+        ([0.25, 0.9, 0.35, 1.0], 0.7)
+    } else {
+        ([0.12, 0.45, 0.55, 1.0], 0.5)
     }
 }

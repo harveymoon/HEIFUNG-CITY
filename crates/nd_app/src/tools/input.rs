@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use nd_sim::{Plan, Vec2 as SVec2};
 
-use super::{bulldoze, buildings, edit, elevation_label, pick, rail, refused_text, road, transit, zone, EffectivePlan, Tool, ToolState, TransitMode};
+use super::{bulldoze, buildings, edit, elevation_label, rail, refused_text, road, transit, zone, EffectivePlan, Tool, ToolState, TransitMode};
 use crate::camera::{CameraMode, Cursor, OrbitCamera};
 use crate::selection::{apply_pick, Selection};
 use crate::sim::Sim;
@@ -103,6 +103,25 @@ pub(crate) fn tool_input(
             tools.points.clear();
             tools.drag = None;
             tools.stroke = None;
+        }
+    }
+    // [lines] Editing a line ends with the line, or when another tool or
+    // mode is picked; Esc lets a picked slot go, then finishes.
+    if let Some(e) = tools.line_edit {
+        if !super::line_edit::still_editing(sim.world.transit.routes.contains_key(e.route), tools.tool, tools.transit_mode) {
+            tools.line_edit = None;
+            tools.stop_drag = None;
+            if sim.world.transit.routes.get(e.route).is_some_and(|r| r.stops.is_empty()) {
+                sim.world.remove_bus_route(e.route);
+            }
+        } else if key(KeyCode::Escape) && !flags.data_view {
+            if e.slot.is_some() {
+                tools.line_edit = Some(super::line_edit::LineEdit { slot: None, ..e });
+                tools.status = "Stops go in where they belong again.".into();
+            } else {
+                super::line_edit::finish(&mut sim.world, &mut tools);
+            }
+            return;
         }
     }
     if key(KeyCode::Escape) && !flags.data_view {
@@ -224,9 +243,12 @@ pub(crate) fn tool_input(
         Tool::Bulldoze if tools.cleanup => bulldoze::cleanup_input(&f, sim, tools, selection),
         Tool::Bulldoze => bulldoze::input(&f, sim, tools, selection),
         Tool::Inspect => {
-            if click {
-                if let Some(p) = ground {
-                    let picked = pick(sim, p, tools.depth);
+            // [feat/pt-ux] By the pointer's ray: a tower by its walls, an
+            // aircraft in the air (even against the sky), and from far out
+            // not the people.
+            if click && (ground.is_some() || cursor.ray.is_some()) {
+                {
+                    let picked = super::pick_click(sim, &super::Click { ground, depth: tools.depth, ray: cursor.ray, view_dist: if ground.is_some() { cursor.view_dist } else { f32::INFINITY } });
                     apply_pick(sim, tools, selection, picked);
                 }
             }

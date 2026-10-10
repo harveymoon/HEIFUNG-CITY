@@ -260,6 +260,13 @@ impl Default for BuildingRules {
                 w(Civic, Mid, Style::Library, 0.4),
                 w(Civic, High, Style::Courthouse, 0.6),
                 w(Civic, High, Style::Monument, 0.4),
+                // [pt-visual] brutalist, intimidating civic variety
+                w(Civic, Low, Style::CivicBunker, 0.8),
+                w(Civic, Mid, Style::CivicBunker, 0.3),
+                w(Civic, Mid, Style::CivicTower, 0.5),
+                w(Civic, Mid, Style::Panopticon, 0.35),
+                w(Civic, High, Style::CivicTower, 0.45),
+                w(Civic, High, Style::Panopticon, 0.5),
                 w(Park, Low, Style::ScrubLot, 1.0),
                 w(Park, Mid, Style::Garden, 1.0),
                 w(Park, High, Style::Plaza, 1.0),

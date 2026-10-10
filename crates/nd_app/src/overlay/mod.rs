@@ -17,6 +17,9 @@ pub mod mesh;
 pub mod routes;
 pub mod selection;
 pub mod shapes;
+/// [feat/pt-ux] The selected building's glowing shell.
+pub mod shell;
+pub mod trails;
 
 /// When the overlays run: see the module docs.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -35,6 +38,8 @@ pub struct OverlayPlugin;
 impl Plugin for OverlayPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<crate::selection::Selection>()
+            .init_resource::<trails::CarTrails>()
+            .add_systems(Update, trails::lay_car_trails.in_set(OverlaySet::Build))
             .configure_sets(Update, OverlaySet::Validate.after(SimSet::Step).before(SimSet::Sync))
             .configure_sets(Update, (OverlaySet::Build, OverlaySet::Draw).chain().in_set(SimSet::Sync))
             // [fix/review-app] The selection checked once, right after the
@@ -42,7 +47,12 @@ impl Plugin for OverlayPlugin {
             // API's `selected`, a flag's snapshot), not only by the
             // inspector's egui pass.
             .add_systems(Update, crate::selection::validate_selection.in_set(OverlaySet::Validate))
-            .add_systems(Update, draw_selected.in_set(OverlaySet::Draw));
+            // [pt-walk] Route dashes over everything; thin lines for the way behind.
+            .insert_gizmo_config(selection::RouteTopGizmos, bevy::gizmos::config::GizmoConfig { depth_bias: -1.0, line: bevy::gizmos::config::GizmoLineConfig { width: 2.0, ..default() }, ..default() })
+            .insert_gizmo_config(selection::RouteThinGizmos, bevy::gizmos::config::GizmoConfig { line: bevy::gizmos::config::GizmoLineConfig { width: 1.2, ..default() }, ..default() })
+            .add_systems(Update, draw_selected.in_set(OverlaySet::Draw))
+            .init_resource::<shell::Shell>()
+            .add_systems(Update, shell::sync_shell.in_set(OverlaySet::Build));
     }
 }
 
@@ -50,6 +60,7 @@ impl Plugin for OverlayPlugin {
 #[allow(clippy::too_many_arguments)]
 fn draw_selected(
     mut gizmos: Gizmos,
+    (mut top, mut thin): (Gizmos<selection::RouteTopGizmos>, Gizmos<selection::RouteThinGizmos>),
     sim: Res<crate::sim::Sim>,
     sel: Res<crate::selection::Selection>,
     tools: Res<crate::tools::ToolState>,
@@ -57,6 +68,7 @@ fn draw_selected(
     (mode, follow): (Res<crate::camera::CameraMode>, Res<crate::camera::CameraFollow>),
     assets: Res<crate::assets::GameAssets>,
     water: Res<crate::ferry_select::WaterFrame>,
+    trails: Res<trails::CarTrails>,
 ) {
     let cx = selection::SelectionCx {
         sim: &sim,
@@ -68,5 +80,5 @@ fn draw_selected(
         pov_walk: *mode == crate::camera::CameraMode::Walk && follow.target.is_some(),
         water: water.fresh(&sim),
     };
-    selection::draw_selection(&mut gizmos, &cx);
+    selection::draw_selection(&mut gizmos, &mut selection::Pens { top: &mut top, thin: &mut thin, trails: &trails }, &cx);
 }

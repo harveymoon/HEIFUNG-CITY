@@ -214,3 +214,45 @@ fn rerouting_a_car_at_the_kerb_lists_it_once() {
     }
     assert_eq!(listed(&t), 1, "pulled out");
 }
+
+#[test]
+fn a_car_waits_at_a_full_exit_rather_than_take_a_huge_detour() {
+    // [rage] F18: rerouted round every full exit it came to, a driver went
+    // in loops for a day on an hour's drive. The only other way here is a
+    // loop kilometres long: it waits for the exit to clear.
+    let mut roads = RoadNetwork::default();
+    roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(0.0, 0.0)], 1, 1);
+    roads.add_polyline(&[Vec2::new(0.0, 0.0), Vec2::new(600.0, 0.0)], 1, 1);
+    roads.add_polyline(&[Vec2::new(600.0, 0.0), Vec2::new(900.0, 0.0)], 1, 1);
+    roads.add_polyline(&[Vec2::new(0.0, 0.0), Vec2::new(0.0, 1000.0), Vec2::new(600.0, 1000.0), Vec2::new(600.0, 0.0)], 1, 1);
+    let mut t = Traffic::default();
+    t.rebuild(&roads);
+    let west = roads.nearest_street(Vec2::new(-150.0, 0.0)).unwrap().0;
+    let mid = roads.nearest_street(Vec2::new(300.0, 0.0)).unwrap().0;
+    let east = roads.nearest_street(Vec2::new(750.0, 0.0)).unwrap().0;
+    let (w_lane, goal) = (lane_of(&t, west, Vec2::X, 0), lane_of(&t, east, Vec2::X, 0));
+    let len = t.net.lanes[w_lane as usize].length;
+    let s1 = t.net.lanes[goal as usize].length * 0.5;
+    let (route, _, _) = t.net.route_lanes(w_lane, len - 2.0, goal, s1).expect("route");
+    let exit = route[2];
+    assert_eq!(exit, lane_of(&t, mid, Vec2::X, 0), "straight on along the street: {route:?}");
+    // The exit is full of stopped cars from its start.
+    for k in 0..6 {
+        let id = t.spawn_car(CitizenId::default(), None, vec![exit], 5.0 + 7.0 * k as f32, t.net.lanes[exit as usize].length - 1.0, 0);
+        if t.cars[id].entering {
+            t.cars[id].entering = false;
+            t.insert_sorted(exit, id);
+        }
+    }
+    let car = t.spawn_car(CitizenId::default(), None, route.clone(), len - 2.0, s1, 0);
+    if t.cars[car].entering {
+        t.cars[car].entering = false;
+        t.insert_sorted(w_lane, car);
+    }
+    t.cars[car].stalled = REROUTE_AFTER + 5.0;
+    assert!(t.exit_blocked(&t.net.lanes[route[1] as usize], exit, true), "the exit is full");
+    let other = t.net.route_avoiding(w_lane, len - 2.0, *route.last().unwrap(), s1, Some(exit), None);
+    assert!(other.is_some(), "the long way round exists");
+    t.reroute_stalled();
+    assert_eq!(t.cars[car].route, route, "it waits its turn instead of a loop of kilometres");
+}

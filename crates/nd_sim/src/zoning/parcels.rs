@@ -68,6 +68,8 @@ pub struct Parcel {
     /// [island-lots] Why the ground is rough, in plain words (a cliff,
     /// water), for the Zone tool's refusal.
     pub rough_why: Option<&'static str>,
+    /// [hillside] Steep but terraceable: homes, shops and clubs only.
+    pub hillside: bool,
     /// Land use as built (from the master plan); None is unzoned.
     pub land_use: Option<LandUse>,
     /// The lot this parcel is part of, once zoned and built into one.
@@ -92,6 +94,9 @@ impl Parcel {
         }
         if self.rough {
             return Some(self.rough_why.unwrap_or("too steep or wet to build on"));
+        }
+        if self.hillside && !lu.terraces() {
+            return Some("a steep hillside: only terraced homes, shops and clubs fit here");
         }
         if !self.path_frontage {
             if lu.takes_backland() {
@@ -264,11 +269,47 @@ pub(super) fn parcel_inputs(roads: &RoadNetwork, water: &WaterMask, clip: Option
     k
 }
 
-/// The cut itself (see [`generate_parcels_with`]).
+/// How a cut slices its land.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CutRules {
+    /// [parcel-size] Mend slivers with the backland behind them, fold shore
+    /// backland into the lot in front, cap parcel size (`mend_parcels`,
+    /// `cap_parcel`). Off for the cut a save from before saved parcels is
+    /// loaded with, so its parcels are the ones its lots were made of.
+    pub mend: bool,
+}
+
+impl CutRules {
+    pub const LEGACY: CutRules = CutRules { mend: false };
+    pub const CURRENT: CutRules = CutRules { mend: true };
+}
+
+/// The cut itself (see [`generate_parcels_with`]), by the rules a save
+/// from before saved parcels was cut with.
 pub(super) fn cut_parcels(roads: &RoadNetwork, water: &WaterMask, clip: Option<(Vec2, Vec2)>, shore_reach: Option<f32>) -> Vec<Parcel> {
-    let mut out = Vec::new();
+    match cut_region(roads, water, clip, shore_reach, None) {
+        Some(region) => slice_region(region, roads, water, shore_reach, CutRules::LEGACY),
+        None => Vec::new(),
+    }
+}
+
+/// [stable-parcels] Chains this far (beyond their own reach) from a local
+/// recut's window are left out of its region: far enough that every hole a
+/// block closes round inside the window is closed by roads taken in.
+pub(super) const WINDOW_MARGIN: f32 = 160.0;
+
+/// [stable-parcels] Reach and corridor pieces this far past a local recut's
+/// window are still taken in (holes the window's blocks close round).
+pub(super) const PIECE_MARGIN: f32 = 160.0;
+
+/// The land parcels are cut from: the land within [`PARCEL_REACH`] of every
+/// street and path (and, with `shore_reach`, down to the water), small
+/// enclosed holes filled, minus every corridor and the water, clipped to
+/// `clip`. With `window` only the chains near it are taken in, so the
+/// region is right inside the window (a local recut) and cheaper to make.
+pub(super) fn cut_region(roads: &RoadNetwork, water: &WaterMask, clip: Option<(Vec2, Vec2)>, shore_reach: Option<f32>, window: Option<(Vec2, Vec2)>) -> Option<MultiPolygon<f64>> {
     if roads.is_empty() {
-        return out;
+        return None;
     }
     let shore_reach = shore_reach.filter(|r| *r > PARCEL_REACH && !water.is_empty());
     let mut corridors: Vec<Polygon<f64>> = Vec::new();
@@ -277,6 +318,12 @@ pub(super) fn cut_parcels(roads: &RoadNetwork, water: &WaterMask, clip: Option<(
     let mut wide: Vec<Polygon<f64>> = Vec::new();
     let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
     for (pts, hw, ext_a, ext_b, sid) in road_chains(roads) {
+        if let Some(win) = window {
+            let margin = hw * 2.0 + shore_reach.unwrap_or(PARCEL_REACH) + WINDOW_MARGIN;
+            if !boxes_overlap(bounds_of(&pts), win, margin) {
+                continue;
+            }
+        }
         if let Some(c) = chain_corridor(&pts, hw, ext_a, ext_b) {
             corridors.push(c);
         }
@@ -296,10 +343,22 @@ pub(super) fn cut_parcels(roads: &RoadNetwork, water: &WaterMask, clip: Option<(
             reach_pieces(&pts, hw, r, ext_a, ext_b, &mut wide);
         }
     }
-    if reach.is_empty() {
-        return out;
+    // [stable-parcels] A local recut needs the land near its window only:
+    // the pieces of long chains far beyond it are left out (the region
+    // past the window is not used, and the union is the cost).
+    if let Some(win) = window {
+        let near = |p: &Polygon<f64>| {
+            use geo::BoundingRect;
+            p.bounding_rect().is_some_and(|r| boxes_overlap((Vec2::new(r.min().x as f32, r.min().y as f32), Vec2::new(r.max().x as f32, r.max().y as f32)), win, PIECE_MARGIN))
+        };
+        reach.retain(near);
+        wide.retain(near);
+        corridors.retain(near);
     }
-    let mut region: MultiPolygon<f64> = geo::unary_union(&reach);
+    if reach.is_empty() {
+        return None;
+    }
+    let mut region: MultiPolygon<f64> = crate::prof!("cr.union", geo::unary_union(&reach));
     // [waterfront] Land past the usual reach that runs down to the water
     // (nothing else in the way) joins the region: between a road and the
     // shore, every metre is somebody's lot.
@@ -330,37 +389,72 @@ pub(super) fn cut_parcels(roads: &RoadNetwork, water: &WaterMask, clip: Option<(
             })
             .collect(),
     );
-    let corridors: MultiPolygon<f64> = geo::unary_union(&corridors);
-    region = region.difference(&corridors);
+    let corridors: MultiPolygon<f64> = crate::prof!("cr.corridors", geo::unary_union(&corridors));
+    region = crate::prof!("cr.diff", region.difference(&corridors));
     if let Some((clo, chi)) = clip {
         region = region.intersection(&MultiPolygon(vec![to_geo(&[clo, Vec2::new(chi.x, clo.y), chi, Vec2::new(clo.x, chi.y)])]));
     }
     if let Some(w) = water.near(lo, hi) {
         region = region.difference(&w);
     }
-    let mut polys: Vec<Vec<Vec2>> = Vec::new();
+    Some(region)
+}
+
+/// Slice land (from [`cut_region`]) into parcels: each block chunked at
+/// fixed world positions along its long frontages, every chunk subdivided
+/// with its own random stream, backland merged or chopped.
+pub(super) fn slice_region(region: MultiPolygon<f64>, roads: &RoadNetwork, water: &WaterMask, shore_reach: Option<f32>, rules: CutRules) -> Vec<Parcel> {
+    let mut out = Vec::new();
     for block in region.0 {
         if area_f(&block) < MIN_AREA {
             continue;
         }
         for chunk in chunk_block(block, roads) {
-            let chunk = canonical(chunk);
-            let mut rng = crate::rng_for(block_seed(&chunk), 5);
-            let mut pieces: Vec<Vec<Vec2>> = Vec::new();
-            // [waterfront] A chunk on the water that took in shore land is
-            // sliced into lots running from the road to the waterline.
-            match shore_reach.and_then(|_| shore_lot_size(&chunk, water, roads)) {
-                Some(size) => subdivide_sized(chunk, PARCEL_USE, size, roads, &mut rng, 0, &mut pieces),
-                None => subdivide(chunk, PARCEL_USE, roads, &mut rng, 0, &mut pieces),
-            }
-            for piece in merge_backland(pieces, PARCEL_USE, roads) {
-                chop_backland(piece, roads, 0, &mut polys);
-            }
+            out.extend(slice_chunk(chunk, roads, water, shore_reach, rules));
         }
     }
+    out
+}
+
+/// One chunk of a block sliced into parcels: subdivided with its own
+/// random stream (seeded from its shape, so the same chunk always gives
+/// the same parcels), backland merged or chopped.
+pub(super) fn slice_chunk(chunk: Polygon<f64>, roads: &RoadNetwork, water: &WaterMask, shore_reach: Option<f32>, rules: CutRules) -> Vec<Parcel> {
+    let shore_reach = shore_reach.filter(|r| *r > PARCEL_REACH && !water.is_empty());
+    let mut polys: Vec<Vec<Vec2>> = Vec::new();
+    if area_f(&chunk) < MIN_AREA {
+        return Vec::new();
+    }
+    let chunk = canonical(chunk);
+    let mut rng = crate::rng_for(block_seed(&chunk), 5);
+    let mut pieces: Vec<Vec<Vec2>> = Vec::new();
+    // [waterfront] A chunk on the water that took in shore land is
+    // sliced into lots running from the road to the waterline.
+    match shore_reach.and_then(|_| shore_lot_size(&chunk, water, roads)) {
+        Some(size) => subdivide_sized(chunk, PARCEL_USE, size, roads, &mut rng, 0, &mut pieces),
+        None => subdivide(chunk, PARCEL_USE, roads, &mut rng, 0, &mut pieces),
+    }
+    let pieces = merge_backland(pieces, PARCEL_USE, roads);
+    if rules.mend {
+        // [parcel-size] Slivers and the backland behind them mended,
+        // backland on the water folded into the lot in front, and
+        // nothing past the size cap.
+        let mut chopped = Vec::new();
+        for piece in mend_parcels(pieces, roads, water) {
+            chop_backland(piece, roads, 0, &mut chopped);
+        }
+        for piece in chopped {
+            cap_parcel(piece, water, 0, &mut polys);
+        }
+    } else {
+        for piece in pieces {
+            chop_backland(piece, roads, 0, &mut polys);
+        }
+    }
+    let mut out = Vec::new();
     for poly in polys {
         if let Some(mut p) = parcel_of(poly, roads) {
-            if shore_reach.is_some() || !water.is_empty() {
+            if !water.is_empty() {
                 p.water_frontage = water.shoreline(&p.polygon).0;
             }
             out.push(p);
@@ -464,6 +558,7 @@ pub(super) fn parcel_of(poly: Vec<Vec2>, roads: &RoadNetwork) -> Option<Parcel> 
         street_frontage: street,
         rough: false,
         rough_why: None,
+        hillside: false,
         water_frontage: 0.0,
         land_use: None,
         lot: None,

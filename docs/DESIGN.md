@@ -288,11 +288,28 @@ Citizens are rendered from their simulated positions every frame.
   (backland and rough ground too), homes on a street or a footpath, everything else on
   a street, industry and civic sites not on scraps under 200 m², with their deep
   yards allowed to take the backland behind them; nothing but parks on rough ground.
-  Rough ground is water or a cliff: hillsides up to `MAX_GRADED_SLOPE` (0.7) take lots,
-  each levelled to a pad at its street and cut and filled into the ground, as long as
-  the land rises no more than `MAX_LOT_RELIEF` (18 m) across it. Parcels are cut within
-  the configured square, grown on a landscape to take in every street drawn past it (an
-  island off the coast) up to the map edge (`World::parcel_half`).
+  Rough ground is water or a sheer cliff: ground up to `MAX_GRADED_SLOPE` (0.7) takes any
+  lot, levelled to a pad at its street and cut and filled into the ground, as long as
+  the land rises no more than `MAX_LOT_RELIEF` (18 m) across it; [hillside] steeper
+  ground, up to `MAX_TERRACE_SLOPE` (1.8) and `MAX_TERRACE_RELIEF` (40 m), is a hillside
+  (`Parcel::hillside`, `Landscape::lot_ground`) terraced for homes, shops and clubs (the
+  cliffside villa, the stair street), not for works yards or civic grounds. Parcels are
+  cut within the configured square, grown on a landscape to take in every street drawn
+  past it (an island off the coast) up to the map edge (`World::parcel_half`).
+  [stable-parcels] Parcels are kept between rebuilds and saved with the city (as
+  outlines, `zoning::ParcelCut`): road works recut only the land within `PARCEL_REACH` +
+  `RECUT_REACH` of a road piece that changed (`zoning::recut_parcels`, which compares the
+  road pieces, node degrees and water the last cut was made from), and every other
+  parcel, lot, building, plant and pad stays exactly as it was. A lot whose parcels all
+  came through unchanged keeps its id, outline and building. The ground under the
+  player's buildings (`World::is_city_building`, not docks or stations) is locked: the
+  parcels around it stop at its outline, it is never reshaped by the zoning or the
+  works (only trimmed where a street or track is laid over it), and it is levelled last
+  so a neighbour's pad never buries it. [parcel-size] Slivers along a road and the
+  backland behind them are mended into one parcel, backland on the water folds into the
+  lot in front, and no parcel is over `MAX_PARCEL_AREA` (2,400 m², 4,800 m² on the
+  water); cuts made before saved parcels (an old save's load) keep the old rules, so
+  its lots and parcels still agree.
   Every zoned parcel becomes a lot; uses with lots bigger than a home's join small
   neighbouring parcels (works yards and civic sites two or three, a shop a small
   neighbour) and industry and civic grounds fold in the backland behind them
@@ -304,7 +321,12 @@ Citizens are rendered from their simulated positions every frame.
   unzoned ground with road access: no zoning first. On unzoned ground a lot is made for
   it on placement, from the parcel under the pointer, or joined with its unzoned
   neighbours as civic ground would be when one parcel is too small
-  (`World::placement_site`). Only physical rules refuse: road access, a street out front
+  (`World::placement_site`). [big-sites] On a lot too small for it (a stadium, which
+  wants 2,400 m², a coal plant) it takes in as few neighbouring lots as it needs
+  (`World::joined_site`): what grew on them is bought out and the ground becomes one
+  lot. A city parking lot fills its plot (spaces, cost and upkeep by area; the
+  multi-storey car park the same in decks), and one put next to the city's own lot of
+  the same kind joins it. Only physical rules refuse: road access, a street out front
   where vehicles come and go, the lot's size, the site (river, coast, hot spot), ground
   under a station; parks are kept (but a metro entrance). The ground under a city
   building (`World::is_city_building`) is the city's own: its lot's use is Civic with a
@@ -1513,8 +1535,11 @@ Citizens are rendered from their simulated positions every frame.
   resource for a few days, and under a duty the industry sub-zones that make what the town imports
   are drawn 1 + 1.5 x duty times harder. Each line books its take (today, yesterday, a running
   average) for the window's bars.
-- **Toll booths** (`nd_sim::tolls`, `world/tolls.rs`, Buildings > Transit): a booth (4,000, 60 a
-  day) or a plaza (15,000, 200 a day) stands across a straight stretch of street or highway, both
+- **Toll booths** (`nd_sim::tolls`, `world/tolls.rs`, Buildings > Transit): [toll-fit] one toll
+  plaza on offer, a kiosk for every lane of the road it is put on and priced by it (1,500 and
+  1,250 a lane; upkeep 15 and 22.5 a lane a day: 4,000 and 60 on a two-lane street); widening
+  the road under it adds kiosks and the road works pay for them (`TollBooth::paid_lanes`). The
+  old six-booth plaza (15,000, 200 a day) is kept for saves that have one. It stands across a straight stretch of street or highway, both
   directions, saved by position and found again on every road rebuild (gone with its road). The
   lanes of its piece carry a `LaneToll`: vehicles slow to 2.5 m/s (plaza 4.5) from 60 m before the
   line to 6 m past it, and pay when they cross it from behind: cars from the driver's pocket (the
@@ -1929,7 +1954,26 @@ trait MindProvider {
     and semiconductor fabs (high).
   - Entertainment: shack bars and night markets, clubs, cinemas and neon towers,
     casinos, arenas and megastructures.
-  - Civic: precinct houses, ministries, libraries, courthouses, monuments.
+  - Civic: precinct houses, ministries, libraries, courthouses, monuments, and the
+    brutalist side of the state [pt-visual]: civil defence bunkers (battered concrete,
+    slit windows, blast doors under a visor, searchlights, a barbed fence), ministry
+    towers (an inverted ziggurat of finned concrete floors over a columned glass lobby,
+    the emblem, a lidless eye in a ring, on the crown) and surveillance bureaus (a near
+    windowless dark monolith with lit slits, a camera ring and a radar dome).
+  - Monuments the player places (`buildings/monuments.rs`) [pt-visual]: by tier a menu of
+    obelisks with glowing pyramidions and neon bands, colossal figures in long coats with
+    a raised torch and a lit visor, triumphal arches facing the road with neon down the
+    piers, memorial plazas (a dark wall of lit names, an eternal flame, a field of
+    stelae) and an upright halo ring round a floating crystal; the seed picks one.
+  - Courtyard blocks are a ring of wings, one quad per lot edge sharing its inner corners
+    with the next (`residential::courtyard_ring`), so every outer and inner face has a
+    wall behind it (wings used to be boxes shortened on a wedge while their windows ran
+    the whole edge). A garden tower on a big lot with under seven floors is a garden
+    courtyard instead: white plaster, tall glass, a pool court and planted wing roofs.
+  - Roofs [pt-visual]: `parts::green_roof` (sedum, shrub beds, a gravel path) on high-end
+    podium offices round the tower and on every setback of a high-end slab;
+    `parts::solar_roof` (rows of panels with a walkway every fourth row) on high-end
+    data centres (one row of chillers kept) and on high-end podium towers.
   - Park: scrub lots, gardens, plazas.
   Everything is attached to a surface: roof gear uses the roof footprint, columns hold
   up overhangs, wires run from poles to real units, jacks prop unsupported corners.
@@ -1946,6 +1990,22 @@ trait MindProvider {
   arenas avoid repeating a neighbour. The renderer keeps a `StyleBook` that resolves
   styles in build order (a building sees only older neighbours), so the result does not
   depend on drawing order and a building keeps its look when a newer neighbour arrives.
+- Earthworks that fit the land [pt-visual] (`landscape::earthwork_hold`, `earthwork_band`): a
+  highway, slip road or railway eased 3 m or more below the natural land along its middle (a
+  cutting) or above it (a fill) is held by retaining walls like a road the player sank: the ground
+  is held at the way's height out to a band 5 m past the hard shoulder (pavement for a street) and
+  is the natural land beyond, instead of 1-in-2.5 slopes graded up to 160 m out. The cutting walls
+  (`terrain::works::tunnel_works`) fill exactly that band, face at the shoulder; a fill's wall
+  stands from the land up to a parapet. Ways eased into a gentle slope are graded, never walled
+  (walls used to stand free on the slopes 6 m off a highway). The Road tool warns where an
+  at-grade leg's land climbs or falls 6 m more than the grade allows (a walled cutting or fill,
+  or a tunnel or viaduct instead) and where a straight highway or railway turns more than 35°
+  at a point. On a slope a junction pad hangs a 0.9 m asphalt skirt from its edge
+  (`draw_pad`), closing the vertical slivers that opened between the pad's straight edge and the
+  corners' aprons on their arms' profiles at steep junctions. A footpath crossing the track
+  (no street) gets a dark rubber panel at the rails' height over the ballast and sleepers, the
+  rails flush in it, ramps down to the paving and yellow tactile strips; the crossings' flashing lamps throw a pulsing red point light on the road at
+  night (a pool beside the street lamps', a third its size, none at Low).
 - Ramps (`roads::is_ramp_spec`: one-way streets narrower than a highway): an end dropped on a
   highway gets a lead point `RAMP_LEAD` (40 m) before a merge or after a diverge, beside the
   carriageway (`roads::ease_ramp_ends`), so the ramp joins nearly tangent; the join is drawn as a
@@ -2157,7 +2217,9 @@ trait MindProvider {
   Alpha comes from a palette of twelve steps per kind (plume at most 0.85, smog 0.38, both scaled by puff age and a soft texture), so the
   city reads through from above; the colour darkens at night; nothing casts or receives
   shadows. Thickness follows the plant's output: staffing times the grid's draw on supply.
-- Window lights follow occupancy (`render/lights.rs`, `nd_procgen::lights`). In the app every
+- Window lights follow occupancy (`render/lights.rs`, `nd_procgen::lights`). [pt-visual] A jump
+  in sim time of more than a stagger cycle (a long remote `step`) or back in it (a new city)
+  snaps every building to its share, as a load does. In the app every
   window light is generated (`Extras::dynamic_lights`, about 92% of windows) through
   `parts::window_light`, which ranks it by a hash of its position and lays dark glass just
   behind it (`LIGHT_GLASS_BEHIND`, 13 mm: off the whole-centimetre grid the decals stand on, so
@@ -2218,6 +2280,17 @@ trait MindProvider {
   outlines, saved with serde default) run along the roads, repeated along long streets and
   decluttered on screen, main roads first; pins with a glyph and the name mark services,
   plants, stations, ports, depots, civic buildings and big venues.
+- Beach boardwalks [pt-visual] (`shore::boardwalks`, `render/waterside.rs`): a run of four or
+  more public beach lots sharing their sides gets a wooden promenade along each lot's landward
+  edges, meeting at the seams: deck on a skirt, a rail on the sand side open where each lot's
+  path goes down, lamps with a neon band every 12 m, benches facing the sea, the odd kiosk.
+- Marinas [pt-visual]: `Port::moored` (counted at midnight) is the berths the town's boat owners
+  have let and the billionaires' superyachts lying at a large marina (each billionaire keeps one
+  at the large marina nearest home, at most three a marina). The moored boats are drawn apart
+  from the dock works (`terrain::moored_boats`): the berths let, in berth order, each in a look
+  (`BoatLook`) that grows richer as the marina fills (speedboats among the sailing boats,
+  catamarans among the yachts), and 60 m superyachts (four decks, a helipad, neon) side-to on an
+  outer pontoon off the pier's tip.
 - Parks merge visually: a park of several lots (`park::plan_parks` already plans one cluster)
   lays its lawn up to the seams (no inset on shared edges), keeps trees and lamps clear of the
   park's outside edges only, draws the zone outline only round the outside, and puts the
