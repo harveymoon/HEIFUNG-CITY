@@ -175,6 +175,8 @@ pub fn body_length(b: BodyType) -> f32 {
         BodyType::DeliveryBot => 0.8,
         BodyType::AirTaxi => 6.8,
         BodyType::Helicopter => 11.2,
+        BodyType::TowTruck => 6.4,
+        BodyType::HeavyTow => 9.8,
     }
 }
 
@@ -363,6 +365,8 @@ fn build(m: &VehicleModel, paint: [f32; 3], detail: bool, pal: &Palette) -> Vehi
         BodyType::DeliveryBot => bot(&mut b, col),
         BodyType::AirTaxi => air_taxi(&mut b, col),
         BodyType::Helicopter => helicopter(&mut b, col),
+        BodyType::TowTruck => tow_truck(&mut b, col, false),
+        BodyType::HeavyTow => tow_truck(&mut b, col, true),
     }
     if let Some((_, accent, sign)) = livery {
         livery_marks(&mut b, accent, sign);
@@ -609,6 +613,70 @@ fn semi(b: &mut B, col: [f32; 3]) {
     b.lamps(fx + 0.02, 3.2, hw - 0.3, 0.1, 0.06, 1.0, AMBER);
     b.lamps(rx, 1.2, hw - 0.2, 0.3, 0.14, -1.0, TAIL);
     b.wear_marks(rx + 0.4, cfront - 0.4, 1.4, 3.4, hw);
+}
+
+/// [tow] A wrecker: a conventional cab, a low flat deck with tool lockers,
+/// a boom raked up over the back with its cable and hook, and the wheel
+/// lift (an L-arm a car's front wheels sit in) low behind; an amber light
+/// bar on the cab roof. The heavy one is longer, on three axles, with a
+/// longer rotator boom and outriggers folded at the back.
+fn tow_truck(b: &mut B, col: [f32; 3], heavy: bool) {
+    let m = *b.m;
+    let len = body_length(m.body);
+    let (fx, rx) = (len * 0.5, -len * 0.5);
+    let hw = if heavy { 1.25 } else { 1.05 };
+    let cab_len = if heavy { 2.3 } else { 1.9 };
+    let cr = fx - cab_len;
+    let (sill, roof) = if heavy { (0.75, 3.0) } else { (0.6, 2.35) };
+    // Cab with a short bonnet.
+    b.ext(&[(cr, sill), (fx, sill), (fx + 0.04, sill + 0.55), (fx - 0.55, sill + 0.75), (fx - 0.85, roof - 0.05), (cr + 0.05, roof)], hw - 0.05, col);
+    slope_quad(&mut b.body, (fx - 0.58, sill + 0.8), (fx - 0.84, roof - 0.12), hw - 0.12, GLASS);
+    b.sides(cr + (fx - cr) * 0.45, (sill + roof) * 0.5 + 0.35, hw - 0.05, 0.7, 0.55, GLASS);
+    // Amber light bar across the roof.
+    let bar = roof + 0.09;
+    b.bx((cr + 0.6, roof + 0.04, 0.0), (0.3, 0.06, hw * 1.6), TRIM);
+    b.lights.boxed(Vec3::new(cr + 0.6, bar, 0.0), Vec3::new(0.24, 0.12, hw * 1.5), 0.0, c4(AMBER));
+    // Chassis and the deck behind the cab.
+    let deck = sill + 0.35;
+    b.bx(((rx + cr) * 0.5, sill + 0.1, 0.0), (cr - rx, 0.3, hw * 1.2), TRIM);
+    b.bx(((rx + cr) * 0.5 + 0.2, deck, 0.0), (cr - rx - 0.4, 0.12, hw * 2.0 - 0.1), mul(col, 0.8));
+    // Tool lockers down both sides.
+    let lockers = if heavy { 2.6 } else { 1.4 };
+    for s in [-1.0f32, 1.0] {
+        b.bx((cr - 0.15 - lockers * 0.5, deck + 0.35, s * (hw - 0.22)), (lockers, 0.6, 0.42), col);
+    }
+    // The boom: raked up from behind the cab to over the back, cable and
+    // hook hanging off its end.
+    let boom = 0.18;
+    let (bx0, by0) = (cr - 0.3, deck + 0.1);
+    let (bx1, by1) = (rx + if heavy { 0.6 } else { 0.35 }, if heavy { 3.3 } else { 2.55 });
+    b.ext(&[(bx0, by0), (bx0 + 0.45, by0), (bx1 + 0.2, by1 - 0.15), (bx1, by1)], boom, [0.12, 0.12, 0.13]);
+    b.bx((bx1 - 0.05, (by1 + deck) * 0.5, 0.0), (0.04, by1 - deck - 0.2, 0.04), CHROME);
+    b.bx((bx1 - 0.05, deck + 0.12, 0.0), (0.16, 0.2, 0.1), [0.85, 0.5, 0.05]);
+    // The wheel lift: an arm low out the back with its cross bar.
+    b.bx((rx + 0.25, 0.4, 0.0), (0.7, 0.12, 0.2), TRIM);
+    b.bx((rx - 0.05, 0.4, 0.0), (0.16, 0.14, hw * 1.5), [0.85, 0.5, 0.05]);
+    if heavy {
+        // Outriggers folded at the rear corners.
+        for s in [-1.0f32, 1.0] {
+            b.bx((rx + 0.5, sill + 0.15, s * (hw - 0.1)), (0.5, 0.5, 0.2), [0.85, 0.5, 0.05]);
+        }
+    }
+    // Chevrons on the back.
+    if b.detail {
+        for i in 0..4 {
+            b.lamp(rx - 0.01, sill + 0.2 + i as f32 * 0.12, 0.0, hw * 1.6, 0.05, -1.0, if i % 2 == 0 { AMBER } else { [0.05, 0.05, 0.05] });
+        }
+    }
+    let r = if heavy { 0.52 } else { 0.42 };
+    b.axle(fx - 0.85, hw, r, 0.3);
+    b.axle(rx + 1.2, hw, r, 0.34);
+    if heavy {
+        b.axle(rx + 2.4, hw, r, 0.34);
+    }
+    b.lamps(fx + 0.04, sill + 0.35, hw - 0.25, 0.3, 0.16, 1.0, HEAD);
+    b.lamps(rx, sill + 0.15, hw - 0.15, 0.22, 0.14, -1.0, TAIL);
+    b.wear_marks(rx + 0.3, cr - 0.2, sill + 0.2, deck + 0.6, hw);
 }
 
 fn garbage_truck(b: &mut B, col: [f32; 3]) {

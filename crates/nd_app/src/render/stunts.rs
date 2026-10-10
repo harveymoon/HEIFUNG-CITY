@@ -1,7 +1,7 @@
 //! [driving] What driving leaves on the street: tyre smoke boiling off the
 //! cars spinning donuts in a takeover, the black rings they burn into the
 //! junction, smoke from the bonnet of a crashed car (written-off ones sit
-//! askew), and the wreck riding on the back of a tow truck. The crowd round
+//! askew), and the car a tow truck pulls on its wheel lift. The crowd round
 //! a takeover needs nothing here: its people are citizens, drawn as such.
 
 use super::*;
@@ -14,7 +14,6 @@ pub(super) struct StuntAssets {
     smoke: Handle<Mesh>,
     bonnet: Handle<Mesh>,
     skid: Handle<Mesh>,
-    load: Handle<Mesh>,
     hazard: Handle<StandardMaterial>,
 }
 
@@ -24,8 +23,10 @@ pub(super) struct StuntState {
     smoke: HashMap<CarId, Entity>,
     /// Bonnet smoke and the hazard lamp per crashed car.
     crashed: HashMap<CarId, [Entity; 2]>,
-    /// The wreck on a tow truck's bed.
-    loads: HashMap<CarId, Entity>,
+    /// [tow] The car on a tow truck's wheel lift: its body, the model it
+    /// was made for, and where its rear axle trails (it follows the hitch
+    /// like a trailer, so it swings round corners behind the truck).
+    loads: HashMap<CarId, (Entity, nd_sim::VehicleModel, SVec2)>,
     /// Burned rings, oldest first (kept after the takeover: rubber stays).
     skids: Vec<(SVec2, Entity)>,
 }
@@ -65,15 +66,8 @@ fn make_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateria
         }
         meshes.add(super::shared_mesh(&m, false))
     };
-    // A wreck on the bed: a crumpled dark body.
-    let load = {
-        let mut m = MeshData::default();
-        m.boxed(Vec3::new(-1.6, 1.25, 0.0), Vec3::new(3.2, 0.7, 1.7), 0.06, [0.16, 0.15, 0.15, 1.0]);
-        m.boxed(Vec3::new(-1.8, 1.75, 0.05), Vec3::new(1.6, 0.4, 1.4), -0.1, [0.1, 0.1, 0.11, 1.0]);
-        meshes.add(super::shared_mesh(&m, true))
-    };
     let hazard = materials.add(StandardMaterial { base_color: Color::linear_rgb(3.0, 1.4, 0.1), emissive: LinearRgba::rgb(9.0, 4.0, 0.3), unlit: true, ..default() });
-    StuntAssets { smoke, bonnet, skid, load, hazard }
+    StuntAssets { smoke, bonnet, skid, hazard }
 }
 
 fn despawn_all(commands: &mut Commands, st: &mut StuntState) {
@@ -85,7 +79,7 @@ fn despawn_all(commands: &mut Commands, st: &mut StuntState) {
             commands.entity(e).despawn();
         }
     }
-    for (_, e) in st.loads.drain() {
+    for (_, (e, _, _)) in st.loads.drain() {
         commands.entity(e).despawn();
     }
     for (_, e) in st.skids.drain(..) {
@@ -107,6 +101,8 @@ pub(super) fn sync_stunts(
     mut q: Query<(&mut Transform, &mut Visibility), With<StuntTag>>,
     mut cars: Query<&mut Transform, (With<CarTag>, Without<StuntTag>)>,
     tools: Res<crate::tools::ToolState>,
+    mut vr: ResMut<VehicleRender>,
+    game: Res<GameAssets>,
 ) {
     let w = &sim.world;
     if sim.full_rebuild {
@@ -230,23 +226,55 @@ pub(super) fn sync_stunts(
         }
     }
 
-    // Tow trucks carry their wreck.
-    let tows: Vec<CarId> = w.tows().iter().map(|t| t.truck).filter(|id| traffic.cars.contains_key(*id)).collect();
-    let tow_set: HashSet<CarId> = tows.iter().copied().collect();
-    st.loads.retain(|id, e| {
+    // [tow] Tow trucks pull the car they hooked: its own body, front wheels
+    // up on the wheel lift behind the truck, nose raised, the rest of it
+    // trailing round corners.
+    let tows: Vec<(CarId, nd_sim::VehicleModel)> = w.tows().iter().filter(|t| traffic.cars.contains_key(t.truck)).map(|t| (t.truck, t.model)).collect();
+    let tow_set: HashSet<CarId> = tows.iter().map(|t| t.0).collect();
+    st.loads.retain(|id, (e, _, _)| {
         let keep = tow_set.contains(id);
         if !keep {
             commands.entity(*e).despawn();
         }
         keep
     });
-    for id in tows {
+    vr.ensure_materials(&mut materials);
+    for (id, model) in tows {
         let car = &traffic.cars[id];
         let (p, h) = car.pose_at(f);
-        let e = *st.loads.entry(id).or_insert_with(|| commands.spawn((Mesh3d(a.load.clone()), MeshMaterial3d(mats.surface(Surface::Concrete)), Transform::IDENTITY, StuntTag)).id());
-        if let Ok((mut tf, _)) = q.get_mut(e) {
-            tf.translation = Vec3::new(p.x, w.car_height(car) + 0.05, p.y);
-            tf.rotation = Quat::from_rotation_y(-h);
+        let dir = SVec2::new(h.cos(), h.sin());
+        let truck_len = nd_procgen::vehicles::body_length(car.model.body);
+        let towed_len = nd_procgen::vehicles::body_length(model.body);
+        let hitch = p - dir * (truck_len * 0.5 + 0.1);
+        // Front wheels in the lift; the rear axle on the road behind.
+        let wheelbase = (towed_len - 1.7).max(1.2);
+        let lift = 0.45;
+        if st.loads.get(&id).is_some_and(|(_, m, _)| *m != model) {
+            if let Some((e, _, _)) = st.loads.remove(&id) {
+                commands.entity(e).despawn();
+            }
+        }
+        let entry = st.loads.entry(id).or_insert_with(|| {
+            let v = vr.variant(&mut meshes, &model, &game.palette);
+            let e = commands.spawn((Mesh3d(v.body), MeshMaterial3d(vr.finish_of(model.class)), Transform::IDENTITY, StuntTag)).id();
+            (e, model, hitch - dir * wheelbase)
+        });
+        // Trail the rear axle after the hitch (reset after a jump).
+        let mut rear = entry.2;
+        if rear.distance(hitch) > wheelbase * 3.0 {
+            rear = hitch - dir * wheelbase;
+        }
+        let tdir = (hitch - rear).try_normalize().unwrap_or(dir);
+        rear = hitch - tdir * wheelbase;
+        entry.2 = rear;
+        let th = tdir.y.atan2(tdir.x);
+        let pitch = (lift / wheelbase).atan();
+        // The body's middle: half the wheelbase ahead of the rear axle
+        // (axles sit about 0.85 m in from each end).
+        let mid = rear + tdir * (wheelbase * 0.5);
+        if let Ok((mut tf, _)) = q.get_mut(entry.0) {
+            tf.translation = Vec3::new(mid.x, w.car_height(car) + 0.03 + lift * 0.5, mid.y);
+            tf.rotation = Quat::from_rotation_y(-th) * Quat::from_rotation_z(pitch);
         }
     }
 }
