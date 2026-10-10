@@ -260,7 +260,7 @@ impl World {
         for (k, model) in models.iter().enumerate() {
             let Some(spot) = self.building_spot(ParkKind::Home, at) else { return };
             let color = ((self.citizens[cid].seed >> 8) as u8).wrapping_add(k as u8) % 8;
-            let vid = self.vehicles.cars.insert(OwnedCar { owner: cid, model: *model, place: CarPlace::Parked(spot), color, since: tick, spare: true, usual: false });
+            let vid = self.vehicles.cars.insert(OwnedCar { owner: cid, model: *model, place: CarPlace::Parked(spot), color, since: tick, spare: true, usual: false, dealer: None });
             // `park_at` books the space.
             self.park_at(vid, spot);
             self.vehicles.note(CarEvent::Bought);

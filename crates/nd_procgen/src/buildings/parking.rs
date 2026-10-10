@@ -54,9 +54,8 @@ fn bays(poly: &[Vec2], margin: f32) -> Vec<(Vec2, f32)> {
 /// order the lot draws them: what `parking_lot` lays out, so the renderer
 /// can stand vehicles of its own (a taxi yard's cabs) in the painted bays.
 pub fn surface_lot_bays_world(lot: &nd_sim::Lot) -> Vec<(Vec2, f32)> {
-    let (frame, lot_poly) = crate::buildings::Frame::lot_local(lot);
-    let yard = offset_poly(&lot_poly, 0.4);
-    bays(&yard, 3.0).into_iter().map(|(p, yaw)| (frame.to_world(p.x, p.y), frame.yaw() + yaw)).collect()
+    // [parking] The sim's own layout: its spaces are these bays.
+    nd_sim::parking_layout::surface_bays(lot)
 }
 
 /// Paint the bay lines and put cars in a share of the bays.
@@ -106,7 +105,9 @@ pub fn parking_lot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let occupancy = c.parking.unwrap_or(0.3);
     let yard = yard(g, c, 0.4, Asphalt, mul(pal.asphalt, 1.2 + 0.4 * c.wear));
     let front = c.front_face(&yard);
-    let b = bays(&yard, 3.0);
+    // [parking] The bays the sim counts as the lot's spaces
+    // (`nd_sim::parking_layout`), so the cars drawn are the cars parked.
+    let b = nd_sim::parking_layout::bays_local(&c.lot_poly);
     fill_bays(g, c, rng, &b, 0.045, occupancy, mul(pal.lane_marker, 0.6));
     gate(g, c, rng, &front, 0.0);
     for (i, face) in c.faces(&yard).iter().enumerate() {

@@ -127,14 +127,15 @@ impl LaneNetwork {
             let ring = self.rings.circulating.contains(&lane);
             let line = if ring { SOLID_LINE_MIN } else { SOLID_LINE_MAX };
             let room = here.length - (line - self.junction_after(lane, line)).max(0.0);
-            let short = if room <= 0.0 {
+            let late = if ring { 0.0 } else { (1.0 - room / SHORT_CHANGE_LEN).max(0.0) };
+            let short = if room <= 0.0 || (!ring && room < CHANGE_ROOM_MIN) {
                 SOLID_CHANGE_COST
             } else if ring {
                 0.0
             } else {
-                SHORT_CHANGE_COST * (1.0 - room / SHORT_CHANGE_LEN).max(0.0)
+                SHORT_CHANGE_COST * late
             };
-            let beside = [here.left, here.right].into_iter().flatten().map(|n| (n, LANE_CHANGE_COST + short));
+            let beside = [here.left, here.right].into_iter().flatten().map(|n| (n, LANE_CHANGE_COST + short + CUT_IN_COST * late * self.lanes[n as usize].cars.len() as f32));
             for (next, step) in ahead.chain(beside) {
                 if next == start || Some(next) == avoid_lane || Some((lane, next)) == avoid_step {
                     continue;
@@ -419,6 +420,7 @@ impl Traffic {
             let nl = &self.net.lanes[next as usize];
             let wreck_ahead = nl.cars.iter().any(|&o| self.cars[o].crashed())
                 || c.route.get(c.idx + 2).is_some_and(|&e| self.net.lanes[e as usize].cars.first().is_some_and(|&o| self.cars[o].crashed() && self.cars[o].s < 2.0 * CAR_LENGTH));
+            let mut full_exit = false;
             let (avoid_lane, avoid_step) = if lane.is_beside(next) {
                 (None, Some((here, next)))
             } else if wreck_ahead && c.stalled >= REROUTE_AFTER && nl.is_connector() {
@@ -427,12 +429,23 @@ impl Traffic {
                 continue;
             } else {
                 match c.route.get(c.idx + 2) {
-                    Some(&exit) if self.exit_blocked(&self.net.lanes[next as usize], exit, true) => (Some(exit), None),
+                    Some(&exit) if self.exit_blocked(&self.net.lanes[next as usize], exit, true) => {
+                        full_exit = true;
+                        (Some(exit), None)
+                    }
                     _ => continue,
                 }
             };
             let (goal, s_end, s) = (*c.route.last().unwrap(), c.s_end, c.s);
-            let found = self.net.route_avoiding(here, s, goal, s_end, avoid_lane, avoid_step);
+            let mut found = self.net.route_avoiding(here, s, goal, s_end, avoid_lane, avoid_step);
+            // [rage] Round a full exit only by a modest detour; otherwise it
+            // waits its turn in the queue (the exit clears).
+            if full_exit {
+                let left = self.net.route_length(&c.route[c.idx..], s);
+                if found.as_ref().is_some_and(|r| self.net.route_length(&r.0, s) > left + REROUTE_DETOUR_M.max(left * REROUTE_DETOUR_SHARE)) {
+                    found = None;
+                }
+            }
             let c = &mut self.cars[id];
             // Back off: a car that keeps standing tries again ever more rarely.
             c.cooldown = (REROUTE_LANE_CHANGE_AFTER * 2f32.powi(c.replans as i32)).min(REROUTE_BACKOFF_MAX);

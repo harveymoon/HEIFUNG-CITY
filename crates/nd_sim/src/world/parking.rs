@@ -26,7 +26,9 @@ impl World {
         };
         let price = size.default_price();
         let bz = Business::new(BusinessKind::Parking, size.jobs());
-        let id = self.place_special(lot_id, name, size.jobs(), size.capacity(), |b| {
+        // [parking] A surface lot has the bays its parcel fits (as drawn).
+        let capacity = if size.floors() == 0 { self.lots.get(lot_id).map_or(size.capacity(), |l| crate::parking_layout::surface_capacity(l).max(1)) } else { size.capacity() };
+        let id = self.place_special(lot_id, name, size.jobs(), capacity, |b| {
             b.tier = Tier::Mid;
             b.floors = size.floors();
             b.business = Some(bz);
@@ -52,7 +54,8 @@ impl World {
         let value = self.land_value.at(lot.center);
         let tier = Tier::for_land_value(value).min(Tier::Mid);
         let floors: u8 = if tier == Tier::Mid && area > 500.0 { self.rng.random_range(3..=5) } else { 0 };
-        let capacity = if floors == 0 { (area / 28.0) as u16 } else { ((area / 32.0) as u16) * floors as u16 };
+        // [parking] A surface lot has the bays its parcel fits (as drawn).
+        let capacity = if floors == 0 { crate::parking_layout::surface_capacity(lot) } else { ((area / 32.0) as u16) * floors as u16 };
         if capacity < 4 {
             return None;
         }

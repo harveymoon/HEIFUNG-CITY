@@ -4,7 +4,7 @@
 use super::*;
 
 impl Traffic {
-    pub(super) fn insert_sorted(&mut self, lane: LaneId, car: CarId) {
+    pub(crate) fn insert_sorted(&mut self, lane: LaneId, car: CarId) {
         let s = self.cars[car].s;
         let list = &mut self.net.lanes[lane as usize].cars;
         let pos = list.iter().position(|&other| self.cars[other].s > s).unwrap_or(list.len());

@@ -47,7 +47,10 @@ fn civic_structures_never_decay_or_burn_down_and_fire_damage_is_repaired() {
     }
     for (k, (n, b)) in stations.iter().enumerate() {
         let now = w.buildings[*b].condition;
-        assert!(now >= start[k], "{n} decayed: {} -> {now}", start[k]);
+        // A random fire may hit a station in these days (the later part
+        // tests fire damage and its repair); decay is what must not happen.
+        let burned = w.services.incidents.iter().any(|i| i.building == *b && i.kind == nd_sim::services::IncidentKind::Fire);
+        assert!(now >= start[k] || burned, "{n} decayed: {} -> {now}", start[k]);
     }
     // Run down (as by an old save's decay): mended at the next midnight.
     w.buildings[police].condition = 0.305;
