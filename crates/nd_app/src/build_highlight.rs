@@ -288,6 +288,46 @@ pub struct BuildHighlight {
     checked_sel: Option<HighlightSel>,
     /// Bumped with every new view, for the meshes.
     pub version: u64,
+    /// [feat/pt-ux] The selected building the view is about, when the Build
+    /// window shows nothing: it gets the marker, figure and area its kind
+    /// shows in build mode (a car park's spaces, a plant's output, a
+    /// station's reach).
+    pub inspected: Option<BuildingId>,
+}
+
+/// [feat/pt-ux] What build mode would show for building `id` alone: its
+/// marker with its figure, and its service area. A private car park (a
+/// business) gets the car park's marker and spaces too. None for buildings
+/// build mode has nothing for (homes, shops, offices).
+pub fn inspected_view(w: &World, id: BuildingId) -> Option<HighlightView> {
+    let b = w.buildings.get(id)?;
+    match w.placed_as(id).filter(|p| Family::of(*p).is_some()) {
+        Some(p) => {
+            let sel = HighlightSel { cat: Cat::Services, sub: None, focus: Some(norm(p)) };
+            let reach = if reach_of(p).is_some() { vec![norm(p)] } else { Vec::new() };
+            Some(compute_from(w, &sel, &[norm(p)], &reach, &[(id, p)]))
+        }
+        None if b.parking_capacity > 0 && b.business.as_ref().is_some_and(|z| z.kind == nd_sim::BusinessKind::Parking) => {
+            let lot = w.lots.get(b.lot)?;
+            let mut v = HighlightView::default();
+            v.marked.push(Marked { id, lot: b.lot, at: lot.center, roof: b.floors as f32 * 3.6 + 4.0, family: Family::Parking, level: Level::Focus, name: b.name.clone(), label: Some(format!("{} / {} spaces", b.parking_used, b.parking_capacity)) });
+            Some(v)
+        }
+        None => None,
+    }
+}
+
+/// [feat/pt-ux] What the inspected building's view depends on.
+fn inspected_key(w: &World, id: BuildingId) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    if let Some(b) = w.buildings.get(id) {
+        (id, b.lot, b.parking_used, b.parking_capacity, b.is_derelict(), b.construction.is_some(), w.roads.version, w.lots.len()).hash(&mut h);
+        if b.plant.is_some() {
+            (w.plant_output_mw(b).round() as i64).hash(&mut h);
+        }
+        b.battery.as_ref().map(|x| x.charge_mwh.round() as i64).hash(&mut h);
+    }
+    h.finish()
 }
 
 /// The kinds `sel` highlights (normalised), and the ones whose areas show:
@@ -523,16 +563,44 @@ fn compute_from(w: &World, sel: &HighlightSel, all: &[Placeable], area_kinds: &[
 /// Seconds between checks for a change.
 const CHECK_EVERY: f64 = 0.5;
 
-fn refresh(sim: Res<Sim>, mut hl: ResMut<BuildHighlight>, time: Res<Time>) {
+fn refresh(sim: Res<Sim>, mut hl: ResMut<BuildHighlight>, time: Res<Time>, selection: Res<crate::selection::Selection>, tools: Res<crate::tools::ToolState>) {
     let Some(sel) = hl.sel else {
-        if hl.view.is_some() {
+        // [feat/pt-ux] No Build window section: a selected building shows
+        // what its kind shows in build mode (not underground).
+        let picked = match *selection {
+            crate::selection::Selection::Building(id) if tools.depth != crate::tools::Depth::Underground => Some(id),
+            _ => None,
+        };
+        if let Some(id) = picked {
+            let now = time.elapsed_secs_f64();
+            if hl.inspected == Some(id) && now - hl.checked < CHECK_EVERY && !sim.full_rebuild {
+                return;
+            }
+            hl.checked = now;
+            hl.checked_sel = None;
+            let key = inspected_key(&sim.world, id);
+            if hl.inspected == Some(id) && hl.key == Some(key) && !sim.full_rebuild {
+                return;
+            }
+            hl.inspected = Some(id);
+            hl.key = Some(key);
+            hl.view = inspected_view(&sim.world, id).map(Arc::new);
+            hl.version += 1;
+            return;
+        }
+        if hl.view.is_some() || hl.inspected.is_some() {
             hl.view = None;
             hl.key = None;
             hl.checked_sel = None;
+            hl.inspected = None;
             hl.version += 1;
         }
         return;
     };
+    if hl.inspected.take().is_some() {
+        hl.key = None;
+        hl.checked_sel = None;
+    }
     let now = time.elapsed_secs_f64();
     if hl.checked_sel == Some(sel) && now - hl.checked < CHECK_EVERY && !sim.full_rebuild {
         return;

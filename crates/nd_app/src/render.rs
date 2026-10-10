@@ -61,6 +61,9 @@ mod plot_hover;
 pub use plot_hover::{hover_site, site_verdict};
 mod junction_view;
 mod layers;
+/// [pt-ux] Parking, Trails and Land density layers.
+mod pt_layers;
+pub use pt_layers::{availability_color as parking_color, Mover as TrailMover};
 mod lights;
 // [review] retaining walls at corner lots over a lower side street
 mod retaining;
@@ -243,7 +246,7 @@ pub(crate) fn lifts(sel: Selection) -> Lifts {
         Selection::Car(c) => Lifts { car: Some(c), ..Default::default() },
         Selection::Unit(u) => Lifts { unit: Some(u), ..Default::default() },
         // Outlined by their own gizmos or meshes, not lifted.
-        Selection::None | Selection::Building(_) | Selection::Parked(_) | Selection::Toll(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Road(_) | Selection::Ship(_) => Lifts::default(),
+        Selection::None | Selection::Building(_) | Selection::Parked(_) | Selection::Toll(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Road(_) | Selection::Ship(_) | Selection::Drone(_) | Selection::Rv(_) => Lifts::default(),
     }
 }
 
@@ -375,7 +378,11 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, sync_ring_preview.in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
         app.add_systems(Update, (holo::sync_draw_hologram, holo::sync_plan_holograms).in_set(SimSet::Sync).after(sync_preview).before(lift_spawned));
         app.add_systems(Update, holo::apply_depth.in_set(SimSet::Sync).after(lift_movers));
+        app.add_systems(Update, holo::sync_tunnel_hints.in_set(SimSet::Sync));
+        // [pt-ux] The rest of the surface, after every owner (PostUpdate).
+        app.add_systems(PostUpdate, holo::hide_surface_extras.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate));
         app.add_systems(Update, (subway::sync_metro_tunnels, subway::sync_metro_trains).in_set(SimSet::Sync).after(sync_trains).before(holo::apply_depth));
+        app.add_systems(Update, subway::sync_platform_figures.in_set(SimSet::Sync).after(holo::apply_depth));
         app.add_systems(Update, (turbines::sync_turbines, solar::sync_solar, haze::sync_haze, grime::sync_grime, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.add_systems(Update, (climate::sync_precipitation, climate::sync_steam).in_set(SimSet::Sync).after(sync_landscape));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
@@ -432,6 +439,7 @@ impl Plugin for RenderPlugin {
         app.insert_gizmo_config(layers::LoadGizmos, bevy::gizmos::config::GizmoConfig { depth_bias: -1.0, line: bevy::gizmos::config::GizmoLineConfig { width: 5.0, ..default() }, ..default() });
         app.add_systems(Update, layers::load_gizmos.in_set(SimSet::Sync).after(lift_movers));
         app.add_systems(Update, layers::danger_gizmos.in_set(SimSet::Sync).after(lift_movers));
+        app.add_plugins(pt_layers::PtLayersPlugin);
         app.add_plugins(mapview::MapViewPlugin);
         // [districts] The district layer; [tourism] visitors on foot, after
         // the citizens whose figure cache they share.

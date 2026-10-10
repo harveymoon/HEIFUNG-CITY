@@ -43,24 +43,36 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
             ("Import duty", Flow::ImportDuty, format!("{:.0}% on imports", t.import_duty * 100.0)),
             ("Tolls", Flow::Tolls, format!("{} booths", p.sim.world.tolls.booths.len())),
         ];
-        super::pane::table(ui, "tax_all", &["tax", "rate", "today", "yesterday"], |ui| {
-            let (mut sum_t, mut sum_y) = (0.0, 0.0);
-            for (name, flow, rate) in lines {
-                let (td, yd) = (l.today_of(flow), l.yesterday_of(flow));
-                sum_t += td;
-                sum_y += yd;
-                ui.label(egui::RichText::new(name));
-                ui.label(egui::RichText::new(rate).weak());
-                ui.label(egui::RichText::new(format!("{td:.0}")));
-                ui.label(egui::RichText::new(format!("{yd:.0}")));
+        // [pt-ux] Sortable; the total stays at the bottom.
+        let rows: Vec<(&str, String, f32, f32)> = lines.into_iter().map(|(name, flow, rate)| (name, rate, l.today_of(flow), l.yesterday_of(flow))).collect();
+        let (sum_t, sum_y): (f32, f32) = (rows.iter().map(|r| r.2).sum(), rows.iter().map(|r| r.3).sum());
+        let key = |r: &(&str, String, f32, f32), c: usize| match c {
+            0 => super::pane::SortKey::text(r.0),
+            1 => super::pane::SortKey::None,
+            2 => super::pane::SortKey::num(r.2),
+            _ => super::pane::SortKey::num(r.3),
+        };
+        let heads = [("tax", ""), ("rate", ""), ("today", ""), ("yesterday", "")];
+        super::pane::sortable_foot(
+            ui,
+            "tax_all",
+            &heads,
+            &rows,
+            key,
+            |ui, r| {
+                ui.label(egui::RichText::new(r.0));
+                ui.label(egui::RichText::new(&r.1).weak());
+                ui.label(egui::RichText::new(format!("{:.0}", r.2)));
+                ui.label(egui::RichText::new(format!("{:.0}", r.3)));
+            },
+            |ui| {
+                ui.label(egui::RichText::new("All taxes").strong().color(GOLD));
+                ui.label("");
+                ui.label(egui::RichText::new(format!("{sum_t:.0}")).strong());
+                ui.label(egui::RichText::new(format!("{sum_y:.0}")).strong());
                 ui.end_row();
-            }
-            ui.label(egui::RichText::new("All taxes").strong().color(GOLD));
-            ui.label("");
-            ui.label(egui::RichText::new(format!("{sum_t:.0}")).strong());
-            ui.label(egui::RichText::new(format!("{sum_y:.0}")).strong());
-            ui.end_row();
-        });
+            },
+        );
     }
 
     // [clarity] The tourist tax: a share of every hotel night, paid by the

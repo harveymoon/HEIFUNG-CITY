@@ -406,7 +406,21 @@ pub(super) fn bulldoze(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         ctx.tools.status = format!("{msg}; its ground goes back to the zoning plan.");
         return Ok(json!({ "message": ctx.tools.status, "treasury": round(ctx.sim.world.economy.treasury) }));
     }
-    let id = GestureId(opt_u64(cmd, "gesture_id")?.ok_or("missing gesture_id (or building)")?);
+    // [pt-ux] `at`: as a Bulldoze click there, only the road's piece
+    // between its junctions.
+    if let Some(at) = opt_vec2(cmd, "at")? {
+        let (id, a, b) = crate::tools::road_piece_at(&ctx.sim, at, ctx.tools.depth).ok_or("no road there")?;
+        let left = ctx.sim.world.remove_road_piece(id, a, b);
+        let now = opt_bool(cmd, "implement")?.unwrap_or(false);
+        if now {
+            ctx.sim.world.implement();
+        }
+        ctx.tools.status = if now { format!("Road piece ({:.0} m) removed.", (b - a).abs()) } else { format!("Road piece ({:.0} m) marked for removal. Ctrl+Enter implements.", (b - a).abs()) };
+        let mut v = project_state(ctx);
+        v["piece"] = json!({ "gesture_id": id.0, "from_m": round(a), "to_m": round(b), "roads_left": left });
+        return Ok(v);
+    }
+    let id = GestureId(opt_u64(cmd, "gesture_id")?.ok_or("missing gesture_id, at (or building)")?);
     if ctx.sim.world.gesture(id).is_none() {
         return Err(format!("no gesture {}", id.0));
     }

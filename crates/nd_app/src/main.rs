@@ -1,6 +1,7 @@
 //! Neon District: Bevy front end. The simulation lives in `nd_sim`; this
 //! crate renders it, drives it, and gives the player tools.
 
+mod air_select;
 mod assets;
 /// [overlay] What is drawn over the city: the selection, previews, highlights.
 mod overlay;
@@ -29,6 +30,7 @@ mod metro_ux;
 mod toll_select;
 /// [road-inspect] Picking and outlining street pieces, and the road card's figures.
 mod road_select;
+mod rv_select;
 mod remote;
 mod render;
 /// [overlay] What the player has selected, checked after every step.

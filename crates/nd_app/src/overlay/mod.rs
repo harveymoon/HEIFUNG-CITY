@@ -17,6 +17,8 @@ pub mod mesh;
 pub mod routes;
 pub mod selection;
 pub mod shapes;
+/// [feat/pt-ux] The selected building's glowing shell.
+pub mod shell;
 pub mod trails;
 
 /// When the overlays run: see the module docs.
@@ -48,7 +50,9 @@ impl Plugin for OverlayPlugin {
             // [pt-walk] Route dashes over everything; thin lines for the way behind.
             .insert_gizmo_config(selection::RouteTopGizmos, bevy::gizmos::config::GizmoConfig { depth_bias: -1.0, line: bevy::gizmos::config::GizmoLineConfig { width: 2.0, ..default() }, ..default() })
             .insert_gizmo_config(selection::RouteThinGizmos, bevy::gizmos::config::GizmoConfig { line: bevy::gizmos::config::GizmoLineConfig { width: 1.2, ..default() }, ..default() })
-            .add_systems(Update, draw_selected.in_set(OverlaySet::Draw));
+            .add_systems(Update, draw_selected.in_set(OverlaySet::Draw))
+            .init_resource::<shell::Shell>()
+            .add_systems(Update, shell::sync_shell.in_set(OverlaySet::Build));
     }
 }
 

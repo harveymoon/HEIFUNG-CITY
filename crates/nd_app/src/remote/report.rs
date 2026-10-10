@@ -1020,6 +1020,11 @@ impl Alert {
         }
     }
 
+    /// [pt-ux] The centroid of the cases (for the Alerts window's "go").
+    pub fn at(&self) -> Option<SVec2> {
+        (!self.points.is_empty()).then(|| self.points.iter().fold(SVec2::ZERO, |a, &p| a + p) / self.points.len() as f32)
+    }
+
     /// Ranking: severity first, then (logarithmically) how many.
     fn score(&self) -> f32 {
         self.severity as f32 * 10.0 + (self.count as f32).ln_1p()

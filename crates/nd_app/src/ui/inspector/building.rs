@@ -72,6 +72,14 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
     for line in w.lot_link_warnings(b.lot) {
         ui.label(egui::RichText::new(line).color(egui::Color32::from_rgb(255, 130, 80)).strong());
     }
+    // [feat/pt-ux] What it is and what it does for the city, first.
+    if let Some((what, gives)) = super::about::about(w, id) {
+        egui::Frame::new().fill(egui::Color32::from_rgba_unmultiplied(40, 34, 20, 140)).corner_radius(4.0).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(egui::RichText::new(what).color(IVORY));
+            ui.label(egui::RichText::new(gives).small().color(egui::Color32::from_gray(190)));
+        });
+    }
     // [free-placement] The city's own: its ground is out of the zoning, and
     // the player may bulldoze it (a second click confirms).
     if w.is_city_building(id) && b.rail.is_none() && b.port.is_none() {

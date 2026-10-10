@@ -123,6 +123,8 @@ fn flag_box(
     let (mut save, mut cancel) = (false, false);
     egui::Window::new(egui::RichText::new("Flag for Claude").color(crate::ui::GOLD).strong())
         .id(egui::Id::new("flag_for_claude"))
+        // [pt-ux] Above the City Data view too (the panes sit below it).
+        .order(egui::Order::Tooltip)
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, -80.0))
