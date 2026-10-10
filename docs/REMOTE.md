@@ -1002,7 +1002,7 @@ selection from the API. Flags live in the running game and are also appended to
 
 `camera` takes any of:
 
-- `look_at: [x, y]` (orbit target), `distance` (12..2500), `yaw`, `pitch` (radians; pitch 0.08..1.5);
+- `look_at: [x, y]` (orbit target), `distance` (12..2500), `yaw`, `pitch` (radians; pitch 0.08..1.5, or down to -1.2 in the Underground view, where the orbit may swing below the ground: it rises back over the horizon once the view leaves Underground);
 - `x`, `z` (target coordinates; `y` is accepted for `z`);
 - `follow`: a citizen or car id, or `{"citizen"|"car"|"building": id}`; the target tracks it every
   frame until the next `camera` command;

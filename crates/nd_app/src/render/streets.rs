@@ -49,8 +49,10 @@ pub(super) fn sync_roads(
         let mut e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, RoadsTag));
         if s.is_glow() {
             e.insert((NotShadowCaster, NotShadowReceiver));
-        } else {
+        } else if ghosts_underground(s) {
             // The same mesh again, see-through, for the underground view.
+            // [pt-ux] Only the street itself: trees, lamps, poles and
+            // street furniture stood over the tunnels as ghosts too.
             commands.spawn((Mesh3d(mesh), MeshMaterial3d(mats.ghost_road.clone()), Transform::IDENTITY, holo::GhostRoadTag, Visibility::Hidden, NotShadowCaster, NotShadowReceiver));
         }
     }
@@ -287,4 +289,12 @@ pub(super) fn sync_tolls(
     }
     let geo = nd_procgen::toll_booths(&draws, &assets.palette);
     spawn_geometry(&mut commands, &mut meshes, &mats, &geo, TollTag);
+}
+
+/// [pt-ux] Which street surfaces the underground view keeps as see-through
+/// ghosts over the tunnels: the carriageway, pavements and kerbs, not
+/// trees, lamps, poles or furniture.
+fn ghosts_underground(s: nd_procgen::Surface) -> bool {
+    use nd_procgen::Surface as S;
+    matches!(s, S::Asphalt | S::WornAsphalt | S::Paving | S::WornPaving | S::Concrete | S::WornConcrete | S::Dirt | S::Tactile)
 }

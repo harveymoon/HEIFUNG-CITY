@@ -565,7 +565,7 @@ fn control_camera(
     // The zone brush and marquee erase with a right-drag: no orbit then.
     if buttons.pressed(MouseButton::Right) && !tools.captures_right_drag() {
         cam.yaw -= motion.delta.x * 0.005;
-        cam.pitch = (cam.pitch + motion.delta.y * 0.005).clamp(0.08, 1.5);
+        cam.pitch = (cam.pitch + motion.delta.y * 0.005).clamp(min_pitch(tools.depth), MAX_PITCH);
     } else if !locked && (buttons.pressed(MouseButton::Middle) || (shift && buttons.pressed(MouseButton::Left))) {
         let (s, c) = cam.yaw.sin_cos();
         let right = Vec3::new(c, 0.0, -s);
@@ -622,10 +622,35 @@ fn control_camera(
         cam.yaw -= 1.2 * dt;
     }
 
+    // [pt-ux] Back above the ground once the view leaves Underground.
+    cam.pitch = settle_pitch(cam.pitch, tools.depth, dt);
     // The orbit centre rides on the ground, eased so hills do not jolt it.
     let ground = sim.world.surface_height(Vec2::new(cam.target.x, cam.target.z));
     cam.target.y += (ground - cam.target.y) * (dt * 6.0).min(1.0);
     place_orbit(&mut cam, &mut tf);
+}
+
+/// The steepest the orbit looks down.
+const MAX_PITCH: f32 = 1.5;
+/// The lowest the orbit eye goes above ground: just over the horizon.
+const GROUND_MIN_PITCH: f32 = 0.08;
+
+/// [pt-ux] How low the orbit may swing: in the Underground view the eye
+/// may go below the ground plane and look up at the tunnels from under
+/// them; elsewhere it stays just above the horizon.
+pub(crate) fn min_pitch(depth: crate::tools::Depth) -> f32 {
+    if depth == crate::tools::Depth::Underground { -1.2 } else { GROUND_MIN_PITCH }
+}
+
+/// [pt-ux] A pitch below what the view allows (the Underground view was
+/// left with the eye under the ground) swings back up within a few frames.
+pub(crate) fn settle_pitch(pitch: f32, depth: crate::tools::Depth, dt: f32) -> f32 {
+    let lo = min_pitch(depth);
+    if pitch >= lo {
+        return pitch;
+    }
+    let next = pitch + (lo - pitch).max(0.05) * (dt * 10.0).min(1.0);
+    next.min(lo)
 }
 
 /// The camera stays over the map: target and eye within the bound. Then
@@ -765,7 +790,9 @@ fn project_cursor(
     let Some(pos) = window.cursor_position() else { return };
     let Ok(ray) = camera.viewport_to_world(gt, pos) else { return };
     let dir = ray.direction.as_vec3();
-    if dir.y >= -1e-4 {
+    // [pt-ux] Under the ground (the Underground view's orbit can swing
+    // below it) the pointer meets the ground from below, looking up.
+    if dir.y.abs() < 1e-4 || (dir.y > 0.0) != (ray.origin.y < 0.0) {
         return;
     }
     let t = -ray.origin.y / dir.y;
@@ -785,4 +812,34 @@ fn project_cursor(
         }
     }
     cursor.ground = Some(Vec2::new(hit.x, hit.z));
+}
+
+#[cfg(test)]
+mod pitch_tests {
+    use super::*;
+    use crate::tools::Depth;
+
+    #[test]
+    fn only_underground_goes_below_the_horizon() {
+        assert!(min_pitch(Depth::Underground) < 0.0);
+        assert_eq!(min_pitch(Depth::Ground), GROUND_MIN_PITCH);
+        assert_eq!(min_pitch(Depth::Sky), GROUND_MIN_PITCH);
+    }
+
+    #[test]
+    fn leaving_underground_swings_back_up() {
+        // Allowed underground: untouched.
+        assert_eq!(settle_pitch(-0.9, Depth::Underground, 0.016), -0.9);
+        // Above ground it rises, never past the limit, and gets there.
+        let mut p = -0.9;
+        let mut last = p;
+        for _ in 0..120 {
+            p = settle_pitch(p, Depth::Ground, 1.0 / 60.0);
+            assert!(p >= last && p <= GROUND_MIN_PITCH);
+            last = p;
+        }
+        assert_eq!(p, GROUND_MIN_PITCH);
+        // A pitch already allowed stays.
+        assert_eq!(settle_pitch(0.7, Depth::Ground, 0.016), 0.7);
+    }
 }

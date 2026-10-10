@@ -44,7 +44,7 @@ impl Plugin for ToolsPlugin {
         app.init_resource::<ToolState>()
             .init_resource::<EffectivePlan>()
             .add_plugins(crate::overlay::OverlayPlugin)
-            .add_systems(Update, (tool_input, crate::road_select::keep_on_rebuild).chain().in_set(SimSet::Input))
+            .add_systems(Update, (tool_input, crate::road_select::keep_on_rebuild, zone::follow_zone_tool).chain().in_set(SimSet::Input))
             // [fix/review-app] After the sim step, like the meshes: drawn in
             // Input, outlines and rings used the pre-tick state and last
             // frame's `frac`, so at speed the gold box trailed its car.
