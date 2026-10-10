@@ -209,6 +209,10 @@ pub struct BuildingTag;
 /// are plain markers for the per-frame transform queries.
 #[derive(Component)]
 pub struct CitizenTag;
+/// [pt-transit] A citizen waiting on a metro platform: the Underground view
+/// shows them (`holo::apply_depth` hides every other figure there).
+#[derive(Component)]
+pub struct PlatformTag;
 #[derive(Component)]
 pub struct CarTag;
 /// [render] A car's body, lights or glow, and whether the car is in a

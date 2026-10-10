@@ -19,7 +19,7 @@ pub(super) fn sync_citizens(
     mut images: ResMut<Assets<Image>>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
     tools: Res<crate::tools::ToolState>,
-    mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d, Option<&swap::SwapOriginal>, Option<&mut WayHeight>), With<CitizenTag>>,
+    mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d, Option<&swap::SwapOriginal>, Option<&mut WayHeight>, Has<PlatformTag>), With<CitizenTag>>,
 ) {
     let lifted = lifts(*selection);
     // [pt-transit] Metro riders wait on the platform below the street:
@@ -71,7 +71,14 @@ pub(super) fn sync_citizens(
     let down = w.down_on_street();
     for &(id, e, key, stature, _) in &outdoors {
         let Some(c) = w.citizens.get(id) else { continue };
-        let Ok((mut tf, mut vis, _, mut mesh, _, way)) = q.get_mut(e) else { continue };
+        let Ok((mut tf, mut vis, _, mut mesh, _, way, platform)) = q.get_mut(e) else { continue };
+        if platform != c.on_platform() {
+            if platform {
+                commands.entity(e).try_remove::<PlatformTag>();
+            } else {
+                commands.entity(e).try_insert(PlatformTag);
+            }
+        }
         *vis = Visibility::Visible;
         let pos = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
         let heading = lerp_angle(c.prev_heading, c.heading, f);
@@ -115,7 +122,7 @@ pub(super) fn sync_citizens(
     }
     for (id, &e) in state.citizens.iter() {
         let Some(c) = w.citizens.get(*id) else { continue };
-        let Ok((_, mut vis, mut mat, mut mesh, heat_original, _)) = q.get_mut(e) else { continue };
+        let Ok((_, mut vis, mut mat, mut mesh, heat_original, _, _)) = q.get_mut(e) else { continue };
         if !shown(c) {
             *vis = Visibility::Hidden;
             // Indoors: let go of the figure so the cache can drop it.
