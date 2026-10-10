@@ -297,6 +297,11 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("implement", "bool, default false (pending in the project)"),
         ("returns", "gesture_id, joined (path ends on a grounds gate), project state"),
     ] },
+    Cmd { name: "connectivity", aliases: &["stranded", "no_route"], effect: Read, run: super::connectivity::connectivity, help: &[
+        ("segments", "bool: also list the streets and paths cut off from the main networks (the connectivity layer's data)"),
+        ("all", "with segments: every street and path, connected or not"),
+        ("returns", "stranded [{net walk|road, center, lots, buildings, residents, workers, here_now, text}], alerts [{seq, kind no_route|stranded_walk|stranded_road, pos, building, count, text}], failed_trips, failed_today, walk_main, drive_main"),
+    ] },
     Cmd { name: "grounds_junctions", aliases: &["park_junctions"], effect: Read, run: planning::grounds_junctions, help: &[
         ("lot", "optional lot id"),
         ("kind", "park|plaza|stadium|campus|station|beach"),

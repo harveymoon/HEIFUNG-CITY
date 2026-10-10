@@ -8,6 +8,8 @@ use crate::vehicle::{VehicleClass, VehicleModel};
 mod household;
 mod population;
 mod decide;
+#[cfg(test)]
+pub(in crate::world) use decide::WANDER_REACH;
 mod arrive;
 mod travel;
 

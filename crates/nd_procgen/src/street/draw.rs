@@ -327,7 +327,7 @@ pub(super) fn draw_run(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &Run, d
         return;
     }
     if run.kind == RoadKind::Path {
-        footpath(g, pal, roads, run, pts, &mut rng);
+        footpath(g, pal, roads, run, pts, &mut rng, cx.lifts.get(ri).and_then(Option::as_ref));
         return;
     }
     if run.kind == RoadKind::Rail {

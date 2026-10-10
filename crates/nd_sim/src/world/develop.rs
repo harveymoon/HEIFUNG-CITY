@@ -200,8 +200,11 @@ impl World {
                 // The player's rule: a long walk to any park or night out
                 // makes a neighbourhood cheaper (`land_value::access_value`).
                 let (n, cell, half) = b.cells();
-                let (park, night) = self.amenity_minutes(n, cell, half);
+                let (dp, dn) = self.amenity_fields();
+                let (park, night) = self.amenity_minutes_from(n, cell, half, &dp, &dn);
                 b.set_access(park, night);
+                // [pt-walk] Kept for each lot's own read-out (`lot_access`).
+                self.connectivity.access = Some(super::connectivity::AccessFields { walk_version: self.walk.version, park: dp, night: dn });
             }
             _ => {
                 b.finish(0.25, &mut self.land_value);
@@ -225,18 +228,11 @@ impl World {
         }
     }
 
-    /// Minutes on foot from every land value cell to the nearest park and
-    /// the nearest open place to go out, along the walk network rather than
-    /// as the crow flies: a park across a river or a motorway with no way
-    /// over is far. Two multi-source Dijkstras over the walk graph (from
-    /// every node in or fronting such a lot), then each cell takes the
-    /// nearest node within `ACCESS_SNAP` plus the straight bit to it.
-    /// Cells with no node near are `NO_DATA` (no access term at all), cells
-    /// that reach none `NONE_REACHABLE`. Cost: O(nodes log nodes) twice and
-    /// one grid lookup per cell, so it stays cheap in a big city.
-    pub(super) fn amenity_minutes(&self, n: usize, cell: f32, half: f32) -> (Vec<f32>, Vec<f32>) {
-        crate::prof_scope!("amenity_minutes");
-        use crate::land_value::{ACCESS_SNAP, NONE_REACHABLE, NO_DATA};
+    /// [pt-walk] Metres on foot from every walk node to the nearest open
+    /// park and the nearest night out (`f32::INFINITY` where none can be
+    /// reached).
+    pub(super) fn amenity_fields(&self) -> (Vec<f32>, Vec<f32>) {
+        crate::prof_scope!("amenity_fields");
         // 1 = park, 2 = nightlife, by lot.
         let mut kind: slotmap::SecondaryMap<LotId, u8> = slotmap::SecondaryMap::new();
         for b in self.buildings.values() {
@@ -248,6 +244,12 @@ impl World {
                 LandUse::Entertainment if !b.is_derelict() && b.business.as_ref().is_none_or(|z| !z.closed) => 2,
                 _ => continue,
             };
+            // [pt-walk] Every lot of a park laid over several.
+            for &l in b.plot.extra_lots.iter() {
+                if self.lots.contains_key(l) {
+                    *kind.entry(l).unwrap().or_insert(0) |= bit;
+                }
+            }
             if self.lots.contains_key(b.lot) {
                 *kind.entry(b.lot).unwrap().or_insert(0) |= bit;
             }
@@ -263,19 +265,35 @@ impl World {
                 nights.push(i as u32);
             }
         }
-        let dp = self.walk.distances_from(&parks);
-        let dn = self.walk.distances_from(&nights);
+        (self.walk.distances_from(&parks), self.walk.distances_from(&nights))
+    }
+
+    /// Minutes on foot (from the fields of `amenity_fields`) from every land value cell to the nearest park and
+    /// the nearest open place to go out, along the walk network rather than
+    /// as the crow flies: a park across a river or a motorway with no way
+    /// over is far. Two multi-source Dijkstras over the walk graph (from
+    /// every node in or fronting such a lot), then each cell takes the
+    /// nearest node within `ACCESS_SNAP` plus the straight bit to it.
+    /// Cells with no node near are `NO_DATA` (no access term at all), cells
+    /// that reach none `NONE_REACHABLE`. Cost: O(nodes log nodes) twice and
+    /// one grid lookup per cell, so it stays cheap in a big city.
+    pub(super) fn amenity_minutes_from(&self, n: usize, cell: f32, half: f32, dp: &[f32], dn: &[f32]) -> (Vec<f32>, Vec<f32>) {
+        crate::prof_scope!("amenity_minutes");
+        use crate::land_value::{ACCESS_SNAP, NONE_REACHABLE, NO_DATA};
         let per_min = WALK_MPS * 60.0;
         let mut park = vec![NO_DATA; n * n];
         let mut night = vec![NO_DATA; n * n];
         for y in 0..n {
             for x in 0..n {
                 let c = Vec2::new(-half + (x as f32 + 0.5) * cell, -half + (y as f32 + 0.5) * cell);
-                let Some(k) = self.walk.nearest_within(c, ACCESS_SNAP) else { continue };
+                // [pt-walk] The nearest node anyone walks from: a lone node
+                // (a lot's loop that joins nothing) read as "no parks within
+                // walking reach" right beside a park (F2, F30).
+                let Some(k) = self.walk.nearest_within(c, ACCESS_SNAP).filter(|&k| !self.walk.adj[k as usize].is_empty()).or_else(|| self.walk.nearest_matching(c, ACCESS_SNAP, |_| true)) else { continue };
                 let off = self.walk.nodes[k as usize].pos.distance(c);
                 let minutes = |d: &[f32]| if d[k as usize].is_finite() { ((d[k as usize] + off) / per_min).min(NONE_REACHABLE - 1.0) } else { NONE_REACHABLE };
-                park[y * n + x] = minutes(&dp);
-                night[y * n + x] = minutes(&dn);
+                park[y * n + x] = minutes(dp);
+                night[y * n + x] = minutes(dn);
             }
         }
         (park, night)

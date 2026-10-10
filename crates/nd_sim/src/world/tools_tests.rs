@@ -658,6 +658,37 @@ fn a_footbridge_over_an_avenue_arm_replaces_the_junction_crosswalk() {
     assert!(path.windows(2).all(|p| w.walk.crossing_between(p[0], p[1]) != Some(cr)));
 }
 
+/// [pt-walk] F19: footbridges over every arm of a crossroads do not stand
+/// in each other's way: where two meet at a corner they join with a
+/// corner deck (one flight of stairs per corner), so the four make a ring
+/// people walk all the way round up on the decks.
+#[test]
+fn footbridges_round_a_junction_join_into_a_ring() {
+    let mut w = crossroads();
+    let k = w.junction_at(Vec2::ZERO, 2.0).expect("a junction");
+    w.economy.treasury = 1.0e7;
+    let arms: Vec<u32> = w.junction_view(k).crossings.iter().map(|c| c.index).collect();
+    assert_eq!(arms.len(), 4);
+    for &cr in &arms {
+        w.set_crossing_upgrade(cr, CrossingUpgrade::Footbridge).unwrap_or_else(|e| panic!("arm {cr}: {e}"));
+        run(&mut w, 1);
+    }
+    assert_eq!(w.walk.footbridges.len(), 4);
+    assert_eq!(w.walk.footbridge_links.len(), 4, "a corner deck at each corner: {:?}", w.walk.footbridge_links);
+    let stairs: usize = w.walk.footbridges.iter().map(|f| f.joined.iter().filter(|j| !**j).count()).sum();
+    assert_eq!(stairs, 4, "one flight down at each corner");
+    // Round the ring on the decks: from one bridge's top to the opposite
+    // bridge's, never coming down.
+    let tops: Vec<u32> = w.walk.footbridges.iter().map(|f| f.nodes[2]).collect();
+    let far = *tops.iter().max_by(|a, b| w.walk.nodes[**a as usize].pos.distance(w.walk.nodes[tops[0] as usize].pos).total_cmp(&w.walk.nodes[**b as usize].pos.distance(w.walk.nodes[tops[0] as usize].pos))).unwrap();
+    let nodes = w.walk.route_nodes(tops[0], far).expect("round the ring");
+    assert!(nodes.iter().all(|&n| w.walk.nodes[n as usize].level > 0.0), "all the way up on the decks: {:?}", nodes.iter().map(|&n| w.walk.nodes[n as usize].level).collect::<Vec<_>>());
+    // And every corner reaches the ground by its stairs.
+    let (a, b) = (w.walk.nodes[w.walk.crossings[arms[0] as usize].a as usize].pos, w.walk.nodes[w.walk.crossings[arms[2] as usize].b as usize].pos);
+    let (_, nodes) = w.walk.route(a, b).expect("corner to corner");
+    assert!(nodes.iter().any(|&n| w.walk.nodes[n as usize].level > 0.0));
+}
+
 /// [footbridge] Cars never give way to someone up on the deck, though the
 /// deck stands right over the lanes (the walker's 2D position is on the
 /// street; only crossings at grade hold traffic).
