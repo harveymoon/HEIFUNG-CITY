@@ -344,11 +344,12 @@ fn a_mornings_car_sales_are_fetched_through_the_day_not_all_at_once() {
     let mut gone = 0;
     for &vid in &sold {
         match w.vehicles.cars.get(vid).map(|c| c.place) {
-            // (Or, with no way out from where its trip ended, left by the
-            // road for the trade: `sale_arrived`'s fallback. Which cars
-            // meet it follows which lot holds the shop, which is history's
-            // now: [stable-parcels] lots keep their ids through rebuilds.)
-            Some(CarPlace::Parked(s)) if s.kind == ParkKind::Kerb && w.vehicles.cars[vid].dealer.is_none() => {}
+            // (Or sold on off the forecourt meanwhile and delivered to its
+            // buyer, a resident whose car it now is.)
+            Some(CarPlace::Parked(s)) if s.kind != ParkKind::Dealer => {
+                let c = &w.vehicles.cars[vid];
+                assert!(c.dealer.is_none() && w.citizens.get(c.owner).is_some_and(|o| o.car == Some(vid)), "a sold car parked off the forecourt is a buyer's: {:?} at {:?}", s.kind, s.pos);
+            }
             Some(CarPlace::Parked(s)) => {
                 assert_eq!(s.kind, ParkKind::Dealer, "on the forecourt");
                 on_court += 1;
