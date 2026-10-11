@@ -54,9 +54,58 @@ fn block(g: &mut Geometry, c: &Ctx, s: Surface, poly: &[Vec2], y0: f32, y1: f32,
     ground(g, &c.frame, s, poly, y1, mul(color, 0.92));
 }
 
+/// The whole site floored with `s`: the outline cleaned of near-repeated
+/// corners and triangulated, and under it a fill of small squares, so a
+/// notched outline of many joined plots (which an ear-clipper can choke
+/// on) still has no bare patches.
+fn fill_site(g: &mut Geometry, c: &Ctx, s: Surface, y: f32, color: [f32; 3]) {
+    let poly = clean_poly(&c.lot_poly, 0.3);
+    ground(g, &c.frame, s, &poly, y, color);
+    if is_convex_local(&poly) {
+        return;
+    }
+    let (lo, hi) = bounds(&poly);
+    let step = 2.5;
+    let mut v = lo.y;
+    while v < hi.y {
+        let mut u = lo.x;
+        while u < hi.x {
+            let sq = [Vec2::new(u, v), Vec2::new(u + step, v), Vec2::new(u + step, v + step), Vec2::new(u, v + step)];
+            if sq.iter().all(|p| c.inside_local(*p)) {
+                ground(g, &c.frame, s, &sq, y - 0.005, color);
+            }
+            u += step;
+        }
+        v += step;
+    }
+}
+
+fn is_convex_local(poly: &[Vec2]) -> bool {
+    let n = poly.len();
+    if n < 4 {
+        return true;
+    }
+    let mut sign = 0.0f32;
+    for i in 0..n {
+        let (a, b, c) = (poly[i], poly[(i + 1) % n], poly[(i + 2) % n]);
+        let z = (b - a).perp_dot(c - b);
+        if z.abs() < 1e-4 {
+            continue;
+        }
+        if sign == 0.0 {
+            sign = z.signum();
+        } else if z.signum() != sign {
+            return false;
+        }
+    }
+    true
+}
+
 /// The site's paved forecourt and the bounds of the buildable footprint.
 fn forecourt(g: &mut Geometry, c: &Ctx, color: [f32; 3]) -> (Vec2, Vec2) {
-    yard(g, c, 0.4, Paving, color);
+    // The lot's own outline (a site of joined plots may be notched, and an
+    // inset of a notched outline can fold over itself).
+    fill_site(g, c, Paving, 0.03, color);
     bounds(&c.poly)
 }
 
@@ -566,6 +615,7 @@ pub fn history_museum(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let apex_b = (qa + qb) * 0.5;
     let out3 = Vec3::new(c.frame.dir3(front.out).x, 0.0, c.frame.dir3(front.out).z);
     g.part(Stone).tri_facing(w3(c, pa, ytop), w3(c, pb, ytop), w3(c, apex_f, ytop + apex_h), out3, rgba(mul(stone, 1.05)));
+    g.part(Stone).tri_facing(w3(c, pa, ytop), w3(c, pb, ytop), w3(c, apex_f, ytop + apex_h), -out3, rgba(mul(stone, 0.8)));
     for (a, b) in [(pa, qa), (pb, qb)] {
         let roof = [w3(c, a, ytop), w3(c, b, ytop), w3(c, apex_b, ytop + apex_h), w3(c, apex_f, ytop + apex_h)];
         let mid3 = (roof[0] + roof[1]) * 0.5;
@@ -747,7 +797,13 @@ fn pier_deck(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, deck: &nd_sim::attra
     g.part(Panel).boxed(Vec3::new(arc_c.x, y + 3.2, arc_c.y), Vec3::new(deck.head * 0.42, 6.4, 7.0), yaw, rgba(mul(pal.panel(2), 0.8)));
     g.part(Glow).boxed(Vec3::new(arc_c.x, y + 1.6, arc_c.y) - Vec3::new(sea.x, 0.0, sea.y) * 3.52, Vec3::new(deck.head * 0.36, 2.4, 0.04), yaw, rgba(mul(WARM, 0.7)));
     g.part(Glow).boxed(Vec3::new(arc_c.x, y + 5.1, arc_c.y) - Vec3::new(sea.x, 0.0, sea.y) * 3.55, Vec3::new(deck.head * 0.32, 1.2, 0.05), yaw, rgba(NEON_PINK));
-    g.part(Glow).boxed(Vec3::new(arc_c.x, y + 6.5, arc_c.y), Vec3::new(deck.head * 0.43, 0.15, 7.1), yaw, rgba(NEON_CYAN));
+    // A lit cornice round the arcade's roof.
+    for s in [-1.0f32, 1.0] {
+        let e = arc_c + sea * 3.55 * s;
+        g.part(Glow).boxed(Vec3::new(e.x, y + 6.5, e.y), Vec3::new(deck.head * 0.43, 0.15, 0.12), yaw, rgba(NEON_CYAN));
+        let e = arc_c + side * (deck.head * 0.215) * s;
+        g.part(Glow).boxed(Vec3::new(e.x, y + 6.5, e.y), Vec3::new(0.12, 0.15, 7.1), yaw, rgba(NEON_CYAN));
+    }
     let wheel_at = deck.head_centre() + side * (deck.head * 0.22) + sea * 3.0;
     ferris_wheel(g, pal, wheel_at, y, sea, (deck.head * 0.3).min(13.0));
     coaster(g, deck.head_centre() - side * (deck.head * 0.24) + sea * 2.0, y, sea, deck.head * 0.22, deck.head * 0.34);
@@ -790,6 +846,7 @@ fn coaster(g: &mut Geometry, at: Vec2, y0: f32, dir: Vec2, rw: f32, rl: f32) {
 /// obelisk.
 pub fn grand_park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let pal = c.palette;
+    fill_site(g, c, Foliage, 0.02, mul(pal.foliage, 1.0));
     super::park::draw(g, c, rng);
     let plan = c.park.as_ref();
     let mut taken: Vec<(Vec2, f32)> = Vec::new();
@@ -847,8 +904,7 @@ pub fn grand_park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
 pub fn zoo(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let pal = c.palette;
     let f = &c.frame;
-    let lawn = offset_poly(&c.lot_poly, 0.3);
-    ground(g, f, Foliage, &lawn, 0.03, mul(pal.foliage, 0.95));
+    fill_site(g, c, Foliage, 0.03, mul(pal.foliage, 0.95));
     let plan = c.park.as_ref();
     if let Some(plan) = plan {
         for path in &plan.paths {
@@ -869,14 +925,16 @@ pub fn zoo(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // The perimeter fence.
     for face in c.faces(&offset_poly(&c.lot_poly, 0.6)) {
         if face.len > 1.0 {
-            face.bx(g, f, Metal, 0.0, 1.0, 0.0, Vec3::new(face.len, 2.0, 0.08), mul(pal.fence_mesh, 0.9));
+            face.bx(g, f, Metal, 0.0, 0.7, 0.0, Vec3::new(face.len, 1.4, 0.06), mul(pal.fence_mesh, 0.9));
+            face.bx(g, f, Metal, 0.0, 1.45, 0.0, Vec3::new(face.len, 0.1, 0.12), mul(pal.wood, 0.7));
         }
     }
     let mut taken: Vec<(Vec2, f32)> = Vec::new();
     let sizes = [12.0f32, 10.0, 10.0, 9.0, 9.0, 8.0, 8.0, 7.0];
     let mut biome = 0usize;
-    for r in sizes {
-        let Some(p) = free_spots(c, plan, r, &taken, 1).into_iter().next() else { continue };
+    for r0 in sizes {
+        // As big as the room allows: smaller pens where the site is tight.
+        let Some((p, r)) = [r0, r0 * 0.75, r0 * 0.55].into_iter().find_map(|r| free_spots(c, plan, r, &taken, 1).into_iter().next().map(|p| (p, r))) else { continue };
         taken.push((p, r));
         let w = wv(c, p);
         enclosure(g, pal, rng, w, r, biome);
@@ -949,7 +1007,7 @@ fn enclosure(g: &mut Geometry, pal: &Palette, rng: &mut impl Rng, w: Vec2, r: f3
         }
         // Elephants at a water hole.
         1 => {
-            g.part(Paint).ground_polygon(&ring(r * 0.3).iter().map(|p| *p + Vec2::new(r * 0.3, 0.0)).collect::<Vec<_>>(), 0.08, rgba(WATER));
+            g.part(Matte).ground_polygon(&ring(r * 0.3).iter().map(|p| *p + Vec2::new(r * 0.3, 0.0)).collect::<Vec<_>>(), 0.08, rgba(WATER));
             for k in 0..2 {
                 elephant(g, n(k), k as f32 * 2.6 + 0.4, 1.0 - k as f32 * 0.3);
             }
@@ -967,7 +1025,7 @@ fn enclosure(g: &mut Geometry, pal: &Palette, rng: &mut impl Rng, w: Vec2, r: f3
         }
         // Penguins round a pool.
         3 => {
-            g.part(Paint).ground_polygon(&ring(r * 0.55), 0.08, rgba([0.2, 0.55, 0.7]));
+            g.part(Matte).ground_polygon(&ring(r * 0.55), 0.08, rgba([0.2, 0.55, 0.7]));
             for k in 0..9 {
                 let q = w + Vec2::from_angle(k as f32 * 0.7) * r * 0.72;
                 g.part(Matte).cylinder_capped(q, 0.2, 0.12, 0.06, 0.65, 6, false, true, rgba([0.08, 0.08, 0.09]));
@@ -986,7 +1044,7 @@ fn enclosure(g: &mut Geometry, pal: &Palette, rng: &mut impl Rng, w: Vec2, r: f3
         }
         // Flamingos in a pond.
         _ => {
-            g.part(Paint).ground_polygon(&ring(r * 0.6), 0.08, rgba(WATER));
+            g.part(Matte).ground_polygon(&ring(r * 0.6), 0.08, rgba(WATER));
             for k in 0..8 {
                 let q = w + Vec2::from_angle(k as f32 * 0.8 + rng.random_range(0.0..0.3)) * r * 0.4;
                 let pink = rgba([0.95, 0.45, 0.55]);
@@ -1170,7 +1228,7 @@ pub fn aquarium(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let roof = [w3(c, Vec2::new(x0, lo.y), t0), w3(c, Vec2::new(x1, lo.y), t1), w3(c, Vec2::new(x1, hi.y), t1), w3(c, Vec2::new(x0, hi.y), t0)];
         g.part(Panel).quad_facing(roof, Vec3::Y, rgba(mul(wall, 0.95)));
         // Tanks glowing behind the glass.
-        let mid = Vec2::new((x0 + x1) * 0.5, lo.y + 0.6);
+        let mid = Vec2::new((x0 + x1) * 0.5, lo.y - 0.08);
         if i % 2 == 0 && i > 0 && i + 1 < n {
             g.part(Glow).decal(w3(c, mid, t0.min(t1) * 0.42), c.frame.dir3(Vec2::X), Vec3::Y, (x1 - x0) * 1.6, t0.min(t1) * 0.6, out, rgba(if i % 4 == 0 { [0.1, 0.9, 2.2] } else { [0.25, 1.6, 2.0] }));
         }
@@ -1191,24 +1249,40 @@ pub fn aquarium(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let sw = wv(c, sp);
     let d = f.along;
     let grey = rgba([0.4, 0.46, 0.52]);
-    let shark = ((hi.x - lo.x) * 0.7).min(9.0);
-    let k_s = shark / 9.0;
-    for k in 0..6 {
-        let t = k as f32 / 5.0 - 0.5;
-        let r = 1.1 * k_s * (1.0 - (2.0 * t).abs().powf(1.6));
-        let q = sw + d * t * shark;
-        g.part(Metal).boxed(Vec3::new(q.x, sy, q.y), Vec3::new(1.6 * k_s, r.max(0.2) * 1.4, r.max(0.2) * 1.2), d.to_angle(), grey);
+    let shark = ((hi.x - lo.x) * 0.7).min(10.0);
+    let k_s = shark / 10.0;
+    // A spindle body of tapering tubes, a dorsal fin, a forked tail.
+    let body = |t: f32| -> (Vec3, f32) {
+        let q = sw + d * (t - 0.45) * shark;
+        let r = 1.15 * k_s * (1.0 - (2.0 * (t - 0.45)).abs().powf(1.8)).max(0.12);
+        (Vec3::new(q.x, sy, q.y), r)
+    };
+    for k in 0..10 {
+        let (a, ra) = body(k as f32 / 10.0);
+        let (b, rb) = body((k + 1) as f32 / 10.0);
+        g.part(Metal).tube(a, b, (ra + rb) * 0.5, 10, grey);
     }
-    g.part(Metal).boxed(Vec3::new(sw.x, sy + 1.4 * k_s, sw.y), Vec3::new(1.6 * k_s, 1.6 * k_s, 0.15), d.to_angle(), grey);
-    let tail = sw - d * shark * 0.53;
-    g.part(Metal).boxed(Vec3::new(tail.x, sy + 0.6, tail.y), Vec3::new(0.8, 2.4, 0.15), d.to_angle(), grey);
+    let d3 = Vec3::new(d.x, 0.0, d.y);
+    let side3 = Vec3::new(-d.y, 0.0, d.x);
+    let (fin0, _) = body(0.48);
+    for s in [1.0f32, -1.0] {
+        g.part(Metal).tri_facing(fin0 + Vec3::Y * 0.9 * k_s, fin0 + Vec3::Y * 0.9 * k_s - d3 * 2.2 * k_s, fin0 + Vec3::Y * 2.6 * k_s - d3 * 1.6 * k_s, side3 * s, grey);
+    }
+    let (tail0, _) = body(0.0);
+    for s in [1.0f32, -1.0] {
+        for up in [1.0f32, -1.0] {
+            g.part(Metal).tri_facing(tail0, tail0 - d3 * 1.6 * k_s + Vec3::Y * 1.9 * k_s * up, tail0 - d3 * 0.6 * k_s + Vec3::Y * 0.4 * up, side3 * s, grey);
+        }
+    }
+    g.part(Glow).boxed(body(0.86).0 + Vec3::Y * 0.3 * k_s + side3 * 0.7 * k_s, Vec3::splat(0.2), 0.0, rgba(NEON_CYAN));
+    g.part(Glow).boxed(body(0.86).0 + Vec3::Y * 0.3 * k_s - side3 * 0.7 * k_s, Vec3::splat(0.2), 0.0, rgba(NEON_CYAN));
     g.part(Metal).tube(Vec3::new(sw.x, sy - 1.2, sw.y), Vec3::new(sw.x, top(n / 2), sw.y), 0.12, 4, rgba(DARK));
     // The touch pool and a whale's tail.
     let pool = share_pt(c, 0.25, 0.16);
     if let Some(r) = fit_radius(c, pool, 4.5, 2.0) {
         let ring: Vec<Vec2> = (0..20).map(|k| wv(c, pool) + Vec2::from_angle(k as f32 / 20.0 * TAU) * r).collect();
         g.part(Concrete).cylinder_capped(wv(c, pool), r + 0.3, r + 0.3, 0.0, 0.5, 20, false, false, rgba(mul(pal.concrete(0), 1.1)));
-        g.part(Paint).ground_polygon(&ring, 0.42, rgba([0.1, 0.45, 0.55]));
+        g.part(Matte).ground_polygon(&ring, 0.42, rgba([0.1, 0.45, 0.55]));
         neon_ring(g, c, pool, r + 0.32, 0.5, NEON_CYAN);
     }
     let tail_at = share_pt(c, 0.78, 0.16);
@@ -1229,6 +1303,7 @@ pub fn aquarium(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
 /// palm house with two vaulted wings, lit warm from within.
 pub fn botanical_garden(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let pal = c.palette;
+    fill_site(g, c, Foliage, 0.02, mul(pal.foliage, 1.0));
     super::park::draw(g, c, rng);
     let centre = nd_sim::geom::polygon_centroid(&c.lot_poly);
     let r = (inradius(&c.lot_poly) * 0.55).clamp(8.0, 18.0);
@@ -1312,54 +1387,75 @@ pub fn concert_hall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let short = if along_u { hi.y - lo.y } else { hi.x - lo.x };
     let axis = if along_u { Vec2::X } else { Vec2::Y };
     let mid = (lo + hi) * 0.5;
-    // The foyer under the sails.
-    let foyer = fit_inside(c, &rect(mid.x, mid.y, if along_u { long * 0.4 } else { short * 0.3 }, if along_u { short * 0.3 } else { long * 0.4 }));
-    extrude(g, f, Glass, &foyer, ph, ph + 5.0, pick(rng, &pal.glass));
+    // The foyer: low glass under the shells, lit warm.
+    let foyer = fit_inside(c, &rect(mid.x, mid.y, if along_u { long * 0.4 } else { short * 0.2 }, if along_u { short * 0.2 } else { long * 0.4 }));
+    extrude(g, f, Glass, &foyer, ph, ph + 4.0, pick(rng, &pal.glass));
+    ground(g, f, Stone, &foyer, ph + 4.0, mul(pal.stone, 1.1));
     for face in c.faces(&foyer) {
         if face.len > 3.0 {
-            face.decal(g, f, Glow, 0.0, ph + 1.8, 0.05, face.len * 0.9, 2.6, mul(WARM, 0.55));
+            face.decal(g, f, Glow, 0.0, ph + 1.6, 0.05, face.len * 0.9, 2.2, mul(WARM, 0.55));
         }
     }
-    // Four sails stepping down along the axis, each a shell of triangles
-    // from its base arc to an apex leaning back.
-    let sails = 4;
+    // The sails: shells like slices of a sphere standing on their corners,
+    // in a row along the podium, all opening the same way, stepping down
+    // in size; white outside, warm wood within, their rims lit at night.
+    let fwd = axis;
+    let side = fwd.perp();
+    let sails = 3;
     for k in 0..sails {
-        let t = (k as f32 + 0.5) / sails as f32 - 0.5;
-        let centre = mid + axis * t * long * 0.82;
-        let scale = 1.0 - 0.16 * k as f32;
-        let bw = short * 0.42 * scale;
-        let bd = long * 0.11;
-        let hgt = (short * 0.75 * scale).clamp(8.0, 26.0);
-        let fwd = if k % 2 == 0 { axis } else { -axis };
-        let side = fwd.perp();
-        let steps = 10;
-        let base: Vec<Vec3> = (0..=steps)
-            .map(|j| {
-                let a = -FRAC_PI_2 + j as f32 / steps as f32 * PI;
-                w3(c, centre + side * (a.sin() * bw) + fwd * (a.cos() * bd), ph)
-            })
-            .collect();
-        let apex = w3(c, centre - fwd * bd * 0.6, ph + hgt);
-        let inner_c = w3(c, centre - fwd * bd * 1.5, ph + hgt * 0.4);
-        for j in 0..steps {
-            let (a, b) = (base[j], base[j + 1]);
-            // Bulge the shell outward between base and apex.
-            let m = (a + b) * 0.5;
-            let bulge = m + (m - inner_c).normalize_or_zero() * 1.2 + Vec3::Y * hgt * 0.35;
-            let out = (m - inner_c).normalize_or_zero();
-            g.part(Panel).tri_facing(a, b, bulge, out, rgba(SAIL_WHITE));
-            let (pa, pb) = (bulge, if j + 1 < steps { let m2 = (base[j + 1] + base[j + 2]) * 0.5; m2 + (m2 - inner_c).normalize_or_zero() * 1.2 + Vec3::Y * hgt * 0.35 } else { b });
-            g.part(Panel).tri_facing(b, pb, pa, out, rgba(SAIL_WHITE));
-            g.part(Panel).tri_facing(pa, pb, apex, out + Vec3::Y * 0.5, rgba(mul(SAIL_WHITE, 0.97)));
-            // The inside, warm.
-            g.part(Matte).tri_facing(a, b, apex, -out, rgba([0.55, 0.42, 0.32]));
-            // The sail's edge lit.
-            g.part(Glow).tube(a + Vec3::Y * 0.15, b + Vec3::Y * 0.15, 0.08, 3, rgba([NEON_AMBER, NEON_PINK, NEON_CYAN, NEON_VIOLET][k % 4]));
+        let scale = 1.0 - 0.2 * k as f32;
+        let bw = (short * 0.46 * scale).max(3.0);
+        let bd = (long * 0.16 * scale).max(2.0);
+        let hgt = (short * 0.8 * scale).clamp(8.0, 30.0);
+        let c0 = mid + fwd * (long * 0.3 - k as f32 * long * 0.27);
+        shell(g, c, c0, fwd, side, bw, bd, hgt, ph + 4.0, [NEON_AMBER, NEON_PINK, NEON_CYAN][k % 3]);
+        // A smaller shell back to back, as at the harbour.
+        if k == 0 {
+            shell(g, c, c0 - fwd * bd * 0.9, -fwd, side, bw * 0.55, bd * 0.6, hgt * 0.5, ph + 4.0, NEON_VIOLET);
         }
-        g.part(Glow).tube(base[0], apex, 0.06, 3, rgba(mul(WARM, 0.8)));
-        g.part(Glow).tube(base[steps], apex, 0.06, 3, rgba(mul(WARM, 0.8)));
     }
     front_lamps(g, c, 5);
+}
+
+/// One sail of the opera house: a curved shell from two corners on the
+/// podium (`c0 -/+ side * bw`) up to an apex leaning forward, bulging back
+/// by `bd`; its rim lit in `neon`. Lot-local centre and directions.
+#[allow(clippy::too_many_arguments)]
+fn shell(g: &mut Geometry, c: &Ctx, c0: Vec2, fwd: Vec2, side: Vec2, bw: f32, bd: f32, h: f32, y0: f32, neon: [f32; 3]) {
+    let (nu, nv) = (12usize, 9usize);
+    let apex = c0 + fwd * (bd * 0.35);
+    let at = |u: f32, v: f32| -> Vec3 {
+        let bulge = (PI * u).sin();
+        let base = c0 + side * (bw * (2.0 * u - 1.0)) - fwd * (bd * bulge);
+        let v = v.min(0.985);
+        let q = base.lerp(apex, v) - fwd * (bd * 0.5 * bulge * (PI * v).sin());
+        // The outline narrows towards the apex in a curve, not a cone.
+        let y = y0 + h * (1.0 - (1.0 - v).powf(1.35));
+        w3(c, q, y)
+    };
+    let mid = w3(c, c0 - fwd * bd, y0 + h * 0.4);
+    for i in 0..nu {
+        for j in 0..nv {
+            let (u0, u1) = (i as f32 / nu as f32, (i + 1) as f32 / nu as f32);
+            let (v0, v1) = (j as f32 / nv as f32, (j + 1) as f32 / nv as f32);
+            let q = [at(u0, v0), at(u1, v0), at(u1, v1), at(u0, v1)];
+            let centre = (q[0] + q[1] + q[2] + q[3]) * 0.25;
+            let back = c.frame.dir3(-fwd);
+            let out = (centre - mid).normalize_or_zero() * 0.3 + back + Vec3::Y * 0.4;
+            g.part(Panel).quad_facing(q, out, rgba(mul(SAIL_WHITE, 0.94 + 0.06 * (j % 2) as f32)));
+            g.part(Wood).quad_facing(q, -out, rgba([0.62, 0.42, 0.28]));
+        }
+    }
+    // The rim: up one side, over the apex, down the other.
+    let rim: Vec<Vec3> = (0..=nv).map(|j| at(0.0, j as f32 / nv as f32)).chain((0..=nv).rev().map(|j| at(1.0, j as f32 / nv as f32))).collect();
+    for w in rim.windows(2) {
+        g.part(Glow).tube(w[0], w[1], 0.09, 4, rgba(neon));
+    }
+    // Uplights at its foot.
+    for u in [0.25f32, 0.5, 0.75] {
+        let p = at(u, 0.0);
+        g.part(Glow).boxed(p + Vec3::Y * 0.15, Vec3::splat(0.35), 0.0, rgba(WARM));
+    }
 }
 
 #[cfg(test)]

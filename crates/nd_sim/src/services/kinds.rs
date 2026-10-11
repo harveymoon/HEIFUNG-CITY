@@ -267,7 +267,7 @@ impl ServiceKind {
             ServiceKind::Observatory => 8.0,
             ServiceKind::Aquarium => 16.0,
             ServiceKind::BotanicalGarden => 6.0,
-            ServiceKind::ConcertHall => 25.0,
+            ServiceKind::ConcertHall => 12.0,
             _ => 0.0,
         }
     }
@@ -445,7 +445,7 @@ impl ServiceKind {
             ServiceKind::Observatory => 120,
             ServiceKind::Aquarium => 360,
             ServiceKind::BotanicalGarden => 500,
-            ServiceKind::ConcertHall => 900,
+            ServiceKind::ConcertHall => 600,
             _ => 0,
         }
     }
@@ -548,7 +548,7 @@ impl ServiceKind {
 /// [attractions] The smallest site each landmark attraction goes on, m²,
 /// in `ServiceKind::LANDMARKS` order: well over an ordinary plot (a
 /// parcel along a street is some 400 to 900 m²), so each takes several.
-pub const ATTRACTION_AREA: [f32; 10] = [2200.0, 2600.0, 1800.0, 2600.0, 7000.0, 5200.0, 1500.0, 2400.0, 3800.0, 2600.0];
+pub const ATTRACTION_AREA: [f32; 10] = [2200.0, 2600.0, 1800.0, 1200.0, 7000.0, 5200.0, 1500.0, 2400.0, 3800.0, 2600.0];
 
 /// The service a building provides, stored on the building.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

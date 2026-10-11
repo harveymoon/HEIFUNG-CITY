@@ -61,7 +61,10 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
         } else if b.homes > 0 {
             tag(ui, "Homes", egui::Color32::from_gray(170));
         }
-        tag(ui, &format!("{} tier", b.tier.label()), egui::Color32::from_gray(130));
+        // [attractions] A landmark comes in one size: no tier to show.
+        if !b.service.is_some_and(|s| s.kind.is_landmark()) {
+            tag(ui, &format!("{} tier", b.tier.label()), egui::Color32::from_gray(130));
+        }
         if let Some(d) = w.district_of_lot(b.lot) {
             tag(ui, &d.name, egui::Color32::from_rgb(200, 140, 230));
         }

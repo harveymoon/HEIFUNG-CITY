@@ -9,6 +9,33 @@ pub fn site_thickness(poly: &[Vec2]) -> f32 {
     if per <= 0.0 { 0.0 } else { 2.0 * polygon_area(poly).abs() / per }
 }
 
+/// [attractions] How much of its convex hull a concave site must fill.
+pub const CONCAVE_MIN_FILL: f32 = 0.8;
+
+/// [attractions] A polygon's area over its convex hull's (1 when convex).
+pub fn hull_fill(poly: &[Vec2]) -> f32 {
+    let mut pts: Vec<Vec2> = poly.to_vec();
+    pts.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    if pts.len() < 3 {
+        return 1.0;
+    }
+    let cross = |o: Vec2, a: Vec2, b: Vec2| (a - o).perp_dot(b - o);
+    let mut hull: Vec<Vec2> = Vec::with_capacity(pts.len() * 2);
+    for pass in 0..2 {
+        let start = hull.len();
+        let iter: Box<dyn Iterator<Item = &Vec2>> = if pass == 0 { Box::new(pts.iter()) } else { Box::new(pts.iter().rev()) };
+        for &p in iter {
+            while hull.len() >= start + 2 && cross(hull[hull.len() - 2], hull[hull.len() - 1], p) <= 0.0 {
+                hull.pop();
+            }
+            hull.push(p);
+        }
+        hull.pop();
+    }
+    let h = polygon_area(&hull).abs();
+    if h <= 0.0 { 1.0 } else { polygon_area(poly).abs() / h }
+}
+
 /// [plant-scale] A site for a building the player puts on unzoned ground:
 /// parcel `start` joined with as few of its neighbours in `polys` as it
 /// takes to reach `need` square metres with a frontage (a street or a
@@ -54,6 +81,11 @@ pub fn grow_site_steps(polys: &[Vec<Vec2>], start: usize, need: f32, min_thick: 
             }
             let up = simplify_collinear(&from_geo(&u.0[0]));
             if up.len() < 3 || (!concave && reflex_vertex(&up, 0.6).is_some()) {
+                continue;
+            }
+            // [attractions] Notches, yes; a C wrapped round a plot it could
+            // not take, no: the site fills most of its convex hull.
+            if concave && hull_fill(&up) < CONCAVE_MIN_FILL {
                 continue;
             }
             let shared = (per + perimeter(pj) - perimeter(&up)) * 0.5;

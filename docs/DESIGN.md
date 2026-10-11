@@ -1334,7 +1334,7 @@ Citizens are rendered from their simulated positions every frame.
   `make_placed_lot_concave`; the city's ground keeps its street front through later road works).
   **Rules** (`World::landmark_problem`, shown in the build hover): one per city (`World::landmark`);
   the pier only on the sea shore, the site within 14 m of the sea (not a lake or river) with open sea
-  under its whole deck (`attractions::plan_pier`); the observatory only on high ground, its site 12 m
+  under its whole deck (`attractions::plan_pier`); the observatory only on high ground, its site 8 m
   or more above the median ground height of every lot (`World::town_median_height`,
   `rise_above_town`; the Build pane shows the rise under the pointer). **The pier's deck** is saved in
   `World::attractions.piers` and pushed onto the built ground's decks (`add_pier_decks`), so walkers
@@ -1349,7 +1349,7 @@ Citizens are rendered from their simulated positions every frame.
   sights of their own kind (`tourism::AttractionKind::ArtMuseum..ConcertHall`, open by the landmark's
   hours) with a pull of 18-38 points (`ServiceKind::tourist_pull`, halved when unstaffed), stand on the
   pier's head or along the park's walk, and stay an hour longer. Both pay the admission at the door
-  (0-25, `ServiceKind::admission`, to the treasury under `tickets`), counted in
+  (0-16, `ServiceKind::admission`, to the treasury under `tickets`), counted in
   `World::attractions.books` (townsfolk and tourists, today and yesterday, takings). **Hours**:
   museums by day (09/10-18/19), the aquarium to 20:00, the garden 08-20, the zoo 09-18, the pier
   10-01, the park always, the observatory 14-00, the opera 17-00. **Land value**: a landmark splats

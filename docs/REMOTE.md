@@ -431,14 +431,14 @@ within 80 m is used, as before.
   `art_museum`, `science_museum` (natural history and science), `history_museum` (city history and
   design; also `museum`), `pier` (pleasure pier), `grand_park`, `zoo`, `observatory`, `aquarium`,
   `botanical_garden` (also `conservatory`), `concert_hall` (also `opera_house`). Each needs a site of
-  several plots (art 2,200 m², science 2,600, history 1,800, pier 2,600, grand park 7,000, zoo 5,200,
+  several plots (art 2,200 m², science 2,600, history 1,800, pier 1,200 ashore, grand park 7,000, zoo 5,200,
   observatory 1,500, aquarium 2,400, botanical 3,800, concert hall 2,600; `ServiceKind::min_area`):
   the lot under the point takes in its neighbours (up to 48 plots, notches allowed), whatever grew on
   them bought out, as for a stadium; on unzoned ground the parcels there are joined. Refusals name
   the reason: `one per city: <name> is the city's <kind> already`; the pier `a pier goes on the sea
   shore...` (the site must come within 14 m of the sea, not a lake or river, with open sea for its
   deck 60-120 m out); the observatory `an observatory needs high ground: this site is +N m from the
-  middle of town (M m up), it needs +12 m or more` (`World::rise_above_town`: against the median
+  middle of town (M m up), it needs +8 m or more` (`World::rise_above_town`: against the median
   ground height of every lot; a flat map has none); a long thin run of plots `the plots here only join
   into a long thin strip...`. `inspect {building}` adds `attraction` {kind, label, about,
   open_hours, open_now, capacity, admission, visits_today/yesterday (townsfolk), tourists_today/

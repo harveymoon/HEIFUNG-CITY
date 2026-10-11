@@ -35,7 +35,7 @@ pub const PIER_SHORE_REACH: f32 = 14.0;
 pub const PIER_DECK_RISE: f32 = 0.35;
 /// Metres an observatory's site must stand above the middle of the town
 /// (the median ground height of every lot).
-pub const OBSERVATORY_RISE: f32 = 12.0;
+pub const OBSERVATORY_RISE: f32 = 8.0;
 
 /// A pleasure pier's deck out over the water: from `root` on the shore to
 /// `tip`, `width` wide, with a head `head` metres square at the far end.

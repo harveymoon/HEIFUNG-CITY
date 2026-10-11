@@ -101,6 +101,13 @@ impl World {
                 return Some(format!("{} stands there; bulldoze it first", b.name));
             }
         }
+        // [attractions] One per city, said first: whatever the ground, a
+        // second one is no use.
+        if let Placeable::Service(k, _) = what {
+            if let Some(b) = k.is_landmark().then(|| self.landmark(k)).flatten().and_then(|b| self.buildings.get(b)) {
+                return Some(format!("one per city: {} is the city's {} already", b.name, k.label()));
+            }
+        }
         if lot.landlocked {
             return Some("that land has no road access".into());
         }

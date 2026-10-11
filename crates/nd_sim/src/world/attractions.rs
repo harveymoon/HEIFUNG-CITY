@@ -61,9 +61,11 @@ impl World {
         if kind == ServiceKind::Pier {
             if let Some(deck) = self.lots.get(lot).and_then(|l| at::plan_pier(&l.polygon, &self.landscape).ok()) {
                 self.attractions.piers.insert(id, deck);
-                self.add_pier_deck(id);
             }
         }
+        // The joined plots each had their own pad: the site is levelled as
+        // one (the pier's deck goes on with it, `add_pier_decks`).
+        self.rebuild_ground();
     }
 
     /// Lay out the walkways and benches of every landmark people walk
