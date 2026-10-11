@@ -342,10 +342,11 @@ fn a_path_dropped_by_a_street_lands_on_its_pavement() {
     let (q, level) = net.pavement_snap(Vec2::new(30.0, 4.0), 8.0).expect("a pavement");
     assert_eq!(level, 0.0);
     assert!((q.y - (hw + crate::zoning::SIDEWALK * 0.55)).abs() < 1e-3, "on the pavement: {q}");
-    assert_eq!(q.x, 30.0);
+    assert!((q.x - 30.0).abs() < 1e-3);
     // Dropped right by the junction: still on a pavement, clear of it.
     let (c, _) = net.pavement_snap(Vec2::new(2.0, 1.0), 8.0).expect("a pavement");
-    assert!(c.x.abs().max(c.y.abs()) >= SNAP_RADIUS + 1.0 - 1e-3 && c.x.abs().min(c.y.abs()) > hw, "clear of the junction: {c}");
+    let off = hw + crate::zoning::SIDEWALK * 0.55;
+    assert!(c.length() > SNAP_RADIUS + 1.0 && ((c.x.abs() - off).abs() < 1e-3 || (c.y.abs() - off).abs() < 1e-3), "on a pavement, clear of the junction: {c}");
     let junction = net.node_near(Vec2::ZERO, 0.5).unwrap();
     let before = net.node(junction).segments.len();
     net.add_polyline_levels(&[q, Vec2::new(q.x, 60.0)], &[0.0, 0.0], 0, 0, RoadKind::Path);

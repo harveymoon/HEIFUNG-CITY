@@ -322,7 +322,7 @@ mod site_tests {
     /// for a building's spot, the ground it would take.
     #[test]
     fn a_site_shows_its_parcels_and_the_ground_at_its_spot() {
-        let mut w = nd_sim::World::new(nd_sim::WorldConfig { emergencies: false, society: false, landscape: nd_sim::LandscapeParams::flat(), ..nd_sim::WorldConfig::test_town() });
+        let mut w = nd_sim::World::new(nd_sim::WorldConfig { emergencies: false, society: false, landscape: nd_sim::LandscapeParams::flat(), ..Default::default() });
         w.add_road(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
         let keys: Vec<_> = w.parcels.parcels.iter().take(3).map(|p| p.key).collect();
         assert_eq!(keys.len(), 3);
