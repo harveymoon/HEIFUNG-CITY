@@ -466,6 +466,36 @@ mod tests {
         w.hourly_homeless();
         assert!(w.society.homeless.rv(3).is_none(), "the contractor hauled it off");
     }
+    /// [fix/buildings-ui] G16: a road drawn across a camp on a vacant lot
+    /// moves the camp on at once; its people find a new spot, and no camp
+    /// is left on a carriageway.
+    #[test]
+    fn a_road_over_a_camp_moves_it_on() {
+        use crate::homeless::{camp_on_way, Camp};
+        let mut w = town(5);
+        populate(&mut w, 30);
+        set_land_value(&mut w, |_| 0.2);
+        let lot = civic_lot(&w, -450.0);
+        let l = &w.lots[lot];
+        assert!(l.building.is_none());
+        let (pos, dir, out) = (l.center, (l.front_edge[1] - l.front_edge[0]).normalize_or_zero(), l.front_dir);
+        let hid = w.households.keys().next().unwrap();
+        w.households[hid].home = None;
+        w.society.homeless.since.push((hid, w.clock.tick));
+        w.society.homeless.camps.push(Camp { id: 99, pos, dir, out, lot: Some(lot), sidewalk: false, households: vec![hid], people: 1, founded: 0 });
+        assert!(!camp_on_way(&w.roads, pos, dir, out));
+        w.hourly_homeless();
+        assert!(w.society.homeless.camps.iter().any(|c| c.id == 99), "the camp stands while its lot is vacant");
+        // A street right through the camp.
+        w.add_road(&[Vec2::new(pos.x, 0.0), Vec2::new(pos.x, 120.0)], 1, 1);
+        w.implement();
+        assert!(w.society.homeless.camps.iter().all(|c| c.id != 99), "the camp moved off the new street");
+        assert!(w.society.homeless.camps.iter().all(|c| c.sidewalk || !camp_on_way(&w.roads, c.pos, c.dir, c.out)), "no tents on a carriageway");
+        let bed = w.society.homeless.bed_of(hid);
+        assert!(bed.is_none_or(|b| b.distance(pos) > 6.0), "its people pitched somewhere else: {bed:?}");
+        assert!(bed.is_some() || w.society.homeless.stats.sleeping_rough > 0);
+    }
+
     #[test]
     fn evicted_households_camp_on_cheap_ground_and_are_housed_again() {
         let mut w = town(4);

@@ -322,6 +322,29 @@ pub(crate) fn on_carriageway(roads: &RoadNetwork, heights: &[f32], inner: &[Vec<
     })
 }
 
+/// [fix/buildings-ui] Does a deck pass over `p` (standing at height `z`):
+/// some way that is not a tunnel (a street, highway, ramp, path or track)
+/// within `reach` of its edge, between 0.8 m and `height` above? Street
+/// trees, lamps and poles under a viaduct would poke through it (G15).
+pub(crate) fn under_deck(roads: &RoadNetwork, heights: &[f32], inner: &[Vec<(f32, f32)>], p: Vec2, z: f32, reach: f32, height: f32) -> bool {
+    if heights.is_empty() {
+        return false;
+    }
+    roads.segments_in_box(p - Vec2::splat(40.0), p + Vec2::splat(40.0)).any(|o| {
+        let os = roads.segment(o);
+        if !os.alive || os.tunnel {
+            return false;
+        }
+        let (a, b) = roads.segment_points(o);
+        let (t, q) = nd_sim::roads::project_on_segment(p, a, b);
+        if q.distance(p) >= os.half_width() + reach {
+            return false;
+        }
+        let dz = nd_sim::landscape::way_height(roads, heights, inner, o, t) - z;
+        dz > 0.8 && dz < height
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
