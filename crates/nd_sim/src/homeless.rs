@@ -72,6 +72,23 @@ pub const CAMP_LV_RADIUS: f32 = 90.0;
 pub const NIGHT_HOUR: u64 = 21;
 pub const WAKE_HOUR: u64 = 7;
 
+/// [fix/buildings-ui] Whether a camp's tents (laid along `dir` round its
+/// spot) stand on a way at ground level: a street, path or track through
+/// it, not a bridge or viaduct over it (camping under an overpass is
+/// allowed) nor a tunnel under it.
+pub fn camp_on_way(roads: &crate::roads::RoadNetwork, pos: Vec2, dir: Vec2, out: Vec2) -> bool {
+    let out = if out.length_squared() > 1e-6 { out.normalize() } else { dir.perp() };
+    let spots = [pos, pos + dir * 5.0, pos - dir * 5.0, pos + out * 5.0, pos - out * 5.0];
+    roads.segments_in_box(pos - Vec2::splat(40.0), pos + Vec2::splat(40.0)).any(|sid| {
+        let sg = roads.segment(sid);
+        if !sg.alive || sg.tunnel || sg.bridge || sg.viaduct {
+            return false;
+        }
+        let (a, b) = roads.segment_points(sid);
+        spots.iter().any(|p| crate::roads::project_on_segment(*p, a, b).1.distance(*p) < sg.half_width() + 1.0)
+    })
+}
+
 /// A camp: tents on a pavement or a vacant lot.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Camp {
@@ -310,6 +327,8 @@ impl World {
             let mid = (p.front_edge[0] + p.front_edge[1]) * 0.5;
             out.push(Spot { pos: p.center, dir: along, out: (mid - p.center).normalize_or_zero(), lot: None, sidewalk: false });
         }
+        // [fix/buildings-ui] Never pitched across a way.
+        out.retain(|s: &Spot| s.sidewalk || !camp_on_way(&self.roads, s.pos, s.dir, s.out));
         out
     }
 
@@ -408,6 +427,41 @@ impl World {
         }
     }
 
+    /// [fix/buildings-ui] Camps whose ground is gone move on, their people
+    /// finding a new spot (another camp nearby, or a fresh one): a lot built
+    /// on or laid over an unzoned parcel, a road drawn across the camp (its
+    /// lot re-cut away, G16), or (`dear`, the hourly round) land that got
+    /// too dear. Called hourly and straight after road works.
+    pub(crate) fn move_camps_on(&mut self, dear: bool) {
+        let lv = &self.land_value;
+        let lots = &self.lots;
+        let roads = &self.roads;
+        let h = &mut self.society.homeless;
+        // [review] Lots by bounding box, for the camps on unzoned parcels
+        // (a point is only inside a lot whose box holds it).
+        let lot_list: Vec<&crate::zoning::Lot> = if h.camps.iter().any(|c| c.lot.is_none()) { lots.values().collect() } else { Vec::new() };
+        let lot_grid = crate::geom::Grid::new(64.0, lot_list.iter().map(|l| crate::geom::bounds(&l.polygon)));
+        let mut displaced: Vec<HouseholdId> = Vec::new();
+        h.camps.retain(|c| {
+            let ground = match c.lot {
+                Some(l) => lots.get(l).is_some_and(|l| c.sidewalk || l.building.is_none()),
+                // An unzoned parcel: until a lot is laid over it.
+                None => !lot_grid.in_box(c.pos, c.pos).into_iter().any(|i| lot_list[i as usize].contains(c.pos)),
+            };
+            // A pavement camp sits beside its street by design; tents on a
+            // lot or a parcel must not be on a carriageway or a path.
+            let paved_over = !c.sidewalk && camp_on_way(roads, c.pos, c.dir, c.out);
+            let ok = (!dear || lv.at(c.pos) < SKID_ROW_LV + 0.08) && ground && !paved_over;
+            if !ok {
+                displaced.extend(c.households.iter().copied());
+            }
+            ok && !c.households.is_empty()
+        });
+        for hid in displaced {
+            self.settle_homeless(hid);
+        }
+    }
+
     // ── the hourly round ───────────────────────────────────────────────────
 
     pub(crate) fn hourly_homeless(&mut self) {
@@ -462,29 +516,7 @@ impl World {
             self.settle_homeless(*hid);
         }
         // Camps on land that got dear or was built on move on, quietly.
-        let lv = &self.land_value;
-        let lots = &self.lots;
-        let h = &mut self.society.homeless;
-        // [review] Lots by bounding box, for the camps on unzoned parcels
-        // (a point is only inside a lot whose box holds it).
-        let lot_list: Vec<&crate::zoning::Lot> = if h.camps.iter().any(|c| c.lot.is_none()) { lots.values().collect() } else { Vec::new() };
-        let lot_grid = crate::geom::Grid::new(64.0, lot_list.iter().map(|l| crate::geom::bounds(&l.polygon)));
-        let mut displaced: Vec<HouseholdId> = Vec::new();
-        h.camps.retain(|c| {
-            let ground = match c.lot {
-                Some(l) => lots.get(l).is_some_and(|l| c.sidewalk || l.building.is_none()),
-                // An unzoned parcel: until a lot is laid over it.
-                None => !lot_grid.in_box(c.pos, c.pos).into_iter().any(|i| lot_list[i as usize].contains(c.pos)),
-            };
-            let ok = lv.at(c.pos) < SKID_ROW_LV + 0.08 && ground;
-            if !ok {
-                displaced.extend(c.households.iter().copied());
-            }
-            ok && !c.households.is_empty()
-        });
-        for hid in displaced {
-            self.settle_homeless(hid);
-        }
+        self.move_camps_on(true);
         // People per camp.
         let counts: Vec<u16> = self.society.homeless.camps.iter().map(|c| c.households.iter().filter_map(|h| self.households.get(*h)).map(|h| h.members.len() as u16).sum()).collect();
         for (c, n) in self.society.homeless.camps.iter_mut().zip(counts) {

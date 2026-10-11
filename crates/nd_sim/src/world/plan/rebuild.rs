@@ -285,6 +285,8 @@ impl World {
         crate::prof!("rb.kerbs", self.refresh_kerbs());
         crate::prof!("rb.links", { self.refresh_rail_links(); self.refresh_port_links() });
         crate::prof!("rb.walk", self.rebuild_walk());
+        // [fix/buildings-ui] Camps the works paved over move on now (G16).
+        crate::prof!("rb.camps", self.move_camps_on(false));
         // Coverage is per lot key: the old map names other lots now.
         crate::prof!("rb.coverage", self.refresh_coverage());
 

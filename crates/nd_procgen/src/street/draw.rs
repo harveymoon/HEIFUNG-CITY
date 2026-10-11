@@ -173,6 +173,13 @@ impl<'a> StreetCtx<'a> {
         junction::on_carriageway(self.roads, self.heights, self.inp.inner, p, z, 0.05)
     }
 
+    /// [fix/buildings-ui] Whether a prop `height` tall and `reach` wide at
+    /// `p` on run `ri` would stand under (and poke through) another way's
+    /// deck.
+    pub(super) fn under_deck(&self, ri: usize, p: Vec2, reach: f32, height: f32) -> bool {
+        junction::under_deck(self.roads, self.heights, self.inp.inner, p, self.run_z(ri, p), reach, height)
+    }
+
     /// (carriageway, markings) set-back of a run's end at `node` on `seg`:
     /// a junction's mouth and stop line, or where a ramp is clear of the
     /// highway it joins.
@@ -395,7 +402,7 @@ pub(super) fn draw_run(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &Run, d
         while s < len - 4.0 {
             let (p, d) = walk_line.at(s);
             let q = p + Vec2::new(-d.y, d.x) * side * (hw + 0.95);
-            if !cx.on_carriageway(q, cx.run_z(ri, q)) {
+            if !cx.on_carriageway(q, cx.run_z(ri, q)) && !cx.under_deck(ri, q, 0.8, 11.0) {
                 lamp_post_world(g, q, 7.0, pal.street_lamp);
             }
             s += 28.0;
@@ -578,7 +585,7 @@ pub(super) fn draw_hard_shoulders(cx: &StreetCtx, g: &mut Geometry, ri: usize, r
         let right = Vec2::new(-d.y, d.x);
         // Not on the lanes of a ramp running alongside to merge.
         let q = p + right * side * (hw + 0.5);
-        if !cx.on_carriageway(q, cx.run_z(ri, q)) {
+        if !cx.on_carriageway(q, cx.run_z(ri, q)) && !cx.under_deck(ri, q, 0.8, 11.0) {
             lamp_post_world(g, q, 9.0, pal.street_lamp);
         }
         s += 40.0;
@@ -682,7 +689,7 @@ pub(super) fn draw_furniture(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &
     let mut side = 1.0;
     while s < len - 4.0 {
         let (p, _, _) = at(s, side, lamp_off);
-        if free(p) && kerbed(s, side) {
+        if free(p) && kerbed(s, side) && !cx.under_deck(ri, p, 0.8, 9.0) {
             lamp_post_world(g, p, 7.0, pal.street_lamp);
             lamp_ts.push((s, side));
         }
@@ -697,7 +704,8 @@ pub(super) fn draw_furniture(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &
                     continue;
                 }
                 let (p, d, _) = at(s, side, back_off);
-                if !free(p) || !kerbed(s, side) {
+                // No tree under another way's deck: it would grow through it.
+                if !free(p) || !kerbed(s, side) || cx.under_deck(ri, p, 6.0, 14.0) {
                     continue;
                 }
                 g.part(Concrete).boxed(Vec3::new(p.x, KERB_H + 0.2, p.y), Vec3::new(1.3, 0.4, 1.3), d.y.atan2(d.x), rgba(mul(pal.paving, 1.1)));
@@ -718,7 +726,7 @@ pub(super) fn draw_furniture(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &
                 let (a, b) = roads.segment_points(sid);
                 (sg.bridge || sg.viaduct) && nd_sim::roads::project_on_segment(p, a, b).1.distance(p) < hw + SIDEWALK + 0.5
             });
-            if !free(p) || !kerbed(s, -1.0) || on_deck {
+            if !free(p) || !kerbed(s, -1.0) || on_deck || cx.under_deck(ri, p, 1.0, 10.0) {
                 s += 32.0;
                 continue;
             }

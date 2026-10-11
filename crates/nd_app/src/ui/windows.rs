@@ -84,7 +84,11 @@ pub fn show_all(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
         }
         let cascade = content.left_top() + egui::vec2(12.0 + 28.0 * i as f32, 12.0 + 30.0 * i as f32);
         // A window keeps its width: content sized from the space it has must
-        // never push it wider frame after frame.
+        // never push it wider frame after frame. [fix/buildings-ui] The
+        // Lines window may be dragged wider, up to the map's width (its
+        // stop diagram and timetable use the room); it still starts at its
+        // default.
+        let max_width = if info == Info::Lines { (content.width() - 24.0).max(info.width()) } else { info.width() };
         let window = egui::Window::new(info.title())
             .title_bar(false)
             .constrain_to(content)
@@ -92,7 +96,7 @@ pub fn show_all(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
             .id(info.id().with("window"))
             .default_pos(cascade)
             .default_width(info.width())
-            .max_width(info.width());
+            .max_width(max_width);
         // [lines] The Lines window is as tall as what it shows (up to the
         // map's height): the height its content took last frame is its
         // minimum, so opening a line grows it rather than scrolling it in
