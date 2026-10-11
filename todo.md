@@ -572,3 +572,5 @@ Sources: Harvey's lists docs/playtest/todo_2026-10-10.md and todo_2026-10-11.md 
 - [ ] Dock/station joined only by a footpath (passengers ok, goods need a road) — check status text; ferry estimates
 - [ ] Metro lines can't be edited stop by stop; metro stations barely visible underground
 - [ ] F27 diagonal sliver parcel can't merge (concave); delivered cars parked far from the buyer's home
+
+## Agents running (2026-10-11): g1 feat/attractions · g2 fix/roads-tools · g3 fix/walk-crossings · g4 fix/vehicles-services · g5 fix/buildings-ui. Stop after these and report to Harvey (he asked).
