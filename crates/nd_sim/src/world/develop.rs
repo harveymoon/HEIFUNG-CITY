@@ -263,8 +263,17 @@ impl World {
             let bit = match b.land_use {
                 LandUse::Park => 1,
                 LandUse::Entertainment if !b.is_derelict() && b.business.as_ref().is_none_or(|z| !z.closed) => 2,
-                _ => continue,
+                // [attractions] The grand park, the zoo, the garden and the
+                // pier are somewhere to walk to; the opera, the pier and
+                // the observatory somewhere to go out.
+                _ => match b.service.map(|s| s.kind) {
+                    Some(k) if k.is_landmark() => u8::from(k.has_grounds()) | if k.night_out() { 2 } else { 0 },
+                    _ => 0,
+                },
             };
+            if bit == 0 {
+                continue;
+            }
             // [pt-walk] Every lot of a park laid over several.
             for &l in b.plot.extra_lots.iter() {
                 if self.lots.contains_key(l) {
@@ -445,6 +454,13 @@ impl World {
                 if s.kind == crate::services::ServiceKind::Vertiport {
                     // Rotor noise: a nuisance the homes around feel most.
                     b.splat_nuisance(c, r, -w);
+                } else if s.kind.is_landmark() {
+                    // [attractions] A landmark lifts the quarter round it
+                    // through its own channel, by how well it is staffed
+                    // (a shut museum lifts little).
+                    b.channel(Channel::Attractions);
+                    b.splat(c, r, w * (0.55 + 0.45 * bld.staffing()));
+                    b.channel(Channel::Other);
                 } else {
                     // [pt-growth] Landmarks (monuments, stadiums) draw as
                     // landmarks; the rest reassure as services.

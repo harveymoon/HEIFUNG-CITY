@@ -24,6 +24,8 @@ pub const STOP_REACH: f32 = 160.0;
 /// Trips shorter than this are walked, bus or no bus.
 pub const BUS_TRIP_MIN: f32 = 160.0;
 pub const BUS_CAPACITY: usize = 40;
+/// [bike-racks] Bikes a bus carries on its front rack.
+pub const BUS_BIKE_RACK: usize = 4;
 /// Seconds a bus stands at a stop.
 pub const DWELL_SECONDS: f32 = 18.0;
 /// Sim minutes a rider waits before giving up and walking. Vehicles move
@@ -484,6 +486,13 @@ pub struct Transit {
     /// times the leg under way as the running one does.
     #[serde(default)]
     pub departures: std::collections::BTreeMap<CarId, (usize, u64)>,
+    /// [bike-racks] Cyclists who rode a bus with their bike on its rack,
+    /// and the times one was left at the stop because the rack was full,
+    /// ever.
+    #[serde(default)]
+    pub bike_rack_rides_total: u64,
+    #[serde(default)]
+    pub bike_rack_full_total: u64,
 }
 
 impl Transit {
@@ -905,4 +914,9 @@ pub struct TransitTrip {
     pub purpose: crate::citizens::Purpose,
     /// Tick the wait began (0 until the rider reaches the stop).
     pub since: u64,
+    /// [bike-racks] A cyclist taking the bus with their bike: it rides on
+    /// the bus's front rack (`BUS_BIKE_RACK` places), so they board only
+    /// while there is a place free and otherwise wait for the next bus.
+    #[serde(default)]
+    pub bike: bool,
 }

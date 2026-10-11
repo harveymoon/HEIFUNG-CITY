@@ -129,6 +129,10 @@ pub(super) fn sync_lots(
             fill.ground_polygon(&lot.polygon, 0.02, scale(pal.ground, 1.15));
         } else if lot.building.is_none() {
             // Vacant: the zoning layer (above) shows what it is zoned for.
+        } else if lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.service.is_some_and(|s| s.kind.is_landmark())) {
+            // [attractions] A landmark floors its own (big, often notched)
+            // site; a gravel fill lifted onto the ground vertex by vertex
+            // rose over its lawns and paths in the middle.
         } else {
             fill.ground_polygon(&lot.polygon, 0.02, rgba(pal.gravel));
         }

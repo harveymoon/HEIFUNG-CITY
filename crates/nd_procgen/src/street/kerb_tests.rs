@@ -319,6 +319,33 @@ fn a_roundabout_ring_is_paved_round_the_outside() {
     assert!(!kerb_inside, "no pavement inside the ring");
 }
 
+/// [walk-crossings] G9: a circus big enough to have land in the middle
+/// has a pavement round the inside of its ring too.
+#[test]
+fn a_big_circus_is_paved_round_the_inside_too() {
+    use nd_sim::plan::{Gesture, GestureId, Plan};
+    let mut plan = Plan::default();
+    plan.gestures.insert(GestureId(1), Gesture::Road { points: vec![Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+    plan.gestures.insert(GestureId(3), Gesture::Roundabout { center: Vec2::ZERO, radius: 70.0, lanes: 2 });
+    let (built, rings) = plan.built_roads();
+    let mut roads = RoadNetwork::default();
+    roads.rings = rings;
+    for (_, pts, f, b, k) in built {
+        roads.add_polyline_kind(&pts, f, b, k);
+    }
+    let mut net = LaneNetwork::default();
+    net.rebuild(&roads);
+    let ring = roads.rings[0];
+    assert!(ring.radius >= super::draw::BIG_RING_RADIUS);
+    let g = draw(&roads, &net, &[]);
+    let inner = ring.radius - ring.half_width();
+    let kerb_inside = g.get(Concrete).positions.iter().filter(|p| {
+        let d = Vec2::new(p[0], p[2]).distance(ring.center);
+        d < inner + 0.5 && d > inner - 3.0
+    }).count();
+    assert!(kerb_inside > 50, "a pavement round the inside: {kerb_inside} vertices");
+}
+
 /// Prints the street triangles of a save, for comparing before and
 /// after a change: `ND_STREET_SAVE=path cargo test --release -p
 /// nd_procgen street_triangles_of_a_save -- --ignored --nocapture`.
@@ -428,4 +455,29 @@ fn a_lane_count_joint_at_a_bend_does_not_overlap() {
             }
         }
     }
+}
+
+/// [fix/buildings-ui] G15: no street trees, lamps or poles stand under a
+/// viaduct crossing the street: they would poke up through its deck. Away
+/// from the viaduct the dear street keeps its trees.
+#[test]
+fn no_trees_under_a_viaduct() {
+    let mut roads = RoadNetwork::default();
+    roads.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
+    let first_deck = roads.nodes.len();
+    roads.add_polyline_levels(&[Vec2::new(0.0, -200.0), Vec2::new(0.0, -60.0), Vec2::new(0.0, 60.0), Vec2::new(0.0, 200.0)], &[8.0; 4], 2, 2, nd_sim::roads::RoadKind::Street);
+    // The street at the ground, the highway 8 m over it.
+    let heights: Vec<f32> = (0..roads.nodes.len()).map(|k| if k >= first_deck { 8.0 } else { 0.0 }).collect();
+    let mut net = LaneNetwork::default();
+    net.rebuild(&roads);
+    let deck = roads.segments_in_box(Vec2::new(-1.0, -1.0), Vec2::new(1.0, 1.0)).find(|&s| roads.segment(s).lanes_fwd == 2).expect("the deck over the street");
+    let reach = roads.segment(deck).half_width();
+    assert!(junction::under_deck(&roads, &heights, &[], Vec2::new(reach - 1.0, 9.0), 0.0, 1.0, 12.0), "beside the street, under the deck");
+    assert!(!junction::under_deck(&roads, &heights, &[], Vec2::new(60.0, 9.0), 0.0, 1.0, 12.0), "out in the open");
+    assert!(!junction::under_deck(&roads, &heights, &[], Vec2::new(reach - 1.0, 9.0), 8.0, 1.0, 12.0), "on the deck itself");
+    let g = draw(&roads, &net, &heights);
+    let leaves = g.get(Foliage);
+    let under: Vec<[f32; 3]> = leaves.positions.iter().copied().filter(|p| p[0].abs() < reach + 2.0 && p[1] < 8.0 && p[2].abs() < 30.0).collect();
+    assert!(under.is_empty(), "foliage under the viaduct at {:?}", &under[..under.len().min(4)]);
+    assert!(leaves.positions.iter().any(|p| p[0].abs() > 40.0 && p[2].abs() < 15.0), "the street keeps its trees away from the viaduct");
 }

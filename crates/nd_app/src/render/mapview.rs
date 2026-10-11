@@ -265,6 +265,8 @@ fn pin_of(b: &nd_sim::Building) -> Option<(&'static str, [u8; 3], u8)> {
             K::Vertiport => ("V", [80, 230, 255], 1),
             K::ParkingEnforcement => ("E", [170, 170, 120], 2),
             K::University => ("U", [120, 200, 255], 1),
+            // [attractions] the landmarks: a star in the attractions' pink
+            _ => ("\u{2605}", [255, 120, 200], 0),
         });
     }
     if b.plant.is_some() {

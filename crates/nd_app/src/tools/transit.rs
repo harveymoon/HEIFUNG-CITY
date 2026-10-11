@@ -13,7 +13,7 @@ use super::TransitMode;
 
 /// Lines, Metro or Depot mode.
 pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection) {
-    let Frame { ctrl, click, ground, finish, right_click, buttons, .. } = *f;
+    let Frame { ctrl, click, shift_click, ground, finish, right_click, buttons, .. } = *f;
     let map_key = |k: KeyCode| f.map_key(k);
     match tools.transit_mode {
     TransitMode::Route => {
@@ -21,7 +21,9 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, selection: 
         // remove its stops (`line_edit`). Enter finishes.
         if tools.line_edit.is_some() {
             let remove = right_click || map_key(KeyCode::Delete);
-            super::line_edit::input(&mut sim.world, tools, ground, click, buttons.just_released(MouseButton::Left), remove);
+            // [fix/buildings-ui] Shift+click inserts a stop where it belongs.
+            tools.line_shift = f.keys.pressed(KeyCode::ShiftLeft) || f.keys.pressed(KeyCode::ShiftRight);
+            super::line_edit::input(&mut sim.world, tools, ground, click || shift_click, shift_click, buttons.just_released(MouseButton::Left), remove);
             if map_key(KeyCode::Enter) && !ctrl {
                 super::line_edit::finish(&mut sim.world, tools);
             }
@@ -37,11 +39,11 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, selection: 
             } else if let Some(p) = ground {
                 if nd_sim::transit::BusStop::snap(&sim.world.roads, p).is_some() {
                     let r = sim.world.add_bus_route();
-                    super::line_edit::start(tools, r);
+                    super::line_edit::start_new(tools, r);
                     if let Some(e) = tools.line_edit.as_mut() {
                         e.back_to = super::Tool::Transit;
                     }
-                    super::line_edit::input(&mut sim.world, tools, ground, true, false, false);
+                    super::line_edit::input(&mut sim.world, tools, ground, true, false, false, false);
                 } else {
                     tools.status = "Click by a street to start a new line, or on a stop to pick its line.".into();
                 }

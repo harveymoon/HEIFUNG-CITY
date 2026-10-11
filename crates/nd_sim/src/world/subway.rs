@@ -391,7 +391,7 @@ impl World {
         }
         if let (false, Some(l)) = (last, on_line) {
             let name = self.buildings.get(at).map(|b| b.name.clone()).unwrap_or_default();
-            let boarding = self.board_waiting(|leg| matches!(leg, TransitLeg::Subway { line: ll, board, alight } if *ll == line && *board == at && l.serves(forward, *board, *alight)), metro::CAPACITY.saturating_sub(keep.len()), metro::FARE, Flow::SubwayFares, Item::Named(name.to_string()), &format!("Took the {} from {name}.", l.name));
+            let boarding = self.board_waiting(|t| matches!(&t.leg, TransitLeg::Subway { line: ll, board, alight } if *ll == line && *board == at && l.serves(forward, *board, *alight)), metro::CAPACITY.saturating_sub(keep.len()), metro::FARE, Flow::SubwayFares, Item::Named(name.to_string()), &format!("Took the {} from {name}.", l.name));
             let n = boarding.len() as u32;
             for p in boarding {
                 self.citizens[p].activity = Activity::OnMetro { train: id };
@@ -558,7 +558,7 @@ mod tests {
         let platform = w.metro_platform(a).unwrap();
         assert!(platform.distance(at) > 3.0, "the platform is not the kerb");
         let rider = walker(&mut w, at);
-        w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Subway { line, board: a, alight: b }, target: b, purpose: Purpose::Wander, since: 0 });
+        w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Subway { line, board: a, alight: b }, target: b, purpose: Purpose::Wander, since: 0, bike: false });
         w.citizens[rider].activity = Activity::Traveling { to: Some(b), purpose: Purpose::ToStop, path: vec![at], idx: 0 };
         w.clock = SimClock::starting_at(0, 3, 0);
         for _ in 0..5 {
@@ -589,7 +589,7 @@ mod tests {
         let at = w.building_entrance(a).unwrap();
         let rider = walker(&mut w, at);
         let target = home.unwrap_or(b);
-        w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Subway { line, board: a, alight: b }, target, purpose: Purpose::Wander, since: 1 });
+        w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Subway { line, board: a, alight: b }, target, purpose: Purpose::Wander, since: 1, bike: false });
         w.citizens[rider].activity = Activity::Waiting { at: w.building_entrance(a).unwrap() };
         w.clock = SimClock::starting_at(0, 8, 0);
         let fares = w.economy.ledger.today[Flow::SubwayFares.index()];
@@ -679,7 +679,7 @@ mod tests {
         let line = w.add_metro_line(&[a, b]).unwrap();
         let at = w.building_entrance(a).unwrap();
         let rider = walker(&mut w, at);
-        w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Subway { line, board: a, alight: b }, target: b, purpose: Purpose::Wander, since: 1 });
+        w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Subway { line, board: a, alight: b }, target: b, purpose: Purpose::Wander, since: 1, bike: false });
         w.citizens[rider].activity = Activity::Waiting { at: w.building_entrance(a).unwrap() };
         assert!(w.remove_metro_line(line));
         assert!(w.citizens[rider].transit.is_none_or(|t| !matches!(t.leg, TransitLeg::Subway { .. })));
@@ -695,7 +695,7 @@ mod tests {
         let line = w.add_metro_line(&[a, b]).unwrap();
         w.set_metro_headway(line, 7).unwrap();
         let rider = walker(&mut w, Vec2::ZERO);
-        w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Subway { line, board: a, alight: b }, target: b, purpose: Purpose::Wander, since: 1 });
+        w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Subway { line, board: a, alight: b }, target: b, purpose: Purpose::Wander, since: 1, bike: false });
         w.citizens[rider].activity = Activity::OnMetro { train: MetroTrainId::default() };
         let text = w.to_ron().unwrap();
         let back = World::from_ron(&text).unwrap();
@@ -766,7 +766,7 @@ mod tests {
         let at = w.building_entrance(c).unwrap();
         let rider = walker(&mut w, at);
         w.clock = SimClock::starting_at(0, 8, 0);
-        w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Subway { line, board: c, alight: a }, target: a, purpose: Purpose::Wander, since: w.clock.tick });
+        w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Subway { line, board: c, alight: a }, target: a, purpose: Purpose::Wander, since: w.clock.tick, bike: false });
         w.citizens[rider].activity = Activity::Waiting { at };
         let mut rode = false;
         for _ in 0..240 {

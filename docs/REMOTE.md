@@ -327,7 +327,7 @@ them a land use.
 | `bulldoze` | `gesture_id` (the whole gesture), `implement`; or `at` `[x,y]` ([pt-ux] as a Bulldoze click there: only the road's piece between its junctions, or to its end, goes; the rest of the road stays, keeping its name; one undo step; reply adds `piece` {`gesture_id`, `from_m`, `to_m`, `roads_left`}; the Bulldoze tool previews that piece in red); or `building` (id): a city building (plant, battery, service, attraction, depot, metro station, cargo hub, city parking) goes at once and its lot goes back to the zoning plan (or unzoned ground). Grown buildings, stations, yards and docks refuse |
 | `paint` | `land_use` (or `none` to unzone; `beach` paints a public beach, see the waterfront section), then `at` `[x,y]` + `radius` (the brush), `rect` `[[x0,y0],[x1,y1]]` (the marquee) or `polygon`; `industry` (industrial only: auto / farming / oil / refinery / manufacturing / logistics / fishing / tech), `implement`. Reply: `painted`, `touched`, `refused` (`[{parcel, center, why}]`), `gesture_id`; `no_parcel` (why, when `at` touched no parcel: water, too far from a road, past the buildable land) |
 | `project` | `action`: list / new / switch / rename / delete / park / start / implement / undo / redo / discard; `id` (default the active project) or `name` to pick one; `name` for new and rename. Reply: `projects` (`id`, `name`, `active`, `steps`, `redo`, `conflicts` `[{gesture, project}]`, `shared_parcels`), `warnings` from the last implement |
-| `grounds_junctions` (or `park_junctions`) | optional `lot`, `kind` (park / plaza / stadium / campus / station / beach), `near` `[x,y]` + `radius` (default 150 m). [park-paths] The gates on the edges of parks and other public grounds (a stadium, a monument's plaza, a school's campus, a station) where a path may join their walkways: the Path tool's snap rings. Reply `junctions` `[{index, pos, kind, label, lot, attached, walk_node, gesture_id}]` (`attached`: a path is joined there, `walk_node` the grounds' walk node it joins, `gesture_id` the path) and `links` (every joined path end). A path whose end is on a gate when its project is implemented is joined: the park lays a walkway out to meet it and walkers route through. When the grounds go (rezoned, bulldozed, re-cut away) the path is cut back to its last point before that end, or removed if fewer than two points are left; the event log gets `PathTrimmed` {`gesture_id`, `removed`, `grounds`} and the game a toast |
+| `grounds_junctions` (or `park_junctions`) | optional `lot`, `kind` (park / plaza / stadium / campus / station / beach / attraction), `near` `[x,y]` + `radius` (default 150 m). [park-paths] The gates on the edges of parks and other public grounds (a stadium, a monument's plaza, a school's campus, a station) where a path may join their walkways: the Path tool's snap rings. Reply `junctions` `[{index, pos, kind, label, lot, attached, walk_node, gesture_id}]` (`attached`: a path is joined there, `walk_node` the grounds' walk node it joins, `gesture_id` the path) and `links` (every joined path end). A path whose end is on a gate when its project is implemented is joined: the park lays a walkway out to meet it and walkers route through. When the grounds go (rezoned, bulldozed, re-cut away) the path is cut back to its last point before that end, or removed if fewer than two points are left; the event log gets `PathTrimmed` {`gesture_id`, `removed`, `grounds`} and the game a toast |
 | `find` `{what: "parcels"}` | per parcel: `index`, `center`, `area`, `land_use` (built), `planned`, `landlocked`, `street`, `rough`, `accepts`, `lot`; filter `land_use`, `zoned`, `landlocked` |
 
 ```json
@@ -427,6 +427,25 @@ within 80 m is used, as before.
   Refusals name the reason: park land, lot area, no street out front (police, fire, health, stadium),
   treasury. Costs, upkeep, jobs, coverage radius, vehicles and capacity per tier are in
   `nd_sim::services::ServiceKind`.
+- [attractions] Landmark attractions, one of each per city, one size (any `tier` is ignored):
+  `art_museum`, `science_museum` (natural history and science), `history_museum` (city history and
+  design; also `museum`), `pier` (pleasure pier), `grand_park`, `zoo`, `observatory`, `aquarium`,
+  `botanical_garden` (also `conservatory`), `concert_hall` (also `opera_house`). Each needs a site of
+  several plots (art 2,200 m², science 2,600, history 1,800, pier 1,200 ashore, grand park 7,000, zoo 5,200,
+  observatory 1,500, aquarium 2,400, botanical 3,800, concert hall 2,600; `ServiceKind::min_area`):
+  the lot under the point takes in its neighbours (up to 48 plots, notches allowed), whatever grew on
+  them bought out, as for a stadium; on unzoned ground the parcels there are joined. Refusals name
+  the reason: `one per city: <name> is the city's <kind> already`; the pier `a pier goes on the sea
+  shore...` (the site must come within 14 m of the sea, not a lake or river, with open sea for its
+  deck 60-120 m out); the observatory `an observatory needs high ground: this site is +N m from the
+  middle of town (M m up), it needs +8 m or more` (`World::rise_above_town`: against the median
+  ground height of every lot; a flat map has none); a long thin run of plots `the plots here only join
+  into a long thin strip...`. `inspect {building}` adds `attraction` {kind, label, about,
+  open_hours, open_now, capacity, admission, visits_today/yesterday (townsfolk), tourists_today/
+  yesterday, takings_today/yesterday, visits_total, tourist_pull, land_value_lift {radius_m,
+  raw_weight}, pier {root, tip, length_m, width_m, head_m} (the deck over the water), rise_above_town_m}.
+  The grand park, zoo, botanical garden and pier lay out walkways and benches (`park` in `inspect`;
+  their gates are `grounds_junctions` of kind `attraction`), the pier's out along its deck.
 
 Reply: `building` id, `message`, `row`, `treasury`; or the sim's reason as `error`. For a dock,
 station or yard the reply adds [dock-access] `road_access` {`connected`, `stub_ends` ([[x, y]]: the
@@ -438,6 +457,7 @@ road_connected, reaches_elsewhere, works, ferries_sail, berth, stub}. `report`'s
 ```json
 {"cmd": "place", "kind": "solar", "x": -210, "y": -210}
 {"cmd": "place", "kind": "fire", "tier": "high", "x": 120, "y": 40}
+{"cmd": "place", "kind": "pier", "x": 40, "y": -610}
 {"cmd": "place", "kind": "dispatch:low", "x": -80, "y": 40}
 ```
 
@@ -739,7 +759,7 @@ in this order, and the reply is the state after:
 | `left_turns` | `true` allows the left from every street, `false` forbids it from every street |
 | `no_left` | `[approach index or [x,y], ...]`: those streets forbid the left, the others allow it. A banned left is taken out of what the junction offers there, so its lane arrows lose it and no route turns left there |
 | `approach` + `lanes` | lane permissions of one arriving street (index, or a point on it): `["L+S", "S+R"]` leftmost first, or `"reset"` (as `lane_use`) |
-| `crossing` + `upgrade` | a crosswalk (walk-graph index from `crossings`, or a point near it): `none`, `button` (a push-button signal: traffic gets a red only after someone presses it; not on a crosswalk that already has walk lights) or `footbridge` (a raised walkway with stairs at both ends; refused where it would stand in another's way). A footbridge replaces the crosswalk under it: its paint, walk lights and at-grade walk edge go, so everyone crossing there climbs over and nobody holds up traffic. Paid for: 1,500 and 18,000 |
+| `crossing` + `upgrade` | a crosswalk (walk-graph index from `crossings`, or a point near it): `none`, `button` (a push-button signal: traffic gets a red only after someone presses it; not on a crosswalk that already has walk lights), `footbridge` (a raised walkway with stairs at both ends; refused where it would stand in another's way) or `removed` (also `remove`, `no_crossing`: [walk-crossings] no crossing there at all: nothing painted, no walk light, walkers route round by another crossing and nobody plans a jaywalk within 30 m; free). A footbridge replaces the crosswalk under it: its paint, walk lights and at-grade walk edge go, so everyone crossing there climbs over and nobody holds up traffic; [walk-crossings] it also replaces the other crosswalks over the same street within 30 m (not its own junction's other arms, nor ones the player set up), and no jaywalk is planned within 80 m of it. Unmarked crossings (a roundabout's own lanes, a highway slip road's mouth, a dead end) may take a button, a footbridge or be removed too: a button makes one a marked crossing with its own light, and a footbridge over a slip road's mouth has its stairs down each street's pavement. Paid for: 1,500 and 18,000 |
 | `crossing` + `keep_crosswalk` | [footbridge] `true` keeps the crosswalk at grade under its footbridge (walkers then take the bridge when it costs them at most 30 m more); `false` (the default, also for footbridges from older saves) lets the bridge replace it. Free |
 | `open`, `extent`, `select_approach`, `select_crossing` | show the editor modal (and its road view's width in metres, 30..300; which street or crosswalk is picked) |
 | `lane_menu`, `hover_lane` | [pt-ux] `[approach, lane]` (lane 0 the leftmost): open that lane's options menu beside its arrow, or show its moves as if hovered (bright: allowed, dashed: offered but not allowed); `null` closes / clears. Needs the editor open |
@@ -761,7 +781,7 @@ Reply: `intersection` {`at`, `junction` (false for a lone crosswalk), `node`, `r
 `approaches` [{index, segment, street, dir (the way it leaves the junction), from, lanes, offered,
 set_by_player, left_forbidden, left_possible, queued, lane_ends [{end, dir, moves [{move, allowed}]}]}], `phases` [{index, approaches, green_s,
 running}], `crossings` [{index, mid, ends, upgrade, signalised, kind, button_light, footbridge
-{walkway, stair_feet, width}, crosswalk_kept, crosswalk_removed}], `footbridges` (in the city), `button_presses_total`}, `done` (what
+{walkway, stair_feet, width}, crosswalk_kept, crosswalk_removed, ramp, shut}], `footbridges` (in the city), `button_presses_total`}, `done` (what
 was changed) and `editor_open`. Everything is saved with the city (`Traffic::junction_rules`,
 `World::crosswalks`, serde defaults) and found again by position after the roads are rebuilt.
 
@@ -773,6 +793,27 @@ was changed) and `editor_open`. Everything is saved with the city (`Traffic::jun
 The reply also has `level_crossing` (null unless the junction's node lies on the railway; see
 below). At a level crossing that is no junction (a street straight over the track), `intersection`
 answers with `intersection: null` and the crossing as `level_crossing`.
+
+#### Crossing use: `walk_crossings` [walk-crossings]
+
+`walk_crossings {at?: [x, y], radius? (80), all?, reset?}`: every walk-graph crossing near `at` (or in
+town) with `index`, `kind` (junction / zebra / informal / jay), `mid`, `segment`, `street`, `marked`,
+`closed` (a footbridge replaced it, the player removed it, or a jaywalk in a footbridge's shadow),
+`bridged`, `button`, and its use since the walk graph was last built (or `reset: true`): `at_grade`
+(walkers who stepped out over it), `against` (of them against the light or mid-block), `bridge`
+(walkers over its footbridge's deck), `bridge_bikes` (cyclists wheeling over it), `replans` (walkers
+who found it gone and planned again). Unused jaywalking edges are listed only with `all: true`.
+`totals` sums them (and `unmarked_at_grade`); `replans_total`, `jay_give_ups_total` (jaywalkers who
+tired of waiting for a gap and went round by a crossing), `jaywalks_total`, `collisions_total`,
+`near_misses_total`. Rules behind it: walkers never cross a highway slip road's mouth except with
+walk lights (an off-ramp at a signalled junction), a push button or a footbridge (`shut` otherwise);
+a roundabout's own lanes are crossed unmarked only when the island is where the walk goes (they cost
+a route 60 m extra); jaywalking short cuts cost 12 m more per lane past the second and none are
+planned over five lanes or more; a jaywalker waiting more than 5 ticks for a gap goes round by a
+crossing. `report` traffic.pedestrians adds `replans_total`, `jay_give_ups_total` and
+`hurt_in_the_street_now`; `report` transit adds `bike_rack_rides_total`, `bike_rack_full_total` and
+`bikes_on_racks_now` ([bike-racks] a bus carries four bikes; a cyclist facing a long ride may take
+the bus with the bike if the rack has room, else waits for the next bus).
 
 #### Level crossings: `level_crossings` [rail-crossing]
 

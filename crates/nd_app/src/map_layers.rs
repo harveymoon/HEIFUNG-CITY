@@ -69,7 +69,7 @@ pub const MAP_LAYERS: &[MapLayer] = &[
     MapLayer { key: "people", label: "People", group: "People", hotkey: "L", hint: "Where everyone is right now", flag: |o| &mut o.people, legend: legend_people },
     MapLayer { key: "pollution", label: "Pollution and noise", group: "Environment", hotkey: "L", hint: "From plants, industry, nightlife and traffic", flag: |o| &mut o.pollution, legend: legend_pollution },
     // [layers] (render/focus.rs, render/layers.rs, render/mapview.rs)
-    MapLayer { key: "crime", label: "Crime", group: "People", hotkey: "L", hint: "Where offences pile up; police cars and their routes lit over a dimmed city", flag: |o| &mut o.crime, legend: legend_crime },
+    MapLayer { key: "crime", label: "Crime", group: "People", hotkey: "L", hint: "Where offences pile up; police cars and their routes lit over a dimmed city, the police stations marked and the ground they cover outlined", flag: |o| &mut o.crime, legend: legend_crime },
     // [events] (render/nights.rs)
     MapLayer { key: "road_condition", label: "Road condition", group: "Traffic", hotkey: "", hint: "Wear on every street: green is smooth, red is crumbling; crews fix dear land first", flag: |o| &mut o.road_condition, legend: legend_road_condition },
     MapLayer { key: "map", label: "Map view", group: "City", hotkey: "L", hint: "A street map: roads, street names, zones and pins, buildings and people hidden", flag: |o| &mut o.map, legend: legend_map },
@@ -330,6 +330,7 @@ fn legend_crime(ui: &mut egui::Ui, _: &LegendCtx) {
             (linear([0.3, 0.9, 1.3]), "patrol route".into()),
             (linear([2.2, 0.25, 0.3]), "on a call".into()),
             (linear([1.6, 0.4, 0.1]), "open crime".into()),
+            (linear(crate::build_highlight::Family::Police.linear()), "police station and its cover".into()),
         ],
         false,
     );

@@ -510,6 +510,13 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         let col = if *ok { egui::Color32::from_rgb(120, 230, 140) } else { egui::Color32::from_rgb(240, 110, 120) };
         ui.label(egui::RichText::new(format!("Here: {note}")).small().color(col));
     }
+    // [attractions] An observatory: how high the ground under the pointer is.
+    if let (Placeable::Service(ServiceKind::Observatory, _), Some(p)) = (tools.build_item(), tools.hover_ground) {
+        if let Some(rise) = sim.world.rise_above_town(p) {
+            let need = nd_sim::attractions::OBSERVATORY_RISE;
+            hint(ui, &format!("Under the pointer: {rise:+.0} m from the middle of town ({}).", if rise >= need { "high enough".to_string() } else { format!("needs {need:+.0} m") }));
+        }
+    }
     // [grid-weather] Wind and solar: what the ground under the pointer gives.
     if let (Placeable::Plant(k @ (nd_sim::PowerPlantKind::Wind | nd_sim::PowerPlantKind::Solar)), Some(p)) = (tools.build_item(), tools.hover_ground) {
         hint(ui, &site_note(&sim.world, k, p));
@@ -571,10 +578,18 @@ pub fn placeable_info(ui: &mut egui::Ui, sim: &mut Sim, what: Placeable) {
             }
             let cap = k.capacity(t);
             if cap > 0 {
-                line += &format!(", {cap} {}", match k { ServiceKind::Health => "beds", ServiceKind::Stadium => "seats", ServiceKind::Jail => "cells", _ => "places" });
+                line += &format!(", {cap} {}", match k { ServiceKind::Health => "beds", ServiceKind::Stadium => "seats", ServiceKind::Jail => "cells", k if k.is_landmark() => "visitors at once", _ => "places" });
             }
             line += ". ";
             line += help::service_note(k);
+            // [attractions] One per city, the site it needs, what it is worth.
+            if k.is_landmark() {
+                line += " ";
+                line += &help::landmark_rules(k);
+                if let Some(b) = sim.world.landmark(k).and_then(|b| sim.world.buildings.get(b)) {
+                    line += &format!(" The city has one: {}.", b.name);
+                }
+            }
         }
         Placeable::Battery(k) => {
             line += &format!(

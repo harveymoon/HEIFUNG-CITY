@@ -61,7 +61,10 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
         } else if b.homes > 0 {
             tag(ui, "Homes", egui::Color32::from_gray(170));
         }
-        tag(ui, &format!("{} tier", b.tier.label()), egui::Color32::from_gray(130));
+        // [attractions] A landmark comes in one size: no tier to show.
+        if !b.service.is_some_and(|s| s.kind.is_landmark()) {
+            tag(ui, &format!("{} tier", b.tier.label()), egui::Color32::from_gray(130));
+        }
         if let Some(d) = w.district_of_lot(b.lot) {
             tag(ui, &d.name, egui::Color32::from_rgb(200, 140, 230));
         }
@@ -240,6 +243,43 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
 
 /// Services, plants, rail, metro and depots: what the building does for
 /// the city, one line each, only where it applies.
+/// [attractions] A landmark's card: open now or when, who came, what the
+/// door took, how it lifts the land round it and draws tourists, and
+/// (the pier, the observatory) its site.
+fn attraction_lines(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId, b: &nd_sim::Building, k: nd_sim::ServiceKind) {
+    section(ui, "ATTRACTION");
+    let hour = w.clock.hour() as u8;
+    let hours = k.hours();
+    let open = b.operating() && hours.contains(hour) && b.workers.len() * 4 >= b.jobs as usize;
+    let state = if b.construction.is_some() || b.demolition.is_some() {
+        "being built".to_string()
+    } else if open {
+        format!("open now ({})", crate::ui::help::hours_label(hours))
+    } else if !b.operating() {
+        "shut".to_string()
+    } else if b.workers.len() * 4 < b.jobs as usize {
+        format!("shut: {} of {} staff", b.workers.len(), b.jobs)
+    } else {
+        format!("closed now; open {}", crate::ui::help::hours_label(hours))
+    };
+    ui.label(format!("{state}  ·  {} visitors in now, {} at once at most  ·  staff {}/{}", b.visitors, k.capacity(nd_sim::Tier::Mid), b.workers.len(), b.jobs));
+    let book = w.attractions.book(id);
+    let fee = if k.admission() > 0.0 { format!("admission {:.0}", k.admission()) } else { "free to enter".to_string() };
+    ui.label(format!("today: {} townsfolk, {} tourists, {:.0} taken  ·  yesterday: {} townsfolk, {} tourists, {:.0} taken  ·  {fee}", book.visits_today, book.tourists_today, book.takings_today, book.visits_yesterday, book.tourists_yesterday, book.takings_yesterday));
+    let (r, wt) = k.land_value(nd_sim::Tier::Mid);
+    let lift = wt * (0.55 + 0.45 * b.staffing());
+    let here = w.lots.get(b.lot).map_or(0.0, |l| w.land_value.at(l.center));
+    hint(ui, &format!("Lifts land value up to +{lift:.2} (raw) within {r:.0} m at this staffing; land here reads {here:.2}. Draws {:.0} points of tourist pull ({:.0} now).", k.tourist_pull(), k.tourist_pull() * (0.5 + 0.5 * b.staffing())));
+    if let Some(d) = w.attractions.piers.get(&id) {
+        hint(ui, &format!("The deck runs {:.0} m out over the sea on piles, {:.0} m wide, with a {:.0} m head for the rides.", d.length(), d.width, d.head));
+    }
+    if k == nd_sim::ServiceKind::Observatory {
+        if let Some(rise) = w.lots.get(b.lot).and_then(|l| w.rise_above_town(l.center)) {
+            hint(ui, &format!("Stands {rise:+.0} m from the middle of town."));
+        }
+    }
+}
+
 pub(super) fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId, b: &nd_sim::Building) {
     if let Some(s) = b.service {
         let units: Vec<&nd_sim::Unit> = w.services.units.values().filter(|u| u.station == id).collect();
@@ -255,6 +295,9 @@ pub(super) fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_s
         }
         section(ui, "SERVICE");
         ui.label(egui::RichText::new(line).color(crate::ui::theme::SERVICE_BLUE));
+        if s.kind.is_landmark() {
+            attraction_lines(ui, w, id, b, s.kind);
+        }
     }
     if let Some(kind) = b.plant {
         // [plant-groups] A Sunfield or Wind Park: the whole park's figures.

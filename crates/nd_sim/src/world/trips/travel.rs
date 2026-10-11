@@ -143,7 +143,8 @@ impl World {
                     }
                 }
                 ModePlan::Train { board, alight, stop } => self.walk_to_transit(id, stop, TransitLeg::Rail { board, alight }, target, purpose, fresh),
-                ModePlan::Bus { route, board, alight, stop } => self.walk_to_transit(id, stop, TransitLeg::Bus { route, board, alight }, target, purpose, fresh),
+                ModePlan::Bus { route, board, alight, stop, bike: false } => self.walk_to_transit(id, stop, TransitLeg::Bus { route, board, alight }, target, purpose, fresh),
+                ModePlan::Bus { route, board, alight, stop, bike: true } => self.ride_to_bus_stop(id, stop, TransitLeg::Bus { route, board, alight }, target, purpose, fresh),
                 ModePlan::Subway { line, board, alight, stop } => self.walk_to_transit(id, stop, TransitLeg::Subway { line, board, alight }, target, purpose, fresh),
                 ModePlan::Taxi { segment, at, wait_at } => self.hail_taxi(id, segment, at, wait_at, target, purpose, fresh),
                 ModePlan::Walk | ModePlan::Bike => {
@@ -205,6 +206,9 @@ impl World {
             None => self.route_path(&streets, mode),
         };
         path.push(entrance);
+        if mode == TravelMode::Bike {
+            self.bike_over_footbridges(&mut path);
+        }
         let c = &mut self.citizens[id];
         if let Some(p) = exit_pos {
             c.pos = p;
@@ -258,7 +262,18 @@ impl World {
                 // buses, shorter waits), not a flat twelve minutes.
                 let wait = (r.headway(secs) as f32 * 0.5).clamp(transit::MIN_EXPECTED_WAIT, transit::MAX_EXPECTED_WAIT);
                 let minutes = (q.from.distance(s0) + s1.distance(q.to)) / walk + wait + r.ride_length(board, alight) / (7.0 * secs);
-                push(TripMode::Bus, minutes, r.fare, crowd, ModePlan::Bus { route, board, alight, stop: s0 });
+                push(TripMode::Bus, minutes, r.fare, crowd, ModePlan::Bus { route, board, alight, stop: s0, bike: false });
+                // [bike-racks] A cyclist facing a long ride may put the bike
+                // on the bus's front rack for the long middle of it: quick
+                // rides to and from the stops, no slog in between. A rack
+                // may be full (another bus, then), so a little worse than a
+                // seat alone.
+                if c.owns_bike && q.allow_bike && dist >= self.config.bike_threshold {
+                    let ends = q.from.distance(s0) + s1.distance(q.to);
+                    let minutes = ends * 1.2 / bike + wait + 1.0 + r.ride_length(board, alight) / (7.0 * secs);
+                    let comfort = crowd + 3.0 + (ends * 1.2 / bike) * 0.25 * (0.5 + caution) * frail;
+                    push(TripMode::Bus, minutes, r.fare, comfort, ModePlan::Bus { route, board, alight, stop: s0, bike: true });
+                }
             } else if let Some((ra, board, x, rb, y, alight)) = self.transit.plan_transfer(q.from, q.to) {
                 // [pt-transit] Two lines with a change between: the first
                 // leg is booked; at its end the rider decides again and the
@@ -268,7 +283,7 @@ impl World {
                 let walking = q.from.distance(a.stops[board].pos) + a.stops[x].pos.distance(b.stops[y].pos) + b.stops[alight].pos.distance(q.to);
                 let riding = (a.ride_length(board, x) + b.ride_length(y, alight)) / (7.0 * secs);
                 let minutes = walking / walk + wait(a) + wait(b) + transit::TRANSFER_PENALTY + riding;
-                push(TripMode::Bus, minutes, a.fare + b.fare, crowd, ModePlan::Bus { route: ra, board, alight: x, stop: a.stops[board].pos });
+                push(TripMode::Bus, minutes, a.fare + b.fare, crowd, ModePlan::Bus { route: ra, board, alight: x, stop: a.stops[board].pos, bike: false });
             }
         }
         if q.allow_transit && Rail::in_service(self.clock.minute_of_day() as u32) {

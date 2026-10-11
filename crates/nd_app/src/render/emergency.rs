@@ -507,3 +507,39 @@ pub(super) fn amber_beacons(sim: Res<Sim>, time: Res<Time>, tools: Res<crate::to
         gizmos.sphere(Isometry3d::from_translation(Vec3::new(p.x, y, p.y)), 0.22, Color::linear_rgb(6.0, 2.6, 0.15));
     }
 }
+
+/// [walk-crossings] Someone lying hurt in the street, waiting for the
+/// paramedics (`World::down_on_street`): a pulsing red cross over them, so
+/// a casualty is told at a glance from someone asleep on the pavement
+/// (Harvey's flag: "is this guy hurt? he should have some indicator").
+pub(super) fn hurt_markers(sim: Res<Sim>, time: Res<Time>, tools: Res<crate::tools::ToolState>, mut gizmos: Gizmos) {
+    if tools.depth == crate::tools::Depth::Underground {
+        return;
+    }
+    let w = &sim.world;
+    let down = w.down_on_street();
+    if down.is_empty() {
+        return;
+    }
+    let t = time.elapsed_secs();
+    let pulse = 0.6 + 0.4 * (t * 4.0).sin().abs();
+    let red = Color::linear_rgb(7.0 * pulse, 0.25, 0.3);
+    for &id in &down {
+        let Some(c) = w.citizens.get(id) else { continue };
+        if c.inside.is_some() || c.activity.is_traveling() {
+            continue;
+        }
+        // Where the figure lies: thrown clear beside the wreck.
+        let p = c.pos + SVec2::new(-c.heading.sin(), c.heading.cos()) * 2.6;
+        let y = w.surface_height(p) + 2.6 + 0.15 * (t * 2.0).sin();
+        let centre = Vec3::new(p.x, y, p.y);
+        let (h, v) = (Vec3::X * 0.55, Vec3::Y * 0.55);
+        for k in [-0.08f32, 0.0, 0.08] {
+            let o = Vec3::Z * k;
+            gizmos.line(centre - h + o, centre + h + o, red);
+            gizmos.line(centre - v + o, centre + v + o, red);
+        }
+        gizmos.circle(Isometry3d::new(centre, Quat::IDENTITY), 0.85, red);
+        gizmos.line(centre - v * 1.6, Vec3::new(p.x, y - 2.3, p.y), Color::linear_rgb(2.0, 0.1, 0.1));
+    }
+}

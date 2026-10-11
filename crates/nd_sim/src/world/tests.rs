@@ -1179,7 +1179,7 @@ fn bulldozing_the_branch_takes_the_trains_off_and_strands_riders_sanely() {
     // Someone is aboard, bound for station B.
     w.rail.trains[train].passengers.push(rider);
     w.citizens[rider].activity = Activity::OnTrain { train };
-    w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Rail { board: station_a, alight: station_b }, target: home, purpose: Purpose::Home, since: 0 });
+    w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Rail { board: station_a, alight: station_b }, target: home, purpose: Purpose::Home, since: 0, bike: false });
     w.start_project();
     w.remove_gesture(branch);
     w.implement();
@@ -1402,7 +1402,7 @@ fn a_save_with_dangling_ids_and_missing_fields_loads_cleanly() {
         cz.inside = Some(ghost);
         cz.parked_at = Some(ghost);
         cz.activity = Activity::Visiting(ghost);
-        cz.transit = Some(TransitTrip { leg: TransitLeg::Rail { board: ghost, alight: ghost }, target: ghost, purpose: Purpose::Home, since: 0 });
+        cz.transit = Some(TransitTrip { leg: TransitLeg::Rail { board: ghost, alight: ghost }, target: ghost, purpose: Purpose::Home, since: 0, bike: false });
     }
     let lot = w.lots.keys().next().unwrap();
     w.lots[lot].building = Some(ghost);
@@ -1563,7 +1563,7 @@ fn a_save_mid_journey_keeps_trucks_buses_and_riders() {
         let c = &mut w.citizens[r];
         c.inside = None;
         c.activity = Activity::Riding { bus };
-        c.transit = Some(TransitTrip { leg: TransitLeg::Bus { route, board: 0, alight: 3 }, target: w.lots[shop_lot].building.unwrap(), purpose: Purpose::Shop(Resource::Goods), since: 0 });
+        c.transit = Some(TransitTrip { leg: TransitLeg::Bus { route, board: 0, alight: 3 }, target: w.lots[shop_lot].building.unwrap(), purpose: Purpose::Shop(Resource::Goods), since: 0, bike: false });
     }
     // A truck on the road too.
     let shop = w.lots[shop_lot].building.unwrap();
@@ -1741,7 +1741,7 @@ fn removing_a_bus_stop_shifts_riders_and_buses_and_cancels_trips_through_it() {
     let shop = w.buildings.keys().next().unwrap();
     let ids: Vec<CitizenId> = w.citizens.keys().collect();
     let (a, b) = (ids[0], *ids.get(1).unwrap_or(&ids[0]));
-    let trip = |board, alight| Some(TransitTrip { leg: TransitLeg::Bus { route, board, alight }, target: shop, purpose: Purpose::Shop(Resource::Goods), since: 0 });
+    let trip = |board, alight| Some(TransitTrip { leg: TransitLeg::Bus { route, board, alight }, target: shop, purpose: Purpose::Shop(Resource::Goods), since: 0, bike: false });
     w.citizens[a].transit = trip(1, 4);
     w.citizens[a].activity = Activity::Waiting { at: Vec2::ZERO };
     if b != a {

@@ -300,6 +300,38 @@ fn scaffolding(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], top
     }
 }
 
+/// [fix/buildings-ui] A demolition's siding: debris netting hung on a
+/// light scaffold (standards every few metres, a ledger every three lifts)
+/// round the footprint up to `top`, a side left open where the machine
+/// works (`open`, its index in `c.faces(poly)`) and any side whose scaffold
+/// would stand outside the fence. Far lighter than a building site's
+/// scaffold: a tall tower coming down is mostly sheeting.
+fn siding(g: &mut Geometry, c: &Ctx, poly: &[Vec2], top: f32, steel: [f32; 3], open: Option<usize>) {
+    let f = &c.frame;
+    let d = 1.0;
+    let rng = &mut sub(c, 0x51D);
+    for (fi, face) in c.faces(poly).into_iter().enumerate() {
+        let net = if rng.random_bool(0.5) { DEBRIS_NET } else { pick(rng, &c.palette.tarp_colors) };
+        if face.len < 3.0 || open == Some(fi) {
+            continue;
+        }
+        if !c.inside_local(face.at(-face.len * 0.5, d + 0.2)) || !c.inside_local(face.at(face.len * 0.5, d + 0.2)) || !c.inside_local(face.at(0.0, d + 0.2)) {
+            continue;
+        }
+        let bays = (face.len / 4.0).ceil().max(1.0) as i32;
+        for k in 0..=bays {
+            let t = -face.len * 0.5 + k as f32 * face.len / bays as f32;
+            face.bx(g, f, Metal, t, top * 0.5, d - 0.1, Vec3::new(0.1, top, 0.1), steel);
+        }
+        let mut y = 6.0;
+        while y < top {
+            face.bx(g, f, Metal, 0.0, y, d - 0.1, Vec3::new(face.len, 0.08, 0.08), steel);
+            y += 6.0;
+        }
+        face.bx(g, f, Tarp, 0.0, (top + 0.25) * 0.5, d + 0.02, Vec3::new(face.len, top - 0.25, 0.02), net);
+    }
+}
+
 /// Paints tower cranes come in: the orange and red of the big rental
 /// fleets, the classic yellow, and white. Picked per site from its seed.
 const CRANE_PAINTS: [[f32; 3]; 4] = [[0.95, 0.36, 0.05], [0.72, 0.07, 0.05], [0.92, 0.70, 0.08], [0.82, 0.83, 0.80]];
@@ -644,6 +676,126 @@ fn worker(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, y: f32) {
     f.bx_yaw(g, Matte, p.x, y + 1.7, p.y, Vec3::new(0.3, 0.14, 0.32), c.palette.helmet, yaw);
 }
 
+/// [fix/buildings-ui] Netting for a demolition's scaffold when the face's
+/// own pick drew none: the dull green of debris mesh.
+const DEBRIS_NET: [f32; 3] = [0.16, 0.30, 0.20];
+
+/// [fix/buildings-ui] Paint of the X on a condemned roof.
+const CONDEMNED_X: [f32; 3] = [0.85, 0.08, 0.06];
+
+/// The top of a building's mass as drawn (walls, glass and roofs; not
+/// masts, signs or lights).
+pub fn mass_top(g: &Geometry) -> f32 {
+    [Concrete, Plaster, Brick, Stone, Panel, Glass, WornConcrete, WornPlaster, WornBrick, WornPanel]
+        .iter()
+        .filter_map(|s| g.parts.get(s.index()))
+        .flat_map(|m| m.positions.iter().map(|p| p[1]))
+        .fold(0.0, f32::max)
+}
+
+/// The main roof of a building as drawn: the highest level of flat mass
+/// surface that covers a fair share of the whole roofed area (a parapet's
+/// cap or a plant room does not), and the world (x, z) corners on it.
+pub fn roof_plane(g: &Geometry) -> Option<(f32, Vec<Vec2>)> {
+    use std::collections::BTreeMap;
+    const BUCKET: f32 = 0.25;
+    let mut levels: BTreeMap<i32, (f32, Vec<Vec2>)> = BTreeMap::new();
+    for s in [Concrete, Plaster, Brick, Stone, Panel, Glass, Metal, WornConcrete, WornPlaster, WornBrick, WornPanel, WornMetal] {
+        let Some(m) = g.parts.get(s.index()) else { continue };
+        for t in m.indices.chunks_exact(3) {
+            let [a, b, c] = [t[0], t[1], t[2]].map(|i| Vec3::from(m.positions[i as usize]));
+            let n = (b - a).cross(c - a);
+            let area = n.length() * 0.5;
+            if area < 1e-3 || n.normalize().y.abs() < 0.95 || (a.y - b.y).abs() > 0.05 || (a.y - c.y).abs() > 0.05 {
+                continue;
+            }
+            let e = levels.entry((a.y / BUCKET).round() as i32).or_default();
+            e.0 += area;
+            e.1.extend([a, b, c].map(|p| Vec2::new(p.x, p.z)));
+        }
+    }
+    let total: f32 = levels.values().map(|l| l.0).sum::<f32>();
+    let biggest = levels.values().map(|l| l.0).fold(0.0, f32::max);
+    if total <= 0.0 {
+        return None;
+    }
+    let (k, (_, pts)) = levels.into_iter().rev().find(|(k, l)| *k > 4 && l.0 >= biggest * 0.3)?;
+    Some((k as f32 * BUCKET, pts))
+}
+
+/// Red X's painted over a roof outline (lot-local) at height `y`: one per
+/// square of about 14 m that fits, or one smaller over the middle.
+fn roof_crosses(g: &mut Geometry, c: &Ctx, outline: &[Vec2], y: f32) {
+    if outline.len() < 3 {
+        return;
+    }
+    let f = &c.frame;
+    // Inside the roof's outline (a hull) and the footprint itself, which
+    // an L-shaped building's hull overreaches.
+    let on_roof = |q: Vec2| point_in_polygon(q, outline) && (c.poly.len() < 3 || point_in_polygon(q, &c.poly)) && c.inside_local(q);
+    let fits = |p: Vec2, r: f32| on_roof(p) && (0..4).all(|k| {
+        let a = std::f32::consts::FRAC_PI_4 + k as f32 * std::f32::consts::FRAC_PI_2;
+        on_roof(p + Vec2::new(a.cos(), a.sin()) * r * 1.45)
+    });
+    let mut x = |p: Vec2, r: f32| {
+        for a in [std::f32::consts::FRAC_PI_4, -std::f32::consts::FRAC_PI_4] {
+            f.bx_yaw(g, Matte, p.x, y + 0.06, p.y, Vec3::new(r * 2.6, 0.06, (r * 0.22).clamp(0.5, 1.4)), CONDEMNED_X, a);
+        }
+    };
+    let (lo, hi) = bounds(outline);
+    let cell = 14.0;
+    let r = cell * 0.32;
+    let (nx, ny) = (((hi.x - lo.x) / cell).floor() as i32, ((hi.y - lo.y) / cell).floor() as i32);
+    let mut drawn = 0;
+    if nx >= 2 || ny >= 2 {
+        let start = lo + Vec2::new(((hi.x - lo.x) - nx.max(1) as f32 * cell) * 0.5, ((hi.y - lo.y) - ny.max(1) as f32 * cell) * 0.5);
+        for i in 0..nx.max(1) {
+            for j in 0..ny.max(1) {
+                let p = start + Vec2::new((i as f32 + 0.5) * cell, (j as f32 + 0.5) * cell);
+                if drawn < 12 && fits(p, r) {
+                    x(p, r);
+                    drawn += 1;
+                }
+            }
+        }
+    }
+    if drawn == 0 {
+        let p = poly_center(outline);
+        let mut r = (inradius(outline) * 0.62).min(6.0);
+        while r >= 1.2 && !fits(p, r) {
+            r *= 0.8;
+        }
+        if r >= 1.2 {
+            x(p, r);
+        }
+    }
+}
+
+/// [fix/buildings-ui] A building with its power off for good (stripped out
+/// for demolition): its window lights go, leaving the dark glass behind
+/// them, and its signs, neon and lamps are dead fittings, drawn matte.
+pub fn lights_out(g: &mut Geometry) {
+    let glow = std::mem::take(g.part(Glow));
+    let mut dead = crate::mesh::MeshData::default();
+    for t in glow.indices.chunks_exact(3) {
+        if t.iter().all(|&i| glow.colors[i as usize][3] >= WINDOW_LIGHT_MARK) {
+            continue;
+        }
+        for &i in t {
+            let i = i as usize;
+            let [r, gr, b, _] = glow.colors[i];
+            let dim = |v: f32| (v * 0.25).min(0.35);
+            dead.positions.push(glow.positions[i]);
+            dead.normals.push(glow.normals[i]);
+            dead.colors.push([dim(r), dim(gr), dim(b), 1.0]);
+            dead.uvs.push(glow.uvs[i]);
+            dead.tangents.push(glow.tangents[i]);
+            dead.indices.push(dead.positions.len() as u32 - 1);
+        }
+    }
+    g.part(Matte).append(&dead);
+}
+
 // ── demolition ──────────────────────────────────────────────────────────
 
 /// Share of the job spent on the structure itself; the rest is the last of
@@ -723,14 +875,34 @@ pub fn demolition_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: 
     let hull = if hull.len() >= 3 && polygon_area(&hull).abs() > 6.0 && inradius(&hull) > 0.8 && poly_inside(c, &hull) { hull } else { Vec::new() };
     broken_top(g, c, &hull, cut, concrete);
 
+    // [fix/buildings-ui] Condemned: a big X on the roof (on the broken top
+    // once the machines are at it), read from the air.
+    if s < WRECK_END {
+        let roof = if wreck > 0.0 { (!hull.is_empty()).then(|| (cut, hull.clone())) } else { roof_plane(g).map(|(y, pts)| (y, convex_hull(&pts.iter().map(|p| f.to_local(*p)).collect::<Vec<_>>()))) };
+        if let Some((y, outline)) = roof {
+            roof_crosses(g, c, &outline, y);
+        }
+    }
+
     // Site clutter stays inside the fence and, while the structure stands,
-    // off its footprint.
+    // off its footprint and its scaffold.
     let standing = s < WRECK_END;
-    let keep_out = if standing { offset_poly(poly, -1.0) } else { Vec::new() };
+    let keep_out = if standing { offset_poly(poly, -1.6) } else { Vec::new() };
     let clear = |p: Vec2| c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.4 && !(keep_out.len() >= 3 && point_in_polygon(p, &keep_out));
 
     // The machine.
-    demolition_machine(g, c, s, &hull, cut, top, standing, &clear);
+    let working = demolition_machine(g, c, s, &hull, cut, top, standing, &clear);
+
+    // [fix/buildings-ui] The siding: scaffold sheeted in debris netting
+    // round what stands, going up while the building is stripped out and
+    // coming down with the cut, open on the side the machine bites.
+    if standing && poly.len() >= 3 {
+        let mass = mass_top(g);
+        let h = if wreck > 0.0 { cut } else { mass * (s / STRIP_OUT).clamp(0.0, 1.0) };
+        if h > 2.0 {
+            siding(g, c, poly, h.min(mass + 1.0), mul(c.palette.steel, 0.9), working);
+        }
+    }
 
     // Rubble heaps: growing while the structure comes down, carted away after.
     let heaps = if standing { (1.0 + wreck * 5.0).round() as i32 } else { (6.0 * (1.0 - (s - WRECK_END) / (1.0 - WRECK_END))).round() as i32 };
@@ -809,8 +981,9 @@ fn broken_top(g: &mut Geometry, c: &Ctx, hull: &[Vec2], cut: f32, concrete: [f32
 /// a tower crane, a high-reach excavator beside a standing one, or loading
 /// out the last heaps.
 #[allow(clippy::too_many_arguments)]
-fn demolition_machine(g: &mut Geometry, c: &Ctx, s: f32, hull: &[Vec2], cut: f32, top: f32, standing: bool, clear: &impl Fn(Vec2) -> bool) {
+fn demolition_machine(g: &mut Geometry, c: &Ctx, s: f32, hull: &[Vec2], cut: f32, top: f32, standing: bool, clear: &impl Fn(Vec2) -> bool) -> Option<usize> {
     let poly = &c.poly;
+    let mut working = None;
     if s > STRIP_OUT * 0.5 && s < 0.98 {
         let rng = &mut sub(c, 21);
         // A small excavator on the top slab, turned so it and its arm
@@ -848,12 +1021,13 @@ fn demolition_machine(g: &mut Geometry, c: &Ctx, s: f32, hull: &[Vec2], cut: f32
             // small machine on the roof instead.
             let target_y = (cut + 0.6).max(1.6);
             let mut spot: Option<(Vec2, Vec2, f32)> = None;
-            'faces: for face in c.faces(poly) {
+            'faces: for (fi, face) in c.faces(poly).into_iter().enumerate() {
                 let yaw = (-face.out).y.atan2(-face.out.x);
                 for d in [5.5f32, 4.5, 3.6] {
                     let p = face.at(0.0, d);
                     if fits(c, p, yaw, clear) {
                         spot = Some((p, face.mid(), yaw));
+                        working = Some(fi);
                         break 'faces;
                     }
                 }
@@ -873,6 +1047,7 @@ fn demolition_machine(g: &mut Geometry, c: &Ctx, s: f32, hull: &[Vec2], cut: f32
             }
         }
     }
+    working
 }
 
 /// Drop everything above `cut` from the geometry; triangles crossing it are

@@ -293,12 +293,16 @@ pub(super) fn update_window_lights(
             hour,
             powered: b.powered,
         };
-        let target = (lit_share(&o) * 255.0).round() as u8;
+        // [fix/buildings-ui] A building site or one coming down has no
+        // power to the floors: the crew in it lights no windows, and the
+        // lights come on only once it is finished.
+        let dark = !b.operating();
+        let target = if dark { 0 } else { (lit_share(&o) * 255.0).round() as u8 };
         let cur = &mut data[slot as usize];
         // A power cut is instant; otherwise ease over, at this building's
         // own pace (12..44 of 255 a turn), so lights come on and go off a
         // few windows at a time.
-        if first || (target == 0 && b.powered < 0.05) {
+        if first || dark || (target == 0 && b.powered < 0.05) {
             *cur = target;
         } else {
             let pace = 12 + (bh >> 8) % 33;

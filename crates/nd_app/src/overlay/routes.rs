@@ -177,7 +177,7 @@ fn edit_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor: &Cursor, sim: &S
         }
         return;
     }
-    let Some((at, idx)) = preview(w, e, hit) else { return };
+    let Some((at, idx)) = preview(w, e, hit, tools.line_shift) else { return };
     let p = lift(at);
     if n >= 1 {
         gizmos.line(lift(route.stops[(idx + n - 1) % n].pos), p, green);

@@ -18,6 +18,9 @@ pub enum GroundsKind {
     Station,
     /// A public beach (`feat/waterfront` may register them).
     Beach,
+    /// [attractions] A landmark's grounds people walk round: the grand
+    /// park, the zoo, the botanical garden, the pier. Joined like a park's.
+    Attraction,
 }
 
 impl GroundsKind {
@@ -29,6 +32,7 @@ impl GroundsKind {
             GroundsKind::Campus => "campus",
             GroundsKind::Station => "station",
             GroundsKind::Beach => "beach",
+            GroundsKind::Attraction => "attraction",
         }
     }
 
@@ -40,7 +44,13 @@ impl GroundsKind {
             GroundsKind::Campus => "campus",
             GroundsKind::Station => "station forecourt",
             GroundsKind::Beach => "beach",
+            GroundsKind::Attraction => "attraction grounds",
         }
+    }
+
+    /// [attractions] Walkways of its own a joined path meets (a park's).
+    pub fn has_walkways(self) -> bool {
+        matches!(self, GroundsKind::Park | GroundsKind::Attraction)
     }
 }
 
@@ -114,10 +124,10 @@ impl WalkGraph {
             };
             // A park's own walkways first (the entrance laid out to meet
             // the path), else any walk node of the grounds.
-            let on_paths = |n: u32| g.kind != GroundsKind::Park || self.adj[n as usize].iter().any(|e| e.park);
+            let on_paths = |n: u32| !g.kind.has_walkways() || self.adj[n as usize].iter().any(|e| e.park);
             let target = self.nearest_matching(p, 40.0, |n| inside(n) && on_paths(n) && Some(n) != end).or_else(|| self.nearest_matching(p, 40.0, |n| inside(n) && Some(n) != end));
             if let (Some(a), Some(b)) = (end, target) {
-                self.link_kind(a, b, true, g.kind == GroundsKind::Park);
+                self.link_kind(a, b, true, g.kind.has_walkways());
                 // [under-construction] Marked, so it shuts with the grounds.
                 for (x, y) in [(a, b), (b, a)] {
                     if let Some(e) = self.adj[x as usize].iter_mut().rev().find(|e| e.to == y) {
