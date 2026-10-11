@@ -407,6 +407,7 @@ impl Plugin for RenderPlugin {
         // Emergency vehicles, fires and rubble, after the cars they hide.
         app.add_systems(Update, emergency::sync_emergency.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, emergency::amber_beacons.after(sync_cars).in_set(SimSet::Sync));
+        app.add_systems(Update, emergency::hurt_markers.in_set(SimSet::Sync));
         app.add_systems(Update, fire_scene::sync_fire_scene.after(emergency::sync_emergency).in_set(SimSet::Sync));
         // [driving] Tyre smoke, skid marks, wrecks and tows.
         app.add_systems(Update, stunts::sync_stunts.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));

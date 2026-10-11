@@ -603,8 +603,17 @@ pub(super) fn draw_kerbs(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &Run,
     let run_cuts: Vec<Cut> = run.nodes.windows(2).filter_map(|w| segment_between(roads, w[0], w[1])).flat_map(|s| cx.cuts.get(&s.0).into_iter().flatten().copied()).collect();
     // Where each side's kerb and pavement begin and end (along the run).
     let mut kerb_ends = [(t0, t1); 2];
+    // [walk-crossings] A circus big enough to have land in the middle has
+    // a pavement round the inside too (G9), the island's lots front it and
+    // people walk it; no arm joins on that side, so it runs unbroken from
+    // node to node. A small roundabout's inside is its apron.
+    let big_ring = ring_out.is_some() && roads.ring_of_segment(run.first).and_then(|k| roads.rings.get(k)).is_some_and(|r| r.radius >= BIG_RING_RADIUS);
     for side in [-1.0f32, 1.0] {
         if ring_out.is_some_and(|o| o != side) {
+            if big_ring {
+                kerb_ends[(side > 0.0) as usize] = (0.0, 0.0);
+                kerb_ribbon(g, &offset_path(pts, side * hw), None, side, SIDEWALK, true, true, &run_cuts, &cx.kerb_cols);
+            }
             continue;
         }
         // Without a corner of its own, a kerb stays back until it is
@@ -783,6 +792,10 @@ pub(super) fn draw_furniture(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &
     }
 }
 
+/// [walk-crossings] A roundabout at least this big (centre to the middle
+/// of its lanes, metres) has a pavement round the inside of its ring.
+pub const BIG_RING_RADIUS: f32 = 40.0;
+
 /// Roundabouts: a mountable apron inside the ring lanes; the middle is
 /// open land. At the height of the ring's nodes.
 pub(super) fn draw_roundabout_aprons(cx: &StreetCtx, g: &mut Geometry) {
@@ -835,6 +848,12 @@ pub(super) fn draw_node(cx: &StreetCtx, g: &mut Geometry, nid: NodeId, node: &nd
         // A path crossing a street: zebra across the carriageway (none
         // where a footbridge replaced it).
         if crosswalk_closed(cx.inp.closed, node.pos) {
+            return;
+        }
+        // [walk-crossings] Not on a roundabout's own lanes: a path meeting
+        // the ring is crossed unmarked there (`nd_sim::walk`), and a zebra
+        // painted over the ring at the node lay across its island (G20).
+        if roads.ring_of_node(nid).is_some() {
             return;
         }
         let seg = roads.segment(alive[0]);
@@ -960,7 +979,7 @@ pub(super) fn draw_arm_marks(cx: &StreetCtx, g: &mut Geometry, nid: NodeId, node
         // were metres apart and two arms' zebras overlapped.
         // [footbridge] None where a footbridge replaced the crosswalk:
         // the stop line moves up to the junction's mouth.
-        let stop = if junction::has_crosswalk(roads, nid, sid) && !crosswalk_closed(cx.inp.closed, node.pos + d * nd_sim::walk::crosswalk_setback(roads, nid, sid)) {
+        let stop = if junction::has_crosswalk(roads, nid, sid) && !arm_crosswalk_closed(cx.inp.closed, node.pos, d, nd_sim::walk::crosswalk_setback(roads, nid, sid)) {
             let mid = nd_sim::walk::crosswalk_setback(roads, nid, sid);
             let half = nd_sim::walk::CROSSWALK_HALF;
             zebra(g, pal, node.pos + d * (mid - half), node.pos + d * (mid + half), right, hw, |_| false);
