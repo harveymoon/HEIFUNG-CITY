@@ -319,6 +319,33 @@ fn a_roundabout_ring_is_paved_round_the_outside() {
     assert!(!kerb_inside, "no pavement inside the ring");
 }
 
+/// [walk-crossings] G9: a circus big enough to have land in the middle
+/// has a pavement round the inside of its ring too.
+#[test]
+fn a_big_circus_is_paved_round_the_inside_too() {
+    use nd_sim::plan::{Gesture, GestureId, Plan};
+    let mut plan = Plan::default();
+    plan.gestures.insert(GestureId(1), Gesture::Road { points: vec![Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+    plan.gestures.insert(GestureId(3), Gesture::Roundabout { center: Vec2::ZERO, radius: 70.0, lanes: 2 });
+    let (built, rings) = plan.built_roads();
+    let mut roads = RoadNetwork::default();
+    roads.rings = rings;
+    for (_, pts, f, b, k) in built {
+        roads.add_polyline_kind(&pts, f, b, k);
+    }
+    let mut net = LaneNetwork::default();
+    net.rebuild(&roads);
+    let ring = roads.rings[0];
+    assert!(ring.radius >= super::draw::BIG_RING_RADIUS);
+    let g = draw(&roads, &net, &[]);
+    let inner = ring.radius - ring.half_width();
+    let kerb_inside = g.get(Concrete).positions.iter().filter(|p| {
+        let d = Vec2::new(p[0], p[2]).distance(ring.center);
+        d < inner + 0.5 && d > inner - 3.0
+    }).count();
+    assert!(kerb_inside > 50, "a pavement round the inside: {kerb_inside} vertices");
+}
+
 /// Prints the street triangles of a save, for comparing before and
 /// after a change: `ND_STREET_SAVE=path cargo test --release -p
 /// nd_procgen street_triangles_of_a_save -- --ignored --nocapture`.

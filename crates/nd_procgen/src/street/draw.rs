@@ -786,7 +786,7 @@ pub(super) fn draw_furniture(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &
 
 /// [walk-crossings] A roundabout at least this big (centre to the middle
 /// of its lanes, metres) has a pavement round the inside of its ring.
-pub const BIG_RING_RADIUS: f32 = 30.0;
+pub const BIG_RING_RADIUS: f32 = 40.0;
 
 /// Roundabouts: a mountable apron inside the ring lanes; the middle is
 /// open land. At the height of the ring's nodes.

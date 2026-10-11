@@ -658,17 +658,23 @@ fn crossing_controls(ui: &mut egui::Ui, w: &mut World, st: &mut EditorState, c: 
     let street = w.roads.nearest_where(c.mid, |s| s.is_street()).and_then(|(sid, ..)| w.streets.of(sid).map(|s| s.name.clone())).unwrap_or_else(|| "the street".into());
     ui.label(egui::RichText::new(format!("Across {street}")).small());
     let mut pick = c.upgrade;
-    ui.horizontal_wrapped(|ui| {
-        for u in [CrossingUpgrade::None, CrossingUpgrade::Button, CrossingUpgrade::Footbridge, CrossingUpgrade::Removed] {
-            let enabled = !(u == CrossingUpgrade::Button && c.signalised);
-            let text = format!("{}{}", upgrade_label(u), if u.cost() > 0.0 && u != c.upgrade { format!(" ${:.0}", u.cost()) } else { String::new() });
-            ui.add_enabled_ui(enabled, |ui| {
-                if ui.add(egui::Button::selectable(pick == u, text)).clicked() {
-                    pick = u;
-                }
-            });
-        }
-    });
+    // [walk-crossings] The upgrades on one row, "Remove crosswalk" on its own
+    // below (it squeezed into a column of letters beside the others).
+    for row in [&[CrossingUpgrade::None, CrossingUpgrade::Button, CrossingUpgrade::Footbridge][..], &[CrossingUpgrade::Removed][..]] {
+        ui.horizontal_wrapped(|ui| {
+            for &u in row {
+                let enabled = !(u == CrossingUpgrade::Button && c.signalised);
+                let text = format!("{}{}", upgrade_label(u), if u.cost() > 0.0 && u != c.upgrade { format!(" ${:.0}", u.cost()) } else { String::new() });
+                ui.add_enabled_ui(enabled, |ui| {
+                    let b = ui.add(egui::Button::selectable(pick == u, text));
+                    let b = if u == CrossingUpgrade::Removed { b.on_hover_text("No crossing here: nothing painted, no walk light; people cross at another crossing (and nobody jaywalks right beside it).") } else { b };
+                    if b.clicked() {
+                        pick = u;
+                    }
+                });
+            }
+        });
+    }
     if pick != c.upgrade {
         st.message = Some(match w.set_crossing_upgrade(c.index, pick) {
             Ok(()) => (format!("Crosswalk across {street}: {}.", upgrade_label(pick).to_lowercase()), true),
