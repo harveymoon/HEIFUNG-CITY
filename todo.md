@@ -497,14 +497,14 @@ Sources: docs/playtest/todo_2026-10-10.md (Harvey's list, "T"), docs/playtest/fl
 Sources: Harvey's lists docs/playtest/todo_2026-10-10.md and todo_2026-10-11.md ("T"), flags docs/playtest/flags_2026-10-09.md (F#) and flags_2026-10-11.md (G#), agent leftovers.
 
 ## 1. Special attractions (new, Harvey 2026-10-11)
-- [ ] One per city each, a league of landmark attractions that lift land value and draw tourists; each needs several plots or one mega plot (joined sites like stadiums)
-- [ ] Museums, two or three types (e.g. art museum, natural history / science, city history or design museum)
-- [ ] Oceanside pier like Santa Monica (only on the sea shore, built out over the water: rides, ferris wheel, arcade, food stands, neon)
-- [ ] A special grand city park (central-park scale, lakes, paths, landmarks)
-- [ ] Zoo
-- [ ] Observatory (only on high ground)
-- [ ] More: aquarium, botanical garden / conservatory, opera house / concert hall, amusement park, convention centre, cathedral-scale landmark, casino resort (pick the best few)
-- [ ] Land value is now hard to raise (after the rescale): attractions, parks and services should be the main levers — check the tuning gives a clear path up
+- [x] One per city each, a league of landmark attractions that lift land value and draw tourists; each needs several plots or one mega plot (joined sites like stadiums)   → DONE [feat/attractions]: ten landmarks under Build > Attractions, one of each per city (refused with the reason), 1,200-7,000 m² sites joined from up to 48 plots (notches allowed, no C-shapes), admissions, staff, hours, upkeep, inspector ATTRACTION card, `inspect.attraction`, docs.
+- [x] Museums, two or three types (e.g. art museum, natural history / science, city history or design museum)   → DONE [feat/attractions]: art museum (spiral drum, sculpture court, LED wall), natural history & science (glass vault, planetarium, skeleton, rocket), city history & design (colonnade, pediment, clock tower, tram).
+- [x] Oceanside pier like Santa Monica (only on the sea shore, built out over the water: rides, ferris wheel, arcade, food stands, neon)   → DONE [feat/attractions]: sea shore only (not lake/river), 60-120 m deck on piles over open sea, walkable (deck on the built ground, paths and benches), wheel, coaster, carousel, arcade, stands, string lights.
+- [x] A special grand city park (central-park scale, lakes, paths, landmarks)   → DONE [feat/attractions]: 7,000 m²+ high-tier park plan with a loop path and benches on the walk graph, lake, rides, gate, glass pavilion, boathouse, obelisk.
+- [x] Zoo   → DONE [feat/attractions]: visitors' loop, enclosures (savanna, elephants, big cats, penguins, bears, flamingos), aviary, gate.
+- [x] Observatory (only on high ground)   → DONE [feat/attractions]: site 8 m+ above the median ground height of every lot (hover says by how much), domes, telescopes, green beam at night.
+- [x] More: aquarium, botanical garden / conservatory, opera house / concert hall, amusement park, convention centre, cathedral-scale landmark, casino resort (pick the best few)   → DONE [feat/attractions]: aquarium (wave roof, shark, touch pool), botanical garden (glass conservatory), opera & concert hall (lit sails). Amusement park, convention centre, cathedral, casino not done.
+- [x] Land value is now hard to raise (after the rescale): attractions, parks and services should be the main levers — check the tuning gives a clear path up   → DONE for attractions [feat/attractions]: own channel `Channel::Attractions` (cap 0.5), 0.26-0.42 over 320-540 m by staffing; a grand park lifts its blocks by 0.08+ and the quarter 200-340 m out by 0.03+ (test). Parks and services tuning left as it was.
 
 ## 2. Roads, intersections and the road tools
 - [ ] Intersections are one joint: dragging the junction dot moves every road attached; roads meeting at a point mend into one junction on Implement and can't be pulled apart (only by demolishing a leg) (T)

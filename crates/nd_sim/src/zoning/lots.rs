@@ -106,6 +106,12 @@ pub fn generate_lots(
 /// frontage it may use, a sharp inward corner, a sliver, too narrow).
 /// None when there is no road anywhere to hang it on.
 pub fn make_lot(zone_id: ZoneId, lu: LandUse, poly: Vec<Vec2>, center: Vec2, roads: &RoadNetwork) -> Option<Lot> {
+    make_lot_shaped(zone_id, lu, poly, center, roads, true)
+}
+
+/// [`make_lot`]; `strict_shape` false lets a notched or long site with a
+/// street front be a lot ([attractions] a landmark's joined plots).
+fn make_lot_shaped(zone_id: ZoneId, lu: LandUse, poly: Vec<Vec2>, center: Vec2, roads: &RoadNetwork, strict_shape: bool) -> Option<Lot> {
     let area = polygon_area(&poly);
     let compact = area / perimeter(&poly).powi(2);
     let (fi, road) = frontage_edge(&poly, roads, lu.fronts_paths());
@@ -127,7 +133,7 @@ pub fn make_lot(zone_id: ZoneId, lu: LandUse, poly: Vec<Vec2>, center: Vec2, roa
     ];
     let has_frontage = road.is_some() && fa.distance(fb) >= MIN_FRONTAGE.min(lu.lot_width() * 0.45);
     let sharp = reflex_vertex(&poly, 0.6).is_some();
-    let landlocked = !has_frontage || sharp || compact < MIN_COMPACTNESS || (u1 - u0) < 8.0 || (v1 - v0) < 8.0;
+    let landlocked = !has_frontage || (strict_shape && (sharp || compact < MIN_COMPACTNESS)) || (u1 - u0) < 8.0 || (v1 - v0) < 8.0;
     #[cfg(test)]
     if landlocked {
         let reason = if !has_frontage { "nofront" } else if sharp { "sharp" } else if compact < MIN_COMPACTNESS { "compact" } else { "narrow" };
@@ -177,6 +183,14 @@ pub fn make_lot(zone_id: ZoneId, lu: LandUse, poly: Vec<Vec2>, center: Vec2, roa
 /// is a street where it has one, else the footpath it lines (a metro
 /// entrance or a battery yard may stand on a path), so ground any zone could
 /// use is ground a city building can use.
+/// [attractions] [`make_placed_lot`] for a landmark's site of joined
+/// parcels: notches and length are no bar, a street front is.
+pub fn make_placed_lot_concave(zone_id: ZoneId, poly: Vec<Vec2>, center: Vec2, roads: &RoadNetwork) -> Option<Lot> {
+    let mut lot = make_lot_shaped(zone_id, LandUse::Civic, poly.clone(), center, roads, false).filter(|l| !l.landlocked).or_else(|| make_lot_shaped(zone_id, LandUse::Residential, poly, center, roads, false))?;
+    lot.land_use = LandUse::Civic;
+    Some(lot)
+}
+
 pub fn make_placed_lot(zone_id: ZoneId, poly: Vec<Vec2>, center: Vec2, roads: &RoadNetwork) -> Option<Lot> {
     let street = make_lot(zone_id, LandUse::Civic, poly.clone(), center, roads);
     let mut lot = match street {

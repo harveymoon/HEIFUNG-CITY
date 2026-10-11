@@ -30,7 +30,7 @@ impl World {
             peds waiting_cache crowds_cache seats society vehicles enforcement air contamination cleanups
             industry_bias places concerns districts tourism subway tolls taxis cargo_hubs rides streets
             pillars pillar_gaps crosswalks estate skyline pressure scene identity street_events road_wear
-            dirty road_log social social_concern committee path_links corps shore level_crossings
+            dirty road_log social social_concern committee path_links corps shore level_crossings attractions
         );
     }
 }

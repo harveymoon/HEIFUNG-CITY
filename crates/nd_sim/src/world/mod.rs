@@ -176,6 +176,10 @@ mod rides;
 // [economy] business pressure, the new trades, the waterfront and the art scene
 mod pressure;
 mod waterfront;
+/// [attractions] Landmark attractions: placement rules, grounds, visits.
+mod attractions;
+#[cfg(test)]
+mod attractions_tests;
 /// [waterfront] Waterfront lots, public beaches and private jetties.
 mod shore;
 #[cfg(test)]
@@ -728,6 +732,10 @@ pub struct World {
     /// `world/corp.rs`, `world/campus.rs`). Old saves load with none.
     #[serde(default)]
     pub corps: crate::corp::Corporations,
+    /// [attractions] The landmark attractions' piers and books
+    /// (`crate::attractions`, `world/attractions.rs`). Old saves load with none.
+    #[serde(default)]
+    pub attractions: crate::attractions::Attractions,
 }
 
 impl World {
@@ -836,6 +844,7 @@ impl World {
             shore: crate::shore::ShoreState { reach_water: true, ..Default::default() },
             path_links: Default::default(),
             corps: Default::default(),
+            attractions: Default::default(),
         };
         w.landscape.set(Landscape::new(&w.config.landscape));
         // [sweep-sim] Grids over the whole buildable land (far islands too).
@@ -864,6 +873,9 @@ impl World {
         self.note_path_links();
         let links: Vec<Vec2> = self.path_links.links.iter().map(|l| l.pos).collect();
         crate::park::plan_parks_with(&mut self.lots, &self.land_value, &links);
+        // [attractions] The park clears every non-park lot's plan: the
+        // landmarks people walk round lay theirs out again.
+        self.plan_attraction_grounds();
         self.build_walk_graph();
     }
 

@@ -148,13 +148,20 @@ impl World {
             // [economy] A night out also finds the restaurants, driving
             // ranges, galleries and marina clubhouses on other land.
             let outing = lu == LandUse::Entertainment && b.business.as_ref().is_some_and(|z| z.kind.is_outing() && z.kind != BusinessKind::Venue);
-            if (b.land_use != lu && !outing) || !b.serves_at(hour) {
+            // [attractions] A landmark is a day out (a museum, the zoo, the
+            // grand park) or a night out (the opera, the pier, the stars).
+            let landmark = b.service.is_some_and(|s| s.kind.is_landmark());
+            if landmark {
+                if !self.landmark_for_outing(b, lu, hour) {
+                    continue;
+                }
+            } else if (b.land_use != lu && !outing) || !b.serves_at(hour) {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };
             // [benches] A park with every seat taken is no place to go now.
             // [waterfront] nor a beach that is shut, out of reach or deserted by the weather
-            if lu == LandUse::Park && (self.park_full(b.lot) || !self.park_open_for_visits(b.lot)) {
+            if lu == LandUse::Park && !landmark && (self.park_full(b.lot) || !self.park_open_for_visits(b.lot)) {
                 continue;
             }
             let d = lot.center.distance(here);

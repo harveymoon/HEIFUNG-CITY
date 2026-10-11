@@ -284,6 +284,29 @@ styles! {
     CivicTower { label: "ministry tower", family: Special, cluster: -0.6, draw: |g, c, r, _| civic::civic_tower(g, c, r) },
     /// A near windowless monolith with lit slits, cameras and an eye over the door.
     Panopticon { label: "surveillance bureau", family: Special, cluster: -0.8, draw: |g, c, r, _| civic::panopticon(g, c, r) },
+    // -- [attractions] the landmark attractions (`buildings/attractions.rs`),
+    // placed by the player, one of each per city; appended so `ALL` keeps
+    // its order. --
+    /// White galleries round a sculpture court, a spiral drum ringed in neon.
+    ArtMuseum { label: "art museum", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::art_museum(g, c, r) },
+    /// A vaulted hall, a planetarium dome, a skeleton and a rocket outside.
+    ScienceMuseum { label: "natural history and science museum", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::science_museum(g, c, r) },
+    /// A colonnade under a pediment, a clock tower, a tram on show.
+    HistoryMuseum { label: "city history and design museum", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::history_museum(g, c, r) },
+    /// The pleasure pier: a gateway sign ashore, the deck out on piles.
+    PleasurePier { label: "pleasure pier", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::pier(g, c, r) },
+    /// A grand park: lakes, paths, a glass pavilion, a boathouse, a gate.
+    GrandPark { label: "grand city park", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::grand_park(g, c, r) },
+    /// Enclosures, animals, an aviary dome and a gate.
+    Zoo { label: "zoo", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::zoo(g, c, r) },
+    /// Telescope domes on a terrace over the city.
+    Observatory { label: "observatory", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::observatory(g, c, r) },
+    /// A wave-roofed hall glowing blue, a shark on the roof.
+    Aquarium { label: "aquarium", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::aquarium(g, c, r) },
+    /// Gardens round a great glass conservatory.
+    BotanicalGarden { label: "botanical garden", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::botanical_garden(g, c, r) },
+    /// White sails over a glass foyer on a podium.
+    ConcertHall { label: "opera and concert hall", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::concert_hall(g, c, r) },
 }
 
 impl Style {
@@ -363,6 +386,16 @@ impl Style {
             // [parking] A parking enforcement office: a small station.
             K::ParkingEnforcement => Style::PoliceStation,
             K::University => Style::University,
+            K::ArtMuseum => Style::ArtMuseum,
+            K::ScienceMuseum => Style::ScienceMuseum,
+            K::HistoryMuseum => Style::HistoryMuseum,
+            K::Pier => Style::PleasurePier,
+            K::GrandPark => Style::GrandPark,
+            K::Zoo => Style::Zoo,
+            K::Observatory => Style::Observatory,
+            K::Aquarium => Style::Aquarium,
+            K::BotanicalGarden => Style::BotanicalGarden,
+            K::ConcertHall => Style::ConcertHall,
         }
     }
 }

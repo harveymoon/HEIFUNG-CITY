@@ -32,6 +32,10 @@ pub fn about(w: &World, id: BuildingId) -> Option<(String, String)> {
         return Some((what, "People within walking reach come to walk, sit and play; it lifts land value and moods round it, and costs the city its upkeep.".into()));
     }
     if let Some(sv) = b.service {
+        // [attractions] A landmark: what it is, and what it does for the city.
+        if sv.kind.is_landmark() {
+            return Some((format!("The city's {}, one of a kind: a landmark attraction run by the city.", sv.kind.label()), format!("{} {}", nd_sim::attractions::about(sv.kind), crate::ui::help::landmark_rules(sv.kind))));
+        }
         return Some((format!("{} run by the city.", capitalise(&a(sv.kind.label()))), crate::ui::help::service_note(sv.kind).to_string()));
     }
     if let Some(k) = b.plant {

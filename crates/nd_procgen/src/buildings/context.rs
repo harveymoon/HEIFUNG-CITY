@@ -48,6 +48,8 @@ pub struct Ctx<'a> {
     pub plant_scale: f32,
     /// [waterfront] See [`Extras::shore`].
     pub shore: Option<ShoreLook>,
+    /// [attractions] See [`Extras::pier`].
+    pub pier: Option<nd_sim::attractions::PierDeck>,
 }
 
 /// Per-building state that changes the look beyond style and condition.
@@ -114,11 +116,14 @@ pub struct Extras<'a> {
     pub annex: Option<nd_sim::corp::Annex>,
     /// [waterfront] Where the water is for a lot on it, and a beach's crowd.
     pub shore: Option<ShoreLook>,
+    /// [attractions] A pleasure pier's deck out over the water (world
+    /// coordinates, `World::attractions`): drawn on piles beyond the lot.
+    pub pier: Option<&'a nd_sim::attractions::PierDeck>,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, brand: None, annex: None, shore: None }
+        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, brand: None, annex: None, shore: None, pier: None }
     }
 }
 
@@ -160,7 +165,15 @@ impl<'a> Ctx<'a> {
             parking: extras.parking.or((style == Style::TruckLot).then_some(extras.fleet)),
             powered: extras.powered,
             rail: extras.rail.cloned().or_else(|| style.rail_kind().map(|k| super::back_edge_link(lot, k))),
-            park: if land_use == LandUse::Park || matches!(style, Style::ScrubLot | Style::Garden | Style::Plaza) { Some(extras.park.cloned().unwrap_or_else(|| nd_sim::park::plan_single(lot, tier))) } else { None },
+            park: if land_use == LandUse::Park || matches!(style, Style::ScrubLot | Style::Garden | Style::Plaza) {
+                Some(extras.park.cloned().unwrap_or_else(|| nd_sim::park::plan_single(lot, tier)))
+            } else if let Some(k) = extras.service.filter(|k| k.has_grounds()) {
+                // [attractions] A landmark's own walkways (the sim's plan,
+                // or the same plan made here for a preview).
+                extras.park.cloned().or_else(|| nd_sim::attractions::plan_grounds(k, lot, extras.pier))
+            } else {
+                None
+            },
             animated_rotors: extras.animated_rotors,
             field: extras.field,
             animated_cranes: extras.animated_cranes,
@@ -168,6 +181,7 @@ impl<'a> Ctx<'a> {
             battery: extras.battery,
             plant_scale: extras.plant_scale,
             shore: extras.shore,
+            pier: extras.pier.cloned(),
         }
     }
 }

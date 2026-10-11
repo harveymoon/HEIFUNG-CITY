@@ -538,7 +538,9 @@ impl World {
 /// lot, `make_placed_lot`).
 pub(in crate::world) fn refresh_lot_roads(lot: &mut Lot, roads: &RoadNetwork, placed: bool) {
     let fresh = if placed {
-        crate::zoning::make_placed_lot(lot.zone, lot.polygon.clone(), lot.center, roads)
+        // [attractions] The city's own ground keeps its street front
+        // whatever notches its plots left (a landmark over joined plots).
+        crate::zoning::make_placed_lot(lot.zone, lot.polygon.clone(), lot.center, roads).filter(|f| !f.landlocked).or_else(|| crate::zoning::make_placed_lot_concave(lot.zone, lot.polygon.clone(), lot.center, roads))
     } else {
         make_lot(lot.zone, lot.land_use, lot.polygon.clone(), lot.center, roads)
     };
