@@ -13,7 +13,9 @@
 //!   restock round sends its lorries out one by one, not all at once;
 //! - outside them it waits for the next day's round: from the buyer's
 //!   early start over the following `NEXT_DAY_SPREAD` minutes (else a
-//!   night's orders all came at dawn);
+//!   night's orders all came at dawn); a building site's at its early
+//!   start, so the crew has its parts when it comes at eight (held to the
+//!   whole morning, sites stood idle and the demo town grew a day late);
 //! - now and then (`NIGHT_RUSH_PER_MILLE` of buyers on a given night) an
 //!   order is a rush job and goes out at night anyway.
 //!
@@ -35,6 +37,9 @@ pub const HOUR_SPREAD: u64 = 50;
 /// Orders held over the night go out over this many minutes from the
 /// buyer's first delivery: the next day's round, not a dawn rush.
 pub const NEXT_DAY_SPREAD: u64 = 6 * 60;
+/// A building site's held-over load goes within this many minutes of its
+/// early start (before the crew comes at eight, mostly).
+pub const SITE_SPREAD: u64 = 40;
 /// Buyers (per thousand, each night) whose order goes out as a night rush.
 pub const NIGHT_RUSH_PER_MILLE: u64 = 25;
 
@@ -58,7 +63,9 @@ pub fn first_delivery(to: BuildingId) -> u64 {
 }
 
 /// When a lorry ordered at `now` for `to` sets off (see the module notes).
-pub fn departure(now: u64, to: BuildingId) -> u64 {
+/// `site`: for a building site, whose crew starts at eight: a load held
+/// over the night goes at the early start, there before the crew.
+pub fn departure(now: u64, to: BuildingId, site: bool) -> u64 {
     let day = now / crate::clock::MINUTES_PER_DAY;
     let minute = now % crate::clock::MINUTES_PER_DAY;
     let start = first_delivery(to);
@@ -73,14 +80,16 @@ pub fn departure(now: u64, to: BuildingId) -> u64 {
         return now + crate::hash::mix(k ^ now, 0x4054_0002) % 30;
     }
     let morning = if minute >= LAST_DEPARTURE { day + 1 } else { day };
-    morning * crate::clock::MINUTES_PER_DAY + start + crate::hash::mix(k ^ morning ^ now.wrapping_mul(0x2545_F491), 0x5747_0003) % NEXT_DAY_SPREAD
+    let spread = if site { SITE_SPREAD } else { NEXT_DAY_SPREAD };
+    morning * crate::clock::MINUTES_PER_DAY + start + crate::hash::mix(k ^ morning ^ now.wrapping_mul(0x2545_F491), 0x5747_0003) % spread
 }
 
 impl World {
     /// Order a lorry: it sets off at `departure`, now when that is now.
     pub(super) fn queue_truck(&mut self, origin: TruckOrigin, cargo: Cargo, color: u8) {
         let tick = self.clock.tick;
-        let due = departure(tick, cargo.to);
+        let site = self.buildings.get(cargo.to).is_some_and(|b| b.construction.is_some());
+        let due = departure(tick, cargo.to, site);
         if due <= tick {
             self.dispatch_truck(origin, cargo, color);
             return;
@@ -140,7 +149,7 @@ mod tests {
         let mut night = 0;
         let mut minutes = std::collections::BTreeSet::new();
         for &to in &buyers {
-            let d = departure(day, to);
+            let d = departure(day, to, false);
             let m = d % crate::clock::MINUTES_PER_DAY;
             if (EARLY_START..LAST_DEPARTURE).contains(&m) && d > day {
                 minutes.insert(m);
@@ -154,14 +163,20 @@ mod tests {
         assert!(minutes.iter().all(|&m| m >= EARLY_START), "never before the early start");
         // Ordered at ten in the morning: all within the hour, many minutes.
         let ten = day + 10 * 60;
-        let ds: Vec<u64> = buyers.iter().map(|&to| departure(ten, to)).collect();
+        let ds: Vec<u64> = buyers.iter().map(|&to| departure(ten, to, false)).collect();
         assert!(ds.iter().all(|&d| d >= ten && d < ten + HOUR_SPREAD));
         let spread: std::collections::BTreeSet<u64> = ds.iter().copied().collect();
         assert!(spread.len() >= HOUR_SPREAD as usize * 3 / 4, "one by one: {} distinct minutes", spread.len());
+        // A building site's held-over load: at its early start.
+        for &to in &buyers {
+            let d = departure(day + 22 * 60, to, true);
+            let m = d % crate::clock::MINUTES_PER_DAY;
+            assert!(d < day + 22 * 60 + 30 || (EARLY_START..EARLY_START + START_SPREAD + SITE_SPREAD).contains(&m), "{m}");
+        }
         // Late evening: the next morning (or a rush).
         let late = day + 22 * 60;
         for &to in &buyers {
-            let d = departure(late, to);
+            let d = departure(late, to, false);
             assert!(d < late + 30 || (d >= day + crate::clock::MINUTES_PER_DAY + EARLY_START && d < day + crate::clock::MINUTES_PER_DAY + EARLY_START + START_SPREAD + NEXT_DAY_SPREAD));
         }
     }

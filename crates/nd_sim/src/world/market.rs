@@ -525,7 +525,7 @@ impl World {
         let (stranded, keep): (Vec<rail::RailOrder>, Vec<rail::RailOrder>) = orders.into_iter().partition(|o| stuck || !works(self, o.cargo.from) || tick.saturating_sub(o.since) >= rail::ORDER_GIVE_UP);
         self.rail.orders = keep;
         for o in stranded {
-            self.dispatch_truck(TruckOrigin::CityEdge, Cargo { from: BuildingId::default(), ..o.cargo }, 6);
+            self.queue_truck(TruckOrigin::CityEdge, Cargo { from: BuildingId::default(), ..o.cargo }, 6);
         }
     }
 

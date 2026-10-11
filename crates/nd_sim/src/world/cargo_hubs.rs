@@ -123,7 +123,8 @@ impl World {
         if beside {
             self.deliver(cargo);
         } else {
-            self.dispatch_truck(TruckOrigin::Building(at), cargo, 6);
+            // [delivery-hours] On to the buyer in working hours.
+            self.queue_truck(TruckOrigin::Building(at), cargo, 6);
         }
     }
 
@@ -230,7 +231,8 @@ impl World {
                 continue;
             }
             self.unpark_truck(h);
-            self.dispatch_truck(TruckOrigin::Building(h), Cargo { from: h, to: l.buyer, resource: l.resource, amount: l.amount, price: l.price }, 6);
+            // [delivery-hours] The hub's lorries keep the buyers' hours.
+            self.queue_truck(TruckOrigin::Building(h), Cargo { from: h, to: l.buyer, resource: l.resource, amount: l.amount, price: l.price }, 6);
             let fee = l.price * hub::HANDLING_FEE;
             if let Some(z) = self.buildings.get_mut(h).and_then(|b| b.business.as_mut()) {
                 z.money += fee;
