@@ -1,3 +1,5 @@
+> **Open work lives in the OPEN WORK section at the end of this file** (consolidated 2026-10-11). Items marked [→] elsewhere were folded into it.
+
 [x] - empty land should have more nature, rocks and sand for deseart landscape and trees/grass for those areas. high-value areas can look like parklets clean cut grass, city land taken care of. but empty lots in bad value areas can lay dorment, overgrown and trashy.   → DONE: vacant lots dress by land value (trashy / wild / parklet), rocks and scrub scattered on open ground (nd_procgen::vacant, terrain::scatter_nature).
 [x] - we need other special city things like police stations, fire stations, hospitals, schools ect. and buildings within the three tiers for all these, is this possible? is our building generator robust enough for these, if not we need to work on that tool a bit more to handle new buildings we will add in the future. we'll also need veichels and emergencies that they travel to. people can get sick, buildings can get on fire or crimes can happen, someone would need to call 911 for a person working at dispatch to send out a team so all that system should be in play. special buildings are user-placed. also need some special attractions like minuments and stadiums. make a "buildings" tool that we can add these buildings have sub-catagories for different things put "power" as a sub category.   → DONE: police, fire, health, school, 911 dispatch, jail, monuments and a stadium in three tiers; fires, crime and sickness answered by vehicles with sirens; out-of-town units when uncovered; a Buildings tool with Power, Services, Transit, Rail, Water and Attractions categories.
 [x] - add a "zones" toggle to show/hide the set zoning on the map  → DONE: Zoning outlines checkbox and the O key.
@@ -304,8 +306,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 - [x] Land-value and estate-pressure grids stop at half_extent+200; Walk camera clamped to half_extent+150 (island-lots leftovers) → DONE [fix/sweep-sim]: on non-flat maps both grids cover the buildable land (`World::grid_half`, grown by whole cells so cells stay put; old saves' grids grow on load keeping their values); the Walk camera reaches the parcels' square (`parcel_half` + 150). Contamination grid unchanged
 - [x] A big generated city (2,168 lots) hit "memory allocation of 268435456 bytes failed" at day 10 under heavy machine load (committee agent) — check memory growth → DONE [fix/memory]: the culprit was the save built as one String (~16 KB of RON per citizen; past 128 MiB at ~9–10k people it doubled into one 256 MiB block); saves and the autosave now stream to the file (same bytes), biggest block while saving under 3 MB. No unbounded growth found in the sim (every log/history is capped; per-citizen memories/places fill to their caps); `examples/memory_probe` (nd_procgen) and the remote `memory` command measure it
-- [ ] Generated grid_plaza seed 3 jams solid once it passes ~10k people: vehicles grow ~400/day at a flat population (day 20: 3,500 vehicles, 3,200 stopped, 527 stuck, 657 waiting at the kerb) (found by fix/memory)
-- [ ] Loading a big save peaks high: the file is read as one string (184 MB for 11k people) and parsing adds ~220 MB more on top; the app's private commit is ~2 GB before any city and ~4–5 GB at 11k people, mostly outside the Rust heap (GPU/driver) (found by fix/memory)
+- [→] Generated grid_plaza seed 3 jams solid once it passes ~10k people: vehicles grow ~400/day at a flat population (day 20: 3,500 vehicles, 3,200 stopped, 527 stuck, 657 waiting at the kerb) (found by fix/memory)
+- [→] Loading a big save peaks high: the file is read as one string (184 MB for 11k people) and parsing adds ~220 MB more on top; the app's private commit is ~2 GB before any city and ~4–5 GB at 11k people, mostly outside the Rust heap (GPU/driver) (found by fix/memory)
 - [x] fix/ped-highway's 2 failing tests → DONE: its test uses a lived-in city; society_demo drill now 7 fires (median 13 min, was decided by 4)
 
 - [x] Dock/station joined only by a footpath counts as unconnected; zoning layer tints a dock's own lot civic blue (dock-access leftovers) → DONE [fix/sweep-sim]: `road_connected` is now streets only (it counted paths, so lorries were sent to path-only docks) and `walk_connected` is new: a ferry terminal or passenger station a path reaches works for passengers and hires ("ON FOOT ONLY" in the inspector, `road_access.serves/note` in the API, no taxi rank there); cargo docks and yards still need a road ("a path reaches it, but goods need a road"). Docks and stations show on the zoning layer as their own use (pale steel outline, no zone wash)
@@ -314,8 +316,8 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [x] Interchange leftovers: hand-drawn ramps at sharp angles still overlap the street briefly; Interchange tool ignores roads pending in a project; only the diamond (no parclo/cloverleaf, no street over the highway); concrete band at a junction edge on river_valley slopes → DONE [fix/sweep-visual]: an arm whose overlap with a sharp-angled neighbour runs past its first piece starts its strip and markings where it is clear (`street::clear_along`, followed round its bends), the stretch over the neighbour drawn just under its asphalt; a street's kerb and pavement wait until clear of a ramp/highway joined at a sharp angle (that stretch surfaced like the junction, no bare wedge); the Interchange tool refuses a ramp crossing a road/path/railway planned in the active project or a planned road ending at its join; the concrete band was the open-cutting retaining wall along one arm running on across the next arm on a slope (`terrain::tunnel_works`), now kept off other ways. Left: parclo/cloverleaf and street-over-highway not done (the diamond's ramps assume the street passes under); pad gaps beside corners on steep junctions (seen while checking)
 - [x] Road-polish leftovers → DONE [fix/interchange]: bridge abutments, signal arms on climbs, stop line at sharp forks; gore deck partly; town street tapers already existed
 
-- [ ] Megacorp leftovers: no café/bookshop trades (bakeries and gadget shops stand in); local students never leave the family home for a dorm (dorms fill with arrivals); the HQ crown is small on a needle-thin league tower; corps' deposits are nominal against estate prices; corp fleets only show on lorries/vans of businesses they own (no corp-owned producers unless bought) → PART DONE [fix/sweep-sim]: `BusinessKind::Cafe`/`Bookshop` appended (walk-in sales, student trade, tourists, vibes, book clubs, tax lines, liveries; drawn with the commercial menu, no look of their own yet), opened by campuses (pizza/café/bookshop) and on downtown land (value 0.7+, a fifth of new shops); 40% of local students with family move into free dorm rooms before arrivals; a corp's shops are stocked in its own branded vans; corps on vacant entertainment land pick bar/driving range/café (unowned first) and bars get bar names. Left: HQ crown on needle towers, nominal deposits
-- [ ] Econ leftovers: investors' second homes/businesses pay no rent/profit; owned buildings skip densify; spare cars never driven; battery thresholds use predicted temperature (econ-followups) → PART DONE [fix/sweep-sim]: let second homes pay their investor 45% of the tenants' rent, businesses bought into 30% of yesterday's profit from the till (founders keep it in the firm), shown in the person pane; on weekends an owner may take the dearest spare out (cars swap in the garage, back on Monday); forecast-temperature price bands documented as intended. Left: owned buildings skip densify
+- [→] Megacorp leftovers: no café/bookshop trades (bakeries and gadget shops stand in); local students never leave the family home for a dorm (dorms fill with arrivals); the HQ crown is small on a needle-thin league tower; corps' deposits are nominal against estate prices; corp fleets only show on lorries/vans of businesses they own (no corp-owned producers unless bought) → PART DONE [fix/sweep-sim]: `BusinessKind::Cafe`/`Bookshop` appended (walk-in sales, student trade, tourists, vibes, book clubs, tax lines, liveries; drawn with the commercial menu, no look of their own yet), opened by campuses (pizza/café/bookshop) and on downtown land (value 0.7+, a fifth of new shops); 40% of local students with family move into free dorm rooms before arrivals; a corp's shops are stocked in its own branded vans; corps on vacant entertainment land pick bar/driving range/café (unowned first) and bars get bar names. Left: HQ crown on needle towers, nominal deposits
+- [→] Econ leftovers: investors' second homes/businesses pay no rent/profit; owned buildings skip densify; spare cars never driven; battery thresholds use predicted temperature (econ-followups) → PART DONE [fix/sweep-sim]: let second homes pay their investor 45% of the tenants' rent, businesses bought into 30% of yesterday's profit from the till (founders keep it in the firm), shown in the person pane; on weekends an owner may take the dearest spare out (cars swap in the garage, back on Monday); forecast-temperature price bands documented as intended. Left: owned buildings skip densify
 
 - [x] Supertall leftovers: big podium over 6–8 plot sites reads heavy; office towers dark at night (landmark always-on floors); long tower shadows vs 650 m cascade unverified → DONE [fix/sweep-visual]: podium lower (12–15 m) and only round the tower's base (5 m wrap), a stepped glass setback tier with a planted terrace and hedges; the rest of an assembled site is plaza with tree planters, lawn beds, benches, lamps and a fountain; landmark floors that never switch off (sky lobbies every 120 m and a spiral under each wing setback on the Y plan, the floors under each Deco setback, bands every quarter and the top on twist/needle); shadows checked: fine up close, but every shadow vanished once the orbit camera was past ~650 m, so the sun's cascades now stretch with the orbit distance (to 3 km; defaults up close and in Walk view)
 - [x] Park-path leftovers: 1–2 m grass step between path end and park walkway; no gates while a building is under construction; no hub gates → step DONE [fix/sweep-visual]: the park's spoke starts at the joined path's end and comes in square to the edge, paved right up to the path. Hub gates not done: a path drawn into a park's interior re-cuts the park lot (paths cut parcels), so it needs its own design. Gates under construction: fix/under-construction
@@ -324,19 +326,19 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 
 - [x] An instance crashed once with no panic text (waterfront agent) — the memory agent is investigating crashes; add a panic hook that writes a crash log next to the saves → DONE [fix/sweep-sim]: `nd_app::crash`: a panic hook writes message, thread, location, backtrace, frame, sim clock and the last save/load to `saves/crash.log` (keeps crash.1-4.log); a wrapping global allocator frees a 2 MiB reserve and logs a failed allocation (size, context, backtrace for big ones) before the usual abort
 
-- [ ] Small gaps in the junction surface beside corners at steep junctions (sweep-visual)
-- [ ] Tower windows all stayed lit at night once after generate_city + remote steps (fixed by save/reload) — window-light update timing (sweep-visual)
-- [ ] Park hub gates (paths into a park interior would split the park lot — needs a design); parclo/cloverleaf and street-over-highway interchange layouts
+- [→] Small gaps in the junction surface beside corners at steep junctions (sweep-visual)
+- [→] Tower windows all stayed lit at night once after generate_city + remote steps (fixed by save/reload) — window-light update timing (sweep-visual)
+- [→] Park hub gates (paths into a park interior would split the park lot — needs a design); parclo/cloverleaf and street-over-highway interchange layouts
 
-- [ ] Footpath-only rail crossings still draw paving over the rails; crossing lamps have no real light at night (rail-crossing)
+- [→] Footpath-only rail crossings still draw paving over the rails; crossing lamps have no real light at night (rail-crossing)
 
 - [x] "Perfect AI City": a New Game preset + save, fully planned and built at day 1 (roads, interchange, zones, services, transit, power), unlimited money, validated to grow big without collapse [feat/perfect-city]   → DONE [feat/perfect-city]: CityPreset::PerfectCity (New game > Starting town, generate_city perfect_city, seed 5): temperate coast, square avenue grid, 3 diamond interchanges, works downwind round the river, farms upwind, every service/plant/transit line/district laid by citygen::furnish, 50M treasury; example perfect_city writes saves/perfect_ai_city.ron and runs it headless; tests citygen_perfect_city
-- [ ] Perfect AI City tops out at ~13k people by day 18 (every lot built; redevelopment adds homes slowly) and from day ~20 vehicles grow ~300-500/day at a flat population (stuck 170 -> 860 by day 30, population drifting back to 12k): the same vehicle build-up as grid_plaza seed 3 above, a sim issue rather than the plan; also ~650 homeless with homes free (rents) once lots run out [feat/perfect-city]
+- [→] Perfect AI City tops out at ~13k people by day 18 (every lot built; redevelopment adds homes slowly) and from day ~20 vehicles grow ~300-500/day at a flat population (stuck 170 -> 860 by day 30, population drifting back to 12k): the same vehicle build-up as grid_plaza seed 3 above, a sim issue rather than the plan; also ~650 homeless with homes free (rents) once lots run out [feat/perfect-city]
 
-- [ ] Save → load → continue drifts: traffic lane network/signals, car blocked_by/offlaw/dodge, traffic pedestrians, trains in motion, land-value work in progress, road wear aren't fully saved (ignored test in tests/determinism.rs lists them) — phase 2b
+- [→] Save → load → continue drifts: traffic lane network/signals, car blocked_by/offlaw/dodge, traffic pedestrians, trains in motion, land-value work in progress, road wear aren't fully saved (ignored test in tests/determinism.rs lists them) — phase 2b
 
-- [ ] citygen::dry asks for 200–250 m water clearance but the water-distance lookup caps at ~161 m, so older presets drag plazas to the map middle (worked around for the Perfect AI City only)
-- [ ] Perfect AI City: levels off ~13k (all lots built by day 18); ~650 priced-out homeless after lots run out; vehicle build-up after day 20 (same as the grid_plaza jam item); no tidal plant; one beach has no access
+- [→] citygen::dry asks for 200–250 m water clearance but the water-distance lookup caps at ~161 m, so older presets drag plazas to the map middle (worked around for the Perfect AI City only)
+- [→] Perfect AI City: levels off ~13k (all lots built by day 18); ~650 priced-out homeless after lots run out; vehicle build-up after day 20 (same as the grid_plaza jam item); no tidal plant; one beach has no access
 
 ## Follow-ups noted in agent reports (not started)
 - [x] Waterfront leftovers: the fishing fleet (world/fishing.rs) does not sail a trawler from a private fishing jetty yet (berth is `Jetty::berth`); cargo-quay coasters are not drawn sailing; old saves keep their parcels unless `waterfront_parcels {on}` (no in-game toggle); beach crowds beyond the sim's own visitors are drawn as props (feat/waterfront) → trawlers and coasters DONE [fix/sweep-visual]: a fishery with its own jetty gets a one-boat fleet (`Fleet::jetty`) on the same grounds/out/home logic (its catch replaces its hourly fish like a port's; inspector FISHING FLEET, `inspect.fishing`, `ships`); the jetty's static boat is drawn only when no fleet sails it; a cargo quay's coaster sails in by water from the map's edge ahead of each load (`shore.inbound`), lies alongside 75 min after landing (`Jetty::last_load`), then sails out (renderer only). The parcels toggle and beach props remain
@@ -370,11 +372,11 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 ## Agents running (update when starting/merging; survives context compaction)
 
 ## Next steps (Harvey 2026-10-08) — ON HOLD: Harvey said pause after the code review; start these another day only when he asks
-- [ ] City rating: liveability, prosperity, safety, environment — measured, with history charts (no challenges/scenarios yet)
-- [ ] Banks and debt: bank businesses open and lend to other businesses (loans can go bad, defaults, failures like real life); broke people can fall into debt (hospital bills, gambling, etc.) with consequences
-- [ ] Large ferry terminal + car ferries: a bigger terminal (vehicle ramps, marshalling lanes, needs a road connection) whose ferries carry cars and trucks as well as passengers; routing treats car-ferry links as part of the road network (with a fare and a wait), so drivers and freight can cross water
-- [ ] Regional commuters: while local labour is short, businesses hire out-of-town workers who drive in on the highway (dearer wage, travel time, sometimes late, highway rush hours); as residents arrive locals are cheaper/closer and are preferred, so the commuter share falls; City Data shows "jobs held by commuters %" as a goal to drive to 0; residents without local work commute out (wages spent elsewhere)
-- [ ] New business kinds (append to enums, each with its own look, demand and staffing):
+- [→] City rating: liveability, prosperity, safety, environment — measured, with history charts (no challenges/scenarios yet)
+- [→] Banks and debt: bank businesses open and lend to other businesses (loans can go bad, defaults, failures like real life); broke people can fall into debt (hospital bills, gambling, etc.) with consequences
+- [→] Large ferry terminal + car ferries: a bigger terminal (vehicle ramps, marshalling lanes, needs a road connection) whose ferries carry cars and trucks as well as passengers; routing treats car-ferry links as part of the road network (with a fare and a wait), so drivers and freight can cross water
+- [→] Regional commuters: while local labour is short, businesses hire out-of-town workers who drive in on the highway (dearer wage, travel time, sometimes late, highway rush hours); as residents arrive locals are cheaper/closer and are preferred, so the commuter share falls; City Data shows "jobs held by commuters %" as a goal to drive to 0; residents without local work commute out (wages spent elsewhere)
+- [→] New business kinds (append to enums, each with its own look, demand and staffing):
   - construction firms (builders who actually put buildings up and employ crews)
   - pharmacy, private clinics, doctors, dentists; childcare/daycare
   - clothing, hardware, furniture shops; fuel/EV charging stations, car wash
@@ -382,12 +384,12 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
   - food variety: fast food, pizza place, noodle bar, restaurants; nightlife split: clubs, cinemas, theatres
   - office economy: software studios, data centres (big power, few jobs), call centres, media, security, cleaning, real estate, law, insurance
   - recycling plants (ties into trash and contamination)
-- [ ] Cable cars (on hilly maps)
-- [ ] Monorail: a new elevated train type running above the road, hanging (suspended) design like Wuppertal / Shonan; stations need no zoning but must connect to a road or path at their connection points to work
-- [ ] Transit economics: ridership per line, fare/fee settings per line and info
-- [ ] Performance with big cities (20k–50k people): profile and fix — a must
-- [ ] Faster save and load (and smaller saves); history autosaves keep 24 × ~150 MB per big city (~3.6 GB) — fewer or compressed
-- [ ] Settings menu (graphics, controls, UI scale, etc.)
+- [→] Cable cars (on hilly maps)
+- [→] Monorail: a new elevated train type running above the road, hanging (suspended) design like Wuppertal / Shonan; stations need no zoning but must connect to a road or path at their connection points to work
+- [→] Transit economics: ridership per line, fare/fee settings per line and info
+- [→] Performance with big cities (20k–50k people): profile and fix — a must
+- [→] Faster save and load (and smaller saves); history autosaves keep 24 × ~150 MB per big city (~3.6 GB) — fewer or compressed
+- [→] Settings menu (graphics, controls, UI scale, etc.)
 - (Later / skipped for now: challenges and scenarios, elections and disasters, water and sewage, seasons and events, advisor and heat maps, neighbouring towns, sound, tutorial)
 - [x] Level crossings: a crossing signal bar that comes down and stops traffic when a train passes (on streets of more than 2 lanes), alternating red flashing lights, a pole going down and up → DONE [feat/rail-crossing]: each crossing runs a cycle from the trains coming (lights 15 s out, arms down 3 s later over 5 s, down while a train is over it and 2 s after, up over 5 s; saved with serde defaults); vehicles stop at a stop line clear of the track (lanes end there), walkers and cyclists at the track's edge; trains wait for a crossing not closed with its box clear; half-barriers + pavement gates on 3+ lane streets, lights/bell/crossbuck only on 1+1, lights and gates on footpaths; posts with twin lamps flashing in turn, crossbucks, bells, striped arms with tip lamps swinging smoothly; road inspector section; `level_crossings` API (and in `intersection`)
 
@@ -471,22 +473,102 @@ Sources: docs/playtest/todo_2026-10-10.md (Harvey's list, "T"), docs/playtest/fl
 - [x] Superyachts for billionaires; marinas grow with more and bigger boats (T); boardwalk along ≥4 plots of public beach (T) → DONE [fix/pt-visual]: `Port::moored` (berths let, superyachts) counted at midnight; boats drawn apart (`terrain::moored_boats`) by owner with looks that get richer as the marina fills (speedboats, catamarans), 60 m superyachts on an outer pontoon of the large marina nearest each billionaire's home (max 3); a run of 4+ touching beach lots gets a promenade (`shore::boardwalks`) with rail, neon lamps, benches, kiosks
 
 ### I. New features [wave 2]
-- [ ] Gas prices, fuel stations, EV pressure, fuel tax (T)
-- [ ] Forests and logging → lumber yard, furniture factory, hardware store (T)
-- [ ] District tax laws and levers (e.g. a student district) (T)
-- [ ] Weekly newspaper (optionally AI) (T)
-- [ ] Several businesses in one building; mall bases in supertalls (T)
-- [ ] Parks: run-down parks (dealers, homeless, trash), paid clean-up displacing camps; Parks page in City Data; nature-preserve parks keeping the terrain (T, F28)
-- [ ] Riots, protests, parades taking over roads (T)
-- [ ] Police gunships, SWAT, armoured trucks, raids (T)
-- [ ] Ownership arcs from an HQ to its properties with pulses (T)
-- [ ] Raised/tunnel roundabouts with [ and ] (T)
-- [ ] Plus the "Next steps" list above (city rating, banks/debt, car ferries, commuters, new business kinds, cable cars, monorail, settings menu)
+- [→] Gas prices, fuel stations, EV pressure, fuel tax (T)
+- [→] Forests and logging → lumber yard, furniture factory, hardware store (T)
+- [→] District tax laws and levers (e.g. a student district) (T)
+- [→] Weekly newspaper (optionally AI) (T)
+- [→] Several businesses in one building; mall bases in supertalls (T)
+- [→] Parks: run-down parks (dealers, homeless, trash), paid clean-up displacing camps; Parks page in City Data; nature-preserve parks keeping the terrain (T, F28)
+- [→] Riots, protests, parades taking over roads (T)
+- [→] Police gunships, SWAT, armoured trucks, raids (T)
+- [→] Ownership arcs from an HQ to its properties with pulses (T)
+- [→] Raised/tunnel roundabouts with [ and ] (T)
+- [→] Plus the "Next steps" list above (city rating, banks/debt, car ferries, commuters, new business kinds, cable cars, monorail, settings menu)
 
 ### J. Engine [wave 2]
-- [ ] Big-city performance 20k–50k; faster/smaller saves and load peak; save→load→continue determinism
+- [→] Big-city performance 20k–50k; faster/smaller saves and load peak; save→load→continue determinism
 
 ## Agents running (playtest round, started 2026-10-10)
 - ALL MERGED (A–H). Wave 2 (I new features, J engine) not started.
 - I (new features) and J (engine) wait for wave 2
 
+
+# OPEN WORK — consolidated 2026-10-11 (the only open list; older "[ ]" items above are marked [→] and folded in here)
+Sources: Harvey's lists docs/playtest/todo_2026-10-10.md and todo_2026-10-11.md ("T"), flags docs/playtest/flags_2026-10-09.md (F#) and flags_2026-10-11.md (G#), agent leftovers.
+
+## 1. Special attractions (new, Harvey 2026-10-11)
+- [ ] One per city each, a league of landmark attractions that lift land value and draw tourists; each needs several plots or one mega plot (joined sites like stadiums)
+- [ ] Museums, two or three types (e.g. art museum, natural history / science, city history or design museum)
+- [ ] Oceanside pier like Santa Monica (only on the sea shore, built out over the water: rides, ferris wheel, arcade, food stands, neon)
+- [ ] A special grand city park (central-park scale, lakes, paths, landmarks)
+- [ ] Zoo
+- [ ] Observatory (only on high ground)
+- [ ] More: aquarium, botanical garden / conservatory, opera house / concert hall, amusement park, convention centre, cathedral-scale landmark, casino resort (pick the best few)
+- [ ] Land value is now hard to raise (after the rescale): attractions, parks and services should be the main levers — check the tuning gives a clear path up
+
+## 2. Roads, intersections and the road tools
+- [ ] Intersections are one joint: dragging the junction dot moves every road attached; roads meeting at a point mend into one junction on Implement and can't be pulled apart (only by demolishing a leg) (T)
+- [ ] Edit: click a road piece to edit its own end points (and disconnect it); otherwise dragging moves the whole junction (T)
+- [ ] Road tool UI cleanup: pick road type → parameters (lanes, height; depth clearly shown as "tunnel" when deep enough) → draw method (straight, curved, circle); "highway ramp" is just a 1-lane one-way; special roads (interchange) as now (T)
+- [ ] Crosswalk option "Remove crosswalk" (no crossing here) to shape pedestrian traffic; two crosswalks close together block a footbridge — allow turning them off (T, G3)
+- [ ] Footbridge didn't remove the crosswalk (G13); a visual crosswalk drawn in the middle of an intersection (G20)
+- [ ] Paths end at the junction centre instead of the pavement (G12); footbridge corners should look like one continuous deck (G14); missing inner pavement on a circus road (G9)
+- [ ] Traffic signals added at an intersection but not visible (T)
+- [ ] Placing a road still re-adjusts plots/buildings all around it after Implement (the plan showed only the red buyouts) (T) — check fix/pt-parcels' local recut on Harvey's newer save
+- [ ] Zoning civic round a circus levelled ground and made many parcels "unusable ground" (G5)
+- [ ] Uncommitted plan: show a prominent "Implement / Discard" bar at the top when the map has unimplemented changes (G2); planning "show" highlights the parcel(s) an action affects (T)
+
+## 3. Pedestrians and cyclists
+- [ ] People jaywalk instead of using footbridges, causing crashes and jams (G4, G7, G17, G20) — routes must prefer bridges; people already mid-route re-plan when a crossing becomes a footbridge; cyclists use footbridges too
+- [ ] Walkers backing up a highway exit with no crosswalk to replace (G11)
+- [ ] Hurt person lying in the road with nobody helping: an indicator and an ambulance (G4)
+- [ ] Bike racks on buses (4 bikes): tired cyclists take the bus if there is room, else wait (T)
+
+## 4. Vehicles and services
+- [ ] Tow trucks stuck on jobs blocking ramps and highways for hours (G10, G15, G19, G20)
+- [ ] Dev "Airlift" button: a Chinook lifts a stuck vehicle away (G19)
+- [ ] Police cars look like police cars (black and white) even with lights off; "parked on the beat" while sitting in traffic (G8)
+- [ ] Delivery trucks only in working hours (early start ok, rare night rush); not all at midnight (T)
+- [ ] Freight ships turn and berth sideways at the port; cranes move containers on/off by the ship's actual imports/exports (G6)
+- [ ] Only one police HQ and one fire HQ per city (T)
+- [ ] Stadium game days bring crowds, traffic and a lively look (G18)
+
+## 5. Buildings, info and UI polish
+- [ ] Fishing port description: "adds to the local fishing economy, a dock for the fishing fleet" (not "links the city to elsewhere") (T)
+- [ ] Buildings being demolished or under construction have no lights on; demolition shows X's on the roof and construction siding (T)
+- [ ] Trees poking through roads/highways — no trees under other roads (G15); homeless tents left on a new road built over their vacant lot (G16)
+- [ ] Lines panel can be resized wider (T); Shift+click inserts a stop, plain clicks add in sequence while creating (T)
+- [ ] Crime layer also highlights police stations (T)
+
+## 6. New features (wave 2)
+- [ ] Gas prices, fuel stations, EV pressure, fuel tax
+- [ ] Forests and logging → lumber yard, furniture factory, hardware store
+- [ ] District tax laws and levers (e.g. a student district)
+- [ ] Weekly newspaper (optionally AI)
+- [ ] Several businesses in one building; mall bases in supertalls
+- [ ] Run-down parks (dealers, homeless, trash), paid clean-up; Parks page in City Data; nature-preserve parks; merged parks get one name
+- [ ] Riots, protests, parades taking over roads
+- [ ] Police gunships, SWAT, armoured trucks, raids
+- [ ] Ownership arcs from an HQ to its properties
+- [ ] Raised / tunnel roundabouts with [ and ]
+- [ ] City rating (liveability, prosperity, safety, environment) with history
+- [ ] Banks and debt (business loans that can go bad; household debt from hospital bills, gambling)
+- [ ] Large ferry terminal and car ferries
+- [ ] Regional commuters (out-of-town workers early on, locals preferred later; commuter share as a goal)
+- [ ] New business kinds (builders, pharmacy/clinics/dentists/childcare, clothing/hardware/furniture, fuel/EV/car wash, salons/gyms/laundromats/trades, food variety, clubs/cinemas/theatres, office economy, recycling)
+- [ ] Cable cars; monorail (suspended); two-way bus lines
+- [ ] Settings menu (graphics, controls, UI scale)
+
+## 7. Engine
+- [ ] Big-city performance 20k–50k people
+- [ ] Faster, smaller saves; lower load peak; fewer/compressed history autosaves (24 × ~150 MB per big city)
+- [ ] Save → load → continue determinism (docs/review/save_determinism_wip.patch)
+
+## 8. Smaller leftovers from agents
+- [ ] Interchanges: parclo/cloverleaf and street-over-highway layouts; Interchange tool ignores pending roads in some cases
+- [ ] Junction surface gaps at steep corners; park hub gates (needs a design)
+- [ ] Megacorp: HQ crown small on needle towers; corp deposits nominal
+- [ ] Investors: owned buildings skip densify
+- [ ] Dock/station joined only by a footpath (passengers ok, goods need a road) — check status text; ferry estimates
+- [ ] Metro lines can't be edited stop by stop; metro stations barely visible underground
+- [ ] F27 diagonal sliver parcel can't merge (concave); delivered cars parked far from the buyer's home
