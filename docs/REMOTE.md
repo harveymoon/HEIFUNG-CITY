@@ -759,7 +759,7 @@ in this order, and the reply is the state after:
 | `left_turns` | `true` allows the left from every street, `false` forbids it from every street |
 | `no_left` | `[approach index or [x,y], ...]`: those streets forbid the left, the others allow it. A banned left is taken out of what the junction offers there, so its lane arrows lose it and no route turns left there |
 | `approach` + `lanes` | lane permissions of one arriving street (index, or a point on it): `["L+S", "S+R"]` leftmost first, or `"reset"` (as `lane_use`) |
-| `crossing` + `upgrade` | a crosswalk (walk-graph index from `crossings`, or a point near it): `none`, `button` (a push-button signal: traffic gets a red only after someone presses it; not on a crosswalk that already has walk lights) or `footbridge` (a raised walkway with stairs at both ends; refused where it would stand in another's way). A footbridge replaces the crosswalk under it: its paint, walk lights and at-grade walk edge go, so everyone crossing there climbs over and nobody holds up traffic. Paid for: 1,500 and 18,000 |
+| `crossing` + `upgrade` | a crosswalk (walk-graph index from `crossings`, or a point near it): `none`, `button` (a push-button signal: traffic gets a red only after someone presses it; not on a crosswalk that already has walk lights), `footbridge` (a raised walkway with stairs at both ends; refused where it would stand in another's way) or `removed` (also `remove`, `no_crossing`: [walk-crossings] no crossing there at all: nothing painted, no walk light, walkers route round by another crossing and nobody plans a jaywalk within 30 m; free). A footbridge replaces the crosswalk under it: its paint, walk lights and at-grade walk edge go, so everyone crossing there climbs over and nobody holds up traffic; [walk-crossings] it also replaces the other crosswalks over the same street within 30 m (not its own junction's other arms, nor ones the player set up), and no jaywalk is planned within 80 m of it. Unmarked crossings (a roundabout's own lanes, a highway slip road's mouth, a dead end) may take a button, a footbridge or be removed too: a button makes one a marked crossing with its own light, and a footbridge over a slip road's mouth has its stairs down each street's pavement. Paid for: 1,500 and 18,000 |
 | `crossing` + `keep_crosswalk` | [footbridge] `true` keeps the crosswalk at grade under its footbridge (walkers then take the bridge when it costs them at most 30 m more); `false` (the default, also for footbridges from older saves) lets the bridge replace it. Free |
 | `open`, `extent`, `select_approach`, `select_crossing` | show the editor modal (and its road view's width in metres, 30..300; which street or crosswalk is picked) |
 | `lane_menu`, `hover_lane` | [pt-ux] `[approach, lane]` (lane 0 the leftmost): open that lane's options menu beside its arrow, or show its moves as if hovered (bright: allowed, dashed: offered but not allowed); `null` closes / clears. Needs the editor open |
@@ -781,7 +781,7 @@ Reply: `intersection` {`at`, `junction` (false for a lone crosswalk), `node`, `r
 `approaches` [{index, segment, street, dir (the way it leaves the junction), from, lanes, offered,
 set_by_player, left_forbidden, left_possible, queued, lane_ends [{end, dir, moves [{move, allowed}]}]}], `phases` [{index, approaches, green_s,
 running}], `crossings` [{index, mid, ends, upgrade, signalised, kind, button_light, footbridge
-{walkway, stair_feet, width}, crosswalk_kept, crosswalk_removed}], `footbridges` (in the city), `button_presses_total`}, `done` (what
+{walkway, stair_feet, width}, crosswalk_kept, crosswalk_removed, ramp, shut}], `footbridges` (in the city), `button_presses_total`}, `done` (what
 was changed) and `editor_open`. Everything is saved with the city (`Traffic::junction_rules`,
 `World::crosswalks`, serde defaults) and found again by position after the roads are rebuilt.
 
@@ -793,6 +793,27 @@ was changed) and `editor_open`. Everything is saved with the city (`Traffic::jun
 The reply also has `level_crossing` (null unless the junction's node lies on the railway; see
 below). At a level crossing that is no junction (a street straight over the track), `intersection`
 answers with `intersection: null` and the crossing as `level_crossing`.
+
+#### Crossing use: `walk_crossings` [walk-crossings]
+
+`walk_crossings {at?: [x, y], radius? (80), all?, reset?}`: every walk-graph crossing near `at` (or in
+town) with `index`, `kind` (junction / zebra / informal / jay), `mid`, `segment`, `street`, `marked`,
+`closed` (a footbridge replaced it, the player removed it, or a jaywalk in a footbridge's shadow),
+`bridged`, `button`, and its use since the walk graph was last built (or `reset: true`): `at_grade`
+(walkers who stepped out over it), `against` (of them against the light or mid-block), `bridge`
+(walkers over its footbridge's deck), `bridge_bikes` (cyclists wheeling over it), `replans` (walkers
+who found it gone and planned again). Unused jaywalking edges are listed only with `all: true`.
+`totals` sums them (and `unmarked_at_grade`); `replans_total`, `jay_give_ups_total` (jaywalkers who
+tired of waiting for a gap and went round by a crossing), `jaywalks_total`, `collisions_total`,
+`near_misses_total`. Rules behind it: walkers never cross a highway slip road's mouth except with
+walk lights (an off-ramp at a signalled junction), a push button or a footbridge (`shut` otherwise);
+a roundabout's own lanes are crossed unmarked only when the island is where the walk goes (they cost
+a route 60 m extra); jaywalking short cuts cost 12 m more per lane past the second and none are
+planned over five lanes or more; a jaywalker waiting more than 5 ticks for a gap goes round by a
+crossing. `report` traffic.pedestrians adds `replans_total`, `jay_give_ups_total` and
+`hurt_in_the_street_now`; `report` transit adds `bike_rack_rides_total`, `bike_rack_full_total` and
+`bikes_on_racks_now` ([bike-racks] a bus carries four bikes; a cyclist facing a long ride may take
+the bus with the bike if the rack has room, else waits for the next bus).
 
 #### Level crossings: `level_crossings` [rail-crossing]
 

@@ -131,6 +131,13 @@ pub(super) fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             crate::tools::line_edit::start(&mut ctx.tools, id);
             Ok(json!({ "editing": key_str(id), "status": ctx.tools.status }))
         }
+        // [fix/buildings-ui] Draw a new line, as the Lines window's "New
+        // line": clicks add stops in order, `shift` clicks insert.
+        "new_line" => {
+            let id = w.add_bus_route();
+            crate::tools::line_edit::start_new(&mut ctx.tools, id);
+            Ok(json!({ "editing": key_str(id), "status": ctx.tools.status }))
+        }
         "finish_edit" => {
             let msg = crate::tools::line_edit::finish(w, &mut ctx.tools);
             Ok(json!({ "editing": Value::Null, "status": msg }))
@@ -143,7 +150,8 @@ pub(super) fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             }
             let p = req_point(cmd)?;
             let right = cmd.get("right").and_then(Value::as_bool).unwrap_or(false);
-            crate::tools::line_edit::input(w, &mut ctx.tools, Some(p), !right, !right, right);
+            let shift = cmd.get("shift").and_then(Value::as_bool).unwrap_or(false);
+            crate::tools::line_edit::input(w, &mut ctx.tools, Some(p), !right, shift, !right, right);
             let route = ctx.tools.line_edit.map(|e| e.route);
             Ok(json!({ "status": ctx.tools.status, "editing": opt_key(route), "row": route.and_then(|r| w.transit.routes.get(r).map(|x| route_row(r, x))) }))
         }

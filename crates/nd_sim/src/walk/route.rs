@@ -138,16 +138,11 @@ impl WalkGraph {
                     continue;
                 }
                 let mut cost = e.len * if e.park { PARK_FACTOR } else if e.interior { INTERIOR_FACTOR } else { 1.0 };
-                if e.cross != NO_CROSSING && self.crossings[e.cross as usize].kind == CrossingKind::Jay {
-                    if !jaywalk {
-                        continue;
+                if e.cross != NO_CROSSING {
+                    match self.crossings[e.cross as usize].route_cost(jaywalk) {
+                        Some(extra) => cost += extra,
+                        None => continue,
                     }
-                    cost += JAY_PENALTY;
-                }
-                // [tools] At grade under a footbridge: the bridge is worth
-                // a little climbing.
-                if e.cross != NO_CROSSING && self.crossings[e.cross as usize].bridged {
-                    cost += BRIDGED_GRADE_PENALTY;
                 }
                 let nd = du + cost;
                 if nd < dist[e.to as usize] {
@@ -226,7 +221,7 @@ impl WalkGraph {
                 continue;
             }
             for e in &self.adj[u as usize] {
-                if e.cross != NO_CROSSING && self.crossings[e.cross as usize].kind == CrossingKind::Jay {
+                if e.cross != NO_CROSSING && self.crossings[e.cross as usize].route_cost(false).is_none() {
                     continue;
                 }
                 if self.shut(e) {

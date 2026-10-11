@@ -36,7 +36,7 @@ pub fn view_json(w: &World, v: &IntersectionView) -> Value {
                 "index": c.index, "mid": v2(c.mid), "ends": [v2(c.ends[0]), v2(c.ends[1])], "upgrade": c.upgrade.label(), "signalised": c.signalised,
                 "kind": format!("{:?}", c.kind).to_lowercase(), "button_light": c.light.map(|l| l.label()),
                 "footbridge": c.footbridge.map(|(top, foot, width)| json!({ "walkway": [v2(top[0]), v2(top[1])], "stair_feet": [v2(foot[0]), v2(foot[1])], "width": round(width) })),
-                "crosswalk_kept": c.kept, "crosswalk_removed": c.closed,
+                "crosswalk_kept": c.kept, "crosswalk_removed": c.closed, "ramp": c.ramp, "shut": c.shut,
             })
         })
         .collect();
@@ -173,7 +173,7 @@ pub fn command(cmd: &Value, w: &mut World, tools: &mut ToolState) -> Result<Valu
     }
     // A crosswalk upgrade: {"crossing": index or [x,y], "upgrade": "none|button|footbridge"}.
     if let Some(u) = opt_str(cmd, "upgrade")? {
-        let upgrade = CrossingUpgrade::parse(u).ok_or("upgrade: none|button|footbridge")?;
+        let upgrade = CrossingUpgrade::parse(u).ok_or("upgrade: none|button|footbridge|removed")?;
         let view = w.intersection_view(at).ok_or("the junction is gone")?;
         let k = pick_crossing(cmd, &view, "upgrade")?;
         w.set_crossing_upgrade(k, upgrade)?;

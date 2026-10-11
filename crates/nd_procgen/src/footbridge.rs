@@ -25,31 +25,25 @@ pub fn footbridges(world: &World, palette: &Palette) -> Geometry {
     let steel = palette.steel;
     let neon = palette.footbridge_neon;
     let ground = |p: Vec2| world.surface_height(p);
+    // [walk-crossings] The walkways: each run of decks joined end to end
+    // (footbridges round a junction and the corner decks between them) is
+    // one walkway, drawn along its line with mitred corners, so the ring
+    // reads as one continuous deck with unbroken rails (G14) rather than
+    // slabs crossing at every corner.
+    let mut run_z: std::collections::HashMap<(u32, u32), f32> = std::collections::HashMap::new();
+    for (pts, closed) in deck_runs(world) {
+        let w = nd_sim::junctions::FOOTBRIDGE_WIDTH;
+        let z = pts.iter().map(|&p| ground(p)).fold(f32::MIN, f32::max) + nd_sim::junctions::FOOTBRIDGE_LEVEL;
+        walkway(&mut g, &pts, closed, z, w, palette);
+        for p in &pts {
+            run_z.insert((p.x.to_bits(), p.y.to_bits()), z);
+        }
+    }
     for fb in &world.walk.footbridges {
         let w = fb.width;
         let [t0, t1] = fb.top;
-        let z = ground(t0).max(ground(t1)) + fb.level;
-        let a = Vec3::new(t0.x, z, t0.y);
-        let b = Vec3::new(t1.x, z, t1.y);
-        let across = (t1 - t0).normalize_or_zero();
-        // The walkway, a little past the stair heads at each end.
-        let ext = Vec3::new(across.x, 0.0, across.y) * (w * 0.5);
-        g.part(Surface::Concrete).slab(a - ext, b + ext, w, DECK_DEPTH, rgba(concrete));
-        g.part(Surface::Paving).slab(a - ext + Vec3::Y * 0.02, b + ext + Vec3::Y * 0.02, w - 0.3, 0.02, rgba(mul(concrete, 1.15)));
-        let side = Vec3::new(-across.y, 0.0, across.x) * (w * 0.5 - 0.06);
-        for s in [1.0f32, -1.0] {
-            let o = side * s;
-            // Glass panels, the steel top rail and posts, a neon strip.
-            g.part(Surface::Glass).slab(a - ext + o + Vec3::Y * (RAIL * 0.5 + 0.05), b + ext + o + Vec3::Y * (RAIL * 0.5 + 0.05), 0.04, RAIL * 0.5, rgba(palette.footbridge_glass));
-            g.part(Surface::Metal).beam(a - ext + o + Vec3::Y * RAIL, b + ext + o + Vec3::Y * RAIL, 0.08, rgba(steel));
-            g.part(Surface::Glow).beam(a - ext + o - Vec3::Y * (DECK_DEPTH - 0.05), b + ext + o - Vec3::Y * (DECK_DEPTH - 0.05), 0.07, rgba(neon));
-            let len = (b - a).length() + w;
-            let posts = (len / 2.5).ceil().max(1.0) as usize;
-            for k in 0..=posts {
-                let p = (a - ext).lerp(b + ext, k as f32 / posts as f32) + o;
-                g.part(Surface::Metal).beam(p, p + Vec3::Y * RAIL, 0.06, rgba(steel));
-            }
-        }
+        // The stairs climb to the deck of the walkway the bridge is part of.
+        let z = [t0, t1].iter().filter_map(|p| run_z.get(&(p.x.to_bits(), p.y.to_bits())).copied()).fold(ground(t0).max(ground(t1)) + fb.level, f32::max);
         // Stairs from each end down to its foot on the pavement.
         for (top, foot) in [(t0, fb.foot[0]), (t1, fb.foot[1])] {
             let gz = ground(foot);
@@ -88,29 +82,145 @@ pub fn footbridges(world: &World, palette: &Palette) -> Geometry {
             g.part(Surface::Concrete).boxed(Vec3::new(col.x, (z - DECK_DEPTH + cz) * 0.5, col.y), Vec3::new(0.7, z - DECK_DEPTH - cz, 0.7), yaw, rgba(mul(concrete, 0.8)));
         }
     }
-    // [pt-walk] Corner decks joining two footbridges' ends: the ring round
-    // a junction. Same deck, glass and neon; a column at its middle.
+    // [pt-walk] Corner decks joining two footbridges' ends: a column at
+    // the middle of each (the deck itself is part of its walkway, above).
     let level = nd_sim::junctions::FOOTBRIDGE_LEVEL;
-    let w = nd_sim::junctions::FOOTBRIDGE_WIDTH;
     for &[p0, p1] in &world.walk.footbridge_links {
         let z = ground(p0).max(ground(p1)) + level;
-        let (a, b) = (Vec3::new(p0.x, z, p0.y), Vec3::new(p1.x, z, p1.y));
         let across = (p1 - p0).normalize_or_zero();
-        let ext = Vec3::new(across.x, 0.0, across.y) * (w * 0.5);
-        g.part(Surface::Concrete).slab(a - ext, b + ext, w, DECK_DEPTH, rgba(concrete));
-        g.part(Surface::Paving).slab(a - ext + Vec3::Y * 0.02, b + ext + Vec3::Y * 0.02, w - 0.3, 0.02, rgba(mul(concrete, 1.15)));
-        let side = Vec3::new(-across.y, 0.0, across.x) * (w * 0.5 - 0.06);
-        for s in [1.0f32, -1.0] {
-            let o = side * s;
-            g.part(Surface::Glass).slab(a - ext + o + Vec3::Y * (RAIL * 0.5 + 0.05), b + ext + o + Vec3::Y * (RAIL * 0.5 + 0.05), 0.04, RAIL * 0.5, rgba(palette.footbridge_glass));
-            g.part(Surface::Metal).beam(a - ext + o + Vec3::Y * RAIL, b + ext + o + Vec3::Y * RAIL, 0.08, rgba(steel));
-            g.part(Surface::Glow).beam(a - ext + o - Vec3::Y * (DECK_DEPTH - 0.05), b + ext + o - Vec3::Y * (DECK_DEPTH - 0.05), 0.07, rgba(neon));
-        }
         let mid = (p0 + p1) * 0.5;
         let cz = ground(mid);
         g.part(Surface::Concrete).boxed(Vec3::new(mid.x, (z - DECK_DEPTH + cz) * 0.5, mid.y), Vec3::new(0.7, z - DECK_DEPTH - cz, 0.7), across.y.atan2(across.x), rgba(mul(concrete, 0.8)));
     }
     g
+}
+
+/// [walk-crossings] The footbridges' decks joined end to end into runs:
+/// each a line of points (the tops of the bridges, in order) and whether
+/// it closes on itself (a ring round a junction).
+pub fn deck_runs(world: &World) -> Vec<(Vec<Vec2>, bool)> {
+    let key = |p: Vec2| (p.x.to_bits(), p.y.to_bits());
+    let mut pieces: Vec<[Vec2; 2]> = world.walk.footbridges.iter().map(|f| f.top).collect();
+    pieces.extend(world.walk.footbridge_links.iter().copied());
+    pieces.retain(|p| p[0].distance(p[1]) > 1e-3);
+    let mut by_point: std::collections::HashMap<(u32, u32), Vec<usize>> = std::collections::HashMap::new();
+    for (i, p) in pieces.iter().enumerate() {
+        for q in p {
+            by_point.entry(key(*q)).or_default().push(i);
+        }
+    }
+    let mut used = vec![false; pieces.len()];
+    let mut runs = Vec::new();
+    // Walk on from `at` along unused pieces until the run ends or closes.
+    let extend = |start: usize, from: Vec2, used: &mut Vec<bool>| -> (Vec<Vec2>, bool) {
+        let mut pts = vec![from];
+        let mut i = start;
+        let mut at = from;
+        loop {
+            used[i] = true;
+            let p = pieces[i];
+            let next = if key(p[0]) == key(at) { p[1] } else { p[0] };
+            pts.push(next);
+            at = next;
+            if key(at) == key(from) {
+                pts.pop();
+                return (pts, true);
+            }
+            let Some(&j) = by_point.get(&key(at)).and_then(|v| v.iter().find(|&&j| !used[j])) else { return (pts, false) };
+            i = j;
+        }
+    };
+    // Open runs first, from their free ends (points with one piece).
+    for (i, p) in pieces.iter().enumerate() {
+        for q in p {
+            if !used[i] && by_point.get(&key(*q)).is_some_and(|v| v.len() == 1) {
+                let (pts, closed) = extend(i, *q, &mut used);
+                runs.push((pts, closed));
+            }
+        }
+    }
+    for i in 0..pieces.len() {
+        if !used[i] {
+            let (pts, closed) = extend(i, pieces[i][0], &mut used);
+            runs.push((pts, closed));
+        }
+    }
+    runs
+}
+
+/// [walk-crossings] One walkway along `pts` at height `z`: the deck, its
+/// paving, glass balustrades with a steel top rail and posts, and a neon
+/// strip under each edge, all following the line round its corners.
+fn walkway(g: &mut Geometry, pts: &[Vec2], closed: bool, z: f32, w: f32, palette: &Palette) {
+    if pts.len() < 2 {
+        return;
+    }
+    let concrete = mul(palette.concrete(0), 0.9);
+    // A closed ring is drawn once round and back to its start, with the
+    // first corner repeated so the seam is mitred like the rest.
+    // A free end (a stair head) runs on half the deck's width, so the
+    // deck covers the head of the stairs.
+    let line: Vec<Vec2> = if closed {
+        let mut v = pts.to_vec();
+        v.push(pts[0]);
+        v.push(pts[1]);
+        v
+    } else {
+        let mut v = pts.to_vec();
+        let n = v.len();
+        let (d0, d1) = ((v[0] - v[1]).normalize_or_zero(), (v[n - 1] - v[n - 2]).normalize_or_zero());
+        v[0] += d0 * w * 0.5;
+        v[n - 1] += d1 * w * 0.5;
+        v
+    };
+    let pts = &line[..if closed { pts.len() } else { line.len() }];
+    let span = |v: &[Vec2]| if closed { v[1..].to_vec() } else { v.to_vec() };
+    let off_line = |o: f32| span(&crate::mesh::offset_path(&line, o));
+    let deck_l = off_line(-w * 0.5);
+    let deck_r = off_line(w * 0.5);
+    // The deck: its top, sides and underside between the two edges.
+    let up = |p: Vec2, y: f32| Vec3::new(p.x, y, p.y);
+    for i in 0..deck_l.len().saturating_sub(1) {
+        let (l0, l1, r0, r1) = (deck_l[i], deck_l[i + 1], deck_r[i], deck_r[i + 1]);
+        let c = rgba(concrete);
+        g.part(Surface::Concrete).quad_facing([up(l0, z), up(l1, z), up(r1, z), up(r0, z)], Vec3::Y, c);
+        g.part(Surface::Concrete).quad_facing([up(l0, z - DECK_DEPTH), up(r0, z - DECK_DEPTH), up(r1, z - DECK_DEPTH), up(l1, z - DECK_DEPTH)], -Vec3::Y, c);
+        let d = (l1 - l0).normalize_or_zero();
+        let out_l = Vec3::new(d.y, 0.0, -d.x);
+        g.part(Surface::Concrete).quad_facing([up(l0, z - DECK_DEPTH), up(l1, z - DECK_DEPTH), up(l1, z), up(l0, z)], out_l, c);
+        g.part(Surface::Concrete).quad_facing([up(r0, z - DECK_DEPTH), up(r1, z - DECK_DEPTH), up(r1, z), up(r0, z)], -out_l, c);
+    }
+    if !closed {
+        let n = deck_l.len();
+        let d0 = (pts[1] - pts[0]).normalize_or_zero();
+        let d1 = (pts[n - 1] - pts[n - 2]).normalize_or_zero();
+        let c = rgba(concrete);
+        g.part(Surface::Concrete).quad_facing([up(deck_l[0], z - DECK_DEPTH), up(deck_r[0], z - DECK_DEPTH), up(deck_r[0], z), up(deck_l[0], z)], Vec3::new(-d0.x, 0.0, -d0.y), c);
+        g.part(Surface::Concrete).quad_facing([up(deck_l[n - 1], z - DECK_DEPTH), up(deck_r[n - 1], z - DECK_DEPTH), up(deck_r[n - 1], z), up(deck_l[n - 1], z)], Vec3::new(d1.x, 0.0, d1.y), c);
+    }
+    // The paving on top.
+    let pave_l = off_line(-(w - 0.3) * 0.5);
+    let pave_r = off_line((w - 0.3) * 0.5);
+    for i in 0..pave_l.len().saturating_sub(1) {
+        g.part(Surface::Paving).quad_facing([up(pave_l[i], z + 0.02), up(pave_l[i + 1], z + 0.02), up(pave_r[i + 1], z + 0.02), up(pave_r[i], z + 0.02)], Vec3::Y, rgba(mul(concrete, 1.15)));
+    }
+    // Each edge: glass, the top rail, posts, the neon strip below.
+    for s in [-1.0f32, 1.0] {
+        let edge = off_line(s * (w * 0.5 - 0.06));
+        for i in 0..edge.len().saturating_sub(1) {
+            let (a, b) = (edge[i], edge[i + 1]);
+            let mid_y = z + RAIL * 0.5 + 0.05;
+            g.part(Surface::Glass).slab(up(a, mid_y), up(b, mid_y), 0.04, RAIL * 0.5, rgba(palette.footbridge_glass));
+            g.part(Surface::Metal).beam(up(a, z + RAIL), up(b, z + RAIL), 0.08, rgba(palette.steel));
+            g.part(Surface::Glow).beam(up(a, z - DECK_DEPTH + 0.05), up(b, z - DECK_DEPTH + 0.05), 0.07, rgba(palette.footbridge_neon));
+            let len = a.distance(b);
+            let posts = (len / 2.5).ceil().max(1.0) as usize;
+            for k in 0..posts {
+                let p = a.lerp(b, k as f32 / posts as f32);
+                g.part(Surface::Metal).beam(up(p, z), up(p, z + RAIL), 0.06, rgba(palette.steel));
+            }
+        }
+    }
 }
 
 #[cfg(test)]

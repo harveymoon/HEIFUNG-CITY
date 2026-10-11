@@ -563,7 +563,30 @@ impl World {
         }
         // On, up to the capacity.
         let memory = format!("Caught the {} bus.", self.transit.routes[bus.route].name);
-        let boarding = self.board_waiting(|leg| matches!(leg, TransitLeg::Bus { route, board, .. } if *route == bus.route && *board == stop_idx), transit::BUS_CAPACITY.saturating_sub(passengers.len()), fare, Flow::BusFares, Item::Route(bus.route), &memory);
+        let at_stop = |t: &TransitTrip| matches!(t.leg, TransitLeg::Bus { route, board, .. } if route == bus.route && board == stop_idx);
+        let mut boarding = self.board_waiting(|t| !t.bike && at_stop(t), transit::BUS_CAPACITY.saturating_sub(passengers.len()), fare, Flow::BusFares, Item::Route(bus.route), &memory);
+        // [bike-racks] Cyclists with their bikes, while the front rack has
+        // a place; the rest wait for the next bus.
+        let racked = passengers.iter().filter(|p| self.citizens.get(**p).and_then(|c| c.transit).is_some_and(|t| t.bike)).count();
+        let room = transit::BUS_CAPACITY.saturating_sub(passengers.len() + boarding.len()).min(transit::BUS_BIKE_RACK.saturating_sub(racked));
+        let mut racked_now = 0;
+        if room > 0 {
+            let with_bikes = self.board_waiting(|t| t.bike && at_stop(t), room, fare, Flow::BusFares, Item::Route(bus.route), &format!("Put my bike on the rack of the {} bus.", self.transit.routes[bus.route].name));
+            self.transit.bike_rack_rides_total += with_bikes.len() as u64;
+            racked_now = with_bikes.len();
+            boarding.extend(with_bikes);
+        }
+        // (Those just boarded still stand at the stop until seated below.)
+        let left = self.still_waiting(|t| t.bike && at_stop(t)).saturating_sub(racked_now);
+        if left > 0 {
+            self.transit.bike_rack_full_total += left as u64;
+            let name = self.transit.routes[bus.route].name.clone();
+            for (id, c) in self.citizens.iter_mut() {
+                if !boarding.contains(&id) && matches!(c.activity, Activity::Waiting { .. }) && c.transit.is_some_and(|t| t.bike && matches!(t.leg, TransitLeg::Bus { route, board, .. } if route == bus.route && board == stop_idx)) {
+                    c.thought = format!("The {name} bus's bike rack was full. Waiting for the next one.");
+                }
+            }
+        }
         for p in boarding {
             self.citizens[p].activity = Activity::Riding { bus: car_id };
             passengers.push(p);

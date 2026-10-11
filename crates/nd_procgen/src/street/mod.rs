@@ -79,6 +79,20 @@ pub fn crosswalk_closed(closed: &[Vec2], mid: Vec2) -> bool {
     closed.iter().any(|c| c.distance(mid) < 2.0)
 }
 
+/// [walk-crossings] Is the crosswalk over a junction's arm (leaving
+/// `centre` along `dir`, its zebra `setback` out) closed? Matched on the
+/// arm's line rather than by the exact spot: on a short or skewed arm the
+/// walk graph's crossing sits metres from where the zebra would be painted
+/// (its set-back shortened to fit), and the zebra stayed under a
+/// footbridge (G13, G20).
+pub fn arm_crosswalk_closed(closed: &[Vec2], centre: Vec2, dir: Vec2, setback: f32) -> bool {
+    closed.iter().any(|&c| {
+        let rel = c - centre;
+        let along = rel.dot(dir);
+        rel.perp_dot(dir).abs() < 2.5 && along > 0.0 && along < setback + 4.0
+    }) || crosswalk_closed(closed, centre + dir * setback)
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StreetLayer {
     #[default]

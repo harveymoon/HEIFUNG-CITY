@@ -555,8 +555,7 @@ fn apply(p: &mut UiCtx, act: Option<Act>) {
         Act::Finish => p.flags.message = crate::tools::line_edit::finish(w, p.tools),
         Act::NewLine => {
             let r = w.add_bus_route();
-            crate::tools::line_edit::start(p.tools, r);
-            p.tools.status = "New line: click streets on the map for its stops, round a loop.".into();
+            crate::tools::line_edit::start_new(p.tools, r);
         }
         Act::Slot(i) => {
             if let Some(e) = p.tools.line_edit.as_mut() {
