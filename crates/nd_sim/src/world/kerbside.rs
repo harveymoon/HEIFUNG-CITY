@@ -38,6 +38,56 @@ impl World {
         }
     }
 
+    /// [walk-crossings] Is `p` out in a street's carriageway (at grade, at
+    /// its level), off any pavement? Where nobody should stand about, sit
+    /// or lie down (Harvey's flag: a homeless woman sleeping rough lay in
+    /// the middle of a roundabout's lanes, and looked hurt).
+    pub fn in_carriageway(&self, p: Vec2) -> bool {
+        let mut inside = false;
+        for sid in self.roads.segments_near(p, 14.0) {
+            let s = self.roads.segment(sid);
+            if !s.is_street() || s.tunnel {
+                continue;
+            }
+            let (a, b) = self.roads.segment_points(sid);
+            let (t, q) = crate::geom::project_on_segment(p, a, b);
+            let d = q.distance(p);
+            if self.roads.segment_level(sid, t).abs() >= crate::roads::GRADE_SEPARATION {
+                continue;
+            }
+            // On another street's pavement (a corner, a footpath's end):
+            // fine where it is.
+            if !s.fronts_nothing() && d > s.half_width() && d < s.half_width() + crate::zoning::SIDEWALK + 0.5 {
+                return false;
+            }
+            if d < s.half_width() - 0.4 && (0.02..=0.98).contains(&t) {
+                inside = true;
+            }
+        }
+        inside
+    }
+
+    /// [walk-crossings] Anyone standing about outdoors in a street's lanes
+    /// (not hurt and waiting for the medics) steps onto the nearest
+    /// pavement. Returns how many were moved.
+    pub(super) fn clear_carriageways(&mut self) -> usize {
+        let down = self.down_on_street();
+        let out: Vec<CitizenId> = self
+            .citizens
+            .iter()
+            .filter(|(id, c)| c.inside.is_none() && matches!(c.activity, Activity::Idle) && !down.contains(id))
+            .filter(|(_, c)| self.in_carriageway(c.pos))
+            .map(|(id, _)| id)
+            .collect();
+        for &id in &out {
+            let to = self.pavement_near(self.citizens[id].pos);
+            let c = &mut self.citizens[id];
+            c.pos = to;
+            c.prev_pos = to;
+        }
+        out.len()
+    }
+
     /// The nearest place on foot to `p`: a node of the walk graph at
     /// ground level that is not itself out on a carriageway; `p` when there
     /// is none in reach.

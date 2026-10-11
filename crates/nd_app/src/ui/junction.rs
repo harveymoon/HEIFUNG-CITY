@@ -435,6 +435,7 @@ fn road_view(ui: &mut egui::Ui, w: &mut World, st: &mut EditorState, v: &Interse
             CrossingUpgrade::None => ("", egui::Color32::from_gray(200)),
             CrossingUpgrade::Button => ("B", egui::Color32::from_rgb(255, 200, 60)),
             CrossingUpgrade::Footbridge => ("F", CYAN),
+            CrossingUpgrade::Removed => ("X", egui::Color32::from_rgb(255, 90, 90)),
         };
         // A footbridge: its walkway and stairs, outlined.
         if let Some((top, foot, width)) = c.footbridge {
@@ -658,7 +659,7 @@ fn crossing_controls(ui: &mut egui::Ui, w: &mut World, st: &mut EditorState, c: 
     ui.label(egui::RichText::new(format!("Across {street}")).small());
     let mut pick = c.upgrade;
     ui.horizontal_wrapped(|ui| {
-        for u in [CrossingUpgrade::None, CrossingUpgrade::Button, CrossingUpgrade::Footbridge] {
+        for u in [CrossingUpgrade::None, CrossingUpgrade::Button, CrossingUpgrade::Footbridge, CrossingUpgrade::Removed] {
             let enabled = !(u == CrossingUpgrade::Button && c.signalised);
             let text = format!("{}{}", upgrade_label(u), if u.cost() > 0.0 && u != c.upgrade { format!(" ${:.0}", u.cost()) } else { String::new() });
             ui.add_enabled_ui(enabled, |ui| {
@@ -680,6 +681,14 @@ fn crossing_controls(ui: &mut egui::Ui, w: &mut World, st: &mut EditorState, c: 
     if c.signalised && c.upgrade == CrossingUpgrade::None {
         ui.label(egui::RichText::new("walk lights run with the junction's signals").small().weak());
     }
+    // [walk-crossings] Why a crossing is shut, or gone.
+    if c.upgrade == CrossingUpgrade::Removed {
+        ui.label(egui::RichText::new("no crossing here: people cross somewhere else").small().weak());
+    } else if c.ramp && c.upgrade == CrossingUpgrade::None && !c.signalised {
+        ui.label(egui::RichText::new("over a highway ramp: nobody crosses here without signals, a push button or a footbridge").small().weak());
+    } else if c.closed && c.upgrade == CrossingUpgrade::None {
+        ui.label(egui::RichText::new("replaced by the footbridge next to it").small().weak());
+    }
     // [footbridge] The crosswalk under a footbridge goes, unless kept.
     if c.upgrade == CrossingUpgrade::Footbridge {
         let mut keep = c.kept;
@@ -697,6 +706,7 @@ fn upgrade_label(u: CrossingUpgrade) -> &'static str {
         CrossingUpgrade::None => "Plain",
         CrossingUpgrade::Button => "Push button",
         CrossingUpgrade::Footbridge => "Footbridge",
+        CrossingUpgrade::Removed => "Remove crosswalk",
     }
 }
 

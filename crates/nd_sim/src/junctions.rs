@@ -158,6 +158,10 @@ pub enum CrossingUpgrade {
     /// (`CrossingRule::keep_crosswalk`), when walkers merely prefer the
     /// bridge.
     Footbridge,
+    /// [walk-crossings] No crossing here at all (the player shapes where
+    /// people cross): nothing painted, no walk light, and walkers route
+    /// round by another crossing. Jaywalkers keep away from it too.
+    Removed,
 }
 
 impl CrossingUpgrade {
@@ -166,6 +170,7 @@ impl CrossingUpgrade {
             CrossingUpgrade::None => "none",
             CrossingUpgrade::Button => "button",
             CrossingUpgrade::Footbridge => "footbridge",
+            CrossingUpgrade::Removed => "removed",
         }
     }
 
@@ -174,6 +179,7 @@ impl CrossingUpgrade {
             "none" | "plain" | "zebra" | "off" => Some(CrossingUpgrade::None),
             "button" | "push_button" | "push-button" | "pelican" | "signal" => Some(CrossingUpgrade::Button),
             "footbridge" | "bridge" | "overpass" | "skywalk" => Some(CrossingUpgrade::Footbridge),
+            "removed" | "remove" | "no_crossing" | "no-crossing" | "deny" | "closed" => Some(CrossingUpgrade::Removed),
             _ => None,
         }
     }
@@ -184,6 +190,7 @@ impl CrossingUpgrade {
             CrossingUpgrade::None => 0.0,
             CrossingUpgrade::Button => 1_500.0,
             CrossingUpgrade::Footbridge => 18_000.0,
+            CrossingUpgrade::Removed => 0.0,
         }
     }
 }

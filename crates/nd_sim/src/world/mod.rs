@@ -90,6 +90,8 @@ mod level_crossings;
 #[cfg(test)]
 mod level_crossing_tests;
 #[cfg(test)]
+mod walk_crossings_tests;
+#[cfg(test)]
 mod ped_highway_tests;
 mod pillars;
 pub use pillars::deck_half_width;

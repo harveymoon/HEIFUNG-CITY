@@ -33,11 +33,9 @@ impl WalkGraph {
         use crate::junctions::{FOOTBRIDGE_RUN, FOOTBRIDGE_WIDTH};
         let c = self.crossings.get(k as usize)?;
         roads.try_segment(c.segment)?;
-        let (s0, s1) = roads.segment_points(c.segment);
-        let dir = (s1 - s0).normalize_or_zero();
-        let along = Self::stair_dir(c, dir, roads);
-        let top = [self.nodes[c.a as usize].pos + along * (FOOTBRIDGE_WIDTH + 0.5), self.nodes[c.b as usize].pos + along * (FOOTBRIDGE_WIDTH + 0.5)];
-        Some((top, [top[0] + along * FOOTBRIDGE_RUN, top[1] + along * FOOTBRIDGE_RUN]))
+        let along = self.stair_dirs(c, roads);
+        let top = [self.nodes[c.a as usize].pos + along[0] * (FOOTBRIDGE_WIDTH + 0.5), self.nodes[c.b as usize].pos + along[1] * (FOOTBRIDGE_WIDTH + 0.5)];
+        Some((top, [top[0] + along[0] * FOOTBRIDGE_RUN, top[1] + along[1] * FOOTBRIDGE_RUN]))
     }
 
     /// The way a footbridge's stairs run: along the street away from the
@@ -49,10 +47,44 @@ impl WalkGraph {
         }
     }
 
+    /// [walk-crossings] The way each end's stairs run. Over a street, both
+    /// along it away from the junction (`stair_dir`). Over a slip road's
+    /// mouth, which has no pavement of its own, each end's stairs run down
+    /// the pavement of the street that end stands on, away from the
+    /// junction, and the deck spans the mouth from corner to corner.
+    pub(super) fn stair_dirs(&self, c: &Crossing, roads: &RoadNetwork) -> [Vec2; 2] {
+        let (s0, s1) = roads.segment_points(c.segment);
+        let dir = (s1 - s0).normalize_or_zero();
+        let along = Self::stair_dir(c, dir, roads);
+        let Some(n) = c.node.filter(|_| c.ramp) else { return [along; 2] };
+        let centre = roads.node(n).pos;
+        let end_dir = |p: Vec2| {
+            // The street whose pavement line the end lies on.
+            roads
+                .node(n)
+                .segments
+                .iter()
+                .copied()
+                .filter(|&s| {
+                    let sg = roads.segment(s);
+                    sg.alive && sg.is_street() && !sg.fronts_nothing()
+                })
+                .map(|s| {
+                    let away = roads.away_dir(s, n);
+                    let off = (p - centre).perp_dot(away).abs();
+                    let want = roads.segment(s).half_width() + crate::zoning::SIDEWALK * 0.55;
+                    ((off - want).abs() + if (p - centre).dot(away) < 0.0 { 50.0 } else { 0.0 }, s, away)
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
+                .map_or(along, |(_, _, away)| away)
+        };
+        [end_dir(self.nodes[c.a as usize].pos), end_dir(self.nodes[c.b as usize].pos)]
+    }
+
     /// A footbridge over crossing `k`: the walkway a little to one side of
     /// the crosswalk at `FOOTBRIDGE_LEVEL`, stairs from each end along the
     /// pavement (`along`), and the feet joined to the pavement both ways.
-    pub(super) fn add_footbridge(&mut self, k: u32, along: Vec2) {
+    pub(super) fn add_footbridge(&mut self, k: u32, along: [Vec2; 2]) {
         use crate::junctions::{FOOTBRIDGE_LEVEL, FOOTBRIDGE_RUN, FOOTBRIDGE_WIDTH};
         let c = self.crossings[k as usize].clone();
         let ends = [c.a, c.b];
@@ -61,6 +93,7 @@ impl WalkGraph {
         let mut feet = [Vec2::ZERO; 2];
         let mut joined = [false; 2];
         for (i, &end) in ends.iter().enumerate() {
+            let along = along[i];
             let p = self.nodes[end as usize].pos;
             let top = p + along * (FOOTBRIDGE_WIDTH + 0.5);
             let foot = top + along * FOOTBRIDGE_RUN;
@@ -134,6 +167,15 @@ impl WalkGraph {
         self.adj[a as usize].push(WalkEdge { to: b, len, interior: false, park: false, cross: NO_CROSSING, raised: true, gate: false });
         self.adj[b as usize].push(WalkEdge { to: a, len, interior: false, park: false, cross: NO_CROSSING, raised: true, gate: false });
         self.raised.push((lo, hi));
+    }
+
+    /// [walk-crossings] The crossing whose footbridge's deck runs from `a`
+    /// to `b` (its two tops, either way round, exactly), if any.
+    pub fn footbridge_deck(&self, a: Vec2, b: Vec2) -> Option<u32> {
+        if self.level_at_node(a) == 0.0 || self.level_at_node(b) == 0.0 {
+            return None;
+        }
+        self.footbridges.iter().find(|f| (f.top[0] == a && f.top[1] == b) || (f.top[0] == b && f.top[1] == a)).map(|f| f.crossing)
     }
 
     /// [tools] Height above the ground of a walk node at exactly `p` (a

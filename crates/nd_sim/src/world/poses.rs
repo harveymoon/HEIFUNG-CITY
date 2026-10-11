@@ -48,7 +48,12 @@ impl World {
         }
         match c.activity {
             Activity::Sitting { .. } => Pose::Bench,
-            Activity::Idle if self.is_homeless(id) => homeless_pose(c.seed, self.clock.tick),
+            // [walk-crossings] Never lying or sitting in a street's lanes.
+            Activity::Idle if self.is_homeless(id) => match homeless_pose(c.seed, self.clock.tick) {
+                Pose::Standing => Pose::Standing,
+                _ if self.in_carriageway(c.pos) => Pose::Standing,
+                p => p,
+            },
             _ => Pose::Standing,
         }
     }

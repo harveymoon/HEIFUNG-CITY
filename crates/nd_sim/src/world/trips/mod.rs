@@ -49,7 +49,9 @@ pub struct TripQuery {
 pub enum ModePlan {
     Walk,
     Bike,
-    Bus { route: RouteId, board: usize, alight: usize, stop: Vec2 },
+    /// A bus ride; [bike-racks] `bike`: a cyclist riding to the stop and
+    /// putting the bike on the bus's rack.
+    Bus { route: RouteId, board: usize, alight: usize, stop: Vec2, bike: bool },
     Train { board: BuildingId, alight: BuildingId, stop: Vec2 },
     /// [subway] A metro ride on one line, walking to `stop` (the entrance).
     Subway { line: crate::subway::MetroLineId, board: BuildingId, alight: BuildingId, stop: Vec2 },

@@ -25,6 +25,9 @@ const ROW: u32 = 3;
 /// [services] Walkers on a crossing with lights and sirens coming hurry clear
 /// at this many times their pace.
 const SIREN_HURRY: f32 = 2.5;
+/// [walk-crossings] A jaywalker waiting this many ticks at the kerb for a
+/// gap in the traffic gives up and goes round by a crossing.
+const JAY_GIVE_UP: u64 = 5;
 
 /// Scratch for one tick of walking.
 pub(super) struct Feet {
@@ -89,6 +92,12 @@ impl World {
         if self.peds.buttons_key != self.walk.version {
             self.peds.buttons.clear();
             self.peds.buttons_key = self.walk.version;
+        }
+        // [walk-crossings] The survey counts by crossing index: a new graph
+        // starts it afresh.
+        if self.peds.uses_key != self.walk.version {
+            self.peds.uses.clear();
+            self.peds.uses_key = self.walk.version;
         }
         Feet { grid, riders_waiting: 0, queue: HashMap::new(), occupied: Vec::new(), calls, waiting: 0, presses: Vec::new() }
     }
@@ -181,7 +190,20 @@ impl World {
             .map(|c| {
                 // [footbridge] A crosswalk its footbridge replaced has no
                 // walk light (nobody calls the phase) and no stop line.
-                let signal = c.node.filter(|_| c.kind == CrossingKind::Junction && !c.closed).and_then(|n| {
+                // [walk-crossings] A slip road's mouth has walk lights when
+                // its junction has signals (and no button of its own), and
+                // only an off-ramp's: its traffic waits at the red while the
+                // walkers cross. Traffic turns into an on-ramp from every
+                // approach, on every green, so its mouth has no safe walk
+                // light (G11: walkers there held up the whole junction).
+                let off_ramp_only = |n: NodeId| {
+                    roads.try_segment(c.segment).is_some_and(|sg| {
+                        let (arriving, leaving) = if sg.b == n { (sg.lanes_fwd, sg.lanes_bwd) } else { (sg.lanes_bwd, sg.lanes_fwd) };
+                        arriving > 0 && leaving == 0
+                    })
+                };
+                let lit = c.kind == CrossingKind::Junction || (c.ramp && !c.button && c.node.is_some_and(off_ramp_only));
+                let signal = c.node.filter(|_| lit && !c.closed).and_then(|n| {
                     let k = *net.node_intersection.get(n.0 as usize)?;
                     let inter = net.intersections.get(k)?;
                     if !inter.signalized || roads.nodes.len() <= n.0 as usize {
@@ -205,6 +227,15 @@ impl World {
                 CrossingInfo { signal, lanes }
             })
             .collect();
+        // [walk-crossings] A slip road's mouth is open to walkers only as a
+        // proper crossing: with the junction's walk lights (then marked, so
+        // drivers turning in give way), a push button or a footbridge.
+        for (c, info) in self.walk.crossings.iter_mut().zip(&infos) {
+            if c.ramp && !c.closed && !c.button {
+                c.shut = info.signal.is_none();
+                c.kind = if c.shut { CrossingKind::Informal } else { CrossingKind::Junction };
+            }
+        }
         self.peds.crossings = infos;
         let nodes = &self.walk.nodes;
         self.peds.cross_grid = crate::geom::Grid::new(
@@ -335,6 +366,26 @@ impl World {
         self.walk.route_with(from, to, jay)
     }
 
+    /// [walk-crossings] Plan the rest of a walk again, lawfully, from the
+    /// kerb it stands at (`path[idx - 1]`) to where it was going: the
+    /// crossing ahead was closed under it (a footbridge or the player took
+    /// it away) or a jaywalker tired of waiting for a gap. True when a new
+    /// way was found; `path` then starts at that kerb (`idx` 0).
+    fn replan_walk(&self, path: &mut Vec<Vec2>, idx: &mut usize) -> bool {
+        if *idx == 0 {
+            return false;
+        }
+        let from = path[*idx - 1];
+        let Some(&dest) = path.last() else { return false };
+        let Some((mut pts, _)) = self.walk.route(from, dest) else { return false };
+        if pts.last().is_none_or(|p| p.distance(dest) > 1e-3) {
+            pts.push(dest);
+        }
+        *path = pts;
+        *idx = 0;
+        true
+    }
+
     /// May this walker step onto crossing `cr` now? `Some(against)` to go
     /// (`against`: against the light, or mid-block), `None` to wait.
     fn may_cross(&self, id: CitizenId, w: &Walker, cr: u32, since: u64, late: bool) -> Option<bool> {
@@ -441,6 +492,32 @@ impl World {
                                     tick
                                 }
                             };
+                            // [walk-crossings] The crossing ahead is gone (a
+                            // footbridge replaced it, the player removed it,
+                            // a slip road's mouth lost its walk lights), or a
+                            // jaywalker has stood long enough waiting for a
+                            // gap: plan the rest of the way again, over the
+                            // bridge or round by a crossing (Harvey's flag:
+                            // people with routes from before the footbridge
+                            // bunched at the kerb and ran across together).
+                            let c = &self.walk.crossings[cr as usize];
+                            let gone = c.closed || c.shut;
+                            let tired = c.kind == CrossingKind::Jay && tick.saturating_sub(since) >= JAY_GIVE_UP;
+                            if (gone || tired) && self.replan_walk(path, idx) {
+                                if gone {
+                                    self.peds.replans_total += 1;
+                                    self.peds.uses.entry(cr).or_default().replans += 1;
+                                } else {
+                                    self.peds.jay_give_ups_total += 1;
+                                }
+                                w.key = path_key(path);
+                                w.crossing = None;
+                                w.waiting = None;
+                                w.against = false;
+                                w.room_leg = usize::MAX;
+                                leg_start = w.base;
+                                continue;
+                            }
                             // Lights and sirens coming: everyone stays on the kerb.
                             let cross = if self.siren_at_crossing(cr) { None } else { self.may_cross(id, &w, cr, since, late) };
                             match cross {
@@ -452,6 +529,9 @@ impl World {
                                         self.peds.jaywalkers_today += 1;
                                         self.peds.jaywalks_total += 1;
                                     }
+                                    let u = self.peds.uses.entry(cr).or_default();
+                                    u.at_grade += 1;
+                                    u.against += against as u32;
                                 }
                                 None => {
                                     w.waiting = Some((cr, *idx, since));
@@ -488,6 +568,12 @@ impl World {
                 break;
             }
             if d <= budget {
+                // [walk-crossings] Over a footbridge's deck: counted.
+                if *idx > 0 {
+                    if let Some(k) = self.walk.footbridge_deck(path[*idx - 1], target) {
+                        self.peds.uses.entry(k).or_default().bridge += 1;
+                    }
+                }
                 w.base = target;
                 leg_start = target;
                 *idx += 1;
