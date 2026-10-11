@@ -534,11 +534,11 @@ Sources: Harvey's lists docs/playtest/todo_2026-10-10.md and todo_2026-10-11.md 
 - [ ] Stadium game days bring crowds, traffic and a lively look (G18)
 
 ## 5. Buildings, info and UI polish
-- [ ] Fishing port description: "adds to the local fishing economy, a dock for the fishing fleet" (not "links the city to elsewhere") (T)
-- [ ] Buildings being demolished or under construction have no lights on; demolition shows X's on the roof and construction siding (T)
-- [ ] Trees poking through roads/highways — no trees under other roads (G15); homeless tents left on a new road built over their vacant lot (G16)
-- [ ] Lines panel can be resized wider (T); Shift+click inserts a stop, plain clicks add in sequence while creating (T)
-- [ ] Crime layer also highlights police stations (T)
+- [x] Fishing port description: "adds to the local fishing economy, a dock for the fishing fleet" (not "links the city to elsewhere") (T) → DONE [fix/buildings-ui]: inspector "about" text per placed kind (ports, ferry, marinas, fishing ports, stations, freight yard, cargo hub, car parks, depot) and per business kind (farms and sheds of the food chain no longer "corner shops"); sites say "coming down" / "going up"
+- [x] Buildings being demolished or under construction have no lights on; demolition shows X's on the roof and construction siding (T) → DONE [fix/buildings-ui]: window lights off for any building not operating; a demolition's old building is drawn stripped (no windows lit, signs/neon dead), red X's on its roof (broken top once cut), debris-netting siding on a light scaffold, open on the machine's side
+- [x] Trees poking through roads/highways — no trees under other roads (G15); homeless tents left on a new road built over their vacant lot (G16) → DONE [fix/buildings-ui]: street trees, lamps and poles skip spots under another way's deck (232 foliage vertices through decks in Harvey's day-25 save → 0); camps on a way move on right after the road works (and hourly), their households joining or pitching elsewhere; new camp spots never on a way
+- [x] Lines panel can be resized wider (T); Shift+click inserts a stop, plain clicks add in sequence while creating (T) → DONE [fix/buildings-ui]: Lines window max width = the map's; a new line (street click or New bus line) appends stops in click order, Shift+click inserts where it belongs; editing an existing line unchanged (remote `bus new_line`, `click {shift}`)
+- [x] Crime layer also highlights police stations (T) → DONE [fix/buildings-ui]: shield markers and lot outlines on every police station, and the ground they cover (by road) outlined in police blue
 
 ## 6. New features (wave 2)
 - [ ] Gas prices, fuel stations, EV pressure, fuel tax

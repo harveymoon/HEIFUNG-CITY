@@ -456,3 +456,28 @@ fn a_lane_count_joint_at_a_bend_does_not_overlap() {
         }
     }
 }
+
+/// [fix/buildings-ui] G15: no street trees, lamps or poles stand under a
+/// viaduct crossing the street: they would poke up through its deck. Away
+/// from the viaduct the dear street keeps its trees.
+#[test]
+fn no_trees_under_a_viaduct() {
+    let mut roads = RoadNetwork::default();
+    roads.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
+    let first_deck = roads.nodes.len();
+    roads.add_polyline_levels(&[Vec2::new(0.0, -200.0), Vec2::new(0.0, -60.0), Vec2::new(0.0, 60.0), Vec2::new(0.0, 200.0)], &[8.0; 4], 2, 2, nd_sim::roads::RoadKind::Street);
+    // The street at the ground, the highway 8 m over it.
+    let heights: Vec<f32> = (0..roads.nodes.len()).map(|k| if k >= first_deck { 8.0 } else { 0.0 }).collect();
+    let mut net = LaneNetwork::default();
+    net.rebuild(&roads);
+    let deck = roads.segments_in_box(Vec2::new(-1.0, -1.0), Vec2::new(1.0, 1.0)).find(|&s| roads.segment(s).lanes_fwd == 2).expect("the deck over the street");
+    let reach = roads.segment(deck).half_width();
+    assert!(junction::under_deck(&roads, &heights, &[], Vec2::new(reach - 1.0, 9.0), 0.0, 1.0, 12.0), "beside the street, under the deck");
+    assert!(!junction::under_deck(&roads, &heights, &[], Vec2::new(60.0, 9.0), 0.0, 1.0, 12.0), "out in the open");
+    assert!(!junction::under_deck(&roads, &heights, &[], Vec2::new(reach - 1.0, 9.0), 8.0, 1.0, 12.0), "on the deck itself");
+    let g = draw(&roads, &net, &heights);
+    let leaves = g.get(Foliage);
+    let under: Vec<[f32; 3]> = leaves.positions.iter().copied().filter(|p| p[0].abs() < reach + 2.0 && p[1] < 8.0 && p[2].abs() < 30.0).collect();
+    assert!(under.is_empty(), "foliage under the viaduct at {:?}", &under[..under.len().min(4)]);
+    assert!(leaves.positions.iter().any(|p| p[0].abs() > 40.0 && p[2].abs() < 15.0), "the street keeps its trees away from the viaduct");
+}

@@ -365,6 +365,43 @@ fn demolition_sites_stay_on_their_lot() {
 "));
 }
 
+/// [fix/buildings-ui] A building being stripped out for demolition has
+/// its power off: no lit windows, signs or neon left on it (only the site's
+/// own lamps on the hoarding), a red X on its roof, and once the strip-out
+/// is under way its siding (scaffold sheeted in netting) goes up round it.
+#[test]
+fn demolition_sites_are_dark_and_marked() {
+    let rules = BuildingRules::default();
+    let pal = Palette::default();
+    let (mut lit_before, mut crossed, mut sided, mut n) = (0, 0, 0, 0);
+    for lu in [LandUse::Residential, LandUse::Commercial, LandUse::Entertainment] {
+        for (li, lot) in many_lots(lu).iter().enumerate().take(8) {
+            let seed = 7 + li as u64;
+            let live = generate_building(lot, lu, 9, Tier::Mid, 1.0, seed, &rules, &pal, &Extras { dynamic_lights: true, ..Extras::default() });
+            let bright_high = |g: &Geometry| g.parts[Surface::Glow.index()].positions.iter().zip(&g.parts[Surface::Glow.index()].colors).filter(|(p, c)| p[1] > 8.0 && c[0] + c[1] + c[2] > 0.6).count();
+            if bright_high(&live) > 0 {
+                lit_before += 1;
+            }
+            let g = generate_building(lot, lu, 9, Tier::Mid, 1.0, seed, &rules, &pal, &Extras { demolition: Some(0.02), dynamic_lights: true, ..Extras::default() });
+            assert_eq!(bright_high(&g), 0, "{lu:?} lot {li}: lights left on the building coming down");
+            let marked = g.parts[Surface::Glow.index()].colors.iter().filter(|c| c[3] >= WINDOW_LIGHT_MARK).count();
+            assert_eq!(marked, 0, "{lu:?} lot {li}: window lights left for the renderer to switch on");
+            let red = |g: &Geometry| g.parts[Surface::Matte.index()].positions.iter().zip(&g.parts[Surface::Matte.index()].colors).any(|(p, c)| p[1] > 4.0 && (c[0] - 0.85).abs() < 0.01 && c[1] < 0.1);
+            if red(&g) {
+                crossed += 1;
+            }
+            let later = generate_building(lot, lu, 9, Tier::Mid, 1.0, seed, &rules, &pal, &Extras { demolition: Some(0.07), ..Extras::default() });
+            if later.parts[Surface::Tarp.index()].positions.iter().any(|p| p[1] > 10.0) {
+                sided += 1;
+            }
+            n += 1;
+        }
+    }
+    assert!(lit_before * 2 > n, "the finished buildings were lit ({lit_before} of {n})");
+    assert!(crossed * 4 > n * 3, "X on the roof of {crossed} of {n}");
+    assert!(sided * 2 > n, "siding on {sided} of {n}");
+}
+
 /// A building cut part way down keeps no triangle above the cut, and
 /// what is below is untouched.
 #[test]

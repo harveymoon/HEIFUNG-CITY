@@ -273,6 +273,11 @@ pub struct HighlightView {
     pub summary: Summary,
     /// Share of homes covered (when one home-serving family is shown).
     pub homes_covered: Option<f32>,
+    /// [fix/buildings-ui] Areas drawn as their outline instead of tinted
+    /// lots (the Crime layer's police: the heat map stays readable).
+    pub outline_only: bool,
+    /// The outline of the areas: segments on the ground, and their family.
+    pub outline: Vec<(SVec2, SVec2, Family)>,
 }
 
 /// The selection and its worked-out view.
@@ -293,6 +298,102 @@ pub struct BuildHighlight {
     /// shows in build mode (a car park's spaces, a plant's output, a
     /// station's reach).
     pub inspected: Option<BuildingId>,
+    /// [fix/buildings-ui] The view is the Crime layer's police stations.
+    pub police: bool,
+}
+
+/// [fix/buildings-ui] The Crime layer's police: every station marked with
+/// its shield and its lot outlined, and the ground they reach by road (the
+/// lots they cover, `COVERED` or better) drawn as one outline.
+pub fn police_view(w: &World) -> HighlightView {
+    let police = norm(Placeable::Service(ServiceKind::Police, nd_sim::Tier::Mid));
+    let sel = HighlightSel { cat: Cat::Services, sub: None, focus: Some(police) };
+    let found = matching(w, &[police]);
+    let mut v = compute_from(w, &sel, &[police], &[police], &found);
+    let covered: Vec<LotId> = v.tints.iter().filter(|t| t.family == Family::Police && t.cov >= COVERED).map(|t| t.lot).collect();
+    v.outline = reach_outline(w, &covered, REACH_GROW).into_iter().map(|(a, b)| (a, b, Family::Police)).collect();
+    v.tints.clear();
+    v.uncovered.clear();
+    v.uncovered_zoned.clear();
+    v.outline_only = true;
+    v
+}
+
+/// How far the covered lots are grown when outlining them: across a
+/// street, so the lots either side join into one area.
+const REACH_GROW: f32 = 9.0;
+
+/// The outline of the lots `lots` grown by `grow` metres, as segments
+/// (marching squares on a 6 m grid; a corner is inside when it lies in a
+/// lot or within `grow` of one).
+pub fn reach_outline(w: &World, lots: &[LotId], grow: f32) -> Vec<(SVec2, SVec2)> {
+    const CELL: f32 = 6.0;
+    let polys: Vec<&[SVec2]> = lots.iter().filter_map(|l| w.lots.get(*l)).map(|l| l.polygon.as_slice()).filter(|p| p.len() >= 3).collect();
+    if polys.is_empty() {
+        return Vec::new();
+    }
+    let pad = SVec2::splat(grow + CELL * 2.0);
+    let (mut lo, mut hi) = (SVec2::splat(f32::MAX), SVec2::splat(f32::MIN));
+    for p in &polys {
+        for q in p.iter() {
+            lo = lo.min(*q);
+            hi = hi.max(*q);
+        }
+    }
+    let (lo, hi) = (lo - pad, hi + pad);
+    let nx = ((hi.x - lo.x) / CELL).ceil() as usize + 1;
+    let ny = ((hi.y - lo.y) / CELL).ceil() as usize + 1;
+    if nx * ny > 6_000_000 {
+        return Vec::new();
+    }
+    let at = |i: usize, j: usize| lo + SVec2::new(i as f32 * CELL, j as f32 * CELL);
+    let mut inside = vec![false; nx * ny];
+    for poly in &polys {
+        let (mut a, mut b) = (SVec2::splat(f32::MAX), SVec2::splat(f32::MIN));
+        for q in poly.iter() {
+            a = a.min(*q);
+            b = b.max(*q);
+        }
+        let (i0, j0) = (((a.x - grow - lo.x) / CELL).floor().max(0.0) as usize, ((a.y - grow - lo.y) / CELL).floor().max(0.0) as usize);
+        let (i1, j1) = ((((b.x + grow - lo.x) / CELL).ceil() as usize).min(nx - 1), (((b.y + grow - lo.y) / CELL).ceil() as usize).min(ny - 1));
+        for j in j0..=j1 {
+            for i in i0..=i1 {
+                let k = j * nx + i;
+                if inside[k] {
+                    continue;
+                }
+                let p = at(i, j);
+                inside[k] = nd_sim::zoning::point_in_polygon(p, poly) || (0..poly.len()).any(|e| nd_sim::roads::project_on_segment(p, poly[e], poly[(e + 1) % poly.len()]).1.distance(p) < grow);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for j in 0..ny - 1 {
+        for i in 0..nx - 1 {
+            // Corners anticlockwise from the bottom left, and the edge
+            // midpoints between them (bottom, right, top, left).
+            let c = [inside[j * nx + i], inside[j * nx + i + 1], inside[(j + 1) * nx + i + 1], inside[(j + 1) * nx + i]];
+            let case = c.iter().enumerate().fold(0u8, |m, (k, &v)| m | ((v as u8) << k));
+            if case == 0 || case == 15 {
+                continue;
+            }
+            let o = at(i, j);
+            let h = CELL * 0.5;
+            let mid = [o + SVec2::new(h, 0.0), o + SVec2::new(CELL, h), o + SVec2::new(h, CELL), o + SVec2::new(0.0, h)];
+            // Edges whose corners differ, in order round the cell; a saddle
+            // (two of them across) joins them pairwise.
+            let crossing: Vec<usize> = (0..4).filter(|&e| c[e] != c[(e + 1) % 4]).collect();
+            match crossing.as_slice() {
+                [a, b] => out.push((mid[*a], mid[*b])),
+                [a, b, cc, d] => {
+                    out.push((mid[*a], mid[*b]));
+                    out.push((mid[*cc], mid[*d]));
+                }
+                _ => {}
+            }
+        }
+    }
+    out
 }
 
 /// [feat/pt-ux] What build mode would show for building `id` alone: its
@@ -563,7 +664,14 @@ fn compute_from(w: &World, sel: &HighlightSel, all: &[Placeable], area_kinds: &[
 /// Seconds between checks for a change.
 const CHECK_EVERY: f64 = 0.5;
 
-fn refresh(sim: Res<Sim>, mut hl: ResMut<BuildHighlight>, time: Res<Time>, selection: Res<crate::selection::Selection>, tools: Res<crate::tools::ToolState>) {
+fn refresh(sim: Res<Sim>, mut hl: ResMut<BuildHighlight>, time: Res<Time>, selection: Res<crate::selection::Selection>, tools: Res<crate::tools::ToolState>, overlays: Res<crate::render::Overlays>) {
+    let crime = overlays.crime && !overlays.map;
+    if hl.police && (hl.sel.is_some() || !crime || matches!(*selection, crate::selection::Selection::Building(_))) {
+        hl.police = false;
+        hl.key = None;
+        hl.view = None;
+        hl.version += 1;
+    }
     let Some(sel) = hl.sel else {
         // [feat/pt-ux] No Build window section: a selected building shows
         // what its kind shows in build mode (not underground).
@@ -585,6 +693,29 @@ fn refresh(sim: Res<Sim>, mut hl: ResMut<BuildHighlight>, time: Res<Time>, selec
             hl.inspected = Some(id);
             hl.key = Some(key);
             hl.view = inspected_view(&sim.world, id).map(Arc::new);
+            hl.version += 1;
+            return;
+        }
+        // [fix/buildings-ui] The Crime layer: the police stations and the
+        // ground they cover.
+        if crime {
+            let now = time.elapsed_secs_f64();
+            if hl.police && now - hl.checked < CHECK_EVERY && !sim.full_rebuild {
+                return;
+            }
+            hl.checked = now;
+            hl.checked_sel = None;
+            hl.inspected = None;
+            let w = &sim.world;
+            let police = norm(Placeable::Service(ServiceKind::Police, nd_sim::Tier::Mid));
+            let sel = HighlightSel { cat: Cat::Services, sub: None, focus: Some(police) };
+            let key = signature(w, &sel, &matching(w, &[police]));
+            if hl.police && hl.key == Some(key) && !sim.full_rebuild {
+                return;
+            }
+            hl.police = true;
+            hl.key = Some(key);
+            hl.view = Some(Arc::new(police_view(w)));
             hl.version += 1;
             return;
         }
@@ -635,6 +766,9 @@ fn wall_height(distance: f32) -> f32 {
 /// in red.
 fn area_mesh(w: &World, v: &HighlightView) -> MeshData {
     let mut m = MeshData::default();
+    if v.outline_only {
+        return m;
+    }
     for t in &v.tints {
         let Some(lot) = w.lots.get(t.lot) else { continue };
         let c = t.family.linear();
@@ -721,6 +855,12 @@ impl MeshOverlay for HighlightMeshes {
 fn rings(mut gizmos: Gizmos, hl: Res<BuildHighlight>, sim: Res<Sim>) {
     let Some(v) = &hl.view else { return };
     let w = &sim.world;
+    // [fix/buildings-ui] An area's outline.
+    for (a, b, fam) in &v.outline {
+        let [r, g, bb] = fam.linear();
+        let col = Color::linear_rgb(r * 2.5, g * 2.5, bb * 2.5);
+        gizmos.line(Vec3::new(a.x, w.surface_height(*a) + 1.0, a.y), Vec3::new(b.x, w.surface_height(*b) + 1.0, b.y), col);
+    }
     for (c, r, fam) in &v.rings {
         let [a, b, cc] = fam.linear();
         let col = Color::linear_rgb(a * 2.5, b * 2.5, cc * 2.5);
