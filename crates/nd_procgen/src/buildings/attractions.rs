@@ -1404,10 +1404,17 @@ pub fn concert_hall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let sails = 3;
     for k in 0..sails {
         let scale = 1.0 - 0.2 * k as f32;
-        let bw = (short * 0.46 * scale).max(3.0);
-        let bd = (long * 0.16 * scale).max(2.0);
+        let mut bw = short * 0.46 * scale;
+        let bd = long * 0.16 * scale;
         let hgt = (short * 0.8 * scale).clamp(8.0, 30.0);
         let c0 = mid + fwd * (long * 0.3 - k as f32 * long * 0.27);
+        // Narrowed until its corners and its bulge stand on the lot.
+        while bw > 2.0 && ![c0 + side * bw, c0 - side * bw, c0 - fwd * (bd * 1.5), c0 + fwd * (bd * 0.5)].iter().all(|p| fits(c, *p, 0.3, 0.4)) {
+            bw *= 0.85;
+        }
+        if bw <= 2.0 || bd < 1.0 {
+            continue;
+        }
         shell(g, c, c0, fwd, side, bw, bd, hgt, ph + 4.0, [NEON_AMBER, NEON_PINK, NEON_CYAN][k % 3]);
         // A smaller shell back to back, as at the harbour.
         if k == 0 {
