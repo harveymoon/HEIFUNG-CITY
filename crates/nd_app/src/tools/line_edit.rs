@@ -6,7 +6,11 @@
 //! While editing, a click
 //! - on a street adds a stop where it belongs along the loop (between the
 //!   two stops whose leg it lies on, not on the end; `bus_edit::insert_index`),
-//!   or at the slot picked with a "+" in the Lines window's diagram;
+//!   or at the slot picked with a "+" in the Lines window's diagram.
+//!   [fix/buildings-ui] While a new line is being drawn, plain clicks add
+//!   stops in the order clicked (each after the last) and Shift+click
+//!   inserts one where it belongs; editing an existing line keeps inserting
+//!   where it belongs;
 //! - on one of the line's own stops picks it up to drag it;
 //! - on another line's stop gives this line a stop at that same kerb (the
 //!   selection does not jump to the other line);
@@ -31,6 +35,9 @@ pub struct LineEdit {
     pub slot: Option<usize>,
     /// The tool to go back to when editing ends.
     pub back_to: Tool,
+    /// [fix/buildings-ui] A new line being drawn: plain clicks append stops
+    /// in order (Shift+click inserts where it belongs).
+    pub creating: bool,
 }
 
 /// What is under the pointer, as editing sees it.
@@ -63,16 +70,26 @@ pub enum EditOp {
 /// edited instead and the tool to go back to is kept.
 pub fn begin(current: Option<LineEdit>, route: RouteId, tool: Tool) -> LineEdit {
     let back_to = current.map_or(if tool == Tool::Transit { Tool::Inspect } else { tool }, |e| e.back_to);
-    LineEdit { route, slot: None, back_to }
+    LineEdit { route, slot: None, back_to, creating: false }
 }
 
-/// What a click on `hit` does.
-pub fn click(edit: &LineEdit, hit: Hit) -> EditOp {
+/// Index meaning "after the last stop" (`put_bus_stop` clamps it).
+pub const APPEND: usize = usize::MAX;
+
+/// Where a new stop goes: the picked slot; else, drawing a new line, after
+/// the last stop unless `shift` (then, like editing, where it belongs:
+/// `None`).
+pub fn target(edit: &LineEdit, shift: bool) -> Option<usize> {
+    edit.slot.or((edit.creating && !shift).then_some(APPEND))
+}
+
+/// What a click on `hit` does (`shift`: Shift held).
+pub fn click(edit: &LineEdit, hit: Hit, shift: bool) -> EditOp {
     match hit {
         Hit::Own(i) => EditOp::Grab(i),
         Hit::Other(r, i) if r == edit.route => EditOp::Grab(i),
-        Hit::Other(r, i) => EditOp::Share { from: (r, i), at: edit.slot },
-        Hit::Street(p) => EditOp::Insert { p, at: edit.slot },
+        Hit::Other(r, i) => EditOp::Share { from: (r, i), at: target(edit, shift) },
+        Hit::Street(p) => EditOp::Insert { p, at: target(edit, shift) },
         Hit::Nothing => EditOp::Miss,
     }
 }
@@ -127,7 +144,7 @@ pub fn hit_at(w: &nd_sim::World, route: RouteId, p: SVec2) -> Hit {
 
 /// Where a stop for `hit` would go in the edited line: its point and the
 /// index it would take (for the map's preview of the insert).
-pub fn preview(w: &nd_sim::World, edit: &LineEdit, hit: Hit) -> Option<(SVec2, usize)> {
+pub fn preview(w: &nd_sim::World, edit: &LineEdit, hit: Hit, shift: bool) -> Option<(SVec2, usize)> {
     let r = w.transit.routes.get(edit.route)?;
     let at = match hit {
         Hit::Other(o, i) if o != edit.route => w.transit.routes.get(o)?.stops.get(i)?.pos,
@@ -135,7 +152,7 @@ pub fn preview(w: &nd_sim::World, edit: &LineEdit, hit: Hit) -> Option<(SVec2, u
         _ => return None,
     };
     let stops: Vec<SVec2> = r.stops.iter().map(|s| s.pos).collect();
-    let idx = edit.slot.map_or_else(|| nd_sim::world::bus_edit::insert_index(&stops, &r.legs, at), |s| s.min(stops.len()));
+    let idx = target(edit, shift).map_or_else(|| nd_sim::world::bus_edit::insert_index(&stops, &r.legs, at), |s| s.min(stops.len()));
     Some((at, idx))
 }
 
@@ -148,6 +165,16 @@ pub fn start(tools: &mut ToolState, route: RouteId) {
     tools.stop_sel = None;
     tools.stop_drag = None;
     tools.status = "Editing the line: click streets to add stops (they go in where they belong along the loop), drag a stop to move it, right-click one to remove it, click another line's stop to share it.".into();
+}
+
+/// [fix/buildings-ui] Start drawing the new line `route`: clicks add its
+/// stops in order.
+pub fn start_new(tools: &mut ToolState, route: RouteId) {
+    start(tools, route);
+    if let Some(e) = tools.line_edit.as_mut() {
+        e.creating = true;
+    }
+    tools.status = "New line: click streets for its stops in order, round the loop; Shift+click inserts a stop where it belongs. Drag a stop to move it, right-click to remove it; Enter finishes.".into();
 }
 
 /// Stop editing: back to the tool editing started from. A line left with
@@ -172,7 +199,7 @@ pub fn finish(w: &mut nd_sim::World, tools: &mut ToolState) -> String {
 
 /// The edit-mode input of the Buses tool (see the module docs). `press`
 /// and `release` are the left button; `remove` a right-click or Delete.
-pub fn input(w: &mut nd_sim::World, tools: &mut ToolState, ground: Option<SVec2>, press: bool, release: bool, remove: bool) {
+pub fn input(w: &mut nd_sim::World, tools: &mut ToolState, ground: Option<SVec2>, press: bool, shift: bool, release: bool, remove: bool) {
     let Some(mut edit) = tools.line_edit else { return };
     let hit = ground.map_or(Hit::Nothing, |p| hit_at(w, edit.route, p));
     tools.hover_stop = match hit {
@@ -181,7 +208,7 @@ pub fn input(w: &mut nd_sim::World, tools: &mut ToolState, ground: Option<SVec2>
         _ => None,
     };
     if press {
-        tools.status = match click(&edit, hit) {
+        tools.status = match click(&edit, hit, shift) {
             EditOp::Grab(i) => {
                 tools.stop_drag = Some((edit.route, i));
                 tools.stop_sel = Some((edit.route, i));
@@ -199,7 +226,7 @@ pub fn input(w: &mut nd_sim::World, tools: &mut ToolState, ground: Option<SVec2>
                 Ok(i) => {
                     edit.inserted(i);
                     let n = w.transit.routes.get(edit.route).map_or(0, |r| r.stops.len());
-                    if i + 1 == n { format!("Stop {} added at the end of the loop.", i + 1) } else { format!("Stop inserted as stop {} of {n}, between the stops either side of it.", i + 1) }
+                    if i + 1 == n { format!("Stop {} added at the end of the loop.{}", i + 1, if edit.creating { " Shift+click inserts a stop where it belongs." } else { "" }) } else { format!("Stop inserted as stop {} of {n}, between the stops either side of it.", i + 1) }
                 }
                 Err(e) => format!("No stop: {e}."),
             },
@@ -250,30 +277,48 @@ mod tests {
     fn editing_remembers_the_tool_it_started_from() {
         let (a, b) = ids();
         let e = begin(None, a, Tool::Inspect);
-        assert_eq!(e, LineEdit { route: a, slot: None, back_to: Tool::Inspect });
+        assert_eq!(e, LineEdit { route: a, slot: None, back_to: Tool::Inspect, creating: false });
         // Started from the Buses tool itself: back to Inspect after.
         assert_eq!(begin(None, a, Tool::Transit).back_to, Tool::Inspect);
         // Switching lines mid-edit keeps the way back.
         let e2 = begin(Some(LineEdit { slot: Some(2), ..e }), b, Tool::Transit);
-        assert_eq!(e2, LineEdit { route: b, slot: None, back_to: Tool::Inspect });
+        assert_eq!(e2, LineEdit { route: b, slot: None, back_to: Tool::Inspect, creating: false });
     }
 
     #[test]
     fn clicks_grab_own_stops_share_others_and_insert_on_streets() {
         let (a, b) = ids();
         let mut e = begin(None, a, Tool::Inspect);
-        assert_eq!(click(&e, Hit::Own(3)), EditOp::Grab(3));
+        assert_eq!(click(&e, Hit::Own(3), false), EditOp::Grab(3));
         // Another line's stop does not switch lines: it is shared.
-        assert_eq!(click(&e, Hit::Other(b, 1)), EditOp::Share { from: (b, 1), at: None });
+        assert_eq!(click(&e, Hit::Other(b, 1), false), EditOp::Share { from: (b, 1), at: None });
         let p = SVec2::new(4.0, 5.0);
-        assert_eq!(click(&e, Hit::Street(p)), EditOp::Insert { p, at: None });
-        assert_eq!(click(&e, Hit::Nothing), EditOp::Miss);
+        assert_eq!(click(&e, Hit::Street(p), false), EditOp::Insert { p, at: None });
+        assert_eq!(click(&e, Hit::Street(p), true), EditOp::Insert { p, at: None });
+        assert_eq!(click(&e, Hit::Nothing, false), EditOp::Miss);
         // With a slot picked, inserts and shares go there.
         e.toggle_slot(2);
-        assert_eq!(click(&e, Hit::Street(p)), EditOp::Insert { p, at: Some(2) });
-        assert_eq!(click(&e, Hit::Other(b, 0)), EditOp::Share { from: (b, 0), at: Some(2) });
+        assert_eq!(click(&e, Hit::Street(p), false), EditOp::Insert { p, at: Some(2) });
+        assert_eq!(click(&e, Hit::Other(b, 0), false), EditOp::Share { from: (b, 0), at: Some(2) });
         e.toggle_slot(2);
         assert_eq!(e.slot, None, "picking the slot again lets it go");
+    }
+
+    /// [fix/buildings-ui] Drawing a new line: plain clicks add stops in
+    /// sequence, Shift+click inserts where the stop belongs.
+    #[test]
+    fn a_new_line_takes_stops_in_order_and_shift_inserts() {
+        let (a, b) = ids();
+        let e = LineEdit { creating: true, ..begin(None, a, Tool::Transit) };
+        let p = SVec2::new(4.0, 5.0);
+        assert_eq!(click(&e, Hit::Street(p), false), EditOp::Insert { p, at: Some(APPEND) });
+        assert_eq!(click(&e, Hit::Other(b, 1), false), EditOp::Share { from: (b, 1), at: Some(APPEND) });
+        assert_eq!(click(&e, Hit::Street(p), true), EditOp::Insert { p, at: None });
+        // A slot picked in the diagram still wins.
+        let mut e = e;
+        e.toggle_slot(1);
+        assert_eq!(click(&e, Hit::Street(p), false), EditOp::Insert { p, at: Some(1) });
+        assert_eq!(click(&e, Hit::Street(p), true), EditOp::Insert { p, at: Some(1) });
     }
 
     #[test]

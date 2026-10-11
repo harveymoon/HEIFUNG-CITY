@@ -148,6 +148,8 @@ pub(crate) fn generate_styled_extras(
     if let Some(progress) = extras.demolition {
         // What stood there, cut down to what is left, in its site.
         let mut g = generate_styled_extras(lot, land_use, floors, tier, condition, seed, style, rules, palette, &Extras { demolition: None, construction: None, ..*extras });
+        // [fix/buildings-ui] Stripped out first: the power is off.
+        construction::lights_out(&mut g);
         construction::demolition_site(&mut g, &ctx, &mut rng, progress);
         return g;
     }

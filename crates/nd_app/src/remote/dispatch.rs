@@ -531,7 +531,7 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("on", "bool, omitted reads: parcels along a road near the water run down to it (on for new cities; a save from before has it off; lots follow at the next implement)"),
     ] },
     Cmd { name: "bus", aliases: &[], effect: Game, run: bus::bus, help: &[
-        ("action", "select|new_route|add_stop|insert_stop|move_stop|remove_stop|set_buses|set_fare|remove_route|rename|recolour|line|problems|check|select_stop|list|edit|finish_edit|click|slot|select_metro"),
+        ("action", "select|new_route|add_stop|insert_stop|move_stop|remove_stop|set_buses|set_fare|remove_route|rename|recolour|line|problems|check|select_stop|list|edit|new_line|finish_edit|click|slot|select_metro"),
         ("route", "id"),
         ("x", "f"),
         ("y", "f"),

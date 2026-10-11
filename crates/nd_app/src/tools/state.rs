@@ -62,6 +62,9 @@ pub struct ToolState {
     /// [lines] The bus line being edited (the Lines window's "Edit line"):
     /// map clicks add, insert, share, drag and remove its stops.
     pub line_edit: Option<super::line_edit::LineEdit>,
+    /// [fix/buildings-ui] Shift held while editing a line (the map's
+    /// preview of where a click would put the stop).
+    pub line_shift: bool,
     /// [lines] The metro line opened in the Lines window.
     pub metro_sel: Option<nd_sim::subway::MetroLineId>,
     /// Where the right button went down (window pixels); a right *click*
@@ -424,6 +427,7 @@ impl Default for ToolState {
             hover_stop: None,
             stop_sel: None,
             line_edit: None,
+            line_shift: false,
             metro_sel: None,
             stop_drag: None,
             show_routes: false,
