@@ -15,6 +15,13 @@ pub(super) fn closed_hash(closed: &[SVec2]) -> u64 {
     h.finish()
 }
 
+/// [fix/roads-tools] The crosswalk key with the signal switches folded in:
+/// turning a junction's signals on or off changes no road and no lane, so
+/// without this the new heads were never drawn (todo 2026-10-11).
+pub(super) fn signals_key(closed: u64, signals_version: u64) -> u64 {
+    closed ^ signals_version.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
 pub(super) fn sync_roads(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -30,7 +37,9 @@ pub(super) fn sync_roads(
     // [footbridge] A footbridge built (or its crosswalk kept) repaints the
     // streets: its zebra goes or comes back.
     let closed = sim.world.closed_crosswalks();
-    let closed_key = closed_hash(&closed);
+    // [fix/roads-tools] Signals switched on in the Intersection editor
+    // repaint them too: their poles are part of the street mesh.
+    let closed_key = signals_key(closed_hash(&closed), sim.world.traffic.net.signals_version);
     if version == state.roads_version && closed_key == state.closed_roads && !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild {
         return;
     }
@@ -109,7 +118,7 @@ pub(super) fn sync_signals(
 ) {
     let net = &sim.world.traffic.net;
     let closed = sim.world.closed_crosswalks();
-    let closed_key = closed_hash(&closed);
+    let closed_key = signals_key(closed_hash(&closed), net.signals_version);
     if net.version != state.lanes_version || closed_key != state.closed_signals || sim.full_rebuild {
         state.lanes_version = net.version;
         state.closed_signals = closed_key;

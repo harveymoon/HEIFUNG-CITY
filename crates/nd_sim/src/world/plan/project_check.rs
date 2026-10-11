@@ -45,6 +45,8 @@ impl World {
         }
         self.master = project.apply_to(&self.master);
         self.rebuild_from_master();
+        // [fix/roads-tools] Roads meeting at a junction share one point there.
+        self.mend_junctions();
         self.apply_industry_strokes(&project);
         Ok(())
     }
@@ -92,7 +94,9 @@ impl World {
                 out.pillar_gaps.extend(self.road_pillar_plan(pts, levels, *f, *b, *k).gaps);
             }
         }
-        let civic = self.buildings.values().any(Self::is_civic_structure);
+        // [fix/roads-tools] Any building: the trial also says which grown
+        // buildings the works would take, for the red outlines.
+        let civic = !self.buildings.is_empty();
         let check_pillars = raised_new || !self.pillars.is_empty();
         if roads_change && (civic || check_pillars) {
             let mut trial = crate::prof!("check.clone", self.clone());
@@ -102,6 +106,8 @@ impl World {
             for (id, b) in self.buildings.iter() {
                 if Self::is_civic_structure(b) && !trial.buildings.contains_key(id) && !out.blocks.iter().any(|k| k.building == id) {
                     out.blocks.push(self.lost_block(id, &pv));
+                } else if !Self::is_civic_structure(b) && !trial.buildings.get(id).is_some_and(|t| t.demolition.is_none()) && b.demolition.is_none() {
+                    out.lost.push(id);
                 }
             }
             if check_pillars {

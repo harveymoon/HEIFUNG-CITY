@@ -45,7 +45,13 @@ pub struct CommitteeRt {
     /// and its connection (this run only). Off, a script cannot switch the
     /// committee to a paid model or point it at another server.
     pub remote_may_switch: bool,
+    /// [fix/roads-tools] The project whose site Show outlines on the map,
+    /// and when it was asked (app seconds); it fades after `SHOW_SITE_FOR`.
+    pub shown_site: Option<(u32, f64)>,
 }
+
+/// [fix/roads-tools] How long a project's Show outlines its site, seconds.
+pub const SHOW_SITE_FOR: f64 = 45.0;
 
 impl Default for CommitteeRt {
     fn default() -> Self {
@@ -66,6 +72,7 @@ impl Default for CommitteeRt {
             fast_forward: false,
             voices: Default::default(),
             remote_may_switch: false,
+            shown_site: None,
         };
         rt.apply_settings();
         rt
@@ -123,7 +130,8 @@ impl Plugin for CommitteePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CommitteeRt>()
             .add_systems(Update, committee_tick.in_set(SimSet::Sync))
-            .add_systems(bevy_egui::EguiPrimaryContextPass, (crate::ui::committee::window_system, crate::ui::diary::window_system).after(crate::ui::side_panel));
+            .add_systems(bevy_egui::EguiPrimaryContextPass, (crate::ui::committee::window_system, crate::ui::diary::window_system).after(crate::ui::side_panel))
+            .add_systems(Update, draw_shown_site.in_set(crate::overlay::OverlaySet::Draw));
     }
 }
 
@@ -217,5 +225,115 @@ fn committee_tick(mut sim: ResMut<Sim>, mut rt: ResMut<CommitteeRt>, mut flags: 
             1 => "The committee adjourned: one project waits for your review".to_string(),
             n => format!("The committee adjourned: {n} projects wait for your review"),
         };
+    }
+}
+
+/// [fix/roads-tools] What a committee project's site would change, for
+/// Show: the parcels it zones, the lot its building would take (or the
+/// ground under its spot), the buildings standing there now, the clean-up
+/// circle and the bus stops. Empty for a project with no site.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SiteMarks {
+    pub ground: Vec<Vec<nd_sim::Vec2>>,
+    pub buildings: Vec<Vec<nd_sim::Vec2>>,
+    pub circle: Option<(nd_sim::Vec2, f32)>,
+    pub stops: Vec<nd_sim::Vec2>,
+}
+
+pub fn site_marks(w: &nd_sim::World, s: &nd_sim::committee::SiteOption) -> SiteMarks {
+    let mut out = SiteMarks::default();
+    let mut lots: Vec<nd_sim::LotId> = Vec::new();
+    for k in &s.parcels {
+        let Some(i) = w.parcels.find(k) else { continue };
+        let parcel = &w.parcels.parcels[i];
+        out.ground.push(parcel.polygon.clone());
+        if let Some(l) = parcel.lot.filter(|l| w.lots.contains_key(*l)) {
+            lots.push(l);
+        }
+    }
+    if let Some(p) = s.point {
+        if let Some((id, l)) = w.lots.iter().find(|(_, l)| l.contains(p)) {
+            out.ground.push(l.polygon.clone());
+            lots.push(id);
+        } else if let Some(i) = w.parcels.at(p) {
+            out.ground.push(w.parcels.parcels[i].polygon.clone());
+        }
+        if s.radius > 0.0 {
+            out.circle = Some((p, s.radius));
+        }
+    }
+    lots.sort();
+    lots.dedup();
+    for l in lots {
+        if w.lots[l].building.is_some() {
+            out.buildings.push(w.lots[l].polygon.clone());
+        }
+    }
+    out.stops = s.stops.clone();
+    out
+}
+
+fn draw_shown_site(mut gizmos: Gizmos, sim: Res<Sim>, rt: Res<CommitteeRt>, time: Res<Time>) {
+    let Some((id, at)) = rt.shown_site else { return };
+    let now = time.elapsed_secs_f64();
+    if now - at > SHOW_SITE_FOR {
+        return;
+    }
+    let w = &sim.world;
+    let Some(site) = w.committee.project(id).and_then(|p| p.site()) else { return };
+    let marks = site_marks(w, site);
+    let lift = |q: nd_sim::Vec2, up: f32| Vec3::new(q.x, w.surface_height(q) + up, q.y);
+    let pulse = 0.75 + 0.25 * (now as f32 * 4.0).sin();
+    let magenta = Color::linear_rgb(3.0 * pulse, 0.4, 3.0 * pulse);
+    let orange = Color::linear_rgb(3.2 * pulse, 1.2 * pulse, 0.2);
+    for poly in &marks.ground {
+        for up in [0.6, 1.2] {
+            let mut pts: Vec<Vec3> = poly.iter().map(|&q| lift(q, up)).collect();
+            if let Some(&f) = pts.first() {
+                pts.push(f);
+            }
+            gizmos.linestrip(pts, magenta);
+        }
+    }
+    for poly in &marks.buildings {
+        for up in [2.0, 8.0, 14.0] {
+            let mut pts: Vec<Vec3> = poly.iter().map(|&q| lift(q, up)).collect();
+            if let Some(&f) = pts.first() {
+                pts.push(f);
+            }
+            gizmos.linestrip(pts, orange);
+        }
+    }
+    if let Some((c, r)) = marks.circle {
+        gizmos.circle(Isometry3d::new(lift(c, 1.0), Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)), r, magenta);
+    }
+    for &s in &marks.stops {
+        gizmos.line(lift(s, 0.5), lift(s, 25.0), magenta);
+        gizmos.circle(Isometry3d::new(lift(s, 1.0), Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)), 5.0, magenta);
+    }
+}
+
+#[cfg(test)]
+mod site_tests {
+    use super::*;
+    use nd_sim::Vec2;
+
+    /// [fix/roads-tools] Show outlines the parcels a rezoning paints and,
+    /// for a building's spot, the ground it would take.
+    #[test]
+    fn a_site_shows_its_parcels_and_the_ground_at_its_spot() {
+        let mut w = nd_sim::World::new(nd_sim::WorldConfig { emergencies: false, society: false, landscape: nd_sim::LandscapeParams::flat(), ..Default::default() });
+        w.add_road(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
+        let keys: Vec<_> = w.parcels.parcels.iter().take(3).map(|p| p.key).collect();
+        assert_eq!(keys.len(), 3);
+        let site = nd_sim::committee::SiteOption { parcels: keys, ..Default::default() };
+        let m = site_marks(&w, &site);
+        assert_eq!(m.ground.len(), 3);
+        assert!(m.buildings.is_empty() && m.circle.is_none());
+        let spot = w.parcels.parcels[5].center;
+        let site = nd_sim::committee::SiteOption { point: Some(spot), radius: 30.0, ..Default::default() };
+        let m = site_marks(&w, &site);
+        assert_eq!(m.ground.len(), 1, "the ground under the spot");
+        assert_eq!(m.circle, Some((spot, 30.0)));
     }
 }

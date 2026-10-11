@@ -51,6 +51,11 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, _selection:
     if ground.is_some() && (click || middle) {
         tools.cursor_pin = None;
     }
+    // [fix/roads-tools] Circle: a click for the centre, a click on the edge.
+    if tools.circle && !tools.interchange && tools.kind != RoadKind::Rail {
+        circle_input(click, finish, ground, sim, tools);
+        return;
+    }
     if click {
         if let Some(p) = ground {
             let first = tools.points.is_empty();
@@ -112,6 +117,40 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, _selection:
         tools.points.clear();
         tools.point_levels.clear();
     }
+}
+
+/// [fix/roads-tools] The circle: the first click sets the centre, the
+/// second (on the edge) lays a closed curved road of the type and lanes
+/// picked, at the level set; Enter or a right-click lets the centre go.
+fn circle_input(click: bool, finish: bool, ground: Option<SVec2>, sim: &mut Sim, tools: &mut ToolState) {
+    if finish {
+        tools.points.clear();
+        tools.point_levels.clear();
+        return;
+    }
+    let Some(p) = ground.filter(|_| click) else { return };
+    if tools.points.is_empty() {
+        tools.push_point(p, tools.elevation);
+        tools.status = "Circle: now click where its edge should run (Enter or right-click cancels).".into();
+        return;
+    }
+    let center = tools.points[0];
+    let pts = super::circle_road(center, p);
+    let kind = tools.kind;
+    let (lf, lb) = if kind != RoadKind::Street { (0, 0) } else { (tools.lanes_fwd, tools.lanes_bwd) };
+    let levels = vec![tools.elevation; pts.len()];
+    let elevation = if tools.elevation != 0.0 { levels.clone() } else { Vec::new() };
+    let built = nd_sim::plan::sample_curve(&pts);
+    let built_levels = nd_sim::plan::sample_curve_levels(&pts, &levels);
+    let r = center.distance(pts[0]);
+    tools.status = if let Some(why) = sim.world.road_refusal(&built, &built_levels, kind, lf, lb) {
+        format!("Not added: {why}.")
+    } else {
+        sim.world.add_gesture(Gesture::Road { points: pts, lanes_fwd: lf, lanes_bwd: lb, curved: true, kind, elevation });
+        format!("Circular {} {:.0} m across added to project. Ctrl+Enter implements.", if kind == RoadKind::Path { "path" } else { "road" }, r * 2.0)
+    };
+    tools.points.clear();
+    tools.point_levels.clear();
 }
 
 /// The roundabout itself is drawn by the renderer (`sync_ring_preview`);

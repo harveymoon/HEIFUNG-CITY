@@ -73,7 +73,9 @@ pub(crate) mod lines;
 /// [events] Street races, raves and road maintenance in the HUD.
 mod nights;
 mod toolbar;
-mod tools;
+/// [fix/roads-tools] The plan bar: Implement / Discard while a plan is pending.
+mod plan_bar;
+pub(crate) mod tools;
 mod topbar;
 pub mod train;
 mod windows;
@@ -130,6 +132,8 @@ pub struct UiFlags {
     pub message_at: Option<bevy::math::Vec2>,
     /// [pt-ux] Every toast as it showed, the newest last (the Alerts window).
     pub log: Vec<alerts::Logged>,
+    /// [fix/roads-tools] The plan bar's Discard was pressed once: it asks.
+    pub plan_confirm: bool,
 }
 
 impl UiFlags {
@@ -282,6 +286,10 @@ pub(crate) fn side_panel(
     title::screen(ctx, &mut p);
     // [tools] The Intersection editor (a modal).
     junction::window(ctx, &mut p);
+    // [fix/roads-tools] A plan not built yet: the bar at the top (G2).
+    if !city_data::is_open(ctx) {
+        plan_bar::show(ctx, &mut p, top_rect.bottom());
+    }
     let fly_to = p.fly_to;
 
     flags.panel_rects = vec![top_rect, bottom_rect];

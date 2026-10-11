@@ -28,6 +28,10 @@ pub struct ProjectCheck {
     pub refusal: Option<String>,
     /// Roads the project lays.
     pub roads: usize,
+    /// [fix/roads-tools] Every other building implementing would pull down
+    /// or buy out, as the trial rebuild found (the plan outlines them in
+    /// red with the ones under its roads).
+    pub lost: Vec<BuildingId>,
 }
 
 /// [tools] One of the city's own structures a project would take: which,
@@ -64,6 +68,8 @@ impl Blocker {
 }
 use crate::zoning::{inner_center, join_parcels, make_lot, Parcel, ParcelKey, ParcelMap};
 
+mod joints;
+pub use joints::{insert_on_leg, leg_near, Joint, JOINT_SAME};
 mod projects;
 mod parcels;
 pub(in crate::world) use parcels::refresh_lot_roads;
@@ -198,3 +204,5 @@ pub(super) fn shrink_about_centroid(poly: &[Vec2], factor: f32) -> Vec<Vec2> {
 mod roundabout_tests;
 #[cfg(test)]
 mod piece_tests;
+#[cfg(test)]
+mod joint_tests;

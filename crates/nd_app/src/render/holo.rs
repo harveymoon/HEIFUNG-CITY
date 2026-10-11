@@ -45,6 +45,13 @@ fn drawn_road(tools: &ToolState, sim: &Sim, cursor: Option<SVec2>) -> Option<(Ve
     if tools.tool != Tool::Road || tools.roundabout {
         return None;
     }
+    // [fix/roads-tools] The circle round the centre clicked, to the pointer.
+    if tools.circle && !tools.interchange && tools.kind != RoadKind::Rail {
+        let (&center, c) = (tools.points.first()?, tools.cursor_pin.or(cursor)?);
+        let pts = crate::tools::circle_road(center, c);
+        let levels = vec![tools.elevation; pts.len()];
+        return Some((pts, levels));
+    }
     let mut pts = tools.points.clone();
     let mut levels = tools.levels();
     if let Some(c) = tools.cursor_pin.or(cursor) {
@@ -272,7 +279,7 @@ pub fn sync_draw_hologram(
         for l in levels {
             l.to_bits().hash(&mut h);
         }
-        (tools.lanes_fwd, tools.lanes_bwd, format!("{:?}", tools.kind), tools.curved, w.plan_version, w.roads.version).hash(&mut h);
+        (tools.lanes_fwd, tools.lanes_bwd, format!("{:?}", tools.kind), tools.curved, tools.circle, w.plan_version, w.roads.version).hash(&mut h);
         h.finish()
     });
     if key == *last && !assets.palette_changed {
@@ -324,10 +331,11 @@ pub fn sync_draw_hologram(
     }
     tools.grade_warnings = w.road_grade_warnings(&ctrl, &ctrl_levels, kind, f, b);
     // [pt-visual] A curved road bends through its points: no sharp corners.
-    if tools.curved {
+    let curved = tools.curved || tools.circle;
+    if curved {
         tools.grade_warnings.retain(|m| !m.starts_with("turns "));
     }
-    let (pts, levels) = built(&ctrl, &ctrl_levels, tools.curved);
+    let (pts, levels) = built(&ctrl, &ctrl_levels, curved);
     let (mesh, red, plan) = hologram(w, &assets.palette, &pts, &levels, f, b, kind, 0.55);
     // [tools] The columns, for the sub-pane and the remote API.
     tools.pillars = crate::tools::PillarNote::of(w, &plan);
@@ -390,6 +398,18 @@ pub fn sync_plan_holograms(
     // found it: the one the refusal names is always marked.
     for k in &check.blocks {
         blocker_marks(w, k, &mut red);
+    }
+    // [fix/roads-tools] Every building implementing would take, as the
+    // trial rebuild found it (the per-road outlines show those under the
+    // road; this catches any other the recut would reshape away).
+    for &bid in &check.lost {
+        let Some(lot) = w.buildings.get(bid).map(|b| b.lot) else { continue };
+        let Some(l) = w.lots.get(lot) else { continue };
+        let y = w.lot_pad(lot) + 0.36;
+        let mut outline = l.polygon.clone();
+        if let Some(&first) = l.polygon.first() { outline.push(first); }
+        red.ground_polygon(&l.polygon, y, [WARN_TINT[0] * 0.25, WARN_TINT[1] * 0.25, WARN_TINT[2] * 0.25, 1.0]);
+        red.ground_strip(&outline, 0.7, y + 0.02, [WARN_TINT[0], WARN_TINT[1], WARN_TINT[2], 1.0]);
     }
     tools.plan_check = check.refusal.is_some().then_some(check);
     if !all.is_empty() {

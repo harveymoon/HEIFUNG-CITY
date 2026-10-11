@@ -660,6 +660,10 @@ pub(super) static COMMANDS: &[Cmd] = &[
     Cmd { name: "tool", aliases: &[], effect: View, run: tool::tool, help: &[
         ("name", "inspect|road|zone|edit|bulldoze|power|transit|rail"),
         ("preset", "Path|Rail|Lane|Street|Avenue|One-way|Ramp|Highway|Tunnel|Roundabout (Tunnel switches the view underground, the others back to ground)"),
+        ("road_type", "Path|Street|One-way|Highway: the Road tool's type (its usual lanes unless the lanes set suit it; the level is kept)"),
+        ("draw_method", "straight|curved|circle: how the Road tool draws (circle: click the centre, then the edge)"),
+        ("edit_drag", "{from: [x,y], to: [x,y]}: the Edit tool's press and drag (a junction moves every road attached; with selected_gesture set first, that road's own point comes off the junction)"),
+        ("selected_gesture", "id: the road picked in the Edit tool"),
         ("elevation", "road tool level for the next point, m (-20..24)"),
         ("depth", "underground|ground|sky: the view layer"),
         ("draw", "[[x,y,level?],...]: the road being drawn, for its preview"),

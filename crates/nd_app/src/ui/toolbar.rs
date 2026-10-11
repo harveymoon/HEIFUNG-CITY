@@ -232,15 +232,7 @@ fn project(ui: &mut egui::Ui, p: &mut UiCtx) {
     ui.vertical(|ui| {
         ui.horizontal(|ui| {
             if ui.add(egui::Button::new(egui::RichText::new("Implement").strong()).min_size(egui::vec2(78.0, 0.0))).on_hover_text("Ctrl+Enter").clicked() {
-                let roads = sim.world.preview().planned_roads.len();
-                let warnings = crate::road_select::keeping_road(&mut sim.world, p.selection, |w| w.implement_project(i.id)).unwrap_or_default();
-                tools.points.clear();
-                // [tools] A refusal is not a warning: nothing was built.
-                tools.status = match sim.world.implement_refused.clone() {
-                    Some(why) => crate::tools::refused_text(&i.name, roads, &why),
-                    None if warnings.is_empty() => format!("{} implemented.", i.name),
-                    None => format!("{} implemented. {}", i.name, warnings.join(" ")),
-                };
+                implement_active(sim, tools, p.selection, i.id, &i.name);
             }
             if ui.add(egui::Button::new("Discard").min_size(egui::vec2(60.0, 0.0))).on_hover_text("Throw the active project away").clicked() {
                 sim.world.discard_project();
@@ -276,4 +268,18 @@ fn project(ui: &mut egui::Ui, p: &mut UiCtx) {
             }
         });
     });
+}
+
+/// [fix/roads-tools] Implement project `id` (the toolbar's button and the
+/// plan bar's), saying what happened in the status line.
+pub(super) fn implement_active(sim: &mut crate::sim::Sim, tools: &mut crate::tools::ToolState, selection: &mut crate::tools::Selection, id: u64, name: &str) {
+    let roads = sim.world.preview().planned_roads.len();
+    let warnings = crate::road_select::keeping_road(&mut sim.world, selection, |w| w.implement_project(id)).unwrap_or_default();
+    tools.points.clear();
+    // [tools] A refusal is not a warning: nothing was built.
+    tools.status = match sim.world.implement_refused.clone() {
+        Some(why) => crate::tools::refused_text(name, roads, &why),
+        None if warnings.is_empty() => format!("{name} implemented."),
+        None => format!("{name} implemented. {}", warnings.join(" ")),
+    };
 }

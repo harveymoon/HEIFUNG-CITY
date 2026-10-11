@@ -32,9 +32,14 @@ const CHUNK_WINDOW: f32 = 320.0;
 const MAX_RECUT_CHUNK: f32 = 300.0;
 
 /// A chunk the changes reach is not recut whole if that would reshape a
-/// built lot this far (m) from every change: it is recut near the changes
-/// only. Empty land (a new district being laid out) is always recut whole.
-const PROTECT: f32 = 110.0;
+/// built lot the works do not come over (farther than this past a changed
+/// piece's corridor): it is recut near the changes only, and there a built
+/// parcel goes only if the works come this close. Empty land (a new
+/// district being laid out) is always recut whole. [fix/roads-tools] Was:
+/// any building 110 m from every change kept a chunk from a whole recut,
+/// so the works reshaped built lots up to 110 m off the road that the plan
+/// never outlined in red.
+const PROTECT: f32 = 2.0;
 
 /// A place where the land may cut differently since the last cut: a
 /// sample along a road piece that came or went (`along`, reaching as far
@@ -410,6 +415,11 @@ fn recut_now(prev: &[Parcel], prev_basis: &CutBasis, roads: &RoadNetwork, water:
         })
         .collect();
     let touched = crate::prof!("rc.touched", geo_union(&squares));
+    // [fix/roads-tools] A building the works themselves come over: within
+    // `PROTECT` of a changed piece's corridor (what the plan outlines in
+    // red), or at a junction that changed.
+    let under_works = |b: Vec2| changes.iter().any(|c| c.at.distance(b) <= c.hw + PROTECT + if c.along { SAMPLE_STEP * 0.5 } else { 4.0 });
+    let built_in = |poly: &[Vec2]| built.iter().copied().find(|b| point_in_polygon(*b, poly));
     let (mut clo, mut chi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
     for s in &squares {
         clo = clo.min(s[0]);
@@ -439,7 +449,12 @@ fn recut_now(prev: &[Parcel], prev_basis: &CutBasis, roads: &RoadNetwork, water:
             // changes: a building in the chunk farther than `PROTECT` from
             // every change keeps its parcel (the chunk is recut near the
             // changes only).
-            let far_built = || built.iter().any(|b| b.x >= lo.x && b.y >= lo.y && b.x <= hi.x && b.y <= hi.y && point_in_polygon(*b, &cpts) && changes.iter().all(|c| c.at.distance(*b) > PROTECT));
+            // [fix/roads-tools] Any building in the chunk beyond the
+            // reach of the changes protects it (was: beyond 110 m), so the
+            // works reshape no built lot but those the road comes near:
+            // implementing took buildings 50 to 180 m off the road that
+            // the plan never outlined (todo 2026-10-11).
+            let far_built = || built.iter().any(|b| b.x >= lo.x && b.y >= lo.y && b.x <= hi.x && b.y <= hi.y && point_in_polygon(*b, &cpts) && !under_works(*b));
             let whole = lo.x >= inner.0.x && lo.y >= inner.0.y && hi.x <= inner.1.x && hi.y <= inner.1.y && lo.distance(hi) <= MAX_RECUT_CHUNK && !(hit && far_built());
             if hit && !whole {
                 piecemeal.push(chunk);
@@ -498,7 +513,13 @@ fn recut_now(prev: &[Parcel], prev_basis: &CutBasis, roads: &RoadNetwork, water:
             if drop[i] || !boxes_overlap(boxes[i], (clo, chi), reach) || !big.intersects(&geo::Point::new(p.center.x as f64, p.center.y as f64)) {
                 continue;
             }
-            if changes.iter().any(|c| point_in_polygon(c.at, &p.polygon) || distance_to_outline(c.at, &p.polygon) < reach) {
+            // [fix/roads-tools] A built parcel goes only where the works
+            // come over its ground; the new land is cut round the rest.
+            let takes = match built_in(&p.polygon) {
+                Some(_) => changes.iter().any(|c| point_in_polygon(c.at, &p.polygon) || distance_to_outline(c.at, &p.polygon) < c.hw - 0.5),
+                None => changes.iter().any(|c| point_in_polygon(c.at, &p.polygon) || distance_to_outline(c.at, &p.polygon) < reach),
+            };
+            if takes {
                 drop[i] = true;
                 near.push(p.polygon.clone());
             }

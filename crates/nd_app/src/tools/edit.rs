@@ -104,17 +104,34 @@ pub(super) fn nearest_gesture(plan: &Plan, p: SVec2) -> Option<(GestureId, usize
 }
 
 /// Hover, drag, click, Shift+click and Delete.
+///
+/// [fix/roads-tools] A junction is one joint: pressing on it drags every
+/// road meeting there together (a road running through gets a point there
+/// as the drag starts). A road picked first (a click on its line) has its
+/// own points dragged on their own instead: that is how a road is taken
+/// off a junction deliberately.
 pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection) {
     let Frame { click, ground, shift_click, buttons, plan, .. } = *f;
     let map_key = |k: KeyCode| f.map_key(k);
     tools.hover_point = ground.and_then(|p| nearest_control_point(plan, p));
     tools.hover_gesture = ground.and_then(|p| nearest_gesture(plan, p)).map(|(id, _)| id);
+    tools.hover_joint = if tools.drag.is_some() || tools.joint_drag.is_some() { None } else { ground.and_then(|p| sim.world.joint_at(plan, p, POINT_PICK_RADIUS)) };
     // [pt-ux] A junction under the pointer (or the remote API's pin) is
     // offered with an "Edit intersection" button; a click there edits the
     // roads as anywhere else.
-    tools.junction_hover = if tools.drag.is_some() { None } else { tools.cursor_pin.or(ground).and_then(|p| crate::ui::junction::target_at(&sim.world, p)) };
+    tools.junction_hover = if tools.drag.is_some() || tools.joint_drag.is_some() { None } else { tools.cursor_pin.or(ground).and_then(|p| crate::ui::junction::target_at(&sim.world, p)) };
 
-    if let Some((id, idx)) = tools.drag {
+    if let Some(mut jd) = tools.joint_drag.take() {
+        let release = !buttons.pressed(MouseButton::Left);
+        if let Some(p) = ground {
+            joint_drag_frame(&mut sim.world, &mut jd, p);
+        }
+        if release {
+            tools.status = if jd.moved { format!("Junction moved: {} road{} with it. Ctrl+Z undoes.", jd.roads(), if jd.roads() == 1 { "" } else { "s" }) } else { String::new() };
+        } else {
+            tools.joint_drag = Some(jd);
+        }
+    } else if let Some((id, idx)) = tools.drag {
         if let (Some(p), Some(mut g)) = (ground, plan.gestures.get(&id).cloned()) {
             if idx < g.points().len() {
                 let before = g.clone();
@@ -134,22 +151,34 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, selection: 
     } else if click {
         // [pt-ux] The Intersection editor opens from the button beside a
         // hovered junction, not from a click on it.
-        if let Some(hp) = tools.hover_point {
-            tools.drag = Some(hp);
-            tools.drag_moved = false;
-            tools.selected_gesture = Some(hp.0);
-        } else {
-            tools.selected_gesture = tools.hover_gesture;
-            if tools.selected_gesture.is_some() {
-                tools.status = "Road selected: change lanes, direction or curve in the panel.".into();
+        match press(tools.hover_joint.as_ref(), tools.selected_gesture, plan) {
+            Press::Joint(jd) => {
+                tools.status = format!("Moving the junction: {} roads move with it. To take one road off it, click that road first, then drag its end.", jd.roads());
+                tools.joint_drag = Some(jd);
+                tools.selected_gesture = None;
             }
-            // [road-inspect] The piece clicked, for the road card
-            // beside the upgrade panel (none for a road only planned).
-            let piece = ground.filter(|_| tools.selected_gesture.is_some()).and_then(|p| crate::road_select::pick(&sim.world, p, tools.depth));
-            match piece {
-                Some(sid) => *selection = Selection::Road(sid),
-                None if matches!(*selection, Selection::Road(_)) => *selection = Selection::None,
-                None => {}
+            Press::Own(jd) => {
+                tools.status = "Moving the picked road's own point: it comes off the junction.".into();
+                tools.joint_drag = Some(jd);
+            }
+            Press::Point(hp) => {
+                tools.drag = Some(hp);
+                tools.drag_moved = false;
+                tools.selected_gesture = Some(hp.0);
+            }
+            Press::Nothing => {
+                tools.selected_gesture = tools.hover_gesture;
+                if tools.selected_gesture.is_some() {
+                    tools.status = "Road picked: change lanes, direction or curve in the panel; drag its own points (even at a junction) to reshape or detach it.".into();
+                }
+                // [road-inspect] The piece clicked, for the road card
+                // beside the upgrade panel (none for a road only planned).
+                let piece = ground.filter(|_| tools.selected_gesture.is_some()).and_then(|p| crate::road_select::pick(&sim.world, p, tools.depth));
+                match piece {
+                    Some(sid) => *selection = Selection::Road(sid),
+                    None if matches!(*selection, Selection::Road(_)) => *selection = Selection::None,
+                    None => {}
+                }
             }
         }
     } else if shift_click {
@@ -180,16 +209,117 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, selection: 
     }
 }
 
+/// [fix/roads-tools] What a press of the left button in the Edit tool
+/// grabs.
+pub(super) enum Press {
+    /// A junction: every road meeting there.
+    Joint(super::JointDrag),
+    /// The picked road's own point at a junction (it comes off it).
+    Own(super::JointDrag),
+    /// A lone control point.
+    Point((GestureId, usize)),
+    /// No point: a click picks the road under it.
+    Nothing,
+}
+
+/// [fix/roads-tools] What pressing at the junction (or point) `joint`
+/// grabs, with `picked` the road picked before.
+pub(super) fn press(joint: Option<&nd_sim::Joint>, picked: Option<GestureId>, plan: &Plan) -> Press {
+    let Some(j) = joint else { return Press::Nothing };
+    if j.is_junction() {
+        if let Some(own) = picked.filter(|g| j.gestures().contains(g)) {
+            let mine = nd_sim::Joint {
+                at: j.at,
+                node: j.node,
+                points: j.points.iter().copied().filter(|m| m.0 == own).take(1).collect(),
+                through: if j.points.iter().any(|m| m.0 == own) { Vec::new() } else { j.through.iter().copied().filter(|m| m.0 == own).collect() },
+            };
+            return Press::Own(super::JointDrag::of(&mine, plan));
+        }
+        return Press::Joint(super::JointDrag::of(j, plan));
+    }
+    match j.points.first() {
+        Some(&p) => Press::Point(p),
+        None => Press::Nothing,
+    }
+}
+
+/// [fix/roads-tools] One frame of a junction drag to `p`: the first frame
+/// that moves it records a new undo step, later ones amend it.
+pub fn joint_drag_frame(world: &mut nd_sim::World, jd: &mut super::JointDrag, p: SVec2) {
+    let changes = jd.at(p);
+    if jd.moved {
+        world.set_gestures(changes, false);
+    } else if changes.iter().any(|(id, g)| jd.base.get(id).is_some_and(|b| b != g)) {
+        world.set_gestures(changes, true);
+        jd.moved = true;
+    }
+}
+
 /// Every control point (the hovered or dragged one bright), the hovered
 /// and selected gestures, and the selected road's lanes.
 pub(super) fn preview(gizmos: &mut Gizmos, p: &Preview) {
     let Preview { tools, sim, plan, .. } = *p;
     let lift = |q: SVec2| super::lift(sim, q);
     let (cyan, white) = (super::CYAN, super::WHITE);
-    for (id, g) in &plan.gestures {
-        for (i, &p) in g.points().iter().enumerate() {
-            let hovered = tools.hover_point == Some((*id, i)) || tools.drag == Some((*id, i));
-            gizmos.circle(flat_at(lift(p)), if hovered { 5.0 } else { 2.5 }, if hovered { white } else { cyan });
+    // [fix/roads-tools] One dot per junction: control points that coincide
+    // (roads meeting there) and built junctions with no point of their own
+    // yet (a road running through) are drawn once, as a joint. The picked
+    // road's own points are drawn orange: those drag on their own.
+    let gold = Color::linear_rgb(2.6, 1.7, 0.3);
+    let orange = Color::linear_rgb(3.0, 0.9, 0.2);
+    let key = |p: SVec2| ((p.x * 2.0).round() as i64, (p.y * 2.0).round() as i64);
+    let mut dots: std::collections::HashMap<(i64, i64), (SVec2, usize)> = std::collections::HashMap::new();
+    for g in plan.gestures.values() {
+        for &p in g.points() {
+            dots.entry(key(p)).or_insert((p, 0)).1 += 1;
+        }
+    }
+    let roads = &sim.world.roads;
+    for n in &roads.nodes {
+        let live = n.segments.iter().filter(|&&s| roads.try_segment(s).is_some()).count();
+        if live >= 3 && !dots.contains_key(&key(n.pos)) && !n.segments.iter().any(|&s| roads.try_segment(s).is_some_and(|s| s.ring)) {
+            dots.insert(key(n.pos), (n.pos, 2));
+        }
+    }
+    for (p, count) in dots.values() {
+        if *count >= 2 {
+            let c = flat_at(lift(*p));
+            gizmos.circle(c, 3.2, gold);
+            gizmos.circle(c, 1.4, gold);
+        } else {
+            gizmos.circle(flat_at(lift(*p)), 2.5, cyan);
+        }
+    }
+    if let Some(g) = tools.selected_gesture.and_then(|id| plan.gestures.get(&id)) {
+        for &p in g.points() {
+            gizmos.circle(flat_at(lift(p) + Vec3::Y * 0.2), 2.0, orange);
+        }
+    }
+    // The point or junction under the pointer (or being dragged), and the
+    // roads that would move with it.
+    if let Some((id, i)) = tools.drag {
+        if let Some(&p) = plan.gestures.get(&id).and_then(|g| g.points().get(i)) {
+            gizmos.circle(flat_at(lift(p)), 5.0, white);
+        }
+    } else if let Some(j) = tools.hover_joint.as_ref() {
+        let own = tools.selected_gesture.filter(|g| j.is_junction() && j.gestures().contains(g));
+        let c = flat_at(lift(j.at));
+        gizmos.circle(c, 5.0, white);
+        if j.is_junction() && own.is_none() {
+            gizmos.circle(c, 6.2, white);
+            for id in j.gestures() {
+                if let Some(g) = plan.gestures.get(&id) {
+                    gizmos.linestrip(g.road_polyline().iter().map(|&p| lift(p) + Vec3::Y * 0.3).collect::<Vec<_>>(), Color::linear_rgb(0.0, 1.2, 1.5));
+                }
+            }
+        }
+    }
+    if let Some(jd) = tools.joint_drag.as_ref() {
+        for (id, i) in &jd.moving {
+            if let Some(&p) = plan.gestures.get(id).and_then(|g| g.points().get(*i)) {
+                gizmos.circle(flat_at(lift(p)), 5.0, white);
+            }
         }
     }
     for (id, colour) in [(tools.hover_gesture, Color::linear_rgb(0.0, 1.2, 1.5)), (tools.selected_gesture, Color::linear_rgb(2.5, 1.6, 0.4))] {
@@ -364,5 +494,35 @@ mod drag_tests {
         assert!(w.gesture(id).is_some());
         assert!(w.undo());
         assert_eq!(w.gesture(id), Some(road(200.0)));
+    }
+}
+
+/// [fix/roads-tools] The remote API's `tool {edit_drag}`: press the left
+/// button at `from` in the Edit tool (with the road picked as it is) and
+/// drag to `to`, as the mouse would. What was grabbed ("junction", "own"
+/// for the picked road's own point, "point", or "nothing") and how many
+/// roads moved.
+pub(crate) fn remote_drag(world: &mut nd_sim::World, tools: &mut ToolState, from: SVec2, to: SVec2) -> (&'static str, usize) {
+    let plan = world.effective_plan().clone();
+    let joint = world.joint_at(&plan, from, POINT_PICK_RADIUS);
+    match press(joint.as_ref(), tools.selected_gesture, &plan) {
+        Press::Joint(mut jd) | Press::Own(mut jd) => {
+            let own = tools.selected_gesture.is_some_and(|g| jd.base.contains_key(&g)) && jd.base.len() == 1;
+            joint_drag_frame(world, &mut jd, to);
+            if !own {
+                tools.selected_gesture = None;
+            }
+            (if own { "own" } else { "junction" }, jd.roads())
+        }
+        Press::Point((id, i)) => {
+            let Some(before) = plan.gestures.get(&id).cloned() else { return ("nothing", 0) };
+            let mut g = before.clone();
+            g.move_point(i, to);
+            let mut moved = false;
+            drag_frame(world, id, &before, g, &mut moved);
+            tools.selected_gesture = Some(id);
+            ("point", 1)
+        }
+        Press::Nothing => ("nothing", 0),
     }
 }

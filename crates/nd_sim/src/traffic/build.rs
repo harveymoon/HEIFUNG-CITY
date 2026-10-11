@@ -88,6 +88,10 @@ pub struct LaneNetwork {
     pub version: u64,
     /// Bumped whenever lane arrows change (for drawing them).
     pub arrows_version: u64,
+    /// [fix/roads-tools] Bumped whenever a junction's signals may have been
+    /// switched on or off without a lane rebuild (the Intersection editor),
+    /// so the signal heads and poles are drawn again.
+    pub signals_version: u64,
     /// Roundabout lanes and junctions (see `apply_roundabouts`).
     pub rings: RingLanes,
     /// [tolls] Some lane has a toll booth (skips the toll checks when none does).

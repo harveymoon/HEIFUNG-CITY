@@ -149,9 +149,50 @@ pub struct ToolState {
     /// [pt-ux] Edit tool: the junction (or crosswalk) under the pointer,
     /// offered with an "Edit intersection" button (`ui::junction::hover_button`).
     pub junction_hover: Option<SVec2>,
+    /// [fix/roads-tools] Edit tool: the junction under the pointer (every
+    /// road meeting there moves with it).
+    pub hover_joint: Option<nd_sim::Joint>,
+    /// [fix/roads-tools] Edit tool: a junction being dragged.
+    pub joint_drag: Option<JointDrag>,
+    /// [fix/roads-tools] Road tool: draw a circle (centre, then radius).
+    pub circle: bool,
     /// [tools] What implementing the active project would refuse on,
     /// refreshed with the plan view (None: nothing).
     pub plan_check: Option<nd_sim::ProjectCheck>,
+}
+
+/// [fix/roads-tools] A junction being dragged in the Edit tool: the roads
+/// meeting there as they were when it was grabbed (a point already put in
+/// those running through), the control points that move, and whether the
+/// drag has moved them yet (its own undo step).
+#[derive(Clone, Debug)]
+pub struct JointDrag {
+    pub base: std::collections::BTreeMap<GestureId, nd_sim::Gesture>,
+    pub moving: Vec<(GestureId, usize)>,
+    pub moved: bool,
+}
+
+impl JointDrag {
+    pub fn of(joint: &nd_sim::Joint, plan: &nd_sim::Plan) -> Self {
+        let (base, moving) = joint.handles(plan);
+        Self { base, moving, moved: false }
+    }
+
+    /// The roads with the junction at `p`.
+    pub fn at(&self, p: SVec2) -> Vec<(GestureId, nd_sim::Gesture)> {
+        let mut out = self.base.clone();
+        for &(id, i) in &self.moving {
+            if let Some(g) = out.get_mut(&id) {
+                g.move_point(i, p);
+            }
+        }
+        out.into_iter().collect()
+    }
+
+    /// How many roads move with it.
+    pub fn roads(&self) -> usize {
+        self.base.len()
+    }
 }
 
 /// [tools] What the player is told when implementing a project is refused:
@@ -231,6 +272,15 @@ impl ToolState {
             return (j, true, 0.0);
         }
         let roads = &sim.world.roads;
+        // [fix/roads-tools] A path dropped by a street ends on its
+        // pavement (G12), not on the street's centre or junction node.
+        if kind == RoadKind::Path {
+            if let Some((q, at)) = roads.pavement_snap(p, POINT_PICK_RADIUS) {
+                if any || (at - level).abs() < nd_sim::roads::GRADE_SEPARATION {
+                    return (q, true, at);
+                }
+            }
+        }
         let (q, snapped) = roads.snap_point_kind(p, POINT_PICK_RADIUS, kind);
         if !snapped {
             return (p, false, level);
@@ -344,6 +394,7 @@ impl ToolState {
             cleanup: self.cleanup,
             cleanup_radius: self.cleanup_radius,
             curved: self.curved,
+            circle: self.circle,
             kind: self.kind,
             build_cat: self.build_cat,
             build: self.build,
@@ -367,6 +418,66 @@ impl ToolState {
             ..ToolState::default()
         };
         *self = fresh;
+    }
+
+    /// [fix/roads-tools] Draw straight, curved or a circle.
+    pub fn set_draw(&mut self, m: super::DrawMethod) {
+        if self.circle != (m == super::DrawMethod::Circle) {
+            self.points.clear();
+            self.point_levels.clear();
+        }
+        self.curved = m == super::DrawMethod::Curved;
+        self.circle = m == super::DrawMethod::Circle;
+    }
+
+    pub fn draw_method(&self) -> super::DrawMethod {
+        if self.circle {
+            super::DrawMethod::Circle
+        } else if self.curved {
+            super::DrawMethod::Curved
+        } else {
+            super::DrawMethod::Straight
+        }
+    }
+
+    /// [fix/roads-tools] The road type being drawn (one of `ROAD_TYPES`):
+    /// a two-way street, a one-way road too narrow for a highway (a ramp
+    /// at one lane), or a highway (one-way, three lanes or more).
+    pub fn road_type(&self) -> &'static str {
+        match self.kind {
+            RoadKind::Path => "Path",
+            RoadKind::Rail => "Rail",
+            RoadKind::Street if self.lanes_fwd > 0 && self.lanes_bwd > 0 => "Street",
+            RoadKind::Street if nd_sim::roads::is_highway_spec(RoadKind::Street, self.lanes_fwd, self.lanes_bwd) => "Highway",
+            RoadKind::Street => "One-way",
+        }
+    }
+
+    /// [fix/roads-tools] Pick a road type: its usual lanes, unless the
+    /// lanes set already suit it. The level is kept (a tunnel is any road
+    /// deep enough). False for a name that is no type.
+    pub fn pick_type(&mut self, label: &str) -> bool {
+        let Some(&ty) = super::ROAD_TYPES.iter().find(|t| t.eq_ignore_ascii_case(label)) else { return false };
+        self.roundabout = false;
+        self.interchange = false;
+        self.tunnel = false;
+        let was = self.road_type();
+        match ty {
+            "Path" => self.kind = RoadKind::Path,
+            _ => {
+                self.kind = RoadKind::Street;
+                if was != ty {
+                    let (f, b) = match ty {
+                        "Street" => (2, 2),
+                        "One-way" => (1, 0),
+                        _ => (4, 0),
+                    };
+                    self.lanes_fwd = f;
+                    self.lanes_bwd = b;
+                }
+            }
+        }
+        true
     }
 
     pub fn captures_brackets(&self) -> bool {
@@ -461,6 +572,9 @@ impl Default for ToolState {
             pillars: Default::default(),
             junction_editor: None,
             junction_hover: None,
+            hover_joint: None,
+            joint_drag: None,
+            circle: false,
             plan_check: None,
         }
     }
