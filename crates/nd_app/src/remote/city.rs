@@ -129,6 +129,31 @@ pub(super) fn tow_car(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     Ok(json!({ "tow_job": job, "vehicle": j.map(|j| key_str(j.car)), "company": j.and_then(|j| j.company).map(key_str), "out_of_town": j.is_some_and(|j| j.company.is_none()) }))
 }
 
+/// [games] Put a game on at stadium `building` today (dev), and say where
+/// it is in its day.
+pub(super) fn stadium_game(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let w = &mut ctx.sim.world;
+    let id = key_from(field(cmd, "building").ok_or("building is required")?)?;
+    let b = w.buildings.get(id).ok_or("no such building")?;
+    if !b.service.is_some_and(|s| s.kind == nd_sim::ServiceKind::Stadium) {
+        return Err(format!("{} is not a stadium", b.name));
+    }
+    if !w.services.events_today.contains(&id) {
+        w.services.events_today.push(id);
+    }
+    use nd_sim::world::games::*;
+    Ok(json!({ "building": key_str(id), "game_today": true, "gates_open": GATES_OPEN, "kickoff": KICKOFF, "final_whistle": FINAL_WHISTLE, "phase": w.game_phase(id).map(|p| p.label()), "away_cars_parked": w.game_cars_parked(id), "away_cars_driving_in": w.games.driving_in.iter().filter(|f| f.stadium == id).count() }))
+}
+
+/// [airlift] Lift a vehicle on the road away by helicopter: `car`.
+pub(super) fn airlift(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let w = &mut ctx.sim.world;
+    let car = key_from(field(cmd, "car").ok_or("car is required")?)?;
+    w.airlift(car)?;
+    let a = w.airlifts().last().unwrap();
+    Ok(json!({ "airlift": true, "at": [a.at.x, a.at.y], "from": [a.from.x, a.from.y], "to": [a.to.x, a.to.y], "pound": a.pound.map(key_str), "hook_tick": a.hook_tick(), "end_tick": a.end_tick() }))
+}
+
 /// [parking] The fee at a lot the city runs.
 pub(super) fn parking_price(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let id = key_from(field(cmd, "building").ok_or("missing building id")?)?;

@@ -61,6 +61,13 @@ pub struct TowMove {
     pub truck: CarId,
     pub then: AfterMove,
     pub since: u64,
+    /// [tow-fix] The street the move is made in: the truck comes back onto
+    /// its lanes, never onto a ramp or highway that passes over or beside
+    /// it (it was put on the nearest "street" by distance alone, often a
+    /// slip road overhead, where it had no way on to the pound and stood
+    /// for hours: G10, G15, G19, G20). None from older saves.
+    #[serde(default)]
+    pub street: Option<SegmentId>,
 }
 
 /// [tow-moves] The way in against a one-way: the point the truck enters
@@ -142,11 +149,13 @@ impl World {
 
     /// [tow-moves] Up the one-way to the car: off the lanes, ambers on.
     pub(super) fn begin_contraflow(&mut self, truck: CarId, job: u32, c: Contra) {
+        // [tow-fix] The one-way street the car stands in.
+        let street = self.enforcement.job(job).and_then(|j| self.vehicles.cars.get(j.car)).and_then(|v| v.spot()).and_then(|s| s.segment);
         self.traffic.begin_manoeuvre(truck, vec![c.entry, c.stop], c.face, CONTRA_SPEED);
         if let Some(t) = self.traffic.cars.get_mut(truck) {
             t.drive.amber = true;
         }
-        self.driving.moves.push(TowMove { truck, then: AfterMove::Hook { job }, since: self.clock.tick });
+        self.driving.moves.push(TowMove { truck, then: AfterMove::Hook { job }, since: self.clock.tick, street });
         self.enforcement.stats.contraflow_total += 1;
     }
 
@@ -174,7 +183,7 @@ impl World {
         if here.as_ref().is_some_and(|r| self.route_len(r) <= self.route_len(&there) + UTURN_SAVING) {
             return false;
         }
-        self.turn_round(truck, pos, heading, Some(self.traffic.net.lanes[ol as usize].point_at(os).0), then);
+        self.turn_round(truck, pos, heading, Some(self.traffic.net.lanes[ol as usize].point_at(os).0), then, Some(segment));
         true
     }
 
@@ -239,7 +248,7 @@ impl World {
                 continue;
             }
             let to = net.lanes[ol as usize].point_at(os).0;
-            self.turn_round(id, pos, heading, Some(to), AfterMove::Resume { goal, s_end });
+            self.turn_round(id, pos, heading, Some(to), AfterMove::Resume { goal, s_end }, Some(segment));
             self.driving.rage_u_turns_today += 1;
             self.driving.rage_u_turns_total += 1;
         }
@@ -247,7 +256,7 @@ impl World {
 
     /// [tow-moves] Turn round where it stands (a three-point turn drawn as
     /// a slow arc) to end at `to` (or across the street) facing back.
-    fn turn_round(&mut self, truck: CarId, pos: Vec2, heading: f32, to: Option<Vec2>, then: AfterMove) {
+    fn turn_round(&mut self, truck: CarId, pos: Vec2, heading: f32, to: Option<Vec2>, then: AfterMove, street: Option<SegmentId>) {
         let fwd = Vec2::new(heading.cos(), heading.sin());
         let target = to.unwrap_or(pos);
         // Swing out to the side the far lane is on (else to the left).
@@ -265,7 +274,7 @@ impl World {
             // A tow truck's ambers flash; a seething driver just goes.
             t.drive.amber = !rage;
         }
-        self.driving.moves.push(TowMove { truck, then, since: self.clock.tick });
+        self.driving.moves.push(TowMove { truck, then, since: self.clock.tick, street });
         if !rage {
             self.enforcement.stats.u_turns_total += 1;
         }
@@ -300,29 +309,36 @@ impl World {
                     if hooked {
                         // Round towards the middle of the street, to face
                         // the way the traffic goes.
-                        let mid = self.roads.nearest_street(pos).map(|(_, _, q)| q);
-                        self.turn_round(m.truck, pos, heading, mid, AfterMove::ToPound { job });
+                        let street = self.street_under(pos, m.street);
+                        let mid = street.map(|s| {
+                            let (a, b) = self.roads.segment_points(s);
+                            let d = (b - a).normalize_or_zero();
+                            a + d * (pos - a).dot(d)
+                        });
+                        self.turn_round(m.truck, pos, heading, mid, AfterMove::ToPound { job }, street);
                     } else {
-                        self.back_on_lanes(m.truck);
+                        self.back_on_lanes(m.truck, m.street, None);
                         if self.traffic.cars.get(m.truck).is_some_and(|c| !c.in_stunt()) {
                             self.tow_truck_home(m.truck, company);
                         }
                     }
                 }
                 AfterMove::ToPound { job } => {
-                    self.back_on_lanes(m.truck);
+                    let goal = self.pound_goal(m.truck, job);
+                    self.back_on_lanes(m.truck, m.street, goal);
                     if self.traffic.cars.get(m.truck).is_some_and(|c| !c.in_stunt()) && !self.route_to_pound(m.truck, job) {
                         self.traffic.pull_in(m.truck, super::cars::RETIRE_RETRY_SECONDS);
                     }
                 }
                 AfterMove::Home { company } => {
-                    self.back_on_lanes(m.truck);
+                    let goal = self.yard_goal(company);
+                    self.back_on_lanes(m.truck, m.street, goal);
                     if self.traffic.cars.get(m.truck).is_some_and(|c| !c.in_stunt()) {
                         self.recovery_truck_home(m.truck, company);
                     }
                 }
                 AfterMove::Resume { goal, s_end } => {
-                    self.back_on_lanes(m.truck);
+                    self.back_on_lanes(m.truck, m.street, Some((goal, s_end)));
                     // On to where it was going (with no way from this side
                     // after all, it arrives where it is and looks again).
                     if self.traffic.cars.get(m.truck).is_some_and(|c| !c.in_stunt()) {
@@ -338,30 +354,36 @@ impl World {
     /// [tow-moves] Back onto the lanes where it stands: the lane of the
     /// street under it running the way it faces (any lane of the nearest
     /// street failing that), a few metres to go.
-    fn back_on_lanes(&mut self, truck: CarId) {
+    ///
+    /// [tow-fix] "The street under it" is the one the move was made in
+    /// (`street`), else the nearest ordinary street: never a highway or
+    /// slip road passing over or beside it, unless there is nothing else.
+    /// Of its lanes one from which `goal` can be reached is preferred.
+    pub(super) fn back_on_lanes(&mut self, truck: CarId, street: Option<SegmentId>, goal: Option<(LaneId, f32)>) {
         let Some(c) = self.traffic.cars.get(truck) else { return };
         if !c.in_stunt() {
             return;
         }
         let (pos, heading) = (c.pos, c.heading);
         let fwd = Vec2::new(heading.cos(), heading.sin());
-        let Some((seg, _, _)) = self.roads.nearest_street(pos) else {
+        let Some(seg) = self.street_under(pos, street) else {
             self.retire_vehicle(truck);
             return;
         };
-        let best = self
-            .traffic
-            .net
+        let net = &self.traffic.net;
+        let best = net
             .segment_lanes
             .get(&seg)
             .into_iter()
             .flatten()
             .copied()
             .map(|l| {
-                let lane = &self.traffic.net.lanes[l as usize];
+                let lane = &net.lanes[l as usize];
                 let (s, d) = lane.project(pos);
                 let along = lane.point_at(s).1.dot(fwd);
-                (l, s, d - along * 10.0)
+                let s0 = s.clamp(0.0, (lane.length - 0.5).max(0.0));
+                let dead = goal.is_some_and(|(g, gs)| net.route_lanes(l, s0, g, gs).is_none());
+                (l, s, d - along * 10.0 + if dead { 1000.0 } else { 0.0 })
             })
             .min_by(|a, b| a.2.total_cmp(&b.2).then(a.0.cmp(&b.0)));
         let Some((lane, s, _)) = best else {
@@ -375,6 +397,17 @@ impl World {
         if let Some(t) = self.traffic.cars.get_mut(truck) {
             t.drive.amber = false;
         }
+    }
+
+    /// [tow-fix] The street a vehicle off the lanes at `pos` is in: `hint`
+    /// while it stands, else the nearest ordinary street (not a highway,
+    /// motorway or slip road), else any.
+    pub(super) fn street_under(&self, pos: Vec2, hint: Option<SegmentId>) -> Option<SegmentId> {
+        if let Some(s) = hint.filter(|&s| self.roads.try_segment(s).is_some_and(|g| g.alive && g.is_street()) && self.traffic.net.segment_lanes.get(&s).is_some_and(|l| !l.is_empty())) {
+            return Some(s);
+        }
+        let plain = self.roads.nearest_where(pos, |s| s.is_street() && !s.is_highway() && !s.is_motorway() && !s.ramp).filter(|(_, _, q)| q.distance(pos) < 30.0);
+        plain.or_else(|| self.roads.nearest_street(pos)).map(|(s, _, _)| s)
     }
 
     /// [tow-moves] Where a tow job's truck goes with the car on: the yard's

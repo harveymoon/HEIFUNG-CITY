@@ -213,7 +213,7 @@ impl World {
     }
 
     /// A route in from the road end `n` (segment `sid`) to `s_end` on `goal`.
-    pub(super) fn route_in_from(&self, n: NodeId, sid: SegmentId, goal: LaneId, s_end: f32) -> Option<(Vec<LaneId>, f32, f32)> {
+    pub(in crate::world) fn route_in_from(&self, n: NodeId, sid: SegmentId, goal: LaneId, s_end: f32) -> Option<(Vec<LaneId>, f32, f32)> {
         let at = self.roads.node(n).pos;
         let lanes = self.traffic.net.segment_lanes.get(&sid)?;
         let &lane = lanes.iter().min_by(|a, b| self.traffic.net.lanes[**a as usize].start().distance(at).total_cmp(&self.traffic.net.lanes[**b as usize].start().distance(at)))?;

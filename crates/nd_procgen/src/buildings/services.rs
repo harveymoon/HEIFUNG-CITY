@@ -425,6 +425,7 @@ pub fn stadium(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             f.bx(g, Glow, p.x, mast_h + 0.6, p.y, Vec3::new(2.8, 1.4, 0.7), mul(pal.street_lamp, 1.6));
         }
     }
+    game_rig(g, c, center, r, ax, ay, h, n, mast_h);
     if c.tier == Tier::High {
         // Roof ring on posts over the stands: an open annulus.
         let ring_o = oval(r * 1.0);
@@ -441,6 +442,115 @@ pub fn stadium(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             }
         }
     }
+}
+
+/// [games] A stadium's game-day dressing, kept out of its mesh: the crowd
+/// in the stands, the two teams on a floodlit pitch, fans milling at the
+/// gates, and the bays on the plaza the away fans' cars stand in.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GameRig {
+    /// The building it dresses (set by whoever draws the building).
+    pub building: Option<nd_sim::BuildingId>,
+    pub stands: Geometry,
+    pub pitch: Geometry,
+    pub outside: Geometry,
+    /// Car bays on the plaza, nearest the gates first: centre (world, at
+    /// the ground) and heading.
+    pub slots: Vec<(Vec3, f32)>,
+}
+
+/// The shirts in a crowd: the home side's red, the visitors' blue, and
+/// the rest.
+const SHIRTS: [[f32; 3]; 8] = [[0.75, 0.1, 0.12], [0.75, 0.1, 0.12], [0.8, 0.15, 0.15], [0.12, 0.25, 0.7], [0.15, 0.3, 0.75], [0.9, 0.88, 0.82], [0.2, 0.2, 0.22], [0.85, 0.7, 0.2]];
+
+fn shirt(seed: u64, k: u64) -> [f32; 3] {
+    SHIRTS[(nd_sim::hash::mix(seed, k) % SHIRTS.len() as u64) as usize]
+}
+
+/// [games] Build the stadium's `GameRig` (see `stadium` for the bowl's
+/// shape: the oval of radius `r` scaled by `ax`/`ay`, stands `h` high).
+#[allow(clippy::too_many_arguments)]
+fn game_rig(g: &mut Geometry, c: &Ctx, center: Vec2, r: f32, ax: f32, ay: f32, h: f32, n: usize, mast_h: f32) {
+    let f = &c.frame;
+    let seed = c.seed;
+    let at = |a: f32, k: f32| center + Vec2::new(a.cos() * r * k * ax, a.sin() * r * k * ay);
+    let mut rig = GameRig::default();
+    // The stands: rows of spectators up the rake, from just above the
+    // touchline to under the rim.
+    let rows = (h / 1.4).clamp(3.0, 9.0) as usize;
+    let per_seg = 7;
+    for i in 0..n {
+        for col in 0..per_seg {
+            let a = (i as f32 + (col as f32 + 0.5) / per_seg as f32) / n as f32 * TAU;
+            for row in 0..rows {
+                let t = 0.12 + 0.76 * (row as f32 + 0.5) / rows as f32;
+                let k = 0.62 + (0.96 - 0.62) * t;
+                let y = 0.6 + (h - 0.6) * t;
+                let key = (i * 1000 + col * 50 + row) as u64;
+                // A few empty seats.
+                if nd_sim::hash::mix(seed, key ^ 0xE0) % 9 == 0 {
+                    continue;
+                }
+                let p = f.at2(at(a, k), y + 0.55);
+                rig.stands.part(Matte).boxed(p, Vec3::new(0.55, 1.1, 0.55), a, rgba(shirt(seed, key)));
+            }
+        }
+    }
+    // The pitch under the lights, and the two teams on it.
+    let pitch: Vec<Vec2> = (0..n).map(|i| at(i as f32 / n as f32 * TAU, 0.6)).collect();
+    for i in 0..n {
+        let j = (i + 1) % n;
+        rig.pitch.part(Glow).quad_facing([f.at2(center, 0.08), f.at2(pitch[j], 0.08), f.at2(pitch[i], 0.08), f.at2(center, 0.08)].map(|p| p), Vec3::Y, rgba([0.16, 0.42, 0.18]));
+    }
+    for k in 0..22u64 {
+        let side = if k < 11 { -1.0 } else { 1.0 };
+        let u = (nd_sim::hash::mix(seed, 0x9100 + k) % 1000) as f32 / 1000.0;
+        let v = (nd_sim::hash::mix(seed, 0x9200 + k) % 1000) as f32 / 1000.0;
+        let a = if ax > ay { Vec2::new(side * (0.05 + 0.42 * u), v * 0.8 - 0.4) } else { Vec2::new(v * 0.8 - 0.4, side * (0.05 + 0.42 * u)) };
+        let p = center + Vec2::new(a.x * r * ax * 0.6, a.y * r * ay * 0.6);
+        let kit = if k < 11 { [0.85, 0.1, 0.12] } else { [0.95, 0.95, 0.95] };
+        rig.pitch.part(Matte).boxed(f.at2(p, 0.95), Vec3::new(0.5, 1.8, 0.5), 0.0, rgba(kit));
+    }
+    rig.pitch.part(Glow).boxed(f.at2(center + Vec2::new(r * 0.04, 0.0), 0.3), Vec3::splat(0.45), 0.0, rgba([1.0, 1.0, 0.95]));
+    // Brighter lamps on the masts while the game is on.
+    for k in 0..4 {
+        let a = (k as f32 + 0.5) / 4.0 * TAU;
+        let p = center + Vec2::new(a.cos() * r * ax * 0.86, a.sin() * r * ay * 0.86);
+        if c.inside_local(p) {
+            rig.pitch.part(Glow).boxed(f.at2(p, mast_h + 0.6), Vec3::new(3.4, 1.8, 0.9), 0.0, rgba([2.4, 2.4, 2.1]));
+        }
+    }
+    // Fans at the gates on the road side and round the bowl.
+    let front = c.front_face(&c.poly);
+    let gate = center + (front.mid() - center).normalize_or_zero() * r * if ax > ay { 1.0 } else { 1.35 } * 1.04;
+    for k in 0..90u64 {
+        let u = (nd_sim::hash::mix(seed, 0xA100 + k) % 1000) as f32 / 1000.0 - 0.5;
+        let v = (nd_sim::hash::mix(seed, 0xA200 + k) % 1000) as f32 / 1000.0;
+        let p = gate + front.tangent * u * r * 0.9 + (front.mid() - center).normalize_or_zero() * v * 6.0;
+        if c.inside_local(p) {
+            rig.outside.part(Matte).boxed(f.at2(p, 0.85), Vec3::new(0.55, 1.7, 0.55), 0.0, rgba(shirt(seed, 0xA300 + k)));
+        }
+    }
+    // Car bays on the plaza clear of the bowl, nearest the gates first.
+    let (lo, hi) = bounds(&c.poly);
+    let mut bays: Vec<(f32, Vec2)> = Vec::new();
+    let mut v = lo.y + 3.0;
+    while v < hi.y - 3.0 {
+        let mut u = lo.x + 2.0;
+        while u < hi.x - 2.0 {
+            let p = Vec2::new(u, v);
+            let e = Vec2::new((p.x - center.x) / (r * ax), (p.y - center.y) / (r * ay));
+            let corners = [p + Vec2::new(-1.2, -2.4), p + Vec2::new(1.2, -2.4), p + Vec2::new(-1.2, 2.4), p + Vec2::new(1.2, 2.4)];
+            if e.length() > 1.12 && corners.iter().all(|q| c.inside_local(*q)) {
+                bays.push((p.distance(gate), p));
+            }
+            u += 2.8;
+        }
+        v += 5.6;
+    }
+    bays.sort_by(|a, b| a.0.total_cmp(&b.0));
+    rig.slots = bays.into_iter().take(160).map(|(_, p)| (f.at2(p, 0.0), f.yaw() + std::f32::consts::FRAC_PI_2)).collect();
+    g.games.push(rig);
 }
 
 /// A jail: cell blocks inside a high wall with watchtowers at the corners

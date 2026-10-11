@@ -85,6 +85,10 @@ impl World {
         if matches!(what, Placeable::Toll(_)) {
             return Some("a toll booth goes on a road".into());
         }
+        // [hq] One headquarters per city for the police and the fire brigade.
+        if let Some(why) = self.hq_problem(what) {
+            return Some(why);
+        }
         // Whatever grew there is bought out; another civic structure is not.
         if let Some(b) = lot.building.and_then(|b| self.buildings.get(b)) {
             if Self::is_civic_structure(b) {
@@ -131,6 +135,16 @@ impl World {
             return Some(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, what.label(), cost));
         }
         None
+    }
+
+    /// [hq] The police and the fire brigade each run one headquarters (the
+    /// top tier) per city; posts and stations as many as wanted. Why a
+    /// second cannot go down, naming the one there is; None otherwise.
+    pub fn hq_problem(&self, what: Placeable) -> Option<String> {
+        let Placeable::Service(kind @ (ServiceKind::Police | ServiceKind::Fire), Tier::High) = what else { return None };
+        let (_, b) = self.buildings.iter().find(|(_, b)| b.service.is_some_and(|s| s.kind == kind && s.tier == Tier::High))?;
+        let what = if kind == ServiceKind::Police { "police" } else { "fire" };
+        Some(format!("the city has its {what} headquarters already ({}): only one per city; build a {what} station instead", b.name))
     }
 
     /// Build a service or attraction on a vacant lot, paid from the treasury.

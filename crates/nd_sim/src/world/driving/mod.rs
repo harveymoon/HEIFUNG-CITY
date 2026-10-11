@@ -143,6 +143,11 @@ pub struct Driving {
     /// [rage] Illegal U-turns by seething drivers, today and in all.
     pub rage_u_turns_today: u32,
     pub rage_u_turns_total: u32,
+    /// [watchdog] Service vehicles watched for standing still on the
+    /// road, and how many were sent on or cleared (`world/watchdog.rs`).
+    pub watch: std::collections::BTreeMap<CarId, super::watchdog::Watched>,
+    pub watchdog_rerouted_total: u32,
+    pub watchdog_cleared_total: u32,
 }
 
 /// A stable `0..1` from a car id, for its weave phase and a stranger's traits.

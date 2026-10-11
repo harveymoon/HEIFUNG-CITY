@@ -82,6 +82,37 @@ fn wheels(m: &mut MeshData, xs: &[f32], z: f32, r: f32) {
     }
 }
 
+/// [police-look] The black-and-white's body (see `make_assets`).
+fn police_body(meshes: &mut Assets<Mesh>) -> Handle<Mesh> {
+    meshes.add(super::shared_mesh(&police_mesh(), true))
+}
+
+/// [police-look] The black-and-white's mesh, kept apart for its test.
+pub(super) fn police_mesh() -> MeshData {
+    let white = [1.0, 1.0, 1.0, 1.0];
+    let black = [0.03, 0.03, 0.035, 1.0];
+    let glass = [0.12, 0.14, 0.18, 1.0];
+    let mut m = MeshData::default();
+    // Black hood, boot and sills.
+    m.boxed(Vec3::new(0.0, 0.72, 0.0), Vec3::new(4.4, 0.74, 1.9), 0.0, black);
+    // White front and rear doors, proud of the body.
+    m.boxed(Vec3::new(-0.05, 0.82, 0.0), Vec3::new(2.0, 0.58, 1.93), 0.0, white);
+    // The cabin's glass and a white roof.
+    m.boxed(Vec3::new(-0.3, 1.38, 0.0), Vec3::new(2.2, 0.46, 1.62), 0.0, glass);
+    m.boxed(Vec3::new(-0.3, 1.64, 0.0), Vec3::new(2.0, 0.08, 1.56), 0.0, white);
+    // The light bar's housing and its unlit lenses, red and blue.
+    m.boxed(Vec3::new(-0.3, 1.76, 0.0), Vec3::new(0.42, 0.16, 1.5), 0.0, [0.1, 0.1, 0.11, 1.0]);
+    m.boxed(Vec3::new(-0.3, 1.78, -0.42), Vec3::new(0.46, 0.14, 0.6), 0.0, [0.45, 0.04, 0.04, 1.0]);
+    m.boxed(Vec3::new(-0.3, 1.78, 0.42), Vec3::new(0.46, 0.14, 0.6), 0.0, [0.04, 0.1, 0.5, 1.0]);
+    // A push bar on the nose and a gold shield on each front door.
+    m.boxed(Vec3::new(2.27, 0.62, 0.0), Vec3::new(0.12, 0.42, 1.5), 0.0, black);
+    for z in [-0.975f32, 0.975] {
+        m.boxed(Vec3::new(0.45, 0.9, z), Vec3::new(0.32, 0.32, 0.02), 0.0, [0.9, 0.7, 0.2, 1.0]);
+    }
+    wheels(&mut m, &[-1.4, 1.4], 0.88, 0.34);
+    m
+}
+
 fn make_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> EmergencyAssets {
     let white = [1.0, 1.0, 1.0, 1.0];
     let dark = [0.12, 0.14, 0.17, 1.0];
@@ -104,15 +135,11 @@ fn make_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateria
         wheels(&mut m, &[-2.4, -1.2, 2.6], 1.05, 0.5);
         meshes.add(super::shared_mesh(&m, true))
     };
-    // Police car: a white sedan with a dark door band.
-    let police = {
-        let mut m = MeshData::default();
-        m.boxed(Vec3::new(0.0, 0.75, 0.0), Vec3::new(4.4, 0.8, 1.9), 0.0, white);
-        m.boxed(Vec3::new(0.0, 0.78, 0.0), Vec3::new(1.8, 0.5, 1.92), 0.0, dark);
-        m.boxed(Vec3::new(-0.3, 1.45, 0.0), Vec3::new(2.2, 0.6, 1.6), 0.0, [0.2, 0.22, 0.26, 1.0]);
-        wheels(&mut m, &[-1.4, 1.4], 0.88, 0.34);
-        meshes.add(super::shared_mesh(&m, true))
-    };
+    // [police-look] Police car: a black-and-white, a black sedan with white
+    // doors and roof, a push bar, and its light bar on the roof always
+    // (dark lenses; the flashing halves light over it, `bars`), so it reads
+    // as the police with the lights off too.
+    let police = police_body(meshes);
     // Ambulance: a box van with a red stripe.
     let ambulance = {
         let mut m = MeshData::default();
@@ -134,7 +161,7 @@ fn make_assets(meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMateria
         [bar(meshes, 2.0, 2.05, -1.0), bar(meshes, 2.0, 2.05, 1.0)],
     ];
     let paint_of = |materials: &mut Assets<StandardMaterial>, c: [f32; 3], metal: f32| materials.add(StandardMaterial { base_color: Color::linear_rgb(c[0], c[1], c[2]), perceptual_roughness: 0.35, metallic: metal, ..default() });
-    let paint = [paint_of(materials, [0.55, 0.03, 0.02], 0.4), paint_of(materials, [0.85, 0.87, 0.9], 0.3), paint_of(materials, [0.9, 0.9, 0.86], 0.2)];
+    let paint = [paint_of(materials, [0.55, 0.03, 0.02], 0.4), paint_of(materials, [0.95, 0.95, 0.97], 0.3), paint_of(materials, [0.9, 0.9, 0.86], 0.2)];
     let light = |materials: &mut Assets<StandardMaterial>, c: [f32; 3]| materials.add(StandardMaterial { base_color: Color::linear_rgb(c[0], c[1], c[2]), emissive: LinearRgba::rgb(c[0] * 6.0, c[1] * 6.0, c[2] * 6.0), unlit: true, ..default() });
     let red = [3.0, 0.15, 0.1];
     let blue = [0.15, 0.4, 3.2];
@@ -505,5 +532,25 @@ pub(super) fn amber_beacons(sim: Res<Sim>, time: Res<Time>, tools: Res<crate::to
         let p = pos + SVec2::new(heading.cos(), heading.sin()) * 0.5;
         let y = w.car_height_at(car, pos) + 1.95;
         gizmos.sphere(Isometry3d::from_translation(Vec3::new(p.x, y, p.y)), 0.22, Color::linear_rgb(6.0, 2.6, 0.15));
+    }
+}
+
+#[cfg(test)]
+mod police_look_tests {
+    use super::*;
+
+    /// [police-look] G8: a police car reads as one with its lights off: a
+    /// black-and-white (black and white panels both) with a light bar's
+    /// housing on the roof, red and blue lenses, part of the body itself.
+    #[test]
+    fn a_police_car_is_black_and_white_with_a_light_bar() {
+        let m = police_mesh();
+        let near = |c: &[f32; 4], k: [f32; 3]| (c[0] - k[0]).abs() < 0.05 && (c[1] - k[1]).abs() < 0.05 && (c[2] - k[2]).abs() < 0.05;
+        let black = m.colors.iter().filter(|c| near(c, [0.03, 0.03, 0.035])).count();
+        let white = m.colors.iter().filter(|c| near(c, [1.0, 1.0, 1.0])).count();
+        assert!(black > 0 && white > 0, "black {black} white {white}");
+        let roof_red = m.positions.iter().zip(&m.colors).any(|(p, c)| p[1] > 1.7 && c[0] > 0.3 && c[2] < 0.1);
+        let roof_blue = m.positions.iter().zip(&m.colors).any(|(p, c)| p[1] > 1.7 && c[2] > 0.3 && c[0] < 0.1);
+        assert!(roof_red && roof_blue, "the light bar's lenses sit on the roof");
     }
 }

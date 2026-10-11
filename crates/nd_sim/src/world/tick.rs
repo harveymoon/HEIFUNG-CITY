@@ -78,6 +78,14 @@ impl World {
         // [ferries] Day trips out, and anyone stranded abroad.
         self.step_ferry_people();
         self.step_cargo_hubs();
+        // [delivery-hours] Lorries due out now.
+        self.step_freight_queue();
+        // [games] Away fans driving in to a game, and home after.
+        self.step_games();
+        // [airlift] Stuck vehicles lifted off the road.
+        self.step_airlifts();
+        // [watchdog] No service vehicle stands for long on a carriageway.
+        self.step_watchdog();
         if self.clock.minute_of_day() == 0 {
             self.bots.delivered_today = 0;
             self.bots.van_orders_today = 0;
@@ -273,6 +281,10 @@ impl World {
             }
             // [carlife] Private cars park (or go on looking), trucks and
             // vans head back to base, cars sold or emigrating leave.
+            // [games] An away fan's car at the ground.
+            if self.fan_car_arrived(car_id) {
+                continue;
+            }
             if self.vehicle_arrived(car_id) {
                 continue;
             }

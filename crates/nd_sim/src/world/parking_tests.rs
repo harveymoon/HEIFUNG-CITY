@@ -7,6 +7,7 @@ use crate::mind::IdleMind;
 use crate::services::ServiceKind;
 use crate::vehicle::{CarEvent, CarPlace, ParkKind, VehicleId};
 use super::cars::HUNT_GIVE_UP;
+use crate::Errand;
 
 fn square(x0: f32, y0: f32, size: f32) -> Vec<Vec2> {
     vec![Vec2::new(x0, y0), Vec2::new(x0 + size, y0), Vec2::new(x0 + size, y0 + size), Vec2::new(x0, y0 + size)]
@@ -618,4 +619,146 @@ fn big_vehicles_get_a_heavy_tow_truck() {
     for big in [BodyType::Semi, BodyType::BubbleBus, BodyType::PanelTruck, BodyType::GarbageTruck] {
         assert_eq!(super::enforcement::tow_model_for(big).body, BodyType::HeavyTow, "{big:?}");
     }
+}
+
+/// [tow-fix] G10/G15/G19/G20: a tow truck turning round in a street with
+/// a highway beside (or over) it came back onto the lanes of whatever
+/// "street" was nearest, the highway, where no road led to its yard; it
+/// pulled in there to try again, and again, for hours. It now comes back
+/// onto the street it turned in, or the nearest ordinary street.
+#[test]
+fn a_truck_off_the_lanes_comes_back_onto_its_street_not_a_highway_beside_it() {
+    let mut w = town();
+    // A highway close beside the long south street.
+    w.add_road(&[Vec2::new(16.0, -290.0), Vec2::new(16.0, -60.0)], 3, 0);
+    run(&mut w, 2);
+    let at = Vec2::new(10.0, -160.0);
+    let (hw, _, _) = w.roads.nearest_street(at).unwrap();
+    assert!(w.roads.segment(hw).is_highway(), "the trap: the highway is the nearest street there");
+    let street = w.roads.nearest_where(Vec2::new(0.0, -160.0), |s| s.is_street() && !s.is_highway()).map(|(s, _, _)| s).unwrap();
+    assert_eq!(w.street_under(at, None), Some(street));
+    assert_eq!(w.street_under(at, Some(street)), Some(street));
+    // A truck that turned round there and ends up nearer the highway.
+    let (lane, s, _) = w.traffic.net.nearest_lane_on(street, Vec2::new(0.0, -160.0)).unwrap();
+    let truck = w.traffic.spawn_car(CitizenId::default(), None, vec![lane], s, s + 3.0, 0);
+    w.traffic.begin_manoeuvre(truck, vec![at], 0.0, 2.0);
+    w.traffic.cars[truck].pos = at;
+    w.back_on_lanes(truck, None, None);
+    let c = &w.traffic.cars[truck];
+    assert!(!c.in_stunt());
+    match &w.traffic.net.lanes[c.route[c.idx] as usize].kind {
+        crate::traffic::LaneKind::Road { segment, .. } => assert_eq!(*segment, street, "back on the street it turned in"),
+        k => panic!("on {k:?}"),
+    }
+}
+
+/// [tow-fix] A truck with a car on and no road from where it stands to its
+/// yard (a highway that only leads out of town) takes the car to the pound
+/// out of town, rather than pulling in on the carriageway to try again for
+/// ever.
+#[test]
+fn a_tow_truck_with_no_road_to_its_yard_takes_the_car_out_of_town() {
+    let mut w = town();
+    let yard = tow_yard(&mut w);
+    // A highway on its own, leading off the map.
+    w.add_road(&[Vec2::new(-300.0, -500.0), Vec2::new(crate::landscape::LAND_HALF, -500.0)], 3, 0);
+    run(&mut w, 2);
+    let (_, vid) = car_near(&mut w, Vec2::new(4.0, -150.0));
+    let job = w.call_tow(vid, TowReason::Illegal).expect("tow called");
+    // The truck stands on the highway, the car's tow job its errand.
+    let (hw, _, _) = w.roads.nearest_street(Vec2::new(0.0, -500.0)).unwrap();
+    let (lane, s, _) = w.traffic.net.nearest_lane_on(hw, Vec2::new(0.0, -500.0)).unwrap();
+    let truck = w.traffic.spawn_car(CitizenId::default(), None, vec![lane], s, s + 2.0, 0);
+    w.traffic.cars[truck].errand = Errand::Tow(job);
+    if let Some(j) = w.enforcement.jobs.iter_mut().find(|j| j.id == job) {
+        j.company = Some(yard);
+        j.truck = Some(truck);
+        j.state = TowState::ToCar;
+    }
+    w.tow_truck_arrived(truck, job);
+    assert_eq!(w.enforcement.job(job).map(|j| j.state), Some(TowState::ToPound), "hooked");
+    assert_eq!(w.enforcement.stats.pound_detours_total, 1, "no way to the yard: out of town instead");
+    assert_eq!(w.enforcement.job(job).and_then(|j| j.company), None);
+    assert!(w.traffic.cars[truck].hold <= 0.0, "driving on, not pulled in on the carriageway");
+    for _ in 0..600 {
+        run(&mut w, 1);
+        if w.vehicles.cars[vid].spot().is_some_and(|s| s.kind == ParkKind::Pound) {
+            break;
+        }
+    }
+    let spot = w.vehicles.cars[vid].spot().copied().unwrap();
+    assert_eq!((spot.kind, spot.building), (ParkKind::Pound, None), "in the pound out of town");
+    assert!(!w.traffic.cars.contains_key(truck));
+}
+
+/// [watchdog] A service vehicle standing still on a carriageway for a
+/// reason of its own (pulled in to try again) is sent on after
+/// `STILL_REROUTE` minutes and taken off the road after `STILL_CLEAR`.
+#[test]
+fn the_watchdog_clears_a_service_vehicle_standing_in_the_road() {
+    use super::watchdog::{STILL_CLEAR, STILL_REROUTE};
+    let mut w = town();
+    let (seg, _, _) = w.roads.nearest_street(Vec2::new(0.0, -200.0)).unwrap();
+    let (lane, s, _) = w.traffic.net.nearest_lane_on(seg, Vec2::new(0.0, -200.0)).unwrap();
+    let truck = w.traffic.spawn_car(CitizenId::default(), None, vec![lane], s, s + 2.0, 0);
+    w.traffic.cars[truck].errand = Errand::Out;
+    // Broken down for good: whatever it is told, it stays where it stands.
+    let mut held = |w: &mut World, n: u64| {
+        for _ in 0..n {
+            if w.traffic.cars.contains_key(truck) {
+                w.traffic.pull_in(truck, 1.0e9);
+            }
+            run(w, 1);
+        }
+    };
+    held(&mut w, STILL_REROUTE + 10);
+    assert!(w.traffic.cars.contains_key(truck));
+    assert!(w.driving.watchdog_rerouted_total >= 1, "sent on first");
+    assert_eq!(w.traffic.cars[truck].errand, Errand::Out, "off the map, with nowhere else to go");
+    held(&mut w, STILL_CLEAR - STILL_REROUTE + 10);
+    assert!(!w.traffic.cars.contains_key(truck), "then cleared off the road");
+    assert_eq!(w.driving.watchdog_cleared_total, 1);
+}
+
+/// [airlift] G19: the airlift. The helicopter is paid for, flies in, the
+/// vehicle stays put until it is over it, is lifted off the road (a stuck
+/// tow truck's car going to the pound), and the helicopter flies away.
+#[test]
+fn the_airlift_lifts_a_stuck_tow_truck_and_its_car_away() {
+    use super::airlift::*;
+    let mut w = town();
+    let yard = tow_yard(&mut w);
+    let (_, vid) = car_near(&mut w, Vec2::new(4.0, -150.0));
+    let job = w.call_tow(vid, TowReason::Illegal).expect("tow called");
+    let (seg, _, _) = w.roads.nearest_street(Vec2::new(0.0, -200.0)).unwrap();
+    let (lane, s, _) = w.traffic.net.nearest_lane_on(seg, Vec2::new(0.0, -200.0)).unwrap();
+    let truck = w.traffic.spawn_car(CitizenId::default(), None, vec![lane], s, s + 2.0, 0);
+    w.traffic.cars[truck].errand = Errand::Tow(job);
+    if let Some(j) = w.enforcement.jobs.iter_mut().find(|j| j.id == job) {
+        j.company = Some(yard);
+        j.truck = Some(truck);
+        j.state = TowState::ToCar;
+    }
+    assert!(w.hook_parked(truck, job));
+    w.traffic.pull_in(truck, 1.0e9);
+    let before = w.economy.treasury;
+    w.airlift(truck).expect("airlift called");
+    assert!(w.airlift(truck).is_err(), "once is enough");
+    assert!((before - w.economy.treasury - AIRLIFT_COST).abs() < 0.01, "paid for");
+    run(&mut w, (AIRLIFT_INBOUND - 1) as usize);
+    assert!(w.traffic.cars.contains_key(truck), "still there until the helicopter is over it");
+    run(&mut w, AIRLIFT_HOOK as usize + 1);
+    assert!(!w.traffic.cars.contains_key(truck), "lifted off the road");
+    assert!(w.enforcement.job(job).is_none(), "the job is done");
+    let spot = w.vehicles.cars[vid].spot().copied().unwrap();
+    assert_eq!((spot.kind, spot.building), (ParkKind::Pound, Some(yard)), "its car in the yard's pound");
+    assert_eq!(w.airlifts().len(), 1, "flying away with it");
+    run(&mut w, AIRLIFT_OUTBOUND as usize + 1);
+    assert!(w.airlifts().is_empty());
+    assert_no_car_lost(&w);
+    // A bus is refused, and so is an empty treasury.
+    w.economy.treasury = 10.0;
+    let (lane2, s2, _) = w.traffic.net.nearest_lane_on(seg, Vec2::new(0.0, -120.0)).unwrap();
+    let other = w.traffic.spawn_car(CitizenId::default(), None, vec![lane2], s2, s2 + 2.0, 0);
+    assert!(w.airlift(other).unwrap_err().contains("treasury"));
 }

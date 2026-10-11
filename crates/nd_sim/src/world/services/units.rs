@@ -302,7 +302,7 @@ impl World {
         self.requeue(id);
     }
 
-    pub(super) fn park_at_station(&mut self, uid: UnitId) {
+    pub(in crate::world) fn park_at_station(&mut self, uid: UnitId) {
         let Some(u) = self.services.units.get(uid) else { return };
         if !self.station_alive(u.station) {
             self.unit_leaves_town(uid);
@@ -338,6 +338,11 @@ impl World {
             return;
         }
         let Some(uid) = self.services.by_car.remove(&car_id) else { return };
+        // [beat] The street it ended on, to pull in to the kerb there.
+        let street = self.traffic.cars.get(car_id).and_then(|c| c.route.get(c.idx)).and_then(|&l| match self.traffic.net.lanes.get(l as usize).map(|l| &l.kind) {
+            Some(crate::traffic::LaneKind::Road { segment, .. }) => Some(*segment),
+            _ => None,
+        });
         let Some(car) = self.traffic.remove_car(car_id) else { return };
         let Some(u) = self.services.units.get_mut(uid) else { return };
         u.car = None;
@@ -369,13 +374,50 @@ impl World {
             UnitState::Transporting => self.deliver_patient(uid),
             UnitState::Returning => self.park_at_station(uid),
             UnitState::Patrol => {
-                // On the beat: park a while.
+                // On the beat: park a while, pulled in to the kerb (it was
+                // left standing in the lane, "parked" in the traffic). With
+                // no kerb there (a highway, a ramp) it drives on at once.
                 let stay = if self.services.units[uid].kind == UnitKind::PoliceCar { PATROL_STAY } else { STANDBY_STAY };
                 let until = self.clock.tick + self.srng().random_range(stay.0..=stay.1);
-                self.services.units[uid].patrol_until = until;
+                let kerbed = self.park_on_beat(uid, street);
+                self.services.units[uid].patrol_until = if kerbed { until } else { self.clock.tick };
             }
             _ => self.send_home(uid),
         }
+    }
+
+    /// [beat] Pull patrol unit `uid`, just stopped at `u.pos` on `street`
+    /// (else the nearest street), in to the kerb on its right, as parked
+    /// cars stand (`kerb_pose`), clear of the junctions. False (left where
+    /// it is) on a highway or ramp, or with no street near.
+    pub(in crate::world) fn park_on_beat(&mut self, uid: UnitId, street: Option<SegmentId>) -> bool {
+        let Some(u) = self.services.units.get(uid) else { return false };
+        let (pos, heading) = (u.pos, u.heading);
+        let seg = street.filter(|&s| self.roads.try_segment(s).is_some_and(|s| s.alive)).or_else(|| self.roads.nearest_street(pos).filter(|(_, _, q)| q.distance(pos) < 15.0).map(|(s, _, _)| s));
+        let Some(seg) = seg else { return false };
+        let s = self.roads.segment(seg);
+        if !s.is_street() || s.lanes() == 0 || s.is_highway() || s.is_motorway() || s.ramp {
+            return false;
+        }
+        let half = s.half_width();
+        let (a, b) = self.roads.segment_points(seg);
+        let len = a.distance(b);
+        if len < 12.0 {
+            return false;
+        }
+        let d = (b - a) / len;
+        let fwd = Vec2::new(heading.cos(), heading.sin());
+        // Facing the way it drove; on a one-way street the way it flows.
+        let with = if s.lanes_fwd == 0 { false } else if s.lanes_bwd == 0 { true } else { fwd.dot(d) >= 0.0 };
+        let dir = if with { d } else { -d };
+        let clear = 6.0f32.min(len * 0.5);
+        let t = (pos - a).dot(d).clamp(clear, len - clear);
+        let right = Vec2::new(-dir.y, dir.x);
+        let at = a + d * t + right * (half - 1.15).max(0.0);
+        let u = &mut self.services.units[uid];
+        u.pos = at;
+        u.heading = dir.y.atan2(dir.x);
+        true
     }
 
     /// A unit (city or out of town) got there: the clock on the response

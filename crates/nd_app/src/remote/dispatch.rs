@@ -620,6 +620,14 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("vehicle", "or a vehicle record id (parked or driving)"),
         ("returns", "tow_job, vehicle, company (null: an out-of-town firm)"),
     ] },
+    Cmd { name: "stadium_game", aliases: &["game_day"], effect: Game, run: city::stadium_game, help: &[
+        ("building", "a stadium's id: it plays a game today (gates open 16:30, kick-off 19:00, final whistle 21:15)"),
+        ("returns", "building, game_today, gates_open, kickoff, final_whistle (minutes of the day), phase, away_cars_parked, away_cars_driving_in"),
+    ] },
+    Cmd { name: "airlift", aliases: &["chinook"], effect: Game, run: city::airlift, help: &[
+        ("car", "a vehicle id on the road: a heavy-lift helicopter flies in, slings it and flies it away (a resident's car to the pound); costs the treasury"),
+        ("returns", "airlift, at, from, to, pound, hook_tick, end_tick"),
+    ] },
     Cmd { name: "parking_price", aliases: &[], effect: Game, run: city::parking_price, help: &[
         ("building", "id of a parking lot the city runs"),
         ("price", "the fee, 0..50"),

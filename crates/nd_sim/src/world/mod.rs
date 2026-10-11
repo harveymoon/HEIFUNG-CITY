@@ -68,6 +68,10 @@ pub mod interchange;
 #[cfg(test)]
 mod interchange_tests;
 mod market;
+pub mod delivery_hours;
+pub mod games;
+pub mod airlift;
+pub mod watchdog;
 mod parking;
 mod pedestrians;
 mod plan;
@@ -726,6 +730,19 @@ pub struct World {
     /// `world/corp.rs`, `world/campus.rs`). Old saves load with none.
     #[serde(default)]
     pub corps: crate::corp::Corporations,
+    /// [delivery-hours] Lorries ordered but not yet on the road: deliveries
+    /// go out in working hours, each at its own minute
+    /// (`world/delivery_hours.rs`). Old saves load with none.
+    #[serde(default)]
+    pub freight_queue: Vec<delivery_hours::QueuedTruck>,
+    /// [games] Stadium game days: away fans driving in and parked
+    /// (`world/games.rs`). Old saves load with none.
+    #[serde(default)]
+    pub games: games::Games,
+    /// [airlift] Helicopters lifting stuck vehicles off the road
+    /// (`world/airlift.rs`). Old saves load with none.
+    #[serde(default)]
+    pub airlifts: Vec<airlift::Airlift>,
 }
 
 impl World {
@@ -834,6 +851,9 @@ impl World {
             shore: crate::shore::ShoreState { reach_water: true, ..Default::default() },
             path_links: Default::default(),
             corps: Default::default(),
+            freight_queue: Vec::new(),
+            games: Default::default(),
+            airlifts: Vec::new(),
         };
         w.landscape.set(Landscape::new(&w.config.landscape));
         // [sweep-sim] Grids over the whole buildable land (far islands too).

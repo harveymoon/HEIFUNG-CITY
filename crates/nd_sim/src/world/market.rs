@@ -356,6 +356,11 @@ impl World {
         }
         // Exports through a cargo hub leave in full semis.
         self.hub_note_exports(shipped);
+        // [berthing] And by sea: onto the quay for the next freighter's
+        // crane (what it loads; a show of the trade, the money is paid).
+        if shipped > 0.0 && !self.ports.working(crate::ports::PortKind::ShippingPort).is_empty() {
+            self.ports.outbound = (self.ports.outbound + shipped).min(crate::ports::CONTAINER_UNITS * crate::ports::MAX_BOXES as f32 * 4.0);
+        }
         self.drain_stranded_rail_imports();
         // Statistics.
         let mut sums: std::collections::BTreeMap<Resource, (f32, u32, f32)> = std::collections::BTreeMap::new();
@@ -578,7 +583,8 @@ impl World {
         self.note_inbound(to, resource, amount);
         // [industry] a lorry parked at a truck lot near the seller takes the job
         let origin = self.fleet_origin(from);
-        self.dispatch_truck(TruckOrigin::Building(origin), cargo, 7);
+        // [delivery-hours] In working hours, at the buyer's own minute.
+        self.queue_truck(TruckOrigin::Building(origin), cargo, 7);
     }
 
     pub(super) fn truck_count(&self) -> usize {
@@ -631,7 +637,7 @@ impl World {
                 return;
             }
         }
-        self.dispatch_truck(TruckOrigin::CityEdge, cargo, 6);
+        self.queue_truck(TruckOrigin::CityEdge, cargo, 6);
     }
 
     /// Where a truck can pull up at a building: its street, or for a lot

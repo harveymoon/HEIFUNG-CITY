@@ -255,6 +255,19 @@ pub(super) fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_s
         }
         section(ui, "SERVICE");
         ui.label(egui::RichText::new(line).color(crate::ui::theme::SERVICE_BLUE));
+        // [games] A stadium's game day.
+        if s.kind == nd_sim::ServiceKind::Stadium {
+            use nd_sim::world::games::{GATES_OPEN, KICKOFF};
+            let hm = |m: u64| format!("{:02}:{:02}", m / 60, m % 60);
+            let today = w.services.events_today.contains(&id);
+            let text = match w.game_phase(id) {
+                Some(p) => format!("Game day: {}  ·  {} away fans' cars parked", p.label(), w.game_cars_parked(id)),
+                None if today && w.clock.minute_of_day() < GATES_OPEN => format!("Game day: gates open {}, kick-off {}", hm(GATES_OPEN), hm(KICKOFF)),
+                None if today => "Game day: the game is over".to_string(),
+                None => "No game today".to_string(),
+            };
+            ui.label(egui::RichText::new(text).color(if today { egui::Color32::from_rgb(255, 200, 60) } else { egui::Color32::GRAY }));
+        }
     }
     if let Some(kind) = b.plant {
         // [plant-groups] A Sunfield or Wind Park: the whole park's figures.
