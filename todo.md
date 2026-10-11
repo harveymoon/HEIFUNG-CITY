@@ -540,6 +540,8 @@ Sources: Harvey's lists docs/playtest/todo_2026-10-10.md and todo_2026-10-11.md 
 - [x] Lines panel can be resized wider (T); Shift+click inserts a stop, plain clicks add in sequence while creating (T) → DONE [fix/buildings-ui]: Lines window max width = the map's; a new line (street click or New bus line) appends stops in click order, Shift+click inserts where it belongs; editing an existing line unchanged (remote `bus new_line`, `click {shift}`)
 - [x] Crime layer also highlights police stations (T) → DONE [fix/buildings-ui]: shield markers and lot outlines on every police station, and the ground they cover (by road) outlined in police blue
 
+- [ ] Leftovers from groups 1–5: inspector says "a observatory"; landmark neon glows by day; amusement park / convention centre / cathedral / casino not built; Harvey's city gridlocked (away fans and crane boxes crawl); curved through-roads not mended on Implement; backland often refused rather than joined; Edit road-upgrade panel uses old presets; lit off-ramp crossing has no painted zebra
+
 ## 6. New features (wave 2)
 - [ ] Gas prices, fuel stations, EV pressure, fuel tax
 - [ ] Forests and logging → lumber yard, furniture factory, hardware store
@@ -573,4 +575,4 @@ Sources: Harvey's lists docs/playtest/todo_2026-10-10.md and todo_2026-10-11.md 
 - [ ] Metro lines can't be edited stop by stop; metro stations barely visible underground
 - [ ] F27 diagonal sliver parcel can't merge (concave); delivered cars parked far from the buyer's home
 
-## Agents running (2026-10-11): g1 feat/attractions · g2 fix/roads-tools · g3 fix/walk-crossings · g4 fix/vehicles-services · g5 fix/buildings-ui. Stop after these and report to Harvey (he asked).
+## Groups 1–5 merged 2026-10-11. Stopped here as Harvey asked; groups 6–8 not started.
