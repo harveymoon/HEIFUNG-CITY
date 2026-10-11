@@ -86,35 +86,99 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
         hint(ui, help::ROAD_INTERCHANGE);
         return;
     }
-    // Lanes and curvature share a row so the bar stays shallow.
-    ui.horizontal(|ui| {
-        if tools.kind == RoadKind::Street {
-            ui.add(egui::Slider::new(&mut tools.lanes_fwd, 0..=4).text("lanes fwd"));
-            ui.add(egui::Slider::new(&mut tools.lanes_bwd, 0..=4).text("lanes back"));
-            if tools.lanes_fwd + tools.lanes_bwd == 0 {
-                tools.lanes_fwd = 1;
+    // [fix/roads-tools] 1. The road type (also picked in the Build
+    // window), 2. its lanes and level, 3. how it is drawn.
+    if tools.kind != RoadKind::Rail {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("1  Type").small().strong());
+            for ty in crate::tools::ROAD_TYPES {
+                if ui.selectable_label(tools.road_type() == ty, ty).on_hover_text(preset_hint(ty)).clicked() {
+                    tools.pick_type(ty);
+                }
             }
-            ui.separator();
-        }
-        if ui.selectable_label(!tools.curved, "Straight").clicked() {
-            tools.curved = false;
-        }
-        if ui.selectable_label(tools.curved, "Curved [C]").clicked() {
-            tools.curved = true;
+        });
+    }
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("2  Lanes").small().strong());
+        match tools.road_type() {
+            "Street" => {
+                ui.label(egui::RichText::new("each way").small());
+                for (n, name) in [(1u8, "1 · lane"), (2, "2 · street"), (3, "3 · avenue"), (4, "4 · boulevard")] {
+                    if ui.selectable_label(tools.lanes_fwd == n && tools.lanes_bwd == n, name).clicked() {
+                        tools.lanes_fwd = n;
+                        tools.lanes_bwd = n;
+                    }
+                }
+            }
+            "One-way" => {
+                for (n, name, tip) in [(1u8, "1 · highway ramp", "One lane one way: the slip road onto or off a highway (or any one-way link)"), (2, "2", "Two lanes one way")] {
+                    if ui.selectable_label(tools.lanes_fwd + tools.lanes_bwd == n, name).on_hover_text(tip).clicked() {
+                        tools.lanes_fwd = n;
+                        tools.lanes_bwd = 0;
+                    }
+                }
+            }
+            "Highway" => {
+                ui.label(egui::RichText::new("one way").small());
+                for n in [3u8, 4] {
+                    if ui.selectable_label(tools.lanes_fwd + tools.lanes_bwd == n, format!("{n}")).clicked() {
+                        tools.lanes_fwd = n;
+                        tools.lanes_bwd = 0;
+                    }
+                }
+                ui.label(egui::RichText::new("draw one each way").small().weak());
+            }
+            _ => {
+                ui.label(egui::RichText::new("walkers and bikes").small().weak());
+            }
         }
     });
-    // The level the next point goes down at.
+    if tools.road_type() == "Street" && tools.lanes_fwd != tools.lanes_bwd {
+        ui.label(egui::RichText::new(format!("uneven: {} forward, {} back", tools.lanes_fwd, tools.lanes_bwd)).small().weak());
+    }
+    // The level the next point goes down at; deep enough, a tunnel.
     ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("    Level").small().strong());
         if ui.small_button("lower").on_hover_text("Lower: [ or Page Down").clicked() {
             tools.step_elevation(false);
         }
-        let text = egui::RichText::new(format!("Level: {}", crate::tools::elevation_label(tools.elevation))).strong();
+        let text = egui::RichText::new(crate::tools::elevation_label(tools.elevation)).strong();
         ui.label(text).on_hover_text("] raises and [ lowers the next point 2 m (or Page Up / Page Down); Shift+] / Shift+[ move the whole road drawn so far. A raised road stands on concrete pillars that dodge the roads and buildings under it: red where there is no room for one (implementing is refused), buildings a pillar would buy out outlined in orange. Roads 4.5 m or more above or below another pass over or under it without a junction; a raised road stands on a viaduct, one 5 m or more down runs in a tunnel.");
         if ui.small_button("raise").on_hover_text("Raise: ] or Page Up").clicked() {
             tools.step_elevation(true);
         }
-        if tools.elevation != 0.0 && !tools.tunnel && ui.small_button("ground").clicked() {
+        if tools.elevation != 0.0 && ui.small_button("ground").clicked() {
             tools.elevation = 0.0;
+            tools.tunnel = false;
+        }
+        if tools.elevation > nd_sim::roads::TUNNEL_LEVEL && tools.kind != RoadKind::Rail && ui.small_button("tunnel").on_hover_text(preset_hint("Tunnel")).clicked() {
+            tools.elevation = nd_sim::roads::TUNNEL_DEPTH;
+            tools.depth = crate::tools::Depth::Underground;
+        }
+    });
+    if let Some(note) = level_note(tools.elevation) {
+        let (text, strong) = note;
+        let t = egui::RichText::new(text).small();
+        ui.label(if strong { t.strong().color(egui::Color32::from_rgb(120, 210, 255)) } else { t.weak() });
+    }
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("3  Draw").small().strong());
+        for m in crate::tools::DrawMethod::ALL {
+            if m == crate::tools::DrawMethod::Circle && tools.kind == RoadKind::Rail {
+                continue;
+            }
+            let label = match m {
+                crate::tools::DrawMethod::Curved => "Curved [C]".to_string(),
+                _ => m.label().to_string(),
+            };
+            let tip = match m {
+                crate::tools::DrawMethod::Straight => "Click points; straight legs between them. Enter or right-click lays the road.",
+                crate::tools::DrawMethod::Curved => "Click points; a smooth curve through them. Enter or right-click lays the road.",
+                crate::tools::DrawMethod::Circle => "Click the centre, then the edge: a closed circular road of this type (for a give-way ring with entries, use the Roundabout).",
+            };
+            if ui.selectable_label(tools.draw_method() == m, label).on_hover_text(tip).clicked() {
+                tools.set_draw(m);
+            }
         }
     });
     // [tools] The raised road's columns.
@@ -590,19 +654,31 @@ pub fn road_label(tools: &ToolState) -> String {
     if tools.interchange {
         return format!("Interchange (diamond), cross street {} + {} lanes", tools.lanes_fwd, tools.lanes_bwd);
     }
-    if tools.tunnel {
-        return format!("Tunnel, {} + {} lanes", tools.lanes_fwd, tools.lanes_bwd);
-    }
-    match tools.kind {
-        RoadKind::Path => "Path".into(),
-        RoadKind::Rail => "Rail track".into(),
-        RoadKind::Street => {
-            let preset = ROAD_PRESETS.iter().find(|(_, f, b, k)| *k == RoadKind::Street && *f == tools.lanes_fwd && *b == tools.lanes_bwd).map(|p| p.0);
-            match preset {
-                Some(name) => name.to_string(),
-                None => format!("Street, {} + {} lanes", tools.lanes_fwd, tools.lanes_bwd),
-            }
+    // [fix/roads-tools] The type, its lanes, and the level when off the ground.
+    let lanes = match tools.road_type() {
+        "Street" if tools.lanes_fwd == tools.lanes_bwd => {
+            let name = ["", " (lane)", " (street)", " (avenue)", " (boulevard)"].get(tools.lanes_fwd as usize).copied().unwrap_or("");
+            format!(", {} lane{} each way{name}", tools.lanes_fwd, if tools.lanes_fwd == 1 { "" } else { "s" })
         }
+        "Street" => format!(", {} + {} lanes", tools.lanes_fwd, tools.lanes_bwd),
+        "One-way" if tools.lanes_fwd + tools.lanes_bwd == 1 => ", 1 lane (highway ramp)".into(),
+        "One-way" | "Highway" => format!(", {} lanes", tools.lanes_fwd + tools.lanes_bwd),
+        _ => String::new(),
+    };
+    let level = if tools.elevation != 0.0 { format!(", {}", crate::tools::elevation_label(tools.elevation)) } else { String::new() };
+    let ty = if tools.kind == RoadKind::Rail { "Rail track" } else { tools.road_type() };
+    format!("{ty}{lanes}{level}")
+}
+
+pub fn level_note(level: f32) -> Option<(String, bool)> {
+    if level <= nd_sim::roads::TUNNEL_LEVEL {
+        Some((format!("TUNNEL: {:.0} m down, bored under streets, water and buildings; joins other tunnels, climbs to a portal where it meets a street.", -level), true))
+    } else if level < 0.0 {
+        Some((format!("A cutting, open to the sky: {:.0} m more down and it is a tunnel.", level - nd_sim::roads::TUNNEL_LEVEL), false))
+    } else if level >= nd_sim::roads::VIADUCT_LEVEL {
+        Some(("A viaduct on pillars: passes over the roads under it.".into(), false))
+    } else {
+        None
     }
 }
 
@@ -612,11 +688,11 @@ pub fn preset_hint(label: &str) -> &'static str {
         "Path" => "Footpath: walkers and bikes only",
         "Rail" => "Railway track: trains only, never fronts lots",
         "Lane" => "One lane each way",
-        "Street" => "Two lanes each way",
+        "Street" => "A two-way street: one to four lanes each way (a lane, a street, an avenue, a boulevard); fronts lots, has pavements",
         "Avenue" => "Three lanes each way",
-        "One-way" => "Two lanes, one direction",
+        "One-way" => "A one-way road of one or two lanes; at one lane it is a highway ramp (the slip road on or off a highway)",
         "Ramp" => "One lane, one direction: slip roads onto a highway",
-        "Highway" => "Four lanes one way: 25 m/s, no frontage, grade-separated",
+        "Highway" => "One carriageway of three or four lanes, one way: 25 m/s, no frontage, grade-separated; draw one each way and join them with ramps",
         "Roundabout" => "A one-way ring with give-way entries: click to stamp it over roads and junctions",
         "Interchange" => "A diamond interchange: click across the highway; a street under it, four ramps, a signalled junction each side",
         _ => "",

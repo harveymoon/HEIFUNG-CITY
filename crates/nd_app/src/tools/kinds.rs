@@ -167,3 +167,45 @@ pub fn elevation_label(level: f32) -> String {
         format!("\u{2212}{:.0} m cutting", -level)
     }
 }
+
+/// [fix/roads-tools] The Road tool's circle: radius limits, metres.
+pub const CIRCLE_MIN_RADIUS: f32 = 15.0;
+pub const CIRCLE_MAX_RADIUS: f32 = 400.0;
+
+/// [fix/roads-tools] The closed curve the Road tool's circle lays with its
+/// centre at `center` and its edge through `edge` (radius kept in limits).
+pub fn circle_road(center: SVec2, edge: SVec2) -> Vec<SVec2> {
+    let r = center.distance(edge).clamp(CIRCLE_MIN_RADIUS, CIRCLE_MAX_RADIUS);
+    nd_sim::plan::circle_points(center, r)
+}
+
+/// [fix/roads-tools] How the Road tool draws: point by point with straight
+/// legs, a smooth curve through the points, or a circle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DrawMethod {
+    Straight,
+    Curved,
+    Circle,
+}
+
+impl DrawMethod {
+    pub const ALL: [DrawMethod; 3] = [DrawMethod::Straight, DrawMethod::Curved, DrawMethod::Circle];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DrawMethod::Straight => "Straight",
+            DrawMethod::Curved => "Curved",
+            DrawMethod::Circle => "Circle",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<DrawMethod> {
+        DrawMethod::ALL.into_iter().find(|m| m.label().eq_ignore_ascii_case(s.trim()))
+    }
+}
+
+/// [fix/roads-tools] The road types of the Road tool, in menu order: each
+/// has its own lanes (`ToolState::pick_type`). The old presets (Lane,
+/// Avenue, Ramp, Tunnel...) are a type with lanes or a level set, still
+/// taken by the remote API's `preset`.
+pub const ROAD_TYPES: [&str; 4] = ["Path", "Street", "One-way", "Highway"];

@@ -27,49 +27,7 @@ impl World {
         crate::prof!("rb.plan_changed", self.plan_changed());
 
         // Roads.
-        let mut roads = RoadNetwork::default();
-        // Roundabouts cut the roads entering them and join them to their
-        // rings; the rings go down first so the arms snap onto them.
-        let (built, rings) = self.master.built_roads_levels();
-        roads.rings = rings;
-        // [tools] The raised ways, for their columns: key, built polyline,
-        // levels, deck half width.
-        let mut raised: Vec<(u64, Vec<Vec2>, Vec<f32>, f32)> = Vec::new();
-        for (_, drawn, levels, fwd, bwd, kind) in built {
-            let way = crate::pillars::is_raised(&levels).then(|| crate::pillars::way_key(&drawn, &levels));
-            // Track is eased into smooth curves and tangential switches.
-            let points = if kind == RoadKind::Rail { rail::smooth_track(&drawn, &roads) } else { drawn.clone() };
-            // An end at the map edge runs on out of sight: a way to elsewhere.
-            let points = crate::landscape::reach_elsewhere(&points);
-            // Ramps meet the highway tangentially: a lead point before a
-            // merge (after a diverge) brings the last piece alongside.
-            // (A roundabout's ring is a one-way street too, but no ramp.)
-            let ring = roads.is_ring_way(&points, fwd, bwd, kind);
-            let points = if crate::roads::is_ramp_spec(kind, fwd, bwd) && !ring { crate::roads::ease_ramp_ends(&points, fwd > 0, &roads) } else { points };
-            // Breaks at every waterline, so a bridge is exactly the span.
-            let points = self.split_at_water(&points);
-            // A height sample every so often, so a long straight way follows
-            // the land instead of running dead straight between its ends.
-            // Only ways that front nothing (highways, track): a street's
-            // vertices decide where its parcels are cut.
-            let sampled = kind == RoadKind::Rail || (crate::roads::is_highway_spec(kind, fwd, bwd) && !ring);
-            let points = if sampled { crate::roads::sample_heights(&points, crate::roads::HEIGHT_SAMPLE) } else { points };
-            // Levels follow the points wherever they moved or multiplied.
-            let levels = if points == drawn { levels } else { crate::plan::carry_levels(&drawn, &levels, &points) };
-            let (fwd, bwd) = match kind {
-                RoadKind::Street if fwd == 0 && bwd == 0 => (1, 1),
-                RoadKind::Street => (fwd, bwd),
-                RoadKind::Path | RoadKind::Rail => (0, 0),
-            };
-            // [tools] Its ends as the network lays them (an end dropped on a
-            // road takes that road's level: a raised road ramps down to it),
-            // for its columns, before it is laid.
-            let landed = way.map(|_| roads.as_built(&points, &levels, kind));
-            roads.add_polyline_levels(&points, &levels, fwd, bwd, kind);
-            if let (Some(key), Some((pts, lv))) = (way, landed) {
-                raised.push((key, pts, lv, super::deck_half_width(kind, fwd, bwd)));
-            }
-        }
+        let (mut roads, raised) = self.lay_roads(&self.master);
         // A zoning edit, or a facility fused onto what is there, gives back
         // exactly the roads that are built. Then the network, its ids and
         // everything hanging off them (lanes, vehicles, trains, bus stops,
@@ -293,6 +251,57 @@ impl World {
         self.events.push(SimEvent::PlanChanged);
         // [park-paths] Paths whose park went with these works are cut back.
         crate::prof!("rb.paths", self.settle_path_links());
+    }
+
+    /// [fix/roads-tools] The road network `plan` lays (and its raised ways:
+    /// key, built polyline, levels, deck half width), as the rebuild lays
+    /// it; nothing in the world changes.
+    #[allow(clippy::type_complexity)]
+    pub(in crate::world) fn lay_roads(&self, plan: &Plan) -> (RoadNetwork, Vec<(u64, Vec<Vec2>, Vec<f32>, f32)>) {
+        let mut roads = RoadNetwork::default();
+        // Roundabouts cut the roads entering them and join them to their
+        // rings; the rings go down first so the arms snap onto them.
+        let (built, rings) = plan.built_roads_levels();
+        roads.rings = rings;
+        // [tools] The raised ways, for their columns: key, built polyline,
+        // levels, deck half width.
+        let mut raised: Vec<(u64, Vec<Vec2>, Vec<f32>, f32)> = Vec::new();
+        for (_, drawn, levels, fwd, bwd, kind) in built {
+            let way = crate::pillars::is_raised(&levels).then(|| crate::pillars::way_key(&drawn, &levels));
+            // Track is eased into smooth curves and tangential switches.
+            let points = if kind == RoadKind::Rail { rail::smooth_track(&drawn, &roads) } else { drawn.clone() };
+            // An end at the map edge runs on out of sight: a way to elsewhere.
+            let points = crate::landscape::reach_elsewhere(&points);
+            // Ramps meet the highway tangentially: a lead point before a
+            // merge (after a diverge) brings the last piece alongside.
+            // (A roundabout's ring is a one-way street too, but no ramp.)
+            let ring = roads.is_ring_way(&points, fwd, bwd, kind);
+            let points = if crate::roads::is_ramp_spec(kind, fwd, bwd) && !ring { crate::roads::ease_ramp_ends(&points, fwd > 0, &roads) } else { points };
+            // Breaks at every waterline, so a bridge is exactly the span.
+            let points = self.split_at_water(&points);
+            // A height sample every so often, so a long straight way follows
+            // the land instead of running dead straight between its ends.
+            // Only ways that front nothing (highways, track): a street's
+            // vertices decide where its parcels are cut.
+            let sampled = kind == RoadKind::Rail || (crate::roads::is_highway_spec(kind, fwd, bwd) && !ring);
+            let points = if sampled { crate::roads::sample_heights(&points, crate::roads::HEIGHT_SAMPLE) } else { points };
+            // Levels follow the points wherever they moved or multiplied.
+            let levels = if points == drawn { levels } else { crate::plan::carry_levels(&drawn, &levels, &points) };
+            let (fwd, bwd) = match kind {
+                RoadKind::Street if fwd == 0 && bwd == 0 => (1, 1),
+                RoadKind::Street => (fwd, bwd),
+                RoadKind::Path | RoadKind::Rail => (0, 0),
+            };
+            // [tools] Its ends as the network lays them (an end dropped on a
+            // road takes that road's level: a raised road ramps down to it),
+            // for its columns, before it is laid.
+            let landed = way.map(|_| roads.as_built(&points, &levels, kind));
+            roads.add_polyline_levels(&points, &levels, fwd, bwd, kind);
+            if let (Some(key), Some((pts, lv))) = (way, landed) {
+                raised.push((key, pts, lv, super::deck_half_width(kind, fwd, bwd)));
+            }
+        }
+        (roads, raised)
     }
 
     /// Lanes for the new roads, with every vehicle carried across them

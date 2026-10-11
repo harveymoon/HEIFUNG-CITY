@@ -183,7 +183,8 @@ pub(crate) fn tool_input(
         }
     }
     if key(KeyCode::KeyC) && tools.tool == Tool::Road && !ctrl {
-        tools.curved = !tools.curved;
+        let m = if tools.curved && !tools.circle { crate::tools::DrawMethod::Straight } else { crate::tools::DrawMethod::Curved };
+        tools.set_draw(m);
     }
 
     // Project commands.

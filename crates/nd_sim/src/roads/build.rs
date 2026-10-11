@@ -243,6 +243,37 @@ impl RoadNetwork {
         (p, false)
     }
 
+    /// [fix/roads-tools] Where a footpath point dropped at `p` lands when
+    /// a street is the nearest way (within its half width plus `reach`):
+    /// on that street's pavement, on the side `p` is, not on the street's
+    /// centre or its junction node (flag G12: paths ended in the middle of
+    /// the junction). With the level of the street there. None when a
+    /// path is nearer, or no street in reach.
+    pub fn pavement_snap(&self, p: Vec2, reach: f32) -> Option<(Vec2, f32)> {
+        let (sid, t, q) = self.nearest_where(p, |s| s.is_street() && !s.fronts_nothing())?;
+        let seg = self.segment(sid);
+        let hw = seg.half_width();
+        let d = q.distance(p);
+        if d > hw + crate::zoning::SIDEWALK + reach {
+            return None;
+        }
+        if let Some((_, _, pq)) = self.nearest_where(p, |s| s.kind == RoadKind::Path) {
+            if pq.distance(p) < (d - hw).max(0.0) + 0.5 {
+                return None;
+            }
+        }
+        let (a, b) = self.segment_points(sid);
+        let len = a.distance(b);
+        let dir = (b - a).normalize_or_zero();
+        let right = Vec2::new(-dir.y, dir.x);
+        let side = if (p - q).dot(right) < 0.0 { -1.0 } else { 1.0 };
+        // Clear of the junction at either end, so the end is joined to the
+        // street beside it, never folded into the junction's node.
+        let keep = SNAP_RADIUS + 1.0;
+        let along = if len > keep * 2.0 { (t * len).clamp(keep, len - keep) } else { len * 0.5 };
+        Some((a + dir * along + right * side * (hw + crate::zoning::SIDEWALK * 0.55), self.segment_level(sid, along / len.max(1e-3))))
+    }
+
     /// The level a road end dropped at `p` would take: the level of the
     /// node or road it snaps onto, if any.
     pub fn snap_level(&self, p: Vec2, radius: f32, kind: RoadKind) -> Option<f32> {

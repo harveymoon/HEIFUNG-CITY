@@ -2365,8 +2365,15 @@ fn the_brush_paints_only_parcels_that_take_the_use_and_one_stroke_is_one_undo() 
     // Industry joins parcels into bigger lots and takes the backland behind.
     let ids = w.parcels.in_polygon(&square(100.0, -100.0, 160.0));
     w.paint_parcels(&ids, Some(LandUse::Industrial), None);
-    assert!(ids.iter().any(|&i| w.parcels.parcels[i].landlocked() && w.planned_zoning()[i] == Some(LandUse::Industrial)), "works yards take the backland");
+    // [fix/roads-tools] Backland only where a yard in front could take it
+    // in (flag G5): here the fronts are narrower than the backland behind
+    // them, so it is refused rather than left as unusable ground.
+    for &i in ids.iter().filter(|&&i| w.parcels.parcels[i].landlocked()) {
+        let taken = w.planned_zoning()[i] == Some(LandUse::Industrial);
+        assert_eq!(taken, w.backland_has_a_front(i, LandUse::Industrial), "backland is painted exactly where a yard could take it in");
+    }
     w.implement();
+    assert!(!w.lots.values().any(|l| l.land_use == LandUse::Industrial && l.landlocked && !l.polygon.is_empty() && w.parcels.parcels.iter().any(|p| p.lot.is_some_and(|x| w.lots.get(x).is_some_and(|y| std::ptr::eq(y, l))) && !p.rough)), "no yard of unusable ground");
     let ind: Vec<&Lot> = w.lots.values().filter(|l| l.land_use == LandUse::Industrial && l.usable()).collect();
     assert!(!ind.is_empty());
     let mean = ind.iter().map(|l| l.area()).sum::<f32>() / ind.len() as f32;

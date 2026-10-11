@@ -11,7 +11,7 @@ use crate::tools::{Tool, ToolState, TransitMode, ZoneMode, BRUSH_MAX, BRUSH_MIN,
 
 pub(super) fn tool_state(t: &ToolState) -> Value {
     json!({
-        "name": tool_name(t.tool), "district": { "selected": t.district.selected, "mode": format!("{:?}", t.district.mode).to_lowercase(), "radius": t.district.radius, "erase": t.district.erase, "points": t.district.points.len() }, "road_kind": road_kind_name(t.kind), "lanes_fwd": t.lanes_fwd, "lanes_bwd": t.lanes_bwd, "curved": t.curved,
+        "name": tool_name(t.tool), "district": { "selected": t.district.selected, "mode": format!("{:?}", t.district.mode).to_lowercase(), "radius": t.district.radius, "erase": t.district.erase, "points": t.district.points.len() }, "road_kind": road_kind_name(t.kind), "lanes_fwd": t.lanes_fwd, "lanes_bwd": t.lanes_bwd, "curved": t.curved, "road_type": t.road_type(), "draw_method": t.draw_method().label(), "road_label": crate::ui::tools::road_label(t),
         "land_use": t.land_use.label(), "zone_mode": t.zone_mode.label(), "brush_radius": t.brush_radius, "unzone": t.unzone, "industry": t.industry, "building": placeable_key(t.build_item()), "building_category": t.build_cat.key(), "rail_kind": rail_name(t.rail_kind),
         "transit_mode": transit_mode_name(t.transit_mode), "route": opt_key(t.route_sel), "show_routes": t.show_routes,
         "pending_points": t.points.len(), "selected_gesture": t.selected_gesture.map(|g| g.0), "status": t.status,
@@ -53,6 +53,17 @@ pub(super) fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         if preset.eq_ignore_ascii_case("interchange") {
             t.tool = Tool::Road;
         }
+    }
+    // [fix/roads-tools] `road_type` (Path, Street, One-way, Highway) and
+    // `draw_method` (straight, curved, circle), as the Road options pick them.
+    if let Some(ty) = opt_str(cmd, "road_type")? {
+        if !t.pick_type(ty) {
+            return Err(format!("unknown road_type {ty:?}; one of {}", crate::tools::ROAD_TYPES.join(", ")));
+        }
+        t.tool = Tool::Road;
+    }
+    if let Some(m) = opt_str(cmd, "draw_method")? {
+        t.set_draw(crate::tools::DrawMethod::parse(m).ok_or_else(|| format!("unknown draw_method {m:?}; straight, curved or circle"))?);
     }
     if let Some(e) = opt_f32(cmd, "elevation")? {
         t.elevation = e.clamp(crate::tools::ELEVATION_MIN, crate::tools::ELEVATION_MAX);
@@ -186,6 +197,9 @@ pub(super) fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     }
     if let Some(c) = opt_bool(cmd, "curved")? {
         t.curved = c;
+        if c {
+            t.circle = false;
+        }
     }
     if let Some(s) = opt_bool(cmd, "show_routes")? {
         t.show_routes = s;
@@ -200,7 +214,21 @@ pub(super) fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(g) = opt_u64(cmd, "selected_gesture")? {
         t.selected_gesture = Some(GestureId(g));
     }
+    // [fix/roads-tools] `edit_drag: {from, to}`: the Edit tool's press at
+    // `from` and drag to `to` (a junction moves every road attached; the
+    // picked road's own point moves on its own).
+    let mut dragged = Value::Null;
+    if let Some(d) = field(cmd, "edit_drag") {
+        let from = opt_vec2(d, "from")?.ok_or("edit_drag needs from: [x, y]")?;
+        let to = opt_vec2(d, "to")?.ok_or("edit_drag needs to: [x, y]")?;
+        t.tool = Tool::Edit;
+        let (what, roads) = crate::tools::edit_drag(&mut ctx.sim.world, t, from, to);
+        dragged = json!({ "grabbed": what, "roads": roads });
+    }
     let mut v = json!({ "tool": tool_state(t) });
+    if !dragged.is_null() {
+        v["edit_drag"] = dragged;
+    }
     if let Some(p) = t.cursor_pin {
         v["hover"] = match crate::render::hover_site(&ctx.sim.world, t, p) {
             Some(s) => json!({ "at": v2(p), "ok": s.verdict.is_ok(), "note": s.verdict.as_ref().ok(), "reason": s.verdict.as_ref().err(), "outline": points(&s.outline) }),

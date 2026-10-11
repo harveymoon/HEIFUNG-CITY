@@ -823,3 +823,30 @@ fn an_end_in_the_air_is_flagged_everywhere_with_the_end_reason() {
     assert_eq!(w.try_implement().expect_err("refused"), shown);
     assert_eq!(w.roads.alive_segments().count(), segs, "nothing was built");
 }
+
+/// [fix/roads-tools] Signals switched on (or off) in the Intersection editor
+/// bump `signals_version`, which the renderer keys the signal heads and
+/// poles on: the switch changes no road and no lane, so the heads were
+/// never drawn (todo 2026-10-11: "I added traffic signals but I don't see
+/// them"). A timing change alone redraws nothing.
+#[test]
+fn switching_signals_on_bumps_the_signal_version() {
+    let mut w = flat();
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+    w.add_road(&[Vec2::new(0.0, -300.0), Vec2::new(0.0, 300.0)], 1, 1);
+    let k = w.junction_at(Vec2::ZERO, 2.0).expect("the crossroads");
+    let start = w.traffic.net.intersections[k].signalized;
+    let v0 = w.traffic.net.signals_version;
+    let mut rule = w.junction_view(k).rule;
+    rule.signal = if start { SignalMode::Unsignalised } else { SignalMode::Signals };
+    w.set_junction_rule(rule.clone()).unwrap();
+    assert_ne!(w.traffic.net.intersections[k].signalized, start);
+    assert_eq!(w.traffic.net.signals_version, v0 + 1, "switched: drawn again");
+    rule.arrow_seconds = 7.0;
+    w.set_junction_rule(rule.clone()).unwrap();
+    assert_eq!(w.traffic.net.signals_version, v0 + 1, "a timing change redraws nothing");
+    rule.signal = if start { SignalMode::Signals } else { SignalMode::Unsignalised };
+    w.set_junction_rule(rule).unwrap();
+    assert_eq!(w.traffic.net.intersections[k].signalized, start);
+    assert_eq!(w.traffic.net.signals_version, v0 + 2);
+}

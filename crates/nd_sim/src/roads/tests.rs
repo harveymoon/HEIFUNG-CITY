@@ -327,3 +327,29 @@ fn streets_cross_highways_without_junctions_and_ramps_still_join() {
     let over = net.grade_crossings().into_iter().find(|c| c.at.x < -100.0).unwrap();
     assert!(!net.segment(over.upper.0).is_highway());
 }
+
+/// [fix/roads-tools] A footpath dropped by a street (G12) lands on the
+/// pavement on its own side, clear of the junction at the street's end,
+/// and the network then joins it to the street beside the junction, not
+/// to the junction's node.
+#[test]
+fn a_path_dropped_by_a_street_lands_on_its_pavement() {
+    let mut net = RoadNetwork::default();
+    net.add_polyline(&[Vec2::new(-100.0, 0.0), Vec2::new(100.0, 0.0)], 2, 2);
+    net.add_polyline(&[Vec2::new(0.0, -100.0), Vec2::new(0.0, 100.0)], 2, 2);
+    let hw = net.segment(net.nearest_where(Vec2::new(50.0, 0.0), |_| true).unwrap().0).half_width();
+    // On the north side of the east arm.
+    let (q, level) = net.pavement_snap(Vec2::new(30.0, 4.0), 8.0).expect("a pavement");
+    assert_eq!(level, 0.0);
+    assert!((q.y - (hw + crate::zoning::SIDEWALK * 0.55)).abs() < 1e-3, "on the pavement: {q}");
+    assert_eq!(q.x, 30.0);
+    // Dropped right by the junction: still on a pavement, clear of it.
+    let (c, _) = net.pavement_snap(Vec2::new(2.0, 1.0), 8.0).expect("a pavement");
+    assert!(c.x.abs().max(c.y.abs()) >= SNAP_RADIUS + 1.0 - 1e-3 && c.x.abs().min(c.y.abs()) > hw, "clear of the junction: {c}");
+    let junction = net.node_near(Vec2::ZERO, 0.5).unwrap();
+    let before = net.node(junction).segments.len();
+    net.add_polyline_levels(&[q, Vec2::new(q.x, 60.0)], &[0.0, 0.0], 0, 0, RoadKind::Path);
+    assert_eq!(net.node(junction).segments.len(), before, "the junction takes no path");
+    // A path nearer than the street keeps its own snapping.
+    assert!(net.pavement_snap(Vec2::new(q.x + 0.2, 40.0), 8.0).is_none());
+}

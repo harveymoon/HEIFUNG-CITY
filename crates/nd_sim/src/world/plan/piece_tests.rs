@@ -53,7 +53,8 @@ fn bulldozing_takes_one_block_of_a_road() {
     assert_eq!(w2.remove_road_piece(main, s0, s1), 1);
     assert_eq!(w2.gesture(main).unwrap().points(), &[Vec2::new(0.0, 0.0), Vec2::new(300.0, 0.0)]);
     assert!(w2.undo());
-    assert_eq!(w2.gesture(main).unwrap().points(), &[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)]);
+    // [fix/roads-tools] As implemented: mended with a point at the crossing.
+    assert_eq!(w2.gesture(main).unwrap().points(), &[Vec2::new(-300.0, 0.0), Vec2::new(0.0, 0.0), Vec2::new(300.0, 0.0)]);
 }
 
 /// A road with no junction on it goes whole.

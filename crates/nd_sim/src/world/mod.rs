@@ -80,6 +80,8 @@ mod placement_tests;
 #[cfg(test)]
 mod stable_parcels_tests;
 #[cfg(test)]
+mod backland_tests;
+#[cfg(test)]
 mod dock_access_tests;
 pub mod poses;
 /// [clarity] Origins and destinations, crews, crash sites.
@@ -102,7 +104,7 @@ mod places_tests;
 #[cfg(test)]
 mod under_construction_tests;
 mod industry_bridge;
-pub use plan::{Blocker, ProjectCheck, ProjectInfo, ProjectPreview};
+pub use plan::{insert_on_leg, leg_near, Blocker, Joint, ProjectCheck, ProjectInfo, ProjectPreview, JOINT_SAME};
 mod power;
 pub use power::{GridAsset, GridHour, PlantRow};
 pub mod plant_groups;
