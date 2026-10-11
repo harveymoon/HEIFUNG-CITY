@@ -730,9 +730,12 @@ fn roof_crosses(g: &mut Geometry, c: &Ctx, outline: &[Vec2], y: f32) {
         return;
     }
     let f = &c.frame;
-    let fits = |p: Vec2, r: f32| (0..4).all(|k| {
+    // Inside the roof's outline (a hull) and the footprint itself, which
+    // an L-shaped building's hull overreaches.
+    let on_roof = |q: Vec2| point_in_polygon(q, outline) && (c.poly.len() < 3 || point_in_polygon(q, &c.poly)) && c.inside_local(q);
+    let fits = |p: Vec2, r: f32| on_roof(p) && (0..4).all(|k| {
         let a = std::f32::consts::FRAC_PI_4 + k as f32 * std::f32::consts::FRAC_PI_2;
-        point_in_polygon(p + Vec2::new(a.cos(), a.sin()) * r * 1.45, outline)
+        on_roof(p + Vec2::new(a.cos(), a.sin()) * r * 1.45)
     });
     let mut x = |p: Vec2, r: f32| {
         for a in [std::f32::consts::FRAC_PI_4, -std::f32::consts::FRAC_PI_4] {

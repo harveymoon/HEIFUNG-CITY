@@ -14,9 +14,11 @@ pub fn about(w: &World, id: BuildingId) -> Option<(String, String)> {
     // [fix/buildings-ui] A building coming down with nothing to follow, or
     // a grown one still going up: what it is now, not what it did or will
     // do (a site has no homes, jobs or lights yet).
-    if let Some(d) = b.demolition.as_ref().filter(|_| b.construction.is_none()) {
+    // (A city structure taking the lot over describes what is coming.)
+    if let Some(d) = b.demolition.as_ref().filter(|_| w.placed_as(id).is_none()) {
         let what = format!("{} coming down.", capitalise(&a(&format!("{} building", d.land_use.label().to_lowercase()))));
-        return Some((what, "Stripped out and being pulled down: the power is off and nobody lives or works here any more. The lot is left vacant once the rubble is hauled away.".into()));
+        let then = if d.clear_lot { "The lot is left vacant once the rubble is hauled away." } else { "A new building goes up once the rubble is hauled away." };
+        return Some((what, format!("Stripped out and being pulled down: the power is off and nobody lives or works here any more. {then}")));
     }
     if b.construction.is_some() && w.placed_as(id).is_none() {
         let noun = b.business.as_ref().map_or_else(|| format!("{} building", b.land_use.label().to_lowercase()), |z| z.kind.label().to_string());
