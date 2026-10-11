@@ -326,10 +326,15 @@ pub enum Channel {
     /// a whole works district is not twenty times worse for the street
     /// beside it. Stored positive, taken off.
     Nuisance,
+    /// [attractions] The landmark attractions (museums, the pier, the
+    /// grand park, the zoo...): the player's strongest lever on land
+    /// value, so one counts in full and two or three overlapping still
+    /// add up to a good deal more than one (`ServiceKind::land_value`).
+    Attractions,
 }
 
 impl Channel {
-    pub const COUNT: usize = 12;
+    pub const COUNT: usize = 13;
 
     /// Most the channel adds to (or takes off) a cell, and the scale of the
     /// curve (`cap x tanh(sum / scale)`: the slope at nothing is
@@ -355,6 +360,7 @@ impl Channel {
             Channel::Landmarks => (0.25, 0.25),
             Channel::Blight => (0.1, 0.4),
             Channel::Nuisance => (0.45, 0.6),
+            Channel::Attractions => (0.5, 0.5),
         })
     }
 }
@@ -502,7 +508,7 @@ impl LandValueBuilder {
         let n = self.n;
         let mut acc = Self::blurred(n, &self.acc);
         // [pt-growth] Each channel blurred, saturated at its cap, added.
-        const CHANNELS: [Channel; Channel::COUNT] = [Channel::Other, Channel::Roads, Channel::Parks, Channel::Homes, Channel::Civic, Channel::Commerce, Channel::Services, Channel::Transit, Channel::Shore, Channel::Landmarks, Channel::Blight, Channel::Nuisance];
+        const CHANNELS: [Channel; Channel::COUNT] = [Channel::Other, Channel::Roads, Channel::Parks, Channel::Homes, Channel::Civic, Channel::Commerce, Channel::Services, Channel::Transit, Channel::Shore, Channel::Landmarks, Channel::Blight, Channel::Nuisance, Channel::Attractions];
         for (ch, buf) in CHANNELS.iter().zip(&self.channels) {
             if buf.len() != n * n {
                 continue;

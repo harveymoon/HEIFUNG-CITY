@@ -29,6 +29,16 @@ impl World {
         if matches!(what, Placeable::Service(ServiceKind::Stadium | ServiceKind::Monument | ServiceKind::School, _) | Placeable::Rail(RailFacility::Station | RailFacility::Central)) {
             self.build_walk_graph();
         }
+        // [attractions] A landmark's forecourt shows its gates; a park,
+        // zoo, garden or pier lays out its walkways and benches.
+        if let Placeable::Service(k, _) = what {
+            if k.is_landmark() {
+                if k.has_grounds() {
+                    self.plan_attraction_grounds();
+                }
+                self.build_walk_graph();
+            }
+        }
     }
 
     /// Put down `what` on a lot (rail pieces at the lot's centre).
@@ -95,6 +105,13 @@ impl World {
                 return Some(format!("{} stands there; bulldoze it first", b.name));
             }
         }
+        // [attractions] One per city, said first: whatever the ground, a
+        // second one is no use.
+        if let Placeable::Service(k, _) = what {
+            if let Some(b) = k.is_landmark().then(|| self.landmark(k)).flatten().and_then(|b| self.buildings.get(b)) {
+                return Some(format!("one per city: {} is the city's {} already", b.name, k.label()));
+            }
+        }
         if lot.landlocked {
             return Some("that land has no road access".into());
         }
@@ -121,7 +138,16 @@ impl World {
                 return Some(e);
             }
         }
-        let needs_street = matches!(what, Placeable::BusDepot | Placeable::ParkingLot(_) | Placeable::CargoHub) || matches!(what, Placeable::Service(k, _) if k.unit_kind().is_some() || k == ServiceKind::Stadium || k == ServiceKind::TrashDepot || k == ServiceKind::ParkingEnforcement || k == ServiceKind::University);
+        // [attractions] One per city; the pier on the sea shore, the
+        // observatory on high ground.
+        if let Placeable::Service(k, _) = what {
+            if k.is_landmark() {
+                if let Some(why) = self.landmark_problem(k, lot) {
+                    return Some(why);
+                }
+            }
+        }
+        let needs_street = matches!(what, Placeable::BusDepot | Placeable::ParkingLot(_) | Placeable::CargoHub) || matches!(what, Placeable::Service(k, _) if k.unit_kind().is_some() || k == ServiceKind::Stadium || k == ServiceKind::TrashDepot || k == ServiceKind::ParkingEnforcement || k == ServiceKind::University || k.is_landmark());
         if needs_street && !lot.car_access() {
             return Some(format!("a {} needs a street out front", what.label()));
         }
@@ -162,6 +188,10 @@ impl World {
             ServiceKind::Stadium => [20, 60, 140][tier.index()],
             ServiceKind::Health | ServiceKind::School => [4, 10, 24][tier.index()],
             ServiceKind::University => [10, 24, 50][tier.index()],
+            // [attractions] Visitors' car parks.
+            ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::ConcertHall => 60,
+            ServiceKind::Pier => 40,
+            k if k.is_landmark() => 30,
             _ => [2, 4, 8][tier.index()],
         };
         let id = self.place_special(lot_id, name, kind.jobs(tier), parking, |b| {
@@ -173,6 +203,10 @@ impl World {
         // [megacorp] A university founds its campus: an owner, a brand.
         if kind == ServiceKind::University {
             self.found_campus(id);
+        }
+        // [attractions] The pier's deck, the books.
+        if kind.is_landmark() {
+            self.landmark_placed(id, kind);
         }
         self.ensure_units(id);
         self.refresh_coverage();

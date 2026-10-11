@@ -66,6 +66,8 @@ mod follow;
 mod grounds;
 /// [pt-walk] `connectivity`: stranded areas, failed trips, their alerts.
 mod connectivity;
+/// [walk-crossings] `walk_crossings`: how each crossing near a point is used.
+mod walk_survey;
 mod history;
 /// [identity] `city_name` and `game_history`.
 mod identity;

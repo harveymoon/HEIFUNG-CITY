@@ -265,6 +265,17 @@ impl World {
         match (purpose, &self.citizens[id].activity) {
             (Purpose::Visit(_), Activity::Visiting(b)) | (Purpose::Sit, Activity::Sitting { park: b, .. }) => {
                 let b = *b;
+                // [attractions] A landmark's ticket at the door (a skint
+                // visitor walks the free parts), counted in its books.
+                if self.buildings.get(b).is_some_and(|x| x.service.is_some_and(|s| s.kind.is_landmark())) {
+                    let purse = (self.citizens[id].savings - OVERDRAFT).max(0.0);
+                    let paid = self.admit_visitor(b, false, purse);
+                    let c = &mut self.citizens[id];
+                    c.savings -= paid;
+                    if let Some(name) = self.buildings.get(b).map(|x| x.name.clone()) {
+                        c.remember(tick, format!("A day out at {name}."));
+                    }
+                }
                 self.rate_visit(id, b);
             }
             _ => {}

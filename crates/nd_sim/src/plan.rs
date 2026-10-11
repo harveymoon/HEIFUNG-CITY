@@ -65,18 +65,21 @@ pub const CURVE_STEP: f32 = 7.0;
 
 /// Centripetal Catmull-Rom spline through `pts`, sampled every `CURVE_STEP`.
 /// The road passes through every control point, so the Edit tool's handles
-/// sit on the road itself.
+/// sit on the road itself. [fix/roads-tools] A closed loop (the last point
+/// on the first, as the Road tool's circle draws it) runs smoothly round
+/// through its start.
 pub fn sample_curve(pts: &[Vec2]) -> Vec<Vec2> {
     if pts.len() < 3 {
         return pts.to_vec();
     }
     let n = pts.len();
+    let closed = is_loop(pts);
     let mut out = vec![pts[0]];
     for i in 0..n - 1 {
-        let p0 = if i == 0 { pts[0] * 2.0 - pts[1] } else { pts[i - 1] };
+        let p0 = if i > 0 { pts[i - 1] } else if closed { pts[n - 2] } else { pts[0] * 2.0 - pts[1] };
         let p1 = pts[i];
         let p2 = pts[i + 1];
-        let p3 = if i + 2 < n { pts[i + 2] } else { pts[n - 1] * 2.0 - pts[n - 2] };
+        let p3 = if i + 2 < n { pts[i + 2] } else if closed { pts[1] } else { pts[n - 1] * 2.0 - pts[n - 2] };
         let steps = ((p1.distance(p2) / CURVE_STEP).ceil() as usize).max(1);
         // Centripetal parameterisation avoids loops and cusps.
         let t0 = 0.0;
@@ -95,6 +98,22 @@ pub fn sample_curve(pts: &[Vec2]) -> Vec<Vec2> {
         }
     }
     out
+}
+
+/// [fix/roads-tools] A closed loop: four or more points, the last on the first.
+pub fn is_loop(pts: &[Vec2]) -> bool {
+    pts.len() >= 4 && pts[0] == pts[pts.len() - 1]
+}
+
+/// [fix/roads-tools] The control points of a circle of `radius` round
+/// `center` for a curved road (`sample_curve` runs it round smoothly):
+/// one every 40 m or so, at least eight, starting due east and closed on
+/// the first.
+pub fn circle_points(center: Vec2, radius: f32) -> Vec<Vec2> {
+    let n = ((std::f32::consts::TAU * radius / 40.0).ceil() as usize).max(8);
+    let mut pts: Vec<Vec2> = (0..n).map(|k| center + Vec2::from_angle(std::f32::consts::TAU * k as f32 / n as f32) * radius).collect();
+    pts.push(pts[0]);
+    pts
 }
 
 /// Levels along [`sample_curve`]`(pts)`: each sample takes the level of its
@@ -484,6 +503,25 @@ impl Project {
             }
         }
         self.push(id, gesture);
+    }
+
+    /// [fix/roads-tools] [`Project::amend`] for a step of several
+    /// gestures (a junction dragged with every road attached): replace the
+    /// last step if it touches exactly these gestures, else record a new one.
+    pub fn amend_many(&mut self, changes: Vec<(GestureId, Option<Gesture>)>) {
+        if changes.is_empty() {
+            return;
+        }
+        if let Some(last) = self.steps.last_mut() {
+            if last.len() == changes.len() && changes.iter().all(|(id, _)| last.contains_key(id)) {
+                for (id, g) in changes {
+                    last.insert(id, g);
+                }
+                self.version += 1;
+                return;
+            }
+        }
+        self.push_many(changes);
     }
 
     pub fn undo(&mut self) -> bool {

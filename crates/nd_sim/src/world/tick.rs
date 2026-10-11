@@ -54,6 +54,8 @@ impl World {
         // [ped-highway] Nobody stands about on a highway or ramp.
         if tick % kerbside::STRANDED_SWEEP_EVERY == 7 {
             self.rescue_stranded();
+            // [walk-crossings] Nor in a street's lanes.
+            self.clear_carriageways();
         }
         self.step_driving();
         self.step_journeys();

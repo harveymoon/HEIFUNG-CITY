@@ -5,6 +5,9 @@
 //! same inputs reproduces the same city.
 
 pub mod air;
+/// [attractions] Landmark attractions: museums, the pier, the grand park,
+/// the zoo, the observatory and the rest, one of each per city.
+pub mod attractions;
 pub mod bots;
 pub mod buildings;
 /// Cargo hubs: freight terminals that consolidate imports and exports.
@@ -131,7 +134,7 @@ pub use transit::{BusRoute, BusStop, DispatchProblem, LineProblem, RouteId, Tran
 pub use rail::{Facility, FacilityId, Rail, RailFacility, RailLink, RailStats, Train, TrainId, TrainKind};
 pub use services::{BuildCategory, Incident, IncidentKind, Placeable, ServiceKind, ServiceSite, Services, ServiceStats, Unit, UnitId, UnitKind};
 pub use world::{GridAsset, PlacementSite, PlantGroup, PlantJoin, PlantPreview, PlantRow, World, WorldConfig, RIGHTING_MIN};
-pub use world::{ApproachView, Blocker, CrossingView, IntersectionView, LaneView, MoveView, PhaseView, ProjectCheck};
+pub use world::{ApproachView, Blocker, Joint, CrossingView, IntersectionView, LaneView, MoveView, PhaseView, ProjectCheck};
 /// [camera]
 pub use world::{Gift, Holding, GIFT_AMOUNT};
 pub use world::{TowerOrder, TowerSite};

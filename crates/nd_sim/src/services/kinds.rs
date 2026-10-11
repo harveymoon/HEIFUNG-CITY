@@ -28,10 +28,71 @@ pub enum ServiceKind {
     /// (dorms, offices, a theatre, sports, frats, plazas) and draws
     /// students (`crate::corp::Campus`, `world/campus.rs`).
     University,
+    // [attractions] The city's landmark attractions, one of each per city
+    // (`ServiceKind::is_landmark`): several plots joined into one site,
+    // a real lift to the land value round them, and a draw for visitors.
+    // Appended so saved kinds keep their order.
+    /// An art museum: galleries round a sculpture court.
+    ArtMuseum,
+    /// A natural history and science museum: skeletons and a planetarium.
+    ScienceMuseum,
+    /// The city history and design museum.
+    HistoryMuseum,
+    /// A pleasure pier on the sea shore, built out over the water on
+    /// piles: rides, a ferris wheel, an arcade and food stands.
+    Pier,
+    /// A grand city park over many plots: lakes, paths and pavilions.
+    GrandPark,
+    /// A zoo: enclosures, an aviary and a visitors' loop.
+    Zoo,
+    /// An observatory on high ground.
+    Observatory,
+    /// An aquarium: tanks, a shark tunnel and a touch pool.
+    Aquarium,
+    /// A botanical garden with a glass conservatory.
+    BotanicalGarden,
+    /// An opera and concert hall.
+    ConcertHall,
 }
 
 impl ServiceKind {
-    pub const ALL: [ServiceKind; 12] = [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::Dispatch, ServiceKind::Monument, ServiceKind::Stadium, ServiceKind::Jail, ServiceKind::TrashDepot, ServiceKind::Vertiport, ServiceKind::ParkingEnforcement, ServiceKind::University];
+    pub const ALL: [ServiceKind; 22] = [
+        ServiceKind::Police,
+        ServiceKind::Fire,
+        ServiceKind::Health,
+        ServiceKind::School,
+        ServiceKind::Dispatch,
+        ServiceKind::Monument,
+        ServiceKind::Stadium,
+        ServiceKind::Jail,
+        ServiceKind::TrashDepot,
+        ServiceKind::Vertiport,
+        ServiceKind::ParkingEnforcement,
+        ServiceKind::University,
+        ServiceKind::ArtMuseum,
+        ServiceKind::ScienceMuseum,
+        ServiceKind::HistoryMuseum,
+        ServiceKind::Pier,
+        ServiceKind::GrandPark,
+        ServiceKind::Zoo,
+        ServiceKind::Observatory,
+        ServiceKind::Aquarium,
+        ServiceKind::BotanicalGarden,
+        ServiceKind::ConcertHall,
+    ];
+    /// [attractions] The landmark attractions, in menu order.
+    pub const LANDMARKS: [ServiceKind; 10] = [
+        ServiceKind::ArtMuseum,
+        ServiceKind::ScienceMuseum,
+        ServiceKind::HistoryMuseum,
+        ServiceKind::Pier,
+        ServiceKind::GrandPark,
+        ServiceKind::Zoo,
+        ServiceKind::Observatory,
+        ServiceKind::Aquarium,
+        ServiceKind::BotanicalGarden,
+        ServiceKind::ConcertHall,
+    ];
     /// The four that cover the city by road distance, in coverage-index order.
     pub const COVERING: [ServiceKind; 4] = [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School];
 
@@ -50,6 +111,16 @@ impl ServiceKind {
             ServiceKind::Vertiport => "vertiport",
             ServiceKind::ParkingEnforcement => "parking_enforcement",
             ServiceKind::University => "university",
+            ServiceKind::ArtMuseum => "art_museum",
+            ServiceKind::ScienceMuseum => "science_museum",
+            ServiceKind::HistoryMuseum => "history_museum",
+            ServiceKind::Pier => "pier",
+            ServiceKind::GrandPark => "grand_park",
+            ServiceKind::Zoo => "zoo",
+            ServiceKind::Observatory => "observatory",
+            ServiceKind::Aquarium => "aquarium",
+            ServiceKind::BotanicalGarden => "botanical_garden",
+            ServiceKind::ConcertHall => "concert_hall",
         }
     }
 
@@ -67,6 +138,16 @@ impl ServiceKind {
             "vertiport" | "skyport" | "drone_pad" | "dronepad" | "vertipad" => Some(ServiceKind::Vertiport),
             "parking_enforcement" | "parking_office" | "parking_police" | "traffic_wardens" => Some(ServiceKind::ParkingEnforcement),
             "university" | "campus" | "college" => Some(ServiceKind::University),
+            "art_museum" | "art_gallery" | "gallery" => Some(ServiceKind::ArtMuseum),
+            "science_museum" | "natural_history_museum" | "natural_history" | "planetarium" => Some(ServiceKind::ScienceMuseum),
+            "history_museum" | "city_museum" | "design_museum" | "museum" => Some(ServiceKind::HistoryMuseum),
+            "pier" | "pleasure_pier" | "amusement_pier" => Some(ServiceKind::Pier),
+            "grand_park" | "central_park" | "city_park" => Some(ServiceKind::GrandPark),
+            "zoo" => Some(ServiceKind::Zoo),
+            "observatory" => Some(ServiceKind::Observatory),
+            "aquarium" => Some(ServiceKind::Aquarium),
+            "botanical_garden" | "botanic_garden" | "conservatory" | "botanical" => Some(ServiceKind::BotanicalGarden),
+            "concert_hall" | "opera_house" | "opera" | "philharmonic" => Some(ServiceKind::ConcertHall),
             _ => None,
         }
     }
@@ -85,6 +166,16 @@ impl ServiceKind {
             ServiceKind::Vertiport => "vertiport",
             ServiceKind::ParkingEnforcement => "parking enforcement office",
             ServiceKind::University => "university",
+            ServiceKind::ArtMuseum => "art museum",
+            ServiceKind::ScienceMuseum => "natural history and science museum",
+            ServiceKind::HistoryMuseum => "city history and design museum",
+            ServiceKind::Pier => "pleasure pier",
+            ServiceKind::GrandPark => "grand city park",
+            ServiceKind::Zoo => "zoo",
+            ServiceKind::Observatory => "observatory",
+            ServiceKind::Aquarium => "aquarium",
+            ServiceKind::BotanicalGarden => "botanical garden",
+            ServiceKind::ConcertHall => "opera and concert hall",
         }
     }
 
@@ -103,6 +194,8 @@ impl ServiceKind {
             ServiceKind::Vertiport => ["drone pad", "vertiport", "skyport"],
             ServiceKind::ParkingEnforcement => ["parking warden post", "parking enforcement office", "parking authority"],
             ServiceKind::University => ["community college", "university", "institute of technology"],
+            // [attractions] One size each: the label is the kind's.
+            k => [k.label(); 3],
         };
         names[tier.index()]
     }
@@ -118,11 +211,83 @@ impl ServiceKind {
             ServiceKind::TrashDepot => Hours::new(6, 18),
             ServiceKind::ParkingEnforcement => Hours::new(7, 21),
             ServiceKind::University => Hours::new(8, 22),
+            // [attractions] Museums by day; the pier till one in the
+            // morning; the park never shuts; the observatory from the
+            // afternoon into the night, when the stars are out.
+            ServiceKind::ArtMuseum => Hours::new(10, 19),
+            ServiceKind::ScienceMuseum => Hours::new(9, 18),
+            ServiceKind::HistoryMuseum => Hours::new(10, 18),
+            ServiceKind::Pier => Hours::new(10, 1),
+            ServiceKind::GrandPark => Hours::ALWAYS,
+            ServiceKind::Zoo => Hours::new(9, 18),
+            ServiceKind::Observatory => Hours::new(14, 0),
+            ServiceKind::Aquarium => Hours::new(9, 20),
+            ServiceKind::BotanicalGarden => Hours::new(8, 20),
+            ServiceKind::ConcertHall => Hours::new(17, 0),
         }
     }
 
     pub fn is_attraction(self) -> bool {
-        matches!(self, ServiceKind::Monument | ServiceKind::Stadium)
+        matches!(self, ServiceKind::Monument | ServiceKind::Stadium) || self.is_landmark()
+    }
+
+    /// [attractions] One of the landmark attractions: one per city, on a
+    /// joined site, one size.
+    pub fn is_landmark(self) -> bool {
+        Self::LANDMARKS.contains(&self)
+    }
+
+    /// [attractions] A landmark people walk round (a park, a zoo, a
+    /// garden, the pier): its own walkways and benches, joined to the
+    /// walk graph and the Path tool's gates.
+    pub fn has_grounds(self) -> bool {
+        matches!(self, ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::BotanicalGarden | ServiceKind::Pier)
+    }
+
+    /// [attractions] An afternoon out (citizens' park trips find it).
+    pub fn day_out(self) -> bool {
+        matches!(self, ServiceKind::ArtMuseum | ServiceKind::ScienceMuseum | ServiceKind::HistoryMuseum | ServiceKind::Pier | ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::Aquarium | ServiceKind::BotanicalGarden)
+    }
+
+    /// [attractions] A night out (citizens' evenings find it).
+    pub fn night_out(self) -> bool {
+        matches!(self, ServiceKind::Pier | ServiceKind::Observatory | ServiceKind::ConcertHall)
+    }
+
+    /// [attractions] What a visit costs at the door (citizens and
+    /// visitors alike, to the treasury); the park is free, the pier's
+    /// rides are paid as they go.
+    pub fn admission(self) -> f32 {
+        match self {
+            ServiceKind::ArtMuseum => 8.0,
+            ServiceKind::ScienceMuseum => 10.0,
+            ServiceKind::HistoryMuseum => 6.0,
+            ServiceKind::Pier => 6.0,
+            ServiceKind::Zoo => 14.0,
+            ServiceKind::Observatory => 8.0,
+            ServiceKind::Aquarium => 16.0,
+            ServiceKind::BotanicalGarden => 6.0,
+            ServiceKind::ConcertHall => 12.0,
+            _ => 0.0,
+        }
+    }
+
+    /// [attractions] How strongly a landmark draws visitors from out of
+    /// town (tourism attractiveness points, `crate::tourism`).
+    pub fn tourist_pull(self) -> f32 {
+        match self {
+            ServiceKind::ArtMuseum => 26.0,
+            ServiceKind::ScienceMuseum => 28.0,
+            ServiceKind::HistoryMuseum => 20.0,
+            ServiceKind::Pier => 38.0,
+            ServiceKind::GrandPark => 32.0,
+            ServiceKind::Zoo => 34.0,
+            ServiceKind::Observatory => 18.0,
+            ServiceKind::Aquarium => 30.0,
+            ServiceKind::BotanicalGarden => 22.0,
+            ServiceKind::ConcertHall => 26.0,
+            _ => 0.0,
+        }
     }
 
     /// Index into coverage arrays for the kinds that cover ground.
@@ -159,6 +324,16 @@ impl ServiceKind {
             ServiceKind::Vertiport => 20_000.0,
             ServiceKind::ParkingEnforcement => 6_000.0,
             ServiceKind::University => 40_000.0,
+            ServiceKind::ArtMuseum => 60_000.0,
+            ServiceKind::ScienceMuseum => 70_000.0,
+            ServiceKind::HistoryMuseum => 45_000.0,
+            ServiceKind::Pier => 85_000.0,
+            ServiceKind::GrandPark => 90_000.0,
+            ServiceKind::Zoo => 95_000.0,
+            ServiceKind::Observatory => 55_000.0,
+            ServiceKind::Aquarium => 75_000.0,
+            ServiceKind::BotanicalGarden => 65_000.0,
+            ServiceKind::ConcertHall => 85_000.0,
         };
         base * [0.5, 1.0, 2.2][tier.index()]
     }
@@ -177,6 +352,16 @@ impl ServiceKind {
             ServiceKind::Vertiport => 260.0,
             ServiceKind::ParkingEnforcement => 150.0,
             ServiceKind::University => 650.0,
+            ServiceKind::ArtMuseum => 520.0,
+            ServiceKind::ScienceMuseum => 600.0,
+            ServiceKind::HistoryMuseum => 420.0,
+            ServiceKind::Pier => 780.0,
+            ServiceKind::GrandPark => 900.0,
+            ServiceKind::Zoo => 1100.0,
+            ServiceKind::Observatory => 420.0,
+            ServiceKind::Aquarium => 720.0,
+            ServiceKind::BotanicalGarden => 640.0,
+            ServiceKind::ConcertHall => 820.0,
         };
         base * [0.6, 1.0, 1.8][tier.index()]
     }
@@ -197,6 +382,18 @@ impl ServiceKind {
             // Two officers a car (`enforcement_cars`).
             ServiceKind::ParkingEnforcement => 6,
             ServiceKind::University => 30,
+            // [attractions] Curators, keepers, ride operators, gardeners,
+            // ushers and the cafe.
+            ServiceKind::ArtMuseum => 24,
+            ServiceKind::ScienceMuseum => 28,
+            ServiceKind::HistoryMuseum => 18,
+            ServiceKind::Pier => 34,
+            ServiceKind::GrandPark => 30,
+            ServiceKind::Zoo => 40,
+            ServiceKind::Observatory => 14,
+            ServiceKind::Aquarium => 28,
+            ServiceKind::BotanicalGarden => 22,
+            ServiceKind::ConcertHall => 32,
         };
         match tier {
             Tier::Low => base.div_ceil(2),
@@ -238,6 +435,17 @@ impl ServiceKind {
             ServiceKind::School => [80, 240, 600][tier.index()],
             // [megacorp] Students enrolled.
             ServiceKind::University => [120, 320, 800][tier.index()],
+            // [attractions] Visitors at once.
+            ServiceKind::ArtMuseum => 260,
+            ServiceKind::ScienceMuseum => 320,
+            ServiceKind::HistoryMuseum => 200,
+            ServiceKind::Pier => 600,
+            ServiceKind::GrandPark => 1500,
+            ServiceKind::Zoo => 700,
+            ServiceKind::Observatory => 120,
+            ServiceKind::Aquarium => 360,
+            ServiceKind::BotanicalGarden => 500,
+            ServiceKind::ConcertHall => 600,
             _ => 0,
         }
     }
@@ -255,6 +463,9 @@ impl ServiceKind {
             ServiceKind::ParkingEnforcement => 200.0,
             // [megacorp] A large campus.
             ServiceKind::University => 1100.0,
+            // [attractions] Each wants several plots (or one mega plot):
+            // joined when it is put down, like a stadium's.
+            k if k.is_landmark() => ATTRACTION_AREA[Self::LANDMARKS.iter().position(|x| *x == k).unwrap_or(0)],
             _ => 400.0,
         };
         base * [0.75, 1.0, 1.6][tier.index()]
@@ -281,6 +492,19 @@ impl ServiceKind {
             ServiceKind::Vertiport => (160.0 * k, -0.04 * k),
             ServiceKind::ParkingEnforcement => (0.0, 0.0),
             ServiceKind::University => (360.0 * k, 0.14 * k),
+            // [attractions] A landmark lifts a whole quarter: its own
+            // land value channel (`Channel::Attractions`), weighed by how
+            // well staffed it is.
+            ServiceKind::ArtMuseum => (400.0, 0.32),
+            ServiceKind::ScienceMuseum => (400.0, 0.32),
+            ServiceKind::HistoryMuseum => (360.0, 0.28),
+            ServiceKind::Pier => (460.0, 0.34),
+            ServiceKind::GrandPark => (540.0, 0.42),
+            ServiceKind::Zoo => (420.0, 0.28),
+            ServiceKind::Observatory => (320.0, 0.26),
+            ServiceKind::Aquarium => (400.0, 0.30),
+            ServiceKind::BotanicalGarden => (440.0, 0.32),
+            ServiceKind::ConcertHall => (440.0, 0.34),
         }
     }
 
@@ -303,9 +527,28 @@ impl ServiceKind {
                 let uni = ["Ashgrove", "Vantmoor", "Kestrel Bay", "Halden", "Corvin", "Saltmarsh", "Ivel", "Larkspur", "Thornbury", "Westhollow"][n as usize % 10];
                 format!("{uni} {}", ["Community College", "University", "Institute of Technology"][tier.index()])
             }
+            ServiceKind::ArtMuseum => ["Neon Museum of Modern Art", "Kowloon Kunsthalle", "Museum of Light and Signal", "The Chromatic Gallery", "Harbor Museum of Art"][n as usize % 5].to_string(),
+            ServiceKind::ScienceMuseum => ["Museum of Natural History and Science", "The Fossil and Star Hall", "Ridgeline Science Museum", "Hall of Deep Time", "City Science Centre"][n as usize % 5].to_string(),
+            ServiceKind::HistoryMuseum => match n % 3 {
+                0 => format!("{place} City History Museum"),
+                1 => "Museum of the City and Design".to_string(),
+                _ => format!("{place} Design Museum"),
+            },
+            ServiceKind::Pier => format!("{place} Pleasure Pier"),
+            ServiceKind::GrandPark => ["Central Park", "Grand Park", "The Commons", "Founders Park", "Lantern Park"][n as usize % 5].to_string(),
+            ServiceKind::Zoo => format!("{place} Zoo"),
+            ServiceKind::Observatory => ["Ridgeline Observatory", "Star Hill Observatory", "Griffin Observatory", "High Lantern Observatory"][n as usize % 4].to_string(),
+            ServiceKind::Aquarium => format!("{place} Aquarium"),
+            ServiceKind::BotanicalGarden => format!("{place} Botanical Garden"),
+            ServiceKind::ConcertHall => ["Neon Opera House", "Harbor Philharmonic Hall", "The Glass Sails Concert Hall", "City Opera and Concert Hall"][n as usize % 4].to_string(),
         }
     }
 }
+
+/// [attractions] The smallest site each landmark attraction goes on, m²,
+/// in `ServiceKind::LANDMARKS` order: well over an ordinary plot (a
+/// parcel along a street is some 400 to 900 m²), so each takes several.
+pub const ATTRACTION_AREA: [f32; 10] = [2200.0, 2600.0, 1800.0, 1200.0, 7000.0, 5200.0, 1500.0, 2400.0, 3800.0, 2600.0];
 
 /// The service a building provides, stored on the building.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

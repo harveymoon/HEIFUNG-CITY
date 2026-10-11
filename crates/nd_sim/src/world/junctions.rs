@@ -95,6 +95,11 @@ pub struct CrossingView {
     /// [footbridge] Replaced by its footbridge: no paint, no walk light,
     /// nobody crosses here at grade.
     pub closed: bool,
+    /// [walk-crossings] Over a highway slip road's mouth.
+    pub ramp: bool,
+    /// [walk-crossings] Shut to walkers now (a slip road's mouth with no
+    /// walk lights, button or bridge).
+    pub shut: bool,
 }
 
 /// What the Intersection editor shows and edits.
@@ -189,6 +194,8 @@ impl World {
             footbridge: self.walk.footbridges.iter().find(|f| f.crossing == k).map(|f| (f.top, f.foot, f.width)),
             kept: c.bridged && !c.closed,
             closed: c.closed,
+            ramp: c.ramp,
+            shut: c.shut,
         })
     }
 
@@ -308,7 +315,10 @@ impl World {
         }
         match upgrade {
             CrossingUpgrade::Button if v.signalised => return Err("this crosswalk already has walk lights with the junction's signals".into()),
-            CrossingUpgrade::Button | CrossingUpgrade::Footbridge if v.kind == CrossingKind::Informal => return Err("only a marked crosswalk can be upgraded".into()),
+            // [walk-crossings] An unmarked crossing (a roundabout's lanes,
+            // a slip road's mouth, a dead end) may become a proper one: a
+            // push button or a footbridge, or be removed.
+            CrossingUpgrade::Button | CrossingUpgrade::Footbridge | CrossingUpgrade::Removed if v.kind == CrossingKind::Jay => return Err("not a crossing".into()),
             _ => {}
         }
         // Two footbridges may not stand in each other's way (at a corner

@@ -84,6 +84,8 @@ mod placement_tests;
 #[cfg(test)]
 mod stable_parcels_tests;
 #[cfg(test)]
+mod backland_tests;
+#[cfg(test)]
 mod dock_access_tests;
 pub mod poses;
 /// [clarity] Origins and destinations, crews, crash sites.
@@ -93,6 +95,8 @@ mod kerbside;
 mod level_crossings;
 #[cfg(test)]
 mod level_crossing_tests;
+#[cfg(test)]
+mod walk_crossings_tests;
 #[cfg(test)]
 mod ped_highway_tests;
 mod pillars;
@@ -106,7 +110,7 @@ mod places_tests;
 #[cfg(test)]
 mod under_construction_tests;
 mod industry_bridge;
-pub use plan::{Blocker, ProjectCheck, ProjectInfo, ProjectPreview};
+pub use plan::{insert_on_leg, leg_near, Blocker, Joint, ProjectCheck, ProjectInfo, ProjectPreview, JOINT_SAME};
 mod power;
 pub use power::{GridAsset, GridHour, PlantRow};
 pub mod plant_groups;
@@ -178,6 +182,10 @@ mod rides;
 // [economy] business pressure, the new trades, the waterfront and the art scene
 mod pressure;
 mod waterfront;
+/// [attractions] Landmark attractions: placement rules, grounds, visits.
+mod attractions;
+#[cfg(test)]
+mod attractions_tests;
 /// [waterfront] Waterfront lots, public beaches and private jetties.
 mod shore;
 #[cfg(test)]
@@ -743,6 +751,10 @@ pub struct World {
     /// (`world/airlift.rs`). Old saves load with none.
     #[serde(default)]
     pub airlifts: Vec<airlift::Airlift>,
+    /// [attractions] The landmark attractions' piers and books
+    /// (`crate::attractions`, `world/attractions.rs`). Old saves load with none.
+    #[serde(default)]
+    pub attractions: crate::attractions::Attractions,
 }
 
 impl World {
@@ -854,6 +866,7 @@ impl World {
             freight_queue: Vec::new(),
             games: Default::default(),
             airlifts: Vec::new(),
+            attractions: Default::default(),
         };
         w.landscape.set(Landscape::new(&w.config.landscape));
         // [sweep-sim] Grids over the whole buildable land (far islands too).
@@ -882,6 +895,9 @@ impl World {
         self.note_path_links();
         let links: Vec<Vec2> = self.path_links.links.iter().map(|l| l.pos).collect();
         crate::park::plan_parks_with(&mut self.lots, &self.land_value, &links);
+        // [attractions] The park clears every non-park lot's plan: the
+        // landmarks people walk round lay theirs out again.
+        self.plan_attraction_grounds();
         self.build_walk_graph();
     }
 

@@ -77,10 +77,12 @@ pub fn toggle(ui: &mut egui::Ui) {
 struct Asks {
     fly: Option<bevy::math::Vec2>,
     message: Option<String>,
+    /// [fix/roads-tools] A project's Show: outline what it would change.
+    show: Option<u32>,
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn window_system(mut contexts: EguiContexts, mut sim: ResMut<Sim>, mut rt: ResMut<CommitteeRt>, mut flags: ResMut<UiFlags>, (mut fly, mut follow, mut mode): (ResMut<CameraFly>, ResMut<CameraFollow>, ResMut<CameraMode>)) -> Result {
+pub fn window_system(mut contexts: EguiContexts, mut sim: ResMut<Sim>, mut rt: ResMut<CommitteeRt>, mut flags: ResMut<UiFlags>, (mut fly, mut follow, mut mode): (ResMut<CameraFly>, ResMut<CameraFollow>, ResMut<CameraMode>), time: Res<Time>) -> Result {
     let ctx = contexts.ctx_mut()?;
     if let Some(open) = rt.open_request.take() {
         set_open(ctx, open);
@@ -145,6 +147,9 @@ pub fn window_system(mut contexts: EguiContexts, mut sim: ResMut<Sim>, mut rt: R
     }
     if let Some(m) = asks.message {
         flags.message = m;
+    }
+    if let Some(id) = asks.show {
+        rt.shown_site = Some((id, time.elapsed_secs_f64()));
     }
     if let Some(p) = asks.fly {
         follow.stop();
@@ -471,7 +476,7 @@ fn project_card(ui: &mut egui::Ui, sim: &Sim, p: &CommitteeProject) -> Option<Pr
             });
         }
         ui.horizontal(|ui| {
-            if p.site().and_then(|s| s.point.or(s.stops.first().copied())).is_some() && ui.button("Show").clicked() {
+            if p.site().and_then(|s| site_centre(sim, s)).is_some() && ui.button("Show").on_hover_text("Fly there and outline the ground and buildings it would change").clicked() {
                 act = Some(ProjectAct::Show);
             }
             if p.status.is_open() {
@@ -494,6 +499,16 @@ fn project_card(ui: &mut egui::Ui, sim: &Sim, p: &CommitteeProject) -> Option<Pr
         }
     });
     act
+}
+
+/// [fix/roads-tools] Where a site is: its building's spot, else its first
+/// stop, else the middle of the parcels it zones.
+fn site_centre(sim: &Sim, s: &nd_sim::committee::SiteOption) -> Option<nd_sim::Vec2> {
+    if let Some(p) = s.point.or(s.stops.first().copied()) {
+        return Some(p);
+    }
+    let pts: Vec<nd_sim::Vec2> = s.parcels.iter().filter_map(|k| sim.world.parcels.find(k)).map(|i| sim.world.parcels.parcels[i].center).collect();
+    (!pts.is_empty()).then(|| pts.iter().copied().sum::<nd_sim::Vec2>() / pts.len() as f32)
 }
 
 enum ProjectAct {
@@ -524,9 +539,11 @@ fn projects_tab(ui: &mut egui::Ui, sim: &mut Sim, asks: &mut Asks) {
     let name = w.committee.project(id).map(|p| p.name.clone()).unwrap_or_default();
     asks.message = Some(match act {
         ProjectAct::Show => {
-            if let Some(pt) = w.committee.project(id).and_then(|p| p.site()).and_then(|s| s.point.or(s.stops.first().copied())) {
+            let at = sim.world.committee.project(id).and_then(|p| p.site()).and_then(|s| site_centre(sim, s));
+            if let Some(pt) = at {
                 asks.fly = Some(bevy::math::Vec2::new(pt.x, pt.y));
             }
+            asks.show = Some(id);
             return;
         }
         ProjectAct::Implement => match w.committee_implement(id) {

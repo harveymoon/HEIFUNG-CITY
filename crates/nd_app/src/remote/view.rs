@@ -530,6 +530,25 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
     });
     // [free-placement] The building's own use (power, wages, venues); `land_use` is Civic for a city building.
     v["use"] = json!(b.land_use.label());
+    // [attractions] A landmark: its hours, visitors, takings, pull and site.
+    if let Some(k) = b.service.map(|s| s.kind).filter(|k| k.is_landmark()) {
+        let book = w.attractions.book(id);
+        let hours = k.hours();
+        let (r, wt) = k.land_value(nd_sim::Tier::Mid);
+        v["attraction"] = json!({
+            "kind": k.key(), "label": k.label(), "about": nd_sim::attractions::about(k),
+            "open_hours": if hours.always() { "always".to_string() } else { format!("{:02}-{:02}", hours.open, hours.close) },
+            "open_now": b.operating() && hours.contains(w.clock.hour() as u8) && b.workers.len() * 4 >= b.jobs as usize,
+            "capacity": k.capacity(nd_sim::Tier::Mid), "admission": round(k.admission()),
+            "visits_today": book.visits_today, "visits_yesterday": book.visits_yesterday,
+            "tourists_today": book.tourists_today, "tourists_yesterday": book.tourists_yesterday,
+            "takings_today": round(book.takings_today), "takings_yesterday": round(book.takings_yesterday), "visits_total": book.visits_total,
+            "tourist_pull": round(k.tourist_pull() * (0.5 + 0.5 * b.staffing())),
+            "land_value_lift": { "radius_m": r, "raw_weight": round(wt * (0.55 + 0.45 * b.staffing())) },
+            "pier": w.attractions.piers.get(&id).map(|d| json!({ "root": v2(d.root), "tip": v2(d.tip), "length_m": round(d.length()), "width_m": d.width, "head_m": d.head })),
+            "rise_above_town_m": lot.and_then(|l| w.rise_above_town(l.center)).map(round),
+        });
+    }
     // [dock-access] A dock, station or yard: on the road network or not, and
     // where to draw a road to join it.
     if let Some(connected) = w.road_access(id) {

@@ -104,10 +104,63 @@ pub enum AttractionKind {
     Coast,
     /// [waterfront] A public beach, open and reachable.
     Beach,
+    // [attractions] The landmark attractions, one of each per city (so a
+    // sight's kind names its building: `World::landmark`). Appended.
+    ArtMuseum,
+    ScienceMuseum,
+    HistoryMuseum,
+    Pier,
+    GrandPark,
+    Zoo,
+    Observatory,
+    Aquarium,
+    BotanicalGarden,
+    ConcertHall,
 }
 
 impl AttractionKind {
-    pub const ALL: [AttractionKind; 7] = [AttractionKind::Monument, AttractionKind::Stadium, AttractionKind::Park, AttractionKind::Nightlife, AttractionKind::District, AttractionKind::Coast, AttractionKind::Beach];
+    pub const ALL: [AttractionKind; 17] = [
+        AttractionKind::Monument,
+        AttractionKind::Stadium,
+        AttractionKind::Park,
+        AttractionKind::Nightlife,
+        AttractionKind::District,
+        AttractionKind::Coast,
+        AttractionKind::Beach,
+        AttractionKind::ArtMuseum,
+        AttractionKind::ScienceMuseum,
+        AttractionKind::HistoryMuseum,
+        AttractionKind::Pier,
+        AttractionKind::GrandPark,
+        AttractionKind::Zoo,
+        AttractionKind::Observatory,
+        AttractionKind::Aquarium,
+        AttractionKind::BotanicalGarden,
+        AttractionKind::ConcertHall,
+    ];
+
+    /// [attractions] The landmark a sight of this kind is.
+    pub fn landmark(self) -> Option<crate::services::ServiceKind> {
+        use crate::services::ServiceKind as K;
+        Some(match self {
+            AttractionKind::ArtMuseum => K::ArtMuseum,
+            AttractionKind::ScienceMuseum => K::ScienceMuseum,
+            AttractionKind::HistoryMuseum => K::HistoryMuseum,
+            AttractionKind::Pier => K::Pier,
+            AttractionKind::GrandPark => K::GrandPark,
+            AttractionKind::Zoo => K::Zoo,
+            AttractionKind::Observatory => K::Observatory,
+            AttractionKind::Aquarium => K::Aquarium,
+            AttractionKind::BotanicalGarden => K::BotanicalGarden,
+            AttractionKind::ConcertHall => K::ConcertHall,
+            _ => return None,
+        })
+    }
+
+    /// [attractions] The sight a landmark is.
+    pub fn for_landmark(k: crate::services::ServiceKind) -> Option<AttractionKind> {
+        AttractionKind::ALL.into_iter().find(|a| a.landmark() == Some(k))
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -118,6 +171,7 @@ impl AttractionKind {
             AttractionKind::District => "landmark district",
             AttractionKind::Coast => "waterfront",
             AttractionKind::Beach => "beach",
+            k => k.landmark().map_or("landmark", |s| s.label()),
         }
     }
 
@@ -132,6 +186,8 @@ impl AttractionKind {
             AttractionKind::Nightlife => hour >= 18 || hour < 2,
             AttractionKind::Stadium => (12..23).contains(&hour),
             AttractionKind::District => (9..24).contains(&hour),
+            // [attractions] By the landmark's own hours.
+            k if k.landmark().is_some() => k.landmark().is_some_and(|s| s.hours().contains(hour as u8)),
             _ => (8..21).contains(&hour),
         }
     }

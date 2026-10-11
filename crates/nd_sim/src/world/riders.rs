@@ -57,6 +57,85 @@ fn ray_hits(o: Vec2, d: Vec2, reach: f32, a: Vec2, b: Vec2) -> Option<f32> {
 }
 
 impl World {
+    /// [walk-crossings] A bike's path that goes straight over a street
+    /// where a footbridge replaced the crossing goes over the bridge
+    /// instead: up the stairs at the near end (wheeling the bike, at a
+    /// walk: `step_rider`), over the deck and down the far side. The bridge's
+    /// points are the walk graph's own, so the rider is drawn up there.
+    /// Bridges joined at a corner deck (no stairs at that end) are left to
+    /// the walkers.
+    pub(super) fn bike_over_footbridges(&self, path: &mut Vec<Vec2>) {
+        if self.walk.footbridges.is_empty() || path.len() < 2 {
+            return;
+        }
+        // Arc length at each vertex.
+        let mut arc = vec![0.0f32; path.len()];
+        for i in 1..path.len() {
+            arc[i] = arc[i - 1] + path[i - 1].distance(path[i]);
+        }
+        // (arc position, half the street's width with its pavements, the
+        // bridge's points in the order ridden)
+        let mut hits: Vec<(f32, f32, [Vec2; 4])> = Vec::new();
+        for f in &self.walk.footbridges {
+            if f.joined[0] || f.joined[1] {
+                continue;
+            }
+            let Some(c) = self.walk.crossings.get(f.crossing as usize) else { continue };
+            if !c.closed || self.roads.try_segment(c.segment).is_none() {
+                continue;
+            }
+            let (s0, s1) = self.roads.segment_points(c.segment);
+            let sdir = (s1 - s0).normalize_or_zero();
+            let (a, b) = (self.walk.nodes[c.a as usize].pos, self.walk.nodes[c.b as usize].pos);
+            let half = a.distance(b) * 0.5 + 1.0;
+            for i in 1..path.len() {
+                let (p, q) = (path[i - 1], path[i]);
+                let len = p.distance(q);
+                if len < 0.3 {
+                    continue;
+                }
+                let d = (q - p) / len;
+                if d.dot(sdir).abs() > ACROSS {
+                    continue;
+                }
+                let (t, at) = crate::geom::project_on_segment(c.mid, p, q);
+                if at.distance(c.mid) > 3.0 {
+                    continue;
+                }
+                let s = arc[i - 1] + t * len;
+                if hits.iter().any(|h| (h.0 - s).abs() < half) {
+                    break;
+                }
+                // The end on the side the bike comes from first.
+                let pts = if p.distance(a) <= p.distance(b) { [f.foot[0], f.top[0], f.top[1], f.foot[1]] } else { [f.foot[1], f.top[1], f.top[0], f.foot[0]] };
+                hits.push((s, half, pts));
+                break;
+            }
+        }
+        if hits.is_empty() {
+            return;
+        }
+        hits.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let mut out: Vec<Vec2> = Vec::with_capacity(path.len() + hits.len() * 4);
+        let mut h = 0;
+        for (i, &v) in path.iter().enumerate() {
+            // Bridges before this vertex (and the street under them) first.
+            while h < hits.len() && hits[h].0 - hits[h].1 <= arc[i] {
+                out.extend_from_slice(&hits[h].2);
+                h += 1;
+            }
+            // A vertex out in the street a bridge spans is not ridden.
+            if hits[..h].iter().any(|x| (arc[i] - x.0).abs() < x.1) && i + 1 < path.len() && i > 0 {
+                continue;
+            }
+            out.push(v);
+        }
+        for x in &hits[h..] {
+            out.extend_from_slice(&x.2);
+        }
+        *path = out;
+    }
+
     /// Do vehicles coming in on `approach` of intersection `k` have the
     /// green to go straight or right (a left arrow alone is not a green for
     /// a bike going on)? Read from the connector lanes the signals set.
@@ -305,12 +384,20 @@ impl World {
         let mut stopped: Option<u32> = None;
         let mut rail_wait: Option<usize> = None;
         let mut guard = 0;
+        // [walk-crossings] Up a footbridge's stairs and over its deck the
+        // bike is wheeled, at a walk.
+        let mut wheeled = false;
         // Crossings matter only once the walk graph and lanes are matched.
         let rules = !self.peds.cross_grid.is_empty() && self.peds.crossings.len() == self.walk.crossings.len();
         while budget > 1e-4 && *idx < path.len() && guard < 64 {
             guard += 1;
             let target = path[*idx];
             let d = pos.distance(target);
+            let from = if *idx > 0 { path[*idx - 1] } else { pos };
+            if !wheeled && !self.walk.raised.is_empty() && (self.walk.level_at_node(from) != 0.0 || self.walk.level_at_node(target) != 0.0) {
+                wheeled = true;
+                budget *= self.config.walk_speed / speed.max(1e-3);
+            }
             if d > 1e-3 {
                 let dir = (target - pos) / d;
                 heading = dir.y.atan2(dir.x);
@@ -331,6 +418,9 @@ impl World {
                     break;
                 }
                 if d <= budget {
+                    if let Some(k) = self.walk.footbridge_deck(from, target) {
+                        self.peds.uses.entry(k).or_default().bridge_bikes += 1;
+                    }
                     pos = target;
                     *idx += 1;
                     budget -= d;

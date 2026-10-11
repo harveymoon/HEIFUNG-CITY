@@ -86,7 +86,8 @@ impl BuildCategory {
             }
             BuildCategory::Rail => vec![Placeable::Rail(RailFacility::Station), Placeable::Rail(RailFacility::Central), Placeable::Rail(RailFacility::FreightYard), Placeable::CargoHub],
             BuildCategory::Water => PortKind::ALL.iter().map(|&k| Placeable::Dock(k)).collect(),
-            BuildCategory::Attractions => vec![Placeable::Service(ServiceKind::Monument, Tier::Mid), Placeable::Service(ServiceKind::Stadium, Tier::Mid)],
+            // [attractions] The monument and stadium, then the landmarks (one of each per city).
+            BuildCategory::Attractions => [ServiceKind::Monument, ServiceKind::Stadium].into_iter().chain(ServiceKind::LANDMARKS).map(|k| Placeable::Service(k, Tier::Mid)).collect(),
         }
     }
 }
@@ -108,13 +109,15 @@ impl Placeable {
         }
     }
 
-    /// Whether the player picks a tier for it.
+    /// Whether the player picks a tier for it. [attractions] A landmark
+    /// attraction comes in one size.
     pub fn has_tiers(self) -> bool {
-        matches!(self, Placeable::Service(..))
+        matches!(self, Placeable::Service(k, _) if !k.is_landmark())
     }
 
     pub fn with_tier(self, tier: Tier) -> Placeable {
         match self {
+            Placeable::Service(k, _) if k.is_landmark() => Placeable::Service(k, Tier::Mid),
             Placeable::Service(k, _) => Placeable::Service(k, tier),
             other => other,
         }
@@ -155,6 +158,16 @@ impl Placeable {
                 ServiceKind::Vertiport => "Vertiport",
                 ServiceKind::ParkingEnforcement => "Parking enforcement",
                 ServiceKind::University => "University",
+                ServiceKind::ArtMuseum => "Art museum",
+                ServiceKind::ScienceMuseum => "Natural history & science museum",
+                ServiceKind::HistoryMuseum => "City history & design museum",
+                ServiceKind::Pier => "Pleasure pier (sea shore)",
+                ServiceKind::GrandPark => "Grand city park",
+                ServiceKind::Zoo => "Zoo",
+                ServiceKind::Observatory => "Observatory (high ground)",
+                ServiceKind::Aquarium => "Aquarium",
+                ServiceKind::BotanicalGarden => "Botanical garden",
+                ServiceKind::ConcertHall => "Opera & concert hall",
             },
             Placeable::ParkingLot(s) => s.menu_label(),
             Placeable::Toll(s) => s.menu_label(),
@@ -246,6 +259,12 @@ impl Placeable {
     pub fn min_thickness(self) -> f32 {
         match self {
             Placeable::Plant(k) => k.min_thickness(),
+            // [attractions] A park, a zoo or a garden is not a strip along
+            // the kerb: room for lakes, enclosures and a glasshouse.
+            Placeable::Service(ServiceKind::GrandPark, _) => 16.0,
+            Placeable::Service(ServiceKind::Zoo, _) => 14.0,
+            Placeable::Service(ServiceKind::BotanicalGarden, _) => 12.0,
+            Placeable::Service(k, _) if k.is_landmark() => 9.0,
             _ => 0.0,
         }
     }
@@ -257,6 +276,15 @@ impl Placeable {
         match self {
             Placeable::Plant(k) => k.max_area(),
             _ => (self.min_area() * 3.0).max(1200.0),
+        }
+    }
+
+    /// [attractions] How many neighbouring plots a site for it may take in
+    /// (`grow_site_steps`): a landmark spans a score of small plots.
+    pub fn join_steps(self) -> usize {
+        match self {
+            Placeable::Service(k, _) if k.is_landmark() => 48,
+            _ => 12,
         }
     }
 
@@ -309,7 +337,7 @@ impl Placeable {
             "clinic" => Some(Placeable::Service(ServiceKind::Health, tier.unwrap_or(Tier::Low))),
             other if crate::enforcement::LotSize::from_key(other).is_some() => crate::enforcement::LotSize::from_key(other).map(Placeable::ParkingLot),
             other if crate::tolls::TollSize::from_key(other).is_some() => crate::tolls::TollSize::from_key(other).map(Placeable::Toll),
-            other => ServiceKind::from_key(other).map(|k| Placeable::Service(k, tier.unwrap_or(Tier::Mid))),
+            other => ServiceKind::from_key(other).map(|k| Placeable::Service(k, tier.unwrap_or(Tier::Mid))).map(|p| p.with_tier(tier.unwrap_or(Tier::Mid))),
         }
     }
 }

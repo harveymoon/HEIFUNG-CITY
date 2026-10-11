@@ -134,8 +134,12 @@ fn underpasses(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32;
 /// deck stands clear of the ground.
 pub fn viaducts(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32; 3]) {
     let roads = &world.roads;
+    // [walk-crossings] Raised footpaths are drawn a run at a time, so a
+    // walkway turning a corner is one deck with unbroken parapets (G14)
+    // rather than two slabs whose rails cross.
+    path_viaducts(world, g, concrete, steel);
     for (sid, seg) in roads.alive_segments() {
-        if !seg.viaduct {
+        if !seg.viaduct || seg.kind == nd_sim::roads::RoadKind::Path {
             continue;
         }
         let (a, b) = roads.segment_points(sid);
@@ -163,6 +167,187 @@ pub fn viaducts(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32
         let top = world.road_height(sid, t) - 1.2;
         let foot = world.ground_height(p.at);
         pillar_column(g, p.at, p.dir, top, foot, p.half_width, concrete);
+    }
+}
+
+/// [walk-crossings] A raised path piece shorter than this (a stub left by
+/// a join) does not break the run of deck it sits on.
+const PATH_STUB: f32 = 3.0;
+
+/// [walk-crossings] The decks of the raised footpaths, joined into runs
+/// through every node where the walkway just carries on (two raised path
+/// pieces meet, short stubs aside): each run one mitred deck with its
+/// parapets and rails following it round the corners. Where three or more
+/// meet each run ends square, as before.
+fn path_viaducts(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32; 3]) {
+    use nd_sim::roads::{NodeId, RoadKind, SegmentId};
+    let roads = &world.roads;
+    let raised_path = |s: SegmentId| roads.try_segment(s).is_some_and(|sg| sg.viaduct && sg.kind == RoadKind::Path);
+    let long = |s: SegmentId| {
+        let (a, b) = roads.segment_points(s);
+        a.distance(b) >= PATH_STUB
+    };
+    // The raised path pieces at a node that count for the run (stubs not).
+    let through = |n: NodeId| -> Vec<SegmentId> { roads.node(n).segments.iter().copied().filter(|&s| raised_path(s) && long(s)).collect() };
+    let z_of = |n: NodeId| world.road_z.get(n.0 as usize).copied().unwrap_or(0.0);
+    let mut done: std::collections::HashSet<SegmentId> = std::collections::HashSet::new();
+    let pieces: Vec<SegmentId> = roads.alive_segments().filter(|(s, _)| raised_path(*s)).map(|(s, _)| s).collect();
+    for &first in &pieces {
+        if done.contains(&first) {
+            continue;
+        }
+        let seg = roads.segment(first);
+        let hw = seg.half_width() + 0.6;
+        if !long(first) {
+            // A stub: its own short deck, no parapets.
+            done.insert(first);
+            let (a, b) = roads.segment_points(first);
+            let (za, zb) = (z_of(seg.a), z_of(seg.b));
+            g.part(Surface::Concrete).slab(glam::Vec3::new(a.x, za - 0.02, a.y), glam::Vec3::new(b.x, zb - 0.02, b.y), hw * 2.0, VIADUCT_DECK.thick, rgba(concrete));
+            continue;
+        }
+        // Grow the run both ways from `first` through nodes where exactly
+        // two long raised path pieces meet.
+        let mut nodes: std::collections::VecDeque<NodeId> = std::collections::VecDeque::from([seg.a, seg.b]);
+        done.insert(first);
+        for forward in [true, false] {
+            let mut prev_seg = first;
+            loop {
+                let n = if forward { *nodes.back().unwrap() } else { *nodes.front().unwrap() };
+                let here = through(n);
+                if here.len() != 2 {
+                    break;
+                }
+                let Some(&next) = here.iter().find(|&&s| s != prev_seg) else { break };
+                if done.contains(&next) {
+                    break;
+                }
+                done.insert(next);
+                let ns = roads.segment(next);
+                let far = if ns.a == n { ns.b } else { ns.a };
+                if forward {
+                    nodes.push_back(far);
+                } else {
+                    nodes.push_front(far);
+                }
+                prev_seg = next;
+            }
+        }
+        let closed = nodes.len() > 3 && nodes.front() == nodes.back();
+        if closed {
+            nodes.pop_back();
+        }
+        let mut pts: Vec<Vec2> = nodes.iter().map(|&n| roads.node(n).pos).collect();
+        let zs: Vec<f32> = nodes.iter().map(|&n| z_of(n)).collect();
+        // [walk-crossings] A raised path that comes down onto a street ends
+        // on its pavement, not out in the middle of the road (G12): the deck
+        // stops at the back of the kerb, where the walkers step off.
+        if !closed {
+            let ends = [(0usize, 1usize), (pts.len() - 1, pts.len() - 2)];
+            for (i, j) in ends {
+                let n = if i == 0 { *nodes.front().unwrap() } else { *nodes.back().unwrap() };
+                let street = roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive && roads.segment(s).is_street() && !roads.segment(s).fronts_nothing()).map(|&s| roads.segment(s).half_width()).fold(0.0f32, f32::max);
+                if street <= 0.0 {
+                    continue;
+                }
+                let len = pts[i].distance(pts[j]);
+                let back = street + nd_sim::zoning::SIDEWALK * 0.5;
+                if len > back + 1.0 {
+                    pts[i] = pts[i] + (pts[j] - pts[i]) / len * back;
+                }
+            }
+        }
+        deck_run(g, &pts, &zs, closed, hw, &VIADUCT_DECK, concrete, steel);
+        let planned = nodes.iter().any(|&n| roads.node(n).level >= nd_sim::roads::VIADUCT_LEVEL) && !world.pillars.is_empty();
+        if !planned {
+            // Columns as `viaduct_span` stands them, piece by piece.
+            for w in pts.windows(2).zip(zs.windows(2)) {
+                let ((a, b), (za, zb)) = ((w.0[0], w.0[1]), (w.1[0], w.1[1]));
+                columns_under(g, a, b, za, zb, hw, &|p| world.ground_height(p), concrete);
+            }
+        }
+    }
+}
+
+/// [walk-crossings] A deck along `pts` (heights `zs` at each point), `hw`
+/// either side, mitred at every corner, with parapet walls and rails along
+/// both edges; square ends unless `closed`.
+#[allow(clippy::too_many_arguments)]
+fn deck_run(g: &mut Geometry, pts: &[Vec2], zs: &[f32], closed: bool, hw: f32, d: &Deck, concrete: [f32; 3], steel: [f32; 3]) {
+    use glam::Vec3;
+    if pts.len() < 2 {
+        return;
+    }
+    let (line, hs): (Vec<Vec2>, Vec<f32>) = if closed {
+        let mut l = pts.to_vec();
+        l.push(pts[0]);
+        l.push(pts[1]);
+        let mut h = zs.to_vec();
+        h.push(zs[0]);
+        h.push(zs[1]);
+        (l, h)
+    } else {
+        (pts.to_vec(), zs.to_vec())
+    };
+    let skip = closed as usize;
+    let off = |o: f32| -> Vec<Vec2> { crate::mesh::offset_path(&line, o).into_iter().skip(skip).collect() };
+    let hs: Vec<f32> = hs.into_iter().skip(skip).map(|z| z - 0.02).collect();
+    let (l, r) = (off(-hw), off(hw));
+    let v = |p: Vec2, y: f32| Vec3::new(p.x, y, p.y);
+    let c = rgba(concrete);
+    for i in 0..l.len() - 1 {
+        let (z0, z1) = (hs[i], hs[i + 1]);
+        let (b0, b1) = (z0 - d.thick, z1 - d.thick);
+        let dir = (l[i + 1] - l[i]).normalize_or_zero();
+        let out_l = Vec3::new(dir.y, 0.0, -dir.x);
+        let m = g.part(Surface::Concrete);
+        m.quad_facing([v(l[i], z0), v(l[i + 1], z1), v(r[i + 1], z1), v(r[i], z0)], Vec3::Y, c);
+        m.quad_facing([v(l[i], b0), v(r[i], b0), v(r[i + 1], b1), v(l[i + 1], b1)], -Vec3::Y, c);
+        m.quad_facing([v(l[i], b0), v(l[i + 1], b1), v(l[i + 1], z1), v(l[i], z0)], out_l, c);
+        m.quad_facing([v(r[i], b0), v(r[i + 1], b1), v(r[i + 1], z1), v(r[i], z0)], -out_l, c);
+    }
+    if !closed {
+        let n = l.len();
+        for (i, j, out) in [(0usize, 1usize, -1.0f32), (n - 1, n - 2, -1.0)] {
+            let dir = (line[i] - line[j]).normalize_or_zero() * -out;
+            g.part(Surface::Concrete).quad_facing([v(l[i], hs[i] - d.thick), v(r[i], hs[i] - d.thick), v(r[i], hs[i]), v(l[i], hs[i])], Vec3::new(dir.x, 0.0, dir.y), c);
+        }
+    }
+    for s in [-1.0f32, 1.0] {
+        let edge = off(s * (hw - 0.2));
+        for i in 0..edge.len() - 1 {
+            let (a3, b3) = (v(edge[i], hs[i]), v(edge[i + 1], hs[i + 1]));
+            g.part(Surface::Metal).beam(a3 + Vec3::Y * d.rail_y, b3 + Vec3::Y * d.rail_y, d.rail, rgba(steel));
+            if d.walls {
+                g.part(Surface::Concrete).slab(a3 + Vec3::Y * d.wall_y, b3 + Vec3::Y * d.wall_y, d.wall_w, d.wall_h, rgba(mul(concrete, 0.9)));
+            }
+        }
+    }
+}
+
+/// Columns under a deck from `a` to `b` where it stands clear of the
+/// ground, about every 24 m (as `viaduct_span` does).
+#[allow(clippy::too_many_arguments)]
+fn columns_under(g: &mut Geometry, a: Vec2, b: Vec2, za: f32, zb: f32, hw: f32, ground: &dyn Fn(Vec2) -> f32, concrete: [f32; 3]) {
+    use glam::Vec3;
+    let len = a.distance(b);
+    if len < 0.3 {
+        return;
+    }
+    let dir = (b - a) / len;
+    let spans = (len / 24.0).ceil().max(1.0) as i32;
+    let yaw = dir.y.atan2(dir.x);
+    for k in 0..=spans {
+        let t = k as f32 / spans as f32;
+        let p = a.lerp(b, t);
+        let top = za + (zb - za) * t - 1.2;
+        let foot = ground(p);
+        if top - foot < 1.0 {
+            continue;
+        }
+        let w = (hw * 0.35).clamp(1.2, 3.0);
+        g.part(Surface::Concrete).boxed(Vec3::new(p.x, (top + foot) * 0.5, p.y), Vec3::new(1.6, top - foot, w), yaw, rgba(mul(concrete, 0.8)));
+        g.part(Surface::Concrete).boxed(Vec3::new(p.x, top - 0.35, p.y), Vec3::new(1.9, 0.7, hw * 1.7), yaw, rgba(mul(concrete, 0.85)));
     }
 }
 

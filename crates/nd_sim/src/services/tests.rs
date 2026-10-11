@@ -27,7 +27,8 @@ fn buildings_tool_categories_hold_every_placeable_once() {
     assert!(crate::tolls::TollSize::OFFERED.iter().all(|&t| BuildCategory::Transit.items().contains(&Placeable::Toll(t))), "toll booths under Transit");
     assert!(seen.contains(&Placeable::Rail(RailFacility::Station)) && seen.contains(&Placeable::Rail(RailFacility::FreightYard)));
     assert!(seen.contains(&Placeable::Dock(PortKind::ShippingPort)) && seen.contains(&Placeable::Dock(PortKind::FerryTerminal)), "docks live under Water");
-    assert_eq!(BuildCategory::Attractions.items().len(), 2);
+    // [attractions] the monument, the stadium and the ten landmarks
+    assert_eq!(BuildCategory::Attractions.items().len(), 2 + ServiceKind::LANDMARKS.len());
 }
 
 #[test]

@@ -54,11 +54,17 @@ impl Traffic {
             self.junction_rules.push(rule.clone());
         }
         if let Some(k) = self.net.intersection_at(roads, rule.at) {
+            let was = self.net.intersections[k].signalized;
             self.reset_junction(roads, k);
             self.apply_rule(roads, k, &rule);
             // The player's own arrows go back on where they still fit.
             self.resolve_lane_use(roads);
             self.net.apply_signals();
+            // [fix/roads-tools] Signals switched on or off: the heads and
+            // poles are drawn again (a timing change redraws nothing).
+            if self.net.intersections[k].signalized != was {
+                self.net.signals_version += 1;
+            }
         }
     }
 

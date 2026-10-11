@@ -70,6 +70,14 @@ impl World {
                 continue;
             }
             if let Some(s) = b.service {
+                // [attractions] A landmark: its own pull, by how well it is
+                // staffed; visitors stand where it is best seen.
+                if let Some(kind) = AttractionKind::for_landmark(s.kind) {
+                    let score = s.kind.tourist_pull() * (0.5 + 0.5 * b.staffing());
+                    let pos = self.attraction_spot(id).unwrap_or_else(|| entrance(self, id));
+                    out.push(Attraction { kind, name: b.name.clone(), pos, building: Some(id), score });
+                    continue;
+                }
                 let kind = match s.kind {
                     ServiceKind::Monument => AttractionKind::Monument,
                     ServiceKind::Stadium => AttractionKind::Stadium,
@@ -481,6 +489,19 @@ impl World {
                     t.spent += 15.0;
                     self.economy.credit(Flow::Tickets, 15.0);
                 }
+                // [attractions] In through the turnstile: a landmark
+                // charges at the door and counts its visitors.
+                if let Some(b) = kind.landmark().and_then(|k| self.landmark(k)) {
+                    let purse = self.tourism.tourists[id].money;
+                    let paid = self.admit_visitor(b, true, purse);
+                    let t = &mut self.tourism.tourists[id];
+                    t.money -= paid;
+                    t.spent += paid;
+                    // Longer at a landmark than at a statue.
+                    if let TouristState::Sightseeing { until, .. } = &mut t.state {
+                        *until += 60;
+                    }
+                }
                 self.tourism.stats.sights_today += 1;
                 // Stand back from the entrance a little, facing it.
                 let off = Vec2::new(rng.random_range(-4.0..4.0), rng.random_range(-4.0..4.0));
@@ -765,6 +786,8 @@ impl World {
     /// hotel and the city's tourist tax. Unmet demand for beds fades.
     pub(super) fn daily_tourism(&mut self) {
         self.tourism.stats.roll();
+        // [attractions] The landmarks' books close with the day's tourism.
+        self.daily_attractions();
         let t = &mut self.tourism;
         t.hotel_demand = t.hotel_demand * 0.5 + t.stats.turned_away_yesterday as f32 * 0.5;
         if self.tourism.tourists.is_empty() {

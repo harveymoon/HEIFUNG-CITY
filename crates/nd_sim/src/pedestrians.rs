@@ -220,6 +220,36 @@ pub struct Pedestrians {
     /// [tools] Button presses ever, and red lights they gave traffic.
     pub button_presses_total: u64,
     pub button_reds_total: u64,
+    /// [walk-crossings] How each crossing has been used since the walk
+    /// graph was built (or the survey reset): by walk-graph crossing index,
+    /// a footbridge counted under the crossing it spans. Not saved; the
+    /// `walk_crossings` survey and the tests read it.
+    #[serde(skip)]
+    pub uses: BTreeMap<u32, CrossingUse>,
+    /// Walk graph version `uses` belongs to.
+    #[serde(skip)]
+    pub uses_key: u64,
+    /// [walk-crossings] Walkers who found the crossing ahead of them gone
+    /// (a footbridge or the player took it away) and planned again, ever.
+    pub replans_total: u64,
+    /// [walk-crossings] Jaywalkers who gave up waiting for a gap in the
+    /// traffic and went round by a crossing instead, ever.
+    pub jay_give_ups_total: u64,
+}
+
+/// [walk-crossings] One crossing's use since the survey began.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CrossingUse {
+    /// Walkers who stepped out over it at grade.
+    pub at_grade: u32,
+    /// Of those, against the light or mid-block (jaywalking).
+    pub against: u32,
+    /// Walkers over its footbridge's deck.
+    pub bridge: u32,
+    /// Cyclists over its footbridge (wheeling the bike).
+    pub bridge_bikes: u32,
+    /// Walkers who planned again on finding it shut.
+    pub replans: u32,
 }
 
 /// [tools] Seconds from a press to the red for traffic (an amber), the

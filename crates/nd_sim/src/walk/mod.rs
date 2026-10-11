@@ -74,6 +74,25 @@ const JAY_PENALTY: f32 = 4.0;
 pub const BRIDGED_GRADE_PENALTY: f32 = 30.0;
 /// `WalkEdge::cross` of an edge that crosses no street.
 pub const NO_CROSSING: u32 = u32::MAX;
+/// [walk-crossings] Jaywalking edges within this far of a footbridge (its
+/// crossing's middle), over a street running the same way, are taken out:
+/// next to a bridge nobody plans to dash across the traffic.
+pub const JAY_BRIDGE_SHADOW: f32 = 80.0;
+/// [walk-crossings] The same round a crosswalk the player removed.
+pub const JAY_REMOVED_SHADOW: f32 = 30.0;
+/// [walk-crossings] A footbridge also replaces the other crosswalks over
+/// its street (same way, middles this close), unless the player set them
+/// up themselves: walkers there go over the bridge.
+pub const FOOTBRIDGE_REPLACES: f32 = 30.0;
+/// [walk-crossings] What jaywalking over each lane beyond the second adds
+/// to the route, metres; none at all over this many lanes or more.
+pub const JAY_LANE_PENALTY: f32 = 12.0;
+pub const JAY_MAX_LANES: u8 = 5;
+/// [walk-crossings] What an unmarked crossing of a roundabout's own lanes
+/// (out to its island) costs a route over its length, metres: the walk
+/// goes round the outside, crossing the arms at their crosswalks, unless
+/// the island is where it is going.
+pub const RING_CROSS_PENALTY: f32 = 60.0;
 
 /// [park-paths] Gates on the edges of a lot `outline` for paths to be drawn
 /// to: one every 40 m or so on each edge of 10 m or more (up to three),
@@ -174,8 +193,22 @@ pub struct Crossing {
     /// [footbridge] The footbridge over it replaced it: the at-grade edge
     /// is gone from the walk graph, nothing is painted, no walk light, and
     /// drivers do not give way here (someone still out on it, on a route
-    /// planned before, is watched like anyone in the road).
+    /// planned before, is watched like anyone in the road). [walk-crossings]
+    /// Also a crosswalk the player removed, one a nearby footbridge
+    /// replaced and a jaywalk in a footbridge's shadow.
     pub closed: bool,
+    /// [walk-crossings] Over the mouth of a highway's slip road: walkers
+    /// may use it only as a proper crossing, with the junction's walk
+    /// lights (`shut` otherwise), a push button, or a footbridge.
+    pub ramp: bool,
+    /// [walk-crossings] Not open to walkers now (a slip road's mouth at a
+    /// junction without signals): routes leave it out. Kept up to date by
+    /// `World::refresh_crossings`, as junction signals change.
+    pub shut: bool,
+    /// [walk-crossings] Across a roundabout's own lanes, out to its island.
+    pub ring: bool,
+    /// [walk-crossings] Lanes of the street crossed, both ways together.
+    pub lanes: u8,
 }
 
 impl Crossing {
@@ -190,6 +223,32 @@ impl Crossing {
     /// walker finds a gap, at their own risk.
     pub fn marked(&self) -> bool {
         matches!(self.kind, CrossingKind::Junction | CrossingKind::Zebra) && !self.closed
+    }
+
+    /// [walk-crossings] What a route pays over the edge's length to cross
+    /// here (None: it may not): a jaywalk only for a jaywalker, and dearer
+    /// over a wide street; a roundabout's ring at a premium; never one shut
+    /// or closed.
+    pub fn route_cost(&self, jaywalk: bool) -> Option<f32> {
+        if self.closed || self.shut {
+            return None;
+        }
+        let mut cost = 0.0;
+        if self.kind == CrossingKind::Jay {
+            if !jaywalk || self.lanes >= JAY_MAX_LANES {
+                return None;
+            }
+            cost += JAY_PENALTY + JAY_LANE_PENALTY * self.lanes.saturating_sub(2) as f32;
+        }
+        if self.ring && self.kind == CrossingKind::Informal {
+            cost += RING_CROSS_PENALTY;
+        }
+        // [tools] At grade under a footbridge: the bridge is worth a little
+        // climbing.
+        if self.bridged {
+            cost += BRIDGED_GRADE_PENALTY;
+        }
+        Some(cost)
     }
 }
 

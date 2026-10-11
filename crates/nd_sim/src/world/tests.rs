@@ -1186,7 +1186,7 @@ fn bulldozing_the_branch_takes_the_trains_off_and_strands_riders_sanely() {
     // Someone is aboard, bound for station B.
     w.rail.trains[train].passengers.push(rider);
     w.citizens[rider].activity = Activity::OnTrain { train };
-    w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Rail { board: station_a, alight: station_b }, target: home, purpose: Purpose::Home, since: 0 });
+    w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Rail { board: station_a, alight: station_b }, target: home, purpose: Purpose::Home, since: 0, bike: false });
     w.start_project();
     w.remove_gesture(branch);
     w.implement();
@@ -1409,7 +1409,7 @@ fn a_save_with_dangling_ids_and_missing_fields_loads_cleanly() {
         cz.inside = Some(ghost);
         cz.parked_at = Some(ghost);
         cz.activity = Activity::Visiting(ghost);
-        cz.transit = Some(TransitTrip { leg: TransitLeg::Rail { board: ghost, alight: ghost }, target: ghost, purpose: Purpose::Home, since: 0 });
+        cz.transit = Some(TransitTrip { leg: TransitLeg::Rail { board: ghost, alight: ghost }, target: ghost, purpose: Purpose::Home, since: 0, bike: false });
     }
     let lot = w.lots.keys().next().unwrap();
     w.lots[lot].building = Some(ghost);
@@ -1570,7 +1570,7 @@ fn a_save_mid_journey_keeps_trucks_buses_and_riders() {
         let c = &mut w.citizens[r];
         c.inside = None;
         c.activity = Activity::Riding { bus };
-        c.transit = Some(TransitTrip { leg: TransitLeg::Bus { route, board: 0, alight: 3 }, target: w.lots[shop_lot].building.unwrap(), purpose: Purpose::Shop(Resource::Goods), since: 0 });
+        c.transit = Some(TransitTrip { leg: TransitLeg::Bus { route, board: 0, alight: 3 }, target: w.lots[shop_lot].building.unwrap(), purpose: Purpose::Shop(Resource::Goods), since: 0, bike: false });
     }
     // A truck on the road too.
     let shop = w.lots[shop_lot].building.unwrap();
@@ -1748,7 +1748,7 @@ fn removing_a_bus_stop_shifts_riders_and_buses_and_cancels_trips_through_it() {
     let shop = w.buildings.keys().next().unwrap();
     let ids: Vec<CitizenId> = w.citizens.keys().collect();
     let (a, b) = (ids[0], *ids.get(1).unwrap_or(&ids[0]));
-    let trip = |board, alight| Some(TransitTrip { leg: TransitLeg::Bus { route, board, alight }, target: shop, purpose: Purpose::Shop(Resource::Goods), since: 0 });
+    let trip = |board, alight| Some(TransitTrip { leg: TransitLeg::Bus { route, board, alight }, target: shop, purpose: Purpose::Shop(Resource::Goods), since: 0, bike: false });
     w.citizens[a].transit = trip(1, 4);
     w.citizens[a].activity = Activity::Waiting { at: Vec2::ZERO };
     if b != a {
@@ -2379,8 +2379,15 @@ fn the_brush_paints_only_parcels_that_take_the_use_and_one_stroke_is_one_undo() 
     // Industry joins parcels into bigger lots and takes the backland behind.
     let ids = w.parcels.in_polygon(&square(100.0, -100.0, 160.0));
     w.paint_parcels(&ids, Some(LandUse::Industrial), None);
-    assert!(ids.iter().any(|&i| w.parcels.parcels[i].landlocked() && w.planned_zoning()[i] == Some(LandUse::Industrial)), "works yards take the backland");
+    // [fix/roads-tools] Backland only where a yard in front could take it
+    // in (flag G5): here the fronts are narrower than the backland behind
+    // them, so it is refused rather than left as unusable ground.
+    for &i in ids.iter().filter(|&&i| w.parcels.parcels[i].landlocked()) {
+        let taken = w.planned_zoning()[i] == Some(LandUse::Industrial);
+        assert_eq!(taken, w.backland_has_a_front(i, LandUse::Industrial), "backland is painted exactly where a yard could take it in");
+    }
     w.implement();
+    assert!(!w.lots.values().any(|l| l.land_use == LandUse::Industrial && l.landlocked && !l.polygon.is_empty() && w.parcels.parcels.iter().any(|p| p.lot.is_some_and(|x| w.lots.get(x).is_some_and(|y| std::ptr::eq(y, l))) && !p.rough)), "no yard of unusable ground");
     let ind: Vec<&Lot> = w.lots.values().filter(|l| l.land_use == LandUse::Industrial && l.usable()).collect();
     assert!(!ind.is_empty());
     let mean = ind.iter().map(|l| l.area()).sum::<f32>() / ind.len() as f32;

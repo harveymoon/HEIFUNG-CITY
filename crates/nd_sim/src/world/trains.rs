@@ -303,8 +303,31 @@ impl World {
             c.prev_pos = p;
         }
         c.mode = TravelMode::Walk;
-        c.transit = Some(TransitTrip { leg, target, purpose, since: tick });
+        c.transit = Some(TransitTrip { leg, target, purpose, since: tick, bike: false });
         c.activity = Activity::Traveling { to: Some(target), purpose: Purpose::ToStop, path, idx: 0 };
+    }
+
+    /// [bike-racks] A cyclist taking the bus with their bike: ride to the
+    /// stop along the streets (or wheel it along the pavement when there is
+    /// no way by road), and wait there for a bus with a free place on its
+    /// rack.
+    pub(super) fn ride_to_bus_stop(&mut self, id: CitizenId, stop: Vec2, leg: TransitLeg, target: BuildingId, purpose: Purpose, count: bool) {
+        let from_node = self.origin_for(id).map(|o| o.2);
+        let to_node = self.roads.nearest_where(stop, |s| s.is_street() && !s.fronts_nothing()).map(|(sid, t, _)| self.roads.nearest_endpoint(sid, t));
+        let streets = from_node.zip(to_node).and_then(|(a, b)| self.roads.foot_path(a, b));
+        self.walk_to_transit(id, stop, leg, target, purpose, count);
+        let tick = self.clock.tick;
+        if let Some(t) = self.citizens[id].transit.as_mut() {
+            t.bike = true;
+        }
+        let Some(nodes) = streets.filter(|n| n.len() >= 2) else { return };
+        let mut path = self.route_path(&nodes, TravelMode::Bike);
+        path.push(stop);
+        self.bike_over_footbridges(&mut path);
+        let c = &mut self.citizens[id];
+        c.mode = TravelMode::Bike;
+        c.activity = Activity::Traveling { to: Some(target), purpose: Purpose::ToStop, path, idx: 0 };
+        c.transit = Some(TransitTrip { leg, target, purpose, since: tick, bike: true });
     }
 
     /// [train-inspect] What a freight train carries: the imports loaded
@@ -646,7 +669,7 @@ impl World {
                     self.travel_to_impl(p, Some(trip.target), trip.purpose, true, false);
                 }
                 let name = self.buildings.get(at).map(|b| b.name.clone()).unwrap_or_default();
-                let boarding = self.board_waiting(|leg| matches!(leg, TransitLeg::Rail { board, .. } if *board == at), rail::TRAIN_CAPACITY.saturating_sub(keep.len()), rail::RAIL_FARE, Flow::RailFares, Item::Building(at), &format!("Took the train from {name}."));
+                let boarding = self.board_waiting(|t| matches!(&t.leg, TransitLeg::Rail { board, .. } if *board == at), rail::TRAIN_CAPACITY.saturating_sub(keep.len()), rail::RAIL_FARE, Flow::RailFares, Item::Building(at), &format!("Took the train from {name}."));
                 for p in boarding {
                     self.citizens[p].activity = Activity::OnTrain { train: id };
                     keep.push(p);
@@ -692,7 +715,7 @@ impl World {
     /// up to `capacity`: each pays `fare` into the treasury under `flow`
     /// and remembers `memory`. The caller seats them in its vehicle. The
     /// fares are itemised under `item` (the bus line, the station).
-    pub(super) fn board_waiting(&mut self, pred: impl Fn(&TransitLeg) -> bool, capacity: usize, fare: f32, flow: Flow, item: Item, memory: &str) -> Vec<CitizenId> {
+    pub(super) fn board_waiting(&mut self, pred: impl Fn(&TransitTrip) -> bool, capacity: usize, fare: f32, flow: Flow, item: Item, memory: &str) -> Vec<CitizenId> {
         crate::prof_scope!("board_waiting");
         let tick = self.clock.tick;
         // [perf] Everyone waiting for anything, listed once a tick (in slot
@@ -706,7 +729,7 @@ impl World {
         let boarding: Vec<CitizenId> = waiting
             .iter()
             .copied()
-            .filter(|&id| self.citizens.get(id).is_some_and(|c| matches!(c.activity, Activity::Waiting { .. }) && c.transit.as_ref().is_some_and(|t| pred(&t.leg))))
+            .filter(|&id| self.citizens.get(id).is_some_and(|c| matches!(c.activity, Activity::Waiting { .. }) && c.transit.as_ref().is_some_and(&pred)))
             .take(capacity)
             .collect();
         self.waiting_cache = Some((tick, waiting));
@@ -717,5 +740,12 @@ impl World {
             self.economy.credit_item(flow, fare, item.clone());
         }
         boarding
+    }
+
+    /// [bike-racks] How many are still waiting whose trip `pred` accepts
+    /// (after `board_waiting` this tick, from its list).
+    pub(super) fn still_waiting(&self, pred: impl Fn(&TransitTrip) -> bool) -> usize {
+        let Some((_, v)) = self.waiting_cache.as_ref().filter(|(t, _)| *t == self.clock.tick) else { return 0 };
+        v.iter().filter(|&&id| self.citizens.get(id).is_some_and(|c| matches!(c.activity, Activity::Waiting { .. }) && c.transit.as_ref().is_some_and(&pred))).count()
     }
 }

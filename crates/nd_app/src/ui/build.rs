@@ -19,9 +19,12 @@ use nd_sim::{BuildCategory, LandUse, Placeable, PortKind, RailFacility, ServiceK
 use super::{help, hint, icons, pane, section, UiCtx, GOLD, IVORY};
 use crate::tools::{Tool, ToolState, TransitMode, ROAD_PRESETS};
 
-/// The road presets offered under Roads, in menu order (Rail track is
-/// under Rail).
-const ROADS: [&str; 10] = ["Path", "Lane", "Street", "Avenue", "One-way", "Ramp", "Highway", "Interchange", "Tunnel", "Roundabout"];
+/// The road types offered under Roads, in menu order (Rail track is under
+/// Rail). [fix/roads-tools] A type, then its lanes and level, then how it
+/// is drawn (in the options): a lane or an avenue is a street of 1 or 3
+/// lanes each way, a highway ramp a one-way road of one lane, a tunnel any
+/// road deep enough. The special roads stamp a layout of their own.
+const ROADS: [&str; 6] = ["Path", "Street", "One-way", "Highway", "Interchange", "Roundabout"];
 
 /// A section of the tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -235,10 +238,8 @@ fn make_groups(cat: Cat) -> Vec<Group> {
         Cat::Roads => {
             for r in ROADS {
                 let group = match r {
-                    "Path" => "Paths",
-                    "Highway" | "Ramp" | "Interchange" => "Highways",
-                    "Tunnel" | "Roundabout" => "Special",
-                    _ => "Streets",
+                    "Interchange" | "Roundabout" => "Special",
+                    _ => "Road type",
                 };
                 add(group, Item::Road(r));
             }
@@ -289,16 +290,10 @@ pub fn current_item(t: &ToolState) -> Option<Item> {
             Item::Road("Roundabout")
         } else if t.interchange {
             Item::Road("Interchange")
-        } else if t.tunnel {
-            Item::Road("Tunnel")
         } else {
-            match t.kind {
-                RoadKind::Rail => Item::Track,
-                RoadKind::Path => Item::Road("Path"),
-                RoadKind::Street => {
-                    let label = ROAD_PRESETS.iter().find(|(_, f, b, k)| *k == RoadKind::Street && *f == t.lanes_fwd && *b == t.lanes_bwd).map_or("Street", |p| p.0);
-                    Item::Road(ROADS.iter().copied().find(|r| *r == label).unwrap_or("Street"))
-                }
+            match t.road_type() {
+                "Rail" => Item::Track,
+                ty => Item::Road(ROADS.iter().copied().find(|r| *r == ty).unwrap_or("Street")),
             }
         }),
         Tool::Zone => Some(if t.beach && t.land_use == LandUse::Park { Item::Beach } else { Item::Zone(t.land_use) }),
@@ -356,7 +351,9 @@ pub fn activate(item: Item, t: &mut ToolState) {
             t.points.clear();
         }
         Item::Road(label) => {
-            t.pick_preset(label);
+            if !t.pick_type(label) {
+                t.pick_preset(label);
+            }
         }
         Item::Track => {
             t.pick_preset("Rail");
@@ -860,11 +857,6 @@ fn info(ui: &mut egui::Ui, p: &mut UiCtx, item: Item, hovered: bool) {
         }
         Item::Road(label) => {
             hint(ui, super::tools::preset_hint(label));
-            if let Some((_, f, b, k)) = ROAD_PRESETS.iter().find(|x| x.0 == label) {
-                if *k == RoadKind::Street {
-                    row(ui, "lanes", format!("{f} forward, {b} back"));
-                }
-            }
             if label == "Roundabout" {
                 hint(ui, help::ROAD_ROUNDABOUT);
             } else if label == "Interchange" {

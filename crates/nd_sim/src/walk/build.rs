@@ -62,7 +62,9 @@ impl WalkGraph {
         let (s0, s1) = roads.segment_points(segment);
         let mid = geom::project_on_segment((pa + pb) * 0.5, s0, s1).1;
         let k = self.crossings.len() as u32;
-        self.crossings.push(Crossing { a, b, segment, node, kind, mid, button: false, bridged: false, closed: false });
+        let sg = roads.segment(segment);
+        let lanes = sg.lanes_fwd.saturating_add(sg.lanes_bwd);
+        self.crossings.push(Crossing { a, b, segment, node, kind, mid, button: false, bridged: false, closed: false, ramp: false, shut: false, ring: false, lanes });
         let len = pa.distance(pb).max(0.05);
         self.adj[a as usize].push(WalkEdge { to: b, len, interior: false, park: false, cross: k, raised: false, gate: false });
         self.adj[b as usize].push(WalkEdge { to: a, len, interior: false, park: false, cross: k, raised: false, gate: false });
@@ -99,8 +101,12 @@ impl WalkGraph {
         let ring = roads.ring_of_node(nid).is_some();
         for arm in &arms {
             if arm.street && arm.ccw != arm.cw && !roads.segment(arm.seg).fronts_nothing() {
-                let kind = if ring && roads.ring_of_segment(arm.seg).is_some() { CrossingKind::Informal } else { CrossingKind::Junction };
+                let on_ring = ring && roads.ring_of_segment(arm.seg).is_some();
+                let kind = if on_ring { CrossingKind::Informal } else { CrossingKind::Junction };
                 self.link_cross(arm.cw, arm.ccw, arm.seg, Some(nid), kind, roads);
+                if let Some(c) = self.crossings.last_mut() {
+                    c.ring = on_ring;
+                }
             }
         }
         // [ped-highway] Slip roads joining here have no pavements and no
@@ -133,6 +139,14 @@ impl WalkGraph {
             });
             if let Some(&(_, s)) = slip.min_by(|x, y| (x.0 - arms[i].ang).rem_euclid(std::f32::consts::TAU).total_cmp(&(y.0 - arms[i].ang).rem_euclid(std::f32::consts::TAU)).then(x.1.cmp(&y.1))) {
                 self.link_cross(arms[i].ccw, arms[j].cw, s, Some(nid), CrossingKind::Informal, roads);
+                // [walk-crossings] Nobody walks over a slip road's mouth
+                // except at a proper crossing: shut until the junction's
+                // signals give it walk lights (`World::refresh_crossings`)
+                // or the player puts a button or a footbridge there.
+                if let Some(c) = self.crossings.last_mut() {
+                    c.ramp = true;
+                    c.shut = true;
+                }
                 continue;
             }
             if gap > 2.6 {
@@ -358,8 +372,15 @@ impl WalkGraph {
             let s0 = streets[0];
             let sides: Vec<u32> = on_street.iter().filter(|x| x.1 == s0).map(|x| x.0).collect();
             if sides.len() == 2 && !roads.segment(s0).fronts_nothing() {
-                let kind = if streets.len() == 2 && paths > 0 { CrossingKind::Zebra } else { CrossingKind::Informal };
+                // [walk-crossings] A path meeting a roundabout's ring: no
+                // zebra over the ring (drivers there give way to nobody;
+                // G20), only an unmarked way over to the island.
+                let on_ring = roads.ring_of_segment(s0).is_some();
+                let kind = if streets.len() == 2 && paths > 0 && !on_ring { CrossingKind::Zebra } else { CrossingKind::Informal };
                 g.link_cross(sides[0], sides[1], s0, Some(nid), kind, roads);
+                if let Some(c) = g.crossings.last_mut() {
+                    c.ring = on_ring;
+                }
             }
             for x in e.iter().filter(|x| !roads.segment(x.1).is_street()) {
                 let p = g.nodes[x.0 as usize].pos;
@@ -593,6 +614,10 @@ impl WalkGraph {
         if rules.is_empty() {
             return;
         }
+        // Crossings the player set up themselves (a footbridge does not
+        // take those away when it replaces its neighbours).
+        let mut ruled = vec![false; self.crossings.len()];
+        let mut removed: Vec<u32> = Vec::new();
         for k in 0..self.crossings.len() {
             let c = &self.crossings[k];
             if c.kind == CrossingKind::Jay || roads.try_segment(c.segment).is_none() {
@@ -601,11 +626,22 @@ impl WalkGraph {
             let (s0, s1) = roads.segment_points(c.segment);
             let dir = (s1 - s0).normalize_or_zero();
             let Some(rule) = rules.iter().find(|r| r.at.distance(c.mid) < 2.0 && r.dir.dot(dir).abs() > 0.9) else { continue };
+            ruled[k] = true;
             match rule.upgrade {
                 CrossingUpgrade::None => {}
-                CrossingUpgrade::Button => self.crossings[k].button = true,
+                CrossingUpgrade::Button => {
+                    let c = &mut self.crossings[k];
+                    c.button = true;
+                    // [walk-crossings] A button over a slip road's mouth
+                    // (or a roundabout's lanes) makes it a proper crossing:
+                    // marked, with its own light.
+                    if c.kind == CrossingKind::Informal {
+                        c.kind = CrossingKind::Zebra;
+                        c.shut = false;
+                    }
+                }
                 CrossingUpgrade::Footbridge => {
-                    let along = Self::stair_dir(c, dir, roads);
+                    let along = self.stair_dirs(c, roads);
                     self.add_footbridge(k as u32, along);
                     // [footbridge] The bridge replaces the crosswalk under
                     // it unless the player kept it: everyone crossing here
@@ -613,6 +649,53 @@ impl WalkGraph {
                     if !rule.keep_crosswalk {
                         self.close_crossing(k as u32);
                     }
+                }
+                // [walk-crossings] No crossing here: walkers go round.
+                CrossingUpgrade::Removed => {
+                    self.close_crossing(k as u32);
+                    removed.push(k as u32);
+                }
+            }
+        }
+        // [walk-crossings] A footbridge replaces the other crosswalks over
+        // its street close by (Harvey's flag: a zebra a few metres from a
+        // footbridge stayed, and everyone used it), and nobody plans a
+        // jaywalk next to a bridge or where the player removed a crossing.
+        let dir_of = |c: &Crossing| {
+            let (s0, s1) = roads.segment_points(c.segment);
+            (s1 - s0).normalize_or_zero()
+        };
+        // (middle, street direction, the junction, how far it replaces
+        // crosswalks, how far it shadows jaywalks)
+        let mut shadows: Vec<(Vec2, Vec2, Option<NodeId>, f32, f32)> = Vec::new();
+        for f in &self.footbridges {
+            let c = &self.crossings[f.crossing as usize];
+            shadows.push((c.mid, dir_of(c), c.node, FOOTBRIDGE_REPLACES, JAY_BRIDGE_SHADOW));
+        }
+        for &k in &removed {
+            let c = &self.crossings[k as usize];
+            shadows.push((c.mid, dir_of(c), c.node, 0.0, JAY_REMOVED_SHADOW));
+        }
+        if !shadows.is_empty() {
+            let bridged: Vec<bool> = self.crossings.iter().map(|c| c.bridged).collect();
+            for k in 0..self.crossings.len() {
+                let c = &self.crossings[k];
+                if c.closed || bridged[k] || roads.try_segment(c.segment).is_none() {
+                    continue;
+                }
+                let jay = c.kind == CrossingKind::Jay;
+                if !jay && ruled[k] {
+                    continue;
+                }
+                let dir = dir_of(c);
+                // The bridge's own junction keeps its other arms' crosswalks.
+                let near = shadows.iter().any(|&(mid, d, node, replace, shadow)| {
+                    let reach = if jay { shadow } else { replace };
+                    let same_junction = !jay && node.is_some() && node == c.node;
+                    reach > 0.0 && !same_junction && dir.dot(d).abs() > 0.8 && c.mid.distance(mid) <= reach && (c.mid - mid).perp_dot(d).abs() < 6.0
+                });
+                if near {
+                    self.close_crossing(k as u32);
                 }
             }
         }

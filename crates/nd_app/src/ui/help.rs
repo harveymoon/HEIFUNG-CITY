@@ -14,7 +14,7 @@ pub const WINDOWS: &str = "City Data (top bar, or J) fills the screen with every
 
 /// The one-line hint under each tool's controls.
 pub const TOOL_HINTS: [(Tool, &str); 9] = [
-    (Tool::Road, "Click to place points; ends dropped near a road snap onto it and make a junction (white ring). Curved roads bend through every point. One-way presets make ramps: a Ramp joining a road is a yield merge with no signals. Enter or right-click adds the road, Backspace undoes a point."),
+    (Tool::Road, "Click to place points; ends dropped near a road snap onto it and make a junction (white ring). Curved roads bend through every point; Circle takes a click for the centre and one for the edge. A one-way road of one lane is a highway ramp: joining a road it is a yield merge with no signals. Any road 5 m or more down is a tunnel. A path dropped by a street ends on its pavement. Enter or right-click adds the road, Backspace undoes a point."),
     (Tool::Zone, "Polygon: click corners around a road, Enter or right-click to add to the project; every parcel whose centre it holds takes the use. Ctrl-click inside an existing zone to repaint it. Zones drawn over older ones take the ground."),
     (Tool::Edit, "Click a road to select it for upgrading (its card, with traffic and wear, opens beside). Hover a junction or a crosswalk and press the \"Edit intersection\" button beside it for the Intersection editor (lane arrows on the road, signals, protected left, push buttons and footbridges). Drag a control point to move it. Shift-click a road or zone edge to insert a point. Delete removes the hovered point."),
     (Tool::Bulldoze, "Click a road to mark the piece under the pointer for removal (junction to junction; the rest of the road stays), or a zone to mark it. Click one of the city's own buildings (a plant, service, depot, station entrance, city parking; outlined red) to bulldoze it at once: its ground goes back to whatever the zoning plan has there. Clean up ground (in the tool's pane) sends a crew to dig out contaminated land."),
@@ -74,5 +74,37 @@ pub fn service_note(k: nd_sim::ServiceKind) -> &'static str {
         K::Vertiport => "Base for the air taxi company's drones: the rich fly between vertiports and rooftop pads, above the traffic. Noisy neighbours.",
         K::ParkingEnforcement => "Officers (two a car) patrol the streets in its radius 07:00 to 21:00: a ticket for cars over the two-hour kerb limit (residents near home have permits), the tow truck after an hour more, or at once for illegal parking. Fines go to the treasury.",
         K::University => "A campus: enrols the town's 18-24s and brings students to dorms, buys nearby homes for dorms, builds offices, a theatre, sports and frats nearby and claims parks as plazas. Pizza places, cafés, bookshops and bars near it do well.",
+        // [attractions] the landmarks: what each is (`nd_sim::attractions::about`)
+        k => nd_sim::attractions::about(k),
+    }
+}
+
+/// [attractions] How a landmark is placed and what it is worth, for the
+/// Buildings pane and the inspector.
+pub fn landmark_rules(k: nd_sim::ServiceKind) -> String {
+    use nd_sim::ServiceKind as K;
+    let (r, w) = k.land_value(nd_sim::Tier::Mid);
+    let site = match k {
+        K::Pier => " Only on the sea shore: the site must reach the sea, with open water off it for the deck (60 to 120 m out on piles).".to_string(),
+        K::Observatory => format!(" Only on high ground: the site must stand {:.0} m or more above the middle of town (the median ground height of every lot).", nd_sim::attractions::OBSERVATORY_RISE),
+        _ => String::new(),
+    };
+    format!(
+        "One per city. Needs a site of {:.0} m² or more: several plots, joined when it is put down (what grew on them is bought out).{site} Open {}; admission {}; lifts land value up to +{:.2} within {:.0} m (more when fully staffed); draws {:.0} points of tourist pull.",
+        k.min_area(nd_sim::Tier::Mid),
+        hours_label(k.hours()),
+        if k.admission() > 0.0 { format!("{:.0}", k.admission()) } else { "free".to_string() },
+        w,
+        r,
+        k.tourist_pull()
+    )
+}
+
+/// "10:00-19:00", "all hours".
+pub fn hours_label(h: nd_sim::Hours) -> String {
+    if h.always() {
+        "all hours".into()
+    } else {
+        format!("{:02}:00-{:02}:00", h.open, h.close)
     }
 }

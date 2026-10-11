@@ -295,10 +295,43 @@ impl World {
             }
             let mut ids: Vec<LotId> = members_of.keys().copied().collect();
             ids.sort();
+            // [fix/roads-tools] Backland zoned for a use that takes it in
+            // (flag G5), not part of a usable lot yet: the empty lots of
+            // that use beside it are cut again so it can be folded into
+            // one (a kept lot is out of the joining); and an empty lot of
+            // nothing but such backland is looked at again.
+            let in_old_lot = |i: usize| members_of.values().any(|m| m.contains(&i));
+            let painted = |i: usize| zoning[i].is_some_and(|(_, g)| matches!(self.master.gestures.get(&g), Some(Gesture::ParcelZone { .. })));
+            let wanting: Vec<(usize, LandUse)> = (0..zoning.len())
+                .filter_map(|i| {
+                    let (lu, _) = zoning[i]?;
+                    let p = &self.parcels.parcels[i];
+                    (lu != LandUse::Park && lu.takes_backland() && !p.path_frontage && !p.rough && pinned_to[i].is_none() && !in_old_lot(i)).then_some((i, lu))
+                })
+                .collect();
+            let refold = |lid: LotId, l: &Lot| {
+                if l.building.is_some() || l.land_use == LandUse::Park || !l.land_use.takes_backland() {
+                    return false;
+                }
+                // Painted backland that came out as a lot of its own before
+                // this fix: looked at again (and left unzoned if still
+                // nothing takes it in).
+                if l.landlocked {
+                    return members_of[&lid].iter().all(|&i| painted(i) && !self.parcels.parcels[i].path_frontage && !self.parcels.parcels[i].rough);
+                }
+                if wanting.is_empty() {
+                    return false;
+                }
+                let bl = crate::geom::bounds(&l.polygon);
+                wanting.iter().any(|&(i, lu)| lu == l.land_use && crate::geom::boxes_overlap(bl, crate::geom::bounds(&self.parcels.parcels[i].polygon), 0.5))
+            };
             for lid in ids {
                 let m = &members_of[&lid];
                 let Some(l) = self.lots.get(lid) else { continue };
                 if locked.contains(&lid) || old_count.get(&lid) != Some(&m.len()) {
+                    continue;
+                }
+                if refold(lid, l) {
                     continue;
                 }
                 if m.iter().all(|&i| pinned_to[i].is_none() && zoning[i].is_some_and(|(lu, _)| lu == l.land_use)) {
@@ -340,6 +373,11 @@ impl World {
             })
             .collect();
         let mut shore_taken = vec![false; shore_back.len()];
+        // [fix/roads-tools] Backland painted for a use that takes it in,
+        // with no lot in front to take it (flag G5): left unzoned, and
+        // taken out of the strokes that painted it, rather than made a lot
+        // of unusable ground (levelled for nothing).
+        let mut orphans: Vec<(ParcelKey, LandUse)> = Vec::new();
         for lu in LandUse::ALL {
             let members: Vec<usize> = (0..zoning.len()).filter(|&i| !done[i] && zoning[i].is_some_and(|(l, _)| l == lu)).collect();
             if members.is_empty() {
@@ -349,6 +387,14 @@ impl World {
             for (idx, poly) in join_parcels(&polys, lu, &self.roads) {
                 let first = members[idx[0]];
                 let Some((_, gid)) = zoning[first] else { continue };
+                if lu != LandUse::Park && lu.takes_backland() {
+                    let ps = &self.parcels.parcels;
+                    let painted = |k: usize| zoning[members[k]].is_some_and(|(_, g)| matches!(self.master.gestures.get(&g), Some(Gesture::ParcelZone { .. })));
+                    if idx.iter().all(|&k| !ps[members[k]].path_frontage && !ps[members[k]].rough && painted(k)) {
+                        orphans.extend(idx.iter().map(|&k| (ps[members[k]].key, lu)));
+                        continue;
+                    }
+                }
                 let (poly, shore) = self.reach_the_water(poly, &shore_back, &mut shore_taken);
                 let center = if idx.len() == 1 && shore.is_empty() { self.parcels.parcels[first].center } else { inner_center(&poly) };
                 let zid = match zone_of.get(&gid) {
@@ -371,6 +417,15 @@ impl World {
                     p.land_use = Some(lu);
                 }
             }
+        }
+        if !orphans.is_empty() {
+            for g in self.master.gestures.values_mut() {
+                if let Gesture::ParcelZone { parcels, land_use: Some(lu), .. } = g {
+                    parcels.retain(|k| !orphans.contains(&(*k, *lu)));
+                }
+            }
+            self.master.gestures.retain(|_, g| !matches!(g, Gesture::ParcelZone { parcels, .. } if parcels.is_empty()));
+            self.plan_changed();
         }
         // [free-placement] [stable-parcels] The city's lots stay as they
         // are, outline and all; only what hangs off the roads is refreshed.
@@ -495,7 +550,26 @@ impl World {
         if self.parcel_holds_civic(i) {
             return Some("a city building stands here: bulldoze it first");
         }
-        lu.and_then(|lu| p.refusal(lu))
+        let lu = lu?;
+        if let Some(why) = p.refusal(lu) {
+            return Some(why);
+        }
+        // [fix/roads-tools] Backland (flag G5): only where a lot in front
+        // could take it in; otherwise it came out as unusable ground.
+        if lu != LandUse::Park && lu.takes_backland() && !p.path_frontage && !self.backland_has_a_front(i, lu) {
+            return Some("landlocked: no parcel in front it could be joined to");
+        }
+        None
+    }
+
+    /// [fix/roads-tools] Could backland parcel `i` be folded into a lot of
+    /// `lu` in front of it (a neighbouring parcel with a frontage for it)?
+    pub fn backland_has_a_front(&self, i: usize, lu: LandUse) -> bool {
+        let p = &self.parcels.parcels[i];
+        let (lo, hi) = crate::geom::bounds(&p.polygon);
+        let reach = (hi - lo).length() * 0.5 + 4.0;
+        let near: Vec<&[Vec2]> = self.parcels.in_circle(p.center, reach).into_iter().filter(|&j| j != i && self.parcels.parcels[j].path_frontage).map(|j| self.parcels.parcels[j].polygon.as_slice()).collect();
+        crate::zoning::backland_joins_any(&p.polygon, near, lu, &self.roads)
     }
 
     /// [island-lots] Why there is no parcel at `p` for the Zone tool to
@@ -538,7 +612,9 @@ impl World {
 /// lot, `make_placed_lot`).
 pub(in crate::world) fn refresh_lot_roads(lot: &mut Lot, roads: &RoadNetwork, placed: bool) {
     let fresh = if placed {
-        crate::zoning::make_placed_lot(lot.zone, lot.polygon.clone(), lot.center, roads)
+        // [attractions] The city's own ground keeps its street front
+        // whatever notches its plots left (a landmark over joined plots).
+        crate::zoning::make_placed_lot(lot.zone, lot.polygon.clone(), lot.center, roads).filter(|f| !f.landlocked).or_else(|| crate::zoning::make_placed_lot_concave(lot.zone, lot.polygon.clone(), lot.center, roads))
     } else {
         make_lot(lot.zone, lot.land_use, lot.polygon.clone(), lot.center, roads)
     };

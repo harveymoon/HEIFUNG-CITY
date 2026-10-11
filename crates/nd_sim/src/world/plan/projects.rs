@@ -269,6 +269,14 @@ impl World {
         self.edit_project(|p| if commit { p.push(id, Some(gesture)) } else { p.amend(id, Some(gesture)) });
     }
 
+    /// [fix/roads-tools] Replace several gestures as one step (a junction
+    /// dragged with every road attached to it). With `commit == false` the
+    /// last step is amended if it touches exactly these gestures.
+    pub fn set_gestures(&mut self, changes: Vec<(GestureId, Gesture)>, commit: bool) {
+        let changes: Vec<(GestureId, Option<Gesture>)> = changes.into_iter().map(|(id, g)| (id, Some(g))).collect();
+        self.edit_project(|p| if commit { p.push_many(changes) } else { p.amend_many(changes) });
+    }
+
     pub fn remove_gesture(&mut self, id: GestureId) {
         self.edit_project(|p| p.push(id, None));
     }

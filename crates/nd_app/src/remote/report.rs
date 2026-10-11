@@ -842,6 +842,21 @@ fn services(w: &World) -> Value {
     if let (Some(t), Value::Object(d)) = (out.get_mut("traffic").and_then(|t| t.as_object_mut()), driving_json(w)) {
         t.extend(d);
     }
+    // [walk-crossings] Walkers who planned again on finding their crossing
+    // gone, jaywalkers who gave up on a gap, the hurt waiting in the street.
+    if let Some(p) = out.pointer_mut("/traffic/pedestrians").and_then(|p| p.as_object_mut()) {
+        p.insert("replans_total".into(), json!(w.peds.replans_total));
+        p.insert("jay_give_ups_total".into(), json!(w.peds.jay_give_ups_total));
+        p.insert("hurt_in_the_street_now".into(), json!(w.down_on_street().len()));
+    }
+    // [bike-racks] Bikes ridden on buses' front racks, cyclists a full rack
+    // left at the stop, and bikes on racks now.
+    if let Some(t) = out.get_mut("transit").and_then(|t| t.as_object_mut()) {
+        let on_racks: usize = w.traffic.cars.values().filter_map(|c| c.bus.as_ref()).map(|b| b.passengers.iter().filter(|p| w.citizens.get(**p).and_then(|c| c.transit).is_some_and(|t| t.bike)).count()).sum();
+        t.insert("bike_rack_rides_total".into(), json!(w.transit.bike_rack_rides_total));
+        t.insert("bike_rack_full_total".into(), json!(w.transit.bike_rack_full_total));
+        t.insert("bikes_on_racks_now".into(), json!(on_racks));
+    }
     out
 }
 
