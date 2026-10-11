@@ -18,11 +18,20 @@ pub fn site_thickness(poly: &[Vec2]) -> f32 {
 /// convex-ish piece. Returns the members (indices into `polys`, sorted) and
 /// the outline; short of `need` when the neighbours run out.
 pub fn grow_site(polys: &[Vec<Vec2>], start: usize, need: f32, min_thick: f32, cap: f32, roads: &RoadNetwork) -> (Vec<usize>, Vec<Vec2>) {
+    grow_site_steps(polys, start, need, min_thick, cap, roads, 12, false)
+}
+
+/// [`grow_site`] taking in up to `steps` neighbours; `concave` lets the
+/// site take an L or a notch on the way ([attractions] a grand park or a
+/// zoo spans a score of small plots, and rows of plots of different widths
+/// never add up to a rectangle one plot at a time).
+#[allow(clippy::too_many_arguments)]
+pub fn grow_site_steps(polys: &[Vec<Vec2>], start: usize, need: f32, min_thick: f32, cap: f32, roads: &RoadNetwork, steps: usize, concave: bool) -> (Vec<usize>, Vec<Vec2>) {
     // [plant-scale] "Fronted" also means thick enough to build on.
     let fronted = |p: &[Vec2]| frontage_width(p, PARCEL_USE, roads).is_some() && site_thickness(p) >= min_thick;
     let mut members = vec![start];
     let mut outline = polys[start].clone();
-    for _ in 0..12 {
+    for _ in 0..steps {
         let area = polygon_area(&outline).abs();
         let has_front = fronted(&outline);
         if area >= need && has_front {
@@ -44,7 +53,7 @@ pub fn grow_site(polys: &[Vec<Vec2>], start: usize, need: f32, min_thick: f32, c
                 continue;
             }
             let up = simplify_collinear(&from_geo(&u.0[0]));
-            if up.len() < 3 || reflex_vertex(&up, 0.6).is_some() {
+            if up.len() < 3 || (!concave && reflex_vertex(&up, 0.6).is_some()) {
                 continue;
             }
             let shared = (per + perimeter(pj) - perimeter(&up)) * 0.5;

@@ -236,5 +236,5 @@ pub fn tourism_page(ui: &mut egui::Ui, p: &mut UiCtx) {
             ui.label(format!("{:.1}", a.score));
         });
     }
-    hint(ui, "Monuments, stadiums, good parks, nightlife, landmark districts (historic, neon strip, night market, tourist quarter) and the waterfront draw visitors. They need a way in and a bed: hotels open on commercial land when visitors are turned away.");
+    hint(ui, "Landmark attractions (museums, the pier, the grand park, the zoo, the observatory, the aquarium, the botanical garden, the opera), monuments, stadiums, good parks, nightlife, landmark districts (historic, neon strip, night market, tourist quarter) and the waterfront draw visitors. They need a way in and a bed: hotels open on commercial land when visitors are turned away.");
 }

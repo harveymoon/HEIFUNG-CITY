@@ -60,7 +60,7 @@ fn flow_note(f: Flow) -> &'static str {
         Flow::BusinessTax => "5% of every open business's takings, at midnight, by the land use it stands on; plus the levy on air-taxi fares.",
         Flow::BusFares => "Fares on each bus line as riders board, and ferry fares by terminal.",
         Flow::RailFares => "Train fares, by the station the rider boarded at.",
-        Flow::Tickets => "Stadium game-night tickets, by stadium.",
+        Flow::Tickets => "Stadium game-night tickets and admissions to the landmark attractions (museums, the zoo, the pier...), by building.",
         Flow::ParkingFines => "Tickets the parking wardens write.",
         Flow::ParkingFees => "Fees at the car parks the city runs, by car park.",
         Flow::PlantUpkeep => "Each power plant's and battery pack's running cost, paid at midnight.",

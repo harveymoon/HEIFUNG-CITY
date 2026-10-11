@@ -327,7 +327,7 @@ them a land use.
 | `bulldoze` | `gesture_id` (the whole gesture), `implement`; or `at` `[x,y]` ([pt-ux] as a Bulldoze click there: only the road's piece between its junctions, or to its end, goes; the rest of the road stays, keeping its name; one undo step; reply adds `piece` {`gesture_id`, `from_m`, `to_m`, `roads_left`}; the Bulldoze tool previews that piece in red); or `building` (id): a city building (plant, battery, service, attraction, depot, metro station, cargo hub, city parking) goes at once and its lot goes back to the zoning plan (or unzoned ground). Grown buildings, stations, yards and docks refuse |
 | `paint` | `land_use` (or `none` to unzone; `beach` paints a public beach, see the waterfront section), then `at` `[x,y]` + `radius` (the brush), `rect` `[[x0,y0],[x1,y1]]` (the marquee) or `polygon`; `industry` (industrial only: auto / farming / oil / refinery / manufacturing / logistics / fishing / tech), `implement`. Reply: `painted`, `touched`, `refused` (`[{parcel, center, why}]`), `gesture_id`; `no_parcel` (why, when `at` touched no parcel: water, too far from a road, past the buildable land) |
 | `project` | `action`: list / new / switch / rename / delete / park / start / implement / undo / redo / discard; `id` (default the active project) or `name` to pick one; `name` for new and rename. Reply: `projects` (`id`, `name`, `active`, `steps`, `redo`, `conflicts` `[{gesture, project}]`, `shared_parcels`), `warnings` from the last implement |
-| `grounds_junctions` (or `park_junctions`) | optional `lot`, `kind` (park / plaza / stadium / campus / station / beach), `near` `[x,y]` + `radius` (default 150 m). [park-paths] The gates on the edges of parks and other public grounds (a stadium, a monument's plaza, a school's campus, a station) where a path may join their walkways: the Path tool's snap rings. Reply `junctions` `[{index, pos, kind, label, lot, attached, walk_node, gesture_id}]` (`attached`: a path is joined there, `walk_node` the grounds' walk node it joins, `gesture_id` the path) and `links` (every joined path end). A path whose end is on a gate when its project is implemented is joined: the park lays a walkway out to meet it and walkers route through. When the grounds go (rezoned, bulldozed, re-cut away) the path is cut back to its last point before that end, or removed if fewer than two points are left; the event log gets `PathTrimmed` {`gesture_id`, `removed`, `grounds`} and the game a toast |
+| `grounds_junctions` (or `park_junctions`) | optional `lot`, `kind` (park / plaza / stadium / campus / station / beach / attraction), `near` `[x,y]` + `radius` (default 150 m). [park-paths] The gates on the edges of parks and other public grounds (a stadium, a monument's plaza, a school's campus, a station) where a path may join their walkways: the Path tool's snap rings. Reply `junctions` `[{index, pos, kind, label, lot, attached, walk_node, gesture_id}]` (`attached`: a path is joined there, `walk_node` the grounds' walk node it joins, `gesture_id` the path) and `links` (every joined path end). A path whose end is on a gate when its project is implemented is joined: the park lays a walkway out to meet it and walkers route through. When the grounds go (rezoned, bulldozed, re-cut away) the path is cut back to its last point before that end, or removed if fewer than two points are left; the event log gets `PathTrimmed` {`gesture_id`, `removed`, `grounds`} and the game a toast |
 | `find` `{what: "parcels"}` | per parcel: `index`, `center`, `area`, `land_use` (built), `planned`, `landlocked`, `street`, `rough`, `accepts`, `lot`; filter `land_use`, `zoned`, `landlocked` |
 
 ```json
@@ -427,6 +427,25 @@ within 80 m is used, as before.
   Refusals name the reason: park land, lot area, no street out front (police, fire, health, stadium),
   treasury. Costs, upkeep, jobs, coverage radius, vehicles and capacity per tier are in
   `nd_sim::services::ServiceKind`.
+- [attractions] Landmark attractions, one of each per city, one size (any `tier` is ignored):
+  `art_museum`, `science_museum` (natural history and science), `history_museum` (city history and
+  design; also `museum`), `pier` (pleasure pier), `grand_park`, `zoo`, `observatory`, `aquarium`,
+  `botanical_garden` (also `conservatory`), `concert_hall` (also `opera_house`). Each needs a site of
+  several plots (art 2,200 m², science 2,600, history 1,800, pier 2,600, grand park 7,000, zoo 5,200,
+  observatory 1,500, aquarium 2,400, botanical 3,800, concert hall 2,600; `ServiceKind::min_area`):
+  the lot under the point takes in its neighbours (up to 48 plots, notches allowed), whatever grew on
+  them bought out, as for a stadium; on unzoned ground the parcels there are joined. Refusals name
+  the reason: `one per city: <name> is the city's <kind> already`; the pier `a pier goes on the sea
+  shore...` (the site must come within 14 m of the sea, not a lake or river, with open sea for its
+  deck 60-120 m out); the observatory `an observatory needs high ground: this site is +N m from the
+  middle of town (M m up), it needs +12 m or more` (`World::rise_above_town`: against the median
+  ground height of every lot; a flat map has none); a long thin run of plots `the plots here only join
+  into a long thin strip...`. `inspect {building}` adds `attraction` {kind, label, about,
+  open_hours, open_now, capacity, admission, visits_today/yesterday (townsfolk), tourists_today/
+  yesterday, takings_today/yesterday, visits_total, tourist_pull, land_value_lift {radius_m,
+  raw_weight}, pier {root, tip, length_m, width_m, head_m} (the deck over the water), rise_above_town_m}.
+  The grand park, zoo, botanical garden and pier lay out walkways and benches (`park` in `inspect`;
+  their gates are `grounds_junctions` of kind `attraction`), the pier's out along its deck.
 
 Reply: `building` id, `message`, `row`, `treasury`; or the sim's reason as `error`. For a dock,
 station or yard the reply adds [dock-access] `road_access` {`connected`, `stub_ends` ([[x, y]]: the
@@ -438,6 +457,7 @@ road_connected, reaches_elsewhere, works, ferries_sail, berth, stub}. `report`'s
 ```json
 {"cmd": "place", "kind": "solar", "x": -210, "y": -210}
 {"cmd": "place", "kind": "fire", "tier": "high", "x": 120, "y": 40}
+{"cmd": "place", "kind": "pier", "x": 40, "y": -610}
 {"cmd": "place", "kind": "dispatch:low", "x": -80, "y": 40}
 ```
 

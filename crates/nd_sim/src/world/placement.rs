@@ -16,7 +16,7 @@
 use super::*;
 use crate::plan::parcel_zoning;
 use crate::services::Placeable;
-use crate::zoning::{grow_site, inner_center, make_placed_lot};
+use crate::zoning::{inner_center, make_placed_lot};
 
 /// Unzoned parcels this close to the one clicked may join it into a site,
 /// metres from its centre.
@@ -156,7 +156,7 @@ impl World {
         let Some(me) = near.iter().position(|&k| k == i) else {
             return Ok(PlacementSite { lot: None, parcels: vec![i], outline: parcel.polygon.clone(), leaves_zone: None, joined: Vec::new() });
         };
-        let (idx, outline) = grow_site(&polys, me, need, what.min_thickness(), what.max_site_area().max(need), &self.roads);
+        let (idx, outline) = crate::zoning::grow_site_steps(&polys, me, need, what.min_thickness(), what.max_site_area().max(need), &self.roads, what.join_steps(), what.join_steps() > 12);
         Ok(PlacementSite { lot: None, parcels: idx.iter().map(|&k| near[k]).collect(), outline, leaves_zone: None, joined: Vec::new() })
     }
 
@@ -194,7 +194,7 @@ impl World {
         near.sort();
         let polys: Vec<Vec<Vec2>> = near.iter().map(|id| self.lots[*id].polygon.clone()).collect();
         let me = near.iter().position(|&id| id == lot)?;
-        let (idx, outline) = grow_site(&polys, me, need, what.min_thickness(), what.max_site_area().max(need), &self.roads);
+        let (idx, outline) = crate::zoning::grow_site_steps(&polys, me, need, what.min_thickness(), what.max_site_area().max(need), &self.roads, what.join_steps(), what.join_steps() > 12);
         if idx.len() < 2 || crate::zoning::polygon_area(&outline).abs() < need * 0.98 {
             return None;
         }
@@ -230,7 +230,10 @@ impl World {
         let l = &mut self.lots[lot];
         l.polygon = site.outline.clone();
         l.center = inner_center(&site.outline);
-        super::plan::refresh_lot_roads(l, roads, false);
+        // [attractions] A landmark's site may be notched: the city's ground
+        // keeps its street front (`refresh_lot_roads` for placed lots).
+        let landmark = matches!(what, Placeable::Service(k, _) if k.is_landmark());
+        super::plan::refresh_lot_roads(l, roads, landmark);
         self.rebuild_walk();
         self.events.push(SimEvent::LotsChanged);
         Ok(lot)
@@ -244,6 +247,12 @@ impl World {
 
     /// The lot a site would become (not inserted).
     pub(super) fn site_lot(&self, site: &PlacementSite) -> Option<Lot> {
+        self.site_lot_for(site, false)
+    }
+
+    /// [`World::site_lot`]; `concave`: [attractions] a landmark's site of
+    /// several parcels may be notched (`make_placed_lot_concave`).
+    fn site_lot_for(&self, site: &PlacementSite, concave: bool) -> Option<Lot> {
         if let Some(id) = site.lot {
             return self.lots.get(id).cloned();
         }
@@ -251,6 +260,9 @@ impl World {
             [one] => self.parcels.parcels[*one].center,
             _ => inner_center(&site.outline),
         };
+        if concave && site.parcels.len() > 1 {
+            return crate::zoning::make_placed_lot_concave(ZoneId::default(), site.outline.clone(), center, &self.roads);
+        }
         make_placed_lot(ZoneId::default(), site.outline.clone(), center, &self.roads)
     }
 
@@ -268,8 +280,25 @@ impl World {
     /// (the preview keeps the site while the pointer stays on its parcel).
     pub fn site_problem(&self, what: Placeable, site: &PlacementSite) -> Option<String> {
         if !site.joined.is_empty() {
+            // [attractions] A landmark's joined ground is the lot clicked,
+            // grown to the outline, as `join_site_lots` makes it (its
+            // street front kept, whatever notches the plots leave).
+            if matches!(what, Placeable::Service(k, _) if k.is_landmark()) {
+                if let Some(mut l) = site.lot.and_then(|id| self.lots.get(id)).cloned() {
+                    l.polygon = site.outline.clone();
+                    l.center = inner_center(&site.outline);
+                    return self.lot_problem(what, &l, None);
+                }
+            }
             // [big-sites] The joined ground as one lot.
             let lot = make_placed_lot(ZoneId::default(), site.outline.clone(), inner_center(&site.outline), &self.roads);
+            // [attractions] A long run of plots along one street joins into a
+            // strip too thin to be a lot at all: say so, not "no road".
+            let area = crate::zoning::polygon_area(&site.outline).abs();
+            let per: f32 = (0..site.outline.len()).map(|i| site.outline[i].distance(site.outline[(i + 1) % site.outline.len()])).sum();
+            if lot.as_ref().is_some_and(|l| l.landlocked) && area / (per * per).max(1.0) < 0.031 {
+                return Some(format!("the plots here only join into a long thin strip; a {} wants a deeper block", what.label()));
+            }
             return match lot {
                 Some(l) => self.lot_problem(what, &l, None),
                 None => Some("no road access to front".into()),
@@ -277,7 +306,7 @@ impl World {
         }
         match site.lot {
             Some(id) => self.placement_problem(what, id),
-            None => match self.site_lot(site) {
+            None => match self.site_lot_for(site, what.join_steps() > 12) {
                 Some(lot) => self.lot_problem(what, &lot, None),
                 None => Some("no road access to front".into()),
             },
@@ -295,7 +324,7 @@ impl World {
             }
             return self.place_on_lot(what, id);
         }
-        let lot = self.make_site_lot(&site).ok_or("no road access to front")?;
+        let lot = self.make_site_lot(&site, what.join_steps() > 12).ok_or("no road access to front")?;
         let out = self.place_on_lot(what, lot);
         if out.is_err() {
             self.drop_city_lot(lot, true);
@@ -305,8 +334,8 @@ impl World {
 
     /// Make a city lot for a site of unzoned parcels: a zone of its own,
     /// its parcels tied to it.
-    fn make_site_lot(&mut self, site: &PlacementSite) -> Option<LotId> {
-        let mut lot = self.site_lot(site)?;
+    fn make_site_lot(&mut self, site: &PlacementSite, concave: bool) -> Option<LotId> {
+        let mut lot = self.site_lot_for(site, concave)?;
         let zid = self.zones.insert(Zone { polygon: lot.polygon.clone(), land_use: LandUse::Civic });
         lot.zone = zid;
         let id = self.lots.insert(lot);
@@ -506,7 +535,9 @@ impl World {
         }
         let (name, power, service, metro) = (b.name.clone(), b.is_power(), b.service.is_some(), b.metro);
         let lot = b.lot;
-        let grounds = self.walk.junctions.iter().any(|j| j.lot == Some(lot));
+        let grounds = self.walk.junctions.iter().any(|j| j.lot == Some(lot)) || self.lots.get(lot).is_some_and(|l| l.park.is_some());
+        // [attractions] A pier's deck goes with it.
+        self.remove_pier(bid);
         self.demolish(bid);
         if power {
             self.refresh_power();
@@ -518,9 +549,10 @@ impl World {
             self.subway.version += 1;
         }
         // [park-paths] Its grounds' gates go, and a path joined to them is
-        // cut back now.
+        // cut back now. [attractions] A park, zoo, garden or pier's own
+        // walkways go with it.
         if grounds {
-            self.build_walk_graph();
+            self.rebuild_walk();
         }
         self.settle_path_links();
         Ok(format!("{name} bulldozed"))

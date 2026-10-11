@@ -55,6 +55,11 @@ fn service_floors(kind: ServiceKind, tier: Tier) -> u8 {
         ServiceKind::Vertiport => [1, 2, 4],
         ServiceKind::ParkingEnforcement => [1, 1, 2],
         ServiceKind::University => [2, 3, 5],
+        // [attractions] Halls of two or three tall storeys; the grounds
+        // people walk round are low.
+        ServiceKind::ArtMuseum | ServiceKind::ScienceMuseum | ServiceKind::HistoryMuseum | ServiceKind::Aquarium | ServiceKind::ConcertHall => [3, 3, 3],
+        ServiceKind::Observatory => [2, 2, 2],
+        ServiceKind::Pier | ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::BotanicalGarden => [1, 1, 1],
     };
     f[tier.index()]
 }

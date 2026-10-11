@@ -75,6 +75,9 @@ impl World {
                         (Some(ServiceKind::School), _) => Some(GroundsKind::Campus),
                         // [megacorp] A university's quad, and its sports centre's field.
                         (Some(ServiceKind::University), _) => Some(GroundsKind::Campus),
+                        // [attractions] A landmark's walked grounds, or its forecourt.
+                        (Some(k), _) if k.has_grounds() => Some(GroundsKind::Attraction),
+                        (Some(k), _) if k.is_landmark() => Some(GroundsKind::Plaza),
                         _ if b.annex == Some(crate::corp::Annex::Sports) => Some(GroundsKind::Stadium),
                         (_, Some(crate::rail::RailFacility::Station | crate::rail::RailFacility::Central)) => Some(GroundsKind::Station),
                         _ => None,

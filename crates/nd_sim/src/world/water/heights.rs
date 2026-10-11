@@ -274,6 +274,8 @@ impl World {
             }
         }
         self.ground.set(crate::landscape::Ground::build_with(&self.landscape, &self.roads, &self.road_z, &self.road_inner, &self.lots, self.ground_half(), &locked, &pad_at));
+        // [attractions] A pleasure pier's deck is walked on over the water.
+        self.add_pier_decks();
     }
 
     /// Legs (by their first point) of a road drawn along `points` at

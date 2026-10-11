@@ -40,6 +40,8 @@ pub mod subway;
 
 pub use adjacency::{building_style, style_extras, Neighbour, StyleBook};
 mod services;
+/// [attractions] The landmark attractions' looks.
+mod attractions;
 /// [pt-visual] Player-placed monuments: obelisks, statues, arches, memorials, halos.
 mod monuments;
 /// [society] The trash depot.

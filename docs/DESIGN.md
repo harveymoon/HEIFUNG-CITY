@@ -1312,6 +1312,56 @@ Citizens are rendered from their simulated positions every frame.
   taken, unit and whether it came from out of town, fee, fire damage per building), the last 500
   resolved ones on file, shown live in City Data's Services › Emergencies and by the `incidents` API command.
   Services draw from their own random stream so the rest of the simulation is not perturbed.
+- **Landmark attractions** [attractions] (`nd_sim::attractions`, `world/attractions.rs`,
+  `nd_procgen::buildings::attractions`): ten landmarks under Build > Attractions, one of each per
+  city and one size (`ServiceKind::LANDMARKS`, `is_landmark`): an art museum (white galleries round a
+  sculpture court, a stepped spiral drum ringed in neon, an LED art wall), a natural history and
+  science museum (a glass barrel-vaulted hall, a planetarium dome, a sauropod skeleton and a rocket
+  outside), a city history and design museum (a colonnade under a lit pediment, a clock tower, an old
+  tram on show), a pleasure pier (Santa Monica style: a lit gateway ashore, a deck 60-120 m out over
+  the sea on piles with lamps, string lights and food stands, and on its head a ferris wheel, a
+  coaster, a carousel and an arcade), a grand city park (the high-tier park plan of the whole site:
+  lakes, a bandstand, rides, fountains; a loop path with benches; a lit gate, a glass pavilion, a
+  boathouse and an obelisk), a zoo (enclosures of savanna, elephants, big cats on rocks, penguins,
+  bears and flamingos round a visitors' loop, an aviary dome), an observatory (domes with telescopes
+  in their slits on a terrace, a ringed planet, a green beam after dark), an aquarium (a wave-roofed
+  hall glowing blue, a shark on the roof, a touch pool), a botanical garden (beds and pools round a
+  domed glass conservatory with vaulted wings) and an opera and concert hall (white sails over a
+  glass foyer on a podium, their edges lit). **Sites**: each needs 1,500-7,000 m² (several plots;
+  `ATTRACTION_AREA`): the lot clicked takes in its neighbours like a stadium (`joined_site`, up to
+  48 plots for a landmark, `Placeable::join_steps`), and a landmark's site may be notched (rows of
+  plots of different widths never add up to a rectangle one at a time: `grow_site_steps(concave)`,
+  `make_placed_lot_concave`; the city's ground keeps its street front through later road works).
+  **Rules** (`World::landmark_problem`, shown in the build hover): one per city (`World::landmark`);
+  the pier only on the sea shore, the site within 14 m of the sea (not a lake or river) with open sea
+  under its whole deck (`attractions::plan_pier`); the observatory only on high ground, its site 12 m
+  or more above the median ground height of every lot (`World::town_median_height`,
+  `rise_above_town`; the Build pane shows the rise under the pointer). **The pier's deck** is saved in
+  `World::attractions.piers` and pushed onto the built ground's decks (`add_pier_decks`), so walkers
+  on it stand on the boards. **Grounds**: the grand park, zoo, botanical garden and pier lay out
+  walkways and benches in `Lot::park` (`attractions::plan_grounds`, after the parks are planned), so
+  the walk graph joins them like a park's, citizens walk in and sit, and their gates are Path tool
+  grounds of kind `Attraction`; the pier's path runs out along the deck and round the head. Museums,
+  the aquarium, the observatory and the opera show a plaza's gates. **Visitors**: the town's people
+  find the museums, zoo, aquarium, garden, park and pier for an afternoon out (`Intent::Visit(Park)`)
+  and the opera, pier and observatory for a night out (`Visit(Entertainment)`) while open, staffed
+  (a quarter of its jobs) and under capacity (`World::landmark_for_outing`); tourists see them as
+  sights of their own kind (`tourism::AttractionKind::ArtMuseum..ConcertHall`, open by the landmark's
+  hours) with a pull of 18-38 points (`ServiceKind::tourist_pull`, halved when unstaffed), stand on the
+  pier's head or along the park's walk, and stay an hour longer. Both pay the admission at the door
+  (0-25, `ServiceKind::admission`, to the treasury under `tickets`), counted in
+  `World::attractions.books` (townsfolk and tourists, today and yesterday, takings). **Hours**:
+  museums by day (09/10-18/19), the aquarium to 20:00, the garden 08-20, the zoo 09-18, the pier
+  10-01, the park always, the observatory 14-00, the opera 17-00. **Land value**: a landmark splats
+  its own channel (`Channel::Attractions`, cap 0.5, scale 0.5: one counts nearly in full, two or three
+  overlapping add up to more), 0.26-0.42 over 320-540 m, times 0.55-1.0 by staffing: the player's
+  strongest lever on land value since the rescale (a grand park lifts the lots round it by a tenth or
+  more and the quarter 200-340 m out by several hundredths, where a monument's lift is gone). The
+  grand park, zoo, garden and pier count as parks for walking access; the opera, pier and observatory
+  as nightlife. **Costs**: 45,000-95,000 to build, 420-1,100 a day, 14-40 jobs, car parks of 30-60.
+  The inspector's ATTRACTION card says what it is and does, open or not and why, today's and
+  yesterday's visitors and takings, its land value lift and pull, the pier's deck and the
+  observatory's rise; `inspect` carries the same as `attraction`.
 - **Fire engines at the scene** (`world/scenes.rs`, `traffic/scene.rs`): an engine is sent to the
   burning building's street, clear of the junctions at either end (18 m, `SCENE_JUNCTION_CLEAR`), up
   whichever side is quicker, and on arrival pulls in to the kerb on the building's side (crossing
@@ -1506,7 +1556,7 @@ Citizens are rendered from their simulated positions every frame.
   City Data's City › Districts lists every district's figures (area, buildings by tier, homes and residents,
   jobs, land value, rent, hotels and beds, visitors staying, pull) with the policy editor.
 - **Tourism** (`nd_sim::tourism`, `world/tourism.rs`): attractions are re-read every two hours:
-  monuments and stadiums by tier, mid and high tier parks by area, open venues, landmark districts
+  the landmark attractions by their pull and staffing, monuments and stadiums by tier, mid and high tier parks by area, open venues, landmark districts
   (historic, neon strip, night market, tourist quarter, with 3+ buildings) and the waterfront (built
   lots within 70 m of water). Their pull sums to the city's attractiveness; visitors per day follow it
   (diminishing past 60 points) times the ways in that work (road off the map 1, rail 0.45, ferry

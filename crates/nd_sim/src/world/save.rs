@@ -73,6 +73,7 @@ impl World {
         if self.lots.values().any(|l| l.land_use == LandUse::Park && l.polygon.len() >= 3 && l.park.is_none()) {
             let links: Vec<Vec2> = self.path_links.links.iter().map(|l| l.pos).collect();
             crate::park::plan_parks_with(&mut self.lots, &self.land_value, &links);
+            self.plan_attraction_grounds();
         }
         // [free-placement] A save from before city ground: the lots under
         // the city's buildings leave their zones (nothing moves).

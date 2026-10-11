@@ -84,6 +84,8 @@ impl Family {
                 ServiceKind::ParkingEnforcement => Family::Wardens,
                 ServiceKind::Vertiport => Family::Air,
                 ServiceKind::Monument | ServiceKind::Stadium => Family::Attraction,
+                // [attractions] the landmarks
+                _ => Family::Attraction,
             },
             Placeable::Plant(_) => Family::Power,
             Placeable::Battery(_) => Family::Battery,
