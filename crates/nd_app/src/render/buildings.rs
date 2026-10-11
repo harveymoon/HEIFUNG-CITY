@@ -238,7 +238,12 @@ pub(super) fn sync_buildings(
             let Some(ids) = members.remove(&k) else { continue };
             let mut geo = Geometry::default();
             for &id in &ids {
+                let rigs_before = geo.games.len();
                 if let Some(top) = append_building(&mut geo, &sim.world, &assets, &sim.styles, id) {
+                    // [games] A stadium's game-day dressing knows its building.
+                    for rig in geo.games[rigs_before..].iter_mut() {
+                        rig.building = Some(id);
+                    }
                     sim.building_tops.0.insert(id, top);
                     state.building_chunks.insert(id, k);
                     let w = &sim.world;
@@ -252,6 +257,9 @@ pub(super) fn sync_buildings(
             let work = sim.world.clock.work_minutes();
             for rig in &geo.cranes {
                 entities.extend(spawn_crane_head(&mut commands, &mut meshes, &mats, rig, work));
+            }
+            for rig in &geo.games {
+                entities.extend(super::games::spawn_game_rig(&mut commands, &mut meshes, &mats, rig));
             }
             state.chunks.insert(k, ChunkMeshes { entities, triangles: geo.triangle_count() });
         }

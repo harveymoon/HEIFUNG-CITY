@@ -52,6 +52,12 @@ pub(super) fn car(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, i
             return;
         }
     }
+    // [airlift] Stuck for good? A heavy-lift helicopter takes it away.
+    if airlift_row(ui, sim, id) {
+        return;
+    }
+    let w = &sim.world;
+    let Some(car) = w.traffic.cars.get(id) else { return };
     // [clarity] Where from, where to, why, and who is driving.
     if journey_card(ui, w, id, selection) {
         return;
@@ -362,6 +368,43 @@ pub(super) fn why_and_trip(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Car
 
 /// [boot] "Tow this car": a wheel clamp now, the tow truck after; the owner
 /// pays at the pound.
+/// [airlift] The Airlift button (or the helicopter on its way): the
+/// emergency service that lifts a vehicle off the road by helicopter, for
+/// one stuck where nothing else can shift it. True once called (the car
+/// is spoken for: the caller stops drawing the card).
+fn airlift_row(ui: &mut egui::Ui, sim: &mut Sim, id: nd_sim::CarId) -> bool {
+    let w = &sim.world;
+    if w.airlifts().iter().any(|a| a.car == Some(id)) {
+        ui.label(egui::RichText::new("The airlift helicopter is on its way to lift it off the road.").color(egui::Color32::from_rgb(255, 200, 60)));
+        return false;
+    }
+    if w.traffic.cars.get(id).is_some_and(|c| c.bus.is_some() || c.siren) {
+        return false;
+    }
+    let mut called = false;
+    ui.horizontal(|ui| {
+        let b = ui.button(egui::RichText::new(format!("Airlift ({:.0})", nd_sim::world::airlift::AIRLIFT_COST)).color(egui::Color32::from_rgb(255, 200, 60)))
+            .on_hover_text("Emergency service: a twin-rotor heavy-lift helicopter flies in, slings this vehicle and flies it away (a resident's car to the pound). For a vehicle stuck where nothing else can shift it.");
+        if b.clicked() {
+            match sim.world.airlift(id) {
+                Ok(()) => called = true,
+                Err(e) => {
+                    let until = ui.ctx().input(|i| i.time) + 4.0;
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("airlift_refused"), (e, until)));
+                }
+            }
+        }
+    });
+    let now = ui.ctx().input(|i| i.time);
+    if let Some((why, until)) = ui.ctx().data(|d| d.get_temp::<(String, f64)>(egui::Id::new("airlift_refused"))) {
+        if now < until {
+            ui.label(egui::RichText::new(format!("Can't airlift: {why}")).color(WARN).small());
+        }
+    }
+    let _ = called;
+    false
+}
+
 pub(super) fn tow_button(ui: &mut egui::Ui) -> bool {
     ui.button(egui::RichText::new("Tow this car").color(egui::Color32::from_rgb(255, 140, 20)))
         .on_hover_text("Clamp it where it stands (a moving car pulls over first) and call the tow truck; the owner pays to get it back from the pound")

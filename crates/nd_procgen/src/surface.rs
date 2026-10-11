@@ -245,11 +245,15 @@ pub struct Geometry {
     /// lantern, world coordinates. The renderer hangs real lights on the
     /// ones near the camera at night.
     pub lamps: Vec<glam::Vec3>,
+    /// [games] A stadium's game-day dressing (crowds, players, the cars of
+    /// the away fans), left out of the mesh for the renderer to show on a
+    /// game day.
+    pub games: Vec<crate::buildings::GameRig>,
 }
 
 impl Default for Geometry {
     fn default() -> Self {
-        Self { parts: (0..Surface::ALL.len()).map(|_| MeshData::default()).collect(), pads: Vec::new(), cranes: Vec::new(), lamps: Vec::new() }
+        Self { parts: (0..Surface::ALL.len()).map(|_| MeshData::default()).collect(), pads: Vec::new(), cranes: Vec::new(), lamps: Vec::new(), games: Vec::new() }
     }
 }
 
@@ -273,6 +277,7 @@ impl Geometry {
         self.pads.extend_from_slice(&other.pads);
         self.cranes.extend(other.cranes.iter().cloned());
         self.lamps.extend_from_slice(&other.lamps);
+        self.games.extend(other.games.iter().cloned());
     }
 
     /// Move every surface that has a weathered variant onto it: the whole

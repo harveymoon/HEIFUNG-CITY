@@ -243,8 +243,9 @@ mod tests {
             let mut w = town(5);
             populate(&mut w, 260);
             if police {
-                for x in [-500.0, 0.0, 500.0] {
-                    w.build_service(civic_lot(&w, x), ServiceKind::Police, Tier::High).unwrap();
+                // [hq] One headquarters (by the poor west) and two stations.
+                for (x, tier) in [(-500.0, Tier::High), (0.0, Tier::Mid), (500.0, Tier::Mid)] {
+                    w.build_service(civic_lot(&w, x), ServiceKind::Police, tier).unwrap();
                 }
             }
             set_land_value(&mut w, |_| 0.2);

@@ -569,7 +569,23 @@ impl World {
         if let Some(c) = company {
             if self.buildings.contains_key(c) {
                 let stop = self.truck_stop(c).and_then(|(s, p)| self.traffic.net.nearest_lane_on(s, p));
-                return stop.is_some_and(|(goal, s_end, _)| self.traffic.redirect(truck, goal, s_end));
+                if stop.is_some_and(|(goal, s_end, _)| self.traffic.redirect(truck, goal, s_end)) {
+                    return true;
+                }
+                // [tow-fix] No road from here to the yard (a slip road or
+                // highway that only leads out of town): on to the pound out
+                // of town rather than standing in the lane for hours.
+                if !self.edge_exits(self.traffic.cars.get(truck).map_or(Vec2::ZERO, |t| t.pos)).is_empty() && self.redirect_out(truck) {
+                    if let Some(j) = self.enforcement.jobs.iter_mut().find(|j| j.id == job_id) {
+                        j.company = None;
+                    }
+                    if let Some(t) = self.driving.tows.iter_mut().find(|t| t.truck == truck) {
+                        t.yard = None;
+                    }
+                    self.enforcement.stats.pound_detours_total += 1;
+                    return true;
+                }
+                return false;
             }
             // The yard was pulled down: the pound out of town takes it.
             if let Some(j) = self.enforcement.jobs.iter_mut().find(|j| j.id == job_id) {
@@ -583,7 +599,7 @@ impl World {
     }
 
     /// In the pound: the company's yard, or one out of town.
-    fn impound(&mut self, vid: VehicleId, company: Option<BuildingId>) {
+    pub(in crate::world) fn impound(&mut self, vid: VehicleId, company: Option<BuildingId>) {
         let tick = self.clock.tick;
         let company = company.filter(|c| self.buildings.contains_key(*c));
         let pos = match company {

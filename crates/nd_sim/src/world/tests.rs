@@ -1008,7 +1008,14 @@ fn a_site_waits_for_its_materials_and_resumes_on_delivery() {
     let p = w.buildings[id].construction.as_ref().unwrap().progress;
     assert!(p > p0, "work resumed: {p}");
     // Work stops again at the quarter until the next load comes (the
-    // one ordered ahead is still on the road).
+    // one ordered ahead is still on the road). [delivery-hours] It may not
+    // have set off yet, or be under way: it is late, as far as this site
+    // knows (taken off the road and out of the queue).
+    w.freight_queue.retain(|q| q.cargo.to != id);
+    let late: Vec<CarId> = w.traffic.cars.iter().filter(|(_, c)| c.cargo.is_some_and(|k| k.to == id)).map(|(k, _)| k).collect();
+    for k in late {
+        w.traffic.remove_car(k);
+    }
     {
         let c = w.buildings[id].construction.as_mut().unwrap();
         c.progress = 0.25 - c.hourly_step() * 0.5;
@@ -1856,12 +1863,19 @@ fn imported_parts_come_from_out_of_town_not_from_the_site_itself() {
     // Nobody in town sells parts: the developer imports them by truck.
     w.build_on(lot);
     let site = w.lots[lot].building.unwrap();
+    // [delivery-hours] It sets off at the site's own minute of the morning.
+    let mut minds = IdleMind;
+    for _ in 0..240 {
+        if w.traffic.cars.values().any(|c| c.cargo.is_some_and(|k| k.to == site)) {
+            break;
+        }
+        w.tick(&mut minds);
+    }
     let truck = w.traffic.cars.iter().find(|(_, c)| c.cargo.is_some_and(|k| k.to == site)).map(|(id, _)| id).expect("a parts truck on the road");
     let cargo = w.traffic.cars[truck].cargo.unwrap();
     assert_ne!(cargo.from, cargo.to, "an import does not claim to come from the buyer");
     assert!(w.buildings.get(cargo.from).is_none(), "it comes from out of town");
     assert_eq!(cargo.price, 0.0, "the developer paid for site parts up front");
-    let mut minds = IdleMind;
     for _ in 0..120 {
         w.tick(&mut minds);
         if !w.traffic.cars.contains_key(truck) {

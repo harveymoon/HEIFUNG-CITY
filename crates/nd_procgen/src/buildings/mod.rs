@@ -66,6 +66,7 @@ mod economy_tests;
 mod pt_visual_tests;
 pub use parts::WINDOW_LIGHT_MARK;
 pub use construction::{crane_paint, crane_slew, CraneRig, CRANE_LIFT_MINUTES, CRANE_SLEW_RANGE};
+pub use services::GameRig;
 pub use power::{battery_lights, coal_vents, CoalVent, solar_head, solar_trackers, wind_rotor, wind_turbines, PlantField, SolarTracker, Turbine, SOLAR_HUB, SOLAR_MAX_TILT, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};
 pub use parking::surface_lot_bays_world;
 

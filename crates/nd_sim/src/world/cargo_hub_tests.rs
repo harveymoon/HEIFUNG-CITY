@@ -34,7 +34,9 @@ fn town() -> (World, BuildingId, LotId) {
 }
 
 fn edge_semis(w: &World, buyer: BuildingId) -> usize {
-    w.traffic.cars.values().filter(|c| c.cargo.is_some_and(|x| x.to == buyer && x.from == BuildingId::default())).count()
+    // [delivery-hours] On the road, or ordered and waiting to set off.
+    let queued = w.freight_queue.iter().filter(|q| q.from.is_none() && q.cargo.to == buyer && q.cargo.from == BuildingId::default()).count();
+    w.traffic.cars.values().filter(|c| c.cargo.is_some_and(|x| x.to == buyer && x.from == BuildingId::default())).count() + queued
 }
 
 #[test]

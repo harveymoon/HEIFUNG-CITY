@@ -29,7 +29,40 @@ pub(super) struct LandscapeRender {
     pub(super) ship_meshes: Option<[Handle<Mesh>; 5]>,
     /// Each drawn ship and the kind its mesh shows.
     pub(super) ships: HashMap<nd_sim::ports::ShipId, (Entity, nd_sim::ports::ShipKind)>,
+    /// [berthing] Each shipping port's crane gear (trolley, hoist rope,
+    /// spreader, the box on it), drawn while a freighter is worked.
+    pub(super) cranes: HashMap<nd_sim::ports::PortId, [Entity; 4]>,
+    pub(super) crane_meshes: Option<[Handle<Mesh>; 4]>,
 }
+
+/// [berthing] The boom the trolley runs under, the spreader's lowest over
+/// the ship's deck stacks and over the quay (m).
+const CRANE_TROLLEY_Y: f32 = 30.2;
+const CRANE_LOW_SHIP: f32 = 9.5;
+const CRANE_LOW_QUAY: f32 = 4.6;
+
+#[derive(Component)]
+pub(super) struct CraneGear;
+
+fn crane_meshes(meshes: &mut Assets<Mesh>) -> [Handle<Mesh>; 4] {
+    let mut unit = |c: [f32; 4], size: Vec3, at: Vec3| {
+        let mut m = MeshData::default();
+        m.boxed(at, size, 0.0, c);
+        meshes.add(shared_mesh(&m, true))
+    };
+    let yellow = [0.95, 0.72, 0.1, 1.0];
+    [
+        // Trolley (x along the boom), a rope 1 m long hanging from y = 0
+        // (scaled to the drop), the spreader frame, and a 40 ft box below it.
+        unit([0.25, 0.26, 0.28, 1.0], Vec3::new(3.0, 1.2, 2.6), Vec3::ZERO),
+        unit([0.1, 0.1, 0.1, 1.0], Vec3::new(0.12, 1.0, 0.12), Vec3::new(0.0, -0.5, 0.0)),
+        unit(yellow, Vec3::new(2.6, 0.35, 12.4), Vec3::ZERO),
+        unit([1.0, 1.0, 1.0, 1.0], Vec3::new(2.44, 2.6, 12.2), Vec3::new(0.0, -1.5, 0.0)),
+    ]
+}
+
+/// [berthing] Colours of the boxes the crane swings, by move.
+const BOX_COLOURS: [[f32; 3]; 6] = [[0.75, 0.16, 0.12], [0.12, 0.32, 0.62], [0.15, 0.5, 0.3], [0.85, 0.55, 0.1], [0.55, 0.55, 0.58], [0.45, 0.2, 0.5]];
 
 /// [fix/review-app] Bring `drawn` (sim id to entity, and what it was drawn
 /// as) in line with the `live` sim collection. Returns the entities to
@@ -214,6 +247,84 @@ pub(super) fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>
             tf.rotation = Quat::from_rotation_y(-dir.y.atan2(dir.x));
         }
     }
+}
+
+/// [berthing] The quay cranes at work: over each shipping port with a
+/// freighter at its berth, the trolley runs along the boom and the
+/// spreader goes down and up, landing the ship's imports on the quay and
+/// loading the city's exports (`nd_sim::ports::crane_work`).
+#[allow(clippy::type_complexity)]
+pub(super) fn sync_port_cranes(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, mats: Res<Materials>, mut materials: ResMut<Assets<StandardMaterial>>, mut state: ResMut<LandscapeRender>, mut box_mats: Local<Vec<Handle<StandardMaterial>>>, mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), With<CraneGear>>) {
+    let w = &sim.world;
+    if sim.full_rebuild {
+        for (_, ents) in state.cranes.drain() {
+            for e in ents {
+                commands.entity(e).despawn();
+            }
+        }
+    }
+    let gone: Vec<nd_sim::ports::PortId> = state.cranes.keys().copied().filter(|p| w.ports.ports.get(*p).is_none_or(|p| p.kind != nd_sim::ports::PortKind::ShippingPort)).collect();
+    for p in gone {
+        if let Some(ents) = state.cranes.remove(&p) {
+            for e in ents {
+                commands.entity(e).despawn();
+            }
+        }
+    }
+    if box_mats.is_empty() {
+        for c in BOX_COLOURS {
+            box_mats.push(materials.add(StandardMaterial { base_color: Color::linear_rgb(c[0], c[1], c[2]), perceptual_roughness: 0.6, ..default() }));
+        }
+    }
+    let f = sim.frac();
+    for (pid, port) in w.ports.ports.iter().filter(|(_, p)| p.kind == nd_sim::ports::PortKind::ShippingPort) {
+        let work = port.building.and_then(|b| w.ports.ships.values().find(|s| s.port == b && s.kind == nd_sim::ShipKind::Freighter)).and_then(|s| nd_sim::ports::crane_work(port, s, f));
+        let Some(c) = work else {
+            if let Some(ents) = state.cranes.get(&pid) {
+                for e in ents {
+                    if let Ok((_, mut v, _)) = q.get_mut(*e) {
+                        *v = Visibility::Hidden;
+                    }
+                }
+            }
+            continue;
+        };
+        if !state.cranes.contains_key(&pid) {
+            let hs = state.crane_meshes.get_or_insert_with(|| crane_meshes(&mut meshes)).clone();
+            let mat = mats.surface(Surface::Panel);
+            let ents = [0, 1, 2, 3].map(|k| commands.spawn((Mesh3d(hs[k].clone()), MeshMaterial3d(if k == 3 { box_mats[0].clone() } else { mat.clone() }), super::offstage(), NotShadowCaster, CraneGear)).id());
+            state.cranes.insert(pid, ents);
+            continue;
+        }
+        let ents = state.cranes[&pid];
+        let yaw = Quat::from_rotation_y(-port.seaward.y.atan2(port.seaward.x));
+        let low = match c.low {
+            nd_sim::ports::CraneEnd::Ship => CRANE_LOW_SHIP,
+            nd_sim::ports::CraneEnd::Quay => CRANE_LOW_QUAY,
+        };
+        let top = CRANE_TROLLEY_Y - 1.0;
+        let hook = top - (top - low) * c.drop;
+        let at = |y: f32| Vec3::new(c.trolley.x, y, c.trolley.y);
+        let poses = [(at(CRANE_TROLLEY_Y), Vec3::ONE, true), (at(top), Vec3::new(1.0, (top - hook).max(0.01), 1.0), true), (at(hook), Vec3::ONE, true), (at(hook), Vec3::ONE, c.carrying)];
+        for (k, e) in ents.iter().enumerate() {
+            if let Ok((mut tf, mut v, mut m)) = q.get_mut(*e) {
+                tf.translation = poses[k].0;
+                tf.rotation = yaw;
+                tf.scale = poses[k].1;
+                *v = if poses[k].2 { Visibility::Inherited } else { Visibility::Hidden };
+                if k == 3 {
+                    let want = &box_mats[(c.n as usize + pid_salt(pid)) % box_mats.len()];
+                    if m.0 != *want {
+                        m.0 = want.clone();
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn pid_salt(p: nd_sim::ports::PortId) -> usize {
+    (slotmap::Key::data(&p).as_ffi() % 7) as usize
 }
 
 #[cfg(test)]

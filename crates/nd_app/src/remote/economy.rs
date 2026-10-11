@@ -125,7 +125,8 @@ pub fn ships(w: &World) -> Value {
         .ports
         .ships
         .values()
-        .map(|sh| json!({ "kind": format!("{:?}", sh.kind).to_lowercase(), "port": key_str(sh.port), "at": v2(sh.pose().0), "heading_deg": round(sh.pose().1.y.atan2(sh.pose().1.x).to_degrees()), "docked": sh.docked }))
+        .map(|sh| json!({ "kind": format!("{:?}", sh.kind).to_lowercase(), "port": key_str(sh.port), "at": v2(sh.pose().0), "heading_deg": round(sh.pose().1.y.atan2(sh.pose().1.x).to_degrees()), "docked": sh.docked, "dwell": sh.dwell, "boxes_in": sh.boxes_in, "boxes_out": sh.boxes_out, "broadside": sh.quay.is_some(),
+            "crane": w.ports.ports.values().find(|p| p.building == Some(sh.port)).and_then(|p| nd_sim::ports::crane_work(p, sh, 0.0)).map(|c| json!({ "move": c.n + 1, "of": c.of, "landing": c.landing, "carrying": c.carrying })) }))
         .collect();
     for (b, f) in &w.fishing.fleets {
         for (k, t) in f.boats.iter().enumerate() {

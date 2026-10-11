@@ -1003,3 +1003,75 @@ fn feuds_rarely_turn_deadly_and_always_the_same_way() {
     assert!((300..900).contains(&n), "about 3% of fights: {n}");
     assert_eq!((0..500u64).map(|t| super::super::social::feud_turns_deadly(77, t)).collect::<Vec<_>>(), (0..500u64).map(|t| super::super::social::feud_turns_deadly(77, t)).collect::<Vec<_>>());
 }
+
+/// [beat] G8: a police car "parked on the beat" stands at the kerb, out
+/// of the traffic lanes, not where its route ended in the lane.
+#[test]
+fn police_on_the_beat_park_at_the_kerb_not_in_the_lane() {
+    let (mut w, station, _) = one_car_town();
+    let uid = w.services.units.iter().find(|(_, u)| u.station == station && u.kind == UnitKind::PoliceCar).map(|(id, _)| id).unwrap();
+    run_until(&mut w, 400, |w| w.services.units[uid].car.is_none() && w.services.units[uid].state == UnitState::Patrol && w.services.units[uid].patrol_until > w.clock.tick);
+    let u = &w.services.units[uid];
+    assert!(u.car.is_none() && u.state == UnitState::Patrol, "parked on a beat");
+    let (seg, _, q) = w.roads.nearest_street(u.pos).unwrap();
+    let half = w.roads.segment(seg).half_width();
+    assert!((q.distance(u.pos) - (half - 1.15)).abs() < 0.4, "at the kerb: {:.2} m from the middle of a street {half:.2} m half-wide", q.distance(u.pos));
+    for &l in w.traffic.net.segment_lanes.get(&seg).into_iter().flatten() {
+        let (_, d) = w.traffic.net.lanes[l as usize].project(u.pos);
+        assert!(d > 1.2, "clear of lane {l}: {d:.2} m");
+    }
+    // Facing the way the kerb-side traffic flows.
+    let (a, b) = w.roads.segment_points(seg);
+    let along = (b - a).normalize();
+    let face = Vec2::new(u.heading.cos(), u.heading.sin());
+    assert!(face.dot(along).abs() > 0.99);
+}
+
+/// [hq] Harvey: "only one police headquarters / fire headquarters per
+/// city". A second is refused with the reason; stations and posts as many
+/// as wanted.
+#[test]
+fn one_police_and_one_fire_headquarters_per_city() {
+    let mut w = town();
+    // A headquarters takes the plots it needs next to the one picked.
+    let hq = |k| Placeable::Service(k, Tier::High);
+    w.place_on_lot(hq(ServiceKind::Police), civic_lot(&w, -600.0)).expect("the first police HQ");
+    let e = w.place_on_lot(hq(ServiceKind::Police), civic_lot(&w, 0.0)).unwrap_err();
+    assert!(e.contains("headquarters already") && e.contains("only one per city"), "{e}");
+    assert!(w.placement_problem(hq(ServiceKind::Police), civic_lot(&w, 0.0)).is_some_and(|p| p.contains("only one")), "the preview says so too");
+    w.build_service(civic_lot(&w, -150.0), ServiceKind::Police, Tier::Mid).expect("a police station is fine");
+    w.place_on_lot(hq(ServiceKind::Fire), civic_lot(&w, 300.0)).expect("the first fire HQ");
+    assert!(w.place_on_lot(hq(ServiceKind::Fire), civic_lot(&w, 600.0)).unwrap_err().contains("fire headquarters"));
+    w.build_service(civic_lot(&w, 600.0), ServiceKind::Fire, Tier::Low).expect("a fire post is fine");
+}
+
+/// [games] G18: on a game day away fans drive in from out of town before
+/// kick-off and park at the ground, the stadium is "live" through the
+/// game, and the cars drive home after the final whistle.
+#[test]
+fn a_game_day_brings_away_fans_cars_and_sends_them_home() {
+    use crate::world::games::*;
+    let mut w = town();
+    let big = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Civic && l.usable() && l.car_access()).max_by(|a, b| a.1.area().total_cmp(&b.1.area())).map(|(id, _)| id).unwrap();
+    let stadium = w.build_service(big, ServiceKind::Stadium, Tier::Low).unwrap();
+    w.services.events_today = vec![stadium];
+    while w.clock.minute_of_day() != GATES_OPEN - 1 {
+        w.clock.advance();
+    }
+    // (The draw for the next day must not end the game at midnight.)
+    assert_eq!(w.game_phase(stadium), None);
+    run_until(&mut w, 2, |_| false);
+    assert_eq!(w.game_phase(stadium), Some(GamePhase::Gates));
+    run_until(&mut w, (KICKOFF - GATES_OPEN) as usize, |w| w.clock.minute_of_day() >= KICKOFF);
+    assert_eq!(w.game_phase(stadium), Some(GamePhase::Live));
+    assert!(w.games.away_cars_total >= AWAY_CARS[0] / 2, "away fans drove in: {}", w.games.away_cars_total);
+    let parked = w.game_cars_parked(stadium);
+    assert!(parked > 0, "and parked at the ground");
+    run_until(&mut w, 400, |w| w.clock.minute_of_day() >= FINAL_WHISTLE + 5);
+    assert_eq!(w.game_phase(stadium), Some(GamePhase::Leaving));
+    assert!(w.game_cars_parked(stadium) < parked, "they head home after the whistle");
+    run_until(&mut w, 400, |w| w.clock.minute_of_day() >= CROWD_GONE + 1);
+    assert_eq!(w.game_cars_parked(stadium), 0, "all gone");
+    assert_eq!(w.game_phase(stadium), None);
+    assert!(w.games.driving_in.is_empty());
+}

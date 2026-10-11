@@ -341,6 +341,7 @@ fn a_mornings_car_sales_are_fetched_through_the_day_not_all_at_once() {
     // town to the trade: gone only at the map edge, counted as sold.
     let sold0 = w.vehicles.stats.events_total.get("sold").copied().unwrap_or(0);
     let mut on_court = 0;
+    let mut sold_on = 0;
     let mut gone = 0;
     for &vid in &sold {
         match w.vehicles.cars.get(vid).map(|c| c.place) {
@@ -349,6 +350,8 @@ fn a_mornings_car_sales_are_fetched_through_the_day_not_all_at_once() {
             Some(CarPlace::Parked(s)) if s.kind != ParkKind::Dealer => {
                 let c = &w.vehicles.cars[vid];
                 assert!(c.dealer.is_none() && w.citizens.get(c.owner).is_some_and(|o| o.car == Some(vid)), "a sold car parked off the forecourt is a buyer's: {:?} at {:?}", s.kind, s.pos);
+                // (It stood on the forecourt first: the dealer sold it on.)
+                sold_on += 1;
             }
             Some(CarPlace::Parked(s)) => {
                 assert_eq!(s.kind, ParkKind::Dealer, "on the forecourt");
@@ -358,7 +361,7 @@ fn a_mornings_car_sales_are_fetched_through_the_day_not_all_at_once() {
             None => gone += 1,
         }
     }
-    assert!(on_court >= 1, "the forecourt took some");
+    assert!(on_court + sold_on >= 1, "the forecourt took some (still there, or sold on to a buyer)");
     assert!(sold0 as usize >= gone, "every car gone left town as sold, none vanished");
     assert_consistent(&w);
 }

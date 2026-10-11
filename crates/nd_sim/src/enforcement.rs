@@ -162,6 +162,9 @@ pub struct EnforcementStats {
     /// one-way street, and that turned round in the street.
     pub contraflow_total: u32,
     pub u_turns_total: u32,
+    /// [tow-fix] Tow trucks with no road to their yard that took the car
+    /// to the pound out of town instead.
+    pub pound_detours_total: u32,
 }
 
 /// Officers on patrol, tow jobs, and the counts.

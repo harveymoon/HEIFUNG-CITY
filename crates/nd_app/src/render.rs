@@ -117,6 +117,10 @@ mod streets;
 mod preview;
 mod lots;
 mod buildings;
+/// [games] Stadium game days: crowds, teams, parked away fans.
+mod games;
+/// [airlift] The heavy-lift helicopter lifting stuck vehicles away.
+mod airlift;
 mod reset;
 mod citizens;
 mod vehicles;
@@ -396,6 +400,8 @@ impl Plugin for RenderPlugin {
         // orbit camera looks.
         app.add_systems(Update, sun_cascades_follow_camera);
         app.add_systems(Update, fishing::sync_trawlers.in_set(SimSet::Sync).after(sync_ships));
+        // [berthing] The quay cranes working the freighters at the berth.
+        app.add_systems(Update, landscape::sync_port_cranes.in_set(SimSet::Sync).after(sync_ships));
         // The ground and water out past the map, into the fog.
         app.init_resource::<far::FarRender>().add_systems(Update, far::sync_far.in_set(SimSet::Sync).after(sync_landscape));
         app.add_systems(Update, retaining::sync_retaining.in_set(SimSet::Sync).after(sync_landscape));
@@ -439,6 +445,8 @@ impl Plugin for RenderPlugin {
             .add_systems(PostUpdate, street_look::sync_fog_reach.before(heat::apply_heat));
         // Tower cranes slewing on building sites.
         app.add_systems(Update, animate_cranes.after(sync_buildings).in_set(SimSet::Sync));
+        app.add_systems(Update, games::sync_game_days.after(sync_buildings).in_set(SimSet::Sync));
+        app.add_systems(Update, airlift::sync_airlifts.in_set(SimSet::Sync));
         app.add_plugins(heat::HeatPlugin);
         // [layers] Focus views swap materials before heat vision does (heat wins).
         app.init_resource::<swap::SwapState>().add_systems(PostUpdate, (focus::focus_fog.before(heat::apply_heat), swap::swap_materials));

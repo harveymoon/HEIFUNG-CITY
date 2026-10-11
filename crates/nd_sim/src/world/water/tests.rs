@@ -194,6 +194,73 @@ fn docks_go_on_the_shore_build_a_pier_and_ships_call() {
     assert!(ship.pose_at(ship.berth_s).0.distance(dock.berth) < 1.0, "it ties up at the berth");
 }
 
+/// [berthing] G6: a freighter turns and lies broadside along the quay at
+/// the berth, and the crane lands its imports and loads the exports while
+/// it stands there, box by box, as many as it carries.
+#[test]
+fn freighters_berth_broadside_and_the_crane_works_their_cargo() {
+    let mut w = valley(8);
+    w.economy.treasury = 500_000.0;
+    let (p, flow, n, width) = river_spot(&w);
+    let road_at = p + n * (width * 0.5 + 110.0);
+    w.add_road(&[road_at - flow * 300.0, road_at + flow * 300.0], 1, 1);
+    w.add_zone(vec![road_at + n * 10.0 - flow * 100.0, road_at + n * 10.0 + flow * 100.0, road_at + n * 80.0 + flow * 100.0, road_at + n * 80.0 - flow * 100.0], LandUse::Residential);
+    let click = p + n * (width * 0.5 + 20.0);
+    let id = w.place_port(PortKind::ShippingPort, click).expect("a port on the river bank");
+    let [s0, _] = w.ports.port_of(id).unwrap().road_line();
+    w.add_road(&[s0, road_at - flow * 300.0], 1, 1);
+    // Exports waiting on the quay; the next ship takes three boxes.
+    w.ports.outbound = 3.0 * crate::ports::CONTAINER_UNITS + 5.0;
+    let dock = w.ports.port_of(id).unwrap().clone();
+    let mut minds = IdleMind;
+    let mut sid = None;
+    for _ in 0..600 {
+        w.tick(&mut minds);
+        sid = w.ports.ships.iter().find(|(_, s)| s.kind == ShipKind::Freighter).map(|(k, _)| k);
+        if sid.is_some() {
+            break;
+        }
+    }
+    let sid = sid.expect("a freighter sails");
+    let ship = w.ports.ships[sid].clone();
+    assert_eq!(ship.boxes_out, 3, "it loads the exports by the box");
+    assert!(w.ports.outbound < crate::ports::CONTAINER_UNITS, "taken off the quay");
+    // Broadside at the berth, along the shore; nosing in further out.
+    let (at, dir) = ship.pose_at(ship.berth_s);
+    assert!(at.distance(dock.berth) < 1.0);
+    assert!(dir.dot(dock.along).abs() > 0.99, "lies along the quay: {dir:?} vs {:?}", dock.along);
+    let x = ship.berth_s - crate::ports::BERTH_TURN - 5.0;
+    assert_eq!(ship.pose_at(x), crate::geom::point_along(&ship.path, x), "on its course further out");
+    let half = ship.pose_at(ship.berth_s - crate::ports::BERTH_TURN * 0.5);
+    assert!(half.0.distance(at) > 1.0, "still coming in, turning");
+    // At the berth: the crane's moves, first landing then loading.
+    let mut ship = ship;
+    ship.boxes_in = 2;
+    ship.s = ship.berth_s;
+    ship.docked = true;
+    let mut seen = Vec::new();
+    let mut carried = false;
+    for left in (1..=crate::ports::FREIGHTER_DWELL).rev() {
+        ship.dwell = left;
+        for f in [0.0, 0.25, 0.5, 0.75] {
+            if let Some(c) = crate::ports::crane_work(&dock, &ship, f) {
+                assert_eq!(c.of, 5);
+                carried |= c.carrying;
+                if seen.last() != Some(&(c.n, c.landing)) {
+                    seen.push((c.n, c.landing));
+                }
+            }
+        }
+    }
+    assert_eq!(seen, vec![(0, true), (1, true), (2, false), (3, false), (4, false)], "two landed, then three loaded");
+    assert!(carried);
+    // Nothing to move, the crane stands.
+    ship.boxes_in = 0;
+    ship.boxes_out = 0;
+    ship.dwell = 30;
+    assert!(crate::ports::crane_work(&dock, &ship, 0.0).is_none());
+}
+
 #[test]
 fn landscapes_and_docks_survive_a_save_and_old_saves_load_flat() {
     let mut w = valley(12);

@@ -489,6 +489,127 @@ pub struct Ship {
     /// [ferries] Back at its own pier after the run, letting people off.
     #[serde(default)]
     pub home: bool,
+    /// [berthing] A freighter's place alongside the pier head: it turns in
+    /// its last `BERTH_TURN` metres to lie broadside there (and back out
+    /// as it leaves). None: it noses in along its path (ferries, boats).
+    #[serde(default)]
+    pub quay: Option<Quay>,
+    /// [berthing] Containers the quay crane lands from it (its imports for
+    /// the port) and loads onto it (the city's exports since the last
+    /// call) while it stands at the berth (`crane_work`).
+    #[serde(default)]
+    pub boxes_in: u32,
+    #[serde(default)]
+    pub boxes_out: u32,
+}
+
+/// [berthing] Where a freighter lies at the berth: its centre and the
+/// way its bow points (along the shore).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Quay {
+    pub at: Vec2,
+    pub dir: Vec2,
+}
+
+/// [berthing] Metres before (and after) the berth over which a freighter
+/// turns broadside to the quay.
+pub const BERTH_TURN: f32 = 90.0;
+/// [berthing] Goods (units) to a container, and the most a call works.
+pub const CONTAINER_UNITS: f32 = 40.0;
+pub const MAX_BOXES: u32 = 14;
+/// [berthing] Minutes of the dwell the crane works (the rest is mooring
+/// and casting off).
+pub const CRANE_MINUTES: f32 = 50.0;
+
+/// [berthing] Containers for a load of `amount` units.
+pub fn boxes_for(amount: f32) -> u32 {
+    ((amount / CONTAINER_UNITS).ceil() as u32).max(1)
+}
+
+/// [berthing] The quay crane at work on a freighter: where its trolley is
+/// along the boom, how far the spreader is let down (0 at the boom, 1 at
+/// the deck or the quay, `low` saying which) and whether a box hangs from
+/// it, and whether it is landing (true) or loading.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CraneWork {
+    pub trolley: Vec2,
+    pub drop: f32,
+    pub low: CraneEnd,
+    pub carrying: bool,
+    pub landing: bool,
+    /// The move under way and how many the call has.
+    pub n: u32,
+    pub of: u32,
+}
+
+/// [berthing] Which end of the boom the spreader is over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CraneEnd {
+    Ship,
+    Quay,
+}
+
+impl Port {
+    /// [berthing] The ship-to-shore crane's boom: from over the quay (the
+    /// foot of the crane drawn with the port) out over the berth.
+    pub fn crane_boom(&self) -> (Vec2, Vec2) {
+        let (w, d) = self.kind.size();
+        let base = self.center + self.seaward * (d * 0.5 - 9.0) + self.along * (w * 0.12);
+        let reach = (self.berth - base).dot(self.seaward).max(10.0);
+        (base, base + self.seaward * (reach + 10.0))
+    }
+
+    /// [berthing] A freighter's place alongside the pier head, arriving
+    /// from `from` (the last point of its way in): broadside along the
+    /// shore, its bow the way it was coming round.
+    pub fn quay_for(&self, from: Vec2) -> Quay {
+        let side = (self.berth - from).dot(self.along);
+        let dir = if side >= 0.0 { self.along } else { -self.along };
+        Quay { at: self.berth, dir }
+    }
+}
+
+/// [berthing] What the crane is doing over freighter `ship` at `port`
+/// (`frac` of the minute gone): the moves are the boxes it lands, then
+/// those it loads, spread over `CRANE_MINUTES` of its stay. None while it
+/// is not at the berth or has nothing (left) to move.
+pub fn crane_work(port: &Port, ship: &Ship, frac: f32) -> Option<CraneWork> {
+    if ship.kind != ShipKind::Freighter || !ship.docked || ship.dwell == 0 {
+        return None;
+    }
+    let quay = ship.quay?;
+    let of = ship.boxes_in + ship.boxes_out;
+    if of == 0 {
+        return None;
+    }
+    let elapsed = (FREIGHTER_DWELL - ship.dwell.min(FREIGHTER_DWELL)) as f32 + frac.clamp(0.0, 1.0);
+    let per = CRANE_MINUTES / of as f32;
+    let n = (elapsed / per) as u32;
+    if n >= of {
+        return None;
+    }
+    let p = elapsed / per - n as f32;
+    let landing = n < ship.boxes_in;
+    let (base, _) = port.crane_boom();
+    let over_ship = base + port.seaward * (quay.at - base).dot(port.seaward);
+    let over_quay = base + port.seaward * 2.0;
+    let (src, dst, src_end, dst_end) = if landing { (over_ship, over_quay, CraneEnd::Ship, CraneEnd::Quay) } else { (over_quay, over_ship, CraneEnd::Quay, CraneEnd::Ship) };
+    // Down and up at the source, across loaded, down and up at the
+    // other end, back empty.
+    const LIFT: f32 = 0.15;
+    let dip = |q: f32| (q / LIFT * std::f32::consts::PI).sin().max(0.0);
+    let ease = |q: f32| q * q * (3.0 - 2.0 * q);
+    let (trolley, drop, low) = if p < LIFT {
+        (src, dip(p), src_end)
+    } else if p < 0.45 {
+        (src.lerp(dst, ease((p - LIFT) / (0.45 - LIFT))), 0.0, dst_end)
+    } else if p < 0.45 + LIFT {
+        (dst, dip(p - 0.45), dst_end)
+    } else {
+        (dst.lerp(src, ease((p - 0.45 - LIFT) / (1.0 - 0.45 - LIFT))), 0.0, src_end)
+    };
+    let carrying = (LIFT * 0.5..0.45 + LIFT * 0.5).contains(&p);
+    Some(CraneWork { trolley, drop, low, carrying, landing, n, of })
 }
 
 impl Ship {
@@ -504,7 +625,25 @@ impl Ship {
 
     /// Position and heading at distance `s`.
     pub fn pose_at(&self, s: f32) -> (Vec2, Vec2) {
-        crate::geom::point_along(&self.path, s)
+        let (p, d) = crate::geom::point_along(&self.path, s);
+        // [berthing] Turning broadside to the quay near the berth.
+        let Some(q) = self.quay else { return (p, d) };
+        let off = (s - self.berth_s).abs();
+        if off >= BERTH_TURN {
+            return (p, d);
+        }
+        let x = 1.0 - off / BERTH_TURN;
+        let t = x * x * (3.0 - 2.0 * x);
+        let (a0, a1) = (d.y.atan2(d.x), q.dir.y.atan2(q.dir.x));
+        let mut delta = a1 - a0;
+        while delta > std::f32::consts::PI {
+            delta -= std::f32::consts::TAU;
+        }
+        while delta < -std::f32::consts::PI {
+            delta += std::f32::consts::TAU;
+        }
+        let a = a0 + delta * t;
+        (p.lerp(q.at, t), Vec2::new(a.cos(), a.sin()))
     }
 
     pub fn pose(&self) -> (Vec2, Vec2) {
@@ -575,6 +714,11 @@ pub struct Ports {
     /// terminal a run sailed from and where it went (`world/ferry_routes.rs`).
     #[serde(default)]
     pub line_riders: Vec<LineRiders>,
+    /// [berthing] The city's exports (units) waiting on the quay for the
+    /// next freighter's crane: added each hour while a shipping port
+    /// works, taken by the containerful when one calls.
+    #[serde(default)]
+    pub outbound: f32,
 }
 
 /// [ferry-routes] Riders today on the runs from `from` to another
