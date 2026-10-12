@@ -84,7 +84,7 @@ fn main() {
             let path = args.get(2).expect("save path");
             let ticks: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1440);
             let mut w = World::read_save(path).expect("load");
-            println!("pop {} buildings {} cars {} walk nodes {}", w.citizens.len(), w.buildings.len(), w.traffic.cars.len(), w.walk.nodes.len());
+            println!("pop {} buildings {} cars {} walk nodes {} tow jobs {}", w.citizens.len(), w.buildings.len(), w.traffic.cars.len(), w.walk.nodes.len(), w.enforcement.jobs.len());
             let _ = nd_sim::prof::take();
             let mut times: Vec<f64> = Vec::new();
             for _ in 0..ticks {

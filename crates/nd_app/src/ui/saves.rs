@@ -705,17 +705,6 @@ impl StateKind {
             SlotKind::Dated => StateKind::Dated,
         }
     }
-
-    pub fn key(self) -> &'static str {
-        match self {
-            StateKind::Named => "named",
-            StateKind::Latest => "latest",
-            StateKind::Autosave => "autosave",
-            StateKind::Dated => "dated",
-            StateKind::History => "history",
-            StateKind::Marked => "marked",
-        }
-    }
 }
 
 /// [title] One saved moment of a game: a save in `saves/` or an entry of

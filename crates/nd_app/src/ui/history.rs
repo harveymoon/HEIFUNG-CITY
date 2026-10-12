@@ -122,7 +122,9 @@ pub fn set_bookmark(entry: &Path, label: Option<&str>) -> Result<SaveMeta, Strin
 }
 
 /// Delete a game's oldest unmarked entries beyond `kept` (with their
-/// sidecars and pictures). Returns how many went.
+/// sidecars and pictures). Returns how many went. (The game thins
+/// instead: [`prune_thinned`].)
+#[cfg(test)]
 pub fn prune(saves: &Path, game_id: &str, kept: usize) -> usize {
     prune_thinned(saves, game_id, kept, 0, SPACING)
 }
