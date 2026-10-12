@@ -360,6 +360,10 @@ fn save_shots(mut commands: Commands, mut shots: ResMut<SaveShots>, mut saves: R
         if shot.frames >= SHOT_FRAMES + 10 {
             commands.entity(shot.camera).despawn();
             done.push(i);
+            // [saves] Pictures that are this one's copies (the autosave's).
+            for copy in saves.take_picture_copies(&shot.path) {
+                let _ = std::fs::copy(&shot.path, copy);
+            }
         }
     }
     if !done.is_empty() {

@@ -61,6 +61,8 @@ mod driving;
 mod industry;
 mod kinds;
 mod save;
+/// [saves] Compressed saves: reading either form.
+pub use save::{is_compressed, save_text, GZIP_MAGIC};
 mod tick;
 mod streams;
 use streams::Stream;

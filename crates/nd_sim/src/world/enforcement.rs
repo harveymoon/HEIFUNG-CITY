@@ -64,16 +64,16 @@ impl World {
             s.clamp_fines_today = 0.0;
         }
         if tick % 10 == 3 {
-            self.staff_patrols();
+            crate::prof!("staff_patrols", self.staff_patrols());
         }
         if tick % 2 == 0 {
-            self.patrols_look();
+            crate::prof!("patrols_look", self.patrols_look());
         }
-        self.step_tow_jobs();
+        crate::prof!("step_tow_jobs", self.step_tow_jobs());
         // [tow-moves] Trucks against a one-way or turning round.
-        self.step_tow_moves();
+        crate::prof!("step_tow_moves", self.step_tow_moves());
         if tick % 60 == 47 {
-            self.hourly_pound();
+            crate::prof!("hourly_pound", self.hourly_pound());
         }
     }
 
@@ -289,10 +289,18 @@ impl World {
         self.buildings
             .iter()
             .filter(|(id, _)| {
+                // [saves] Tow yards only before counting the jobs: counting
+                // every job for every building made each tow call
+                // buildings x jobs (134 ms a tick, most of it, on a
+                // 17,000-person city with a long tow queue).
+                let trucks = self.tow_trucks(*id);
+                if trucks == 0 {
+                    return false;
+                }
                 let busy = self.enforcement.jobs.iter().filter(|j| j.company == Some(*id) && j.truck.is_some()).count();
                 // [services] And its trucks out to wrecks.
                 let wrecks = self.driving.wrecks.iter().filter(|w| w.company == Some(*id) && w.truck.is_some()).count();
-                busy + wrecks < self.tow_trucks(*id)
+                busy + wrecks < trucks
             })
             .filter_map(|(id, b)| self.lots.get(b.lot).filter(|l| l.car_segment.is_some()).map(|l| (id, l.center.distance(p))))
             .min_by(|a, b| a.1.total_cmp(&b.1))

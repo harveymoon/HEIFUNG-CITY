@@ -2439,10 +2439,18 @@ trait MindProvider {
 - **Saves and the title screen** (`ui/saves.rs`, `ui/title.rs`): Saves, Save as writes
   `saves/<name>.ron` (the name made file-safe), a sidecar `<name>.meta.json` (name as typed, day,
   population, treasury, buildings, landscape, city name, game id) and a top-down picture
-  `<name>.png`; quick saves and autosaves get a sidecar and picture too. At startup a title
-  screen lists the saved games newest first as cards with their picture, name, day and
-  population, one row per city name: Continue loads the newest, New game opens the landscape
-  picker, Play this map starts on the landscape already loaded under the name typed beside it.
+  `<name>.png`; quick saves and autosaves get a sidecar and picture too. [saves] Every save is
+  gzip-compressed RON (`World::write_ron_gz`, the fastest level: a 17,000-person city's 240 MB of
+  RON is 40 MB, written in 1.2 s); loading takes that or plain RON (`World::read_save`), so older
+  saves load. [home] The saves, flags, assets and settings live in the game's home folder: the
+  exe's folder whatever the working directory (`ND_HOME` overrides; `home.rs`). At startup a
+  [title] two-pane title screen: left, one card per game (by game id; by city name for saves from
+  before ids), the game played last first and largest; right, the picked game's save states
+  (latest quick save, autosave, dated quick saves, history autosaves and marked moments) newest
+  first with picture, day, population and age, to pick and Load (or double-click). Continue loads
+  the newest save, New game opens the [wizard] step-by-step new map wizard (landscape with
+  preview, starting town, a required name, review, Start; Next waits until each step is done),
+  Play this map starts on the landscape already loaded under the name typed beside it.
   The city behind is paused while it is up; `ND_TITLE=0` skips it, and the API's `load`,
   `new_game` and `seed_demo` close it.
 - **Perfect AI City** [perfect-city] (`nd_procgen::citygen::perfect` and `furnish`): a New game
@@ -2478,15 +2486,23 @@ trait MindProvider {
   screen ask for the name (a suggestion from `names::city_name` is offered), and the City and
   Saves windows rename it. A save from before identities gets an id when it is next saved; a
   named one takes the name it was saved under as the city's (`saves::legacy_city_name`), quick
-  saves and the autosave load as "Unnamed city". The Saves window and the title screen group saves by city name.
+  saves and the autosave load as "Unnamed city". The Saves window groups saves by city name, the
+  title screen by game. [identity] An example city at its first day (nobody living there, and no
+  game id of its own or a starting town's name: the bundled Perfect AI City) loads as a new game
+  with a new id and a suggested name (`saves::starter_of`), so a game played from it is never
+  saved under the example's name.
 - **Game history** (`ui/history.rs`): every daily autosave is also written to
   `saves/history/<game id>/<unix ms>-day<N>.ron` (serialised once on the worker thread, written
   there and to `saves/autosave.ron`), with its sidecar and picture. The Game history window
   (Saves, Game history) lists the running game's entries newest first with their pictures; the
   player can name a moment (a bookmark, kept in the entry's sidecar), "Mark this moment" (save
   now, named), and Revert to an entry after a confirmation, which loads it like Load. Entries
-  after the one reverted to stay, so a revert can be undone. The newest 24 unmarked entries of a
-  game are kept; marked ones are never pruned.
+  after the one reverted to stay, so a revert can be undone. [saves] The newest 8 unmarked
+  entries of a game are kept, then 8 older ones at least 5 days apart (`history::prune_thinned`);
+  marked ones are never pruned. With compression a big city's history is about 16 x 40 MB
+  instead of 24 x 240 MB. The autosave's picture is the history entry's, filmed once and copied.
+  The frame pays only for a copy of the world (about 90 ms for 17,000 people); serialising,
+  compressing and writing run on a worker thread.
 
 ## City Data: one full-screen view for the reports
 

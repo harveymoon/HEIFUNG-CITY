@@ -19,6 +19,8 @@ mod directory;
 mod district_tool;
 mod fire_scene;
 mod flags;
+/// [home] Saves, flags and settings beside the exe, not wherever it was started.
+mod home;
 mod map_layers;
 /// [camera] Favourites' gold, a person's place posts, a robot's route.
 mod marks;
@@ -59,6 +61,11 @@ fn window_size() -> WindowResolution {
 }
 
 fn main() {
+    // [home] First: every relative path from here on is inside the home folder.
+    match home::enter() {
+        Ok(home) => eprintln!("home folder: {}", home.display()),
+        Err(e) => eprintln!("home folder not entered ({e}); using the working directory"),
+    }
     crash::install();
     App::new()
         .insert_resource(ClearColor(Color::linear_rgb(0.02, 0.018, 0.028)))

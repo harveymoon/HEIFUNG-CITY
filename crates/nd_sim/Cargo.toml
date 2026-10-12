@@ -14,6 +14,8 @@ slotmap = { workspace = true }
 ron = { workspace = true }
 anyhow = { workspace = true }
 geo = "0.30"
+# [saves] Saves gzip-compressed (zlib-rs: fast, pure Rust).
+flate2 = { version = "1.1", features = ["zlib-rs"] }
 
 [features]
 # Section timings (`prof!`) for examples/perf_probe.rs; off in the game.
