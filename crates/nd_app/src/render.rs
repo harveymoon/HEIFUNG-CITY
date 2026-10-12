@@ -63,6 +63,8 @@ mod junction_view;
 mod layers;
 /// [pt-ux] Parking, Trails and Land density layers.
 mod pt_layers;
+/// [w1] The Construction layer.
+pub mod sites_layer;
 pub use pt_layers::{availability_color as parking_color, Mover as TrailMover};
 mod lights;
 // [review] retaining walls at corner lots over a lower side street
@@ -459,6 +461,7 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, layers::load_gizmos.in_set(SimSet::Sync).after(lift_movers));
         app.add_systems(Update, layers::danger_gizmos.in_set(SimSet::Sync).after(lift_movers));
         app.add_plugins(pt_layers::PtLayersPlugin);
+        app.add_plugins(sites_layer::SitesLayerPlugin);
         app.add_plugins(mapview::MapViewPlugin);
         // [districts] The district layer; [tourism] visitors on foot, after
         // the citizens whose figure cache they share.

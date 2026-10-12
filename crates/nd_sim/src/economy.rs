@@ -482,10 +482,16 @@ impl Economy {
     /// short, negative when homes will be. Households bring children and
     /// retirees, so it counts adults per home, not people.
     pub fn job_gap(&self) -> f32 {
+        self.job_gap_with(self.homes_building, self.jobs_building)
+    }
+
+    /// [w1] [`Economy::job_gap`] as if `homes_building` homes and
+    /// `jobs_building` jobs were being built.
+    pub fn job_gap_with(&self, homes_building: u32, jobs_building: u32) -> f32 {
         let adults = self.working_age as f32;
         let adults_per_home = if self.households > 0 { (adults / self.households as f32).clamp(0.5, 3.0) } else { 1.3 };
-        let workers = adults + (self.homes_free + self.homes_building) as f32 * adults_per_home;
-        let jobs = (self.jobs_permanent + self.jobs_building) as f32;
+        let workers = adults + (self.homes_free + homes_building) as f32 * adults_per_home;
+        let jobs = (self.jobs_permanent + jobs_building) as f32;
         ((workers - jobs) / workers.max(50.0)).clamp(-1.0, 1.0)
     }
 
@@ -507,18 +513,26 @@ impl Economy {
     }
 
     pub fn recompute(&mut self) {
+        self.demand = self.demand_with(self.homes_building, self.jobs_building);
+    }
+
+    /// [w1] The demand per land use as if `homes_building` homes and
+    /// `jobs_building` jobs were going up (`recompute` passes the real
+    /// figures). With fewer, the gap the sites already fill shows: the
+    /// Demand panel's "include planned / under construction".
+    pub fn demand_with(&self, homes_building: u32, jobs_building: u32) -> [f32; 6] {
         let pop = self.population.max(1) as f32;
         // Homes and jobs already going up count against the pressure, so a
         // boom does not start a site on every vacant lot while the first ones
         // are still scaffolding.
-        let housing_pressure = ((self.waiting_immigrants as f32 + self.unhoused as f32) - self.homes_building as f32 * 0.5).max(0.0) / 6.0;
+        let housing_pressure = ((self.waiting_immigrants as f32 + self.unhoused as f32) - homes_building as f32 * 0.5).max(0.0) / 6.0;
         // Homes and jobs are built in balance: the jobs the town will need
         // once its homes fill (the gap) and the adults out of work today pull
         // commercial and industrial development; joblessness and a coming
         // shortage of jobs hold back new housing, and a coming shortage of
         // workers for the jobs on offer pulls it.
         let unemployment = self.unemployment_share();
-        let gap = self.job_gap();
+        let gap = self.job_gap_with(homes_building, jobs_building);
         let job_pressure = (gap.max(0.0) * 1.5 + (unemployment - 0.03).max(0.0) * 2.0).min(1.0);
         let home_pull = (-gap).max(0.0) * 0.8;
         let home_damp = (1.0 - (unemployment - 0.04).max(0.0) * 4.0 - gap.max(0.0) * 1.5).clamp(0.2, 1.0);
@@ -544,7 +558,7 @@ impl Economy {
                 d[lu.index()] = (d[lu.index()] * pull).min(1.0);
             }
         }
-        self.demand = d;
+        d
     }
 
     /// Gini coefficient of a list of incomes.

@@ -538,7 +538,8 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("on", "bool, omitted reads: parcels along a road near the water run down to it (on for new cities; a save from before has it off; lots follow at the next implement)"),
     ] },
     Cmd { name: "bus", aliases: &[], effect: Game, run: bus::bus, help: &[
-        ("action", "select|new_route|add_stop|insert_stop|move_stop|remove_stop|set_buses|set_fare|remove_route|rename|recolour|line|problems|check|select_stop|list|edit|new_line|finish_edit|click|slot|select_metro"),
+        ("action", "select|new_route|add_stop|insert_stop|move_stop|remove_stop|set_buses|set_fare|remove_route|rename|recolour|line|problems|check|select_stop|list|edit|new_line|finish_edit|click|slot|select_metro|two_way"),
+        ("on", "two_way: bool, run the line out and back along the far kerbs (true) or round its loop (false)"),
         ("route", "id"),
         ("x", "f"),
         ("y", "f"),
@@ -553,7 +554,9 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("line", "select_metro: metro line id"),
     ] },
     Cmd { name: "subway", aliases: &["metro"], effect: Game, run: |cmd, ctx| subway::command(cmd, &mut ctx.sim.world), help: &[
-        ("action", "status (default)|station|line|preview|headway|remove_line|inspect_line|inspect_station"),
+        ("action", "status (default)|station|line|preview|headway|remove_line|inspect_line|inspect_station|insert_stop|remove_stop|move_stop|set_loop|relay"),
+        ("index", "insert_stop: where (omitted: where it belongs); remove_stop, move_stop: which stop"),
+        ("on", "set_loop: bool"),
         ("x", "f (station)"),
         ("y", "f (station)"),
         ("stations", "[id or [x,y], ...] (line, preview)"),

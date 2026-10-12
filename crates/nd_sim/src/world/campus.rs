@@ -468,6 +468,20 @@ impl World {
 
     /// Put up an annex on a clear plot: the campus's building of the kind,
     /// in the lot's land use, as a building site.
+    /// [w1] The tier and floors an annex on `lot` is built at (`None`: a
+    /// plaza, no building).
+    pub(super) fn annex_size(&self, lot: LotId, annex: Annex) -> Option<(Tier, u8)> {
+        let cap = self.height_cap(lot).max(2);
+        Some(match annex {
+            Annex::Dorm => (Tier::Low, 6u8.min(cap.max(3))),
+            Annex::Frat => (Tier::Mid, 2),
+            Annex::Admin => (Tier::Mid, 4u8.min(cap.max(3))),
+            Annex::Theatre => (Tier::Mid, 2),
+            Annex::Sports => (Tier::Mid, 1),
+            Annex::Plaza => return None,
+        })
+    }
+
     pub(super) fn build_annex(&mut self, ki: usize, lot: LotId, annex: Annex) -> Option<BuildingId> {
         let l = self.lots.get(lot)?;
         if l.building.is_some() {
@@ -475,15 +489,7 @@ impl World {
         }
         let lu = l.land_use;
         let value = self.lot_value(lot);
-        let cap = self.height_cap(lot).max(2);
-        let (tier, floors) = match annex {
-            Annex::Dorm => (Tier::Low, 6u8.min(cap.max(3))),
-            Annex::Frat => (Tier::Mid, 2),
-            Annex::Admin => (Tier::Mid, 4u8.min(cap.max(3))),
-            Annex::Theatre => (Tier::Mid, 2),
-            Annex::Sports => (Tier::Mid, 1),
-            Annex::Plaza => return None,
-        };
+        let (tier, floors) = self.annex_size(lot, annex)?;
         let campus = self.buildings[self.corps.campuses[ki].building].name.clone();
         let n = self.corps.campuses[ki].count(annex);
         let seed = self.fresh_seed();

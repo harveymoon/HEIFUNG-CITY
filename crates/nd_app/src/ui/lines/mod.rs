@@ -67,6 +67,13 @@ enum Act {
     DeleteMetro(MetroLineId),
     SelectStation(nd_sim::BuildingId, Vec2),
     SelectTrain(nd_sim::MetroTrainId),
+    /// [w1] Edit a metro line stop by stop; finish; the gap the next
+    /// station goes into.
+    EditMetro(MetroLineId),
+    FinishMetro,
+    MetroSlot(usize),
+    /// [w1] Run a bus line both ways or as a loop.
+    TwoWay(RouteId, bool),
 }
 
 /// Stop names, worked out once per edit of the lines: the nearest building
@@ -268,8 +275,9 @@ fn bus_line(ui: &mut egui::Ui, p: &UiCtx, rid: RouteId, probs: &[problems::Probl
     // Figures.
     let length: f32 = (0..n).map(|i| r.leg_length(i)).sum();
     let lap: f32 = (0..n).map(|i| r.leg_minutes(i, tsp).0).sum();
+    let shape = if r.two_way { "out and back" } else { "loop" };
     let waiting = w.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Waiting { .. }) && matches!(c.transit.map(|t| t.leg), Some(nd_sim::transit::TransitLeg::Bus { route, .. }) if route == rid)).count();
-    hint(ui, &format!("{} riders today · {} yesterday · {waiting} waiting now · loop {:.2} km, about {:.0} min round", r.riders_today, r.boardings_yesterday(), length / 1000.0, lap));
+    hint(ui, &format!("{} riders today · {} yesterday · {waiting} waiting now · {shape} {:.2} km, about {:.0} min round", r.riders_today, r.boardings_yesterday(), length / 1000.0, lap));
     // [pt-transit] The line's books and its fare.
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(format!("fare {:.2} · yesterday {:.0} in fares, {:.0} running costs, {} riders", r.fare, r.fares_yesterday, r.upkeep_yesterday, r.riders_yesterday)).small());
@@ -280,6 +288,15 @@ fn bus_line(ui: &mut egui::Ui, p: &UiCtx, rid: RouteId, probs: &[problems::Probl
             *act = Some(Act::Fare(rid, r.fare + 0.5));
         }
     });
+    // [w1] Out and back instead of round a loop.
+    let mut two_way = r.two_way;
+    if ui
+        .checkbox(&mut two_way, "two-way: out along the stops and back along the far kerbs")
+        .on_hover_text("The buses run to the last stop, turn, and come back calling at the far kerb of every stop on the way (made and kept in step for you). Off: they run round the stops as a loop, one way.")
+        .changed()
+    {
+        *act = Some(Act::TwoWay(rid, two_way));
+    }
     // Problems: all of them while editing; otherwise the ones that stop it.
     let shown: Vec<&problems::Problem> = probs.iter().filter(|p| edit.is_some() || p.blocks).collect();
     if !shown.is_empty() {
@@ -302,7 +319,7 @@ fn bus_line(ui: &mut egui::Ui, p: &UiCtx, rid: RouteId, probs: &[problems::Probl
         .map(|i| {
             let s = &r.stops[i].stats;
             Node {
-                name: names.names.get(&(rid, i)).cloned().unwrap_or_default(),
+                name: format!("{}{}", if r.stops[i].back { "↩ " } else { "" }, names.names.get(&(rid, i)).cloned().unwrap_or_default()),
                 on: s.on_today,
                 off: s.off_today,
                 tip: format!("Stop {}: {} on, {} off today · {} on, {} off yesterday. Click to mark it on the map.", i + 1, s.on_today, s.off_today, s.on_yesterday, s.off_yesterday),
@@ -426,8 +443,17 @@ fn metro_line(ui: &mut egui::Ui, p: &UiCtx, id: MetroLineId, act: &mut Option<Ac
     let col = metro_color(l.color);
     let secs = w.config.traffic_seconds_per_tick;
     let n = l.stations.len();
+    let editing = p.tools.metro_edit.filter(|e| e.line == id);
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(&l.name).font(crate::ui::theme::heading()).color(col));
+        // [w1] Stop by stop on the map.
+        if editing.is_some() {
+            if ui.button(egui::RichText::new("Finish editing").color(GOLD).strong()).clicked() {
+                *act = Some(Act::FinishMetro);
+            }
+        } else if ui.button("Edit stops").on_hover_text("Add, insert, move and remove stations on the map; only new tunnel is dug").clicked() {
+            *act = Some(Act::EditMetro(id));
+        }
         ui.label(egui::RichText::new(format!("every {} min", l.headway)).small());
         if ui.small_button("−").on_hover_text("Trains more often").clicked() && l.headway > 2 {
             *act = Some(Act::Headway(id, l.headway - 2));
@@ -446,7 +472,10 @@ fn metro_line(ui: &mut egui::Ui, p: &UiCtx, id: MetroLineId, act: &mut Option<Ac
             ui.ctx().data_mut(|d| d.insert_temp(armed_id, !armed));
         }
     });
-    hint(ui, &format!("{} riders today · {} yesterday · {:.1} km of tunnel{} · {} runs today. Stops are changed by laying the line again (Build, Transit, Metro lines).", l.riders_today, l.riders_yesterday, l.length() / 1000.0, if l.looped { " in a loop" } else { "" }, l.runs_today));
+    hint(ui, &format!("{} riders today · {} yesterday · {:.1} km of tunnel{} · {} runs today.", l.riders_today, l.riders_yesterday, l.length() / 1000.0, if l.looped { " in a loop" } else { "" }, l.runs_today));
+    if editing.is_some() {
+        hint(ui, "On the map: click a station to add it (it goes in where it belongs; a + below picks the gap), drag a stop onto another station to move it, right-click or Delete takes it off.");
+    }
     if n == 0 {
         return;
     }
@@ -484,7 +513,7 @@ fn metro_line(ui: &mut egui::Ui, p: &UiCtx, id: MetroLineId, act: &mut Option<Ac
         v
     }).collect();
     let empty = vehicles.is_empty();
-    let track = Track { id: egui::Id::new(("metro_track", p.sim.generation, id)), color: col, nodes, legs, looped: l.looped, vehicles, editing: false, slot: None };
+    let track = Track { id: egui::Id::new(("metro_track", p.sim.generation, id)), color: col, nodes, legs, looped: l.looped, vehicles, editing: editing.is_some(), slot: editing.and_then(|e| e.slot) };
     match diagram::show(ui, &track) {
         Some(Clicked::Stop(i)) => {
             let s = l.stations[i];
@@ -492,7 +521,8 @@ fn metro_line(ui: &mut egui::Ui, p: &UiCtx, id: MetroLineId, act: &mut Option<Ac
             *act = Some(Act::SelectStation(s, Vec2::new(at.x, at.y)));
         }
         Some(Clicked::Vehicle(k)) => *act = Some(Act::SelectTrain(ids[k])),
-        _ => {}
+        Some(Clicked::Slot(i)) => *act = Some(Act::MetroSlot(i)),
+        None => {}
     }
     if empty {
         hint(ui, &format!("No train in the tunnel now (trains run {:02}:00 to midnight).", 5));
@@ -581,6 +611,24 @@ fn apply(p: &mut UiCtx, act: Option<Act>) {
             p.fly_to = Some(at);
         }
         Act::SelectTrain(t) => *p.selection = crate::tools::Selection::Metro(t),
+        Act::EditMetro(l) => crate::tools::metro_edit::start(p.tools, l),
+        Act::FinishMetro => p.flags.message = crate::tools::metro_edit::finish(w, p.tools),
+        Act::MetroSlot(i) => {
+            if let Some(e) = p.tools.metro_edit.as_mut() {
+                e.slot = if e.slot == Some(i) { None } else { Some(i) };
+                p.tools.status = match e.slot {
+                    Some(s) => format!("The next station clicked goes in as stop {}.", s + 1),
+                    None => "Stations go in where they belong again.".into(),
+                };
+            }
+        }
+        Act::TwoWay(r, on) => match w.set_bus_route_two_way(r, on) {
+            Ok(()) => {
+                p.tools.stop_sel = None;
+                p.flags.message = if on { "Two-way: the buses come back along the far kerbs.".into() } else { "A loop again: the buses run round the stops one way.".into() };
+            }
+            Err(e) => p.flags.message = e,
+        },
     }
 }
 

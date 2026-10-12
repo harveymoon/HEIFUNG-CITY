@@ -171,14 +171,62 @@ pub fn market_businesses(ui: &mut egui::Ui, p: &mut UiCtx) {
     });
     heading(ui, "Demand for new buildings");
     hint(ui, "How quickly vacant lots of each land use develop: now, and over the range.");
+    // [w1] With the sites under way: a lighter extension for the demand
+    // they already meet, so a bar that looks high but is being built for
+    // reads as such.
+    let include_id = egui::Id::new("demand_include_sites");
+    let mut include = ui.ctx().data_mut(|d| *d.get_persisted_mut_or(include_id, false));
+    if ui
+        .checkbox(&mut include, "include planned / under construction")
+        .on_hover_text("Adds a lighter extension to each bar: the demand the buildings going up there will meet once they open. A short dark bar with a long light one: the demand is already being built for.")
+        .changed()
+    {
+        ui.ctx().data_mut(|d| d.insert_persisted(include_id, include));
+    }
+    let (under, sites) = if include { (w.demand_under_way(), w.sites_by_use()) } else { ([0.0; 6], [(0, 0, 0); 6]) };
     for lu in LandUse::ALL {
         let col = super::theme::rgb_f(p.assets.palette.zone_color(lu));
-        ui.add(egui::ProgressBar::new(e.demand_for(lu)).text(lu.label()).fill(col.gamma_multiply(0.7)).desired_height(18.0).desired_width(BAR_WIDTH));
+        if include {
+            let i = lu.index();
+            demand_bar(ui, lu.label(), e.demand_for(lu), under[i], sites[i], col);
+        } else {
+            ui.add(egui::ProgressBar::new(e.demand_for(lu)).text(lu.label()).fill(col.gamma_multiply(0.7)).desired_height(18.0).desired_width(BAR_WIDTH));
+        }
+    }
+    if include {
+        hint(ui, "Dark: demand still open. Light: demand the sites going up already meet. Venues, civic buildings and parks follow the population, so their sites add no light part.");
     }
     ui.add_space(6.0);
     let series: Vec<Series> = LandUse::ALL.iter().map(|&lu| Series::new(lu.label(), super::theme::rgb_f(p.assets.palette.zone_color(lu)), pane::col(&days, |d| d.demand[lu.index()] * 100.0))).collect();
     pane::line_chart(ui, &labels, &series, 120.0, &|x| format!("{x:.0}%"));
     legend(ui, &series);
+}
+
+/// [w1] A demand bar with the sites under way: the open demand dark, the
+/// demand the sites already meet a lighter extension after it, and the
+/// sites in the text.
+fn demand_bar(ui: &mut egui::Ui, label: &str, demand: f32, building: f32, sites: (u32, u32, u32), col: Color32) {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(BAR_WIDTH, 18.0), egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 3.0, ui.visuals().extreme_bg_color);
+    let x = |t: f32| rect.left() + rect.width() * t.clamp(0.0, 1.0);
+    let dark = egui::Rect::from_min_max(rect.min, egui::pos2(x(demand), rect.bottom()));
+    painter.rect_filled(dark, 3.0, col.gamma_multiply(0.7));
+    if building > 0.0 {
+        let light = egui::Rect::from_min_max(egui::pos2(x(demand), rect.top()), egui::pos2(x(demand + building), rect.bottom()));
+        painter.rect_filled(light, 0.0, col.gamma_multiply(0.28));
+        painter.rect_stroke(light, 0.0, egui::Stroke::new(1.0, col.gamma_multiply(0.6)), egui::StrokeKind::Inside);
+    }
+    let (n, homes, jobs) = sites;
+    let what = match (homes, jobs) {
+        (0, 0) => String::new(),
+        (h, 0) => format!(", {h} homes"),
+        (0, j) => format!(", {j} jobs"),
+        (h, j) => format!(", {h} homes, {j} jobs"),
+    };
+    let text = if n > 0 { format!("{label}  ·  {:.0}%  ·  {n} site{} going up{what}", demand * 100.0, if n == 1 { "" } else { "s" }) } else { format!("{label}  ·  {:.0}%", demand * 100.0) };
+    painter.text(rect.left_center() + egui::vec2(6.0, 0.0), egui::Align2::LEFT_CENTER, text, egui::TextStyle::Body.resolve(ui.style()), ui.visuals().text_color());
+    resp.on_hover_text(format!("Open demand {:.0}%; the sites going up meet about {:.0}% more.", demand * 100.0, building * 100.0));
 }
 
 /// Market, Trade: what the city's businesses buy from and sell out of town.
