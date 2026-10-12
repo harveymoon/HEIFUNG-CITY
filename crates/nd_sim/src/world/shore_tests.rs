@@ -431,3 +431,39 @@ fn a_beach_is_grounds_a_player_path_can_join() {
     assert_eq!(g.kind, crate::walk::GroundsKind::Beach);
     assert!(!g.gates.is_empty(), "with gates on its edge for the Path tool");
 }
+
+/// [beaches] (H2) Two public beaches side by side are one beach: one name,
+/// one state (its sand together), the sand planned over the seam, one
+/// lifeguard's anchor; the lot alone is still its own beach.
+#[test]
+fn beaches_side_by_side_merge_into_one() {
+    let mut w = World::new(WorldConfig::test_town());
+    w.add_road(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
+    let zone = w.zones.insert(Zone { polygon: vec![Vec2::new(-10.0, 30.0), Vec2::new(200.0, 30.0), Vec2::new(200.0, 90.0), Vec2::new(-10.0, 90.0)], land_use: LandUse::Park });
+    let beach = |x0: f32, x1: f32, w: &mut World| {
+        let poly = vec![Vec2::new(x0, 40.0), Vec2::new(x1, 40.0), Vec2::new(x1, 80.0), Vec2::new(x0, 80.0)];
+        let mut l = make_lot(zone, LandUse::Park, poly, Vec2::new((x0 + x1) * 0.5, 60.0), &w.roads).unwrap();
+        l.landlocked = true;
+        l.shore = LotShore { frontage: x1 - x0, seaward: Vec2::Y, beach: true };
+        w.lots.insert(l)
+    };
+    let a = beach(0.0, 30.0, &mut w);
+    let b = beach(30.0, 60.0, &mut w);
+    let lone = beach(120.0, 150.0, &mut w);
+    w.rebuild_walk();
+    w.hourly_shore();
+    assert_eq!(w.shore.beaches.len(), 2, "two beaches: the pair and the lone one");
+    let (ba, sa) = w.beach_on(a).expect("a beach");
+    let (bb, _) = w.beach_on(b).expect("a beach");
+    assert_eq!(ba, bb, "one state for the pair");
+    assert_eq!(sa.lots.len(), 2);
+    assert!((sa.area - 2400.0).abs() < 50.0, "{}", sa.area);
+    let (ia, ib) = (w.lots[a].building.unwrap(), w.lots[b].building.unwrap());
+    assert_eq!(w.buildings[ia].name, w.buildings[ib].name, "one name");
+    assert_ne!(w.beach_on(lone).unwrap().0, ba);
+    // Planned as one: one anchor, the seam shared.
+    let (pa, pb) = (w.lots[a].park.as_ref().unwrap(), w.lots[b].park.as_ref().unwrap());
+    assert_eq!(pa.cluster_lots, 2);
+    assert!(pa.anchor != pb.anchor, "one anchor");
+    assert!(!pa.seams.is_empty() && !pb.seams.is_empty());
+}
