@@ -117,17 +117,25 @@ pub(crate) fn on_carriageway(roads: &RoadNetwork, heights: &[f32], inner: &[Vec<
     junction::on_carriageway(roads, heights, inner, p, z, 0.05)
 }
 
-/// Vertex counts of every part: where the next piece of drawing starts.
+/// Vertex counts of every part, then the lamp count: where the next piece
+/// of drawing starts.
 pub(crate) fn marks(g: &Geometry) -> Vec<usize> {
-    g.parts.iter().map(|m| m.positions.len()).collect()
+    g.parts.iter().map(|m| m.positions.len()).chain(std::iter::once(g.lamps.len())).collect()
 }
 
-/// Raise every vertex drawn since `from` by `h` of its (x, z).
+/// Raise every vertex drawn since `from` by `h` of its (x, z), and the
+/// lamp heads recorded since (the renderer hangs lights and draws pools
+/// at them: left at the flat height, a lamp on a hill lit nothing).
 pub(crate) fn lift_since(g: &mut Geometry, from: &[usize], h: impl Fn(Vec2) -> f32) {
+    let parts = g.parts.len();
     for (k, m) in g.parts.iter_mut().enumerate() {
         let start = from.get(k).copied().unwrap_or(0);
         for p in m.positions.iter_mut().skip(start) {
             p[1] += h(Vec2::new(p[0], p[2]));
         }
+    }
+    let start = from.get(parts).copied().unwrap_or(g.lamps.len());
+    for l in g.lamps.iter_mut().skip(start) {
+        l.y += h(Vec2::new(l.x, l.z));
     }
 }

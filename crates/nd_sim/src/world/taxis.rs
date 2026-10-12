@@ -553,7 +553,7 @@ impl World {
         c.activity = Activity::Riding { bus: car };
         c.inside = None;
         if drunk || night {
-            c.remember(tick, if drunk { format!("Too far gone to drive. Took a {name} cab home.") } else { format!("Late. Hailed a {name} cab.") });
+            c.remember(tick, if drunk { format!("Too far gone to drive. Took {} cab home.", crate::names::a(&name)) } else { format!("Late. Hailed {} cab.", crate::names::a(&name)) });
         }
         if drunk {
             self.taxis.stats.drunk_rides_today += 1;

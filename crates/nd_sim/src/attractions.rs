@@ -113,7 +113,7 @@ pub fn plan_pier(poly: &[Vec2], land: &Landscape) -> Result<PierDeck, String> {
     }
     let Some((_, shore)) = best else {
         return Err(match other {
-            Some(k) => format!("a pier goes on the sea shore, not by a {}", k.label()),
+            Some(k) => format!("a pier goes on the sea shore, not by {}", crate::names::a(k.label())),
             None => "a pier goes on the sea shore: this site does not reach the sea".into(),
         });
     };

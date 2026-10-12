@@ -47,7 +47,7 @@ pub fn metro_entrance(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // The pylon by the kerb: the M that says "metro" from down the street.
     let pylon = clamp_into(&c.poly, Vec2::new(lo.x + w * 0.2, lo.y + 1.2));
-    metro_pylon(g, f, pylon, 4.6, pal);
+    metro_pylon(g, f, pylon, 5.6, pal);
     // Benches, a bin, bike racks and trees where there is room.
     let face = c.front_face(&offset_poly(&c.lot_poly, 0.3));
     for s in [-1.0f32, 1.0] {
@@ -151,11 +151,22 @@ fn pick_glass(pal: &crate::palette::Palette) -> [f32; 3] {
 
 /// A tall dark pylon with the lit M in a ring at the top.
 pub fn metro_pylon(g: &mut Geometry, f: &Frame, p: Vec2, h: f32, pal: &crate::palette::Palette) {
+    // [w1-render] A lit cube with the M on all four sides, big enough to
+    // find an entrance from the usual height over the city (it was a
+    // 1.3 m board, two-sided, a speck from more than a block away).
+    let k = 2.0;
+    let half = k * 0.5;
     f.bx(g, Panel, p.x, h * 0.5, p.y, Vec3::new(0.5, h, 0.5), mul(CHARCOAL, 1.2));
-    f.bx(g, Panel, p.x, h + 0.55, p.y, Vec3::new(1.3, 1.3, 0.3), DARK);
-    for (s, n) in [(1.0f32, Vec2::new(0.0, -1.0)), (-1.0, Vec2::new(0.0, 1.0))] {
-        let face = Face::new(p + Vec2::new(-0.6 * s, 0.0), p + Vec2::new(0.6 * s, 0.0), n);
-        neon_text(g, f, &face, "M", 0.0, h + 0.55, 0.8, 0.17, METRO_CYAN);
+    f.bx(g, Panel, p.x, h + half, p.y, Vec3::new(k, k, k), DARK);
+    for n in [Vec2::new(0.0, -1.0), Vec2::new(0.0, 1.0), Vec2::new(-1.0, 0.0), Vec2::new(1.0, 0.0)] {
+        let right = Vec2::new(-n.y, n.x);
+        let c = p + n * half;
+        let face = Face::new(c - right * (half - 0.1), c + right * (half - 0.1), n);
+        neon_text(g, f, &face, "M", 0.0, h + half, k * 0.62, 0.08, METRO_CYAN);
+    }
+    // Cyan rims top and bottom, and the lamp under the cube.
+    for y in [h + 0.06, h + k - 0.06] {
+        f.bx(g, Glow, p.x, y, p.y, Vec3::new(k + 0.1, 0.12, k + 0.1), mul(METRO_CYAN, 0.8));
     }
     f.bx(g, Glow, p.x, h - 0.4, p.y, Vec3::new(0.52, 0.18, 0.52), mul(pal.lamp, 0.8));
 }

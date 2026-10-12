@@ -227,6 +227,42 @@ pub fn name_misfits(name: &str, kind: BusinessKind) -> bool {
     !fits
 }
 
+/// The indefinite article for `word` by its sound: "an" before a vowel
+/// sound ("an observatory", "an hour", "an 8-floor block", "an EV"), "a"
+/// otherwise ("a university", "a one-way street", "a 12-floor block").
+pub fn article(word: &str) -> &'static str {
+    let w = word.trim_start();
+    let lower = w.to_lowercase();
+    let first = lower.chars().next();
+    // Numbers: eight, eleven, eighteen, eighty..., eleven thousand...
+    if first.is_some_and(|c| c.is_ascii_digit()) {
+        let digits: String = lower.chars().take_while(|c| c.is_ascii_digit() || *c == ',').filter(|c| *c != ',').collect();
+        let an = digits.starts_with('8') || ((digits.starts_with("11") || digits.starts_with("18")) && digits.len() % 3 == 2);
+        return if an { "an" } else { "a" };
+    }
+    // Initialisms said letter by letter: "an EV", "an HQ", "a TV".
+    let token: String = w.chars().take_while(|c| c.is_alphanumeric()).collect();
+    if token.len() >= 2 && token.chars().all(|c| c.is_ascii_uppercase()) {
+        return if token.starts_with(['A', 'E', 'F', 'H', 'I', 'L', 'M', 'N', 'O', 'R', 'S', 'X']) { "an" } else { "a" };
+    }
+    // Silent h, and vowels said as a consonant.
+    const AN: [&str; 4] = ["hour", "honest", "honour", "heir"];
+    const A: [&str; 9] = ["uni", "use", "usu", "uti", "ure", "eu", "one", "once", "ewe"];
+    if AN.iter().any(|p| lower.starts_with(p)) {
+        return "an";
+    }
+    if A.iter().any(|p| lower.starts_with(p)) {
+        return "a";
+    }
+    if first.is_some_and(|c| "aeiou".contains(c)) { "an" } else { "a" }
+}
+
+/// `word` with its indefinite article: "an observatory", "a park".
+pub fn a(word: impl AsRef<str>) -> String {
+    let word = word.as_ref();
+    format!("{} {word}", article(word))
+}
+
 #[cfg(test)]
 mod business_name_tests {
     use super::*;
@@ -248,5 +284,13 @@ mod business_name_tests {
         for k in BusinessKind::ALL {
             assert_eq!(business_name(k, 7), business_name(k, 7));
         }
+    }
+
+    #[test]
+    fn articles_follow_the_sound() {
+        for (w, art) in [("observatory", "an"), ("aquarium", "an"), ("opera house", "an"), ("park", "a"), ("university", "a"), ("hour", "an"), ("hospital", "a"), ("one-way street", "a"), ("8-floor block", "an"), ("18-floor block", "an"), ("80-floor block", "an"), ("12-floor block", "a"), ("110-lot park", "a"), ("EV", "an"), ("HQ", "an"), ("TV", "a"), ("Observatory", "an"), ("", "a")] {
+            assert_eq!(article(w), art, "{w}");
+        }
+        assert_eq!(a("observatory"), "an observatory");
     }
 }

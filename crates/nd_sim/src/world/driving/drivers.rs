@@ -157,7 +157,7 @@ impl World {
             Some(p) => format!("{}'s {body}", p.name),
             None if c.siren || self.services.unit_of_car(id).is_some() => format!("emergency {body}"),
             // [moto] A rider from out of town in a moto pack.
-            None if c.drive.gang.is_some_and(|g| g.pack) => format!("a {body} with the moto pack"),
+            None if c.drive.gang.is_some_and(|g| g.pack) => format!("{} with the moto pack", crate::names::a(&body)),
             None => {
                 let an = if body.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
                 match c.errand {

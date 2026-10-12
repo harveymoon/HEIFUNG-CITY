@@ -156,7 +156,7 @@ impl World {
                     bz.deals += 1;
                 }
                 self.vehicles.stats.bought_today += 1;
-                self.citizens[id].remember(tick, format!("Bought a {} at {name}.", model_label(&model)));
+                self.citizens[id].remember(tick, format!("Bought {} at {name}.", crate::names::a(&model_label(&model))));
                 return Some(price);
             }
         }
@@ -171,7 +171,7 @@ impl World {
         c.owned = Some(vid);
         c.errand = Errand::Deliver;
         self.vehicles.stats.bought_today += 1;
-        self.citizens[id].remember(tick, format!("Ordered a {} from out of town. It's being driven in.", model_label(&model)));
+        self.citizens[id].remember(tick, format!("Ordered {} from out of town. It's being driven in.", crate::names::a(&model_label(&model))));
         Some(price)
     }
 

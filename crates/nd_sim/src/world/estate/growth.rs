@@ -189,7 +189,7 @@ impl World {
         s.buyouts_total += 1;
         s.buyouts_today += 1;
         let (tick, pos) = (self.clock.tick, self.lots.get(lot).map(|l| l.center).unwrap_or_default());
-        self.skyline.push_news(tick, format!("{dev_name} buys {} plots round {name} for a {floors}-floor block", ours.len()), pos, Some(bid));
+        self.skyline.push_news(tick, format!("{dev_name} buys {} plots round {name} for {}-floor block", ours.len(), crate::names::a(&floors.to_string())), pos, Some(bid));
         true
     }
 
