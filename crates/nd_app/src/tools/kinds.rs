@@ -208,4 +208,4 @@ impl DrawMethod {
 /// has its own lanes (`ToolState::pick_type`). The old presets (Lane,
 /// Avenue, Ramp, Tunnel...) are a type with lanes or a level set, still
 /// taken by the remote API's `preset`.
-pub const ROAD_TYPES: [&str; 4] = ["Path", "Street", "One-way", "Highway"];
+pub const ROAD_TYPES: [&str; 4] = ["Path", "Street", "On-ramp", "Highway"];

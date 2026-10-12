@@ -174,7 +174,7 @@ mod tests {
     #[test]
     fn the_summary_counts_what_the_project_ends_up_changing() {
         let mut p = Project::default();
-        let road = |x: f32| Gesture::Road { points: vec![Vec2::new(x, 0.0), Vec2::new(x, 100.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() };
+        let road = |x: f32| Gesture::Road { points: vec![Vec2::new(x, 0.0), Vec2::new(x, 100.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None };
         p.push(GestureId(1), Some(road(0.0)));
         p.push(GestureId(1), Some(road(5.0)));
         p.push(GestureId(2), Some(road(50.0)));

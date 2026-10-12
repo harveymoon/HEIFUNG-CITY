@@ -34,14 +34,14 @@ pub struct RoadPreview {
 /// the hologram and conflict colours, `alpha` its opacity.
 #[allow(clippy::too_many_arguments)]
 pub fn road_preview(world: &World, points: &[Vec2], levels: &[f32], lanes_fwd: u8, lanes_bwd: u8, kind: RoadKind, palette: &Palette, steep: &[usize], tint: [f32; 3], warn: [f32; 3], alpha: f32) -> RoadPreview {
-    road_preview_with(world, points, levels, lanes_fwd, lanes_bwd, kind, palette, steep, tint, warn, alpha, None)
+    road_preview_with(world, points, levels, lanes_fwd, lanes_bwd, kind, None, palette, steep, tint, warn, alpha, None)
 }
 
 /// [tools] `road_preview` with the columns where the pillar plan puts them
 /// (`World::road_pillar_plan`) instead of evenly spaced, and its gaps (no
 /// room for a column) tinted as conflicts.
 #[allow(clippy::too_many_arguments)]
-pub fn road_preview_with(world: &World, points: &[Vec2], levels: &[f32], lanes_fwd: u8, lanes_bwd: u8, kind: RoadKind, palette: &Palette, steep: &[usize], tint: [f32; 3], warn: [f32; 3], alpha: f32, pillars: Option<&nd_sim::pillars::PillarPlan>) -> RoadPreview {
+pub fn road_preview_with(world: &World, points: &[Vec2], levels: &[f32], lanes_fwd: u8, lanes_bwd: u8, kind: RoadKind, car_only: Option<bool>, palette: &Palette, steep: &[usize], tint: [f32; 3], warn: [f32; 3], alpha: f32, pillars: Option<&nd_sim::pillars::PillarPlan>) -> RoadPreview {
     let mut out = RoadPreview::default();
     if points.len() < 2 {
         return out;
@@ -58,8 +58,8 @@ pub fn road_preview_with(world: &World, points: &[Vec2], levels: &[f32], lanes_f
     let level = |i: usize| levels.get(i).copied().unwrap_or(0.0);
     // Lay it into a copy of the network to see where it joins and crosses.
     let mut net = world.roads.clone();
-    let made = net.add_polyline_levels(points, levels, lanes_fwd, lanes_bwd, kind);
-    let class = nd_sim::roads::WayClass::laying(kind, lanes_fwd, lanes_bwd, false);
+    let made = net.add_polyline_use(points, levels, lanes_fwd, lanes_bwd, kind, car_only);
+    let class = nd_sim::roads::WayClass::laying_use(kind, lanes_fwd, lanes_bwd, false, car_only);
     let separated = crossings_near(&net, &made);
     for &sid in &made {
         let s = net.segment(sid);
@@ -83,7 +83,7 @@ pub fn road_preview_with(world: &World, points: &[Vec2], levels: &[f32], lanes_f
         let (pa, pb) = (net.node(s.a).pos, net.node(s.b).pos);
         let (la, lb) = (net.node(s.a).level, net.node(s.b).level);
         let (f, b) = if s.lanes_fwd + s.lanes_bwd > 0 || kind != RoadKind::Street { (s.lanes_fwd, s.lanes_bwd) } else { (lanes_fwd, lanes_bwd) };
-        mini.add_polyline_levels(&[pa, pb], &[la, lb], f, b, s.kind);
+        mini.add_polyline_use(&[pa, pb], &[la, lb], f, b, s.kind, s.car_only);
     }
     // A slip road is one for what it joins: alone, a ramp onto a highway is
     // just a one-way street, and was drawn with kerbs and pavements, far
@@ -283,7 +283,7 @@ mod tests {
         // Something stands up at deck height over the crossing.
         assert!(pv.mesh.positions.iter().any(|p| (p[0] - 60.0).abs() < 4.0 && p[2].abs() < 4.0 && p[1] > 7.5));
         // Built, the road stands where the preview drew it.
-        w.add_gesture(Gesture::Road { points: pts.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: levels.to_vec() });
+        w.add_gesture(Gesture::Road { points: pts.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: levels.to_vec(), car_only: None });
         w.implement();
         for (i, p) in pts.iter().enumerate() {
             let n = w.roads.node_near(*p, 0.5).unwrap();

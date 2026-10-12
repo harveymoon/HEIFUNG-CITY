@@ -86,25 +86,39 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
         hint(ui, help::ROAD_INTERCHANGE);
         return;
     }
-    // [fix/roads-tools] 1. The road type (also picked in the Build
-    // window), 2. its lanes and level, 3. how it is drawn.
+    // [w1-roads] 1. A preset (also picked in the Build window) only sets
+    // the dials below; it lights while the dials are just what it sets.
+    // 2. Use, lanes and level are set on their own: the lanes never
+    // change the Use (a 3-lane one-way Mixed street keeps its pavements).
     if tools.kind != RoadKind::Rail {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("1  Type").small().strong());
-            for ty in crate::tools::ROAD_TYPES {
-                if ui.selectable_label(tools.road_type() == ty, ty).on_hover_text(preset_hint(ty)).clicked() {
-                    tools.pick_type(ty);
+            ui.label(egui::RichText::new("1  Preset").small().strong());
+            let ty = tools.road_type();
+            for t in crate::tools::ROAD_TYPES {
+                let Some((pk, pf, pb, _)) = crate::tools::preset_values(t) else { continue };
+                if icons::selectable(ui, ty == t, t, |p, r, c| icons::road(p, r, pk, pf, pb, c)).on_hover_text(preset_hint(t)).clicked() {
+                    tools.pick_type(t);
+                }
+            }
+            if ty == "Custom" {
+                ui.label(egui::RichText::new("custom").small().italics());
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("2  Use").small().strong());
+            let now = tools.road_use();
+            for u in nd_sim::roads::RoadUse::ALL {
+                if ui.selectable_label(now == u, u.label()).on_hover_text(use_hint(u)).clicked() && now != u {
+                    tools.set_use(u);
                 }
             }
         });
     }
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("2  Lanes").small().strong());
-        let ty = tools.road_type();
-        lanes_row(ui, ty, &mut tools.lanes_fwd, &mut tools.lanes_bwd);
-    });
-    if tools.road_type() == "Street" && tools.lanes_fwd != tools.lanes_bwd {
-        ui.label(egui::RichText::new(format!("uneven: {} forward, {} back", tools.lanes_fwd, tools.lanes_bwd)).small().weak());
+    if tools.kind == RoadKind::Street {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("    Lanes").small().strong());
+            lanes_dials(ui, &mut tools.lanes_fwd, &mut tools.lanes_bwd);
+        });
     }
     // The level the next point goes down at; deep enough, a tunnel.
     ui.horizontal(|ui| {
@@ -177,45 +191,41 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
     hint(ui, help::tool_hint(Tool::Road));
 }
 
-/// [w1-roads] The lanes a road type offers (the Road tool's step 2 and
-/// the Edit tool's upgrade panel). True when a choice was clicked.
-fn lanes_row(ui: &mut egui::Ui, ty: &str, f: &mut u8, b: &mut u8) -> bool {
+/// [w1-roads] The lanes forward and back, each 0 to 4 (one at least):
+/// set on their own, they never change what the road is for. True when
+/// changed.
+fn lanes_dials(ui: &mut egui::Ui, f: &mut u8, b: &mut u8) -> bool {
     let mut changed = false;
-    match ty {
-        "Street" => {
-            ui.label(egui::RichText::new("each way").small());
-            for (n, name) in [(1u8, "1 · lane"), (2, "2 · street"), (3, "3 · avenue"), (4, "4 · boulevard")] {
-                if ui.selectable_label(*f == n && *b == n, name).clicked() {
-                    (*f, *b) = (n, n);
-                    changed = true;
-                }
+    for (label, mine, other) in [("forward", 0usize, 1usize), ("back", 1, 0)] {
+        ui.label(egui::RichText::new(label).small());
+        for n in 0..=4u8 {
+            let mut v = [*f, *b];
+            if ui.selectable_label(v[mine] == n, format!("{n}")).clicked() && v[mine] != n && (n > 0 || v[other] > 0) {
+                v[mine] = n;
+                (*f, *b) = (v[0], v[1]);
+                changed = true;
             }
         }
-        "One-way" => {
-            for (n, name, tip) in [(1u8, "1 · highway ramp", "One lane one way: the slip road onto or off a highway (or any one-way link)"), (2, "2", "Two lanes one way")] {
-                if ui.selectable_label(*f + *b == n, name).on_hover_text(tip).clicked() {
-                    // Kept running the way it does.
-                    (*f, *b) = if *f == 0 && *b > 0 { (0, n) } else { (n, 0) };
-                    changed = true;
-                }
-            }
-        }
-        "Highway" => {
-            ui.label(egui::RichText::new("one way").small());
-            for n in [3u8, 4] {
-                if ui.selectable_label(*f + *b == n, format!("{n}")).clicked() {
-                    // Kept running the way it does.
-                    (*f, *b) = if *f == 0 && *b > 0 { (0, n) } else { (n, 0) };
-                    changed = true;
-                }
-            }
-            ui.label(egui::RichText::new("draw one each way").small().weak());
-        }
-        _ => {
-            ui.label(egui::RichText::new("walkers and bikes").small().weak());
+        if mine == 0 {
+            ui.separator();
         }
     }
+    let note = match (*f, *b) {
+        (x, y) if x == y => format!("{x} each way"),
+        (x, 0) | (0, x) => format!("one-way, {x} lane{}", if x == 1 { "" } else { "s" }),
+        (x, y) => format!("uneven: {x} + {y}"),
+    };
+    ui.label(egui::RichText::new(note).small().weak());
     changed
+}
+
+/// [w1-roads] What each Use means.
+pub fn use_hint(u: nd_sim::roads::RoadUse) -> &'static str {
+    match u {
+        nd_sim::roads::RoadUse::Pedestrian => "Walkers and bikes only: a footpath",
+        nd_sim::roads::RoadUse::Mixed => "Cars and walkers: pavements, street speed, lots along it (any number of lanes, one-way or two-way)",
+        nd_sim::roads::RoadUse::CarOnly => "Cars only: no walkers and no pavements, highway speed, nothing built along it; meets other roads by its ends or ramps",
+    }
 }
 
 fn zone(ui: &mut egui::Ui, sim: &Sim, tools: &mut ToolState, assets: &GameAssets) {
@@ -300,34 +310,57 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
     hint(ui, help::tool_hint(Tool::Edit));
     let Some(id) = tools.selected_gesture else { return };
     match plan.sync(&sim.world).gestures.get(&id).cloned() {
-        Some(Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind, mut elevation }) => {
+        Some(Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind, mut elevation, car_only }) => {
             section(ui, "ROAD UPGRADE");
             let (mut f, mut b, mut c, mut k) = (lanes_fwd, lanes_bwd, curved, kind);
             let mut changed = false;
-            // [w1-roads] The Road tool's steps: 1 type, 2 lanes and level,
-            // 3 how it runs (the old presets are gone from here).
-            let ty = crate::tools::road_type_of(k, f, b);
+            // [w1-roads] As the Road tool: presets set the dials, the Use
+            // is its own (a road made car-only by accident gets its
+            // pavements back here), and the lanes never change the Use.
+            // A road from before the Use was stored keeps the use its
+            // lanes gave it until it is changed here.
+            let mut co = nd_sim::roads::RoadUse::of(k, f, b, car_only) == nd_sim::roads::RoadUse::CarOnly && k == RoadKind::Street;
+            let ty = crate::tools::road_type_of(k, f, b, co);
             if k != RoadKind::Rail {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("1  Type").small().strong());
+                    ui.label(egui::RichText::new("1  Preset").small().strong());
                     for t in crate::tools::ROAD_TYPES {
-                        if ui.selectable_label(ty == t, t).on_hover_text(preset_hint(t)).clicked() && ty != t {
-                            (k, f, b) = crate::tools::with_type(t, k, f, b);
+                        let Some((pk, pf, pb, _)) = crate::tools::preset_values(t) else { continue };
+                        if icons::selectable(ui, ty == t, t, |p, r, c| icons::road(p, r, pk, pf, pb, c)).on_hover_text(preset_hint(t)).clicked() && ty != t {
+                            if let Some((nk, nf, nb, nc)) = crate::tools::preset_values(t) {
+                                (k, co) = (nk, nc);
+                                if nk == RoadKind::Street {
+                                    (f, b) = (nf, nb);
+                                }
+                                changed = true;
+                            }
+                        }
+                    }
+                    if ty == "Custom" {
+                        ui.label(egui::RichText::new("custom").small().italics());
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("2  Use").small().strong());
+                    let now = crate::tools::road_use_of(k, co);
+                    for u in nd_sim::roads::RoadUse::ALL {
+                        if ui.selectable_label(now == u, u.label()).on_hover_text(use_hint(u)).clicked() && now != u {
+                            let (nk, nf, nb, nc) = crate::tools::with_use(u, k, f, b);
+                            (k, f, b, co) = (nk, nf, nb, nc);
                             changed = true;
                         }
                     }
                 });
             }
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("2  Lanes").small().strong());
-                changed |= lanes_row(ui, crate::tools::road_type_of(k, f, b), &mut f, &mut b);
-                if k == RoadKind::Street && f != b && ui.small_button("Flip direction").on_hover_text("Traffic runs the other way").clicked() {
-                    std::mem::swap(&mut f, &mut b);
-                    changed = true;
-                }
-            });
-            if k == RoadKind::Street && f > 0 && b > 0 && f != b {
-                ui.label(egui::RichText::new(format!("uneven: {f} forward, {b} back")).small().weak());
+            if k == RoadKind::Street {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("    Lanes").small().strong());
+                    changed |= lanes_dials(ui, &mut f, &mut b);
+                    if f != b && ui.small_button("Flip direction").on_hover_text("Traffic runs the other way").clicked() {
+                        std::mem::swap(&mut f, &mut b);
+                        changed = true;
+                    }
+                });
             }
             // The whole road up or down a step (ends on other roads too).
             ui.horizontal(|ui| {
@@ -378,7 +411,9 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
                 if elevation.iter().all(|l| *l == 0.0) {
                     elevation.clear();
                 }
-                sim.world.set_gesture(id, Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved: c, kind: k, elevation }, true);
+                // [w1-roads] Once changed here the use is stored on the road.
+                let car_only = if k == RoadKind::Street { Some(co) } else { None };
+                sim.world.set_gesture(id, Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved: c, kind: k, elevation, car_only }, true);
                 tools.status = "Road changed. Ctrl+Enter implements; buildings along it stay.".into();
             }
         }
@@ -715,19 +750,20 @@ pub fn road_label(tools: &ToolState) -> String {
         return format!("Interchange (diamond), cross street {} + {} lanes", tools.lanes_fwd, tools.lanes_bwd);
     }
     // [fix/roads-tools] The type, its lanes, and the level when off the ground.
-    let lanes = match tools.road_type() {
-        "Street" if tools.lanes_fwd == tools.lanes_bwd => {
-            let name = ["", " (lane)", " (street)", " (avenue)", " (boulevard)"].get(tools.lanes_fwd as usize).copied().unwrap_or("");
-            format!(", {} lane{} each way{name}", tools.lanes_fwd, if tools.lanes_fwd == 1 { "" } else { "s" })
+    // [w1-roads] And its Use.
+    let lanes = match (tools.kind, tools.lanes_fwd, tools.lanes_bwd) {
+        (RoadKind::Street, f, b) if f == b => {
+            let name = ["", " (lane)", " (street)", " (avenue)", " (boulevard)"].get(f as usize).copied().unwrap_or("");
+            format!(", {f} lane{} each way{name}", if f == 1 { "" } else { "s" })
         }
-        "Street" => format!(", {} + {} lanes", tools.lanes_fwd, tools.lanes_bwd),
-        "One-way" if tools.lanes_fwd + tools.lanes_bwd == 1 => ", 1 lane (highway ramp)".into(),
-        "One-way" | "Highway" => format!(", {} lanes", tools.lanes_fwd + tools.lanes_bwd),
+        (RoadKind::Street, f, 0) | (RoadKind::Street, 0, f) => format!(", one-way, {f} lane{}", if f == 1 { "" } else { "s" }),
+        (RoadKind::Street, f, b) => format!(", {f} + {b} lanes"),
         _ => String::new(),
     };
     let level = if tools.elevation != 0.0 { format!(", {}", crate::tools::elevation_label(tools.elevation)) } else { String::new() };
     let ty = if tools.kind == RoadKind::Rail { "Rail track" } else { tools.road_type() };
-    format!("{ty}{lanes}{level}")
+    let usage = if tools.kind == RoadKind::Street { format!(" · {}", tools.road_use().label().to_lowercase()) } else { String::new() };
+    format!("{ty}{usage}{lanes}{level}")
 }
 
 pub fn level_note(level: f32) -> Option<(String, bool)> {
@@ -745,14 +781,16 @@ pub fn level_note(level: f32) -> Option<(String, bool)> {
 pub fn preset_hint(label: &str) -> &'static str {
     match label {
         "Tunnel" => "A road 8 m under the ground: passes under streets, water and buildings without taking them; joins other tunnels; start or end it on a street to make a portal ramp. Switches to the underground view",
-        "Path" => "Footpath: walkers and bikes only",
+        "Path" => "Preset: a footpath, walkers and bikes only",
         "Rail" => "Railway track: trains only, never fronts lots",
         "Lane" => "One lane each way",
-        "Street" => "A two-way street: one to four lanes each way (a lane, a street, an avenue, a boulevard); fronts lots, has pavements",
+        "Street" => "Preset: two lanes each way, cars and walkers (pavements, lots along it)",
         "Avenue" => "Three lanes each way",
-        "One-way" => "A one-way road of one or two lanes; at one lane it is a highway ramp (the slip road on or off a highway)",
+        "One-way" => "A one-way street",
+        "On-ramp" => "Preset: one lane, one way, cars only (a slip road on or off a highway)",
+        "Custom" => "The dials match no preset",
         "Ramp" => "One lane, one direction: slip roads onto a highway",
-        "Highway" => "One carriageway of three or four lanes, one way: 25 m/s, no frontage, grade-separated; draw one each way and join them with ramps",
+        "Highway" => "Preset: one carriageway of four lanes, one way, cars only: 25 m/s, no frontage, grade-separated; draw one each way and join them with ramps",
         "Roundabout" => "A one-way ring with give-way entries: click to stamp it over roads and junctions",
         "Interchange" => "A diamond interchange: click across the highway; a street under it, four ramps, a signalled junction each side",
         _ => "",

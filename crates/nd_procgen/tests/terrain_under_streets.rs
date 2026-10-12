@@ -91,9 +91,9 @@ fn terrain_stays_under_every_ground_street() {
     let side = Vec2::new(-dir.y, dir.x);
     // A six-lane street over the crest, a cross street at each end, and
     // lots both sides.
-    w.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 3, lanes_bwd: 3, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+    w.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 3, lanes_bwd: 3, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
     for e in [a, b] {
-        w.add_gesture(Gesture::Road { points: vec![e - side * 80.0, e + side * 80.0], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        w.add_gesture(Gesture::Road { points: vec![e - side * 80.0, e + side * 80.0], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
     }
     for s in [-1.0f32, 1.0] {
         let (n0, n1) = (side * s * 16.0, side * s * 75.0);

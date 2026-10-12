@@ -62,9 +62,9 @@ fn elevated_world() -> World {
     let mut w = World::new(WorldConfig { landscape: nd_sim::landscape::LandscapeParams::flat(), ..WorldConfig::default() });
     w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
     w.add_road(&[Vec2::new(0.0, -300.0), Vec2::new(0.0, 300.0)], 1, 1);
-    w.add_gesture(Gesture::Road { points: vec![Vec2::new(60.0, -300.0), Vec2::new(60.0, -150.0), Vec2::new(60.0, 150.0), Vec2::new(60.0, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![0.0, 8.0, 8.0, 0.0] });
-    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-150.0, -300.0), Vec2::new(-150.0, -150.0), Vec2::new(-150.0, 150.0), Vec2::new(-150.0, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![0.0, -12.0, -12.0, 0.0] });
-    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-300.0, 200.0), Vec2::new(300.0, 200.0)], lanes_fwd: 3, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: vec![9.0, 9.0] });
+    w.add_gesture(Gesture::Road { points: vec![Vec2::new(60.0, -300.0), Vec2::new(60.0, -150.0), Vec2::new(60.0, 150.0), Vec2::new(60.0, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![0.0, 8.0, 8.0, 0.0], car_only: None });
+    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-150.0, -300.0), Vec2::new(-150.0, -150.0), Vec2::new(-150.0, 150.0), Vec2::new(-150.0, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![0.0, -12.0, -12.0, 0.0], car_only: None });
+    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-300.0, 200.0), Vec2::new(300.0, 200.0)], lanes_fwd: 3, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: vec![9.0, 9.0], car_only: None });
     w.add_gesture(Gesture::Roundabout { center: Vec2::new(0.0, 0.0), radius: 30.0, lanes: 2 });
     w.add_gesture(Gesture::Roundabout { center: Vec2::new(200.0, -200.0), radius: 8.0, lanes: 1 });
     w.implement();

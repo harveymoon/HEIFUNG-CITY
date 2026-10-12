@@ -286,9 +286,9 @@ pub fn rv_json(w: &World, seed: u64) -> Value {
 
 pub fn gesture(id: GestureId, g: &Gesture) -> Value {
     match g {
-        Gesture::Road { points: ps, lanes_fwd, lanes_bwd, curved, kind, elevation } => json!({
+        Gesture::Road { points: ps, lanes_fwd, lanes_bwd, curved, kind, elevation, car_only } => json!({
             "id": id.0, "kind": "road", "road_kind": road_kind_name(*kind), "points": points(ps),
-            "lanes_fwd": lanes_fwd, "lanes_bwd": lanes_bwd, "curved": curved,
+            "lanes_fwd": lanes_fwd, "lanes_bwd": lanes_bwd, "curved": curved, "use": nd_sim::roads::RoadUse::of(*kind, *lanes_fwd, *lanes_bwd, *car_only).key(), "use_set": car_only.is_some(),
             "elevation": (0..ps.len()).map(|i| elevation.get(i).copied().unwrap_or(0.0)).collect::<Vec<f32>>(),
         }),
         Gesture::Zone { polygon, land_use } => json!({ "id": id.0, "kind": "zone", "land_use": land_use.label(), "points": points(polygon), "area": round(polygon_area(polygon).abs()) }),

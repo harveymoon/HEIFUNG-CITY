@@ -66,11 +66,11 @@ impl World {
         let had_project = self.project.take();
         if !rail_fused {
             let [a, b] = facility.rail_line();
-            self.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Rail, elevation: Vec::new() });
+            self.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Rail, elevation: Vec::new(), car_only: None });
         }
         if !road_fused {
             let [a, b] = facility.road_line();
-            self.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+            self.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         }
         if self.project.is_some() {
             self.implement();
@@ -78,8 +78,18 @@ impl World {
             self.rebuild_from_master();
         }
         self.project = had_project;
-        let lot_id = self.facilities[fid].lot.ok_or("the facility lost its lot")?;
-        let id = self.attach_rail_building(lot_id, kind)?;
+        // [w1-roads] One that cannot stand after all is taken back, not left
+        // as a building-less facility blocking the ground (and every later
+        // station near it as "too close").
+        let built = self.facilities[fid].lot.ok_or_else(|| "the facility lost its lot".to_string()).and_then(|lot_id| self.attach_rail_building(lot_id, kind));
+        let id = match built {
+            Ok(id) => id,
+            Err(e) => {
+                self.facilities.remove(fid);
+                self.rebuild_from_master();
+                return Err(e);
+            }
+        };
         self.facilities[fid].building = Some(id);
         self.refresh_rail_links();
         Ok(id)

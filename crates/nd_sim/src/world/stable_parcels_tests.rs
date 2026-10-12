@@ -77,7 +77,7 @@ fn check_far_edit_leaves_everything_else(mut w: World, plants: Vec<BuildingId>, 
     let buildings_before: Vec<(BuildingId, _)> = w.buildings.keys().filter(|&id| far(w.lots[w.buildings[id].lot].center)).map(|id| (id, building_bits(&w, id))).collect();
     let parcels_before: Vec<Vec<u32>> = w.parcels.parcels.iter().filter(|p| far(p.center)).map(|p| p.polygon.iter().flat_map(|v| [v.x.to_bits(), v.y.to_bits()]).collect()).collect();
     assert!(lots_before.len() > 50 && buildings_before.len() > 20, "a town to test on: {} lots, {} buildings", lots_before.len(), buildings_before.len());
-    w.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+    w.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
     let check = w.active_project_check();
     assert!(check.refusal.is_none(), "a road far from everything is no trouble: {:?}", check.refusal);
     w.try_implement().expect("implemented");

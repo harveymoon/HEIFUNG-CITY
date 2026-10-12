@@ -44,7 +44,7 @@ fn highway() -> Vec<Vec2> {
 }
 
 fn lay(w: &mut World, pts: &[Vec2], lanes: (u8, u8), curved: bool) {
-    w.add_gesture(Gesture::Road { points: pts.to_vec(), lanes_fwd: lanes.0, lanes_bwd: lanes.1, curved, kind: RoadKind::Street, elevation: Vec::new() });
+    w.add_gesture(Gesture::Road { points: pts.to_vec(), lanes_fwd: lanes.0, lanes_bwd: lanes.1, curved, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
     w.implement();
 }
 

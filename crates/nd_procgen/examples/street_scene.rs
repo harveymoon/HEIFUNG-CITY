@@ -18,7 +18,7 @@ fn road(w: &mut World, pts: &[[f32; 3]], f: u8, b: u8, kind: RoadKind, curved: b
     let points: Vec<Vec2> = pts.iter().map(|p| Vec2::new(p[0], p[1])).collect();
     let elevation: Vec<f32> = pts.iter().map(|p| p[2]).collect();
     let elevation = if elevation.iter().all(|e| *e == 0.0) { Vec::new() } else { elevation };
-    w.add_gesture(Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved, kind, elevation });
+    w.add_gesture(Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved, kind, elevation, car_only: None });
 }
 
 /// The test scene the remote API builds in `scene.py`, on the flat map.

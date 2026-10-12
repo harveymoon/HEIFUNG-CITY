@@ -32,7 +32,7 @@ fn town(roads: &[(Vec2, Vec2)], one_go: bool, zone: &[Vec2]) -> World {
     let mut w = World::new(WorldConfig { emergencies: false, society: false, landscape: nd_sim::landscape::LandscapeParams::flat(), ..WorldConfig::default() });
     if one_go {
         for &(a, b) in roads {
-            w.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+            w.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         }
         w.implement();
     } else {

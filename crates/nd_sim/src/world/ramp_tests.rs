@@ -230,7 +230,7 @@ fn a_car_is_drawn_at_the_height_of_the_road_where_it_is_drawn() {
     let a = Vec2::new(-300.0, -300.0);
     let b = Vec2::new(-300.0, 300.0);
     let had = w.project.take();
-    w.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![0.0, 20.0] });
+    w.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![0.0, 20.0], car_only: None });
     w.implement();
     w.project = had;
     assert!(w.relief);

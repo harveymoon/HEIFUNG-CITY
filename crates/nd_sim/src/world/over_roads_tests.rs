@@ -121,7 +121,7 @@ fn a_road_planned_across_the_ground_refuses_a_building_there() {
     assert!(w.placement_problem_at(Placeable::Plant(PowerPlantKind::Solar), p).is_ok(), "free unzoned ground");
     // A curved road planned (not built) through the parcels there.
     w.new_project(Some("bypass"));
-    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-360.0, 70.0), Vec2::new(-300.0, 18.0), Vec2::new(-240.0, 70.0)], lanes_fwd: 1, lanes_bwd: 1, curved: true, kind: RoadKind::Street, elevation: Vec::new() });
+    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-360.0, 70.0), Vec2::new(-300.0, 18.0), Vec2::new(-240.0, 70.0)], lanes_fwd: 1, lanes_bwd: 1, curved: true, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
     let why = w.placement_problem_at(Placeable::Plant(PowerPlantKind::Solar), p).expect_err("a planned road runs there");
     assert!(why.contains("planned in this project"), "{why}");
     assert!(w.place_building(Placeable::Service(ServiceKind::Police, Tier::Low), p).is_err());

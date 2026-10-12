@@ -17,7 +17,7 @@ fn main() {
     for r in v.chunks(4) {
         let mut w = loaded.clone();
         let (a, b) = (Vec2::new(r[0], r[1]), Vec2::new(r[0] + r[2], r[1] + r[3]));
-        w.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        w.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         let t = Instant::now();
         let c1 = w.active_project_check();
         let first = t.elapsed().as_secs_f32();

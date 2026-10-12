@@ -262,7 +262,15 @@ pub(super) fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         return Err(why);
     }
     let elevation = if levels.iter().any(|l| *l != 0.0) { levels } else { Vec::new() };
-    let id = ctx.sim.world.add_gesture(Gesture::Road { points: pts, lanes_fwd: lf, lanes_bwd: lb, curved, kind, elevation });
+    // [w1-roads] `use` (mixed | car_only) is stored on the road; without
+    // it the road's use is read from its lanes as before.
+    let car_only = match opt_str(cmd, "use")?.map(|u| nd_sim::roads::RoadUse::parse(u).ok_or_else(|| format!("unknown use {u:?}; pedestrian, mixed or car_only"))).transpose()? {
+        Some(nd_sim::roads::RoadUse::CarOnly) if kind == RoadKind::Street => Some(true),
+        Some(nd_sim::roads::RoadUse::Mixed) if kind == RoadKind::Street => Some(false),
+        Some(u) if kind == RoadKind::Street || u != nd_sim::roads::RoadUse::Pedestrian => return Err(format!("use {} needs kind {}", u.key(), if u == nd_sim::roads::RoadUse::Pedestrian { "path" } else { "street" })),
+        _ => None,
+    };
+    let id = ctx.sim.world.add_gesture(Gesture::Road { points: pts, lanes_fwd: lf, lanes_bwd: lb, curved, kind, elevation, car_only });
     let implemented = opt_bool(cmd, "implement")?.unwrap_or(false);
     if implemented {
         ctx.sim.world.implement();
@@ -289,6 +297,43 @@ pub(super) fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     }
     v["grade_warnings"] = json!(warnings);
     Ok(v)
+}
+
+/// [w1-roads] `road_use {gesture, use?, lanes_fwd?, lanes_bwd?, implement?}`:
+/// the Edit tool's upgrade panel for a road: its Use (pedestrian, mixed,
+/// car_only; the lanes stay) and lanes (the Use stays). A road from before
+/// the Use was stored keeps what its lanes made it unless `use` is given.
+pub(super) fn road_use(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    use nd_sim::roads::RoadUse;
+    let id = nd_sim::GestureId(opt_u64(cmd, "gesture")?.ok_or("gesture: the road's gesture id")?);
+    let Some(Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind, elevation, car_only }) = ctx.sim.world.gesture(id) else { return Err(format!("gesture {} is not a road", id.0)) };
+    if kind == RoadKind::Rail {
+        return Err("a railway has no use to set".into());
+    }
+    let was = RoadUse::of(kind, lanes_fwd, lanes_bwd, car_only);
+    let mut co = was == RoadUse::CarOnly;
+    let (mut k, mut f, mut b) = (kind, lanes_fwd, lanes_bwd);
+    if let Some(u) = opt_str(cmd, "use")? {
+        let u = RoadUse::parse(u).ok_or_else(|| format!("unknown use {u:?}; pedestrian, mixed or car_only"))?;
+        (k, f, b, co) = crate::tools::with_use(u, k, f, b);
+    }
+    if k == RoadKind::Street {
+        if let Some(n) = opt_u64(cmd, "lanes_fwd")? {
+            f = n.min(4) as u8;
+        }
+        if let Some(n) = opt_u64(cmd, "lanes_bwd")? {
+            b = n.min(4) as u8;
+        }
+        if f + b == 0 {
+            return Err("a street needs at least one lane".into());
+        }
+    }
+    let car_only = if k == RoadKind::Street { Some(co) } else { None };
+    ctx.sim.world.set_gesture(id, Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved, kind: k, elevation, car_only }, true);
+    if opt_bool(cmd, "implement")?.unwrap_or(false) {
+        ctx.sim.world.implement();
+    }
+    Ok(json!({ "gesture": id.0, "use": RoadUse::of(k, f, b, car_only).key(), "was": was.key(), "lanes_fwd": f, "lanes_bwd": b, "implement_refused": ctx.sim.world.implement_refused }))
 }
 
 /// `add_roundabout {center, radius | diameter, lanes, implement?}`: stamp a

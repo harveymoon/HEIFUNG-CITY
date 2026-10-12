@@ -59,6 +59,19 @@ fn report(w: &World, label: &str, cells: &mut HashMap<(i32, i32), (u32, BTreeMap
     tot.standing += standing as u64;
     tot.vehicles += t.cars.len() as u64;
     println!("{label}: day {} {:02}:{:02} vehicles {} standing>{stall:.0}s {standing} kinds(all,standing) {:?} why {:?}", w.clock.day(), w.clock.hour(), w.clock.minute_of_day() % 60, t.cars.len(), by_kind, why);
+    // Vehicles waiting at the kerb to pull out, by spot.
+    let mut kerb: BTreeMap<(i32, i32), Vec<nd_sim::CarId>> = BTreeMap::new();
+    for (id, c) in t.cars.iter() {
+        if c.v < 0.5 && c.stalled > stall && t.stop_reason(id).key() == "at_kerb" {
+            kerb.entry(((c.pos.x / 10.0).round() as i32, (c.pos.y / 10.0).round() as i32)).or_default().push(id);
+        }
+    }
+    for ((x, y), ids) in kerb.iter().filter(|(_, v)| v.len() >= 3) {
+        let c = &t.cars[ids[0]];
+        let lane = c.route[c.idx.min(c.route.len() - 1)];
+        let l = &t.net.lanes[lane as usize];
+        println!("   KERB ({}, {}) {} waiting [{}] lane {lane} s {:.1}/{:.1} lane cars {} entering {} stalled {:.0} -> {}", x * 10, y * 10, ids.len(), kind(w, ids[0]), c.s, l.length, l.cars.len(), c.entering, c.stalled, t.stop_reason(ids[0]).text(|id| format!("{id:?} [{}] v{:.1} s{:.1}", kind(w, id), t.cars.get(id).map_or(0.0, |o| o.v), t.cars.get(id).map_or(0.0, |o| o.s))));
+    }
     // Heads of the longest queues.
     let mut heads: HashMap<nd_sim::CarId, (usize, bool)> = HashMap::new();
     for (id, c) in t.cars.iter() {

@@ -108,7 +108,7 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, _selection:
             if let Some(why) = sim.world.road_refusal(&built, &built_levels, kind, lf, lb) {
                 tools.status = format!("Not added: {why}.");
             } else {
-                let g = Gesture::Road { points: tools.points.clone(), lanes_fwd: lf, lanes_bwd: lb, curved, kind, elevation };
+                let g = Gesture::Road { points: tools.points.clone(), lanes_fwd: lf, lanes_bwd: lb, curved, kind, elevation, car_only: tools.car_only_flag() };
                 sim.world.add_gesture(g);
                 let warn = if tools.grade_warnings.is_empty() { String::new() } else { format!(" Warning: {}.", tools.grade_warnings.join("; ")) };
                 tools.status = format!("{} {} added to project ({} points). Ctrl+Enter implements.{warn}", if tools.curved { "Curved" } else { "Straight" }, match kind { RoadKind::Path => "path", RoadKind::Rail => "track", RoadKind::Street if tools.tunnel => "tunnel", RoadKind::Street => "road" }, tools.points.len());
@@ -146,7 +146,7 @@ fn circle_input(click: bool, finish: bool, ground: Option<SVec2>, sim: &mut Sim,
     tools.status = if let Some(why) = sim.world.road_refusal(&built, &built_levels, kind, lf, lb) {
         format!("Not added: {why}.")
     } else {
-        sim.world.add_gesture(Gesture::Road { points: pts, lanes_fwd: lf, lanes_bwd: lb, curved: true, kind, elevation });
+        sim.world.add_gesture(Gesture::Road { points: pts, lanes_fwd: lf, lanes_bwd: lb, curved: true, kind, elevation, car_only: tools.car_only_flag() });
         format!("Circular {} {:.0} m across added to project. Ctrl+Enter implements.", if kind == RoadKind::Path { "path" } else { "road" }, r * 2.0)
     };
     tools.points.clear();

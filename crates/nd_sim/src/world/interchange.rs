@@ -132,7 +132,7 @@ impl World {
             if crate::roads::is_highway_spec(RoadKind::Street, f, bk) || crate::roads::is_ramp_spec(RoadKind::Street, f, bk) {
                 return Err(InterchangeRefusal::new("the cross street must be a two-way street", mid));
             }
-            plan.gestures.push(Gesture::Road { points: vec![a, b], lanes_fwd: f, lanes_bwd: bk, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+            plan.gestures.push(Gesture::Road { points: vec![a, b], lanes_fwd: f, lanes_bwd: bk, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         }
         // The terminal on the street as it will run: on the existing one,
         // else on the drawn line.
@@ -249,7 +249,7 @@ impl World {
             }
         }
         for (pts, _) in ramps {
-            plan.gestures.push(Gesture::Road { points: pts, lanes_fwd: 1, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+            plan.gestures.push(Gesture::Road { points: pts, lanes_fwd: 1, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         }
         Ok(plan)
     }

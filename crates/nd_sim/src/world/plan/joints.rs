@@ -186,7 +186,11 @@ impl World {
                 }
             }
             if let Some((leg, d)) = leg_near(g, q) {
-                if d <= THROUGH_REACH && (level_on_leg(g, leg, q) - level).abs() < GRADE_SEPARATION && Self::node_on_road(roads, n, &line, 1.0) {
+                // [w1-roads] Or bent onto it: a road crossing a curve snaps
+                // onto the curve's nearest vertex (up to `SNAP_RADIUS`
+                // off its own line), and its pieces there run along it.
+                let on = (d <= THROUGH_REACH && Self::node_on_road(roads, n, &line, 1.0)) || (d <= SNAP_RADIUS && Self::node_on_road(roads, n, &line, (d * 0.6).max(1.0)));
+                if on && (level_on_leg(g, leg, q) - level).abs() < GRADE_SEPARATION {
                     j.through.push((*id, leg));
                 }
             }
@@ -282,6 +286,7 @@ impl World {
         }
         let (roads, _) = self.lay_roads(&self.master);
         let mut out: BTreeMap<GestureId, Gesture> = BTreeMap::new();
+        let mut done: Vec<(Vec2, BTreeSet<GestureId>)> = Vec::new();
         for i in 0..roads.nodes.len() {
             let n = NodeId(i as u32);
             let live = roads.node(n).segments.iter().filter(|&&s| roads.try_segment(s).is_some()).count();
@@ -293,6 +298,18 @@ impl World {
             if gs.len() < 2 || !gs.iter().any(|g| touched.contains(g)) {
                 continue;
             }
+            // One crossing can leave two junction nodes a few metres apart
+            // (a road crossing a curve between two of its vertices): it is
+            // mended once, at the first.
+            if done.iter().any(|(p, o): &(Vec2, BTreeSet<GestureId>)| p.distance(j.at) < 2.0 * SNAP_RADIUS && o.intersection(&gs).count() >= 2) {
+                continue;
+            }
+            // The curves running through get their point; then every other
+            // road here is put on the same point too (ends moved onto it,
+            // straight roads through bent onto it, as the network already
+            // bends them), so the junction is laid at that one point
+            // however the curve is sampled round it.
+            let mut mended_curve = false;
             for &(id, _) in &j.through {
                 let Some(g) = out.get(&id).or_else(|| self.master.gestures.get(&id)) else { continue };
                 if !curved(g) {
@@ -300,6 +317,33 @@ impl World {
                 }
                 if let Some(m) = curve_through(g, j.at) {
                     out.insert(id, m);
+                    mended_curve = true;
+                }
+            }
+            if !mended_curve {
+                continue;
+            }
+            done.push((j.at, gs.clone()));
+            for &(id, k) in &j.points {
+                let Some(g) = out.get(&id).or_else(|| self.master.gestures.get(&id)).cloned() else { continue };
+                let mut g = g;
+                if g.points().get(k).is_some_and(|c| *c != j.at) {
+                    g.move_point(k, j.at);
+                    out.insert(id, g);
+                }
+            }
+            for &(id, _) in &j.through {
+                let Some(g) = out.get(&id).or_else(|| self.master.gestures.get(&id)).cloned() else { continue };
+                if curved(&g) {
+                    continue;
+                }
+                let mut g = g;
+                if let Some((leg, d)) = leg_near(&g, j.at) {
+                    let pts = g.points();
+                    if d <= SNAP_RADIUS && pts[leg].distance(j.at) > JOINT_SAME && pts[leg + 1].distance(j.at) > JOINT_SAME {
+                        insert_on_leg(&mut g, leg, j.at);
+                        out.insert(id, g);
+                    }
                 }
             }
         }
@@ -340,7 +384,7 @@ impl World {
                 // point in this road already.
                 if let Some((leg, d)) = leg_near(g, j.at) {
                     let pts = g.points();
-                    if d <= THROUGH_REACH && pts[leg].distance(j.at) > JOINT_SAME && pts[leg + 1].distance(j.at) > JOINT_SAME {
+                    if d <= SNAP_RADIUS && pts[leg].distance(j.at) > JOINT_SAME && pts[leg + 1].distance(j.at) > JOINT_SAME {
                         insert_on_leg(g, leg, j.at);
                     }
                 }
@@ -360,73 +404,73 @@ fn polyline_gap(a: &[Vec2], b: &[Vec2]) -> f32 {
     one(a, b).max(one(b, a))
 }
 
-/// Sample count of span `i` of a curved road (`sample_curve`'s steps).
-fn span_steps(pts: &[Vec2], i: usize) -> usize {
-    ((pts[i].distance(pts[i + 1]) / crate::plan::CURVE_STEP).ceil() as usize).max(1)
-}
-
-/// The samples of span `i` (control point `i` to `i + 1`) of a curved road.
-fn sample_span(g: &Gesture, i: usize) -> Vec<Vec2> {
-    let pts = g.points();
-    let line = g.road_polyline();
-    if pts.len() < 3 {
-        return line;
-    }
-    let k: usize = (0..i).map(|j| span_steps(pts, j)).sum();
-    let end = (k + span_steps(pts, i)).min(line.len() - 1);
-    line[k.min(end)..=end].to_vec()
-}
-
 /// [w1-roads] Curved road `g` with a control point at `q` (a junction on
-/// its built line) that runs within `CURVE_MEND_TOL` of where it ran: the
-/// point put in on its span, and points of the drawn curve pinned in the
-/// spans that strayed, a few at most. None when it has a point there
-/// already or cannot be kept close enough.
+/// its built line) that runs within `CURVE_MEND_TOL` of where it ran. A
+/// spline bends round a new point over the spans either side of it, so
+/// those spans are pinned with points of the curve as drawn, every
+/// `spacing` metres (40, then 25, then 15) until the curve built through
+/// them keeps to the one drawn. None when it has a point there already,
+/// is a closed loop, or cannot be kept close enough.
 pub fn curve_through(g: &Gesture, q: Vec2) -> Option<Gesture> {
-    let Gesture::Road { points, curved: true, .. } = g else { return None };
-    if points.len() < 2 || points.iter().any(|c| c.distance(q) <= JOINT_SAME) {
+    let Gesture::Road { points, curved: true, lanes_fwd, lanes_bwd, kind, elevation, car_only, .. } = g else { return None };
+    if points.len() < 2 || crate::plan::is_loop(points) || points.iter().any(|c| c.distance(q) <= JOINT_SAME) {
         return None;
     }
     let drawn = g.road_polyline();
-    if crate::geom::distance_to_polyline(q, &drawn) > THROUGH_REACH {
+    let drawn_levels = g.road_levels();
+    let (s_q, d_q) = crate::geom::project_on_poly(&drawn, q)?;
+    if d_q > THROUGH_REACH {
         return None;
     }
-    // The span of the curve `q` lies on.
-    let leg = (0..points.len() - 1).min_by(|&a, &b| {
-        let da = crate::geom::distance_to_polyline(q, &sample_span(g, a));
-        let db = crate::geom::distance_to_polyline(q, &sample_span(g, b));
-        da.total_cmp(&db)
-    })?;
-    let mut m = g.clone();
-    insert_on_leg(&mut m, leg, q);
-    for _ in 0..16 {
-        let gap = polyline_gap(&m.road_polyline(), &drawn);
-        if std::env::var("CURVE_DEBUG").is_ok() {
-            eprintln!("gap {gap:.3} points {}", m.points().len());
+    // Arc length of every control point along the curve drawn (it passes
+    // through each of them).
+    let arcs: Vec<f32> = points.iter().map(|c| crate::geom::project_on_poly(&drawn, *c).map_or(0.0, |(s, _)| s)).collect();
+    if arcs.windows(2).any(|w| w[1] < w[0]) {
+        return None;
+    }
+    let leg = arcs.windows(2).position(|w| s_q >= w[0] && s_q <= w[1])?;
+    let lo = arcs[leg.saturating_sub(1)];
+    let hi = arcs[(leg + 2).min(points.len() - 1)];
+    let raised = elevation.iter().any(|l| *l != 0.0);
+    // Level at arc `s` along the curve drawn.
+    let level_at = |s: f32| -> f32 {
+        let mut acc = 0.0;
+        for i in 0..drawn.len().saturating_sub(1) {
+            let len = drawn[i].distance(drawn[i + 1]);
+            if s <= acc + len || i + 2 == drawn.len() {
+                let t = if len > 0.0 { ((s - acc) / len).clamp(0.0, 1.0) } else { 0.0 };
+                let (a, b) = (drawn_levels.get(i).copied().unwrap_or(0.0), drawn_levels.get(i + 1).copied().unwrap_or(0.0));
+                return a + (b - a) * t;
+            }
+            acc += len;
         }
-        if gap <= CURVE_MEND_TOL {
+        0.0
+    };
+    for spacing in [40.0f32, 25.0, 15.0] {
+        let mut pts: Vec<(f32, Vec2, f32)> = points.iter().zip(&arcs).enumerate().map(|(i, (p, s))| (*s, *p, elevation.get(i).copied().unwrap_or(0.0))).collect();
+        pts.push((s_q, q, level_at(s_q)));
+        let mut s = lo + spacing;
+        while s < hi - spacing * 0.4 {
+            if pts.iter().all(|(t, ..)| (t - s).abs() > spacing * 0.4) {
+                pts.push((s, crate::geom::point_along(&drawn, s).0, level_at(s)));
+            }
+            s += spacing;
+        }
+        pts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let m = Gesture::Road {
+            points: pts.iter().map(|p| p.1).collect(),
+            lanes_fwd: *lanes_fwd,
+            lanes_bwd: *lanes_bwd,
+            curved: true,
+            kind: *kind,
+            elevation: if raised { pts.iter().map(|p| p.2).collect() } else { Vec::new() },
+            car_only: *car_only,
+        };
+        if polyline_gap(&m.road_polyline(), &drawn) <= CURVE_MEND_TOL {
             return Some(m);
         }
-        // Pin the drawn curve in the span that strays most: its middle, put
-        // back on the curve drawn.
-        let pts = m.points().to_vec();
-        let mut worst: (f32, Option<(usize, Vec2)>) = (0.0, None);
-        for i in 0..pts.len() - 1 {
-            let span = sample_span(&m, i);
-            let mid = crate::geom::point_along(&span, crate::geom::path_length(&span) * 0.5).0;
-            let gap = crate::geom::distance_to_polyline(mid, &drawn);
-            if gap > worst.0 {
-                let pin = crate::geom::project_on_poly(&drawn, mid).map_or(mid, |(s, _)| crate::geom::point_along(&drawn, s).0);
-                worst = (gap, Some((i, pin)));
-            }
-        }
-        let (i, pin) = worst.1?;
-        if pts[i].distance(pin) < 1.0 || pts[i + 1].distance(pin) < 1.0 {
-            return None;
-        }
-        insert_on_leg(&mut m, i, pin);
     }
-    (polyline_gap(&m.road_polyline(), &drawn) <= CURVE_MEND_TOL).then_some(m)
+    None
 }
 
 /// [fix/roads-tools] Do two networks lay the same roads: the same pieces

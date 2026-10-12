@@ -104,7 +104,7 @@ fn a_car_on_a_split_street_drives_on_and_only_removed_streets_lose_cars() {
     // A cross street through the main street just behind the car, and the
     // side street removed, in one project.
     w.start_project();
-    w.add_gesture(nd_sim::Gesture::Road { points: vec![Vec2::new(-100.0, -100.0), Vec2::new(-100.0, 100.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: nd_sim::roads::RoadKind::Street, elevation: Vec::new() });
+    w.add_gesture(nd_sim::Gesture::Road { points: vec![Vec2::new(-100.0, -100.0), Vec2::new(-100.0, 100.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: nd_sim::roads::RoadKind::Street, elevation: Vec::new(), car_only: None });
     w.remove_gesture(side);
     w.try_implement().unwrap();
     let c = w.traffic.cars.get(main).expect("still on the road");

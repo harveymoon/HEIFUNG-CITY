@@ -388,7 +388,7 @@ mod tests {
         let mut id = 0;
         let mut road = |plan: &mut Plan, pts: &[Vec2]| {
             id += 1;
-            plan.gestures.insert(GestureId(id), Gesture::Road { points: pts.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+            plan.gestures.insert(GestureId(id), Gesture::Road { points: pts.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         };
         road(&mut plan, &[Vec2::new(-700.0, 0.0), Vec2::new(-500.0, 0.0)]);
         road(&mut plan, &[Vec2::new(-600.0, -100.0), Vec2::new(-600.0, 100.0)]);

@@ -307,7 +307,7 @@ fn road_works_never_take_a_civic_structure() {
     let master = world.master.clone();
     // A road straight through the depot's yard.
     world.start_project();
-    let gid = world.add_gesture(nd_sim::Gesture::Road { points: vec![at + Vec2::new(-80.0, 0.0), at + Vec2::new(80.0, 0.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: nd_sim::roads::RoadKind::Street, elevation: Vec::new() });
+    let gid = world.add_gesture(nd_sim::Gesture::Road { points: vec![at + Vec2::new(-80.0, 0.0), at + Vec2::new(80.0, 0.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: nd_sim::roads::RoadKind::Street, elevation: Vec::new(), car_only: None });
     let blockers = world.project_blockers();
     assert!(blockers.contains(&depot), "outlined while planned: {blockers:?}");
     let refused = world.try_implement().expect_err("refused");
@@ -317,7 +317,7 @@ fn road_works_never_take_a_civic_structure() {
     assert_eq!(world.master.gestures, master.gestures, "nothing built");
     assert!(world.buildings.contains_key(depot) && world.buildings.len() == n_before);
     // Moved clear (far out of town), it goes through.
-    world.set_gesture(gid, nd_sim::Gesture::Road { points: vec![Vec2::new(-260.0, 600.0), Vec2::new(-100.0, 600.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: nd_sim::roads::RoadKind::Street, elevation: Vec::new() }, true);
+    world.set_gesture(gid, nd_sim::Gesture::Road { points: vec![Vec2::new(-260.0, 600.0), Vec2::new(-100.0, 600.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: nd_sim::roads::RoadKind::Street, elevation: Vec::new(), car_only: None }, true);
     assert!(world.project_blockers().is_empty());
     world.try_implement().expect("implemented once moved");
     assert!(world.buildings.contains_key(depot));

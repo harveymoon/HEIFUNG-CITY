@@ -11,7 +11,7 @@ fn flat_world() -> World {
 }
 
 fn road(points: &[Vec2], lanes: (u8, u8), kind: RoadKind, elevation: &[f32]) -> Gesture {
-    Gesture::Road { points: points.to_vec(), lanes_fwd: lanes.0, lanes_bwd: lanes.1, curved: false, kind, elevation: elevation.to_vec() }
+    Gesture::Road { points: points.to_vec(), lanes_fwd: lanes.0, lanes_bwd: lanes.1, curved: false, kind, elevation: elevation.to_vec(), car_only: None }
 }
 
 fn build(w: &mut World, g: Gesture) -> GestureId {
@@ -87,8 +87,8 @@ fn crossing_at_an_existing_junction_or_vertex_joins_it() {
 #[test]
 fn curved_roads_crossing_make_junctions() {
     let mut w = flat_world();
-    build(&mut w, Gesture::Road { points: vec![Vec2::new(-200.0, -80.0), Vec2::new(0.0, 60.0), Vec2::new(200.0, -80.0)], lanes_fwd: 1, lanes_bwd: 1, curved: true, kind: RoadKind::Street, elevation: Vec::new() });
-    build(&mut w, Gesture::Road { points: vec![Vec2::new(-120.0, 150.0), Vec2::new(0.0, -40.0), Vec2::new(120.0, 150.0)], lanes_fwd: 1, lanes_bwd: 1, curved: true, kind: RoadKind::Street, elevation: Vec::new() });
+    build(&mut w, Gesture::Road { points: vec![Vec2::new(-200.0, -80.0), Vec2::new(0.0, 60.0), Vec2::new(200.0, -80.0)], lanes_fwd: 1, lanes_bwd: 1, curved: true, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
+    build(&mut w, Gesture::Road { points: vec![Vec2::new(-120.0, 150.0), Vec2::new(0.0, -40.0), Vec2::new(120.0, 150.0)], lanes_fwd: 1, lanes_bwd: 1, curved: true, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
     let junctions: Vec<NodeId> = (0..w.roads.nodes.len() as u32).map(NodeId).filter(|&n| segments_at(&w, n).len() >= 3).collect();
     assert_eq!(junctions.len(), 2);
     for j in junctions {

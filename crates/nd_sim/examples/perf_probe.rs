@@ -18,8 +18,8 @@ fn big_city() -> World {
     let span = 560.0;
     for i in -4..=4 {
         let c = i as f32 * 140.0;
-        world.add_gesture(Gesture::Road { points: vec![Vec2::new(-span, c), Vec2::new(span, c)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
-        world.add_gesture(Gesture::Road { points: vec![Vec2::new(c, -span), Vec2::new(c, span)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        world.add_gesture(Gesture::Road { points: vec![Vec2::new(-span, c), Vec2::new(span, c)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
+        world.add_gesture(Gesture::Road { points: vec![Vec2::new(c, -span), Vec2::new(c, span)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
     }
     let cell = |cx: f32, cy: f32| vec![Vec2::new(cx - 65.0, cy - 65.0), Vec2::new(cx + 65.0, cy - 65.0), Vec2::new(cx + 65.0, cy + 65.0), Vec2::new(cx - 65.0, cy + 65.0)];
     // The demo district's 4x4 plan, tiled.

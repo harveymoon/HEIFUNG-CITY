@@ -53,7 +53,7 @@ impl World {
         let pid = self.ports.ports.insert(port);
         let had_project = self.project.take();
         if let Some(stub) = stub {
-            self.add_gesture(Gesture::Road { points: stub.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+            self.add_gesture(Gesture::Road { points: stub.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         }
         if self.project.is_some() {
             self.implement();
@@ -126,27 +126,26 @@ impl World {
             let (s, c) = deg.to_radians().sin_cos();
             Vec2::new(inland.x * c - inland.y * s, inland.x * s + inland.y * c)
         };
-        // [w1-roads] The first way the stub would cross: a street ends it
-        // there (a T onto it, never a crossroads through it); a highway,
-        // slip road or railway makes the line no good.
+        // [w1-roads] The first street the stub would cross ends it there (a
+        // T onto it, never a crossroads through it). Track and highways it
+        // passes at a level crossing or under a deck, as any road does.
         let crossing = |end: Vec2| -> Option<Option<Vec2>> {
-            let mut best: Option<(f32, bool)> = None;
+            let mut best: Option<f32> = None;
             for sid in self.roads.segments_in_box(gate.min(end) - Vec2::splat(2.0), gate.max(end) + Vec2::splat(2.0)) {
                 let s = self.roads.segment(sid);
-                if s.kind == RoadKind::Path || s.tunnel || self.roads.spans_lots(sid) {
+                if !s.is_street() || s.is_motorway() || s.tunnel || self.roads.spans_lots(sid) {
                     continue;
                 }
                 let (p0, p1) = self.roads.segment_points(sid);
                 if let Some((t, _)) = crate::geom::segment_intersection_closed(gate, end, p0, p1, 1e-3) {
-                    let joinable = s.is_street() && !s.is_motorway();
-                    if best.is_none_or(|(bt, _)| t < bt) {
-                        best = Some((t, joinable));
+                    if best.is_none_or(|bt| t < bt) {
+                        best = Some(t);
                     }
                 }
             }
             match best {
                 None => Some(None),
-                Some((t, true)) if gate.distance(end) * t >= ports::STUB_MIN * 0.5 => Some(Some(gate.lerp(end, t))),
+                Some(t) if gate.distance(end) * t >= ports::STUB_MIN * 0.5 => Some(Some(gate.lerp(end, t))),
                 _ => None,
             }
         };

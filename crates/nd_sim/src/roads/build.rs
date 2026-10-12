@@ -326,7 +326,7 @@ impl RoadNetwork {
             return existing;
         }
         self.index.take();
-        self.segments.push(Segment { a, b, lanes_fwd, lanes_bwd, alive: true, kind, bridge: false, viaduct: false, tunnel: false, ring: self.laying_ring, ramp: false });
+        self.segments.push(Segment { a, b, lanes_fwd, lanes_bwd, alive: true, kind, bridge: false, viaduct: false, tunnel: false, ring: self.laying_ring, ramp: false, car_only: self.laying_use });
         let id = SegmentId((self.segments.len() - 1) as u32);
         self.nodes[a.0 as usize].segments.push(id);
         self.nodes[b.0 as usize].segments.push(id);
@@ -362,6 +362,15 @@ impl RoadNetwork {
         self.add_polyline_levels(points, &[], lanes_fwd, lanes_bwd, kind)
     }
 
+    /// [w1-roads] [`RoadNetwork::add_polyline_levels`] for a road with its
+    /// use set (`car_only`: see [`Segment::car_only`]).
+    pub fn add_polyline_use(&mut self, points: &[Vec2], levels: &[f32], lanes_fwd: u8, lanes_bwd: u8, kind: RoadKind, car_only: Option<bool>) -> Vec<SegmentId> {
+        self.laying_use = if kind == RoadKind::Street { car_only } else { None };
+        let out = self.add_polyline_levels(points, levels, lanes_fwd, lanes_bwd, kind);
+        self.laying_use = None;
+        out
+    }
+
     /// Add a way along `points` with a level per point (metres above the
     /// ground; missing levels are 0). Ways it crosses at about its level
     /// are split into junctions; ways it crosses well above or below it
@@ -371,7 +380,7 @@ impl RoadNetwork {
         let mut out = Vec::new();
         let last = points.len().saturating_sub(1);
         self.laying_ring = self.is_ring_way(points, lanes_fwd, lanes_bwd, kind);
-        let class = WayClass::laying(kind, lanes_fwd, lanes_bwd, self.laying_ring);
+        let class = WayClass::laying_use(kind, lanes_fwd, lanes_bwd, self.laying_ring, self.laying_use);
         let level = |i: usize| levels.get(i).copied().filter(|l| l.is_finite()).unwrap_or(0.0);
         for (i, w) in points.windows(2).enumerate() {
             if w[0].distance(w[1]) < 0.5 {
@@ -405,7 +414,7 @@ impl RoadNetwork {
         // candidates are fixed before splitting starts, in ascending id
         // order, so the junction nodes come out as a full scan makes them.
         let candidates = self.grid().in_box(pa.min(pb), pa.max(pb));
-        let class = WayClass::laying(kind, lanes_fwd, lanes_bwd, self.laying_ring);
+        let class = WayClass::laying_use(kind, lanes_fwd, lanes_bwd, self.laying_ring, self.laying_use);
         for i in candidates {
             let s = self.segments[i as usize].clone();
             if !s.alive || s.a == a || s.a == b || s.b == a || s.b == b {

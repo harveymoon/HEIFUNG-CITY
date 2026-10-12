@@ -29,7 +29,7 @@ fn main() {
         }
         let mut w = base.clone();
         w.project = None;
-        w.add_gesture(Gesture::Road { points: pts.clone(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        w.add_gesture(Gesture::Road { points: pts.clone(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         let check = w.active_project_check();
         if check.refusal.is_some() {
             continue;

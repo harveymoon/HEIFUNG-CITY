@@ -268,7 +268,12 @@ impl World {
         // [tools] The raised ways, for their columns: key, built polyline,
         // levels, deck half width.
         let mut raised: Vec<(u64, Vec<Vec2>, Vec<f32>, f32)> = Vec::new();
-        for (_, drawn, levels, fwd, bwd, kind) in built {
+        for (gid, drawn, levels, fwd, bwd, kind) in built {
+            // [w1-roads] The road's use as set (None: read from its lanes).
+            let car_only = match plan.gestures.get(&gid) {
+                Some(Gesture::Road { car_only, .. }) => *car_only,
+                _ => None,
+            };
             let way = crate::pillars::is_raised(&levels).then(|| crate::pillars::way_key(&drawn, &levels));
             // Track is eased into smooth curves and tangential switches.
             let points = if kind == RoadKind::Rail { rail::smooth_track(&drawn, &roads) } else { drawn.clone() };
@@ -278,14 +283,14 @@ impl World {
             // merge (after a diverge) brings the last piece alongside.
             // (A roundabout's ring is a one-way street too, but no ramp.)
             let ring = roads.is_ring_way(&points, fwd, bwd, kind);
-            let points = if crate::roads::is_ramp_spec(kind, fwd, bwd) && !ring { crate::roads::ease_ramp_ends(&points, fwd > 0, &roads) } else { points };
+            let points = if crate::roads::is_ramp_use(kind, fwd, bwd, car_only) && !ring { crate::roads::ease_ramp_ends(&points, fwd > 0, &roads) } else { points };
             // Breaks at every waterline, so a bridge is exactly the span.
             let points = self.split_at_water(&points);
             // A height sample every so often, so a long straight way follows
             // the land instead of running dead straight between its ends.
             // Only ways that front nothing (highways, track): a street's
             // vertices decide where its parcels are cut.
-            let sampled = kind == RoadKind::Rail || (crate::roads::is_highway_spec(kind, fwd, bwd) && !ring);
+            let sampled = kind == RoadKind::Rail || (crate::roads::is_highway_use(kind, fwd, bwd, car_only) && !ring);
             let points = if sampled { crate::roads::sample_heights(&points, crate::roads::HEIGHT_SAMPLE) } else { points };
             // Levels follow the points wherever they moved or multiplied.
             let levels = if points == drawn { levels } else { crate::plan::carry_levels(&drawn, &levels, &points) };
@@ -298,9 +303,9 @@ impl World {
             // road takes that road's level: a raised road ramps down to it),
             // for its columns, before it is laid.
             let landed = way.map(|_| roads.as_built(&points, &levels, kind));
-            roads.add_polyline_levels(&points, &levels, fwd, bwd, kind);
+            roads.add_polyline_use(&points, &levels, fwd, bwd, kind, car_only);
             if let (Some(key), Some((pts, lv))) = (way, landed) {
-                raised.push((key, pts, lv, super::deck_half_width(kind, fwd, bwd)));
+                raised.push((key, pts, lv, super::deck_half_width_use(kind, fwd, bwd, car_only)));
             }
         }
         (roads, raised)

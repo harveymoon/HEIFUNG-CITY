@@ -108,7 +108,7 @@ fn main() {
         println!("stub off the dead end at ({:.0}, {:.0}), {:.0} m from the nearest city building", p.x, p.y, d);
         (p, p + dir * 50.0)
     };
-    w.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+    w.add_gesture(Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
     prof_table();
     let t = Instant::now();
     let check = w.active_project_check();

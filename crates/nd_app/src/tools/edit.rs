@@ -420,7 +420,7 @@ mod pick_tests {
     use super::*;
 
     fn road(points: Vec<SVec2>, f: u8, b: u8) -> Gesture {
-        Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved: false, kind: RoadKind::Street, elevation: Vec::new() }
+        Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None }
     }
 
     /// A ramp drawn onto a highway's start shares its control point. A click
@@ -453,7 +453,7 @@ mod drag_tests {
     use nd_sim::World;
 
     fn road(x: f32) -> Gesture {
-        Gesture::Road { points: vec![SVec2::new(x, -300.0), SVec2::new(x, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() }
+        Gesture::Road { points: vec![SVec2::new(x, -300.0), SVec2::new(x, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None }
     }
 
     /// Run a drag of `id`'s first point to x = 300, 320, 340 (release on

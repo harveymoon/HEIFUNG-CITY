@@ -7,7 +7,7 @@ impl World {
     /// Convenience for scripts and tests: lay track right away.
     pub fn add_rail(&mut self, points: &[Vec2]) -> GestureId {
         let had_project = self.project.take();
-        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Rail, elevation: Vec::new() });
+        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Rail, elevation: Vec::new(), car_only: None });
         self.implement();
         self.project = had_project;
         id
@@ -392,7 +392,7 @@ impl World {
     /// Convenience for scripts and tests: build a road right away.
     pub fn add_road(&mut self, points: &[Vec2], lanes_fwd: u8, lanes_bwd: u8) -> GestureId {
         let had_project = self.project.take();
-        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd, lanes_bwd, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd, lanes_bwd, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         self.implement();
         self.project = had_project;
         id
@@ -401,7 +401,7 @@ impl World {
     /// Convenience for scripts and tests: a walking and cycling path right away.
     pub fn add_path(&mut self, points: &[Vec2]) -> GestureId {
         let had_project = self.project.take();
-        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Path, elevation: Vec::new() });
+        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Path, elevation: Vec::new(), car_only: None });
         self.implement();
         self.project = had_project;
         id

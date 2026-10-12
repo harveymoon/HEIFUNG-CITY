@@ -17,7 +17,7 @@ fn main() {
     let r = &w.roads;
     println!("gestures near:");
     for (id, g) in &w.master.gestures {
-        if let nd_sim::plan::Gesture::Road { points, lanes_fwd, lanes_bwd, kind, elevation, curved } = g {
+        if let nd_sim::plan::Gesture::Road { points, lanes_fwd, lanes_bwd, kind, elevation, curved, .. } = g {
             if points.iter().any(|p| p.distance(c) <= rad) || points.windows(2).any(|s| nd_sim::roads::project_on_segment(c, s[0], s[1]).1.distance(c) <= rad) {
                 println!("  g{} {:?} {}/{} curved {} pts {:?} lv {:?}", id.0, kind, lanes_fwd, lanes_bwd, curved, points.iter().map(|p| (p.x.round(), p.y.round())).collect::<Vec<_>>(), elevation);
             }
