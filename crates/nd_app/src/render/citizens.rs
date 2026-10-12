@@ -72,7 +72,10 @@ pub(super) fn sync_citizens(
     for &(id, e, key, stature, _) in &outdoors {
         let Some(c) = w.citizens.get(id) else { continue };
         let Ok((mut tf, mut vis, _, mut mesh, _, way, platform)) = q.get_mut(e) else { continue };
-        if platform != c.on_platform() {
+        // [walk-networks] Down in a pedestrian tunnel too: shown in the
+        // underground view with the platforms' people.
+        let below = c.on_platform() || w.citizen_in_tunnel(c);
+        if platform != below {
             if platform {
                 commands.entity(e).try_remove::<PlatformTag>();
             } else {

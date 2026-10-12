@@ -196,6 +196,9 @@ struct LaneArrowsTag;
 struct OverlayTag;
 #[derive(Component)]
 struct PathsTag;
+/// [walk-networks] The Walk networks layer's mesh.
+#[derive(Component)]
+struct WalkNetTag;
 #[derive(Component, Clone)]
 struct TransitTag;
 /// [tolls] Toll booth meshes, set on the road's height by `lift_spawned`.
@@ -325,6 +328,9 @@ struct RenderState {
     overlay_shown: bool,
     paths_version: u64,
     paths_shown: bool,
+    /// [walk-networks] What the Walk networks layer was drawn for.
+    walknet_key: (u64, u64),
+    walknet_shown: bool,
     transit_version: u64,
     /// [tolls] `Tolls::version` the booths were last drawn for (+1, so 0 is "never").
     toll_version: u64,
@@ -381,7 +387,7 @@ impl Plugin for RenderPlugin {
         app.add_plugins(thumbs::ThumbsPlugin);
         app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_plugins(MaterialPlugin::<street_look::PoolMaterial>::default()).init_resource::<sky::SkyLook>().add_systems(Startup, (lights::add_shader, street_look::add_pool_shader, setup)).add_systems(
             Update,
-            (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)
+            (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_walk_networks, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)
                 .chain()
                 .in_set(SimSet::Sync),
         );
@@ -460,6 +466,7 @@ impl Plugin for RenderPlugin {
         app.insert_gizmo_config(layers::LoadGizmos, bevy::gizmos::config::GizmoConfig { depth_bias: -1.0, line: bevy::gizmos::config::GizmoLineConfig { width: 5.0, ..default() }, ..default() });
         app.add_systems(Update, layers::load_gizmos.in_set(SimSet::Sync).after(lift_movers));
         app.add_systems(Update, layers::danger_gizmos.in_set(SimSet::Sync).after(lift_movers));
+        app.add_systems(Update, walk_network_gizmos.in_set(SimSet::Sync).after(lift_movers));
         app.add_plugins(pt_layers::PtLayersPlugin);
         app.add_plugins(sites_layer::SitesLayerPlugin);
         app.add_plugins(mapview::MapViewPlugin);

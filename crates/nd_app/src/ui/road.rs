@@ -96,7 +96,12 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, sid: nd
     hint(ui, &identity_line(&card));
     // [pt-walk] A piece of network cut off from the rest.
     for line in w.segment_link_warnings(sid) {
-        ui.label(egui::RichText::new(line).color(WARN).strong());
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new(&line).color(WARN).strong());
+            if line.contains("pedestrian") {
+                crate::map_layers::walk_networks_button(ui);
+            }
+        });
     }
     if card.run.len() > 1 {
         hint(ui, &format!("Piece {} of {} between junctions ({:.0} m in all; the rest traced faintly). Figures are for this piece.", card.run_index + 1, card.run.len(), card.run_length));

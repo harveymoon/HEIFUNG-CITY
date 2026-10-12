@@ -52,7 +52,7 @@ impl Focus {
             Some(Focus::Density)
         } else if o.construction {
             Some(Focus::Sites)
-        } else if o.paths {
+        } else if o.paths || o.walk_networks {
             Some(Focus::Walk)
         } else {
             None

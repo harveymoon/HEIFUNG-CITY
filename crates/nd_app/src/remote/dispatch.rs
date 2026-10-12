@@ -318,6 +318,10 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("all", "with segments: every street and path, connected or not"),
         ("returns", "stranded [{net walk|road, center, lots, buildings, residents, workers, here_now, text}], alerts [{seq, kind no_route|stranded_walk|stranded_road, pos, building, count, text}], failed_trips, failed_today, walk_main, drive_main"),
     ] },
+    Cmd { name: "walk_networks", aliases: &["walknets", "pedestrian_networks"], effect: Read, run: super::connectivity::walk_networks, help: &[
+        ("buildings", "how many building names to list per network (default 8)"),
+        ("returns", "layer (the map layer key, for `overlay`), count, networks [{id (kept across rebuilds; a merge keeps the larger one's), main, name, color (#hex), color_linear, nodes, edges, underground_edges, buildings, residents, workers, lo, hi, center, some_buildings}], main first then by buildings and edges"),
+    ] },
     Cmd { name: "grounds_junctions", aliases: &["park_junctions"], effect: Read, run: planning::grounds_junctions, help: &[
         ("lot", "optional lot id"),
         ("kind", "park|plaza|stadium|campus|station|beach"),

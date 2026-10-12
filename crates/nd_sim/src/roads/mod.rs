@@ -177,6 +177,19 @@ impl Segment {
         self.is_motorway() || self.tunnel
     }
 
+    /// [walk-networks] People may walk (and ride) along it: a footpath at
+    /// any depth, or a street with pavements. A tunnel fronts nothing, but
+    /// a footpath bored underground is a pedestrian tunnel, and a street
+    /// tunnel the player set to Mixed has walkways along its bore. Never
+    /// the highway, its slip roads, a car-only road or the railway.
+    pub fn walkable(&self) -> bool {
+        match self.kind {
+            RoadKind::Rail => false,
+            RoadKind::Path => true,
+            RoadKind::Street => !self.is_motorway() && (!self.tunnel || self.car_only == Some(false)),
+        }
+    }
+
     pub fn half_width(&self) -> f32 {
         half_width_spec(self.kind, self.lanes_fwd, self.lanes_bwd)
     }

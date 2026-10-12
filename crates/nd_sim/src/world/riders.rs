@@ -162,11 +162,19 @@ impl World {
         !any && inter.phases.get(inter.phase).is_some_and(|g| g.contains(&approach))
     }
 
-    /// Someone other than `id` on (or stepping onto) crossing `cr` last tick.
+    /// Someone on foot on (or stepping onto) crossing `cr` last tick.
+    ///
+    /// [walk-networks] Only walkers: a rider gives way to people on a
+    /// crossing, not to other bikes. Counting riders locked a roundabout in
+    /// Harvey's city for days: bikes riding round the ring stood in the
+    /// mouth of an arm (on its crosswalk, so they held it) giving way to
+    /// bikes standing on the ring's crossing, who in turn gave way to them;
+    /// hundreds piled up at three spots and the cars (sirens too) stopped
+    /// for the bikes "in the road" for good.
     fn crossing_taken(&self, cr: u32, id: CitizenId) -> bool {
         let occ = &self.peds.occupants;
         let from = occ.partition_point(|x| x.0 < cr);
-        occ[from..].iter().take_while(|x| x.0 == cr).any(|x| x.1 != id)
+        occ[from..].iter().take_while(|x| x.0 == cr).any(|x| x.1 != id && self.citizens.get(x.1).is_some_and(|c| c.mode == TravelMode::Walk))
     }
 
     /// Seconds before cross traffic reaches junction `node`: the nearest
@@ -394,14 +402,19 @@ impl World {
             let target = path[*idx];
             let d = pos.distance(target);
             let from = if *idx > 0 { path[*idx - 1] } else { pos };
-            if !wheeled && !self.walk.raised.is_empty() && (self.walk.level_at_node(from) != 0.0 || self.walk.level_at_node(target) != 0.0) {
+            if !wheeled && !self.walk.raised.is_empty() && (self.walk.level_at_node(from) > 0.0 || self.walk.level_at_node(target) > 0.0) {
                 wheeled = true;
                 budget *= self.config.walk_speed / speed.max(1e-3);
             }
             if d > 1e-3 {
                 let dir = (target - pos) / d;
                 heading = dir.y.atan2(dir.x);
-                if rules {
+                // [walk-networks] Down in a tunnel the crossings and level
+                // crossings of the ways above are nothing to the rider (a
+                // bike under a roundabout gave way to its crossings and,
+                // standing there, held its traffic up).
+                let below = self.leg_in_tunnel(from, target, pos, true);
+                if rules && !below {
                     let reach = d.min(budget + LOOK_AHEAD);
                     if let Some(s) = self.rider_stop(id, &mut r, pos, dir, reach, late, feet) {
                         if s.at <= budget {
@@ -412,7 +425,7 @@ impl World {
                     }
                 }
                 // [rail-crossing] A level crossing with its lights on.
-                if let Some((k, stop)) = self.rail_stop(pos, pos + dir * d.min(budget)) {
+                if let Some((k, stop)) = self.rail_stop(pos, pos + dir * d.min(budget)).filter(|_| !below) {
                     pos = stop;
                     rail_wait = Some(k);
                     break;
@@ -628,6 +641,38 @@ mod tests {
         }
         run(&mut w, 3);
         assert!(out_of(w.citizens[id].pos, centre, out) > mid_out + CROSSWALK_HALF || !matches!(w.citizens[id].activity, Activity::Traveling { .. }), "rode on once the zebra was clear");
+    }
+
+    /// [walk-networks] A rider gives way to people on a crossing, not to
+    /// another bike standing on it: two bikes each waiting for the other's
+    /// crossing locked a roundabout in Harvey's city for days.
+    #[test]
+    fn a_cyclist_does_not_wait_for_another_bike_on_the_crosswalk() {
+        let mut w = town();
+        let (cr, _, _, centre, out) = arm(&w);
+        let mid_out = out_of(w.walk.crossings[cr as usize].mid, centre, out);
+        let mut ids = w.citizens.keys();
+        let (id, other) = (ids.next().unwrap(), ids.next().unwrap());
+        let path = shoulder(&w, centre, out, mid_out - 6.0, mid_out + 60.0);
+        rider(&mut w, id, seeds(|c, _| c < 0.1, 1)[0], path);
+        // The other is a cyclist standing on the zebra.
+        let at = w.walk.crossings[cr as usize].mid;
+        {
+            let o = &mut w.citizens[other];
+            o.mode = TravelMode::Bike;
+            o.inside = None;
+            o.pos = at;
+            o.prev_pos = at;
+            o.activity = Activity::Traveling { to: None, purpose: Purpose::Wander, path: vec![at], idx: 0 };
+        }
+        let mut passed = false;
+        for _ in 0..6 {
+            w.peds.occupants = vec![(cr, other)];
+            w.citizens[other].mode = TravelMode::Bike;
+            run(&mut w, 1);
+            passed |= out_of(w.citizens[id].pos, centre, out) > mid_out + CROSSWALK_HALF || !matches!(w.citizens[id].activity, Activity::Traveling { .. });
+        }
+        assert!(passed, "rode over a zebra only a bike stood on");
     }
 
     /// [review] At a five-arm junction a neighbouring arm's crosswalk lies

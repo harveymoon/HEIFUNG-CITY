@@ -57,11 +57,15 @@ pub struct Overlays {
     /// [w1] Construction: building sites going up and coming down, over a
     /// dimmed city (`sites_layer`, `focus::Focus::Sites`).
     pub construction: bool,
+    /// [walk-networks] Walk networks: every walkway coloured by the
+    /// connected network of the walk graph it is on, over a dimmed city,
+    /// buildings off the main network outlined (`sync_walk_networks`).
+    pub walk_networks: bool,
 }
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false, parking: false, trails: false, density: false, construction: false }
+        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false, parking: false, trails: false, density: false, construction: false, walk_networks: false }
     }
 }
 
@@ -189,6 +193,74 @@ pub(super) fn sync_paths(
     if !mesh.is_empty() {
         let data = mesh;
         commands.spawn((Mesh3d(meshes.add(to_mesh(&data, false))), MeshMaterial3d(mats.glow()), Transform::IDENTITY, bevy::light::NotShadowCaster, bevy::light::NotShadowReceiver, PathsTag, super::focus::FocusKeep));
+    }
+}
+
+/// [walk-networks] The Walk networks layer: every walkable edge in its
+/// network's colour (`nd_sim::world::walk_networks`), tunnels dimmer and
+/// thinner; rebuilt when the walk graph or its networks change.
+pub(super) fn sync_walk_networks(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
+    mats: Res<Materials>,
+    overlays: Res<Overlays>,
+    mut state: ResMut<RenderState>,
+    existing: Query<Entity, With<WalkNetTag>>,
+) {
+    let w = &sim.world;
+    let nets = &w.walk_networks;
+    let key = (w.walk.version, nets.list.iter().map(|n| n.id as u64).sum::<u64>() ^ (nets.list.len() as u64) << 32);
+    if overlays.walk_networks == state.walknet_shown && key == state.walknet_key && !sim.full_rebuild {
+        return;
+    }
+    state.walknet_shown = overlays.walk_networks;
+    state.walknet_key = key;
+    despawn_all(&mut commands, &existing);
+    if !overlays.walk_networks {
+        return;
+    }
+    let walk = &w.walk;
+    let mut mesh = MeshData::default();
+    for (i, edges) in walk.adj.iter().enumerate() {
+        let Some(net) = nets.of_node(walk, i as u32) else { continue };
+        let c = net.color();
+        for e in edges {
+            if (i as u32) >= e.to {
+                continue;
+            }
+            let (Some(a), Some(b)) = (walk.nodes.get(i), walk.nodes.get(e.to as usize)) else { continue };
+            let under = a.level < 0.0 || b.level < 0.0;
+            // Over 1 so the main colours bloom over the dimmed city; the
+            // tunnels below dimmer, the lot loops and gates thinner.
+            let (k, width) = if under { (0.8, 0.7) } else if e.interior { (1.3, 0.6) } else { (1.9, 1.0) };
+            mesh.ground_strip(&[a.pos, b.pos], width, 0.3, [c[0] * k, c[1] * k, c[2] * k, 1.0]);
+        }
+    }
+    if !mesh.is_empty() {
+        commands.spawn((Mesh3d(meshes.add(to_mesh(&mesh, false))), MeshMaterial3d(mats.glow()), Transform::IDENTITY, bevy::light::NotShadowCaster, bevy::light::NotShadowReceiver, WalkNetTag, super::focus::FocusKeep));
+    }
+}
+
+/// [walk-networks] In the Walk networks layer, every building off the main
+/// network outlined in its network's colour.
+pub(super) fn walk_network_gizmos(sim: Res<Sim>, overlays: Res<Overlays>, lighting: Res<Lighting>, mut gizmos: Gizmos<super::layers::LoadGizmos>) {
+    if lighting.heat || !overlays.walk_networks {
+        return;
+    }
+    let w = &sim.world;
+    let nets = &w.walk_networks;
+    for net in nets.list.iter().skip(1) {
+        let c = net.color();
+        let col = Color::linear_rgb(c[0] * 2.2, c[1] * 2.2, c[2] * 2.2);
+        for &b in &net.buildings {
+            let Some(lot) = w.building_lot(b) else { continue };
+            let ground = w.surface_height(lot.center) + 1.0;
+            let ring: Vec<Vec3> = lot.polygon.iter().map(|p| Vec3::new(p.x, ground, p.y)).collect();
+            if ring.len() >= 3 {
+                gizmos.linestrip(ring.iter().copied().chain(ring.first().copied()), col);
+            }
+        }
     }
 }
 
