@@ -463,21 +463,64 @@ fn layer_button(ui: &mut egui::Ui, p: &mut UiCtx) {
         .on_hover_text("The map layer: one data view at a time, with its colour key at the bottom right. V, O, P toggle theirs; L steps through the heat maps, K through the land layers.");
 }
 
+/// [view-tabs] The two tabs of the layer picker and their groups, in the
+/// order they are shown. City: what the player builds and runs; World:
+/// what the land and the wider economy hand the city (the land surveys and
+/// the industry odds). A group missing here goes under City, last.
+const VIEW_TABS: [(&str, &[&str]); 2] = [
+    ("City", &["City", "People", "Traffic", "Transit", "Environment"]),
+    ("World", &["Land and resources", "Industry odds"]),
+];
+
+/// [view-tabs] Which tab a group sits under (0 City, 1 World).
+fn tab_of(group: &str) -> usize {
+    VIEW_TABS.iter().position(|(_, gs)| gs.contains(&group)).unwrap_or(0)
+}
+
+/// [view-tabs] The groups of a tab, each once, with its layers in picker
+/// order: groups named in [`VIEW_TABS`] first in that order, any other
+/// City group after them.
+fn tab_groups(tab: usize) -> Vec<(&'static str, Vec<LayerId>)> {
+    let mut groups: Vec<(&'static str, Vec<LayerId>)> = Vec::new();
+    for l in LayerId::all() {
+        let g = l.group();
+        if tab_of(g) != tab {
+            continue;
+        }
+        match groups.iter_mut().find(|(name, _)| *name == g) {
+            Some((_, v)) => v.push(l),
+            None => groups.push((g, vec![l])),
+        }
+    }
+    let rank = |g: &str| VIEW_TABS[tab].1.iter().position(|x| *x == g).unwrap_or(usize::MAX);
+    groups.sort_by_key(|(g, _)| rank(g));
+    groups
+}
+
 /// Every map layer under its group heading, the one on lit; a click shows
-/// it alone, "None" clears the map. `wrap` lays each group out in a
-/// wrapping row (the View window) rather than a column (the dropdown).
+/// it alone, "None" clears the map. [view-tabs] Two tabs, City and World,
+/// each group once. `wrap` lays each group out in a wrapping row (the View
+/// window) rather than a column (the dropdown).
 pub fn layer_list(ui: &mut egui::Ui, overlays: &mut Overlays, wrap: bool) {
     let active = map_layers::active(overlays);
     let mut pick: Option<Option<LayerId>> = None;
-    if ui.selectable_label(active.is_none(), "None").on_hover_text("No data layer: the plain map").clicked() {
-        pick = Some(None);
-    }
-    let all = LayerId::all();
-    let mut i = 0;
-    while i < all.len() {
-        let group = all[i].group();
-        let members: Vec<LayerId> = all[i..].iter().copied().take_while(|l| l.group() == group).collect();
-        i += members.len();
+    let tab_id = egui::Id::new("view_tab");
+    // Opens on the tab of the layer showing, then stays where it was put.
+    let mut tab: usize = ui.ctx().data(|d| d.get_temp(tab_id)).unwrap_or_else(|| active.map_or(0, |l| tab_of(l.group())));
+    ui.horizontal(|ui| {
+        for (i, (name, _)) in VIEW_TABS.iter().enumerate() {
+            let hint = if i == 0 { "What the city builds and runs: zoning, people, traffic, transit" } else { "What the land and the wider economy give the city: resources and industry odds" };
+            if ui.selectable_label(tab == i, egui::RichText::new(*name).strong()).on_hover_text(hint).clicked() {
+                tab = i;
+            }
+        }
+        ui.separator();
+        if ui.selectable_label(active.is_none(), "None").on_hover_text("No data layer: the plain map").clicked() {
+            pick = Some(None);
+        }
+    });
+    ui.ctx().data_mut(|d| d.insert_temp(tab_id, tab));
+    for (group, members) in tab_groups(tab) {
         section(ui, &group.to_uppercase());
         let mut item = |ui: &mut egui::Ui, l: LayerId| {
             let key = l.hotkey();
@@ -507,6 +550,25 @@ mod tests {
 
     fn row_width(row: &[(Item, f32)]) -> f32 {
         row.iter().map(|r| r.1).sum::<f32>() + GROUP_GAP * (row.len() as f32 - 1.0)
+    }
+
+    /// [view-tabs] Every layer shows exactly once across the two tabs,
+    /// and no group heading appears twice in a tab.
+    #[test]
+    fn view_tabs_hold_every_layer_once() {
+        let mut seen = 0;
+        for tab in 0..VIEW_TABS.len() {
+            let groups = tab_groups(tab);
+            let mut names: Vec<&str> = groups.iter().map(|(g, _)| *g).collect();
+            let n = names.len();
+            names.sort();
+            names.dedup();
+            assert_eq!(names.len(), n, "a group twice in tab {tab}");
+            seen += groups.iter().map(|(_, v)| v.len()).sum::<usize>();
+        }
+        assert_eq!(seen, LayerId::all().len());
+        assert!(tab_groups(1).iter().any(|(g, _)| *g == "Industry odds"));
+        assert!(tab_groups(0).iter().filter(|(g, _)| *g == "Traffic").count() == 1);
     }
 
     /// No row is ever wider than the bar, at any width, as long as every
