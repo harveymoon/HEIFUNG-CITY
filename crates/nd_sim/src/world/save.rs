@@ -3,10 +3,50 @@
 
 use super::*;
 
+/// [saves] Gzip's first two bytes: a compressed save starts with them, RON
+/// text never does.
+pub const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
+
+/// [saves] Whether a save's bytes are compressed.
+pub fn is_compressed(bytes: &[u8]) -> bool {
+    bytes.starts_with(&GZIP_MAGIC)
+}
+
+/// [saves] A save's RON text: gunzipped if compressed, else as it is. The
+/// text is sized from gzip's length trailer up front, so a big save grows no
+/// doubling buffers on the way.
+pub fn save_text(bytes: &[u8]) -> std::io::Result<String> {
+    use std::io::Read;
+    if !is_compressed(bytes) {
+        return String::from_utf8(bytes.to_vec()).map_err(std::io::Error::other);
+    }
+    // The trailer holds the length mod 2^32: a hint only, and never more
+    // than RON packs into (a damaged file must not ask for gigabytes).
+    let hint = bytes.len().checked_sub(4).map_or(0, |at| u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]) as usize);
+    let mut text = String::with_capacity(hint.min(bytes.len().saturating_mul(64)) + 1);
+    flate2::read::MultiGzDecoder::new(bytes).read_to_string(&mut text)?;
+    Ok(text)
+}
+
 impl World {
-    /// The save format: pretty RON, nested six deep.
+    /// The RON format: pretty RON, nested six deep.
     pub(super) fn ron_config() -> ron::ser::PrettyConfig {
         ron::ser::PrettyConfig::default().depth_limit(6)
+    }
+
+    /// [saves] The format of the game's save files: [`Self::ron_config`]
+    /// one item a line but not indented. Indentation was half of a big
+    /// city's save (124 of its 239 MB), all of it to write, compress, hold
+    /// in memory while loading and parse. Indented saves load the same.
+    fn save_config() -> ron::ser::PrettyConfig {
+        Self::ron_config().indentor("")
+    }
+
+    /// [saves] The save file's RON ([`Self::save_config`]) as a string, as
+    /// [`World::write_ron_gz`] compresses it. [`World::to_ron`] stays
+    /// indented for reading by eye and for tests that cut fields out.
+    pub fn to_save_ron(&self) -> Result<String, ron::Error> {
+        ron::ser::to_string_pretty(self, Self::save_config())
     }
 
     pub fn to_ron(&self) -> Result<String, ron::Error> {
@@ -20,6 +60,35 @@ impl World {
     /// bytes failed" crash.
     pub fn write_ron(&self, out: impl std::io::Write) -> Result<(), ron::Error> {
         ron::Options::default().to_io_writer_pretty(out, self, Self::ron_config())
+    }
+
+    /// [saves] The save compressed: [`World::to_save_ron`]'s RON through gzip
+    /// at its fastest level (a big city's 240 MB of RON comes to 40 MB,
+    /// in 1.2 s against 0.8 s plain). [`World::from_save_bytes`] reads it and the plain RON alike.
+    pub fn write_ron_gz(&self, out: impl std::io::Write) -> std::io::Result<()> {
+        // RON writes in small pieces: buffered before the compressor, which
+        // pays per call (unbuffered it took thirty times as long).
+        let mut buf = std::io::BufWriter::with_capacity(1 << 20, flate2::write::GzEncoder::new(out, flate2::Compression::fast()));
+        ron::Options::default().to_io_writer_pretty(&mut buf, self, Self::save_config()).map_err(std::io::Error::other)?;
+        buf.into_inner().map_err(|e| e.into_error())?.finish()?.flush()
+    }
+
+    /// [saves] A world from a save file's bytes: gzip-compressed RON
+    /// ([`World::write_ron_gz`]) or plain RON (every older save).
+    pub fn from_save_bytes(bytes: &[u8]) -> Result<Self, String> {
+        let text = save_text(bytes).map_err(|e| e.to_string())?;
+        Self::from_ron(&text).map_err(|e| e.to_string())
+    }
+
+    /// [saves] [`World::from_save_bytes`] of a file. The compressed bytes
+    /// are dropped before the RON is parsed, so the peak is the RON text and
+    /// the world, as for a plain save.
+    pub fn read_save(path: impl AsRef<std::path::Path>) -> Result<Self, String> {
+        let text = {
+            let bytes = std::fs::read(path.as_ref()).map_err(|e| e.to_string())?;
+            save_text(&bytes).map_err(|e| e.to_string())?
+        };
+        Self::from_ron(&text).map_err(|e| e.to_string())
     }
 
     pub fn from_ron(text: &str) -> Result<Self, ron::error::SpannedError> {
@@ -276,5 +345,29 @@ impl World {
                 car.errand = Errand::Through;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod save_format_tests {
+    use super::*;
+
+    /// [saves] A compressed save holds the unindented RON and loads; a
+    /// plain (indented, older) one loads too; a cut-off file is an error,
+    /// not a panic.
+    #[test]
+    fn compressed_saves_round_trip() {
+        let w = World::new(WorldConfig::default());
+        let mut buf = Vec::new();
+        w.write_ron_gz(&mut buf).unwrap();
+        assert!(is_compressed(&buf));
+        assert_eq!(save_text(&buf).unwrap(), w.to_save_ron().unwrap());
+        assert!(buf.len() * 4 < w.to_ron().unwrap().len());
+        let back = World::from_save_bytes(&buf).expect("compressed loads");
+        assert_eq!(back.clock.tick, w.clock.tick);
+        assert_eq!(back.lots.len(), w.lots.len());
+        let plain = World::from_save_bytes(w.to_ron().unwrap().as_bytes()).expect("plain loads");
+        assert_eq!(plain.to_save_ron().unwrap(), back.to_save_ron().unwrap());
+        assert!(World::from_save_bytes(&buf[..buf.len() / 2]).is_err());
     }
 }
