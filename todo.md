@@ -611,3 +611,5 @@ Everything still open, from the old groups 6–8, the group 1–5 leftovers, tod
 ## H. Public order and events (big features)
 - [ ] Riots, protests, parades taking over roads
 - [ ] Police gunships, SWAT, armoured trucks, raids
+
+## Wave 1 (groups A–F parts) merged 2026-10-12. Left from wave 1: backland/F27 concave lots, parclo/cloverleaf ramps, save→load determinism, tow-job backlog (1,341 queued in Harvey's city: too few tow trucks), car ferries have no real car queues. Wave 2 (G, H, rest of E/F) on hold.
