@@ -168,21 +168,25 @@ impl BusStop {
     /// way: the way back of a two-way line. `None` on a one-way street (or a
     /// street that has gone).
     pub fn far_kerb(&self, roads: &RoadNetwork) -> Option<BusStop> {
-        let seg = roads.segments.get(self.segment.0 as usize)?;
-        if !seg.alive || seg.lanes_fwd == 0 || seg.lanes_bwd == 0 {
+        // The street the stop stands by now (its own id can be stale after
+        // the roads were rebuilt), as `snap` finds it.
+        let (segment, _, q) = roads.nearest_street(self.pos)?;
+        if q.distance(self.pos) > STOP_SNAP {
             return None;
         }
-        let (a, b) = roads.segment_points(self.segment);
-        let len = a.distance(b);
-        if len < 1e-3 {
+        let seg = roads.segment(segment);
+        if seg.lanes_fwd == 0 || seg.lanes_bwd == 0 {
             return None;
         }
-        let d = (b - a) / len;
-        let q = a + d * (self.pos - a).dot(d).clamp(0.0, len);
+        let (a, b) = roads.segment_points(segment);
+        let d = (b - a).normalize_or_zero();
+        if d == Vec2::ZERO {
+            return None;
+        }
         let right = Vec2::new(-d.y, d.x);
         let side = if (self.pos - q).dot(right) >= 0.0 { 1.0 } else { -1.0 };
         let hw = seg.half_width();
-        Some(BusStop { segment: self.segment, pos: q - right * side * (hw - 1.4).max(1.5), stats: StopStats::default(), back: true })
+        Some(BusStop { segment, pos: q - right * side * (hw - 1.4).max(1.5), stats: StopStats::default(), back: true })
     }
 }
 

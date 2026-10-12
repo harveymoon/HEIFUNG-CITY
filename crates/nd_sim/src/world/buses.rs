@@ -129,7 +129,13 @@ impl World {
     pub(super) fn resync_two_way(&mut self, route: RouteId) {
         let Some(r) = self.transit.routes.get(route) else { return };
         let out = r.outbound_len();
-        let want: Vec<BusStop> = if r.two_way && out >= 3 { (1..out - 1).rev().filter_map(|k| r.stops[k].far_kerb(&self.roads)).collect() } else { Vec::new() };
+        // A far kerb the line already stops at on its way out is not made
+        // twice (a loop drawn out and back along one street).
+        let want: Vec<BusStop> = if r.two_way && out >= 3 {
+            (1..out - 1).rev().filter_map(|k| r.stops[k].far_kerb(&self.roads)).filter(|f| !r.stops[..out].iter().any(|o| o.pos.distance(f.pos) < 3.0)).collect()
+        } else {
+            Vec::new()
+        };
         let have: Vec<BusStop> = r.stops[out..].to_vec();
         if want.len() == have.len() && want.iter().zip(&have).all(|(a, b)| a.pos.distance(b.pos) < 0.5 && a.segment == b.segment) {
             return;
