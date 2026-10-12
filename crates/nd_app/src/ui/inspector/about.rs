@@ -146,10 +146,9 @@ fn dirty(k: BusinessKind) -> bool {
     matches!(k, BusinessKind::Refinery | BusinessKind::ChemicalWorks | BusinessKind::Smelter | BusinessKind::OilWell | BusinessKind::StripMine | BusinessKind::Slaughterhouse | BusinessKind::Feedlot)
 }
 
-/// "a thing" / "an office".
+/// "a thing" / "an office" (by the sound: `nd_sim::names::a`).
 fn a(noun: &str) -> String {
-    let vowel = noun.chars().next().is_some_and(|c| "aeiouAEIOU".contains(c));
-    format!("{} {noun}", if vowel { "an" } else { "a" })
+    nd_sim::names::a(noun)
 }
 
 #[cfg(test)]
@@ -182,5 +181,7 @@ mod tests {
     fn articles() {
         assert_eq!(a("office"), "an office");
         assert_eq!(a("grocery"), "a grocery");
+        assert_eq!(a("observatory"), "an observatory");
+        assert_eq!(a("university"), "a university");
     }
 }

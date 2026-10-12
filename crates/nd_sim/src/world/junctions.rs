@@ -335,7 +335,7 @@ impl World {
         }
         let cost = upgrade.cost();
         if cost > 0.0 && self.economy.treasury < cost {
-            return Err(format!("not enough money: a {} costs {cost:.0}", upgrade.label()));
+            return Err(format!("not enough money: {} costs {cost:.0}", crate::names::a(upgrade.label())));
         }
         if cost > 0.0 {
             self.economy.debit_item(Flow::Construction, cost, Item::Named(format!("{}s", upgrade.label())));

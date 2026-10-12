@@ -22,7 +22,7 @@ impl World {
         let area = self.lots[lot_id].area();
         let cost = size.cost_for(area);
         if self.economy.treasury < cost {
-            return Err(format!("the treasury has {:.0}; a {} on {:.0} m² costs {:.0}", self.economy.treasury, size.label(), area, cost));
+            return Err(format!("the treasury has {:.0}; {} on {:.0} m² costs {:.0}", self.economy.treasury, crate::names::a(size.label()), area, cost));
         }
         self.take_over_lot(lot_id, size.label())?;
         // [free-placement] The city's own lot: out of the zone.

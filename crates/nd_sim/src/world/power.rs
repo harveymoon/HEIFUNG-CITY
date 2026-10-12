@@ -78,7 +78,7 @@ impl World {
         let scale = kind.size_scale(lot.area());
         let cost = kind.cost_at(scale);
         if self.economy.treasury < cost {
-            return Err(format!("the treasury has {:.0}; a {} here costs {:.0}", self.economy.treasury, kind.label(), cost));
+            return Err(format!("the treasury has {:.0}; {} here costs {:.0}", self.economy.treasury, crate::names::a(kind.label()), cost));
         }
         self.take_over_lot(lot_id, kind.label())?;
         self.economy.debit_item(Flow::Construction, cost, Item::Named(kind.label().to_string()));

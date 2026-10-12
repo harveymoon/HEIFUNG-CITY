@@ -297,7 +297,7 @@ impl World {
             let area = crate::zoning::polygon_area(&site.outline).abs();
             let per: f32 = (0..site.outline.len()).map(|i| site.outline[i].distance(site.outline[(i + 1) % site.outline.len()])).sum();
             if lot.as_ref().is_some_and(|l| l.landlocked) && area / (per * per).max(1.0) < 0.031 {
-                return Some(format!("the plots here only join into a long thin strip; a {} wants a deeper block", what.label()));
+                return Some(format!("the plots here only join into a long thin strip; {} wants a deeper block", crate::names::a(what.label())));
             }
             return match lot {
                 Some(l) => self.lot_problem(what, &l, None),

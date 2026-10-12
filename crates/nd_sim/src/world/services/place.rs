@@ -120,18 +120,18 @@ impl World {
         }
         // [free-placement] Zoning is no bar: only a park is kept.
         if !what.allowed_on(lot.land_use) {
-            return Some(format!("that is park land: unzone it before putting a {} there", what.label()));
+            return Some(format!("that is park land: unzone it before putting {} there", crate::names::a(what.label())));
         }
         // [plant-groups] A small lot may join the solar or wind farm next door.
         // [plant-scale] A site on unzoned ground (no lot yet) too.
         let joins = matches!(what, Placeable::Plant(k) if lot.area() < k.min_area() && self.small_plant_site_joins(k, &lot.polygon, lot_id).is_some());
         if lot.area() < what.min_area() && !joins {
-            return Some(format!("too small: a {} needs {:.0} m² (this lot is {:.0})", what.label(), what.min_area(), lot.area()));
+            return Some(format!("too small: {} needs {:.0} m² (this lot is {:.0})", crate::names::a(what.label()), what.min_area(), lot.area()));
         }
         // [plant-scale] A heavy plant is not put on a strip along the kerb.
         let thick = crate::zoning::site_thickness(&lot.polygon);
         if thick < what.min_thickness() {
-            return Some(format!("too narrow: a {} needs ground about {:.0} m deep and wide (this is a strip {:.0} m across)", what.label(), what.min_thickness() * 2.0, thick * 2.0));
+            return Some(format!("too narrow: {} needs ground about {:.0} m deep and wide (this is a strip {:.0} m across)", crate::names::a(what.label()), what.min_thickness() * 2.0, thick * 2.0));
         }
         if let Placeable::Plant(k) = what {
             if let Err(e) = self.power_site_on(lot, k) {
@@ -149,7 +149,7 @@ impl World {
         }
         let needs_street = matches!(what, Placeable::BusDepot | Placeable::ParkingLot(_) | Placeable::CargoHub) || matches!(what, Placeable::Service(k, _) if k.unit_kind().is_some() || k == ServiceKind::Stadium || k == ServiceKind::TrashDepot || k == ServiceKind::ParkingEnforcement || k == ServiceKind::University || k.is_landmark());
         if needs_street && !lot.car_access() {
-            return Some(format!("a {} needs a street out front", what.label()));
+            return Some(format!("{} needs a street out front", crate::names::a(what.label())));
         }
         // [clarity] Solar and wind cost what the lot they fill makes them.
         // [plant-scale] Coal, nuclear and geothermal by their site too.
@@ -158,7 +158,7 @@ impl World {
             _ => what.cost(),
         };
         if self.economy.treasury < cost {
-            return Some(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, what.label(), cost));
+            return Some(format!("the treasury has {:.0}; {} costs {:.0}", self.economy.treasury, crate::names::a(what.label()), cost));
         }
         None
     }

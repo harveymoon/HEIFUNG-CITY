@@ -35,6 +35,23 @@ pub fn coin(rng: &mut impl Rng, p: f32) -> bool {
 /// building's windows whose rank is below its lit share and swaps the mark
 /// for that share's lookup (opaque glow ignores alpha anyway).
 pub const WINDOW_LIGHT_MARK: f32 = 2.0;
+/// [w1-render] Vertex alpha marking a landmark's neon in the Glow mesh:
+/// the renderer dims it by day like the signs (it is drawn far brighter, to
+/// carry at night, and glared on through the afternoon).
+pub const NEON_MARK: f32 = 1.5;
+/// Vertex alpha marking glow lit only after dark (an observatory's beam):
+/// the renderer leaves it out by day.
+pub const NIGHT_MARK: f32 = 1.75;
+
+/// Mark the glow drawn since vertex `from` with `mark` ([`NEON_MARK`],
+/// [`NIGHT_MARK`]), leaving window lights and anything marked already.
+pub fn mark_glow(g: &mut Geometry, from: usize, mark: f32) {
+    for c in g.part(Glow).colors.iter_mut().skip(from) {
+        if c[3] < NEON_MARK - 0.01 {
+            c[3] = mark;
+        }
+    }
+}
 
 pub use crate::depth::LIGHT_GLASS_BEHIND;
 

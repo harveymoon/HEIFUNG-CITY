@@ -29,7 +29,7 @@ impl World {
     pub fn place_port(&mut self, kind: PortKind, p: Vec2) -> Result<BuildingId, String> {
         let port = self.plan_port(kind, p)?;
         if self.economy.treasury < kind.cost() {
-            return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), kind.cost()));
+            return Err(format!("the treasury has {:.0}; {} costs {:.0}", self.economy.treasury, crate::names::a(kind.label()), kind.cost()));
         }
         for (_, lot) in self.buildings_under(&port.footprint()) {
             self.take_over_lot(lot, kind.label())?;

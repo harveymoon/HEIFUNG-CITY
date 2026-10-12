@@ -1173,7 +1173,10 @@ pub fn observatory(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         if *main {
             // The night beam, straight up from the crown.
             let crown = w3(c, *p, h + drum + *r);
+            let from = g.get(Glow).positions.len();
             g.part(Glow).tube(crown, crown + Vec3::Y * 70.0, 0.12, 4, rgba(mul(NEON_GREEN, 0.8)));
+            // [w1-render] Only after dark: it stood over the hill all day.
+            super::parts::mark_glow(g, from, super::parts::NIGHT_MARK);
         }
     }
     // Telescopes on the terrace and a ringed planet on a plinth.

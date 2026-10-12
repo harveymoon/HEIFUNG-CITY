@@ -658,7 +658,7 @@ impl World {
                 c.savings += stolen * 0.5;
             }
             c.thought = if first_since { "First job done. My hands are still shaking.".to_string() } else { "Nobody saw a thing.".to_string() };
-            c.remember(tick, format!("Did a {} at {bname}.", offence.key()));
+            c.remember(tick, format!("Did {} at {bname}.", crate::names::a(offence.key())));
         }
         if offence == Offence::Murder {
             // A stranger's work: the police have no name to go on.
