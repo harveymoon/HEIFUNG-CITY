@@ -66,6 +66,8 @@ pub const MAP_LAYERS: &[MapLayer] = &[
     // [clarity] (render/layers.rs `danger_gizmos`)
     MapLayer { key: "danger", label: "Traffic danger", group: "Traffic", hotkey: "", hint: "Crashes on the record per street: where accidents keep happening", flag: |o| &mut o.danger, legend: legend_danger },
     MapLayer { key: "paths", label: "Pedestrian network", group: "Traffic", hotkey: "P", hint: "Lot loops, alleys and gates people walk", flag: |o| &mut o.paths, legend: legend_paths },
+    // [walk-networks] (render/overlays.rs `sync_walk_networks`)
+    MapLayer { key: "walk_networks", label: "Walk networks", group: "Traffic", hotkey: "", hint: "Every walkway coloured by the network it belongs to: places people cannot walk between show in different colours; buildings off the main network outlined", flag: |o| &mut o.walk_networks, legend: legend_walk_networks },
     MapLayer { key: "people", label: "People", group: "People", hotkey: "L", hint: "Where everyone is right now", flag: |o| &mut o.people, legend: legend_people },
     MapLayer { key: "pollution", label: "Pollution and noise", group: "Environment", hotkey: "L", hint: "From plants, industry, nightlife and traffic", flag: |o| &mut o.pollution, legend: legend_pollution },
     // [layers] (render/focus.rs, render/layers.rs, render/mapview.rs)
@@ -410,6 +412,75 @@ fn legend_paths(ui: &mut egui::Ui, cx: &LegendCtx) {
         false,
     );
     small(ui, &format!("{} walking now", cx.world.citizens.values().filter(|c| c.is_visible() && !matches!(c.activity, nd_sim::Activity::Driving { .. })).count()));
+}
+
+/// [walk-networks] The Walk networks layer's key: the networks by size,
+/// each with its colour; hover for where it is and what is on it, click to
+/// fly there.
+fn legend_walk_networks(ui: &mut egui::Ui, cx: &LegendCtx) {
+    let nets = &cx.world.walk_networks;
+    if nets.list.is_empty() {
+        small(ui, "no walkways yet");
+        return;
+    }
+    let others = nets.list.len() - 1;
+    small(ui, &if others == 0 { "one walk network: everywhere on it is in walking reach".to_string() } else { format!("{} walk networks: places in different colours are not joined on foot", nets.list.len()) });
+    const ROWS: usize = 12;
+    for (k, n) in nets.list.iter().enumerate().take(ROWS) {
+        let c = n.color();
+        let label = format!("{}{}: {} walkways, {} building{}, {} resident{}", if k == 0 { "main, " } else { "" }, n.name, n.edges, n.buildings.len(), crate::ui::fmt::s(n.buildings.len() as u32), n.residents, crate::ui::fmt::s(n.residents));
+        let r = ui
+            .horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                ui.painter().rect_filled(rect, 2.0, linear(c));
+                ui.add(egui::Label::new(egui::RichText::new(label).small()).sense(egui::Sense::click()))
+            })
+            .inner;
+        let names: Vec<String> = n.buildings.iter().take(6).filter_map(|b| cx.world.buildings.get(*b).map(|x| x.name.clone())).collect();
+        let more = n.buildings.len().saturating_sub(names.len());
+        let mut tip = format!("Network #{} {}\nfrom ({:.0}, {:.0}) to ({:.0}, {:.0})\n{} nodes, {} walkways ({} underground), {} workers", n.id, n.name, n.lo.x, n.lo.y, n.hi.x, n.hi.y, n.nodes, n.edges, n.underground, n.workers);
+        if !names.is_empty() {
+            tip.push_str(&format!("\n{}{}", names.join(", "), if more > 0 { format!(" and {more} more") } else { String::new() }));
+        }
+        tip.push_str("\nclick: fly there");
+        if r.on_hover_text(tip).clicked() {
+            request_fly(ui.ctx(), (n.lo + n.hi) * 0.5);
+        }
+    }
+    if nets.list.len() > ROWS {
+        small(ui, &format!("and {} smaller", nets.list.len() - ROWS));
+    }
+    small(ui, "outlined: buildings off the main network; dim: tunnels");
+}
+
+/// [walk-networks] Ask for a layer to be shown from somewhere without the
+/// overlays at hand (an inspector line, an alert): `take_requests` in the
+/// UI pass switches it on.
+pub fn request_layer(ctx: &egui::Context, key: &'static str) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("nd_request_layer"), key));
+}
+
+/// [walk-networks] Ask the camera to fly to `at` (a legend row).
+pub fn request_fly(ctx: &egui::Context, at: nd_sim::Vec2) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("nd_request_fly"), (at.x, at.y)));
+}
+
+/// The layer and the place asked for since the last frame, if any.
+pub fn take_requests(ctx: &egui::Context, o: &mut Overlays) -> Option<nd_sim::Vec2> {
+    if let Some(key) = ctx.data_mut(|d| d.remove_temp::<&'static str>(egui::Id::new("nd_request_layer"))) {
+        if let Some(l) = LayerId::parse(key) {
+            set_active(o, Some(l));
+        }
+    }
+    ctx.data_mut(|d| d.remove_temp::<(f32, f32)>(egui::Id::new("nd_request_fly"))).map(|(x, y)| nd_sim::Vec2::new(x, y))
+}
+
+/// [walk-networks] A "show the walk networks" button after a line about
+/// being cut off on foot.
+pub fn walk_networks_button(ui: &mut egui::Ui) {
+    if ui.small_button("Walk networks").on_hover_text("Show the Walk networks map layer: which places are joined on foot").clicked() {
+        request_layer(ui.ctx(), "walk_networks");
+    }
 }
 
 /// [pt-ux] The Parking layer's key.

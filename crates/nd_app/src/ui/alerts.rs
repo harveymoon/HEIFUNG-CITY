@@ -68,6 +68,13 @@ fn severity_color(s: u8) -> egui::Color32 {
     }
 }
 
+/// [walk-networks] An alert about getting about on foot: no route found,
+/// cut off from the pedestrian grid.
+fn on_foot_problem(text: &str) -> bool {
+    let t = text.to_ascii_lowercase();
+    t.contains("pedestrian") || t.contains("no route found") || t.contains("on foot")
+}
+
 /// The window's body.
 pub fn body(ui: &mut egui::Ui, p: &mut UiCtx) {
     let now = ui.input(|i| i.time);
@@ -98,6 +105,11 @@ pub fn body(ui: &mut egui::Ui, p: &mut UiCtx) {
                         fly = Some(at);
                     }
                 }
+                // [walk-networks] Trips that found no way on foot, a place
+                // cut off: the map layer that shows why.
+                if on_foot_problem(&l.text) {
+                    crate::map_layers::walk_networks_button(ui);
+                }
                 let text = egui::RichText::new(&l.text);
                 ui.add(egui::Label::new(if fresh { text.color(IVORY) } else { text.weak() }).wrap());
             });
@@ -121,6 +133,9 @@ pub fn body(ui: &mut egui::Ui, p: &mut UiCtx) {
                 }
             }
             let msg = if pr.message.is_empty() { format!("{} cases", pr.count) } else { pr.message.clone() };
+            if on_foot_problem(&msg) {
+                crate::map_layers::walk_networks_button(ui);
+            }
             ui.add(egui::Label::new(egui::RichText::new(msg).color(if pr.severity >= 3 { WARN } else { IVORY })).wrap()).on_hover_text(pr.hint);
         });
     }

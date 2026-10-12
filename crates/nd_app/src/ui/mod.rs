@@ -292,6 +292,11 @@ pub(crate) fn side_panel(
     if !city_data::is_open(ctx) {
         plan_bar::show(ctx, &mut p, top_rect.bottom());
     }
+    // [walk-networks] A layer or a place asked for by a legend row, an
+    // inspector line or an alert.
+    if let Some(at) = crate::map_layers::take_requests(ctx, p.overlays) {
+        p.fly_to = Some(Vec2::new(at.x, at.y));
+    }
     let fly_to = p.fly_to;
 
     flags.panel_rects = vec![top_rect, bottom_rect];

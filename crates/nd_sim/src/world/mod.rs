@@ -158,6 +158,7 @@ mod edge_tests;
 #[cfg(test)]
 mod concerns_tests;
 pub mod connectivity;
+pub mod walk_networks;
 #[cfg(test)]
 mod connectivity_tests;
 #[cfg(test)]
@@ -522,6 +523,10 @@ pub struct World {
     /// (`world/connectivity.rs`).
     #[serde(default)]
     pub connectivity: connectivity::Connectivity,
+    /// [walk-networks] The walk graph's separate networks with ids kept
+    /// across rebuilds (`world/walk_networks.rs`); derived, not saved.
+    #[serde(skip)]
+    pub walk_networks: walk_networks::WalkNetworks,
     /// Late mind answers (`MindProvider::poll`) for citizens who were
     /// travelling when they came, with the tick they came: acted on at the
     /// citizen's next decision (`step_citizens`) if still fresh. Not saved:
@@ -830,6 +835,7 @@ impl World {
             road_component: Vec::new(),
             drive_component: Vec::new(),
             connectivity: Default::default(),
+            walk_networks: Default::default(),
             stations: Vec::new(),
             yards: Vec::new(),
             halts: Vec::new(),

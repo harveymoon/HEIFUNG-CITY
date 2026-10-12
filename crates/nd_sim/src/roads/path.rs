@@ -40,11 +40,13 @@ impl RoadNetwork {
         self.path_where(from, to, |s| !s.is_rail())
     }
 
-    /// A* for walkers and bikes: streets and paths, but never a tunnel, a
-    /// highway or a slip road (`Segment::fronts_nothing`). A rider routed
-    /// through a bore was drawn on the ground above it.
+    /// A* for walkers and bikes: streets and paths, never a highway or a
+    /// slip road (`Segment::walkable`). [walk-networks] Pedestrian tunnels
+    /// and Mixed street tunnels are walkable; a rider in one is drawn down
+    /// in the bore (`World::way_height_on_leg`) and meets no crossing of
+    /// the street above (`World::leg_in_tunnel`).
     pub fn foot_path(&self, from: NodeId, to: NodeId) -> Option<Vec<NodeId>> {
-        self.path_where(from, to, |s| !s.is_rail() && !s.fronts_nothing())
+        self.path_where(from, to, Segment::walkable)
     }
 
     /// A* along the railway only.

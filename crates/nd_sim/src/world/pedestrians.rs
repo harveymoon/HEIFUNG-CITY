@@ -302,7 +302,7 @@ impl World {
         let mid = (a + b) * 0.5;
         // [footbridge] Up a footbridge's stairs or on its deck: within its
         // width, not out over the street beside it.
-        if self.walk.level_at_node(a) != 0.0 || self.walk.level_at_node(b) != 0.0 {
+        if self.walk.level_at_node(a) > 0.0 || self.walk.level_at_node(b) > 0.0 {
             let half = crate::junctions::FOOTBRIDGE_WIDTH * 0.5 - 0.3;
             return (-half, half);
         }
@@ -593,7 +593,8 @@ impl World {
             }
             // [rail-crossing] A level crossing with its lights on: wait at
             // the edge of the track (whoever is on it walks off).
-            if let Some((k, stop)) = self.rail_stop(w.base, w.base + dir * d.min(budget)) {
+            // ([walk-networks] not down in a tunnel under the track)
+            if let Some((k, stop)) = self.rail_stop(w.base, w.base + dir * d.min(budget)).filter(|_| self.walk.level_at_node(target) >= 0.0) {
                 w.base = stop;
                 budget = 0.0;
                 rail_wait = Some(k);

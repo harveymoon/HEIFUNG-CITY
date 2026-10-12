@@ -33,13 +33,13 @@ pub(super) enum Stop {
 pub(super) type End = (u32, SegmentId, i8);
 
 impl WalkGraph {
-    pub(super) fn add_node(&mut self, pos: Vec2, lot: Option<LotId>) -> u32 {
+    pub(crate) fn add_node(&mut self, pos: Vec2, lot: Option<LotId>) -> u32 {
         self.nodes.push(WalkNode { pos, lot, near: Vec::new(), level: 0.0 });
         self.adj.push(Vec::new());
         (self.nodes.len() - 1) as u32
     }
 
-    pub(super) fn link(&mut self, a: u32, b: u32, interior: bool) {
+    pub(crate) fn link(&mut self, a: u32, b: u32, interior: bool) {
         self.link_kind(a, b, interior, false);
     }
 
@@ -100,7 +100,7 @@ impl WalkGraph {
         arms.sort_by(|x, y| x.ang.total_cmp(&y.ang).then(x.seg.cmp(&y.seg)));
         let ring = roads.ring_of_node(nid).is_some();
         for arm in &arms {
-            if arm.street && arm.ccw != arm.cw && !roads.segment(arm.seg).fronts_nothing() {
+            if arm.street && arm.ccw != arm.cw && roads.segment(arm.seg).walkable() {
                 let on_ring = ring && roads.ring_of_segment(arm.seg).is_some();
                 let kind = if on_ring { CrossingKind::Informal } else { CrossingKind::Junction };
                 self.link_cross(arm.cw, arm.ccw, arm.seg, Some(nid), kind, roads);
@@ -230,11 +230,15 @@ impl WalkGraph {
         // A footpath meeting streets ends on their pavement.
         let path_setback = |n: NodeId| if roads.street_degree(n) > 0 { widest(roads, n) + SIDEWALK * 0.55 } else { 0.0 };
         for (sid, seg) in roads.alive_segments() {
-            // No one walks in a road tunnel, nor along a highway or its
-            // slip roads: they have hard shoulders, not pavements.
-            if seg.fronts_nothing() {
+            // No one walks along a highway or its slip roads (hard
+            // shoulders, not pavements), nor in a car-only tunnel.
+            // [walk-networks] A pedestrian tunnel, or a street tunnel set to
+            // Mixed, is walked: Harvey's east district was joined to the
+            // town only by one, and was an island on foot.
+            if !seg.walkable() {
                 continue;
             }
+            let first_node = g.nodes.len();
             let (a, b) = roads.segment_points(sid);
             let len = a.distance(b).max(1e-3);
             let d = (b - a) / len;
@@ -324,15 +328,32 @@ impl WalkGraph {
                     street_nodes.push(nb);
                 }
             }
+            // [walk-networks] Down in a tunnel: its walkway nodes stand at
+            // the bore's depth (negative `level`), so nobody on the street
+            // above is snapped onto them, no lot's front joins them, and a
+            // walker there is drawn underground (`World::walker_way_height`).
+            if seg.tunnel {
+                street_nodes.retain(|&n| (n as usize) < first_node);
+                let (la, lb) = (roads.node(seg.a).level, roads.node(seg.b).level);
+                for n in &mut g.nodes[first_node..] {
+                    let t = geom::project_on_segment(n.pos, a, b).0;
+                    n.level = (la + (lb - la) * t).min(-0.5);
+                }
+            }
         }
         // Joins at road nodes: plain bends link matching sides directly;
         // junctions get crosswalks and corners; a footpath meeting a street
         // gets a zebra; a dead end is crossed at its end.
+        // [walk-networks] (first node added, road node) per road node, to
+        // put the hubs and corners of a junction down in a tunnel at its
+        // depth afterwards.
+        let mut added_at: Vec<(usize, usize)> = Vec::new();
         for (ni, node) in roads.nodes.iter().enumerate() {
             let e = &ends[ni];
             if e.is_empty() {
                 continue;
             }
+            added_at.push((g.nodes.len(), ni));
             let nid = NodeId(ni as u32);
             let mut streets: Vec<SegmentId> = Vec::new();
             let mut paths = 0;
@@ -371,7 +392,7 @@ impl WalkGraph {
             }
             let s0 = streets[0];
             let sides: Vec<u32> = on_street.iter().filter(|x| x.1 == s0).map(|x| x.0).collect();
-            if sides.len() == 2 && !roads.segment(s0).fronts_nothing() {
+            if sides.len() == 2 && roads.segment(s0).walkable() {
                 // [walk-crossings] A path meeting a roundabout's ring: no
                 // zebra over the ring (drivers there give way to nobody;
                 // G20), only an unmarked way over to the island.
@@ -386,6 +407,21 @@ impl WalkGraph {
                 let p = g.nodes[x.0 as usize].pos;
                 if let Some(best) = on_street.iter().min_by(|u, v| g.nodes[u.0 as usize].pos.distance(p).total_cmp(&g.nodes[v.0 as usize].pos.distance(p))).map(|y| y.0) {
                     g.link(x.0, best, false);
+                }
+            }
+        }
+
+        let joins_end = g.nodes.len();
+        for (k, &(from, ni)) in added_at.iter().enumerate() {
+            let to = added_at.get(k + 1).map_or(joins_end, |x| x.0);
+            let rn = &roads.nodes[ni];
+            let underground = rn.level <= crate::roads::TUNNEL_LEVEL && rn.segments.iter().all(|&s| {
+                let sg = roads.segment(s);
+                !sg.alive || !sg.walkable() || sg.tunnel
+            });
+            if underground {
+                for n in &mut g.nodes[from..to] {
+                    n.level = rn.level.min(-0.5);
                 }
             }
         }

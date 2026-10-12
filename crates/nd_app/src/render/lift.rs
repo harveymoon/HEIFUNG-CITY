@@ -35,7 +35,7 @@ pub struct WayHeight(pub Option<f32>);
 pub(super) fn lift_spawned(
     sim: Res<Sim>,
     mut meshes: ResMut<Assets<Mesh>>,
-    q: Query<&Mesh3d, Or<(Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<TransitTag>, Added<ScatterTag>, Added<RingPreviewTag>)>>,
+    q: Query<&Mesh3d, Or<(Added<LotsTag>, Added<PreviewTag>, Added<ParkTag>, Added<VacantTag>, Added<OverlayTag>, Added<PathsTag>, Added<WalkNetTag>, Added<TransitTag>, Added<ScatterTag>, Added<RingPreviewTag>)>>,
     tolls: Query<&Mesh3d, Added<TollTag>>,
     mut signals: Query<&mut Transform, Added<SignalTag>>,
 ) {

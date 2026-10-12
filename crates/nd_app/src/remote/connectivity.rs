@@ -63,3 +63,32 @@ pub(super) fn connectivity(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> 
     }
     Ok(out)
 }
+
+/// [walk-networks] `walk_networks`: the walk graph's separate networks, the
+/// main one first, with the colours the "Walk networks" map layer draws
+/// them in (`overlay {layer: "walk_networks"}` shows it).
+pub(super) fn walk_networks(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let w = &ctx.sim.world;
+    let nets = &w.walk_networks;
+    let limit = cmd.get("buildings").and_then(Value::as_u64).unwrap_or(8) as usize;
+    let hex = |c: [f32; 3]| {
+        // Linear to sRGB for a hex the eye would match.
+        let to = |x: f32| (if x <= 0.003_130_8 { x * 12.92 } else { 1.055 * x.powf(1.0 / 2.4) - 0.055 }.clamp(0.0, 1.0) * 255.0).round() as u8;
+        format!("#{:02x}{:02x}{:02x}", to(c[0]), to(c[1]), to(c[2]))
+    };
+    let list: Vec<Value> = nets
+        .list
+        .iter()
+        .enumerate()
+        .map(|(k, n)| {
+            json!({
+                "id": n.id, "main": k == 0, "name": n.name, "color": hex(n.color()), "color_linear": n.color().map(round),
+                "nodes": n.nodes, "edges": n.edges, "underground_edges": n.underground,
+                "buildings": n.buildings.len(), "residents": n.residents, "workers": n.workers,
+                "lo": v2(n.lo), "hi": v2(n.hi), "center": v2((n.lo + n.hi) * 0.5),
+                "some_buildings": n.buildings.iter().take(limit).map(|b| json!({ "id": key_str(*b), "name": w.buildings.get(*b).map(|x| x.name.clone()) })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    Ok(json!({ "layer": "walk_networks", "count": list.len(), "walk_version": nets.version, "networks": list }))
+}

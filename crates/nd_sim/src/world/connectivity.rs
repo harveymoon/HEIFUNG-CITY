@@ -223,6 +223,8 @@ impl World {
         crate::prof_scope!("refresh_connectivity");
         self.connectivity.dirty = false;
         self.connectivity.key = Some((self.walk.version, self.clock.tick / 60));
+        // [walk-networks] Head counts on each network, hourly too.
+        self.refresh_walk_networks();
         // Lots worth counting: those with a building.
         // A public beach with no way on says so itself (`shore`): not a
         // stranded area.

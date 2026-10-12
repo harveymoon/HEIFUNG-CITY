@@ -88,7 +88,13 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
     }
     // [pt-walk] Cut off from the rest of the city on foot or by road.
     for line in w.lot_link_warnings(b.lot) {
-        ui.label(egui::RichText::new(line).color(egui::Color32::from_rgb(255, 130, 80)).strong());
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new(&line).color(egui::Color32::from_rgb(255, 130, 80)).strong());
+            // [walk-networks] Which places it is joined to on foot.
+            if line.contains("pedestrian") {
+                crate::map_layers::walk_networks_button(ui);
+            }
+        });
     }
     // [feat/pt-ux] What it is and what it does for the city, first.
     if let Some((what, gives)) = super::about::about(w, id) {

@@ -309,6 +309,82 @@ fn walkers_and_bikes_never_route_through_a_tunnel() {
     }
 }
 
+/// [walk-networks] `tunnel_town` with the tunnel a Mixed street (the Road
+/// tool's default use) or a footpath, the player's own choice.
+fn walk_tunnel_town(kind: RoadKind) -> World {
+    let mut w = flat_world();
+    w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+    w.add_road(&[Vec2::new(-400.0, 400.0), Vec2::new(400.0, 400.0)], 1, 1);
+    let pts = [Vec2::new(-300.0, 0.0), Vec2::new(-300.0, -130.0), Vec2::new(0.0, -130.0), Vec2::new(0.0, 530.0), Vec2::new(150.0, 530.0), Vec2::new(150.0, 400.0)];
+    let lanes = if kind == RoadKind::Path { (0, 0) } else { (1, 1) };
+    let car_only = (kind == RoadKind::Street).then_some(false);
+    build(&mut w, Gesture::Road { points: pts.to_vec(), lanes_fwd: lanes.0, lanes_bwd: lanes.1, curved: false, kind, elevation: vec![0.0, T, T, T, T, 0.0], car_only });
+    w
+}
+
+fn walk_comp_near(w: &World, p: Vec2) -> Option<u32> {
+    w.walk.nearest(p, 150.0).and_then(|n| w.walk.component(n))
+}
+
+/// [walk-networks] Harvey's east district was joined to the town only by
+/// a Mixed street tunnel, and a corner of it only by footpaths bored
+/// underground: nobody could walk there (the walk graph left every tunnel
+/// out), and his pedestrian tunnels went unused. A pedestrian tunnel, or a
+/// street tunnel set to Mixed, is walked; its walkway is down at the
+/// bore's depth, so nobody at the surface is put on it.
+#[test]
+fn walkers_go_through_a_foot_tunnel_or_a_mixed_street_tunnel() {
+    for kind in [RoadKind::Path, RoadKind::Street] {
+        let w = walk_tunnel_town(kind);
+        let (south, north) = (Vec2::new(-200.0, 0.0), Vec2::new(300.0, 400.0));
+        let (cs, cn) = (walk_comp_near(&w, south), walk_comp_near(&w, north));
+        assert!(cs.is_some() && cs == cn, "{kind:?}: the streets are one walk network through the tunnel ({cs:?}, {cn:?})");
+        let a = w.roads.node_near(Vec2::new(-300.0, 0.0), 0.5).unwrap();
+        let b = w.roads.node_near(Vec2::new(150.0, 400.0), 0.5).unwrap();
+        assert!(w.roads.foot_path(a, b).is_some(), "{kind:?}: walkers and bikes route through it");
+        // In the bore: walk nodes below ground, none at the surface there.
+        let mid = Vec2::new(0.0, 200.0);
+        assert!(w.walk.nodes.iter().any(|n| n.pos.x.abs() < 10.0 && n.level <= T + 0.5), "{kind:?}: walkway at the tunnel's depth");
+        assert!(w.walk.nearest_within(mid, 20.0).is_none(), "{kind:?}: nothing at the surface over the bore to be put on");
+        // A walker's route through it is drawn down in the bore.
+        let from = w.walk.nearest(south, 150.0).unwrap();
+        let to = w.walk.nearest(north, 150.0).unwrap();
+        let path = w.walk.route_nodes(from, to).expect("a walking route");
+        let pts: Vec<Vec2> = path.iter().map(|&n| w.walk.nodes[n as usize].pos).collect();
+        let leg = pts.windows(2).find(|l| l[0].x.abs() < 10.0 && l[1].x.abs() < 10.0 && l[0].y.min(l[1].y) < 200.0 && l[0].y.max(l[1].y) > 200.0).expect("a leg in the long bore");
+        let at = leg[0] + (leg[1] - leg[0]) * ((200.0 - leg[0].y) / (leg[1].y - leg[0].y));
+        assert!(w.leg_in_tunnel(leg[0], leg[1], at, false), "{kind:?}: the leg is in the tunnel");
+        let z = w.way_height_on_leg(leg[0], leg[1], at).expect("a height in the bore");
+        assert!(z < T + 1.0, "{kind:?}: drawn down in the tunnel, at {z}");
+        // On the surface street, nothing changes.
+        let s0 = Vec2::new(100.0, 8.0);
+        assert!(!w.leg_in_tunnel(s0, s0 + Vec2::X * 10.0, s0 + Vec2::X * 5.0, true));
+    }
+    // A street tunnel from before the use was set (or set to cars only) is
+    // still for cars alone (`walkers_and_bikes_never_route_through_a_tunnel`).
+    let (w, _) = tunnel_town();
+    assert_ne!(walk_comp_near(&w, Vec2::new(-200.0, 0.0)), walk_comp_near(&w, Vec2::new(300.0, 400.0)));
+}
+
+/// [walk-networks] A rider in a pedestrian tunnel under a street meets
+/// none of the street's crossings (they are 8 m overhead): bikes in a bore
+/// under a roundabout stood giving way to its crossings, and drivers above
+/// stopped for them.
+#[test]
+fn a_rider_in_a_tunnel_is_under_the_street_not_in_it() {
+    let w = walk_tunnel_town(RoadKind::Path);
+    // The bore passes under the south street at x = 0.
+    let (a, b) = (Vec2::new(-0.5, -60.0), Vec2::new(-0.5, 60.0));
+    for y in [-20.0, 0.0, 20.0] {
+        assert!(w.leg_in_tunnel(a, b, Vec2::new(-0.5, y), true), "under the street at y {y}");
+    }
+    let mut c = Citizen::newcomer("Rider".into(), 7, 30, None, None, a, 0);
+    c.mode = TravelMode::Bike;
+    c.activity = Activity::Traveling { to: None, purpose: Purpose::Wander, path: vec![a, b], idx: 1 };
+    let z = w.walker_way_height(&c, Vec2::new(-0.5, 0.0)).expect("in the bore");
+    assert!(z < T + 1.0, "a rider under the street is drawn in the tunnel, at {z}");
+}
+
 #[test]
 fn tunnels_meet_tunnels_at_underground_junctions() {
     let (mut w, _) = tunnel_town();

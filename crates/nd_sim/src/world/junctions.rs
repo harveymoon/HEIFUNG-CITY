@@ -439,12 +439,25 @@ impl World {
         let Activity::Traveling { path, idx, .. } = &c.activity else { return None };
         let to = *path.get(*idx)?;
         let from = if *idx > 0 { path[*idx - 1] } else { pos };
+        // [walk-networks] A rider's path is laid along the roads (offset
+        // to the shoulder), not through walk nodes: found in a tunnel by
+        // the way it runs along.
+        if c.mode == crate::citizens::TravelMode::Bike && self.leg_in_tunnel(from, to, pos, true) {
+            return self.bore_height_on_leg(from, to, pos);
+        }
         self.way_height_on_leg(from, to, pos)
     }
 
     /// [footbridge] `walker_way_height` for someone at `pos` on the leg
     /// from `from` to `to`.
     pub fn way_height_on_leg(&self, from: Vec2, to: Vec2, pos: Vec2) -> Option<f32> {
+        // [walk-networks] A leg of the walk graph down in a tunnel (an end
+        // node below ground, `WalkNode::level`): the bore's height.
+        if self.walk.level_at_node(from) < 0.0 || self.walk.level_at_node(to) < 0.0 {
+            if let Some(z) = self.bore_height_on_leg(from, to, pos) {
+                return Some(z);
+            }
+        }
         if !self.relief {
             return None;
         }
@@ -480,14 +493,87 @@ impl World {
         best.map(|(_, z)| z)
     }
 
+    /// [walk-networks] The height of the walkable tunnel (a pedestrian
+    /// tunnel, a Mixed street tunnel) running along the leg at `pos`.
+    fn bore_height_on_leg(&self, from: Vec2, to: Vec2, pos: Vec2) -> Option<f32> {
+        let leg = to - from;
+        let dir = (leg.length() > 0.5).then(|| leg.normalize());
+        let mut best: Option<(f32, f32)> = None;
+        for sid in self.roads.segments_near(pos, 12.0) {
+            let s = self.roads.segment(sid);
+            if !s.tunnel || !s.walkable() {
+                continue;
+            }
+            let (a, b) = self.roads.segment_points(sid);
+            if dir.is_some_and(|d| d.dot((b - a).normalize_or_zero()).abs() < 0.7) {
+                continue;
+            }
+            let (t, q) = crate::geom::project_on_segment(pos, a, b);
+            let d = q.distance(pos);
+            if d <= s.half_width() + crate::zoning::SIDEWALK + 1.5 && best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, self.road_height(sid, t)));
+            }
+        }
+        best.map(|(_, z)| z)
+    }
+
+    /// [walk-networks] Is this walker or rider down in a tunnel now (shown
+    /// in the underground view, like someone on a metro platform)?
+    pub fn citizen_in_tunnel(&self, c: &Citizen) -> bool {
+        match &c.activity {
+            Activity::Traveling { path, idx, .. } if *idx > 0 && *idx < path.len() && c.inside.is_none() => self.leg_in_tunnel(path[*idx - 1], path[*idx], c.pos, c.mode == crate::citizens::TravelMode::Bike),
+            _ => false,
+        }
+    }
+
+    /// [walk-networks] Is someone at `pos` on the leg `from`..`to` down in a
+    /// tunnel, so the crossings, level crossings and traffic of the ways
+    /// above are nothing to them? A walk-graph leg is when an end node is
+    /// below ground. With `along_roads` (a rider's path, laid along the
+    /// roads' shoulders), also when the leg runs closely along a walkable
+    /// tunnel and along no way at the surface there.
+    pub fn leg_in_tunnel(&self, from: Vec2, to: Vec2, pos: Vec2, along_roads: bool) -> bool {
+        if self.walk.level_at_node(from) < 0.0 || self.walk.level_at_node(to) < 0.0 {
+            return true;
+        }
+        if !along_roads {
+            return false;
+        }
+        let leg = to - from;
+        let len = leg.length();
+        let dir = (len > 0.5).then(|| leg / len);
+        let mut bore = false;
+        for sid in self.roads.segments_near(pos, 12.0) {
+            let s = self.roads.segment(sid);
+            if s.is_rail() {
+                continue;
+            }
+            let (a, b) = self.roads.segment_points(sid);
+            if dir.is_some_and(|d| d.dot((b - a).normalize_or_zero()).abs() < 0.9) {
+                continue;
+            }
+            let reach = s.half_width() + if s.is_street() { crate::zoning::SIDEWALK } else { 0.0 } + 0.5;
+            if crate::geom::project_on_segment(pos, a, b).1.distance(pos) > reach {
+                continue;
+            }
+            if !s.tunnel {
+                return false;
+            }
+            bore |= s.walkable();
+        }
+        bore
+    }
+
     /// How high a walker stands above the ground: up the stairs and on the
     /// deck of a raised walkway, 0 elsewhere.
     pub fn walker_level(&self, c: &Citizen, pos: Vec2) -> f32 {
         if self.walk.raised.is_empty() {
             return 0.0;
         }
+        // [walk-networks] Down in a tunnel the way's own height says how
+        // deep (`walker_way_height`); this is only ever a lift.
         match &c.activity {
-            Activity::Traveling { path, idx, .. } if *idx > 0 && *idx < path.len() => self.walk.level_on_leg(path[*idx - 1], path[*idx], pos),
+            Activity::Traveling { path, idx, .. } if *idx > 0 && *idx < path.len() => self.walk.level_on_leg(path[*idx - 1], path[*idx], pos).max(0.0),
             _ => 0.0,
         }
     }

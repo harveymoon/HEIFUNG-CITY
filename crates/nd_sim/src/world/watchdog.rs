@@ -9,7 +9,9 @@
 //! minutes, standing on a lane (not parked off it), is sent on again (its
 //! job's way on, else off the map); still there after `STILL_CLEAR`, it is
 //! taken off the road as the airlift would (`lift_off_road`), its job
-//! settled. Counted in `Driving::watchdog_*`.
+//! settled. Counted in `Driving::watchdog_*`. [walk-networks] One standing
+//! in a queue gets `QUEUED_REROUTE` / `QUEUED_CLEAR` instead: a jam that
+//! has not moved for hours is not going to.
 
 use super::*;
 use crate::Errand;
@@ -21,6 +23,10 @@ pub const WATCH_MOVED: f32 = 6.0;
 /// Minutes standing before it is sent on again, and before it is cleared.
 pub const STILL_REROUTE: u64 = 30;
 pub const STILL_CLEAR: u64 = 90;
+/// [walk-networks] The same for one standing in a queue (a jam's victim):
+/// sent on after three hours, off the road after six.
+pub const QUEUED_REROUTE: u64 = 180;
+pub const QUEUED_CLEAR: u64 = 360;
 
 /// Where a watched vehicle was last seen moving, since when, and whether
 /// it has been sent on already.
@@ -67,18 +73,24 @@ impl World {
         self.driving.watch.retain(|k, _| live.contains(k));
         for (id, pos, stunt, queued) in ids {
             let w = self.driving.watch.entry(id).or_insert(Watched { pos, since: tick, rerouted: false });
-            if w.pos.distance(pos) > WATCH_MOVED || queued {
+            if w.pos.distance(pos) > WATCH_MOVED {
                 *w = Watched { pos, since: tick, rerouted: false };
                 continue;
             }
+            // [walk-networks] Queued it is given far longer, but not for
+            // ever: five police cars and ambulances stood "responding" for
+            // up to 40 game hours in a jam that never cleared (giving way
+            // to bikes locked at a roundabout), and giving way counted as
+            // a jam's victim, so the watchdog never looked at them.
+            let (reroute, clear) = if queued { (QUEUED_REROUTE, QUEUED_CLEAR) } else { (STILL_REROUTE, STILL_CLEAR) };
             let still = tick - w.since;
-            if still >= STILL_CLEAR {
+            if still >= clear {
                 self.driving.watch.remove(&id);
                 self.driving.watchdog_cleared_total += 1;
                 self.lift_off_road(id, None);
                 continue;
             }
-            if still >= STILL_REROUTE && !w.rerouted && !stunt {
+            if still >= reroute && !w.rerouted && !stunt {
                 w.rerouted = true;
                 self.driving.watchdog_rerouted_total += 1;
                 self.watchdog_send_on(id);
