@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::dams::{self as dm, DamPlan, DamWall};
-use crate::geom::{distance_to_outline, segment_distance_between, segment_intersection};
+use crate::geom::{distance_to_outline, segment_distance_between};
 
 impl World {
     /// The hydro plant `plant` and its lot, or why not.
@@ -80,7 +80,8 @@ impl World {
             return Err("the wall would cross the water more than once: draw it straight across from bank to bank".into());
         }
         // Across the plant's own river, and about square to its flow.
-        let crossing = river.points.windows(2).enumerate().find_map(|(i, w)| segment_intersection(a, b, w[0], w[1]).map(|_| i));
+        // (Touching a vertex of the centre line counts: the nearest stretch.)
+        let crossing = river.points.windows(2).enumerate().map(|(i, w)| (i, segment_distance_between(a, b, w[0], w[1]))).filter(|(_, d)| *d < 0.5).min_by(|x, y| x.1.total_cmp(&y.1)).map(|(i, _)| i);
         let Some(seg) = crossing else {
             return Err(format!("the wall must cross the river beside {} (the one it takes its water from)", bld.name));
         };
@@ -137,9 +138,26 @@ impl World {
         self.economy.debit_item(Flow::Construction, plan.cost, Item::Named("dam wall".to_string()));
         self.remove_dam_wall(plant);
         let mut wall = DamWall { plant, a: plan.a, b: plan.b, upstream: plan.upstream, river: plan.river, path: None };
-        // Dams carry footpaths only: one along the crest, from bank to bank.
-        let pts = wall.crest(6);
+        // Dams carry footpaths only: one along the crest, from bank to bank
+        // (from where it leaves the plant's own ground, which a path may
+        // not cross).
+        let mut pts = wall.crest(12);
+        if let Some(poly) = self.buildings.get(plant).and_then(|b| self.lots.get(b.lot)).map(|l| l.polygon.clone()) {
+            while pts.len() > 2 && point_in_polygon(pts[0], &poly) {
+                pts.remove(0);
+            }
+            while pts.len() > 2 && point_in_polygon(pts[pts.len() - 1], &poly) {
+                pts.pop();
+            }
+        }
+        // The walkway is part of the wall: what the path's works would
+        // charge is in the wall's price already.
+        let treasury = self.economy.treasury;
         let id = self.add_path(&pts);
+        let bridge = treasury - self.economy.treasury;
+        if bridge > 0.0 {
+            self.economy.credit_item(Flow::Construction, bridge, Item::Named("bridges".into()));
+        }
         if self.master.gestures.contains_key(&id) {
             wall.path = Some(id);
         }
@@ -318,7 +336,8 @@ mod tests {
         let Some((mut w, plant, a, b)) = river_town() else { panic!("no river town found") };
         // A footbridge across the river right where the wall would go.
         let out = (b - a).normalize();
-        w.add_path(&[a - out * 12.0, b + out * 12.0]);
+        let id = w.add_path(&[a.lerp(b, 0.15), b + out * 12.0]);
+        assert!(w.master.gestures.contains_key(&id), "the footbridge is built: {:?}", w.implement_refused);
         let why = w.plan_dam_wall(plant, a, b).expect_err("over a road");
         assert!(why.contains("may not be built on a road"), "{why}");
     }

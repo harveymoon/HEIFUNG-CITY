@@ -575,7 +575,7 @@ mod tests {
                 assert_eq!(Page::parse(None, t.key(), Some(p.key())), Ok(*p));
             }
         }
-        assert_eq!(seen.len(), 23);
+        assert_eq!(seen.len(), 24, "[parks] City, Parks added");
     }
 
     /// The old window names still find their pages.

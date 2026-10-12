@@ -341,10 +341,14 @@ mod tests {
         w.add_road(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
         w.add_zone(vec![Vec2::new(-60.0, 6.0), Vec2::new(60.0, 6.0), Vec2::new(60.0, 50.0), Vec2::new(-60.0, 50.0)], LandUse::Park);
         let mut minds = crate::mind::IdleMind;
-        for _ in 0..400 {
+        for k in 0..6000 {
             w.tick(&mut minds);
+            let parks = w.buildings.values().filter(|b| b.land_use == LandUse::Park);
+            if k > 200 && parks.clone().count() >= 2 && parks.clone().all(|b| b.operating()) {
+                break;
+            }
         }
-        let parks: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.land_use == LandUse::Park).map(|(id, _)| id).collect();
+        let parks: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.land_use == LandUse::Park && b.operating()).map(|(id, _)| id).collect();
         (w, parks)
     }
 
