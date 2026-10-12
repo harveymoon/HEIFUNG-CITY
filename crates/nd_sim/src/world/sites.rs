@@ -263,8 +263,9 @@ mod tests {
         w.update_economy();
         let e = &w.economy;
         assert!(e.homes_building > 0);
-        // People waiting for a home: the sites count against them.
-        w.economy.waiting_immigrants = 40;
+        // People waiting for a home, a few more than the sites will take:
+        // the sites count against them, and the demand is not at its cap.
+        w.economy.waiting_immigrants = w.economy.homes_building / 2 + 2;
         w.economy.recompute();
         let under = w.demand_under_way();
         let r = LandUse::Residential.index();
