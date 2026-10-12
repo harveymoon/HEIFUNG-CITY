@@ -17,6 +17,11 @@ impl World {
         if let Some(b) = self.buildings_under(&fp).into_iter().filter_map(|(id, _)| self.buildings.get(id)).find(|b| Self::is_civic_structure(b)) {
             return Err(format!("{} stands there; bulldoze it first", b.name));
         }
+        // [w1-roads] Nothing over a road (H3: a yacht club was put down on
+        // one), built or planned.
+        if let Some(why) = self.road_under(crate::world::over_roads::Footprint::Area(&fp), kind.label(), true) {
+            return Err(why);
+        }
         if self.facilities.values().any(|f| polygons_overlap(&f.footprint(), &fp)) || self.ports.ports.values().any(|o| polygons_overlap(&o.footprint(), &fp) || o.center.distance(port.center) < kind.size().0 * 0.6) {
             return Err("too close to another dock or station".into());
         }
@@ -121,11 +126,37 @@ impl World {
             let (s, c) = deg.to_radians().sin_cos();
             Vec2::new(inland.x * c - inland.y * s, inland.x * s + inland.y * c)
         };
+        // [w1-roads] The first way the stub would cross: a street ends it
+        // there (a T onto it, never a crossroads through it); a highway,
+        // slip road or railway makes the line no good.
+        let crossing = |end: Vec2| -> Option<Option<Vec2>> {
+            let mut best: Option<(f32, bool)> = None;
+            for sid in self.roads.segments_in_box(gate.min(end) - Vec2::splat(2.0), gate.max(end) + Vec2::splat(2.0)) {
+                let s = self.roads.segment(sid);
+                if s.kind == RoadKind::Path || s.tunnel || self.roads.spans_lots(sid) {
+                    continue;
+                }
+                let (p0, p1) = self.roads.segment_points(sid);
+                if let Some((t, _)) = crate::geom::segment_intersection_closed(gate, end, p0, p1, 1e-3) {
+                    let joinable = s.is_street() && !s.is_motorway();
+                    if best.is_none_or(|(bt, _)| t < bt) {
+                        best = Some((t, joinable));
+                    }
+                }
+            }
+            match best {
+                None => Some(None),
+                Some((t, true)) if gate.distance(end) * t >= ports::STUB_MIN * 0.5 => Some(Some(gate.lerp(end, t))),
+                _ => None,
+            }
+        };
         for len in [ports::STUB_LENGTH, ports::STUB_LENGTH * 0.7, ports::STUB_MIN] {
             for deg in [0.0f32, 25.0, -25.0, 45.0, -45.0, 60.0, -60.0] {
                 let end = gate + turn(deg) * len;
-                if clear(end) {
-                    return [gate, end];
+                match crossing(end) {
+                    Some(Some(at)) if clear(at) => return [gate, at],
+                    Some(None) if clear(end) => return [gate, end],
+                    _ => {}
                 }
             }
         }

@@ -289,21 +289,12 @@ impl World {
     }
 
     /// [sweep-visual] The roads the active project adds or changes and has
-    /// not built yet: their control points (a curved one's are close
-    /// enough to its line for a crossing check) and kind.
+    /// not built yet, and their kind.
     fn pending_roads(&self) -> Vec<(Vec<Vec2>, RoadKind)> {
-        if self.project.is_none() {
-            return Vec::new();
-        }
-        self.effective_plan()
-            .gestures
-            .iter()
-            .filter(|(id, g)| self.master.gestures.get(*id) != Some(*g))
-            .filter_map(|(_, g)| match g {
-                Gesture::Road { points, kind, .. } if points.len() >= 2 => Some((points.clone(), *kind)),
-                _ => None,
-            })
-            .collect()
+        // [w1-roads] As they will be built: a curved road's control points
+        // can stand well off its line (a bend drawn across the ramp's way
+        // was missed), and a planned roundabout counts as its ring.
+        self.planned_ways().into_iter().map(|(pts, kind, _, _)| (pts, kind)).collect()
     }
 
     /// A road for a message: where it is (no street-name lookup).

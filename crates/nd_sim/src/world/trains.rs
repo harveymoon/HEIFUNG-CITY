@@ -95,6 +95,10 @@ impl World {
         if let Some(b) = self.buildings.values().filter(|b| self.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, &fp) || polygons_overlap(&fp, &l.polygon))).find(|b| Self::is_civic_structure(b)) {
             return Some(format!("{} stands there; bulldoze it first", b.name));
         }
+        // [w1-roads] Nothing over a road (its own track runs through it).
+        if let Some(why) = self.road_under(crate::world::over_roads::Footprint::Area(&fp), kind.label(), false) {
+            return Some(why);
+        }
         // [subway] The Central Station is the one grand terminus.
         if kind == RailFacility::Central && self.buildings.values().any(|b| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::Central)) {
             return Some("the city has its Central Station already".into());

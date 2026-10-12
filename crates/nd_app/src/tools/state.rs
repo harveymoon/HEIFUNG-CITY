@@ -246,6 +246,37 @@ pub const ROAD_PRESETS: [(&str, u8, u8, RoadKind); 8] = [
     ("Highway", 4, 0, RoadKind::Street),
 ];
 
+/// [fix/roads-tools] The road type (one of `ROAD_TYPES`, or "Rail") of a
+/// way of `kind` with these lanes: a two-way street, a one-way road too
+/// narrow for a highway (a ramp at one lane), or a highway.
+pub fn road_type_of(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> &'static str {
+    match kind {
+        RoadKind::Path => "Path",
+        RoadKind::Rail => "Rail",
+        RoadKind::Street if lanes_fwd > 0 && lanes_bwd > 0 => "Street",
+        RoadKind::Street if nd_sim::roads::is_highway_spec(RoadKind::Street, lanes_fwd, lanes_bwd) => "Highway",
+        RoadKind::Street => "One-way",
+    }
+}
+
+/// [w1-roads] A way switched to road type `ty`: its kind and lanes, the
+/// type's usual lanes unless the lanes it has suit it already (the Road
+/// tool and the Edit tool's upgrade panel share this).
+pub fn with_type(ty: &str, kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> (RoadKind, u8, u8) {
+    if ty == "Path" {
+        return (RoadKind::Path, lanes_fwd, lanes_bwd);
+    }
+    if road_type_of(kind, lanes_fwd, lanes_bwd) == ty {
+        return (RoadKind::Street, lanes_fwd, lanes_bwd);
+    }
+    let (f, b) = match ty {
+        "Street" => (2, 2),
+        "One-way" => (1, 0),
+        _ => (4, 0),
+    };
+    (RoadKind::Street, f, b)
+}
+
 impl ToolState {
     /// What the Buildings tool puts down: the picked item at the picked tier.
     pub fn build_item(&self) -> nd_sim::Placeable {
@@ -444,13 +475,7 @@ impl ToolState {
     /// a two-way street, a one-way road too narrow for a highway (a ramp
     /// at one lane), or a highway (one-way, three lanes or more).
     pub fn road_type(&self) -> &'static str {
-        match self.kind {
-            RoadKind::Path => "Path",
-            RoadKind::Rail => "Rail",
-            RoadKind::Street if self.lanes_fwd > 0 && self.lanes_bwd > 0 => "Street",
-            RoadKind::Street if nd_sim::roads::is_highway_spec(RoadKind::Street, self.lanes_fwd, self.lanes_bwd) => "Highway",
-            RoadKind::Street => "One-way",
-        }
+        road_type_of(self.kind, self.lanes_fwd, self.lanes_bwd)
     }
 
     /// [fix/roads-tools] Pick a road type: its usual lanes, unless the
@@ -461,22 +486,7 @@ impl ToolState {
         self.roundabout = false;
         self.interchange = false;
         self.tunnel = false;
-        let was = self.road_type();
-        match ty {
-            "Path" => self.kind = RoadKind::Path,
-            _ => {
-                self.kind = RoadKind::Street;
-                if was != ty {
-                    let (f, b) = match ty {
-                        "Street" => (2, 2),
-                        "One-way" => (1, 0),
-                        _ => (4, 0),
-                    };
-                    self.lanes_fwd = f;
-                    self.lanes_bwd = b;
-                }
-            }
-        }
+        (self.kind, self.lanes_fwd, self.lanes_bwd) = with_type(ty, self.kind, self.lanes_fwd, self.lanes_bwd);
         true
     }
 

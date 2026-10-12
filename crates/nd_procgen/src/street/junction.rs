@@ -78,6 +78,23 @@ pub(crate) fn has_crosswalk(roads: &RoadNetwork, n: NodeId, sid: SegmentId) -> b
     !(seg.fronts_nothing() || (roads.ring_of_node(n).is_some() && roads.ring_of_segment(sid).is_some()))
 }
 
+/// [w1-roads] An off-ramp's mouth at a signalled junction: the walk graph
+/// opens a crossing there with the junction's walk lights
+/// (`World::refresh_crossings`), so it is painted and lit like any arm's
+/// crosswalk. An on-ramp's mouth (traffic turns in on every green) and a
+/// slip road at an unsignalled junction stay unmarked.
+pub(crate) fn lit_ramp_mouth(roads: &RoadNetwork, net: &LaneNetwork, n: NodeId, sid: SegmentId) -> bool {
+    let seg = roads.segment(sid);
+    if !seg.alive || !seg.is_street() || seg.tunnel || seg.is_highway() || !seg.ramp {
+        return false;
+    }
+    let (arriving, leaving) = if seg.b == n { (seg.lanes_fwd, seg.lanes_bwd) } else { (seg.lanes_bwd, seg.lanes_fwd) };
+    if arriving == 0 || leaving > 0 {
+        return false;
+    }
+    net.node_intersection.get(n.0 as usize).and_then(|&k| net.intersections.get(k)).is_some_and(|i| i.signalized)
+}
+
 /// Distance along an arm with half width `hw_a`, at an angle `theta` from a
 /// neighbour of half width `hw_b`, past which its side toward the
 /// neighbour is clear of the neighbour's carriageway (where the two facing

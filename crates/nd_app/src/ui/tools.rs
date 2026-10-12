@@ -9,7 +9,7 @@ use super::help;
 use super::{hint, icons, section, WARN};
 use crate::assets::GameAssets;
 use crate::sim::Sim;
-use crate::tools::{EffectivePlan, Tool, ToolState, TransitMode, ZoneMode, BRUSH_MAX, BRUSH_MIN, ROAD_PRESETS};
+use crate::tools::{EffectivePlan, Tool, ToolState, TransitMode, ZoneMode, BRUSH_MAX, BRUSH_MIN};
 
 pub fn sub_pane(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut EffectivePlan, assets: &GameAssets) {
     match tools.tool {
@@ -100,38 +100,8 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
     }
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("2  Lanes").small().strong());
-        match tools.road_type() {
-            "Street" => {
-                ui.label(egui::RichText::new("each way").small());
-                for (n, name) in [(1u8, "1 · lane"), (2, "2 · street"), (3, "3 · avenue"), (4, "4 · boulevard")] {
-                    if ui.selectable_label(tools.lanes_fwd == n && tools.lanes_bwd == n, name).clicked() {
-                        tools.lanes_fwd = n;
-                        tools.lanes_bwd = n;
-                    }
-                }
-            }
-            "One-way" => {
-                for (n, name, tip) in [(1u8, "1 · highway ramp", "One lane one way: the slip road onto or off a highway (or any one-way link)"), (2, "2", "Two lanes one way")] {
-                    if ui.selectable_label(tools.lanes_fwd + tools.lanes_bwd == n, name).on_hover_text(tip).clicked() {
-                        tools.lanes_fwd = n;
-                        tools.lanes_bwd = 0;
-                    }
-                }
-            }
-            "Highway" => {
-                ui.label(egui::RichText::new("one way").small());
-                for n in [3u8, 4] {
-                    if ui.selectable_label(tools.lanes_fwd + tools.lanes_bwd == n, format!("{n}")).clicked() {
-                        tools.lanes_fwd = n;
-                        tools.lanes_bwd = 0;
-                    }
-                }
-                ui.label(egui::RichText::new("draw one each way").small().weak());
-            }
-            _ => {
-                ui.label(egui::RichText::new("walkers and bikes").small().weak());
-            }
-        }
+        let ty = tools.road_type();
+        lanes_row(ui, ty, &mut tools.lanes_fwd, &mut tools.lanes_bwd);
     });
     if tools.road_type() == "Street" && tools.lanes_fwd != tools.lanes_bwd {
         ui.label(egui::RichText::new(format!("uneven: {} forward, {} back", tools.lanes_fwd, tools.lanes_bwd)).small().weak());
@@ -205,6 +175,47 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
         RoadKind::Street => {}
     }
     hint(ui, help::tool_hint(Tool::Road));
+}
+
+/// [w1-roads] The lanes a road type offers (the Road tool's step 2 and
+/// the Edit tool's upgrade panel). True when a choice was clicked.
+fn lanes_row(ui: &mut egui::Ui, ty: &str, f: &mut u8, b: &mut u8) -> bool {
+    let mut changed = false;
+    match ty {
+        "Street" => {
+            ui.label(egui::RichText::new("each way").small());
+            for (n, name) in [(1u8, "1 · lane"), (2, "2 · street"), (3, "3 · avenue"), (4, "4 · boulevard")] {
+                if ui.selectable_label(*f == n && *b == n, name).clicked() {
+                    (*f, *b) = (n, n);
+                    changed = true;
+                }
+            }
+        }
+        "One-way" => {
+            for (n, name, tip) in [(1u8, "1 · highway ramp", "One lane one way: the slip road onto or off a highway (or any one-way link)"), (2, "2", "Two lanes one way")] {
+                if ui.selectable_label(*f + *b == n, name).on_hover_text(tip).clicked() {
+                    // Kept running the way it does.
+                    (*f, *b) = if *f == 0 && *b > 0 { (0, n) } else { (n, 0) };
+                    changed = true;
+                }
+            }
+        }
+        "Highway" => {
+            ui.label(egui::RichText::new("one way").small());
+            for n in [3u8, 4] {
+                if ui.selectable_label(*f + *b == n, format!("{n}")).clicked() {
+                    // Kept running the way it does.
+                    (*f, *b) = if *f == 0 && *b > 0 { (0, n) } else { (n, 0) };
+                    changed = true;
+                }
+            }
+            ui.label(egui::RichText::new("draw one each way").small().weak());
+        }
+        _ => {
+            ui.label(egui::RichText::new("walkers and bikes").small().weak());
+        }
+    }
+    changed
 }
 
 fn zone(ui: &mut egui::Ui, sim: &Sim, tools: &mut ToolState, assets: &GameAssets) {
@@ -293,33 +304,67 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
             section(ui, "ROAD UPGRADE");
             let (mut f, mut b, mut c, mut k) = (lanes_fwd, lanes_bwd, curved, kind);
             let mut changed = false;
-            ui.horizontal_wrapped(|ui| {
-                for (label, pf, pb, pk) in ROAD_PRESETS {
-                    let on = k == pk && (pk != RoadKind::Street || (f == pf && b == pb));
-                    if icons::selectable(ui, on, label, |p, r, c| icons::road(p, r, pk, pf, pb, c)).on_hover_text(preset_hint(label)).clicked() {
-                        k = pk;
-                        f = pf;
-                        b = pb;
-                        changed = true;
+            // [w1-roads] The Road tool's steps: 1 type, 2 lanes and level,
+            // 3 how it runs (the old presets are gone from here).
+            let ty = crate::tools::road_type_of(k, f, b);
+            if k != RoadKind::Rail {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("1  Type").small().strong());
+                    for t in crate::tools::ROAD_TYPES {
+                        if ui.selectable_label(ty == t, t).on_hover_text(preset_hint(t)).clicked() && ty != t {
+                            (k, f, b) = crate::tools::with_type(t, k, f, b);
+                            changed = true;
+                        }
                     }
-                }
-            });
+                });
+            }
             ui.horizontal(|ui| {
-                changed |= ui.add(egui::Slider::new(&mut f, 0..=4).text("lanes fwd")).changed();
-                changed |= ui.add(egui::Slider::new(&mut b, 0..=4).text("lanes back")).changed();
-                if ui.button("Flip direction").clicked() {
+                ui.label(egui::RichText::new("2  Lanes").small().strong());
+                changed |= lanes_row(ui, crate::tools::road_type_of(k, f, b), &mut f, &mut b);
+                if k == RoadKind::Street && f != b && ui.small_button("Flip direction").on_hover_text("Traffic runs the other way").clicked() {
                     std::mem::swap(&mut f, &mut b);
                     changed = true;
                 }
-                changed |= ui.checkbox(&mut c, "Curved").changed();
-                // The whole road up or down a step (ends on other roads too).
+            });
+            if k == RoadKind::Street && f > 0 && b > 0 && f != b {
+                ui.label(egui::RichText::new(format!("uneven: {f} forward, {b} back")).small().weak());
+            }
+            // The whole road up or down a step (ends on other roads too).
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("    Level").small().strong());
                 let lv = |e: &Vec<f32>, i: usize| e.get(i).copied().unwrap_or(0.0);
+                if ui.small_button("lower").on_hover_text("Every point 2 m lower").clicked() {
+                    elevation = (0..points.len()).map(|i| lv(&elevation, i) - crate::tools::ELEVATION_STEP).collect();
+                    changed = true;
+                }
+                let lo = (0..points.len()).map(|i| lv(&elevation, i)).fold(f32::INFINITY, f32::min);
+                let hi = (0..points.len()).map(|i| lv(&elevation, i)).fold(f32::NEG_INFINITY, f32::max);
+                let text = if (hi - lo).abs() < 0.01 { crate::tools::elevation_label(lo) } else { format!("{} to {}", crate::tools::elevation_label(lo), crate::tools::elevation_label(hi)) };
+                ui.label(egui::RichText::new(text).strong());
                 if ui.small_button("raise").on_hover_text("Every point 2 m higher").clicked() {
                     elevation = (0..points.len()).map(|i| lv(&elevation, i) + crate::tools::ELEVATION_STEP).collect();
                     changed = true;
                 }
-                if ui.small_button("lower").on_hover_text("Every point 2 m lower").clicked() {
-                    elevation = (0..points.len()).map(|i| lv(&elevation, i) - crate::tools::ELEVATION_STEP).collect();
+                if elevation.iter().any(|l| *l != 0.0) && ui.small_button("ground").on_hover_text("Every point back at grade").clicked() {
+                    elevation.clear();
+                    changed = true;
+                }
+                if k != RoadKind::Rail && hi > nd_sim::roads::TUNNEL_LEVEL && ui.small_button("tunnel").on_hover_text(preset_hint("Tunnel")).clicked() {
+                    elevation = vec![nd_sim::roads::TUNNEL_DEPTH; points.len()];
+                    changed = true;
+                }
+            });
+            if let Some((text, _)) = level_note(elevation.iter().copied().fold(0.0f32, |a, l| if l.abs() > a.abs() { l } else { a })) {
+                ui.label(egui::RichText::new(text).small().weak());
+            }
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("3  Runs").small().strong());
+                if ui.selectable_label(!c, "Straight").on_hover_text("Straight legs between its points").clicked() && c {
+                    c = false;
+                    changed = true;
+                }
+                if ui.selectable_label(c, "Curved").on_hover_text("A smooth curve through its points").clicked() && !c {
+                    c = true;
                     changed = true;
                 }
                 if ui.button("Deselect").clicked() {
@@ -343,7 +388,7 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
             let mut changed = false;
             ui.horizontal(|ui| {
                 changed |= ui.add(egui::Slider::new(&mut d, nd_sim::roads::RING_MIN_RADIUS * 2.0..=nd_sim::roads::RING_MAX_RADIUS * 2.0).step_by(2.0).suffix(" m").text("across")).changed();
-                for k in [1u8, 2] {
+                for k in 1..=nd_sim::roads::RING_MAX_LANES {
                     if ui.selectable_label(n == k, format!("{k} lane{}", super::fmt::s(k))).clicked() && n != k {
                         n = k;
                         changed = true;

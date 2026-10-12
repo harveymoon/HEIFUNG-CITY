@@ -77,6 +77,9 @@ mod pedestrians;
 mod plan;
 /// [free-placement] City buildings on any usable parcel; their ground out of the zoning.
 mod placement;
+pub mod over_roads;
+#[cfg(test)]
+mod over_roads_tests;
 pub use placement::PlacementSite;
 pub(crate) use placement::SiteRule;
 #[cfg(test)]
