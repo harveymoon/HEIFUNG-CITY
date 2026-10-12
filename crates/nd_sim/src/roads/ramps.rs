@@ -10,6 +10,75 @@ pub fn is_highway_spec(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> bool {
     kind == RoadKind::Street && (lanes_fwd == 0 || lanes_bwd == 0) && lanes_fwd + lanes_bwd >= 3
 }
 
+/// [w1-roads] What a road carries, set on the road by the player (not read
+/// from its lanes): walkers and bikes only (a path), cars and walkers (a
+/// street: pavements, street speed, lots along it), or cars only (a
+/// highway or slip road: no pavements, highway speed, fronts nothing).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoadUse {
+    Pedestrian,
+    Mixed,
+    CarOnly,
+}
+
+impl RoadUse {
+    pub const ALL: [RoadUse; 3] = [RoadUse::Pedestrian, RoadUse::Mixed, RoadUse::CarOnly];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            RoadUse::Pedestrian => "Pedestrians only",
+            RoadUse::Mixed => "Mixed",
+            RoadUse::CarOnly => "Car-only",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            RoadUse::Pedestrian => "pedestrian",
+            RoadUse::Mixed => "mixed",
+            RoadUse::CarOnly => "car_only",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<RoadUse> {
+        match s.to_ascii_lowercase().replace(['-', ' '], "_").as_str() {
+            "pedestrian" | "pedestrians" | "pedestrians_only" | "path" | "foot" => Some(RoadUse::Pedestrian),
+            "mixed" | "street" => Some(RoadUse::Mixed),
+            "car_only" | "cars_only" | "car" | "cars" | "highway" | "motorway" => Some(RoadUse::CarOnly),
+            _ => None,
+        }
+    }
+
+    /// The use of a way as built: its kind, and for a street the explicit
+    /// car-only flag, or (`None`, roads from before it was set) what its
+    /// lanes made it: a one-way street of three lanes or more was a highway.
+    pub fn of(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8, car_only: Option<bool>) -> RoadUse {
+        match kind {
+            RoadKind::Path => RoadUse::Pedestrian,
+            RoadKind::Rail => RoadUse::CarOnly,
+            RoadKind::Street => match car_only {
+                Some(true) => RoadUse::CarOnly,
+                Some(false) => RoadUse::Mixed,
+                None if is_highway_spec(kind, lanes_fwd, lanes_bwd) => RoadUse::CarOnly,
+                None => RoadUse::Mixed,
+            },
+        }
+    }
+}
+
+/// [w1-roads] A highway carriageway, with the road's own use: a one-way
+/// street of three lanes or more that is not set to Mixed.
+pub fn is_highway_use(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8, car_only: Option<bool>) -> bool {
+    car_only != Some(false) && is_highway_spec(kind, lanes_fwd, lanes_bwd)
+}
+
+/// [w1-roads] A slip road in the making, with the road's own use: a one-way
+/// street too narrow for a highway that is not set to Mixed.
+pub fn is_ramp_use(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8, car_only: Option<bool>) -> bool {
+    car_only != Some(false) && (is_ramp_spec(kind, lanes_fwd, lanes_bwd) || (car_only == Some(true) && kind == RoadKind::Street && (lanes_fwd == 0) != (lanes_bwd == 0) && !is_highway_spec(kind, lanes_fwd, lanes_bwd)))
+}
+
 /// A ramp: a one-way street too narrow to be a highway (slip roads on and
 /// off the highway, and any one-way link).
 pub fn is_ramp_spec(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> bool {
@@ -186,7 +255,7 @@ impl RoadNetwork {
             self.segments[i].ring = ring;
             self.segments[i].ramp = false;
         }
-        let one_way = |s: &Segment| s.alive && s.is_street() && !s.ring && !s.is_highway() && (s.lanes_fwd == 0) != (s.lanes_bwd == 0);
+        let one_way = |s: &Segment| s.alive && s.is_street() && !s.ring && !s.is_highway() && s.car_only != Some(false) && (s.lanes_fwd == 0) != (s.lanes_bwd == 0);
         let mut stack: Vec<SegmentId> = Vec::new();
         for n in &self.nodes {
             if n.segments.iter().any(|&s| self.segments[s.0 as usize].alive && self.segments[s.0 as usize].is_highway()) {

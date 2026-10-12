@@ -62,6 +62,19 @@ pub const JAM_CRAWL: f32 = 2.0;
 /// Seconds of clear road a lawful walker wants before stepping onto a
 /// crossing: drivers further off than that can stop for them.
 pub const LAWFUL_GAP: f32 = 1.6;
+/// [w1-roads] Seconds a driver waits at a zebra with no lights before the
+/// walkers coming up to it hold back and let the queue through: a steady
+/// stream of walkers kept cars standing there for five minutes and more
+/// (Harvey's city on a game evening), a queue back across the junctions
+/// behind. Walkers already on the zebra cross on.
+pub const ZEBRA_PATIENCE: f32 = 20.0;
+/// [w1-roads] Seconds a car stands at the line on its green before the
+/// walkers about to cross against the light leave it the road (sooner
+/// than that it is only pulling up).
+pub const GREEN_WAIT: f32 = 5.0;
+/// A car this close before the zebra (m) is the one waiting at it.
+pub const ZEBRA_WAIT_REACH: f32 = 14.0;
+
 /// A conflict faster than this (m/s) can hurt; the chance grows with speed.
 pub const HURT_SPEED: f32 = 4.0;
 

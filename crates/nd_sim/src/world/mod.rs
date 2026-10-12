@@ -81,6 +81,11 @@ mod pedestrians;
 mod plan;
 /// [free-placement] City buildings on any usable parcel; their ground out of the zoning.
 mod placement;
+pub mod over_roads;
+#[cfg(test)]
+mod over_roads_tests;
+#[cfg(test)]
+mod road_use_tests;
 pub use placement::PlacementSite;
 pub(crate) use placement::SiteRule;
 #[cfg(test)]
@@ -104,7 +109,7 @@ mod walk_crossings_tests;
 #[cfg(test)]
 mod ped_highway_tests;
 mod pillars;
-pub use pillars::deck_half_width;
+pub use pillars::{deck_half_width, deck_half_width_use};
 mod junctions;
 pub use junctions::{ApproachView, CrossingView, IntersectionView, LaneView, MoveView, PhaseView};
 mod riders;

@@ -11,10 +11,15 @@ use std::collections::HashSet;
 /// Half width of the deck of a way of this kind and these lanes: the
 /// carriageway and its pavements (a highway and its ramps have none).
 pub fn deck_half_width(kind: RoadKind, fwd: u8, bwd: u8) -> f32 {
+    deck_half_width_use(kind, fwd, bwd, None)
+}
+
+/// [w1-roads] [`deck_half_width`] with the road's use set.
+pub fn deck_half_width_use(kind: RoadKind, fwd: u8, bwd: u8, car_only: Option<bool>) -> f32 {
     match kind {
         RoadKind::Street => {
             let (f, b) = if fwd == 0 && bwd == 0 { (1, 1) } else { (fwd, bwd) };
-            let motorway = crate::roads::is_highway_spec(kind, f, b) || crate::roads::is_ramp_spec(kind, f, b);
+            let motorway = crate::roads::is_highway_use(kind, f, b, car_only) || crate::roads::is_ramp_use(kind, f, b, car_only);
             (f + b) as f32 * crate::roads::LANE_WIDTH * 0.5 + crate::roads::SHOULDER + if motorway { 0.6 } else { crate::zoning::SIDEWALK }
         }
         RoadKind::Path => crate::roads::PATH_HALF_WIDTH + 0.6,

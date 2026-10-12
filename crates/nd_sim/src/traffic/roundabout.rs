@@ -402,11 +402,11 @@ mod tests {
     /// roundabout stamped on the junction when `ring` is given.
     fn city(arm_lanes: u8, ring: Option<(f32, u8)>) -> RoadNetwork {
         let mut plan = Plan::default();
-        let road = |a: Vec2, b: Vec2| Gesture::Road { points: vec![a, b], lanes_fwd: arm_lanes, lanes_bwd: arm_lanes, curved: false, kind: RoadKind::Street, elevation: Vec::new() };
+        let road = |a: Vec2, b: Vec2| Gesture::Road { points: vec![a, b], lanes_fwd: arm_lanes, lanes_bwd: arm_lanes, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None };
         plan.gestures.insert(GestureId(1), road(Vec2::new(-320.0, 0.0), Vec2::new(320.0, 0.0)));
         plan.gestures.insert(GestureId(2), road(Vec2::new(0.0, -320.0), Vec2::new(0.0, 320.0)));
         if let Some((radius, lanes)) = ring {
-            plan.gestures.insert(GestureId(3), Gesture::Roundabout { center: Vec2::ZERO, radius, lanes });
+            plan.gestures.insert(GestureId(3), Gesture::Roundabout { center: Vec2::ZERO, radius, lanes, level: 0.0 });
         }
         let (built, rings) = plan.built_roads();
         let mut net = RoadNetwork::default();
@@ -659,11 +659,11 @@ mod tests {
     /// crossroads outside joins the outer ring.
     fn nested() -> RoadNetwork {
         let mut plan = Plan::default();
-        let road = |a: Vec2, b: Vec2| Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() };
+        let road = |a: Vec2, b: Vec2| Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None };
         plan.gestures.insert(GestureId(1), road(Vec2::new(-320.0, 0.0), Vec2::new(320.0, 0.0)));
         plan.gestures.insert(GestureId(2), road(Vec2::new(0.0, -320.0), Vec2::new(0.0, 320.0)));
-        plan.gestures.insert(GestureId(3), Gesture::Roundabout { center: Vec2::ZERO, radius: 100.0, lanes: 1 });
-        plan.gestures.insert(GestureId(4), Gesture::Roundabout { center: Vec2::ZERO, radius: 30.0, lanes: 1 });
+        plan.gestures.insert(GestureId(3), Gesture::Roundabout { center: Vec2::ZERO, radius: 100.0, lanes: 1, level: 0.0 });
+        plan.gestures.insert(GestureId(4), Gesture::Roundabout { center: Vec2::ZERO, radius: 30.0, lanes: 1, level: 0.0 });
         plan.gestures.insert(GestureId(5), road(Vec2::new(30.0, 0.0), Vec2::new(100.0, 0.0)));
         plan.gestures.insert(GestureId(6), road(Vec2::new(-30.0, 0.0), Vec2::new(-100.0, 0.0)));
         let (built, rings) = plan.built_roads();
@@ -795,10 +795,10 @@ mod tests {
     /// drawn afterwards from inside the ring's open middle out to it.
     fn ring_with_inner_arm() -> (RoadNetwork, Vec2, Vec2) {
         let mut plan = Plan::default();
-        let road = |a: Vec2, b: Vec2| Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() };
+        let road = |a: Vec2, b: Vec2| Gesture::Road { points: vec![a, b], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None };
         plan.gestures.insert(GestureId(1), road(Vec2::new(-320.0, 0.0), Vec2::new(320.0, 0.0)));
         plan.gestures.insert(GestureId(2), road(Vec2::new(0.0, -320.0), Vec2::new(0.0, 320.0)));
-        plan.gestures.insert(GestureId(3), Gesture::Roundabout { center: Vec2::ZERO, radius: 60.0, lanes: 3 });
+        plan.gestures.insert(GestureId(3), Gesture::Roundabout { center: Vec2::ZERO, radius: 60.0, lanes: 3, level: 0.0 });
         let dir = Vec2::new(-1.0, -1.0).normalize();
         let (inner_end, on_ring) = (dir * 15.0, dir * 60.0);
         plan.gestures.insert(GestureId(4), road(inner_end, on_ring));

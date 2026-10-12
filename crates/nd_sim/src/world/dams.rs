@@ -322,7 +322,7 @@ mod tests {
         let road = [mid - flow * 40.0, mid + flow * 40.0];
         assert!(w.road_over_dam(&road, &[0.0, 0.0], RoadKind::Street, 4.0).is_some());
         assert!(w.road_over_dam(&road, &[0.0, 0.0], RoadKind::Path, 1.5).is_none());
-        w.add_gesture(crate::plan::Gesture::Road { points: road.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        w.add_gesture(crate::plan::Gesture::Road { points: road.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         let refusal = w.try_implement().expect_err("no road on a dam");
         assert!(refusal.contains("dam"), "{refusal}");
         // Bulldozing the plant takes the wall with it.

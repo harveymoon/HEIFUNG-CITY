@@ -368,7 +368,7 @@ fn scene() -> World {
         let points: Vec<Vec2> = pts.iter().map(|p| Vec2::new(p[0], p[1])).collect();
         let elevation: Vec<f32> = pts.iter().map(|p| p[2]).collect();
         let elevation = if elevation.iter().all(|e| *e == 0.0) { Vec::new() } else { elevation };
-        w.add_gesture(Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved, kind, elevation });
+        w.add_gesture(Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved, kind, elevation, car_only: None });
     }
     let mut w = World::new(WorldConfig { seed: 7, landscape: nd_sim::landscape::LandscapeParams { highway: true, ..nd_sim::landscape::LandscapeParams::flat() }, ..WorldConfig::default() });
     w.economy.treasury = 1.0e9;
@@ -390,7 +390,7 @@ fn scene() -> World {
     st(&mut w, &[[200.0, -550.0], [e.x, e.y]], 1, 1);
     st(&mut w, &[[400.0, -550.0], [600.0, -550.0]], 1, 1);
     st(&mut w, &[[500.0, -650.0], [500.0, -450.0]], 1, 1);
-    w.add_gesture(Gesture::Roundabout { center: Vec2::new(500.0, -550.0), radius: 25.0, lanes: 1 });
+    w.add_gesture(Gesture::Roundabout { center: Vec2::new(500.0, -550.0), radius: 25.0, lanes: 1, level: 0.0 });
     road(&mut w, &[[-750.0, -300.0, 0.0], [-650.0, -250.0, 0.0], [-600.0, -150.0, 0.0], [-650.0, -50.0, 0.0]], 1, 1, s, true);
     st(&mut w, &[[-450.0, -300.0], [-450.0, 100.0]], 1, 1);
     road(&mut w, &[[-560.0, -100.0, 0.0], [-500.0, -100.0, 8.0], [-400.0, -100.0, 8.0], [-340.0, -100.0, 0.0]], 1, 1, s, false);
@@ -471,7 +471,7 @@ fn world_meshes(out: &Out, tag: &str, w: &World, walk_at: &[Vec2], previews: &[V
     for (k, pts) in previews.iter().enumerate() {
         for (lk, levels) in [vec![0.0; pts.len()], pts.iter().enumerate().map(|(i, _)| if i == 0 || i + 1 == pts.len() { 0.0 } else { 9.0 }).collect(), pts.iter().enumerate().map(|(i, _)| if i == 0 || i + 1 == pts.len() { 0.0 } else { -9.0 }).collect()].into_iter().enumerate() {
             for kind in [nd_sim::roads::RoadKind::Street, nd_sim::roads::RoadKind::Path, nd_sim::roads::RoadKind::Rail] {
-                let p = crate::preview::road_preview_with(w, pts, &levels, 2, 1, kind, &pal, &[1], [0.2, 0.8, 1.0], [1.0, 0.2, 0.1], 0.5, None);
+                let p = crate::preview::road_preview_with(w, pts, &levels, 2, 1, kind, None, &pal, &[1], [0.2, 0.8, 1.0], [1.0, 0.2, 0.1], 0.5, None);
                 out.mesh(format!("{tag} preview {k} {lk} {kind:?}"), &p.mesh);
                 out.debug(format!("{tag} preview {k} {lk} {kind:?} pts"), &(&p.junctions, &p.flyovers, &p.heights));
             }

@@ -18,7 +18,7 @@ fn road(w: &mut World, pts: &[[f32; 3]], f: u8, b: u8, kind: RoadKind, curved: b
     let points: Vec<Vec2> = pts.iter().map(|p| Vec2::new(p[0], p[1])).collect();
     let elevation: Vec<f32> = pts.iter().map(|p| p[2]).collect();
     let elevation = if elevation.iter().all(|e| *e == 0.0) { Vec::new() } else { elevation };
-    w.add_gesture(Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved, kind, elevation });
+    w.add_gesture(Gesture::Road { points, lanes_fwd: f, lanes_bwd: b, curved, kind, elevation, car_only: None });
 }
 
 /// The test scene the remote API builds in `scene.py`, on the flat map.
@@ -43,7 +43,7 @@ pub fn scene() -> (World, Vec<(String, Vec2)>) {
     st(&mut w, &[[200.0, -550.0], [e.x, e.y]], 1, 1);
     st(&mut w, &[[400.0, -550.0], [600.0, -550.0]], 1, 1);
     st(&mut w, &[[500.0, -650.0], [500.0, -450.0]], 1, 1);
-    w.add_gesture(Gesture::Roundabout { center: Vec2::new(500.0, -550.0), radius: 25.0, lanes: 1 });
+    w.add_gesture(Gesture::Roundabout { center: Vec2::new(500.0, -550.0), radius: 25.0, lanes: 1, level: 0.0 });
     road(&mut w, &[[-750.0, -300.0, 0.0], [-650.0, -250.0, 0.0], [-600.0, -150.0, 0.0], [-650.0, -50.0, 0.0]], 1, 1, s, true);
     st(&mut w, &[[-450.0, -300.0], [-450.0, 100.0]], 1, 1);
     road(&mut w, &[[-560.0, -100.0, 0.0], [-500.0, -100.0, 8.0], [-400.0, -100.0, 8.0], [-340.0, -100.0, 0.0]], 1, 1, s, false);

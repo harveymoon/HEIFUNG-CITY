@@ -260,8 +260,8 @@ mod tests {
         assert!(TollSize::Booth.cost_for(4) > TollSize::Booth.cost_for(2));
         let up0 = w.tolls.get(a).unwrap().upkeep_per_day();
         // The narrow road widened to four lanes: the plaza grows with it.
-        let Some(Gesture::Road { points, curved, kind, elevation, .. }) = w.gesture(narrow) else { panic!("the road") };
-        w.set_gesture(narrow, Gesture::Road { points, lanes_fwd: 2, lanes_bwd: 2, curved, kind, elevation }, true);
+        let Some(Gesture::Road { points, curved, kind, elevation, car_only, .. }) = w.gesture(narrow) else { panic!("the road") };
+        w.set_gesture(narrow, Gesture::Road { points, lanes_fwd: 2, lanes_bwd: 2, curved, kind, elevation, car_only }, true);
         let t2 = w.economy.treasury;
         w.implement();
         let b = w.tolls.get(a).expect("the booth stays on the widened road");

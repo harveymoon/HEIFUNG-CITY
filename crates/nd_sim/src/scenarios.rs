@@ -15,8 +15,8 @@ pub fn demo_district(world: &mut World) {
     world.start_project();
     for i in -2..=2 {
         let c = i as f32 * 140.0;
-        world.add_gesture(Gesture::Road { points: vec![Vec2::new(-280.0, c), Vec2::new(280.0, c)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: crate::roads::RoadKind::Street, elevation: Vec::new() });
-        world.add_gesture(Gesture::Road { points: vec![Vec2::new(c, -280.0), Vec2::new(c, 280.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: crate::roads::RoadKind::Street, elevation: Vec::new() });
+        world.add_gesture(Gesture::Road { points: vec![Vec2::new(-280.0, c), Vec2::new(280.0, c)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: crate::roads::RoadKind::Street, elevation: Vec::new(), car_only: None });
+        world.add_gesture(Gesture::Road { points: vec![Vec2::new(c, -280.0), Vec2::new(c, 280.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: crate::roads::RoadKind::Street, elevation: Vec::new(), car_only: None });
     }
     let cell = |cx: f32, cy: f32| {
         vec![Vec2::new(cx - 65.0, cy - 65.0), Vec2::new(cx + 65.0, cy - 65.0), Vec2::new(cx + 65.0, cy + 65.0), Vec2::new(cx - 65.0, cy + 65.0)]
@@ -31,7 +31,7 @@ pub fn demo_district(world: &mut World) {
         world.add_gesture(Gesture::Zone { polygon: cell(x, y), land_use: lu });
     }
     // A branch off the trunk line (a turnout, eased into curves when built), running behind the southern row.
-    world.add_gesture(Gesture::Road { points: vec![Vec2::new(-420.0, crate::rail::TRUNK_Y), Vec2::new(-330.0, -410.0), Vec2::new(-280.0, -348.0), Vec2::new(-110.0, -348.0), Vec2::new(-70.0, -324.0), Vec2::new(150.0, -324.0)], lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: crate::roads::RoadKind::Rail, elevation: Vec::new() });
+    world.add_gesture(Gesture::Road { points: vec![Vec2::new(-420.0, crate::rail::TRUNK_Y), Vec2::new(-330.0, -410.0), Vec2::new(-280.0, -348.0), Vec2::new(-110.0, -348.0), Vec2::new(-70.0, -324.0), Vec2::new(150.0, -324.0)], lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: crate::roads::RoadKind::Rail, elevation: Vec::new(), car_only: None });
     world.implement();
     // The way in: a street north from the grid onto the highway (or,
     // with no highway, a road off the east edge of the map).

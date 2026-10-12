@@ -33,7 +33,7 @@ fn tunnel_town() -> World {
     w.add_road(&[Vec2::new(-400.0, 400.0), Vec2::new(400.0, 400.0)], 1, 1);
     let pts = [Vec2::new(-300.0, 0.0), Vec2::new(-300.0, -130.0), Vec2::new(0.0, -130.0), Vec2::new(0.0, 530.0), Vec2::new(150.0, 530.0), Vec2::new(150.0, 400.0)];
     let had = w.project.take();
-    w.add_gesture(Gesture::Road { points: pts.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![0.0, T, T, T, T, 0.0] });
+    w.add_gesture(Gesture::Road { points: pts.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![0.0, T, T, T, T, 0.0], car_only: None });
     w.implement();
     w.project = had;
     w.add_zone(vec![Vec2::new(-380.0, 10.0), Vec2::new(380.0, 10.0), Vec2::new(380.0, 120.0), Vec2::new(-380.0, 120.0)], LandUse::Residential);

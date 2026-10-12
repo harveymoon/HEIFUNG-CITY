@@ -7,7 +7,7 @@ impl World {
     /// Convenience for scripts and tests: lay track right away.
     pub fn add_rail(&mut self, points: &[Vec2]) -> GestureId {
         let had_project = self.project.take();
-        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Rail, elevation: Vec::new() });
+        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Rail, elevation: Vec::new(), car_only: None });
         self.implement();
         self.project = had_project;
         id
@@ -260,7 +260,7 @@ impl World {
         // [parks] (D5) A path drawn into a park's interior (its hub gate)
         // ends at the park's edge gate: the park walks it on to the hub.
         let gesture = match gesture {
-            Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind: RoadKind::Path, elevation } => Gesture::Road { points: self.path_into_parks(&points), lanes_fwd, lanes_bwd, curved, kind: RoadKind::Path, elevation },
+            Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind: RoadKind::Path, elevation, .. } => Gesture::Road { points: self.path_into_parks(&points), lanes_fwd, lanes_bwd, curved, kind: RoadKind::Path, elevation, car_only: None },
             g => g,
         };
         let id = GestureId(self.next_gesture);
@@ -398,7 +398,7 @@ impl World {
     /// Convenience for scripts and tests: build a road right away.
     pub fn add_road(&mut self, points: &[Vec2], lanes_fwd: u8, lanes_bwd: u8) -> GestureId {
         let had_project = self.project.take();
-        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd, lanes_bwd, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd, lanes_bwd, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         self.implement();
         self.project = had_project;
         id
@@ -407,7 +407,7 @@ impl World {
     /// Convenience for scripts and tests: a walking and cycling path right away.
     pub fn add_path(&mut self, points: &[Vec2]) -> GestureId {
         let had_project = self.project.take();
-        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Path, elevation: Vec::new() });
+        let id = self.add_gesture(Gesture::Road { points: points.to_vec(), lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Path, elevation: Vec::new(), car_only: None });
         self.implement();
         self.project = had_project;
         id
@@ -430,12 +430,19 @@ impl World {
     /// lanes are brought within limits. Errors if another roundabout
     /// already takes the ground.
     pub fn add_roundabout(&mut self, center: Vec2, radius: f32, lanes: u8) -> Result<GestureId, String> {
-        let center = self.roundabout_snap(center);
-        let ring = crate::roads::Ring::new(center, radius, lanes);
+        self.add_roundabout_at(center, radius, lanes, 0.0)
+    }
+
+    /// [w1-roads] [`World::add_roundabout`] at `level` metres above the
+    /// ground (negative below): a raised roundabout, or one in a tunnel.
+    /// Its centre snaps only onto a junction or street at about its level.
+    pub fn add_roundabout_at(&mut self, center: Vec2, radius: f32, lanes: u8, level: f32) -> Result<GestureId, String> {
+        let center = if level.abs() < crate::roads::GRADE_SEPARATION { self.roundabout_snap(center) } else { center };
+        let ring = crate::roads::Ring::new(center, radius, lanes).at_level(level);
         if crate::plan::ring_effect(self.effective_plan(), ring).blocked {
             return Err("another roundabout already takes this ground".into());
         }
-        Ok(self.add_gesture(Gesture::Roundabout { center: ring.center, radius: ring.radius, lanes: ring.lanes }))
+        Ok(self.add_gesture(Gesture::Roundabout { center: ring.center, radius: ring.radius, lanes: ring.lanes, level: ring.level }))
     }
 
     /// Where a roundabout centre dropped at `p` lands: on a junction within
@@ -457,6 +464,11 @@ impl World {
     /// the ring is not taken): demolished on implement, as for any road
     /// works.
     pub fn roundabout_takes(&self, ring: crate::roads::Ring) -> Vec<LotId> {
+        // [w1-roads] A ring high enough to span the lots, or bored in a
+        // tunnel, takes none.
+        if ring.level >= crate::pillars::SPAN_LEVEL || ring.level <= crate::roads::TUNNEL_LEVEL {
+            return Vec::new();
+        }
         let reach = ring.outer_radius();
         let grid = LotGrid::new(&self.lots);
         grid.near(ring.center, reach)

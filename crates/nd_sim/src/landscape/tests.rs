@@ -210,8 +210,8 @@ fn demo_ground_world() -> crate::world::World {
     w.start_project();
     for i in -2..=2 {
         let c = i as f32 * 140.0;
-        w.add_gesture(Gesture::Road { points: vec![Vec2::new(-280.0, c), Vec2::new(280.0, c)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
-        w.add_gesture(Gesture::Road { points: vec![Vec2::new(c, -280.0), Vec2::new(c, 280.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        w.add_gesture(Gesture::Road { points: vec![Vec2::new(-280.0, c), Vec2::new(280.0, c)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
+        w.add_gesture(Gesture::Road { points: vec![Vec2::new(c, -280.0), Vec2::new(c, 280.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
     }
     let cell = |cx: f32, cy: f32| vec![Vec2::new(cx - 65.0, cy - 65.0), Vec2::new(cx + 65.0, cy - 65.0), Vec2::new(cx + 65.0, cy + 65.0), Vec2::new(cx - 65.0, cy + 65.0)];
     let uses = [LandUse::Industrial, LandUse::Residential, LandUse::Commercial, LandUse::Park];
@@ -224,8 +224,7 @@ fn demo_ground_world() -> crate::world::World {
         lanes_bwd: 0,
         curved: false,
         kind: RoadKind::Rail,
-        elevation: Vec::new(),
-    });
+        elevation: Vec::new(), car_only: None });
     w.implement();
     w.economy.treasury = w.economy.treasury.max(150_000.0);
     assert!(w.link_to_highway(Vec2::new(0.0, 280.0)), "the demo's ramps join the highway");
@@ -409,7 +408,7 @@ fn deep_highway_cuttings_and_fills_are_held_by_walls() {
         w.start_project();
         for k in -3..=3 {
             let y = k as f32 * 260.0;
-            w.add_gesture(crate::Gesture::Road { points: vec![Vec2::new(-1400.0, y), Vec2::new(1400.0, y + 90.0)], lanes_fwd: 3, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+            w.add_gesture(crate::Gesture::Road { points: vec![Vec2::new(-1400.0, y), Vec2::new(1400.0, y + 90.0)], lanes_fwd: 3, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         }
         w.implement();
         for (sid, seg) in w.roads.alive_segments() {

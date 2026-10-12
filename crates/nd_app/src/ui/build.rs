@@ -24,7 +24,7 @@ use crate::tools::{Tool, ToolState, TransitMode, ROAD_PRESETS};
 /// is drawn (in the options): a lane or an avenue is a street of 1 or 3
 /// lanes each way, a highway ramp a one-way road of one lane, a tunnel any
 /// road deep enough. The special roads stamp a layout of their own.
-const ROADS: [&str; 6] = ["Path", "Street", "One-way", "Highway", "Interchange", "Roundabout"];
+const ROADS: [&str; 6] = ["Path", "Street", "On-ramp", "Highway", "Interchange", "Roundabout"];
 
 /// A section of the tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -784,7 +784,9 @@ fn icon(painter: &egui::Painter, r: Rect, item: Item, p: &UiCtx, col: Color32) {
             painter.rect_stroke(r.shrink(r.width() * 0.08), r.width() * 0.3, egui::Stroke::new(1.5, Color32::from_rgb(170, 160, 150)), egui::StrokeKind::Inside);
         }
         Item::Road(label) => {
-            if let Some((_, f, b, k)) = ROAD_PRESETS.iter().find(|x| x.0 == label) {
+            if let Some((k, f, b, _)) = crate::tools::preset_values(label) {
+                icons::road(painter, r, k, f, b, col);
+            } else if let Some((_, f, b, k)) = ROAD_PRESETS.iter().find(|x| x.0 == label) {
                 icons::road(painter, r, *k, *f, *b, col);
             }
         }

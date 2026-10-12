@@ -11,7 +11,7 @@ use crate::tools::{Tool, ToolState, TransitMode, ZoneMode, BRUSH_MAX, BRUSH_MIN,
 
 pub(super) fn tool_state(t: &ToolState) -> Value {
     json!({
-        "name": tool_name(t.tool), "district": { "selected": t.district.selected, "mode": format!("{:?}", t.district.mode).to_lowercase(), "radius": t.district.radius, "erase": t.district.erase, "points": t.district.points.len() }, "road_kind": road_kind_name(t.kind), "lanes_fwd": t.lanes_fwd, "lanes_bwd": t.lanes_bwd, "curved": t.curved, "road_type": t.road_type(), "draw_method": t.draw_method().label(), "road_label": crate::ui::tools::road_label(t),
+        "name": tool_name(t.tool), "district": { "selected": t.district.selected, "mode": format!("{:?}", t.district.mode).to_lowercase(), "radius": t.district.radius, "erase": t.district.erase, "points": t.district.points.len() }, "road_kind": road_kind_name(t.kind), "lanes_fwd": t.lanes_fwd, "lanes_bwd": t.lanes_bwd, "curved": t.curved, "road_type": t.road_type(), "use": t.road_use().key(), "draw_method": t.draw_method().label(), "road_label": crate::ui::tools::road_label(t),
         "land_use": t.land_use.label(), "zone_mode": t.zone_mode.label(), "brush_radius": t.brush_radius, "unzone": t.unzone, "industry": t.industry, "building": placeable_key(t.build_item()), "building_category": t.build_cat.key(), "rail_kind": rail_name(t.rail_kind),
         "transit_mode": transit_mode_name(t.transit_mode), "route": opt_key(t.route_sel), "show_routes": t.show_routes,
         "pending_points": t.points.len(), "selected_gesture": t.selected_gesture.map(|g| g.0), "status": t.status,
@@ -60,6 +60,12 @@ pub(super) fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         if !t.pick_type(ty) {
             return Err(format!("unknown road_type {ty:?}; one of {}", crate::tools::ROAD_TYPES.join(", ")));
         }
+        t.tool = Tool::Road;
+    }
+    // [w1-roads] `use`: pedestrian | mixed | car_only, the Road tool's Use
+    // dial (the lanes stay).
+    if let Some(u) = opt_str(cmd, "use")? {
+        t.set_use(nd_sim::roads::RoadUse::parse(u).ok_or_else(|| format!("unknown use {u:?}; pedestrian, mixed or car_only"))?);
         t.tool = Tool::Road;
     }
     if let Some(m) = opt_str(cmd, "draw_method")? {

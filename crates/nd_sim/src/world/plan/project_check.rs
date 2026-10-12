@@ -43,7 +43,13 @@ impl World {
             self.plan_changed();
             return Ok(());
         }
-        self.master = project.apply_to(&self.master);
+        let before = std::mem::take(&mut self.master);
+        self.master = project.apply_to(&before);
+        // [w1-roads] Curved roads through the project's junctions get their
+        // point there before they are built.
+        let touched: std::collections::BTreeSet<GestureId> = self.master.gestures.iter().filter(|(id, g)| before.gestures.get(*id) != Some(*g)).map(|(id, _)| *id).collect();
+        drop(before);
+        self.mend_curves_through(&touched);
         self.rebuild_from_master();
         // [fix/roads-tools] Roads meeting at a junction share one point there.
         self.mend_junctions();

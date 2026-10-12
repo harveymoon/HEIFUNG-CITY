@@ -78,6 +78,23 @@ pub(crate) fn has_crosswalk(roads: &RoadNetwork, n: NodeId, sid: SegmentId) -> b
     !(seg.fronts_nothing() || (roads.ring_of_node(n).is_some() && roads.ring_of_segment(sid).is_some()))
 }
 
+/// [w1-roads] An off-ramp's mouth at a signalled junction: the walk graph
+/// opens a crossing there with the junction's walk lights
+/// (`World::refresh_crossings`), so it is painted and lit like any arm's
+/// crosswalk. An on-ramp's mouth (traffic turns in on every green) and a
+/// slip road at an unsignalled junction stay unmarked.
+pub(crate) fn lit_ramp_mouth(roads: &RoadNetwork, net: &LaneNetwork, n: NodeId, sid: SegmentId) -> bool {
+    let seg = roads.segment(sid);
+    if !seg.alive || !seg.is_street() || seg.tunnel || seg.is_highway() || !seg.ramp {
+        return false;
+    }
+    let (arriving, leaving) = if seg.b == n { (seg.lanes_fwd, seg.lanes_bwd) } else { (seg.lanes_bwd, seg.lanes_fwd) };
+    if arriving == 0 || leaving > 0 {
+        return false;
+    }
+    net.node_intersection.get(n.0 as usize).and_then(|&k| net.intersections.get(k)).is_some_and(|i| i.signalized)
+}
+
 /// Distance along an arm with half width `hw_a`, at an angle `theta` from a
 /// neighbour of half width `hw_b`, past which its side toward the
 /// neighbour is clear of the neighbour's carriageway (where the two facing
@@ -371,7 +388,7 @@ mod tests {
         let mut id = 0;
         let mut road = |plan: &mut Plan, pts: &[Vec2]| {
             id += 1;
-            plan.gestures.insert(GestureId(id), Gesture::Road { points: pts.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+            plan.gestures.insert(GestureId(id), Gesture::Road { points: pts.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         };
         road(&mut plan, &[Vec2::new(-700.0, 0.0), Vec2::new(-500.0, 0.0)]);
         road(&mut plan, &[Vec2::new(-600.0, -100.0), Vec2::new(-600.0, 100.0)]);
@@ -387,7 +404,7 @@ mod tests {
         road(&mut plan, &[Vec2::new(400.0, 0.0), Vec2::new(400.0, 0.0) + Vec2::from_angle(11f32.to_radians()) * 200.0]);
         road(&mut plan, &[Vec2::new(-200.0, 300.0), Vec2::new(200.0, 300.0)]);
         road(&mut plan, &[Vec2::new(0.0, 200.0), Vec2::new(0.0, 400.0)]);
-        plan.gestures.insert(GestureId(99), Gesture::Roundabout { center: Vec2::new(0.0, 300.0), radius: 25.0, lanes: 1 });
+        plan.gestures.insert(GestureId(99), Gesture::Roundabout { center: Vec2::new(0.0, 300.0), radius: 25.0, lanes: 1, level: 0.0 });
         let (built, rings) = plan.built_roads();
         let mut roads = RoadNetwork::default();
         roads.rings = rings;

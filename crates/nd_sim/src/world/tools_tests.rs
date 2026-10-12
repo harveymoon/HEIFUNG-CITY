@@ -17,7 +17,7 @@ fn square(x0: f32, y0: f32, w: f32, h: f32) -> Vec<Vec2> {
 }
 
 fn raised(points: &[Vec2], levels: &[f32], lanes: (u8, u8)) -> Gesture {
-    Gesture::Road { points: points.to_vec(), lanes_fwd: lanes.0, lanes_bwd: lanes.1, curved: false, kind: RoadKind::Street, elevation: levels.to_vec() }
+    Gesture::Road { points: points.to_vec(), lanes_fwd: lanes.0, lanes_bwd: lanes.1, curved: false, kind: RoadKind::Street, elevation: levels.to_vec(), car_only: None }
 }
 
 /// Plan a gesture in a project of its own and implement it.

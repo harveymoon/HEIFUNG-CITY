@@ -46,7 +46,7 @@ fn queries(w: &World) -> String {
 
 fn road(points: Vec<Vec2>, raised: bool) -> Gesture {
     let elevation = if raised { (0..points.len()).map(|i| if i == 0 || i + 1 == points.len() { 0.0 } else { 8.0 }).collect() } else { Vec::new() };
-    Gesture::Road { points, lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation }
+    Gesture::Road { points, lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation, car_only: None }
 }
 
 /// Project checks of a few test projects, and how long one takes.

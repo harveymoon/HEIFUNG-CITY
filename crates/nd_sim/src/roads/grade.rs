@@ -66,6 +66,19 @@ impl WayClass {
         }
     }
 
+    /// [w1-roads] [`WayClass::laying`] with the road's use: a street set to
+    /// Mixed is a street whatever its lanes; one set to cars only is a
+    /// slip road in the making when too narrow for a highway.
+    pub fn laying_use(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8, ring: bool, car_only: Option<bool>) -> Self {
+        match car_only {
+            _ if kind != RoadKind::Street || ring => Self::laying(kind, lanes_fwd, lanes_bwd, ring),
+            Some(false) => WayClass::Street,
+            Some(true) if is_highway_spec(kind, lanes_fwd, lanes_bwd) => WayClass::Highway,
+            Some(true) if (lanes_fwd == 0) != (lanes_bwd == 0) => WayClass::OneWay,
+            _ => Self::laying(kind, lanes_fwd, lanes_bwd, ring),
+        }
+    }
+
     pub(super) fn rank(self) -> u8 {
         match self {
             WayClass::Highway => 2,

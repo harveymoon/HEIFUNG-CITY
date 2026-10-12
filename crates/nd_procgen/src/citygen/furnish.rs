@@ -10,7 +10,7 @@ use nd_sim::districts::{CommercialSpec, ResidentialSpec};
 use nd_sim::enforcement::LotSize;
 use nd_sim::landscape::{HIGHWAY_Y, MAP_EDGE};
 use nd_sim::world::{IndustryArea, PolicyChange};
-use nd_sim::{BatteryKind, BuildingId, IndustryKind, LandUse, Lot, LotId, Placeable, PortKind, PowerPlantKind, RailFacility, ServiceKind, Tier, World};
+use nd_sim::{BatteryKind, BuildingId, Gesture, IndustryKind, LandUse, Lot, LotId, Placeable, PortKind, PowerPlantKind, RailFacility, ServiceKind, Tier, World};
 
 /// The treasury the city starts with once everything is paid for: deep
 /// enough that it never runs dry while it grows (Harvey's "unlimited
@@ -186,12 +186,50 @@ impl Ctx<'_> {
 
     /// A dock or station whose street stub is not on the network yet: a
     /// road from each free end to the nearest junction.
+    /// [w1-roads] For a rail building refused over a street running along
+    /// the track ("a road runs across the site at (x, y)"): take that
+    /// street's stretch between its junctions out and build. True if one
+    /// was taken out.
+    fn clear_railside(&mut self, why: &str) -> bool {
+        let Some(rest) = why.split("runs across the site at (").nth(1) else { return false };
+        let nums: Vec<f32> = rest.split(')').next().unwrap_or("").split(',').filter_map(|t| t.trim().parse().ok()).collect();
+        let [x, y] = nums[..] else { return false };
+        let at = Vec2::new(x, y);
+        let Some((sid, _, q)) = self.w.roads.nearest_street(at) else { return false };
+        let (a, b) = self.w.roads.segment_points(sid);
+        // Only a street along the track (east-west) or a dead end coming up
+        // to it, never one crossing it.
+        let dead_end = |p: Vec2| self.w.roads.node_near(p, 0.5).is_some_and(|n| self.w.roads.street_degree(n) == 1);
+        let s = self.w.roads.segment(sid);
+        let run_dead = self.w.road_run(sid).iter().any(|&r| {
+            let (ra, rb) = self.w.roads.segment_points(r);
+            dead_end(ra) || dead_end(rb)
+        });
+        if q.distance(at) > 2.0 || ((b - a).normalize_or_zero().x.abs() < 0.7 && !run_dead) || s.is_motorway() {
+            return false;
+        }
+        let gid = self.w.master.gestures.iter().find(|(_, g)| matches!(g, Gesture::Road { .. }) && nd_sim::geom::distance_to_polyline(at, &g.road_polyline()) < 1.5).map(|(id, _)| *id);
+        let Some(gid) = gid else { return false };
+        let Some((s0, s1)) = self.w.road_piece_span(gid, Some(sid), at) else { return false };
+        self.w.remove_road_piece(gid, s0, s1);
+        self.w.implement();
+        self.note(format!("railside street at ({x:.0}, {y:.0}) taken out for the station"));
+        true
+    }
+
     fn join_stub(&mut self, b: BuildingId, what: &str) {
-        if self.w.road_access(b) != Some(false) {
+        // [w1-roads] A stub left dangling is joined too, even when the
+        // building reaches a street another way (a station whose
+        // railside street gave way to it fronts the streets crossing the
+        // track, and its stub was a dead piece cut off from the city).
+        if self.w.road_access(b) != Some(false) && self.w.stub_ends_of(b).is_empty() {
             return;
         }
+        // [w1-roads] Never back onto the stub's own other end (a road along
+        // the stub joins nothing).
+        let own: Vec<Vec2> = self.w.ports.port_of(b).and_then(|p| p.stub).map(|s| s.to_vec()).unwrap_or_default();
         for end in self.w.stub_ends_of(b) {
-            let to = self.street_nodes_near(end, 240.0).into_iter().filter(|q| q.distance(end) > 3.0).min_by(|a, c| a.distance(end).total_cmp(&c.distance(end)));
+            let to = self.street_nodes_near(end, 240.0).into_iter().filter(|q| q.distance(end) > 3.0 && own.iter().all(|o| o.distance(*q) > 1.0)).min_by(|a, c| a.distance(end).total_cmp(&c.distance(end)));
             if let Some(to) = to {
                 self.w.add_road(&[end, to], 1, 1);
             }
@@ -389,7 +427,10 @@ fn rail_and_docks(cx: &mut Ctx) {
         }
         Vec2::new(best.map_or(want, |b| b.1), y)
     };
-    let along: Vec<Vec2> = [0.0, 15.0, -15.0, 30.0, -30.0].iter().map(|&x| Vec2::new(x, 0.0)).collect();
+    // [w1-roads] Either side of the track (a station goes on the side of
+    // the click), and off any street running along it: nothing is built
+    // over a road.
+    let along: Vec<Vec2> = [0.0f32, 15.0, -15.0, 30.0, -30.0, 60.0, -60.0].iter().flat_map(|&x| [Vec2::new(x, 0.0), Vec2::new(x, 3.0), Vec2::new(x, -3.0)]).collect();
     let mut taken: Vec<f32> = Vec::new();
     let east = cx.works.iter().map(|p| p.x).fold(cx.downtown.x + 300.0, f32::max);
     let stations = [
@@ -400,8 +441,57 @@ fn rail_and_docks(cx: &mut Ctx) {
     ];
     for (kind, want, what) in stations {
         let p = gap_mid(want, kind.platform_length() + 140.0, &taken);
-        if let Some(b) = place_near(cx, what, &along, |w, p| w.place_rail_facility(kind, p), p) {
-            taken.push(cx.centre_of(b).x);
+        // [w1-roads] Nothing is built over a road: where a street runs
+        // alongside the track too close for the building's depth, the next
+        // gaps out are tried (nearest first).
+        let mut gaps: Vec<f32> = xs.windows(2).filter(|w| w[1] - w[0] >= kind.platform_length() + 140.0).map(|w| (w[0] + w[1]) * 0.5).filter(|m| taken.iter().all(|t| (t - m).abs() >= 150.0) && (m - p.x).abs() > 1.0).collect();
+        gaps.sort_by(|a, b| (a - want).abs().total_cmp(&(b - want).abs()));
+        let mut tries: Vec<Vec2> = along.clone();
+        tries.extend(gaps.iter().flat_map(|g| along.iter().map(move |o| Vec2::new(g - p.x, 0.0) + *o)));
+        let kinds: Vec<RailFacility> = vec![kind];
+        let mut placed = None;
+        let mut last = String::from("nowhere to try");
+        'kinds: for k in kinds {
+            for &d in &tries {
+                match cx.w.place_rail_facility(k, p + d) {
+                    Ok(b) => {
+                        placed = Some(b);
+                        break 'kinds;
+                    }
+                    Err(e) => last = e,
+                }
+            }
+        }
+        // [w1-roads] Nowhere clear: the stretch of the street running along
+        // the track that the building would stand over gives way to it (the
+        // station fronts the streets crossing the track instead), at the
+        // spot first wanted.
+        if placed.is_none() && kind != RailFacility::Station {
+            let centres: Vec<f32> = std::iter::once(p.x).chain(gaps.iter().copied().take(4)).collect();
+            'sides: for (cx_x, side) in centres.iter().flat_map(|x| [(*x, 3.0f32), (*x, -3.0)]) {
+                for _ in 0..4 {
+                    match cx.w.place_rail_facility(kind, Vec2::new(cx_x, p.y + side)) {
+                        Ok(b) => {
+                            placed = Some(b);
+                            break 'sides;
+                        }
+                        Err(e) => {
+                            last = e.clone();
+                            if !cx.clear_railside(&e) {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        match placed {
+            Some(b) => {
+                cx.placed(what, b);
+                cx.join_stub(b, what);
+                taken.push(cx.centre_of(b).x);
+            }
+            None => cx.refused(what, &last),
         }
     }
     let coast: Vec<Vec2> = cx.w.landscape.sea.as_ref().map(|s| s.coast.clone()).unwrap_or_default();
@@ -409,9 +499,12 @@ fn rail_and_docks(cx: &mut Ctx) {
         // A point on dry land just inland of the coast line (the sea is to
         // the south).
         let shore = |x: f32| coast.iter().copied().min_by(|a, b| (a.x - x).abs().total_cmp(&(b.x - x).abs())).unwrap_or(Vec2::new(x, -700.0)) + Vec2::new(0.0, 35.0);
-        let offs: Vec<Vec2> = [0.0, 70.0, -70.0, 140.0, -140.0, 210.0, -210.0, 280.0, -280.0].iter().map(|&x| Vec2::new(x, 0.0)).collect();
+        let offs: Vec<Vec2> = [0.0, 70.0, -70.0, 140.0, -140.0, 210.0, -210.0, 280.0, -280.0, 350.0, -350.0, 420.0, -420.0].iter().map(|&x| Vec2::new(x, 0.0)).collect();
         let ferry_x = cx.downtown.x + 180.0;
-        let offs_f: Vec<Vec2> = offs.iter().map(|o| shore(ferry_x + o.x) - Vec2::new(ferry_x, 0.0)).collect();
+        // [w1-roads] Then on along the shore, both ways, to a stretch with
+        // no street along it inside the terminal's yard.
+        let far: Vec<Vec2> = (1..40).flat_map(|k| [Vec2::new(420.0 + 35.0 * k as f32, 0.0), Vec2::new(-420.0 - 35.0 * k as f32, 0.0)]).collect();
+        let offs_f: Vec<Vec2> = offs.iter().chain(far.iter()).map(|o| shore(ferry_x + o.x) - Vec2::new(ferry_x, 0.0)).collect();
         place_near(cx, "ferry terminal", &offs_f, |w, p| w.place_port(PortKind::FerryTerminal, p), Vec2::new(ferry_x, 0.0));
         let port_x = east - 40.0;
         let offs_p: Vec<Vec2> = offs.iter().map(|o| shore(port_x + o.x) - Vec2::new(port_x, 0.0)).collect();

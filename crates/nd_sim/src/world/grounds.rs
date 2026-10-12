@@ -177,7 +177,7 @@ impl World {
         ids.dedup();
         let mut changed = false;
         for id in ids {
-            let Some(Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind, elevation }) = self.master.gestures.get(&id).cloned() else { continue };
+            let Some(Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind, elevation, car_only }) = self.master.gestures.get(&id).cloned() else { continue };
             if kind != RoadKind::Path || points.len() < 2 {
                 continue;
             }
@@ -199,7 +199,7 @@ impl World {
             } else {
                 let pts = points[lo..hi].to_vec();
                 let elevation = if elevation.is_empty() { elevation } else { elevation.iter().copied().skip(lo).take(hi - lo).collect() };
-                self.master.gestures.insert(id, Gesture::Road { points: pts, lanes_fwd, lanes_bwd, curved, kind, elevation });
+                self.master.gestures.insert(id, Gesture::Road { points: pts, lanes_fwd, lanes_bwd, curved, kind, elevation, car_only });
                 self.events.push(SimEvent::PathTrimmed { gesture: id, removed: false, grounds: what });
             }
         }

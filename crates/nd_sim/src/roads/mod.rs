@@ -108,6 +108,12 @@ pub struct Segment {
     /// street's along its length (`traffic::LaneNetwork::ramp_profiles`).
     #[serde(default)]
     pub ramp: bool,
+    /// [w1-roads] The road's use as the player set it: `Some(true)` cars
+    /// only, `Some(false)` mixed (a street with pavements, whatever its
+    /// lanes), `None` a road from before it was set, its use read from its
+    /// lanes as it always was (`RoadUse::of`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub car_only: Option<bool>,
 }
 
 impl Segment {
@@ -127,13 +133,26 @@ impl Segment {
     /// fast, fronts no lots, and is grade-separated: other ways cross it
     /// without a junction unless an end is dropped on it (a ramp).
     pub fn is_highway(&self) -> bool {
-        !self.ring && is_highway_spec(self.kind, self.lanes_fwd, self.lanes_bwd)
+        !self.ring && is_highway_use(self.kind, self.lanes_fwd, self.lanes_bwd, self.car_only)
+    }
+
+    /// [w1-roads] What it carries (`RoadUse::of`).
+    pub fn road_use(&self) -> RoadUse {
+        if self.ring {
+            return RoadUse::Mixed;
+        }
+        RoadUse::of(self.kind, self.lanes_fwd, self.lanes_bwd, self.car_only)
     }
 
     /// A highway carriageway or one of its slip roads: fast road that
     /// fronts nothing and has no pavements.
     pub fn is_motorway(&self) -> bool {
-        self.ramp || self.is_highway()
+        // [w1-roads] A road set to cars only fronts nothing whatever its
+        // lanes; one set to Mixed is a street even joined to a highway.
+        match self.car_only {
+            Some(car_only) => car_only && self.kind == RoadKind::Street && !self.ring,
+            None => self.ramp || self.is_highway(),
+        }
     }
 
     /// [interchange] Its part in grade separation (`separated`).
@@ -199,6 +218,9 @@ pub struct RoadNetwork {
     /// flagged `ring` and never treated as a highway while they are cut in.
     #[serde(skip)]
     laying_ring: bool,
+    /// [w1-roads] The use of the way being laid (`add_polyline_use`).
+    #[serde(skip)]
+    laying_use: Option<bool>,
 }
 
 impl RoadNetwork {

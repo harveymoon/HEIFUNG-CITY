@@ -116,11 +116,11 @@ fn the_ship_deck_and_a_zero_slab_are_sound() {
 fn tunnel_under_the_highway() -> World {
     let mut w = World::new(WorldConfig { landscape: nd_sim::landscape::LandscapeParams::flat(), ..WorldConfig::default() });
     // A three-lane one-way carriageway and a tunnel passing under it.
-    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], lanes_fwd: 3, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], lanes_fwd: 3, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
     let t = nd_sim::roads::TUNNEL_DEPTH;
-    w.add_gesture(Gesture::Road { points: vec![Vec2::new(300.0, -300.0), Vec2::new(300.0, -150.0), Vec2::new(300.0, 150.0), Vec2::new(300.0, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![0.0, t, t, 0.0] });
+    w.add_gesture(Gesture::Road { points: vec![Vec2::new(300.0, -300.0), Vec2::new(300.0, -150.0), Vec2::new(300.0, 150.0), Vec2::new(300.0, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![0.0, t, t, 0.0], car_only: None });
     // A one-way tunnel along under the carriageway, as a ramp's might.
-    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-200.0, -60.0), Vec2::new(-150.0, -6.0), Vec2::new(150.0, -6.0), Vec2::new(200.0, -60.0)], lanes_fwd: 3, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: vec![0.0, t, t, 0.0] });
+    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-200.0, -60.0), Vec2::new(-150.0, -6.0), Vec2::new(150.0, -6.0), Vec2::new(200.0, -60.0)], lanes_fwd: 3, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: vec![0.0, t, t, 0.0], car_only: None });
     w.implement();
     w
 }

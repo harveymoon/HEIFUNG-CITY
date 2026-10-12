@@ -21,7 +21,10 @@ pub(super) fn roundabout_input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, 
     if click || right_down || middle {
         tools.ring_pin = None;
     }
-    tools.ring_hover = tools.ring_pin.or(if flags.pointer_over_ui { None } else { ground }).map(|p| sim.world.roundabout_snap(p));
+    // [w1-roads] A raised or sunken ring does not snap onto the junctions
+    // at grade.
+    let at_grade = tools.elevation.abs() < nd_sim::roads::GRADE_SEPARATION;
+    tools.ring_hover = tools.ring_pin.or(if flags.pointer_over_ui { None } else { ground }).map(|p| if at_grade { sim.world.roundabout_snap(p) } else { p });
     // Ctrl+wheel sizes it (the camera leaves the wheel alone then).
     if ctrl && !flags.pointer_over_ui {
         let lines = match scroll.unit {
@@ -36,7 +39,9 @@ pub(super) fn roundabout_input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, 
     if click {
         if let Some(c) = tools.ring_hover {
             let (r, lanes) = (tools.ring_radius, tools.ring_lanes);
-            tools.status = match sim.world.add_roundabout(c, r, lanes) {
+            let level = tools.elevation;
+            tools.status = match sim.world.add_roundabout_at(c, r, lanes, level) {
+                Ok(_) if level != 0.0 => format!("Roundabout {:.0} m across at {} stamped into the project: roads drawn to it at its level join it, others pass under or over. Ctrl+Z undoes, Ctrl+Enter implements.", r * 2.0, elevation_label(level)),
                 Ok(_) => format!("Roundabout {:.0} m across stamped into the project: roads crossing it are cut and joined, buildings in red come down. Ctrl+Z undoes, Ctrl+Enter implements.", r * 2.0),
                 Err(e) => format!("No roundabout: {e}."),
             };
@@ -82,10 +87,12 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, _selection:
         if tools.points.len() >= 2 {
             let (a, b) = (tools.points[0], tools.points[tools.points.len() - 1]);
             let lanes = (tools.lanes_fwd.max(1), tools.lanes_bwd.max(1));
-            tools.status = match sim.world.add_diamond(a, b, lanes) {
+            let layout = tools.interchange_layout;
+            let over = layout == nd_sim::world::interchange::InterchangeLayout::StreetOver;
+            tools.status = match sim.world.add_interchange(a, b, lanes, layout) {
                 Ok((plan, ids)) => format!(
                     "Diamond interchange added to the project: {}{} ramps, a signalled junction where they meet the street on each side. Ctrl+Z undoes, Ctrl+Enter implements.",
-                    if plan.kept_street { "the street under the highway kept, " } else { "the cross street under the highway, " },
+                    if plan.kept_street { "the street under the highway kept, " } else if over { "the cross street on a bridge over the highway, " } else { "the cross street under the highway, " },
                     ids.len() - usize::from(!plan.kept_street)
                 ),
                 Err(r) => format!("No interchange: {} (pinned in red at {:.0}, {:.0}).", r.why, r.at.x, r.at.y),
@@ -112,7 +119,7 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, _selection:
             if let Some(why) = sim.world.road_refusal(&built, &built_levels, kind, lf, lb) {
                 tools.status = format!("Not added: {why}.");
             } else {
-                let g = Gesture::Road { points: tools.points.clone(), lanes_fwd: lf, lanes_bwd: lb, curved, kind, elevation };
+                let g = Gesture::Road { points: tools.points.clone(), lanes_fwd: lf, lanes_bwd: lb, curved, kind, elevation, car_only: tools.car_only_flag() };
                 sim.world.add_gesture(g);
                 let warn = if tools.grade_warnings.is_empty() { String::new() } else { format!(" Warning: {}.", tools.grade_warnings.join("; ")) };
                 tools.status = format!("{} {} added to project ({} points). Ctrl+Enter implements.{warn}", if tools.curved { "Curved" } else { "Straight" }, match kind { RoadKind::Path => "path", RoadKind::Rail => "track", RoadKind::Street if tools.tunnel => "tunnel", RoadKind::Street => "road" }, tools.points.len());
@@ -150,7 +157,7 @@ fn circle_input(click: bool, finish: bool, ground: Option<SVec2>, sim: &mut Sim,
     tools.status = if let Some(why) = sim.world.road_refusal(&built, &built_levels, kind, lf, lb) {
         format!("Not added: {why}.")
     } else {
-        sim.world.add_gesture(Gesture::Road { points: pts, lanes_fwd: lf, lanes_bwd: lb, curved: true, kind, elevation });
+        sim.world.add_gesture(Gesture::Road { points: pts, lanes_fwd: lf, lanes_bwd: lb, curved: true, kind, elevation, car_only: tools.car_only_flag() });
         format!("Circular {} {:.0} m across added to project. Ctrl+Enter implements.", if kind == RoadKind::Path { "path" } else { "road" }, r * 2.0)
     };
     tools.points.clear();

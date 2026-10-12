@@ -435,7 +435,7 @@ mod tile_tests {
     fn world() -> World {
         let mut w = World::new(WorldConfig { landscape: nd_sim::landscape::LandscapeParams { relief: 0.8, ..nd_sim::landscape::LandscapeParams::default() }, ..WorldConfig::default() });
         w.economy.treasury = 1.0e9;
-        w.add_gesture(Gesture::Road { points: vec![Vec2::new(-300.0, -200.0), Vec2::new(250.0, -150.0)], lanes_fwd: 2, lanes_bwd: 2, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        w.add_gesture(Gesture::Road { points: vec![Vec2::new(-300.0, -200.0), Vec2::new(250.0, -150.0)], lanes_fwd: 2, lanes_bwd: 2, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         w.implement();
         w
     }
@@ -475,7 +475,7 @@ mod tile_tests {
         assert_eq!(tris(&union), tris(&whole));
         assert!(tiles.update(&w).is_empty(), "nothing changed");
         let before: Vec<MeshData> = (0..tiles.len()).map(|t| tiles.mesh(t).clone()).collect();
-        w.add_gesture(Gesture::Road { points: vec![Vec2::new(100.0, 200.0), Vec2::new(180.0, 330.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        w.add_gesture(Gesture::Road { points: vec![Vec2::new(100.0, 200.0), Vec2::new(180.0, 330.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         w.implement();
         let changed = tiles.update(&w);
         let fresh = LandscapeTiles::new(&w, &pal, 8.0);
@@ -501,7 +501,7 @@ mod tile_tests {
         let mut tiles = LandscapeTiles::new(&w, &pal, 8.0);
         let c = w.lots.values().map(|l| l.center).fold(Vec2::ZERO, |a, p| a + p) / w.lots.len().max(1) as f32;
         w.economy.treasury = 1.0e9;
-        w.add_gesture(Gesture::Road { points: vec![c + Vec2::new(-60.0, 40.0), c + Vec2::new(70.0, 90.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        w.add_gesture(Gesture::Road { points: vec![c + Vec2::new(-60.0, 40.0), c + Vec2::new(70.0, 90.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         w.implement();
         let t0 = Instant::now();
         let whole = build_landscape_terrain(&w, &pal, 8.0);

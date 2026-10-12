@@ -46,6 +46,9 @@ pub struct ToolState {
     pub selected_gesture: Option<GestureId>,
     /// Street or path.
     pub kind: RoadKind,
+    /// [w1-roads] A street drawn for cars only (no pavements, highway speed,
+    /// no lots along it): the Use dial. Never changed by the lanes.
+    pub car_only: bool,
     /// Buildings tool: the open sub-category, the item picked in it and
     /// the tier for services and attractions.
     pub build_cat: nd_sim::BuildCategory,
@@ -112,6 +115,9 @@ pub struct ToolState {
     /// [interchange] Road tool, Interchange preset: two clicks across the
     /// highway lay a diamond interchange (`World::plan_diamond`).
     pub interchange: bool,
+    /// [w1-roads] The interchange's layout: the street under the highway
+    /// or over it.
+    pub interchange_layout: nd_sim::world::interchange::InterchangeLayout,
     /// [interchange] Why the diamond under the pointer would be refused, and
     /// where (refreshed with its hologram).
     pub interchange_refusal: Option<(String, SVec2)>,
@@ -262,6 +268,55 @@ pub const ROAD_PRESETS: [(&str, u8, u8, RoadKind); 8] = [
     ("Highway", 4, 0, RoadKind::Street),
 ];
 
+/// [w1-roads] The values a road preset (one of `ROAD_TYPES`) sets: kind,
+/// lanes forward and back, cars only. Presets only set values; the Use,
+/// lanes and level dials are independent of them.
+pub fn preset_values(label: &str) -> Option<(RoadKind, u8, u8, bool)> {
+    let l = label.to_ascii_lowercase();
+    Some(match l.as_str() {
+        "path" => (RoadKind::Path, 0, 0, false),
+        "street" => (RoadKind::Street, 2, 2, false),
+        "on-ramp" | "onramp" | "on_ramp" | "ramp" => (RoadKind::Street, 1, 0, true),
+        "highway" => (RoadKind::Street, 4, 0, true),
+        // Older names, kept for the remote API: a one-way street.
+        "one-way" | "oneway" | "one_way" => (RoadKind::Street, 1, 0, false),
+        _ => return None,
+    })
+}
+
+/// [w1-roads] The preset whose values these are exactly (any path is the
+/// Path), "Rail" for track, or "Custom" when none matches: a preset button
+/// lights only when the dials are just what it sets.
+pub fn road_type_of(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8, car_only: bool) -> &'static str {
+    match kind {
+        RoadKind::Path => "Path",
+        RoadKind::Rail => "Rail",
+        RoadKind::Street => super::ROAD_TYPES.iter().copied().find(|t| preset_values(t) == Some((RoadKind::Street, lanes_fwd, lanes_bwd, car_only))).unwrap_or("Custom"),
+    }
+}
+
+/// [w1-roads] The Use dial's value for these settings.
+pub fn road_use_of(kind: RoadKind, car_only: bool) -> nd_sim::roads::RoadUse {
+    match kind {
+        RoadKind::Path => nd_sim::roads::RoadUse::Pedestrian,
+        RoadKind::Street if car_only => nd_sim::roads::RoadUse::CarOnly,
+        _ => nd_sim::roads::RoadUse::Mixed,
+    }
+}
+
+/// [w1-roads] Settings switched to Use `u`: the lanes stay as they are (a
+/// path becoming a street gets one lane each way, a car-only road two one
+/// way only if it had none).
+pub fn with_use(u: nd_sim::roads::RoadUse, kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> (RoadKind, u8, u8, bool) {
+    use nd_sim::roads::RoadUse;
+    let (f, b) = if kind == RoadKind::Street && lanes_fwd + lanes_bwd > 0 { (lanes_fwd, lanes_bwd) } else { (1, 1) };
+    match u {
+        RoadUse::Pedestrian => (RoadKind::Path, lanes_fwd, lanes_bwd, false),
+        RoadUse::Mixed => (RoadKind::Street, f, b, false),
+        RoadUse::CarOnly => (RoadKind::Street, f, b, true),
+    }
+}
+
 impl ToolState {
     /// What the Buildings tool puts down: the picked item at the picked tier.
     pub fn build_item(&self) -> nd_sim::Placeable {
@@ -348,6 +403,7 @@ impl ToolState {
             self.roundabout = false;
             self.interchange = true;
             self.kind = RoadKind::Street;
+            self.car_only = false;
             if self.lanes_fwd == 0 || self.lanes_bwd == 0 {
                 self.lanes_fwd = 2;
                 self.lanes_bwd = 2;
@@ -378,13 +434,15 @@ impl ToolState {
             self.depth = Depth::Underground;
             return true;
         }
-        let Some((_, f, b, k)) = ROAD_PRESETS.iter().find(|(l, ..)| l.eq_ignore_ascii_case(label)) else { return false };
+        let Some((name, f, b, k)) = ROAD_PRESETS.iter().find(|(l, ..)| l.eq_ignore_ascii_case(label)) else { return false };
         self.roundabout = false;
         self.kind = *k;
         if *k == RoadKind::Street {
             self.lanes_fwd = *f;
             self.lanes_bwd = *b;
         }
+        // [w1-roads] The highway and its ramps are for cars only.
+        self.car_only = matches!(*name, "Highway" | "Ramp");
         if self.tunnel {
             self.tunnel = false;
             self.elevation = 0.0;
@@ -416,6 +474,7 @@ impl ToolState {
             curved: self.curved,
             circle: self.circle,
             kind: self.kind,
+            car_only: self.car_only,
             build_cat: self.build_cat,
             build: self.build,
             build_tier: self.build_tier,
@@ -430,6 +489,7 @@ impl ToolState {
             beach: self.beach,
             roundabout: self.roundabout,
             interchange: self.interchange,
+            interchange_layout: self.interchange_layout,
             ring_radius: self.ring_radius,
             ring_lanes: self.ring_lanes,
             elevation: self.elevation,
@@ -464,44 +524,57 @@ impl ToolState {
     /// a two-way street, a one-way road too narrow for a highway (a ramp
     /// at one lane), or a highway (one-way, three lanes or more).
     pub fn road_type(&self) -> &'static str {
-        match self.kind {
-            RoadKind::Path => "Path",
-            RoadKind::Rail => "Rail",
-            RoadKind::Street if self.lanes_fwd > 0 && self.lanes_bwd > 0 => "Street",
-            RoadKind::Street if nd_sim::roads::is_highway_spec(RoadKind::Street, self.lanes_fwd, self.lanes_bwd) => "Highway",
-            RoadKind::Street => "One-way",
+        road_type_of(self.kind, self.lanes_fwd, self.lanes_bwd, self.car_only)
+    }
+
+    /// [w1-roads] The Use dial.
+    pub fn road_use(&self) -> nd_sim::roads::RoadUse {
+        road_use_of(self.kind, self.car_only)
+    }
+
+    /// [w1-roads] Set the Use; the lanes stay.
+    pub fn set_use(&mut self, u: nd_sim::roads::RoadUse) {
+        if self.kind == RoadKind::Rail {
+            return;
         }
+        let (k, f, b, c) = with_use(u, self.kind, self.lanes_fwd, self.lanes_bwd);
+        self.kind = k;
+        if k == RoadKind::Street {
+            (self.lanes_fwd, self.lanes_bwd) = (f, b);
+        }
+        self.car_only = c;
+        self.roundabout = false;
+        self.interchange = false;
+    }
+
+    /// [w1-roads] The use stored on a road drawn now (`Gesture::Road`).
+    pub fn car_only_flag(&self) -> Option<bool> {
+        (self.kind == RoadKind::Street).then_some(self.car_only)
     }
 
     /// [fix/roads-tools] Pick a road type: its usual lanes, unless the
     /// lanes set already suit it. The level is kept (a tunnel is any road
     /// deep enough). False for a name that is no type.
     pub fn pick_type(&mut self, label: &str) -> bool {
-        let Some(&ty) = super::ROAD_TYPES.iter().find(|t| t.eq_ignore_ascii_case(label)) else { return false };
+        let ty = label;
+        if preset_values(ty).is_none() {
+            return false;
+        }
         self.roundabout = false;
         self.interchange = false;
         self.tunnel = false;
-        let was = self.road_type();
-        match ty {
-            "Path" => self.kind = RoadKind::Path,
-            _ => {
-                self.kind = RoadKind::Street;
-                if was != ty {
-                    let (f, b) = match ty {
-                        "Street" => (2, 2),
-                        "One-way" => (1, 0),
-                        _ => (4, 0),
-                    };
-                    self.lanes_fwd = f;
-                    self.lanes_bwd = b;
-                }
-            }
+        let Some((k, f, b, c)) = preset_values(ty) else { return false };
+        self.kind = k;
+        if k == RoadKind::Street {
+            (self.lanes_fwd, self.lanes_bwd) = (f, b);
         }
+        self.car_only = c;
         true
     }
 
     pub fn captures_brackets(&self) -> bool {
-        self.tool == Tool::Road && !self.roundabout
+        // [w1-roads] A roundabout too: [ and ] raise and lower the ring.
+        self.tool == Tool::Road
     }
 
     /// [tools] Raise or lower the whole road being drawn a step: every
@@ -547,6 +620,7 @@ impl Default for ToolState {
             build_here: None,
             build_site: None,
             build_verdict: None,
+            car_only: false,
             curved: false,
             selected_gesture: None,
             kind: RoadKind::Street,
@@ -579,6 +653,7 @@ impl Default for ToolState {
             beach: false,
             roundabout: false,
             interchange: false,
+            interchange_layout: Default::default(),
             interchange_refusal: None,
             ring_radius: 20.0,
             ring_lanes: 1,
@@ -609,7 +684,7 @@ impl ToolState {
         if self.tool != Tool::Road || !self.roundabout {
             return None;
         }
-        self.ring_hover.map(|c| nd_sim::roads::Ring::new(c, self.ring_radius, self.ring_lanes))
+        self.ring_hover.map(|c| nd_sim::roads::Ring::new(c, self.ring_radius, self.ring_lanes).at_level(self.elevation))
     }
 
     /// Does the mouse wheel belong to the tool (Ctrl+wheel sizes the
@@ -647,5 +722,41 @@ impl ToolState {
     /// [waterfront] Painting public beaches.
     pub fn painting_beach(&self) -> bool {
         self.land_use == LandUse::Park && self.beach && !self.unzone
+    }
+}
+
+#[cfg(test)]
+mod road_use_tests {
+    use super::*;
+    use nd_sim::roads::RoadUse;
+
+    /// [w1-roads] A preset lights only when the dials are exactly its
+    /// values; the lanes never change the Use.
+    #[test]
+    fn presets_light_only_on_their_exact_values_and_lanes_keep_the_use() {
+        let mut t = ToolState::default();
+        assert!(t.pick_type("Street"));
+        assert_eq!((t.kind, t.lanes_fwd, t.lanes_bwd, t.car_only), (RoadKind::Street, 2, 2, false));
+        assert_eq!(t.road_type(), "Street");
+        // Three lanes one way: custom, still Mixed.
+        (t.lanes_fwd, t.lanes_bwd) = (3, 0);
+        assert_eq!(t.road_type(), "Custom");
+        assert_eq!(t.road_use(), RoadUse::Mixed);
+        assert_eq!(t.car_only_flag(), Some(false), "stored on the road as Mixed");
+        // Car-only: the lanes stay.
+        t.set_use(RoadUse::CarOnly);
+        assert_eq!((t.lanes_fwd, t.lanes_bwd), (3, 0));
+        assert_eq!(t.road_type(), "Custom");
+        (t.lanes_fwd, t.lanes_bwd) = (4, 0);
+        assert_eq!(t.road_type(), "Highway");
+        assert!(t.pick_type("On-ramp"));
+        assert_eq!((t.lanes_fwd, t.lanes_bwd, t.car_only), (1, 0, true));
+        assert_eq!(t.road_type(), "On-ramp");
+        t.set_use(RoadUse::Mixed);
+        assert_eq!(t.road_type(), "Custom", "a mixed one-lane one-way is no preset");
+        t.set_use(RoadUse::Pedestrian);
+        assert_eq!((t.kind, t.road_type()), (RoadKind::Path, "Path"));
+        assert_eq!(t.car_only_flag(), None);
+        assert_eq!(road_type_of(RoadKind::Street, 2, 2, true), "Custom");
     }
 }

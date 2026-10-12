@@ -118,6 +118,10 @@ impl World {
         if self.under_facility(lot.center) {
             return Some("that ground belongs to a station or yard".into());
         }
+        // [w1-roads] Nothing over a road (H1, H3), built or planned.
+        if let Some(why) = self.road_under(crate::world::over_roads::Footprint::Area(&lot.polygon), &what.label(), true) {
+            return Some(why);
+        }
         // [free-placement] Zoning is no bar: only a park is kept.
         if !what.allowed_on(lot.land_use) {
             return Some(format!("that is park land: unzone it before putting {} there", crate::names::a(what.label())));

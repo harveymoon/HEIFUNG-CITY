@@ -40,7 +40,7 @@ fn plants(w: &mut World, x_max: f32, n: usize) -> Vec<BuildingId> {
 }
 
 fn street_road(points: Vec<Vec2>) -> Gesture {
-    Gesture::Road { points, lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: crate::roads::RoadKind::Street, elevation: Vec::new() }
+    Gesture::Road { points, lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: crate::roads::RoadKind::Street, elevation: Vec::new(), car_only: None }
 }
 
 /// What Implement answers for the active project now, without building it.

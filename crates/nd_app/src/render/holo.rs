@@ -86,7 +86,7 @@ fn half_width(kind: RoadKind, f: u8, b: u8) -> f32 {
 /// the deck red over a stretch with no room for one, the buildings a
 /// column would buy out outlined in orange with a marker where it stands.
 #[allow(clippy::too_many_arguments)]
-fn hologram(w: &World, pal: &nd_procgen::Palette, pts: &[SVec2], levels: &[f32], f: u8, b: u8, kind: RoadKind, alpha: f32) -> (MeshData, MeshData, nd_sim::pillars::PillarPlan) {
+fn hologram(w: &World, pal: &nd_procgen::Palette, pts: &[SVec2], levels: &[f32], f: u8, b: u8, kind: RoadKind, car_only: Option<bool>, alpha: f32) -> (MeshData, MeshData, nd_sim::pillars::PillarPlan) {
     // [interchange] A ramp as it will be built (`roads::ease_ramp_way`): the
     // hologram used to show the line as drawn while the build ran it
     // alongside the highway first.
@@ -95,7 +95,7 @@ fn hologram(w: &World, pal: &nd_procgen::Palette, pts: &[SVec2], levels: &[f32],
     let steep = w.steep_legs(pts, levels, kind);
     let plan = w.road_pillar_plan(pts, levels, f, b, kind);
     let raised = nd_sim::pillars::is_raised(levels);
-    let pv = road_preview_with(w, pts, levels, f, b, kind, pal, &steep, pal.preview, WARN_TINT, alpha, raised.then_some(&plan));
+    let pv = road_preview_with(w, pts, levels, f, b, kind, car_only, pal, &steep, pal.preview, WARN_TINT, alpha, raised.then_some(&plan));
     let mut red = MeshData::default();
     for lot in w.road_takes(pts, levels, f, b, kind) {
         let Some(l) = w.lots.get(lot) else { continue };
@@ -303,18 +303,19 @@ pub fn sync_draw_hologram(
         let (a, z) = (ctrl[0], ctrl[ctrl.len() - 1]);
         let mut mesh = MeshData::default();
         let mut red = MeshData::default();
-        match w.plan_diamond(a, z, (f.max(1), b.max(1))) {
+        match w.plan_interchange(a, z, (f.max(1), b.max(1)), tools.interchange_layout) {
             Ok(plan) => {
                 for g in &plan.gestures {
-                    if let nd_sim::Gesture::Road { points, lanes_fwd, lanes_bwd, kind, .. } = g {
-                        let (m, r, _) = hologram(w, &assets.palette, points, &vec![0.0; points.len()], *lanes_fwd, *lanes_bwd, *kind, 0.55);
+                    if let nd_sim::Gesture::Road { points, lanes_fwd, lanes_bwd, kind, car_only, .. } = g {
+                        // [w1-roads] At their planned heights (a street-over layout climbs).
+                        let (m, r, _) = hologram(w, &assets.palette, points, &(0..points.len()).map(|i| g.level(i)).collect::<Vec<f32>>(), *lanes_fwd, *lanes_bwd, *kind, *car_only, 0.55);
                         mesh.append(&m);
                         red.append(&r);
                     }
                 }
             }
             Err(r) => {
-                let (m, _, _) = hologram(w, &assets.palette, &[a, z], &[0.0, 0.0], f.max(1), b.max(1), kind, 0.35);
+                let (m, _, _) = hologram(w, &assets.palette, &[a, z], &[0.0, 0.0], f.max(1), b.max(1), kind, Some(false), 0.35);
                 mesh.append(&m);
                 let line = nd_sim::pillars::Gap { a: r.at, b: r.at, level: 0.0, end: true, over_road: false };
                 gap_marks(w, &line, 6.0, &mut red);
@@ -336,7 +337,7 @@ pub fn sync_draw_hologram(
         tools.grade_warnings.retain(|m| !m.starts_with("turns "));
     }
     let (pts, levels) = built(&ctrl, &ctrl_levels, curved);
-    let (mesh, red, plan) = hologram(w, &assets.palette, &pts, &levels, f, b, kind, 0.55);
+    let (mesh, red, plan) = hologram(w, &assets.palette, &pts, &levels, f, b, kind, tools.car_only_flag(), 0.55);
     // [tools] The columns, for the sub-pane and the remote API.
     tools.pillars = crate::tools::PillarNote::of(w, &plan);
     if !mesh.is_empty() {
@@ -375,9 +376,9 @@ pub fn sync_plan_holograms(
     let mut all = MeshData::default();
     let mut red = MeshData::default();
     let mut add = |pv: &nd_sim::PlanPreview, alpha: f32, red_too: bool| {
-        for (i, (_, pts, f, b, kind)) in pv.planned_roads.iter().enumerate() {
+        for (i, (gid, pts, f, b, kind)) in pv.planned_roads.iter().enumerate() {
             let levels = pv.planned_levels.get(i).cloned().unwrap_or_else(|| vec![0.0; pts.len()]);
-            let (m, r, _) = hologram(w, &assets.palette, pts, &levels, *f, *b, *kind, alpha);
+            let (m, r, _) = hologram(w, &assets.palette, pts, &levels, *f, *b, *kind, w.effective_plan().car_only(*gid), alpha);
             all.append(&m);
             if red_too {
                 red.append(&r);

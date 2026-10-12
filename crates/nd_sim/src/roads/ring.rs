@@ -59,12 +59,20 @@ pub struct Ring {
     pub radius: f32,
     /// Ring lanes, 1 to [`RING_MAX_LANES`].
     pub lanes: u8,
+    /// [w1-roads] Height above the ground (`Gesture::Roundabout::level`).
+    #[serde(default)]
+    pub level: f32,
 }
 
 impl Ring {
     /// A ring with its radius and lanes brought within limits.
     pub fn new(center: Vec2, radius: f32, lanes: u8) -> Self {
-        Self { center, radius: radius.clamp(RING_MIN_RADIUS, RING_MAX_RADIUS), lanes: lanes.clamp(1, RING_MAX_LANES) }
+        Self { center, radius: radius.clamp(RING_MIN_RADIUS, RING_MAX_RADIUS), lanes: lanes.clamp(1, RING_MAX_LANES), level: 0.0 }
+    }
+
+    /// [w1-roads] The ring at `level` metres above the ground.
+    pub fn at_level(self, level: f32) -> Self {
+        Self { level: if level.is_finite() { level } else { 0.0 }, ..self }
     }
 
     pub fn half_width(&self) -> f32 {
@@ -228,6 +236,29 @@ pub struct RingLayout {
 /// highways pass untouched). Rings that overlap an earlier one are left out;
 /// nested rings with room between them are fine.
 pub fn layout_rings(rings: &[(Ring, u64)], roads: &[(Vec<Vec2>, bool, u64)]) -> RingLayout {
+    let input: Vec<(Vec<Vec2>, Option<Vec<f32>>, u64)> = roads.iter().map(|(p, c, a)| (p.clone(), c.then(|| vec![0.0; p.len()]), *a)).collect();
+    layout_rings_levels(rings, &input)
+}
+
+/// [w1-roads] Does a road with these points and levels meet `ring` (be cut
+/// and joined to it)? A ring at grade meets the roads at grade, as before
+/// (a road drawn above or below the ground anywhere passes it by); a raised
+/// or sunken ring meets the roads that come to it at about its level.
+pub fn ring_meets(ring: &Ring, pts: &[Vec2], levels: &[f32]) -> bool {
+    let raised = levels.iter().any(|l| *l != 0.0);
+    if ring.level == 0.0 {
+        return !raised;
+    }
+    if !raised {
+        return false;
+    }
+    // The level where the road comes to the circle.
+    let k = (0..pts.len()).min_by(|&a, &b| (pts[a].distance(ring.center) - ring.radius).abs().total_cmp(&(pts[b].distance(ring.center) - ring.radius).abs()));
+    k.and_then(|k| levels.get(k)).is_some_and(|l| (l - ring.level).abs() < GRADE_SEPARATION)
+}
+
+/// [w1-roads] [`layout_rings`] with each road's levels (None: never cut).
+pub fn layout_rings_levels(rings: &[(Ring, u64)], roads: &[(Vec<Vec2>, Option<Vec<f32>>, u64)]) -> RingLayout {
     let mut chosen: Vec<(Ring, u64)> = Vec::new();
     for r in rings {
         if !chosen.iter().any(|o| o.0.overlaps(&r.0)) {
@@ -237,13 +268,16 @@ pub fn layout_rings(rings: &[(Ring, u64)], roads: &[(Vec<Vec2>, bool, u64)]) -> 
     let on = |ring: &Ring, p: Vec2| (p.distance(ring.center) - ring.radius).abs() < 1e-2;
     let mut out = RingLayout::default();
     let mut joins: Vec<Vec<Vec2>> = vec![Vec::new(); chosen.len()];
-    for (i, (pts, clip, age)) in roads.iter().enumerate() {
-        if !clip {
+    for (i, (pts, levels, age)) in roads.iter().enumerate() {
+        let Some(levels) = levels else {
             out.kept.push((i, pts.clone()));
             continue;
-        }
+        };
         let mut pieces = vec![pts.clone()];
         for (k, (ring, ring_age)) in chosen.iter().enumerate() {
+            if !ring_meets(ring, pts, levels) {
+                continue;
+            }
             let older = age < ring_age;
             let mut next = Vec::new();
             for p in pieces {

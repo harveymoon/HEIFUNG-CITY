@@ -218,7 +218,7 @@ pub(super) fn sync_ring_preview(
 ) {
     let w = &sim.world;
     let ring = tools.ring_preview();
-    let key = ring.map(|r| ((r.center.x * 4.0).round() as i64, (r.center.y * 4.0).round() as i64, (r.radius * 4.0).round() as i64, r.lanes, w.plan_version, w.lots.len() as u64 ^ w.roads.version << 20));
+    let key = ring.map(|r| ((r.center.x * 4.0).round() as i64, (r.center.y * 4.0).round() as i64, (r.radius * 4.0).round() as i64, r.lanes, w.plan_version ^ (r.level.to_bits() as u64) << 32, w.lots.len() as u64 ^ w.roads.version << 20));
     if key == *last && !assets.palette_changed {
         return;
     }

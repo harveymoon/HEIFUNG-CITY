@@ -239,7 +239,7 @@ fn snapping_never_joins_ways_at_different_levels() {
     // A street along y = 0 and a viaduct 8 m up along x = 0 over it.
     w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
     let had = w.project.take();
-    w.add_gesture(Gesture::Road { points: vec![Vec2::new(0.0, -400.0), Vec2::new(0.0, -250.0), Vec2::new(0.0, 250.0), Vec2::new(0.0, 400.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![0.0, 8.0, 8.0, 0.0] });
+    w.add_gesture(Gesture::Road { points: vec![Vec2::new(0.0, -400.0), Vec2::new(0.0, -250.0), Vec2::new(0.0, 250.0), Vec2::new(0.0, 400.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![0.0, 8.0, 8.0, 0.0], car_only: None });
     w.try_implement().expect("the viaduct is built");
     w.project = had;
     // A ground street from the south-west, its end dropped right at the
@@ -261,7 +261,7 @@ fn snapping_never_joins_ways_at_different_levels() {
     // A raised end (8 m) dropped on the viaduct, by the ground under it,
     // joins the viaduct.
     let had = w.project.take();
-    w.add_gesture(Gesture::Road { points: vec![Vec2::new(300.0, -150.0), Vec2::new(150.0, -150.0), Vec2::new(2.0, -120.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![0.0, 8.0, 8.0] });
+    w.add_gesture(Gesture::Road { points: vec![Vec2::new(300.0, -150.0), Vec2::new(150.0, -150.0), Vec2::new(2.0, -120.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![0.0, 8.0, 8.0], car_only: None });
     w.try_implement().expect("the raised street is built");
     w.project = had;
     let raised_end = w.roads.nodes.iter().enumerate().find(|(i, _)| alive_at(&w, NodeId(*i as u32)).iter().any(|&s| { let (a, b) = w.roads.segment_points(s); a.distance(Vec2::new(150.0, -150.0)) < 1.0 && b.distance(Vec2::new(0.0, -120.0)) < 6.0 || b.distance(Vec2::new(150.0, -150.0)) < 1.0 && a.distance(Vec2::new(0.0, -120.0)) < 6.0 }));
@@ -378,7 +378,7 @@ fn the_interchange_tool_sees_roads_pending_in_the_project() {
     highway(&mut w);
     assert!(w.plan_diamond(Vec2::new(0.0, -220.0), Vec2::new(0.0, 220.0), (2, 2)).is_ok());
     // The same street as above, only planned.
-    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-90.0, 24.0), Vec2::new(-90.0, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-90.0, 24.0), Vec2::new(-90.0, 300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
     let steps = w.project.as_ref().map_or(0, |p| p.steps.len());
     let r = w.plan_diamond(Vec2::new(0.0, -220.0), Vec2::new(0.0, 220.0), (2, 2)).unwrap_err();
     assert!(r.why.contains("off-ramp would cross a road planned"), "{}", r.why);
@@ -387,6 +387,55 @@ fn the_interchange_tool_sees_roads_pending_in_the_project() {
     assert_eq!(w.project.as_ref().map_or(0, |p| p.steps.len()), steps, "nothing added");
     // A planned path ending where a ramp would join the highway crowds it.
     w.discard_project();
-    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-150.0, 14.0), Vec2::new(-150.0, 200.0)], lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Path, elevation: Vec::new() });
+    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-150.0, 14.0), Vec2::new(-150.0, 200.0)], lanes_fwd: 0, lanes_bwd: 0, curved: false, kind: RoadKind::Path, elevation: Vec::new(), car_only: None });
     assert!(w.plan_diamond(Vec2::new(0.0, -220.0), Vec2::new(0.0, 220.0), (2, 2)).is_err());
+}
+
+/// [w1-roads] The street-over layout: the cross street climbs onto a bridge
+/// over the highway at grade, the ramps climb to it, and every movement
+/// works; a street too short to climb is refused.
+#[test]
+fn the_street_over_layout_bridges_the_highway() {
+    use super::interchange::{InterchangeLayout, OVER_CLEARANCE};
+    let mut w = flat_world();
+    highway(&mut w);
+    let short = w.plan_interchange(Vec2::new(0.0, -150.0), Vec2::new(0.0, 150.0), (2, 2), InterchangeLayout::StreetOver).unwrap_err();
+    assert!(short.why.contains("too short to climb"), "{}", short.why);
+    let (plan, ids) = w.add_interchange(Vec2::new(0.0, -400.0), Vec2::new(0.0, 400.0), (2, 2), InterchangeLayout::StreetOver).expect("it fits");
+    assert_eq!(ids.len(), 5, "the street and four ramps");
+    assert!(!plan.kept_street);
+    w.try_implement().expect("implemented");
+    no_at_grade_highway_junction(&w);
+    let t = terminals(&w);
+    assert_eq!(t.len(), 2, "one terminal per side");
+    for &n in &t {
+        assert_eq!(ramps_in_out(&w, n), (1, 1));
+        assert!((w.roads.node(n).level - OVER_CLEARANCE).abs() < 0.5, "terminals on the bridge: {}", w.roads.node(n).level);
+    }
+    assert_eq!(highway_joins(&w).len(), 4);
+    // The street passes over both carriageways, which stay at grade.
+    let over: Vec<_> = w.roads.grade_crossings().into_iter().filter(|c| c.at.x.abs() < 30.0 && c.at.y.abs() < 12.0).collect();
+    assert_eq!(over.len(), 2, "{over:?}");
+    for c in &over {
+        assert!(two_way(w.roads.segment(c.upper.0)) && w.roads.segment(c.lower.0).is_highway(), "the street on top: {c:?}");
+    }
+    assert!(route(&w, Vec2::new(-400.0, 9.0), Vec2::new(0.0, -380.0)), "eastbound off to the south");
+    assert!(route(&w, Vec2::new(-400.0, 9.0), Vec2::new(0.0, 380.0)), "eastbound off to the north");
+    assert!(route(&w, Vec2::new(0.0, -380.0), Vec2::new(400.0, 9.0)), "on eastbound from the south");
+    assert!(route(&w, Vec2::new(0.0, 380.0), Vec2::new(-400.0, -9.0)), "on westbound from the north");
+}
+
+/// [w1-roads] A curved road planned in the project across a ramp's way is
+/// in the way, though its control points stand well off the ramp.
+#[test]
+fn a_curved_planned_road_blocks_the_interchange() {
+    let mut w = flat_world();
+    highway(&mut w);
+    assert!(w.plan_diamond(Vec2::new(0.0, -220.0), Vec2::new(0.0, 220.0), (2, 2)).is_ok());
+    w.new_project(Some("bend"));
+    // Control points far from the off-ramp's line, the curve itself
+    // sweeping across it south of the highway.
+    w.add_gesture(Gesture::Road { points: vec![Vec2::new(-260.0, -140.0), Vec2::new(-100.0, -30.0), Vec2::new(60.0, -140.0)], lanes_fwd: 1, lanes_bwd: 1, curved: true, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
+    let r = w.plan_diamond(Vec2::new(0.0, -220.0), Vec2::new(0.0, 220.0), (2, 2)).unwrap_err();
+    assert!(r.why.contains("planned in this project"), "{}", r.why);
 }

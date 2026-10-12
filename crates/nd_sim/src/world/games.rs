@@ -32,6 +32,10 @@ const ARRIVE_BEFORE: u64 = 20;
 const MAX_ON_ROAD: usize = 6000;
 /// They drive off over this many minutes after the whistle.
 const LEAVING_SPREAD: u64 = 35;
+/// [w1-roads] Kerb spots by the ground they pull out from, and how far
+/// apart (m).
+const LEAVE_SPOTS: usize = 4;
+const LEAVE_SPACING: f32 = 9.0;
 
 /// Where a stadium is in its game day.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +107,18 @@ impl World {
             // A new day: anyone still parked from last night has gone.
             self.games.parked.clear();
         }
+        // [w1-roads] Fans still parked when the crowd should be gone (the
+        // street out was full) keep leaving until they are all away.
+        let stragglers = minute > CROWD_GONE && self.games.parked.values().any(|n| *n > 0);
+        if stragglers {
+            let grounds: Vec<BuildingId> = self.games.parked.iter().filter(|(_, n)| **n > 0).map(|(b, _)| *b).collect();
+            for b in grounds {
+                for k in 0..LEAVE_SPOTS {
+                    self.drive_out_fan(b, self.clock.day() ^ (minute << 8) ^ k as u64);
+                }
+            }
+            return;
+        }
         if !(GATES_OPEN..=CROWD_GONE).contains(&minute) || (self.services.events_today.is_empty() && self.games.driving_in.is_empty()) {
             return;
         }
@@ -167,10 +183,21 @@ impl World {
 
     /// A parked away fan drives home: off the map by the nearest exit.
     fn drive_out_fan(&mut self, b: BuildingId, salt: u64) {
-        let Some(n) = self.games.parked.get_mut(&b).filter(|n| **n > 0) else { return };
-        *n -= 1;
+        if self.games.parked.get(&b).is_none_or(|n| *n == 0) {
+            return;
+        }
         let Some((seg, pt)) = self.truck_stop(b) else { return };
         let Some((lane, s0, _)) = self.traffic.net.nearest_lane_on(seg, pt) else { return };
+        // [w1-roads] Each car pulls out from a free spot along the kerb by
+        // the ground: they all used to be set down on the one spot and stood
+        // there waiting to pull out, an hour after the game (Harvey's city).
+        // With every spot taken it stays parked for the next minute.
+        let len = self.traffic.net.lanes[lane as usize].length;
+        let waiting: Vec<f32> = self.traffic.cars.values().filter(|c| c.entering && c.route.get(c.idx) == Some(&lane)).map(|c| c.s).collect();
+        let Some(s0) = (0..LEAVE_SPOTS).map(|k| s0 - k as f32 * LEAVE_SPACING).filter(|s| *s >= 2.0 && *s <= len).find(|s| waiting.iter().all(|w| (w - s).abs() > LEAVE_SPACING * 0.8)) else { return };
+        if let Some(n) = self.games.parked.get_mut(&b) {
+            *n -= 1;
+        }
         let exits = self.any_exits(pt);
         let Some((route, s0, s1)) = exits.into_iter().take(4).find_map(|(g, se)| self.traffic.net.route_lanes(lane, s0, g, se)) else { return };
         let colour = (crate::hash::mix(salt, 0xC1) % 8) as u8;

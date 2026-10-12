@@ -133,11 +133,11 @@ fn level_on_leg(g: &Gesture, leg: usize, q: Vec2) -> f32 {
 impl World {
     /// Does node `n` carry a piece of the road along `line`: some live
     /// piece from it runs along the line (within `reach` at its middle)?
-    fn node_on_road(&self, n: NodeId, line: &[Vec2], reach: f32) -> bool {
-        let node = self.roads.node(n);
-        node.segments.iter().filter_map(|&s| self.roads.try_segment(s)).any(|s| {
+    fn node_on_road(roads: &RoadNetwork, n: NodeId, line: &[Vec2], reach: f32) -> bool {
+        let node = roads.node(n);
+        node.segments.iter().filter_map(|&s| roads.try_segment(s)).any(|s| {
             let other = if s.a == n { s.b } else { s.a };
-            let mid = (node.pos + self.roads.node(other).pos) * 0.5;
+            let mid = (node.pos + roads.node(other).pos) * 0.5;
             crate::geom::distance_to_polyline(mid, line) <= reach
         })
     }
@@ -146,10 +146,15 @@ impl World {
     /// every road of the plan meeting there. A roundabout's nodes have none
     /// (the ring is moved by its centre).
     pub fn joint_of_node(&self, plan: &Plan, n: NodeId) -> Joint {
-        let node = self.roads.node(n);
+        Self::joint_in(&self.roads, plan, n)
+    }
+
+    /// [`World::joint_of_node`] on network `roads` (one laid from `plan`).
+    fn joint_in(roads: &RoadNetwork, plan: &Plan, n: NodeId) -> Joint {
+        let node = roads.node(n);
         let (q, level) = (node.pos, node.level);
         let mut j = Joint { at: q, node: Some(n), ..Default::default() };
-        if self.roads.ring_of_node(n).is_some() {
+        if roads.ring_of_node(n).is_some() {
             return j;
         }
         for (id, g) in &plan.gestures {
@@ -171,7 +176,7 @@ impl World {
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             let line = g.road_polyline();
             if let Some((i, d)) = near {
-                if self.node_on_road(n, &line, (d * 0.6).max(1.0)) {
+                if Self::node_on_road(roads, n, &line, (d * 0.6).max(1.0)) {
                     j.points.push((*id, i));
                     // Both ends of a closed loop meet here.
                     if (i == 0 || i == last) && points[0].distance(points[last]) <= JOINT_SAME {
@@ -181,7 +186,11 @@ impl World {
                 }
             }
             if let Some((leg, d)) = leg_near(g, q) {
-                if d <= THROUGH_REACH && (level_on_leg(g, leg, q) - level).abs() < GRADE_SEPARATION && self.node_on_road(n, &line, 1.0) {
+                // [w1-roads] Or bent onto it: a road crossing a curve snaps
+                // onto the curve's nearest vertex (up to `SNAP_RADIUS`
+                // off its own line), and its pieces there run along it.
+                let on = (d <= THROUGH_REACH && Self::node_on_road(roads, n, &line, 1.0)) || (d <= SNAP_RADIUS && Self::node_on_road(roads, n, &line, (d * 0.6).max(1.0)));
+                if on && (level_on_leg(g, leg, q) - level).abs() < GRADE_SEPARATION {
                     j.through.push((*id, leg));
                 }
             }
@@ -259,6 +268,92 @@ impl World {
         n
     }
 
+    /// [w1-roads] Curved roads running through a junction get a control
+    /// point there too, before the plan is built: done after the build
+    /// it would move the curve (a spline bends round a new point) and so
+    /// was left undone, and the junction stayed a point on the curve the
+    /// Edit tool could pull the roads apart at. Laid from the plan about to
+    /// be built, so the curve is built once, through its new point: the
+    /// point goes in where the network meets it, with points of the drawn
+    /// curve pinned beside it until the curve built through them strays
+    /// no more than `CURVE_MEND_TOL` from the curve drawn (else it is left
+    /// as drawn). Only junctions of the roads in `touched` (the project's).
+    /// How many roads were mended.
+    pub(in crate::world) fn mend_curves_through(&mut self, touched: &BTreeSet<GestureId>) -> usize {
+        let curved = |g: &Gesture| matches!(g, Gesture::Road { curved: true, .. });
+        if touched.is_empty() || !self.master.gestures.values().any(curved) {
+            return 0;
+        }
+        let (roads, _) = self.lay_roads(&self.master);
+        let mut out: BTreeMap<GestureId, Gesture> = BTreeMap::new();
+        let mut done: Vec<(Vec2, BTreeSet<GestureId>)> = Vec::new();
+        for i in 0..roads.nodes.len() {
+            let n = NodeId(i as u32);
+            let live = roads.node(n).segments.iter().filter(|&&s| roads.try_segment(s).is_some()).count();
+            if live < 3 {
+                continue;
+            }
+            let j = Self::joint_in(&roads, &self.master, n);
+            let gs = j.gestures();
+            if gs.len() < 2 || !gs.iter().any(|g| touched.contains(g)) {
+                continue;
+            }
+            // One crossing can leave two junction nodes a few metres apart
+            // (a road crossing a curve between two of its vertices): it is
+            // mended once, at the first.
+            if done.iter().any(|(p, o): &(Vec2, BTreeSet<GestureId>)| p.distance(j.at) < 2.0 * SNAP_RADIUS && o.intersection(&gs).count() >= 2) {
+                continue;
+            }
+            // The curves running through get their point; then every other
+            // road here is put on the same point too (ends moved onto it,
+            // straight roads through bent onto it, as the network already
+            // bends them), so the junction is laid at that one point
+            // however the curve is sampled round it.
+            let mut mended_curve = false;
+            for &(id, _) in &j.through {
+                let Some(g) = out.get(&id).or_else(|| self.master.gestures.get(&id)) else { continue };
+                if !curved(g) {
+                    continue;
+                }
+                if let Some(m) = curve_through(g, j.at) {
+                    out.insert(id, m);
+                    mended_curve = true;
+                }
+            }
+            if !mended_curve {
+                continue;
+            }
+            done.push((j.at, gs.clone()));
+            for &(id, k) in &j.points {
+                let Some(g) = out.get(&id).or_else(|| self.master.gestures.get(&id)).cloned() else { continue };
+                let mut g = g;
+                if g.points().get(k).is_some_and(|c| *c != j.at) {
+                    g.move_point(k, j.at);
+                    out.insert(id, g);
+                }
+            }
+            for &(id, _) in &j.through {
+                let Some(g) = out.get(&id).or_else(|| self.master.gestures.get(&id)).cloned() else { continue };
+                if curved(&g) {
+                    continue;
+                }
+                let mut g = g;
+                if let Some((leg, d)) = leg_near(&g, j.at) {
+                    let pts = g.points();
+                    if d <= SNAP_RADIUS && pts[leg].distance(j.at) > JOINT_SAME && pts[leg + 1].distance(j.at) > JOINT_SAME {
+                        insert_on_leg(&mut g, leg, j.at);
+                        out.insert(id, g);
+                    }
+                }
+            }
+        }
+        let n = out.len();
+        for (id, g) in out {
+            self.master.gestures.insert(id, g);
+        }
+        n
+    }
+
     /// The gestures of `plan` with their junctions mended (see
     /// `mend_junctions`), only those that change.
     pub(in crate::world) fn junction_mends(&self, plan: &Plan) -> Vec<(GestureId, Gesture)> {
@@ -289,7 +384,7 @@ impl World {
                 // point in this road already.
                 if let Some((leg, d)) = leg_near(g, j.at) {
                     let pts = g.points();
-                    if d <= THROUGH_REACH && pts[leg].distance(j.at) > JOINT_SAME && pts[leg + 1].distance(j.at) > JOINT_SAME {
+                    if d <= SNAP_RADIUS && pts[leg].distance(j.at) > JOINT_SAME && pts[leg + 1].distance(j.at) > JOINT_SAME {
                         insert_on_leg(g, leg, j.at);
                     }
                 }
@@ -297,6 +392,85 @@ impl World {
         }
         out.into_iter().filter(|(id, g)| plan.gestures.get(id) != Some(g)).collect()
     }
+}
+
+/// [w1-roads] How far a curve mended through a junction may stray from
+/// the curve drawn, metres.
+pub const CURVE_MEND_TOL: f32 = 0.2;
+
+/// Furthest any point of one polyline is from the other, both ways.
+fn polyline_gap(a: &[Vec2], b: &[Vec2]) -> f32 {
+    let one = |x: &[Vec2], y: &[Vec2]| x.iter().map(|p| crate::geom::distance_to_polyline(*p, y)).fold(0.0f32, f32::max);
+    one(a, b).max(one(b, a))
+}
+
+/// [w1-roads] Curved road `g` with a control point at `q` (a junction on
+/// its built line) that runs within `CURVE_MEND_TOL` of where it ran. A
+/// spline bends round a new point over the spans either side of it, so
+/// those spans are pinned with points of the curve as drawn, every
+/// `spacing` metres (40, then 25, then 15) until the curve built through
+/// them keeps to the one drawn. None when it has a point there already,
+/// is a closed loop, or cannot be kept close enough.
+pub fn curve_through(g: &Gesture, q: Vec2) -> Option<Gesture> {
+    let Gesture::Road { points, curved: true, lanes_fwd, lanes_bwd, kind, elevation, car_only, .. } = g else { return None };
+    if points.len() < 2 || crate::plan::is_loop(points) || points.iter().any(|c| c.distance(q) <= JOINT_SAME) {
+        return None;
+    }
+    let drawn = g.road_polyline();
+    let drawn_levels = g.road_levels();
+    let (s_q, d_q) = crate::geom::project_on_poly(&drawn, q)?;
+    if d_q > THROUGH_REACH {
+        return None;
+    }
+    // Arc length of every control point along the curve drawn (it passes
+    // through each of them).
+    let arcs: Vec<f32> = points.iter().map(|c| crate::geom::project_on_poly(&drawn, *c).map_or(0.0, |(s, _)| s)).collect();
+    if arcs.windows(2).any(|w| w[1] < w[0]) {
+        return None;
+    }
+    let leg = arcs.windows(2).position(|w| s_q >= w[0] && s_q <= w[1])?;
+    let lo = arcs[leg.saturating_sub(1)];
+    let hi = arcs[(leg + 2).min(points.len() - 1)];
+    let raised = elevation.iter().any(|l| *l != 0.0);
+    // Level at arc `s` along the curve drawn.
+    let level_at = |s: f32| -> f32 {
+        let mut acc = 0.0;
+        for i in 0..drawn.len().saturating_sub(1) {
+            let len = drawn[i].distance(drawn[i + 1]);
+            if s <= acc + len || i + 2 == drawn.len() {
+                let t = if len > 0.0 { ((s - acc) / len).clamp(0.0, 1.0) } else { 0.0 };
+                let (a, b) = (drawn_levels.get(i).copied().unwrap_or(0.0), drawn_levels.get(i + 1).copied().unwrap_or(0.0));
+                return a + (b - a) * t;
+            }
+            acc += len;
+        }
+        0.0
+    };
+    for spacing in [40.0f32, 25.0, 15.0] {
+        let mut pts: Vec<(f32, Vec2, f32)> = points.iter().zip(&arcs).enumerate().map(|(i, (p, s))| (*s, *p, elevation.get(i).copied().unwrap_or(0.0))).collect();
+        pts.push((s_q, q, level_at(s_q)));
+        let mut s = lo + spacing;
+        while s < hi - spacing * 0.4 {
+            if pts.iter().all(|(t, ..)| (t - s).abs() > spacing * 0.4) {
+                pts.push((s, crate::geom::point_along(&drawn, s).0, level_at(s)));
+            }
+            s += spacing;
+        }
+        pts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let m = Gesture::Road {
+            points: pts.iter().map(|p| p.1).collect(),
+            lanes_fwd: *lanes_fwd,
+            lanes_bwd: *lanes_bwd,
+            curved: true,
+            kind: *kind,
+            elevation: if raised { pts.iter().map(|p| p.2).collect() } else { Vec::new() },
+            car_only: *car_only,
+        };
+        if polyline_gap(&m.road_polyline(), &drawn) <= CURVE_MEND_TOL {
+            return Some(m);
+        }
+    }
+    None
 }
 
 /// [fix/roads-tools] Do two networks lay the same roads: the same pieces

@@ -31,7 +31,7 @@ pub fn lay_city(world: &mut World, plan: &CityPlan) -> LaidCity {
         // [perfect-city] A planned city's collectors are 2+2 avenues too:
         // the capacity the grid needs when it fills up.
         let (lanes_fwd, lanes_bwd) = if planned && r.class == super::RoadClass::Collector { (2, 2) } else { r.class.lanes() };
-        world.add_gesture(Gesture::Road { points: r.points.clone(), lanes_fwd, lanes_bwd, curved: false, kind: RoadKind::Street, elevation: Vec::new() });
+        world.add_gesture(Gesture::Road { points: r.points.clone(), lanes_fwd, lanes_bwd, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
         out.roads += 1;
     }
     for z in &plan.zones {

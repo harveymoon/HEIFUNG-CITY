@@ -1004,7 +1004,9 @@ pub(super) fn draw_arm_marks(cx: &StreetCtx, g: &mut Geometry, nid: NodeId, node
         // were metres apart and two arms' zebras overlapped.
         // [footbridge] None where a footbridge replaced the crosswalk:
         // the stop line moves up to the junction's mouth.
-        let stop = if junction::has_crosswalk(roads, nid, sid) && !arm_crosswalk_closed(cx.inp.closed, node.pos, d, nd_sim::walk::crosswalk_setback(roads, nid, sid)) {
+        // [w1-roads] A lit off-ramp mouth is a marked crossing too.
+        let marked = junction::has_crosswalk(roads, nid, sid) || junction::lit_ramp_mouth(roads, cx.net, nid, sid);
+        let stop = if marked && !arm_crosswalk_closed(cx.inp.closed, node.pos, d, nd_sim::walk::crosswalk_setback(roads, nid, sid)) {
             let mid = nd_sim::walk::crosswalk_setback(roads, nid, sid);
             let half = nd_sim::walk::CROSSWALK_HALF;
             zebra(g, pal, node.pos + d * (mid - half), node.pos + d * (mid + half), right, hw, |_| false);

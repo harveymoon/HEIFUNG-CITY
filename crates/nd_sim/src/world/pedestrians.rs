@@ -266,6 +266,24 @@ impl World {
         info.lanes.iter().map(|&(l, s)| self.traffic.time_to_crossing_above(l, s, HOLD_DEPTH, min_v)).fold(f32::INFINITY, f32::min)
     }
 
+    /// [w1-roads] Has a driver stood at crossing `cr` (just before it, on
+    /// one of its lanes) for `ZEBRA_PATIENCE` or more?
+    pub(super) fn driver_kept_waiting(&self, cr: u32) -> bool {
+        self.driver_waiting(cr, crate::pedestrians::ZEBRA_PATIENCE)
+    }
+
+    /// [w1-roads] Has a driver stood at crossing `cr` (just before it, on
+    /// one of its lanes) for `secs` or more?
+    pub(super) fn driver_waiting(&self, cr: u32, secs: f32) -> bool {
+        let Some(info) = self.peds.crossings.get(cr as usize) else { return false };
+        let t = &self.traffic;
+        info.lanes.iter().any(|&(l, s)| {
+            t.net.lanes.get(l as usize).is_some_and(|lane| {
+                lane.cars.iter().filter_map(|&c| t.cars.get(c)).any(|c| c.s <= s + 0.5 && s - c.s < crate::pedestrians::ZEBRA_WAIT_REACH && c.v < 0.5 && c.stalled >= secs)
+            })
+        })
+    }
+
     /// [emergency] The room a walker has either side of the line from `a`
     /// to `b` (m, - left, + right): on a pavement, from the building line
     /// to the kerb; on a crossing, the zebra's depth; anywhere else (lot
@@ -403,6 +421,11 @@ impl World {
         // crossing is walked through (between the cars), not waited for.
         let gap = self.crossing_gap(cr, if lawful && (signal.is_some() || button) { JAM_CRAWL } else { 0.5 });
         if lawful && crossing.marked() {
+            // [w1-roads] At a zebra with no lights, a driver kept waiting
+            // gets to go: the walkers coming up hold back.
+            if signal.is_none() && !button && self.driver_kept_waiting(cr) {
+                return None;
+            }
             // Look first: nobody too close to stop.
             return (gap >= LAWFUL_GAP).then_some(false);
         }
@@ -415,6 +438,15 @@ impl World {
             return (gap >= needed).then_some(false);
         }
         if crossing.kind != CrossingKind::Jay && !w.bold {
+            return None;
+        }
+        // [w1-roads] Against the light, nobody steps out in front of a car
+        // standing at the line: it is about to go. Its
+        // gap read as open road (only moving cars count), so a stream of
+        // walkers against the red kept the cars with the green standing at
+        // the stop line for minutes (Harvey's city, a signalled junction
+        // at (-186, -427): nine on the crosswalk, cars stood 500 s).
+        if signal.is_some() && self.driver_waiting(cr, crate::pedestrians::GREEN_WAIT) {
             return None;
         }
         let c = &self.citizens[id];
@@ -616,9 +648,10 @@ impl World {
                 // [tools] Press the button and wait for the light: drivers
                 // do not give way to someone waiting here.
                 feet.presses.push(cr);
-            } else if crossing.marked() && !self.siren_at_crossing(cr) {
+            } else if crossing.marked() && !self.siren_at_crossing(cr) && !(crossing.kind != CrossingKind::Jay && self.driver_kept_waiting(cr)) {
                 // About to step onto a zebra: drivers give way (but not to
-                // someone standing back for lights and sirens).
+                // someone standing back for lights and sirens, nor [w1-roads]
+                // to someone holding back for a driver kept waiting).
                 feet.occupied.push((cr, id));
             }
             kerb + u * (0.9 - 0.7 * row) + v * col * 0.75

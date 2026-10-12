@@ -118,7 +118,7 @@ pub(super) fn ped_signal_posts_at(roads: &RoadNetwork, net: &LaneNetwork, corner
             let seg = roads.segment(sid);
             // No walk lights where nobody crosses (a ramp, a tunnel: the
             // walk graph has no crosswalk there either).
-            if !junction::has_crosswalk(roads, inter.node, sid) {
+            if !junction::has_crosswalk(roads, inter.node, sid) && !junction::lit_ramp_mouth(roads, net, inter.node, sid) {
                 continue;
             }
             let (a, b) = roads.segment_points(sid);

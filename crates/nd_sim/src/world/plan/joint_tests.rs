@@ -8,7 +8,7 @@ fn flat() -> World {
 }
 
 fn road(points: &[Vec2]) -> Gesture {
-    Gesture::Road { points: points.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new() }
+    Gesture::Road { points: points.to_vec(), lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None }
 }
 
 fn build(w: &mut World, gs: &[Gesture]) -> Vec<GestureId> {
@@ -124,7 +124,7 @@ fn a_road_passing_over_is_no_part_of_the_junction() {
     let mut w = flat();
     let street = road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)]);
     let tee = road(&[Vec2::new(0.0, 0.0), Vec2::new(0.0, -200.0)]);
-    let deck = Gesture::Road { points: vec![Vec2::new(-20.0, 300.0), Vec2::new(-20.0, -300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![10.0, 10.0] };
+    let deck = Gesture::Road { points: vec![Vec2::new(-20.0, 300.0), Vec2::new(-20.0, -300.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![10.0, 10.0], car_only: None };
     let ids = build(&mut w, &[street, tee, deck.clone()]);
     assert_eq!(w.master.gestures[&ids[2]], deck, "the viaduct is untouched");
     let plan = w.effective_plan().clone();
@@ -160,7 +160,7 @@ fn a_circle_road_is_a_closed_smooth_ring() {
     let mut w = flat();
     let pts = crate::plan::circle_points(Vec2::new(0.0, 0.0), 80.0);
     assert!(crate::plan::is_loop(&pts));
-    let g = Gesture::Road { points: pts.clone(), lanes_fwd: 1, lanes_bwd: 1, curved: true, kind: RoadKind::Street, elevation: Vec::new() };
+    let g = Gesture::Road { points: pts.clone(), lanes_fwd: 1, lanes_bwd: 1, curved: true, kind: RoadKind::Street, elevation: Vec::new(), car_only: None };
     // Smooth through the start: every sample stays near the circle.
     for q in g.road_polyline() {
         assert!((q.length() - 80.0).abs() < 1.5, "{q} off the circle");
@@ -175,3 +175,40 @@ fn a_circle_road_is_a_closed_smooth_ring() {
     let p = moved[&ids[0]].points();
     assert_eq!(p[0], p[p.len() - 1], "still closed");
 }
+
+/// [w1-roads] A curved road with a street ending on its middle and another
+/// crossing it: Implement gives the curve a control point at each
+/// junction (built through it, a hair from the curve drawn), so the
+/// junction is one point and moves as one.
+#[test]
+fn a_curved_road_through_junctions_gets_its_points() {
+    let mut w = flat();
+    let curve = Gesture::Road { points: vec![Vec2::new(-300.0, 0.0), Vec2::new(0.0, 80.0), Vec2::new(300.0, 0.0)], lanes_fwd: 1, lanes_bwd: 1, curved: true, kind: RoadKind::Street, elevation: Vec::new(), car_only: None };
+    let drawn = curve.road_polyline();
+    let ids = build(&mut w, &[curve, road(&[Vec2::new(-150.0, 200.0), Vec2::new(-150.0, 0.0)]), road(&[Vec2::new(150.0, 250.0), Vec2::new(150.0, -150.0)])]);
+    let (c, tee, cross) = (ids[0], ids[1], ids[2]);
+    unchanged_on_the_map(&w);
+    let cp = pts(&w, c);
+    for x in [-150.0f32, 150.0] {
+        // The junction (the crossing road may snap onto a vertex of the curve).
+        let n = (0..w.roads.nodes.len()).map(|i| NodeId(i as u32)).find(|&n| (w.roads.node(n).pos.x - x).abs() < 6.0 && w.roads.node(n).pos.y > 20.0 && w.roads.node(n).pos.y < 90.0 && w.roads.node(n).segments.iter().filter(|&&s| w.roads.try_segment(s).is_some()).count() >= 3).expect("a junction on the curve");
+        let q = w.roads.node(n).pos;
+        assert!(cp.contains(&q), "the curve has a point at the junction {q:?}: {cp:?}");
+        let live = w.roads.node(n).segments.iter().filter(|&&s| w.roads.try_segment(s).is_some()).count();
+        assert!(live >= 3, "still a junction");
+    }
+    // Built a hair from where it was drawn.
+    let built = w.master.gestures[&c].road_polyline();
+    for p in &built {
+        assert!(crate::geom::distance_to_polyline(*p, &drawn) <= super::joints::CURVE_MEND_TOL + 1e-3);
+    }
+    // The junction moves as one: the curve and the road crossing it together.
+    let q = pts(&w, tee).into_iter().find(|p| cp.contains(p)).expect("the crossing road shares the point");
+    let plan = w.effective_plan().clone();
+    let j = w.joint_at(&plan, q, 6.0).expect("the junction on the curve");
+    assert!(j.gestures().contains(&c) && j.gestures().contains(&tee), "{:?}", j.gestures());
+    assert!(j.through.is_empty(), "the curve has its own point there");
+    let _ = cross;
+}
+
+
