@@ -104,9 +104,10 @@ impl QualitySetting {
         }
     }
 
-    /// The starting setting: `ND_QUALITY` if set to one of the above, else Auto.
+    /// The starting setting: `ND_QUALITY` if set to one of the above, else
+    /// [settings] the one saved from the Settings window, else Auto.
     pub fn from_env() -> QualitySetting {
-        std::env::var("ND_QUALITY").ok().and_then(|v| QualitySetting::parse(&v)).unwrap_or_default()
+        std::env::var("ND_QUALITY").ok().and_then(|v| QualitySetting::parse(&v)).or_else(|| crate::ui::theme::saved_quality().and_then(|v| QualitySetting::parse(&v))).unwrap_or_default()
     }
 }
 
@@ -125,7 +126,20 @@ pub struct Graphics {
     pub reason: &'static str,
     /// The effects on the camera now, e.g. "TAA · SSAO high · vol. fog".
     pub effects: String,
+    /// [saves] The last [`LONG_FRAMES_KEPT`] frames that took over
+    /// [`LONG_FRAME_MS`] (a hitch the player feels), oldest first: the
+    /// frame's milliseconds, the sim tick's milliseconds in the frame after
+    /// it, and the sim's tick then. Loads and new cities are left out.
+    pub long_frames: std::collections::VecDeque<(f32, f32, u64)>,
 }
+
+/// [saves] A frame this long is a hitch: kept in [`Graphics::long_frames`].
+/// (A 17,000-person city's frames are 150-300 ms anyway: one tick each.)
+pub const LONG_FRAME_MS: f32 = 500.0;
+/// [saves] Seconds after a load before frames count as hitches.
+pub const LONG_FRAME_AFTER: f32 = 5.0;
+/// [saves] How many hitches are kept.
+pub const LONG_FRAMES_KEPT: usize = 24;
 
 /// Frame time Auto aims at: 60 frames a second.
 pub const TARGET_MS: f32 = 1000.0 / 60.0;
@@ -160,11 +174,14 @@ pub(super) struct Throttle {
     since_up: Option<f32>,
     steps: u32,
     reason: &'static str,
+    /// [saves] Seconds since a city was loaded or started: hitches before
+    /// [`LONG_FRAME_AFTER`] are the meshes being built, not play.
+    since_city: f32,
 }
 
 impl Default for Throttle {
     fn default() -> Self {
-        Self { tier: Quality::High, ema_ms: TARGET_MS, sim_ms: 0.0, over: 0.0, under: 0.0, settle: SETTLE, up_wait: UP_WAIT, since_up: None, steps: 0, reason: "starting" }
+        Self { tier: Quality::High, ema_ms: TARGET_MS, sim_ms: 0.0, over: 0.0, under: 0.0, settle: SETTLE, up_wait: UP_WAIT, since_up: None, steps: 0, reason: "starting", since_city: 0.0 }
     }
 }
 
@@ -364,9 +381,20 @@ fn throttle(time: Res<Time<Real>>, sim: Res<Sim>, lighting: Res<Lighting>, mut s
     if sim.full_rebuild {
         // A city just loaded: the next frames rebuild every mesh.
         state.settle = SETTLE;
+        state.since_city = 0.0;
     }
+    // The frame that builds the new city's meshes comes after the flag
+    // clears: counted from the frame before it.
+    let settled = state.since_city > LONG_FRAME_AFTER;
+    state.since_city += dt;
     let tier = state.step(lighting.quality, dt, sim.tick_ms);
     let g = &mut stats.graphics;
+    if dt * 1000.0 > LONG_FRAME_MS && !sim.full_rebuild && settled {
+        if g.long_frames.len() >= LONG_FRAMES_KEPT {
+            g.long_frames.pop_front();
+        }
+        g.long_frames.push_back((dt * 1000.0, sim.tick_ms, sim.world.clock.tick));
+    }
     g.tier = tier;
     g.frame_ms = state.ema_ms;
     g.sim_ms = state.sim_ms;

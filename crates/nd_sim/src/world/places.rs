@@ -177,6 +177,8 @@ impl World {
             // [waterfront] A beach on a hot day.
             if lu == LandUse::Park {
                 social += self.beach_pull(b.lot);
+                // [parks] a run-down park puts people off
+                social += self.park_pull(bid);
             }
             // [economy] An opening tonight draws a crowd, and the guests most.
             if let Some(o) = self.scene.opening_at(bid, tick) {

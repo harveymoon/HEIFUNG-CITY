@@ -122,7 +122,9 @@ fn service_floors(k: ServiceKind) -> u8 {
         ServiceKind::Health => 4,
         ServiceKind::Monument | ServiceKind::TrashDepot | ServiceKind::ParkingEnforcement => 1,
         // [attractions] as the sim builds them
-        ServiceKind::Pier | ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::BotanicalGarden => 1,
+        ServiceKind::Pier | ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::BotanicalGarden | ServiceKind::AmusementPark => 1,
+        ServiceKind::Cathedral => 4,
+        ServiceKind::CasinoResort => 14,
         k if k.is_landmark() => 3,
         _ => 2,
     }
@@ -360,6 +362,10 @@ fn save_shots(mut commands: Commands, mut shots: ResMut<SaveShots>, mut saves: R
         if shot.frames >= SHOT_FRAMES + 10 {
             commands.entity(shot.camera).despawn();
             done.push(i);
+            // [saves] Pictures that are this one's copies (the autosave's).
+            for copy in saves.take_picture_copies(&shot.path) {
+                let _ = std::fs::copy(&shot.path, copy);
+            }
         }
     }
     if !done.is_empty() {

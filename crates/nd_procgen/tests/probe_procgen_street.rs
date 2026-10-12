@@ -198,3 +198,81 @@ fn heights_cost_little_and_change_nothing() {
     println!("{k} equal answers; 20000 lifts on a 90-leg run: scan {scan:?}, grid {grid:?}");
     assert!(grid * 2 < scan, "grid {grid:?} vs scan {scan:?}");
 }
+
+/// The street surfaces (carriageway, pavement, kerb) of `g` cover the
+/// point `p` (seen from above)?
+fn covered(tris: &[[Vec2; 3]], p: Vec2) -> bool {
+    tris.iter().any(|t| {
+        let (a, b, c) = (t[0], t[1], t[2]);
+        let d = (b - a).perp_dot(c - a);
+        if d.abs() < 1e-6 {
+            return false;
+        }
+        let u = (p - a).perp_dot(c - a) / d;
+        let v = (b - a).perp_dot(p - a) / d;
+        u >= -1e-4 && v >= -1e-4 && u + v <= 1.0 + 1e-4
+    })
+}
+
+/// [w1-render] Junction surfaces at steep corners: four streets meeting
+/// with each arm climbing or falling at its own grade (up to 15%) leave no
+/// ground showing through anywhere on the carriageways and pavements
+/// round the junction, looked at from above.
+#[test]
+fn steep_junctions_leave_no_gaps() {
+    use nd_procgen::Surface;
+    for (k, grades) in [[0.15f32, -0.12, 0.1, -0.15], [0.15, 0.15, -0.15, -0.15], [-0.08, 0.14, -0.14, 0.08]].into_iter().enumerate() {
+        for skew in [0.0f32, 0.35] {
+            let mut roads = RoadNetwork::default();
+            let len = 60.0;
+            let dirs: Vec<Vec2> = (0..4).map(|i| Vec2::from_angle(i as f32 * std::f32::consts::FRAC_PI_2 + if i % 2 == 1 { skew } else { 0.0 })).collect();
+            for d in &dirs {
+                roads.add_polyline(&[Vec2::ZERO, *d * len], 1, 1);
+            }
+            let mut net = LaneNetwork::default();
+            net.rebuild(&roads);
+            // The centre at 20 m, each arm's far end on its grade.
+            let heights: Vec<f32> = roads
+                .nodes
+                .iter()
+                .map(|n| match dirs.iter().position(|d| (n.pos - *d * len).length() < 0.5) {
+                    Some(i) => 20.0 + grades[i] * len,
+                    None => 20.0,
+                })
+                .collect();
+            let lv = LandValue::new(1000.0, 50.0);
+            let pal = Palette::default();
+            let g = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 1, heights: &heights, inner: &[], layer: StreetLayer::Surface, closed: &[] });
+            assert_sound("steep", &g);
+            let mut tris: Vec<[Vec2; 3]> = Vec::new();
+            for s in [Surface::Asphalt, Surface::WornAsphalt, Surface::Paving, Surface::WornPaving, Surface::Concrete, Surface::WornConcrete, Surface::Tactile] {
+                let m = g.get(s);
+                for t in m.indices.chunks(3) {
+                    let v: [Vec2; 3] = std::array::from_fn(|k| Vec2::new(m.positions[t[k] as usize][0], m.positions[t[k] as usize][2]));
+                    if v.iter().any(|q| q.length() < 40.0) {
+                        tris.push(v);
+                    }
+                }
+            }
+            // Every point on an arm's carriageway or pavement out to 25 m.
+            let hw = roads.segments[0].half_width() + nd_sim::zoning::SIDEWALK - 0.4;
+            let mut holes = Vec::new();
+            for d in &dirs {
+                let right = Vec2::new(-d.y, d.x);
+                let mut s = 0.0;
+                while s <= 25.0 {
+                    let mut o = -hw;
+                    while o <= hw {
+                        let p = *d * s + right * o;
+                        if !covered(&tris, p) {
+                            holes.push(p);
+                        }
+                        o += 0.25;
+                    }
+                    s += 0.25;
+                }
+            }
+            assert!(holes.is_empty(), "case {k} skew {skew}: {} uncovered points, e.g. {:?}", holes.len(), &holes[..holes.len().min(8)]);
+        }
+    }
+}

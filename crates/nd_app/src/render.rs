@@ -63,6 +63,8 @@ mod junction_view;
 mod layers;
 /// [pt-ux] Parking, Trails and Land density layers.
 mod pt_layers;
+/// [w1] The Construction layer.
+pub mod sites_layer;
 pub use pt_layers::{availability_color as parking_color, Mover as TrailMover};
 mod lights;
 // [review] retaining walls at corner lots over a lower side street
@@ -377,7 +379,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<people::PeopleRender>();
         app.add_plugins(thumbs::ThumbsPlugin);
-        app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).init_resource::<sky::SkyLook>().add_systems(Startup, (lights::add_shader, setup)).add_systems(
+        app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_plugins(MaterialPlugin::<street_look::PoolMaterial>::default()).init_resource::<sky::SkyLook>().add_systems(Startup, (lights::add_shader, street_look::add_pool_shader, setup)).add_systems(
             Update,
             (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)
                 .chain()
@@ -441,7 +443,8 @@ impl Plugin for RenderPlugin {
         // [look] Street lamps that light the road at night, wet roads in
         // the rain, and the fog's reach by climate and weather.
         app.init_resource::<street_look::StreetLamps>()
-            .add_systems(Update, (street_look::sync_lamp_lights, street_look::sync_wet_roads).after(update_daylight).in_set(SimSet::Sync))
+            .add_systems(Update, (street_look::sync_lamp_lights, street_look::sync_lamp_pools).chain().after(update_daylight).in_set(SimSet::Sync))
+            .add_systems(Update, street_look::sync_wet_roads.after(update_daylight).in_set(SimSet::Sync))
             .add_systems(PostUpdate, street_look::sync_fog_reach.before(heat::apply_heat));
         // Tower cranes slewing on building sites.
         app.add_systems(Update, animate_cranes.after(sync_buildings).in_set(SimSet::Sync));
@@ -458,6 +461,7 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, layers::load_gizmos.in_set(SimSet::Sync).after(lift_movers));
         app.add_systems(Update, layers::danger_gizmos.in_set(SimSet::Sync).after(lift_movers));
         app.add_plugins(pt_layers::PtLayersPlugin);
+        app.add_plugins(sites_layer::SitesLayerPlugin);
         app.add_plugins(mapview::MapViewPlugin);
         // [districts] The district layer; [tourism] visitors on foot, after
         // the citizens whose figure cache they share.

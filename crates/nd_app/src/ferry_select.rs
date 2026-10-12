@@ -97,7 +97,7 @@ impl WaterFrame {
 
 /// Is `b` a dock with routes to show: a ferry terminal or shipping port?
 pub fn is_route_dock(w: &World, b: BuildingId) -> bool {
-    matches!(w.ports.kind_of(b), Some(PortKind::FerryTerminal | PortKind::ShippingPort))
+    matches!(w.ports.kind_of(b), Some(PortKind::FerryTerminal | PortKind::FerryTerminalLarge | PortKind::ShippingPort))
 }
 
 /// What the selection puts in focus: the lines to draw bright and the dock
@@ -150,6 +150,7 @@ fn ship_width(s: &Ship) -> f32 {
     match s.kind {
         ShipKind::Freighter => 13.0,
         ShipKind::Ferry => 9.0,
+        ShipKind::CarFerry => 16.0,
         _ => 5.0,
     }
 }
@@ -160,7 +161,7 @@ pub fn pick(w: &World, p: SVec2, f: f32) -> Option<(f32, ShipId)> {
     w.ports
         .ships
         .iter()
-        .filter(|(_, s)| matches!(s.kind, ShipKind::Ferry | ShipKind::Freighter))
+        .filter(|(_, s)| matches!(s.kind, ShipKind::Ferry | ShipKind::CarFerry | ShipKind::Freighter))
         .filter_map(|(id, s)| {
             let (c, h) = ship_pose(s, f);
             let fwd = SVec2::new(h.cos(), h.sin());

@@ -10,7 +10,7 @@ pub const CAMERA_ORBIT: &str = "Right-drag rotate · middle-drag or shift-drag p
 pub const HOTKEYS: &str = "Space pause · - / = speed · Ctrl+Z / Ctrl+Y undo and redo · Ctrl+Enter implement · J City Data · Esc clears points and the selection (or closes City Data) · Backspace drops the last point or stop · Delete removes the hovered point or stop · O zoning layer · V land value · L heat layers · K land and resource layers (farmland, oil, geothermal, best place for each industry) · M metro (lines and stations) · P pedestrian network · H drone heat vision · G seeds the demo on an empty map";
 pub const TOOL_KEYS: &str = "Tools by digit 1–9 or by letter I R Z B N T Y (Edit has no letter: Q and E turn the camera). The building ones (2 Road, 3 Zone, 6 Buildings, 7 Transit, 8 Rail, 9 Districts) open the Build window at their section.";
 
-pub const WINDOWS: &str = "City Data (top bar, or J) fills the screen with every report on the city: City, Economy, Market, People and Services, each with its sub-tabs; Esc closes it, and clicking the treasury, population or power figure in the top bar opens its page. The other buttons open the tool windows (Lines, View, Saves, Help, Dev); drag them anywhere, they remember where they were. The Inspect tool opens the inspector on a building or car and the person pane on a citizen.";
+pub const WINDOWS: &str = "City Data (top bar, or J) fills the screen with every report on the city: City, Economy, Market, People and Services, each with its sub-tabs; Esc closes it, and clicking the treasury, population or power figure in the top bar opens its page. The other buttons open the tool windows (Lines, View, Alerts, Saves, Settings, Help, Dev); drag them anywhere, they remember where they were. The Inspect tool opens the inspector on a building or car and the person pane on a citizen.";
 
 /// The one-line hint under each tool's controls.
 pub const TOOL_HINTS: [(Tool, &str); 9] = [
@@ -43,7 +43,7 @@ pub const EDIT_ZONE_SELECTED: &str = "Selected a zone; use the Zone tool with Ct
 pub const TRANSIT_DEPOT: &str = "Click a lot or unzoned ground by a street (not a park). Buses park here overnight and leave at 05:30; each bus costs its upkeep per day and riders pay a fare.";
 pub const PROJECT_NONE: &str = "No active project. Drawing, painting or bulldozing starts one.";
 pub const SEED_EXISTING: &str = "The map already has buildings: the demo is laid out blind over the centre and implements at once (no undo).";
-pub const SAVES: &str = "Save as writes saves/<name>.ron with a map picture of the city (saves/<name>.png) and its day and population; Save writes saves/city.ron (always the latest) and a dated slot, the newest eight kept. The title screen at startup lists the saved games newest first. Load on a running city asks first, then comes up paused with the tools reset.";
+pub const SAVES: &str = "Save as writes saves/<name>.ron with a map picture of the city (saves/<name>.png) and its day and population; Save writes saves/city.ron (always the latest) and a dated slot, the newest eight kept. The title screen at startup shows each game as a card (the last played first and largest); pick one to see its saves (quick saves, the autosave, its history), then Load. Saves are compressed and live beside the game's exe. Load on a running city asks first, then comes up paused with the tools reset.";
 pub const ASSETS_RELOAD: &str = "assets/palette.ron and assets/rules/buildings.ron hot-reload while running.";
 
 pub fn power_note(k: PowerPlantKind) -> &'static str {
@@ -52,7 +52,7 @@ pub fn power_note(k: PowerPlantKind) -> &'static str {
         PowerPlantKind::Solar => ". Any lot but parks and civic. Hexagonal panels on trackers that turn to face the sun; clean, but only by day and dimmed by cloud.",
         PowerPlantKind::Wind => ". Any vacant lot. Clean; output follows the wind.",
         PowerPlantKind::Nuclear => ". Enormous, steady, expensive, and the neighbours are nervous.",
-        PowerPlantKind::Hydro => ". On a lot beside a river or stream with a current of 0.8 m/s or more; output follows the current, and a bigger site holds more turbine bays (one to eight). A dam is built across the water.",
+        PowerPlantKind::Hydro => ". On a lot beside a river or stream with a current of 0.8 m/s or more; output follows the current, and a bigger site holds more turbine bays (one to eight). Then draw its dam: click the bank by the plant and the far bank; the wall shows its length, cost and power as you go. It makes nothing until the wall stands. A dam carries a footpath, never a road.",
         PowerPlantKind::Tidal => ". On the sea shore. Clean; output rises and falls with the two tides a day, and a bigger site holds more turbine bays (one to eight).",
         PowerPlantKind::Geothermal => ". Over a geothermal hot spot (yellow ground, steaming vents). Steady; output follows the heat.",
     }

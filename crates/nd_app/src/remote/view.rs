@@ -530,6 +530,13 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
     });
     // [free-placement] The building's own use (power, wages, venues); `land_use` is Civic for a city building.
     v["use"] = json!(b.land_use.label());
+    // [w1] A site: which way it is going and what will stand there.
+    v["site"] = w.site_plan(id).map_or(Value::Null, |p| {
+        json!({
+            "kind": p.kind.key(), "progress": round(p.progress), "coming_down_floors": p.coming_down_floors,
+            "next": p.next.map(|n| json!({ "building": key_str(n.building), "name": n.name, "land_use": n.land_use.label(), "tier": n.tier.label(), "floors": n.floors, "height_m": round(n.height_m), "joins": n.joins })),
+        })
+    });
     // [attractions] A landmark: its hours, visitors, takings, pull and site.
     if let Some(k) = b.service.map(|s| s.kind).filter(|k| k.is_landmark()) {
         let book = w.attractions.book(id);
@@ -902,8 +909,8 @@ pub fn route_row(id: RouteId, r: &nd_sim::BusRoute) -> Value {
     json!({
         "id": key_str(id), "name": r.name, "color": r.color, "buses": r.buses, "fare": round(r.fare), "riders_today": r.riders_today,
         "riders_yesterday": r.boardings_yesterday(),
-        "stops": r.stops.iter().map(|s| json!({ "pos": v2(s.pos), "segment": s.segment.0, "on_today": s.stats.on_today, "off_today": s.stats.off_today })).collect::<Vec<_>>(),
-        "broken_legs": r.broken, "legs": r.legs.len(),
+        "stops": r.stops.iter().map(|s| json!({ "pos": v2(s.pos), "segment": s.segment.0, "on_today": s.stats.on_today, "off_today": s.stats.off_today, "back": s.back })).collect::<Vec<_>>(),
+        "broken_legs": r.broken, "legs": r.legs.len(), "two_way": r.two_way, "outbound_stops": r.outbound_len(),
     })
 }
 
@@ -978,6 +985,7 @@ pub fn placeable_key(p: nd_sim::Placeable) -> String {
         nd_sim::Placeable::Rail(f) => rail_name(f).to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::ShippingPort) => "shipping_port".to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::FerryTerminal) => "ferry_terminal".to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::FerryTerminalLarge) => "ferry_terminal_large".to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::MarinaSmall) => "marina_small".to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::MarinaLarge) => "marina_large".to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::FishingPortSmall) => "fishing_port_small".to_string(),
@@ -1105,6 +1113,7 @@ pub fn access_json(w: &World, id: nd_sim::BuildingId, connected: bool) -> Value 
         "connected": connected,
         // [sweep-sim] Reached on foot (a path) and whether that is enough.
         "serves": w.access_serves(id),
+        "footpath_only": w.footpath_only(id),
         "note": w.access_note(id),
         "stub_ends": w.stub_ends_of(id).into_iter().map(v2).collect::<Vec<_>>(),
         "problem": w.access_problem(id),

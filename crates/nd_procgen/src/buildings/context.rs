@@ -50,6 +50,8 @@ pub struct Ctx<'a> {
     pub shore: Option<ShoreLook>,
     /// [attractions] See [`Extras::pier`].
     pub pier: Option<nd_sim::attractions::PierDeck>,
+    /// [parks] See [`Extras::park_look`].
+    pub park_look: Option<super::park::ParkLook>,
 }
 
 /// Per-building state that changes the look beyond style and condition.
@@ -119,11 +121,13 @@ pub struct Extras<'a> {
     /// [attractions] A pleasure pier's deck out over the water (world
     /// coordinates, `World::attractions`): drawn on piles beyond the lot.
     pub pier: Option<&'a nd_sim::attractions::PierDeck>,
+    /// [parks] (D5) A park's litter and dealers (`World::parks`).
+    pub park_look: Option<super::park::ParkLook>,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, brand: None, annex: None, shore: None, pier: None }
+        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, brand: None, annex: None, shore: None, pier: None, park_look: None }
     }
 }
 
@@ -182,6 +186,7 @@ impl<'a> Ctx<'a> {
             plant_scale: extras.plant_scale,
             shore: extras.shore,
             pier: extras.pier.cloned(),
+            park_look: extras.park_look,
         }
     }
 }

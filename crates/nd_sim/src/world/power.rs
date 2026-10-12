@@ -78,7 +78,7 @@ impl World {
         let scale = kind.size_scale(lot.area());
         let cost = kind.cost_at(scale);
         if self.economy.treasury < cost {
-            return Err(format!("the treasury has {:.0}; a {} here costs {:.0}", self.economy.treasury, kind.label(), cost));
+            return Err(format!("the treasury has {:.0}; {} here costs {:.0}", self.economy.treasury, crate::names::a(kind.label()), cost));
         }
         self.take_over_lot(lot_id, kind.label())?;
         self.economy.debit_item(Flow::Construction, cost, Item::Named(kind.label().to_string()));
@@ -285,7 +285,8 @@ impl World {
     /// `plant_output_mw` of a working plant with its group bonus known.
     fn plant_output_mw_with(&self, b: &Building, kind: PowerPlantKind, bonus: f32) -> f32 {
         let site = self.power_site(b.lot, kind).unwrap_or(0.0);
-        self.plant_capacity_mw_with(b, bonus) * self.plant_availability(b) * site
+        // [dams] A hydro plant waiting for its wall makes nothing.
+        self.plant_capacity_mw_with(b, bonus) * self.plant_availability(b) * site * self.dam_share(b)
     }
 
     /// [grid-weather] The wind and sun a plant at `p` would get: the map's

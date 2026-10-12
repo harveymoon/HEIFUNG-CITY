@@ -59,7 +59,11 @@ fn service_floors(kind: ServiceKind, tier: Tier) -> u8 {
         // people walk round are low.
         ServiceKind::ArtMuseum | ServiceKind::ScienceMuseum | ServiceKind::HistoryMuseum | ServiceKind::Aquarium | ServiceKind::ConcertHall => [3, 3, 3],
         ServiceKind::Observatory => [2, 2, 2],
-        ServiceKind::Pier | ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::BotanicalGarden => [1, 1, 1],
+        ServiceKind::Pier | ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::BotanicalGarden | ServiceKind::AmusementPark => [1, 1, 1],
+        // (D4) The halls; the nave is tall; the casino's hotel tower.
+        ServiceKind::ConventionCentre => [3, 3, 3],
+        ServiceKind::Cathedral => [4, 4, 4],
+        ServiceKind::CasinoResort => [14, 14, 14],
     };
     f[tier.index()]
 }

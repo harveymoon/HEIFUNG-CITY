@@ -204,6 +204,9 @@ impl World {
                 // [waterfront] beaches, and lots on the water
                 b.channel(Channel::Shore);
                 self.splat_shore(&mut b);
+                // [parks] run-down parks sour the land round them
+                b.channel(Channel::Blight);
+                self.splat_parks(&mut b);
                 b.channel(Channel::Other);
                 // [land] NIMBY: the land round a mansion jumps, fading.
                 for n in &self.estate.nimby {
@@ -319,7 +322,7 @@ impl World {
                 // [pt-walk] The nearest node anyone walks from: a lone node
                 // (a lot's loop that joins nothing) read as "no parks within
                 // walking reach" right beside a park (F2, F30).
-                let Some(k) = self.walk.nearest_within(c, ACCESS_SNAP).filter(|&k| !self.walk.adj[k as usize].is_empty()).or_else(|| self.walk.nearest_matching(c, ACCESS_SNAP, |_| true)) else { continue };
+                let Some(k) = self.walk.nearest_within(c, ACCESS_SNAP).filter(|&k| !self.walk.adj[k as usize].is_empty()).or_else(|| self.walk.nearest_matching_within(c, ACCESS_SNAP, |_| true)) else { continue };
                 let off = self.walk.nodes[k as usize].pos.distance(c);
                 let minutes = |d: &[f32]| if d[k as usize].is_finite() { ((d[k as usize] + off) / per_min).min(NONE_REACHABLE - 1.0) } else { NONE_REACHABLE };
                 park[y * n + x] = minutes(dp);
@@ -1110,6 +1113,10 @@ impl World {
         report("contamination", &|b| w.splat_contamination(b));
         report("districts", &|b| w.splat_districts(b));
         report("shore", &|b| w.splat_shore(b));
+        report("parks", &|b| {
+            b.channel(Channel::Blight);
+            w.splat_parks(b)
+        });
         report("towers", &|b| w.splat_towers(b));
         report("setting", &|b| w.splat_setting(b));
         report("access", &|b| {

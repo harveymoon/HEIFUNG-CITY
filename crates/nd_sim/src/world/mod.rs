@@ -42,6 +42,8 @@ mod enforcement;
 pub mod gifts;
 pub use gifts::{Gift, Holding, GIFT_AMOUNT};
 mod construction;
+/// [w1] Sites going up and coming down, for the player.
+pub mod sites;
 /// [land] Pressure, prices, owners, merged plots and the super-elite.
 mod estate;
 #[cfg(test)]
@@ -59,6 +61,8 @@ mod driving;
 mod industry;
 mod kinds;
 mod save;
+/// [saves] Compressed saves: reading either form.
+pub use save::{is_compressed, save_text, GZIP_MAGIC};
 mod tick;
 mod streams;
 use streams::Stream;
@@ -137,6 +141,8 @@ mod social_tests;
 mod survey;
 pub use survey::SiteContext;
 mod subway;
+/// [w1] Metro lines edited stop by stop.
+pub mod metro_edit;
 #[cfg(test)]
 mod car_tests;
 #[cfg(test)]
@@ -189,6 +195,10 @@ mod pressure;
 mod waterfront;
 /// [attractions] Landmark attractions: placement rules, grounds, visits.
 mod attractions;
+/// [dams] (H1) Hydro dam walls drawn bank to bank; no road on a dam.
+mod dams;
+/// [parks] (D5) Parks run down and cleaned up; nature preserves.
+mod parks;
 #[cfg(test)]
 mod attractions_tests;
 /// [waterfront] Waterfront lots, public beaches and private jetties.
@@ -760,6 +770,16 @@ pub struct World {
     /// (`crate::attractions`, `world/attractions.rs`). Old saves load with none.
     #[serde(default)]
     pub attractions: crate::attractions::Attractions,
+    /// [dams] (H1) Dam walls the player drew for hydro plants, and the
+    /// plants waiting for theirs (`world/dams.rs`). Old saves load with none:
+    /// their plants keep the automatic arch.
+    #[serde(default)]
+    pub dams: crate::dams::Dams,
+    /// [parks] (D5) The parks: one state per park of lots side by side,
+    /// litter, campers, dealers, clean-ups, nature preserves
+    /// (`world/parks.rs`). Old saves start with every park kept.
+    #[serde(default)]
+    pub parks: crate::parks::Parks,
 }
 
 impl World {
@@ -872,6 +892,8 @@ impl World {
             games: Default::default(),
             airlifts: Vec::new(),
             attractions: Default::default(),
+            dams: Default::default(),
+            parks: Default::default(),
         };
         w.landscape.set(Landscape::new(&w.config.landscape));
         // [sweep-sim] Grids over the whole buildable land (far islands too).
@@ -899,7 +921,7 @@ impl World {
         // and the parks lay their walkways out to meet them.
         self.note_path_links();
         let links: Vec<Vec2> = self.path_links.links.iter().map(|l| l.pos).collect();
-        crate::park::plan_parks_with(&mut self.lots, &self.land_value, &links);
+        crate::park::plan_parks_wild(&mut self.lots, &self.land_value, &links, &self.parks.preserves);
         // [attractions] The park clears every non-park lot's plan: the
         // landmarks people walk round lay theirs out again.
         self.plan_attraction_grounds();

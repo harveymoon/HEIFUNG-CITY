@@ -592,6 +592,22 @@ fn rail(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
 /// The Buildings tool: a row of sub-categories, the items in the open one,
 /// a tier picker for services and attractions, and what it costs and does.
 fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
+    // [dams] (H1) The second step of a hydro plant: its wall.
+    if let Some(step) = tools.dam {
+        let name = sim.world.buildings.get(step.plant).map_or_else(String::new, |b| b.name.clone());
+        ui.label(egui::RichText::new(format!("Dam wall for {name}")).strong());
+        let how = if step.a.is_none() { "Click the bank by the plant (or the far bank), then the other bank." } else { "Now click the far bank. Right click: pick the first bank again." };
+        hint(ui, &format!("{how} Dams carry a footpath along the crest, never a road, and a wall may not cross a road. {:.0} a metre, {:.0} m at most.", nd_sim::dams::DAM_COST_PER_M, nd_sim::dams::DAM_MAX_LENGTH));
+        if let Some((ok, note)) = &tools.dam_note {
+            let col = if *ok { egui::Color32::from_rgb(120, 230, 140) } else { egui::Color32::from_rgb(240, 110, 120) };
+            ui.label(egui::RichText::new(format!("Here: {note}")).color(col));
+        }
+        if ui.small_button("Later (Esc)").on_hover_text("Leave the plant without a wall: it makes no power until it has one").clicked() {
+            tools.dam = None;
+            tools.dam_note = None;
+        }
+        return;
+    }
     // The item is picked in the Build window; the tier is a parameter.
     ui.horizontal_wrapped(|ui| {
         ui.label(egui::RichText::new(format!("Placing: {}", tools.build.menu_label())).strong());
@@ -605,6 +621,25 @@ fn buildings(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         }
     });
     placeable_info(ui, sim, tools.build_item());
+    // [ferries] (D6) What a ferry terminal under the pointer would carry
+    // (worked out again when the pointer moves 8 m or the docks change).
+    if let (Placeable::Dock(k), Some(p)) = (tools.build_item(), tools.hover_ground) {
+        if k.is_ferry() {
+            let key = egui::Id::new(("ferry_estimate", k.label(), (p.x / 8.0).round() as i32, (p.y / 8.0).round() as i32, sim.world.ports.ports.len(), sim.world.citizens.len() / 50));
+            let text = match ui.ctx().data(|d| d.get_temp::<Option<String>>(key)) {
+                Some(t) => t,
+                None => {
+                    let t = sim.world.ferry_estimate(k, p).map(|e| e.text());
+                    ui.ctx().data_mut(|d| d.insert_temp(key, t.clone()));
+                    t
+                }
+            };
+            match text {
+                Some(t) => ui.label(egui::RichText::new(format!("Here: {t}")).small().color(egui::Color32::from_rgb(150, 210, 255))),
+                None => ui.label(egui::RichText::new("Here: a ferry terminal cannot go here (it needs the water's edge)").small().color(egui::Color32::from_rgb(240, 110, 120))),
+            };
+        }
+    }
     // [free-placement] What a click under the pointer would do.
     if let Some((ok, note, _)) = &tools.build_here {
         let col = if *ok { egui::Color32::from_rgb(120, 230, 140) } else { egui::Color32::from_rgb(240, 110, 120) };
@@ -738,11 +773,14 @@ fn dock_hint(ui: &mut egui::Ui, sim: &mut Sim, k: nd_sim::PortKind) {
         hint(ui, &match k {
             nd_sim::PortKind::ShippingPort => format!("A container port, {w:.0} by {d:.0} m, on a river at least {:.0} m wide or on the sea; it builds a pier out into the water and a street along its landward side. {:.0} to build, {:.0}/day. Imports come by ship at {:.0}% of the price, exports earn {:.0}% more.", k.min_width(), k.cost(), k.upkeep_per_day(), nd_sim::ports::SHIP_IMPORT_FACTOR * 100.0, (nd_sim::ports::SHIP_EXPORT_BONUS - 1.0) * 100.0),
             nd_sim::PortKind::FerryTerminal => format!("A ferry terminal, {w:.0} by {d:.0} m, on any water; ferries run to every other terminal on connected water, or out to elsewhere. {:.0} to build, {:.0}/day, fare {:.0}.", k.cost(), k.upkeep_per_day(), nd_sim::ports::FERRY_FARE),
+            // [ferries] (D6)
+            nd_sim::PortKind::FerryTerminalLarge => format!("A large ferry terminal, {w:.0} by {d:.0} m, on water at least {:.0} m wide: car ferries take {} passengers and {} cars a sailing to the other terminals on connected water, or out to elsewhere. {:.0} to build, {:.0}/day, fare {:.0} a head, {:.0} a car (cars need a road to the terminal).", k.min_width(), k.ferry_capacity(), k.car_deck(), k.cost(), k.upkeep_per_day(), nd_sim::ports::FERRY_FARE, nd_sim::ports::CAR_FERRY_FARE),
             // [economy]
             nd_sim::PortKind::MarinaSmall | nd_sim::PortKind::MarinaLarge => format!("A recreational marina, {w:.0} by {d:.0} m, at the water's edge (a lake will do; rivers {:.0} m wide): {} berths let to the wealthy households around{}. Lifts the land value nearby and draws seafood restaurants. The city builds the quay ({:.0}, {:.0}/day); an operator runs it on the berth fees.", k.min_width(), k.berths(), if k.is_large() { ", yachts from all over town, and a clubhouse to go out to" } else { "" }, k.cost(), k.upkeep_per_day()),
             nd_sim::PortKind::FishingPortSmall | nd_sim::PortKind::FishingPortLarge => format!("A fishing port, {w:.0} by {d:.0} m, at the water's edge: {} trawlers put out before dawn and land fish by early afternoon. Fish gutting sheds, a fish-stick factory and fish markets open near it. The city builds the quay ({:.0}, {:.0}/day); an operator sells the catch.", k.berths(), k.cost(), k.upkeep_per_day()),
         });
-        hint(ui, &format!("{} port{} · {} terminal{} · {} ship{} out · {} loads landed today, {} waiting · {} ferry riders today, fares {:.0}", s.ports, super::fmt::s(s.ports), s.terminals, super::fmt::s(s.terminals), s.ships_out, super::fmt::s(s.ships_out), s.freight_landed_today, s.waiting_cargo, s.ferry_riders_today, s.ferry_fares_today));
+        // [ferries] (D6) What a terminal under the pointer would carry.
+        hint(ui, &format!("{} port{} · {} terminal{} · {} ship{} out · {} loads landed today, {} waiting · {} ferry riders today, {} cars, fares {:.0}", s.ports, super::fmt::s(s.ports), s.terminals, super::fmt::s(s.terminals), s.ships_out, super::fmt::s(s.ships_out), s.freight_landed_today, s.waiting_cargo, s.ferry_riders_today, s.cars_ferried_today, s.ferry_fares_today));
 }
 
 /// Tooltip for a road preset button.

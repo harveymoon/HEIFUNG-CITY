@@ -54,6 +54,15 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, selection: 
     TransitMode::Metro => {
         // [metro-ux] Enter finishes; a right-click takes back the last stop.
         let enter = map_key(KeyCode::Enter) && !ctrl;
+        // [w1] Editing a line stop by stop.
+        if tools.metro_edit.is_some() {
+            let remove = right_click || map_key(KeyCode::Delete);
+            super::metro_edit::input(&mut sim.world, tools, ground, click, buttons.just_released(MouseButton::Left), remove, enter);
+            if let Some(b) = tools.metro_hover.filter(|_| click) {
+                *selection = Selection::Building(b);
+            }
+            return;
+        }
         metro_click(sim, tools, selection, ground, click, enter, right_click);
     }
     TransitMode::Depot => {

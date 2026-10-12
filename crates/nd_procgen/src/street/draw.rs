@@ -168,6 +168,27 @@ impl<'a> StreetCtx<'a> {
         self.lifts.get(ri).and_then(|l| l.as_ref()).map_or(0.0, |l| l.height(p))
     }
 
+    /// The height of junction `node`'s `corner` at `p`. Each run's profile
+    /// is the node's height at the junction and rises along the run, so the
+    /// two together are a plane through both slopes. On that plane the
+    /// corner's two ends sat off their arms' own kerbs and pavements by the
+    /// other arm's rise across the road (0.75 m on a 15% street 5 m wide),
+    /// leaving a step and a gap beside each corner at a steep junction; the
+    /// plane is now bent back onto each arm towards its end of the kerb.
+    pub(super) fn corner_z(&self, node: NodeId, corner: &Corner, p: Vec2) -> f32 {
+        let (ra, rb) = (corner.arms[0].0, corner.arms[1].0);
+        let z0 = self.node_z(node);
+        let plane = self.run_z(ra, p) + self.run_z(rb, p) - z0;
+        let (Some(&ka), Some(&kb)) = (corner.kerb.first(), corner.kerb.last()) else { return plane };
+        // Where the plane stands off each arm at that arm's end.
+        let (off_a, off_b) = (self.run_z(rb, ka) - z0, self.run_z(ra, kb) - z0);
+        // Bent over each half of the kerb only: the middle of the corner
+        // (where the pad's corner point is) stays on the plane.
+        let v = kerb_fraction(&corner.kerb, p);
+        let (wa, wb) = (1.0 - nd_sim::geom::smoothstep(0.0, 0.5, v), nd_sim::geom::smoothstep(0.5, 1.0, v));
+        plane - wa * off_a - wb * off_b
+    }
+
     /// Whether `p` lies on some carriageway at height `z`.
     pub(super) fn on_carriageway(&self, p: Vec2, z: f32) -> bool {
         junction::on_carriageway(self.roads, self.heights, self.inp.inner, p, z, 0.05)
@@ -910,7 +931,8 @@ pub(super) fn draw_node(cx: &StreetCtx, g: &mut Geometry, nid: NodeId, node: &nd
 pub(super) fn draw_pad(cx: &StreetCtx, g: &mut Geometry, nid: NodeId, node: &nd_sim::roads::Node, arms: &[Mouth]) {
     let i = nid.0;
     let node_corners = cx.corners.by_node.get(&i);
-    let corner_x = |sa: SegmentId, sb: SegmentId| node_corners.into_iter().flatten().find(|c| c.arms[0].2 == sa && c.arms[1].2 == sb && c.turn < 0.0 && !c.apron.is_empty()).map(|c| c.apron[0]);
+    let corner_of = |sa: SegmentId, sb: SegmentId| node_corners.into_iter().flatten().find(|c| c.arms[0].2 == sa && c.arms[1].2 == sb && c.turn < 0.0 && !c.apron.is_empty());
+    let corner_x = |sa: SegmentId, sb: SegmentId| corner_of(sa, sb).map(|c| c.apron[0]);
     let outline = junction::pad_outline_with(node.pos, arms, &corner_x);
     if outline.len() < 3 {
         return;
@@ -922,6 +944,9 @@ pub(super) fn draw_pad(cx: &StreetCtx, g: &mut Geometry, nid: NodeId, node: &nd_
             0.0
         } else if pp.arms[0] == pp.arms[1] {
             rz(pp.arms[0]) - z0
+        } else if let Some(c) = corner_of(arms[pp.arms[0]].seg, arms[pp.arms[1]].seg) {
+            // The corner's own apron starts here: at its height.
+            cx.corner_z(nid, c, pp.p) - z0
         } else {
             rz(pp.arms[0]) + rz(pp.arms[1]) - 2.0 * z0
         }
@@ -1031,19 +1056,36 @@ pub(super) fn draw_corners(cx: &StreetCtx, g: &mut Geometry) {
                 }
             }
             if !cx.lifts.is_empty() {
-                // Each run's profile is the node's height at the junction and
-                // rises along the run, so the two together are the height of
-                // the road beside either arm (the other contributing only
-                // the node's), and a plane through both slopes between.
-                let (ra, rb) = (corner.arms[0].0, corner.arms[1].0);
-                let z0 = cx.node_z(nid);
-                lift_since(g, &from, |p| cx.run_z(ra, p) + cx.run_z(rb, p) - z0);
+                // Between the two arms' profiles (`StreetCtx::corner_z`).
+                lift_since(g, &from, |p| cx.corner_z(nid, corner, p));
             }
         }
         if cx.inp.land_value.at(centre) < 0.35 {
             weather_tail(g, worn);
         }
     }
+}
+
+/// How far round a corner's kerb `p` is: the arc-length share (0 at the
+/// first arm's end, 1 at the second's) of the kerb point nearest it.
+pub(super) fn kerb_fraction(kerb: &[Vec2], p: Vec2) -> f32 {
+    let total: f32 = kerb.windows(2).map(|w| w[0].distance(w[1])).sum();
+    if total < 1e-4 {
+        return 0.5;
+    }
+    let (mut best, mut at, mut run) = (f32::MAX, 0.0, 0.0);
+    for w in kerb.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let len = a.distance(b);
+        let t = if len > 1e-6 { ((p - a).dot(b - a) / (len * len)).clamp(0.0, 1.0) } else { 0.0 };
+        let d = p.distance(a.lerp(b, t));
+        if d < best {
+            best = d;
+            at = run + t * len;
+        }
+        run += len;
+    }
+    (at / total).clamp(0.0, 1.0)
 }
 
 /// The paving filling a junction corner behind its kerb ribbon, and its

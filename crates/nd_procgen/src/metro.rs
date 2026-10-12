@@ -101,15 +101,47 @@ pub fn tunnels(lines: &[TunnelLine], stations: &[PlatformSite], ground: &dyn Fn(
             g.part(Glow).boxed(Vec3::new(p.x, y + 4.6, p.y), Vec3::new(5.0, 0.15, 0.6), d.y.atan2(d.x), rgba([1.4, 1.35, 1.2]));
             g.part(Concrete).boxed(Vec3::new(p.x, y + 3.0, p.y), Vec3::new(0.5, 4.0, 0.5), 0.0, wall);
         }
-        // The shaft up to the street: escalators in a lit box.
+        // [w1-render] The hall as a box that reads from above: closed at
+        // both ends, its rim lit in the line's colour all round, so a
+        // station stands out from the bores running through it.
+        let half = TRACK_OFFSET + BORE_HALF + 1.2;
+        let yaw = d.y.atan2(d.x);
+        let rim = rgba(mul(pal.metro_line(s.colour), 1.25));
+        for (end, out) in [(a, -1.0f32), (b, 1.0)] {
+            let p = end + d * out * 0.2;
+            g.part(Concrete).boxed(Vec3::new(p.x, y + 2.85, p.y), Vec3::new(0.4, 6.3, half * 2.0 + 0.4), yaw, wall);
+            g.part(Glow).boxed(Vec3::new(p.x, y + 6.2, p.y), Vec3::new(0.5, 0.35, half * 2.0 + 0.9), yaw, rim);
+        }
+        for side in [-1.0f32, 1.0] {
+            g.part(Glow).strip_box(a, b, side * (half + 0.05), 0.5, y + 6.0, y + 6.35, rim);
+        }
+        // The way up: an escalator shaft climbing from the platform's end
+        // nearest the entrance to the street, its handrails lit, and at
+        // the top a lit frame and pylon where the entrance stands (the
+        // building itself is hidden underground).
         let top = ground(s.entrance);
         let e = s.entrance;
-        let mid = (s.at + e) * 0.5;
-        let run = s.at.distance(e).max(2.0);
-        let yaw = (e - s.at).y.atan2((e - s.at).x);
-        g.part(Glow).boxed(Vec3::new(mid.x, (y + 1.0 + top) * 0.5, mid.y), Vec3::new(run, 0.12, 0.12), yaw, glow);
-        g.part(Glow).boxed(Vec3::new(e.x, (y + top) * 0.5, e.y), Vec3::new(0.3, (top - y).max(1.0), 0.3), 0.0, glow);
-        g.part(Concrete).boxed(Vec3::new(e.x, (y + top) * 0.5 - 0.5, e.y), Vec3::new(3.2, (top - y - 1.0).max(1.0), 3.2), yaw, rgba([0.25, 0.26, 0.29]));
+        let along = (e - s.at).dot(d).clamp(-PLATFORM_LEN * 0.4, PLATFORM_LEN * 0.4);
+        let foot = s.at + d * along;
+        let (p0, p1) = (Vec3::new(foot.x, y + 1.0, foot.y), Vec3::new(e.x, top, e.y));
+        let dir = p1 - p0;
+        if dir.length() > 1.0 {
+            g.part(Concrete).beam(p0 - Vec3::Y * 1.2, p1 - Vec3::Y * 1.2, 2.4, wall);
+            let flat = Vec2::new(dir.x, dir.z).normalize_or(d);
+            let side = Vec3::new(-flat.y, 0.0, flat.x);
+            for k in [-1.0f32, 1.0] {
+                let o = side * k * 1.1 + Vec3::Y * 0.9;
+                g.part(Glow).beam(p0 + o, p1 + o, 0.16, glow);
+            }
+        }
+        let sq = 2.2;
+        for (u, v) in [(1.0f32, 0.0f32), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+            let c = Vec3::new(e.x + u * sq, top + 0.3, e.y + v * sq);
+            let size = if u != 0.0 { Vec3::new(0.25, 0.25, sq * 2.0 + 0.25) } else { Vec3::new(sq * 2.0 + 0.25, 0.25, 0.25) };
+            g.part(Glow).boxed(c, size, 0.0, rim);
+        }
+        g.part(Glow).boxed(Vec3::new(e.x, top + 3.0, e.y), Vec3::new(0.5, 6.0, 0.5), 0.0, glow);
+        g.part(Glow).boxed(Vec3::new(e.x, top + 6.2, e.y), Vec3::new(1.8, 0.5, 1.8), 0.0, rim);
     }
     g
 }

@@ -20,7 +20,7 @@ impl World {
         let lanes = self.roads.segment(sid).lanes();
         let cost = size.cost_for(lanes);
         if self.economy.treasury < cost {
-            return Err(format!("the treasury has {:.0}; a {} across {lanes} lanes costs {:.0}", self.economy.treasury, size.label(), cost));
+            return Err(format!("the treasury has {:.0}; {} across {lanes} lanes costs {:.0}", self.economy.treasury, crate::names::a(size.label()), cost));
         }
         self.economy.debit(Flow::Construction, cost);
         self.tolls.next_id = self.tolls.next_id.max(self.tolls.booths.iter().map(|b| b.id).max().unwrap_or(0)) + 1;

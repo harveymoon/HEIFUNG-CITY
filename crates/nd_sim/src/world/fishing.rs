@@ -52,11 +52,11 @@ impl World {
     /// Shipping lanes and ferry routes fishing grounds keep clear of.
     fn shipping_lanes(&self) -> Vec<Vec<Vec2>> {
         let mut out = Vec::new();
-        let ferries: Vec<Vec2> = self.ports.ports.values().filter(|p| p.kind == PortKind::FerryTerminal).map(|p| p.berth).collect();
+        let ferries: Vec<Vec2> = self.ports.ports.values().filter(|p| p.kind.is_ferry()).map(|p| p.berth).collect();
         for p in self.ports.ports.values() {
             match p.kind {
                 PortKind::ShippingPort => out.extend(self.landscape.water_route(p.berth, None)),
-                PortKind::FerryTerminal => {
+                PortKind::FerryTerminal | PortKind::FerryTerminalLarge => {
                     out.extend(self.landscape.water_routes_out(p.berth).into_iter().map(|(_, r)| r));
                     for q in &ferries {
                         if q.distance(p.berth) > 1.0 {

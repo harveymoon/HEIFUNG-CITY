@@ -54,6 +54,8 @@ pub const FERRY_SERVICE_START: u32 = 6 * 60;
 pub const FERRY_SERVICE_END: u32 = 22 * 60;
 pub const FERRY_CAPACITY: u32 = 150;
 pub const FERRY_FARE: f32 = 3.0;
+/// [ferries] (D6) A car ferry's drive-on fare, a car and its driver.
+pub const CAR_FERRY_FARE: f32 = 14.0;
 /// Share of the import bill paid when goods come by ship.
 pub const SHIP_IMPORT_FACTOR: f32 = 0.7;
 /// Export income multiplier for towns with a working shipping port.
@@ -133,15 +135,41 @@ pub enum PortKind {
     FishingPortSmall,
     /// A large fishing port: a long quay, a crane, an ice house and a fleet.
     FishingPortLarge,
+    /// [ferries] (D6) A large ferry terminal: a long pier with a linkspan,
+    /// marshalling lanes, and car ferries that take cars as well as
+    /// foot passengers. Appended so saved kinds keep their order.
+    FerryTerminalLarge,
 }
 
 impl PortKind {
-    pub const ALL: [PortKind; 6] = [PortKind::ShippingPort, PortKind::FerryTerminal, PortKind::MarinaSmall, PortKind::MarinaLarge, PortKind::FishingPortSmall, PortKind::FishingPortLarge];
+    pub const ALL: [PortKind; 7] = [PortKind::ShippingPort, PortKind::FerryTerminal, PortKind::FerryTerminalLarge, PortKind::MarinaSmall, PortKind::MarinaLarge, PortKind::FishingPortSmall, PortKind::FishingPortLarge];
+
+    /// [ferries] (D6) A ferry terminal, small or large.
+    pub fn is_ferry(self) -> bool {
+        matches!(self, PortKind::FerryTerminal | PortKind::FerryTerminalLarge)
+    }
+
+    /// [ferries] (D6) Passengers a ferry from here takes.
+    pub fn ferry_capacity(self) -> u32 {
+        match self {
+            PortKind::FerryTerminalLarge => 380,
+            _ => FERRY_CAPACITY,
+        }
+    }
+
+    /// [ferries] (D6) Cars a ferry from here takes on its car deck.
+    pub fn car_deck(self) -> u32 {
+        match self {
+            PortKind::FerryTerminalLarge => 40,
+            _ => 0,
+        }
+    }
 
     pub fn label(self) -> &'static str {
         match self {
             PortKind::ShippingPort => "shipping port",
             PortKind::FerryTerminal => "ferry terminal",
+            PortKind::FerryTerminalLarge => "large ferry terminal",
             PortKind::MarinaSmall => "small marina",
             PortKind::MarinaLarge => "large marina",
             PortKind::FishingPortSmall => "small fishing port",
@@ -191,7 +219,7 @@ impl PortKind {
         match self {
             PortKind::ShippingPort | PortKind::FishingPortSmall | PortKind::FishingPortLarge => crate::zoning::LandUse::Industrial,
             PortKind::MarinaSmall | PortKind::MarinaLarge => crate::zoning::LandUse::Commercial,
-            PortKind::FerryTerminal => crate::zoning::LandUse::Civic,
+            PortKind::FerryTerminal | PortKind::FerryTerminalLarge => crate::zoning::LandUse::Civic,
         }
     }
 
@@ -200,6 +228,7 @@ impl PortKind {
         match self {
             PortKind::ShippingPort => (96.0, 56.0),
             PortKind::FerryTerminal => (48.0, 30.0),
+            PortKind::FerryTerminalLarge => (84.0, 46.0),
             PortKind::MarinaSmall => (44.0, 30.0),
             PortKind::MarinaLarge => (84.0, 46.0),
             PortKind::FishingPortSmall => (46.0, 32.0),
@@ -212,6 +241,7 @@ impl PortKind {
         match self {
             PortKind::ShippingPort => (46.0, 14.0),
             PortKind::FerryTerminal => (30.0, 6.0),
+            PortKind::FerryTerminalLarge => (44.0, 12.0),
             // A marina's main pontoon; the finger berths hang off it.
             PortKind::MarinaSmall => (26.0, 3.0),
             PortKind::MarinaLarge => (42.0, 4.0),
@@ -224,6 +254,7 @@ impl PortKind {
         match self {
             PortKind::ShippingPort => 45_000.0,
             PortKind::FerryTerminal => 18_000.0,
+            PortKind::FerryTerminalLarge => 48_000.0,
             PortKind::MarinaSmall => 9_000.0,
             PortKind::MarinaLarge => 26_000.0,
             PortKind::FishingPortSmall => 8_000.0,
@@ -235,6 +266,7 @@ impl PortKind {
         match self {
             PortKind::ShippingPort => 500.0,
             PortKind::FerryTerminal => 250.0,
+            PortKind::FerryTerminalLarge => 560.0,
             // The city keeps up the breakwater and the quay; the operator
             // pays its own staff.
             PortKind::MarinaSmall | PortKind::FishingPortSmall => 40.0,
@@ -246,6 +278,7 @@ impl PortKind {
         match self {
             PortKind::ShippingPort => 30,
             PortKind::FerryTerminal => 8,
+            PortKind::FerryTerminalLarge => 22,
             PortKind::MarinaSmall => 3,
             PortKind::MarinaLarge => 9,
             PortKind::FishingPortSmall => 10,
@@ -258,6 +291,7 @@ impl PortKind {
         match self {
             PortKind::ShippingPort => 40.0,
             PortKind::FerryTerminal => 16.0,
+            PortKind::FerryTerminalLarge => 34.0,
             PortKind::MarinaSmall | PortKind::FishingPortSmall => 18.0,
             PortKind::MarinaLarge | PortKind::FishingPortLarge => 26.0,
         }
@@ -334,7 +368,7 @@ impl Port {
     /// port, marina or fishing port needs the roads for what it lands.
     pub fn sails(&self) -> bool {
         match self.kind {
-            PortKind::FerryTerminal => true,
+            PortKind::FerryTerminal | PortKind::FerryTerminalLarge => true,
             _ => self.works(),
         }
     }
@@ -344,7 +378,7 @@ impl Port {
     /// to its gate is enough; a dock that lands goods needs a road.
     pub fn works(&self) -> bool {
         // [economy] Marinas and fishing ports work any water they are on.
-        let reached = self.road_connected || (self.kind == PortKind::FerryTerminal && self.walk_connected);
+        let reached = self.road_connected || (self.kind.is_ferry() && self.walk_connected);
         reached && (self.reaches_elsewhere || self.kind != PortKind::ShippingPort)
     }
 
@@ -398,7 +432,7 @@ impl Port {
     /// shore within reach, square to it, set back from the waterline, with
     /// its pier. `Err` says why not.
     pub fn plan(kind: PortKind, p: Vec2, land: &Landscape) -> Result<Port, String> {
-        let shore = land.nearest_shore(p, SHORE_REACH).ok_or_else(|| format!("a {} must be built at the water's edge", kind.label()))?;
+        let shore = land.nearest_shore(p, SHORE_REACH).ok_or_else(|| format!("{} must be built at the water's edge", crate::names::a(kind.label())))?;
         let w = shore.water;
         match (kind, w.kind) {
             (PortKind::ShippingPort, WaterKind::Lake) => return Err("ships cannot reach a lake: build the port on a river or the sea".into()),
@@ -406,7 +440,7 @@ impl Port {
             _ => {}
         }
         if matches!(w.kind, WaterKind::River | WaterKind::Stream) && w.width < kind.min_width() {
-            return Err(format!("the {} is {:.0} m wide; a {} needs {:.0} m", w.kind.label(), w.width, kind.label(), kind.min_width()));
+            return Err(format!("the {} is {:.0} m wide; {} needs {:.0} m", w.kind.label(), w.width, crate::names::a(kind.label()), kind.min_width()));
         }
         let seaward = shore.seaward;
         let along = Vec2::new(seaward.y, -seaward.x);
@@ -455,6 +489,16 @@ pub enum ShipKind {
     Yacht,
     /// [economy] A small sailing or motor boat out of a marina.
     Sailboat,
+    /// [ferries] (D6) A car ferry out of a large terminal: cars on its
+    /// deck, passengers above.
+    CarFerry,
+}
+
+impl ShipKind {
+    /// [ferries] (D6) A ferry, small or a car ferry.
+    pub fn is_ferry(self) -> bool {
+        matches!(self, ShipKind::Ferry | ShipKind::CarFerry)
+    }
 }
 
 /// A ship under way: along `path`, standing `dwell` minutes at each end
@@ -501,6 +545,9 @@ pub struct Ship {
     pub boxes_in: u32,
     #[serde(default)]
     pub boxes_out: u32,
+    /// [ferries] (D6) Cars on a car ferry's deck.
+    #[serde(default)]
+    pub cars: u32,
 }
 
 /// [berthing] Where a freighter lies at the berth: its centre and the
@@ -617,6 +664,7 @@ impl Ship {
         match self.kind {
             ShipKind::Freighter => 70.0,
             ShipKind::Ferry => 28.0,
+            ShipKind::CarFerry => 54.0,
             ShipKind::FishingBoat => 16.0,
             ShipKind::Yacht => 18.0,
             ShipKind::Sailboat => 9.0,
@@ -660,6 +708,9 @@ pub struct PortStats {
     pub freight_landed_today: u32,
     pub ferry_riders_today: u32,
     pub ferry_fares_today: f32,
+    /// [ferries] (D6) Cars carried by the car ferries today.
+    #[serde(default)]
+    pub cars_ferried_today: u32,
     /// Goods waiting at ports for the next freighter.
     pub waiting_cargo: u32,
     /// [ferries] Runs to towns off the map today, and the people they
@@ -774,6 +825,34 @@ impl Ports {
     /// [ferries] Working ferry terminals with a ferry to a town off the
     /// map: the way in for visitors and commuters by water.
     pub fn remote_terminals(&self) -> Vec<BuildingId> {
-        self.ports.values().filter(|p| p.kind == PortKind::FerryTerminal && p.works() && !p.remote.is_empty()).filter_map(|p| p.building).collect()
+        self.ports.values().filter(|p| p.kind.is_ferry() && p.works() && !p.remote.is_empty()).filter_map(|p| p.building).collect()
     }
 }
+
+/// [ferries] (D6) A ferry terminal's estimate before it is built
+/// (`World::ferry_estimate`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FerryEstimate {
+    /// Residents within 500 m of the pier.
+    pub near: u32,
+    /// Towns off the map its water reaches, other terminals it would link.
+    pub towns: u32,
+    pub terminals: u32,
+    /// Sailings, riders and cars a day; fares a day against upkeep.
+    pub sailings: u32,
+    pub riders: u32,
+    pub cars: u32,
+    pub fares: f32,
+    pub upkeep: f32,
+}
+
+impl FerryEstimate {
+    pub fn text(&self) -> String {
+        if self.sailings == 0 {
+            return format!("no ferries would run: its water reaches no other terminal and no town off the map ({} residents within 500 m)", self.near);
+        }
+        let cars = if self.cars > 0 { format!(" and {} cars", self.cars) } else { String::new() };
+        format!("about {} riders{cars} a day on {} sailings ({} residents within 500 m; {} town{} off the map, {} other terminal{}): fares about {:.0} a day against {:.0} upkeep", self.riders, self.sailings, self.near, self.towns, if self.towns == 1 { "" } else { "s" }, self.terminals, if self.terminals == 1 { "" } else { "s" }, self.fares, self.upkeep)
+    }
+}
+

@@ -615,8 +615,12 @@ pub fn beach(g: &mut Geometry, c: &Ctx, look: Option<ShoreLook>) {
         f.along * s.x + f.inward * s.y
     });
     let across = Vec2::new(-sea.y, sea.x);
+    // [beaches] (H2) One of several lots of a merged beach: the sand runs
+    // over the seams (no inset), only the anchor has the lifeguard and the
+    // sign.
+    let (merged, anchor) = c.park.as_ref().map_or((false, true), |l| (l.cluster_lots > 1, l.anchor));
     // Sand.
-    let inner = offset_poly(&c.lot_poly, 0.2);
+    let inner = if merged { c.lot_poly.to_vec() } else { offset_poly(&c.lot_poly, 0.2) };
     ground(g, f, Dirt, &inner, 0.05, SAND);
     // Wet sand along the water.
     let (v0, v1) = lot.iter().map(|p| p.dot(sea)).fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(v), b.max(v)));
@@ -650,10 +654,12 @@ pub fn beach(g: &mut Geometry, c: &Ctx, look: Option<ShoreLook>) {
         }
     }
     let seed = c.seed;
-    beach_crowd(g, benches, seed, state.bathers as usize);
+    beach_crowd(g, benches, seed, state.bathers as usize, state.night);
     beach_water(g, look.is_some(), &state, seed, drop, sea, across, (u0, u1), v1);
-    lifeguard_tower(g, pal, &state, &lot, sea, across, (u0, u1), v1);
-    if state.closed {
+    if anchor {
+        lifeguard_tower(g, pal, &state, &lot, sea, across, (u0, u1), v1);
+    }
+    if state.closed && anchor {
         beach_closed(g, paths, entrances, &lot, sea, across);
     }
     // A few palms at the back of the sand on a warm beach.
@@ -667,14 +673,29 @@ pub fn beach(g: &mut Geometry, c: &Ctx, look: Option<ShoreLook>) {
 }
 
 /// A beach's towels, umbrellas and loungers, and `bathers` of the crowd
-/// lying on them.
-fn beach_crowd(g: &mut Geometry, benches: &[(Vec2, f32)], seed: u64, bathers: usize) {
+/// lying on them. [beaches] (H2) After dark the umbrellas and towels are
+/// packed away: only the loungers stay out, stacked in pairs.
+fn beach_crowd(g: &mut Geometry, benches: &[(Vec2, f32)], seed: u64, bathers: usize, night: bool) {
     let mut lying = bathers;
     for (i, (p, yaw)) in benches.iter().enumerate() {
         let h = hash(seed, i as u64);
         let col = BRIGHT[(h % BRIGHT.len() as u64) as usize];
         let along = Vec2::new(yaw.cos(), yaw.sin());
         let towel_yaw = yaw + FRAC_PI_2;
+        if night {
+            if h % 5 == 2 {
+                for k in 0..2 {
+                    let y = 0.32 + k as f32 * 0.14;
+                    g.part(Matte).boxed(Vec3::new(p.x, y, p.y), Vec3::new(0.65, 0.08, 1.9), towel_yaw, rgba(WHITE));
+                }
+            }
+            if lying > 0 && h % 7 != 3 {
+                lying -= 1;
+                let skin = SKIN[((h >> 16) % 4) as usize];
+                g.part(Matte).boxed(Vec3::new(p.x, 0.18, p.y), Vec3::new(0.4, 0.2, 1.55), towel_yaw, rgba(skin));
+            }
+            continue;
+        }
         match h % 5 {
             0 | 1 => {
                 // An umbrella over a towel.
@@ -972,10 +993,14 @@ pub fn shore_look(world: &nd_sim::World, id: nd_sim::BuildingId) -> Option<Shore
     }
     let drop = (world.lot_pad(b.lot) - nd_sim::landscape::WATER_LEVEL).max(0.0);
     let beach = lot.shore.beach.then(|| {
-        let s = world.shore.beaches.get(&id);
-        let visitors = s.map_or(0, |s| s.visitors);
-        let swimmers = s.map_or(0, |s| s.swimmers);
-        let here = s.map_or(0, |s| s.people_here);
+        // [beaches] (H2) A lot of a merged beach draws its share of the
+        // beach's crowd, by its sand.
+        let s = world.shore.beach(id);
+        let share = s.filter(|s| s.area > 0.0 && !s.members.is_empty()).map_or(1.0, |s| (lot.area() / s.area).clamp(0.0, 1.0));
+        let part = |n: u32| (n as f32 * share).round() as u32;
+        let visitors = s.map_or(0, |s| part(s.visitors));
+        let swimmers = s.map_or(0, |s| part(s.swimmers));
+        let here = s.map_or(0, |s| part(s.people_here));
         BeachLook {
             bathers: visitors.saturating_sub(swimmers).saturating_sub(here).min(400) as u16,
             swimmers: swimmers.min(200) as u16,

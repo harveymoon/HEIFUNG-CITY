@@ -53,6 +53,7 @@ pub(super) fn sync_roads(
     let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Surface, closed: &closed });
     stats.street_triangles = geo.triangle_count();
     lamps.lamps.clone_from(&geo.lamps);
+    lamps.version += 1;
     for (s, data) in geo.iter() {
         let mesh = meshes.add(to_mesh(data, !s.is_glow()));
         let mut e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, RoadsTag));

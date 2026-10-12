@@ -253,7 +253,8 @@ fn a_path_to_the_stub_serves_passengers_but_not_goods() {
             let dp = w.ports.port_of(dock).unwrap();
             if dp.walk_connected {
                 assert!(!dp.works(), "goods need a road");
-                assert!(w.access_problem(dock).is_some_and(|s| s.contains("goods need a road")), "{:?}", w.access_problem(dock));
+                assert!(w.access_problem(dock).is_some_and(|s| s.contains("goods need a road") && s.starts_with("joined only by a footpath")), "{:?}", w.access_problem(dock));
+                assert_eq!(w.footpath_only(dock), Some(true));
             }
         }
     }

@@ -132,7 +132,7 @@ pub fn install(ctx: &egui::Context) {
 
 /// [fonts] The player's text size, as egui's zoom factor: every panel,
 /// window and label scales together. Saved in `settings.ron` in the game's
-/// working directory; `ND_UI_SCALE` overrides it for a run.
+/// home folder; `ND_UI_SCALE` overrides it for a run.
 pub const SCALES: [(f32, &str); 4] = [(0.9, "Small"), (1.0, "Normal"), (1.15, "Large"), (1.3, "Huge")];
 const SETTINGS_PATH: &str = "settings.ron";
 
@@ -144,6 +144,9 @@ struct Settings {
     /// the player turns them on in the View window.
     #[serde(default)]
     speech_bubbles: Option<bool>,
+    /// [settings] The graphics setting ("Auto", "Low", "Medium", "High").
+    #[serde(default)]
+    quality: Option<String>,
 }
 
 fn load_settings() -> Settings {
@@ -176,6 +179,18 @@ fn set_bubbles(on: bool) {
     BUBBLES.store(if on { 2 } else { 1 }, std::sync::atomic::Ordering::Relaxed);
     let mut settings = load_settings();
     settings.speech_bubbles = Some(on);
+    save_settings(&settings);
+}
+
+/// [settings] The graphics setting saved last run, if any.
+pub fn saved_quality() -> Option<String> {
+    load_settings().quality
+}
+
+/// [settings] Save the graphics setting for the next run.
+pub fn save_quality(label: &str) {
+    let mut settings = load_settings();
+    settings.quality = Some(label.to_string());
     save_settings(&settings);
 }
 

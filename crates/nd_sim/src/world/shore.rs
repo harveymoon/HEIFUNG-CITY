@@ -110,7 +110,18 @@ impl World {
     /// The beach on a lot (its park building and state), if it is one.
     pub fn beach_on(&self, lot: LotId) -> Option<(BuildingId, &BeachState)> {
         let b = self.lots.get(lot).filter(|l| l.shore.beach)?.building?;
-        self.shore.beaches.get(&b).map(|s| (b, s))
+        // [beaches] (H2) A lot of a merged beach: that beach.
+        let a = self.shore.beach_anchor(b)?;
+        self.shore.beaches.get(&a).map(|s| (a, s))
+    }
+
+    /// [beaches] (H2) The lots of a beach (its anchor's state's, or the
+    /// anchor's own lot for a state from before merging).
+    fn beach_lots(&self, b: BuildingId) -> Vec<LotId> {
+        match self.shore.beaches.get(&b) {
+            Some(s) if !s.lots.is_empty() => s.lots.iter().copied().filter(|l| self.lots.contains_key(*l)).collect(),
+            _ => self.buildings.get(b).map(|x| x.lot).into_iter().collect(),
+        }
     }
 
     /// Can people go to the park on this lot now? Always for an ordinary
@@ -164,7 +175,7 @@ impl World {
         }
         self.shore.access_version = self.walk.version;
         let mut by_lot: HashMap<LotId, Vec<u32>> = HashMap::new();
-        let beach_lots: Vec<LotId> = self.shore.beaches.keys().filter_map(|b| self.buildings.get(*b).map(|x| x.lot)).collect();
+        let beach_lots: Vec<LotId> = self.shore.beaches.keys().flat_map(|b| self.beach_lots(*b)).collect();
         if beach_lots.is_empty() {
             return;
         }
@@ -177,10 +188,14 @@ impl World {
         }
         let ids: Vec<BuildingId> = self.shore.beaches.keys().copied().collect();
         for b in ids {
-            let Some(lot) = self.buildings.get(b).map(|x| x.lot) else { continue };
-            let starts = by_lot.get(&lot).cloned().unwrap_or_default();
+            let lots = self.beach_lots(b);
+            if lots.is_empty() {
+                continue;
+            }
+            let starts: Vec<u32> = lots.iter().flat_map(|l| by_lot.get(l).cloned().unwrap_or_default()).collect();
             let reached = self.walk_reaches_street(&starts, 4000);
-            let cap = self.lots.get(lot).map_or(0, |l| (l.area() / shore::M2_PER_BATHER) as u32);
+            let area: f32 = lots.iter().filter_map(|l| self.lots.get(*l)).map(|l| l.area()).sum();
+            let cap = (area / shore::M2_PER_BATHER) as u32;
             if let Some(s) = self.shore.beaches.get_mut(&b) {
                 s.access = reached;
                 s.capacity = cap.max(4);
@@ -238,17 +253,47 @@ impl World {
             .filter(|(_, b)| self.lots.get(b.lot).is_some_and(|l| l.shore.beach))
             .map(|(id, b)| (id, b.lot))
             .collect();
-        let keep: std::collections::HashSet<BuildingId> = now.iter().map(|x| x.0).collect();
+        // [beaches] (H2) Beach lots side by side are one beach: one name
+        // and one state, held by the anchor (the oldest beach of the group,
+        // so a beach keeps its name as lots are added to it).
+        let by_lot: HashMap<LotId, BuildingId> = now.iter().map(|(b, l)| (*l, *b)).collect();
+        let lot_ids: Vec<LotId> = now.iter().map(|x| x.1).collect();
+        let groups = shore::groups_of(&lot_ids, |a, b| shore::touching(&self.lots[a].polygon, &self.lots[b].polygon));
+        let mut anchors: Vec<(BuildingId, Vec<BuildingId>, Vec<LotId>)> = Vec::new();
+        for lots in groups {
+            let mut members: Vec<BuildingId> = lots.iter().map(|l| by_lot[l]).collect();
+            members.sort();
+            let anchor = members.iter().copied().filter(|b| self.shore.beaches.contains_key(b)).min_by_key(|b| (self.buildings[*b].built_tick, *b)).unwrap_or(members[0]);
+            let others: Vec<BuildingId> = members.into_iter().filter(|b| *b != anchor).collect();
+            anchors.push((anchor, others, lots));
+        }
+        let keep: std::collections::HashSet<BuildingId> = anchors.iter().map(|x| x.0).collect();
         self.shore.beaches.retain(|b, _| keep.contains(b));
-        for (b, _) in now {
-            if self.shore.beaches.contains_key(&b) {
-                continue;
+        for (b, others, lots) in anchors {
+            if !self.shore.beaches.contains_key(&b) {
+                let name = shore::beach_name(self.buildings[b].seed);
+                self.buildings[b].name = name.clone();
+                self.shore.beaches.insert(b, BeachState { name, open: true, ..Default::default() });
+                self.shore.access_version = 0;
+                self.events.push(SimEvent::BuildingChanged(b));
             }
-            let name = shore::beach_name(self.buildings[b].seed);
-            self.buildings[b].name = name.clone();
-            self.shore.beaches.insert(b, BeachState { name, open: true, ..Default::default() });
-            self.shore.access_version = 0;
-            self.events.push(SimEvent::BuildingChanged(b));
+            let area: f32 = lots.iter().map(|l| self.lots[*l].area()).sum();
+            let s = self.shore.beaches.get_mut(&b).unwrap();
+            if s.members != others || s.lots != lots {
+                s.members = others.clone();
+                s.lots = lots;
+                s.area = area;
+                self.shore.access_version = 0;
+                let name = s.name.clone();
+                // One name over the whole beach.
+                for m in &others {
+                    if self.buildings[*m].name != name {
+                        self.buildings[*m].name = name.clone();
+                    }
+                    self.events.push(SimEvent::BuildingChanged(*m));
+                }
+                self.events.push(SimEvent::BuildingChanged(b));
+            }
         }
     }
 
@@ -274,10 +319,17 @@ impl World {
         // (building, centre, lot, area)
         let mut list: Vec<(BuildingId, Vec2, LotId, f32)> = Vec::new();
         let ids: Vec<BuildingId> = self.shore.beaches.keys().copied().collect();
+        let mut polys: HashMap<BuildingId, Vec<Vec<Vec2>>> = HashMap::new();
         for b in &ids {
-            let Some(lot_id) = self.buildings.get(*b).map(|x| x.lot) else { continue };
-            let Some(lot) = self.lots.get(lot_id) else { continue };
-            let worst = self.beach_contamination(lot);
+            let lots: Vec<&Lot> = self.beach_lots(*b).into_iter().filter_map(|l| self.lots.get(l)).collect();
+            let Some(first) = lots.first() else { continue };
+            let lot_id = self.buildings[*b].lot;
+            // [beaches] (H2) The whole sand of a merged beach: the worst
+            // contamination anywhere on it, its area, its middle.
+            let worst = lots.iter().map(|l| self.beach_contamination(l)).fold(0.0f32, f32::max);
+            let area: f32 = lots.iter().map(|l| l.area()).sum();
+            let centre = if lots.len() == 1 { first.center } else { lots.iter().map(|l| l.center * l.area()).sum::<Vec2>() / area.max(1.0) };
+            polys.insert(*b, lots.iter().map(|l| l.polygon.clone()).collect());
             let s = self.shore.beaches.get_mut(b).unwrap();
             s.contamination = worst;
             if s.open && worst >= shore::BEACH_CLOSE_AT {
@@ -286,7 +338,7 @@ impl World {
                 s.open = true;
             }
             s.appeal = appeal;
-            list.push((*b, lot.center, lot_id, lot.area()));
+            list.push((*b, centre, lot_id, area));
         }
         // Residents to a usable beach within reach: each picks one by its
         // sand and how near it is (a hash of who they are and the day, so
@@ -322,16 +374,16 @@ impl World {
                 Activity::Visiting(b) => Some(*b),
                 _ => None,
             };
-            if let Some(b) = at.filter(|b| self.shore.beaches.contains_key(b)) {
+            if let Some(b) = at.and_then(|b| self.shore.beach_anchor(b)) {
                 *here.entry(b).or_default() += 1;
             }
         }
         let tourists: Vec<Vec2> = self.tourism.tourists.values().filter(|t| t.is_visible()).map(|t| t.pos).collect();
         let in_town = self.tourism.tourists.len() as f32;
         let n_usable = usable.len().max(1) as f32;
-        for (b, _, lot_id, area) in list {
-            let lot_poly = self.lots[lot_id].polygon.clone();
-            let tourists_here = tourists.iter().filter(|p| point_in_polygon(**p, &lot_poly)).count() as u32;
+        for (b, _, _, area) in list {
+            let sand = polys.remove(&b).unwrap_or_default();
+            let tourists_here = tourists.iter().filter(|p| sand.iter().any(|poly| point_in_polygon(**p, poly))).count() as u32;
             let s = self.shore.beaches.get_mut(&b).unwrap();
             s.catchment = catchment.get(&b).copied().unwrap_or(0);
             s.people_here = here.get(&b).copied().unwrap_or(0) + tourists_here;
@@ -381,7 +433,12 @@ impl World {
             }
         }
         for b in changed {
+            // Every lot of a merged beach is redrawn with it.
+            let members = self.shore.beaches.get(&b).map(|s| s.members.clone()).unwrap_or_default();
             self.events.push(SimEvent::BuildingChanged(b));
+            for m in members {
+                self.events.push(SimEvent::BuildingChanged(m));
+            }
         }
     }
 
@@ -389,11 +446,10 @@ impl World {
     /// open beach that people used today are a little happier.
     pub(super) fn daily_shore(&mut self) {
         let mut good: Vec<Vec2> = Vec::new();
+        let lots: HashMap<BuildingId, Vec<LotId>> = self.shore.beaches.keys().map(|b| (*b, self.beach_lots(*b))).collect();
         for (b, s) in self.shore.beaches.iter_mut() {
             if s.usable() && s.visits_today > 0 {
-                if let Some(c) = self.buildings.get(*b).and_then(|x| self.lots.get(x.lot)).map(|l| l.center) {
-                    good.push(c);
-                }
+                good.extend(lots[b].iter().filter_map(|l| self.lots.get(*l)).map(|l| l.center));
             }
             s.visits_yesterday = s.visits_today;
             s.visits_today = 0;
@@ -414,7 +470,7 @@ impl World {
     /// A spot on a beach for a visitor (a towel spot by their seed), for a
     /// sight at `at` on a beach's boardwalk; `at` itself otherwise.
     pub(super) fn beach_spot(&self, at: Vec2, seed: u64) -> Vec2 {
-        let lot = self.shore.beaches.keys().filter_map(|b| self.buildings.get(*b)).filter_map(|b| self.lots.get(b.lot)).filter(|l| l.center.distance(at) < BEACH_SPOT_REACH).min_by(|a, b| a.center.distance(at).total_cmp(&b.center.distance(at)));
+        let lot = self.shore.beaches.keys().flat_map(|b| self.beach_lots(*b)).filter_map(|l| self.lots.get(l)).filter(|l| l.center.distance(at) < BEACH_SPOT_REACH).min_by(|a, b| a.center.distance(at).total_cmp(&b.center.distance(at)));
         let Some(spots) = lot.and_then(|l| l.park.as_ref()).map(|p| &p.benches).filter(|b| !b.is_empty()) else { return at };
         spots[(seed % spots.len() as u64) as usize].0
     }
@@ -430,10 +486,12 @@ impl World {
             }
         }
         for (bid, s) in &self.shore.beaches {
-            let Some(c) = self.buildings.get(*bid).and_then(|x| self.lots.get(x.lot)).map(|l| l.center) else { continue };
             let (r, w) = shore::BEACH_LIFT;
             let lift = if !s.access { w * 0.4 } else if s.open { w } else { w * 0.25 };
-            b.splat(c, r, lift);
+            // [beaches] Every lot of a merged beach lifts the land by it.
+            for l in self.beach_lots(*bid).into_iter().filter_map(|l| self.lots.get(l)) {
+                b.splat(l.center, r, lift);
+            }
         }
     }
 
@@ -549,7 +607,8 @@ impl World {
             .beaches
             .iter()
             .filter(|(_, s)| s.usable())
-            .filter_map(|(b, _)| self.buildings.get(*b).and_then(|x| self.lots.get(x.lot)).map(|l| l.center))
+            .flat_map(|(b, _)| self.beach_lots(*b))
+            .filter_map(|l| self.lots.get(l).map(|l| l.center))
             .collect()
     }
 }

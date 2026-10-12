@@ -220,6 +220,7 @@ impl World {
             artists_mid: artists_mid as f32,
             rich_adults: rich_adults as f32,
             rich_near_water: rich_near_water as f32,
+            people: self.citizens.len() as f32,
             has_water,
             // [waterfront]
             tourists: self.tourism.tourists.len() as f32,
@@ -265,11 +266,11 @@ impl World {
         }
         // [waterfront] The shore's trades stand on the water.
         if kind.wants_waterfront() && !l.shore.is_waterfront() {
-            return Err(format!("a {} must stand on a lot that runs down to the water", kind.label()));
+            return Err(format!("{} must stand on a lot that runs down to the water", crate::names::a(kind.label())));
         }
         let id = self.build_on_as(lot, Some(kind)).ok_or("nothing can be built on that lot")?;
         if let Some(z) = self.buildings[id].business.as_mut() {
-            z.origin = Some(format!("Opened by hand as a {}.", kind.label()));
+            z.origin = Some(format!("Opened by hand as {}.", crate::names::a(kind.label())));
         }
         if finish {
             self.finish_construction(id);
@@ -421,7 +422,7 @@ impl World {
             let Some(id) = self.build_on_as(lot, Some(bk)) else { continue };
             let why = self.pressure.reading(kind).map(|r| r.why.split(';').next().unwrap_or("").trim().to_string()).unwrap_or_default();
             if let Some(z) = self.buildings[id].business.as_mut() {
-                z.origin = Some(format!("Opened because the city wanted a {}: {why}.", kind.label()));
+                z.origin = Some(format!("Opened because the city wanted {}: {why}.", crate::names::a(kind.label())));
             }
             *self.pressure.opened_total.entry(kind.key().to_string()).or_insert(0) += 1;
             self.pressure.held_days[kind.index()] = 0;
@@ -920,7 +921,7 @@ impl World {
                     let ik = k.industry().unwrap();
                     format!("The ground and the neighbours here favour {} ({}).", ik.label(), k.label())
                 }
-                k => format!("The market said a {} would pay its way here.", k.label()),
+                k => format!("The market said {} would pay its way here.", crate::names::a(k.label())),
             }
         });
         let week: Vec<&crate::market::DayBook> = z.books.iter().rev().take(7).collect();

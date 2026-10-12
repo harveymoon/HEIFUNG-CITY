@@ -206,7 +206,7 @@ impl World {
                 _ => 3.0,
             };
             let speed = self.config.metres_per_tick(mps);
-            self.ports.ships.insert(Ship { kind, path, s: 0.0, prev_s: 0.0, speed, dwell: 5, port: b, to: None, cargo: Vec::new(), passengers: 0, docked: false, berth_s, color: (h % 6) as u8, remote: None, home: false, quay: None, boxes_in: 0, boxes_out: 0 });
+            self.ports.ships.insert(Ship { kind, path, s: 0.0, prev_s: 0.0, speed, dwell: 5, port: b, to: None, cargo: Vec::new(), passengers: 0, docked: false, berth_s, color: (h % 6) as u8, remote: None, home: false, quay: None, boxes_in: 0, boxes_out: 0, cars: 0 });
         }
     }
 

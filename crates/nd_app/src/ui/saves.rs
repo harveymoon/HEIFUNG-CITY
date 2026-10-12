@@ -141,8 +141,15 @@ pub struct Saves {
     /// The autosave being written on a worker thread: the day and how long
     /// the write took, or why it failed.
     autosave: Option<std::thread::JoinHandle<Result<(u64, f64), String>>>,
+    /// [saves] The quick save being written on a worker thread: the
+    /// message to show when it is done.
+    quick: Option<std::thread::JoinHandle<Result<String, String>>>,
     /// Pictures to render (PNG paths); `render/thumbs.rs` takes them.
     shots: Vec<PathBuf>,
+    /// [saves] Pictures that are copies of another being rendered (the
+    /// autosave's is its history entry's): (rendered, copy), copied when the
+    /// rendered one is written, so the city is filmed once, not twice.
+    picture_copies: Vec<(PathBuf, PathBuf)>,
     /// Pictures loaded as egui textures, by path, with the file time they
     /// were read at.
     pictures: HashMap<PathBuf, (Option<SystemTime>, egui::TextureHandle)>,
@@ -158,6 +165,9 @@ pub struct Saves {
     /// entry's file time, for the game id and [`disk_generation`] it was
     /// read at; the Game history window shows it every frame.
     history: Option<(u64, String, HistoryList)>,
+    /// [title] Every game with its saves and history ([`games`]), as of
+    /// the [`disk_generation`] it was read at.
+    games: Option<(u64, std::sync::Arc<Vec<Game>>)>,
     /// The name typed into "Save as".
     pub name: String,
     /// The title screen is up (at startup unless `ND_TITLE=0`).
@@ -172,7 +182,7 @@ pub struct Saves {
 impl Default for Saves {
     fn default() -> Self {
         let title = !std::env::var("ND_TITLE").is_ok_and(|v| v == "0");
-        Self { slots: Vec::new(), dirty: true, pending_load: None, autosave: None, shots: Vec::new(), pictures: HashMap::new(), pictures_checked: HashMap::new(), pictures_due: HashMap::new(), history: None, name: String::new(), title, history_requested: None, new_city_name: String::new() }
+        Self { slots: Vec::new(), dirty: true, pending_load: None, autosave: None, quick: None, shots: Vec::new(), picture_copies: Vec::new(), pictures: HashMap::new(), pictures_checked: HashMap::new(), pictures_due: HashMap::new(), history: None, games: None, name: String::new(), title, history_requested: None, new_city_name: String::new() }
     }
 }
 
@@ -206,10 +216,36 @@ impl Saves {
         self.history.as_ref().map_or_else(Default::default, |(_, _, v)| v.clone())
     }
 
+    /// [title] Every game, newest first, with its save states (the saves
+    /// folder and every game's history): read once per [`disk_generation`].
+    pub fn games(&mut self) -> std::sync::Arc<Vec<Game>> {
+        let gen = disk_generation();
+        if self.dirty || !self.games.as_ref().is_some_and(|(g, _)| *g == gen) {
+            let history = scan_history(Path::new(DIR));
+            let games = games(self.slots(), &history);
+            self.games = Some((gen, std::sync::Arc::new(games)));
+        }
+        self.games.as_ref().map_or_else(Default::default, |(_, v)| v.clone())
+    }
+
     /// [identity] Drop the cached history listing: the next look reads the
     /// folder again (the window does this while closed, so it opens fresh).
     pub fn forget_history(&mut self) {
         self.history = None;
+    }
+
+    /// [saves] Ask for `copy` to be `png`'s picture once that is rendered.
+    fn want_picture_copy(&mut self, png: PathBuf, copy: PathBuf) {
+        self.pictures_due.insert(copy.clone(), SystemTime::now());
+        self.picture_copies.retain(|(_, c)| *c != copy);
+        self.picture_copies.push((png, copy));
+    }
+
+    /// [saves] The copies waiting for `rendered` (written now): taken.
+    pub fn take_picture_copies(&mut self, rendered: &Path) -> Vec<PathBuf> {
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.picture_copies).into_iter().partition(|(r, _)| r == rendered);
+        self.picture_copies = rest;
+        mine.into_iter().map(|(_, c)| c).collect()
     }
 
     /// The pictures asked for since the last call.
@@ -263,20 +299,25 @@ impl Saves {
         Some(tex)
     }
 
-    /// Delete the oldest dated slots beyond `SLOTS_KEPT`. The zero-padded
-    /// timestamp makes the file names sort chronologically.
+    /// Delete the oldest dated slots beyond `SLOTS_KEPT`.
     fn prune(&self) {
-        let Ok(dir) = std::fs::read_dir(DIR) else { return };
-        let mut dated: Vec<PathBuf> = dir.flatten().map(|e| e.path()).filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("city-") && n.ends_with(".ron"))).collect();
-        dated.sort();
-        let excess = dated.len().saturating_sub(SLOTS_KEPT);
-        for p in dated.into_iter().take(excess) {
-            let _ = std::fs::remove_file(&p);
-            let _ = std::fs::remove_file(meta_path(&p));
-        }
-        if excess > 0 {
-            disk_changed();
-        }
+        prune_slots();
+    }
+}
+
+/// Delete the oldest dated slots beyond `SLOTS_KEPT`. The zero-padded
+/// timestamp makes the file names sort chronologically.
+fn prune_slots() {
+    let Ok(dir) = std::fs::read_dir(DIR) else { return };
+    let mut dated: Vec<PathBuf> = dir.flatten().map(|e| e.path()).filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("city-") && n.ends_with(".ron"))).collect();
+    dated.sort();
+    let excess = dated.len().saturating_sub(SLOTS_KEPT);
+    for p in dated.into_iter().take(excess) {
+        let _ = std::fs::remove_file(&p);
+        let _ = std::fs::remove_file(meta_path(&p));
+    }
+    if excess > 0 {
+        disk_changed();
     }
 }
 
@@ -493,6 +534,45 @@ pub fn save_now(sim: &mut Sim, saves: &mut Saves, flags: &mut UiFlags) {
     };
 }
 
+/// [saves] Quick save without stopping the game: the frame pays for a copy
+/// of the world (about 90 ms for 17,000 people); the latest slot, its dated
+/// copy and their sidecars are written on a worker thread, and the message
+/// comes when they are on disk (`autosave` looks in every frame). The Saves
+/// window's button; the remote API's `save` stays [`save_now`], done when
+/// it answers. A second press while one is writing waits for it.
+pub fn save_now_in_background(sim: &mut Sim, saves: &mut Saves, flags: &mut UiFlags) {
+    if saves.quick.is_some() {
+        flags.message = "still writing the last quick save".into();
+        return;
+    }
+    ensure_game_id(&mut sim.world);
+    let world = sim.world.clone();
+    sim.saved_tick = Some(sim.world.clock.tick);
+    let meta = serde_json::to_string_pretty(&meta_of(sim, "")).ok();
+    let slot = format!("{DIR}/city-{:012}-day{}.ron", now_unix(), sim.world.clock.day() + 1);
+    let job = std::thread::Builder::new().name("nd-quicksave".into()).spawn(move || {
+        crate::sim::save_world(&world, Path::new(LATEST))?;
+        drop(world);
+        if let Some(text) = &meta {
+            let _ = std::fs::write(meta_path(Path::new(LATEST)), text);
+        }
+        crate::sim::copy_atomic(Path::new(LATEST), Path::new(&slot)).map_err(|e| format!("saved {LATEST}; slot copy failed: {e}"))?;
+        if let Some(text) = &meta {
+            let _ = std::fs::write(meta_path(Path::new(&slot)), text);
+        }
+        prune_slots();
+        Ok(format!("saved {LATEST} and slot {}", slot_label(Path::new(&slot))))
+    });
+    match job {
+        Ok(j) => {
+            saves.quick = Some(j);
+            flags.message = "saving…".into();
+            saves.want_picture(Path::new(LATEST).with_extension("png"));
+        }
+        Err(e) => flags.message = format!("save failed: {e}"),
+    }
+}
+
 /// Replace the running city; it comes up paused so the player can look
 /// first. The message (also put in `flags.message`) says how it went. The
 /// tools, the selection and the plan cache refer to the old city's ids:
@@ -501,15 +581,24 @@ pub fn load_now(path: &Path, sim: &mut Sim, flags: &mut UiFlags) -> Result<Strin
     let shown = path.display().to_string();
     let result = match sim.load(&shown) {
         Ok(()) => {
-            // [identity] A named save from before city names: the name it
-            // was saved under becomes the city's.
-            if sim.world.identity.name.trim().is_empty() {
-                if let Some(name) = legacy_city_name(path) {
-                    rename_city(&mut sim.world, &name);
-                }
-            }
             sim.paused = true;
-            Ok(format!("loaded {shown} (paused)"))
+            if let Some(example) = starter_of(&sim.world) {
+                // [identity] An example city at its first day (the bundled
+                // Perfect AI City): a new game of its own, under a new name,
+                // so its saves never pass for the example's.
+                sim.world.identity = nd_sim::CityIdentity { name: String::new(), game_id: new_game_id() };
+                let name = rename_city(&mut sim.world, &super::newgame::suggest_name());
+                Ok(format!("new game {name} started from the example {example} (paused); rename it in the City or Saves window"))
+            } else {
+                // [identity] A named save from before city names: the name it
+                // was saved under becomes the city's.
+                if sim.world.identity.name.trim().is_empty() {
+                    if let Some(name) = legacy_city_name(path) {
+                        rename_city(&mut sim.world, &name);
+                    }
+                }
+                Ok(format!("loaded {shown} (paused)"))
+            }
         }
         Err(e) => Err(format!("load failed: {e}")),
     };
@@ -517,6 +606,21 @@ pub fn load_now(path: &Path, sim: &mut Sim, flags: &mut UiFlags) -> Result<Strin
         Ok(m) | Err(m) => m.clone(),
     };
     result
+}
+
+/// [identity] If a loaded world is a starting city rather than a game in
+/// play, the example's name to mention: nobody lives there yet, it is its
+/// first day, and it has no game id of its own (examples are written
+/// without one, `nd_procgen/examples/perfect_city.rs`) or carries a starting
+/// town's name (`CityPreset::label`). A player's own fresh city saved on day
+/// one has an id and its own name, and loads as itself.
+pub fn starter_of(world: &nd_sim::World) -> Option<String> {
+    if !world.citizens.is_empty() || world.clock.day() > 0 {
+        return None;
+    }
+    let name = world.identity.name.trim();
+    let preset_name = nd_procgen::citygen::CityPreset::ALL.iter().any(|c| c.label().eq_ignore_ascii_case(name));
+    (!world.identity.has_id() || preset_name).then(|| if name.is_empty() { "city".to_string() } else { name.to_string() })
 }
 
 /// [identity] The city name an unnamed save takes on load: a named save's
@@ -576,6 +680,121 @@ pub fn group_by_city(slots: &[Slot]) -> Vec<(String, Vec<usize>)> {
         }
     }
     groups
+}
+
+/// [title] What a save state of a game is, as the title screen lists it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StateKind {
+    Named,
+    Latest,
+    Autosave,
+    /// A dated backup of a quick save.
+    Dated,
+    /// A daily autosave kept in the game's history.
+    History,
+    /// A history entry the player named.
+    Marked,
+}
+
+impl StateKind {
+    fn of(kind: SlotKind) -> Self {
+        match kind {
+            SlotKind::Named => StateKind::Named,
+            SlotKind::Latest => StateKind::Latest,
+            SlotKind::Autosave => StateKind::Autosave,
+            SlotKind::Dated => StateKind::Dated,
+        }
+    }
+}
+
+/// [title] One saved moment of a game: a save in `saves/` or an entry of
+/// its history.
+#[derive(Clone, Debug)]
+pub struct SaveState {
+    pub path: PathBuf,
+    pub label: String,
+    pub kind: StateKind,
+    pub modified: Option<SystemTime>,
+    pub meta: Option<SaveMeta>,
+    pub picture: PathBuf,
+}
+
+impl SaveState {
+    /// "Day 12 · 340 people · $ 52000", or "" without a sidecar.
+    pub fn figures(&self) -> String {
+        self.meta.as_ref().map_or_else(String::new, |m| format!("Day {} · {} people · $ {:.0}", m.day, m.population, m.treasury))
+    }
+}
+
+/// [title] One game (one city as played from its start): every save of it,
+/// newest first.
+#[derive(Clone, Debug)]
+pub struct Game {
+    /// The game id, or `city:<name>` for saves from before ids.
+    pub key: String,
+    /// The city's name as its newest save has it.
+    pub city: String,
+    pub states: Vec<SaveState>,
+}
+
+impl Game {
+    pub fn newest(&self) -> Option<&SaveState> {
+        self.states.first()
+    }
+}
+
+/// [title] Saves and history entries grouped by game: by game id where the
+/// sidecar has one (two games may share a city name), else by city name.
+/// Games newest first, each game's states newest first. `history` is each
+/// game id's entries with their file times (`history::list`).
+pub fn games(slots: &[Slot], history: &[(String, Vec<(super::history::Entry, Option<SystemTime>)>)]) -> Vec<Game> {
+    let mut out: Vec<Game> = Vec::new();
+    let mut add = |key: String, city: &str, state: SaveState| match out.iter_mut().find(|g| g.key == key) {
+        Some(g) => g.states.push(state),
+        None => out.push(Game { key, city: city.to_string(), states: vec![state] }),
+    };
+    for s in slots {
+        let key = s.meta.as_ref().map(|m| m.game_id.trim()).filter(|id| !id.is_empty()).map_or_else(|| format!("city:{}", s.city()), str::to_string);
+        add(key, s.city(), SaveState { path: s.path.clone(), label: s.label.clone(), kind: StateKind::of(s.kind), modified: s.modified, meta: s.meta.clone(), picture: s.path.with_extension("png") });
+    }
+    for (id, entries) in history {
+        for (e, modified) in entries {
+            let (kind, label) = match e.bookmark() {
+                Some(b) => (StateKind::Marked, format!("★ {b}")),
+                None => (StateKind::History, format!("History, day {}", e.meta.day)),
+            };
+            add(id.clone(), e.meta.city_name(), SaveState { path: e.path.clone(), label, kind, modified: *modified, meta: Some(e.meta.clone()), picture: e.picture() });
+        }
+    }
+    for g in &mut out {
+        g.states.sort_by(|a, b| b.modified.cmp(&a.modified));
+        // The name the city has now: its newest save's.
+        if let Some(n) = g.states.first().and_then(|s| s.meta.as_ref()).map(|m| m.city_name().to_string()) {
+            if !g.key.starts_with("city:") {
+                g.city = n;
+            }
+        }
+    }
+    out.sort_by(|a, b| b.newest().and_then(|s| s.modified).cmp(&a.newest().and_then(|s| s.modified)));
+    out
+}
+
+/// [title] Every game's history in a saves folder: (game id, entries with
+/// their file times), for [`games`].
+pub fn scan_history(dir: &Path) -> Vec<(String, Vec<(super::history::Entry, Option<SystemTime>)>)> {
+    let Ok(rd) = std::fs::read_dir(dir.join(super::history::SUBDIR)) else { return Vec::new() };
+    let mut out = Vec::new();
+    for d in rd.flatten().filter(|d| d.path().is_dir()) {
+        let Some(id) = d.file_name().to_str().map(str::to_string) else { continue };
+        let entries: Vec<_> = super::history::list(dir, &id).into_iter().map(|e| {
+            let modified = std::fs::metadata(&e.path).and_then(|m| m.modified()).ok();
+            (e, modified)
+        }).collect();
+        if !entries.is_empty() {
+            out.push((id, entries));
+        }
+    }
+    out
 }
 
 /// [identity] The city's name with a Rename control: shown at the top of
@@ -651,7 +870,7 @@ pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, saves: &mut Saves, flags: &mut Ui
     }
     ui.horizontal(|ui| {
         if ui.button("Quick save").on_hover_text(format!("Writes {LATEST} and a dated slot; the newest {SLOTS_KEPT} slots are kept")).clicked() {
-            save_now(sim, saves, flags);
+            save_now_in_background(sim, saves, flags);
         }
         if ui.small_button("refresh list").clicked() {
             saves.mark_dirty();
@@ -734,6 +953,16 @@ pub fn panel(ui: &mut egui::Ui, sim: &mut Sim, saves: &mut Saves, flags: &mut Ui
 /// time: a day that turns while the last one is still writing (1024x on a
 /// slow disk) is skipped, and the next day catches up.
 pub fn autosave(mut sim: ResMut<Sim>, mut saves: ResMut<Saves>, mut flags: ResMut<UiFlags>) {
+    // [saves] A quick save written in the background, landed.
+    if saves.quick.as_ref().is_some_and(|j| j.is_finished()) {
+        let job = saves.quick.take().expect("checked above");
+        saves.mark_dirty();
+        flags.message = match job.join() {
+            Ok(Ok(m)) => m,
+            Ok(Err(e)) => format!("save failed: {e}"),
+            Err(_) => "save failed: the writer thread panicked".into(),
+        };
+    }
     if saves.autosave.as_ref().is_some_and(|j| j.is_finished()) {
         let job = saves.autosave.take().expect("checked above");
         saves.mark_dirty();
@@ -742,7 +971,7 @@ pub fn autosave(mut sim: ResMut<Sim>, mut saves: ResMut<Saves>, mut flags: ResMu
                 debug!("autosave of day {day} written in {ms:.0} ms off the main thread");
                 // [identity] The game's history keeps its newest autosaves
                 // and every marked one.
-                let pruned = super::history::prune(Path::new(DIR), &sim.world.identity.game_id, super::history::KEPT);
+                let pruned = super::history::prune_thinned(Path::new(DIR), &sim.world.identity.game_id, super::history::KEPT, super::history::KEPT_SPACED, super::history::SPACING);
                 if pruned > 0 {
                     debug!("game history: {pruned} old autosave(s) pruned");
                 }
@@ -791,8 +1020,8 @@ pub fn autosave(mut sim: ResMut<Sim>, mut saves: ResMut<Saves>, mut flags: ResMu
         }
         let _ = std::fs::write(meta_path(&entry), text);
     }
-    saves.want_picture(Path::new(AUTOSAVE).with_extension("png"));
     saves.want_picture(entry.with_extension("png"));
+    saves.want_picture_copy(entry.with_extension("png"), Path::new(AUTOSAVE).with_extension("png"));
     saves.mark_dirty();
 }
 
@@ -825,7 +1054,7 @@ mod tests {
 
     /// [memory] A save is streamed to its file (never built as one string)
     /// and the autosave's second copy is a file copy: both hold exactly the
-    /// RON `to_ron` gives, and load back.
+    /// RON `to_save_ron` gives ([saves] compressed: unpacked first), and load back.
     #[test]
     fn streamed_saves_are_the_ron_byte_for_byte() {
         let mut sim = Sim::new();
@@ -838,10 +1067,18 @@ mod tests {
         let b = dir.join("sub").join("b.ron");
         crate::sim::save_world(&sim.world, &a).expect("save");
         crate::sim::copy_atomic(&a, &b).expect("copy");
-        let want = sim.world.to_ron().unwrap();
-        assert_eq!(std::fs::read_to_string(&a).unwrap(), want);
-        assert_eq!(std::fs::read_to_string(&b).unwrap(), want);
-        let back = nd_sim::World::from_ron(&std::fs::read_to_string(&b).unwrap()).expect("loads");
+        let want = sim.world.to_save_ron().unwrap();
+        assert!(want.len() < sim.world.to_ron().unwrap().len(), "[saves] not indented");
+        let unpack = |p: &Path| nd_sim::world::save_text(&std::fs::read(p).unwrap()).unwrap();
+        assert!(nd_sim::world::is_compressed(&std::fs::read(&a).unwrap()), "saves are compressed");
+        assert!(std::fs::metadata(&a).unwrap().len() * 4 < want.len() as u64, "and much smaller");
+        assert_eq!(unpack(&a), want);
+        assert_eq!(unpack(&b), want);
+        let back = nd_sim::World::read_save(&b).expect("loads");
+        // A plain RON save from before compression still loads.
+        let plain = dir.join("plain.ron");
+        std::fs::write(&plain, &want).unwrap();
+        assert_eq!(nd_sim::World::read_save(&plain).expect("plain loads").clock.tick, sim.world.clock.tick);
         assert_eq!(back.citizens.len(), sim.world.citizens.len());
         assert_eq!(back.buildings.len(), sim.world.buildings.len());
         assert_eq!(back.clock.tick, sim.world.clock.tick);
@@ -915,8 +1152,10 @@ mod tests {
         assert_eq!(legacy_city_name(&dir.join("autosave.ron")), None);
         assert_eq!(legacy_city_name(&dir.join("city-000001700000-day3.ron")), None);
         assert_eq!(legacy_city_name(&dir.join("history").join("g").join("000000000001000-day3.ron")), None);
-        // Loaded: the city takes it.
-        let sim0 = Sim::new();
+        // Loaded: the city takes it. (A city played past its first day: an
+        // empty day-one save without an id is a starting city, below.)
+        let mut sim0 = Sim::new();
+        sim0.world.clock.tick = 2 * 1440 + 30;
         let legacy = dir.join("Old_Town.ron");
         std::fs::write(&legacy, legacy_ron(&sim0.world)).unwrap();
         let mut sim = Sim::new();
@@ -925,6 +1164,45 @@ mod tests {
         assert!(flags.message.starts_with("loaded"), "{}", flags.message);
         assert_eq!(sim.world.identity.name, "Old Town");
         assert!(!sim.world.identity.has_id(), "the id still comes with the next save");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// [identity] An example city at its first day (no id, nobody living
+    /// there: the bundled Perfect AI City) loads as a new game with its own
+    /// id and a new name; a player's fresh day-one save loads as itself.
+    #[test]
+    fn example_cities_load_as_new_games() {
+        let dir = std::env::temp_dir().join(format!("nd_starter_{}_{}", std::process::id(), new_game_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut example = Sim::new();
+        example.world.identity = nd_sim::CityIdentity { name: "Perfect AI City".into(), game_id: String::new() };
+        let path = dir.join("Perfect_AI_City.ron");
+        example.save(&path).unwrap();
+        let mut sim = Sim::new();
+        let mut flags = UiFlags::default();
+        let msg = load_now(&path, &mut sim, &mut flags).unwrap();
+        assert!(msg.starts_with("new game"), "{msg}");
+        assert!(sim.world.identity.has_id());
+        assert!(!sim.world.identity.name.is_empty() && sim.world.identity.name != "Perfect AI City", "{}", sim.world.identity.name);
+        let first = sim.world.identity.clone();
+        load_now(&path, &mut sim, &mut flags).unwrap();
+        assert_ne!(sim.world.identity.game_id, first.game_id, "each start is its own game");
+        // The example written with an id, under a starting town's name: still a starter.
+        example.world.identity.game_id = new_game_id();
+        example.save(&path).unwrap();
+        load_now(&path, &mut sim, &mut flags).unwrap();
+        assert_ne!(sim.world.identity.name, "Perfect AI City");
+        // A player's own day-one city loads as itself.
+        let mut own = Sim::new();
+        own.set_city_name("Cobalt Reach");
+        let own_path = dir.join("Cobalt_Reach.ron");
+        own.save(&own_path).unwrap();
+        let msg = load_now(&own_path, &mut sim, &mut flags).unwrap();
+        assert!(msg.starts_with("loaded"), "{msg}");
+        assert_eq!(sim.world.identity, own.world.identity);
+        // And a played example (people, later days) keeps its name.
+        example.world.clock.tick = 3 * 1440;
+        assert!(starter_of(&example.world).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -949,6 +1227,38 @@ mod tests {
         // An old named save groups under the name it was saved under.
         let old = Slot { path: PathBuf::from("saves/Old_Town.ron"), label: "Old Town".into(), kind: SlotKind::Named, modified: None, meta: None, picture: None };
         assert_eq!(old.city(), "Old Town");
+    }
+
+    /// [title] Games group by id (two games of one name stay apart), by
+    /// name without one; history entries join their game; newest first.
+    #[test]
+    fn saves_group_into_games() {
+        let t = |s: u64| Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(s));
+        let slot = |n: &str, city: &str, id: &str, kind: SlotKind, at: u64| Slot {
+            path: PathBuf::from(format!("saves/{n}.ron")),
+            label: n.into(),
+            kind,
+            modified: t(at),
+            meta: Some(SaveMeta { city: city.into(), game_id: id.into(), day: at, ..Default::default() }),
+            picture: None,
+        };
+        let slots = vec![
+            slot("city", "Neon Bay", "g2", SlotKind::Latest, 50),
+            slot("Neon_Bay", "Neon Bay", "g1", SlotKind::Named, 40),
+            slot("autosave", "Neon Bay", "g2", SlotKind::Autosave, 30),
+            slot("Old", "Old Town", "", SlotKind::Named, 10),
+        ];
+        let entry = |id: &str, day: u64, mark: Option<&str>| super::super::history::Entry { path: PathBuf::from(format!("saves/history/{id}/{day}.ron")), meta: SaveMeta { day, city: "Neon Bay".into(), game_id: id.into(), bookmark: mark.map(String::from), ..Default::default() } };
+        let history = vec![("g1".to_string(), vec![(entry("g1", 3, None), t(60)), (entry("g1", 2, Some("bridge")), t(20))])];
+        let g = games(&slots, &history);
+        let keys: Vec<&str> = g.iter().map(|g| g.key.as_str()).collect();
+        assert_eq!(keys, vec!["g1", "g2", "city:Old Town"], "newest game first; same name, two games");
+        assert_eq!(g[0].states.len(), 3);
+        assert_eq!(g[0].states[0].kind, StateKind::History);
+        assert_eq!(g[0].states[2].kind, StateKind::Marked);
+        assert_eq!(g[0].states[2].label, "★ bridge");
+        assert_eq!(g[1].states.iter().map(|s| s.kind).collect::<Vec<_>>(), vec![StateKind::Latest, StateKind::Autosave]);
+        assert_eq!(g[2].city, "Old Town");
     }
 
     /// [identity] Revert puts back the moment saved, with its game id, and

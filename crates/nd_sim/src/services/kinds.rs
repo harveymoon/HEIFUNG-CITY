@@ -53,10 +53,20 @@ pub enum ServiceKind {
     BotanicalGarden,
     /// An opera and concert hall.
     ConcertHall,
+    // [attractions] (D4) The second league, appended.
+    /// An amusement park: a coaster, a ferris wheel, a drop tower and rides
+    /// round a midway.
+    AmusementPark,
+    /// A convention centre: exhibition halls under a long roof.
+    ConventionCentre,
+    /// A cathedral: a nave, twin towers and a rose window.
+    Cathedral,
+    /// A casino resort: a hotel tower over a neon casino and a pool deck.
+    CasinoResort,
 }
 
 impl ServiceKind {
-    pub const ALL: [ServiceKind; 22] = [
+    pub const ALL: [ServiceKind; 26] = [
         ServiceKind::Police,
         ServiceKind::Fire,
         ServiceKind::Health,
@@ -79,9 +89,13 @@ impl ServiceKind {
         ServiceKind::Aquarium,
         ServiceKind::BotanicalGarden,
         ServiceKind::ConcertHall,
+        ServiceKind::AmusementPark,
+        ServiceKind::ConventionCentre,
+        ServiceKind::Cathedral,
+        ServiceKind::CasinoResort,
     ];
     /// [attractions] The landmark attractions, in menu order.
-    pub const LANDMARKS: [ServiceKind; 10] = [
+    pub const LANDMARKS: [ServiceKind; 14] = [
         ServiceKind::ArtMuseum,
         ServiceKind::ScienceMuseum,
         ServiceKind::HistoryMuseum,
@@ -92,6 +106,10 @@ impl ServiceKind {
         ServiceKind::Aquarium,
         ServiceKind::BotanicalGarden,
         ServiceKind::ConcertHall,
+        ServiceKind::AmusementPark,
+        ServiceKind::ConventionCentre,
+        ServiceKind::Cathedral,
+        ServiceKind::CasinoResort,
     ];
     /// The four that cover the city by road distance, in coverage-index order.
     pub const COVERING: [ServiceKind; 4] = [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School];
@@ -121,6 +139,10 @@ impl ServiceKind {
             ServiceKind::Aquarium => "aquarium",
             ServiceKind::BotanicalGarden => "botanical_garden",
             ServiceKind::ConcertHall => "concert_hall",
+            ServiceKind::AmusementPark => "amusement_park",
+            ServiceKind::ConventionCentre => "convention_centre",
+            ServiceKind::Cathedral => "cathedral",
+            ServiceKind::CasinoResort => "casino_resort",
         }
     }
 
@@ -146,6 +168,10 @@ impl ServiceKind {
             "zoo" => Some(ServiceKind::Zoo),
             "observatory" => Some(ServiceKind::Observatory),
             "aquarium" => Some(ServiceKind::Aquarium),
+            "amusement_park" | "theme_park" | "funfair" => Some(ServiceKind::AmusementPark),
+            "convention_centre" | "convention_center" | "exhibition_centre" => Some(ServiceKind::ConventionCentre),
+            "cathedral" | "basilica" => Some(ServiceKind::Cathedral),
+            "casino_resort" | "casino" => Some(ServiceKind::CasinoResort),
             "botanical_garden" | "botanic_garden" | "conservatory" | "botanical" => Some(ServiceKind::BotanicalGarden),
             "concert_hall" | "opera_house" | "opera" | "philharmonic" => Some(ServiceKind::ConcertHall),
             _ => None,
@@ -176,6 +202,10 @@ impl ServiceKind {
             ServiceKind::Aquarium => "aquarium",
             ServiceKind::BotanicalGarden => "botanical garden",
             ServiceKind::ConcertHall => "opera and concert hall",
+            ServiceKind::AmusementPark => "amusement park",
+            ServiceKind::ConventionCentre => "convention centre",
+            ServiceKind::Cathedral => "cathedral",
+            ServiceKind::CasinoResort => "casino resort",
         }
     }
 
@@ -224,6 +254,13 @@ impl ServiceKind {
             ServiceKind::Aquarium => Hours::new(9, 20),
             ServiceKind::BotanicalGarden => Hours::new(8, 20),
             ServiceKind::ConcertHall => Hours::new(17, 0),
+            // (D4) The rides till eleven; expos by day into the evening;
+            // the cathedral from early mass to evensong; the casino never
+            // shuts.
+            ServiceKind::AmusementPark => Hours::new(10, 23),
+            ServiceKind::ConventionCentre => Hours::new(8, 21),
+            ServiceKind::Cathedral => Hours::new(7, 21),
+            ServiceKind::CasinoResort => Hours::ALWAYS,
         }
     }
 
@@ -241,17 +278,17 @@ impl ServiceKind {
     /// garden, the pier): its own walkways and benches, joined to the
     /// walk graph and the Path tool's gates.
     pub fn has_grounds(self) -> bool {
-        matches!(self, ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::BotanicalGarden | ServiceKind::Pier)
+        matches!(self, ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::BotanicalGarden | ServiceKind::Pier | ServiceKind::AmusementPark)
     }
 
     /// [attractions] An afternoon out (citizens' park trips find it).
     pub fn day_out(self) -> bool {
-        matches!(self, ServiceKind::ArtMuseum | ServiceKind::ScienceMuseum | ServiceKind::HistoryMuseum | ServiceKind::Pier | ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::Aquarium | ServiceKind::BotanicalGarden)
+        matches!(self, ServiceKind::ArtMuseum | ServiceKind::ScienceMuseum | ServiceKind::HistoryMuseum | ServiceKind::Pier | ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::Aquarium | ServiceKind::BotanicalGarden | ServiceKind::AmusementPark | ServiceKind::ConventionCentre | ServiceKind::Cathedral)
     }
 
     /// [attractions] A night out (citizens' evenings find it).
     pub fn night_out(self) -> bool {
-        matches!(self, ServiceKind::Pier | ServiceKind::Observatory | ServiceKind::ConcertHall)
+        matches!(self, ServiceKind::Pier | ServiceKind::Observatory | ServiceKind::ConcertHall | ServiceKind::AmusementPark | ServiceKind::CasinoResort)
     }
 
     /// [attractions] What a visit costs at the door (citizens and
@@ -268,6 +305,13 @@ impl ServiceKind {
             ServiceKind::Aquarium => 16.0,
             ServiceKind::BotanicalGarden => 6.0,
             ServiceKind::ConcertHall => 12.0,
+            // (D4) A day ticket; an expo pass; the cathedral is free (the
+            // tower climb aside); the casino's take is what a visit leaves
+            // at the tables, on average.
+            ServiceKind::AmusementPark => 28.0,
+            ServiceKind::ConventionCentre => 10.0,
+            ServiceKind::Cathedral => 2.0,
+            ServiceKind::CasinoResort => 24.0,
             _ => 0.0,
         }
     }
@@ -286,6 +330,10 @@ impl ServiceKind {
             ServiceKind::Aquarium => 30.0,
             ServiceKind::BotanicalGarden => 22.0,
             ServiceKind::ConcertHall => 26.0,
+            ServiceKind::AmusementPark => 40.0,
+            ServiceKind::ConventionCentre => 24.0,
+            ServiceKind::Cathedral => 30.0,
+            ServiceKind::CasinoResort => 36.0,
             _ => 0.0,
         }
     }
@@ -334,6 +382,10 @@ impl ServiceKind {
             ServiceKind::Aquarium => 75_000.0,
             ServiceKind::BotanicalGarden => 65_000.0,
             ServiceKind::ConcertHall => 85_000.0,
+            ServiceKind::AmusementPark => 110_000.0,
+            ServiceKind::ConventionCentre => 90_000.0,
+            ServiceKind::Cathedral => 80_000.0,
+            ServiceKind::CasinoResort => 120_000.0,
         };
         base * [0.5, 1.0, 2.2][tier.index()]
     }
@@ -362,6 +414,10 @@ impl ServiceKind {
             ServiceKind::Aquarium => 720.0,
             ServiceKind::BotanicalGarden => 640.0,
             ServiceKind::ConcertHall => 820.0,
+            ServiceKind::AmusementPark => 1250.0,
+            ServiceKind::ConventionCentre => 760.0,
+            ServiceKind::Cathedral => 380.0,
+            ServiceKind::CasinoResort => 950.0,
         };
         base * [0.6, 1.0, 1.8][tier.index()]
     }
@@ -394,6 +450,10 @@ impl ServiceKind {
             ServiceKind::Aquarium => 28,
             ServiceKind::BotanicalGarden => 22,
             ServiceKind::ConcertHall => 32,
+            ServiceKind::AmusementPark => 60,
+            ServiceKind::ConventionCentre => 36,
+            ServiceKind::Cathedral => 12,
+            ServiceKind::CasinoResort => 70,
         };
         match tier {
             Tier::Low => base.div_ceil(2),
@@ -446,6 +506,10 @@ impl ServiceKind {
             ServiceKind::Aquarium => 360,
             ServiceKind::BotanicalGarden => 500,
             ServiceKind::ConcertHall => 600,
+            ServiceKind::AmusementPark => 1500,
+            ServiceKind::ConventionCentre => 2000,
+            ServiceKind::Cathedral => 800,
+            ServiceKind::CasinoResort => 1200,
             _ => 0,
         }
     }
@@ -505,6 +569,13 @@ impl ServiceKind {
             ServiceKind::Aquarium => (400.0, 0.30),
             ServiceKind::BotanicalGarden => (440.0, 0.32),
             ServiceKind::ConcertHall => (440.0, 0.34),
+            // (D4) The rides are loud and the casino brings its own
+            // trouble: they lift less than a museum; the cathedral's
+            // square and the convention trade lift a good deal.
+            ServiceKind::AmusementPark => (420.0, 0.22),
+            ServiceKind::ConventionCentre => (420.0, 0.30),
+            ServiceKind::Cathedral => (440.0, 0.34),
+            ServiceKind::CasinoResort => (380.0, 0.18),
         }
     }
 
@@ -541,6 +612,15 @@ impl ServiceKind {
             ServiceKind::Aquarium => format!("{place} Aquarium"),
             ServiceKind::BotanicalGarden => format!("{place} Botanical Garden"),
             ServiceKind::ConcertHall => ["Neon Opera House", "Harbor Philharmonic Hall", "The Glass Sails Concert Hall", "City Opera and Concert Hall"][n as usize % 4].to_string(),
+            // (D4) Invented names, like every name in the city.
+            ServiceKind::AmusementPark => ["Comet Coast Fun Park", "Starfall Pleasure Gardens", format!("{place} Funland").as_str(), "Lanternlight Park", "Kestrel Bay Rides"][n as usize % 5].to_string(),
+            ServiceKind::ConventionCentre => match n % 3 {
+                0 => format!("{place} Convention Centre"),
+                1 => format!("{place} Exhibition Halls"),
+                _ => "Neon District Convention Centre".to_string(),
+            },
+            ServiceKind::Cathedral => ["Cathedral of the Harbor Light", format!("{place} Cathedral").as_str(), "Basilica of Saint Aldric", "Cathedral of the Lanterns"][n as usize % 4].to_string(),
+            ServiceKind::CasinoResort => ["The Gilded Lantern Resort and Casino", "Jade Tide Casino Resort", "The Velvet Comet", "Lucky Heron Resort and Casino"][n as usize % 4].to_string(),
         }
     }
 }
@@ -548,7 +628,7 @@ impl ServiceKind {
 /// [attractions] The smallest site each landmark attraction goes on, m²,
 /// in `ServiceKind::LANDMARKS` order: well over an ordinary plot (a
 /// parcel along a street is some 400 to 900 m²), so each takes several.
-pub const ATTRACTION_AREA: [f32; 10] = [2200.0, 2600.0, 1800.0, 1200.0, 7000.0, 5200.0, 1500.0, 2400.0, 3800.0, 2600.0];
+pub const ATTRACTION_AREA: [f32; 14] = [2200.0, 2600.0, 1800.0, 1200.0, 7000.0, 5200.0, 1500.0, 2400.0, 3800.0, 2600.0, 6000.0, 3200.0, 2000.0, 3600.0];
 
 /// The service a building provides, stored on the building.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

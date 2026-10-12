@@ -88,6 +88,10 @@ pub use report::{alerts as city_alerts, Alert as CityAlert};
 mod road;
 /// [waterfront] Waterfront lots, public beaches and private jetties.
 mod shore;
+/// [dams] (H1) Hydro dam walls.
+mod dams;
+/// [parks] (D5) Parks, clean-ups, nature preserves.
+mod parks;
 /// [supertall] the skyscraper league
 mod skyline;
 /// [social] Friends, feuds, groups.

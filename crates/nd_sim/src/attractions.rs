@@ -113,7 +113,7 @@ pub fn plan_pier(poly: &[Vec2], land: &Landscape) -> Result<PierDeck, String> {
     }
     let Some((_, shore)) = best else {
         return Err(match other {
-            Some(k) => format!("a pier goes on the sea shore, not by a {}", k.label()),
+            Some(k) => format!("a pier goes on the sea shore, not by {}", crate::names::a(k.label())),
             None => "a pier goes on the sea shore: this site does not reach the sea".into(),
         });
     };
@@ -189,6 +189,10 @@ pub fn about(kind: ServiceKind) -> &'static str {
         ServiceKind::Aquarium => "Tanks of reef fish, a shark tunnel and a jellyfish hall glowing blue. A big draw by day and into the evening.",
         ServiceKind::BotanicalGarden => "Gardens of flower beds and pools round a great glass conservatory of palms. People stroll and sit; it lifts the land value round it.",
         ServiceKind::ConcertHall => "An opera house of white sails over a glass foyer. Evening performances draw a crowd that dines and drinks nearby.",
+        ServiceKind::AmusementPark => "A coaster, a ferris wheel, a drop tower, a carousel and a midway of food stands round a loop. Families by day, the lights till eleven; the biggest draw for visitors, but noisy neighbours.",
+        ServiceKind::ConventionCentre => "Exhibition halls under a long glass-fronted roof and a plaza for the crowds. Trade fairs and expos bring visitors who fill the hotels.",
+        ServiceKind::Cathedral => "A nave of stone under twin towers and spires, a rose window lit at night, and a square before it. Free to visit; pilgrims and sightseers come from far off.",
+        ServiceKind::CasinoResort => "A hotel tower over a neon casino floor and a pool deck. Open all hours: visitors come for the tables and the shows; the land round it gains less than you might think.",
         _ => "",
     }
 }
@@ -207,7 +211,7 @@ pub fn plan_grounds(kind: ServiceKind, lot: &Lot, pier: Option<&PierDeck>) -> Op
         // A grand park: the high-tier plan of the whole site (lakes, rides,
         // a bandstand, fountains), and a loop round it.
         ServiceKind::GrandPark | ServiceKind::BotanicalGarden => crate::park::plan_single(lot, Tier::High),
-        _ => ParkLayout { tier: Tier::High, paths: Vec::new(), benches: Vec::new(), features: Vec::new(), entrances: vec![gate], shared_edges: Vec::new(), cluster_lots: 1, cluster_area: area, anchor: true, seams: Vec::new() },
+        _ => ParkLayout { tier: Tier::High, paths: Vec::new(), benches: Vec::new(), features: Vec::new(), entrances: vec![gate], shared_edges: Vec::new(), cluster_lots: 1, cluster_area: area, anchor: true, seams: Vec::new(), preserve: false },
     };
     match kind {
         ServiceKind::GrandPark => {
@@ -231,6 +235,18 @@ pub fn plan_grounds(kind: ServiceKind, lot: &Lot, pier: Option<&PierDeck>) -> Op
                 layout.paths.push(vec![gate, near(gate)]);
                 if point_in_polygon(mid, &lot.polygon) {
                     layout.paths.push(vec![near(gate), mid, far]);
+                }
+            }
+        }
+        ServiceKind::AmusementPark => {
+            // (D4) The midway: a loop round the rides, a way in from the
+            // gate across the middle, benches along it.
+            add_loop(&mut layout, lot, 9.0, gate, 20.0);
+            if let Some(ring) = layout.paths.first().cloned() {
+                let mid = crate::geom::polygon_centroid(&lot.polygon);
+                let far = ring.iter().copied().max_by(|a, b| a.distance(gate).total_cmp(&b.distance(gate))).unwrap_or(mid);
+                if point_in_polygon(mid, &lot.polygon) {
+                    layout.paths.push(vec![gate, mid, far]);
                 }
             }
         }

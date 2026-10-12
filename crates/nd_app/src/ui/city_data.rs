@@ -67,7 +67,7 @@ impl Tab {
     pub fn pages(self) -> &'static [Page] {
         use Page::*;
         match self {
-            Tab::City => &[CityOverview, CityLand, CityDistricts, CitySkyline, CityTourism],
+            Tab::City => &[CityOverview, CityLand, CityDistricts, CitySkyline, CityTourism, CityParks],
             Tab::Economy => &[EconomyOverview, EconomyCashFlow, EconomyLedger, EconomyTaxes, EconomyCorporations],
             Tab::Market => &[MarketGoods, MarketBusinesses, MarketTrade],
             Tab::People => &[PeoplePopulation, PeopleInequality, PeopleConcerns, PeopleSocial, PeopleFavourites],
@@ -90,6 +90,8 @@ pub enum Page {
     CityDistricts,
     CitySkyline,
     CityTourism,
+    /// [parks] (D5) Every park, how kept, clean-ups and preserves.
+    CityParks,
     EconomyOverview,
     EconomyCashFlow,
     EconomyLedger,
@@ -125,6 +127,7 @@ impl Page {
             CityDistricts => "Districts",
             CitySkyline => "Skyline",
             CityTourism => "Tourism",
+            CityParks => "Parks",
             EconomyCashFlow => "Cash flow",
             EconomyLedger => "Ledger",
             EconomyTaxes => "Taxes",
@@ -154,6 +157,7 @@ impl Page {
             CityDistricts => "districts",
             CitySkyline => "skyline",
             CityTourism => "tourism",
+            CityParks => "parks",
             EconomyCashFlow => "cash_flow",
             EconomyLedger => "ledger",
             EconomyTaxes => "taxes",
@@ -183,6 +187,7 @@ impl Page {
             CityDistricts => "Districts",
             CitySkyline => "The skyline",
             CityTourism => "Tourism",
+            CityParks => "The parks",
             EconomyOverview => "The city's money",
             EconomyCashFlow => "Cash flow",
             EconomyLedger => "The ledger",
@@ -213,6 +218,7 @@ impl Page {
             CityDistricts => "Every district with its figures and policies. Pick one to edit it; the District tool (9) paints them.",
             CitySkyline => "The tallest buildings, the towers rising, the race for the city's tallest, and the height limit that holds it.",
             CityTourism => "Who visits, what draws them, where they sleep and what they spend.",
+            CityParks => "Every park, how well kept it is and what wears it down: litter, dealers, people sleeping rough. Clean one up, or leave it wild.",
             EconomyOverview => "The treasury, where it is heading, and what the city's businesses want.",
             EconomyCashFlow => "Money in and out of the treasury day by day, by flow.",
             EconomyLedger => "Every line of the books, opened onto the buildings, lines and classes behind it.",
@@ -285,6 +291,7 @@ impl Page {
             "emergencies" | "911" => Target::Page(Page::ServicesEmergencies),
             "districts" => Target::Page(Page::CityDistricts),
             "tourism" => Target::Page(Page::CityTourism),
+            "parks" => Target::Page(Page::CityParks),
             "skyline" | "towers" => Target::Page(Page::CitySkyline),
             _ => return None,
         })
@@ -527,6 +534,7 @@ fn body_of(ui: &mut egui::Ui, p: &mut UiCtx, page: Page) {
         CityDistricts => super::districts::page(ui, p),
         CitySkyline => super::skyline::page(ui, p),
         CityTourism => super::districts::tourism_page(ui, p),
+        CityParks => super::parks::page(ui, p),
         EconomyOverview => super::economy::overview(ui, p),
         EconomyCashFlow => super::economy::cash_flow(ui, p),
         EconomyLedger => super::economy::ledger(ui, p),
@@ -567,7 +575,7 @@ mod tests {
                 assert_eq!(Page::parse(None, t.key(), Some(p.key())), Ok(*p));
             }
         }
-        assert_eq!(seen.len(), 23);
+        assert_eq!(seen.len(), 24, "[parks] City, Parks added");
     }
 
     /// The old window names still find their pages.

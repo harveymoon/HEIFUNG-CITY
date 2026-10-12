@@ -122,6 +122,10 @@ pub struct ParkLayout {
     /// in part; these are the exact parts). Empty for older saves.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub seams: Vec<(Vec2, Vec2)>,
+    /// [parks] (D5) Left wild, a nature preserve: meadow and woodland, its
+    /// paths a trail, no features, few benches.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub preserve: bool,
 }
 
 fn anchor_default() -> bool {
@@ -151,6 +155,13 @@ pub fn plan_parks(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue) {
 /// (inside it or within `walk::GROUNDS_REACH` of its edge), so the park's
 /// walkways run out to meet the path.
 pub fn plan_parks_with(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue, links: &[Vec2]) {
+    plan_parks_wild(lots, land_value, links, &[]);
+}
+
+/// [parks] (D5) `plan_parks_with`, with the points of the parks left as
+/// nature preserves (`World::parks`): a park any of whose lots holds one
+/// is planned wild.
+pub fn plan_parks_wild(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue, links: &[Vec2], preserves: &[Vec2]) {
     let ids: Vec<LotId> = lots.iter().filter(|(_, l)| l.land_use == LandUse::Park && l.polygon.len() >= 3 && !l.shore.beach).map(|(id, _)| id).collect();
     for (id, l) in lots.iter_mut() {
         if !ids.contains(&id) {
@@ -211,18 +222,48 @@ pub fn plan_parks_with(lots: &mut SlotMap<LotId, Lot>, land_value: &LandValue, l
     }
     for c in 0..next {
         let members: Vec<usize> = (0..n).filter(|&i| cluster[i] == c).collect();
-        let layouts = plan_cluster(&members, &ids, &adj, &linked, lots, land_value);
+        let mut layouts = plan_cluster(&members, &ids, &adj, &linked, lots, land_value);
+        // [parks] A nature preserve: no lawns' features, a trail, a bench
+        // in three.
+        if members.iter().any(|&i| preserves.iter().any(|p| point_in_polygon(*p, &lots[ids[i]].polygon))) {
+            for l in layouts.iter_mut() {
+                l.preserve = true;
+                l.features.clear();
+                let mut k = 0;
+                l.benches.retain(|_| {
+                    k += 1;
+                    k % 3 == 1
+                });
+            }
+        }
         for (i, mut layout) in members.iter().zip(layouts) {
             layout.shared_edges = shared[*i].clone();
             layout.seams = seams[*i].clone();
             lots[ids[*i]].park = Some(layout);
         }
     }
-    // [waterfront] Public beaches are sand, each lot its own: a boardwalk
-    // down to the water and towel spots (`crate::shore::plan_beach`).
-    for l in lots.values_mut().filter(|l| l.land_use == LandUse::Park && l.shore.beach && l.polygon.len() >= 3) {
-        let tier = Tier::for_land_value(land_value.at(l.center));
-        l.park = Some(crate::shore::plan_beach(l, tier));
+    // [waterfront] Public beaches are sand: a boardwalk down to the water
+    // and towel spots (`crate::shore::plan_beach`). [beaches] (H2) Beach
+    // lots side by side are one beach: one tier, the sand running over the
+    // seams between them, one anchor (the lifeguard, the sign).
+    for group in crate::shore::beach_groups(lots) {
+        let areas: Vec<f32> = group.iter().map(|id| polygon_area(&lots[*id].polygon).abs()).collect();
+        let total: f32 = areas.iter().sum();
+        let lv = group.iter().zip(&areas).map(|(id, a)| land_value.at(lots[*id].center) * a).sum::<f32>() / total.max(1.0);
+        let tier = Tier::for_land_value(lv);
+        let anchor = (0..group.len()).max_by(|&a, &b| areas[a].total_cmp(&areas[b]).then(b.cmp(&a))).unwrap_or(0);
+        let seams: Vec<Vec<(Vec2, Vec2)>> = group
+            .iter()
+            .map(|id| group.iter().filter(|o| *o != id).flat_map(|o| shared_stretches(&lots[*id].polygon, &lots[*o].polygon)).collect())
+            .collect();
+        for (k, id) in group.iter().enumerate() {
+            let mut layout = crate::shore::plan_beach_with(&lots[*id], tier, &seams[k]);
+            layout.cluster_lots = group.len() as u32;
+            layout.cluster_area = total;
+            layout.anchor = k == anchor;
+            layout.seams = seams[k].clone();
+            lots[*id].park = Some(layout);
+        }
     }
 }
 
@@ -454,7 +495,7 @@ fn plan_lot_paths(lot: &Lot, gaps: &[Vec2], links: &[Vec2], has_gate: bool) -> P
         let b = pull_inside(poly, hub - side * 0.8 + (out - hub) * 0.5, hub);
         paths.push(vec![hub, a, out, b, hub]);
     }
-    ParkLayout { tier: Tier::Mid, paths, benches: Vec::new(), features: Vec::new(), entrances, shared_edges: Vec::new(), cluster_lots: 1, cluster_area: polygon_area(poly).abs(), anchor: true, seams: Vec::new() }
+    ParkLayout { tier: Tier::Mid, paths, benches: Vec::new(), features: Vec::new(), entrances, shared_edges: Vec::new(), cluster_lots: 1, cluster_area: polygon_area(poly).abs(), anchor: true, seams: Vec::new(), preserve: false }
 }
 
 /// Spurs to the features, bends around them, then benches along every path
@@ -694,7 +735,7 @@ pub fn pull_inside(poly: &[Vec2], p: Vec2, anchor: Vec2) -> Vec2 {
 /// the edge index on each side.
 /// Every stretch (a metre or more) of `a`'s outline that `b`'s outline runs
 /// along, as world segments.
-fn shared_stretches(a: &[Vec2], b: &[Vec2]) -> Vec<(Vec2, Vec2)> {
+pub(crate) fn shared_stretches(a: &[Vec2], b: &[Vec2]) -> Vec<(Vec2, Vec2)> {
     let mut out = Vec::new();
     for i in 0..a.len() {
         let (p, q) = (a[i], a[(i + 1) % a.len()]);

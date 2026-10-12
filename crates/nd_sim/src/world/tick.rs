@@ -7,10 +7,10 @@ use super::*;
 impl World {
     pub fn tick(&mut self, minds: &mut dyn MindProvider) {
         // [park-paths] A path whose park went since the last tick is cut back.
-        self.settle_path_links();
+        crate::prof!("settle_path_links", self.settle_path_links());
         // [under-construction] Park walkways and gates shut while their
         // building is a site.
-        self.refresh_closed_grounds();
+        crate::prof!("refresh_closed_grounds", self.refresh_closed_grounds());
         self.clock.advance();
         let tick = self.clock.tick;
         if self.clock.minute_of_day() == 0 {
@@ -18,17 +18,17 @@ impl World {
         }
         self.periodic(tick);
         // [pt-walk] Stranded areas, when the networks changed (and hourly).
-        self.step_connectivity();
+        crate::prof!("step_connectivity", self.step_connectivity());
         // [megacorp] Students to class and out at night.
-        self.step_campus();
+        crate::prof!("step_campus", self.step_campus());
         // [parking] Drivers worn out by the hunt and stuck in a queue leave
         // the car where it stands.
         if tick % 5 == 2 {
-            self.hunters_give_up();
+            crate::prof!("hunters_give_up", self.hunters_give_up());
         }
         // [parking] Hunters turn into a lot with room they are passing.
         if tick % 2 == 1 {
-            self.hunters_spot_lots();
+            crate::prof!("hunters_spot_lots", self.hunters_spot_lots());
         }
         // Answers a mind worked out in the background (an LLM's) land
         // whenever they are ready. Someone mid-journey (driving, on a bus or
@@ -44,50 +44,50 @@ impl World {
         if tick % 60 == 0 {
             self.deferred_intents.retain(|_, (_, at)| tick.saturating_sub(*at) <= trips::DEFERRED_INTENT_TTL);
         }
-        self.step_traffic();
+        crate::prof!("step_traffic", self.step_traffic());
         // [road-inspect] The vehicles that drove onto each piece, counted.
-        self.log_road_traffic();
+        crate::prof!("log_road_traffic", self.log_road_traffic());
         // [land] Billionaires' convoys form and follow.
-        self.step_convoys();
-        self.step_air();
-        self.step_taxis();
+        crate::prof!("step_convoys", self.step_convoys());
+        crate::prof!("step_air", self.step_air());
+        crate::prof!("step_taxis", self.step_taxis());
         // [ped-highway] Nobody stands about on a highway or ramp.
         if tick % kerbside::STRANDED_SWEEP_EVERY == 7 {
-            self.rescue_stranded();
+            crate::prof!("rescue_stranded", self.rescue_stranded());
             // [walk-crossings] Nor in a street's lanes.
-            self.clear_carriageways();
+            crate::prof!("clear_carriageways", self.clear_carriageways());
         }
-        self.step_driving();
-        self.step_journeys();
+        crate::prof!("step_driving", self.step_driving());
+        crate::prof!("step_journeys", self.step_journeys());
         // [events] Street races and warehouse raves.
-        self.step_nights();
+        crate::prof!("step_nights", self.step_nights());
         if tick % crate::road_wear::SAMPLE_EVERY == 3 {
-            self.sample_road_load();
+            crate::prof!("sample_road_load", self.sample_road_load());
         }
-        self.step_enforcement();
-        self.step_services();
+        crate::prof!("step_enforcement", self.step_enforcement());
+        crate::prof!("step_services", self.step_services());
         // [society] Trash trucks.
-        self.step_society();
-        self.step_through_traffic();
-        self.step_transit();
-        self.step_rail();
-        self.step_subway();
-        self.step_ships();
+        crate::prof!("step_society", self.step_society());
+        crate::prof!("step_through_traffic", self.step_through_traffic());
+        crate::prof!("step_transit", self.step_transit());
+        crate::prof!("step_rail", self.step_rail());
+        crate::prof!("step_subway", self.step_subway());
+        crate::prof!("step_ships", self.step_ships());
         // [economy] marina boats out on the water
-        self.step_boats();
+        crate::prof!("step_boats", self.step_boats());
         // [fishing] trawlers out to the grounds and home
-        self.step_fishing();
+        crate::prof!("step_fishing", self.step_fishing());
         // [ferries] Day trips out, and anyone stranded abroad.
-        self.step_ferry_people();
-        self.step_cargo_hubs();
+        crate::prof!("step_ferry_people", self.step_ferry_people());
+        crate::prof!("step_cargo_hubs", self.step_cargo_hubs());
         // [delivery-hours] Lorries due out now.
-        self.step_freight_queue();
+        crate::prof!("step_freight_queue", self.step_freight_queue());
         // [games] Away fans driving in to a game, and home after.
-        self.step_games();
+        crate::prof!("step_games", self.step_games());
         // [airlift] Stuck vehicles lifted off the road.
-        self.step_airlifts();
+        crate::prof!("step_airlifts", self.step_airlifts());
         // [watchdog] No service vehicle stands for long on a carriageway.
-        self.step_watchdog();
+        crate::prof!("step_watchdog", self.step_watchdog());
         if self.clock.minute_of_day() == 0 {
             self.bots.delivered_today = 0;
             self.bots.van_orders_today = 0;
@@ -97,12 +97,12 @@ impl World {
         }
         crate::prof!("step_bots", self.step_bots());
         // [tourism] Arrivals on the hour, visitors' days, departures.
-        self.step_tourism();
-        self.step_citizens(minds);
+        crate::prof!("step_tourism", self.step_tourism());
+        crate::prof!("step_citizens", self.step_citizens(minds));
         // [passengers] With their drivers, in or out of the car.
-        self.step_passengers();
+        crate::prof!("step_passengers", self.step_passengers());
         // [social] Who gets talking, and friends calling round.
-        self.step_social();
+        crate::prof!("step_social", self.step_social());
         // [concerns] Happiness on the hour and at midnight.
         crate::prof!("step_concerns", self.step_concerns());
         // Every system that moves people has run: lay the breadcrumbs.
@@ -151,6 +151,8 @@ impl World {
         crate::prof!("daily_tourism", self.daily_tourism());
         // [waterfront] beach tallies, and the households near a good one
         self.daily_shore();
+        // [parks] litter, campers, dealers: how kept each park is
+        self.daily_parks();
         crate::prof!("close_day_record", self.close_day_record(record));
         // [land] Buyouts, branches, merges, McMansions, billionaires.
         self.daily_estate();
@@ -184,6 +186,10 @@ impl World {
     // [waterfront] beaches (access, weather, crowds), private jetties
     if tick % 60 == 33 {
         crate::prof!("hourly_shore", self.hourly_shore());
+    }
+    // [parks] the park list (one per park of lots side by side) and who is in each
+    if tick % 60 == 37 {
+        crate::prof!("hourly_parks", self.hourly_parks());
     }
     // [land] People present and moving, at :13 clear of the rest.
     if tick % 60 == 13 {

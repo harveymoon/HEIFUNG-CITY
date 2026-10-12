@@ -11,8 +11,9 @@
 //! - **What goes in**: the daily autosave (`saves::autosave` writes it here
 //!   and to `saves/autosave.ron`), and "Mark this moment", which saves now
 //!   with a bookmark.
-//! - **Kept**: the newest [`KEPT`] unmarked entries of a game; bookmarked
-//!   ones are never pruned.
+//! - **Kept**: the newest [`KEPT`] unmarked entries of a game, and
+//!   [`KEPT_SPACED`] older ones [`SPACING`] days apart ([saves]); bookmarked
+//!   ones are never pruned. Entries are compressed like every save.
 //! - **Revert**: loads an entry, after a confirmation, as Load does. Later
 //!   entries stay, so a revert can itself be undone from the list.
 //!
@@ -28,8 +29,14 @@ use super::{hint, section, UiCtx, GOLD, IVORY, WARN};
 
 /// The history folder inside the saves folder.
 pub const SUBDIR: &str = "history";
-/// Unmarked entries kept per game; the oldest go first.
-pub const KEPT: usize = 24;
+/// Unmarked entries kept per game, every one: the newest days.
+pub const KEPT: usize = 8;
+/// [saves] Older unmarked entries kept beyond [`KEPT`], thinned to one per
+/// [`SPACING`] days (a big city's entry is 20-25 MB compressed, so a game's
+/// history stays under half a gigabyte instead of 24 x 240 MB).
+pub const KEPT_SPACED: usize = 8;
+/// [saves] Days between the older entries kept.
+pub const SPACING: u64 = 5;
 
 /// One saved moment of a game.
 #[derive(Clone, Debug)]
@@ -115,22 +122,43 @@ pub fn set_bookmark(entry: &Path, label: Option<&str>) -> Result<SaveMeta, Strin
 }
 
 /// Delete a game's oldest unmarked entries beyond `kept` (with their
-/// sidecars and pictures). Returns how many went.
+/// sidecars and pictures). Returns how many went. (The game thins
+/// instead: [`prune_thinned`].)
+#[cfg(test)]
 pub fn prune(saves: &Path, game_id: &str, kept: usize) -> usize {
+    prune_thinned(saves, game_id, kept, 0, SPACING)
+}
+
+/// [saves] The game's pruning: the newest `kept` unmarked entries stay;
+/// beyond them, up to `spaced` more, each at least `spacing` days from the
+/// last one kept (newest to oldest; after a revert the days run back, so
+/// the distance either way counts); bookmarks always stay. The rest go,
+/// with their sidecars and pictures. Returns how many went.
+pub fn prune_thinned(saves: &Path, game_id: &str, kept: usize, spaced: usize, spacing: u64) -> usize {
     let entries = list(saves, game_id);
     let mut seen = 0;
     let mut gone = 0;
+    let mut last_day: Option<u64> = None;
+    let mut spaced_kept = 0;
     for e in entries {
         if e.bookmark().is_some() {
             continue;
         }
         seen += 1;
-        if seen > kept {
-            let _ = std::fs::remove_file(&e.path);
-            let _ = std::fs::remove_file(meta_path(&e.path));
-            let _ = std::fs::remove_file(e.picture());
-            gone += 1;
+        if seen <= kept {
+            last_day = Some(e.meta.day);
+            continue;
         }
+        let far = last_day.is_none_or(|d| d.abs_diff(e.meta.day) >= spacing);
+        if far && spaced_kept < spaced {
+            spaced_kept += 1;
+            last_day = Some(e.meta.day);
+            continue;
+        }
+        let _ = std::fs::remove_file(&e.path);
+        let _ = std::fs::remove_file(meta_path(&e.path));
+        let _ = std::fs::remove_file(e.picture());
+        gone += 1;
     }
     if gone > 0 {
         super::saves::disk_changed();
@@ -201,7 +229,7 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
 
 fn body(ui: &mut egui::Ui, p: &mut UiCtx, st: &mut ViewState) {
     let game_id = p.sim.world.identity.game_id.clone();
-    hint(ui, &format!("Every day's autosave is kept here (the newest {KEPT}, and every marked one). Mark the moments that matter; revert to go back to one."));
+    hint(ui, &format!("Every day's autosave is kept here: the newest {KEPT}, {KEPT_SPACED} older ones {SPACING} days apart, and every marked one. Mark the moments that matter; revert to go back to one."));
     section(ui, "MARK THIS MOMENT");
     ui.horizontal(|ui| {
         ui.add(egui::TextEdit::singleline(&mut st.mark_label).desired_width(200.0).hint_text("e.g. first metro line"));
@@ -339,6 +367,23 @@ mod tests {
         // A clash in one millisecond takes the next stamp.
         let a = entry_path(&saves, game, 10, 1_010);
         assert_ne!(a, left[0].path);
+        let _ = std::fs::remove_dir_all(&saves);
+    }
+
+    /// [saves] Older entries thin out to one per few days; the newest and
+    /// the bookmarks all stay.
+    #[test]
+    fn old_entries_thin_out() {
+        let saves = tmp("thin");
+        let game = "thin-1";
+        for day in 1..=40u64 {
+            write_entry(&saves, game, day, 1_000 + day, if day == 3 { Some("founding") } else { None });
+        }
+        prune_thinned(&saves, game, 8, 4, 5);
+        let days: Vec<u64> = list(&saves, game).iter().map(|e| e.meta.day).collect();
+        assert_eq!(days, vec![40, 39, 38, 37, 36, 35, 34, 33, 28, 23, 18, 13, 3]);
+        // Pruning again changes nothing.
+        assert_eq!(prune_thinned(&saves, game, 8, 4, 5), 0);
         let _ = std::fs::remove_dir_all(&saves);
     }
 

@@ -124,6 +124,12 @@ pub(crate) fn tool_input(
             return;
         }
     }
+    // [w1] Editing a metro line ends with the line, or with the tool or mode.
+    if let Some(e) = tools.metro_edit {
+        if !sim.world.subway.lines.contains_key(e.line) || tools.tool != Tool::Transit || tools.transit_mode != TransitMode::Metro {
+            tools.metro_edit = None;
+        }
+    }
     if key(KeyCode::Escape) && !flags.data_view {
         tools.points.clear();
         tools.drag = None;
@@ -133,6 +139,17 @@ pub(crate) fn tool_input(
         *selection = Selection::None;
         if tools.tool != Tool::Transit {
             tools.route_sel = None;
+        }
+        // [w1] Esc ends editing a metro line (every change is already made).
+        if tools.metro_edit.is_some() {
+            super::metro_edit::finish(&sim.world, &mut tools);
+        }
+        // [dams] Esc leaves the dam wall for later (the inspector's "Draw
+        // its dam wall" picks it up again).
+        if let Some(step) = tools.dam.take() {
+            tools.dam_note = None;
+            let name = sim.world.buildings.get(step.plant).map_or_else(|| "The plant".to_string(), |b| b.name.clone());
+            tools.status = format!("{name} has no dam wall yet: it makes no power until it has one (select it and press \"Draw its dam wall\").");
         }
         // [metro-ux] Esc cancels the line being drawn.
         if !tools.metro_draft.is_empty() {

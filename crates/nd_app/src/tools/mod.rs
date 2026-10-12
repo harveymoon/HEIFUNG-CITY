@@ -7,6 +7,7 @@
 //! preview; the input frame in `input`; the state in `state` and `kinds`.
 
 mod buildings;
+pub(crate) use buildings::{dam_click, dam_readout};
 mod bulldoze;
 pub(crate) use bulldoze::piece_at as road_piece_at;
 mod edit;
@@ -14,6 +15,7 @@ pub(crate) use edit::remote_drag as edit_drag;
 mod input;
 mod kinds;
 pub mod line_edit;
+pub mod metro_edit;
 mod pick;
 mod plan_cache;
 mod rail;

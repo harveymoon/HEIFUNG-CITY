@@ -44,7 +44,7 @@ impl World {
         let (facility, rail_fused, road_fused) = Facility::plan(kind, p, &self.roads);
         let cost = kind.cost();
         if self.economy.treasury < cost {
-            return Err(format!("the treasury has {:.0}; a {} costs {:.0}", self.economy.treasury, kind.label(), cost));
+            return Err(format!("the treasury has {:.0}; {} costs {:.0}", self.economy.treasury, crate::names::a(kind.label()), cost));
         }
         if let Some(why) = self.rail_piece_problem(&facility) {
             return Err(why);

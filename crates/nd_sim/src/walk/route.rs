@@ -54,6 +54,27 @@ impl WalkGraph {
         best.map(|(_, i)| i)
     }
 
+    /// [saves] [`nearest_matching`](Self::nearest_matching) by a box query
+    /// of `r` (same answer, exact ties to the lower index): asking about
+    /// open country or the sea, where nothing is that close, no longer
+    /// searches the whole map ring by ring. The land value's walk-time pass
+    /// asks it for every grid cell: on a 17,000-person city that search
+    /// was a 1.2 s tick every two game hours.
+    pub fn nearest_matching_within(&self, p: Vec2, r: f32, keep: impl Fn(u32) -> bool) -> Option<u32> {
+        if self.index.len() != self.nodes.len() {
+            return self.nearest_matching(p, r, keep);
+        }
+        let mut best: Option<(f32, u32)> = None;
+        for i in self.index.in_box(p - Vec2::splat(r), p + Vec2::splat(r)) {
+            let n = &self.nodes[i as usize];
+            let d = n.pos.distance(p);
+            if d <= r && n.level == 0.0 && !self.adj[i as usize].is_empty() && keep(i) && best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, i));
+            }
+        }
+        best.map(|(_, i)| i)
+    }
+
     /// Nearest node within `r` by a box query: unlike [`nearest`](Self::nearest)
     /// it never searches further out when nothing is that close, so asking
     /// about open country is as cheap as asking about a street. Exact ties

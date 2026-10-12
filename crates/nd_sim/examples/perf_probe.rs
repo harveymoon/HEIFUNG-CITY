@@ -83,14 +83,19 @@ fn main() {
         Some("measure") => {
             let path = args.get(2).expect("save path");
             let ticks: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1440);
-            let mut w = World::from_ron(&std::fs::read_to_string(path).expect("read")).expect("load");
-            println!("pop {} buildings {} cars {} walk nodes {}", w.citizens.len(), w.buildings.len(), w.traffic.cars.len(), w.walk.nodes.len());
+            let mut w = World::read_save(path).expect("load");
+            println!("pop {} buildings {} cars {} walk nodes {} tow jobs {}", w.citizens.len(), w.buildings.len(), w.traffic.cars.len(), w.walk.nodes.len(), w.enforcement.jobs.len());
             let _ = nd_sim::prof::take();
             let mut times: Vec<f64> = Vec::new();
             for _ in 0..ticks {
                 let t = Instant::now();
                 w.tick(&mut minds);
-                times.push(t.elapsed().as_secs_f64() * 1000.0);
+                let dt = t.elapsed().as_secs_f64() * 1000.0;
+                // [saves] The ticks a player would feel as a hitch.
+                if dt > 100.0 {
+                    println!("slow tick {} (day {} {}): {dt:.0} ms", w.clock.tick, w.clock.day() + 1, w.clock.format_hhmm());
+                }
+                times.push(dt);
             }
             let total: f64 = times.iter().sum();
             let mut sorted = times.clone();

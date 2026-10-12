@@ -536,6 +536,33 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("at", "[x, y] with open"),
         ("finish", "bool: built at once"),
     ] },
+    Cmd { name: "parks", aliases: &[], effect: Read, run: parks::parks, help: &[
+        ("returns", "[parks] every park (lots side by side are one park, one name): area, kept 0..1, run_down, litter, dealers, campers, homeless, visits, preserve (left wild), cleanups, cleanup_cost, troubles"),
+    ] },
+    Cmd { name: "park", aliases: &[], effect: Game, run: parks::park, help: &[
+        ("building", "any park building of the park"),
+        ("clean_up", "bool: pay for a clean-up (litter cleared, dealers moved on for 10 days, campers by it found somewhere else)"),
+        ("preserve", "bool: leave it wild as a nature preserve, or make it a kept park again"),
+        ("set", "dev: {trash 0..1, dealers 0..4} sets its state"),
+    ] },
+    Cmd { name: "ferry_estimate", aliases: &[], effect: Read, run: ferry::estimate, help: &[
+        ("at", "[x, y] where the terminal would go"),
+        ("kind", "ferry_terminal (default) or ferry_terminal_large (car ferries)"),
+        ("returns", "[ferries] residents within 500 m, towns off the map, terminals linked, sailings, riders and cars a day, fares against upkeep, or why it cannot go"),
+    ] },
+    Cmd { name: "dams", aliases: &[], effect: Read, run: dams::dams, help: &[
+        ("returns", "[dams] every hydro plant: output, nameplate and its dam (wall: ends, length, crest footpath; awaiting_wall: placed with the tool, makes nothing yet; automatic: the old arch), and the wall rules"),
+    ] },
+    Cmd { name: "dam", aliases: &[], effect: Game, run: dams::dam, help: &[
+        ("building", "the hydro plant"),
+        ("a", "[x, y] one bank (with b: what the wall would be: length_m, span_m, cost, expected_mw, or reason)"),
+        ("b", "[x, y] the other bank"),
+        ("build", "bool, with a and b: build it (paid; a footpath goes along the crest)"),
+        ("step", "bool: the Buildings tool's wall step for this plant (as after placing it; it waits for its wall) or leave it"),
+        ("cursor", "[x, y] in the step: the read-out under the pointer"),
+        ("click", "[x, y] in the step: first bank, then the far bank (builds)"),
+        ("note", "one end within 50 m of the plant, both on dry ground within 30 m of the water, across the plant's river once and roughly square to it, never over a road; no road may then be built over the dam"),
+    ] },
     Cmd { name: "shore", aliases: &["waterfront"], effect: Read, run: shore_command, help: &[
         ("returns", "[waterfront] waterfront lots (vacant ones), their frontage, public beaches (open, bathers now), private jetties, the waterfront trades open (beach resorts, pier restaurants, beach bars, boat rentals, waterfront hotels) and their pressures; whether parcels reach the water"),
     ] },
@@ -549,7 +576,8 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("on", "bool, omitted reads: parcels along a road near the water run down to it (on for new cities; a save from before has it off; lots follow at the next implement)"),
     ] },
     Cmd { name: "bus", aliases: &[], effect: Game, run: bus::bus, help: &[
-        ("action", "select|new_route|add_stop|insert_stop|move_stop|remove_stop|set_buses|set_fare|remove_route|rename|recolour|line|problems|check|select_stop|list|edit|new_line|finish_edit|click|slot|select_metro"),
+        ("action", "select|new_route|add_stop|insert_stop|move_stop|remove_stop|set_buses|set_fare|remove_route|rename|recolour|line|problems|check|select_stop|list|edit|new_line|finish_edit|click|slot|select_metro|two_way"),
+        ("on", "two_way: bool, run the line out and back along the far kerbs (true) or round its loop (false)"),
         ("route", "id"),
         ("x", "f"),
         ("y", "f"),
@@ -564,7 +592,9 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("line", "select_metro: metro line id"),
     ] },
     Cmd { name: "subway", aliases: &["metro"], effect: Game, run: |cmd, ctx| subway::command(cmd, &mut ctx.sim.world), help: &[
-        ("action", "status (default)|station|line|preview|headway|remove_line|inspect_line|inspect_station"),
+        ("action", "status (default)|station|line|preview|headway|remove_line|inspect_line|inspect_station|insert_stop|remove_stop|move_stop|set_loop|relay"),
+        ("index", "insert_stop: where (omitted: where it belongs); remove_stop, move_stop: which stop"),
+        ("on", "set_loop: bool"),
         ("x", "f (station)"),
         ("y", "f (station)"),
         ("stations", "[id or [x,y], ...] (line, preview)"),
@@ -809,7 +839,7 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("note", "no fields: what is highlighted now and the summary (worked out the frame after a change)"),
     ] },
     Cmd { name: "window", aliases: &[], effect: View, run: window::window, help: &[
-        ("name", "a tool window: lines|view (or land)|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), new_game, title (the title screen), history (the Game history window); the old report names city|economy|taxes|market|people|power|transit|emergencies|districts|tourism open their City Data tab or page"),
+        ("name", "a tool window: lines|view (or land)|alerts|saves|settings|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), new_game, title (the title screen), history (the Game history window); the old report names city|economy|taxes|market|people|power|transit|emergencies|districts|tourism open their City Data tab or page"),
         ("open", "bool, omitted toggles"),
         ("sub", "with a City Data name: the sub-tab (people's old tab overview|concerns|social works too)"),
     ] },

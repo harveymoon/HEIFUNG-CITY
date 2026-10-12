@@ -157,24 +157,37 @@ fn banner(g: &mut Geometry, c: &Ctx, m: &BrandMark, at: Vec2, out: Vec2, y0: f32
     logo(g, c, m, at + out * 0.16, out, y1 - w * 0.6, w);
 }
 
+/// The logo's side on an HQ crown `top` metres up over a roof `w` by `d`:
+/// most of the roof's width, and on a tall slim tower (a needle tapers to
+/// a narrow top) at least a share of the height, so the brand still reads
+/// from across the city. [w1-render] It was capped at 14 m whatever the
+/// height: a speck on top of a 500 m needle.
+pub(crate) fn crown_logo_size(top: f32, w: f32, d: f32) -> f32 {
+    let cap = (top * 0.06).clamp(14.0, 34.0);
+    (w.min(d) * 0.7).max(top * 0.045).clamp(4.0, cap)
+}
+
 /// The HQ's crown: two bands of light round the top, the logo on every
-/// side above the roof, and a spire with an aviation light.
+/// side above the roof, and a spire with an aviation light. On a tall
+/// tower the bands are deeper and the logo screens stand out past a slim
+/// top (`crown_logo_size`).
 fn crown(g: &mut Geometry, c: &Ctx, m: &BrandMark, top: f32, lo: Vec2, hi: Vec2) {
     let f = &c.frame;
     let (w, d) = (hi.x - lo.x, hi.y - lo.y);
     let mid = (lo + hi) * 0.5;
+    let band = 0.8 * (top / 150.0).clamp(1.0, 3.0);
     let banded = [Vec2::new(lo.x, lo.y), Vec2::new(hi.x, lo.y), Vec2::new(hi.x, hi.y), Vec2::new(lo.x, hi.y)].iter().all(|q| c.inside_local(*q + (*q - mid).signum() * 0.3));
-    for (k, y) in [top - 1.2, top + 0.4].into_iter().enumerate().filter(|_| banded) {
+    for (k, y) in [top - 0.4 - band, top + band * 0.5].into_iter().enumerate().filter(|_| banded) {
         let col = lit(m, if k == 0 { 1.4 } else { 2.2 });
-        f.bx(g, Glow, mid.x, y, lo.y - 0.12, Vec3::new(w + 0.3, 0.8, 0.12), col);
-        f.bx(g, Glow, mid.x, y, hi.y + 0.12, Vec3::new(w + 0.3, 0.8, 0.12), col);
-        f.bx(g, Glow, lo.x - 0.12, y, mid.y, Vec3::new(0.12, 0.8, d + 0.3), col);
-        f.bx(g, Glow, hi.x + 0.12, y, mid.y, Vec3::new(0.12, 0.8, d + 0.3), col);
+        f.bx(g, Glow, mid.x, y, lo.y - 0.12, Vec3::new(w + 0.3, band, 0.12), col);
+        f.bx(g, Glow, mid.x, y, hi.y + 0.12, Vec3::new(w + 0.3, band, 0.12), col);
+        f.bx(g, Glow, lo.x - 0.12, y, mid.y, Vec3::new(0.12, band, d + 0.3), col);
+        f.bx(g, Glow, hi.x + 0.12, y, mid.y, Vec3::new(0.12, band, d + 0.3), col);
     }
     // A screen wall round the roof carrying the logo on all four sides.
-    let size = (w.min(d) * 0.7).clamp(4.0, 14.0);
+    let size = crown_logo_size(top, w, d);
     let wall = size + 1.5;
-    let y = top + 0.6 + wall * 0.5;
+    let y = top + 0.6 + band.max(0.8) - 0.8 + wall * 0.5;
     let inset = 0.4;
     let sides = [
         (Vec2::new(mid.x, lo.y + inset), Vec2::new(0.0, -1.0), w),
@@ -184,10 +197,12 @@ fn crown(g: &mut Geometry, c: &Ctx, m: &BrandMark, top: f32, lo: Vec2, hi: Vec2)
     ];
     for (p, out, len) in sides {
         let right = Vec2::new(out.y, -out.x);
-        if !on_lot(c, p, out, (len * 0.5 - inset).max(0.5), 0.1) {
+        // At least as wide as the logo, cantilevered past a narrow top.
+        let span = (len - inset * 2.0).max(size + 1.0);
+        if !on_lot(c, p, out, span * 0.5, 0.1) {
             continue;
         }
-        f.bx_yaw(g, Panel, p.x - out.x * 0.2, y, p.y - out.y * 0.2, Vec3::new((len - inset * 2.0).max(1.0), wall, 0.3), BOARD, right.y.atan2(right.x));
+        f.bx_yaw(g, Panel, p.x - out.x * 0.2, y, p.y - out.y * 0.2, Vec3::new(span, wall, 0.3), BOARD, right.y.atan2(right.x));
         logo(g, c, m, p, out, y, size);
     }
     // The spire, over the middle of the crown when that is on the lot (an
@@ -196,9 +211,10 @@ fn crown(g: &mut Geometry, c: &Ctx, m: &BrandMark, top: f32, lo: Vec2, hi: Vec2)
         return;
     }
     let spire = (top * 0.18).clamp(6.0, 30.0);
-    g.part(Metal).cylinder(f.to_world(mid.x, mid.y), 0.6, 0.12, top + 0.6, top + 0.6 + spire + wall, 8, rgba(POLE));
-    aviation_light_local(g, f, c.palette, mid.x, top + 0.6 + spire + wall, mid.y, 0.5);
-    f.bx(g, Glow, mid.x, top + 0.6 + wall + 0.3, mid.y, Vec3::new(1.4, 0.25, 1.4), lit(m, 2.6));
+    let base = y - wall * 0.5;
+    g.part(Metal).cylinder(f.to_world(mid.x, mid.y), 0.6, 0.12, top + 0.6, base + spire + wall, 8, rgba(POLE));
+    aviation_light_local(g, f, c.palette, mid.x, base + spire + wall, mid.y, 0.5);
+    f.bx(g, Glow, mid.x, base + wall + 0.3, mid.y, Vec3::new(1.4, 0.25, 1.4), lit(m, 2.6));
 }
 
 /// Flags in the brand colour on poles at the corners of a plaza, the crest
