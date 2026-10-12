@@ -215,6 +215,9 @@ const POOL_SHADER_SRC: &str = r#"
 
 // x, y: the fade in, metres from the eye; z: strength.
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> pool_fade: vec4<f32>;
+// x, y: the distance fog's start and end (the pools fade into it as the
+// lit scene does; fog itself would add its colour, the pools being added).
+@group(#{MATERIAL_BIND_GROUP}) @binding(101) var<uniform> pool_fog: vec4<f32>;
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -223,6 +226,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var k = pool_fade.z;
     if pool_fade.y > pool_fade.x {
         k = k * smoothstep(pool_fade.x, pool_fade.y, d);
+    }
+    if pool_fog.y > pool_fog.x {
+        k = k * clamp((pool_fog.y - d) / (pool_fog.y - pool_fog.x), 0.0, 1.0);
     }
     var out: FragmentOutput;
     out.color = vec4(pbr_input.material.base_color.rgb * k, 0.0);
@@ -238,6 +244,9 @@ pub(super) struct LampPools {
     /// x, y: the fade in (metres from the eye); z: strength (night).
     #[uniform(100)]
     pub fade: Vec4,
+    /// x, y: the distance fog's linear start and end.
+    #[uniform(101)]
+    pub fog: Vec4,
 }
 
 impl MaterialExtension for LampPools {
@@ -263,19 +272,19 @@ pub(super) struct LampPoolTag;
 pub(super) struct PoolState {
     version: Option<u64>,
     material: Option<Handle<PoolMaterial>>,
-    applied: Option<[i32; 3]>,
+    applied: Option<[i32; 5]>,
 }
 
 /// Radius of a lamp's pool on the ground, metres.
-pub(super) const POOL_R: f32 = 11.0;
+pub(super) const POOL_R: f32 = 10.0;
 /// Side of the patches the pools are merged into (one mesh each, so the
 /// patches out of view are culled).
 const POOL_PATCH: f32 = 300.0;
 /// The falloff from the middle out: (radius share, brightness).
-const POOL_RINGS: [(f32, f32); 3] = [(0.35, 0.62), (0.7, 0.2), (1.0, 0.0)];
+const POOL_RINGS: [(f32, f32); 3] = [(0.3, 0.55), (0.62, 0.18), (1.0, 0.0)];
 const POOL_SIDES: usize = 10;
 /// Pool brightness at full night, against the lamp's tint.
-const POOL_STRENGTH: f32 = 0.42;
+const POOL_STRENGTH: f32 = 0.2;
 /// Lantern over the street's datum, for the ground under it (7 m posts).
 const LANTERN_UP: f32 = 6.8;
 
@@ -326,6 +335,7 @@ pub(super) fn sync_lamp_pools(
     look: Res<sky::SkyLook>,
     lighting: Res<Lighting>,
     tools: Res<ToolState>,
+    fogs: Query<&DistanceFog, With<OrbitCamera>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<PoolMaterial>>,
     mut pools: Query<(Entity, &mut Visibility), With<LampPoolTag>>,
@@ -336,7 +346,7 @@ pub(super) fn sync_lamp_pools(
         .get_or_insert_with(|| {
             materials.add(PoolMaterial {
                 base: StandardMaterial { base_color: Color::WHITE, unlit: true, alpha_mode: AlphaMode::Add, fog_enabled: false, double_sided: true, cull_mode: None, ..default() },
-                extension: LampPools { fade: Vec4::ZERO },
+                extension: LampPools { fade: Vec4::ZERO, fog: Vec4::ZERO },
             })
         })
         .clone();
@@ -371,13 +381,18 @@ pub(super) fn sync_lamp_pools(
         return;
     }
     let (start, end) = lamps.reach.unwrap_or((0.0, 0.0));
-    let key = [start.round() as i32, end.round() as i32, (night * 64.0).round() as i32];
+    let (f0, f1) = match fogs.iter().next().map(|f| f.falloff.clone()) {
+        Some(FogFalloff::Linear { start, end }) => (start, end),
+        _ => (0.0, 0.0),
+    };
+    let key = [start.round() as i32, end.round() as i32, (night * 64.0).round() as i32, (f0 / 10.0).round() as i32, (f1 / 10.0).round() as i32];
     if state.applied == Some(key) {
         return;
     }
     state.applied = Some(key);
     if let Some(mut m) = materials.get_mut(&material) {
         m.extension.fade = Vec4::new(key[0] as f32, key[1] as f32, POOL_STRENGTH * key[2] as f32 / 64.0, 0.0);
+        m.extension.fog = Vec4::new(key[3] as f32 * 10.0, key[4] as f32 * 10.0, 0.0, 0.0);
     }
 }
 
