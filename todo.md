@@ -585,14 +585,14 @@ Everything still open, from the old groups 6–8, the group 1–5 leftovers, tod
 - [ ] Dock/station joined only by a footpath (passengers ok, goods need a road): check the status text
 
 ## E. Transit
-- [ ] Metro lines can't be edited stop by stop
-- [ ] Two-way bus lines
+- [x] Metro lines can't be edited stop by stop → DONE [w1/transit-construction]: Lines window "Edit stops" (Buses tool, Metro mode): click a station to insert it where it belongs (or at a diagram "+" slot), drag a stop onto another station to move it, right-click/Delete removes, loop on/off; each edit re-lays the tunnel and pays only for new stretches (`World::insert_metro_stop/remove_metro_stop/move_metro_stop/set_metro_looped/relay_metro_line`, `world/metro_edit.rs`; API `subway {action: insert_stop|remove_stop|move_stop|set_loop|relay}`)
+- [x] Two-way bus lines → DONE [w1/transit-construction]: lines were loops only; new `two_way` option (Lines window checkbox, API `bus {action: two_way, on}`) runs out along the stops and back along the far kerbs; the way back's stops (`BusStop::back`) are generated and kept in step with every insert/move/remove (end stops served once, the bus turns there)
 - [ ] Cable cars; monorail (suspended)
 
 ## F. Construction, planning and city info
-- [ ] "Construction" map layer: sites going up and coming down in a coloured overlay
-- [ ] Inspector on a building site shows the planned final height; on a demolition, the next building's height if one is planned
-- [ ] Demand for new buildings: toggle "include planned / under construction" adding a lighter bar extension for what is being built
+- [x] "Construction" map layer: sites going up and coming down in a coloured overlay → DONE [w1/transit-construction]: layer `construction` (City group): city dimmed, sites outlined cyan (going up, wire box to the planned height, built part bright), amber (coming down, rebuild planned), red (coming down, lot left vacant), with progress/height labels; legend counts each kind (`render/sites_layer.rs`, `World::construction_sites/site_plan`)
+- [x] Inspector on a building site shows the planned final height; on a demolition, the next building's height if one is planned → DONE [w1/transit-construction]: "Planned: N floors, about X m high when finished"; a demolition names what follows (the redevelopment, a campus annex, or the building next door that bought the plot) with floors and height, else "a vacant lot (nothing planned yet)"; API `inspect` building `site`
+- [x] Demand for new buildings: toggle "include planned / under construction" adding a lighter bar extension for what is being built → DONE [w1/transit-construction]: checkbox (remembered); each bar gets a light extension for the demand the sites going up already meet (demand without that land use's sites minus demand now, `World::demand_under_way`, `Economy::demand_with`) and the sites/homes/jobs in its text; venues, civic and parks follow population so get none; API `report` overview `demand_met_by_sites`
 - [ ] Ownership arcs from an HQ to its properties
 - [ ] City rating (liveability, prosperity, safety, environment) with history
 - [ ] Weekly newspaper (optionally AI)

@@ -190,6 +190,12 @@ fn demand(w: &World) -> Value {
     LandUse::ALL.iter().map(|&lu| (lu_key(lu), json!(round(w.economy.demand_for(lu))))).collect::<Map<_, _>>().into()
 }
 
+/// [w1] The demand the sites going up already meet, per land use.
+fn demand_met(w: &World) -> Value {
+    let u = w.demand_under_way();
+    LandUse::ALL.iter().map(|&lu| (lu_key(lu), json!(round(u[lu.index()])))).collect::<Map<_, _>>().into()
+}
+
 fn overview(w: &World, alerts: &[Alert]) -> Value {
     let e = &w.economy;
     let (mut built, mut sites, mut derelict, mut demolishing) = (0, 0, 0, 0);
@@ -221,6 +227,8 @@ fn overview(w: &World, alerts: &[Alert]) -> Value {
         "net_yesterday": round(e.ledger.yesterday.iter().sum()), "net_today_so_far": round(e.ledger.today.iter().sum()),
         "land_value_avg": round(e.avg_land_value), "gini": round(e.gini),
         "demand_by_land_use": demand(w),
+        // [w1] The demand the sites going up already meet (the Demand panel's light extension).
+        "demand_met_by_sites": demand_met(w),
         "headline_alerts": alerts.iter().take(5).map(|a| a.message.clone()).collect::<Vec<_>>(),
     })
 }

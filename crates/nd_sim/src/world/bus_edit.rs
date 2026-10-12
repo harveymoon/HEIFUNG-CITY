@@ -135,6 +135,49 @@ mod tests {
         assert!(w.share_bus_stop(b, (a, 1), None).is_err(), "only once");
     }
 
+    /// [w1] A two-way line: out along the south street and back along its
+    /// far kerb, the way back kept in step with every edit.
+    #[test]
+    fn a_two_way_line_runs_back_along_the_far_kerb_and_follows_edits() {
+        let mut w = World::new(WorldConfig::test_town());
+        w.add_road(&[v(-400.0, 0.0), v(400.0, 0.0)], 1, 1);
+        w.add_road(&[v(-400.0, 140.0), v(400.0, 140.0)], 1, 1);
+        w.add_road(&[v(-300.0, 0.0), v(-300.0, 140.0)], 1, 1);
+        w.add_road(&[v(300.0, 0.0), v(300.0, 140.0)], 1, 1);
+        let route = w.add_bus_route();
+        for p in [v(-200.0, 4.0), v(0.0, 4.0), v(200.0, 4.0)] {
+            w.add_bus_stop(route, p).unwrap();
+        }
+        w.set_bus_route_two_way(route, true).unwrap();
+        let r = &w.transit.routes[route];
+        assert!(r.two_way);
+        assert_eq!(r.stops.len(), 4, "A B C and B on the far kerb");
+        assert_eq!(r.outbound_len(), 3);
+        let (b, back) = (r.stops[1], r.stops[3]);
+        assert!(back.back && back.segment == b.segment);
+        assert!(back.pos.distance(v(0.0, -b.pos.y)) < 0.6, "opposite kerb: {:?} vs {:?}", back.pos, b.pos);
+        assert!(r.runnable(), "every leg has a road: {:?}", r.broken);
+        // The way back's figures stay with their stop through an edit.
+        w.transit.routes[route].stops[3].stats.on_today = 9;
+        let at = w.insert_bus_stop(route, None, v(100.0, 4.0)).unwrap();
+        assert_eq!(at, 2, "into the way out, between B and C");
+        let r = &w.transit.routes[route];
+        let backs: Vec<Vec2> = r.stops[r.outbound_len()..].iter().map(|s| s.pos).collect();
+        assert_eq!(backs.len(), 2);
+        assert!(backs[0].x > 90.0 && backs[1].x.abs() < 1.0, "back past the new stop, then B: {backs:?}");
+        assert_eq!(r.stops[5].stats.on_today, 9);
+        // Removing a stop on the way back takes its twin out with it.
+        w.remove_bus_stop(route, 4);
+        let r = &w.transit.routes[route];
+        assert_eq!(r.outbound_len(), 3);
+        assert!(r.stops.iter().all(|s| (s.pos.x - 100.0).abs() > 20.0), "the new stop went, both sides");
+        assert_eq!(r.stops.len(), 4);
+        // Off again: a loop of the stops out.
+        w.set_bus_route_two_way(route, false).unwrap();
+        assert_eq!(w.transit.routes[route].stops.len(), 3);
+        assert!(w.transit.routes[route].stops.iter().all(|s| !s.back));
+    }
+
     #[test]
     fn buses_keep_their_stops_through_an_insert() {
         let (mut w, route) = block();

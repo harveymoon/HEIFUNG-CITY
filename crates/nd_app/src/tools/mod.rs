@@ -14,6 +14,7 @@ pub(crate) use edit::remote_drag as edit_drag;
 mod input;
 mod kinds;
 pub mod line_edit;
+pub mod metro_edit;
 mod pick;
 mod plan_cache;
 mod rail;

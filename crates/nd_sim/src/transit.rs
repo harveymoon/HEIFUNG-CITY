@@ -94,6 +94,11 @@ pub struct BusStop {
     /// stops before it are removed (the Lines window's strip diagram).
     #[serde(default)]
     pub stats: StopStats,
+    /// [w1] On the way back of a two-way line: the far kerb of one of the
+    /// line's own stops, kept in step with it (`World::set_bus_route_two_way`).
+    /// Such stops come after all the others.
+    #[serde(default)]
+    pub back: bool,
 }
 
 /// A stop's ridership and the timing of the leg that leaves it, for the
@@ -156,7 +161,28 @@ impl BusStop {
         let right = Vec2::new(-d.y, d.x);
         let side = if (p - q).dot(right) >= 0.0 { 1.0 } else { -1.0 };
         let hw = roads.segment(segment).half_width();
-        Some(BusStop { segment, pos: q + right * side * (hw - 1.4).max(1.5), stats: StopStats::default() })
+        Some(BusStop { segment, pos: q + right * side * (hw - 1.4).max(1.5), stats: StopStats::default(), back: false })
+    }
+
+    /// [w1] The same spot on the far kerb, served by buses driving the other
+    /// way: the way back of a two-way line. `None` on a one-way street (or a
+    /// street that has gone).
+    pub fn far_kerb(&self, roads: &RoadNetwork) -> Option<BusStop> {
+        let seg = roads.segments.get(self.segment.0 as usize)?;
+        if !seg.alive || seg.lanes_fwd == 0 || seg.lanes_bwd == 0 {
+            return None;
+        }
+        let (a, b) = roads.segment_points(self.segment);
+        let len = a.distance(b);
+        if len < 1e-3 {
+            return None;
+        }
+        let d = (b - a) / len;
+        let q = a + d * (self.pos - a).dot(d).clamp(0.0, len);
+        let right = Vec2::new(-d.y, d.x);
+        let side = if (self.pos - q).dot(right) >= 0.0 { 1.0 } else { -1.0 };
+        let hw = seg.half_width();
+        Some(BusStop { segment: self.segment, pos: q - right * side * (hw - 1.4).max(1.5), stats: StopStats::default(), back: true })
     }
 }
 
@@ -204,6 +230,11 @@ pub struct BusRoute {
     pub bus_minutes_today: u32,
     #[serde(default)]
     pub upkeep_yesterday: f32,
+    /// [w1] Runs out along its stops and back along the far kerbs of the
+    /// same streets (the way back's stops are [`BusStop::back`]), instead
+    /// of round a loop one way.
+    #[serde(default)]
+    pub two_way: bool,
 }
 
 /// [pt-transit] Why a line that wants a bus did not get one.
@@ -309,7 +340,14 @@ impl BusRoute {
             fares_yesterday: 0.0,
             bus_minutes_today: 0,
             upkeep_yesterday: 0.0,
+            two_way: false,
         }
+    }
+
+    /// [w1] Stops on the way out: all but a two-way line's way back (which
+    /// comes last).
+    pub fn outbound_len(&self) -> usize {
+        self.stops.iter().take_while(|s| !s.back).count()
     }
 
     /// [pt-transit] Sim minutes a bus takes round the whole loop (timed
@@ -575,7 +613,7 @@ impl Transit {
     pub fn stop_for_click(&self, roads: &RoadNetwork, p: Vec2) -> Option<BusStop> {
         let shared = self.routes.values().flat_map(|r| r.stops.iter()).filter(|s| s.pos.distance(p) <= SHARE_STOP).min_by(|a, b| a.pos.distance(p).total_cmp(&b.pos.distance(p)));
         match shared {
-            Some(s) => Some(BusStop { segment: s.segment, pos: s.pos, stats: StopStats::default() }),
+            Some(s) => Some(BusStop { segment: s.segment, pos: s.pos, stats: StopStats::default(), back: false }),
             None => BusStop::snap(roads, p),
         }
     }
@@ -733,7 +771,7 @@ mod tests {
     fn line(transit: &mut Transit, pts: &[Vec2], buses: u8) -> RouteId {
         let id = transit.new_route();
         let r = &mut transit.routes[id];
-        r.stops = pts.iter().map(|&p| BusStop { segment: SegmentId(0), pos: p, stats: StopStats::default() }).collect();
+        r.stops = pts.iter().map(|&p| BusStop { segment: SegmentId(0), pos: p, stats: StopStats::default(), back: false }).collect();
         let n = pts.len();
         r.legs = (0..n).map(|i| vec![pts[i], pts[(i + 1) % n]]).collect();
         r.buses = buses;

@@ -63,7 +63,7 @@ impl World {
     /// `from` is at, so riders change there; at `at` or where it belongs.
     pub fn share_bus_stop(&mut self, route: RouteId, from: (RouteId, usize), at: Option<usize>) -> Result<usize, String> {
         let src = self.transit.routes.get(from.0).and_then(|r| r.stops.get(from.1)).ok_or("no such stop")?;
-        let stop = BusStop { segment: src.segment, pos: src.pos, stats: transit::StopStats::default() };
+        let stop = BusStop { segment: src.segment, pos: src.pos, stats: transit::StopStats::default(), back: false };
         self.put_bus_stop(route, at, stop)
     }
 
@@ -73,7 +73,14 @@ impl World {
             return Err("this line stops there already".into());
         }
         let was = r.stops.len();
-        let idx = at.unwrap_or_else(|| bus_edit::insert_index(&r.stops.iter().map(|s| s.pos).collect::<Vec<_>>(), &r.legs, stop.pos)).min(was);
+        // [w1] A two-way line takes new stops on its way out; its way back
+        // follows them (`resync_two_way`).
+        let idx = if r.two_way {
+            let out = r.outbound_len();
+            at.unwrap_or_else(|| bus_edit::insert_index(&r.stops[..out].iter().map(|s| s.pos).collect::<Vec<_>>(), &[], stop.pos)).min(out)
+        } else {
+            at.unwrap_or_else(|| bus_edit::insert_index(&r.stops.iter().map(|s| s.pos).collect::<Vec<_>>(), &r.legs, stop.pos)).min(was)
+        };
         r.stops.insert(idx, stop);
         // The stop before now drives to the new one.
         let n = r.stops.len();
@@ -83,8 +90,67 @@ impl World {
         if idx < was {
             self.stop_inserted(route, idx);
         }
+        self.resync_two_way(route);
         self.transit.refresh_legs(&self.traffic.net);
         Ok(idx)
+    }
+
+    /// [w1] Run line `route` both ways (out along its stops and back along
+    /// the far kerbs of the same streets) or round its loop one way. The
+    /// way back's stops are made, and kept in step, from the stops on the
+    /// way out (`BusStop::far_kerb`): the end stops are served once, the
+    /// bus turning there.
+    pub fn set_bus_route_two_way(&mut self, route: RouteId, on: bool) -> Result<(), String> {
+        let r = self.transit.routes.get_mut(route).ok_or("no such line")?;
+        if r.two_way == on {
+            return Ok(());
+        }
+        r.two_way = on;
+        self.resync_two_way(route);
+        self.transit.refresh_legs(&self.traffic.net);
+        self.transit.version += 1;
+        Ok(())
+    }
+
+    /// [w1] For a stop on a two-way line's way back, the stop on the way out
+    /// it mirrors.
+    pub fn bus_stop_twin(&self, route: RouteId, idx: usize) -> Option<usize> {
+        let r = self.transit.routes.get(route)?;
+        let s = r.stops.get(idx).filter(|s| s.back)?;
+        let out = r.outbound_len();
+        r.stops[..out].iter().position(|o| o.far_kerb(&self.roads).is_some_and(|f| f.pos.distance(s.pos) < 1.0))
+    }
+
+    /// [w1] Make a line's way back match its way out: none on a one-way
+    /// line; on a two-way line the far kerb of every stop out but the two
+    /// ends, in reverse order. Stops on the way back that stay where they
+    /// were keep their figures; buses and riders bound for one that goes
+    /// are dealt with as for any stop removed.
+    pub(super) fn resync_two_way(&mut self, route: RouteId) {
+        let Some(r) = self.transit.routes.get(route) else { return };
+        let out = r.outbound_len();
+        let want: Vec<BusStop> = if r.two_way && out >= 3 { (1..out - 1).rev().filter_map(|k| r.stops[k].far_kerb(&self.roads)).collect() } else { Vec::new() };
+        let have: Vec<BusStop> = r.stops[out..].to_vec();
+        if want.len() == have.len() && want.iter().zip(&have).all(|(a, b)| a.pos.distance(b.pos) < 0.5 && a.segment == b.segment) {
+            return;
+        }
+        // Take the old way back off, last first.
+        for idx in (out..out + have.len()).rev() {
+            self.transit.routes[route].stops.remove(idx);
+            self.stop_removed(route, idx);
+        }
+        let r = &mut self.transit.routes[route];
+        for mut s in want {
+            if let Some(old) = have.iter().find(|h| h.pos.distance(s.pos) < 1.0) {
+                s.stats = old.stats;
+                s.stats.forget_leg();
+            }
+            r.stops.push(s);
+        }
+        // The last stop out now drives to a different stop next.
+        if out > 0 {
+            r.stops[out - 1].stats.forget_leg();
+        }
     }
 
     /// [pt-transit] A stop went into a line's list at `idx`: buses, leg
@@ -225,7 +291,17 @@ impl World {
     }
 
     pub fn move_bus_stop(&mut self, route: RouteId, idx: usize, p: Vec2) -> bool {
-        let Some(stop) = BusStop::snap(&self.roads, p) else { return false };
+        let Some(mut stop) = BusStop::snap(&self.roads, p) else { return false };
+        // [w1] A stop on a two-way line's way back moves its twin on the way
+        // out to the kerb opposite.
+        let mut idx = idx;
+        if self.transit.routes.get(route).and_then(|r| r.stops.get(idx)).is_some_and(|s| s.back) {
+            let Some(twin) = self.bus_stop_twin(route, idx) else { return false };
+            idx = twin;
+            if let Some(f) = stop.far_kerb(&self.roads) {
+                stop = BusStop { back: false, ..f };
+            }
+        }
         let Some(r) = self.transit.routes.get_mut(route) else { return false };
         if idx >= r.stops.len() {
             return false;
@@ -237,6 +313,7 @@ impl World {
         let n = r.stops.len();
         r.stops[idx].stats.forget_leg();
         r.stops[(idx + n - 1) % n].stats.forget_leg();
+        self.resync_two_way(route);
         self.transit.refresh_legs(&self.traffic.net);
         true
     }
@@ -271,6 +348,9 @@ impl World {
 
     /// Remove a stop; a line with no stops left is removed too.
     pub fn remove_bus_stop(&mut self, route: RouteId, idx: usize) {
+        // [w1] A stop on a two-way line's way back: its twin on the way out
+        // goes (and with it this one).
+        let idx = self.bus_stop_twin(route, idx).unwrap_or(idx);
         let Some(r) = self.transit.routes.get_mut(route) else { return };
         if idx < r.stops.len() {
             r.stops.remove(idx);
@@ -285,6 +365,7 @@ impl World {
         if empty {
             self.remove_bus_route(route);
         } else {
+            self.resync_two_way(route);
             self.transit.refresh_legs(&self.traffic.net);
         }
     }

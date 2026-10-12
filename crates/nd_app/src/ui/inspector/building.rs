@@ -72,9 +72,15 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
     // [pt-growth] (F25) While the old building comes down the fields
     // already describe its successor: say which is which, so a hut being
     // pulled down does not read as "9 floors".
+    // [w1] With the planned height, and on a plain demolition whatever is
+    // planned for the plot.
+    let next = w.site_plan(id).and_then(|p| p.next);
     match &b.demolition {
-        Some(d) if d.clear_lot => hint(ui, &format!("coming down: {} floor{} {} {}", d.floors, crate::ui::fmt::s(d.floors), d.tier.label().to_lowercase(), d.land_use.label().to_lowercase())),
-        Some(d) => hint(ui, &format!("coming down: {} floor{} {} {}  ·  then {}, {} floor{}", d.floors, crate::ui::fmt::s(d.floors), d.tier.label().to_lowercase(), d.land_use.label().to_lowercase(), style.map_or("a new building", |s| s.label()), b.floors, crate::ui::fmt::s(b.floors))),
+        Some(d) if d.clear_lot => {
+            let then = next.as_ref().map_or(String::new(), |n| format!("  ·  then {}{}, {} floor{}, about {:.0} m", if n.joins { "part of " } else { "" }, n.name, n.floors, crate::ui::fmt::s(n.floors), n.height_m));
+            hint(ui, &format!("coming down: {} floor{} {} {}{then}", d.floors, crate::ui::fmt::s(d.floors), d.tier.label().to_lowercase(), d.land_use.label().to_lowercase()));
+        }
+        Some(d) => hint(ui, &format!("coming down: {} floor{} {} {}  ·  then {}, {} floor{}, about {:.0} m", d.floors, crate::ui::fmt::s(d.floors), d.tier.label().to_lowercase(), d.land_use.label().to_lowercase(), style.map_or("a new building", |s| s.label()), b.floors, crate::ui::fmt::s(b.floors), w.building_height(id))),
         None => {
             let started = if b.construction.is_some() { "started" } else { "built" };
             hint(ui, &format!("{}  ·  {} floor{}  ·  {started} day {}", style.map_or("unknown style", |s| s.label()), b.floors, crate::ui::fmt::s(b.floors), fmt::day(b.built_tick)));
@@ -131,7 +137,12 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
     if let Some(d) = &b.demolition {
         let ready = w.clock.after_work_hours(d.work_hours_left());
         ui.add(egui::ProgressBar::new(d.progress).desired_height(18.0).fill(egui::Color32::from_rgb(190, 90, 60)).text(format!("BEING DEMOLISHED {:.0}%, clear about day {} {}", d.progress * 100.0, fmt::day(ready), fmt::hhmm(ready))));
-        let then = if d.clear_lot { "then a vacant lot" } else { "then the new building goes up" };
+        let then = match next.as_ref() {
+            _ if !d.clear_lot => format!("then the new building goes up: {} floor{}, about {:.0} m", b.floors, crate::ui::fmt::s(b.floors), w.building_height(id)),
+            Some(n) if n.joins => format!("then part of {}: {} floor{}, about {:.0} m", n.name, n.floors, crate::ui::fmt::s(n.floors), n.height_m),
+            Some(n) => format!("then {}: {} floor{}, about {:.0} m", n.name, n.floors, crate::ui::fmt::s(n.floors), n.height_m),
+            None => "then a vacant lot (nothing planned yet)".to_string(),
+        };
         ui.label(egui::RichText::new(format!("{}  ·  {then}  ·  wrecking crew {}/{}  ·  rubble {} of {} loads hauled  ·  crews work 08:00-17:00", capitalise(d.reason.label()), b.workers.len(), b.jobs, d.loads, nd_sim::Demolition::loads_for(d.floors))).small());
     }
     if let Some(c) = b.construction.as_ref().filter(|_| b.demolition.is_none()) {
@@ -141,6 +152,10 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
         let left = format!("done about day {} {}", fmt::day(ready), fmt::hhmm(ready));
         let status = if c.waiting_for_materials() { if c.ordered { ", waiting for materials (truck on its way)" } else { ", waiting for materials" } } else { "" };
         ui.add(egui::ProgressBar::new(c.progress).desired_height(18.0).fill(egui::Color32::from_rgb(200, 150, 60)).text(format!("UNDER CONSTRUCTION {:.0}%, {left}{status}", c.progress * 100.0)));
+        // [w1] What it will be when it tops out.
+        if let Some(n) = next.as_ref() {
+            ui.label(egui::RichText::new(format!("Planned: {} floor{}, about {:.0} m high when finished", n.floors, crate::ui::fmt::s(n.floors), n.height_m)).strong().color(egui::Color32::from_rgb(120, 220, 245)));
+        }
         ui.label(egui::RichText::new(format!("{} of {} deliveries in  ·  {:.1} days of work in all  ·  site crew {}/{}  ·  will have {} homes and {} jobs", c.deliveries, nd_sim::Construction::DELIVERIES, c.days, b.workers.len(), b.jobs, homes, jobs)).small());
     }
     if b.plant.is_none() && b.powered < 0.98 && b.construction.is_none() {

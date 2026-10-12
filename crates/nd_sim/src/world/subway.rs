@@ -62,7 +62,7 @@ impl World {
     /// end closes a loop of three or more), checked: every one a metro
     /// station, none twice. Returns the distinct stations and whether the
     /// line is a loop.
-    fn metro_calls(&self, stations: &[BuildingId]) -> Result<(Vec<BuildingId>, bool), String> {
+    pub(super) fn metro_calls(&self, stations: &[BuildingId]) -> Result<(Vec<BuildingId>, bool), String> {
         let mut seen: Vec<BuildingId> = Vec::new();
         let mut looped = false;
         for (k, &s) in stations.iter().enumerate() {
@@ -238,7 +238,7 @@ impl World {
 
     /// People waiting for a metro ride `pred` rules out give up and go on
     /// by other means.
-    fn strand_metro_waiting(&mut self, pred: impl Fn(MetroLineId, BuildingId, BuildingId) -> bool) {
+    pub(super) fn strand_metro_waiting(&mut self, pred: impl Fn(MetroLineId, BuildingId, BuildingId) -> bool) {
         let tick = self.clock.tick;
         let stranded: Vec<CitizenId> = self
             .citizens
