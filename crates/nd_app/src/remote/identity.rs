@@ -89,7 +89,7 @@ pub fn game_history(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             let game = opt_str(cmd, "game_id")?.map(str::to_string).unwrap_or_else(|| ctx.sim.world.identity.game_id.clone());
             let marked_only = opt_bool(cmd, "marked_only")?.unwrap_or(false);
             let entries: Vec<Value> = history::list(dir, &game).iter().filter(|e| !marked_only || e.bookmark().is_some()).map(entry_json).collect();
-            Ok(json!({ "game_id": game, "city": identity_json(&ctx.sim.world), "entries": entries, "kept_unmarked": history::KEPT, "note": "newest first; every daily autosave lands here, marked ones are never pruned" }))
+            Ok(json!({ "game_id": game, "city": identity_json(&ctx.sim.world), "entries": entries, "kept_unmarked": history::KEPT, "kept_spaced": history::KEPT_SPACED, "spacing_days": history::SPACING, "note": "newest first; every daily autosave lands here, marked ones are never pruned" }))
         }
         "bookmark" | "mark_entry" | "unmark" => {
             let e = entry_of(cmd, ctx)?;

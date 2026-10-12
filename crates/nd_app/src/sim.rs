@@ -190,8 +190,8 @@ impl Sim {
 
     pub fn load(&mut self, path: &str) -> Result<(), String> {
         crate::crash::note_io("loading", Path::new(path));
-        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-        self.world = World::from_ron(&text).map_err(|e| e.to_string())?;
+        // [saves] Compressed or plain RON (saves from before compression).
+        self.world = World::read_save(path)?;
         crate::crash::note_io("loaded", Path::new(path));
         self.city_replaced();
         self.saved_tick = Some(self.world.clock.tick);
@@ -217,8 +217,11 @@ impl Sim {
 /// [memory] Streamed straight into the file: a big city's save is well over
 /// 100 MB, and building it as one `String` first asked for a single 256 MiB
 /// block (the crash at day 10 of a 2,000-lot city).
+///
+/// [saves] Gzip-compressed RON (`World::write_ron_gz`): a tenth of the size
+/// and of the disk writes. Loading takes either form, so older saves load.
 pub fn save_world(world: &World, path: &Path) -> Result<(), String> {
-    write_atomic_with(path, |out| world.write_ron(out).map_err(std::io::Error::other)).map_err(|e| e.to_string())
+    write_atomic_with(path, |out| world.write_ron_gz(out)).map_err(|e| e.to_string())
 }
 
 /// Copy `from` to `to` atomically (as [`write_atomic`]): the autosave's

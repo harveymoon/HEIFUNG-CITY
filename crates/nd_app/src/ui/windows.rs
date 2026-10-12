@@ -30,10 +30,12 @@ pub enum Info {
     Dev,
     /// [pt-ux] The Alerts window (ui/alerts.rs).
     Alerts,
+    /// [settings] Graphics, text size, speech bubbles and the controls.
+    Settings,
 }
 
 impl Info {
-    pub const ALL: [Info; 6] = [Info::Lines, Info::Land, Info::Alerts, Info::Saves, Info::Help, Info::Dev];
+    pub const ALL: [Info; 7] = [Info::Lines, Info::Land, Info::Alerts, Info::Saves, Info::Settings, Info::Help, Info::Dev];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -43,6 +45,7 @@ impl Info {
             Info::Help => "Help",
             Info::Dev => "Dev",
             Info::Alerts => "Alerts",
+            Info::Settings => "Settings",
         }
     }
 
@@ -57,6 +60,7 @@ impl Info {
             Info::Saves => 460.0,
             Info::Land => 380.0,
             Info::Alerts => 420.0,
+            Info::Settings => 420.0,
         }
     }
 
@@ -131,6 +135,7 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, info: Info) {
         Info::Help => help_window(ui),
         Info::Dev => dev(ui, p),
         Info::Alerts => super::alerts::body(ui, p),
+        Info::Settings => settings(ui, p),
     }
 }
 
@@ -158,8 +163,20 @@ pub(super) fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
             }
         });
     }
+    hint(ui, "Graphics, text size and speech bubbles: the Settings window.");
+}
+
+/// [settings] The Settings window: graphics, text size and speech bubbles
+/// (kept in `settings.ron` in the game's home folder), and the controls.
+fn settings(ui: &mut egui::Ui, p: &mut UiCtx) {
     graphics_setting(ui, p);
     super::theme::scale_setting(ui);
+    section(ui, "CONTROLS");
+    hint(ui, "The camera and the keys; the Help window has the tools.");
+    ui.label(egui::RichText::new(help::CAMERA_ORBIT).small());
+    ui.label(egui::RichText::new(format!("Walk mode: {}", help::CAMERA_WALK)).small());
+    ui.label(egui::RichText::new(help::HOTKEYS).small());
+    ui.label(egui::RichText::new(help::TOOL_KEYS).small());
 }
 
 /// [look] The graphics setting: Auto holds about 60 fps by stepping the
@@ -170,6 +187,8 @@ fn graphics_setting(ui: &mut egui::Ui, p: &mut UiCtx) {
         for q in crate::render::QualitySetting::ALL {
             if ui.selectable_label(p.lighting.quality == q, q.label()).clicked() {
                 p.lighting.quality = q;
+                // [settings] Kept for the next run.
+                super::theme::save_quality(q.label());
             }
         }
     });

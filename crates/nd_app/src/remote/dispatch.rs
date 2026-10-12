@@ -798,7 +798,7 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("note", "no fields: what is highlighted now and the summary (worked out the frame after a change)"),
     ] },
     Cmd { name: "window", aliases: &[], effect: View, run: window::window, help: &[
-        ("name", "a tool window: lines|view (or land)|saves|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), new_game, title (the title screen), history (the Game history window); the old report names city|economy|taxes|market|people|power|transit|emergencies|districts|tourism open their City Data tab or page"),
+        ("name", "a tool window: lines|view (or land)|alerts|saves|settings|help|dev, or build (the Build window; section roads|zoning|parks|districts|power|services|transit|rail|water|attractions), new_game, title (the title screen), history (the Game history window); the old report names city|economy|taxes|market|people|power|transit|emergencies|districts|tourism open their City Data tab or page"),
         ("open", "bool, omitted toggles"),
         ("sub", "with a City Data name: the sub-tab (people's old tab overview|concerns|social works too)"),
     ] },

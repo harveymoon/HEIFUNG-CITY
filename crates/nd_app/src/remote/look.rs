@@ -17,7 +17,7 @@ pub(super) fn graphics_json(ctx: &Ctx) -> Value {
     };
     json!({
         "quality": ctx.lighting.quality.label().to_lowercase(), "tier": tier.label().to_lowercase(),
-        "frame_ms": round(g.frame_ms), "sim_ms": round(g.sim_ms), "auto_steps": g.steps, "reason": g.reason, "effects": g.effects,
+        "frame_ms": round(g.frame_ms), "sim_ms": round(g.sim_ms), "long_frames": g.long_frames.iter().map(|&(ms, sim_ms, tick)| json!({ "ms": round(ms), "sim_ms": round(sim_ms), "tick": tick })).collect::<Vec<_>>(), "auto_steps": g.steps, "reason": g.reason, "effects": g.effects,
     })
 }
 
