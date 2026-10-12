@@ -398,7 +398,7 @@ impl Port {
     /// shore within reach, square to it, set back from the waterline, with
     /// its pier. `Err` says why not.
     pub fn plan(kind: PortKind, p: Vec2, land: &Landscape) -> Result<Port, String> {
-        let shore = land.nearest_shore(p, SHORE_REACH).ok_or_else(|| format!("a {} must be built at the water's edge", kind.label()))?;
+        let shore = land.nearest_shore(p, SHORE_REACH).ok_or_else(|| format!("{} must be built at the water's edge", crate::names::a(kind.label())))?;
         let w = shore.water;
         match (kind, w.kind) {
             (PortKind::ShippingPort, WaterKind::Lake) => return Err("ships cannot reach a lake: build the port on a river or the sea".into()),
@@ -406,7 +406,7 @@ impl Port {
             _ => {}
         }
         if matches!(w.kind, WaterKind::River | WaterKind::Stream) && w.width < kind.min_width() {
-            return Err(format!("the {} is {:.0} m wide; a {} needs {:.0} m", w.kind.label(), w.width, kind.label(), kind.min_width()));
+            return Err(format!("the {} is {:.0} m wide; {} needs {:.0} m", w.kind.label(), w.width, crate::names::a(kind.label()), kind.min_width()));
         }
         let seaward = shore.seaward;
         let along = Vec2::new(seaward.y, -seaward.x);

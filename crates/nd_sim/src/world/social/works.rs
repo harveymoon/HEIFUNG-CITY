@@ -250,11 +250,11 @@ impl World {
         }
         for m in &members {
             if let Some(c) = self.citizens.get_mut(*m) {
-                c.remember(tick, format!("We put our savings together and are opening {bname}, a {}.", kind.label()));
+                c.remember(tick, format!("We put our savings together and are opening {bname}, {}.", crate::names::a(kind.label())));
             }
         }
         let pos = self.lots[lot].center;
-        self.social.push_news(tick, format!("💡 {bname}: friends pooled ${stake:.0} to open a {} near their homes.", kind.label()), pos, Some(gid));
+        self.social.push_news(tick, format!("💡 {bname}: friends pooled ${stake:.0} to open {} near their homes.", crate::names::a(kind.label())), pos, Some(gid));
         true
     }
 

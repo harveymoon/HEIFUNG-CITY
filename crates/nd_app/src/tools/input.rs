@@ -124,6 +124,12 @@ pub(crate) fn tool_input(
             return;
         }
     }
+    // [w1] Editing a metro line ends with the line, or with the tool or mode.
+    if let Some(e) = tools.metro_edit {
+        if !sim.world.subway.lines.contains_key(e.line) || tools.tool != Tool::Transit || tools.transit_mode != TransitMode::Metro {
+            tools.metro_edit = None;
+        }
+    }
     if key(KeyCode::Escape) && !flags.data_view {
         tools.points.clear();
         tools.drag = None;
@@ -133,6 +139,10 @@ pub(crate) fn tool_input(
         *selection = Selection::None;
         if tools.tool != Tool::Transit {
             tools.route_sel = None;
+        }
+        // [w1] Esc ends editing a metro line (every change is already made).
+        if tools.metro_edit.is_some() {
+            super::metro_edit::finish(&sim.world, &mut tools);
         }
         // [metro-ux] Esc cancels the line being drawn.
         if !tools.metro_draft.is_empty() {

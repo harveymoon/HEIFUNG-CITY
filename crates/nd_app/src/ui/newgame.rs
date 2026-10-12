@@ -349,7 +349,7 @@ fn start(p: &mut UiCtx, params: LandscapeParams, city: Option<CityPreset>, name:
     p.sim.set_city_name(name);
     let named = p.sim.world.identity.display_name().to_string();
     p.flags.message = match city {
-        Some(c) => format!("New city {named}: {} on a {label} landscape", c.label()),
+        Some(c) => format!("New city {named}: {} on {} landscape", c.label(), nd_sim::names::a(label)),
         None => format!("New city {named}: {label} landscape"),
     };
 }

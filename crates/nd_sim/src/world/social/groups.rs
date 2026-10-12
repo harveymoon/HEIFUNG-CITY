@@ -97,12 +97,12 @@ impl World {
             for &m in &crew {
                 self.social.circles.entry(m).or_default().groups.push(id);
                 if let Some(c) = self.citizens.get_mut(m) {
-                    c.remember(tick, if m == f { format!("Started {name}, a {}, with friends.", kind.label()) } else { format!("Joined {name}, a {}.", kind.label()) });
+                    c.remember(tick, if m == f { format!("Started {name}, {}, with friends.", crate::names::a(kind.label())) } else { format!("Joined {name}, {}.", crate::names::a(kind.label())) });
                 }
             }
             let pos = home.unwrap_or(Vec2::ZERO);
             let fname = self.citizens[f].name.clone();
-            self.social.push_news(tick, format!("{} {fname} and friends started {name}, a {}.", kind.icon(), kind.label()), pos, Some(id));
+            self.social.push_news(tick, format!("{} {fname} and friends started {name}, {}.", kind.icon(), crate::names::a(kind.label())), pos, Some(id));
             self.social.today.groups_formed += 1;
             formed += 1;
             per_kind[kind.index()] += 1;

@@ -135,6 +135,35 @@ pub fn command(cmd: &Value, w: &mut World) -> Result<Value, String> {
             let p = w.metro_line_preview(&stations)?;
             Ok(json!({ "preview": preview_json(&p), "affordable": p.tunnel_cost <= w.economy.treasury, "treasury": round(w.economy.treasury) }))
         }
+        // [w1] Stop by stop, as bus lines: only new tunnel is paid for.
+        "insert_stop" | "remove_stop" | "move_stop" | "set_loop" | "relay" => {
+            let id = line_arg(w, cmd)?;
+            let before = w.economy.treasury;
+            let index = opt_u64(cmd, "index")?.map(|i| i as usize);
+            let mut at = Value::Null;
+            match action.as_str() {
+                "insert_stop" => {
+                    let s = station_arg(w, field(cmd, "station").ok_or("missing station: id or [x, y]")?)?;
+                    at = json!(w.insert_metro_stop(id, index, s)?);
+                }
+                "remove_stop" => w.remove_metro_stop(id, index.ok_or("missing index")?)?,
+                "move_stop" => {
+                    let s = station_arg(w, field(cmd, "station").ok_or("missing station: id or [x, y]")?)?;
+                    w.move_metro_stop(id, index.ok_or("missing index")?, s)?;
+                }
+                "set_loop" => w.set_metro_looped(id, opt_bool(cmd, "on")?.ok_or("missing on: bool")?)?,
+                _ => {
+                    let list = match field(cmd, "stations") {
+                        Some(Value::Array(list)) => list.clone(),
+                        _ => return Err("missing stations: [id or [x, y], ...]".into()),
+                    };
+                    let stations = list.iter().map(|v| station_arg(w, v)).collect::<Result<Vec<_>, _>>()?;
+                    let looped = opt_bool(cmd, "loop")?.unwrap_or(w.subway.lines[id].looped);
+                    w.relay_metro_line(id, &stations, looped)?;
+                }
+            }
+            Ok(json!({ "line": line_row(w, id), "index": at, "paid": round(before - w.economy.treasury), "treasury": round(w.economy.treasury) }))
+        }
         "headway" => {
             let id = line_arg(w, cmd)?;
             let m = opt_u64(cmd, "minutes")?.ok_or("missing minutes")?;

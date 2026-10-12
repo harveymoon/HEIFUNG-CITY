@@ -400,7 +400,7 @@ pub fn site(roads: &RoadNetwork, p: Vec2, size: TollSize) -> Result<(SegmentId, 
     let len = a.distance(b);
     let clear = size.clearance();
     if len < clear * 2.0 + 2.0 {
-        return Err(format!("this stretch of road is {len:.0} m between junctions or bends; a {} needs a straight run of {:.0} m", size.label(), clear * 2.0 + 2.0));
+        return Err(format!("this stretch of road is {len:.0} m between junctions or bends; {} needs a straight run of {:.0} m", crate::names::a(size.label()), clear * 2.0 + 2.0));
     }
     let dir = (b - a) / len.max(1e-3);
     let along = (q - a).dot(dir).clamp(clear, len - clear);

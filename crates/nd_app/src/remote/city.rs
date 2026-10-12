@@ -57,7 +57,7 @@ pub(super) fn generate_city(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String>
     if let Some(name) = name {
         ctx.sim.set_city_name(name);
     }
-    ctx.tools.status = format!("New city: {} on a {} landscape", preset.label(), ctx.sim.world.landscape.params.preset.label());
+    ctx.tools.status = format!("New city: {} on {} landscape", preset.label(), nd_sim::names::a(ctx.sim.world.landscape.params.preset.label()));
     ctx.history.follow_city(ctx.sim.generation, &ctx.sim.world, "generated city");
     let mut v = land::summary(&ctx.sim.world);
     let class = |c: nd_procgen::citygen::RoadClass| json!({ "roads": plan.roads.iter().filter(|r| r.class == c).count(), "length_m": round(plan.road_length(c)) });

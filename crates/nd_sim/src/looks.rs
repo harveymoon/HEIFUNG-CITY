@@ -440,9 +440,9 @@ impl Appearance {
             HairStyle::Short => format!("short {} {colour} hair", self.genes.texture.label()),
             HairStyle::Long => format!("long {} {colour} hair", self.genes.texture.label()),
             HairStyle::Bun => format!("{colour} hair in a bun"),
-            HairStyle::Buzz => format!("a {colour} buzz cut"),
-            HairStyle::Mohawk => format!("a {colour} mohawk"),
-            HairStyle::Afro => format!("a {colour} afro"),
+            HairStyle::Buzz => format!("{} buzz cut", crate::names::a(colour)),
+            HairStyle::Mohawk => format!("{} mohawk", crate::names::a(colour)),
+            HairStyle::Afro => format!("{} afro", crate::names::a(colour)),
         }
     }
 

@@ -550,7 +550,7 @@ pub fn unit_doing(w: &World, uid: UnitId) -> String {
     match (u.state, inc) {
         (UnitState::OnScene, Some(i)) if u.packing() => format!("packing up at {}, the fire {}", place.unwrap_or_default(), if i.outcome == Some(Outcome::Extinguished) { "out" } else { "over" }),
         (UnitState::OnScene, Some(i)) => format!("on scene at {} {}, {} min", place.unwrap_or_default(), what(i.kind), tick.saturating_sub(i.arrived.unwrap_or(tick))),
-        (UnitState::Responding, Some(i)) => format!("responding to a {} at {}, {} min since the call", what(i.kind), place.unwrap_or_default(), tick.saturating_sub(i.dispatched.unwrap_or(tick))),
+        (UnitState::Responding, Some(i)) => format!("responding to {} at {}, {} min since the call", nd_sim::names::a(what(i.kind)), place.unwrap_or_default(), tick.saturating_sub(i.dispatched.unwrap_or(tick))),
         (UnitState::Transporting, _) => format!("taking a patient to {}", u.hospital.and_then(|h| w.buildings.get(h)).map_or("hospital", |b| b.name.as_str())),
         (UnitState::Pursuing, _) => "in pursuit".into(),
         (UnitState::Patrol, _) if u.kind == UnitKind::PoliceCar => if u.car.is_some() { "on patrol".into() } else { "on patrol, parked on the beat".into() },

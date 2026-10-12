@@ -55,7 +55,7 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, id: u32
     let (road, ways) = crate::toll_select::road(w, b);
     let lanes: u8 = ways.iter().map(|(_, n)| n).sum();
     let kiosks = b.size.booths(lanes);
-    hint(ui, &format!("{}  ·  {kiosks} kiosk{} across  ·  on a {road}", capitalise(b.size.label()), super::fmt::s(kiosks)));
+    hint(ui, &format!("{}  ·  {kiosks} kiosk{} across  ·  on {}", capitalise(b.size.label()), super::fmt::s(kiosks), nd_sim::names::a(&road)));
     let charges = ways.iter().map(|(d, n)| format!("{n} lane{} {d}bound", if *n == 1 { "" } else { "s" })).collect::<Vec<_>>().join(", ");
     ui.label(format!("Charges {}: {charges}", if ways.len() > 1 { "both ways" } else { "one way" }));
 

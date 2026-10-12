@@ -262,6 +262,30 @@ fn paint_lines(painter: &egui::Painter, to_screen: &dyn Fn(SVec2) -> Option<egui
     if !tool_active(tools) {
         return;
     }
+    // [w1] Editing a line: it stands out, and what a click or a drop on the
+    // station under the pointer would make of it pulses.
+    if let Some(e) = tools.metro_edit {
+        let Some(l) = w.subway.lines.get(e.line) else { return };
+        paint_path(painter, to_screen, &l.path, egui::Stroke::new(9.0, egui::Color32::from_black_alpha(170)));
+        paint_path(painter, to_screen, &l.path, egui::Stroke::new(5.5, egui::Color32::from_rgb(245, 245, 255)));
+        if let Some(h) = tools.metro_hover {
+            let mut stations = l.stations.clone();
+            match (e.grab, stations.iter().position(|s| *s == h)) {
+                (Some(g), None) => stations[g] = h,
+                (None, None) => {
+                    let pts: Vec<SVec2> = stations.iter().filter_map(|&s| w.metro_platform(s)).collect();
+                    let at = e.slot.unwrap_or_else(|| w.metro_platform(h).map_or(stations.len(), |p| nd_sim::world::metro_edit::metro_insert_index(&pts, l.looped, p))).min(stations.len());
+                    stations.insert(at, h);
+                }
+                _ => return,
+            }
+            let pts: Vec<SVec2> = stations.iter().filter_map(|&s| w.metro_platform(s)).collect();
+            let (path, _) = nd_sim::subway::lay_line(&pts, l.looped);
+            let col = egui::Color32::from_rgb(140, 255, 170).gamma_multiply(0.5 + 0.5 * pulse);
+            paint_path(painter, to_screen, &path, egui::Stroke::new(3.5, col));
+        }
+        return;
+    }
     let draft = &tools.metro_draft;
     let now = w.metro_draft_preview(draft);
     if now.path.len() >= 2 {
@@ -336,7 +360,11 @@ fn station_labels(mut contexts: EguiContexts, sim: Res<Sim>, tools: Res<ToolStat
             continue;
         }
         let hovered = drawing && tools.metro_hover == Some(s);
-        let order = draft.stations.iter().position(|&x| x == s);
+        // [w1] Editing a line: its stations carry their numbers.
+        let order = match tools.metro_edit.and_then(|e| w.subway.lines.get(e.line)) {
+            Some(l) => l.stations.iter().position(|&x| x == s),
+            None => draft.stations.iter().position(|&x| x == s),
+        };
         let r = if hovered { 17.0 } else { 14.0 };
         let ring = if hovered { egui::Color32::WHITE } else if order.is_some() { egui::Color32::from_rgb(255, 230, 150) } else { cyan };
         painter.circle(at, r + 3.0, egui::Color32::from_black_alpha(150), egui::Stroke::NONE);
@@ -378,6 +406,10 @@ fn panel(mut contexts: EguiContexts, mut sim: ResMut<Sim>, mut tools: ResMut<Too
     let ctx = contexts.ctx_mut()?;
     let tools = &mut *tools;
     let w = &mut sim.world;
+    if tools.metro_edit.is_some() {
+        edit_panel(ctx, w, tools);
+        return Ok(());
+    }
     let stations = w.metro_stations().len();
     let d = tools.metro_draft.clone();
     let p = w.metro_draft_preview(&d);
@@ -462,4 +494,59 @@ fn panel(mut contexts: EguiContexts, mut sim: ResMut<Sim>, mut tools: ResMut<Too
         _ => {}
     }
     Ok(())
+}
+
+/// [w1] The panel while a line is edited stop by stop.
+fn edit_panel(ctx: &egui::Context, w: &mut World, tools: &mut ToolState) {
+    let Some(e) = tools.metro_edit else { return };
+    let Some(l) = w.subway.lines.get(e.line) else { return };
+    let (looped, n) = (l.looped, l.stations.len());
+    let mut act: Option<&str> = None;
+    egui::Window::new(format!("Editing {}", l.name))
+        .id(egui::Id::new("metro_line_panel"))
+        .default_pos(egui::pos2(12.0, 64.0))
+        .default_width(310.0)
+        .resizable(false)
+        .collapsible(true)
+        .show(ctx, |ui| {
+            ui.set_max_width(310.0);
+            for text in [
+                "Click a station to add it: it goes in where it belongs along the line (a + in the Lines window's diagram picks the gap instead).",
+                "Drag a stop onto another station to call there instead.",
+                "Right-click (or Delete) a stop to take it off the line.",
+            ] {
+                ui.label(egui::RichText::new(text).color(IVORY));
+            }
+            ui.label(egui::RichText::new("Each change re-lays the tunnel at once; only new stretches are dug and paid for.").small().weak());
+            ui.separator();
+            let names: Vec<String> = l.stations.iter().map(|&s| name(w, s)).collect();
+            let route = if looped { format!("{} > {}", names.join(" > "), names[0]) } else { names.join(" > ") };
+            ui.label(egui::RichText::new(route).color(IVORY));
+            ui.label(egui::RichText::new(format!("{n} stations · {:.2} km of tunnel · treasury {:.0}", l.length() / 1000.0, w.economy.treasury)).small());
+            ui.horizontal(|ui| {
+                let mut lp = looped;
+                if ui.add_enabled(n >= 3, egui::Checkbox::new(&mut lp, "loop")).on_hover_text("Run on from the last station back to the first").changed() {
+                    act = Some(if lp { "loop" } else { "open" });
+                }
+                if ui.button(egui::RichText::new("Finish editing").strong()).on_hover_text("Enter or Esc").clicked() {
+                    act = Some("finish");
+                }
+            });
+            if !tools.status.is_empty() {
+                let bad = tools.status.contains("not added") || tools.status.starts_with("No") || tools.status.starts_with("Not");
+                ui.label(egui::RichText::new(&tools.status).small().color(if bad { WARN } else { IVORY.gamma_multiply(0.85) }));
+            }
+        });
+    match act {
+        Some("finish") => {
+            crate::tools::metro_edit::finish(w, tools);
+        }
+        Some(x) => {
+            tools.status = match w.set_metro_looped(e.line, x == "loop") {
+                Ok(()) => if x == "loop" { "Closed into a loop.".into() } else { "Opened: the line runs end to end.".into() },
+                Err(err) => format!("Not changed: {err}."),
+            };
+        }
+        None => {}
+    }
 }

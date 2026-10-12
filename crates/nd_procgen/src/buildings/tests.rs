@@ -883,3 +883,29 @@ fn supports_are_ibeams_and_stay_put() {
     }
     assert!(props >= 20 * 5, "stacks should stand on I-beam props ({props} rust triangles)");
 }
+
+/// [w1-render] A megacorp HQ on a needle tower carries its crown big
+/// enough to read against the tower: the logo screens over the top are a
+/// fair share of the height, not the 14 m cap of a slab's roof.
+#[test]
+fn hq_crown_reads_on_a_needle_tower() {
+    use super::sweep_tests::{hq, lot_of, rect};
+    let lot = lot_of(&rect(110.0, 110.0), 0.0, Vec2::ZERO);
+    for height in [320.0f32, 600.0] {
+        let tower = nd_sim::towers::Tower { height, design: nd_sim::towers::TowerDesign::Needle, seed: 5, started_day: 0, topped_out_day: Some(1), record_bid: false };
+        let extras = Extras { brand: Some(hq()), tower: Some(tower), ..Extras::default() };
+        let g = generate_styled_extras(&lot, LandUse::Commercial, 150, Tier::High, 1.0, 7, Style::Supertall, &BuildingRules::default(), &Palette::default(), &extras);
+        check_mesh(&g, "needle hq");
+        let shaft_top = height * 0.76;
+        // The screens: panels standing over the shaft's top.
+        let screens: Vec<[f32; 3]> = g.get(Surface::Panel).positions.iter().copied().filter(|p| p[1] > shaft_top + 2.0 && p[1] < shaft_top + 80.0).collect();
+        assert!(!screens.is_empty(), "{height} m: no crown screens");
+        let (y0, y1) = screens.iter().fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p[1]), b.max(p[1])));
+        let flat: Vec<Vec2> = screens.iter().map(|p| Vec2::new(p[0], p[2])).collect();
+        let (lo, hi) = parts::bounds(&flat);
+        assert!(y1 - y0 >= height * 0.04, "{height} m: crown screens {:.1} m tall", y1 - y0);
+        assert!((hi - lo).max_element() >= height * 0.04, "{height} m: crown screens {:?} across", hi - lo);
+    }
+    // A slab's roof keeps its old crown.
+    assert_eq!(super::brand::crown_logo_size(60.0, 10.0, 12.0), 7.0);
+}

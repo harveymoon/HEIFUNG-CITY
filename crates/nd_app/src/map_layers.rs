@@ -78,6 +78,8 @@ pub const MAP_LAYERS: &[MapLayer] = &[
     MapLayer { key: "parking", label: "Parking", group: "Traffic", hotkey: "", hint: "Streets by the legal parking a driver finds (kerbs and public lots in walking reach); every public lot with how full it is", flag: |o| &mut o.parking, legend: legend_parking },
     MapLayer { key: "trails", label: "Trails", group: "People", hotkey: "", hint: "A long exposure: everything that moves leaves a fading streak over a darkened city", flag: |o| &mut o.trails, legend: legend_trails },
     MapLayer { key: "density", label: "Land density", group: "City", hotkey: "", hint: "Foot traffic and people per block, smoothed over days: quiet suburbs dark, busy main streets hot, where developers build taller", flag: |o| &mut o.density, legend: legend_density },
+    // [w1] (render/sites_layer.rs)
+    MapLayer { key: "construction", label: "Construction", group: "City", hotkey: "", hint: "Building sites: going up (with the planned height), coming down for a rebuild, or coming down for good", flag: |o| &mut o.construction, legend: legend_construction },
     MapLayer { key: "metro", label: "Metro", group: "Transit", hotkey: "M", hint: "The metro: tunnels and lines in their colours, every station a named marker, over a dimmed city", flag: |o| &mut o.metro, legend: legend_metro },
 ];
 
@@ -368,6 +370,22 @@ fn legend_metro(ui: &mut egui::Ui, cx: &LegendCtx) {
     }
     swatches(ui, &[(Color32::from_rgb(120, 235, 255), format!("{} stations", w.metro_stations().len())), (Color32::WHITE, "line being drawn".into())], true);
     small(ui, "Build window, Transit, Metro: Metro station places them, Metro lines joins them");
+}
+
+/// [w1] The Construction layer's key.
+fn legend_construction(ui: &mut egui::Ui, cx: &LegendCtx) {
+    use nd_sim::world::sites::SiteKind;
+    let sites = cx.world.construction_sites();
+    let items: Vec<(Color32, String)> = SiteKind::ALL
+        .iter()
+        .map(|k| {
+            let c = crate::render::sites_layer::site_color(*k);
+            let m = c[0].max(c[1]).max(c[2]).max(1.0);
+            (linear([c[0] / m, c[1] / m, c[2] / m]), format!("{} ({})", k.label(), sites.iter().filter(|s| s.1 == *k).count()))
+        })
+        .collect();
+    swatches(ui, &items, false);
+    small(ui, "boxes stand to the planned height; the bright part of a site going up is built so far");
 }
 
 fn legend_traffic_types(ui: &mut egui::Ui, _: &LegendCtx) {

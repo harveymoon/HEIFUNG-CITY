@@ -310,6 +310,14 @@ styles! {
 }
 
 impl Style {
+    /// The landmark attractions (`buildings/attractions.rs`).
+    pub fn is_attraction(self) -> bool {
+        matches!(
+            self,
+            Style::ArtMuseum | Style::ScienceMuseum | Style::HistoryMuseum | Style::PleasurePier | Style::GrandPark | Style::Zoo | Style::Observatory | Style::Aquarium | Style::BotanicalGarden | Style::ConcertHall
+        )
+    }
+
     /// Position in `ALL` (and in [`STYLES`]), for per-style tables.
     pub fn index(self) -> usize {
         self as usize

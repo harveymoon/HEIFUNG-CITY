@@ -161,6 +161,13 @@ pub(super) fn bus(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             e.slot = opt_u64(cmd, "index")?.map(|i| i as usize);
             Ok(json!({ "slot": e.slot }))
         }
+        // [w1] Run a line both ways (out and back along the far kerbs) or as a loop.
+        "two_way" => {
+            let id = route_arg(w)?;
+            let on = cmd.get("on").and_then(Value::as_bool).ok_or("missing on: bool")?;
+            w.set_bus_route_two_way(id, on)?;
+            Ok(json!({ "route": key_str(id), "row": route_row(id, &w.transit.routes[id]) }))
+        }
         // Put a stop into a line where it belongs along the loop (or at index).
         "insert_stop" => {
             let id = route_arg(w)?;

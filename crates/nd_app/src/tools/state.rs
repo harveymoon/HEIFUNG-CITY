@@ -79,6 +79,8 @@ pub struct ToolState {
     pub metro_draft: nd_sim::subway::MetroDraft,
     /// [metro-ux] The station under the pointer in Metro mode.
     pub metro_hover: Option<BuildingId>,
+    /// [w1] The metro line being edited stop by stop (`metro_edit`).
+    pub metro_edit: Option<super::metro_edit::MetroEdit>,
     /// Rail tool: station or freight yard.
     pub rail_kind: nd_sim::RailFacility,
     /// Rail tool: a dock instead of a station or yard.
@@ -545,6 +547,7 @@ impl Default for ToolState {
             rail_kind: nd_sim::RailFacility::Station,
             metro_draft: Default::default(),
             metro_hover: None,
+            metro_edit: None,
             dock: None,
             favorites: Vec::new(),
             zone_mode: ZoneMode::Brush,

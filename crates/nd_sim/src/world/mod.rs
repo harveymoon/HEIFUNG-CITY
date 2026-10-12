@@ -42,6 +42,8 @@ mod enforcement;
 pub mod gifts;
 pub use gifts::{Gift, Holding, GIFT_AMOUNT};
 mod construction;
+/// [w1] Sites going up and coming down, for the player.
+pub mod sites;
 /// [land] Pressure, prices, owners, merged plots and the super-elite.
 mod estate;
 #[cfg(test)]
@@ -134,6 +136,8 @@ mod social_tests;
 mod survey;
 pub use survey::SiteContext;
 mod subway;
+/// [w1] Metro lines edited stop by stop.
+pub mod metro_edit;
 #[cfg(test)]
 mod car_tests;
 #[cfg(test)]
