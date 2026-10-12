@@ -1,0 +1,7 @@
+- the street-lights on the roads are nice touch. however when zoomed out a little at night, only handful of lights illuminate. it feels like they are only illuminating at the very center of the camera viewport so zoomed in we don't notice but zoomed out it clearly only illuminates the lights in a small right. this calculation should also consider the frustum FOV based ont he camera zoom to choose what lights to turn on, if this was a performance decision then at a certain zoom distance we can render the lights differently.
+- fog is too thick when zoomed out too far. 
+- gameplay seems to freeze for 2-3 seconds every 2 game hours. maybe its auto-saving?
+- lets make a "construction" layer showing construction/destruction in a colored overlay.
+- when clicking on a building being constructed, show its final planned height, also if destructed, also show the next building's heihgt if already planned on that lot. 
+- in the "Demand for new buildings" section, make a toggle for "include planned/under-construction buildings" that when clicked will show a ligher extention to the bar-lines of the current planned constructions in those zone areas. this can help identify if we need to zone more, or if new businesses/houses are currently being built that might meet the current demand
+- 

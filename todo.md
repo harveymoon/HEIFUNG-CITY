@@ -1,4 +1,4 @@
-> **Open work lives in the OPEN WORK section at the end of this file** (consolidated 2026-10-11). Items marked [→] elsewhere were folded into it.
+> **Open work lives in the OPEN WORK section at the end of this file** (re-consolidated 2026-10-11 evening). Items marked [→] elsewhere were folded into it.
 
 [x] - empty land should have more nature, rocks and sand for deseart landscape and trees/grass for those areas. high-value areas can look like parklets clean cut grass, city land taken care of. but empty lots in bad value areas can lay dorment, overgrown and trashy.   → DONE: vacant lots dress by land value (trashy / wild / parklet), rocks and scrub scattered on open ground (nd_procgen::vacant, terrain::scatter_nature).
 [x] - we need other special city things like police stations, fire stations, hospitals, schools ect. and buildings within the three tiers for all these, is this possible? is our building generator robust enough for these, if not we need to work on that tool a bit more to handle new buildings we will add in the future. we'll also need veichels and emergencies that they travel to. people can get sick, buildings can get on fire or crimes can happen, someone would need to call 911 for a person working at dispatch to send out a team so all that system should be in play. special buildings are user-placed. also need some special attractions like minuments and stadiums. make a "buildings" tool that we can add these buildings have sub-catagories for different things put "power" as a sub category.   → DONE: police, fire, health, school, 911 dispatch, jail, monuments and a stadium in three tiers; fires, crime and sickness answered by vehicles with sirens; out-of-town units when uncovered; a Buildings tool with Power, Services, Transit, Rail, Water and Attractions categories.
@@ -493,8 +493,10 @@ Sources: docs/playtest/todo_2026-10-10.md (Harvey's list, "T"), docs/playtest/fl
 - I (new features) and J (engine) wait for wave 2
 
 
-# OPEN WORK — consolidated 2026-10-11 (the only open list; older "[ ]" items above are marked [→] and folded in here)
-Sources: Harvey's lists docs/playtest/todo_2026-10-10.md and todo_2026-10-11.md ("T"), flags docs/playtest/flags_2026-10-09.md (F#) and flags_2026-10-11.md (G#), agent leftovers.
+# Consolidated list of 2026-10-11 (morning); groups 1–5 done, the rest moved to the OPEN WORK section below
+Sources: Harvey's lists docs/playtest/todo_2026-10-10.md, todo_2026-10-11.md ("T") and todo_2026-10-11-evening.md (todo6), flags docs/playtest/flags_2026-10-09.md (F#), flags_2026-10-11.md (G#) and flags_2026-10-11-evening.md (H#), agent leftovers.
+
+## DONE 2026-10-11 — groups 1–5 (kept for the record)
 
 ## 1. Special attractions (new, Harvey 2026-10-11)
 - [x] One per city each, a league of landmark attractions that lift land value and draw tourists; each needs several plots or one mega plot (joined sites like stadiums)   → DONE [feat/attractions]: ten landmarks under Build > Attractions, one of each per city (refused with the reason), 1,200-7,000 m² sites joined from up to 48 plots (notches allowed, no C-shapes), admissions, staff, hours, upkeep, inspector ATTRACTION card, `inspect.attraction`, docs.
@@ -540,39 +542,71 @@ Sources: Harvey's lists docs/playtest/todo_2026-10-10.md and todo_2026-10-11.md 
 - [x] Lines panel can be resized wider (T); Shift+click inserts a stop, plain clicks add in sequence while creating (T) → DONE [fix/buildings-ui]: Lines window max width = the map's; a new line (street click or New bus line) appends stops in click order, Shift+click inserts where it belongs; editing an existing line unchanged (remote `bus new_line`, `click {shift}`)
 - [x] Crime layer also highlights police stations (T) → DONE [fix/buildings-ui]: shield markers and lot outlines on every police station, and the ground they cover (by road) outlined in police blue
 
-- [ ] Leftovers from groups 1–5: inspector says "a observatory"; landmark neon glows by day; amusement park / convention centre / cathedral / casino not built; Harvey's city gridlocked (away fans and crane boxes crawl); curved through-roads not mended on Implement; backland often refused rather than joined; Edit road-upgrade panel uses old presets; lit off-ramp crossing has no painted zebra
+# OPEN WORK — re-consolidated 2026-10-11 evening (the only open list)
+Everything still open, from the old groups 6–8, the group 1–5 leftovers, todo6 (docs/playtest/todo_2026-10-11-evening.md) and flags H1–H4 (docs/playtest/flags_2026-10-11-evening.md), regrouped by the code each touches so one agent can own a group.
 
-## 6. New features (wave 2)
-- [ ] Gas prices, fuel stations, EV pressure, fuel tax
-- [ ] Forests and logging → lumber yard, furniture factory, hardware store
-- [ ] District tax laws and levers (e.g. a student district)
-- [ ] Weekly newspaper (optionally AI)
-- [ ] Several businesses in one building; mall bases in supertalls
-- [ ] Run-down parks (dealers, homeless, trash), paid clean-up; Parks page in City Data; nature-preserve parks; merged parks get one name
-- [ ] Riots, protests, parades taking over roads
-- [ ] Police gunships, SWAT, armoured trucks, raids
-- [ ] Ownership arcs from an HQ to its properties
-- [ ] Raised / tunnel roundabouts with [ and ]
-- [ ] City rating (liveability, prosperity, safety, environment) with history
-- [ ] Banks and debt (business loans that can go bad; household debt from hospital bills, gambling)
-- [ ] Large ferry terminal and car ferries
-- [ ] Regional commuters (out-of-town workers early on, locals preferred later; commuter share as a goal)
-- [ ] New business kinds (builders, pharmacy/clinics/dentists/childcare, clothing/hardware/furniture, fuel/EV/car wash, salons/gyms/laundromats/trades, food variety, clubs/cinemas/theatres, office economy, recycling)
-- [ ] Cable cars; monorail (suspended); two-way bus lines
+## A. Start screen, saves and performance
+- [ ] Title screen as a multi-pane view: city thumbnails (most recent game first, largest); selecting a city lists its save states (latest, autosave, dated quick saves, history autosaves with day, population, time) to click before Load; Continue still loads the newest
+- [ ] New-map page as a step-by-step wizard that can't be skipped: landscape (preview) → starting city/preset → city name (required, suggested) → review → Start; Next disabled until the step is done
+- [ ] A new game started from a preset/example gets its own name, never "Perfect AI City" (today's day-long game looked lost)
+- [ ] Saves and flags folders resolve next to the exe, not the working directory
+- [ ] Play freezes 2–3 s every 2 game hours: the history autosave of a ~240 MB city on the main thread; write it in the background
+- [ ] Faster, smaller saves; lower load peak; fewer/compressed history autosaves (24 × ~150–240 MB per big city)
+- [ ] Save → load → continue determinism (docs/review/save_determinism_wip.patch)
+- [ ] Big-city performance 20k–50k people
 - [ ] Settings menu (graphics, controls, UI scale)
 
-## 7. Engine
-- [ ] Big-city performance 20k–50k people
-- [ ] Faster, smaller saves; lower load peak; fewer/compressed history autosaves (24 × ~150 MB per big city)
-- [ ] Save → load → continue determinism (docs/review/save_determinism_wip.patch)
+## B. Rendering and visuals
+- [ ] Street lights only lit near the middle of the view when zoomed out: pick lit lamps by the camera frustum/zoom; past a distance draw them cheaply (glow sprites) instead of dropping them
+- [ ] Fog too thick when zoomed far out
+- [ ] Landmark neon glows by day
+- [ ] Junction surface gaps at steep corners
+- [ ] Megacorp HQ crown small on needle towers
+- [ ] Metro stations barely visible underground
+- [ ] Inspector text "a observatory" (article before vowels)
 
-## 8. Smaller leftovers from agents
+## C. Roads, junctions and traffic
+- [ ] Harvey's city gridlocked (away fans and crane boxes crawl): find the choke points
+- [ ] Curved through-roads not mended on Implement
+- [ ] Backland often refused rather than joined; F27 diagonal sliver parcel can't merge (concave)
+- [ ] Edit road-upgrade panel still uses the old presets
+- [ ] Lit off-ramp crossing has no painted zebra
 - [ ] Interchanges: parclo/cloverleaf and street-over-highway layouts; Interchange tool ignores pending roads in some cases
-- [ ] Junction surface gaps at steep corners; park hub gates (needs a design)
-- [ ] Megacorp: HQ crown small on needle towers; corp deposits nominal
-- [ ] Investors: owned buildings skip densify
-- [ ] Dock/station joined only by a footpath (passengers ok, goods need a road) — check status text; ferry estimates
-- [ ] Metro lines can't be edited stop by stop; metro stations barely visible underground
-- [ ] F27 diagonal sliver parcel can't merge (concave); delivered cars parked far from the buyer's home
+- [ ] Raised / tunnel roundabouts with [ and ]
+- [ ] Nothing may be built over a road: marinas (H3), dams (H1) and other placeables refused on roads, and no junction made
 
-## Groups 1–5 merged 2026-10-11. Stopped here as Harvey asked; groups 6–8 not started.
+## D. Waterfront, parks and attractions
+- [ ] Dam: two-step tool (place the building, then the wall coast to coast, one end near the building) with live size, cost and expected power; dams carry footpaths only, no roads (H1)
+- [ ] Public beaches side by side merge into one beach whose landscape fits the combined shape; umbrellas packed away at night (H2)
+- [ ] Marina demand: "held" reads as if none were built; show wanted vs have ("about 6, you have 2") and check 5.6 is sensible (H4)
+- [ ] Remaining attractions: amusement park, convention centre, cathedral, casino resort
+- [ ] Run-down parks (dealers, homeless, trash), paid clean-up; Parks page in City Data; nature-preserve parks; merged parks get one name; park hub gates (needs a design)
+- [ ] Large ferry terminal and car ferries; ferry estimates
+- [ ] Dock/station joined only by a footpath (passengers ok, goods need a road): check the status text
+
+## E. Transit
+- [ ] Metro lines can't be edited stop by stop
+- [ ] Two-way bus lines
+- [ ] Cable cars; monorail (suspended)
+
+## F. Construction, planning and city info
+- [ ] "Construction" map layer: sites going up and coming down in a coloured overlay
+- [ ] Inspector on a building site shows the planned final height; on a demolition, the next building's height if one is planned
+- [ ] Demand for new buildings: toggle "include planned / under construction" adding a lighter bar extension for what is being built
+- [ ] Ownership arcs from an HQ to its properties
+- [ ] City rating (liveability, prosperity, safety, environment) with history
+- [ ] Weekly newspaper (optionally AI)
+
+## G. Economy and businesses (big features)
+- [ ] Gas prices, fuel stations, EV pressure, fuel tax
+- [ ] Forests and logging → lumber yard, furniture factory, hardware store
+- [ ] New business kinds (builders, pharmacy/clinics/dentists/childcare, clothing/hardware/furniture, fuel/EV/car wash, salons/gyms/laundromats/trades, food variety, clubs/cinemas/theatres, office economy, recycling)
+- [ ] Several businesses in one building; mall bases in supertalls
+- [ ] Banks and debt (business loans that can go bad; household debt from hospital bills, gambling)
+- [ ] District tax laws and levers (e.g. a student district)
+- [ ] Regional commuters (out-of-town workers early on, locals preferred later; commuter share as a goal)
+- [ ] Investors: owned buildings skip densify; megacorp deposits nominal; delivered cars parked far from the buyer's home
+
+## H. Public order and events (big features)
+- [ ] Riots, protests, parades taking over roads
+- [ ] Police gunships, SWAT, armoured trucks, raids
