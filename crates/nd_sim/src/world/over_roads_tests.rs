@@ -84,27 +84,6 @@ fn a_dock_beside_a_road_still_goes_down_and_its_stub_makes_no_crossroads() {
     }
 }
 
-#[test]
-fn a_dam_across_a_bridge_is_refused() {
-    let mut w = valley(8);
-    let (p, flow, n, width) = river_spot(&w);
-    // A plant's lot on the bank.
-    let side = n * (width * 0.5 + 8.0);
-    let lot = vec![p + side - flow * 30.0, p + side + flow * 30.0, p + side + n * 60.0 + flow * 30.0, p + side + n * 60.0 - flow * 30.0];
-    let (line, half) = w.hydro_dam_line(&lot).expect("a river beside the lot");
-    assert!(w.road_under(Footprint::Wall(&line, half), "dam", true).is_none(), "nothing in the way yet");
-    // A bridge straight along where the dam's arch would go.
-    let mid = line[line.len() / 2];
-    let across = (line[line.len() - 1] - line[0]).normalize_or_zero();
-    w.add_road(&[mid - across * (width + 60.0), mid + across * (width + 60.0)], 1, 1);
-    let why = w.road_under(Footprint::Wall(&line, half), "dam", true).expect("the dam would stand on the bridge");
-    assert!(why.contains("nothing may be built over a road"), "{why}");
-    // A bridge well downstream is no bar.
-    let mut w2 = valley(8);
-    w2.add_road(&[mid - across * (width + 60.0) + flow * 120.0, mid + across * (width + 60.0) + flow * 120.0], 1, 1);
-    assert!(w2.road_under(Footprint::Wall(&line, half), "dam", true).is_none());
-}
-
 /// An avenue with nothing zoned to the north, flat ground.
 fn town() -> World {
     let mut w = World::new(WorldConfig { emergencies: false, society: false, landscape: LandscapeParams::flat(), ..WorldConfig::test_town() });

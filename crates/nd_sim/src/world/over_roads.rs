@@ -1,5 +1,5 @@
 //! [w1-roads] Nothing is built over a road (flags H1, H3): a dock, a plant,
-//! a service, an attraction, a station or yard, a dam wall: whatever the
+//! a service, an attraction, a station or yard, whatever the
 //! Build window puts down is refused, in the preview and on the click,
 //! when its footprint takes in a carriageway, built or planned in the
 //! active project. Tunnels pass under and decks high enough to span lots
@@ -20,18 +20,12 @@ const KERB_SLACK: f32 = 1.2;
 pub enum Footprint<'a> {
     /// A closed outline (a lot, a dock, a station).
     Area(&'a [Vec2]),
-    /// A wall along a line, `half` wide each side of it (a dam).
-    Wall(&'a [Vec2], f32),
 }
 
 impl Footprint<'_> {
     fn bounds(&self) -> (Vec2, Vec2) {
-        let (pts, pad) = match self {
-            Footprint::Area(p) => (*p, 0.0),
-            Footprint::Wall(p, h) => (*p, *h),
-        };
-        let (lo, hi) = crate::geom::bounds(pts);
-        (lo - Vec2::splat(pad), hi + Vec2::splat(pad))
+        let Footprint::Area(pts) = self;
+        crate::geom::bounds(pts)
     }
 
     /// Does a way along `p0`-`p1`, `hw` wide each side, run onto it?
@@ -47,7 +41,6 @@ impl Footprint<'_> {
                 }
                 (0..poly.len()).any(|i| segment_distance_between(p0, p1, poly[i], poly[(i + 1) % poly.len()]) < reach)
             }
-            Footprint::Wall(line, half) => line.windows(2).any(|w| segment_distance_between(p0, p1, w[0], w[1]) < hw + half - KERB_SLACK),
         }
     }
 }
@@ -130,27 +123,5 @@ impl World {
                 _ => None,
             })
             .collect()
-    }
-
-    /// [w1-roads] The crest line of the dam a hydro plant on `lot` throws
-    /// across the river beside it (as `nd_procgen::dam` draws it: an arch
-    /// from bank to bank, bowed upstream), and its half width.
-    pub fn hydro_dam_line(&self, lot: &[Vec2]) -> Option<(Vec<Vec2>, f32)> {
-        let land = &self.landscape;
-        let (ri, _, bank) = land.river_beside(lot, 40.0)?;
-        let r = &land.rivers[ri];
-        let (seg, c, _) = r.nearest(bank);
-        let flow = r.flow(seg);
-        let across = Vec2::new(-flow.y, flow.x);
-        let half = r.width * 0.5 + 6.0;
-        let bow = (half * 0.32).clamp(3.0, 22.0);
-        let n = 12;
-        let pts = (0..=n)
-            .map(|i| {
-                let t = i as f32 / n as f32 * 2.0 - 1.0;
-                c + across * (t * half) - flow * (bow * (1.0 - t * t))
-            })
-            .collect();
-        Some((pts, 3.75))
     }
 }

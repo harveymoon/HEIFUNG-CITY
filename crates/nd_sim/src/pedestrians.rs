@@ -68,6 +68,10 @@ pub const LAWFUL_GAP: f32 = 1.6;
 /// (Harvey's city on a game evening), a queue back across the junctions
 /// behind. Walkers already on the zebra cross on.
 pub const ZEBRA_PATIENCE: f32 = 20.0;
+/// [w1-roads] Seconds a car stands at the line on its green before the
+/// walkers about to cross against the light leave it the road (sooner
+/// than that it is only pulling up).
+pub const GREEN_WAIT: f32 = 5.0;
 /// A car this close before the zebra (m) is the one waiting at it.
 pub const ZEBRA_WAIT_REACH: f32 = 14.0;
 

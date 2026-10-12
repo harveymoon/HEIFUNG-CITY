@@ -440,13 +440,13 @@ impl World {
         if crossing.kind != CrossingKind::Jay && !w.bold {
             return None;
         }
-        // [w1-roads] Against the light (or off a crossing), nobody steps out
-        // in front of a car standing at the line: it is about to go. Its
+        // [w1-roads] Against the light, nobody steps out in front of a car
+        // standing at the line: it is about to go. Its
         // gap read as open road (only moving cars count), so a stream of
         // walkers against the red kept the cars with the green standing at
         // the stop line for minutes (Harvey's city, a signalled junction
         // at (-186, -427): nine on the crosswalk, cars stood 500 s).
-        if self.driver_waiting(cr, 2.0) {
+        if signal.is_some() && self.driver_waiting(cr, crate::pedestrians::GREEN_WAIT) {
             return None;
         }
         let c = &self.citizens[id];

@@ -260,7 +260,7 @@ impl World {
         // [parks] (D5) A path drawn into a park's interior (its hub gate)
         // ends at the park's edge gate: the park walks it on to the hub.
         let gesture = match gesture {
-            Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind: RoadKind::Path, elevation } => Gesture::Road { points: self.path_into_parks(&points), lanes_fwd, lanes_bwd, curved, kind: RoadKind::Path, elevation },
+            Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind: RoadKind::Path, elevation, .. } => Gesture::Road { points: self.path_into_parks(&points), lanes_fwd, lanes_bwd, curved, kind: RoadKind::Path, elevation, car_only: None },
             g => g,
         };
         let id = GestureId(self.next_gesture);

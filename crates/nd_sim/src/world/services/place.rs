@@ -141,14 +141,6 @@ impl World {
             if let Err(e) = self.power_site_on(lot, k) {
                 return Some(e);
             }
-            // [w1-roads] Nor a dam wall across a road or bridge (H1).
-            if k == crate::power::PowerPlantKind::Hydro {
-                if let Some((line, half)) = self.hydro_dam_line(&lot.polygon) {
-                    if let Some(why) = self.road_under(crate::world::over_roads::Footprint::Wall(&line, half), "dam", true) {
-                        return Some(why.replace("across the site", "where the dam would stand"));
-                    }
-                }
-            }
         }
         // [attractions] One per city; the pier on the sea shore, the
         // observatory on high ground.
