@@ -194,8 +194,10 @@ impl World {
             let dealers = if s.preserve || grace {
                 0
             } else {
+                // Only cheap land the police seldom reach draws them; litter
+                // and people sleeping rough make it worse.
                 let cheap = ((pk::DEALER_LV - lv).max(0.0) / pk::DEALER_LV) * (1.0 - police);
-                let risk = cheap + 0.4 * trash + if campers + homeless > 0 { 0.2 } else { 0.0 };
+                let risk = cheap * (1.0 + trash + if campers + homeless > 0 { 0.5 } else { 0.0 });
                 let target = ((risk * pk::MAX_DEALERS as f32).floor() as u8).min(pk::MAX_DEALERS);
                 // One comes or goes a day.
                 match target.cmp(&s.dealers) {

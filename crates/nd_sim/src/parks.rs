@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, HashMap};
 /// A park with `kept` under this is run down.
 pub const RUN_DOWN_BELOW: f32 = 0.5;
 /// Litter a day per visitor-hour on a park's every 50 m² of ground.
-pub const LITTER_PER_VISIT: f32 = 0.03;
+pub const LITTER_PER_VISIT: f32 = 0.01;
 /// Litter cleared a day with a trash depot in reach, and without.
 pub const LITTER_CLEARED: f32 = 0.12;
 pub const LITTER_CLEARED_UNSERVED: f32 = 0.03;

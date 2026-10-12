@@ -16,6 +16,7 @@ use crate::camera::Cursor;
 pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection) {
     // [dams] (H1) A hydro plant's second step: its wall.
     if let Some(step) = tools.dam {
+        tools.build_here = None;
         dam_input(f, sim, tools, selection, step);
         return;
     }

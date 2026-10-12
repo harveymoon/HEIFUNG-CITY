@@ -101,7 +101,8 @@ pub fn hover_site(w: &World, tools: &ToolState, p: SVec2) -> Option<HoverSite> {
     match tools.tool {
         Tool::Buildings => {
             let what = tools.build_item();
-            if !on_a_plot(what) {
+            // [dams] Drawing a dam wall: no plot under the pointer.
+            if !on_a_plot(what) || tools.dam.is_some() {
                 return None;
             }
             let key = w.parcels.at(p).map(|i| (what, i, w.parcels.version, w.lots.len()));
@@ -322,7 +323,7 @@ impl MeshOverlay for PlotHoverMesh {
         // The Buildings tool's verdict was worked out this frame in
         // `tool_input` (`build_here`, from the same point): not again here.
         let site = at.and_then(|p| match (&tools.build_here, tools.tool) {
-            (Some((ok, text, outline)), Tool::Buildings) if on_a_plot(tools.build_item()) => buildings_site(w, tools, p, *ok, text.clone(), outline.clone()),
+            (Some((ok, text, outline)), Tool::Buildings) if on_a_plot(tools.build_item()) && tools.dam.is_none() => buildings_site(w, tools, p, *ok, text.clone(), outline.clone()),
             _ => hover_site(w, tools, p),
         });
         let distance = cams.iter().next().map_or(400.0, |c| c.distance);

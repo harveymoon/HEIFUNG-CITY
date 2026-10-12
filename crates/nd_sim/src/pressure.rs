@@ -85,6 +85,11 @@ pub const SCENE_MIN_AUDIENCE: f32 = 20.0;
 /// on the map, standing for a few dozen). Was 150: a 17k city on the
 /// water then wanted 5-6 marinas with two built (H4).
 pub const RICH_PER_MARINA: f32 = 250.0;
+/// (H4) Residents per small marina's worth of berths at most, however rich:
+/// about one berth per hundred people, a small marina standing for some
+/// thirty. Harvey's 17k city, half its households wealthy and by the
+/// water, wants about six, not the cap of eight.
+pub const PEOPLE_PER_MARINA: f32 = 3000.0;
 /// A large marina's berths, counted in small marinas (22 berths to 10).
 pub const LARGE_MARINA_WORTH: f32 = 2.2;
 /// [waterfront] Visitors in town per beach resort's worth of guests.
@@ -301,6 +306,9 @@ pub struct Signals {
     pub beach_appeal: f32,
     /// [waterfront] Vacant lots on the water to build on.
     pub waterfront_sites: f32,
+    /// (H4) Residents in town.
+    #[serde(default)]
+    pub people: f32,
 }
 
 impl Signals {
@@ -341,6 +349,7 @@ impl Signals {
         self.beaches_open = today.beaches_open;
         self.beach_appeal = today.beach_appeal;
         self.waterfront_sites = today.waterfront_sites;
+        self.people = today.people;
     }
 
     /// Is there an art scene: enough artists getting by and enough money
@@ -490,7 +499,8 @@ pub fn assess(s: &Signals, supply: &Supply) -> Vec<Pressure> {
                 (wanted, format!("{} rich adults and {} studios open{}; {ht}", s.rich_adults.round(), studios, scene_note(s)))
             }
             PressureKind::Marina => {
-                let wanted = if s.has_water { s.rich_near_water / RICH_PER_MARINA } else { 0.0 };
+                let by_people = if s.people > 0.0 { s.people / PEOPLE_PER_MARINA } else { f32::MAX };
+                let wanted = if s.has_water { (s.rich_near_water / RICH_PER_MARINA).min(by_people) } else { 0.0 };
                 let wanted = wanted.max(0.0);
                 let why = if s.has_water {
                     format!("{} wealthy households near the water would keep a boat: berths for about {wanted:.1} small marinas ({}); a large marina counts as {LARGE_MARINA_WORTH}", s.rich_near_water.round(), marinas_built(s))
@@ -766,8 +776,14 @@ mod tests {
         assert_eq!(p.have, 2);
         let held = p.held.expect("wants more");
         assert!(held.contains("wants berths for about 6") && held.contains("you have 2"), "{held}");
-        // Harvey's 17k city: ~840 wealthy households by the water, one small
-        // and one large marina: met.
+        // A city of 17,600 with 3,468 wealthy households by the water (Harvey's
+        // day 20) wants about six, not the cap.
+        let rich = Signals { rich_near_water: 3468.0, people: 17_627.0, has_water: true, marinas_small: 1.0, marinas_large: 1.0, ..Default::default() };
+        let p = get(&assess(&rich, &Supply::default()), PressureKind::Marina);
+        assert!((p.wanted - 5.9).abs() < 0.1, "{p:?}");
+        assert!(p.held.as_deref().is_some_and(|h| h.contains("about 6") && h.contains("you have 2")), "{:?}", p.held);
+        // Harvey's 17k city on day 11: ~840 wealthy households by the water,
+        // one small and one large marina: met.
         let h4 = Signals { rich_near_water: 840.0, has_water: true, marinas_small: 1.0, marinas_large: 1.0, ..Default::default() };
         let p = get(&assess(&h4, &Supply::default()), PressureKind::Marina);
         assert!(!p.wants_more(), "{p:?}");

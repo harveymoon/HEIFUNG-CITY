@@ -220,6 +220,7 @@ impl World {
             artists_mid: artists_mid as f32,
             rich_adults: rich_adults as f32,
             rich_near_water: rich_near_water as f32,
+            people: self.citizens.len() as f32,
             has_water,
             // [waterfront]
             tourists: self.tourism.tourists.len() as f32,
