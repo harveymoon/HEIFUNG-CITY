@@ -566,6 +566,7 @@ Everything still open, from the old groups 6–8, the group 1–5 leftovers, tod
 - [ ] Inspector text "a observatory" (article before vowels)
 
 ## C. Roads, junctions and traffic
+- [ ] TOP: Road type is inferred from lanes (`is_highway_spec`): a 3-lane one-way street silently becomes a highway, losing sidewalk and zones, and can't get them back. Presets (Path / Street / On-ramp / Highway) only set values and highlight when matched; explicit "Use" dial: Pedestrians only / Mixed / Car-only (sets speed, sidewalk, zoning); lanes never change the use; stored on the road (old saves keep their highways); Edit can switch an existing road's use (Harvey 2026-10-11)
 - [ ] Harvey's city gridlocked (away fans and crane boxes crawl): find the choke points
 - [ ] Curved through-roads not mended on Implement
 - [ ] Backland often refused rather than joined; F27 diagonal sliver parcel can't merge (concave)
