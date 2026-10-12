@@ -21,7 +21,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureDimension, TextureFormat};
 use bevy::shader::{Shader, ShaderRef};
 use nd_procgen::lights::{lit_share, Occupancy};
-use nd_procgen::{Geometry, Surface, WINDOW_LIGHT_MARK};
+use nd_procgen::{Geometry, Surface, NEON_MARK, NIGHT_MARK, WINDOW_LIGHT_MARK};
 use nd_sim::BuildingId;
 use slotmap::Key;
 
@@ -46,19 +46,21 @@ pub(super) const WINDOW_PREPASS_SHADER: Handle<Shader> = uuid_handle!("9a1c3e57-
 /// Bindings and the lit test, shared by the main pass and the prepass.
 const WINDOW_COMMON_SRC: &str = r#"
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var lit_texture: texture_2d<f32>;
-// x: sim minutes (wrapped), for each window's own wandering.
+// x: sim minutes (wrapped), for each window's own wandering; y: how much
+// night it is (0 by day, 1 at night), for landmark neon and night beams.
 @group(#{MATERIAL_BIND_GROUP}) @binding(101) var<uniform> lights_clock: vec4<f32>;
 
 fn window_hash(p: vec2<f32>) -> f32 {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 }
 
-// uv.x: the building's slot, or -1 for glow that is always on; uv.y: this
-// window's rank. A window lights when its rank is below the building's lit
-// share.
+// uv.x: the building's slot, or -1 for glow that is always on, -2 for a
+// landmark's neon (dimmed by day), -3 for glow lit only after dark; uv.y:
+// this window's rank. A window lights when its rank is below the
+// building's lit share.
 fn window_dark(uv: vec2<f32>) -> bool {
     if uv.x < 0.0 {
-        return false;
+        return uv.x < -2.5 && lights_clock.y < 0.5;
     }
     let slot = u32(uv.x + 0.5);
     let dims = textureDimensions(lit_texture);
@@ -93,12 +95,18 @@ const WINDOW_SHADER_SRC: &str = r#"
 const WINDOW_MAIN_SRC: &str = r#"
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    var pbr_input = pbr_input_from_standard_material(in, is_front);
 #ifdef VERTEX_UVS_A
     if window_dark(in.uv) {
         discard;
     }
+    // A landmark's neon, drawn bright to carry at night, dims by day to
+    // about the signs' glow.
+    if in.uv.x < -1.5 && in.uv.x > -2.5 {
+        let k = mix(0.4, 1.0, lights_clock.y);
+        pbr_input.material.base_color = vec4(pbr_input.material.base_color.rgb * k, pbr_input.material.base_color.a);
+    }
 #endif
-    let pbr_input = pbr_input_from_standard_material(in, is_front);
     var out: FragmentOutput;
     out.color = main_pass_post_lighting_processing(pbr_input, pbr_input.material.base_color);
     return out;
@@ -153,7 +161,7 @@ pub(super) type WindowMaterial = ExtendedMaterial<StandardMaterial, WindowLights
 pub(super) struct WindowLights {
     #[texture(100)]
     pub lit: Handle<Image>,
-    /// x: sim minutes, wrapped to keep f32 precision.
+    /// x: sim minutes, wrapped to keep f32 precision; y: night (0..1).
     #[uniform(101)]
     pub clock: Vec4,
 }
@@ -198,7 +206,9 @@ pub(super) fn slot_of(id: BuildingId) -> Option<u32> {
 
 /// Point one building's window lights at its slot: marked glow vertices
 /// (see `parts::window_light`) get `uv = (slot, rank)` and their alpha
-/// back; every other glow vertex gets `uv.x = -1`, always on.
+/// back; a landmark's neon (`NEON_MARK`) gets `uv.x = -2`, dimmed by day,
+/// glow lit only after dark (`NIGHT_MARK`) `-3`; every other glow vertex
+/// gets `uv.x = -1`, always on.
 pub(super) fn tag_windows(g: &mut Geometry, slot: Option<u32>) {
     let m = g.part(Surface::Glow);
     for (c, uv) in m.colors.iter_mut().zip(m.uvs.iter_mut()) {
@@ -209,6 +219,12 @@ pub(super) fn tag_windows(g: &mut Geometry, slot: Option<u32>) {
                 Some(s) => [s as f32, rank],
                 None => [-1.0, 0.0],
             };
+        } else if c[3] >= NIGHT_MARK - 0.01 {
+            c[3] = 1.0;
+            *uv = [-3.0, 0.0];
+        } else if c[3] >= NEON_MARK - 0.01 {
+            c[3] = 1.0;
+            *uv = [-2.0, 0.0];
         } else {
             *uv = [-1.0, 0.0];
         }
@@ -227,6 +243,7 @@ fn building_hash(slot: u32) -> u64 {
 /// on that building's own turn, a few windows at a time.
 pub(super) fn update_window_lights(
     sim: Res<Sim>,
+    look: Res<super::sky::SkyLook>,
     mats: Res<Materials>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<WindowMaterial>>,
@@ -236,10 +253,13 @@ pub(super) fn update_window_lights(
     let w = &sim.world;
     // The windows' own clock, at most once a sim minute (a material
     // write rebuilds its bind group).
-    if *minute != w.clock.tick || sim.full_rebuild {
+    let night = ((1.0 - look.daylight) * 32.0).round() / 32.0;
+    let night_moved = materials.get(&mats.windows).is_some_and(|m| m.extension.clock.y != night);
+    if *minute != w.clock.tick || sim.full_rebuild || night_moved {
         *minute = w.clock.tick;
         if let Some(mut m) = materials.get_mut(&mats.windows) {
             m.extension.clock.x = (w.clock.tick % 1_000_000) as f32 + sim.frac();
+            m.extension.clock.y = night;
         }
     }
     let step = w.clock.tick / UPDATE_EVERY_TICKS;
@@ -312,4 +332,27 @@ pub(super) fn update_window_lights(
     }
     // Touch the material so its bind group picks up the new texture.
     let _ = materials.get_mut(&mats.windows);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// [w1-render] Window lights point at the building's texel; a
+    /// landmark's neon and its night-only glow get their own codes, the
+    /// rest of the glow stays always on; every alpha comes back to 1.
+    #[test]
+    fn glow_marks_become_codes() {
+        let mut g = Geometry::default();
+        let m = g.part(Surface::Glow);
+        for a in [1.0, NEON_MARK, NIGHT_MARK, WINDOW_LIGHT_MARK + 0.25] {
+            m.positions.push([0.0; 3]);
+            m.colors.push([1.0, 1.0, 1.0, a]);
+            m.uvs.push([0.0; 2]);
+        }
+        tag_windows(&mut g, Some(9));
+        let m = g.get(Surface::Glow);
+        assert_eq!(m.uvs, vec![[-1.0, 0.0], [-2.0, 0.0], [-3.0, 0.0], [9.0, 0.25]]);
+        assert!(m.colors.iter().all(|c| c[3] == 1.0));
+    }
 }

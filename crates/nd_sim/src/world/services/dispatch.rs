@@ -206,7 +206,7 @@ impl World {
         }
         let what = match inc.kind {
             IncidentKind::Fire => format!("smoke pouring out of {bname}"),
-            IncidentKind::Crime => format!("a {} at {bname}", inc.crime.map_or("robbery", |c| c.label())),
+            IncidentKind::Crime => format!("{} at {bname}", crate::names::a(inc.crime.map_or("robbery", |c| c.label()))),
             IncidentKind::Medical if inc.on_road => format!("{} hurt in a crash by {bname}", inc.citizen.and_then(|c| self.citizens.get(c)).map_or("someone".to_string(), |c| c.name.clone())),
             IncidentKind::Medical => format!("{} collapsed at {bname}", inc.citizen.and_then(|c| self.citizens.get(c)).map_or("someone".to_string(), |c| c.name.clone())),
             IncidentKind::Crash => format!("a bad crash by {bname}"),

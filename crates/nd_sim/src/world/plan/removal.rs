@@ -20,7 +20,7 @@ impl World {
         if Self::is_civic_structure(b) {
             return Err(format!("{} stands there; bulldoze it first", b.name));
         }
-        let memory = format!("The city bought out {} to build a {for_what}. Had to move on.", b.name);
+        let memory = format!("The city bought out {} to build {}. Had to move on.", b.name, crate::names::a(for_what));
         // [relocate] The business looks for a new place.
         self.pack_business(bid, &format!("the city's new {for_what}"));
         self.buy_out(bid, lot_id, None, &memory);
