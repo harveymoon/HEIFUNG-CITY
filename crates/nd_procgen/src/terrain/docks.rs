@@ -36,6 +36,7 @@ pub fn boat_size(kind: ShipKind) -> (f32, f32) {
     match kind {
         ShipKind::Freighter => (70.0, 12.0),
         ShipKind::Ferry => (28.0, 8.0),
+        ShipKind::CarFerry => (54.0, 14.0),
         ShipKind::FishingBoat => (16.0, 5.0),
         ShipKind::Yacht => (22.0, 6.0),
         ShipKind::Sailboat => (9.0, 3.0),
@@ -235,6 +236,7 @@ pub fn boat_mesh(kind: ShipKind, palette: &Palette) -> MeshData {
     match kind {
         ShipKind::Freighter => return ship_mesh(true, palette),
         ShipKind::Ferry => return ship_mesh(false, palette),
+        ShipKind::CarFerry => return car_ferry_mesh(palette),
         ShipKind::FishingBoat => return trawler_mesh(false, palette),
         ShipKind::Yacht => {
             let (len, beam) = boat_size(kind);
@@ -306,6 +308,48 @@ pub fn ship_mesh(freighter: bool, palette: &Palette) -> MeshData {
         m.boxed(Vec3::new(-2.0, 6.2, 0.0), Vec3::new(len * 0.35, 1.8, beam * 0.6), 0.0, rgba(palette.glass_dark));
         m.boxed(Vec3::new(-2.0, 4.0, 0.0), Vec3::new(len * 0.62, 0.6, beam * 0.82), 0.0, rgba([0.9, 0.25, 0.2]));
     }
+    m
+}
+
+/// [ferries] (D6) A car ferry: a blunt white hull with a bow visor, an
+/// open car deck aft with rows of cars, two decks of cabins and a bridge
+/// forward, a red stripe and a funnel.
+pub fn car_ferry_mesh(palette: &Palette) -> MeshData {
+    use glam::Vec3;
+    let mut m = MeshData::default();
+    let (len, beam) = boat_size(ShipKind::CarFerry);
+    let half = len * 0.5;
+    let white = [0.9, 0.91, 0.92];
+    let bottom = [Vec3::new(-half, -1.8, -beam * 0.5), Vec3::new(half - 6.0, -1.8, -beam * 0.5), Vec3::new(half, -1.8, -beam * 0.25), Vec3::new(half, -1.8, beam * 0.25), Vec3::new(half - 6.0, -1.8, beam * 0.5), Vec3::new(-half, -1.8, beam * 0.5)];
+    let top: Vec<Vec3> = bottom.iter().map(|p| *p + Vec3::Y * 4.4).collect();
+    m.frustum(&bottom, &top, rgba(white));
+    let deck: Vec<Vec3> = top.iter().map(|p| *p + Vec3::Y * 0.06).collect();
+    m.cap(&deck, Vec3::Y, rgba([0.3, 0.32, 0.34]));
+    // The red stripe along the hull.
+    m.boxed(Vec3::new(0.0, 1.6, 0.0), Vec3::new(len - 1.0, 0.7, beam * 1.01), 0.0, rgba([0.85, 0.15, 0.15]));
+    // Cars in rows on the open deck aft.
+    let colours = [[0.8, 0.1, 0.1], [0.15, 0.25, 0.7], [0.85, 0.85, 0.82], [0.12, 0.12, 0.14], [0.6, 0.6, 0.62], [0.9, 0.7, 0.15]];
+    let mut k = 0;
+    for row in 0..4 {
+        let z = -beam * 0.36 + row as f32 * beam * 0.24;
+        for col in 0..5 {
+            let x = -half + 3.5 + col as f32 * 4.8;
+            m.boxed(Vec3::new(x, 3.25, z), Vec3::new(4.0, 1.3, 1.8), 0.0, rgba(colours[k % colours.len()]));
+            k += 3;
+        }
+    }
+    // Cabins forward: two decks, windows, a bridge on top, a funnel.
+    let cx = half * 0.32;
+    m.boxed(Vec3::new(cx, 4.4, 0.0), Vec3::new(len * 0.48, 3.4, beam * 0.92), 0.0, rgba(white));
+    m.boxed(Vec3::new(cx, 4.6, 0.0), Vec3::new(len * 0.485, 1.0, beam * 0.93), 0.0, rgba(palette.glass_dark));
+    m.boxed(Vec3::new(cx + 2.0, 7.6, 0.0), Vec3::new(len * 0.3, 3.0, beam * 0.8), 0.0, rgba(white));
+    m.boxed(Vec3::new(cx + 2.0, 7.8, 0.0), Vec3::new(len * 0.305, 0.9, beam * 0.81), 0.0, rgba(palette.glass_dark));
+    m.boxed(Vec3::new(cx + len * 0.12, 10.2, 0.0), Vec3::new(5.0, 2.0, beam * 0.9), 0.0, rgba(white));
+    m.boxed(Vec3::new(cx + len * 0.12 + 2.0, 10.3, 0.0), Vec3::new(1.2, 1.0, beam * 0.92), 0.0, rgba(palette.glass_dark));
+    m.boxed(Vec3::new(cx - len * 0.06, 11.4, 0.0), Vec3::new(3.0, 4.6, 2.6), 0.0, rgba([0.85, 0.15, 0.15]));
+    m.boxed(Vec3::new(cx - len * 0.06, 13.9, 0.0), Vec3::new(3.1, 0.5, 2.7), 0.0, rgba([0.1, 0.1, 0.12]));
+    // The stern ramp, raised.
+    m.boxed(Vec3::new(-half + 0.3, 4.6, 0.0), Vec3::new(0.5, 3.6, beam * 0.6), 0.0, rgba([0.4, 0.42, 0.44]));
     m
 }
 

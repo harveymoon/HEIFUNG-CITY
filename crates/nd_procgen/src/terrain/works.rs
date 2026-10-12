@@ -816,7 +816,7 @@ fn port_docks(world: &World, palette: &Palette, g: &mut Geometry, concrete: [f32
                 g.part(Surface::Metal).beam(Vec3::new(base.x, 31.0, base.y), Vec3::new(out.x, 31.0, out.y), 1.4, rgba(palette.metal_paint(0)));
                 g.part(Surface::Glow).boxed(Vec3::new(out.x, 31.8, out.y), Vec3::splat(0.6), 0.0, rgba(palette.aviation_light));
             }
-            PortKind::FerryTerminal => {
+            PortKind::FerryTerminal | PortKind::FerryTerminalLarge => {
                 // A floating pontoon at the tip with a lamp.
                 let p = tip + along * 4.0;
                 g.part(Surface::Metal).boxed(Vec3::new(p.x, WATER_LEVEL + 0.5, p.y), Vec3::new(8.0, 1.0, 5.0), along.y.atan2(along.x), rgba(mul(palette.metal_paint(2), 0.8)));
@@ -857,16 +857,20 @@ fn water_plants(world: &World, palette: &Palette, g: &mut Geometry, concrete: [f
     use glam::Vec3;
     let land = &world.landscape;
     // Plants that work the water.
-    for b in world.buildings.values() {
+    for (id, b) in world.buildings.iter() {
         let Some(kind) = b.plant else { continue };
         let Some(lot) = world.lots.get(b.lot) else { continue };
         match kind {
             PowerPlantKind::Hydro => {
-                // [plant-groups] A curved arch dam across the river beside the plant.
-                if let Some((ri, _, bank)) = land.river_beside(&lot.polygon, 40.0) {
-                    let r = &land.rivers[ri];
-                    let (seg, c, _) = r.nearest(bank);
-                    crate::dam::hydro_dam(g, c, r.flow(seg), r.width, lot.center, world.plant_scale(b), &|p| world.ground_height(p), concrete, steel);
+                // [dams] (H1) The wall the player drew, bank to bank.
+                if let Some(wall) = world.dams.wall_of(id) {
+                    let span = land.rivers.get(wall.river).map_or(wall.length() * 0.6, |r| r.width);
+                    crate::dam::hydro_dam_wall(g, wall, span, lot.center, world.plant_scale(b), &|p| world.ground_height(p), concrete, steel);
+                } else if let Some((c, flow, width)) = world.auto_dam(id) {
+                    // [plant-groups] A plant from before the wall tool: a
+                    // curved arch dam across the river beside it. (None
+                    // while a new plant waits for its wall.)
+                    crate::dam::hydro_dam(g, c, flow, width, lot.center, world.plant_scale(b), &|p| world.ground_height(p), concrete, steel);
                 }
             }
             PowerPlantKind::Tidal => {

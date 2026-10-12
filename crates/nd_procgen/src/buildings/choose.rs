@@ -25,7 +25,7 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         _ if extras.metro => Style::MetroEntrance,
         _ if extras.depot => Style::BusDepot,
         _ if extras.port == Some(nd_sim::ports::PortKind::ShippingPort) => Style::ShippingPort,
-        _ if extras.port == Some(nd_sim::ports::PortKind::FerryTerminal) => Style::FerryTerminal,
+        _ if extras.port.is_some_and(|k| k.is_ferry()) => Style::FerryTerminal,
         // [economy] Waterfront docks: each kind has its own land side.
         _ if extras.port == Some(nd_sim::ports::PortKind::MarinaSmall) => Style::MarinaSmall,
         _ if extras.port == Some(nd_sim::ports::PortKind::MarinaLarge) => Style::MarinaLarge,

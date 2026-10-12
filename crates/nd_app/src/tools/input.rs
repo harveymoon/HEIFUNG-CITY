@@ -134,6 +134,13 @@ pub(crate) fn tool_input(
         if tools.tool != Tool::Transit {
             tools.route_sel = None;
         }
+        // [dams] Esc leaves the dam wall for later (the inspector's "Draw
+        // its dam wall" picks it up again).
+        if let Some(step) = tools.dam.take() {
+            tools.dam_note = None;
+            let name = sim.world.buildings.get(step.plant).map_or_else(|| "The plant".to_string(), |b| b.name.clone());
+            tools.status = format!("{name} has no dam wall yet: it makes no power until it has one (select it and press \"Draw its dam wall\").");
+        }
         // [metro-ux] Esc cancels the line being drawn.
         if !tools.metro_draft.is_empty() {
             tools.status = "Line cancelled: nothing was built.".into();

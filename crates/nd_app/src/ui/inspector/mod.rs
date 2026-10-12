@@ -41,6 +41,22 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
         .vscroll(true)
         .show(ctx, |ui| {
             show(ui, p.sim, p.selection, p.assets);
+            // [parks] (D5) A park: how kept, a clean-up, leave it wild.
+            if let Selection::Building(id) = *p.selection {
+                if let Some(m) = super::parks::inspector(ui, p.sim, id) {
+                    p.flags.message = m;
+                }
+            }
+            // [dams] (H1) A hydro plant with no wall drawn: draw one.
+            if let Selection::Building(id) = *p.selection {
+                if p.sim.world.buildings.get(id).is_some_and(|b| b.plant == Some(nd_sim::PowerPlantKind::Hydro)) && p.sim.world.dams.wall_of(id).is_none() {
+                    let label = if p.sim.world.dams.is_pending(id) { "Draw its dam wall" } else { "Redraw its dam wall" };
+                    if ui.button(label).on_hover_text("Click the bank by the plant, then the far bank: the wall shows its size, cost and power as you go. A drawn wall takes the old dam's place.").clicked() {
+                        p.tools.tool = crate::tools::Tool::Buildings;
+                        p.tools.dam = Some(crate::tools::DamStep { plant: id, a: None });
+                    }
+                }
+            }
             // [ferry-routes] A click on a route flies to its far end.
             if let Some(at) = super::ferry::take_fly(ui.ctx()) {
                 p.fly_to = Some(at);

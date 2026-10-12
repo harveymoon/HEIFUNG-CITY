@@ -80,8 +80,13 @@ pub const RICH_PER_GALLERY: f32 = 300.0;
 pub const SCENE_MIN_ARTISTS: f32 = 4.0;
 /// ... and this many rich adults to buy.
 pub const SCENE_MIN_AUDIENCE: f32 = 20.0;
-/// Wealthy households near the water per marina berth's worth of demand.
-pub const RICH_PER_MARINA: f32 = 150.0;
+/// Wealthy households near the water per small marina's worth of berths
+/// (about one in eight or nine keeps a boat; a small marina has 10 berths
+/// on the map, standing for a few dozen). Was 150: a 17k city on the
+/// water then wanted 5-6 marinas with two built (H4).
+pub const RICH_PER_MARINA: f32 = 250.0;
+/// A large marina's berths, counted in small marinas (22 berths to 10).
+pub const LARGE_MARINA_WORTH: f32 = 2.2;
 /// [waterfront] Visitors in town per beach resort's worth of guests.
 pub const TOURISTS_PER_RESORT: f32 = 60.0;
 /// [waterfront] Comfortable adults, and visitors, per restaurant on a pier.
@@ -486,9 +491,12 @@ pub fn assess(s: &Signals, supply: &Supply) -> Vec<Pressure> {
             }
             PressureKind::Marina => {
                 let wanted = if s.has_water { s.rich_near_water / RICH_PER_MARINA } else { 0.0 };
-                let have = s.marinas_small + s.marinas_large;
                 let wanted = wanted.max(0.0);
-                let why = if s.has_water { format!("{} wealthy households near the water would keep a boat; {} marinas", s.rich_near_water.round(), have.round()) } else { "no water to build a marina on".to_string() };
+                let why = if s.has_water {
+                    format!("{} wealthy households near the water would keep a boat: berths for about {wanted:.1} small marinas ({}); a large marina counts as {LARGE_MARINA_WORTH}", s.rich_near_water.round(), marinas_built(s))
+                } else {
+                    "no water to build a marina on".to_string()
+                };
                 (wanted, why)
             }
             // [waterfront] The trades of the shore, only where there is one.
@@ -511,17 +519,35 @@ pub fn assess(s: &Signals, supply: &Supply) -> Vec<Pressure> {
         };
         let mut p = Pressure::new(kind, wanted, supply, why);
         if kind == PressureKind::Marina {
-            // The player's docks are not businesses the supply counts.
+            // The player's docks are not businesses the supply counts. A
+            // large marina's berths count as more than one small one's.
             p.have = (s.marinas_small + s.marinas_large).round() as u32;
-            p.gap = p.wanted - p.have as f32;
+            let worth = s.marinas_small + LARGE_MARINA_WORTH * s.marinas_large;
+            p.gap = p.wanted - worth;
             p.strength = p.gap.clamp(0.0, 1.0);
             if p.wants_more() {
-                p.held = Some("the player builds marinas: Build > Water".to_string());
+                // H4: say what stands, not just that it is held.
+                let want = p.wanted.round().max(1.0) as u32;
+                p.held = Some(match p.have {
+                    0 => format!("wants about {want} marina{}, you have none: Build > Water", if want == 1 { "" } else { "s" }),
+                    _ => format!("wants berths for about {want} small marinas, you have {} (worth {worth:.1}): Build > Water", marinas_built(s)),
+                });
             }
         }
         out.push(p);
     }
     out
+}
+
+/// "2 (1 large)" / "1 small": the marinas the player has built.
+fn marinas_built(s: &Signals) -> String {
+    let (small, large) = (s.marinas_small.round() as u32, s.marinas_large.round() as u32);
+    match (small, large) {
+        (0, 0) => "none built".to_string(),
+        (n, 0) => format!("{n} small"),
+        (0, n) => format!("{n} large"),
+        (a, b) => format!("{} ({b} large)", a + b),
+    }
 }
 
 fn scene_note(s: &Signals) -> String {
@@ -729,6 +755,23 @@ mod tests {
         assert!(p.wants_more() && p.held.as_deref().is_some_and(|h| h.contains("Build")));
         let dry = Signals { rich_near_water: 200.0, ..Default::default() };
         assert!(!get(&assess(&dry, &Supply::default()), PressureKind::Marina).wants_more());
+    }
+
+    /// H4: with marinas built the advice says how many stand, and a large
+    /// marina's berths count for more than a small one's.
+    #[test]
+    fn marina_advice_counts_what_is_built() {
+        let s = Signals { rich_near_water: 1500.0, has_water: true, marinas_small: 2.0, ..Default::default() };
+        let p = get(&assess(&s, &Supply::default()), PressureKind::Marina);
+        assert_eq!(p.have, 2);
+        let held = p.held.expect("wants more");
+        assert!(held.contains("wants berths for about 6") && held.contains("you have 2"), "{held}");
+        // Harvey's 17k city: ~840 wealthy households by the water, one small
+        // and one large marina: met.
+        let h4 = Signals { rich_near_water: 840.0, has_water: true, marinas_small: 1.0, marinas_large: 1.0, ..Default::default() };
+        let p = get(&assess(&h4, &Supply::default()), PressureKind::Marina);
+        assert!(!p.wants_more(), "{p:?}");
+        assert!(p.held.is_none());
     }
 
     #[test]

@@ -351,6 +351,16 @@ pub(super) fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_s
         } else if kind.reference_area().is_some() {
             hint(ui, &format!("sized to its lot: {:.0} m², {:.2}× a standard {}", w.lots.get(b.lot).map_or(0.0, |l| l.area()), w.plant_scale(b), kind.label()));
         }
+        // [dams] (H1) Its dam.
+        if kind == nd_sim::PowerPlantKind::Hydro {
+            match w.dams.wall_of(id) {
+                Some(wall) => hint(ui, &format!("dam wall {:.0} m from bank to bank, a footpath along its crest (no roads on a dam)", wall.length())),
+                None if w.dams.is_pending(id) => {
+                    ui.label(egui::RichText::new("no dam wall yet: it makes no power until one is drawn").color(egui::Color32::from_rgb(255, 170, 80)));
+                }
+                None => hint(ui, "the old automatic dam across the river beside it (a wall can be drawn to replace it)"),
+            }
+        }
         if b.demolition.is_some() {
             ui.label(egui::RichText::new("clearing the lot: not on the grid yet").color(egui::Color32::from_rgb(255, 170, 80)));
         }
@@ -385,7 +395,12 @@ pub(super) fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_s
         }
     }
     // [dock-access] A dock or station off the roads: say so, loud, and what to do.
-    if let Some(problem) = w.access_problem(id) {
+    if let (Some(problem), Some(true)) = (w.access_problem(id), w.footpath_only(id)) {
+        // (D7) A footpath only: people walk in, goods need a road.
+        section(ui, "ROAD ACCESS");
+        ui.label(egui::RichText::new("FOOTPATH ONLY: GOODS NEED A ROAD").color(egui::Color32::from_rgb(255, 170, 80)).strong());
+        hint(ui, &crate::ui::fmt::capitalise(&problem));
+    } else if let Some(problem) = w.access_problem(id) {
         section(ui, "ROAD ACCESS");
         ui.label(egui::RichText::new("NOT CONNECTED TO THE ROAD NETWORK").color(egui::Color32::from_rgb(255, 170, 80)).strong());
         let todo = if w.stub_ends_of(id).is_empty() { "Its street is joined to roads that reach neither the city nor a way out of town: carry them on to the network." } else { "Draw a road to the marked end of its street stub (the amber ring); it snaps on like any road end." };

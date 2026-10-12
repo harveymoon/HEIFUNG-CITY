@@ -525,6 +525,33 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("at", "[x, y] with open"),
         ("finish", "bool: built at once"),
     ] },
+    Cmd { name: "parks", aliases: &[], effect: Read, run: parks::parks, help: &[
+        ("returns", "[parks] every park (lots side by side are one park, one name): area, kept 0..1, run_down, litter, dealers, campers, homeless, visits, preserve (left wild), cleanups, cleanup_cost, troubles"),
+    ] },
+    Cmd { name: "park", aliases: &[], effect: Game, run: parks::park, help: &[
+        ("building", "any park building of the park"),
+        ("clean_up", "bool: pay for a clean-up (litter cleared, dealers moved on for 10 days, campers by it found somewhere else)"),
+        ("preserve", "bool: leave it wild as a nature preserve, or make it a kept park again"),
+        ("set", "dev: {trash 0..1, dealers 0..4} sets its state"),
+    ] },
+    Cmd { name: "ferry_estimate", aliases: &[], effect: Read, run: ferry::estimate, help: &[
+        ("at", "[x, y] where the terminal would go"),
+        ("kind", "ferry_terminal (default) or ferry_terminal_large (car ferries)"),
+        ("returns", "[ferries] residents within 500 m, towns off the map, terminals linked, sailings, riders and cars a day, fares against upkeep, or why it cannot go"),
+    ] },
+    Cmd { name: "dams", aliases: &[], effect: Read, run: dams::dams, help: &[
+        ("returns", "[dams] every hydro plant: output, nameplate and its dam (wall: ends, length, crest footpath; awaiting_wall: placed with the tool, makes nothing yet; automatic: the old arch), and the wall rules"),
+    ] },
+    Cmd { name: "dam", aliases: &[], effect: Game, run: dams::dam, help: &[
+        ("building", "the hydro plant"),
+        ("a", "[x, y] one bank (with b: what the wall would be: length_m, span_m, cost, expected_mw, or reason)"),
+        ("b", "[x, y] the other bank"),
+        ("build", "bool, with a and b: build it (paid; a footpath goes along the crest)"),
+        ("step", "bool: the Buildings tool's wall step for this plant (as after placing it; it waits for its wall) or leave it"),
+        ("cursor", "[x, y] in the step: the read-out under the pointer"),
+        ("click", "[x, y] in the step: first bank, then the far bank (builds)"),
+        ("note", "one end within 50 m of the plant, both on dry ground within 30 m of the water, across the plant's river once and roughly square to it, never over a road; no road may then be built over the dam"),
+    ] },
     Cmd { name: "shore", aliases: &["waterfront"], effect: Read, run: shore_command, help: &[
         ("returns", "[waterfront] waterfront lots (vacant ones), their frontage, public beaches (open, bathers now), private jetties, the waterfront trades open (beach resorts, pier restaurants, beach bars, boat rentals, waterfront hotels) and their pressures; whether parcels reach the water"),
     ] },

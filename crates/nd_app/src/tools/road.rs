@@ -59,10 +59,14 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, _selection:
     if click {
         if let Some(p) = ground {
             let first = tools.points.is_empty();
-            let grounds = ToolState::grounds_snap(sim, p, tools.kind).and_then(|q| sim.world.grounds_junction_near(q, 0.01).map(|j| j.kind.label()));
+            let snap = ToolState::grounds_snap(sim, p, tools.kind);
+            let hub = snap.is_some_and(|q| sim.world.park_hub_near(q, 0.01).is_some());
+            let grounds = snap.and_then(|q| sim.world.grounds_junction_near(q, 0.01).map(|j| j.kind.label()));
             let (p, snapped, level) = ToolState::road_snap_level(sim, p, tools.kind, tools.elevation, first);
             tools.push_point(p, level);
-            if let Some(what) = grounds {
+            if hub {
+                tools.status = "Snapped to the park's hub: the path is laid to the park's edge gate on this side and the park's walkway carries on to the hub (the park is not cut in two).".into();
+            } else if let Some(what) = grounds {
                 tools.status = format!("Snapped to the {what}'s gate: the path joins its walkways there once implemented.");
             } else if snapped && !tools.interchange {
                 tools.status = format!("Snapped to the road at {}: a junction forms there.", elevation_label(level));
@@ -190,6 +194,15 @@ pub(super) fn preview(gizmos: &mut Gizmos, p: &Preview) {
             let col = if j.attached { green } else { Color::linear_rgb(2.4, 1.6, 0.4) };
             gizmos.circle(flat_at(lift(j.pos)), 1.4, col);
             gizmos.circle(flat_at(lift(j.pos)), 0.6, col);
+        }
+        // [parks] (D5) Park hub gates: violet rings deep in the parks.
+        let violet = Color::linear_rgb(1.6, 0.6, 3.0);
+        for (_, h) in sim.world.park_hubs() {
+            if near.is_some_and(|c| c.distance(h) > 600.0) {
+                continue;
+            }
+            gizmos.circle(flat_at(lift(h)), 1.8, violet);
+            gizmos.circle(flat_at(lift(h)), 0.8, violet);
         }
         if let Some(g) = gate_snap {
             let pulse = 1.0 + 0.25 * (p.t * 5.0).sin();

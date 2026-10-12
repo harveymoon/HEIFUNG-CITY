@@ -52,7 +52,7 @@ pub fn power_note(k: PowerPlantKind) -> &'static str {
         PowerPlantKind::Solar => ". Any lot but parks and civic. Hexagonal panels on trackers that turn to face the sun; clean, but only by day and dimmed by cloud.",
         PowerPlantKind::Wind => ". Any vacant lot. Clean; output follows the wind.",
         PowerPlantKind::Nuclear => ". Enormous, steady, expensive, and the neighbours are nervous.",
-        PowerPlantKind::Hydro => ". On a lot beside a river or stream with a current of 0.8 m/s or more; output follows the current, and a bigger site holds more turbine bays (one to eight). A dam is built across the water.",
+        PowerPlantKind::Hydro => ". On a lot beside a river or stream with a current of 0.8 m/s or more; output follows the current, and a bigger site holds more turbine bays (one to eight). Then draw its dam: click the bank by the plant and the far bank; the wall shows its length, cost and power as you go. It makes nothing until the wall stands. A dam carries a footpath, never a road.",
         PowerPlantKind::Tidal => ". On the sea shore. Clean; output rises and falls with the two tides a day, and a bigger site holds more turbine bays (one to eight).",
         PowerPlantKind::Geothermal => ". Over a geothermal hot spot (yellow ground, steaming vents). Steady; output follows the heat.",
     }

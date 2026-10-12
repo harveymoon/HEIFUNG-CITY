@@ -204,6 +204,9 @@ impl World {
                 // [waterfront] beaches, and lots on the water
                 b.channel(Channel::Shore);
                 self.splat_shore(&mut b);
+                // [parks] run-down parks sour the land round them
+                b.channel(Channel::Blight);
+                self.splat_parks(&mut b);
                 b.channel(Channel::Other);
                 // [land] NIMBY: the land round a mansion jumps, fading.
                 for n in &self.estate.nimby {
@@ -1110,6 +1113,10 @@ impl World {
         report("contamination", &|b| w.splat_contamination(b));
         report("districts", &|b| w.splat_districts(b));
         report("shore", &|b| w.splat_shore(b));
+        report("parks", &|b| {
+            b.channel(Channel::Blight);
+            w.splat_parks(b)
+        });
         report("towers", &|b| w.splat_towers(b));
         report("setting", &|b| w.splat_setting(b));
         report("access", &|b| {

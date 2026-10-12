@@ -978,6 +978,7 @@ pub fn placeable_key(p: nd_sim::Placeable) -> String {
         nd_sim::Placeable::Rail(f) => rail_name(f).to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::ShippingPort) => "shipping_port".to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::FerryTerminal) => "ferry_terminal".to_string(),
+        nd_sim::Placeable::Dock(nd_sim::PortKind::FerryTerminalLarge) => "ferry_terminal_large".to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::MarinaSmall) => "marina_small".to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::MarinaLarge) => "marina_large".to_string(),
         nd_sim::Placeable::Dock(nd_sim::PortKind::FishingPortSmall) => "fishing_port_small".to_string(),
@@ -1105,6 +1106,7 @@ pub fn access_json(w: &World, id: nd_sim::BuildingId, connected: bool) -> Value 
         "connected": connected,
         // [sweep-sim] Reached on foot (a path) and whether that is enough.
         "serves": w.access_serves(id),
+        "footpath_only": w.footpath_only(id),
         "note": w.access_note(id),
         "stub_ends": w.stub_ends_of(id).into_iter().map(v2).collect::<Vec<_>>(),
         "problem": w.access_problem(id),

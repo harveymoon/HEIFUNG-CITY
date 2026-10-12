@@ -30,6 +30,14 @@ pub fn plaza(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     park(g, c, rng);
 }
 
+/// [parks] (D5) What the sim says of a park beyond its plan: the litter
+/// on its ground and the dealers working it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ParkLook {
+    pub trash: f32,
+    pub dealers: u8,
+}
+
 /// Everything a park needs to know while it is being drawn.
 struct Park<'a> {
     layout: &'a ParkLayout,
@@ -128,6 +136,11 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // park's other lots, so their ground meets without a seam; it keeps the
     // usual inset from the street and the neighbours.
     let lawn = if layout.shared_edges.is_empty() { inner.clone() } else { inset_edges(&c.lot_poly, |i| if layout.shared_edges.contains(&i) { -0.05 } else { 0.3 }) };
+    // [parks] (D5) A nature preserve: meadow, a trail, woodland.
+    if layout.preserve {
+        wild(g, c, rng, &park, &lawn);
+        return;
+    }
     park_ground(g, c, rng, &park, &inner, &lawn);
     park_paths(g, c, &park);
     park_benches(g, c, rng, &park);
@@ -138,6 +151,115 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // ── trees ────────────────────────────────────────────────────────────
     trees(g, rng, &park, pal);
     park_edges(g, c, rng, &park, &inner);
+    // [parks] (D5) A park let go: its litter and its dealers.
+    if let Some(look) = c.park_look {
+        let_go(g, c, rng, &park, look);
+    }
+}
+
+/// [parks] (D5) Litter over a neglected park's ground (paper, cans,
+/// bags, by how much there is) and the dealers by its paths: hooded
+/// figures standing about, a phone lit in a hand.
+fn let_go(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, park: &Park, look: ParkLook) {
+    let area = nd_sim::zoning::polygon_area(&park.lot).abs();
+    let n = ((look.trash - 0.1).max(0.0) * area / 25.0).min(160.0) as usize;
+    let colours = [[0.86, 0.85, 0.8], [0.75, 0.2, 0.18], [0.3, 0.55, 0.8], [0.2, 0.2, 0.22], [0.85, 0.75, 0.3]];
+    for _ in 0..n {
+        let Some(p) = c.random_inside(rng, 0.8) else { continue };
+        let w = c.frame.to_world(p.x, p.y);
+        let col = colours[rng.random_range(0..colours.len())];
+        if rng.random_bool(0.2) {
+            // A bag of rubbish.
+            g.part(Tarp).boxed(Vec3::new(w.x, 0.22, w.y), Vec3::new(0.5, 0.44, 0.45), rng.random_range(0.0..TAU), rgba([0.12, 0.12, 0.13]));
+        } else {
+            g.part(Tarp).boxed(Vec3::new(w.x, 0.05, w.y), Vec3::new(0.28, 0.06, 0.2), rng.random_range(0.0..TAU), rgba(col));
+        }
+    }
+    // The dealers, each by a path a little off it.
+    let mut placed = 0;
+    'paths: for path in &park.layout.paths {
+        for seg in path.windows(2) {
+            if placed >= look.dealers as usize {
+                break 'paths;
+            }
+            let d = (seg[1] - seg[0]).normalize_or_zero();
+            let w = seg[0].lerp(seg[1], 0.5) + d.perp() * (park.path_width * 0.5 + 1.0);
+            if !park.inside_world(w, 0.5) {
+                continue;
+            }
+            hooded_figure(g, w, d.perp().to_angle() + PI, rng);
+            placed += 1;
+        }
+    }
+}
+
+/// A figure in a dark hoodie, hands at a lit phone (world).
+fn hooded_figure(g: &mut Geometry, w: Vec2, yaw: f32, rng: &mut impl Rng) {
+    let hoodie = [[0.1, 0.1, 0.12], [0.2, 0.05, 0.06], [0.08, 0.12, 0.2]][rng.random_range(0..3)];
+    g.part(Matte).boxed(Vec3::new(w.x, 0.45, w.y), Vec3::new(0.34, 0.9, 0.24), yaw, rgba([0.14, 0.14, 0.16]));
+    g.part(Matte).boxed(Vec3::new(w.x, 1.25, w.y), Vec3::new(0.48, 0.7, 0.3), yaw, rgba(hoodie));
+    g.part(Matte).boxed(Vec3::new(w.x, 1.75, w.y), Vec3::new(0.28, 0.3, 0.3), yaw, rgba(hoodie));
+    let f = Vec2::from_angle(yaw + FRAC_PI_2) * 0.25;
+    g.part(Glow).boxed(Vec3::new(w.x + f.x, 1.2, w.y + f.y), Vec3::new(0.08, 0.14, 0.02), yaw, rgba([0.6, 0.9, 1.4]));
+}
+
+/// [parks] (D5) A nature preserve: long meadow grass with wildflowers,
+/// its paths a beaten trail, woodland thick round them, a wooden sign by
+/// the way in.
+fn wild(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, park: &Park, lawn: &[Vec2]) {
+    let (f, pal) = (&c.frame, c.palette);
+    ground(g, f, Foliage, lawn, 0.03, mul(pal.foliage, 0.8));
+    // Tussocks and flowers.
+    let area = nd_sim::zoning::polygon_area(&park.lot).abs();
+    let flowers = [[0.9, 0.85, 0.3], [0.8, 0.35, 0.6], [0.95, 0.95, 0.92], [0.55, 0.45, 0.9]];
+    for _ in 0..((area / 14.0) as usize).min(260) {
+        let Some(p) = c.random_inside(rng, 0.6) else { continue };
+        let w = f.to_world(p.x, p.y);
+        if park.path_distance(w) < 1.4 {
+            continue;
+        }
+        if rng.random_bool(0.3) {
+            g.part(Foliage).boxed(Vec3::new(w.x, 0.12, w.y), Vec3::new(0.2, 0.24, 0.2), 0.0, rgba(flowers[rng.random_range(0..flowers.len())]));
+        } else {
+            g.part(Foliage).cylinder_capped(w, 0.5, 0.15, 0.0, rng.random_range(0.4..0.8), 5, false, true, rgba(mul(pal.foliage_dry, rng.random_range(0.8..1.1))));
+        }
+    }
+    for path in &park.layout.paths {
+        if path.len() >= 2 {
+            g.part(Dirt).path_strip(path, 0.0, 1.3, 0.05, rgba(mul(pal.dirt, 0.8)));
+        }
+    }
+    for (w, facing) in &park.layout.benches {
+        bench_world(g, *w, facing + FRAC_PI_2, mul(pal.wood, 0.75), CHARCOAL);
+    }
+    // Woodland: trees close together, clear of the trail.
+    let mut placed: Vec<Vec2> = Vec::new();
+    for _ in 0..((area / 30.0) as usize + 4).min(160) {
+        let Some(p) = c.random_inside(rng, 1.8) else { continue };
+        let w = f.to_world(p.x, p.y);
+        if park.path_distance(w) < 2.6 || placed.iter().any(|q| q.distance(w) < 4.2) || !park.inside_world(w, 1.5) {
+            continue;
+        }
+        placed.push(w);
+        let leaf = mul(pal.foliage, rng.random_range(0.7..1.0));
+        if rng.random_bool(0.35) {
+            tree_kind(g, w, 0.0, TreeKind::Conifer, rng.random_range(7.0..12.0), rng.random_range(2.0..3.0), pal.bark, leaf);
+        } else {
+            tree_kind(g, w, 0.0, TreeKind::Round, rng.random_range(6.0..10.0), rng.random_range(2.2..3.4), pal.bark, leaf);
+        }
+    }
+    // A wooden sign by the way in.
+    if let (true, Some(gate), Some(path)) = (park.layout.anchor, park.layout.entrances.first(), park.layout.paths.first()) {
+        let dir = (path.get(1).copied().unwrap_or(*gate) - *gate).normalize_or_zero();
+        let w = *gate + dir * 1.2 + dir.perp() * 1.8;
+        if park.inside_world(w, 0.3) {
+            for s in [-0.6f32, 0.6] {
+                let q = w + dir.perp() * s;
+                g.part(Wood).boxed(Vec3::new(q.x, 0.7, q.y), Vec3::new(0.12, 1.4, 0.12), 0.0, rgba(mul(pal.wood, 0.7)));
+            }
+            g.part(Wood).boxed(Vec3::new(w.x, 1.3, w.y), Vec3::new(1.5, 0.6, 0.08), dir.perp().to_angle(), rgba(mul(pal.wood, 0.9)));
+        }
+    }
 }
 
 /// The lawn (or dirt and scrapes, or a lawn and a forecourt) by tier.

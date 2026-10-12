@@ -60,3 +60,18 @@ pub fn ship_json(w: &World, id: ShipId) -> Option<Value> {
         "route": line,
     }))
 }
+
+/// [ferries] (D6) `ferry_estimate {at: [x, y], kind?: ferry_terminal|ferry_terminal_large}`:
+/// what a terminal there would carry before it is built.
+pub(super) fn estimate(cmd: &Value, ctx: &mut super::ctx::Ctx) -> Result<Value, String> {
+    let at = super::view::opt_vec2(cmd, "at")?.ok_or("ferry_estimate needs at: [x, y]")?;
+    let kind = match super::view::opt_str(cmd, "kind")?.unwrap_or("ferry_terminal") {
+        "ferry_terminal_large" | "large_ferry" | "car_ferry" | "ferry_port" => nd_sim::PortKind::FerryTerminalLarge,
+        _ => nd_sim::PortKind::FerryTerminal,
+    };
+    let w = &ctx.sim.world;
+    Ok(match w.ferry_estimate(kind, at) {
+        Some(e) => json!({ "ok": true, "kind": kind.label(), "residents_near": e.near, "towns_off_map": e.towns, "terminals_linked": e.terminals, "sailings_a_day": e.sailings, "riders_a_day": e.riders, "cars_a_day": e.cars, "fares_a_day": super::view::round(e.fares), "upkeep_a_day": super::view::round(e.upkeep), "text": e.text() }),
+        None => json!({ "ok": false, "reason": w.plan_port(kind, at).err().unwrap_or_else(|| "not a ferry terminal".to_string()) }),
+    })
+}

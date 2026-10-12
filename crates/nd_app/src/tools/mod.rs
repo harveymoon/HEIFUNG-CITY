@@ -7,6 +7,7 @@
 //! preview; the input frame in `input`; the state in `state` and `kinds`.
 
 mod buildings;
+pub(crate) use buildings::{dam_click, dam_readout};
 mod bulldoze;
 pub(crate) use bulldoze::piece_at as road_piece_at;
 mod edit;

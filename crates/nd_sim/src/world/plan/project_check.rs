@@ -123,7 +123,12 @@ impl World {
         // An end left in the air is the plainer problem: say it first.
         out.pillar_gaps.sort_by_key(|g| !g.end);
         out.pillar_refusal = out.pillar_gaps.first().map(|g| format!("Not implemented: {}.", g.reason()));
-        out.refusal = Self::blocks_refusal(&out.blocks).or_else(|| out.pillar_refusal.clone());
+        // [dams] (H1) No road on a dam: dams carry footpaths only.
+        out.dam_refusal = pv.planned_roads.iter().enumerate().find_map(|(i, (_, pts, f, b, k))| {
+            let levels = pv.planned_levels.get(i).map_or(&[][..], |l| &l[..]);
+            self.road_over_dam(pts, levels, *k, crate::roads::half_width_spec(*k, *f, *b))
+        });
+        out.refusal = Self::blocks_refusal(&out.blocks).or_else(|| out.dam_refusal.clone()).or_else(|| out.pillar_refusal.clone());
         out
     }
 

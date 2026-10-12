@@ -139,6 +139,64 @@ use crate::hash::mix2 as mix;
 /// and spots on a loose grid across the sand, each facing the water. The
 /// spots are the lot's benches: people walk to one and lie down.
 pub fn plan_beach(lot: &Lot, tier: Tier) -> ParkLayout {
+    plan_beach_with(lot, tier, &[])
+}
+
+/// [beaches] (H2) Public beach lots that share a side (2 m or more of
+/// edge): each group is one beach. Every beach lot is in exactly one
+/// group (a lone lot is a group of one); groups and their lots sorted.
+pub fn beach_groups(lots: &slotmap::SlotMap<crate::zoning::LotId, Lot>) -> Vec<Vec<crate::zoning::LotId>> {
+    let ids: Vec<crate::zoning::LotId> = lots.iter().filter(|(_, l)| l.shore.beach && l.land_use == crate::zoning::LandUse::Park && l.polygon.len() >= 3).map(|(id, _)| id).collect();
+    groups_of(&ids, |a, b| touching(&lots[a].polygon, &lots[b].polygon))
+}
+
+/// Do two outlines share 2 m or more of edge?
+pub fn touching(a: &[Vec2], b: &[Vec2]) -> bool {
+    let (na, nb) = (a.len(), b.len());
+    (0..na).any(|i| (0..nb).any(|j| crate::geom::shared_stretch(a[i], a[(i + 1) % na], b[j], b[(j + 1) % nb]).is_some_and(|(lo, hi)| hi - lo >= 2.0)))
+}
+
+/// The connected groups of `ids` under `joined`, each sorted, sorted.
+pub fn groups_of<K: Copy + Ord>(ids: &[K], joined: impl Fn(K, K) -> bool) -> Vec<Vec<K>> {
+    let n = ids.len();
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for i in 0..n {
+        for j in (i + 1)..n {
+            if joined(ids[i], ids[j]) {
+                adj[i].push(j);
+                adj[j].push(i);
+            }
+        }
+    }
+    let mut seen = vec![false; n];
+    let mut out = Vec::new();
+    for s in 0..n {
+        if seen[s] {
+            continue;
+        }
+        let mut stack = vec![s];
+        seen[s] = true;
+        let mut group = Vec::new();
+        while let Some(i) = stack.pop() {
+            group.push(ids[i]);
+            for &j in &adj[i] {
+                if !seen[j] {
+                    seen[j] = true;
+                    stack.push(j);
+                }
+            }
+        }
+        group.sort();
+        out.push(group);
+    }
+    out.sort();
+    out
+}
+
+/// [`plan_beach`] for a lot of a beach of several (H2): towel spots may
+/// come up to the `seams` it shares with the others (a metre off, so the
+/// sand reads as one beach, not lots fenced by bare strips).
+pub fn plan_beach_with(lot: &Lot, tier: Tier, seams: &[(Vec2, Vec2)]) -> ParkLayout {
     let poly = &lot.polygon;
     let sea = if lot.shore.seaward != Vec2::ZERO { lot.shore.seaward } else { -lot.front_dir };
     let entrance = pull_inside(poly, lot.entrance() - lot.front_dir * 1.5, lot.center);
@@ -166,7 +224,9 @@ pub fn plan_beach(lot: &Lot, tier: Tier) -> ParkLayout {
             let jitter = (mix(seed, (row * 131 + benches.len()) as u64) % 1000) as f32 / 1000.0 - 0.5;
             let p = along * (u + jitter * 1.2) + sea * (v + jitter * 0.8);
             let clear_of_walk = walk.windows(2).all(|w| crate::geom::project_on_segment(p, w[0], w[1]).1.distance(p) > 2.2);
-            if point_in_polygon(p, poly) && distance_to_outline(p, poly) > 2.0 && clear_of_walk {
+            let edge = distance_to_outline(p, poly);
+            let by_seam = seams.iter().any(|(a, b)| crate::geom::project_on_segment(p, *a, *b).1.distance(p) <= edge + 0.3);
+            if point_in_polygon(p, poly) && (edge > 2.0 || (by_seam && edge > 1.0)) && clear_of_walk {
                 benches.push((p, facing + jitter * 0.4));
             }
             u += spacing_u;
@@ -185,6 +245,7 @@ pub fn plan_beach(lot: &Lot, tier: Tier) -> ParkLayout {
         cluster_area: area,
         anchor: true,
         seams: Vec::new(),
+        preserve: false,
     }
 }
 
@@ -326,6 +387,12 @@ pub struct BeachState {
     /// night), to redraw it only when that changes.
     #[serde(skip)]
     pub shown: u32,
+    /// [beaches] (H2) The other park buildings of a beach of several lots
+    /// side by side (this one, the anchor, holds the beach's one name and
+    /// state), and all its lots with their sand together.
+    pub members: Vec<BuildingId>,
+    pub lots: Vec<crate::zoning::LotId>,
+    pub area: f32,
 }
 
 impl BeachState {
@@ -361,8 +428,19 @@ pub struct ShoreState {
 }
 
 impl ShoreState {
+    /// The beach a park building is (part of): its own state, or the
+    /// state of the beach it was merged into.
     pub fn beach(&self, b: BuildingId) -> Option<&BeachState> {
-        self.beaches.get(&b)
+        self.beaches.get(&self.beach_anchor(b)?)
+    }
+
+    /// [beaches] (H2) The building that holds the state of the beach `b`
+    /// is part of (`b` itself for a beach of one lot or the anchor).
+    pub fn beach_anchor(&self, b: BuildingId) -> Option<BuildingId> {
+        if self.beaches.contains_key(&b) {
+            return Some(b);
+        }
+        self.beaches.iter().find(|(_, s)| s.members.contains(&b)).map(|(a, _)| *a)
     }
 
     /// Bathers on every beach now.

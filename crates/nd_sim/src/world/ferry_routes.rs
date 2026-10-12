@@ -72,7 +72,7 @@ impl WaterLine {
         match self.kind {
             LineKind::Freight => s.kind == ShipKind::Freighter && s.port == self.from,
             LineKind::Ferry => {
-                s.kind == ShipKind::Ferry
+                s.kind.is_ferry()
                     && match self.to {
                         LineEnd::Terminal(t) => (s.port == self.from && s.to == Some(t)) || (s.port == t && s.to == Some(self.from)),
                         LineEnd::Town(k) => s.port == self.from && s.remote == Some(k),
@@ -194,7 +194,7 @@ impl World {
     pub fn water_net_signature(&self) -> u64 {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         for p in self.ports.ports.values() {
-            if !matches!(p.kind, PortKind::FerryTerminal | PortKind::ShippingPort) {
+            if !matches!(p.kind, PortKind::FerryTerminal | PortKind::FerryTerminalLarge | PortKind::ShippingPort) {
                 continue;
             }
             (p.kind as u8).hash(&mut h);
@@ -216,7 +216,7 @@ impl World {
     /// while `water_net_signature` stands.
     pub fn water_net(&self) -> WaterNet {
         let docks: Vec<&ports::Port> = self.ports.ports.values().filter(|p| p.building.is_some_and(|b| self.buildings.contains_key(b))).collect();
-        let terminals: Vec<&ports::Port> = docks.iter().copied().filter(|p| p.kind == PortKind::FerryTerminal).collect();
+        let terminals: Vec<&ports::Port> = docks.iter().copied().filter(|p| p.kind.is_ferry()).collect();
         let shipping: Vec<&ports::Port> = docks.iter().copied().filter(|p| p.kind == PortKind::ShippingPort).collect();
         let mut pairs: Vec<(Vec2, Option<Vec2>)> = Vec::new();
         let mut pair_ends: Vec<(usize, usize)> = Vec::new();
@@ -310,10 +310,10 @@ impl World {
         let Some((pid, port)) = self.ports.ports.iter().find(|(_, p)| p.building == Some(b)) else { return Vec::new() };
         // [sweep-sim] As `dispatch_ships` picks: a terminal's boats sail
         // (empty) even before people can reach it, to any terminal that sails.
-        if port.kind != PortKind::FerryTerminal || !port.sails() || self.buildings.get(b).is_none_or(|x| x.is_derelict()) {
+        if !port.kind.is_ferry() || !port.sails() || self.buildings.get(b).is_none_or(|x| x.is_derelict()) {
             return Vec::new();
         }
-        let others: Vec<BuildingId> = self.ports.ports.iter().filter(|(oid, o)| *oid != pid && o.kind == PortKind::FerryTerminal && o.sails()).filter_map(|(_, o)| o.building).collect();
+        let others: Vec<BuildingId> = self.ports.ports.iter().filter(|(oid, o)| *oid != pid && o.kind.is_ferry() && o.sails()).filter_map(|(_, o)| o.building).collect();
         let has = |to: LineEnd| net.find(b, to).is_some();
         let free = self.ferry_free_at(b);
         let mut t = Self::dispatch_tick(Self::in_service((port.last_sailing + ports::FERRY_HEADWAY).max(self.clock.tick).max(free)));
@@ -381,7 +381,7 @@ impl World {
     pub fn ferry_free_at(&self, b: BuildingId) -> u64 {
         let now = self.clock.tick;
         let Some(port) = self.ports.port_of(b) else { return now };
-        let mine: Vec<&Ship> = self.ports.ships.values().filter(|s| s.port == b && s.kind == ShipKind::Ferry).collect();
+        let mine: Vec<&Ship> = self.ports.ships.values().filter(|s| s.port == b && s.kind.is_ferry()).collect();
         let mut free = now;
         for s in &mine {
             if s.pose().0.distance(port.berth) >= 40.0 {
@@ -550,12 +550,12 @@ mod tests {
         }
         let b = built[0];
         let mut minds = IdleMind;
-        let count = |w: &World| w.ports.ships.values().filter(|s| s.port == b && s.kind == ShipKind::Ferry).count();
+        let count = |w: &World| w.ports.ships.values().filter(|s| s.port == b && s.kind.is_ferry()).count();
         // Run to a boat boarding at the pier.
         let mut boarding = false;
         for _ in 0..3000 {
             w.tick(&mut minds);
-            if let Some(s) = w.ports.ships.values().find(|s| s.port == b && s.kind == ShipKind::Ferry && s.dwell > 2 && !s.docked && s.s < 1.0) {
+            if let Some(s) = w.ports.ships.values().find(|s| s.port == b && s.kind.is_ferry() && s.dwell > 2 && !s.docked && s.s < 1.0) {
                 let dwell = s.dwell as u64;
                 assert!(w.ferry_free_at(b) >= w.clock.tick + dwell, "not before the boat at the pier leaves");
                 boarding = true;

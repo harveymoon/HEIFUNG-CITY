@@ -303,3 +303,36 @@ fn landscapes_and_docks_survive_a_save_and_old_saves_load_flat() {
     assert_eq!(loaded.ground_height(Vec2::new(20.0, 30.0)), 0.0);
     assert_eq!(loaded.surface_height(Vec2::new(20.0, 0.0)), 0.0);
 }
+
+/// [ferries] (D6) A large terminal runs car ferries with cars on deck, and
+/// a terminal gives its estimate before it is built.
+#[test]
+fn a_large_ferry_terminal_runs_car_ferries_and_terminals_are_estimated() {
+    let mut w = valley(8);
+    w.economy.treasury = 500_000.0;
+    let (p, flow, n, width) = river_spot(&w);
+    let road_at = p + n * (width * 0.5 + 110.0);
+    w.add_road(&[road_at - flow * 300.0, road_at + flow * 300.0], 1, 1);
+    w.add_zone(vec![road_at + n * 10.0 - flow * 100.0, road_at + n * 10.0 + flow * 100.0, road_at + n * 80.0 + flow * 100.0, road_at + n * 80.0 - flow * 100.0], LandUse::Residential);
+    let click = p + n * (width * 0.5 + 24.0);
+    let est = w.ferry_estimate(PortKind::FerryTerminalLarge, click).or_else(|| w.ferry_estimate(PortKind::FerryTerminal, click)).expect("an estimate where a terminal fits");
+    assert!(est.sailings > 0 && est.riders > 0, "{est:?}");
+    assert!(est.text().contains("riders"));
+    assert!(w.ferry_estimate(PortKind::FerryTerminal, road_at + n * 60.0).is_none(), "away from the water: none");
+    let Ok(id) = w.place_port(PortKind::FerryTerminalLarge, click) else { return };
+    assert!(w.ports.port_of(id).unwrap().kind.car_deck() > 0);
+    let [s0, _] = w.ports.port_of(id).unwrap().road_line();
+    w.add_road(&[s0, road_at - flow * 300.0], 1, 1);
+    let mut minds = IdleMind;
+    let mut ferry = None;
+    for _ in 0..1500 {
+        w.tick(&mut minds);
+        if let Some(s) = w.ports.ships.values().find(|s| s.port == id) {
+            ferry = Some((s.kind, s.cars, s.passengers));
+            break;
+        }
+    }
+    let (kind, cars, _) = ferry.expect("a car ferry sails");
+    assert_eq!(kind, ShipKind::CarFerry);
+    assert!(cars <= PortKind::FerryTerminalLarge.car_deck());
+}

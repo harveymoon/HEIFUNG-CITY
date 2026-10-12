@@ -116,10 +116,15 @@ pub enum AttractionKind {
     Aquarium,
     BotanicalGarden,
     ConcertHall,
+    // (D4)
+    AmusementPark,
+    ConventionCentre,
+    Cathedral,
+    CasinoResort,
 }
 
 impl AttractionKind {
-    pub const ALL: [AttractionKind; 17] = [
+    pub const ALL: [AttractionKind; 21] = [
         AttractionKind::Monument,
         AttractionKind::Stadium,
         AttractionKind::Park,
@@ -137,6 +142,10 @@ impl AttractionKind {
         AttractionKind::Aquarium,
         AttractionKind::BotanicalGarden,
         AttractionKind::ConcertHall,
+        AttractionKind::AmusementPark,
+        AttractionKind::ConventionCentre,
+        AttractionKind::Cathedral,
+        AttractionKind::CasinoResort,
     ];
 
     /// [attractions] The landmark a sight of this kind is.
@@ -153,6 +162,10 @@ impl AttractionKind {
             AttractionKind::Aquarium => K::Aquarium,
             AttractionKind::BotanicalGarden => K::BotanicalGarden,
             AttractionKind::ConcertHall => K::ConcertHall,
+            AttractionKind::AmusementPark => K::AmusementPark,
+            AttractionKind::ConventionCentre => K::ConventionCentre,
+            AttractionKind::Cathedral => K::Cathedral,
+            AttractionKind::CasinoResort => K::CasinoResort,
             _ => return None,
         })
     }

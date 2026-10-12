@@ -1478,3 +1478,403 @@ mod tests {
         assert!(g.triangle_count() > 500);
     }
 }
+
+// ── (D4) the second league: amusement park, convention centre, cathedral,
+// casino resort ─────────────────────────────────────────────────────────────
+
+/// A drop tower: a lattice mast, a ring of seats part way up, a lit crown
+/// (world).
+fn drop_tower(g: &mut Geometry, at: Vec2, y0: f32, h: f32) {
+    let steel = [0.75, 0.76, 0.8];
+    for k in 0..4 {
+        let o = Vec2::from_angle(k as f32 * FRAC_PI_2 + PI / 4.0) * 1.1;
+        g.part(Metal).cylinder(at + o, 0.18, 0.14, y0, y0 + h, 6, rgba(steel));
+    }
+    let mut y = y0 + 3.0;
+    while y < y0 + h - 1.0 {
+        g.part(Metal).cylinder(at, 1.25, 1.25, y, y + 0.12, 4, rgba(steel));
+        y += 3.0;
+    }
+    let seats = y0 + h * 0.62;
+    g.part(Paint).cylinder_capped(at, 2.6, 2.6, seats, seats + 1.1, 16, true, true, rgba([0.95, 0.3, 0.2]));
+    g.part(Glow).cylinder(at, 2.65, 2.65, seats + 1.1, seats + 1.25, 16, rgba(NEON_AMBER));
+    g.part(Matte).cylinder_capped(at, 1.6, 1.0, y0 + h, y0 + h + 1.6, 8, false, true, rgba(DARK));
+    g.part(Glow).cylinder(at, 1.65, 1.65, y0 + h + 0.6, y0 + h + 0.9, 12, rgba(NEON_PINK));
+    g.part(Glow).boxed(Vec3::new(at.x, y0 + h + 2.0, at.y), Vec3::splat(0.5), 0.0, rgba(NEON_RED));
+}
+
+/// A swing ride: a mast, a tilted crown and chairs hanging off it (world).
+fn swing_ride(g: &mut Geometry, pal: &Palette, at: Vec2, y0: f32, r: f32) {
+    g.part(Metal).cylinder(at, 0.5, 0.4, y0, y0 + 9.0, 8, rgba(SILVER));
+    g.part(Tarp).cylinder_capped(at, r * 0.55, 0.3, y0 + 8.5, y0 + 10.5, 16, true, false, rgba(pal.awning(5)));
+    for k in 0..12 {
+        let a = k as f32 / 12.0 * TAU;
+        let top = at + Vec2::from_angle(a) * r * 0.5;
+        let seat = at + Vec2::from_angle(a) * r;
+        g.part(Metal).tube(Vec3::new(top.x, y0 + 8.5, top.y), Vec3::new(seat.x, y0 + 4.2, seat.y), 0.04, 3, rgba(SILVER));
+        g.part(Paint).boxed(Vec3::new(seat.x, y0 + 4.0, seat.y), Vec3::new(0.6, 0.3, 0.6), a, rgba(pal.awning(k)));
+    }
+    let ring: Vec<Vec3> = (0..20).map(|k| { let p = at + Vec2::from_angle(k as f32 / 20.0 * TAU) * r * 0.55; Vec3::new(p.x, y0 + 8.5, p.y) }).collect();
+    for k in 0..20 {
+        g.part(Glow).tube(ring[k], ring[(k + 1) % 20], 0.06, 3, rgba(NEON_VIOLET));
+    }
+}
+
+/// An amusement park: the midway (the sim's loop and benches), a lit gate,
+/// and its rides in the clearest ground: a coaster, a ferris wheel, a drop
+/// tower, a swing ride, a carousel and food stands along the way.
+pub fn amusement_park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let pal = c.palette;
+    let f = &c.frame;
+    fill_site(g, c, Paving, 0.03, mix(pal.paving, [0.62, 0.55, 0.5], 0.35));
+    let plan = c.park.as_ref();
+    if let Some(plan) = plan {
+        for path in &plan.paths {
+            g.part(Paving).ground_strip(path, 4.0, 0.06, rgba(mul(pal.paving, 1.15)));
+            // Strings of light along the midway.
+            for s in path.windows(2) {
+                g.part(Glow).tube(Vec3::new(s[0].x, 4.2, s[0].y), Vec3::new(s[1].x, 4.2, s[1].y), 0.04, 3, rgba(mul(NEON_AMBER, 0.8)));
+            }
+        }
+        for (k, (p, yaw)) in plan.benches.iter().enumerate() {
+            bench_world(g, *p, *yaw + FRAC_PI_2, pal.wood, DARK);
+            if k % 2 == 0 {
+                lamp_post_world(g, *p + Vec2::from_angle(*yaw) * -1.2, 4.4, pal.street_lamp);
+            }
+        }
+        if let Some(path) = plan.paths.iter().find(|p| p.len() >= 2) {
+            let along = (path[1] - path[0]).normalize_or_zero();
+            gate_arch_in(g, c, path[0] + along * 1.5, along, 8.0, 7.5, [0.95, 0.85, 0.3], NEON_PINK);
+        }
+    }
+    // A fence round it all.
+    for face in c.faces(&offset_poly(&c.lot_poly, 0.6)) {
+        if face.len > 1.0 {
+            face.bx(g, f, Metal, 0.0, 0.9, 0.0, Vec3::new(face.len, 1.8, 0.06), mul(pal.fence_mesh, 0.9));
+        }
+    }
+    let mut taken: Vec<(Vec2, f32)> = Vec::new();
+    let dir = f.along;
+    // The coaster takes the most room.
+    for r in [16.0f32, 12.0, 9.0] {
+        if let Some(p) = free_spots(c, plan, r, &taken, 1).into_iter().next() {
+            coaster(g, wv(c, p), 0.0, dir, r * 1.4, r * 1.9);
+            taken.push((p, r));
+            break;
+        }
+    }
+    for r in [11.0f32, 8.0] {
+        if let Some(p) = free_spots(c, plan, r * 0.6, &taken, 1).into_iter().next() {
+            ferris_wheel(g, pal, wv(c, p), 0.0, dir.perp(), r);
+            taken.push((p, r * 0.6));
+            break;
+        }
+    }
+    if let Some(p) = free_spots(c, plan, 4.0, &taken, 1).into_iter().next() {
+        drop_tower(g, wv(c, p), 0.0, 28.0);
+        taken.push((p, 4.0));
+    }
+    if let Some(p) = free_spots(c, plan, 6.5, &taken, 1).into_iter().next() {
+        swing_ride(g, pal, wv(c, p), 0.0, 6.0);
+        taken.push((p, 6.5));
+    }
+    if let Some(p) = free_spots(c, plan, 5.0, &taken, 1).into_iter().next() {
+        carousel(g, pal, wv(c, p), 0.0, 4.5);
+        taken.push((p, 5.0));
+    }
+    // Food stands beside the midway.
+    if let Some(plan) = plan {
+        let mut k = 0;
+        for path in plan.paths.iter().take(1) {
+            for s in path.windows(2).step_by(3) {
+                let d = (s[1] - s[0]).normalize_or_zero();
+                let at = s[0].lerp(s[1], 0.5) + d.perp() * 4.5;
+                if fits(c, f.to_local(at), 2.2, 0.5) && taken.iter().all(|(q, r)| q.distance(f.to_local(at)) > r + 3.0) {
+                    food_stand(g, pal, at, 0.0, -d.perp(), k);
+                    k += 1;
+                }
+                if k >= 6 {
+                    break;
+                }
+            }
+        }
+    }
+    for p in free_spots(c, plan, 2.5, &taken, 10) {
+        tree_in(g, f, pal, p, rng.random_range(5.0..7.0), rng.random_range(1.6..2.2), mul(pal.foliage, rng.random_range(0.9..1.1)));
+    }
+}
+
+/// A convention centre: a long hall under a shallow barrel roof on steel
+/// trusses, a full-height glass front lit warm, a canopy along the plaza,
+/// flag poles and a big LED wall.
+pub fn convention_centre(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let f = &c.frame;
+    let pal = c.palette;
+    forecourt(g, c, mul(pal.paving, 1.12));
+    let hall = share_rect(c, 0.5, 0.62, 0.44, 0.3);
+    if hall.len() < 3 {
+        return;
+    }
+    let (lo, hi) = bounds(&hall);
+    let h = 13.0;
+    let wall = [0.78, 0.8, 0.84];
+    // The back and the ends, panelled; the front all glass.
+    extrude(g, f, Panel, &hall, 0.0, h, wall);
+    let front = Face::from_edge(Vec2::new(lo.x, lo.y), Vec2::new(hi.x, lo.y));
+    let glass = pick(rng, &pal.glass);
+    front.bx(g, f, Glass, 0.0, h * 0.5, 0.05, Vec3::new(front.len, h - 0.4, 0.1), glass);
+    for k in 0..((front.len / 6.0) as i32) {
+        let t = -front.len * 0.5 + 3.0 + k as f32 * 6.0;
+        front.bx(g, f, Metal, t, h * 0.5, 0.15, Vec3::new(0.25, h, 0.25), SILVER);
+    }
+    front.decal(g, f, Glow, 0.0, h * 0.42, 0.18, front.len * 0.94, h * 0.6, mul(WARM, 0.45));
+    // A barrel roof over the hall: ribs across, sheeting between.
+    let n = 10;
+    let span = hi.y - lo.y;
+    let arch = |t: f32| h + (span * 0.12).min(5.0) * (1.0 - (2.0 * t - 1.0).powi(2));
+    for i in 0..n {
+        let (v0, v1) = (lo.y + span * i as f32 / n as f32, lo.y + span * (i + 1) as f32 / n as f32);
+        let (y0, y1) = (arch(i as f32 / n as f32), arch((i + 1) as f32 / n as f32));
+        let q = [w3(c, Vec2::new(lo.x, v0), y0), w3(c, Vec2::new(lo.x, v1), y1), w3(c, Vec2::new(hi.x, v1), y1), w3(c, Vec2::new(hi.x, v0), y0)];
+        g.part(Metal).quad_facing(q, Vec3::Y, rgba(mul(SILVER, 0.9)));
+    }
+    let ribs = ((hi.x - lo.x) / 8.0).ceil() as i32;
+    for k in 0..=ribs {
+        let u = lo.x + (hi.x - lo.x) * k as f32 / ribs as f32;
+        let mut prev = w3(c, Vec2::new(u, lo.y), arch(0.0) + 0.3);
+        for i in 1..=n {
+            let t = i as f32 / n as f32;
+            let p = w3(c, Vec2::new(u, lo.y + span * t), arch(t) + 0.3);
+            g.part(Metal).tube(prev, p, 0.18, 4, rgba(DARK));
+            prev = p;
+        }
+    }
+    // The roof's lit edge over the front.
+    g.part(Glow).tube(w3(c, Vec2::new(lo.x, lo.y - 0.2), h + 0.1), w3(c, Vec2::new(hi.x, lo.y - 0.2), h + 0.1), 0.12, 4, rgba(NEON_CYAN));
+    // The canopy along the plaza and its columns.
+    let canopy_d = ((lo.y - bounds(&c.poly).0.y) * 0.6).clamp(3.0, 9.0);
+    front.bx(g, f, Metal, 0.0, 5.2, canopy_d * 0.5, Vec3::new(front.len * 0.8, 0.4, canopy_d), mul(SILVER, 0.95));
+    front.decal(g, f, Glow, 0.0, 5.0, canopy_d + 0.05, front.len * 0.78, 0.15, NEON_CYAN);
+    for k in 0..5 {
+        let t = (k as f32 / 4.0 - 0.5) * front.len * 0.75;
+        let p = front.at(t, canopy_d - 0.6);
+        g.part(Metal).cylinder(wv(c, p), 0.22, 0.22, 0.0, 5.0, 6, rgba(SILVER));
+    }
+    entrance(g, c, rng, &front, 0.0, (10.0f32).min(front.len * 0.4), 4.5);
+    marquee(g, c, rng, &front, 0.0, h + 1.6, (front.len * 0.45).min(26.0), 1.6, NEON_CYAN);
+    led_screen(g, c, rng, &front, front.len * 0.32, h * 0.6, (front.len * 0.18).min(10.0), h * 0.4);
+    // Flag poles across the plaza.
+    let flags = [NEON_PINK, NEON_AMBER, NEON_GREEN, NEON_VIOLET, NEON_CYAN, NEON_RED];
+    for k in 0..6 {
+        let t = (k as f32 / 5.0 - 0.5) * front.len * 0.85;
+        let p = front.at(t, canopy_d + 3.0);
+        if !fits(c, p, 0.5, 0.4) {
+            continue;
+        }
+        let w = wv(c, p);
+        g.part(Metal).cylinder(w, 0.08, 0.06, 0.0, 9.0, 5, rgba(SILVER));
+        g.part(Tarp).boxed(Vec3::new(w.x, 8.2, w.y) + f.dir3(Vec2::X) * 0.8, Vec3::new(1.5, 1.0, 0.03), f.yaw(), rgba(mul(flags[k], 0.35)));
+    }
+    front_lamps(g, c, 5);
+}
+
+/// A cathedral: a stone nave with buttresses down its sides, twin west
+/// towers with spires at the front, a lantern over the crossing, a rose
+/// window that glows at night, and a square before the doors.
+pub fn cathedral(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let f = &c.frame;
+    let pal = c.palette;
+    forecourt(g, c, mul(pal.stone, 0.95));
+    let stone = mix(pal.stone, [0.78, 0.74, 0.66], 0.5);
+    let (blo, bhi) = bounds(&c.poly);
+    // The nave runs back from the front, across the middle of the site.
+    let nave = share_rect(c, 0.5, 0.6, 0.16, 0.34);
+    if nave.len() < 3 {
+        return;
+    }
+    let (lo, hi) = bounds(&nave);
+    let wall_h = 16.0;
+    block(g, c, Stone, &nave, 0.0, wall_h, stone);
+    // A pitched roof of dark lead along the nave.
+    let ridge = wall_h + (hi.x - lo.x) * 0.55;
+    let mid_u = (lo.x + hi.x) * 0.5;
+    for (u0, side) in [(lo.x, -1.0f32), (hi.x, 1.0)] {
+        let q = [w3(c, Vec2::new(u0, lo.y), wall_h), w3(c, Vec2::new(u0, hi.y), wall_h), w3(c, Vec2::new(mid_u, hi.y), ridge), w3(c, Vec2::new(mid_u, lo.y), ridge)];
+        let n = Vec3::new(f.dir3(Vec2::X).x * side, 0.8, f.dir3(Vec2::X).z * side).normalize();
+        g.part(Metal).quad_facing(q, n, rgba([0.28, 0.32, 0.36]));
+    }
+    for v0 in [lo.y, hi.y] {
+        let out = if v0 == lo.y { -1.0 } else { 1.0 };
+        g.part(Stone).tri_facing(w3(c, Vec2::new(lo.x, v0), wall_h), w3(c, Vec2::new(hi.x, v0), wall_h), w3(c, Vec2::new(mid_u, v0), ridge), f.dir3(Vec2::Y * out), rgba(stone));
+    }
+    // Transepts across, two thirds of the way back.
+    let cross_v = lo.y + (hi.y - lo.y) * 0.62;
+    let tw = (hi.y - lo.y) * 0.1;
+    let transept = fit_inside(c, &rect(mid_u, cross_v, (hi.x - lo.x) * 1.15, tw));
+    block(g, c, Stone, &transept, 0.0, wall_h * 0.9, stone);
+    // The lantern over the crossing.
+    let crossing = Vec2::new(mid_u, cross_v);
+    g.part(Stone).cylinder_capped(wv(c, crossing), 3.2, 3.2, ridge - 1.0, ridge + 6.0, 8, false, true, rgba(stone));
+    g.part(Glow).cylinder(wv(c, crossing), 3.25, 3.25, ridge + 2.0, ridge + 4.0, 8, rgba(mul(WARM, 0.9)));
+    g.part(Metal).cylinder_capped(wv(c, crossing), 3.0, 0.05, ridge + 6.0, ridge + 14.0, 8, false, false, rgba([0.3, 0.36, 0.4]));
+    // Buttresses down both sides, tall windows glowing between them.
+    let bays = ((hi.y - lo.y) / 6.0).floor().max(3.0) as i32;
+    for k in 0..bays {
+        let v = lo.y + (k as f32 + 0.5) * (hi.y - lo.y) / bays as f32;
+        for (u, s) in [(lo.x, -1.0f32), (hi.x, 1.0)] {
+            let p = Vec2::new(u + s * 1.2, v);
+            if fits(c, p, 0.6, 0.2) {
+                f.bx(g, Stone, p.x, wall_h * 0.4, p.y, Vec3::new(2.4, wall_h * 0.8, 1.0), mul(stone, 0.9));
+            }
+            let side = Face::new(Vec2::new(u, v - 2.0), Vec2::new(u, v + 2.0), Vec2::X * s);
+            side.decal(g, f, Glow, 0.0, wall_h * 0.5, 0.06, 1.6, wall_h * 0.55, [0.6, 0.35, 1.1]);
+        }
+    }
+    // The west front: twin towers and their spires, the rose window and
+    // the doors.
+    let tower_w = ((hi.x - lo.x) * 0.38).clamp(4.0, 9.0);
+    let th = wall_h + 18.0;
+    for s in [-1.0f32, 1.0] {
+        let cu = mid_u + s * ((hi.x - lo.x) * 0.5 + tower_w * 0.35);
+        let t = fit_inside(c, &rect(cu, lo.y + tower_w * 0.5, tower_w * 0.5, tower_w * 0.5));
+        if t.len() < 3 {
+            continue;
+        }
+        block(g, c, Stone, &t, 0.0, th, stone);
+        let (tl, thi) = bounds(&t);
+        let tc = (tl + thi) * 0.5;
+        let r = (thi.x - tl.x).min(thi.y - tl.y) * 0.55;
+        g.part(Stone).cylinder_capped(wv(c, tc), r, 0.15, th, th + 16.0, 8, false, false, rgba(mul(stone, 0.95)));
+        g.part(Glow).cylinder(wv(c, tc), r + 0.05, r + 0.05, th - 0.4, th - 0.1, 8, rgba(NEON_AMBER));
+        // Belfry openings.
+        for face in c.faces(&t) {
+            if face.len > 2.0 {
+                face.decal(g, f, Glow, 0.0, th - 4.0, 0.06, face.len * 0.35, 3.5, mul(WARM, 0.7));
+            }
+        }
+        g.part(Metal).cylinder(wv(c, tc), 0.08, 0.08, th + 16.0, th + 18.0, 4, rgba([0.85, 0.75, 0.4]));
+    }
+    let west = Face::from_edge(Vec2::new(lo.x, lo.y), Vec2::new(hi.x, lo.y));
+    let rose_y = wall_h * 0.66;
+    let rose_r = ((hi.x - lo.x) * 0.28).clamp(1.5, 4.0);
+    let rose = wv(c, west.at(0.0, 0.08));
+    let out3 = f.dir3(west.out);
+    let side3 = f.dir3(west.tangent);
+    let centre = Vec3::new(rose.x, rose_y, rose.y);
+    let colors = [NEON_VIOLET, NEON_CYAN, NEON_PINK, NEON_AMBER];
+    for k in 0..16 {
+        let a0 = k as f32 / 16.0 * TAU;
+        let a1 = (k + 1) as f32 / 16.0 * TAU;
+        let p0 = centre + (side3 * a0.cos() + Vec3::Y * a0.sin()) * rose_r;
+        let p1 = centre + (side3 * a1.cos() + Vec3::Y * a1.sin()) * rose_r;
+        g.part(Glow).tri_facing(centre + out3 * 0.02, p0, p1, out3, rgba(mul(colors[k % 4], 0.55)));
+        g.part(Stone).tube(centre, p0, 0.08, 3, rgba(stone));
+        g.part(Stone).tube(p0, p1, 0.12, 3, rgba(stone));
+    }
+    entrance(g, c, rng, &west, 0.0, ((hi.x - lo.x) * 0.4).min(5.0), 6.0);
+    west.decal(g, f, Glow, 0.0, 6.4, 0.1, ((hi.x - lo.x) * 0.42).min(5.4), 0.15, NEON_AMBER);
+    // The square: a fountain and lamps.
+    let sq = Vec2::new(mid_u, (blo.y + lo.y) * 0.5);
+    if let Some(r) = fit_radius(c, sq, 3.0, 1.5) {
+        if sq.y < lo.y - r - 1.0 {
+            g.part(Stone).cylinder_capped(wv(c, sq), r, r, 0.0, 0.6, 16, false, true, rgba(stone));
+            g.part(Matte).ground_polygon(&(0..16).map(|k| wv(c, sq) + Vec2::from_angle(k as f32 / 16.0 * TAU) * (r - 0.3)).collect::<Vec<_>>(), 0.62, rgba(WATER));
+            neon_ring(g, c, sq, r + 0.05, 0.6, NEON_CYAN);
+        }
+    }
+    let _ = bhi;
+    front_lamps(g, c, 4);
+}
+
+/// A casino resort: a curved hotel tower of glass over a podium of neon,
+/// the casino floor behind a lit facade, a porte-cochère, a pool deck with
+/// palms and a tall sign.
+pub fn casino_resort(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let f = &c.frame;
+    let pal = c.palette;
+    forecourt(g, c, mix(pal.paving, [0.3, 0.25, 0.32], 0.5));
+    let podium = share_rect(c, 0.5, 0.55, 0.44, 0.3);
+    if podium.len() < 3 {
+        return;
+    }
+    let (lo, hi) = bounds(&podium);
+    let ph = 9.0;
+    block(g, c, Panel, &podium, 0.0, ph, [0.16, 0.12, 0.2]);
+    let front = Face::from_edge(Vec2::new(lo.x, lo.y), Vec2::new(hi.x, lo.y));
+    // The facade: bands of neon up the podium.
+    let bands = [NEON_PINK, NEON_AMBER, NEON_VIOLET];
+    for (k, col) in bands.iter().enumerate() {
+        front.decal(g, f, Glow, 0.0, 2.0 + k as f32 * 2.6, 0.06, front.len * 0.96, 0.22, *col);
+    }
+    for face in c.faces(&podium) {
+        if face.len > 4.0 && !face.is_front {
+            face.decal(g, f, Glow, 0.0, ph - 0.6, 0.05, face.len * 0.9, 0.18, NEON_PINK);
+        }
+    }
+    entrance(g, c, rng, &front, -front.len * 0.15, (8.0f32).min(front.len * 0.3), 4.5);
+    marquee(g, c, rng, &front, front.len * 0.18, ph - 2.6, (front.len * 0.4).min(20.0), 2.0, NEON_AMBER);
+    // The porte-cochère over the drive.
+    let pc = front.at(-front.len * 0.15, 4.5);
+    f.bx(g, Metal, pc.x, 5.2, pc.y, Vec3::new(12.0f32.min(front.len * 0.4), 0.5, 7.0), [0.85, 0.7, 0.3]);
+    for s in [-1.0f32, 1.0] {
+        let p = front.at(-front.len * 0.15 + s * 5.0f32.min(front.len * 0.17), 7.5);
+        if fits(c, p, 0.4, 0.2) {
+            g.part(Metal).cylinder(wv(c, p), 0.3, 0.3, 0.0, 5.0, 6, rgba([0.85, 0.7, 0.3]));
+        }
+    }
+    // The hotel tower: a crescent of glass on the podium's back half.
+    let (pu, pv) = ((lo.x + hi.x) * 0.5, lo.y + (hi.y - lo.y) * 0.65);
+    let rw = (hi.x - lo.x) * 0.36;
+    let rd = ((hi.y - lo.y) * 0.22).max(4.0);
+    let th = 58.0;
+    let glass = pick(rng, &pal.glass);
+    let arc: Vec<Vec2> = (0..=12).map(|k| { let a = PI * (k as f32 / 12.0); Vec2::new(pu - a.cos() * rw, pv + a.sin() * rd) }).collect();
+    let inner: Vec<Vec2> = arc.iter().rev().map(|p| Vec2::new(p.x, p.y + ((p.x - pu) / rw).powi(2).mul_add(-rd * 0.6, rd * 0.6) - 6.0)).collect();
+    let mut tower: Vec<Vec2> = arc.clone();
+    tower.extend(inner);
+    let tower = fit_inside(c, &tower);
+    if tower.len() >= 3 {
+        extrude(g, f, Glass, &tower, ph, ph + th, glass);
+        ground(g, f, Panel, &tower, ph + th, [0.2, 0.18, 0.24]);
+        // Floors lit warm, a crown of light.
+        for face in c.faces(&tower) {
+            if face.len > 1.5 {
+                let mut y = ph + 3.0;
+                while y < ph + th - 2.0 {
+                    if rng.random_bool(0.55) {
+                        face.decal(g, f, Glow, 0.0, y, 0.04, face.len * 0.9, 1.1, mul(WARM, 0.55));
+                    }
+                    y += 3.4;
+                }
+                face.decal(g, f, Glow, 0.0, ph + th - 0.6, 0.05, face.len, 0.4, NEON_AMBER);
+            }
+        }
+    }
+    // The pool deck on the podium's roof, palms round it.
+    let pool = fit_inside(c, &rect(pu, lo.y + (hi.y - lo.y) * 0.22, (hi.x - lo.x) * 0.25, (hi.y - lo.y) * 0.1));
+    if pool.len() >= 3 {
+        ground(g, f, Matte, &pool, ph + 0.08, [0.15, 0.6, 0.75]);
+        let (plo, phi) = bounds(&pool);
+        neon_line(g, c, &[plo, Vec2::new(phi.x, plo.y), phi, Vec2::new(plo.x, phi.y)], ph + 0.15, true, NEON_CYAN);
+        for k in 0..4 {
+            let p = Vec2::new(if k % 2 == 0 { plo.x - 1.5 } else { phi.x + 1.5 }, if k < 2 { plo.y } else { phi.y });
+            if c.inside_local(p) {
+                tree_kind(g, wv(c, p), ph, TreeKind::Palm, 6.0, 3.2, pal.bark, mul(pal.foliage, 1.1));
+            }
+        }
+    }
+    // The tall sign at the corner of the forecourt.
+    let sp = Vec2::new(lo.x + 2.0, (bounds(&c.poly).0.y + lo.y) * 0.5);
+    if fits(c, sp, 1.2, 0.3) {
+        let w = wv(c, sp);
+        g.part(Metal).cylinder(w, 0.6, 0.6, 0.0, 16.0, 8, rgba(DARK));
+        let face_dir = f.dir3(Vec2::new(0.0, -1.0));
+        let yaw = f.yaw();
+        g.part(Matte).boxed(Vec3::new(w.x, 13.0, w.y), Vec3::new(5.0, 6.0, 0.6), yaw, rgba(DARK));
+        for (k, col) in [NEON_AMBER, NEON_PINK, NEON_CYAN, NEON_VIOLET].iter().enumerate() {
+            g.part(Glow).boxed(Vec3::new(w.x, 10.8 + k as f32 * 1.4, w.y) + face_dir * 0.32, Vec3::new(4.2, 0.9, 0.05), yaw, rgba(*col));
+        }
+        g.part(Glow).boxed(Vec3::new(w.x, 16.6, w.y), Vec3::new(1.4, 1.4, 1.4), PI / 4.0, rgba(NEON_AMBER));
+    }
+    front_lamps(g, c, 4);
+}

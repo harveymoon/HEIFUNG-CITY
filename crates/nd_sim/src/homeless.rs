@@ -369,7 +369,7 @@ impl World {
 
     /// Find a homeless household a place: its car, a camp nearby, or a new
     /// camp on the nearest cheap spot.
-    fn settle_homeless(&mut self, hid: HouseholdId) {
+    pub(crate) fn settle_homeless(&mut self, hid: HouseholdId) {
         let tick = self.clock.tick;
         if self.society.homeless.bed_of(hid).is_some() {
             return;
