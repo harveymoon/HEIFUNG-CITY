@@ -557,13 +557,13 @@ Everything still open, from the old groups 6–8, the group 1–5 leftovers, tod
 - [ ] Settings menu (graphics, controls, UI scale)
 
 ## B. Rendering and visuals
-- [ ] Street lights only lit near the middle of the view when zoomed out: pick lit lamps by the camera frustum/zoom; past a distance draw them cheaply (glow sprites) instead of dropping them
-- [ ] Fog too thick when zoomed far out
-- [ ] Landmark neon glows by day
-- [ ] Junction surface gaps at steep corners
-- [ ] Megacorp HQ crown small on needle towers
-- [ ] Metro stations barely visible underground
-- [ ] Inspector text "a observatory" (article before vowels)
+- [x] Street lights only lit near the middle of the view when zoomed out: pick lit lamps by the camera frustum/zoom; past a distance draw them cheaply (glow sprites) instead of dropping them → DONE [w1/render]: real lights go to the lamps in the camera frustum nearest the eye (was: round the orbit target); every lamp also throws an additive ground pool (merged meshes per 300 m patch, on the surface under it) that fades in where the real lights stop and out into the fog; lamp heads now follow the street profile (they stayed at flat height on hills). Shots O:/nd_w1render/run/screenshots/{before,after2}_h22_d*.png
+- [x] Fog too thick when zoomed far out → DONE [w1/render]: orbit fog start/end draw back with the camera distance (unchanged up close; zoomed right out it starts past the city), kept solid short of the far ground's edge. Shots {before,after2}_h13_d*.png
+- [x] Landmark neon glows by day → DONE [w1/render]: attraction glow is marked (NEON_MARK) and the window shader dims it by day to about the signs' level; the observatory beam (NIGHT_MARK) is off by day. Shots {before,after2}_pier_h13.png
+- [x] Junction surface gaps at steep corners → DONE [w1/render]: corners were lifted on the plane of both arms' slopes, so each end stood off its arm's kerb/pavement by the other arm's rise across the road (0.75 m at 15%); the plane now bends onto each arm over its half of the kerb (`StreetCtx::corner_z`, also the pad's corner point). Test steep_junctions_leave_no_gaps (top-down coverage). Not checked visually on a real steep junction
+- [x] Megacorp HQ crown small on needle towers → DONE [w1/render]: logo screens sized by tower height too (`crown_logo_size`: >= 4.5% of the height, cap 6%/34 m, was 14 m), cantilevered past a slim top, deeper bands. Unit-tested (hq_crown_reads_on_a_needle_tower); no megacorp in the test save to screenshot
+- [x] Metro stations barely visible underground → DONE [w1/render]: halls closed at the ends and rimmed in the line colour, an escalator shaft with lit rails, a lit frame and pylon at the entrance (underground view); above ground a 2 m four-sided lit M cube on a 5.6 m pylon. Shots {before,after2}_metro_under_d250.png
+- [x] Inspector text "a observatory" (article before vowels) → DONE [w1/render]: `nd_sim::names::a`/`article` by sound (vowels, silent h, "uni"/"one", numbers like 8/11/18, initialisms) used at every "a {}" composition in nd_sim and nd_app
 
 ## C. Roads, junctions and traffic
 - [ ] Harvey's city gridlocked (away fans and crane boxes crawl): find the choke points
