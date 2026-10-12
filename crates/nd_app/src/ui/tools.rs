@@ -80,6 +80,16 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
                 }
             }
         });
+        // [w1-roads] Which way the street passes the highway.
+        ui.horizontal(|ui| {
+            use nd_sim::world::interchange::InterchangeLayout;
+            ui.label("layout");
+            for (l, name, tip) in [(InterchangeLayout::StreetUnder, "Street under", "The street stays at grade; the highway is lifted over it on a short deck"), (InterchangeLayout::StreetOver, "Street over", "The street crosses on a bridge over the highway; the ramps climb to it (the street must run about 170 m out each side)")] {
+                if ui.selectable_label(tools.interchange_layout == l, name).on_hover_text(tip).clicked() {
+                    tools.interchange_layout = l;
+                }
+            }
+        });
         if let Some((why, at)) = &tools.interchange_refusal {
             ui.label(egui::RichText::new(format!("! Cannot be built: {why} (red pin at {:.0}, {:.0}).", at.x, at.y)).color(WARN).small());
         }
@@ -417,9 +427,9 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
                 tools.status = "Road changed. Ctrl+Enter implements; buildings along it stay.".into();
             }
         }
-        Some(Gesture::Roundabout { center, radius, lanes }) => {
+        Some(Gesture::Roundabout { center, radius, lanes, level }) => {
             section(ui, "ROUNDABOUT");
-            let (mut d, mut n) = (radius * 2.0, lanes);
+            let (mut d, mut n, mut lv) = (radius * 2.0, lanes, level);
             let mut changed = false;
             ui.horizontal(|ui| {
                 changed |= ui.add(egui::Slider::new(&mut d, nd_sim::roads::RING_MIN_RADIUS * 2.0..=nd_sim::roads::RING_MAX_RADIUS * 2.0).step_by(2.0).suffix(" m").text("across")).changed();
@@ -429,12 +439,22 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
                         changed = true;
                     }
                 }
+                // [w1-roads] The ring up or down a step, as [ and ] do.
+                if ui.small_button("lower").on_hover_text("2 m lower ([)").clicked() {
+                    lv -= crate::tools::ELEVATION_STEP;
+                    changed = true;
+                }
+                ui.label(egui::RichText::new(crate::tools::elevation_label(lv)).strong());
+                if ui.small_button("raise").on_hover_text("2 m higher (])").clicked() {
+                    lv += crate::tools::ELEVATION_STEP;
+                    changed = true;
+                }
                 if ui.button("Deselect").clicked() {
                     tools.selected_gesture = None;
                 }
             });
             if changed {
-                sim.world.set_gesture(id, Gesture::Roundabout { center, radius: d * 0.5, lanes: n }, true);
+                sim.world.set_gesture(id, Gesture::Roundabout { center, radius: d * 0.5, lanes: n, level: lv }, true);
                 tools.status = "Roundabout changed. Ctrl+Enter implements.".into();
             }
         }

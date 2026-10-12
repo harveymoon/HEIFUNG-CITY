@@ -113,6 +113,9 @@ pub struct ToolState {
     /// [interchange] Road tool, Interchange preset: two clicks across the
     /// highway lay a diamond interchange (`World::plan_diamond`).
     pub interchange: bool,
+    /// [w1-roads] The interchange's layout: the street under the highway
+    /// or over it.
+    pub interchange_layout: nd_sim::world::interchange::InterchangeLayout,
     /// [interchange] Why the diamond under the pointer would be refused, and
     /// where (refreshed with its hologram).
     pub interchange_refusal: Option<(String, SVec2)>,
@@ -466,6 +469,7 @@ impl ToolState {
             beach: self.beach,
             roundabout: self.roundabout,
             interchange: self.interchange,
+            interchange_layout: self.interchange_layout,
             ring_radius: self.ring_radius,
             ring_lanes: self.ring_lanes,
             elevation: self.elevation,
@@ -549,7 +553,8 @@ impl ToolState {
     }
 
     pub fn captures_brackets(&self) -> bool {
-        self.tool == Tool::Road && !self.roundabout
+        // [w1-roads] A roundabout too: [ and ] raise and lower the ring.
+        self.tool == Tool::Road
     }
 
     /// [tools] Raise or lower the whole road being drawn a step: every
@@ -627,6 +632,7 @@ impl Default for ToolState {
             beach: false,
             roundabout: false,
             interchange: false,
+            interchange_layout: Default::default(),
             interchange_refusal: None,
             ring_radius: 20.0,
             ring_lanes: 1,
@@ -655,7 +661,7 @@ impl ToolState {
         if self.tool != Tool::Road || !self.roundabout {
             return None;
         }
-        self.ring_hover.map(|c| nd_sim::roads::Ring::new(c, self.ring_radius, self.ring_lanes))
+        self.ring_hover.map(|c| nd_sim::roads::Ring::new(c, self.ring_radius, self.ring_lanes).at_level(self.elevation))
     }
 
     /// Does the mouse wheel belong to the tool (Ctrl+wheel sizes the

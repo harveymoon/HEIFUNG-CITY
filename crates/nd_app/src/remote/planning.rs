@@ -351,7 +351,10 @@ pub(super) fn add_roundabout(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String
     if !(1..=nd_sim::roads::RING_MAX_LANES).contains(&lanes) {
         return Err("a roundabout has 1, 2 or 3 ring lanes".into());
     }
-    let id = ctx.sim.world.add_roundabout(center, radius, lanes)?;
+    // [w1-roads] `level` (or `elevation`): a raised ring (metres above the
+    // ground) or a sunken one (negative; -5 and below, a tunnel).
+    let level = opt_f32(cmd, "level")?.or(opt_f32(cmd, "elevation")?).unwrap_or(0.0).clamp(crate::tools::ELEVATION_MIN, crate::tools::ELEVATION_MAX);
+    let id = ctx.sim.world.add_roundabout_at(center, radius, lanes, level)?;
     let ring = ctx.sim.world.gesture(id).and_then(|g| g.ring()).ok_or("roundabout not in the plan")?;
     let fx = nd_sim::plan::ring_effect(ctx.sim.world.effective_plan(), ring);
     let takes: Vec<Value> = ctx.sim.world.roundabout_takes(ring).into_iter().filter_map(|l| ctx.sim.world.lots.get(l).and_then(|x| x.building)).map(|b| json!(key_str(b))).collect();
@@ -383,8 +386,13 @@ pub(super) fn add_interchange(cmd: &Value, ctx: &mut Ctx) -> Result<Value, Strin
     let f = opt_u64(cmd, "lanes_fwd")?.map_or(2, |n| n.min(4) as u8);
     let b = opt_u64(cmd, "lanes_bwd")?.map_or(2, |n| n.min(4) as u8);
     let check = opt_bool(cmd, "check")?.unwrap_or(false);
+    // [w1-roads] `layout`: street_under (the diamond, default) or street_over.
+    let layout = match opt_str(cmd, "layout")? {
+        Some(l) => nd_sim::world::interchange::InterchangeLayout::parse(l).ok_or_else(|| format!("unknown layout {l:?}; street_under or street_over"))?,
+        None => ctx.tools.interchange_layout,
+    };
     let w = &mut ctx.sim.world;
-    let planned = if check { w.plan_diamond(from, to, (f, b)).map(|p| (p, Vec::new())) } else { w.add_diamond(from, to, (f, b)) };
+    let planned = if check { w.plan_interchange(from, to, (f, b), layout).map(|p| (p, Vec::new())) } else { w.add_interchange(from, to, (f, b), layout) };
     let (plan, ids) = match planned {
         Ok(x) => x,
         Err(r) => {

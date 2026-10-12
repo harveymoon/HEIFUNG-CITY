@@ -303,11 +303,12 @@ pub fn sync_draw_hologram(
         let (a, z) = (ctrl[0], ctrl[ctrl.len() - 1]);
         let mut mesh = MeshData::default();
         let mut red = MeshData::default();
-        match w.plan_diamond(a, z, (f.max(1), b.max(1))) {
+        match w.plan_interchange(a, z, (f.max(1), b.max(1)), tools.interchange_layout) {
             Ok(plan) => {
                 for g in &plan.gestures {
                     if let nd_sim::Gesture::Road { points, lanes_fwd, lanes_bwd, kind, car_only, .. } = g {
-                        let (m, r, _) = hologram(w, &assets.palette, points, &vec![0.0; points.len()], *lanes_fwd, *lanes_bwd, *kind, *car_only, 0.55);
+                        // [w1-roads] At their planned heights (a street-over layout climbs).
+                        let (m, r, _) = hologram(w, &assets.palette, points, &(0..points.len()).map(|i| g.level(i)).collect::<Vec<f32>>(), *lanes_fwd, *lanes_bwd, *kind, *car_only, 0.55);
                         mesh.append(&m);
                         red.append(&r);
                     }

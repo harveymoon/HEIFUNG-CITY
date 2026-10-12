@@ -404,7 +404,7 @@ mod tests {
         road(&mut plan, &[Vec2::new(400.0, 0.0), Vec2::new(400.0, 0.0) + Vec2::from_angle(11f32.to_radians()) * 200.0]);
         road(&mut plan, &[Vec2::new(-200.0, 300.0), Vec2::new(200.0, 300.0)]);
         road(&mut plan, &[Vec2::new(0.0, 200.0), Vec2::new(0.0, 400.0)]);
-        plan.gestures.insert(GestureId(99), Gesture::Roundabout { center: Vec2::new(0.0, 300.0), radius: 25.0, lanes: 1 });
+        plan.gestures.insert(GestureId(99), Gesture::Roundabout { center: Vec2::new(0.0, 300.0), radius: 25.0, lanes: 1, level: 0.0 });
         let (built, rings) = plan.built_roads();
         let mut roads = RoadNetwork::default();
         roads.rings = rings;

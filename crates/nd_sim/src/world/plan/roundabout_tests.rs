@@ -35,7 +35,7 @@ fn a_roundabout_stamped_on_a_four_way_replaces_it_and_undo_brings_it_back() {
     let master_before = w.master.clone();
     // Dropped a few metres off, it snaps onto the junction.
     let id = w.add_roundabout(Vec2::new(4.0, -3.0), 20.0, 1).expect("stamped");
-    assert_eq!(w.gesture(id), Some(Gesture::Roundabout { center: Vec2::ZERO, radius: 20.0, lanes: 1 }));
+    assert_eq!(w.gesture(id), Some(Gesture::Roundabout { center: Vec2::ZERO, radius: 20.0, lanes: 1, level: 0.0 }));
     // The project shows the ring, the four road ends it takes up and the
     // four joins, and nothing is built yet.
     let pv = w.preview();
@@ -116,7 +116,7 @@ fn roads_crossing_or_ending_in_the_circle_are_joined_or_trimmed() {
     // A second ring on top of the first is refused; limits hold.
     assert!(w.add_roundabout(Vec2::new(30.0, 0.0), 20.0, 1).is_err());
     let id = w.add_roundabout(Vec2::new(500.0, 500.0), 900.0, 7).unwrap();
-    assert_eq!(w.gesture(id), Some(Gesture::Roundabout { center: Vec2::new(500.0, 500.0), radius: crate::roads::RING_MAX_RADIUS, lanes: crate::roads::RING_MAX_LANES }));
+    assert_eq!(w.gesture(id), Some(Gesture::Roundabout { center: Vec2::new(500.0, 500.0), radius: crate::roads::RING_MAX_RADIUS, lanes: crate::roads::RING_MAX_LANES, level: 0.0 }));
 }
 
 #[test]
@@ -161,7 +161,7 @@ fn buildings_in_the_way_are_taken() {
 fn a_large_ring_leaves_its_middle_open_for_parcels_and_new_roads() {
     let mut w = crossroads();
     let id = w.add_roundabout(Vec2::ZERO, 1000.0, 1).unwrap();
-    assert_eq!(w.gesture(id), Some(Gesture::Roundabout { center: Vec2::ZERO, radius: crate::roads::RING_MAX_RADIUS, lanes: 1 }), "240 m across at most");
+    assert_eq!(w.gesture(id), Some(Gesture::Roundabout { center: Vec2::ZERO, radius: crate::roads::RING_MAX_RADIUS, lanes: 1, level: 0.0 }), "240 m across at most");
     // Undo and redo the stamp.
     assert!(w.undo());
     assert!(w.effective_plan().roundabouts().next().is_none());
@@ -223,4 +223,47 @@ fn rings_nest_with_room_between_and_partial_overlaps_are_refused() {
     assert_eq!(w.roads.ring_of_node(outer), Some(0));
     let far = w.roads.node_near(Vec2::new(300.0, 0.0), 1.0).unwrap();
     assert!(w.roads.path(far, inner).is_some(), "out on the avenue to the inner ring");
+}
+
+/// [w1-roads] A raised roundabout over a street: the ramps drawn up to it
+/// at its level join it, the street under it passes beneath untouched, and
+/// it is saved with its level.
+#[test]
+fn a_raised_roundabout_takes_the_roads_at_its_level_and_passes_over_the_rest() {
+    let mut w = World::new(WorldConfig { emergencies: false, society: false, landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::test_town() });
+    w.economy.treasury = 5_000_000.0;
+    // A street at grade straight through where the ring goes.
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+    let ring_id = w.add_roundabout_at(Vec2::new(0.0, 0.0), 30.0, 1, 8.0).expect("stamped");
+    assert!(matches!(w.gesture(ring_id), Some(Gesture::Roundabout { level, .. }) if level == 8.0));
+    // Roads up to it from north and south, rising to its level.
+    for sy in [1.0f32, -1.0] {
+        w.add_gesture(Gesture::Road { points: vec![Vec2::new(0.0, sy * 250.0), Vec2::new(0.0, sy * 120.0), Vec2::new(0.0, 0.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: vec![0.0, 8.0, 8.0], car_only: None });
+    }
+    w.try_implement().expect("implemented");
+    let ring = w.roads.rings.first().copied().expect("a ring");
+    assert_eq!(ring.level, 8.0);
+    // Every ring node stands at its level.
+    let ring_nodes: Vec<NodeId> = (0..w.roads.nodes.len() as u32).map(NodeId).filter(|&n| w.roads.ring_of_node(n).is_some()).collect();
+    assert!(!ring_nodes.is_empty());
+    for &n in &ring_nodes {
+        assert!((w.roads.node(n).level - 8.0).abs() < 0.01, "ring node at {}", w.roads.node(n).level);
+    }
+    // The two raised arms join it; the street at grade is not cut.
+    let joins = ring_nodes.iter().filter(|&&n| w.roads.street_degree(n) >= 3).count();
+    assert_eq!(joins, 2, "the two ramps join the ring");
+    let street_whole = w.roads.alive_segments().any(|(sid, s)| {
+        let (a, b) = w.roads.segment_points(sid);
+        s.is_street() && a.y.abs() < 0.5 && b.y.abs() < 0.5 && a.x.min(b.x) < -40.0 && a.x.max(b.x) > 40.0 && w.roads.node(s.a).level == 0.0
+    }) || {
+        // or still running under it in pieces at grade
+        w.roads.alive_segments().filter(|(sid, s)| {
+            let (a, b) = w.roads.segment_points(*sid);
+            s.is_street() && a.y.abs() < 0.5 && b.y.abs() < 0.5 && (a.x.abs() < 30.0 || b.x.abs() < 30.0)
+        }).all(|(_, s)| w.roads.node(s.a).level == 0.0 && w.roads.node(s.b).level == 0.0)
+    };
+    assert!(street_whole, "the street passes under at grade");
+    let ron = w.to_ron().unwrap();
+    let w2 = World::from_ron(&ron).unwrap();
+    assert_eq!(w2.roads.rings.first().map(|r| r.level), Some(8.0));
 }

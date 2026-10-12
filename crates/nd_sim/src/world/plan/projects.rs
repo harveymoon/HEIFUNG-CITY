@@ -424,12 +424,19 @@ impl World {
     /// lanes are brought within limits. Errors if another roundabout
     /// already takes the ground.
     pub fn add_roundabout(&mut self, center: Vec2, radius: f32, lanes: u8) -> Result<GestureId, String> {
-        let center = self.roundabout_snap(center);
-        let ring = crate::roads::Ring::new(center, radius, lanes);
+        self.add_roundabout_at(center, radius, lanes, 0.0)
+    }
+
+    /// [w1-roads] [`World::add_roundabout`] at `level` metres above the
+    /// ground (negative below): a raised roundabout, or one in a tunnel.
+    /// Its centre snaps only onto a junction or street at about its level.
+    pub fn add_roundabout_at(&mut self, center: Vec2, radius: f32, lanes: u8, level: f32) -> Result<GestureId, String> {
+        let center = if level.abs() < crate::roads::GRADE_SEPARATION { self.roundabout_snap(center) } else { center };
+        let ring = crate::roads::Ring::new(center, radius, lanes).at_level(level);
         if crate::plan::ring_effect(self.effective_plan(), ring).blocked {
             return Err("another roundabout already takes this ground".into());
         }
-        Ok(self.add_gesture(Gesture::Roundabout { center: ring.center, radius: ring.radius, lanes: ring.lanes }))
+        Ok(self.add_gesture(Gesture::Roundabout { center: ring.center, radius: ring.radius, lanes: ring.lanes, level: ring.level }))
     }
 
     /// Where a roundabout centre dropped at `p` lands: on a junction within
@@ -451,6 +458,11 @@ impl World {
     /// the ring is not taken): demolished on implement, as for any road
     /// works.
     pub fn roundabout_takes(&self, ring: crate::roads::Ring) -> Vec<LotId> {
+        // [w1-roads] A ring high enough to span the lots, or bored in a
+        // tunnel, takes none.
+        if ring.level >= crate::pillars::SPAN_LEVEL || ring.level <= crate::roads::TUNNEL_LEVEL {
+            return Vec::new();
+        }
         let reach = ring.outer_radius();
         let grid = LotGrid::new(&self.lots);
         grid.near(ring.center, reach)

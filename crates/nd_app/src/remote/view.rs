@@ -293,7 +293,7 @@ pub fn gesture(id: GestureId, g: &Gesture) -> Value {
         }),
         Gesture::Zone { polygon, land_use } => json!({ "id": id.0, "kind": "zone", "land_use": land_use.label(), "points": points(polygon), "area": round(polygon_area(polygon).abs()) }),
         Gesture::ParcelZone { parcels, land_use, industry } => json!({ "id": id.0, "kind": "parcel_zone", "land_use": land_use.map_or("unzoned", |l| l.label()), "parcels": parcels.len(), "industry": industry }),
-        Gesture::Roundabout { center, radius, lanes } => json!({ "id": id.0, "kind": "roundabout", "center": [center.x, center.y], "radius": radius, "diameter": radius * 2.0, "lanes": lanes, "points": points(std::slice::from_ref(center)) }),
+        Gesture::Roundabout { center, radius, lanes, level } => json!({ "id": id.0, "kind": "roundabout", "center": [center.x, center.y], "radius": radius, "diameter": radius * 2.0, "lanes": lanes, "level": level, "points": points(std::slice::from_ref(center)) }),
     }
 }
 

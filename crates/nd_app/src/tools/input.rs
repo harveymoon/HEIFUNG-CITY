@@ -160,7 +160,10 @@ pub(crate) fn tool_input(
     // whole road drawn so far goes up or down with it.
     if tools.captures_brackets() && (key(KeyCode::BracketRight) || key(KeyCode::BracketLeft)) {
         let up = key(KeyCode::BracketRight);
-        if shift && !tools.points.is_empty() {
+        if tools.roundabout {
+            tools.step_elevation(up);
+            tools.status = format!("Roundabout at {} ([ lowers, ] raises): roads drawn to it at that level join it, others pass under or over.", elevation_label(tools.elevation));
+        } else if shift && !tools.points.is_empty() {
             tools.step_whole_road(up);
             tools.status = format!("The whole road at {} (Shift+[ ] move every point; [ ] the next one).", elevation_label(tools.elevation));
         } else {

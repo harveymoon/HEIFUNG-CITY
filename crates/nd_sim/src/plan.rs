@@ -62,7 +62,16 @@ pub enum Gesture {
     /// and out and join it where they meet it (`roads::layout_rings`). The
     /// inside stays open land. The road gestures themselves are untouched,
     /// so undoing the stamp restores them.
-    Roundabout { center: Vec2, radius: f32, lanes: u8 },
+    Roundabout {
+        center: Vec2,
+        radius: f32,
+        lanes: u8,
+        /// [w1-roads] Height of the ring above the ground (metres; negative
+        /// below): a raised roundabout over a highway or street, or one in
+        /// a tunnel. Roads join it at about its level; others pass by.
+        #[serde(default, skip_serializing_if = "crate::plan::is_zero")]
+        level: f32,
+    },
 }
 
 /// Spacing of the straight pieces a curved road is built from, in metres.
@@ -103,6 +112,11 @@ pub fn sample_curve(pts: &[Vec2]) -> Vec<Vec2> {
         }
     }
     out
+}
+
+/// [w1-roads] For serde: a level of 0 is not written.
+pub fn is_zero(x: &f32) -> bool {
+    *x == 0.0
 }
 
 /// [fix/roads-tools] A closed loop: four or more points, the last on the first.
@@ -234,7 +248,7 @@ impl Gesture {
             Gesture::Road { points, .. } => points.clone(),
             Gesture::Zone { polygon, .. } => polygon.clone(),
             Gesture::ParcelZone { .. } => Vec::new(),
-            Gesture::Roundabout { center, radius, lanes } => Ring::new(*center, *radius, *lanes).polyline(&[]).0,
+            Gesture::Roundabout { center, radius, lanes, .. } => Ring::new(*center, *radius, *lanes).polyline(&[]).0,
         }
     }
 
@@ -284,7 +298,7 @@ impl Gesture {
     /// The roundabout, within limits, if this is one.
     pub fn ring(&self) -> Option<Ring> {
         match self {
-            Gesture::Roundabout { center, radius, lanes } => Some(Ring::new(*center, *radius, *lanes)),
+            Gesture::Roundabout { center, radius, lanes, level } => Some(Ring::new(*center, *radius, *lanes).at_level(*level)),
             _ => None,
         }
     }
@@ -343,9 +357,12 @@ pub fn ring_effect(plan: &Plan, ring: Ring) -> RingEffect {
     let age = plan.roundabouts().find(|(_, r)| *r == ring).map_or(u64::MAX, |(id, _)| id.0);
     let rings = [(ring, age)];
     let roads: Vec<(GestureId, Vec<Vec2>, bool, f32)> = plan.roads().map(|(id, pts, f, b, k)| (id, pts, ring_cuts(k, f, b, plan.car_only(id)), crate::roads::half_width_spec(k, f, b) * 2.0)).collect();
-    let raised = |id: &GestureId| plan.gestures.get(id).is_some_and(Gesture::is_elevated);
-    let input: Vec<(Vec<Vec2>, bool, u64)> = roads.iter().map(|(id, p, c, _)| (p.clone(), *c && near_ring(p, &ring) && !raised(id), id.0)).collect();
-    let layout = crate::roads::layout_rings(&rings, &input);
+    let levels_of = |id: &GestureId, p: &[Vec2]| match plan.gestures.get(id) {
+        Some(g) if g.is_elevated() => g.road_levels(),
+        _ => vec![0.0; p.len()],
+    };
+    let input: Vec<(Vec<Vec2>, Option<Vec<f32>>, u64)> = roads.iter().map(|(id, p, c, _)| (p.clone(), (*c && near_ring(p, &ring)).then(|| levels_of(id, p)), id.0)).collect();
+    let layout = crate::roads::layout_rings_levels(&rings, &input);
     let mut out = RingEffect { ring: Some(ring), ..Default::default() };
     if let Some((_, poly, joins)) = layout.rings.iter().find(|(r, ..)| *r == ring) {
         out.road = poly.clone();
@@ -415,7 +432,11 @@ impl Plan {
             .map(|(id, pts, f, b, k)| {
                 let l = match sources.get(&id) {
                     Some(src) => level_of(id, src, &pts),
-                    None => vec![0.0; pts.len()],
+                    // [w1-roads] A roundabout's ring, at its level.
+                    None => match self.gestures.get(&id) {
+                        Some(Gesture::Roundabout { level, .. }) => vec![*level; pts.len()],
+                        _ => vec![0.0; pts.len()],
+                    },
                 };
                 (id, pts, l, f, b, k)
             })
@@ -437,10 +458,14 @@ impl Plan {
         if rings.is_empty() {
             return (roads, Vec::new());
         }
-        // A road drawn above or below the ground passes the ring by.
-        let raised = |id: &GestureId| self.gestures.get(id).is_some_and(Gesture::is_elevated);
-        let input: Vec<(Vec<Vec2>, bool, u64)> = roads.iter().map(|(id, p, f, b, k)| (p.clone(), ring_cuts(*k, *f, *b, self.car_only(*id)) && !raised(id), id.0)).collect();
-        let layout = crate::roads::layout_rings(&rings, &input);
+        // A road drawn above or below the ground passes a ring at grade by;
+        // [w1-roads] a raised or sunken ring takes the roads at its level.
+        let levels_of = |id: &GestureId, p: &[Vec2]| match self.gestures.get(id) {
+            Some(g) if g.is_elevated() => g.road_levels(),
+            _ => vec![0.0; p.len()],
+        };
+        let input: Vec<(Vec<Vec2>, Option<Vec<f32>>, u64)> = roads.iter().map(|(id, p, f, b, k)| (p.clone(), ring_cuts(*k, *f, *b, self.car_only(*id)).then(|| levels_of(id, p)), id.0)).collect();
+        let layout = crate::roads::layout_rings_levels(&rings, &input);
         let ids: Vec<GestureId> = self.roundabouts().filter(|(_, r)| layout.rings.iter().any(|(x, ..)| x == r)).map(|(id, _)| id).collect();
         let mut out: Vec<(GestureId, Vec<Vec2>, u8, u8, RoadKind)> = Vec::new();
         for ((ring, poly, _), id) in layout.rings.iter().zip(ids) {

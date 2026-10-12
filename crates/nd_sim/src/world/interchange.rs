@@ -34,6 +34,52 @@ pub const DIAMOND_TERMINAL: f32 = 55.0;
 const TERMINAL_RUN: f32 = 25.0;
 /// The steepest crossing angle a diamond is laid at (degrees from square).
 const MAX_SKEW_DEG: f32 = 40.0;
+/// [w1-roads] How high the cross street of a street-over diamond stands
+/// above the highway: clear of it (`GRADE_SEPARATION`) with room for a deck.
+pub const OVER_CLEARANCE: f32 = 7.0;
+
+/// [w1-roads] Which way the cross street of a diamond passes the highway.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InterchangeLayout {
+    /// The street at grade, the highway lifted over it on a short deck.
+    #[default]
+    StreetUnder,
+    /// The street on a bridge over the highway at grade, the ramps climbing
+    /// to it.
+    StreetOver,
+}
+
+impl InterchangeLayout {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().replace(['-', ' '], "_").as_str() {
+            "diamond" | "under" | "street_under" => Some(Self::StreetUnder),
+            "over" | "street_over" | "diamond_over" | "overpass" => Some(Self::StreetOver),
+            _ => None,
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::StreetUnder => "street_under",
+            Self::StreetOver => "street_over",
+        }
+    }
+}
+
+/// Levels along `pts` rising linearly by length from `from` at the first
+/// point to `to` at the last.
+fn ramp_levels(pts: &[Vec2], from: f32, to: f32) -> Vec<f32> {
+    let total = crate::geom::path_length(pts).max(1e-3);
+    let mut acc = 0.0;
+    let mut out = Vec::with_capacity(pts.len());
+    for (i, p) in pts.iter().enumerate() {
+        if i > 0 {
+            acc += pts[i - 1].distance(*p);
+        }
+        out.push(from + (to - from) * acc / total);
+    }
+    out
+}
 
 /// A diamond interchange as it would be laid: the gestures (the cross street
 /// first unless one is there already, then the ramps) and where the ramps
@@ -87,6 +133,16 @@ impl World {
     /// or when a ramp would cross another road or join the highway where
     /// another road already does.
     pub fn plan_diamond(&self, a: Vec2, b: Vec2, lanes: (u8, u8)) -> Result<InterchangePlan, InterchangeRefusal> {
+        self.plan_interchange(a, b, lanes, InterchangeLayout::StreetUnder)
+    }
+
+    /// [w1-roads] [`World::plan_diamond`] in a layout: the street under the
+    /// highway (the diamond as it was) or over it, on a bridge
+    /// `OVER_CLEARANCE` above, climbing from grade at the street's ends and
+    /// level from one ramp terminal to the other; the ramps climb from the
+    /// carriageway to it.
+    pub fn plan_interchange(&self, a: Vec2, b: Vec2, lanes: (u8, u8), layout: InterchangeLayout) -> Result<InterchangePlan, InterchangeRefusal> {
+        let over = layout == InterchangeLayout::StreetOver;
         let roads = &self.roads;
         let len = a.distance(b);
         if len < 1.0 {
@@ -126,8 +182,18 @@ impl World {
         // The cross street: one already along the line under the highway,
         // else the drawn one.
         let existing = self.street_along(a, b, &cws);
+        if over && existing.is_some() {
+            return Err(InterchangeRefusal::new("a street already passes under the highway here: use the street-under layout, or draw the new street elsewhere", mid));
+        }
+        // [w1-roads] The bridge level and where the street climbs to it:
+        // level from the first terminal to the last, down to grade a
+        // climb's length beyond each.
+        let deck = cws.iter().map(|c| {
+            roads.nearest_where(c.at, Segment::is_highway).map_or(0.0, |(sid, t, _)| roads.segment_level(sid, t))
+        }).fold(0.0f32, f32::max) + OVER_CLEARANCE;
+        let climb = deck / super::water::STREET_GRADE * 1.15;
         let mut plan = InterchangePlan { kept_street: existing.is_some(), crossings: cws.iter().map(|c| c.at).collect(), ..Default::default() };
-        if existing.is_none() {
+        if existing.is_none() && !over {
             let (f, bk) = (lanes.0.max(1), lanes.1);
             if crate::roads::is_highway_spec(RoadKind::Street, f, bk) || crate::roads::is_ramp_spec(RoadKind::Street, f, bk) {
                 return Err(InterchangeRefusal::new("the cross street must be a two-way street", mid));
@@ -195,6 +261,22 @@ impl World {
             }
             plan.terminals.push(t_pt);
         }
+        if over {
+            let (f, bk) = (lanes.0.max(1), lanes.1);
+            if crate::roads::is_highway_spec(RoadKind::Street, f, bk) || crate::roads::is_ramp_spec(RoadKind::Street, f, bk) {
+                return Err(InterchangeRefusal::new("the cross street must be a two-way street", mid));
+            }
+            let along = |p: Vec2| (p - a).dot(u);
+            let lo = plan.terminals.iter().map(|t| along(*t)).fold(f32::INFINITY, f32::min);
+            let hi = plan.terminals.iter().map(|t| along(*t)).fold(f32::NEG_INFINITY, f32::max);
+            if lo - climb < 5.0 || hi + climb > len - 5.0 {
+                let short = if lo - climb < 5.0 { a } else { b };
+                return Err(InterchangeRefusal::new(format!("the street is too short to climb over the highway: it must run at least {:.0} m out from the highway on each side", DIAMOND_TERMINAL + climb + 5.0), short));
+            }
+            let pts = vec![a, a + u * (lo - climb), a + u * lo, a + u * hi, a + u * (hi + climb), b];
+            let elevation = vec![0.0, 0.0, deck, deck, 0.0, 0.0];
+            plan.gestures.push(Gesture::Road { points: pts, lanes_fwd: f, lanes_bwd: bk, curved: false, kind: RoadKind::Street, elevation, car_only: Some(false) });
+        }
         // Nothing in the way: a ramp crosses no road but its own carriageway
         // join and its terminal, and no other road already joins the
         // carriageway where it does.
@@ -248,8 +330,15 @@ impl World {
                 return Err(InterchangeRefusal::new(format!("another road already joins the highway where the {what} would: move the interchange along the highway"), join));
             }
         }
-        for (pts, _) in ramps {
-            plan.gestures.push(Gesture::Road { points: pts, lanes_fwd: 1, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
+        for (pts, what) in ramps {
+            // [w1-roads] Over the highway, each ramp climbs from its
+            // carriageway to the bridge's level at its terminal.
+            let elevation = if over {
+                if what == "off-ramp" { ramp_levels(&pts, 0.0, deck) } else { ramp_levels(&pts, deck, 0.0) }
+            } else {
+                Vec::new()
+            };
+            plan.gestures.push(Gesture::Road { points: pts, lanes_fwd: 1, lanes_bwd: 0, curved: false, kind: RoadKind::Street, elevation, car_only: None });
         }
         Ok(plan)
     }
@@ -258,7 +347,12 @@ impl World {
     /// project (one is started if none is), as the Road tool's Interchange
     /// preset does. The gesture ids, in order.
     pub fn add_diamond(&mut self, a: Vec2, b: Vec2, lanes: (u8, u8)) -> Result<(InterchangePlan, Vec<GestureId>), InterchangeRefusal> {
-        let plan = self.plan_diamond(a, b, lanes)?;
+        self.add_interchange(a, b, lanes, InterchangeLayout::StreetUnder)
+    }
+
+    /// [w1-roads] [`World::add_diamond`] in a layout (`plan_interchange`).
+    pub fn add_interchange(&mut self, a: Vec2, b: Vec2, lanes: (u8, u8), layout: InterchangeLayout) -> Result<(InterchangePlan, Vec<GestureId>), InterchangeRefusal> {
+        let plan = self.plan_interchange(a, b, lanes, layout)?;
         let ids = plan.gestures.iter().cloned().map(|g| self.add_gesture(g)).collect();
         Ok((plan, ids))
     }

@@ -21,7 +21,10 @@ pub(super) fn roundabout_input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, 
     if click || right_down || middle {
         tools.ring_pin = None;
     }
-    tools.ring_hover = tools.ring_pin.or(if flags.pointer_over_ui { None } else { ground }).map(|p| sim.world.roundabout_snap(p));
+    // [w1-roads] A raised or sunken ring does not snap onto the junctions
+    // at grade.
+    let at_grade = tools.elevation.abs() < nd_sim::roads::GRADE_SEPARATION;
+    tools.ring_hover = tools.ring_pin.or(if flags.pointer_over_ui { None } else { ground }).map(|p| if at_grade { sim.world.roundabout_snap(p) } else { p });
     // Ctrl+wheel sizes it (the camera leaves the wheel alone then).
     if ctrl && !flags.pointer_over_ui {
         let lines = match scroll.unit {
@@ -36,7 +39,9 @@ pub(super) fn roundabout_input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, 
     if click {
         if let Some(c) = tools.ring_hover {
             let (r, lanes) = (tools.ring_radius, tools.ring_lanes);
-            tools.status = match sim.world.add_roundabout(c, r, lanes) {
+            let level = tools.elevation;
+            tools.status = match sim.world.add_roundabout_at(c, r, lanes, level) {
+                Ok(_) if level != 0.0 => format!("Roundabout {:.0} m across at {} stamped into the project: roads drawn to it at its level join it, others pass under or over. Ctrl+Z undoes, Ctrl+Enter implements.", r * 2.0, elevation_label(level)),
                 Ok(_) => format!("Roundabout {:.0} m across stamped into the project: roads crossing it are cut and joined, buildings in red come down. Ctrl+Z undoes, Ctrl+Enter implements.", r * 2.0),
                 Err(e) => format!("No roundabout: {e}."),
             };
@@ -78,10 +83,12 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, _selection:
         if tools.points.len() >= 2 {
             let (a, b) = (tools.points[0], tools.points[tools.points.len() - 1]);
             let lanes = (tools.lanes_fwd.max(1), tools.lanes_bwd.max(1));
-            tools.status = match sim.world.add_diamond(a, b, lanes) {
+            let layout = tools.interchange_layout;
+            let over = layout == nd_sim::world::interchange::InterchangeLayout::StreetOver;
+            tools.status = match sim.world.add_interchange(a, b, lanes, layout) {
                 Ok((plan, ids)) => format!(
                     "Diamond interchange added to the project: {}{} ramps, a signalled junction where they meet the street on each side. Ctrl+Z undoes, Ctrl+Enter implements.",
-                    if plan.kept_street { "the street under the highway kept, " } else { "the cross street under the highway, " },
+                    if plan.kept_street { "the street under the highway kept, " } else if over { "the cross street on a bridge over the highway, " } else { "the cross street under the highway, " },
                     ids.len() - usize::from(!plan.kept_street)
                 ),
                 Err(r) => format!("No interchange: {} (pinned in red at {:.0}, {:.0}).", r.why, r.at.x, r.at.y),

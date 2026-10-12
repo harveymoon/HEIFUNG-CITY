@@ -36,6 +36,14 @@ fn report(w: &World, label: &str, cells: &mut HashMap<(i32, i32), (u32, BTreeMap
     let stall: f32 = std::env::var("STALL").ok().and_then(|s| s.parse().ok()).unwrap_or(120.0);
     let mut why: BTreeMap<&str, usize> = BTreeMap::new();
     let mut by_kind: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    let mut speed: BTreeMap<&str, (f32, usize)> = BTreeMap::new();
+    for (id, c) in t.cars.iter() {
+        let e = speed.entry(kind(w, id)).or_default();
+        e.0 += c.v;
+        e.1 += 1;
+    }
+    let speeds: Vec<String> = speed.iter().map(|(k, (v, n))| format!("{k} {:.1}", v / (*n).max(1) as f32)).collect();
+    println!("   mean speed m/s by kind (all, standing too): {}", speeds.join(", "));
     let mut standing = 0usize;
     for (id, c) in t.cars.iter() {
         let k = kind(w, id);
@@ -71,6 +79,23 @@ fn report(w: &World, label: &str, cells: &mut HashMap<(i32, i32), (u32, BTreeMap
         let lane = c.route[c.idx.min(c.route.len() - 1)];
         let l = &t.net.lanes[lane as usize];
         println!("   KERB ({}, {}) {} waiting [{}] lane {lane} s {:.1}/{:.1} lane cars {} entering {} stalled {:.0} -> {}", x * 10, y * 10, ids.len(), kind(w, ids[0]), c.s, l.length, l.cars.len(), c.entering, c.stalled, t.stop_reason(ids[0]).text(|id| format!("{id:?} [{}] v{:.1} s{:.1}", kind(w, id), t.cars.get(id).map_or(0.0, |o| o.v), t.cars.get(id).map_or(0.0, |o| o.s))));
+    }
+    // Crossings holding a car standing long for walkers: which, and who is on them.
+    if std::env::var("XING").is_ok() {
+        let mut seen = std::collections::BTreeSet::new();
+        for (id, c) in t.cars.iter() {
+            if !(c.v < 0.5 && c.stalled > 180.0 && t.stop_reason(id).key() == "pedestrians") {
+                continue;
+            }
+            for (k, x) in w.walk.crossings.iter().enumerate() {
+                if x.mid.distance(c.pos) > 30.0 || !seen.insert(k) {
+                    continue;
+                }
+                let info = w.peds.crossings.get(k);
+                let on = w.peds.occupants.iter().filter(|(cr, _)| *cr as usize == k).count();
+                println!("   XING {k} at ({:.0},{:.0}) kind {:?} marked {} signal {:?} lanes {:?} occupants {on} near car {:?} lane {} s {:.1}", x.mid.x, x.mid.y, x.kind, x.marked(), info.and_then(|i| i.signal), info.map(|i| i.lanes.clone()), id, c.route[c.idx], c.s);
+            }
+        }
     }
     // Heads of the longest queues.
     let mut heads: HashMap<nd_sim::CarId, (usize, bool)> = HashMap::new();

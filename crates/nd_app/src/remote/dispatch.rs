@@ -326,6 +326,7 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("returns", "junctions [{index, pos, kind, lot, attached, walk_node, gesture_id}] (the Path tool's snap rings) and links (paths joined to grounds)"),
     ] },
     Cmd { name: "add_roundabout", aliases: &[], effect: Game, run: planning::add_roundabout, help: &[
+        ("level", "metres above the ground (negative below; -5 or lower is a tunnel), default 0: roads drawn to it at its level join it, the rest pass under or over"),
         ("center", "[x,y] (snaps onto a junction within 12 m or a street within 6 m)"),
         ("radius", "m to the ring centreline, 12..120 (or diameter 24..240)"),
         ("lanes", "1|2|3 ring lanes"),
@@ -338,6 +339,7 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("lanes_fwd", "cross street lanes (default 2)"),
         ("lanes_bwd", "(default 2)"),
         ("check", "bool: only plan it, add nothing"),
+        ("layout", "street_under (default: the diamond, the highway lifted over the street) or street_over (the street on a bridge over the highway, the ramps climbing to it)"),
         ("implement", "bool"),
         ("returns", "gesture_ids, interchange {kept_street, terminals, crossings, roads [{points, lanes}]}, or refused {why, at}; project state"),
     ] },

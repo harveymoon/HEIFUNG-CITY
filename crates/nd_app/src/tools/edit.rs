@@ -91,7 +91,7 @@ pub(super) fn nearest_gesture(plan: &Plan, p: SVec2) -> Option<(GestureId, usize
             }
             // Paint strokes have no shape to pick: undo or the eraser takes them back.
             Gesture::ParcelZone { .. } => {}
-            Gesture::Roundabout { center, radius, lanes } => {
+            Gesture::Roundabout { center, radius, lanes, .. } => {
                 let ring = nd_sim::roads::Ring::new(*center, *radius, *lanes);
                 let d = (p.distance(ring.center) - ring.radius).abs();
                 if d < ring.half_width() + 2.0 && best.map_or(true, |b| d < b.0) {

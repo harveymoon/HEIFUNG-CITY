@@ -297,7 +297,7 @@ fn a_roundabout_ring_is_paved_round_the_outside() {
     let mut plan = Plan::default();
     plan.gestures.insert(GestureId(1), Gesture::Road { points: vec![Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
     plan.gestures.insert(GestureId(2), Gesture::Road { points: vec![Vec2::new(0.0, -200.0), Vec2::new(0.0, 200.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
-    plan.gestures.insert(GestureId(3), Gesture::Roundabout { center: Vec2::ZERO, radius: 30.0, lanes: 1 });
+    plan.gestures.insert(GestureId(3), Gesture::Roundabout { center: Vec2::ZERO, radius: 30.0, lanes: 1, level: 0.0 });
     let (built, rings) = plan.built_roads();
     let mut roads = RoadNetwork::default();
     roads.rings = rings;
@@ -326,7 +326,7 @@ fn a_big_circus_is_paved_round_the_inside_too() {
     use nd_sim::plan::{Gesture, GestureId, Plan};
     let mut plan = Plan::default();
     plan.gestures.insert(GestureId(1), Gesture::Road { points: vec![Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], lanes_fwd: 1, lanes_bwd: 1, curved: false, kind: RoadKind::Street, elevation: Vec::new(), car_only: None });
-    plan.gestures.insert(GestureId(3), Gesture::Roundabout { center: Vec2::ZERO, radius: 70.0, lanes: 2 });
+    plan.gestures.insert(GestureId(3), Gesture::Roundabout { center: Vec2::ZERO, radius: 70.0, lanes: 2, level: 0.0 });
     let (built, rings) = plan.built_roads();
     let mut roads = RoadNetwork::default();
     roads.rings = rings;

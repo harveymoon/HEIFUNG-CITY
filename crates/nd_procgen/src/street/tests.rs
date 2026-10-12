@@ -158,7 +158,7 @@ fn a_roundabout_leaves_its_middle_open_and_has_no_signals() {
     let lv = LandValue::new(400.0, 50.0);
     let pal = Palette::default();
     let mut tris = Vec::new();
-    for g in [None, Some(Gesture::Roundabout { center: Vec2::ZERO, radius: 30.0, lanes: 2 })] {
+    for g in [None, Some(Gesture::Roundabout { center: Vec2::ZERO, radius: 30.0, lanes: 2, level: 0.0 })] {
         let mut plan = plan.clone();
         if let Some(g) = g {
             plan.gestures.insert(GestureId(3), g);
