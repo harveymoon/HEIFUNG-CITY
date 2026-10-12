@@ -8,7 +8,7 @@ impl World {
         let port = Port::plan(kind, p, &self.landscape)?;
         // [ferries] A ferry terminal's boats run to towns off the map, so
         // its water must reach the edge (a lake that does not is no good).
-        if kind == PortKind::FerryTerminal && self.landscape.water_routes_out(port.berth).is_empty() {
+        if kind.is_ferry() && self.landscape.water_routes_out(port.berth).is_empty() {
             return Err("ferries need water that reaches the edge of the map: build the terminal on a river or the sea".into());
         }
         let fp = port.footprint();
@@ -66,6 +66,7 @@ impl World {
             match kind {
                 PortKind::ShippingPort => format!("Port of {n}"),
                 PortKind::FerryTerminal => format!("{n} Ferry"),
+                PortKind::FerryTerminalLarge => format!("{n} Ferry Port"),
                 // [economy]
                 PortKind::MarinaSmall => format!("{n} Marina"),
                 PortKind::MarinaLarge => format!("{n} Yacht Club"),
@@ -83,7 +84,7 @@ impl World {
         self.lease_dock(id, kind, false);
         self.ports.ports[pid].building = Some(id);
         // [ferries] Its towns off the map, across the edges its water reaches.
-        if kind == PortKind::FerryTerminal {
+        if kind.is_ferry() {
             self.link_remote_terminals(pid);
         }
         self.ports.ports[pid].last_sailing = self.clock.tick.saturating_sub(ports::FREIGHT_HEADWAY);
@@ -208,7 +209,7 @@ impl World {
             p.walk_connected = walk;
             p.reaches_elsewhere = out;
             // [ferries] A terminal from a save before remote towns gets its own.
-            if p.kind == PortKind::FerryTerminal && p.remote.is_empty() && out {
+            if p.kind.is_ferry() && p.remote.is_empty() && out {
                 self.link_remote_terminals(id);
             }
         }

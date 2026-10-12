@@ -190,6 +190,8 @@ impl World {
             ServiceKind::University => [10, 24, 50][tier.index()],
             // [attractions] Visitors' car parks.
             ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::ConcertHall => 60,
+            // (D4) Coaches and cars by the hundred.
+            ServiceKind::AmusementPark | ServiceKind::ConventionCentre | ServiceKind::CasinoResort => 90,
             ServiceKind::Pier => 40,
             k if k.is_landmark() => 30,
             _ => [2, 4, 8][tier.index()],

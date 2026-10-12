@@ -82,6 +82,8 @@ pub(super) fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 });
             }
             let before = w.economy.treasury;
+            // [dams] `await_wall: true`: a hydro plant waits for its wall, as the tool places it.
+            let await_wall = opt_bool(cmd, "await_wall")?.unwrap_or(false);
             let (id, here) = match site {
                 Ok(site) => (w.place_building(what, p)?, site.note()),
                 Err(_) => {
@@ -89,6 +91,9 @@ pub(super) fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     (w.place_on_lot(what, lot)?, "nearest lot".into())
                 }
             };
+            if await_wall {
+                w.await_dam_wall(id);
+            }
             // [plant-groups] What was paid, and a plant's MW on its lot and its park.
             let paid = before - w.economy.treasury;
             let note = match w.buildings.get(id).filter(|b| b.plant.is_some()) {

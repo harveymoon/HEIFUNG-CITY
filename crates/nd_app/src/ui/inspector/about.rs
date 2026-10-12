@@ -88,6 +88,7 @@ fn placed_note(parking: (u16, u16), p: nd_sim::Placeable) -> Option<(String, Str
         P::Rail(R::FreightYard) => "Goods trains load and unload here: businesses import and export by rail instead of by lorry from the edge of the map.".into(),
         P::Dock(K::ShippingPort) => "Container ships bring imports in cheaper than by road and carry exports out for more; freight lorries come and go from its yard.".into(),
         P::Dock(K::FerryTerminal) => "Ferries carry passengers to the other terminals on connected water, or out to elsewhere, for a fare.".into(),
+        P::Dock(K::FerryTerminalLarge) => "Car ferries carry passengers and their cars to the other terminals on connected water, or out to elsewhere: a fare a head and a dearer one a car.".into(),
         P::Dock(K::MarinaSmall) => "Berths let to the wealthy households round about for their boats; it lifts land value nearby and draws seafood restaurants.".into(),
         P::Dock(K::MarinaLarge) => "Berths for boats and yachts from all over town, and a clubhouse to go out to; it lifts land value nearby and draws seafood restaurants.".into(),
         P::Dock(K::FishingPortSmall | K::FishingPortLarge) => "Adds to the local fishing economy and provides a dock for the fishing fleet: its trawlers put out before dawn and land fish for the gutting sheds, the fish-stick factory and the fish markets nearby.".into(),
@@ -165,7 +166,7 @@ mod tests {
         // Only the gateways link to elsewhere.
         for k in nd_sim::PortKind::ALL {
             let (_, gives) = placed_note((0, 0), nd_sim::Placeable::Dock(k)).unwrap();
-            assert_eq!(gives.contains("elsewhere"), matches!(k, nd_sim::PortKind::FerryTerminal), "{k:?}: {gives}");
+            assert_eq!(gives.contains("elsewhere"), k.is_ferry(), "{k:?}: {gives}");
         }
     }
 

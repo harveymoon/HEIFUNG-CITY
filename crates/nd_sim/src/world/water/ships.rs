@@ -2,6 +2,8 @@
 
 use super::*;
 
+use crate::ports::FerryEstimate;
+
 impl World {
     /// Sail ships, dispatch new ones on their headways, land freight and
     /// ferry passengers.
@@ -50,7 +52,7 @@ impl World {
                 ship.docked = true;
                 ship.dwell = match ship.kind {
                     ShipKind::Freighter => ports::FREIGHTER_DWELL,
-                    ShipKind::Ferry => ports::FERRY_DWELL,
+                    ShipKind::Ferry | ShipKind::CarFerry => ports::FERRY_DWELL,
                     // [economy] out on the fishing ground, or at anchor
                     ShipKind::FishingBoat | ShipKind::Yacht | ShipKind::Sailboat => crate::world::waterfront::boat_dwell(ship.kind),
                 };
@@ -80,12 +82,12 @@ impl World {
         let minute = self.clock.minute_of_day() as u32;
         let ports_now: Vec<(PortId, Port)> = self.ports.ports.iter().map(|(id, p)| (id, p.clone())).collect();
         self.ports.stats.ports = ports_now.iter().filter(|(_, p)| p.kind == PortKind::ShippingPort).count() as u32;
-        self.ports.stats.terminals = ports_now.iter().filter(|(_, p)| p.kind == PortKind::FerryTerminal).count() as u32;
+        self.ports.stats.terminals = ports_now.iter().filter(|(_, p)| p.kind.is_ferry()).count() as u32;
         self.ports.stats.waiting_cargo = self.ports.inbound.len() as u32;
         // [economy] Marina and fishing boats do not count against the ships.
-        let big_ships = self.ports.ships.values().filter(|s| matches!(s.kind, ShipKind::Freighter | ShipKind::Ferry)).count();
+        let big_ships = self.ports.ships.values().filter(|s| matches!(s.kind, ShipKind::Freighter | ShipKind::Ferry | ShipKind::CarFerry)).count();
         for (pid, port) in &ports_now {
-            if !matches!(port.kind, PortKind::ShippingPort | PortKind::FerryTerminal) {
+            if !matches!(port.kind, PortKind::ShippingPort | PortKind::FerryTerminal | PortKind::FerryTerminalLarge) {
                 continue;
             }
             // [dock-access] A ferry terminal's boats run on the water alone.
@@ -102,7 +104,7 @@ impl World {
             let at_pier = mine.iter().any(|s| s.pose().0.distance(port.berth) < 40.0);
             let busy = match port.kind {
                 PortKind::ShippingPort => !mine.is_empty(),
-                PortKind::FerryTerminal => at_pier || mine.len() >= ports::FERRIES_PER_TERMINAL,
+                PortKind::FerryTerminal | PortKind::FerryTerminalLarge => at_pier || mine.len() >= ports::FERRIES_PER_TERMINAL,
                 _ => true,
             };
             if busy {
@@ -134,19 +136,19 @@ impl World {
                     let boxes_in = cargo.iter().map(|c| ports::boxes_for(c.amount)).sum::<u32>().min(ports::MAX_BOXES);
                     let boxes_out = ((self.ports.outbound / ports::CONTAINER_UNITS) as u32).min(ports::MAX_BOXES);
                     self.ports.outbound = (self.ports.outbound - boxes_out as f32 * ports::CONTAINER_UNITS).max(0.0);
-                    self.ports.ships.insert(Ship { kind: ShipKind::Freighter, path, s: 0.0, prev_s: 0.0, speed, dwell: 0, port: b, to: None, cargo, passengers: 0, docked: false, berth_s, color, remote: None, home: false, quay, boxes_in, boxes_out });
+                    self.ports.ships.insert(Ship { kind: ShipKind::Freighter, path, s: 0.0, prev_s: 0.0, speed, dwell: 0, port: b, to: None, cargo, passengers: 0, docked: false, berth_s, color, remote: None, home: false, quay, boxes_in, boxes_out, cars: 0 });
                     self.ports.ports[*pid].last_sailing = tick;
                 }
                 // [economy] Boats are sent by `World::step_boats`.
                 PortKind::MarinaSmall | PortKind::MarinaLarge | PortKind::FishingPortSmall | PortKind::FishingPortLarge => {}
-                PortKind::FerryTerminal => {
+                PortKind::FerryTerminal | PortKind::FerryTerminalLarge => {
                     if !(ports::FERRY_SERVICE_START..ports::FERRY_SERVICE_END).contains(&minute) || tick.saturating_sub(port.last_sailing) < ports::FERRY_HEADWAY {
                         continue;
                     }
                     // [ferries] Take turns: a run to a town off the map,
                     // then one to the next terminal in town, and so on;
                     // with only one kind, that kind every time.
-                    let others: Vec<(BuildingId, Vec2)> = ports_now.iter().filter(|(oid, o)| oid != pid && o.kind == PortKind::FerryTerminal && o.sails()).filter_map(|(_, o)| o.building.map(|ob| (ob, o.berth))).collect();
+                    let others: Vec<(BuildingId, Vec2)> = ports_now.iter().filter(|(oid, o)| oid != pid && o.kind.is_ferry() && o.sails()).filter_map(|(_, o)| o.building.map(|ob| (ob, o.berth))).collect();
                     let turn = port.sailings as usize;
                     let remote_turn = !port.remote.is_empty() && (others.is_empty() || turn % 2 == 0);
                     let mut chosen: Option<(Option<BuildingId>, Option<u8>, Vec<Vec2>)> = None;
@@ -184,7 +186,7 @@ impl World {
                     if remote.is_some() {
                         let leaving = self.ports.boarding.remove(&b).unwrap_or(0);
                         let prepaid = self.ports.prepaid.remove(&b).unwrap_or(0).min(leaving);
-                        out = leaving.min(ports::FERRY_CAPACITY);
+                        out = leaving.min(port.kind.ferry_capacity());
                         out_prepaid = prepaid.min(out);
                         if leaving > out {
                             self.ports.boarding.insert(b, leaving - out);
@@ -194,15 +196,20 @@ impl World {
                         }
                         self.ports.stats.remote_sailings_today += 1;
                     }
-                    let locals = locals.min(ports::FERRY_CAPACITY - out);
+                    // [ferries] (D6) A large terminal's boats take more, and
+                    // a car ferry drives cars aboard too.
+                    let locals = (locals * port.kind.ferry_capacity() / ports::FERRY_CAPACITY).min(port.kind.ferry_capacity() - out);
                     let riders = out + locals;
-                    let fares = (riders - out_prepaid) as f32 * ports::FERRY_FARE;
+                    let cars = if port.kind.car_deck() > 0 && reachable(b) && port.road_connected { self.ferry_cars(b, to, riders, port.kind.car_deck()) } else { 0 };
+                    let fares = (riders - out_prepaid) as f32 * ports::FERRY_FARE + cars as f32 * ports::CAR_FERRY_FARE;
+                    self.ports.stats.cars_ferried_today += cars;
                     // Ferry fares are public transport income, booked with the bus fares.
                     self.economy.credit_item(Flow::BusFares, fares, Item::Building(b));
                     self.ports.stats.ferry_riders_today += riders;
                     self.ports.stats.ferry_fares_today += fares;
                     self.ports.count_line_riders(b, to, remote, riders);
-                    self.ports.ships.insert(Ship { kind: ShipKind::Ferry, path, s: 0.0, prev_s: 0.0, speed, dwell: ports::FERRY_DWELL, port: b, to, cargo: Vec::new(), passengers: riders, docked: false, berth_s, color: 0, remote, home: false, quay: None, boxes_in: 0, boxes_out: 0 });
+                    let kind = if port.kind.car_deck() > 0 { ShipKind::CarFerry } else { ShipKind::Ferry };
+                    self.ports.ships.insert(Ship { kind, path, s: 0.0, prev_s: 0.0, speed, dwell: ports::FERRY_DWELL, port: b, to, cargo: Vec::new(), passengers: riders, docked: false, berth_s, color: 0, remote, home: false, quay: None, boxes_in: 0, boxes_out: 0, cars });
                     self.ports.ports[*pid].last_sailing = tick;
                     self.ports.ports[*pid].sailings += 1;
                 }
@@ -218,6 +225,35 @@ impl World {
         // and day trippers are counted as they board).
         let base = if to.is_none() { 4 } else { 2 };
         (near / 12 + base + self.rng.random_range(0..6)).min(ports::FERRY_CAPACITY)
+    }
+
+    /// [ferries] (D6) Cars driven aboard a car ferry: a share of the
+    /// passengers bring their car, more on a run out of town; the deck
+    /// takes `deck`. Seeded by the terminal and the tick.
+    pub(super) fn ferry_cars(&self, from: BuildingId, to: Option<BuildingId>, riders: u32, deck: u32) -> u32 {
+        let h = crate::hash::mix(self.clock.tick ^ 0xCA2F, { use slotmap::Key; from.data().as_ffi() });
+        let share = if to.is_none() { 0.22 } else { 0.1 };
+        ((riders as f32 * share) as u32 + (h % 5) as u32).min(deck)
+    }
+
+    /// [ferries] (D6) What a ferry terminal of `kind` at `p` would carry:
+    /// the people within its reach, the towns off the map its water runs
+    /// to, the terminals it would link, and riders (and cars) a day at
+    /// today's numbers. None where it cannot go.
+    pub fn ferry_estimate(&self, kind: PortKind, p: Vec2) -> Option<FerryEstimate> {
+        if !kind.is_ferry() {
+            return None;
+        }
+        let port = self.plan_port(kind, p).ok()?;
+        let near = self.citizens.values().filter(|c| c.home.and_then(|h| self.building_entrance(h)).is_some_and(|q| q.distance(port.berth) < 500.0)).count() as u32;
+        let towns = self.landscape.water_routes_out(port.berth).len().min(2) as u32;
+        let terminals = self.ports.ports.values().filter(|o| o.kind.is_ferry() && o.sails() && self.landscape.water_route(port.berth, Some(o.berth)).is_some()).count() as u32;
+        let sailings = if towns + terminals == 0 { 0 } else { ((ports::FERRY_SERVICE_END - ports::FERRY_SERVICE_START) as u64 / ports::FERRY_HEADWAY) as u32 };
+        let per = (near / 12 + if towns > 0 { 4 } else { 2 } + 2) * kind.ferry_capacity() / ports::FERRY_CAPACITY;
+        let riders = sailings * per.min(kind.ferry_capacity());
+        let cars = if kind.car_deck() > 0 { sailings * ((per as f32 * if towns > 0 { 0.22 } else { 0.1 }) as u32 + 2).min(kind.car_deck()) } else { 0 };
+        let fares = riders as f32 * ports::FERRY_FARE + cars as f32 * ports::CAR_FERRY_FARE;
+        Some(FerryEstimate { near, towns, terminals, sailings, riders, cars, fares, upkeep: kind.upkeep_per_day() })
     }
 
     pub(super) fn ship_docked(&mut self, id: crate::ports::ShipId) {

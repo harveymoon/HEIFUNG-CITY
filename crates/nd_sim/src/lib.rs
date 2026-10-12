@@ -23,6 +23,8 @@ pub mod corp;
 pub mod crime;
 /// [districts] Named districts with specialisations and the Historic freeze.
 pub mod districts;
+/// [dams] (H1) Hydro dam walls the player draws.
+pub mod dams;
 pub mod economy;
 pub mod enforcement;
 /// [land] The land market: pressure, prices, owners, merged plots, the super-elite.
@@ -47,6 +49,8 @@ pub mod market;
 pub mod mind;
 pub mod names;
 pub mod park;
+/// [parks] (D5) Parks kept or let go, clean-ups, nature preserves.
+pub mod parks;
 pub mod parking_layout;
 pub mod pedestrians;
 pub mod pillars;

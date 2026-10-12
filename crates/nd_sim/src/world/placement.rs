@@ -538,6 +538,8 @@ impl World {
         let grounds = self.walk.junctions.iter().any(|j| j.lot == Some(lot)) || self.lots.get(lot).is_some_and(|l| l.park.is_some());
         // [attractions] A pier's deck goes with it.
         self.remove_pier(bid);
+        // [dams] Its dam wall goes with it (the crest's footpath stays).
+        self.forget_dam(bid);
         self.demolish(bid);
         if power {
             self.refresh_power();

@@ -307,6 +307,14 @@ styles! {
     BotanicalGarden { label: "botanical garden", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::botanical_garden(g, c, r) },
     /// White sails over a glass foyer on a podium.
     ConcertHall { label: "opera and concert hall", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::concert_hall(g, c, r) },
+    /// (D4) A coaster, a ferris wheel, a drop tower and rides round a midway.
+    AmusementPark { label: "amusement park", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::amusement_park(g, c, r) },
+    /// (D4) Exhibition halls under a barrel roof, a glass front, flags.
+    ConventionCentre { label: "convention centre", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::convention_centre(g, c, r) },
+    /// (D4) A nave, twin spired towers, a rose window, a square.
+    Cathedral { label: "cathedral", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::cathedral(g, c, r) },
+    /// (D4) A crescent hotel tower over a neon casino and a pool deck.
+    CasinoResort { label: "casino resort", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::casino_resort(g, c, r) },
 }
 
 impl Style {
@@ -404,6 +412,10 @@ impl Style {
             K::Aquarium => Style::Aquarium,
             K::BotanicalGarden => Style::BotanicalGarden,
             K::ConcertHall => Style::ConcertHall,
+            K::AmusementPark => Style::AmusementPark,
+            K::ConventionCentre => Style::ConventionCentre,
+            K::Cathedral => Style::Cathedral,
+            K::CasinoResort => Style::CasinoResort,
         }
     }
 }

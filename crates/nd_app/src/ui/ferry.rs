@@ -22,7 +22,7 @@ pub fn take_fly(ctx: &egui::Context) -> Option<Vec2> {
 /// The FERRIES / SHIPPING LANE section of a dock's inspector.
 pub fn dock_routes(ui: &mut egui::Ui, w: &World, id: BuildingId) {
     let Some(kind) = w.ports.kind_of(id).filter(|_| crate::ferry_select::is_route_dock(w, id)) else { return };
-    let ferry = kind == nd_sim::PortKind::FerryTerminal;
+    let ferry = kind.is_ferry();
     section(ui, if ferry { "FERRY ROUTES" } else { "SHIPPING LANE" });
     if ferry {
         let towns = w.ferry_towns(id);

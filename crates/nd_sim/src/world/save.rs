@@ -141,7 +141,7 @@ impl World {
         // from before parks were serialised has park lots without one.
         if self.lots.values().any(|l| l.land_use == LandUse::Park && l.polygon.len() >= 3 && l.park.is_none()) {
             let links: Vec<Vec2> = self.path_links.links.iter().map(|l| l.pos).collect();
-            crate::park::plan_parks_with(&mut self.lots, &self.land_value, &links);
+            crate::park::plan_parks_wild(&mut self.lots, &self.land_value, &links, &self.parks.preserves);
             self.plan_attraction_grounds();
         }
         // [free-placement] A save from before city ground: the lots under

@@ -18,7 +18,7 @@ impl World {
     /// for any other building.
     pub fn access_serves(&self, b: BuildingId) -> Option<bool> {
         if let Some(p) = self.ports.port_of(b) {
-            return Some(p.road_connected || (p.kind == PortKind::FerryTerminal && p.walk_connected));
+            return Some(p.road_connected || (p.kind.is_ferry() && p.walk_connected));
         }
         self.buildings.get(b).and_then(|x| x.rail.as_ref()).map(|l| l.road_connected || (l.kind.is_passenger() && l.walk_connected))
     }
@@ -30,7 +30,17 @@ impl World {
         if self.road_access(b)? || !self.access_serves(b)? {
             return None;
         }
-        Some("reached on foot only: a path joins it to the city, so passengers walk in and out; no road reaches it yet for taxis, buses or deliveries".to_string())
+        Some("reached on foot only: a footpath joins it to the city, so passengers walk in and out; goods need a road, and taxis, buses and deliveries cannot get there until a road reaches the marked end of its street stub".to_string())
+    }
+
+    /// [dock-access] (D7) A dock, station or yard joined to the city by a
+    /// footpath and no road. None for any other building.
+    pub fn footpath_only(&self, b: BuildingId) -> Option<bool> {
+        let walk = match self.ports.port_of(b) {
+            Some(p) => p.walk_connected,
+            None => self.buildings.get(b)?.rail.as_ref()?.walk_connected,
+        };
+        Some(walk && !self.road_access(b)?)
     }
 
     /// [dock-access] What the player is told about a dock or station off
@@ -41,9 +51,18 @@ impl World {
         }
         let joined = self.stub_ends_of(b).is_empty();
         let walk = self.ports.port_of(b).map(|p| p.walk_connected).or_else(|| self.buildings.get(b).and_then(|x| x.rail.as_ref()).map(|l| l.walk_connected)).unwrap_or(false);
-        let what = if walk {
-            "a path reaches it, but goods need a road: lorries cannot get there on foot"
-        } else if self.ports.port_of(b).is_some_and(|p| p.kind == PortKind::FerryTerminal) {
+        // (D7) Joined by a footpath only: say that first and plainly.
+        if walk {
+            let goods = match self.ports.port_of(b).map(|p| p.kind) {
+                Some(PortKind::ShippingPort) => "no freight is landed or shipped until lorries can reach the quay",
+                Some(PortKind::FishingPortSmall | PortKind::FishingPortLarge) => "the catch is not landed until lorries can take it away",
+                Some(PortKind::MarinaSmall | PortKind::MarinaLarge) => "boat owners drive in with their gear and the chandlery takes deliveries, so it stays shut",
+                _ => "freight trains are not loaded until lorries can reach the yard",
+            };
+            let todo = if joined { "carry a road on from its street to the city" } else { "draw a road to the marked end of its street stub" };
+            return Some(format!("joined only by a footpath: people can walk to it, but goods need a road; {goods}: {todo}"));
+        }
+        let what = if self.ports.port_of(b).is_some_and(|p| p.kind.is_ferry()) {
             "ferries sail, but carry no one until people can get to the pier (a road or a path)"
         } else if self.ports.port_of(b).is_some() {
             "nothing lands or is sold until lorries can reach it"
@@ -103,7 +122,7 @@ impl World {
                 if self.roads.nearest_street(probe).is_some_and(|(_, _, q)| q.distance(probe) <= rail::ROAD_EDGE_FUSE) {
                     "on the water's edge, fronting the street here".to_string()
                 } else {
-                    let ferry = if kind == PortKind::FerryTerminal { " (its ferries sail meanwhile, carrying no one)" } else { "" };
+                    let ferry = if kind.is_ferry() { " (its ferries sail meanwhile, carrying no one)" } else { "" };
                     format!("on the water's edge; no road needed: it lays a short access road inland. Draw a road to its marked end to put it on the road network{ferry}")
                 }
             }))),

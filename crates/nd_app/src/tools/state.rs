@@ -161,6 +161,20 @@ pub struct ToolState {
     /// [tools] What implementing the active project would refuse on,
     /// refreshed with the plan view (None: nothing).
     pub plan_check: Option<nd_sim::ProjectCheck>,
+    /// [dams] (H1) Buildings tool, second step of a hydro plant: drawing
+    /// its dam wall bank to bank.
+    pub dam: Option<DamStep>,
+    /// [dams] What the wall under the pointer would be: (ok, the read-out),
+    /// refreshed every frame of the step.
+    pub dam_note: Option<(bool, String)>,
+}
+
+/// [dams] (H1) The dam wall being drawn: for which plant, and the first
+/// bank once clicked.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DamStep {
+    pub plant: BuildingId,
+    pub a: Option<SVec2>,
 }
 
 /// [fix/roads-tools] A junction being dragged in the Edit tool: the roads
@@ -301,9 +315,13 @@ impl ToolState {
         if kind != RoadKind::Path {
             return None;
         }
-        let j = sim.world.grounds_junction_near(p, POINT_PICK_RADIUS)?;
         let (q, on_road) = sim.world.roads.snap_point_kind(p, POINT_PICK_RADIUS, kind);
-        (!on_road || q.distance(p) > j.pos.distance(p)).then_some(j.pos)
+        let gate = sim.world.grounds_junction_near(p, POINT_PICK_RADIUS).map(|j| j.pos);
+        // [parks] (D5) A park's hub gate: the path is laid to its edge
+        // gate on that side when added, and the park walks it on.
+        let hub = sim.world.park_hub_near(p, POINT_PICK_RADIUS).map(|h| h.1);
+        let best = [gate, hub].into_iter().flatten().min_by(|a, b| a.distance(p).total_cmp(&b.distance(p)))?;
+        (!on_road || q.distance(p) > best.distance(p)).then_some(best)
     }
 
     /// Add a point of the road being drawn with its level.
@@ -579,6 +597,8 @@ impl Default for ToolState {
             joint_drag: None,
             circle: false,
             plan_check: None,
+            dam: None,
+            dam_note: None,
         }
     }
 }

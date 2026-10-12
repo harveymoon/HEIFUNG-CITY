@@ -28,7 +28,7 @@
 
 use super::*;
 use crate::landscape::MapEdge;
-use crate::ports::{self, DayTrip, PortId, PortKind, RemoteTerminal};
+use crate::ports::{self, DayTrip, PortId, RemoteTerminal};
 use crate::tourism::{self as tm, Arrival, Goal, Tourist, TouristId, TouristState};
 
 /// Salt for the ferry draws.
@@ -45,7 +45,7 @@ impl World {
 
     /// The towns off the map a terminal runs to (empty for anything else).
     pub fn ferry_towns(&self, b: BuildingId) -> Vec<RemoteTerminal> {
-        self.ports.port_of(b).filter(|p| p.kind == PortKind::FerryTerminal).map_or(Vec::new(), |p| p.remote.clone())
+        self.ports.port_of(b).filter(|p| p.kind.is_ferry()).map_or(Vec::new(), |p| p.remote.clone())
     }
 
     /// The name of a terminal's remote town `k`.

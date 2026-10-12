@@ -152,7 +152,7 @@ impl World {
             if !s.usable() {
                 continue;
             }
-            let score = tm::beach_score(lot.area(), season);
+            let score = tm::beach_score(if s.area > 0.0 { s.area } else { lot.area() }, season);
             if score > 0.0 {
                 let pos = lot.park.as_ref().and_then(|p| p.paths.first()).and_then(|w| w.last().copied()).unwrap_or(lot.center);
                 out.push(Attraction { kind: AttractionKind::Beach, name: s.name.clone(), pos, building: Some(*bid), score });

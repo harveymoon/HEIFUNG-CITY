@@ -23,10 +23,10 @@ pub(super) struct LandscapeRender {
     pub(super) tiles: Option<nd_procgen::terrain::LandscapeTiles>,
     pub(super) tile_ents: Vec<Option<Entity>>,
     /// [refactor/app] The counters `signature` was hashed under.
-    pub(super) gate: Gate<(u64, u64, u64, usize, usize, u64, bool)>,
+    pub(super) gate: Gate<(u64, u64, u64, usize, usize, u64, bool, u64)>,
     pub(super) water_mat: Option<Handle<StandardMaterial>>,
     /// [economy] One mesh per `ShipKind` (freighter, ferry, trawler, yacht, sailboat).
-    pub(super) ship_meshes: Option<[Handle<Mesh>; 5]>,
+    pub(super) ship_meshes: Option<[Handle<Mesh>; 6]>,
     /// Each drawn ship and the kind its mesh shows.
     pub(super) ships: HashMap<nd_sim::ports::ShipId, (Entity, nd_sim::ports::ShipKind)>,
     /// [berthing] Each shipping port's crane gear (trolley, hoist rope,
@@ -120,6 +120,8 @@ pub(super) fn landscape_signature(w: &World) -> u64 {
     w.buildings.values().filter(|b| b.plant.is_some()).count().hash(&mut h);
     w.landscape.is_flat().hash(&mut h);
     w.relief.hash(&mut h);
+    // [dams] A wall drawn or awaited redraws the works.
+    w.dams.version.hash(&mut h);
     h.finish()
 }
 
@@ -143,7 +145,7 @@ pub(super) fn sync_landscape(
 ) {
     let w = &sim.world;
     let fresh = !assets.palette_changed && !sim.full_rebuild;
-    if state.gate.same((sim.generation, w.landscape.version(), w.roads.version, w.lots.len(), w.ports.ports.len(), w.buildings.version(), w.relief)) && state.signature.is_some() && fresh {
+    if state.gate.same((sim.generation, w.landscape.version(), w.roads.version, w.lots.len(), w.ports.ports.len(), w.buildings.version(), w.relief, w.dams.version)) && state.signature.is_some() && fresh {
         return;
     }
     let sig = landscape_signature(w);
@@ -216,7 +218,7 @@ pub(super) fn sync_landscape(
 }
 
 /// [economy] The ship kinds in `ship_meshes` order.
-pub(super) const SHIP_KINDS: [nd_sim::ShipKind; 5] = [nd_sim::ShipKind::Freighter, nd_sim::ShipKind::Ferry, nd_sim::ShipKind::FishingBoat, nd_sim::ShipKind::Yacht, nd_sim::ShipKind::Sailboat];
+pub(super) const SHIP_KINDS: [nd_sim::ShipKind; 6] = [nd_sim::ShipKind::Freighter, nd_sim::ShipKind::Ferry, nd_sim::ShipKind::FishingBoat, nd_sim::ShipKind::Yacht, nd_sim::ShipKind::Sailboat, nd_sim::ShipKind::CarFerry];
 
 /// Freighters, ferries and (economy) boats along their routes, blended between ticks.
 pub(super) fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut state: ResMut<LandscapeRender>, mut q: Query<&mut Transform, With<ShipTag>>) {

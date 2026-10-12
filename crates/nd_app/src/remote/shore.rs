@@ -32,7 +32,9 @@ pub fn lot_shore(w: &World, id: LotId) -> Value {
 pub fn beach_json(w: &World, b: BuildingId, s: &BeachState) -> Value {
     let lot = w.buildings.get(b).and_then(|x| w.lots.get(x.lot));
     json!({
-        "building": key_str(b), "name": s.name, "pos": lot.map(|l| v2(l.center)), "area_m2": lot.map(|l| round(l.area())),
+        "building": key_str(b), "name": s.name, "pos": lot.map(|l| v2(l.center)), "area_m2": if s.area > 0.0 { Some(round(s.area)) } else { lot.map(|l| round(l.area())) },
+        // [beaches] (H2) the lots of a merged beach
+        "lots": s.lots.len().max(1), "members": s.members.iter().map(|m| key_str(*m)).collect::<Vec<_>>(),
         "access": s.access, "open": s.open, "usable": s.usable(), "note": s.note,
         "visitors": s.visitors, "swimmers": s.swimmers, "people_here": s.people_here, "draw": round(s.draw),
         "capacity": s.capacity, "crowded": s.crowded(), "catchment": s.catchment,

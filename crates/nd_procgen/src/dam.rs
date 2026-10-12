@@ -43,11 +43,28 @@ pub fn dam_parts(scale: f32) -> (usize, usize) {
 /// river centre point `c` of a river `width` wide flowing along `flow` (unit).
 #[allow(clippy::too_many_arguments)]
 pub fn hydro_dam(g: &mut Geometry, c: Vec2, flow: Vec2, width: f32, lot_center: Vec2, scale: f32, ground: &dyn Fn(Vec2) -> f32, concrete: [f32; 3], steel: [f32; 3]) {
-    let (towers, gates) = dam_parts(scale);
     let across = Vec2::new(-flow.y, flow.x);
-    let upstream = -flow;
     // Into the banks on both sides, so the abutments sit in the ground.
     let half = width * 0.5 + 6.0;
+    dam_body(g, c, across, flow, half, width, lot_center, scale, ground, concrete, steel);
+}
+
+/// [dams] (H1) The dam on a wall the player drew: the arch from bank to
+/// bank (`DamWall::crest`'s, so the crest's footpath runs along it).
+#[allow(clippy::too_many_arguments)]
+pub fn hydro_dam_wall(g: &mut Geometry, wall: &nd_sim::dams::DamWall, span: f32, lot_center: Vec2, scale: f32, ground: &dyn Fn(Vec2) -> f32, concrete: [f32; 3], steel: [f32; 3]) {
+    let len = wall.length().max(1.0);
+    let across = (wall.b - wall.a) / len;
+    let c = wall.a.lerp(wall.b, 0.5);
+    dam_body(g, c, across, -wall.upstream, len * 0.5, span.max(4.0), lot_center, scale, ground, concrete, steel);
+}
+
+/// The dam: an arch `half` either side of `c` along `across`, bowed
+/// against `flow`, over water `width` wide.
+#[allow(clippy::too_many_arguments)]
+fn dam_body(g: &mut Geometry, c: Vec2, across: Vec2, flow: Vec2, half: f32, width: f32, lot_center: Vec2, scale: f32, ground: &dyn Fn(Vec2) -> f32, concrete: [f32; 3], steel: [f32; 3]) {
+    let (towers, gates) = dam_parts(scale);
+    let upstream = -flow;
     let bow = (half * 0.32).clamp(3.0, 22.0);
     let n = ((half * 2.0) / 2.5).ceil().clamp(10.0, 48.0) as usize;
     let crest = arch(c, across, upstream, half, bow, n);

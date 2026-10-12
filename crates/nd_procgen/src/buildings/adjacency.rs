@@ -423,6 +423,8 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
         tower: b.plot.tower,
         // [attractions] a pier's deck over the water
         pier: world.attractions.piers.get(&id),
+        // [parks] litter and dealers in a park let go
+        park_look: world.parks.of(id).map(|s| super::park::ParkLook { trash: s.trash, dealers: s.dealers }),
         ..Extras::default()
     }
 }

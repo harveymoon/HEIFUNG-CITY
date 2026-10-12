@@ -151,6 +151,8 @@ impl World {
         crate::prof!("daily_tourism", self.daily_tourism());
         // [waterfront] beach tallies, and the households near a good one
         self.daily_shore();
+        // [parks] litter, campers, dealers: how kept each park is
+        self.daily_parks();
         crate::prof!("close_day_record", self.close_day_record(record));
         // [land] Buyouts, branches, merges, McMansions, billionaires.
         self.daily_estate();
@@ -184,6 +186,10 @@ impl World {
     // [waterfront] beaches (access, weather, crowds), private jetties
     if tick % 60 == 33 {
         crate::prof!("hourly_shore", self.hourly_shore());
+    }
+    // [parks] the park list (one per park of lots side by side) and who is in each
+    if tick % 60 == 37 {
+        crate::prof!("hourly_parks", self.hourly_parks());
     }
     // [land] People present and moving, at :13 clear of the rest.
     if tick % 60 == 13 {

@@ -49,6 +49,7 @@ fn row(ui: &mut egui::Ui, p: &Pressure, full: bool) {
         bar(ui, p.strength, heat(p));
         let status = if p.wants_more() {
             match &p.held {
+                Some(_) if p.kind == PressureKind::Marina => "yours to build".to_string(),
                 Some(_) => "wanted, held".to_string(),
                 None => "opening one".to_string(),
             }
@@ -68,7 +69,8 @@ fn row(ui: &mut egui::Ui, p: &Pressure, full: bool) {
     if full || p.wants_more() {
         ui.label(egui::RichText::new(format!("    {}", p.why)).small().weak());
         if let Some(h) = &p.held {
-            ui.label(egui::RichText::new(format!("    held: {h}")).small().color(Color32::from_rgb(200, 160, 90)));
+            let tag = if p.kind == PressureKind::Marina { "advice" } else { "held" };
+            ui.label(egui::RichText::new(format!("    {tag}: {h}")).small().color(Color32::from_rgb(200, 160, 90)));
         }
     }
 }

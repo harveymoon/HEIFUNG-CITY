@@ -14,6 +14,8 @@ pub mod alerts;
 mod ferry;
 /// [waterfront] The inspector's waterfront and beach lines.
 mod shore;
+/// [parks] (D5) The Parks page and a park's inspector section.
+mod parks;
 /// [committee] The Committee window.
 pub mod committee;
 /// [voices] A citizen's diary, on demand.
