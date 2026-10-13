@@ -315,6 +315,34 @@ styles! {
     Cathedral { label: "cathedral", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::cathedral(g, c, r) },
     /// (D4) A crescent hotel tower over a neon casino and a pool deck.
     CasinoResort { label: "casino resort", family: Special, cluster: -1.5, draw: |g, c, r, _| attractions::casino_resort(g, c, r) },
+    // -- [capsule] the Capsule district's white domes (`buildings/capsule.rs`),
+    // drawn only from its look's menus; appended so `ALL` keeps its order. --
+    // Low domes repeat happily along a street; the towers stand apart.
+    /// A dome on a drum ringed with portholes, a round door, a garage dome or pad.
+    DomeHouse { label: "dome house", family: Luxury, cluster: 0.8, draw: |g, c, r, _| capsule::dome_house(g, c, r) },
+    /// A saucer raised on a core and four legs, portholes round its rim.
+    SaucerHouse { label: "saucer house", family: Luxury, cluster: 0.6, draw: |g, c, r, _| capsule::saucer_house(g, c, r) },
+    /// A ball on a single thick stilt, like a lolly, over a lobby dome.
+    PopsicleDome { label: "stilt dome", family: Spire, cluster: 0.2, draw: |g, c, r, _| capsule::popsicle_dome(g, c, r) },
+    /// Two or three domes of different sizes joined by glass tubes.
+    TwinDomes { label: "twin domes", family: Luxury, cluster: 0.5, draw: |g, c, r, _| capsule::twin_domes(g, c, r) },
+    /// A main dome with small pods round it on short glass tubes.
+    DomePods { label: "dome with pods", family: Luxury, cluster: 0.5, draw: |g, c, r, _| capsule::dome_pods(g, c, r) },
+    /// A pill-shaped tower: a porthole row every floor, a rounded top.
+    CapsuleTower { label: "capsule tower", family: Spire, cluster: -0.4, draw: |g, c, r, e| capsule::capsule_tower(g, c, r, e.rooftop_pad) },
+    /// Saucers stacked round a white core, a radar ball on top.
+    SaucerStack { label: "saucer stack", family: Spire, cluster: -0.6, draw: |g, c, r, e| capsule::saucer_stack(g, c, r, e.rooftop_pad) },
+    /// A tall stilt with a big domed pod holding the top floors.
+    StiltTower { label: "stilt tower", family: Spire, cluster: -1.2, draw: |g, c, r, e| capsule::stilt_tower(g, c, r, e.rooftop_pad) },
+    /// A big shallow dome over a glass drum, a curved glass canopy, a pad.
+    DomeHall { label: "dome hall", family: Retail, cluster: -0.3, draw: |g, c, r, _| capsule::dome_hall(g, c, r) },
+    /// A round office drum ribboned with glass, a radar ball, a lab dome.
+    DomeCampus { label: "dome campus", family: Office, cluster: 0.1, draw: |g, c, r, _| capsule::dome_campus(g, c, r) },
+}
+
+impl Style {
+    /// [capsule] The Capsule district's styles.
+    pub const CAPSULE: [Style; 10] = [Style::DomeHouse, Style::SaucerHouse, Style::PopsicleDome, Style::TwinDomes, Style::DomePods, Style::CapsuleTower, Style::SaucerStack, Style::StiltTower, Style::DomeHall, Style::DomeCampus];
 }
 
 impl Style {
@@ -382,7 +410,12 @@ impl Style {
     /// High-tier towers that take a rooftop helideck when the sim gives the
     /// building a pad (`buildings::air::rooftop_deck` finds the roof).
     pub fn pad_capable(self) -> bool {
-        matches!(self, Style::Crystal | Style::Fortress | Style::GardenTower | Style::PencilTower | Style::TwinSlab | Style::GlassTerraces | Style::Megastructure | Style::SlabTower | Style::TwistTower)
+        matches!(
+            self,
+            Style::Crystal | Style::Fortress | Style::GardenTower | Style::PencilTower | Style::TwinSlab | Style::GlassTerraces | Style::Megastructure | Style::SlabTower | Style::TwistTower
+                // [capsule] Their own round deck on a mast over the crown.
+                | Style::CapsuleTower | Style::SaucerStack | Style::StiltTower
+        )
     }
 
     /// The style a placed service or attraction is drawn in.

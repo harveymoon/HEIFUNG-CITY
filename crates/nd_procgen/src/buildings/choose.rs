@@ -56,6 +56,13 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
             let menu = district::look_styles(extras.look.unwrap(), land_use, tier).unwrap();
             district::pick(menu, &adjacency::Site { floors, frontage: lot.width() }, extras.neighbours, &mut rng)
         }
+        // [capsule] A tower with a pad in the Capsule district keeps the
+        // look: its towers carry their own round deck.
+        (None, None) if extras.rooftop_pad && extras.look == Some(nd_sim::districts::Look::Capsule) && district::look_styles(nd_sim::districts::Look::Capsule, land_use, tier).is_some_and(|m| m.iter().any(|(s, _)| s.pad_capable())) => {
+            let menu: Vec<(Style, f32)> = district::look_styles(nd_sim::districts::Look::Capsule, land_use, tier).unwrap().iter().copied().filter(|(s, _)| s.pad_capable()).collect();
+            let weights: Vec<f32> = menu.iter().map(|(s, w)| w * adjacency::neighbour_factor(*s, extras.neighbours)).collect();
+            weighted_index(&weights, &mut rng).map_or(menu[0].0, |i| menu[i].0)
+        }
         (None, None) if !extras.rooftop_pad && extras.business == Some(nd_sim::BusinessKind::Hotel) => {
             district::pick(district::hotel_styles(tier), &adjacency::Site { floors, frontage: lot.width() }, extras.neighbours, &mut rng)
         }

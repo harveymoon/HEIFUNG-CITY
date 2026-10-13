@@ -15,6 +15,8 @@ mod civic;
 mod commercial;
 mod construction;
 mod dense;
+/// [capsule] The Capsule district's white domes, saucers and pill towers.
+mod capsule;
 /// [districts] District looks: style menus and palettes, hotels.
 pub mod district;
 mod entertainment;
@@ -192,7 +194,8 @@ fn finished(ctx: &Ctx, style: Style, rng: &mut nd_sim::SimRng, extras: &Extras) 
     if let Some(m) = &extras.brand {
         brand::decorate(&mut g, ctx, m);
     }
-    if weathered(ctx.tier, ctx.wear) {
+    // [capsule] The dome district is spotless whatever its tier or age.
+    if weathered(ctx.tier, ctx.wear) && !Style::CAPSULE.contains(&style) {
         g.weather();
     }
     g
@@ -221,6 +224,9 @@ fn back_edge_link(lot: &Lot, kind: RailFacility) -> RailLink {
     let side = if Vec2::new(-d.y, d.x).dot(lot.front_dir) >= 0.0 { 1.0 } else { -1.0 };
     RailLink { kind, segment: nd_sim::SegmentId(0), platform: [back - d * half, back + d * half], side, rail_connected: true, road_connected: true, walk_connected: true }
 }
+
+#[cfg(test)]
+mod capsule_tests;
 
 #[cfg(test)]
 mod coplanar_tests;

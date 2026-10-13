@@ -3,10 +3,12 @@
 //! cages and AC boxes, signs hung out over the pavement, antenna forests,
 //! sky bridges, glowing crown outlines and laundry poles.
 
+mod domes;
 mod fences;
 mod layout;
 mod props;
 mod roofs;
+pub(crate) use domes::*;
 pub(crate) use fences::*;
 pub(crate) use layout::*;
 pub(crate) use props::*;

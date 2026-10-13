@@ -1603,7 +1603,7 @@ Reply:
 | `create` | `name` optional (generated otherwise) | `id`, `name` |
 | `paint` | `id` (or `district`: id or name; none starts a new district, `new_name`), then `at` `[x,y]` + `radius` (default 40), `polygon`, or `rect` `[[x0,y0],[x1,y1]]`; `erase` | `id`, `cells_changed` (16 m cells) |
 | `erase` | `at` + `radius`, `polygon` or `rect` | `cells_changed` |
-| `set` | `id` / `district`; any of `residential` kowloon / suburban / eco / none, `commercial` neon_strip / tech_campus / night_market / tourist / none, `industry` farming / oil / refinery / manufacturing / logistics / fishing / tech / none, `historic` bool, `height_limit` (m; null or 0 lifts it), `rename` | `id`, `name`, `policy` |
+| `set` | `id` / `district`; any of `residential` kowloon / suburban / eco / capsule / none, `commercial` neon_strip / tech_campus / night_market / tourist / capsule / none ([capsule] white domes, saucers and pill towers; as `commercial` it opens offices and gadget shops only where the market carries them, and gives nights out its domes too), `industry` farming / oil / refinery / manufacturing / logistics / fishing / tech / none, `historic` bool, `height_limit` (m; null or 0 lifts it), `rename` | `id`, `name`, `policy` |
 | `remove` | `id` / `district` | `removed` |
 | `at` | `at` `[x,y]` | the district there |
 | `select` | `id` / `district` (none clears) | the District tool's selected district |

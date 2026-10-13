@@ -174,7 +174,11 @@ impl World {
         if favours.is_empty() {
             return None;
         }
-        let viable = self.business_kinds_viable(lu, Some(jobs))?;
+        let mut viable = self.business_kinds_viable(lu, Some(jobs))?;
+        // [capsule] A high-tech-only look keeps to its trades when any is viable.
+        if look.favours_only() && viable.iter().any(|k| favours.iter().any(|(f, _)| f == k)) {
+            viable.retain(|k| favours.iter().any(|(f, _)| f == k));
+        }
         if viable.is_empty() {
             return None;
         }
