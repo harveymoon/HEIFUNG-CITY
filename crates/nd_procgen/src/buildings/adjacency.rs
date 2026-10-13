@@ -198,6 +198,14 @@ pub fn site_fit(style: Style, site: &Site) -> f32 {
         Style::Shacks | Style::TrailerPark | Style::Huts => if f <= 1.0 { 1.0 } else { 0.0 },
         Style::Suburb => if f <= 2.0 { 1.0 } else { 0.0 },
         Style::CapsuleHotel => if f <= 1.0 { 0.12 } else { 1.0 },
+        // [capsule] Domes and saucers are low; the towers want their floors.
+        // (A dome house of fifteen floors would be a silo: they give way.)
+        Style::DomeHouse | Style::SaucerHouse | Style::TwinDomes | Style::DomePods => if f <= 4.0 { 1.0 } else { 0.02 },
+        Style::DomeHall => if f <= 6.0 { 1.0 } else { 0.08 },
+        Style::PopsicleDome => tall(4.0) * low(14.0),
+        Style::CapsuleTower | Style::SaucerStack => tall(6.0),
+        Style::StiltTower => tall(10.0),
+        Style::DomeCampus => tall(3.0),
         _ => 1.0,
     }
 }

@@ -59,6 +59,15 @@ pub fn look_styles(look: Look, lu: LandUse, tier: Tier) -> Option<Menu> {
         (Look::Historic, Residential, Mid) => &[(S::Courtyard, 0.55), (S::Tenement, 0.45)],
         (Look::Historic, Residential, High) => &[(S::Courtyard, 0.5), (S::Villas, 0.5)],
         (Look::Historic, Commercial, _) => &[(S::Shophouse, 0.6), (S::MarketHall, 0.4)],
+        // [capsule] White domes for homes, shops, offices and nights out.
+        (Look::Capsule, Residential, Low) => &[(S::DomeHouse, 0.45), (S::SaucerHouse, 0.3), (S::TwinDomes, 0.25)],
+        (Look::Capsule, Residential, Mid) => &[(S::DomePods, 0.2), (S::DomeHouse, 0.15), (S::SaucerHouse, 0.15), (S::PopsicleDome, 0.25), (S::CapsuleTower, 0.15), (S::SaucerStack, 0.1), (S::StiltTower, 0.08)],
+        (Look::Capsule, Residential, High) => &[(S::CapsuleTower, 0.35), (S::StiltTower, 0.25), (S::PopsicleDome, 0.2), (S::SaucerStack, 0.2)],
+        (Look::Capsule, Commercial, Low) => &[(S::DomeHall, 0.45), (S::TwinDomes, 0.35), (S::PopsicleDome, 0.2)],
+        (Look::Capsule, Commercial, Mid) => &[(S::DomeCampus, 0.35), (S::SaucerStack, 0.25), (S::DomeHall, 0.25), (S::CapsuleTower, 0.15)],
+        (Look::Capsule, Commercial, High) => &[(S::SaucerStack, 0.3), (S::CapsuleTower, 0.25), (S::StiltTower, 0.2), (S::DomeCampus, 0.25)],
+        (Look::Capsule, Entertainment, Low) => &[(S::DomeHall, 0.6), (S::TwinDomes, 0.4)],
+        (Look::Capsule, Entertainment, _) => &[(S::DomeHall, 0.5), (S::SaucerStack, 0.3), (S::PopsicleDome, 0.2)],
         _ => return None,
     })
 }
@@ -183,6 +192,21 @@ pub fn tint(look: Look) -> Tint {
             sign_scale: 1.0,
             grime: Some((0.1, 0.2)),
         },
+        // [capsule] Warm white, soft warm portholes, pastel signs and few of
+        // them, spotless. The shells carry their own whites and stripes
+        // (`buildings/capsule.rs`); the tint lights their windows.
+        Look::Capsule => Tint {
+            walls: &[[0.93, 0.91, 0.86], [0.95, 0.94, 0.90], [0.91, 0.90, 0.87]],
+            trim: Some([0.66, 0.68, 0.72]),
+            windows: &[[1.35, 1.12, 0.72], [1.25, 1.18, 0.95], [1.1, 1.2, 1.25]],
+            signs: &[[1.7, 1.35, 0.45], [0.45, 1.5, 1.5], [1.7, 0.85, 0.45], [0.7, 1.0, 1.7]],
+            awnings: Some(&[[0.96, 0.76, 0.24], [0.22, 0.66, 0.68], [0.95, 0.50, 0.20]]),
+            brick: None,
+            plaster: Some(&[[0.93, 0.91, 0.86], [0.95, 0.94, 0.90]]),
+            signage: None,
+            sign_scale: 0.35,
+            grime: Some((0.0, 0.0)),
+        },
         Look::Historic => Tint {
             walls: &[[0.55, 0.32, 0.24], [0.62, 0.56, 0.46], [0.48, 0.30, 0.22], [0.66, 0.60, 0.50]],
             trim: Some([0.74, 0.70, 0.60]),
@@ -251,6 +275,7 @@ mod tests {
                 Look::NeonStrip | Look::NightMarket => &[LandUse::Commercial, LandUse::Entertainment],
                 Look::TechCampus | Look::Tourist => &[LandUse::Commercial],
                 Look::Historic => &[LandUse::Residential, LandUse::Commercial],
+                Look::Capsule => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment],
             };
             for &lu in uses {
                 for tier in Tier::ALL {

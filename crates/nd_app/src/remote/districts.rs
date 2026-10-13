@@ -127,8 +127,8 @@ pub fn district(cmd: &Value, w: &mut World, overlays: &mut Overlays, tools: &mut
         "set" | "policy" => {
             let id = district_id(cmd, w)?.ok_or("missing id (or district name)")?;
             let change = PolicyChange {
-                residential: spec(cmd, "residential", ResidentialSpec::parse, "kowloon, suburban, eco")?,
-                commercial: spec(cmd, "commercial", CommercialSpec::parse, "neon_strip, tech_campus, night_market, tourist")?,
+                residential: spec(cmd, "residential", ResidentialSpec::parse, "kowloon, suburban, eco, capsule")?,
+                commercial: spec(cmd, "commercial", CommercialSpec::parse, "neon_strip, tech_campus, night_market, tourist, capsule")?,
                 industry: spec(cmd, "industry", industry_of, "farming, oil, refinery, manufacturing, logistics, fishing, tech")?,
                 historic: opt_bool(cmd, "historic")?,
                 // [supertall] metres; null or 0 lifts it

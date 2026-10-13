@@ -157,7 +157,7 @@ fn overlap_area_of_unit_squares() {
     assert_eq!(overlap_area(&a, &c), 0.0);
 }
 
-fn test_lots(lu: LandUse) -> Vec<Lot> {
+pub(super) fn test_lots(lu: LandUse) -> Vec<Lot> {
     use nd_sim::roads::RoadNetwork;
     use nd_sim::zoning::{generate_lots, Zone, ZoneId};
     let mut roads = RoadNetwork::default();

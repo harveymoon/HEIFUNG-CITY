@@ -42,6 +42,9 @@ pub enum ResidentialSpec {
     Suburban,
     /// Garden towers and planted terraces; lifts the land around.
     Eco,
+    /// [capsule] White domes, saucers and pill towers ringed with round
+    /// windows. Appended so saved specs keep their names and order.
+    Capsule,
 }
 
 /// How the shops in a district grow.
@@ -55,16 +58,20 @@ pub enum CommercialSpec {
     NightMarket,
     /// Hotels first, then shops for visitors.
     Tourist,
+    /// [capsule] High-tech domes: offices and gadget shops only (where the
+    /// market can carry them), in white domes and pill towers.
+    Capsule,
 }
 
 impl ResidentialSpec {
-    pub const ALL: [ResidentialSpec; 3] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco];
+    pub const ALL: [ResidentialSpec; 4] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule];
 
     pub fn label(self) -> &'static str {
         match self {
             ResidentialSpec::Kowloon => "Kowloon stacks",
             ResidentialSpec::Suburban => "Suburban",
             ResidentialSpec::Eco => "Eco",
+            ResidentialSpec::Capsule => "Capsule",
         }
     }
 
@@ -73,6 +80,7 @@ impl ResidentialSpec {
             ResidentialSpec::Kowloon => "kowloon",
             ResidentialSpec::Suburban => "suburban",
             ResidentialSpec::Eco => "eco",
+            ResidentialSpec::Capsule => "capsule",
         }
     }
 
@@ -82,7 +90,7 @@ impl ResidentialSpec {
 }
 
 impl CommercialSpec {
-    pub const ALL: [CommercialSpec; 4] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist];
+    pub const ALL: [CommercialSpec; 5] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -90,6 +98,7 @@ impl CommercialSpec {
             CommercialSpec::TechCampus => "Tech campus",
             CommercialSpec::NightMarket => "Night market",
             CommercialSpec::Tourist => "Tourist quarter",
+            CommercialSpec::Capsule => "Capsule",
         }
     }
 
@@ -99,6 +108,7 @@ impl CommercialSpec {
             CommercialSpec::TechCampus => "tech_campus",
             CommercialSpec::NightMarket => "night_market",
             CommercialSpec::Tourist => "tourist",
+            CommercialSpec::Capsule => "capsule",
         }
     }
 
@@ -121,10 +131,14 @@ pub enum Look {
     NightMarket,
     Tourist,
     Historic,
+    /// [capsule] White domes of many sizes, domes on stilts, pill towers,
+    /// saucers, ringed with portholes: the high-tech dome district.
+    /// Appended so saved looks keep their names and order.
+    Capsule,
 }
 
 impl Look {
-    pub const ALL: [Look; 8] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic];
+    pub const ALL: [Look; 9] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule];
 
     pub fn index(self) -> usize {
         self as usize
@@ -140,6 +154,7 @@ impl Look {
             Look::NightMarket => "night market",
             Look::Tourist => "tourist quarter",
             Look::Historic => "historic",
+            Look::Capsule => "capsule",
         }
     }
 
@@ -155,6 +170,8 @@ impl Look {
             Look::TechCampus => (floors + 1).min(cap.max(1) + 1),
             Look::NightMarket => floors.min(2),
             Look::Historic => floors.min(4),
+            // Domes keep to the block's density, one floor over at most.
+            Look::Capsule => floors.min(cap.max(1) + 1),
         };
         f.max(1)
     }
@@ -169,6 +186,8 @@ impl Look {
             Look::NightMarket => tier.down(),
             Look::TechCampus => tier.up(),
             Look::Suburban if tier == Tier::Low => Tier::Mid,
+            // Super high tech: never built cheap.
+            Look::Capsule if tier == Tier::Low => Tier::Mid,
             _ => tier,
         }
     }
@@ -181,8 +200,17 @@ impl Look {
             Look::TechCampus => &[(BusinessKind::Office, 5.0), (BusinessKind::GadgetShop, 2.0)],
             Look::NightMarket => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Bakery, 4.0)],
             Look::Tourist => &[(BusinessKind::Hotel, 6.0), (BusinessKind::GadgetShop, 2.0), (BusinessKind::Bakery, 2.0)],
+            Look::Capsule => &[(BusinessKind::Office, 4.0), (BusinessKind::GadgetShop, 3.0)],
             _ => &[],
         }
+    }
+
+    /// [capsule] Whether the favoured trades are the only ones this look
+    /// opens (when the market can carry any of them): the Capsule district
+    /// is high tech only. Hotels for a queue of visitors and the trades the
+    /// economy opens by pressure (car dealers and the like) still come.
+    pub fn favours_only(self) -> bool {
+        self == Look::Capsule
     }
 
     /// Pull on the land value around each building of this look (radius m,
@@ -192,6 +220,7 @@ impl Look {
             Look::Eco => Some((140.0, 0.06)),
             Look::Historic => Some((120.0, 0.05)),
             Look::TechCampus => Some((120.0, 0.03)),
+            Look::Capsule => Some((120.0, 0.04)),
             _ => None,
         }
     }
@@ -236,6 +265,7 @@ impl District {
                 ResidentialSpec::Kowloon => Look::Kowloon,
                 ResidentialSpec::Suburban => Look::Suburban,
                 ResidentialSpec::Eco => Look::Eco,
+                ResidentialSpec::Capsule => Look::Capsule,
             }),
             // Nightlife on a strip or in a market takes the street's look.
             LandUse::Commercial | LandUse::Entertainment => self.commercial.and_then(|s| match s {
@@ -243,6 +273,8 @@ impl District {
                 CommercialSpec::NightMarket => Some(Look::NightMarket),
                 CommercialSpec::TechCampus if lu == LandUse::Commercial => Some(Look::TechCampus),
                 CommercialSpec::Tourist if lu == LandUse::Commercial => Some(Look::Tourist),
+                // Nights out under a dome too.
+                CommercialSpec::Capsule => Some(Look::Capsule),
                 _ => None,
             }),
             _ => None,
@@ -648,5 +680,37 @@ mod tests {
         assert!(Look::Suburban.floors(9, 20) <= 3);
         assert!(Look::NightMarket.floors(6, 20) <= 2);
         assert_eq!(Look::TechCampus.tier(Tier::Mid), Tier::High);
+    }
+
+    /// [capsule] The Capsule spec gives the Capsule look to homes, shops and
+    /// nights out; it is never cheap, keeps tall buildings tall, parses from
+    /// the API's keys, and a district saved before it existed still loads.
+    #[test]
+    fn capsule_look_and_old_saves() {
+        let mut d = Districts::default();
+        let id = d.create(None, 1, 0).unwrap();
+        let dist = d.get_mut(id).unwrap();
+        dist.residential = Some(ResidentialSpec::Capsule);
+        dist.commercial = Some(CommercialSpec::Capsule);
+        for lu in [LandUse::Residential, LandUse::Commercial, LandUse::Entertainment] {
+            assert_eq!(dist.look_for(lu), Some(Look::Capsule));
+        }
+        assert_eq!(dist.look_for(LandUse::Industrial), None);
+        assert_eq!(Look::Capsule.tier(Tier::Low), Tier::Mid);
+        assert_eq!(Look::Capsule.tier(Tier::High), Tier::High);
+        assert_eq!(Look::Capsule.floors(30, 40), 30);
+        assert!(Look::Capsule.favours_only() && !Look::TechCampus.favours_only());
+        assert_eq!(ResidentialSpec::parse("capsule"), Some(ResidentialSpec::Capsule));
+        assert_eq!(CommercialSpec::parse("Capsule"), Some(CommercialSpec::Capsule));
+        assert_eq!(Look::ALL[Look::Capsule.index()], Look::Capsule);
+        // An old district, as saved, round trips; a new one too.
+        let old = "(id: 3, name: \"Jade Row\", color: 2, residential: Some(Eco), commercial: Some(Tourist), industry: None, historic: false)";
+        let back: District = ron::from_str(old).expect("old district loads");
+        assert_eq!(back.residential, Some(ResidentialSpec::Eco));
+        let text = ron::to_string(&*dist).unwrap();
+        let again: District = ron::from_str(&text).unwrap();
+        assert_eq!(again.residential, Some(ResidentialSpec::Capsule));
+        assert_eq!(ron::from_str::<Look>("Historic").unwrap(), Look::Historic);
+        assert_eq!(ron::from_str::<Look>("Capsule").unwrap(), Look::Capsule);
     }
 }

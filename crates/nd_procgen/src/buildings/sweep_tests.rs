@@ -67,7 +67,7 @@ pub(crate) fn odd_lots() -> Vec<(&'static str, Lot)> {
 }
 
 /// Everything wrong with one mesh, as short kind keys with a detail.
-fn faults(g: &Geometry, lot: &Lot, style: Style) -> Vec<(&'static str, String)> {
+pub(crate) fn faults(g: &Geometry, lot: &Lot, style: Style) -> Vec<(&'static str, String)> {
     let sliver = lot.depth().min(lot.width()) < 4.0;
     let mut out = Vec::new();
     // Track-side styles reach out to the stand-in track behind the lot.
