@@ -242,7 +242,7 @@ pub(super) fn window(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             // [committee] The Committee window, optionally at a tab.
             let open = opt_bool(cmd, "open")?.unwrap_or(true);
             let tab = match opt_str(cmd, "tab")? {
-                Some(t) => Some(crate::ui::committee::Tab::parse(t).ok_or_else(|| format!("unknown tab {t:?}; meeting, members, alerts, projects, settings"))?),
+                Some(t) => Some(crate::ui::committee::Tab::parse(t).ok_or_else(|| format!("unknown tab {t:?}; meeting, ask, members, alerts, projects, settings"))?),
                 None => None,
             };
             ctx.committee.open_request = Some(open);

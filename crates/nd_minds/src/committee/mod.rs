@@ -20,6 +20,7 @@
 pub mod driver;
 pub mod http;
 pub mod mock;
+pub mod questions;
 pub mod settings;
 pub mod voices;
 
@@ -114,6 +115,21 @@ pub enum Task {
     Dialogue { a: voices::CitizenCard, b: voices::CitizenCard, bond: String, topic: String, outcome: String, setting: String, place: Option<String>, template: String },
     /// [voices] A citizen's diary of the day, from their memories (text).
     Diary { who: voices::CitizenCard, day: u32, entries: Vec<String>, talks: Vec<String> },
+    /// [ask-committee] The mayor's question between meetings (JSON
+    /// `{respond, text}`): the member may choose not to answer. `earlier`:
+    /// what others said before them in the thread (bounded). `last`: the
+    /// last member asked, and nobody has answered yet (the stand-in then
+    /// answers rather than leave the mayor in silence).
+    Question { question: String, facts: Vec<Fact>, earlier: Vec<Heard>, last: bool },
+}
+
+/// [ask-committee] A reply earlier in a question's thread, as the next
+/// member reads it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Heard {
+    pub name: String,
+    pub scope: String,
+    pub text: String,
 }
 
 impl Task {
@@ -130,12 +146,13 @@ impl Task {
             Task::Ping => "ping",
             Task::Dialogue { .. } => "dialogue",
             Task::Diary { .. } => "diary",
+            Task::Question { .. } => "question",
         }
     }
 
     /// Does the reply have to be JSON?
     pub fn wants_json(&self) -> bool {
-        matches!(self, Task::Propose { .. } | Task::Vote { .. } | Task::Pick { .. })
+        matches!(self, Task::Propose { .. } | Task::Vote { .. } | Task::Pick { .. } | Task::Question { .. })
     }
 }
 
@@ -243,7 +260,12 @@ pub fn system_prompt(req: &TurnRequest) -> String {
         _ => {}
     }
     let mut s = String::new();
-    s.push_str(&format!("This is a turn in a city-builder game, Neon District: a meeting of the mayor's committee of {}, a fictional cyberpunk city. Everyone in the room is fictional.\n", req.city));
+    let question = matches!(req.task, Task::Question { .. });
+    if question {
+        s.push_str(&format!("This is question time in a city-builder game, Neon District: between meetings the mayor of {}, a fictional cyberpunk city, has put a question to the committee in its chat room. Everyone in the room is fictional.\n", req.city));
+    } else {
+        s.push_str(&format!("This is a turn in a city-builder game, Neon District: a meeting of the mayor's committee of {}, a fictional cyberpunk city. Everyone in the room is fictional.\n", req.city));
+    }
     match &req.speaker {
         Some(p) => {
             s.push_str(&format!("You are {}, the {} (scope: {}). Former {}. Party: {}.\n", p.name, p.title, p.scope, p.background, p.party));
@@ -255,7 +277,11 @@ pub fn system_prompt(req: &TurnRequest) -> String {
                     s.push_str(&format!("- {m}\n"));
                 }
             }
-            s.push_str("Stay in character and consistent with your past votes. Speak in plain words, 2 to 4 sentences. Quote only numbers that are in the city report; never invent figures. No stage directions.\n");
+            if question {
+                s.push_str("Stay in character and consistent with your past votes. You need not answer: answer when the question touches your scope, your goals or your convictions, or when you have something worth adding to what the others said; otherwise decline. If you answer, speak in plain words, 1 to 4 sentences, to the mayor or in reply to a colleague. Quote only numbers that are in the city report; never invent figures. No stage directions.\n");
+            } else {
+                s.push_str("Stay in character and consistent with your past votes. Speak in plain words, 2 to 4 sentences. Quote only numbers that are in the city report; never invent figures. No stage directions.\n");
+            }
         }
         None => s.push_str("You are the committee secretary: neutral, brief and orderly. You keep to the agenda and speak in 1 to 3 sentences. Quote only numbers in the city report.\n"),
     }
@@ -309,6 +335,21 @@ pub fn user_prompt(req: &TurnRequest) -> String {
         }
         Task::Closing { results, projects, next_day } => s.push_str(&format!("Close the meeting. Results: {}. {projects} project(s) go to the mayor for review. The next meeting is on day {next_day}.", if results.is_empty() { "nothing was voted".into() } else { results.join("; ") })),
         Task::Ping => s.push_str("Reply with the single word: ready."),
+        Task::Question { question, facts: f, earlier, .. } => {
+            if !f.is_empty() {
+                s.push_str(&format!("Your figures: {}.\n", facts(f)));
+            }
+            s.push_str(&format!("The mayor asks the committee: \"{question}\"\n"));
+            if earlier.is_empty() {
+                s.push_str("Nobody has answered yet.\n");
+            } else {
+                s.push_str("Already said in this thread:\n");
+                for h in earlier {
+                    s.push_str(&format!("- {} ({}): \"{}\"\n", h.name, h.scope, h.text));
+                }
+            }
+            s.push_str("Decide whether to answer. Reply with only a JSON object: {\"respond\": true, \"text\": \"your answer\"} or {\"respond\": false, \"text\": \"\"}.");
+        }
         Task::Dialogue { a, b, bond, topic, outcome, setting, place, template } => {
             s = format!(
                 "{} talks to {} ({}; {bond}) about {topic}, {}. How it goes: {outcome}. The game's own line was: \"{template}\". Write {}'s line instead, in their voice.",
@@ -424,6 +465,10 @@ impl Courier {
             let Some((req, _)) = self.open.remove(&id) else { continue };
             match res {
                 Ok(reply) if !req.task.wants_json() || reply.json.is_some() => out.push(Delivered { id, req, reply, fell_back: None }),
+                // [ask-committee] A question answered in prose (or broken
+                // JSON) is still the member's: `questions::parse_answer`
+                // reads what it can.
+                Ok(reply) if matches!(req.task, Task::Question { .. }) && !reply.text.trim().is_empty() => out.push(Delivered { id, req, reply, fell_back: None }),
                 Ok(reply) if matches!(req.task, Task::Propose { .. }) && reply.text.trim().is_empty() => {
                     let why = "the model gave an empty answer".to_string();
                     self.note_error(why.clone());

@@ -621,3 +621,201 @@ fn a_meeting_run_hands_back_other_deliveries() {
     assert!(v.take(&others[0]));
     assert!(!v.diary(id).unwrap().pending, "the diary arrived");
 }
+
+// ── [ask-committee] the mayor's questions ──────────────────────────────────
+
+use super::questions::{parse_answer, Asker};
+
+fn reply(raw: &str) -> TurnReply {
+    TurnReply::from_raw(raw, true)
+}
+
+#[test]
+fn a_question_reply_says_whether_they_answer() {
+    assert_eq!(parse_answer(&reply(r#"{"respond": false, "text": ""}"#)), (false, String::new()));
+    assert!(!parse_answer(&reply(r#"{"respond": false, "text": "I would rather not."}"#)).0, "a decline with words is still a decline");
+    assert_eq!(parse_answer(&reply(r#"Sure: {"respond": true, "text": "Rents follow the shortage."}"#)), (true, "Rents follow the shortage.".to_string()));
+    assert_eq!(parse_answer(&reply(r#"{"respond": "yes", "text": "Build homes."}"#)), (true, "Build homes.".to_string()));
+    assert!(!parse_answer(&reply(r#"{"respond": true, "text": "  "}"#)).0, "an empty answer is no answer");
+    // Malformed: cut off by the token cap, prose, or nothing usable.
+    assert_eq!(parse_answer(&reply(r#"{"respond": true, "text": "The buses are full and"#)), (true, "The buses are full and".to_string()));
+    assert!(!parse_answer(&reply(r#"{"respond":false,"text":"#)).0);
+    assert_eq!(parse_answer(&reply("We need more depots, mayor.")), (true, "We need more depots, mayor.".to_string()));
+    assert!(!parse_answer(&reply("{")).0);
+    assert!(!parse_answer(&reply("")).0);
+}
+
+#[test]
+fn a_question_turn_reads_the_persona_the_report_and_the_thread() {
+    let mut w = grown();
+    w.committee_ensure();
+    let qid = w.committee.ask("  Why   are rents so high? ", w.committee_today()).unwrap();
+    let q = w.committee.question(qid).unwrap().clone();
+    assert_eq!(q.text, "Why are rents so high?");
+    assert_eq!(q.asked.len(), w.committee.seated_ids().len());
+    let first = q.asked[0];
+    w.committee.answer_question(qid, first, true, "Because nobody builds.", false);
+    let q = w.committee.question(qid).unwrap().clone();
+    let report = nd_sim::committee::CityReport::build(&w);
+    let req = questions::request(&w, &report, &q, q.asked[1]).unwrap();
+    assert!(req.task.wants_json());
+    assert_eq!(req.task.key(), "question");
+    let sys = system_prompt(&req);
+    let user = user_prompt(&req);
+    let me = req.speaker.as_ref().unwrap();
+    assert!(sys.contains("question time") && sys.contains(&me.name) && sys.contains("need not answer"), "{sys}");
+    assert!(user.contains("CITY REPORT") && user.contains("Why are rents so high?"), "{user}");
+    assert!(user.contains("Because nobody builds.") && user.contains(&w.committee.name_of(first)), "earlier replies are in the thread: {user}");
+    assert!(user.contains(r#"{"respond": true"#) && user.contains(r#"{"respond": false"#), "{user}");
+    assert!(req.max_tokens <= 400);
+}
+
+#[test]
+fn the_stand_in_answers_questions_in_character_and_sometimes_declines() {
+    let run = || {
+        let mut w = grown();
+        w.committee_ensure();
+        let mut a = Asker::default();
+        let mut c = Courier::mock();
+        let today = w.committee_today();
+        let qs = ["Why are rents so high?", "Is crime getting worse?", "What do you all think of the new year?", "Should we cut taxes?", "How are the buses doing?"];
+        for t in qs {
+            w.committee.ask(t, today).unwrap();
+        }
+        let others = a.run(&mut w, &mut c, 200);
+        assert!(others.is_empty());
+        w.committee.questions.clone()
+    };
+    let qs = run();
+    assert_eq!(qs, run(), "deterministic");
+    let mut declined = 0;
+    for q in &qs {
+        assert!(q.is_complete(), "every member asked has had their turn: {q:?}");
+        assert_eq!(q.replies.len(), q.asked.len(), "one reply per member");
+        assert!(q.answers().count() >= 1, "somebody answers: {q:?}");
+        declined += q.replies.iter().filter(|r| !r.respond).count();
+        for r in q.answers() {
+            assert!(!r.text.is_empty() && !r.stand_in);
+        }
+    }
+    assert!(declined > 0, "some members chose not to answer");
+    let rents = &qs[0];
+    let housing = rents.replies.iter().find(|r| r.scope == "Housing").expect("a housing member is seated");
+    assert!(housing.respond, "the housing member answers a question on rents: {rents:?}");
+    for q in &qs {
+        println!("Q: {}", q.text);
+        for r in &q.replies {
+            println!("  {} ({}): {}", r.name, if r.respond { "answers" } else { "no comment" }, r.text);
+        }
+    }
+}
+
+#[test]
+fn questions_survive_a_save_and_old_saves_load_without_them() {
+    let mut w = grown();
+    w.committee_ensure();
+    let mut a = Asker::default();
+    let mut c = Courier::mock();
+    w.committee.ask("Why are rents so high?", 0).unwrap();
+    let _ = a.run(&mut w, &mut c, 100);
+    // A second question still being answered when the city is saved.
+    let pending = w.committee.ask("Is crime getting worse?", 0).unwrap();
+    let text = w.to_ron().unwrap();
+    let mut back = World::from_ron(&text).unwrap();
+    assert_eq!(back.committee.questions, w.committee.questions);
+    assert!(!back.committee.question(pending).unwrap().is_complete());
+    // After a load the asker picks up where the thread stood.
+    let mut a2 = Asker::default();
+    let _ = a2.run(&mut back, &mut c, 100);
+    assert!(back.committee.question(pending).unwrap().is_complete());
+    // A save from before the feature: no `questions` field anywhere.
+    let mut fresh = grown();
+    fresh.committee_ensure();
+    let text = fresh.to_ron().unwrap();
+    let old: String = text.lines().filter(|l| !l.trim_start().starts_with("questions:")).collect::<Vec<_>>().join("\n");
+    assert!(!old.contains("questions:"), "the field was cut");
+    let back = World::from_ron(&old).unwrap();
+    assert!(back.committee.questions.is_empty());
+    assert_eq!(back.committee.pool, fresh.committee.pool);
+}
+
+thread_local!(static HEARD: std::cell::RefCell<Vec<TurnRequest>> = const { std::cell::RefCell::new(Vec::new()) });
+
+/// The stand-in, keeping a copy of every request.
+#[derive(Default)]
+struct Recorder(MockCommittee);
+
+impl CommitteeBackend for Recorder {
+    fn submit(&mut self, id: u64, req: TurnRequest) {
+        HEARD.with(|h| h.borrow_mut().push(req.clone()));
+        self.0.submit(id, req);
+    }
+    fn poll(&mut self) -> Vec<(u64, Result<TurnReply, String>)> {
+        self.0.poll()
+    }
+    fn name(&self) -> String {
+        "recorder".into()
+    }
+    fn is_mock(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn the_next_meeting_reads_the_questions_and_marks_them_discussed() {
+    let mut w = grown();
+    w.committee_ensure();
+    let mut a = Asker::default();
+    let mut c = Courier::new(Box::new(Recorder::default()), Duration::from_secs(60));
+    let today = w.committee_today();
+    let done = w.committee.ask("Why are rents so high?", today).unwrap();
+    let _ = a.run(&mut w, &mut c, 100);
+    let said = w.committee.question(done).unwrap().answers().next().unwrap().text.clone();
+    // One still waiting when the meeting opens: it stays for the next.
+    let waiting = w.committee.ask("Is crime getting worse?", today).unwrap();
+    HEARD.with(|h| h.borrow_mut().clear());
+    let mut d = Driver::default();
+    let number = start_meeting(&mut w, true).unwrap();
+    let m = w.committee.meeting.as_ref().unwrap();
+    assert!(m.questions.contains("Why are rents so high?"), "{}", m.questions);
+    let head: String = said.chars().take(40).collect();
+    assert!(m.questions.contains(&head), "the digest has what they said: {}", m.questions);
+    assert!(!m.questions.contains("Is crime getting worse?"), "a thread still being answered waits");
+    assert_eq!(m.questions_read, vec![done]);
+    assert!(m.questions.chars().count() <= nd_sim::committee::questions::DIGEST_MAX_CHARS + 200);
+    assert_eq!(w.committee.question(done).unwrap().discussed, Some(number));
+    assert_eq!(w.committee.question(waiting).unwrap().discussed, None);
+    let _ = d.run(&mut w, &mut c, 400);
+    let heard = HEARD.with(|h| h.borrow().clone());
+    let status: Vec<&TurnRequest> = heard.iter().filter(|r| matches!(r.task, Task::Status { .. })).collect();
+    assert!(!status.is_empty());
+    for r in &status {
+        assert!(user_prompt(r).contains("Questions the mayor put to the committee"), "every member's turn has the digest");
+    }
+    let m = w.committee.meeting.as_ref().unwrap();
+    assert!(m.transcript.iter().any(|l| l.kind == LineKind::Note && l.text.contains("question")), "the secretary notes the questions");
+    abstain_rest(&mut w).unwrap();
+    let _ = d.run(&mut w, &mut c, 400);
+    assert!(w.committee.meeting.is_none());
+    // The late thread is answered and waits for the meeting after.
+    let _ = a.run(&mut w, &mut c, 100);
+    assert_eq!(w.committee.undiscussed().len(), 1);
+    let digest = w.committee.questions_digest();
+    assert!(digest.contains("Is crime getting worse?") && !digest.contains("Why are rents so high?"), "{digest}");
+    // Discussed threads stay in the log.
+    assert_eq!(w.committee.questions.len(), 2);
+}
+
+#[test]
+fn the_question_log_is_bounded() {
+    let mut w = grown();
+    w.committee_ensure();
+    for i in 0..(nd_sim::committee::questions::QUESTIONS_KEPT + 7) {
+        w.committee.ask(&format!("Question {i}?"), 0).unwrap();
+    }
+    assert_eq!(w.committee.questions.len(), nd_sim::committee::questions::QUESTIONS_KEPT);
+    assert!(w.committee.ask("   ", 0).is_err());
+    let long = "word ".repeat(400);
+    let id = w.committee.ask(&long, 0).unwrap();
+    assert!(w.committee.question(id).unwrap().text.chars().count() <= nd_sim::committee::questions::QUESTION_MAX_CHARS + 3);
+}

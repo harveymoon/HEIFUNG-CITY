@@ -48,6 +48,8 @@ pub struct CommitteeRt {
     /// [fix/roads-tools] The project whose site Show outlines on the map,
     /// and when it was asked (app seconds); it fades after `SHOW_SITE_FOR`.
     pub shown_site: Option<(u32, f64)>,
+    /// [ask-committee] The mayor's questions in flight.
+    pub asker: nd_minds::committee::questions::Asker,
 }
 
 /// [fix/roads-tools] How long a project's Show outlines its site, seconds.
@@ -73,6 +75,7 @@ impl Default for CommitteeRt {
             voices: Default::default(),
             remote_may_switch: false,
             shown_site: None,
+            asker: Default::default(),
         };
         rt.apply_settings();
         rt
@@ -99,6 +102,24 @@ impl CommitteeRt {
 
     pub fn save_settings(&mut self) -> Result<(), String> {
         self.settings.save()
+    }
+
+    /// [ask-committee] Put a question to the seated members; their answers
+    /// come on later frames (with the stand-in, at once).
+    pub fn ask(&mut self, sim: &mut Sim, text: &str) -> Result<u32, String> {
+        let today = sim.world.committee_today();
+        sim.world.committee_ensure();
+        let id = sim.world.committee.ask(text, today)?;
+        self.asker.pump(&mut sim.world, &mut self.courier);
+        Ok(id)
+    }
+
+    /// Hand a reply to whoever asked for it: the meeting, a question, or a
+    /// citizen's voice (none of them: an answer to something forgotten).
+    pub fn hand_on(&mut self, w: &mut nd_sim::World, d: &nd_minds::committee::Delivered) {
+        if !self.driver.take(w, d) && !self.asker.take(w, d) {
+            self.voices.take(d);
+        }
     }
 
     pub fn test_connection(&mut self) {
@@ -175,6 +196,7 @@ fn committee_tick(mut sim: ResMut<Sim>, mut rt: ResMut<CommitteeRt>, mut flags: 
         rt.generation = sim.generation;
         rt.driver.reset();
         rt.voices.reset();
+        rt.asker.reset();
         rt.last_day = None;
         rt.paused_before = None;
         rt.shown = (0, 0);
@@ -191,10 +213,7 @@ fn committee_tick(mut sim: ResMut<Sim>, mut rt: ResMut<CommitteeRt>, mut flags: 
     daily(&mut sim, rt, &mut flags);
     // Replies: the meeting's and the alerts'.
     for d in rt.courier.poll() {
-        // Neither: an answer to something forgotten (a reload).
-        if !rt.driver.take(&mut sim.world, &d) {
-            rt.voices.take(&d);
-        }
+        rt.hand_on(&mut sim.world, &d);
         // An alert phrased just now: refresh the toast if it is the latest.
         if matches!(d.req.task, nd_minds::committee::Task::Alert { .. }) {
             if let Some(a) = sim.world.committee.alerts.last() {
@@ -205,6 +224,8 @@ fn committee_tick(mut sim: ResMut<Sim>, mut rt: ResMut<CommitteeRt>, mut flags: 
             }
         }
     }
+    // [ask-committee] The next member's turn on the mayor's questions.
+    rt.asker.pump(&mut sim.world, &mut rt.courier);
     // [voices] New conversations of the people the player watches.
     {
         let w = &sim.world;

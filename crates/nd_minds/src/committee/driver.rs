@@ -80,6 +80,10 @@ pub fn start_meeting(w: &mut World, on_demand: bool) -> Result<u32, String> {
     ranked.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
     let proposers: Vec<u32> = ranked.into_iter().take(MAX_PROPOSALS).map(|x| x.3).collect();
     let c = &mut w.committee;
+    // [ask-committee] The mayor's questions since the last meeting go into
+    // every turn's papers, and count as discussed from here on.
+    let questions = c.questions_digest();
+    let questions_read = c.mark_questions_discussed(number);
     c.meetings_held = number;
     c.next_meeting_day = today + nd_sim::committee::MEETING_INTERVAL_DAYS;
     for &id in &members {
@@ -87,7 +91,7 @@ pub fn start_meeting(w: &mut World, on_demand: bool) -> Result<u32, String> {
             p.record.meetings += 1;
         }
     }
-    c.meeting = Some(Meeting { number, day: today, seed, stage: Stage::Opening, cursor: 0, members, transcript: Vec::new(), proposals: Vec::new(), report, calls: 0, on_demand, proposers });
+    c.meeting = Some(Meeting { number, day: today, seed, stage: Stage::Opening, cursor: 0, members, transcript: Vec::new(), proposals: Vec::new(), report, calls: 0, on_demand, proposers, questions, questions_read });
     Ok(number)
 }
 
@@ -126,7 +130,12 @@ fn card(w: &World, id: u32) -> Option<PersonaCard> {
 }
 
 fn request(w: &World, m: &Meeting, speaker: Option<u32>, task: Task, salt: u64, max_tokens: u32) -> TurnRequest {
-    TurnRequest { speaker: speaker.and_then(|id| card(w, id)), task, city: m.report.city.clone(), day: m.day, report: m.report.to_text(), seed: mix(m.seed, salt), max_tokens }
+    let mut report = m.report.to_text();
+    if !m.questions.is_empty() {
+        report.push('\n');
+        report.push_str(&m.questions);
+    }
+    TurnRequest { speaker: speaker.and_then(|id| card(w, id)), task, city: m.report.city.clone(), day: m.day, report, seed: mix(m.seed, salt), max_tokens }
 }
 
 /// Who answers whom: the pairs whose leanings differ most (or agree most,
@@ -226,6 +235,10 @@ impl Driver {
             Step::Opening => {
                 let m = w.committee.meeting.as_mut().unwrap();
                 m.say(Speaker::Secretary, SECRETARY, LineKind::Speech, text);
+                if !m.questions_read.is_empty() {
+                    let n = m.questions_read.len();
+                    m.say(Speaker::Secretary, SECRETARY, LineKind::Note, format!("The mayor's {} since the last meeting, with the members' answers, {} in everyone's papers.", if n == 1 { "question".to_string() } else { format!("{n} questions") }, if n == 1 { "is" } else { "are" }));
+                }
                 m.say(Speaker::Secretary, SECRETARY, LineKind::Agenda, "1. Status reports");
                 m.advance(Stage::Status);
             }

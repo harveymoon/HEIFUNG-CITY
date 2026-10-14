@@ -1929,6 +1929,26 @@ button) does.
   for valid sites again).
 - `report`: the compact city report the committee reads, as `text` (what a model is sent) and
   `report` (the figures).
+- `ask {text}` (alias field `question`): [ask-committee] put a question to the seated members,
+  as the Committee window's Ask tab does. Each member asked gets one turn (one at a time, in an
+  order that rotates per question, reading the city report, their persona and up to 4 earlier
+  replies in the thread) and decides whether to answer: a model replies `{"respond": bool,
+  "text": "..."}`; the stand-in answers from templates and the real figures and sometimes
+  declines. With the stand-in the whole thread is answered before the reply; with a model the
+  answers arrive on later frames (read `questions` again). Reply: `asked` (the question's id),
+  `backend`, `question` (as below). Fails with no members seated or an empty text; the text is
+  cut to 400 characters.
+- `questions {id?, limit?}`: the question threads, newest first (default 20; `id` for one):
+  `id`, `day`, `text`, `discussed` (the number of the meeting that read it, or null), `complete`,
+  `asked` [{id, name}], `waiting` (member ids still to answer), `typing` (being asked now),
+  `replies` [{member, name, scope, respond, text, stand_in}] (`respond: false` is "no comment";
+  `stand_in`: the model failed and the stand-in spoke). Also `kept` (the last 40 threads are
+  kept, saved with the city), `undiscussed`, `answered` (replies filed this run) and
+  `next_meeting_digest`: the text the next meeting will read. When a meeting opens, every
+  answered thread not yet discussed goes into a digest (the newest 5, answers clipped, at most
+  about 1,800 characters) appended to the city report in every turn of that meeting, the
+  secretary notes it in the transcript, and the threads are marked discussed (they stay in the
+  log). A thread still being answered waits for the meeting after.
 - `minutes {meeting?}`: a past meeting (default the last), as `committee_meeting` returns one;
   `kept` lists the numbers kept (the last 6).
 - `settings {backend?, local_url?, local_model?, claude_model?, claude_effort?,
@@ -1951,13 +1971,15 @@ button) does.
 - `fast_forward: true` (alias `skip`): the window shows everything at once; with the stand-in the
   meeting runs to the mayor's vote (or the end) before the reply. A model keeps its own pace.
 - Reply: `in_session`, and `meeting` (number, day, stage, on_demand, calls, waiting_for_mayor,
-  done, members, proposers, `transcript` from `transcript_from` (speaker: "secretary", "mayor" or
+  done, members, proposers, `questions_digest` (the mayor's questions the meeting read, as sent
+  to the models; empty if none) and `questions_read` (their ids), `transcript` from `transcript_from` (speaker: "secretary", "mayor" or
   a member id; name, kind: speech|agenda|vote|result|note, text), `proposals` (id, title, by,
   by_name, action, rationale, cost, votes [{member, name, vote, reason}], mayor, tally {yes, no,
   abstain}, outcome, would_be, project)); between meetings `next_meeting_day` and `last` (the
   last minutes).
 
-`window {name: "committee", tab?: "meeting|members|alerts|projects|settings"}` opens the window.
+`window {name: "committee", tab?: "meeting|ask|members|alerts|projects|settings"}` opens the window
+(`ask`, alias `questions`/`chat`: the question chat room).
 
 [voices] Through the same backend:
 
@@ -1976,4 +1998,6 @@ curl -d '{"cmd":"committee_meeting","start":true,"fast_forward":true}' http://12
 curl -d '{"cmd":"committee_meeting","vote":{"proposal":1,"vote":"yes"}}' http://127.0.0.1:4817/cmd
 curl -d '{"cmd":"committee_meeting","abstain_rest":true,"fast_forward":true}' http://127.0.0.1:4817/cmd
 curl -d '{"cmd":"committee","action":"implement","project":21}' http://127.0.0.1:4817/cmd
+curl -d '{"cmd":"committee","action":"ask","text":"Why are rents so high?"}' http://127.0.0.1:4817/cmd
+curl -d '{"cmd":"committee","action":"questions","limit":5}' http://127.0.0.1:4817/cmd
 ```

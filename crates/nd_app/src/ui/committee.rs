@@ -24,6 +24,8 @@ const TYPE_RATE: f32 = 260.0;
 pub enum Tab {
     #[default]
     Meeting,
+    /// [ask-committee] The question chat room.
+    Ask,
     Members,
     Alerts,
     Projects,
@@ -31,11 +33,12 @@ pub enum Tab {
 }
 
 impl Tab {
-    const ALL: [Tab; 5] = [Tab::Meeting, Tab::Members, Tab::Alerts, Tab::Projects, Tab::Settings];
+    const ALL: [Tab; 6] = [Tab::Meeting, Tab::Ask, Tab::Members, Tab::Alerts, Tab::Projects, Tab::Settings];
 
     fn label(self) -> &'static str {
         match self {
             Tab::Meeting => "Meeting",
+            Tab::Ask => "Ask",
             Tab::Members => "Members",
             Tab::Alerts => "Alerts",
             Tab::Projects => "Projects",
@@ -44,7 +47,11 @@ impl Tab {
     }
 
     pub fn parse(s: &str) -> Option<Tab> {
-        Tab::ALL.into_iter().find(|t| t.label().eq_ignore_ascii_case(s.trim()))
+        let s = s.trim();
+        if ["questions", "question", "chat", "ask the committee"].iter().any(|k| k.eq_ignore_ascii_case(s)) {
+            return Some(Tab::Ask);
+        }
+        Tab::ALL.into_iter().find(|t| t.label().eq_ignore_ascii_case(s))
     }
 }
 
@@ -134,8 +141,13 @@ pub fn window_system(mut contexts: EguiContexts, mut sim: ResMut<Sim>, mut rt: R
             });
             ui.separator();
             ui.data_mut(|d| d.insert_temp(tab_id(), tab));
+            if tab == Tab::Ask {
+                ask_tab(ui, &mut sim, &mut rt, &mut asks);
+                return;
+            }
             egui::ScrollArea::vertical().id_salt(("committee_scroll", tab as u8)).auto_shrink([false, false]).stick_to_bottom(tab == Tab::Meeting && sim.world.committee.meeting.is_some()).show(ui, |ui| match tab {
                 Tab::Meeting => meeting_tab(ui, &mut sim, &mut rt, &mut asks),
+                Tab::Ask => {}
                 Tab::Members => members_tab(ui, &mut sim, &mut asks),
                 Tab::Alerts => alerts_tab(ui, &mut sim),
                 Tab::Projects => projects_tab(ui, &mut sim, &mut asks),
@@ -332,6 +344,108 @@ fn meeting_tab(ui: &mut egui::Ui, sim: &mut Sim, rt: &mut CommitteeRt, asks: &mu
     }
     if abstain {
         let _ = abstain_rest(&mut sim.world);
+    }
+}
+
+/// [ask-committee] The chat room: the mayor's questions and the members'
+/// answers, oldest first, with who is still typing; the box to ask below.
+fn ask_tab(ui: &mut egui::Ui, sim: &mut Sim, rt: &mut CommitteeRt, asks: &mut Asks) {
+    sim.world.committee_ensure();
+    let typing = rt.asker.typing();
+    let seated = sim.world.committee.seated_ids().len();
+    hint(ui, &format!("Ask the committee anything. Each of the {seated} seated members decides whether to answer, in character, from the city's figures; they read each other's replies. The next meeting has the questions and answers in its papers. Through {}.", rt.courier.backend_name()));
+    ui.separator();
+    let input_h = 70.0;
+    let log_h = (ui.available_height() - input_h).max(80.0);
+    egui::ScrollArea::vertical().id_salt("committee_ask_scroll").auto_shrink([false, false]).max_height(log_h).stick_to_bottom(true).show(ui, |ui| {
+        let c = &sim.world.committee;
+        if c.questions.is_empty() {
+            ui.add_space(8.0);
+            hint(ui, "No questions yet. Try \"Why are rents so high?\" or \"Should we build a metro?\"");
+        }
+        for q in &c.questions {
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.label(egui::RichText::new("The mayor").font(theme::button()).color(MAYOR));
+                ui.label(egui::RichText::new(format!("· day {}", q.day + 1)).small().weak());
+                ui.label(egui::RichText::new(&q.text).color(IVORY));
+            });
+            for r in q.answers() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.add_space(14.0);
+                    ui.label(egui::RichText::new(&r.name).font(theme::button()).color(GOLD));
+                    if !r.scope.is_empty() {
+                        ui.label(egui::RichText::new(format!("({})", r.scope)).small().weak());
+                    }
+                    ui.label(egui::RichText::new(&r.text).color(IVORY));
+                    if r.stand_in {
+                        ui.label(egui::RichText::new("(stand-in)").small().weak()).on_hover_text("The model did not answer in time; the offline stand-in spoke instead");
+                    }
+                });
+            }
+            let quiet: Vec<&str> = q.replies.iter().filter(|r| !r.respond).map(|r| r.name.as_str()).collect();
+            if !quiet.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_space(14.0);
+                    ui.label(egui::RichText::new(format!("No comment from {}.", quiet.join(", "))).small().italics().color(egui::Color32::from_gray(150)));
+                });
+            }
+            let waiting = q.waiting();
+            if !waiting.is_empty() {
+                let now: Vec<String> = typing.iter().filter(|(qid, _)| *qid == q.id).map(|(_, m)| c.name_of(*m)).collect();
+                let rest: Vec<String> = waiting.iter().filter(|m| !typing.contains(&(q.id, **m))).map(|m| c.name_of(*m)).collect();
+                let mut t = String::new();
+                if !now.is_empty() {
+                    t.push_str(&format!("{} {} typing...", now.join(", "), if now.len() == 1 { "is" } else { "are" }));
+                }
+                if !rest.is_empty() {
+                    if !t.is_empty() {
+                        t.push_str("  ");
+                    }
+                    t.push_str(&format!("Still to answer: {}.", rest.join(", ")));
+                }
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_space(14.0);
+                    ui.label(egui::RichText::new(t).small().italics().color(CYAN));
+                });
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+            } else {
+                let tag = match q.discussed {
+                    Some(n) => format!("read at meeting {n}"),
+                    None => "for the next meeting".to_string(),
+                };
+                ui.horizontal(|ui| {
+                    ui.add_space(14.0);
+                    hint(ui, &tag);
+                });
+            }
+        }
+    });
+    ui.separator();
+    let draft_id = egui::Id::new("committee_ask_draft");
+    let mut draft: String = ui.data(|d| d.get_temp(draft_id)).unwrap_or_default();
+    let mut send = false;
+    ui.horizontal(|ui| {
+        let r = ui.add(egui::TextEdit::singleline(&mut draft).hint_text("Ask the committee a question...").desired_width(ui.available_width() - 70.0).char_limit(nd_sim::committee::questions::QUESTION_MAX_CHARS));
+        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            send = true;
+            r.request_focus();
+        }
+        if ui.add_enabled(!draft.trim().is_empty() && seated > 0, egui::Button::new(egui::RichText::new("Send").font(theme::button()))).clicked() {
+            send = true;
+        }
+    });
+    if send && !draft.trim().is_empty() {
+        match rt.ask(sim, &draft) {
+            Ok(_) => draft.clear(),
+            Err(e) => asks.message = Some(format!("Not asked: {e}")),
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(draft_id, draft));
+    if seated == 0 {
+        hint(ui, "Nobody is seated: appoint members on the Members tab first.");
     }
 }
 

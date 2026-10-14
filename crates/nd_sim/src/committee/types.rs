@@ -256,6 +256,13 @@ pub struct Meeting {
     /// Members (in order) asked to table a topic.
     #[serde(default)]
     pub proposers: Vec<u32>,
+    /// [ask-committee] The digest of the mayor's questions since the last
+    /// meeting, as every turn of this meeting reads it (empty: none).
+    #[serde(default)]
+    pub questions: String,
+    /// The question threads it covers (marked discussed by this meeting).
+    #[serde(default)]
+    pub questions_read: Vec<u32>,
 }
 
 impl Meeting {

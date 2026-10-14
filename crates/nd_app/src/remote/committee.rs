@@ -6,7 +6,7 @@
 use nd_minds::committee::driver::abstain_rest;
 use nd_minds::committee::settings::BackendChoice;
 use nd_minds::committee::cast_mayor_vote;
-use nd_sim::committee::{rules, Alert, CityReport, CommitteeProject, Line, MayorVote, Meeting, Politician, Proposal, Speaker};
+use nd_sim::committee::{rules, Alert, CityReport, CommitteeProject, Line, MayorVote, Meeting, Politician, Proposal, Question, Speaker};
 use serde_json::{json, Value};
 
 use super::view::*;
@@ -76,9 +76,22 @@ fn meeting(m: &Meeting, sim: &Sim, from: usize) -> Value {
         "number": m.number, "day": m.day + 1, "stage": m.stage.label(), "on_demand": m.on_demand, "calls": m.calls,
         "waiting_for_mayor": m.waiting_for_mayor(), "done": m.is_done(),
         "members": m.members, "proposers": m.proposers,
+        "questions_digest": m.questions, "questions_read": m.questions_read,
         "transcript_from": from, "transcript_len": m.transcript.len(),
         "transcript": m.transcript.iter().skip(from).map(line).collect::<Vec<_>>(),
         "proposals": m.proposals.iter().map(|p| proposal(p, sim)).collect::<Vec<_>>(),
+    })
+}
+
+/// [ask-committee] One question thread.
+fn question(q: &Question, sim: &Sim, rt: &CommitteeRt) -> Value {
+    let c = &sim.world.committee;
+    let typing: Vec<u32> = rt.asker.typing().into_iter().filter(|(qid, _)| *qid == q.id).map(|(_, m)| m).collect();
+    json!({
+        "id": q.id, "day": q.day + 1, "text": q.text, "discussed": q.discussed, "complete": q.is_complete(),
+        "asked": q.asked.iter().map(|&id| json!({ "id": id, "name": c.name_of(id) })).collect::<Vec<_>>(),
+        "waiting": q.waiting(), "typing": typing,
+        "replies": q.replies.iter().map(|r| json!({ "member": r.member, "name": r.name, "scope": r.scope, "respond": r.respond, "text": r.text, "stand_in": r.stand_in })).collect::<Vec<_>>(),
     })
 }
 
@@ -179,6 +192,35 @@ pub fn command(cmd: &Value, sim: &mut Sim, rt: &mut CommitteeRt) -> Result<Value
             let r = CityReport::build(&sim.world);
             Ok(json!({ "text": r.to_text(), "report": serde_json::to_value(&r).unwrap_or(Value::Null) }))
         }
+        "ask" => {
+            // [ask-committee] Put a question to the seated members.
+            let text = opt_str(cmd, "text")?.or(opt_str(cmd, "question")?).ok_or("missing text (the question)")?.to_string();
+            let id = rt.ask(sim, &text)?;
+            // The stand-in answers at once: collect the thread now. A model
+            // answers on later frames: read `questions` again.
+            if rt.courier.is_mock() {
+                let others = rt.asker.run(&mut sim.world, &mut rt.courier, 64);
+                for d in others {
+                    rt.hand_on(&mut sim.world, &d);
+                }
+            }
+            let q = sim.world.committee.question(id).ok_or("the question was not kept")?;
+            Ok(json!({ "asked": id, "backend": rt.courier.backend_name(), "question": question(q, sim, rt) }))
+        }
+        "questions" => {
+            let c = &sim.world.committee;
+            if let Some(id) = opt_u64(cmd, "id")? {
+                let q = c.question(id as u32).ok_or_else(|| format!("no question {id}"))?;
+                return Ok(json!({ "question": question(q, sim, rt) }));
+            }
+            let limit = opt_u64(cmd, "limit")?.unwrap_or(20) as usize;
+            let undiscussed = c.undiscussed().len();
+            Ok(json!({
+                "questions": c.questions.iter().rev().take(limit).map(|q| question(q, sim, rt)).collect::<Vec<_>>(),
+                "kept": c.questions.len(), "undiscussed": undiscussed, "answered": rt.asker.answered,
+                "next_meeting_digest": c.questions_digest(),
+            }))
+        }
         "minutes" => {
             let c = &sim.world.committee;
             let m = match opt_u64(cmd, "meeting")? {
@@ -234,7 +276,7 @@ pub fn command(cmd: &Value, sim: &mut Sim, rt: &mut CommitteeRt) -> Result<Value
             }
             Ok(json!({ "remote_may_switch": rt.remote_may_switch, "backend": backend(rt), "auto_meetings": sim.world.committee.auto_meetings, "veto_allowed": sim.world.committee.veto_allowed }))
         }
-        other => Err(format!("unknown committee action {other:?}; state, members, appoint, dismiss, alerts, check_alerts, projects, implement, dismiss_project, pick_site, refresh_sites, report, minutes, settings")),
+        other => Err(format!("unknown committee action {other:?}; state, members, appoint, dismiss, alerts, check_alerts, projects, implement, dismiss_project, pick_site, refresh_sites, report, ask, questions, minutes, settings")),
     }
 }
 
@@ -264,11 +306,11 @@ pub fn meeting_command(cmd: &Value, sim: &mut Sim, rt: &mut CommitteeRt) -> Resu
         // The stand-in answers at once: run to the mayor's vote or the end
         // now. A model keeps its own pace (the frames pump it).
         if rt.courier.is_mock() {
-            let CommitteeRt { driver, courier, voices, .. } = rt;
-            // [fix/review-app] Voice lines and diaries polled on the way
-            // are theirs, not dropped.
-            for d in driver.run(&mut sim.world, courier, 400) {
-                voices.take(&d);
+            // [fix/review-app] Voice lines, diaries (and [ask-committee]
+            // answers) polled on the way are theirs, not dropped.
+            let others = rt.driver.run(&mut sim.world, &mut rt.courier, 400);
+            for d in others {
+                rt.hand_on(&mut sim.world, &d);
             }
         }
     }
@@ -289,15 +331,13 @@ pub fn diary(cmd: &Value, sim: &mut Sim, rt: &mut CommitteeRt) -> Result<Value, 
         return Err("no such citizen".into());
     }
     let refresh = opt_bool(cmd, "refresh")?.unwrap_or(false);
-    let CommitteeRt { voices, courier, driver, .. } = rt;
-    voices.ask_diary(&sim.world, id, courier, refresh);
-    if courier.is_mock() {
-        for d in courier.poll() {
-            if !driver.take(&mut sim.world, &d) {
-                voices.take(&d);
-            }
+    rt.voices.ask_diary(&sim.world, id, &mut rt.courier, refresh);
+    if rt.courier.is_mock() {
+        for d in rt.courier.poll() {
+            rt.hand_on(&mut sim.world, &d);
         }
     }
+    let (voices, courier) = (&rt.voices, &rt.courier);
     let d = voices.diary(id);
     Ok(json!({
         "citizen": key_str(id), "name": sim.world.citizens[id].name,

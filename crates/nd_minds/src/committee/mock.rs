@@ -264,6 +264,11 @@ impl MockCommittee {
                 let r = format!("Option {} of {}, because {reason}.", i + 1, options.len());
                 TurnReply { text: r.clone(), json: Some(json!({ "choice": i + 1, "reason": r })) }
             }
+            Task::Question { question, facts, earlier, last } => {
+                let Some(p) = &req.speaker else { return TurnReply { text: String::new(), json: Some(json!({ "respond": false, "text": "" })) } };
+                let (respond, t) = question_answer(p, question, facts, earlier, *last, seed);
+                TurnReply { text: if respond { t.clone() } else { String::new() }, json: Some(json!({ "respond": respond, "text": t })) }
+            }
             Task::Closing { results, projects, next_day } => {
                 let res = if results.is_empty() { "Nothing came to a vote".to_string() } else { results.join("; ") };
                 let close = pick(seed, 11, &["That concludes the business of this meeting.", "The meeting is adjourned.", "Thank you, members. We are adjourned."]);
@@ -275,6 +280,75 @@ impl MockCommittee {
             }
         }
     }
+}
+
+/// [ask-committee] Words in a question that make it a scope's business.
+fn scope_words(scope: &str) -> &'static [&'static str] {
+    match scope {
+        "Transit" => &["bus", "train", "transit", "traffic", "commut", "rail", "metro", "subway", "parking", "toll", "cars"],
+        "Housing" => &["rent", "home", "hous", "unhoused", "homeless", "apartment", "tenant", "landlord", "evict"],
+        "Finance" => &["money", "budget", "tax", "treasury", "debt", "cost", "credit", "spend", "deficit", "afford", "broke"],
+        "Public safety" => &["crime", "police", "fire", "safe", "gang", "911", "emergenc", "cop", "violen"],
+        "Environment" => &["pollut", "park", "green", "contamin", "ground", "clean", "tree", "dirt", "toxic", "smog"],
+        "Business" => &["job", "work", "shop", "business", "unemploy", "store", "commerce", "corp", "industr", "econom"],
+        "Power and roads" => &["power", "electric", "blackout", "brownout", "road", "pothole", "grid", "light", "street"],
+        "Health and schools" => &["health", "clinic", "hospital", "school", "educat", "sick", "kid", "child", "doctor"],
+        _ => &[],
+    }
+}
+
+/// [ask-committee] The stand-in's answer to the mayor's question: whether
+/// this member speaks (their scope, their temper, what was said before)
+/// and what they say, from the real figures. Deterministic in the seed.
+pub fn question_answer(p: &PersonaCard, question: &str, facts: &[Fact], earlier: &[super::Heard], last: bool, seed: u64) -> (bool, String) {
+    let q = question.to_lowercase();
+    let first_name = p.name.split_whitespace().next().unwrap_or("").to_lowercase();
+    let relevant = scope_words(&p.scope).iter().any(|w| q.contains(w)) || q.contains(&p.scope.to_lowercase()) || (!first_name.is_empty() && q.contains(&first_name));
+    let talkative = match p.temper_key.as_str() {
+        "firebrand" => 0.7,
+        "populist" => 0.6,
+        "contrarian" => 0.55,
+        "dealmaker" => 0.5,
+        "idealist" => 0.45,
+        "old_guard" => 0.35,
+        "pragmatist" => 0.3,
+        _ => 0.2,
+    };
+    let react = !earlier.is_empty() && chance(seed, 42, if p.temper_key == "contrarian" { 0.5 } else { 0.15 });
+    let speaks = last || (relevant && chance(seed, 40, 0.92)) || react || chance(seed, 41, talkative * 0.4);
+    if !speaks {
+        return (false, String::new());
+    }
+    let lead = match p.temper_key.as_str() {
+        "firebrand" => pick(seed, 43, &["Straight answer, mayor.", "You asked, so here it is.", "About time someone asked."]),
+        "technocrat" => pick(seed, 43, &["By the numbers, then.", "The short answer is in the figures.", "Data first."]),
+        "populist" => pick(seed, 43, &["The street has been asking the same thing.", "Folks out there want to know too.", "Here's what people tell me."]),
+        "pragmatist" => pick(seed, 43, &["Fair question.", "Practically speaking, then.", "Here's what I'd do."]),
+        "idealist" => pick(seed, 43, &["It's the right question.", "This goes to what we're for.", "Principle first."]),
+        "old_guard" => pick(seed, 43, &["We've asked this before.", "Seen this one before, mayor.", "Long story short."]),
+        "contrarian" => pick(seed, 43, &["Everyone will tell you the obvious. I won't.", "Maybe the wrong question, but fine.", "Let me push back a little."]),
+        _ => pick(seed, 43, &["Happy to help, mayor; remember it.", "There's a deal in this somewhere.", "I can answer that, for a favour later."]),
+    };
+    let mut parts = vec![lead.to_string()];
+    if let Some(h) = earlier.last().filter(|_| react || chance(seed, 44, 0.4)) {
+        let first = h.name.split_whitespace().next().unwrap_or(&h.name);
+        let agree = chance(seed, 45, if p.temper_key == "contrarian" { 0.2 } else { 0.55 });
+        let t = if agree { pick(seed, 46, &["{first} is right about that.", "I'm with {first} on this.", "What {first} said, and I'd go further."]) } else { pick(seed, 46, &["I don't agree with {first}.", "{first} has it backwards.", "With respect to {first}, that misses the point."]) };
+        parts.push(t.replace("{first}", first));
+    }
+    parts.push(if relevant { pick(seed, 47, &["This is my portfolio.", "That lands on my desk.", "Squarely my area."]) } else { pick(seed, 47, &["Not my desk, but it touches mine.", "Outside my brief, though it reaches it.", "From where I sit, then."]) }.to_string());
+    let shown: Vec<&Fact> = facts.iter().take(3).collect();
+    let bad = shown.iter().copied().find(|f| is_bad(f));
+    if let Some(f) = bad.or(shown.first().copied()) {
+        parts.push(format!("{}.", fact_sentence(f, seed, 48, "since we last met")));
+    }
+    parts.push(verdict(p, bad.is_some(), mix(seed, 49)).to_string());
+    if chance(seed, 50, 0.35) {
+        if let Some(g) = p.goals.first() {
+            parts.push(format!("My aim has not changed: {g}."));
+        }
+    }
+    (true, parts.join(" "))
 }
 
 /// The vote a reply gives for a proposal, if it gives one.

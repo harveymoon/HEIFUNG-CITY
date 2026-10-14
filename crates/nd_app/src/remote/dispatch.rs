@@ -489,7 +489,7 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("note", "what people complain about, ranked by people this week with the trend against last week, where it comes from, and city happiness (daily, hourly for 48 h)"),
     ] },
     Cmd { name: "committee", aliases: &[], effect: Paid, run: |cmd, ctx| committee::command(cmd, &mut ctx.sim, &mut ctx.committee), help: &[
-        ("action", "state (default)|members|appoint {id, seat?}|dismiss {id}|alerts {limit, mark_seen}|check_alerts|projects|implement {project}|dismiss_project {project}|pick_site {project, option}|refresh_sites {project}|report|minutes {meeting?}|settings {backend: mock|local|claude, local_url, local_model, claude_model, claude_effort, claude_fallbacks, timeout_s, auto_meetings, veto_allowed, save, test}"),
+        ("action", "state (default)|members|appoint {id, seat?}|dismiss {id}|alerts {limit, mark_seen}|check_alerts|projects|implement {project}|dismiss_project {project}|pick_site {project, option}|refresh_sites {project}|report|ask {text} (put a question to the seated members; each answers or declines)|questions {id?, limit?} (the question threads, newest first)|minutes {meeting?}|settings {backend: mock|local|claude, local_url, local_model, claude_model, claude_effort, claude_fallbacks, timeout_s, auto_meetings, veto_allowed, save, test}"),
         ("note", "the mayor's AI committee (docs/AI_COMMITTEE.md): fictional politicians, six seats, alerts, projects; never takes or returns an API key; the backend fields need the player's leave (the Committee window's settings)"),
     ] },
     Cmd { name: "committee_meeting", aliases: &["meeting"], effect: Paid, run: |cmd, ctx| committee::meeting_command(cmd, &mut ctx.sim, &mut ctx.committee), help: &[
@@ -1002,6 +1002,37 @@ mod dispatch_tests {
         app.world_mut().resource_mut::<crate::committee::CommitteeRt>().remote_may_switch = true;
         let (status, body) = send(&mut app, json!({ "cmd": "committee", "action": "settings", "backend": "mock" }));
         assert_eq!(status, 200, "{body}");
+    }
+
+    /// [ask-committee] A question through the remote API: the stand-in
+    /// answers at once, one reply per seated member; `questions` reads the
+    /// thread back and the digest the next meeting will read.
+    #[test]
+    fn the_committee_answers_a_question_through_the_api() {
+        let mut app = app();
+        send(&mut app, json!({ "cmd": "seed_demo" }));
+        let (status, body) = send(&mut app, json!({ "cmd": "committee", "action": "ask" }));
+        assert_eq!(status, 400, "a question needs words: {body}");
+        let (status, body) = send(&mut app, json!({ "cmd": "committee", "action": "ask", "text": "Why are rents so high?" }));
+        assert_eq!(status, 200, "{body}");
+        let q = &body["question"];
+        assert_eq!(q["complete"], true, "{body}");
+        let asked = q["asked"].as_array().unwrap().len();
+        assert!(asked > 0);
+        assert_eq!(q["replies"].as_array().unwrap().len(), asked, "one reply each: {body}");
+        assert!(q["replies"].as_array().unwrap().iter().any(|r| r["respond"] == true), "{body}");
+        let (status, body) = send(&mut app, json!({ "cmd": "committee", "action": "questions" }));
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["undiscussed"], 1);
+        assert!(body["next_meeting_digest"].as_str().unwrap().contains("Why are rents so high?"), "{body}");
+        let (status, body) = send(&mut app, json!({ "cmd": "committee_meeting", "start": true, "fast_forward": true }));
+        assert_eq!(status, 200, "{body}");
+        // In session at the mayor's vote, or already closed if nothing was tabled.
+        let m = if body["in_session"] == true { &body["meeting"] } else { &body["last"] };
+        assert!(m["questions_digest"].as_str().is_some_and(|d| d.contains("Why are rents so high?")), "{body}");
+        let (_, body) = send(&mut app, json!({ "cmd": "committee", "action": "questions" }));
+        assert_eq!(body["undiscussed"], 0);
+        assert!(body["questions"][0]["discussed"].is_u64(), "{body}");
     }
 
     /// Names and aliases are unique across the registry.
