@@ -259,6 +259,9 @@ pub struct DriveState {
     /// this trip (fed into how the trip felt).
     pub anger: f32,
     pub anger_peak: f32,
+    /// [bridge-riders] The anger is a street racer's who lost, not a late
+    /// driver's: sore on the drive home (timed afresh from the race).
+    pub sore_loser: bool,
     /// [emergency] The move of a vehicle driving off-law (lights and
     /// sirens, or fleeing them): round a queue, on the kerb, through a red
     /// (`traffic/siren.rs`). Planned afresh every step.

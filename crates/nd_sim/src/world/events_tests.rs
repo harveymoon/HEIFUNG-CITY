@@ -505,3 +505,50 @@ fn a_police_car_near_the_pack_chases_a_local_rider() {
     assert!(w.traffic.cars[ch.car].drive.fleeing && w.traffic.cars[ch.car].model.body.two_wheeler());
     assert!(w.street_events.pack_chases_total >= 1);
 }
+
+/// [bridge-riders] Harvey's flag: a car he took for a racer read "raging
+/// because it took too long" and "out to the entertainment, looking for
+/// parking". A racer's status says what they are doing, a race has no
+/// destination to be late for, and a racer who lost drives home sore.
+#[test]
+fn a_racer_is_shown_racing_and_a_loser_drives_home_sore() {
+    let mut w = town(11, false);
+    let folk: Vec<CitizenId> = w.citizens.keys().collect();
+    racers(&mut w, &folk[8..12]);
+    w.start_race(Some(Vec2::new(-500.0, 30.0))).expect("a race starts");
+    let first = w.race().unwrap().cars[0];
+    run(&mut w, 2, |_| false);
+    let shown = w.car_journey(first).expect("a journey").purpose;
+    assert!(shown.contains("street race"), "on the way to the race: {shown}");
+    assert!(w.traffic.cars[first].drive.calm.is_none(), "no road rage while at it");
+    let mut racing_shown = false;
+    let over = run(&mut w, 1500, |w| {
+        if let Some(r) = w.race() {
+            for &c in &r.cars {
+                if w.traffic.cars.get(c).is_some_and(|x| x.drive.gang.is_some_and(|g| g.phase == crate::traffic::GangPhase::Racing)) {
+                    let j = w.car_journey(c).unwrap().purpose;
+                    assert_eq!(j, "street racing");
+                    racing_shown = true;
+                }
+            }
+        }
+        w.race().is_none()
+    });
+    assert!(over && racing_shown, "the race ran and ended");
+    let rec = w.street_events.history.iter().rev().find(|r| r.kind == EventKind::Race).expect("recorded").clone();
+    assert!(!rec.police, "no police in this town");
+    let sore: Vec<CarId> = w.traffic.cars.iter().filter(|(_, c)| c.drive.sore_loser).map(|(id, _)| id).collect();
+    assert!(!sore.is_empty(), "the losers drive home sore");
+    for &c in &sore {
+        let car = &w.traffic.cars[c];
+        assert!(car.drive.anger > 0.0 && car.drive.gang.is_none());
+        assert_ne!(w.citizens.get(car.citizen).map(|p| p.name.clone()), rec.winner, "the winner is not sore");
+    }
+    // The drive home is timed from the race's end, not from the evening.
+    run(&mut w, 2, |_| false);
+    for &c in &sore {
+        if let Some((elapsed, _)) = w.car_trip_minutes(c) {
+            assert!(elapsed <= 3.0, "timed afresh: {elapsed}");
+        }
+    }
+}

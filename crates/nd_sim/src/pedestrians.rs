@@ -94,6 +94,11 @@ pub fn jaywalk_chance(age: u8, caution: f32, hedonism: f32, drunk: f32, late: bo
     p.min(0.9)
 }
 
+/// [bridge-riders] Someone more than this far (metres) above or below a
+/// street is not in its road: on a footbridge, an elevated path or a
+/// viaduct over it, or down in a tunnel under it.
+pub const LEVEL_APART: f32 = 3.0;
+
 /// Seconds of clear road a jaywalker wants before going: the careful want
 /// more, someone late less.
 pub fn gap_needed(caution: f32, late: bool) -> f32 {

@@ -206,8 +206,13 @@ impl World {
     /// The first crossing ahead of a rider at `pos` heading `dir` (within
     /// `reach`) that they must stop for, if any; crossings they ride over
     /// lawfully as a walker would are claimed in `feet` so drivers stop.
+    ///
+    /// [bridge-riders] Only the crossings of streets at the rider's own
+    /// level (`leg`, the leg ridden, says how high that is): riding an
+    /// elevated path or a viaduct over a street, its crossings are nothing
+    /// to the rider, nor the rider anything to its drivers.
     #[allow(clippy::too_many_arguments)]
-    fn rider_stop(&mut self, id: CitizenId, r: &mut Rider, pos: Vec2, dir: Vec2, reach: f32, late: bool, feet: &mut Feet) -> Option<Stop> {
+    fn rider_stop(&mut self, id: CitizenId, r: &mut Rider, pos: Vec2, dir: Vec2, reach: f32, late: bool, leg: (Vec2, Vec2), feet: &mut Feet) -> Option<Stop> {
         let tick = self.clock.tick;
         let seed = self.citizens[id].seed;
         let end = pos + dir * reach;
@@ -215,7 +220,12 @@ impl World {
         // meets it (riding along) or runs down it (riding across) comes
         // within a few metres of the box.
         let pad = Vec2::splat(3.5);
-        let near = self.peds.cross_grid.in_box(pos.min(end) - pad, pos.max(end) + pad);
+        let mut near = self.peds.cross_grid.in_box(pos.min(end) - pad, pos.max(end) + pad);
+        if !near.is_empty() {
+            if let Some(z) = self.leg_way_height(leg.0, leg.1, pos) {
+                near.retain(|&cr| !self.crossing_apart_from(cr, z));
+            }
+        }
         // [review] Per junction, the crosswalk best aligned with the ride
         // is the one over the arm the rider comes in on: only its light
         // is theirs. At a five-arm junction a neighbouring arm's crosswalk
@@ -413,10 +423,16 @@ impl World {
                 // crossings of the ways above are nothing to the rider (a
                 // bike under a roundabout gave way to its crossings and,
                 // standing there, held its traffic up).
+                // [bridge-riders] Nor up on a footbridge (its stairs, its
+                // deck, a ring of decks): Harvey's flag, the cars under a
+                // footbridge braked for the bikes wheeled over it, which the
+                // deck, running a step beside the old crosswalk, put "on"
+                // that crosswalk ("everyone is taking the footpath").
                 let below = self.leg_in_tunnel(from, target, pos, true);
-                if rules && !below {
+                let off_street = below || self.leg_raised(from, target);
+                if rules && !off_street {
                     let reach = d.min(budget + LOOK_AHEAD);
-                    if let Some(s) = self.rider_stop(id, &mut r, pos, dir, reach, late, feet) {
+                    if let Some(s) = self.rider_stop(id, &mut r, pos, dir, reach, late, (from, target), feet) {
                         if s.at <= budget {
                             pos += dir * s.at.min(d);
                             stopped = Some(s.cr);
@@ -425,7 +441,7 @@ impl World {
                     }
                 }
                 // [rail-crossing] A level crossing with its lights on.
-                if let Some((k, stop)) = self.rail_stop(pos, pos + dir * d.min(budget)).filter(|_| !below) {
+                if let Some((k, stop)) = self.rail_stop(pos, pos + dir * d.min(budget)).filter(|_| !off_street) {
                     pos = stop;
                     rail_wait = Some(k);
                     break;

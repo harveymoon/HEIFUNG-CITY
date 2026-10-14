@@ -1074,17 +1074,23 @@ window, with its buses) and `clock`. So when the player says "this car", ask `se
 A car's detail (`inspect {car}`, `selected`) carries:
 
 - `label`: "Mara Voss's hatchback", "bus on Line 2", "delivery truck", "a sedan passing through".
-- `why`: `reason` (moving, queued, letting_out, red_light, pedestrians, give_way, turning_left,
+- `why`: `reason` (moving, queued, letting_out, red_light, pedestrians, jaywalker, give_way, turning_left,
   roundabout, exit_full, lane_change, at_kerb, bus_stop, unloading, arriving, crashed, takeover,
-  in_show, unexplained), `text` (plain language, naming the vehicle responsible), `by` and
-  `by_label` (that vehicle: select it to follow the queue), `good_reason` (false only for
-  `unexplained`: a car standing for no reason the sim knows, a bug worth reporting), `stalled_s`.
+  in_show, scene, at_work, level_crossing, unexplained), `text` (plain language, naming the vehicle
+  or person responsible), `by` and `by_label` (that vehicle: select it to follow the queue; for
+  `pedestrians` / `jaywalker`, the person on the crossing nearest the car, e.g. "Ana Ruiz on a bike"),
+  `by_kind` (`vehicle`, `citizen` or null), `people_on_crossing` (how many, for `pedestrians` /
+  `jaywalker`), `good_reason` (false only for `unexplained`: a car standing for no reason the sim
+  knows, a bug worth reporting), `stalled_s`.
 - `jam`: who it waits for, back to the head of the queue (`Traffic::jam_chain`): `length`,
   `cycle` (a gridlock ring), `head`, `head_label`, `head_reason` (a `why`) and `chain` (each car's id,
   label, reason, speed, pos, stalled_s; at most 60).
 - `trip`: `elapsed_min` on the road vs `expected_min` (from the route at departure, free flow plus
   a little per junction), `over_ratio`, `can_rage` (private drivers), `anger` and `anger_peak`
-  (0..1), `patience`, `temper`.
+  (0..1), `anger_cause` (`late`: the drive is taking too long; `lost_race`: a street racer who lost,
+  sore on the drive home; null when calm), `patience`, `temper`. Street racers, takeover crews and
+  moto packs are not timed while they are at it (no destination to be late for); a racer's drive
+  home is timed afresh.
 - `driver`: for a private car `citizen`, `name`, `age`, `mood`, `class`, `purpose`, `destination`,
   `destination_name`, `anger`; for every vehicle `style` {`label`, `boldness` (-1 slow .. 0 normal ..
   1 reckless, the inspector's slider), `calm_boldness`, `skill`, `speed`, `headway_s`, `aggression`,

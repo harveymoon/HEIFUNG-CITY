@@ -13,6 +13,7 @@ use super::*;
 use crate::services::{IncidentKind, UnitId, UnitState};
 use crate::taxi::CabJob;
 use crate::vehicle::Errand;
+use crate::traffic::GangPhase;
 
 /// Crash sites kept for the danger layer (the oldest go first).
 pub const CRASH_SITES_KEPT: usize = 4000;
@@ -424,6 +425,35 @@ impl World {
                 _ => "on the road",
             };
             return Some(Journey { purpose: purpose.into(), from, to: None, driver });
+        }
+        // [bridge-riders] A street racer, a takeover crew or a moto pack has
+        // no errand of its own (Harvey's flag: a racer's status read "out
+        // to the entertainment, looking for parking"): what it is doing.
+        if let Some(g) = car.drive.gang {
+            let spot = |s: &crate::street_events::Spot| Place { label: s.name.clone(), building: None, car: None, pos: Some(s.centre) };
+            let (purpose, to) = if g.race {
+                match self.street_events.race.as_ref().filter(|r| r.id == g.takeover) {
+                    Some(r) => match (r.stage, g.phase) {
+                        (_, GangPhase::Racing) => ("street racing".to_string(), Some(spot(&r.finish))),
+                        (crate::street_events::RaceStage::Gathering, _) if car.in_stunt() => ("at the street race meet, waiting for the flag".to_string(), Some(spot(&r.meet))),
+                        (crate::street_events::RaceStage::Gathering, _) => ("on the way to a street race".to_string(), Some(spot(&r.meet))),
+                        (crate::street_events::RaceStage::Racing, _) => ("at the street race finish".to_string(), Some(spot(&r.finish))),
+                        (crate::street_events::RaceStage::Party, _) => ("at the party after the street race".to_string(), Some(spot(&r.finish))),
+                    },
+                    None => ("driving off after a street race".to_string(), None),
+                }
+            } else if g.pack {
+                ("riding with the moto pack".to_string(), None)
+            } else {
+                let at = self.driving.takeovers.active.as_ref().filter(|t| t.id == g.takeover).map(|t| Place { label: t.place.clone(), building: None, car: None, pos: Some(t.centre) });
+                let what = match g.phase {
+                    GangPhase::Joining => "on the way to a street takeover",
+                    GangPhase::Show => "in a street takeover",
+                    GangPhase::Leaving | GangPhase::Racing => "leaving a street takeover",
+                };
+                (what.to_string(), at)
+            };
+            return Some(Journey { purpose, from, to, driver });
         }
         if let Some((purpose, to)) = errand_story {
             let driver = match car.errand {

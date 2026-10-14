@@ -218,7 +218,13 @@ pub(super) fn driver_card(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarI
                 _ => (None, None),
             };
             let dest = to.and_then(|b| w.buildings.get(b)).map(|b| b.name.as_str());
+            // [bridge-riders] A racer or a takeover crew: what they are doing.
+            let gang = car.drive.gang.and_then(|_| w.car_journey(id)).map(|j| match j.to {
+                Some(to) => format!("{} · {}", j.purpose, to.label),
+                None => j.purpose,
+            });
             let line = match (purpose, dest) {
+                _ if gang.is_some() => gang.clone().unwrap_or_default(),
                 (Some(p), Some(d)) => format!("{} · to {d}", purpose_label(p)),
                 (Some(p), None) => purpose_label(p),
                 (None, Some(d)) => format!("to {d}"),
@@ -246,7 +252,8 @@ pub(super) fn driver_card(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::CarI
         };
         // An empty bar still paints a dot of fill; calm is just said.
         if d.anger > 0.02 {
-            ui.add(egui::ProgressBar::new(d.anger).desired_width(220.0).desired_height(18.0).fill(egui::Color32::from_rgb(200, 60, 40)).text(format!("anger: {word}  ·  {:.0}%", d.anger * 100.0)));
+            let why = if d.sore_loser { ", lost the street race" } else { "" };
+            ui.add(egui::ProgressBar::new(d.anger).desired_width(220.0).desired_height(18.0).fill(egui::Color32::from_rgb(200, 60, 40)).text(format!("anger: {word}{why}  ·  {:.0}%", d.anger * 100.0)));
         } else {
             ui.label(egui::RichText::new(format!("{word} at the wheel")).small());
         }
@@ -313,9 +320,22 @@ pub(super) fn why_and_trip(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Car
                         *selection = Selection::Car(b);
                     }
                 }
-                None => {
-                    ui.label(egui::RichText::new(capitalise(&reason.text(|_| String::new()))).color(colour(&reason)));
-                }
+                None => match w.stopped_for(id) {
+                    // [bridge-riders] Stopping for someone: who, as a link.
+                    Some((p, n)) => {
+                        let lead = if matches!(reason, StopReason::Jaywalker { .. }) { "braking for someone crossing the road (no crosswalk):" } else { "stopped at a crossing for" };
+                        ui.label(egui::RichText::new(capitalise(lead)).color(colour(&reason)));
+                        if ui.small_button(w.person_label(p)).on_hover_text("Select this person").clicked() {
+                            *selection = Selection::Citizen(p);
+                        }
+                        if n > 1 {
+                            ui.label(egui::RichText::new(format!("and {} more", n - 1)).color(colour(&reason)));
+                        }
+                    }
+                    None => {
+                        ui.label(egui::RichText::new(capitalise(&reason.text(|_| String::new()))).color(colour(&reason)));
+                    }
+                },
             }
         });
         if car.stalled > 1.0 {
@@ -342,7 +362,7 @@ pub(super) fn why_and_trip(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Car
             }
         });
         let speed = t.cars.get(head).map_or(0.0, |h| h.v * 3.6);
-        ui.label(egui::RichText::new(format!("— {}  ·  {speed:.0} km/h", hr.text(|c| w.car_label(c)))).color(colour(&hr)));
+        ui.label(egui::RichText::new(format!("— {}  ·  {speed:.0} km/h", w.stop_reason_text(head))).color(colour(&hr)));
     }
     if !trip {
         return;
@@ -361,7 +381,8 @@ pub(super) fn why_and_trip(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Car
             a if a >= 0.25 => "losing patience",
             _ => "getting irritated",
         };
-        ui.add(egui::ProgressBar::new(d.anger).desired_width(220.0).fill(egui::Color32::from_rgb(200, 60, 40)).text(format!("Driver {word}  ·  {:.0}%", d.anger * 100.0)));
+        let why = if d.sore_loser { ", lost the street race" } else { "" };
+        ui.add(egui::ProgressBar::new(d.anger).desired_width(220.0).fill(egui::Color32::from_rgb(200, 60, 40)).text(format!("Driver {word}{why}  ·  {:.0}%", d.anger * 100.0)));
     }
     ui.label(egui::RichText::new(format!("Driver: {}", d.profile.label())).small().weak());
 }

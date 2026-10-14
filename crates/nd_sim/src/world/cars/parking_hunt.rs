@@ -196,8 +196,11 @@ impl World {
             .traffic
             .cars
             .iter()
-            .filter(|(_, c)| matches!(c.errand, Errand::Search { .. } | Errand::ToKerb | Errand::ToLot(_)) && !c.entering && c.hold <= 0.0 && !c.crashed() && c.v < 0.5 && c.stalled > HUNT_STUCK)
-            .filter(|(_, c)| self.citizens.get(c.citizen).is_some_and(|z| z.commute.search_since > 0 && tick.saturating_sub(z.commute.search_since) > HUNT_GIVE_UP))
+            .filter(|(_, c)| matches!(c.errand, Errand::Search { .. } | Errand::ToKerb | Errand::ToLot(_)) && !c.entering && c.hold <= 0.0 && !c.crashed() && !c.in_stunt())
+            .filter(|(_, c)| {
+                let hunted = self.citizens.get(c.citizen).filter(|z| z.commute.search_since > 0).map_or(0, |z| tick.saturating_sub(z.commute.search_since));
+                (hunted > HUNT_GIVE_UP && c.v < 0.5 && c.stalled > HUNT_STUCK) || (hunted > HUNT_ABANDON && c.v < HUNT_ABANDON_SPEED)
+            })
             .map(|(id, _)| id)
             .collect();
         for id in stuck {
@@ -332,6 +335,12 @@ impl World {
             .filter(|(d, _, _)| *d <= if desperate { LOT_WALK * 2.0 } else { LOT_WALK })
             .collect();
         lots.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // [bridge-riders] Worn out, a driver no longer sets off for a lot
+        // across town: that sent hunters who had given up (stuck in a
+        // queue) off on another long drive, into the next queue, for hours.
+        if worn_out {
+            lots.clear();
+        }
         for (d, b, fee) in lots.into_iter().take(3) {
             let Some((seg, pt)) = self.truck_stop(b) else { continue };
             let Some((goal, s_end, _)) = self.traffic.net.nearest_lane_on(seg, pt) else { continue };
