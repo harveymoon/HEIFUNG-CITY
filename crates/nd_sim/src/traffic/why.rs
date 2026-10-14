@@ -25,12 +25,13 @@ pub enum StopReason {
     LettingOut { car: CarId },
     /// A red light.
     RedLight,
-    /// People on a pedestrian crossing ahead.
-    Pedestrians,
+    /// People on a pedestrian crossing ahead (`crossing`: the index into
+    /// `WalkGraph::crossings`, for the world to say who is on it).
+    Pedestrians { crossing: Option<u32> },
     /// Braking hard for someone crossing where there is no crosswalk (a
     /// roundabout's lanes, a dead end, a jaywalker): nobody stops for them
     /// there, but nobody runs them down either if they can still stop.
-    Jaywalker,
+    Jaywalker { crossing: Option<u32> },
     /// Giving way at an unsignalled junction to traffic already in it.
     GiveWay { to: Option<CarId> },
     /// Turning left on a shared green, waiting for oncoming traffic.
@@ -91,8 +92,8 @@ impl StopReason {
             StopReason::Queued { .. } => "queued",
             StopReason::LettingOut { .. } => "letting_out",
             StopReason::RedLight => "red_light",
-            StopReason::Pedestrians => "pedestrians",
-            StopReason::Jaywalker => "jaywalker",
+            StopReason::Pedestrians { .. } => "pedestrians",
+            StopReason::Jaywalker { .. } => "jaywalker",
             StopReason::GiveWay { .. } => "give_way",
             StopReason::TurningLeft { .. } => "turning_left",
             StopReason::Roundabout => "roundabout",
@@ -120,8 +121,8 @@ impl StopReason {
             StopReason::Queued { behind } => format!("queued behind {}", name(behind)),
             StopReason::LettingOut { car } => format!("letting {} out of the kerb", name(car)),
             StopReason::RedLight => "waiting at a red light".into(),
-            StopReason::Pedestrians => "stopped for people on a crossing".into(),
-            StopReason::Jaywalker => "braking for someone crossing the road (no crosswalk)".into(),
+            StopReason::Pedestrians { .. } => "stopped for people on a crossing".into(),
+            StopReason::Jaywalker { .. } => "braking for someone crossing the road (no crosswalk)".into(),
             StopReason::GiveWay { to } => or(to, "giving way at the junction to", "giving way at the junction"),
             StopReason::TurningLeft { to } => or(to, "turning left, waiting for oncoming", "turning left, waiting for a gap in oncoming traffic"),
             StopReason::Roundabout => "giving way to the roundabout".into(),
@@ -269,11 +270,12 @@ impl Traffic {
         let mut base = -c.s;
         for k in c.idx..(c.idx + 3).min(c.route.len()) {
             let l = c.route[k];
-            if self.peds.holds.get(&l).is_some_and(|hs| hs.iter().any(|h| base + h.s >= -0.5 && base + h.s < 40.0)) {
-                return StopReason::Pedestrians;
+            let ahead = |m: &std::collections::BTreeMap<LaneId, Vec<Hold>>| m.get(&l).and_then(|hs| hs.iter().filter(|h| base + h.s >= -0.5 && base + h.s < 40.0).min_by(|a, b| a.s.total_cmp(&b.s)).map(|h| h.crossing));
+            if let Some(cr) = ahead(&self.peds.holds) {
+                return StopReason::Pedestrians { crossing: Some(cr) };
             }
-            if self.peds.watch.get(&l).is_some_and(|hs| hs.iter().any(|h| base + h.s >= -0.5 && base + h.s < 40.0)) {
-                return StopReason::Jaywalker;
+            if let Some(cr) = ahead(&self.peds.watch) {
+                return StopReason::Jaywalker { crossing: Some(cr) };
             }
             base += lanes[l as usize].length;
         }

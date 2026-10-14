@@ -564,6 +564,40 @@ impl World {
         bore
     }
 
+    /// [bridge-riders] Is the leg `from`..`to` part of a raised walkway (a
+    /// footbridge's stairs or deck, a ring of decks round a junction)? Up
+    /// there nobody is in the street below, whatever is under them.
+    pub fn leg_raised(&self, from: Vec2, to: Vec2) -> bool {
+        !self.walk.raised.is_empty() && (self.walk.level_at_node(from) > 0.0 || self.walk.level_at_node(to) > 0.0)
+    }
+
+    /// [bridge-riders] The height (absolute, as `road_height`) of someone
+    /// at `pos` on the leg `from`..`to` that is not on a raised walkway or
+    /// in a tunnel: the raised way they go along (an elevated path or
+    /// street, a viaduct, a bridge, a dam's crest), else the ground. None
+    /// in a flat city, where every way is at grade.
+    pub fn leg_way_height(&self, from: Vec2, to: Vec2, pos: Vec2) -> Option<f32> {
+        if !self.relief {
+            return None;
+        }
+        Some(self.way_height_on_leg(from, to, pos).unwrap_or_else(|| self.ground_height(pos)))
+    }
+
+    /// [bridge-riders] Is crossing `cr`'s street at another level from
+    /// someone at height `z` (`leg_way_height`): a street under the
+    /// elevated path or viaduct they ride, or one up on a viaduct over
+    /// the street they ride? Then they are not in its road, and its
+    /// drivers have nobody there to stop for.
+    pub fn crossing_apart_from(&self, cr: u32, z: f32) -> bool {
+        let Some(c) = self.walk.crossings.get(cr as usize) else { return false };
+        if self.roads.try_segment(c.segment).is_none() {
+            return false;
+        }
+        let (a, b) = self.roads.segment_points(c.segment);
+        let (t, _) = crate::geom::project_on_segment(c.mid, a, b);
+        (self.road_height(c.segment, t) - z).abs() > crate::pedestrians::LEVEL_APART
+    }
+
     /// How high a walker stands above the ground: up the stairs and on the
     /// deck of a raised walkway, 0 elsewhere.
     pub fn walker_level(&self, c: &Citizen, pos: Vec2) -> f32 {

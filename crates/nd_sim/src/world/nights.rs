@@ -10,6 +10,10 @@ use crate::street_events::*;
 use crate::traffic::{DriverProfile, GangPhase, GangRole, LaneId, StuntKind};
 use crate::vehicle::{BodyType, VehicleClass, VehicleModel};
 
+/// [bridge-riders] How angry (0..1, "losing patience") a street racer who
+/// lost drives home.
+pub const SORE_LOSER: f32 = 0.35;
+
 /// A stable 64-bit mix of two numbers.
 fn mix(a: u64, b: u64) -> u64 {
     let mut x = a ^ b.wrapping_mul(0x9E37_79B9_7F4A_7C15);
@@ -600,6 +604,11 @@ impl World {
         tc.drive.gang = None;
         tc.drive.profile.assigned = false;
         tc.drive.calm = None;
+        // [bridge-riders] The drive home is a trip of its own, timed from
+        // here: a race has no destination to be late for (Harvey's flag).
+        tc.drive.expected_min = 0.0;
+        tc.drive.anger = 0.0;
+        tc.drive.sore_loser = false;
         if let Some(p) = self.citizens.get_mut(driver) {
             if let Activity::Driving { purpose, to, .. } = &mut p.activity {
                 *purpose = Purpose::Home;
@@ -612,9 +621,14 @@ impl World {
     /// Everyone goes home; the record and the news.
     fn end_race(&mut self, r: Race, police: bool) {
         let tick = self.clock.tick;
+        let raced = !police && r.go_at.is_some() && !r.finished.is_empty();
         for &car in &r.cars {
-            if self.traffic.cars.get(car).is_some_and(|c| !c.drive.fleeing) {
-                self.release_racer(car);
+            if self.traffic.cars.get(car).is_some_and(|c| !c.drive.fleeing) && self.release_racer(car) && raced && r.finished.first() != Some(&car) {
+                // [bridge-riders] Beaten: sore for the drive home.
+                let tc = &mut self.traffic.cars[car];
+                tc.drive.anger = SORE_LOSER;
+                tc.drive.anger_peak = tc.drive.anger_peak.max(SORE_LOSER);
+                tc.drive.sore_loser = true;
             }
         }
         for &cid in &r.racers {

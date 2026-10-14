@@ -87,6 +87,11 @@ impl World {
                 car.drive.patience = patience;
                 car.drive.temper = temper;
                 car.drive.calm = (!pro).then_some(car.drive.profile);
+                // [bridge-riders] Anger carried into a drive timed afresh
+                // (a street racer who lost, driving home sore) shows.
+                if let Some(calm) = car.drive.calm.filter(|_| car.drive.anger > 0.0) {
+                    car.drive.profile = calm.angry(car.drive.anger);
+                }
                 continue;
             }
             let Some(calm) = car.drive.calm else { continue };
@@ -137,6 +142,47 @@ impl World {
     pub fn car_trip_minutes(&self, id: CarId) -> Option<(f32, f32)> {
         let c = self.traffic.cars.get(id)?;
         (c.drive.expected_min > 0.0).then(|| (self.clock.tick.saturating_sub(c.drive.trip_start) as f32, c.drive.expected_min))
+    }
+
+    /// [bridge-riders] The person a vehicle stopping for people on a
+    /// crossing (or braking for someone in the road) is stopping for: of
+    /// those on that crossing last tick, the one nearest the vehicle, and
+    /// how many there are in all. None for any other reason.
+    pub fn stopped_for(&self, id: CarId) -> Option<(CitizenId, usize)> {
+        use crate::traffic::StopReason;
+        let car = self.traffic.cars.get(id)?;
+        let cr = match self.traffic.stop_reason(id) {
+            StopReason::Pedestrians { crossing } | StopReason::Jaywalker { crossing } => crossing?,
+            _ => return None,
+        };
+        let occ = &self.peds.occupants;
+        let from = occ.partition_point(|x| x.0 < cr);
+        let on: Vec<CitizenId> = occ[from..].iter().take_while(|x| x.0 == cr).map(|x| x.1).filter(|&p| self.citizens.contains_key(p)).collect();
+        let nearest = on.iter().copied().min_by(|&a, &b| self.citizens[a].pos.distance(car.pos).total_cmp(&self.citizens[b].pos.distance(car.pos)))?;
+        Some((nearest, on.len()))
+    }
+
+    /// [bridge-riders] Someone in the road, in a few words: "Ana Ruiz on a
+    /// bike", "Theo Achebe on foot".
+    pub fn person_label(&self, id: CitizenId) -> String {
+        match self.citizens.get(id) {
+            Some(c) if c.mode == crate::citizens::TravelMode::Bike => format!("{} on a bike", c.name),
+            Some(c) => format!("{} on foot", c.name),
+            None => "someone who has gone".into(),
+        }
+    }
+
+    /// [bridge-riders] Why a vehicle is held up, in plain language
+    /// (`StopReason::text`), naming the person it stops for when it is
+    /// people on a crossing or someone in the road.
+    pub fn stop_reason_text(&self, id: CarId) -> String {
+        use crate::traffic::StopReason;
+        let r = self.traffic.stop_reason(id);
+        match (r, self.stopped_for(id)) {
+            (StopReason::Pedestrians { .. }, Some((p, n))) => format!("stopped at a crossing for {}{}", self.person_label(p), if n > 1 { format!(" and {} more", n - 1) } else { String::new() }),
+            (StopReason::Jaywalker { .. }, Some((p, _))) => format!("braking for {}, crossing the road (no crosswalk)", self.person_label(p)),
+            _ => r.text(|c| self.car_label(c)),
+        }
     }
 
     /// A vehicle in a few words, for the inspector and the remote API:

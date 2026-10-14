@@ -241,7 +241,7 @@ pub fn selection(w: &World, sel: Selection) -> Value {
         Selection::Road(sid) => json!({ "kind": "road", "id": sid.0, "name": crate::road_select::name(w, sid), "road_kind": crate::road_select::kind(w, sid) }),
         Selection::Citizen(id) => json!({ "kind": "citizen", "id": key_str(id), "name": w.citizens.get(id).map(|c| c.name.as_str()) }),
         Selection::Building(id) => json!({ "kind": "building", "id": key_str(id), "name": w.buildings.get(id).map(|b| b.name.as_str()) }),
-        Selection::Car(id) => json!({ "kind": "car", "id": key_str(id), "label": w.car_label(id), "why": w.traffic.cars.contains_key(id).then(|| w.traffic.stop_reason(id).text(|c| w.car_label(c))) }),
+        Selection::Car(id) => json!({ "kind": "car", "id": key_str(id), "label": w.car_label(id), "why": w.traffic.cars.contains_key(id).then(|| w.stop_reason_text(id)) }),
         Selection::Parked(id) => json!({ "kind": "parked_car", "id": key_str(id) }),
         Selection::Bot(id) => json!({ "kind": "bot", "id": key_str(id), "name": nd_sim::bots::bot_name(w, id) }),
         Selection::Train(id) => json!({ "kind": "train", "id": key_str(id), "headcode": w.rail.trains.get(id).map(|t| crate::train_select::headcode(id, t.kind)) }),
@@ -753,9 +753,18 @@ pub fn driver_json(w: &World, c: &Car) -> Value {
 pub fn stop_reason_json(w: &World, id: CarId) -> Value {
     let r = w.traffic.stop_reason(id);
     let by = r.by();
+    // [bridge-riders] Stopping for people: `by` names the person (the one
+    // nearest the vehicle) and `by_kind` says which it is.
+    let person = w.stopped_for(id);
+    let (by, by_label, by_kind) = match (by, person) {
+        (Some(b), _) => (Some(key_str(b)), Some(w.car_label(b)), Some("vehicle")),
+        (None, Some((p, _))) => (Some(key_str(p)), Some(w.person_label(p)), Some("citizen")),
+        (None, None) => (None, None, None),
+    };
     json!({
-        "reason": r.key(), "text": r.text(|c| w.car_label(c)), "good_reason": r.is_good(),
-        "by": by.map(key_str), "by_label": by.map(|b| w.car_label(b)),
+        "reason": r.key(), "text": w.stop_reason_text(id), "good_reason": r.is_good(),
+        "by": by, "by_label": by_label, "by_kind": by_kind,
+        "people_on_crossing": person.map(|(_, n)| n),
         "stalled_s": w.traffic.cars.get(id).map(|c| round(c.stalled)),
     })
 }
@@ -786,7 +795,8 @@ pub fn trip_json(w: &World, id: CarId, c: &Car) -> Value {
     json!({
         "timed": expected > 0.0, "started_tick": d.trip_start, "elapsed_min": round(elapsed), "expected_min": round(expected),
         "over_ratio": if expected > 0.0 { json!(round(elapsed / expected)) } else { Value::Null },
-        "can_rage": d.calm.is_some(), "anger": round(d.anger), "anger_peak": round(d.anger_peak), "patience": round(d.patience), "temper": round(d.temper),
+        "can_rage": d.calm.is_some(), "anger": round(d.anger),
+        "anger_cause": if d.anger <= 0.02 { Value::Null } else if d.sore_loser { json!("lost_race") } else { json!("late") }, "anger_peak": round(d.anger_peak), "patience": round(d.patience), "temper": round(d.temper),
         "angry_profile": d.anger > 0.0,
     })
 }

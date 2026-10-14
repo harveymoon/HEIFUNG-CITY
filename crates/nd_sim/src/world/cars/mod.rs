@@ -64,6 +64,14 @@ pub(super) const HUNT_GIVE_UP: u64 = 60;
 /// [parking] Seconds a worn-out hunter stands in a queue before it leaves
 /// the car where it is (`World::hunters_give_up`).
 const HUNT_STUCK: f32 = 120.0;
+/// [bridge-riders] Ticks of hunting after which a hunter still on the move
+/// (crawling round a loop of jams, never standing `HUNT_STUCK` seconds in
+/// one go) leaves the car as soon as it is going slowly: Harvey's flag, a
+/// driver "raging because it took too long" had circled the same blocks
+/// near the cabaret for four hours.
+const HUNT_ABANDON: u64 = HUNT_GIVE_UP * 2;
+/// [bridge-riders] Slow enough (m/s) for an abandoning hunter to pull in.
+const HUNT_ABANDON_SPEED: f32 = 3.0;
 /// Walking the last stretch from the car below this is just getting out.
 const GET_OUT: f32 = 20.0;
 
