@@ -227,6 +227,31 @@ Both are display only: kept in the app (`Voices`, not the save), never read by t
 failed or slow request leaves the template (the courier's fallback). Spotlit citizens' thoughts
 still go through the separate `HybridMind` path.
 
+### Ask the committee
+
+The Committee window's **Ask** tab is a chat room between meetings (`nd_minds::committee::questions`,
+`nd_sim::committee::questions`, remote `committee {action: ask | questions}`). The mayor types a
+question and presses Enter or Send; each seated member then gets one turn (`Task::Question`) and
+decides whether to answer, in character, from the same persona card and city report as their
+meeting turns plus their scope's figures. A model replies `{"respond": true|false, "text": "..."}`;
+a reply in prose is taken as an answer, a broken one is read as far as it goes (`parse_answer`).
+Members answer one at a time (the model backends work one request at a time anyway), in an order
+that rotates per question, and each reads up to four earlier replies in the thread (clipped), so
+they can agree with or argue against a colleague. The window shows who is typing and who is still
+to answer; members who decline appear on one "No comment from ..." line. The stand-in answers
+when the question touches the member's scope, sometimes otherwise (by temper: firebrands talk,
+technocrats rarely), sometimes reacts to the reply before, and the last member answers if nobody
+has; deterministic in the question's seed.
+
+The threads are saved with the city (`Committee::questions`, the last 40; old saves load with
+none). When a meeting opens, the answered threads no meeting has read go into a digest (the
+newest five, answers cut to 160 characters, at most about 1,800 characters), appended to the city
+report in every turn of that meeting; the secretary notes it after the opening, and the threads
+are marked discussed (they stay in the chat log, tagged "read at meeting N"). A thread still
+being answered waits for the next meeting. Each question costs at most one call per seated
+member (six), with the settings' timeout and token cap; a failed call is answered by the
+stand-in and marked "(stand-in)".
+
 ### Not done yet
 
 - Streaming tokens from the model (the window types out each finished turn instead).

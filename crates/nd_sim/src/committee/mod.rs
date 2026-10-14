@@ -19,6 +19,7 @@
 //! project's status.
 
 pub mod proposals;
+pub mod questions;
 pub mod report;
 pub mod rules;
 
@@ -36,6 +37,7 @@ use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 
 pub use proposals::{Action, SiteOption};
+pub use questions::{Question, QuestionReply};
 pub use report::{Area, CityReport, Fact};
 
 use crate::{SimRng, World};
@@ -88,6 +90,9 @@ pub struct Committee {
     pub veto_allowed: bool,
     /// The report the last meeting read, for "since the last meeting".
     pub baseline: Option<CityReport>,
+    /// [ask-committee] The mayor's questions between meetings and the
+    /// members' replies (oldest first; `questions::QUESTIONS_KEPT`).
+    pub questions: Vec<questions::Question>,
 }
 
 impl Default for Committee {
@@ -107,6 +112,7 @@ impl Default for Committee {
             auto_meetings: true,
             veto_allowed: true,
             baseline: None,
+            questions: Vec::new(),
         }
     }
 }
