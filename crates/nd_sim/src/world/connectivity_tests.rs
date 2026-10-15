@@ -180,3 +180,19 @@ fn strolls_stay_near_and_shun_the_industrial_estate() {
     // About half the walk nodes in reach are on the estate's frontage.
     assert!(industrial * 10 < n, "{industrial} of {n} strolls into the industrial estate");
 }
+
+/// [park-access] Residents are counted by their walk to a park, a park lot
+/// itself is never short of one, and homes without a park are counted.
+#[test]
+fn park_access_summary_counts_residents_by_walk() {
+    use super::connectivity::{ParkAccessRow, ParkAccessSummary};
+    let lot = LotId::default();
+    let row = |minutes: Option<f32>, residents: u32| ParkAccessRow { lot, minutes, residents, park: false };
+    let rows = [row(Some(3.0), 10), row(Some(8.0), 20), row(Some(14.0), 30), row(Some(40.0), 15), row(None, 25), row(None, 0)];
+    let s = ParkAccessSummary::of(&rows);
+    assert_eq!(s.residents, 100);
+    assert_eq!((s.within_5, s.within_10, s.within_15, s.none), (10, 30, 60, 25));
+    assert_eq!(s.homes_without, 1, "an empty lot is not a home");
+    assert!((s.share(s.within_15) - 0.6).abs() < 1e-6);
+    assert_eq!(ParkAccessSummary::default().share(0), 0.0);
+}

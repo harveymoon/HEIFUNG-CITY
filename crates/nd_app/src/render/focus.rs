@@ -48,7 +48,7 @@ impl Focus {
             Some(Focus::Metro)
         } else if o.trails {
             Some(Focus::Trails)
-        } else if o.density {
+        } else if o.density || o.park_access {
             Some(Focus::Density)
         } else if o.construction {
             Some(Focus::Sites)

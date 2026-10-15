@@ -54,6 +54,8 @@ pub struct Overlays {
     pub trails: bool,
     /// [pt-ux] Land density: how densely each plot is built (`pt_layers`).
     pub density: bool,
+    /// [park-access] Walking minutes to the nearest park, per lot (`pt_layers`).
+    pub park_access: bool,
     /// [w1] Construction: building sites going up and coming down, over a
     /// dimmed city (`sites_layer`, `focus::Focus::Sites`).
     pub construction: bool,
@@ -65,7 +67,7 @@ pub struct Overlays {
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false, parking: false, trails: false, density: false, construction: false, walk_networks: false }
+        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false, parking: false, trails: false, density: false, park_access: false, construction: false, walk_networks: false }
     }
 }
 

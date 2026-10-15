@@ -174,6 +174,55 @@ pub struct AccessFields {
     pub night: Vec<f32>,
 }
 
+/// [park-access] One lot of [`World::park_access`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ParkAccessRow {
+    pub lot: LotId,
+    pub minutes: Option<f32>,
+    pub residents: u32,
+    /// The lot is a park itself.
+    pub park: bool,
+}
+
+/// [park-access] Residents by their walk to a park: within 5, 10 and 15
+/// minutes, and with none in reach.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ParkAccessSummary {
+    pub residents: u32,
+    pub within_5: u32,
+    pub within_10: u32,
+    pub within_15: u32,
+    pub none: u32,
+    /// Homes (lots with residents) with no park in reach.
+    pub homes_without: u32,
+}
+
+impl ParkAccessSummary {
+    pub fn of(rows: &[ParkAccessRow]) -> Self {
+        let mut s = Self::default();
+        for r in rows.iter().filter(|r| r.residents > 0) {
+            s.residents += r.residents;
+            match r.minutes {
+                Some(m) => {
+                    s.within_5 += if m <= 5.0 { r.residents } else { 0 };
+                    s.within_10 += if m <= 10.0 { r.residents } else { 0 };
+                    s.within_15 += if m <= 15.0 { r.residents } else { 0 };
+                }
+                None => {
+                    s.none += r.residents;
+                    s.homes_without += 1;
+                }
+            }
+        }
+        s
+    }
+
+    /// `n` as a share of all residents, 0..1.
+    pub fn share(&self, n: u32) -> f32 {
+        if self.residents == 0 { 0.0 } else { n as f32 / self.residents as f32 }
+    }
+}
+
 impl Connectivity {
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
@@ -453,6 +502,20 @@ impl World {
             let text = format!("No route found: {n} trips to {name} failed today ({why}).");
             self.connectivity.push_alert(tick, AlertKind::NoRoute, pos, Some(target), n, text);
         }
+    }
+
+    /// [park-access] The Park access layer's data: every lot with a
+    /// building, its walk to the nearest open park in minutes (`None`: no
+    /// park in walking reach) and how many people live there.
+    pub fn park_access(&self) -> Vec<ParkAccessRow> {
+        self.lots
+            .iter()
+            .filter_map(|(id, l)| {
+                let b = self.buildings.get(l.building?)?;
+                let a = self.lot_walk_access(id)?;
+                Some(ParkAccessRow { lot: id, minutes: a.park_min, residents: b.residents.len() as u32, park: b.land_use == LandUse::Park })
+            })
+            .collect()
     }
 
     /// [pt-walk] Walking access from lot `l` itself (F2, F30): the best of

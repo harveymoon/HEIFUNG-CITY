@@ -80,6 +80,8 @@ pub const MAP_LAYERS: &[MapLayer] = &[
     MapLayer { key: "parking", label: "Parking", group: "Traffic", hotkey: "", hint: "Streets by the legal parking a driver finds (kerbs and public lots in walking reach); every public lot with how full it is", flag: |o| &mut o.parking, legend: legend_parking },
     MapLayer { key: "trails", label: "Trails", group: "People", hotkey: "", hint: "A long exposure: everything that moves leaves a fading streak over a darkened city", flag: |o| &mut o.trails, legend: legend_trails },
     MapLayer { key: "density", label: "Land density", group: "City", hotkey: "", hint: "Foot traffic and people per block, smoothed over days: quiet suburbs dark, busy main streets hot, where developers build taller", flag: |o| &mut o.density, legend: legend_density },
+    // [park-access] (render/pt_layers.rs `park_access_gizmos`)
+    MapLayer { key: "park_access", label: "Park access", group: "People", hotkey: "", hint: "Walking minutes from every building to the nearest open park: green close, red far, homes with no park in reach ringed", flag: |o| &mut o.park_access, legend: legend_park_access },
     // [w1] (render/sites_layer.rs)
     MapLayer { key: "construction", label: "Construction", group: "City", hotkey: "", hint: "Building sites: going up (with the planned height), coming down for a rebuild, or coming down for good", flag: |o| &mut o.construction, legend: legend_construction },
     MapLayer { key: "metro", label: "Metro", group: "Transit", hotkey: "M", hint: "The metro: tunnels and lines in their colours, every station a named marker, over a dimmed city", flag: |o| &mut o.metro, legend: legend_metro },
@@ -515,6 +517,23 @@ fn legend_trails(ui: &mut egui::Ui, _: &LegendCtx) {
         .collect();
     swatches(ui, &items, false);
     small(ui, "each streak fades out over about ten seconds");
+}
+
+/// [park-access] The Park access layer's key: the minutes ramp and how
+/// the city's residents fare (`pt_layers::park_access_summary`, refreshed
+/// with the layer).
+fn legend_park_access(ui: &mut egui::Ui, _: &LegendCtx) {
+    ramp(ui, |t| linear(crate::render::park_access_color(Some(t * crate::render::PARK_ACCESS_FAR))), "next door", "15+ min");
+    swatches(ui, &[(linear(crate::render::park_access_color(None)), "no park in walking reach".to_string())], false);
+    match crate::render::park_access_summary() {
+        Some(s) if s.residents > 0 => {
+            let pct = |n: u32| (s.share(n) * 100.0).round();
+            small(ui, &format!("{} residents: {}% within 5 min, {}% within 10, {}% within 15; {}% ({} homes) with no park in reach", s.residents, pct(s.within_5), pct(s.within_10), pct(s.within_15), pct(s.none), s.homes_without));
+        }
+        Some(_) => small(ui, "nobody lives here yet"),
+        None => small(ui, "measuring..."),
+    }
+    small(ui, "a park counts once it is laid out and open; minutes are by the walking paths, updated every two game hours");
 }
 
 /// [pt-ux] The Land density layer's key.

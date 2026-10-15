@@ -10,6 +10,10 @@
 //!   glowing streak that fades out over [`TRAIL_SAMPLES`] samples: cars red,
 //!   buses gold, lorries amber, sirens blue-white, people cyan, robots
 //!   green.
+//! - **Park access** (`park_access`): every built lot outlined by its walk
+//!   to the nearest open park ([`World::park_access`]), green close to red
+//!   at [`PARK_ACCESS_FAR`] minutes and beyond, homes with no park in reach
+//!   ringed twice; parks themselves bright green.
 //! - **Land density** (`density`): how densely each plot is built, as a
 //!   heat map. [`plot_density`] reads the growth model's land density
 //!   (`World::land_density_at`, fix/pt-growth).
@@ -36,7 +40,7 @@ pub(super) struct PtLayersPlugin;
 impl Plugin for PtLayersPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Trails>()
-            .add_systems(Update, (parking_gizmos, sync_trails, density_gizmos).in_set(SimSet::Sync).after(super::lift_movers))
+            .add_systems(Update, (parking_gizmos, sync_trails, density_gizmos, park_access_gizmos).in_set(SimSet::Sync).after(super::lift_movers))
             .add_systems(bevy_egui::EguiPrimaryContextPass, parking_labels.after(crate::ui::side_panel));
     }
 }
@@ -438,9 +442,92 @@ fn density_gizmos(sim: Res<Sim>, overlays: Res<Overlays>, lighting: Res<super::L
     }
 }
 
+// ── park access ────────────────────────────────────────────────────────────
+
+/// [park-access] Minutes at which the layer reads fully red.
+pub const PARK_ACCESS_FAR: f32 = 15.0;
+
+/// [park-access] Green for a park next door through yellow (7.5 min) to red
+/// at [`PARK_ACCESS_FAR`] and beyond; magenta for no park in walking reach.
+pub fn park_access_color(minutes: Option<f32>) -> [f32; 3] {
+    let Some(m) = minutes else { return [0.75, 0.05, 0.6] };
+    let t = (m / PARK_ACCESS_FAR).clamp(0.0, 1.0);
+    let (green, yellow, red) = ([0.1, 0.85, 0.3], [1.0, 0.85, 0.1], [1.0, 0.12, 0.08]);
+    let (a, b, k) = if t < 0.5 { (green, yellow, t * 2.0) } else { (yellow, red, (t - 0.5) * 2.0) };
+    [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k]
+}
+
+/// [park-access] The last summary the layer measured, for its legend (the
+/// legend has only the world, and measuring every frame is too dear).
+static PARK_ACCESS: std::sync::Mutex<Option<nd_sim::world::connectivity::ParkAccessSummary>> = std::sync::Mutex::new(None);
+
+/// [park-access] How the city's residents fare, as last measured; `None`
+/// until the layer has been on.
+pub fn park_access_summary() -> Option<nd_sim::world::connectivity::ParkAccessSummary> {
+    PARK_ACCESS.lock().ok().and_then(|g| *g)
+}
+
+/// [park-access] A lot's outline pulled in by `inset` metres, at height `lift`.
+fn lot_ring(w: &World, l: &nd_sim::Lot, inset: f32, lift: f32) -> Vec<Vec3> {
+    l.polygon
+        .iter()
+        .chain(l.polygon.first())
+        .map(|p| {
+            let q = *p + (l.center - *p).normalize_or_zero() * inset;
+            Vec3::new(q.x, w.surface_height(q) + lift, q.y)
+        })
+        .collect()
+}
+
+/// The Park access layer: every built lot outlined in its walk-to-park
+/// colour over a dimmed city (`focus::Focus::Density`), homes with no park
+/// in reach ringed twice, parks bright green; measured every few seconds.
+fn park_access_gizmos(sim: Res<Sim>, overlays: Res<Overlays>, lighting: Res<super::Lighting>, time: Res<Time>, mut cache: Local<Option<(f32, Vec<(Vec<Vec3>, Color)>)>>, mut gizmos: Gizmos<super::layers::LoadGizmos>) {
+    if lighting.heat || !overlays.park_access {
+        *cache = None;
+        return;
+    }
+    let now = time.elapsed_secs();
+    if cache.as_ref().is_none_or(|(at, _)| now - at >= 5.0) || sim.full_rebuild {
+        let w = &sim.world;
+        let rows = w.park_access();
+        if let Ok(mut g) = PARK_ACCESS.lock() {
+            *g = Some(nd_sim::world::connectivity::ParkAccessSummary::of(&rows));
+        }
+        let mut out = Vec::new();
+        for r in &rows {
+            let Some(l) = w.lots.get(r.lot) else { continue };
+            let c = if r.park { [0.2, 1.0, 0.45] } else { park_access_color(r.minutes) };
+            let col = Color::linear_rgb(c[0] * 1.8, c[1] * 1.8, c[2] * 1.8);
+            out.push((lot_ring(w, l, 1.2, 0.8), col));
+            // A home with no park in reach: a second ring, so it stands out.
+            if r.minutes.is_none() && r.residents > 0 {
+                out.push((lot_ring(w, l, 3.0, 1.0), col));
+            }
+        }
+        *cache = Some((now, out));
+    }
+    if let Some((_, v)) = cache.as_ref() {
+        for (pts, c) in v {
+            gizmos.linestrip(pts.iter().copied(), *c);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn park_access_colours_run_green_to_red() {
+        let near = park_access_color(Some(0.0));
+        let far = park_access_color(Some(PARK_ACCESS_FAR * 2.0));
+        assert!(near[1] > near[0], "next door is green");
+        assert!(far[0] > far[1], "far is red");
+        assert_eq!(park_access_color(Some(PARK_ACCESS_FAR)), far, "red from the far mark on");
+        let none = park_access_color(None);
+        assert!(none[2] > 0.4 && none[0] > 0.4, "no park reads magenta");
+    }
 
     #[test]
     fn availability_counts_kerbs_and_near_lots() {

@@ -65,7 +65,7 @@ mod layers;
 mod pt_layers;
 /// [w1] The Construction layer.
 pub mod sites_layer;
-pub use pt_layers::{availability_color as parking_color, Mover as TrailMover};
+pub use pt_layers::{availability_color as parking_color, park_access_color, park_access_summary, Mover as TrailMover, PARK_ACCESS_FAR};
 mod lights;
 /// [chase-cam] What stands between the chase camera and its subject, cut away.
 mod cutaway;
