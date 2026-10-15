@@ -614,6 +614,7 @@ Everything still open, from the old groups 6–8, the group 1–5 leftovers, tod
 - [ ] District tax laws and levers (e.g. a student district)
 - [ ] Regional commuters (out-of-town workers early on, locals preferred later; commuter share as a goal)
 - [ ] Investors: owned buildings skip densify; megacorp deposits nominal; delivered cars parked far from the buyer's home
+- [x] Harvey 2026-10-15: "why is demand for civic always 100%? I keep zoning more land it never goes down" → DONE [fix/civic-demand]: civic demand was `0.1 + pop/150` (100% past ~135 people, blind to what was built) and park demand a flat 50%. Both are now a supply gap (`Economy::civic_gap` / `park_gap`, `Shortfall`): need (civic offices 3 m² of floor a head, rising to 4 at 20k people; parks 6 m² a head) less what is open, what is going up (counted in full, and the light part of the Demand bar) and a quarter of what the vacant zoned lots could hold (at most half the shortfall: zoning shows, only building meets it); scaled by the old small-town ramp. Demand panel and zoning tool say why ("12122 people need about 43,713 m² of civic offices; the city has 179,047 m²"). Entertainment checked: not stuck, it follows venue takings (`cover`), and says so. Harvey's day-50 city: civic 100% → 5% (218 civic offices, ~179,000 m² of floor for 12,122 people, 4× the need), park 50% → 75% (26 parks, 16,836 m², 1.4 m² a head)
 
 ## H. Public order and events (big features)
 - [ ] Riots, protests, parades taking over roads
