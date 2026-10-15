@@ -6,9 +6,9 @@ use nd_sim::bots::{bot_code, bot_name, fleet_colour};
 use nd_sim::{BotId, Vec2 as SVec2, World};
 use serde_json::{json, Value};
 
-use super::view::{building_name, field, key_from, key_str, opt_bool, opt_f32, opt_vec2, round, selection, v2};
+use super::view::{building_name, field, key_from, key_str, opt_bool, opt_f32, opt_str, opt_vec2, round, selection, v2};
 use super::ctx::Ctx;
-use crate::camera::{thing_pose, zoom_distance, CameraMode, FlyGoal};
+use crate::camera::{chase_subject, thing_pose, zoom_distance, CameraMode, FlyGoal, FollowView};
 use crate::tools::Selection;
 
 /// The thing a command names: `{citizen|car|bot|building|vehicle: id}`
@@ -66,11 +66,17 @@ pub(super) fn target_of(cmd: &Value, ctx: &Ctx, what: &str) -> Result<Selection,
     }
 }
 
-/// `follow {target?, stop?, on?, pov?, fly?}`: lock the camera on a thing
-/// (the selection by default), as the inspector's Follow button does.
-/// `stop: true` or `on: false` ends it. `pov: true` looks through their
-/// eyes (Walk view), `pov: false` goes back to the orbit camera. The camera
-/// flies in smoothly first unless `fly: false`.
+/// `follow {target?, stop?, on?, pov?, fly?, view?, turn?, tilt?, zoom?}`:
+/// lock the camera on a thing (the selection by default), as the
+/// inspector's Follow button does. `stop: true` or `on: false` ends it.
+/// `pov: true` looks through their eyes (Walk view), `pov: false` goes back
+/// to the follow camera. The camera flies in smoothly first unless `fly:
+/// false`. [chase-cam] `view`: `chase` (low behind it, the default) or
+/// `high` (the orbit camera riding on it), as F toggles; `turn` / `tilt`
+/// (radians) nudge the chase camera round it as a right-drag does (it
+/// swings back after a moment), `zoom` sets its distance (times the
+/// default, 0.55..3). Following the same thing again keeps the follow and
+/// applies only the view and nudges.
 pub(super) fn follow(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let stop = opt_bool(cmd, "stop")?.unwrap_or(false) || opt_bool(cmd, "on")? == Some(false);
     if stop {
@@ -83,7 +89,27 @@ pub(super) fn follow(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     }
     let sel = target_of(cmd, ctx, "follow")?;
     let generation = ctx.sim.generation;
-    ctx.follow.start(sel, generation);
+    let again = ctx.follow.is(sel) && ctx.follow.generation == generation;
+    if !again {
+        ctx.follow.start(sel, generation);
+    }
+    if let Some(v) = opt_str(cmd, "view")? {
+        let view = match v.to_ascii_lowercase().as_str() {
+            "chase" => FollowView::Chase,
+            "high" | "orbit" => FollowView::High,
+            _ => return Err(format!("follow: unknown view {v:?}; chase or high")),
+        };
+        ctx.follow.set_view(view);
+    }
+    let turn = opt_f32(cmd, "turn")?.unwrap_or(0.0);
+    let tilt = opt_f32(cmd, "tilt")?.unwrap_or(0.0);
+    ctx.follow.nudge.turn(SVec2::new(turn, tilt));
+    if let Some(c) = opt_bool(cmd, "cutaway")? {
+        ctx.follow.cutaway_off = !c;
+    }
+    if let Some(z) = opt_f32(cmd, "zoom")? {
+        ctx.follow.nudge.zoom = z.clamp(crate::chase::ZOOM_MIN, crate::chase::ZOOM_MAX);
+    }
     let pose = thing_pose(&ctx.sim, sel);
     if let Some(pov) = opt_bool(cmd, "pov")? {
         if pov && pose.is_none_or(|p| p.heading.is_none()) {
@@ -91,12 +117,14 @@ pub(super) fn follow(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         *ctx.mode = if pov { CameraMode::Walk } else { CameraMode::Orbit };
     }
-    if *ctx.mode == CameraMode::Orbit && opt_bool(cmd, "fly")?.unwrap_or(true) {
+    if *ctx.mode == CameraMode::Orbit && !again && opt_bool(cmd, "fly")?.unwrap_or(true) {
         let d = ctx.cams.iter().next().map_or(90.0, |c| c.distance.min(zoom_distance(&ctx.sim, sel) * 2.0));
         ctx.fly.to(FlyGoal::Thing(sel), Some(d), None);
     }
     Ok(json!({
         "following": selection(&ctx.sim.world, sel), "pov": *ctx.mode == CameraMode::Walk,
+        "view": ctx.follow.view.label(), "chase_capable": chase_subject(&ctx.sim, sel).is_some(),
+        "nudge": { "turn": round(ctx.follow.nudge.look.x), "tilt": round(ctx.follow.nudge.look.y), "zoom": round(ctx.follow.nudge.zoom) },
         "at": pose.map(|p| v2(p.pos)), "flying": ctx.fly.flying(), "camera": super::camera::camera_pose(ctx),
     }))
 }

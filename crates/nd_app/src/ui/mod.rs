@@ -324,7 +324,7 @@ pub(crate) fn side_panel(
 
     person::pane(ctx, &mut sim, &mut tools, &mut selection, &mut flags, content, (&mut follow, &mut fly, &mut mode));
     if data_rect.is_none() {
-        follow::banner(ctx, &sim, &mut follow, &mut mode, &mut selection, content);
+        follow::banner(ctx, &sim, &mut follow, &mut fly, &mut mode, &mut selection, content);
     }
     if tools.tool == Tool::Inspect && *mode == CameraMode::Orbit && data_rect.is_none() {
         // [pt-ux] Underground, only what that view draws.

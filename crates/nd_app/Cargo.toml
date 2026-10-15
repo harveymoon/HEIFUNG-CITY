@@ -30,6 +30,8 @@ winit = { version = "0.30", default-features = false }
 [dev-dependencies]
 # [fonts] The glyph-coverage test reads the fonts' character maps.
 ttf-parser = "0.25"
+# [chase-cam] Parse and validate the cut-away shader's WGSL (the version Bevy uses).
+naga = { version = "29", features = ["wgsl-in"] }
 
 [build-dependencies]
 # The exe's icon in Explorer and the taskbar (a Windows resource).

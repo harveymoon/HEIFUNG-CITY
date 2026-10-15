@@ -73,6 +73,9 @@ pub(super) fn status(ctx: &Ctx) -> Value {
     });
     // [camera] What the camera is locked on, if anything.
     v["following"] = json!(ctx.follow.target.map(|s| selection(w, s)));
+    // [chase-cam] How it follows, and what the chase camera cuts away.
+    v["follow_view"] = json!(ctx.follow.target.map(|_| ctx.follow.view.label()));
+    v["chasing"] = json!(ctx.follow.chasing());
     // [subway] Added apart: the literal above is at serde_json's macro depth.
     let ss = &w.subway.stats;
     v["subway"] = json!({ "stations": ss.stations, "lines": ss.lines, "trains": ss.trains, "waiting": ss.waiting, "riding": ss.riding, "riders_today": ss.riders_today, "riders_yesterday": ss.riders_yesterday, "fares_today": round(ss.fares_today) });
@@ -87,6 +90,7 @@ pub(super) fn status(ctx: &Ctx) -> Value {
     v["identity"] = identity::identity_json(w);
     // [looks] The figure cache: meshes alive, people outdoors and their distinct looks.
     let st = &ctx.stats;
+    v["render"]["cut_meshes"] = json!(st.cut_meshes);
     v["render"]["people"] = json!({ "meshes": st.people_meshes, "mesh_cap": crate::render::PEOPLE_MESH_CAP, "visible": st.people_visible, "distinct_looks_visible": st.people_looks_visible, "built_total": st.people_built, "borrowed": st.people_borrowed, "materials": 1 });
     // The full alerts scan on every poll. Not cached: nothing cheap says
     // the world is unchanged (`step_sim` and other per-frame systems take

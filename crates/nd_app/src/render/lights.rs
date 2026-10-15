@@ -89,12 +89,17 @@ const WINDOW_SHADER_SRC: &str = r#"
     pbr_fragment::pbr_input_from_standard_material,
     forward_io::{VertexOutput, FragmentOutput},
     pbr_functions::main_pass_post_lighting_processing,
+    mesh_view_bindings::view,
 }
 "#;
 
 const WINDOW_MAIN_SRC: &str = r#"
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    // [chase-cam] Cut away with the building (`cutaway`).
+    if cut_away(in.world_position.xyz, in.position.xy, view.world_position) {
+        discard;
+    }
     var pbr_input = pbr_input_from_standard_material(in, is_front);
 #ifdef VERTEX_UVS_A
     if window_dark(in.uv) {
@@ -117,6 +122,7 @@ const WINDOW_PREPASS_SRC: &str = r#"
 #import bevy_pbr::{
     prepass_io::{VertexOutput, FragmentOutput},
     pbr_prepass_functions,
+    mesh_view_bindings::view,
 }
 "#;
 
@@ -124,6 +130,9 @@ const WINDOW_PREPASS_MAIN_SRC: &str = r#"
 #ifdef PREPASS_FRAGMENT
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    if cut_away(in.world_position.xyz, in.position.xy, view.world_position) {
+        discard;
+    }
 #ifdef VERTEX_UVS_A
     if window_dark(in.uv) {
         discard;
@@ -144,6 +153,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 #else
 @fragment
 fn fragment(in: VertexOutput) {
+    if cut_away(in.world_position.xyz, in.position.xy, view.world_position) {
+        discard;
+    }
 #ifdef VERTEX_UVS_A
     if window_dark(in.uv) {
         discard;
@@ -164,6 +176,9 @@ pub(super) struct WindowLights {
     /// x: sim minutes, wrapped to keep f32 precision; y: night (0..1).
     #[uniform(101)]
     pub clock: Vec4,
+    /// [chase-cam] What the chase camera cuts away (`cutaway`).
+    #[uniform(102)]
+    pub cut: super::cutaway::CutParams,
 }
 
 impl MaterialExtension for WindowLights {
@@ -179,9 +194,10 @@ impl MaterialExtension for WindowLights {
 }
 
 pub(super) fn add_shader(mut shaders: ResMut<Assets<Shader>>) {
-    let main = format!("{WINDOW_SHADER_SRC}{WINDOW_COMMON_SRC}{WINDOW_MAIN_SRC}");
+    let cut = super::cutaway::cut_wgsl(102);
+    let main = format!("{WINDOW_SHADER_SRC}{WINDOW_COMMON_SRC}{cut}{WINDOW_MAIN_SRC}");
     let _ = shaders.insert(WINDOW_SHADER.id(), Shader::from_wgsl(main, "nd_app/window_lights.wgsl"));
-    let prepass = format!("{WINDOW_PREPASS_SRC}{WINDOW_COMMON_SRC}{WINDOW_PREPASS_MAIN_SRC}");
+    let prepass = format!("{WINDOW_PREPASS_SRC}{WINDOW_COMMON_SRC}{cut}{WINDOW_PREPASS_MAIN_SRC}");
     let _ = shaders.insert(WINDOW_PREPASS_SHADER.id(), Shader::from_wgsl(prepass, "nd_app/window_lights_prepass.wgsl"));
 }
 
