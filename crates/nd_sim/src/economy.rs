@@ -296,6 +296,75 @@ impl LeaveReason {
     }
 }
 
+/// [civic-demand] Civic office floor space a resident of a small town
+/// needs (m²), and of a city of `CIVIC_CITY_POP` or more.
+pub const CIVIC_M2_PER_HEAD: f32 = 3.0;
+pub const CIVIC_M2_PER_HEAD_CITY: f32 = 4.0;
+pub const CIVIC_CITY_POP: f32 = 20_000.0;
+/// [civic-demand] Park ground a resident needs (m²: a playground, a green
+/// and a share of the big parks; the WHO asks nine of green space).
+pub const PARK_M2_PER_HEAD: f32 = 6.0;
+/// [civic-demand] Share of a vacant zoned lot's room counted against the
+/// need until it is built on, and the most of the shortfall the buildings
+/// leave that zoning alone can ease: zoning shows, only building meets it.
+pub const ZONED_CREDIT: f32 = 0.25;
+pub const ZONED_EASE_MAX: f32 = 0.5;
+/// [civic-demand] Share of a civic lot a civic building covers, and the
+/// floors a vacant civic lot is reckoned to get (they are two to five).
+pub const CIVIC_COVERAGE: f32 = 0.5;
+pub const CIVIC_ZONED_FLOORS: f32 = 3.0;
+
+/// [civic-demand] Floor space of a civic building of `floors` floors on
+/// `lot_area` m² of ground.
+pub fn civic_floor_m2(lot_area: f32, floors: u8) -> f32 {
+    lot_area * CIVIC_COVERAGE * floors as f32
+}
+
+/// [civic-demand] What the sites going up will add once open: homes and
+/// jobs, civic floor space and park ground (m²).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct UnderWay {
+    pub homes: u32,
+    pub jobs: u32,
+    pub civic_m2: f32,
+    pub park_m2: f32,
+}
+
+/// [civic-demand] A need against what meets it, m²: built, going up and
+/// zoned (what the vacant lots could hold), and the share of the need still
+/// open after all three (`0..1`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Shortfall {
+    pub need: f32,
+    pub built: f32,
+    pub building: f32,
+    pub zoned: f32,
+    pub gap: f32,
+}
+
+impl Shortfall {
+    pub fn new(need: f32, built: f32, building: f32, zoned: f32) -> Self {
+        let short = (need - built - building).max(0.0);
+        let eased = (zoned * ZONED_CREDIT).min(short * ZONED_EASE_MAX);
+        let gap = if need > 0.0 { ((short - eased) / need).clamp(0.0, 1.0) } else { 0.0 };
+        Shortfall { need, built, building, zoned, gap }
+    }
+}
+
+/// 12,345 for 12345.4.
+fn thousands(x: f32) -> String {
+    let n = x.max(0.0).round() as u64;
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Deliberately simple demand model. Demand per land use is in `0..1` and
 /// drives how quickly vacant lots develop.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -371,6 +440,23 @@ pub struct Economy {
     pub homes_building: u32,
     #[serde(default)]
     pub jobs_building: u32,
+    /// [civic-demand] Civic office floor space (m², `civic_floor_m2`): open,
+    /// going up, and what the vacant civic lots could hold. Tallied with the
+    /// rest by `World::update_economy`.
+    #[serde(default)]
+    pub civic_m2: f32,
+    #[serde(default)]
+    pub civic_m2_building: f32,
+    #[serde(default)]
+    pub civic_m2_zoned: f32,
+    /// [civic-demand] Park ground (m²): open (a run-down park counted for
+    /// less), being laid out, and on vacant park lots.
+    #[serde(default)]
+    pub park_m2: f32,
+    #[serde(default)]
+    pub park_m2_building: f32,
+    #[serde(default)]
+    pub park_m2_zoned: f32,
     /// Building materials bought from outside today, at import prices.
     #[serde(default)]
     pub materials_today: f32,
@@ -513,14 +599,77 @@ impl Economy {
     }
 
     pub fn recompute(&mut self) {
-        self.demand = self.demand_with(self.homes_building, self.jobs_building);
+        self.demand = self.demand_with(self.under_way());
     }
 
-    /// [w1] The demand per land use as if `homes_building` homes and
-    /// `jobs_building` jobs were going up (`recompute` passes the real
-    /// figures). With fewer, the gap the sites already fill shows: the
-    /// Demand panel's "include planned / under construction".
-    pub fn demand_with(&self, homes_building: u32, jobs_building: u32) -> [f32; 6] {
+    /// [civic-demand] What the city's sites will add once open: the real
+    /// figures `recompute` uses.
+    pub fn under_way(&self) -> UnderWay {
+        UnderWay { homes: self.homes_building, jobs: self.jobs_building, civic_m2: self.civic_m2_building, park_m2: self.park_m2_building }
+    }
+
+    /// [civic-demand] Civic office floor space the town needs, m²: town
+    /// halls, courts, registries and agencies grow with the population, and
+    /// a big city keeps more of them a head than a small town.
+    pub fn civic_need_m2(&self) -> f32 {
+        let pop = self.population as f32;
+        pop * (CIVIC_M2_PER_HEAD + (CIVIC_M2_PER_HEAD_CITY - CIVIC_M2_PER_HEAD) * (pop / CIVIC_CITY_POP).min(1.0))
+    }
+
+    /// [civic-demand] Park ground the town needs, m².
+    pub fn park_need_m2(&self) -> f32 {
+        self.population as f32 * PARK_M2_PER_HEAD
+    }
+
+    /// [civic-demand] The civic floor space needed against what there is,
+    /// with `building_m2` going up.
+    pub fn civic_gap(&self, building_m2: f32) -> Shortfall {
+        Shortfall::new(self.civic_need_m2(), self.civic_m2, building_m2, self.civic_m2_zoned)
+    }
+
+    /// [civic-demand] The park ground needed against what there is, with
+    /// `building_m2` being laid out.
+    pub fn park_gap(&self, building_m2: f32) -> Shortfall {
+        Shortfall::new(self.park_need_m2(), self.park_m2, building_m2, self.park_m2_zoned)
+    }
+
+    /// [civic-demand] Why the demand for civic land, parks or venues is what
+    /// it is, for the Demand panel and the zoning tool; None for the others.
+    pub fn demand_reason(&self, lu: LandUse) -> Option<String> {
+        let pop = self.population;
+        // Venues follow the market: more open while the ones in town pay.
+        if lu == LandUse::Entertainment {
+            return Some(match self.cover_of(crate::market::BusinessKind::Venue) {
+                Some(c) if c < 1.2 => format!("The town's venues take in {:.0}% of their costs: fewer new ones open until that is back over 120%.", c * 100.0),
+                Some(c) => format!("The town's venues take in {:.0}% of their costs: they pay, so more are wanted.", c * 100.0),
+                None => "Nightlife follows the population until the first venues show whether they pay.".to_string(),
+            });
+        }
+        let (s, what) = match lu {
+            LandUse::Civic => (self.civic_gap(self.civic_m2_building), "civic offices"),
+            LandUse::Park => (self.park_gap(self.park_m2_building), "parkland"),
+            _ => return None,
+        };
+        let mut t = format!("{pop} people need about {} m² of {what}; the city has {} m²", thousands(s.need), thousands(s.built));
+        if s.building > 0.0 {
+            t.push_str(&format!(", {} m² more going up", thousands(s.building)));
+        }
+        t.push('.');
+        if s.zoned > 0.0 {
+            t.push_str(&format!(" Vacant {} lots could hold about {} m² (they ease the demand a little until built).", lu.label().to_lowercase(), thousands(s.zoned)));
+        }
+        if lu == LandUse::Park && self.park_m2 > 0.0 {
+            t.push_str(" A run-down park counts for less.");
+        }
+        Some(t)
+    }
+
+    /// [w1] The demand per land use as if `u` were going up (`recompute`
+    /// passes the real figures, `under_way`). With less, the gap the sites
+    /// already fill shows: the Demand panel's "include planned / under
+    /// construction".
+    pub fn demand_with(&self, u: UnderWay) -> [f32; 6] {
+        let (homes_building, jobs_building) = (u.homes, u.jobs);
         let pop = self.population.max(1) as f32;
         // Homes and jobs already going up count against the pressure, so a
         // boom does not start a site on every vacant lot while the first ones
@@ -548,8 +697,13 @@ impl Economy {
         d[LandUse::Commercial.index()] = (0.2 + job_pressure * 1.2).min(1.0);
         d[LandUse::Industrial.index()] = (0.15 + job_pressure).min(1.0);
         d[LandUse::Entertainment.index()] = ((0.1 + entertainment_pressure * 0.8) * venue_room).min(1.0);
-        d[LandUse::Civic.index()] = (0.1 + (pop / 150.0)).min(1.0);
-        d[LandUse::Park.index()] = 0.5;
+        // [civic-demand] Civic offices and parks: what the town needs for
+        // its people less what stands, what is going up and (a little) what
+        // is zoned and waiting, so zoning and building them brings the
+        // demand down. A small town wants little of either yet.
+        let small_town = (0.1 + pop / 150.0).min(1.0);
+        d[LandUse::Civic.index()] = ((0.05 + 0.95 * self.civic_gap(u.civic_m2).gap) * small_town).min(1.0);
+        d[LandUse::Park.index()] = ((0.05 + 0.95 * self.park_gap(u.park_m2).gap) * small_town).min(1.0);
         // [tax] A land use taxed over the standard is less wanted, one let
         // off is wanted more (1 at the standard rates: no change).
         for lu in [LandUse::Residential, LandUse::Commercial, LandUse::Industrial, LandUse::Entertainment] {
@@ -592,6 +746,107 @@ mod tests {
         assert!((e.food_order_factor() - 1.5).abs() < 1e-4);
         e.roll_population(500);
         assert_eq!(e.food_order_factor(), 1.0, "shrinking never orders less than today");
+    }
+
+    fn town_of(pop: u32) -> Economy {
+        Economy { population: pop, ..Economy::default() }
+    }
+
+    const CIVIC: usize = 4;
+    const PARK: usize = 5;
+
+    #[test]
+    fn civic_demand_falls_as_civic_offices_go_up_and_rises_with_the_town() {
+        assert_eq!(LandUse::Civic.index(), CIVIC);
+        let mut e = town_of(5000);
+        e.recompute();
+        assert!(e.demand[CIVIC] > 0.95, "nothing civic in a town of 5000: {}", e.demand[CIVIC]);
+        let need = e.civic_need_m2();
+        let mut last = e.demand[CIVIC];
+        for share in [0.25, 0.5, 0.75, 1.0, 1.5] {
+            e.civic_m2 = need * share;
+            e.recompute();
+            // Past the need it stays at the floor.
+            assert!(e.demand[CIVIC] < last || (share > 1.0 && e.demand[CIVIC] == last), "more civic floor space ({share} of the need), less demand: {} after {last}", e.demand[CIVIC]);
+            last = e.demand[CIVIC];
+        }
+        assert!(e.demand[CIVIC] <= 0.05 + 1e-4, "ample civic: {}", e.demand[CIVIC]);
+        // The town grows past what it has: the demand comes back.
+        let has = e.civic_m2;
+        for pop in [10_000, 20_000, 40_000] {
+            e.population = pop;
+            e.recompute();
+            assert!(e.demand[CIVIC] > last, "a town of {pop} with {has} m2: {} after {last}", e.demand[CIVIC]);
+            last = e.demand[CIVIC];
+        }
+    }
+
+    #[test]
+    fn civic_offices_going_up_count_and_zoned_lots_ease_it_only_partly() {
+        let mut e = town_of(8000);
+        let need = e.civic_need_m2();
+        e.civic_m2 = need * 0.4;
+        e.recompute();
+        let built_only = e.demand[CIVIC];
+        // Sites going up meet it like buildings (the light part of the bar).
+        e.civic_m2_building = need * 0.3;
+        e.recompute();
+        let with_sites = e.demand[CIVIC];
+        assert!(with_sites < built_only - 0.2, "{with_sites} vs {built_only}");
+        assert!((e.demand_with(UnderWay { civic_m2: 0.0, ..e.under_way() })[CIVIC] - built_only).abs() < 1e-5);
+        // Zoning ever more vacant civic land eases it, but never more than
+        // half the shortfall the buildings leave.
+        e.civic_m2_building = 0.0;
+        let mut last = built_only;
+        for zoned in [need * 0.2, need, need * 10.0, need * 100.0] {
+            e.civic_m2_zoned = zoned;
+            e.recompute();
+            assert!(e.demand[CIVIC] <= last, "zoning eases: {} after {last}", e.demand[CIVIC]);
+            last = e.demand[CIVIC];
+        }
+        assert!(last < built_only - 0.1, "zoning shows on the bar: {last} vs {built_only}");
+        let half_gap = 0.05 + 0.95 * 0.6 * 0.5;
+        assert!((last - half_gap).abs() < 1e-3, "only buildings fully meet it: {last}, expected {half_gap}");
+    }
+
+    #[test]
+    fn park_demand_follows_park_ground_per_head() {
+        assert_eq!(LandUse::Park.index(), PARK);
+        let mut e = town_of(3000);
+        e.recompute();
+        assert!(e.demand[PARK] > 0.95, "no parks: {}", e.demand[PARK]);
+        e.park_m2 = e.park_need_m2() * 0.5;
+        e.recompute();
+        let half = e.demand[PARK];
+        assert!((0.4..0.6).contains(&half), "half the parkland it needs: {half}");
+        e.park_m2 = e.park_need_m2() * 1.2;
+        e.recompute();
+        assert!(e.demand[PARK] <= 0.05 + 1e-4, "ample parks: {}", e.demand[PARK]);
+        e.population = 9000;
+        e.recompute();
+        assert!(e.demand[PARK] > 0.5, "the town tripled: {}", e.demand[PARK]);
+    }
+
+    #[test]
+    fn a_small_town_wants_little_civic_or_park_yet() {
+        let mut e = town_of(15);
+        e.recompute();
+        assert!(e.demand[CIVIC] < 0.25 && e.demand[PARK] < 0.25, "{:?}", e.demand);
+        let mut e = town_of(0);
+        e.recompute();
+        assert!(e.demand[CIVIC] <= 0.1 && e.demand[PARK] <= 0.1, "{:?}", e.demand);
+    }
+
+    #[test]
+    fn the_demand_reason_names_the_need_and_what_there_is() {
+        let mut e = town_of(12_000);
+        e.civic_m2 = 5_500.0;
+        e.civic_m2_zoned = 1_200.0;
+        let r = e.demand_reason(LandUse::Civic).unwrap();
+        assert!(r.contains("12000 people") && r.contains("5,500 m²") && r.contains("1,200 m²"), "{r}");
+        assert!(e.demand_reason(LandUse::Commercial).is_none());
+        assert_eq!(thousands(1_234_567.4), "1,234,567");
+        assert_eq!(thousands(999.0), "999");
     }
 
     #[test]

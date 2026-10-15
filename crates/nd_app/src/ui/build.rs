@@ -878,6 +878,10 @@ fn info(ui: &mut egui::Ui, p: &mut UiCtx, item: Item, hovered: bool) {
             let demand = p.sim.world.economy.demand_for(lu);
             let col = super::theme::rgb_f(p.assets.palette.zone_color(lu));
             ui.add(egui::ProgressBar::new(demand).text(format!("demand {:.0}%", demand * 100.0)).fill(col.gamma_multiply(0.7)).desired_height(18.0));
+            // [civic-demand] What the city is short of, for civic and parks.
+            if let Some(r) = p.sim.world.economy.demand_reason(lu) {
+                hint(ui, &r);
+            }
             hint(ui, zone_note(lu));
         }
         Item::District => hint(ui, super::districts::TOOL_HINT),
@@ -986,8 +990,8 @@ fn zone_note(lu: LandUse) -> &'static str {
         LandUse::Commercial => "Shops and offices: jobs, groceries and goods. Needs a street out front.",
         LandUse::Industrial => "Works yards and plants: jobs and goods, noise and pollution. Pick a sub-zone in the options.",
         LandUse::Entertainment => "Bars, clubs, cinemas: nightlife and jobs, some noise at night.",
-        LandUse::Civic => "Public buildings: lifts land value around them.",
-        LandUse::Park => "Open green: lifts land value and mood nearby; goes anywhere, rough ground too.",
+        LandUse::Civic => "Public offices (halls, courts, agencies): well-paid jobs, lift land value around them. The town needs more floor space of them as it grows.",
+        LandUse::Park => "Open green: lifts land value and mood nearby; goes anywhere, rough ground too. The town wants about 6 m² of park a head.",
         #[allow(unreachable_patterns)]
         _ => "",
     }

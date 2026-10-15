@@ -77,6 +77,10 @@ impl World {
         let mut tier_counts = [0u32; 3];
         let mut rent_sum = [0.0f32; 3];
         let mut depots = 0u32;
+        // [civic-demand] Civic floor space and park ground: open, going up.
+        let (mut civic_m2, mut civic_m2_building, mut park_m2, mut park_m2_building) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        let lots = &self.lots;
+        let ground = |b: &Building| -> f32 { std::iter::once(b.lot).chain(b.plot.extra_lots.iter().copied()).filter_map(|l| lots.get(l)).map(|l| l.area()).sum() };
         for b in self.buildings.values_mut() {
             if b.operating() {
                 jobs_permanent += b.jobs as u32;
@@ -98,6 +102,15 @@ impl World {
                 homes_building += homes as u32;
                 jobs_building += jobs as u32;
             }
+            if !b.being_demolished() {
+                let green = b.service.is_some_and(|s| matches!(s.kind, crate::services::ServiceKind::GrandPark | crate::services::ServiceKind::BotanicalGarden));
+                if b.land_use == LandUse::Civic && !b.is_city_structure() {
+                    let m2 = crate::economy::civic_floor_m2(ground(b), b.floors);
+                    *if b.operating() { &mut civic_m2 } else { &mut civic_m2_building } += m2;
+                } else if (b.land_use == LandUse::Park && !b.is_city_structure()) || green {
+                    *if b.operating() { &mut park_m2 } else { &mut park_m2_building } += ground(b);
+                }
+            }
             if b.land_use == LandUse::Residential {
                 tier_counts[b.tier.index()] += 1;
                 rent_sum[b.tier.index()] += b.rent;
@@ -115,6 +128,27 @@ impl World {
         e.sites = sites;
         e.homes_building = homes_building;
         e.jobs_building = jobs_building;
+        // [civic-demand] A run-down park counts for less (half, at worst):
+        // the parks' upkeep across the city, by their area.
+        let (kept_area, area) = self.parks.parks.values().fold((0.0f32, 0.0f32), |(k, a), s| (k + s.kept.clamp(0.0, 1.0) * s.area, a + s.area));
+        let kept = if area > 0.0 { kept_area / area } else { 1.0 };
+        e.civic_m2 = civic_m2;
+        e.civic_m2_building = civic_m2_building;
+        e.park_m2 = park_m2 * (0.5 + 0.5 * kept);
+        e.park_m2_building = park_m2_building;
+        // What the vacant civic and park lots could hold.
+        let (mut civic_zoned, mut park_zoned) = (0.0f32, 0.0f32);
+        for l in self.lots.values() {
+            if l.building.is_none() && l.usable() {
+                match l.land_use {
+                    LandUse::Civic => civic_zoned += l.area() * crate::economy::CIVIC_COVERAGE * crate::economy::CIVIC_ZONED_FLOORS,
+                    LandUse::Park => park_zoned += l.area(),
+                    _ => {}
+                }
+            }
+        }
+        e.civic_m2_zoned = civic_zoned;
+        e.park_m2_zoned = park_zoned;
         e.tier_counts = tier_counts;
         for i in 0..3 {
             e.avg_rent[i] = if tier_counts[i] > 0 { rent_sum[i] / tier_counts[i] as f32 } else { 0.0 };
