@@ -124,8 +124,9 @@ impl World {
     /// [w1] How much of each land use's demand the sites under way already
     /// meet: the demand there would be without them, less the demand there
     /// is (`Economy::demand_with`), one land use's sites at a time. Zero
-    /// where the demand does not follow what is being built (venues, civic
-    /// buildings and parks follow the population).
+    /// for venues (they follow the population and the market).
+    /// [civic-demand] Civic offices and parks going up count against their
+    /// need.
     pub fn demand_under_way(&self) -> [f32; 6] {
         let e = &self.economy;
         let mut by_use = [(0u32, 0u32); 6];
@@ -137,16 +138,22 @@ impl World {
                 x.1 += j as u32;
             }
         }
-        let now = e.demand_with(e.homes_building, e.jobs_building);
+        let real = e.under_way();
+        let now = e.demand_with(real);
         let mut out = [0.0f32; 6];
         for lu in LandUse::ALL {
             let i = lu.index();
             let (h, j) = by_use[i];
-            if h == 0 && j == 0 {
+            let mut without = crate::economy::UnderWay { homes: real.homes.saturating_sub(h), jobs: real.jobs.saturating_sub(j), ..real };
+            match lu {
+                LandUse::Civic => without.civic_m2 = 0.0,
+                LandUse::Park => without.park_m2 = 0.0,
+                _ => {}
+            }
+            if without == real {
                 continue;
             }
-            let without = e.demand_with(e.homes_building.saturating_sub(h), e.jobs_building.saturating_sub(j));
-            out[i] = (without[i] - now[i]).max(0.0);
+            out[i] = (e.demand_with(without)[i] - now[i]).max(0.0);
         }
         out
     }
@@ -277,6 +284,78 @@ mod tests {
         assert!(sites[r].1 > 0);
         // Recompute is what demand_with says for the real figures.
         let e = &w.economy;
-        assert_eq!(e.demand, e.demand_with(e.homes_building, e.jobs_building));
+        assert_eq!(e.demand, e.demand_with(e.under_way()));
+    }
+
+    /// [civic-demand] The civic demand for a town of `pop` as it stands.
+    fn civic_demand(w: &mut World, pop: u32) -> f32 {
+        w.update_economy();
+        w.economy.population = pop;
+        w.economy.recompute();
+        w.economy.demand[LandUse::Civic.index()]
+    }
+
+    #[test]
+    fn civic_offices_built_bring_the_civic_demand_down() {
+        let mut w = World::new(WorldConfig { landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::test_town() });
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        let c = LandUse::Civic.index();
+        let pop = 1500;
+        let bare = civic_demand(&mut w, pop);
+        assert!(bare > 0.99, "a town of {pop} with no civic land: {bare}");
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Civic).unwrap();
+        let zoned = civic_demand(&mut w, pop);
+        assert!(w.economy.civic_m2_zoned > 0.0);
+        assert!(zoned < bare && zoned >= 0.5, "zoning eases it a little, never all the way: {zoned}");
+        let mut lots: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none() && l.land_use == LandUse::Civic).map(|(id, _)| id).collect();
+        lots.sort_by(|a, b| w.lots[*a].center.x.total_cmp(&w.lots[*b].center.x));
+        assert!(lots.len() >= 2, "civic lots");
+        let site = build(&mut w, lots[0]);
+        let going_up = civic_demand(&mut w, pop);
+        assert!(w.economy.civic_m2_building > 0.0 && w.economy.civic_m2 == 0.0);
+        assert!(going_up < zoned, "a civic site going up counts: {going_up} after {zoned}");
+        assert!(w.demand_under_way()[c] > 0.0, "the light part of the bar");
+        w.finish_construction(site);
+        let open = civic_demand(&mut w, pop);
+        assert!(w.economy.civic_m2 > 0.0 && w.economy.civic_m2_building == 0.0);
+        assert!(open <= going_up + 1e-5, "{open} after {going_up}");
+        // Every lot built: the town of 1500 has more than it needs.
+        for &l in &lots[1..] {
+            let b = build(&mut w, l);
+            w.finish_construction(b);
+        }
+        let full = civic_demand(&mut w, pop);
+        assert!(w.economy.civic_m2 >= w.economy.civic_need_m2(), "{} m2 for a need of {}", w.economy.civic_m2, w.economy.civic_need_m2());
+        assert!(full <= 0.06, "ample civic: {full}");
+        // The town grows: it wants more again.
+        let grown = civic_demand(&mut w, 30_000);
+        assert!(grown > 0.5, "a city of 30000: {grown}");
+    }
+
+    #[test]
+    fn parks_laid_out_bring_the_park_demand_down() {
+        let mut w = World::new(WorldConfig { landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::test_town() });
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        let p = LandUse::Park.index();
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Park).unwrap();
+        let lots: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none() && l.land_use == LandUse::Park).map(|(id, _)| id).collect();
+        let area: f32 = lots.iter().map(|l| w.lots[*l].area()).sum();
+        // A town that needs about twice the parkland zoned.
+        let pop = (area * 2.0 / crate::economy::PARK_M2_PER_HEAD) as u32;
+        let park = |w: &mut World| {
+            w.update_economy();
+            w.economy.population = pop;
+            w.economy.recompute();
+            w.economy.demand[p]
+        };
+        let zoned = park(&mut w);
+        for &l in &lots {
+            let b = build(&mut w, l);
+            w.finish_construction(b);
+        }
+        let open = park(&mut w);
+        assert!((w.economy.park_m2 - area).abs() < 1.0, "{} of {area}", w.economy.park_m2);
+        assert!(open < zoned - 0.1, "{open} after {zoned}");
+        assert!((0.4..0.6).contains(&open), "half the parkland it needs: {open}");
     }
 }
