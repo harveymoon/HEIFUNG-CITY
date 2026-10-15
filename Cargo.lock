@@ -3938,6 +3938,7 @@ dependencies = [
  "bevy_egui",
  "embed-resource",
  "glam",
+ "naga",
  "nd_minds",
  "nd_procgen",
  "nd_sim",

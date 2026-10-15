@@ -198,7 +198,7 @@ pub(super) fn setup(
     let lit = images.add(lights::lit_image());
     let windows = window_materials.add(lights::WindowMaterial {
         base: StandardMaterial { base_color: Color::WHITE, unlit: true, ..default() },
-        extension: lights::WindowLights { lit: lit.clone(), clock: Vec4::ZERO },
+        extension: lights::WindowLights { lit: lit.clone(), clock: Vec4::ZERO, cut: default() },
     });
     let signal_green = materials.add(unlit(pal.signal_green));
     let signal_red = materials.add(unlit(pal.signal_red));

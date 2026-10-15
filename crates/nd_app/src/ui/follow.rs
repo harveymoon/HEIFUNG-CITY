@@ -7,7 +7,7 @@ use bevy_egui::egui;
 use nd_sim::CitizenId;
 
 use super::{GOLD, IVORY};
-use crate::camera::{thing_pose, zoom_distance, CameraFly, CameraFollow, CameraMode, FlyGoal};
+use crate::camera::{chase_subject, thing_pose, zoom_distance, CameraFly, CameraFollow, CameraMode, FlyGoal, FollowView};
 use crate::sim::Sim;
 use crate::tools::Selection;
 
@@ -64,7 +64,7 @@ pub fn camera_buttons(ui: &mut egui::Ui, sim: &Sim, sel: Selection, follow: &mut
                         *mode = CameraMode::Orbit;
                     }
                 }
-            } else if ui.button("Follow").on_hover_text("Keep the camera on them wherever they go (pan is locked; rotate and zoom still work). Tab while following: their point of view.").clicked() {
+            } else if ui.button("Follow").on_hover_text("Keep the camera on them wherever they go: low behind them, looking where they go, with whatever is in the way cut away (right-drag looks round, the wheel zooms). F: the high view. Tab: their point of view.").clicked() {
                 start_follow(sim, sel, follow, fly, None);
             }
         }
@@ -95,10 +95,11 @@ pub fn gift_button(ui: &mut egui::Ui, sim: &mut Sim, id: CitizenId, small: bool)
 /// While the camera follows something: a gold frame round the map and a
 /// banner at its top naming who, saying the camera is locked, with their
 /// point of view and Stop following (Esc).
-pub fn banner(ctx: &egui::Context, sim: &Sim, follow: &mut CameraFollow, mode: &mut CameraMode, selection: &mut Selection, content: egui::Rect) {
+pub fn banner(ctx: &egui::Context, sim: &Sim, follow: &mut CameraFollow, fly: &mut CameraFly, mode: &mut CameraMode, selection: &mut Selection, content: egui::Rect) {
     let Some(sel) = follow.target else { return };
     let pose = thing_pose(sim, sel);
     let pov_ok = pose.is_some_and(|p| p.heading.is_some());
+    let chase_ok = chase_subject(sim, sel).is_some();
     let pulse = ((ctx.input(|i| i.time) * 2.0).sin() * 0.5 + 0.5) as f32;
     ctx.request_repaint();
     // The frame: the whole map is held.
@@ -129,9 +130,22 @@ pub fn banner(ctx: &egui::Context, sim: &Sim, follow: &mut CameraFollow, mode: &
                         ui.label(egui::RichText::new(format!("{} {who}", if pov { "seeing through the eyes of" } else { "following" })).color(IVORY));
                         ui.separator();
                         if pov_ok {
-                            let (text, hover) = if pov { ("Map view", "Back to the orbit camera, still following (Tab)") } else { ("Their view", "See what they see (Tab). Right-drag looks around.") };
+                            let (text, hover) = if pov { ("Map view", "Back to the follow camera (Tab)") } else { ("Their view", "See what they see (Tab). Right-drag looks around.") };
                             if ui.button(text).on_hover_text(hover).clicked() {
                                 *mode = if pov { CameraMode::Orbit } else { CameraMode::Walk };
+                            }
+                        }
+                        // [chase-cam] Behind them, or the high orbit.
+                        if chase_ok && !pov {
+                            let (text, hover, next) = match follow.view {
+                                FollowView::Chase => ("High view", "The orbit camera high above them, still following (F)", FollowView::High),
+                                FollowView::High => ("Chase view", "Low behind them, looking where they go (F)", FollowView::Chase),
+                            };
+                            if ui.button(text).on_hover_text(hover).clicked() {
+                                follow.set_view(next);
+                                if next == FollowView::High {
+                                    fly.to(FlyGoal::Thing(sel), Some(zoom_distance(sim, sel) * 1.3), Some(0.62));
+                                }
                             }
                         }
                         if *selection != sel && ui.button("Select").on_hover_text("Open them in the inspector").clicked() {
@@ -144,7 +158,13 @@ pub fn banner(ctx: &egui::Context, sim: &Sim, follow: &mut CameraFollow, mode: &
                             }
                         }
                     });
-                    let hint = if pov { "Their eyes lead; right-drag to look around." } else { "Pan is locked to them; rotate and zoom still work." };
+                    let hint = if pov {
+                        "Their eyes lead; right-drag to look around."
+                    } else if chase_ok && follow.view == FollowView::Chase {
+                        "Right-drag or Q/E looks round them (it swings back), the wheel zooms. F: high view."
+                    } else {
+                        "Pan is locked to them; rotate and zoom still work."
+                    };
                     ui.label(egui::RichText::new(hint).small().weak());
                 });
         });

@@ -1127,7 +1127,7 @@ selection from the API. Flags live in the running game and are also appended to
 Reply: the pose (`mode`, `target`, `distance`, `yaw`, `pitch`, `eye`), and `following`.
 A `follow` here is the same follow as the inspector's Follow button (below).
 
-`follow {citizen|car|bot|building|vehicle?, stop?, on?, pov?, fly?}` is the inspector's **Follow**
+`follow {citizen|car|bot|building|vehicle?, stop?, on?, pov?, fly?, view?, turn?, tilt?, zoom?, cutaway?}` is the inspector's **Follow**
 button: the camera stays on the thing (default: the selection) until stopped. Pan (WASD, middle or
 shift drag) and the F-key jumps are locked; rotate and zoom still work. In game a banner says
 "CAMERA LOCKED" with **Stop following (Esc)** and a gold frame holds the map; Esc stops it (and
@@ -1136,8 +1136,27 @@ looks through their eyes (Walk view: a walker's eyes, a driver's seat, a robot's
 looks around and springs back; Tab in game), `pov: false` back to the orbit camera; a building has
 no point of view. The camera flies in smoothly first unless `fly: false`. A followed car that parks
 hands the follow (and the selection) to its driver on foot; anything else that is gone ends it.
-Any `camera` command ends a follow. Reply `following`, `pov`, `at`, `flying`, `camera`;
-`status.following` names what is followed (or null).
+Any `camera` command ends a follow. Reply `following`, `pov`, `at`, `flying`, `camera`, `view`,
+`chase_capable`, `nudge` {turn, tilt, zoom}; `status.following` names what is followed (or null),
+`status.follow_view` chase / high, `status.chasing` whether the chase camera has the view, and
+`status.render.cut_meshes` how many scenery meshes wear the cutting material.
+
+[chase-cam] Anything with a heading (a person, cyclist, car, bus, lorry, emergency unit, robot,
+train, metro train, ship, aircraft, camper) is followed with a **chase camera** by default: low
+behind it (a car about 3 m up and 7.5 m back, a walker at shoulder height 3.5 m back; buses,
+lorries, trains, ships and aircraft further), looking the way it faces and a little ahead, swinging
+round with it on the turns (smoothed, rate-limited; a walker standing still keeps the last heading;
+a reversing car's camera stays behind its nose). The camera keeps above the ground and comes in
+towards the subject where a hill is in the way; scenery between the eye and the subject
+(buildings, decks, trees, lamps) is cut away (a dithered cone, see `render/cutaway.rs`). Chasing
+into a road tunnel or the metro switches the Underground view on, and back off when it comes up or
+the follow ends. `follow {view: "chase"|"high"}` (F in game) switches to the old high orbit follow
+and back; `turn` / `tilt` (radians) nudge the chase camera round the subject as a right-drag or
+Q/E does (it swings back behind after a moment), `zoom` sets its distance (times the default,
+0.55..3; the wheel in game). `follow` on the thing already followed keeps the follow (no new
+flight) and applies only `view` and the nudges. `cutaway: false` (dev, for comparing) chases
+without cutting anything away; `cutaway: true` puts it back. A building, toll or road has no heading: the high
+view.
 
 `zoom_to {citizen|car|bot|building|vehicle?, at?, distance?, pitch?}` (alias `zoom`) is the
 inspector's **Zoom to**: a smooth flight (0.7 to 2.2 s, a hop out over long trips) onto the thing

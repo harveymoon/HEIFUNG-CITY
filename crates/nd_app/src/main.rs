@@ -8,6 +8,8 @@ mod overlay;
 /// [build-highlight] A Build window section's buildings and service areas on the map.
 mod build_highlight;
 mod camera;
+/// [chase-cam] The chase camera's maths: pose, smoothing, ground, cut-away.
+mod chase;
 /// [fix/review-app] The one reset of app state when a different city starts.
 mod city_reset;
 /// [committee] The mayor's AI committee in the running game.

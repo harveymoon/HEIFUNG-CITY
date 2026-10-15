@@ -243,6 +243,8 @@ pub(super) fn swap_materials(
             None => {
                 let Some(o) = window_materials.get(id) else { continue };
                 let mut m = o.clone();
+                // [chase-cam] Nothing is cut in these views.
+                m.extension.cut = Default::default();
                 if k < 0.0 {
                     m.base = ghost_of(&o.base);
                 } else {
@@ -302,7 +304,7 @@ mod tests {
         };
         let windows = {
             let lit = app.world_mut().resource_mut::<Assets<Image>>().add(Image::default());
-            app.world_mut().resource_mut::<Assets<WindowMaterial>>().add(WindowMaterial { base: StandardMaterial::default(), extension: super::super::lights::WindowLights { lit, clock: Vec4::ZERO } })
+            app.world_mut().resource_mut::<Assets<WindowMaterial>>().add(WindowMaterial { base: StandardMaterial::default(), extension: super::super::lights::WindowLights { lit, clock: Vec4::ZERO, cut: Default::default() } })
         };
         app.insert_resource(Materials::for_test(overlay.clone(), windows.clone()));
         app.add_systems(Update, swap_materials);

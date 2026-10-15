@@ -10,6 +10,7 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
+use crate::chase::{clear_ground, Chase, Cut, Nudge, Subject, SubjectKind};
 use crate::overlay::shapes::lerp_angle;
 use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
@@ -111,11 +112,37 @@ pub fn ray_ground(w: &nd_sim::World, o: Vec3, dir: Vec3) -> Option<Vec2> {
     Some(Vec2::new(hit.x, hit.z))
 }
 
+/// [chase-cam] How the camera follows something that moves.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FollowView {
+    /// Low behind it, looking the way it goes, swinging round with it
+    /// (`chase`); what stands in the way is cut away (`render::cutaway`).
+    #[default]
+    Chase,
+    /// The orbit camera riding on it, high above (the old follow).
+    High,
+}
+
+impl FollowView {
+    pub fn label(self) -> &'static str {
+        match self {
+            FollowView::Chase => "chase",
+            FollowView::High => "high",
+        }
+    }
+}
+
+/// [chase-cam] What the chase camera cuts away this frame (off unless a
+/// chase is on); `render::cutaway` reads it.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Debug)]
+pub struct CameraCut(pub Cut);
+
 /// [camera] The thing the camera is locked onto: a person, a vehicle, a
 /// delivery robot or a building. While set, the orbit target rides on it
 /// (pan keys and drags do nothing; rotate and zoom still work) and Walk
 /// view looks out through their eyes. Esc, the banner's button or the
-/// thing leaving the city ends it.
+/// thing leaving the city ends it. [chase-cam] Something with a heading is
+/// followed with the chase camera unless `view` is High (F toggles).
 #[derive(Resource, Default)]
 pub struct CameraFollow {
     pub target: Option<Selection>,
@@ -129,6 +156,21 @@ pub struct CameraFollow {
     /// Who drives the followed car: when it parks and leaves the road the
     /// camera stays with them on foot.
     driver: Option<nd_sim::CitizenId>,
+    /// [chase-cam] Chase or high; kept from one follow to the next.
+    pub view: FollowView,
+    /// [chase-cam] The player's turn, tilt and zoom on the chase camera.
+    pub nudge: Nudge,
+    chase: Chase,
+    /// The chase has taken over the camera (it swings in from where the
+    /// camera was on the frame it does).
+    chase_on: bool,
+    /// The chased thing is in a tunnel or the metro this frame, and the
+    /// Underground view was switched on for it (`auto_depth`).
+    chase_under: bool,
+    auto_under: bool,
+    /// [chase-cam] Dev: the chase without the cut-away, to compare
+    /// (remote `follow {cutaway: false}`).
+    pub cutaway_off: bool,
 }
 
 impl CameraFollow {
@@ -138,12 +180,30 @@ impl CameraFollow {
         self.pov_look = Vec2::ZERO;
         self.pov_yaw = None;
         self.driver = None;
+        self.nudge = Nudge::default();
+        self.chase_on = false;
     }
 
     pub fn stop(&mut self) {
         self.target = None;
         self.pov_yaw = None;
         self.driver = None;
+        self.chase_on = false;
+    }
+
+    /// [chase-cam] Is the chase camera driving the view now (following
+    /// something that moves, Chase view, not their point of view)?
+    pub fn chasing(&self) -> bool {
+        self.chase_on
+    }
+
+    /// [chase-cam] Switch between the chase and the high view.
+    pub fn set_view(&mut self, view: FollowView) {
+        if self.view != view {
+            self.view = view;
+            self.chase_on = false;
+            self.nudge = Nudge::default();
+        }
     }
 
     /// Looking through the eyes of someone in a vehicle (or the vehicle
@@ -346,6 +406,99 @@ pub fn thing_pose(sim: &Sim, sel: Selection) -> Option<ThingPose> {
     }
 }
 
+/// [chase-cam] The followed thing as the chase camera sees it: where it is
+/// drawn, which way it faces, the floor under it (road, deck, rails,
+/// water, tunnel) and what kind of thing it is. `None` for what has no
+/// heading (a building, a toll booth, a road): those keep the high view.
+pub fn chase_subject(sim: &Sim, sel: Selection) -> Option<Subject> {
+    let w = &sim.world;
+    let f = sim.frac();
+    let ground = |p: Vec2| w.surface_height_near(p, w.ground_height(p));
+    let on_road = |id: nd_sim::CarId, kind: Option<SubjectKind>| {
+        w.traffic.cars.get(id).map(|car| {
+            let (p, h) = car.pose_at(f);
+            let big = car.bus.is_some() || car.cargo.is_some();
+            let kind = kind.unwrap_or(if big { SubjectKind::Big } else { SubjectKind::Car });
+            Subject { pos: p, heading: h, floor: w.car_height_at(car, p), kind, underground: w.car_in_tunnel(car) }
+        })
+    };
+    let simple = |pos: Vec2, heading: f32, floor: f32, kind: SubjectKind| Subject { pos, heading, floor, kind, underground: false };
+    match sel {
+        Selection::None | Selection::Building(_) | Selection::Toll(_) | Selection::Road(_) => None,
+        Selection::Car(id) => on_road(id, None),
+        Selection::Parked(id) => w.vehicles.cars.get(id).and_then(|c| c.spot()).map(|s| simple(s.pos, s.heading, ground(s.pos), SubjectKind::Car)),
+        Selection::Unit(id) => {
+            let u = w.services.units.get(id)?;
+            let kind = if u.kind == nd_sim::UnitKind::PoliceCar { SubjectKind::Car } else { SubjectKind::Big };
+            match u.car {
+                Some(car) if w.traffic.cars.contains_key(car) => on_road(car, Some(kind)),
+                _ => crate::fire_scene::unit_pose(w, id, f).map(|(p, h)| simple(p, h, ground(p), kind)),
+            }
+        }
+        Selection::Train(_) | Selection::Metro(_) => {
+            let (p, h, _) = crate::train_select::car_poses(w, sel, f).first().copied()?;
+            Some(match sel {
+                Selection::Metro(_) => {
+                    let floor = (if w.relief { w.ground_height(p) } else { 0.0 }) - nd_sim::subway::DEPTH;
+                    Subject { pos: p, heading: h, floor, kind: SubjectKind::Metro, underground: true }
+                }
+                _ => simple(p, h, w.surface_height(p), SubjectKind::Train),
+            })
+        }
+        Selection::Ship(id) => w.ports.ships.get(id).map(|s| {
+            let (p, h) = crate::ferry_select::ship_pose(s, f);
+            simple(p, h, nd_sim::landscape::WATER_LEVEL, SubjectKind::Ship(s.length()))
+        }),
+        Selection::Drone(id) => crate::air_select::pose(w, id, f).map(|(at, h)| simple(Vec2::new(at.x, at.z), h, at.y, SubjectKind::Air)),
+        Selection::Rv(seed) => w.society.homeless.rv(seed).map(|r| simple(r.pos, r.heading, ground(r.pos), SubjectKind::Rv)),
+        Selection::Bot(id) => w.bots.bots.get(id).map(|b| {
+            let p = if b.prev_pos.distance(b.pos) < 30.0 { b.prev_pos.lerp(b.pos, f) } else { b.pos };
+            simple(p, lerp_angle(b.prev_heading, b.heading, f), ground(p), SubjectKind::Bot)
+        }),
+        Selection::Citizen(id) => {
+            let c = w.citizens.get(id)?;
+            if let Some((p, h, eye)) = crate::fire_scene::crew_pose(w, &sim.building_tops, id, f) {
+                return Some(simple(p, h, eye - 1.65, SubjectKind::Walker));
+            }
+            let riding = match &c.activity {
+                nd_sim::Activity::Driving { car, .. } => on_road(*car, None),
+                nd_sim::Activity::Riding { bus } => on_road(*bus, Some(SubjectKind::Big)),
+                nd_sim::Activity::Passenger { driver, seated: true, .. } => match w.citizens.get(*driver).map(|d| &d.activity) {
+                    Some(nd_sim::Activity::Driving { car, .. }) => on_road(*car, None),
+                    _ => None,
+                },
+                _ => None,
+            };
+            // Indoors: nothing to chase; the high view over the building.
+            if riding.is_none() && c.inside.is_some() {
+                return None;
+            }
+            riding.or_else(|| {
+                let p = if c.prev_pos.distance(c.pos) < 30.0 { c.prev_pos.lerp(c.pos, f) } else { c.pos };
+                let floor = if c.on_platform() { -nd_sim::subway::DEPTH } else { w.walker_way_height(c, p).unwrap_or_else(|| ground(p)) + w.walker_level(c, p) };
+                let bike = c.mode == nd_sim::citizens::TravelMode::Bike && c.activity.is_traveling();
+                Some(Subject {
+                    pos: p,
+                    heading: lerp_angle(c.prev_heading, c.heading, f),
+                    floor,
+                    kind: if bike { SubjectKind::Cyclist } else { SubjectKind::Walker },
+                    underground: c.on_platform() || w.citizen_in_tunnel(c),
+                })
+            })
+        }
+    }
+}
+
+/// [chase-cam] The ground the chase camera stays above: the built ground,
+/// or the water's surface (not decks: under a viaduct the camera stays
+/// under it, and what is in the way is cut away instead).
+fn chase_ground(w: &nd_sim::World, p: Vec2) -> f32 {
+    if !w.relief {
+        return 0.0;
+    }
+    let g = w.ground_height(p);
+    if !w.landscape.is_flat() && w.landscape.is_water(p) { g.max(nd_sim::landscape::WATER_LEVEL) } else { g }
+}
 
 /// The walk camera's yaw (forward = (sin, cos) in x, z) for a sim heading.
 fn yaw_of_heading(h: f32) -> f32 {
@@ -361,11 +514,12 @@ impl Plugin for CameraPlugin {
             .init_resource::<WalkState>()
             .init_resource::<CameraFollow>()
             .init_resource::<CameraFly>()
+            .init_resource::<CameraCut>()
             .add_systems(Startup, spawn_camera)
             .add_systems(Update, (control_camera, project_cursor).chain().before(SimSet::Input))
             // After the sim has stepped and the renderer has placed things,
             // so the camera sits on the thing where it is drawn this frame.
-            .add_systems(Update, follow_and_fly.after(SimSet::Sync));
+            .add_systems(Update, (follow_and_fly, auto_depth).chain().after(SimSet::Sync));
     }
 }
 
@@ -435,6 +589,14 @@ fn control_camera(
         *mode = if *mode == CameraMode::Walk { CameraMode::Orbit } else { CameraMode::Walk };
     }
     let pov = *mode == CameraMode::Walk && pov_capable;
+    // [chase-cam] F: the chase view or the high one, while following.
+    if key(KeyCode::KeyF) && follow.target.is_some() && *mode == CameraMode::Orbit {
+        let next = if follow.view == FollowView::Chase { FollowView::High } else { FollowView::Chase };
+        follow.set_view(next);
+        if let Some(sel) = follow.target.filter(|_| next == FollowView::High) {
+            fly.to(FlyGoal::Thing(sel), Some(zoom_distance(&sim, sel) * 1.3), Some(0.62));
+        }
+    }
     if *mode != walk.last_mode {
         walk.last_mode = *mode;
         match *mode {
@@ -542,6 +704,44 @@ fn control_camera(
         let look = Vec3::new(sy * cp, sp, cy * cp);
         tf.translation = walk.pos;
         tf.look_to(look, Vec3::Y);
+        return;
+    }
+
+    // [chase-cam] The chase camera: a right-drag (or Q/E) turns it round
+    // the subject for a moment, the wheel (or [ ]) zooms it in and out;
+    // `follow_and_fly` places it.
+    let chase = follow.target.is_some() && follow.view == FollowView::Chase && !fly.flying() && follow.target.and_then(|t| chase_subject(&sim, t)).is_some();
+    if chase {
+        let mut turn = Vec2::ZERO;
+        let dragging = buttons.pressed(MouseButton::Right) && !tools.captures_right_drag();
+        if dragging {
+            turn += Vec2::new(motion.delta.x, motion.delta.y) * 0.005;
+        }
+        if held(KeyCode::KeyQ) {
+            turn.x -= 1.2 * dt;
+        }
+        if held(KeyCode::KeyE) {
+            turn.x += 1.2 * dt;
+        }
+        follow.nudge.turn(turn);
+        let turning = dragging || held(KeyCode::KeyQ) || held(KeyCode::KeyE);
+        follow.nudge.settle(dt, turning);
+        let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+        if !flags.pointer_over_ui && !tools.captures_wheel(ctrl) {
+            let lines = match scroll.unit {
+                MouseScrollUnit::Line => scroll.delta.y,
+                MouseScrollUnit::Pixel => scroll.delta.y / 60.0,
+            };
+            if lines != 0.0 {
+                follow.nudge.zoom_by(lines);
+            }
+        }
+        if held(KeyCode::BracketLeft) && !tools.captures_brackets() {
+            follow.nudge.zoom_by(1.5 * dt / 0.12);
+        }
+        if held(KeyCode::BracketRight) && !tools.captures_brackets() {
+            follow.nudge.zoom_by(-1.5 * dt / 0.12);
+        }
         return;
     }
 
@@ -737,12 +937,19 @@ fn follow_and_fly(
     mut flags: ResMut<UiFlags>,
     mut q: Query<(&mut OrbitCamera, &mut Transform)>,
     mut selection: ResMut<Selection>,
+    mut cut: ResMut<CameraCut>,
 ) {
     let Ok((mut cam, mut tf)) = q.single_mut() else { return };
     let dt = time.delta_secs().min(0.1);
     let w = &sim.world;
+    // [chase-cam] Nothing is cut away unless the chase below says so.
+    cut.0.on = false;
+    follow.chase_under = false;
     if *mode == CameraMode::Walk {
         fly.flight = None;
+    }
+    if fly.flight.is_some() || follow.target.is_none() || *mode == CameraMode::Walk {
+        follow.chase_on = false;
     }
     if let Some(flight) = fly.flight.as_mut() {
         let goal = match flight.goal {
@@ -819,8 +1026,62 @@ fn follow_and_fly(
         tf.look_to(look, Vec3::Y);
         return;
     }
+    // [chase-cam] Low behind it, looking where it goes.
+    if let Some(sub) = chase_subject(&sim, sel).filter(|_| follow.view == FollowView::Chase) {
+        if !follow.chase_on {
+            follow.chase_on = true;
+            let from = (tf.translation, tf.translation + tf.forward().as_vec3() * 30.0);
+            follow.chase.restart(Some(from));
+        }
+        let nudge = follow.nudge;
+        let p = sub.kind.profile();
+        let pose = follow.chase.step(&sub, &nudge, dt);
+        let eye = if sub.underground {
+            // In a tunnel: no ground over it to keep above; keep off the
+            // tunnel floor.
+            Vec3::new(pose.eye.x, pose.eye.y.max(sub.floor + 1.0), pose.eye.z)
+        } else {
+            clear_ground(pose.eye, pose.focus, |q| chase_ground(w, q), 0.6)
+        };
+        tf.translation = eye;
+        tf.look_at(pose.look_at, Vec3::Y);
+        // The orbit camera keeps the same eye, so the view does not jump
+        // when the follow ends and the remote API reports where it is.
+        let base = Vec3::new(sub.pos.x, sub.floor, sub.pos.y);
+        let off = eye - base;
+        let d = off.length().max(0.5);
+        cam.target = base;
+        cam.distance = d;
+        cam.yaw = off.x.atan2(off.z);
+        cam.pitch = (off.y / d).clamp(-1.0, 1.0).asin();
+        let ground_eye = if sub.underground { sub.floor } else { w.surface_height_near(Vec2::new(eye.x, eye.z), sub.floor) };
+        cut.0 = Cut::for_pose(&crate::chase::Pose { eye, ..pose }, &p, ground_eye, sub.floor);
+        cut.0.on = !follow.cutaway_off;
+        follow.chase_under = sub.underground;
+        return;
+    }
+    follow.chase_on = false;
     cam.target = Vec3::new(pose.pos.x, w.surface_height(pose.pos), pose.pos.y);
     place_orbit(&mut cam, &mut tf);
+}
+
+/// [chase-cam] Chasing something into a tunnel or the metro switches the
+/// Underground view on (the surface hidden, the tunnels drawn), and back
+/// off when it comes up or the follow ends; a view the player picked is
+/// left alone.
+fn auto_depth(mut follow: ResMut<CameraFollow>, mut tools: ResMut<crate::tools::ToolState>) {
+    use crate::tools::Depth;
+    if follow.chase_under {
+        if !follow.auto_under && tools.depth == Depth::Ground {
+            tools.depth = Depth::Underground;
+            follow.auto_under = true;
+        }
+    } else if follow.auto_under {
+        follow.auto_under = false;
+        if tools.depth == Depth::Underground {
+            tools.depth = Depth::Ground;
+        }
+    }
 }
 
 fn project_cursor(

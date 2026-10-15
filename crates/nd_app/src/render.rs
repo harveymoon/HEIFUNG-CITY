@@ -67,6 +67,8 @@ mod pt_layers;
 pub mod sites_layer;
 pub use pt_layers::{availability_color as parking_color, Mover as TrailMover};
 mod lights;
+/// [chase-cam] What stands between the chase camera and its subject, cut away.
+mod cutaway;
 // [review] retaining walls at corner lots over a lower side street
 mod retaining;
 // [pt-visual] moored boats and beach boardwalks
@@ -377,6 +379,8 @@ pub struct RenderStats {
     pub people_borrowed: usize,
     /// [look] The graphics tier in force, the frame time and the effects.
     pub graphics: Graphics,
+    /// [chase-cam] Scenery meshes wearing the cutting material now.
+    pub cut_meshes: usize,
 }
 
 pub struct RenderPlugin;
@@ -385,7 +389,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<people::PeopleRender>();
         app.add_plugins(thumbs::ThumbsPlugin);
-        app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_plugins(MaterialPlugin::<street_look::PoolMaterial>::default()).init_resource::<sky::SkyLook>().add_systems(Startup, (lights::add_shader, street_look::add_pool_shader, setup)).add_systems(
+        app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_plugins(MaterialPlugin::<street_look::PoolMaterial>::default()).add_plugins(MaterialPlugin::<cutaway::CutMaterial>::default()).init_resource::<cutaway::CutState>().add_systems(Startup, cutaway::add_shader).init_resource::<sky::SkyLook>().add_systems(Startup, (lights::add_shader, street_look::add_pool_shader, setup)).add_systems(
             Update,
             (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_walk_networks, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)
                 .chain()
@@ -459,6 +463,8 @@ impl Plugin for RenderPlugin {
         app.add_plugins(heat::HeatPlugin);
         // [layers] Focus views swap materials before heat vision does (heat wins).
         app.init_resource::<swap::SwapState>().add_systems(PostUpdate, (focus::focus_fog.before(heat::apply_heat), swap::swap_materials));
+        // [chase-cam] After the swapper: it only ever sees the originals.
+        app.add_systems(PostUpdate, cutaway::apply_cutaway.after(swap::swap_materials));
         app.add_plugins(look::LookPlugin);
         app.insert_gizmo_config(layers::XrayGizmos, bevy::gizmos::config::GizmoConfig { depth_bias: -1.0, line: bevy::gizmos::config::GizmoLineConfig { width: 3.0, ..default() }, ..default() });
         app.add_systems(Update, layers::layer_gizmos.in_set(SimSet::Sync).after(lift_movers));
