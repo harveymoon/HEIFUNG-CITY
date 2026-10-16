@@ -109,29 +109,6 @@ fn a_flat_world_keeps_its_roads_near_the_ground() {
     }
 }
 
-/// M11: the walk camera's street detail stays off tunnels (and the highway)
-/// and stands on a viaduct's deck, not on the ground beneath it.
-#[test]
-fn walk_detail_follows_the_road_it_belongs_to() {
-    let w = elevated_world();
-    let pal = Palette::default();
-    let wd = nd_procgen::walk_detail(&w, &pal, Vec2::new(-150.0, 0.0), 90.0);
-    assert_sound("walk detail (tunnel)", &wd);
-    // The tunnel street (x = -150) from -150 to 150 runs at -12 m; nothing
-    // of the walk detail belongs in it (the street crossing over it at
-    // z = 0 keeps its own).
-    let in_bore: usize = wd.iter().map(|(_, m)| m.positions.iter().filter(|p| (p[0] + 150.0).abs() < 10.0 && p[2].abs() > 30.0 && p[2].abs() < 140.0).count()).sum();
-    assert_eq!(in_bore, 0, "walk detail along the tunnel");
-    let wd2 = nd_procgen::walk_detail(&w, &pal, Vec2::new(60.0, 0.0), 90.0);
-    assert_sound("walk detail (viaduct)", &wd2);
-    let vz = w.roads.node_near(Vec2::new(60.0, -150.0), 1.0).map(|n| w.road_z[n.0 as usize]).expect("viaduct node");
-    assert!(vz > 7.0, "the viaduct stands {vz} m up");
-    let on_via: Vec<f32> = wd2.iter().flat_map(|(_, m)| m.positions.iter().filter(|p| (p[0] - 60.0).abs() < 9.0 && p[2].abs() < 100.0 && p[2].abs() > 30.0).map(|p| p[1])).collect();
-    assert!(!on_via.is_empty(), "the viaduct's pavements get detail");
-    let lowest = on_via.iter().copied().fold(f32::MAX, f32::min);
-    assert!(lowest > vz - 1.0, "walk detail at {lowest} m under a deck at {vz} m");
-}
-
 /// Times `f`, best of three (other work on the machine only adds).
 fn best_of_three(mut f: impl FnMut()) -> Duration {
     (0..3).map(|_| {

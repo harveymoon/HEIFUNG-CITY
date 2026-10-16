@@ -37,7 +37,6 @@ pub mod toll;
 pub mod textures;
 pub mod vehicles;
 pub mod vacant;
-pub mod walk;
 
 #[cfg(test)]
 mod golden_tests;
@@ -53,4 +52,3 @@ pub use terrain::{build_far_ground, build_terrain, flat_height, scatter_nature, 
 pub use textures::{generate as generate_texture, mip_chain, roughness_map, Texture};
 pub use vacant::generate_vacant;
 pub use vehicles::{vehicle_mesh, VehicleMesh};
-pub use walk::{walk_detail, WALK_RADIUS, WALK_REDRAW};

@@ -111,12 +111,6 @@ impl StreetLayer {
     }
 }
 
-/// Does `p` stand on a street's lanes at about height `z`? For the walk
-/// view's clutter (`walk.rs`), as the street's own furniture.
-pub(crate) fn on_carriageway(roads: &RoadNetwork, heights: &[f32], inner: &[Vec<(f32, f32)>], p: Vec2, z: f32) -> bool {
-    junction::on_carriageway(roads, heights, inner, p, z, 0.05)
-}
-
 /// Vertex counts of every part, then the lamp count: where the next piece
 /// of drawing starts.
 pub(crate) fn marks(g: &Geometry) -> Vec<usize> {

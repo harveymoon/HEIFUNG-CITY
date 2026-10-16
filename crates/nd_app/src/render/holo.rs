@@ -452,7 +452,7 @@ pub fn apply_depth(
         (Entity, &mut Visibility, Has<DepthHidden>, Has<CitizenTag>, Has<super::PlatformTag>),
         (
             Or<(
-                Or<(With<TerrainTag>, With<BuildingTag>, With<LotsTag>, With<ScatterTag>, With<ParkTag>, With<VacantTag>, With<RoadsTag>, With<WaterTag>, With<WaterworksTag>, With<LaneArrowsTag>, With<PathsTag>, With<WalkDetailTag>, With<SignalTag>, With<CitizenTag>)>,
+                Or<(With<TerrainTag>, With<BuildingTag>, With<LotsTag>, With<ScatterTag>, With<ParkTag>, With<VacantTag>, With<RoadsTag>, With<WaterTag>, With<WaterworksTag>, With<LaneArrowsTag>, With<PathsTag>, With<SignalTag>, With<CitizenTag>)>,
                 // Kerbside life: parked cars, trash and camps, stops, tolls, pavement bots.
                 Or<(With<ParkedTag>, With<super::society::SocietyTag>, With<TransitTag>, With<TollTag>, With<BotTag>)>,
             )>,

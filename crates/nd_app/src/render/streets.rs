@@ -1,4 +1,4 @@
-//! Streets, lane arrows, signals, bus stops, toll booths and the walker's street detail.
+//! Streets, lane arrows, signals, bus stops and toll booths.
 //!
 //! [refactor/app] Split out of `render.rs`.
 
@@ -163,40 +163,6 @@ pub(super) fn sync_signals(
             mat.0 = wanted.clone();
         }
     }
-}
-
-/// Walk mode only: street-level detail (signs, carts, vending machines,
-/// steam, cables, puddles, scooters, clutter, cracks) within
-/// `WALK_RADIUS` of the walker, redrawn after `WALK_REDRAW` metres.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn sync_walk_detail(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    sim: Res<Sim>,
-    assets: Res<GameAssets>,
-    mats: Res<Materials>,
-    mode: Res<crate::camera::CameraMode>,
-    walk: Res<crate::camera::WalkState>,
-    mut drawn: Local<Option<(SVec2, u64, usize)>>,
-    existing: Query<Entity, With<WalkDetailTag>>,
-) {
-    if *mode != crate::camera::CameraMode::Walk {
-        if drawn.take().is_some() {
-            despawn_all(&mut commands, &existing);
-        }
-        return;
-    }
-    let here = SVec2::new(walk.pos.x, walk.pos.z);
-    let key = (sim.world.roads.version, sim.world.buildings.len());
-    if let Some((at, rv, nb)) = *drawn {
-        if at.distance(here) < nd_procgen::WALK_REDRAW && (rv, nb) == key && !assets.palette_changed && !sim.full_rebuild {
-            return;
-        }
-    }
-    despawn_all(&mut commands, &existing);
-    let geo = nd_procgen::walk_detail(&sim.world, &assets.palette, here, nd_procgen::WALK_RADIUS);
-    spawn_geometry(&mut commands, &mut meshes, &mats, &geo, WalkDetailTag);
-    *drawn = Some((here, key.0, key.1));
 }
 
 /// Bus stops: a pole, a sign, a kerb mark and a shelter at every stop of

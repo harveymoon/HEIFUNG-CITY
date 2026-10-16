@@ -426,7 +426,7 @@ fn scene() -> World {
 }
 
 /// Every world-level generator on one world.
-fn world_meshes(out: &Out, tag: &str, w: &World, walk_at: &[Vec2], previews: &[Vec<Vec2>]) {
+fn world_meshes(out: &Out, tag: &str, w: &World, previews: &[Vec<Vec2>]) {
     use crate::street::{generate_street, lane_arrows, ped_signal_posts, signal_posts, StreetInput, StreetLayer};
     let pal = Palette::default();
     let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
@@ -458,9 +458,6 @@ fn world_meshes(out: &Out, tag: &str, w: &World, walk_at: &[Vec2], previews: &[V
         out.mesh(format!("{tag} far ground"), &crate::terrain::build_far_ground(nd_sim::landscape::LAND_HALF, 3000.0, 25.0, &|p| w.ground_height(p), &|p| w.landscape.is_water(p), &pal));
     }
     out.geo(format!("{tag} footbridges"), &crate::footbridge::footbridges(w, &pal));
-    for (k, c) in walk_at.iter().enumerate() {
-        out.geo(format!("{tag} walk {k}"), &crate::walk::walk_detail(w, &pal, *c, crate::walk::WALK_RADIUS));
-    }
     for c in w.level_crossings() {
         let rig = crate::crossing::rigs(c);
         let mut g = Geometry::default();
@@ -644,9 +641,8 @@ fn golden_hashes() {
     }
     if only.is_empty() || only.contains('w') {
         let w = scene();
-        let walk = [Vec2::new(-600.0, -550.0), Vec2::new(-250.0, -520.0), Vec2::new(500.0, -550.0), Vec2::new(380.0, -230.0)];
         let previews = vec![vec![Vec2::new(-700.0, -480.0), Vec2::new(-500.0, -620.0)], vec![Vec2::new(-200.0, -620.0), Vec2::new(-100.0, -600.0), Vec2::new(0.0, -480.0), Vec2::new(60.0, -400.0)], vec![Vec2::new(420.0, -560.0), Vec2::new(560.0, -540.0)]];
-        world_meshes(&out, "scene", &w, &walk, &previews);
+        world_meshes(&out, "scene", &w, &previews);
         eprintln!("scene {:.1}s", t0.elapsed().as_secs_f32());
         for (preset, seed, days) in [(crate::citygen::CityPreset::CoastalRiver, 1u64, 2u32), (crate::citygen::CityPreset::OldTown, 2, 0)] {
             let (mut w, _, _) = crate::citygen::generate_world(preset, seed);
@@ -655,9 +651,8 @@ fn golden_hashes() {
                 w.tick(&mut minds);
             }
             let c = w.lots.values().map(|l| l.center).fold(Vec2::ZERO, |a, p| a + p) / w.lots.len().max(1) as f32;
-            let walk = [c, c + Vec2::new(300.0, 120.0), c - Vec2::new(250.0, 200.0)];
             let previews = vec![vec![c - Vec2::new(200.0, 30.0), c + Vec2::new(200.0, 30.0)], vec![c + Vec2::new(-50.0, -300.0), c + Vec2::new(20.0, -100.0), c + Vec2::new(120.0, 80.0)]];
-            world_meshes(&out, &format!("{preset:?}{seed}"), &w, &walk, &previews);
+            world_meshes(&out, &format!("{preset:?}{seed}"), &w, &previews);
             eprintln!("{preset:?} {:.1}s ({} buildings)", t0.elapsed().as_secs_f32(), w.buildings.len());
         }
     }

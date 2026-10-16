@@ -359,9 +359,6 @@ impl<K: PartialEq> Gate<K> {
     }
 }
 
-/// Street-level props drawn only around the walker (`nd_procgen::walk`).
-#[derive(Component, Clone)]
-struct WalkDetailTag;
 
 /// Renderer statistics shown in the UI.
 #[derive(Resource, Default)]
@@ -391,7 +388,7 @@ impl Plugin for RenderPlugin {
         app.add_plugins(thumbs::ThumbsPlugin);
         app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_plugins(MaterialPlugin::<street_look::PoolMaterial>::default()).add_plugins(MaterialPlugin::<cutaway::CutMaterial>::default()).init_resource::<cutaway::CutState>().add_systems(Startup, cutaway::add_shader).init_resource::<sky::SkyLook>().add_systems(Startup, (lights::add_shader, street_look::add_pool_shader, setup)).add_systems(
             Update,
-            (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_walk_networks, sync_transit, sync_buildings, sync_walk_detail, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)
+            (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_walk_networks, sync_transit, sync_buildings, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)
                 .chain()
                 .in_set(SimSet::Sync),
         );

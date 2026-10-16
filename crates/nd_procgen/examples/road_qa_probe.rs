@@ -146,20 +146,6 @@ fn probe(w: &World, label: &str) {
             }
         }
     }
-    let walk = nd_procgen::walk::walk_detail(w, &pal, Vec2::ZERO, 5000.0);
-    for (s, m) in walk.iter() {
-        if matches!(s, Surface::Paint | Surface::Asphalt | Surface::WornAsphalt) {
-            continue;
-        }
-        for p in &m.positions {
-            let q = Vec2::new(p[0], p[2]);
-            if let Some((sid, dy)) = on_lanes(w, q, p[1], 0.6) {
-                if dy > 0.12 && dy < 3.5 {
-                    props.add(q, format!("walk {s:?} vertex {dy:.2} m over the lanes of segment {sid}"));
-                }
-            }
-        }
-    }
     props.print();
     if std::env::var("ND_HIST").is_ok() {
         println!("  {hist:?}");
