@@ -2104,15 +2104,9 @@ trait MindProvider {
   where the land is worth it.
 - Cameras: an orbit camera for planning and a first-person walk mode (Tab) that
   steps onto the nearest pavement with mouse look and WASD, a wider field of view and
-  closer fog. Tools are disabled while walking. In walk mode only, `nd_procgen::walk`
-  adds street-level detail within 90 m of the eye (redrawn every 25 m): lit A-frames,
-  lightboxes and blade signs at shopfronts, vending machines, food carts with steam,
-  manholes and steam vents, cables, lanterns and banners strung across cheap streets,
-  puddles holding a smear of sign colour, scooters in the gutter, bin bags, crates,
-  bikes, cones, planters, and cracks, stains and gum on the slabs. It is laid out per
-  road segment from its own seed, so props stay put as the walker moves, and set on that
-  segment's height (a viaduct's pavement, a street on a hillside); highways, ramps, rings and
-  tunnels get none.
+  closer fog. Tools are disabled while walking. Every detail is drawn the same from every
+  camera: there are no walk-mode-only props (the old `nd_procgen::walk` street clutter was
+  removed 2026-10-15).
 - Performance: the sim gets a real-time budget per frame (12 ms) and drops its
   backlog instead of stalling the renderer; shadows use three cascades out to 650 m;
   the HUD shows fps, meshes and triangles.
