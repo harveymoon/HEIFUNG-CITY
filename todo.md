@@ -635,6 +635,14 @@ Everything still open, from the old groups 6–8, the group 1–5 leftovers, tod
 - [ ] Investors: owned buildings skip densify; megacorp deposits nominal; delivered cars parked far from the buyer's home
 - [x] Harvey 2026-10-15: "why is demand for civic always 100%? I keep zoning more land it never goes down" → DONE [fix/civic-demand]: civic demand was `0.1 + pop/150` (100% past ~135 people, blind to what was built) and park demand a flat 50%. Both are now a supply gap (`Economy::civic_gap` / `park_gap`, `Shortfall`): need (civic offices 3 m² of floor a head, rising to 4 at 20k people; parks 6 m² a head) less what is open, what is going up (counted in full, and the light part of the Demand bar) and a quarter of what the vacant zoned lots could hold (at most half the shortfall: zoning shows, only building meets it); scaled by the old small-town ramp. Demand panel and zoning tool say why ("12122 people need about 43,713 m² of civic offices; the city has 179,047 m²"). Entertainment checked: not stuck, it follows venue takings (`cover`), and says so. Harvey's day-50 city: civic 100% → 5% (218 civic offices, ~179,000 m² of floor for 12,122 people, 4× the need), park 50% → 75% (26 parks, 16,836 m², 1.4 m² a head)
 
+## I. City services
+- [ ] Where the trash goes (Harvey 2026-10-15). Today a city depot's trucks unload at the depot and the trash simply disappears (crates/nd_sim/src/trash.rs: no landfill, no disposal cost, nothing toxic); only the private hauler "drives the trash out of town". Add, under Buildings > Services > trash:
+  - **Landfill:** a placeable dump on its own land. It auto-expands onto adjacent lots the player zones or gives it as it fills, looks really gross (heaps, gulls, leachate, trucks tipping), makes the land around it toxic (the contamination/dirt system), lowers land value and mood nearby. Scavengers pick through it at night (homeless and poor residents, a little income for them, some risk).
+  - **Default, no landfill or incinerator:** depots haul the trash out of town at a clearly higher cost per tonne (trucks drive it off the map edge, like the private hauler).
+  - **Incinerator:** burns trash with no land to fill, but costs more to run and is more toxic (air pollution and contamination downwind, a smokestack).
+  - Budget and City Data show tonnes collected, where they went (landfill / out of town / burned) and what each costs.
+- [ ] "Trashy streets" map layer (Harvey 2026-10-15): in the View panel (City tab, likely People or Environment), colour streets and blocks by overflowing bins and litter on the pavement (trash.rs overflow, park litter), with landfills and incinerators marked.
+
 ## H. Public order and events (big features)
 - [ ] Riots, protests, parades taking over roads
 - [ ] Police gunships, SWAT, armoured trucks, raids
