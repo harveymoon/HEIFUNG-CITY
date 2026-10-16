@@ -677,6 +677,75 @@ Everything still open, from the old groups 6–8, the group 1–5 leftovers, tod
   - Budget and City Data show tonnes collected, where they went (landfill / out of town / burned) and what each costs.
 - [ ] "Trashy streets" map layer (Harvey 2026-10-15): in the View panel (City tab, likely People or Environment), colour streets and blocks by overflowing bins and litter on the pavement (trash.rs overflow, park litter), with landfills and incinerators marked.
 
+## J. Flags 2026-10-11 night to 10-15 (docs/playtest/flags_2026-10-15.md, K#)
+Not yet in the list (the stuck police cars, footbridge braking, the racer are fixed; Kade's dead-end loops and U-turns are in C).
+
+**Road and path tools**
+- [ ] Adding a raised path raised the underground paths beneath it, and it can't be undone (K1)
+- [ ] Intersection editor: the junction dot and the lane arrows overlap, so the dot can't be clicked (K2)
+- [ ] A path up a mountainside levelled the hill and put the path on stilts; paths should follow the slope (K5)
+- [ ] A raised path at a height that conflicts with the roads under it should error and require going higher (K12)
+- [ ] Raising a path in Edit put a pillar in the middle of the highway: Edit must apply the build tool's pillar rules (K13)
+- [ ] A footbridge at the end of a raised path should merge into it, stay raised and step down like the path (K14)
+- [ ] Paths make crosswalks a few feet from an intersection's crosswalk: near a crossing or footbridge, let the path end on the street (K15)
+- [ ] Intersection editing on the road itself, with a box round the area and time paused until done (K21)
+- [ ] Three car parks placed side by side: only two merged (K42)
+
+**Zoning and parcels**
+- [ ] Much of the land inside a circus is un-zoneable, "no road", though it reaches the road (K8)
+- [ ] A parcel with 3 streets around it says it has none (K9)
+
+**Dead ends and crosswalks**
+- [ ] A dead-end road gets a sidewalk round its end, not a crosswalk; walkers walk round the end (K47, K48)
+- [ ] A footbridge didn't remove the crosswalk next to it (K48)
+- [ ] Two trucks stuck on a tiny dead-end road that leads nowhere: why route there, and why stuck (K47)
+
+**Bus lines**
+- [ ] No bus stop allowed on a one-way exit ramp ("NO ROAD"), and the line won't route out to the industrial area (K3)
+- [ ] A bus line refused to route round a roundabout with ramps between (K4)
+
+**Traffic and vehicles**
+- [ ] A tow truck took a wrong turn and a detour right at the accident: once close it should switch to working mode and go to the car (K22)
+- [ ] A garbage truck stuck going round in a circle (K24)
+- [ ] A car stuck mid U-turn at the end of a road, waiting for a jaywalker who isn't there; a motorcycle stuck beside it (K39, K40)
+- [ ] A scooter unloading at the kerb blocks all traffic: small vehicles pull out of the way (K31)
+- [ ] A crashed car awaiting a tow shows "passing through": it should say crashed/totalled, and cars behind should go round it (K46)
+- [ ] Parked cars in the middle of the road with traffic driving through them (K34, K38)
+- [ ] A new road instantly full of parked cars that never drove there: cars must arrive and park, not appear (K43)
+- [ ] A car park says 2/109 taken but shows no cars: the count and the cars drawn must match (K45)
+
+**Construction and supply**
+- [ ] A new island's buildings started construction after a road was added, but no delivery trucks ever came (K6; Harvey thinks the on-ramp was poor). A site whose delivery trucks or construction company trucks can't reach it must not build: say so on the building ("delivery trucks can't get here", "builders can't reach this plot") with an alert and a mark on the plot. Today some construction starts before the first delivery truck arrives: construction should wait for its materials and its builders to arrive.
+
+**People**
+- [ ] "Lying down on the pavement" shown while the person is on the beach (K17)
+- [ ] The kerb-sitting pose is half underground (K18)
+- [ ] Benches drawn under a layer of grass (K19)
+- [ ] People queue in rigid rows of 3 like a formation: they should keep personal space and crowd naturally; and explain why the queue formed (it was walkers waiting at a crosswalk by a dead end with stuck trucks) (K44, K45)
+- [ ] Figures walking over the water near the ferry, some with glitched textures (K37)
+
+**Buildings and visuals**
+- [ ] City Car Park 88 looks really funny (K32); a car park lot sits slightly underground (K44)
+- [ ] Capsule buildings under construction look like plain rectangles until finished: build them up in their real shape (K41)
+- [ ] Z-fighting on some Capsule windows (K42)
+- [ ] Homeless tents all alike in neat rows at lot centres: vary placement and shape, some build cardboard huts (K33)
+- [ ] Attractions tab: grey out the build button of an attraction already placed (the casino) (K16)
+
+**Paths and attractions**
+- [ ] The zoo and the botanical garden next to it have separate fenced paths: adjacent grounds' paths connect, and park paths join any adjacent property's paths (K10)
+
+**Inspector data**
+- [ ] A path bridge with people on it shows flow 0: show cars, walkers and bikes separately, or hide car flow on paths (K11)
+
+**Trains and freight**
+- [ ] Freight trains don't carry real-looking shipping containers: one standard, realistic container everywhere (trains, ships, hubs, stacks homes) (K35)
+- [ ] A freight train stopped at its first car instead of pulling into the station; loading and unloading should be animated from its real contents (K35)
+- [ ] Containers have a real life in the city: brought in on trains and ships, stored at stations and cargo hubs, taken out on trucks to where their goods go, used for other things, eventually reused as "stacks" homes; all visible, not props (K36)
+- [ ] A passenger train bumps into the freight train ahead, stops a second: trains keep a safe gap (K49); traffic and people stuck by the freight yard near the street (K50)
+
+**Drones**
+- [ ] A drone at "-" battery keeps circling instead of falling. Future air traffic is centrally scheduled: departures and landings timed so there is never a queue or circling (K30)
+
 ## H. Public order and events (big features)
 - [ ] See incidents as they happen (Harvey 2026-10-15). (1) A crime in progress shows a big red laser-like beam rising from its spot, visible from far off, until it's resolved. (2) The building inspector says when something is happening inside or at the building (today it doesn't, even with a police helicopter circling it): a clear INCIDENT line at the top (what, since when, units on scene, people involved) and a button that opens a popup with the police record for that incident (`services/incident.rs`: kind, stage, suspect, victims, callers, units, timeline, outcome). (3) Clicking the circling helicopter, or anything at the scene, leads to the same incident.
 - [ ] Base jumping easter egg (Harvey 2026-10-15). Very rarely a daredevil citizen (reckless, young, bold) climbs a tall building (supertalls and towers; at dusk or early morning) and jumps off, a parachute opens and they glide down to land in a park, plaza or street, then walk off. Drawn as a small figure with a coloured canopy; a crowd may stop to look; the police may fine them if they land near; a rare one goes wrong (a tree, a hard landing, an ambulance). A news/Alerts line and a memory for the jumper and onlookers.
