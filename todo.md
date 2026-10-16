@@ -677,6 +677,7 @@ Everything still open, from the old groups 6–8, the group 1–5 leftovers, tod
 - [ ] "Trashy streets" map layer (Harvey 2026-10-15): in the View panel (City tab, likely People or Environment), colour streets and blocks by overflowing bins and litter on the pavement (trash.rs overflow, park litter), with landfills and incinerators marked.
 
 ## H. Public order and events (big features)
+- [ ] Serial killer sprees (Harvey 2026-10-15). Very rarely a criminal citizen turns into a serial killer and goes on a spree lasting days: a killing now and then (using the existing murder/incident machinery in crime.rs and services/incident.rs), good at evading the police (searches come up empty, the case stays open), but always caught in the end. The finale is a standoff lasting hours at their home: police cars and officers in a ring around the building, lights flashing, a cordon, SWAT if it exists (ties to the SWAT item), then the arrest. The news and the people react: residents in the area are scared (mood down, fewer people out at night, concerns and memories), and the area's crime rate and fear stay up for a while after. The inspector and Alerts follow the case (victims, days at large, where it ended); the remote API exposes it.
 - [ ] Riots, protests, parades taking over roads
 - [ ] Police gunships, SWAT, armoured trucks, raids
 
