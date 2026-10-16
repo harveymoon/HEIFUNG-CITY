@@ -645,7 +645,7 @@ Everything still open, from the old groups 6–8, the group 1–5 leftovers, tod
 - [ ] Gas prices, fuel stations, EV pressure, fuel tax
 - [ ] Forests and logging → lumber yard, furniture factory, hardware store
 - [ ] New business kinds (builders, pharmacy/clinics/dentists/childcare, clothing/hardware/furniture, fuel/EV/car wash, salons/gyms/laundromats/trades, food variety, clubs/cinemas/theatres, office economy, recycling)
-- [ ] Several businesses in one building; mall bases in supertalls
+- [ ] TOP: Several businesses in one building; mall bases in supertalls (Harvey 2026-10-15: "buildings definitely need to have more than one business, that's kinda crazy for this simulation"). Today `Building::business` is an `Option<Business>` (crates/nd_sim/src/buildings.rs), so every building holds at most one business. Make it a list: ground-floor shops under flats and offices, several offices per tower floor range, mixed-use blocks, strip malls and malls (the malls item). Each tenant has its own kind, staff, books, hours, rent to the building's owner and sign on the facade; vacancy per unit; the building's owner collects rents. Touches the market, jobs, deliveries, rent, the inspector (a tenant list), the directory, the economy panels and saves (old saves: the single business becomes the only tenant). Prerequisite for strip malls, malls and mega-malls.
 - [ ] Banks and debt (business loans that can go bad; household debt from hospital bills, gambling)
 - [ ] District tax laws and levers (e.g. a student district)
 - [ ] Regional commuters (out-of-town workers early on, locals preferred later; commuter share as a goal)
