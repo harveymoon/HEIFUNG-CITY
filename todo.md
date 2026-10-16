@@ -715,7 +715,7 @@ Not yet in the list (the stuck police cars, footbridge braking, the racer are fi
 - [ ] A car park says 2/109 taken but shows no cars: the count and the cars drawn must match (K44)
 
 **Construction and supply**
-- [ ] A new island's buildings started construction after a road was added, but no delivery trucks ever came (K6; Harvey thinks the on-ramp was poor). A site whose delivery trucks or construction company trucks can't reach it must not build: say so on the building ("delivery trucks can't get here", "builders can't reach this plot") with an alert and a mark on the plot. Today some construction starts before the first delivery truck arrives: construction should wait for its materials and its builders to arrive.
+- [ ] A new island's buildings started construction after a road was added, but no delivery trucks ever came (K6; Harvey thinks the on-ramp was poor). A site whose delivery trucks or construction company trucks can't reach it must not build: say so on the building ("delivery trucks can't get here", "builders can't reach this plot") with an alert and a mark on the plot. Today some construction starts before the first delivery truck arrives: construction should wait for its materials and its builders to arrive. Exceptions: homes on footpaths (residential lots reached only by a path: crews and deliveries come on foot or park on the nearest street), and a building extending its footprint onto land next to it when the building already has street access.
 
 **People**
 - [ ] "Lying down on the pavement" shown while the person is on the beach (K17)
