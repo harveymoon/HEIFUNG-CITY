@@ -49,7 +49,10 @@ fn cars_move_to_the_turn_lane_their_turn_needs() {
     let (inner, outer) = (lane_of(&t, west, Vec2::X, 0), lane_of(&t, west, Vec2::X, 1));
     // Lane discipline at the junction: the outer (right) lane never
     // turns left, the inner (left) lane never turns right; both go on.
-    let turns = |l: LaneId| t.net.lanes[l as usize].next.iter().filter(|&&c| t.net.lanes[c as usize].permitted).map(|&c| t.net.lanes[c as usize].turn).collect::<Vec<i8>>();
+    // ([r2-traffic] Its U-turn, driven as a left, is checked apart.)
+    let turns = |l: LaneId| t.net.lanes[l as usize].next.iter().filter(|&&c| t.net.lanes[c as usize].permitted && !t.net.lanes[c as usize].uturn).map(|&c| t.net.lanes[c as usize].turn).collect::<Vec<i8>>();
+    assert!(t.net.lanes[inner as usize].next.iter().any(|&c| t.net.lanes[c as usize].uturn && t.net.lanes[c as usize].permitted), "and U-turns at the lights");
+    assert!(!t.net.lanes[outer as usize].next.iter().any(|&c| t.net.lanes[c as usize].uturn), "never from the outer lane");
     // The default two-lane approach: a left-only lane and a straight-and-right lane.
     assert_eq!(t.net.lanes[inner as usize].arrows, LEFT);
     assert_eq!(t.net.lanes[outer as usize].arrows, STRAIGHT | RIGHT);

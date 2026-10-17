@@ -762,3 +762,78 @@ fn the_airlift_lifts_a_stuck_tow_truck_and_its_car_away() {
     let other = w.traffic.spawn_car(CitizenId::default(), None, vec![lane2], s2, s2 + 2.0, 0);
     assert!(w.airlift(other).unwrap_err().contains("treasury"));
 }
+
+// ── [r2-traffic] ──────────────────────────────────────────────────────────
+
+#[test]
+fn a_parked_car_keeps_its_kerb_slot_when_the_ids_change() {
+    // K41: the road ids renumbered by a rebuild left every parked car
+    // pointing at another street; the kerb index then marked slots taken on
+    // whatever streets had those numbers and cars were moved, one slot
+    // free after another, onto a road just built. Found by where it stands,
+    // the car keeps its slot.
+    let mut w = town();
+    let (_, vid) = parked_far(&mut w);
+    let spot = *w.vehicles.cars[vid].spot().unwrap();
+    let other = w.roads.nearest_street(Vec2::new(-300.0, 0.0)).unwrap().0;
+    assert_ne!(Some(other), spot.segment);
+    if let CarPlace::Parked(s) = &mut w.vehicles.cars[vid].place {
+        (s.segment, s.slot) = (Some(other), 0);
+    }
+    w.remap_kerb_slots();
+    let now = *w.vehicles.cars[vid].spot().unwrap();
+    assert_eq!((now.segment, now.side, now.slot), (spot.segment, spot.side, spot.slot), "its own slot again");
+    assert_eq!(now.pos, spot.pos, "and it never moved");
+    assert_eq!(w.vehicles.kerbs[&spot.segment.unwrap()].get(&(spot.side, spot.slot)), Some(&vid));
+}
+
+#[test]
+fn a_car_left_with_no_slot_stands_at_the_kerb_not_in_the_lane() {
+    // K32/K35: a car squeezed in where there was no slot kept its place in
+    // its lane and was drawn in the middle of the road.
+    let w = town();
+    let lane_centre = Vec2::new(1.75, -150.0);
+    let spot = w.squeezed_spot(lane_centre);
+    let half = w.roads.segment(spot.segment.expect("on the street")).half_width();
+    assert!((spot.pos.x.abs() - (half - 1.15)).abs() < 0.05, "on the kerb line: {:?} (half width {half})", spot.pos);
+    assert!(spot.pos.x > 0.0, "on the side it stood");
+    assert!((spot.pos.y + 150.0).abs() < 0.5);
+}
+
+#[test]
+fn tow_calls_lapse_and_are_not_booked_past_what_the_trucks_can_take() {
+    // The tow backlog: every illegally parked car a patrol passed became a
+    // tow call at once and none ever lapsed; Harvey's city had 1,341 (and
+    // later 2,210) queued for a handful of trucks.
+    let mut w = town();
+    let (_, vid) = parked_far(&mut w);
+    let tick = w.clock.tick;
+    let trucks: usize = w.buildings.keys().map(|b| w.tow_trucks(b)).sum::<usize>() + OUT_OF_TOWN_TOW_TRUCKS;
+    for k in 0..trucks * TOW_QUEUE_PER_TRUCK {
+        w.enforcement.jobs.push(TowJob { id: 10_000 + k as u32, car: VehicleId::default(), company: None, truck: None, state: TowState::Waiting { until: tick + 600 }, reason: TowReason::Illegal, since: tick, contra: None });
+    }
+    w.call_tow_if_room(vid);
+    assert!(w.enforcement.job_for(vid).is_none(), "the queue is full: a ticket only");
+    assert_eq!(w.enforcement.stats.tows_declined_total, 1);
+    w.enforcement.jobs.clear();
+    w.call_tow_if_room(vid);
+    let id = w.enforcement.job_for(vid).expect("room again: towed").id;
+    // Nobody comes for hours: the call lapses.
+    if let Some(j) = w.enforcement.jobs.iter_mut().find(|j| j.id == id) {
+        j.since = tick.saturating_sub(TOW_LAPSE + 1);
+        j.state = TowState::Waiting { until: tick + 600 };
+    }
+    run(&mut w, 2);
+    assert!(w.enforcement.job_for(vid).is_none(), "lapsed");
+    assert_eq!(w.enforcement.stats.tows_lapsed_total, 1);
+}
+
+#[test]
+fn a_car_park_is_redrawn_for_every_car_while_few_stand_there() {
+    // K44: "2/109 spots taken" on a lot drawn empty: it was redrawn only
+    // when its fullness crossed an eighth.
+    use super::cars::parking_band;
+    assert_ne!(parking_band(0, 109), parking_band(2, 109));
+    assert!((0..=12).all(|n| parking_band(n, 109) != parking_band(n + 1, 109)));
+    assert_eq!(parking_band(60, 109), parking_band(61, 109), "a full lot is not redrawn for every car");
+}

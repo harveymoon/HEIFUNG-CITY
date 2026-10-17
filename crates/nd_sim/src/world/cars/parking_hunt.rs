@@ -410,7 +410,7 @@ impl World {
                 // is left where it stands, squeezed in at the kerb (it used
                 // to drive round for good: drivers hunting two to ten hours
                 // for a space, through the jam they were part of).
-                let spot = ParkSpot { kind: ParkKind::Overflow, pos, slot: u16::MAX, since: self.clock.tick, ..Default::default() };
+                let spot = self.squeezed_spot(pos);
                 self.finish_park(car_id, vid, spot, tries.max(1));
             }
         }

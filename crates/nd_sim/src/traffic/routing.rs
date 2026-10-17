@@ -97,13 +97,22 @@ impl LaneNetwork {
     /// `LANE_CHANGE_COST`; every vehicle already on a lane adds
     /// `QUEUE_COST`, so routes spread over lanes and around queues.
     pub fn route_avoiding(&self, start: LaneId, s_start: f32, goal: LaneId, s_end: f32, avoid_lane: Option<LaneId>, avoid_step: Option<(LaneId, LaneId)>) -> Option<(Vec<LaneId>, f32, f32)> {
-        self.route_search(start, s_start, goal, s_end, avoid_lane, avoid_step, true)
+        let lanes: Vec<LaneId> = avoid_lane.into_iter().collect();
+        self.route_search(start, s_start, goal, s_end, &Detour { lanes: &lanes, step: avoid_step, ..Detour::PLAIN })
     }
 
-    /// The A* behind `route_avoiding`; `tolls` false searches as if no road
-    /// were tolled.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn route_search(&self, start: LaneId, s_start: f32, goal: LaneId, s_end: f32, avoid_lane: Option<LaneId>, avoid_step: Option<(LaneId, LaneId)>, tolls: bool) -> Option<(Vec<LaneId>, f32, f32)> {
+    /// [r2-traffic] A re-plan from where a stalled car stands: never into
+    /// `avoid` (the full exit, and the ways round it the car already tried),
+    /// never the step `avoid_step`; queues weigh `REPLAN_QUEUE_COST` a
+    /// vehicle and turning back costs `TURNBACK_COST` (a dead end's
+    /// turning circle or a junction U-turn), so the car is not sent out and
+    /// back down the nearest stub into the same jam (K52).
+    pub fn route_replan(&self, start: LaneId, s_start: f32, goal: LaneId, s_end: f32, avoid: &[LaneId], avoid_step: Option<(LaneId, LaneId)>) -> Option<(Vec<LaneId>, f32, f32)> {
+        self.route_search(start, s_start, goal, s_end, &Detour { lanes: avoid, step: avoid_step, queue_cost: REPLAN_QUEUE_COST, turnback_cost: TURNBACK_COST, tolls: true })
+    }
+
+    /// The A* behind `route_avoiding`.
+    pub(super) fn route_search(&self, start: LaneId, s_start: f32, goal: LaneId, s_end: f32, d: &Detour) -> Option<(Vec<LaneId>, f32, f32)> {
         if start == goal && s_end >= s_start {
             return Some((vec![start], s_start, s_end));
         }
@@ -111,14 +120,15 @@ impl LaneNetwork {
         SEARCH.with(|cell| {
             let mut scratch = cell.borrow_mut();
             scratch.begin(self.lanes.len());
-            self.route_search_in(&mut scratch, start, s_start, goal, s_end, to, avoid_lane, avoid_step, tolls)
+            self.route_search_in(&mut scratch, start, s_start, goal, s_end, to, d)
         })
     }
 
     /// [`Self::route_search`] on reused scratch (the costs and parents of
     /// the lanes reached, by lane index).
     #[allow(clippy::too_many_arguments)]
-    fn route_search_in(&self, sc: &mut SearchScratch, start: LaneId, s_start: f32, goal: LaneId, s_end: f32, to: Vec2, avoid_lane: Option<LaneId>, avoid_step: Option<(LaneId, LaneId)>, tolls: bool) -> Option<(Vec<LaneId>, f32, f32)> {
+    fn route_search_in(&self, sc: &mut SearchScratch, start: LaneId, s_start: f32, goal: LaneId, s_end: f32, to: Vec2, d: &Detour) -> Option<(Vec<LaneId>, f32, f32)> {
+        let tolls = d.tolls;
         let mut open = BinaryHeap::new();
         let start_cost = self.lanes[start as usize].length - s_start;
         sc.set(start, start_cost, None);
@@ -151,7 +161,11 @@ impl LaneNetwork {
             let gl = sc.g(lane).unwrap();
             let here = &self.lanes[lane as usize];
             // [tolls] A toll counts as the detour a driver would take to avoid it.
-            let ahead = here.next.iter().filter(|&&n| self.lanes[n as usize].permitted).map(|&n| (n, self.lanes[n as usize].length + self.rings.penalty(n) + if tolls { self.toll_penalty(n) } else { 0.0 }));
+            let ahead = here.next.iter().filter(|&&n| self.lanes[n as usize].permitted).map(|&n| {
+                let l = &self.lanes[n as usize];
+                let back = if d.turnback_cost > 0.0 && (l.uturn || l.turnaround) { d.turnback_cost } else { 0.0 };
+                (n, l.length + self.rings.penalty(n) + back + if tolls { self.toll_penalty(n) } else { 0.0 })
+            });
             // Room on this piece before the solid line of the junction
             // ahead (the line may begin pieces back, round bends).
             // On a roundabout, slow and with arms close together, the line
@@ -170,7 +184,7 @@ impl LaneNetwork {
             };
             let beside = [here.left, here.right].into_iter().flatten().map(|n| (n, LANE_CHANGE_COST + short + CUT_IN_COST * late * self.lanes[n as usize].cars.len() as f32));
             for (next, step) in ahead.chain(beside) {
-                if next == start || Some(next) == avoid_lane || Some((lane, next)) == avoid_step {
+                if next == start || d.lanes.contains(&next) || Some((lane, next)) == d.step {
                     continue;
                 }
                 // Changing onto the goal lane from the start puts the car
@@ -178,7 +192,7 @@ impl LaneNetwork {
                 if lane == start && next == goal && here.is_beside(next) && s_end < s_start + 1.0 {
                     continue;
                 }
-                let cost = gl + step + QUEUE_COST * self.lanes[next as usize].cars.len() as f32;
+                let cost = gl + step + d.queue_cost * self.lanes[next as usize].cars.len() as f32;
                 if sc.g(next).map_or(true, |old| cost < old) {
                     sc.set(next, cost, Some(lane));
                     open.push(Open { f: cost + self.lanes[next as usize].end().distance(to), g: cost, lane: next, expanded: expanded + 1 });
@@ -260,6 +274,27 @@ impl LaneNetwork {
         }
         total
     }
+}
+
+/// [r2-traffic] What a route search steers clear of and how it weighs
+/// queues and turning back.
+#[derive(Clone, Copy, Debug)]
+pub struct Detour<'a> {
+    /// Lanes never entered.
+    pub lanes: &'a [LaneId],
+    /// A step (from, to) never taken.
+    pub step: Option<(LaneId, LaneId)>,
+    /// Cost (m) of every vehicle already on a lane entered.
+    pub queue_cost: f32,
+    /// Extra cost (m) of a U-turn or a dead end's turning circle.
+    pub turnback_cost: f32,
+    /// False: searched as if no road were tolled.
+    pub tolls: bool,
+}
+
+impl Detour<'static> {
+    /// The plain search: nothing avoided, the usual weights.
+    pub const PLAIN: Detour<'static> = Detour { lanes: &[], step: None, queue_cost: QUEUE_COST, turnback_cost: 0.0, tolls: true };
 }
 
 thread_local! {
@@ -376,11 +411,14 @@ impl Traffic {
     /// destination, keeping its place in the lane. False when no route
     /// exists (the destination is behind it on its own lane, say).
     pub(super) fn replan_from_here(&mut self, id: CarId) -> bool {
-        let (here, s, goal, s_end) = {
+        let (here, s, goal, s_end, avoid) = {
             let c = &self.cars[id];
-            (c.route[c.idx], c.s, *c.route.last().unwrap(), c.s_end)
+            (c.route[c.idx], c.s, *c.route.last().unwrap(), c.s_end, c.avoided.iter().map(|&(l, _)| l).collect::<Vec<_>>())
         };
-        let Some((route, _, _)) = self.net.route_lanes(here, s, goal, s_end) else { return false };
+        // [r2-traffic] Queues weighed, turning back costed, and not back
+        // into what it gave up on (with no way round those, any way).
+        let found = self.net.route_replan(here, s, goal, s_end, &avoid, None).or_else(|| self.net.route_lanes(here, s, goal, s_end));
+        let Some((route, _, _)) = found else { return false };
         let car = &mut self.cars[id];
         car.route = route;
         car.idx = 0;
@@ -433,10 +471,24 @@ impl Traffic {
     /// because their exit is full (a gridlock ring, a jammed street) or
     /// because they cannot get into the lane their turn needs look for
     /// another way from where they stand.
-    pub(super) fn reroute_stalled(&mut self) {
+    ///
+    /// [r2-traffic] The new way never goes back into what the car gave up
+    /// on in the last `AVOID_SECONDS` (`Car::avoided`), weighs queues and
+    /// turning back (`route_replan`), and is taken only when it is a
+    /// modest detour: a much longer one is waited out in the queue
+    /// (`JAM_DETOUR_M`; a full exit `REROUTE_DETOUR_M`). A crash ahead is
+    /// always gone round.
+    pub(super) fn reroute_stalled(&mut self, seconds: f32) {
         let ids: Vec<CarId> = self.cars.keys().collect();
         for &id in &ids {
             self.bail_off_ring(id);
+            let c = &mut self.cars[id];
+            if !c.avoided.is_empty() {
+                c.avoided.retain_mut(|(_, t)| {
+                    *t -= seconds;
+                    *t > 0.0
+                });
+            }
         }
         for id in ids {
             let c = &self.cars[id];
@@ -459,12 +511,18 @@ impl Traffic {
             // `BUS_DETOUR_AFTER`, or round a crash.
             let bus_waits = c.bus.is_some() && c.stalled < BUS_DETOUR_AFTER;
             let mut full_exit = false;
+            let mut wreck = false;
             let (avoid_lane, avoid_step) = if lane.is_beside(next) {
                 if bus_waits {
                     continue;
                 }
                 (None, Some((here, next)))
+            } else if wreck_ahead && matches!(c.errand, crate::vehicle::Errand::Recover(_)) {
+                // [r2-traffic] A tow truck going to a crash does not go
+                // round it: it is where it is going (K21).
+                continue;
             } else if wreck_ahead && c.stalled >= REROUTE_AFTER && nl.is_connector() {
+                wreck = true;
                 (Some(next), None)
             } else if c.stalled < REROUTE_AFTER || bus_waits {
                 continue;
@@ -478,15 +536,26 @@ impl Traffic {
                 }
             };
             let (goal, s_end, s) = (*c.route.last().unwrap(), c.s_end, c.s);
-            let mut found = self.net.route_avoiding(here, s, goal, s_end, avoid_lane, avoid_step);
+            let mut avoid: Vec<LaneId> = c.avoided.iter().map(|&(l, _)| l).filter(|&l| l != goal).collect();
+            avoid.extend(avoid_lane);
+            let mut found = self.net.route_replan(here, s, goal, s_end, &avoid, avoid_step);
+            if found.is_none() && !c.avoided.is_empty() {
+                // Every way left goes back into one it gave up on before:
+                // then only the one ahead now is avoided.
+                found = self.net.route_replan(here, s, goal, s_end, &avoid[avoid.len() - avoid_lane.iter().count()..], avoid_step);
+            }
             // [rage] Round a full exit only by a modest detour; otherwise it
-            // waits its turn in the queue (the exit clears).
-            if full_exit {
+            // waits its turn in the queue (the exit clears). [r2-traffic]
+            // A turn it cannot get into likewise.
+            if !wreck {
                 let left = self.net.route_length(&c.route[c.idx..], s);
-                if found.as_ref().is_some_and(|r| self.net.route_length(&r.0, s) > left + REROUTE_DETOUR_M.max(left * REROUTE_DETOUR_SHARE)) {
+                let cap = if full_exit { REROUTE_DETOUR_M.max(left * REROUTE_DETOUR_SHARE) } else { JAM_DETOUR_M.max(left * JAM_DETOUR_SHARE) };
+                if found.as_ref().is_some_and(|r| self.net.route_length(&r.0, s) > left + cap) {
                     found = None;
                 }
             }
+            // What it gave up on: the exit, or the lane it could not get into.
+            let gave_up = avoid_lane.or(avoid_step.map(|(_, to)| to));
             let c = &mut self.cars[id];
             // Back off: a car that keeps standing tries again ever more rarely.
             c.cooldown = (REROUTE_LANE_CHANGE_AFTER * 2f32.powi(c.replans as i32)).min(REROUTE_BACKOFF_MAX);
@@ -494,7 +563,21 @@ impl Traffic {
             if let Some((route, _, _)) = found {
                 c.route = route;
                 c.idx = 0;
+                if let Some(l) = gave_up {
+                    c.remember_avoided(l);
+                }
             }
         }
+    }
+}
+
+impl Car {
+    /// [r2-traffic] Remember a way given up on for `AVOID_SECONDS`.
+    pub(super) fn remember_avoided(&mut self, lane: LaneId) {
+        self.avoided.retain(|&(l, _)| l != lane);
+        if self.avoided.len() >= AVOID_MAX {
+            self.avoided.remove(0);
+        }
+        self.avoided.push((lane, AVOID_SECONDS));
     }
 }

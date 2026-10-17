@@ -66,6 +66,12 @@ pub struct Car {
     /// Tries at another way since it last moved (backs the next one off).
     #[serde(default)]
     pub replans: u8,
+    /// [r2-traffic] Ways this car gave up on (full exits, turns it could
+    /// not get into) and the traffic seconds it still remembers each, so a
+    /// re-plan does not send it straight back into them (K52). Lane ids:
+    /// forgotten when the lanes are rebuilt.
+    #[serde(default)]
+    pub avoided: Vec<(LaneId, f32)>,
     /// Squeezing past a left turner waiting at the head of a one-lane
     /// approach, on the shoulder to its right.
     #[serde(default)]

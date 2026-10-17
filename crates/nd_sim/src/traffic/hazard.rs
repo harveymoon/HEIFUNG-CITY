@@ -87,7 +87,12 @@ impl Traffic {
             return lane.right.is_none();
         }
         let kerb = |l: &LaneId| self.net.lanes.get(*l as usize).is_some_and(|x| !x.is_connector() && x.right.is_none());
-        lane.turn == 0 && lane.length < 8.0 && lane.next.len() == 1 && lane.next.iter().all(kerb) && lane.prev.len() == 1 && lane.prev.iter().all(kerb)
+        // [r2-traffic] A junction's box has room round a wreck in it: it
+        // is pushed aside and the traffic eases past it (K45: a write-off
+        // in a junction held the queue behind it until the tow came).
+        let LaneKind::Connector { node, .. } = lane.kind else { return false };
+        let real_junction = self.net.node_intersection.get(node.0 as usize).and_then(|&k| self.net.intersections.get(k)).is_some_and(|i| i.approaches >= 3) && !self.net.rings.nodes.contains_key(&node);
+        real_junction || (lane.turn == 0 && lane.length < 8.0 && lane.next.len() == 1 && lane.next.iter().all(kerb) && lane.prev.len() == 1 && lane.prev.iter().all(kerb))
     }
 
     /// A stopped vehicle the traffic behind may ease past.
@@ -339,8 +344,45 @@ mod tests {
         assert!(t.pass_side(car, wreck, &t.net.lanes[lane]).is_none(), "no room for a lorry past a lorry");
     }
 
+    /// [r2-traffic] K45: a write-off in a junction held the queue behind
+    /// it until the tow truck came (and was shown "passing through"). The
+    /// junction's box has room: it is pushed aside and the cars ease past.
+    #[test]
+    fn traffic_eases_past_a_wreck_in_a_junction() {
+        let mut roads = RoadNetwork::default();
+        roads.add_polyline(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        roads.add_polyline(&[Vec2::new(0.0, -400.0), Vec2::new(0.0, 400.0)], 1, 1);
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let y = 0.5 * LANE_WIDTH;
+        let wreck = send(&mut t, &roads, Vec2::new(-30.0, y), Vec2::new(300.0, y));
+        for _ in 0..400 {
+            if t.net.lanes[t.cars[wreck].route[t.cars[wreck].idx] as usize].is_connector() && t.cars[wreck].s > 2.0 {
+                break;
+            }
+            t.step(0.25, 1);
+        }
+        assert!(t.net.lanes[t.cars[wreck].route[t.cars[wreck].idx] as usize].is_connector(), "in the junction");
+        t.crash(vec![wreck], CrashCause::OffRoad, 30.0);
+        assert!(t.cars[wreck].drive.crash.is_some_and(|c| c.wrecked));
+        assert!(t.push_aside(wreck), "pushed aside in the junction's box");
+        let wx = t.cars[wreck].pos.x;
+        let mut cars = Vec::new();
+        for k in 0..200 {
+            if k % 8 == 0 && k < 100 {
+                let c = send(&mut t, &roads, Vec2::new(-300.0, y), Vec2::new(350.0, y));
+                t.cars[c].drive.profile = DriverProfile::professional(k as f32 * 0.01);
+                cars.push(c);
+            }
+            t.step(1.0, 4);
+        }
+        let past = cars.iter().filter(|&&c| t.cars.get(c).is_none_or(|c| c.pos.x > wx + 5.0)).count();
+        assert!(past * 10 >= cars.len() * 7, "most got past: {past} of {}", cars.len());
+        assert!(t.crashes.iter().all(|c| c.cars == vec![wreck]), "nobody ran into the wreck");
+    }
+
     /// Only a kerb lane has a shoulder to push onto; a crash in an inner
-    /// lane or a junction stays put.
+    /// lane stays put.
     #[test]
     fn only_kerb_lanes_have_room_aside() {
         let mut roads = RoadNetwork::default();

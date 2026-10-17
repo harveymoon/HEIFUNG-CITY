@@ -277,9 +277,14 @@ impl World {
     pub(super) fn driver_waiting(&self, cr: u32, secs: f32) -> bool {
         let Some(info) = self.peds.crossings.get(cr as usize) else { return false };
         let t = &self.traffic;
+        let reach = crate::pedestrians::ZEBRA_WAIT_REACH;
+        let standing = |c: &crate::traffic::Car| c.v < 0.5 && c.stalled >= secs;
         info.lanes.iter().any(|&(l, s)| {
             t.net.lanes.get(l as usize).is_some_and(|lane| {
-                lane.cars.iter().filter_map(|&c| t.cars.get(c)).any(|c| c.s <= s + 0.5 && s - c.s < crate::pedestrians::ZEBRA_WAIT_REACH && c.v < 0.5 && c.stalled >= secs)
+                lane.cars.iter().filter_map(|&c| t.cars.get(c)).any(|c| c.s <= s + 0.5 && s - c.s < reach && standing(c))
+                    // [r2-traffic] Or at the end of a lane leading onto it
+                    // (a crossing over a junction's or a dead end's turn).
+                    || (s < reach && lane.prev.iter().filter_map(|&p| t.net.lanes.get(p as usize)).any(|pl| pl.cars.last().and_then(|&c| t.cars.get(c)).is_some_and(|c| pl.length - c.s + s < reach && standing(c))))
             })
         })
     }
@@ -430,6 +435,14 @@ impl World {
             return (gap >= LAWFUL_GAP).then_some(false);
         }
         if lawful {
+            // [r2-traffic] Unmarked, nobody steps out in front of a car
+            // standing at it either: it is about to go. Only moving cars
+            // made the gap, so a stream of walkers round the end of a dead
+            // end kept the cars turning there standing for minutes,
+            // "braking for someone crossing the road" (K37, K38, K47).
+            if self.driver_waiting(cr, crate::pedestrians::GREEN_WAIT) {
+                return None;
+            }
             // Unmarked (a dead end, a roundabout's lanes): nobody gives way,
             // so a gap long enough to get across, plus the walker's margin.
             let across = self.walk.nodes.get(crossing.a as usize).zip(self.walk.nodes.get(crossing.b as usize)).map_or(8.0, |(a, b)| a.pos.distance(b.pos));
@@ -804,9 +817,18 @@ impl World {
             if hurt {
                 self.peds.collisions_today += 1;
                 self.peds.collisions_total += 1;
-                if let Some(c) = self.traffic.cars.get_mut(car) {
-                    c.v = 0.0;
-                    c.hold = c.hold.max(150.0);
+                // [r2-traffic] The driver pulls over to the kerb (out of
+                // the traffic, which goes on past) unless it is in the
+                // middle of a junction: it used to stop dead in its lane
+                // for minutes with everyone stuck behind it (K29).
+                let in_junction = self.traffic.cars.get(car).and_then(|c| c.route.get(c.idx)).is_some_and(|&l| self.traffic.net.lanes[l as usize].is_connector());
+                if in_junction {
+                    if let Some(c) = self.traffic.cars.get_mut(car) {
+                        c.v = 0.0;
+                        c.hold = c.hold.max(150.0);
+                    }
+                } else if self.traffic.cars.contains_key(car) {
+                    self.traffic.pull_in(car, 150.0);
                 }
                 {
                     let c = &mut self.citizens[ped];

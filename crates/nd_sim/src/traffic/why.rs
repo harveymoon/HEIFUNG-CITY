@@ -49,6 +49,9 @@ pub enum StopReason {
     BusStop,
     /// A lorry or van standing at the kerb on a job (unloading).
     Unloading,
+    /// [r2-traffic] A private car or bike stopped at the kerb (dropping
+    /// someone off, after a knock with a walker): not "on a job".
+    PulledOver,
     /// Pulling up at its destination.
     Arriving,
     /// Stopped after a crash.
@@ -102,6 +105,7 @@ impl StopReason {
             StopReason::AtKerb { .. } => "at_kerb",
             StopReason::BusStop => "bus_stop",
             StopReason::Unloading => "unloading",
+            StopReason::PulledOver => "pulled_over",
             StopReason::Arriving => "arriving",
             StopReason::Crashed { .. } => "crashed",
             StopReason::Takeover => "takeover",
@@ -131,6 +135,7 @@ impl StopReason {
             StopReason::AtKerb { waiting_for } => or(waiting_for, "at the kerb, waiting to pull out past", "at the kerb, waiting to pull out"),
             StopReason::BusStop => "at a bus stop".into(),
             StopReason::Unloading => "stopped at the kerb on a job (unloading)".into(),
+            StopReason::PulledOver => "pulled over at the kerb".into(),
             StopReason::Arriving => "pulling up at its destination".into(),
             StopReason::Crashed { wrecked: true } => "written off in a crash, waiting for the tow".into(),
             StopReason::Crashed { wrecked: false } => "stopped after a bump, exchanging details".into(),
@@ -197,7 +202,13 @@ impl Traffic {
             return StopReason::Crashed { wrecked: cr.wrecked };
         }
         if c.hold > 0.0 || c.wait == Wait::Dwell {
-            return if c.bus.is_some() { StopReason::BusStop } else { StopReason::Unloading };
+            return if c.bus.is_some() {
+                StopReason::BusStop
+            } else if c.cargo.is_none() && c.owned.is_some() {
+                StopReason::PulledOver
+            } else {
+                StopReason::Unloading
+            };
         }
         if c.entering {
             return StopReason::AtKerb { waiting_for: c.blocked_by.filter(|b| self.cars.contains_key(*b)) };

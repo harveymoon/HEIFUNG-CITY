@@ -59,6 +59,14 @@ pub struct Lane {
     /// `crate::road_wear`): set by the world after every rebuild and each
     /// night. Drivers keep under the limit (`limit_at`) and misjudge more.
     pub rough: f32,
+    /// [r2-traffic] A connector turning back the way it came at a
+    /// junction (not a dead end): the U-turn from the left-turn lane of a
+    /// wide street at a signalled junction, driven as a left turn on the
+    /// left phase. `permitted` only while the junction is signalled and the
+    /// lane keeps its left arrow (`LaneNetwork::refresh_uturns`).
+    pub uturn: bool,
+    /// [r2-traffic] A connector round a dead end's turning circle.
+    pub turnaround: bool,
 }
 
 /// [tolls] A toll booth on a lane: where along it, what it charges and how
@@ -89,7 +97,7 @@ impl Lane {
             cum.push(cum.last().unwrap() + w[0].distance(w[1]));
         }
         let length = *cum.last().unwrap();
-        Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, limit_end: speed_limit, highway: false, ramp: false, end_node, left: None, right: None, prev: Vec::new(), turn: 0, arrows: 0, permitted: true, approach: u32::MAX, red_for: 0.0, blocked: false, rail_closed: false, toll: None, rough: 0.0 }
+        Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, limit_end: speed_limit, highway: false, ramp: false, end_node, left: None, right: None, prev: Vec::new(), turn: 0, arrows: 0, permitted: true, approach: u32::MAX, red_for: 0.0, blocked: false, rail_closed: false, toll: None, rough: 0.0, uturn: false, turnaround: false }
     }
 
     pub fn is_connector(&self) -> bool {

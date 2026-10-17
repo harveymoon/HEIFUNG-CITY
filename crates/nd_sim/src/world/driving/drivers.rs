@@ -199,6 +199,15 @@ impl World {
             return "delivery truck".into();
         }
         let body = c.model.body.label().replace('_', " ");
+        // [r2-traffic] A wreck in the road says so, whoever it was (K45:
+        // "queued behind an suv passing through" was a write-off).
+        if let Some(cr) = c.drive.crash {
+            let what = if cr.wrecked { "wrecked" } else { "crashed" };
+            return match self.citizens.get(c.citizen) {
+                Some(p) => format!("{}'s {what} {body}", p.name),
+                None => format!("a {what} {body}"),
+            };
+        }
         match self.citizens.get(c.citizen) {
             Some(p) => format!("{}'s {body}", p.name),
             None if c.siren || self.services.unit_of_car(id).is_some() => format!("emergency {body}"),

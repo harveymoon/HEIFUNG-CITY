@@ -28,6 +28,8 @@ impl Plugin for StubMarksPlugin {
 struct Stubs {
     at: Option<bevy::ecs::change_detection::Tick>,
     list: Vec<(nd_sim::BuildingId, Vec<SVec2>)>,
+    /// [r2-traffic] Building sites no truck can get to.
+    sites: Vec<(nd_sim::BuildingId, SVec2, nd_sim::SiteBlock)>,
 }
 
 /// The marks' colour: the amber of an unfinished connection.
@@ -38,10 +40,20 @@ fn amber(pulse: f32) -> Color {
 fn stub_rings(mut gizmos: Gizmos, sim: Res<Sim>, time: Res<Time>, mut stubs: ResMut<Stubs>) {
     let w = &sim.world;
     stubs.list = w.unjoined_stubs();
+    stubs.sites = w.blocked_sites();
     stubs.at = Some(sim.last_changed());
     let t = time.elapsed_secs();
     let pulse = (t * 2.6).sin() * 0.5 + 0.5;
     let col = amber(pulse);
+    // [r2-traffic] A site no truck can get to: a red ring on its plot and
+    // a post, like a road end waiting for its road (K6).
+    let red = Color::linear_rgb(3.4 + pulse, 0.35, 0.2);
+    for &(_, c, _) in &stubs.sites {
+        let at = Vec3::new(c.x, w.surface_height(c) + 0.4, c.y);
+        gizmos.circle(flat_at(at), 9.0, red);
+        gizmos.circle(flat_at(at), 9.0 + 3.0 * pulse, red.with_alpha(0.5));
+        gizmos.line(at, at + Vec3::Y * (18.0 + 2.0 * pulse), red);
+    }
     for (b, ends) in &stubs.list {
         let gate = w.building_entrance(*b);
         for &e in ends {
@@ -68,14 +80,15 @@ fn stub_rings(mut gizmos: Gizmos, sim: Res<Sim>, time: Res<Time>, mut stubs: Res
 
 fn stub_labels(mut contexts: EguiContexts, sim: Res<Sim>, flags: Res<UiFlags>, cams: Query<(&Camera, &GlobalTransform), With<crate::camera::OrbitCamera>>, cache: Res<Stubs>) -> Result {
     let w = &sim.world;
-    let fresh;
-    let stubs = if cache.at == Some(sim.last_changed()) {
-        &cache.list
+    let (fresh, fresh_sites);
+    let (stubs, sites) = if cache.at == Some(sim.last_changed()) {
+        (&cache.list, &cache.sites)
     } else {
         fresh = w.unjoined_stubs();
-        &fresh
+        fresh_sites = w.blocked_sites();
+        (&fresh, &fresh_sites)
     };
-    if stubs.is_empty() {
+    if stubs.is_empty() && sites.is_empty() {
         return Ok(());
     }
     let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };
@@ -100,6 +113,20 @@ fn stub_labels(mut contexts: EguiContexts, sim: Res<Sim>, flags: Res<UiFlags>, c
             }
             painter.text(at, egui::Align2::CENTER_BOTTOM, &text, crate::ui::theme::small(), text_col);
         }
+    }
+    let site_col = egui::Color32::from_rgb(255, 120, 90);
+    for &(b, c, why) in sites {
+        let Some(at) = to_screen(c, 20.0) else { continue };
+        if !screen.contains(at) {
+            continue;
+        }
+        let name = w.buildings.get(b).map_or("", |x| x.name.as_str());
+        let text = format!("{}
+{name}: building site on hold", why.text());
+        for off in [egui::vec2(1.0, 1.0), egui::vec2(-1.0, 1.0), egui::vec2(1.0, -1.0), egui::vec2(-1.0, -1.0)] {
+            painter.text(at + off, egui::Align2::CENTER_BOTTOM, &text, crate::ui::theme::small(), egui::Color32::BLACK);
+        }
+        painter.text(at, egui::Align2::CENTER_BOTTOM, &text, crate::ui::theme::small(), site_col);
     }
     Ok(())
 }

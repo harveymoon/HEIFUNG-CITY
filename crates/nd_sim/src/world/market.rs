@@ -4,6 +4,11 @@
 
 use super::*;
 
+/// [r2-traffic] Minutes a site's load waits when every lorry is on the road,
+/// and before a site no lorry could reach is tried again.
+const SITE_TRUCK_WAIT: u64 = 15;
+const SITE_RETRY: u64 = 60;
+
 impl World {
     /// Businesses pay wages; those that cannot for several days close, and
     /// closed buildings are demolished after a week so the lot can be reused.
@@ -654,11 +659,22 @@ impl World {
     /// edge. Delivered on the spot when there is no route or the road is
     /// full of trucks already: the buyer counts the load as inbound.
     pub(super) fn dispatch_truck(&mut self, origin: TruckOrigin, cargo: Cargo, color: u8) {
+        let to_site = self.buildings.get(cargo.to).is_some_and(|b| b.construction.is_some());
         if self.truck_count() >= crate::market::MAX_TRUCKS {
+            // [r2-traffic] A building site's load waits for a truck: the
+            // site does not start on parts nobody brought (K6).
+            if to_site {
+                let from = match origin {
+                    TruckOrigin::Building(b) => Some(b),
+                    TruckOrigin::CityEdge => None,
+                };
+                self.freight_queue.push(crate::world::delivery_hours::QueuedTruck { due: self.clock.tick + SITE_TRUCK_WAIT, from, cargo, color });
+                return;
+            }
             self.deliver(cargo);
             return;
         }
-        let route = (|| {
+        let mut route = (|| {
             let (from_seg, from_pt) = match origin {
                 TruckOrigin::Building(b) => self.truck_stop(b)?,
                 TruckOrigin::CityEdge => {
@@ -671,11 +687,21 @@ impl World {
             let (to_seg, to_pt) = self.truck_stop(cargo.to)?;
             self.traffic.net.find_route(from_seg, from_pt, to_seg, to_pt)
         })();
+        // [r2-traffic] A site's load comes in from out of town by any road
+        // that leads there (the one entry tried first may be on another
+        // network: an island's own road, a stub); and with none at all,
+        // nothing is dropped on the site by magic: it waits and says so.
+        if route.is_none() && to_site {
+            route = self.site_route_from_edge(cargo.to);
+            if route.is_none() {
+                self.site_unsupplied(cargo, origin, color);
+                return;
+            }
+        }
         match route {
             Some((route, s0, s1)) => {
                 // The lorry by the goods and the seller's trade, in its livery.
                 let seller = self.buildings.get(cargo.from).and_then(|b| b.business.as_ref()).map(|bz| bz.kind);
-                let to_site = self.buildings.get(cargo.to).is_some_and(|b| b.construction.is_some());
                 let long_haul = matches!(origin, TruckOrigin::CityEdge) || seller.is_none();
                 let id = self.traffic.spawn_car(CitizenId::default(), Some(cargo), route, s0, s1, color);
                 let mut rng = crate::vehicle::model_rng(self.clock.tick, slotmap::Key::data(&id).as_ffi());
@@ -695,6 +721,51 @@ impl World {
                 }
             }
             None => self.deliver(cargo),
+        }
+    }
+
+    /// [r2-traffic] A way for a lorry from out of town to building site
+    /// `to`: from the farthest of the city's ways in on the site's own
+    /// street network.
+    fn site_route_from_edge(&self, to: BuildingId) -> Option<(Vec<crate::traffic::LaneId>, f32, f32)> {
+        let (to_seg, to_pt) = self.truck_stop(to)?;
+        let s = self.roads.try_segment(to_seg).filter(|s| s.alive && s.is_street())?;
+        let net = self.drive_component(s.a)?;
+        let mut leaves: Vec<NodeId> = self.city_leaves().into_iter().filter(|&n| self.drive_component(n) == Some(net)).collect();
+        leaves.sort_by(|a, b| self.roads.node(*b).pos.length().total_cmp(&self.roads.node(*a).pos.length()).then(a.0.cmp(&b.0)));
+        leaves.into_iter().take(4).find_map(|n| {
+            let node = self.roads.node(n);
+            let seg = *node.segments.iter().find(|&&s| self.roads.segment(s).alive && self.roads.segment(s).is_street())?;
+            self.traffic.net.find_route(seg, node.pos, to_seg, to_pt)
+        })
+    }
+
+    /// [r2-traffic] No lorry can get to building site `cargo.to`. A home
+    /// on a footpath (or with no street near it) takes the load on foot,
+    /// as before; any other site waits (`SiteBlock::Deliveries`, an alert
+    /// once), and the load is sent again after `SITE_RETRY` minutes.
+    fn site_unsupplied(&mut self, cargo: Cargo, origin: TruckOrigin, color: u8) {
+        let path_home = self.buildings.get(cargo.to).and_then(|b| self.lots.get(b.lot).map(|l| (b, l))).is_some_and(|(b, l)| b.land_use == crate::zoning::LandUse::Residential && (l.car_segment.is_none() || !self.roads.try_segment(l.front_segment).is_some_and(|s| s.is_street())));
+        if path_home {
+            self.deliver(cargo);
+            return;
+        }
+        let tick = self.clock.tick;
+        let newly = match self.buildings.get_mut(cargo.to).and_then(|b| b.construction.as_mut()) {
+            Some(c) => {
+                let newly = c.blocked.is_none();
+                if c.blocked.is_none() {
+                    c.blocked = Some(crate::buildings::SiteBlock::Deliveries);
+                }
+                c.ordered = false;
+                c.retry_at = tick + SITE_RETRY;
+                newly
+            }
+            None => return,
+        };
+        let _ = (origin, color);
+        if newly {
+            self.site_blocked_alert(cargo.to, crate::buildings::SiteBlock::Deliveries);
         }
     }
 
@@ -718,6 +789,10 @@ impl World {
         if let Some(c) = b.construction.as_mut() {
             c.deliveries = c.deliveries.saturating_add(1);
             c.ordered = false;
+            // [r2-traffic] A truck got there: the way is open.
+            if c.blocked == Some(crate::buildings::SiteBlock::Deliveries) {
+                c.blocked = None;
+            }
             return;
         }
         if let Some(bz) = b.business.as_mut() {

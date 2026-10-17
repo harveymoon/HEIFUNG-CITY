@@ -28,6 +28,8 @@ use crate::vehicle::{CarEvent, CarPlace, Errand, OwnedCar, ParkKind, ParkSpot, V
 
 mod kerbs;
 mod parking;
+#[cfg(test)]
+pub(in crate::world) use parking::parking_band;
 mod vehicle_routes;
 mod parking_hunt;
 mod car_market;
@@ -146,7 +148,7 @@ impl World {
             for &vid in inside.iter().skip(cap as usize) {
                 let pos = self.vehicles.cars[vid].spot().map(|s| s.pos).unwrap_or_default();
                 self.vehicles.cars[vid].place = CarPlace::Driving(CarId::default());
-                let spot = self.place_near(pos, None).unwrap_or(ParkSpot { kind: ParkKind::Overflow, pos, slot: u16::MAX, ..Default::default() });
+                let spot = self.place_near(pos, None).unwrap_or_else(|| self.squeezed_spot(pos));
                 self.park_at(vid, spot);
             }
         }
@@ -182,7 +184,7 @@ impl World {
                 None => {
                     let home = self.citizens[id].home;
                     let near = home.and_then(|h| self.building_entrance(h)).unwrap_or(self.citizens[id].pos);
-                    let spot = self.place_near(near, home).unwrap_or(ParkSpot { kind: ParkKind::Overflow, pos: near, slot: u16::MAX, ..Default::default() });
+                    let spot = self.place_near(near, home).unwrap_or_else(|| self.squeezed_spot(near));
                     let vid = self.new_car(id, model, CarPlace::Driving(CarId::default()), CarEvent::Migrated);
                     self.park_at(vid, spot);
                 }
@@ -213,7 +215,7 @@ impl World {
         for (vid, pos) in lost {
             self.unpark(vid);
             self.vehicles.cars[vid].place = CarPlace::Driving(CarId::default());
-            let spot = self.place_near(pos, None).unwrap_or(ParkSpot { kind: ParkKind::Overflow, pos, slot: u16::MAX, ..Default::default() });
+            let spot = self.place_near(pos, None).unwrap_or_else(|| self.squeezed_spot(pos));
             self.park_at(vid, spot);
         }
         self.hourly_dealers();

@@ -182,8 +182,16 @@ impl World {
                     Some(truck) => {
                         truck.drive.amber = true;
                         truck.drive.recovering = truck.pos.distance(wreck_pos) < RECOVERY_REACH || to_go.is_some_and(|m| m < RECOVERY_ROUTE);
+                        // [r2-traffic] Close by: straight to the wreck at
+                        // a crawl, ambers on, rather than on round a
+                        // detour or stuck in the queue behind it (K21).
+                        let (gap, stalled) = (truck.pos.distance(wreck_pos), truck.stalled);
                         let allowed = ((truck.drive.expected_min * 2.0) as u64).clamp(TOW_ARRIVE_MAX, TOW_ARRIVE_CAP);
                         let late = w.righted_at == 0 && (tick >= w.sent + allowed || truck.stalled > TOW_STALL_MIN * self.config.traffic_seconds_per_tick);
+                        if gap < WORK_REACH && (to_go.is_some_and(|m| m > gap * 1.8 + 30.0) || stalled > WORK_STALL) && self.work_mode(t, w.car) {
+                            keep.push(w);
+                            continue;
+                        }
                         if late && self.tow(w.car) {
                             self.recovery_truck_home(t, w.company);
                             continue;
@@ -277,6 +285,59 @@ impl World {
         t.drive.trip_start = self.clock.tick;
         t.drive.expected_min = (t.expected_seconds(&self.traffic.net) / self.config.traffic_seconds_per_tick.max(0.1)).max(1.0);
         Some((truck, company))
+    }
+
+    /// [r2-traffic] A recovery truck near its wreck switches to working
+    /// mode: off the lanes, it creeps (`CONTRA_SPEED`) along the street to
+    /// stop just behind the wreck, by the junction between them when they
+    /// are on streets that meet, then hooks it (`AfterMove::Recover`). Only
+    /// within the wreck's own street or one meeting it (never across a
+    /// block). True when it began.
+    fn work_mode(&mut self, truck: CarId, wreck: CarId) -> bool {
+        if self.tow_moving(truck) {
+            return true;
+        }
+        let net = &self.traffic.net;
+        let (Some(t), Some(w)) = (self.traffic.cars.get(truck), self.traffic.cars.get(wreck)) else { return false };
+        if t.in_stunt() || t.entering || w.in_stunt() {
+            return false;
+        }
+        let seg_of = |c: &crate::traffic::Car| match net.lanes.get(*c.route.get(c.idx)? as usize)?.kind {
+            crate::traffic::LaneKind::Road { segment, .. } => Some(segment),
+            crate::traffic::LaneKind::Connector { .. } => None,
+        };
+        let node_of = |c: &crate::traffic::Car| match net.lanes.get(*c.route.get(c.idx)? as usize)?.kind {
+            crate::traffic::LaneKind::Connector { node, .. } => Some(node),
+            _ => None,
+        };
+        let Some(wseg) = seg_of(w) else { return false };
+        let ws = self.roads.segment(wseg);
+        let (wa, wb) = (ws.a, ws.b);
+        // By the junction the two streets share (none: the same street).
+        let via = match (seg_of(t), node_of(t)) {
+            (Some(ts), _) if ts == wseg => None,
+            (Some(ts), _) => {
+                let s2 = self.roads.segment(ts);
+                match [wa, wb].into_iter().find(|&n| n == s2.a || n == s2.b) {
+                    Some(n) => Some(self.roads.node(n).pos),
+                    None => return false,
+                }
+            }
+            (None, Some(n)) if n == wa || n == wb => None,
+            _ => return false,
+        };
+        let dir = Vec2::new(w.heading.cos(), w.heading.sin());
+        let stop = w.pos - dir * (w.length() + 3.0);
+        let mut path: Vec<Vec2> = via.into_iter().filter(|p| p.distance(t.pos) > 3.0).collect();
+        path.push(stop);
+        let face = w.heading;
+        self.traffic.begin_manoeuvre(truck, path, face, super::tow_moves::CONTRA_SPEED);
+        if let Some(c) = self.traffic.cars.get_mut(truck) {
+            c.drive.amber = true;
+        }
+        self.driving.moves.push(super::tow_moves::TowMove { truck, then: super::tow_moves::AfterMove::Recover { wreck }, since: self.clock.tick, street: Some(wseg) });
+        self.driving.work_mode_total += 1;
+        true
     }
 
     /// [services] A recovery truck at the end of its route: at the wreck,

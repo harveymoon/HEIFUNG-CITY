@@ -252,6 +252,10 @@ pub struct Signals {
     pub outside_tows: f32,
     /// Tows a day done by companies in town.
     pub local_tows: f32,
+    /// [r2-traffic] Tow calls for illegally parked cars waiting for a truck,
+    /// and those turned down because every truck had a queue (a day): the
+    /// tows the city needs and nobody does.
+    pub tow_backlog: f32,
     /// Crashes a day.
     pub crashes: f32,
     /// Private cars in town.
@@ -330,6 +334,7 @@ impl Signals {
         mix(&mut self.fillets, today.fillets);
         mix(&mut self.beach_visits, today.beach_visits);
         self.cars = today.cars;
+        self.tow_backlog = today.tow_backlog;
         self.rich_households = today.rich_households;
         self.trash_uncovered = today.trash_uncovered;
         self.trash_overflowing = today.trash_overflowing;
@@ -434,6 +439,10 @@ fn have_text(have: u32, label: &str) -> String {
 }
 
 /// Every pressure, read from the signals against what stands.
+/// [r2-traffic] A waiting or turned-down tow call counts as this share of
+/// a tow done (many are the same car seen again).
+const BACKLOG_WEIGHT: f32 = 0.25;
+
 pub fn assess(s: &Signals, supply: &Supply) -> Vec<Pressure> {
     let mut out = Vec::with_capacity(PressureKind::ALL.len());
     for kind in PressureKind::ALL {
@@ -444,8 +453,12 @@ pub fn assess(s: &Signals, supply: &Supply) -> Vec<Pressure> {
                 // The open local companies take the jobs they can; what the
                 // firm from out of town still does is the unmet part (a
                 // company still being built takes none yet).
-                let wanted = supply.open[BusinessKind::TowYard.index()] as f32 + s.outside_tows / TOWS_PER_COMPANY;
-                (wanted, format!("{} a day towed by the company from out of town ({} local); {ht}", plural(s.outside_tows, "car", "cars"), plural(s.local_tows, "tow", "tows")))
+                // [r2-traffic] And the tows waiting or turned down for want
+                // of trucks: the out-of-town fleet is capped, so what it
+                // does never showed how many the city needed (a backlog
+                // of 1,341 asked for no more yards).
+                let wanted = supply.open[BusinessKind::TowYard.index()] as f32 + (s.outside_tows + s.tow_backlog * BACKLOG_WEIGHT) / TOWS_PER_COMPANY;
+                (wanted, format!("{} a day towed by the company from out of town ({} local), {} waiting or turned down; {ht}", plural(s.outside_tows, "car", "cars"), plural(s.local_tows, "tow", "tows"), s.tow_backlog.round()))
             }
             PressureKind::Mechanic => {
                 let services = s.cars / CARS_PER_SERVICE;

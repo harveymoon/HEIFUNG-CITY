@@ -329,6 +329,19 @@ impl World {
         let car = self.traffic.cars.get(id)?;
         let from = self.journeys.car_from.get(&id).copied().map_or_else(|| Place { label: self.street_name_near(car.pos), building: None, car: None, pos: Some(car.pos) }, |o| self.place_of_origin(o));
         let stranger = || Driver::Unknown(STRANGER.to_string());
+        // [r2-traffic] A car stopped by a crash is not "passing through":
+        // a write-off waits for its tow, others for the drivers to swap
+        // details (K45).
+        if let Some(cr) = car.drive.crash {
+            let towing = self.driving.wrecks.iter().any(|w| w.car == id && w.truck.is_some());
+            let purpose = match (cr.wrecked, towing) {
+                (true, true) => "written off in a crash, a tow truck on its way",
+                (true, false) => "written off in a crash, waiting for a tow",
+                (false, _) => "stopped after a crash",
+            };
+            let driver = if self.citizens.contains_key(car.citizen) { Driver::Citizen(car.citizen) } else { stranger() };
+            return Some(Journey { purpose: purpose.into(), from, to: None, driver });
+        }
         // City vehicles: the crew from the station's payroll.
         if let Some(uid) = self.services.unit_of_car(id) {
             let u = &self.services.units[uid];

@@ -460,6 +460,7 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
             "progress": round(c.progress), "days_left": round(c.days_left()), "days": round(c.days),
             "deliveries": c.deliveries, "deliveries_needed": nd_sim::Construction::DELIVERIES,
             "waiting_for_materials": c.waiting_for_materials(), "ordered": c.ordered,
+            "blocked": c.blocked.map(|k| k.key()), "blocked_text": c.blocked.map(|k| k.text()),
             "crew": b.workers.len(), "crew_wanted": b.jobs, "planned_homes": homes, "planned_jobs": jobs,
         })
     });

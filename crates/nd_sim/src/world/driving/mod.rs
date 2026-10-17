@@ -58,6 +58,11 @@ const RECOVERY_REACH: f32 = 250.0;
 const RECOVERY_ROUTE: f32 = 1000.0;
 /// [services] How near (m) the truck must stop to hook the wreck.
 const HOOK_REACH: f32 = 30.0;
+/// [r2-traffic] A recovery truck this near its wreck (m) whose route there
+/// is a detour, or that has stood `WORK_STALL` traffic seconds, drives the
+/// rest straight to it, off the lanes (`World::work_mode`; K21).
+const WORK_REACH: f32 = 70.0;
+const WORK_STALL: f32 = 20.0;
 /// [services] A crash whose call stays open this long (minutes: its police
 /// unit gone, say) has its tow called anyway; it used to wait for ever.
 const TOW_CALL_MAX: u64 = 120;
@@ -143,6 +148,9 @@ pub struct Driving {
     /// [rage] Illegal U-turns by seething drivers, today and in all.
     pub rage_u_turns_today: u32,
     pub rage_u_turns_total: u32,
+    /// [r2-traffic] Recovery trucks that drove the last stretch to their
+    /// wreck in working mode (`World::work_mode`).
+    pub work_mode_total: u32,
     /// [watchdog] Service vehicles watched for standing still on the
     /// road, and how many were sent on or cleared (`world/watchdog.rs`).
     pub watch: std::collections::BTreeMap<CarId, super::watchdog::Watched>,

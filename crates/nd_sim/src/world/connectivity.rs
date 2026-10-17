@@ -110,6 +110,8 @@ pub enum AlertKind {
     NoRoute,
     /// A newly stranded area with people in it.
     Stranded(Net),
+    /// [r2-traffic] A building site no truck can get to.
+    SiteBlocked,
 }
 
 /// A connectivity alert, for the toast and the alerts panel.
@@ -228,7 +230,7 @@ impl Connectivity {
         self.dirty = true;
     }
 
-    fn push_alert(&mut self, tick: u64, kind: AlertKind, pos: Vec2, building: Option<BuildingId>, count: u32, text: String) {
+    pub(in crate::world) fn push_alert(&mut self, tick: u64, kind: AlertKind, pos: Vec2, building: Option<BuildingId>, count: u32, text: String) {
         let seq = self.next_seq;
         self.next_seq = self.next_seq.wrapping_add(1);
         self.alerts.push_back(ConnectivityAlert { seq, tick, kind, pos, building, count, text });

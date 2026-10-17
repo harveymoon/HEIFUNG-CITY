@@ -146,8 +146,15 @@ impl World {
         use crate::vehicle::{CarEvent, CarPlace, Errand};
         // A truck taken off the road still delivers: the buyer already counts
         // the load as inbound and would never reorder it otherwise.
+        // [r2-traffic] Not parts for a building site: a site starts on what
+        // a truck brought, so its load is sent again (a road edit used to
+        // drop every site's load on the spot: K6).
         if let Some(cargo) = car.cargo {
-            self.deliver(cargo);
+            if self.buildings.get(cargo.to).is_some_and(|b| b.construction.is_some()) && !crate::world::is_return_trip(&cargo) {
+                self.queue_truck(crate::world::market::TruckOrigin::CityEdge, cargo, 6);
+            } else {
+                self.deliver(cargo);
+            }
         }
         // [carlife] Trucks and vans are back at their base; private cars
         // park where they stood (cars on their way to be sold or out of

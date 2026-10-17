@@ -60,6 +60,11 @@ impl Traffic {
             // The player's own arrows go back on where they still fit.
             self.resolve_lane_use(roads);
             self.net.apply_signals();
+            // [r2-traffic] Signals off closes the junction's U-turns (and
+            // on opens them); cars routed through a closed one plan again.
+            if self.net.refresh_uturns() {
+                self.replan_forbidden_turns();
+            }
             // [fix/roads-tools] Signals switched on or off: the heads and
             // poles are drawn again (a timing change redraws nothing).
             if self.net.intersections[k].signalized != was {

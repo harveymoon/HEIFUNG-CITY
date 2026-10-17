@@ -82,6 +82,26 @@ impl World {
         (p + right * off, dir.y.atan2(dir.x))
     }
 
+    /// [r2-traffic] Where a car left with no slot of its own stands: on
+    /// the kerb line of the nearest street it can stand along, on the side
+    /// nearer `p`, facing that side's traffic. These spots used to keep the
+    /// car's place in its lane, so it was drawn in the middle of the road
+    /// with the traffic driving through it (K32, K35).
+    pub(in crate::world) fn squeezed_spot(&self, p: Vec2) -> ParkSpot {
+        let tick = self.clock.tick;
+        let near = self.roads.nearest_where(p, |s| s.is_street() && !s.is_highway() && !s.ramp && !s.bridge && !s.tunnel && !s.ring && s.lanes() > 0).filter(|(_, _, q)| q.distance(p) < 40.0);
+        let Some((sid, _, _)) = near else { return ParkSpot { kind: ParkKind::Overflow, pos: p, slot: u16::MAX, since: tick, ..Default::default() } };
+        let (a, b) = self.roads.segment_points(sid);
+        let len = a.distance(b).max(0.01);
+        let d = (b - a) / len;
+        let along = (p - a).dot(d).clamp(0.0, len);
+        let sides = self.kerb_sides(sid);
+        let right = Vec2::new(-d.y, d.x);
+        let side = if ((p - a).dot(right) >= 0.0 && sides[0]) || !sides[1] { 0 } else { 1 };
+        let (pos, heading) = self.kerb_pose(sid, side, if side == 0 { along } else { len - along });
+        ParkSpot { kind: ParkKind::Overflow, segment: Some(sid), side, slot: u16::MAX, pos, heading, since: tick, ..Default::default() }
+    }
+
     pub(super) fn slot_pose(&self, sid: SegmentId, side: u8, slot: u16) -> (Vec2, f32) {
         self.kerb_pose(sid, side, KERB_MARGIN + (slot as f32 + 0.5) * KERB_PITCH)
     }

@@ -197,6 +197,7 @@ impl World {
         Signals {
             outside_tows: outside,
             local_tows: (all_tows - outside).max(0.0),
+            tow_backlog: (self.enforcement.jobs.iter().filter(|j| matches!(j.state, crate::enforcement::TowState::Waiting { .. })).count() as u32 + self.enforcement.stats.tows_declined_today) as f32,
             crashes,
             cars: self.vehicles.cars.len() as f32,
             rich_households: rich_households as f32,

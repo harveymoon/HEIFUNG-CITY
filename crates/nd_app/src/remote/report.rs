@@ -1095,6 +1095,8 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     let mut dock_off = Alert::new("dock_not_connected", 2, "not connected to the road network: draw a road to the marked end of the dock's access road (inspect road_access.stub_ends)");
     let mut route_broken = Alert::new("bus_route_broken", 2, "a leg of the line has no road between its stops, or it has fewer than two stops; move or remove stops");
     let mut sites = Alert::new("construction_waiting_for_materials", 1, "sites wait for parts deliveries each quarter; many waiting means parts are short (economy.resources parts)");
+    // [r2-traffic] Sites no truck can get to (K6).
+    let mut sites_cut = Alert::new("construction_unreachable", 2, "building sites no delivery truck or builder can drive to: join their street to the roads that lead out of town (inspect building under_construction.blocked)");
     let mut stuck = Alert::new("stuck_vehicles", 2, "vehicles standing still for minutes: a gridlock ring (listed with its junctions) or a street over capacity; add lanes, another route or transit there");
     let mut derelict = Alert::new("derelict_buildings", 1, "condition below 0.3; they are redeveloped or demolished in time");
     let mut vacant_demand = Alert::new("vacant_lots_with_high_demand", 1, "demand is high but lots stand empty: they may lack road access or the area may be unattractive");
@@ -1139,6 +1141,8 @@ pub fn alerts(w: &World) -> Vec<Alert> {
             if b.is_derelict() {
                 derelict.add_id(id, at);
             }
+        } else if b.demolition.is_none() && b.construction.as_ref().is_some_and(|c| c.blocked.is_some()) {
+            sites_cut.add_id(id, at);
         } else if b.demolition.is_none() && b.construction.as_ref().is_some_and(|c| c.waiting_for_materials()) {
             sites.add_id(id, at);
         }
@@ -1275,7 +1279,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
         a.message = format!("no dispatcher on duty: jobs go out {} minutes after the call", w.dispatcher().1);
         uncovered.push(a);
     }
-    let mut out = vec![fires, hungry, starving, unhoused, rent, food_staff, food_empty, closed, broke, unpowered, crowded, rail_broken, dock_off, route_broken, no_buses, fleet_short, sites, stuck, derelict, vacant_demand];
+    let mut out = vec![fires, hungry, starving, unhoused, rent, food_staff, food_empty, closed, broke, unpowered, crowded, rail_broken, dock_off, route_broken, no_buses, fleet_short, sites_cut, sites, stuck, derelict, vacant_demand];
     // City-wide conditions with no single place.
     // Only working-age adults look for work: children and retirees are not
     // unemployed.

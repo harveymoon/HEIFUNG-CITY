@@ -156,7 +156,11 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
         // [pt-growth] Sites work the working day only: when it should be done.
         let ready = w.clock.after_work_hours(c.work_hours_left());
         let left = format!("done about day {} {}", fmt::day(ready), fmt::hhmm(ready));
-        let status = if c.waiting_for_materials() { if c.ordered { ", waiting for materials (truck on its way)" } else { ", waiting for materials" } } else { "" };
+        let status = if c.blocked.is_some() { ", on hold" } else if c.waiting_for_materials() { if c.ordered { ", waiting for materials (truck on its way)" } else { ", waiting for materials" } } else { "" };
+        // [r2-traffic] A site no truck can get to says so (K6).
+        if let Some(k) = c.blocked {
+            ui.label(egui::RichText::new(format!("! {}: the site waits until a road leads here", capitalise(k.text()))).strong().color(egui::Color32::from_rgb(255, 130, 80)));
+        }
         ui.add(egui::ProgressBar::new(c.progress).desired_height(18.0).fill(egui::Color32::from_rgb(200, 150, 60)).text(format!("UNDER CONSTRUCTION {:.0}%, {left}{status}", c.progress * 100.0)));
         // [w1] What it will be when it tops out.
         if let Some(n) = next.as_ref() {

@@ -61,6 +61,15 @@ pub const CLAMP_PAY_CHANCE: f32 = 0.35;
 pub const OUT_OF_TOWN_TOW_TRUCKS: usize = 4;
 /// Minutes a towed car waits in the pound before it is auctioned.
 pub const AUCTION_AFTER: u64 = 3 * crate::clock::MINUTES_PER_DAY;
+/// [r2-traffic] Tow calls for illegally parked cars waiting per tow truck
+/// in town (with the company from out of town's): past that a patrol only
+/// tickets. Every car parked where it may not be became a tow call at
+/// once, and a city short of parking queued 1,341 (then 2,210) that the
+/// trucks could never work through.
+pub const TOW_QUEUE_PER_TRUCK: usize = 4;
+/// [r2-traffic] Minutes an illegal-parking tow call waits for a truck
+/// before it is dropped (the ticket stands; the next patrol may call again).
+pub const TOW_LAPSE: u64 = 6 * 60;
 /// Tow trucks a tow company runs per four staff (at least one).
 pub const TRUCKS_PER_STAFF: usize = 4;
 /// How close an officer passes to spot a car.
@@ -165,6 +174,12 @@ pub struct EnforcementStats {
     /// [tow-fix] Tow trucks with no road to their yard that took the car
     /// to the pound out of town instead.
     pub pound_detours_total: u32,
+    /// [r2-traffic] Illegally parked cars only ticketed because every tow
+    /// truck already had a queue (`TOW_QUEUE_PER_TRUCK`), and tow calls
+    /// dropped when no truck came within `TOW_LAPSE`.
+    pub tows_declined_today: u32,
+    pub tows_declined_total: u32,
+    pub tows_lapsed_total: u32,
 }
 
 /// Officers on patrol, tow jobs, and the counts.

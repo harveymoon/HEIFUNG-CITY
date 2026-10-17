@@ -25,7 +25,7 @@ impl LaneNetwork {
         if near.is_empty() {
             return Vec::new();
         }
-        let Some((free, _, _)) = self.route_search(first, s_start, last, s_end, None, None, false) else { return Vec::new() };
+        let Some((free, _, _)) = self.route_search(first, s_start, last, s_end, &Detour { tolls: false, ..Detour::PLAIN }) else { return Vec::new() };
         let mut out: Vec<u32> = free.iter().filter_map(|&l| self.lanes[l as usize].toll).map(|t| t.booth).filter(|id| near.contains(id)).collect();
         out.sort_unstable();
         out.dedup();

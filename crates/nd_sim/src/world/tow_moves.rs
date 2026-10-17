@@ -53,6 +53,9 @@ pub enum AfterMove {
     /// [rage] A seething driver turned round illegally: on to where it
     /// was going (`s_end` along lane `goal`).
     Resume { goal: LaneId, s_end: f32 },
+    /// [r2-traffic] A recovery truck in working mode beside its wreck:
+    /// back on the lanes there and hook it.
+    Recover { wreck: CarId },
 }
 
 /// A tow truck off the lanes on a move.
@@ -335,6 +338,12 @@ impl World {
                     self.back_on_lanes(m.truck, m.street, goal);
                     if self.traffic.cars.get(m.truck).is_some_and(|c| !c.in_stunt()) {
                         self.recovery_truck_home(m.truck, company);
+                    }
+                }
+                AfterMove::Recover { wreck } => {
+                    self.back_on_lanes(m.truck, m.street, None);
+                    if self.traffic.cars.get(m.truck).is_some_and(|c| !c.in_stunt()) {
+                        self.recovery_truck_arrived(m.truck, wreck);
                     }
                 }
                 AfterMove::Resume { goal, s_end } => {

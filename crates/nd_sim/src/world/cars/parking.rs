@@ -3,6 +3,19 @@
 
 use super::*;
 
+/// [r2-traffic] Which band of fullness a car park is in: the cars drawn on
+/// it (baked into its mesh, `parking_visual`) are redrawn when it changes.
+/// Every car counts while few stand there, then every 1/24 of the bays:
+/// in eighths a 109-bay lot "2/109 taken" was still drawn empty (K44).
+pub(in crate::world) fn parking_band(used: u16, capacity: u16) -> u32 {
+    let (used, cap) = (used as u32, capacity.max(1) as u32);
+    if used <= 12 {
+        used
+    } else {
+        13 + used * 24 / cap
+    }
+}
+
 impl World {
     /// Put a car in a space: the building's count, the kerb index, the
     /// owner's `parked_at`.
@@ -12,9 +25,9 @@ impl World {
         let owner = car.owner;
         if spot.kind.uses_building() {
             if let Some(b) = spot.building.and_then(|b| self.buildings.get_mut(b)) {
-                let before = b.parking_used * 8 / b.parking_capacity.max(1);
+                let before = parking_band(b.parking_used, b.parking_capacity);
                 b.parking_used = b.parking_used.saturating_add(1);
-                if b.is_parking() && before != b.parking_used * 8 / b.parking_capacity.max(1) {
+                if b.is_parking() && before != parking_band(b.parking_used, b.parking_capacity) {
                     self.events.push(SimEvent::BuildingChanged(spot.building.unwrap()));
                 }
             }
@@ -34,9 +47,9 @@ impl World {
         let spot = *self.vehicles.cars.get(vid)?.spot()?;
         if spot.kind.uses_building() {
             if let Some(b) = spot.building.and_then(|b| self.buildings.get_mut(b)) {
-                let before = b.parking_used * 8 / b.parking_capacity.max(1);
+                let before = parking_band(b.parking_used, b.parking_capacity);
                 b.parking_used = b.parking_used.saturating_sub(1);
-                if b.is_parking() && before != b.parking_used * 8 / b.parking_capacity.max(1) {
+                if b.is_parking() && before != parking_band(b.parking_used, b.parking_capacity) {
                     self.events.push(SimEvent::BuildingChanged(spot.building.unwrap()));
                 }
             }
@@ -108,7 +121,7 @@ impl World {
         }
         let home = self.citizens.get(self.vehicles.cars[vid].owner).and_then(|c| c.home);
         let near = if booted { self.boot_spot(pos) } else { self.place_near(pos, home) };
-        let mut spot = near.unwrap_or(ParkSpot { kind: ParkKind::Overflow, pos, slot: u16::MAX, since: self.clock.tick, ..Default::default() });
+        let mut spot = near.unwrap_or_else(|| self.squeezed_spot(pos));
         spot.booted = booted;
         self.park_at(vid, spot);
     }
@@ -124,7 +137,7 @@ impl World {
     /// re-found near where the car stands.
     pub(in crate::world) fn refresh_kerbs(&mut self) {
         self.refresh_no_kerb();
-        self.vehicles.reindex_kerbs();
+        self.remap_kerb_slots();
         let moved: Vec<(VehicleId, Vec2)> = self
             .vehicles
             .cars
@@ -137,6 +150,54 @@ impl World {
             self.park_stranded(vid, pos);
         }
         self.vehicles.reindex_kerbs();
+    }
+
+    /// [r2-traffic] Roads rebuilt renumber their pieces: a car whose kerb
+    /// slot is still there, under another id or number, keeps it (found by
+    /// where it stands); then the kerb index is rebuilt. Done before any
+    /// car is re-parked: with the stale ids the index marked slots taken on
+    /// whichever streets now had those numbers, and cars were moved, slot
+    /// free by slot, onto the empty kerbs of a road just built (K41).
+    pub(in crate::world) fn remap_kerb_slots(&mut self) {
+        let stale: Vec<(VehicleId, ParkSpot)> = self.vehicles.cars.iter().filter_map(|(id, c)| c.spot().filter(|s| s.kind.on_street() && s.slot != u16::MAX).map(|s| (id, *s))).filter(|(_, s)| !self.street_spot_valid(s)).collect();
+        for (vid, s) in stale {
+            if let Some((seg, side, slot)) = self.slot_at(s.pos) {
+                if let Some(CarPlace::Parked(sp)) = self.vehicles.cars.get_mut(vid).map(|c| &mut c.place) {
+                    (sp.segment, sp.side, sp.slot) = (Some(seg), side, slot);
+                }
+            }
+        }
+        self.vehicles.reindex_kerbs();
+    }
+
+    /// [r2-traffic] The kerb slot whose place is `p` (within a metre).
+    fn slot_at(&self, p: Vec2) -> Option<(SegmentId, u8, u16)> {
+        let segs: Vec<SegmentId> = self.roads.segments_in_box(p - Vec2::splat(12.0), p + Vec2::splat(12.0)).collect();
+        for sid in segs {
+            let count = self.slot_count(sid);
+            if count == 0 {
+                continue;
+            }
+            let (a, b) = self.roads.segment_points(sid);
+            let len = a.distance(b).max(0.01);
+            let d = (b - a) / len;
+            let along = (p - a).dot(d);
+            for side in 0..2u8 {
+                if !self.kerb_sides(sid)[side as usize] {
+                    continue;
+                }
+                let at = if side == 0 { along } else { len - along };
+                let k = ((at - KERB_MARGIN) / KERB_PITCH - 0.5).round();
+                if k < 0.0 || k >= count as f32 {
+                    continue;
+                }
+                let slot = k as u16;
+                if self.slot_pose(sid, side, slot).0.distance(p) < 1.0 {
+                    return Some((sid, side, slot));
+                }
+            }
+        }
+        None
     }
 
     /// Does a car on the street still stand where its slot is?

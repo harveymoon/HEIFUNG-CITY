@@ -15,7 +15,7 @@ impl Traffic {
         let lane = route[0];
         let (pos, dir) = self.net.lanes[lane as usize].point_at(s_start);
         let heading = dir.y.atan2(dir.x);
-        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, blocked_by: None, replans: 0, passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), owned: None, errand: Default::default(), drive: DriveState::default(), toll_booth: 0, toll_paid: false, occupants: Vec::new(), glide_from: 0.0, glide_len: 0.0, glide_done: 0.0 });
+        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, blocked_by: None, replans: 0, avoided: Vec::new(), passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), owned: None, errand: Default::default(), drive: DriveState::default(), toll_booth: 0, toll_paid: false, occupants: Vec::new(), glide_from: 0.0, glide_len: 0.0, glide_done: 0.0 });
         self.pull_out(id);
         // [toll-inspect] Did it set off round a booth? (The world looks,
         // once it knows whether this is a bus or a city vehicle.)

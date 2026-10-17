@@ -3,7 +3,7 @@
 
 use super::*;
 use super::market::TruckOrigin;
-use crate::buildings::Demolition;
+use crate::buildings::{Demolition, SiteBlock};
 
 /// A site this far into its build is only groundworks: a bulldozed one is
 /// cleared at once rather than demolished.
@@ -38,13 +38,37 @@ impl World {
         // A site still clearing what stood before waits for the wrecking
         // crew; its materials are ordered when the lot is clear.
         let ids: Vec<BuildingId> = self.buildings.iter().filter(|(id, b)| b.construction.is_some() && b.demolition.is_none() && site_slot(*id) == slot).map(|(id, _)| id).collect();
+        // [r2-traffic] The street networks a truck from out of town can
+        // drive (worked out once, only when some site steps now).
+        let reach = if ids.is_empty() { None } else { Some(self.supply_networks()) };
+        let tick = self.clock.tick;
         for bid in ids {
+            // [r2-traffic] A plot no truck can get to does not build: it
+            // says so (K6). Deliveries that found no way wait for
+            // `retry_at` and are sent again.
+            let builders_ok = reach.as_ref().is_none_or(|r| self.builders_reach(bid, r));
+            let newly = {
+                let c = self.buildings[bid].construction.as_mut().unwrap();
+                let was = c.blocked;
+                if !builders_ok {
+                    c.blocked = Some(SiteBlock::Builders);
+                } else if c.blocked == Some(SiteBlock::Builders) {
+                    c.blocked = None;
+                }
+                (c.blocked.is_some() && c.blocked != was).then_some(c.blocked).flatten()
+            };
+            if let Some(why) = newly {
+                self.site_blocked_alert(bid, why);
+            }
+            if !builders_ok {
+                continue;
+            }
             let (order, waiting, before, after) = {
                 let c = self.buildings[bid].construction.as_mut().unwrap();
                 let before = c.progress;
                 // One load is kept on the road ahead of the work, so a
                 // quarter only stalls when its truck is late.
-                let order = !c.ordered && c.deliveries < Construction::DELIVERIES && c.deliveries <= c.stage() + 1;
+                let order = !c.ordered && c.deliveries < Construction::DELIVERIES && c.deliveries <= c.stage() + 1 && tick >= c.retry_at;
                 if c.waiting_for_materials() || !working {
                     (order, true, before, before)
                 } else {
@@ -65,6 +89,55 @@ impl World {
                 self.events.push(SimEvent::BuildingChanged(bid));
             }
         }
+    }
+
+    /// [r2-traffic] The street networks (`drive_component`) that reach a
+    /// way in from elsewhere (a road off the map, the highway): where a
+    /// truck from out of town, or a builder's van, can drive. Empty when
+    /// the city has no way in by road at all (then nothing is held back:
+    /// a test world, or a city that lives by rail).
+    pub(super) fn supply_networks(&self) -> std::collections::HashSet<u32> {
+        self.city_leaves().into_iter().filter_map(|n| self.drive_component(n)).collect()
+    }
+
+    /// [r2-traffic] Can the builders and their trucks drive to `bid`'s
+    /// plot from the city's way in (`supply_networks`)? Homes on a footpath
+    /// always can (crews and deliveries come on foot from the nearest
+    /// street), as can a building spreading onto the land next door: only
+    /// its own plot, the one on the street, is looked at.
+    pub(super) fn builders_reach(&self, bid: BuildingId, nets: &std::collections::HashSet<u32>) -> bool {
+        if nets.is_empty() {
+            return true;
+        }
+        let Some(b) = self.buildings.get(bid) else { return true };
+        let Some(lot) = self.lots.get(b.lot) else { return true };
+        let path_home = b.land_use == crate::zoning::LandUse::Residential && !self.roads.try_segment(lot.front_segment).is_some_and(|s| s.is_street());
+        if path_home {
+            return true;
+        }
+        let Some((seg, _)) = self.truck_stop(bid) else { return false };
+        let Some(s) = self.roads.try_segment(seg).filter(|s| s.alive && s.is_street()) else { return false };
+        [s.a, s.b].into_iter().any(|n| self.drive_component(n).is_some_and(|c| nets.contains(&c)))
+    }
+
+    /// [r2-traffic] Building sites held up because no truck can get to
+    /// them: the site, its plot's centre and why (for the marks on the map).
+    pub fn blocked_sites(&self) -> Vec<(BuildingId, Vec2, SiteBlock)> {
+        self.buildings
+            .iter()
+            .filter(|(_, b)| b.demolition.is_none())
+            .filter_map(|(id, b)| Some((id, self.lots.get(b.lot)?.center, b.construction.as_ref()?.blocked?)))
+            .collect()
+    }
+
+    /// [r2-traffic] Tell the player once a site is held up: an alert (a
+    /// toast; the inspector and the map say so while it lasts).
+    pub(super) fn site_blocked_alert(&mut self, bid: BuildingId, why: SiteBlock) {
+        let Some(b) = self.buildings.get(bid) else { return };
+        let pos = self.lots.get(b.lot).map_or(Vec2::ZERO, |l| l.center);
+        let text = format!("{}: {} (the building site waits)", b.name, why.text());
+        let tick = self.clock.tick;
+        self.connectivity.push_alert(tick, crate::world::connectivity::AlertKind::SiteBlocked, pos, Some(bid), 1, text);
     }
 
     /// A truckload of parts for a building site: from a local fab when one

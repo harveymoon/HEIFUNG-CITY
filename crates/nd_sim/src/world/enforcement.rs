@@ -53,6 +53,7 @@ impl World {
             s.tickets_today = 0;
             s.fines_today = 0.0;
             s.tows_today = 0;
+            s.tows_declined_today = 0;
             s.tows_out_of_town_today = 0;
             s.released_today = 0;
             s.release_fees_today = 0.0;
@@ -229,10 +230,10 @@ impl World {
         if spot.ticketed == 0 {
             self.ticket(vid, illegal);
             if illegal {
-                self.call_tow(vid, TowReason::Illegal);
+                self.call_tow_if_room(vid);
             }
         } else if illegal {
-            self.call_tow(vid, TowReason::Illegal);
+            self.call_tow_if_room(vid);
         } else if tick >= spot.ticketed + GRACE {
             self.clamp(vid);
         }
@@ -277,7 +278,11 @@ impl World {
     /// with anyone there; none when it is shut.
     pub fn tow_trucks(&self, b: BuildingId) -> usize {
         let Some(bld) = self.buildings.get(b) else { return 0 };
-        let ok = bld.operating() && !bld.is_derelict() && bld.business.as_ref().is_some_and(|z| z.kind == BusinessKind::TowYard && !z.closed);
+        // [r2-traffic] A run-down yard still runs its trucks while it is
+        // staffed: three of Harvey's seven yards, 24 staff between them, sent
+        // none (derelict), yet counted as tow companies the city had, so no
+        // more were opened while 2,000 tow calls waited.
+        let ok = bld.operating() && bld.business.as_ref().is_some_and(|z| z.kind == BusinessKind::TowYard && !z.closed);
         if !ok || bld.workers.is_empty() {
             return 0;
         }
@@ -305,6 +310,21 @@ impl World {
             .filter_map(|(id, b)| self.lots.get(b.lot).filter(|l| l.car_segment.is_some()).map(|l| (id, l.center.distance(p))))
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(id, _)| id)
+    }
+
+    /// [r2-traffic] A patrol calls the tow truck for an illegally parked
+    /// car only while the trucks are not swamped: with `TOW_QUEUE_PER_TRUCK`
+    /// calls already waiting for every truck the city's companies (and the
+    /// one from out of town) run, the ticket is all it gets.
+    pub(super) fn call_tow_if_room(&mut self, vid: VehicleId) {
+        let trucks: usize = self.buildings.keys().map(|b| self.tow_trucks(b)).sum::<usize>() + OUT_OF_TOWN_TOW_TRUCKS;
+        let waiting = self.enforcement.jobs.iter().filter(|j| matches!(j.state, TowState::Waiting { .. }) && j.reason == TowReason::Illegal).count();
+        if waiting >= trucks * TOW_QUEUE_PER_TRUCK {
+            self.enforcement.stats.tows_declined_today += 1;
+            self.enforcement.stats.tows_declined_total += 1;
+            return;
+        }
+        self.call_tow(vid, TowReason::Illegal);
     }
 
     /// Call a tow truck for a parked car.
@@ -339,6 +359,13 @@ impl World {
                 TowState::Waiting { until } => {
                     if !parked.is_some_and(|s| s.kind.on_street()) {
                         self.enforcement.jobs.retain(|j| j.id != job.id);
+                        continue;
+                    }
+                    // [r2-traffic] No truck came for an illegally parked car
+                    // in hours: the call lapses (the ticket stands).
+                    if job.reason == TowReason::Illegal && tick >= job.since + TOW_LAPSE {
+                        self.enforcement.jobs.retain(|j| j.id != job.id);
+                        self.enforcement.stats.tows_lapsed_total += 1;
                         continue;
                     }
                     if tick >= until {
@@ -787,19 +814,10 @@ impl World {
             _ => return Err("only private cars can be towed".into()),
         }
         let (pos, heading, driver) = (car.pos, car.heading, car.citizen);
-        // The kerb to the right of the lane, if no slot is free.
-        let dir = Vec2::new(heading.cos(), heading.sin());
-        let edge = pos + Vec2::new(dir.y, -dir.x) * 2.6;
-        let tick = self.clock.tick;
-        let spot = self.boot_spot(pos).unwrap_or_else(|| ParkSpot {
-            kind: ParkKind::Overflow,
-            segment: self.roads.nearest_street(pos).map(|(s, _, _)| s),
-            slot: u16::MAX,
-            pos: edge,
-            heading,
-            since: tick,
-            ..Default::default()
-        });
+        // The kerb beside it, if no slot is free. [r2-traffic] It was
+        // put 2.6 m to the car's left, on the centre line (K32/K35).
+        let _ = heading;
+        let spot = self.boot_spot(pos).unwrap_or_else(|| self.squeezed_spot(pos));
         self.traffic.remove_car(car_id);
         self.park_at(vid, spot);
         // The driver gets out and walks the rest; passengers follow.

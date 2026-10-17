@@ -232,6 +232,9 @@ impl World {
         self.charge_bridges();
 
         if roads_changed {
+            // [r2-traffic] Parked cars keep their slots under the new ids
+            // before anyone stranded by the rebuild looks for a free one.
+            self.remap_kerb_slots();
             crate::prof!("rb.traffic", self.carry_traffic());
             // Trains ran on track that may be gone or re-laid, and their stops
             // and node ids are stale either way: everyone gets off where the

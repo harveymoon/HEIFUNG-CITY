@@ -128,6 +128,39 @@ pub struct Construction {
     /// A delivery has been ordered and is on its way.
     #[serde(default)]
     pub ordered: bool,
+    /// [r2-traffic] No truck can get to the site (`SiteBlock`): the work
+    /// waits, nothing is delivered by magic, and it looks again at
+    /// `retry_at`.
+    #[serde(default)]
+    pub blocked: Option<SiteBlock>,
+    #[serde(default)]
+    pub retry_at: u64,
+}
+
+/// [r2-traffic] Why a building site cannot go on (K6): the trucks that
+/// bring its materials, or the crew's vans, find no road there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SiteBlock {
+    /// No delivery truck could find a way to it.
+    Deliveries,
+    /// The plot is on no street the city's roads reach.
+    Builders,
+}
+
+impl SiteBlock {
+    pub fn text(self) -> &'static str {
+        match self {
+            SiteBlock::Deliveries => "delivery trucks can't get here",
+            SiteBlock::Builders => "builders can't reach this plot",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            SiteBlock::Deliveries => "no_deliveries",
+            SiteBlock::Builders => "no_builders",
+        }
+    }
 }
 
 impl Construction {
@@ -135,7 +168,7 @@ impl Construction {
     pub const DELIVERIES: u8 = 4;
 
     pub fn new(days: f32) -> Self {
-        Self { progress: 0.0, days: days.clamp(1.0, 12.0), deliveries: 0, ordered: false }
+        Self { progress: 0.0, days: days.clamp(1.0, 12.0), deliveries: 0, ordered: false, blocked: None, retry_at: 0 }
     }
 
     /// Build time for a building of this size and quality.

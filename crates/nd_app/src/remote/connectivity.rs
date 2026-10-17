@@ -38,6 +38,7 @@ pub(super) fn connectivity(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> 
             let kind = match a.kind {
                 AlertKind::NoRoute => "no_route".to_string(),
                 AlertKind::Stranded(n) => format!("stranded_{}", net_key(n)),
+                AlertKind::SiteBlocked => "site_unreachable".to_string(),
             };
             json!({ "seq": a.seq, "tick": a.tick, "kind": kind, "pos": v2(a.pos), "building": a.building.map(key_str), "count": a.count, "text": a.text })
         })

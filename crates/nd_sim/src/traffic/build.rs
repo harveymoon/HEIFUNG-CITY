@@ -104,6 +104,13 @@ pub struct LaneNetwork {
     pub rail_closed_any: bool,
 }
 
+/// [r2-traffic] A street wide enough for a U-turn at its junctions: two
+/// or more lanes each way, not a highway, slip road or roundabout.
+pub(super) fn uturn_street(roads: &RoadNetwork, seg: SegmentId) -> bool {
+    let s = roads.segment(seg);
+    s.lanes_fwd >= 2 && s.lanes_bwd >= 2 && !s.is_highway() && !s.ramp && !s.ring
+}
+
 impl LaneNetwork {
     pub fn rebuild(&mut self, roads: &RoadNetwork) {
         self.lanes.clear();
@@ -279,6 +286,24 @@ impl LaneNetwork {
                     if ok {
                         let id = self.push_connector(inc, out, nid, approach, radius, approaches.len());
                         self.lanes[id as usize].turn = turn(angle);
+                        self.lanes[id as usize].turnaround = out_seg == inc_seg;
+                        connectors.push((id, approach));
+                    }
+                }
+                // [r2-traffic] A U-turn from the leftmost lane of a wide
+                // two-way street (2+ lanes each way) at a real junction,
+                // swinging wide into the kerb lane going back. Driven as a
+                // left turn (its phase, its arrow, giving way to oncoming
+                // traffic); permitted only at a signalled junction from a
+                // lane with a left arrow (`refresh_uturns`). Drivers used
+                // to go out and back down the nearest dead end instead (K22,
+                // K49, K52).
+                if i == 0 && approaches.len() >= 3 && uturn_street(roads, inc_seg) && approaches.iter().all(|&s| !roads.segment(s).is_highway() && !roads.segment(s).ring) {
+                    let back = outgoing.iter().filter(|&&(_, s)| s == inc_seg).map(|&(l, _)| l).max_by_key(|&l| lane_index(&self.lanes[l as usize]));
+                    if let Some(out) = back {
+                        let id = self.push_connector(inc, out, nid, approach, radius, approaches.len());
+                        let c = &mut self.lanes[id as usize];
+                        (c.turn, c.uturn, c.permitted) = (-1, true, false);
                         connectors.push((id, approach));
                     }
                 }
@@ -352,6 +377,7 @@ impl LaneNetwork {
         self.ramp_profiles(roads);
         self.apply_roundabouts(roads);
         self.apply_signals();
+        self.refresh_uturns();
     }
 
     pub(super) fn push_connector(&mut self, inc: LaneId, out: LaneId, nid: NodeId, approach: usize, radius: f32, approaches: usize) -> LaneId {
@@ -389,7 +415,32 @@ impl LaneNetwork {
     /// The turns the connectors out of `lanes` (an approach) make, as a
     /// `LEFT | STRAIGHT | RIGHT` mask.
     pub fn exits_of(&self, lanes: &[LaneId]) -> u8 {
-        lanes.iter().flat_map(|&l| self.lanes[l as usize].next.iter()).fold(0u8, |acc, &c| acc | turn_bit(self.lanes[c as usize].turn))
+        // A U-turn rides on the left arrow; it never asks for one.
+        lanes.iter().flat_map(|&l| self.lanes[l as usize].next.iter()).filter(|&&c| !self.lanes[c as usize].uturn).fold(0u8, |acc, &c| acc | turn_bit(self.lanes[c as usize].turn))
+    }
+
+    /// [r2-traffic] May a car take U-turn connector `c` now: its junction
+    /// is signalled and the lane feeding it keeps a left arrow.
+    fn uturn_open(&self, c: LaneId) -> bool {
+        let lane = &self.lanes[c as usize];
+        let LaneKind::Connector { node, .. } = lane.kind else { return false };
+        let signalled = self.node_intersection.get(node.0 as usize).and_then(|&k| self.intersections.get(k)).is_some_and(|i| i.signalized);
+        signalled && !self.rings.nodes.contains_key(&node) && lane.prev.iter().any(|&p| self.lanes[p as usize].arrows & LEFT != 0)
+    }
+
+    /// [r2-traffic] Open or close every U-turn connector by its junction's
+    /// signals and its lane's arrows (after a rebuild, a junction rule or
+    /// new arrows). True when any changed.
+    pub fn refresh_uturns(&mut self) -> bool {
+        let mut changed = false;
+        for c in 0..self.lanes.len() {
+            if self.lanes[c].uturn {
+                let open = self.uturn_open(c as LaneId);
+                changed |= self.lanes[c].permitted != open;
+                self.lanes[c].permitted = open;
+            }
+        }
+        changed
     }
 
     pub fn set_arrows(&mut self, approach: usize, arrows: Vec<u8>) {
@@ -404,7 +455,7 @@ impl LaneNetwork {
             self.lanes[l as usize].arrows = a;
             for c in self.lanes[l as usize].next.clone() {
                 let bit = turn_bit(self.lanes[c as usize].turn);
-                self.lanes[c as usize].permitted = a & bit != 0;
+                self.lanes[c as usize].permitted = a & bit != 0 && (!self.lanes[c as usize].uturn || self.uturn_open(c));
             }
         }
         self.arrows_version += 1;

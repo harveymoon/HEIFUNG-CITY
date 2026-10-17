@@ -253,6 +253,6 @@ fn a_car_waits_at_a_full_exit_rather_than_take_a_huge_detour() {
     assert!(t.exit_blocked(&t.net.lanes[route[1] as usize], exit, true), "the exit is full");
     let other = t.net.route_avoiding(w_lane, len - 2.0, *route.last().unwrap(), s1, Some(exit), None);
     assert!(other.is_some(), "the long way round exists");
-    t.reroute_stalled();
+    t.reroute_stalled(1.0);
     assert_eq!(t.cars[car].route, route, "it waits its turn instead of a loop of kilometres");
 }
