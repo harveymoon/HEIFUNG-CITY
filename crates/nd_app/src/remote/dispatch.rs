@@ -628,6 +628,7 @@ pub(super) static COMMANDS: &[Cmd] = &[
     ] },
     Cmd { name: "inspect", aliases: &[], effect: Read, run: inspect::inspect, help: &[
         ("citizen|building|lot|car|train|drone|vehicle|route", "id (vehicle: a private car's record; a unit's car also gets unit)"),
+        ("history", "bool: with citizen, building or car, the recorded history (docs/REMOTE.md \"History\"): a car's trip (streets driven with times, re-plans and why, U-turns, stalls and what held it, anger, errands such as the parking hunt; a car gone from the road gives its last trip), a citizen's trips (mode chosen and runner-up, legs, waits, failed routes), life events and last drive, a building's events (built, owners, business opened/closed, households, incidents)"),
         ("unit", "id: an emergency unit: title, kind, station, state, doing, crew (citizen, name, role, out, pos, pose), incident (fire: how_bad, intensity, minutes_to_out, progress, damage; else patient, suspect, people), and for a fire engine at work scene (seconds, water_litres, aim, ladder {yaw_deg, pitch_deg, length, outriggers, tip}, hoses, streams)"),
         ("gesture", "int; with no id, the current selection"),
         ("junction", "[x,y]: the nearest junction's signal, lane arrows per arriving street and left turn waits"),
@@ -635,6 +636,24 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("road", "id, or [x,y]: the piece a click there picks (else the nearest), as segment, plus road: the road card (kind, lanes, limit, level, run, now {vehicles by kind, bikes, walkers, speed, congestion, queue}, flow, hourly (72 h), decay {wear, condition, effects, wear_per_day, next_condition, repair_cost, queue_place, last_repaired_day}, tolls, crossings, bus_stops, kerb parking)"),
         ("toll", "int: a toll booth in full (traffic, lorries, free, avoided, queue, hourly)"),
         ("ship", "id (landscape.ships): a ferry or freighter: title, doing, passengers, cargo, route; a ferry terminal or shipping port building also gets routes (to, ships, headway_min, next_departure, passengers_today)"),
+    ] },
+    Cmd { name: "replay", aliases: &["trip_replay"], effect: Read, run: insight::replay, help: &[
+        ("car|citizen", "id: the car's trip on the road (or its last), or the citizen's drive under way (or their last)"),
+        ("step_m", "optional: keep a point only every this many metres"),
+    ] },
+    Cmd { name: "get", aliases: &["dump"], effect: Read, run: insight::get, help: &[
+        ("kind", "citizen|building|lot|zone|household|car|vehicle|train|facility|route|unit|incident|drone|bot|metro|metro_line|owner|cab|ship|tourist|segment|node"),
+        ("id", "\"idx:version\" (incident, segment, node: a number): every saved field of that entity"),
+        ("field", "instead of kind: a field of the world itself (\"?\" lists them), e.g. economy, estate, services"),
+        ("path", "optional dotted path into the value (\"business.stock\", \"route.0\")"),
+        ("max_bytes", "default 4000000; bigger answers ask for a narrower path"),
+    ] },
+    Cmd { name: "query", aliases: &[], effect: Read, run: insight::query, help: &[
+        ("kind", "as get"),
+        ("filter", "{dotted path: value | \"substring\" | {min, max}}; a string also matches an enum variant (\"activity\": \"Driving\")"),
+        ("fields", "[dotted paths] to return (default: every field)"),
+        ("offset", "default 0"),
+        ("limit", "default 50, max 2000"),
     ] },
     Cmd { name: "lane_use", aliases: &[], effect: Game, run: junction::lane_use, help: &[
         ("junction", "[x,y]"),

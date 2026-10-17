@@ -37,6 +37,8 @@ pub mod history;
 pub mod homeless;
 /// [identity] The city's name and game id.
 pub mod identity;
+/// [insight] The city's memory: trips, re-plans, life and building events.
+pub mod insight;
 pub mod ground;
 pub mod industry;
 pub mod junctions;

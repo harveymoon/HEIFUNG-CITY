@@ -921,6 +921,82 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
   (mcmansion | mansion | merged | mega_hotel | museum | tower | null), `pressure` and `pressure_floors` at
   its lot, `height_cap`, `wants_to_expand`, `owned_with` (every property of its owner)
 
+#### History, replays and the full dump [insight]
+
+The sim keeps a bounded memory of what happened, saved with the city (`World::insight`,
+`crate::insight`; a save from before it loads with none). It only records: nothing in it feeds back
+into the game.
+
+- **Vehicles**: every vehicle on the road has a trip log from the moment it took to the road: each
+  street piece it drove onto (segment, direction, entry point and time), every re-plan (`why`:
+  `lane_change` (could not get into the lane its turn needs), `full_exit`, `crash_ahead`, `stuck` (on
+  one route too long, or a turn on it closed), `parking_hunt`, `errand` (a lorry, van or city
+  vehicle on to its next stop or back to base), `redirect`, `new_route` (a bus at a stop, a show, a
+  chase), `emergency`; `avoided` (where the lane it went round begins), `remaining_before_m` and
+  `remaining_after_m` (null and `found_route: false`: it looked, found none and kept its route)),
+  U-turns (`dead_end`: turned round where the street ends), rage U-turns, stalls of a minute or more
+  (`seconds` in traffic seconds, `cause`: queued_behind, red_light, giving_way, exit_full,
+  lane_change, pulling_out, crashed, junction_blocked, level_crossing, ...; `behind`: the car in its
+  way), anger in 10% steps, crashes, and errand changes (the parking hunt's steps: `parking_search`
+  with `tries`, `to_parking_lot`, `to_kerb_space`; `return_to_base`, `tow_job`, ...). A finished trip
+  is kept with its driver (their `last_drive`), or for vehicles nobody in town drives in a ring of the
+  last 300.
+- **Citizens**: each trip set off (`set_off`, or `next_leg` after a ride: the mode chosen, its
+  expected minutes, the `runner_up` mode and its minutes, `could_not`: better-ranked modes that could
+  not be done), each change of activity (the legs: on foot or by bike, driving, waiting for and riding
+  the bus, the train, the metro, a lift, flying; arriving home, at work, out), routes that failed
+  (`no_route` with why), and life events: `arrived` in town, new `home`, `job`, `car`,
+  `household`, `crime_victim`, `suspect`, `patient`, `crash`. About a day or two of an ordinary life
+  is kept; older records drop off.
+- **Buildings**: `started` (a site, or placed), `built`, `demolition` (why), `opened` (the business
+  kind), `closed`, `reopened`, `owner` (the estate owner, or independent), `rebuilt` (tier and
+  floors), `moved_in` / `moved_out` (households), `incident` (fire, crime, medical, crash; its id) and
+  `resolved` (how), `renamed`.
+
+Each record carries `tick`, `day`, `time`, `at` [x, y] and `event`. Logs are capped in bytes (a
+trip on the road 3 KB, a finished one 1.5 KB, a citizen's trips 384 B and life 192 B, a building
+256 B); when one fills, its oldest street pieces go first, then its oldest records
+(`records_dropped`).
+
+`inspect {car: id, history: true}` adds `history`: the trip (`kind` private / lorry / bus / service /
+taxi / through / fleet / other, `driver`, `vehicle`, `to`, `set_off`, `ended`, `minutes_on_road`,
+`summary` {street_pieces, replans by why, u_turns, dead_end_u_turns, rage_u_turns, stalls,
+stalled_min, stalled_by_cause_s, max_anger_pct, crashes, records_dropped}, `now` {at, wait,
+stalled_s, anger_pct, route_left_m} while on the road, and `records`). A car no longer on the road
+still answers with its last trip (`car: null`, `on_road: false`). `inspect {citizen: id, history:
+true}` adds `history` {trips (each `set_off` record with `legs` (with `minutes`, and `waited_min` at
+a stop), `ended` (the activity it ended in) and `took_min`), trips_today, failed_routes, life,
+last_drive, current_drive, records}. `inspect {building: id, history: true}` adds `history`
+{events}.
+
+`replay {car | citizen, step_m?}` gives a trip's way as points: `points` [[x, y, tick], ...] (a
+fractional game-minute tick, timed along each street piece), from where it took to the road along
+each piece's lane (while the roads are as they were; after a rebuild the recorded entry points),
+to where it is now; `length_m`, `events` (every record but the street pieces), `on_road`. A citizen
+gives the drive under way, else their last. The selected car's thin "came from" line in the game is
+drawn from the same record where the app's own breadcrumbs do not reach (after a load).
+
+`get {kind, id}` returns every saved field of one thing, as the save holds it (`value`; slotmap
+keys shown as "idx:version" ids). Kinds: citizen, building, lot, zone, household, car, vehicle,
+train, facility, route, unit, incident (its number), drone, bot, metro, metro_line, owner, cab,
+ship, tourist, segment and node (their numbers). `path` picks inside it (`"business.stock"`,
+`"route.0"`). `get {field}` returns a field of the world itself, private ones too (`field: "?"`
+lists them: economy, estate, services, insight, ...), with `path` to narrow it; answers over
+`max_bytes` (4 MB) say so and list the keys to narrow by.
+
+`query {kind, filter?, fields?, offset?, limit?}` lists a kind: `filter` {dotted path: value |
+"substring" | {min, max}} (a string also matches an enum variant by name, e.g. `"activity":
+"Driving"`; {min, max} on an array compares its length), `fields` [dotted paths] to return
+(default: every field, as `value`). Reply {total, matched, rows: [{id, ...}]}.
+
+```json
+{"cmd": "inspect", "car": "134:757", "history": true}
+{"cmd": "replay", "citizen": "88:3", "step_m": 10}
+{"cmd": "get", "kind": "building", "id": "120:4", "path": "business"}
+{"cmd": "get", "field": "economy", "path": "transit"}
+{"cmd": "query", "kind": "citizen", "filter": {"activity": "Driving", "mood": {"max": 0.3}}, "fields": ["name", "home", "mood"]}
+```
+
 ### Land market
 
 `ownership {building}`: the selection highlight's data: `owner` ({id, name, detail} or null for an

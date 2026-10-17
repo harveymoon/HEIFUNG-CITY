@@ -31,7 +31,7 @@ impl World {
             industry_bias places concerns districts tourism subway tolls taxis cargo_hubs rides streets
             pillars pillar_gaps crosswalks estate skyline pressure scene identity street_events road_wear
             dirty road_log social social_concern committee path_links corps shore level_crossings attractions
-            freight_queue games airlifts dams parks
+            freight_queue games airlifts dams parks insight
         );
     }
 }

@@ -1,8 +1,9 @@
 //! [pt-walk] Where each vehicle on the road has been: a breadcrumb trail
 //! per car, laid as the sim moves them, for the thin "came from" line of a
-//! selected car. The sim keeps only the route ahead (a reroute starts it
-//! afresh), so the way behind is remembered here, from when the car took
-//! to the road (or the game was loaded).
+//! selected car, from when the car took to the road (or the game was
+//! loaded). [insight] The sim now keeps a coarser saved record of each trip
+//! (`World::trip_replay`); the line takes that where these breadcrumbs do
+//! not reach (`overlay::selection::past_points`).
 
 use std::collections::HashMap;
 
