@@ -110,6 +110,9 @@ impl World {
         // A pad that went away cannot hold anybody's slot.
         let ids: Vec<DroneId> = self.air.drones.keys().collect();
         for id in ids {
+            if self.air.drones[id].booked.is_some_and(|(b, _)| self.air.pad(b).is_none()) {
+                self.air.drones[id].booked = None;
+            }
             let lost_slot = self.air.drones[id].at.is_some_and(|b| self.air.pad(b).is_none());
             let lost_dest = self.air.drones[id].dest.is_some_and(|b| self.air.pad(b).is_none());
             if lost_slot || lost_dest {
@@ -347,6 +350,8 @@ impl World {
         a.stats.fares_yesterday = std::mem::take(&mut a.stats.fares_today);
         a.stats.gave_up_today = 0;
         a.stats.holds_today = 0;
+        a.stats.ground_holds_today = 0;
+        a.stats.forced_landings_today = 0;
         a.stats.medic_flights_today = 0;
         a.stats.police_flights_today = 0;
         a.stats.grumbles_today = 0;
@@ -367,6 +372,13 @@ impl World {
     }
 
     // ── dispatch ───────────────────────────────────────────────────────────
+
+    /// [r4] (K28) Battery a taxi needs to fly from where it is to its base
+    /// and land: the climb, the cruise and the landing.
+    fn charge_home(&self, d: &Drone) -> f32 {
+        let home = self.air.pad(d.base).map_or(d.pos, |p| p.pos);
+        d.pos.distance(home) / 1000.0 * air::BATTERY_PER_KM + air::TAXI_ALT * air::BATTERY_PER_CLIMB_M + air::LANDING_CHARGE
+    }
 
     /// Battery a taxi needs to fetch a rider from pad `from`, fly them to
     /// `to` and get home, with a climb at each take-off.
@@ -397,6 +409,10 @@ impl World {
                 .iter()
                 .filter(|(_, d)| d.craft == Craft::Taxi && matches!(d.job, Job::Idle | Job::Home) && !(d.phase == Phase::Parked && d.until > tick))
                 .filter(|(_, d)| d.battery - self.battery_needed(d, a.pos, b.pos) >= air::RESERVE * 0.5)
+                // [r4] (K28) Only with a landing slot at the pickup (or
+                // already standing on it): no drone is sent to queue over
+                // a full pad; the rider waits a little longer instead.
+                .filter(|(id, d)| (d.at == Some(from) && !d.phase.airborne()) || self.air.bookable_slot(from, *id).is_some())
                 .map(|(id, d)| (d.pos.distance(a.pos), id))
                 .min_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
             match best {
@@ -529,18 +545,47 @@ impl World {
                 d.dest = Some(dest);
                 d.goal = pad.pos;
                 d.goal_alt = pad.height;
+                self.book_landing(id);
             }
         }
     }
 
+    /// [r4] (K28) Book the aircraft a landing slot at the pad it is flying
+    /// to (giving up one booked elsewhere), if one can be had. Whether it
+    /// holds a booking there now.
+    fn book_landing(&mut self, id: DroneId) -> bool {
+        let (dest, booked) = (self.air.drones[id].dest, self.air.drones[id].booked);
+        let Some(dest) = dest else {
+            self.air.drones[id].booked = None;
+            return false;
+        };
+        if booked.is_some_and(|(p, _)| p == dest) {
+            return true;
+        }
+        let slot = self.air.bookable_slot(dest, id);
+        self.air.drones[id].booked = slot.map(|s| (dest, s));
+        slot.is_some()
+    }
+
     /// Lift off for `goal` (a pad, or a street spot with `dest` None).
     fn air_take_off(&mut self, id: DroneId, dest: Option<BuildingId>, goal: Vec2, goal_alt: f32) {
+        let tick = self.clock.tick;
         let d = &mut self.air.drones[id];
         d.dest = dest;
         d.goal = goal;
         d.goal_alt = goal_alt;
         d.until = 0;
-        if !d.phase.airborne() {
+        d.grounded = false;
+        let airborne = d.phase.airborne();
+        let booked = self.book_landing(id);
+        if !airborne && !booked && dest.is_some() {
+            self.air.stats.ground_holds_today += 1;
+        }
+        let d = &mut self.air.drones[id];
+        if !airborne {
+            // [r4] (K28) Off the pad once its landing slot is booked, or
+            // after a short wait for one (see `fly`, Climbing).
+            d.until = tick + air::GROUND_HOLD;
             d.phase = Phase::Climbing;
             d.flights_today += 1;
             d.flights_total += 1;
@@ -558,6 +603,18 @@ impl World {
         self.air.drones[id].job = Job::Home;
         match self.air.pad(base).copied() {
             Some(p) => {
+                // [r4] (K28) On the ground away from home without the charge
+                // to get there: it stays and charges first (`parked`).
+                let short = {
+                    let d = &self.air.drones[id];
+                    d.craft == Craft::Taxi && !d.phase.airborne() && d.at != Some(base) && d.battery < self.charge_home(d) + air::DIVERT_MARGIN
+                };
+                if short {
+                    let d = &mut self.air.drones[id];
+                    d.phase = Phase::Parked;
+                    d.dest = None;
+                    return;
+                }
                 if self.air.drones[id].at == Some(base) && !self.air.drones[id].phase.airborne() {
                     let d = &mut self.air.drones[id];
                     d.job = Job::Idle;
@@ -590,12 +647,22 @@ impl World {
                 }
             }
             Phase::Climbing => {
+                // [r4] (K28) Still on the pad without a landing slot at the
+                // far end: it waits there for one (a ground hold), up to
+                // `GROUND_HOLD` ticks, rather than queue in the air.
+                let on_pad = {
+                    let d = &self.air.drones[id];
+                    d.dest.is_some() && d.at.and_then(|b| self.air.pad(b)).is_some_and(|p| d.alt <= p.height + 0.01)
+                };
+                if on_pad && !self.book_landing(id) && tick < self.air.drones[id].until {
+                    return;
+                }
                 let d = &mut self.air.drones[id];
                 let cruise = d.craft.cruise();
                 let rise = (air::VERTICAL_MPS * dt).min((cruise - d.alt).max(0.0));
                 d.alt += rise;
                 if d.craft == Craft::Taxi {
-                    d.battery -= rise * air::BATTERY_PER_CLIMB_M;
+                    d.battery = (d.battery - rise * air::BATTERY_PER_CLIMB_M).max(0.0);
                 }
                 // Clear of the roof, start edging towards the goal.
                 if d.alt > cruise * 0.6 {
@@ -625,7 +692,7 @@ impl World {
                     let moved = step.min(dist - air::APPROACH * 0.5);
                     step_towards(d, moved);
                     if d.craft == Craft::Taxi {
-                        d.battery -= moved / 1000.0 * air::BATTERY_PER_KM;
+                        d.battery = (d.battery - moved / 1000.0 * air::BATTERY_PER_KM).max(0.0);
                         d.km_today += moved / 1000.0;
                     }
                 }
@@ -635,7 +702,7 @@ impl World {
                     let d = &mut self.air.drones[id];
                     circle(d, air::HOLD_RADIUS, d.craft.mps() * dt * 0.5, d.craft.cruise() - 20.0);
                     if d.craft == Craft::Taxi {
-                        d.battery -= d.craft.mps() * dt * 0.5 / 1000.0 * air::BATTERY_PER_KM;
+                        d.battery = (d.battery - d.craft.mps() * dt * 0.5 / 1000.0 * air::BATTERY_PER_KM).max(0.0);
                     }
                 }
                 self.request_landing(id);
@@ -669,6 +736,11 @@ impl World {
                 }
             }
         }
+        // [r4] (K28) Never on empty: a taxi short of the charge to reach its
+        // pad diverts or comes down.
+        if self.air.drones.get(id).is_some_and(|d| d.craft == Craft::Taxi && matches!(d.phase, Phase::Climbing | Phase::Cruising | Phase::Holding)) {
+            self.check_charge(id);
+        }
         // Noise under it, louder low down.
         let d = &self.air.drones[id];
         if d.phase.airborne() {
@@ -696,17 +768,34 @@ impl World {
             self.air.drones[id].phase = Phase::Descending;
             return;
         };
+        // [r4] (K28) Its booked slot, once whoever stood there has gone
+        // (the booking was made for when it got here). A flight that left
+        // without one books now; only the rare one that still cannot holds,
+        // first come first landed. Low on charge, it lands first.
+        let low = {
+            let d = &self.air.drones[id];
+            d.craft == Craft::Taxi && d.battery < air::RESERVE * 0.5
+        };
+        let booked = self.book_landing(id);
+        let slot = match self.air.drones[id].booked {
+            Some((p, s)) if p == dest && self.air.slot_clear(dest, s, id) => Some(s),
+            _ if low => (0..self.air.pad(dest).map_or(0, |p| p.slots)).find(|&s| self.air.slot_clear(dest, s, id) && !self.air.drones.iter().any(|(o, d)| o != id && d.booked == Some((dest, s)) && d.phase == Phase::Descending)),
+            _ => None,
+        };
         let mine = {
             let d = &self.air.drones[id];
             if d.phase == Phase::Holding { (d.hold_since, id) } else { (tick, id) }
         };
-        let ahead = self.air.drones.iter().any(|(oid, o)| oid != id && o.phase == Phase::Holding && o.dest == Some(dest) && (o.hold_since, oid) < mine);
-        let slot = if ahead { None } else { self.air.free_slot(dest) };
+        // Without a booking (and not short of charge), wait behind those
+        // holding longer.
+        let ahead = !booked && !low && self.air.drones.iter().any(|(oid, o)| oid != id && o.phase == Phase::Holding && o.dest == Some(dest) && (o.hold_since, oid) < mine);
+        let slot = if ahead { None } else { slot };
         let d = &mut self.air.drones[id];
         match slot {
             Some(s) => {
                 d.at = Some(dest);
                 d.slot = s;
+                d.booked = None;
                 d.phase = Phase::Descending;
             }
             None if d.phase != Phase::Holding => {
@@ -715,6 +804,90 @@ impl World {
                 self.air.stats.holds_today += 1;
             }
             None => {}
+        }
+    }
+
+    /// [r4] (K28) A taxi in the air without the charge left to reach its
+    /// pad and land (with [`air::DIVERT_MARGIN`] to spare) diverts to the
+    /// nearest pad it can reach that has a slot for it, a passenger aboard
+    /// getting off there; with no such pad, or with the battery all but
+    /// flat, it comes straight down in the street below and waits there for
+    /// the recovery van's charge. It never flies on at 0.
+    fn check_charge(&mut self, id: DroneId) {
+        let per_m = air::BATTERY_PER_KM / 1000.0;
+        let (pos, goal, battery, here, phase) = {
+            let d = &self.air.drones[id];
+            (d.pos, d.goal, d.battery, d.dest, d.phase)
+        };
+        let need = |to: Vec2| pos.distance(to) * per_m + air::LANDING_CHARGE;
+        if battery >= need(goal) + air::DIVERT_MARGIN {
+            return;
+        }
+        let flat = battery <= air::LANDING_CHARGE;
+        // Able to make its own pad still: straight in, landing first.
+        if !flat && battery >= need(goal) && here.is_some() {
+            if phase == Phase::Holding {
+                self.request_landing(id);
+            }
+            return;
+        }
+        let divert = if flat {
+            None
+        } else {
+            self.air
+                .pads
+                .iter()
+                .filter(|p| p.kind.for_taxis() && Some(p.building) != here && battery >= need(p.pos))
+                .filter(|p| self.air.bookable_slot(p.building, id).is_some())
+                .min_by(|a, b| a.pos.distance(pos).total_cmp(&b.pos.distance(pos)).then(a.building.cmp(&b.building)))
+                .copied()
+        };
+        match divert {
+            Some(p) => {
+                let job = self.air.drones[id].job;
+                let job = match job {
+                    // A rider aboard gets off at this pad and walks.
+                    Job::Taxi { rider, from, aboard: true, .. } => Job::Taxi { rider, from, to: p.building, aboard: true },
+                    // A pickup is left for another drone.
+                    Job::Taxi { rider, aboard: false, .. } => {
+                        if !self.air.pending.contains(&rider) {
+                            self.air.pending.push(rider);
+                        }
+                        Job::Home
+                    }
+                    other => other,
+                };
+                let d = &mut self.air.drones[id];
+                d.job = job;
+                if d.phase == Phase::Holding {
+                    d.phase = Phase::Cruising;
+                }
+                d.dest = Some(p.building);
+                d.goal = p.pos;
+                d.goal_alt = p.height;
+                d.booked = None;
+                self.book_landing(id);
+            }
+            None => {
+                // Down in the street where it is.
+                let spot = self.kerbside(pos);
+                let d = &mut self.air.drones[id];
+                if let Job::Taxi { rider, aboard: false, .. } = d.job {
+                    d.job = Job::Home;
+                    if !self.air.pending.contains(&rider) {
+                        self.air.pending.push(rider);
+                    }
+                }
+                let d = &mut self.air.drones[id];
+                d.at = None;
+                d.booked = None;
+                d.dest = None;
+                d.goal = spot;
+                d.goal_alt = 0.0;
+                d.grounded = true;
+                d.phase = Phase::Descending;
+                self.air.stats.forced_landings_today += 1;
+            }
         }
     }
 
@@ -855,9 +1028,27 @@ impl World {
             let d = &self.air.drones[id];
             (d.job, d.at, d.base)
         };
-        if at == Some(base) && self.air.drones[id].craft == Craft::Taxi {
+        if self.air.drones[id].craft == Craft::Taxi {
+            // [r4] (K28) At base on its own charger; on another pad off
+            // theirs, slower; down in the street off the recovery van's.
+            let rate = if at == Some(base) {
+                air::CHARGE_PER_TICK
+            } else if at.is_some() {
+                air::AWAY_CHARGE_PER_TICK
+            } else {
+                air::RECOVERY_CHARGE_PER_TICK
+            };
             let d = &mut self.air.drones[id];
-            d.battery = (d.battery + air::CHARGE_PER_TICK).min(1.0);
+            d.battery = (d.battery + rate).min(1.0);
+            // Grounded with a flat battery: home once it has the charge.
+            if at != Some(base) && matches!(d.job, Job::Home | Job::Idle) {
+                let need = self.charge_home(&self.air.drones[id]);
+                if self.air.drones[id].battery >= need + air::RESERVE * 0.5 {
+                    self.air.drones[id].grounded = false;
+                    self.air_go_home(id);
+                }
+                return;
+            }
         }
         match job {
             Job::Taxi { rider, from, aboard: false, .. } if at == Some(from) => self.try_board(id, rider, from),
@@ -1365,5 +1556,107 @@ mod tests {
         let b = run(21);
         assert_eq!(a, b);
         assert!(a.3 && a.1 == 1, "the rider arrived after the load: {a:?}");
+    }
+
+    /// [r4] (K28) A taxi running out of charge in the air never flies on
+    /// empty: it diverts to a pad it can reach, or comes down in the street
+    /// below and charges there; the battery never goes below 0, and once
+    /// charged it flies home.
+    #[test]
+    fn a_taxi_low_on_charge_lands_instead_of_circling_on_empty() {
+        let (mut w, _, home, _) = tower_town(11);
+        let taxi = w.air.drones.iter().find(|(_, d)| d.craft == Craft::Taxi).map(|(id, _)| id).unwrap();
+        let pad = *w.air.pad(home).unwrap();
+        {
+            // Far out over the edge of town, bound for the tower, with a
+            // battery that cannot get it there.
+            let d = &mut w.air.drones[taxi];
+            d.at = None;
+            d.phase = Phase::Cruising;
+            d.alt = air::TAXI_ALT;
+            d.pos = pad.pos + Vec2::new(-1500.0, 600.0);
+            d.dest = Some(home);
+            d.goal = pad.pos;
+            d.goal_alt = pad.height;
+            d.job = Job::Home;
+            d.battery = 0.03;
+        }
+        let mut minds = IdleMind;
+        let mut down = false;
+        for _ in 0..400 {
+            w.tick(&mut minds);
+            let d = &w.air.drones[taxi];
+            assert!(d.battery >= 0.0, "never below empty: {}", d.battery);
+            assert!(!(d.phase.airborne() && d.battery <= 0.0 && d.phase != Phase::Descending), "never flying on at 0");
+            assert_ne!(d.phase, Phase::Holding, "never circling on a flat battery");
+            down |= !d.phase.airborne() && d.at != Some(d.base);
+        }
+        assert!(down, "it came down short of its pad");
+        assert!(w.air.stats.forced_landings_today + w.air.stats.holds_today <= 1 || w.air.stats.forced_landings_today == 1);
+        // It charged where it came down and went home.
+        let mut home_again = false;
+        for _ in 0..1500 {
+            w.tick(&mut minds);
+            let d = &w.air.drones[taxi];
+            assert!(d.battery >= 0.0);
+            if d.at == Some(d.base) && !d.phase.airborne() {
+                home_again = true;
+                break;
+            }
+        }
+        assert!(home_again, "recharged and flew home: {:?} {:?} {:.2}", w.air.drones[taxi].phase, w.air.drones[taxi].job, w.air.drones[taxi].battery);
+    }
+
+    /// [r4] (K28) Flights are given their landing slot before they leave:
+    /// with the rooftop pad booked by a drone on its way in, a second taxi
+    /// bound there waits on its own pad until it can have the slot, and
+    /// lands without circling.
+    #[test]
+    fn take_offs_wait_for_a_landing_slot_instead_of_circling() {
+        let (mut w, _, home, _) = tower_town(13);
+        let pad = *w.air.pad(home).unwrap();
+        let taxis: Vec<DroneId> = w.air.drones.iter().filter(|(_, d)| d.craft == Craft::Taxi).map(|(id, _)| id).take(2).collect();
+        assert_eq!(taxis.len(), 2);
+        let (a, b) = (taxis[0], taxis[1]);
+        // A is in the air for the rooftop, its slot booked.
+        {
+            let d = &mut w.air.drones[a];
+            d.at = None;
+            d.phase = Phase::Cruising;
+            d.alt = air::TAXI_ALT;
+            d.pos = pad.pos + Vec2::new(500.0, 0.0);
+            d.dest = Some(home);
+            d.goal = pad.pos;
+            d.goal_alt = pad.height;
+            d.job = Job::Home;
+        }
+        assert!(w.book_landing(a));
+        assert_eq!(w.air.free_slot(home), None, "a booked slot is taken");
+        // B, parked at the vertiport, is sent there too.
+        w.air.drones[b].job = Job::Home;
+        w.air_take_off(b, Some(home), pad.pos, pad.height);
+        assert!(w.air.drones[b].booked.is_none(), "no slot for B yet");
+        let mut minds = IdleMind;
+        let mut b_waited = false;
+        let mut landed = Vec::new();
+        for _ in 0..200 {
+            w.tick(&mut minds);
+            assert!(w.air.drones.values().all(|d| d.phase != Phase::Holding), "nobody circles");
+            let d = &w.air.drones[b];
+            b_waited |= d.phase == Phase::Climbing && d.at.is_some() && d.until > w.clock.tick;
+            for &id in &[a, b] {
+                // Given the pad's slot to come down on.
+                if w.air.drones[id].at == Some(home) && !landed.contains(&id) {
+                    landed.push(id);
+                }
+            }
+            if landed.len() == 2 && !w.air.drones[b].phase.airborne() {
+                break;
+            }
+        }
+        assert!(b_waited, "B held on the ground for its slot");
+        assert!(w.air.stats.ground_holds_today >= 1);
+        assert_eq!(landed, vec![a, b], "A then B, in their slots");
+        assert_eq!(w.air.stats.holds_today, 0, "no holding in the air");
     }
 }

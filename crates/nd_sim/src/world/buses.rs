@@ -55,7 +55,7 @@ impl World {
     /// Snapped like `add_bus_stop`. Buses, leg timings and riders bound for
     /// later stops shift up with the list. The index it took.
     pub fn insert_bus_stop(&mut self, route: RouteId, at: Option<usize>, p: Vec2) -> Result<usize, String> {
-        let stop = self.transit.stop_for_click(&self.roads, p).ok_or("click next to a street")?;
+        let stop = self.transit.stop_for_click(&self.roads, p).ok_or_else(|| transit::stop_refusal(&self.roads, p))?;
         self.put_bus_stop(route, at, stop)
     }
 

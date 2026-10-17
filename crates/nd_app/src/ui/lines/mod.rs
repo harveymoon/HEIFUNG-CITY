@@ -334,7 +334,7 @@ fn bus_line(ui: &mut egui::Ui, p: &UiCtx, rid: RouteId, probs: &[problems::Probl
             .map(|i| {
                 let broken = r.broken.contains(&i) || probs.iter().any(|p| p.blocks && p.leg == Some(i));
                 let (mins, timed) = r.leg_minutes(i, tsp);
-                Leg { text: if broken { "NO ROAD".into() } else { format!("{}{:.0} min", if timed { "" } else { "~" }, mins.max(1.0)) }, broken }
+                Leg { text: if broken && r.against.contains(&i) { "ONE-WAY".into() } else if broken { "NO ROAD".into() } else { format!("{}{:.0} min", if timed { "" } else { "~" }, mins.max(1.0)) }, broken }
             })
             .collect()
     };

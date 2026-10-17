@@ -40,6 +40,18 @@ pub struct Train {
     /// [train-inspect] Units of imports a freight train has set down so far.
     #[serde(default)]
     pub unloaded: f32,
+    /// [r4] (K50) Speed now, m/s: up to the line speed `speed`, braking to
+    /// a stand at calls, the switch and behind another train.
+    #[serde(default)]
+    pub v: f32,
+    /// [r4] (K33) The length of the stand it is making now (traffic
+    /// seconds): a freight train stands as long as its cranes take.
+    #[serde(default)]
+    pub dwell_total: f32,
+    /// [r4] (K33) The shipping containers on a freight train's wagons, and
+    /// the ones being lifted off or on at the yard it stands at.
+    #[serde(default)]
+    pub boxes: Vec<super::BoxLoad>,
 }
 
 impl Train {
@@ -70,6 +82,21 @@ impl Train {
 
     pub fn head(&self) -> Vec2 {
         point_along(&self.poly, self.s).0
+    }
+
+    /// [r4] Traffic seconds to run `d` metres from the speed it has now,
+    /// picking up speed at [`ACCEL`] to the line speed (no braking: a
+    /// crossing ahead is run over, not stopped at).
+    pub fn seconds_to(&self, d: f32) -> f32 {
+        let (v0, vmax) = (self.v.clamp(0.0, self.speed.max(0.1)), self.speed.max(0.1));
+        let t_acc = (vmax - v0) / ACCEL;
+        let d_acc = (v0 + vmax) * 0.5 * t_acc;
+        if d <= d_acc {
+            // v0 t + a t² / 2 = d
+            (-v0 + (v0 * v0 + 2.0 * ACCEL * d.max(0.0)).sqrt()) / ACCEL
+        } else {
+            t_acc + (d - d_acc) / vmax
+        }
     }
 
     /// On a branch right now.
@@ -206,4 +233,18 @@ pub fn sub_path(pts: &[Vec2], s0: f32, s1: f32) -> Vec<Vec2> {
     }
     out.push(point_along(pts, s1).0);
     out
+}
+
+/// [r4] (K33) Arc length of the first point after `s` where `pts` doubles
+/// back on itself (a spur's end, where a train turns round), if any.
+pub fn turn_point_after(pts: &[Vec2], s: f32) -> Option<f32> {
+    let mut acc = 0.0;
+    for i in 1..pts.len().saturating_sub(1) {
+        acc += pts[i - 1].distance(pts[i]);
+        let (a, b) = ((pts[i] - pts[i - 1]).normalize_or_zero(), (pts[i + 1] - pts[i]).normalize_or_zero());
+        if acc > s + 0.01 && a.dot(b) < -0.5 {
+            return Some(acc);
+        }
+    }
+    None
 }

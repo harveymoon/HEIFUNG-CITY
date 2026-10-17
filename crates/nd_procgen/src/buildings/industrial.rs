@@ -60,7 +60,7 @@ pub fn junkyard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let office = front.at(front.len * 0.3, -4.5);
     if poly_inside(c, &rect(office.x, office.y, 3.2, 1.4)) {
         let col = pick(rng, &pal.container_colors);
-        container_unit(g, c, rng, office.x, office.y, 0.0, 6.05, 2.44, 2.6, 0.0, col);
+        container_unit(g, c, rng, office.x, office.y, 0.0, CONTAINER_20, CONTAINER_W, CONTAINER_H, 0.0, col);
         // The container's road side, facing the road.
         let of = Face::new(office + Vec2::new(-3.0, -1.22), office + Vec2::new(3.0, -1.22), Vec2::new(0.0, -1.0));
         of.decal(g, f, Glow, -1.0, 1.5, 0.04, 1.0, 0.7, mul(c.style.window_color(0), 0.9));
@@ -544,12 +544,14 @@ pub fn depot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 let v = yard_lo.y + 1.5 + r as f32 * 3.6;
                 let stack = rng.random_range(1..=3);
                 for k in 0..stack {
-                    let len = if rng.random_bool(0.7) { 12.1 } else { 6.05 };
+                    let forty = rng.random_bool(0.7);
+                    let len = if forty { CONTAINER_40 } else { CONTAINER_20 };
                     if !c.inside_local(Vec2::new(u + len * 0.5, v)) || !c.inside_local(Vec2::new(u - len * 0.5, v)) {
                         break;
                     }
-                    let col = pick(rng, &pal.container_colors);
-                    container_unit(g, c, rng, u, v, 0.0, len, 2.44, 2.6, k as f32 * 2.6, col);
+                    // [r4] (K33) The standard box, in a line's colours.
+                    let line = shipping_line(rng.random());
+                    iso_container(g, c, rng, u, v, 0.0, forty, k as f32 * CONTAINER_H, line, BoxLook::Dry);
                 }
             }
         }
@@ -893,8 +895,10 @@ pub fn container_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             if c.inside_local(p + Vec2::new(-6.2, -1.3)) && c.inside_local(p + Vec2::new(6.2, 1.3)) && c.inside_local(p + Vec2::new(6.2, -1.3)) && c.inside_local(p + Vec2::new(-6.2, 1.3)) && !coin(rng, 0.15) {
                 let high = rng.random_range(2..=4);
                 for k in 0..high {
-                    let col = pick(rng, &pal.container_colors);
-                    container_unit(g, c, rng, u, v, 0.0, 12.1, 2.44, 2.6, k as f32 * 2.6, col);
+                    // [r4] (K33) The standard box, in a line's colours.
+                    let line = shipping_line(rng.random());
+                    let look = if coin(rng, 0.12) { BoxLook::Reefer } else { BoxLook::Dry };
+                    iso_container(g, c, rng, u, v, 0.0, true, k as f32 * CONTAINER_H, line, look);
                 }
             }
             u += 13.0;
@@ -1037,7 +1041,7 @@ pub fn truck_lot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let office = front.at(front.len * 0.35, -3.0);
     if poly_inside(c, &rect(office.x, office.y, 3.0, 1.3)) {
         let col = pick(rng, &pal.container_colors);
-        container_unit(g, c, rng, office.x, office.y, 0.0, 6.05, 2.44, 2.6, 0.0, col);
+        container_unit(g, c, rng, office.x, office.y, 0.0, CONTAINER_20, CONTAINER_W, CONTAINER_H, 0.0, col);
         let of = Face::new(office + Vec2::new(-3.0, -1.22), office + Vec2::new(3.0, -1.22), Vec2::new(0.0, -1.0));
         of.decal(g, f, Glow, 0.8, 1.5, 0.04, 1.2, 0.7, mul(c.style.window_color(0), 0.9));
     }

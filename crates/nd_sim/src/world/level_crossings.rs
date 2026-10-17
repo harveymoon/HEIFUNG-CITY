@@ -12,15 +12,15 @@ use crate::traffic::Wait;
 
 /// A crossing on a train's route: where along the route its box starts and
 /// ends (the head enters at `s_in`, the tail leaves at `s_out`).
-struct OnRoute {
-    k: usize,
-    s_in: f32,
-    s_out: f32,
+pub(super) struct OnRoute {
+    pub(super) k: usize,
+    pub(super) s_in: f32,
+    pub(super) s_out: f32,
 }
 
 impl World {
     /// The crossings `t` runs over, ahead or behind.
-    fn crossings_on(&self, t: &Train) -> Vec<OnRoute> {
+    pub(super) fn crossings_on(&self, t: &Train) -> Vec<OnRoute> {
         self.level_crossings
             .list
             .iter()
@@ -100,7 +100,9 @@ impl World {
                 // Running time, the stand it is making now and the calls
                 // it makes before it gets there.
                 let calls = t.stops.iter().skip(t.next_stop).filter(|(_, s)| *s > t.s + 0.5 && *s < r.s_in).count();
-                let mut e = (r.s_in - t.s) / t.speed.max(0.1) + t.dwell.max(0.0) + calls as f32 * rail::DWELL_SECONDS;
+                // [r4] At the speed it has now, picking up speed (a train
+                // standing at a call is a while yet).
+                let mut e = t.seconds_to(r.s_in - t.s) + t.dwell.max(0.0) + calls as f32 * rail::DWELL_SECONDS;
                 // Held at a block signal (not at this crossing): it may
                 // stand a while yet.
                 if t.held && !waiting_here {

@@ -417,8 +417,16 @@ impl World {
             let (_, on_track) = crate::roads::project_on_segment(*centre, pa, pb);
             let spur_end = self.roads.neighbors(second).count() <= 1;
             if i == last && spur_end {
-                // Run to the platform and come back the same way.
-                poly.push(on_track);
+                // Run to the platform and come back the same way. [r4]
+                // (K33) Into it, to its far end (short of the buffers), so
+                // the train stands along the platform, not short of it.
+                let pf = self.roads.node(first).pos;
+                let ps = self.roads.node(second).pos;
+                let into = (ps - pf).normalize_or_zero();
+                let half = order[i].0;
+                let half = self.buildings.get(half).and_then(|b| b.rail.as_ref()).map_or(0.0, |l| l.kind.platform_length() * 0.5);
+                let room = (ps - on_track).dot(into) - 4.0;
+                poly.push(on_track + into * half.min(room).max(0.0));
             } else if let Some(path) = self.roads.rail_path(cur, second) {
                 push_path(&mut poly, &mut nodes, path, &self.roads);
                 cur = second;
@@ -499,8 +507,54 @@ impl World {
             }
             prev_acc = acc;
         }
-        self.rail.trains.insert(Train { kind, cars, nodes, poly, s: 0.0, prev_s: 0.0, speed, stops, next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo, color, held: false, branch, exports: 0.0, unloaded: 0.0 });
+        // [r4] (K33) Imports in their containers, wagon by wagon.
+        let boxes = if kind == TrainKind::Freight { rail::box_cargo(&cargo, cars, crate::hash::mix(self.clock.tick, self.rail.stats.freight_trains_today as u64) as u32) } else { Vec::new() };
+        let mut t = Train { kind, cars, nodes, poly, s: 0.0, prev_s: 0.0, speed, stops, next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo, color, held: false, branch, exports: 0.0, unloaded: 0.0, v: speed, dwell_total: 0.0, boxes };
+        self.pull_into_calls(&mut t);
+        self.rail.trains.insert(t);
         true
+    }
+
+    /// [r4] (K33) Where along its route a train's head comes to a stand at
+    /// each call: not with its head at the middle of the platform (a long
+    /// freight train stood with its first wagon at the yard and the rest
+    /// out on the line, over the street crossing), but drawn up so the
+    /// train fills the platform from its far end: its middle at the
+    /// platform's middle when it is shorter, its head at the far end when
+    /// longer. Never past the end of the route or into the next call.
+    pub(super) fn pull_into_calls(&self, t: &mut Train) {
+        let total = t.total();
+        let len = t.length();
+        let n = t.stops.len();
+        let crossings = self.crossings_on(t);
+        for i in 0..n {
+            let (b, s) = t.stops[i];
+            let platform = self.buildings.get(b).and_then(|x| x.rail.as_ref()).map_or(0.0, |l| l.kind.platform_length());
+            // A spur's end turns the train round where the route doubles
+            // back: not beyond that point.
+            let mut cap = rail::turn_point_after(&t.poly, s).unwrap_or(total).min(total - 0.5);
+            if let Some(&(_, next)) = t.stops.get(i + 1) {
+                cap = cap.min(next - 1.0);
+            }
+            let mut head = (s + len.min(platform) * 0.5).min(cap);
+            // (K51) Nor standing over a level crossing while it calls (the
+            // street stays shut the whole stand): drawn on until its tail
+            // is clear of it, or kept short of it, whichever it can.
+            for _ in 0..2 {
+                for r in &crossings {
+                    if head > r.s_in && head - len < r.s_out {
+                        let on = r.s_out + len + 1.0;
+                        let short = r.s_in - 1.0;
+                        if on <= cap && on - head <= len {
+                            head = on;
+                        } else if short >= s - platform * 0.5 {
+                            head = short;
+                        }
+                    }
+                }
+            }
+            t.stops[i].1 = head.max(s - platform * 0.5).min(cap.max(s));
+        }
     }
 
     /// [freight] Whether a freight train is due: on the headway when goods
@@ -562,7 +616,8 @@ impl World {
         let ids: Vec<TrainId> = self.rail.trains.keys().collect();
         let waited = std::mem::take(&mut self.level_crossings.trains_waiting);
         for id in ids {
-            let blocked = self.rail.blocked(id);
+            // [r4] (K50) The clear track ahead, up to the train in front.
+            let ahead = self.rail.clear_ahead(id);
             // [rail-crossing] Short of a crossing not yet closed and clear.
             let crossing = self.crossing_hold(id);
             let branch_busy = self.rail.trains.iter().any(|(oid, o)| oid != id && o.on_branch());
@@ -575,32 +630,57 @@ impl World {
                 t.prev_s = t.s;
                 if t.dwell > 0.0 {
                     t.dwell -= seconds;
+                    t.v = 0.0;
                     if t.dwell <= 0.0 {
                         t.next_stop += 1;
+                        // [r4] (K33) The crane's work is done: what came off
+                        // is in the yard, what went on rides.
+                        t.boxes.retain(|b| !matches!(b.lift, rail::Lift::Off(_)));
+                        for b in t.boxes.iter_mut() {
+                            b.lift = rail::Lift::Aboard;
+                        }
                     }
                     continue;
                 }
-                if blocked {
-                    t.held = true;
-                    continue;
-                }
-                t.held = false;
                 let target = if t.next_stop < t.stops.len() { t.stops[t.next_stop].1 } else { t.total() };
-                // Hold at the junction while another train is on the branch.
-                let mut limit = target;
+                // Where it must come to a stand: its next call, the switch
+                // while another train is on the branch, and a safe gap
+                // behind the train ahead. It brakes for these.
+                // Running out of town at the end it does not brake for the
+                // map's edge.
+                let calling = t.next_stop < t.stops.len();
+                let mut limit = if calling { target } else { f32::INFINITY };
+                let mut held = false;
                 if let Some((bin, _)) = t.branch {
                     if t.s <= bin + 0.5 && branch_busy {
                         limit = limit.min(bin);
-                        t.held = true;
+                        held = true;
                     }
                 }
-                let mut at_crossing = None;
-                if let Some((h, k)) = crossing.filter(|&(h, _)| h < limit && h < t.s + t.speed * seconds) {
-                    limit = h;
-                    at_crossing = Some(k);
+                if let Some((gap, _)) = ahead {
+                    let stand = t.s + (gap - rail::SAFE_GAP).max(0.0);
+                    if stand < limit {
+                        limit = stand;
+                        held |= gap < rail::BLOCK;
+                    }
                 }
-                t.s = (t.s + t.speed * seconds).min(limit);
-                if let Some(k) = at_crossing.filter(|_| t.s >= limit - 0.01) {
+                let room = (limit - t.s).max(0.0);
+                let v_stop = (2.0 * rail::BRAKE * room).sqrt();
+                let v_want = t.speed.min(v_stop);
+                t.v = if t.v < v_want { (t.v + rail::ACCEL * seconds).min(v_want) } else { v_want };
+                let mut step = (t.v * seconds).min(room).min((target - t.s).max(0.0));
+                // A crossing not yet closed: stopped short of it (the
+                // crossing closes ahead of the train; this is the
+                // fallback).
+                let mut at_crossing = None;
+                if let Some((h, k)) = crossing.filter(|&(h, _)| h < t.s + step + 0.01) {
+                    step = (h - t.s).clamp(0.0, step);
+                    at_crossing = Some(k);
+                    t.v = step / seconds.max(0.01);
+                }
+                t.s += step;
+                t.held = held && step < 0.5;
+                if let Some(k) = at_crossing.filter(|_| step < 0.01 || t.s >= crossing.map_or(f32::MAX, |c| c.0) - 0.01) {
                     self.level_crossings.trains_waiting.push(id);
                     if !waited.contains(&id) {
                         if let Some(c) = self.level_crossings.list.get_mut(k) {
@@ -609,7 +689,8 @@ impl World {
                     }
                 }
                 if t.s >= target - 0.01 {
-                    if t.next_stop < t.stops.len() { Some(true) } else { Some(false) }
+                    t.v = 0.0;
+                    Some(calling)
                 } else {
                     None
                 }
@@ -656,6 +737,7 @@ impl World {
         let (at, kind) = {
             let t = &mut self.rail.trains[id];
             t.dwell = rail::DWELL_SECONDS;
+            t.dwell_total = t.dwell;
             (t.stops[t.next_stop].0, t.kind)
         };
         match kind {
@@ -716,6 +798,33 @@ impl World {
                     b.rail_outbound = 0.0;
                 }
                 self.rail.trains[id].exports += exports;
+                // [r4] (K33) The yard crane's work, box by box: this yard's
+                // imports off, then the exports on into the slots left, and
+                // the train stands as long as that takes.
+                {
+                    let t = &mut self.rail.trains[id];
+                    let mut moves = 0u8;
+                    for b in t.boxes.iter_mut().filter(|b| b.yard == Some(at) && b.lift == rail::Lift::Aboard) {
+                        b.lift = rail::Lift::Off(moves);
+                        moves = moves.saturating_add(1);
+                    }
+                    let mut teu = ((exports / rail::TEU_UNITS).ceil() as usize).min(64);
+                    let free = rail::free_slots(&t.boxes.iter().filter(|b| !matches!(b.lift, rail::Lift::Off(_))).copied().collect::<Vec<_>>(), t.cars);
+                    let mut slots = free.into_iter().peekable();
+                    while teu > 0 {
+                        let Some((wagon, slot)) = slots.next() else { break };
+                        let forty = teu >= 2 && slot == 0 && slots.peek() == Some(&(wagon, 1));
+                        if forty {
+                            slots.next();
+                        }
+                        let seed = crate::hash::mix(slotmap::Key::data(&at).as_ffi(), ((t.boxes.len() as u64) << 8) ^ moves as u64 ^ self.clock.tick) as u32;
+                        t.boxes.push(rail::BoxLoad { wagon, slot, forty, kind: rail::BoxKind::Dry, resource: None, yard: None, seed, lift: rail::Lift::On(moves) });
+                        moves = moves.saturating_add(1);
+                        teu -= if forty { 2 } else { 1 };
+                    }
+                    t.dwell = rail::freight_dwell(moves as usize);
+                    t.dwell_total = t.dwell;
+                }
                 for cargo in queued {
                     self.rail.stats.freight_in_today += cargo.amount;
                     // Into a cargo hub on the yard's siding, else a lorry.

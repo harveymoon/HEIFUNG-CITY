@@ -173,6 +173,13 @@ impl Segment {
     /// carries walkers or crossings, or gets RVs, camps or litter beside
     /// it. A tunnel is drawn on its own profile underground, so a car
     /// "parked" at its kerb used to stand on the ground above the bore.
+    /// [r4] (K3) A bus stop may stand at its kerb: any street but a bored
+    /// tunnel or a highway carriageway (slip roads have a shoulder to pull
+    /// onto; one-way streets a kerb on either side).
+    pub fn stop_allowed(&self) -> bool {
+        self.is_street() && !self.tunnel && !self.is_highway()
+    }
+
     pub fn fronts_nothing(&self) -> bool {
         self.is_motorway() || self.tunnel
     }
