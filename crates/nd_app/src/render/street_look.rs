@@ -411,10 +411,14 @@ pub(super) fn wet_look(wet: f32) -> (f32, f32) {
     (1.0 - 0.45 * wet, 1.0 - 0.78 * wet)
 }
 
-pub(super) fn sync_wet_roads(sim: Res<Sim>, time: Res<Time>, mats: Res<Materials>, mut materials: ResMut<Assets<StandardMaterial>>, mut wet: Local<f32>, mut applied: Local<Option<i32>>) {
-    let rain = super::climate::precip_now(&sim.world).filter(|(k, _)| *k == "rain").map(|(_, i)| i).unwrap_or(0.0);
+pub(super) fn sync_wet_roads(sim: Res<Sim>, time: Res<Time>, lighting: Res<Lighting>, mats: Res<Materials>, mut materials: ResMut<Assets<StandardMaterial>>, mut wet: Local<f32>, mut applied: Local<Option<i32>>) {
+    let rain = super::climate::precip_shown(&sim.world, &lighting).filter(|(k, _)| *k == "rain").map(|(_, i)| i).unwrap_or(0.0);
     let dt = time.delta_secs().min(0.25);
     *wet = if rain > *wet { (*wet + dt / WET_UP_S).min(rain.max(0.35)) } else { (*wet - dt / DRY_S).max(rain) };
+    // [show-weather] Weather hidden: the streets dry at once.
+    if !lighting.show_weather {
+        *wet = 0.0;
+    }
     let key = (*wet * 48.0).round() as i32;
     if *applied == Some(key) {
         return;
@@ -508,7 +512,7 @@ pub(super) fn sync_fog_reach(sim: Res<Sim>, look: Res<sky::SkyLook>, mode: Res<C
         return;
     }
     let w = &sim.world;
-    let precip = super::climate::precip_now(w).map(|(_, i)| i).unwrap_or(0.0);
+    let precip = super::climate::precip_shown(w, &lighting).map(|(_, i)| i).unwrap_or(0.0);
     let vis = visibility(w.landscape.params.climate, look.daylight, precip);
     let Some((cam, tf)) = cams.iter().next() else { return };
     let eye = tf.translation();

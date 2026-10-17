@@ -568,11 +568,39 @@ fn car_route(gizmos: &mut Gizmos, pens: &mut Pens, w: &World, car: &nd_sim::Car,
     }
 }
 
+/// [insight] The way behind a car: the sim's saved record of its trip
+/// (`World::trip_replay`, which survives a load) up to where the app's
+/// finer breadcrumb trail begins, then the breadcrumbs. Either alone when
+/// the other has nothing; the breadcrumbs alone when they reach back to
+/// the start of the trip.
+pub fn past_points(history: &[(SVec2, bool)], crumbs: &[(SVec2, bool)]) -> Vec<(SVec2, bool)> {
+    let (Some(&(h0, _)), Some(&(c0, _))) = (history.first(), crumbs.first()) else {
+        return if crumbs.is_empty() { history.to_vec() } else { crumbs.to_vec() };
+    };
+    if h0.distance(c0) < 30.0 {
+        return crumbs.to_vec();
+    }
+    // The history up to its point nearest where the breadcrumbs start.
+    let k = history.iter().enumerate().min_by(|a, b| a.1 .0.distance(c0).total_cmp(&b.1 .0.distance(c0))).map_or(0, |(k, _)| k);
+    history[..=k].iter().chain(crumbs.iter()).copied().collect()
+}
+
 /// [pt-walk] Where a car came from: the trail it left since it took to
 /// the road, a thin dim line (dashed where it ran in a tunnel), up to the
-/// car.
+/// car. [insight] From the sim's saved trip record where the breadcrumbs
+/// do not reach (after a load).
 fn car_past(pens: &mut Pens, w: &World, id: CarId, car: &nd_sim::Car, f: f32) {
-    let Some(trail) = pens.trails.trails.get(&id) else { return };
+    let crumbs: &[(SVec2, bool)] = pens.trails.trails.get(&id).map_or(&[], |t| &t[..]);
+    let history: Vec<(SVec2, bool)> = w.insight.live.get(id).map_or_else(Vec::new, |t| {
+        let mut pts: Vec<(SVec2, bool)> = w.trip_replay(t).into_iter().map(|p| (p.at, p.segment.and_then(|s| w.roads.try_segment(nd_sim::SegmentId(s))).is_some_and(|s| s.tunnel))).collect();
+        // The replay ends at the car itself, drawn below.
+        pts.pop();
+        pts
+    });
+    let trail = past_points(&history, crumbs);
+    if trail.is_empty() {
+        return;
+    }
     let lift = |q: SVec2| Vec3::new(q.x, 0.8 + w.surface_height(q), q.y);
     let here = car.pose_at(f).0;
     let mut pts: Vec<(Vec3, bool)> = trail.iter().map(|&(q, t)| (lift(q), t)).collect();
@@ -618,6 +646,21 @@ mod tests {
         let d = dashes(&[Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 2.0)]);
         assert_eq!(d.len(), 2, "one dash in two pieces: {d:?}");
         assert!((d[1].1.z - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn the_past_line_takes_the_saved_history_where_the_breadcrumbs_stop() {
+        let p = |x: f32| (SVec2::new(x, 0.0), false);
+        let history: Vec<_> = (0..10).map(|i| p(i as f32 * 50.0)).collect();
+        let crumbs: Vec<_> = (0..20).map(|i| p(300.0 + i as f32 * 4.0)).collect();
+        let out = past_points(&history, &crumbs);
+        assert_eq!(out.first(), Some(&p(0.0)), "from the start of the trip");
+        assert_eq!(out.len(), 7 + crumbs.len(), "history up to 300 m, then the breadcrumbs");
+        // Breadcrumbs from the start: they alone.
+        let from_start: Vec<_> = (0..20).map(|i| p(i as f32 * 4.0)).collect();
+        assert_eq!(past_points(&history, &from_start), from_start);
+        assert_eq!(past_points(&history, &[]), history, "after a load: the history alone");
+        assert_eq!(past_points(&[], &crumbs), crumbs);
     }
 
     #[test]

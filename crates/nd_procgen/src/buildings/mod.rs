@@ -171,6 +171,14 @@ fn building_site(ctx: &Ctx, style: Style, rng: &mut nd_sim::SimRng, extras: &Ext
         supertall::site(&mut g, ctx, &t, progress);
         return g;
     }
+    if Style::CAPSULE.contains(&style) {
+        // [K39] The domes, pills and saucers go up in their own shape: the
+        // finished building (from the same stream, so the same building)
+        // cut at the height the work has reached.
+        let shell = finished(ctx, style, &mut rng.clone(), extras);
+        construction::shaped_site(&mut g, ctx, rng, progress, shell);
+        return g;
+    }
     construction::construction_site(&mut g, ctx, rng, progress);
     if weathered(ctx.tier, ctx.wear) {
         g.weather();
@@ -191,7 +199,9 @@ fn finished(ctx: &Ctx, style: Style, rng: &mut nd_sim::SimRng, extras: &Extras) 
         air::rooftop_deck(&mut g, ctx);
     }
     // [megacorp] The owner's brand: rooftop signs, banners, the HQ crown.
-    if let Some(m) = &extras.brand {
+    // [K19] Not on a public beach: a campus that annexed one as its
+    // "plaza" laid a lawn quad over the sand, the towels under it.
+    if let Some(m) = extras.brand.as_ref().filter(|_| style != Style::Beach) {
         brand::decorate(&mut g, ctx, m);
     }
     // [capsule] The dome district is spotless whatever its tier or age.

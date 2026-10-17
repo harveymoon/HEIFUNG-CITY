@@ -321,6 +321,11 @@ pub struct Traffic {
     /// before every step (`traffic/scene.rs`).
     #[serde(skip)]
     pub scenes: Vec<SceneZone>,
+    /// [insight] What happened to vehicles since the world last drained
+    /// them, for their history (`crate::insight`): street pieces driven
+    /// onto, re-plans and why. Recording only.
+    #[serde(skip)]
+    pub notes: Vec<(CarId, crate::insight::Note)>,
 }
 
 impl Traffic {
@@ -362,6 +367,26 @@ impl Traffic {
         dropped
     }
 
+    /// [insight] Leave a note for the car's history. Bounded for a traffic
+    /// model run without a world to drain it (tests).
+    pub fn note(&mut self, id: CarId, note: crate::insight::Note) {
+        if self.notes.len() >= 200_000 {
+            self.notes.clear();
+        }
+        self.notes.push((id, note));
+    }
+
+    /// [insight] A re-plan for the history: the metres left on the car's
+    /// route now and on `new` (from where it stands), and where the lane it
+    /// avoids begins. Call before the route is swapped.
+    pub fn note_replan(&mut self, id: CarId, why: crate::insight::Why, avoided: Option<LaneId>, new: Option<&[LaneId]>) {
+        let Some(c) = self.cars.get(id) else { return };
+        let before = c.route.get(c.idx..).map_or(0.0, |r| self.net.route_length(r, c.s));
+        let after = new.map(|r| self.net.route_length(r, c.s));
+        let avoided = avoided.and_then(|l| self.net.lanes.get(l as usize)).and_then(|l| l.points.first().copied());
+        self.note(id, crate::insight::Note::Replan { why, avoided, before_m: before, after_m: after });
+    }
+
     pub fn remove_car(&mut self, id: CarId) -> Option<Car> {
         let car = self.cars.remove(id)?;
         if let Some(&lane) = car.route.get(car.idx) {
@@ -376,8 +401,11 @@ impl Traffic {
     /// the approach's arrows, and the wait before a left turn.
     fn entered(&mut self, from: LaneId, to: LaneId, id: CarId) {
         // [road-inspect] Counted onto the street piece it drives onto.
-        if let LaneKind::Road { segment, .. } = self.net.lanes[to as usize].kind {
+        if let LaneKind::Road { segment, forward, .. } = self.net.lanes[to as usize].kind {
             self.segment_entries.push(segment.0);
+            // [insight] And into the car's history.
+            let at = self.net.lanes[to as usize].points.first().copied().unwrap_or_default();
+            self.note(id, crate::insight::Note::Entered { segment: segment.0, forward, at });
         }
         let (ap, turn) = (self.net.lanes[from as usize].approach, self.net.lanes[to as usize].turn);
         if !self.net.lanes[to as usize].is_connector() {

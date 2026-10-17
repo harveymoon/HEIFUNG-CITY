@@ -109,7 +109,8 @@ pub(super) fn overlay(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     Ok(overlays_json(o))
 }
 
-/// `lighting {hour?, follow_clock?}`: the time of day the view shows.
+/// `lighting {hour?, follow_clock?, weather?}`: the time of day the view
+/// shows, and [show-weather] whether the weather is drawn.
 pub(super) fn lighting(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let l = &mut ctx.lighting;
     if let Some(h) = opt_f32(cmd, "hour")? {
@@ -120,7 +121,10 @@ pub(super) fn lighting(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(b) = opt_bool(cmd, "follow_clock")? {
         l.follow_clock = b;
     }
-    Ok(json!({ "follow_clock": l.follow_clock, "hour": l.hour, "heat_vision": l.heat }))
+    if let Some(b) = opt_bool(cmd, "weather")? {
+        l.show_weather = b;
+    }
+    Ok(json!({ "follow_clock": l.follow_clock, "hour": l.hour, "heat_vision": l.heat, "weather": l.show_weather }))
 }
 
 pub(super) fn heat_vision(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {

@@ -108,6 +108,7 @@ impl World {
         // ground modes below. Drone trips keep their own statistics.
         if allow_bus {
             if let Some(plan) = self.consider_air(id, target, purpose, walk_from, entrance) {
+                self.note_trip(id, &[(crate::insight::AIR, 0.0)], 0, purpose, target, fresh);
                 self.start_air_trip(id, plan, target, purpose, fresh);
                 return;
             }
@@ -120,7 +121,9 @@ impl World {
             self.note_taxi_demand(id, &q, &ranked);
         }
         let dist = walk_from.distance(entrance);
-        for opt in ranked {
+        // [insight] The ranking, for the citizen's history.
+        let modes: Vec<(u8, f32)> = ranked.iter().map(|o| (o.mode.index() as u8, o.minutes)).collect();
+        for (k, opt) in ranked.into_iter().enumerate() {
             match opt.plan {
                 ModePlan::Car { car, at } => {
                     if at.distance(walk_from) > 25.0 {
@@ -128,6 +131,7 @@ impl World {
                     } else if !self.start_drive(id, car, target, purpose) {
                         continue;
                     }
+                    self.note_trip(id, &modes, k, purpose, target, fresh);
                     if fresh {
                         self.begin_trip(id, opt.mode, dist);
                         // [passengers] Coworkers and family setting off
@@ -154,6 +158,7 @@ impl World {
                     }
                 }
             }
+            self.note_trip(id, &modes, k, purpose, target, fresh);
             if fresh {
                 self.begin_trip(id, opt.mode, dist);
             }

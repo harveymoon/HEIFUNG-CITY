@@ -384,6 +384,7 @@ impl Traffic {
         if route.is_empty() {
             return;
         }
+        self.note_replan(id, crate::insight::Why::NewRoute, None, Some(&route));
         let old_lane = self.cars[id].route[self.cars[id].idx];
         if route[0] == old_lane {
             let car = &mut self.cars[id];
@@ -424,6 +425,8 @@ impl Traffic {
         // [r2-traffic] Queues weighed, turning back costed, and not back
         // into what it gave up on (with no way round those, any way).
         let found = self.net.route_replan(here, s, goal, s_end, &avoid, None).or_else(|| self.net.route_lanes(here, s, goal, s_end));
+        // [insight] For the history.
+        self.note_replan(id, crate::insight::Why::Stuck, None, found.as_ref().map(|r| &r.0[..]));
         let Some((route, _, _)) = found else { return false };
         let car = &mut self.cars[id];
         car.route = route;
@@ -466,6 +469,9 @@ impl Traffic {
         if route.first() != Some(&car.route[car.idx]) {
             return false;
         }
+        // [insight] For the history (the world names the errand).
+        self.note_replan(id, crate::insight::Why::Redirect, None, Some(&route));
+        let Some(car) = self.cars.get_mut(id) else { return false };
         car.route = route;
         car.idx = 0;
         car.s_end = s_end;
@@ -567,6 +573,12 @@ impl Traffic {
             }
             // What it gave up on: the exit, or the lane it could not get into.
             let gave_up = avoid_lane.or(avoid_step.map(|(_, to)| to));
+            // [insight] For the history: why, what it went round, and how
+            // much further the new way is (none found: it stays). A U-turn
+            // given up counts as its exit being full.
+            let uturn_off = avoid_lane.is_some_and(|l| self.net.lanes[l as usize].uturn);
+            let why = if full_exit || uturn_off { crate::insight::Why::FullExit } else if avoid_step.is_some() { crate::insight::Why::LaneChange } else { crate::insight::Why::Crash };
+            self.note_replan(id, why, gave_up, found.as_ref().map(|r| &r.0[..]));
             let c = &mut self.cars[id];
             // Back off: a car that keeps standing tries again ever more rarely.
             c.cooldown = (REROUTE_LANE_CHANGE_AFTER * 2f32.powi(c.replans as i32)).min(REROUTE_BACKOFF_MAX);

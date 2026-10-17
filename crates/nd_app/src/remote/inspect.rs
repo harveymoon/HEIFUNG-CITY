@@ -216,6 +216,10 @@ pub(super) fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         v["places"] = places::citizen_places(w, id);
         v["social"] = social::citizen_social(w, id);
         v["holdings"] = follow::holdings_json(w, id);
+        // [insight] Trips, legs, failed routes, life events, the last drive.
+        if opt_bool(cmd, "history")?.unwrap_or(false) {
+            v["history"] = super::insight::citizen_history(w, id);
+        }
         return Ok(json!({ "citizen": v }));
     }
     if let Some(v) = field(cmd, "building") {
@@ -233,6 +237,10 @@ pub(super) fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         if crate::ferry_select::is_route_dock(w, id) {
             v["routes"] = ferry::routes_json(w, id);
         }
+        // [insight] Built, sold, opened, closed, households, incidents.
+        if opt_bool(cmd, "history")?.unwrap_or(false) {
+            v["history"] = super::insight::building_history(w, id);
+        }
         return Ok(json!({ "building": v }));
     }
     if let Some(v) = field(cmd, "lot") {
@@ -242,8 +250,18 @@ pub(super) fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     }
     if let Some(v) = field(cmd, "car") {
         let id = key_from(v)?;
-        let c = w.traffic.cars.get(id).ok_or("no such car")?;
+        let history = opt_bool(cmd, "history")?.unwrap_or(false);
+        // [insight] A car gone from the road still has its last trip.
+        let Some(c) = w.traffic.cars.get(id) else {
+            return match history && w.insight.trip_of(id).is_some() {
+                true => Ok(json!({ "car": null, "on_road": false, "history": super::insight::car_history(w, id) })),
+                false => Err("no such car".into()),
+            };
+        };
         let mut v = json!({ "car": car_detail(w, id, c) });
+        if history {
+            v["history"] = super::insight::car_history(w, id);
+        }
         // [fire-scene] An emergency unit's car: the unit card as well.
         if let Some(uid) = w.services.unit_of_car(id) {
             v["unit"] = units::unit_detail(&ctx.sim, uid, &ctx.assets.rules).unwrap_or(Value::Null);

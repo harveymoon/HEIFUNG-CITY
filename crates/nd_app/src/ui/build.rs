@@ -717,11 +717,18 @@ fn grid(ui: &mut egui::Ui, p: &mut UiCtx, st: &State) -> Option<Item> {
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             for item in g.items.iter().copied() {
                 let on = current.is_some_and(|c| c.same(item));
-                let resp = tile(ui, p, item, on);
+                // [K16] A one-per-city attraction already built: greyed,
+                // not pickable, its name on hover.
+                let taken = item.placeable().and_then(|pl| p.sim.world.landmark_taken(pl)).and_then(|b| p.sim.world.buildings.get(b)).map(|b| b.name.clone());
+                let resp = ui.add_enabled_ui(taken.is_none(), |ui| tile(ui, p, item, on)).inner;
+                let resp = match &taken {
+                    Some(name) => resp.on_disabled_hover_text(format!("One per city: {name} is already built.")),
+                    None => resp,
+                };
                 if resp.hovered() {
                     hovered = Some(item);
                 }
-                if resp.clicked() {
+                if resp.clicked() && taken.is_none() {
                     picked = Some(item);
                 }
             }
@@ -736,7 +743,11 @@ fn grid(ui: &mut egui::Ui, p: &mut UiCtx, st: &State) -> Option<Item> {
 /// One tile: the thumbnail (or icon) and the name with its price.
 fn tile(ui: &mut egui::Ui, p: &UiCtx, item: Item, on: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(TILE, egui::Sense::click());
-    let painter = ui.painter_at(rect);
+    // [K16] Greyed out when disabled (a landmark already built).
+    let mut painter = ui.painter_at(rect);
+    if !ui.is_enabled() {
+        painter.set_opacity(0.35);
+    }
     let fill = if on {
         Color32::from_rgb(110, 78, 32)
     } else if resp.hovered() {

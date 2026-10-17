@@ -105,6 +105,8 @@ impl World {
         crate::prof!("step_social", self.step_social());
         // [concerns] Happiness on the hour and at midnight.
         crate::prof!("step_concerns", self.step_concerns());
+        // [insight] Everything has moved: the history takes it in.
+        crate::prof!("step_insight", self.step_insight());
         // Every system that moves people has run: lay the breadcrumbs.
         for c in self.citizens.values_mut() {
             c.push_trail();

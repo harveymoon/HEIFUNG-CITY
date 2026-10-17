@@ -52,6 +52,11 @@ mod estate_tests;
 mod growth_tests;
 pub use estate::{escort_model, police_escort_model, supercar};
 mod history;
+/// [insight] Recording the city's memory (`crate::insight`).
+mod insight;
+pub use insight::{act_of, errand_of, ReplayPoint};
+#[cfg(test)]
+mod insight_tests;
 mod memory;
 mod develop;
 mod districts;
@@ -791,6 +796,13 @@ pub struct World {
     /// (`world/parks.rs`). Old saves start with every park kept.
     #[serde(default)]
     pub parks: crate::parks::Parks,
+    /// [insight] The city's memory: vehicles' trips (where they went,
+    /// re-plans and why, stalls, anger), citizens' trips and life events,
+    /// what happened to each building (`crate::insight`,
+    /// `world/insight.rs`). Bounded; saved as one compact string. Old saves
+    /// load with none.
+    #[serde(default)]
+    pub insight: crate::insight::Insight,
 }
 
 impl World {
@@ -906,6 +918,7 @@ impl World {
             attractions: Default::default(),
             dams: Default::default(),
             parks: Default::default(),
+            insight: Default::default(),
         };
         w.landscape.set(Landscape::new(&w.config.landscape));
         // [sweep-sim] Grids over the whole buildable land (far islands too).

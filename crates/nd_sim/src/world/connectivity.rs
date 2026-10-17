@@ -476,6 +476,8 @@ impl World {
 
     /// Log a trip that found no way, raising an alert on repeats.
     pub(super) fn note_failed_trip(&mut self, id: CitizenId, from: Vec2, target: BuildingId, why: &str) {
+        // [insight] Into the citizen's history too.
+        self.note_no_route(id, from, target, why);
         let tick = self.clock.tick;
         let day = self.clock.day();
         let k = &mut self.connectivity;

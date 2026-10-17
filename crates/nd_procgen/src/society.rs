@@ -107,6 +107,37 @@ fn lean_to(g: &mut Geometry, f: &Frame, u: f32, v: f32, w: f32, d: f32, col: [f3
     g.part(Matte).boxed(f.v3(u, v - d * 0.1, 0.1), Vec3::new(w * 0.7, 0.18, d * 0.55), f.yaw(), rgba([0.42, 0.38, 0.3]));
 }
 
+/// [K31] A cardboard hut: flattened boxes propped into walls (each panel
+/// a different brown, a little askew), a plastic sheet or a slab of board
+/// over the top weighed down with a tyre or a brick, a doorway left open
+/// toward the street.
+fn cardboard_hut(g: &mut Geometry, f: &Frame, u: f32, v: f32, pal: &Palette, rng: &mut impl Rng) {
+    let (w, d, h) = (rng.random_range(1.4..2.2), rng.random_range(1.1..1.6), rng.random_range(0.8..1.15));
+    let yaw = f.yaw();
+    let board = |rng: &mut dyn rand::RngCore| -> [f32; 3] { mix(mul(pal.plywood, 1.15), [0.62, 0.5, 0.34], rng.random_range(0.2..0.8)) };
+    let t = 0.04;
+    // Back and two side walls; the front half open for a door.
+    let sag = rng.random_range(0.85..1.0);
+    g.part(Wood).boxed(f.v3(u, v - d * 0.5, h * 0.5), Vec3::new(w, h, t), yaw + rng.random_range(-0.05..0.05), rgba(board(rng)));
+    for s in [-1.0f32, 1.0] {
+        let hh = h * if s < 0.0 { sag } else { 1.0 };
+        g.part(Wood).boxed(f.v3(u + s * w * 0.5, v, hh * 0.5), Vec3::new(t, hh, d), yaw + rng.random_range(-0.06..0.06), rgba(board(rng)));
+    }
+    let door = rng.random_range(0.35..0.55);
+    g.part(Wood).boxed(f.v3(u - w * (0.5 - (1.0 - door) * 0.25), v + d * 0.5, h * 0.45), Vec3::new(w * (1.0 - door) * 0.5, h * 0.9, t), yaw, rgba(board(rng)));
+    // The lid: a tarp sheet in a camp colour or a slab of board, sloping a
+    // little to the back.
+    let lid = if rng.random_bool(0.5) { pick(rng, &pal.tarp_colors) } else { mul(board(rng), 0.85) };
+    let (a, b) = (f.v3(u, v - d * 0.55, h * sag), f.v3(u, v + d * 0.6, h + 0.05));
+    g.part(Tarp).slab(a, b, w + 0.25, 0.03, rgba(lid));
+    if rng.random_bool(0.5) {
+        let q = f.at(u + w * 0.2, v);
+        g.part(Matte).cylinder(q, 0.28, 0.28, f.y + h + 0.03, f.y + h + 0.2, 8, rgba(DARK));
+    }
+    // A blanket on the floor inside.
+    g.part(Matte).boxed(f.v3(u, v - d * 0.1, 0.05), Vec3::new(w * 0.75, 0.1, d * 0.6), yaw, rgba(mix(pick(rng, &pal.tarp_colors), [0.35, 0.32, 0.28], 0.6)));
+}
+
 /// A shopping cart heaped with bags.
 fn cart(g: &mut Geometry, f: &Frame, u: f32, v: f32, yaw: f32, pal: &Palette, rng: &mut impl Rng) {
     let c = f.at(u, v);
@@ -175,21 +206,36 @@ pub fn camp(p: Vec2, along: Vec2, out: Vec2, tents: u8, sidewalk: bool, seed: u6
     let f = Frame::new(p, along, out, if sidewalk { PAVE_Y } else { LOT_Y });
     let n = tents.max(1) as usize;
     let spacing = if sidewalk { 2.3 } else { 3.0 };
+    // [K31] Each camp its own mix: some mostly tents, some mostly
+    // cardboard huts, and how loosely it sprawls.
+    let cardboard = [0.0, 0.15, 0.35, 0.6, 0.9][rng.random_range(0..5)];
+    let sprawl = rng.random_range(0.8..1.5);
+    let mut along_at = -(n as f32 - 1.0) * 0.5 * spacing;
     for k in 0..n {
-        let (u, v) = if sidewalk {
-            // Tents in a row against the lot line, a gap to walk past.
-            ((k as f32 - (n as f32 - 1.0) * 0.5) * spacing, -0.6)
+        let (u, v, turn) = if sidewalk {
+            // Tents in a file against the lot line, a gap to walk past;
+            // uneven gaps, some set back, some turned.
+            let u = along_at;
+            along_at += spacing * rng.random_range(0.9..1.15);
+            (u, -0.6 + rng.random_range(-0.25..0.15), rng.random_range(-0.2..0.2))
         } else {
-            let a = k as f32 * 2.39996 + rng.random_range(-0.3..0.3);
-            let r = 1.5 + (k as f32).sqrt() * 1.9;
-            (a.cos() * r, a.sin() * r)
+            // A loose sprawl: each shelter turned its own way.
+            let a = k as f32 * 2.39996 + rng.random_range(-0.7..0.7);
+            let r = (1.2 + (k as f32).sqrt() * 1.9) * sprawl * rng.random_range(0.8..1.25);
+            (a.cos() * r, a.sin() * r, rng.random_range(-1.2..1.2))
         };
+        // The shelter in its own frame, turned off the camp's.
+        let sf = Frame::new(f.at(u, v), Vec2::from_angle(turn).rotate(f.along), Vec2::from_angle(turn).rotate(f.out), f.y);
         let col = pick(&mut rng, &pal.tarp_colors);
         let col = mul(col, rng.random_range(0.7..1.0));
-        match rng.random_range(0..5) {
-            0 | 1 => dome_tent(&mut g, &f, u, v, rng.random_range(0.8..1.05), rng.random_range(0.95..1.2), col, &mut rng),
-            2 | 3 => ridge_tent(&mut g, &f, u, v, rng.random_range(1.9..2.3), rng.random_range(1.2..1.5), rng.random_range(0.9..1.15), col),
-            _ => lean_to(&mut g, &f, u, v, rng.random_range(1.8..2.4), rng.random_range(1.3..1.7), col),
+        if rng.random::<f32>() < cardboard {
+            cardboard_hut(&mut g, &sf, 0.0, 0.0, pal, &mut rng);
+        } else {
+            match rng.random_range(0..5) {
+                0 | 1 => dome_tent(&mut g, &sf, 0.0, 0.0, rng.random_range(0.75..1.1), rng.random_range(0.9..1.25), col, &mut rng),
+                2 | 3 => ridge_tent(&mut g, &sf, 0.0, 0.0, rng.random_range(1.8..2.5), rng.random_range(1.1..1.6), rng.random_range(0.85..1.2), col),
+                _ => lean_to(&mut g, &sf, 0.0, 0.0, rng.random_range(1.8..2.6), rng.random_range(1.3..1.8), col),
+            }
         }
         // A cart or some clutter between tents.
         if k % 2 == 0 {

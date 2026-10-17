@@ -252,6 +252,8 @@ impl World {
             }
             let to = net.lanes[ol as usize].point_at(os).0;
             self.turn_round(id, pos, heading, Some(to), AfterMove::Resume { goal, s_end }, Some(segment));
+            // [insight] For the car's history.
+            self.traffic.note(id, crate::insight::Note::RageUTurn);
             self.driving.rage_u_turns_today += 1;
             self.driving.rage_u_turns_total += 1;
         }

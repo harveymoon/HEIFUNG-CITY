@@ -35,6 +35,8 @@ mod files;
 mod flags;
 mod incidents;
 mod inspect;
+/// [insight] History, replays and the read-only dump.
+mod insight;
 mod look;
 mod place;
 mod planning;

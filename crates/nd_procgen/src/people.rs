@@ -23,7 +23,12 @@ use nd_sim::looks::{linear, skin_srgb, Appearance, Build, HairColor, HairStyle, 
 pub const SKIN_STEPS: u8 = 10;
 /// Triangle budget for a standing figure (a rider has a bike as well).
 pub const MAX_TRIS: usize = 150;
-pub const MAX_RIDER_TRIS: usize = 190;
+/// A rider's bike has round 16-sided wheels and a tube frame.
+pub const MAX_RIDER_TRIS: usize = 440;
+/// Segments round a bike wheel's tyre.
+pub const WHEEL_SIDES: usize = 16;
+/// [K18] A seated figure's limbs are round tubes.
+pub const MAX_SEATED_TRIS: usize = 180;
 /// A tourist carries a backpack and a camera as well.
 pub const MAX_TOURIST_TRIS: usize = 180;
 
@@ -46,11 +51,21 @@ pub struct PersonKey {
     pub ride: bool,
     /// [tourism] A visitor: a backpack and a camera on the strap.
     pub tourist: bool,
+    /// [K18] Sitting: 0 standing (or riding), [`SIT_BENCH`] on a bench or
+    /// a seat, [`SIT_GROUND`] on the pavement or the kerb, knees up.
+    pub sit: u8,
 }
 
+/// [`PersonKey::sit`]: on a bench, the seat 0.46 m up.
+pub const SIT_BENCH: u8 = 1;
+/// [`PersonKey::sit`]: on the ground (the kerb, the pavement), knees up.
+pub const SIT_GROUND: u8 = 2;
+/// Seat height of a bench figure, metres.
+pub const BENCH_SEAT: f32 = 0.46;
+
 /// The silhouette part of a key: the same shape in other colours.
-pub fn shape_of(k: &PersonKey) -> (u8, u8, u8, bool, bool) {
-    (k.style, k.outfit, k.build, k.child, k.ride)
+pub fn shape_of(k: &PersonKey) -> (u8, u8, u8, bool, bool, u8) {
+    (k.style, k.outfit, k.build, k.child, k.ride, k.sit)
 }
 
 pub fn person_key(look: &Appearance, age: u8, class: Tier, ride: bool) -> PersonKey {
@@ -83,6 +98,7 @@ pub fn person_key(look: &Appearance, age: u8, class: Tier, ride: bool) -> Person
         },
         ride,
         tourist: false,
+        sit: 0,
     }
 }
 
@@ -161,6 +177,46 @@ impl Builder<'_> {
             self.m.boxed_open(c, s, 0.0, rgba(color));
         }
         self.paint(v0, cell);
+    }
+
+    /// A round tube from `a` to `b` (four sides, open ends: too thin for
+    /// anyone to see in), its UVs on `cell`.
+    fn tube(&mut self, a: Vec3, b: Vec3, r: f32, color: [f32; 3], cell: usize) {
+        let v0 = self.m.positions.len();
+        self.m.tube_capped(a, b, r, 4, false, false, rgba(color));
+        self.paint(v0, cell);
+    }
+
+    /// A bike wheel in the XY plane centred on `c`: a tyre ring of
+    /// `WHEEL_SIDES` segments (both flat faces and the tread) from radius
+    /// `inner` to `outer`, `half_w` either side of z = `c.z`, and three
+    /// thin spokes across the hub, seen from both sides.
+    fn wheel(&mut self, c: Vec3, outer: f32, inner: f32, half_w: f32, color: [f32; 3]) {
+        let v0 = self.m.positions.len();
+        let col = rgba(color);
+        let at = |i: usize, r: f32, z: f32| {
+            let t = i as f32 / WHEEL_SIDES as f32 * std::f32::consts::TAU;
+            Vec3::new(c.x + t.cos() * r, c.y + t.sin() * r, c.z + z)
+        };
+        for i in 0..WHEEL_SIDES {
+            let j = i + 1;
+            let mid = (i as f32 + 0.5) / WHEEL_SIDES as f32 * std::f32::consts::TAU;
+            let radial = Vec3::new(mid.cos(), mid.sin(), 0.0);
+            for s in [-1.0f32, 1.0] {
+                let z = s * half_w;
+                self.m.quad_facing([at(i, inner, z), at(j, inner, z), at(j, outer, z), at(i, outer, z)], Vec3::Z * s, col);
+            }
+            self.m.quad_facing([at(i, outer, -half_w), at(j, outer, -half_w), at(j, outer, half_w), at(i, outer, half_w)], radial, col);
+        }
+        for k in 0..3 {
+            let t = k as f32 / 3.0 * std::f32::consts::PI + 0.3;
+            let (d, w) = (Vec3::new(t.cos(), t.sin(), 0.0) * inner, Vec3::new(-t.sin(), t.cos(), 0.0) * 0.008);
+            for s in [-1.0f32, 1.0] {
+                let z = Vec3::Z * (s * 0.006);
+                self.m.quad_facing([c - d - w + z, c + d - w + z, c + d + w + z, c - d + w + z], Vec3::Z * s, col);
+            }
+        }
+        self.paint(v0, 0);
     }
 
     fn paint(&mut self, from: usize, cell: usize) {
@@ -247,7 +303,9 @@ pub fn person_mesh(k: &PersonKey) -> MeshData {
         _ => (accent, accent_cell),
     };
 
-    if !k.ride {
+    if k.sit != 0 && !k.ride {
+        seated(&mut b, k, bw, td, tw, head_scale, skin, (main, main_cell), (legs, legs_cell), (sleeve, sleeve_cell), (trim, trim_cell), outfit);
+    } else if !k.ride {
         let hip = 0.86;
         let top = 1.46;
         // Legs.
@@ -298,14 +356,27 @@ pub fn person_mesh(k: &PersonKey) -> MeshData {
             b.part(Vec3::new(td / 2.0, 1.08, -0.06), Vec3::new(td / 2.0 + 0.08, 1.17, 0.06), [0.03, 0.03, 0.035], 0, false);
         }
     } else {
-        // The bike: wheels, frame and bars.
+        // The bike: round wheels (a 16-sided tyre ring with three spokes
+        // across), a diamond frame of round tubes in the rider's accent
+        // colour, a saddle, a stem and drop of bars. [round-wheels]
         let dark = [0.03, 0.03, 0.035];
         let steel = [0.35, 0.36, 0.4];
         for x in [-0.55f32, 0.55] {
-            b.part(Vec3::new(x - 0.34, 0.0, -0.03), Vec3::new(x + 0.34, 0.68, 0.03), dark, 0, true);
+            b.wheel(Vec3::new(x, 0.34, 0.0), 0.34, 0.29, 0.028, dark);
         }
-        b.part(Vec3::new(-0.55, 0.57, -0.03), Vec3::new(0.55, 0.63, 0.03), steel, 0, true);
-        b.part(Vec3::new(0.32, 0.6, -0.22), Vec3::new(0.38, 1.3, 0.22), steel, 0, true);
+        let (rear, front) = (Vec3::new(-0.55, 0.34, 0.0), Vec3::new(0.55, 0.34, 0.0));
+        let bb = Vec3::new(-0.02, 0.3, 0.0);
+        let seat = Vec3::new(-0.15, 0.86, 0.0);
+        let head_top = Vec3::new(0.36, 0.98, 0.0);
+        let head_low = Vec3::new(0.41, 0.8, 0.0);
+        for (a, c) in [(bb, seat), (seat, head_top), (bb, head_low), (head_top, head_low), (bb, rear), (seat - Vec3::new(0.0, 0.05, 0.0), rear)] {
+            b.tube(a, c, 0.022, accent, accent_cell);
+        }
+        // Fork, stem and the bars across.
+        b.tube(head_low, front, 0.018, steel, 0);
+        b.tube(head_top, Vec3::new(0.38, 1.24, 0.0), 0.02, steel, 0);
+        b.tube(Vec3::new(0.38, 1.24, -0.24), Vec3::new(0.38, 1.24, 0.24), 0.018, dark, 0);
+        b.part(Vec3::new(-0.27, 0.86, -0.06), Vec3::new(-0.03, 0.91, 0.06), dark, 0, true);
         // The rider, seated, leaning on the bars.
         for s in [-1.0f32, 1.0] {
             let z = s * 0.085 * bw;
@@ -322,6 +393,48 @@ pub fn person_mesh(k: &PersonKey) -> MeshData {
         head(&mut b, k, Vec3::new(-0.12, top + 0.03, 0.0), head_scale, skin);
     }
     m
+}
+
+/// [K18] A seated figure facing +X: on a bench (the seat [`BENCH_SEAT`]
+/// up, thighs level, shins down to the ground) or on the ground (sat on
+/// the kerb or the pavement, knees drawn up, forearms on them). Limbs are
+/// round tubes along their bones; the torso and head as standing.
+#[allow(clippy::too_many_arguments)]
+fn seated(b: &mut Builder, k: &PersonKey, bw: f32, td: f32, tw: f32, head_scale: f32, skin: [f32; 3], main: ([f32; 3], usize), legs: ([f32; 3], usize), sleeve: ([f32; 3], usize), trim: ([f32; 3], usize), outfit: Outfit) {
+    let bench = k.sit == SIT_BENCH;
+    let leg_r = 0.075 * bw;
+    // Hip, knee and foot in the figure's own (x, y); the torso's foot.
+    let (hip, knee, foot, seat) = if bench {
+        (Vec3::new(-0.05, BENCH_SEAT + 0.07, 0.0), Vec3::new(0.38, BENCH_SEAT + 0.07, 0.0), Vec3::new(0.42, 0.04, 0.0), BENCH_SEAT)
+    } else {
+        (Vec3::new(-0.04, 0.09, 0.0), Vec3::new(0.3, 0.44, 0.0), Vec3::new(0.46, 0.05, 0.0), 0.0)
+    };
+    for s in [-1.0f32, 1.0] {
+        let z = Vec3::Z * (s * 0.09 * bw);
+        b.tube(hip + z, knee + z, leg_r, legs.0, legs.1);
+        b.tube(knee + z, foot + z, leg_r * 0.9, legs.0, legs.1);
+        // The shoe.
+        b.part(foot + z + Vec3::new(-0.06, -0.04, -0.05), foot + z + Vec3::new(0.12, 0.06, 0.05), [0.05, 0.05, 0.06], 0, true);
+    }
+    // Torso: upright on a bench, a little forward on the ground.
+    let lean = if bench { 0.0 } else { 0.08 };
+    let (y0, y1) = (seat + 0.04, seat + 0.64);
+    b.part(Vec3::new(-td / 2.0 - 0.04, y0, -tw / 2.0), Vec3::new(td / 2.0 - 0.04 + lean, y1, tw / 2.0), main.0, main.1, true);
+    // The trim band at the waist.
+    b.part(Vec3::new(-td / 2.0 - 0.05, y0 + 0.02, -tw / 2.0 - 0.01), Vec3::new(td / 2.0 - 0.03 + lean, y0 + 0.07, tw / 2.0 + 0.01), trim.0, trim.1, false);
+    // Arms: down to the lap on a bench, forearms on the knees on the ground.
+    let shoulder = |s: f32| Vec3::new(-0.02 + lean, y1 - 0.05, s * (tw / 2.0 + 0.05));
+    for s in [-1.0f32, 1.0] {
+        let hand = if bench { Vec3::new(0.22, seat + 0.2, s * (tw / 2.0 + 0.02)) } else { knee + Vec3::new(-0.02, 0.04, s * 0.13) };
+        let elbow = if bench { Vec3::new(0.02, seat + 0.3, s * (tw / 2.0 + 0.06)) } else { (shoulder(s) + hand) * 0.5 + Vec3::new(0.0, -0.06, 0.0) };
+        b.tube(shoulder(s), elbow, 0.05, sleeve.0, sleeve.1);
+        b.tube(elbow, hand, 0.045, sleeve.0, sleeve.1);
+    }
+    if outfit == Outfit::Coat {
+        // The coat's skirt over the seat.
+        b.part(Vec3::new(-td / 2.0 - 0.06, seat, -tw * 0.55), Vec3::new(td / 2.0 + 0.04, y0 + 0.2, tw * 0.55), main.0, main.1, true);
+    }
+    head(b, k, Vec3::new(-0.02 + lean * 1.5, y1 + 0.03, 0.0), head_scale, skin);
 }
 
 // ── [fire-scene] firefighters ──────────────────────────────────────────────
@@ -431,7 +544,7 @@ pub struct FigureCache<H> {
     entries: std::collections::BTreeMap<PersonKey, (H, u64)>,
     frame: u64,
     /// What each silhouette borrowed this frame, so borrowers agree.
-    lent: std::collections::BTreeMap<(u8, u8, u8, bool, bool), Option<H>>,
+    lent: std::collections::BTreeMap<(u8, u8, u8, bool, bool, u8), Option<H>>,
     /// Figures built over the run.
     pub built: usize,
     /// Figures borrowed this frame.
@@ -506,7 +619,12 @@ mod tests {
                 for build in 0..3 {
                     for (child, ride, tourist) in [(false, false, false), (true, false, false), (false, true, false), (true, true, false), (false, false, true)] {
                         for (hair, fav, wear) in [(0u8, [0u8, 8u8], 0u8), (7, [10, 11], 1), (8 + 4, [5, 3], 2)] {
-                            out.push(PersonKey { style, outfit, build, child, skin: (style * 3 + outfit) % SKIN_STEPS, hair, fav, wear, ride, tourist });
+                            out.push(PersonKey { style, outfit, build, child, skin: (style * 3 + outfit) % SKIN_STEPS, hair, fav, wear, ride, tourist, sit: 0 });
+                            if !ride && !tourist {
+                                for sit in [SIT_BENCH, SIT_GROUND] {
+                                    out.push(PersonKey { style, outfit, build, child, skin: (style * 3 + outfit) % SKIN_STEPS, hair, fav, wear, ride, tourist, sit });
+                                }
+                            }
                         }
                     }
                 }
@@ -520,7 +638,7 @@ mod tests {
         for k in every_key() {
             let m = person_mesh(&k);
             let tris = m.indices.len() / 3;
-            let budget = if k.ride { MAX_RIDER_TRIS } else if k.tourist { MAX_TOURIST_TRIS } else { MAX_TRIS };
+            let budget = if k.ride { MAX_RIDER_TRIS } else if k.tourist { MAX_TOURIST_TRIS } else if k.sit != 0 { MAX_SEATED_TRIS } else { MAX_TRIS };
             assert!(tris > 20 && tris <= budget, "{k:?}: {tris} triangles");
             assert_eq!(m.uvs.len(), m.positions.len());
             assert_eq!(m.colors.len(), m.positions.len());
@@ -533,6 +651,36 @@ mod tests {
             for uv in &m.uvs {
                 assert!(uv[0] > 0.0 && uv[0] < 1.0);
             }
+        }
+    }
+
+    /// [K18] Seated figures sit at their seat with their feet on the
+    /// ground, full size (not a standing figure squashed into the ground).
+    #[test]
+    fn seated_figures_sit_on_their_seat_above_the_ground() {
+        for k in every_key().filter(|k| k.sit != 0) {
+            let m = person_mesh(&k);
+            let ys: Vec<f32> = m.positions.iter().map(|p| p[1]).collect();
+            let (lo, hi) = (ys.iter().cloned().fold(f32::MAX, f32::min), ys.iter().cloned().fold(f32::MIN, f32::max));
+            assert!(lo >= -0.02 && lo < 0.1, "{k:?}: feet at {lo}");
+            let seat = if k.sit == SIT_BENCH { BENCH_SEAT } else { 0.0 };
+            let want = seat + if k.child { 0.95 } else { 0.9 };
+            assert!(hi > want * 0.85 && hi < want + 0.35, "{k:?}: head top {hi} (seat {seat})");
+        }
+    }
+
+    #[test]
+    fn bike_wheels_are_round() {
+        // [round-wheels] A box wheel touched the ground along its whole
+        // width; a round one only right under the axle.
+        for k in every_key().filter(|k| k.ride) {
+            let m = person_mesh(&k);
+            for p in m.positions.iter().filter(|p| p[1] < 0.02) {
+                let off = (p[0].abs() - 0.55).abs();
+                assert!(off < 0.07, "{k:?}: ground contact at {p:?}");
+            }
+            let rim = m.positions.iter().filter(|p| ((p[0].abs() - 0.55).hypot(p[1] - 0.34) - 0.34).abs() < 1e-3).count();
+            assert!(rim >= 2 * WHEEL_SIDES * 4, "{k:?}: only {rim} rim vertices");
         }
     }
 
@@ -555,7 +703,7 @@ mod tests {
 
     #[test]
     fn the_figure_matches_the_old_one_in_size() {
-        let k = PersonKey { style: 0, outfit: 0, build: 1, child: false, skin: 3, hair: 0, fav: [0, 1], wear: 1, ride: false, tourist: false };
+        let k = PersonKey { style: 0, outfit: 0, build: 1, child: false, skin: 3, hair: 0, fav: [0, 1], wear: 1, ride: false, tourist: false, sit: 0 };
         let m = person_mesh(&k);
         let top = m.positions.iter().map(|p| p[1]).fold(0.0, f32::max);
         // The old box figure stood 1.75 m (plus the 0.16 m lift).
@@ -568,7 +716,7 @@ mod tests {
         assert_eq!(pal.len(), EMISSIVE_CELLS);
         assert_eq!(pal[0], [0.0; 3]);
         assert!(pal.iter().flatten().all(|v| v.is_finite() && *v >= 0.0 && *v <= 1.0));
-        let k = PersonKey { style: 0, outfit: 1, build: 1, child: false, skin: 3, hair: 0, fav: [8, 0], wear: 1, ride: false, tourist: false };
+        let k = PersonKey { style: 0, outfit: 1, build: 1, child: false, skin: 3, hair: 0, fav: [8, 0], wear: 1, ride: false, tourist: false, sit: 0 };
         let m = person_mesh(&k);
         let lit = m.uvs.iter().filter(|uv| (uv[0] * EMISSIVE_CELLS as f32) as usize == bright_cell(0)).count();
         let dark = m.uvs.iter().filter(|uv| (uv[0] * EMISSIVE_CELLS as f32) as usize == 0).count();
@@ -596,7 +744,7 @@ mod tests {
 
     #[test]
     fn the_figure_cache_stays_bounded() {
-        let key = |i: u32| PersonKey { style: (i % 7) as u8, outfit: (i % 6) as u8, build: (i % 3) as u8, child: false, skin: ((i / 484) % 10) as u8, hair: (i % 8) as u8, fav: [(i % 22) as u8, ((i / 22) % 22) as u8], wear: 1, ride: false, tourist: false };
+        let key = |i: u32| PersonKey { style: (i % 7) as u8, outfit: (i % 6) as u8, build: (i % 3) as u8, child: false, skin: ((i / 484) % 10) as u8, hair: (i % 8) as u8, fav: [(i % 22) as u8, ((i / 22) % 22) as u8], wear: 1, ride: false, tourist: false, sit: 0 };
         let cap = 64;
         let mut c: FigureCache<u32> = FigureCache::new(cap);
         let mut n = 0u32;

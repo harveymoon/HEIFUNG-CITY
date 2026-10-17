@@ -51,7 +51,11 @@ pub(super) struct Puff {
 struct Plant {
     stacks: Vec<CoalVent>,
     centre: Vec3,
+    /// How hard it burns now (the target).
     intensity: f32,
+    /// [smoke-start] How hard it is drawn burning: eases toward
+    /// `intensity`, so a plant firing up starts with a thin wisp.
+    shown: f32,
     entities: Vec<Entity>,
     key: u64,
 }
@@ -124,6 +128,7 @@ pub(super) fn sync_haze(
     sim: Res<Sim>,
     lighting: Res<Lighting>,
     time: Res<Time>,
+    clock: Res<super::climate::SceneClock>,
     mut state: Local<HazeState>,
     cams: Query<&GlobalTransform, With<crate::camera::OrbitCamera>>,
     mut puffs: Query<(&Puff, &mut Transform, &mut MeshMaterial3d<StandardMaterial>, &mut Visibility, Option<&super::swap::SwapOriginal>)>,
@@ -172,14 +177,15 @@ pub(super) fn sync_haze(
     let draw = if p.supply_mw > 0.0 { (p.demand_mw / p.supply_mw).clamp(0.25, 1.0) } else { 1.0 };
     let mut seen = Vec::new();
     for (id, b) in w.buildings.iter() {
-        if !b.plant.is_some_and(|k| k.makes_haze()) || b.construction.is_some() {
+        // [smoke-start] Only a finished plant smokes: not while its lot is
+        // still being cleared (the old building coming down) or it is
+        // being built.
+        if !b.plant.is_some_and(|k| k.makes_haze()) || !b.operating() {
             continue;
         }
         let Some(lot) = w.lots.get(b.lot) else { continue };
         seen.push(id);
-        let staffed = if b.jobs > 0 { (b.workers.len() as f32 / b.jobs as f32).clamp(0.3, 1.0) } else { 1.0 };
-        // A running plant always smokes; harder the more of it the grid draws.
-        let intensity = if b.is_derelict() { 0.0 } else { 0.55 + 0.45 * (staffed * draw).clamp(0.0, 1.0) };
+        let intensity = plant_smoke(b.is_derelict(), w.plant_output_mw(b), b.workers.len(), b.jobs, draw);
         let pad = w.lot_pad(b.lot);
         // [plant-scale] The stacks come from the station's own layout (its
         // seed and size), so they follow a rebuild of the plant too.
@@ -187,10 +193,12 @@ pub(super) fn sync_haze(
         let key = ((lot.center.x.to_bits() as u64) << 32 | lot.center.y.to_bits() as u64 ^ pad.to_bits() as u64) ^ b.seed.rotate_left(17) ^ (scale.to_bits() as u64) << 7;
         if let Some(plant) = state.plants.get_mut(&id) {
             plant.intensity = intensity;
+            plant.shown = ease_smoke(plant.shown, intensity, time.delta_secs() * clock.rate);
             if plant.key == key {
                 continue;
             }
         }
+        let kept = state.plants.get(&id).map(|p| p.shown);
         if let Some(old) = state.plants.remove(&id) {
             for e in old.entities {
                 commands.entity(e).despawn();
@@ -211,7 +219,9 @@ pub(super) fn sync_haze(
         for k in 0..SMOG_PUFFS {
             entities.push(spawn(None, k));
         }
-        state.plants.insert(id, Plant { stacks, centre: Vec3::new(lot.center.x, pad, lot.center.y), intensity, entities, key });
+        // A rebuilt plant's layout keeps how hard it was drawn burning.
+        let shown = kept.unwrap_or(0.0);
+        state.plants.insert(id, Plant { stacks, centre: Vec3::new(lot.center.x, pad, lot.center.y), intensity, shown, entities, key });
     }
     let gone: Vec<BuildingId> = state.plants.keys().copied().filter(|id| !seen.contains(id)).collect();
     for id in gone {
@@ -229,7 +239,8 @@ pub(super) fn sync_haze(
     let Some(cam) = cams.iter().next() else { return };
     let face = cam.compute_transform().rotation;
     let eye = cam.translation();
-    let now = time.elapsed_secs();
+    // [scene-clock] Game time: the plume hangs still while paused.
+    let now = clock.t;
     let dir = wind_dir(w.clock.tick);
     let wind = w.weather.wind.clamp(0.05, 1.0);
     let along = Vec3::new(dir.x, 0.0, dir.y);
@@ -271,7 +282,7 @@ pub(super) fn sync_haze(
                 (pos, size, alpha, 1)
             }
         };
-        let a = alpha * plant.intensity * near_fade(eye.distance(pos), size);
+        let a = alpha * plant.shown * near_fade(eye.distance(pos), size);
         if a < 0.5 / ALPHA_STEPS as f32 {
             vis.set_if_neq(Visibility::Hidden);
             continue;
@@ -288,6 +299,27 @@ pub(super) fn sync_haze(
         // Smog lies flatter than it is tall from the street.
         tf.scale = if smog == 1 { Vec3::new(size, size * 0.45, 1.0) } else { Vec3::splat(size) };
     }
+}
+
+/// [smoke-start] How hard a finished coal plant's smoke shows, 0..1: none
+/// while it makes no power (derelict, its site giving nothing) or has no
+/// one at work; otherwise from a thin 0.3 up with its staffing and how
+/// much of it the grid draws.
+pub(super) fn plant_smoke(derelict: bool, output_mw: f32, workers: usize, jobs: u16, draw: f32) -> f32 {
+    if derelict || output_mw <= 0.0 || (jobs > 0 && workers == 0) {
+        return 0.0;
+    }
+    let staffed = if jobs > 0 { (workers as f32 / jobs as f32).clamp(0.0, 1.0) } else { 1.0 };
+    0.3 + 0.7 * (staffed * draw).clamp(0.0, 1.0)
+}
+
+/// Scene seconds for drawn smoke to get most of the way to a new level:
+/// a plant firing up builds its plume over about half a minute.
+const SMOKE_EASE_S: f32 = 12.0;
+
+/// [smoke-start] Drawn smoke after `dt` scene seconds, easing toward `target`.
+pub(super) fn ease_smoke(shown: f32, target: f32, dt: f32) -> f32 {
+    shown + (target - shown) * (1.0 - (-dt.max(0.0) / SMOKE_EASE_S).exp())
 }
 
 impl Puff {
@@ -309,5 +341,26 @@ mod tests {
         assert_eq!(near_fade(10.0, 50.0), 0.0);
         assert!(near_fade(30.0, 50.0) > 0.0 && near_fade(30.0, 50.0) < 1.0);
         assert_eq!(near_fade(60.0, 50.0), 1.0);
+    }
+
+    /// [smoke-start] No smoke from a plant that makes no power or has no
+    /// one at work; a fully staffed, fully drawn plant smokes in full; a
+    /// newly fired plume builds up and freezes while paused.
+    #[test]
+    fn smoke_only_from_a_working_plant_and_it_builds_up() {
+        assert_eq!(plant_smoke(false, 0.0, 40, 40, 1.0), 0.0);
+        assert_eq!(plant_smoke(false, 500.0, 0, 40, 1.0), 0.0);
+        assert_eq!(plant_smoke(true, 500.0, 40, 40, 1.0), 0.0);
+        assert_eq!(plant_smoke(false, 500.0, 40, 40, 1.0), 1.0);
+        let half = plant_smoke(false, 500.0, 20, 40, 1.0);
+        assert!(half > 0.3 && half < 1.0);
+        assert_eq!(ease_smoke(0.0, 1.0, 0.0), 0.0, "paused: no change");
+        let first = ease_smoke(0.0, 1.0, 1.0 / 60.0);
+        assert!(first > 0.0 && first < 0.01, "a gentle start: {first}");
+        let mut s = 0.0;
+        for _ in 0..60 * 60 {
+            s = ease_smoke(s, 1.0, 1.0 / 60.0);
+        }
+        assert!(s > 0.95, "full within a minute: {s}");
     }
 }
