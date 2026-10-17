@@ -120,6 +120,8 @@ fn u_turns_stalls_and_replans_are_read_from_the_notes_and_the_state() {
     w.traffic.note(id, Note::Entered { segment: seg, forward: true, at: fp });
     w.traffic.note(id, Note::Entered { segment: seg, forward: false, at: fp });
     w.traffic.note_replan(id, Why::FullExit, None, None);
+    // The same again: counted, not written twice.
+    w.traffic.note_replan(id, Why::FullExit, None, None);
     // Standing two minutes, then moving on.
     w.traffic.cars[id].stalled = 4.0;
     w.traffic.cars[id].wait = crate::traffic::Wait::ExitFull;
@@ -131,7 +133,8 @@ fn u_turns_stalls_and_replans_are_read_from_the_notes_and_the_state() {
     w.step_insight();
     let recs = w.insight.live.get(id).unwrap().log.records();
     assert!(recs.iter().any(|r| matches!(r.ev, Ev::UTurn { .. })), "{recs:?}");
-    assert!(recs.iter().any(|r| matches!(r.ev, Ev::Replan { why: Why::FullExit, after_m: None, .. })));
+    assert_eq!(recs.iter().filter(|r| matches!(r.ev, Ev::Replan { why: Why::FullExit, after_m: None, .. })).count(), 1);
+    assert_eq!(w.insight.live.get(id).unwrap().watch.repeats, 1);
     assert!(recs.iter().any(|r| matches!(r.ev, Ev::Stall { cause: crate::traffic::Wait::ExitFull, seconds, .. } if seconds >= 60)), "{recs:?}");
     assert!(recs.iter().any(|r| matches!(r.ev, Ev::Anger { pct: 45 })));
     assert!(recs.iter().any(|r| matches!(r.ev, Ev::Errand { what: 1, tries: 1, .. })));

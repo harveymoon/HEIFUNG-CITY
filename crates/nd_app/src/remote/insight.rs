@@ -203,7 +203,7 @@ pub fn trip_json(w: &World, t: &Trip, records: bool) -> Value {
         "set_off": tick_time(t.start), "ended": t.end.map_or(Value::Null, tick_time), "minutes_on_road": end.saturating_sub(t.start),
         "summary": {
             "street_pieces": streets, "replans": replans, "u_turns": u_turns, "dead_end_u_turns": dead_ends, "rage_u_turns": rage,
-            "stalls": stalls, "stalled_min": 0.0, "stalled_by_cause_s": causes,
+            "replans_repeated": t.watch.repeats, "stalls": stalls, "stalled_min": 0.0, "stalled_by_cause_s": causes,
             "max_anger_pct": max_anger, "crashes": crashes, "records_dropped": t.log.dropped,
         },
     });

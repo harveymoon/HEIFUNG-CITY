@@ -960,7 +960,8 @@ trip on the road 3 KB, a finished one 768 B, a citizen's trips 224 B and life 19
 
 `inspect {car: id, history: true}` adds `history`: the trip (`kind` private / lorry / bus / service /
 taxi / through / fleet / other, `driver`, `vehicle`, `to`, `set_off`, `ended`, `minutes_on_road`,
-`summary` {street_pieces, replans by why, u_turns, dead_end_u_turns, rage_u_turns, stalls,
+`summary` {street_pieces, replans by why, replans_repeated (re-plans that repeat one of the last few
+records, same reason round the same place: counted, not written again), u_turns, dead_end_u_turns, rage_u_turns, stalls,
 stalled_min, stalled_by_cause_s, max_anger_pct, crashes, records_dropped}, `now` {at, wait,
 stalled_s, anger_pct, route_left_m} while on the road, and `records`). A car no longer on the road
 still answers with its last trip (`car: null`, `on_road: false`). `inspect {citizen: id, history:

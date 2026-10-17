@@ -246,6 +246,16 @@ impl World {
             }
             Note::RageUTurn => Rec { tick, at: pos, ev: Ev::RageUTurn },
         };
+        // The same re-plan as one of the last few records (same reason,
+        // round the same place): counted, not written again.
+        if let (Ev::Replan { why, avoided, .. }, Some(t)) = (&rec.ev, self.insight.live.get_mut(id)) {
+            let recent = t.log.records();
+            let same = recent.iter().rev().take(6).any(|r| matches!(&r.ev, Ev::Replan { why: w, avoided: a, .. } if w == why && r.at.distance(rec.at) < 3.0 && match (a, avoided) { (Some(a), Some(b)) => a.distance(*b) < 3.0, (None, None) => true, _ => false }));
+            if same {
+                t.watch.repeats += 1;
+                return;
+            }
+        }
         if let Some(t) = self.insight.live.get_mut(id) {
             t.log.push(rec, TRIP_BYTES);
         }

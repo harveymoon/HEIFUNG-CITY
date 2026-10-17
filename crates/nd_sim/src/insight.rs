@@ -55,7 +55,7 @@ pub const ANGER_STEP: u8 = 10;
 /// Free text in a record (a reason, a business kind) is cut to this many bytes.
 const TEXT_MAX: usize = 80;
 /// Format of the saved store.
-const FORMAT: u8 = 2;
+const FORMAT: u8 = 3;
 
 /// Why a vehicle took a new route.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -788,6 +788,10 @@ pub struct Watch {
     pub last: Option<(u32, bool)>,
     /// Where it was at the last look: where its trip ends.
     pub pos: Vec2,
+    /// Re-plans not written out because they repeat one of the last few
+    /// (a car flipping between two ways round the same jam every two
+    /// minutes would fill its log with nothing else).
+    pub repeats: u32,
 }
 
 /// One vehicle's trip: who and what, and its log.
@@ -840,6 +844,7 @@ impl Trip {
         let p = q(w.pos);
         put_i(b, p[0]);
         put_i(b, p[1]);
+        put(b, w.repeats as u64);
     }
 
     fn decode(r: &mut Rd) -> Option<Trip> {
@@ -860,7 +865,8 @@ impl Trip {
         let errand = (r.byte()?, r.byte()?, r.u()?);
         let last = r.u()?.checked_sub(1).map(|v| ((v >> 1) as u32, v & 1 == 1));
         let pos = unq([r.i()?, r.i()?]);
-        Some(Trip { car, kind, vehicle, driver, to, start, end, log, watch: Watch { stall, anger, crashed, errand, last, pos } })
+        let repeats = r.u()? as u32;
+        Some(Trip { car, kind, vehicle, driver, to, start, end, log, watch: Watch { stall, anger, crashed, errand, last, pos, repeats } })
     }
 }
 
