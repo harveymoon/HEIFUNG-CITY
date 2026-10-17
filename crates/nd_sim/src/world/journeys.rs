@@ -291,8 +291,9 @@ impl World {
             let down = self.down_on_street();
             match self.pose_with(id, &down) {
                 crate::world::Pose::Lying if down.contains(&id) => return "lying hurt in the street, waiting for the paramedics".into(),
-                crate::world::Pose::Lying => return "lying down on the pavement".into(),
-                crate::world::Pose::SittingKerb => return "sitting on the kerb".into(),
+                // [K17] Where they lie or sit: the pavement, a beach or a park.
+                crate::world::Pose::Lying => return format!("lying down {}", self.ground_word(c.pos).0),
+                crate::world::Pose::SittingKerb => return format!("sitting {}", self.ground_word(c.pos).1),
                 _ => {}
             }
         }

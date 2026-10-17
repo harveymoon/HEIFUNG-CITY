@@ -116,10 +116,17 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, sid: nd
             kinds.push(plural(k, one, many));
         }
     }
-    let vehicles = if kinds.is_empty() { "No vehicles on it".to_string() } else { format!("{} on it: {}", plural(n.vehicles(), "vehicle", "vehicles"), kinds.join(", ")) };
-    ui.label(vehicles);
-    if n.bikes + n.walkers > 0 {
-        hint(ui, &format!("{} and {} along it and its pavements", plural(n.walkers, "walker", "walkers"), plural(n.bikes, "cyclist", "cyclists")));
+    let people = format!("{} and {}", plural(n.walkers, "walker", "walkers"), plural(n.bikes, "cyclist", "cyclists"));
+    if !card.vehicles {
+        // [K11] A footpath: its traffic is people.
+        ui.label(format!("{people} on it"));
+        hint(ui, "Walkers and cyclists only: no cars drive here.");
+    } else {
+        let vehicles = if kinds.is_empty() { "No vehicles on it".to_string() } else { format!("{} on it: {}", plural(n.vehicles(), "vehicle", "vehicles"), kinds.join(", ")) };
+        ui.label(vehicles);
+        if n.bikes + n.walkers > 0 {
+            hint(ui, &format!("{people} along it and its pavements"));
+        }
     }
     if n.vehicles() > 0 && card.limit > 0.0 {
         let cong = n.congestion();
@@ -141,24 +148,28 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, sid: nd
 
     // Flow.
     let (this_hour, last_hour, today, yesterday) = card.flows();
-    section(ui, "FLOW");
-    egui::Grid::new(("road_flow", sid.0)).num_columns(4).spacing(egui::vec2(14.0, 2.0)).show(ui, |ui| {
-        for h in ["this hour", "last hour", "today", "yesterday"] {
-            ui.label(egui::RichText::new(h).small().weak());
+    // [K11] No vehicle flow on a footpath: the grid counts only vehicles,
+    // and its zeros read as "nobody uses it" with people on it.
+    if card.vehicles {
+        section(ui, "VEHICLE FLOW");
+        egui::Grid::new(("road_flow", sid.0)).num_columns(4).spacing(egui::vec2(14.0, 2.0)).show(ui, |ui| {
+            for h in ["this hour", "last hour", "today", "yesterday"] {
+                ui.label(egui::RichText::new(h).small().weak());
+            }
+            ui.end_row();
+            for v in [this_hour, last_hour, today, yesterday] {
+                ui.label(egui::RichText::new(v.to_string()).strong());
+            }
+            ui.end_row();
+        })
+        .response
+        .on_hover_text("Vehicles that drove onto this piece (both ways), counted as they come on.");
+        if !compact {
+            if let Some((h, c)) = card.peak() {
+                hint(ui, &format!("Busiest hour of the last three days: {c} on day {}, {:02}:00", h / 24 + 1, h % 24));
+            }
+            hour_chart(ui, &card.hours, card.hour_now);
         }
-        ui.end_row();
-        for v in [this_hour, last_hour, today, yesterday] {
-            ui.label(egui::RichText::new(v.to_string()).strong());
-        }
-        ui.end_row();
-    })
-    .response
-    .on_hover_text("Vehicles that drove onto this piece (both ways), counted as they come on.");
-    if !compact {
-        if let Some((h, c)) = card.peak() {
-            hint(ui, &format!("Busiest hour of the last three days: {c} on day {}, {:02}:00", h / 24 + 1, h % 24));
-        }
-        hour_chart(ui, &card.hours, card.hour_now);
     }
 
     // Decay.

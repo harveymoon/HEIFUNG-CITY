@@ -531,7 +531,7 @@ fn misc(out: &Out) {
     for style in 0..7u8 {
         for outfit in 0..6u8 {
             for (bk, build) in [0u8, 1, 2].into_iter().enumerate() {
-                let k = crate::people::PersonKey { style, outfit, build, child: (style + outfit) % 5 == 0, skin: (style * 3 + outfit) % 8, hair: (style + bk as u8 * 4) % 14, fav: [outfit, style], wear: bk as u8, ride: outfit == 2, tourist: style == 3 };
+                let k = crate::people::PersonKey { style, outfit, build, child: (style + outfit) % 5 == 0, skin: (style * 3 + outfit) % 8, hair: (style + bk as u8 * 4) % 14, fav: [outfit, style], wear: bk as u8, ride: outfit == 2, tourist: style == 3, sit: 0 };
                 out.mesh(format!("person {style} {outfit} {build}"), &crate::people::person_mesh(&k));
             }
         }

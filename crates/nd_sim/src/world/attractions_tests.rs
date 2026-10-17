@@ -418,3 +418,30 @@ fn tourists_come_to_see_a_landmark_and_are_counted() {
     let book = w.attractions.book(zoo);
     assert_eq!((book.tourists_today, book.tourists_yesterday), (0, 1));
 }
+
+/// [K10] A zoo and a botanical garden side by side: each one's walks come
+/// out to the seam between them (the fences open there) and the walk graph
+/// joins the two, so a visitor walks from one to the other inside.
+#[test]
+fn grounds_side_by_side_join_their_walks() {
+    let mut w = town();
+    let zoo_lot = home_lot(&w, Vec2::new(-200.0, -30.0));
+    let zoo = w.place_building(landmark(ServiceKind::Zoo), w.lots[zoo_lot].center).expect("a zoo");
+    finish_all(&mut w);
+    let zoo_lot = w.buildings[zoo].lot;
+    // The garden on the next plots along, beside the zoo's site.
+    let east = w.lots[zoo_lot].polygon.iter().map(|p| p.x).fold(f32::MIN, f32::max);
+    let lot = home_lot(&w, Vec2::new(east + 25.0, -30.0));
+    let garden = w.place_building(landmark(ServiceKind::BotanicalGarden), w.lots[lot].center).expect("a garden");
+    finish_all(&mut w);
+    w.implement();
+    let garden_lot = w.buildings[garden].lot;
+    let seam = super::attractions::grounds_seam(&w.lots[zoo_lot].polygon, &w.lots[garden_lot].polygon).expect("the two sites side by side");
+    for l in [zoo_lot, garden_lot] {
+        let park = w.lots[l].park.as_ref().expect("grounds walks");
+        assert!(park.entrances.iter().any(|e| e.distance(seam) < 4.0), "a way in at the seam {seam}: {:?}", park.entrances);
+    }
+    // In the walk graph a node of the zoo's walks links straight to the garden's.
+    let joined = w.walk.nodes.iter().enumerate().filter(|(_, n)| n.lot == Some(zoo_lot)).any(|(i, _)| w.walk.adj[i].iter().any(|e| w.walk.nodes[e.to as usize].lot == Some(garden_lot) && e.park));
+    assert!(joined, "the zoo's walks join the garden's");
+}

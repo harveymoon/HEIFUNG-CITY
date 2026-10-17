@@ -117,6 +117,32 @@ impl Camp {
     }
 }
 
+/// [K31] Where on a vacant lot a camp pitches, and the way its tents run:
+/// not square on the lot's centre (a street of vacant lots read as a neat
+/// parade of identical camps) but somewhere between the centre and one of
+/// the lot's corners, turned a little off the street, from a hash of the
+/// lot (deterministic, no RNG draw).
+pub fn camp_pitch(l: &crate::zoning::Lot, id: LotId, along: Vec2) -> (Vec2, Vec2) {
+    use slotmap::Key;
+    let h = crate::hash::mix(id.data().as_ffi(), 0xCA4F_51DE);
+    let unit = |k: u32| ((h >> k) & 0xFFFF) as f32 / 65535.0;
+    let turn = (unit(32) - 0.5) * 1.1;
+    let dir = Vec2::from_angle(turn).rotate(along);
+    let n = l.polygon.len();
+    if n < 3 {
+        return (l.center, dir);
+    }
+    let corner = l.polygon[(h as usize >> 3) % n];
+    // Not right up against the corner: tents need the room.
+    for t in [0.2 + 0.4 * unit(16), 0.25, 0.1] {
+        let p = l.center.lerp(corner, t);
+        if l.contains(p) && crate::geom::distance_to_outline(p, &l.polygon) > 3.0 {
+            return (p, dir);
+        }
+    }
+    (l.center, dir)
+}
+
 /// A household living in its vehicle at the kerb.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Rv {
@@ -309,7 +335,10 @@ impl World {
             }
             let along = (l.front_edge[1] - l.front_edge[0]).normalize_or_zero();
             match l.building {
-                None if !self.services.is_rubble(id) => out.push(Spot { pos: l.center, dir: along, out: l.front_dir, lot: Some(id), sidewalk: false }),
+                None if !self.services.is_rubble(id) => {
+                    let (pos, dir) = camp_pitch(l, id, along);
+                    out.push(Spot { pos, dir, out: l.front_dir, lot: Some(id), sidewalk: false })
+                }
                 // Built lots lend their pavement, if it is on a street.
                 Some(_) if l.car_access() => out.push(Spot { pos: l.entrance() + l.front_dir.normalize_or_zero() * 1.5, dir: along, out: l.front_dir, lot: Some(id), sidewalk: true }),
                 _ => {}
@@ -517,6 +546,18 @@ impl World {
         }
         // Camps on land that got dear or was built on move on, quietly.
         self.move_camps_on(true);
+        // [K31] A camp from before pitches were spread out, square on its
+        // lot's centre: moved to its own pitch.
+        for c in self.society.homeless.camps.iter_mut().filter(|c| !c.sidewalk) {
+            let Some(l) = c.lot.and_then(|id| self.lots.get(id).map(|l| (id, l))) else { continue };
+            if l.1.building.is_none() && c.pos.distance(l.1.center) < 0.01 {
+                let along = (l.1.front_edge[1] - l.1.front_edge[0]).normalize_or_zero();
+                let (pos, dir) = camp_pitch(l.1, l.0, along);
+                if !camp_on_way(&self.roads, pos, dir, c.out) {
+                    (c.pos, c.dir) = (pos, dir);
+                }
+            }
+        }
         // People per camp.
         let counts: Vec<u16> = self.society.homeless.camps.iter().map(|c| c.households.iter().filter_map(|h| self.households.get(*h)).map(|h| h.members.len() as u16).sum()).collect();
         for (c, n) in self.society.homeless.camps.iter_mut().zip(counts) {
@@ -708,5 +749,33 @@ impl World {
         for r in self.society.homeless.rvs.iter().filter(|r| r.parked(self.clock.tick)) {
             b.splat(r.pos, 50.0, -CAMP_LV);
         }
+    }
+}
+
+#[cfg(test)]
+mod pitch_tests {
+    use super::*;
+
+    /// [K31] Camps on a street of vacant lots do not all sit square on
+    /// their lots' centres: each pitches somewhere of its own on its lot.
+    #[test]
+    fn camps_pitch_off_centre_and_on_their_lot() {
+        let mut w = World::new(crate::WorldConfig::default());
+        crate::scenarios::demo_district(&mut w);
+        w.implement();
+        let mut off = 0;
+        let mut n = 0;
+        for (id, l) in w.lots.iter().filter(|(_, l)| l.usable() && l.area() > 150.0) {
+            let along = (l.front_edge[1] - l.front_edge[0]).normalize_or_zero();
+            let (p, dir) = camp_pitch(l, id, along);
+            assert!(l.contains(p), "a pitch on its own lot");
+            assert!((dir.length() - 1.0).abs() < 1e-3);
+            n += 1;
+            if p.distance(l.center) > 1.0 {
+                off += 1;
+            }
+            assert_eq!(camp_pitch(l, id, along), (p, dir), "the same lot, the same pitch");
+        }
+        assert!(n > 5 && off * 2 > n, "{off} of {n} pitched off centre");
     }
 }
