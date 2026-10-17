@@ -85,6 +85,10 @@ pub const GROUNDS_REACH: f32 = 4.0;
 /// [park-paths] Gates are put this far outside the edge, clear of it.
 pub const GATE_OUT: f32 = 1.6;
 
+/// [K10] Ways in of two grounds side by side this close are joined (each
+/// stands about a metre inside its own lot, a seam's sliver between).
+pub const SEAM_GATE_REACH: f32 = 5.5;
+
 impl WalkGraph {
     /// The benches in a lot (node, lot, facing), in the order they were laid.
     pub fn benches_in(&self, lot: LotId) -> impl Iterator<Item = &(u32, LotId, f32)> + '_ {

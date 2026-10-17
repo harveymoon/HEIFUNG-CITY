@@ -59,6 +59,19 @@ impl World {
     }
 }
 
+impl World {
+    /// [K17] The ground at `p` in words, for "lying down …" and "sitting
+    /// …": on a beach, on a park's grass, else the pavement and its kerb.
+    /// A scan of the lots: for one citizen's status line, not a crowd.
+    pub fn ground_word(&self, p: Vec2) -> (&'static str, &'static str) {
+        match self.lots.values().find(|l| l.contains(p)) {
+            Some(l) if l.shore.beach => ("on the beach", "on the sand"),
+            Some(l) if l.land_use == crate::zoning::LandUse::Park => ("on the grass", "on the grass"),
+            _ => ("on the pavement", "on the kerb"),
+        }
+    }
+}
+
 /// A homeless person standing around: at night most lie down to sleep;
 /// by day some sit on the kerb and a few lie down, changing every hour or
 /// so (from the seed, so it does not flicker frame to frame).
@@ -88,5 +101,21 @@ mod tests {
         let night: Vec<Pose> = (0..400u64).map(|s| homeless_pose(s.wrapping_mul(0x2545_F491_4F6C_DD1D), 2 * 60)).collect();
         assert!(night.iter().all(|&p| p != Pose::Standing), "nobody stands about at night");
         assert!(night.iter().filter(|&&p| p == Pose::Lying).count() > 250, "most sleep");
+    }
+
+    /// [K17] Someone lying on a beach is not "on the pavement".
+    #[test]
+    fn the_status_names_the_ground_they_lie_on() {
+        let mut w = World::new(WorldConfig::default());
+        crate::scenarios::demo_district(&mut w);
+        w.implement();
+        let lot = w.lots.iter().find(|(_, l)| l.usable() && l.area() > 200.0).map(|(id, _)| id).expect("a lot");
+        let at = w.lots[lot].center;
+        assert_eq!(w.ground_word(Vec2::new(1.0e5, 1.0e5)).0, "on the pavement");
+        w.lots[lot].shore.beach = true;
+        assert_eq!(w.ground_word(at), ("on the beach", "on the sand"));
+        w.lots[lot].shore.beach = false;
+        w.lots[lot].land_use = crate::zoning::LandUse::Park;
+        assert_eq!(w.ground_word(at).0, "on the grass");
     }
 }

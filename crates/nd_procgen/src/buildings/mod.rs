@@ -171,6 +171,14 @@ fn building_site(ctx: &Ctx, style: Style, rng: &mut nd_sim::SimRng, extras: &Ext
         supertall::site(&mut g, ctx, &t, progress);
         return g;
     }
+    if Style::CAPSULE.contains(&style) {
+        // [K39] The domes, pills and saucers go up in their own shape: the
+        // finished building (from the same stream, so the same building)
+        // cut at the height the work has reached.
+        let shell = finished(ctx, style, &mut rng.clone(), extras);
+        construction::shaped_site(&mut g, ctx, rng, progress, shell);
+        return g;
+    }
     construction::construction_site(&mut g, ctx, rng, progress);
     if weathered(ctx.tier, ctx.wear) {
         g.weather();

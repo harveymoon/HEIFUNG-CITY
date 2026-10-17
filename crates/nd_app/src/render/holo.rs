@@ -486,8 +486,11 @@ pub fn apply_depth(
     };
     for (e, mut v, marked, citizen, platform) in &mut surface {
         // Citizens: `sync_citizens` sets every one, every frame. ([pt-transit]
-        // Those on a metro platform are underground: shown there.)
-        apply(e, &mut v, marked, !under || platform, !citizen);
+        // Those on a metro platform are underground: shown there.) [K36]
+        // And only there: a walker down a road tunnel under a river stood at
+        // the bore's depth, seen through the water as a figure walking on it.
+        let on = if citizen && platform { under } else { !under || platform };
+        apply(e, &mut v, marked, on, !citizen);
     }
     for mut v in &mut tunnels {
         let want = if under { Visibility::Inherited } else { Visibility::Hidden };

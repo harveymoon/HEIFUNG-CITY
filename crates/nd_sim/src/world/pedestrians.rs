@@ -20,8 +20,27 @@ use std::collections::BTreeMap;
 const CELL: f32 = 2.0;
 /// Depth of a crossing's hold along a lane.
 const HOLD_DEPTH: f32 = CROSSWALK_HALF * 2.0 + 0.6;
-/// Waiting walkers stand in rows of this many at the kerb.
-const ROW: u32 = 3;
+/// [K46] Metres between waiting walkers at the kerb, about: they bunch
+/// closer than when walking, but nobody stands in anyone's pocket.
+const KERB_SPACE: f32 = 0.62;
+
+/// [K46] Where the `n`th walker waiting at a kerb stands, from the kerb
+/// point: a loose crowd fanned out behind it, spread wider along the kerb
+/// than it is deep (everyone wants to see the road), filled from the front
+/// out on a sunflower spiral so neighbours keep their personal space, each
+/// shuffled a little by their own `seed`. Not ranks of three: a long wait
+/// read as a drilled formation. `u` points over the road, `v` along it.
+fn kerb_spot(n: u32, seed: u64, u: Vec2, v: Vec2) -> Vec2 {
+    let k = n as f32 + 0.5;
+    let r = KERB_SPACE * k.sqrt();
+    // The golden angle folded into the half disc behind the kerb.
+    let a = (n as f32 * 2.399_963).rem_euclid(std::f32::consts::PI);
+    let jx = crate::hash::hash01(seed, n as u64, 0x4B45) - 0.5;
+    let jy = crate::hash::hash01(seed, n as u64, 0x5246) - 0.5;
+    let along = r * a.cos() * 1.35 + jx * 0.3;
+    let back = r * a.sin() * 0.8 + jy * 0.2;
+    u * (0.9 - back) + v * along
+}
 /// [services] Walkers on a crossing with lights and sirens coming hurry clear
 /// at this many times their pace.
 const SIREN_HURRY: f32 = 2.5;
@@ -637,7 +656,6 @@ impl World {
             let n = *slot;
             *slot += 1;
             feet.waiting += 1;
-            let (row, col) = ((n / ROW) as f32, (n % ROW) as f32 - 1.0);
             heading = u.y.atan2(u.x);
             let crossing = &self.walk.crossings[cr as usize];
             let signal = self.peds.crossings.get(cr as usize).and_then(|i| i.signal);
@@ -655,7 +673,8 @@ impl World {
                 // to someone holding back for a driver kept waiting).
                 feet.occupied.push((cr, id));
             }
-            kerb + u * (0.9 - 0.7 * row) + v * col * 0.75
+            let seed = self.citizens[id].seed;
+            kerb + kerb_spot(n, seed, u, v)
         } else {
             heading = dir.y.atan2(dir.x);
             let right = Vec2::new(-dir.y, dir.x);
@@ -1126,4 +1145,25 @@ mod tests {
         };
         assert_eq!(trace(), trace());
     }
+
+    /// [K46] A big crowd at a kerb is a loose crowd, not ranks of three:
+    /// everyone keeps some personal space, it spreads along the kerb more
+    /// than back from it, and no rank of three stands square behind another.
+    #[test]
+    fn a_crowd_at_the_kerb_bunches_loosely() {
+        let (u, v) = (Vec2::Y, Vec2::X);
+        let spots: Vec<Vec2> = (0..60u32).map(|n| kerb_spot(n, 1000 + n as u64 * 77, u, v)).collect();
+        for (i, a) in spots.iter().enumerate() {
+            for b in &spots[i + 1..] {
+                assert!(a.distance(*b) > 0.3, "{a} and {b} stand in each other's pocket");
+            }
+            assert!(a.y <= 0.9 + 0.11, "{a}: not past the kerb");
+        }
+        let (w, d) = spots.iter().fold((0.0f32, 0.0f32), |(w, d), p| (w.max(p.x.abs()), d.max(0.9 - p.y)));
+        assert!(w > d, "wider along the kerb ({w:.1}) than deep ({d:.1})");
+        // No two waiters line up exactly in a file (the old 0.75 m grid).
+        let rows = spots.iter().filter(|p| ((p.x / 0.75).round() * 0.75 - p.x).abs() < 0.01).count();
+        assert!(rows < 10, "{rows} on the old grid");
+    }
 }
+

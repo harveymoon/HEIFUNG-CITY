@@ -16,7 +16,25 @@ const AISLE: f32 = 6.0;
 
 /// Bay centres and their yaw (bays face the aisle), laid out in double rows
 /// across the footprint's bounding rectangle, kept inside the polygon.
+/// [K30] Rows run along the frame or along the footprint's longest side,
+/// whichever fits more bays: a wedge-shaped car park beside a slanting
+/// street had rows square to the street, too long for it, and stood as a
+/// bare deck with no car on it whatever its count said.
 fn bays(poly: &[Vec2], margin: f32) -> Vec<(Vec2, f32)> {
+    let square = bays_along(poly, margin);
+    let n = poly.len();
+    let Some(long) = (0..n).map(|i| poly[(i + 1) % n] - poly[i]).max_by(|a, b| a.length().total_cmp(&b.length())) else { return square };
+    let turn = long.y.atan2(long.x);
+    if turn.sin().abs() < 0.05 || turn.cos().abs() < 0.05 {
+        return square;
+    }
+    let (back, fore) = (Vec2::from_angle(-turn), Vec2::from_angle(turn));
+    let turned: Vec<Vec2> = poly.iter().map(|p| back.rotate(*p)).collect();
+    let along: Vec<(Vec2, f32)> = bays_along(&turned, margin).into_iter().map(|(p, yaw)| (fore.rotate(p), yaw + turn)).collect();
+    if along.len() > square.len() + square.len() / 8 { along } else { square }
+}
+
+fn bays_along(poly: &[Vec2], margin: f32) -> Vec<(Vec2, f32)> {
     let inner = offset_poly(poly, margin);
     if inner.len() < 3 {
         return Vec::new();
@@ -192,4 +210,23 @@ pub fn car_park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         front.decal(g, f, Glow, -front.len * 0.4, k as f32 * fh + 0.6, 0.05, 0.6, 0.6, mul(pal.window_warm, 0.8));
     }
     grime(g, c, rng, &front, 0.0, top, 2.0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// [K30] A long thin wedge lying across the frame (a car park on a
+    /// slanting street) still gets its bays, in rows along its length.
+    #[test]
+    fn a_slanting_wedge_gets_bays_along_it() {
+        let (d, n) = (Vec2::from_angle(0.6), Vec2::from_angle(0.6).perp());
+        let poly = vec![Vec2::ZERO, d * 80.0 + n * 4.0, d * 80.0 + n * 20.0, n * 18.0];
+        let along = bays(&poly, 1.8);
+        let square = bays_along(&poly, 1.8);
+        assert!(along.len() >= square.len() && along.len() >= 20, "{} bays, {} square", along.len(), square.len());
+        for (p, _) in &along {
+            assert!(nd_sim::zoning::point_in_polygon(*p, &poly));
+        }
+    }
 }

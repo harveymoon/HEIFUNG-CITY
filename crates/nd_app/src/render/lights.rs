@@ -72,7 +72,12 @@ fn window_dark(uv: vec2<f32>) -> bool {
     // to its threshold every 40..180 sim minutes, at its own phase: the
     // building's share holds on average while single rooms come and go.
     if share < 0.996 {
-        let key = vec2(uv.x * 0.618 + 3.1, uv.y * 977.0);
+        // [K40] Keyed on the slot and rank rounded to whole steps: the
+        // UVs come interpolated across the pane with float error, and the
+        // hash (sin of a big number times 43758) blew that error up into a
+        // per-pixel speckle over every half-lit window of a building with
+        // a high slot (read as z-fighting on the Capsule portholes).
+        let key = vec2(f32(slot % 4096u) * 0.618 + 3.1, floor(uv.y * 977.0 + 0.5));
         let period = 40.0 + 140.0 * window_hash(key);
         let epoch = floor(lights_clock.x / period + window_hash(key.yx + 1.7));
         let jitter = (window_hash(key + vec2(epoch * 0.731, epoch * 1.37)) - 0.5) * 0.26;
@@ -370,5 +375,15 @@ mod tests {
         let m = g.get(Surface::Glow);
         assert_eq!(m.uvs, vec![[-1.0, 0.0], [-2.0, 0.0], [-3.0, 0.0], [9.0, 0.25]]);
         assert!(m.colors.iter().all(|c| c[3] == 1.0));
+    }
+
+    /// [K40] The per-window flicker is keyed on whole numbers (the slot,
+    /// the rank in 977 steps), never on the raw interpolated UVs, whose
+    /// float error the hash would turn into a speckle across the pane.
+    #[test]
+    fn the_window_flicker_key_is_quantised() {
+        let key_line = WINDOW_COMMON_SRC.lines().find(|l| l.contains("let key = ")).expect("the key");
+        assert!(key_line.contains("slot % 4096u") && key_line.contains("floor(uv.y * 977.0 + 0.5)"), "{key_line}");
+        assert!(!key_line.contains("uv.x *"), "{key_line}");
     }
 }

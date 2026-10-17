@@ -67,11 +67,17 @@ pub struct Overlays {
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: true, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false, parking: false, trails: false, density: false, park_access: false, construction: false, walk_networks: false }
+        Self { land_value: false, paths: false, zoning: false, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false, parking: false, trails: false, density: false, park_access: false, construction: false, walk_networks: false }
     }
 }
 
 impl Overlays {
+    /// [clean-start] Every layer off for a new or loaded city; the "other
+    /// projects" switch is a preference and stays.
+    pub fn forget_city(&mut self) {
+        *self = Self { projects: self.projects, ..Self::default() };
+    }
+
     /// The heat-map style layers the L key steps through, one at a time.
     pub const CYCLE: [&'static str; 7] = ["land_value", "traffic", "traffic_types", "people", "pollution", "crime", "map"];
 

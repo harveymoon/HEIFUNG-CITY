@@ -28,6 +28,43 @@ const SNOW_FLAKES: usize = 4000;
 /// Blocks: 2 x 2 round the camera, 3 high.
 const LAYERS: usize = 3;
 
+/// [scene-clock] The clock weather, smoke and rotors animate on: game
+/// time, not real time. It stands still while the game is paused and runs
+/// faster on fast-forward, but sublinearly (the square root of the speed
+/// against the default 16x, held to 0.25x..6x): snow at 1024x would be a
+/// grey blur, and at 1x a crawl.
+#[derive(Resource, Default)]
+pub struct SceneClock {
+    /// Seconds of scene time since the app started.
+    pub t: f32,
+    /// Scene seconds per real second this frame (0 while paused).
+    pub rate: f32,
+}
+
+impl SceneClock {
+    /// Scene seconds per real second at a game-speed multiple, 0 paused.
+    pub fn rate_for(paused: bool, multiple: f32) -> f32 {
+        if paused {
+            0.0
+        } else {
+            (multiple / crate::sim::SPEEDS[crate::sim::DEFAULT_SPEED].1).sqrt().clamp(0.25, 6.0)
+        }
+    }
+}
+
+/// Advance the [`SceneClock`] by this frame.
+pub(super) fn tick_scene_clock(time: Res<Time>, sim: Res<Sim>, mut clock: ResMut<SceneClock>) {
+    clock.rate = SceneClock::rate_for(sim.paused, crate::sim::SPEEDS[sim.speed_index].1);
+    clock.t += time.delta_secs() * clock.rate;
+}
+
+/// [show-weather] What is falling now as drawn: [`precip_now`] unless the
+/// player turned the weather off in the View window (the sim's weather is
+/// unchanged; only the rain, snow, fog and wet streets go).
+pub fn precip_shown(w: &World, lighting: &Lighting) -> Option<(&'static str, f32)> {
+    precip_now(w).filter(|_| lighting.show_weather)
+}
+
 /// What is falling now and how hard (0..1), if anything.
 pub fn precip_now(w: &World) -> Option<(&'static str, f32)> {
     let kind = match look(w.landscape.params.climate).precip {
@@ -114,13 +151,13 @@ pub(super) fn sync_precipitation(
     sim: Res<Sim>,
     lighting: Res<Lighting>,
     stats: Res<RenderStats>,
-    time: Res<Time>,
+    clock: Res<SceneClock>,
     mut state: Local<PrecipState>,
     cams: Query<&GlobalTransform, With<crate::camera::OrbitCamera>>,
     mut blocks: Query<(&Precipitation, &mut Transform, &mut Visibility, &mut Mesh3d)>,
 ) {
     let w = &sim.world;
-    let now = precip_now(w).filter(|_| stats.graphics.tier != Quality::Low && !lighting.heat);
+    let now = precip_shown(w, &lighting).filter(|_| stats.graphics.tier != Quality::Low && !lighting.heat);
     let Some((kind, intensity)) = now else {
         if state.shown.take().is_some() {
             for (_, _, mut vis, _) in &mut blocks {
@@ -155,7 +192,8 @@ pub(super) fn sync_precipitation(
     }
     let Some(cam) = cams.iter().next() else { return };
     let eye = cam.translation();
-    let t = time.elapsed_secs();
+    // [scene-clock] Game time: the snow hangs still while paused.
+    let t = clock.t;
     // Rain falls fast and straight; snow slowly, drifting downwind.
     let (fall, drift) = if snow { (1.6, 1.2 + 3.0 * w.weather.wind) } else { (18.0, 1.0 + 4.0 * w.weather.wind) };
     let dir = haze::wind_dir(w.clock.tick);
@@ -215,7 +253,7 @@ pub(super) fn sync_steam(
     mut materials: ResMut<Assets<StandardMaterial>>,
     sim: Res<Sim>,
     lighting: Res<Lighting>,
-    time: Res<Time>,
+    clock: Res<SceneClock>,
     mut state: Local<SteamState>,
     cams: Query<&GlobalTransform, With<crate::camera::OrbitCamera>>,
     mut puffs: Query<(&Steam, &mut Transform, &mut MeshMaterial3d<StandardMaterial>, &mut Visibility, Option<&super::swap::SwapOriginal>)>,
@@ -285,7 +323,7 @@ pub(super) fn sync_steam(
     let Some(cam) = cams.iter().next() else { return };
     let face = cam.compute_transform().rotation;
     let eye = cam.translation();
-    let now = time.elapsed_secs();
+    let now = clock.t;
     let dir = haze::wind_dir(w.clock.tick);
     let wind = w.weather.wind.clamp(0.05, 1.0);
     let along = Vec3::new(dir.x, 0.0, dir.y);
@@ -311,5 +349,34 @@ pub(super) fn sync_steam(
         tf.translation = pos;
         tf.rotation = face;
         tf.scale = Vec3::splat(size);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// [scene-clock] Paused, the weather stands still; faster game speeds
+    /// run it faster, never slower, within bounds.
+    #[test]
+    fn the_scene_clock_follows_the_game_speed() {
+        assert_eq!(SceneClock::rate_for(true, 16.0), 0.0);
+        assert_eq!(SceneClock::rate_for(false, 16.0), 1.0);
+        let rates: Vec<f32> = crate::sim::SPEEDS.iter().map(|(_, m)| SceneClock::rate_for(false, *m)).collect();
+        assert!(rates.windows(2).all(|r| r[1] >= r[0]), "{rates:?}");
+        assert!(rates.iter().all(|r| (0.25..=6.0).contains(r)), "{rates:?}");
+    }
+
+    /// [show-weather] Hidden weather is still the sim's weather.
+    #[test]
+    fn hiding_the_weather_hides_only_the_drawing() {
+        let mut w = World::new(nd_sim::WorldConfig::default());
+        w.landscape.params.climate = nd_sim::Climate::Temperate;
+        w.weather.cloud = 0.95;
+        let mut l = Lighting { show_weather: true, ..Lighting::default() };
+        assert!(precip_shown(&w, &l).is_some());
+        l.show_weather = false;
+        assert!(precip_shown(&w, &l).is_none());
+        assert!(precip_now(&w).is_some());
     }
 }

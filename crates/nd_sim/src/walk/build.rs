@@ -587,6 +587,8 @@ impl WalkGraph {
         // first point (an entrance) joins the lot loop, and benches hang
         // off the nearest path node so people can walk to them and sit.
         let loop_mids: HashMap<LotId, Vec<u32>> = loops.iter().map(|l| (l.lot, l.mids.clone())).collect();
+        // [K10] Each grounds' ways in, to join those of grounds beside it.
+        let mut gates_in: Vec<(LotId, u32)> = Vec::new();
         for (lid, lot) in lots.iter() {
             let Some(park) = &lot.park else { continue };
             let mut path_nodes: Vec<u32> = Vec::new();
@@ -613,6 +615,9 @@ impl WalkGraph {
                     if let (Some(e), Some(m)) = (entrance, nearest) {
                         g.link_kind(e, m, true, true);
                     }
+                    if let Some(e) = entrance.filter(|_| park.entrances.iter().any(|x| x.distance(first) < 0.3)) {
+                        gates_in.push((lid, e));
+                    }
                 }
             }
             for (pos, facing) in &park.benches {
@@ -621,6 +626,25 @@ impl WalkGraph {
                     g.link_kind(n, near, true, true);
                 }
                 g.benches.push((n, lid, *facing));
+            }
+        }
+        // [K10] Two grounds side by side (a zoo by a botanical garden, a
+        // park) whose walks both come out to the seam between them
+        // (`World::join_neighbouring_grounds`) are joined there.
+        for (i, &(la, a)) in gates_in.iter().enumerate() {
+            for &(lb, b) in &gates_in[i + 1..] {
+                if la == lb {
+                    continue;
+                }
+                let (pa, pb) = (g.nodes[a as usize].pos, g.nodes[b as usize].pos);
+                if pa.distance(pb) > SEAM_GATE_REACH {
+                    continue;
+                }
+                let mid = (pa + pb) * 0.5;
+                let on_seam = [la, lb].iter().all(|l| geom::distance_to_outline(mid, &lots[*l].polygon) < 3.0);
+                if on_seam && !g.adj[a as usize].iter().any(|e| e.to == b) {
+                    g.link_kind(a, b, true, true);
+                }
             }
         }
         for (k, b) in g.benches.iter().enumerate() {

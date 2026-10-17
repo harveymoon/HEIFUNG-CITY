@@ -909,3 +909,40 @@ fn hq_crown_reads_on_a_needle_tower() {
     // A slab's roof keeps its old crown.
     assert_eq!(super::brand::crown_logo_size(60.0, 10.0, 12.0), 7.0);
 }
+
+/// [K19] A public beach stays sand whoever owns it: a campus's "plaza"
+/// annex drew a lawn over the beach, its towel spots under the grass.
+#[test]
+fn a_beach_annexed_by_a_campus_is_still_a_beach() {
+    let rules = BuildingRules::default();
+    let mut lot = many_lots(LandUse::Park)[0].clone();
+    lot.shore.beach = true;
+    let extras = Extras { annex: Some(nd_sim::corp::Annex::Plaza), ..Extras::default() };
+    assert_eq!(choose_style(&lot, LandUse::Park, 1, Tier::Mid, 3, &rules, &extras), Style::Beach);
+    lot.shore.beach = false;
+    assert_eq!(choose_style(&lot, LandUse::Park, 1, Tier::Mid, 3, &rules, &extras), Style::Plaza);
+}
+
+/// [K39] A Capsule building goes up in its own shape: half way through,
+/// the site already shows the finished building's own painted shell (cut
+/// at the work's height), not a box of bare concrete.
+#[test]
+fn capsule_sites_rise_in_their_own_shape() {
+    let rules = BuildingRules::default();
+    let pal = Palette::default();
+    let lot = many_lots(LandUse::Residential)[0].clone();
+    let ex = |construction| Extras { look: Some(nd_sim::districts::Look::Capsule), construction, ..Extras::default() };
+    for style in [Style::DomeHouse, Style::CapsuleTower, Style::SaucerStack] {
+        let done = generate_styled_extras(&lot, LandUse::Residential, 12, Tier::Mid, 1.0, 21, style, &rules, &pal, &ex(None));
+        let site = generate_styled_extras(&lot, LandUse::Residential, 12, Tier::Mid, 1.0, 21, style, &rules, &pal, &ex(Some(0.5)));
+        let full = done.get(Surface::Matte).positions.iter().map(|p| p[1]).fold(0.0f32, f32::max);
+        // The shell's own vertices (not a concrete box): most of the site's
+        // painted vertices are the finished building's, and they stand part
+        // of the way up.
+        let finished: std::collections::HashSet<[u32; 3]> = done.get(Surface::Matte).positions.iter().map(|p| p.map(f32::to_bits)).collect();
+        let half = site.get(Surface::Matte).positions.iter().filter(|p| finished.contains(&p.map(f32::to_bits))).map(|p| p[1]).fold(0.0f32, f32::max);
+        assert!(half > full * 0.15 && half < full * 0.8, "{style:?}: the painted shell stands {half:.1} m of {full:.1} m half way");
+        let shared = site.get(Surface::Matte).positions.iter().filter(|p| finished.contains(&p.map(f32::to_bits))).count();
+        assert!(shared > 100, "{style:?}: only {shared} of the building's own painted vertices on the site");
+    }
+}

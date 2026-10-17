@@ -232,6 +232,9 @@ pub struct Card {
     /// Cars parked at its kerbs, and whether kerb parking is allowed.
     pub kerb_parked: u32,
     pub kerb_parking: bool,
+    /// [K11] Vehicles can drive on it (false: a footpath or a pedestrians-
+    /// only street, which has walkers and cyclists but no vehicle flow).
+    pub vehicles: bool,
 }
 
 /// The wear side of the card (pieces the city's crews look after).
@@ -341,6 +344,7 @@ impl Card {
             bus_stops,
             kerb_parked: w.vehicles.kerbs.get(&sid).map_or(0, |k| k.len() as u32),
             kerb_parking: s.is_street() && !s.is_motorway() && !s.tunnel && !w.vehicles.no_kerb.1.contains(&sid),
+            vehicles: w.carries_vehicles(sid),
         })
     }
 
