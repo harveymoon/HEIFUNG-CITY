@@ -218,21 +218,18 @@ const REROUTE_LANE_CHANGE_AFTER: f32 = 10.0;
 /// and back down five dead ends off one avenue (K52).
 const REPLAN_QUEUE_COST: f32 = 20.0;
 const TURNBACK_COST: f32 = 250.0;
+/// [r2-traffic] Metres a U-turn at a junction counts for in any route: it
+/// is slow and waits on the oncoming stream, so it is taken only when it
+/// saves a real detour (round the block is often as quick).
+const UTURN_COST: f32 = 60.0;
+/// [r2-traffic] Metres each vehicle already on the lane a U-turn turns
+/// back into adds to it.
+const UTURN_QUEUE_COST: f32 = 30.0;
 /// [r2-traffic] Traffic seconds a car remembers a way it gave up on (a
 /// full exit, a turn it could not get into), so the next re-plan does not
 /// send it back the same way; at most `AVOID_MAX` remembered.
 const AVOID_SECONDS: f32 = 900.0;
 const AVOID_MAX: usize = 6;
-/// [r2-traffic] A missed turn or a full exit in a jam is waited out unless
-/// the way round is at most this many metres (or this share of the drive
-/// left) longer: standing still in a queue costs little; a long loop costs
-/// a lot and often ends in the same queue.
-const JAM_DETOUR_M: f32 = 300.0;
-const JAM_DETOUR_SHARE: f32 = 0.35;
-/// [r2-traffic] Below this speed (m/s) a car missing its turn is in a jam.
-const JAM_SPEED: f32 = 4.0;
-/// [r2-traffic] Vehicles crawling on a lane that make it a queue.
-const JAM_QUEUE: usize = 3;
 /// [pt-transit] Seconds a bus stands blocked before it leaves its line to
 /// go another way (round a crash it goes at once).
 const BUS_DETOUR_AFTER: f32 = 240.0;

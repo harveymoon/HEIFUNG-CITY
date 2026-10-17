@@ -164,6 +164,12 @@ impl LaneNetwork {
             let ahead = here.next.iter().filter(|&&n| self.lanes[n as usize].permitted).map(|&n| {
                 let l = &self.lanes[n as usize];
                 let back = if d.turnback_cost > 0.0 && (l.uturn || l.turnaround) { d.turnback_cost } else { 0.0 };
+                // [r2-traffic] A U-turn is slow and waits on the oncoming
+                // traffic: worth it only when it saves a real detour.
+                let back = back + if l.uturn { UTURN_COST } else { 0.0 };
+                // [r2-traffic] And a U-turn into a queue is worse than none:
+                // every vehicle on the lane it turns back into counts more.
+                let back = back + if l.uturn { l.next.first().map_or(0.0, |&e| self.lanes[e as usize].cars.len() as f32 * UTURN_QUEUE_COST) } else { 0.0 };
                 (n, l.length + self.rings.penalty(n) + back + if tolls { self.toll_penalty(n) } else { 0.0 })
             });
             // Room on this piece before the solid line of the junction
@@ -473,11 +479,12 @@ impl Traffic {
     /// another way from where they stand.
     ///
     /// [r2-traffic] The new way never goes back into what the car gave up
-    /// on in the last `AVOID_SECONDS` (`Car::avoided`), weighs queues and
-    /// turning back (`route_replan`), and is taken only when it is a
-    /// modest detour: a much longer one is waited out in the queue
-    /// (`JAM_DETOUR_M`; a full exit `REROUTE_DETOUR_M`). A crash ahead is
-    /// always gone round.
+    /// on in the last `AVOID_SECONDS` (`Car::avoided`) and weighs queues and
+    /// turning back (`route_replan`). A car held at the line before a U-turn
+    /// (its way back full, or no gap in the oncoming stream) gives the
+    /// U-turn up. A tow truck going to a crash never goes round it. (Waiting
+    /// out a missed turn in a jam instead of re-planning was tried: on
+    /// Harvey's city it made drivers angrier and trips longer.)
     pub(super) fn reroute_stalled(&mut self, seconds: f32) {
         let ids: Vec<CarId> = self.cars.keys().collect();
         for &id in &ids {
@@ -511,18 +518,22 @@ impl Traffic {
             // `BUS_DETOUR_AFTER`, or round a crash.
             let bus_waits = c.bus.is_some() && c.stalled < BUS_DETOUR_AFTER;
             let mut full_exit = false;
-            let mut wreck = false;
             let (avoid_lane, avoid_step) = if lane.is_beside(next) {
                 if bus_waits {
                     continue;
                 }
                 (None, Some((here, next)))
+            } else if nl.uturn && matches!(c.wait, Wait::ExitFull | Wait::Yield) {
+                // [r2-traffic] Held at the line before a U-turn (its way
+                // back full, or no gap in the oncoming stream): it gives
+                // the U-turn up rather than hold its lane at the lights;
+                // turning back into a queue is what jammed Harvey's avenue.
+                (Some(next), None)
             } else if wreck_ahead && matches!(c.errand, crate::vehicle::Errand::Recover(_)) {
                 // [r2-traffic] A tow truck going to a crash does not go
                 // round it: it is where it is going (K21).
                 continue;
             } else if wreck_ahead && c.stalled >= REROUTE_AFTER && nl.is_connector() {
-                wreck = true;
                 (Some(next), None)
             } else if c.stalled < REROUTE_AFTER || bus_waits {
                 continue;
@@ -547,9 +558,9 @@ impl Traffic {
             // [rage] Round a full exit only by a modest detour; otherwise it
             // waits its turn in the queue (the exit clears). [r2-traffic]
             // A turn it cannot get into likewise.
-            if !wreck {
+            if full_exit {
                 let left = self.net.route_length(&c.route[c.idx..], s);
-                let cap = if full_exit { REROUTE_DETOUR_M.max(left * REROUTE_DETOUR_SHARE) } else { JAM_DETOUR_M.max(left * JAM_DETOUR_SHARE) };
+                let cap = REROUTE_DETOUR_M.max(left * REROUTE_DETOUR_SHARE);
                 if found.as_ref().is_some_and(|r| self.net.route_length(&r.0, s) > left + cap) {
                     found = None;
                 }

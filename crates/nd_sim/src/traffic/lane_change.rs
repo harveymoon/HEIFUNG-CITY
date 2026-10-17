@@ -142,20 +142,12 @@ impl Traffic {
                     let here = c.route[c.idx];
                     let (goal, s_end, s) = (*c.route.last().unwrap(), c.s_end, c.s);
                     // [r2-traffic] Not back into ways it gave up on, queues
-                    // and turning back weighed; and crawling in a jam it
-                    // waits for its gap rather than take a long loop round
-                    // (out and back down a dead end, into the same jam: K52).
+                    // and turning back weighed (out and back down a dead
+                    // end into the same jam: K52).
                     let avoid: Vec<LaneId> = c.avoided.iter().map(|&(l, _)| l).filter(|&l| l != goal).collect();
                     let mut found = self.net.route_replan(here, s, goal, s_end, &avoid, Some((here, target)));
                     if found.is_none() && !avoid.is_empty() {
                         found = self.net.route_replan(here, s, goal, s_end, &[], Some((here, target)));
-                    }
-                    let queued = |l: LaneId| self.net.lanes[l as usize].cars.iter().filter(|&&o| self.cars[o].v < JAM_SPEED).count() >= JAM_QUEUE;
-                    if c.v < JAM_SPEED && (queued(here) || queued(target)) {
-                        let left = self.net.route_length(&c.route[c.idx..], s);
-                        if found.as_ref().is_some_and(|r| self.net.route_length(&r.0, s) > left + JAM_DETOUR_M.max(left * JAM_DETOUR_SHARE)) {
-                            found = None;
-                        }
                     }
                     match found {
                         Some((route, _, _)) => {

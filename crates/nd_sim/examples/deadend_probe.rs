@@ -53,6 +53,7 @@ fn main() {
     let mut w = World::from_ron(&std::fs::read_to_string(&src).unwrap()).expect("load");
     eprintln!("loaded in {:.1}s", t0.elapsed().as_secs_f32());
     let rage0 = w.driving.rage_u_turns_total;
+    let crashes0 = w.driving.crashes_total;
     let (jobs0, towed0) = (w.enforcement.jobs.len(), w.enforcement.stats.tows_total);
     for (b, bld) in w.buildings.iter().filter(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind == nd_sim::BusinessKind::TowYard)) {
         println!("tow yard {:?} {} workers {} jobs {} trucks {} operating {} closed {:?}", b, bld.name, bld.workers.len(), bld.jobs, w.tow_trucks(b), bld.operating(), bld.business.as_ref().map(|z| z.closed));
@@ -135,6 +136,16 @@ fn main() {
             blockers(&w);
         }
         if (i + 1) % 60 == 0 {
+            // U-turners standing at the head of their lane, and why.
+            let mut why: std::collections::BTreeMap<&str, u32> = Default::default();
+            for (id, c) in w.traffic.cars.iter() {
+                if c.v < 0.5 && c.stalled > 60.0 && c.route.get(c.idx + 1).is_some_and(|&n| net.lanes[n as usize].uturn) {
+                    *why.entry(w.traffic.stop_reason(id).key()).or_default() += 1;
+                }
+            }
+            if !why.is_empty() {
+                eprintln!("   u-turners standing: {why:?}");
+            }
             eprintln!("+{} day {} {:02}:{:02} vehicles {} dead-end turns {dead_end_total} junction U-turns {uturn_total}", i + 1, w.clock.day(), w.clock.hour(), w.clock.minute_of_day() % 60, w.traffic.cars.len());
         }
     }
@@ -164,7 +175,8 @@ fn main() {
     }
     let circling_n = circling.len();
     println!(
-        "SUMMARY ticks {ticks} dead_end_turnarounds {dead_end_total} junction_uturns {uturn_total} rage_uturns {} trips_done {} mean_trip_min {mean_min:.1} mean_expected_min {mean_exp:.1} ratio_p50 {:.2} p90 {:.2} p99 {:.2} trips_with_2plus_dead_ends {looping} circling_cars {circling_n} still_driving {} of_them_over_3x {over} wall {:.0}s",
+        "SUMMARY crashes {} ticks {ticks} dead_end_turnarounds {dead_end_total} junction_uturns {uturn_total} rage_uturns {} trips_done {} mean_trip_min {mean_min:.1} mean_expected_min {mean_exp:.1} ratio_p50 {:.2} p90 {:.2} p99 {:.2} trips_with_2plus_dead_ends {looping} circling_cars {circling_n} still_driving {} of_them_over_3x {over} wall {:.0}s",
+        w.driving.crashes_total - crashes0,
         w.driving.rage_u_turns_total - rage0,
         ended.len(),
         pct(0.5),

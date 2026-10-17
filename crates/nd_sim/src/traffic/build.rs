@@ -292,14 +292,17 @@ impl LaneNetwork {
                 }
                 // [r2-traffic] A U-turn from the leftmost lane of a wide
                 // two-way street (2+ lanes each way) at a real junction,
-                // swinging wide into the kerb lane going back. Driven as a
+                // into the inner lane going back (into the kerb lane, with
+                // its parking and deliveries, the turners stood at the line
+                // waiting for room and held their lane: Harvey's avenue at
+                // (320, -400) locked up). Driven as a
                 // left turn (its phase, its arrow, giving way to oncoming
                 // traffic); permitted only at a signalled junction from a
                 // lane with a left arrow (`refresh_uturns`). Drivers used
                 // to go out and back down the nearest dead end instead (K22,
                 // K49, K52).
                 if i == 0 && approaches.len() >= 3 && uturn_street(roads, inc_seg) && approaches.iter().all(|&s| !roads.segment(s).is_highway() && !roads.segment(s).ring) {
-                    let back = outgoing.iter().filter(|&&(_, s)| s == inc_seg).map(|&(l, _)| l).max_by_key(|&l| lane_index(&self.lanes[l as usize]));
+                    let back = outgoing.iter().filter(|&&(_, s)| s == inc_seg).map(|&(l, _)| l).min_by_key(|&l| lane_index(&self.lanes[l as usize]));
                     if let Some(out) = back {
                         let id = self.push_connector(inc, out, nid, approach, radius, approaches.len());
                         let c = &mut self.lanes[id as usize];

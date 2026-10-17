@@ -39,7 +39,7 @@ fn a_signalled_junction_of_wide_streets_has_u_turns_from_the_left_lane() {
         let LaneKind::Road { segment: s_in, .. } = t.net.lanes[from as usize].kind else { panic!() };
         let LaneKind::Road { segment: s_out, forward, .. } = t.net.lanes[c.next[0] as usize].kind else { panic!() };
         assert_eq!(s_in, s_out, "back along the same street");
-        assert!(t.net.lanes[c.next[0] as usize].right.is_none(), "swinging wide into the kerb lane ({forward})");
+        assert!(t.net.lanes[c.next[0] as usize].left.is_none(), "into the inner lane going back ({forward})");
         assert!(c.points.iter().all(|p| p.length() < 14.0), "inside the junction");
     }
     // The lane arrows are what the junction offers without them.
@@ -101,4 +101,30 @@ fn a_replan_weighs_turning_back_and_remembers_what_it_gave_up() {
     }
     assert_eq!(c.avoided.len(), AVOID_MAX, "a bounded memory");
     assert_eq!(c.avoided.last().unwrap().0, 9);
+}
+
+#[test]
+fn a_car_held_at_the_line_before_its_u_turn_gives_it_up() {
+    // Turning back into a queue held the turner's lane at the lights (the
+    // avenue at (320, -400) in Harvey's city locked up): held there, it
+    // goes another way.
+    let roads = avenues();
+    let mut t = Traffic::default();
+    t.rebuild(&roads);
+    let (from, _, to, s1) = back_west(&t, &roads);
+    let len = t.net.lanes[from as usize].length;
+    let (route, _, _) = t.net.route_lanes(from, len - 2.0, to, s1).expect("route");
+    let u = route[1];
+    assert!(t.net.lanes[u as usize].uturn, "the U-turn is next: {route:?}");
+    let car = t.spawn_car(CitizenId::default(), None, route, len - 2.0, s1, 0);
+    if t.cars[car].entering {
+        t.cars[car].entering = false;
+        t.insert_sorted(from, car);
+    }
+    t.cars[car].stalled = REROUTE_AFTER + 5.0;
+    t.cars[car].wait = Wait::ExitFull;
+    t.reroute_stalled(1.0);
+    let c = &t.cars[car];
+    assert!(!c.route.contains(&u), "it gave the U-turn up: {:?}", c.route);
+    assert!(c.avoided.iter().any(|&(l, _)| l == u), "and remembers it");
 }
