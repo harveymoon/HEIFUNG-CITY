@@ -5,6 +5,17 @@
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
+/// [K36] A walker whose way runs this far under the ground there (an
+/// open cut's floor is its ground) is in a tunnel: drawn only in the Underground view.
+const UNDERGROUND_WALK: f32 = -1.5;
+
+/// The ground at `p`, or the water's surface over it (an open cut's
+/// floor is its ground; a bridge deck above does not count).
+fn under_floor(w: &nd_sim::World, p: SVec2) -> f32 {
+    let g = w.ground_height(p);
+    if w.landscape.is_water(p) { g.max(nd_sim::landscape::WATER_LEVEL) } else { g }
+}
+
 pub(super) fn sync_citizens(
     mut commands: Commands,
     sim: Res<Sim>,
@@ -82,7 +93,9 @@ pub(super) fn sync_citizens(
         let Ok((mut tf, mut vis, _, mut mesh, _, way, platform)) = q.get_mut(e) else { continue };
         // [walk-networks] Down in a pedestrian tunnel too: shown in the
         // underground view with the platforms' people.
-        let below = c.on_platform() || w.citizen_in_tunnel(c);
+        // [K36] Or anyone whose way runs below ground (a street tunnel
+        // under a river), however their leg was found.
+        let below = c.on_platform() || w.citizen_in_tunnel(c) || w.walker_way_height(c, c.pos).is_some_and(|z| z < under_floor(w, c.pos) + UNDERGROUND_WALK);
         if platform != below {
             if platform {
                 commands.entity(e).try_remove::<PlatformTag>();

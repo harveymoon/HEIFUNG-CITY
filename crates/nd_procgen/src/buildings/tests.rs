@@ -919,6 +919,12 @@ fn a_beach_annexed_by_a_campus_is_still_a_beach() {
     lot.shore.beach = true;
     let extras = Extras { annex: Some(nd_sim::corp::Annex::Plaza), ..Extras::default() };
     assert_eq!(choose_style(&lot, LandUse::Park, 1, Tier::Mid, 3, &rules, &extras), Style::Beach);
+    // And no campus lawn laid over the sand.
+    let pal = Palette::default();
+    let mark = nd_sim::corp::BrandMark { role: nd_sim::corp::BrandRole::Annex(nd_sim::corp::Annex::Plaza), ..super::sweep_tests::hq() };
+    let branded = generate_styled_extras(&lot, LandUse::Park, 1, Tier::Mid, 1.0, 3, Style::Beach, &rules, &pal, &Extras { brand: Some(mark), ..extras });
+    let plain = generate_styled_extras(&lot, LandUse::Park, 1, Tier::Mid, 1.0, 3, Style::Beach, &rules, &pal, &extras);
+    assert_eq!(branded.get(Surface::Matte).positions.len(), plain.get(Surface::Matte).positions.len(), "no lawn quad on the beach");
     lot.shore.beach = false;
     assert_eq!(choose_style(&lot, LandUse::Park, 1, Tier::Mid, 3, &rules, &extras), Style::Plaza);
 }

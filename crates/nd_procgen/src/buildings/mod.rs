@@ -199,7 +199,9 @@ fn finished(ctx: &Ctx, style: Style, rng: &mut nd_sim::SimRng, extras: &Extras) 
         air::rooftop_deck(&mut g, ctx);
     }
     // [megacorp] The owner's brand: rooftop signs, banners, the HQ crown.
-    if let Some(m) = &extras.brand {
+    // [K19] Not on a public beach: a campus that annexed one as its
+    // "plaza" laid a lawn quad over the sand, the towels under it.
+    if let Some(m) = extras.brand.as_ref().filter(|_| style != Style::Beach) {
         brand::decorate(&mut g, ctx, m);
     }
     // [capsule] The dome district is spotless whatever its tier or age.

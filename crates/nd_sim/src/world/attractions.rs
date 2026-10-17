@@ -93,7 +93,7 @@ impl World {
             let layout = at::plan_grounds(*k, &self.lots[*lot], pier.as_ref());
             self.lots[*lot].park = layout;
         }
-        self.join_neighbouring_grounds(&sites.iter().map(|s| s.0).collect::<Vec<_>>());
+        self.join_neighbouring_grounds();
     }
 
     /// [K10] Grounds side by side are walked as one: where an attraction's
@@ -102,7 +102,9 @@ impl World {
     /// opens there (`ParkLayout::entrances`), the walk graph joining the
     /// two ends (`WalkGraph` build). Not a beach (it opens only onto a
     /// park by its own rules) nor the pier.
-    fn join_neighbouring_grounds(&mut self, sites: &[LotId]) {
+    pub(in crate::world) fn join_neighbouring_grounds(&mut self) {
+        let sites: Vec<LotId> = self.buildings.iter().filter(|(id, b)| b.service.is_some_and(|s| s.kind.has_grounds() && s.kind != ServiceKind::Pier) && self.lots.get(b.lot).is_some_and(|l| l.building == Some(*id))).map(|(_, b)| b.lot).collect();
+        let sites = &sites[..];
         let walked = |l: &crate::zoning::Lot| l.park.as_ref().is_some_and(|p| !p.paths.is_empty()) && !l.shore.beach;
         let mut others: Vec<LotId> = self.lots.iter().filter(|(_, l)| l.land_use == LandUse::Park && walked(l)).map(|(id, _)| id).collect();
         others.extend(sites.iter().copied().filter(|id| self.lots.get(*id).is_some_and(walked)));
