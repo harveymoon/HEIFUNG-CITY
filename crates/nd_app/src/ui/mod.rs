@@ -158,7 +158,7 @@ impl Plugin for UiPlugin {
             .add_systems(PreUpdate, install_fonts.after(EguiPreUpdateSet::InitContexts).before(EguiPreUpdateSet::BeginPass))
             .add_systems(PreUpdate, read_input_flags.after(EguiPreUpdateSet::BeginPass))
             .add_systems(Update, saves::autosave.in_set(SimSet::Sync))
-            .add_systems(EguiPrimaryContextPass, (side_panel, pins::map_pins.after(side_panel), social::bubbles.after(side_panel), junction::hover_button.after(side_panel)));
+            .add_systems(EguiPrimaryContextPass, (side_panel, pins::map_pins.after(side_panel), social::bubbles.after(side_panel), junction::hover_button.after(side_panel), junction::on_map.after(side_panel), junction::hold_time.after(side_panel)));
     }
 }
 
@@ -286,7 +286,7 @@ pub(crate) fn side_panel(
     newgame::window(ctx, &mut p, content);
     history::window(ctx, &mut p, content);
     title::screen(ctx, &mut p);
-    // [tools] The Intersection editor (a modal).
+    // [tools] The Intersection editor's panel (its arrows are on the map).
     junction::window(ctx, &mut p);
     // [fix/roads-tools] A plan not built yet: the bar at the top (G2).
     if !city_data::is_open(ctx) {

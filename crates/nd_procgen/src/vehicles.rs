@@ -808,7 +808,8 @@ fn bike(b: &mut B, col: [f32; 3]) {
     let (fx, rx) = (len * 0.5, -len * 0.5);
     let r = if scooter { 0.22 } else { 0.32 };
     let wheel = |b: &mut B, x: f32| {
-        b.body.pipe(Vec2::new(x, 0.0), Vec2::Y, 0.12, r, r, 8, c4(TYRE));
+        // 14 sides: an 8-sided wheel reads as a nut close up. [round-wheels]
+        b.body.pipe(Vec2::new(x, 0.0), Vec2::Y, 0.12, r, r, 14, c4(TYRE));
     };
     wheel(b, fx - r);
     wheel(b, rx + r);

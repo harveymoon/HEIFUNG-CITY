@@ -86,14 +86,16 @@ fn half_width(kind: RoadKind, f: u8, b: u8) -> f32 {
 /// the deck red over a stretch with no room for one, the buildings a
 /// column would buy out outlined in orange with a marker where it stands.
 #[allow(clippy::too_many_arguments)]
-fn hologram(w: &World, pal: &nd_procgen::Palette, pts: &[SVec2], levels: &[f32], f: u8, b: u8, kind: RoadKind, car_only: Option<bool>, alpha: f32) -> (MeshData, MeshData, nd_sim::pillars::PillarPlan) {
+fn hologram(w: &World, pal: &nd_procgen::Palette, pts: &[SVec2], levels: &[f32], f: u8, b: u8, kind: RoadKind, car_only: Option<bool>, alpha: f32, replaced: &[Vec<SVec2>]) -> (MeshData, MeshData, nd_sim::pillars::PillarPlan) {
     // [interchange] A ramp as it will be built (`roads::ease_ramp_way`): the
     // hologram used to show the line as drawn while the build ran it
     // alongside the highway first.
     let (pts, levels) = nd_sim::roads::ease_ramp_way(pts, levels, f, b, kind, &w.roads);
     let (pts, levels) = (&pts[..], &levels[..]);
     let steep = w.steep_legs(pts, levels, kind);
-    let plan = w.road_pillar_plan(pts, levels, f, b, kind);
+    // [r1-roads] (K13) A road changed in the Edit tool: the road as it was
+    // is not in the way of its own new columns.
+    let plan = w.road_pillar_plan_replacing(pts, levels, f, b, kind, replaced);
     let raised = nd_sim::pillars::is_raised(levels);
     let pv = road_preview_with(w, pts, levels, f, b, kind, car_only, pal, &steep, pal.preview, WARN_TINT, alpha, raised.then_some(&plan));
     let mut red = MeshData::default();
@@ -308,14 +310,14 @@ pub fn sync_draw_hologram(
                 for g in &plan.gestures {
                     if let nd_sim::Gesture::Road { points, lanes_fwd, lanes_bwd, kind, car_only, .. } = g {
                         // [w1-roads] At their planned heights (a street-over layout climbs).
-                        let (m, r, _) = hologram(w, &assets.palette, points, &(0..points.len()).map(|i| g.level(i)).collect::<Vec<f32>>(), *lanes_fwd, *lanes_bwd, *kind, *car_only, 0.55);
+                        let (m, r, _) = hologram(w, &assets.palette, points, &(0..points.len()).map(|i| g.level(i)).collect::<Vec<f32>>(), *lanes_fwd, *lanes_bwd, *kind, *car_only, 0.55, &[]);
                         mesh.append(&m);
                         red.append(&r);
                     }
                 }
             }
             Err(r) => {
-                let (m, _, _) = hologram(w, &assets.palette, &[a, z], &[0.0, 0.0], f.max(1), b.max(1), kind, Some(false), 0.35);
+                let (m, _, _) = hologram(w, &assets.palette, &[a, z], &[0.0, 0.0], f.max(1), b.max(1), kind, Some(false), 0.35, &[]);
                 mesh.append(&m);
                 let line = nd_sim::pillars::Gap { a: r.at, b: r.at, level: 0.0, end: true, over_road: false };
                 gap_marks(w, &line, 6.0, &mut red);
@@ -337,7 +339,7 @@ pub fn sync_draw_hologram(
         tools.grade_warnings.retain(|m| !m.starts_with("turns "));
     }
     let (pts, levels) = built(&ctrl, &ctrl_levels, curved);
-    let (mesh, red, plan) = hologram(w, &assets.palette, &pts, &levels, f, b, kind, tools.car_only_flag(), 0.55);
+    let (mesh, red, plan) = hologram(w, &assets.palette, &pts, &levels, f, b, kind, tools.car_only_flag(), 0.55, &[]);
     // [tools] The columns, for the sub-pane and the remote API.
     tools.pillars = crate::tools::PillarNote::of(w, &plan);
     if !mesh.is_empty() {
@@ -376,9 +378,10 @@ pub fn sync_plan_holograms(
     let mut all = MeshData::default();
     let mut red = MeshData::default();
     let mut add = |pv: &nd_sim::PlanPreview, alpha: f32, red_too: bool| {
+        let replaced: Vec<Vec<SVec2>> = pv.removed_roads.iter().map(|(_, pts, ..)| pts.clone()).collect();
         for (i, (gid, pts, f, b, kind)) in pv.planned_roads.iter().enumerate() {
             let levels = pv.planned_levels.get(i).cloned().unwrap_or_else(|| vec![0.0; pts.len()]);
-            let (m, r, _) = hologram(w, &assets.palette, pts, &levels, *f, *b, *kind, w.effective_plan().car_only(*gid), alpha);
+            let (m, r, _) = hologram(w, &assets.palette, pts, &levels, *f, *b, *kind, w.effective_plan().car_only(*gid), alpha, &replaced);
             all.append(&m);
             if red_too {
                 red.append(&r);
@@ -486,8 +489,11 @@ pub fn apply_depth(
     };
     for (e, mut v, marked, citizen, platform) in &mut surface {
         // Citizens: `sync_citizens` sets every one, every frame. ([pt-transit]
-        // Those on a metro platform are underground: shown there.)
-        apply(e, &mut v, marked, !under || platform, !citizen);
+        // Those on a metro platform are underground: shown there.) [K36]
+        // And only there: a walker down a road tunnel under a river stood at
+        // the bore's depth, seen through the water as a figure walking on it.
+        let on = if citizen && platform { under } else { !under || platform };
+        apply(e, &mut v, marked, on, !citizen);
     }
     for mut v in &mut tunnels {
         let want = if under { Visibility::Inherited } else { Visibility::Hidden };

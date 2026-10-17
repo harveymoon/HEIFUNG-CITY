@@ -63,6 +63,10 @@ pub struct Parcel {
     pub path_frontage: bool,
     /// Has a street frontage, which shops, industry and the rest need.
     pub street_frontage: bool,
+    /// [r1-roads] (K9) Fronts a road, but its shape (a sharp inner corner,
+    /// a sliver) is no lot: why it is refused, in words, is its shape, not
+    /// "no street".
+    pub awkward: bool,
     /// Too steep to level, or standing in the water.
     pub rough: bool,
     /// [island-lots] Why the ground is rough, in plain words (a cliff,
@@ -101,6 +105,9 @@ impl Parcel {
         if !self.path_frontage {
             if lu.takes_backland() {
                 return None;
+            }
+            if self.awkward {
+                return Some("an awkward shape to build on (a sharp inner corner or a sliver), though it fronts a road");
             }
             return Some("landlocked: no street or path to front");
         }
@@ -556,6 +563,7 @@ pub(super) fn parcel_of(poly: Vec<Vec2>, roads: &RoadNetwork) -> Option<Parcel> 
         front_edge: home.front_edge,
         path_frontage: !home.landlocked,
         street_frontage: street,
+        awkward: home.landlocked && fronts_a_way(&poly, roads),
         rough: false,
         rough_why: None,
         hillside: false,

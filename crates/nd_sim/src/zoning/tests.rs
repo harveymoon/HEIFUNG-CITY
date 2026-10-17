@@ -412,3 +412,23 @@ fn a_fresh_cut_has_no_parcel_past_the_cap() {
         assert!(p.area <= MAX_PARCEL_AREA + 1.0, "parcel at {} is {:.0} m²", p.center, p.area);
     }
 }
+
+/// [r1-roads] (K9) A U of land wrapped round a lot kept inside it (three
+/// streets round it, Harvey's flag at (606, -663)) is split at its inner
+/// corners into pieces with none: one parcel of that shape had a sharp
+/// inner corner and was refused as having no street.
+#[test]
+fn a_u_shaped_rest_is_split_at_its_inner_corners() {
+    let v = |x: f32, y: f32| Vec2::new(x, y);
+    // A 60 x 50 block with a 30 x 25 notch out of its north side.
+    let u = vec![v(0.0, 0.0), v(60.0, 0.0), v(60.0, 50.0), v(45.0, 50.0), v(45.0, 25.0), v(15.0, 25.0), v(15.0, 50.0), v(0.0, 50.0)];
+    assert!(reflex_vertex(&ccw(&u), 0.6).is_some(), "the U has sharp inner corners");
+    let mut out = Vec::new();
+    super::recut::split_at_corners(u.clone(), 0, &mut out);
+    assert!(out.len() >= 2, "{out:?}");
+    let total: f32 = out.iter().map(|p| polygon_area(p).abs()).sum();
+    assert!((total - polygon_area(&u).abs()).abs() < 5.0, "no land lost: {total}");
+    for p in &out {
+        assert!(reflex_vertex(&ccw(p), 0.6).is_none(), "a piece with a sharp inner corner: {p:?}");
+    }
+}

@@ -82,6 +82,13 @@ impl World {
 
     /// What is on the piece right now: vehicles by kind, walkers and riders
     /// on it and its pavements, speeds and the queue.
+    /// [K11] Whether vehicles can drive on `sid` at all: it has a car lane
+    /// (a footpath or a pedestrians-only street has none, and no vehicle
+    /// flow to count).
+    pub fn carries_vehicles(&self, sid: SegmentId) -> bool {
+        self.traffic.net.segment_lanes.get(&sid).is_some_and(|ls| ls.iter().any(|&l| matches!(self.traffic.net.lanes[l as usize].kind, LaneKind::Road { .. })))
+    }
+
     pub fn road_now(&self, sid: SegmentId) -> RoadNow {
         let mut out = RoadNow::default();
         let Some(seg) = self.roads.try_segment(sid).filter(|s| s.alive) else { return out };
@@ -308,5 +315,18 @@ mod tests {
             let shared = [s.a, s.b].into_iter().find(|n| *n == t.a || *n == t.b).expect("consecutive pieces meet");
             assert_eq!(w.roads.neighbors(shared).count(), 2);
         }
+    }
+
+    /// [K11] A footpath carries no vehicles (its card shows people, not a
+    /// vehicle flow of zeros); a street does.
+    #[test]
+    fn a_footpath_carries_no_vehicles() {
+        let mut w = town();
+        w.add_path(&[Vec2::new(-100.0, -60.0), Vec2::new(-100.0, -10.0)]);
+        w.implement();
+        let street = street_piece(&w);
+        assert!(w.carries_vehicles(street));
+        let path = (0..w.roads.segments.len()).map(|i| SegmentId(i as u32)).find(|&s| w.roads.segment(s).alive && w.roads.segment(s).kind == crate::roads::RoadKind::Path).expect("the path");
+        assert!(!w.carries_vehicles(path));
     }
 }

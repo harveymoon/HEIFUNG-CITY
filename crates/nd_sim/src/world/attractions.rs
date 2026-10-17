@@ -15,6 +15,16 @@ impl World {
         self.buildings.iter().filter(|(_, b)| b.service.is_some_and(|s| s.kind == kind)).map(|(id, _)| id).min()
     }
 
+    /// [K16] The landmark already standing for a one-per-city attraction
+    /// `what` (the Build window greys its button), or None: not a landmark,
+    /// or none built yet.
+    pub fn landmark_taken(&self, what: crate::services::Placeable) -> Option<BuildingId> {
+        match what {
+            crate::services::Placeable::Service(k, _) if k.is_landmark() => self.landmark(k),
+            _ => None,
+        }
+    }
+
     /// The middle of the town's ground: the median ground height of every
     /// lot (as `splat_setting` measures the hills), or None on a flat map
     /// or a town of a handful of lots.
@@ -79,9 +89,53 @@ impl World {
                 (k.has_grounds() && self.lots.get(b.lot).is_some_and(|l| l.building == Some(id))).then(|| (b.lot, k, self.attractions.piers.get(&id).cloned()))
             })
             .collect();
-        for (lot, k, pier) in sites {
-            let layout = at::plan_grounds(k, &self.lots[lot], pier.as_ref());
-            self.lots[lot].park = layout;
+        for (lot, k, pier) in &sites {
+            let layout = at::plan_grounds(*k, &self.lots[*lot], pier.as_ref());
+            self.lots[*lot].park = layout;
+        }
+        self.join_neighbouring_grounds();
+    }
+
+    /// [K10] Grounds side by side are walked as one: where an attraction's
+    /// grounds (a zoo, a botanical garden, the grand park) meet another's
+    /// or a park's, each side's walks run out to the seam and the fence
+    /// opens there (`ParkLayout::entrances`), the walk graph joining the
+    /// two ends (`WalkGraph` build). Not a beach (it opens only onto a
+    /// park by its own rules) nor the pier.
+    pub(in crate::world) fn join_neighbouring_grounds(&mut self) {
+        let sites: Vec<LotId> = self.buildings.iter().filter(|(id, b)| b.service.is_some_and(|s| s.kind.has_grounds() && s.kind != ServiceKind::Pier) && self.lots.get(b.lot).is_some_and(|l| l.building == Some(*id))).map(|(_, b)| b.lot).collect();
+        let sites = &sites[..];
+        let walked = |l: &crate::zoning::Lot| l.park.as_ref().is_some_and(|p| !p.paths.is_empty()) && !l.shore.beach;
+        let mut others: Vec<LotId> = self.lots.iter().filter(|(_, l)| l.land_use == LandUse::Park && walked(l)).map(|(id, _)| id).collect();
+        others.extend(sites.iter().copied().filter(|id| self.lots.get(*id).is_some_and(walked)));
+        others.sort();
+        others.dedup();
+        let mut joins: Vec<(LotId, Vec2)> = Vec::new();
+        for &a in sites {
+            let Some(la) = self.lots.get(a).filter(|l| walked(l)) else { continue };
+            for &b in &others {
+                if b == a || (sites.contains(&b) && b < a) {
+                    continue;
+                }
+                let Some(lb) = self.lots.get(b) else { continue };
+                if let Some(m) = grounds_seam(&la.polygon, &lb.polygon) {
+                    joins.push((a, m));
+                    joins.push((b, m));
+                }
+            }
+        }
+        for (id, m) in joins {
+            let Some(l) = self.lots.get_mut(id) else { continue };
+            let poly = l.polygon.clone();
+            let centre = l.center;
+            let Some(layout) = l.park.as_mut() else { continue };
+            let end = crate::park::pull_inside(&poly, m, centre);
+            let Some(onto) = layout.paths.iter().flatten().copied().min_by(|p, q| p.distance(end).total_cmp(&q.distance(end))) else { continue };
+            if onto.distance(end) < 0.5 || layout.entrances.iter().any(|e| e.distance(end) < 1.0) {
+                continue;
+            }
+            layout.paths.push(vec![end, onto]);
+            layout.entrances.push(end);
         }
     }
 
@@ -169,3 +223,36 @@ impl World {
         }
     }
 }
+
+/// [K10] Where two grounds meet: the middle of the longest stretch (six
+/// metres or more) along which their outlines run side by side, at most
+/// [`GROUNDS_SEAM_GAP`] apart (two sites placed beside each other leave a
+/// sliver between them).
+pub(crate) fn grounds_seam(a: &[Vec2], b: &[Vec2]) -> Option<Vec2> {
+    let mut best: Option<(f32, Vec2)> = None;
+    for i in 0..a.len() {
+        let (p, q) = (a[i], a[(i + 1) % a.len()]);
+        let len = p.distance(q);
+        if len < 1e-3 {
+            continue;
+        }
+        let dir = (q - p) / len;
+        for j in 0..b.len() {
+            let (r, s) = (b[j], b[(j + 1) % b.len()]);
+            let off = |x: Vec2| (x - p).perp_dot(dir).abs();
+            if off(r) > GROUNDS_SEAM_GAP || off(s) > GROUNDS_SEAM_GAP {
+                continue;
+            }
+            let (tr, ts) = ((r - p).dot(dir), (s - p).dot(dir));
+            let (lo, hi) = (tr.min(ts).max(0.0), tr.max(ts).min(len));
+            if hi - lo >= 6.0 && best.is_none_or(|(l, _)| hi - lo > l) {
+                best = Some((hi - lo, p + dir * ((lo + hi) * 0.5)));
+            }
+        }
+    }
+    best.map(|(_, m)| m)
+}
+
+/// [K10] Two grounds whose edges run this close count as side by side.
+pub(crate) const GROUNDS_SEAM_GAP: f32 = 2.5;
+

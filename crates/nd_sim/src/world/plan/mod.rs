@@ -24,6 +24,9 @@ pub struct ProjectCheck {
     pub pillar_refusal: Option<String>,
     /// [dams] (H1) A planned road over a dam wall, in words.
     pub dam_refusal: Option<String>,
+    /// [r1-roads] A planned road crossing a way at a height that is
+    /// neither a junction nor clear of it (`World::crossing_refusal`).
+    pub crossing_refusal: Option<String>,
     /// What implementing would say, word for word, if it refuses: the
     /// structures taken first, then the columns. `try_implement` refuses
     /// exactly when this is set, so a plan shown clear always implements.

@@ -58,6 +58,49 @@ fn block(g: &mut Geometry, c: &Ctx, s: Surface, poly: &[Vec2], y0: f32, y1: f32,
 /// corners and triangulated, and under it a fill of small squares, so a
 /// notched outline of many joined plots (which an ear-clipper can choke
 /// on) still has no bare patches.
+/// [K10] Half-width of the gap a perimeter fence leaves at a way in (the
+/// front gate, or the walk joining a neighbouring zoo, garden or park).
+const FENCE_GAP: f32 = 2.4;
+
+/// [K10] A perimeter fence round the site `0.6` m in from the lot line,
+/// open wherever a walkway comes in (`ParkLayout::entrances`): the front
+/// gate, and the seams where the grounds join a neighbouring park or
+/// attraction's walks. `rail` adds a timber top rail.
+fn perimeter_fence(g: &mut Geometry, c: &Ctx, h: f32, rail: bool) {
+    let (f, pal) = (&c.frame, c.palette);
+    let gaps: Vec<Vec2> = c.park.as_ref().map(|p| p.entrances.iter().map(|e| f.to_local(*e)).collect()).unwrap_or_default();
+    for face in c.faces(&offset_poly(&c.lot_poly, 0.6)) {
+        if face.len <= 1.0 {
+            continue;
+        }
+        // The stretches of this side left between the gaps on it.
+        let half = face.len * 0.5;
+        let mut cuts: Vec<(f32, f32)> = gaps
+            .iter()
+            .filter(|p| (**p - face.mid()).dot(face.out).abs() < 3.5)
+            .map(|p| (*p - face.mid()).dot(face.tangent))
+            .filter(|t| t.abs() < half + FENCE_GAP)
+            .map(|t| (t - FENCE_GAP, t + FENCE_GAP))
+            .collect();
+        cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut from = -half;
+        let mut pieces = Vec::new();
+        for (lo, hi) in cuts.into_iter().chain(std::iter::once((half, half))) {
+            if lo > from + 0.3 {
+                pieces.push((from, lo.min(half)));
+            }
+            from = from.max(hi);
+        }
+        for (t0, t1) in pieces {
+            let (t, len) = ((t0 + t1) * 0.5, t1 - t0);
+            face.bx(g, f, Metal, t, h * 0.5, 0.0, Vec3::new(len, h, 0.06), mul(pal.fence_mesh, 0.9));
+            if rail {
+                face.bx(g, f, Metal, t, h + 0.05, 0.0, Vec3::new(len, 0.1, 0.12), mul(pal.wood, 0.7));
+            }
+        }
+    }
+}
+
 fn fill_site(g: &mut Geometry, c: &Ctx, s: Surface, y: f32, color: [f32; 3]) {
     let poly = clean_poly(&c.lot_poly, 0.3);
     ground(g, &c.frame, s, &poly, y, color);
@@ -922,13 +965,9 @@ pub fn zoo(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             gate_arch_in(g, c, path[0] + along * 1.5, along, 6.5, 6.0, mul(pal.wood, 0.8), NEON_AMBER);
         }
     }
-    // The perimeter fence.
-    for face in c.faces(&offset_poly(&c.lot_poly, 0.6)) {
-        if face.len > 1.0 {
-            face.bx(g, f, Metal, 0.0, 0.7, 0.0, Vec3::new(face.len, 1.4, 0.06), mul(pal.fence_mesh, 0.9));
-            face.bx(g, f, Metal, 0.0, 1.45, 0.0, Vec3::new(face.len, 0.1, 0.12), mul(pal.wood, 0.7));
-        }
-    }
+    // The perimeter fence, open at the gate and [K10] where the walks
+    // join a neighbouring park or attraction's.
+    perimeter_fence(g, c, 1.4, true);
     let mut taken: Vec<(Vec2, f32)> = Vec::new();
     let sizes = [12.0f32, 10.0, 10.0, 9.0, 9.0, 8.0, 8.0, 7.0];
     let mut biome = 0usize;
@@ -1550,12 +1589,8 @@ pub fn amusement_park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             gate_arch_in(g, c, path[0] + along * 1.5, along, 8.0, 7.5, [0.95, 0.85, 0.3], NEON_PINK);
         }
     }
-    // A fence round it all.
-    for face in c.faces(&offset_poly(&c.lot_poly, 0.6)) {
-        if face.len > 1.0 {
-            face.bx(g, f, Metal, 0.0, 0.9, 0.0, Vec3::new(face.len, 1.8, 0.06), mul(pal.fence_mesh, 0.9));
-        }
-    }
+    // A fence round it all, open at the ways in.
+    perimeter_fence(g, c, 1.8, false);
     let mut taken: Vec<(Vec2, f32)> = Vec::new();
     let dir = f.along;
     // The coaster takes the most room.

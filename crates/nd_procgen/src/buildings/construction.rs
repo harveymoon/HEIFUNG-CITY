@@ -25,12 +25,31 @@ fn sub(c: &Ctx, salt: u64) -> nd_sim::SimRng {
 
 /// Draw the site at `progress` in `0..1`.
 pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: f32) {
+    construction_site_of(g, c, rng, progress, None);
+}
+
+/// [K39] A site whose building goes up in its own shape: `shell` is the
+/// finished building (a Capsule dome, pill tower or saucer stack), cut off
+/// at the height the work has reached (the way a demolition cuts it
+/// down), lights out, a raw deck with starter bars on the cut while the
+/// work goes on, the crane over it; its lawns, paths and trees go in last.
+/// Not a box that turns into domes on the day it is finished.
+pub fn shaped_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: f32, shell: Geometry) {
+    construction_site_of(g, c, rng, progress, Some(shell));
+}
+
+/// Progress past which a shaped site's grounds (lawn, paths, trees) are
+/// laid: the landscaping is the last job.
+const LANDSCAPE_FROM: f32 = 0.93;
+
+fn construction_site_of(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: f32, shell: Option<Geometry>) {
     let f = &c.frame;
     let pal = c.palette;
     let progress = progress.clamp(0.0, 1.0);
     let landscaping = c.land_use == LandUse::Park;
     let fh = c.fh();
-    let height = if landscaping { 0.0 } else { c.height() };
+    let shell_top = shell.as_ref().map(|s| s.parts.iter().flat_map(|m| m.positions.iter().map(|p| p[1])).fold(0.0f32, f32::max));
+    let height = if landscaping { 0.0 } else { shell_top.unwrap_or(c.height()) };
     // The structure goes up over the middle of the job: groundworks first,
     // fit-out last.
     let built = if landscaping { 0.0 } else { (((progress - 0.08) / 0.84).clamp(0.0, 1.0) * height).min(height) };
@@ -53,7 +72,31 @@ pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress
 
     // The raft, and the structure on it.
     let poly = &c.poly;
-    if poly.len() >= 3 {
+    if let Some(mut shell) = shell {
+        // [K39] The building's own shape up to the cut.
+        if progress < LANDSCAPE_FROM {
+            *shell.part(Foliage) = Default::default();
+            *shell.part(Paving) = Default::default();
+        }
+        let share = ((progress - 0.08) / 0.84).clamp(0.0, 1.0);
+        if share < 1.0 {
+            let cut = built.max(0.0);
+            let points = clip_above(&mut shell, cut);
+            let hull: Vec<Vec2> = convex_hull(&points.iter().map(|p| f.to_local(*p)).collect::<Vec<_>>());
+            let hull = if hull.len() >= 3 && polygon_area(&hull).abs() > 6.0 && inradius(&hull) > 0.8 && poly_inside(c, &hull) { hull } else { Vec::new() };
+            if !hull.is_empty() {
+                // The deck being worked: a raw slab, starter bars round it.
+                broken_top(g, c, &hull, cut, concrete);
+            }
+        }
+        lights_out(&mut shell);
+        for (k, m) in shell.parts.iter().enumerate() {
+            g.parts[k].append(m);
+        }
+        if height >= 18.0 && progress > 0.06 && progress < 0.98 {
+            tower_crane(g, c, &mut sub(c, 3), poly, built, height);
+        }
+    } else if poly.len() >= 3 {
         extrude(g, f, Concrete, poly, 0.0, 0.35, mul(pal.concrete(0), 0.7));
         if !landscaping {
             structure(g, c, &mut sub(c, 1), poly, built, floors_done, fh, concrete, pale, steel);
@@ -122,7 +165,7 @@ pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress
         let n = 3 + (c.floors as usize / 6).min(3);
         for k in 0..n {
             let rng = &mut sub(c, 300 + k as u64);
-            if k % 2 == 0 && floors_done > 0 && poly.len() >= 3 {
+            if k % 2 == 0 && floors_done > 0 && poly.len() >= 3 && shell_top.is_none() {
                 if let Some(p) = random_in_poly(rng, poly, 0.0) {
                     worker(g, c, rng, p, slab_top + 0.35);
                     continue;

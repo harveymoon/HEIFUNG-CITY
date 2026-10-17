@@ -68,10 +68,24 @@ impl World {
     /// column; a lot with a protected building blocks it; a grown building
     /// is bought out; an empty lot is taken; anything else is free.
     pub fn pillar_site(&self, p: Vec2, level: f32, lots: &[LotId], footprints: &[Vec<Vec2>]) -> Site {
+        self.pillar_site_replacing(p, level, lots, footprints, &[])
+    }
+
+    /// [r1-roads] (K13) `pillar_site`, leaving out the roads lying along
+    /// `replaced` (the road an edit replaces: raised in the Edit tool, the
+    /// road as it was, at grade under its own new deck, blocked every
+    /// column and the edit was refused for want of room).
+    pub fn pillar_site_replacing(&self, p: Vec2, level: f32, lots: &[LotId], footprints: &[Vec<Vec2>], replaced: &[Vec<Vec2>]) -> Site {
         let r = PILLAR_RADIUS;
         let roads = &self.roads;
         for sid in roads.segments_in_box(p - Vec2::splat(40.0), p + Vec2::splat(40.0)) {
             let seg = roads.segment(sid);
+            if !replaced.is_empty() {
+                let (a, b) = roads.segment_points(sid);
+                if replaced.iter().any(|w| crate::geom::distance_to_polyline(a, w) < 1.0 && crate::geom::distance_to_polyline(b, w) < 1.0) {
+                    continue;
+                }
+            }
             let (a, b) = roads.segment_points(sid);
             let (t, q) = crate::roads::project_on_segment(p, a, b);
             let lv = roads.segment_level(sid, t);
@@ -122,12 +136,18 @@ impl World {
     /// placed against the city as it is (the Road tool's preview and the
     /// project's check). `held`: columns already standing that carry it.
     pub fn plan_pillars(&self, pts: &[Vec2], levels: &[f32], half_width: f32, held: &[Vec2]) -> PillarPlan {
+        self.plan_pillars_replacing(pts, levels, half_width, held, &[])
+    }
+
+    /// [r1-roads] `plan_pillars` with the roads along `replaced` left out
+    /// (`pillar_site_replacing`).
+    pub fn plan_pillars_replacing(&self, pts: &[Vec2], levels: &[f32], half_width: f32, held: &[Vec2], replaced: &[Vec<Vec2>]) -> PillarPlan {
         if !pillars::is_raised(levels) {
             return PillarPlan::default();
         }
         let lots = self.lots_near_way(pts, half_width);
         let fps = self.structure_footprints();
-        let site = |p: Vec2, level: f32| self.pillar_site(p, level, &lots, &fps);
+        let site = |p: Vec2, level: f32| self.pillar_site_replacing(p, level, &lots, &fps, replaced);
         pillars::plan(pts, levels, half_width, pillars::way_key(pts, levels), &site, held)
     }
 
@@ -135,9 +155,17 @@ impl World {
     /// with its ends where and at the level the network will lay them (an
     /// end dropped on a road ramps down to it: no column there).
     pub fn road_pillar_plan(&self, pts: &[Vec2], levels: &[f32], fwd: u8, bwd: u8, kind: RoadKind) -> PillarPlan {
-        let held: Vec<Vec2> = self.pillars.iter().map(|p| p.at).collect();
+        self.road_pillar_plan_replacing(pts, levels, fwd, bwd, kind, &[])
+    }
+
+    /// [r1-roads] (K13) `road_pillar_plan` for a road replacing the roads
+    /// along `replaced` (the Edit tool's road as it was): they are not in
+    /// the way of its columns, and its own old columns hold nothing up.
+    pub fn road_pillar_plan_replacing(&self, pts: &[Vec2], levels: &[f32], fwd: u8, bwd: u8, kind: RoadKind, replaced: &[Vec<Vec2>]) -> PillarPlan {
         let (pts, levels) = self.roads.as_built(pts, levels, kind);
-        self.plan_pillars(&pts, &levels, deck_half_width(kind, fwd, bwd), &held)
+        let old: Vec<u64> = replaced.iter().map(|r| r.as_slice()).filter_map(|r| self.pillars.iter().find(|p| crate::geom::distance_to_polyline(p.at, r) < 0.5).map(|p| p.way)).collect();
+        let held: Vec<Vec2> = self.pillars.iter().filter(|p| !old.contains(&p.way)).map(|p| p.at).collect();
+        self.plan_pillars_replacing(&pts, &levels, deck_half_width(kind, fwd, bwd), &held, replaced)
     }
 
     /// The columns of every raised way (`ways`: built polyline, levels and

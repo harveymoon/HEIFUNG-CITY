@@ -15,6 +15,7 @@
 use bevy::prelude::*;
 
 use crate::camera::{CameraFly, CameraFollow};
+use crate::render::{Lighting, Overlays};
 use crate::sim::{Sim, SimSet};
 use crate::tools::{EffectivePlan, Selection, ToolState};
 
@@ -34,24 +35,34 @@ impl Plugin for CityResetPlugin {
 }
 
 /// Reset the city-scoped state once per new `Sim::generation`.
-pub fn on_city_replaced(sim: Res<Sim>, mut epoch: ResMut<CityEpoch>, mut tools: ResMut<ToolState>, mut selection: ResMut<Selection>, mut eplan: ResMut<EffectivePlan>, mut follow: ResMut<CameraFollow>, mut fly: ResMut<CameraFly>) {
+#[allow(clippy::too_many_arguments)]
+pub fn on_city_replaced(sim: Res<Sim>, mut epoch: ResMut<CityEpoch>, mut tools: ResMut<ToolState>, mut selection: ResMut<Selection>, mut eplan: ResMut<EffectivePlan>, mut follow: ResMut<CameraFollow>, mut fly: ResMut<CameraFly>, mut overlays: ResMut<Overlays>, mut lighting: ResMut<Lighting>) {
     // Checked before any `ResMut` is touched, so a normal frame marks
     // nothing changed.
     if epoch.0 == sim.generation {
         return;
     }
-    catch_up(sim.generation, &mut epoch, &mut tools, &mut selection, &mut eplan, &mut follow, &mut fly);
+    catch_up(sim.generation, &mut epoch, &mut tools, &mut selection, &mut eplan, &mut follow, &mut fly, &mut overlays, &mut lighting);
 }
 
 /// The reset itself, for callers that need it before the next frame (the
 /// remote API runs a batch of commands in one go). Does nothing when the
 /// state already belongs to `generation`.
-pub fn catch_up(generation: u64, epoch: &mut CityEpoch, tools: &mut ToolState, selection: &mut Selection, eplan: &mut EffectivePlan, follow: &mut CameraFollow, fly: &mut CameraFly) {
+///
+/// [clean-start] A new or loaded city also starts on the plain map in
+/// Inspect: no map layer on (the "other projects" switch kept), no heat
+/// vision, the Inspect tool (its panels closed with it); the tool
+/// preferences stay.
+#[allow(clippy::too_many_arguments)]
+pub fn catch_up(generation: u64, epoch: &mut CityEpoch, tools: &mut ToolState, selection: &mut Selection, eplan: &mut EffectivePlan, follow: &mut CameraFollow, fly: &mut CameraFly, overlays: &mut Overlays, lighting: &mut Lighting) {
     if epoch.0 == generation {
         return;
     }
     epoch.0 = generation;
     tools.forget_city();
+    tools.tool = crate::tools::Tool::Inspect;
+    overlays.forget_city();
+    lighting.heat = false;
     *selection = Selection::None;
     eplan.invalidate();
     follow.stop();
@@ -73,6 +84,8 @@ mod tests {
             .init_resource::<EffectivePlan>()
             .init_resource::<CameraFollow>()
             .init_resource::<CameraFly>()
+            .init_resource::<Overlays>()
+            .init_resource::<Lighting>()
             .init_resource::<CityEpoch>()
             .add_systems(Update, on_city_replaced.in_set(SimSet::Input));
         app
@@ -113,5 +126,35 @@ mod tests {
         assert_eq!(tools.status, "kept");
         assert!(*app.world().resource::<Selection>() == Selection::None);
         assert_eq!(app.world().resource::<CityEpoch>().0, app.world().resource::<Sim>().generation);
+    }
+
+    /// [clean-start] A loaded or new city starts on the plain map in
+    /// Inspect, whatever layer, tool and view the old one was left in.
+    #[test]
+    fn a_new_city_starts_plain_in_inspect() {
+        let mut app = app();
+        app.update();
+        {
+            let w = app.world_mut();
+            w.resource_mut::<ToolState>().tool = crate::tools::Tool::Road;
+            let mut o = w.resource_mut::<Overlays>();
+            o.traffic = true;
+            o.zoning = true;
+            o.land = Some(nd_sim::survey::LandLayer::ALL[0]);
+            o.projects = false;
+            w.resource_mut::<Lighting>().heat = true;
+        }
+        app.world_mut().resource_mut::<Sim>().new_game(nd_sim::LandscapeParams::flat());
+        app.update();
+        let w = app.world();
+        assert_eq!(w.resource::<ToolState>().tool, crate::tools::Tool::Inspect);
+        let o = w.resource::<Overlays>();
+        assert!(!o.traffic && !o.zoning && o.land.is_none(), "no layer on");
+        assert!(crate::map_layers::MAP_LAYERS.iter().all(|l| !o.get(l.key).unwrap_or(false)), "no layer on");
+        assert!(!o.projects, "the other-projects switch is a preference");
+        assert!(!w.resource::<Lighting>().heat);
+        // The very first city starts plain too.
+        let fresh = Overlays::default();
+        assert!(crate::map_layers::MAP_LAYERS.iter().all(|l| !fresh.get(l.key).unwrap_or(false)));
     }
 }

@@ -144,6 +144,9 @@ impl World {
             crate::park::plan_parks_wild(&mut self.lots, &self.land_value, &links, &self.parks.preserves);
             self.plan_attraction_grounds();
         }
+        // [K10] Grounds side by side in a save from before they were joined:
+        // their walks run out to the seam now (a no-op once they do).
+        self.join_neighbouring_grounds();
         // [free-placement] A save from before city ground: the lots under
         // the city's buildings leave their zones (nothing moves).
         self.settle_city_ground(&[], false);

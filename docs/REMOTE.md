@@ -787,14 +787,17 @@ in this order, and the reply is the state after:
 | `approach` + `lanes` | lane permissions of one arriving street (index, or a point on it): `["L+S", "S+R"]` leftmost first, or `"reset"` (as `lane_use`) |
 | `crossing` + `upgrade` | a crosswalk (walk-graph index from `crossings`, or a point near it): `none`, `button` (a push-button signal: traffic gets a red only after someone presses it; not on a crosswalk that already has walk lights), `footbridge` (a raised walkway with stairs at both ends; refused where it would stand in another's way) or `removed` (also `remove`, `no_crossing`: [walk-crossings] no crossing there at all: nothing painted, no walk light, walkers route round by another crossing and nobody plans a jaywalk within 30 m; free). A footbridge replaces the crosswalk under it: its paint, walk lights and at-grade walk edge go, so everyone crossing there climbs over and nobody holds up traffic; [walk-crossings] it also replaces the other crosswalks over the same street within 30 m (not its own junction's other arms, nor ones the player set up), and no jaywalk is planned within 80 m of it. Unmarked crossings (a roundabout's own lanes, a highway slip road's mouth, a dead end) may take a button, a footbridge or be removed too: a button makes one a marked crossing with its own light, and a footbridge over a slip road's mouth has its stairs down each street's pavement. Paid for: 1,500 and 18,000 |
 | `crossing` + `keep_crosswalk` | [footbridge] `true` keeps the crosswalk at grade under its footbridge (walkers then take the bridge when it costs them at most 30 m more); `false` (the default, also for footbridges from older saves) lets the bridge replace it. Free |
-| `open`, `extent`, `select_approach`, `select_crossing` | show the editor modal (and its road view's width in metres, 30..300; which street or crosswalk is picked) |
+| `open`, `extent`, `select_approach`, `select_crossing` | open the editor (and the width in metres of the box it draws round the junction on the map, 30..300; which street or crosswalk is picked). [r1-roads] Time stands still while it is open (`status.paused`), as it was again when it closes |
 | `lane_menu`, `hover_lane` | [pt-ux] `[approach, lane]` (lane 0 the leftmost): open that lane's options menu beside its arrow, or show its moves as if hovered (bright: allowed, dashed: offered but not allowed); `null` closes / clears. Needs the editor open |
 | `close` | hide it |
 
 [pt-ux] In the game the editor opens from the "Edit intersection" button that pops up beside a
 junction or crosswalk under the pointer with the Edit tool (`tool {name: edit, cursor: [x, y]}` pins
-it there), not from a click on the junction (which edits the roads like anywhere else). In the
-modal every arriving lane has an arrow at its stop line showing its moves; hovering one draws them
+it there), not from a click on the junction (which edits the roads like anywhere else). [r1-roads]
+(K20) It edits on the map itself: a box is drawn round the junction, the camera comes over it, time
+stands still and the other tools leave the map alone until Done (or Esc); the controls are a panel
+at the right. On the roads in the box every arriving lane has an arrow at its stop line showing its
+moves (a crosswalk's dot is picked before an arrow under it, K2); hovering one draws them
 through the junction and clicking one opens its menu (the lane's options as arrows, the street's
 automatic arrows, left turns from the street). Picking an option keeps every exit reachable: a
 move no lane has any more goes back on the lane nearest its side. Beside the view: traffic signals
