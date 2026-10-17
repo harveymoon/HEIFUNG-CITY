@@ -119,7 +119,7 @@ pub fn road_preview_with(world: &World, points: &[Vec2], levels: &[f32], lanes_f
     out.heights = points.iter().enumerate().map(|(i, &p)| mini.node_near(p, 0.5).map_or(ground(p) + level(i), |n| z[n.0 as usize])).collect();
     let mut lanes = LaneNetwork::default();
     lanes.rebuild(&mini);
-    let mut geo = generate_street(&StreetInput { roads: &mini, net: &lanes, land_value: &world.land_value, palette, seed: 1, heights: &z, inner: &[], layer: StreetLayer::All, closed: &[] });
+    let mut geo = generate_street(&StreetInput { roads: &mini, net: &lanes, land_value: &world.land_value, palette, seed: 1, heights: &z, inner: &[], layer: StreetLayer::All, closed: &[], joined_ramps: &[] });
     // Decks and pillars under the raised parts.
     let concrete = crate::buildings::parts::mul(palette.concrete(0), 0.85);
     for (sid, s) in mini.alive_segments() {

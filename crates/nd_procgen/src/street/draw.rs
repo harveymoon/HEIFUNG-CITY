@@ -355,7 +355,20 @@ pub(super) fn draw_run(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &Run, d
         return;
     }
     if run.kind == RoadKind::Path {
-        footpath(g, pal, roads, run, pts, &mut rng, cx.lifts.get(ri).and_then(Option::as_ref));
+        // [r1-roads] (K14) A ramp a footbridge took over ends at its top.
+        let mut pts = pts.clone();
+        for &(r, n) in cx.inp.joined_ramps {
+            let at_r = roads.node(r).pos;
+            let Some(k) = (0..pts.len()).min_by(|&a, &b| pts[a].distance(at_r).total_cmp(&pts[b].distance(at_r))).filter(|&k| pts[k].distance(at_r) < 1.0) else { continue };
+            if run.end_node == n && k > 0 {
+                pts.truncate(k + 1);
+            } else if run.start_node == n && k + 1 < pts.len() {
+                pts.drain(..k);
+            }
+        }
+        if path_length(&pts) >= 0.5 {
+            footpath(g, pal, roads, run, &pts, &mut rng, cx.lifts.get(ri).and_then(Option::as_ref));
+        }
         return;
     }
     if run.kind == RoadKind::Rail {
@@ -994,7 +1007,10 @@ pub(super) fn draw_arm_marks(cx: &StreetCtx, g: &mut Geometry, nid: NodeId, node
             // No crossing on the ring itself; arms get theirs set back
             // past a splitter island, and a give-way line at the mouth.
             if roads.ring_of_segment(sid).is_none() {
-                roundabout_arm(g, pal, node.pos, d, r, seg, seg.a.0 as usize == i);
+                // [r1-roads] (K48) No zebra where the walk graph closed the
+                // arm's crossing (a footbridge, a dead-end stub walked round).
+                let paint = !arm_crosswalk_closed(cx.inp.closed, node.pos, d, nd_sim::walk::crosswalk_setback(roads, nid, sid));
+                roundabout_arm(g, pal, node.pos, d, r, seg, seg.a.0 as usize == i, paint);
             }
             continue;
         }
@@ -1227,7 +1243,8 @@ pub(super) fn roundabout_apron(g: &mut Geometry, pal: &Palette, ring: &nd_sim::r
 /// Where an arm meets a roundabout: a splitter island down the middle of a
 /// two-way arm, a zebra set back from the ring across it (with a refuge in
 /// the island), and a dashed give-way line across the lanes going in.
-pub(super) fn roundabout_arm(g: &mut Geometry, pal: &Palette, at: Vec2, d: Vec2, r: f32, seg: &nd_sim::Segment, from_a: bool) {
+#[allow(clippy::too_many_arguments)]
+pub(super) fn roundabout_arm(g: &mut Geometry, pal: &Palette, at: Vec2, d: Vec2, r: f32, seg: &nd_sim::Segment, from_a: bool, with_zebra: bool) {
     let right = Vec2::new(-d.y, d.x);
     let hw = seg.half_width();
     let (outgoing, incoming) = if from_a { (seg.lanes_fwd, seg.lanes_bwd) } else { (seg.lanes_bwd, seg.lanes_fwd) };
@@ -1244,7 +1261,9 @@ pub(super) fn roundabout_arm(g: &mut Geometry, pal: &Palette, at: Vec2, d: Vec2,
             g.part(Paint).path_strip(&[a - d * 0.6, b + d * 0.6], 0.0, w0 + 0.5, MARK_Y, rgba(mul(pal.lane_marker, 0.5)));
         }
     }
-    zebra(g, pal, at + d * z0, at + d * z1, right, hw, |s| !((s - divide).abs() > 0.6 || outgoing == 0 || incoming == 0));
+    if with_zebra {
+        zebra(g, pal, at + d * z0, at + d * z1, right, hw, |s| !((s - divide).abs() > 0.6 || outgoing == 0 || incoming == 0));
+    }
     if incoming > 0 {
         let (l0, l1) = (-(hw - SHOULDER), divide);
         let mut x = l0 + 0.3;

@@ -434,7 +434,7 @@ fn world_meshes(out: &Out, tag: &str, w: &World, previews: &[Vec<Vec2>]) {
     let closed = [Vec2::new(-600.0, -550.0)];
     for (ln, layer) in [("surface", StreetLayer::Surface), ("underground", StreetLayer::Underground), ("all", StreetLayer::All)] {
         for (cn, closed) in [("", &[][..]), (" closed", &closed[..])] {
-            let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: w.config.seed, heights, inner, layer, closed });
+            let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: w.config.seed, heights, inner, layer, closed, joined_ramps: &[] });
             out.geo(format!("{tag} street {ln}{cn}"), &g);
         }
     }

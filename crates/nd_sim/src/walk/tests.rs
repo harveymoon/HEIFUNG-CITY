@@ -202,9 +202,13 @@ fn walkers_cross_streets_only_at_crossings() {
             }
         }
     }
-    for k in ["Junction", "Zebra", "Informal", "Jay"] {
+    for k in ["Junction", "Zebra", "Jay"] {
         assert!(kinds.get(k).copied().unwrap_or(0) > 0, "some {k} crossings: {kinds:?}");
     }
+    // [r1-roads] (K47) The dead end is walked round, not crossed (it used
+    // to be this town's unmarked crossing).
+    let end = Vec2::new(70.0, 200.0);
+    assert!(!g.crossings.iter().any(|c| c.mid.distance(end) < 4.0), "no crossing over the dead end");
     // The long streets get mid-block zebras, the 140 m blocks none.
     assert!(!midblock_crossings(&roads).is_empty());
     // Lawful routes never jaywalk; a jaywalker's may.

@@ -265,10 +265,13 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx) {
         p.tools.junction_editor = None;
         return;
     };
-    // [r1-roads] (K20) The camera comes over the junction once.
+    // [r1-roads] (K20) The camera comes over the junction once, looking
+    // well down on it so the arrows lie along their lanes.
     if !st.framed {
         st.framed = true;
-        p.fly_to = Some(Vec2::new(st.at.x, st.at.y));
+        p.follow.stop();
+        *p.mode = crate::camera::CameraMode::Orbit;
+        p.fly.to(crate::camera::FlyGoal::Point(Vec2::new(st.at.x, st.at.y)), Some((st.extent * 2.3).clamp(90.0, 420.0)), Some(1.2));
     }
     let mut close = false;
     let mut open = true;
@@ -340,11 +343,13 @@ pub fn on_map(mut contexts: EguiContexts, mut sim: ResMut<crate::sim::Sim>, mut 
     if corners.iter().any(|c| c.x < -1.0e4) {
         return Ok(());
     }
-    let rect = egui::Rect::from_points(&corners).intersect(ctx.content_rect());
+    // Between the top and bottom bars: nothing is drawn over them.
+    let clip = flags.map_rect(ctx.content_rect());
+    let rect = egui::Rect::from_points(&corners).intersect(clip);
     if !rect.is_positive() {
         return Ok(());
     }
-    road_view(&ctx, &mut sim.world, &mut st, &view, &sc, rect, &corners);
+    road_view(&ctx, &mut sim.world, &mut st, &view, &sc, rect, &corners, clip);
     tools.junction_editor = Some(st);
     Ok(())
 }
@@ -454,15 +459,19 @@ fn lane_spots(sc: &Screen, v: &IntersectionView) -> Vec<LaneSpot> {
 /// straight from the input (the box is no egui area, so the camera still
 /// orbits and zooms over it; the map tools stand aside while the editor
 /// is open), never through a window over it.
-fn road_view(ctx: &egui::Context, w: &mut World, st: &mut EditorState, v: &IntersectionView, sc: &Screen, rect: egui::Rect, corners: &[egui::Pos2]) {
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("junction_on_map"))).with_clip_rect(ctx.content_rect());
+#[allow(clippy::too_many_arguments)]
+fn road_view(ctx: &egui::Context, w: &mut World, st: &mut EditorState, v: &IntersectionView, sc: &Screen, rect: egui::Rect, corners: &[egui::Pos2], clip: egui::Rect) {
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("junction_on_map"))).with_clip_rect(clip);
     // The box: a dim veil outside it would hide the city; a bright frame
     // with corner ticks on the ground says where the editing is.
     let mut ring = corners.to_vec();
     ring.push(corners[0]);
     painter.add(egui::Shape::line(ring.clone(), egui::Stroke::new(5.0, egui::Color32::from_black_alpha(140))));
     painter.extend(egui::Shape::dashed_line(&ring, egui::Stroke::new(2.0, CYAN), 10.0, 6.0));
-    painter.text(corners[0] + egui::vec2(4.0, -4.0), egui::Align2::LEFT_BOTTOM, "INTERSECTION EDIT \u{00b7} time stopped", crate::ui::theme::small(), CYAN);
+    // The label over the box's top corner, kept on the map.
+    let top = corners.iter().copied().fold(egui::pos2(f32::MAX, f32::MAX), |a, c| if c.y < a.y { c } else { a });
+    let label = top.clamp(clip.min + egui::vec2(6.0, 18.0), clip.max - egui::vec2(220.0, 6.0)) + egui::vec2(4.0, -4.0);
+    painter.text(label, egui::Align2::LEFT_BOTTOM, "INTERSECTION EDIT \u{00b7} time stopped", crate::ui::theme::small(), CYAN);
     let free = !ctx.is_pointer_over_egui();
     let pointer = ctx.input(|i| i.pointer.hover_pos()).filter(|p| free && rect.contains(*p));
     let click = pointer.filter(|_| ctx.input(|i| i.pointer.primary_clicked()));

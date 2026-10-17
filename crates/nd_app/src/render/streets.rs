@@ -37,6 +37,8 @@ pub(super) fn sync_roads(
     // [footbridge] A footbridge built (or its crosswalk kept) repaints the
     // streets: its zebra goes or comes back.
     let closed = sim.world.closed_crosswalks();
+    // [r1-roads] (K14) Path ramps a footbridge took over.
+    let joined: Vec<(nd_sim::roads::NodeId, nd_sim::roads::NodeId)> = sim.world.walk.footbridges.iter().filter_map(|f| f.path_join.map(|(_, r, n)| (r, n))).collect();
     // [fix/roads-tools] Signals switched on in the Intersection editor
     // repaint them too: their poles are part of the street mesh.
     let closed_key = signals_key(closed_hash(&closed), sim.world.traffic.net.signals_version);
@@ -50,7 +52,7 @@ pub(super) fn sync_roads(
     // Each run is set on its own height profile here (a viaduct over a
     // street, the street under it), so the roads are not lifted again.
     let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
-    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Surface, closed: &closed });
+    let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Surface, closed: &closed, joined_ramps: &joined });
     stats.street_triangles = geo.triangle_count();
     lamps.lamps.clone_from(&geo.lamps);
     lamps.version += 1;
@@ -68,7 +70,7 @@ pub(super) fn sync_roads(
     }
     // The tunnels on their own, shown in the underground view.
     if w.roads.alive_segments().any(|(_, s)| s.tunnel) {
-        let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Underground, closed: &closed });
+        let geo = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &assets.palette, seed: w.config.seed, heights, inner: if w.relief { &w.road_inner } else { &[] }, layer: nd_procgen::street::StreetLayer::Underground, closed: &closed, joined_ramps: &joined });
         stats.street_triangles += geo.triangle_count();
         for (s, data) in geo.iter() {
             commands.spawn((Mesh3d(meshes.add(to_mesh(data, !s.is_glow()))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, holo::TunnelTag, Visibility::Hidden, NotShadowCaster));

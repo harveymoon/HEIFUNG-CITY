@@ -259,7 +259,7 @@ mod tests {
         assert_eq!(closed, vec![mid]);
         let pal = Palette::default();
         let paint_near = |closed: &[Vec2]| {
-            let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: 1, heights: &[], inner: &[], layer: StreetLayer::Surface, closed });
+            let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: 1, heights: &[], inner: &[], layer: StreetLayer::Surface, closed, joined_ramps: &[] });
             // The street runs along x: the zebra's stripes lie across it.
             let paint = g.get(Surface::Paint).positions.iter().filter(|p| (p[0] - mid.x).abs() < 1.4 && (p[2] - mid.y).abs() < 9.0).count();
             let beacons = g.get(Surface::Glow).positions.iter().filter(|p| Vec2::new(p[0], p[2]).distance(mid) < 12.0).count();

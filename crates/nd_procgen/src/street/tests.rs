@@ -76,7 +76,7 @@ fn one_way_roads_show_their_direction_and_ramps_get_a_gore() {
     net.rebuild(&roads);
     let lv = LandValue::new(400.0, 50.0);
     let pal = Palette::default();
-    let g = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 3, heights: &[], inner: &[], layer: StreetLayer::All, closed: &[] });
+    let g = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 3, heights: &[], inner: &[], layer: StreetLayer::All, closed: &[], joined_ramps: &[] });
     for (_, m) in g.iter() {
         assert!(m.positions.iter().all(|p| p.iter().all(|v| v.is_finite())));
     }
@@ -101,7 +101,7 @@ fn motorway_barriers_never_stand_on_another_motorways_lanes() {
     net.rebuild(&roads);
     let lv = LandValue::new(400.0, 50.0);
     let pal = Palette::default();
-    let g = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 3, heights: &[], inner: &[], layer: StreetLayer::All, closed: &[] });
+    let g = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 3, heights: &[], inner: &[], layer: StreetLayer::All, closed: &[], joined_ramps: &[] });
     let lanes = |p: Vec2| {
         roads.alive_segments().any(|(sid, s)| {
             let (a, b) = roads.segment_points(sid);
@@ -121,7 +121,7 @@ fn streets_are_finite_low_and_deterministic() {
     let (roads, net) = network();
     let lv = LandValue::new(400.0, 50.0);
     let pal = Palette::default();
-    let inp = StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 5, heights: &[], inner: &[], layer: StreetLayer::All, closed: &[] };
+    let inp = StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 5, heights: &[], inner: &[], layer: StreetLayer::All, closed: &[], joined_ramps: &[] };
     let a = generate_street(&inp);
     assert!(a.triangle_count() > 1000, "{} triangles is not a street network", a.triangle_count());
     for (s, m) in a.iter() {
@@ -171,7 +171,7 @@ fn a_roundabout_leaves_its_middle_open_and_has_no_signals() {
         }
         let mut net = LaneNetwork::default();
         net.rebuild(&roads);
-        let geo = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 9, heights: &[], inner: &[], layer: StreetLayer::All, closed: &[] });
+        let geo = generate_street(&StreetInput { roads: &roads, net: &net, land_value: &lv, palette: &pal, seed: 9, heights: &[], inner: &[], layer: StreetLayer::All, closed: &[], joined_ramps: &[] });
         for (s, m) in geo.iter() {
             assert!(m.positions.iter().all(|p| p.iter().all(|v| v.is_finite()) && p[1] < 20.0), "{s:?}");
         }

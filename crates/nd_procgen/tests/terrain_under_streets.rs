@@ -113,7 +113,7 @@ fn terrain_stays_under_every_ground_street() {
 
     let pal = Palette::default();
     let terrain = nd_procgen::terrain::build_landscape_terrain(&w, &pal, TERRAIN_CELL);
-    let streets = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: w.config.seed, heights: &w.road_z, inner: &w.road_inner, layer: StreetLayer::Surface, closed: &[] });
+    let streets = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: w.config.seed, heights: &w.road_z, inner: &w.road_inner, layer: StreetLayer::Surface, closed: &[], joined_ramps: &[] });
     // The carriageway, fresh or worn (a cheap street's moves to the worn
     // surface).
     let tris: Vec<[[f32; 3]; 3]> = [Some(Surface::Asphalt), Surface::Asphalt.worn()]

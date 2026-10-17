@@ -377,7 +377,7 @@ mod tests {
     fn draw(roads: &RoadNetwork, net: &LaneNetwork) -> Geometry {
         let lv = rich();
         let pal = Palette::default();
-        generate_street(&StreetInput { roads, net, land_value: &lv, palette: &pal, seed: 4, heights: &[], inner: &[], layer: StreetLayer::All, closed: &[] })
+        generate_street(&StreetInput { roads, net, land_value: &lv, palette: &pal, seed: 4, heights: &[], inner: &[], layer: StreetLayer::All, closed: &[], joined_ramps: &[] })
     }
 
     /// Junctions of the shapes the QA walk found wrong: a crossroads, a T,
