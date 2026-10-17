@@ -148,11 +148,34 @@ impl StopStats {
     }
 }
 
+/// [r4] (K3) Why no stop can go at `p`, for the tools to say: a highway
+/// or a tunnel there and no street.
+pub fn stop_refusal(roads: &RoadNetwork, p: Vec2) -> String {
+    match roads.nearest_street(p) {
+        Some((sid, _, q)) if q.distance(p) <= STOP_SNAP => {
+            let s = roads.segment(sid);
+            if s.tunnel {
+                "no stop in a tunnel: put it on a street at ground level".into()
+            } else if s.is_highway() {
+                "no stop on a highway carriageway: there is no kerb to pull in at (a slip road or a street will take one)".into()
+            } else {
+                "no kerb here a bus can pull in at".into()
+            }
+        }
+        _ => "click next to a street".into(),
+    }
+}
+
 impl BusStop {
     /// Snap a click to the nearest street: the stop sits by the kerb on
     /// the side that was clicked, so buses driving that way serve it.
     pub fn snap(roads: &RoadNetwork, p: Vec2) -> Option<BusStop> {
-        let (segment, _, q) = roads.nearest_street(p)?;
+        // [r4] (K3) Only where a bus can pull in: not in a bored tunnel
+        // under the street clicked (the stop snapped to a tunnel running
+        // under a roundabout), nor on a highway carriageway. Slip roads
+        // and one-way streets take stops at their kerb. Nor on a piece of
+        // street too short to have lanes.
+        let (segment, _, q) = roads.nearest_where(p, |s| s.stop_allowed() && roads.node(s.a).pos.distance(roads.node(s.b).pos) >= 0.5)?;
         if q.distance(p) > STOP_SNAP {
             return None;
         }
@@ -170,7 +193,7 @@ impl BusStop {
     pub fn far_kerb(&self, roads: &RoadNetwork) -> Option<BusStop> {
         // The street the stop stands by now (its own id can be stale after
         // the roads were rebuilt), as `snap` finds it.
-        let (segment, _, q) = roads.nearest_street(self.pos)?;
+        let (segment, _, q) = roads.nearest_where(self.pos, |s| s.stop_allowed() && roads.node(s.a).pos.distance(roads.node(s.b).pos) >= 0.5)?;
         if q.distance(self.pos) > STOP_SNAP {
             return None;
         }
@@ -207,6 +230,11 @@ pub struct BusRoute {
     /// Legs with no road between their stops.
     #[serde(skip)]
     pub broken: Vec<usize>,
+    /// [r4] (K3) Of those, the legs a bus could drive the other way (from
+    /// the next stop back to this one): a one-way street runs against the
+    /// line there.
+    #[serde(skip)]
+    pub against: Vec<usize>,
     /// [pt-transit] The lanes of each leg as the buses drive them (lanes,
     /// `s` on the first, `s` on the last): worked out with the polylines,
     /// so a bus drives the line that is drawn. `None` for a broken leg.
@@ -261,6 +289,9 @@ pub enum LineProblem {
     TooFewStops,
     /// No road from stop `leg` to the next: the line cannot run.
     NoRoad { leg: usize },
+    /// [r4] (K3) No road from stop `leg` to the next going this way, though
+    /// there is the other way: a one-way street runs against the line.
+    OneWayAgainst { leg: usize },
     /// The bus has to go a long way round between these stops.
     LongWayRound { leg: usize, metres: f32, direct: f32 },
     /// The line is set to run no buses.
@@ -280,13 +311,13 @@ pub enum LineProblem {
 impl LineProblem {
     /// Stops a line from running at all (as opposed to a warning).
     pub fn blocks(&self) -> bool {
-        matches!(self, LineProblem::TooFewStops | LineProblem::NoRoad { .. } | LineProblem::NoBuses | LineProblem::NoDepot | LineProblem::DepotUnreachable)
+        matches!(self, LineProblem::TooFewStops | LineProblem::NoRoad { .. } | LineProblem::OneWayAgainst { .. } | LineProblem::NoBuses | LineProblem::NoDepot | LineProblem::DepotUnreachable)
     }
 
     /// The leg it is about, for marking on the map or the strip.
     pub fn leg(&self) -> Option<usize> {
         match self {
-            LineProblem::NoRoad { leg } | LineProblem::LongWayRound { leg, .. } => Some(*leg),
+            LineProblem::NoRoad { leg } | LineProblem::OneWayAgainst { leg } | LineProblem::LongWayRound { leg, .. } => Some(*leg),
             _ => None,
         }
     }
@@ -296,6 +327,7 @@ impl LineProblem {
         match self {
             LineProblem::TooFewStops => "too_few_stops",
             LineProblem::NoRoad { .. } => "no_road",
+            LineProblem::OneWayAgainst { .. } => "one_way_against",
             LineProblem::LongWayRound { .. } => "long_way_round",
             LineProblem::NoBuses => "no_buses",
             LineProblem::NoDepot => "no_depot",
@@ -313,6 +345,7 @@ impl std::fmt::Display for LineProblem {
         match self {
             LineProblem::TooFewStops => write!(f, "needs at least two stops"),
             LineProblem::NoRoad { leg } => write!(f, "no road from stop {} to the next: move one of them, or join the streets", leg + 1),
+            LineProblem::OneWayAgainst { leg } => write!(f, "stop {} to the next runs against a one-way street (buses only drive one-way streets and ramps the way they go): swap the two stops round, or add a stop on a street that leads back", leg + 1),
             LineProblem::LongWayRound { leg, metres, direct } => write!(f, "stop {} to the next is a {:.0} m drive for {:.0} m apart (a one-way street, or a stop on the far kerb?)", leg + 1, metres, direct),
             LineProblem::NoBuses => write!(f, "set to run no buses"),
             LineProblem::NoDepot => write!(f, "no bus depot: build one, buses start and end the day there"),
@@ -336,6 +369,7 @@ impl BusRoute {
             riders_today: 0,
             legs: Vec::new(),
             broken: Vec::new(),
+            against: Vec::new(),
             leg_lanes: Vec::new(),
             next_release: 0,
             dispatch: None,
@@ -386,7 +420,7 @@ impl BusRoute {
         let mut out = Vec::new();
         for i in 0..n {
             if self.broken.contains(&i) {
-                out.push(LineProblem::NoRoad { leg: i });
+                out.push(if self.against.contains(&i) { LineProblem::OneWayAgainst { leg: i } } else { LineProblem::NoRoad { leg: i } });
                 continue;
             }
             let direct = self.stops[i].pos.distance(self.stops[(i + 1) % n].pos);
@@ -551,6 +585,7 @@ impl Transit {
         for route in self.routes.values_mut() {
             route.legs.clear();
             route.broken.clear();
+            route.against.clear();
             route.leg_lanes.clear();
             let n = route.stops.len();
             if n < 2 {
@@ -567,6 +602,9 @@ impl Transit {
                     None => {
                         route.legs.push(vec![a.pos, b.pos]);
                         route.broken.push(i);
+                        if net.find_route_round(b.segment, b.pos, a.segment, a.pos).is_some() {
+                            route.against.push(i);
+                        }
                         route.leg_lanes.push(None);
                     }
                 }
@@ -603,8 +641,12 @@ impl Transit {
             match leg {
                 Some((lanes, s0, s1)) => r.legs.push(net.polyline(&lanes, s0, s1)),
                 None => {
-                    r.legs.push(vec![stops[i].pos, stops[(i + 1) % stops.len()].pos]);
+                    let (a, b) = (stops[i], stops[(i + 1) % stops.len()]);
+                    r.legs.push(vec![a.pos, b.pos]);
                     r.broken.push(i);
+                    if net.find_route_round(b.segment, b.pos, a.segment, a.pos).is_some() {
+                        r.against.push(i);
+                    }
                 }
             }
         }

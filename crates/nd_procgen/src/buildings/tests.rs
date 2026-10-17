@@ -910,6 +910,35 @@ fn hq_crown_reads_on_a_needle_tower() {
     assert_eq!(super::brand::crown_logo_size(60.0, 10.0, 12.0), 7.0);
 }
 
+/// [r4] (K33) The standard box the renderer puts on trains and ships is
+/// the ISO size whatever its build and line, sound, and within budget; a
+/// line's boxes carry its colours.
+#[test]
+fn the_standard_container_is_iso_sized_in_every_build() {
+    let pal = Palette::default();
+    for (k, look) in [parts::BoxLook::Dry, parts::BoxLook::Reefer, parts::BoxLook::Tank, parts::BoxLook::OpenTop].into_iter().enumerate() {
+        for forty in [false, true] {
+            for seed in 0..12u64 {
+                let g = super::rail::container_geometry(forty, look, seed * 31 + k as u64, 0.4, &pal);
+                check_mesh(&g, "standard container");
+                assert!(g.triangle_count() <= parts::CONTAINER_TRIS_EX, "{look:?} spent {} triangles", g.triangle_count());
+                let (mut lo, mut hi) = (glam::Vec3::splat(f32::MAX), glam::Vec3::splat(f32::MIN));
+                for (_, m) in g.iter() {
+                    for p in &m.positions {
+                        lo = lo.min(glam::Vec3::from(*p));
+                        hi = hi.max(glam::Vec3::from(*p));
+                    }
+                }
+                let size = hi - lo;
+                let len = if forty && look != parts::BoxLook::Tank { parts::CONTAINER_40 } else { parts::CONTAINER_20 };
+                assert!((size.x - len).abs() < 0.2, "{look:?} forty {forty}: {size:?} long");
+                assert!((size.z - parts::CONTAINER_W).abs() < 0.16, "{look:?}: {size:?} wide");
+                assert!((size.y - parts::CONTAINER_H).abs() < 0.08 && lo.y.abs() < 0.01, "{look:?}: {size:?} high from {}", lo.y);
+            }
+        }
+    }
+}
+
 /// [K19] A public beach stays sand whoever owns it: a campus's "plaza"
 /// annex drew a lawn over the beach, its towel spots under the grass.
 #[test]

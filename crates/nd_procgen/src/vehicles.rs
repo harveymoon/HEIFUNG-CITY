@@ -591,17 +591,25 @@ fn semi(b: &mut B, col: [f32; 3]) {
     b.ext(&[(cr, 0.7), (fx, 0.7), (fx + 0.05, 2.6), (fx - 0.3, 3.15), (cr, 3.2)], hw - 0.05, cab_col);
     b.body.decal(Vec3::new(fx + 0.07, 2.05, 0.0), Vec3::Z, Vec3::Y, hw * 1.7, 0.8, Vec3::X, c4(GLASS));
     b.sides(fx - 0.6, 2.2, hw - 0.05, 0.6, 0.55, GLASS);
-    // Container on a skeletal trailer.
-    let cfront = cr - 0.35;
-    let palette = [[0.55, 0.12, 0.06], [0.08, 0.25, 0.45], [0.15, 0.35, 0.2], [0.6, 0.6, 0.62], [0.65, 0.42, 0.06]];
-    let ccol = palette[b.rng.random_range(0..palette.len())];
-    b.ext(&[(rx, 1.15), (cfront, 1.15), (cfront, 3.75), (rx, 3.75)], hw, ccol);
+    // Container on a skeletal trailer. [r4] (K33) The town's standard
+    // twenty-foot box (`CONTAINER_20` by `CONTAINER_W` by `CONTAINER_H`),
+    // in a shipping line's colours and mark.
+    let cfront = (rx + crate::CONTAINER_20).min(cr - 0.35);
+    let line = &crate::SHIPPING_LINES[b.rng.random_range(0..crate::SHIPPING_LINES.len())];
+    let ccol = line.body;
+    let (cb, ct) = (1.15, 1.15 + crate::CONTAINER_H);
+    b.ext(&[(rx, cb), (cfront, cb), (cfront, ct), (rx, ct)], crate::CONTAINER_W * 0.5, ccol);
     if b.detail {
         for i in 1..8 {
             let x = rx + (cfront - rx) * i as f32 / 8.0;
-            b.sides(x, 2.45, hw, 0.06, 2.5, mul(ccol, 0.7));
+            b.sides(x, (cb + ct) * 0.5, crate::CONTAINER_W * 0.5, 0.06, crate::CONTAINER_H - 0.1, mul(ccol, 0.7));
         }
-        b.lamp(rx - 0.005, 2.45, 0.0, 0.04, 2.5, -1.0, mul(ccol, 0.5));
+        if line.band {
+            b.sides((rx + cfront) * 0.5, ct - 0.55, crate::CONTAINER_W * 0.5 + 0.004, cfront - rx - 0.6, 0.36, line.mark);
+        } else {
+            b.sides(rx + 1.4, (cb + ct) * 0.5 + 0.2, crate::CONTAINER_W * 0.5 + 0.004, 1.8, 0.9, line.mark);
+        }
+        b.lamp(rx - 0.005, (cb + ct) * 0.5, 0.0, 0.04, crate::CONTAINER_H - 0.1, -1.0, mul(ccol, 0.5));
     }
     b.bx(((rx + cfront) * 0.5 + 0.5, 0.95, 0.0), (cfront - rx, 0.3, hw * 1.2), TRIM);
     let r = 0.5;

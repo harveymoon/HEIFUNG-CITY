@@ -49,7 +49,16 @@ pub fn title(w: &World, id: DroneId) -> String {
 pub fn doing(w: &World, id: DroneId) -> String {
     let Some(d) = w.air.drones.get(id) else { return String::new() };
     let to = destination(w, id).map(|(name, _)| format!(" to {name}")).unwrap_or_default();
-    format!("{}  ·  {}{}", crate::ui::fmt::capitalise(d.job.label()), d.phase.label(), if d.phase.airborne() { to } else { String::new() })
+    // [r4] (K28) Put down short of its pad on a flat battery.
+    if d.grounded {
+        return if d.phase.airborne() { "Battery all but flat  ·  coming down in the street".into() } else { format!("Down in the street, battery flat  ·  charging off the recovery van ({:.0}%)", d.battery * 100.0) };
+    }
+    // Waiting on the pad for its landing slot at the far end.
+    if d.phase == nd_sim::air::Phase::Climbing && d.at.is_some() && d.booked.is_none() && d.dest.is_some() && d.until > w.clock.tick {
+        return format!("{}  ·  cleared for take-off once a landing slot{} is free", crate::ui::fmt::capitalise(d.job.label()), to);
+    }
+    let slot = if d.booked.is_some() && d.phase.airborne() { "  ·  landing slot booked" } else { "" };
+    format!("{}  ·  {}{}{slot}", crate::ui::fmt::capitalise(d.job.label()), d.phase.label(), if d.phase.airborne() { to } else { String::new() })
 }
 
 /// Where it is flying: a pad building's name (or "the street") and the point.

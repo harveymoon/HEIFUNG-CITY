@@ -617,7 +617,7 @@ fn tower_crane(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, poly: &[Vec2], bui
 fn site_cabin(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f32) {
     let f = &c.frame;
     let col = pick(rng, &[[0.78, 0.78, 0.76], [0.55, 0.62, 0.68], [0.70, 0.66, 0.58]]);
-    container_unit(g, c, rng, p.x, p.y, yaw, 6.0, 2.5, 2.6, 0.25, col);
+    container_unit(g, c, rng, p.x, p.y, yaw, CONTAINER_20, CONTAINER_W, CONTAINER_H, 0.25, col);
     // Blocks under it, a lit window on the long side, a door and steps.
     let (s, co) = yaw.sin_cos();
     let at = |lu: f32, lv: f32| Vec2::new(p.x + lu * co - lv * s, p.y + lu * s + lv * co);

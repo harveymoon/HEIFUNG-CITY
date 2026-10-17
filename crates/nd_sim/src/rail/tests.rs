@@ -42,7 +42,7 @@ fn sharpest_turn_measures_the_worst_corner() {
 }
 
 fn train(poly: Vec<Vec2>, s: f32, branch: Option<(f32, f32)>) -> Train {
-    Train { kind: TrainKind::Passenger, cars: 2, nodes: Vec::new(), poly, s, prev_s: s, speed: 0.0, stops: Vec::new(), next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo: Vec::new(), color: 0, held: false, branch, exports: 0.0, unloaded: 0.0 }
+    Train { kind: TrainKind::Passenger, cars: 2, nodes: Vec::new(), poly, s, prev_s: s, speed: 0.0, stops: Vec::new(), next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo: Vec::new(), color: 0, held: false, branch, exports: 0.0, unloaded: 0.0, v: 0.0, dwell_total: 0.0, boxes: Vec::new() }
 }
 
 /// [freight] Wagons fill oldest first up to capacity; what does not

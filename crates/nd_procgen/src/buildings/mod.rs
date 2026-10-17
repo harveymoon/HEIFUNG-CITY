@@ -29,7 +29,7 @@ mod park;
 mod parking;
 pub mod parts;
 mod power;
-mod rail;
+pub mod rail;
 pub mod waterworks;
 pub mod transit;
 mod residential;

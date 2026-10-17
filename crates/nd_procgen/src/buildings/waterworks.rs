@@ -230,7 +230,7 @@ pub fn shipping_port(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             for t in 0..tiers {
                 let col = crate::palette::at(colors, rng.random_range(0..colors.len().max(1)));
                 if poly_inside(c, &rect(u, v, 6.4, 1.4)) {
-                    container_unit(g, c, rng, u, v, 0.0, 12.2, 2.45, 2.6, t as f32 * 2.6, col);
+                    container_unit(g, c, rng, u, v, 0.0, CONTAINER_40, CONTAINER_W, CONTAINER_H, t as f32 * CONTAINER_H, col);
                 }
             }
             u += 13.0;

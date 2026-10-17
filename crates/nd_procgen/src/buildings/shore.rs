@@ -878,7 +878,7 @@ pub fn jetty(j: &Jetty, deck: f32, water: f32, night: bool, seed: u64, boat_alon
             let cols = [[0.75, 0.25, 0.2], [0.2, 0.45, 0.7], [0.85, 0.7, 0.2], [0.3, 0.6, 0.35]];
             for k in 0..4 {
                 let q = stack + side * ((k % 2) as f32 * 2.6 - 1.3);
-                g.part(Container).boxed(Vec3::new(q.x, top + 1.3 + (k / 2) as f32 * 2.6, q.y), Vec3::new(6.0, 2.6, 2.4), yaw, rgba(cols[(seed as usize + k) % 4]));
+                g.part(Container).boxed(Vec3::new(q.x, top + CONTAINER_H * 0.5 + (k / 2) as f32 * CONTAINER_H, q.y), Vec3::new(CONTAINER_20, CONTAINER_H, CONTAINER_W), yaw, rgba(cols[(seed as usize + k) % 4]));
             }
             if boat_alongside {
                 boat(&mut g, j.berth, d, water, 30.0, 8.0, [0.2, 0.25, 0.32], false, night);

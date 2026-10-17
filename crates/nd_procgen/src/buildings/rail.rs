@@ -4,7 +4,9 @@
 //! the road, an apron and a gantry crane along the rails.
 
 use super::parts::*;
-use super::Ctx;
+use super::{BuildingRules, Ctx, Frame};
+use crate::palette::Palette;
+use nd_sim::{rng_for, LandUse, Tier};
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use rand::Rng;
@@ -108,6 +110,42 @@ pub fn platform(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, from: Vec2) {
     g.part(Concrete).slab(Vec3::new(exit.x, 0.05, exit.y), Vec3::new(pc.x, 0.95, pc.y), 3.0, 0.15, rgba(concrete));
 }
 
+/// [r4] (K33) Height of the yard crane's runway beams.
+pub const YARD_RUNWAY_Y: f32 = 8.4;
+
+/// [r4] (K33) A freight yard laid out across its track, as offsets along
+/// `out` (away from the track, on the yard's side) from the platform line:
+/// the main line's centre, the apron's near edge and width, and the crane
+/// runways (the near one on the apron, the far one beyond the main line).
+/// The yard is drawn to it and the renderer runs the crane on it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct YardLayout {
+    pub main: f32,
+    pub sidings: usize,
+    pub apron_in: f32,
+    pub apron_w: f32,
+    pub near_off: f32,
+    pub far_off: f32,
+}
+
+/// [r4] (K33) The layout of the yard on `link` with lot outline `lot`
+/// (world coordinates).
+pub fn yard_layout(link: &nd_sim::RailLink, lot: &[Vec2]) -> YardLayout {
+    let [pa, pb] = link.platform;
+    let along = link.along();
+    let out = Vec2::new(-along.y, along.x) * link.side;
+    let length = pa.distance(pb);
+    // The platform line sits 3.8 m off the track centre; sidings every 4.6 m.
+    let main = -(nd_sim::roads::RAIL_HALF_WIDTH + 1.4);
+    let sidings = if length > 80.0 { 3 } else { 2 };
+    let apron_in = main + 4.6 * sidings as f32 + 3.4;
+    // The apron ends inside the lot: its far edge is the lot's extent
+    // across the track, measured from the platform line.
+    let lot_across = lot.iter().map(|p| (*p - pa).dot(out)).fold(f32::MIN, f32::max);
+    let apron_w = (lot_across - 0.6 - apron_in).clamp(3.0, 9.0);
+    YardLayout { main, sidings, apron_in, apron_w, near_off: apron_in + apron_w - 0.6, far_off: main - 3.0 }
+}
+
 pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
@@ -140,9 +178,10 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let along = link.along();
     let out = Vec2::new(-along.y, along.x) * link.side;
     let length = pa.distance(pb);
-    // The platform line sits 3.8 m off the track centre; sidings every 4.6 m.
-    let main = -(nd_sim::roads::RAIL_HALF_WIDTH + 1.4);
-    let sidings = if length > 80.0 { 3 } else { 2 };
+    let lot_world: Vec<Vec2> = c.lot_poly.iter().map(|p| f.to_world(p.x, p.y)).collect();
+    let lay = yard_layout(link, &lot_world);
+    let main = lay.main;
+    let sidings = lay.sidings;
     // The points where a siding rejoins the main line are clamped to the
     // lot's own extent along the track, so a yard does not lay rail through
     // its neighbours: a short lot gets short, steep turnouts.
@@ -161,17 +200,15 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let pts = nd_sim::plan::sample_curve(&ctrl);
         railway_track(g, pal, &pts, 4.4);
     }
-    let apron_in = main + 4.6 * sidings as f32 + 3.4;
-    // The apron ends inside the lot: its far edge is the lot's extent
-    // across the track, measured from the platform line.
-    let lot_across = c.lot_poly.iter().map(|p| (f.to_world(p.x, p.y) - pa).dot(out)).fold(f32::MIN, f32::max);
-    let apron_w = (lot_across - 0.6 - apron_in).clamp(3.0, 9.0);
+    let (apron_in, apron_w) = (lay.apron_in, lay.apron_w);
     g.part(Concrete).path_box(&[pa + out * (apron_in + apron_w * 0.5), pb + out * (apron_in + apron_w * 0.5)], 0.0, apron_w, 0.0, 0.3, rgba(mul(pal.concrete(0), 1.1)));
     g.part(Glow).path_strip(&[pa + out * (apron_in + 0.3), pb + out * (apron_in + 0.3)], 0.0, 0.12, 0.32, rgba(pal.platform_line));
-    // Gantry: legs on the apron and beyond the main line, beam over everything.
+    // Gantry: legs on the apron and beyond the main line carrying the two
+    // runway beams along the track. [r4] (K33) The crane's bridge, trolley
+    // and spreader ride them, drawn and moved by the renderer from the
+    // train's real load (`YardLayout`).
     let steel = mul(pal.metal_paint(0), 1.1);
-    let far_off = main - 3.0;
-    let near_off = apron_in + apron_w - 0.6;
+    let (far_off, near_off) = (lay.far_off, lay.near_off);
     for t in [0.25f32, 0.75] {
         let p = pa.lerp(pb, t);
         let near = p + out * near_off;
@@ -179,13 +216,9 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         for q in [near, far] {
             g.part(Metal).boxed(Vec3::new(q.x, 4.0, q.y), Vec3::new(0.5, 8.0, 0.5), 0.0, rgba(steel));
         }
-        g.part(Metal).beam(Vec3::new(near.x, 8.2, near.y), Vec3::new(far.x, 8.2, far.y), 0.6, rgba(steel));
-        let hook = near.lerp(far, rng.random_range(0.2..0.8));
-        g.part(Matte).boxed(Vec3::new(hook.x, 7.4, hook.y), Vec3::new(1.4, 1.0, 1.4), 0.0, rgba(CHARCOAL));
-        g.part(Matte).boxed(Vec3::new(hook.x, 5.5, hook.y), Vec3::new(0.05, 3.0, 0.05), 0.0, rgba(DARK));
     }
     for off in [near_off, far_off] {
-        g.part(Metal).beam(Vec3::new(pa.x + out.x * off, 8.4, pa.y + out.y * off), Vec3::new(pb.x + out.x * off, 8.4, pb.y + out.y * off), 0.4, rgba(steel));
+        g.part(Metal).beam(Vec3::new(pa.x + out.x * off, YARD_RUNWAY_Y, pa.y + out.y * off), Vec3::new(pb.x + out.x * off, YARD_RUNWAY_Y, pb.y + out.y * off), 0.4, rgba(steel));
     }
     aviation_light(g, pal, Vec3::new(pa.x + out.x * near_off, 8.9, pa.y + out.y * near_off), 0.35);
     // Container stacks on the apron's far edge, towards the shed.
@@ -198,8 +231,9 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         let stack = rng.random_range(1..=3);
         for level in 0..stack {
-            let col = pick(rng, &pal.container_colors);
-            container_unit(g, c, rng, lp.x, lp.y, along.y.atan2(along.x) - f.yaw(), 6.05, 2.44, 2.6, level as f32 * 2.6, col);
+            // [r4] (K33) The standard box, in a line's colours.
+            let line = shipping_line(rng.random());
+            iso_container(g, c, rng, lp.x, lp.y, along.y.atan2(along.x) - f.yaw(), false, level as f32 * CONTAINER_H, line, BoxLook::Dry);
         }
     }
     // Forklift and lorries at the doors.
@@ -229,4 +263,80 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     if poly_inside(c, &rect(wb.x, wb.y, 1.6, 4.6)) {
         f.bx(g, Metal, wb.x, 0.08, wb.y, Vec3::new(3.0, 0.16, 9.0), mul(pal.steel, 0.5));
     }
+}
+
+/// [r4] (K33) Draw with `draw` in a bare world frame (no lot): for the
+/// containers the renderer puts on vehicles.
+fn draw_free(seed: u64, wear: f32, pal: &Palette, draw: impl FnOnce(&mut Geometry, &Ctx)) -> Geometry {
+    let rules = BuildingRules::default();
+    let sq = vec![Vec2::new(-40.0, -40.0), Vec2::new(40.0, -40.0), Vec2::new(40.0, 40.0), Vec2::new(-40.0, 40.0)];
+    let c = Ctx {
+        frame: Frame { center: Vec2::ZERO, along: Vec2::X, inward: Vec2::Y, width: 80.0, depth: 80.0 },
+        rules: rules.for_land_use(LandUse::Industrial),
+        style: rules.style(Tier::Mid),
+        palette: pal,
+        land_use: LandUse::Industrial,
+        tier: Tier::Mid,
+        floors: 1,
+        wear: wear.clamp(0.0, 1.0),
+        fw: 80.0,
+        fd: 80.0,
+        lot_poly: sq.clone(),
+        poly: sq,
+        seed,
+        parking: None,
+        powered: 1.0,
+        park: None,
+        rail: None,
+        animated_rotors: false,
+        field: None,
+        animated_cranes: false,
+        dynamic_lights: false,
+        battery: None,
+        plant_scale: 1.0,
+        shore: None,
+        pier: None,
+        park_look: None,
+    };
+    let mut g = Geometry::default();
+    draw(&mut g, &c);
+    g
+}
+
+/// [r4] (K33) One standard container on its own, for the renderer to put
+/// on a train, a lorry or a crane's spreader: centred on the origin, its
+/// floor at height 0, its length along +x, drawn exactly as the yards and
+/// stacks draw theirs ([`iso_container`]), in the line and paint `seed`
+/// picks, as worn as `wear`.
+pub fn container_geometry(forty: bool, look: BoxLook, seed: u64, wear: f32, pal: &Palette) -> Geometry {
+    draw_free(seed, wear, pal, |g, c| {
+        let mut rng = rng_for(seed, 0xC0E7);
+        iso_container(g, c, &mut rng, 0.0, 0.0, 0.0, forty, 0.0, shipping_line(seed), look);
+    })
+}
+
+/// [r4] (K33) A container ship's deck cargo: bays of forty-foot boxes across
+/// the deck between the bow and the deckhouse, one to three high, each in
+/// its own line's colours. In the ship's frame (bow along +x) with the
+/// lowest tier on `deck`; `len` and `beam` are the hull's.
+pub fn freighter_cargo(seed: u64, len: f32, beam: f32, deck: f32, pal: &Palette) -> Geometry {
+    draw_free(seed, 0.35, pal, |g, c| {
+        let mut rng = rng_for(seed, 0x5419);
+        let half = len * 0.5;
+        let rows = ((beam * 0.86) / (CONTAINER_W + 0.06)).floor().max(1.0) as i32;
+        let pitch = CONTAINER_40 + 0.5;
+        let bays = (((len - 26.0) / pitch).floor() as i32).max(1);
+        for k in 0..bays {
+            let x = -half + 16.0 + pitch * 0.5 + k as f32 * pitch;
+            for r in 0..rows {
+                let z = (r as f32 - (rows - 1) as f32 * 0.5) * (CONTAINER_W + 0.06);
+                let tiers = 1 + ((k * 7 + r * 3 + seed as i32) % 3);
+                for t in 0..tiers {
+                    let line = shipping_line(rng.random());
+                    let look = if coin(&mut rng, 0.12) { BoxLook::Reefer } else { BoxLook::Dry };
+                    iso_container(g, c, &mut rng, x, z, 0.0, true, deck + t as f32 * CONTAINER_H, line, look);
+                }
+            }
+        }
+    })
 }

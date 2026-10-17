@@ -428,7 +428,7 @@ pub fn strip_mine(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     let cab = Vec2::new(area.u1 - 4.0, area.v0 + 1.6);
     if poly_inside(c, &rect(cab.x, cab.y, 3.1, 1.3)) && cab.distance(heap_pt) > 6.0 {
-        container_unit(g, c, rng, cab.x, cab.y, 0.0, 6.05, 2.44, 2.6, 0.0, [0.85, 0.65, 0.1]);
+        container_unit(g, c, rng, cab.x, cab.y, 0.0, CONTAINER_20, CONTAINER_W, CONTAINER_H, 0.0, [0.85, 0.65, 0.1]);
     }
     let front = c.front_face(&c.poly);
     floodlight(g, c, front.at(-front.len * 0.45, -0.8), 12.0);
@@ -490,7 +490,7 @@ pub fn trash_company(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let front = c.front_face(&lot);
     let office = Vec2::new(area.u1 - 3.5, area.v0 + 1.6);
     if poly_inside(c, &rect(office.x, office.y, 3.1, 1.3)) {
-        container_unit(g, c, rng, office.x, office.y, 0.0, 6.05, 2.44, 2.6, 0.0, livery);
+        container_unit(g, c, rng, office.x, office.y, 0.0, CONTAINER_20, CONTAINER_W, CONTAINER_H, 0.0, livery);
         let of = Face::new(office + Vec2::new(-3.0, -1.23), office + Vec2::new(3.0, -1.23), Vec2::new(0.0, -1.0));
         pane(g, c, rng, &of, -1.2, 1.5, 1.2, 0.8, false);
         sign_board(g, c, rng, &of, 0.8, 3.1, 3.5, 0.5);
