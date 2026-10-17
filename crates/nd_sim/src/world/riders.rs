@@ -30,6 +30,9 @@ const STOP_SHORT: f32 = 1.0;
 /// degrees of it; across it when more than 60 degrees off.
 const ALONG: f32 = 0.7;
 const ACROSS: f32 = 0.5;
+/// [r1-roads] Most metres more than the street's width a ride round a ring
+/// of footbridge decks may take (`bike_over_footbridges`).
+const RING_DETOUR: f32 = 90.0;
 /// A bold rider rolls the dice on a red once per this many ticks.
 const RED_ROLL_TICKS: u64 = 5;
 /// Salt of a rider's red-light dice, apart from a walker's.
@@ -62,8 +65,12 @@ impl World {
     /// instead: up the stairs at the near end (wheeling the bike, at a
     /// walk: `step_rider`), over the deck and down the far side. The bridge's
     /// points are the walk graph's own, so the rider is drawn up there.
-    /// Bridges joined at a corner deck (no stairs at that end) are left to
-    /// the walkers.
+    /// [r1-roads] A bridge joined at a corner deck to the next one (a ring
+    /// of decks round a junction, no stairs at that end) is ridden as the
+    /// walkers go: over the ring and down the nearest stairs, by the walk
+    /// graph (it used to be left out, and the bikes crossed at grade under
+    /// it). A path already over a bridge is left as it is, so this may run
+    /// again on the rest of a ride (`step_rider`, after the bridges change).
     pub(super) fn bike_over_footbridges(&self, path: &mut Vec<Vec2>) {
         if self.walk.footbridges.is_empty() || path.len() < 2 {
             return;
@@ -75,9 +82,9 @@ impl World {
         }
         // (arc position, half the street's width with its pavements, the
         // bridge's points in the order ridden)
-        let mut hits: Vec<(f32, f32, [Vec2; 4])> = Vec::new();
+        let mut hits: Vec<(f32, f32, Vec<Vec2>)> = Vec::new();
         for f in &self.walk.footbridges {
-            if f.joined[0] || f.joined[1] {
+            if path.iter().any(|p| f.top.contains(p)) {
                 continue;
             }
             let Some(c) = self.walk.crossings.get(f.crossing as usize) else { continue };
@@ -107,7 +114,24 @@ impl World {
                     break;
                 }
                 // The end on the side the bike comes from first.
-                let pts = if p.distance(a) <= p.distance(b) { [f.foot[0], f.top[0], f.top[1], f.foot[1]] } else { [f.foot[1], f.top[1], f.top[0], f.foot[0]] };
+                let near_a = p.distance(a) <= p.distance(b);
+                let pts = if f.joined[0] || f.joined[1] {
+                    // Round the ring of decks as a walker goes, from this
+                    // kerb to the other: never more than a short way round.
+                    let (from, to) = if near_a { (c.a, c.b) } else { (c.b, c.a) };
+                    let Some(nodes) = self.walk.route_nodes(from, to) else { break };
+                    let pts: Vec<Vec2> = nodes.iter().map(|&n| self.walk.nodes[n as usize].pos).collect();
+                    let walked: f32 = pts.windows(2).map(|w| w[0].distance(w[1])).sum();
+                    let raised = nodes.iter().any(|&n| self.walk.nodes[n as usize].level > 0.0);
+                    if !raised || walked > half * 8.0 + RING_DETOUR {
+                        break;
+                    }
+                    pts
+                } else if near_a {
+                    vec![f.foot[0], f.top[0], f.top[1], f.foot[1]]
+                } else {
+                    vec![f.foot[1], f.top[1], f.top[0], f.foot[0]]
+                };
                 hits.push((s, half, pts));
                 break;
             }
@@ -394,7 +418,7 @@ impl World {
         };
         let mut r = self.peds.riders.get(&id).copied().unwrap_or_else(|| {
             let (caution, hedonism) = driver_traits(seed);
-            Rider { waiting: None, ran: None, caution, hedonism }
+            Rider { waiting: None, ran: None, caution, hedonism, bridges: 0 }
         });
         let mut pos = self.citizens[id].pos;
         let mut heading = self.citizens[id].heading;
@@ -405,6 +429,23 @@ impl World {
         // [walk-crossings] Up a footbridge's stairs and over its deck the
         // bike is wheeled, at a walk.
         let mut wheeled = false;
+        // [r1-roads] (section C) A footbridge put up (or a ring of decks
+        // joined) since the ride was planned: the rest of it goes over, as
+        // a walker re-plans (riders used to cross at grade under bridges
+        // built after they set off).
+        let walk_key = self.walk.version + 1;
+        if r.bridges != walk_key {
+            r.bridges = walk_key;
+            if !self.walk.footbridges.is_empty() && *idx < path.len() {
+                let mut rest: Vec<Vec2> = std::iter::once(pos).chain(path[*idx..].iter().copied()).collect();
+                let n = rest.len();
+                self.bike_over_footbridges(&mut rest);
+                if rest.len() != n {
+                    path.truncate(*idx);
+                    path.extend_from_slice(&rest[1..]);
+                }
+            }
+        }
         // Crossings matter only once the walk graph and lanes are matched.
         let rules = !self.peds.cross_grid.is_empty() && self.peds.crossings.len() == self.walk.crossings.len();
         while budget > 1e-4 && *idx < path.len() && guard < 64 {

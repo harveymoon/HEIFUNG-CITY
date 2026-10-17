@@ -76,7 +76,7 @@ impl World {
             if other.center.distance(lot.center) > 200.0 {
                 return false;
             }
-            let Some(o) = crate::zoning::joined_outline(&[other.polygon.clone(), lot.polygon.clone()]) else { return false };
+            let Some(o) = join_plots(&other.polygon, &lot.polygon) else { return false };
             let shared = (crate::geom::perimeter(&other.polygon) + crate::geom::perimeter(&lot.polygon) - crate::geom::perimeter(&o)) * 0.5;
             shared >= 4.0 && crate::geom::polygon_area(&o).abs() > other.area() + lot.area() * 0.9
         })
@@ -89,7 +89,7 @@ impl World {
     pub(super) fn extend_city_parking(&mut self, b: BuildingId, lot_id: LotId) -> Result<BuildingId, String> {
         let size = self.vehicles.city_lots.get(&b).map(|c| c.size).ok_or("not a parking lot the city runs")?;
         let home = self.buildings.get(b).map(|x| x.lot).ok_or("no such building")?;
-        let outline = crate::zoning::joined_outline(&[self.lots[home].polygon.clone(), self.lots[lot_id].polygon.clone()]).ok_or("the plots do not join")?;
+        let outline = join_plots(&self.lots[home].polygon, &self.lots[lot_id].polygon).ok_or("the plots do not join")?;
         let added = self.lots[lot_id].area();
         let cost = size.cost_for(added);
         if self.economy.treasury < cost {
@@ -345,3 +345,39 @@ pub const PARKING_SPACING: f32 = 150.0;
 /// What a founder must have to open a surface lot or a car park.
 pub const PARKING_LOT_COST: f32 = 300.0;
 pub const PARKING_CAR_PARK_COST: f32 = 1200.0;
+
+/// [r1-roads] (K42) How far a plot's corner may lie off its neighbour's edge
+/// and still be joined along it, m: plots cut from different parcels of a
+/// curved or skewed block meet along edges that are not quite the same
+/// line, and the union left a sliver between them (two pieces), so the
+/// third of three car parks side by side never joined the other two.
+pub const PLOT_JOIN_SLACK: f32 = 1.0;
+
+/// [r1-roads] (K42) The outline of two neighbouring plots joined: the
+/// corners of each lying within `PLOT_JOIN_SLACK` of the other's outline are
+/// put on it first, so the two meet along one line. None when they do not
+/// make one piece.
+pub fn join_plots(a: &[Vec2], b: &[Vec2]) -> Option<Vec<Vec2>> {
+    let snap = |pts: &[Vec2], onto: &[Vec2]| -> Vec<Vec2> {
+        pts.iter()
+            .map(|&p| {
+                let n = onto.len();
+                let mut best = (f32::INFINITY, p);
+                for i in 0..n {
+                    let (_, q) = crate::geom::project_on_segment(p, onto[i], onto[(i + 1) % n]);
+                    let d = q.distance(p);
+                    if d < best.0 {
+                        best = (d, q);
+                    }
+                }
+                if best.0 <= PLOT_JOIN_SLACK { best.1 } else { p }
+            })
+            .collect()
+    };
+    let b2 = snap(b, a);
+    let pieces = crate::zoning::union_outlines(&[a.to_vec(), b2.clone()]);
+    if pieces.len() != 1 {
+        return None;
+    }
+    crate::zoning::joined_outline(&[a.to_vec(), b2])
+}

@@ -92,8 +92,8 @@ pub(super) fn run_one(cmd: &Value, ctx: &mut Ctx) -> Reply {
     // the old one's ids now, before the next command in this batch reads
     // it (`city_reset` would only run later this frame).
     {
-        let Ctx { sim, epoch, tools, selection, eplan, follow, fly, .. } = ctx;
-        crate::city_reset::catch_up(sim.generation, epoch, tools, selection, eplan, follow, fly);
+        let Ctx { sim, epoch, tools, selection, eplan, follow, fly, overlays, lighting, .. } = ctx;
+        crate::city_reset::catch_up(sim.generation, epoch, tools, selection, eplan, follow, fly, overlays, lighting);
     }
     match result {
         Ok(mut body) => {
@@ -794,6 +794,7 @@ pub(super) static COMMANDS: &[Cmd] = &[
     Cmd { name: "lighting", aliases: &[], effect: View, run: look::lighting, help: &[
         ("follow_clock", "bool"),
         ("hour", "0..24 (also unpins from the clock)"),
+        ("weather", "bool: draw the weather (rain, snow, fog, wet streets); the sim's weather is unchanged"),
     ] },
     Cmd { name: "heat_vision", aliases: &["heat"], effect: View, run: look::heat_vision, help: &[
         ("on", "bool, omitted toggles: the drone thermal camera view (also key H)"),

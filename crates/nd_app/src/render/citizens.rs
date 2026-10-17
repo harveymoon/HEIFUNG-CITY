@@ -5,6 +5,17 @@
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
+/// [K36] A walker whose way runs this far under the ground there (an
+/// open cut's floor is its ground) is in a tunnel: drawn only in the Underground view.
+const UNDERGROUND_WALK: f32 = -1.5;
+
+/// The ground at `p`, or the water's surface over it (an open cut's
+/// floor is its ground; a bridge deck above does not count).
+fn under_floor(w: &nd_sim::World, p: SVec2) -> f32 {
+    let g = w.ground_height(p);
+    if w.landscape.is_water(p) { g.max(nd_sim::landscape::WATER_LEVEL) } else { g }
+}
+
 pub(super) fn sync_citizens(
     mut commands: Commands,
     sim: Res<Sim>,
@@ -51,11 +62,20 @@ pub(super) fn sync_citizens(
     // frame is evicted to make room for another.
     // Nearest the camera first: they claim figures before the distant.
     let eye = camera.iter().next().map_or(Vec3::ZERO, |t| t.translation());
+    let down = w.down_on_street();
+    // [K18] A seated figure of their own (on a bench, or on the kerb with
+    // their knees up), not a standing one squashed into the ground.
+    let sit_of = |id: CitizenId, ride: bool| match w.pose_with(id, &down) {
+        _ if ride || plain => 0,
+        nd_sim::world::Pose::Bench => nd_procgen::people::SIT_BENCH,
+        nd_sim::world::Pose::SittingKerb => nd_procgen::people::SIT_GROUND,
+        _ => 0,
+    };
     let mut outdoors: Vec<(CitizenId, Entity, nd_procgen::people::PersonKey, f32, f32)> = state
         .citizens
         .iter()
         .filter_map(|(id, &e)| w.citizens.get(*id).filter(|c| shown(c)).map(|c| (*id, e, people::figure_of(c), c.pos.distance_squared(SVec2::new(eye.x, eye.z)))))
-        .map(|(id, e, (k, s), d)| (id, e, k, s, d))
+        .map(|(id, e, (k, s), d)| (id, e, nd_procgen::people::PersonKey { sit: sit_of(id, k.ride), ..k }, s, d))
         .collect();
     outdoors.sort_by(|a, b| a.4.total_cmp(&b.4));
     let mut protected: HashSet<nd_procgen::people::PersonKey> = HashSet::new();
@@ -68,13 +88,14 @@ pub(super) fn sync_citizens(
         }
     }
     let mut looks: HashSet<nd_procgen::people::PersonKey> = HashSet::new();
-    let down = w.down_on_street();
     for &(id, e, key, stature, _) in &outdoors {
         let Some(c) = w.citizens.get(id) else { continue };
         let Ok((mut tf, mut vis, _, mut mesh, _, way, platform)) = q.get_mut(e) else { continue };
         // [walk-networks] Down in a pedestrian tunnel too: shown in the
         // underground view with the platforms' people.
-        let below = c.on_platform() || w.citizen_in_tunnel(c);
+        // [K36] Or anyone whose way runs below ground (a street tunnel
+        // under a river), however their leg was found.
+        let below = c.on_platform() || w.citizen_in_tunnel(c) || w.walker_way_height(c, c.pos).is_some_and(|z| z < under_floor(w, c.pos) + UNDERGROUND_WALK);
         if platform != below {
             if platform {
                 commands.entity(e).try_remove::<PlatformTag>();
@@ -98,7 +119,10 @@ pub(super) fn sync_citizens(
         if let Some(mut way) = way {
             way.0 = w.walker_way_height(c, pos);
         }
-        tf.translation = Vec3::new(pos.x, if lying { 0.12 } else if seated { 0.02 } else { 0.16 } + raised, pos.y);
+        // [K18] A bench's seat is on the park's ground; a kerb sitter sits
+        // on the pavement (its top, where walkers stand).
+        let kerb = pose == nd_sim::world::Pose::SittingKerb;
+        tf.translation = Vec3::new(pos.x, if lying { 0.12 } else if seated && !kerb { 0.02 } else { 0.16 } + raised, pos.y);
         if c.on_platform() {
             tf.translation.y = 0.16 - nd_sim::subway::DEPTH;
         }
@@ -106,16 +130,17 @@ pub(super) fn sync_citizens(
         if lying {
             tf.rotation *= Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
         }
-        // On the kerb: lower, hunched forward over the knees.
-        let kerb = pose == nd_sim::world::Pose::SittingKerb;
-        if kerb {
-            tf.rotation *= Quat::from_rotation_x(0.35);
-            tf.translation.y -= 0.1;
-        }
-        tf.scale = if kerb { Vec3::new(1.05, 0.5, 1.25) } else if seated { Vec3::new(1.0, 0.62, 1.15) } else { Vec3::ONE } * stature;
+        // The seated figures are modelled sitting (`PersonKey::sit`); only
+        // the plain stand-in is squashed.
+        tf.scale = Vec3::splat(stature);
         looks.insert(key);
         let fallback = || if key.ride { mats.bike_mesh.clone() } else { mats.citizen_mesh.clone() };
-        let wanted_mesh = if plain { fallback() } else { people.mesh_for(key, &mut meshes).unwrap_or_else(fallback) };
+        let figure = if plain { None } else { people.mesh_for(key, &mut meshes) };
+        let stand_in = figure.is_none();
+        let wanted_mesh = figure.unwrap_or_else(fallback);
+        if stand_in && seated && !plain {
+            tf.scale = Vec3::new(1.0, 0.62, 1.15) * stature;
+        }
         if plain {
             tf.scale = if seated { Vec3::new(1.0, 0.62, 1.15) } else { Vec3::ONE };
         }

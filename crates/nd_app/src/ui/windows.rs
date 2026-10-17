@@ -149,6 +149,7 @@ pub(super) fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
     ui.checkbox(&mut p.tools.show_routes, "Bus lines whatever the tool");
     ui.checkbox(&mut p.overlays.projects, "Other pending projects, dim");
     ui.checkbox(&mut p.lighting.heat, "Drone heat vision [H]");
+    ui.checkbox(&mut p.lighting.show_weather, "Show weather").on_hover_text("Falling rain and snow, fog and wet streets. Off only hides them: the weather still happens.");
     hint(ui, "Land value, rents and the class mix are in City Data, City, Land and rent.");
     section(ui, "LIGHTING");
     let lighting = &mut *p.lighting;

@@ -11,13 +11,15 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
     let mut rng = rng_for(seed, 11);
     match (extras.plant, extras.parking) {
         _ if extras.service.is_some() => Style::for_service(extras.service.unwrap()),
+        // [waterfront] A public beach is sand, not a lawn. [K19] Before the
+        // annexes: a campus that took a beach over as a "plaza" drew a lawn
+        // over the sand, its towel spots sunk under the grass.
+        _ if land_use == LandUse::Park && lot.shore.beach => Style::Beach,
         // [megacorp] A campus annex has its kind's look; an HQ is a tower.
         _ if extras.annex.is_some_and(|a| Style::for_annex(a).is_some()) => Style::for_annex(extras.annex.unwrap()).unwrap(),
         _ if extras.brand.is_some_and(|m| m.role == nd_sim::corp::BrandRole::Headquarters) && land_use == LandUse::Commercial && extras.tower.is_none() => {
             if seed % 2 == 0 { Style::TwistTower } else { Style::SlabTower }
         }
-        // [waterfront] A public beach is sand, not a lawn.
-        _ if land_use == LandUse::Park && lot.shore.beach => Style::Beach,
         // [land] McMansions, mansions, mega hotels and museums.
         _ if Style::for_form(extras.form).is_some() => Style::for_form(extras.form).unwrap(),
         // [subway] Before the depot: the Central Station is a bus terminal too.

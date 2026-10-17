@@ -602,7 +602,7 @@ impl Default for ToolState {
     fn default() -> Self {
         Self {
             district: Default::default(),
-            tool: Tool::Road,
+            tool: Tool::Inspect,
             lanes_fwd: 1,
             lanes_bwd: 1,
             land_use: LandUse::Residential,

@@ -70,7 +70,7 @@ fn probe(w: &World, label: &str) {
     let pal = Palette::default();
     let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
     let inner: &[Vec<(f32, f32)>] = if w.relief { &w.road_inner } else { &[] };
-    let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: w.config.seed, heights, inner, layer: StreetLayer::Surface, closed: &[] });
+    let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: w.config.seed, heights, inner, layer: StreetLayer::Surface, closed: &[], joined_ramps: &[] });
     let roads = &w.roads;
     let nz = |n: NodeId| heights.get(n.0 as usize).copied().unwrap_or(0.0);
     println!("{label}: {} segments, {} triangles", roads.alive_segments().count(), g.triangle_count());

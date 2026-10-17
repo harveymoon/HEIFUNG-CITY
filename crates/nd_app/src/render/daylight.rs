@@ -17,11 +17,15 @@ pub struct Lighting {
     /// [look] The graphics setting: Auto (the throttler holds the frame
     /// rate) or a fixed tier. `ND_QUALITY` sets the starting value.
     pub quality: QualitySetting,
+    /// [show-weather] Draw the weather: falling rain and snow, the fog it
+    /// brings and wet streets (View window, ALSO DRAWN). Off hides them
+    /// only; the sim's weather goes on.
+    pub show_weather: bool,
 }
 
 impl Default for Lighting {
     fn default() -> Self {
-        Self { follow_clock: true, hour: 14.0, heat: false, quality: QualitySetting::from_env() }
+        Self { follow_clock: true, hour: 14.0, heat: false, quality: QualitySetting::from_env(), show_weather: true }
     }
 }
 /// Near shadow cascade bounds (m): the defaults, kept while the orbit
@@ -88,7 +92,7 @@ pub(super) fn update_daylight(
     // second rather than every frame.
     // [look] The fog's tint follows the climate and the rain or snow too.
     let climate = sim.world.landscape.params.climate;
-    let precip = climate::precip_now(&sim.world).map(|(_, i)| i).unwrap_or(0.0);
+    let precip = climate::precip_shown(&sim.world, &lighting).map(|(_, i)| i).unwrap_or(0.0);
     let climate_ix = nd_sim::Climate::ALL.iter().position(|c| *c == climate).unwrap_or(0) as i32;
     let daylight_key = (t * 4096.0).round() as i32 + 8192 * (climate_ix * 16 + (precip * 15.0).round() as i32);
     if state.daylight_key == Some(daylight_key) && !assets.palette_changed {

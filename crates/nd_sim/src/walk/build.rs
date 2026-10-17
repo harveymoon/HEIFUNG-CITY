@@ -392,11 +392,31 @@ impl WalkGraph {
             }
             let s0 = streets[0];
             let sides: Vec<u32> = on_street.iter().filter(|x| x.1 == s0).map(|x| x.0).collect();
-            if sides.len() == 2 && roads.segment(s0).walkable() {
+            let mut joins: Vec<u32> = on_street.iter().map(|x| x.0).collect();
+            let on_ring = roads.ring_of_segment(s0).is_some();
+            if sides.len() == 2 && roads.segment(s0).walkable() && streets.len() == 1 && !on_ring {
+                // [r1-roads] (K47, K48) A dead end: the pavement runs on
+                // round its end (where `nd_procgen::street::cul_de_sac`
+                // paves it), so walkers go round instead of standing in
+                // the turning head waiting for a gap (it used to be an
+                // unmarked crossing over the end: people waited there for
+                // ever behind lorries stuck in it).
+                let away = roads.away_dir(s0, nid);
+                let right = Vec2::new(-away.y, away.x);
+                let off = roads.segment(s0).half_width() + SIDEWALK * 0.55;
+                let cap = node.pos - away * (SIDEWALK * 0.55);
+                let corners = [g.add_node(cap + right * off, None), g.add_node(cap - right * off, None)];
+                g.link(corners[0], corners[1], false);
+                for &sd in &sides {
+                    let p = g.nodes[sd as usize].pos;
+                    let near = if g.nodes[corners[0] as usize].pos.distance(p) <= g.nodes[corners[1] as usize].pos.distance(p) { corners[0] } else { corners[1] };
+                    g.link(sd, near, false);
+                }
+                joins.extend(corners);
+            } else if sides.len() == 2 && roads.segment(s0).walkable() {
                 // [walk-crossings] A path meeting a roundabout's ring: no
                 // zebra over the ring (drivers there give way to nobody;
                 // G20), only an unmarked way over to the island.
-                let on_ring = roads.ring_of_segment(s0).is_some();
                 let kind = if streets.len() == 2 && paths > 0 && !on_ring { CrossingKind::Zebra } else { CrossingKind::Informal };
                 g.link_cross(sides[0], sides[1], s0, Some(nid), kind, roads);
                 if let Some(c) = g.crossings.last_mut() {
@@ -405,7 +425,7 @@ impl WalkGraph {
             }
             for x in e.iter().filter(|x| !roads.segment(x.1).is_street()) {
                 let p = g.nodes[x.0 as usize].pos;
-                if let Some(best) = on_street.iter().min_by(|u, v| g.nodes[u.0 as usize].pos.distance(p).total_cmp(&g.nodes[v.0 as usize].pos.distance(p))).map(|y| y.0) {
+                if let Some(best) = joins.iter().copied().min_by(|&u, &v| g.nodes[u as usize].pos.distance(p).total_cmp(&g.nodes[v as usize].pos.distance(p))) {
                     g.link(x.0, best, false);
                 }
             }
@@ -425,6 +445,8 @@ impl WalkGraph {
                 }
             }
         }
+
+        g.close_redundant_path_zebras(roads);
 
         // ── lots ─────────────────────────────────────────────────────────
         // Each usable lot gets a loop inset from its edges with a node at
@@ -587,6 +609,8 @@ impl WalkGraph {
         // first point (an entrance) joins the lot loop, and benches hang
         // off the nearest path node so people can walk to them and sit.
         let loop_mids: HashMap<LotId, Vec<u32>> = loops.iter().map(|l| (l.lot, l.mids.clone())).collect();
+        // [K10] Each grounds' ways in, to join those of grounds beside it.
+        let mut gates_in: Vec<(LotId, u32)> = Vec::new();
         for (lid, lot) in lots.iter() {
             let Some(park) = &lot.park else { continue };
             let mut path_nodes: Vec<u32> = Vec::new();
@@ -613,6 +637,9 @@ impl WalkGraph {
                     if let (Some(e), Some(m)) = (entrance, nearest) {
                         g.link_kind(e, m, true, true);
                     }
+                    if let Some(e) = entrance.filter(|_| park.entrances.iter().any(|x| x.distance(first) < 0.3)) {
+                        gates_in.push((lid, e));
+                    }
                 }
             }
             for (pos, facing) in &park.benches {
@@ -623,11 +650,82 @@ impl WalkGraph {
                 g.benches.push((n, lid, *facing));
             }
         }
+        // [K10] Two grounds side by side (a zoo by a botanical garden, a
+        // park) whose walks both come out to the seam between them
+        // (`World::join_neighbouring_grounds`) are joined there.
+        for (i, &(la, a)) in gates_in.iter().enumerate() {
+            for &(lb, b) in &gates_in[i + 1..] {
+                if la == lb {
+                    continue;
+                }
+                let (pa, pb) = (g.nodes[a as usize].pos, g.nodes[b as usize].pos);
+                if pa.distance(pb) > SEAM_GATE_REACH {
+                    continue;
+                }
+                let mid = (pa + pb) * 0.5;
+                let on_seam = [la, lb].iter().all(|l| geom::distance_to_outline(mid, &lots[*l].polygon) < 3.0);
+                if on_seam && !g.adj[a as usize].iter().any(|e| e.to == b) {
+                    g.link_kind(a, b, true, true);
+                }
+            }
+        }
         for (k, b) in g.benches.iter().enumerate() {
             g.bench_lots.entry(b.1).or_default().push(k as u32);
         }
         g.reindex();
         g
+    }
+
+    /// [r1-roads] (K15) A footpath meeting a street a few metres from a
+    /// crosswalk already there (a junction's, or another zebra) gets no
+    /// zebra of its own: the path ends on the pavement and walkers cross
+    /// at the crosswalk beside it (a second zebra a few metres from the
+    /// junction's stopped the traffic twice). Its crossing is closed, so
+    /// nothing is painted there (`World::closed_crosswalks`). The footbridge
+    /// case is `apply_upgrades`' (`FOOTBRIDGE_REPLACES`).
+    pub(super) fn close_redundant_path_zebras(&mut self, roads: &RoadNetwork) {
+        let dir_of = |c: &Crossing| {
+            let (s0, s1) = roads.segment_points(c.segment);
+            (s1 - s0).normalize_or_zero()
+        };
+        let mut close: Vec<u32> = Vec::new();
+        for (k, c) in self.crossings.iter().enumerate() {
+            // (K48) A junction's crosswalk over a short dead-end stub: the
+            // pavement runs round the stub's end a few metres off, so the
+            // walkers go round it (Willow Broadway, a 19 m stub off Zenith
+            // Circus, had a crosswalk over its mouth beside its end).
+            if c.kind == CrossingKind::Junction && !c.closed {
+                if let (Some(n), Some(s)) = (c.node, roads.try_segment(c.segment)) {
+                    let far = if s.a == n { s.b } else { s.a };
+                    let (p0, p1) = roads.segment_points(c.segment);
+                    let lone = roads.node(far).segments.iter().filter(|&&o| roads.try_segment(o).is_some()).count() == 1;
+                    if lone && p0.distance(p1) <= DEAD_END_STUB {
+                        close.push(k as u32);
+                        continue;
+                    }
+                }
+            }
+            // A path's zebra: at a road node (mid-block zebras have none).
+            if c.kind != CrossingKind::Zebra || c.node.is_none() || c.closed {
+                continue;
+            }
+            let d = dir_of(c);
+            let near = self.crossings.iter().enumerate().any(|(j, o)| {
+                j != k
+                    && !o.closed
+                    && !close.contains(&(j as u32))
+                    && matches!(o.kind, CrossingKind::Junction | CrossingKind::Zebra)
+                    && o.mid.distance(c.mid) <= PATH_ZEBRA_NEAR
+                    && dir_of(o).dot(d).abs() > 0.8
+                    && (o.mid - c.mid).perp_dot(d).abs() < 6.0
+            });
+            if near {
+                close.push(k as u32);
+            }
+        }
+        for k in close {
+            self.close_crossing(k);
+        }
     }
 
     /// The node grid and the crossing lookup, after nodes were added.
@@ -678,7 +776,7 @@ impl WalkGraph {
                 }
                 CrossingUpgrade::Footbridge => {
                     let along = self.stair_dirs(c, roads);
-                    self.add_footbridge(k as u32, along);
+                    self.add_footbridge(k as u32, along, roads);
                     // [footbridge] The bridge replaces the crosswalk under
                     // it unless the player kept it: everyone crossing here
                     // climbs over, and nobody waits in the road.

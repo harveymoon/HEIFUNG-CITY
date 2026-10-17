@@ -600,7 +600,15 @@ fn add_locked_rest(locked: &[&Vec<Vec2>], have: &[Parcel], roads: &RoadNetwork, 
             }
             to_geo(l).difference(&geo_union(&inside)).0.iter().filter(|p| area_f(p) >= MIN_AREA).map(from_geo).collect()
         };
+        // [r1-roads] (K9) The rest round parcels kept inside it is often
+        // a U or an L wrapped round them: it is split at its inner corners
+        // into pieces that each front their street (a U round a kept lot,
+        // with three streets round it, was one parcel "with no street").
+        let mut pieces: Vec<Vec<Vec2>> = Vec::new();
         for poly in rest {
+            split_at_corners(poly, 0, &mut pieces);
+        }
+        for poly in pieces {
             if let Some(mut p) = parcel_of(poly, roads) {
                 if !water.is_empty() {
                     p.water_frontage = water.shoreline(&p.polygon).0;
@@ -610,6 +618,32 @@ fn add_locked_rest(locked: &[&Vec<Vec2>], have: &[Parcel], roads: &RoadNetwork, 
             }
         }
     }
+}
+
+/// [r1-roads] (K9) An outline cut at its sharp inner corners (`reflex_vertex`)
+/// into pieces with none, each at least `MIN_AREA`: through each corner
+/// along the edge coming into it (which takes a U's arms off its base),
+/// else across that edge. Gives up after a few cuts, or where no cut
+/// leaves pieces big enough, keeping the piece as it is.
+pub(super) fn split_at_corners(poly: Vec<Vec2>, depth: usize, out: &mut Vec<Vec<Vec2>>) {
+    if depth < 6 {
+        if let Some((i, _)) = reflex_vertex(&ccw(&poly), 0.6) {
+            let pts = ccw(&poly);
+            let n = pts.len();
+            let (a, b) = (pts[(i + n - 1) % n], pts[i]);
+            let d = (b - a).normalize_or_zero();
+            for normal in [Vec2::new(-d.y, d.x), d] {
+                let pieces = cut(&to_geo(&pts), b, normal);
+                if pieces.len() >= 2 && pieces.iter().all(|p| area_f(p) >= MIN_AREA) {
+                    for p in pieces {
+                        split_at_corners(from_geo(&p), depth + 1, out);
+                    }
+                    return;
+                }
+            }
+        }
+    }
+    out.push(poly);
 }
 
 

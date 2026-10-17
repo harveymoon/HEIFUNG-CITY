@@ -238,3 +238,68 @@ fn a_car_stopping_for_someone_names_them() {
     assert_eq!(p, id);
     assert!(text.contains(&name), "named: {text}");
 }
+
+/// [r1-roads] (section C) Footbridges joined round a junction into a ring
+/// of decks are ridden over too: a bike crossing an arm goes up and round
+/// on the decks as the walkers do (ends joined at a corner deck used to be
+/// left out, and the bikes crossed at grade under the ring).
+#[test]
+fn a_bike_crossing_an_arm_under_a_ring_of_decks_goes_over_it() {
+    let mut w = flat();
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 2, 2);
+    w.add_road(&[Vec2::new(0.0, -300.0), Vec2::new(0.0, 300.0)], 2, 2);
+    w.economy.treasury = 1.0e7;
+    let k = w.junction_at(Vec2::ZERO, 2.0).expect("a junction");
+    let arms: Vec<u32> = w.junction_view(k).crossings.iter().map(|c| c.index).collect();
+    for &cr in &arms {
+        w.set_crossing_upgrade(cr, CrossingUpgrade::Footbridge).unwrap();
+        run(&mut w, 1);
+    }
+    assert_eq!(w.walk.footbridge_links.len(), 4, "a ring of decks");
+    // Straight over an arm whose bridge is joined at a corner (no stairs
+    // of its own there).
+    let f = w.walk.footbridges.iter().find(|f| f.joined.iter().any(|j| *j)).expect("a joined bridge");
+    let c = &w.walk.crossings[f.crossing as usize];
+    let (s0, s1) = w.roads.segment_points(c.segment);
+    let across = (s1 - s0).normalize_or_zero().perp();
+    let (from, to) = (c.mid + across * 25.0, c.mid - across * 25.0);
+    let mut path = vec![from, to];
+    w.bike_over_footbridges(&mut path);
+    assert!(path.iter().any(|&p| w.walk.level_at_node(p) > 0.0), "up on the decks: {path:?}");
+    assert!(path.len() > 2 && path[0] == from && *path.last().unwrap() == to);
+    // Once over, it is not spliced again.
+    let again = path.clone();
+    w.bike_over_footbridges(&mut path);
+    assert_eq!(path, again);
+}
+
+/// [r1-roads] (section C) A rider who set off before the footbridge went
+/// up (its path straight over the old zebra) takes the bridge once it
+/// stands, as a walker re-plans.
+#[test]
+fn a_rider_on_the_way_when_a_footbridge_goes_up_takes_it() {
+    let mut w = flat();
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 2, 2);
+    w.add_path(&[Vec2::new(0.0, 120.0), Vec2::new(0.0, 0.0)]);
+    w.add_path(&[Vec2::new(0.0, 0.0), Vec2::new(0.0, -120.0)]);
+    people(&mut w);
+    let cr = w.walk.crossings.iter().position(|c| c.kind == CrossingKind::Zebra && c.mid.distance(Vec2::ZERO) < 3.0).expect("the path's zebra") as u32;
+    let nodes = w.roads.foot_path(node_at(&w, Vec2::new(0.0, 120.0)), node_at(&w, Vec2::new(0.0, -120.0))).expect("a way along the path");
+    let path = w.route_path(&nodes, TravelMode::Bike);
+    assert!(path.iter().all(|&p| w.walk.level_at_node(p) == 0.0), "planned at grade");
+    let id = w.citizens.keys().next().unwrap();
+    set_off(&mut w, id, TravelMode::Bike, path);
+    run(&mut w, 3);
+    w.economy.treasury = 1.0e6;
+    w.set_crossing_upgrade(cr, CrossingUpgrade::Footbridge).unwrap();
+    let mut up = 0.0f32;
+    for _ in 0..200 {
+        run(&mut w, 1);
+        let c = &w.citizens[id];
+        up = up.max(w.walker_level(c, c.pos));
+        if !matches!(c.activity, Activity::Traveling { .. }) {
+            break;
+        }
+    }
+    assert!(up > 3.0, "over the bridge: highest {up:.1} m");
+}

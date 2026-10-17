@@ -93,6 +93,14 @@ pub const JAY_MAX_LANES: u8 = 5;
 /// goes round the outside, crossing the arms at their crosswalks, unless
 /// the island is where it is going.
 pub const RING_CROSS_PENALTY: f32 = 60.0;
+/// [r1-roads] (K15) A footpath meeting a street within this far of a
+/// crosswalk (a junction's or another zebra, middle to middle) gets no zebra
+/// of its own (`close_redundant_path_zebras`).
+pub const PATH_ZEBRA_NEAR: f32 = 20.0;
+/// [r1-roads] (K48) A dead-end street this short (junction to its end, in
+/// one piece) has no crosswalk over its mouth: the pavement round its end
+/// is a few steps further (`close_redundant_path_zebras`).
+pub const DEAD_END_STUB: f32 = 30.0;
 
 /// [park-paths] Gates on the edges of a lot `outline` for paths to be drawn
 /// to: one every 40 m or so on each edge of 10 m or more (up to three),

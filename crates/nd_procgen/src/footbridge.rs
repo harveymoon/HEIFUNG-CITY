@@ -259,7 +259,7 @@ mod tests {
         assert_eq!(closed, vec![mid]);
         let pal = Palette::default();
         let paint_near = |closed: &[Vec2]| {
-            let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: 1, heights: &[], inner: &[], layer: StreetLayer::Surface, closed });
+            let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: 1, heights: &[], inner: &[], layer: StreetLayer::Surface, closed, joined_ramps: &[] });
             // The street runs along x: the zebra's stripes lie across it.
             let paint = g.get(Surface::Paint).positions.iter().filter(|p| (p[0] - mid.x).abs() < 1.4 && (p[2] - mid.y).abs() < 9.0).count();
             let beacons = g.get(Surface::Glow).positions.iter().filter(|p| Vec2::new(p[0], p[2]).distance(mid) < 12.0).count();
@@ -282,7 +282,7 @@ mod tests {
             let along = Vec2::new(-across.y, across.x);
             let (t0, t1) = (Vec2::new(10.0, 10.0), Vec2::new(10.0, 10.0) + across * 16.0);
             let width = 3.0;
-            w.walk.footbridges.push(nd_sim::walk::Footbridge { crossing: 0, top: [t0, t1], foot: [t0 + along * 9.0, t1 + along * 9.0], level: 5.4, width, nodes: [0; 4], joined: [false; 2] });
+            w.walk.footbridges.push(nd_sim::walk::Footbridge { crossing: 0, top: [t0, t1], foot: [t0 + along * 9.0, t1 + along * 9.0], level: 5.4, width, nodes: [0; 4], joined: [false; 2], path_join: None });
             let g = footbridges(&w, &Palette::default());
             let steps = crate::terrain::upright_faces(g.get(Surface::Concrete), STEP_RISE);
             crate::terrain::faces_along_are(&steps, along, width - 0.2).map_err(|e| format!("steps at {deg}: {e}")).unwrap();

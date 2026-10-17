@@ -71,6 +71,10 @@ pub struct StreetInput<'a> {
     /// [footbridge] Middles of the crosswalks a footbridge replaced
     /// (`World::closed_crosswalks`): no zebra, beacons or walk lights there.
     pub closed: &'a [Vec2],
+    /// [r1-roads] (K14) Raised paths' ramps down to a street that a
+    /// footbridge took over (`Footbridge::path_join`: the last raised node,
+    /// the node at the street): not drawn, the deck runs on into the bridge.
+    pub joined_ramps: &'a [(nd_sim::roads::NodeId, nd_sim::roads::NodeId)],
 }
 
 /// [footbridge] Is the crosswalk with its middle at `mid` one a footbridge

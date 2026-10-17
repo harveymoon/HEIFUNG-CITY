@@ -160,11 +160,15 @@ pub struct Rider {
     pub ran: Option<u32>,
     pub caution: f32,
     pub hedonism: f32,
+    /// [r1-roads] The walk graph (its version, plus one) the rest of the
+    /// ride was last fitted to the footbridges on (`step_rider`): a bridge
+    /// put up after the ride was planned is taken (0: not yet).
+    pub bridges: u64,
 }
 
 impl Default for Rider {
     fn default() -> Self {
-        Rider { waiting: None, ran: None, caution: 0.5, hedonism: 0.5 }
+        Rider { waiting: None, ran: None, caution: 0.5, hedonism: 0.5, bridges: 0 }
     }
 }
 

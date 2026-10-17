@@ -403,6 +403,7 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, (subway::sync_metro_tunnels, subway::sync_metro_trains).in_set(SimSet::Sync).after(sync_trains).before(holo::apply_depth));
         app.add_systems(Update, subway::sync_platform_figures.in_set(SimSet::Sync).after(holo::apply_depth));
         app.add_systems(Update, (turbines::sync_turbines, solar::sync_solar, haze::sync_haze, grime::sync_grime, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
+        app.init_resource::<climate::SceneClock>().add_systems(Update, climate::tick_scene_clock.in_set(SimSet::Input));
         app.add_systems(Update, (climate::sync_precipitation, climate::sync_steam).in_set(SimSet::Sync).after(sync_landscape));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));
         // [sweep-visual] The sun's shadow cascades reach as far as the
@@ -485,8 +486,7 @@ impl Plugin for RenderPlugin {
         app.init_resource::<plot_hover::PlotHover>().add_plugins(crate::overlay::mesh::MeshOverlayPlugin::<plot_hover::PlotHoverMesh>::default());
         app.add_systems(bevy_egui::EguiPrimaryContextPass, plot_hover::plot_hover_label);
         // [tools] Footbridges, and the Intersection editor's road view.
-        app.init_resource::<junction_view::JunctionCam>()
-            .add_systems(Update, (junction_view::sync_footbridges.after(sync_roads).before(lift_spawned), junction_view::sync_junction_camera).in_set(SimSet::Sync))
+        app.add_systems(Update, junction_view::sync_footbridges.after(sync_roads).before(lift_spawned).in_set(SimSet::Sync))
             .add_systems(PostUpdate, junction_view::tag_road_layers);
     }
 }

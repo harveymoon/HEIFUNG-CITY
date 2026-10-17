@@ -234,8 +234,21 @@ pub(super) fn frontage_runs(poly: &[Vec2], roads: &RoadNetwork, allow_paths: boo
 /// Does a parcel have a usable road edge?
 pub(super) fn fronted(poly: &[Vec2], lu: LandUse, roads: &RoadNetwork) -> bool {
     let (fi, road) = frontage_edge(poly, roads, lu.fronts_paths());
+    road.is_some() && frontage_long_enough(poly, fi, lu, roads)
+}
+
+/// [r1-roads] (K8) Is the frontage at edge `fi` long enough for `lu`: the
+/// edge itself, or the run of road edges it is part of (`frontage_runs`).
+/// Land along a curve fronts it in short edges, one per piece of the curve
+/// (7 m, less on the inside of a bend): inside a circus no single edge was
+/// long enough, and all of it was refused as having no road.
+pub(super) fn frontage_long_enough(poly: &[Vec2], fi: usize, lu: LandUse, roads: &RoadNetwork) -> bool {
     let n = poly.len();
-    road.is_some() && poly[fi].distance(poly[(fi + 1) % n]) >= MIN_FRONTAGE.min(lu.lot_width() * 0.45)
+    let need = MIN_FRONTAGE.min(lu.lot_width() * 0.45);
+    if poly[fi].distance(poly[(fi + 1) % n]) >= need {
+        return true;
+    }
+    frontage_runs(poly, roads, lu.fronts_paths()).iter().any(|(run, len)| *len >= need && run.contains(&fi))
 }
 
 /// [free-placement] Does an outline front a street or footpath at all,
