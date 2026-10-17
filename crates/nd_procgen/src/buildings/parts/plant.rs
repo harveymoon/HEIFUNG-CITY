@@ -86,8 +86,9 @@ pub(super) fn box_sides(m: &mut MeshData, corner: impl Fn(f32, f32, f32) -> Vec3
 
 /// Most triangles one container may spend, details and wear included.
 pub const CONTAINER_TRIS: usize = 70;
-/// [r4] (K33) Most a liveried, reefer, tank or open-top box may spend.
-pub const CONTAINER_TRIS_EX: usize = 96;
+/// [r4] (K33) Most a liveried, reefer, tank or open-top box may spend (a
+/// tank's frame and barrel are solid: it has no sheet to decal on).
+pub const CONTAINER_TRIS_EX: usize = 160;
 
 /// [r4] (K33) The ISO container, the one standard every container in town
 /// is drawn to (stacks homes, yards, cargo hubs, trains, ships, lorries,
