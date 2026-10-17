@@ -121,10 +121,11 @@ pub const BLOCK: f32 = 90.0;
 /// and stopping dead (or into it: at 4 traffic seconds a tick a passenger
 /// train covers 100 m, more than the old block).
 pub const SAFE_GAP: f32 = 30.0;
-/// [r4] Service braking and acceleration, m/s²: a train slows to a stand
+/// [r4] Service braking and acceleration, m/s² (an electric multiple
+/// unit's, freight too: kept gentle enough to see): a train slows to a stand
 /// at its calls, the switch and a train ahead, and picks up speed again.
-pub const BRAKE: f32 = 0.7;
-pub const ACCEL: f32 = 0.5;
+pub const BRAKE: f32 = 1.0;
+pub const ACCEL: f32 = 0.8;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RailStats {

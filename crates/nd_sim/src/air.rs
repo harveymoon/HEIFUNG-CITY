@@ -82,7 +82,7 @@ pub const AWAY_CHARGE_PER_TICK: f32 = 0.01;
 pub const RECOVERY_CHARGE_PER_TICK: f32 = 0.004;
 /// [r4] (K28) Ticks a taxi waits on the pad for its landing slot at the far
 /// end before it takes off anyway (and, rarely, holds there).
-pub const GROUND_HOLD: u64 = 30;
+pub const GROUND_HOLD: u64 = 60;
 /// Drones fly from 05:00 until 02:00.
 pub const SERVICE_START: u32 = 5 * 60;
 pub const SERVICE_END: u32 = 2 * 60;
