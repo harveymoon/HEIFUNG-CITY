@@ -1,10 +1,12 @@
 //! [tools] The Intersection editor. [pt-ux] Opened from the "Edit
 //! intersection" button that pops up beside a junction (or crosswalk)
 //! under the pointer with the Edit tool ([`hover_button`]), so a click on
-//! the junction itself still edits the roads there. A modal with a
-//! top-down orthographic render of the roads around it (no buildings:
-//! `render::junction_view` films the road layer into a texture), and on
-//! those roads:
+//! the junction itself still edits the roads there. [r1-roads] (K20) The
+//! editing is done on the road itself: a box round the junction's area is
+//! drawn on the map ([`on_map`]), time stands still until the editor is
+//! closed ([`hold_time`]), the other tools leave the map alone meanwhile,
+//! and on the roads in the box (it used to be a modal over a top-down
+//! render of them):
 //!
 //! - an arrow at the stop line of every arriving lane, showing where the
 //!   lane may go (left, straight, right). Hovering it draws the lane's
@@ -14,7 +16,7 @@
 //! - a dot on each crosswalk: click it for its upgrade (push-button signal
 //!   or footbridge).
 //!
-//! Beside the view, a compact panel: signals on or off, the protected left
+//! Beside the box, a compact panel: signals on or off, the protected left
 //! turn as a toggle, left turns allowed, the signal timing folded away, the
 //! picked crosswalk, Reset and Done.
 //!
@@ -30,11 +32,12 @@ use nd_sim::{IntersectionView, Vec2 as SVec2, World};
 
 use super::{UiCtx, WARN};
 
-/// Pixels of the road view.
-pub const VIEW_PX: f32 = 520.0;
-/// How far the road view zooms (metres across).
+/// How large the box round the junction may be (metres across).
 pub const EXTENT_MIN: f32 = 30.0;
 pub const EXTENT_MAX: f32 = 300.0;
+/// [r1-roads] (K2) Points round a crosswalk's dot that pick the dot
+/// before any lane arrow under it.
+const DOT_PICK: f32 = 11.0;
 
 const CYAN: egui::Color32 = egui::Color32::from_rgb(120, 230, 255);
 const FAINT: egui::Color32 = egui::Color32::from_rgb(170, 180, 200);
@@ -44,10 +47,10 @@ const FAINT: egui::Color32 = egui::Color32::from_rgb(170, 180, 200);
 pub struct EditorState {
     /// The junction (or lone crosswalk) edited.
     pub at: SVec2,
-    /// Metres across the road view.
+    /// Metres across the box round it on the map.
     pub extent: f32,
-    /// The road view's texture, once `render::junction_view` has made it.
-    pub texture: Option<egui::TextureId>,
+    /// [r1-roads] The camera has been brought over the junction.
+    pub framed: bool,
     /// The approach (index into the view's approaches) last picked.
     pub approach: Option<usize>,
     /// The crosswalk (walk graph index) shown in detail.
@@ -66,14 +69,39 @@ impl EditorState {
     pub fn open(w: &World, p: SVec2) -> Option<Self> {
         let v = w.intersection_view(p)?;
         let extent = (v.radius * 2.0 + 36.0).clamp(48.0, 120.0);
-        Some(Self { at: v.at, extent, texture: None, approach: None, crossing: v.crossings.first().filter(|_| v.node.is_none()).map(|c| c.index), message: None, lane_menu: None, hover_lane: None })
+        Some(Self { at: v.at, extent, framed: false, approach: None, crossing: v.crossings.first().filter(|_| v.node.is_none()).map(|c| c.index), message: None, lane_menu: None, hover_lane: None })
     }
 
-    /// Where a point of the ground lands on the road view drawn in `rect`.
-    pub fn to_view(&self, rect: egui::Rect, p: SVec2) -> egui::Pos2 {
-        let u = (p.x - self.at.x) / self.extent + 0.5;
-        let v = (p.y - self.at.y) / self.extent + 0.5;
-        egui::pos2(rect.left() + u * rect.width(), rect.top() + v * rect.height())
+    /// [r1-roads] The corners of the box round the junction on the ground.
+    pub fn box_corners(&self) -> [SVec2; 4] {
+        let h = self.extent * 0.5;
+        [(-h, -h), (h, -h), (h, h), (-h, h)].map(|(x, y)| self.at + SVec2::new(x, y))
+    }
+}
+
+/// [r1-roads] (K20) Where points of the ground by the junction land on the
+/// screen (egui points), through the map's camera, at the road's height.
+pub struct Screen<'a> {
+    camera: &'a Camera,
+    gt: &'a GlobalTransform,
+    z: f32,
+    zoom: f32,
+}
+
+impl Screen<'_> {
+    /// The screen point of ground point `p` (far off screen when behind
+    /// the camera).
+    pub fn at(&self, p: SVec2) -> egui::Pos2 {
+        match self.camera.world_to_viewport(self.gt, Vec3::new(p.x, self.z, p.y)) {
+            Ok(v) => egui::pos2(v.x / self.zoom, v.y / self.zoom),
+            Err(_) => egui::pos2(-1.0e5, -1.0e5),
+        }
+    }
+
+    /// Screen points per metre on the ground round `p`.
+    fn scale(&self, p: SVec2) -> f32 {
+        let o = self.at(p);
+        ((self.at(p + SVec2::X) - o).length() + (self.at(p + SVec2::Y) - o).length()) * 0.5
     }
 }
 
@@ -227,40 +255,98 @@ pub fn hover_button(
     Ok(())
 }
 
-// ---- The modal ----
+// ---- The panel ----
 
-/// The modal, when open.
+/// The editor's panel, when open: the controls beside the box on the map
+/// (the arrows and dots are on the roads, [`on_map`]). Esc or Done closes.
 pub fn window(ctx: &egui::Context, p: &mut UiCtx) {
     let Some(mut st) = p.tools.junction_editor.clone() else { return };
     let Some(view) = p.sim.world.intersection_view(st.at) else {
         p.tools.junction_editor = None;
         return;
     };
+    // [r1-roads] (K20) The camera comes over the junction once.
+    if !st.framed {
+        st.framed = true;
+        p.fly_to = Some(Vec2::new(st.at.x, st.at.y));
+    }
     let mut close = false;
-    let modal = egui::Modal::new(egui::Id::new("junction_editor")).show(ctx, |ui| {
-        ui.set_max_width(VIEW_PX + 330.0);
-        ui.horizontal(|ui| {
-            ui.heading(egui::RichText::new("Intersection").color(CYAN));
+    let mut open = true;
+    egui::Window::new(egui::RichText::new("Intersection").color(CYAN))
+        .id(egui::Id::new("junction_editor"))
+        .open(&mut open)
+        .resizable(false)
+        .collapsible(false)
+        .default_width(310.0)
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 64.0))
+        .show(ctx, |ui| {
+            ui.set_width(300.0);
             ui.label(egui::RichText::new(title(&view)).weak());
+            ui.label(egui::RichText::new("Editing on the road, in the box: hover a lane's arrow to see its moves, click it for its options (right click: next option); click a crosswalk's dot to upgrade it. Time stands still until Done.").small().weak());
+            ui.separator();
+            if controls(ui, &mut p.sim.world, &mut st, &view) {
+                close = true;
+            }
+            if let Some((msg, ok)) = &st.message {
+                ui.label(egui::RichText::new(msg).color(if *ok { egui::Color32::from_rgb(140, 230, 160) } else { WARN }));
+            }
         });
-        ui.separator();
-        ui.horizontal_top(|ui| {
-            road_view(ui, &mut p.sim.world, &mut st, &view);
-            ui.vertical(|ui| {
-                ui.set_width(300.0);
-                if controls(ui, &mut p.sim.world, &mut st, &view) {
-                    close = true;
-                }
-            });
-        });
-        if let Some((msg, ok)) = &st.message {
-            ui.label(egui::RichText::new(msg).color(if *ok { egui::Color32::from_rgb(140, 230, 160) } else { WARN }));
-        }
-    });
-    if modal.should_close() && st.lane_menu.is_none() {
+    if !open || (st.lane_menu.is_none() && ctx.input(|i| i.key_pressed(egui::Key::Escape))) {
         close = true;
     }
+    if st.lane_menu.is_some() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        st.lane_menu = None;
+    }
     p.tools.junction_editor = if close { None } else { Some(st) };
+}
+
+/// [r1-roads] (K20) Time stands still while the Intersection editor is
+/// open (the player edits a junction with nothing moving through it), and
+/// goes on as it was when it closes, however it was closed (Done, Esc, the
+/// remote API).
+pub fn hold_time(tools: Res<crate::tools::ToolState>, mut sim: ResMut<crate::sim::Sim>, mut held: Local<Option<bool>>) {
+    match (tools.junction_editor.is_some(), *held) {
+        (true, None) => {
+            *held = Some(sim.paused);
+            sim.paused = true;
+        }
+        (true, Some(_)) => {
+            if !sim.paused {
+                sim.paused = true;
+            }
+        }
+        (false, Some(was)) => {
+            sim.paused = was;
+            *held = None;
+        }
+        (false, None) => {}
+    }
+}
+
+/// [r1-roads] (K20) The editor on the map: the box round the junction's
+/// area, and the lane arrows and crosswalk dots on the roads themselves,
+/// projected through the map's camera. The box takes the pointer (the map
+/// tools leave it alone while the editor is open).
+pub fn on_map(mut contexts: EguiContexts, mut sim: ResMut<crate::sim::Sim>, mut tools: ResMut<crate::tools::ToolState>, flags: Res<super::UiFlags>, cams: Query<(&Camera, &GlobalTransform), With<crate::camera::OrbitCamera>>) -> Result {
+    let Some(mut st) = tools.junction_editor.clone() else { return Ok(()) };
+    if flags.data_view {
+        return Ok(());
+    }
+    let Some(view) = sim.world.intersection_view(st.at) else { return Ok(()) };
+    let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };
+    let ctx = contexts.ctx_mut()?.clone();
+    let sc = Screen { camera, gt, z: sim.world.surface_height(st.at) + 0.15, zoom: ctx.zoom_factor() };
+    let corners: Vec<egui::Pos2> = st.box_corners().iter().map(|&c| sc.at(c)).collect();
+    if corners.iter().any(|c| c.x < -1.0e4) {
+        return Ok(());
+    }
+    let rect = egui::Rect::from_points(&corners).intersect(ctx.content_rect());
+    if !rect.is_positive() {
+        return Ok(());
+    }
+    road_view(&ctx, &mut sim.world, &mut st, &view, &sc, rect, &corners);
+    tools.junction_editor = Some(st);
+    Ok(())
 }
 
 fn title(v: &IntersectionView) -> String {
@@ -280,9 +366,9 @@ fn title(v: &IntersectionView) -> String {
     format!("{} \u{00b7} {kind} \u{00b7} {} streets", names.join(" \u{00d7} "), v.approaches.len())
 }
 
-/// Screen direction of a ground direction `d` at `p` on the view.
-fn screen_dir(st: &EditorState, rect: egui::Rect, p: SVec2, d: SVec2) -> egui::Vec2 {
-    (st.to_view(rect, p + d) - st.to_view(rect, p)).normalized()
+/// Screen direction of a ground direction `d` at `p`.
+fn screen_dir(sc: &Screen, p: SVec2, d: SVec2) -> egui::Vec2 {
+    (sc.at(p + d) - sc.at(p)).normalized()
 }
 
 /// A lane arrow: `bits` drawn as a shaft up the lane (`fwd`, screen;
@@ -318,11 +404,11 @@ fn paint_glyph(painter: &egui::Painter, c: egui::Pos2, fwd: egui::Vec2, left: eg
 }
 
 /// A move through the junction on the view: a line with a head at its end.
-fn paint_move(painter: &egui::Painter, st: &EditorState, rect: egui::Rect, path: &[SVec2], allowed: bool) {
+fn paint_move(painter: &egui::Painter, sc: &Screen, path: &[SVec2], allowed: bool) {
     if path.len() < 2 {
         return;
     }
-    let pts: Vec<egui::Pos2> = path.iter().map(|&q| st.to_view(rect, q)).collect();
+    let pts: Vec<egui::Pos2> = path.iter().map(|&q| sc.at(q)).collect();
     if allowed {
         painter.add(egui::Shape::line(pts.clone(), egui::Stroke::new(6.0, egui::Color32::from_black_alpha(160))));
         painter.add(egui::Shape::line(pts.clone(), egui::Stroke::new(3.0, CYAN)));
@@ -347,7 +433,7 @@ struct LaneSpot {
     left: egui::Vec2,
 }
 
-fn lane_spots(st: &EditorState, rect: egui::Rect, v: &IntersectionView) -> Vec<LaneSpot> {
+fn lane_spots(sc: &Screen, v: &IntersectionView) -> Vec<LaneSpot> {
     let mut out = Vec::new();
     for (i, a) in v.approaches.iter().enumerate() {
         for (j, l) in a.lanes.iter().enumerate() {
@@ -357,56 +443,55 @@ fn lane_spots(st: &EditorState, rect: egui::Rect, v: &IntersectionView) -> Vec<L
             // A little back from the stop line, on the lane.
             let at = l.end - l.dir * 7.5;
             let left = SVec2::new(l.dir.y, -l.dir.x);
-            out.push(LaneSpot { approach: i, lane: j, centre: st.to_view(rect, at), fwd: screen_dir(st, rect, at, l.dir), left: screen_dir(st, rect, at, left) });
+            out.push(LaneSpot { approach: i, lane: j, centre: sc.at(at), fwd: screen_dir(sc, at, l.dir), left: screen_dir(sc, at, left) });
         }
     }
     out
 }
 
-/// The road view with the lane arrows and crosswalks on it.
-fn road_view(ui: &mut egui::Ui, w: &mut World, st: &mut EditorState, v: &IntersectionView) {
-    let (resp, painter) = ui.allocate_painter(egui::vec2(VIEW_PX, VIEW_PX), egui::Sense::click());
-    // (Sense::click covers the secondary button too.)
-    let rect = resp.rect;
-    let painter = painter.with_clip_rect(rect);
-    painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(6, 8, 14));
-    match st.texture {
-        Some(tex) => {
-            painter.image(tex, rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
-        }
-        None => {
-            painter.text(rect.center(), egui::Align2::CENTER_CENTER, "rendering the roads...", crate::ui::theme::body(), egui::Color32::GRAY);
-        }
-    }
-    let pointer = ui.input(|i| i.pointer.hover_pos()).filter(|p| rect.contains(*p) && resp.hovered());
-    let click = resp.clicked().then(|| resp.interact_pointer_pos()).flatten();
-    // The wheel zooms the view.
-    if resp.hovered() {
-        let dy = ui.input(|i| i.smooth_scroll_delta.y);
-        if dy != 0.0 {
-            st.extent = (st.extent * (1.0 - dy * 0.002)).clamp(EXTENT_MIN, EXTENT_MAX);
-        }
-    }
+/// The lane arrows and crosswalks on the roads in the box (`corners`, on
+/// screen; `rect` their bounds), and the box itself. The pointer is read
+/// straight from the input (the box is no egui area, so the camera still
+/// orbits and zooms over it; the map tools stand aside while the editor
+/// is open), never through a window over it.
+fn road_view(ctx: &egui::Context, w: &mut World, st: &mut EditorState, v: &IntersectionView, sc: &Screen, rect: egui::Rect, corners: &[egui::Pos2]) {
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("junction_on_map"))).with_clip_rect(ctx.content_rect());
+    // The box: a dim veil outside it would hide the city; a bright frame
+    // with corner ticks on the ground says where the editing is.
+    let mut ring = corners.to_vec();
+    ring.push(corners[0]);
+    painter.add(egui::Shape::line(ring.clone(), egui::Stroke::new(5.0, egui::Color32::from_black_alpha(140))));
+    painter.extend(egui::Shape::dashed_line(&ring, egui::Stroke::new(2.0, CYAN), 10.0, 6.0));
+    painter.text(corners[0] + egui::vec2(4.0, -4.0), egui::Align2::LEFT_BOTTOM, "INTERSECTION EDIT \u{00b7} time stopped", crate::ui::theme::small(), CYAN);
+    let free = !ctx.is_pointer_over_egui();
+    let pointer = ctx.input(|i| i.pointer.hover_pos()).filter(|p| free && rect.contains(*p));
+    let click = pointer.filter(|_| ctx.input(|i| i.pointer.primary_clicked()));
+    let right_click = pointer.is_some() && ctx.input(|i| i.pointer.secondary_clicked());
     // Each lane's badge: as wide as the lane (side by side, never
     // overlapping), longer along it, a clickable size at any zoom.
-    let px = rect.width() / st.extent;
+    let px = sc.scale(st.at);
     let wid = (nd_sim::roads::LANE_WIDTH * px * 0.44).clamp(7.0, 18.0);
     let len = (wid * 1.7).clamp(13.0, 30.0);
-    let spots = lane_spots(st, rect, v);
+    let spots = lane_spots(sc, v);
     let inside = |sp: &LaneSpot, p: egui::Pos2| {
         let r = p - sp.centre;
         (r.dot(sp.fwd)).abs() < len && (r.dot(sp.left)).abs() < wid
     };
-    let hovered = pointer.and_then(|p| spots.iter().filter(|sp| inside(sp, p)).min_by(|a, b| a.centre.distance(p).total_cmp(&b.centre.distance(p)))).map(|sp| (sp.approach, sp.lane));
+    // [r1-roads] (K2) A crosswalk's dot sits by the stop line, under the
+    // lane badges there: the dot wins under the pointer (it is the small
+    // target), so it can always be clicked; a badge still answers on the
+    // rest of its face.
+    let on_dot = |p: egui::Pos2| v.crossings.iter().any(|c| p.distance(sc.at(c.mid)) < DOT_PICK);
+    let hovered = pointer.filter(|&p| !on_dot(p)).and_then(|p| spots.iter().filter(|sp| inside(sp, p)).min_by(|a, b| a.centre.distance(p).total_cmp(&b.centre.distance(p)))).map(|sp| (sp.approach, sp.lane));
     let shown = hovered.or(st.lane_menu).or(st.hover_lane);
     // The shown lane's moves under the arrows.
     if let Some((ai, li)) = shown {
         if let Some(l) = v.approaches.get(ai).and_then(|a| a.lanes.get(li)) {
             for m in l.moves.iter().filter(|m| !m.permitted) {
-                paint_move(&painter, st, rect, &m.path, false);
+                paint_move(&painter, sc, &m.path, false);
             }
             for m in l.moves.iter().filter(|m| m.permitted) {
-                paint_move(&painter, st, rect, &m.path, true);
+                paint_move(&painter, sc, &m.path, true);
             }
         }
     }
@@ -424,13 +509,18 @@ fn road_view(ui: &mut egui::Ui, w: &mut World, st: &mut EditorState, v: &Interse
     if let Some((ai, li)) = hovered {
         if let Some(a) = v.approaches.get(ai) {
             let bits = a.arrows.get(li).copied().unwrap_or(0);
-            resp.clone().on_hover_text(format!("{} from the {}, lane {} of {}: {}{}. Click to change.", a.name, compass(a.dir), li + 1, a.arrows.len(), choice_label(bits).to_lowercase(), if a.fixed { " (set by you)" } else { " (automatic)" }));
+            let text = format!("{} from the {}, lane {} of {}: {}{}. Click to change.", a.name, compass(a.dir), li + 1, a.arrows.len(), choice_label(bits).to_lowercase(), if a.fixed { " (set by you)" } else { " (automatic)" });
+            if let Some(p) = pointer {
+                egui::Area::new(egui::Id::new("junction_lane_tip")).order(egui::Order::Tooltip).fixed_pos(p + egui::vec2(16.0, 16.0)).show(ctx, |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| ui.label(text));
+                });
+            }
         }
     }
     // The crosswalks: a dot in the middle of each.
     let mut on_crossing = false;
     for c in &v.crossings {
-        let m = st.to_view(rect, c.mid);
+        let m = sc.at(c.mid);
         let (label, col) = match c.upgrade {
             CrossingUpgrade::None => ("", egui::Color32::from_gray(200)),
             CrossingUpgrade::Button => ("B", egui::Color32::from_rgb(255, 200, 60)),
@@ -440,27 +530,27 @@ fn road_view(ui: &mut egui::Ui, w: &mut World, st: &mut EditorState, v: &Interse
         // A footbridge: its walkway and stairs, outlined.
         if let Some((top, foot, width)) = c.footbridge {
             let stroke = egui::Stroke::new((width * px).max(3.0), egui::Color32::from_rgba_unmultiplied(90, 230, 255, 150));
-            painter.line_segment([st.to_view(rect, top[0]), st.to_view(rect, top[1])], stroke);
+            painter.line_segment([sc.at(top[0]), sc.at(top[1])], stroke);
             for i in 0..2 {
-                painter.line_segment([st.to_view(rect, top[i]), st.to_view(rect, foot[i])], egui::Stroke::new((width * px * 0.8).max(2.0), egui::Color32::from_rgba_unmultiplied(90, 230, 255, 110)));
+                painter.line_segment([sc.at(top[i]), sc.at(foot[i])], egui::Stroke::new((width * px * 0.8).max(2.0), egui::Color32::from_rgba_unmultiplied(90, 230, 255, 110)));
             }
         }
         let sel = st.crossing == Some(c.index);
-        let (a, b) = (st.to_view(rect, c.ends[0]), st.to_view(rect, c.ends[1]));
+        let (a, b) = (sc.at(c.ends[0]), sc.at(c.ends[1]));
         painter.line_segment([a, b], egui::Stroke::new(if sel { 4.0 } else { 2.0 }, col.gamma_multiply(if c.closed { 0.25 } else { 0.8 })));
         painter.circle_filled(m, 8.0, egui::Color32::from_black_alpha(200));
         painter.circle_stroke(m, 8.0, egui::Stroke::new(if sel { 2.5 } else { 1.5 }, if sel { CYAN } else { col }));
         if !label.is_empty() {
             painter.text(m, egui::Align2::CENTER_CENTER, label, crate::ui::theme::small(), col);
         }
-        if click.is_some_and(|p| p.distance(m) < 11.0) && hovered.is_none() {
+        if click.is_some_and(|p| p.distance(m) < DOT_PICK) && hovered.is_none() {
             st.crossing = Some(c.index);
             st.lane_menu = None;
             on_crossing = true;
         }
     }
     // A right click on a lane's arrow steps it to its next option.
-    if let (true, Some((ai, li)), Some(k)) = (resp.secondary_clicked(), hovered, v.intersection) {
+    if let (true, Some((ai, li)), Some(k)) = (right_click, hovered, v.intersection) {
         let a = &v.approaches[ai];
         let next = next_choice(a.arrows.get(li).copied().unwrap_or(0), a.exits);
         let arrows = fit_lanes(&a.arrows, li, next, a.exits);
@@ -475,21 +565,17 @@ fn road_view(ui: &mut egui::Ui, w: &mut World, st: &mut EditorState, v: &Interse
     } else if click.is_some() && !on_crossing {
         st.lane_menu = None;
     }
-    painter.text(rect.left_bottom() + egui::vec2(6.0, -6.0), egui::Align2::LEFT_BOTTOM, format!("{:.0} m across \u{00b7} north up \u{00b7} wheel zooms", st.extent), crate::ui::theme::small(), egui::Color32::from_gray(160));
-    if !spots.is_empty() && st.lane_menu.is_none() {
-        painter.text(rect.left_top() + egui::vec2(8.0, 8.0), egui::Align2::LEFT_TOP, "Hover a lane's arrow to see its moves; click it for its options (right click: next option).", crate::ui::theme::small(), egui::Color32::from_gray(210));
-    }
     // The lane menu, beside its arrow.
     if let Some((ai, li)) = st.lane_menu {
         match spots.iter().find(|sp| sp.approach == ai && sp.lane == li) {
-            Some(sp) => lane_menu(ui, w, st, v, sp, rect),
+            Some(sp) => lane_menu(ctx, w, st, v, sp, rect),
             None => st.lane_menu = None,
         }
     }
 }
 
 /// The options of one lane, in a small panel beside its arrow.
-fn lane_menu(ui: &mut egui::Ui, w: &mut World, st: &mut EditorState, v: &IntersectionView, sp: &LaneSpot, rect: egui::Rect) {
+fn lane_menu(ctx: &egui::Context, w: &mut World, st: &mut EditorState, v: &IntersectionView, sp: &LaneSpot, rect: egui::Rect) {
     let a = &v.approaches[sp.approach];
     let Some(k) = v.intersection else { return };
     let cur = a.arrows.get(sp.lane).copied().unwrap_or(0);
@@ -502,7 +588,7 @@ fn lane_menu(ui: &mut egui::Ui, w: &mut World, st: &mut EditorState, v: &Interse
     let mut auto = false;
     let mut close = false;
     let mut ban: Option<bool> = None;
-    let menu = egui::Area::new(egui::Id::new(("lane_menu", sp.approach, sp.lane))).order(egui::Order::Tooltip).fixed_pos(egui::pos2(x, y)).show(ui.ctx(), |ui| {
+    let menu = egui::Area::new(egui::Id::new(("lane_menu", sp.approach, sp.lane))).order(egui::Order::Tooltip).fixed_pos(egui::pos2(x, y)).show(ctx, |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_width(w_menu - 16.0);
             ui.horizontal(|ui| {
@@ -553,7 +639,7 @@ fn lane_menu(ui: &mut egui::Ui, w: &mut World, st: &mut EditorState, v: &Interse
     });
     let r = menu.response.rect;
     let near = egui::pos2(sp.centre.x.clamp(r.left(), r.right()), sp.centre.y.clamp(r.top(), r.bottom()));
-    ui.painter().with_clip_rect(rect).line_segment([sp.centre, near], egui::Stroke::new(1.5, CYAN.gamma_multiply(0.8)));
+    ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("junction_on_map"))).line_segment([sp.centre, near], egui::Stroke::new(1.5, CYAN.gamma_multiply(0.8)));
     if close {
         st.lane_menu = None;
     }

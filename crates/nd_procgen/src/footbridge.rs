@@ -282,7 +282,7 @@ mod tests {
             let along = Vec2::new(-across.y, across.x);
             let (t0, t1) = (Vec2::new(10.0, 10.0), Vec2::new(10.0, 10.0) + across * 16.0);
             let width = 3.0;
-            w.walk.footbridges.push(nd_sim::walk::Footbridge { crossing: 0, top: [t0, t1], foot: [t0 + along * 9.0, t1 + along * 9.0], level: 5.4, width, nodes: [0; 4], joined: [false; 2] });
+            w.walk.footbridges.push(nd_sim::walk::Footbridge { crossing: 0, top: [t0, t1], foot: [t0 + along * 9.0, t1 + along * 9.0], level: 5.4, width, nodes: [0; 4], joined: [false; 2], path_join: None });
             let g = footbridges(&w, &Palette::default());
             let steps = crate::terrain::upright_faces(g.get(Surface::Concrete), STEP_RISE);
             crate::terrain::faces_along_are(&steps, along, width - 0.2).map_err(|e| format!("steps at {deg}: {e}")).unwrap();

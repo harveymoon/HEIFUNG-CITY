@@ -252,6 +252,11 @@ pub(crate) fn tool_input(
     let ground = cursor.ground;
     tools.hover_ground = ground;
 
+    // [r1-roads] (K20) The Intersection editor works on the map: while it
+    // is open the tools leave the map's clicks to it.
+    if tools.junction_editor.is_some() {
+        return;
+    }
     let f = Frame { keys: &keys, buttons: &buttons, flags: &flags, scroll: &scroll, plan, yaw, ctrl, right_click, finish, right_down, click, shift_click, middle, ground };
     let (sim, tools, selection) = (&mut *sim, &mut *tools, &mut *selection);
     match tools.tool {

@@ -131,7 +131,7 @@ fn make_lot_shaped(zone_id: ZoneId, lu: LandUse, poly: Vec<Vec2>, center: Vec2, 
         along * u1 + inward * v1,
         along * u0 + inward * v1,
     ];
-    let has_frontage = road.is_some() && fa.distance(fb) >= MIN_FRONTAGE.min(lu.lot_width() * 0.45);
+    let has_frontage = road.is_some() && frontage_long_enough(&poly, fi, lu, roads);
     let sharp = reflex_vertex(&poly, 0.6).is_some();
     let landlocked = !has_frontage || (strict_shape && (sharp || compact < MIN_COMPACTNESS)) || (u1 - u0) < 8.0 || (v1 - v0) < 8.0;
     #[cfg(test)]

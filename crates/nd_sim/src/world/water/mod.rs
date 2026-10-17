@@ -59,6 +59,11 @@ fn rail_crossing_refusal(mine: RoadKind, theirs: RoadKind, highway: bool, mine_l
 
 /// Spacing of the inner height samples along a long street or path.
 pub const INNER_STEP: f32 = 30.0;
+/// [r1-roads] (K5) The same along a footpath: closely, so a path up a
+/// hillside lies on the slope. Sampled every 30 m it ran in straight
+/// chords, cut metres into every crest (the hill graded down to it) and
+/// standing over every hollow.
+pub const PATH_INNER_STEP: f32 = 6.0;
 
 /// Heights inside long streets and paths, between their nodes, so a street
 /// drawn as one long leg over a hill follows the land instead of running
@@ -95,12 +100,13 @@ fn inner_heights(land: &crate::landscape::Landscape, roads: &crate::roads::RoadN
         }
         let (a, b) = roads.segment_points(sid);
         let len = a.distance(b);
-        if len < INNER_STEP * 1.5 {
+        let step = if s.kind == RoadKind::Path { PATH_INNER_STEP } else { INNER_STEP };
+        if len < step * 1.5 {
             continue;
         }
         let (za, zb) = (z.get(s.a.0 as usize).copied().unwrap_or(0.0), z.get(s.b.0 as usize).copied().unwrap_or(0.0));
         let g = way_grade(s.kind);
-        let m = (len / INNER_STEP).round().max(2.0) as usize;
+        let m = (len / step).round().max(2.0) as usize;
         let ds = len / m as f32;
         let mut h: Vec<f32> = (1..m)
             .map(|k| {
