@@ -4,9 +4,9 @@
 
 use super::*;
 
-/// [r2-traffic] Minutes a site's load waits when every lorry is on the road,
-/// and before a site no lorry could reach is tried again.
-const SITE_TRUCK_WAIT: u64 = 15;
+/// [r2-traffic] Site lorries allowed on the road past `MAX_TRUCKS`, and
+/// minutes before a site no lorry could reach is tried again.
+const SITE_TRUCKS_EXTRA: usize = 40;
 const SITE_RETRY: u64 = 60;
 
 impl World {
@@ -660,17 +660,14 @@ impl World {
     /// full of trucks already: the buyer counts the load as inbound.
     pub(super) fn dispatch_truck(&mut self, origin: TruckOrigin, cargo: Cargo, color: u8) {
         let to_site = self.buildings.get(cargo.to).is_some_and(|b| b.construction.is_some());
-        if self.truck_count() >= crate::market::MAX_TRUCKS {
-            // [r2-traffic] A building site's load waits for a truck: the
-            // site does not start on parts nobody brought (K6).
-            if to_site {
-                let from = match origin {
-                    TruckOrigin::Building(b) => Some(b),
-                    TruckOrigin::CityEdge => None,
-                };
-                self.freight_queue.push(crate::world::delivery_hours::QueuedTruck { due: self.clock.tick + SITE_TRUCK_WAIT, from, cargo, color });
-                return;
-            }
+        // [r2-traffic] A building site's load goes by truck (the site
+        // starts on what a truck brought, K6), with room for
+        // `SITE_TRUCKS_EXTRA` site lorries past the cap; only past that, in
+        // a boom, is it delivered on the spot as other loads are. (Queued
+        // behind the cap instead, a growing city's sites starved: a
+        // generated city opened 17 businesses by day 4 instead of 20+.)
+        let cap = crate::market::MAX_TRUCKS + if to_site { SITE_TRUCKS_EXTRA } else { 0 };
+        if self.truck_count() >= cap {
             self.deliver(cargo);
             return;
         }
