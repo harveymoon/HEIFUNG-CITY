@@ -49,7 +49,8 @@ impl ContainerMeshes {
 
 /// Spawn one box: a parent carrying the transform, its surfaces as children.
 pub(super) fn spawn_box(commands: &mut Commands, mats: &Materials, parts: &[(Surface, Handle<Mesh>)], tag: impl Component + Clone) -> Entity {
-    let parent = commands.spawn((Transform::IDENTITY, Visibility::default(), tag.clone())).id();
+    // Stood on the ground the trains are lifted to (`lift_movers`).
+    let parent = commands.spawn((Transform::IDENTITY, Visibility::default(), tag.clone(), super::lift::Grounded)).id();
     for (s, m) in parts {
         commands.spawn((Mesh3d(m.clone()), MeshMaterial3d(mats.surface(*s)), Transform::IDENTITY, tag.clone(), ChildOf(parent)));
     }
@@ -228,7 +229,7 @@ pub(super) fn sync_freight(
     let cm = state.crane_meshes.get_or_insert_with(|| crane_meshes(&mut meshes)).clone();
     for &b in &yards {
         if !state.cranes.contains_key(&b) {
-            let ents = [0, 1, 2, 3].map(|k| commands.spawn((Mesh3d(cm[k].clone()), MeshMaterial3d(mats.surface(Surface::Metal)), Transform::IDENTITY, YardCraneTag)).id());
+            let ents = [0, 1, 2, 3].map(|k| commands.spawn((Mesh3d(cm[k].clone()), MeshMaterial3d(mats.surface(Surface::Metal)), Transform::IDENTITY, YardCraneTag, super::lift::Grounded)).id());
             state.cranes.insert(b, ents);
         }
     }
