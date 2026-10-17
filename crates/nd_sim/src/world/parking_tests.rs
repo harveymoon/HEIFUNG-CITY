@@ -837,3 +837,21 @@ fn a_car_park_is_redrawn_for_every_car_while_few_stand_there() {
     assert!((0..=12).all(|n| parking_band(n, 109) != parking_band(n + 1, 109)));
     assert_eq!(parking_band(60, 109), parking_band(61, 109), "a full lot is not redrawn for every car");
 }
+
+/// [r1-roads] (K42) Harvey's three car parks side by side: City Parking 20
+/// and City Parking 50 (itself two plots joined) meet along an edge that is
+/// not quite one line (a corner 0.3 m off it). The union left a sliver and
+/// they never joined; the plots are now put on one line first.
+#[test]
+fn car_parks_meeting_along_a_skewed_edge_join() {
+    let v = |pts: &[(f32, f32)]| pts.iter().map(|&(x, y)| Vec2::new(x, y)).collect::<Vec<_>>();
+    let cp20 = v(&[(152.0, -189.0), (171.0, -217.0), (204.0, -194.0), (185.0, -166.0)]);
+    let cp50 = v(&[(137.0, -199.0), (185.0, -166.0), (148.0, -113.0), (152.0, -43.0), (137.0, -53.0)]);
+    let joined = super::parking::join_plots(&cp50, &cp20).expect("they join into one piece");
+    let sum = crate::geom::polygon_area(&cp20).abs() + crate::geom::polygon_area(&cp50).abs();
+    let area = crate::geom::polygon_area(&joined).abs();
+    assert!((area - sum).abs() < sum * 0.02, "the joined lot has both plots' ground: {area:.0} of {sum:.0}");
+    // Plots well apart still do not join.
+    let far = v(&[(300.0, -189.0), (319.0, -217.0), (352.0, -194.0), (333.0, -166.0)]);
+    assert!(super::parking::join_plots(&cp50, &far).is_none());
+}

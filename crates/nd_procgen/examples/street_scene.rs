@@ -130,7 +130,7 @@ fn main() {
     let pal = Palette::default();
     let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
     let inner: &[Vec<(f32, f32)>] = if w.relief { &w.road_inner } else { &[] };
-    let mut g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: w.config.seed, heights, inner, layer: StreetLayer::Surface, closed: &[] });
+    let mut g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: w.config.seed, heights, inner, layer: StreetLayer::Surface, closed: &[], joined_ramps: &[] });
     let arrows = nd_procgen::street::lane_arrows(&w.roads, &w.traffic.net, heights, inner, &pal);
     for (s, m) in arrows.iter() {
         g.part(s).append(m);

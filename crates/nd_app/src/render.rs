@@ -485,8 +485,7 @@ impl Plugin for RenderPlugin {
         app.init_resource::<plot_hover::PlotHover>().add_plugins(crate::overlay::mesh::MeshOverlayPlugin::<plot_hover::PlotHoverMesh>::default());
         app.add_systems(bevy_egui::EguiPrimaryContextPass, plot_hover::plot_hover_label);
         // [tools] Footbridges, and the Intersection editor's road view.
-        app.init_resource::<junction_view::JunctionCam>()
-            .add_systems(Update, (junction_view::sync_footbridges.after(sync_roads).before(lift_spawned), junction_view::sync_junction_camera).in_set(SimSet::Sync))
+        app.add_systems(Update, junction_view::sync_footbridges.after(sync_roads).before(lift_spawned).in_set(SimSet::Sync))
             .add_systems(PostUpdate, junction_view::tag_road_layers);
     }
 }

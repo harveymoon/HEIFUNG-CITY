@@ -425,6 +425,126 @@ impl World {
                 }
             }
         }
+        self.crossing_refusal(points, levels, kind, lanes_fwd, lanes_bwd, &[])
+    }
+
+    /// [r1-roads] (K1, K12) Why a way drawn along `points` at `levels`
+    /// cannot cross the ways already built, if it cannot: where it crosses
+    /// one at a height that is neither a junction nor clear of it. A way
+    /// drawn a few metres off the other's level (a path raised 2 m over a
+    /// path or a street) used to meet it at a junction at its own level,
+    /// so the junction node lifted the way under it up to the deck (or
+    /// dragged a deck down to the street); and a raised way over the
+    /// highway (which meets nothing) stood at its drawn height, its deck
+    /// through the lorries. Both need `GRADE_SEPARATION` of headroom, or
+    /// the same level to meet. Crossings at the way's own ends are where
+    /// it lands (it comes up or down to what it is dropped on) and are not
+    /// counted, nor ways the railway refusal covers. `replaced`: polylines
+    /// of roads being replaced (the Edit tool's road as it was), whose
+    /// pieces are left out.
+    pub fn crossing_refusal(&self, points: &[Vec2], levels: &[f32], kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8, replaced: &[Vec<Vec2>]) -> Option<String> {
+        if points.len() < 2 {
+            return None;
+        }
+        let lv = |i: usize| levels.get(i).copied().filter(|l| l.is_finite()).unwrap_or(0.0);
+        let class = crate::roads::WayClass::laying(kind, lanes_fwd, lanes_bwd, false);
+        let (first, last) = (points[0], points[points.len() - 1]);
+        let is_replaced = |sid: SegmentId| {
+            let (p0, p1) = self.roads.segment_points(sid);
+            replaced.iter().any(|r| crate::geom::distance_to_polyline(p0, r) < 1.0 && crate::geom::distance_to_polyline(p1, r) < 1.0)
+        };
+        for i in 0..points.len() - 1 {
+            let (a, b) = (points[i], points[i + 1]);
+            // (K1) A node the way passes within snapping distance of is
+            // joined too (`add_segment_between`): one of a shallow tunnel's
+            // portal ramp, 4 m down, was pulled up to the path drawn over it.
+            if kind != RoadKind::Rail && a.distance(b) > crate::roads::SNAP_RADIUS * 2.0 {
+                let pad = Vec2::splat(crate::roads::SNAP_RADIUS);
+                for sid in self.roads.segments_in_box(a.min(b) - pad, a.max(b) + pad) {
+                    for n in [self.roads.segment(sid).a, self.roads.segment(sid).b] {
+                        let node = self.roads.node(n);
+                        let (t, q) = crate::geom::project_on_segment(node.pos, a, b);
+                        let reach = crate::roads::END_SNAP_RADIUS + 2.0;
+                        // Right on the line it is a crossing (said below).
+                        if q.distance(node.pos) > crate::roads::SNAP_RADIUS || q.distance(node.pos) < 0.5 || q.distance(first) < reach || q.distance(last) < reach || is_replaced(sid) || self.roads.segment(sid).is_rail() {
+                            continue;
+                        }
+                        let mine = lv(i) + (lv(i + 1) - lv(i)) * t;
+                        let gap = mine - node.level;
+                        let meets = node.segments.iter().filter_map(|&o| self.roads.try_segment(o)).any(|o| !crate::roads::separated(class, mine, o.class(), node.level));
+                        if meets && gap.abs() >= CROSSING_LEVEL_SLACK && (mine != 0.0 || node.level != 0.0) {
+                            let name = self.streets.of(sid).map(|st| st.name.clone()).unwrap_or_else(|| if self.roads.segment(sid).kind == RoadKind::Path { "a path".to_string() } else { "a road".to_string() });
+                            return Some(format!(
+                                "it passes {:.1} m {} a junction of {name} at ({:.0}, {:.0}) close beside it: too close to pass {} it, too far off to meet it there. Keep {:.0} m or more off that point, take it {:.1} m further {}, or bring it to {name}'s level to join it",
+                                gap.abs(),
+                                if gap >= 0.0 { "above" } else { "below" },
+                                node.pos.x,
+                                node.pos.y,
+                                if gap >= 0.0 { "over" } else { "under" },
+                                crate::roads::SNAP_RADIUS,
+                                crate::roads::GRADE_SEPARATION - gap.abs(),
+                                if gap >= 0.0 { "up" } else { "down" },
+                            ));
+                        }
+                    }
+                }
+            }
+            for sid in self.roads.segments_in_box(a.min(b), a.max(b)) {
+                let s = self.roads.segment(sid);
+                if s.is_rail() || kind == RoadKind::Rail {
+                    continue;
+                }
+                let (p0, p1) = self.roads.segment_points(sid);
+                let Some((t, u)) = crate::roads::segment_intersection_closed(a, b, p0, p1, 1e-3) else { continue };
+                let at = a.lerp(b, t);
+                let reach = crate::roads::END_SNAP_RADIUS + s.half_width();
+                if at.distance(first) < reach || at.distance(last) < reach || is_replaced(sid) {
+                    continue;
+                }
+                let mine = lv(i) + (lv(i + 1) - lv(i)) * t;
+                let theirs = self.roads.segment_level(sid, u);
+                let gap = mine - theirs;
+                let name = self.streets.of(sid).map(|st| st.name.clone()).unwrap_or_else(|| if s.kind == RoadKind::Path { "a path".to_string() } else { "a road".to_string() });
+                let (way, raise, pass) = if gap >= 0.0 { ("above", true, "over") } else { ("below", false, "under") };
+                if !crate::roads::separated(class, mine, s.class(), theirs) {
+                    // They would meet: only at about the same level.
+                    if gap.abs() >= CROSSING_LEVEL_SLACK && (mine != 0.0 || theirs != 0.0) {
+                        return Some(format!(
+                            "it crosses {name} {:.1} m {way} it at ({:.0}, {:.0}): too close to pass {pass} it, too far off to meet it at a junction. {} it {:.1} m more there (ways need {:.1} m between them to pass), or bring it to {name}'s level to join it",
+                            gap.abs(),
+                            at.x,
+                            at.y,
+                            if raise { "Raise" } else { "Lower" },
+                            crate::roads::GRADE_SEPARATION - gap.abs(),
+                            crate::roads::GRADE_SEPARATION,
+                        ));
+                    }
+                    continue;
+                }
+                // They pass one over the other: the upper one must clear the
+                // lower, unless it is at grade (then the sim lifts it).
+                // Over a way standing on a fill or lifted over another (the
+                // highway's embankment), by how high it really stands.
+                let clear = if raise && self.relief && !self.road_z.is_empty() {
+                    let natural = self.landscape.height(at).max(if self.landscape.is_flat() { 0.0 } else { crate::landscape::BANK_HEIGHT });
+                    mine - (self.road_height(sid, u) - natural).max(theirs)
+                } else {
+                    gap.abs()
+                };
+                let upper_fixed = if raise { mine != 0.0 } else { theirs != 0.0 };
+                if upper_fixed && clear < UNDERPASS_CLEARANCE - 0.01 {
+                    let gap = clear.max(0.0);
+                    return Some(format!(
+                        "it passes only {:.1} m {way} {name} at ({:.0}, {:.0}), which it cannot meet: {} it {:.1} m more there to clear it ({UNDERPASS_CLEARANCE:.1} m of headroom)",
+                        gap.abs(),
+                        at.x,
+                        at.y,
+                        if raise { "raise" } else { "lower" },
+                        UNDERPASS_CLEARANCE - gap.abs(),
+                    ));
+                }
+            }
+        }
         None
     }
 
@@ -591,6 +711,10 @@ pub const TERRAIN_FIT_WARN: f32 = 6.0;
 /// [pt-visual] Metres of cut or fill on an at-grade leg from which the
 /// Road tool refuses it (`road_refusal`).
 pub const TERRAIN_REFUSE: f32 = 15.0;
+/// [r1-roads] Metres two ways may differ in level where they cross and
+/// still meet at a junction (`crossing_refusal`): the junction is laid at
+/// one level, so a way drawn further off it would be bent to meet it.
+pub const CROSSING_LEVEL_SLACK: f32 = 1.0;
 /// [pt-visual] Degrees a highway or railway may turn at one drawn point
 /// before the Road tool calls it a sharp corner.
 pub const SHARP_TURN_WARN: f32 = 35.0;

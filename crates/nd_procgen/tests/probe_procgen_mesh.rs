@@ -133,7 +133,7 @@ fn barriers_stand_over_a_tunnel() {
     let w = tunnel_under_the_highway();
     assert!(w.roads.alive_segments().any(|(_, s)| s.tunnel));
     let pal = Palette::default();
-    let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: 3, heights: &w.road_z, inner: &w.road_inner, layer: StreetLayer::Surface, closed: &[] });
+    let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: 3, heights: &w.road_z, inner: &w.road_inner, layer: StreetLayer::Surface, closed: &[], joined_ramps: &[] });
     let hz = w.roads.nearest_where(Vec2::new(0.0, 0.0), |s| s.is_highway()).map(|(sid, t, _)| w.road_height(sid, t)).unwrap();
     // Barrier tops (0.8 m over the carriageway) along both edges of the
     // carriageway, from x = -120 to 120: no gap wider than a few metres.

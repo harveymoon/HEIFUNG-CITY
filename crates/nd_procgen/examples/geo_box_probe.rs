@@ -15,7 +15,7 @@ fn main() {
     let pal = Palette::default();
     let heights: &[f32] = if w.relief { &w.road_z } else { &[] };
     let inner: &[Vec<(f32, f32)>] = if w.relief { &w.road_inner } else { &[] };
-    let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: w.config.seed, heights, inner, layer: StreetLayer::Surface, closed: &[] });
+    let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: w.config.seed, heights, inner, layer: StreetLayer::Surface, closed: &[], joined_ramps: &[] });
     let water = nd_procgen::terrain::waterworks(&w, &pal);
     let (walls, caps) = nd_procgen::terrain::retaining_walls(&w, &pal);
     let ground = nd_procgen::terrain::build_landscape_terrain(&w, &pal, 4.0);

@@ -95,9 +95,10 @@ impl World {
         let roads_change = !pv.planned_roads.is_empty() || !pv.removed_roads.is_empty() || !pv.planned_rings.is_empty() || !pv.removed_rings.is_empty();
         out.roads = pv.planned_roads.len();
         let raised_new = pv.planned_levels.iter().any(|l| crate::pillars::is_raised(l));
+        let replaced: Vec<Vec<Vec2>> = pv.removed_roads.iter().map(|(_, pts, ..)| pts.clone()).collect();
         if roads_change && raised_new {
             for ((_, pts, f, b, k), levels) in pv.planned_roads.iter().zip(&pv.planned_levels) {
-                out.pillar_gaps.extend(self.road_pillar_plan(pts, levels, *f, *b, *k).gaps);
+                out.pillar_gaps.extend(self.road_pillar_plan_replacing(pts, levels, *f, *b, *k, &replaced).gaps);
             }
         }
         // [fix/roads-tools] Any building: the trial also says which grown
@@ -134,7 +135,15 @@ impl World {
             let levels = pv.planned_levels.get(i).map_or(&[][..], |l| &l[..]);
             self.road_over_dam(pts, levels, *k, crate::roads::half_width_spec(*k, *f, *b))
         });
-        out.refusal = Self::blocks_refusal(&out.blocks).or_else(|| out.dam_refusal.clone()).or_else(|| out.pillar_refusal.clone());
+        // [r1-roads] (K12, K13) A road changed in the Edit tool (raised,
+        // lowered) is held to the Road tool's rules: where it crosses a way
+        // at a height that is neither a junction nor clear of it, it is
+        // refused with the reason, not built through the other.
+        out.crossing_refusal = pv.planned_roads.iter().enumerate().find_map(|(i, (_, pts, f, b, k))| {
+            let levels = pv.planned_levels.get(i).map_or(&[][..], |l| &l[..]);
+            self.crossing_refusal(pts, levels, *k, *f, *b, &replaced).map(|why| format!("Not implemented: {} ({}).", why, self.planned_road_label(pts)))
+        });
+        out.refusal = Self::blocks_refusal(&out.blocks).or_else(|| out.dam_refusal.clone()).or_else(|| out.crossing_refusal.clone()).or_else(|| out.pillar_refusal.clone());
         out
     }
 

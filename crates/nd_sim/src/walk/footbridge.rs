@@ -20,6 +20,23 @@ pub struct Footbridge {
     /// joins its deck (`WalkGraph::footbridge_links`) instead of having
     /// stairs of its own: footbridges round a junction make a ring.
     pub joined: [bool; 2],
+    /// [r1-roads] (K14) A raised path coming down to the street at the
+    /// crossing's node joins the bridge instead: (the end it joins, the
+    /// path's last raised node, the node at the street). The path stays up
+    /// on its deck to the bridge (`nd_procgen::terrain` draws it so), its
+    /// ramp down to the street is not walked, and that end has no stairs.
+    pub path_join: Option<(usize, NodeId, NodeId)>,
+}
+
+/// [r1-roads] (K14) The raised path coming down onto the street at road
+/// node `n`: the path piece from `n` whose other node is up on a deck
+/// (`VIADUCT_LEVEL` or more), as (that node, the piece).
+pub fn raised_path_down_to(roads: &RoadNetwork, n: NodeId) -> Option<(NodeId, SegmentId)> {
+    roads.node(n).segments.iter().copied().filter(|&s| roads.try_segment(s).is_some_and(|sg| sg.kind == RoadKind::Path)).find_map(|s| {
+        let sg = roads.segment(s);
+        let far = if sg.a == n { sg.b } else { sg.a };
+        (roads.node(far).level >= crate::roads::VIADUCT_LEVEL && roads.node(n).level < crate::roads::VIADUCT_LEVEL).then_some((far, s))
+    })
 }
 
 /// [pt-walk] Two footbridge ends at most this far apart (at a junction's
@@ -84,7 +101,7 @@ impl WalkGraph {
     /// A footbridge over crossing `k`: the walkway a little to one side of
     /// the crosswalk at `FOOTBRIDGE_LEVEL`, stairs from each end along the
     /// pavement (`along`), and the feet joined to the pavement both ways.
-    pub(super) fn add_footbridge(&mut self, k: u32, along: [Vec2; 2]) {
+    pub(super) fn add_footbridge(&mut self, k: u32, along: [Vec2; 2], roads: &RoadNetwork) {
         use crate::junctions::{FOOTBRIDGE_LEVEL, FOOTBRIDGE_RUN, FOOTBRIDGE_WIDTH};
         let c = self.crossings[k as usize].clone();
         let ends = [c.a, c.b];
@@ -92,6 +109,17 @@ impl WalkGraph {
         let mut tops = [Vec2::ZERO; 2];
         let mut feet = [Vec2::ZERO; 2];
         let mut joined = [false; 2];
+        // [r1-roads] (K14) A raised path coming down to the street right
+        // here (the crossing is its zebra): the end on its side joins it.
+        let mut path_join: Option<(usize, NodeId, NodeId)> = None;
+        if let Some(n) = c.node.filter(|_| c.kind == CrossingKind::Zebra) {
+            if let Some((r, _)) = raised_path_down_to(roads, n) {
+                let rp = roads.node(r).pos;
+                let side = |e: u32| (self.nodes[e as usize].pos - roads.node(n).pos).dot(rp - roads.node(n).pos);
+                let i = if side(c.a) >= side(c.b) { 0 } else { 1 };
+                path_join = Some((i, r, n));
+            }
+        }
         for (i, &end) in ends.iter().enumerate() {
             let along = along[i];
             let p = self.nodes[end as usize].pos;
@@ -99,6 +127,26 @@ impl WalkGraph {
             let foot = top + along * FOOTBRIDGE_RUN;
             let t = self.add_node(top, None);
             self.nodes[t as usize].level = FOOTBRIDGE_LEVEL;
+            if let Some((_, r, n)) = path_join.filter(|j| j.0 == i) {
+                // The deck goes on to the path's deck; the path's ramp down
+                // to the street is not walked (nor drawn) any more.
+                let (rp, np) = (roads.node(r).pos, roads.node(n).pos);
+                let on_ramp = |q: Vec2| crate::geom::project_on_segment(q, rp, np).1.distance(q) < 0.3;
+                let ramp: Vec<u32> = (0..self.nodes.len() as u32).filter(|&m| m != t && self.nodes[m as usize].level == 0.0 && on_ramp(self.nodes[m as usize].pos)).collect();
+                for &m in &ramp {
+                    let pm = self.nodes[m as usize].pos;
+                    self.adj[m as usize].retain(|e| !(ramp.contains(&e.to) && pm.distance(rp) > 0.3) && !(ramp.contains(&e.to) && self.nodes[e.to as usize].pos.distance(rp) > 0.3));
+                }
+                if let Some(&at_r) = ramp.iter().find(|&&m| self.nodes[m as usize].pos.distance(rp) < 0.3) {
+                    self.link_raised(t, at_r);
+                }
+                joined[i] = true;
+                nodes[i * 2] = t;
+                nodes[i * 2 + 1] = t;
+                tops[i] = top;
+                feet[i] = top;
+                continue;
+            }
             // [pt-walk] Another footbridge's end at this corner: a corner
             // deck over to it, and no stairs of our own here.
             let near = self
@@ -141,7 +189,7 @@ impl WalkGraph {
         // The walkway.
         self.link_raised(nodes[1], nodes[3]);
         self.crossings[k as usize].bridged = true;
-        self.footbridges.push(Footbridge { crossing: k, top: tops, foot: feet, level: FOOTBRIDGE_LEVEL, width: FOOTBRIDGE_WIDTH, nodes: [nodes[0], nodes[2], nodes[1], nodes[3]], joined });
+        self.footbridges.push(Footbridge { crossing: k, top: tops, foot: feet, level: FOOTBRIDGE_LEVEL, width: FOOTBRIDGE_WIDTH, nodes: [nodes[0], nodes[2], nodes[1], nodes[3]], joined, path_join });
     }
 
     /// [footbridge] Take crossing `k`'s at-grade edge out of the walk graph

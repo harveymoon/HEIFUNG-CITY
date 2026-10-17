@@ -238,13 +238,32 @@ fn path_viaducts(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f3
             nodes.pop_back();
         }
         let mut pts: Vec<Vec2> = nodes.iter().map(|&n| roads.node(n).pos).collect();
-        let zs: Vec<f32> = nodes.iter().map(|&n| z_of(n)).collect();
+        let mut zs: Vec<f32> = nodes.iter().map(|&n| z_of(n)).collect();
+        // [r1-roads] (K14) A footbridge joined to the path where it came
+        // down to the street: the deck stays up and runs on into the
+        // bridge's end (the bridge's stairs on the far side take walkers
+        // down), not down its ramp to the kerb.
+        let mut joined_end = [false; 2];
+        if !closed && pts.len() >= 2 {
+            let last = pts.len() - 1;
+            for (end, (i, j)) in [(0usize, 1usize), (last, last - 1)].into_iter().enumerate() {
+                let (n, r) = (nodes[i], nodes[j]);
+                if let Some((f, k)) = world.walk.footbridges.iter().find_map(|f| f.path_join.filter(|pj| pj.1 == r && pj.2 == n).map(|pj| (f, pj.0))) {
+                    pts[i] = f.top[k];
+                    zs[i] = world.surface_height(f.top[0]).max(world.surface_height(f.top[1])) + f.level;
+                    joined_end[end] = true;
+                }
+            }
+        }
         // [walk-crossings] A raised path that comes down onto a street ends
         // on its pavement, not out in the middle of the road (G12): the deck
         // stops at the back of the kerb, where the walkers step off.
         if !closed {
             let ends = [(0usize, 1usize), (pts.len() - 1, pts.len() - 2)];
-            for (i, j) in ends {
+            for (e, (i, j)) in ends.into_iter().enumerate() {
+                if joined_end[e] {
+                    continue;
+                }
                 let n = if i == 0 { *nodes.front().unwrap() } else { *nodes.back().unwrap() };
                 let street = roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive && roads.segment(s).is_street() && !roads.segment(s).fronts_nothing()).map(|&s| roads.segment(s).half_width()).fold(0.0f32, f32::max);
                 if street <= 0.0 {

@@ -11,7 +11,7 @@ fn rich() -> LandValue {
 fn draw(roads: &RoadNetwork, net: &LaneNetwork, heights: &[f32]) -> Geometry {
     let lv = rich();
     let pal = Palette::default();
-    generate_street(&StreetInput { roads, net, land_value: &lv, palette: &pal, seed: 4, heights, inner: &[], layer: StreetLayer::All, closed: &[] })
+    generate_street(&StreetInput { roads, net, land_value: &lv, palette: &pal, seed: 4, heights, inner: &[], layer: StreetLayer::All, closed: &[], joined_ramps: &[] })
 }
 
 /// Junctions of every shape: a crossroads of a wide and a narrow street,
@@ -358,7 +358,7 @@ fn street_triangles_of_a_save() {
     let inner: &[Vec<(f32, f32)>] = if w.relief { &w.road_inner } else { &[] };
     let pal = Palette::default();
     let t = std::time::Instant::now();
-    let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: w.config.seed, heights, inner, layer: StreetLayer::Surface, closed: &[] });
+    let g = generate_street(&StreetInput { roads: &w.roads, net: &w.traffic.net, land_value: &w.land_value, palette: &pal, seed: w.config.seed, heights, inner, layer: StreetLayer::Surface, closed: &[], joined_ramps: &[] });
     let ms = t.elapsed().as_millis();
     let cuts: usize = crossing_cuts(&w.roads).values().map(|v| v.len()).sum();
     let corners: usize = junction_corners(&w.roads, &w.traffic.net, &build_runs(&w.roads)).by_node.values().map(|v| v.len()).sum();
