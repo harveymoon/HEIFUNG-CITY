@@ -216,11 +216,60 @@ impl LaneNetwork {
             self.segment_lanes.insert(sid, ids);
         }
 
+        // [r4] (K4) A street piece too short for lanes (under half a metre:
+        // left where a road was split twice at one spot, say where a tunnel
+        // passes under a roundabout) has none, and used to cut the road in
+        // two there: the ring's lanes ended at one of its nodes and began
+        // at the other, with nothing between, so no car or bus could drive
+        // round. Its two ends are one junction: the nodes it joins are
+        // grouped and their connectors built together, at the first.
+        let mut group_of: Vec<u32> = (0..roads.nodes.len() as u32).collect();
+        fn root(g: &mut [u32], mut n: u32) -> u32 {
+            while g[n as usize] != n {
+                g[n as usize] = g[g[n as usize] as usize];
+                n = g[n as usize];
+            }
+            n
+        }
+        for (sid, seg) in roads.alive_segments() {
+            if seg.is_street() && !self.segment_lanes.contains_key(&sid) {
+                let (ra, rb) = (root(&mut group_of, seg.a.0), root(&mut group_of, seg.b.0));
+                if ra != rb {
+                    let (lo, hi) = (ra.min(rb), ra.max(rb));
+                    group_of[hi as usize] = lo;
+                }
+            }
+        }
+        let mut members: HashMap<u32, Vec<NodeId>> = HashMap::new();
+        for n in 0..roads.nodes.len() as u32 {
+            let r = root(&mut group_of, n);
+            if r != n {
+                members.entry(r).or_insert_with(|| vec![NodeId(r)]).push(NodeId(n));
+            }
+        }
         for (ni, node) in roads.nodes.iter().enumerate() {
             let nid = NodeId(ni as u32);
-            let approaches: Vec<SegmentId> = roads.streets_at(nid).collect();
+            if group_of[ni] != ni as u32 {
+                continue; // built with its group's first node
+            }
+            let group: Vec<NodeId> = members.get(&(ni as u32)).cloned().unwrap_or_else(|| vec![nid]);
+            let merged = group.len() > 1;
+            let approaches: Vec<SegmentId> = if merged {
+                let mut v: Vec<SegmentId> = group.iter().flat_map(|&n| roads.streets_at(n)).filter(|s| self.segment_lanes.contains_key(s)).collect();
+                v.sort();
+                v.dedup();
+                v
+            } else {
+                roads.streets_at(nid).collect()
+            };
             if approaches.is_empty() {
                 continue;
+            }
+            if merged {
+                let r = group.iter().map(|n| self.node_radius[n.0 as usize]).fold(0.0, f32::max);
+                for n in &group {
+                    self.node_radius[n.0 as usize] = r;
+                }
             }
             let mut incoming: Vec<(LaneId, SegmentId)> = Vec::new();
             let mut outgoing: Vec<(LaneId, SegmentId)> = Vec::new();
@@ -229,7 +278,8 @@ impl LaneNetwork {
                 // A piece too short for lanes (under half a metre) has none.
                 for &lid in self.segment_lanes.get(&sid).into_iter().flatten() {
                     if let LaneKind::Road { forward, .. } = self.lanes[lid as usize].kind {
-                        let ends_here = if forward { seg.b == nid } else { seg.a == nid };
+                        let end = if forward { seg.b } else { seg.a };
+                        let ends_here = if merged { group.contains(&end) } else { end == nid };
                         if ends_here {
                             incoming.push((lid, sid));
                         } else {
@@ -339,6 +389,9 @@ impl LaneNetwork {
             // One incoming approach (or one opposed pair) has nobody to yield to.
             let signalized = default_signalized(approaches.len(), two_way, phases.len());
             self.node_intersection[ni] = self.intersections.len();
+            for n in &group {
+                self.node_intersection[n.0 as usize] = self.intersections.len();
+            }
             let incoming = incoming.iter().map(|&(l, s)| (l, approaches.iter().position(|&a| a == s).unwrap_or(0))).collect();
             let greens = vec![GREEN_SECONDS; phases.len()];
             self.intersections.push(Intersection { node: nid, radius, approaches: approaches.len(), phases, phase: 0, opposite, arrow: 0.0, left_turns: 0, left_wait_sum: 0.0, left_wait_max: 0.0, timer: 0.0, connectors, incoming, signalized, greens, arrow_mode: Default::default(), arrow_len: ARROW_SECONDS, ruled: false });

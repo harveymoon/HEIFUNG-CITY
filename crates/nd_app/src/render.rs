@@ -131,6 +131,7 @@ mod vehicles;
 mod parked;
 mod overlays;
 mod trains;
+mod freight;
 mod landscape;
 mod lift;
 pub(crate) use self::mesh_util::*;
@@ -443,6 +444,8 @@ impl Plugin for RenderPlugin {
         app.init_resource::<air::AirState>().add_systems(Update, air::sync_air.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, check_car_bodies.after(lift_movers).in_set(SimSet::Sync));
         // [rail-crossing] Level crossing gear: flashing lamps, swinging arms.
+        // [r4] (K33) Containers on the freight trains and the yard cranes.
+        app.init_resource::<freight::ContainerMeshes>().init_resource::<freight::FreightRender>().add_systems(Update, freight::sync_freight.after(sync_trains).before(update_daylight).in_set(SimSet::Sync));
         app.add_systems(Update, crossings::sync_crossings.after(sync_trains).before(update_daylight).in_set(SimSet::Sync));
         // [pt-visual] The crossings' red light on the road at night.
         app.add_systems(Update, crossings::sync_crossing_lights.after(update_daylight).in_set(SimSet::Sync));

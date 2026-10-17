@@ -62,7 +62,7 @@ fn crane_meshes(meshes: &mut Assets<Mesh>) -> [Handle<Mesh>; 4] {
 }
 
 /// [berthing] Colours of the boxes the crane swings, by move.
-const BOX_COLOURS: [[f32; 3]; 6] = [[0.75, 0.16, 0.12], [0.12, 0.32, 0.62], [0.15, 0.5, 0.3], [0.85, 0.55, 0.1], [0.55, 0.55, 0.58], [0.45, 0.2, 0.5]];
+const BOX_PAINTS: usize = 6;
 
 /// [fix/review-app] Bring `drawn` (sim id to entity, and what it was drawn
 /// as) in line with the `live` sim collection. Returns the entities to
@@ -256,7 +256,7 @@ pub(super) fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>
 /// spreader goes down and up, landing the ship's imports on the quay and
 /// loading the city's exports (`nd_sim::ports::crane_work`).
 #[allow(clippy::type_complexity)]
-pub(super) fn sync_port_cranes(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, mats: Res<Materials>, mut materials: ResMut<Assets<StandardMaterial>>, mut state: ResMut<LandscapeRender>, mut box_mats: Local<Vec<Handle<StandardMaterial>>>, mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>), With<CraneGear>>) {
+pub(super) fn sync_port_cranes(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut state: ResMut<LandscapeRender>, mut box_meshes: Local<Vec<Handle<Mesh>>>, mut q: Query<(&mut Transform, &mut Visibility, &mut Mesh3d), With<CraneGear>>) {
     let w = &sim.world;
     if sim.full_rebuild {
         for (_, ents) in state.cranes.drain() {
@@ -273,9 +273,17 @@ pub(super) fn sync_port_cranes(mut commands: Commands, mut meshes: ResMut<Assets
             }
         }
     }
-    if box_mats.is_empty() {
-        for c in BOX_COLOURS {
-            box_mats.push(materials.add(StandardMaterial { base_color: Color::linear_rgb(c[0], c[1], c[2]), perceptual_roughness: 0.6, ..default() }));
+    // [r4] (K33) The box on the spreader is the town's standard forty-foot
+    // container, in one of several lines' colours by move: length across
+    // the boom (z), its roof just under the spreader.
+    if box_meshes.is_empty() {
+        for k in 0..BOX_PAINTS {
+            let g = nd_procgen::container_geometry(true, nd_procgen::BoxLook::Dry, 0xB0C5 + k as u64 * 31, 0.3, &assets.palette);
+            let mut m = MeshData::default();
+            for (_, part) in g.iter() {
+                m.append_transformed(part, Vec3::new(0.0, -0.2 - nd_procgen::CONTAINER_H, 0.0), std::f32::consts::FRAC_PI_2);
+            }
+            box_meshes.push(meshes.add(shared_mesh(&m, true)));
         }
     }
     let f = sim.frac();
@@ -294,7 +302,7 @@ pub(super) fn sync_port_cranes(mut commands: Commands, mut meshes: ResMut<Assets
         if !state.cranes.contains_key(&pid) {
             let hs = state.crane_meshes.get_or_insert_with(|| crane_meshes(&mut meshes)).clone();
             let mat = mats.surface(Surface::Panel);
-            let ents = [0, 1, 2, 3].map(|k| commands.spawn((Mesh3d(hs[k].clone()), MeshMaterial3d(if k == 3 { box_mats[0].clone() } else { mat.clone() }), super::offstage(), NotShadowCaster, CraneGear)).id());
+            let ents = [0, 1, 2, 3].map(|k| commands.spawn((Mesh3d(if k == 3 { box_meshes[0].clone() } else { hs[k].clone() }), MeshMaterial3d(if k == 3 { mats.surface(Surface::Container) } else { mat.clone() }), super::offstage(), NotShadowCaster, CraneGear)).id());
             state.cranes.insert(pid, ents);
             continue;
         }
@@ -315,7 +323,7 @@ pub(super) fn sync_port_cranes(mut commands: Commands, mut meshes: ResMut<Assets
                 tf.scale = poses[k].1;
                 *v = if poses[k].2 { Visibility::Inherited } else { Visibility::Hidden };
                 if k == 3 {
-                    let want = &box_mats[(c.n as usize + pid_salt(pid)) % box_mats.len()];
+                    let want = &box_meshes[(c.n as usize + pid_salt(pid)) % box_meshes.len()];
                     if m.0 != *want {
                         m.0 = want.clone();
                     }

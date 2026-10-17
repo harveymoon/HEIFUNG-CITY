@@ -131,7 +131,7 @@ fn place_units(c: &Ctx, rng: &mut impl Rng, lo: Vec2, hi: Vec2) -> Vec<Unit> {
         while placed < target && attempts < 90 {
             attempts += 1;
             let trailer = rng.random_bool(0.2);
-            let (len, wid, h) = if trailer { (rng.random_range(6.5..8.5), 2.7, 2.9) } else if rng.random_bool(0.3) { (12.1, 2.44, 2.6) } else { (6.05, 2.44, 2.6) };
+            let (len, wid, h) = if trailer { (rng.random_range(6.5..8.5), 2.7, 2.9) } else if rng.random_bool(0.3) { (CONTAINER_40, CONTAINER_W, CONTAINER_H) } else { (CONTAINER_20, CONTAINER_W, CONTAINER_H) };
             let yaw = match rng.random_range(0..10) {
                 0..=5 => 0.0,
                 6..=8 => std::f32::consts::FRAC_PI_2,

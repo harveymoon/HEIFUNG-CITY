@@ -115,6 +115,16 @@ pub const ORDER_GIVE_UP: u64 = FREIGHT_HEADWAY * 4;
 pub const COUPLING: f32 = 1.2;
 /// A train keeps this much clear track ahead.
 pub const BLOCK: f32 = 90.0;
+/// [r4] (K50) A train following another comes to a stand this far behind
+/// its tail (or its head, coming the other way), braking for it from far
+/// enough back to stop there, instead of running up to it at line speed
+/// and stopping dead (or into it: at 4 traffic seconds a tick a passenger
+/// train covers 100 m, more than the old block).
+pub const SAFE_GAP: f32 = 30.0;
+/// [r4] Service braking and acceleration, m/s²: a train slows to a stand
+/// at its calls, the switch and a train ahead, and picks up speed again.
+pub const BRAKE: f32 = 0.7;
+pub const ACCEL: f32 = 0.5;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RailStats {
@@ -207,22 +217,36 @@ impl Rail {
     /// [train-inspect] The train whose head or tail stands in `id`'s block
     /// (see [`Rail::blocked`]).
     pub fn blocked_by(&self, id: TrainId) -> Option<TrainId> {
+        self.clear_ahead(id).filter(|&(gap, _)| gap < BLOCK).map(|(_, o)| o)
+    }
+
+    /// [r4] (K50) The clear track ahead of `id`'s head, and the train that
+    /// ends it: the nearest head or tail of another train standing on
+    /// `id`'s route ahead of it, 0 when another train's body already spans
+    /// its head. `None` when the line ahead is clear.
+    pub fn clear_ahead(&self, id: TrainId) -> Option<(f32, TrainId)> {
         let me = self.trains.get(id)?;
+        let mut best: Option<(f32, TrainId)> = None;
         for (oid, other) in &self.trains {
             if oid == id {
                 continue;
             }
             let head = other.head();
             let tail = point_along(&other.poly, other.s - other.length()).0;
-            for p in [head, tail] {
-                if let Some((s, d)) = project_on_poly(&me.poly, p) {
-                    if d < 3.0 && s > me.s && s < me.s + BLOCK {
-                        return Some(oid);
-                    }
+            let on = |p: Vec2| project_on_poly(&me.poly, p).filter(|&(_, d)| d < 3.0).map(|(s, _)| s);
+            let (sh, st) = (on(head), on(tail));
+            let gap = match (sh, st) {
+                // Its body reaches over this train's head.
+                (Some(a), Some(b)) if a.min(b) <= me.s && a.max(b) > me.s => Some(0.0),
+                _ => [sh, st].into_iter().flatten().filter(|&s| s > me.s).map(|s| s - me.s).min_by(f32::total_cmp),
+            };
+            if let Some(g) = gap {
+                if best.is_none_or(|(b, _)| g < b) {
+                    best = Some((g, oid));
                 }
             }
         }
-        None
+        best
     }
 
     /// [freight] Units of imports waiting out of town for `yard`, and the

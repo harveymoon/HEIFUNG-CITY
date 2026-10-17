@@ -105,6 +105,8 @@ mod level_crossings;
 #[cfg(test)]
 mod level_crossing_tests;
 #[cfg(test)]
+mod r4_rail_tests;
+#[cfg(test)]
 mod walk_crossings_tests;
 #[cfg(test)]
 mod bridge_riders_tests;

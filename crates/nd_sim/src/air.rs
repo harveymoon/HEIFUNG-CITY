@@ -70,6 +70,19 @@ pub const BATTERY_PER_KM: f32 = 0.06;
 pub const BATTERY_PER_CLIMB_M: f32 = 0.0004;
 pub const CHARGE_PER_TICK: f32 = 0.03;
 pub const RESERVE: f32 = 0.2;
+/// [r4] (K28) A taxi in the air with less than this over what it needs to
+/// reach its pad diverts to the nearest pad it can reach (or comes down in
+/// the street where it is, as a last resort): it never flies on empty.
+pub const DIVERT_MARGIN: f32 = 0.04;
+/// [r4] (K28) Battery a taxi needs to come down from cruise.
+pub const LANDING_CHARGE: f32 = 0.01;
+/// [r4] (K28) Charge per tick of a taxi on a pad not its own, and of one
+/// grounded in the street (the recovery van's charger).
+pub const AWAY_CHARGE_PER_TICK: f32 = 0.01;
+pub const RECOVERY_CHARGE_PER_TICK: f32 = 0.004;
+/// [r4] (K28) Ticks a taxi waits on the pad for its landing slot at the far
+/// end before it takes off anyway (and, rarely, holds there).
+pub const GROUND_HOLD: u64 = 30;
 /// Drones fly from 05:00 until 02:00.
 pub const SERVICE_START: u32 = 5 * 60;
 pub const SERVICE_END: u32 = 2 * 60;
@@ -296,8 +309,18 @@ pub struct Drone {
     pub slot: u8,
     /// Tick it started holding (first come, first landed).
     pub hold_since: u64,
-    /// 0..1.
+    /// 0..1. [r4] (K28) Never below 0: a taxi lands before it runs out.
     pub battery: f32,
+    /// [r4] (K28) The landing slot booked at the pad it is flying to (pad,
+    /// slot): air traffic control gives every flight its slot before it
+    /// leaves the ground, so drones arrive to a free pad instead of
+    /// queueing round it.
+    #[serde(default)]
+    pub booked: Option<(BuildingId, u8)>,
+    /// [r4] (K28) Put down short of its pad with too little charge to fly
+    /// on: standing where it came down, charging off the recovery van.
+    #[serde(default)]
+    pub grounded: bool,
     pub job: Job,
     pub flights_today: u32,
     pub km_today: f32,
@@ -325,6 +348,8 @@ impl Drone {
             slot: 0,
             hold_since: 0,
             battery: 1.0,
+            booked: None,
+            grounded: false,
             job: Job::Idle,
             flights_today: 0,
             km_today: 0.0,
@@ -378,6 +403,11 @@ pub struct AirStats {
     pub gave_up_today: u32,
     /// Times a drone had to hold for a slot today.
     pub holds_today: u32,
+    /// [r4] (K28) Take-offs held on the pad for a landing slot at the far
+    /// end today, and taxis that came down short of their pad on a flat
+    /// battery (each one is a scheduling failure: should stay 0).
+    pub ground_holds_today: u32,
+    pub forced_landings_today: u32,
     pub medic_flights_today: u32,
     pub medic_flights_total: u32,
     pub police_flights_today: u32,
@@ -420,15 +450,48 @@ impl Air {
         self.rooftops.contains(&b)
     }
 
-    /// Drones holding a slot of pad `b`.
+    /// Drones on a slot of pad `b` (on it, landing on it or climbing off
+    /// it; bookings for later are not counted, see [`Air::free_slot`]).
     pub fn slots_used(&self, b: BuildingId) -> usize {
         self.drones.values().filter(|d| d.at == Some(b)).count()
     }
 
-    /// The free slot index at `b`, if any.
+    /// The free slot index at `b`, if any: nobody on it and nobody booked.
     pub fn free_slot(&self, b: BuildingId) -> Option<u8> {
         let pad = self.pad(b)?;
-        (0..pad.slots).find(|s| !self.drones.values().any(|d| d.at == Some(b) && d.slot == *s))
+        (0..pad.slots).find(|s| !self.drones.values().any(|d| (d.at == Some(b) && d.slot == *s) || d.booked == Some((b, *s))))
+    }
+
+    /// [r4] (K28) A slot at `b` that drone `me` may book for its landing:
+    /// nobody else has booked it, and whoever stands on it now is on the
+    /// way out (climbing off, or shutting the doors with a passenger for
+    /// somewhere else), so it is clear by the time `me` gets there. A free
+    /// slot first. `None` when the pad is full for the time being.
+    pub fn bookable_slot(&self, b: BuildingId, me: DroneId) -> Option<u8> {
+        let pad = self.pad(b)?;
+        let leaving = |d: &Drone| {
+            d.phase == Phase::Climbing
+                || (d.phase == Phase::Boarding && matches!(d.job, Job::Taxi { aboard: true, to, .. } if to != b))
+                || (d.phase == Phase::Boarding && d.job == Job::Idle && d.base != b)
+        };
+        let mut later = None;
+        for s in 0..pad.slots {
+            if self.drones.iter().any(|(id, d)| id != me && d.booked == Some((b, s))) {
+                continue;
+            }
+            match self.drones.iter().find(|(id, d)| *id != me && d.at == Some(b) && d.slot == s) {
+                None => return Some(s),
+                Some((_, d)) if leaving(d) && later.is_none() => later = Some(s),
+                _ => {}
+            }
+        }
+        later
+    }
+
+    /// [r4] (K28) Whether slot `s` of `b` is clear of everyone but `me`
+    /// right now (to come down on it).
+    pub fn slot_clear(&self, b: BuildingId, s: u8, me: DroneId) -> bool {
+        !self.drones.iter().any(|(id, d)| id != me && d.at == Some(b) && d.slot == s)
     }
 
     /// The drone a citizen is flying in or waiting for.

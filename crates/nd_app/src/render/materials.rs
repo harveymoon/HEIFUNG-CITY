@@ -188,8 +188,16 @@ pub(super) fn setup(
     };
     let wagon_mesh = {
         let mut m = MeshData::default();
+        // [r4] (K33) A container flat: the deck and its twistlock pins; the
+        // boxes it carries are their own entities (`freight`), lifted off
+        // and on at the yards.
         m.boxed(Vec3::new(0.0, 1.0, 0.0), Vec3::new(13.6, 0.5, 2.7), 0.0, [0.2, 0.2, 0.22, 1.0]);
-        m.boxed(Vec3::new(0.0, 2.55, 0.0), Vec3::new(12.2, 2.6, 2.44), 0.0, [1.0, 1.0, 1.0, 1.0]);
+        for x in [-6.1f32, -0.05, 0.05, 6.1] {
+            for z in [-1.15f32, 1.15] {
+                m.boxed(Vec3::new(x, 1.3, z), Vec3::new(0.16, 0.12, 0.16), 0.0, [0.5, 0.42, 0.1, 1.0]);
+            }
+        }
+        m.boxed(Vec3::new(6.65, 1.7, 0.0), Vec3::new(0.25, 0.9, 2.6), 0.0, [0.2, 0.2, 0.22, 1.0]);
         rail_wheels(&mut m, 13.0);
         meshes.add(shared_mesh(&m, true))
     };

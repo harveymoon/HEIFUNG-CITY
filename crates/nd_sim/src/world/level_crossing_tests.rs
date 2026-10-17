@@ -33,7 +33,7 @@ fn send_train(w: &mut World, k: usize, before: f32) -> crate::rail::TrainId {
     let d = if c.rail_dir.x >= 0.0 { c.rail_dir } else { -c.rail_dir };
     let poly = vec![c.pos - d * 1500.0, c.pos + d * 1500.0];
     let s = 1500.0 - before;
-    w.rail.trains.insert(Train { kind: TrainKind::Passenger, cars: 3, nodes: Vec::new(), poly, s, prev_s: s, speed: rail::PASSENGER_SPEED, stops: Vec::new(), next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo: Vec::new(), color: 0, held: false, branch: None, exports: 0.0, unloaded: 0.0 })
+    w.rail.trains.insert(Train { kind: TrainKind::Passenger, cars: 3, nodes: Vec::new(), poly, s, prev_s: s, speed: rail::PASSENGER_SPEED, stops: Vec::new(), next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo: Vec::new(), color: 0, held: false, branch: None, exports: 0.0, unloaded: 0.0, v: rail::PASSENGER_SPEED, dwell_total: 0.0, boxes: Vec::new() })
 }
 
 /// A car driving north over the crossing from `south` metres south of it.

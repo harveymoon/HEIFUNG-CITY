@@ -99,6 +99,14 @@ pub fn train_detail(w: &World, id: TrainId, palette: &[[f32; 3]]) -> Option<Valu
             "loads": loads,
             "exports_aboard": round(m.exports_aboard.max(0.0)),
             "exports_to_collect": m.exports_to_collect.iter().map(|(y, a)| json!({ "yard": key_str(*y), "yard_name": building_name(w, Some(*y)), "amount": round(*a) })).collect::<Vec<_>>(),
+            // [r4] (K33) The boxes on the wagons and the crane's work.
+            "containers": t.boxes.iter().map(|b| json!({
+                "wagon": b.wagon, "slot": b.slot, "size_ft": if b.forty { 40 } else { 20 }, "kind": b.kind.label(),
+                "line": nd_procgen::shipping_line((b.seed % 30) as u64 * 7919 + 13).name,
+                "resource": b.resource.map(|r| r.label()), "yard": b.yard.map(key_str), "yard_name": building_name(w, b.yard),
+                "lift": match b.lift { rail::Lift::Aboard => "aboard".to_string(), rail::Lift::Off(k) => format!("coming off (move {})", k + 1), rail::Lift::On(k) => format!("going on (move {})", k + 1) },
+            })).collect::<Vec<_>>(),
+            "stand_seconds": round(t.dwell_total),
         });
     }
     Some(v)

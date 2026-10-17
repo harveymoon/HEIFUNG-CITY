@@ -1045,7 +1045,7 @@ pub fn drone_detail(w: &World, id: nd_sim::air::DroneId) -> Option<Value> {
         "pos": v2(d.pos), "altitude_m": round(d.alt), "heading": round(d.heading),
         "phase": d.phase.label(), "doing": d.job.label(), "job": job,
         "dest": opt_key(d.dest), "dest_name": building_name(w, d.dest), "goal": v2(d.goal),
-        "on_pad": opt_key(d.at), "slot": d.slot, "battery": round(d.battery.max(0.0)),
+        "on_pad": opt_key(d.at), "slot": d.slot, "battery": round(d.battery.max(0.0)), "booked": d.booked.map(|(b, s)| json!({ "pad": key_str(b), "slot": s })), "grounded": d.grounded,
         "flights_today": d.flights_today, "km_today": round(d.km_today), "flights_total": d.flights_total,
     }))
 }
@@ -1079,7 +1079,7 @@ pub fn air_report(w: &World) -> Value {
         "drones": { "taxis": craft(Craft::Taxi), "air_ambulances": craft(Craft::AirAmbulance), "police_helicopters": craft(Craft::PoliceHeli), "airborne": airborne, "holding": holding, "mean_taxi_battery": mean_battery },
         "flights_today": s.flights_today, "riders_today": s.riders_today, "fares_today": round(s.fares_today),
         "flights_yesterday": s.flights_yesterday, "riders_yesterday": s.riders_yesterday, "fares_yesterday": round(s.fares_yesterday), "riders_total": s.riders_total,
-        "waiting_for_drone": waiting, "in_the_air": flying, "gave_up_today": s.gave_up_today, "holds_today": s.holds_today,
+        "waiting_for_drone": waiting, "in_the_air": flying, "gave_up_today": s.gave_up_today, "holds_today": s.holds_today, "ground_holds_today": s.ground_holds_today, "forced_landings_today": s.forced_landings_today,
         "medic_flights_today": s.medic_flights_today, "medic_flights_total": s.medic_flights_total, "police_flights_today": s.police_flights_today,
         "company": { "name": a.company.name, "money": round(a.company.money), "revenue_today": round(a.company.revenue_today), "revenue_yesterday": round(a.company.revenue_yesterday), "costs_per_day": round(a.company.costs_today) },
         "noise": { "cells": noise_cells, "max": round(noise_max), "max_land_value_penalty": round(nd_sim::air::noise_penalty(noise_max)), "grumbles_today": s.grumbles_today },

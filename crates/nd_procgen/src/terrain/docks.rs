@@ -296,12 +296,11 @@ pub fn ship_mesh(freighter: bool, palette: &Palette) -> MeshData {
     m.cap(&deck, Vec3::Y, rgba(mul(hull, 1.3)));
     if freighter {
         m.boxed(Vec3::new(-half + 6.0, 6.5, 0.0), Vec3::new(7.0, 7.0, beam * 0.8), 0.0, rgba([0.9, 0.9, 0.88]));
-        let colors = &palette.container_colors;
-        for k in 0..6 {
-            let x = -half + 16.0 + k as f32 * 7.5;
-            let c = if colors.is_empty() { [0.7, 0.3, 0.2] } else { colors[k % colors.len()] };
-            let tiers = 1 + (k % 3) as i32;
-            m.boxed(Vec3::new(x, 2.5 + tiers as f32 * 1.3, 0.0), Vec3::new(6.8, tiers as f32 * 2.6, beam * 0.85), 0.0, rgba(c));
+        // [r4] (K33) Its deck cargo in the town's one standard box, each
+        // in its line's colours (baked into the hull's mesh).
+        let cargo = crate::buildings::rail::freighter_cargo(0x5A11, len, beam, 2.56, palette);
+        for (_, part) in cargo.iter() {
+            m.append_transformed(part, Vec3::ZERO, 0.0);
         }
     } else {
         m.boxed(Vec3::new(-1.0, 4.0, 0.0), Vec3::new(len * 0.6, 3.0, beam * 0.8), 0.0, rgba([0.92, 0.92, 0.9]));
