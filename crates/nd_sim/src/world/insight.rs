@@ -23,8 +23,9 @@ pub fn act_of(c: &Citizen) -> Act {
     let k = |b: Option<BuildingId>| ffi(b);
     let (tag, with) = match &c.activity {
         Activity::Arriving => (0, 0),
-        Activity::AtHome => (1, k(c.home)),
-        Activity::Working => (2, k(c.work)),
+        // Home and work are the citizen's own: not repeated in every record.
+        Activity::AtHome => (1, 0),
+        Activity::Working => (2, 0),
         Activity::Visiting(b) => (3, k(Some(*b))),
         Activity::Idle => (4, 0),
         Activity::Traveling { to, .. } => (5, k(*to)),

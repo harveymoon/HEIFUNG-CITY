@@ -57,11 +57,17 @@ fn assert_bounded(w: &World) {
 #[test]
 fn a_day_of_town_life_is_remembered_and_stays_bounded() {
     let (w, shop) = town();
+    for p in w.insight.people.values() {
+        let mut re = crate::insight::Log::default();
+        for r in p.trips.records() { re.push(r, 100_000); }
+        assert_eq!(re.size(), p.trips.size(), "decodes whole: {:?}", p.trips.records());
+    }
     // People: trips with the mode chosen, legs, and arriving in town.
     let trips = w.insight.people.values().flat_map(|p| p.trips.records()).filter(|r| matches!(r.ev, Ev::Trip { .. })).count();
     let legs = w.insight.people.values().flat_map(|p| p.trips.records()).filter(|r| matches!(r.ev, Ev::Act(_))).count();
     let arrived = w.insight.people.values().flat_map(|p| p.life.records()).filter(|r| matches!(r.ev, Ev::Life { what: Life::Arrived, .. })).count();
-    assert!(trips > 0 && legs > trips, "trips {trips}, legs {legs}");
+    // (A trip home from the doorstep starts and ends in the same tick: no leg.)
+    assert!(trips > 0 && legs > 0, "trips {trips}, legs {legs}");
     assert!(arrived > 0, "newcomers noted");
     // The shop: begun and finished.
     let shop_log: Vec<Happened> = w.insight.buildings.get(shop).unwrap().log.records().into_iter().filter_map(|r| if let Ev::Happened { what, .. } = r.ev { Some(what) } else { None }).collect();

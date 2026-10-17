@@ -223,12 +223,29 @@ fn arrived(tag: u8) -> bool {
     matches!(tag, 1 | 2 | 3 | 4 | 7 | 14)
 }
 
+/// At home and at work name the citizen's own home and workplace (not kept
+/// in each record).
+fn own_places(w: &World, id: CitizenId, mut v: Value) -> Value {
+    let c = w.citizens.get(id);
+    let b = match v["activity"].as_str() {
+        Some("at_home") => c.and_then(|c| c.home),
+        Some("working") => c.and_then(|c| c.work),
+        _ => return v,
+    };
+    if v["building"].is_null() {
+        v["building"] = opt_key(b);
+        v["building_name"] = building_name(w, b);
+    }
+    v
+}
+
 /// A citizen's history: trips grouped from their records (each set-off
 /// with its legs, waits and where it ended), routes that failed, life
 /// events and the last drive.
 pub fn citizen_history(w: &World, id: CitizenId) -> Value {
     let Some(p) = w.insight.people.get(id) else { return json!({ "trips": [], "life": [], "note": "nothing recorded yet" }) };
     let recs = p.trips.records();
+    let rec = |r: &Rec| own_places(w, id, record_json(w, r));
     let mut trips: Vec<Value> = Vec::new();
     let mut cur: Option<(u64, Value, Vec<Value>)> = None;
     fn close(cur: &mut Option<(u64, Value, Vec<Value>)>, trips: &mut Vec<Value>, end: Option<(u64, &str)>) {
@@ -258,7 +275,7 @@ pub fn citizen_history(w: &World, id: CitizenId) -> Value {
                 }
                 match &mut cur {
                     Some((_, _, legs)) => {
-                        let mut l = record_json(w, r);
+                        let mut l = rec(r);
                         l["minutes"] = json!(next_tick.saturating_sub(r.tick));
                         if a.tag == 8 {
                             l["waited_min"] = json!(next_tick.saturating_sub(r.tick));
@@ -288,7 +305,7 @@ pub fn citizen_history(w: &World, id: CitizenId) -> Value {
             Some(nd_sim::Activity::Driving { car, .. }) => w.insight.live.get(*car).map_or(Value::Null, |t| trip_json(w, t, true)),
             _ => Value::Null,
         },
-        "records": recs.iter().map(|r| record_json(w, r)).collect::<Vec<_>>(),
+        "records": recs.iter().map(rec).collect::<Vec<_>>(),
         "records_dropped": p.trips.dropped + p.life.dropped,
     })
 }
@@ -395,7 +412,8 @@ fn entities<'a>(w: &'a World, kind: &str) -> Result<Vec<Entity<'a>>, String> {
         "unit" | "units" => slots(&w.services.units),
         "drone" | "drones" => slots(&w.air.drones),
         "bot" | "bots" => slots(&w.bots.bots),
-        "metro" | "metros" => slots(&w.subway.trains),
+        // Metro trains are not saved (rebuilt from the lines): their Debug form.
+        "metro" | "metros" => w.subway.trains.iter().map(|(k, v)| -> Entity<'a> { (key_str(k), Box::new(move || json!({ "debug": format!("{v:?}") }))) }).collect(),
         "metro_line" | "metro_lines" => slots(&w.subway.lines),
         "owner" | "owners" => slots(&w.estate.owners),
         "cab" | "cabs" => slots(&w.taxis.cabs),

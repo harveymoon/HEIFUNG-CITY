@@ -18,8 +18,9 @@
 //! ticks since the record before, the position as a delta in half metres,
 //! then the record's own fields as varints), capped in bytes; a full log
 //! drops its oldest street pieces first, then its oldest records (counted in
-//! `Log::dropped`). The whole store is saved as one base64 string of that
-//! binary (`Insight`'s serde), so it costs the save a few bytes a record,
+//! `Log::dropped`). The whole store is saved as one string, that binary
+//! deflated and in base64 (`Insight`'s serde), so it costs the save a byte or
+//! two a record,
 //! and a store that will not decode loads empty rather than failing the save.
 
 use crate::buildings::BuildingId;
@@ -36,12 +37,13 @@ use std::collections::VecDeque;
 /// pieces and events).
 pub const TRIP_BYTES: usize = 3072;
 /// A finished trip is kept trimmed to this (its street pieces go first).
-pub const DONE_TRIP_BYTES: usize = 1536;
+pub const DONE_TRIP_BYTES: usize = 768;
 /// Finished trips kept for vehicles nobody in town drives (lorries, buses,
 /// service vehicles, through traffic), newest last.
 pub const DONE_TRIPS: usize = 300;
-/// Bytes of trips and legs kept per citizen (a day or two of an ordinary life).
-pub const PERSON_BYTES: usize = 384;
+/// Bytes of trips and legs kept per citizen (about a day of an ordinary
+/// life: a set-off is about a dozen bytes, a leg six to ten).
+pub const PERSON_BYTES: usize = 224;
 /// Bytes of life events kept per citizen.
 pub const LIFE_BYTES: usize = 192;
 /// Bytes of events kept per building.
@@ -53,7 +55,7 @@ pub const ANGER_STEP: u8 = 10;
 /// Free text in a record (a reason, a business kind) is cut to this many bytes.
 const TEXT_MAX: usize = 80;
 /// Format of the saved store.
-const FORMAT: u8 = 1;
+const FORMAT: u8 = 2;
 
 /// Why a vehicle took a new route.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -375,6 +377,17 @@ fn put(b: &mut Vec<u8>, mut v: u64) {
     b.push(v as u8);
 }
 
+/// A key's ffi bits (0: none) as its index and version, two short varints
+/// (the bits as one varint take five bytes or more).
+fn put_key(b: &mut Vec<u8>, v: u64) {
+    if v == 0 {
+        put(b, 0);
+    } else {
+        put(b, (v & 0xffff_ffff) + 1);
+        put(b, v >> 32);
+    }
+}
+
 fn zz(v: i64) -> u64 {
     ((v << 1) ^ (v >> 63)) as u64
 }
@@ -439,6 +452,13 @@ impl<'a> Rd<'a> {
                 return Some(v);
             }
             shift += 7;
+        }
+    }
+
+    fn key(&mut self) -> Option<u64> {
+        match self.u()? {
+            0 => Some(0),
+            i => Some(((self.u()? & 0xffff_ffff) << 32) | ((i - 1) & 0xffff_ffff)),
         }
     }
 
@@ -534,18 +554,18 @@ impl Ev {
             Ev::Stall { seconds, cause, blocker } => {
                 put(b, *seconds as u64);
                 b.push(WAITS.iter().position(|w| w == cause).unwrap_or(0) as u8);
-                put(b, ffi(*blocker));
+                put_key(b, ffi(*blocker));
             }
             Ev::Anger { pct } => b.push(*pct),
             Ev::Errand { what, tries, building } => {
                 b.push(*what);
                 b.push(*tries);
-                put(b, ffi(*building));
+                put_key(b, ffi(*building));
             }
             Ev::Trip { mode, purpose, to, minutes, alt, failed, leg } => {
                 b.push(*mode);
                 put_purpose(b, *purpose);
-                put(b, ffi(*to));
+                put_key(b, ffi(*to));
                 put(b, metres(*minutes));
                 match alt {
                     Some((m, min)) => {
@@ -559,10 +579,10 @@ impl Ev {
             }
             Ev::Act(a) => {
                 b.push(a.tag | (a.mode << 5));
-                put(b, a.with);
+                put_key(b, a.with);
             }
             Ev::NoRoute { to, why } => {
-                put(b, ffi(*to));
+                put_key(b, ffi(*to));
                 put_str(b, why);
             }
             Ev::Life { what, other, text } => {
@@ -595,15 +615,15 @@ impl Ev {
             }
             3 => Ev::UTurn { dead_end: r.byte()? != 0 },
             4 => Ev::RageUTurn,
-            5 => Ev::Stall { seconds: r.u()? as u32, cause: *WAITS.get(r.byte()? as usize)?, blocker: unffi(r.u()?) },
+            5 => Ev::Stall { seconds: r.u()? as u32, cause: *WAITS.get(r.byte()? as usize)?, blocker: unffi(r.key()?) },
             6 => Ev::Anger { pct: r.byte()? },
             7 => Ev::Crash,
-            8 => Ev::Errand { what: r.byte()?, tries: r.byte()?, building: unffi(r.u()?) },
+            8 => Ev::Errand { what: r.byte()?, tries: r.byte()?, building: unffi(r.key()?) },
             9 => Ev::End(End::Left),
             10 => {
                 let mode = r.byte()?;
                 let purpose = get_purpose(r)?;
-                let to = unffi(r.u()?);
+                let to = unffi(r.key()?);
                 let minutes = r.u()? as f32;
                 let alt = match r.byte()? {
                     255 => None,
@@ -613,9 +633,9 @@ impl Ev {
             }
             11 => {
                 let t = r.byte()?;
-                Ev::Act(Act { tag: t & 0x1f, mode: t >> 5, with: r.u()? })
+                Ev::Act(Act { tag: t & 0x1f, mode: t >> 5, with: r.key()? })
             }
-            12 => Ev::NoRoute { to: unffi(r.u()?), why: r.string()? },
+            12 => Ev::NoRoute { to: unffi(r.key()?), why: r.string()? },
             13 => Ev::Life { what: *Life::ALL.get(r.byte()? as usize)?, other: r.u()?, text: r.string()? },
             14 => Ev::Happened { what: *Happened::ALL.get(r.byte()? as usize)?, other: r.u()?, text: r.string()? },
             _ => return None,
@@ -705,38 +725,29 @@ impl Log {
     /// Down to at most `cap` bytes: the oldest street pieces go first (the
     /// path matters less than what happened on it), then the oldest records.
     pub fn trim(&mut self, cap: usize) {
-        if self.bytes.len() <= cap {
-            return;
-        }
-        let mut recs = self.records();
-        let n = recs.len();
-        let enters = recs.iter().filter(|r| matches!(r.ev, Ev::Enter { .. })).count();
-        // Each record costs about the same: drop in proportion.
-        let per = (self.bytes.len() as f32 / n.max(1) as f32).max(1.0);
-        let mut excess = ((self.bytes.len() - cap) as f32 / per).ceil() as usize + 1;
-        let mut out = Vec::with_capacity(n);
-        let mut drop_enters = excess.min(enters.saturating_sub(1));
-        excess -= drop_enters;
-        for r in recs.drain(..) {
-            if drop_enters > 0 && matches!(r.ev, Ev::Enter { .. }) {
-                drop_enters -= 1;
-                self.dropped += 1;
-                continue;
-            }
-            out.push(r);
-        }
-        let skip = excess.min(out.len().saturating_sub(1));
-        self.dropped += skip as u32;
-        self.rebuild(&out[skip..]);
-        // Records vary in size: make sure.
-        while self.bytes.len() > cap && !self.bytes.is_empty() {
-            let recs = self.records();
+        while self.bytes.len() > cap {
+            let mut recs = self.records();
             if recs.len() <= 1 {
                 break;
             }
-            let k = (recs.len() / 4).max(1);
-            self.dropped += k as u32;
-            self.rebuild(&recs[k..]);
+            // About how many records make up the excess (they cost about the same).
+            let per = (self.bytes.len() as f32 / recs.len() as f32).max(1.0);
+            let excess = (((self.bytes.len() - cap) as f32 / per).ceil() as usize).max(1);
+            let enters = recs.iter().filter(|r| matches!(r.ev, Ev::Enter { .. })).count();
+            if enters > 1 {
+                let mut n = excess.min(enters - 1);
+                recs.retain(|r| {
+                    let go = n > 0 && matches!(r.ev, Ev::Enter { .. });
+                    n -= go as usize;
+                    !go
+                });
+                self.dropped += excess.min(enters - 1) as u32;
+                self.rebuild(&recs);
+            } else {
+                let k = excess.min(recs.len() - 1);
+                self.dropped += k as u32;
+                self.rebuild(&recs[k..]);
+            }
         }
     }
 
@@ -796,11 +807,11 @@ pub struct Trip {
 
 impl Trip {
     fn encode(&self, b: &mut Vec<u8>) {
-        put(b, ffi(Some(self.car)));
+        put_key(b, ffi(Some(self.car)));
         b.push(TripKind::ALL.iter().position(|k| *k == self.kind).unwrap_or(0) as u8);
-        put(b, ffi(self.vehicle));
-        put(b, ffi(self.driver));
-        put(b, ffi(self.to));
+        put_key(b, ffi(self.vehicle));
+        put_key(b, ffi(self.driver));
+        put_key(b, ffi(self.to));
         put(b, self.start);
         put(b, self.end.map_or(0, |e| e + 1));
         self.log.encode(b);
@@ -810,7 +821,7 @@ impl Trip {
                 b.push(1);
                 put(b, t);
                 b.push(WAITS.iter().position(|x| *x == cause).unwrap_or(0) as u8);
-                put(b, ffi(blocker));
+                put_key(b, ffi(blocker));
                 let p = q(at);
                 put_i(b, p[0]);
                 put_i(b, p[1]);
@@ -832,17 +843,17 @@ impl Trip {
     }
 
     fn decode(r: &mut Rd) -> Option<Trip> {
-        let car = unffi(r.u()?).unwrap_or_default();
+        let car = unffi(r.key()?).unwrap_or_default();
         let kind = *TripKind::ALL.get(r.byte()? as usize)?;
-        let vehicle = unffi(r.u()?);
-        let driver = unffi(r.u()?);
-        let to = unffi(r.u()?);
+        let vehicle = unffi(r.key()?);
+        let driver = unffi(r.key()?);
+        let to = unffi(r.key()?);
         let start = r.u()?;
         let end = r.u()?.checked_sub(1);
         let log = Log::decode(r)?;
         let stall = match r.byte()? {
             0 => None,
-            _ => Some((r.u()?, *WAITS.get(r.byte()? as usize)?, unffi(r.u()?), unq([r.i()?, r.i()?]))),
+            _ => Some((r.u()?, *WAITS.get(r.byte()? as usize)?, unffi(r.key()?), unq([r.i()?, r.i()?]))),
         };
         let anger = r.byte()?;
         let crashed = r.byte()? != 0;
@@ -944,7 +955,7 @@ impl Insight {
         let people: Vec<(CitizenId, &Person)> = self.people.iter().filter(|(_, p)| !p.trips.is_empty() || !p.life.is_empty() || p.last_drive.is_some()).collect();
         put(&mut b, people.len() as u64);
         for (id, p) in people {
-            put(&mut b, ffi(Some(id)));
+            put_key(&mut b, ffi(Some(id)));
             p.trips.encode(&mut b);
             p.life.encode(&mut b);
             match &p.last_drive {
@@ -958,7 +969,7 @@ impl Insight {
         let places: Vec<(BuildingId, &Place)> = self.buildings.iter().filter(|(_, p)| !p.log.is_empty()).collect();
         put(&mut b, places.len() as u64);
         for (id, p) in places {
-            put(&mut b, ffi(Some(id)));
+            put_key(&mut b, ffi(Some(id)));
             p.log.encode(&mut b);
         }
         put(&mut b, self.last_incident as u64);
@@ -984,7 +995,7 @@ impl Insight {
             s.done.push_back(Trip::decode(&mut r)?);
         }
         for _ in 0..r.u()? {
-            let id: CitizenId = unffi(r.u()?)?;
+            let id: CitizenId = unffi(r.key()?)?;
             let trips = Log::decode(&mut r)?;
             let life = Log::decode(&mut r)?;
             let last_drive = match r.byte()? {
@@ -994,7 +1005,7 @@ impl Insight {
             s.people.insert(id, Person { trips, life, last_drive, seen: None });
         }
         for _ in 0..r.u()? {
-            let id: BuildingId = unffi(r.u()?)?;
+            let id: BuildingId = unffi(r.key()?)?;
             s.buildings.insert(id, Place { log: Log::decode(&mut r)?, seen: None });
         }
         s.last_incident = r.u()? as u32;
@@ -1053,9 +1064,35 @@ pub fn unbase64(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// The saved form: "z" and the base64 of the store's bytes deflated. (The
+/// save's own gzip cannot squeeze base64 of varints well: deflating first
+/// halves what the store adds to a compressed save.)
+fn pack(raw: &[u8]) -> String {
+    use std::io::Write;
+    let mut z = flate2::write::ZlibEncoder::new(Vec::with_capacity(raw.len() / 2), flate2::Compression::fast());
+    let packed = z.write_all(raw).and_then(|_| z.finish());
+    match packed {
+        Ok(bytes) => format!("z{}", base64(&bytes)),
+        Err(_) => base64(raw),
+    }
+}
+
+fn unpack(s: &str) -> Option<Vec<u8>> {
+    use std::io::Read;
+    match s.strip_prefix('z') {
+        Some(rest) => {
+            let bytes = unbase64(rest)?;
+            let mut out = Vec::new();
+            flate2::read::ZlibDecoder::new(&bytes[..]).read_to_end(&mut out).ok()?;
+            Some(out)
+        }
+        None => unbase64(s),
+    }
+}
+
 impl Serialize for Insight {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&base64(&self.encode()))
+        s.serialize_str(&pack(&self.encode()))
     }
 }
 
@@ -1063,7 +1100,7 @@ impl<'de> Deserialize<'de> for Insight {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         // A store that will not decode loads empty: the city still loads.
         let s = String::deserialize(d)?;
-        Ok(unbase64(&s).and_then(|b| Insight::decode(&b)).unwrap_or_default())
+        Ok(unpack(&s).and_then(|b| Insight::decode(&b)).unwrap_or_default())
     }
 }
 

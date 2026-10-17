@@ -946,7 +946,7 @@ into the game.
   not be done), each change of activity (the legs: on foot or by bike, driving, waiting for and riding
   the bus, the train, the metro, a lift, flying; arriving home, at work, out), routes that failed
   (`no_route` with why), and life events: `arrived` in town, new `home`, `job`, `car`,
-  `household`, `crime_victim`, `suspect`, `patient`, `crash`. About a day or two of an ordinary life
+  `household`, `crime_victim`, `suspect`, `patient`, `crash`. About a day of an ordinary life
   is kept; older records drop off.
 - **Buildings**: `started` (a site, or placed), `built`, `demolition` (why), `opened` (the business
   kind), `closed`, `reopened`, `owner` (the estate owner, or independent), `rebuilt` (tier and
@@ -954,7 +954,7 @@ into the game.
   `resolved` (how), `renamed`.
 
 Each record carries `tick`, `day`, `time`, `at` [x, y] and `event`. Logs are capped in bytes (a
-trip on the road 3 KB, a finished one 1.5 KB, a citizen's trips 384 B and life 192 B, a building
+trip on the road 3 KB, a finished one 768 B, a citizen's trips 224 B and life 192 B, a building
 256 B); when one fills, its oldest street pieces go first, then its oldest records
 (`records_dropped`).
 
