@@ -161,17 +161,17 @@ fn architecture(d: &nd_sim::districts::District) -> String {
 fn story_cards(ui: &mut egui::Ui, sim: &mut Sim, id: u16) {
     let Some(cur) = sim.world.districts.get(id).map(|d| d.story) else { return };
     let mut pick = None;
-    egui::Grid::new(("story_cards", id)).num_columns(3).striped(true).spacing([10.0, 4.0]).show(ui, |ui| {
-        for s in Story::ALL {
-            let on = cur == Some(s);
+    for s in Story::ALL {
+        let on = cur == Some(s);
+        ui.horizontal_wrapped(|ui| {
             if ui.selectable_label(on, egui::RichText::new(s.label()).strong().color(if on { GOLD } else { IVORY })).on_hover_text("Pick this story for the district").clicked() && !on {
                 pick = Some(s);
             }
-            ui.add(egui::Label::new(egui::RichText::new(s.backstory()).small()).wrap());
-            ui.add(egui::Label::new(egui::RichText::new(s.sets()).small().weak()).wrap());
-            ui.end_row();
-        }
-    });
+            ui.label(egui::RichText::new(s.sets()).small().weak());
+        });
+        ui.add(egui::Label::new(egui::RichText::new(s.backstory()).small().italics()).wrap());
+        ui.add_space(4.0);
+    }
     if let Some(s) = pick {
         let _ = sim.world.set_district_policy(id, PolicyChange { story: Some(Some(s)), ..Default::default() });
     }
@@ -230,8 +230,9 @@ pub fn page(ui: &mut egui::Ui, p: &mut UiCtx) {
             if let Some(d) = p.sim.world.districts.get(id) {
                 let b = &d.books;
                 let by: Vec<String> = Policy::ALL.iter().filter(|q| b.yesterday[q.index()] != 0.0).map(|q| format!("{} {:+.0}", q.label(), b.yesterday[q.index()])).collect();
-                row(ui, "district taxes yesterday", format!("levied ${:.0}   paid out ${:.0}   net {:+.0}{}", b.levied_yesterday(), b.spent_yesterday(), b.levied_yesterday() - b.spent_yesterday(), if by.is_empty() { String::new() } else { format!("   ({})", by.join(", ")) }));
-                let today: f32 = b.today.iter().sum();
+                // (+ 0.0: no "-0" for an empty day)
+                row(ui, "district taxes yesterday", format!("levied ${:.0}   paid out ${:.0}   net {:+.0}{}", b.levied_yesterday() + 0.0, b.spent_yesterday() + 0.0, b.levied_yesterday() - b.spent_yesterday() + 0.0, if by.is_empty() { String::new() } else { format!("   ({})", by.join(", ")) }));
+                let today: f32 = b.today.iter().sum::<f32>() + 0.0;
                 row(ui, "so far today", format!("net {today:+.0} to the city"));
                 let pulls: Vec<String> = nd_sim::LandUse::ALL.iter().filter(|lu| d.policies.pull(**lu) != 1.0).map(|lu| format!("{} x{:.2}", lu.label(), d.policies.pull(*lu))).collect();
                 row(ui, "new buildings here", if pulls.is_empty() { "as anywhere in town".to_string() } else { pulls.join("   ") });

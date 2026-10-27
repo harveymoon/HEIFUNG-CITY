@@ -365,6 +365,9 @@ impl District {
         if let Some(s) = self.story {
             return s.label().to_string();
         }
+        if !self.is_custom() {
+            return "No story".to_string();
+        }
         let mut parts: Vec<String> = Vec::new();
         if let Some(r) = self.residential {
             parts.push(r.label().to_string());
@@ -378,11 +381,7 @@ impl District {
         if self.historic {
             parts.push("Historic".to_string());
         }
-        if parts.is_empty() {
-            "no policy".to_string()
-        } else {
-            parts.join(", ")
-        }
+        format!("Custom: {}", parts.join(", "))
     }
 
     /// Draws visitors in its own right: a landmark district.
