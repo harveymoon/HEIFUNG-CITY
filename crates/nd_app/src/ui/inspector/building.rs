@@ -193,7 +193,7 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
         cashflow(ui, &bz.books, (bz.revenue_today, bz.spend_today));
         // [ledger] Its rent and its account.
         if bz.rent_day > 0.0 {
-            hint(ui, &format!("rent {:.0}/day to {}", bz.rent_day, crate::remote::ledger::account_name(w, w.landlord_of(id))));
+            hint(ui, &format!("rent {:.0}/day for {:.0} m² to {}", bz.rent_day, w.business_area(id), crate::remote::ledger::account_name(w, w.landlord_of(w.host_of(id)))));
         }
         crate::ui::ledger::account_section(ui, w, nd_sim::bank::Account::Business(id), "account");
         // [relocate] A business that lost its old building to a buyout.
@@ -212,6 +212,56 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
                     ui.label(egui::RichText::new(format!("sells {}: {:.0} in stock at {:.1}", r.label(), bz.stock_of(*r), bz.sell_price(*r, b.jobs))).small());
                 }
             });
+        }
+    }
+
+    // ── [tenants] A tenant's building, a building's units ──
+    if let Some(host) = b.unit_of.filter(|h| w.buildings.contains_key(*h)) {
+        let h = &w.buildings[host];
+        let place = h.units.iter().filter(|u| u.occupant == nd_sim::Occupant::Tenant(id)).map(|u| u.place()).collect::<Vec<_>>().join(", ");
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new(format!("Rents {place} of")).small());
+            if ui.link(egui::RichText::new(&h.name).small()).clicked() {
+                *selection = Selection::Building(host);
+            }
+        });
+    }
+    if !b.units.is_empty() {
+        let vacant = b.vacant_units();
+        section(ui, &format!("UNITS  ·  {} let, {} to let", b.units.len() - vacant, vacant));
+        let mut pick = None;
+        egui::Grid::new(("inspector_units", id)).num_columns(4).spacing([8.0, 2.0]).show(ui, |ui| {
+            for u in &b.units {
+                ui.label(egui::RichText::new(format!("{}{}", if u.shopfront { "shop · " } else { "" }, u.place())).small());
+                ui.label(egui::RichText::new(format!("{:.0} m²", u.area)).small().weak());
+                ui.label(egui::RichText::new(format!("{} job{}", u.jobs, crate::ui::fmt::s(u.jobs))).small().weak());
+                match u.occupant {
+                    nd_sim::Occupant::Vacant => {
+                        let days = w.clock.tick.saturating_sub(u.vacant_since) / 1440;
+                        ui.label(egui::RichText::new(format!("to let, {days} day{}", crate::ui::fmt::s(days))).small().color(WARN));
+                    }
+                    nd_sim::Occupant::Main => {
+                        ui.label(egui::RichText::new(b.business.as_ref().map_or("its own", |z| z.kind.label())).small().color(GOLD));
+                    }
+                    nd_sim::Occupant::Tenant(t) => match w.buildings.get(t) {
+                        Some(tb) => {
+                            let shut = tb.business.as_ref().is_some_and(|z| z.closed);
+                            let text = format!("{} ({}){}", tb.name, tb.business.as_ref().map_or("", |z| z.kind.label()), if shut { ", shut" } else { "" });
+                            if ui.link(egui::RichText::new(text).small()).clicked() {
+                                pick = Some(t);
+                            }
+                        }
+                        None => {
+                            ui.label(egui::RichText::new("?").small());
+                        }
+                    },
+                }
+                ui.end_row();
+            }
+        });
+        if let Some(t) = pick {
+            *selection = Selection::Building(t);
+            return;
         }
     }
 

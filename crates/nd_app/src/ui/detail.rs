@@ -133,6 +133,13 @@ pub fn market_businesses(ui: &mut egui::Ui, p: &mut UiCtx) {
         pane::kpi(ui, "closed so far", egui::RichText::new(format!("{}", m.closed_total)));
         pane::kpi(ui, "kinds losing money", warn_if(losing > 0, format!("{losing}")));
         pane::kpi(ui, "deals today", egui::RichText::new(format!("{}", m.deals_today)));
+        // [tenants] Units in buildings let in parts: rented, to let.
+        let (units, vacant, tenants) = w.buildings.values().fold((0usize, 0usize, 0usize), |(u, v, t), b| (u + b.units.len(), v + b.vacant_units(), t + usize::from(b.is_tenant())));
+        if units > 0 {
+            pane::kpi(ui, "tenants in shared buildings", egui::RichText::new(format!("{tenants}")));
+            pane::kpi(ui, "units to let", egui::RichText::new(format!("{vacant} of {units}")));
+            pane::kpi(ui, "units let / taken to grow", egui::RichText::new(format!("{} / {}", m.tenants_let_total, m.units_taken_total)));
+        }
     });
     let days = pane::days(&e.history, span);
     let labels = pane::day_labels(&days);

@@ -37,7 +37,7 @@ fn mass_top(g: &Geometry) -> f32 {
 }
 
 /// The extent (lot-local) of the mass between heights `y0` and `y1`.
-fn extent(g: &Geometry, c: &Ctx, y0: f32, y1: f32) -> Option<(Vec2, Vec2)> {
+pub(super) fn extent(g: &Geometry, c: &Ctx, y0: f32, y1: f32) -> Option<(Vec2, Vec2)> {
     let mut lo = Vec2::splat(f32::MAX);
     let mut hi = Vec2::splat(f32::MIN);
     for s in MASS {

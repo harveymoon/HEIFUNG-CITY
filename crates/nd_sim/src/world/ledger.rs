@@ -15,9 +15,6 @@ pub const PROPERTY_TAX: f32 = 0.10;
 /// rent. With upkeep and tax it leaves the old investor's 45%
 /// (`rich::INVEST_RENT_NET`).
 pub const RENT_LOAN: f32 = 0.15;
-/// [ledger] A business's daily rent for its unit, per job, as a share of
-/// what one home in the building rents for (`Building::rent`).
-pub const SHOP_RENT_PER_JOB: f32 = 0.1;
 /// [ledger] What an out-of-town owner (a developer, the independent
 /// landlords' pool) keeps in town before its profit leaves: about this many
 /// days of its rent roll.
@@ -299,25 +296,35 @@ impl World {
         }
     }
 
-    /// [ledger] A business's daily rent for its unit: per job, a share of a
-    /// home's rent here. Nothing when it runs its own building (an owner
-    /// record that is not a landlord: a firm, a founder, a corp) or the
-    /// city runs it. One business per building today: kept per business so
-    /// a building of several tenants sums them.
+    /// [ledger] [tenants] A business's daily rent for its space: its floor
+    /// area (`business_area`: its units, or the whole building when it is
+    /// one business) at a share of a home's rent here per m², so by the
+    /// building's tier, land value and state (`Building::rent`). A tenant
+    /// always pays its building's owner; a building's own business pays
+    /// unless it runs its own building (an owner record that is not a
+    /// landlord: a firm, a founder, a corp). Nothing for what the city runs.
     pub fn shop_rent(&self, bid: BuildingId) -> f32 {
         let Some(b) = self.buildings.get(bid) else { return 0.0 };
         let Some(z) = &b.business else { return 0.0 };
         if z.closed || b.land_use == LandUse::Civic || b.land_use == LandUse::Park || b.service.is_some() || b.city_parking || matches!(z.kind, BusinessKind::Office | BusinessKind::CargoHub) {
             return 0.0;
         }
-        let landlord = match b.plot.owner.and_then(|o| self.estate.owners.get(o)) {
-            None => true,
-            Some(o) => matches!(o.kind, OwnerKind::Developer | OwnerKind::University { .. } | OwnerKind::Company { .. }),
+        let host = match b.unit_of {
+            Some(h) => match self.buildings.get(h) {
+                Some(h) => h,
+                None => return 0.0,
+            },
+            None => b,
         };
+        let landlord = b.is_tenant()
+            || match host.plot.owner.and_then(|o| self.estate.owners.get(o)) {
+                None => true,
+                Some(o) => matches!(o.kind, OwnerKind::Developer | OwnerKind::University { .. } | OwnerKind::Company { .. }),
+            };
         if !landlord {
             return 0.0;
         }
-        b.rent * SHOP_RENT_PER_JOB * b.jobs.max(1) as f32
+        self.business_area(bid) * host.rent / super::tenants::HOME_M2 * super::tenants::UNIT_RENT_SHARE
     }
 
     /// [ledger] Once a day after the rents: owners out of town (developers,

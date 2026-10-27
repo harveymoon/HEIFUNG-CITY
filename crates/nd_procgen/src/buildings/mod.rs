@@ -11,6 +11,8 @@ pub mod adjacency;
 pub mod air;
 /// [megacorp] Brands on buildings and the university's hall.
 pub mod brand;
+// [tenants] a sign over each shop of a building let in parts
+mod shopfronts;
 mod civic;
 mod commercial;
 mod construction;
@@ -203,6 +205,10 @@ fn finished(ctx: &Ctx, style: Style, rng: &mut nd_sim::SimRng, extras: &Extras) 
     // "plaza" laid a lawn quad over the sand, the towels under it.
     if let Some(m) = extras.brand.as_ref().filter(|_| style != Style::Beach) {
         brand::decorate(&mut g, ctx, m);
+    }
+    // [tenants] A sign over each shop on the ground floor.
+    if !extras.units.is_empty() {
+        shopfronts::draw(&mut g, ctx, extras.units, ctx.seed);
     }
     // [capsule] The dome district is spotless whatever its tier or age.
     if weathered(ctx.tier, ctx.wear) && !Style::CAPSULE.contains(&style) {

@@ -53,13 +53,17 @@ fn lazy_rows<'a>(w: &'a World, what: &str) -> Result<Vec<Row<'a>>, String> {
                         "revenue_today": round(z.revenue_today), "spend_today": round(z.spend_today), "profit_today": round(z.revenue_today - z.spend_today),
                         "deals": z.deals, "broke_days": z.broke_days, "closed": z.closed, "under_construction": b.construction.is_some(),
                         "powered": round(b.powered), "derelict": b.is_derelict(), "stock": stock, "inputs_short": short, "pos": pos(b),
+                        // [tenants] the building it rents units in
+                        "tenant_of": b.unit_of.map(key_str), "rent_per_day": round(z.rent_day), "area_m2": round(w.business_area(id)),
                     })
                 })
             })
             .collect(),
+        // [tenants] Structures only: a tenant is a business, not a building.
         "buildings" => w
             .buildings
             .iter()
+            .filter(|(_, b)| !b.is_tenant())
             .map(|(id, b)| -> Row<'a> {
                 Box::new(move || {
                     json!({
@@ -70,6 +74,7 @@ fn lazy_rows<'a>(w: &'a World, what: &str) -> Result<Vec<Row<'a>>, String> {
                         "business": b.business.as_ref().map(|z| z.kind.label()), "closed": b.business.as_ref().is_some_and(|z| z.closed),
                         "plant": b.plant.map(plant_name), "depot": b.depot, "rail": b.rail.as_ref().map(|r| rail_name(r.kind)),
                         "derelict": b.is_derelict(), "built_day": b.built_tick / 1440 + 1, "lot": key_str(b.lot), "pos": pos(b),
+                        "tenants": w.tenants_of(id).len(), "units_vacant": b.vacant_units(),
                     })
                 })
             })

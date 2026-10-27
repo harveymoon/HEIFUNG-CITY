@@ -50,6 +50,14 @@ impl World {
     pub(in crate::world) fn demolish_with(&mut self, bid: BuildingId, at: Option<Vec2>, memory: Option<&str>) {
         // Nothing vanishes: it becomes a demolition site and is cleared over
         // the next days (see `construction.rs`), unless it must go at once.
+        // [tenants] A tenant goes alone: its building stands.
+        if self.buildings.get(bid).is_some_and(|b| b.is_tenant()) {
+            self.retire_tenant(bid, memory.map(str::to_string));
+            return;
+        }
+        if self.buildings.get(bid).is_some_and(|b| !b.units.is_empty()) {
+            self.evict_tenants(bid, "its building coming down");
+        }
         if self.begin_demolition(bid, at, memory) {
             return;
         }

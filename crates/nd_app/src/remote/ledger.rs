@@ -79,7 +79,7 @@ fn by_kind(cells: &[Cell]) -> Value {
 /// with the outside world.
 pub fn flows(w: &World, cells: &[Cell]) -> Value {
     let mut groups = serde_json::Map::new();
-    for g in ["property", "wages", "profits", "city", "trade", "other"] {
+    for g in ["property", "sales", "wages", "profits", "city", "trade", "other"] {
         let mine: Vec<Cell> = cells.iter().filter(|c| c.kind.group() == g).copied().collect();
         if mine.is_empty() {
             continue;

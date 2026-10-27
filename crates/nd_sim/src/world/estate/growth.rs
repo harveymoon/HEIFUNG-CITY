@@ -172,7 +172,7 @@ impl World {
         if had_business {
             self.pack_business(bid, &format!("{dev_name}'s new block"));
         }
-        self.settle_sale(bid);
+        self.settle_sale_to(bid, Some(dev));
         self.buildings[bid].plot.form = Some(Form::Merged);
         self.take_plots_for(bid, &picked, &memory, crate::buildings::DemolitionReason::Assembly);
         self.redevelop_with(bid, tier, floors, value, memory, false);
@@ -231,7 +231,7 @@ impl World {
             let dev = self.developer(&mut rng);
             let name = self.buildings[bid].name.clone();
             let dev_name = self.estate.owners.get(dev).map(|o| o.name.clone()).unwrap_or_default();
-            self.settle_sale(bid);
+            self.settle_sale_to(bid, Some(dev));
             self.give_to(bid, dev, price);
             let tier = self.buildings[bid].tier;
             let b = &mut self.buildings[bid];
@@ -299,7 +299,7 @@ impl World {
         if had_business {
             self.pack_business(bid, &format!("{dev_name}'s rebuild"));
         }
-        self.settle_sale(bid);
+        self.settle_sale_to(bid, Some(dev));
         self.redevelop_with(bid, tier, floors, value, memory, false);
         self.tag_demolition(bid, crate::buildings::DemolitionReason::Redevelopment);
         if had_business {

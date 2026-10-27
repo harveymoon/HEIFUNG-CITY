@@ -347,6 +347,8 @@ impl StyleBook {
         let mut pending: Vec<BuildingId> = world
             .buildings
             .iter()
+            // [tenants] A tenant is drawn as its building, with no style of its own.
+            .filter(|(_, b)| !b.is_tenant())
             .filter(|(id, b)| self.entries.get(id).is_none_or(|e| e.key != key_of(*id, b)))
             .map(|(id, _)| id)
             .collect();
@@ -357,7 +359,7 @@ impl StyleBook {
         // Grid of every building's lot centre for the radius queries.
         let cell = RADIUS;
         let mut grid: HashMap<(i32, i32), Vec<(BuildingId, Vec2)>> = HashMap::new();
-        for (id, b) in world.buildings.iter() {
+        for (id, b) in world.buildings.iter().filter(|(_, b)| !b.is_tenant()) {
             if let Some(lot) = world.lots.get(b.lot) {
                 let c = lot.center;
                 grid.entry(((c.x / cell).floor() as i32, (c.y / cell).floor() as i32)).or_default().push((id, c));
@@ -433,6 +435,8 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
         pier: world.attractions.piers.get(&id),
         // [parks] litter and dealers in a park let go
         park_look: world.parks.of(id).map(|s| super::park::ParkLook { trash: s.trash, dealers: s.dealers }),
+        // [tenants] signs over its shops
+        units: &b.units,
         ..Extras::default()
     }
 }

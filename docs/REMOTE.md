@@ -611,7 +611,7 @@ kind's total, how much came `from_outside` and went `to_outside`), `days_kept` (
   `gifts_and_help`, `tuition`, `healthcare`, `tourism`, `grants`, `arrivals`, `departures`,
   `untracked`, `opening_balances`.
 - `{day: 12}`: one closed day (game day): `by_kind`, every `flow`, and its `summary` (as `flows`).
-- `{flows: true}`: the money-flow page's figures for `today` and `yesterday`: by group (property,
+- `{flows: true}`: the money-flow page's figures for `today` and `yesterday`: by group (property, sales,
   wages, profits, city, trade, other) each group's flows, and `in_from_outside`, `out_to_outside`,
   `net_with_outside`.
 - `{trace: "business 4:1"}` keeps every move of one account (up to 100 000) until `{trace: null}`;
@@ -1079,6 +1079,26 @@ several plots), home, business, form. A billionaire's other homes and businesses
 {"cmd": "ownership", "building": "146:1"}
 {"cmd": "estate", "action": "pressure", "at": [0, 0]}
 ```
+
+### Several businesses in one building [tenants]
+
+A building that can be let in parts (flats of three floors or more on a street, shop and office
+buildings of two or more, a supertall's two-storey mall base) is cut into `units` when it opens:
+shopfronts on the ground floor and ranges of upper floors. Its own business has the units its kind
+and staff want; the rest are let to other businesses, each a **tenant**: a record of its own
+(`tenant_of` its building) with its own id, kind, staff, books, account (`business <id>` in the
+ledger), hours, sign and rent, standing on its building's lot.
+
+- `inspect {building}`: `business` is the building's own business (or, with none, its first
+  tenant's: the old field, kept), plus `tenants` [{id, name, kind, closed, jobs, workers, money,
+  rent_per_day, area_m2, hours}], `units` [{place, floors [lo, hi], shopfront, area_m2, jobs,
+  occupant "vacant" | "own" | "tenant", business (id), name, kind, vacant_days}], `units_vacant`
+  and, on a tenant, `tenant_of` {id, name}. `business.rent_per_day` and `business.area_m2`: the
+  rent it pays for its floor area.
+- `list businesses` has every tenant with `tenant_of`, `rent_per_day`, `area_m2`; `list
+  buildings` lists structures only, each with `tenants` and `units_vacant`.
+- Rent: a unit's floor area times a share of a home's rent in the building per m² (so by tier,
+  land value and condition), to the building's owner, at most half the day's profit.
 
 ### Mega-corps and universities [megacorp]
 

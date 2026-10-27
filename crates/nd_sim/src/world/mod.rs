@@ -228,6 +228,11 @@ mod nights;
 mod moto;
 mod roadworks;
 mod relocate;
+// [tenants] several businesses in one building
+mod tenants;
+pub use tenants::{fits_shopfront, unit_layout};
+#[cfg(test)]
+mod tenants_tests;
 mod rich;
 /// [megacorp] Mega-corporations.
 mod corp;

@@ -215,6 +215,14 @@ impl World {
         if self.land_value.raw.is_empty() && !self.buildings.is_empty() {
             self.update_land_value();
         }
+        // [tenants] A save from before units: every building that can be
+        // let in parts is cut into units, its business keeping all it
+        // needs for its staff (nobody laid off), the rest to let.
+        let ids: Vec<BuildingId> = self.buildings.keys().collect();
+        for id in ids {
+            self.plan_units(id, true);
+        }
+        self.sync_tenants();
         self.update_economy();
         // A save from before named projects: number and name the one it has.
         self.name_active_project();

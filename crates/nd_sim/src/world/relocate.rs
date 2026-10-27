@@ -52,7 +52,8 @@ impl World {
     /// (road works): where it stood, its ground and land use given.
     pub(super) fn pack_business_at(&mut self, bid: BuildingId, why: &str, from: Vec2, area: f32, land_use: LandUse) {
         let Some(b) = self.buildings.get(bid) else { return };
-        if !b.operating() || b.is_special() {
+        // [tenants] A tenant losing its building packs up like any other.
+        if !b.operating() || (b.is_special() && !b.is_tenant()) {
             return;
         }
         let Some(z) = b.business.as_ref() else { return };
@@ -132,9 +133,19 @@ impl World {
         if m.business.money < cost {
             return None;
         }
-        let lot = self.relocation_lot(m)?;
-        let new = self.build_on_named(lot, Some(m.business.kind), Some(m.name.clone()))?;
-        let to = self.lots[lot].center;
+        // [tenants] An empty unit within reach first: it moves straight in
+        // (no site to wait for), else a site on the nearest lot.
+        let unit = self.vacant_unit_near(m.from, m.business.kind, m.jobs, RELOCATE_REACH);
+        let (new, to) = match unit {
+            Some((host, i)) => {
+                let new = self.open_tenant(host, i, Business::new(m.business.kind, 0), Some(m.name.clone()))?;
+                (new, self.lots[self.buildings[host].lot].center)
+            }
+            None => {
+                let lot = self.relocation_lot(m)?;
+                (self.build_on_named(lot, Some(m.business.kind), Some(m.name.clone()))?, self.lots[lot].center)
+            }
+        };
         let old = if m.from_words.is_empty() { "its old place".to_string() } else { m.from_words.clone() };
         let from_words = format!("{old}, {:.0} m away, after {}", to.distance(m.from), m.why);
         let mut z = m.business.clone();
@@ -153,8 +164,11 @@ impl World {
         // and comes back here), and the move is paid from it.
         self.replace_business(new, z);
         self.transfer(Account::Business(new), Account::Outside, cost, Kind::Building);
-        match m.owner.filter(|o| self.estate.owners.contains_key(*o)) {
+        // [tenants] A tenant rents: the building stays its owner's (the
+        // business keeps its founder, `Business::owner`).
+        match m.owner.filter(|o| self.estate.owners.contains_key(*o) && unit.is_none()) {
             Some(o) => self.give_to(new, o, 0.0),
+            None if unit.is_some() => {}
             None => {
                 if let Some(c) = owner_cid.filter(|c| self.citizens.contains_key(*c)) {
                     self.set_business_owner(new, c);
@@ -168,6 +182,10 @@ impl World {
             if let Some(c) = self.citizens.get_mut(c) {
                 c.remember(tick, format!("{} lost its building to {}. It's moving; they'll take us back when it reopens.", m.name, m.why));
             }
+        }
+        // [tenants] Into a unit: open at once, the old staff back now.
+        if unit.is_some() {
+            self.rehire_moved_staff(new);
         }
         Some(new)
     }

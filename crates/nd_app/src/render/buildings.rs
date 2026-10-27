@@ -92,7 +92,8 @@ pub(crate) fn building_geometry(world: &World, assets: &GameAssets, styles: &Sty
 /// The chunk a building is drawn in: by its lot centre, so a building and
 /// its lot's vacant/park neighbours share cells.
 pub(super) fn building_chunk(world: &World, id: BuildingId) -> Option<ChunkKey> {
-    let b = world.buildings.get(id)?;
+    // [tenants] A tenant is drawn as part of its building.
+    let b = world.buildings.get(id).filter(|b| !b.is_tenant())?;
     Some(chunk_of(world.lots.get(b.lot)?.center))
 }
 

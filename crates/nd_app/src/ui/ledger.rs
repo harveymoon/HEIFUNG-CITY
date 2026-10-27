@@ -34,8 +34,9 @@ pub fn account_section(ui: &mut egui::Ui, w: &nd_sim::World, a: Account, title: 
 
 /// Rows of the page: (kind group, from class, to class) → units, biggest
 /// first; groups in a fixed order.
-const GROUPS: [(&str, &str); 6] = [
-    ("property", "Rent and property: tenants to owners, owners to upkeep, tax and the bank"),
+const GROUPS: [(&str, &str); 7] = [
+    ("property", "Rent: tenants to owners, owners to upkeep, tax and the bank"),
+    ("sales", "Property sales: whole buildings changing hands at their value, mostly paid with bank loans and capital from out of town"),
     ("wages", "Wages: earnings in from outside, payrolls out, the purse and the pockets"),
     ("profits", "Profits and investment: dividends, stakes, deposits"),
     ("city", "The city's books: taxes, fares and fees in, upkeep and building out"),
@@ -129,7 +130,7 @@ fn sankey(ui: &mut egui::Ui, rows: &[Cell]) {
     let used_l = left.iter().filter(|x| **x > 0).count();
     let used_r = right.iter().filter(|x| **x > 0).count();
     let gap = 6.0;
-    let height = 120.0f32.max(14.0 * used_l.max(used_r) as f32 + gap * used_l.max(used_r) as f32);
+    let height = 120.0f32.max((LABEL_H + 1.0) * used_l.max(used_r) as f32 + gap * used_l.max(used_r) as f32);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     let p = ui.painter_at(rect);
     let bar_w = 10.0;
@@ -177,20 +178,79 @@ fn sankey(ui: &mut egui::Ui, rows: &[Cell]) {
         }
     }
     let font = egui::FontId::proportional(11.0);
+    // Labels at their node's middle, then spread so none overlaps another
+    // or leaves the chart (thin nodes at the top or bottom of a side ran
+    // into each other).
+    let mut labels: Vec<(f32, f32, String, bool)> = Vec::new();
     for c in Class::ALL {
         let v = left[c.index()];
         if v > 0 {
             let h = v as f32 / total as f32 * lh;
             let r = egui::Rect::from_min_size(egui::pos2(lx, ltop[c.index()]), egui::vec2(bar_w, h.max(1.0)));
             p.rect_filled(r, 1.0, class_color(c));
-            p.text(egui::pos2(lx - 4.0, r.center().y), egui::Align2::RIGHT_CENTER, format!("{} {}", c.label(), super::fmt::money(dollars(v))), font.clone(), IVORY);
+            labels.push((r.center().y, lx - 4.0, format!("{} {}", c.label(), super::fmt::money(dollars(v))), true));
         }
         let v = right[c.index()];
         if v > 0 {
             let h = v as f32 / total as f32 * rh;
             let r = egui::Rect::from_min_size(egui::pos2(rx, rtop[c.index()]), egui::vec2(bar_w, h.max(1.0)));
             p.rect_filled(r, 1.0, class_color(c));
-            p.text(egui::pos2(rx + bar_w + 4.0, r.center().y), egui::Align2::LEFT_CENTER, format!("{} {}", c.label(), super::fmt::money(dollars(v))), font.clone(), IVORY);
+            labels.push((r.center().y, rx + bar_w + 4.0, format!("{} {}", c.label(), super::fmt::money(dollars(v))), false));
         }
+    }
+    for side in [true, false] {
+        let mut ys: Vec<f32> = labels.iter().filter(|l| l.3 == side).map(|l| l.0).collect();
+        spread_labels(&mut ys, rect.top() + LABEL_H / 2.0, rect.bottom() - LABEL_H / 2.0, LABEL_H);
+        for ((_, x, text, _), y) in labels.iter().filter(|l| l.3 == side).zip(ys) {
+            let align = if side { egui::Align2::RIGHT_CENTER } else { egui::Align2::LEFT_CENTER };
+            p.text(egui::pos2(*x, y), align, text, font.clone(), IVORY);
+        }
+    }
+}
+
+/// Height of a band label on the money-flow chart, px.
+const LABEL_H: f32 = 13.0;
+
+/// Move label centres `ys` (top to bottom, as the nodes are stacked) apart
+/// to at least `step`, inside `lo..=hi`, each as near its node as it can be.
+fn spread_labels(ys: &mut [f32], lo: f32, hi: f32, step: f32) {
+    let n = ys.len();
+    if n == 0 {
+        return;
+    }
+    // Down from the top, then back up from the bottom.
+    let mut prev = lo - step;
+    for y in ys.iter_mut() {
+        *y = y.max(prev + step).max(lo);
+        prev = *y;
+    }
+    let mut next = hi + step;
+    for y in ys.iter_mut().rev() {
+        *y = y.min(next - step);
+        next = *y;
+    }
+    // A side with more labels than room starts at the top.
+    if ys[0] < lo {
+        for (i, y) in ys.iter_mut().enumerate() {
+            *y = lo + i as f32 * step;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::spread_labels;
+
+    /// [ledger] The money-flow labels at the top and bottom of a side were
+    /// drawn over each other (three thin nodes within a few pixels).
+    #[test]
+    fn band_labels_never_overlap() {
+        let mut ys = vec![100.0, 101.0, 102.0, 160.0, 218.0, 219.0];
+        spread_labels(&mut ys, 100.0, 220.0, 13.0);
+        for w in ys.windows(2) {
+            assert!(w[1] - w[0] >= 13.0 - 1e-3, "{ys:?}");
+        }
+        assert!(ys[0] >= 100.0 && *ys.last().unwrap() <= 220.0, "{ys:?}");
+        assert!((ys[3] - 160.0).abs() < 1e-3, "a label with room stays by its node: {ys:?}");
     }
 }

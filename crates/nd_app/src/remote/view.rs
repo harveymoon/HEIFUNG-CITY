@@ -439,7 +439,31 @@ pub fn building_row(w: &World, id: BuildingId, b: &Building) -> Value {
         "business": b.business.as_ref().map(|z| z.kind.label()), "plant": b.plant.map(plant_name),
         "depot": b.depot, "rail": b.rail.as_ref().map(|r| rail_name(r.kind)), "derelict": b.is_derelict(),
         "service": b.service.map(|s| format!("{}:{}", s.kind.key(), tier_key(s.tier))), "burning": w.services.is_burning(id),
+        // [tenants] units let to other businesses, and the building a tenant rents in
+        "tenants": w.tenants_of(id).len(), "units": b.units.len(), "units_vacant": b.vacant_units(),
+        "tenant_of": b.unit_of.map(key_str),
     })
+}
+
+/// [tenants] A building's units: where, how big, who has each.
+pub fn units_json(w: &World, id: BuildingId, b: &Building) -> Value {
+    b.units
+        .iter()
+        .map(|u| {
+            let (who, name, kind) = match u.occupant {
+                nd_sim::Occupant::Vacant => ("vacant", None, None),
+                nd_sim::Occupant::Main => ("own", Some(b.name.clone()), b.business.as_ref().map(|z| z.kind.label())),
+                nd_sim::Occupant::Tenant(t) => ("tenant", w.buildings.get(t).map(|x| x.name.clone()), w.buildings.get(t).and_then(|x| x.business.as_ref()).map(|z| z.kind.label())),
+            };
+            json!({
+                "place": u.place(), "floors": [u.lo, u.hi], "shopfront": u.shopfront, "area_m2": round(u.area), "jobs": u.jobs,
+                "occupant": who, "business": match u.occupant { nd_sim::Occupant::Tenant(t) => Value::String(key_str(t)), nd_sim::Occupant::Main => Value::String(key_str(id)), _ => Value::Null },
+                "name": name, "kind": kind,
+                "vacant_days": u.vacant().then(|| w.clock.tick.saturating_sub(u.vacant_since) / 1440),
+            })
+        })
+        .collect::<Vec<_>>()
+        .into()
 }
 
 pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> Value {
@@ -471,9 +495,18 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
             "inbound_units": round(w.rail.orders_for(id).1), "aboard_units": round(w.rail.aboard_for(id)), "outbound_units": round(b.rail_outbound),
         })
     });
-    let business = b.business.as_ref().map(|z| {
+    // [tenants] `business` is the building's own business, or with none
+    // its first tenant's (the old field, kept); `tenants` lists them all.
+    let first = w.tenants_of(id).first().copied();
+    let (bz_id, bz_b) = match (&b.business, first.and_then(|t| w.buildings.get(t).map(|x| (t, x)))) {
+        (None, Some((t, x))) => (t, x),
+        _ => (id, b),
+    };
+    let business = bz_b.business.as_ref().map(|z| {
+        let b = bz_b;
         let recipe = z.kind.recipe();
         json!({
+            "id": key_str(bz_id), "name": b.name, "rent_per_day": round(z.rent_day), "area_m2": round(w.business_area(bz_id)),
             "kind": z.kind.label(), "industry": z.kind.industry().map(|k| k.label()), "closed": z.closed, "money": round(z.money), "revenue_today": round(z.revenue_today),
             "books": z.books.iter().map(|d| json!({ "revenue": round(d.revenue), "spend": round(d.spend) })).collect::<Vec<_>>(),
             "spend_today": round(z.spend_today), "deals": z.deals, "staffing": round(b.staffing()), "broke_days": z.broke_days,
@@ -531,6 +564,23 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
     });
     // [free-placement] The building's own use (power, wages, venues); `land_use` is Civic for a city building.
     v["use"] = json!(b.land_use.label());
+    // [tenants] the businesses renting units here, the units, and the building a tenant rents in
+    v["tenants"] = w
+        .tenants_of(id)
+        .iter()
+        .filter_map(|t| w.buildings.get(*t).map(|x| (t, x)))
+        .map(|(t, x)| {
+            json!({
+                "id": key_str(*t), "name": x.name, "kind": x.business.as_ref().map(|z| z.kind.label()), "closed": x.business.as_ref().is_some_and(|z| z.closed),
+                "jobs": x.jobs, "workers": x.workers.len(), "money": round(x.business.as_ref().map_or(0.0, |z| z.money)), "rent_per_day": round(x.business.as_ref().map_or(0.0, |z| z.rent_day)),
+                "area_m2": round(w.business_area(*t)), "hours": format!("{:02}-{:02}", x.opening_hours().open, x.opening_hours().close),
+            })
+        })
+        .collect::<Vec<_>>()
+        .into();
+    v["units"] = units_json(w, id, b);
+    v["units_vacant"] = json!(b.vacant_units());
+    v["tenant_of"] = b.unit_of.map_or(Value::Null, |h| json!({ "id": key_str(h), "name": w.buildings.get(h).map(|x| x.name.clone()) }));
     // [w1] A site: which way it is going and what will stand there.
     v["site"] = w.site_plan(id).map_or(Value::Null, |p| {
         json!({

@@ -34,6 +34,21 @@ fn line(w: &World, label: &str, secs: f64) {
         w.buildings.len(),
         secs
     );
+    // [tenants] Jobs, the jobless, and the units let and to let.
+    let adults = w.citizens.values().filter(|c| c.can_work()).count().max(1);
+    let idle = w.citizens.values().filter(|c| c.can_work() && c.work.is_none()).count();
+    let jobs: u32 = w.buildings.values().filter(|b| b.operating()).map(|b| b.jobs as u32).sum();
+    let filled: usize = w.buildings.values().filter(|b| b.operating()).map(|b| b.workers.len()).sum();
+    let units: usize = w.buildings.values().map(|b| b.units.len()).sum();
+    let vacant: usize = w.buildings.values().map(|b| b.vacant_units()).sum();
+    let tenants = w.buildings.values().filter(|b| b.is_tenant()).count();
+    let shop_rent: f32 = open.iter().map(|z| z.rent_day).sum();
+    println!(
+        "   jobs {jobs} filled {filled} unemployment {:.1}% units {units} vacant {vacant} tenants {tenants} let_total {} grown_total {} shop_rent_day {shop_rent:.0}",
+        idle as f32 / adults as f32 * 100.0,
+        w.economy.market.tenants_let_total,
+        w.economy.market.units_taken_total
+    );
 }
 
 /// [ledger] The books: the balance check, any drift, yesterday's flows.

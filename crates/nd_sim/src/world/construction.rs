@@ -216,6 +216,8 @@ impl World {
         self.events.push(SimEvent::BuildingChanged(bid));
         // [land] The buyer moves in; a mansion starts its NIMBY pull.
         self.estate_finished(bid);
+        // [tenants] Cut into units to let, if it can be.
+        self.plan_units(bid, false);
         // [relocate] A business that moved here takes its old staff back.
         self.rehire_moved_staff(bid);
         self.building_opened(bid);
@@ -513,6 +515,10 @@ impl World {
     /// their home (with `memory`, or a plain note), staff are laid off,
     /// anyone inside steps out.
     pub(super) fn vacate(&mut self, bid: BuildingId, memory: Option<String>, at: Option<Vec2>) {
+        // [tenants] The businesses renting units leave with everyone else.
+        if self.buildings.get(bid).is_some_and(|b| !b.units.is_empty()) {
+            self.evict_tenants(bid, "its building coming down");
+        }
         let tick = self.clock.tick;
         let Some(b) = self.buildings.get_mut(bid) else { return };
         let residents = std::mem::take(&mut b.residents);

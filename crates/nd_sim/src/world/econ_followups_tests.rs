@@ -56,9 +56,19 @@ fn high_street() -> (World, BuildingId) {
 
 // ── 4. a bought-out business moves ──────────────────────────────────────
 
+/// [tenants] No empty units anywhere: the flats' shopfronts taken off the
+/// market, so a business that moves has to build (the case these tests
+/// are about; moving into a unit is tested below).
+fn no_empty_units(w: &mut World) {
+    for b in w.buildings.values_mut() {
+        b.units.retain(|u| !u.vacant());
+    }
+}
+
 #[test]
 fn a_business_bought_out_by_the_city_moves_with_its_owner_and_staff() {
     let (mut w, shop) = high_street();
+    no_empty_units(&mut w);
     let staff = w.buildings[shop].workers.clone();
     assert!(!staff.is_empty(), "the bar hired people");
     let founder = w.citizens.iter().find(|(id, c)| c.can_work() && !staff.contains(id)).map(|(id, _)| id).unwrap();
@@ -91,6 +101,32 @@ fn a_business_bought_out_by_the_city_moves_with_its_owner_and_staff() {
     // It survives a save.
     let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
     assert_eq!(back.buildings[new].business.as_ref().unwrap().moved_from.as_deref(), Some(from.as_str()));
+}
+
+/// [tenants] With an empty shopfront under the flats across the avenue,
+/// a bought-out bakery moves straight into it: no site to wait for, open
+/// at once with its books, its owner and its old staff, as a tenant that
+/// pays the flats' owner rent; the books balance.
+#[test]
+fn a_business_bought_out_moves_into_an_empty_shopfront_nearby() {
+    let (mut w, shop) = high_street();
+    assert!(w.buildings.values().any(|b| b.units.iter().any(|u| u.vacant() && u.shopfront)), "the flats have shops to let");
+    let staff = w.buildings[shop].workers.clone();
+    let (name, lot) = (w.buildings[shop].name.clone(), w.buildings[shop].lot);
+    w.buildings[shop].business.as_mut().unwrap().money = 2_000.0;
+    w.reconcile_ledger();
+    w.build_city_parking(lot, crate::enforcement::LotSize::Small).expect("the city takes the lot");
+    w.relocate_waiting();
+    assert_eq!(w.estate.stats.relocated_total, 1);
+    let (new, b) = w.buildings.iter().find(|(id, b)| *id != shop && b.name == name && b.business.is_some()).expect("it moved");
+    let host = b.unit_of.expect("into a unit, as a tenant");
+    assert!(b.construction.is_none(), "open at once");
+    assert_eq!(b.business.as_ref().unwrap().kind, BusinessKind::Bakery);
+    assert!(w.buildings[host].units.iter().any(|u| u.occupant == crate::buildings::Occupant::Tenant(new)));
+    let back = staff.iter().filter(|c| w.citizens.get(**c).is_some_and(|c| c.work == Some(new))).count();
+    assert!(back > 0, "its staff back at once: {back} of {}", staff.len());
+    assert_eq!(w.reconcile_ledger(), 0);
+    assert_eq!(w.ledger_sum(), 0);
 }
 
 #[test]
@@ -132,10 +168,11 @@ fn a_developer_buyout_moves_the_business_and_the_new_building_opens_another() {
 fn a_move_waits_for_a_lot_then_gives_up() {
     let (mut w, shop) = high_street();
     w.buildings[shop].business.as_mut().unwrap().money = 2_000.0;
-    // No free commercial lot anywhere.
+    // No free commercial lot anywhere (nor an empty unit).
     for lot in lots_of(&w, LandUse::Commercial) {
         built(&mut w, lot);
     }
+    no_empty_units(&mut w);
     let lot = w.buildings[shop].lot;
     w.build_city_parking(lot, crate::enforcement::LotSize::Small).unwrap();
     w.relocate_waiting();

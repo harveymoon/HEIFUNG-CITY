@@ -383,7 +383,11 @@ impl Kind {
     /// The headline group on the money-flow page.
     pub fn group(self) -> &'static str {
         match self {
-            Kind::Rent | Kind::ShopRent | Kind::Upkeep | Kind::Loan | Kind::PropertySale | Kind::Flow(Flow::PropertyTax) => "property",
+            Kind::Rent | Kind::ShopRent | Kind::Upkeep | Kind::Loan | Kind::Flow(Flow::PropertyTax) => "property",
+            // [e2-tenants] Whole buildings changing hands at their value
+            // (a block is worth months of the city's rent): a group of its
+            // own, so a day's one sale does not flatten the rent beside it.
+            Kind::PropertySale => "sales",
             Kind::Wages | Kind::Payroll | Kind::Pocket => "wages",
             Kind::Dividend | Kind::Investment => "profits",
             Kind::Flow(_) => "city",

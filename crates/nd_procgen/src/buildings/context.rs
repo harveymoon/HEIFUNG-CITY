@@ -123,11 +123,14 @@ pub struct Extras<'a> {
     pub pier: Option<&'a nd_sim::attractions::PierDeck>,
     /// [parks] (D5) A park's litter and dealers (`World::parks`).
     pub park_look: Option<super::park::ParkLook>,
+    /// [tenants] The units it is let in (`nd_sim::buildings::Unit`): a sign over each
+    /// shopfront.
+    pub units: &'a [nd_sim::buildings::Unit],
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, brand: None, annex: None, shore: None, pier: None, park_look: None }
+        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[] }
     }
 }
 

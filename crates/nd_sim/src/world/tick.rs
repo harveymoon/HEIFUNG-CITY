@@ -186,6 +186,8 @@ impl World {
         crate::prof!("record_hour", self.record_hour());
         // [toll-inspect] each booth's hour on its chart
         self.hourly_tolls();
+        // [tenants] tenants stand as their buildings do
+        self.sync_tenants();
     }
     // [pt-growth] A sixth of the sites every ten minutes (each its own slot).
     if tick % 10 == 0 {

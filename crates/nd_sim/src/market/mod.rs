@@ -68,6 +68,12 @@ pub struct MarketStats {
     /// Shoppers who found a shop shut or full today.
     #[serde(default)]
     pub turned_away_today: u32,
+    /// [tenants] Empty units let to a new business, ever.
+    #[serde(default)]
+    pub tenants_let_total: u32,
+    /// [tenants] Empty units taken by a business growing next door, ever.
+    #[serde(default)]
+    pub units_taken_total: u32,
 }
 
 #[cfg(test)]

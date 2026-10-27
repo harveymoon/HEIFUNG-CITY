@@ -405,7 +405,9 @@ pub fn businesses(w: &World) -> Vec<BizRow> {
             let district = w.district_of_lot(b.lot).map_or(String::new(), |d| d.name.clone());
             let street = lot.map_or(String::new(), |l| street_of(w, l));
             let rep = w.reputation(id).filter(|r| r.rated > 0);
-            let hay = hay_of(&[&b.name, &kind_label, &owner, owner_kind, &street, &district, state.label()]);
+            // [tenants] A tenant is found by the building it rents in too.
+            let host = b.unit_of.and_then(|h| w.buildings.get(h)).map_or(String::new(), |h| h.name.clone());
+            let hay = hay_of(&[&b.name, &kind_label, &owner, owner_kind, &street, &district, state.label(), &host]);
             BizRow {
                 id,
                 name: b.name.clone(),

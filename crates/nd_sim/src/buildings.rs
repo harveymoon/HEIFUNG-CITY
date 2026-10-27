@@ -511,11 +511,79 @@ pub struct Building {
     /// it (`crate::estate`). Default: one plot, independently owned.
     #[serde(default)]
     pub plot: crate::estate::Plot,
+    /// [tenants] The units it is let in: shopfronts on the ground floor and
+    /// ranges of upper floors, each empty, the building's own business's
+    /// (`business`) or another business's (`World::plan_units`). Empty for
+    /// buildings that are one business or none (houses, sheds, the city's
+    /// structures), and in saves from before tenants (planned on load).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub units: Vec<Unit>,
+    /// [tenants] Set on a tenant: a business renting units in this other
+    /// building. It is a record of its own (its own staff, books, account,
+    /// hours, sign and rent) but no structure: it stands on its host's lot,
+    /// is drawn as part of the host and goes when the host goes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_of: Option<BuildingId>,
+}
+
+/// [tenants] Who has a unit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Occupant {
+    /// To let.
+    Vacant,
+    /// The building's own business (`Building::business`).
+    Main,
+    /// Another business renting it (a record with `unit_of` this building).
+    Tenant(BuildingId),
+}
+
+/// [tenants] A unit of a building that can be let on its own.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Unit {
+    /// Floors it spans, ground floor 0, inclusive.
+    pub lo: u8,
+    pub hi: u8,
+    /// Its share of each floor's footprint, `0..=1`.
+    pub share: f32,
+    /// Floor area, m².
+    pub area: f32,
+    /// A shop on the street, with its own door and sign.
+    pub shopfront: bool,
+    /// Jobs it holds (`Building::recompute_capacity`).
+    pub jobs: u16,
+    pub occupant: Occupant,
+    /// Tick it last fell empty (or was planned empty).
+    #[serde(default)]
+    pub vacant_since: u64,
+}
+
+impl Unit {
+    pub fn floors(&self) -> u8 {
+        self.hi.saturating_sub(self.lo) + 1
+    }
+
+    pub fn vacant(&self) -> bool {
+        self.occupant == Occupant::Vacant
+    }
+
+    /// "ground floor", "floor 3", "floors 4–9".
+    pub fn place(&self) -> String {
+        match (self.lo, self.hi) {
+            (0, 0) => "ground floor".into(),
+            (0, h) => format!("ground floor–{h}"),
+            (l, h) if l == h => format!("floor {l}"),
+            (l, h) => format!("floors {l}–{h}"),
+        }
+    }
 }
 
 fn one() -> f32 {
     1.0
 }
+
+/// [tenants] A shopfront's staff against an office floor of the same area:
+/// a shop floor is busier (tills, stockroom, the door).
+pub const SHOPFRONT_STAFFING: f32 = 1.5;
 
 impl Building {
     /// Daily pay for a labourer on a building site.
@@ -564,6 +632,8 @@ impl Building {
             metro: false,
             annex: None,
             plot: Default::default(),
+            units: Vec::new(),
+            unit_of: None,
         };
         b.recompute_capacity();
         b.update_rent(land_value);
@@ -599,7 +669,19 @@ impl Building {
     /// and recomputed their jobs as an ordinary industrial building; city
     /// car parks and cargo hubs were, until the review.)
     pub fn is_special(&self) -> bool {
-        self.is_city_structure() || self.annex.is_some_and(|a| a.special())
+        self.is_city_structure() || self.annex.is_some_and(|a| a.special()) || self.is_tenant()
+    }
+
+    /// [tenants] A business renting units in another building
+    /// (`unit_of`), not a structure of its own: special (never upgraded,
+    /// redeveloped, bought or counted as a building), drawn as its host.
+    pub fn is_tenant(&self) -> bool {
+        self.unit_of.is_some()
+    }
+
+    /// [tenants] Units to let.
+    pub fn vacant_units(&self) -> usize {
+        self.units.iter().filter(|u| u.vacant()).count()
     }
 
     pub fn parking_free(&self) -> u16 {
@@ -710,12 +792,43 @@ impl Building {
         };
         self.homes = homes;
         self.jobs = jobs;
+        // [tenants] Jobs split over the units by floor area; the building's
+        // own business has those of its own units only.
+        if !self.units.is_empty() {
+            self.jobs = self.split_unit_jobs(jobs);
+        }
         // Towers bring their own parking; middle blocks squeeze in a few spaces.
         self.parking_capacity = match self.tier {
             Tier::High => (homes + jobs) / 2 + 2,
             Tier::Mid => (homes + jobs) / 4,
             Tier::Low => 0,
         };
+    }
+
+    /// [tenants] Each unit's jobs from the building's (`jobs`, all floors):
+    /// an office or shop building's spread by floor area (its jobs as
+    /// before, however it is let), a shopfront under homes at a shop's
+    /// staffing for its share of the ground floor
+    /// ([`SHOPFRONT_STAFFING`] times a shop floor). Returns the jobs of the
+    /// units the building's own business has.
+    fn split_unit_jobs(&mut self, jobs: u16) -> u16 {
+        let floors = self.floors.max(1) as f32;
+        let k = 1 + self.plot.extra_lots.len() as u16;
+        let shop_floor = (if self.tier == Tier::High { 4 } else { 3 }) * k;
+        let homes_above = self.land_use == LandUse::Residential;
+        let mut own = 0u16;
+        for u in self.units.iter_mut() {
+            let n = if homes_above {
+                shop_floor as f32 * SHOPFRONT_STAFFING * u.share * u.floors() as f32
+            } else {
+                jobs as f32 / floors * u.share * u.floors() as f32
+            };
+            u.jobs = (n.round() as u16).max(if u.shopfront { 2 } else { 1 });
+            if u.occupant == Occupant::Main {
+                own += u.jobs;
+            }
+        }
+        own
     }
 
     /// Homes and jobs the building will have once construction is over.

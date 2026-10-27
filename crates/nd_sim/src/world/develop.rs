@@ -12,7 +12,7 @@ const SETTING_LOW: f32 = 0.03;
 
 /// Takings over costs a kind of business must have shown before more of
 /// it are built (1 is break-even).
-const COVER_TO_EXPAND: f32 = 1.05;
+pub(super) const COVER_TO_EXPAND: f32 = 1.05;
 /// A kind of business whose shelves hold more than this many days of what
 /// it makes is not selling it all: no more of it are built.
 const MARKET_FULL_DAYS: f32 = 0.75;
@@ -393,6 +393,10 @@ impl World {
 
     /// One building's pull on the land around it.
     pub(super) fn splat_building(b: &mut LandValueBuilder, bld: &Building, lots: &SlotMap<LotId, Lot>) {
+        // [tenants] A tenant is part of its building's pull, not another.
+        if bld.is_tenant() {
+            return;
+        }
         // [under-construction] A site lifts (or sours) nothing yet: the
         // park, the tower, the station, the smokestack count once open.
         if !bld.operating() {
@@ -713,6 +717,9 @@ impl World {
         }
         self.economy.roll_population(self.citizens.len() as u32);
         self.daily_businesses();
+        // [tenants] Shut tenants out, empty units let, growing businesses
+        // into the unit next door.
+        self.daily_tenants();
         // Conditions moved: a station or yard may have gone derelict.
         self.refresh_facility_cache();
     }
@@ -805,6 +812,12 @@ impl World {
         if candidates.is_empty() {
             return None;
         }
+        Some(self.kinds_viable(candidates, jobs_here))
+    }
+
+    /// [tenants] [`World::business_kinds_viable`] over a menu of kinds of
+    /// one's own (a shopfront's).
+    pub(super) fn kinds_viable(&self, candidates: &[BusinessKind], jobs_here: Option<u16>) -> Vec<BusinessKind> {
         let (mut open, mut sites, mut jobs) = ([0u32; BusinessKind::COUNT], [0u32; BusinessKind::COUNT], [0u32; BusinessKind::COUNT]);
         // Output on the shelves of each kind, against a day of what they
         // make at full staff: over most of a day and the market is full.
@@ -847,7 +860,7 @@ impl World {
                 out.push(kind);
             }
         }
-        Some(out)
+        out
     }
 
     /// Grocers' jobs the town needs for the people it has and most of those

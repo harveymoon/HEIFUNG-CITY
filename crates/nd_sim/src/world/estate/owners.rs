@@ -146,11 +146,24 @@ impl World {
     /// after `pack_business` (a business that moves takes its owner and
     /// goodwill along) and before the building is pulled down or rebuilt.
     pub(in crate::world) fn settle_sale(&mut self, bid: BuildingId) {
+        self.settle_sale_to(bid, None);
+    }
+
+    /// [`World::settle_sale`] to `buyer`, when known. [ledger] An owner
+    /// "selling" to itself (a developer rebuilding its own block taller, a
+    /// firm taking its own plot next door) is paid nothing: every such
+    /// rebuild booked the building's full price from out of town into the
+    /// developer, which sent it straight back out as profit (millions a
+    /// day on a big city's money-flow page, `e2-tenants`).
+    pub(in crate::world) fn settle_sale_to(&mut self, bid: BuildingId, buyer: Option<OwnerId>) {
         let Some(oid) = self.buildings.get(bid).and_then(|b| b.plot.owner) else { return };
-        let price = self.sale_price(bid);
+        let price = if buyer == Some(oid) { 0.0 } else { self.sale_price(bid) };
         self.buildings[bid].plot.owner = None;
         let Some(o) = self.estate.owners.get_mut(oid) else { return };
         o.properties.retain(|p| *p != bid);
+        if price <= 0.0 {
+            return;
+        }
         o.earned += price;
         // [ledger] Paid by the buyer, from out of town, into the seller's
         // account: a resident's purse, a corp's cash, a firm's, developer's
@@ -345,7 +358,8 @@ impl World {
                     // [relocate] A business next door looks for a new place.
                     let why = format!("{}'s expansion", self.buildings.get(bid).map_or(String::new(), |b| b.name.clone()));
                     self.pack_business(other, &why);
-                    self.settle_sale(other);
+                    let buyer = self.buildings.get(bid).and_then(|b| b.plot.owner);
+                    self.settle_sale_to(other, buyer);
                     // A park standing on rezoned ground just goes.
                     self.estate.reserved.insert(l, bid);
                     if let Some(b) = self.buildings.get_mut(bid) {

@@ -20,6 +20,9 @@ impl World {
         let mut demolish = Vec::new();
         let mut cover = [(0.0f32, 0.0f32); BusinessKind::COUNT];
         let mut reoffice: Vec<(BuildingId, u16)> = Vec::new();
+        // [tenants] Shut for good with other businesses still renting units
+        // here: the building stands, its own units to let.
+        let mut let_go: Vec<BuildingId> = Vec::new();
         for bid in ids {
             if !self.buildings[bid].operating() {
                 continue;
@@ -46,7 +49,12 @@ impl World {
                 bz.spend_today = 0.0;
                 bz.broke_days = bz.broke_days.saturating_add(1);
                 if bz.broke_days > 7 {
-                    if b.plot.tower.is_some() {
+                    let tenanted = b.units.iter().any(|u| matches!(u.occupant, crate::buildings::Occupant::Tenant(_)));
+                    if b.is_tenant() {
+                        // [tenants] Its unit is let again (`daily_tenants`).
+                    } else if tenanted {
+                        let_go.push(bid);
+                    } else if b.plot.tower.is_some() {
                         // [supertall] Nobody pulls down a landmark tower
                         // for a failed tenant: offices take the floors.
                         let jobs = b.jobs;
@@ -87,7 +95,9 @@ impl World {
                 let spent = self.buildings[bid].business.as_ref().map_or(0.0, |z| z.spend_today) + wage_bill + extra;
                 let shop_rent = self.shop_rent(bid).min((revenue - spent).max(0.0) * SHOP_RENT_PROFIT_CAP);
                 if shop_rent > 0.0 {
-                    self.collect_rent(Account::Business(bid), bid, shop_rent, Kind::ShopRent);
+                    // [tenants] To the owner of the building it stands in.
+                    let host = self.host_of(bid);
+                    self.collect_rent(Account::Business(bid), host, shop_rent, Kind::ShopRent);
                 }
                 let b = &mut self.buildings[bid];
                 let bz = b.business.as_mut().unwrap();
@@ -117,7 +127,11 @@ impl World {
             if bz.broke_days >= 5 {
                 bz.closed = true;
                 bz.broke_days = 0;
-                b.condition = b.condition.min(0.25);
+                // [tenants] A shut shop does not run down a building others
+                // still trade in (nor a tenant its host).
+                if !b.is_tenant() && !b.units.iter().any(|u| matches!(u.occupant, crate::buildings::Occupant::Tenant(_))) {
+                    b.condition = b.condition.min(0.25);
+                }
                 b.workers.clear();
                 let name = b.name.clone();
                 for w in workers {
@@ -134,6 +148,9 @@ impl World {
         // [ledger] Offices into the failed tenant's tower floors.
         for (bid, jobs) in reoffice {
             self.set_business(bid, Some(Business::new(BusinessKind::Office, jobs)));
+        }
+        for bid in let_go {
+            self.vacate_main(bid);
         }
         for (i, (takings, costs)) in cover.into_iter().enumerate() {
             if let Some(kind) = BusinessKind::ALL.get(i) {
