@@ -32,6 +32,8 @@ fn report(w: &World) {
         w.economy.ledger.yesterday_of(nd_sim::economy::Flow::DistrictLevies),
         w.economy.ledger.yesterday_of(nd_sim::economy::Flow::DistrictSpending),
     );
+    let flows: Vec<String> = nd_sim::economy::Flow::ALL.iter().filter(|f| w.economy.ledger.yesterday[f.index()] != 0.0).map(|f| format!("{} {:.0}", f.label(), w.economy.ledger.yesterday[f.index()])).collect();
+    println!("   treasury yday: {}", flows.join(", "));
     for d in &w.districts.list {
         let Some(s) = stats.iter().find(|s| s.id == d.id) else { continue };
         let by: Vec<String> = Policy::ALL.iter().filter(|p| d.books.yesterday[p.index()] != 0.0).map(|p| format!("{} {:+.0}", p.key(), d.books.yesterday[p.index()])).collect();
