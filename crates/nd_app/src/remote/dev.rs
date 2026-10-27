@@ -9,7 +9,8 @@ use super::view::*;
 /// Dev: money for trying things out.
 pub(super) fn grant(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let amount = opt_f32(cmd, "amount")?.unwrap_or(100_000.0);
-    ctx.sim.world.economy.treasury += amount;
+    // [ledger] From outside, booked as a grant.
+    ctx.sim.world.grant_treasury(amount);
     Ok(json!({ "treasury": round(ctx.sim.world.economy.treasury) }))
 }
 

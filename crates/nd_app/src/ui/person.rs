@@ -215,6 +215,11 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
             }
             citizen_summary(ui, w, &w.citizens[id]);
             super::estate::citizen_line(ui, w, id);
+            // [ledger] The household's purse and their own pocket.
+            if let Some(h) = w.citizens[id].household.filter(|h| w.households.contains_key(*h)) {
+                super::ledger::account_section(ui, w, nd_sim::bank::Account::Household(h), "household purse");
+            }
+            super::ledger::account_section(ui, w, nd_sim::bank::Account::Person(id), "pocket");
             spotlight_toggle(ui, &mut sim.world, id, "Spotlight: route through the LLM mind");
             ui.separator();
             super::places::citizen_places(ui, &sim.world, id);

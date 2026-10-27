@@ -25,6 +25,7 @@ pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildi
         Some((name, OwnerKind::Person { .. })) => format!("{name}, who founded it"),
         Some((name, OwnerKind::MegaCorp { .. })) => format!("{name} (mega-corp)"),
         Some((name, OwnerKind::University { .. })) => format!("{name} (university)"),
+        Some((name, OwnerKind::Company { .. })) => format!("{name} (a resident's property company)"),
         Some((name, OwnerKind::Firm { kind })) => {
             let n = owner.map_or(0, |(_, o)| o.properties.len());
             if n > 1 { format!("{name} ({} chain of {n})", kind.label()) } else { format!("{name} (the {} firm)", kind.label()) }
@@ -32,6 +33,13 @@ pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildi
         None => if b.homes > 0 { "an independent landlord".to_string() } else { "independently owned".to_string() },
     };
     ui.label(egui::RichText::new(format!("owned by {who}  ·  for sale at {}", money(w.sale_price(id)))).color(IVORY));
+    // [ledger] Where the rent goes: the owner's account (a resident's
+    // purse, a company's, a corp's cash) or the landlords' pool.
+    let landlord = w.landlord_of(id);
+    if let Some((_, o)) = owner {
+        hint(ui, &format!("rent collected today {}  ·  yesterday {}", money(o.rent_today as f64), money(o.rent_yesterday as f64)));
+    }
+    super::ledger::account_section(ui, w, landlord, if owner.is_some() { "owner's account" } else { "the independent landlords' pool" });
     let mut bits: Vec<String> = Vec::new();
     if let Some(f) = b.plot.form {
         bits.push(f.label().to_string());

@@ -158,9 +158,12 @@ impl World {
             if got > 0.0 {
                 let cost = got * price;
                 let sb = self.buildings[seller_id].business.as_mut().unwrap();
-                sb.money += cost;
                 sb.revenue_today += cost;
                 sb.deals += 1;
+                // [ledger] Paid by whoever is building: an owner with its
+                // own money, else a developer from out of town.
+                let payer = self.site_payer(bid);
+                self.transfer(payer, Account::Business(seller_id), cost, Kind::Building);
                 self.economy.market.deals_today += 1;
                 self.ship(seller_id, bid, resource, got, cost);
                 return;
@@ -168,6 +171,8 @@ impl World {
         }
         let cost = amount * resource.base_price() * IMPORT_MARKUP;
         self.economy.materials_today += cost;
+        let payer = self.site_payer(bid);
+        self.transfer(payer, Account::Outside, cost, Kind::Building);
         self.import(bid, resource, amount, 0.0);
     }
 

@@ -235,9 +235,10 @@ impl World {
             self.queue_truck(TruckOrigin::Building(h), Cargo { from: h, to: l.buyer, resource: l.resource, amount: l.amount, price: l.price }, 6);
             let fee = l.price * hub::HANDLING_FEE;
             if let Some(z) = self.buildings.get_mut(h).and_then(|b| b.business.as_mut()) {
-                z.money += fee;
                 z.revenue_today += fee;
                 z.deals += 1;
+                // [ledger] Handling, paid by the shipper out of town.
+                self.transfer(Account::Outside, Account::Business(h), fee, Kind::Fees);
             }
             let s = &mut self.cargo_hubs.stats;
             s.forwarded_today += 1;

@@ -357,7 +357,8 @@ impl World {
         a.stats.grumbles_today = 0;
         let taxis = a.drones.values().filter(|d| d.craft == Craft::Taxi).count() as f32;
         let costs = taxis * air::DRONE_COST_PER_DAY;
-        a.company.money += a.company.revenue_today - costs;
+        // [ledger] Fares came in as they were paid; the drones' running
+        // costs go out (below).
         a.company.revenue_yesterday = std::mem::take(&mut a.company.revenue_today);
         a.company.costs_today = costs;
         for d in a.drones.values_mut() {
@@ -369,6 +370,7 @@ impl World {
         }
         a.noise.retain(|_, n| *n > 0.5);
         a.grumbled.clear();
+        self.transfer(Account::Airline, Account::Outside, costs, Kind::Upkeep);
     }
 
     // ── dispatch ───────────────────────────────────────────────────────────
@@ -967,20 +969,19 @@ impl World {
         let fare = air::fare(metres);
         let to_name = self.buildings.get(to).map_or(String::new(), |b| b.name.clone());
         {
-            let c = &mut self.citizens[rider];
-            let from_savings = fare.min(c.savings.max(0.0));
-            c.savings -= from_savings;
-            let rest = fare - from_savings;
-            if let Some(h) = c.household.and_then(|h| self.households.get_mut(h)) {
-                h.money -= rest;
-            } else {
-                c.savings -= rest;
+            // [ledger] The fare to the air taxi company (less the city's
+            // levy): from the pocket, the rest from the household's purse.
+            let from_savings = fare.min(self.citizens[rider].savings.max(0.0));
+            let purse = self.purse_of(rider);
+            for (from, part) in [(Account::Person(rider), from_savings), (purse, fare - from_savings)] {
+                self.transfer(from, Account::Airline, part * (1.0 - air::LEVY), Kind::Fares);
+                self.pay_city(from, Flow::BusinessTax, part * air::LEVY, Some(Item::Named("air taxi levy".into())));
             }
+            let c = &mut self.citizens[rider];
             c.activity = Activity::Flying { drone: id };
             c.inside = None;
             c.remember(tick, format!("Took a drone taxi to {to_name}. {fare:.0} well spent."));
         }
-        self.economy.credit_item(Flow::BusinessTax, fare * air::LEVY, Item::Named("air taxi levy".into()));
         let a = &mut self.air;
         a.company.revenue_today += fare * (1.0 - air::LEVY);
         a.stats.riders_today += 1;

@@ -56,6 +56,12 @@ pub struct Business {
     /// [relocate] Its old staff, hired back when the new building opens.
     #[serde(default)]
     pub rehire: Vec<crate::citizens::CitizenId>,
+    /// [ledger] The rent it paid for its unit at the last midnight, to the
+    /// building's owner (`World::shop_rent`); 0 when it owns or the city
+    /// runs the building. Per business, so a building of several tenants
+    /// sums its tenants'.
+    #[serde(default)]
+    pub rent_day: f32,
 }
 
 /// One closed day of a business's books.
@@ -102,6 +108,7 @@ impl Business {
             owner: None,
             moved_from: None,
             rehire: Vec::new(),
+            rent_day: 0.0,
         }
     }
 

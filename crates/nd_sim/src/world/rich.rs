@@ -13,11 +13,17 @@
 //! super-elite already buy their extra homes and firms when they arrive
 //! (`spawn_elite`).
 //!
-//! *Returns* (`pay_investors`, daily): a second home pays its owner the
-//! rent its tenants paid less upkeep and the bank ([`INVEST_RENT_NET`]); a
-//! business bought into pays [`INVEST_PROFIT_SHARE`] of yesterday's profit
-//! out of its till. Founders who run their own firm (a taxi company, a car
-//! park) keep the money in the business.
+//! *Returns*: [ledger] a second home is bought by the household's property
+//! company (`OwnerKind::Company`, made on the first purchase): the deposit
+//! goes in from the household and out to the seller, the bank lends the
+//! rest. Its tenants pay their rent to the company as they pay it
+//! (`World::collect_rent`); the company pays upkeep, property tax and the
+//! mortgage out of it, keeps half the rest and pays the founder's household
+//! the other half (`World::settle_owners`), so a company that does well can
+//! put its own money into the next deposit. A business bought into pays
+//! [`INVEST_PROFIT_SHARE`] of yesterday's profit out of its till
+//! (`pay_investors`). Founders who run their own firm (a taxi company, a
+//! car park) keep the money in the business.
 //!
 //! *Garages*: a billionaire's mansion, once built, takes the supercars
 //! beyond the one they drive (`Elite::cars`), and a family's McMansion a
@@ -40,8 +46,9 @@ pub const INVEST_CASH: f32 = 1_000.0;
 /// Share of its cash a household puts down on a purchase.
 pub const INVEST_DEPOSIT: f32 = 0.3;
 /// [sweep-sim] Share of a let home's rent its investor keeps (the rest is
-/// upkeep and the bank's).
-pub const INVEST_RENT_NET: f32 = 0.45;
+/// upkeep and the bank's). [ledger] Now the sum of the real flows: rent in,
+/// `ledger::RENT_UPKEEP`, `PROPERTY_TAX` and `RENT_LOAN` out.
+pub const INVEST_RENT_NET: f32 = 1.0 - super::ledger::RENT_UPKEEP - super::ledger::PROPERTY_TAX - super::ledger::RENT_LOAN;
 /// [sweep-sim] Share of a business's day's profit paid to an investor.
 pub const INVEST_PROFIT_SHARE: f32 = 0.3;
 /// [sweep-sim] Chance (hash roll) an owner takes the dearest car out on a
@@ -70,7 +77,7 @@ impl World {
         let mut rich: Vec<(f32, HouseholdId)> = self
             .households
             .iter()
-            .filter(|(_, h)| h.money >= INVEST_CASH && h.members.iter().all(|m| !self.estate.is_elite(*m)))
+            .filter(|(id, h)| h.money + self.company_cash(*id) as f32 >= INVEST_CASH && h.members.iter().all(|m| !self.estate.is_elite(*m)))
             .map(|(id, _)| (self.household_income(id), id))
             .filter(|(i, _)| *i >= RICH_INCOME)
             .collect();
@@ -85,10 +92,23 @@ impl World {
             let owns_business = held.iter().any(|b| self.buildings.get(*b).is_some_and(|x| x.business.is_some()));
             let pick = if owns_business { self.second_home_for(hid) } else { self.investment_business().or_else(|| self.second_home_for(hid)) };
             let Some(bid) = pick else { continue };
-            let Some(owner) = self.owner_for_citizen(cid) else { continue };
+            let is_home = self.buildings[bid].business.is_none();
+            // [ledger] Homes to let are the household's company's; a
+            // business bought into is the earner's own.
+            let owner = if is_home { self.company_of(cid) } else { self.owner_for_citizen(cid) };
+            let Some(owner) = owner else { continue };
             let price = self.sale_price(bid);
-            let deposit = self.households[hid].money * INVEST_DEPOSIT;
-            self.households[hid].money -= deposit;
+            let cash = if is_home { self.company_cash(hid) } else { 0.0 };
+            let deposit = (self.households[hid].money + cash as f32) * INVEST_DEPOSIT;
+            // [ledger] The deposit to the seller (the company's own money
+            // first, the household's for the rest), the bank's loan for
+            // the balance.
+            let seller = self.landlord_of(bid);
+            let buyer = self.owner_account(owner);
+            let from_company = (cash as f32).clamp(0.0, deposit);
+            self.transfer(Account::Household(hid), buyer, deposit - from_company, Kind::Investment);
+            self.transfer(buyer, seller, deposit, Kind::PropertySale);
+            self.transfer64(Account::Outside, seller, (price - deposit as f64).max(0.0), Kind::PropertySale);
             self.give_to(bid, owner, price);
             let tick = self.clock.tick;
             let (name, is_business, pos) = {
@@ -136,18 +156,14 @@ impl World {
             .map(|(id, _)| id)
     }
 
-    /// [sweep-sim] Once a day: every household or person holding a home
-    /// they do not live in, or a business they bought into, is paid by it.
+    /// [sweep-sim] Once a day: every household or person holding a
+    /// business they bought into is paid its share of the profit. [ledger]
+    /// Rent from a home they let came in as the tenants paid it
+    /// (`collect_rent`); what it left after upkeep, tax and the bank counts
+    /// in the day's income.
     pub(super) fn pay_investors(&mut self) {
         use crate::estate::OwnerKind;
-        // What each home's households paid in rent today.
-        let mut rent: std::collections::HashMap<BuildingId, f32> = std::collections::HashMap::new();
-        for (hid, h) in self.households.iter() {
-            if let Some(home) = h.home.filter(|b| self.buildings.contains_key(*b)) {
-                *rent.entry(home).or_default() += self.rent_due(hid, home);
-            }
-        }
-        let owners: Vec<(crate::estate::OwnerId, HouseholdId, Vec<BuildingId>)> = self
+        let owners: Vec<(crate::estate::OwnerId, HouseholdId, Vec<BuildingId>, f32)> = self
             .estate
             .owners
             .iter()
@@ -157,31 +173,25 @@ impl World {
                     OwnerKind::Person { citizen } => self.citizens.get(citizen)?.household?,
                     _ => return None,
                 };
-                self.households.contains_key(hid).then(|| (oid, hid, o.properties.clone()))
+                self.households.contains_key(hid).then(|| (oid, hid, o.properties.clone(), o.rent_today))
             })
             .collect();
-        for (oid, hid, props) in owners {
+        for (oid, hid, props, rent) in owners {
             let home = self.households[hid].home;
-            let mut paid = 0.0f32;
+            let mut paid = rent * INVEST_RENT_NET;
             for b in props {
                 if Some(b) == home {
                     continue;
                 }
-                let Some(bld) = self.buildings.get_mut(b) else { continue };
-                if let Some(z) = bld.business.as_mut() {
-                    // A founder runs their own firm: the money stays in it.
-                    if z.owner.is_some() || z.closed {
-                        continue;
-                    }
-                    let profit = z.books.last().map_or(0.0, |d| d.revenue - d.spend);
-                    let share = (profit * INVEST_PROFIT_SHARE).min(z.money).max(0.0);
-                    z.money -= share;
-                    paid += share;
-                } else if bld.homes > 0 {
-                    paid += rent.get(&b).copied().unwrap_or(0.0) * INVEST_RENT_NET;
+                let Some(z) = self.buildings.get(b).and_then(|x| x.business.as_ref()) else { continue };
+                // A founder runs their own firm: the money stays in it.
+                if z.owner.is_some() || z.closed {
+                    continue;
                 }
+                let profit = z.books.last().map_or(0.0, |d| d.revenue - d.spend);
+                let share = (profit * INVEST_PROFIT_SHARE).min(z.money).max(0.0);
+                paid += self.transfer(Account::Business(b), Account::Household(hid), share, Kind::Dividend);
             }
-            self.households[hid].money += paid;
             if let Some(o) = self.estate.owners.get_mut(oid) {
                 o.income_day = paid;
                 o.earned += paid as f64;
@@ -189,10 +199,28 @@ impl World {
         }
     }
 
+    /// [ledger] The property company `cid`'s household lets its homes
+    /// through, made on its first purchase ("Okafor Properties").
+    pub(in crate::world) fn company_of(&mut self, cid: CitizenId) -> Option<crate::estate::OwnerId> {
+        use crate::estate::OwnerKind;
+        let c = self.citizens.get(cid)?;
+        if let Some(o) = self.estate.owners.iter().find(|(_, o)| o.kind == OwnerKind::Company { founder: cid }).map(|(id, _)| id) {
+            return Some(o);
+        }
+        let surname = c.name.rsplit(' ').next().unwrap_or(&c.name).to_string();
+        Some(self.new_owner(format!("{surname} Properties"), OwnerKind::Company { founder: cid }))
+    }
+
+    /// [ledger] The cash in the property companies of `hid`'s members.
+    pub fn company_cash(&self, hid: HouseholdId) -> f64 {
+        let Some(h) = self.households.get(hid) else { return 0.0 };
+        self.estate.owners.values().filter(|o| matches!(o.kind, crate::estate::OwnerKind::Company { founder } if h.members.contains(&founder))).map(|o| o.money).sum()
+    }
+
     /// [sweep-sim] What `cid`'s holdings paid yesterday (0 for none).
     pub fn investment_income(&self, cid: CitizenId) -> f32 {
         let hh = self.citizens.get(cid).and_then(|c| c.household);
-        self.estate.owners.values().filter(|o| o.kind.citizen() == Some(cid) || hh.is_some_and(|h| o.kind == crate::estate::OwnerKind::Household { household: h })).map(|o| o.income_day).sum()
+        self.estate.owners.values().filter(|o| o.kind.citizen() == Some(cid) || o.kind == crate::estate::OwnerKind::Company { founder: cid } || hh.is_some_and(|h| o.kind == crate::estate::OwnerKind::Household { household: h })).map(|o| o.income_day).sum()
     }
 
     /// [sweep-sim] Weekend drives: on a Saturday or Sunday an owner with a

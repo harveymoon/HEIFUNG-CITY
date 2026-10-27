@@ -191,6 +191,11 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
             figure(ui, "staff", format!("{}/{}", b.workers.len(), b.jobs), IVORY);
         });
         cashflow(ui, &bz.books, (bz.revenue_today, bz.spend_today));
+        // [ledger] Its rent and its account.
+        if bz.rent_day > 0.0 {
+            hint(ui, &format!("rent {:.0}/day to {}", bz.rent_day, crate::remote::ledger::account_name(w, w.landlord_of(id))));
+        }
+        crate::ui::ledger::account_section(ui, w, nd_sim::bank::Account::Business(id), "account");
         // [relocate] A business that lost its old building to a buyout.
         if let Some(from) = &bz.moved_from {
             ui.label(egui::RichText::new(format!("moved from {from}")).small().color(GOLD));

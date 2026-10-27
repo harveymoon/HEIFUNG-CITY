@@ -394,6 +394,15 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("reset", "bool: back to the standard rates"),
         ("returns", "every line: rate, default, pull, buildings, homes/jobs, today, yesterday, recent_per_day; by_land_use; duty"),
     ] },
+    Cmd { name: "ledger", aliases: &["money", "books"], effect: Game, run: |cmd, ctx| ledger::command(cmd, &mut ctx.sim.world), help: &[
+        ("account", "one account: \"treasury\" | \"outside\" | \"landlords\" | \"airline\" | \"household ID\" | \"person ID\" | \"business ID\" | \"owner ID\" | \"tourist ID\" | \"tower N\" (IDs as idx:version): balance and its last moves (and the full trace when it is traced)"),
+        ("kind", "one kind of flow (rent, shop_rent, wages_and_pensions, payroll, income_tax, property_tax, ...): today and each kept day, by payer and payee class"),
+        ("day", "one closed day (game day, from 1): totals by kind and every flow"),
+        ("flows", "true: where rent, wages, profits, taxes and trade went today and yesterday (the money-flow page)"),
+        ("trace", "an account to trace in full, or null to stop (dev)"),
+        ("check", "bool: reconcile every account after every tick and report drifts (dev; slow in a big city)"),
+        ("returns", "no field: balanced (the sum of every balance and the outside world is zero), accounts, untracked money and drifts, today's and yesterday's totals by kind (total, from_outside, to_outside)"),
+    ] },
     Cmd { name: "tolls", aliases: &["toll"], effect: Game, run: |cmd, ctx| taxes::tolls(cmd, &mut ctx.sim.world), help: &[
         ("action", "list (default) | price | remove | inspect"),
         ("id", "booth id (or at: [x,y])"),

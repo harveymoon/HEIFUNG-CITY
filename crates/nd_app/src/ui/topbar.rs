@@ -422,7 +422,7 @@ fn dev_grant(ui: &mut egui::Ui, resp: &egui::Response, p: &mut UiCtx) {
     let since = ui.data_mut(|d| *d.get_temp_mut_or_insert_with(id, || now));
     let held = now - since;
     if held >= GRANT_HOLD_SECS {
-        p.sim.world.economy.treasury += GRANT_AMOUNT;
+        p.sim.world.grant_treasury(GRANT_AMOUNT);
         p.tools.status = format!("Dev: +$ {GRANT_AMOUNT:.0} to the treasury");
         ui.data_mut(|d| d.insert_temp(id, now));
     } else if held > 0.5 {

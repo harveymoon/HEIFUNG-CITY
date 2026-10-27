@@ -552,12 +552,14 @@ impl World {
         let regulars: Vec<CitizenId> = self.buildings[target].residents.iter().chain(self.buildings[target].workers.iter()).copied().filter(|c| *c != cid).collect();
         let mut victim: Option<CitizenId> = None;
         let mut stolen = 0.0;
+        // [ledger] Cash taken, by whom it was taken from.
+        let mut taken: Vec<(crate::bank::Account, f32)> = Vec::new();
         match offence {
             Offence::Theft => {
                 victim = present.choose(self.society_rng()).copied();
                 if let Some(z) = self.buildings[target].business.as_mut() {
                     let cash = (z.money.max(0.0) * THEFT_SHARE).min(THEFT_MAX);
-                    z.money -= cash;
+                    taken.push((crate::bank::Account::Business(target), cash));
                     stolen += cash;
                     let sells: Vec<crate::market::Resource> = z.kind.recipe().outputs.iter().map(|(r, _)| *r).filter(|r| z.stock_of(*r) > 0.0).collect();
                     if let Some(&r) = sells.first() {
@@ -582,7 +584,7 @@ impl World {
                     let members = self.households.get(hid).map(|h| h.members.clone()).unwrap_or_default();
                     if let Some(h) = self.households.get_mut(hid) {
                         let take = (h.money.max(0.0) * BURGLARY_SHARE).min(BURGLARY_MAX);
-                        h.money -= take;
+                        taken.push((crate::bank::Account::Household(hid), take));
                         stolen += take;
                     }
                     victim = members.first().copied();
@@ -653,10 +655,15 @@ impl World {
         if offence != Offence::Murder {
             s.add_heat(at, 1.0);
         }
+        // [ledger] The cash goes to the fence out of town; the thief's cut
+        // of it and the stock comes back in.
+        for (from, cash) in taken {
+            self.transfer(from, crate::bank::Account::Outside, cash, crate::bank::Kind::Theft);
+        }
+        if stolen > 0.0 && self.citizens.contains_key(cid) {
+            self.transfer(crate::bank::Account::Outside, crate::bank::Account::Person(cid), stolen * 0.5, crate::bank::Kind::Theft);
+        }
         if let Some(c) = self.citizens.get_mut(cid) {
-            if stolen > 0.0 {
-                c.savings += stolen * 0.5;
-            }
             c.thought = if first_since { "First job done. My hands are still shaking.".to_string() } else { "Nobody saw a thing.".to_string() };
             c.remember(tick, format!("Did {} at {bname}.", crate::names::a(offence.key())));
         }

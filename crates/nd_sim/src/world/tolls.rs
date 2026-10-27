@@ -126,11 +126,17 @@ impl World {
                 self.tolls.trucks_today += 1;
             }
             let (driver, cargo) = (car.citizen, car.cargo);
+            // [ledger] Paid by the driver, a lorry's shipper or buyer, or a
+            // car from out of town.
+            let payer = if self.citizens.contains_key(driver) {
+                Account::Person(driver)
+            } else {
+                cargo.and_then(|cargo| [cargo.from, cargo.to].into_iter().find_map(|b| self.business_account(b))).unwrap_or(Account::Outside)
+            };
             if price > 0.0 {
-                self.economy.credit(Flow::Tolls, price);
+                self.pay_city(payer, Flow::Tolls, price, None);
             }
             if let Some(c) = self.citizens.get_mut(driver) {
-                c.savings -= price;
                 c.commute.toll += price;
                 if price > 0.0 && (tick + pass.booth as u64) % 9 == 0 {
                     c.remember(tick, format!("Paid {price:.0} at {name}. Every trip costs more now."));
@@ -138,7 +144,6 @@ impl World {
             } else if let Some(cargo) = cargo {
                 let payer = [cargo.from, cargo.to].into_iter().find(|b| self.buildings.get(*b).is_some_and(|b| b.business.is_some()));
                 if let Some(bz) = payer.and_then(|b| self.buildings.get_mut(b)).and_then(|b| b.business.as_mut()) {
-                    bz.money -= price;
                     bz.spend_today += price;
                 }
             }

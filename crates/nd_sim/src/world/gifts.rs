@@ -55,17 +55,11 @@ impl World {
         }
         let name = c.name.clone();
         let household = c.household.filter(|h| self.households.contains_key(*h));
-        self.economy.debit_item(Flow::Gifts, amount, Item::Named(name));
+        // [ledger] From the treasury to the household's purse.
+        self.city_pays(self.purse_of(citizen), Flow::Gifts, amount, Some(Item::Named(name)));
         let members = match household {
-            Some(h) => {
-                let hh = &mut self.households[h];
-                hh.money += amount;
-                hh.members.clone()
-            }
-            None => {
-                self.citizens[citizen].savings += amount;
-                vec![citizen]
-            }
+            Some(h) => self.households[h].members.clone(),
+            None => vec![citizen],
         };
         let tick = self.clock.tick;
         for m in members {

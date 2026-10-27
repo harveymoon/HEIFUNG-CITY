@@ -183,12 +183,13 @@ impl World {
 
     /// A visit to a landmark: what it costs at the door, if `purse` can
     /// pay (to the treasury), counted in its books. Returns what was paid.
-    pub(in crate::world) fn admit_visitor(&mut self, b: BuildingId, tourist: bool, purse: f32) -> f32 {
+    /// [ledger] The ticket is paid from `payer` into the treasury.
+    pub(in crate::world) fn admit_visitor(&mut self, b: BuildingId, tourist: bool, purse: f32, payer: Account) -> f32 {
         let Some(kind) = self.buildings.get(b).and_then(|x| x.service).map(|s| s.kind).filter(|k| k.is_landmark()) else { return 0.0 };
         let fee = kind.admission();
         let paid = if purse >= fee { fee } else { 0.0 };
         if paid > 0.0 {
-            self.economy.credit_item(Flow::Tickets, paid, Item::Building(b));
+            self.pay_city(payer, Flow::Tickets, paid, Some(Item::Building(b)));
         }
         let book = self.attractions.books.entry(b).or_default();
         if tourist {

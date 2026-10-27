@@ -549,8 +549,9 @@ impl World {
             j.built = tick;
             if paid {
                 if let Some(z) = self.buildings[b].business.as_mut() {
-                    z.money -= shore::JETTY_COST;
                     z.spend_today += shore::JETTY_COST;
+                    // [ledger] Built by a contractor from out of town.
+                    self.transfer(Account::Business(b), Account::Outside, shore::JETTY_COST, Kind::Building);
                 }
             }
             self.shore.jetties.insert(b, j);

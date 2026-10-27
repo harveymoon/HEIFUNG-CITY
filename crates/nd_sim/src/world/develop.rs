@@ -582,6 +582,8 @@ impl World {
             self.economy.debit_item(Flow::RailUpkeep, x, Item::Building(id));
         }
         self.daily_tolls();
+        // [ledger] The ledger's day closes with the treasury's.
+        self.close_ledger_day();
         self.economy.ledger.roll();
         // [tax] The tax book closes with the ledger: what is collected below
         // (incomes, takings) is booked to the new day, as in the ledger.
@@ -904,7 +906,7 @@ impl World {
             return;
         }
         if let Some(new) = self.pick_business_kind(lu, jobs).filter(|k| *k != kind) {
-            self.buildings[bid].business = Some(Business::new(new, jobs));
+            self.set_business(bid, Some(Business::new(new, jobs)));
             self.fit_business_name(bid);
         }
     }

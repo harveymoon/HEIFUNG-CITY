@@ -266,6 +266,10 @@ pub enum OwnerKind {
     /// [megacorp] A university and the buildings round its campus
     /// (`crate::corp::Campus`).
     University { campus: BuildingId },
+    /// [ledger] A resident's property company: what they buy to let is the
+    /// company's, the tenants pay it, it pays the founder a dividend
+    /// (`World::settle_owners`).
+    Company { founder: CitizenId },
 }
 
 impl OwnerKind {
@@ -294,6 +298,17 @@ pub struct Owner {
     pub income_day: f32,
     #[serde(default)]
     pub earned: f64,
+    /// [ledger] The owner's own money (firms, developers, residents'
+    /// property companies): the mirror of its ledger account. Mega-corps
+    /// keep theirs in `MegaCorp::cash`, the university in `Campus::funds`,
+    /// residents in their household's purse.
+    #[serde(default)]
+    pub money: f64,
+    /// [ledger] Rent collected today and yesterday.
+    #[serde(default)]
+    pub rent_today: f32,
+    #[serde(default)]
+    pub rent_yesterday: f32,
 }
 
 // ── the super-elite ──────────────────────────────────────────────────────────

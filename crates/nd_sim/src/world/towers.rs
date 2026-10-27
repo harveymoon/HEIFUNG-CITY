@@ -150,8 +150,11 @@ impl World {
         let demand = self.tower_demand();
         let inflow = pop.max(TOWER_MIN_POP) as f64 * CAPITAL_PER_PERSON * (0.4 + demand.clamp(0.0, 1.0) as f64);
         let cap = structure_cost(TOWER_MAX_M) * 1.5;
-        for d in &mut self.skyline.developers {
-            d.capital = (d.capital + inflow * d.pull as f64).min(cap);
+        // [ledger] Investors' money from out of town, up to the cap.
+        for i in 0..self.skyline.developers.len() {
+            let d = &self.skyline.developers[i];
+            let add = ((d.capital + inflow * d.pull as f64).min(cap) - d.capital).max(0.0);
+            self.transfer64(Account::Outside, Account::Tower(i as u16), add, Kind::Investment);
         }
         let day = self.clock.day() as u32;
         if self.skyline.last_start_day.is_some_and(|d| day < d + TOWER_START_GAP_DAYS) {
@@ -382,7 +385,10 @@ impl World {
                 continue;
             }
             let bid = self.break_ground(dev, &plots, height, order.design, record_bid && height > record, price);
-            self.skyline.developers[dev].capital = (self.skyline.developers[dev].capital - cost).max(0.0);
+            // [ledger] The plots and the build, paid out of town (what a
+            // forced order cannot afford, the bank covers).
+            let pay = cost.min(self.skyline.developers[dev].capital.max(0.0));
+            self.transfer64(Account::Tower(dev as u16), Account::Outside, pay, Kind::Building);
             return Ok(bid);
         }
         Err(why)
@@ -451,7 +457,7 @@ impl World {
         }
         if lu == LandUse::Commercial {
             let jobs = self.buildings[bid].planned_capacity().1;
-            self.buildings[bid].business = Some(Business::new(BusinessKind::Office, jobs));
+            self.set_business(bid, Some(Business::new(BusinessKind::Office, jobs)));
         }
         let rest: Vec<LotId> = plots[1..].to_vec();
         self.take_plots_for(bid, &rest, &memory, crate::buildings::DemolitionReason::Landmark);

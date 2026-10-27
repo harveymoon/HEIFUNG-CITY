@@ -485,17 +485,15 @@ impl World {
                 t.sights += 1;
                 // A ticket at the stadium on a match day.
                 if kind == AttractionKind::Stadium && t.money > 15.0 {
-                    t.money -= 15.0;
                     t.spent += 15.0;
-                    self.economy.credit(Flow::Tickets, 15.0);
+                    self.pay_city(Account::Tourist(id), Flow::Tickets, 15.0, None);
                 }
                 // [attractions] In through the turnstile: a landmark
                 // charges at the door and counts its visitors.
                 if let Some(b) = kind.landmark().and_then(|k| self.landmark(k)) {
                     let purse = self.tourism.tourists[id].money;
-                    let paid = self.admit_visitor(b, true, purse);
+                    let paid = self.admit_visitor(b, true, purse, Account::Tourist(id));
                     let t = &mut self.tourism.tourists[id];
-                    t.money -= paid;
                     t.spent += paid;
                     // Longer at a landmark than at a statue.
                     if let TouristState::Sightseeing { until, .. } = &mut t.state {
@@ -568,11 +566,14 @@ impl World {
                 }
                 _ => {}
             }
-            bz.money += paid;
             bz.revenue_today += paid;
             if paid > 0.0 {
                 bz.deals += 1;
             }
+        }
+        // [ledger] From the visitor's wallet to the shop or venue.
+        if self.business_account(b).is_some() {
+            self.transfer(Account::Tourist(id), Account::Business(b), paid, Kind::Tourism);
         }
         let s = &mut self.tourism.stats;
         if venue {
@@ -582,7 +583,6 @@ impl World {
         }
         s.spend_total += paid as f64;
         let t = &mut self.tourism.tourists[id];
-        t.money -= paid;
         t.spent += paid;
         let stay = if venue { rng.random_range(60..150) } else { rng.random_range(15..45) };
         t.state = TouristState::Inside { building: b, until: tick + stay };
@@ -808,19 +808,19 @@ impl World {
             let tax = price * rate;
             // Rooms are paid ahead (in their money from the start); a broke
             // visitor still has the room they booked.
-            t.money -= price + tax;
             t.spent += price + tax;
-            bz.money += price;
             bz.revenue_today += price;
             bz.deals += 1;
             tax_total += tax;
+            // [ledger] The night to the hotel, the tax to the city.
+            self.transfer(Account::Tourist(id), Account::Business(hotel), price, Kind::Tourism);
+            self.pay_city(Account::Tourist(id), Flow::TouristTax, tax, None);
             let s = &mut self.tourism.stats;
             s.nights_today += 1;
             s.spend_hotels_today += price;
             s.spend_total += price as f64;
         }
         self.tourism.stats.tax_today += tax_total;
-        self.economy.credit(Flow::TouristTax, tax_total);
     }
 }
 

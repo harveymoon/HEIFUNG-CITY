@@ -8,6 +8,7 @@ pub mod air;
 /// [attractions] Landmark attractions: museums, the pier, the grand park,
 /// the zoo, the observatory and the rest, one of each per city.
 pub mod attractions;
+pub mod bank;
 pub mod bots;
 pub mod buildings;
 /// Cargo hubs: freight terminals that consolidate imports and exports.

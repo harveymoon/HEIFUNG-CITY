@@ -150,15 +150,13 @@ impl World {
                 c.remember(tick, format!("The ambulance took me to {hname}."));
                 self.services.admissions.push(Admission { citizen: p, hospital: h, until });
                 // The household pays what it can; the city covers the rest.
-                let paid = match self.citizens[p].household.and_then(|hh| self.households.get_mut(hh)) {
+                let paid = match self.citizens[p].household.filter(|hh| self.households.contains_key(*hh)) {
                     Some(hh) => {
-                        let pay = hh.money.clamp(0.0, HOSPITAL_BILL);
-                        hh.money -= pay;
-                        pay
+                        let pay = self.households[hh].money.clamp(0.0, HOSPITAL_BILL);
+                        self.pay_city(Account::Household(hh), Flow::ServiceUpkeep, pay, Some(Item::Named("hospital bills paid by patients".into())))
                     }
                     None => 0.0,
                 };
-                self.economy.credit_item(Flow::ServiceUpkeep, paid, Item::Named("hospital bills paid by patients".into()));
                 self.services.stats.bills_paid_today += paid;
                 self.services.stats.bills_covered_today += HOSPITAL_BILL - paid;
                 if let Some(i) = self.services.incident_mut(id) {

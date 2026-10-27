@@ -8,6 +8,9 @@ use super::*;
 /// minutes before a site no lorry could reach is tried again.
 const SITE_TRUCKS_EXTRA: usize = 40;
 const SITE_RETRY: u64 = 60;
+/// [ledger] The most of a day's profit a business's unit rent takes
+/// (`World::shop_rent` is the full rent).
+const SHOP_RENT_PROFIT_CAP: f32 = 0.5;
 
 impl World {
     /// Businesses pay wages; those that cannot for several days close, and
@@ -16,6 +19,7 @@ impl World {
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
         let mut demolish = Vec::new();
         let mut cover = [(0.0f32, 0.0f32); BusinessKind::COUNT];
+        let mut reoffice: Vec<(BuildingId, u16)> = Vec::new();
         for bid in ids {
             if !self.buildings[bid].operating() {
                 continue;
@@ -46,7 +50,7 @@ impl World {
                         // [supertall] Nobody pulls down a landmark tower
                         // for a failed tenant: offices take the floors.
                         let jobs = b.jobs;
-                        b.business = Some(Business::new(BusinessKind::Office, jobs));
+                        reoffice.push((bid, jobs));
                         self.events.push(SimEvent::BuildingChanged(bid));
                     } else {
                         demolish.push(bid);
@@ -57,22 +61,38 @@ impl World {
             let tax = revenue * rate;
             self.economy.tax_today += tax;
             let lu = b.land_use;
-            self.economy.credit_item(Flow::BusinessTax, tax, Item::LandUse(lu));
             if let Some(c) = tax_line {
                 self.economy.taxes.collect(c, tax);
             }
+            // [ledger] The standard part was in the prices customers paid
+            // (from outside the business's own money); the rest below.
+            let extra = if publicly_funded { 0.0 } else { revenue * surcharge };
+            self.economy.credit_item(Flow::BusinessTax, tax - extra, Item::LandUse(lu));
             if !publicly_funded {
-                bz.money -= wage_bill;
-                bz.spend_today += wage_bill;
+                // [ledger] Wages to the staff's employers' payroll: paid out
+                // of town for now (the workers' earnings come in from
+                // outside, `daily_household`).
+                self.transfer(Account::Business(bid), Account::Outside, wage_bill, Kind::Payroll);
                 // [tax] Prices were set on takings after the standard rate:
                 // a rate over it is a cost the business carries (and its
                 // cover, which decides whether more of it are built, shows
                 // it); one under it is money kept.
-                let extra = revenue * surcharge;
                 if extra != 0.0 {
-                    bz.money -= extra;
-                    bz.spend_today += extra;
+                    self.pay_city(Account::Business(bid), Flow::BusinessTax, extra, Some(Item::LandUse(lu)));
                 }
+                // [ledger] Rent for its unit, to the building's owner: the
+                // unit's rent out of the day's profit, at most half of it
+                // (a lean day pays less, a losing day nothing), so rent
+                // never tips a business into the red.
+                let spent = self.buildings[bid].business.as_ref().map_or(0.0, |z| z.spend_today) + wage_bill + extra;
+                let shop_rent = self.shop_rent(bid).min((revenue - spent).max(0.0) * SHOP_RENT_PROFIT_CAP);
+                if shop_rent > 0.0 {
+                    self.collect_rent(Account::Business(bid), bid, shop_rent, Kind::ShopRent);
+                }
+                let b = &mut self.buildings[bid];
+                let bz = b.business.as_mut().unwrap();
+                bz.rent_day = shop_rent;
+                bz.spend_today += wage_bill + extra + shop_rent;
                 // The market's reading of this kind of business, past the
                 // first day's stocking up: what it took against what it
                 // paid out, wages and inputs.
@@ -82,6 +102,8 @@ impl World {
                     e.1 += bz.spend_today;
                 }
             }
+            let b = &mut self.buildings[bid];
+            let bz = b.business.as_mut().unwrap();
             bz.days_open = bz.days_open.saturating_add(1);
             let spent = bz.spend_today;
             bz.close_books(revenue, spent);
@@ -108,6 +130,10 @@ impl World {
                 self.events.push(SimEvent::BusinessClosed(bid));
                 self.events.push(SimEvent::BuildingChanged(bid));
             }
+        }
+        // [ledger] Offices into the failed tenant's tower floors.
+        for (bid, jobs) in reoffice {
+            self.set_business(bid, Some(Business::new(BusinessKind::Office, jobs)));
         }
         for (i, (takings, costs)) in cover.into_iter().enumerate() {
             if let Some(kind) = BusinessKind::ALL.get(i) {
@@ -194,13 +220,15 @@ impl World {
                 if students > 0.0 {
                     self.corps.stats.student_trade_today += got * price * students / feet;
                 }
-                bz.money += got * price;
                 bz.revenue_today += got * price;
                 bz.deals += 1;
                 self.economy.walk_in_sales_today += got * price;
                 if output == Resource::BakedGoods {
                     self.economy.market.meals_sold_today += got as u32;
                 }
+                // [ledger] Passers-by are not tracked one by one: their
+                // custom comes in from outside the accounts.
+                self.transfer(Account::Outside, Account::Business(bid), got * price, Kind::WalkIn);
             }
         }
         for l in self.lots.values_mut() {
@@ -284,15 +312,14 @@ impl World {
                         let cost = got * price;
                         {
                             let sb = self.buildings[seller_id].business.as_mut().unwrap();
-                            sb.money += cost;
                             sb.revenue_today += cost;
                             sb.deals += 1;
                         }
                         {
                             let bb = self.buildings[bid].business.as_mut().unwrap();
-                            bb.money -= cost;
                             bb.spend_today += cost;
                         }
+                        self.transfer(Account::Business(bid), Account::Business(seller_id), cost, Kind::Supplies);
                         self.economy.market.deals_today += 1;
                         self.ship(seller_id, bid, r, got, cost);
                     }
@@ -306,11 +333,11 @@ impl World {
                         let duty = cost * self.economy.taxes.import_duty;
                         {
                             let bb = self.buildings[bid].business.as_mut().unwrap();
-                            bb.money -= cost + duty;
                             bb.spend_today += cost + duty;
                         }
+                        self.transfer(Account::Business(bid), Account::Outside, cost, Kind::Imports);
                         if duty > 0.0 {
-                            self.economy.credit(Flow::ImportDuty, duty);
+                            self.pay_city(Account::Business(bid), Flow::ImportDuty, duty, None);
                             self.economy.taxes.duty_today += duty;
                         }
                         self.economy.taxes.note_import(r, amount);
@@ -328,6 +355,7 @@ impl World {
         let yards: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.rail.as_ref().is_some_and(|l| l.kind == RailFacility::FreightYard) && !b.is_derelict() && b.operating()).map(|(id, _)| id).collect();
         let export_bonus = (if yards.is_empty() { 1.0 } else { rail::RAIL_EXPORT_BONUS }).max(self.sea_export_bonus()) * self.hub_export_bonus();
         let mut shipped = 0.0f32;
+        let mut sold: Vec<(BuildingId, f32)> = Vec::new();
         for &bid in &ids {
             let b = &mut self.buildings[bid];
             if !b.operating() {
@@ -349,11 +377,14 @@ impl World {
                     bz.take(*r, surplus);
                     let income = surplus * r.base_price() * EXPORT_DISCOUNT * export_bonus;
                     shipped += surplus;
-                    bz.money += income;
+                    sold.push((bid, income));
                     bz.revenue_today += income;
                     self.economy.market.exports_today += income;
                 }
             }
+        }
+        for (bid, income) in sold {
+            self.transfer(Account::Outside, Account::Business(bid), income, Kind::Exports);
         }
         // [freight] Onto the apron of a yard the freight trains call at.
         if let Some(&y) = self.yards.first().or(yards.first()) {
@@ -464,7 +495,8 @@ impl World {
     /// Every hour out at a venue is a round of drinks, paid from the
     /// pocket while there is pocket money for it.
     pub(super) fn venue_tabs(&mut self) {
-        for c in self.citizens.values_mut() {
+        let mut tabs: Vec<(CitizenId, BuildingId, f32)> = Vec::new();
+        for (cid, c) in self.citizens.iter_mut() {
             let Activity::Visiting(b) = c.activity else { continue };
             let Some(bld) = self.buildings.get_mut(b) else { continue };
             // [places] Drinks cost more somewhere polished; a regular
@@ -491,13 +523,16 @@ impl World {
             if c.savings < tab {
                 continue;
             }
-            c.savings -= tab;
-            bz.money += tab;
+            tabs.push((cid, b, tab));
             bz.revenue_today += tab;
             c.mood = (c.mood + 0.01).min(1.0);
             if regular {
                 self.places.reputation.entry(b).or_default().regular_revenue_today += tab;
             }
+        }
+        // [ledger] The rounds, from the pocket to the venue.
+        for (cid, b, tab) in tabs {
+            self.transfer(Account::Person(cid), Account::Business(b), tab, Kind::Outings);
         }
     }
 
@@ -859,17 +894,17 @@ impl World {
         let cost = got * price;
         // Everyone at home sees the restocked pantry, not just the shopper.
         let mut pantry: Option<(Vec<CitizenId>, f32)> = None;
-        match hh {
+        let payer = match hh {
             Some(h) => {
-                h.money -= cost;
                 h.groceries += got;
                 c.groceries = h.groceries;
                 pantry = Some((h.members.clone(), h.groceries));
+                Account::Household(c.household.unwrap())
             }
-            None => c.savings -= cost,
-        }
-        bz.money += cost;
+            None => Account::Person(cid),
+        };
         bz.revenue_today += cost;
+        self.transfer(payer, Account::Business(shop), cost, Kind::Shopping);
         self.economy.market.deals_today += 1;
         if let Some((members, g)) = pantry {
             for m in members {

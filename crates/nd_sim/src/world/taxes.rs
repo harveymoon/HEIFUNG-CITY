@@ -163,13 +163,16 @@ mod tests {
         }
         let mut taxed = w.clone();
         taxed.set_tax_rate(cat, 0.25);
-        let t0 = (w.economy.treasury, taxed.economy.treasury);
+        // [ledger] Less the property tax on the business's rent (paid by its
+        // landlord out of it), the same in both.
+        let ptax = |w: &World| w.economy.ledger.today_of(Flow::PropertyTax);
+        let t0 = (w.economy.treasury - ptax(&w), taxed.economy.treasury - ptax(&taxed));
         w.daily_businesses();
         taxed.daily_businesses();
         let m = |w: &World| w.buildings[b].business.as_ref().unwrap().money;
         assert!((m(&w) - m(&taxed) - 1000.0 * (0.25 - BUSINESS_TAX)).abs() < 0.5, "the business pays the extra 20%");
-        assert!((w.economy.treasury - t0.0 - 1000.0 * BUSINESS_TAX).abs() < 0.5);
-        assert!((taxed.economy.treasury - t0.1 - 1000.0 * 0.25).abs() < 0.5);
+        assert!((w.economy.treasury - ptax(&w) - t0.0 - 1000.0 * BUSINESS_TAX).abs() < 0.5);
+        assert!((taxed.economy.treasury - ptax(&taxed) - t0.1 - 1000.0 * 0.25).abs() < 0.5);
         assert!(taxed.economy.cover_of(kind).unwrap() < w.economy.cover_of(kind).unwrap(), "the market reads it as a worse business");
     }
 

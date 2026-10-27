@@ -68,6 +68,9 @@ impl World {
         self.invest_rich();
         // [sweep-sim] ... and what they hold pays them.
         self.pay_investors();
+        // [ledger] Owners out of town send their profit home; residents'
+        // companies pay their founders.
+        self.settle_owners();
         self.weekend_cars();
         self.daily_elites();
         self.daily_nimby();

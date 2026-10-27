@@ -58,13 +58,16 @@ pub enum Flow {
     RoadMaintenance,
     /// [events] Fines from busted street races and raves.
     Fines,
+    /// [ledger] Property tax every owner pays out of the rent it collects
+    /// (`crate::bank`, `World::collect_rent`).
+    PropertyTax,
 }
 
 /// Number of `Flow`s; the ledger's row length.
-pub const FLOWS: usize = 23;
+pub const FLOWS: usize = 24;
 
 impl Flow {
-    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep, Flow::GridExport, Flow::Gifts, Flow::RoadMaintenance, Flow::Fines];
+    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep, Flow::GridExport, Flow::Gifts, Flow::RoadMaintenance, Flow::Fines, Flow::PropertyTax];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -91,6 +94,7 @@ impl Flow {
             Flow::Gifts => "gifts to residents",
             Flow::RoadMaintenance => "road maintenance",
             Flow::Fines => "fines",
+            Flow::PropertyTax => "property tax",
         }
     }
 
@@ -239,7 +243,7 @@ impl Ledger {
 
     /// Add a posting to today's itemised lines. A linear search: a day has
     /// at most a few hundred items and most postings land on a recent one.
-    fn post_item(&mut self, flow: Flow, item: Item, amount: f32) {
+    pub(crate) fn post_item(&mut self, flow: Flow, item: Item, amount: f32) {
         match self.items_today.iter_mut().rev().find(|e| e.flow == flow && e.item == item) {
             Some(e) => {
                 e.amount += amount;
@@ -504,6 +508,10 @@ pub struct Economy {
     /// and what each line brought in. Old saves load at the standard rates.
     #[serde(default)]
     pub taxes: crate::tax::TaxBook,
+    /// [ledger] Every account's money and the day's flows (`crate::bank`).
+    /// `treasury` mirrors its treasury account.
+    #[serde(default)]
+    pub bank: crate::bank::Bank,
 }
 
 fn default_treasury() -> f32 {
@@ -511,9 +519,30 @@ fn default_treasury() -> f32 {
 }
 
 impl Economy {
-    /// Money into the treasury, booked under `flow`.
+    /// Money into the treasury from the outside world (or out to it when
+    /// negative), booked under `flow`: through the ledger's door
+    /// (`crate::bank`), the treasury mirroring its account. Flows with a
+    /// payer or payee in town go through `World::pay_city` /
+    /// `World::city_pays` instead.
     pub fn credit(&mut self, flow: Flow, amount: f32) {
-        self.treasury += amount;
+        self.credit_from(crate::bank::Account::Outside, crate::bank::Class::Outside, flow, amount);
+    }
+
+    /// [ledger] `credit` with the other side named: the ledger part only.
+    /// The other account must already be synced (`World::pay_city`); its
+    /// mirror is the caller's to write.
+    pub(crate) fn credit_from(&mut self, other: crate::bank::Account, class: crate::bank::Class, flow: Flow, amount: f32) {
+        use crate::bank::{Account, Class, Kind, Mirror};
+        let u = crate::bank::units(amount as f64);
+        if u != 0 {
+            self.bank.sync(Account::Treasury, Class::City, Mirror::F32(self.treasury));
+            if u > 0 {
+                self.bank.post((other, class), (Account::Treasury, Class::City), u, Kind::Flow(flow));
+            } else {
+                self.bank.post((Account::Treasury, Class::City), (other, class), -u, Kind::Flow(flow));
+            }
+            self.treasury = self.bank.balance(Account::Treasury) as f32;
+        }
         self.ledger.today[flow.index()] += amount;
     }
 

@@ -251,15 +251,17 @@ impl World {
         let Some(work) = t.commuter else { return };
         if let Some(b) = self.buildings.get_mut(work) {
             if let Some(bz) = b.business.as_mut() {
-                bz.money -= ports::COMMUTER_WAGE;
                 bz.spend_today += ports::COMMUTER_WAGE;
             }
         }
+        // [ledger] The day's wage, from the business to the commuter (who
+        // takes it home over the water).
+        let from = self.business_account(work).unwrap_or(Account::Outside);
+        self.transfer(from, Account::Tourist(id), ports::COMMUTER_WAGE, Kind::Payroll);
         if let Some(p) = self.building_entrance(work) {
             let t = &mut self.tourism.tourists[id];
             t.pos = p;
             t.prev_pos = p;
-            t.money += ports::COMMUTER_WAGE;
         }
         self.tourist_depart(id);
     }
@@ -359,7 +361,7 @@ impl World {
         }
         let tick = self.clock.tick;
         let fare = 2.0 * ports::FERRY_FARE;
-        self.economy.credit_item(Flow::BusFares, fare, Item::Building(b));
+        self.pay_city(Account::Person(id), Flow::BusFares, fare, Some(Item::Building(b)));
         self.ports.stats.ferry_fares_today += fare;
         self.ports.stats.day_trips_today += 1;
         *self.ports.boarding.entry(b).or_insert(0) += 1;
@@ -369,7 +371,6 @@ impl World {
         let mut rng = crate::rng_for(self.citizens[id].seed ^ tick, SALT ^ 0xB0A7);
         let back = tick - tick % 1440 + 17 * 60 + rng.random_range(0..150u64);
         let c = &mut self.citizens[id];
-        c.savings -= fare;
         c.inside = None;
         c.activity = Activity::Abroad { terminal: b, town: trip.town, until: back.max(tick + 180) };
         c.thought = format!("On the ferry to {name}.");

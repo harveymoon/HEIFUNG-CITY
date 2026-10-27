@@ -65,6 +65,7 @@ mod districts_tests;
 mod driving;
 mod industry;
 mod kinds;
+mod ledger;
 mod save;
 /// [saves] Compressed saves: reading either form.
 pub use save::{is_compressed, save_text, GZIP_MAGIC};
@@ -249,10 +250,13 @@ mod grounds_tests;
 mod events_tests;
 #[cfg(test)]
 mod economy_tests;
+#[cfg(test)]
+mod ledger_tests;
 
 use crate::buildings::{Building, BuildingId, Construction, Tier};
 use crate::citizens::{Activity, Citizen, CitizenId, Household, HouseholdId, Purpose};
 use crate::clock::SimClock;
+use crate::bank::{Account, Kind};
 use crate::economy::{Economy, Flow, Item, GIG_INCOME, OVERDRAFT};
 use crate::events::SimEvent;
 use crate::land_value::{Channel, LandValue, LandValueBuilder};
@@ -940,6 +944,9 @@ impl World {
         // The starting bridges come with the map.
         w.economy.treasury = 60_000.0;
         w.economy.ledger = Default::default();
+        // [ledger] The books open on the starting money.
+        w.economy.bank = Default::default();
+        w.open_ledger();
         w
     }
 

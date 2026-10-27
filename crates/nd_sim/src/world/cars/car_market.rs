@@ -110,7 +110,9 @@ impl World {
 
     /// Buy a car: at a dealer in town (it is delivered home from the
     /// forecourt), else from out of town (driven in from the map edge).
-    /// Returns what was paid, or `None` when it could not be done.
+    /// Returns what was paid, or `None` when it could not be done. [ledger]
+    /// Paid from the buyer's purse: the dealer's share to the dealer, the
+    /// rest to the maker out of town.
     pub(in crate::world) fn buy_car(&mut self, id: CitizenId, model: VehicleModel, price: f32) -> Option<f32> {
         let c = self.citizens.get(id)?;
         if c.car.is_some() {
@@ -137,10 +139,12 @@ impl World {
                 c.vehicle = Some(used);
                 let name = self.buildings[dealer].name.clone();
                 if let Some(bz) = self.buildings[dealer].business.as_mut() {
-                    bz.money += paid * 0.5;
                     bz.revenue_today += paid * 0.5;
                     bz.deals += 1;
                 }
+                let purse = self.purse_of(id);
+                self.transfer(purse, self.business_account(dealer).unwrap_or(Account::Outside), paid * 0.5, Kind::Cars);
+                self.transfer(purse, Account::Outside, paid * 0.5, Kind::Cars);
                 self.vehicles.stats.bought_today += 1;
                 self.citizens[id].remember(tick, format!("Bought a used {} at {name}.", model_label(&used)));
                 return Some(paid);
@@ -151,10 +155,12 @@ impl World {
                 let name = self.buildings[dealer].name.clone();
                 if let Some(bz) = self.buildings[dealer].business.as_mut() {
                     // The dealer's margin; the rest goes to the maker out of town.
-                    bz.money += price * 0.25;
                     bz.revenue_today += price * 0.25;
                     bz.deals += 1;
                 }
+                let purse = self.purse_of(id);
+                self.transfer(purse, self.business_account(dealer).unwrap_or(Account::Outside), price * 0.25, Kind::Cars);
+                self.transfer(purse, Account::Outside, price * 0.75, Kind::Cars);
                 self.vehicles.stats.bought_today += 1;
                 self.citizens[id].remember(tick, format!("Bought {} at {name}.", crate::names::a(&model_label(&model))));
                 return Some(price);
@@ -172,6 +178,8 @@ impl World {
         c.errand = Errand::Deliver;
         self.vehicles.stats.bought_today += 1;
         self.citizens[id].remember(tick, format!("Ordered {} from out of town. It's being driven in.", crate::names::a(&model_label(&model))));
+        let purse = self.purse_of(id);
+        self.transfer(purse, Account::Outside, price, Kind::Cars);
         Some(price)
     }
 
@@ -188,8 +196,10 @@ impl World {
     /// a dealer in reach) and stays where it is parked until the dealer's
     /// driver fetches it during working hours (`hourly_dealers`), so a
     /// morning's sales do not all set off in one line at the same minute.
-    /// A car on the road is not sold. Returns the money got.
-    pub(in crate::world) fn sell_car(&mut self, id: CitizenId, reason: &str) -> Option<f32> {
+    /// A car on the road is not sold. Returns the money got: [ledger] its
+    /// worth (at most `cap`), paid into the seller's purse from the trade
+    /// out of town.
+    pub(in crate::world) fn sell_car(&mut self, id: CitizenId, reason: &str, cap: f32) -> Option<f32> {
         let vid = self.citizens.get(id)?.car?;
         let car = self.vehicles.cars.get(vid)?;
         let spot = *car.spot()?;
@@ -197,7 +207,7 @@ impl World {
         if matches!(spot.kind, ParkKind::Hooked | ParkKind::Pound) || spot.booted {
             return None;
         }
-        let worth = (car.model.price() * 0.5).min(400.0);
+        let worth = (car.model.price() * 0.5).min(400.0).min(cap);
         let tick = self.clock.tick;
         let dealer = self.dealer_near(spot.pos);
         if let Some(bz) = dealer.and_then(|d| self.buildings.get_mut(d)).and_then(|b| b.business.as_mut()) {
@@ -218,6 +228,8 @@ impl World {
         c.parked_at = None;
         c.remember(tick, reason.to_string());
         self.vehicles.stats.sold_today += 1;
+        let purse = self.purse_of(id);
+        self.transfer(Account::Outside, purse, worth, Kind::Cars);
         Some(worth)
     }
 
@@ -498,13 +510,19 @@ impl World {
         let name = match shop {
             Some(s) => {
                 if let Some(bz) = self.buildings[s].business.as_mut() {
-                    bz.money += BIKE_PRICE * 0.4;
                     bz.revenue_today += BIKE_PRICE * 0.4;
                     bz.deals += 1;
                 }
+                let purse = self.purse_of(id);
+                self.transfer(purse, self.business_account(s).unwrap_or(Account::Outside), BIKE_PRICE * 0.4, Kind::Cars);
+                self.transfer(purse, Account::Outside, BIKE_PRICE * 0.6, Kind::Cars);
                 self.buildings[s].name.clone()
             }
-            None => "a shop out of town".to_string(),
+            None => {
+                let purse = self.purse_of(id);
+                self.transfer(purse, Account::Outside, BIKE_PRICE, Kind::Cars);
+                "a shop out of town".to_string()
+            }
         };
         let c = &mut self.citizens[id];
         c.owns_bike = true;

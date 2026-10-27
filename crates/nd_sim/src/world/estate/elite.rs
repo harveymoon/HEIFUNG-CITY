@@ -78,11 +78,12 @@ impl World {
         {
             let c = &mut self.citizens[cid];
             c.income = income;
-            c.savings += 5_000.0;
             c.remember(tick, format!("{} Time for a place worthy of it.", if origin == EliteOrigin::Local { "Made my first billion here." } else { "Came for a visit. Bought half a street." }));
         }
-        if let Some(h) = self.citizens[cid].household.and_then(|h| self.households.get_mut(h)) {
-            h.money += 50_000.0;
+        // [ledger] A fortune made or kept out of town: in from outside.
+        self.transfer(Account::Outside, Account::Person(cid), 5_000.0, Kind::Investment);
+        if let Some(h) = self.citizens[cid].household.filter(|h| self.households.contains_key(*h)) {
+            self.transfer(Account::Outside, Account::Household(h), 50_000.0, Kind::Investment);
         }
         // The garage: two to six supercars, the first driven every day.
         let ncars = rng.random_range(2..=6usize);

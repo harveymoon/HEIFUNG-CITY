@@ -305,12 +305,11 @@ impl World {
         match founder {
             Some(f) => {
                 let stake = cost.max(self.wealth_of(&self.citizens[f]) * 0.25).min(cost * 2.0);
-                match self.citizens[f].household.and_then(|h| self.households.get_mut(h)) {
-                    Some(h) => h.money -= stake,
-                    None => self.citizens[f].savings -= stake,
+                // [ledger] The founder's savings into the business.
+                if self.business_account(bid).is_some() {
+                    self.transfer(self.purse_of(f), Account::Business(bid), stake, Kind::Investment);
                 }
                 if let Some(z) = self.buildings[bid].business.as_mut() {
-                    z.money += stake;
                     z.origin = Some(format!("Opened by a local with savings where drivers were circling for a space ({circling} today)."));
                 }
                 self.set_business_owner(bid, f);

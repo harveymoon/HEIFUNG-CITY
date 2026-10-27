@@ -580,6 +580,62 @@ revenue}). Saves from before this keep their booths with the new books empty.
 {"cmd": "inspect", "toll": 1}
 ```
 
+### The ledger: every account and every flow [ledger]
+
+All money in the sim lives in accounts and moves only by one door (`World::transfer`), so nothing is
+made or lost in town: every household's purse, every citizen's pocket, every business's till, every
+property owner (firms, developers, residents' property companies, mega-corps' cash, the university's
+funds), the tower developers, every tourist's wallet, the air taxi company, the independent landlords
+(one pool for the buildings no owner record holds), the city treasury and one **outside world**
+(wages earned out of town, imports and exports, visitors' money, owners out of town). Balances are
+exact (whole 1/10000 dollars); the sum of every balance and the outside world is always zero.
+
+`ledger {}` (also `money`, `books`): `balanced` (true while that sum is zero), `sum_units`,
+`accounts`, `treasury`, `landlords`, `outside`, `untracked_total` / `untracked_moves` (money a money
+field gained or lost outside the door: zero in a healthy city), `orphans` (moves naming an account
+that had gone, paid to or from outside instead), `moves_today`, `drifts` (the last few untracked
+changes: tick, account, amount, the last kind it booked), `today` and `yesterday` (`by_kind`: each
+kind's total, how much came `from_outside` and went `to_outside`), `days_kept` (60 days are saved).
+
+- `{account: "household 12:3"}` (also `"person ID"`, `"business ID"` with the building's id,
+  `"owner ID"`, `"tourist ID"`, `"tower N"`, `"treasury"`, `"outside"`, `"landlords"`, `"airline"`):
+  `balance`, `class`, `name`, `open`, and `recent` (the account's last 50 moves, 24 for a person or
+  tourist, newest first: tick, when, kind, other account and its name, amount: + in, - out). Not
+  saved: after a load the rings start empty.
+- `{kind: "rent"}`: one kind of flow, `today` and each kept day, by payer and payee class (`flows`:
+  kind, from, to, amount, moves). Kinds: the treasury's flows (`income_tax`, `business_tax`,
+  `property_tax`, `bus_fares`, ...) and `wages_and_pensions`, `payroll`, `living_costs`,
+  `pocket_money`, `rent`, `shop_rent`, `upkeep_and_running_costs`, `mortgages`, `profits_paid_out`,
+  `shopping`, `outings`, `walk_in_sales`, `supplies`, `imports`, `exports`, `building_work`,
+  `property_sales`, `investment`, `cars_and_bikes`, `private_fares`, `private_fees`, `theft`,
+  `gifts_and_help`, `tuition`, `healthcare`, `tourism`, `grants`, `arrivals`, `departures`,
+  `untracked`, `opening_balances`.
+- `{day: 12}`: one closed day (game day): `by_kind`, every `flow`, and its `summary` (as `flows`).
+- `{flows: true}`: the money-flow page's figures for `today` and `yesterday`: by group (property,
+  wages, profits, city, trade, other) each group's flows, and `in_from_outside`, `out_to_outside`,
+  `net_with_outside`.
+- `{trace: "business 4:1"}` keeps every move of one account (up to 100 000) until `{trace: null}`;
+  `{account}` then returns them as `trace`. `{check: true}` reconciles every account after every tick
+  and logs drifts (dev; slow in a big city; also the env var `ND_LEDGER_CHECK=1`).
+
+Rent goes to the building's owner: a resident's purse, a company's account, a corp's cash, the
+university's funds, or the independent landlords' pool. The owner pays 30% of it as upkeep (out of
+town) and 10% as property tax (the treasury's `property_tax` line); residents and their property
+companies also pay 15% to the bank. Businesses renting their unit (no owner, or a developer's,
+university's or residents' company's building) pay `shop_rent` (a tenth of a home's rent per job) to
+the building's owner. Developers and the landlords' pool send what they hold over $20,000 out of town
+each day (`profits_paid_out`); a residents' property company pays its founder's household half its
+day's net. The household, business and owner inspectors show the account with its recent moves;
+City Data, Economy, Money flow (`city_data {tab: "economy", sub: "money_flow"}`) draws the day's
+flows from payers to payees.
+
+```json
+{"cmd": "ledger"}
+{"cmd": "ledger", "account": "treasury"}
+{"cmd": "ledger", "kind": "rent"}
+{"cmd": "ledger", "flows": true}
+```
+
 ### Industry sub-zones
 
 `industry {lot | pos | polygon, kind}` sets the player's industry bias (`World::set_industry_bias`):
@@ -1109,7 +1165,7 @@ Skyline page (`city_data {tab: "city", sub: "skyline"}`) shows the same.
 | `heat_vision` (alias `heat`) | `on` (bool; omitted toggles). Drone heat vision: buildings, ground and roads go near-black, people, vehicles, fires and drones glow by temperature (lights and engines white-hot), with motion blur, scanlines, noise, a vignette and a reticle. Same as key H and the top bar's Heat button. Reply `heat_vision`; also `status.lighting.heat_vision` |
 | `graphics` (alias `quality`) | `quality` auto / low / medium / high. Pins the graphics tier (Low: MSAA, no SSAO or haze, no rain or snow, street lamps only glow; Medium: TAA, light SSAO, real light from the 18 street lamps nearest the view at night; High: TAA, full SSAO, volumetric haze, big shadows, 40 lit lamps. Every tier: wet, glossy roads while it rains, fog tinted and thickened by climate and weather) or hands it back to the frame-rate throttler (Auto). Pin one before screenshots that must compare. Reply `quality`, `tier` (in force from the next frame), `frame_ms` (smoothed), `sim_ms`, `auto_steps`, `reason`, `effects`, `long_frames` ([saves] the last 24 frames over 500 ms, oldest first: `ms`, `sim_ms` the tick time in that frame, `tick`; loads left out: hitches to chase); also `status.render.graphics`. `ND_QUALITY` sets the starting setting, else [settings] the one saved from the Settings window |
 | `window` | `name` a tool window: lines / view (also `land`, `layers`, `map`: the View window, once Land) / alerts ([pt-ux] the draggable Alerts window: every toast as it happened with a "go" where it has a place, and the city's problems now, the `report` alerts) / saves / settings ([settings] graphics, text size, speech bubbles, the controls) / help / dev, `open` (omit to toggle). Reply `open`, `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it. The old report windows are City Data pages now: `name` city / economy / market / people / services opens that tab (at its last sub-tab), taxes / power / transit / emergencies / districts / tourism their page (Economy › Taxes, Services › Power, ...); `sub` (or People's old `tab` overview / concerns / social) picks a sub-tab, `open` false closes the view, omitted toggles, `expanded` is accepted and opens. The reply is `city_data`'s. `name: "build"`: the Build window, `open` (omit to toggle), `section` roads / zoning / parks / districts / power / services / transit / rail / water / attractions (opens it there); `status.build_window` {open, section}. A building tool picked with `tool` opens the Build window at its section, as its hotkey does. `name: "title"`: the title screen (above) |
-| `city_data` | `tab` city / economy / market / people / services / directory, `sub` (the tab's sub-tab, below; omitted: the tab's last one this session), `open` (bool; a `tab` alone opens; `open: true` alone reopens where it was; `open: false` closes). No fields: the state only. Reply `open`, `tab`, `sub`, `title` (the page's), `tabs` [{tab, label, subs}]. The full-screen City Data view (top bar, or J; Esc closes; [pt-ux] it sits above every other pane while open; a name picked on a page closes it so the inspector shows, and opening a window from the top bar closes it; every table's headings sort it: click for biggest first or A to Z, again to reverse, a third time for the given order): **city** overview / land / districts / tourism; **economy** overview / cash_flow / ledger / taxes; **market** goods / businesses / trade; **people** population / inequality / concerns / social / favourites; **services** power / transit / emergencies; **directory** businesses / people (also `citizens`). Applied in the same frame's egui pass, so a following `screenshot` shows it; `status.city_data` says what shows |
+| `city_data` | `tab` city / economy / market / people / services / directory, `sub` (the tab's sub-tab, below; omitted: the tab's last one this session), `open` (bool; a `tab` alone opens; `open: true` alone reopens where it was; `open: false` closes). No fields: the state only. Reply `open`, `tab`, `sub`, `title` (the page's), `tabs` [{tab, label, subs}]. The full-screen City Data view (top bar, or J; Esc closes; [pt-ux] it sits above every other pane while open; a name picked on a page closes it so the inspector shows, and opening a window from the top bar closes it; every table's headings sort it: click for biggest first or A to Z, again to reverse, a third time for the given order): **city** overview / land / districts / tourism; **economy** overview / cash_flow / ledger / money_flow ([ledger] where the money goes) / taxes / corporations; **market** goods / businesses / trade; **people** population / inequality / concerns / social / favourites; **services** power / transit / emergencies; **directory** businesses / people (also `citizens`). Applied in the same frame's egui pass, so a following `screenshot` shows it; `status.city_data` says what shows |
 
 Land survey layers (map layers like the rest, so one at a time with them; K steps through these
 in the game; the top bar's Layer button and the View window list them;

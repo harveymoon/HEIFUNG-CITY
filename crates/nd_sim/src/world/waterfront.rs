@@ -74,8 +74,9 @@ impl World {
         } else {
             format!("The city built this {}; an operator runs it on its takings.", kind.label())
         });
-        b.business = Some(z);
         b.condition = b.condition.max(0.8);
+        // [ledger] The old operator's till wound up, the new one's float in.
+        self.replace_business(id, z);
         self.events.push(SimEvent::BuildingChanged(id));
     }
 
@@ -132,16 +133,13 @@ impl World {
             }
             moored.push((b, crate::ports::Moored { berths_let: owners.len().min(berths) as u16, superyachts: supers.get(&b).copied().unwrap_or(0) }));
             let mut fees = 0.0;
+            let to = self.business_account(b).unwrap_or(Account::Outside);
             for (h, fee) in owners {
-                if let Some(hh) = self.households.get_mut(h) {
-                    if hh.money > fee * 5.0 {
-                        hh.money -= fee;
-                        fees += fee;
-                    }
+                if self.households.get(h).is_some_and(|hh| hh.money > fee * 5.0) {
+                    fees += self.transfer(Account::Household(h), to, fee, Kind::Fees);
                 }
             }
             if let Some(z) = self.buildings.get_mut(b).and_then(|x| x.business.as_mut()) {
-                z.money += fees;
                 z.revenue_today += fees;
             }
             fees_total += fees;

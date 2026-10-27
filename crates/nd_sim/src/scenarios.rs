@@ -39,7 +39,10 @@ pub fn demo_district(world: &mut World) {
         world.add_road(&[Vec2::new(280.0, 0.0), Vec2::new(crate::landscape::MAP_EDGE, 0.0)], 1, 1);
     }
     // The demo has the money for its showpieces.
-    world.economy.treasury = world.economy.treasury.max(150_000.0);
+    let short = 150_000.0 - world.economy.treasury;
+    if short > 0.0 {
+        world.grant_treasury(short);
+    }
     // A freight yard and a station set down beside the branch; their
     // street sides land on the southern avenue, so both open at once.
     if world.facilities.is_empty() {

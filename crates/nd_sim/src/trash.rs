@@ -839,24 +839,19 @@ impl World {
             let hhs: Vec<HouseholdId> = b.households.clone();
             let jobs = b.workers.len() as f32;
             let mut paid = 0.0;
+            // [ledger] To the local company, else the hauler out of town.
+            let to = company.and_then(|c| self.business_account(c)).unwrap_or(crate::bank::Account::Outside);
             for h in hhs {
-                if let Some(hh) = self.households.get_mut(h) {
-                    if hh.money > fee_hh * 10.0 {
-                        hh.money -= fee_hh;
-                        paid += fee_hh;
-                    }
+                if self.households.get(h).is_some_and(|hh| hh.money > fee_hh * 10.0) {
+                    paid += self.transfer(crate::bank::Account::Household(h), to, fee_hh, crate::bank::Kind::Fees);
                 }
             }
             let job_fee = PRIVATE_FEE_JOB * jobs * fee_hh / PRIVATE_FEE_HOUSEHOLD;
-            if let Some(z) = self.buildings.get_mut(bid).and_then(|b| b.business.as_mut()) {
-                if z.money > job_fee {
-                    z.money -= job_fee;
-                    paid += job_fee;
-                }
+            if self.buildings.get(bid).and_then(|b| b.business.as_ref()).is_some_and(|z| z.money > job_fee) {
+                paid += self.transfer(crate::bank::Account::Business(bid), to, job_fee, crate::bank::Kind::Fees);
             }
             match company.and_then(|c| self.buildings.get_mut(c)).and_then(|b| b.business.as_mut()) {
                 Some(z) => {
-                    z.money += paid;
                     z.revenue_today += paid;
                 }
                 None => revenue += paid,

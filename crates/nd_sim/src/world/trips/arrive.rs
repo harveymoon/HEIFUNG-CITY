@@ -171,6 +171,8 @@ impl World {
             None
         };
         let c = &mut self.citizens[id];
+        // [ledger] A venue's cover, paid once the citizen is let go of below.
+        let mut covers: Vec<(BuildingId, f32)> = Vec::new();
         match (purpose, to) {
             (Purpose::ToStop, Some(_)) => {
                 if let Some(p) = platform {
@@ -233,8 +235,7 @@ impl World {
                     c.remember(tick, format!("Spent the evening at {name}."));
                     c.mood = (c.mood + 0.05).min(1.0);
                     if let (Some(cover), Some(bz)) = (cover, bld.business.as_mut()) {
-                        c.savings -= cover;
-                        bz.money += cover;
+                        covers.push((b, cover));
                         bz.revenue_today += cover;
                         // The kitchen feeds the hungry from its groceries.
                         if c.satiety < 0.7 && bz.take(Resource::Groceries, 0.5) > 0.0 {
@@ -261,6 +262,9 @@ impl World {
             }
         }
         c.next_decision_tick = tick + 30 + self.rng.random_range(0..90);
+        for (b, cover) in covers {
+            self.transfer(Account::Person(id), Account::Business(b), cover, Kind::Outings);
+        }
         // [places] A night out, an afternoon in the park: how was it?
         match (purpose, &self.citizens[id].activity) {
             (Purpose::Visit(_), Activity::Visiting(b)) | (Purpose::Sit, Activity::Sitting { park: b, .. }) => {
@@ -269,9 +273,8 @@ impl World {
                 // visitor walks the free parts), counted in its books.
                 if self.buildings.get(b).is_some_and(|x| x.service.is_some_and(|s| s.kind.is_landmark())) {
                     let purse = (self.citizens[id].savings - OVERDRAFT).max(0.0);
-                    let paid = self.admit_visitor(b, false, purse);
+                    self.admit_visitor(b, false, purse, Account::Person(id));
                     let c = &mut self.citizens[id];
-                    c.savings -= paid;
                     if let Some(name) = self.buildings.get(b).map(|x| x.name.clone()) {
                         c.remember(tick, format!("A day out at {name}."));
                     }

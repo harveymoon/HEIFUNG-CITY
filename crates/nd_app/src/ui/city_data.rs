@@ -68,7 +68,7 @@ impl Tab {
         use Page::*;
         match self {
             Tab::City => &[CityOverview, CityLand, CityDistricts, CitySkyline, CityTourism, CityParks],
-            Tab::Economy => &[EconomyOverview, EconomyCashFlow, EconomyLedger, EconomyTaxes, EconomyCorporations],
+            Tab::Economy => &[EconomyOverview, EconomyCashFlow, EconomyLedger, EconomyMoneyFlow, EconomyTaxes, EconomyCorporations],
             Tab::Market => &[MarketGoods, MarketBusinesses, MarketTrade],
             Tab::People => &[PeoplePopulation, PeopleInequality, PeopleConcerns, PeopleSocial, PeopleFavourites],
             Tab::Services => &[ServicesPower, ServicesTransit, ServicesEmergencies],
@@ -95,6 +95,8 @@ pub enum Page {
     EconomyOverview,
     EconomyCashFlow,
     EconomyLedger,
+    /// [ledger] Where rent, wages, profits and taxes go.
+    EconomyMoneyFlow,
     EconomyTaxes,
     /// [megacorp] Mega-corps, universities and the rules on them.
     EconomyCorporations,
@@ -130,6 +132,7 @@ impl Page {
             CityParks => "Parks",
             EconomyCashFlow => "Cash flow",
             EconomyLedger => "Ledger",
+            EconomyMoneyFlow => "Money flow",
             EconomyTaxes => "Taxes",
             EconomyCorporations => "Corporations",
             MarketGoods => "Goods and prices",
@@ -160,6 +163,7 @@ impl Page {
             CityParks => "parks",
             EconomyCashFlow => "cash_flow",
             EconomyLedger => "ledger",
+            EconomyMoneyFlow => "money_flow",
             EconomyTaxes => "taxes",
             EconomyCorporations => "corporations",
             MarketGoods => "goods",
@@ -191,6 +195,7 @@ impl Page {
             EconomyOverview => "The city's money",
             EconomyCashFlow => "Cash flow",
             EconomyLedger => "The ledger",
+            EconomyMoneyFlow => "Where the money goes",
             EconomyTaxes => "Taxes",
             EconomyCorporations => "Mega-corporations and universities",
             MarketGoods => "Goods and prices",
@@ -222,6 +227,7 @@ impl Page {
             EconomyOverview => "The treasury, where it is heading, and what the city's businesses want.",
             EconomyCashFlow => "Money in and out of the treasury day by day, by flow.",
             EconomyLedger => "Every line of the books, opened onto the buildings, lines and classes behind it.",
+            EconomyMoneyFlow => "Every dollar in town moves from one account to another: rent to owners, wages, profits, taxes and trade, and what crosses the city limits.",
             EconomyTaxes => "What each tax brings in, and the rates: set them here.",
             EconomyCorporations => "Mega-corps with their logos, HQs, holdings and market share; universities; the cap and the levy.",
             MarketGoods => "Every good's price against its base and the stock in town.",
@@ -256,6 +262,7 @@ impl Page {
                 let s = match s.as_str() {
                     "cashflow" | "flows" => "cash_flow",
                     "budget" | "tax" => "taxes",
+                    "money" | "sankey" | "flow" | "where_the_money_goes" => "money_flow",
                     "corps" | "corp" | "megacorps" | "mega_corps" | "universities" => "corporations",
                     "prices" | "goods_and_prices" => "goods",
                     "industry" => "businesses",
@@ -538,6 +545,7 @@ fn body_of(ui: &mut egui::Ui, p: &mut UiCtx, page: Page) {
         EconomyOverview => super::economy::overview(ui, p),
         EconomyCashFlow => super::economy::cash_flow(ui, p),
         EconomyLedger => super::economy::ledger(ui, p),
+        EconomyMoneyFlow => super::ledger::page(ui, p),
         EconomyTaxes => super::economy::taxes(ui, p),
         EconomyCorporations => super::estate::corporations_page(ui, p),
         MarketGoods => super::detail::market_goods(ui, p),
@@ -575,7 +583,7 @@ mod tests {
                 assert_eq!(Page::parse(None, t.key(), Some(p.key())), Ok(*p));
             }
         }
-        assert_eq!(seen.len(), 24, "[parks] City, Parks added");
+        assert_eq!(seen.len(), 25, "[parks] City, Parks added; [ledger] Economy, Money flow");
     }
 
     /// The old window names still find their pages.

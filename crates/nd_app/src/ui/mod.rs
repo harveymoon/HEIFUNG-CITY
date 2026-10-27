@@ -42,6 +42,8 @@ mod help;
 pub mod history;
 mod hover;
 mod inspector;
+/// [ledger] Accounts in the inspectors, Economy, Money flow.
+mod ledger;
 pub mod newgame;
 pub mod pane;
 pub mod people;

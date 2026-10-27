@@ -144,12 +144,9 @@ impl World {
         let tick = self.clock.tick;
         if let Some(f) = founder {
             let stake = (self.wealth_of(&self.citizens[f]) * 0.4).min(1500.0);
-            match self.citizens[f].household.and_then(|h| self.households.get_mut(h)) {
-                Some(h) => h.money -= stake,
-                None => self.citizens[f].savings -= stake,
-            }
-            if let Some(z) = self.buildings[company].business.as_mut() {
-                z.money += stake;
+            // [ledger] The founder's savings into the firm.
+            if self.business_account(company).is_some() {
+                self.transfer(self.purse_of(f), Account::Business(company), stake, Kind::Investment);
             }
             // [land] the founder's owner record (mirrored on the books)
             self.set_business_owner(company, f);
@@ -645,15 +642,14 @@ impl World {
     fn take_fare(&mut self, id: CabId, rider: CitizenId, metres: f32) {
         let fare = taxi::fare(metres);
         let company = self.taxis.cabs[id].company;
+        // [ledger] From the rider's purse to the firm.
+        let payer = if self.citizens.contains_key(rider) { self.purse_of(rider) } else { Account::Outside };
+        let to = self.business_account(company).unwrap_or(Account::Outside);
+        self.transfer(payer, to, fare, Kind::Fares);
         if let Some(c) = self.citizens.get_mut(rider) {
-            match c.household.and_then(|h| self.households.get_mut(h)) {
-                Some(h) => h.money -= fare,
-                None => c.savings -= fare,
-            }
             c.commute.fee += fare;
         }
         if let Some(z) = self.buildings.get_mut(company).and_then(|b| b.business.as_mut()) {
-            z.money += fare;
             z.revenue_today += fare;
             z.deals += 1;
         }
@@ -992,8 +988,8 @@ impl World {
                 let afford = ((money - 150.0) / taxi::CAB_PRICE).floor().max(0.0) as usize;
                 for _ in 0..want.min(afford).max(1) {
                     if let Some(z) = self.buildings[company].business.as_mut() {
-                        z.money -= taxi::CAB_PRICE;
                         z.spend_today += taxi::CAB_PRICE;
+                        self.transfer(Account::Business(company), Account::Outside, taxi::CAB_PRICE, Kind::Cars);
                     }
                     self.add_cab(company);
                     self.taxis.stats.cabs_bought_total += 1;
@@ -1001,8 +997,8 @@ impl World {
             } else if missed == 0 && fleet > taxi::START_CABS && (rides as f32) < fleet as f32 * 1.5 {
                 // The last idle cab in the yard (fleet order) goes; half its price comes back.
                 if let Some(id) = self.taxis.fleet(company).filter(|(_, c)| c.place == CabPlace::Yard && c.job == CabJob::Idle).map(|(id, _)| id).last() {
-                    if let Some(z) = self.buildings[company].business.as_mut() {
-                        z.money += taxi::CAB_PRICE * 0.5;
+                    if self.business_account(company).is_some() {
+                        self.transfer(Account::Outside, Account::Business(company), taxi::CAB_PRICE * 0.5, Kind::Cars);
                     }
                     self.sell_cab(id);
                 }

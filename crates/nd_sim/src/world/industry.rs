@@ -325,8 +325,9 @@ impl World {
                     if kind == BusinessKind::FleetLot {
                         fee += BAY_FEE_PER_HOUR * bz.fleet_trucks as f32;
                     }
-                    bz.money += fee;
                     bz.revenue_today += fee;
+                    // [ledger] Handling and bays, paid by hauliers from out of town.
+                    self.transfer(Account::Outside, Account::Business(id), fee, Kind::Fees);
                 }
                 _ => {}
             }

@@ -71,7 +71,18 @@ impl World {
     pub fn owned_with(&self, bid: BuildingId) -> Vec<BuildingId> {
         let mut out = vec![bid];
         if let Some((_, o)) = self.owner_of(bid) {
-            out.extend(o.properties.iter().copied().filter(|p| *p != bid && self.buildings.contains_key(*p)));
+            // [ledger] A resident's holdings sit on more than one record
+            // (their own, their household's, their property company's).
+            let person = match &o.kind {
+                OwnerKind::Person { citizen } | OwnerKind::Elite { citizen } => Some(*citizen),
+                OwnerKind::Company { founder } => Some(*founder),
+                OwnerKind::Household { household } => self.households.get(*household).and_then(|h| h.members.first().copied()),
+                _ => None,
+            };
+            match person.filter(|c| self.citizens.contains_key(*c)) {
+                Some(c) => out.extend(self.properties_of(c).into_iter().filter(|p| *p != bid)),
+                None => out.extend(o.properties.iter().copied().filter(|p| *p != bid && self.buildings.contains_key(*p))),
+            }
         }
         out
     }
@@ -109,7 +120,7 @@ impl World {
 
     pub(in crate::world) fn new_owner(&mut self, name: String, kind: OwnerKind) -> OwnerId {
         let day = self.clock.day();
-        self.estate.owners.insert(Owner { name, kind, properties: Vec::new(), spent: 0.0, since_day: day as u32, income_day: 0.0, earned: 0.0 })
+        self.estate.owners.insert(Owner { name, kind, properties: Vec::new(), spent: 0.0, since_day: day as u32, income_day: 0.0, earned: 0.0, money: 0.0, rent_today: 0.0, rent_yesterday: 0.0 })
     }
 
     /// `owner` buys `bid` (or takes it on as built): off its old owner's
@@ -141,29 +152,11 @@ impl World {
         let Some(o) = self.estate.owners.get_mut(oid) else { return };
         o.properties.retain(|p| *p != bid);
         o.earned += price;
-        let kind = o.kind.clone();
-        match kind {
-            OwnerKind::Person { citizen } | OwnerKind::Elite { citizen } => {
-                if let Some(c) = self.citizens.get_mut(citizen) {
-                    match c.household.and_then(|h| self.households.get_mut(h)) {
-                        Some(h) => h.money += price as f32,
-                        None => c.savings += price as f32,
-                    }
-                }
-            }
-            OwnerKind::Household { household } => {
-                if let Some(h) = self.households.get_mut(household) {
-                    h.money += price as f32;
-                }
-            }
-            OwnerKind::MegaCorp { .. } => {
-                if let Some(c) = self.corps.corps.iter_mut().find(|c| c.owner == oid) {
-                    c.cash += price;
-                }
-            }
-            // A firm, developer or university books it as earned.
-            _ => {}
-        }
+        // [ledger] Paid by the buyer, from out of town, into the seller's
+        // account: a resident's purse, a corp's cash, a firm's, developer's
+        // or company's own money, the university's funds.
+        let to = self.owner_account(oid);
+        self.transfer64(Account::Outside, to, price, Kind::PropertySale);
     }
 
     /// The owner record that is `cid`'s own: their billionaire record, a
@@ -203,7 +196,7 @@ impl World {
             .estate
             .owners
             .values()
-            .filter(|o| o.kind.citizen() == Some(cid) || hh.is_some_and(|h| o.kind == OwnerKind::Household { household: h }))
+            .filter(|o| o.kind.citizen() == Some(cid) || o.kind == OwnerKind::Company { founder: cid } || hh.is_some_and(|h| o.kind == OwnerKind::Household { household: h }))
             .flat_map(|o| o.properties.iter().copied())
             .filter(|b| self.buildings.contains_key(*b))
             .collect();

@@ -249,8 +249,7 @@ impl World {
             }
             car.owner
         };
-        self.charge(owner, FINE);
-        self.economy.credit(Flow::ParkingFines, FINE);
+        self.charge(owner, FINE, Account::Treasury, Kind::Flow(Flow::ParkingFines));
         let s = &mut self.enforcement.stats;
         s.tickets_today += 1;
         s.tickets_total += 1;
@@ -263,13 +262,11 @@ impl World {
         }
     }
 
-    /// Money out of a citizen's household purse (their pocket without one).
-    fn charge(&mut self, id: CitizenId, amount: f32) {
-        let Some(c) = self.citizens.get_mut(id) else { return };
-        match c.household.and_then(|h| self.households.get_mut(h)) {
-            Some(h) => h.money -= amount,
-            None => c.savings -= amount,
-        }
+    /// Money out of a citizen's household purse (their pocket without one),
+    /// to `to` [ledger] (a gone citizen's bill is paid by nobody in town).
+    fn charge(&mut self, id: CitizenId, amount: f32, to: Account, kind: Kind) {
+        let from = if self.citizens.contains_key(id) { self.purse_of(id) } else { Account::Outside };
+        self.transfer(from, to, amount, kind);
     }
 
     // ── towing ─────────────────────────────────────────────────────────────
@@ -669,9 +666,9 @@ impl World {
     pub(super) fn pay_release(&mut self, owner: CitizenId, spot: ParkSpot) {
         let tick = self.clock.tick;
         let fee = self.release_fee(&spot);
-        self.charge(owner, fee);
+        let to = spot.building.and_then(|b| self.business_account(b)).unwrap_or(Account::Outside);
+        self.charge(owner, fee, to, Kind::Fees);
         if let Some(bz) = spot.building.and_then(|b| self.buildings.get_mut(b)).and_then(|b| b.business.as_mut()) {
-            bz.money += fee;
             bz.revenue_today += fee;
             bz.deals += 1;
         }
@@ -758,8 +755,9 @@ impl World {
         let Some(spot) = car.spot().copied() else { return };
         let (owner, price) = (car.owner, car.model.price() * 0.3);
         if let Some(bz) = spot.building.and_then(|b| self.buildings.get_mut(b)).and_then(|b| b.business.as_mut()) {
-            bz.money += price;
             bz.revenue_today += price;
+            // [ledger] The buyer is out of town.
+            self.transfer(Account::Outside, Account::Business(spot.building.unwrap()), price, Kind::Cars);
         }
         if let Some(c) = self.citizens.get_mut(owner).filter(|c| c.car == Some(vid)) {
             c.car = None;
@@ -919,8 +917,7 @@ impl World {
             if purse < CLAMP_FINE || crate::pedestrians::hash01(key, tick / 60, 0xC1A3) >= CLAMP_PAY_CHANCE {
                 continue;
             }
-            self.charge(owner, CLAMP_FINE);
-            self.economy.credit(Flow::ParkingFines, CLAMP_FINE);
+            self.charge(owner, CLAMP_FINE, Account::Treasury, Kind::Flow(Flow::ParkingFines));
             if let Some(CarPlace::Parked(s)) = self.vehicles.cars.get_mut(vid).map(|c| &mut c.place) {
                 s.booted = false;
                 // A fresh start at the kerb: the ticket is settled.

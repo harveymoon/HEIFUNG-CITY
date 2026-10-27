@@ -13,6 +13,8 @@ impl World {
         crate::prof!("refresh_closed_grounds", self.refresh_closed_grounds());
         self.clock.advance();
         let tick = self.clock.tick;
+        // [ledger] Every move this tick is stamped with it.
+        self.economy.bank.now = tick;
         if self.clock.minute_of_day() == 0 {
             self.daily();
         }
@@ -114,6 +116,10 @@ impl World {
             if c.inside.is_some() || matches!(c.activity, Activity::Sitting { .. } | Activity::Waiting { .. }) {
                 c.mark_stop();
             }
+        }
+        // [ledger] The debug check: every account against its mirror.
+        if self.economy.bank.check {
+            self.check_ledger_tick();
         }
     }
 

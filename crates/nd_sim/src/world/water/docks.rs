@@ -265,8 +265,8 @@ impl World {
     /// when ordering, and off the day's import bill.
     pub(in crate::world) fn refund_import(&mut self, buyer: BuildingId, refund: f32) {
         if let Some(bz) = self.buildings.get_mut(buyer).and_then(|b| b.business.as_mut()) {
-            bz.money += refund;
             bz.spend_today -= refund;
+            self.transfer(Account::Outside, Account::Business(buyer), refund, Kind::Imports);
         }
         self.economy.market.imports_today -= refund;
     }

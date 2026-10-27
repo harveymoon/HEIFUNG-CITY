@@ -275,11 +275,11 @@ impl World {
             return;
         }
         let cost = price * got / amount;
-        bz.money += cost;
         bz.revenue_today += cost;
         self.economy.market.deals_today += 1;
+        // [ledger] Paid from the household's purse to the shop.
+        self.transfer(crate::bank::Account::Household(hh), crate::bank::Account::Business(shop), cost, crate::bank::Kind::Shopping);
         let Some(h) = self.households.get_mut(hh) else { return };
-        h.money -= cost;
         if matches!(resource, Resource::Groceries | Resource::BakedGoods) {
             h.groceries += got;
             self.economy.market.meals_sold_today += got as u32;

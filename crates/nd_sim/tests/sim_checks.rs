@@ -92,3 +92,46 @@ fn demo_homes_know_how_far_the_park_and_nightlife_are() {
     let mean = access.iter().map(|a| a.value).sum::<f32>() / access.len() as f32;
     println!("homes {}: park {:.1}..{:.1} min, value mean {mean:+.3}", access.len(), parks.iter().cloned().fold(f32::MAX, f32::min), worst);
 }
+
+/// [ledger] Money is neither made nor lost: the demo district runs eight
+/// days with every account checked against its money field after every
+/// tick (the debug check, `World::reconcile_ledger`), and the sum of every
+/// balance plus the outside world stays exactly zero in ledger units. No
+/// money moves outside the door (`Kind::Untracked` stays zero), rent
+/// reaches the owners and the day's totals close into the history. Then a
+/// save and load keep the books: the balances come back from their fields
+/// and the sum is still zero.
+#[test]
+fn the_ledger_balances_to_the_unit_and_nothing_moves_outside_the_door() {
+    use nd_sim::bank::{Account, Kind};
+    let mut w = common::demo_world();
+    let mut minds = RuleBasedMind::default();
+    let base_untracked = (w.economy.bank.untracked_units, w.economy.bank.untracked_moves);
+    let mut worst: Option<String> = None;
+    for _ in 0..1440 * 8 {
+        w.tick(&mut minds);
+        if w.reconcile_ledger() > 0 && worst.is_none() {
+            let d = w.economy.bank.drifts.back().unwrap();
+            worst = Some(format!("tick {}: {} drifted {:+.4} after {:?}", w.clock.tick, d.account, d.dollars, d.last_kind));
+        }
+        assert_eq!(w.ledger_sum(), 0, "tick {}: the balances no longer sum to zero", w.clock.tick);
+    }
+    assert!(worst.is_none(), "money moved outside the door: {}", worst.unwrap());
+    assert_eq!((w.economy.bank.untracked_units, w.economy.bank.untracked_moves), base_untracked);
+    let bank = &w.economy.bank;
+    assert!(bank.history.len() >= 7, "a closed day a day: {}", bank.history.len());
+    let day = bank.yesterday().unwrap();
+    assert!(day.of(Kind::Rent) > 0.0, "rent was paid");
+    assert!(day.cells.iter().any(|c| c.kind == Kind::Rent && c.to != nd_sim::bank::Class::Outside), "and reached an owner in town");
+    // The treasury's own row is the same money the Economy window shows.
+    let city: f64 = day.cells.iter().filter(|c| matches!(c.kind, Kind::Flow(_))).map(|c| if c.to == nd_sim::bank::Class::City { c.dollars() } else { -c.dollars() }).sum();
+    let old: f32 = w.economy.ledger.yesterday.iter().sum();
+    assert!((city - old as f64).abs() < 1.0 + old.abs() as f64 * 1e-4, "ledger {city} vs the treasury's rows {old}");
+    assert_eq!(bank.balance(Account::Treasury) as f32, w.economy.treasury, "the treasury mirrors its account");
+    // Through a save.
+    let text = w.to_ron().unwrap();
+    let back = World::from_ron(&text).unwrap();
+    assert_eq!(back.ledger_sum(), 0);
+    assert_eq!(back.economy.bank.history, w.economy.bank.history, "the day totals are saved");
+    assert_eq!(back.economy.bank.balance(Account::Landlords), w.economy.bank.balance(Account::Landlords), "the landlords' pool is saved");
+}

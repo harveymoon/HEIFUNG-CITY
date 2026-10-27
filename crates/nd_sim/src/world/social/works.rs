@@ -226,20 +226,23 @@ impl World {
         let stake = (pot * 0.4).min(2500.0);
         let shares: Vec<(CitizenId, f32)> = members.iter().filter_map(|m| self.citizens.get(*m).map(|c| (*m, stake * wealth(c) / pot.max(1.0)))).collect();
         let Some(bid) = self.build_on_as(lot, Some(kind)) else { return false };
+        // [ledger] Each share into the new business: from the pocket, the
+        // rest from the household's purse (nothing more without one).
+        let to = self.business_account(bid).unwrap_or(Account::Outside);
+        let mut pooled = 0.0;
         for (m, share) in shares {
-            let m = &m;
-            let from_pocket = share.min(self.citizens[*m].savings.max(0.0));
-            self.citizens[*m].savings -= from_pocket;
-            let rest = share - from_pocket;
-            if let Some(h) = self.citizens[*m].household.and_then(|h| self.households.get_mut(h)) {
-                h.money -= rest;
+            let from_pocket = share.min(self.citizens[m].savings.max(0.0));
+            pooled += self.transfer(Account::Person(m), to, from_pocket, Kind::Investment);
+            if let Some(h) = self.citizens[m].household.filter(|h| self.households.contains_key(*h)) {
+                pooled += self.transfer(Account::Household(h), to, share - from_pocket, Kind::Investment);
             }
         }
+        // What a member without a household could not put in, the bank lends.
+        self.transfer(Account::Outside, to, stake - pooled, Kind::Investment);
         let bname = format!("{name}");
         if let Some(b) = self.buildings.get_mut(bid) {
             b.name = bname.clone();
             if let Some(z) = b.business.as_mut() {
-                z.money += stake;
                 let fname = self.citizens.get(founder).map(|c| c.name.clone()).unwrap_or_default();
                 z.origin = Some(format!("Founded by {fname} and friends ({} people pooling ${stake:.0}).", members.len()));
             }

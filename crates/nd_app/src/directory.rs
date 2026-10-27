@@ -363,6 +363,7 @@ pub fn owner_kind_label(k: &OwnerKind) -> &'static str {
         OwnerKind::Person { .. } => "person",
         OwnerKind::MegaCorp { .. } => "mega-corp",
         OwnerKind::University { .. } => "university",
+        OwnerKind::Company { .. } => "property company",
     }
 }
 

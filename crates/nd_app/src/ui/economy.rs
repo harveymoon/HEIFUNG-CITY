@@ -49,6 +49,7 @@ pub fn flow_color(f: Flow) -> Color32 {
         Flow::Gifts => Color32::from_rgb(255, 210, 90),
         Flow::RoadMaintenance => Color32::from_rgb(160, 130, 100),
         Flow::Fines => Color32::from_rgb(220, 150, 255),
+        Flow::PropertyTax => Color32::from_rgb(100, 200, 120),
     }
 }
 
@@ -79,6 +80,7 @@ fn flow_note(f: Flow) -> &'static str {
         Flow::Gifts => "Money the city gave residents' households (the person pane's and favourites' \"gift $1000\"), by who got it.",
         Flow::RoadMaintenance => "Road crews resurfacing worn streets, up to the day's allowance (the funding level in City Data, Economy, Taxes, times what the network needs); the crews go to dear land first.",
         Flow::Fines => "Fines from busted street races and shut-down raves.",
+        Flow::PropertyTax => "10% of every rent collected, paid by the building's owner (a resident, a company, a developer, the independent landlords), by building. Economy, Money flow shows where the rest of the rent goes.",
     }
 }
 

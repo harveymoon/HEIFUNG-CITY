@@ -175,16 +175,13 @@ impl World {
 
     /// Students pay their tuition from their pocket, when there is some.
     pub(super) fn tuition(&mut self, ki: usize) {
-        let mut got = 0.0f64;
+        let owner = self.corps.campuses[ki].owner;
         for s in self.corps.campuses[ki].students.clone() {
-            if let Some(c) = self.citizens.get_mut(s) {
-                if c.savings >= TUITION {
-                    c.savings -= TUITION;
-                    got += TUITION as f64;
-                }
+            if self.citizens.get(s).is_some_and(|c| c.savings >= TUITION) {
+                // [ledger] To the university's funds.
+                self.transfer(Account::Person(s), Account::Owner(owner), TUITION, Kind::Tuition);
             }
         }
-        self.corps.campuses[ki].funds += got;
     }
 
     /// Free dorm rooms and room in the intake: students arrive from out of
@@ -237,12 +234,14 @@ impl World {
             }
             let Some(&dorm) = free.first() else { break };
             let from_home = (self.households[old].money * 0.1).clamp(0.0, 150.0);
-            self.households[old].money -= from_home;
             self.households[old].members.retain(|m| *m != cid);
             if let Some(b) = self.citizens[cid].home.and_then(|h| self.buildings.get_mut(h)) {
                 b.residents.retain(|r| *r != cid);
             }
-            let hid = self.households.insert(Household { members: vec![cid], home: Some(dorm), money: from_home + 40.0, groceries: 1.0, rent_stress_days: 0, moved_day: day });
+            // [ledger] The new household opens with $40 brought from
+            // outside, then the family's send-off moves across.
+            let hid = self.households.insert(Household { members: vec![cid], home: Some(dorm), money: 40.0, groceries: 1.0, rent_stress_days: 0, moved_day: day });
+            self.transfer(Account::Household(old), Account::Household(hid), from_home, Kind::Gifts);
             let name = self.buildings[dorm].name.clone();
             {
                 let c = &mut self.citizens[cid];
@@ -374,7 +373,9 @@ impl World {
                 b.annex = Some(Annex::Dorm);
                 b.name = Annex::Dorm.name(&name, n);
                 self.corps.campuses[ki].annexes.push((bid, Annex::Dorm));
-                self.corps.campuses[ki].funds -= (price * 0.01).min(self.corps.campuses[ki].funds.max(0.0));
+                let fee = (price * 0.01).min(self.corps.campuses[ki].funds.max(0.0));
+                let owner = self.corps.campuses[ki].owner;
+                self.transfer64(Account::Owner(owner), Account::Outside, fee, Kind::PropertySale);
                 self.corps.campuses[ki].expansions_total += 1;
                 self.corps.stats.campus_expansions_total += 1;
                 self.events.push(SimEvent::BuildingChanged(bid));

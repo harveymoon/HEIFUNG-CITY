@@ -439,22 +439,25 @@ impl World {
             let bld = &self.buildings[b];
             (bld.parking_price, bld.name.clone())
         };
+        // [ledger] From the driver's pocket.
+        let payer = if self.citizens.contains_key(driver) { Account::Person(driver) } else { Account::Outside };
         if self.vehicles.city_lots.contains_key(&b) {
             // [parking] A lot the city runs: the fee goes to the treasury.
-            self.economy.credit_item(Flow::ParkingFees, fee, Item::Building(b));
+            self.pay_city(payer, Flow::ParkingFees, fee, Some(Item::Building(b)));
             self.enforcement.stats.city_lot_fees_today += fee;
             if let Some(bz) = self.buildings[b].business.as_mut() {
                 bz.deals += 1;
             }
         } else if let Some(bz) = self.buildings[b].business.as_mut() {
-            bz.money += fee;
             bz.revenue_today += fee;
             bz.deals += 1;
+            self.transfer(payer, Account::Business(b), fee, Kind::Fees);
+        } else {
+            self.transfer(payer, Account::Outside, fee, Kind::Fees);
         }
         self.economy.parking_fees_today += fee;
         let roll = self.rng.random_bool(0.05);
         if let Some(c) = self.citizens.get_mut(driver) {
-            c.savings -= fee;
             c.commute.fee += fee;
             if roll {
                 c.remember(tick, format!("Paid {fee:.0} to park at {name}."));

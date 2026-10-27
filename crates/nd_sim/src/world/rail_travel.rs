@@ -161,7 +161,7 @@ impl World {
         }
         let tick = self.clock.tick;
         let fare = 2.0 * rail::RAIL_FARE;
-        self.economy.credit_item(Flow::RailFares, fare, Item::Building(b));
+        self.pay_city(Account::Person(id), Flow::RailFares, fare, Some(Item::Building(b)));
         let s = &mut self.rail.stats;
         s.riders_today += 1;
         s.fares_today += fare;
@@ -171,7 +171,6 @@ impl World {
         let mut rng = crate::rng_for(self.citizens[id].seed ^ tick, SALT ^ 0xB0A7);
         let back = tick - tick % 1440 + 17 * 60 + rng.random_range(0..150u64);
         let c = &mut self.citizens[id];
-        c.savings -= fare;
         c.inside = None;
         c.activity = Activity::Abroad { terminal: b, town: trip.town, until: back.max(tick + 180) };
         c.thought = format!("On the train to {name}.");

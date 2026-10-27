@@ -350,10 +350,10 @@ impl World {
             }
             let each = bill / list.len() as f32;
             for h in list {
-                if let Some(hh) = self.households.get_mut(h) {
-                    if hh.money > each * 5.0 {
-                        hh.money -= each;
-                    }
+                if self.households.get(h).is_some_and(|hh| hh.money > each * 5.0) {
+                    // [ledger] The shops were paid as they worked (from
+                    // outside); the bill settles it.
+                    self.transfer(Account::Household(h), Account::Outside, each, Kind::Fees);
                 }
             }
         }
@@ -379,13 +379,13 @@ impl World {
             .collect();
         for (h, at) in rich {
             let Some(&(d, _)) = dealers.iter().filter(|(_, p)| p.distance(at) <= super::cars::CAR_DEALER_REACH).min_by(|a, b| a.1.distance(at).total_cmp(&b.1.distance(at)).then(a.0.cmp(&b.0))) else { continue };
-            let Some(hh) = self.households.get_mut(h) else { continue };
+            let Some(hh) = self.households.get(h) else { continue };
             if hh.money < DEALER_LEASE * 20.0 {
                 continue;
             }
-            hh.money -= DEALER_LEASE;
+            let to = self.business_account(d).unwrap_or(Account::Outside);
+            self.transfer(Account::Household(h), to, DEALER_LEASE, Kind::Cars);
             if let Some(z) = self.buildings.get_mut(d).and_then(|b| b.business.as_mut()) {
-                z.money += DEALER_LEASE;
                 z.revenue_today += DEALER_LEASE;
             }
         }
@@ -646,9 +646,9 @@ impl World {
                 let jobs = done * c / cap;
                 let pay = jobs * fee;
                 if let Some(z) = self.buildings[id].business.as_mut() {
-                    z.money += pay;
                     z.revenue_today += pay;
                     z.deals += (jobs + 0.5) as u32;
+                    self.transfer(Account::Outside, Account::Business(id), pay, Kind::Fees);
                 }
                 if kind == BusinessKind::Mechanic {
                     self.pressure.car_bill_today += pay;
@@ -779,16 +779,13 @@ impl World {
             let price = Resource::Art.base_price() * 2.5;
             let has_art = self.buildings[g].business.as_ref().is_some_and(|z| z.stock_of(Resource::Art) >= 1.0);
             if has_art && savings > price * 3.0 && roll < if opening { 12 } else { 3 } {
-                match hh {
-                    Some(h) => self.households[h].money -= price,
-                    None => self.citizens[cid].savings -= price,
-                }
+                let payer = hh.map_or(Account::Person(cid), Account::Household);
+                self.transfer(payer, Account::Business(g), price, Kind::Shopping);
                 let c = &mut self.citizens[cid];
                 let name = self.buildings[g].name.clone();
                 c.remember(tick, format!("Bought a painting at {name}."));
                 let z = self.buildings[g].business.as_mut().unwrap();
                 z.take(Resource::Art, 1.0);
-                z.money += price;
                 z.revenue_today += price;
                 z.deals += 1;
                 self.scene.art_sold_total += 1;
@@ -799,15 +796,12 @@ impl World {
                 // Enjoyed it: a gift towards the next show.
                 let gift = (savings * 0.04).clamp(0.0, pressure::MAX_DONATION);
                 if gift >= 5.0 {
-                    match hh {
-                        Some(h) => self.households[h].money -= gift,
-                        None => self.citizens[cid].savings -= gift,
-                    }
+                    let payer = hh.map_or(Account::Person(cid), Account::Household);
+                    self.transfer(payer, Account::Business(g), gift, Kind::Gifts);
                     let c = &mut self.citizens[cid];
                     let name = self.buildings[g].name.clone();
                     c.remember(tick, format!("Loved the opening at {name}. Gave {gift:.0} towards the next show."));
                     let z = self.buildings[g].business.as_mut().unwrap();
-                    z.money += gift;
                     z.revenue_today += gift;
                     z.donations += gift;
                     self.scene.donations_total += gift;

@@ -445,6 +445,13 @@ fn an_investor_is_paid_rent_and_a_share_of_profit() {
     let rent: f32 = w.households.iter().filter(|(_, h)| h.home == Some(block)).map(|(id, _)| w.rent_due(id, block)).sum();
     assert!(rent > 0.0);
     let before = w.households[hid].money;
+    // [ledger] The tenants pay their rent to the owner as they pay it (at
+    // their midnight); the owner keeps it less upkeep, tax and the bank.
+    let tenants: Vec<crate::citizens::HouseholdId> = w.households.iter().filter(|(_, h)| h.home == Some(block)).map(|(id, _)| id).collect();
+    for t in tenants {
+        let due = w.rent_due(t, block);
+        w.collect_rent(crate::bank::Account::Household(t), block, due, crate::bank::Kind::Rent);
+    }
     w.pay_investors();
     let expect = 300.0 * super::rich::INVEST_PROFIT_SHARE + rent * super::rich::INVEST_RENT_NET;
     let got = w.households[hid].money - before;

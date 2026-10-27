@@ -114,12 +114,12 @@ impl World {
         })
     }
 
-    pub(super) fn add_to_loan_purse(&mut self, id: CitizenId, amount: f32) {
-        let Some(c) = self.citizens.get_mut(id) else { return };
-        match c.household.and_then(|h| self.households.get_mut(h)) {
-            Some(h) => h.money += amount,
-            None => c.savings += amount,
+    /// [ledger] A loan (or its paying back) from `from`'s purse to `to`'s.
+    pub(super) fn lend_between(&mut self, from: CitizenId, to: CitizenId, amount: f32) {
+        if !self.citizens.contains_key(from) || !self.citizens.contains_key(to) {
+            return;
         }
+        self.transfer(self.purse_of(from), self.purse_of(to), amount, Kind::Gifts);
     }
 
     /// The broke borrow from friends who trust them; debts are paid back
@@ -149,8 +149,7 @@ impl World {
                 .max_by(|a, b| a.1.total_cmp(&b.1).then(b.0.cmp(&a.0)))
                 .map(|x| x.0);
             let Some(l) = lender else { continue };
-            self.add_to_loan_purse(l, -need);
-            self.add_to_loan_purse(id, need);
+            self.lend_between(l, id, need);
             if let Some(t) = self.social.circles.get_mut(&l).and_then(|c| c.tie_mut(id)) {
                 t.lent += need;
             }
@@ -164,8 +163,7 @@ impl World {
         for (l, b, owed, _) in debts {
             let Some((_, money)) = self.loan_purse(b) else { continue };
             if money > owed + 60.0 {
-                self.add_to_loan_purse(b, -owed);
-                self.add_to_loan_purse(l, owed);
+                self.lend_between(b, l, owed);
                 if let Some(t) = self.social.circles.get_mut(&l).and_then(|c| c.tie_mut(b)) {
                     t.lent = 0.0;
                     t.trust = (t.trust + 0.1).min(1.0);
@@ -240,10 +238,11 @@ impl World {
         if let Some(b) = old_home.and_then(|h| self.buildings.get_mut(h)) {
             b.residents.retain(|x| *x != cid);
         }
+        // [ledger] The purse comes along.
+        self.transfer(Account::Household(old), Account::Household(into), money, Kind::Gifts);
         self.remove_household(old);
         let h = &mut self.households[into];
         h.members.push(cid);
-        h.money += money;
         h.groceries += groceries;
         self.buildings[new_home].residents.push(cid);
         let c = &mut self.citizens[cid];

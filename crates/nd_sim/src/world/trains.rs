@@ -857,10 +857,8 @@ impl World {
             .collect();
         self.waiting_cache = Some((tick, waiting));
         for &p in &boarding {
-            let c = &mut self.citizens[p];
-            c.savings -= fare;
-            c.remember(tick, memory.to_string());
-            self.economy.credit_item(flow, fare, item.clone());
+            self.pay_city(Account::Person(p), flow, fare, Some(item.clone()));
+            self.citizens[p].remember(tick, memory.to_string());
         }
         boarding
     }

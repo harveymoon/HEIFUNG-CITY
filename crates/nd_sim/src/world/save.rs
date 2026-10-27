@@ -223,6 +223,9 @@ impl World {
         self.mark_shore_lots();
         self.plan_changed();
         self.events.push(SimEvent::PlanChanged);
+        // [ledger] Every balance into its account (an older save's money
+        // fields become the opening balances).
+        self.open_ledger();
     }
 
     /// Drop every reference to something that is not there: a hand-edited

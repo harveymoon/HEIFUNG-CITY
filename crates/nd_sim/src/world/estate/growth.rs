@@ -180,7 +180,7 @@ impl World {
         if had_business || lu == LandUse::Commercial {
             let jobs = self.buildings[bid].planned_capacity().1;
             let kind = self.pick_business_kind(lu, jobs);
-            self.buildings[bid].business = kind.map(|k| Business::new(k, jobs));
+            self.set_business(bid, kind.map(|k| Business::new(k, jobs)));
         }
         self.give_to(bid, dev, price);
         let s = &mut self.estate.stats;
@@ -307,7 +307,7 @@ impl World {
             // opens as what the market wants now.
             let jobs = self.buildings[bid].planned_capacity().1;
             let kind = self.pick_business_kind(lu, jobs);
-            self.buildings[bid].business = kind.map(|k| Business::new(k, jobs));
+            self.set_business(bid, kind.map(|k| Business::new(k, jobs)));
             self.fit_business_name(bid);
         }
         self.give_to(bid, dev, price);
@@ -403,8 +403,9 @@ impl World {
         if !taxi {
             self.buildings[branch].name = name;
         }
-        if let Some(z) = self.buildings.get_mut(bid).and_then(|b| b.business.as_mut()) {
-            z.money -= 1500.0;
+        // [ledger] The fit-out, paid by the firm's first business.
+        if self.business_account(bid).is_some() {
+            self.transfer(Account::Business(bid), Account::Outside, 1500.0, Kind::Building);
         }
         self.give_to(branch, owner, 1500.0);
         self.estate.stats.branches_total += 1;
@@ -465,8 +466,9 @@ impl World {
                 o.spent += price;
             }
         }
-        if let Some(z) = self.buildings.get_mut(bid).and_then(|b| b.business.as_mut()) {
-            z.money -= (price as f32 * 0.01).min(z.money.max(0.0));
+        if let Some(z) = self.buildings.get(bid).and_then(|b| b.business.as_ref()) {
+            let fee = (price as f32 * 0.01).min(z.money.max(0.0));
+            self.transfer(Account::Business(bid), Account::Outside, fee, Kind::PropertySale);
         }
         self.estate.stats.merges_total += 1;
         true

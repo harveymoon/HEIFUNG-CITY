@@ -249,16 +249,18 @@ fn repeated_pain_changes_how_a_citizen_travels() {
     assert_ne!(after, TripMode::Car, "after the misery, something else: {:?}", w.mode_options(c, &q));
     // Habits follow: with a bike to fall back on, the car is sold.
     let gone0 = w.vehicles.stats.destroyed_total;
-    let mut money = 0.0;
+    // [ledger] The wheels are paid from the household's purse.
+    let hid = w.citizens[c].household.expect("a household");
+    w.households[hid].money = 0.0;
     w.citizens[c].owns_bike = true;
     for day in 0..40 {
-        w.wheels(c, &mut money, day);
+        w.wheels(c, hid, day);
         if w.citizens[c].car.is_none() {
             break;
         }
     }
     assert!(w.citizens[c].car.is_none(), "sold the car");
-    assert!(money > 0.0, "and got money for it");
+    assert!(w.households[hid].money > 0.0, "and got money for it");
     assert!(w.citizens[c].memories.iter().any(|m| m.text.contains("Sold the car")), "and remembers why");
     // [carlife] It is the dealer's now, still parked where it was until
     // the dealer's driver comes for it in working hours.
@@ -321,7 +323,7 @@ fn a_mornings_car_sales_are_fetched_through_the_day_not_all_at_once() {
         let c = resident(&mut w);
         let home = w.citizens[c].home.unwrap();
         let vid = w.give_car_parked(c, w.building_entrance(home).unwrap());
-        assert!(w.sell_car(c, "Sold the car.").is_some());
+        assert!(w.sell_car(c, "Sold the car.", f32::MAX).is_some());
         sold.push(vid);
     }
     // Fetched over the working day: never more than a few set off in an hour.
@@ -372,7 +374,7 @@ fn a_buyer_takes_a_used_car_off_the_forecourt() {
     let a = resident(&mut w);
     let home = w.citizens[a].home.unwrap();
     let vid = w.give_car_parked(a, w.building_entrance(home).unwrap());
-    w.sell_car(a, "Sold the car.");
+    w.sell_car(a, "Sold the car.", f32::MAX);
     for _ in 0..(2 * 1440) {
         run(&mut w, 1);
         if w.vehicles.cars[vid].spot().is_some_and(|s| s.kind == ParkKind::Dealer) {
@@ -399,15 +401,16 @@ fn long_walks_buy_a_bike_at_a_shop() {
         w.citizens[c].commute.feel(TripMode::Walk, 2.5);
     }
     let money0 = w.buildings[shop].business.as_ref().map_or(0.0, |b| b.money);
-    let mut money = 300.0;
+    let hid = w.citizens[c].household.expect("a household");
+    w.households[hid].money = 300.0;
     for day in 0..30 {
-        w.wheels(c, &mut money, day);
+        w.wheels(c, hid, day);
         if w.citizens[c].owns_bike {
             break;
         }
     }
     assert!(w.citizens[c].owns_bike, "bought a bike");
-    assert!(money < 300.0, "and paid for it");
+    assert!(w.households[hid].money < 300.0, "and paid for it");
     assert!(w.citizens[c].memories.iter().any(|m| m.text.contains("Tired of the long walks")), "{:?}", w.citizens[c].memories.iter().map(|m| &m.text).collect::<Vec<_>>());
     assert!(w.buildings[shop].business.as_ref().map_or(0.0, |b| b.money) >= money0, "at the shop");
     assert!(w.vehicles.stats.bikes_bought_today >= 1);
@@ -420,15 +423,16 @@ fn transit_that_fails_buys_a_car_that_is_delivered_home() {
     for _ in 0..4 {
         w.transit_failed(c);
     }
-    let mut money = 2000.0;
+    let hid = w.citizens[c].household.expect("a household");
+    w.households[hid].money = 2000.0;
     for day in 0..30 {
-        w.wheels(c, &mut money, day);
+        w.wheels(c, hid, day);
         if w.citizens[c].car.is_some() {
             break;
         }
     }
     let vid = w.citizens[c].car.expect("bought a car");
-    assert!(money < 2000.0);
+    assert!(w.households[hid].money < 2000.0);
     assert_eq!(w.vehicles.stats.events_total.get("bought").copied().unwrap_or(0) + w.vehicles.stats.events_total.get("bought_out_of_town").copied().unwrap_or(0), 1);
     // It is on its way from the dealer (or the map edge), not at the door.
     match w.vehicles.cars[vid].place {

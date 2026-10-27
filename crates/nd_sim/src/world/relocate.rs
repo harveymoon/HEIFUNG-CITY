@@ -138,7 +138,6 @@ impl World {
         let old = if m.from_words.is_empty() { "its old place".to_string() } else { m.from_words.clone() };
         let from_words = format!("{old}, {:.0} m away, after {}", to.distance(m.from), m.why);
         let mut z = m.business.clone();
-        z.money -= cost;
         z.broke_days = 0;
         z.closed = false;
         // Orders on the way went to the old address; lorries parked there
@@ -150,7 +149,10 @@ impl World {
         z.origin = Some(format!("Moved here after losing its old building to {}.", m.why));
         z.rehire = m.staff.clone();
         let owner_cid = z.owner;
-        self.buildings[new].business = Some(z);
+        // [ledger] The till moves with it (it left with the old building
+        // and comes back here), and the move is paid from it.
+        self.replace_business(new, z);
+        self.transfer(Account::Business(new), Account::Outside, cost, Kind::Building);
         match m.owner.filter(|o| self.estate.owners.contains_key(*o)) {
             Some(o) => self.give_to(new, o, 0.0),
             None => {

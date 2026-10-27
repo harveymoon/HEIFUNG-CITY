@@ -75,6 +75,8 @@ mod history;
 mod identity;
 mod junction;
 mod land;
+/// [ledger] The city's money as accounts: `ledger`.
+pub(crate) mod ledger;
 mod list;
 mod map;
 /// [events] street races, raves, road condition

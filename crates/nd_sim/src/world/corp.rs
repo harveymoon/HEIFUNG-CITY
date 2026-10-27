@@ -432,30 +432,28 @@ impl World {
     pub(super) fn corp_books(&mut self, ci: usize) {
         let owner = self.corps.corps[ci].owner;
         let props = self.estate.owners.get(owner).map(|o| o.properties.clone()).unwrap_or_default();
-        let (mut skim, mut gross) = (0.0f64, 0.0f32);
+        let mut gross = 0.0f32;
         for p in props {
-            let Some(z) = self.buildings.get_mut(p).and_then(|b| b.business.as_mut()) else { continue };
+            let Some(z) = self.buildings.get(p).and_then(|b| b.business.as_ref()) else { continue };
             let Some(d) = z.books.last().copied() else { continue };
             gross += d.revenue.max(0.0);
             let profit = d.revenue - d.spend;
             if profit > 0.0 {
                 let take = (profit * SKIM).min((z.money - SKIM_FLOOR).max(0.0));
-                z.money -= take;
-                skim += take as f64;
+                // [ledger] Up from the holding's till into the corp's cash.
+                self.transfer(Account::Business(p), Account::Owner(owner), take, Kind::Dividend);
             }
         }
         let levy = (gross * self.corps.rules.levy.clamp(0.0, MAX_LEVY)) as f64;
         let c = &mut self.corps.corps[ci];
         c.revenue_yesterday = gross;
-        c.cash += skim;
         if levy > 0.0 {
             // [review] `cash` already holds the skim: adding it again let the
             // levy drive the corp into debt.
             let paid = levy.min(c.cash.max(0.0));
-            c.cash -= paid;
             c.levy_total += paid;
             let name = c.brand.name.clone();
-            self.economy.credit_item(Flow::BusinessTax, paid as f32, Item::Named(format!("mega-corp levy: {name}")));
+            self.pay_city(Account::Owner(owner), Flow::BusinessTax, paid as f32, Some(Item::Named(format!("mega-corp levy: {name}"))));
             self.corps.stats.levy_today += paid;
             self.corps.stats.levy_total += paid;
         }
@@ -491,7 +489,7 @@ impl World {
         let b = &mut self.buildings[bid];
         b.name = format!("{short} Tower");
         if b.land_use == LandUse::Commercial {
-            b.business = Some(Business::new(BusinessKind::Office, jobs));
+            self.set_business(bid, Some(Business::new(BusinessKind::Office, jobs)));
         }
         self.corps.corps[ci].hq = Some(bid);
         let tick = self.clock.tick;
@@ -605,13 +603,14 @@ impl World {
         };
         self.take_plots_for(bid, &plots[1..], &memory, crate::buildings::DemolitionReason::Landmark);
         let jobs = self.buildings[bid].planned_capacity().1;
-        let b = &mut self.buildings[bid];
-        b.name = format!("{short} Tower");
-        b.business = Some(Business::new(BusinessKind::Office, jobs));
+        self.buildings[bid].name = format!("{short} Tower");
+        self.replace_business(bid, Business::new(BusinessKind::Office, jobs));
         self.give_to(bid, owner, price);
         let c = &mut self.corps.corps[ci];
         c.hq = Some(bid);
-        c.cash -= (price * DEPOSIT_SHARE).min(c.cash.max(0.0));
+        // [ledger] The deposit, to the sellers and builders out of town.
+        let deposit = (price * DEPOSIT_SHARE).min(c.cash.max(0.0));
+        self.transfer64(Account::Owner(owner), Account::Outside, deposit, Kind::PropertySale);
         let tick = self.clock.tick;
         let pos = self.lots.get(primary).map_or(Vec2::ZERO, |l| l.center);
         self.social.push_news(tick, format!("🏗 {name} broke ground on {short} Tower, {floors} floors, its headquarters."), pos, None);
@@ -723,8 +722,10 @@ impl World {
                 (bid, 0.0)
             }
         };
+        let deposit = (price * DEPOSIT_SHARE).max(100.0).min(self.corps.corps[ci].cash.max(0.0));
+        let owner = self.corps.corps[ci].owner;
+        self.transfer64(Account::Owner(owner), Account::Outside, deposit, Kind::PropertySale);
         let c = &mut self.corps.corps[ci];
-        c.cash -= (price * DEPOSIT_SHARE).max(100.0).min(c.cash.max(0.0));
         c.bought_total += 1;
         self.corps.stats.purchases_total += 1;
         self.corps.stats.purchases_today += 1;
@@ -895,11 +896,13 @@ impl World {
     pub fn corp_buy_now(&mut self, owner: OwnerId) -> Result<Option<BuildingId>, String> {
         let ci = self.corp_index(owner).ok_or("no such corp")?;
         // Dev: the deposit is waived, the purse left as it was.
+        // [ledger] Lent from outside for the one buy, and given back.
         let keep = self.corps.corps[ci].cash;
-        self.corps.corps[ci].cash = 1e12;
+        self.transfer64(Account::Outside, Account::Owner(owner), 1e12 - keep, Kind::Grants);
         let before: Vec<BuildingId> = self.estate.owners.get(owner).map(|o| o.properties.clone()).unwrap_or_default();
         let bought = self.corp_buy(ci);
-        self.corps.corps[ci].cash = keep;
+        let now = self.corps.corps[ci].cash;
+        self.transfer64(Account::Owner(owner), Account::Outside, now - keep, Kind::Grants);
         if !bought {
             return Ok(None);
         }

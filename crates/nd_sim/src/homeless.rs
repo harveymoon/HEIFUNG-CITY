@@ -293,9 +293,15 @@ impl World {
     /// Put a household out of its home onto the street.
     pub fn evict(&mut self, hid: HouseholdId, template: &str) {
         let tick = self.clock.tick;
+        let Some(hh) = self.households.get(hid) else { return };
+        // [ledger] The arrears are written off: the landlord takes the loss.
+        let debt = (-hh.money).max(0.0);
+        if debt > 0.0 {
+            let landlord = hh.home.map_or(crate::bank::Account::Outside, |b| self.landlord_of(b));
+            self.transfer(landlord, crate::bank::Account::Household(hid), debt, crate::bank::Kind::Rent);
+        }
         let Some(hh) = self.households.get_mut(hid) else { return };
         let old = hh.home.take();
-        hh.money = hh.money.max(0.0);
         hh.rent_stress_days = 0;
         let members = hh.members.clone();
         let name = old.and_then(|o| self.buildings.get(o)).map(|b| b.name.clone()).unwrap_or_default();
@@ -570,12 +576,10 @@ impl World {
             for m in members {
                 let Some(c) = self.citizens.get(m) else { continue };
                 if c.satiety < 0.3 {
-                    let paid = self.households.get_mut(hid).map(|h| {
-                        let p = h.money.clamp(0.0, MEAL_COST);
-                        h.money -= p;
-                        p
-                    });
-                    let _ = paid;
+                    // [ledger] A meal at the kitchen, bought in from outside.
+                    if let Some(p) = self.households.get(hid).map(|h| h.money.clamp(0.0, MEAL_COST)) {
+                        self.transfer(crate::bank::Account::Household(hid), crate::bank::Account::Outside, p, crate::bank::Kind::Shopping);
+                    }
                     let c = &mut self.citizens[m];
                     c.satiety = c.satiety.max(MEAL_SATIETY);
                     c.hungry_days = 0;

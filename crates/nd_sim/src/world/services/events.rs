@@ -61,11 +61,10 @@ impl World {
             fans.shuffle(self.srng());
             let take = ((seats as f32 * self.srng().random_range(0.5..0.95)) as usize).min(fans.len());
             for &cid in &fans[..take] {
+                self.pay_city(Account::Person(cid), Flow::Tickets, TICKET_PRICE, Some(Item::Building(sid)));
                 let c = &mut self.citizens[cid];
-                c.savings -= TICKET_PRICE;
                 c.remember(tick, format!("Got a ticket for tonight's game at {name}."));
                 c.thought = "Game night!".to_string();
-                self.economy.credit_item(Flow::Tickets, TICKET_PRICE, Item::Building(sid));
                 self.services.stats.tickets_today += TICKET_PRICE;
                 self.travel_to(cid, Some(sid), Purpose::Visit(lu));
             }

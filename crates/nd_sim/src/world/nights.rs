@@ -93,12 +93,10 @@ impl World {
     /// Take a fine from a citizen's household (or their own savings) into
     /// the treasury. Returns what was taken.
     fn fine(&mut self, cid: CitizenId, amount: f32) -> f32 {
-        let Some(c) = self.citizens.get_mut(cid) else { return 0.0 };
-        match c.household.filter(|h| self.households.contains_key(*h)) {
-            Some(h) => self.households[h].money -= amount,
-            None => c.savings -= amount,
+        if !self.citizens.contains_key(cid) {
+            return 0.0;
         }
-        self.economy.credit(Flow::Fines, amount);
+        self.pay_city(self.purse_of(cid), Flow::Fines, amount, None);
         self.street_events.fines_total += amount;
         amount
     }
@@ -858,11 +856,17 @@ impl World {
                 // On the door: the promoter's cut, and the hire of the
                 // place to whoever runs the warehouse.
                 let fee = RAVE_DOOR_FEE.min(self.citizens[cid].savings.max(0.0));
-                self.citizens[cid].savings -= fee;
-                if let Some(z) = self.buildings.get_mut(b).and_then(|x| x.business.as_mut()) {
-                    z.money += fee * 0.5;
-                    z.revenue_today += fee * 0.5;
-                }
+                // [ledger] Half to whoever runs the warehouse, half to the
+                // promoter from out of town.
+                let hire = match self.buildings.get_mut(b).and_then(|x| x.business.as_mut()) {
+                    Some(z) => {
+                        z.revenue_today += fee * 0.5;
+                        Account::Business(b)
+                    }
+                    None => Account::Outside,
+                };
+                self.transfer(Account::Person(cid), hire, fee * 0.5, Kind::Outings);
+                self.transfer(Account::Person(cid), Account::Outside, fee * 0.5, Kind::Outings);
                 r.takings += fee;
                 let c = &mut self.citizens[cid];
                 c.activity = Activity::Visiting(b);
