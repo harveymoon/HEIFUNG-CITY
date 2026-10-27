@@ -886,7 +886,8 @@ impl Building {
         if let Some(a) = self.annex.filter(|a| a.special()) {
             return a.hours();
         }
-        self.business.as_ref().map_or(Hours::ALWAYS, |z| z.kind.hours())
+        // [stories] A late licence keeps it open longer.
+        self.business.as_ref().map_or(Hours::ALWAYS, |z| z.kind.hours().later(z.late_hours))
     }
 
     /// Hours a worker with `seed` works here. Building sites work days.

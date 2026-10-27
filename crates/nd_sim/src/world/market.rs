@@ -23,6 +23,7 @@ impl World {
         // [tenants] Shut for good with other businesses still renting units
         // here: the building stands, its own units to let.
         let mut let_go: Vec<BuildingId> = Vec::new();
+        let any_policy = self.any_district_policy();
         for bid in ids {
             if !self.buildings[bid].operating() {
                 continue;
@@ -88,6 +89,9 @@ impl World {
                 if extra != 0.0 {
                     self.pay_city(Account::Business(bid), Flow::BusinessTax, extra, Some(Item::LandUse(lu)));
                 }
+                // [stories] The district's levies on its takings (or relief):
+                // a cost it carries like a tax over the standard.
+                let extra = extra + if any_policy { self.district_business_levies(bid, revenue) } else { 0.0 };
                 // [ledger] Rent for its unit, to the building's owner: the
                 // unit's rent out of the day's profit, at most half of it
                 // (a lean day pays less, a losing day nothing), so rent

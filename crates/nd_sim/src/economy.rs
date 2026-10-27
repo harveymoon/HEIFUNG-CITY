@@ -61,13 +61,19 @@ pub enum Flow {
     /// [ledger] Property tax every owner pays out of the rent it collects
     /// (`crate::bank`, `World::collect_rent`).
     PropertyTax,
+    /// [stories] A district's own levies: business rate, nightlife,
+    /// pollution and bed levies (`crate::stories`).
+    DistrictLevies,
+    /// [stories] What a district's policies pay out: rent support,
+    /// heritage grants, business-rate relief.
+    DistrictSpending,
 }
 
 /// Number of `Flow`s; the ledger's row length.
-pub const FLOWS: usize = 24;
+pub const FLOWS: usize = 26;
 
 impl Flow {
-    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep, Flow::GridExport, Flow::Gifts, Flow::RoadMaintenance, Flow::Fines, Flow::PropertyTax];
+    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep, Flow::GridExport, Flow::Gifts, Flow::RoadMaintenance, Flow::Fines, Flow::PropertyTax, Flow::DistrictLevies, Flow::DistrictSpending];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -95,6 +101,8 @@ impl Flow {
             Flow::RoadMaintenance => "road maintenance",
             Flow::Fines => "fines",
             Flow::PropertyTax => "property tax",
+            Flow::DistrictLevies => "district levies",
+            Flow::DistrictSpending => "district spending",
         }
     }
 

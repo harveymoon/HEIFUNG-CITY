@@ -50,6 +50,8 @@ pub fn flow_color(f: Flow) -> Color32 {
         Flow::RoadMaintenance => Color32::from_rgb(160, 130, 100),
         Flow::Fines => Color32::from_rgb(220, 150, 255),
         Flow::PropertyTax => Color32::from_rgb(100, 200, 120),
+        Flow::DistrictLevies => Color32::from_rgb(200, 140, 230),
+        Flow::DistrictSpending => Color32::from_rgb(150, 110, 200),
     }
 }
 
@@ -81,6 +83,8 @@ fn flow_note(f: Flow) -> &'static str {
         Flow::RoadMaintenance => "Road crews resurfacing worn streets, up to the day's allowance (the funding level in City Data, Economy, Taxes, times what the network needs); the crews go to dear land first.",
         Flow::Fines => "Fines from busted street races and shut-down raves.",
         Flow::PropertyTax => "10% of every rent collected, paid by the building's owner (a resident, a company, a developer, the independent landlords), by building. Economy, Money flow shows where the rest of the rent goes.",
+        Flow::DistrictLevies => "Each district's own levies, set by its story and fine-tuned on City Data, Districts: business rates, noise and alcohol levies, pollution levies and bed levies, by district and policy.",
+        Flow::DistrictSpending => "What districts' policies pay out: rent support to residents, heritage grants to owners and business-rate relief, by district and policy.",
     }
 }
 

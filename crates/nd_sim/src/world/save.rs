@@ -117,6 +117,9 @@ impl World {
         // [people] Saves from before households: one per citizen. Detected
         // per citizen (no household), so no version bump is needed.
         self.migrate_households();
+        // [stories] Districts from before stories take the story their
+        // dials are (or stay custom).
+        self.districts.adopt_stories();
         // A parking lot the player placed before the flag existed is one of
         // the city's own: roads stop at it instead of buying it out.
         let city_lots: Vec<BuildingId> = self.vehicles.city_lots.keys().copied().collect();

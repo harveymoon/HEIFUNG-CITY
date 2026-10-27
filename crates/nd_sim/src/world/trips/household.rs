@@ -92,6 +92,7 @@ impl World {
             return;
         }
         let home = hh.home.filter(|h| self.buildings.contains_key(*h));
+        let any_policy = self.any_district_policy();
         // [megacorp] Staff in company housing and students in dorms pay less.
         let rent = home.map(|h| self.rent_due(hid, h)).unwrap_or(0.0);
         let income = self.household_income(hid);
@@ -107,6 +108,12 @@ impl World {
         if let Some(h) = home {
             self.collect_rent(purse, h, rent, Kind::Rent);
         }
+        // [stories] A district's rent support: the city pays part of it back.
+        let support = match home {
+            Some(h) if any_policy => self.pay_rent_support(hid, h, rent),
+            _ => 0.0,
+        };
+        let rent = rent - support;
         self.transfer(purse, Account::Outside, living, Kind::Living);
         // Pockets come back to the shared purse (with any debts run up on
         // them), then the grown-ups draw pocket money again if there is some.
@@ -187,7 +194,8 @@ impl World {
         if rent > income * AFFORDABLE_SHARE {
             if self.rng.random::<f32>() < 0.25 {
                 if let Some(b) = self.choose_home(income, Some((home, rent)), self.has_children(hid)) {
-                    if self.buildings[b].rent <= income * AFFORDABLE_SHARE {
+                    let support = if any_policy { self.rent_support_of(b) } else { 0.0 };
+                    if self.buildings[b].rent * (1.0 - support) <= income * AFFORDABLE_SHARE {
                         self.move_household(hid, b, "Found somewhere cheaper: {}.");
                     }
                 }
@@ -230,12 +238,17 @@ impl World {
     /// school covers when its tier has one free; dorms and frat houses are
     /// the university's.
     pub(in crate::world) fn choose_home(&mut self, income: f32, cheaper_than: Option<(BuildingId, f32)>, family: bool) -> Option<BuildingId> {
+        // [stories] Rent as the household will feel it: net of a district's
+        // rent support.
+        let any_policy = self.any_district_policy();
+        let net = |w: &World, id: BuildingId, rent: f32| if any_policy { rent * (1.0 - w.rent_support_of(id)) } else { rent };
         let candidates: Vec<(BuildingId, Tier, f32)> = self
             .buildings
             .iter()
-            .filter(|(id, b)| b.land_use == LandUse::Residential && b.operating() && b.free_homes() > 0 && b.annex.is_none() && cheaper_than.is_none_or(|(h, r)| *id != h && b.rent < r * 0.95))
-            .filter(|(_, b)| b.rent <= income * RENT_STRESS_SHARE)
-            .map(|(id, b)| (id, b.tier, b.rent))
+            .filter(|(_, b)| b.land_use == LandUse::Residential && b.operating() && b.free_homes() > 0 && b.annex.is_none())
+            .map(|(id, b)| (id, b.tier, net(self, id, b.rent)))
+            .filter(|(id, _, rent)| cheaper_than.is_none_or(|(h, r)| *id != h && *rent < r * 0.95))
+            .filter(|(_, _, rent)| *rent <= income * RENT_STRESS_SHARE)
             .collect();
         let comfortable: Vec<(BuildingId, Tier)> = candidates.iter().filter(|(_, _, r)| *r <= income * AFFORDABLE_SHARE).map(|(id, t, _)| (*id, *t)).collect();
         if let Some(best) = comfortable.iter().map(|(_, t)| *t).max() {

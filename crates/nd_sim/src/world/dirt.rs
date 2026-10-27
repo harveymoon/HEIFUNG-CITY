@@ -109,6 +109,7 @@ impl World {
     /// kind (shut ones still scar the place, at half).
     pub fn refresh_dirty(&mut self) {
         let mut out = Vec::new();
+        let any_policy = self.any_district_policy();
         for (id, b) in self.buildings.iter() {
             if !b.operating() {
                 continue;
@@ -128,7 +129,9 @@ impl World {
             } else {
                 continue;
             };
-            out.push(DirtySource { building: id, pos: l.center, as_kind, level: d * activity, reach: industry::dirt_reach(d) });
+            // [stories] A district's pollution levy pays for filters.
+            let filters = if any_policy { self.district_filters(id) } else { 1.0 };
+            out.push(DirtySource { building: id, pos: l.center, as_kind, level: d * activity * filters, reach: industry::dirt_reach(d) });
         }
         self.dirty = out;
     }

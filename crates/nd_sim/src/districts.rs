@@ -252,6 +252,45 @@ pub struct District {
     /// the city's limit.
     #[serde(default)]
     pub height_limit: Option<f32>,
+    /// [stories] The district's story, which set the dials above; `None`
+    /// is no story (nothing set) or, with dials set, a custom district
+    /// from an older save whose dials no story has.
+    #[serde(default)]
+    pub story: Option<crate::stories::Story>,
+    /// [stories] Its own taxes and levers (the story's to start with; the
+    /// player fine-tunes them).
+    #[serde(default)]
+    pub policies: crate::stories::Policies,
+    /// [stories] What the policies moved, today and yesterday.
+    #[serde(default)]
+    pub books: DistrictBooks,
+}
+
+/// [stories] A district's money from its policies, by policy (positive:
+/// to the city; negative: the city paid), today and the whole of yesterday.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct DistrictBooks {
+    #[serde(default)]
+    pub today: [f32; crate::stories::POLICIES],
+    #[serde(default)]
+    pub yesterday: [f32; crate::stories::POLICIES],
+}
+
+impl DistrictBooks {
+    /// Levied (to the city) yesterday.
+    pub fn levied_yesterday(&self) -> f32 {
+        self.yesterday.iter().filter(|x| **x > 0.0).sum()
+    }
+
+    /// Paid out by the city yesterday.
+    pub fn spent_yesterday(&self) -> f32 {
+        -self.yesterday.iter().filter(|x| **x < 0.0).sum::<f32>()
+    }
+
+    pub fn roll(&mut self) {
+        self.yesterday = self.today;
+        self.today = [0.0; crate::stories::POLICIES];
+    }
 }
 
 impl District {
@@ -281,8 +320,54 @@ impl District {
         }
     }
 
+    /// [stories] Set the story: its architecture, height limit and
+    /// policies replace the district's (`None`: no story, nothing set but
+    /// the height limit, which stays).
+    pub fn apply_story(&mut self, story: Option<crate::stories::Story>) {
+        self.story = story;
+        match story {
+            Some(s) => {
+                let p = s.preset();
+                self.residential = p.residential;
+                self.commercial = p.commercial;
+                self.industry = p.industry;
+                self.historic = p.historic;
+                self.height_limit = p.height_limit;
+                self.policies = p.policies;
+            }
+            None => {
+                self.residential = None;
+                self.commercial = None;
+                self.industry = None;
+                self.historic = false;
+                self.policies = Default::default();
+            }
+        }
+    }
+
+    /// [stories] A custom district: building-type dials no story has (an
+    /// older save's, or set through the API).
+    pub fn is_custom(&self) -> bool {
+        self.story.is_none() && (self.residential.is_some() || self.commercial.is_some() || self.industry.is_some() || self.historic)
+    }
+
+    /// [stories] The story's name, "Custom" or "No story".
+    pub fn story_label(&self) -> &'static str {
+        match self.story {
+            Some(s) => s.label(),
+            None if self.is_custom() => "Custom",
+            None => "No story",
+        }
+    }
+
     /// One line of what the district's policies are, for lists.
     pub fn policy_label(&self) -> String {
+        if let Some(s) = self.story {
+            return s.label().to_string();
+        }
+        if !self.is_custom() {
+            return "No story".to_string();
+        }
         let mut parts: Vec<String> = Vec::new();
         if let Some(r) = self.residential {
             parts.push(r.label().to_string());
@@ -296,11 +381,7 @@ impl District {
         if self.historic {
             parts.push("Historic".to_string());
         }
-        if parts.is_empty() {
-            "no policy".to_string()
-        } else {
-            parts.join(", ")
-        }
+        format!("Custom: {}", parts.join(", "))
     }
 
     /// Draws visitors in its own right: a landmark district.
@@ -579,7 +660,7 @@ impl Districts {
         self.next_id = self.next_id.max(self.list.iter().map(|d| d.id).max().unwrap_or(0)) + 1;
         let id = self.next_id;
         let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| default_name(seed, id));
-        self.list.push(District { id, name, color: ((id - 1) as usize % COLORS.len()) as u8, residential: None, commercial: None, industry: None, historic: false, created_tick: tick, height_limit: None });
+        self.list.push(District { id, name, color: ((id - 1) as usize % COLORS.len()) as u8, residential: None, commercial: None, industry: None, historic: false, created_tick: tick, height_limit: None, story: None, policies: Default::default(), books: Default::default() });
         self.version += 1;
         Some(id)
     }
@@ -609,6 +690,35 @@ impl Districts {
             self.version += 1;
         }
         n
+    }
+
+    /// [stories] Districts from a save before stories: those whose dials
+    /// are exactly a story's take it (their height limit kept, the story's
+    /// policies to start with); the rest stay custom, or no story when
+    /// nothing was set. Run on every load: it only touches districts with
+    /// no story whose dials match one, which a loaded custom one never does.
+    pub fn adopt_stories(&mut self) -> usize {
+        let mut n = 0;
+        for d in self.list.iter_mut().filter(|d| d.story.is_none()) {
+            if let Some(s) = crate::stories::Story::matching(d) {
+                let height = d.height_limit;
+                d.apply_story(Some(s));
+                d.height_limit = height;
+                n += 1;
+            }
+        }
+        for d in self.list.iter_mut() {
+            d.policies = d.policies.clamped();
+        }
+        if n > 0 {
+            self.version += 1;
+        }
+        n
+    }
+
+    /// [stories] The policies of the district at `p`, when any is set.
+    pub fn policies_at(&self, p: Vec2) -> Option<(u16, crate::stories::Policies)> {
+        self.at(p).filter(|d| !d.policies.is_none()).map(|d| (d.id, d.policies))
     }
 }
 

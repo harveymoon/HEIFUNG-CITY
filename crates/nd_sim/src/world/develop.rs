@@ -589,6 +589,10 @@ impl World {
         // [ledger] The ledger's day closes with the treasury's.
         self.close_ledger_day();
         self.economy.ledger.roll();
+        // [stories] Districts' policy books close with the ledger's day.
+        for d in self.districts.list.iter_mut() {
+            d.books.roll();
+        }
         // [tax] The tax book closes with the ledger: what is collected below
         // (incomes, takings) is booked to the new day, as in the ledger.
         self.economy.taxes.roll();
@@ -650,6 +654,8 @@ impl World {
             // in weeks, out of service but still charged, and nothing ever
             // repaired them.) Fire damage is mended by `repair_civic`.
             if !Self::is_civic_structure(&self.buildings[bid]) {
+                // [stories] A heritage grant keeps the repairs up.
+                let decay = decay * (1.0 - self.heritage_wear_cut(bid));
                 let b = &mut self.buildings[bid];
                 b.condition = (b.condition - decay + if full { 0.006 } else { 0.0 }).clamp(0.05, 1.0);
             }
@@ -761,6 +767,7 @@ impl World {
         // Land uses whose businesses would all lose money are not built on:
         // a town that cannot sell more bread does not get another bakery.
         let viable: Vec<bool> = LandUse::ALL.iter().map(|&lu| self.business_kinds_viable(lu, None).is_none_or(|v| !v.is_empty())).collect();
+        let any_policy = self.any_district_policy();
         for i in 0..vacant.len() {
             if built >= self.config.max_builds_per_interval {
                 break;
@@ -785,6 +792,11 @@ impl World {
             if matches!(lu, LandUse::Residential | LandUse::Commercial | LandUse::Entertainment) && !self.dirty.is_empty() {
                 let e = self.dirt_exposure_at(self.lots[lot_id].center, crate::industry::Neighbour::Land(lu), None);
                 chance *= 1.0 - super::dirt::ADJACENCY_BUILD_HIT * e;
+            }
+            // [stories] A district's levies put builders off, its support
+            // and relief draw them.
+            if any_policy {
+                chance *= self.district_pull(lot_id, lu);
             }
             if self.rng.random::<f32>() < chance {
                 self.build_on(lot_id);
