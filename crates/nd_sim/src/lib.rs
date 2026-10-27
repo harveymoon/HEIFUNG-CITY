@@ -24,6 +24,7 @@ pub mod corp;
 pub mod crime;
 /// [districts] Named districts with specialisations and the Historic freeze.
 pub mod districts;
+pub mod stories;
 /// [dams] (H1) Hydro dam walls the player draws.
 pub mod dams;
 pub mod economy;

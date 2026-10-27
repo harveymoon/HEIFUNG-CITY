@@ -796,6 +796,7 @@ impl World {
         let ids: Vec<TouristId> = self.tourism.tourists.keys().collect();
         let mut tax_total = 0.0;
         let rate = self.economy.taxes.tourist_tax();
+        let any_policy = self.any_district_policy();
         for id in ids {
             if self.tourism.tourists[id].commuter.is_some() {
                 continue;
@@ -815,6 +816,11 @@ impl World {
             // [ledger] The night to the hotel, the tax to the city.
             self.transfer(Account::Tourist(id), Account::Business(hotel), price, Kind::Tourism);
             self.pay_city(Account::Tourist(id), Flow::TouristTax, tax, None);
+            // [stories] The district's bed levy on top.
+            if any_policy {
+                let levy = self.pay_bed_levy(hotel, Account::Tourist(id), price);
+                self.tourism.tourists[id].spent += levy;
+            }
             let s = &mut self.tourism.stats;
             s.nights_today += 1;
             s.spend_hotels_today += price;

@@ -39,6 +39,12 @@ pub struct PolicyChange {
     pub name: Option<String>,
     /// [supertall] The district's height limit (m), `Some(None)` to lift it.
     pub height_limit: Option<Option<f32>>,
+    /// [stories] Pick a story (`Some(None)`: no story): its architecture,
+    /// height limit and policies replace the district's. Applied before
+    /// the fields above, so a height limit or a dial given with it wins.
+    pub story: Option<Option<crate::stories::Story>>,
+    /// [stories] Fine-tune policy dials, clamped to their ranges.
+    pub policies: Vec<(crate::stories::Policy, f32)>,
 }
 
 /// One district's figures, for the window and the API.
@@ -107,6 +113,17 @@ impl World {
     /// over the next days (`daily_districts`).
     pub fn set_district_policy(&mut self, id: u16, change: PolicyChange) -> Result<(), String> {
         let d = self.districts.get_mut(id).ok_or_else(|| format!("no district {id}"))?;
+        if let Some(s) = change.story {
+            d.apply_story(s);
+        }
+        // [stories] Building types set by hand (the API, an older caller):
+        // the district is custom from then on, its policies kept.
+        if change.residential.is_some() || change.commercial.is_some() || change.industry.is_some() || change.historic.is_some() {
+            d.story = None;
+        }
+        for (p, v) in change.policies {
+            d.policies.set(p, v);
+        }
         if let Some(r) = change.residential {
             d.residential = r;
         }

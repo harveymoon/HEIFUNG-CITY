@@ -4,6 +4,7 @@
 
 use nd_sim::districts::{CommercialSpec, ResidentialSpec};
 use nd_sim::industry::IndustryKind;
+use nd_sim::stories::{Policy, Story};
 use nd_sim::tourism::{Arrival, TouristState};
 use nd_sim::world::PolicyChange;
 use nd_sim::World;
@@ -76,6 +77,15 @@ pub fn district_json(w: &World) -> Value {
                 "historic": d.is_some_and(|d| d.historic),
                 "height_limit": d.and_then(|d| d.height_limit),
                 "landmark": d.is_some_and(|d| d.is_landmark()),
+                "story": d.and_then(|d| d.story).map(|s| s.key()),
+                "story_label": d.map(|d| d.story_label()),
+                "closest_story": d.filter(|d| d.is_custom()).and_then(Story::closest).map(|s| s.key()),
+                "policies": d.map(|d| Policy::ALL.iter().map(|p| (p.key().to_string(), json!(round(d.policies.get(*p))))).collect::<serde_json::Map<_, _>>()),
+                "policy_money_yesterday": d.map(|d| Policy::ALL.iter().filter(|p| d.books.yesterday[p.index()] != 0.0).map(|p| (p.key().to_string(), json!(round(d.books.yesterday[p.index()])))).collect::<serde_json::Map<_, _>>()),
+                "policy_money_today": d.map(|d| Policy::ALL.iter().filter(|p| d.books.today[p.index()] != 0.0).map(|p| (p.key().to_string(), json!(round(d.books.today[p.index()])))).collect::<serde_json::Map<_, _>>()),
+                "levied_yesterday": d.map(|d| round(d.books.levied_yesterday())),
+                "spent_yesterday": d.map(|d| round(d.books.spent_yesterday())),
+                "growth_pull": d.map(|d| nd_sim::LandUse::ALL.iter().filter(|lu| d.policies.pull(**lu) != 1.0).map(|lu| (lu.label().to_string(), json!(round(d.policies.pull(*lu))))).collect::<serde_json::Map<_, _>>()),
                 "color": d.map(|d| d.color),
                 "area_m2": round(s.area_m2), "centroid": s.centroid.map(round),
                 "lots": s.lots, "vacant_lots": s.vacant_lots, "buildings": s.buildings, "under_construction": s.under_construction,
@@ -124,9 +134,31 @@ pub fn district(cmd: &Value, w: &mut World, overlays: &mut Overlays, tools: &mut
             overlays.districts = true;
             json!({ "id": if id == 0 { Value::Null } else { json!(id) }, "cells_changed": cells, "erased": erase })
         }
+        "stories" => {
+            let rows: Vec<Value> = Story::ALL.iter().map(|s| json!({ "key": s.key(), "label": s.label(), "backstory": s.backstory(), "sets": s.sets(), "planned_look": s.planned_look() })).collect();
+            json!({ "stories": rows, "policies": Policy::ALL.iter().map(|p| json!({ "key": p.key(), "label": p.label(), "range": p.range(), "help": p.help() })).collect::<Vec<_>>() })
+        }
         "set" | "policy" => {
             let id = district_id(cmd, w)?.ok_or("missing id (or district name)")?;
+            // [stories] `story`: a key or label, "none" for no story.
+            let story = match field(cmd, "story") {
+                None => None,
+                Some(Value::Null) => Some(None),
+                Some(Value::String(s)) if s.eq_ignore_ascii_case("none") || s.is_empty() => Some(None),
+                Some(Value::String(s)) => Some(Some(Story::parse(s).ok_or_else(|| format!("unknown story {s:?}; one of {}, none", Story::ALL.iter().map(|s| s.key()).collect::<Vec<_>>().join(", ")))?)),
+                Some(v) => return Err(format!("story must be a string, got {v}")),
+            };
+            let mut policies = Vec::new();
+            for p in Policy::ALL {
+                match field(cmd, p.key()) {
+                    None => {}
+                    Some(Value::Bool(b)) => policies.push((p, *b as u8 as f32)),
+                    Some(v) => policies.push((p, v.as_f64().ok_or_else(|| format!("{} must be a number", p.key()))? as f32)),
+                }
+            }
             let change = PolicyChange {
+                story,
+                policies,
                 residential: spec(cmd, "residential", ResidentialSpec::parse, "kowloon, suburban, eco, capsule")?,
                 commercial: spec(cmd, "commercial", CommercialSpec::parse, "neon_strip, tech_campus, night_market, tourist, capsule")?,
                 industry: spec(cmd, "industry", industry_of, "farming, oil, refinery, manufacturing, logistics, fishing, tech")?,
@@ -141,7 +173,7 @@ pub fn district(cmd: &Value, w: &mut World, overlays: &mut Overlays, tools: &mut
             };
             w.set_district_policy(id, change)?;
             let d = w.districts.get(id).unwrap();
-            json!({ "id": id, "name": d.name, "policy": d.policy_label() })
+            json!({ "id": id, "name": d.name, "policy": d.policy_label(), "story": d.story.map(|s| s.key()), "policies": d.policies.summary() })
         }
         "remove" | "delete" => {
             let id = district_id(cmd, w)?.ok_or("missing id (or district name)")?;
@@ -162,7 +194,7 @@ pub fn district(cmd: &Value, w: &mut World, overlays: &mut Overlays, tools: &mut
             overlays.districts = opt_bool(cmd, "on")?.unwrap_or(!overlays.districts);
             json!({})
         }
-        other => return Err(format!("unknown district action {other:?}; one of list, create, paint, erase, set, remove, at, select, layer")),
+        other => return Err(format!("unknown district action {other:?}; one of list, stories, create, paint, erase, set, remove, at, select, layer")),
     };
     out["layer_on"] = json!(overlays.districts);
     Ok(out)

@@ -62,6 +62,10 @@ pub struct Business {
     /// sums its tenants'.
     #[serde(default)]
     pub rent_day: f32,
+    /// [stories] Hours past its usual close it stays open (a district's
+    /// late licence, set daily).
+    #[serde(default)]
+    pub late_hours: u8,
 }
 
 /// One closed day of a business's books.
@@ -108,6 +112,7 @@ impl Business {
             owner: None,
             moved_from: None,
             rehire: Vec::new(),
+            late_hours: 0,
             rent_day: 0.0,
         }
     }

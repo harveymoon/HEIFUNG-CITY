@@ -126,6 +126,16 @@ impl Hours {
         }
     }
 
+    /// [stories] Closing `h` hours later (round the clock stays so; never
+    /// so late it would close when it opens).
+    pub fn later(self, h: u8) -> Hours {
+        if h == 0 || self.always() {
+            return self;
+        }
+        let h = h.min(23u8.saturating_sub(self.span()));
+        Hours { open: self.open, close: (self.close + h) % 24 }
+    }
+
     /// Hours open per day.
     pub fn span(self) -> u8 {
         if self.always() {

@@ -156,6 +156,8 @@ impl World {
         self.daily_benches();
         // [districts] facelifts; [tourism] hotel nights and the books.
         crate::prof!("daily_districts", self.daily_districts());
+        // [stories] late licences, noise, heritage grants
+        self.daily_stories();
         crate::prof!("daily_tourism", self.daily_tourism());
         // [waterfront] beach tallies, and the households near a good one
         self.daily_shore();

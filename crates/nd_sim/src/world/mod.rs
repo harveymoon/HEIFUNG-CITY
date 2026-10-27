@@ -60,6 +60,10 @@ mod insight_tests;
 mod memory;
 mod develop;
 mod districts;
+// [stories] District stories' policies in the sim.
+mod stories;
+#[cfg(test)]
+mod stories_tests;
 #[cfg(test)]
 mod districts_tests;
 mod driving;

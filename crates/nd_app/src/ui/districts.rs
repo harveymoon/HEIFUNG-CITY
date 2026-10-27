@@ -4,8 +4,8 @@
 //! what they bring in).
 
 use bevy_egui::egui;
-use nd_sim::districts::{CommercialSpec, ResidentialSpec, COLORS};
-use nd_sim::industry::IndustryKind;
+use nd_sim::districts::COLORS;
+use nd_sim::stories::{Policy, Story};
 use nd_sim::tourism::{Arrival, AttractionKind};
 use nd_sim::world::PolicyChange;
 
@@ -20,7 +20,7 @@ fn color_of(c: u8) -> egui::Color32 {
     super::theme::rgb_f(c)
 }
 
-pub const TOOL_HINT: &str = "Drag to paint the selected district (a new one starts on the first stroke when none is picked); right-drag erases. Shift-click picks the district under the pointer. Polygon: click corners, Enter or right-click fills. Policies change what grows there and how it looks; standing buildings follow over a few days.";
+pub const TOOL_HINT: &str = "Drag to paint the selected district (a new one starts on the first stroke when none is picked); right-drag erases. Shift-click picks the district under the pointer. Polygon: click corners, Enter or right-click fills. A district's story sets what grows there and how it looks (standing buildings follow over a few days) and its own taxes, which you can fine-tune.";
 
 /// The District tool's parameters.
 pub fn sub_pane(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
@@ -63,7 +63,9 @@ pub fn sub_pane(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
     hint(ui, TOOL_HINT);
 }
 
-/// Name and policies of one district, editable.
+/// [stories] Name, story and policies of one district, editable. The story
+/// sets the building types; the policy dials and the height limit are the
+/// player's to fine-tune.
 fn policy_editor(ui: &mut egui::Ui, sim: &mut Sim, id: u16, rename: &mut String) {
     let Some(d) = sim.world.districts.get(id).cloned() else { return };
     let mut change = PolicyChange::default();
@@ -72,43 +74,17 @@ fn policy_editor(ui: &mut egui::Ui, sim: &mut Sim, id: u16, rename: &mut String)
         if r.lost_focus() && *rename != d.name && !rename.trim().is_empty() {
             change.name = Some(rename.clone());
         }
-        ui.label(egui::RichText::new("homes").weak());
-        egui::ComboBox::from_id_salt(("res", id)).selected_text(d.residential.map_or("any", |s| s.label())).show_ui(ui, |ui| {
-            if ui.selectable_label(d.residential.is_none(), "any").clicked() {
-                change.residential = Some(None);
+        ui.label(egui::RichText::new("story").weak());
+        egui::ComboBox::from_id_salt(("story", id)).width(190.0).selected_text(egui::RichText::new(d.story_label()).color(GOLD)).show_ui(ui, |ui| {
+            if ui.selectable_label(d.story.is_none() && !d.is_custom(), "No story").on_hover_text("Grows like the city around it; policies off").clicked() {
+                change.story = Some(None);
             }
-            for s in ResidentialSpec::ALL {
-                if ui.selectable_label(d.residential == Some(s), s.label()).clicked() {
-                    change.residential = Some(Some(s));
+            for s in Story::ALL {
+                if ui.selectable_label(d.story == Some(s), s.label()).on_hover_text(format!("{}\n\nSets {}", s.backstory(), s.sets())).clicked() {
+                    change.story = Some(Some(s));
                 }
             }
         });
-        ui.label(egui::RichText::new("shops").weak());
-        egui::ComboBox::from_id_salt(("com", id)).selected_text(d.commercial.map_or("any", |s| s.label())).show_ui(ui, |ui| {
-            if ui.selectable_label(d.commercial.is_none(), "any").clicked() {
-                change.commercial = Some(None);
-            }
-            for s in CommercialSpec::ALL {
-                if ui.selectable_label(d.commercial == Some(s), s.label()).clicked() {
-                    change.commercial = Some(Some(s));
-                }
-            }
-        });
-        ui.label(egui::RichText::new("industry").weak());
-        egui::ComboBox::from_id_salt(("ind", id)).selected_text(d.industry.map_or("by the ground", |s| s.label())).show_ui(ui, |ui| {
-            if ui.selectable_label(d.industry.is_none(), "by the ground").clicked() {
-                change.industry = Some(None);
-            }
-            for k in IndustryKind::ALL {
-                if ui.selectable_label(d.industry == Some(k), k.label()).clicked() {
-                    change.industry = Some(Some(k));
-                }
-            }
-        });
-        let mut historic = d.historic;
-        if ui.checkbox(&mut historic, "Historic").on_hover_text("Freeze growth: no upgrades, no redevelopment; new homes and shops in old brick; draws visitors").changed() {
-            change.historic = Some(historic);
-        }
         // [supertall] The district's height limit.
         let mut capped = d.height_limit.is_some();
         if ui.checkbox(&mut capped, "Height limit").on_hover_text("Nothing new rises over it here: towers and ordinary buildings alike (standing ones stay)").changed() {
@@ -123,8 +99,81 @@ fn policy_editor(ui: &mut egui::Ui, sim: &mut Sim, id: u16, rename: &mut String)
             sim.world.remove_district(id);
         }
     });
-    if change.name.is_some() || change.residential.is_some() || change.commercial.is_some() || change.industry.is_some() || change.historic.is_some() || change.height_limit.is_some() {
+    match d.story {
+        Some(s) => {
+            ui.label(egui::RichText::new(s.backstory()).italics().color(IVORY));
+            ui.label(egui::RichText::new(format!("Builds: {}", architecture(&d))).weak()).on_hover_text(format!("Its own look ({}) comes later; until then it builds in today's looks. Switch the story to change the building types.", s.planned_look()));
+        }
+        None if d.is_custom() => {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new(format!("Custom, from an older save: {}.", architecture(&d))).weak());
+                if let Some(c) = Story::closest(&d) {
+                    if ui.button(format!("Switch to {}", c.label())).on_hover_text(format!("{}\n\nSets {}", c.backstory(), c.sets())).clicked() {
+                        change.story = Some(Some(c));
+                    }
+                }
+            });
+        }
+        None => hint(ui, "No story: it grows like the city around it. Pick a story to give it a character, its own looks and its own taxes."),
+    }
+    // The policy dials.
+    ui.horizontal_wrapped(|ui| {
+        for p in Policy::ALL {
+            let v = d.policies.get(p);
+            if p == Policy::LateHours {
+                let mut on = d.policies.late_hours;
+                if ui.checkbox(&mut on, p.label()).on_hover_text(p.help()).changed() {
+                    change.policies.push((p, on as u8 as f32));
+                }
+                continue;
+            }
+            let (lo, hi) = p.range();
+            ui.label(egui::RichText::new(p.label()).weak()).on_hover_text(p.help());
+            if p.is_share() {
+                let mut pct = v * 100.0;
+                if ui.add(egui::DragValue::new(&mut pct).range(lo * 100.0..=hi * 100.0).speed(0.5).suffix("%")).on_hover_text(p.help()).changed() {
+                    change.policies.push((p, pct / 100.0));
+                }
+            } else {
+                let mut x = v;
+                if ui.add(egui::DragValue::new(&mut x).range(lo..=hi).speed(1.0).prefix("$").suffix("/day")).on_hover_text(p.help()).changed() {
+                    change.policies.push((p, x));
+                }
+            }
+        }
+    });
+    if change.name.is_some() || change.story.is_some() || !change.policies.is_empty() || change.height_limit.is_some() {
         let _ = sim.world.set_district_policy(id, change);
+    }
+}
+
+/// [stories] What a district builds, in words.
+fn architecture(d: &nd_sim::districts::District) -> String {
+    let mut v = vec![format!("homes {}", d.residential.map_or("any", |r| r.label())), format!("shops {}", d.commercial.map_or("any", |c| c.label())), format!("industry {}", d.industry.map_or("by the ground", |i| i.label()))];
+    if d.historic {
+        v.push("Historic freeze".into());
+    }
+    v.join(", ")
+}
+
+/// [stories] The story picker: every story with its backstory and what it
+/// sets, for the picked district.
+fn story_cards(ui: &mut egui::Ui, sim: &mut Sim, id: u16) {
+    let Some(cur) = sim.world.districts.get(id).map(|d| d.story) else { return };
+    let mut pick = None;
+    egui::Grid::new(("story_cards", id)).num_columns(3).striped(true).spacing([10.0, 4.0]).show(ui, |ui| {
+        for s in Story::ALL {
+            let on = cur == Some(s);
+            if ui.selectable_label(on, egui::RichText::new(s.label()).strong().color(if on { GOLD } else { IVORY })).on_hover_text("Pick this story for the district").clicked() && !on {
+                pick = Some(s);
+            }
+            ui.add(egui::Label::new(egui::RichText::new(s.backstory()).small()).wrap());
+            ui.add(egui::Label::new(egui::RichText::new(s.sets()).small().weak()).wrap());
+            ui.end_row();
+        }
+    });
+    if let Some(s) = pick {
+        let _ = sim.world.set_district_policy(id, PolicyChange { story: Some(Some(s)), ..Default::default() });
     }
 }
 
@@ -154,7 +203,7 @@ pub fn page(ui: &mut egui::Ui, p: &mut UiCtx) {
             _ => pane::SortKey::num(s.tourists_staying as f64),
         };
         let rows: Vec<&nd_sim::world::DistrictStats> = stats.iter().collect();
-        pane::sortable_plain(ui, "district_table", &["district", "policy", "ha", "buildings (+sites)", "residents (homes)", "workers/jobs", "visitors"], &rows, key, |ui, s| {
+        pane::sortable_plain(ui, "district_table", &["district", "story", "ha", "buildings (+sites)", "residents (homes)", "workers/jobs", "visitors"], &rows, key, |ui, s| {
             let color = p.sim.world.districts.get(s.id).map_or(IVORY, |d| color_of(d.color));
             let picked = p.tools.district.selected == Some(s.id);
             if ui.selectable_label(picked, egui::RichText::new(&s.name).color(color).strong()).on_hover_text("Pick it to see its detail and edit its policies").clicked() {
@@ -177,7 +226,19 @@ pub fn page(ui: &mut egui::Ui, p: &mut UiCtx) {
             row(ui, "businesses", format!("{} open   hotels {} with {} beds", s.businesses_open, s.hotels, s.beds));
             row(ui, "draws visitors", format!("{:.1} points", s.attraction));
             let (id, at) = (s.id, s.centroid);
+            // [stories] What its policies moved and what they do to growth.
+            if let Some(d) = p.sim.world.districts.get(id) {
+                let b = &d.books;
+                let by: Vec<String> = Policy::ALL.iter().filter(|q| b.yesterday[q.index()] != 0.0).map(|q| format!("{} {:+.0}", q.label(), b.yesterday[q.index()])).collect();
+                row(ui, "district taxes yesterday", format!("levied ${:.0}   paid out ${:.0}   net {:+.0}{}", b.levied_yesterday(), b.spent_yesterday(), b.levied_yesterday() - b.spent_yesterday(), if by.is_empty() { String::new() } else { format!("   ({})", by.join(", ")) }));
+                let today: f32 = b.today.iter().sum();
+                row(ui, "so far today", format!("net {today:+.0} to the city"));
+                let pulls: Vec<String> = nd_sim::LandUse::ALL.iter().filter(|lu| d.policies.pull(**lu) != 1.0).map(|lu| format!("{} x{:.2}", lu.label(), d.policies.pull(*lu))).collect();
+                row(ui, "new buildings here", if pulls.is_empty() { "as anywhere in town".to_string() } else { pulls.join("   ") });
+            }
+            heading(ui, "Story and policies");
             policy_editor(ui, p.sim, id, &mut p.tools.district.rename);
+            egui::CollapsingHeader::new("Stories").id_salt(("stories_open", id)).default_open(true).show(ui, |ui| story_cards(ui, p.sim, id));
             if ui.button("Show on the map").on_hover_text("Close City Data and fly there").clicked() {
                 p.fly_to = Some(bevy::math::Vec2::new(at[0], at[1]));
             }

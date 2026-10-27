@@ -6,7 +6,7 @@
 use super::perfect::{DOWNTOWN, MIDTOWN};
 use super::CityPlan;
 use glam::Vec2;
-use nd_sim::districts::{CommercialSpec, ResidentialSpec};
+use nd_sim::stories::Story;
 use nd_sim::enforcement::LotSize;
 use nd_sim::landscape::{HIGHWAY_Y, MAP_EDGE};
 use nd_sim::world::{IndustryArea, PolicyChange};
@@ -747,11 +747,14 @@ fn beach(cx: &mut Ctx) {
     cx.note(format!("public beach: {n} parcels of sand along the sea front"));
 }
 
-/// Districts with their policies: plain mid-rise homes up to 60 m across the north,
-/// a strip of garden suburbs by the farms, dense housing and night markets
-/// by the railway, a tourist sea front, a neon midtown and a downtown with
-/// no height limit, the works and the farms.
+/// Districts with their stories: plain mid-rise homes up to 60 m across the
+/// north (no story), Quiet Acres by the farms, the Walled Quarter by the
+/// railway, the Promenade on the sea front, Afterglow Mile in midtown,
+/// Founders' Campus downtown, Foundry Row at the works and an Eco Village
+/// over the farms.
 fn districts(cx: &mut Ctx) {
+    // [stories] Each district a story, with the demo's own height limit.
+    let story = |s: Story, height: Option<f32>| PolicyChange { story: Some(Some(s)), height_limit: Some(height), ..Default::default() };
     let (dt, mt) = (cx.downtown, cx.midtown);
     let lo = cx.w.lots.values().map(|l| l.center).fold(Vec2::splat(f32::INFINITY), Vec2::min);
     let hi = cx.w.lots.values().map(|l| l.center).fold(Vec2::splat(f32::NEG_INFINITY), Vec2::max);
@@ -763,14 +766,14 @@ fn districts(cx: &mut Ctx) {
         // Painted in order: later districts take the cells they share.
         // Plain homes at every tier (no look pulling the rents up), mid-rise.
         ("Northside", rect(Vec2::new(farm_x, rail + 60.0), Vec2::new(works_x, hi.y + 60.0)), PolicyChange { height_limit: Some(Some(60.0)), ..Default::default() }),
-        ("Garden Suburbs", rect(Vec2::new(farm_x, rail + 60.0), Vec2::new(farm_x + 260.0, hi.y + 60.0)), PolicyChange { residential: Some(Some(ResidentialSpec::Suburban)), height_limit: Some(Some(24.0)), ..Default::default() }),
+        ("Garden Suburbs", rect(Vec2::new(farm_x, rail + 60.0), Vec2::new(farm_x + 260.0, hi.y + 60.0)), story(Story::QuietAcres, Some(24.0))),
         // Cheap dense housing for the works' and the shops' staff.
-        ("Railside", rect(Vec2::new(farm_x, rail - 120.0), Vec2::new(works_x, rail + 260.0)), PolicyChange { residential: Some(Some(ResidentialSpec::Kowloon)), commercial: Some(Some(CommercialSpec::NightMarket)), ..Default::default() }),
-        ("Sea Front", rect(Vec2::new(farm_x, lo.y - 80.0), Vec2::new(works_x, rail - 120.0)), PolicyChange { residential: Some(Some(ResidentialSpec::Eco)), commercial: Some(Some(CommercialSpec::Tourist)), height_limit: Some(Some(60.0)), ..Default::default() }),
-        ("Midtown", circle(mt, 240.0), PolicyChange { commercial: Some(Some(CommercialSpec::NeonStrip)), residential: Some(Some(ResidentialSpec::Kowloon)), height_limit: Some(None), ..Default::default() }),
-        ("Downtown", circle(dt + Vec2::new(0.0, 130.0), 300.0), PolicyChange { commercial: Some(Some(CommercialSpec::TechCampus)), residential: Some(Some(ResidentialSpec::Eco)), height_limit: Some(None), ..Default::default() }),
-        ("Eastworks", rect(Vec2::new(works_x, lo.y - 60.0), Vec2::new(hi.x + 60.0, hi.y + 60.0)), PolicyChange { industry: Some(Some(IndustryKind::Manufacturing)), ..Default::default() }),
-        ("West Farms", rect(Vec2::new(lo.x - 60.0, lo.y - 60.0), Vec2::new(farm_x, hi.y + 60.0)), PolicyChange { industry: Some(Some(IndustryKind::Farming)), residential: Some(Some(ResidentialSpec::Suburban)), height_limit: Some(Some(18.0)), ..Default::default() }),
+        ("Railside", rect(Vec2::new(farm_x, rail - 120.0), Vec2::new(works_x, rail + 260.0)), story(Story::WalledQuarter, None)),
+        ("Sea Front", rect(Vec2::new(farm_x, lo.y - 80.0), Vec2::new(works_x, rail - 120.0)), story(Story::Promenade, Some(60.0))),
+        ("Midtown", circle(mt, 240.0), story(Story::AfterglowMile, None)),
+        ("Downtown", circle(dt + Vec2::new(0.0, 130.0), 300.0), story(Story::FoundersCampus, None)),
+        ("Eastworks", rect(Vec2::new(works_x, lo.y - 60.0), Vec2::new(hi.x + 60.0, hi.y + 60.0)), story(Story::FoundryRow, None)),
+        ("West Farms", rect(Vec2::new(lo.x - 60.0, lo.y - 60.0), Vec2::new(farm_x, hi.y + 60.0)), story(Story::EcoVillage, Some(18.0))),
     ];
     for (name, area, change) in ds {
         let r = cx.w.create_district(Some(name.to_string())).and_then(|id| {

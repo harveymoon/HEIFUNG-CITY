@@ -1780,11 +1780,12 @@ Reply:
 
 | action | fields | reply |
 | --- | --- | --- |
-| `list` (default) | | `districts`: id, name, policy, residential, commercial, industry, historic, height_limit, landmark, area_m2, centroid, lots, vacant_lots, buildings, under_construction, by_land_use, by_tier, in_look (buildings already in the district's look), homes, residents, jobs, workers, businesses_open, hotels, beds, tourists_staying, land_value_avg, rent_avg, attraction |
+| `list` (default) | | `districts`: id, name, policy, residential, commercial, industry, historic, height_limit, landmark, area_m2, centroid, lots, vacant_lots, buildings, under_construction, by_land_use, by_tier, in_look (buildings already in the district's look), homes, residents, jobs, workers, businesses_open, hotels, beds, tourists_staying, land_value_avg, rent_avg, attraction; [stories] `story` (key or null), `story_label` (the story, "Custom" or "No story"), `closest_story` (a custom district's nearest story), `policies` {rent_support, nightlife_levy, late_hours (0/1), pollution_levy, heritage_grant, business_rate, bed_levy}, `policy_money_today` / `policy_money_yesterday` (by policy; positive to the city, negative paid by it), `levied_yesterday`, `spent_yesterday`, `growth_pull` (land uses whose new buildings go up more (>1) or less readily) |
+| `stories` | | [stories] `stories` [{key, label, backstory, sets, planned_look}], `policies` [{key, label, range, help}] |
 | `create` | `name` optional (generated otherwise) | `id`, `name` |
 | `paint` | `id` (or `district`: id or name; none starts a new district, `new_name`), then `at` `[x,y]` + `radius` (default 40), `polygon`, or `rect` `[[x0,y0],[x1,y1]]`; `erase` | `id`, `cells_changed` (16 m cells) |
 | `erase` | `at` + `radius`, `polygon` or `rect` | `cells_changed` |
-| `set` | `id` / `district`; any of `residential` kowloon / suburban / eco / capsule / none, `commercial` neon_strip / tech_campus / night_market / tourist / capsule / none ([capsule] white domes, saucers and pill towers; as `commercial` it opens offices and gadget shops only where the market carries them, and gives nights out its domes too), `industry` farming / oil / refinery / manufacturing / logistics / fishing / tech / none, `historic` bool, `height_limit` (m; null or 0 lifts it), `rename` | `id`, `name`, `policy` |
+| `set` | `id` / `district`; [stories] `story` (a key or label from `stories`, or none: its homes and shops looks, industry, Historic, height limit and policies replace the district's), any policy dial by key (`rent_support` 0–0.5, `nightlife_levy` 0–0.2, `late_hours` bool, `pollution_levy` 0–0.2, `heritage_grant` 0–100 $/building/day, `business_rate` −0.05–0.10 (below 0 relief), `bed_levy` 0–0.2; clamped); also (older, makes the district custom) any of `residential` kowloon / suburban / eco / capsule / none, `commercial` neon_strip / tech_campus / night_market / tourist / capsule / none ([capsule] white domes, saucers and pill towers; as `commercial` it opens offices and gadget shops only where the market carries them, and gives nights out its domes too), `industry` farming / oil / refinery / manufacturing / logistics / fishing / tech / none, `historic` bool, `height_limit` (m; null or 0 lifts it), `rename` | `id`, `name`, `policy`, `story`, `policies` |
 | `remove` | `id` / `district` | `removed` |
 | `at` | `at` `[x,y]` | the district there |
 | `select` | `id` / `district` (none clears) | the District tool's selected district |
@@ -1798,7 +1799,12 @@ architecture it was built in) and `district`.
 {"cmd": "district", "action": "paint", "rect": [[-200, -150], [0, 150]], "new_name": "Lantern Row"}
 {"cmd": "district", "action": "set", "district": "Lantern Row", "commercial": "neon_strip", "residential": "kowloon"}
 {"cmd": "district", "action": "set", "id": 2, "historic": true}
+{"cmd": "district", "action": "set", "district": "Lantern Row", "story": "afterglow_mile", "nightlife_levy": 0.12}
 ```
+
+[stories] A story sets the building types; the policy dials and the height limit are the player's
+to fine-tune. Every policy's money moves through the ledger: levies as the treasury's
+`district levies`, support, grants and relief as `district spending`, itemised "District: policy".
 
 `tourism {action?, limit?}` (also `tourists`): `attractiveness`, `demand_per_day`, `ways_in` (road,
 rail, ferry, air), `tourists` (in town), `visible` (out on the street), `hotel_demand`, `today`
