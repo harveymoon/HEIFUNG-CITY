@@ -20,9 +20,6 @@ mod growth;
 mod elite;
 mod convoys;
 
-/// Fictional property developers.
-const DEVELOPERS: &[&str] = &["Kessler Land", "Halcyon Developments", "Argent Holdings", "Meridian Estates", "Nocturne Property", "Zenith Build", "Fulcrum Realty"];
-
 /// [review] The salts of [`World::erng`]'s small-number draw sites, in one
 /// place so no two share one: `invest_rich` used 4, the same as
 /// `daily_elites`, so on the same midnight tick both drew identical
@@ -36,8 +33,10 @@ pub(super) mod erng_salt {
     pub const INVEST_RICH: u64 = 6;
     pub const ACQUIRE_NAME: u64 = 9;
     pub const FORECLOSE: u64 = 10;
+    /// [companies] Old developers selling up to local builders.
+    pub const RETIRE: u64 = 11;
     #[cfg(test)]
-    pub const ALL: [u64; 8] = [DENSIFY, EXPAND_FIRMS, MCMANSIONS, ELITES, NIMBY, INVEST_RICH, ACQUIRE_NAME, FORECLOSE];
+    pub const ALL: [u64; 9] = [DENSIFY, EXPAND_FIRMS, MCMANSIONS, ELITES, NIMBY, INVEST_RICH, ACQUIRE_NAME, FORECLOSE, RETIRE];
 }
 
 impl World {
@@ -68,6 +67,9 @@ impl World {
         self.invest_rich();
         // [sweep-sim] ... and what they hold pays them.
         self.pay_investors();
+        // [companies] Old developers sell up to local firms; builders grow
+        // up and merge; fleets get their colours.
+        self.daily_companies();
         // [ledger] Owners out of town send their profit home; residents'
         // companies pay their founders.
         self.settle_owners();

@@ -224,7 +224,7 @@ fn developers_assemble_small_plots_into_one_bigger_building() {
     assert_eq!(b.plot.form, Some(Form::Merged));
     assert!(b.floors >= ASSEMBLY_MIN_FLOORS, "{} floors", b.floors);
     assert_eq!(b.demolition.as_ref().map(|d| d.reason), Some(DemolitionReason::Assembly), "it says why it comes down");
-    assert!(matches!(w.owner_of(bid).map(|o| &o.1.kind), Some(OwnerKind::Developer)));
+    assert!(matches!(w.owner_of(bid).map(|o| &o.1.kind), Some(OwnerKind::Builder { .. })), "a local builder bought it");
     // The neighbours come down too, for the same reason, and join when clear.
     let pending = b.plot.pending_lots.clone();
     for l in &pending {
@@ -308,7 +308,7 @@ fn a_half_empty_block_is_lost_to_a_developer_who_cuts_the_rent() {
     let b = &w.buildings[bid];
     assert!(b.tier < Tier::High, "a step down: {:?}", b.tier);
     assert!(b.rent < rent, "the rent came down: {} from {rent}", b.rent);
-    assert!(matches!(w.owner_of(bid).map(|o| &o.1.kind), Some(OwnerKind::Developer)), "the owner lost it");
+    assert!(matches!(w.owner_of(bid).map(|o| &o.1.kind), Some(OwnerKind::Builder { .. })), "the owner lost it to a local builder");
     assert_eq!(w.estate.stats.foreclosures_total, 1);
 }
 

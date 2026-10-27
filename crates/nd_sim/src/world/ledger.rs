@@ -285,7 +285,7 @@ impl World {
         self.transfer(owner, Account::Outside, amount * RENT_UPKEEP, Kind::Upkeep);
         self.pay_city(owner, Flow::PropertyTax, amount * PROPERTY_TAX, Some(crate::economy::Item::Building(bid)));
         let resident = match self.buildings.get(bid).and_then(|b| b.plot.owner).and_then(|o| self.estate.owners.get(o)) {
-            Some(o) => matches!(o.kind, OwnerKind::Household { .. } | OwnerKind::Person { .. } | OwnerKind::Company { .. }),
+            Some(o) => matches!(o.kind, OwnerKind::Household { .. } | OwnerKind::Person { .. } | OwnerKind::Company { .. } | OwnerKind::Builder { .. }),
             None => false,
         };
         if resident {
@@ -319,7 +319,7 @@ impl World {
         let landlord = b.is_tenant()
             || match host.plot.owner.and_then(|o| self.estate.owners.get(o)) {
                 None => true,
-                Some(o) => matches!(o.kind, OwnerKind::Developer | OwnerKind::University { .. } | OwnerKind::Company { .. }),
+                Some(o) => o.kind.lets(),
             };
         if !landlord {
             return 0.0;
@@ -344,7 +344,10 @@ impl World {
                 OwnerKind::Developer if money > OUT_OF_TOWN_FLOAT => {
                     self.transfer64(Account::Owner(oid), Account::Outside, money - OUT_OF_TOWN_FLOAT, Kind::Dividend);
                 }
-                OwnerKind::Company { founder } => {
+                // [companies] A builder pays its founder as a property
+                // company does; one whose founder is gone keeps it all.
+                OwnerKind::Builder { founder } if !self.citizens.contains_key(founder) => {}
+                OwnerKind::Company { founder } | OwnerKind::Builder { founder } => {
                     let net = rent * (1.0 - RENT_UPKEEP - PROPERTY_TAX - RENT_LOAN) * COMPANY_DIVIDEND;
                     let pay = (net as f64).min(money.max(0.0)) as f32;
                     if pay > 0.0 {
@@ -364,12 +367,12 @@ impl World {
         }
     }
 
-    /// [ledger] Who pays for the materials of a site: a developer or a
-    /// residents' company out of its own money, anyone else's build is
+    /// [ledger] Who pays for the materials of a site: a developer, a
+    /// residents' company or a builder out of its own money, anyone else's build is
     /// financed from out of town (as it always was).
     pub fn site_payer(&self, bid: BuildingId) -> Account {
         match self.buildings.get(bid).and_then(|b| b.plot.owner).and_then(|o| self.estate.owners.get(o).map(|x| (o, &x.kind))) {
-            Some((o, OwnerKind::Developer | OwnerKind::Company { .. })) => Account::Owner(o),
+            Some((o, OwnerKind::Developer | OwnerKind::Company { .. } | OwnerKind::Builder { .. })) => Account::Owner(o),
             _ => Account::Outside,
         }
     }

@@ -236,6 +236,12 @@ mod tenants_tests;
 mod rich;
 /// [megacorp] Mega-corporations.
 mod corp;
+/// [companies] Local companies: builders, growth, fleet liveries, the
+/// company directory.
+mod companies;
+pub use companies::{owner_kind_words, CompanySummary};
+#[cfg(test)]
+mod companies_tests;
 /// [megacorp] Universities, students and schools near families.
 mod campus;
 #[cfg(test)]

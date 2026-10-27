@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 use super::view::{key_str, opt_bool, opt_str, opt_u64, round, v2};
 use super::window::WindowRequests;
-use crate::directory::{self as dir, BizCol, BizState, Filter, PersonCol, Status};
+use crate::directory::{self as dir, BizCol, BizState, CompanyCol, Filter, PersonCol, Status};
 use crate::ui::city_data::{Page, Target};
 use crate::ui::directory::TableState;
 
@@ -27,6 +27,9 @@ fn filter_of(cmd: &Value) -> Result<Filter, String> {
     if let Some(c) = opt_str(cmd, "class")? {
         f.class = Some(dir::class_parse(c).ok_or_else(|| format!("unknown class {c:?}; one of low, middle, high, elite"))?);
     }
+    if let Some(k) = opt_str(cmd, "owner_kind")? {
+        f.owner_kind = Some(dir::owner_kind_parse(k).ok_or_else(|| format!("unknown owner kind {k:?}; one of {}", dir::OWNER_KINDS.map(|(k, _)| k).join(", ")))?);
+    }
     if let Some(s) = opt_str(cmd, "status")? {
         f.status = Some(Status::parse(s).ok_or_else(|| format!("unknown status {s:?}; one of {}", Status::ALL.map(|s| s.key()).join(", ")))?);
     }
@@ -39,17 +42,59 @@ fn opt_r(v: Option<f32>) -> Value {
 
 pub fn directory(w: &nd_sim::World, windows: &mut WindowRequests, cmd: &Value) -> Result<Value, String> {
     let kind = opt_str(cmd, "kind")?.unwrap_or("businesses").trim().to_ascii_lowercase();
-    let people = match kind.as_str() {
-        "businesses" | "business" | "firms" => false,
-        "people" | "citizens" | "persons" => true,
-        other => return Err(format!("unknown kind {other:?}; businesses or people")),
-    };
     let filter = filter_of(cmd)?;
     let desc = opt_bool(cmd, "desc")?;
     let offset = opt_u64(cmd, "offset")?.unwrap_or(0) as usize;
     let limit = (opt_u64(cmd, "limit")?.unwrap_or(DEFAULT_LIMIT as u64) as usize).min(MAX_LIMIT);
     let show = opt_bool(cmd, "show")?.unwrap_or(false);
     let start = std::time::Instant::now();
+    let people = match kind.as_str() {
+        "businesses" | "business" | "shops" => false,
+        "people" | "citizens" | "persons" => true,
+        // [companies] Every owner, biggest first.
+        "companies" | "company" | "owners" | "firms" | "corps" => {
+            if filter.kind.is_some() || filter.state.is_some() || filter.class.is_some() || filter.status.is_some() {
+                return Err("for companies use owner_kind, district and search".into());
+            }
+            let col = match opt_str(cmd, "sort")? {
+                Some(s) => CompanyCol::parse(s).ok_or_else(|| format!("unknown column {s:?}; one of {}", CompanyCol::ALL.map(|c| c.key()).join(", ")))?,
+                None => CompanyCol::Value,
+            };
+            let desc = desc.unwrap_or(col.numeric());
+            let rows = dir::companies(w);
+            let read_ms = start.elapsed().as_secs_f32() * 1000.0;
+            let order = dir::order(&rows, &filter, col, desc);
+            let full = w.company_summaries();
+            let out: Vec<Value> = order
+                .iter()
+                .skip(offset)
+                .take(limit)
+                .map(|&i| {
+                    let r = &rows[i as usize];
+                    let history: Vec<Value> = full.iter().find(|c| c.owner == r.owner).map_or(Vec::new(), |c| c.history.iter().map(|n| json!({ "day": n.day + 1, "text": n.text })).collect());
+                    json!({
+                        "owner": key_str(r.owner), "name": r.name, "what": r.what, "owner_kind": r.kind_key, "founder": r.founder,
+                        "properties": r.properties, "value": round(r.value as f32), "rent_yesterday": round(r.rent), "takings_yesterday": round(r.takings),
+                        "staff": r.staff, "vehicles": r.vehicles, "since_day": r.since_day + 1, "district": r.district,
+                        "livery": r.livery.map(nd_sim::companies::fleet_hex), "flagship": r.flagship.map(key_str), "pos": r.pos.map(v2),
+                        "size": round(r.size as f32), "history": history,
+                    })
+                })
+                .collect();
+            if show {
+                windows.directory_companies = Some(TableState { filter: filter.clone(), col, desc });
+                windows.request_data(Some(Target::Page(Page::DirectoryCompanies)), Some(true));
+            }
+            let mut v = json!({ "kind": "companies", "read_ms": round(read_ms), "sort": col.key(), "desc": desc, "total": rows.len(), "matched": order.len(), "offset": offset, "rows": out });
+            v["took_ms"] = json!(round(start.elapsed().as_secs_f32() * 1000.0));
+            v["shown"] = json!(show);
+            return Ok(v);
+        }
+        other => return Err(format!("unknown kind {other:?}; businesses, companies or people")),
+    };
+    if filter.owner_kind.is_some() {
+        return Err("owner_kind filters companies".into());
+    }
     let mut v = if people {
         if filter.kind.is_some() || filter.state.is_some() {
             return Err("business_kind and state filter businesses; for people use class, status, district".into());

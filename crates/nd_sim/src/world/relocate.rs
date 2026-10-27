@@ -16,7 +16,7 @@
 //! building's floors from the world's stream, as for any new building.)
 
 use super::*;
-use crate::estate::{Moving, OwnerKind};
+use crate::estate::Moving;
 use crate::industry::IndustryKind;
 
 /// How far a business will move, m.
@@ -63,7 +63,7 @@ impl World {
         if self.estate.moving.iter().any(|m| m.name == b.name && m.business.kind == z.kind) {
             return;
         }
-        let owner = b.plot.owner.filter(|o| self.estate.owners.get(*o).is_some_and(|o| o.kind != OwnerKind::Developer));
+        let owner = b.plot.owner.filter(|o| self.estate.owners.get(*o).is_some_and(|o| !o.kind.builds()));
         let staff: Vec<CitizenId> = b.workers.iter().copied().filter(|c| self.citizens.get(*c).is_some_and(|c| c.work == Some(bid))).collect();
         // Its old address by the nearest neighbour still standing.
         let from_words = self

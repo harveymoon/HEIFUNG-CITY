@@ -409,6 +409,14 @@ pub struct MegaCorp {
     pub revenue_yesterday: f32,
 }
 
+impl MegaCorp {
+    /// [companies] What it knows from where it started, and so what it
+    /// builds and buys next (`crate::companies::Specialty`).
+    pub fn specialty(&self) -> crate::companies::Specialty {
+        crate::companies::Specialty::of_origin(self.origin)
+    }
+}
+
 /// The player's levers on the corps (Economy › Corporations).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

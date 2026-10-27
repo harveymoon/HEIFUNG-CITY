@@ -70,8 +70,6 @@ pub const VERTIPORT_CLEARANCE_CAP_M: f32 = 120.0;
 pub const FLOOR_M: [f32; 6] = [3.1, 3.5, 5.0, 3.6, 4.2, 3.0];
 
 /// Fictional tower developers: first and second words.
-const DEV_A: &[&str] = &["Kestrel", "Solenne", "Vireo", "Corvane", "Halden", "Ostrava", "Marlowe", "Tamsin", "Lisle", "Brightwater", "Calloway", "Ardent"];
-const DEV_B: &[&str] = &["Group", "Holdings", "Partners", "Vertical", "Capital", "Development", "Realty", "Land Co."];
 /// Tower names.
 const NAME_A: &[&str] = &["Meridian", "Aurora", "Helix", "Obsidian", "Lumen", "Vesper", "Cobalt", "Zenith", "Halcyon", "Sable", "Orchid", "Prism", "Solstice", "Nimbus", "Spectra", "Ion", "Argent", "Corona"];
 const NAME_B: &[&str] = &["Spire", "Tower", "Needle", "Pinnacle", "Crown", "One", "Point", "Summit", "Sky Tower", "Centre"];
@@ -256,10 +254,6 @@ pub fn unit(h: u64) -> f32 {
     ((x >> 40) as f32) / ((1u64 << 24) as f32)
 }
 
-pub fn developer_name(h: u64) -> String {
-    format!("{} {}", DEV_A[(h % DEV_A.len() as u64) as usize], DEV_B[((h >> 17) % DEV_B.len() as u64) as usize])
-}
-
 pub fn tower_name(h: u64) -> String {
     format!("{} {}", NAME_A[(h % NAME_A.len() as u64) as usize], NAME_B[((h >> 13) % NAME_B.len() as u64) as usize])
 }
@@ -312,6 +306,11 @@ pub struct TowerDeveloper {
     pub capital: f64,
     /// How hard investors back it, `0.7..1.3`.
     pub pull: f32,
+    /// [companies] The resident who runs it: tower developers are local
+    /// firms named after their founder (`World::localise_tower_developers`
+    /// takes on an old save's out-of-town ones).
+    #[serde(default)]
+    pub founder: Option<crate::citizens::CitizenId>,
 }
 
 /// The league's state on the `World` (`World::skyline`).
@@ -394,7 +393,6 @@ mod tests {
         assert_eq!(ordinal(11), "11th");
         assert_eq!(ordinal(22), "22nd");
         assert_ne!(tower_name(1), "");
-        assert_eq!(developer_name(7), developer_name(7));
         for s in [0u64, 1, 99, 12345] {
             let u = unit(s);
             assert!((0.0..1.0).contains(&u));

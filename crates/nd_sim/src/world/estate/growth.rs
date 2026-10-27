@@ -23,8 +23,9 @@ impl World {
         for (id, b) in self.buildings.iter() {
             // [pt-growth] A developer's own building (a block it assembled
             // or rebuilt before) may be rebuilt taller again as the street
-            // gets busier: density feeds on itself.
-            let developers = b.plot.owner.and_then(|o| self.estate.owners.get(o)).is_some_and(|o| o.kind == OwnerKind::Developer);
+            // gets busier: density feeds on itself. [companies] A local
+            // builder's too.
+            let developers = b.plot.owner.and_then(|o| self.estate.owners.get(o)).is_some_and(|o| o.kind.builds());
             let free = b.plot.owner.is_none() || developers;
             let form_ok = b.plot.form.is_none() || (developers && b.plot.form == Some(Form::Merged));
             if !matches!(b.land_use, LandUse::Residential | LandUse::Commercial | LandUse::Entertainment) || !form_ok || !free {
@@ -165,7 +166,7 @@ impl World {
         if worth < price * 1.2 {
             return false;
         }
-        let dev = self.developer(rng);
+        let dev = self.builder_for(lot, rng);
         let dev_name = self.estate.owners.get(dev).map(|o| o.name.clone()).unwrap_or_default();
         let (name, had_business) = (self.buildings[bid].name.clone(), self.buildings[bid].business.is_some());
         let memory = format!("{dev_name} bought up {name} and the houses next to it for a new block of {floors} floors. We had to go.");
@@ -222,13 +223,14 @@ impl World {
             if days < FORECLOSE_DAYS || !waiting || sold >= 2 || !self.buyable(bid) {
                 continue;
             }
-            let developers = self.buildings[bid].plot.owner.and_then(|o| self.estate.owners.get(o)).is_some_and(|o| o.kind == OwnerKind::Developer);
+            let developers = self.buildings[bid].plot.owner.and_then(|o| self.estate.owners.get(o)).is_some_and(|o| o.kind.builds());
             if developers && !rng.random_bool(0.3) {
                 // A developer that already holds it tries the market a while.
                 continue;
             }
             let price = self.sale_price(bid) * FORECLOSE_DISCOUNT;
-            let dev = self.developer(&mut rng);
+            let lot = self.buildings[bid].lot;
+            let dev = self.builder_for(lot, &mut rng);
             let name = self.buildings[bid].name.clone();
             let dev_name = self.estate.owners.get(dev).map(|o| o.name.clone()).unwrap_or_default();
             self.settle_sale_to(bid, Some(dev));
@@ -259,7 +261,6 @@ impl World {
             return false;
         }
         let price = self.sale_price(bid);
-        let dev = self.developer(rng);
         let (lu, lot, old_floors, name, had_business) = {
             let b = &self.buildings[bid];
             (b.land_use, b.lot, b.floors, b.name.clone(), b.business.is_some())
@@ -290,7 +291,9 @@ impl World {
         if self.value_of_new(bid, tier, floors) < price * 1.2 {
             return false;
         }
-        if self.buildings[bid].plot.owner.and_then(|o| self.estate.owners.get(o)).is_some_and(|o| o.kind == OwnerKind::Developer) {
+        // [companies] Bought by a local builder (the nearest, or a new one).
+        let dev = self.builder_for(lot, rng);
+        if self.buildings[bid].plot.owner.and_then(|o| self.estate.owners.get(o)).is_some_and(|o| o.kind.builds()) {
             self.estate.stats.redensified_total += 1;
         }
         let dev_name = self.estate.owners.get(dev).map(|o| o.name.clone()).unwrap_or_default();
@@ -337,7 +340,9 @@ impl World {
     }
 
     /// Successful firms grow, two a day at most: branch kinds open a
-    /// branch across the city, the rest buy the plot next door.
+    /// branch across the city, the rest buy the plot next door; [companies]
+    /// shops and fleet yards buy next door first, then open more across
+    /// town (`World::grow_firm`).
     pub(in crate::world) fn expand_firms(&mut self) {
         let mut rng = self.erng(erng_salt::EXPAND_FIRMS);
         let mut cands: Vec<(f32, BuildingId)> = self
@@ -355,8 +360,8 @@ impl World {
             if !self.wants_to_expand(bid) || !rng.random_bool(0.2) {
                 continue;
             }
-            let kind = self.buildings[bid].business.as_ref().unwrap().kind;
-            let grew = if branches(kind) { self.open_branch(bid).is_some() } else if expansion_form(kind).is_some() { self.expand_into_neighbours(bid) } else { false };
+            // [companies] Shops and yards grow next door, then across town.
+            let grew = self.grow_firm(bid);
             if grew {
                 done += 1;
             }

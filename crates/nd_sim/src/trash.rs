@@ -625,6 +625,12 @@ impl World {
             Some((lanes, s0, s1)) if from.distance(to.1) > 8.0 => {
                 let car = self.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, 0);
                 self.traffic.cars[car].model = truck_model(hauler, number);
+                // [companies] A local company's truck in its colours.
+                if let Hauler::Company(b) = hauler {
+                    if let Some(l) = self.fleet_livery(b, Livery::Utility) {
+                        self.traffic.cars[car].model.livery = l;
+                    }
+                }
                 self.society.trash.trucks[id].car = Some(car);
             }
             _ => {

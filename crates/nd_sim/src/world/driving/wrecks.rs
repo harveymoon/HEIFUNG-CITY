@@ -276,8 +276,13 @@ impl World {
         let (route, s0, s1) = route;
         let truck = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, 3);
         let towed = self.traffic.cars.get(car).map_or(BodyType::Sedan, |c| c.model.body);
+        // [companies] A local yard's truck in its colours.
+        let livery = company.and_then(|c| self.fleet_livery(c, crate::vehicle::Livery::Utility));
         let t = &mut self.traffic.cars[truck];
         t.model = super::enforcement::tow_model_for(towed);
+        if let Some(l) = livery {
+            t.model.livery = l;
+        }
         t.errand = Errand::Recover(car);
         t.drive.profile = DriverProfile::professional(car_hash(truck, 1));
         t.drive.amber = true;
@@ -449,8 +454,13 @@ impl World {
         self.enforcement.stats.wrecks_towed_total += 1;
         self.traffic.remove_car(car);
         let truck = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, 0);
+        // [companies] A local yard's truck in its colours.
+        let livery = yard.and_then(|c| self.fleet_livery(c, crate::vehicle::Livery::Utility));
         let t = &mut self.traffic.cars[truck];
         t.model = super::enforcement::tow_model_for(model.body);
+        if let Some(l) = livery {
+            t.model.livery = l;
+        }
         t.drive.profile = DriverProfile::professional(car_hash(truck, 1));
         // [rage] Timed, but a tow driver keeps their head (no calm profile).
         t.drive.trip_start = self.clock.tick;

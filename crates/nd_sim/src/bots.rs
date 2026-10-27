@@ -254,7 +254,9 @@ impl World {
                 let id = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, 0);
                 self.traffic.cars[id].model = VehicleModel::delivery(kind, &mut rng);
                 // [megacorp] A corp's shop sends its van in the corp's colours.
-                if let Some(l) = self.corp_livery(shop) {
+                // [companies] A local shop's in its own.
+                let base = self.traffic.cars[id].model.livery;
+                if let Some(l) = self.fleet_livery(shop, base) {
                     self.traffic.cars[id].model.livery = l;
                 }
                 // [carlife] The van drives back to the shop afterwards.

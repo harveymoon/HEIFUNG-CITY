@@ -20,6 +20,8 @@ pub mod committee;
 /// [concerns] Complaints by category and city happiness over time.
 pub mod concerns;
 /// [megacorp] Mega-corporations, universities, brands and logos.
+/// [companies] Local companies: builders, fleet liveries, corp specialties.
+pub mod companies;
 pub mod corp;
 pub mod crime;
 /// [districts] Named districts with specialisations and the Historic freeze.

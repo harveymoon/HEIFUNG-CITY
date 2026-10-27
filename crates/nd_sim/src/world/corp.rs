@@ -278,7 +278,8 @@ impl World {
         let eligible = |b: &Building| b.business.as_ref().is_some_and(|z| !z.closed && !matches!(z.kind, BusinessKind::CargoHub | BusinessKind::Parking)) && b.operating() && !b.is_special();
         let mut out: Vec<CompanySize> = Vec::new();
         for (oid, o) in self.estate.owners.iter() {
-            if !matches!(o.kind, OwnerKind::Firm { .. } | OwnerKind::Person { .. }) {
+            // [companies] Local builders and property companies too.
+            if !matches!(o.kind, OwnerKind::Firm { .. } | OwnerKind::Person { .. } | OwnerKind::Builder { .. } | OwnerKind::Company { .. }) {
                 continue;
             }
             let held: Vec<(BuildingId, &Building)> = o.properties.iter().filter_map(|p| self.buildings.get(*p).map(|b| (*p, b))).filter(|(_, b)| eligible(b)).collect();
@@ -332,7 +333,7 @@ impl World {
                 return Ok(i);
             }
             if let Some(ow) = self.estate.owners.get(o) {
-                if !matches!(ow.kind, OwnerKind::Firm { .. } | OwnerKind::Person { .. } | OwnerKind::Developer) {
+                if !matches!(ow.kind, OwnerKind::Firm { .. } | OwnerKind::Person { .. } | OwnerKind::Developer | OwnerKind::Builder { .. } | OwnerKind::Company { .. }) {
                     return Err(format!("{} is owned by {}, not a company", b.name, ow.name));
                 }
             }
@@ -629,6 +630,8 @@ impl World {
         let owner = self.corps.corps[ci].owner;
         let props = self.estate.owners.get(owner).map(|o| o.properties.clone()).unwrap_or_default();
         let kinds: Vec<BusinessKind> = props.iter().filter_map(|p| self.buildings.get(*p)?.business.as_ref().map(|z| z.kind)).collect();
+        // [companies] Its specialty's trades count as nearer still.
+        let spec = self.corps.corps[ci].specialty();
         let staff = self.corp_staff(owner).len() as f32;
         let (homes, _) = self.corp_homes(owner);
         let wants_homes = (homes as f32) < staff * HOUSING_PER_STAFF;
@@ -649,13 +652,10 @@ impl World {
                     if last.iter().map(|d| d.revenue - d.spend).sum::<f32>() <= 0.0 {
                         continue;
                     }
-                    if kinds.contains(&z.kind) {
-                        1.0
-                    } else {
-                        NEW_KIND_PULL
-                    }
+                    let pull = if spec.wants(z.kind) { crate::companies::SPECIALTY_PULL } else { 1.0 };
+                    pull * if kinds.contains(&z.kind) { 1.0 } else { NEW_KIND_PULL }
                 }
-                None if b.land_use == LandUse::Residential && wants_homes && b.homes >= 4 && b.homes <= 60 && b.tier <= Tier::Mid => 0.9,
+                None if b.land_use == LandUse::Residential && wants_homes && b.homes >= 4 && b.homes <= 60 && b.tier <= Tier::Mid => if spec.builds_homes() { 0.6 } else { 0.9 },
                 None => continue,
             };
             let d = self.drive_to_lot(&table, oseg, lot);
@@ -749,7 +749,14 @@ impl World {
         let value = self.lot_value(lid);
         let tier = Tier::for_land_value(value);
         let h = mix(self.config.seed ^ 0xC0_B1, lid.data().as_ffi() ^ self.clock.tick);
-        let kind = match lu {
+        // [companies] What its specialty builds here, when the plot is big
+        // enough for it (a dealer's forecourt); otherwise what any corp
+        // builds.
+        let area = lot.area();
+        let spec: Vec<BusinessKind> = self.corps.corps[ci].specialty().builds(lu).iter().copied().filter(|k| area >= crate::companies::min_area(*k)).collect();
+        let kind = if !spec.is_empty() {
+            Some(self.corp_new_kind(ci, &spec, h))
+        } else { match lu {
             LandUse::Residential => None,
             LandUse::Commercial => {
                 let opts = [BusinessKind::Office, BusinessKind::GadgetShop, BusinessKind::Grocery, BusinessKind::Bakery, BusinessKind::Hotel, BusinessKind::Cafe, BusinessKind::Bookshop];
@@ -763,7 +770,7 @@ impl World {
                 _ => [BusinessKind::Fab, BusinessKind::Assembly, BusinessKind::Mill][(h % 3) as usize],
             }),
             LandUse::Civic | LandUse::Park => return None,
-        };
+        } };
         let cap = self.height_cap(lid).max(1);
         let mut floors = match (lu, tier) {
             (LandUse::Industrial, _) => 2,

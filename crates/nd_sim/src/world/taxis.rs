@@ -79,7 +79,12 @@ impl World {
         let number = self.taxis.fleet(company).map(|(_, c)| c.number).max().unwrap_or(0) + 1;
         let pos = self.building_lot(company).map_or(Vec2::ZERO, |l| l.center);
         let tick = self.clock.tick;
-        self.taxis.cabs.insert(Cab { company, number, model: taxi::cab_model(number), place: CabPlace::Yard, job: CabJob::Idle, on_duty: false, last_pos: pos, since: tick })
+        let mut model = taxi::cab_model(number);
+        // [companies] In the company's own colours, once it has them.
+        if let Some(l) = self.fleet_livery(company, crate::vehicle::Livery::Taxi) {
+            model.livery = l;
+        }
+        self.taxis.cabs.insert(Cab { company, number, model, place: CabPlace::Yard, job: CabJob::Idle, on_duty: false, last_pos: pos, since: tick })
     }
 
     /// What a citizen could put into a business: their own savings and

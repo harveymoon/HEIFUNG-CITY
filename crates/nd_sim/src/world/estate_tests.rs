@@ -106,7 +106,7 @@ fn pressure_densifies_a_busy_block_and_leaves_a_quiet_one_low() {
         let x = &w.buildings[*b];
         assert!(x.demolition.is_some() && x.construction.is_some(), "bought, coming down, to be rebuilt");
         assert!(x.floors > 2, "rebuilt bigger: {}", x.floors);
-        assert!(matches!(w.owner_of(*b).map(|o| &o.1.kind), Some(OwnerKind::Developer)));
+        assert!(matches!(w.owner_of(*b).map(|o| &o.1.kind), Some(OwnerKind::Builder { .. })), "bought by a local builder");
     }
     for q in &quiet {
         let x = &w.buildings[*q];

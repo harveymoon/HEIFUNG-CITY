@@ -89,6 +89,8 @@ pub struct Filter {
     pub class: Option<Class>,
     /// People: one status.
     pub status: Option<Status>,
+    /// [companies] Companies: one kind of owner (`CompanySummary::kind_key`).
+    pub owner_kind: Option<&'static str>,
 }
 
 /// The text a row's search looks in: its parts, lower case, in one string.
@@ -364,6 +366,7 @@ pub fn owner_kind_label(k: &OwnerKind) -> &'static str {
         OwnerKind::MegaCorp { .. } => "mega-corp",
         OwnerKind::University { .. } => "university",
         OwnerKind::Company { .. } => "property company",
+        OwnerKind::Builder { .. } => "builder",
     }
 }
 
@@ -429,6 +432,208 @@ pub fn businesses(w: &World) -> Vec<BizRow> {
                 footfall: lot.map_or(0, |l| l.footfall_today),
                 state,
                 pos: w.building_lot(id).map(|l| l.center),
+                hay,
+            }
+        })
+        .collect()
+}
+
+// ── [companies] companies ───────────────────────────────────────────────────
+
+/// One owner (a firm, a founder, a builder, a corp, the university, a
+/// billionaire, a family, an old save's developer), as its row shows it.
+#[derive(Clone, Debug)]
+pub struct CompanyRow {
+    pub owner: nd_sim::estate::OwnerId,
+    pub name: String,
+    /// What it is, in words, and its short key ("builder", "corp", ...).
+    pub what: String,
+    pub kind_key: &'static str,
+    pub founder: String,
+    pub properties: u32,
+    pub value: f64,
+    pub rent: f32,
+    pub takings: f32,
+    pub staff: u32,
+    pub vehicles: u32,
+    pub since_day: u32,
+    /// Its newest history line, "day 63: renamed from ...".
+    pub latest: String,
+    pub livery: Option<u8>,
+    pub district: String,
+    /// Its HQ or biggest building, to select and fly to.
+    pub flagship: Option<BuildingId>,
+    pub pos: Option<Vec2>,
+    pub size: f64,
+    hay: String,
+}
+
+/// The company table's columns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CompanyCol {
+    Name,
+    What,
+    Founder,
+    Properties,
+    Value,
+    Rent,
+    Takings,
+    Staff,
+    Vehicles,
+    Since,
+    History,
+}
+
+impl CompanyCol {
+    pub const ALL: [CompanyCol; 11] = [CompanyCol::Name, CompanyCol::What, CompanyCol::Founder, CompanyCol::Properties, CompanyCol::Value, CompanyCol::Rent, CompanyCol::Takings, CompanyCol::Staff, CompanyCol::Vehicles, CompanyCol::Since, CompanyCol::History];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            CompanyCol::Name => "name",
+            CompanyCol::What => "what it is",
+            CompanyCol::Founder => "founder",
+            CompanyCol::Properties => "props",
+            CompanyCol::Value => "value",
+            CompanyCol::Rent => "rent yday",
+            CompanyCol::Takings => "takings yday",
+            CompanyCol::Staff => "staff",
+            CompanyCol::Vehicles => "vehicles",
+            CompanyCol::Since => "since",
+            CompanyCol::History => "latest",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            CompanyCol::Name => "name",
+            CompanyCol::What => "what",
+            CompanyCol::Founder => "founder",
+            CompanyCol::Properties => "properties",
+            CompanyCol::Value => "value",
+            CompanyCol::Rent => "rent",
+            CompanyCol::Takings => "takings",
+            CompanyCol::Staff => "staff",
+            CompanyCol::Vehicles => "vehicles",
+            CompanyCol::Since => "since",
+            CompanyCol::History => "history",
+        }
+    }
+
+    pub fn tip(self) -> &'static str {
+        match self {
+            CompanyCol::Name => "The company's name (the swatch is its fleet livery)",
+            CompanyCol::What => "What kind of owner it is: a builder and landlord, a firm, a founder, a mega-corp and its specialty, the university, a billionaire",
+            CompanyCol::Founder => "The resident behind it",
+            CompanyCol::Properties => "Buildings it owns",
+            CompanyCol::Value => "What its buildings would sell for, summed",
+            CompanyCol::Rent => "Rent its tenants paid it yesterday",
+            CompanyCol::Takings => "What its own businesses took yesterday",
+            CompanyCol::Staff => "People working in its buildings",
+            CompanyCol::Vehicles => "Vehicles it runs now: cabs, tow and garbage trucks, lorries and vans on the road",
+            CompanyCol::Since => "The day it was founded (or came to own something here)",
+            CompanyCol::History => "The latest thing that happened to it (founded, grew, renamed, merged, sold up); the search looks through all of it",
+        }
+    }
+
+    pub fn numeric(self) -> bool {
+        matches!(self, CompanyCol::Properties | CompanyCol::Value | CompanyCol::Rent | CompanyCol::Takings | CompanyCol::Staff | CompanyCol::Vehicles | CompanyCol::Since)
+    }
+
+    pub fn parse(s: &str) -> Option<CompanyCol> {
+        let s = s.trim().to_ascii_lowercase().replace([' ', '-'], "_");
+        let s = match s.as_str() {
+            "kind" | "type" => "what",
+            "props" | "holdings" | "buildings" => "properties",
+            "worth" | "size" => "value",
+            "revenue" => "takings",
+            "fleet" => "vehicles",
+            "founded" | "day" => "since",
+            "latest" => "history",
+            other => other,
+        };
+        CompanyCol::ALL.into_iter().find(|c| c.key() == s)
+    }
+}
+
+impl Row for CompanyRow {
+    type Col = CompanyCol;
+
+    fn key(&self, c: CompanyCol) -> Key<'_> {
+        match c {
+            CompanyCol::Name => Key::Text(&self.name),
+            CompanyCol::What => Key::Text(&self.what),
+            CompanyCol::Founder => text(&self.founder),
+            // Properties, then their value.
+            CompanyCol::Properties => Key::Num(self.properties as f64 + (self.value / 1e15).min(0.5)),
+            CompanyCol::Value => Key::Num(self.value),
+            CompanyCol::Rent => Key::Num(self.rent as f64),
+            CompanyCol::Takings => Key::Num(self.takings as f64),
+            CompanyCol::Staff => Key::Num(self.staff as f64),
+            CompanyCol::Vehicles => Key::Num(self.vehicles as f64),
+            CompanyCol::Since => Key::Num(self.since_day as f64),
+            CompanyCol::History => text(&self.latest),
+        }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn matches(&self, f: &Filter) -> bool {
+        f.owner_kind.is_none_or(|k| k == self.kind_key) && f.district.as_ref().is_none_or(|d| *d == self.district) && found(&self.hay, &f.search)
+    }
+}
+
+/// The kinds of owner the Companies picker offers, with their words.
+pub const OWNER_KINDS: [(&str, &str); 9] = [
+    ("builder", "builders and landlords"),
+    ("firm", "firms and chains"),
+    ("founder", "founders"),
+    ("property", "property companies"),
+    ("corp", "mega-corps"),
+    ("university", "universities"),
+    ("billionaire", "billionaires"),
+    ("family", "families"),
+    ("developer", "old developers"),
+];
+
+/// An owner kind's key as `OWNER_KINDS` spells it (for the API).
+pub fn owner_kind_parse(s: &str) -> Option<&'static str> {
+    let s = s.trim().to_ascii_lowercase();
+    OWNER_KINDS.iter().find(|(k, w)| *k == s || *w == s || s.trim_end_matches('s') == *k).map(|(k, _)| *k)
+}
+
+/// Every owner in town as a row, biggest first (`World::company_summaries`).
+pub fn companies(w: &World) -> Vec<CompanyRow> {
+    w.company_summaries()
+        .into_iter()
+        .map(|c| {
+            let at = c.flagship.and_then(|b| w.buildings.get(b).map(|x| x.lot));
+            let district = at.and_then(|l| w.district_of_lot(l)).map_or(String::new(), |d| d.name.clone());
+            let founder = c.founder.clone().unwrap_or_default();
+            let latest = c.history.last().map_or(String::new(), |n| format!("day {}: {}", n.day + 1, n.text));
+            let flagship_name = c.flagship.and_then(|b| w.buildings.get(b)).map_or(String::new(), |b| b.name.clone());
+            let all: Vec<&str> = c.history.iter().map(|n| n.text.as_str()).collect();
+            let hay = hay_of(&[&c.name, &c.what, c.kind_key, &founder, &district, &flagship_name, &all.join(" ")]);
+            CompanyRow {
+                owner: c.owner,
+                name: c.name,
+                what: c.what,
+                kind_key: c.kind_key,
+                founder,
+                properties: c.properties as u32,
+                value: c.value,
+                rent: c.rent,
+                takings: c.takings,
+                staff: c.staff as u32,
+                vehicles: c.vehicles as u32,
+                since_day: c.since_day,
+                latest,
+                livery: c.livery,
+                district,
+                flagship: c.flagship,
+                pos: c.flagship.and_then(|b| w.building_lot(b)).map(|l| l.center),
+                size: c.size,
                 hay,
             }
         })

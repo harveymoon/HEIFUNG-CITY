@@ -59,6 +59,8 @@ pub struct WindowRequests {
     /// [directory] Settings for the Directory tables (`directory {show}`).
     pub directory_biz: Option<crate::ui::directory::TableState<crate::directory::BizCol>>,
     pub directory_people: Option<crate::ui::directory::TableState<crate::directory::PersonCol>>,
+    /// [companies] The Companies table's settings, from `directory {kind: companies, show}`.
+    pub directory_companies: Option<crate::ui::directory::TableState<crate::directory::CompanyCol>>,
 }
 
 /// A tool window by name. The View window was the Land window; its old name
@@ -175,6 +177,9 @@ pub fn apply_window_requests(mut contexts: EguiContexts, mut req: ResMut<WindowR
     }
     if let Some(s) = req.directory_people.take() {
         crate::ui::directory::set_people(ctx, s);
+    }
+    if let Some(s) = req.directory_companies.take() {
+        crate::ui::directory::set_companies(ctx, s);
     }
     if let Some(y) = req.data_scroll.take() {
         crate::ui::city_data::scroll_to(ctx, y);

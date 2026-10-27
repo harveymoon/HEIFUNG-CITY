@@ -758,7 +758,9 @@ impl World {
                 // [megacorp] A corp's lorries wear its brand (not on a
                 // building-site run or a haul in from out of town).
                 if !to_site && !long_haul {
-                    if let Some(l) = self.corp_livery(cargo.from) {
+                    // [companies] A local company's lorry in its own colours.
+                    let base = self.traffic.cars[id].model.livery;
+                    if let Some(l) = self.fleet_livery(cargo.from, base) {
                         self.traffic.cars[id].model.livery = l;
                     } else if let Some(l) = self.corp_livery(cargo.to).filter(|_| self.buildings.get(cargo.to).and_then(|b| b.business.as_ref()).is_some_and(|z| z.kind.customers_per_job().is_some())) {
                         // [sweep-sim] A corp's shop is stocked by the corp's
@@ -766,6 +768,12 @@ impl World {
                         let m = &mut self.traffic.cars[id].model;
                         m.livery = l;
                         m.body = crate::vehicle::BodyType::DeliveryVan;
+                    }
+                }
+                // [companies] A builder's site lorries wear its colours.
+                if to_site {
+                    if let Some(c) = self.builder_colour(cargo.to) {
+                        self.traffic.cars[id].model.livery = crate::vehicle::Livery::fleet(crate::vehicle::Livery::Construction, c);
                     }
                 }
             }

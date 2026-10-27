@@ -75,7 +75,7 @@ impl World {
             // (their own, their household's, their property company's).
             let person = match &o.kind {
                 OwnerKind::Person { citizen } | OwnerKind::Elite { citizen } => Some(*citizen),
-                OwnerKind::Company { founder } => Some(*founder),
+                OwnerKind::Company { founder } | OwnerKind::Builder { founder } => Some(*founder),
                 OwnerKind::Household { household } => self.households.get(*household).and_then(|h| h.members.first().copied()),
                 _ => None,
             };
@@ -120,7 +120,7 @@ impl World {
 
     pub(in crate::world) fn new_owner(&mut self, name: String, kind: OwnerKind) -> OwnerId {
         let day = self.clock.day();
-        self.estate.owners.insert(Owner { name, kind, properties: Vec::new(), spent: 0.0, since_day: day as u32, income_day: 0.0, earned: 0.0, money: 0.0, rent_today: 0.0, rent_yesterday: 0.0 })
+        self.estate.owners.insert(Owner { name, kind, properties: Vec::new(), spent: 0.0, since_day: day as u32, income_day: 0.0, earned: 0.0, money: 0.0, rent_today: 0.0, rent_yesterday: 0.0, livery: None, history: Vec::new(), grown: false })
     }
 
     /// `owner` buys `bid` (or takes it on as built): off its old owner's
@@ -209,7 +209,7 @@ impl World {
             .estate
             .owners
             .values()
-            .filter(|o| o.kind.citizen() == Some(cid) || o.kind == OwnerKind::Company { founder: cid } || hh.is_some_and(|h| o.kind == OwnerKind::Household { household: h }))
+            .filter(|o| o.kind.citizen() == Some(cid) || o.kind == OwnerKind::Company { founder: cid } || o.kind == OwnerKind::Builder { founder: cid } || hh.is_some_and(|h| o.kind == OwnerKind::Household { household: h }))
             .flat_map(|o| o.properties.iter().copied())
             .filter(|b| self.buildings.contains_key(*b))
             .collect();
@@ -230,17 +230,6 @@ impl World {
         let o = self.new_owner(name, OwnerKind::Firm { kind });
         self.give_to(bid, o, 0.0);
         Some(o)
-    }
-
-    /// A developer to buy with: one of up to four, made as needed.
-    pub(super) fn developer(&mut self, rng: &mut SimRng) -> OwnerId {
-        let devs: Vec<OwnerId> = self.estate.owners.iter().filter(|(_, o)| o.kind == OwnerKind::Developer).map(|(id, _)| id).collect();
-        if devs.len() >= 4 || (!devs.is_empty() && rng.random_bool(0.6)) {
-            return devs[rng.random_range(0..devs.len())];
-        }
-        let taken: Vec<String> = self.estate.owners.values().map(|o| o.name.clone()).collect();
-        let name = DEVELOPERS.iter().find(|n| !taken.iter().any(|t| t == *n)).map(|s| s.to_string()).unwrap_or_else(|| format!("Developer {}", devs.len() + 1));
-        self.new_owner(name, OwnerKind::Developer)
     }
 
     /// Can the market buy this building? Built and standing, ordinary (not
@@ -378,7 +367,7 @@ impl World {
     /// `lu`: same land use, not under a facility or already promised, empty
     /// (landlocked backland included) or holding a building the market may
     /// buy that is no taller than `max_floors`. Cheapest first, vacant first.
-    pub(super) fn plots_next_to(&self, ours: &[LotId], lu: LandUse, max_floors: u8, owner: Option<OwnerId>) -> Vec<(f64, LotId)> {
+    pub(in crate::world) fn plots_next_to(&self, ours: &[LotId], lu: LandUse, max_floors: u8, owner: Option<OwnerId>) -> Vec<(f64, LotId)> {
         let mine: Vec<&Lot> = ours.iter().filter_map(|l| self.lots.get(*l)).collect();
         let mut out: Vec<(f64, LotId)> = Vec::new();
         for (lid, l) in self.lots.iter() {

@@ -20,7 +20,11 @@ pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildi
     let owner = w.owner_of(id);
     let who = match owner.map(|(_, o)| (o.name.clone(), &o.kind)) {
         Some((name, OwnerKind::Elite { .. })) => format!("{name} (billionaire)"),
-        Some((name, OwnerKind::Developer)) => format!("{name} (developer)"),
+        Some((name, OwnerKind::Developer)) => format!("{name} (an out-of-town developer, selling up to local firms)"),
+        Some((name, OwnerKind::Builder { founder })) => match w.citizens.get(*founder) {
+            Some(c) => format!("{name} (a local builder and landlord founded by {})", c.name),
+            None => format!("{name} (a local builder and landlord)"),
+        },
         Some((name, OwnerKind::Household { .. })) => format!("{name} (owner-occupied)"),
         Some((name, OwnerKind::Person { .. })) => format!("{name}, who founded it"),
         Some((name, OwnerKind::MegaCorp { .. })) => format!("{name} (mega-corp)"),
@@ -72,6 +76,22 @@ pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildi
             }
         });
     }
+}
+
+/// [companies] What a specialty builds, in words.
+fn specialty_builds(s: nd_sim::companies::Specialty) -> String {
+    let mut v: Vec<&str> = Vec::new();
+    for lu in [nd_sim::LandUse::Commercial, nd_sim::LandUse::Industrial, nd_sim::LandUse::Entertainment] {
+        for k in s.builds(lu) {
+            if !v.contains(&k.label()) {
+                v.push(k.label());
+            }
+        }
+    }
+    if s.builds_homes() {
+        v.push("homes");
+    }
+    v.join(", ")
 }
 
 /// The super-elite line in a citizen's panel: fortune, mansion, garage
@@ -175,7 +195,7 @@ pub fn corporations_page(ui: &mut egui::Ui, p: &mut super::UiCtx) {
                     paint_logo(ui, &c.brand, 44.0);
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new(&c.brand.name).heading().color(brand_color(&c.brand)));
-                        ui.label(egui::RichText::new(format!("grew out of {} ({}) on day {}", c.origin_name, c.origin.label(), c.founded_day + 1)).small().color(IVORY));
+                        ui.label(egui::RichText::new(format!("grew out of {} ({}) on day {}  ·  specialty: {}, so it builds {}", c.origin_name, c.origin.label(), c.founded_day + 1, c.specialty().label(), specialty_builds(c.specialty()))).small().color(IVORY));
                         let hq = c.hq.and_then(|h| w.buildings.get(h)).map_or("no HQ yet".to_string(), |h| format!("HQ {} ({} floors{})", h.name, h.floors, if h.construction.is_some() { ", going up" } else { "" }));
                         ui.label(egui::RichText::new(hq).color(GOLD));
                     });
@@ -220,10 +240,38 @@ pub fn corporations_page(ui: &mut egui::Ui, p: &mut super::UiCtx) {
             }
             hint(ui, &format!("Students out tonight {}  ·  to class today {}  ·  student trade at pizza places, cafés and bookshops today {:.0}", w.corps.stats.students_out_today, w.corps.stats.students_to_class_today, w.corps.stats.student_trade_today));
         }
+        // [companies] Every kind of owner, by size (what its buildings are
+        // worth and a year of its rent and takings), and what each is.
         section(ui, "BIGGEST COMPANIES");
-        for c in w.companies().into_iter().take(6) {
-            ui.label(egui::RichText::new(format!("{}  ·  {}  ·  {} propert{}  ·  {} staff  ·  takes {:.0} a day{}", c.name, c.kind.label(), c.holdings, if c.holdings == 1 { "y" } else { "ies" }, c.staff, c.revenue, if c.qualifies() { "  ·  big enough to become a mega-corp" } else { "" })).small());
+        let big = w.biggest_companies(10);
+        if big.is_empty() {
+            hint(ui, "Nobody owns more than their own home yet.");
         }
+        let ready: Vec<nd_sim::estate::OwnerId> = w.companies().into_iter().filter(|x| x.qualifies()).filter_map(|x| x.owner).collect();
+        for c in &big {
+            let promote = ready.contains(&c.owner) && !matches!(c.kind_key, "corp" | "university");
+            ui.horizontal(|ui| {
+                let col = c.livery.map_or(IVORY, super::directory::livery_color);
+                if ui.small_button("show").on_hover_text("Select its biggest building; the map outlines everything it owns").clicked() {
+                    select = c.flagship;
+                }
+                ui.label(egui::RichText::new(&c.name).strong().color(col));
+                ui.label(egui::RichText::new(format!(
+                    "{}{}  ·  {} propert{} worth {}  ·  rent {} and takings {} yesterday  ·  {} staff{}{}",
+                    c.what,
+                    c.founder.as_ref().map_or(String::new(), |f| format!(", {f}")),
+                    c.properties,
+                    if c.properties == 1 { "y" } else { "ies" },
+                    money(c.value),
+                    money(c.rent as f64),
+                    money(c.takings as f64),
+                    c.staff,
+                    if c.vehicles > 0 { format!("  ·  {} vehicles", c.vehicles) } else { String::new() },
+                    if promote { "  ·  big enough to become a mega-corp" } else { "" }
+                )).small());
+            });
+        }
+        hint(ui, "Ranked by size: what its buildings would sell for plus a year of its rent and takings. Every owner is in City Data › Directory › Companies.");
     }
     section(ui, "RULES");
     let r = &mut p.sim.world.corps.rules;

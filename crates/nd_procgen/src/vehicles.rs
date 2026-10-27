@@ -85,6 +85,7 @@ const TAXI_YELLOW: [f32; 3] = [1.0, 0.55, 0.0];
 fn livery_code(l: Livery) -> u64 {
     match l {
         Livery::Corp(c, s) => 100 + c as u64 * 256 + s as u64,
+        Livery::Fleet(b, c) => 70_000 + b as u64 * 256 + c as u64,
         Livery::None => 0,
         Livery::Pizza => 1,
         Livery::Parcels => 2,
@@ -149,6 +150,18 @@ pub fn livery_colors(l: Livery, paint: u8, pal: &Palette) -> Option<([f32; 3], [
         Livery::Corp(c, _) => {
             let k = brand_rgb(c);
             (mix(k, [0.05, 0.05, 0.06], 0.6), k, mul(k, 2.4))
+        }
+        // [companies] A local company's colour on the whole body, the trade
+        // underneath: a cab's dark checker band and bright sign, a site
+        // lorry's black stripe and amber, a van's pale stripe.
+        Livery::Fleet(base, c) => {
+            let k = nd_sim::companies::fleet_rgb(c);
+            let lit = [k[0] * 2.4 + 0.25, k[1] * 2.4 + 0.25, k[2] * 2.4 + 0.25];
+            match Livery::Fleet(base, c).base() {
+                Livery::Taxi => (k, [0.02, 0.02, 0.025], lit),
+                Livery::Construction => (k, [0.04, 0.04, 0.04], AMBER),
+                _ => (k, mix(k, [0.85, 0.85, 0.82], 0.75), lit),
+            }
         }
     })
 }
@@ -695,7 +708,7 @@ fn garbage_truck(b: &mut B, col: [f32; 3]) {
     b.ext(&[(cr, 0.6), (fx, 0.6), (fx + 0.05, 2.2), (fx - 0.25, 2.75), (cr, 2.8)], hw - 0.05, [0.82, 0.82, 0.8]);
     b.body.decal(Vec3::new(fx + 0.07, 1.85, 0.0), Vec3::Z, Vec3::Y, hw * 1.7, 0.7, Vec3::X, c4(GLASS));
     // Compactor body with a rounded top and a hopper.
-    let body_col = mix(col, [0.15, 0.32, 0.12], if b.m.livery == Livery::Utility { 0.0 } else { 0.6 });
+    let body_col = mix(col, [0.15, 0.32, 0.12], if b.m.livery.base() == Livery::Utility || matches!(b.m.livery, Livery::Fleet(..)) { 0.0 } else { 0.6 });
     b.ext(&[(rx + 0.9, 0.8), (cr - 0.1, 0.8), (cr - 0.1, 3.0), (cr - 0.5, 3.35), (rx + 1.3, 3.35), (rx + 0.9, 3.0)], hw, body_col);
     b.ext(&[(rx, 0.7), (rx + 0.9, 0.7), (rx + 0.9, 3.2), (rx + 0.3, 2.9), (rx, 2.0)], hw - 0.05, mul(body_col, 0.7));
     b.bx(((rx + fx) * 0.5, 0.6, 0.0), (len - 0.4, 0.25, hw * 1.4), TRIM);
@@ -1007,7 +1020,7 @@ fn livery_marks(b: &mut B, accent: [f32; 3], sign: [f32; 3]) {
             };
             // A stripe along the bottom and a lit logo panel.
             b.sides(x, y - h * 0.5 - 0.2, hw, w + 0.6, 0.18, accent);
-            if m.livery == Livery::Construction {
+            if m.livery.base() == Livery::Construction {
                 for i in 0..5 {
                     b.lamp(-len * 0.5 - 0.01, 0.7 + i as f32 * 0.12, 0.0, 1.8, 0.05, -1.0, if i % 2 == 0 { AMBER } else { [0.05, 0.05, 0.05] });
                 }
@@ -1022,7 +1035,7 @@ fn livery_marks(b: &mut B, accent: [f32; 3], sign: [f32; 3]) {
                 b.lit_sides(x, y, hw + 0.01, h * 0.25, h * 0.25, mul(accent, 0.2));
             }
         }
-        BodyType::Hatchback | BodyType::Sedan | BodyType::Suv | BodyType::Coupe if m.livery == Livery::Taxi => taxi_marks(b, accent, sign),
+        BodyType::Hatchback | BodyType::Sedan | BodyType::Suv | BodyType::Coupe if m.livery.base() == Livery::Taxi => taxi_marks(b, accent, sign),
         BodyType::Hatchback | BodyType::Sedan | BodyType::Suv | BodyType::Pickup | BodyType::Coupe | BodyType::CyberTruck => {
             // Door decal and a lit roof topper.
             b.sides(0.0, 0.7, if matches!(m.body, BodyType::Suv | BodyType::Pickup | BodyType::CyberTruck) { 0.97 } else { 0.89 }, 1.2, 0.3, accent);
@@ -1046,7 +1059,7 @@ fn livery_marks(b: &mut B, accent: [f32; 3], sign: [f32; 3]) {
         }
         _ => {}
     }
-    if m.livery == Livery::Construction || m.livery == Livery::Utility {
+    if matches!(m.livery.base(), Livery::Construction | Livery::Utility) {
         // Beacon on the roof of the cab.
         let (x, y) = match m.body {
             BodyType::PanelTruck | BodyType::BoxVan => (len * 0.5 - 1.0, 2.5),

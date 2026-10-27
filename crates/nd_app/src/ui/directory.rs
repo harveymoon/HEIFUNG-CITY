@@ -1,5 +1,6 @@
-//! [directory] City Data's Directory tab: every business and every person in
-//! one sortable table each (Businesses, People).
+//! [directory] City Data's Directory tab: every business, every company
+//! (owner) and every person in one sortable table each (Businesses,
+//! Companies, People), each with a search box.
 //!
 //! Cities run to ten thousand people and more, so the tables never lay out
 //! what is off screen: the body is an `egui::ScrollArea::show_rows` that
@@ -22,7 +23,7 @@ use nd_sim::estate::Class;
 use super::pane::{self, CAPTION};
 use super::fmt::capitalise;
 use super::{UiCtx, GOLD, IVORY, WARN};
-use crate::directory::{self as dir, BizCol, BizRow, BizState, Filter, PersonCol, PersonRow, Row, Status};
+use crate::directory::{self as dir, BizCol, BizRow, BizState, CompanyCol, CompanyRow, Filter, PersonCol, PersonRow, Row, Status};
 use crate::tools::Selection;
 
 /// Seconds between snapshots of the world while the page shows.
@@ -48,6 +49,12 @@ pub struct TableState<C> {
 impl Default for TableState<BizCol> {
     fn default() -> Self {
         Self { filter: Filter::default(), col: BizCol::Name, desc: false }
+    }
+}
+
+impl Default for TableState<CompanyCol> {
+    fn default() -> Self {
+        Self { filter: Filter::default(), col: CompanyCol::Value, desc: true }
     }
 }
 
@@ -107,6 +114,10 @@ pub fn set_businesses(ctx: &egui::Context, s: TableState<BizCol>) {
 
 pub fn set_people(ctx: &egui::Context, s: TableState<PersonCol>) {
     save_state(ctx, "people", s);
+}
+
+pub fn set_companies(ctx: &egui::Context, s: TableState<CompanyCol>) {
+    save_state(ctx, "companies", s);
 }
 
 /// The snapshot and the order for `st`: a new snapshot when the last is
@@ -211,6 +222,75 @@ pub fn businesses(ui: &mut egui::Ui, p: &mut UiCtx) {
         Some(Act::Go(i)) => {
             let r = &rows[i as usize];
             *p.selection = Selection::Building(r.id);
+            p.fly_to = r.pos;
+        }
+        None => {}
+    }
+}
+
+/// [companies] City Data, Directory, Companies: every owner, biggest first.
+pub fn companies(ui: &mut egui::Ui, p: &mut UiCtx) {
+    let ctx = ui.ctx().clone();
+    let now = ctx.input(|i| i.time);
+    let mut st: TableState<CompanyCol> = state(&ctx, "companies");
+    let w = &p.sim.world;
+    let (rows, order) = cached(&ctx, "companies", now, w.clock.tick, p.sim.generation, &st, || dir::companies(w));
+
+    let count = |k: &str| rows.iter().filter(|r| r.kind_key == k).count();
+    let local = rows.iter().filter(|r| matches!(r.kind_key, "builder" | "firm" | "founder" | "property" | "corp") && r.properties > 0).count();
+    let fleets = rows.iter().filter(|r| r.vehicles > 0).count();
+    let vehicles: u32 = rows.iter().map(|r| r.vehicles).sum();
+    pane::cards(ui, |ui| {
+        pane::kpi(ui, "owners", egui::RichText::new(format!("{}", rows.len())).color(GOLD));
+        pane::kpi(ui, "local companies", egui::RichText::new(format!("{local}")).color(GOOD));
+        pane::kpi(ui, "builders", egui::RichText::new(format!("{}", count("builder"))));
+        pane::kpi(ui, "mega-corps", egui::RichText::new(format!("{}", count("corp"))));
+        pane::kpi(ui, "with a fleet", egui::RichText::new(format!("{fleets} ({vehicles} vehicles)")));
+        if count("developer") > 0 {
+            pane::kpi(ui, "old developers selling up", egui::RichText::new(format!("{}", count("developer"))).color(WARN));
+        }
+    });
+    ui.add_space(8.0);
+
+    let before = st.clone();
+    ui.horizontal_wrapped(|ui| {
+        search_box(ui, &mut st.filter.search, "search names, founders, kinds, history");
+        egui::ComboBox::from_id_salt("directory_company_kind").selected_text(st.filter.owner_kind.and_then(|k| dir::OWNER_KINDS.iter().find(|(x, _)| *x == k)).map_or("every kind of owner", |(_, w)| *w)).show_ui(ui, |ui| {
+            ui.selectable_value(&mut st.filter.owner_kind, None, "every kind of owner");
+            for (k, words) in dir::OWNER_KINDS {
+                let n = count(k);
+                if n > 0 {
+                    ui.selectable_value(&mut st.filter.owner_kind, Some(k), format!("{words} ({n})"));
+                }
+            }
+        });
+        district_picker(ui, "directory_company_district", &mut st.filter.district, rows.iter().map(|r| r.district.as_str()));
+        clear_button(ui, &mut st.filter);
+        count_line(ui, order.len(), rows.len(), "owner", "owners");
+    });
+    ui.add_space(4.0);
+
+    let sel_owner = match *p.selection {
+        Selection::Building(id) => p.sim.world.buildings.get(id).and_then(|b| b.plot.owner),
+        _ => None,
+    };
+    let cols = &CompanyCol::ALL;
+    let weights = [1.9, 2.0, 1.2, 0.55, 0.8, 0.75, 0.85, 0.6, 0.7, 0.75, 2.1];
+    let act = table(ui, "directory_companies", cols, &weights, &mut st.col, &mut st.desc, |c| (c.label(), c.tip(), c.numeric()), &rows, &order, |r| sel_owner == Some(r.owner), company_cell);
+    if st != before {
+        save_state(&ctx, "companies", st);
+    }
+    match act {
+        Some(Act::Select(i)) => {
+            if let Some(b) = rows[i as usize].flagship {
+                *p.selection = Selection::Building(b);
+            }
+        }
+        Some(Act::Go(i)) => {
+            let r = &rows[i as usize];
+            if let Some(b) = r.flagship {
+                *p.selection = Selection::Building(b);
+            }
             p.fly_to = r.pos;
         }
         None => {}
@@ -520,6 +600,33 @@ fn biz_cell(r: &BizRow, c: BizCol) -> (String, Color32) {
         BizCol::Rating => (r.rating.map_or("-".into(), |s| format!("{s:.1}★")), r.rating.map_or(QUIET, |s| if s >= 3.5 { GOOD } else if s < 2.5 { WARN } else { IVORY })),
         BizCol::Footfall => (format!("{}", r.footfall), IVORY),
         BizCol::State => (r.state.label().into(), state_color(r.state)),
+    }
+}
+
+/// [companies] A fleet colour as egui's, lightened when too dark to read.
+pub fn livery_color(i: u8) -> Color32 {
+    let [r, g, b] = nd_sim::companies::FLEET_COLOURS[i as usize % nd_sim::companies::FLEET_COLOURS.len()];
+    if (r as u32 + g as u32 + b as u32) < 200 {
+        Color32::from_rgb(r.saturating_add(90), g.saturating_add(90), b.saturating_add(100))
+    } else {
+        Color32::from_rgb(r, g, b)
+    }
+}
+
+fn company_cell(r: &CompanyRow, c: CompanyCol) -> (String, Color32) {
+    let money = |v: f64| super::fmt::money(v);
+    match c {
+        CompanyCol::Name => (r.name.clone(), r.livery.map_or(IVORY, livery_color)),
+        CompanyCol::What => (r.what.clone(), if r.kind_key == "developer" { WARN } else { Color32::from_gray(200) }),
+        CompanyCol::Founder => (r.founder.clone(), Color32::from_gray(200)),
+        CompanyCol::Properties => (format!("{}", r.properties), IVORY),
+        CompanyCol::Value => (money(r.value), IVORY),
+        CompanyCol::Rent => (super::fmt::compact(r.rent), if r.rent > 0.0 { GOOD } else { QUIET }),
+        CompanyCol::Takings => (super::fmt::compact(r.takings), if r.takings > 0.0 { GOOD } else { QUIET }),
+        CompanyCol::Staff => (format!("{}", r.staff), IVORY),
+        CompanyCol::Vehicles => (if r.vehicles > 0 { format!("{}", r.vehicles) } else { "-".into() }, if r.vehicles > 0 { IVORY } else { QUIET }),
+        CompanyCol::Since => (format!("day {}", r.since_day + 1), Color32::from_gray(200)),
+        CompanyCol::History => (r.latest.clone(), Color32::from_gray(190)),
     }
 }
 

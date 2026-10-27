@@ -975,7 +975,7 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
   with stock and prices), park
 - lot: land use, polygon, area, land value and tier, `land_value_for_use` (as the lot's own land use feels it), `access` (as in `terrain_at`), zone, building, vacant/landlocked, footfall
 - [land] building `land`: `owner` ({id, name, properties, spent, detail {kind: firm (business) |
-  developer | household | elite (citizen)}}, or {kind: independent}), `sale_price`, `lots` (every
+  developer | household | elite (citizen) | builder (founder) | company (founder)}}, or {kind: independent}), `sale_price`, `lots` (every
   plot it spans, primary first), `merged`, `pending_lots` (bought, still clearing), `form`
   (mcmansion | mansion | merged | mega_hotel | museum | tower | null), `pressure` and `pressure_floors` at
   its lot, `height_cap`, `wants_to_expand`, `owned_with` (every property of its owner)
@@ -1185,7 +1185,7 @@ Skyline page (`city_data {tab: "city", sub: "skyline"}`) shows the same.
 | `heat_vision` (alias `heat`) | `on` (bool; omitted toggles). Drone heat vision: buildings, ground and roads go near-black, people, vehicles, fires and drones glow by temperature (lights and engines white-hot), with motion blur, scanlines, noise, a vignette and a reticle. Same as key H and the top bar's Heat button. Reply `heat_vision`; also `status.lighting.heat_vision` |
 | `graphics` (alias `quality`) | `quality` auto / low / medium / high. Pins the graphics tier (Low: MSAA, no SSAO or haze, no rain or snow, street lamps only glow; Medium: TAA, light SSAO, real light from the 18 street lamps nearest the view at night; High: TAA, full SSAO, volumetric haze, big shadows, 40 lit lamps. Every tier: wet, glossy roads while it rains, fog tinted and thickened by climate and weather) or hands it back to the frame-rate throttler (Auto). Pin one before screenshots that must compare. Reply `quality`, `tier` (in force from the next frame), `frame_ms` (smoothed), `sim_ms`, `auto_steps`, `reason`, `effects`, `long_frames` ([saves] the last 24 frames over 500 ms, oldest first: `ms`, `sim_ms` the tick time in that frame, `tick`; loads left out: hitches to chase); also `status.render.graphics`. `ND_QUALITY` sets the starting setting, else [settings] the one saved from the Settings window |
 | `window` | `name` a tool window: lines / view (also `land`, `layers`, `map`: the View window, once Land) / alerts ([pt-ux] the draggable Alerts window: every toast as it happened with a "go" where it has a place, and the city's problems now, the `report` alerts) / saves / settings ([settings] graphics, text size, speech bubbles, the controls) / help / dev, `open` (omit to toggle). Reply `open`, `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it. The old report windows are City Data pages now: `name` city / economy / market / people / services opens that tab (at its last sub-tab), taxes / power / transit / emergencies / districts / tourism their page (Economy › Taxes, Services › Power, ...); `sub` (or People's old `tab` overview / concerns / social) picks a sub-tab, `open` false closes the view, omitted toggles, `expanded` is accepted and opens. The reply is `city_data`'s. `name: "build"`: the Build window, `open` (omit to toggle), `section` roads / zoning / parks / districts / power / services / transit / rail / water / attractions (opens it there); `status.build_window` {open, section}. A building tool picked with `tool` opens the Build window at its section, as its hotkey does. `name: "title"`: the title screen (above) |
-| `city_data` | `tab` city / economy / market / people / services / directory, `sub` (the tab's sub-tab, below; omitted: the tab's last one this session), `open` (bool; a `tab` alone opens; `open: true` alone reopens where it was; `open: false` closes). No fields: the state only. Reply `open`, `tab`, `sub`, `title` (the page's), `tabs` [{tab, label, subs}]. The full-screen City Data view (top bar, or J; Esc closes; [pt-ux] it sits above every other pane while open; a name picked on a page closes it so the inspector shows, and opening a window from the top bar closes it; every table's headings sort it: click for biggest first or A to Z, again to reverse, a third time for the given order): **city** overview / land / districts / tourism; **economy** overview / cash_flow / ledger / money_flow ([ledger] where the money goes) / taxes / corporations; **market** goods / businesses / trade; **people** population / inequality / concerns / social / favourites; **services** power / transit / emergencies; **directory** businesses / people (also `citizens`). Applied in the same frame's egui pass, so a following `screenshot` shows it; `status.city_data` says what shows |
+| `city_data` | `tab` city / economy / market / people / services / directory, `sub` (the tab's sub-tab, below; omitted: the tab's last one this session), `open` (bool; a `tab` alone opens; `open: true` alone reopens where it was; `open: false` closes). No fields: the state only. Reply `open`, `tab`, `sub`, `title` (the page's), `tabs` [{tab, label, subs}]. The full-screen City Data view (top bar, or J; Esc closes; [pt-ux] it sits above every other pane while open; a name picked on a page closes it so the inspector shows, and opening a window from the top bar closes it; every table's headings sort it: click for biggest first or A to Z, again to reverse, a third time for the given order): **city** overview / land / districts / tourism; **economy** overview / cash_flow / ledger / money_flow ([ledger] where the money goes) / taxes / corporations; **market** goods / businesses / trade; **people** population / inequality / concerns / social / favourites; **services** power / transit / emergencies; **directory** businesses / companies (also `owners`, `firms`) / people (also `citizens`). Applied in the same frame's egui pass, so a following `screenshot` shows it; `status.city_data` says what shows |
 
 Land survey layers (map layers like the rest, so one at a time with them; K steps through these
 in the game; the top bar's Layer button and the View window list them;
@@ -1595,14 +1595,16 @@ numeric range, anything else by equality. Sorting puts nulls last; `id` is alway
 
 `{"cmd": "directory", "kind": "people", "sort": "income", "desc": true, "search": "kessler", "class": "middle", "district": "Old Town", "offset": 0, "limit": 50, "show": true}`
 
-The rows of City Data's Directory tab (`city_data {tab: "directory", sub: "businesses" | "people"}`),
+The rows of City Data's Directory tab (`city_data {tab: "directory", sub: "businesses" | "companies" | "people"}`),
 sorted and filtered by the page's own code (`crate::directory`), so they match what the player
-sees. `kind`: businesses (default) or people. `sort`: a column key, below (default name); `desc`
+sees. `kind`: businesses (default), companies ([companies] every owner; also `owners`, `firms`) or people. `sort`: a column key, below (default name); `desc`
 reverses; missing values (no rating yet, no job, no district) sort last either way and ties fall
 back to the name. `search`: words that must all appear (case-blind) in the row's name, kind,
 owner, street, district, state (businesses) or name, workplace, home, street, district,
-favourite place, status (people). Pickers: `district` (both), `business_kind` (a kind key) and
-`state` (businesses), `class` and `status` (people). `show: true` also opens the page with these
+favourite place, status (people), name, what it is, founder, district, biggest building and
+its whole history (companies). Pickers: `district` (all), `business_kind` (a kind key) and
+`state` (businesses), `class` and `status` (people), `owner_kind` (companies: builder, firm,
+founder, property, corp, university, billionaire, family, developer). `show: true` also opens the page with these
 settings. Reply: `kind`, `sort`, `desc`, `total`, `matched`, `offset`, `rows`, `took_ms`.
 
 - Businesses' columns: `name`, `kind` (key) and `kind_label` ("Mill · farming"), `owner` and
@@ -1620,6 +1622,16 @@ settings. Reply: `kind`, `sort`, `desc`, `total`, `matched`, `offset`, `rows`, `
   (their best-liked place), `friends`, `status` (working, at_home, asleep, out, travelling, ill,
   homeless, arriving, away), `pos`. Sort keys: name, age, class (then income), income, job, home,
   household, mood, health (ill lowest, then how well fed), commute, favourite, friends, status.
+- [companies] Companies' columns: `owner` (id), `name`, `what` ("local builder and landlord",
+  "mega-corp from grocery (groceries)", "taxi company firm", ...), `owner_kind` (as the picker),
+  `founder` (the resident behind it, by name), `properties`, `value` (what its buildings would
+  sell for), `rent_yesterday`, `takings_yesterday` (its businesses'), `staff`, `vehicles` (cabs,
+  tow and garbage trucks, lorries and vans on the road now), `since_day`, `district` (of its
+  biggest building), `livery` (its fleet colour, "#e12832", or null), `flagship` (its HQ or
+  biggest building), `pos`, `size` (value plus a year of rent and takings: the default sort,
+  biggest first) and `history` [{day, text}] (founded, bought, grew, renamed, merged, sold up).
+  Sort keys: name, what, founder, properties, value, rent, takings, staff, vehicles, since,
+  history.
 
 ### export
 

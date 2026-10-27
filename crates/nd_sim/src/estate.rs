@@ -188,6 +188,8 @@ pub fn expansion_form(kind: BusinessKind) -> Option<Form> {
         K::Hotel => Some(Form::MegaHotel),
         K::OilWell | K::Refinery | K::Fab | K::Assembly | K::GrainFarm | K::VertFarm | K::Dairy | K::ProteinVat | K::Mill | K::ContainerYard => Some(Form::Merged),
         K::GadgetShop | K::Office | K::Venue | K::Grocery => Some(Form::Merged),
+        // [companies] Fleet yards: a bigger yard runs more vehicles.
+        K::TowYard | K::TrashCompany | K::FleetLot => Some(Form::Merged),
         K::Gallery => Some(Form::Museum),
         _ => None,
     }
@@ -270,6 +272,11 @@ pub enum OwnerKind {
     /// company's, the tenants pay it, it pays the founder a dividend
     /// (`World::settle_owners`).
     Company { founder: CitizenId },
+    /// [companies] A local builder and landlord firm founded by a resident:
+    /// buys low buildings where the town presses for more, rebuilds them
+    /// bigger and lets them (`crate::companies`). Took the out-of-town
+    /// developers' place; its money works like a property company's.
+    Builder { founder: CitizenId },
 }
 
 impl OwnerKind {
@@ -279,6 +286,27 @@ impl OwnerKind {
             OwnerKind::Elite { citizen } | OwnerKind::Person { citizen } => Some(*citizen),
             _ => None,
         }
+    }
+
+    /// [companies] The resident behind the owner: the person or billionaire
+    /// themselves, or the founder of a property company or builder.
+    pub fn founder(&self) -> Option<CitizenId> {
+        match self {
+            OwnerKind::Elite { citizen } | OwnerKind::Person { citizen } | OwnerKind::Company { founder: citizen } | OwnerKind::Builder { founder: citizen } => Some(*citizen),
+            _ => None,
+        }
+    }
+
+    /// [companies] A landlord that lets what it owns (its businesses pay it
+    /// rent): a developer, the university, a property company, a builder.
+    pub fn lets(&self) -> bool {
+        matches!(self, OwnerKind::Developer | OwnerKind::University { .. } | OwnerKind::Company { .. } | OwnerKind::Builder { .. })
+    }
+
+    /// [companies] A firm that buys and rebuilds where the town presses for
+    /// more: a local builder, or an old save's out-of-town developer.
+    pub fn builds(&self) -> bool {
+        matches!(self, OwnerKind::Developer | OwnerKind::Builder { .. })
     }
 }
 
@@ -309,6 +337,17 @@ pub struct Owner {
     pub rent_today: f32,
     #[serde(default)]
     pub rent_yesterday: f32,
+    /// [companies] Its fleet livery (an index into
+    /// `crate::companies::FLEET_COLOURS`), once it runs vehicles.
+    #[serde(default)]
+    pub livery: Option<u8>,
+    /// [companies] What happened to it, oldest first (founded, grew,
+    /// renamed, merged, sold up), at most `HISTORY_MAX` lines.
+    #[serde(default)]
+    pub history: Vec<crate::companies::OwnerNote>,
+    /// [companies] A builder that has taken its grown-up name.
+    #[serde(default)]
+    pub grown: bool,
 }
 
 // ── the super-elite ──────────────────────────────────────────────────────────

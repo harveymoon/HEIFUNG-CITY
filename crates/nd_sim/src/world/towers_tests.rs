@@ -95,7 +95,7 @@ fn a_tower_rises_only_on_dear_dense_land() {
     let t = tower_of(&w, bid);
     assert!(t.height >= SKYSCRAPER_M, "in the league: {}", t.height);
     assert!(b.construction.as_ref().is_some_and(|c| c.days >= 20.0), "a long build");
-    assert!(matches!(w.owner_of(bid).map(|o| &o.1.kind), Some(OwnerKind::Developer)), "owned by its developer");
+    assert!(matches!(w.owner_of(bid).map(|o| &o.1.kind), Some(OwnerKind::Builder { .. })), "owned by its developer, a local firm");
     assert!(w.skyline.news.last().is_some_and(|n| n.headline.contains("breaks ground")), "{:?}", w.skyline.news.last());
     // Cheap land everywhere: nothing.
     let mut poor = downtown();

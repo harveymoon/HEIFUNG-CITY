@@ -567,6 +567,10 @@ impl World {
     /// the lower lot id.
     pub(super) fn pressure_lot(&self, kind: PressureKind, vacant: &[LotId]) -> Option<LotId> {
         let p = self.placement(kind)?;
+        let rival_yards: Vec<Vec2> = match kind.business() {
+            Some(k) if crate::companies::runs_fleet(k) && matches!(k, BusinessKind::TowYard | BusinessKind::TrashCompany) => self.sites_of(&[k]),
+            _ => Vec::new(),
+        };
         let mut best: Option<(f32, LotId)> = None;
         for &id in vacant {
             let Some(lot) = self.lots.get(id) else { continue };
@@ -600,7 +604,11 @@ impl World {
             // Bigger lots suit the yards and ranges; the land use's order says
             // which it prefers.
             let room = if p.min_area > 0.0 { -(lot.area() / p.min_area).min(3.0) * 0.3 } else { 0.0 };
-            let score = if d.is_finite() { d / 150.0 } else { 0.0 } + value + rank as f32 * 0.8 + room + view;
+            // [companies] Rival yards of the same trade start in different
+            // parts of town: a site close to one is marked down.
+            let rivals = rival_yards.iter().map(|r| r.distance(lot.center)).fold(f32::INFINITY, f32::min);
+            let spacing = if rivals < crate::companies::RIVAL_SPACING { (crate::companies::RIVAL_SPACING - rivals) / 100.0 } else { 0.0 };
+            let score = if d.is_finite() { d / 150.0 } else { 0.0 } + value + rank as f32 * 0.8 + room + view + spacing;
             if best.is_none_or(|(s, b)| score < s || (score == s && id < b)) {
                 best = Some((score, id));
             }

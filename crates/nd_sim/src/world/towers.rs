@@ -181,20 +181,16 @@ impl World {
         self.economy.demand_for(LandUse::Commercial).max(self.economy.demand_for(LandUse::Residential))
     }
 
+    /// [companies] A new tower developer: a local firm, its founder and
+    /// name given by `localise_tower_developers` (a town with nobody in it
+    /// yet, the tests, gets one named from a hash).
     fn new_tower_developer(&mut self) -> usize {
         let n = self.skyline.developers.len() as u64;
-        let taken: Vec<String> = self.skyline.developers.iter().map(|d| d.name.clone()).chain(self.estate.owners.values().map(|o| o.name.clone())).collect();
-        let mut k = 0u64;
-        let name = loop {
-            let h = self.config.seed ^ 0xDE7E_10 ^ (n * 7919 + k).wrapping_mul(0x9E37_79B9);
-            let name = developer_name(crate::towers::unit(h).to_bits() as u64 ^ h.rotate_left(17));
-            if !taken.contains(&name) || k > 40 {
-                break name;
-            }
-            k += 1;
-        };
         let pull = 0.7 + 0.6 * unit(self.config.seed ^ (n + 1).wrapping_mul(0x51ED));
-        self.skyline.developers.push(TowerDeveloper { name, owner: None, capital: 0.0, pull });
+        let surname = crate::names::family_name(&mut crate::rng_for(self.config.seed ^ 0xDE7E_10, n));
+        let name = crate::companies::tower_firm_name(&surname, self.config.seed ^ n);
+        self.skyline.developers.push(TowerDeveloper { name, owner: None, capital: 0.0, pull, founder: None });
+        self.localise_tower_developers();
         self.skyline.developers.len() - 1
     }
 
@@ -400,7 +396,12 @@ impl World {
             return o;
         }
         let name = self.skyline.developers[dev].name.clone();
-        let o = self.new_owner(name, OwnerKind::Developer);
+        // [companies] A local firm's record, run by its founder.
+        let founder = self.skyline.developers[dev].founder.unwrap_or_default();
+        let o = self.new_owner(name, OwnerKind::Builder { founder });
+        self.note_owner(o, "broke ground on its first tower".to_string());
+        // A tower firm keeps its name (it is not a builder growing up).
+        self.estate.owners[o].grown = true;
         self.skyline.developers[dev].owner = Some(o);
         o
     }

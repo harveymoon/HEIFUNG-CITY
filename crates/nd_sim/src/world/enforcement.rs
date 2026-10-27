@@ -457,8 +457,13 @@ impl World {
         };
         let truck = self.traffic.spawn_car(CitizenId::default(), None, route, s0, s1, 3);
         let towed = self.vehicles.cars.get(job.car).map_or(BodyType::Sedan, |c| c.model.body);
+        // [companies] A local yard's truck in its colours.
+        let livery = company.and_then(|c| self.fleet_livery(c, Livery::Utility));
         let t = &mut self.traffic.cars[truck];
         t.model = tow_model_for(towed);
+        if let Some(l) = livery {
+            t.model.livery = l;
+        }
         t.errand = Errand::Tow(job_id);
         if let Some(j) = self.enforcement.jobs.iter_mut().find(|j| j.id == job_id) {
             j.company = company;

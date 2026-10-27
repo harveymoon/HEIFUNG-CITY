@@ -62,6 +62,10 @@ pub struct Business {
     /// sums its tenants'.
     #[serde(default)]
     pub rent_day: f32,
+    /// [companies] Its fleet livery colour (`crate::companies::FLEET_COLOURS`)
+    /// when it runs vehicles and has no owner record to carry one.
+    #[serde(default)]
+    pub livery: Option<u8>,
 }
 
 /// One closed day of a business's books.
@@ -109,6 +113,7 @@ impl Business {
             moved_from: None,
             rehire: Vec::new(),
             rent_day: 0.0,
+            livery: None,
         }
     }
 

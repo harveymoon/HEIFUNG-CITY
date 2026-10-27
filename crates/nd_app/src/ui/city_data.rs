@@ -72,7 +72,7 @@ impl Tab {
             Tab::Market => &[MarketGoods, MarketBusinesses, MarketTrade],
             Tab::People => &[PeoplePopulation, PeopleInequality, PeopleConcerns, PeopleSocial, PeopleFavourites],
             Tab::Services => &[ServicesPower, ServicesTransit, ServicesEmergencies],
-            Tab::Directory => &[DirectoryBusinesses, DirectoryPeople],
+            Tab::Directory => &[DirectoryBusinesses, DirectoryCompanies, DirectoryPeople],
         }
     }
 
@@ -112,6 +112,8 @@ pub enum Page {
     ServicesTransit,
     ServicesEmergencies,
     DirectoryBusinesses,
+    /// [companies] Every owner: builders, firms, corps, the university.
+    DirectoryCompanies,
     DirectoryPeople,
 }
 
@@ -147,6 +149,7 @@ impl Page {
             ServicesTransit => "Transit",
             ServicesEmergencies => "Emergencies",
             DirectoryBusinesses => "Businesses",
+            DirectoryCompanies => "Companies",
             DirectoryPeople => "People",
         }
     }
@@ -178,6 +181,7 @@ impl Page {
             ServicesTransit => "transit",
             ServicesEmergencies => "emergencies",
             DirectoryBusinesses => "businesses",
+            DirectoryCompanies => "companies",
             DirectoryPeople => "people",
         }
     }
@@ -210,6 +214,7 @@ impl Page {
             ServicesTransit => "Transit",
             ServicesEmergencies => "Emergencies",
             DirectoryBusinesses => "Every business",
+            DirectoryCompanies => "Every company and owner",
             DirectoryPeople => "Everyone in town",
         }
     }
@@ -242,6 +247,7 @@ impl Page {
             ServicesTransit => "Riders by mode and line, fares against upkeep; buses, rail, metro, taxis and cargo.",
             ServicesEmergencies => "Every 911 call, live and on record: response times, units, outcomes.",
             DirectoryBusinesses => "Every business in town: click a heading to sort, search or pick to narrow it, click a row to inspect it, go to fly there.",
+            DirectoryCompanies => "Every owner in town (builders, firms, founders, corps, the university, billionaires), biggest first: what it owns, its rent and takings, staff, vehicles and history. Click a row to select its biggest building (the map outlines all it owns).",
             DirectoryPeople => "Every citizen: click a heading to sort, search or pick to narrow it, click a row to inspect them, go to fly there.",
         }
     }
@@ -273,7 +279,8 @@ impl Page {
                     "land_and_rent" | "rent" => "land",
                     "911" => "emergencies",
                     "citizens" | "residents" | "population" if t == Tab::Directory => "people",
-                    "shops" | "firms" | "companies" if t == Tab::Directory => "businesses",
+                    "shops" if t == Tab::Directory => "businesses",
+                    "firms" | "owners" | "companies" if t == Tab::Directory => "companies",
                     other => other,
                 };
                 t.pages().iter().copied().find(|p| p.key() == s).ok_or_else(|| format!("{} has no sub-tab {s:?}; one of {}", t.key(), t.pages().iter().map(|p| p.key()).collect::<Vec<_>>().join(", ")))
@@ -560,6 +567,7 @@ fn body_of(ui: &mut egui::Ui, p: &mut UiCtx, page: Page) {
         ServicesTransit => super::detail::transit(ui, p),
         ServicesEmergencies => super::emergencies::page(ui, p),
         DirectoryBusinesses => super::directory::businesses(ui, p),
+        DirectoryCompanies => super::directory::companies(ui, p),
         DirectoryPeople => super::directory::people(ui, p),
     }
 }

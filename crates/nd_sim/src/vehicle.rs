@@ -162,10 +162,39 @@ pub enum Livery {
     /// `LogoShape as u8`, in the low three bits, the monogram's letter from
     /// A in the rest), lit on the side.
     Corp(u8, u8),
+    /// [companies] A local company's fleet: the trade's livery underneath
+    /// (`Livery::code` of a plain livery: a cab, a site lorry, a parcel
+    /// van) painted in the company's colour (an index into
+    /// `crate::companies::FLEET_COLOURS`).
+    Fleet(u8, u8),
 }
 
 impl Livery {
-    pub const ALL: [Livery; 9] = [Livery::None, Livery::Pizza, Livery::Parcels, Livery::Grocery, Livery::Construction, Livery::Utility, Livery::Transit, Livery::Taxi, Livery::Corp(6, 2)];
+    pub const ALL: [Livery; 11] = [Livery::None, Livery::Pizza, Livery::Parcels, Livery::Grocery, Livery::Construction, Livery::Utility, Livery::Transit, Livery::Taxi, Livery::Corp(6, 2), Livery::Fleet(7, 4), Livery::Fleet(4, 1)];
+
+    /// [companies] The plain liveries by number, for `Livery::Fleet`.
+    const PLAIN: [Livery; 8] = [Livery::None, Livery::Pizza, Livery::Parcels, Livery::Grocery, Livery::Construction, Livery::Utility, Livery::Transit, Livery::Taxi];
+
+    /// [companies] A plain livery's number (`Fleet`'s first field); a
+    /// corp's or fleet's own counts as none.
+    pub fn code(self) -> u8 {
+        Self::PLAIN.iter().position(|l| *l == self).unwrap_or(0) as u8
+    }
+
+    /// [companies] The trade's livery under a company's colours: what a
+    /// `Fleet` livery is drawn as (a cab's checker band and roof sign, a
+    /// site lorry's beacon); any other livery itself.
+    pub fn base(self) -> Livery {
+        match self {
+            Livery::Fleet(b, _) => Self::PLAIN.get(b as usize).copied().unwrap_or(Livery::None),
+            l => l,
+        }
+    }
+
+    /// [companies] `base` in company colour `colour`.
+    pub fn fleet(base: Livery, colour: u8) -> Livery {
+        Livery::Fleet(base.base().code(), colour)
+    }
 
     /// The fleet a business sends its deliveries in.
     pub fn for_business(kind: BusinessKind) -> Livery {
