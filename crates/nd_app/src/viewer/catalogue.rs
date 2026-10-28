@@ -86,6 +86,8 @@ pub fn group(s: Style) -> &'static str {
         GardenHouse | Bungalow | CulDeSac | ShoppingParade | GardenCentre | CornerCafe | GardenManor => "Garden suburb",
         // [r4-harbour] The Promenade's look.
         PastelTerrace | Boathouses | LighthouseCorner | BoardwalkCafe | SeafoodShack | AwningArcade | BoutiqueHotel | FishMarketHall | NetSheds | PastelVilla => "Harbour Pastel",
+        // [r4-oldstone] The Old Town Charter's look (Historic).
+        StoneHouse | GabledRow | CourtyardHouse | MarketArcade | GuildHall | ClockTower | OldInn | WaterMill | Tannery | CobbledYard | StoneManor => "Old Stone",
         // [r4-glass] Founders' Campus's look.
         StudentFlats | CoLivingTower | GlassLab | StartupSheds | AtriumOffice | CampusQuad | ResearchLab | ServerHall | GlassPavilion => "Glass Campus",
         #[allow(unreachable_patterns)]
@@ -94,7 +96,7 @@ pub fn group(s: Style) -> &'static str {
 }
 
 /// Every section, in catalogue order.
-pub const GROUPS: [&str; 25] = [
+pub const GROUPS: [&str; 26] = [
     "Residential",
     "Commercial",
     "Industrial",
@@ -118,6 +120,7 @@ pub const GROUPS: [&str; 25] = [
     "Lantern Alley",
     "Garden suburb",
     "Harbour Pastel",
+    "Old Stone",
     "Glass Campus",
     "Other",
 ];
@@ -125,7 +128,7 @@ pub const GROUPS: [&str; 25] = [
 /// The land use a section's forced styles are drawn for.
 fn group_land_use(g: &str) -> LandUse {
     match g {
-        "Residential" | "Homes and estates" | "Capsule district" | "Brick & Steel" | "Lantern Alley" | "Garden suburb" | "Harbour Pastel" | "Glass Campus" => LandUse::Residential,
+        "Residential" | "Homes and estates" | "Capsule district" | "Brick & Steel" | "Lantern Alley" | "Garden suburb" | "Harbour Pastel" | "Old Stone" | "Glass Campus" => LandUse::Residential,
         "Commercial" | "Shops and trades" | "Malls" | "Parking" | "League towers" => LandUse::Commercial,
         "Entertainment" | "Waterfront" => LandUse::Entertainment,
         "Civic" | "City services" | "Attractions" | "Transit and rail" => LandUse::Civic,
@@ -148,6 +151,10 @@ fn lantern_land_use(s: Style) -> Option<LandUse> {
         AwningArcade | BoutiqueHotel => Some(LandUse::Commercial),
         BoardwalkCafe | SeafoodShack => Some(LandUse::Entertainment),
         FishMarketHall | NetSheds => Some(LandUse::Industrial),
+        // [r4-oldstone] Old Stone's, likewise.
+        MarketArcade | GuildHall | ClockTower => Some(LandUse::Commercial),
+        OldInn => Some(LandUse::Entertainment),
+        WaterMill | Tannery | CobbledYard => Some(LandUse::Industrial),
         // [r4-glass] Glass Campus's, likewise.
         StudentFlats | CoLivingTower | GlassPavilion => Some(LandUse::Residential),
         GlassLab | AtriumOffice => Some(LandUse::Commercial),
@@ -204,7 +211,7 @@ pub fn lot_size(s: Style, tier: Tier) -> (f32, f32) {
         },
         CampusQuad | ServerHall => (52.0, 48.0),
         Stadium | Arena | GrandPark | Zoo | AmusementPark | BotanicalGarden | ConventionCentre | MegaMall | ShippingPort | PowerCoal | PowerNuclear | PowerSolar | PowerWind | PowerHydro | PowerTidal | PowerGeothermal | FreightYard | CentralStation | StripMine | OilField | Refinery | Farmstead | CowFarm | Feedlot | Prison | University | CasinoResort | Megastructure => (130.0, 110.0),
-        Hospital | School | MarketHall | Mall | MegaHotel | Mansion | ArtMuseum | ScienceMuseum | HistoryMuseum | ConcertHall | Cathedral | Aquarium | Observatory | PleasurePier | Station | ContainerYard | TruckLot | Smelter | ChemicalWorks | ChickenFarm | Slaughterhouse | TankFarm | Depot | Junkyard | Factory | FabPlant | BusDepot | TrashDepot | TrashCompany | MarinaLarge | FishingPortLarge | FerryTerminal | GolfRange | BeachResort | Beach | TrailerPark | Suburb | Supertall | CarDealer | StripMall | Casino | Cinema | DomeCampus | Courthouse | Ministry | CivicTower | FoundryWorks | GasWorks | LoftEstate | SawtoothFactory | CulDeSac | GardenManor => (75.0, 65.0),
+        Hospital | School | MarketHall | Mall | MegaHotel | Mansion | ArtMuseum | ScienceMuseum | HistoryMuseum | ConcertHall | Cathedral | Aquarium | Observatory | PleasurePier | Station | ContainerYard | TruckLot | Smelter | ChemicalWorks | ChickenFarm | Slaughterhouse | TankFarm | Depot | Junkyard | Factory | FabPlant | BusDepot | TrashDepot | TrashCompany | MarinaLarge | FishingPortLarge | FerryTerminal | GolfRange | BeachResort | Beach | TrailerPark | Suburb | Supertall | CarDealer | StripMall | Casino | Cinema | DomeCampus | Courthouse | Ministry | CivicTower | FoundryWorks | GasWorks | LoftEstate | SawtoothFactory | CulDeSac | GardenManor | StoneManor => (75.0, 65.0),
         _ => match tier {
             Tier::Low => (30.0, 32.0),
             Tier::Mid => (36.0, 38.0),

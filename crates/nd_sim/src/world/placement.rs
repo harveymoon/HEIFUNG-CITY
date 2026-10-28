@@ -76,8 +76,9 @@ impl SiteRule {
     pub const STREET_NOT_HISTORIC: SiteRule = SiteRule { backland: false, historic: false };
     /// Any lot, backland too, in any district (plots joined to a site).
     pub const ANY: SiteRule = SiteRule { backland: true, historic: true };
-    /// Backland too, but not in a historic district (merged sites: towers,
-    /// McMansions, mansions).
+    /// Backland too, but not in a historic district (merged sites: towers;
+    /// [r4-oldstone] McMansions and mansions take `ANY`, empty plots only
+    /// there).
     pub const ANY_NOT_HISTORIC: SiteRule = SiteRule { backland: true, historic: false };
 }
 

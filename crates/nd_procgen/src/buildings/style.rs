@@ -436,6 +436,32 @@ styles! {
     NetSheds { label: "net sheds", family: Heavy, cluster: 0.9, draw: |g, c, r, e| harbour::net_sheds(g, c, r, e) },
     /// A family's or a billionaire's pastel villa with its own boathouse.
     PastelVilla { label: "pastel waterfront villa", family: Special, cluster: 0.0, draw: |g, c, r, e| harbour::pastel_villa(g, c, r, e) },
+    // -- [r4-oldstone] the Old Stone look of the Old Town Charter (the
+    // Historic look's own buildings, `buildings/oldstone.rs`,
+    // `oldstone_works.rs`), drawn only from its look's menus (and the stone
+    // manor for a big house there); appended so `ALL` keeps its order. --
+    /// Stone and jettied timber-frame town houses, a dormer, a front garden.
+    StoneHouse { label: "stone house", family: Walkup, cluster: 0.7, draw: |g, c, r, _| oldstone::stone_house(g, c, r) },
+    /// A row of narrow tall houses, gables to the street, crow steps.
+    GabledRow { label: "gabled row", family: Walkup, cluster: 0.9, draw: |g, c, r, _| oldstone::gabled_row(g, c, r) },
+    /// Ranges round a cobbled courtyard, an arched carriage gate, a well.
+    CourtyardHouse { label: "courtyard house", family: Walkup, cluster: 0.3, draw: |g, c, r, _| oldstone::courtyard_house(g, c, r) },
+    /// Storeys over the pavement on stone arches, shops in the arcade.
+    MarketArcade { label: "market arcade", family: Retail, cluster: 0.8, draw: |g, c, r, _| oldstone::market_arcade(g, c, r) },
+    /// A crow-stepped stone hall, a lit rose window, banners, a turret.
+    GuildHall { label: "guild hall", family: Special, cluster: -1.2, draw: |g, c, r, _| oldstone::guild_hall(g, c, r) },
+    /// A clock tower with lit faces and a spire, its church and churchyard.
+    ClockTower { label: "clock tower", family: Special, cluster: -2.0, draw: |g, c, r, _| oldstone::clock_tower(g, c, r) },
+    /// A coaching inn: jettied front, bay windows, the hung sign, the yard.
+    OldInn { label: "old inn", family: Night, cluster: -0.3, draw: |g, c, r, _| oldstone::old_inn(g, c, r) },
+    /// A stone mill with a lucam and a water wheel turning in its race.
+    WaterMill { label: "old mill", family: Heavy, cluster: -0.8, draw: |g, c, r, _| oldstone_works::water_mill(g, c, r) },
+    /// A tannery: a drying loft, pits of lime and bark liquor, hides on rails.
+    Tannery { label: "tannery", family: Heavy, cluster: -0.2, draw: |g, c, r, _| oldstone_works::tannery(g, c, r) },
+    /// A carter's or cooper's cobbled yard: workshops, a gateway, a cart.
+    CobbledYard { label: "cobbled yard", family: Heavy, cluster: 0.5, draw: |g, c, r, _| oldstone_works::cobbled_yard(g, c, r) },
+    /// A stone manor round a court: porch tower and clock, wings, a garden.
+    StoneManor { label: "stone manor", family: Special, cluster: 0.0, draw: |g, c, r, _| oldstone::stone_manor(g, c, r) },
     // -- [r4-glass] Glass Campus, Founders' Campus's look
     // (`buildings/glasscampus.rs`), drawn only from its menus (the pavilion
     // for its estates' forms, the server hall for the assembly halls
@@ -476,6 +502,10 @@ impl Style {
 
     /// [r4-brick] The Brick & Steel look's styles (Foundry Row).
     pub const BRICK_STEEL: [Style; 10] = [Style::BrickRow, Style::WarehouseLoft, Style::MillLofts, Style::BrickWorkshop, Style::CornerPub, Style::UnionHall, Style::SawtoothFactory, Style::FoundryWorks, Style::GasWorks, Style::LoftEstate];
+
+    /// [r4-oldstone] The Old Stone look's styles (the Historic look; the
+    /// Old Town Charter).
+    pub const OLD_STONE: [Style; 11] = [Style::StoneHouse, Style::GabledRow, Style::CourtyardHouse, Style::MarketArcade, Style::GuildHall, Style::ClockTower, Style::OldInn, Style::WaterMill, Style::Tannery, Style::CobbledYard, Style::StoneManor];
 
     /// [capsule] The Capsule district's styles.
     pub const CAPSULE: [Style; 10] = [Style::DomeHouse, Style::SaucerHouse, Style::PopsicleDome, Style::TwinDomes, Style::DomePods, Style::CapsuleTower, Style::SaucerStack, Style::StiltTower, Style::DomeHall, Style::DomeCampus];

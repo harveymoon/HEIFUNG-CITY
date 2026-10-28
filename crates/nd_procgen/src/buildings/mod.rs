@@ -33,6 +33,10 @@ mod lantern;
 mod garden;
 /// [r4-harbour] Harbour Pastel: terraces, boathouses, cafés, sheds, villa.
 mod harbour;
+/// [r4-oldstone] Old Town Charter's Old Stone: houses, rows, arcades, halls, manor.
+mod oldstone;
+/// [r4-oldstone] Old Stone's works: the mill, the tannery, cobbled yards.
+mod oldstone_works;
 /// [r4-glass] Glass Campus: flats, towers, labs, sheds, offices, quads, halls.
 mod glasscampus;
 /// [districts] District looks: style menus and palettes, hotels.
@@ -276,6 +280,9 @@ mod lantern_tests;
 
 #[cfg(test)]
 mod harbour_tests;
+
+#[cfg(test)]
+mod oldstone_tests;
 
 #[cfg(test)]
 mod glasscampus_tests;

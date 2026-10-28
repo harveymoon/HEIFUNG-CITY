@@ -251,7 +251,10 @@ impl World {
                 // [r4-brick] The works take the district's look (Brick &
                 // Steel builds them in brick), then retool below.
                 let want = district.as_ref().and_then(|d| d.look_for(LandUse::Industrial));
-                if b.look != want {
+                // [r4-oldstone] Not in a historic district: its works keep
+                // what stands, as its homes and shops do (new ones are
+                // built in the Old Stone look).
+                if b.look != want && !district.as_ref().is_some_and(|d| d.historic) {
                     self.buildings[id].look = want;
                     self.events.push(SimEvent::BuildingChanged(id));
                 }
