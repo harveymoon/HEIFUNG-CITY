@@ -586,6 +586,12 @@ impl World {
             }
             (None, None) => Demolition::of(b, false),
         };
+        // [r4-decks] Rebuilt under a raised road: no taller than its deck
+        // allows over any of its plots.
+        let floors = match self.deck_cap_plots(&std::iter::once(b.lot).chain(b.plot.extra_lots.iter().copied()).collect::<Vec<_>>()) {
+            Some(cap) => floors.min(cap.max(1)),
+            None => floors,
+        };
         self.vacate(bid, Some(memory), None);
         let seed = self.fresh_seed();
         let tick = self.clock.tick;

@@ -122,6 +122,11 @@ impl World {
         if let Some(why) = self.road_under(crate::world::over_roads::Footprint::Area(&lot.polygon), &what.label(), true) {
             return Some(why);
         }
+        // [r4-decks] Under a raised road: never on a column's ground, and
+        // under the deck only what fits below it.
+        if let Some(why) = self.deck_problem(what, &lot.polygon) {
+            return Some(why);
+        }
         // [free-placement] Zoning is no bar: only a park is kept.
         if !what.allowed_on(lot.land_use) {
             return Some(format!("that is park land: unzone it before putting {} there", crate::names::a(what.label())));
@@ -165,6 +170,27 @@ impl World {
             return Some(format!("the treasury has {:.0}; {} costs {:.0}", self.economy.treasury, crate::names::a(what.label()), cost));
         }
         None
+    }
+
+    /// [r4-decks] Why `what` cannot go on ground of this outline under a
+    /// raised road: a column stands on it, or the deck over it is too low
+    /// for its storeys (a surface car park fits under any deck; a plant
+    /// under none).
+    pub(in crate::world) fn deck_problem(&self, what: Placeable, poly: &[Vec2]) -> Option<String> {
+        if !self.pillars.is_empty() && self.pillars_on(poly) {
+            return Some("a column of the raised road stands there".into());
+        }
+        let cap = self.deck_cap_of(poly)?;
+        let storeys = match what {
+            Placeable::ParkingLot(size) => size.floors(),
+            Placeable::Service(k, t) => service_floors(k, t),
+            Placeable::BusDepot | Placeable::CargoHub | Placeable::MetroStation | Placeable::Battery(_) => 1,
+            _ => u8::MAX,
+        };
+        (storeys > cap).then(|| match cap {
+            0 => "the raised road over it is too low to build under (a park or a surface car park fits)".to_string(),
+            n => format!("too tall for the raised road over it: {n} storey{} fit{} under its deck", if n == 1 { "" } else { "s" }, if n == 1 { "s" } else { "" }),
+        })
     }
 
     /// [hq] The police and the fire brigade each run one headquarters (the

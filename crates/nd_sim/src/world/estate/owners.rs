@@ -392,7 +392,8 @@ impl World {
             if l.land_use != lu || ours.contains(&lid) || !self.site_clear(lid, SiteRule::ANY) {
                 continue;
             }
-            if !mine.iter().any(|m| m.center.distance(l.center) < 120.0 && lots_touch(m, l)) {
+            // [r4-decks] A plot under a raised road joins no bigger building.
+            if !mine.iter().any(|m| m.center.distance(l.center) < 120.0 && lots_touch(m, l)) || self.under_a_deck(lid) {
                 continue;
             }
             let cost = match l.building {
