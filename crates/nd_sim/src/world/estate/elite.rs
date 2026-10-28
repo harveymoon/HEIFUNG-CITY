@@ -200,7 +200,9 @@ impl World {
             .collect();
         let mansions: Vec<Vec2> = self.buildings.iter().filter(|(_, b)| b.plot.form == Some(Form::Mansion)).filter_map(|(id, _)| self.footprint(id).map(|l| l.center)).collect();
         let open = |lid: LotId, l: &Lot| -> bool {
-            if l.land_use != LandUse::Residential || !self.site_clear(lid, SiteRule::ANY_NOT_HISTORIC) {
+            // [r4-oldstone] In a historic district too, on empty plots only
+            // (`buyable` keeps its standing houses).
+            if l.land_use != LandUse::Residential || !self.site_clear(lid, SiteRule::ANY) {
                 return false;
             }
             match l.building {

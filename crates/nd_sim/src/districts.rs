@@ -398,7 +398,10 @@ impl DistrictBooks {
 impl District {
     /// The look a new building of `lu` gets here, if the district gives one.
     pub fn look_for(&self, lu: LandUse) -> Option<Look> {
-        if self.historic && matches!(lu, LandUse::Residential | LandUse::Commercial) {
+        // [r4-oldstone] Historic is the Old Stone look, which builds the
+        // nights out (the inns) and the works (the mill, the tannery, the
+        // yards) too, not only homes and shops.
+        if self.historic && matches!(lu, LandUse::Residential | LandUse::Commercial | LandUse::Entertainment | LandUse::Industrial) {
             return Some(Look::Historic);
         }
         match lu {
@@ -1099,5 +1102,26 @@ mod tests {
         assert_eq!(saved.list[2].commercial, Some(CommercialSpec::Tourist));
         // Every load runs it: nothing more to do.
         assert_eq!(saved.adopt_stories(), 0);
+    }
+
+    /// [r4-oldstone] Historic is the Old Stone look: it gives its look to
+    /// homes, shops, nights out and the works. An Old Town Charter district
+    /// as saved before the look loads and builds in it, with nothing to
+    /// adopt (the story's dials have not changed).
+    #[test]
+    fn historic_is_old_stone_for_every_built_use() {
+        use crate::stories::Story;
+        let old = "(id: 4, name: \"Old Quarter\", color: 3, residential: None, commercial: None, industry: None, historic: true, height_limit: Some(24.0), story: Some(OldTownCharter), policies: (heritage_grant: 40.0, bed_levy: 0.05))";
+        let back: District = ron::from_str(old).expect("old district loads");
+        let mut ds = Districts::default();
+        ds.list.push(back);
+        assert_eq!(ds.adopt_stories(), 0);
+        let d = &ds.list[0];
+        assert!(Story::OldTownCharter.fits(d));
+        for lu in [LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial] {
+            assert_eq!(d.look_for(lu), Some(Look::Historic), "{lu:?}");
+        }
+        assert_eq!(d.look_for(LandUse::Civic), None);
+        assert_eq!(d.look_for(LandUse::Park), None);
     }
 }

@@ -55,10 +55,20 @@ pub fn look_styles(look: Look, lu: LandUse, tier: Tier) -> Option<Menu> {
         (Look::Tourist, Commercial, Low) => &[(S::CapsuleHotel, 0.5), (S::Shophouse, 0.25), (S::NightMarket, 0.25)],
         (Look::Tourist, Commercial, Mid) => &[(S::TwinSlab, 0.35), (S::GlassTerraces, 0.35), (S::CapsuleHotel, 0.3)],
         (Look::Tourist, Commercial, High) => &[(S::SlabTower, 0.35), (S::GlassTerraces, 0.35), (S::TwistTower, 0.3)],
-        (Look::Historic, Residential, Low) => &[(S::Tenement, 0.6), (S::Courtyard, 0.4)],
-        (Look::Historic, Residential, Mid) => &[(S::Courtyard, 0.55), (S::Tenement, 0.45)],
-        (Look::Historic, Residential, High) => &[(S::Courtyard, 0.5), (S::Villas, 0.5)],
-        (Look::Historic, Commercial, _) => &[(S::Shophouse, 0.6), (S::MarketHall, 0.4)],
+        // [r4-oldstone] Historic is the Old Stone look (the Old Town
+        // Charter): stone and timber houses, gabled rows and courtyard
+        // houses; arcades, the guild hall, the clock tower and the inns;
+        // the mill, the tannery and the cobbled yards.
+        (Look::Historic, Residential, Low) => &[(S::StoneHouse, 0.45), (S::GabledRow, 0.55)],
+        (Look::Historic, Residential, Mid) => &[(S::GabledRow, 0.4), (S::StoneHouse, 0.3), (S::CourtyardHouse, 0.3)],
+        (Look::Historic, Residential, High) => &[(S::CourtyardHouse, 0.55), (S::StoneHouse, 0.25), (S::GabledRow, 0.2)],
+        (Look::Historic, Commercial, Low) => &[(S::GabledRow, 0.45), (S::MarketArcade, 0.35), (S::OldInn, 0.2)],
+        (Look::Historic, Commercial, Mid) => &[(S::MarketArcade, 0.45), (S::GabledRow, 0.25), (S::CourtyardHouse, 0.15), (S::GuildHall, 0.15)],
+        (Look::Historic, Commercial, High) => &[(S::MarketArcade, 0.35), (S::GuildHall, 0.3), (S::CourtyardHouse, 0.2), (S::ClockTower, 0.15)],
+        (Look::Historic, Entertainment, Low) => &[(S::OldInn, 0.8), (S::MarketArcade, 0.2)],
+        (Look::Historic, Entertainment, _) => &[(S::OldInn, 0.55), (S::GuildHall, 0.25), (S::ClockTower, 0.2)],
+        (Look::Historic, Industrial, Low) => &[(S::CobbledYard, 0.5), (S::Tannery, 0.3), (S::WaterMill, 0.2)],
+        (Look::Historic, Industrial, _) => &[(S::CobbledYard, 0.35), (S::Tannery, 0.3), (S::WaterMill, 0.35)],
         // [capsule] White domes for homes, shops, offices and nights out.
         (Look::Capsule, Residential, Low) => &[(S::DomeHouse, 0.45), (S::SaucerHouse, 0.3), (S::TwinDomes, 0.25)],
         (Look::Capsule, Residential, Mid) => &[(S::DomePods, 0.2), (S::DomeHouse, 0.15), (S::SaucerHouse, 0.15), (S::PopsicleDome, 0.25), (S::CapsuleTower, 0.15), (S::SaucerStack, 0.1), (S::StiltTower, 0.08)],
@@ -119,6 +129,8 @@ pub fn look_mansion(look: Look) -> Option<Style> {
         Look::Garden => Some(Style::GardenManor),
         // [r4-harbour] A pastel villa with a boathouse on The Promenade.
         Look::HarbourPastel => Some(Style::PastelVilla),
+        // [r4-oldstone] The Old Town's (Historic) stone manor.
+        Look::Historic => Some(Style::StoneManor),
         _ => None,
     }
 }
@@ -384,7 +396,8 @@ mod tests {
                 Look::Kowloon | Look::Suburban | Look::Eco => &[LandUse::Residential],
                 Look::NeonStrip | Look::NightMarket => &[LandUse::Commercial, LandUse::Entertainment],
                 Look::TechCampus | Look::Tourist => &[LandUse::Commercial],
-                Look::Historic => &[LandUse::Residential, LandUse::Commercial],
+                // [r4-oldstone] Old Stone builds nights out and works too.
+                Look::Historic => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
                 Look::Capsule => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment],
                 Look::BrickSteel => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
                 Look::Lantern => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
@@ -398,9 +411,11 @@ mod tests {
                 }
             }
             // [r4-brick] Brick & Steel builds the works in its look; [lantern]
-            // Lantern Alley its small trades. No other look dresses industry.
-            // [r4-harbour] Harbour Pastel its fish market and net sheds.
-            assert_eq!(look_styles(look, LandUse::Industrial, Tier::Mid).is_some(), matches!(look, Look::BrickSteel | Look::Lantern | Look::HarbourPastel));
+            // [r4-brick] Brick & Steel builds the works in its look; [lantern]
+            // Lantern Alley its small trades; [r4-harbour] Harbour Pastel its
+            // fish market and net sheds; [r4-oldstone] Old Stone (Historic)
+            // its mill, tannery and yards. No other look dresses industry.
+            assert_eq!(look_styles(look, LandUse::Industrial, Tier::Mid).is_some(), matches!(look, Look::BrickSteel | Look::Lantern | Look::HarbourPastel | Look::Historic));
         }
     }
 
