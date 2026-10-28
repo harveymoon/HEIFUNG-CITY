@@ -182,7 +182,7 @@ fn install_fonts(mut contexts: EguiContexts, mut done: Local<bool>) {
 /// holds this frame's pointer position, tested against the areas laid out
 /// in the previous pass: the same-frame answer the tools need, rather than
 /// a flag written at the end of the previous frame's pass.
-fn read_input_flags(mut contexts: EguiContexts, mut flags: ResMut<UiFlags>) {
+pub(crate) fn read_input_flags(mut contexts: EguiContexts, mut flags: ResMut<UiFlags>) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
     let over_bars = ctx.pointer_latest_pos().is_some_and(|p| flags.panel_rects.iter().any(|r| r.contains(p)));
     flags.pointer_over_ui = over_bars || ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input();
