@@ -222,13 +222,15 @@ enum Toggle {
     NewGame,
     /// [committee] The Committee window (`ui/committee.rs`).
     Committee,
+    /// [viewer] The building viewer (`viewer/`).
+    Viewer,
 }
 
 impl Toggle {
     fn all() -> Vec<Toggle> {
         // [committee] The Committee sits by City Data: both are about running
         // the city, not tools for the map; it stays its own floating window.
-        let mut out = vec![Toggle::CityData, Toggle::Committee];
+        let mut out = vec![Toggle::CityData, Toggle::Committee, Toggle::Viewer];
         for info in Info::ALL {
             if info == Info::Saves {
                 out.push(Toggle::NewGame);
@@ -248,6 +250,7 @@ impl Toggle {
             Toggle::Window(info) => info.title(),
             Toggle::NewGame => "New game…",
             Toggle::Committee => "Committee",
+            Toggle::Viewer => "Viewer",
         }
     }
 
@@ -257,6 +260,7 @@ impl Toggle {
             Toggle::Window(info) => info.is_open(ctx),
             Toggle::NewGame => super::newgame::is_open(ctx),
             Toggle::Committee => super::committee::is_open(ctx),
+            Toggle::Viewer => crate::viewer::is_open(ctx),
         }
     }
 
@@ -281,6 +285,7 @@ impl Toggle {
                 }
             }
             Toggle::Committee => super::committee::toggle(ui),
+            Toggle::Viewer => crate::viewer::toggle(ui),
             Toggle::Window(info) => {
                 let open = info.is_open(ui.ctx());
                 if ui.selectable_label(open, info.title()).clicked() {

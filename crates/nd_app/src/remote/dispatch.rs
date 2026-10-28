@@ -734,6 +734,32 @@ pub(super) static COMMANDS: &[Cmd] = &[
     Cmd { name: "flag", aliases: &[], effect: Files, run: flags::flag, help: &[
         ("note", "text: flag the current selection, as F8 does in game"),
     ] },
+    Cmd { name: "viewer", aliases: &[], effect: View, run: viewer::viewer, help: &[
+        ("action", "status (default) | open | close | toggle | select | next | prev | list | screenshot: the building viewer (top bar Viewer, or X): one building at a time on a turntable"),
+        ("source", "city (the buildings standing) | catalogue (every style the generator makes, in seeded variants) | notes"),
+        ("building", "id: show this city building (a tenant shows the building it rents in)"),
+        ("style", "a style key (PencilTower) or label (\"pencil tower\"): show it from the catalogue"),
+        ("variant", "0-based variant of the catalogue style (tier, height, seed)"),
+        ("note", "note id: show what it is about (the Notes list)"),
+        ("step", "int: move through the list shown, as the arrows do (next and prev are 1 and -1)"),
+        ("filter", "{search, group (a catalogue section), form, land_use, district, story, business, tier, noted}; null or \"\" clears one"),
+        ("clear_filters", "bool"),
+        ("go_to", "bool: \"Go to it in the city\": select the building shown, fly the camera to it and close the viewer (applied in the next egui pass)"),
+        ("light", "day | night (or night: bool); lights: bool (window lights and signs); auto_rotate: bool"),
+        ("yaw", "degrees round the building (stops the turning); pitch: degrees above the floor; zoom: 0.25..4, 1 frames it; reset_view: bool"),
+        ("inspiration", "a picture of the Inspirations folder (the end of its path, e.g. Hong_Kong/x.jpg) shown beside the building, or none"),
+        ("path", "with screenshot: optional .png (see files); default screenshots/viewer-<ms>.png: the turntable image alone, written once the building has stood a moment; opens the viewer"),
+        ("offset", "with list: default 0; limit: default 50, max 1000; the rows of the list shown (city, catalogue or notes) after the filters"),
+    ] },
+    Cmd { name: "building_notes", aliases: &["notes"], effect: Files, run: viewer::building_notes, help: &[
+        ("action", "list (default) | get | set | reply | resolve | reopen | delete: the notes left in the building viewer, kept in building_notes.ron in the game's folder (not in a save), as work items"),
+        ("id", "note id (get, reply, resolve, reopen, delete; set with id changes the text)"),
+        ("building", "id: a city building (list: its notes; set: a new note on it)"),
+        ("style", "a style key or label (list: its notes; set: a new note on it)"),
+        ("text", "set: the note; reply: the answer; resolve: an optional closing answer"),
+        ("by", "who writes (default claude)"),
+        ("status", "list: open (default) | resolved | all; kind: building | style; this_city: bool (only this game's buildings)"),
+    ] },
     Cmd { name: "favourite", aliases: &["favorite"], effect: View, run: flags::favourite, help: &[
         ("citizen", "id"),
         ("on", "bool, omitted toggles"),
@@ -931,7 +957,10 @@ mod dispatch_tests {
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<Assets<Image>>()
-            .init_resource::<crate::city_reset::CityEpoch>();
+            .init_resource::<crate::city_reset::CityEpoch>()
+            .init_resource::<crate::viewer::Viewer>()
+            .init_resource::<crate::render::Turntable>()
+            .init_resource::<crate::viewer::notes::BuildingNotes>();
         app
     }
 
@@ -1062,6 +1091,61 @@ mod dispatch_tests {
         let (_, body) = send(&mut app, json!({ "cmd": "committee", "action": "questions" }));
         assert_eq!(body["undiscussed"], 0);
         assert!(body["questions"][0]["discussed"].is_u64(), "{body}");
+    }
+
+    /// [viewer] The viewer is driven and its notes kept through the API: a
+    /// city building and a catalogue style are picked, a note is left on
+    /// each, answered and resolved, and the lists say so.
+    #[test]
+    fn the_building_viewer_and_its_notes_through_the_api() {
+        let mut app = app();
+        send(&mut app, json!({ "cmd": "seed_demo" }));
+        send(&mut app, json!({ "cmd": "step", "ticks": 1440 }));
+        let (status, body) = send(&mut app, json!({ "cmd": "viewer", "action": "list", "limit": 5 }));
+        assert_eq!(status, 200, "{body}");
+        assert!(body["total"].as_u64().unwrap() > 0, "{body}");
+        let id = body["rows"][0]["id"].as_str().unwrap().to_string();
+        let (status, body) = send(&mut app, json!({ "cmd": "viewer", "action": "open", "building": id, "light": "night", "lights": false }));
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["open"], true);
+        assert_eq!(body["subject"]["id"], id);
+        assert_eq!(body["view"]["night"], true);
+        assert_eq!(body["view"]["lights"], false);
+        // The catalogue: every style, found by label, its variants in range.
+        let (_, body) = send(&mut app, json!({ "cmd": "viewer", "style": "pencil tower", "variant": 2 }));
+        assert_eq!(body["source"], "catalogue");
+        assert_eq!(body["subject"]["style"], "PencilTower");
+        assert_eq!(body["catalogue_styles"].as_u64().unwrap() as usize, nd_procgen::Style::ALL.len());
+        let (status, _) = send(&mut app, json!({ "cmd": "viewer", "variant": 999 }));
+        assert_eq!(status, 400);
+        let (status, _) = send(&mut app, json!({ "cmd": "viewer", "style": "no such style" }));
+        assert_eq!(status, 400);
+        let (_, body) = send(&mut app, json!({ "cmd": "viewer", "action": "list", "filter": { "group": "Malls" } }));
+        assert_eq!(body["total"], 3, "{body}");
+        // Notes: one on the building, one on the style.
+        let (status, body) = send(&mut app, json!({ "cmd": "building_notes", "action": "set", "building": id, "text": "roof too flat", "by": "player" }));
+        assert_eq!(status, 200, "{body}");
+        let a = body["note"]["id"].as_u64().unwrap();
+        assert_eq!(body["note"]["target"]["kind"], "building");
+        let (_, body) = send(&mut app, json!({ "cmd": "building_notes", "action": "set", "style": "PencilTower", "text": "more neon" }));
+        let b = body["note"]["id"].as_u64().unwrap();
+        let (status, _) = send(&mut app, json!({ "cmd": "building_notes", "action": "set", "text": "about nothing" }));
+        assert_eq!(status, 400, "a new note needs a building or a style");
+        let (_, body) = send(&mut app, json!({ "cmd": "building_notes" }));
+        assert_eq!(body["open"], 2);
+        assert_eq!(body["notes"][0]["in_this_city"], true);
+        let (_, body) = send(&mut app, json!({ "cmd": "building_notes", "action": "resolve", "id": b, "text": "added strips" }));
+        assert_eq!(body["note"]["status"], "resolved");
+        assert_eq!(body["note"]["replies"][0]["text"], "added strips");
+        let (_, body) = send(&mut app, json!({ "cmd": "building_notes", "style": "pencil tower", "status": "all" }));
+        assert_eq!(body["notes"].as_array().unwrap().len(), 1);
+        // The viewer shows the notes on what it shows.
+        let (_, body) = send(&mut app, json!({ "cmd": "viewer", "building": id }));
+        assert_eq!(body["notes"][0]["id"].as_u64(), Some(a));
+        let (_, body) = send(&mut app, json!({ "cmd": "building_notes", "action": "delete", "id": a }));
+        assert_eq!(body["deleted"].as_u64(), Some(a));
+        let (_, body) = send(&mut app, json!({ "cmd": "building_notes" }));
+        assert_eq!(body["open"], 0);
     }
 
     /// Names and aliases are unique across the registry.

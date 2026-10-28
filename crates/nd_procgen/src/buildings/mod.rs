@@ -134,8 +134,10 @@ pub fn generate_styled(
     generate_styled_extras(lot, land_use, floors, tier, condition, seed, style, rules, palette, &Extras::default())
 }
 
+/// A specific style with its extras; [viewer] the building viewer's
+/// catalogue draws every style this way.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn generate_styled_extras(
+pub fn generate_styled_extras(
     lot: &Lot,
     land_use: LandUse,
     floors: u8,

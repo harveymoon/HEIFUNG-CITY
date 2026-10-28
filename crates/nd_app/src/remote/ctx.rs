@@ -52,4 +52,8 @@ pub(super) struct Ctx<'w, 's> {
     pub(super) entities: Query<'w, 's, Entity>,
     /// [fix/review-app] Which city the tools and selection belong to.
     pub(super) epoch: ResMut<'w, crate::city_reset::CityEpoch>,
+    /// [viewer] The building viewer, its turntable and its notes.
+    pub(super) viewer: ResMut<'w, crate::viewer::Viewer>,
+    pub(super) turntable: ResMut<'w, crate::render::Turntable>,
+    pub(super) notes: ResMut<'w, crate::viewer::notes::BuildingNotes>,
 }
