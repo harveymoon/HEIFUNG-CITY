@@ -988,3 +988,4 @@ fn capsule_sites_rise_in_their_own_shape() {
         assert!(shared > 100, "{style:?}: only {shared} of the building's own painted vertices on the site");
     }
 }
+

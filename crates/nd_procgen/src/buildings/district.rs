@@ -107,6 +107,19 @@ pub fn look_styles(look: Look, lu: LandUse, tier: Tier) -> Option<Menu> {
         (Look::HarbourPastel, Commercial, _) => &[(S::AwningArcade, 0.35), (S::BoardwalkCafe, 0.25), (S::BoutiqueHotel, 0.25), (S::SeafoodShack, 0.15)],
         (Look::HarbourPastel, Entertainment, _) => &[(S::BoardwalkCafe, 0.4), (S::SeafoodShack, 0.35), (S::AwningArcade, 0.25)],
         (Look::HarbourPastel, Industrial, _) => &[(S::NetSheds, 0.55), (S::FishMarketHall, 0.45)],
+        // [r4-glass] Student flats and co-living towers for homes; labs,
+        // sheds, atrium offices and quads for the campus; the quad and the
+        // sheds' bars for nights out; research labs and server halls for
+        // its small industry.
+        (Look::GlassCampus, Residential, Low) => &[(S::StudentFlats, 0.8), (S::CoLivingTower, 0.2)],
+        (Look::GlassCampus, Residential, Mid) => &[(S::StudentFlats, 0.55), (S::CoLivingTower, 0.45)],
+        (Look::GlassCampus, Residential, High) => &[(S::CoLivingTower, 0.6), (S::StudentFlats, 0.4)],
+        (Look::GlassCampus, Commercial, Low) => &[(S::StartupSheds, 0.4), (S::GlassLab, 0.35), (S::CampusQuad, 0.25)],
+        (Look::GlassCampus, Commercial, Mid) => &[(S::GlassLab, 0.3), (S::AtriumOffice, 0.3), (S::CampusQuad, 0.2), (S::StartupSheds, 0.2)],
+        (Look::GlassCampus, Commercial, High) => &[(S::AtriumOffice, 0.5), (S::GlassLab, 0.3), (S::CampusQuad, 0.2)],
+        (Look::GlassCampus, Entertainment, _) => &[(S::CampusQuad, 0.55), (S::StartupSheds, 0.45)],
+        (Look::GlassCampus, Industrial, Low) => &[(S::ResearchLab, 0.5), (S::ServerHall, 0.3), (S::StartupSheds, 0.2)],
+        (Look::GlassCampus, Industrial, _) => &[(S::ServerHall, 0.5), (S::ResearchLab, 0.5)],
         _ => return None,
     })
 }
@@ -119,6 +132,8 @@ pub fn look_mansion(look: Look) -> Option<Style> {
         Look::Garden => Some(Style::GardenManor),
         // [r4-harbour] A pastel villa with a boathouse on The Promenade.
         Look::HarbourPastel => Some(Style::PastelVilla),
+        // [r4-glass] A glass pavilion house on Founders' Campus.
+        Look::GlassCampus => Some(Style::GlassPavilion),
         _ => None,
     }
 }
@@ -317,6 +332,22 @@ pub fn tint(look: Look) -> Tint {
             sign_scale: 0.5,
             grime: Some((0.35, 0.3)),
         },
+        // [r4-glass] Tinted glass and pale concrete, cool white office light
+        // and warm flats; signs few and screen-bright (cyan, white, violet,
+        // lime). The styles carry their own glass and panels
+        // (`buildings/glasscampus.rs`); a little grime, a campus not a render.
+        Look::GlassCampus => Tint {
+            walls: &[[0.74, 0.74, 0.72], [0.58, 0.60, 0.62], [0.82, 0.82, 0.80], [0.46, 0.48, 0.50]],
+            trim: Some([0.20, 0.21, 0.22]),
+            windows: &[[0.95, 1.1, 1.4], [1.15, 1.15, 1.1], [1.3, 1.05, 0.75]],
+            signs: &[[0.3, 1.7, 2.4], [2.0, 2.1, 2.3], [1.3, 0.5, 2.4], [1.1, 2.2, 0.4]],
+            awnings: Some(&[[0.20, 0.21, 0.22], [0.60, 0.62, 0.64]]),
+            brick: None,
+            plaster: Some(&[[0.80, 0.80, 0.78], [0.70, 0.71, 0.72]]),
+            signage: None,
+            sign_scale: 0.4,
+            grime: Some((0.25, 0.3)),
+        },
         Look::Historic => Tint {
             walls: &[[0.55, 0.32, 0.24], [0.62, 0.56, 0.46], [0.48, 0.30, 0.22], [0.66, 0.60, 0.50]],
             trim: Some([0.74, 0.70, 0.60]),
@@ -390,6 +421,7 @@ mod tests {
                 Look::Lantern => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
                 Look::Garden => &[LandUse::Residential, LandUse::Commercial],
                 Look::HarbourPastel => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
+                Look::GlassCampus => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
             };
             for &lu in uses {
                 for tier in Tier::ALL {
@@ -399,8 +431,9 @@ mod tests {
             }
             // [r4-brick] Brick & Steel builds the works in its look; [lantern]
             // Lantern Alley its small trades. No other look dresses industry.
-            // [r4-harbour] Harbour Pastel its fish market and net sheds.
-            assert_eq!(look_styles(look, LandUse::Industrial, Tier::Mid).is_some(), matches!(look, Look::BrickSteel | Look::Lantern | Look::HarbourPastel));
+            // [r4-harbour] Harbour Pastel its fish market and net sheds;
+            // [r4-glass] Glass Campus its research labs and server halls.
+            assert_eq!(look_styles(look, LandUse::Industrial, Tier::Mid).is_some(), matches!(look, Look::BrickSteel | Look::Lantern | Look::HarbourPastel | Look::GlassCampus));
         }
     }
 

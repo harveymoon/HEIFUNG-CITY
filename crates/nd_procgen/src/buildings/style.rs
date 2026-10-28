@@ -436,6 +436,29 @@ styles! {
     NetSheds { label: "net sheds", family: Heavy, cluster: 0.9, draw: |g, c, r, e| harbour::net_sheds(g, c, r, e) },
     /// A family's or a billionaire's pastel villa with its own boathouse.
     PastelVilla { label: "pastel waterfront villa", family: Special, cluster: 0.0, draw: |g, c, r, e| harbour::pastel_villa(g, c, r, e) },
+    // -- [r4-glass] Glass Campus, Founders' Campus's look
+    // (`buildings/glasscampus.rs`), drawn only from its menus (the pavilion
+    // for its estates' forms, the server hall for the assembly halls
+    // there); appended so `ALL` keeps its order. Flats, sheds and halls
+    // repeat; the tower, the atrium office and the quad stand apart. --
+    /// A slab of student flats: bright panels by every window, galleries behind.
+    StudentFlats { label: "student flats", family: Slab, cluster: 0.8, draw: |g, c, r, e| glasscampus::student_flats(g, c, r, e) },
+    /// A tinted glass tower on a podium, lounges hung off it, a braced stair core.
+    CoLivingTower { label: "co-living tower", family: Slab, cluster: -0.4, draw: |g, c, r, e| glasscampus::coliving_tower(g, c, r, e) },
+    /// A glass lab in an exposed steel frame, fume stacks on the roof.
+    GlassLab { label: "glass lab", family: Tech, cluster: 0.4, draw: |g, c, r, e| glasscampus::glass_lab(g, c, r, e) },
+    /// A yard of cheap prefab sheds, some stacked, lit late, a shared deck.
+    StartupSheds { label: "start-up sheds", family: Tech, cluster: 0.7, draw: |g, c, r, e| glasscampus::startup_sheds(g, c, r, e) },
+    /// Tinted office slab with a full-height atrium lit all night, a screen in it.
+    AtriumOffice { label: "atrium office", family: Office, cluster: -0.3, draw: |g, c, r, e| glasscampus::atrium_office(g, c, r, e) },
+    /// Low glass wings round a lawn, a big screen, a cafe pavilion.
+    CampusQuad { label: "shared quad", family: Office, cluster: -1.0, draw: |g, c, r, e| glasscampus::campus_quad(g, c, r, e) },
+    /// A chamfered concrete research lab: ribbon windows, louvres, stacks.
+    ResearchLab { label: "research lab", family: Tech, cluster: 0.3, draw: |g, c, r, e| glasscampus::research_lab(g, c, r, e) },
+    /// A fenced windowless server hall, chillers on the roof, generators.
+    ServerHall { label: "server hall", family: Tech, cluster: 0.6, draw: |g, c, r, e| glasscampus::server_hall(g, c, r, e) },
+    /// A family's or a billionaire's glass pavilion house.
+    GlassPavilion { label: "glass pavilion house", family: Special, cluster: 0.0, draw: |g, c, r, e| glasscampus::glass_pavilion(g, c, r, e) },
 }
 
 impl Style {
@@ -465,6 +488,9 @@ impl Style {
 
     /// [r4-harbour] Harbour Pastel's styles (The Promenade).
     pub const HARBOUR: [Style; 10] = [Style::PastelTerrace, Style::Boathouses, Style::LighthouseCorner, Style::BoardwalkCafe, Style::SeafoodShack, Style::AwningArcade, Style::BoutiqueHotel, Style::FishMarketHall, Style::NetSheds, Style::PastelVilla];
+
+    /// [r4-glass] Glass Campus's styles (Founders' Campus).
+    pub const GLASS_CAMPUS: [Style; 9] = [Style::StudentFlats, Style::CoLivingTower, Style::GlassLab, Style::StartupSheds, Style::AtriumOffice, Style::CampusQuad, Style::ResearchLab, Style::ServerHall, Style::GlassPavilion];
 }
 
 impl Style {

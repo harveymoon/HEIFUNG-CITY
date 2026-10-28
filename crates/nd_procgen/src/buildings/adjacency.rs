@@ -220,6 +220,15 @@ pub fn site_fit(style: Style, site: &Site) -> f32 {
         Style::Boathouses | Style::SeafoodShack | Style::BoardwalkCafe | Style::NetSheds => low(3.0),
         Style::LighthouseCorner => tall(3.0) * low(6.0),
         Style::BoutiqueHotel => tall(3.0),
+        // [r4-glass] Sheds and the quad are low, the flats mid-rise, the
+        // tower and the atrium office want floors.
+        Style::StartupSheds => low(2.0),
+        Style::CampusQuad | Style::GlassLab => low(5.0),
+        Style::StudentFlats => tall(3.0) * low(10.0),
+        Style::CoLivingTower => tall(6.0),
+        Style::AtriumOffice => tall(4.0),
+        Style::ResearchLab => low(6.0),
+        Style::ServerHall => low(4.0),
         _ => 1.0,
     }
 }
