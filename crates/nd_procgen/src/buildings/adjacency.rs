@@ -220,6 +220,11 @@ pub fn site_fit(style: Style, site: &Site) -> f32 {
         Style::Boathouses | Style::SeafoodShack | Style::BoardwalkCafe | Style::NetSheds => low(3.0),
         Style::LighthouseCorner => tall(3.0) * low(6.0),
         Style::BoutiqueHotel => tall(3.0),
+        // [r4-oldstone] Old houses are two to four storeys; the arcade and
+        // the inn want a street front of their own.
+        Style::StoneHouse | Style::OldInn => low(3.0),
+        Style::GabledRow => low(5.0),
+        Style::MarketArcade => low(4.0) * if w > 0.0 && w < 14.0 { 0.5 } else { 1.0 },
         // [r4-solarpunk] Terraces and townhouses are low, the shops, the
         // farms and the depot too; the vine tower and the vertical farm
         // want floors.
