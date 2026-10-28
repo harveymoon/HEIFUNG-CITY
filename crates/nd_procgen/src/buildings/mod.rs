@@ -27,6 +27,8 @@ mod capsule;
 mod brick;
 /// [r4-brick] Brick & Steel's works: saw-tooth sheds, foundry, gas works.
 mod brick_works;
+/// [lantern] Lantern Alley: shophouses, alleys, stalls, halls, workshops.
+mod lantern;
 /// [garden] The Garden Suburb's houses, shops and garden manor.
 mod garden;
 /// [districts] District looks: style menus and palettes, hotels.
@@ -264,6 +266,9 @@ mod garden_tests;
 
 #[cfg(test)]
 mod brick_tests;
+
+#[cfg(test)]
+mod lantern_tests;
 
 #[cfg(test)]
 mod hk_tests;

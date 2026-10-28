@@ -23,6 +23,8 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         // [r4-brick] A family's big house or a billionaire's estate in
         // Foundry Row is a converted warehouse: the loft estate.
         _ if extras.form.is_some_and(|f| f.owner_occupied()) && extras.look == Some(nd_sim::districts::Look::BrickSteel) => Style::LoftEstate,
+        // [lantern] In Lantern Lanes it is a courtyard shophouse compound.
+        _ if extras.form.is_some_and(|f| f.owner_occupied()) && extras.look == Some(nd_sim::districts::Look::Lantern) => Style::LanternCompound,
         // [garden] A family's or a billionaire's house in a district look
         // that has its own (the story's mansion).
         _ if extras.form.is_some_and(|f| f.owner_occupied()) && extras.look.and_then(district::look_mansion).is_some() => district::look_mansion(extras.look.unwrap()).unwrap(),
@@ -61,7 +63,8 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         (None, None) if extras.business == Some(nd_sim::BusinessKind::Hotel) && lot.shore.is_waterfront() => Style::WaterfrontHotel,
         // [districts] A district's look, then hotels, before the land use's menu.
         // [r4-brick] (Works with a look of their own, a refinery or a fish
-        // plant, keep it in a Brick & Steel district.)
+        // plant, keep it in a Brick & Steel or [lantern] Lantern
+        // Alley district.)
         (None, None) if !extras.rooftop_pad && extras.look.is_some_and(|l| district::look_styles(l, land_use, tier).is_some()) && !(land_use == LandUse::Industrial && extras.business.is_some_and(|k| industry_styles(k, tier).is_some())) => {
             let menu = district::look_styles(extras.look.unwrap(), land_use, tier).unwrap();
             district::pick(menu, &adjacency::Site { floors, frontage: lot.width() }, extras.neighbours, &mut rng)

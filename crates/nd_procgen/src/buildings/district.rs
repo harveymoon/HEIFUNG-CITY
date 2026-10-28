@@ -81,6 +81,15 @@ pub fn look_styles(look: Look, lu: LandUse, tier: Tier) -> Option<Menu> {
         (Look::BrickSteel, Industrial, Low) => &[(S::SawtoothFactory, 0.55), (S::FoundryWorks, 0.25), (S::GasWorks, 0.2)],
         (Look::BrickSteel, Industrial, Mid) => &[(S::SawtoothFactory, 0.45), (S::FoundryWorks, 0.35), (S::GasWorks, 0.2)],
         (Look::BrickSteel, Industrial, High) => &[(S::FoundryWorks, 0.4), (S::SawtoothFactory, 0.35), (S::GasWorks, 0.25)],
+        // [lantern] Shophouses and alleys for homes; stalls, halls and tea
+        // houses for shops and nights out; workshops and kitchens for its
+        // small industry.
+        (Look::Lantern, Residential, Low) => &[(S::AlleyWalkups, 0.55), (S::LanternShophouse, 0.45)],
+        (Look::Lantern, Residential, _) => &[(S::LanternShophouse, 0.55), (S::AlleyWalkups, 0.45)],
+        (Look::Lantern, Commercial, Low) => &[(S::StallRows, 0.35), (S::LanternShophouse, 0.3), (S::FoodCourt, 0.15), (S::TeaHouse, 0.1), (S::LanternMarket, 0.1)],
+        (Look::Lantern, Commercial, _) => &[(S::LanternShophouse, 0.3), (S::FoodCourt, 0.2), (S::TeaHouse, 0.2), (S::LanternMarket, 0.2), (S::StallRows, 0.1)],
+        (Look::Lantern, Entertainment, _) => &[(S::LanternMarket, 0.35), (S::TeaHouse, 0.3), (S::StallRows, 0.2), (S::FoodCourt, 0.15)],
+        (Look::Lantern, Industrial, _) => &[(S::AlleyWorkshops, 0.55), (S::BackKitchens, 0.45)],
         // [garden] Houses, bungalows and closes; a parade, a café, a
         // garden centre.
         (Look::Garden, Residential, Low) => &[(S::Bungalow, 0.5), (S::GardenHouse, 0.38), (S::CulDeSac, 0.12)],
@@ -252,6 +261,21 @@ pub fn tint(look: Look) -> Tint {
             sign_scale: 0.5,
             grime: Some((0.6, 0.5)),
         },
+        // [lantern] Stained render and faded tile (cream, jade, ochre,
+        // dusty pink), dark red trim, warm windows; red, amber and jade
+        // signs everywhere; red, green, blue and tan awnings.
+        Look::Lantern => Tint {
+            walls: &[[0.66, 0.60, 0.50], [0.46, 0.56, 0.50], [0.64, 0.52, 0.34], [0.64, 0.48, 0.46], [0.52, 0.52, 0.50]],
+            trim: Some([0.36, 0.12, 0.09]),
+            windows: &[[1.4, 0.95, 0.5], [1.35, 0.8, 0.45], [1.2, 1.05, 0.7]],
+            signs: &[[2.6, 0.35, 0.2], [2.5, 1.5, 0.3], [0.4, 2.0, 1.2], [2.4, 0.5, 0.6], [2.2, 2.0, 1.4]],
+            awnings: Some(&[[0.62, 0.12, 0.09], [0.16, 0.36, 0.26], [0.16, 0.28, 0.48], [0.58, 0.46, 0.20]]),
+            brick: Some(&[[0.48, 0.25, 0.18], [0.40, 0.30, 0.24]]),
+            plaster: Some(&[[0.70, 0.64, 0.52], [0.56, 0.62, 0.54], [0.68, 0.56, 0.40]]),
+            signage: Some((0.9, 0.65)),
+            sign_scale: 1.0,
+            grime: None,
+        },
         // [garden] Brick, render and painted boards under tile and slate,
         // warm lamplit windows, few signs and quiet ones, a little worn.
         Look::Garden => Tint {
@@ -336,6 +360,7 @@ mod tests {
                 Look::Historic => &[LandUse::Residential, LandUse::Commercial],
                 Look::Capsule => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment],
                 Look::BrickSteel => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
+                Look::Lantern => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
                 Look::Garden => &[LandUse::Residential, LandUse::Commercial],
             };
             for &lu in uses {
@@ -344,8 +369,9 @@ mod tests {
                     assert!(!menu.is_empty() && menu.iter().all(|(_, w)| *w > 0.0));
                 }
             }
-            // [r4-brick] Only Brick & Steel builds the works in its look.
-            assert_eq!(look_styles(look, LandUse::Industrial, Tier::Mid).is_some(), look == Look::BrickSteel);
+            // [r4-brick] Brick & Steel builds the works in its look; [lantern]
+            // Lantern Alley its small trades. No other look dresses industry.
+            assert_eq!(look_styles(look, LandUse::Industrial, Tier::Mid).is_some(), matches!(look, Look::BrickSteel | Look::Lantern));
         }
     }
 
