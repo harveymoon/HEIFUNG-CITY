@@ -424,7 +424,8 @@ pub fn student_flats(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, _e: &Extras)
     let depth = (area.d() - 1.8).min(12.5);
     let v0 = area.v0 + (area.d() - 1.8 - depth).clamp(0.0, 3.0);
     let Some(b) = fit(c, R::new(area.u0 + 0.3, area.u1 - 0.3, v0, v0 + depth), 6.0) else { return kiosk(g, c, rng) };
-    let floors = (c.floors as i32).clamp(2, 10);
+    // As tall as the sim counts it (a refitted block keeps its floors).
+    let floors = (c.floors as i32).clamp(2, 24);
     let h = floors as f32 * fh;
     let wall = mix(concrete(c, rng), [0.82, 0.80, 0.76], 0.4);
     block(g, c, Concrete, &b, 0.0, h, wall);
@@ -589,7 +590,7 @@ pub fn glass_lab(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, _e: &Extras) {
     let fh = c.fh().clamp(3.6, 4.2);
     let area = R::of(&c.poly);
     let Some(b) = fit(c, R::new(area.u0 + 1.2, area.u1 - 1.2, area.v0 + 2.5, area.v0 + 2.5 + (area.d() - 3.5).min(22.0)), 6.0) else { return kiosk(g, c, rng) };
-    let floors = (c.floors as i32).clamp(1, 5);
+    let floors = (c.floors as i32).clamp(1, 8);
     let glass = tint(c, rng);
     let span = spandrel(c, rng);
     let top = curtain_block(g, c, rng, &b, 0.0, floors, fh, glass, span);
@@ -809,7 +810,7 @@ pub fn atrium_office(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras) 
     let fh = c.fh().clamp(3.4, 3.8);
     let area = R::of(&c.poly);
     let Some(b) = fit(c, R::new(area.u0 + 0.8, area.u1 - 0.8, area.v0 + 3.0, area.v0 + 3.0 + (area.d() - 4.0).min(24.0)), 8.0) else { return glass_lab(g, c, rng, e) };
-    let floors = (c.floors as i32).clamp(3, 20);
+    let floors = (c.floors as i32).clamp(3, 30);
     let glass = tint(c, rng);
     let span = spandrel(c, rng);
     // A recessed ground floor under the slab, then the slab.
@@ -866,7 +867,7 @@ pub fn campus_quad(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras) {
     if area.w() < 18.0 || area.d() < 16.0 {
         return glass_lab(g, c, rng, e);
     }
-    let floors = (c.floors as i32).clamp(1, 4);
+    let floors = (c.floors as i32).clamp(1, 8);
     let glass = tint(c, rng);
     let span = spandrel(c, rng);
     let ww = (area.w() * 0.2).clamp(6.0, 11.0);
@@ -965,7 +966,7 @@ pub fn research_lab(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras) {
     let fh = c.fh().clamp(3.8, 4.4);
     let area = R::of(&c.poly);
     let Some(b) = fit(c, R::new(area.u0 + 1.5, area.u1 - 1.5, area.v0 + 3.0, area.v0 + 3.0 + (area.d() - 4.5).min(26.0)), 7.0) else { return glass_lab(g, c, rng, e) };
-    let floors = (c.floors as i32).clamp(2, 6);
+    let floors = (c.floors as i32).clamp(2, 8);
     let h = floors as f32 * fh;
     let conc = mix(concrete(c, rng), [0.62, 0.62, 0.60], 0.3);
     let poly = chamfered(&b, 2.4);

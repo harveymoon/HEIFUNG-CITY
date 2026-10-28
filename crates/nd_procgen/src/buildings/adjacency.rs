@@ -228,11 +228,11 @@ pub fn site_fit(style: Style, site: &Site) -> f32 {
         // [r4-glass] Sheds and the quad are low, the flats mid-rise, the
         // tower and the atrium office want floors.
         Style::StartupSheds => low(2.0),
-        Style::CampusQuad | Style::GlassLab => low(5.0),
-        Style::StudentFlats => tall(3.0) * low(10.0),
+        Style::CampusQuad => low(6.0),
+        Style::GlassLab | Style::ResearchLab => low(8.0),
+        Style::StudentFlats => tall(3.0) * low(16.0),
         Style::CoLivingTower => tall(6.0),
         Style::AtriumOffice => tall(4.0),
-        Style::ResearchLab => low(6.0),
         Style::ServerHall => low(4.0),
         _ => 1.0,
     }
