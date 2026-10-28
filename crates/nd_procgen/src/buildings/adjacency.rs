@@ -209,6 +209,11 @@ pub fn site_fit(style: Style, site: &Site) -> f32 {
         // [r4-brick] Rows are three or four storeys, the mill wants height.
         Style::BrickRow | Style::CornerPub => low(4.0),
         Style::MillLofts => tall(5.0),
+        // [r4-oldstone] Old houses are two to four storeys; the arcade and
+        // the inn want a street front of their own.
+        Style::StoneHouse | Style::OldInn => low(3.0),
+        Style::GabledRow => low(5.0),
+        Style::MarketArcade => low(4.0) * if w > 0.0 && w < 14.0 { 0.5 } else { 1.0 },
         _ => 1.0,
     }
 }

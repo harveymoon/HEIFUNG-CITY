@@ -260,3 +260,42 @@ fn a_merged_building_counts_once_in_its_district() {
     assert_eq!(s.homes, w.buildings[b].homes as u32);
     assert_eq!(s.residents, w.buildings[b].residents.len() as u32);
 }
+
+/// [r4-oldstone] The Old Town (Old Town Charter, Historic): new works go up
+/// in its look (Old Stone: the mill, the tannery, the yards) while the
+/// works that stood before keep theirs (the freeze); and a family's big
+/// house may go up there on empty plots only, never by buying out the
+/// houses that stand.
+#[test]
+fn an_old_town_builds_old_stone_and_big_houses_only_on_empty_plots() {
+    let mut w = town();
+    w.add_zone(square(10.0, -200.0, 190.0), LandUse::Industrial);
+    w.add_zone(square(10.0, 10.0, 190.0), LandUse::Residential);
+    w.land_value.fill(0.9);
+    let works = vacant(&w, LandUse::Industrial);
+    assert!(works.len() >= 2);
+    w.build_on(works[0]);
+    finish_all(&mut w);
+    let standing = w.lots[works[0]].building.unwrap();
+    assert_eq!(w.buildings[standing].look, None);
+    let id = district_over_street(&mut w);
+    w.set_district_policy(id, PolicyChange { story: Some(Some(crate::stories::Story::OldTownCharter)), ..Default::default() }).unwrap();
+    for lu in [LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial] {
+        assert_eq!(w.districts.get(id).unwrap().look_for(lu), Some(Look::Historic), "{lu:?}");
+    }
+    w.build_on(works[1]);
+    assert_eq!(w.buildings[w.lots[works[1]].building.unwrap()].look, Some(Look::Historic));
+    for _ in 0..12 {
+        w.clock.tick += 1440;
+        w.daily_districts();
+    }
+    assert_eq!(w.buildings[standing].look, None, "the works that stood keep their look");
+    // A big house on two empty plots; none once every plot is built on.
+    let site = w.mcmansion_site().expect("two empty plots side by side");
+    assert!(site.iter().all(|l| w.lots[*l].building.is_none()));
+    for lot in vacant(&w, LandUse::Residential) {
+        w.build_on(lot);
+    }
+    finish_all(&mut w);
+    assert!(w.mcmansion_site().is_none(), "no buying out the Old Town's houses");
+}

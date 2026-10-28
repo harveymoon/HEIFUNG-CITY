@@ -526,10 +526,13 @@ impl World {
     /// Two touching residential plots in a low-density, well-valued block,
     /// empty or holding low homes the market may buy, that make one compact
     /// plot. The best valued first.
-    pub(super) fn mcmansion_site(&self) -> Option<Vec<LotId>> {
+    pub(in crate::world) fn mcmansion_site(&self) -> Option<Vec<LotId>> {
         let mut cands: Vec<(f32, LotId)> = Vec::new();
         for (lid, l) in self.lots.iter() {
-            if l.land_use != LandUse::Residential || !self.site_clear(lid, SiteRule::ANY_NOT_HISTORIC) {
+            // [r4-oldstone] In a historic district too, on empty plots only
+            // (`buyable` keeps its standing houses): the Old Town's big
+            // house is a stone manor.
+            if l.land_use != LandUse::Residential || !self.site_clear(lid, SiteRule::ANY) {
                 continue;
             }
             if self.pressure_floors(lid) > LOW_DENSITY_FLOORS {

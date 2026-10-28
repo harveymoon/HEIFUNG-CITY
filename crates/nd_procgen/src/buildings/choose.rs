@@ -23,6 +23,8 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         // [r4-brick] A family's big house or a billionaire's estate in
         // Foundry Row is a converted warehouse: the loft estate.
         _ if extras.form.is_some_and(|f| f.owner_occupied()) && extras.look == Some(nd_sim::districts::Look::BrickSteel) => Style::LoftEstate,
+        // [r4-oldstone] In the Old Town (the Historic look) a stone manor.
+        _ if extras.form.is_some_and(|f| f.owner_occupied()) && extras.look == Some(nd_sim::districts::Look::Historic) => Style::StoneManor,
         // [land] McMansions, mansions, mega hotels and museums.
         _ if Style::for_form(extras.form).is_some() => Style::for_form(extras.form).unwrap(),
         // [subway] Before the depot: the Central Station is a bus terminal too.

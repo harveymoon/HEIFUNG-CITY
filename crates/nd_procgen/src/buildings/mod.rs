@@ -27,6 +27,10 @@ mod capsule;
 mod brick;
 /// [r4-brick] Brick & Steel's works: saw-tooth sheds, foundry, gas works.
 mod brick_works;
+/// [r4-oldstone] Old Town Charter's Old Stone: houses, rows, arcades, halls, manor.
+mod oldstone;
+/// [r4-oldstone] Old Stone's works: the mill, the tannery, cobbled yards.
+mod oldstone_works;
 /// [districts] District looks: style menus and palettes, hotels.
 pub mod district;
 mod entertainment;
@@ -260,6 +264,9 @@ mod capsule_tests;
 
 #[cfg(test)]
 mod brick_tests;
+
+#[cfg(test)]
+mod oldstone_tests;
 
 #[cfg(test)]
 mod hk_tests;
