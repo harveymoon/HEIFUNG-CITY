@@ -25,6 +25,8 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         _ if extras.form.is_some_and(|f| f.owner_occupied()) && extras.look == Some(nd_sim::districts::Look::BrickSteel) => Style::LoftEstate,
         // [lantern] In Lantern Lanes it is a courtyard shophouse compound.
         _ if extras.form.is_some_and(|f| f.owner_occupied()) && extras.look == Some(nd_sim::districts::Look::Lantern) => Style::LanternCompound,
+        // [r4-harbour] On The Promenade, a pastel villa with a boathouse.
+        _ if extras.form.is_some_and(|f| f.owner_occupied()) && extras.look == Some(nd_sim::districts::Look::HarbourPastel) => Style::PastelVilla,
         // [land] McMansions, mansions, mega hotels and museums.
         _ if Style::for_form(extras.form).is_some() => Style::for_form(extras.form).unwrap(),
         // [subway] Before the depot: the Central Station is a bus terminal too.
@@ -52,6 +54,9 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         (None, Some(_)) => Style::CarPark,
         // [economy] The new trades wear their own look whatever the zone or
         // the district: a car dealer is a car dealer in any architecture.
+        // [r4-harbour] The front's own hotel, seafood shack and fish market
+        // hall in a Harbour Pastel district (other trades keep theirs).
+        (None, None) if !extras.rooftop_pad && extras.look == Some(nd_sim::districts::Look::HarbourPastel) && harbour::trade_style(extras.business).is_some() => harbour::trade_style(extras.business).unwrap(),
         (None, None) if extras.business.is_some_and(business_look_wins) => {
             let options = industry_styles(extras.business.unwrap(), tier).unwrap();
             pick_industry_style(options, extras.neighbours, &mut rng)

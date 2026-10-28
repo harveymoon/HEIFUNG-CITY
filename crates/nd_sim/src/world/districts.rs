@@ -176,7 +176,8 @@ impl World {
             return None;
         }
         let look = self.district_look_for(lot, lu);
-        let tourist_quarter = look == Some(Look::Tourist);
+        // [r4-harbour] Harbour Pastel is a tourist quarter too.
+        let tourist_quarter = look.is_some_and(Look::tourist_quarter);
         let demand = self.tourism.hotel_demand;
         let hotels_building = self.buildings.values().filter(|b| b.construction.is_some() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Hotel)).count();
         // One hotel at a time is enough to answer a queue; a tourist quarter

@@ -379,7 +379,8 @@ impl World {
             .iter()
             .filter(|(id, l)| l.land_use == LandUse::Commercial && self.lot_free_for(*id, SiteRule::STREET))
             .map(|(id, l)| {
-                let quarter = self.districts.at(l.center).is_some_and(|d| d.commercial == Some(crate::districts::CommercialSpec::Tourist));
+                // [r4-harbour] (Harbour Pastel is one too.)
+                let quarter = self.districts.at(l.center).is_some_and(|d| d.commercial.is_some_and(crate::districts::CommercialSpec::tourist_quarter));
                 let pull: f32 = sights.iter().map(|(p, s)| s / (1.0 + p.distance(l.center) / 300.0)).sum();
                 // [waterfront] Rooms with a view: a hotel on the water first
                 // (after a tourist quarter), drawn as a waterfront hotel.
@@ -748,7 +749,8 @@ impl World {
             let taste = if b.tier == class { 2.0 } else { 1.0 };
             // A neon strip or night market is where visitors go to shop.
             let strip = match b.look {
-                Some(crate::districts::Look::NeonStrip | crate::districts::Look::NightMarket | crate::districts::Look::Tourist) => 2.5,
+                // [r4-harbour] The pastel front too.
+                Some(crate::districts::Look::NeonStrip | crate::districts::Look::NightMarket | crate::districts::Look::Tourist | crate::districts::Look::HarbourPastel) => 2.5,
                 _ => 1.0,
             };
             options.push((id, taste * strip / (1.0 + d / 250.0)));

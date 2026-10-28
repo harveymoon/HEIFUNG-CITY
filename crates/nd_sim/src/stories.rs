@@ -357,7 +357,8 @@ impl Story {
             Story::FoundersCampus => (Some(R::Eco), Some(C::TechCampus), None, false, None, Policies { rent_support: 0.15, business_rate: -0.02, ..p }),
             Story::OldTownCharter => (None, None, None, true, Some(24.0), Policies { heritage_grant: 40.0, bed_levy: 0.05, ..p }),
             Story::QuietAcres => (Some(R::Suburban), None, None, false, Some(18.0), Policies { nightlife_levy: 0.10, ..p }),
-            Story::Promenade => (Some(R::Eco), Some(C::Tourist), None, false, Some(60.0), Policies { bed_levy: 0.05, ..p }),
+            // [r4-harbour] Its own look, Harbour Pastel, for homes, the front and its small industry.
+            Story::Promenade => (Some(R::HarbourPastel), Some(C::HarbourPastel), None, false, Some(60.0), Policies { bed_levy: 0.05, ..p }),
             Story::FoundryRow => (Some(R::BrickSteel), Some(C::BrickSteel), Some(IndustryKind::Manufacturing), false, None, Policies { pollution_levy: 0.05, rent_support: 0.10, ..p }),
             Story::LanternLanes => (Some(R::Lantern), Some(C::Lantern), None, false, None, Policies { late_hours: true, business_rate: -0.02, ..p }),
             Story::Shantytown => (Some(R::Kowloon), None, None, false, Some(12.0), Policies { rent_support: 0.20, ..p }),
@@ -414,7 +415,18 @@ impl Story {
         if d.residential.is_none() && d.commercial.is_none() && d.industry.is_none() && !d.historic {
             return None;
         }
-        Story::ALL.into_iter().find(|s| s.fits(d))
+        Story::ALL.into_iter().find(|s| s.fits(d) || s.old_dials() == Some((d.residential, d.commercial, d.industry, d.historic)))
+    }
+
+    /// [r4-harbour] The building-type dials a story set before it got its
+    /// own look, where an old district with no story may still carry them
+    /// (The Promenade was Eco homes and the Tourist quarter): such a
+    /// district still takes the story on load, and with it the new look.
+    fn old_dials(self) -> Option<(Option<ResidentialSpec>, Option<CommercialSpec>, Option<IndustryKind>, bool)> {
+        match self {
+            Story::Promenade => Some((Some(ResidentialSpec::Eco), Some(CommercialSpec::Tourist), None, false)),
+            _ => None,
+        }
     }
 
     /// The story nearest a custom district's dials, to suggest: most dials

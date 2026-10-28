@@ -29,6 +29,8 @@ mod brick;
 mod brick_works;
 /// [lantern] Lantern Alley: shophouses, alleys, stalls, halls, workshops.
 mod lantern;
+/// [r4-harbour] Harbour Pastel: terraces, boathouses, cafés, sheds, villa.
+mod harbour;
 /// [districts] District looks: style menus and palettes, hotels.
 pub mod district;
 mod entertainment;
@@ -265,6 +267,9 @@ mod brick_tests;
 
 #[cfg(test)]
 mod lantern_tests;
+
+#[cfg(test)]
+mod harbour_tests;
 
 #[cfg(test)]
 mod hk_tests;
