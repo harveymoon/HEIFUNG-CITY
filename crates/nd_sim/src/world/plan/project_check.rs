@@ -89,6 +89,18 @@ impl World {
     /// previews them, then the whole project on a copy of the world (the
     /// trial rebuild), so the plan view, the hologram and the refusal all
     /// say the same thing.
+    /// Whether a stretch with no room for a column lies on or under one of
+    /// `roads` (within a wide deck's width of it).
+    fn gap_touches(g: &crate::pillars::Gap, roads: &[&[Vec2]]) -> bool {
+        const NEAR: f32 = 16.0;
+        roads.iter().any(|pts| {
+            if pts.len() == 1 {
+                return crate::geom::segment_distance_between(g.a, g.b, pts[0], pts[0]) < NEAR;
+            }
+            pts.windows(2).any(|w| crate::geom::segment_distance_between(g.a, g.b, w[0], w[1]) < NEAR)
+        })
+    }
+
     pub fn project_check(&self, project: &Project) -> ProjectCheck {
         let pv = preview(&self.master, project);
         let mut out = ProjectCheck { blocks: self.road_blocks(&pv), ..Default::default() };
@@ -118,7 +130,13 @@ impl World {
                 }
             }
             if check_pillars {
-                for g in &trial.pillar_gaps {
+                // Only gaps the project's own roads touch refuse it: a
+                // viaduct already built over buildings that grew under it
+                // later is the city's, and must not block every road drawn
+                // anywhere else (Harvey's day-9 save: no road could be
+                // implemented at all).
+                let changed: Vec<&[Vec2]> = pv.planned_roads.iter().map(|(_, pts, ..)| &pts[..]).chain(replaced.iter().map(|p| &p[..])).collect();
+                for g in trial.pillar_gaps.iter().filter(|g| Self::gap_touches(g, &changed)) {
                     if !out.pillar_gaps.iter().any(|o| o.a.distance(g.a) < 3.0 && o.b.distance(g.b) < 3.0) {
                         out.pillar_gaps.push(*g);
                     }
