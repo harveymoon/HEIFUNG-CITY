@@ -42,6 +42,7 @@ mod selection;
 mod sim;
 /// [dock-access] "Connect here" marks on unjoined dock and station street stubs.
 mod stub_marks;
+mod pressure_where;
 mod tools;
 mod train_select;
 /// [ferry-routes] Ferry routes on the water when a terminal or ship is selected.
@@ -118,6 +119,7 @@ impl PluginGroup for WorldViewPlugins {
             .add(metro_ux::MetroUxPlugin)
             .add(build_highlight::BuildHighlightPlugin)
             .add(stub_marks::StubMarksPlugin)
+            .add(pressure_where::PressureWherePlugin)
             .add(ferry_select::FerrySelectPlugin)
     }
 }

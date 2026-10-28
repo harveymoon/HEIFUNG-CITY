@@ -430,7 +430,7 @@ impl World {
 
     /// May this walker step onto crossing `cr` now? `Some(against)` to go
     /// (`against`: against the light, or mid-block), `None` to wait.
-    fn may_cross(&self, id: CitizenId, w: &Walker, cr: u32, since: u64, late: bool) -> Option<bool> {
+    pub(super) fn may_cross(&self, id: CitizenId, w: &Walker, cr: u32, since: u64, late: bool) -> Option<bool> {
         let crossing = &self.walk.crossings[cr as usize];
         let signal = self.peds.crossings.get(cr as usize).and_then(|i| i.signal);
         let button = crossing.button && signal.is_none();
@@ -444,10 +444,17 @@ impl World {
         // With the walk light on, a jam standing or crawling across the
         // crossing is walked through (between the cars), not waited for.
         let gap = self.crossing_gap(cr, if lawful && (signal.is_some() || button) { JAM_CRAWL } else { 0.5 });
+        // [r4-hunger] Holding back for a driver standing at the crossing
+        // lets it go; one that still stands after a few minutes is stuck in
+        // a jam, not about to go, and the walkers kept for it go between
+        // the cars (the gap still counts every moving one). Without this a
+        // jam that never cleared held 900 walkers at two crossings of
+        // Harvey's day-62 city for a day and more, until they starved.
+        let jammed = self.clock.tick.saturating_sub(since) >= crate::pedestrians::JAM_WALK_THROUGH;
         if lawful && crossing.marked() {
             // [w1-roads] At a zebra with no lights, a driver kept waiting
             // gets to go: the walkers coming up hold back.
-            if signal.is_none() && !button && self.driver_kept_waiting(cr) {
+            if signal.is_none() && !button && !jammed && self.driver_kept_waiting(cr) {
                 return None;
             }
             // Look first: nobody too close to stop.
@@ -459,7 +466,7 @@ impl World {
             // made the gap, so a stream of walkers round the end of a dead
             // end kept the cars turning there standing for minutes,
             // "braking for someone crossing the road" (K37, K38, K47).
-            if self.driver_waiting(cr, crate::pedestrians::GREEN_WAIT) {
+            if !jammed && self.driver_waiting(cr, crate::pedestrians::GREEN_WAIT) {
                 return None;
             }
             // Unmarked (a dead end, a roundabout's lanes): nobody gives way,

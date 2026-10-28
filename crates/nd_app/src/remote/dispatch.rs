@@ -548,6 +548,12 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("open", "optional: a business kind key (mechanic, car_dealer, golf_range, ...) to open on the vacant lot at `at`"),
         ("at", "[x, y] with open"),
         ("finish", "bool: built at once"),
+        ("returns", "pressures (kind, label, business, strength, wanted, have, gap, struggling, wants_more, why, held: why none opens, needs: the lot its business needs (text, uses, min_area_m2, street, waterfront, near, anchors, reach_m)), opened_total, signals, trash, art, waterfront"),
+    ] },
+    Cmd { name: "pressure_where", aliases: &["show_where"], effect: View, run: economy::show_where, help: &[
+        ("kind", "a pressure kind key (fish_gutting, tow_company, ...): show on the map what lot its business needs, as the Economy pane's \"show where\": a post and the reach round each anchor, the vacant lots of its land uses outlined by fit"),
+        ("off", "bool: hide it"),
+        ("returns", "on, kind, label, held, needs (text, uses, min_area_m2, street, waterfront, near, anchors, reach_m), lots_by_fit, lots (lot, fit: suits | too_small | no_street | not_on_water | no_jetty_room | too_far | taken, center, area_m2, land_use)"),
     ] },
     Cmd { name: "parks", aliases: &[], effect: Read, run: parks::parks, help: &[
         ("returns", "[parks] every park (lots side by side are one park, one name): area, kept 0..1, run_down, litter, dealers, campers, homeless, visits, preserve (left wild), cleanups, cleanup_cost, troubles"),

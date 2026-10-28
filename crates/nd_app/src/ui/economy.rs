@@ -104,7 +104,7 @@ pub fn overview(ui: &mut egui::Ui, p: &mut UiCtx) {
     row(ui, "power", format!("plant upkeep {:.0}/day · imported {:.0} · exported {:.0}", e.power.upkeep_today, e.power.import_cost_today, e.power.export_income_today));
     hint(ui, "Cash flow has every flow day by day; Ledger opens each line onto what made it.");
     // [economy] what the city's businesses want, and why
-    super::pressure::wanted(ui, w);
+    super::pressure::wanted(ui, w, &mut p.flags.pressure_where, &mut p.fly_to);
 }
 
 /// Economy, Cash flow: every flow over the range, then yesterday's books.
