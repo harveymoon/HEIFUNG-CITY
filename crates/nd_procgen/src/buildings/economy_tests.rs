@@ -268,3 +268,43 @@ fn waterfront_docks_moor_their_boats() {
     assert!(boats.get(crate::surface::Surface::Panel).indices.len() > 100, "the moored boats are drawn");
     valid(&boats, "moored boats");
 }
+
+/// [p2-look] A strip mine's pit is dug below the ground, not heaped up on
+/// a rim: its faces stand under ground level inside the hole the renderer
+/// cuts out of the ground (`strip_mine_hole`), its floor well below, and
+/// the yard round it leaves the hole open.
+#[test]
+fn a_strip_mine_pit_is_dug_below_the_ground() {
+    let rules = BuildingRules::default();
+    let pal = crate::palette::Palette::default();
+    let local = [Vec2::new(0.0, 0.0), Vec2::new(52.0, 0.0), Vec2::new(52.0, 64.0), Vec2::new(0.0, 64.0)];
+    let mut lot = super::sweep_tests::lot_of(&local, 0.7, Vec2::new(120.0, -40.0));
+    lot.land_use = LandUse::Industrial;
+    let hole = strip_mine_hole(&lot).expect("a pit on a 52 by 64 m lot");
+    assert!(crate::mesh::is_convex(&hole));
+    let inside = |p: Vec2, slack: f32| -> bool {
+        let n = hole.len();
+        let s = (0..n).map(|i| hole[i].perp_dot(hole[(i + 1) % n])).sum::<f32>().signum();
+        (0..n).all(|i| s * (hole[(i + 1) % n] - hole[i]).perp_dot(p - hole[i]) / hole[i].distance(hole[(i + 1) % n]) >= -slack)
+    };
+    assert!(hole.iter().all(|p| nd_sim::geom::point_in_polygon(*p, &lot.polygon)), "the pit is on its lot");
+    for tier in [Tier::Low, Tier::Mid, Tier::High] {
+        let g = generate_styled(&lot, LandUse::Industrial, 1, tier, 0.8, 7, Style::StripMine, &rules, &pal);
+        let stone = g.parts.get(crate::surface::Surface::Stone.index()).expect("rock faces");
+        let low = stone.positions.iter().map(|p| p[1]).fold(f32::MAX, f32::min);
+        assert!(low < -8.0, "{tier:?}: the floor is dug {low:.1} m down");
+        for p in &stone.positions {
+            assert!(p[1] <= 0.1, "{tier:?}: no rock face stands above the ground ({:.2} m)", p[1]);
+            assert!(inside(Vec2::new(p[0], p[2]), 0.05), "{tier:?}: a rock face outside the hole cut for it");
+        }
+        // Nothing floors the hole at ground level: the yard is cut round it.
+        for (s, m) in g.iter() {
+            for t in m.indices.chunks_exact(3) {
+                let ps: Vec<[f32; 3]> = t.iter().map(|&i| m.positions[i as usize]).collect();
+                let flat = ps.iter().all(|p| (p[1] - 0.03).abs() < 0.02);
+                let mid = Vec2::new(ps.iter().map(|p| p[0]).sum::<f32>() / 3.0, ps.iter().map(|p| p[2]).sum::<f32>() / 3.0);
+                assert!(!(flat && inside(mid, -0.5)), "{tier:?}: {s:?} ground over the pit at {mid:?}");
+            }
+        }
+    }
+}

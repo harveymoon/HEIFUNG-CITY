@@ -12,6 +12,7 @@ pub(super) fn sync_terrain(
     mats: Res<Materials>,
     existing: Query<Entity, With<TerrainTag>>,
     mut ways: Local<Vec<(SVec2, SVec2, f32)>>,
+    mut pits: Local<u64>,
 ) {
     // A landscape's ground is drawn by `sync_landscape`.
     if !sim.world.landscape.is_flat() {
@@ -19,12 +20,16 @@ pub(super) fn sync_terrain(
     }
     // The hills are levelled along the ways running out of the city.
     let now = far::far_ways(&sim.world);
-    if !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild && *ways == now {
+    // [p2-look] The strip mines' pits are cut out of it.
+    let holes_key = nd_procgen::holes::holes_key(&sim.world);
+    if !existing.is_empty() && !assets.palette_changed && !sim.full_rebuild && *ways == now && holes_key == *pits {
         return;
     }
+    *pits = holes_key;
     *ways = now;
     despawn_all(&mut commands, &existing);
-    let data = build_terrain(&terrain_config(&sim.world), &assets.palette);
+    let mut data = build_terrain(&terrain_config(&sim.world), &assets.palette);
+    nd_procgen::holes::cut_holes(&mut data, &nd_procgen::holes::ground_holes(&sim.world));
     commands.spawn((Mesh3d(meshes.add(to_mesh(&data, true))), MeshMaterial3d(mats.surface(Surface::Dirt)), Transform::IDENTITY, TerrainTag));
 }
 

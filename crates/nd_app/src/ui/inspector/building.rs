@@ -104,6 +104,13 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
             ui.label(egui::RichText::new(gives).small().color(egui::Color32::from_gray(190)));
         });
     }
+    // [p2-look] A mall's shops, anchors, food court, owner, car park and
+    // reach; a site grown over the plots next door.
+    if let Some(t) = super::site::mall_section(ui, w, id) {
+        *selection = Selection::Building(t);
+        return;
+    }
+    super::site::joined_site_section(ui, w, id);
     // [free-placement] The city's own: its ground is out of the zoning, and
     // the player may bulldoze it (a second click confirms).
     if w.is_city_building(id) && b.rail.is_none() && b.port.is_none() {
@@ -226,7 +233,8 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
             }
         });
     }
-    if !b.units.is_empty() {
+    // [p2-look] A mall's units are in its own section above.
+    if !b.units.is_empty() && !b.plot.form.is_some_and(|f| f.is_mall()) {
         let vacant = b.vacant_units();
         section(ui, &format!("UNITS  ·  {} let, {} to let", b.units.len() - vacant, vacant));
         let mut pick = None;
