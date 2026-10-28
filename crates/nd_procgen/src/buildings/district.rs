@@ -90,6 +90,13 @@ pub fn look_styles(look: Look, lu: LandUse, tier: Tier) -> Option<Menu> {
         (Look::Lantern, Commercial, _) => &[(S::LanternShophouse, 0.3), (S::FoodCourt, 0.2), (S::TeaHouse, 0.2), (S::LanternMarket, 0.2), (S::StallRows, 0.1)],
         (Look::Lantern, Entertainment, _) => &[(S::LanternMarket, 0.35), (S::TeaHouse, 0.3), (S::StallRows, 0.2), (S::FoodCourt, 0.15)],
         (Look::Lantern, Industrial, _) => &[(S::AlleyWorkshops, 0.55), (S::BackKitchens, 0.45)],
+        // [garden] Houses, bungalows and closes; a parade, a café, a
+        // garden centre.
+        (Look::Garden, Residential, Low) => &[(S::Bungalow, 0.5), (S::GardenHouse, 0.38), (S::CulDeSac, 0.12)],
+        (Look::Garden, Residential, Mid) => &[(S::GardenHouse, 0.5), (S::Bungalow, 0.25), (S::CulDeSac, 0.25)],
+        (Look::Garden, Residential, High) => &[(S::GardenHouse, 0.55), (S::CulDeSac, 0.3), (S::Bungalow, 0.15)],
+        (Look::Garden, Commercial, Low) => &[(S::ShoppingParade, 0.45), (S::CornerCafe, 0.35), (S::GardenCentre, 0.2)],
+        (Look::Garden, Commercial, _) => &[(S::ShoppingParade, 0.45), (S::GardenCentre, 0.3), (S::CornerCafe, 0.25)],
         // [r4-harbour] Terraces, boathouses and corner towers for homes;
         // the arcade, cafés, shacks and boutique hotels on the front; the
         // fish market and net sheds for its small industry.
@@ -102,6 +109,18 @@ pub fn look_styles(look: Look, lu: LandUse, tier: Tier) -> Option<Menu> {
         (Look::HarbourPastel, Industrial, _) => &[(S::NetSheds, 0.55), (S::FishMarketHall, 0.45)],
         _ => return None,
     })
+}
+
+/// [garden] The house a family (`Form::McMansion`) or a billionaire
+/// (`Form::Mansion`) builds in a look that has its own: `None` keeps the
+/// city-wide McMansion and mansion.
+pub fn look_mansion(look: Look) -> Option<Style> {
+    match look {
+        Look::Garden => Some(Style::GardenManor),
+        // [r4-harbour] A pastel villa with a boathouse on The Promenade.
+        Look::HarbourPastel => Some(Style::PastelVilla),
+        _ => None,
+    }
 }
 
 /// What a hotel looks like by tier.
@@ -269,6 +288,20 @@ pub fn tint(look: Look) -> Tint {
             sign_scale: 1.0,
             grime: None,
         },
+        // [garden] Brick, render and painted boards under tile and slate,
+        // warm lamplit windows, few signs and quiet ones, a little worn.
+        Look::Garden => Tint {
+            walls: &[[0.80, 0.76, 0.66], [0.62, 0.40, 0.30], [0.74, 0.74, 0.70], [0.70, 0.72, 0.64]],
+            trim: Some([0.86, 0.85, 0.80]),
+            windows: &[[1.3, 1.0, 0.62], [1.25, 1.05, 0.75]],
+            signs: &[[1.5, 1.2, 0.6], [1.2, 1.4, 1.1], [1.6, 0.9, 0.5]],
+            awnings: Some(&[[0.20, 0.36, 0.26], [0.52, 0.16, 0.16], [0.18, 0.24, 0.44], [0.70, 0.62, 0.40]]),
+            brick: Some(&[[0.56, 0.30, 0.22], [0.50, 0.28, 0.21], [0.62, 0.40, 0.28], [0.46, 0.30, 0.24]]),
+            plaster: Some(&[[0.84, 0.80, 0.70], [0.80, 0.78, 0.72], [0.74, 0.70, 0.60]]),
+            signage: None,
+            sign_scale: 0.2,
+            grime: Some((0.15, 0.2)),
+        },
         // [r4-harbour] Salt-faded pastels and white trim, warm windows;
         // few signs, in sea-front reds, yellows and teals; striped canvas.
         // The styles paint their own pastels (`buildings/harbour.rs`).
@@ -355,6 +388,7 @@ mod tests {
                 Look::Capsule => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment],
                 Look::BrickSteel => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
                 Look::Lantern => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
+                Look::Garden => &[LandUse::Residential, LandUse::Commercial],
                 Look::HarbourPastel => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
             };
             for &lu in uses {

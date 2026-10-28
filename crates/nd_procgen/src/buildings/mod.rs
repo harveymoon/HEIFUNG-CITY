@@ -29,6 +29,8 @@ mod brick;
 mod brick_works;
 /// [lantern] Lantern Alley: shophouses, alleys, stalls, halls, workshops.
 mod lantern;
+/// [garden] The Garden Suburb's houses, shops and garden manor.
+mod garden;
 /// [r4-harbour] Harbour Pastel: terraces, boathouses, cafés, sheds, villa.
 mod harbour;
 /// [districts] District looks: style menus and palettes, hotels.
@@ -261,6 +263,8 @@ fn back_edge_link(lot: &Lot, kind: RailFacility) -> RailLink {
 
 #[cfg(test)]
 mod capsule_tests;
+#[cfg(test)]
+mod garden_tests;
 
 #[cfg(test)]
 mod brick_tests;

@@ -83,6 +83,7 @@ pub fn group(s: Style) -> &'static str {
         // [r4-brick] Foundry Row's look.
         BrickRow | WarehouseLoft | MillLofts | BrickWorkshop | CornerPub | UnionHall | SawtoothFactory | FoundryWorks | GasWorks | LoftEstate => "Brick & Steel",
         LanternShophouse | AlleyWalkups | StallRows | FoodCourt | TeaHouse | LanternMarket | AlleyWorkshops | BackKitchens | LanternCompound => "Lantern Alley",
+        GardenHouse | Bungalow | CulDeSac | ShoppingParade | GardenCentre | CornerCafe | GardenManor => "Garden suburb",
         // [r4-harbour] The Promenade's look.
         PastelTerrace | Boathouses | LighthouseCorner | BoardwalkCafe | SeafoodShack | AwningArcade | BoutiqueHotel | FishMarketHall | NetSheds | PastelVilla => "Harbour Pastel",
         #[allow(unreachable_patterns)]
@@ -91,7 +92,7 @@ pub fn group(s: Style) -> &'static str {
 }
 
 /// Every section, in catalogue order.
-pub const GROUPS: [&str; 23] = [
+pub const GROUPS: [&str; 24] = [
     "Residential",
     "Commercial",
     "Industrial",
@@ -113,6 +114,7 @@ pub const GROUPS: [&str; 23] = [
     "Malls",
     "Brick & Steel",
     "Lantern Alley",
+    "Garden suburb",
     "Harbour Pastel",
     "Other",
 ];
@@ -120,7 +122,7 @@ pub const GROUPS: [&str; 23] = [
 /// The land use a section's forced styles are drawn for.
 fn group_land_use(g: &str) -> LandUse {
     match g {
-        "Residential" | "Homes and estates" | "Capsule district" | "Brick & Steel" | "Lantern Alley" | "Harbour Pastel" => LandUse::Residential,
+        "Residential" | "Homes and estates" | "Capsule district" | "Brick & Steel" | "Lantern Alley" | "Garden suburb" | "Harbour Pastel" => LandUse::Residential,
         "Commercial" | "Shops and trades" | "Malls" | "Parking" | "League towers" => LandUse::Commercial,
         "Entertainment" | "Waterfront" => LandUse::Entertainment,
         "Civic" | "City services" | "Attractions" | "Transit and rail" => LandUse::Civic,
@@ -145,6 +147,12 @@ fn lantern_land_use(s: Style) -> Option<LandUse> {
         FishMarketHall | NetSheds => Some(LandUse::Industrial),
         _ => None,
     }
+}
+
+/// [garden] The land use a style off every zone menu is drawn for when its
+/// section's is not its own: the Garden Suburb's shops among its homes.
+fn own_land_use(s: Style) -> Option<LandUse> {
+    matches!(s, Style::ShoppingParade | Style::GardenCentre | Style::CornerCafe).then_some(LandUse::Commercial)
 }
 
 /// The heights a style is shown at: low and tall where its family grows.
@@ -181,7 +189,7 @@ pub fn lot_size(s: Style, tier: Tier) -> (f32, f32) {
         },
         FishMarketHall => (48.0, 40.0),
         Stadium | Arena | GrandPark | Zoo | AmusementPark | BotanicalGarden | ConventionCentre | MegaMall | ShippingPort | PowerCoal | PowerNuclear | PowerSolar | PowerWind | PowerHydro | PowerTidal | PowerGeothermal | FreightYard | CentralStation | StripMine | OilField | Refinery | Farmstead | CowFarm | Feedlot | Prison | University | CasinoResort | Megastructure => (130.0, 110.0),
-        Hospital | School | MarketHall | Mall | MegaHotel | Mansion | ArtMuseum | ScienceMuseum | HistoryMuseum | ConcertHall | Cathedral | Aquarium | Observatory | PleasurePier | Station | ContainerYard | TruckLot | Smelter | ChemicalWorks | ChickenFarm | Slaughterhouse | TankFarm | Depot | Junkyard | Factory | FabPlant | BusDepot | TrashDepot | TrashCompany | MarinaLarge | FishingPortLarge | FerryTerminal | GolfRange | BeachResort | Beach | TrailerPark | Suburb | Supertall | CarDealer | StripMall | Casino | Cinema | DomeCampus | Courthouse | Ministry | CivicTower | FoundryWorks | GasWorks | LoftEstate | SawtoothFactory => (75.0, 65.0),
+        Hospital | School | MarketHall | Mall | MegaHotel | Mansion | ArtMuseum | ScienceMuseum | HistoryMuseum | ConcertHall | Cathedral | Aquarium | Observatory | PleasurePier | Station | ContainerYard | TruckLot | Smelter | ChemicalWorks | ChickenFarm | Slaughterhouse | TankFarm | Depot | Junkyard | Factory | FabPlant | BusDepot | TrashDepot | TrashCompany | MarinaLarge | FishingPortLarge | FerryTerminal | GolfRange | BeachResort | Beach | TrailerPark | Suburb | Supertall | CarDealer | StripMall | Casino | Cinema | DomeCampus | Courthouse | Ministry | CivicTower | FoundryWorks | GasWorks | LoftEstate | SawtoothFactory | CulDeSac | GardenManor => (75.0, 65.0),
         _ => match tier {
             Tier::Low => (30.0, 32.0),
             Tier::Mid => (36.0, 38.0),
@@ -225,7 +233,7 @@ pub fn entries(rules: &BuildingRules) -> Vec<Entry> {
             let def = style.def();
             let g = group(style);
             let menus: Vec<_> = rules.styles.iter().filter(|w| w.style == style && w.weight > 0.0).collect();
-            let land_use = menus.first().map_or_else(|| lantern_land_use(style).unwrap_or(group_land_use(g)), |w| w.land_use);
+            let land_use = menus.first().map_or_else(|| lantern_land_use(style).or(own_land_use(style)).unwrap_or(group_land_use(g)), |w| w.land_use);
             let mut tiers: Vec<Tier> = Tier::ALL.into_iter().filter(|t| menus.iter().any(|w| w.tier == *t)).collect();
             let on_menu = !tiers.is_empty();
             if !on_menu {
@@ -259,14 +267,20 @@ pub fn geometry(e: &Entry, v: Variant, rules: &BuildingRules, palette: &Palette)
         topped_out_day: Some(1),
         record_bid: false,
     });
-    // [lantern] A look's own styles in its colours.
-    let look = Style::LANTERN.contains(&e.style).then_some(nd_sim::districts::Look::Lantern);
+    // [lantern] A look's own styles in its colours. [garden] The Garden
+    // Suburb's too, its manor at the top tier as a billionaire's (the grand one).
+    let look = if Style::LANTERN.contains(&e.style) {
+        Some(nd_sim::districts::Look::Lantern)
+    } else {
+        Style::GARDEN.contains(&e.style).then_some(nd_sim::districts::Look::Garden)
+    };
+    let form = (e.style == Style::GardenManor && v.tier == Tier::High).then_some(nd_sim::estate::Form::Mansion);
     // [r4-harbour] Harbour Pastel's in its colours, on a lot with the
     // water behind it (its piers out over the stage's floor).
     let harbour = Style::HARBOUR.contains(&e.style);
     let look = look.or(harbour.then_some(nd_sim::districts::Look::HarbourPastel));
     let shore = harbour.then(|| nd_procgen::buildings::ShoreLook { seaward: (lot.center - (lot.front_edge[0] + lot.front_edge[1]) * 0.5).normalize_or_zero(), drop: 1.2, beach: None });
-    let extras = Extras { powered: 1.0, dynamic_lights: true, tower, look, shore, ..Extras::default() };
+    let extras = Extras { powered: 1.0, dynamic_lights: true, tower, look, form, shore, ..Extras::default() };
     generate_styled_extras(&lot, e.land_use, v.floors, v.tier, 0.9, v.seed, e.style, rules, palette, &extras)
 }
 

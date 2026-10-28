@@ -51,6 +51,9 @@ pub enum ResidentialSpec {
     /// [lantern] Lantern Alley: shophouses with flats over the shop and
     /// narrow walk-ups round lantern-strung alleys. Appended.
     Lantern,
+    /// [garden] Detached houses in gardens, bungalows, closes round a
+    /// turning circle; three floors at most. Appended.
+    Garden,
     /// [r4-harbour] Harbour Pastel (The Promenade): salt-weathered pastel
     /// terraces, converted boathouses, lighthouse corner towers. Appended.
     HarbourPastel,
@@ -76,6 +79,9 @@ pub enum CommercialSpec {
     /// courts, tea houses and market halls behind lantern gates; its small
     /// industry is workshops and back-alley kitchens. Appended.
     Lantern,
+    /// [garden] A small shopping parade, a corner café, a garden centre:
+    /// groceries and bakeries first. Appended.
+    Garden,
     /// [r4-harbour] Harbour Pastel's front: boardwalk cafés, seafood
     /// shacks, striped-awning arcades, boutique hotels with flags; a tourist
     /// quarter (hotels first); its small industry is the fish market hall
@@ -84,7 +90,7 @@ pub enum CommercialSpec {
 }
 
 impl ResidentialSpec {
-    pub const ALL: [ResidentialSpec; 7] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule, ResidentialSpec::BrickSteel, ResidentialSpec::Lantern, ResidentialSpec::HarbourPastel];
+    pub const ALL: [ResidentialSpec; 8] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule, ResidentialSpec::BrickSteel, ResidentialSpec::Lantern, ResidentialSpec::Garden, ResidentialSpec::HarbourPastel];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -94,6 +100,7 @@ impl ResidentialSpec {
             ResidentialSpec::Capsule => "Capsule",
             ResidentialSpec::BrickSteel => "Brick & Steel",
             ResidentialSpec::Lantern => "Lantern Alley",
+            ResidentialSpec::Garden => "Garden suburb",
             ResidentialSpec::HarbourPastel => "Harbour Pastel",
         }
     }
@@ -106,6 +113,7 @@ impl ResidentialSpec {
             ResidentialSpec::Capsule => "capsule",
             ResidentialSpec::BrickSteel => "brick_steel",
             ResidentialSpec::Lantern => "lantern_alley",
+            ResidentialSpec::Garden => "garden",
             ResidentialSpec::HarbourPastel => "harbour_pastel",
         }
     }
@@ -116,7 +124,7 @@ impl ResidentialSpec {
 }
 
 impl CommercialSpec {
-    pub const ALL: [CommercialSpec; 8] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule, CommercialSpec::BrickSteel, CommercialSpec::Lantern, CommercialSpec::HarbourPastel];
+    pub const ALL: [CommercialSpec; 9] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule, CommercialSpec::BrickSteel, CommercialSpec::Lantern, CommercialSpec::Garden, CommercialSpec::HarbourPastel];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -127,6 +135,7 @@ impl CommercialSpec {
             CommercialSpec::Capsule => "Capsule",
             CommercialSpec::BrickSteel => "Brick & Steel",
             CommercialSpec::Lantern => "Lantern Alley",
+            CommercialSpec::Garden => "Garden suburb",
             CommercialSpec::HarbourPastel => "Harbour Pastel",
         }
     }
@@ -140,6 +149,7 @@ impl CommercialSpec {
             CommercialSpec::Capsule => "capsule",
             CommercialSpec::BrickSteel => "brick_steel",
             CommercialSpec::Lantern => "lantern_alley",
+            CommercialSpec::Garden => "garden",
             CommercialSpec::HarbourPastel => "harbour_pastel",
         }
     }
@@ -180,6 +190,10 @@ pub enum Look {
     /// halls, workshops and back-alley kitchens, paper lanterns strung over
     /// the lanes. It also dresses the district's small industry. Appended.
     Lantern,
+    /// [garden] The Garden Suburb: detached houses in gardens behind picket
+    /// fences and hedges, bungalows, closes, a shopping parade, a garden
+    /// centre and a corner café; porch lights and dark streets. Appended.
+    Garden,
     /// [r4-harbour] Harbour Pastel (The Promenade): pastel waterfront
     /// terraces, converted boathouses, lighthouse corner towers; boardwalk
     /// cafés, seafood shacks, striped-awning arcades, boutique hotels with
@@ -189,7 +203,7 @@ pub enum Look {
 }
 
 impl Look {
-    pub const ALL: [Look; 12] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule, Look::BrickSteel, Look::Lantern, Look::HarbourPastel];
+    pub const ALL: [Look; 13] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule, Look::BrickSteel, Look::Lantern, Look::Garden, Look::HarbourPastel];
 
     pub fn index(self) -> usize {
         self as usize
@@ -208,6 +222,7 @@ impl Look {
             Look::Capsule => "capsule",
             Look::BrickSteel => "brick & steel",
             Look::Lantern => "lantern alley",
+            Look::Garden => "garden suburb",
             Look::HarbourPastel => "harbour pastel",
         }
     }
@@ -230,6 +245,8 @@ impl Look {
             Look::BrickSteel => floors.min(cap.max(1) + 1).min(10),
             // [lantern] Two to five storeys: shophouses, walk-ups, halls.
             Look::Lantern => floors.max(2).min(5).min(cap.max(2) + 1),
+            // Two storeys and rooms in the roof at most.
+            Look::Garden => floors.min(3),
             // [r4-harbour] Two to seven storeys along the front: terraces,
             // boathouses, a boutique hotel at most seven.
             Look::HarbourPastel => floors.max(2).min(7).min(cap.max(2) + 1),
@@ -272,6 +289,8 @@ impl Look {
             Look::BrickSteel => &[(BusinessKind::Bakery, 2.0), (BusinessKind::Grocery, 2.0)],
             // [lantern] Food first: grocers, bakers and kitchens open late.
             Look::Lantern => &[(BusinessKind::Bakery, 4.0), (BusinessKind::Grocery, 3.0), (BusinessKind::Venue, 2.0)],
+            // The parade's grocer and the café-bakery.
+            Look::Garden => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Bakery, 3.0)],
             // [r4-harbour] A tourist quarter's hotels first (as the Tourist
             // look it replaces), then cafés and bars along the front.
             Look::HarbourPastel => &[(BusinessKind::Hotel, 6.0), (BusinessKind::Bakery, 3.0), (BusinessKind::Venue, 2.0)],
@@ -390,6 +409,7 @@ impl District {
                 ResidentialSpec::Capsule => Look::Capsule,
                 ResidentialSpec::BrickSteel => Look::BrickSteel,
                 ResidentialSpec::Lantern => Look::Lantern,
+                ResidentialSpec::Garden => Look::Garden,
                 ResidentialSpec::HarbourPastel => Look::HarbourPastel,
             }),
             // Nightlife on a strip or in a market takes the street's look.
@@ -403,6 +423,9 @@ impl District {
                 // [r4-brick] The pub and the union hall are the nights out.
                 CommercialSpec::BrickSteel => Some(Look::BrickSteel),
                 CommercialSpec::Lantern => Some(Look::Lantern),
+                // [garden] A parade, a café, a garden centre; nights out
+                // keep the land use's own looks.
+                CommercialSpec::Garden if lu == LandUse::Commercial => Some(Look::Garden),
                 // [r4-harbour] Cafés, shacks and the hotels' bars too.
                 CommercialSpec::HarbourPastel => Some(Look::HarbourPastel),
                 _ => None,
