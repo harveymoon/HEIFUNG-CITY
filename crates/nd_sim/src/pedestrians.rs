@@ -72,6 +72,10 @@ pub const ZEBRA_PATIENCE: f32 = 20.0;
 /// walkers about to cross against the light leave it the road (sooner
 /// than that it is only pulling up).
 pub const GREEN_WAIT: f32 = 5.0;
+/// [r4-hunger] Ticks a walker holds back at a crossing with no lights for a
+/// driver standing at it before taking that driver for stuck in a jam and
+/// walking through between the cars.
+pub const JAM_WALK_THROUGH: u64 = 4;
 /// A car this close before the zebra (m) is the one waiting at it.
 pub const ZEBRA_WAIT_REACH: f32 = 14.0;
 

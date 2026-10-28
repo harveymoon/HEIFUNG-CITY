@@ -138,6 +138,9 @@ pub struct UiFlags {
     pub log: Vec<alerts::Logged>,
     /// [fix/roads-tools] The plan bar's Discard was pressed once: it asks.
     pub plan_confirm: bool,
+    /// [r4-hunger] The held business pressure whose lot need the map shows
+    /// ("show where", `pressure_where`).
+    pub pressure_where: Option<nd_sim::pressure::PressureKind>,
 }
 
 impl UiFlags {

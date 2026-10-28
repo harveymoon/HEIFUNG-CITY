@@ -893,3 +893,27 @@ fn switching_signals_on_bumps_the_signal_version() {
     assert_eq!(w.traffic.net.intersections[k].signalized, start);
     assert_eq!(w.traffic.net.signals_version, v0 + 2);
 }
+
+/// [r4-hunger] A walker holds back at a zebra for a driver kept waiting
+/// there, so the driver can go; a driver who still stands minutes later is
+/// stuck in a jam, and the walker crosses between the cars. Before, a jam
+/// that never cleared held 900 walkers at two crossings of Harvey's day-62
+/// city for a day and more, until they starved and left.
+#[test]
+fn walkers_held_back_for_a_driver_stuck_in_a_jam_walk_through() {
+    let (mut w, cr) = zebra_town();
+    // A car a few metres short of the zebra, on one of its lanes.
+    let (l, s) = w.peds.crossings[cr as usize].lanes[0];
+    let citizen = w.citizens.keys().next().unwrap();
+    let car = w.traffic.spawn_car(citizen, None, vec![l], (s - 5.0).max(0.0), s + 20.0, 0);
+    // It stands there, and goes on standing: the jam ahead never moves.
+    let c = &mut w.traffic.cars[car];
+    c.v = 0.0;
+    c.stalled = 900.0;
+    let id = w.citizens.keys().next().unwrap();
+    let walker = crate::pedestrians::Walker { caution: 0.5, ..Default::default() };
+    let tick = w.clock.tick;
+    assert_eq!(w.may_cross(id, &walker, cr, tick, false), None, "just come up: holds back for the driver kept waiting");
+    let since = tick - crate::pedestrians::JAM_WALK_THROUGH;
+    assert_eq!(w.may_cross(id, &walker, cr, since, false), Some(false), "minutes later: walks through between the standing cars");
+}

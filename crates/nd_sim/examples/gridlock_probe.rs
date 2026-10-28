@@ -143,7 +143,7 @@ fn main() {
     let every: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(30);
     let mut minds = HybridMind::new(Box::new(MockBackend::default()));
     let t0 = std::time::Instant::now();
-    let mut w = World::from_ron(&std::fs::read_to_string(&src).unwrap()).expect("load");
+    let mut w = World::read_save(&src).expect("load");
     // Optionally skip to a time of day first (minute of day), quietly.
     if let Some(m) = std::env::var("START_MIN").ok().and_then(|s| s.parse::<u64>().ok()) {
         while w.clock.minute_of_day() != m {

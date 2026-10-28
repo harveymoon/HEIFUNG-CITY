@@ -2150,6 +2150,35 @@ fn sleep_restores_at_home_and_exhaustion_costs_output_and_mood() {
     assert!(w.citizens[sleeper].satiety > 0.6 && w.citizens[sleeper].packed_meal == 0.0);
 }
 
+/// [r4-hunger] A household that lost its home eats the groceries it has
+/// wherever it is; with a home, only at home (or the packed meal). On
+/// Harvey's day-62 city 1,100 people on the street with no camp bed went
+/// hungry with food in the pantry and left over hunger.
+#[test]
+fn a_household_with_no_home_eats_its_groceries_where_it_is() {
+    let (mut w, _) = family_street();
+    let id = w.citizens.keys().next().unwrap();
+    let hid = w.citizens[id].household.expect("in a household");
+    {
+        let c = &mut w.citizens[id];
+        c.inside = None;
+        c.activity = Activity::Idle;
+        c.satiety = 0.3;
+        c.packed_meal = 0.0;
+    }
+    w.households[hid].groceries = 5.0;
+    w.sleep_and_eat();
+    assert!(w.citizens[id].satiety < 0.3, "out, housed, no packed meal: the pantry is at home");
+    let home = w.households[hid].home.take();
+    for m in w.households[hid].members.clone() {
+        w.citizens[m].home = None;
+    }
+    assert!(home.is_some());
+    w.sleep_and_eat();
+    assert!(w.citizens[id].satiety > 0.6, "no home: eats from the bag");
+    assert!(w.households[hid].groceries < 5.0);
+}
+
 #[test]
 fn rent_stressed_households_move_somewhere_cheaper_before_leaving() {
     let (mut w, _) = family_street();

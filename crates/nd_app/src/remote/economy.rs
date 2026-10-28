@@ -10,13 +10,51 @@ use serde_json::{json, Value};
 
 use super::view::{key_str, opt_bool, opt_str, req_point, round, v2};
 
-fn reading(p: &Pressure) -> Value {
+fn reading(w: &World, p: &Pressure) -> Value {
     json!({
         "kind": p.kind.key(), "label": p.kind.label(), "business": p.kind.business().map(|b| b.key()),
         "strength": round(p.strength), "wanted": round(p.wanted), "have": p.have, "gap": round(p.gap),
         "struggling": p.struggling, "wants_more": p.wants_more(), "why": p.why, "held": p.held,
         "player_placed": p.kind.player_placed(),
+        "needs": needs(w, p.kind),
     })
+}
+
+/// [r4-hunger] The lot a pressure's business needs (`World::lot_need`):
+/// text, land uses, size, street, water, the anchors and the reach. Null
+/// for the kinds the player builds or with nowhere to go yet.
+fn needs(w: &World, kind: PressureKind) -> Value {
+    let Some(n) = w.lot_need(kind) else { return Value::Null };
+    json!({
+        "text": n.text(), "uses": n.uses.iter().map(|u| u.label().to_lowercase()).collect::<Vec<_>>(), "min_area_m2": round(n.min_area),
+        "street": n.needs_street, "waterfront": n.waterfront, "near": n.near, "anchors": n.anchors.iter().map(|a| v2(*a)).collect::<Vec<_>>(),
+        "reach_m": n.reach.map(round),
+    })
+}
+
+/// [r4-hunger] `pressure_where {kind}`: "show where" on the map for a
+/// pressure (as the Economy pane's button): what it needs and the vacant
+/// lots of its land uses with how each measures up; `{off: true}` hides
+/// it; with neither, what is shown now.
+pub(super) fn show_where(cmd: &Value, ctx: &mut super::ctx::Ctx) -> Result<Value, String> {
+    if opt_bool(cmd, "off")? == Some(true) {
+        ctx.flags.pressure_where = None;
+    } else if let Some(k) = opt_str(cmd, "kind")? {
+        let kind = PressureKind::from_key(k).ok_or_else(|| format!("unknown pressure kind {k:?}; one of {}", PressureKind::ALL.iter().map(|k| k.key()).collect::<Vec<_>>().join(", ")))?;
+        ctx.flags.pressure_where = Some(kind);
+    }
+    let w = &ctx.sim.world;
+    let Some(kind) = ctx.flags.pressure_where else { return Ok(json!({ "on": false })) };
+    let lots = w.lot_need_lots(kind);
+    let mut by: std::collections::BTreeMap<&str, u32> = Default::default();
+    for (_, f) in &lots {
+        *by.entry(f.key()).or_default() += 1;
+    }
+    Ok(json!({
+        "on": true, "kind": kind.key(), "label": kind.label(), "held": w.pressure.reading(kind).and_then(|r| r.held.clone()),
+        "needs": needs(w, kind), "lots_by_fit": by,
+        "lots": lots.iter().filter_map(|(id, f)| w.lots.get(*id).map(|l| json!({ "lot": key_str(*id), "fit": f.key(), "center": v2(l.center), "area_m2": round(l.area()), "land_use": l.land_use.label().to_lowercase() }))).collect::<Vec<_>>(),
+    }))
 }
 
 /// The `pressure` report section.
@@ -27,7 +65,7 @@ pub fn report(w: &World) -> Value {
     let t = &w.society.trash.stats;
     let sc = &w.scene;
     json!({
-        "pressures": readings.iter().map(|p| reading(p)).collect::<Vec<_>>(),
+        "pressures": readings.iter().map(|p| reading(w, p)).collect::<Vec<_>>(),
         "opened_total": w.pressure.opened_total,
         "signals": {
             "outside_tows_per_day": round(s.outside_tows), "local_tows_per_day": round(s.local_tows), "crashes_per_day": round(s.crashes), "cars": s.cars,

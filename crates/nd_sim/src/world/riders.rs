@@ -33,6 +33,9 @@ const ACROSS: f32 = 0.5;
 /// [r1-roads] Most metres more than the street's width a ride round a ring
 /// of footbridge decks may take (`bike_over_footbridges`).
 const RING_DETOUR: f32 = 90.0;
+/// [r4-hunger] Ticks a rider gives way to a zebra that never empties
+/// before wheeling through among the walkers.
+const ZEBRA_PATIENCE: u64 = 5;
 /// A bold rider rolls the dice on a red once per this many ticks.
 const RED_ROLL_TICKS: u64 = 5;
 /// Salt of a rider's red-light dice, apart from a walker's.
@@ -186,6 +189,17 @@ impl World {
         !any && inter.phases.get(inter.phase).is_some_and(|g| g.contains(&approach))
     }
 
+    /// [r4-hunger] No light faces `approach` of intersection `k`: no lane
+    /// comes into the junction on it (a one-way street out of it) and no
+    /// phase serves it, so it is never green. A rider coming in that way
+    /// (on the pavement, against the one-way) waited for that green for
+    /// good: 2,200 cyclists stood at one such T on Harvey's day-62 city,
+    /// starved and left.
+    pub(super) fn approach_unlit(&self, k: usize, approach: usize) -> bool {
+        let Some(inter) = self.traffic.net.intersections.get(k) else { return false };
+        inter.signalized && !inter.phases.is_empty() && !inter.phases.iter().any(|g| g.contains(&approach)) && !inter.connectors.iter().any(|&(_, ap)| ap == approach)
+    }
+
     /// Someone on foot on (or stepping onto) crossing `cr` last tick.
     ///
     /// [walk-networks] Only walkers: a rider gives way to people on a
@@ -297,11 +311,17 @@ impl World {
                 let entering = crossing.node.is_some_and(|n| (self.roads.node(n).pos - crossing.mid).dot(dir) > 0.0);
                 let own = crossing.node.is_none_or(|n| own_arm.iter().any(|(m, best)| *m == n && along >= *best));
                 let entering = entering && own;
+                // [r4-hunger] In on an arm no light faces: no green comes,
+                // so in a gap in the cross traffic, as where there are no
+                // lights.
+                let unlit = entering && signal.is_some_and(|(k, ap)| self.approach_unlit(k as usize, ap as usize));
                 let red = match signal {
-                    Some((k, ap)) if entering && !self.approach_green(k as usize, ap as usize) => Some((k, ap)),
+                    Some((k, ap)) if entering && !unlit && !self.approach_green(k as usize, ap as usize) => Some((k, ap)),
                     _ => None,
                 };
-                if let Some((k, ap)) = red {
+                if unlit && self.cross_traffic_gap(crossing.node, crossing.segment) < gap_needed(r.caution, late) {
+                    Some(Stop { at, cr })
+                } else if let Some((k, ap)) = red {
                     // Call the bike's phase: a detector would see it.
                     if let Some(inter) = self.traffic.net.intersections.get(k as usize) {
                         if let Some(g) = inter.phases.get(inter.phase).filter(|g| !g.contains(&(ap as usize))) {
@@ -332,8 +352,19 @@ impl World {
                     }
                     Some(Stop { at, cr })
                 } else if self.crossing_taken(cr, id) {
-                    // Somebody is on the zebra: give way.
-                    Some(Stop { at, cr })
+                    // Somebody is on the zebra: give way. [r4-hunger] Not
+                    // for good: a zebra in front of a busy grocer never
+                    // emptied and a hundred riders stood at it all day, so
+                    // after a few minutes the rider wheels through among
+                    // the walkers.
+                    let since = match r.waiting {
+                        Some((c, t)) if c == cr => t,
+                        _ => {
+                            r.waiting = Some((cr, tick));
+                            tick
+                        }
+                    };
+                    (tick.saturating_sub(since) < ZEBRA_PATIENCE).then_some(Stop { at, cr })
                 } else {
                     None
                 }
@@ -553,11 +584,16 @@ mod tests {
 
     /// `town` with extra arms from the junction out to each of `arms`.
     fn town_with(arms: &[Vec2]) -> World {
+        let mut roads = vec![(vec![Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1), (vec![Vec2::new(0.0, -300.0), Vec2::new(0.0, 300.0)], 1, 1)];
+        roads.extend(arms.iter().map(|&a| (vec![Vec2::ZERO, a], 1, 1)));
+        town_of(&roads)
+    }
+
+    /// `town` on these roads (points, lanes forward, lanes back).
+    fn town_of(roads: &[(Vec<Vec2>, u8, u8)]) -> World {
         let mut w = World::new(WorldConfig { emergencies: false, society: false, landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::test_town() });
-        w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
-        w.add_road(&[Vec2::new(0.0, -300.0), Vec2::new(0.0, 300.0)], 1, 1);
-        for &a in arms {
-            w.add_road(&[Vec2::ZERO, a], 1, 1);
+        for (pts, f, b) in roads {
+            w.add_road(pts, *f, *b);
         }
         w.add_zone(square(10.0, 10.0, 180.0), LandUse::Residential);
         run(&mut w, 8 * 60);
@@ -676,6 +712,47 @@ mod tests {
         assert_eq!(passed_on, Some(true), "went over on the green");
         assert_eq!(w.peds.red_lights_run_total, 0, "a cautious rider never runs the red");
         assert!(!matches!(w.citizens[id].activity, Activity::Traveling { .. }), "arrived");
+    }
+
+    /// [r4-hunger] Coming into a signalised junction along a one-way
+    /// street out of it (on its pavement), no light faces the rider: no
+    /// lane comes in that way and no phase serves it. They used to wait for
+    /// that arm's green, which never comes; 2,200 riders stood at such a T
+    /// in Harvey's day-62 city until they starved and left. Now they go in
+    /// a gap in the cross traffic.
+    #[test]
+    fn a_cyclist_coming_in_against_a_one_way_is_not_held_for_good() {
+        let mut w = town_of(&[
+            (vec![Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1),
+            (vec![Vec2::new(0.0, -300.0), Vec2::ZERO], 1, 1),
+            (vec![Vec2::ZERO, Vec2::new(0.0, 300.0)], 1, 0),
+        ]);
+        let (cr, k, ap) = w
+            .peds
+            .crossings
+            .iter()
+            .enumerate()
+            .find_map(|(cr, i)| i.signal.filter(|&(k, ap)| w.approach_unlit(k as usize, ap as usize)).map(|(k, ap)| (cr as u32, k as usize, ap as usize)))
+            .expect("a signalised junction with an arm no light faces (the one-way out)");
+        assert!(!(0..400).any(|_| {
+            run(&mut w, 1);
+            w.approach_green(k, ap)
+        }), "that arm is never green");
+        let c = &w.walk.crossings[cr as usize];
+        let centre = w.roads.node(c.node.unwrap()).pos;
+        let out = (c.mid - centre).normalize();
+        let mid_out = out_of(c.mid, centre, out);
+        let id = w.citizens.keys().next().unwrap();
+        let path = shoulder(&w, centre, out, mid_out + CROSSWALK_HALF + 6.0, -80.0);
+        rider(&mut w, id, seeds(|c, _| c > 0.85, 1)[0], path);
+        for _ in 0..600 {
+            run(&mut w, 1);
+            if !matches!(w.citizens[id].activity, Activity::Traveling { .. }) {
+                break;
+            }
+        }
+        assert!(out_of(w.citizens[id].pos, centre, out) < -60.0 || !matches!(w.citizens[id].activity, Activity::Traveling { .. }), "rode through the junction: {} m out", out_of(w.citizens[id].pos, centre, out));
+        assert_eq!(w.peds.red_lights_run_total, 0, "and ran no light doing it");
     }
 
     #[test]

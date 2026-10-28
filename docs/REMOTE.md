@@ -1938,7 +1938,12 @@ slaughterhouse, fish_gutting, fish_stick_factory, fish_market, seafood_restauran
 art_studio, gallery, marina, and [waterfront] beach_resort, pier_restaurant, beach_bar, boat_rental), `label`, `business` (the business kind key it opens), `strength`
 0..1, `wanted`, `have` (open and being built), `gap`, `struggling`, `wants_more`, `why` (the
 cause in words), `held` (why nothing opens despite the gap: cooling down after one closed, no
-lot, a player-placed kind), `player_placed`), `opened_total` (by kind), `signals` (the smoothed
+lot, a player-placed kind; with no lot it says the lot it needs and how the vacant lots of its land
+uses fall short, e.g. "no vacant lot that suits it: it needs a vacant industrial lot of 500 m² or more
+on a street within 1.4 km of a fishing port (vacant industrial lots: 3 too small, 12 too far)"),
+`needs` [r4-hunger] (the lot its business needs, null for player-placed kinds: `text`, `uses`,
+`min_area_m2`, `street`, `waterfront`, `near` (what the anchors are), `anchors` [[x, y]...],
+`reach_m` (null: anywhere, best near the anchors)), `player_placed`), `opened_total` (by kind), `signals` (the smoothed
 causes: outside and local tows a day, crashes a day, cars, rich households, cars bought a day and
 of them out of town, buildings out of the city's trash rounds, overflowing bins, depots, bike
 owners, bikes bought, long walks a day, livestock, fish and fillets a day, fishing ports and
@@ -1959,6 +1964,14 @@ variant name: `mechanic` (`car_repair_shop`), `car_dealer` (`car_dealership`), `
 kinds) on the vacant lot under or nearest the point (within 150 m), as a pressure would; `finish:
 true` builds it at once. Reply `building`, `kind`, `lot`, `finished`, `story`. Marinas and fishing
 ports are docks: use `place`.
+
+`pressure_where {kind}` (alias `show_where`) [r4-hunger]: the Economy pane's "show where" for a
+pressure: the map shows a post at each anchor with the reach drawn round it and outlines the
+vacant lots of its land uses by fit (green suits, amber too small, orange on a footpath, blue not
+on the water, grey too far), with a banner saying what it needs. Reply `on`, `kind`, `label`,
+`held`, `needs` (as above), `lots_by_fit`, `lots` (lot, fit: suits | too_small | no_street |
+not_on_water | no_jetty_room | too_far | taken, center, area_m2, land_use). `{off: true}` hides
+it; with neither field, what is shown now.
 
 `place {kind}` takes the docks `marina` (`marina_small`), `marina_large` (`yacht_club`),
 `fishing_port` (`fishing_port_small`, `fish_quay`) and `fishing_port_large` (`fishing_harbour`) at
