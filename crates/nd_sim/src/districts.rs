@@ -57,6 +57,10 @@ pub enum ResidentialSpec {
     /// [r4-harbour] Harbour Pastel (The Promenade): salt-weathered pastel
     /// terraces, converted boathouses, lighthouse corner towers. Appended.
     HarbourPastel,
+    /// [r4-solarpunk] Solarpunk Green (Eco Village): timber-and-glass
+    /// terraces under planted roofs, solar-shingle townhouses, vine-covered
+    /// towers with balcony gardens. Appended.
+    SolarpunkGreen,
     /// [r4-glass] Glass Campus (Founders' Campus): student flats with
     /// bright panels, co-living towers with glass lounges. Appended.
     GlassCampus,
@@ -90,6 +94,10 @@ pub enum CommercialSpec {
     /// quarter (hotels first); its small industry is the fish market hall
     /// and net sheds. Appended.
     HarbourPastel,
+    /// [r4-solarpunk] Solarpunk Green's shops: glass market halls with
+    /// rooftop farms, co-op stores, repair cafés; its small industry is
+    /// vertical farms, greenhouse rows and the cargo-bike depot. Appended.
+    SolarpunkGreen,
     /// [r4-glass] Glass Campus's shops and offices: glass labs, start-up
     /// sheds, atrium offices round shared quads; offices first, the tier a
     /// step up from the cheapest; its small industry is research labs and
@@ -98,7 +106,7 @@ pub enum CommercialSpec {
 }
 
 impl ResidentialSpec {
-    pub const ALL: [ResidentialSpec; 9] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule, ResidentialSpec::BrickSteel, ResidentialSpec::Lantern, ResidentialSpec::Garden, ResidentialSpec::HarbourPastel, ResidentialSpec::GlassCampus];
+    pub const ALL: [ResidentialSpec; 10] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule, ResidentialSpec::BrickSteel, ResidentialSpec::Lantern, ResidentialSpec::Garden, ResidentialSpec::HarbourPastel, ResidentialSpec::SolarpunkGreen, ResidentialSpec::GlassCampus];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -110,6 +118,7 @@ impl ResidentialSpec {
             ResidentialSpec::Lantern => "Lantern Alley",
             ResidentialSpec::Garden => "Garden suburb",
             ResidentialSpec::HarbourPastel => "Harbour Pastel",
+            ResidentialSpec::SolarpunkGreen => "Solarpunk Green",
             ResidentialSpec::GlassCampus => "Glass Campus",
         }
     }
@@ -124,6 +133,7 @@ impl ResidentialSpec {
             ResidentialSpec::Lantern => "lantern_alley",
             ResidentialSpec::Garden => "garden",
             ResidentialSpec::HarbourPastel => "harbour_pastel",
+            ResidentialSpec::SolarpunkGreen => "solarpunk_green",
             ResidentialSpec::GlassCampus => "glass_campus",
         }
     }
@@ -134,7 +144,7 @@ impl ResidentialSpec {
 }
 
 impl CommercialSpec {
-    pub const ALL: [CommercialSpec; 10] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule, CommercialSpec::BrickSteel, CommercialSpec::Lantern, CommercialSpec::Garden, CommercialSpec::HarbourPastel, CommercialSpec::GlassCampus];
+    pub const ALL: [CommercialSpec; 11] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule, CommercialSpec::BrickSteel, CommercialSpec::Lantern, CommercialSpec::Garden, CommercialSpec::HarbourPastel, CommercialSpec::SolarpunkGreen, CommercialSpec::GlassCampus];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -147,6 +157,7 @@ impl CommercialSpec {
             CommercialSpec::Lantern => "Lantern Alley",
             CommercialSpec::Garden => "Garden suburb",
             CommercialSpec::HarbourPastel => "Harbour Pastel",
+            CommercialSpec::SolarpunkGreen => "Solarpunk Green",
             CommercialSpec::GlassCampus => "Glass Campus",
         }
     }
@@ -162,6 +173,7 @@ impl CommercialSpec {
             CommercialSpec::Lantern => "lantern_alley",
             CommercialSpec::Garden => "garden",
             CommercialSpec::HarbourPastel => "harbour_pastel",
+            CommercialSpec::SolarpunkGreen => "solarpunk_green",
             CommercialSpec::GlassCampus => "glass_campus",
         }
     }
@@ -212,6 +224,14 @@ pub enum Look {
     /// flags; the fish market hall and net sheds for its small industry;
     /// string lights along the front after dark. Appended.
     HarbourPastel,
+    /// [r4-solarpunk] Solarpunk Green (Eco Village), lived in rather than
+    /// new: weathered timber and glass terraces under planted roofs,
+    /// solar-shingle townhouses, vine-covered towers with balcony gardens;
+    /// glass market halls with rooftop farms, co-op stores, repair cafés;
+    /// vertical farms, greenhouse rows and a cargo-bike depot with wind
+    /// trees for its small industry; solar canopies glowing after dark.
+    /// Appended.
+    SolarpunkGreen,
     /// [r4-glass] Glass Campus (Founders' Campus): student flats with
     /// bright panels, co-living towers; glass labs, start-up sheds, atrium
     /// offices, shared quads; research labs and fenced server halls for its
@@ -221,7 +241,7 @@ pub enum Look {
 }
 
 impl Look {
-    pub const ALL: [Look; 14] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule, Look::BrickSteel, Look::Lantern, Look::Garden, Look::HarbourPastel, Look::GlassCampus];
+    pub const ALL: [Look; 15] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule, Look::BrickSteel, Look::Lantern, Look::Garden, Look::HarbourPastel, Look::SolarpunkGreen, Look::GlassCampus];
 
     pub fn index(self) -> usize {
         self as usize
@@ -242,6 +262,7 @@ impl Look {
             Look::Lantern => "lantern alley",
             Look::Garden => "garden suburb",
             Look::HarbourPastel => "harbour pastel",
+            Look::SolarpunkGreen => "solarpunk green",
             Look::GlassCampus => "glass campus",
         }
     }
@@ -269,6 +290,9 @@ impl Look {
             // [r4-harbour] Two to seven storeys along the front: terraces,
             // boathouses, a boutique hotel at most seven.
             Look::HarbourPastel => floors.max(2).min(7).min(cap.max(2) + 1),
+            // [r4-solarpunk] As the Eco homes it replaces in Eco Village:
+            // the block's density, ten storeys at most (the vine towers).
+            Look::SolarpunkGreen => floors.min(cap.max(1)).min(10),
             // [r4-glass] A campus reaches a floor over the block (as the
             // Tech campus did), twelve at most: flats, co-living, labs.
             Look::GlassCampus => (floors + 1).min(cap.max(1) + 1).min(12),
@@ -319,6 +343,9 @@ impl Look {
             // [r4-harbour] A tourist quarter's hotels first (as the Tourist
             // look it replaces), then cafés and bars along the front.
             Look::HarbourPastel => &[(BusinessKind::Hotel, 6.0), (BusinessKind::Bakery, 3.0), (BusinessKind::Venue, 2.0)],
+            // [r4-solarpunk] The co-op grocer, the café-bakery, the bike
+            // repairers.
+            Look::SolarpunkGreen => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Bakery, 2.0), (BusinessKind::BikeShop, 2.0)],
             // [r4-glass] Offices first and gadget shops, as the Tech campus.
             Look::GlassCampus => &[(BusinessKind::Office, 5.0), (BusinessKind::GadgetShop, 2.0)],
             _ => &[],
@@ -350,6 +377,9 @@ impl Look {
             Look::Capsule => Some((120.0, 0.04)),
             // [r4-harbour] A painted front lifts the land as Eco homes did.
             Look::HarbourPastel => Some((120.0, 0.04)),
+            // [r4-solarpunk] Planted roofs lift the land as the Eco homes
+            // they replace did.
+            Look::SolarpunkGreen => Some((140.0, 0.06)),
             // [r4-glass] Between the Eco homes' lift and the Tech campus's,
             // which it replaces on Founders' Campus.
             Look::GlassCampus => Some((130.0, 0.05)),
@@ -444,6 +474,7 @@ impl District {
                 ResidentialSpec::Lantern => Look::Lantern,
                 ResidentialSpec::Garden => Look::Garden,
                 ResidentialSpec::HarbourPastel => Look::HarbourPastel,
+                ResidentialSpec::SolarpunkGreen => Look::SolarpunkGreen,
                 ResidentialSpec::GlassCampus => Look::GlassCampus,
             }),
             // Nightlife on a strip or in a market takes the street's look.
@@ -462,6 +493,8 @@ impl District {
                 CommercialSpec::Garden if lu == LandUse::Commercial => Some(Look::Garden),
                 // [r4-harbour] Cafés, shacks and the hotels' bars too.
                 CommercialSpec::HarbourPastel => Some(Look::HarbourPastel),
+                // [r4-solarpunk] The repair café is the night out too.
+                CommercialSpec::SolarpunkGreen => Some(Look::SolarpunkGreen),
                 // [r4-glass] The quad's café and the sheds' bars too.
                 CommercialSpec::GlassCampus => Some(Look::GlassCampus),
                 _ => None,
@@ -472,6 +505,9 @@ impl District {
             LandUse::Industrial if self.commercial == Some(CommercialSpec::Lantern) => Some(Look::Lantern),
             // [r4-harbour] The front's small industry: fish market and net sheds.
             LandUse::Industrial if self.commercial == Some(CommercialSpec::HarbourPastel) => Some(Look::HarbourPastel),
+            // [r4-solarpunk] Vertical farms, greenhouse rows, the bike depot
+            // (farms keep their farmsteads: `nd_procgen::buildings::choose`).
+            LandUse::Industrial if self.commercial == Some(CommercialSpec::SolarpunkGreen) => Some(Look::SolarpunkGreen),
             // [r4-glass] The campus's: research labs and server halls.
             LandUse::Industrial if self.commercial == Some(CommercialSpec::GlassCampus) => Some(Look::GlassCampus),
             _ => None,
@@ -1135,6 +1171,64 @@ mod tests {
         assert_eq!(saved.list[0].policies.bed_levy, 0.08);
         assert_eq!(saved.list[2].story, None);
         assert_eq!(saved.list[2].commercial, Some(CommercialSpec::Tourist));
+        // Every load runs it: nothing more to do.
+        assert_eq!(saved.adopt_stories(), 0);
+    }
+
+    /// [r4-solarpunk] Solarpunk Green gives its look to homes, shops,
+    /// nights out and its small industry; Eco Village keeps the Eco homes'
+    /// land value lift, farming industry and ten-storey cap. An Eco Village
+    /// saved with the old dials (Eco homes, farming) takes the look on
+    /// load, keeping its height limit and policies, and so does an old
+    /// district with those dials and no story; Eco homes alone, or with
+    /// another industry, stay custom.
+    #[test]
+    fn solarpunk_green_look_and_old_eco_village_saves() {
+        use crate::stories::Story;
+        let mut d = Districts::default();
+        let id = d.create(None, 1, 0).unwrap();
+        let dist = d.get_mut(id).unwrap();
+        dist.apply_story(Some(Story::EcoVillage));
+        for lu in [LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial] {
+            assert_eq!(dist.look_for(lu), Some(Look::SolarpunkGreen), "{lu:?}");
+        }
+        assert_eq!(dist.look_for(LandUse::Civic), None);
+        assert_eq!(dist.industry, Some(IndustryKind::Farming));
+        assert_eq!(dist.height_limit, Some(40.0));
+        assert!(!dist.is_landmark() && !Look::SolarpunkGreen.tourist_quarter());
+        assert_eq!(Look::SolarpunkGreen.land_value(), Look::Eco.land_value());
+        assert_eq!(Look::SolarpunkGreen.favours()[0].0, BusinessKind::Grocery);
+        assert_eq!(Look::SolarpunkGreen.tier(Tier::Low), Tier::Low);
+        assert_eq!(Look::SolarpunkGreen.floors(20, 40), 10);
+        assert_eq!(Look::SolarpunkGreen.floors(3, 2), Look::Eco.floors(3, 2));
+        assert_eq!(Look::ALL[Look::SolarpunkGreen.index()], Look::SolarpunkGreen);
+        assert_eq!(ResidentialSpec::parse("solarpunk_green"), Some(ResidentialSpec::SolarpunkGreen));
+        assert_eq!(CommercialSpec::parse("Solarpunk Green"), Some(CommercialSpec::SolarpunkGreen));
+        assert_eq!(ron::from_str::<Look>("SolarpunkGreen").unwrap(), Look::SolarpunkGreen);
+        // As saved before the look: the story with Eco homes and farming,
+        // a height limit and a tuned levy; an older district with those
+        // dials and no story; Eco homes alone; Eco homes with fishing.
+        let old = "(id: 3, name: \"West Farms\", color: 2, residential: Some(Eco), commercial: None, industry: Some(Farming), historic: false, height_limit: Some(18.0), story: Some(EcoVillage), policies: (pollution_levy: 0.15))";
+        let older = "(id: 4, name: \"Jade Gardens\", color: 3, residential: Some(Eco), commercial: None, industry: Some(Farming), historic: false)";
+        let eco = "(id: 5, name: \"Glass Commons\", color: 4, residential: Some(Eco), commercial: None, industry: None, historic: false)";
+        let fish = "(id: 6, name: \"Silk Wharf\", color: 5, residential: Some(Eco), commercial: None, industry: Some(Fishing), historic: false)";
+        let mut saved = Districts::default();
+        for text in [old, older, eco, fish] {
+            saved.list.push(ron::from_str(text).expect("old district loads"));
+        }
+        assert_eq!(saved.adopt_stories(), 2);
+        for (i, height) in [(0, Some(18.0)), (1, None)] {
+            let got = &saved.list[i];
+            assert_eq!(got.story, Some(Story::EcoVillage), "{}", got.name);
+            assert_eq!((got.residential, got.commercial, got.industry), (Some(ResidentialSpec::SolarpunkGreen), Some(CommercialSpec::SolarpunkGreen), Some(IndustryKind::Farming)));
+            assert_eq!(got.height_limit, height);
+            assert!(Story::EcoVillage.fits(got));
+        }
+        assert_eq!(saved.list[0].policies.pollution_levy, 0.15);
+        for i in [2, 3] {
+            assert_eq!(saved.list[i].story, None, "{}", saved.list[i].name);
+            assert_eq!(saved.list[i].residential, Some(ResidentialSpec::Eco));
+        }
         // Every load runs it: nothing more to do.
         assert_eq!(saved.adopt_stories(), 0);
     }

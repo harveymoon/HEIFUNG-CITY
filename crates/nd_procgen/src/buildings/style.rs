@@ -462,6 +462,32 @@ styles! {
     CobbledYard { label: "cobbled yard", family: Heavy, cluster: 0.5, draw: |g, c, r, _| oldstone_works::cobbled_yard(g, c, r) },
     /// A stone manor round a court: porch tower and clock, wings, a garden.
     StoneManor { label: "stone manor", family: Special, cluster: 0.0, draw: |g, c, r, _| oldstone::stone_manor(g, c, r) },
+    // -- [r4-solarpunk] Solarpunk Green, Eco Village's look
+    // (`buildings/solarpunk.rs`), drawn only from its menus (the villa for
+    // its estates' forms, the vertical farm and the repair café for those
+    // trades there); appended so `ALL` keeps its order. Terraces,
+    // townhouses and greenhouses repeat; the tower, the hall and the depot
+    // stand apart. --
+    /// Narrow timber houses glazed floor by floor under planted roofs.
+    TimberTerrace { label: "timber-and-glass terrace", family: Walkup, cluster: 1.0, draw: |g, c, r, _| solarpunk::timber_terrace(g, c, r) },
+    /// Tall houses under steep roofs skinned in patched solar shingles.
+    SolarTownhouses { label: "solar-shingle townhouses", family: Walkup, cluster: 0.7, draw: |g, c, r, _| solarpunk::solar_townhouses(g, c, r) },
+    /// A concrete frame wrapped in balcony gardens, creepers, a roof greenhouse.
+    VineTower { label: "vine-covered tower", family: Slab, cluster: -0.3, draw: |g, c, r, _| solarpunk::vine_tower(g, c, r) },
+    /// An iron and dirty-glass hall, stalls out front, a farm on the roof behind.
+    GlassMarketHall { label: "glass market hall", family: Retail, cluster: -0.6, draw: |g, c, r, _| solarpunk::glass_market_hall(g, c, r) },
+    /// A timber shop behind a forecourt of crates under a solar canopy.
+    CoopStore { label: "co-op store", family: Retail, cluster: 0.4, draw: |g, c, r, _| solarpunk::coop_store(g, c, r) },
+    /// An old workshop with its door up on the benches, tables under bulbs.
+    RepairCafe { label: "repair café", family: Night, cluster: 0.2, draw: |g, c, r, _| solarpunk::repair_cafe(g, c, r) },
+    /// Growing floors behind green glass, magenta grow lights after dark.
+    VerticalFarm { label: "vertical farm", family: Tech, cluster: -0.5, draw: |g, c, r, _| solarpunk::vertical_farm(g, c, r) },
+    /// Long glasshouses on gravel, sodium-lit after dark, a packing shed.
+    GreenhouseRows { label: "greenhouse rows", family: Farm, cluster: 0.8, draw: |g, c, r, _| solarpunk::greenhouse_rows(g, c, r) },
+    /// Cargo bikes on charge under a solar canopy, wind trees in the yard.
+    BikeDepot { label: "cargo-bike depot", family: Logistics, cluster: -0.4, draw: |g, c, r, _| solarpunk::bike_depot(g, c, r) },
+    /// A family's or a billionaire's planted solar villa with a roof garden.
+    SolarVilla { label: "planted solar villa", family: Special, cluster: 0.0, draw: |g, c, r, _| solarpunk::solar_villa(g, c, r) },
     // -- [r4-glass] Glass Campus, Founders' Campus's look
     // (`buildings/glasscampus.rs`), drawn only from its menus (the pavilion
     // for its estates' forms, the server hall for the assembly halls
@@ -519,6 +545,8 @@ impl Style {
     /// [r4-harbour] Harbour Pastel's styles (The Promenade).
     pub const HARBOUR: [Style; 10] = [Style::PastelTerrace, Style::Boathouses, Style::LighthouseCorner, Style::BoardwalkCafe, Style::SeafoodShack, Style::AwningArcade, Style::BoutiqueHotel, Style::FishMarketHall, Style::NetSheds, Style::PastelVilla];
 
+    /// [r4-solarpunk] Solarpunk Green's styles (Eco Village).
+    pub const SOLARPUNK: [Style; 10] = [Style::TimberTerrace, Style::SolarTownhouses, Style::VineTower, Style::GlassMarketHall, Style::CoopStore, Style::RepairCafe, Style::VerticalFarm, Style::GreenhouseRows, Style::BikeDepot, Style::SolarVilla];
     /// [r4-glass] Glass Campus's styles (Founders' Campus).
     pub const GLASS_CAMPUS: [Style; 9] = [Style::StudentFlats, Style::CoLivingTower, Style::GlassLab, Style::StartupSheds, Style::AtriumOffice, Style::CampusQuad, Style::ResearchLab, Style::ServerHall, Style::GlassPavilion];
 }

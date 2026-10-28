@@ -351,7 +351,10 @@ impl Story {
         let p = Policies::default();
         let (residential, commercial, industry, historic, height_limit, policies) = match self {
             Story::Capsule => (Some(R::Capsule), Some(C::Capsule), None, false, None, Policies { business_rate: -0.03, ..p }),
-            Story::EcoVillage => (Some(R::Eco), None, Some(IndustryKind::Farming), false, Some(40.0), Policies { pollution_levy: 0.10, ..p }),
+            // [r4-solarpunk] Its own look, Solarpunk Green, for homes, shops
+            // and its small industry; still a farming district (its farms
+            // keep their farmsteads).
+            Story::EcoVillage => (Some(R::SolarpunkGreen), Some(C::SolarpunkGreen), Some(IndustryKind::Farming), false, Some(40.0), Policies { pollution_levy: 0.10, ..p }),
             Story::WalledQuarter => (Some(R::Kowloon), Some(C::NightMarket), None, false, None, Policies { late_hours: true, business_rate: -0.02, ..p }),
             Story::AfterglowMile => (None, Some(C::NeonStrip), None, false, None, Policies { late_hours: true, nightlife_levy: 0.08, ..p }),
             // [r4-glass] Its own look, Glass Campus, for homes, the campus and its small industry.
@@ -430,6 +433,9 @@ impl Story {
             Story::QuietAcres => d.residential == Some(ResidentialSpec::Suburban) && d.commercial.is_none() && d.industry.is_none() && !d.historic,
             // [r4-harbour] The Promenade: Eco homes and the Tourist quarter.
             Story::Promenade => d.residential == Some(ResidentialSpec::Eco) && d.commercial == Some(crate::districts::CommercialSpec::Tourist) && d.industry.is_none() && !d.historic,
+            // [r4-solarpunk] Eco Village: Eco homes, shops as they come,
+            // farming industry.
+            Story::EcoVillage => d.residential == Some(ResidentialSpec::Eco) && d.commercial.is_none() && d.industry == Some(IndustryKind::Farming) && !d.historic,
             // [r4-glass] Founders' Campus: Eco homes and the Tech campus.
             Story::FoundersCampus => d.residential == Some(ResidentialSpec::Eco) && d.commercial == Some(crate::districts::CommercialSpec::TechCampus) && d.industry.is_none() && !d.historic,
             _ => false,

@@ -159,8 +159,8 @@ pub fn district(cmd: &Value, w: &mut World, overlays: &mut Overlays, tools: &mut
             let change = PolicyChange {
                 story,
                 policies,
-                residential: spec(cmd, "residential", ResidentialSpec::parse, "kowloon, suburban, eco, capsule, brick_steel, lantern_alley, garden, harbour_pastel, glass_campus")?,
-                commercial: spec(cmd, "commercial", CommercialSpec::parse, "neon_strip, tech_campus, night_market, tourist, capsule, brick_steel, lantern_alley, garden, harbour_pastel, glass_campus")?,
+                residential: spec(cmd, "residential", ResidentialSpec::parse, "kowloon, suburban, eco, capsule, brick_steel, lantern_alley, garden, harbour_pastel, solarpunk_green, glass_campus")?,
+                commercial: spec(cmd, "commercial", CommercialSpec::parse, "neon_strip, tech_campus, night_market, tourist, capsule, brick_steel, lantern_alley, garden, harbour_pastel, solarpunk_green, glass_campus")?,
                 industry: spec(cmd, "industry", industry_of, "farming, oil, refinery, manufacturing, logistics, fishing, tech")?,
                 historic: opt_bool(cmd, "historic")?,
                 // [supertall] metres; null or 0 lifts it

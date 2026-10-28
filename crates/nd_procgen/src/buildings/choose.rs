@@ -58,6 +58,9 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         // [r4-harbour] The front's own hotel, seafood shack and fish market
         // hall in a Harbour Pastel district (other trades keep theirs).
         (None, None) if !extras.rooftop_pad && extras.look == Some(nd_sim::districts::Look::HarbourPastel) && harbour::trade_style(extras.business).is_some() => harbour::trade_style(extras.business).unwrap(),
+        // [r4-solarpunk] Eco Village's vertical farm and repair café (farms
+        // keep their farmsteads, other trades their own looks).
+        (None, None) if !extras.rooftop_pad && extras.look == Some(nd_sim::districts::Look::SolarpunkGreen) && solarpunk::trade_style(extras.business).is_some() => solarpunk::trade_style(extras.business).unwrap(),
         // [r4-glass] On Founders' Campus the assembly halls are server halls.
         (None, None) if !extras.rooftop_pad && extras.look == Some(nd_sim::districts::Look::GlassCampus) && glasscampus::trade_style(extras.business, tier).is_some() => glasscampus::trade_style(extras.business, tier).unwrap(),
         (None, None) if extras.business.is_some_and(business_look_wins) => {

@@ -37,6 +37,8 @@ mod harbour;
 mod oldstone;
 /// [r4-oldstone] Old Stone's works: the mill, the tannery, cobbled yards.
 mod oldstone_works;
+/// [r4-solarpunk] Solarpunk Green: terraces, towers, halls, farms, villa.
+mod solarpunk;
 /// [r4-glass] Glass Campus: flats, towers, labs, sheds, offices, quads, halls.
 mod glasscampus;
 /// [districts] District looks: style menus and palettes, hotels.
@@ -283,6 +285,9 @@ mod harbour_tests;
 
 #[cfg(test)]
 mod oldstone_tests;
+
+#[cfg(test)]
+mod solarpunk_tests;
 
 #[cfg(test)]
 mod glasscampus_tests;
