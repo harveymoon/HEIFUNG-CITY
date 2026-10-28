@@ -11,6 +11,7 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::{CascadeShadowConfigBuilder, GlobalAmbientLight, NotShadowCaster, NotShadowReceiver};
+use bevy::camera::visibility::VisibilityRange;
 use bevy::math::Affine2;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::DistanceFog;
@@ -280,6 +281,17 @@ pub(crate) fn offstage() -> Transform {
 #[derive(Default)]
 struct ChunkMeshes {
     entities: Vec<Entity>,
+    /// Base and detail together.
+    triangles: usize,
+    /// [r4-style] The chunk's detail cells: where they are and how much.
+    detail: Vec<DetailCell>,
+}
+
+/// [r4-style] One detail cell's layer: the centre its distance range is
+/// measured from, its layer and its triangles.
+struct DetailCell {
+    at: Vec3,
+    lod: nd_procgen::Lod,
     triangles: usize,
 }
 
@@ -379,6 +391,11 @@ pub struct RenderStats {
     pub graphics: Graphics,
     /// [chase-cam] Scenery meshes wearing the cutting material now.
     pub cut_meshes: usize,
+    /// [r4-style] Building detail triangles generated per layer (mid,
+    /// near), and those within their layer's distance range of the camera
+    /// now (the rest are not drawn).
+    pub detail_triangles: [usize; 2],
+    pub detail_in_range: [usize; 2],
 }
 
 pub struct RenderPlugin;
@@ -459,6 +476,7 @@ impl Plugin for RenderPlugin {
             .add_systems(PostUpdate, street_look::sync_fog_reach.before(heat::apply_heat));
         // Tower cranes slewing on building sites.
         app.add_systems(Update, animate_cranes.after(sync_buildings).in_set(SimSet::Sync));
+        app.add_systems(Update, buildings::detail_stats.after(sync_buildings).in_set(SimSet::Sync));
         app.add_systems(Update, games::sync_game_days.after(sync_buildings).in_set(SimSet::Sync));
         app.add_systems(Update, airlift::sync_airlifts.in_set(SimSet::Sync));
         app.add_plugins(heat::HeatPlugin);

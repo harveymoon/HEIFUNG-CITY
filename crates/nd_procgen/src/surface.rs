@@ -230,6 +230,44 @@ impl Surface {
     }
 }
 
+/// [r4-style] How close the camera must be for a part of a building to be
+/// drawn. The base mesh is always drawn; the two detail layers are spawned
+/// as meshes of their own that the renderer drops with distance, so a city
+/// of thousands of AC units, frames and pipes only pays for the ones near
+/// the camera. Every layer is generated every time, from the same seed: the
+/// detail is a permanent part of the building, only hidden when far off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum Lod {
+    /// Always drawn: the mass, the lit windows and every glowing sign.
+    #[default]
+    Base,
+    /// Reads from a few blocks away: awnings, cages, tanks, shacks, cores'
+    /// steel. Drawn to [`Lod::MID_RANGE`].
+    Mid,
+    /// The grain seen up close: AC units, frames, laundry, pipes, railings,
+    /// streaks. Drawn to [`Lod::NEAR_RANGE`].
+    Near,
+}
+
+impl Lod {
+    /// The detail layers, in [`Geometry::detail`] order.
+    pub const DETAIL: [Lod; 2] = [Lod::Mid, Lod::Near];
+    /// Camera distance (m, to the middle of the chunk's detail) past which
+    /// mid detail is dropped.
+    pub const MID_RANGE: f32 = 700.0;
+    /// Camera distance past which near detail is dropped.
+    pub const NEAR_RANGE: f32 = 320.0;
+
+    /// Index into [`Geometry::detail`], or `None` for the base mesh.
+    pub fn layer(self) -> Option<usize> {
+        match self {
+            Lod::Base => None,
+            Lod::Mid => Some(0),
+            Lod::Near => Some(1),
+        }
+    }
+}
+
 /// Mesh data split by surface. Empty surfaces are skipped by the renderer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Geometry {
@@ -249,17 +287,73 @@ pub struct Geometry {
     /// the away fans), left out of the mesh for the renderer to show on a
     /// game day.
     pub games: Vec<crate::buildings::GameRig>,
+    /// [r4-style] The detail layers ([`Lod::DETAIL`] order), each split by
+    /// surface like `parts`; empty until a generator draws into one (with
+    /// [`Geometry::lod`]). Never holds glow: lit windows and signs stay in
+    /// the base mesh so the night city reads the same from afar.
+    pub detail: [Vec<MeshData>; 2],
+    /// Where [`Geometry::part`] sends what is drawn now.
+    lod: Lod,
 }
 
 impl Default for Geometry {
     fn default() -> Self {
-        Self { parts: (0..Surface::ALL.len()).map(|_| MeshData::default()).collect(), pads: Vec::new(), cranes: Vec::new(), lamps: Vec::new(), games: Vec::new() }
+        Self { parts: (0..Surface::ALL.len()).map(|_| MeshData::default()).collect(), pads: Vec::new(), cranes: Vec::new(), lamps: Vec::new(), games: Vec::new(), detail: [Vec::new(), Vec::new()], lod: Lod::Base }
     }
 }
 
 impl Geometry {
+    /// The mesh for surface `s` in the layer being drawn ([`Geometry::lod`]):
+    /// every primitive a generator emits comes through here. Glow always
+    /// goes to the base mesh.
     pub fn part(&mut self, s: Surface) -> &mut MeshData {
-        &mut self.parts[s.index()]
+        match self.lod.layer().filter(|_| !s.is_glow()) {
+            None => &mut self.parts[s.index()],
+            Some(k) => {
+                let layer = &mut self.detail[k];
+                if layer.is_empty() {
+                    layer.resize_with(Surface::ALL.len(), MeshData::default);
+                }
+                &mut layer[s.index()]
+            }
+        }
+    }
+
+    /// Draw `body` into detail layer `lod` (back to the layer before after).
+    pub fn lod<R>(&mut self, lod: Lod, body: impl FnOnce(&mut Geometry) -> R) -> R {
+        let was = std::mem::replace(&mut self.lod, lod);
+        let r = body(self);
+        self.lod = was;
+        r
+    }
+
+    /// One detail layer by surface (empty surfaces skipped).
+    pub fn detail_iter(&self, lod: Lod) -> impl Iterator<Item = (Surface, &MeshData)> {
+        let layer = lod.layer().map_or(&[][..], |k| &self.detail[k][..]);
+        Surface::ALL.iter().copied().zip(layer.iter()).filter(|(_, m)| !m.is_empty())
+    }
+
+    /// Whether any detail was drawn.
+    pub fn has_detail(&self) -> bool {
+        self.detail.iter().any(|l| l.iter().any(|m| !m.is_empty()))
+    }
+
+    /// Fold the detail layers into the base mesh (a building coming down is
+    /// cut as one).
+    pub fn flatten_detail(&mut self) {
+        for layer in self.detail.iter_mut() {
+            for (a, b) in self.parts.iter_mut().zip(std::mem::take(layer).iter()) {
+                a.append(b);
+            }
+        }
+    }
+
+    /// Every mesh, base and detail, for passes that move or recolour all of
+    /// them (raising onto a pad, snow).
+    pub fn meshes_mut(&mut self) -> impl Iterator<Item = (Surface, &mut MeshData)> {
+        let base = Surface::ALL.iter().copied().zip(self.parts.iter_mut());
+        let [mid, near] = &mut self.detail;
+        base.chain(Surface::ALL.iter().copied().zip(mid.iter_mut())).chain(Surface::ALL.iter().copied().zip(near.iter_mut()))
     }
 
     pub fn get(&self, s: Surface) -> &MeshData {
@@ -274,6 +368,17 @@ impl Geometry {
         for (a, b) in self.parts.iter_mut().zip(other.parts.iter()) {
             a.append(b);
         }
+        for (mine, theirs) in self.detail.iter_mut().zip(other.detail.iter()) {
+            if theirs.is_empty() {
+                continue;
+            }
+            if mine.is_empty() {
+                mine.resize_with(Surface::ALL.len(), MeshData::default);
+            }
+            for (a, b) in mine.iter_mut().zip(theirs.iter()) {
+                a.append(b);
+            }
+        }
         self.pads.extend_from_slice(&other.pads);
         self.cranes.extend(other.cranes.iter().cloned());
         self.lamps.extend_from_slice(&other.lamps);
@@ -283,13 +388,26 @@ impl Geometry {
     /// Move every surface that has a weathered variant onto it: the whole
     /// building or street reads as run down without a single extra triangle.
     pub fn weather(&mut self) {
-        for (base, worn) in Surface::WEATHERED {
-            let m = std::mem::take(&mut self.parts[base.index()]);
-            self.parts[worn.index()].append(&m);
+        for layer in std::iter::once(&mut self.parts).chain(self.detail.iter_mut().filter(|l| !l.is_empty())) {
+            for (base, worn) in Surface::WEATHERED {
+                let m = std::mem::take(&mut layer[base.index()]);
+                layer[worn.index()].append(&m);
+            }
         }
     }
 
+    /// Triangles in the base mesh and every detail layer.
     pub fn triangle_count(&self) -> usize {
+        self.base_triangle_count() + self.detail.iter().flatten().map(|m| m.indices.len() / 3).sum::<usize>()
+    }
+
+    /// Triangles in the base mesh only (what is drawn from far off).
+    pub fn base_triangle_count(&self) -> usize {
         self.parts.iter().map(|m| m.indices.len() / 3).sum()
+    }
+
+    /// Triangles in one detail layer.
+    pub fn detail_triangle_count(&self, lod: Lod) -> usize {
+        lod.layer().map_or(0, |k| self.detail[k].iter().map(|m| m.indices.len() / 3).sum())
     }
 }

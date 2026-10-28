@@ -65,7 +65,7 @@ fn drawn_pads<'a>(st: &'a mut AirRender, w: &World, assets: &GameAssets, styles:
     let fresh = st.pads.get(&id).is_none_or(|(k, _)| *k != key);
     if fresh {
         let mut geo = Geometry::default();
-        let _ = super::append_building(&mut geo, w, assets, styles, id);
+        let _ = super::append_building(&mut geo, &mut [Geometry::default()], w, assets, styles, id);
         st.pads.insert(id, (key, geo.pads));
     }
     &st.pads[&id].1

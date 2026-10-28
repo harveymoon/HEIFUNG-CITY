@@ -208,7 +208,8 @@ fn extent(g: &Geometry, lot: &Lot, link: Option<&RailLink>) -> (f32, f32, f32, S
     let frame = Frame::from_lot(lot);
     let (mut over, mut top, mut low) = (0.0f32, 0.0f32, 0.0f32);
     let mut culprit = String::new();
-    for (surface, m) in g.iter() {
+    // [r4-style] The detail layers stand by the lot as the base does.
+    for (surface, m) in g.iter().chain(crate::surface::Lod::DETAIL.into_iter().flat_map(|l| g.detail_iter(l))) {
         for p in &m.positions {
             let q = Vec2::new(p[0], p[2]);
             let mut d = outside_by(q, lot);
@@ -438,12 +439,16 @@ fn geometry_stays_near_its_lot() {
                     let g = generate_styled(lot, lu, floors, tier, 0.6, seed + li as u64, style, &rules, &pal);
                     let link = style.rail_kind().map(|k| back_edge_link(lot, k));
                     let (over, top, low, culprit) = extent(&g, lot, link.as_ref());
-                    let tris = g.triangle_count();
+                    // [r4-style] The budget is the base mesh's, what is drawn
+                    // from anywhere; the detail layers, drawn only near the
+                    // camera, get two and a half times it again.
+                    let tris = g.base_triangle_count();
+                    let detail = g.triangle_count() - tris;
                     let allow = 1.0;
-                    if over > allow || top > (60.0 + floors as f32 * 5.0).max(90.0) || low < -0.3 || tris > budget(floors, lot) {
+                    if over > allow || top > (60.0 + floors as f32 * 5.0).max(90.0) || low < -0.3 || tris > budget(floors, lot) || detail * 2 > 5 * budget(floors, lot) {
                         let frame = Frame::from_lot(lot);
                         let (plo, phi) = parts::bounds(&frame_poly(&frame, lot));
-                        worst.push((over.max(-low).max((tris as f32 - budget(floors, lot) as f32) / 1000.0), format!("{style:?} {lu:?} lot {li} ({} verts, span {span:.0}, local {:.0}..{:.0} x {:.0}..{:.0}) overshoots {over:.1} m, top {top:.0} m, low {low:.1}, {tris} tris of {}, floors {floors}: {culprit}", lot.polygon.len(), plo.x, phi.x, plo.y, phi.y, budget(floors, lot))));
+                        worst.push((over.max(-low).max((tris as f32 - budget(floors, lot) as f32) / 1000.0), format!("{style:?} {lu:?} lot {li} ({} verts, span {span:.0}, local {:.0}..{:.0} x {:.0}..{:.0}) overshoots {over:.1} m, top {top:.0} m, low {low:.1}, {tris} tris (+{detail} detail) of {}, floors {floors}: {culprit}", lot.polygon.len(), plo.x, phi.x, plo.y, phi.y, budget(floors, lot))));
                     }
                 }
             }

@@ -188,11 +188,11 @@ pub fn snow_cover(geo: &mut Geometry, amount: f32) {
     if amount <= 0.0 {
         return;
     }
-    for s in Surface::ALL {
+    for (s, m) in geo.meshes_mut() {
         if matches!(s, Surface::Glow | Surface::Glass | Surface::Asphalt | Surface::Paving) {
             continue;
         }
-        snow_mesh(geo.part(s), amount);
+        snow_mesh(m, amount);
     }
 }
 

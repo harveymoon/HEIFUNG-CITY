@@ -37,8 +37,23 @@ pub(super) fn mass_top(g: &Geometry) -> f32 {
         .fold(0.0, f32::max)
 }
 
-/// Generate one building's geometry into the chunk's merged geometry.
-pub(super) fn append_building(geo: &mut Geometry, world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<f32> {
+/// [r4-style] Detail cells per chunk side: a chunk's detail layers are cut
+/// into `DETAIL_SPLIT`² cells by lot centre, each its own mesh with a
+/// distance range, so the detail of a building drops out about when that
+/// building is far off, not when the middle of its 128 m chunk is.
+pub(super) const DETAIL_SPLIT: usize = 2;
+
+/// The detail cell of a chunk a building's detail goes in.
+fn detail_cell(world: &World, id: BuildingId) -> usize {
+    let Some(c) = world.buildings.get(id).and_then(|b| world.lots.get(b.lot)).map(|l| l.center) else { return 0 };
+    let k = DETAIL_SPLIT as f32 / CHUNK;
+    let (i, j) = (((c.x * k).floor() as i64).rem_euclid(DETAIL_SPLIT as i64), ((c.y * k).floor() as i64).rem_euclid(DETAIL_SPLIT as i64));
+    (j as usize) * DETAIL_SPLIT + i as usize
+}
+
+/// Generate one building's geometry into the chunk's merged geometry, its
+/// detail layers into the chunk's detail cell for it.
+pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<f32> {
     let b = world.buildings.get(id)?;
     let mut g = building_geometry(world, assets, styles, id)?;
     // [climate] Snow on the roofs in a cold climate.
@@ -47,6 +62,11 @@ pub(super) fn append_building(geo: &mut Geometry, world: &World, assets: &GameAs
     let top = mass_top(&g);
     // Every building stands on its lot's levelled pad.
     nd_procgen::terrain::raise_geometry(&mut g, world.lot_pad(b.lot));
+    if g.has_detail() {
+        let mut d = Geometry::default();
+        d.detail = std::mem::take(&mut g.detail);
+        cells[detail_cell(world, id).min(cells.len() - 1)].append(&d);
+    }
     geo.append(&g);
     Some(top)
 }
@@ -238,9 +258,10 @@ pub(super) fn sync_buildings(
             }
             let Some(ids) = members.remove(&k) else { continue };
             let mut geo = Geometry::default();
+            let mut cells: Vec<Geometry> = (0..DETAIL_SPLIT * DETAIL_SPLIT).map(|_| Geometry::default()).collect();
             for &id in &ids {
                 let rigs_before = geo.games.len();
-                if let Some(top) = append_building(&mut geo, &sim.world, &assets, &sim.styles, id) {
+                if let Some(top) = append_building(&mut geo, &mut cells, &sim.world, &assets, &sim.styles, id) {
                     // [games] A stadium's game-day dressing knows its building.
                     for rig in geo.games[rigs_before..].iter_mut() {
                         rig.building = Some(id);
@@ -255,6 +276,18 @@ pub(super) fn sync_buildings(
                 }
             }
             let mut entities = spawn_building_geometry(&mut commands, &mut meshes, &mats, &geo);
+            // [r4-style] The detail layers, each cell its own meshes that
+            // drop out with distance.
+            let mut detail = Vec::new();
+            for cell in &cells {
+                for lod in nd_procgen::Lod::DETAIL {
+                    let (ents, at, tris) = spawn_detail_geometry(&mut commands, &mut meshes, &mats, cell, lod);
+                    if tris > 0 {
+                        entities.extend(ents);
+                        detail.push(DetailCell { at, lod, triangles: tris });
+                    }
+                }
+            }
             let work = sim.world.clock.work_minutes();
             for rig in &geo.cranes {
                 entities.extend(spawn_crane_head(&mut commands, &mut meshes, &mats, rig, work));
@@ -262,13 +295,33 @@ pub(super) fn sync_buildings(
             for rig in &geo.games {
                 entities.extend(super::games::spawn_game_rig(&mut commands, &mut meshes, &mats, rig));
             }
-            state.chunks.insert(k, ChunkMeshes { entities, triangles: geo.triangle_count() });
+            let triangles = geo.triangle_count() + detail.iter().map(|d| d.triangles).sum::<usize>();
+            state.chunks.insert(k, ChunkMeshes { entities, triangles, detail });
         }
     }
     if rebuild_all || touched {
         stats.building_entities = state.chunks.values().map(|c| c.entities.len()).sum();
         stats.building_triangles = state.chunks.values().map(|c| c.triangles).sum();
     }
+}
+
+/// [r4-style] Count the building detail generated and the detail within
+/// its distance range of the camera now, for `status.render`.
+pub(super) fn detail_stats(state: Res<RenderState>, cams: Query<&GlobalTransform, With<Camera3d>>, mut stats: ResMut<RenderStats>) {
+    let eye = cams.iter().next().map(|t| t.translation());
+    let (mut all, mut near) = ([0usize; 2], [0usize; 2]);
+    for c in state.chunks.values() {
+        for d in &c.detail {
+            let Some(k) = d.lod.layer() else { continue };
+            let range = if d.lod == nd_procgen::Lod::Near { nd_procgen::Lod::NEAR_RANGE } else { nd_procgen::Lod::MID_RANGE };
+            all[k] += d.triangles;
+            if eye.is_some_and(|e| e.distance(d.at) < range) {
+                near[k] += d.triangles;
+            }
+        }
+    }
+    stats.detail_triangles = all;
+    stats.detail_in_range = near;
 }
 
 /// A tower crane's head, turned about its mast by [`animate_cranes`]. Each
