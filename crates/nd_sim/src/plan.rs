@@ -634,7 +634,8 @@ pub type ParcelZoning = Vec<Option<(LandUse, GestureId)>>;
 /// What each parcel is zoned as under `plan`. Gestures are applied oldest
 /// first (gesture ids only grow), so the newest zone polygon that holds the
 /// parcel's centre, or the newest stroke that painted it, decides. A parcel
-/// takes a land use only if it accepts it ([`crate::zoning::Parcel::accepts`]);
+/// takes a land use only if it accepts it ([`crate::zoning::Parcel::accepts`];
+/// a zone polygon [`crate::zoning::Parcel::accepts_in_area`]);
 /// a gesture it refuses leaves it as it was. A stroke with no land use
 /// erases back to unzoned.
 pub fn parcel_zoning(parcels: &ParcelMap, plan: &Plan) -> ParcelZoning {
@@ -646,7 +647,9 @@ pub fn parcel_zoning(parcels: &ParcelMap, plan: &Plan) -> ParcelZoning {
                     continue;
                 }
                 for i in parcels.in_polygon(polygon) {
-                    if parcels.parcels[i].accepts(*land_use) {
+                    // [land-assembly] An area zone leaves other uses'
+                    // backland alone; painting zones any parcel.
+                    if parcels.parcels[i].accepts_in_area(*land_use) {
                         out[i] = Some((*land_use, *id));
                     }
                 }

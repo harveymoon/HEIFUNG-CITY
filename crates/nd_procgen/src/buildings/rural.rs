@@ -343,8 +343,13 @@ pub fn strip_mine(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             clamp_into(&pit_poly, p)
         })
         .collect();
-    let levels = [3, 4, 5][t];
-    let rim = [4.0, 6.0, 8.0][t];
+    // [land-assembly] A pit grown over the plots behind its road plot is
+    // dug in more benches and heaped higher: past a radius of 18 m, a
+    // bench more every 10 m and a rim up to two and a half times as high.
+    let r = rx.min(ry);
+    let grown = ((r - 18.0) / 10.0).clamp(0.0, 5.0) as usize;
+    let levels = [3, 4, 5][t] + grown;
+    let rim = [4.0, 6.0, 8.0][t] * (r / 18.0).clamp(1.0, 2.5);
     let ring = |k: f32| -> Vec<Vec2> { outer.iter().map(|p| centre + (*p - centre) * k).collect() };
     let world = |p: Vec2, y: f32| f.at2(p, y);
     let rock = mix(pal.stone, pal.dirt, 0.4);
@@ -386,7 +391,7 @@ pub fn strip_mine(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     ground(g, f, Glass, &scale_poly(&floor, 0.45), 0.08, mul(pal.water, 1.4));
     // Haul trucks on the benches and the floor.
     let paint = [0.85, 0.62, 0.08];
-    for k in 0..[1, 2, 3][t].min(bench_mid.len()) {
+    for k in 0..([1, 2, 3][t] + grown).min(bench_mid.len()) {
         let (s, y) = bench_mid[(k * 2 + 1).min(bench_mid.len() - 1)];
         let i = rng.random_range(0..sides);
         let p = centre + (outer[i] - centre) * s;

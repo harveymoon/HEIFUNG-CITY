@@ -216,6 +216,11 @@ impl IndustryKind {
     }
 }
 
+/// [land-assembly] A strip mine opens only on a plot at least this big
+/// (m², a little over a usual works yard): its pit then grows over the
+/// land behind it.
+pub const STRIP_MINE_MIN_AREA: f32 = 1500.0;
+
 /// The player's industry sub-zone over an area: newer entries win. `kind:
 /// None` hands the area back to the ground over an older bias.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

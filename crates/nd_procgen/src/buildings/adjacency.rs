@@ -568,7 +568,8 @@ mod tests {
             assert!(n.iter().all(|x| x.distance < RADIUS));
             // What the book recorded is what the generator draws.
             let lot = &w.lots[b.lot];
-            let extras = Extras { neighbours: n, ..Extras::default() };
+            // [malls] A strip mall's form decides its look.
+            let extras = Extras { neighbours: n, form: b.plot.form, ..Extras::default() };
             assert_eq!(book.style(id), Some(choose_style(lot, b.land_use, b.floors, b.tier, b.seed, &rules, &extras)));
         }
         // The oldest building has no older neighbours.
@@ -609,6 +610,8 @@ mod tests {
         for (i, &id) in farms.iter().enumerate() {
             let kind = [B::GrainFarm, B::VertFarm, B::Dairy, B::Mill][i % 4];
             w.buildings[id].business = Some(nd_sim::Business::new(kind, 4));
+            // [malls] A farm is no strip mall (a mall's form decides its look).
+            w.buildings[id].plot.form = None;
         }
         let taxi = ids[1];
         w.buildings[taxi].business = Some(nd_sim::Business::new(B::TaxiCompany, 4));
@@ -628,6 +631,7 @@ mod tests {
         // A building that turns into a farm is restyled on the next refresh.
         let later = ids.iter().copied().find(|id| !farms.contains(id) && *id != taxi && book.style(*id) != Some(Style::Farmstead)).unwrap();
         w.buildings[later].business = Some(nd_sim::Business::new(B::GrainFarm, 4));
+        w.buildings[later].plot.form = None;
         book.refresh(&w, &rules);
         assert_eq!(book.style(later), Some(Style::Farmstead));
     }

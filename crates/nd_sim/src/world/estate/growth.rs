@@ -428,8 +428,18 @@ impl World {
         if !b.plot.pending_lots.is_empty() || b.construction.is_some() || b.plot.tower.is_some() {
             return false;
         }
+        // [land-assembly] Open-ground trades spread over the land round
+        // them without closing.
+        if self.grows_over_land(bid) {
+            return self.grow_site_in_place(bid);
+        }
+        // A multi-storey car park does not rebuild over its neighbours.
+        if kind == BusinessKind::Parking {
+            return false;
+        }
         let ours = b.plot.lots(b.lot);
-        if ours.len() >= MAX_MERGED_LOTS {
+        let cap = crate::estate::site_cap(kind);
+        if ours.len() >= cap {
             return false;
         }
         let lu = self.lots.get(b.lot).map_or(b.land_use, |l| l.land_use);
@@ -438,7 +448,7 @@ impl World {
         let want = if matches!(kind, BusinessKind::OilWell | BusinessKind::GrainFarm | BusinessKind::VertFarm | BusinessKind::Dairy) { 2 } else { 1 };
         let mut picked: Vec<LotId> = Vec::new();
         for (_, lid) in self.plots_next_to(&ours, lu, floors.saturating_add(1), owner) {
-            if picked.len() >= want || ours.len() + picked.len() >= MAX_MERGED_LOTS {
+            if picked.len() >= want || ours.len() + picked.len() >= cap {
                 break;
             }
             let all: Vec<&Lot> = ours.iter().chain(picked.iter()).chain(std::iter::once(&lid)).skip(1).filter_map(|l| self.lots.get(*l)).collect();

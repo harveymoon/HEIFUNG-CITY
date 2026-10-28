@@ -366,6 +366,23 @@ impl Story {
         Preset { residential, commercial, industry, historic, height_limit, policies }
     }
 
+    /// [malls] How readily strip malls and malls go up in the district,
+    /// against a district with no story (1): the suburb's shopping parades
+    /// and the neon strip's malls most, the night market's stalls and the
+    /// walled quarter's alleys least, none behind the old town's charter.
+    pub fn mall_bias(self) -> f32 {
+        match self {
+            Story::QuietAcres => 1.6,
+            Story::AfterglowMile | Story::NeoTokyoHeights => 1.3,
+            Story::Promenade => 1.0,
+            Story::FoundersCampus | Story::FoundryRow => 0.8,
+            Story::EcoVillage | Story::Capsule | Story::Shantytown => 0.5,
+            Story::WalledQuarter => 0.4,
+            Story::LanternLanes => 0.3,
+            Story::OldTownCharter => 0.0,
+        }
+    }
+
     /// What the story sets, in words, for the picker.
     pub fn sets(self) -> String {
         let p = self.preset();

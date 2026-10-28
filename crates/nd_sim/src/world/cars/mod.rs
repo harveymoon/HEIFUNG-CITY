@@ -136,7 +136,8 @@ impl World {
             .buildings
             .iter()
             .filter(|(_, b)| b.is_parking() && b.floors == 0 && b.construction.is_none())
-            .filter_map(|(id, b)| self.lots.get(b.lot).map(|l| (id, crate::parking_layout::surface_capacity(l).max(1))))
+            // [land-assembly] Over the whole site of one grown over the plots behind it.
+            .filter_map(|(id, _)| self.footprint(id).map(|l| (id, crate::parking_layout::surface_capacity(&l).max(1))))
             .collect();
         if !surface.is_empty() {
             self.refresh_no_kerb();

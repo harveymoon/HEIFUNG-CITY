@@ -1,8 +1,10 @@
 //! [fix/roads-tools] Flag G5: civic zoning painted over a block's backland
-//! came out as lots of "unusable ground" (levelled for nothing). Backland
-//! is painted only where a lot in front could take it in, a lot kept from
-//! before is cut again to take it in, and backland nothing takes in is
-//! left unzoned rather than made a landlocked lot.
+//! came out as lots of "unusable ground" (levelled for nothing); a lot kept
+//! from before is cut again to take in backland painted behind it.
+//! [land-assembly] Since "zone any parcel" (Harvey 2026-10-15) backland
+//! nothing in front takes in is zoned all the same: a landlocked lot that
+//! nothing builds on alone, until a company on the plot in front joins it
+//! to its site (G5 left it unzoned and took it out of the stroke).
 
 use super::*;
 
@@ -23,10 +25,7 @@ fn paint(w: &mut World, ids: &[usize]) {
     w.try_implement().expect("implemented");
 }
 
-fn no_unusable_civic(w: &World) {
-    for l in w.lots.values().filter(|l| l.land_use == LandUse::Civic) {
-        assert!(!l.landlocked, "a civic lot of unusable ground at {}", l.center);
-    }
+fn planned_is_built(w: &World) {
     let planned = w.planned_zoning();
     for (i, p) in w.parcels.parcels.iter().enumerate() {
         assert_eq!(planned[i], p.land_use, "parcel at {} planned other than built", p.center);
@@ -34,35 +33,46 @@ fn no_unusable_civic(w: &World) {
 }
 
 #[test]
-fn civic_over_a_whole_block_leaves_no_unusable_ground() {
+fn civic_over_a_whole_block_zones_all_of_it() {
     let mut w = block();
     let ids = in_block(&w);
     let back = ids.iter().filter(|&&i| !w.parcels.parcels[i].path_frontage).count();
     assert!(back > 0, "the block has backland");
     paint(&mut w, &ids);
-    no_unusable_civic(&w);
-    assert!(w.lots.values().any(|l| l.land_use == LandUse::Civic), "the fronts are civic");
+    planned_is_built(&w);
+    assert!(w.lots.values().any(|l| l.land_use == LandUse::Civic && !l.landlocked), "the fronts are civic");
+    for &i in &in_block(&w) {
+        let p = &w.parcels.parcels[i];
+        if !p.rough {
+            assert_eq!(p.land_use, Some(LandUse::Civic), "every parcel of the block is zoned, backland too: {}", p.center);
+        }
+    }
 }
 
 #[test]
-fn backland_nothing_could_take_in_is_refused_and_never_a_lot() {
+fn backland_nothing_could_take_in_is_a_landlocked_lot_nothing_builds_on_alone() {
     let mut w = block();
     let ids = in_block(&w);
     let (front, back): (Vec<usize>, Vec<usize>) = ids.iter().partition(|&&i| w.parcels.parcels[i].path_frontage);
     let keys: Vec<_> = back.iter().map(|&i| w.parcels.parcels[i].key).collect();
     paint(&mut w, &front);
-    let civic = w.lots.values().filter(|l| l.land_use == LandUse::Civic).count();
+    let civic = w.lots.values().filter(|l| l.land_use == LandUse::Civic && !l.landlocked).count();
     let back: Vec<usize> = keys.iter().filter_map(|k| w.parcels.find(k)).collect();
     // Here the fronts are narrower than the backland behind them: no lot
-    // could take it in, and the Zone tool says so.
+    // takes it in, and the Zone tool zones it all the same.
     for &i in &back {
-        assert_eq!(w.parcel_refusal(i, Some(LandUse::Civic)), Some("landlocked: no parcel in front it could be joined to"));
+        assert_eq!(w.parcel_refusal(i, Some(LandUse::Civic)), None);
+        assert_eq!(w.parcel_refusal(i, Some(LandUse::Commercial)), None, "any use");
     }
-    // Painted anyway (a stroke from before the check): no lot is made of it.
     w.project = None;
     w.add_gesture(Gesture::ParcelZone { parcels: keys.clone(), land_use: Some(LandUse::Civic), industry: None });
     w.try_implement().unwrap();
-    no_unusable_civic(&w);
-    assert_eq!(w.lots.values().filter(|l| l.land_use == LandUse::Civic).count(), civic, "the front lots stay as they were");
-    assert!(!w.master.gestures.values().any(|g| matches!(g, Gesture::ParcelZone { parcels, .. } if parcels.iter().any(|k| keys.contains(k)))), "the backland is taken out of the stroke");
+    planned_is_built(&w);
+    assert_eq!(w.lots.values().filter(|l| l.land_use == LandUse::Civic && !l.landlocked).count(), civic, "the front lots stay as they were");
+    let locked: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Civic && l.landlocked).map(|(id, _)| id).collect();
+    assert!(!locked.is_empty(), "the backland is a landlocked lot of its own");
+    assert!(w.master.gestures.values().any(|g| matches!(g, Gesture::ParcelZone { parcels, .. } if parcels.iter().any(|k| keys.contains(k)))), "the stroke keeps the backland");
+    for l in locked {
+        assert!(!w.site_clear(l, SiteRule::STREET), "ordinary growth never builds on backland alone");
+    }
 }

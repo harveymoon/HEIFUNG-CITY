@@ -37,6 +37,10 @@ fn town() -> (World, BuildingId, BuildingId) {
     assert!(lots.len() >= 2);
     w.build_on(lots[0]);
     let shop = w.lots[lots[0]].building.unwrap();
+    // [malls] A plain shop (its plot may draw a strip mall, with its own car
+    // park out front): these tests are about the town's lots and kerbs.
+    w.buildings[shop].plot.form = None;
+    w.buildings[shop].floors = w.buildings[shop].floors.min(2);
     w.finish_construction(shop);
     let lot = w.build_parking(lots[1]).expect("parking lot opens");
     run(&mut w, 12 * 60);

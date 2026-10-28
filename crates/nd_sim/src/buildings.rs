@@ -555,6 +555,20 @@ pub struct Unit {
     /// Tick it last fell empty (or was planned empty).
     #[serde(default)]
     pub vacant_since: u64,
+    /// [malls] What the unit is for in a mall: a shop (every unit
+    /// elsewhere), an anchor store or a food-court counter.
+    #[serde(default)]
+    pub role: UnitRole,
+}
+
+/// [malls] A mall unit's part: an ordinary shop, a big anchor store at an
+/// end, or a counter in the food court.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UnitRole {
+    #[default]
+    Shop,
+    Anchor,
+    FoodCourt,
 }
 
 impl Unit {
@@ -784,6 +798,12 @@ impl Building {
                     _ => (homes, jobs),
                 }
             }
+            // [malls] A mall's shop floors are busier than an office floor:
+            // twice a shop building's staff a floor.
+            Some(crate::estate::Form::Mall | crate::estate::Form::MegaMall) => {
+                let k = 1 + self.plot.extra_lots.len() as u16;
+                (0, jobs * k * 2)
+            }
             _ => {
                 let homes = if self.land_use == LandUse::Residential && self.tier == Tier::Low && self.floors == 1 { 6 } else { homes };
                 let k = 1 + self.plot.extra_lots.len() as u16;
@@ -803,6 +823,15 @@ impl Building {
             Tier::Mid => (homes + jobs) / 4,
             Tier::Low => 0,
         };
+        // [malls] A strip mall's car park out front (10 to 20 cars, by its
+        // seed: what is drawn), a mall's lot round it, a mega-mall's deck.
+        let k = 1 + self.plot.extra_lots.len() as u16;
+        match self.plot.form {
+            Some(crate::estate::Form::StripMall) => self.parking_capacity = 10 + (self.seed % 11) as u16,
+            Some(crate::estate::Form::Mall) => self.parking_capacity = 30 * k,
+            Some(crate::estate::Form::MegaMall) => self.parking_capacity = 60 * k,
+            _ => {}
+        }
     }
 
     /// [tenants] Each unit's jobs from the building's (`jobs`, all floors):

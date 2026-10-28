@@ -67,7 +67,7 @@ mod tests {
         lots.sort_by(|a, b| b.area().total_cmp(&a.area()));
         let lot = &lots[0];
         let (rules, pal) = (BuildingRules::default(), Palette::default());
-        let unit = |occupant| Unit { lo: 0, hi: 0, share: 1.0 / 3.0, area: 80.0, shopfront: true, jobs: 3, occupant, vacant_since: 0 };
+        let unit = |occupant| Unit { lo: 0, hi: 0, share: 1.0 / 3.0, area: 80.0, shopfront: true, jobs: 3, occupant, vacant_since: 0, role: Default::default() };
         let units = [unit(Occupant::Main), unit(Occupant::Vacant), unit(Occupant::Main)];
         let mut drawn = 0;
         for seed in 0..12u64 {

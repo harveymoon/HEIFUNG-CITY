@@ -32,6 +32,9 @@ fn form_key(f: Form) -> &'static str {
         Form::MegaHotel => "mega_hotel",
         Form::Museum => "museum",
         Form::Tower => "tower",
+        Form::StripMall => "strip_mall",
+        Form::Mall => "mall",
+        Form::MegaMall => "mega_mall",
     }
 }
 

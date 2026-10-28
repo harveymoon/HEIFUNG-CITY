@@ -214,9 +214,14 @@ impl World {
                 weights[k.index()] *= self.economy.taxes.pull(crate::tax::TaxCategory::of_industry(k)) * self.economy.taxes.import_substitution(k);
             }
         }
+        // [land-assembly] No strip mine on a plot too small for a pit.
+        let small = self.lots[lot_id].area() < industry::STRIP_MINE_MIN_AREA;
+        if small {
+            weights[IndustryKind::Mining.index()] = 0.0;
+        }
         let kind = forced.unwrap_or_else(|| industry::pick(&weights, roll));
         let roll = self.rng.random::<f32>();
-        industry::pick_business(&industry::business_weights(kind, &site), roll)
+        industry::pick_business(&industry::business_weights(kind, &site), roll).filter(|k| !(small && *k == BusinessKind::StripMine))
     }
 
     // ── land value ──────────────────────────────────────────────────────────

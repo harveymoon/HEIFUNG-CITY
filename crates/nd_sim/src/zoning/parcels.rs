@@ -88,10 +88,13 @@ impl Parcel {
 
     /// Why this parcel cannot take `lu`, or None if it can. The ruleset:
     /// parks go anywhere, backland and rough ground included (a park is
-    /// reached through the park); homes need a street or path to front;
-    /// everything else needs a street; industry and civic sites are not put
-    /// on scraps, but their deep yards may take the backland behind them
-    /// (it is folded into the lot in front, see [`join_parcels`]).
+    /// reached through the park); [land-assembly] any use may be zoned on
+    /// backland with no frontage (a deep yard folds it into the lot in
+    /// front, see [`join_parcels`]; otherwise it is a landlocked lot that
+    /// is built on only when a company on the plot in front joins it to its
+    /// site); a frontage parcel for homes needs a street or path, for
+    /// everything else a street; industry and civic sites are not put on
+    /// scraps.
     pub fn refusal(&self, lu: LandUse) -> Option<&'static str> {
         if lu == LandUse::Park {
             return None;
@@ -103,13 +106,7 @@ impl Parcel {
             return Some("a steep hillside: only terraced homes, shops and clubs fit here");
         }
         if !self.path_frontage {
-            if lu.takes_backland() {
-                return None;
-            }
-            if self.awkward {
-                return Some("an awkward shape to build on (a sharp inner corner or a sliver), though it fronts a road");
-            }
-            return Some("landlocked: no street or path to front");
+            return None;
         }
         if !lu.fronts_paths() && !self.street_frontage {
             return Some("fronts only a footpath; this use needs a street");
@@ -122,6 +119,16 @@ impl Parcel {
 
     pub fn accepts(&self, lu: LandUse) -> bool {
         self.refusal(lu).is_none()
+    }
+
+    /// [land-assembly] Whether a zone drawn as an area (a polygon, the
+    /// city generator's zones) takes this parcel: as [`Parcel::accepts`],
+    /// but backland only for a use whose deep lots take it in (parks too).
+    /// Backland for any other use is zoned only by painting it (the Zone
+    /// tool's brush), so an area zone does not fill a block's middle with
+    /// landlocked lots.
+    pub fn accepts_in_area(&self, lu: LandUse) -> bool {
+        self.accepts(lu) && (self.path_frontage || lu == LandUse::Park || lu.takes_backland())
     }
 
     pub fn contains(&self, p: Vec2) -> bool {

@@ -1030,18 +1030,36 @@ impl World {
         if !self.lots[lot_id].car_access() {
             b.parking_capacity = 0;
         }
-        let kind = match forced {
+        let mut kind = match forced {
             Some(k) => Some(k),
             None => self.business_for_new_building(lot_id, lu, b.jobs),
         };
+        // [malls] A wide, deep road plot may be a strip mall (a shop or an
+        // office keeps one unit, the rest let); a big one a mall round its
+        // store. Not where a pressure or a move asked for a building.
+        let mall = if forced.is_none() && b.plot.tower.is_none() { self.mall_form_for(lot_id, b.tier, b.seed) } else { None };
+        let mall = match (mall, kind) {
+            (Some(crate::estate::Form::StripMall), Some(k)) if !super::tenants::fits_shopfront(k) && k != BusinessKind::Office => None,
+            (m, _) => m,
+        };
+        if let Some(form) = mall {
+            if form == crate::estate::Form::Mall && !kind.is_some_and(super::tenants::fits_shopfront) {
+                kind = Some(BusinessKind::Grocery);
+            }
+            b.plot.form = Some(form);
+            b.tier = b.tier.min(Tier::Mid);
+            b.floors = if form == crate::estate::Form::StripMall { 2 + (crate::hash::mix(b.seed, 0x57A1) % 2) as u8 } else { 2 };
+            b.recompute_capacity();
+        }
         if let Some(kind) = kind {
             // [industry] some sub-zones build low: wells, fields, yards
             if let Some(ik) = kind.industry() {
                 b.floors = b.floors.min(ik.max_floors()).max(1);
                 b.recompute_capacity();
             }
-            // [economy] sheds, forecourts and ranges stay low too
-            if let Some(m) = kind.max_floors() {
+            // [economy] sheds, forecourts and ranges stay low too ([malls]
+            // a shop in a mall has its unit, the mall its floors)
+            if let Some(m) = kind.max_floors().filter(|_| mall.is_none()) {
                 b.floors = b.floors.min(m).max(1);
                 b.recompute_capacity();
             }
@@ -1059,10 +1077,16 @@ impl World {
             }
         }
         // Nothing opens overnight: the lot becomes a building site first.
-        b.construction = Some(Construction::new(Construction::days_for(floors, tier)));
+        b.construction = Some(Construction::new(if mall.is_some() { Construction::days_for(b.floors, b.tier) } else { Construction::days_for(floors, tier) }));
         b.recompute_capacity();
         let id = self.buildings.insert(b);
         self.lots[lot_id].building = Some(id);
+        // [malls] A mall is a local company's from the start (its store's
+        // firm): the company that may grow it into a mega-mall.
+        if mall == Some(crate::estate::Form::Mall) {
+            let _ = self.firm_of(id);
+            self.estate.stats.malls_total += 1;
+        }
         self.events.push(SimEvent::BuildingBuilt(id));
         self.order_materials(id);
         Some(id)

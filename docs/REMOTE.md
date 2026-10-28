@@ -977,7 +977,7 @@ A citizen's `inspect` also carries `vehicles` {bike, car {id, body, class, price
 - [land] building `land`: `owner` ({id, name, properties, spent, detail {kind: firm (business) |
   developer | household | elite (citizen) | builder (founder) | company (founder)}}, or {kind: independent}), `sale_price`, `lots` (every
   plot it spans, primary first), `merged`, `pending_lots` (bought, still clearing), `form`
-  (mcmansion | mansion | merged | mega_hotel | museum | tower | null), `pressure` and `pressure_floors` at
+  (mcmansion | mansion | merged | mega_hotel | museum | tower | strip_mall | mall | mega_mall | null), `pressure` and `pressure_floors` at
   its lot, `height_cap`, `wants_to_expand`, `owned_with` (every property of its owner)
 
 #### History, replays and the full dump [insight]

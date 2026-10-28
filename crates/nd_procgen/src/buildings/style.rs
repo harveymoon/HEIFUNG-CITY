@@ -338,9 +338,22 @@ styles! {
     DomeHall { label: "dome hall", family: Retail, cluster: -0.3, draw: |g, c, r, _| capsule::dome_hall(g, c, r) },
     /// A round office drum ribboned with glass, a radar ball, a lab dome.
     DomeCampus { label: "dome campus", family: Office, cluster: 0.1, draw: |g, c, r, _| capsule::dome_campus(g, c, r) },
+    // -- [malls] strip malls, malls and mega-malls (`buildings/malls.rs`),
+    // drawn only for their `Form`; appended so `ALL` keeps its order. --
+    /// A row of shopfronts behind a small car park, a pylon sign by the street.
+    StripMall { label: "strip mall", family: Retail, cluster: 0.3, draw: |g, c, r, e| malls::strip_mall(g, c, r, e) },
+    /// A two-level block of shops round its car park, a glass atrium.
+    Mall { label: "mall", family: Special, cluster: -1.0, draw: |g, c, r, e| malls::mall(g, c, r, e) },
+    /// Anchor stores, a food court and a parking structure.
+    MegaMall { label: "mega-mall", family: Special, cluster: -1.5, draw: |g, c, r, e| malls::mega_mall(g, c, r, e) },
 }
 
 impl Style {
+    /// [malls] The mall styles, which draw their own shop signs.
+    pub fn is_mall(self) -> bool {
+        matches!(self, Style::StripMall | Style::Mall | Style::MegaMall)
+    }
+
     /// [capsule] The Capsule district's styles.
     pub const CAPSULE: [Style; 10] = [Style::DomeHouse, Style::SaucerHouse, Style::PopsicleDome, Style::TwinDomes, Style::DomePods, Style::CapsuleTower, Style::SaucerStack, Style::StiltTower, Style::DomeHall, Style::DomeCampus];
 }
@@ -394,6 +407,9 @@ impl Style {
             Form::Museum => Some(Style::Museum),
             Form::Tower => Some(Style::Supertall),
             Form::Merged => None,
+            Form::StripMall => Some(Style::StripMall),
+            Form::Mall => Some(Style::Mall),
+            Form::MegaMall => Some(Style::MegaMall),
         }
     }
 

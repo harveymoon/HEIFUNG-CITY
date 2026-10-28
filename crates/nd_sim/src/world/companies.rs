@@ -364,6 +364,15 @@ impl World {
         };
         let ours = b.plot.lots(b.lot);
         let lu = self.lots.get(b.lot).map_or(b.land_use, |l| l.land_use);
+        // [malls] A store whose plots make a big enough site rebuilds as a
+        // mall; a mall's company grows by opening stores across town (the
+        // mall itself grows into a mega-mall on its own: `grow_malls`).
+        if shop_chain(kind) && self.mall_site_ok(bid) {
+            return Some(ShopGrowth::Mall);
+        }
+        if b.plot.form.is_some_and(|f| f.is_mall()) {
+            return Some(ShopGrowth::Branch);
+        }
         if ours.len() < cap && b.plot.tower.is_none() && !self.plots_next_to(&ours, lu, b.floors.saturating_add(1), b.plot.owner).is_empty() {
             return Some(ShopGrowth::Neighbour);
         }
@@ -379,13 +388,17 @@ impl World {
             let grew = match step {
                 ShopGrowth::Neighbour => self.expand_into_neighbours(bid) || self.open_branch(bid).is_some(),
                 ShopGrowth::Branch => self.open_branch(bid).is_some(),
-                ShopGrowth::Mall => false,
+                ShopGrowth::Mall => self.build_mall(bid),
             };
             if grew {
                 if let Some(o) = self.buildings.get(bid).and_then(|b| b.plot.owner) {
                     let n = self.estate.owners.get(o).map_or(0, |o| o.properties.len());
                     let lots = self.buildings.get(bid).map_or(1, |b| 1 + b.plot.extra_lots.len() + b.plot.pending_lots.len());
-                    let what = if step == ShopGrowth::Neighbour && lots > 1 { format!("bought the plot next door ({lots} plots)") } else { format!("opened another {} ({n} in all)", kind.label()) };
+                    let what = match step {
+                        ShopGrowth::Neighbour if lots > 1 => format!("bought the plot next door ({lots} plots)"),
+                        ShopGrowth::Mall => format!("is rebuilding its {} as a mall ({lots} plots)", kind.label()),
+                        _ => format!("opened another {} ({n} in all)", kind.label()),
+                    };
                     self.note_owner(o, what);
                 }
             }

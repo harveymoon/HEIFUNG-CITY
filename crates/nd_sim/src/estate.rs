@@ -84,6 +84,15 @@ pub const FORECLOSE_DISCOUNT: f64 = 0.6;
 
 /// Most properties merged into one building (the primary lot included).
 pub const MAX_MERGED_LOTS: usize = 4;
+/// [land-assembly] An open-ground site (a strip mine's pit, an oil field,
+/// fields, a car park) grows to at most this many plots...
+pub const BIG_SITE_LOTS: usize = 8;
+/// ... the rest of industry (a factory, a refinery) to this many.
+pub const INDUSTRY_SITE_LOTS: usize = 6;
+/// [land-assembly] An open-ground site need not be a neat block: its plots'
+/// hull may be this much bigger than they are (it is drawn on the plots
+/// themselves, `World::footprint`).
+pub const SITE_HULL_SLACK: f32 = 1.4;
 /// A merged footprint whose convex hull is more than this much bigger than
 /// its plots is refused (the plots do not form one compact block).
 pub const MERGE_HULL_SLACK: f32 = 1.06;
@@ -158,6 +167,15 @@ pub enum Form {
     /// [supertall] A league tower (skyscraper, supertall or megatall) on a
     /// site its developer assembled; `Plot::tower` has its height and form.
     Tower,
+    /// [malls] An LA-style strip mall: two or three storeys, a row of
+    /// shopfronts with a sign over each door and a small car park in front.
+    StripMall,
+    /// [malls] One building holding many shops (tenants) round its own car
+    /// park.
+    Mall,
+    /// [malls] A mall grown over the land round it: anchor stores, a food
+    /// court, a parking structure; draws shoppers from across town.
+    MegaMall,
 }
 
 impl Form {
@@ -169,7 +187,15 @@ impl Form {
             Form::MegaHotel => "mega hotel",
             Form::Museum => "museum",
             Form::Tower => "tower",
+            Form::StripMall => "strip mall",
+            Form::Mall => "mall",
+            Form::MegaMall => "mega-mall",
         }
+    }
+
+    /// [malls] A strip mall, mall or mega-mall: shops let as units.
+    pub fn is_mall(self) -> bool {
+        matches!(self, Form::StripMall | Form::Mall | Form::MegaMall)
     }
 
     /// Lived in by the household that owns it: no rent.
@@ -191,8 +217,35 @@ pub fn expansion_form(kind: BusinessKind) -> Option<Form> {
         // [companies] Fleet yards: a bigger yard runs more vehicles.
         K::TowYard | K::TrashCompany | K::FleetLot => Some(Form::Merged),
         K::Gallery => Some(Form::Museum),
+        // [land-assembly] Most industry grows over the land behind it (a
+        // strip mine's pit, a feedlot's pens), and a car park over the
+        // plots behind its road plot.
+        K::Parking => Some(Form::Merged),
+        _ if kind.industry().is_some() => Some(Form::Merged),
         _ => None,
     }
+}
+
+/// [land-assembly] Plots a business's site may grow to (the road plot
+/// included): open-ground trades (pits, fields, wells, pens, car parks)
+/// spread furthest, the rest of industry further than a shop.
+pub fn site_cap(kind: BusinessKind) -> usize {
+    if grows_in_place(kind) {
+        BIG_SITE_LOTS
+    } else if kind.industry().is_some() {
+        INDUSTRY_SITE_LOTS
+    } else {
+        MAX_MERGED_LOTS
+    }
+}
+
+/// [land-assembly] Trades that grow without rebuilding: they spread over
+/// the empty plots they buy (a pit dug wider, more wells, more fields,
+/// more bays) while they stay open; the rest close and rebuild across the
+/// plots bought.
+pub fn grows_in_place(kind: BusinessKind) -> bool {
+    use BusinessKind as K;
+    matches!(kind, K::StripMine | K::OilWell | K::GrainFarm | K::Dairy | K::CowFarm | K::ChickenFarm | K::Feedlot | K::Parking)
 }
 
 /// Kinds that grow by opening branches across the city rather than by
@@ -451,6 +504,15 @@ pub struct EstateStats {
     pub redensified_total: u32,
     /// [pt-growth] Half-empty blocks their owners lost to a developer.
     pub foreclosures_total: u32,
+    /// [land-assembly] Plots open-ground sites (pits, oil fields, car
+    /// parks) bought round them and spread over, and the backland among them.
+    pub site_plots_total: u32,
+    pub backland_plots_total: u32,
+    /// [malls] Stores rebuilt as malls, and malls grown into mega-malls.
+    pub malls_total: u32,
+    pub mega_malls_total: u32,
+    /// [malls] Old low shop buildings rebuilt as strip malls.
+    pub strip_malls_rebuilt_total: u32,
 }
 
 // ── the pressure grid ────────────────────────────────────────────────────────

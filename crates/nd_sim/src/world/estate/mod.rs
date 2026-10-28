@@ -62,6 +62,11 @@ impl World {
         self.foreclose_empty();
         self.densify();
         self.expand_firms();
+        // [land-assembly] Pits, oil fields, farms and car parks spread over
+        // the plots behind them; [malls] a thriving mall grows into a mega-mall.
+        self.assemble_sites();
+        self.grow_malls();
+        self.rebuild_strip_malls();
         self.build_mcmansions();
         // [rich] The well-off buy a business or a second home.
         self.invest_rich();

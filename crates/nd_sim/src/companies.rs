@@ -268,8 +268,8 @@ pub enum ShopGrowth {
     Neighbour,
     /// Open another store across town (the chain that becomes a corp).
     Branch,
-    /// [G2] Build a mall on the land it has assembled. Not taken yet: the
-    /// malls round fills this in (`World::shop_growth` never returns it).
+    /// [malls] Rebuild as a mall on the land it has assembled
+    /// (`World::build_mall`, once its plots reach `world::malls::MALL_MIN_AREA`).
     Mall,
 }
 

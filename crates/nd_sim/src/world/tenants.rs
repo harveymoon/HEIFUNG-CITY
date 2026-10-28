@@ -21,7 +21,7 @@
 //! seed and the day.
 
 use super::*;
-use crate::buildings::{Occupant, Unit};
+use crate::buildings::{Occupant, Unit, UnitRole};
 use crate::estate::OwnerKind;
 use crate::hash::hash01;
 
@@ -64,6 +64,11 @@ pub fn unit_layout(b: &Building, frontage: f32, plate: f32) -> Vec<Unit> {
     if !b.operating() || b.is_special() || b.is_parking() || b.plot.form.is_some_and(|f| f.owner_occupied()) {
         return Vec::new();
     }
+    // [malls] A strip mall, mall or mega-mall has its own layout, whatever
+    // its own store is.
+    if let Some(form) = b.plot.form.filter(|f| f.is_mall()) {
+        return super::malls::mall_layout(form, b.floors.max(1), frontage, plate);
+    }
     if b.business.as_ref().is_some_and(|z| z.kind.max_floors().is_some() || z.kind.needs_site() || z.kind.industry().is_some()) {
         return Vec::new();
     }
@@ -86,7 +91,7 @@ pub fn unit_layout(b: &Building, frontage: f32, plate: f32) -> Vec<Unit> {
     let mut v = Vec::new();
     let share = 1.0 / shops as f32;
     for _ in 0..shops {
-        v.push(Unit { lo: 0, hi: base_top, share, area: plate * share * (base_top + 1) as f32, shopfront: true, jobs: 0, occupant: Occupant::Vacant, vacant_since: 0 });
+        v.push(Unit { lo: 0, hi: base_top, share, area: plate * share * (base_top + 1) as f32, shopfront: true, jobs: 0, occupant: Occupant::Vacant, vacant_since: 0, role: UnitRole::Shop });
     }
     if b.land_use == LandUse::Commercial {
         // Upper floors in ranges: a floor each in a low block, up to eight
@@ -98,7 +103,7 @@ pub fn unit_layout(b: &Building, frontage: f32, plate: f32) -> Vec<Unit> {
             let mut lo = first;
             while lo < floors {
                 let hi = (lo + band - 1).min(floors - 1);
-                v.push(Unit { lo, hi, share: 1.0, area: plate * (hi - lo + 1) as f32, shopfront: false, jobs: 0, occupant: Occupant::Vacant, vacant_since: 0 });
+                v.push(Unit { lo, hi, share: 1.0, area: plate * (hi - lo + 1) as f32, shopfront: false, jobs: 0, occupant: Occupant::Vacant, vacant_since: 0, role: UnitRole::Shop });
                 lo = hi + 1;
             }
         }
@@ -114,6 +119,12 @@ pub fn unit_layout(b: &Building, frontage: f32, plate: f32) -> Vec<Unit> {
 /// The unit jobs must be set (`recompute_capacity`).
 pub fn assign_main(b: &mut Building, keep_shops: bool, staff: u16) {
     let Some(kind) = b.business.as_ref().map(|z| z.kind) else { return };
+    // [malls] A mall's own store has one unit (an anchor if there is one);
+    // the rest are let.
+    if b.plot.form.is_some_and(|f| f.is_mall()) {
+        super::malls::assign_mall_main(b, kind, staff);
+        return;
+    }
     let shop = fits_shopfront(kind);
     let mut own = 0u16;
     for u in b.units.iter_mut() {
@@ -377,10 +388,17 @@ impl World {
     /// the shop kinds the market would open now (`kinds_viable`), cafés and
     /// bookshops on dear streets too; picked by hash. `None`: nothing would
     /// pay its way here.
-    fn shop_for_unit(&self, host: BuildingId, jobs: u16, salt: u64) -> Option<BusinessKind> {
+    fn shop_for_unit(&self, host: BuildingId, jobs: u16, salt: u64, role: UnitRole) -> Option<BusinessKind> {
         let h = self.buildings.get(host)?;
         let dear = self.lots.get(h.lot).is_some_and(|l| self.land_value.at(l.center) >= super::campus::DOWNTOWN_VALUE);
-        let menu: &[BusinessKind] = if dear {
+        let mall = h.plot.form.is_some_and(|f| f.is_mall());
+        // [malls] Anchors are big stores, the food court cafés and bakeries;
+        // a mall's shops are the whole menu (it is where the shops are).
+        let menu: &[BusinessKind] = if role == UnitRole::Anchor {
+            &[BusinessKind::Grocery, BusinessKind::GadgetShop]
+        } else if role == UnitRole::FoodCourt {
+            &[BusinessKind::Cafe, BusinessKind::Bakery]
+        } else if dear || mall {
             &[BusinessKind::Grocery, BusinessKind::Bakery, BusinessKind::GadgetShop, BusinessKind::Cafe, BusinessKind::Bookshop]
         } else {
             &[BusinessKind::Grocery, BusinessKind::Bakery, BusinessKind::GadgetShop]
@@ -402,26 +420,45 @@ impl World {
         let demand = self.economy.demand_for(LandUse::Commercial).clamp(0.0, 1.0);
         let short_of_jobs = self.economy.job_gap();
         let hosts: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.vacant_units() > 0 && b.operating() && !b.is_derelict()).map(|(id, _)| id).collect();
-        let mut let_today = 0;
+        let (mut let_today, mut mall_today) = (0, 0);
         for host in hosts {
-            if let_today >= LETS_PER_DAY {
+            if let_today >= LETS_PER_DAY && mall_today >= super::malls::MALL_LETS_PER_DAY {
                 break;
             }
-            let h = &self.buildings[host];
-            let seed = h.seed;
-            let Some(i) = h.units.iter().position(|u| u.vacant()) else { continue };
-            let u = h.units[i];
-            let chance = if u.shopfront { LET_CHANCE * (0.25 + demand) } else { LET_CHANCE * (short_of_jobs * 10.0).clamp(0.0, 1.0) };
-            if hash01(seed, day, i as u64) >= chance {
+            // [malls] Malls let on their own allowance, up to two units a
+            // day each, and more readily (shoppers come for the mall).
+            let mall = self.buildings[host].plot.form.is_some_and(|f| f.is_mall());
+            if (mall && mall_today >= super::malls::MALL_LETS_PER_DAY) || (!mall && let_today >= LETS_PER_DAY) {
                 continue;
             }
-            let kind = if u.shopfront { self.shop_for_unit(host, u.jobs, day) } else { Some(BusinessKind::Office) };
-            let Some(kind) = kind else { continue };
-            let mut z = Business::new(kind, u.jobs);
-            z.origin = Some(format!("Took {} of {}, empty {} days.", if u.shopfront { "a shopfront" } else { "offices" }, self.buildings[host].name, self.clock.tick.saturating_sub(u.vacant_since) / 1440));
-            if self.open_tenant(host, i, z, None).is_some() {
-                let_today += 1;
-                self.economy.market.tenants_let_total += 1;
+            let vacant: Vec<usize> = self.buildings[host].units.iter().enumerate().filter(|(_, u)| u.vacant()).map(|(i, _)| i).take(if mall { 2 } else { 1 }).collect();
+            for i in vacant {
+                let h = &self.buildings[host];
+                let seed = h.seed;
+                let u = h.units[i];
+                let pull = if mall { super::malls::MALL_LET_PULL } else { 1.0 };
+                let chance = if u.shopfront { LET_CHANCE * (0.25 + demand) * pull } else { LET_CHANCE * (short_of_jobs * 10.0).clamp(0.0, 1.0) };
+                if hash01(seed, day, i as u64) >= chance {
+                    continue;
+                }
+                let kind = if u.shopfront { self.shop_for_unit(host, u.jobs, if mall { day ^ ((i as u64) << 20) } else { day }, u.role) } else { Some(BusinessKind::Office) };
+                let Some(kind) = kind else { continue };
+                let mut z = Business::new(kind, u.jobs);
+                let what = match u.role {
+                    UnitRole::Anchor => "the anchor store",
+                    UnitRole::FoodCourt => "a food-court counter",
+                    UnitRole::Shop if u.shopfront => "a shopfront",
+                    UnitRole::Shop => "offices",
+                };
+                z.origin = Some(format!("Took {what} of {}, empty {} days.", self.buildings[host].name, self.clock.tick.saturating_sub(u.vacant_since) / 1440));
+                if self.open_tenant(host, i, z, None).is_some() {
+                    if mall {
+                        mall_today += 1;
+                    } else {
+                        let_today += 1;
+                    }
+                    self.economy.market.tenants_let_total += 1;
+                }
             }
         }
     }
@@ -438,7 +475,8 @@ impl World {
                 break;
             }
             let mut who: Vec<(Occupant, BuildingId)> = Vec::new();
-            if self.buildings[host].business.is_some() {
+            // [malls] A mall's own store keeps its one unit: the rest is let.
+            if self.buildings[host].business.is_some() && !self.buildings[host].plot.form.is_some_and(|f| f.is_mall()) {
                 who.push((Occupant::Main, host));
             }
             who.extend(self.tenants_of(host).into_iter().map(|t| (Occupant::Tenant(t), t)));

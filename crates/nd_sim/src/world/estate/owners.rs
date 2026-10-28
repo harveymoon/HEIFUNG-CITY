@@ -98,8 +98,26 @@ impl World {
         }
         let others: Vec<&Lot> = b.plot.extra_lots.iter().filter_map(|l| self.lots.get(*l)).collect();
         // [supertall] A tower's assembled site may be a little less compact.
-        let slack = if b.plot.form == Some(Form::Tower) { crate::towers::TOWER_HULL_SLACK } else { MERGE_HULL_SLACK };
+        // [land-assembly] An open-ground site (a pit, fields, a car park)
+        // is drawn on the plots it owns, joined into one outline, however
+        // ragged; it is framed and entered by its road plot.
+        let open = b.plot.form == Some(Form::Merged) && b.business.as_ref().is_some_and(|z| crate::estate::grows_in_place(z.kind));
+        let slack = match b.plot.form {
+            Some(Form::Tower) => crate::towers::TOWER_HULL_SLACK,
+            // [malls] A mega-mall's car park fills the corners of its block.
+            Some(Form::MegaMall) => super::super::malls::MALL_HULL_SLACK,
+            _ if open => crate::estate::SITE_HULL_SLACK,
+            _ => MERGE_HULL_SLACK,
+        };
         Some(match merged_lot_within(lot, &others, slack) {
+            Some(mut m) if open => {
+                let polys: Vec<Vec<Vec2>> = std::iter::once(lot).chain(others.iter().copied()).map(|l| l.polygon.clone()).collect();
+                if let Some(u) = crate::zoning::joined_outline(&polys).filter(|u| u.len() >= 3) {
+                    m.center = crate::zoning::inner_center(&u);
+                    m.polygon = u;
+                }
+                Cow::Owned(m)
+            }
             Some(m) => Cow::Owned(m),
             None => Cow::Borrowed(lot),
         })
@@ -220,7 +238,7 @@ impl World {
     }
 
     /// The owner record of a firm, made on its first branch or merge.
-    pub(super) fn firm_of(&mut self, bid: BuildingId) -> Option<OwnerId> {
+    pub(in crate::world) fn firm_of(&mut self, bid: BuildingId) -> Option<OwnerId> {
         let b = self.buildings.get(bid)?;
         if let Some(o) = b.plot.owner.filter(|o| self.estate.owners.contains_key(*o)) {
             return Some(o);

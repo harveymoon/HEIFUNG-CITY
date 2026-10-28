@@ -2325,7 +2325,7 @@ fn a_zone_polygon_maps_onto_the_parcels_whose_centre_it_holds() {
     w.add_zone(poly.clone(), LandUse::Commercial);
     for (i, p) in w.parcels.parcels.iter().enumerate() {
         let inside = crate::zoning::point_in_polygon(p.center, &poly);
-        let expect = inside && p.accepts(LandUse::Commercial);
+        let expect = inside && p.accepts_in_area(LandUse::Commercial);
         assert_eq!(p.land_use == Some(LandUse::Commercial), expect, "parcel {i} at {:?}", p.center);
         assert_eq!(w.planned_zoning()[i], p.land_use);
     }
@@ -2381,15 +2381,16 @@ fn the_brush_paints_only_parcels_that_take_the_use_and_one_stroke_is_one_undo() 
     // Industry joins parcels into bigger lots and takes the backland behind.
     let ids = w.parcels.in_polygon(&square(100.0, -100.0, 160.0));
     w.paint_parcels(&ids, Some(LandUse::Industrial), None);
-    // [fix/roads-tools] Backland only where a yard in front could take it
-    // in (flag G5): here the fronts are narrower than the backland behind
-    // them, so it is refused rather than left as unusable ground.
-    for &i in ids.iter().filter(|&&i| w.parcels.parcels[i].landlocked()) {
-        let taken = w.planned_zoning()[i] == Some(LandUse::Industrial);
-        assert_eq!(taken, w.backland_has_a_front(i, LandUse::Industrial), "backland is painted exactly where a yard could take it in");
+    // [land-assembly] Any backland is painted (Harvey 2026-10-15, after
+    // flag G5 refused what no yard in front could take in): what no yard
+    // folds in is a landlocked lot nothing builds on alone.
+    for &i in ids.iter().filter(|&&i| w.parcels.parcels[i].landlocked() && !w.parcels.parcels[i].rough) {
+        assert_eq!(w.planned_zoning()[i], Some(LandUse::Industrial), "backland is painted");
     }
     w.implement();
-    assert!(!w.lots.values().any(|l| l.land_use == LandUse::Industrial && l.landlocked && !l.polygon.is_empty() && w.parcels.parcels.iter().any(|p| p.lot.is_some_and(|x| w.lots.get(x).is_some_and(|y| std::ptr::eq(y, l))) && !p.rough)), "no yard of unusable ground");
+    for (id, _) in w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Industrial && l.landlocked) {
+        assert!(!w.site_clear(id, SiteRule::STREET), "no yard grows on backland alone");
+    }
     let ind: Vec<&Lot> = w.lots.values().filter(|l| l.land_use == LandUse::Industrial && l.usable()).collect();
     assert!(!ind.is_empty());
     let mean = ind.iter().map(|l| l.area()).sum::<f32>() / ind.len() as f32;

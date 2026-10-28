@@ -234,6 +234,12 @@ mod roadworks;
 mod relocate;
 // [tenants] several businesses in one building
 mod tenants;
+// [malls] Strip malls, malls and mega-malls.
+pub mod malls;
+// [land-assembly] Companies spreading over the land behind the road.
+mod land_assembly;
+#[cfg(test)]
+mod land_malls_tests;
 pub use tenants::{fits_shopfront, unit_layout};
 #[cfg(test)]
 mod tenants_tests;

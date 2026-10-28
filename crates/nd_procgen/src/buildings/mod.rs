@@ -13,6 +13,8 @@ pub mod air;
 pub mod brand;
 // [tenants] a sign over each shop of a building let in parts
 mod shopfronts;
+// [malls] Strip malls, malls and mega-malls.
+mod malls;
 mod civic;
 mod commercial;
 mod construction;
@@ -206,8 +208,9 @@ fn finished(ctx: &Ctx, style: Style, rng: &mut nd_sim::SimRng, extras: &Extras) 
     if let Some(m) = extras.brand.as_ref().filter(|_| style != Style::Beach) {
         brand::decorate(&mut g, ctx, m);
     }
-    // [tenants] A sign over each shop on the ground floor.
-    if !extras.units.is_empty() {
+    // [tenants] A sign over each shop on the ground floor ([malls] a mall
+    // style hangs its own).
+    if !extras.units.is_empty() && !style.is_mall() {
         shopfronts::draw(&mut g, ctx, extras.units, ctx.seed);
     }
     // [capsule] The dome district is spotless whatever its tier or age.

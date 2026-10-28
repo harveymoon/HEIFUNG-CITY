@@ -255,7 +255,9 @@ impl World {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };
-            let d = lot.center.distance(at);
+            // [malls] People come further for a mall, from across town for a
+            // mega-mall: the distance they weigh is shorter.
+            let d = lot.center.distance(at) / self.shop_reach(bid);
             let price = bz.sell_price(r, b.jobs);
             cands.push((bid, price + d * 0.02, d, price));
         }
