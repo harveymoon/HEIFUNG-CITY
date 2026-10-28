@@ -9,16 +9,12 @@ use super::fmt::money;
 use crate::tools::Selection;
 use nd_sim::estate::OwnerKind;
 
-pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId, selection: &mut Selection) {
-    let Some(b) = w.buildings.get(id) else { return };
-    // [megacorp] The corp or university behind it, with its logo.
-    brand_line(ui, w, id);
-    if b.is_special() || b.land_use == nd_sim::LandUse::Park {
-        return;
-    }
-    section(ui, "OWNERSHIP");
+/// Who owns `id`, as the OWNERSHIP section says it: the owner's name and
+/// what kind of owner it is ([p2-look] the mall and site lines too).
+pub fn owner_text(w: &nd_sim::World, id: nd_sim::BuildingId) -> String {
+    let Some(b) = w.buildings.get(id) else { return String::new() };
     let owner = w.owner_of(id);
-    let who = match owner.map(|(_, o)| (o.name.clone(), &o.kind)) {
+    match owner.map(|(_, o)| (o.name.clone(), &o.kind)) {
         Some((name, OwnerKind::Elite { .. })) => format!("{name} (billionaire)"),
         Some((name, OwnerKind::Developer)) => format!("{name} (an out-of-town developer, selling up to local firms)"),
         Some((name, OwnerKind::Builder { founder })) => match w.citizens.get(*founder) {
@@ -35,7 +31,19 @@ pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::Buildi
             if n > 1 { format!("{name} ({} chain of {n})", kind.label()) } else { format!("{name} (the {} firm)", kind.label()) }
         }
         None => if b.homes > 0 { "an independent landlord".to_string() } else { "independently owned".to_string() },
-    };
+    }
+}
+
+pub fn building_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId, selection: &mut Selection) {
+    let Some(b) = w.buildings.get(id) else { return };
+    // [megacorp] The corp or university behind it, with its logo.
+    brand_line(ui, w, id);
+    if b.is_special() || b.land_use == nd_sim::LandUse::Park {
+        return;
+    }
+    section(ui, "OWNERSHIP");
+    let owner = w.owner_of(id);
+    let who = owner_text(w, id);
     ui.label(egui::RichText::new(format!("owned by {who}  ·  for sale at {}", money(w.sale_price(id)))).color(IVORY));
     // [ledger] Where the rent goes: the owner's account (a resident's
     // purse, a company's, a corp's cash) or the landlords' pool.

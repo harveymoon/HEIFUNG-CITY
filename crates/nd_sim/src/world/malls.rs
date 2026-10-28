@@ -68,6 +68,16 @@ pub const MALL_HULL_SLACK: f32 = 1.12;
 /// A mega-mall's site: at least this big (m²), at most this many plots.
 pub const MEGA_MALL_MIN_AREA: f32 = 3000.0;
 pub const MEGA_MALL_MAX_LOTS: usize = 8;
+/// [p2-look] A mega-mall's site must be compact: its short side at least
+/// this share of its long side, and at least this long (m), measured along
+/// and across its road plot's front. (A forced one on a bike shop's long
+/// narrow forecourt came out a cramped strip of small anchors.)
+pub const MEGA_MALL_MIN_ASPECT: f32 = 0.45;
+pub const MEGA_MALL_MIN_SIDE: f32 = 36.0;
+/// [p2-look] How loose the block may be while a mega-mall is still buying
+/// it (an L on the way to a square); the finished block is joined at
+/// [`MALL_HULL_SLACK`].
+pub const MEGA_MALL_GROWING_SLACK: f32 = 1.35;
 /// A mall grows only while at most this share of its shops are to let...
 pub const MEGA_MALL_MAX_VACANT: f32 = 0.25;
 /// ... it has traded this many days...
@@ -314,6 +324,13 @@ impl World {
         }
     }
 
+    /// [p2-look] The distance (m) over which people weigh coming to the
+    /// shop at `bid` (`choose_shop` divides the walk or drive by it): a
+    /// street shop's, times its mall's pull (`shop_reach`).
+    pub fn shopper_reach_m(&self, bid: BuildingId) -> f32 {
+        super::places::REACH_SHOP * self.shop_reach(bid)
+    }
+
     /// [malls] A shop chain's store whose site is big enough to rebuild as a
     /// mall (`ShopGrowth::Mall`): commercial, not one already, on a road
     /// plot, its plots at least [`MALL_MIN_AREA`] together, in a district
@@ -388,10 +405,54 @@ impl World {
         }
     }
 
+    /// [p2-look] A site's extent along its road plot's front and across it
+    /// (m): the box its plots fill, turned with the front.
+    pub fn site_extent(&self, primary: LotId, lots: &[LotId]) -> (f32, f32) {
+        let Some(p) = self.lots.get(primary) else { return (0.0, 0.0) };
+        let along = Vec2::new(-p.front_dir.y, p.front_dir.x);
+        let (mut lo, mut hi) = (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN));
+        for l in std::iter::once(&primary).chain(lots.iter()).filter_map(|l| self.lots.get(*l)) {
+            for q in &l.polygon {
+                let d = Vec2::new((*q - p.center).dot(along), (*q - p.center).dot(p.front_dir));
+                lo = lo.min(d);
+                hi = hi.max(d);
+            }
+        }
+        let size = (hi - lo).max(Vec2::ZERO);
+        (size.x, size.y)
+    }
+
+    /// [p2-look] Whether a mega-mall fits a site of these plots: compact
+    /// enough ([`MEGA_MALL_MIN_ASPECT`], [`MEGA_MALL_MIN_SIDE`]) for its
+    /// anchors, concourse and parking deck round a car park.
+    pub fn mega_mall_shape_ok(&self, primary: LotId, lots: &[LotId]) -> bool {
+        let (w, d) = self.site_extent(primary, lots);
+        w.min(d) >= MEGA_MALL_MIN_SIDE && w.min(d) >= w.max(d) * MEGA_MALL_MIN_ASPECT
+    }
+
     /// [malls] The plots round the building at `bid` that would make its
-    /// site a mega-mall's (cheapest touching first, the site kept compact),
-    /// or None if they cannot reach [`MEGA_MALL_MIN_AREA`].
+    /// site a mega-mall's, or None if they cannot reach
+    /// [`MEGA_MALL_MIN_AREA`] on a compact site (`mega_mall_shape_ok`).
     fn mega_mall_plots(&self, bid: BuildingId, relaxed: bool) -> Option<Vec<LotId>> {
+        // [p2-look] Two ways of buying the block, the first that gives a
+        // compact one drawn whole: towards a square (on small plots: taking
+        // the squarest step each turn runs along the street, a road plot
+        // beside being squarer than one behind, into a strip), else the
+        // squarest step each turn (on big plots, where a square's L on the
+        // way would not join).
+        self.mega_mall_plots_by(bid, relaxed, true).or_else(|| self.mega_mall_plots_by(bid, relaxed, false))
+    }
+
+    /// [p2-look] `mega_mall_plots` one way: `square`, each plot the one
+    /// that brings the block's sides nearest a square of the size wanted
+    /// (the block may be an L on the way, `MEGA_MALL_GROWING_SLACK`); else
+    /// the one that leaves it most compact (joined at `MALL_HULL_SLACK`
+    /// every step). The cheapest of those near as good either way. The
+    /// finished block must join at `MALL_HULL_SLACK`, the slack
+    /// `World::footprint` draws it at (a forced mega-mall bought at a looser
+    /// one fell back to its road plot alone, a narrow forecourt, and came
+    /// out a cramped box), and pass `mega_mall_shape_ok`.
+    fn mega_mall_plots_by(&self, bid: BuildingId, relaxed: bool, square: bool) -> Option<Vec<LotId>> {
         let b = self.buildings.get(bid)?;
         let ours = b.plot.lots(b.lot);
         let owner = b.plot.owner;
@@ -399,19 +460,40 @@ impl World {
         let primary = self.lots.get(b.lot)?;
         let mut area: f32 = ours.iter().filter_map(|l| self.lots.get(*l)).map(|l| l.area()).sum();
         let mut picked: Vec<LotId> = Vec::new();
+        let floors = if relaxed { 12 } else { 4 };
+        let slack = if square { MEGA_MALL_GROWING_SLACK } else { MALL_HULL_SLACK };
+        let side = (MEGA_MALL_MIN_AREA * 1.2).sqrt();
         while area < MEGA_MALL_MIN_AREA && ours.len() + picked.len() < MEGA_MALL_MAX_LOTS {
             let mut cur = ours.clone();
             cur.extend(picked.iter().copied());
-            let (floors, slack) = if relaxed { (12, 1.35) } else { (4, MALL_HULL_SLACK) };
-            let next = self.plots_next_to(&cur, lu, floors, owner).into_iter().map(|(_, l)| l).find(|l| {
-                let all: Vec<&Lot> = cur.iter().skip(1).chain(std::iter::once(l)).filter_map(|x| self.lots.get(*x)).collect();
-                merged_lot_within(primary, &all, slack).is_some()
-            });
+            // (score, lot): lower is better.
+            let fits: Vec<(f32, LotId)> = self
+                .plots_next_to(&cur, lu, floors, owner)
+                .into_iter()
+                .map(|(_, l)| l)
+                .filter(|l| {
+                    let all: Vec<&Lot> = cur.iter().skip(1).chain(std::iter::once(l)).filter_map(|x| self.lots.get(*x)).collect();
+                    merged_lot_within(primary, &all, slack).is_some()
+                })
+                .map(|l| {
+                    let mut with: Vec<LotId> = cur[1..].to_vec();
+                    with.push(l);
+                    let (w, d) = self.site_extent(b.lot, &with);
+                    let score = if square { (w - side).abs() + (d - side).abs() } else { -(w.min(d) / w.max(d).max(1e-3)) * 50.0 };
+                    (score, l)
+                })
+                .collect();
+            let best = fits.iter().map(|x| x.0).fold(f32::MAX, f32::min);
+            let next = fits.iter().find(|x| x.0 <= best + 5.0).map(|x| x.1);
             let Some(l) = next else { break };
             area += self.lots[l].area();
             picked.push(l);
         }
-        (area >= MEGA_MALL_MIN_AREA && !picked.is_empty()).then_some(picked)
+        let mut site: Vec<LotId> = ours[1..].to_vec();
+        site.extend(picked.iter().copied());
+        let all: Vec<&Lot> = site.iter().filter_map(|x| self.lots.get(*x)).collect();
+        let drawn = merged_lot_within(primary, &all, MALL_HULL_SLACK).is_some();
+        (area >= MEGA_MALL_MIN_AREA && !picked.is_empty() && drawn && self.mega_mall_shape_ok(b.lot, &site)).then_some(picked)
     }
 
     /// [malls] The mall at `bid` buys the commercial plots round it (built
@@ -424,7 +506,7 @@ impl World {
     }
 
     /// [malls] `grow_mega_mall`; `relaxed` (a forced one, for screenshots)
-    /// buys taller neighbours and takes a less compact block.
+    /// buys taller neighbours.
     fn grow_mega_mall_with(&mut self, bid: BuildingId, relaxed: bool) -> bool {
         let Some(b) = self.buildings.get(bid) else { return false };
         if b.plot.form != Some(Form::Mall) || !b.operating() || b.is_tenant() || !b.plot.pending_lots.is_empty() {

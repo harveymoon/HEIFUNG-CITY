@@ -59,6 +59,43 @@ pub fn building_land(w: &World, id: BuildingId) -> Value {
         "height_cap": w.height_cap(b.lot),
         "wants_to_expand": w.wants_to_expand(id),
         "owned_with": w.owned_with(id).iter().map(|p| key_str(*p)).collect::<Vec<_>>(),
+        // [p2-look] A mall's shops and draw, a joined site's size.
+        "mall": mall_json(w, id),
+        "site": (!b.plot.extra_lots.is_empty()).then(|| json!({
+            "plots": 1 + b.plot.extra_lots.len(),
+            "backland": b.plot.extra_lots.iter().filter(|l| w.lots.get(**l).is_some_and(|x| x.landlocked)).count(),
+            "area_m2": round(w.footprint(id).map_or(0.0, |l| l.area())),
+        })),
+    })
+}
+
+/// [p2-look] `inspect.building.land.mall` of a strip mall, mall or
+/// mega-mall: its shop units by role (let or to let, who has them), the
+/// car park and the reach; null for anything else.
+fn mall_json(w: &World, id: BuildingId) -> Value {
+    let Some(b) = w.buildings.get(id).filter(|b| b.plot.form.is_some_and(|f| f.is_mall())) else { return Value::Null };
+    let units: Vec<Value> = b
+        .units
+        .iter()
+        .filter(|u| u.shopfront)
+        .map(|u| {
+            let who = match u.occupant {
+                nd_sim::Occupant::Vacant => Value::Null,
+                nd_sim::Occupant::Main => json!({ "id": key_str(id), "name": b.name, "own": true }),
+                nd_sim::Occupant::Tenant(t) => json!({ "id": key_str(t), "name": w.buildings.get(t).map(|x| x.name.clone()), "kind": w.buildings.get(t).and_then(|x| x.business.as_ref()).map(|z| z.kind.label()) }),
+            };
+            json!({ "role": format!("{:?}", u.role).to_lowercase(), "floor": u.lo, "let": !u.vacant(), "occupant": who })
+        })
+        .collect();
+    json!({
+        "shops": units.len(),
+        "let": b.units.iter().filter(|u| u.shopfront && !u.vacant()).count(),
+        "tenants": w.tenants_of(id).len(),
+        "parking_spaces": b.parking_capacity,
+        "parking_used": b.parking_used,
+        "reach": round(w.shop_reach(id)),
+        "reach_m": round(w.shopper_reach_m(id)),
+        "units": units,
     })
 }
 

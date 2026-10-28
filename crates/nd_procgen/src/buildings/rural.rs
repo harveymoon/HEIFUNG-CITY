@@ -6,6 +6,7 @@
 use super::parts::*;
 use super::kit::{block, cow, gable_on, fish_crates, fish_sign, fit, haul_truck, heap, pane, pane_row, rail_fence, R};
 use super::{Ctx, Face, Frame};
+use nd_sim::geom::point_in_polygon;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::rng_for;
@@ -318,99 +319,225 @@ pub fn slaughterhouse(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
 
 // ── strip mine ───────────────────────────────────────────────────────────────
 
-/// A terraced open pit filling the lot: benches stepping down from a high
-/// spoil rim to a floor with standing water, haul trucks on the benches, a
-/// conveyor up out of it to an ore heap, spoil heaps and a site cabin.
+/// Points round a strip mine's pit edge.
+const PIT_SIDES: usize = 24;
+
+/// [p2-look] Where a strip mine's pit lies on its lot (lot coordinates):
+/// its edge, a convex ring of [`PIT_SIDES`] points round `centre` fitted
+/// into the lot behind a strip along the street (`front` deep) kept for
+/// the ore heap, spoil and the cabin. The pit is dug below the ground: the
+/// renderer cuts the same ring out of the ground ([`strip_mine_hole`]).
+struct Pit {
+    ring: Vec<Vec2>,
+    centre: Vec2,
+    /// The shortest distance from the centre to the edge, m.
+    r: f32,
+    front: f32,
+    area: R,
+}
+
+fn pit_plan(lot_poly: &[Vec2]) -> Option<Pit> {
+    let area = R::of(&offset_poly(lot_poly, 1.0));
+    let front = (area.d() * 0.22).clamp(4.0, 14.0);
+    let room = super::kit::clip_box(&offset_poly(lot_poly, 1.5), area.u0 - 3.0, area.u1 + 3.0, area.v0 + front, area.v1 + 3.0);
+    let room = if room.len() >= 3 { room } else { offset_poly(lot_poly, 1.5) };
+    if room.len() < 3 {
+        return None;
+    }
+    let (lo, hi) = bounds(&room);
+    // The biggest ellipse found round a few centres (the middle, the
+    // deepest point, a grid over the site): a joined site's outline is
+    // ragged, and one centred in its box can come out small.
+    let fits = |ring: &[Vec2]| (0..ring.len()).all(|i| [ring[i], (ring[i] + ring[(i + 1) % ring.len()]) * 0.5].iter().all(|p| point_in_polygon(*p, &room) && distance_to_boundary(*p, &room) > 0.3));
+    let ellipse = |centre: Vec2, rx: f32, ry: f32| -> Vec<Vec2> { (0..PIT_SIDES).map(|i| centre + Vec2::from_angle(i as f32 / PIT_SIDES as f32 * TAU) * Vec2::new(rx, ry)).collect() };
+    let mut centres = vec![(lo + hi) * 0.5, interior_anchor(&room)];
+    for j in 1..5 {
+        for i in 1..5 {
+            centres.push(lo + (hi - lo) * Vec2::new(i as f32, j as f32) / 5.0);
+        }
+    }
+    let mut best: Option<(f32, Vec2, f32, f32)> = None;
+    for centre in centres.into_iter().filter(|c| point_in_polygon(*c, &room)) {
+        let (rx, ry) = ((centre.x - lo.x).min(hi.x - centre.x), (centre.y - lo.y).min(hi.y - centre.y));
+        let mut k = 1.0;
+        while k > 0.3 && !fits(&ellipse(centre, rx * k, ry * k)) {
+            k *= 0.93;
+        }
+        let r = rx.min(ry) * k;
+        if k > 0.3 && r >= 5.0 && best.is_none_or(|b| rx * ry * k * k > b.0) {
+            best = Some((rx * ry * k * k, centre, rx * k, ry * k));
+        }
+    }
+    let (_, centre, rx, ry) = best?;
+    let r = rx.min(ry);
+    Some(Pit { ring: ellipse(centre, rx, ry), centre, r, front, area })
+}
+
+/// [p2-look] The edge of the pit a strip mine on `lot` (the building's
+/// footprint, `World::footprint`) is dug in, in world x, z: the hole the
+/// renderer cuts in the ground. None when the lot is too small for one.
+pub fn strip_mine_hole(lot: &nd_sim::Lot) -> Option<Vec<Vec2>> {
+    let (frame, lot_poly) = Frame::lot_local(lot);
+    pit_plan(&lot_poly).map(|p| p.ring.iter().map(|q| frame.to_world(q.x, q.y)).collect())
+}
+
+/// A strip mine: a terraced open pit dug below the ground: benches stepping
+/// down from the edge to a floor with standing water, a haul road
+/// spiralling down along the walls and out to the street, haul trucks, a
+/// conveyor up out of it to an ore heap out front, terraced spoil heaps
+/// beside it, a fence round the edge and a site cabin.
 pub fn strip_mine(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
     let t = c.tier.index();
-    let pad = yard(g, c, 0.3, Dirt, mix(pal.dirt, pal.stone, 0.3));
-    // [dirty-industry] Dust, tailings and diesel on the ground round the pit.
-    super::dirty::soot_stains(g, c, rng, &pad, 0.5, false);
-    let area = R::of(&c.poly);
-    let fs = (area.d() * 0.22).clamp(4.0, 14.0);
-    let pit_poly = super::kit::clip_box(&offset_poly(&c.lot_poly, 1.0), area.u0 - 3.0, area.u1 + 3.0, area.v0 + fs, area.v1 + 3.0);
-    let pit_poly = if pit_poly.is_empty() { offset_poly(&c.lot_poly, 1.0) } else { pit_poly };
-    let centre = interior_anchor(&pit_poly);
-    let (lo, hi) = bounds(&pit_poly);
-    let (rx, ry) = ((hi.x - lo.x) * 0.5, (hi.y - lo.y) * 0.5);
-    let sides = 14;
-    let outer: Vec<Vec2> = (0..sides)
-        .map(|i| {
-            let a = i as f32 / sides as f32 * TAU;
-            let p = centre + Vec2::new(a.cos() * rx, a.sin() * ry);
-            clamp_into(&pit_poly, p)
-        })
-        .collect();
+    let ground_col = mix(pal.dirt, pal.stone, 0.3);
+    let pad = offset_poly(&c.lot_poly, 0.3);
+    let Some(pit) = pit_plan(&c.lot_poly) else {
+        // Too small a lot for a pit: a scraped yard with its heaps.
+        let pad = yard(g, c, 0.3, Dirt, ground_col);
+        super::dirty::soot_stains(g, c, rng, &pad, 0.5, false);
+        let p = interior_anchor(&pad);
+        heap(g, c, p, 4.0, 3.5, mix([0.4, 0.3, 0.25], pal.stone, 0.3));
+        return;
+    };
+    let area = pit.area;
+    let fs = pit.front;
+    // The yard round the pit, the pit cut out of it as the ground is.
+    for piece in crate::holes::polygon_minus(&pad, std::slice::from_ref(&pit.ring)) {
+        ground(g, f, Dirt, &piece, 0.03, ground_col);
+    }
+    // [dirty-industry] Dust, tailings and diesel on the strip out front.
+    let strip = super::kit::clip_box(&pad, area.u0 - 3.0, area.u1 + 3.0, area.v0 - 3.0, area.v0 + fs - 0.5);
+    if strip.len() >= 3 {
+        super::dirty::soot_stains(g, c, rng, &strip, 0.5, false);
+    }
     // [land-assembly] A pit grown over the plots behind its road plot is
-    // dug in more benches and heaped higher: past a radius of 18 m, a
-    // bench more every 10 m and a rim up to two and a half times as high.
-    let r = rx.min(ry);
-    let grown = ((r - 18.0) / 10.0).clamp(0.0, 5.0) as usize;
-    let levels = [3, 4, 5][t] + grown;
-    let rim = [4.0, 6.0, 8.0][t] * (r / 18.0).clamp(1.0, 2.5);
-    let ring = |k: f32| -> Vec<Vec2> { outer.iter().map(|p| centre + (*p - centre) * k).collect() };
+    // dug deeper in more benches: one for every 8 m of radius.
+    let r = pit.r;
+    let levels = ((r / 8.0) as usize + [0, 0, 1][t]).clamp(2, 8);
+    let centre = pit.centre;
+    let ring = |k: f32| -> Vec<Vec2> { pit.ring.iter().map(|p| centre + (*p - centre) * k).collect() };
     let world = |p: Vec2, y: f32| f.at2(p, y);
+    // Each level: a steep face (a third of the step in) and a bench (the
+    // rest), down to a floor at 0.3 of the radius.
+    let d = 0.7 / levels as f32;
+    let face_in = 0.32 * d;
+    let hb = face_in * r * 2.4;
+    let top = |k: usize| 0.03 - k as f32 * hb;
+    let a = |k: usize| 1.0 - k as f32 * d;
+    let b = |k: usize| a(k) - face_in;
     let rock = mix(pal.stone, pal.dirt, 0.4);
-    // Outer slope of the spoil rim.
-    let top0 = 0.92;
-    let ground_ring = ring(1.0);
-    let rim_ring = ring(top0);
-    for i in 0..sides {
-        let j = (i + 1) % sides;
-        let mid = (ground_ring[i] + ground_ring[j]) * 0.5;
-        let out = f.dir3(mid - centre);
-        g.part(Dirt).quad_facing([world(ground_ring[i], 0.0), world(ground_ring[j], 0.0), world(rim_ring[j], rim), world(rim_ring[i], rim)], out, rgba(mul(rock, 0.85)));
-    }
-    // Benches and risers down to the floor.
-    let descent = 0.62;
-    let step = descent / levels as f32;
-    let mut a = top0;
-    let mut bench_mid: Vec<(f32, f32)> = Vec::new();
+    let n = PIT_SIDES;
     for k in 0..levels {
-        let y = rim * (1.0 - k as f32 / levels as f32);
-        let y_next = rim * (1.0 - (k + 1) as f32 / levels as f32);
-        let b = a - step * 0.7;
-        let a_next = b - step * 0.3;
-        let (ra, rb, rn) = (ring(a), ring(b), ring(a_next));
         let strata = if k % 2 == 0 { mul(rock, 1.05) } else { mix(rock, [0.55, 0.42, 0.3], 0.35) };
-        for i in 0..sides {
-            let j = (i + 1) % sides;
-            g.part(Dirt).quad_facing([world(ra[i], y), world(ra[j], y), world(rb[j], y), world(rb[i], y)], Vec3::Y, rgba(mul(strata, 1.1)));
-            let mid = (rb[i] + rb[j]) * 0.5;
-            let inward = f.dir3(centre - mid);
-            g.part(Stone).quad_facing([world(rb[i], y), world(rb[j], y), world(rn[j], y_next), world(rn[i], y_next)], inward + Vec3::Y * 0.3, rgba(mul(strata, 0.8)));
+        let (ra, rb) = (ring(a(k)), ring(b(k)));
+        let (y0, y1) = (top(k), top(k + 1));
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let inward = f.dir3(centre - (rb[i] + rb[j]) * 0.5);
+            g.part(Stone).quad_facing([world(ra[i], y0), world(ra[j], y0), world(rb[j], y1), world(rb[i], y1)], inward + Vec3::Y * 0.3, rgba(mul(strata, 0.8)));
         }
-        bench_mid.push(((a + b) * 0.5, y));
-        a = a_next;
+        // The bench under the face, or the floor at the bottom.
+        if k + 1 < levels {
+            let rn = ring(a(k + 1));
+            for i in 0..n {
+                let j = (i + 1) % n;
+                g.part(Dirt).quad_facing([world(rb[i], y1), world(rb[j], y1), world(rn[j], y1), world(rn[i], y1)], Vec3::Y, rgba(mul(strata, 1.1)));
+            }
+        }
     }
-    // The floor, with a pool of water in it.
-    let floor = ring(a);
-    ground(g, f, Dirt, &floor, 0.05, mul(rock, 0.7));
-    ground(g, f, Glass, &scale_poly(&floor, 0.45), 0.08, mul(pal.water, 1.4));
-    // Haul trucks on the benches and the floor.
+    let floor_y = top(levels);
+    let floor = ring(b(levels - 1));
+    ground(g, f, Dirt, &floor, floor_y, mul(rock, 0.7));
+    ground(g, f, Glass, &scale_poly(&floor, 0.45), floor_y + 0.05, mul(pal.water, 1.4));
+    // The haul road: a ledge along the foot of each face rising to the
+    // level above, a quarter turn each, spiralling down from where it
+    // leaves the pit on the street side.
+    let exit = (0..n).min_by(|&p, &q| pit.ring[p].y.total_cmp(&pit.ring[q].y)).unwrap_or(n * 3 / 4);
+    let m = n / 4;
+    let road_col = mul(ground_col, 0.8);
+    let bench_w = (d - face_in) * r;
+    let road_w = (bench_w * 0.6).clamp(1.5, 6.0) / r;
+    for k in 0..levels {
+        let end = (exit + n * levels - k * m) % n;
+        let (y_lo, y_hi) = (top(k + 1), top(k));
+        let at = |s: usize| -> (Vec2, Vec2, f32) {
+            let i = (end + n - m + s) % n;
+            let h = s as f32 / m as f32;
+            let dir = pit.ring[i] - centre;
+            let outer = centre + dir * (b(k) + face_in * h);
+            let inner = centre + dir * (b(k) - road_w);
+            (outer, inner, y_lo + (y_hi - y_lo) * h)
+        };
+        for s in 0..m {
+            let ((o0, i0, h0), (o1, i1, h1)) = (at(s), at(s + 1));
+            g.part(Dirt).quad_facing([world(o0, h0), world(o1, h1), world(i1, h1), world(i0, h0)], Vec3::Y, rgba(road_col));
+            // Its inner side, a wedge from nothing at the foot.
+            let inward = f.dir3(centre - (i0 + i1) * 0.5);
+            if s == 0 {
+                g.part(Stone).tri_facing(world(i0, y_lo), world(i1, h1), world(i1, y_lo), inward, rgba(mul(rock, 0.75)));
+            } else {
+                g.part(Stone).quad_facing([world(i0, h0), world(i1, h1), world(i1, y_lo), world(i0, y_lo)], inward, rgba(mul(rock, 0.75)));
+            }
+        }
+        // Its end, where it meets the level above, faces on along the wall.
+        let (o, i, h) = at(m);
+        let along = f.dir3(at(m).0 - at(m - 1).0);
+        let foot = centre + (pit.ring[end] - centre) * b(k);
+        g.part(Stone).quad_facing([world(o, h), world(i, h), world(i, y_lo), world(foot, y_lo)], along, rgba(mul(rock, 0.7)));
+    }
+    // The road on out to the street.
+    let gate = pit.ring[exit];
+    let lane = R::new(gate.x - road_w * r * 0.5, gate.x + road_w * r * 0.5, area.v0 - 0.5, gate.y + 0.3);
+    if lane.d() > 0.5 {
+        let lane = super::kit::clip_box(&pad, lane.u0, lane.u1, lane.v0, lane.v1);
+        if lane.len() >= 3 {
+            for piece in crate::holes::polygon_minus(&lane, std::slice::from_ref(&pit.ring)) {
+                ground(g, f, Dirt, &piece, 0.05, road_col);
+            }
+        }
+    }
+    // A fence round the edge, open where the road comes out.
+    let fence = ring(1.0 + 1.0 / r);
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let near_gate = [i, j].iter().any(|&q| (q + n - exit) % n <= 1 || (exit + n - q) % n <= 1);
+        if !near_gate && c.inside_local(fence[i]) && c.inside_local(fence[j]) {
+            rail_fence(g, c, fence[i], fence[j], 1.1, mul(pal.steel, 0.7));
+        }
+    }
+    // Haul trucks: on the floor, on the benches when wide enough and at the
+    // top of the road.
     let paint = [0.85, 0.62, 0.08];
-    for k in 0..([1, 2, 3][t] + grown).min(bench_mid.len()) {
-        let (s, y) = bench_mid[(k * 2 + 1).min(bench_mid.len() - 1)];
-        let i = rng.random_range(0..sides);
-        let p = centre + (outer[i] - centre) * s;
-        let tangent = outer[(i + 1) % sides] - outer[i];
-        if distance_to_boundary(p, &c.lot_poly) < 4.0 || !c.inside_local(p) {
-            continue;
+    let tangent_at = |i: usize| {
+        let tg = pit.ring[(i + 1) % n] - pit.ring[i];
+        tg.y.atan2(tg.x)
+    };
+    let mut trucks: Vec<(Vec2, f32, f32)> = Vec::new();
+    let fi = rng.random_range(0..n);
+    trucks.push((centre + (pit.ring[fi] - centre) * b(levels - 1) * 0.6, floor_y, tangent_at(fi)));
+    if bench_w > 3.4 {
+        for k in 0..([0, 1, 2][t] + levels / 4).min(levels - 1) {
+            let i = rng.random_range(0..n);
+            trucks.push((centre + (pit.ring[i] - centre) * (b(k) + a(k + 1)) * 0.5, top(k + 1), tangent_at(i)));
         }
-        haul_truck(g, f, p, y, tangent.y.atan2(tangent.x), paint);
     }
-    let fp = centre + (outer[sides / 3] - centre) * (a * 0.6);
-    let yaw = rng.random_range(0.0..TAU);
-    if c.inside_local(fp) && distance_to_boundary(fp, &c.lot_poly) > 4.0 {
-        haul_truck(g, f, fp, 0.0, yaw, mul(paint, 0.9));
+    let up = (gate - centre).normalize_or_zero();
+    trucks.push((gate + up * 5.0, 0.03, up.y.atan2(up.x)));
+    for (p, y, yaw) in trucks {
+        if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 3.5 {
+            haul_truck(g, f, p, y, yaw, paint);
+        }
     }
-    // The conveyor: from the floor over the rim to the ore heap out front.
-    let rim_pt = centre + (outer[sides * 3 / 4] - centre) * top0;
-    let heap_pt = Vec2::new(crate::mesh::clamp_safe(rim_pt.x, area.u0 + 3.0, area.u1 - 3.0), area.v0 + fs * 0.5);
+    // The conveyor: from the floor up over the edge to the ore heap out
+    // front, beside the road.
+    let rim_i = (exit + n / 8) % n;
+    let rim_pt = pit.ring[rim_i];
+    let side = if rim_pt.x > gate.x { 1.0 } else { -1.0 };
+    let heap_pt = Vec2::new(crate::mesh::clamp_safe(rim_pt.x + side * 4.0, area.u0 + 3.0, area.u1 - 3.0), area.v0 + fs * 0.5);
     let heap_ok = c.inside_local(heap_pt) && distance_to_boundary(heap_pt, &c.lot_poly) > 2.0 && distance_to_boundary(rim_pt, &c.lot_poly) > 1.0;
-    let pts = [Vec3::new(centre.x, 1.0, centre.y), Vec3::new(rim_pt.x, rim + 3.0, rim_pt.y), Vec3::new(heap_pt.x, 6.0, heap_pt.y)];
+    let low = centre + (rim_pt - centre) * b(levels - 1) * 0.5;
+    let pts = [Vec3::new(low.x, floor_y + 1.0, low.y), Vec3::new(rim_pt.x, 3.0, rim_pt.y), Vec3::new(heap_pt.x, 6.0, heap_pt.y)];
     for w in pts.windows(2).take(if heap_ok { 2 } else { 0 }) {
         let (a3, b3) = (f.at(w[0].x, w[0].y, w[0].z), f.at(w[1].x, w[1].y, w[1].z));
         g.part(Metal).slab(a3, b3, 1.2, 0.5, rgba(mul(pal.steel, 0.8)));
@@ -420,24 +547,53 @@ pub fn strip_mine(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         for l in 1..=legs {
             let s = l as f32 / (legs + 1) as f32;
             let q = w[0].lerp(w[1], s);
-            f.bx(g, Metal, q.x, q.y * 0.5, q.z, Vec3::new(0.25, q.y, 0.25), mul(pal.steel, 0.6));
+            // A leg stands on the ground under it: a bench or the floor in
+            // the pit, the yard outside.
+            let foot = pit_ground(&pit, levels, d, face_in, hb, Vec2::new(q.x, q.z));
+            f.bx(g, Metal, q.x, (q.y + foot) * 0.5, q.z, Vec3::new(0.25, (q.y - foot).max(0.2), 0.25), mul(pal.steel, 0.6));
         }
     }
-    heap(g, c, heap_pt, (fs * 0.45).min(5.0), 5.0, mix([0.4, 0.3, 0.25], pal.stone, 0.3));
-    // Spoil heaps and the site cabin on the front strip.
-    for k in 0..[1, 2, 2][t] {
-        let p = Vec2::new(area.u0 + 4.0 + k as f32 * 9.0, area.v0 + fs * 0.5);
-        if p.distance(heap_pt) > 8.0 {
-            heap(g, c, p, (fs * 0.4).min(4.5), 3.5, mul(rock, 0.9));
+    if heap_ok {
+        heap(g, c, heap_pt, (fs * 0.45).min(5.0), 5.0, mix([0.4, 0.3, 0.25], pal.stone, 0.3));
+    }
+    // Spoil heaps beside the pit, terraced: on the strip out front and in
+    // the corners of the site the pit leaves free.
+    let spoil = mul(rock, 0.9);
+    let mut spots: Vec<(Vec2, f32)> = (0..[1, 2, 2][t]).map(|k| (Vec2::new(area.u0 + 4.0 + k as f32 * 9.0, area.v0 + fs * 0.5), (fs * 0.4).min(4.5))).collect();
+    for p in [Vec2::new(area.u0 + 7.0, area.v1 - 7.0), Vec2::new(area.u1 - 7.0, area.v1 - 7.0), Vec2::new(area.u0 + 7.0, centre.y), Vec2::new(area.u1 - 7.0, centre.y)] {
+        let clear = distance_to_boundary(p, &pit.ring);
+        if !point_in_polygon(p, &pit.ring) && clear > 5.0 {
+            spots.push((p, (clear - 1.5).min(7.0)));
+        }
+    }
+    for (p, rr) in spots {
+        if p.distance(heap_pt) > 8.0 && p.distance(gate) > rr + 4.0 && distance_to_boundary(p, &c.lot_poly) > rr * 0.8 {
+            heap(g, c, p, rr, rr * 0.7, spoil);
+            heap(g, c, p, rr * 0.6, rr * 1.05, mul(spoil, 0.92));
         }
     }
     let cab = Vec2::new(area.u1 - 4.0, area.v0 + 1.6);
-    if poly_inside(c, &rect(cab.x, cab.y, 3.1, 1.3)) && cab.distance(heap_pt) > 6.0 {
+    if poly_inside(c, &rect(cab.x, cab.y, 3.1, 1.3)) && cab.distance(heap_pt) > 6.0 && (cab.x - gate.x).abs() > road_w * r * 0.5 + 3.5 {
         container_unit(g, c, rng, cab.x, cab.y, 0.0, CONTAINER_20, CONTAINER_W, CONTAINER_H, 0.0, [0.85, 0.65, 0.1]);
     }
     let front = c.front_face(&c.poly);
     floodlight(g, c, front.at(-front.len * 0.45, -0.8), 12.0);
     floodlight(g, c, front.at(front.len * 0.45, -0.8), 12.0);
+}
+
+/// The height of a strip mine's ground at `p` (lot coordinates): the yard
+/// outside the pit, the bench or floor of the level it falls on inside.
+fn pit_ground(pit: &Pit, levels: usize, d: f32, face_in: f32, hb: f32, p: Vec2) -> f32 {
+    if !point_in_polygon(p, &pit.ring) {
+        return 0.03;
+    }
+    // How far out `p` lies, as a share of the edge's distance on its ray.
+    let dir = p - pit.centre;
+    let angle = dir.y.atan2(dir.x).rem_euclid(TAU);
+    let i = ((angle / TAU * PIT_SIDES as f32) as usize).min(PIT_SIDES - 1);
+    let edge = pit.ring[i].distance(pit.centre).max(0.1);
+    let s = dir.length() / edge;
+    (0..levels).find(|&k| s >= 1.0 - k as f32 * d - face_in).map_or(0.03 - levels as f32 * hb, |k| 0.03 - (k + 1) as f32 * hb)
 }
 
 // ── trash company ────────────────────────────────────────────────────────────

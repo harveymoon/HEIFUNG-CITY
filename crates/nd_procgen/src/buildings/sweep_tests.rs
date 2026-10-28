@@ -129,7 +129,8 @@ pub(crate) fn faults(g: &Geometry, lot: &Lot, style: Style) -> Vec<(&'static str
         if over > 1.2 && !sliver {
             out.push(("off the lot", format!("{s:?}: {over:.1} m")));
         }
-        if m.positions.iter().any(|p| p[1] < -0.3) {
+        // [p2-look] A strip mine's pit is dug down by design.
+        if !style.digs() && m.positions.iter().any(|p| p[1] < -0.3) {
             out.push(("below ground", format!("{s:?}")));
         }
     }
