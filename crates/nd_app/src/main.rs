@@ -47,6 +47,8 @@ mod train_select;
 /// [ferry-routes] Ferry routes on the water when a terminal or ship is selected.
 mod ferry_select;
 mod ui;
+/// [viewer] The building viewer: city buildings and the style catalogue on a turntable, with notes.
+mod viewer;
 
 use bevy::app::PluginGroupBuilder;
 use bevy::prelude::*;
@@ -125,7 +127,7 @@ struct PlayerPlugins;
 
 impl PluginGroup for PlayerPlugins {
     fn build(self) -> PluginGroupBuilder {
-        PluginGroupBuilder::start::<Self>().add(tools::ToolsPlugin).add(ui::UiPlugin).add(district_tool::DistrictToolPlugin).add(committee::CommitteePlugin)
+        PluginGroupBuilder::start::<Self>().add(tools::ToolsPlugin).add(ui::UiPlugin).add(district_tool::DistrictToolPlugin).add(committee::CommitteePlugin).add(viewer::ViewerPlugin)
     }
 }
 

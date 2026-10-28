@@ -32,6 +32,9 @@ use crate::tools::Selection;
 /// Offscreen renders: Build window thumbnails, save pictures.
 mod thumbs;
 pub use thumbs::Thumbs;
+/// [viewer] The building viewer's turntable.
+mod turntable;
+pub use turntable::{turntable_aspect, Turntable};
 mod air;
 /// [districts] The district layer; [tourism] visitors on foot.
 mod districts;
@@ -387,6 +390,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<people::PeopleRender>();
         app.add_plugins(thumbs::ThumbsPlugin);
+        app.add_plugins(turntable::TurntablePlugin);
         app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_plugins(MaterialPlugin::<street_look::PoolMaterial>::default()).add_plugins(MaterialPlugin::<cutaway::CutMaterial>::default()).init_resource::<cutaway::CutState>().add_systems(Startup, cutaway::add_shader).init_resource::<sky::SkyLook>().add_systems(Startup, (lights::add_shader, street_look::add_pool_shader, setup)).add_systems(
             Update,
             (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_walk_networks, sync_transit, sync_buildings, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)

@@ -1189,6 +1189,7 @@ Skyline page (`city_data {tab: "city", sub: "skyline"}`) shows the same.
 | `select` | `citizen` / `building` / `car` / `vehicle` (a parked car) / `bot` (a delivery robot) / `train` / `metro` (a metro train) / `unit` (an emergency unit, see Emergency units) id, `toll` (a booth id, an integer), `road` / `segment` (a street piece: id or [x, y]), or `at: [x, y]` (picks like a click: on a train's car it picks the train; a metro train only with the Underground view on; a road piece when nothing else is there), or nothing to clear |
 | `selected` | full detail of the player's selection (see below) |
 | `flags` / `flag` | the player's "Flag for Claude" bookmarks (see below) |
+| `viewer` / `building_notes` | [viewer] the building viewer and the notes left in it (see below) |
 | `favourite` | `citizen`, `on` (omit to toggle). Favourites wear a gold ring and diamond in the world (their car, driving or parked, a gold box) |
 | `gift` | `citizen` (default: the selected citizen), `amount` (default 1000): money from the treasury to their household (their savings if they have none), as the person pane's "Gift $1000". Refused when the treasury cannot pay. Booked as `gifts_to_residents`, itemised by name; they remember it. Reply `amount`, `household`, `household_money`, `savings`, `treasury` |
 | `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail, district; the building ones are what the Build window's items pick: road and its presets for Roads and Rail track, zone for Zoning and Parks, buildings for Power, Services, Transit placeables, Water and Attractions, rail for stations and yards, transit for bus and metro lines; the metro line tool is `tool {name: transit, kind: metro}`, see `metro_line`), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway, Roundabout), `diameter` and `ring_lanes` (roundabout), `ring_at` `[x,y]` (show the roundabout preview there as if hovered, until the mouse is used), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use or zone mode), `mode` (zone: polygon / brush / marquee), `radius` (zone brush), `unzone`, `industry` (zone, industrial: auto / farming / oil / ...), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture`, `elevation` (the Road tool's level for the next point, m), `depth` (underground / ground / sky: the view layer; the Tunnel preset switches to underground, other presets back), `draw` `[[x,y,level?],...]` (the road being drawn, as if clicked, so its hologram shows), `cursor` `[x,y]` (where the pointer stands for that hologram until the mouse is used); also the Buildings tool's and the Zone brush/marquee's plot highlight), `hover` `[x,y]` (the same pin, named for the plot highlight: with the Buildings tool the site there (a lot, or the unzoned parcels a lot would be made of, as `place {check}`) gets its outline and light wall, green if a click would build and red with the reason if not, and the Build window's "Here:" line follows the pin; with the Zone tool's brush or marquee, the parcel being painted. The pin holds until the real pointer moves over the map). The reply's tool state has `elevation`, `elevation_label`, `point_levels`, `tunnel`, `depth`, `grade_warnings`, and (refreshed with the road preview, a frame later) `pillars` {count, at, buyouts (building names a pillar would buy out), empty_lots, gaps ([{from, to, end_in_the_air, over_road, level, reason}]: stretches with no room for a pillar), refusal}, and `intersection_editor` (where the editor is open, or null). With a `cursor`/`hover` pin set, the reply also has `hover`: {`at`, `ok`, `note` (what a click would do), `reason` (why it would be refused), `outline` (the plot's polygon)}, or null where the tool has no plot there (roads, tolls, rail pieces and docks have their own previews) |
@@ -1280,6 +1281,66 @@ selection from the API. Flags live in the running game and are also appended to
 {"cmd": "selected"}
 {"cmd": "flags", "since": 3}
 {"cmd": "flag", "note": "this one has not moved for ages"}
+```
+
+### The building viewer and its notes [viewer]
+
+The building viewer (top bar **Viewer**, or X; Esc closes) shows one building at a time on a
+turntable against a plain backdrop, as the game draws it (the same procgen mesh, materials, signs
+and window lights), filmed on its own stage far from the map with its own lights, so its day/night
+and lights switches change nothing in the city. The city runs on behind it; while it is open the
+keys are the viewer's (left/right flip, up/down change the variant in the catalogue or flip in the
+other lists). Three lists: **city** (every building standing; a tenant is listed under the building
+it rents in), **catalogue** (every style the generator can draw, `nd_procgen::buildings::STYLES`,
+each in seeded variants: the tiers whose zone menus offer it, or all three for a forced style,
+times one to three heights, times 3 seeds) and **notes**. Filters: search words, `group` (a
+catalogue section: Residential, Commercial, Industrial, Entertainment, Civic, Parks and beaches,
+Parking, Power, Transit and rail, Docks, City services, Attractions, Industry trades, Shops and
+trades, Homes and estates, League towers, Waterfront, Capsule district, Malls), `form`, `land_use`,
+`district`, `story`, `business` (a kind's label), `tier`, `noted` (only what has open notes).
+
+`viewer` fields: `action` status (default) / open / close / toggle / select / next / prev / list /
+screenshot; `source` city / catalogue / notes; `building` (id; switches to the city list), `style`
+(key `PencilTower` or label "pencil tower"; switches to the catalogue), `variant` (0-based), `note`
+(id; shows what it is about), `step` (int, as the arrows), `filter` {...} (null or "" clears one),
+`clear_filters`, `go_to` (true: select the city building shown, fly the camera to it and close the viewer, as its "Go to it in the city" button); the look: `light` day / night (or `night` bool), `lights` (window lights and signs),
+`auto_rotate`, `yaw` / `pitch` (degrees), `zoom` (0.25..4, 1 frames the building), `reset_view`;
+`inspiration` (a picture of the `Inspirations` folder, by the end of its path, shown beside the
+building, or `none`; the folder is `ND_INSPIRATIONS` or an `Inspirations` folder above the home
+folder, the exe or the source tree); `path` (with screenshot: a .png, default
+`screenshots/viewer-<ms>.png`). Reply: `open`, `source`, `position` / `shown` (in the filtered list),
+`city_buildings`, `catalogue_styles`, `filter`, `subject` (a city building: `id`, `name`, `style`,
+`style_key`, `group`, `form`, `land_use`, `tier`, `floors`, `district`, `story`, `business`,
+`footprint_m2`, `pos`, `tenants`, `owner`, `state`, `homes`, `jobs`; a style: `style`, `label`,
+`group`, `family`, `land_use`, `tiers`, `on_zone_menu`, `variant`, `variants`, `tier`, `floors`,
+`seed`), `notes` (the notes on the subject: on the building, or on the style for every variant),
+`note` (the picked note in the notes list), `view` {night, lights, auto_rotate, yaw_deg, pitch_deg,
+zoom, size_m (the drawn bounding box), ready}, `inspiration`. `list` adds `total` and `rows`
+(`offset`, `limit`). `screenshot` films the turntable image alone (1280 x 800) once the building
+has stood a moment (about a second after a change; it opens the viewer); the ordinary `screenshot`
+shows the window with the viewer.
+
+**Notes** (`building_notes`, alias `notes`) are work items left in the viewer: one box per city
+building and one per style. They are kept in `building_notes.ron` in the game's home folder (not
+in a save: they are about the game, across cities) and written on every change. A note on a city
+building names the game (`game`, the game id, and `city`), the building's id, name, place and
+style, so it still reads once the building or the city is gone. Actions:
+
+| `action` | Fields | Does |
+| --- | --- | --- |
+| `list` (default) | `status` open (default) / resolved / all, `kind` building / style, `building` or `style` (its notes only), `this_city` | the notes, newest changes last as written; each `id`, `target`, `text`, `by`, `created`, `updated` (unix s), `status`, `resolved` {unix, by}, `replies` [{unix, by, text}], and for a building `in_this_city` (it stands in the running game). Also `open`, `total`, `file` |
+| `get` | `id` | one note |
+| `set` (alias `add`) | `text`, and `building` (id) or `style` (key or label) for a new note, or `id` to change one's text; `by` (default claude) | the note |
+| `reply` | `id`, `text`, `by` | adds an answer under the note |
+| `resolve` / `reopen` | `id`, optional `text` (a closing answer), `by` | marks it done or open again |
+| `delete` | `id` | removes it |
+
+```json
+{"cmd": "viewer", "action": "open", "building": "214:1", "light": "night"}
+{"cmd": "viewer", "style": "pencil tower", "variant": 4, "action": "screenshot", "path": "screenshots/pencil.png"}
+{"cmd": "viewer", "action": "list", "source": "catalogue", "filter": {"group": "Malls"}}
+{"cmd": "building_notes"}
+{"cmd": "building_notes", "action": "resolve", "id": 3, "text": "the roof pad sits on the roof now"}
 ```
 
 ### Camera

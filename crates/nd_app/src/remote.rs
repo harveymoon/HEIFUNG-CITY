@@ -45,6 +45,8 @@ mod status;
 mod time;
 mod tool;
 mod window;
+/// [viewer] `viewer` and `building_notes`.
+mod viewer;
 
 // Feature commands, report sections and inspector blocks.
 /// [committee] `committee`, `committee_meeting`.
