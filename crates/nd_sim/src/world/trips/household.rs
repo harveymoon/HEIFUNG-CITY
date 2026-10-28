@@ -100,11 +100,20 @@ impl World {
         // [tax] Wages are what is left after the standard income tax; a
         // rate over it comes out of the purse, one under it is kept.
         let tax_extra = income * self.economy.taxes.surcharge(self.tax_category_of_home(home));
-        // [ledger] Earnings come in from out of town (net of the rate over
-        // the standard tax), the rent goes to the home's owner
-        // (`collect_rent`), living costs go out of town.
+        // [ledger] Earnings (net of the rate over the standard tax), the
+        // rent goes to the home's owner (`collect_rent`), living costs go
+        // out of town. [p1-sim] A business pays its staff their payroll
+        // wage itself (`wage_payer`, noted in `wages_paid` for its books);
+        // the rest of everyone's earnings comes in from out of town.
         let purse = Account::Household(hid);
-        self.transfer(Account::Outside, purse, income - tax_extra, Kind::Wages);
+        let mut from_employers = 0.0;
+        for &m in &members {
+            let Some((bid, pay)) = self.wage_payer(m) else { continue };
+            let paid = self.transfer(Account::Business(bid), purse, pay, Kind::Wages);
+            *self.wages_paid.entry(bid).or_default() += paid;
+            from_employers += paid;
+        }
+        self.transfer(Account::Outside, purse, income - tax_extra - from_employers, Kind::Wages);
         if let Some(h) = home {
             self.collect_rent(purse, h, rent, Kind::Rent);
         }

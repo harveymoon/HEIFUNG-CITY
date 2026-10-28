@@ -293,7 +293,7 @@ struct RenderState {
     closed_signals: u64,
     /// What the project holograms were built for: plan version, parcels
     /// version, whether parked projects are shown.
-    preview_key: Option<(u64, u64, bool)>,
+    preview_key: Option<(u64, u64, bool, bool)>,
     arrows_version: u64,
     /// [refactor/app] What the lane arrows were last built from when they
     /// came out empty (a network with no arrows draws nothing, and the

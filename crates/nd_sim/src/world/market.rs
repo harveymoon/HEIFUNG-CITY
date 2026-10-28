@@ -11,6 +11,13 @@ const SITE_RETRY: u64 = 60;
 /// [ledger] The most of a day's profit a business's unit rent takes
 /// (`World::shop_rent` is the full rent).
 const SHOP_RENT_PROFIT_CAP: f32 = 0.5;
+/// [p1-sim] What a business pays out of its own money a day for each of its
+/// staff, as a share of the job's wage (`Building::wage`): its payroll. The
+/// rest of what a worker earns (skill, school, the wage over the payroll)
+/// comes in from out of town as before. At the full wage the businesses of
+/// Harvey's day-62 city would pay their staff ~$300k a day on ~$370k of
+/// takings, ~$400k spent in all: a fifth of them losing money every day.
+pub const PAYROLL_SHARE: f32 = 0.6;
 
 impl World {
     /// Businesses pay wages; those that cannot for several days close, and
@@ -33,11 +40,11 @@ impl World {
                 let b = &self.buildings[bid];
                 let Some(bz) = &b.business else { continue };
                 // [parking] Lots the city runs are paid for by the city.
-                let publicly_funded = matches!(bz.kind, BusinessKind::Office | BusinessKind::CargoHub) || b.land_use == LandUse::Civic || self.vehicles.city_lots.contains_key(&bid);
+                let publicly_funded = self.publicly_funded(bid);
                 // [tax] What its takings are taxed under (the city's own
                 // businesses at the standard rate, as before).
                 let tax_line = if publicly_funded { None } else { crate::tax::TaxCategory::of_business(bz.kind, b.tier) };
-                (b.workers.len() as f32 * b.wage() * 0.6, b.workers.clone(), publicly_funded, bz.kind, tax_line)
+                (b.workers.len() as f32 * b.wage() * PAYROLL_SHARE, b.workers.clone(), publicly_funded, bz.kind, tax_line)
             };
             let (rate, surcharge) = tax_line.map_or((crate::tax::BUSINESS_TAX, 0.0), |c| (self.economy.taxes.rate(c), self.economy.taxes.surcharge(c)));
             let b = &mut self.buildings[bid];
@@ -78,10 +85,12 @@ impl World {
             let extra = if publicly_funded { 0.0 } else { revenue * surcharge };
             self.economy.credit_item(Flow::BusinessTax, tax - extra, Item::LandUse(lu));
             if !publicly_funded {
-                // [ledger] Wages to the staff's employers' payroll: paid out
-                // of town for now (the workers' earnings come in from
-                // outside, `daily_household`).
-                self.transfer(Account::Business(bid), Account::Outside, wage_bill, Kind::Payroll);
+                // [p1-sim] The payroll went to the staff's households in
+                // their daily pass (`daily_household`, `wages_paid`); what
+                // is left of it (staff with no household of their own,
+                // gone since) is paid out of town as before.
+                let paid = self.wages_paid.remove(&bid).unwrap_or(0.0);
+                self.transfer(Account::Business(bid), Account::Outside, (wage_bill - paid).max(0.0), Kind::Payroll);
                 // [tax] Prices were set on takings after the standard rate:
                 // a rate over it is a cost the business carries (and its
                 // cover, which decides whether more of it are built, shows
@@ -172,6 +181,32 @@ impl World {
         self.economy.market.meals_sold_today = 0;
         self.economy.market.grocery_imports_today = 0.0;
         self.economy.market.turned_away_today = 0;
+        self.wages_paid.clear();
+    }
+
+    /// [parking] The city's own businesses (offices, cargo hubs, civic
+    /// ground, the lots the city runs): their staff are paid for by the
+    /// city, not out of the takings.
+    pub(in crate::world) fn publicly_funded(&self, bid: BuildingId) -> bool {
+        let Some(b) = self.buildings.get(bid) else { return false };
+        let Some(bz) = &b.business else { return false };
+        matches!(bz.kind, BusinessKind::Office | BusinessKind::CargoHub) || b.land_use == LandUse::Civic || self.vehicles.city_lots.contains_key(&bid)
+    }
+
+    /// [p1-sim] The business that pays `cid`'s wage out of its own money and
+    /// what it pays them a day (`PAYROLL_SHARE` of the job's wage, never more
+    /// than they earn): an open business they are on the staff of, not one
+    /// the city runs. None for everyone else (a building site, the city's
+    /// jobs, gigs, pensions): their money comes in from outside.
+    pub(in crate::world) fn wage_payer(&self, cid: CitizenId) -> Option<(BuildingId, f32)> {
+        let c = self.citizens.get(cid)?;
+        let bid = c.work?;
+        let b = self.buildings.get(bid)?;
+        let bz = b.business.as_ref()?;
+        if bz.closed || !b.operating() || !b.workers.contains(&cid) || self.publicly_funded(bid) {
+            return None;
+        }
+        Some((bid, (b.wage() * PAYROLL_SHARE).min(c.income.max(0.0))))
     }
 
     /// Every sim hour: hunger, eating at home, production, restocking through

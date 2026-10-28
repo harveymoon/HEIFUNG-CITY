@@ -8,7 +8,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let s0: u64 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(1);
     let n: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(6);
-    let (mut d8s, mut lates) = (Vec::new(), Vec::new());
+    let (mut d8s, mut lates, mut closed) = (Vec::new(), Vec::new(), Vec::new());
     for seed in s0..s0 + n {
         let mut w = World::new(nd_sim::WorldConfig { seed, ..nd_sim::WorldConfig::default() });
         w.drain_events();
@@ -31,10 +31,22 @@ fn main() {
                 late += idle / adults / 3.0;
             }
         }
-        println!("seed {seed}: day 8 {:.1}%  days 18-20 {:.1}%  pop {}", d8 * 100.0, late * 100.0, w.citizens.len());
+        // [p1-sim] And the money: businesses shut over the 20 days, broke
+        // ones still open, the treasury.
+        let open = w.buildings.values().filter_map(|b| b.business.as_ref()).filter(|z| !z.closed).count();
+        let broke = w.buildings.values().filter_map(|b| b.business.as_ref()).filter(|z| !z.closed && z.money < -300.0).count();
+        println!(
+            "seed {seed}: day 8 {:.1}%  days 18-20 {:.1}%  pop {}  businesses open {open} broke {broke} closed_total {}  treasury {:.0}",
+            d8 * 100.0,
+            late * 100.0,
+            w.citizens.len(),
+            w.economy.market.closed_total,
+            w.economy.treasury
+        );
+        closed.push(w.economy.market.closed_total as f32);
         d8s.push(d8);
         lates.push(late);
     }
     let avg = |v: &[f32]| v.iter().sum::<f32>() / v.len().max(1) as f32 * 100.0;
-    println!("AVG day 8 {:.1}%  days 18-20 {:.1}%", avg(&d8s), avg(&lates));
+    println!("AVG day 8 {:.1}%  days 18-20 {:.1}%  closed {:.1}", avg(&d8s), avg(&lates), avg(&closed) / 100.0);
 }

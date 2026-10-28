@@ -49,6 +49,47 @@ fn line(w: &World, label: &str, secs: f64) {
         w.economy.market.tenants_let_total,
         w.economy.market.units_taken_total
     );
+    // [p1-sim] Where the people went: homes, who left and why, arrivals waiting.
+    let homes_bldgs = w.buildings.values().filter(|b| b.land_use == nd_sim::LandUse::Residential && b.operating()).count();
+    println!(
+        "   homes {} free {} res_buildings {homes_bldgs} sites {} homes_building {} waiting_immigrants {} emigrated_total {} by {:?} displaced {} priced_out {}",
+        e.homes_total,
+        e.homes_free,
+        e.sites,
+        e.homes_building,
+        e.waiting_immigrants,
+        e.emigrated_total,
+        e.emigrated_by,
+        e.displaced_total,
+        e.priced_out_total
+    );
+    // [p1-sim] Food: the hungry, and the grocers and places to eat open.
+    let hungry = w.citizens.values().filter(|c| c.hungry_days > 0).count();
+    let starving = w.citizens.values().filter(|c| c.hungry_days >= 3).count();
+    let grocers = w.buildings.values().filter(|b| b.operating() && b.business.as_ref().is_some_and(|z| !z.closed && z.kind == nd_sim::BusinessKind::Grocery)).count();
+    let shops = w.buildings.values().filter(|b| b.operating() && b.land_use == nd_sim::LandUse::Commercial && b.business.as_ref().is_some_and(|z| !z.closed)).count();
+    println!("   food: hungry {hungry} 3+ days {starving} groceries open {grocers} commercial open {shops}");
+    // [p1-sim] What the businesses that pay their own staff took and spent
+    // yesterday, their payroll (60% of the wage a head) and what their staff
+    // earn in full; and how many would end the day under water paying that.
+    let (mut takings, mut spend, mut payroll, mut full, mut under) = (0.0f64, 0.0f64, 0.0f64, 0.0f64, 0usize);
+    for b in w.buildings.values().filter(|b| b.operating()) {
+        let Some(z) = b.business.as_ref().filter(|z| !z.closed) else { continue };
+        if matches!(z.kind, nd_sim::BusinessKind::Office | nd_sim::BusinessKind::CargoHub) || b.land_use == nd_sim::LandUse::Civic {
+            continue;
+        }
+        let Some(day) = z.books.last() else { continue };
+        let pay = b.workers.len() as f64 * b.wage() as f64 * 0.6;
+        let earn: f64 = b.workers.iter().filter_map(|c| w.citizens.get(*c)).map(|c| c.income as f64).sum();
+        takings += day.revenue as f64;
+        spend += day.spend as f64;
+        payroll += pay;
+        full += earn;
+        if (day.revenue - day.spend) as f64 - (earn - pay) < 0.0 {
+            under += 1;
+        }
+    }
+    println!("   businesses' day: takings {takings:.0} spend {spend:.0} (payroll {payroll:.0}); their staff earn {full:.0}; at full wages {under} would lose money on the day");
 }
 
 /// [ledger] The books: the balance check, any drift, yesterday's flows.
@@ -81,6 +122,13 @@ fn main() {
     } else {
         World::read_save(src).expect("load")
     };
+    // [p1-sim] PERTURB=n: n cents from outside into the first household's
+    // purse at the start, a nudge to see how far runs part by chance alone.
+    if let Some(n) = std::env::var("PERTURB").ok().and_then(|s| s.parse::<f32>().ok()).filter(|n| *n != 0.0) {
+        if let Some(h) = w.households.keys().next() {
+            w.transfer(nd_sim::bank::Account::Outside, nd_sim::bank::Account::Household(h), n * 0.01, nd_sim::bank::Kind::Gifts);
+        }
+    }
     let mut minds = RuleBasedMind::default();
     line(&w, "start", 0.0);
     for _ in 0..days {

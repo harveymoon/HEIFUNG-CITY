@@ -623,9 +623,16 @@ university's funds, or the independent landlords' pool. The owner pays 30% of it
 town) and 10% as property tax (the treasury's `property_tax` line); residents and their property
 companies also pay 15% to the bank. Businesses renting their unit (no owner, or a developer's,
 university's or residents' company's building) pay `shop_rent` (a tenth of a home's rent per job) to
-the building's owner. Developers and the landlords' pool send what they hold over $20,000 out of town
-each day (`profits_paid_out`); a residents' property company pays its founder's household half its
-day's net. The household, business and owner inspectors show the account with its recent moves;
+the building's owner. Developers send what they hold over $20,000 out of town each day
+(`profits_paid_out`); the landlords' pool pays what it holds over $20,000, up to the last day's rent
+after upkeep and tax, to the households with $5,000 or more saved, in proportion to their savings
+(`profits_paid_out`, landlords → households), and sends the rest (the price of buildings it sold,
+paid with the buyer's loan from outside) back out (`property_sales`, landlords → outside);
+a residents' property company pays its founder's household half its day's net. A business pays its
+staff's households their payroll wage (60% of the job's wage) itself (`wages_and_pensions`,
+businesses → households); the rest of their earnings, and everyone else's (the city's jobs, building
+sites, gigs, pensions), still comes in from outside, and only the payroll of staff with no household
+leaves town (`payroll`). The household, business and owner inspectors show the account with its recent moves;
 City Data, Economy, Money flow (`city_data {tab: "economy", sub: "money_flow"}`) draws the day's
 flows from payers to payees.
 

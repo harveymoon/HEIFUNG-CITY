@@ -254,6 +254,49 @@ fn pillars_and_intersection_settings_survive_save_and_load() {
     assert!(inter.greens.iter().any(|g| (*g - 33.0).abs() < 1e-3), "{:?}", inter.greens);
 }
 
+/// [p1-sim] Ground under a deck too low for a storey (or a column) is
+/// never zoned: the brush refuses it with the reason, a zone drawn over it
+/// leaves it out, and every parcel the plan zones has a lot of that use, so
+/// no plan hologram is left over it for good. Harvey's day-2 city had 23
+/// parcels zoned under a cloverleaf's ramps that lost their lots on every
+/// rebuild and kept their raised fills; a save and load keeps the marks.
+#[test]
+fn ground_under_a_low_deck_is_never_left_zoned_without_a_lot() {
+    let mut w = flat();
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+    // A deck at 6 m (too low for a storey) along the north side of the
+    // street, over its parcels, ramps well clear at both ends.
+    let pts = [Vec2::new(-430.0, 20.0), Vec2::new(-330.0, 20.0), Vec2::new(330.0, 20.0), Vec2::new(430.0, 20.0)];
+    try_build(&mut w, raised(&pts, &[0.0, 6.0, 6.0, 0.0], (1, 1))).expect("implemented");
+    assert_eq!(crate::pillars::floors_under(6.0), 0);
+    w.add_zone(square(-200.0, -60.0, 400.0, 120.0), LandUse::Residential);
+    let under: Vec<usize> = (0..w.parcels.parcels.len()).filter(|&i| w.parcels.parcels[i].under_deck).collect();
+    assert!(!under.is_empty(), "parcels under the deck are marked");
+    let why = w.parcel_refusal(under[0], Some(LandUse::Residential)).expect("refused");
+    assert!(why.contains("raised road"), "{why}");
+    assert!(w.parcel_refusal(under[0], Some(LandUse::Park)).is_none(), "a park may go under it");
+    let check = |w: &World, label: &str| {
+        let planned = w.planned_zoning();
+        assert_eq!(planned.len(), w.parcels.parcels.len());
+        let mut built = 0;
+        for (i, p) in w.parcels.parcels.iter().enumerate() {
+            let Some(lu) = planned[i] else { continue };
+            let lot = p.lot.and_then(|l| w.lots.get(l));
+            assert!(lot.is_some_and(|l| l.land_use == lu), "{label}: parcel {i} at {} planned {lu:?} has no lot of it ({:?}, under the deck {})", p.center, p.lot, p.under_deck);
+            built += 1;
+        }
+        assert!(built > 4, "{label}: the south side is zoned and laid out ({built})");
+        assert!(under.iter().all(|&i| planned.get(i).copied().flatten().is_none()), "{label}: none under the deck is planned");
+    };
+    check(&w, "drawn");
+    // Painted with the brush: refused, nothing changes.
+    let (_, n) = w.paint_parcels(&under, Some(LandUse::Commercial), None);
+    assert_eq!(n, 0, "the brush paints nothing under the deck");
+    let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+    assert!(back.parcels.parcels.iter().filter(|p| p.under_deck).count() == under.len(), "marked again on load");
+    check(&back, "loaded");
+}
+
 /// A crossroads of two-lane-each-way streets.
 fn crossroads() -> World {
     let mut w = flat();

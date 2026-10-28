@@ -74,6 +74,10 @@ pub struct Parcel {
     pub rough_why: Option<&'static str>,
     /// [hillside] Steep but terraceable: homes, shops and clubs only.
     pub hillside: bool,
+    /// [p1-sim] A raised road's deck passes too low over it for a storey
+    /// under it, or one of its columns stands on it: nothing but a park
+    /// goes here (the rebuild drops a lot like that, `World::mark_under_decks`).
+    pub under_deck: bool,
     /// Land use as built (from the master plan); None is unzoned.
     pub land_use: Option<LandUse>,
     /// The lot this parcel is part of, once zoned and built into one.
@@ -101,6 +105,9 @@ impl Parcel {
         }
         if self.rough {
             return Some(self.rough_why.unwrap_or("too steep or wet to build on"));
+        }
+        if self.under_deck {
+            return Some("a raised road runs too low over this ground (or its columns stand here): nothing can be built under it");
         }
         if self.hillside && !lu.terraces() {
             return Some("a steep hillside: only terraced homes, shops and clubs fit here");
@@ -574,6 +581,7 @@ pub(super) fn parcel_of(poly: Vec<Vec2>, roads: &RoadNetwork) -> Option<Parcel> 
         rough: false,
         rough_why: None,
         hillside: false,
+        under_deck: false,
         water_frontage: 0.0,
         land_use: None,
         lot: None,

@@ -234,6 +234,43 @@ impl World {
         self.pillars.iter().any(|p| point_in_polygon(p.at, poly) || distance_to_outline(p.at, poly) < PILLAR_RADIUS)
     }
 
+    /// [p1-sim] Mark the parcels a lot could never stand on for the raised
+    /// roads (`Parcel::under_deck`): a column on it, or a deck too low over
+    /// it for a storey, the same test the rebuild drops a lot by. Zoning
+    /// them is refused, so the plan never holds a zone that gets no lot
+    /// (in Harvey's day-2 city 23 parcels by a cloverleaf were zoned under
+    /// its ramps, lost their lots and kept their plan hologram for good).
+    pub(in crate::world) fn mark_under_decks(&self, parcels: &mut [crate::zoning::Parcel]) {
+        let decks = self.roads.alive_segments().any(|(sid, _)| self.roads.spans_lots(sid));
+        if self.pillars.is_empty() && !decks {
+            return;
+        }
+        // Columns by 32 m cell, so a parcel looks only at those near it.
+        const CELL: f32 = 32.0;
+        let cell = |p: Vec2| ((p.x / CELL).floor() as i32, (p.y / CELL).floor() as i32);
+        let mut grid: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        for (k, p) in self.pillars.iter().enumerate() {
+            grid.entry(cell(p.at)).or_default().push(k);
+        }
+        for p in parcels.iter_mut() {
+            let (lo, hi) = crate::geom::bounds(&p.polygon);
+            let (a, b) = (cell(lo - Vec2::splat(PILLAR_RADIUS)), cell(hi + Vec2::splat(PILLAR_RADIUS)));
+            let mut column = false;
+            'cells: for x in a.0..=b.0 {
+                for y in a.1..=b.1 {
+                    for &k in grid.get(&(x, y)).map_or(&[][..], |v| &v[..]) {
+                        let at = self.pillars[k].at;
+                        if point_in_polygon(at, &p.polygon) || distance_to_outline(at, &p.polygon) < PILLAR_RADIUS {
+                            column = true;
+                            break 'cells;
+                        }
+                    }
+                }
+            }
+            p.under_deck = column || (decks && self.deck_cap_of(&p.polygon) == Some(0));
+        }
+    }
+
     /// Floors that fit on a lot of this outline under the decks that span
     /// over it (`RoadNetwork::spans_lots`), or None with no deck over it.
     pub fn deck_cap_of(&self, poly: &[Vec2]) -> Option<u8> {

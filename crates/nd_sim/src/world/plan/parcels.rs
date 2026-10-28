@@ -157,12 +157,17 @@ impl World {
 
     /// The parcels the city has, less those under a station, yard or dock
     /// footprint.
+    /// [p1-sim] Those under a raised road's low deck or its columns are
+    /// marked (`mark_under_decks`).
     fn published_parcels(&self, raw: Vec<Parcel>) -> Vec<Parcel> {
         let footprints = self.structure_footprints();
-        if footprints.is_empty() {
-            return raw;
-        }
-        raw.into_iter().filter(|p| !footprints.iter().any(|fp| point_in_polygon(p.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.995), &p.polygon))).collect()
+        let mut out: Vec<Parcel> = if footprints.is_empty() {
+            raw
+        } else {
+            raw.into_iter().filter(|p| !footprints.iter().any(|fp| point_in_polygon(p.center, fp) || polygons_overlap(&shrink_about_centroid(fp, 0.995), &p.polygon))).collect()
+        };
+        self.mark_under_decks(&mut out);
+        out
     }
 
     /// [stable-parcels] Cut the parcels for today's roads where they
