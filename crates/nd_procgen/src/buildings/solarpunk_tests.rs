@@ -206,22 +206,3 @@ fn solar_villa_grows_on_an_estate() {
     assert!(b.triangle_count() > a.triangle_count(), "{} vs {}", b.triangle_count(), a.triangle_count());
     assert!(top(&b) > top(&a) + 2.0, "{} vs {}", top(&b), top(&a));
 }
-
-#[test]
-#[ignore]
-fn zz_debug_clash() {
-    let rules = BuildingRules::default();
-    let pal = Palette::default();
-    for (lu, style, floors, tier) in [(LandUse::Residential, Style::SolarTownhouses, 2u8, Tier::Mid), (LandUse::Residential, Style::TimberTerrace, 5u8, Tier::High), (LandUse::Industrial, Style::SolarVilla, 5u8, Tier::Low)] {
-        let lots = test_lots(lu);
-        for lot in lots.iter().take(3) {
-            let (frame, _) = Frame::lot_local(lot);
-            let g = generate_styled_extras(lot, lu, floors, tier, 0.9, 42 + floors as u64, style, &rules, &pal, &solarpunk(false));
-            for c in clash_list(&g).iter().take(3) {
-                let at: Vec<f32> = c.what.split(" at [").nth(1).unwrap().split(']').next().unwrap().split(", ").map(|x| x.parse().unwrap()).collect();
-                let l = frame.to_local(Vec2::new(at[0], at[2]));
-                eprintln!("{style:?}: {} local ({:.2}, {:.2}, {:.2}) n {:?}", c.what, l.x, at[1], l.y, c.normal);
-            }
-        }
-    }
-}

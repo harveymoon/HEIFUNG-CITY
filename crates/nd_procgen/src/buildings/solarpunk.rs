@@ -119,6 +119,12 @@ fn room(c: &Ctx, p: Vec2, r: f32) -> bool {
     c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > r
 }
 
+/// Whether a box `hu` by `hv` either side of lot-local `p` (a container
+/// along `v`) stands on the lot, its corners 0.3 m in from the edge.
+fn box_room(c: &Ctx, p: Vec2, hu: f32, hv: f32) -> bool {
+    [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].iter().all(|(a, b)| room(c, p + Vec2::new(a * hu, b * hv), 0.3))
+}
+
 // ── shared pieces ─────────────────────────────────────────────────────────────
 
 /// A window: lit or dark glass, its frame and sill (mid), a glazing bar
@@ -419,7 +425,7 @@ fn solar_canopy(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, r: &R, foot: f32,
     }
     // The glow: a strip along the front edge and the underside panel.
     let from = g.part(Glow).positions.len();
-    f.bx(g, Glow, r.c().x, y - 0.17, r.v0 + 0.08, Vec3::new(r.w() - 0.2, 0.07, 0.07), mul(CANOPY_GLOW, 1.0 - 0.3 * c.wear));
+    f.bx(g, Glow, r.c().x, y - 0.19, r.v0 + 0.08, Vec3::new(r.w() - 0.2, 0.11, 0.09), mul(CANOPY_GLOW, 1.0 - 0.3 * c.wear));
     let under = (a + b) * 0.5 - n * 0.16;
     g.part(Glow).decal(under, f.dir3(Vec2::X), (b - a).normalize_or_zero(), r.w() - 0.4, a.distance(b) - 0.4, -n, rgba(mul(CANOPY_GLOW, 0.5 - 0.2 * c.wear)));
     mark_glow(g, from, NIGHT_MARK);
@@ -1082,7 +1088,7 @@ pub fn repair_cafe(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     if side_room > 3.0 && s.d() > 6.5 {
         let u = s.u0 - 1.5;
         let v = s.c().y;
-        if room(c, Vec2::new(u, v - 3.2), 0.2) && room(c, Vec2::new(u, v + 3.2), 0.2) {
+        if box_room(c, Vec2::new(u, v), CONTAINER_W * 0.5, CONTAINER_20 * 0.5) {
             container_unit(g, c, rng, u, v, std::f32::consts::FRAC_PI_2, CONTAINER_20, CONTAINER_W, CONTAINER_H, 0.0, mul(BRIGHT[1 + (c.seed % 3) as usize], 0.8 - 0.25 * c.wear));
         }
     }
@@ -1253,7 +1259,7 @@ pub fn bike_depot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         return greenhouse_rows(g, c, rng);
     }
     yard(g, c, 0.3, Concrete, mul(pick(rng, &pal.concrete), 0.72));
-    let sd = (area.d() * 0.4).clamp(5.0, 10.0);
+    let sd = (area.d() * 0.5).clamp(5.0, 13.0);
     let sw = (area.w() - 1.2).min(40.0);
     let Some(s) = fit(c, R::new(area.c().x - sw * 0.5, area.c().x + sw * 0.5, area.v1 - sd - 0.6, area.v1 - 0.6), 4.0) else { return greenhouse_rows(g, c, rng) };
     // The back wall of boards.
@@ -1271,6 +1277,10 @@ pub fn bike_depot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let u = s.u0 + 1.0 + i as f32 * 1.4;
         if here && i < 8 {
             bike(g, c, Vec2::new(u, s.v1 - 2.0), Vec2::new(0.0, 1.0), col, true);
+            // A second row, nose to tail, under a deep canopy.
+            if s.d() > 8.0 && i % 3 != 1 {
+                bike(g, c, Vec2::new(u, s.v1 - 5.2), Vec2::new(0.0, 1.0), mul(col, 0.85), i % 2 == 0);
+            }
         }
         if i % 2 == 0 {
             let p = Vec2::new(u, s.v1 - 0.6);
@@ -1283,7 +1293,7 @@ pub fn bike_depot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // The container office at the front corner.
     let ou = area.u0 + 1.8;
     let ov = area.v0 + 4.2;
-    if area.w() > 10.0 && s.v0 - area.v0 > 6.0 && room(c, Vec2::new(ou, ov - 3.1), 0.2) && room(c, Vec2::new(ou, ov + 3.1), 0.2) {
+    if area.w() > 10.0 && s.v0 - area.v0 > 6.0 && box_room(c, Vec2::new(ou, ov), CONTAINER_W * 0.5, CONTAINER_20 * 0.5) {
         container_unit(g, c, rng, ou, ov, std::f32::consts::FRAC_PI_2, CONTAINER_20, CONTAINER_W, CONTAINER_H, 0.0, mul(PATINA[0], 0.8 - 0.25 * c.wear));
         let face = Face::new(Vec2::new(ou + CONTAINER_W * 0.5, ov - 1.0), Vec2::new(ou + CONTAINER_W * 0.5, ov + 1.0), Vec2::X);
         face.glaze(g, c, 0.0, 1.5, 0.08, 1.4, 0.9, Pane::Lit(mul(INSIDE, 0.8)));
