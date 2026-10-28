@@ -482,8 +482,8 @@ impl World {
     }
 
     /// Every hour: people sleep at home or tire; satiety drains (slower
-    /// asleep); people at home eat from the household pantry, those out eat
-    /// the meal they packed. Returns how many exhausted people are at work
+    /// asleep); people at home eat from the household pantry (a household
+    /// with no home, wherever it is), those out eat the meal they packed. Returns how many exhausted people are at work
     /// in each building, for production; working exhausted costs mood.
     pub(super) fn sleep_and_eat(&mut self) -> HashMap<BuildingId, u16> {
         let tick = self.clock.tick;
@@ -529,7 +529,14 @@ impl World {
             }
             c.satiety = (c.satiety - if c.asleep { 0.02 } else { 0.04 }).max(0.0);
             let pantry = c.household.and_then(|h| self.households.get_mut(h));
-            if at_home && c.satiety < 0.65 {
+            // [r4-hunger] A household with no home carries its groceries
+            // and eats them where it is. Only a home's kitchen fed anyone,
+            // so on Harvey's day-62 city the 1,100 people on the street
+            // with no camp bed (the mission van feeds those with one) went
+            // hungry with food in the bag and money in the purse, and left
+            // over hunger by the hundred a day.
+            let carried = c.home.is_none() && pantry.is_some();
+            if (at_home || carried) && c.satiety < 0.65 {
                 if let Some(hh) = pantry {
                     if hh.groceries >= 1.0 {
                         hh.groceries -= 1.0;

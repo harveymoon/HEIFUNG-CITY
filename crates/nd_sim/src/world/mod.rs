@@ -316,7 +316,7 @@ pub use industry_bridge::INDUSTRY_CHOICES;
 pub use districts::{DistrictStats, PolicyChange};
 pub use poses::Pose;
 pub use journeys::{Driver, Journey, Place};
-pub use pressure::{artist_seed, is_artist, BusinessStory};
+pub use pressure::{artist_seed, is_artist, BusinessStory, LotFit, LotNeed};
 
 /// A parcel that loses or gains more than this share of its area under a
 /// building is treated as a new parcel: the building goes.

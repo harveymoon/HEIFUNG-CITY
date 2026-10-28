@@ -148,6 +148,7 @@ pub use world::{ApproachView, Blocker, Joint, CrossingView, IntersectionView, La
 /// [camera]
 pub use world::{Gift, Holding, GIFT_AMOUNT};
 pub use world::{TowerOrder, TowerSite};
+pub use world::{LotFit, LotNeed};
 pub use zoning::{LandUse, Lot, LotId, Parcel, ParcelKey, ParcelMap, Zone, ZoneId};
 
 pub use glam::Vec2;

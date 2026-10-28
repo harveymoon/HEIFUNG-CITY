@@ -180,6 +180,13 @@ impl MindProvider for RuleBasedMind {
         let decide = |intent: Intent, thought: String| Some(Decision { intent, thought, memory: None });
 
         if !ctx.has_home {
+            // [r4-hunger] No roof, but food first: a grown-up with nothing
+            // left in the bag buys groceries (eaten wherever they are). They
+            // only ever wandered, looking for a bunk, and starved.
+            if ctx.satiety < 0.45 && ctx.groceries < 1.0 && ctx.stage != LifeStage::Child && ctx.groceries_for_sale && !clock.is_night() {
+                let t = self.pick(HUNGRY_THOUGHTS);
+                return decide(Intent::Shop(Resource::Groceries), t);
+            }
             let t = self.pick(NO_HOME_THOUGHTS);
             return decide(Intent::Wander, t);
         }
@@ -567,11 +574,13 @@ mod tests {
         pantry_low: bool,
         regular_spot: Option<&'static str>,
         places_known: usize,
+        /// [r4-hunger] No home.
+        homeless: bool,
     }
 
     impl Default for Case {
         fn default() -> Self {
-            Self { hour: 10, stage_age: 35, wakefulness: 0.8, asleep: false, at_home: false, on_shift: false, satiety: 0.9, groceries: 5.0, pantry_low: false, regular_spot: None, places_known: 0 }
+            Self { hour: 10, stage_age: 35, wakefulness: 0.8, asleep: false, at_home: false, on_shift: false, satiety: 0.9, groceries: 5.0, pantry_low: false, regular_spot: None, places_known: 0, homeless: false }
         }
     }
 
@@ -590,7 +599,7 @@ mod tests {
                     id: CitizenId::default(),
                     citizen: &c,
                     clock: &clock,
-                    has_home: true,
+                    has_home: !case.homeless,
                     has_work: true,
                     home_name: Some("Home"),
                     work_name: Some("Work"),
@@ -621,6 +630,23 @@ mod tests {
         assert!(intents(Case { hour: 19, wakefulness: 0.1, ..Default::default() }).iter().all(|i| *i == Intent::GoHome), "tired out: home to bed");
         assert!(intents(Case { hour: 15, wakefulness: 0.1, on_shift: true, ..Default::default() }).iter().all(|i| *i == Intent::GoWork), "tired mid-shift: finish it");
         assert!(intents(Case { hour: 15, wakefulness: 0.01, on_shift: true, ..Default::default() }).iter().all(|i| *i == Intent::GoHome), "exhausted: even the shift waits");
+    }
+
+    /// [r4-hunger] With no home they look for a bunk, but a hungry grown-up
+    /// with nothing left in the bag buys groceries first (they only ever
+    /// wandered, and starved).
+    #[test]
+    fn the_homeless_buy_food_when_the_bag_is_empty() {
+        let fed = intents(Case { homeless: true, ..Default::default() });
+        assert!(fed.iter().all(|i| *i == Intent::Wander), "fed: looking for a bunk");
+        let bag = intents(Case { homeless: true, satiety: 0.3, groceries: 3.0, ..Default::default() });
+        assert!(bag.iter().all(|i| *i == Intent::Wander), "food in the bag: eaten where they are");
+        let empty = intents(Case { homeless: true, satiety: 0.3, groceries: 0.0, ..Default::default() });
+        assert!(empty.iter().all(|i| *i == Intent::Shop(Resource::Groceries)), "hungry, nothing left: shopping");
+        let night = intents(Case { homeless: true, hour: 2, satiety: 0.3, groceries: 0.0, ..Default::default() });
+        assert!(night.iter().all(|i| *i == Intent::Wander), "not at night");
+        let kid = intents(Case { homeless: true, stage_age: 9, satiety: 0.3, groceries: 0.0, ..Default::default() });
+        assert!(kid.iter().all(|i| *i == Intent::Wander), "children do not do the shopping");
     }
 
     #[test]

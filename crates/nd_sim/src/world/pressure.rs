@@ -78,6 +78,101 @@ struct Placement {
     /// Prefers cheap land (<0), dear land (>0) or does not mind (0).
     value: f32,
     needs_street: bool,
+    /// [r4-hunger] What the anchors are, for the player ("a fishing port").
+    near: &'static str,
+}
+
+/// [r4-hunger] The lot a pressure's business needs ([`World::lot_need`]),
+/// from its placement: for the player, so a held pressure says what to zone.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LotNeed {
+    /// The land uses it takes, the one it likes best first.
+    pub uses: Vec<LandUse>,
+    /// Square metres; 0 for any size.
+    pub min_area: f32,
+    /// On a street cars can use (not a footpath).
+    pub needs_street: bool,
+    /// On the water, between a road and the shore.
+    pub waterfront: bool,
+    /// The points it should be near.
+    pub anchors: Vec<Vec2>,
+    /// No farther than this from the nearest anchor; None: anywhere, best
+    /// near them.
+    pub reach: Option<f32>,
+    /// What the anchors are ("a fishing port").
+    pub near: &'static str,
+}
+
+impl LotNeed {
+    /// "industrial", "commercial or entertainment".
+    pub fn uses_text(&self) -> String {
+        self.uses.iter().map(|u| u.label().to_lowercase()).collect::<Vec<_>>().join(" or ")
+    }
+
+    /// "needs a vacant industrial lot of 500 m² or more on a street within
+    /// 1.4 km of a fishing port".
+    pub fn text(&self) -> String {
+        let mut t = format!("needs a vacant {} lot", self.uses_text());
+        if self.min_area > 0.0 {
+            t += &format!(" of {:.0} m² or more", self.min_area);
+        }
+        t += match (self.waterfront, self.needs_street) {
+            (true, true) => " on the water and on a street",
+            (true, false) => " on the water",
+            (false, true) => " on a street",
+            (false, false) => "",
+        };
+        match self.reach {
+            Some(r) if r >= 1000.0 => t += &format!(" within {:.1} km of {}", r / 1000.0, self.near),
+            Some(r) => t += &format!(" within {:.0} m of {}", r, self.near),
+            None => t += &format!(", best near {}", self.near),
+        }
+        t
+    }
+}
+
+/// [r4-hunger] How a vacant lot measures up to a pressure's business
+/// ([`World::lot_need_lots`]): it suits, or the first thing it fails.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LotFit {
+    Suits,
+    /// Built on, promised or under a yard.
+    Taken,
+    WrongUse,
+    NotOnWater,
+    NoJettyRoom,
+    TooSmall,
+    NoStreet,
+    TooFar,
+}
+
+impl LotFit {
+    pub fn key(self) -> &'static str {
+        match self {
+            LotFit::Suits => "suits",
+            LotFit::Taken => "taken",
+            LotFit::WrongUse => "wrong_use",
+            LotFit::NotOnWater => "not_on_water",
+            LotFit::NoJettyRoom => "no_jetty_room",
+            LotFit::TooSmall => "too_small",
+            LotFit::NoStreet => "no_street",
+            LotFit::TooFar => "too_far",
+        }
+    }
+
+    /// "too small", for "vacant industrial lots: 3 too small".
+    pub fn label(self) -> &'static str {
+        match self {
+            LotFit::Suits => "suit",
+            LotFit::Taken => "taken",
+            LotFit::WrongUse => "of another land use",
+            LotFit::NotOnWater => "not on the water",
+            LotFit::NoJettyRoom => "with no room for a jetty",
+            LotFit::TooSmall => "too small",
+            LotFit::NoStreet => "on a footpath, not a street",
+            LotFit::TooFar => "too far",
+        }
+    }
 }
 
 /// Why a business is where it is and how it is doing, for the inspector
@@ -415,8 +510,9 @@ impl World {
         for (_, kind) in order {
             let Some(bk) = kind.business() else { continue };
             let Some(lot) = self.pressure_lot(kind, vacant) else {
+                let text = self.no_lot_text(kind);
                 if let Some(r) = self.pressure.readings.iter_mut().find(|r| r.kind == kind) {
-                    r.held = Some(if bk.wants_waterfront() { "no vacant lot on the water that suits it: zone the land between a road and the shore" } else { "no vacant lot that suits it" }.to_string());
+                    r.held = Some(text);
                 }
                 continue;
             };
@@ -478,38 +574,38 @@ impl World {
         let marinas: Vec<Vec2> = self.working_docks(|k| k.is_marina()).into_iter().map(|d| d.2).collect();
         let marinas_for_rental = marinas.clone();
         let p = match kind {
-            PressureKind::TowCompany => Placement { uses: &[Industrial, Commercial], anchors: vec![self.centroid(&crash_spots)], reach: f32::INFINITY, min_area: 500.0, value: -1.0, needs_street: true },
-            PressureKind::Mechanic => Placement { uses: &[Commercial, Industrial], anchors: vec![self.centroid(&crash_spots)], reach: f32::INFINITY, min_area: 350.0, value: -1.0, needs_street: true },
+            PressureKind::TowCompany => Placement { uses: &[Industrial, Commercial], anchors: vec![self.centroid(&crash_spots)], reach: f32::INFINITY, min_area: 500.0, value: -1.0, needs_street: true, near: "where the crashes are" },
+            PressureKind::Mechanic => Placement { uses: &[Commercial, Industrial], anchors: vec![self.centroid(&crash_spots)], reach: f32::INFINITY, min_area: 350.0, value: -1.0, needs_street: true, near: "where the crashes are" },
             PressureKind::CarDealer => {
                 let rich = self.homes_of(|c| c.class() == Tier::High);
-                Placement { uses: &[Commercial], anchors: vec![self.centroid(&rich)], reach: f32::INFINITY, min_area: 700.0, value: 0.6, needs_street: true }
+                Placement { uses: &[Commercial], anchors: vec![self.centroid(&rich)], reach: f32::INFINITY, min_area: 700.0, value: 0.6, needs_street: true, near: "the well-off's homes" }
             }
             PressureKind::TrashCompany => {
                 let far: Vec<Vec2> = self.society.trash.bins.iter().filter(|(_, b)| !b.covered).filter_map(|(id, _)| self.building_lot(*id).map(|l| l.center)).collect();
-                Placement { uses: &[Industrial], anchors: vec![self.centroid(&far)], reach: f32::INFINITY, min_area: 600.0, value: -1.0, needs_street: true }
+                Placement { uses: &[Industrial], anchors: vec![self.centroid(&far)], reach: f32::INFINITY, min_area: 600.0, value: -1.0, needs_street: true, near: "the buildings no trash company serves" }
             }
             PressureKind::BikeShop => {
                 let riders = self.homes_of(|c| c.owns_bike);
-                Placement { uses: &[Commercial], anchors: vec![self.centroid(&riders)], reach: f32::INFINITY, min_area: 0.0, value: 0.0, needs_street: false }
+                Placement { uses: &[Commercial], anchors: vec![self.centroid(&riders)], reach: f32::INFINITY, min_area: 0.0, value: 0.0, needs_street: false, near: "the bike owners' homes" }
             }
             PressureKind::Slaughterhouse => {
                 let farms = self.sites_of(&[BusinessKind::CowFarm, BusinessKind::ChickenFarm, BusinessKind::Feedlot]);
                 if farms.is_empty() {
                     return None;
                 }
-                Placement { uses: &[Industrial], anchors: farms, reach: 1500.0, min_area: 800.0, value: -1.0, needs_street: true }
+                Placement { uses: &[Industrial], anchors: farms, reach: 1500.0, min_area: 800.0, value: -1.0, needs_street: true, near: "a livestock farm" }
             }
             PressureKind::FishGutting | PressureKind::FishStickFactory => {
                 if fishing.is_empty() {
                     return None;
                 }
-                Placement { uses: &[Industrial], anchors: fishing, reach: 1400.0, min_area: 500.0, value: -0.5, needs_street: true }
+                Placement { uses: &[Industrial], anchors: fishing, reach: 1400.0, min_area: 500.0, value: -0.5, needs_street: true, near: "a fishing port" }
             }
             PressureKind::FishMarket => {
                 if fishing.is_empty() {
                     return None;
                 }
-                Placement { uses: &[Commercial, Industrial], anchors: fishing, reach: 1200.0, min_area: 0.0, value: 0.0, needs_street: false }
+                Placement { uses: &[Commercial, Industrial], anchors: fishing, reach: 1200.0, min_area: 0.0, value: 0.0, needs_street: false, near: "a fishing port" }
             }
             PressureKind::SeafoodRestaurant => {
                 let mut anchors = marinas;
@@ -517,37 +613,39 @@ impl World {
                 if anchors.is_empty() {
                     return None;
                 }
-                Placement { uses: &[Commercial, Entertainment], anchors, reach: 900.0, min_area: 0.0, value: 0.5, needs_street: false }
+                Placement { uses: &[Commercial, Entertainment], anchors, reach: 900.0, min_area: 0.0, value: 0.5, needs_street: false, near: "a marina or fishing port" }
             }
             PressureKind::GolfRange => {
                 let comfortable = self.homes_of(|c| c.class() >= Tier::Mid && c.can_work());
-                Placement { uses: &[Entertainment, Commercial], anchors: vec![self.centroid(&comfortable)], reach: f32::INFINITY, min_area: 2800.0, value: 0.3, needs_street: true }
+                Placement { uses: &[Entertainment, Commercial], anchors: vec![self.centroid(&comfortable)], reach: f32::INFINITY, min_area: 2800.0, value: 0.3, needs_street: true, near: "the comfortable homes" }
             }
             PressureKind::ArtStudio => {
                 // Old warehouses and workshops: cheap industrial buildings.
                 let warehouses: Vec<Vec2> = self.buildings.values().filter(|b| b.land_use == LandUse::Industrial && b.tier == Tier::Low && b.port.is_none() && !b.is_power()).filter_map(|b| self.lots.get(b.lot).map(|l| l.center)).collect();
+                let near = if warehouses.is_empty() { "the city centre" } else { "old warehouses (cheap industrial buildings)" };
                 let anchors = if warehouses.is_empty() { vec![self.city_centre()] } else { warehouses };
-                Placement { uses: &[Commercial, Industrial], anchors, reach: 900.0, min_area: 0.0, value: -1.5, needs_street: false }
+                Placement { uses: &[Commercial, Industrial], anchors, reach: 900.0, min_area: 0.0, value: -1.5, needs_street: false, near }
             }
             PressureKind::Gallery => {
                 let studios = self.sites_of(&[BusinessKind::ArtStudio]);
-                Placement { uses: &[Commercial, Entertainment], anchors: if studios.is_empty() { vec![self.city_centre()] } else { studios }, reach: 1800.0, min_area: 0.0, value: 0.4, needs_street: false }
+                let near = if studios.is_empty() { "the city centre" } else { "an art studio" };
+                Placement { uses: &[Commercial, Entertainment], anchors: if studios.is_empty() { vec![self.city_centre()] } else { studios }, reach: 1800.0, min_area: 0.0, value: 0.4, needs_street: false, near }
             }
             // [waterfront] On lots that run down to the water (`pressure_lot`).
             PressureKind::BeachResort => {
                 let beaches = self.usable_beach_centres();
-                Placement { uses: &[Commercial, Entertainment], anchors: if beaches.is_empty() { vec![self.city_centre()] } else { beaches }, reach: f32::INFINITY, min_area: 1200.0, value: 0.8, needs_street: true }
+                Placement { uses: &[Commercial, Entertainment], anchors: if beaches.is_empty() { vec![self.city_centre()] } else { beaches }, reach: f32::INFINITY, min_area: 1200.0, value: 0.8, needs_street: true, near: "a beach" }
             }
             PressureKind::PierRestaurant => {
                 let comfortable = self.homes_of(|c| c.class() >= Tier::Mid);
-                Placement { uses: &[Commercial, Entertainment], anchors: vec![self.centroid(&comfortable)], reach: f32::INFINITY, min_area: 0.0, value: 0.6, needs_street: false }
+                Placement { uses: &[Commercial, Entertainment], anchors: vec![self.centroid(&comfortable)], reach: f32::INFINITY, min_area: 0.0, value: 0.6, needs_street: false, near: "the comfortable homes" }
             }
             PressureKind::BeachBar => {
                 let beaches = self.usable_beach_centres();
                 if beaches.is_empty() {
                     return None;
                 }
-                Placement { uses: &[Entertainment, Commercial], anchors: beaches, reach: 700.0, min_area: 0.0, value: 0.0, needs_street: false }
+                Placement { uses: &[Entertainment, Commercial], anchors: beaches, reach: 700.0, min_area: 0.0, value: 0.0, needs_street: false, near: "a beach" }
             }
             PressureKind::BoatRental => {
                 let mut anchors = self.usable_beach_centres();
@@ -555,11 +653,93 @@ impl World {
                 if anchors.is_empty() {
                     anchors.push(self.city_centre());
                 }
-                Placement { uses: &[Commercial, Entertainment], anchors, reach: f32::INFINITY, min_area: 0.0, value: 0.2, needs_street: false }
+                Placement { uses: &[Commercial, Entertainment], anchors, reach: f32::INFINITY, min_area: 0.0, value: 0.2, needs_street: false, near: "a beach or marina" }
             }
             PressureKind::Marina => return None,
         };
         Some(p)
+    }
+
+    /// [r4-hunger] Whether lot `id` suits a pressure's business, or the
+    /// first test it fails, in the order `pressure_lot` always asked them:
+    /// free, the land use, on the water (with room for a jetty), the size,
+    /// a street, the reach from the anchors.
+    fn lot_fit(&self, kind: PressureKind, p: &Placement, id: LotId) -> LotFit {
+        let Some(lot) = self.lots.get(id) else { return LotFit::Taken };
+        if !self.lot_free_for(id, SiteRule::STREET) {
+            return LotFit::Taken;
+        }
+        if !p.uses.contains(&lot.land_use) {
+            return LotFit::WrongUse;
+        }
+        // [waterfront] The shore's trades only on the water; a pier or a
+        // pontoon only where boats can work.
+        if let Some(bk) = kind.business().filter(|b| b.wants_waterfront()) {
+            if !lot.shore.is_waterfront() || lot.shore.beach {
+                return LotFit::NotOnWater;
+            }
+            if let Some(jk) = Self::jetty_kind_for(bk) {
+                if crate::shore::plan_jetty(lot, &self.landscape, jk).is_err() {
+                    return LotFit::NoJettyRoom;
+                }
+            }
+        }
+        if lot.area() < p.min_area {
+            return LotFit::TooSmall;
+        }
+        if p.needs_street && !lot.car_access() {
+            return LotFit::NoStreet;
+        }
+        let d = p.anchors.iter().map(|a| a.distance(lot.center)).fold(f32::INFINITY, f32::min);
+        if d > p.reach {
+            return LotFit::TooFar;
+        }
+        LotFit::Suits
+    }
+
+    /// [r4-hunger] The lot a pressure's business needs, for the player
+    /// (`Pressure::held`, the economy pane, the API): None for the kinds
+    /// the player builds or that have nowhere to go yet.
+    pub fn lot_need(&self, kind: PressureKind) -> Option<LotNeed> {
+        let p = self.placement(kind)?;
+        Some(LotNeed {
+            uses: p.uses.to_vec(),
+            min_area: p.min_area,
+            needs_street: p.needs_street,
+            waterfront: kind.business().is_some_and(|b| b.wants_waterfront()),
+            reach: p.reach.is_finite().then_some(p.reach),
+            anchors: p.anchors,
+            near: p.near,
+        })
+    }
+
+    /// [r4-hunger] The vacant lots of the land uses a pressure's business
+    /// takes, each with whether it suits and if not why (`lot_fit`), for
+    /// "show where": with a reach, only those within 400 m past it.
+    pub fn lot_need_lots(&self, kind: PressureKind) -> Vec<(LotId, LotFit)> {
+        let Some(p) = self.placement(kind) else { return Vec::new() };
+        let margin = if p.reach.is_finite() { p.reach + 400.0 } else { f32::INFINITY };
+        self.lots
+            .iter()
+            .filter(|(_, l)| l.building.is_none() && l.usable() && p.uses.contains(&l.land_use))
+            .filter(|(_, l)| p.anchors.iter().any(|a| a.distance(l.center) <= margin))
+            .map(|(id, _)| (id, self.lot_fit(kind, &p, id)))
+            .collect()
+    }
+
+    /// [r4-hunger] What `Pressure::held` says when no lot suits: the lot
+    /// it needs and how the vacant lots of its land uses fall short.
+    fn no_lot_text(&self, kind: PressureKind) -> String {
+        let Some(need) = self.lot_need(kind) else { return "no vacant lot that suits it".to_string() };
+        let mut tally: std::collections::BTreeMap<LotFit, u32> = Default::default();
+        for (_, fit) in self.lot_need_lots(kind) {
+            *tally.entry(fit).or_default() += 1;
+        }
+        let uses = need.uses_text();
+        let short: Vec<String> = tally.iter().filter(|(f, _)| **f != LotFit::Suits).map(|(f, n)| format!("{n} {}", f.label())).collect();
+        let lots = if short.is_empty() { format!("no vacant {uses} lot nearby") } else { format!("vacant {uses} lots: {}", short.join(", ")) };
+        let advice = if need.waterfront { " Zone the land between a road and the shore." } else { "" };
+        format!("no vacant lot that suits it: it {} ({lots}).{advice}", need.text())
     }
 
     /// The vacant lot a pressure's business opens on: allowed land use,
@@ -574,31 +754,13 @@ impl World {
         let mut best: Option<(f32, LotId)> = None;
         for &id in vacant {
             let Some(lot) = self.lots.get(id) else { continue };
-            if !self.lot_free_for(id, SiteRule::STREET) {
+            if self.lot_fit(kind, &p, id) != LotFit::Suits {
                 continue;
             }
             let Some(rank) = p.uses.iter().position(|u| *u == lot.land_use) else { continue };
-            // [waterfront] The shore's trades only on the water; a pier or a
-            // pontoon only where boats can work.
-            let mut view = 0.0;
-            if let Some(bk) = kind.business().filter(|b| b.wants_waterfront()) {
-                if !lot.shore.is_waterfront() || lot.shore.beach {
-                    continue;
-                }
-                if let Some(jk) = Self::jetty_kind_for(bk) {
-                    if crate::shore::plan_jetty(lot, &self.landscape, jk).is_err() {
-                        continue;
-                    }
-                }
-                view = -(lot.shore.frontage / 40.0).min(1.5);
-            }
-            if lot.area() < p.min_area || (p.needs_street && !lot.car_access()) {
-                continue;
-            }
+            // [waterfront] The shore's trades like a long frontage.
+            let view = if kind.business().is_some_and(|b| b.wants_waterfront()) { -(lot.shore.frontage / 40.0).min(1.5) } else { 0.0 };
             let d = p.anchors.iter().map(|a| a.distance(lot.center)).fold(f32::INFINITY, f32::min);
-            if d > p.reach {
-                continue;
-            }
             let lv = self.land_value.at(lot.center).clamp(0.0, 1.0);
             let value = if p.value < 0.0 { -p.value * lv * 3.0 } else { p.value * (1.0 - lv) * 3.0 };
             // Bigger lots suit the yards and ranges; the land use's order says

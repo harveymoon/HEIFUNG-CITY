@@ -368,3 +368,44 @@ fn an_old_save_loads_and_reads_its_pressures() {
         assert!(!s.why.is_empty() && !s.doing.is_empty(), "{}", b.name);
     }
 }
+
+/// [r4-hunger] A held pressure says what lot would do (Harvey asked how to
+/// satisfy "Fish gutting shed 0 in town, 8.0 wanted"): the land use, the
+/// size, the street and how near to what.
+#[test]
+fn a_lot_need_reads_as_what_to_zone() {
+    let n = LotNeed { uses: vec![LandUse::Industrial], min_area: 500.0, needs_street: true, waterfront: false, anchors: vec![Vec2::ZERO], reach: Some(1400.0), near: "a fishing port" };
+    assert_eq!(n.text(), "needs a vacant industrial lot of 500 m² or more on a street within 1.4 km of a fishing port");
+    let n = LotNeed { uses: vec![LandUse::Commercial, LandUse::Entertainment], min_area: 0.0, needs_street: false, reach: Some(900.0), near: "a marina or fishing port", ..n };
+    assert_eq!(n.text(), "needs a vacant commercial or entertainment lot within 900 m of a marina or fishing port");
+    let n = LotNeed { uses: vec![LandUse::Industrial], min_area: 600.0, needs_street: true, reach: None, near: "the buildings no trash company serves", ..n };
+    assert_eq!(n.text(), "needs a vacant industrial lot of 600 m² or more on a street, best near the buildings no trash company serves");
+}
+
+/// [r4-hunger] A trash company wanted where the only industrial land is a
+/// scrap too small for a yard: held, and the held line says what it needs
+/// and why the vacant industrial lots there are no good; "show where"
+/// lists them, too small.
+#[test]
+fn a_pressure_held_for_want_of_a_lot_says_what_lot() {
+    let mut w = flat();
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+    let sq = |x0: f32, y0: f32, s: f32| vec![Vec2::new(x0, y0), Vec2::new(x0 + s, y0), Vec2::new(x0 + s, y0 + s), Vec2::new(x0, y0 + s)];
+    w.add_zone(sq(-200.0, 8.0, 18.0), LandUse::Industrial);
+    w.add_zone(sq(0.0, 8.0, 120.0), LandUse::Commercial);
+    assert!(w.lots.values().any(|l| l.land_use == LandUse::Industrial), "the scrap of industrial land has a lot");
+    w.daily_pressure();
+    w.pressure.signals.trash_uncovered = 600.0;
+    w.pressure.readings = crate::pressure::assess(&w.pressure.signals, &w.pressure_supply());
+    w.pressure.held_days[PressureKind::TrashCompany.index()] = crate::pressure::OPEN_DAYS;
+    let v = vacant(&w);
+    w.open_by_pressure(&v);
+    assert_eq!(count(&w, BusinessKind::TrashCompany), 0, "no lot suits a trash yard");
+    let held = w.pressure.reading(PressureKind::TrashCompany).and_then(|p| p.held.clone()).expect("held");
+    assert!(held.starts_with("no vacant lot that suits it: it needs a vacant industrial lot of 600 m² or more on a street"), "{held}");
+    assert!(held.contains("too small"), "and says the industrial lot there is too small: {held}");
+    let lots = w.lot_need_lots(PressureKind::TrashCompany);
+    assert!(!lots.is_empty() && lots.iter().all(|(id, fit)| *fit == LotFit::TooSmall && w.lots[*id].land_use == LandUse::Industrial), "{lots:?}");
+    let need = w.lot_need(PressureKind::TrashCompany).unwrap();
+    assert_eq!((need.uses.clone(), need.min_area, need.needs_street, need.reach), (vec![LandUse::Industrial], 600.0, true, None));
+}

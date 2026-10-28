@@ -43,7 +43,9 @@ fn bar(ui: &mut egui::Ui, value: f32, col: Color32) {
     }
 }
 
-fn row(ui: &mut egui::Ui, p: &Pressure, full: bool) {
+/// [r4-hunger] `show`: the pressure "show where" puts on the map, and
+/// where the camera should fly when it is turned on.
+fn row(ui: &mut egui::Ui, w: &World, p: &Pressure, full: bool, show: &mut Option<PressureKind>, fly_to: &mut Option<bevy::math::Vec2>) {
     ui.horizontal(|ui| {
         ui.add_sized(egui::vec2(130.0, 14.0), egui::Label::new(egui::RichText::new(capitalise(p.kind.label())).small().color(IVORY)));
         bar(ui, p.strength, heat(p));
@@ -71,12 +73,27 @@ fn row(ui: &mut egui::Ui, p: &Pressure, full: bool) {
         if let Some(h) = &p.held {
             let tag = if p.kind == PressureKind::Marina { "advice" } else { "held" };
             ui.label(egui::RichText::new(format!("    {tag}: {h}")).small().color(Color32::from_rgb(200, 160, 90)));
+            // [r4-hunger] The lot it needs, on the map.
+            if p.kind != PressureKind::Marina && h.starts_with("no vacant lot") {
+                if let Some(need) = w.lot_need(p.kind) {
+                    ui.horizontal(|ui| {
+                        ui.add_space(14.0);
+                        let on = *show == Some(p.kind);
+                        if ui.small_button(if on { "hide" } else { "show where" }).on_hover_text("Outline the vacant lots of its land uses on the map (green suits, amber too small, orange on a footpath, blue not on the water, grey too far) and ring where it must be near").clicked() {
+                            *show = if on { None } else { Some(p.kind) };
+                            if !on {
+                                *fly_to = crate::pressure_where::focus(&need).map(|a| bevy::math::Vec2::new(a.x, a.y));
+                            }
+                        }
+                    });
+                }
+            }
         }
     }
 }
 
 /// Economy, Overview: every pressure, why, and the scene around it.
-pub fn wanted(ui: &mut egui::Ui, w: &World) {
+pub fn wanted(ui: &mut egui::Ui, w: &World, show: &mut Option<PressureKind>, fly_to: &mut Option<bevy::math::Vec2>) {
     heading(ui, "What the city's businesses want");
     hint(ui, "Each trade is opened by a cause in the city. Strength is the unmet need: a full bar is one business more than stands. One opens when a pressure holds two days and a lot suits it; one that cannot pay its way closes like any other, and its kind waits a while.");
     if w.pressure.readings.is_empty() {
@@ -84,7 +101,7 @@ pub fn wanted(ui: &mut egui::Ui, w: &World) {
         return;
     }
     for p in sorted(w) {
-        row(ui, p, true);
+        row(ui, w, p, true, show, fly_to);
     }
     let t = &w.society.trash.stats;
     let companies = w.trash_companies().len();
