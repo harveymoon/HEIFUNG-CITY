@@ -567,6 +567,16 @@ impl World {
     /// [bridge-riders] Is the leg `from`..`to` part of a raised walkway (a
     /// footbridge's stairs or deck, a ring of decks round a junction)? Up
     /// there nobody is in the street below, whatever is under them.
+    /// [r4-crossings] A cyclist on a footbridge's stairs or deck (a raised
+    /// walkway leg): the bike is wheeled there (`step_rider` slows them to
+    /// a walk), so the figure is drawn on foot, not riding up the steps.
+    pub fn wheeling_bike(&self, c: &Citizen) -> bool {
+        match &c.activity {
+            Activity::Traveling { path, idx, .. } if c.mode == crate::citizens::TravelMode::Bike && *idx > 0 && *idx < path.len() => self.leg_raised(path[*idx - 1], path[*idx]),
+            _ => false,
+        }
+    }
+
     pub fn leg_raised(&self, from: Vec2, to: Vec2) -> bool {
         !self.walk.raised.is_empty() && (self.walk.level_at_node(from) > 0.0 || self.walk.level_at_node(to) > 0.0)
     }

@@ -269,6 +269,68 @@ impl World {
     /// key, built polyline, levels, deck half width), as the rebuild lays
     /// it; nothing in the world changes.
     #[allow(clippy::type_complexity)]
+    /// [r4-crossings] On load: when the plan lays roads other than the
+    /// save's (the laying rules changed since: `roads::MIN_PIECE`,
+    /// `roads::PATH_MEETS`), rebuild from it now, traffic carried across,
+    /// rather than at the player's next edit. Whether it did.
+    pub(in crate::world) fn relay_roads_after_load(&mut self) -> bool {
+        if self.master.gestures.is_empty() {
+            return false;
+        }
+        let (roads, _) = self.lay_roads(&self.master);
+        if same_layout(&self.roads, &roads) {
+            return false;
+        }
+        self.rebuild_from_master();
+        // The player's crossing upgrades (footbridges, buttons) are kept by
+        // the crossing's middle: one whose crossing moved with the street's
+        // nodes (a stub's crosswalk is set back from the junction now) goes
+        // to the crossing that took its place.
+        if self.reanchor_crossing_rules() {
+            self.build_walk_graph();
+        }
+        true
+    }
+
+    /// [r4-crossings] Crossing rules that match no crossing now
+    /// (`WalkGraph::apply_upgrades` matches within 2 m) move to the nearest
+    /// crossing over a street running the same way within
+    /// `REANCHOR_REACH` that no other rule holds. Whether any moved.
+    pub(in crate::world) fn reanchor_crossing_rules(&mut self) -> bool {
+        const REANCHOR_REACH: f32 = 12.0;
+        let dir_of = |c: &crate::walk::Crossing| {
+            let (s0, s1) = self.roads.segment_points(c.segment);
+            (s1 - s0).normalize_or_zero()
+        };
+        let live: Vec<(Vec2, Vec2)> = self
+            .walk
+            .crossings
+            .iter()
+            .filter(|c| c.kind != crate::walk::CrossingKind::Jay && self.roads.try_segment(c.segment).is_some())
+            .map(|c| (c.mid, dir_of(c)))
+            .collect();
+        let matches = |at: Vec2, dir: Vec2, c: &(Vec2, Vec2)| c.0.distance(at) < 2.0 && c.1.dot(dir).abs() > 0.9;
+        let mut held: Vec<bool> = live.iter().map(|c| self.crosswalks.rules.iter().any(|r| matches(r.at, r.dir, c))).collect();
+        let mut moved = false;
+        for r in &mut self.crosswalks.rules {
+            if live.iter().any(|c| matches(r.at, r.dir, c)) {
+                continue;
+            }
+            let best = live
+                .iter()
+                .enumerate()
+                .filter(|(k, c)| !held[*k] && c.1.dot(r.dir).abs() > 0.9 && c.0.distance(r.at) <= REANCHOR_REACH)
+                .min_by(|a, b| a.1 .0.distance(r.at).total_cmp(&b.1 .0.distance(r.at)).then(a.0.cmp(&b.0)));
+            if let Some((k, c)) = best {
+                r.at = c.0;
+                r.dir = c.1;
+                held[k] = true;
+                moved = true;
+            }
+        }
+        moved
+    }
+
     pub(in crate::world) fn lay_roads(&self, plan: &Plan) -> (RoadNetwork, Vec<(u64, Vec<Vec2>, Vec<f32>, f32)>) {
         let mut roads = RoadNetwork::default();
         // Roundabouts cut the roads entering them and join them to their

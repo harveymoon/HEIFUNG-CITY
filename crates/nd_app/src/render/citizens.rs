@@ -71,10 +71,13 @@ pub(super) fn sync_citizens(
         nd_sim::world::Pose::SittingKerb => nd_procgen::people::SIT_GROUND,
         _ => 0,
     };
+    // [r4-crossings] A cyclist on a footbridge's stairs or deck walks the
+    // bike over: drawn on foot there, not riding up the steps into the air.
+    let wheeled = |c: &nd_sim::Citizen, (k, s): (nd_procgen::people::PersonKey, f32)| (nd_procgen::people::PersonKey { ride: k.ride && !w.wheeling_bike(c), ..k }, s);
     let mut outdoors: Vec<(CitizenId, Entity, nd_procgen::people::PersonKey, f32, f32)> = state
         .citizens
         .iter()
-        .filter_map(|(id, &e)| w.citizens.get(*id).filter(|c| shown(c)).map(|c| (*id, e, people::figure_of(c), c.pos.distance_squared(SVec2::new(eye.x, eye.z)))))
+        .filter_map(|(id, &e)| w.citizens.get(*id).filter(|c| shown(c)).map(|c| (*id, e, wheeled(c, people::figure_of(c)), c.pos.distance_squared(SVec2::new(eye.x, eye.z)))))
         .map(|(id, e, (k, s), d)| (id, e, nd_procgen::people::PersonKey { sit: sit_of(id, k.ride), ..k }, s, d))
         .collect();
     outdoors.sort_by(|a, b| a.4.total_cmp(&b.4));

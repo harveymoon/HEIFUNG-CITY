@@ -41,6 +41,18 @@ pub const LANE_WIDTH: f32 = 3.5;
 pub const SHOULDER: f32 = 1.5;
 /// How far a road end may be dropped from an existing road and still join it.
 pub const END_SNAP_RADIUS: f32 = 9.0;
+/// [r4-crossings] The shortest piece a street is cut into where a path
+/// ends on it or a way passes under it: closer than this to one of the
+/// street's nodes, the path joins that node and the way below gets no
+/// vertex over it. A piece shorter than a junction's radius (the widest
+/// half width plus a metre) leaves its lanes no length: Harvey's ring had a
+/// 1.9 m piece beside a junction, where an underpass passed under it.
+pub const MIN_PIECE: f32 = 6.0;
+/// [r4-crossings] A path ending on a street this close (along it) to where
+/// another path already meets that street joins it there: two paths drawn
+/// to either pavement a few steps apart meet the street at one point and
+/// share one crossing, instead of cutting it twice.
+pub const PATH_MEETS: f32 = 8.0;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Node {

@@ -184,6 +184,31 @@ impl RoadNetwork {
         None
     }
 
+    /// [r4-crossings] Where a path end dropped at `p` (at `level`) should
+    /// be put so it meets the street it lands on at one of the street's
+    /// nodes: an end of the piece it lands on closer than `MIN_PIECE` (no
+    /// stub cut off the street), or one within `PATH_MEETS` where another
+    /// path already meets the street (paths to either pavement a few steps
+    /// apart meet it at one point and share one crossing). None when it
+    /// lands on no street, or the street is cut there as before. The
+    /// drawing tools put the end there (`World::add_gesture`), so roads
+    /// already drawn lay as they always did.
+    pub fn path_end_join(&self, p: Vec2, level: f32) -> Option<Vec2> {
+        let Some(EndTarget::On(sid, t, q)) = self.end_target(p, END_SNAP_RADIUS, RoadKind::Path, level, &[]) else { return None };
+        let s = self.segment(sid);
+        if !s.is_street() || s.is_motorway() {
+            return None;
+        }
+        let l = self.segment_level(sid, t);
+        let has_path = |n: NodeId| self.node(n).segments.iter().any(|&o| self.segment(o).alive && self.segment(o).kind == RoadKind::Path);
+        [s.a, s.b]
+            .into_iter()
+            .map(|n| (self.node(n).pos.distance(q), n))
+            .filter(|&(d, n)| (d < MIN_PIECE || (d <= PATH_MEETS && has_path(n))) && (self.node(n).level - l).abs() < GRADE_SEPARATION)
+            .min_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)))
+            .map(|(_, n)| self.node(n).pos)
+    }
+
     /// [tools] Where an end of a way dropped at `p` lands and the level it
     /// takes there, as `add_polyline_levels` lays it (`end_node`): a node
     /// within `SNAP_RADIUS` (its level), else a point on a road within
@@ -431,10 +456,12 @@ impl RoadNetwork {
                     if passes_over_class(class, mine, s.class(), theirs) {
                         let n = self.push_node(x, mine);
                         cuts.push((t, n));
-                    } else {
+                    } else if [s.a, s.b].iter().all(|&e| self.node(e).pos.distance(x) >= MIN_PIECE) {
                         let n = self.push_node(x, theirs);
                         self.split_segment(SegmentId(i), n);
                     }
+                    // [r4-crossings] (Else the node beside it stands for
+                    // the vertex: no stub of street a metre or two long.)
                     continue;
                 }
                 let n = self.get_or_add_node(x, mine, class);
