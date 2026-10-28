@@ -28,7 +28,7 @@ pub fn sub_pane(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &
 /// [dirty-industry] The Bulldoze tool: remove things, or clean up
 /// contaminated ground over a circle (the hover label quotes the cost).
 fn bulldoze(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui.selectable_label(!tools.cleanup, "Remove").on_hover_text("Roads, zones and the city's own buildings").clicked() {
             tools.cleanup = false;
         }
@@ -54,7 +54,7 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
     // the Build window's Roads or Rail section; these are its parameters.
     ui.label(egui::RichText::new(format!("Drawing: {}", road_label(tools))).strong());
     if tools.roundabout {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let mut d = tools.ring_radius * 2.0;
             if ui.add(egui::Slider::new(&mut d, nd_sim::roads::RING_MIN_RADIUS * 2.0..=nd_sim::roads::RING_MAX_RADIUS * 2.0).step_by(2.0).suffix(" m").text("across [Ctrl+wheel]")).changed() {
                 tools.ring_radius = d * 0.5;
@@ -71,7 +71,7 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
     }
     // [interchange] The cross street's lanes and what would stop it.
     if tools.interchange {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("cross street");
             for (f, b, name) in [(1u8, 1u8, "Lane"), (2, 2, "Street"), (3, 3, "Avenue")] {
                 if ui.selectable_label(tools.lanes_fwd == f && tools.lanes_bwd == b, name).clicked() {
@@ -81,7 +81,7 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
             }
         });
         // [w1-roads] Which way the street passes the highway.
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             use nd_sim::world::interchange::InterchangeLayout;
             ui.label("layout");
             for (l, name, tip) in [(InterchangeLayout::StreetUnder, "Street under", "The street stays at grade; the highway is lifted over it on a short deck"), (InterchangeLayout::StreetOver, "Street over", "The street crosses on a bridge over the highway; the ramps climb to it (the street must run about 170 m out each side)")] {
@@ -101,7 +101,7 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
     // 2. Use, lanes and level are set on their own: the lanes never
     // change the Use (a 3-lane one-way Mixed street keeps its pavements).
     if tools.kind != RoadKind::Rail {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(egui::RichText::new("1  Preset").small().strong());
             let ty = tools.road_type();
             for t in crate::tools::ROAD_TYPES {
@@ -114,7 +114,7 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
                 ui.label(egui::RichText::new("custom").small().italics());
             }
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(egui::RichText::new("2  Use").small().strong());
             let now = tools.road_use();
             for u in nd_sim::roads::RoadUse::ALL {
@@ -125,13 +125,13 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
         });
     }
     if tools.kind == RoadKind::Street {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(egui::RichText::new("    Lanes").small().strong());
             lanes_dials(ui, &mut tools.lanes_fwd, &mut tools.lanes_bwd);
         });
     }
     // The level the next point goes down at; deep enough, a tunnel.
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(egui::RichText::new("    Level").small().strong());
         if ui.small_button("lower").on_hover_text("Lower: [ or Page Down").clicked() {
             tools.step_elevation(false);
@@ -155,7 +155,7 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
         let t = egui::RichText::new(text).small();
         ui.label(if strong { t.strong().color(egui::Color32::from_rgb(120, 210, 255)) } else { t.weak() });
     }
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(egui::RichText::new("3  Draw").small().strong());
         for m in crate::tools::DrawMethod::ALL {
             if m == crate::tools::DrawMethod::Circle && tools.kind == RoadKind::Rail {
@@ -259,7 +259,7 @@ fn zone(ui: &mut egui::Ui, sim: &Sim, tools: &mut ToolState, assets: &GameAssets
             }
         });
     }
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         for m in ZoneMode::ALL {
             if ui.selectable_label(tools.zone_mode == m, m.label()).clicked() {
                 tools.zone_mode = m;
@@ -332,7 +332,7 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
             let mut co = nd_sim::roads::RoadUse::of(k, f, b, car_only) == nd_sim::roads::RoadUse::CarOnly && k == RoadKind::Street;
             let ty = crate::tools::road_type_of(k, f, b, co);
             if k != RoadKind::Rail {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label(egui::RichText::new("1  Preset").small().strong());
                     for t in crate::tools::ROAD_TYPES {
                         let Some((pk, pf, pb, _)) = crate::tools::preset_values(t) else { continue };
@@ -350,7 +350,7 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
                         ui.label(egui::RichText::new("custom").small().italics());
                     }
                 });
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label(egui::RichText::new("2  Use").small().strong());
                     let now = crate::tools::road_use_of(k, co);
                     for u in nd_sim::roads::RoadUse::ALL {
@@ -363,7 +363,7 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
                 });
             }
             if k == RoadKind::Street {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label(egui::RichText::new("    Lanes").small().strong());
                     changed |= lanes_dials(ui, &mut f, &mut b);
                     if f != b && ui.small_button("Flip direction").on_hover_text("Traffic runs the other way").clicked() {
@@ -373,7 +373,7 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
                 });
             }
             // The whole road up or down a step (ends on other roads too).
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(egui::RichText::new("    Level").small().strong());
                 let lv = |e: &Vec<f32>, i: usize| e.get(i).copied().unwrap_or(0.0);
                 if ui.small_button("lower").on_hover_text("Every point 2 m lower").clicked() {
@@ -400,7 +400,7 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
             if let Some((text, _)) = level_note(elevation.iter().copied().fold(0.0f32, |a, l| if l.abs() > a.abs() { l } else { a })) {
                 ui.label(egui::RichText::new(text).small().weak());
             }
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(egui::RichText::new("3  Runs").small().strong());
                 if ui.selectable_label(!c, "Straight").on_hover_text("Straight legs between its points").clicked() && c {
                     c = false;
@@ -431,7 +431,7 @@ fn edit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState, plan: &mut Effe
             section(ui, "ROUNDABOUT");
             let (mut d, mut n, mut lv) = (radius * 2.0, lanes, level);
             let mut changed = false;
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 changed |= ui.add(egui::Slider::new(&mut d, nd_sim::roads::RING_MIN_RADIUS * 2.0..=nd_sim::roads::RING_MAX_RADIUS * 2.0).step_by(2.0).suffix(" m").text("across")).changed();
                 for k in 1..=nd_sim::roads::RING_MAX_LANES {
                     if ui.selectable_label(n == k, format!("{k} lane{}", super::fmt::s(k))).clicked() && n != k {
@@ -477,7 +477,7 @@ fn transit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         TransitMode::Route => {
             // [lines] The line being edited, and the way out.
             if let Some(e) = tools.line_edit.filter(|e| sim.world.transit.routes.contains_key(e.route)) {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label(egui::RichText::new(format!("Editing {}", sim.world.transit.routes[e.route].name)).color(super::GOLD).strong());
                     if ui.button(egui::RichText::new("Finish editing line").color(super::GOLD)).clicked() {
                         crate::tools::line_edit::finish(&mut sim.world, tools);
@@ -528,7 +528,7 @@ fn metro(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
     egui::ScrollArea::vertical().max_height(66.0).show(ui, |ui| {
         for id in ids {
             let l = &sim.world.subway.lines[id];
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(egui::RichText::new(format!("{}{} · {} stations · {:.1} km · every {} min · {} riders today", l.name, if l.looped { " (loop)" } else { "" }, l.stations.len(), l.length() / 1000.0, l.headway, l.riders_today)).small());
                 if ui.small_button("−").on_hover_text("trains more often").clicked() {
                     headway = Some((id, l.headway.saturating_sub(2)));
@@ -552,7 +552,7 @@ fn metro(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
 
 /// One bus line: select it, add or remove a bus, delete it.
 fn route_row(ui: &mut egui::Ui, tools: &mut ToolState, id: nd_sim::RouteId, r: &nd_sim::transit::BusRoute, set_buses: &mut Option<(nd_sim::RouteId, u8)>, remove: &mut Option<nd_sim::RouteId>) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let sel = tools.route_sel == Some(id);
         if ui.selectable_label(sel, format!("{} · {} stops · {} bus{} · {} riders today{}", r.name, r.stops.len(), r.buses, if r.buses == 1 { "" } else { "es" }, r.riders_today, if r.broken.is_empty() { "" } else { " · NO ROAD between some stops" })).clicked() {
             tools.route_sel = if sel { None } else { Some(id) };
