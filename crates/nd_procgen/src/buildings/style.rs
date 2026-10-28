@@ -346,6 +346,29 @@ styles! {
     Mall { label: "mall", family: Special, cluster: -1.0, draw: |g, c, r, e| malls::mall(g, c, r, e) },
     /// Anchor stores, a food court and a parking structure.
     MegaMall { label: "mega-mall", family: Special, cluster: -1.5, draw: |g, c, r, e| malls::mega_mall(g, c, r, e) },
+    // -- [r4-brick] the Brick & Steel look of Foundry Row (`buildings/brick.rs`,
+    // `brick_works.rs`), drawn only from its look's menus (and the loft
+    // estate for a big house there); appended so `ALL` keeps its order. --
+    /// A terrace of red-brick worker houses, chimney stacks, back yards.
+    BrickRow { label: "brick worker row", family: Walkup, cluster: 0.9, draw: |g, c, r, _| brick::brick_row(g, c, r) },
+    /// A brick warehouse of lofts: steel windows, a hoist, a water tower.
+    WarehouseLoft { label: "warehouse loft", family: Walkup, cluster: 0.5, draw: |g, c, r, _| brick::warehouse_loft(g, c, r) },
+    /// A converted mill: a long loft block, a stair tower with a clock, a chimney.
+    MillLofts { label: "mill lofts", family: Slab, cluster: 0.1, draw: |g, c, r, _| brick::mill_lofts(g, c, r) },
+    /// A brick workshop: big doors, a name board, a yard and a van.
+    BrickWorkshop { label: "brick workshop", family: Retail, cluster: 0.4, draw: |g, c, r, _| brick::brick_workshop(g, c, r) },
+    /// The corner pub: tiled front, warm windows, a hung sign, a beer garden.
+    CornerPub { label: "corner pub", family: Night, cluster: -0.4, draw: |g, c, r, _| brick::corner_pub(g, c, r) },
+    /// The union hall: a gabled hall, banners, a round window, a flag.
+    UnionHall { label: "union hall", family: Special, cluster: -1.0, draw: |g, c, r, _| brick::union_hall(g, c, r) },
+    /// A saw-tooth brick factory, its north lights glowing after dark.
+    SawtoothFactory { label: "saw-tooth factory", family: Heavy, cluster: 0.6, draw: |g, c, r, _| brick_works::sawtooth_factory(g, c, r) },
+    /// A foundry: casting shed, cupola, chimneys, a goliath gantry, a siding.
+    FoundryWorks { label: "foundry", family: Heavy, cluster: 0.2, draw: |g, c, r, _| brick_works::foundry_works(g, c, r) },
+    /// A gas works: holders in their guide frames, a brick retort house.
+    GasWorks { label: "gas works", family: Heavy, cluster: -0.6, draw: |g, c, r, _| brick_works::gas_works(g, c, r) },
+    /// A loft estate: a made-over warehouse, a glass penthouse, a pool.
+    LoftEstate { label: "loft estate", family: Special, cluster: 0.0, draw: |g, c, r, _| brick::loft_estate(g, c, r) },
     // -- [garden] the Garden Suburb look (`buildings/garden.rs`), drawn only
     // from its look's menus and for a family's or a billionaire's house in
     // it; appended so `ALL` keeps its order. Houses repeat along a street;
@@ -379,6 +402,9 @@ impl Style {
     pub fn digs(self) -> bool {
         self == Style::StripMine
     }
+
+    /// [r4-brick] The Brick & Steel look's styles (Foundry Row).
+    pub const BRICK_STEEL: [Style; 10] = [Style::BrickRow, Style::WarehouseLoft, Style::MillLofts, Style::BrickWorkshop, Style::CornerPub, Style::UnionHall, Style::SawtoothFactory, Style::FoundryWorks, Style::GasWorks, Style::LoftEstate];
 
     /// [capsule] The Capsule district's styles.
     pub const CAPSULE: [Style; 10] = [Style::DomeHouse, Style::SaucerHouse, Style::PopsicleDome, Style::TwinDomes, Style::DomePods, Style::CapsuleTower, Style::SaucerStack, Style::StiltTower, Style::DomeHall, Style::DomeCampus];

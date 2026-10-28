@@ -23,6 +23,10 @@ mod dense;
 pub mod hk;
 /// [capsule] The Capsule district's white domes, saucers and pill towers.
 mod capsule;
+/// [r4-brick] Foundry Row's Brick & Steel: rows, lofts, pub, hall, estate.
+mod brick;
+/// [r4-brick] Brick & Steel's works: saw-tooth sheds, foundry, gas works.
+mod brick_works;
 /// [garden] The Garden Suburb's houses, shops and garden manor.
 mod garden;
 /// [districts] District looks: style menus and palettes, hotels.
@@ -257,6 +261,9 @@ fn back_edge_link(lot: &Lot, kind: RailFacility) -> RailLink {
 mod capsule_tests;
 #[cfg(test)]
 mod garden_tests;
+
+#[cfg(test)]
+mod brick_tests;
 
 #[cfg(test)]
 mod hk_tests;

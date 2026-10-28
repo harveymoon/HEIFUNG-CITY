@@ -359,7 +359,7 @@ impl Story {
             // [garden] The Garden Suburb, homes and shops.
             Story::QuietAcres => (Some(R::Garden), Some(C::Garden), None, false, Some(18.0), Policies { nightlife_levy: 0.10, ..p }),
             Story::Promenade => (Some(R::Eco), Some(C::Tourist), None, false, Some(60.0), Policies { bed_levy: 0.05, ..p }),
-            Story::FoundryRow => (None, None, Some(IndustryKind::Manufacturing), false, None, Policies { pollution_levy: 0.05, rent_support: 0.10, ..p }),
+            Story::FoundryRow => (Some(R::BrickSteel), Some(C::BrickSteel), Some(IndustryKind::Manufacturing), false, None, Policies { pollution_levy: 0.05, rent_support: 0.10, ..p }),
             Story::LanternLanes => (None, Some(C::NightMarket), None, false, None, Policies { late_hours: true, business_rate: -0.02, ..p }),
             Story::Shantytown => (Some(R::Kowloon), None, None, false, Some(12.0), Policies { rent_support: 0.20, ..p }),
             Story::NeoTokyoHeights => (Some(R::Eco), Some(C::NeonStrip), None, false, None, Policies { business_rate: 0.03, late_hours: true, ..p }),

@@ -206,6 +206,9 @@ pub fn site_fit(style: Style, site: &Site) -> f32 {
         Style::CapsuleTower | Style::SaucerStack => tall(6.0),
         Style::StiltTower => tall(10.0),
         Style::DomeCampus => tall(3.0),
+        // [r4-brick] Rows are three or four storeys, the mill wants height.
+        Style::BrickRow | Style::CornerPub => low(4.0),
+        Style::MillLofts => tall(5.0),
         // [garden] Houses and shops of the suburb are low; a close wants
         // a wide plot.
         Style::GardenHouse | Style::Bungalow => if f <= 3.0 { 1.0 } else { 0.02 },

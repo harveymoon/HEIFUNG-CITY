@@ -242,6 +242,9 @@ fn run_turntable(
         for e in stage.building.drain(..).chain(stage.glow.drain(..)) {
             commands.entity(e).despawn();
         }
+        // [r4-brick] Up close on the stage: the detail layers too (sills,
+        // glazing bars, AC units), as the city draws them near the camera.
+        geo.flatten_detail();
         lights::tag_windows(&mut geo, Some(0));
         let (lo, hi) = bounds(&geo).unwrap_or((Vec3::splat(-5.0), Vec3::splat(5.0)));
         let mid = (lo + hi) * 0.5;
