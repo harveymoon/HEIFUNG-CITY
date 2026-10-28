@@ -440,6 +440,8 @@ fn geometry_stays_near_its_lot() {
                     let (over, top, low, culprit) = extent(&g, lot, link.as_ref());
                     let tris = g.triangle_count();
                     let allow = 1.0;
+                    // [p2-look] A strip mine's pit is dug down by design.
+                    let low = if style.digs() { 0.0 } else { low };
                     if over > allow || top > (60.0 + floors as f32 * 5.0).max(90.0) || low < -0.3 || tris > budget(floors, lot) {
                         let frame = Frame::from_lot(lot);
                         let (plo, phi) = parts::bounds(&frame_poly(&frame, lot));

@@ -354,6 +354,13 @@ impl Style {
         matches!(self, Style::StripMall | Style::Mall | Style::MegaMall)
     }
 
+    /// [p2-look] A look dug below the ground (a strip mine's pit: the
+    /// renderer cuts its hole out of the ground, `holes`); the only styles
+    /// the tests let reach under it.
+    pub fn digs(self) -> bool {
+        self == Style::StripMine
+    }
+
     /// [capsule] The Capsule district's styles.
     pub const CAPSULE: [Style; 10] = [Style::DomeHouse, Style::SaucerHouse, Style::PopsicleDome, Style::TwinDomes, Style::DomePods, Style::CapsuleTower, Style::SaucerStack, Style::StiltTower, Style::DomeHall, Style::DomeCampus];
 }

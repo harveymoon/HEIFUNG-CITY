@@ -309,7 +309,7 @@ struct RenderState {
     /// landlocked state.
     lots_signature: Option<(usize, usize, u64, bool, u64)>,
     /// [refactor/app] The counters `lots_signature` was hashed under.
-    lots_gate: Gate<(u64, u64, u64, usize, u64, bool, bool)>,
+    lots_gate: Gate<(u64, u64, u64, usize, u64, bool, bool, u64)>,
     /// [refactor/app] The lots version the parks, and the lots and land
     /// value versions the vacant dressing, were last checked against.
     parks_gate: Gate<(u64, u64)>,

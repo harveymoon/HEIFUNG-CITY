@@ -122,6 +122,8 @@ pub(super) fn landscape_signature(w: &World) -> u64 {
     w.relief.hash(&mut h);
     // [dams] A wall drawn or awaited redraws the works.
     w.dams.version.hash(&mut h);
+    // [p2-look] A strip mine's pit is cut out of the ground.
+    nd_procgen::holes::holes_key(w).hash(&mut h);
     h.finish()
 }
 
