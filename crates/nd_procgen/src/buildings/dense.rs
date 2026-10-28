@@ -2,10 +2,11 @@
 //! terraces, night market arcades and neon karaoke towers. Each changes
 //! form with its floors.
 
+use super::hk;
 use super::kit::*;
 use super::parts::*;
 use super::{Ctx, Face};
-use crate::surface::{Geometry, Surface, Surface::*};
+use crate::surface::{Geometry, Lod, Surface, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::Tier;
 use rand::seq::IndexedRandom;
@@ -38,31 +39,63 @@ pub fn walled_city(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     };
     let cells = split_cells(rng, poly, nu, nv);
     let cages = if c.tier == Tier::Low { 0.07 } else { 0.03 };
+    // [r4-style] The Hong Kong detail (buildings/hk.rs) draws from its own
+    // stream: `rng` runs as it always has, so the blocks, windows and signs
+    // stand where they did.
+    let mut d = hk::stream(c);
+    let ledge_col = mul(pick(&mut d, &c.palette.concrete), 0.78 - 0.2 * c.wear);
+    let ledge_depth = 1.4;
+    let tone = hk::tile_tone(c, &mut d);
+    let dress = hk::FlatDress { more_ac: if c.tier == Tier::High { 0.25 } else { 0.45 }, ledge_below: false };
     for cell in &cells {
         let floors = (base + rng.random_range(-2..=2)).max(2);
         let h = floors as f32 * fh;
         let (s, col) = patchwork(c, rng);
         extrude(g, f, s, cell, 0.0, h, col);
-        for face in c.faces(cell) {
+        let banded = coin(&mut d, 0.35);
+        let ledges = hk::ledge_faces(c, cell, poly, ledge_depth);
+        for (fi, face) in c.faces(cell).into_iter().enumerate() {
             if face.len < 2.0 || !face_is_outer(&face, poly) {
                 continue;
             }
             // Ground floor: shutters and shops on the street, blank elsewhere.
             if face.is_front {
-                storefront(g, c, rng, &face, 0.0, fh);
+                // The plain shopfront is drawn into nothing so `rng` runs on
+                // as before; the Hong Kong shops take its place.
+                storefront(&mut Geometry::default(), c, rng, &face, 0.0, fh);
+                hk::shops(g, c, &mut d, &face, 0.0, fh);
             }
-            dense_windows(g, c, rng, &face, fh, floors - 1, fh, 1.7, 0.16 + 0.15 * c.style.clutter, cages);
+            let ledge = ledges.iter().find(|(i, _)| *i == fi).map(|(_, ext)| *ext);
+            if let Some(ext) = ledge {
+                hk::ledge(g, c, &face, fh + 0.05, ledge_depth.min(c.reach_out(&face) + 0.5), ext, ledge_col);
+            }
+            if banded && floors > 3 {
+                hk::tile_bands(g, c, &face, fh, floors - 2, fh, tone);
+            }
+            hk::flat_windows(g, c, rng, &face, fh, floors - 1, fh, 1.7, 0.16 + 0.15 * c.style.clutter, cages, hk::FlatDress { ledge_below: ledge.is_some(), ..dress });
             grime(g, c, rng, &face, 0.0, h, 2.5);
-            laundry_poles(g, c, rng, &face, fh, floors - 1, fh, 0.2);
+            g.lod(Lod::Near, |g| laundry_poles(g, c, rng, &face, fh, floors - 1, fh, 0.2));
             graffiti(g, c, rng, &face, 0.0, fh * 1.2, 1.0 + c.wear);
             if face.is_front && rng.random_bool(0.6) {
                 let (t, y) = (rng.random_range(-face.len * 0.3..face.len * 0.3), fh + 1.0 + rng.random_range(0.0..fh * 2.0));
-                hanging_sign(g, c, rng, &face, t, y, 2.2, 1.6);
+                hanging_sign(g, c, rng, &face, t, y.max(fh + 0.6 + 0.8), 2.2, 1.6);
+            }
+            if !face.is_front {
+                // A pipe run down the side, and neon on the street corner.
+                if coin(&mut d, 0.5) {
+                    let t = face.len * if coin(&mut d, 0.5) { 0.38 } else { -0.38 };
+                    let n = d.random_range(1..=3);
+                    hk::pipe_run(g, c, &mut d, &face, t, 0.0, h, fh, n);
+                }
+                if floors > 4 && coin(&mut d, 0.35) {
+                    hk::corner_neon(g, c, &mut d, &face, hk::street_end(&face), fh + 0.8, ((floors - 2) as f32 * fh).min(fh * 5.0));
+                }
             }
         }
         // Each roof is a different height: a step of parapets and junk.
         parapet(g, c, cell, h, 0.7, 0.2, s, mul(col, 0.9));
-        antenna_forest(g, c, rng, &offset_poly(cell, 0.4), h, 1.0);
+        g.lod(Lod::Mid, |g| antenna_forest(g, c, rng, &offset_poly(cell, 0.4), h, 1.0));
+        hk::roof_clutter(g, c, &mut d, cell, h, 0.7);
     }
     // Pipes and cable bundles strung across the front.
     let front = c.front_face(poly);
@@ -70,7 +103,7 @@ pub fn walled_city(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let y = fh * (1.6 + k as f32 * 1.3);
         let a = f.at2(front.at(-front.len * 0.45, 0.25), y);
         let b = f.at2(front.at(front.len * 0.45, 0.25), y + 0.4);
-        g.part(Matte).wire(a, b, 0.6, 0.05, rgba(DARK));
+        g.lod(Lod::Near, |g| g.part(Matte).wire(a, b, 0.6, 0.05, rgba(DARK)));
     }
 }
 

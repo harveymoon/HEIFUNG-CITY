@@ -4,11 +4,12 @@
 //! walk-up or pavilion version, middle ones a podium and slab, tall ones a
 //! tower with setbacks and a crown.
 
+use super::hk;
 use super::kit::*;
 use super::parts::*;
 use super::{Ctx, Face};
 use crate::mesh::MeshData;
-use crate::surface::{Geometry, Surface::*};
+use crate::surface::{Geometry, Lod, Surface::*};
 use glam::{Vec2, Vec3};
 use rand::seq::IndexedRandom;
 use rand::Rng;
@@ -30,9 +31,23 @@ pub fn pencil_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         Form::High => 3,
     };
     let podium_h = podium_floors as f32 * fh;
+    // [r4-style] The Hong Kong detail (buildings/hk.rs) draws from its own
+    // stream: `rng` runs as it always has, so the tower, its windows and
+    // its signs stand where they did.
+    let mut d = hk::stream(c);
+    let podium_col = mul(pick(rng, &pal.concrete), 0.85);
     // Podium over the whole footprint: shops at the street, signs over them.
-    extrude(g, f, Concrete, poly, 0.0, podium_h, mul(pick(rng, &pal.concrete), 0.85));
-    storefront(g, c, rng, &front, 0.0, fh);
+    extrude(g, f, Concrete, poly, 0.0, podium_h, podium_col);
+    // The plain shopfront is drawn into nothing so `rng` runs on as
+    // before; the Hong Kong shops take its place, under a deep ledge.
+    storefront(&mut Geometry::default(), c, rng, &front, 0.0, fh);
+    hk::shops(g, c, &mut d, &front, 0.0, fh);
+    let ledge_depth = 1.6;
+    let ledge_col = mul(podium_col, 0.9 - 0.2 * c.wear);
+    let faces_p = c.faces(poly);
+    for (i, ext) in hk::ledge_faces(c, poly, poly, ledge_depth) {
+        hk::ledge(g, c, &faces_p[i], fh + 0.05, ledge_depth.min(c.reach_out(&faces_p[i]) + 0.5), ext, ledge_col);
+    }
     if podium_floors > 1 {
         band_windows(g, c, rng, &front, fh, podium_floors - 1, fh);
     }
@@ -45,7 +60,8 @@ pub fn pencil_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for i in 0..n_signs {
         let t = -front.len * 0.4 + (i as f32 + 0.5) * front.len * 0.8 / n_signs as f32;
         let (y, reach, h) = (fh + 0.6 + rng.random_range(0.0..(podium_h + 1.0)), rng.random_range(1.6..2.8), rng.random_range(1.2..2.2));
-        hanging_sign(g, c, rng, &front, t, y, reach, h);
+        // Clear of the ledge.
+        hanging_sign(g, c, rng, &front, t, y.max(fh + 0.6 + h * 0.5), reach, h);
     }
 
     // The tower: a slim slab standing on the front of the podium. On a low
@@ -71,13 +87,19 @@ pub fn pencil_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     extrude(g, f, wall_s, &tower, y0, y0 + shaft as f32 * fh, wall);
     let faces = c.faces(&tower);
     let cages = if c.tier == nd_sim::Tier::Low { 0.08 } else { 0.02 };
+    // Some towers are faced in tile bands between the window rows.
+    let bands = coin(&mut d, 0.45).then(|| hk::tile_tone(c, &mut d));
+    let dress = hk::FlatDress { more_ac: if c.tier == nd_sim::Tier::High { 0.2 } else { 0.4 }, ledge_below: form == Form::Low };
     for face in &faces {
         if face.len < 2.5 {
             continue;
         }
-        dense_windows(g, c, rng, face, y0, shaft, fh, 1.9, 0.18 + 0.2 * c.style.clutter, cages);
+        if let Some(tone) = bands.filter(|_| shaft > 2) {
+            hk::tile_bands(g, c, face, y0, shaft - 1, fh, tone);
+        }
+        hk::flat_windows(g, c, rng, face, y0, shaft, fh, 1.9, 0.18 + 0.2 * c.style.clutter, cages, dress);
         if !face.is_front {
-            laundry_poles(g, c, rng, face, y0, shaft, fh, 0.12 + 0.3 * c.wear);
+            g.lod(Lod::Near, |g| laundry_poles(g, c, rng, face, y0, shaft, fh, 0.12 + 0.3 * c.wear));
         }
         grime(g, c, rng, face, y0, y0 + shaft as f32 * fh, 1.5);
     }
@@ -96,31 +118,50 @@ pub fn pencil_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     let mut top = y0 + shaft as f32 * fh;
     let mut roof = tower.clone();
+    let mut rail_y = 0.9;
     if set_floors > 0 {
         // Setback floors and a crown frame with a lit outline.
         let upper = fit_inside(c, &scale_poly(&tower, 0.8));
         extrude(g, f, wall_s, &upper, top, top + set_floors as f32 * fh, mul(wall, 1.08));
         for face in c.faces(&upper) {
             if face.len > 2.5 {
-                dense_windows(g, c, rng, &face, top, set_floors, fh, 2.0, 0.0, 0.0);
+                hk::flat_windows(g, c, rng, &face, top, set_floors, fh, 2.0, 0.0, 0.0, hk::FlatDress { more_ac: 0.2, ledge_below: false });
             }
         }
-        roof_gear(g, c, rng, &tower, top, 0.6);
+        g.lod(Lod::Mid, |g| roof_gear(g, c, rng, &tower, top, 0.6));
         top += set_floors as f32 * fh;
         roof = upper;
+        rail_y = 0.0;
         let crown = offset_poly(&roof, -0.2);
         let lit = [mul(pick(rng, &pal.sign_colors), 0.9), mul(pick(rng, &pal.sign_colors), 0.7)];
         crown_frame(g, c, &crown, top, 4.0, 0.3, Panel, mul(pal.steel, 0.8), &[(4.0, 0.25, lit[0]), (2.0, 0.12, lit[1])]);
     } else {
         parapet(g, c, &tower, top, 0.9, 0.25, wall_s, mul(wall, 0.9));
     }
-    antenna_forest(g, c, rng, &offset_poly(&roof, 0.6), top, if c.tier == nd_sim::Tier::Low { 0.8 } else { 0.35 });
+    g.lod(Lod::Mid, |g| antenna_forest(g, c, rng, &offset_poly(&roof, 0.6), top, if c.tier == nd_sim::Tier::Low { 0.8 } else { 0.35 }));
     if poly_inside_poly(&rect(poly_center(&roof).x, poly_center(&roof).y, 1.3, 1.3), &roof) {
-        water_tank(g, f, poly_center(&roof), top, 1.1, 2.2, Metal, mul(pal.steel, 0.8));
+        g.lod(Lod::Mid, |g| water_tank(g, f, poly_center(&roof), top, 1.1, 2.2, Metal, mul(pal.steel, 0.8)));
     }
     // Back of the podium roof: a terrace with tanks and plant.
     if form != Form::Low {
-        roof_gear(g, c, rng, &offset_poly(poly, 0.5), podium_h, 0.4);
+        g.lod(Lod::Mid, |g| roof_gear(g, c, rng, &offset_poly(poly, 0.5), podium_h, 0.4));
+    }
+    // [r4-style] The Hong Kong dressing, all from `d`: the stair and lift
+    // core up one side, aerials and a railing on the roof, neon up the
+    // corner, a billboard on the podium.
+    if form != Form::Low {
+        let core_col = mul(*[pick(&mut d, &pal.concrete), pick(&mut d, &pal.plaster)].choose(&mut d).unwrap(), 0.95 - 0.25 * c.wear);
+        hk::side_core(g, c, &mut d, &tower, podium_h, y0 + shaft as f32 * fh, fh, core_col);
+    }
+    hk::roof_clutter(g, c, &mut d, &roof, top, rail_y);
+    let side = faces.iter().filter(|fc| !fc.is_front && fc.len > 3.0 && fc.out.y.abs() < 0.5).max_by(|a, b| c.reach_out(a).total_cmp(&c.reach_out(b)));
+    if let Some(side) = side.filter(|_| shaft > 3 && coin(&mut d, 0.6)) {
+        hk::corner_neon(g, c, &mut d, side, hk::street_end(side), y0 + 0.6, (shaft as f32 * fh * 0.4).clamp(fh * 2.0, fh * 6.0));
+    }
+    if podium_floors > 1 && front.len > 8.0 && coin(&mut d, 0.55) {
+        let w = (front.len * 0.45).min(9.0);
+        let t = d.random_range(-(front.len - w) * 0.4..=(front.len - w) * 0.4);
+        hk::podium_billboard(g, c, &mut d, &front, t, fh * 1.55, w, (fh * 0.8).min(2.6));
     }
 }
 

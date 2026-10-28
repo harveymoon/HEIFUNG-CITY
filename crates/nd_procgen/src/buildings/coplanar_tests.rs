@@ -83,7 +83,8 @@ pub(super) fn clash_list(g: &Geometry) -> Vec<Clash> {
         what: String,
     }
     let mut tris: Vec<Tri> = Vec::new();
-    for (s, m) in g.iter() {
+    // [r4-style] The detail layers are drawn over the base near the camera.
+    for (s, m) in g.iter().chain(crate::surface::Lod::DETAIL.into_iter().flat_map(|l| g.detail_iter(l))) {
         for t in m.indices.chunks_exact(3) {
             let p = [m.positions[t[0] as usize], m.positions[t[1] as usize], m.positions[t[2] as usize]];
             let c = cross(sub(p[1], p[0]), sub(p[2], p[0]));

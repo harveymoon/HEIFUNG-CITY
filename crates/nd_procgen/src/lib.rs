@@ -52,7 +52,7 @@ pub use buildings::strip_mine_hole;
 pub use buildings::{battery_lights, solar_head, solar_trackers, SolarTracker, SOLAR_HUB, SOLAR_MAX_TILT, building_style, style_extras, coal_vents, CoalVent, generate_building, wind_rotor, wind_turbines, BuildingRules, PlantField, CraneRig, crane_slew, GameRig, Extras, LandUseRules, Neighbour, Style, StyleBook, Turbine, NEON_MARK, NIGHT_MARK, WINDOW_LIGHT_MARK};
 pub use mesh::MeshData;
 pub use palette::Palette;
-pub use surface::{Geometry, Surface};
+pub use surface::{Geometry, Lod, Surface};
 pub use terrain::{build_far_ground, build_terrain, flat_height, scatter_nature, terrain_height, TerrainConfig};
 pub use textures::{generate as generate_texture, mip_chain, roughness_map, Texture};
 pub use vacant::generate_vacant;
