@@ -139,7 +139,7 @@ fn door(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f32, col:
 /// A string of bulbs on a sagging wire between lot-local anchors, about
 /// `spacing` apart: the wire mid detail, each bulb's glass near detail,
 /// its light base glow lit only after dark; a few dead on a run-down front.
-fn bulbs(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, a: Vec3, b: Vec3, sag: f32, spacing: f32) {
+pub(super) fn bulbs(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, a: Vec3, b: Vec3, sag: f32, spacing: f32) {
     let len = a.distance(b);
     if len < 1.0 {
         return;
@@ -178,7 +178,7 @@ fn lamp_post(g: &mut Geometry, c: &Ctx, p: Vec2, h: f32) {
 /// triangles in the wall's own finish, the ridge along `u` (`along_u`) or
 /// along `v`.
 #[allow(clippy::too_many_arguments)]
-fn gabled(g: &mut Geometry, c: &Ctx, r: &R, y: f32, rise: f32, along_u: bool, eave: f32, s: Surface, roof: [f32; 3], wall_s: Surface, wall: [f32; 3]) {
+pub(super) fn gabled(g: &mut Geometry, c: &Ctx, r: &R, y: f32, rise: f32, along_u: bool, eave: f32, s: Surface, roof: [f32; 3], wall_s: Surface, wall: [f32; 3]) {
     let f = &c.frame;
     let p = |a: f32, yy: f32, b: f32| if along_u { f.at(a, yy, b) } else { f.at(b, yy, a) };
     let d = |a: f32, b: f32| if along_u { f.dir3(Vec2::new(a, b)) } else { f.dir3(Vec2::new(b, a)) };

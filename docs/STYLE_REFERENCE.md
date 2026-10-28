@@ -196,6 +196,25 @@ a view down one street shows a few dozen such towers.
   sills, shutters, glazing bars, railings, chairs and pots are detail. On a
   lot that touches the water (`Ctx::shore`) a small pier on piles runs out
   over it, unless the business builds its own jetty.
+- Done (r4-solarpunk): **Solarpunk Green** (`buildings/solarpunk.rs`, Eco
+  Village's look): timber-and-glass terraces under planted roofs (flat
+  behind an upstand or a sedum mono-pitch), solar-shingle townhouses
+  (steep mono-pitch roofs skinned in PV to the street), a vine-covered
+  tower with balcony gardens, a glass market hall with a farm on the roof
+  behind, a co-op store, a repair café in an old workshop, a vertical farm,
+  greenhouse rows, a cargo-bike depot, and a planted solar villa with a
+  roof garden for the story's mansions. Lived in, not a brochure: timber
+  silvers and darkens with wear, copper patinates, glass is dirty, panels
+  are patched with odd ones (a tarp over a leak on a worn roof), cables
+  run down to battery boxes, rain tanks at every corner, roofs overgrown.
+  The PV skin is one quad per slope in the base; patches mid, seams near.
+  Creepers are decals at two depths of their own (0.011, 0.015: under the
+  grime and the frames), a third of them base so a planted wall reads green
+  from far off. Wind trees: trunk base, branches and blades mid. Glow, all
+  base and marked `NIGHT_MARK`: the amber strip and underside of every
+  solar canopy, string bulbs (Harbour's), the vertical farm's magenta grow
+  lights floor by floor, greenhouses' sodium lamps, post lamps and the
+  depot's charge lights. Bikes and cargo bikes are near detail.
 - Left for later: the cyberpunk family (section 2) on the Neon strip,
   offices and industry; the street-level props round the plot; the other
   looks (Skyline Luxe, Glass Campus).

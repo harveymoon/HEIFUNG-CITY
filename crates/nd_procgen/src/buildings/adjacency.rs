@@ -220,6 +220,13 @@ pub fn site_fit(style: Style, site: &Site) -> f32 {
         Style::Boathouses | Style::SeafoodShack | Style::BoardwalkCafe | Style::NetSheds => low(3.0),
         Style::LighthouseCorner => tall(3.0) * low(6.0),
         Style::BoutiqueHotel => tall(3.0),
+        // [r4-solarpunk] Terraces and townhouses are low, the shops, the
+        // farms and the depot too; the vine tower and the vertical farm
+        // want floors.
+        Style::TimberTerrace => low(4.0),
+        Style::SolarTownhouses | Style::CoopStore | Style::RepairCafe | Style::GlassMarketHall | Style::GreenhouseRows | Style::BikeDepot => low(3.0),
+        Style::VineTower => tall(4.0),
+        Style::VerticalFarm => tall(3.0),
         _ => 1.0,
     }
 }

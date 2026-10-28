@@ -107,6 +107,18 @@ pub fn look_styles(look: Look, lu: LandUse, tier: Tier) -> Option<Menu> {
         (Look::HarbourPastel, Commercial, _) => &[(S::AwningArcade, 0.35), (S::BoardwalkCafe, 0.25), (S::BoutiqueHotel, 0.25), (S::SeafoodShack, 0.15)],
         (Look::HarbourPastel, Entertainment, _) => &[(S::BoardwalkCafe, 0.4), (S::SeafoodShack, 0.35), (S::AwningArcade, 0.25)],
         (Look::HarbourPastel, Industrial, _) => &[(S::NetSheds, 0.55), (S::FishMarketHall, 0.45)],
+        // [r4-solarpunk] Terraces, townhouses and vine towers for homes;
+        // the market hall, co-op stores and repair cafés for shops and
+        // nights out; vertical farms, greenhouses and the bike depot for its
+        // small industry.
+        (Look::SolarpunkGreen, Residential, Low) => &[(S::TimberTerrace, 0.55), (S::SolarTownhouses, 0.4), (S::VineTower, 0.05)],
+        (Look::SolarpunkGreen, Residential, Mid) => &[(S::TimberTerrace, 0.4), (S::SolarTownhouses, 0.35), (S::VineTower, 0.25)],
+        (Look::SolarpunkGreen, Residential, High) => &[(S::VineTower, 0.45), (S::TimberTerrace, 0.3), (S::SolarTownhouses, 0.25)],
+        (Look::SolarpunkGreen, Commercial, Low) => &[(S::CoopStore, 0.45), (S::RepairCafe, 0.35), (S::GlassMarketHall, 0.2)],
+        (Look::SolarpunkGreen, Commercial, _) => &[(S::CoopStore, 0.35), (S::GlassMarketHall, 0.35), (S::RepairCafe, 0.3)],
+        (Look::SolarpunkGreen, Entertainment, _) => &[(S::RepairCafe, 0.55), (S::GlassMarketHall, 0.25), (S::CoopStore, 0.2)],
+        (Look::SolarpunkGreen, Industrial, Low) => &[(S::GreenhouseRows, 0.5), (S::BikeDepot, 0.3), (S::VerticalFarm, 0.2)],
+        (Look::SolarpunkGreen, Industrial, _) => &[(S::VerticalFarm, 0.4), (S::GreenhouseRows, 0.35), (S::BikeDepot, 0.25)],
         _ => return None,
     })
 }
@@ -119,6 +131,8 @@ pub fn look_mansion(look: Look) -> Option<Style> {
         Look::Garden => Some(Style::GardenManor),
         // [r4-harbour] A pastel villa with a boathouse on The Promenade.
         Look::HarbourPastel => Some(Style::PastelVilla),
+        // [r4-solarpunk] A planted solar villa in Eco Village.
+        Look::SolarpunkGreen => Some(Style::SolarVilla),
         _ => None,
     }
 }
@@ -317,6 +331,22 @@ pub fn tint(look: Look) -> Tint {
             sign_scale: 0.5,
             grime: Some((0.35, 0.3)),
         },
+        // [r4-solarpunk] Weathered timber, lime render and stained
+        // concrete, warm low windows; few signs, hand-painted, in leaf
+        // greens, ochre and clay; canvas in moss, rust and oat. Lived in:
+        // some grime. The styles paint their own timbers (`solarpunk.rs`).
+        Look::SolarpunkGreen => Tint {
+            walls: &[[0.56, 0.52, 0.46], [0.62, 0.47, 0.31], [0.70, 0.66, 0.56], [0.58, 0.60, 0.54], [0.44, 0.34, 0.25]],
+            trim: Some([0.30, 0.36, 0.26]),
+            windows: &[[1.35, 0.95, 0.5], [1.25, 1.0, 0.62], [1.15, 1.05, 0.7]],
+            signs: &[[0.6, 1.8, 0.5], [1.9, 1.4, 0.4], [1.7, 0.8, 0.4], [1.6, 1.6, 1.3]],
+            awnings: Some(&[[0.26, 0.36, 0.20], [0.50, 0.26, 0.14], [0.66, 0.60, 0.46], [0.30, 0.40, 0.38]]),
+            brick: Some(&[[0.52, 0.32, 0.24], [0.46, 0.30, 0.22]]),
+            plaster: Some(&[[0.76, 0.70, 0.58], [0.68, 0.64, 0.54], [0.72, 0.56, 0.38]]),
+            signage: None,
+            sign_scale: 0.4,
+            grime: Some((0.3, 0.3)),
+        },
         Look::Historic => Tint {
             walls: &[[0.55, 0.32, 0.24], [0.62, 0.56, 0.46], [0.48, 0.30, 0.22], [0.66, 0.60, 0.50]],
             trim: Some([0.74, 0.70, 0.60]),
@@ -390,6 +420,7 @@ mod tests {
                 Look::Lantern => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
                 Look::Garden => &[LandUse::Residential, LandUse::Commercial],
                 Look::HarbourPastel => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
+                Look::SolarpunkGreen => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
             };
             for &lu in uses {
                 for tier in Tier::ALL {
@@ -399,8 +430,9 @@ mod tests {
             }
             // [r4-brick] Brick & Steel builds the works in its look; [lantern]
             // Lantern Alley its small trades. No other look dresses industry.
-            // [r4-harbour] Harbour Pastel its fish market and net sheds.
-            assert_eq!(look_styles(look, LandUse::Industrial, Tier::Mid).is_some(), matches!(look, Look::BrickSteel | Look::Lantern | Look::HarbourPastel));
+            // [r4-harbour] Harbour Pastel its fish market and net sheds;
+            // [r4-solarpunk] Solarpunk Green its farms and bike depot.
+            assert_eq!(look_styles(look, LandUse::Industrial, Tier::Mid).is_some(), matches!(look, Look::BrickSteel | Look::Lantern | Look::HarbourPastel | Look::SolarpunkGreen));
         }
     }
 
