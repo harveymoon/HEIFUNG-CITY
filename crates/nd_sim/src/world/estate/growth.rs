@@ -611,6 +611,12 @@ impl World {
                 id
             }
         };
+        // [lantern] A story with its own big house (Lantern Alley's
+        // courtyard compound) builds it from the start, not a plain mansion
+        // the daily facelift refits days later. Other looks as before.
+        if let Some(l) = self.district_look_for(primary, LandUse::Residential).filter(|l| l.has_own_estates()) {
+            self.buildings[bid].look = Some(l);
+        }
         if form == Form::Mansion {
             let n = self.estate.owners.get(owner).map(|o| o.name.clone()).unwrap_or_default();
             self.buildings[bid].name = format!("{n} Estate");

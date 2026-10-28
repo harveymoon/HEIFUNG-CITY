@@ -23,6 +23,8 @@ mod dense;
 pub mod hk;
 /// [capsule] The Capsule district's white domes, saucers and pill towers.
 mod capsule;
+/// [lantern] Lantern Alley: shophouses, alleys, stalls, halls, workshops.
+mod lantern;
 /// [districts] District looks: style menus and palettes, hotels.
 pub mod district;
 mod entertainment;
@@ -253,6 +255,9 @@ fn back_edge_link(lot: &Lot, kind: RailFacility) -> RailLink {
 
 #[cfg(test)]
 mod capsule_tests;
+
+#[cfg(test)]
+mod lantern_tests;
 
 #[cfg(test)]
 mod hk_tests;

@@ -243,6 +243,9 @@ fn run_turntable(
             commands.entity(e).despawn();
         }
         lights::tag_windows(&mut geo, Some(0));
+        // [lantern] The whole building, its detail layers too (AC units,
+        // lantern paper, awnings): the turntable is always close up.
+        geo.flatten_detail();
         let (lo, hi) = bounds(&geo).unwrap_or((Vec3::splat(-5.0), Vec3::splat(5.0)));
         let mid = (lo + hi) * 0.5;
         let offset = STAGE - Vec3::new(mid.x, 0.0, mid.z);

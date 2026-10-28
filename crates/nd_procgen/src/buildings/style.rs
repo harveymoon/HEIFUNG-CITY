@@ -346,6 +346,29 @@ styles! {
     Mall { label: "mall", family: Special, cluster: -1.0, draw: |g, c, r, e| malls::mall(g, c, r, e) },
     /// Anchor stores, a food court and a parking structure.
     MegaMall { label: "mega-mall", family: Special, cluster: -1.5, draw: |g, c, r, e| malls::mega_mall(g, c, r, e) },
+    // -- [lantern] Lantern Alley, the Lantern Lanes story's look
+    // (`buildings/lantern.rs`), drawn only from its menus (the compound for
+    // its estates' forms); appended so `ALL` keeps its order. --
+    // Shophouse rows, alleys, stalls and workshops repeat along a lane; the
+    // halls and the tea house stand apart.
+    /// Narrow shophouses, flats over a shop behind an arcade, lanterns along it.
+    LanternShophouse { label: "lantern shophouses", family: Walkup, cluster: 1.0, draw: |g, c, r, _| lantern::shophouses(g, c, r) },
+    /// Two walk-ups either side of an alley strung with lanterns and washing.
+    AlleyWalkups { label: "alley walk-ups", family: Walkup, cluster: 0.8, draw: |g, c, r, _| lantern::alley_walkups(g, c, r) },
+    /// Stall rows under patchwork tarps, lanterns across the aisles.
+    StallRows { label: "stall rows", family: Night, cluster: 0.9, draw: |g, c, r, _| lantern::stall_rows(g, c, r) },
+    /// An open hall of kitchens and tables under a tin gable (a cooked-food hall upstairs on dear land).
+    FoodCourt { label: "food court hall", family: Retail, cluster: -0.4, draw: |g, c, r, _| lantern::food_court(g, c, r) },
+    /// Storeys under stacked tile skirts, lacquered columns, lanterns under the eaves.
+    TeaHouse { label: "tea house", family: Night, cluster: -0.3, draw: |g, c, r, _| lantern::tea_house(g, c, r) },
+    /// A painted gateway, a forecourt of stalls under lantern strings, a market hall.
+    LanternMarket { label: "lantern night market", family: Night, cluster: 0.2, draw: |g, c, r, _| lantern::lantern_market(g, c, r) },
+    /// Small workshops behind a work apron, roller doors, lean-tos, stock.
+    AlleyWorkshops { label: "alley workshops", family: Heavy, cluster: 0.8, draw: |g, c, r, _| lantern::alley_workshops(g, c, r) },
+    /// Kitchens behind a service alley: hoods, ducts, steam, gas bottles.
+    BackKitchens { label: "back-alley kitchens", family: Heavy, cluster: 0.5, draw: |g, c, r, _| lantern::back_kitchens(g, c, r) },
+    /// A family's or a billionaire's courtyard shophouse compound.
+    LanternCompound { label: "courtyard shophouse compound", family: Special, cluster: 0.0, draw: |g, c, r, _| lantern::compound(g, c, r) },
 }
 
 impl Style {
@@ -363,6 +386,9 @@ impl Style {
 
     /// [capsule] The Capsule district's styles.
     pub const CAPSULE: [Style; 10] = [Style::DomeHouse, Style::SaucerHouse, Style::PopsicleDome, Style::TwinDomes, Style::DomePods, Style::CapsuleTower, Style::SaucerStack, Style::StiltTower, Style::DomeHall, Style::DomeCampus];
+
+    /// [lantern] Lantern Alley's styles.
+    pub const LANTERN: [Style; 9] = [Style::LanternShophouse, Style::AlleyWalkups, Style::StallRows, Style::FoodCourt, Style::TeaHouse, Style::LanternMarket, Style::AlleyWorkshops, Style::BackKitchens, Style::LanternCompound];
 }
 
 impl Style {
@@ -417,6 +443,17 @@ impl Style {
             Form::StripMall => Some(Style::StripMall),
             Form::Mall => Some(Style::Mall),
             Form::MegaMall => Some(Style::MegaMall),
+        }
+    }
+
+    /// [lantern] The style a form forces in a district look: a family's
+    /// McMansion and a billionaire's mansion build in the story's own
+    /// style where it has one (Lantern Alley's courtyard compound).
+    pub fn for_form_in(form: Option<nd_sim::estate::Form>, look: Option<nd_sim::districts::Look>) -> Option<Style> {
+        use nd_sim::estate::Form;
+        match (form?, look) {
+            (Form::McMansion | Form::Mansion, Some(nd_sim::districts::Look::Lantern)) => Some(Style::LanternCompound),
+            _ => Style::for_form(form),
         }
     }
 

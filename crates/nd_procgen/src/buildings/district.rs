@@ -68,6 +68,15 @@ pub fn look_styles(look: Look, lu: LandUse, tier: Tier) -> Option<Menu> {
         (Look::Capsule, Commercial, High) => &[(S::SaucerStack, 0.3), (S::CapsuleTower, 0.25), (S::StiltTower, 0.2), (S::DomeCampus, 0.25)],
         (Look::Capsule, Entertainment, Low) => &[(S::DomeHall, 0.6), (S::TwinDomes, 0.4)],
         (Look::Capsule, Entertainment, _) => &[(S::DomeHall, 0.5), (S::SaucerStack, 0.3), (S::PopsicleDome, 0.2)],
+        // [lantern] Shophouses and alleys for homes; stalls, halls and tea
+        // houses for shops and nights out; workshops and kitchens for its
+        // small industry (the one look that dresses industry).
+        (Look::Lantern, Residential, Low) => &[(S::AlleyWalkups, 0.55), (S::LanternShophouse, 0.45)],
+        (Look::Lantern, Residential, _) => &[(S::LanternShophouse, 0.55), (S::AlleyWalkups, 0.45)],
+        (Look::Lantern, Commercial, Low) => &[(S::StallRows, 0.35), (S::LanternShophouse, 0.3), (S::FoodCourt, 0.15), (S::TeaHouse, 0.1), (S::LanternMarket, 0.1)],
+        (Look::Lantern, Commercial, _) => &[(S::LanternShophouse, 0.3), (S::FoodCourt, 0.2), (S::TeaHouse, 0.2), (S::LanternMarket, 0.2), (S::StallRows, 0.1)],
+        (Look::Lantern, Entertainment, _) => &[(S::LanternMarket, 0.35), (S::TeaHouse, 0.3), (S::StallRows, 0.2), (S::FoodCourt, 0.15)],
+        (Look::Lantern, Industrial, _) => &[(S::AlleyWorkshops, 0.55), (S::BackKitchens, 0.45)],
         _ => return None,
     })
 }
@@ -207,6 +216,21 @@ pub fn tint(look: Look) -> Tint {
             sign_scale: 0.35,
             grime: Some((0.0, 0.0)),
         },
+        // [lantern] Stained render and faded tile (cream, jade, ochre,
+        // dusty pink), dark red trim, warm windows; red, amber and jade
+        // signs everywhere; red, green, blue and tan awnings.
+        Look::Lantern => Tint {
+            walls: &[[0.66, 0.60, 0.50], [0.46, 0.56, 0.50], [0.64, 0.52, 0.34], [0.64, 0.48, 0.46], [0.52, 0.52, 0.50]],
+            trim: Some([0.36, 0.12, 0.09]),
+            windows: &[[1.4, 0.95, 0.5], [1.35, 0.8, 0.45], [1.2, 1.05, 0.7]],
+            signs: &[[2.6, 0.35, 0.2], [2.5, 1.5, 0.3], [0.4, 2.0, 1.2], [2.4, 0.5, 0.6], [2.2, 2.0, 1.4]],
+            awnings: Some(&[[0.62, 0.12, 0.09], [0.16, 0.36, 0.26], [0.16, 0.28, 0.48], [0.58, 0.46, 0.20]]),
+            brick: Some(&[[0.48, 0.25, 0.18], [0.40, 0.30, 0.24]]),
+            plaster: Some(&[[0.70, 0.64, 0.52], [0.56, 0.62, 0.54], [0.68, 0.56, 0.40]]),
+            signage: Some((0.9, 0.65)),
+            sign_scale: 1.0,
+            grime: None,
+        },
         Look::Historic => Tint {
             walls: &[[0.55, 0.32, 0.24], [0.62, 0.56, 0.46], [0.48, 0.30, 0.22], [0.66, 0.60, 0.50]],
             trim: Some([0.74, 0.70, 0.60]),
@@ -276,6 +300,7 @@ mod tests {
                 Look::TechCampus | Look::Tourist => &[LandUse::Commercial],
                 Look::Historic => &[LandUse::Residential, LandUse::Commercial],
                 Look::Capsule => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment],
+                Look::Lantern => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
             };
             for &lu in uses {
                 for tier in Tier::ALL {
@@ -283,7 +308,8 @@ mod tests {
                     assert!(!menu.is_empty() && menu.iter().all(|(_, w)| *w > 0.0));
                 }
             }
-            assert!(look_styles(look, LandUse::Industrial, Tier::Mid).is_none());
+            // [lantern] Only Lantern Alley dresses industry.
+            assert_eq!(look_styles(look, LandUse::Industrial, Tier::Mid).is_some(), look == Look::Lantern);
         }
     }
 

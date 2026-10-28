@@ -303,7 +303,7 @@ pub fn shops(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0: f32
 /// A canvas awning sloping out from the wall at `y` to `reach`, with a
 /// valance at its edge, stripes and two steel arms.
 #[allow(clippy::too_many_arguments)]
-fn awning(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, w: f32, reach: f32, col: [f32; 3], stripe: Option<[f32; 3]>) {
+pub(crate) fn awning(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, w: f32, reach: f32, col: [f32; 3], stripe: Option<[f32; 3]>) {
     let f = &c.frame;
     let drop = reach * 0.42;
     let a = f.at2(face.at(t, 0.3), y);

@@ -20,8 +20,9 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         _ if extras.brand.is_some_and(|m| m.role == nd_sim::corp::BrandRole::Headquarters) && land_use == LandUse::Commercial && extras.tower.is_none() => {
             if seed % 2 == 0 { Style::TwistTower } else { Style::SlabTower }
         }
-        // [land] McMansions, mansions, mega hotels and museums.
-        _ if Style::for_form(extras.form).is_some() => Style::for_form(extras.form).unwrap(),
+        // [land] McMansions, mansions, mega hotels and museums ([lantern] in
+        // the story's own style where it has one).
+        _ if Style::for_form(extras.form).is_some() => Style::for_form_in(extras.form, extras.look).unwrap(),
         // [subway] Before the depot: the Central Station is a bus terminal too.
         _ if extras.rail.is_some_and(|r| r.kind == RailFacility::Central) => Style::CentralStation,
         _ if extras.metro => Style::MetroEntrance,
@@ -54,7 +55,9 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         // [waterfront] A hotel on the water: balconies facing it, a roof pool.
         (None, None) if extras.business == Some(nd_sim::BusinessKind::Hotel) && lot.shore.is_waterfront() => Style::WaterfrontHotel,
         // [districts] A district's look, then hotels, before the land use's menu.
-        (None, None) if !extras.rooftop_pad && extras.look.is_some_and(|l| district::look_styles(l, land_use, tier).is_some()) => {
+        // [lantern] Industry with a look of its own (a farm, a refinery)
+        // keeps it in a district that dresses its industry.
+        (None, None) if !extras.rooftop_pad && extras.look.is_some_and(|l| district::look_styles(l, land_use, tier).is_some()) && !(land_use == LandUse::Industrial && extras.business.is_some_and(|k| industry_styles(k, tier).is_some())) => {
             let menu = district::look_styles(extras.look.unwrap(), land_use, tier).unwrap();
             district::pick(menu, &adjacency::Site { floors, frontage: lot.width() }, extras.neighbours, &mut rng)
         }
