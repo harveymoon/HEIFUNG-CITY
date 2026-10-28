@@ -260,7 +260,22 @@ impl World {
         // [parks] (D5) A path drawn into a park's interior (its hub gate)
         // ends at the park's edge gate: the park walks it on to the hub.
         let gesture = match gesture {
-            Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind: RoadKind::Path, elevation, .. } => Gesture::Road { points: self.path_into_parks(&points), lanes_fwd, lanes_bwd, curved, kind: RoadKind::Path, elevation, car_only: None },
+            Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind: RoadKind::Path, elevation, .. } => {
+                let mut points = self.path_into_parks(&points);
+                // [r4-crossings] An end dropped on a street meets it at a
+                // node of the street when one is a few steps off: no stub
+                // cut off it, and one crossing where two paths face each
+                // other across it (`RoadNetwork::path_end_join`).
+                let n = points.len();
+                if n >= 2 {
+                    for i in [0, n - 1] {
+                        if let Some(q) = self.roads.path_end_join(points[i], elevation.get(i).copied().unwrap_or(0.0)) {
+                            points[i] = q;
+                        }
+                    }
+                }
+                Gesture::Road { points, lanes_fwd, lanes_bwd, curved, kind: RoadKind::Path, elevation, car_only: None }
+            }
             g => g,
         };
         let id = GestureId(self.next_gesture);
