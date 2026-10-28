@@ -15,13 +15,16 @@ pub const PROPERTY_TAX: f32 = 0.10;
 /// rent. With upkeep and tax it leaves the old investor's 45%
 /// (`rich::INVEST_RENT_NET`).
 pub const RENT_LOAN: f32 = 0.15;
-/// [ledger] What an out-of-town owner (a developer, the independent
-/// landlords' pool) keeps in town before its profit leaves: about this many
-/// days of its rent roll.
+/// [ledger] What an out-of-town owner (a developer) keeps in town before its
+/// profit leaves, and [p1-sim] the independent landlords' pool before it
+/// shares out the rest: about this many days of its rent roll.
 pub const OUT_OF_TOWN_FLOAT: f64 = 20_000.0;
 /// [ledger] Share of a residents' property company's day's net paid to its
 /// founder's household; the rest stays in the company for the next deposit.
 pub const COMPANY_DIVIDEND: f32 = 0.5;
+/// [p1-sim] Savings a household has before it counts among the town's
+/// small landlords, who share the independent landlords' surplus.
+pub const LANDLORD_SAVINGS: f32 = 5_000.0;
 
 impl World {
     // ── accounts ─────────────────────────────────────────────────────────
@@ -327,14 +330,33 @@ impl World {
         self.business_area(bid) * host.rent / super::tenants::HOME_M2 * super::tenants::UNIT_RENT_SHARE
     }
 
-    /// [ledger] Once a day after the rents: owners out of town (developers,
-    /// the independent landlords) send what they hold beyond a float home;
-    /// residents' property companies pay their founders a dividend. Owners'
-    /// day's rent rolls into yesterday's.
+    /// [ledger] Once a day after the rents: developers (out of town) send
+    /// what they hold beyond a float home; residents' property companies pay
+    /// their founders a dividend. Owners' day's rent rolls into yesterday's.
+    /// [p1-sim] The independent landlords are townspeople: what their pool
+    /// holds beyond the float, up to the last day's rent after upkeep and
+    /// tax, is paid to the households with savings (`LANDLORD_SAVINGS`), in
+    /// proportion to them, and stays in town. Past that it is the price of
+    /// buildings they sold, paid with the buyer's bank loan from outside: it
+    /// goes back out (`PropertySale`), so a sale moves no money into town
+    /// (handed to the savers, the old developers' selling up would have
+    /// given them ~$2M a day in Harvey's day-62 city).
     pub(in crate::world) fn settle_owners(&mut self) {
         let landlords = self.economy.bank.balance(Account::Landlords);
         if landlords > OUT_OF_TOWN_FLOAT {
-            self.transfer64(Account::Landlords, Account::Outside, landlords - OUT_OF_TOWN_FLOAT, Kind::Dividend);
+            let surplus = landlords - OUT_OF_TOWN_FLOAT;
+            let rent_in: f64 = self.economy.bank.yesterday().map_or(0.0, |d| d.cells.iter().filter(|c| c.to == Class::Landlords && matches!(c.kind, Kind::Rent | Kind::ShopRent)).map(|c| c.dollars()).sum());
+            let profit = (rent_in * (1.0 - RENT_UPKEEP - PROPERTY_TAX) as f64).min(surplus);
+            let savers: Vec<(crate::citizens::HouseholdId, f64)> = self.households.iter().filter(|(_, h)| h.money >= LANDLORD_SAVINGS).map(|(id, h)| (id, h.money as f64)).collect();
+            let total: f64 = savers.iter().map(|s| s.1).sum();
+            if total > 0.0 && profit > 0.0 {
+                for (hid, money) in savers {
+                    self.transfer64(Account::Landlords, Account::Household(hid), profit * money / total, Kind::Dividend);
+                }
+            }
+            if surplus > profit {
+                self.transfer64(Account::Landlords, Account::Outside, surplus - profit, Kind::PropertySale);
+            }
         }
         let ids: Vec<OwnerId> = self.estate.owners.keys().collect();
         for oid in ids {

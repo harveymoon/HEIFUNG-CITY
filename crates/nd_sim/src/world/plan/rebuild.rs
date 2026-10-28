@@ -95,6 +95,13 @@ impl World {
                 .filter(|(_, l)| self.pillars_on(&l.polygon) || self.deck_cap_of(&l.polygon) == Some(0))
                 .map(|(id, _)| id)
                 .collect();
+            // [p1-sim] Its parcels are no lot's (they kept naming the lost
+            // one as built); parcels marked `under_deck` are never zoned, so
+            // this is only a joined lot whose union reaches a column.
+            for p in self.parcels.parcels.iter_mut().filter(|p| p.lot.is_some_and(|l| drop.contains(&l))) {
+                p.lot = None;
+                p.land_use = None;
+            }
             for id in drop {
                 self.lots.remove(id);
             }

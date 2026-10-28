@@ -30,8 +30,14 @@ pub(super) fn sync_preview(
     overlays: Res<Overlays>,
     mut state: ResMut<RenderState>,
     existing: Query<Entity, With<PreviewTag>>,
+    tools: Res<crate::tools::ToolState>,
 ) {
-    let key = (sim.world.plan_version, sim.world.parcels.version, overlays.projects);
+    // [p1-sim] The raised fills of zoning planned but not laid show while a
+    // project is open or parked, or with the Zone tool or the zoning layer:
+    // with every layer off and no project, the plan is out of sight.
+    let w = &sim.world;
+    let show_plan = w.project.is_some() || !w.parked_projects.is_empty() || overlays.zoning || tools.tool == crate::tools::Tool::Zone;
+    let key = (sim.world.plan_version, sim.world.parcels.version, overlays.projects, show_plan);
     if state.preview_key == Some(key) && !assets.palette_changed && !sim.full_rebuild {
         return;
     }
@@ -42,12 +48,11 @@ pub(super) fn sync_preview(
     let mut glow = MeshData::default();
     // [pt-ux] The planned zones' see-through fills, raised (`raised_zone`).
     let mut fills = MeshData::default();
-    let w = &sim.world;
     let unzoned = [0.55f32, 0.55, 0.6];
     // Parcels the active project re-zones.
     // [waterfront] Public beaches painted or unpainted show as sand.
     let beaches = w.planned_beaches();
-    let planned = w.planned_zoning();
+    let planned: &[Option<nd_sim::LandUse>] = if show_plan { w.planned_zoning() } else { &[] };
     for (i, p) in w.parcels.parcels.iter().enumerate() {
         let Some(&want) = planned.get(i) else { break };
         let beach_want = beaches.get(i).copied().unwrap_or(false);
