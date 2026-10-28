@@ -514,6 +514,11 @@ pub struct World {
     /// built at; refreshed whenever the plan changes, so reads are free.
     #[serde(skip)]
     plan_cache: Option<(u64, Plan)>,
+    /// [p1-sim] Wages each business paid its staff in today's household
+    /// pass (`daily_household`), taken off its payroll in the market's
+    /// daily books just after (`daily_businesses`). Empty between days.
+    #[serde(skip)]
+    pub(crate) wages_paid: std::collections::BTreeMap<BuildingId, f32>,
     pub roads: crate::versioned::Versioned<RoadNetwork>,
     pub zones: SlotMap<ZoneId, Zone>,
     pub lots: crate::versioned::Versioned<SlotMap<LotId, Lot>>,
@@ -857,6 +862,7 @@ impl World {
             next_gesture: 1,
             plan_version: 0,
             plan_cache: None,
+            wages_paid: Default::default(),
             implement_refused: None,
             deferred_intents: BTreeMap::new(),
             roads: Default::default(),
