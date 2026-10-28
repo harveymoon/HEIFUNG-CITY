@@ -168,6 +168,29 @@ impl PillarPlan {
     }
 }
 
+/// [r4-decks] Whether a column at `p` stands on the stretch `g` (between
+/// its ends, within a deck's width of the line joining them).
+pub fn on_stretch(p: Vec2, g: &Gap) -> bool {
+    let (t, q) = crate::geom::project_on_segment(p, g.a, g.b);
+    t > 0.0 && t < 1.0 && q.distance(p) < 6.0
+}
+
+/// [r4-decks] Whether the columns `kept` on the stretch `g` hold it up:
+/// no span from its last support through them to the next longer than
+/// `PILLAR_MAX_SPAN`.
+pub fn stretch_held(g: &Gap, kept: &[Pillar]) -> bool {
+    if kept.is_empty() {
+        return false;
+    }
+    let along = |p: Vec2| crate::geom::project_on_segment(p, g.a, g.b).0;
+    let len = g.a.distance(g.b);
+    let mut ts: Vec<f32> = kept.iter().map(|p| along(p.at)).collect();
+    ts.push(0.0);
+    ts.push(1.0);
+    ts.sort_by(f32::total_cmp);
+    ts.windows(2).all(|w| (w[1] - w[0]) * len <= PILLAR_MAX_SPAN + 0.01)
+}
+
 /// A key for a raised way: its points and levels, to the decimetre. Saved
 /// (`Pillar::way`), so the hash is spelled out here (FNV-1a over the
 /// quantised numbers, then a splitmix finish) and never changes with the

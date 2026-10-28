@@ -593,6 +593,8 @@ impl World {
                 b
             }
             None => {
+                // [r4-decks] Under a raised road: what fits below its deck.
+                let floors = self.deck_cap_plots(plots).map_or(floors, |cap| floors.min(cap.max(1)));
                 let seed = self.fresh_seed();
                 let name = {
                     let mut rng = self.erng(erng_salt::ACQUIRE_NAME);

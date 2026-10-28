@@ -491,6 +491,8 @@ impl World {
         let lu = l.land_use;
         let value = self.lot_value(lot);
         let (tier, floors) = self.annex_size(lot, annex)?;
+        // [r4-decks] Under a raised road: what fits below its deck.
+        let floors = self.deck_fit(lot, floors);
         let campus = self.buildings[self.corps.campuses[ki].building].name.clone();
         let n = self.corps.campuses[ki].count(annex);
         let seed = self.fresh_seed();

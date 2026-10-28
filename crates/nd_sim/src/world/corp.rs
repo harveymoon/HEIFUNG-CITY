@@ -512,7 +512,8 @@ impl World {
     /// merge of its own, not promised or frozen.
     pub(super) fn hq_plot_ok(&self, lid: LotId) -> bool {
         let Some(l) = self.lots.get(lid) else { return false };
-        if l.land_use != LandUse::Commercial || !self.site_clear(lid, SiteRule::STREET_NOT_HISTORIC) {
+        // [r4-decks] Nor under a raised road.
+        if l.land_use != LandUse::Commercial || !self.site_clear(lid, SiteRule::STREET_NOT_HISTORIC) || self.under_a_deck(lid) {
             return false;
         }
         match l.building {

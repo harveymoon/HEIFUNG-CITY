@@ -201,7 +201,7 @@ pub fn raise_geometry(geo: &mut Geometry, dy: f32) {
     if dy == 0.0 {
         return;
     }
-    for part in geo.parts.iter_mut() {
+    for (_, part) in geo.meshes_mut() {
         for p in part.positions.iter_mut() {
             p[1] += dy;
         }

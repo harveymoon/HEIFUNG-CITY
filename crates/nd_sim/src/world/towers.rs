@@ -212,9 +212,10 @@ impl World {
     /// or a grown building it may buy (never the city's, a home bought
     /// outright, a billionaire's or another tower), not under a facility,
     /// not promised to anyone, not in a historic district.
-    fn tower_plot_ok(&self, lid: LotId, lu: LandUse) -> bool {
+    pub(super) fn tower_plot_ok(&self, lid: LotId, lu: LandUse) -> bool {
         let Some(l) = self.lots.get(lid) else { return false };
-        if l.land_use != lu || !self.site_clear(lid, SiteRule::ANY_NOT_HISTORIC) {
+        // [r4-decks] Nor under a raised road.
+        if l.land_use != lu || !self.site_clear(lid, SiteRule::ANY_NOT_HISTORIC) || self.under_a_deck(lid) {
             return false;
         }
         match l.building {

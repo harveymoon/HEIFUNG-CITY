@@ -170,6 +170,17 @@ impl Out {
             soup = soup.wrapping_add(s.wrapping_mul(2 * i as u64 + 1));
             tris += t;
         }
+        // [r4-style] The detail layers, hashed on after the base only where
+        // a style draws them, so every other case keeps its line.
+        for (l, layer) in g.detail.iter().enumerate().filter(|(_, l)| l.iter().any(|m| !m.is_empty())) {
+            for (i, m) in layer.iter().enumerate() {
+                let (e, s, t) = mesh_hashes(m);
+                h.u32((100 * (l + 1) + i) as u32);
+                h.u64(e);
+                soup = soup.wrapping_add(s.wrapping_mul(2 * (100 * (l + 1) + i) as u64 + 1));
+                tris += t;
+            }
+        }
         let mut x = Fnv::new();
         x.bytes(format!("{:?}{:?}{:?}", g.pads, g.cranes, g.lamps).as_bytes());
         self.line(name, format!("exact={:016x} soup={soup:016x} tris={tris} extras={:016x}", h.0, x.0));

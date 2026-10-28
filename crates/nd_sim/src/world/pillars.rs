@@ -47,9 +47,14 @@ fn segment_polygon_distance(a: Vec2, b: Vec2, poly: &[Vec2]) -> f32 {
 
 impl World {
     /// A building the city never removes for a column: anything the player
-    /// placed (plants, depots, stations, services, docks, hubs) and parks.
+    /// placed (plants, depots, stations, services, docks, hubs). A park is
+    /// not in the way at all: a column stands in it as on open ground.
+    /// [r4-decks] (It used to block a column: Harvey's day-9 city zoned
+    /// parks under its raised walkways, the only use their 6 m decks allow,
+    /// on the ground of their columns, and every later rebuild found no
+    /// room for those columns and showed spans of 45 m and 85 m in red.)
     fn pillar_protected(b: &Building) -> bool {
-        Self::is_civic_structure(b) || b.land_use == LandUse::Park
+        Self::is_civic_structure(b)
     }
 
     /// Lots whose box comes near the polyline: the candidates for its sites.
@@ -123,6 +128,7 @@ impl World {
             }
             match l.building.and_then(|b| self.buildings.get(b).map(|bb| (b, bb))) {
                 Some((_, b)) if Self::pillar_protected(b) => return Site::Blocked,
+                Some((_, b)) if b.land_use == LandUse::Park => {}
                 Some((bid, _)) => out = Site::Buyout(lid, bid),
                 None if l.land_use == LandUse::Park => {}
                 None if matches!(out, Site::Free) => out = Site::EmptyLot(lid),
@@ -221,7 +227,18 @@ impl World {
             for (_, b) in &plan.buyouts {
                 taken.insert(*b);
             }
-            gaps.extend(plan.gaps.iter().copied());
+            // [r4-decks] A way that stood before keeps the columns it stood
+            // on in a stretch that has no room now (what grew or was placed
+            // round them since), unless a road now runs there: the road
+            // stands as it did, and no red span is left on it.
+            let old: Vec<Pillar> = self.pillars.iter().filter(|p| p.way == key).copied().collect();
+            for g in &plan.gaps {
+                let kept: Vec<Pillar> = if g.end { Vec::new() } else { old.iter().filter(|p| pillars::on_stretch(p.at, g) && site(p.at, p.level) != Site::Road).copied().collect() };
+                if !pillars::stretch_held(g, &kept) {
+                    gaps.push(*g);
+                }
+                out.extend(kept);
+            }
             out.extend(plan.pillars);
         }
         self.pillars = out;
@@ -298,6 +315,32 @@ impl World {
     /// `deck_cap_of` a lot.
     pub fn deck_cap(&self, lot: LotId) -> Option<u8> {
         self.lots.get(lot).and_then(|l| self.deck_cap_of(&l.polygon))
+    }
+
+    /// [r4-decks] Floors that fit under the decks over a building on these
+    /// plots (its lot and any it was merged over), None with no deck over
+    /// any of them.
+    pub fn deck_cap_plots(&self, plots: &[LotId]) -> Option<u8> {
+        plots.iter().filter_map(|&l| self.deck_cap(l)).min()
+    }
+
+    /// [r4-decks] `floors` held to what fits under a deck over `lot`, as
+    /// they are with none over it: every way a building goes up (growth,
+    /// a rebuild, a car park, an annex) passes through this or
+    /// `height_cap`, so nothing taller than the clearance stands under a
+    /// raised road. At least one storey: ground too low for one is never a
+    /// lot.
+    pub fn deck_fit(&self, lot: LotId, floors: u8) -> u8 {
+        match self.deck_cap(lot) {
+            Some(cap) => floors.min(cap.max(1)),
+            None => floors,
+        }
+    }
+
+    /// [r4-decks] A lot under a raised road (a deck spans over it, or a
+    /// column stands on it): no tower, headquarters or merged plot takes it.
+    pub fn under_a_deck(&self, lot: LotId) -> bool {
+        self.lots.get(lot).is_some_and(|l| (!self.pillars.is_empty() && self.pillars_on(&l.polygon)) || self.deck_cap_of(&l.polygon).is_some())
     }
 
     /// Lots the road drawn along `pts` at `levels` would take: those in its
