@@ -283,6 +283,8 @@ mod harbour_tests;
 
 #[cfg(test)]
 mod oldstone_tests;
+
+#[cfg(test)]
 mod solarpunk_tests;
 
 #[cfg(test)]
