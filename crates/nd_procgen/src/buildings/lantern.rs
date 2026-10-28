@@ -439,7 +439,7 @@ pub fn alley_walkups(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             tops.push(0.0);
             continue;
         }
-        let floors = (c.floors as i32 + rng.random_range(0..=2)).clamp(3, (c.floors as i32 + 2).max(7));
+        let floors = (c.floors as i32 + rng.random_range(0..=2)).clamp(3, (c.floors as i32 + 2).clamp(7, 14));
         let h = floors as f32 * fh;
         tops.push(h);
         let (s, col) = wall(c, rng);
@@ -467,7 +467,7 @@ pub fn alley_walkups(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                     hk::corner_neon(g, c, rng, &face, end, fh + 0.8, h - fh - 1.4);
                 }
             } else {
-                hk::flat_windows(g, c, rng, &face, fh, floors - 1, fh, if alley { 1.7 } else { 2.2 }, 0.45, 0.12 + 0.2 * c.wear, FlatDress { more_ac: 0.25, ledge_below: false });
+                hk::flat_windows(g, c, rng, &face, fh, floors - 1, fh, if alley { 1.7 } else { 2.2 }, 0.4, if alley { 0.12 + 0.2 * c.wear } else { 0.04 + 0.08 * c.wear }, FlatDress { more_ac: 0.2, ledge_below: false });
                 if alley {
                     hk::pipe_run(g, c, rng, &face, face.len * 0.3, 0.2, h, fh, 3);
                     // Back doors onto the alley, a bulb over each.
