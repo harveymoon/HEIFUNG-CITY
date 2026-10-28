@@ -178,6 +178,11 @@ a view down one street shows a few dozen such towers.
   `NIGHT_MARK` (12 triangles, lit after dark only), strung across what a
   lot holds (its alley, court, aisles, arcade). Uses the HK pass's
   `flat_windows`, `ledge`, `awning`, `roof_clutter`, `pipe_run`.
+- Done (r4-garden): the Garden Suburb look (Quiet Acres; `buildings/garden.rs`):
+  houses, bungalows, a close, a parade, a garden centre, a corner café and the
+  garden manor, with fences' pickets, frames, glazing bars, gutters, aerials,
+  bins, beds and garden furniture in the near layer, sheds, cars, rails and
+  awnings in the mid layer; porch lanterns lit only after dark.
 - Left for later: the cyberpunk family (section 2) on the Neon strip,
   offices and industry; the street-level props round the plot; the other
   looks (Skyline Luxe, Glass Campus).

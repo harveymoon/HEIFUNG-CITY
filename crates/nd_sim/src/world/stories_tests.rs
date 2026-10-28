@@ -85,12 +85,40 @@ fn a_story_sets_the_district_and_dials_fine_tune_it() {
     assert_eq!(d.height_limit, Some(30.0));
     w.set_district_policy(id, PolicyChange { story: Some(Some(Story::QuietAcres)), ..Default::default() }).unwrap();
     let d = w.districts.get(id).unwrap();
-    assert!(!d.historic && d.residential == Some(ResidentialSpec::Suburban) && d.policies == Story::QuietAcres.preset().policies);
+    // [garden] Quiet Acres builds the Garden Suburb, homes and shops.
+    assert!(!d.historic && d.residential == Some(ResidentialSpec::Garden) && d.commercial == Some(CommercialSpec::Garden) && d.policies == Story::QuietAcres.preset().policies);
     w.set_district_policy(id, PolicyChange { commercial: Some(Some(CommercialSpec::NeonStrip)), ..Default::default() }).unwrap();
     assert!(w.districts.get(id).unwrap().is_custom());
     w.set_district_policy(id, PolicyChange { story: Some(None), ..Default::default() }).unwrap();
     let d = w.districts.get(id).unwrap();
     assert!(!d.is_custom() && d.story.is_none() && d.policies.is_none());
+}
+
+/// [garden] Saves from before Quiet Acres had its own look: a Quiet Acres
+/// district saved with the old Suburban dials takes the Garden Suburb on
+/// load (its policies and height kept), and a district from before stories
+/// with only Suburban homes still finds Quiet Acres.
+#[test]
+fn quiet_acres_from_an_old_save_takes_the_garden_suburb() {
+    let saved = "(id: 4, name: \"Elm Close\", color: 1, residential: Some(Suburban), commercial: None, industry: None, historic: false, height_limit: Some(15.0), story: Some(QuietAcres), policies: (nightlife_levy: 0.15))";
+    let older = "(id: 5, name: \"Oak Rise\", color: 2, residential: Some(Suburban), commercial: None, industry: None, historic: false, height_limit: None)";
+    let mut ds = crate::districts::Districts::default();
+    ds.list.push(ron::from_str(saved).expect("a story district loads"));
+    ds.list.push(ron::from_str(older).expect("an old district loads"));
+    assert_eq!(ds.adopt_stories(), 2);
+    let (a, b) = (&ds.list[0], &ds.list[1]);
+    for d in [a, b] {
+        assert_eq!(d.story, Some(Story::QuietAcres), "{}", d.name);
+        assert_eq!((d.residential, d.commercial), (Some(ResidentialSpec::Garden), Some(CommercialSpec::Garden)), "{}", d.name);
+        assert!(Story::QuietAcres.fits(d));
+        assert_eq!(d.look_for(LandUse::Residential), Some(crate::districts::Look::Garden));
+        assert_eq!(d.look_for(LandUse::Commercial), Some(crate::districts::Look::Garden));
+        assert_eq!(d.look_for(LandUse::Entertainment), None, "nights out keep their own looks");
+    }
+    assert_eq!(a.policies.nightlife_levy, 0.15, "its own policies kept");
+    assert_eq!(a.height_limit, Some(15.0));
+    assert_eq!(b.height_limit, None, "an old district keeps its height limit");
+    assert_eq!(ds.adopt_stories(), 0, "nothing left to adopt");
 }
 
 /// [stories] On a populated town every policy moves money through the

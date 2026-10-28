@@ -51,6 +51,9 @@ pub enum ResidentialSpec {
     /// [lantern] Lantern Alley: shophouses with flats over the shop and
     /// narrow walk-ups round lantern-strung alleys. Appended.
     Lantern,
+    /// [garden] Detached houses in gardens, bungalows, closes round a
+    /// turning circle; three floors at most. Appended.
+    Garden,
 }
 
 /// How the shops in a district grow.
@@ -73,10 +76,13 @@ pub enum CommercialSpec {
     /// courts, tea houses and market halls behind lantern gates; its small
     /// industry is workshops and back-alley kitchens. Appended.
     Lantern,
+    /// [garden] A small shopping parade, a corner café, a garden centre:
+    /// groceries and bakeries first. Appended.
+    Garden,
 }
 
 impl ResidentialSpec {
-    pub const ALL: [ResidentialSpec; 6] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule, ResidentialSpec::BrickSteel, ResidentialSpec::Lantern];
+    pub const ALL: [ResidentialSpec; 7] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule, ResidentialSpec::BrickSteel, ResidentialSpec::Lantern, ResidentialSpec::Garden];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -86,6 +92,7 @@ impl ResidentialSpec {
             ResidentialSpec::Capsule => "Capsule",
             ResidentialSpec::BrickSteel => "Brick & Steel",
             ResidentialSpec::Lantern => "Lantern Alley",
+            ResidentialSpec::Garden => "Garden suburb",
         }
     }
 
@@ -97,6 +104,7 @@ impl ResidentialSpec {
             ResidentialSpec::Capsule => "capsule",
             ResidentialSpec::BrickSteel => "brick_steel",
             ResidentialSpec::Lantern => "lantern_alley",
+            ResidentialSpec::Garden => "garden",
         }
     }
 
@@ -106,7 +114,7 @@ impl ResidentialSpec {
 }
 
 impl CommercialSpec {
-    pub const ALL: [CommercialSpec; 7] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule, CommercialSpec::BrickSteel, CommercialSpec::Lantern];
+    pub const ALL: [CommercialSpec; 8] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule, CommercialSpec::BrickSteel, CommercialSpec::Lantern, CommercialSpec::Garden];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -117,6 +125,7 @@ impl CommercialSpec {
             CommercialSpec::Capsule => "Capsule",
             CommercialSpec::BrickSteel => "Brick & Steel",
             CommercialSpec::Lantern => "Lantern Alley",
+            CommercialSpec::Garden => "Garden suburb",
         }
     }
 
@@ -129,6 +138,7 @@ impl CommercialSpec {
             CommercialSpec::Capsule => "capsule",
             CommercialSpec::BrickSteel => "brick_steel",
             CommercialSpec::Lantern => "lantern_alley",
+            CommercialSpec::Garden => "garden",
         }
     }
 
@@ -163,10 +173,14 @@ pub enum Look {
     /// halls, workshops and back-alley kitchens, paper lanterns strung over
     /// the lanes. It also dresses the district's small industry. Appended.
     Lantern,
+    /// [garden] The Garden Suburb: detached houses in gardens behind picket
+    /// fences and hedges, bungalows, closes, a shopping parade, a garden
+    /// centre and a corner café; porch lights and dark streets. Appended.
+    Garden,
 }
 
 impl Look {
-    pub const ALL: [Look; 11] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule, Look::BrickSteel, Look::Lantern];
+    pub const ALL: [Look; 12] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule, Look::BrickSteel, Look::Lantern, Look::Garden];
 
     pub fn index(self) -> usize {
         self as usize
@@ -185,6 +199,7 @@ impl Look {
             Look::Capsule => "capsule",
             Look::BrickSteel => "brick & steel",
             Look::Lantern => "lantern alley",
+            Look::Garden => "garden suburb",
         }
     }
 
@@ -206,6 +221,8 @@ impl Look {
             Look::BrickSteel => floors.min(cap.max(1) + 1).min(10),
             // [lantern] Two to five storeys: shophouses, walk-ups, halls.
             Look::Lantern => floors.max(2).min(5).min(cap.max(2) + 1),
+            // Two storeys and rooms in the roof at most.
+            Look::Garden => floors.min(3),
         };
         f.max(1)
     }
@@ -242,6 +259,8 @@ impl Look {
             Look::BrickSteel => &[(BusinessKind::Bakery, 2.0), (BusinessKind::Grocery, 2.0)],
             // [lantern] Food first: grocers, bakers and kitchens open late.
             Look::Lantern => &[(BusinessKind::Bakery, 4.0), (BusinessKind::Grocery, 3.0), (BusinessKind::Venue, 2.0)],
+            // The parade's grocer and the café-bakery.
+            Look::Garden => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Bakery, 3.0)],
             _ => &[],
         }
     }
@@ -348,6 +367,7 @@ impl District {
                 ResidentialSpec::Capsule => Look::Capsule,
                 ResidentialSpec::BrickSteel => Look::BrickSteel,
                 ResidentialSpec::Lantern => Look::Lantern,
+                ResidentialSpec::Garden => Look::Garden,
             }),
             // Nightlife on a strip or in a market takes the street's look.
             LandUse::Commercial | LandUse::Entertainment => self.commercial.and_then(|s| match s {
@@ -360,6 +380,9 @@ impl District {
                 // [r4-brick] The pub and the union hall are the nights out.
                 CommercialSpec::BrickSteel => Some(Look::BrickSteel),
                 CommercialSpec::Lantern => Some(Look::Lantern),
+                // [garden] A parade, a café, a garden centre; nights out
+                // keep the land use's own looks.
+                CommercialSpec::Garden if lu == LandUse::Commercial => Some(Look::Garden),
                 _ => None,
             }),
             // [r4-brick] Brick & Steel builds its works in brick too.
