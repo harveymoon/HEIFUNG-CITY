@@ -232,6 +232,10 @@ impl World {
         self.recut_parcels();
         // [waterfront] frontage on the water, for a save from before
         self.mark_shore_lots();
+        // [r4-crossings] Roads laid by older rules are laid again from the
+        // plan: a path end that cut a stub off a street, or a way passing
+        // under one a metre from its junction, leaves the street whole.
+        self.relay_roads_after_load();
         self.plan_changed();
         self.events.push(SimEvent::PlanChanged);
         // [ledger] Every balance into its account (an older save's money

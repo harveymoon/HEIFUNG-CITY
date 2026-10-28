@@ -411,6 +411,31 @@ styles! {
     /// The big garden house behind tall hedges (`estate::Form::McMansion`
     /// and `Mansion` in the Garden Suburb).
     GardenManor { label: "garden manor", family: Special, cluster: 0.0, draw: |g, c, r, e| garden::garden_manor(g, c, r, e) },
+    // -- [r4-harbour] Harbour Pastel, The Promenade's look
+    // (`buildings/harbour.rs`), drawn only from its menus (the villa for its
+    // estates' forms, the hotel, shack and hall for those trades there);
+    // appended so `ALL` keeps its order. Terraces, sheds and arcades repeat
+    // along the front; the corner tower, hotel and hall stand apart. --
+    /// Narrow pastel houses, gables to the street, shutters, bulbs along the front.
+    PastelTerrace { label: "pastel terrace", family: Walkup, cluster: 1.0, draw: |g, c, r, e| harbour::pastel_terrace(g, c, r, e) },
+    /// Clapboard boathouses made homes: glazed boat doors, a slipway, a pier.
+    Boathouses { label: "converted boathouses", family: Walkup, cluster: 0.6, draw: |g, c, r, e| harbour::boathouses(g, c, r, e) },
+    /// Flats with a striped lighthouse tower on the corner, its lamp lit at night.
+    LighthouseCorner { label: "lighthouse corner block", family: Walkup, cluster: -0.8, draw: |g, c, r, e| harbour::lighthouse_corner(g, c, r, e) },
+    /// A café behind a raised boardwalk of tables, umbrellas and bulbs.
+    BoardwalkCafe { label: "boardwalk café", family: Retail, cluster: 0.5, draw: |g, c, r, e| harbour::boardwalk_cafe(g, c, r, e) },
+    /// A board shack with a lit hatch, a fish on the roof, picnic tables.
+    SeafoodShack { label: "seafood shack", family: Night, cluster: 0.6, draw: |g, c, r, e| harbour::seafood_shack(g, c, r, e) },
+    /// Shops behind white columns, each under its own striped awning.
+    AwningArcade { label: "striped-awning arcade", family: Retail, cluster: 0.8, draw: |g, c, r, e| harbour::awning_arcade(g, c, r, e) },
+    /// Balconies, a portico, flags out front and a mansard roof terrace.
+    BoutiqueHotel { label: "boutique hotel", family: Luxury, cluster: -0.4, draw: |g, c, r, e| harbour::boutique_hotel(g, c, r, e) },
+    /// A painted-iron hall with a clerestory, roller doors, crates of ice.
+    FishMarketHall { label: "fish market hall", family: Retail, cluster: -0.6, draw: |g, c, r, e| harbour::fish_market_hall(g, c, r, e) },
+    /// Tall tar-black net sheds, nets drying behind them.
+    NetSheds { label: "net sheds", family: Heavy, cluster: 0.9, draw: |g, c, r, e| harbour::net_sheds(g, c, r, e) },
+    /// A family's or a billionaire's pastel villa with its own boathouse.
+    PastelVilla { label: "pastel waterfront villa", family: Special, cluster: 0.0, draw: |g, c, r, e| harbour::pastel_villa(g, c, r, e) },
     // -- [r4-oldstone] the Old Stone look of the Old Town Charter (the
     // Historic look's own buildings, `buildings/oldstone.rs`,
     // `oldstone_works.rs`), drawn only from its look's menus (and the stone
@@ -464,8 +489,12 @@ impl Style {
 
     /// [lantern] Lantern Alley's styles.
     pub const LANTERN: [Style; 9] = [Style::LanternShophouse, Style::AlleyWalkups, Style::StallRows, Style::FoodCourt, Style::TeaHouse, Style::LanternMarket, Style::AlleyWorkshops, Style::BackKitchens, Style::LanternCompound];
+
     /// [garden] The Garden Suburb's styles.
     pub const GARDEN: [Style; 7] = [Style::GardenHouse, Style::Bungalow, Style::CulDeSac, Style::ShoppingParade, Style::GardenCentre, Style::CornerCafe, Style::GardenManor];
+
+    /// [r4-harbour] Harbour Pastel's styles (The Promenade).
+    pub const HARBOUR: [Style; 10] = [Style::PastelTerrace, Style::Boathouses, Style::LighthouseCorner, Style::BoardwalkCafe, Style::SeafoodShack, Style::AwningArcade, Style::BoutiqueHotel, Style::FishMarketHall, Style::NetSheds, Style::PastelVilla];
 }
 
 impl Style {

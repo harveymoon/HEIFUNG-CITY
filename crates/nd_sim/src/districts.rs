@@ -54,6 +54,9 @@ pub enum ResidentialSpec {
     /// [garden] Detached houses in gardens, bungalows, closes round a
     /// turning circle; three floors at most. Appended.
     Garden,
+    /// [r4-harbour] Harbour Pastel (The Promenade): salt-weathered pastel
+    /// terraces, converted boathouses, lighthouse corner towers. Appended.
+    HarbourPastel,
 }
 
 /// How the shops in a district grow.
@@ -79,10 +82,15 @@ pub enum CommercialSpec {
     /// [garden] A small shopping parade, a corner café, a garden centre:
     /// groceries and bakeries first. Appended.
     Garden,
+    /// [r4-harbour] Harbour Pastel's front: boardwalk cafés, seafood
+    /// shacks, striped-awning arcades, boutique hotels with flags; a tourist
+    /// quarter (hotels first); its small industry is the fish market hall
+    /// and net sheds. Appended.
+    HarbourPastel,
 }
 
 impl ResidentialSpec {
-    pub const ALL: [ResidentialSpec; 7] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule, ResidentialSpec::BrickSteel, ResidentialSpec::Lantern, ResidentialSpec::Garden];
+    pub const ALL: [ResidentialSpec; 8] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule, ResidentialSpec::BrickSteel, ResidentialSpec::Lantern, ResidentialSpec::Garden, ResidentialSpec::HarbourPastel];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -93,6 +101,7 @@ impl ResidentialSpec {
             ResidentialSpec::BrickSteel => "Brick & Steel",
             ResidentialSpec::Lantern => "Lantern Alley",
             ResidentialSpec::Garden => "Garden suburb",
+            ResidentialSpec::HarbourPastel => "Harbour Pastel",
         }
     }
 
@@ -105,6 +114,7 @@ impl ResidentialSpec {
             ResidentialSpec::BrickSteel => "brick_steel",
             ResidentialSpec::Lantern => "lantern_alley",
             ResidentialSpec::Garden => "garden",
+            ResidentialSpec::HarbourPastel => "harbour_pastel",
         }
     }
 
@@ -114,7 +124,7 @@ impl ResidentialSpec {
 }
 
 impl CommercialSpec {
-    pub const ALL: [CommercialSpec; 8] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule, CommercialSpec::BrickSteel, CommercialSpec::Lantern, CommercialSpec::Garden];
+    pub const ALL: [CommercialSpec; 9] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule, CommercialSpec::BrickSteel, CommercialSpec::Lantern, CommercialSpec::Garden, CommercialSpec::HarbourPastel];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -126,6 +136,7 @@ impl CommercialSpec {
             CommercialSpec::BrickSteel => "Brick & Steel",
             CommercialSpec::Lantern => "Lantern Alley",
             CommercialSpec::Garden => "Garden suburb",
+            CommercialSpec::HarbourPastel => "Harbour Pastel",
         }
     }
 
@@ -139,11 +150,17 @@ impl CommercialSpec {
             CommercialSpec::BrickSteel => "brick_steel",
             CommercialSpec::Lantern => "lantern_alley",
             CommercialSpec::Garden => "garden",
+            CommercialSpec::HarbourPastel => "harbour_pastel",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|x| x.key() == s.to_ascii_lowercase() || x.label().eq_ignore_ascii_case(s))
+    }
+
+    /// [r4-harbour] Shops of a tourist quarter (see [`Look::tourist_quarter`]).
+    pub fn tourist_quarter(self) -> bool {
+        matches!(self, CommercialSpec::Tourist | CommercialSpec::HarbourPastel)
     }
 }
 
@@ -177,10 +194,16 @@ pub enum Look {
     /// fences and hedges, bungalows, closes, a shopping parade, a garden
     /// centre and a corner café; porch lights and dark streets. Appended.
     Garden,
+    /// [r4-harbour] Harbour Pastel (The Promenade): pastel waterfront
+    /// terraces, converted boathouses, lighthouse corner towers; boardwalk
+    /// cafés, seafood shacks, striped-awning arcades, boutique hotels with
+    /// flags; the fish market hall and net sheds for its small industry;
+    /// string lights along the front after dark. Appended.
+    HarbourPastel,
 }
 
 impl Look {
-    pub const ALL: [Look; 12] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule, Look::BrickSteel, Look::Lantern, Look::Garden];
+    pub const ALL: [Look; 13] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule, Look::BrickSteel, Look::Lantern, Look::Garden, Look::HarbourPastel];
 
     pub fn index(self) -> usize {
         self as usize
@@ -200,6 +223,7 @@ impl Look {
             Look::BrickSteel => "brick & steel",
             Look::Lantern => "lantern alley",
             Look::Garden => "garden suburb",
+            Look::HarbourPastel => "harbour pastel",
         }
     }
 
@@ -223,6 +247,9 @@ impl Look {
             Look::Lantern => floors.max(2).min(5).min(cap.max(2) + 1),
             // Two storeys and rooms in the roof at most.
             Look::Garden => floors.min(3),
+            // [r4-harbour] Two to seven storeys along the front: terraces,
+            // boathouses, a boutique hotel at most seven.
+            Look::HarbourPastel => floors.max(2).min(7).min(cap.max(2) + 1),
         };
         f.max(1)
     }
@@ -242,6 +269,9 @@ impl Look {
             // [lantern] Lanes, not towers: dear land builds a good
             // shophouse, never a glass tower.
             Look::Lantern if tier == Tier::High => Tier::Mid,
+            // [r4-harbour] The front is never a slum: built a step up from
+            // the cheapest land.
+            Look::HarbourPastel if tier == Tier::Low => Tier::Mid,
             _ => tier,
         }
     }
@@ -261,6 +291,9 @@ impl Look {
             Look::Lantern => &[(BusinessKind::Bakery, 4.0), (BusinessKind::Grocery, 3.0), (BusinessKind::Venue, 2.0)],
             // The parade's grocer and the café-bakery.
             Look::Garden => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Bakery, 3.0)],
+            // [r4-harbour] A tourist quarter's hotels first (as the Tourist
+            // look it replaces), then cafés and bars along the front.
+            Look::HarbourPastel => &[(BusinessKind::Hotel, 6.0), (BusinessKind::Bakery, 3.0), (BusinessKind::Venue, 2.0)],
             _ => &[],
         }
     }
@@ -273,6 +306,13 @@ impl Look {
         self == Look::Capsule
     }
 
+    /// [r4-harbour] A tourist quarter: hotels go up twice as eagerly and on
+    /// its lots first, and visitors shop there. The Tourist look and Harbour
+    /// Pastel, which took its place on The Promenade.
+    pub fn tourist_quarter(self) -> bool {
+        matches!(self, Look::Tourist | Look::HarbourPastel)
+    }
+
     /// Pull on the land value around each building of this look (radius m,
     /// weight), on top of what its land use already does.
     pub fn land_value(self) -> Option<(f32, f32)> {
@@ -281,6 +321,8 @@ impl Look {
             Look::Historic => Some((120.0, 0.05)),
             Look::TechCampus => Some((120.0, 0.03)),
             Look::Capsule => Some((120.0, 0.04)),
+            // [r4-harbour] A painted front lifts the land as Eco homes did.
+            Look::HarbourPastel => Some((120.0, 0.04)),
             _ => None,
         }
     }
@@ -371,6 +413,7 @@ impl District {
                 ResidentialSpec::BrickSteel => Look::BrickSteel,
                 ResidentialSpec::Lantern => Look::Lantern,
                 ResidentialSpec::Garden => Look::Garden,
+                ResidentialSpec::HarbourPastel => Look::HarbourPastel,
             }),
             // Nightlife on a strip or in a market takes the street's look.
             LandUse::Commercial | LandUse::Entertainment => self.commercial.and_then(|s| match s {
@@ -386,12 +429,16 @@ impl District {
                 // [garden] A parade, a café, a garden centre; nights out
                 // keep the land use's own looks.
                 CommercialSpec::Garden if lu == LandUse::Commercial => Some(Look::Garden),
+                // [r4-harbour] Cafés, shacks and the hotels' bars too.
+                CommercialSpec::HarbourPastel => Some(Look::HarbourPastel),
                 _ => None,
             }),
             // [r4-brick] Brick & Steel builds its works in brick too.
             LandUse::Industrial if self.residential == Some(ResidentialSpec::BrickSteel) || self.commercial == Some(CommercialSpec::BrickSteel) => Some(Look::BrickSteel),
             // [lantern] The lanes' small industry: workshops and kitchens.
             LandUse::Industrial if self.commercial == Some(CommercialSpec::Lantern) => Some(Look::Lantern),
+            // [r4-harbour] The front's small industry: fish market and net sheds.
+            LandUse::Industrial if self.commercial == Some(CommercialSpec::HarbourPastel) => Some(Look::HarbourPastel),
             _ => None,
         }
     }
@@ -462,7 +509,7 @@ impl District {
 
     /// Draws visitors in its own right: a landmark district.
     pub fn is_landmark(&self) -> bool {
-        self.historic || matches!(self.commercial, Some(CommercialSpec::NeonStrip | CommercialSpec::NightMarket | CommercialSpec::Tourist | CommercialSpec::Lantern))
+        self.historic || matches!(self.commercial, Some(CommercialSpec::NeonStrip | CommercialSpec::NightMarket | CommercialSpec::Tourist | CommercialSpec::Lantern | CommercialSpec::HarbourPastel))
     }
 }
 
@@ -999,6 +1046,62 @@ mod tests {
         // The Walled Quarter keeps the night market.
         assert_eq!(saved.list[1].commercial, Some(CommercialSpec::NightMarket));
         assert_eq!(saved.list[1].residential, Some(ResidentialSpec::Kowloon));
+    }
+
+    /// [r4-harbour] Harbour Pastel gives its look to homes, the front's
+    /// shops and nights out and its small industry; it is a tourist quarter
+    /// like the Tourist look it replaces on The Promenade, keeps to two to
+    /// seven storeys and never builds the cheapest tier. A Promenade
+    /// district saved with the old dials (Eco homes, Tourist shops) takes
+    /// the look on load, keeping its height limit and policies, and so
+    /// does an old district with those dials and no story; the Tourist
+    /// dials alone stay custom.
+    #[test]
+    fn harbour_pastel_look_and_old_promenade_saves() {
+        use crate::stories::Story;
+        let mut d = Districts::default();
+        let id = d.create(None, 1, 0).unwrap();
+        let dist = d.get_mut(id).unwrap();
+        dist.apply_story(Some(Story::Promenade));
+        for lu in [LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial] {
+            assert_eq!(dist.look_for(lu), Some(Look::HarbourPastel), "{lu:?}");
+        }
+        assert_eq!(dist.look_for(LandUse::Civic), None);
+        assert!(dist.is_landmark());
+        assert!(Look::HarbourPastel.tourist_quarter() && Look::Tourist.tourist_quarter() && !Look::Lantern.tourist_quarter());
+        assert!(CommercialSpec::HarbourPastel.tourist_quarter() && !CommercialSpec::NeonStrip.tourist_quarter());
+        assert_eq!(Look::HarbourPastel.favours()[0].0, BusinessKind::Hotel);
+        assert_eq!(Look::HarbourPastel.tier(Tier::Low), Tier::Mid);
+        assert_eq!(Look::HarbourPastel.tier(Tier::High), Tier::High);
+        assert_eq!(Look::HarbourPastel.floors(1, 1), 2);
+        assert_eq!(Look::HarbourPastel.floors(20, 40), 7);
+        assert_eq!(Look::ALL[Look::HarbourPastel.index()], Look::HarbourPastel);
+        assert_eq!(ResidentialSpec::parse("harbour_pastel"), Some(ResidentialSpec::HarbourPastel));
+        assert_eq!(CommercialSpec::parse("Harbour Pastel"), Some(CommercialSpec::HarbourPastel));
+        assert_eq!(ron::from_str::<Look>("HarbourPastel").unwrap(), Look::HarbourPastel);
+        // As saved before the look: the story with Eco homes and the
+        // Tourist quarter, a height limit and a tuned bed levy; an older
+        // district with those dials and no story; and a custom Tourist one.
+        let old = "(id: 3, name: \"Harbour Front\", color: 2, residential: Some(Eco), commercial: Some(Tourist), industry: None, historic: false, height_limit: Some(45.0), story: Some(Promenade), policies: (bed_levy: 0.08))";
+        let older = "(id: 4, name: \"Jade Row\", color: 3, residential: Some(Eco), commercial: Some(Tourist), industry: None, historic: false)";
+        let custom = "(id: 5, name: \"Signal Wharf\", color: 4, residential: Some(Kowloon), commercial: Some(Tourist), industry: None, historic: false)";
+        let mut saved = Districts::default();
+        for text in [old, older, custom] {
+            saved.list.push(ron::from_str(text).expect("old district loads"));
+        }
+        assert_eq!(saved.adopt_stories(), 2);
+        for (i, height) in [(0, Some(45.0)), (1, None)] {
+            let got = &saved.list[i];
+            assert_eq!(got.story, Some(Story::Promenade), "{}", got.name);
+            assert_eq!((got.residential, got.commercial), (Some(ResidentialSpec::HarbourPastel), Some(CommercialSpec::HarbourPastel)));
+            assert_eq!(got.height_limit, height);
+            assert!(Story::Promenade.fits(got));
+        }
+        assert_eq!(saved.list[0].policies.bed_levy, 0.08);
+        assert_eq!(saved.list[2].story, None);
+        assert_eq!(saved.list[2].commercial, Some(CommercialSpec::Tourist));
+        // Every load runs it: nothing more to do.
+        assert_eq!(saved.adopt_stories(), 0);
     }
 
     /// [r4-oldstone] Historic is the Old Stone look: it gives its look to

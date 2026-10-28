@@ -31,6 +31,8 @@ mod brick_works;
 mod lantern;
 /// [garden] The Garden Suburb's houses, shops and garden manor.
 mod garden;
+/// [r4-harbour] Harbour Pastel: terraces, boathouses, cafés, sheds, villa.
+mod harbour;
 /// [r4-oldstone] Old Town Charter's Old Stone: houses, rows, arcades, halls, manor.
 mod oldstone;
 /// [r4-oldstone] Old Stone's works: the mill, the tannery, cobbled yards.
@@ -273,6 +275,9 @@ mod brick_tests;
 
 #[cfg(test)]
 mod lantern_tests;
+
+#[cfg(test)]
+mod harbour_tests;
 
 #[cfg(test)]
 mod oldstone_tests;

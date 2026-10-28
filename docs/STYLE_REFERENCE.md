@@ -183,6 +183,19 @@ a view down one street shows a few dozen such towers.
   garden manor, with fences' pickets, frames, glazing bars, gutters, aerials,
   bins, beds and garden furniture in the near layer, sheds, cars, rails and
   awnings in the mid layer; porch lanterns lit only after dark.
+- Done (r4-harbour): **Harbour Pastel** (`buildings/harbour.rs`, The
+  Promenade's look): pastel terraces with gables to the street, converted
+  boathouses, a block with a lighthouse tower on its corner, a boardwalk
+  café, a seafood shack, a striped-awning arcade, a boutique hotel with
+  flags, the fish market hall, net sheds, and a pastel villa with its
+  boathouse for the story's mansions. Salt-faded pastels (greyer and
+  darker with wear), white trim yellowing, tar-black sheds. String bulbs:
+  wire mid detail, the bulb's glass near detail, its light a base-mesh
+  glow box marked `NIGHT_MARK` (12 triangles, lit after dark only), strung
+  along each front; the lighthouse lamp rooms glow the same way. Frames,
+  sills, shutters, glazing bars, railings, chairs and pots are detail. On a
+  lot that touches the water (`Ctx::shore`) a small pier on piles runs out
+  over it, unless the business builds its own jetty.
 - Left for later: the cyberpunk family (section 2) on the Neon strip,
   offices and industry; the street-level props round the plot; the other
   looks (Skyline Luxe, Glass Campus).

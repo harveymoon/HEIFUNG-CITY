@@ -358,7 +358,8 @@ impl Story {
             Story::OldTownCharter => (None, None, None, true, Some(24.0), Policies { heritage_grant: 40.0, bed_levy: 0.05, ..p }),
             // [garden] The Garden Suburb, homes and shops.
             Story::QuietAcres => (Some(R::Garden), Some(C::Garden), None, false, Some(18.0), Policies { nightlife_levy: 0.10, ..p }),
-            Story::Promenade => (Some(R::Eco), Some(C::Tourist), None, false, Some(60.0), Policies { bed_levy: 0.05, ..p }),
+            // [r4-harbour] Its own look, Harbour Pastel, for homes, the front and its small industry.
+            Story::Promenade => (Some(R::HarbourPastel), Some(C::HarbourPastel), None, false, Some(60.0), Policies { bed_levy: 0.05, ..p }),
             Story::FoundryRow => (Some(R::BrickSteel), Some(C::BrickSteel), Some(IndustryKind::Manufacturing), false, None, Policies { pollution_levy: 0.05, rent_support: 0.10, ..p }),
             Story::LanternLanes => (Some(R::Lantern), Some(C::Lantern), None, false, None, Policies { late_hours: true, business_rate: -0.02, ..p }),
             Story::Shantytown => (Some(R::Kowloon), None, None, false, Some(12.0), Policies { rent_support: 0.20, ..p }),
@@ -426,6 +427,8 @@ impl Story {
         use crate::districts::ResidentialSpec;
         match self {
             Story::QuietAcres => d.residential == Some(ResidentialSpec::Suburban) && d.commercial.is_none() && d.industry.is_none() && !d.historic,
+            // [r4-harbour] The Promenade: Eco homes and the Tourist quarter.
+            Story::Promenade => d.residential == Some(ResidentialSpec::Eco) && d.commercial == Some(crate::districts::CommercialSpec::Tourist) && d.industry.is_none() && !d.historic,
             _ => false,
         }
     }

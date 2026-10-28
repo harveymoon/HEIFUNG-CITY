@@ -214,6 +214,12 @@ pub fn site_fit(style: Style, site: &Site) -> f32 {
         Style::GardenHouse | Style::Bungalow => if f <= 3.0 { 1.0 } else { 0.02 },
         Style::CulDeSac => (if f <= 3.0 { 1.0 } else { 0.02 }) * if w > 0.0 && w < 34.0 { 0.15 } else { 1.0 },
         Style::ShoppingParade | Style::CornerCafe | Style::GardenCentre => if f <= 4.0 { 1.0 } else { 0.05 },
+        // [r4-harbour] Terraces, boathouses, shacks and sheds are low; the
+        // corner tower and the hotel want a few floors.
+        Style::PastelTerrace | Style::AwningArcade => low(4.0),
+        Style::Boathouses | Style::SeafoodShack | Style::BoardwalkCafe | Style::NetSheds => low(3.0),
+        Style::LighthouseCorner => tall(3.0) * low(6.0),
+        Style::BoutiqueHotel => tall(3.0),
         // [r4-oldstone] Old houses are two to four storeys; the arcade and
         // the inn want a street front of their own.
         Style::StoneHouse | Style::OldInn => low(3.0),
