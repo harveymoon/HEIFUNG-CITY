@@ -136,7 +136,7 @@ fn paint(c: &Ctx, rng: &mut impl Rng) -> Paint {
 /// The lawn: greener on the better land, dried out on the cheap and the
 /// neglected.
 fn lawn(c: &Ctx) -> [f32; 3] {
-    let dry = if c.tier == Tier::Low { 0.45 } else { 0.1 } + 0.4 * c.wear;
+    let dry = if c.tier == Tier::Low { 0.3 } else { 0.08 } + 0.3 * c.wear;
     mix(mix(c.palette.foliage, [0.26, 0.42, 0.18], 0.5), c.palette.foliage_dry, dry.min(0.8))
 }
 
@@ -1468,7 +1468,7 @@ pub fn corner_cafe(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             ground(g, f, Paving, &terrace.poly(), PATIO_Y, mul(pal.paving, 1.1));
             let mut d = stream(c);
             let cols: Vec<[f32; 3]> = (0..8).map(|_| pick(&mut d, &pal.awning_colors)).collect();
-            let nu = ((terrace.w() - 1.0) / 2.6).floor().max(1.0) as i32;
+            let nu = ((terrace.w() - 1.0) / 2.6).floor().clamp(1.0, 4.0) as i32;
             let nv = ((terrace.d() - 1.0) / 2.8).floor().clamp(1.0, 3.0) as i32;
             g.lod(Lod::Mid, |g| {
                 for i in 0..nu {
@@ -1756,7 +1756,7 @@ pub fn garden_manor(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras) {
         let pr = (garden_d * 0.15).clamp(2.0, 4.5);
         if poly_inside(c, &ngon(pq.x, pq.y, pr + 0.6, 14, 0.0)) {
             ground(g, f, Stone, &ngon(pq.x, pq.y, pr + 0.5, 14, 0.2), BED_Y, [0.56, 0.55, 0.50]);
-            ground(g, f, Glass, &ngon(pq.x, pq.y, pr, 14, 0.2), PATH_Y, mix(pal.water, [0.10, 0.16, 0.14], 0.5));
+            ground(g, f, Matte, &ngon(pq.x, pq.y, pr, 14, 0.2), PATH_Y, [0.10, 0.17, 0.17]);
         }
         // The tennis court and garage block on the grandest sites.
         if grand && garden_d > 30.0 {
