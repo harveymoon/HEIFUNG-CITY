@@ -20,6 +20,9 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         _ if extras.brand.is_some_and(|m| m.role == nd_sim::corp::BrandRole::Headquarters) && land_use == LandUse::Commercial && extras.tower.is_none() => {
             if seed % 2 == 0 { Style::TwistTower } else { Style::SlabTower }
         }
+        // [garden] A family's or a billionaire's house in a district look
+        // that has its own (the story's mansion).
+        _ if extras.form.is_some_and(|f| f.owner_occupied()) && extras.look.and_then(district::look_mansion).is_some() => district::look_mansion(extras.look.unwrap()).unwrap(),
         // [land] McMansions, mansions, mega hotels and museums.
         _ if Style::for_form(extras.form).is_some() => Style::for_form(extras.form).unwrap(),
         // [subway] Before the depot: the Central Station is a bus terminal too.

@@ -206,6 +206,11 @@ pub fn site_fit(style: Style, site: &Site) -> f32 {
         Style::CapsuleTower | Style::SaucerStack => tall(6.0),
         Style::StiltTower => tall(10.0),
         Style::DomeCampus => tall(3.0),
+        // [garden] Houses and shops of the suburb are low; a close wants
+        // a wide plot.
+        Style::GardenHouse | Style::Bungalow => if f <= 3.0 { 1.0 } else { 0.02 },
+        Style::CulDeSac => (if f <= 3.0 { 1.0 } else { 0.02 }) * if w > 0.0 && w < 34.0 { 0.15 } else { 1.0 },
+        Style::ShoppingParade | Style::CornerCafe | Style::GardenCentre => if f <= 4.0 { 1.0 } else { 0.05 },
         _ => 1.0,
     }
 }

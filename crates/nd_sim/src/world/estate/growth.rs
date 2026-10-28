@@ -613,6 +613,9 @@ impl World {
                 id
             }
         };
+        // [garden] The house takes the district's look, so a story with its
+        // own mansion (the Garden Suburb's garden manor) builds it.
+        self.buildings[bid].look = self.district_look_for(primary, LandUse::Residential);
         if form == Form::Mansion {
             let n = self.estate.owners.get(owner).map(|o| o.name.clone()).unwrap_or_default();
             self.buildings[bid].name = format!("{n} Estate");

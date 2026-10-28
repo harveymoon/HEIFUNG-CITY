@@ -168,6 +168,11 @@ a view down one street shows a few dozen such towers.
   side core with pipes, mixed facades, streaks, rooftop clutter, shutters,
   awnings, podium billboard, corner neon); the detail layers and their
   distance ranges.
+- Done (r4-garden): the Garden Suburb look (Quiet Acres; `buildings/garden.rs`):
+  houses, bungalows, a close, a parade, a garden centre, a corner café and the
+  garden manor, with fences' pickets, frames, glazing bars, gutters, aerials,
+  bins, beds and garden furniture in the near layer, sheds, cars, rails and
+  awnings in the mid layer; porch lanterns lit only after dark.
 - Left for later: the cyberpunk family (section 2) on the Neon strip,
   offices and industry; the street-level props round the plot; the other
   looks (Lantern Alley, Skyline Luxe, Glass Campus).

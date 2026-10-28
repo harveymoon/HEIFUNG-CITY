@@ -346,6 +346,25 @@ styles! {
     Mall { label: "mall", family: Special, cluster: -1.0, draw: |g, c, r, e| malls::mall(g, c, r, e) },
     /// Anchor stores, a food court and a parking structure.
     MegaMall { label: "mega-mall", family: Special, cluster: -1.5, draw: |g, c, r, e| malls::mega_mall(g, c, r, e) },
+    // -- [garden] the Garden Suburb look (`buildings/garden.rs`), drawn only
+    // from its look's menus and for a family's or a billionaire's house in
+    // it; appended so `ALL` keeps its order. Houses repeat along a street;
+    // a garden centre stands apart. --
+    /// Detached houses of many plans and roofs, gardens, fences, drives.
+    GardenHouse { label: "garden house", family: Walkup, cluster: 0.9, draw: |g, c, r, _| garden::garden_house(g, c, r) },
+    /// One-storey bungalows with carports.
+    Bungalow { label: "bungalow", family: Walkup, cluster: 0.8, draw: |g, c, r, _| garden::bungalow(g, c, r) },
+    /// A close of houses round a turning circle.
+    CulDeSac { label: "cul-de-sac", family: Walkup, cluster: 0.3, draw: |g, c, r, _| garden::cul_de_sac(g, c, r) },
+    /// A row of small shops with flats over them behind a forecourt.
+    ShoppingParade { label: "shopping parade", family: Retail, cluster: 0.4, draw: |g, c, r, _| garden::shopping_parade(g, c, r) },
+    /// A garden centre: shop, glasshouse, polytunnels, plant tables.
+    GardenCentre { label: "garden centre", family: Retail, cluster: -1.0, draw: |g, c, r, _| garden::garden_centre(g, c, r) },
+    /// A corner café with tables out under string lights.
+    CornerCafe { label: "corner cafe", family: Retail, cluster: -0.3, draw: |g, c, r, _| garden::corner_cafe(g, c, r) },
+    /// The big garden house behind tall hedges (`estate::Form::McMansion`
+    /// and `Mansion` in the Garden Suburb).
+    GardenManor { label: "garden manor", family: Special, cluster: 0.0, draw: |g, c, r, e| garden::garden_manor(g, c, r, e) },
 }
 
 impl Style {
@@ -363,6 +382,9 @@ impl Style {
 
     /// [capsule] The Capsule district's styles.
     pub const CAPSULE: [Style; 10] = [Style::DomeHouse, Style::SaucerHouse, Style::PopsicleDome, Style::TwinDomes, Style::DomePods, Style::CapsuleTower, Style::SaucerStack, Style::StiltTower, Style::DomeHall, Style::DomeCampus];
+
+    /// [garden] The Garden Suburb's styles.
+    pub const GARDEN: [Style; 7] = [Style::GardenHouse, Style::Bungalow, Style::CulDeSac, Style::ShoppingParade, Style::GardenCentre, Style::CornerCafe, Style::GardenManor];
 }
 
 impl Style {

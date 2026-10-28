@@ -45,6 +45,9 @@ pub enum ResidentialSpec {
     /// [capsule] White domes, saucers and pill towers ringed with round
     /// windows. Appended so saved specs keep their names and order.
     Capsule,
+    /// [garden] Detached houses in gardens, bungalows, closes round a
+    /// turning circle; three floors at most. Appended.
+    Garden,
 }
 
 /// How the shops in a district grow.
@@ -61,10 +64,13 @@ pub enum CommercialSpec {
     /// [capsule] High-tech domes: offices and gadget shops only (where the
     /// market can carry them), in white domes and pill towers.
     Capsule,
+    /// [garden] A small shopping parade, a corner café, a garden centre:
+    /// groceries and bakeries first. Appended.
+    Garden,
 }
 
 impl ResidentialSpec {
-    pub const ALL: [ResidentialSpec; 4] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule];
+    pub const ALL: [ResidentialSpec; 5] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule, ResidentialSpec::Garden];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -72,6 +78,7 @@ impl ResidentialSpec {
             ResidentialSpec::Suburban => "Suburban",
             ResidentialSpec::Eco => "Eco",
             ResidentialSpec::Capsule => "Capsule",
+            ResidentialSpec::Garden => "Garden suburb",
         }
     }
 
@@ -81,6 +88,7 @@ impl ResidentialSpec {
             ResidentialSpec::Suburban => "suburban",
             ResidentialSpec::Eco => "eco",
             ResidentialSpec::Capsule => "capsule",
+            ResidentialSpec::Garden => "garden",
         }
     }
 
@@ -90,7 +98,7 @@ impl ResidentialSpec {
 }
 
 impl CommercialSpec {
-    pub const ALL: [CommercialSpec; 5] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule];
+    pub const ALL: [CommercialSpec; 6] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule, CommercialSpec::Garden];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -99,6 +107,7 @@ impl CommercialSpec {
             CommercialSpec::NightMarket => "Night market",
             CommercialSpec::Tourist => "Tourist quarter",
             CommercialSpec::Capsule => "Capsule",
+            CommercialSpec::Garden => "Garden suburb",
         }
     }
 
@@ -109,6 +118,7 @@ impl CommercialSpec {
             CommercialSpec::NightMarket => "night_market",
             CommercialSpec::Tourist => "tourist",
             CommercialSpec::Capsule => "capsule",
+            CommercialSpec::Garden => "garden",
         }
     }
 
@@ -135,10 +145,14 @@ pub enum Look {
     /// saucers, ringed with portholes: the high-tech dome district.
     /// Appended so saved looks keep their names and order.
     Capsule,
+    /// [garden] The Garden Suburb: detached houses in gardens behind picket
+    /// fences and hedges, bungalows, closes, a shopping parade, a garden
+    /// centre and a corner café; porch lights and dark streets. Appended.
+    Garden,
 }
 
 impl Look {
-    pub const ALL: [Look; 9] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule];
+    pub const ALL: [Look; 10] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule, Look::Garden];
 
     pub fn index(self) -> usize {
         self as usize
@@ -155,6 +169,7 @@ impl Look {
             Look::Tourist => "tourist quarter",
             Look::Historic => "historic",
             Look::Capsule => "capsule",
+            Look::Garden => "garden suburb",
         }
     }
 
@@ -172,6 +187,8 @@ impl Look {
             Look::Historic => floors.min(4),
             // Domes keep to the block's density, one floor over at most.
             Look::Capsule => floors.min(cap.max(1) + 1),
+            // Two storeys and rooms in the roof at most.
+            Look::Garden => floors.min(3),
         };
         f.max(1)
     }
@@ -201,6 +218,8 @@ impl Look {
             Look::NightMarket => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Bakery, 4.0)],
             Look::Tourist => &[(BusinessKind::Hotel, 6.0), (BusinessKind::GadgetShop, 2.0), (BusinessKind::Bakery, 2.0)],
             Look::Capsule => &[(BusinessKind::Office, 4.0), (BusinessKind::GadgetShop, 3.0)],
+            // The parade's grocer and the café-bakery.
+            Look::Garden => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Bakery, 3.0)],
             _ => &[],
         }
     }
@@ -305,6 +324,7 @@ impl District {
                 ResidentialSpec::Suburban => Look::Suburban,
                 ResidentialSpec::Eco => Look::Eco,
                 ResidentialSpec::Capsule => Look::Capsule,
+                ResidentialSpec::Garden => Look::Garden,
             }),
             // Nightlife on a strip or in a market takes the street's look.
             LandUse::Commercial | LandUse::Entertainment => self.commercial.and_then(|s| match s {
@@ -314,6 +334,9 @@ impl District {
                 CommercialSpec::Tourist if lu == LandUse::Commercial => Some(Look::Tourist),
                 // Nights out under a dome too.
                 CommercialSpec::Capsule => Some(Look::Capsule),
+                // [garden] A parade, a café, a garden centre; nights out
+                // keep the land use's own looks.
+                CommercialSpec::Garden if lu == LandUse::Commercial => Some(Look::Garden),
                 _ => None,
             }),
             _ => None,
@@ -697,8 +720,22 @@ impl Districts {
     /// policies to start with); the rest stay custom, or no story when
     /// nothing was set. Run on every load: it only touches districts with
     /// no story whose dials match one, which a loaded custom one never does.
+    /// [garden] A district with a story whose look has changed since the
+    /// save (Quiet Acres was Suburban homes, now the Garden Suburb) takes
+    /// the story's new architecture, its own policies and height kept; its
+    /// buildings come round to it through the daily facelift.
     pub fn adopt_stories(&mut self) -> usize {
         let mut n = 0;
+        for d in self.list.iter_mut() {
+            if let Some(s) = d.story.filter(|s| !s.fits(d)) {
+                let p = s.preset();
+                d.residential = p.residential;
+                d.commercial = p.commercial;
+                d.industry = p.industry;
+                d.historic = p.historic;
+                n += 1;
+            }
+        }
         for d in self.list.iter_mut().filter(|d| d.story.is_none()) {
             if let Some(s) = crate::stories::Story::matching(d) {
                 let height = d.height_limit;

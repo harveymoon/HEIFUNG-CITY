@@ -356,7 +356,8 @@ impl Story {
             Story::AfterglowMile => (None, Some(C::NeonStrip), None, false, None, Policies { late_hours: true, nightlife_levy: 0.08, ..p }),
             Story::FoundersCampus => (Some(R::Eco), Some(C::TechCampus), None, false, None, Policies { rent_support: 0.15, business_rate: -0.02, ..p }),
             Story::OldTownCharter => (None, None, None, true, Some(24.0), Policies { heritage_grant: 40.0, bed_levy: 0.05, ..p }),
-            Story::QuietAcres => (Some(R::Suburban), None, None, false, Some(18.0), Policies { nightlife_levy: 0.10, ..p }),
+            // [garden] The Garden Suburb, homes and shops.
+            Story::QuietAcres => (Some(R::Garden), Some(C::Garden), None, false, Some(18.0), Policies { nightlife_levy: 0.10, ..p }),
             Story::Promenade => (Some(R::Eco), Some(C::Tourist), None, false, Some(60.0), Policies { bed_levy: 0.05, ..p }),
             Story::FoundryRow => (None, None, Some(IndustryKind::Manufacturing), false, None, Policies { pollution_levy: 0.05, rent_support: 0.10, ..p }),
             Story::LanternLanes => (None, Some(C::NightMarket), None, false, None, Policies { late_hours: true, business_rate: -0.02, ..p }),
@@ -408,13 +409,25 @@ impl Story {
     }
 
     /// The story an old district's dials are, if any: the one whose
-    /// architecture is exactly the district's (its height limit aside).
+    /// architecture is exactly the district's (its height limit aside), or
+    /// was before the story got its own look ([`Story::fitted_before`]).
     /// A district with no dials, or dials no story has, has none.
     pub fn matching(d: &District) -> Option<Story> {
         if d.residential.is_none() && d.commercial.is_none() && d.industry.is_none() && !d.historic {
             return None;
         }
-        Story::ALL.into_iter().find(|s| s.fits(d))
+        Story::ALL.into_iter().find(|s| s.fits(d)).or_else(|| Story::ALL.into_iter().find(|s| s.fitted_before(d)))
+    }
+
+    /// [garden] Whether `d`'s dials are the architecture this story had
+    /// before its own look (Quiet Acres: Suburban homes, shops as they
+    /// come), so a save from then still finds its story.
+    pub fn fitted_before(self, d: &District) -> bool {
+        use crate::districts::ResidentialSpec;
+        match self {
+            Story::QuietAcres => d.residential == Some(ResidentialSpec::Suburban) && d.commercial.is_none() && d.industry.is_none() && !d.historic,
+            _ => false,
+        }
     }
 
     /// The story nearest a custom district's dials, to suggest: most dials
