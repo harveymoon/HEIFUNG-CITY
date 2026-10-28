@@ -369,6 +369,48 @@ styles! {
     GasWorks { label: "gas works", family: Heavy, cluster: -0.6, draw: |g, c, r, _| brick_works::gas_works(g, c, r) },
     /// A loft estate: a made-over warehouse, a glass penthouse, a pool.
     LoftEstate { label: "loft estate", family: Special, cluster: 0.0, draw: |g, c, r, _| brick::loft_estate(g, c, r) },
+    // -- [lantern] Lantern Alley, the Lantern Lanes story's look
+    // (`buildings/lantern.rs`), drawn only from its menus (the compound for
+    // its estates' forms); appended so `ALL` keeps its order. --
+    // Shophouse rows, alleys, stalls and workshops repeat along a lane; the
+    // halls and the tea house stand apart.
+    /// Narrow shophouses, flats over a shop behind an arcade, lanterns along it.
+    LanternShophouse { label: "lantern shophouses", family: Walkup, cluster: 1.0, draw: |g, c, r, _| lantern::shophouses(g, c, r) },
+    /// Two walk-ups either side of an alley strung with lanterns and washing.
+    AlleyWalkups { label: "alley walk-ups", family: Walkup, cluster: 0.8, draw: |g, c, r, _| lantern::alley_walkups(g, c, r) },
+    /// Stall rows under patchwork tarps, lanterns across the aisles.
+    StallRows { label: "stall rows", family: Night, cluster: 0.9, draw: |g, c, r, _| lantern::stall_rows(g, c, r) },
+    /// An open hall of kitchens and tables under a tin gable (a cooked-food hall upstairs on dear land).
+    FoodCourt { label: "food court hall", family: Retail, cluster: -0.4, draw: |g, c, r, _| lantern::food_court(g, c, r) },
+    /// Storeys under stacked tile skirts, lacquered columns, lanterns under the eaves.
+    TeaHouse { label: "tea house", family: Night, cluster: -0.3, draw: |g, c, r, _| lantern::tea_house(g, c, r) },
+    /// A painted gateway, a forecourt of stalls under lantern strings, a market hall.
+    LanternMarket { label: "lantern night market", family: Night, cluster: 0.2, draw: |g, c, r, _| lantern::lantern_market(g, c, r) },
+    /// Small workshops behind a work apron, roller doors, lean-tos, stock.
+    AlleyWorkshops { label: "alley workshops", family: Heavy, cluster: 0.8, draw: |g, c, r, _| lantern::alley_workshops(g, c, r) },
+    /// Kitchens behind a service alley: hoods, ducts, steam, gas bottles.
+    BackKitchens { label: "back-alley kitchens", family: Heavy, cluster: 0.5, draw: |g, c, r, _| lantern::back_kitchens(g, c, r) },
+    /// A family's or a billionaire's courtyard shophouse compound.
+    LanternCompound { label: "courtyard shophouse compound", family: Special, cluster: 0.0, draw: |g, c, r, _| lantern::compound(g, c, r) },
+    // -- [garden] the Garden Suburb look (`buildings/garden.rs`), drawn only
+    // from its look's menus and for a family's or a billionaire's house in
+    // it; appended so `ALL` keeps its order. Houses repeat along a street;
+    // a garden centre stands apart. --
+    /// Detached houses of many plans and roofs, gardens, fences, drives.
+    GardenHouse { label: "garden house", family: Walkup, cluster: 0.9, draw: |g, c, r, _| garden::garden_house(g, c, r) },
+    /// One-storey bungalows with carports.
+    Bungalow { label: "bungalow", family: Walkup, cluster: 0.8, draw: |g, c, r, _| garden::bungalow(g, c, r) },
+    /// A close of houses round a turning circle.
+    CulDeSac { label: "cul-de-sac", family: Walkup, cluster: 0.3, draw: |g, c, r, _| garden::cul_de_sac(g, c, r) },
+    /// A row of small shops with flats over them behind a forecourt.
+    ShoppingParade { label: "shopping parade", family: Retail, cluster: 0.4, draw: |g, c, r, _| garden::shopping_parade(g, c, r) },
+    /// A garden centre: shop, glasshouse, polytunnels, plant tables.
+    GardenCentre { label: "garden centre", family: Retail, cluster: -1.0, draw: |g, c, r, _| garden::garden_centre(g, c, r) },
+    /// A corner café with tables out under string lights.
+    CornerCafe { label: "corner cafe", family: Retail, cluster: -0.3, draw: |g, c, r, _| garden::corner_cafe(g, c, r) },
+    /// The big garden house behind tall hedges (`estate::Form::McMansion`
+    /// and `Mansion` in the Garden Suburb).
+    GardenManor { label: "garden manor", family: Special, cluster: 0.0, draw: |g, c, r, e| garden::garden_manor(g, c, r, e) },
     // -- [r4-oldstone] the Old Stone look of the Old Town Charter (the
     // Historic look's own buildings, `buildings/oldstone.rs`,
     // `oldstone_works.rs`), drawn only from its look's menus (and the stone
@@ -419,6 +461,11 @@ impl Style {
 
     /// [capsule] The Capsule district's styles.
     pub const CAPSULE: [Style; 10] = [Style::DomeHouse, Style::SaucerHouse, Style::PopsicleDome, Style::TwinDomes, Style::DomePods, Style::CapsuleTower, Style::SaucerStack, Style::StiltTower, Style::DomeHall, Style::DomeCampus];
+
+    /// [lantern] Lantern Alley's styles.
+    pub const LANTERN: [Style; 9] = [Style::LanternShophouse, Style::AlleyWalkups, Style::StallRows, Style::FoodCourt, Style::TeaHouse, Style::LanternMarket, Style::AlleyWorkshops, Style::BackKitchens, Style::LanternCompound];
+    /// [garden] The Garden Suburb's styles.
+    pub const GARDEN: [Style; 7] = [Style::GardenHouse, Style::Bungalow, Style::CulDeSac, Style::ShoppingParade, Style::GardenCentre, Style::CornerCafe, Style::GardenManor];
 }
 
 impl Style {

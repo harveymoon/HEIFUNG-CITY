@@ -916,13 +916,15 @@ pub fn market_arcade(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     block(g, c, us, &r, ah, top, ucol);
     cornice(g, c, &r.poly(), ah + 0.1, 0.25, 0.06, Stone, pt.trim);
     // Piers and arches.
-    let n = ((r.w() - 0.7) / 3.8).floor().max(1.0) as i32;
+    // Bays of at most 3.8 m: round arches that spring well above the ground.
+    let n = ((r.w() - 0.7) / 3.8).ceil().max(1.0) as i32;
     let step = (r.w() - 0.7) / n as f32;
     let front = r.front();
     for k in 0..=n {
         let u = r.u0 + 0.35 + k as f32 * step;
         f.bx(g, Stone, u, ah * 0.5, r.v0 + 0.35, Vec3::new(0.7, ah, 0.7), pt.stone);
-        g.lod(Lod::Mid, |g| f.bx(g, Stone, u, ah - 1.5 - step * 0.5 + 0.6, r.v0 + 0.35, Vec3::new(0.86, 0.18, 0.86), pt.trim));
+        // The impost at the springing.
+        g.lod(Lod::Mid, |g| f.bx(g, Stone, u, ah - (step - 0.7) * 0.5, r.v0 + 0.35, Vec3::new(0.86, 0.18, 0.86), pt.trim));
     }
     let col = rgba(pt.stone);
     let out = f.dir3(front.out);
@@ -955,8 +957,8 @@ pub fn market_arcade(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for k in 0..n {
         let t = -sf.len * 0.5 + 0.35 + (k as f32 + 0.5) * step;
         let shop = Paint { door: pick(rng, &DOORS), ..pt };
-        window(g, c, &sf, t - step * 0.14, fh * 0.48, step * 0.45, fh * 0.55, light(c, rng, 0.3), &shop, Set::Oak, k as u64);
-        door(g, c, &sf, t + step * 0.3, 0.9, 2.2, &shop, Pane::Dark);
+        window(g, c, &sf, t - step * 0.18, fh * 0.48, step * 0.38, fh * 0.55, light(c, rng, 0.3), &shop, Set::Oak, k as u64);
+        door(g, c, &sf, t + step * 0.3, 0.8, 2.2, &shop, Pane::Dark);
         let board = pick(rng, &[[0.12, 0.20, 0.15], [0.30, 0.09, 0.07], [0.10, 0.10, 0.12], [0.24, 0.18, 0.10]]);
         sf.decal(g, f, Wood, t, ah - 0.45, TIMBER, step * 0.8, 0.45, board);
         let letters = ((step * 0.6 / 0.42) as i32).clamp(2, 8);
@@ -1420,9 +1422,10 @@ pub fn stone_manor(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
     }
     // The gravel court: a fountain, the cars.
-    if court.w() > 6.0 && court.d() > 6.0 {
-        let cp = court.inset(0.6);
-        ground(g, f, Dirt, &cp.poly(), 0.06, mix(pal.paving, [0.70, 0.66, 0.56], 0.6));
+    let cp = court.inset(0.6);
+    if court.w() > 6.0 && court.d() > 6.0 && poly_inside(c, &rect(cp.c().x, cp.c().y, 2.2, 2.2)) {
+        let gravel = clip_box(&yard_poly, cp.u0, cp.u1, cp.v0, cp.v1);
+        ground(g, f, Dirt, &gravel, 0.06, mix(pal.paving, [0.70, 0.66, 0.56], 0.6));
         let fp = cp.c();
         let fw = f.to_world(fp.x, fp.y);
         g.part(Stone).cylinder_capped(fw, 2.0, 2.0, 0.06, 0.6, 16, false, true, rgba(pt.trim));

@@ -27,6 +27,10 @@ mod capsule;
 mod brick;
 /// [r4-brick] Brick & Steel's works: saw-tooth sheds, foundry, gas works.
 mod brick_works;
+/// [lantern] Lantern Alley: shophouses, alleys, stalls, halls, workshops.
+mod lantern;
+/// [garden] The Garden Suburb's houses, shops and garden manor.
+mod garden;
 /// [r4-oldstone] Old Town Charter's Old Stone: houses, rows, arcades, halls, manor.
 mod oldstone;
 /// [r4-oldstone] Old Stone's works: the mill, the tannery, cobbled yards.
@@ -261,9 +265,14 @@ fn back_edge_link(lot: &Lot, kind: RailFacility) -> RailLink {
 
 #[cfg(test)]
 mod capsule_tests;
+#[cfg(test)]
+mod garden_tests;
 
 #[cfg(test)]
 mod brick_tests;
+
+#[cfg(test)]
+mod lantern_tests;
 
 #[cfg(test)]
 mod oldstone_tests;

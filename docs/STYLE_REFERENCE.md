@@ -168,6 +168,21 @@ a view down one street shows a few dozen such towers.
   side core with pipes, mixed facades, streaks, rooftop clutter, shutters,
   awnings, podium billboard, corner neon); the detail layers and their
   distance ranges.
+- Done (r4-lantern): **Lantern Alley** (`buildings/lantern.rs`, the
+  Lantern Lanes story's look, the low forms of section 1): shophouses
+  with an arcade, alley walk-ups, stall rows, a food court hall, a tea
+  house, a night-market hall behind a gateway, workshops, back-alley
+  kitchens and a courtyard compound for the story's mansions. Paper
+  lanterns: the paper body is mid detail (12 triangles, cap and tassel
+  near), the light a base-mesh glow box just round it marked
+  `NIGHT_MARK` (12 triangles, lit after dark only), strung across what a
+  lot holds (its alley, court, aisles, arcade). Uses the HK pass's
+  `flat_windows`, `ledge`, `awning`, `roof_clutter`, `pipe_run`.
+- Done (r4-garden): the Garden Suburb look (Quiet Acres; `buildings/garden.rs`):
+  houses, bungalows, a close, a parade, a garden centre, a corner café and the
+  garden manor, with fences' pickets, frames, glazing bars, gutters, aerials,
+  bins, beds and garden furniture in the near layer, sheds, cars, rails and
+  awnings in the mid layer; porch lanterns lit only after dark.
 - Left for later: the cyberpunk family (section 2) on the Neon strip,
   offices and industry; the street-level props round the plot; the other
-  looks (Lantern Alley, Skyline Luxe, Glass Campus).
+  looks (Skyline Luxe, Glass Campus).

@@ -291,6 +291,13 @@ fn an_old_town_builds_old_stone_and_big_houses_only_on_empty_plots() {
     }
     assert_eq!(w.buildings[standing].look, None, "the works that stood keep their look");
     // A big house on two empty plots; none once every plot is built on.
+    // A quiet quarter (measured, nobody about): big houses are wanted.
+    let p = &mut w.estate.pressure;
+    let quiet = vec![0.0f32; p.value.len()];
+    p.samples = 0;
+    p.sample(&quiet, &quiet);
+    p.samples = 48;
+    p.always = true;
     let site = w.mcmansion_site().expect("two empty plots side by side");
     assert!(site.iter().all(|l| w.lots[*l].building.is_none()));
     for lot in vacant(&w, LandUse::Residential) {
