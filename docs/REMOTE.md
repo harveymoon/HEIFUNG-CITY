@@ -1303,7 +1303,7 @@ trades, Homes and estates, League towers, Waterfront, Capsule district, Malls), 
 screenshot; `source` city / catalogue / notes; `building` (id; switches to the city list), `style`
 (key `PencilTower` or label "pencil tower"; switches to the catalogue), `variant` (0-based), `note`
 (id; shows what it is about), `step` (int, as the arrows), `filter` {...} (null or "" clears one),
-`clear_filters`; the look: `light` day / night (or `night` bool), `lights` (window lights and signs),
+`clear_filters`, `go_to` (true: select the city building shown, fly the camera to it and close the viewer, as its "Go to it in the city" button); the look: `light` day / night (or `night` bool), `lights` (window lights and signs),
 `auto_rotate`, `yaw` / `pitch` (degrees), `zoom` (0.25..4, 1 frames the building), `reset_view`;
 `inspiration` (a picture of the `Inspirations` folder, by the end of its path, shown beside the
 building, or `none`; the folder is `ND_INSPIRATIONS` or an `Inspirations` folder above the home

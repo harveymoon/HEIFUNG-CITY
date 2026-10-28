@@ -244,6 +244,13 @@ pub(super) fn viewer(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             Some(all.into_iter().find(|x| x.to_string_lossy().to_ascii_lowercase().replace('\\', "/").ends_with(&low)).ok_or_else(|| format!("no picture {p:?} in the Inspirations folder"))?)
         };
     }
+    // "Go to it in the city": the window flies the camera there and closes.
+    if opt_bool(cmd, "go_to")? == Some(true) {
+        match ctx.viewer.subject(&ctx.sim, &ctx.notes) {
+            crate::viewer::Subject::City(id) => ctx.viewer.go_to = Some(id),
+            _ => return Err("go_to needs a city building on show".into()),
+        }
+    }
     let mut reply = status(ctx);
     if action == "screenshot" || field(cmd, "path").is_some() {
         let default = format!("screenshots/viewer-{}.png", unique_stamp());

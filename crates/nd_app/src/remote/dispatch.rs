@@ -744,6 +744,7 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("step", "int: move through the list shown, as the arrows do (next and prev are 1 and -1)"),
         ("filter", "{search, group (a catalogue section), form, land_use, district, story, business, tier, noted}; null or \"\" clears one"),
         ("clear_filters", "bool"),
+        ("go_to", "bool: \"Go to it in the city\": select the building shown, fly the camera to it and close the viewer (applied in the next egui pass)"),
         ("light", "day | night (or night: bool); lights: bool (window lights and signs); auto_rotate: bool"),
         ("yaw", "degrees round the building (stops the turning); pitch: degrees above the floor; zoom: 0.25..4, 1 frames it; reset_view: bool"),
         ("inspiration", "a picture of the Inspirations folder (the end of its path, e.g. Hong_Kong/x.jpg) shown beside the building, or none"),
