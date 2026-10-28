@@ -398,6 +398,7 @@ Direction chosen: look-dev is "grounded neon" (realistic light, materials, AO an
 - [x] Old todo2.md–todo5.md deleted after checking every request is in todo.md
 
 ## Agents running (update when starting/merging; survives context compaction)
+- 2026-10-28 Round 4 wave A: p2-look-leftovers (pits, malls, inspector; ports 4933-4935), r4-viewer (building viewer + notes; 4930-4932), r4-style (STYLE_REFERENCE.md + Hong Kong tower detail; 4936-4938). Queued when slots free: raised-road growth fix (buildings around pillars / under decks), hunger exodus + held-pressure hint; then L2 looks 2-3 at a time. Main c8bc4ee has R1-R3, hotfix 5e9323e, P1 leftovers.
 
 ## Next steps (Harvey 2026-10-08) — ON HOLD: Harvey said pause after the code review; start these another day only when he asks
 - [→] City rating: liveability, prosperity, safety, environment — measured, with history charts (no challenges/scenarios yet)
