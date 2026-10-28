@@ -68,6 +68,19 @@ pub fn look_styles(look: Look, lu: LandUse, tier: Tier) -> Option<Menu> {
         (Look::Capsule, Commercial, High) => &[(S::SaucerStack, 0.3), (S::CapsuleTower, 0.25), (S::StiltTower, 0.2), (S::DomeCampus, 0.25)],
         (Look::Capsule, Entertainment, Low) => &[(S::DomeHall, 0.6), (S::TwinDomes, 0.4)],
         (Look::Capsule, Entertainment, _) => &[(S::DomeHall, 0.5), (S::SaucerStack, 0.3), (S::PopsicleDome, 0.2)],
+        // [r4-brick] Brick & Steel: worker rows and lofts, workshops, the
+        // pub and the union hall, and the works.
+        (Look::BrickSteel, Residential, Low) => &[(S::BrickRow, 0.7), (S::WarehouseLoft, 0.3)],
+        (Look::BrickSteel, Residential, Mid) => &[(S::BrickRow, 0.4), (S::WarehouseLoft, 0.45), (S::MillLofts, 0.15)],
+        (Look::BrickSteel, Residential, High) => &[(S::WarehouseLoft, 0.5), (S::MillLofts, 0.5)],
+        (Look::BrickSteel, Commercial, Low) => &[(S::BrickWorkshop, 0.55), (S::CornerPub, 0.3), (S::WarehouseLoft, 0.15)],
+        (Look::BrickSteel, Commercial, Mid) => &[(S::BrickWorkshop, 0.35), (S::WarehouseLoft, 0.3), (S::CornerPub, 0.2), (S::UnionHall, 0.15)],
+        (Look::BrickSteel, Commercial, High) => &[(S::WarehouseLoft, 0.4), (S::MillLofts, 0.35), (S::UnionHall, 0.25)],
+        (Look::BrickSteel, Entertainment, Low) => &[(S::CornerPub, 0.7), (S::BrickWorkshop, 0.3)],
+        (Look::BrickSteel, Entertainment, _) => &[(S::CornerPub, 0.55), (S::UnionHall, 0.45)],
+        (Look::BrickSteel, Industrial, Low) => &[(S::SawtoothFactory, 0.55), (S::FoundryWorks, 0.25), (S::GasWorks, 0.2)],
+        (Look::BrickSteel, Industrial, Mid) => &[(S::SawtoothFactory, 0.45), (S::FoundryWorks, 0.35), (S::GasWorks, 0.2)],
+        (Look::BrickSteel, Industrial, High) => &[(S::FoundryWorks, 0.4), (S::SawtoothFactory, 0.35), (S::GasWorks, 0.25)],
         _ => return None,
     })
 }
@@ -207,6 +220,21 @@ pub fn tint(look: Look) -> Tint {
             sign_scale: 0.35,
             grime: Some((0.0, 0.0)),
         },
+        // [r4-brick] Sooty red brick, amber windows, sodium-orange and cream
+        // signs and few of them; grimy whatever the tier. The styles carry
+        // their own bricks and steel (`buildings/brick.rs`).
+        Look::BrickSteel => Tint {
+            walls: &[[0.50, 0.22, 0.15], [0.44, 0.19, 0.14], [0.52, 0.30, 0.21]],
+            trim: Some([0.62, 0.58, 0.50]),
+            windows: &[[1.35, 0.85, 0.40], [1.25, 0.95, 0.55], [1.40, 0.72, 0.30]],
+            signs: &[[2.4, 1.1, 0.25], [2.2, 1.8, 0.9], [2.3, 0.35, 0.2], [0.3, 1.4, 1.1]],
+            awnings: Some(&[[0.14, 0.26, 0.18], [0.36, 0.08, 0.07], [0.30, 0.24, 0.16]]),
+            brick: Some(&[[0.50, 0.22, 0.15], [0.56, 0.27, 0.18], [0.44, 0.19, 0.14]]),
+            plaster: None,
+            signage: None,
+            sign_scale: 0.5,
+            grime: Some((0.6, 0.5)),
+        },
         Look::Historic => Tint {
             walls: &[[0.55, 0.32, 0.24], [0.62, 0.56, 0.46], [0.48, 0.30, 0.22], [0.66, 0.60, 0.50]],
             trim: Some([0.74, 0.70, 0.60]),
@@ -276,6 +304,7 @@ mod tests {
                 Look::TechCampus | Look::Tourist => &[LandUse::Commercial],
                 Look::Historic => &[LandUse::Residential, LandUse::Commercial],
                 Look::Capsule => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment],
+                Look::BrickSteel => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
             };
             for &lu in uses {
                 for tier in Tier::ALL {
@@ -283,7 +312,8 @@ mod tests {
                     assert!(!menu.is_empty() && menu.iter().all(|(_, w)| *w > 0.0));
                 }
             }
-            assert!(look_styles(look, LandUse::Industrial, Tier::Mid).is_none());
+            // [r4-brick] Only Brick & Steel builds the works in its look.
+            assert_eq!(look_styles(look, LandUse::Industrial, Tier::Mid).is_some(), look == Look::BrickSteel);
         }
     }
 

@@ -247,6 +247,14 @@ impl World {
             }
             // Industry: retool to the district's sub-zone.
             if b.land_use == LandUse::Industrial {
+                // [r4-brick] The works take the district's look (Brick &
+                // Steel builds them in brick), then retool below.
+                let want = district.as_ref().and_then(|d| d.look_for(LandUse::Industrial));
+                if b.look != want {
+                    self.buildings[id].look = want;
+                    self.events.push(SimEvent::BuildingChanged(id));
+                }
+                let b = &self.buildings[id];
                 let Some(kind) = district.as_ref().and_then(|d| d.industry) else { continue };
                 if b.business.as_ref().is_none_or(|z| z.kind.industry() == Some(kind) || z.kind == BusinessKind::Parking) {
                     continue;

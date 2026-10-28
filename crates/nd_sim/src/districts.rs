@@ -45,6 +45,9 @@ pub enum ResidentialSpec {
     /// [capsule] White domes, saucers and pill towers ringed with round
     /// windows. Appended so saved specs keep their names and order.
     Capsule,
+    /// [r4-brick] Red-brick worker rows, warehouse lofts with steel
+    /// windows and water towers (the Foundry Row story).
+    BrickSteel,
 }
 
 /// How the shops in a district grow.
@@ -61,10 +64,12 @@ pub enum CommercialSpec {
     /// [capsule] High-tech domes: offices and gadget shops only (where the
     /// market can carry them), in white domes and pill towers.
     Capsule,
+    /// [r4-brick] Brick workshops, the corner pub, the union hall.
+    BrickSteel,
 }
 
 impl ResidentialSpec {
-    pub const ALL: [ResidentialSpec; 4] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule];
+    pub const ALL: [ResidentialSpec; 5] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule, ResidentialSpec::BrickSteel];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -72,6 +77,7 @@ impl ResidentialSpec {
             ResidentialSpec::Suburban => "Suburban",
             ResidentialSpec::Eco => "Eco",
             ResidentialSpec::Capsule => "Capsule",
+            ResidentialSpec::BrickSteel => "Brick & Steel",
         }
     }
 
@@ -81,6 +87,7 @@ impl ResidentialSpec {
             ResidentialSpec::Suburban => "suburban",
             ResidentialSpec::Eco => "eco",
             ResidentialSpec::Capsule => "capsule",
+            ResidentialSpec::BrickSteel => "brick_steel",
         }
     }
 
@@ -90,7 +97,7 @@ impl ResidentialSpec {
 }
 
 impl CommercialSpec {
-    pub const ALL: [CommercialSpec; 5] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule];
+    pub const ALL: [CommercialSpec; 6] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule, CommercialSpec::BrickSteel];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -99,6 +106,7 @@ impl CommercialSpec {
             CommercialSpec::NightMarket => "Night market",
             CommercialSpec::Tourist => "Tourist quarter",
             CommercialSpec::Capsule => "Capsule",
+            CommercialSpec::BrickSteel => "Brick & Steel",
         }
     }
 
@@ -109,6 +117,7 @@ impl CommercialSpec {
             CommercialSpec::NightMarket => "night_market",
             CommercialSpec::Tourist => "tourist",
             CommercialSpec::Capsule => "capsule",
+            CommercialSpec::BrickSteel => "brick_steel",
         }
     }
 
@@ -135,10 +144,13 @@ pub enum Look {
     /// saucers, ringed with portholes: the high-tech dome district.
     /// Appended so saved looks keep their names and order.
     Capsule,
+    /// [r4-brick] Brick & Steel (Foundry Row): worker rows, lofts, the pub
+    /// and the union hall, and the district's works in brick and steel.
+    BrickSteel,
 }
 
 impl Look {
-    pub const ALL: [Look; 9] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule];
+    pub const ALL: [Look; 10] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule, Look::BrickSteel];
 
     pub fn index(self) -> usize {
         self as usize
@@ -155,6 +167,7 @@ impl Look {
             Look::Tourist => "tourist quarter",
             Look::Historic => "historic",
             Look::Capsule => "capsule",
+            Look::BrickSteel => "brick & steel",
         }
     }
 
@@ -172,6 +185,8 @@ impl Look {
             Look::Historic => floors.min(4),
             // Domes keep to the block's density, one floor over at most.
             Look::Capsule => floors.min(cap.max(1) + 1),
+            // [r4-brick] Low-rise: rows of three or four, lofts to ten.
+            Look::BrickSteel => floors.min(cap.max(1) + 1).min(10),
         };
         f.max(1)
     }
@@ -201,6 +216,8 @@ impl Look {
             Look::NightMarket => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Bakery, 4.0)],
             Look::Tourist => &[(BusinessKind::Hotel, 6.0), (BusinessKind::GadgetShop, 2.0), (BusinessKind::Bakery, 2.0)],
             Look::Capsule => &[(BusinessKind::Office, 4.0), (BusinessKind::GadgetShop, 3.0)],
+            // [r4-brick] Workers' shops: the baker and the grocer.
+            Look::BrickSteel => &[(BusinessKind::Bakery, 2.0), (BusinessKind::Grocery, 2.0)],
             _ => &[],
         }
     }
@@ -305,6 +322,7 @@ impl District {
                 ResidentialSpec::Suburban => Look::Suburban,
                 ResidentialSpec::Eco => Look::Eco,
                 ResidentialSpec::Capsule => Look::Capsule,
+                ResidentialSpec::BrickSteel => Look::BrickSteel,
             }),
             // Nightlife on a strip or in a market takes the street's look.
             LandUse::Commercial | LandUse::Entertainment => self.commercial.and_then(|s| match s {
@@ -314,8 +332,12 @@ impl District {
                 CommercialSpec::Tourist if lu == LandUse::Commercial => Some(Look::Tourist),
                 // Nights out under a dome too.
                 CommercialSpec::Capsule => Some(Look::Capsule),
+                // [r4-brick] The pub and the union hall are the nights out.
+                CommercialSpec::BrickSteel => Some(Look::BrickSteel),
                 _ => None,
             }),
+            // [r4-brick] Brick & Steel builds its works in brick too.
+            LandUse::Industrial if self.residential == Some(ResidentialSpec::BrickSteel) || self.commercial == Some(CommercialSpec::BrickSteel) => Some(Look::BrickSteel),
             _ => None,
         }
     }
@@ -697,6 +719,8 @@ impl Districts {
     /// policies to start with); the rest stay custom, or no story when
     /// nothing was set. Run on every load: it only touches districts with
     /// no story whose dials match one, which a loaded custom one never does.
+    /// [r4-brick] A district with a story whose looks changed since the
+    /// save (a story that got its own look) takes the story's new ones.
     pub fn adopt_stories(&mut self) -> usize {
         let mut n = 0;
         for d in self.list.iter_mut().filter(|d| d.story.is_none()) {
@@ -704,6 +728,19 @@ impl Districts {
                 let height = d.height_limit;
                 d.apply_story(Some(s));
                 d.height_limit = height;
+                n += 1;
+            }
+        }
+        // [r4-brick] A story that got its own look since the save (Foundry
+        // Row's Brick & Steel): the district takes the story's building
+        // types now; its policies and height limit stay the player's.
+        for d in self.list.iter_mut() {
+            if let Some(s) = d.story.filter(|s| !s.fits(d)) {
+                let p = s.preset();
+                d.residential = p.residential;
+                d.commercial = p.commercial;
+                d.industry = p.industry;
+                d.historic = p.historic;
                 n += 1;
             }
         }
@@ -822,5 +859,45 @@ mod tests {
         assert_eq!(again.residential, Some(ResidentialSpec::Capsule));
         assert_eq!(ron::from_str::<Look>("Historic").unwrap(), Look::Historic);
         assert_eq!(ron::from_str::<Look>("Capsule").unwrap(), Look::Capsule);
+    }
+
+    /// [r4-brick] Brick & Steel gives its look to homes, shops, nights out
+    /// and the works; it keeps the district low; and a Foundry Row district
+    /// saved before the look (dials: manufacturing only) takes it on load,
+    /// keeping the player's policies and height limit.
+    #[test]
+    fn brick_steel_look_and_old_foundry_row() {
+        use crate::stories::Story;
+        let mut d = Districts::default();
+        let id = d.create(None, 1, 0).unwrap();
+        let dist = d.get_mut(id).unwrap();
+        dist.apply_story(Some(Story::FoundryRow));
+        for lu in [LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial] {
+            assert_eq!(dist.look_for(lu), Some(Look::BrickSteel), "{lu:?}");
+        }
+        assert_eq!(dist.industry, Some(IndustryKind::Manufacturing));
+        assert_eq!(Look::BrickSteel.floors(30, 40), 10);
+        assert_eq!(Look::BrickSteel.floors(3, 2), 3);
+        assert_eq!(ResidentialSpec::parse("brick_steel"), Some(ResidentialSpec::BrickSteel));
+        assert_eq!(CommercialSpec::parse("Brick & Steel"), Some(CommercialSpec::BrickSteel));
+        assert_eq!(Look::ALL[Look::BrickSteel.index()], Look::BrickSteel);
+        // Other districts' works keep no look.
+        let other = d.create(None, 2, 0).unwrap();
+        d.get_mut(other).unwrap().apply_story(Some(Story::Capsule));
+        assert_eq!(d.get(other).unwrap().look_for(LandUse::Industrial), None);
+        // As saved before the look: Foundry Row with manufacturing alone.
+        let old = "(id: 3, name: \"Eastworks\", color: 2, residential: None, commercial: None, industry: Some(Manufacturing), historic: false, height_limit: Some(30.0), story: Some(FoundryRow), policies: (pollution_levy: 0.12, rent_support: 0.1))";
+        let back: District = ron::from_str(old).expect("old district loads");
+        let mut ds = Districts::default();
+        ds.list.push(back);
+        assert_eq!(ds.adopt_stories(), 1);
+        let got = &ds.list[0];
+        assert_eq!(got.story, Some(Story::FoundryRow));
+        assert!(Story::FoundryRow.fits(got));
+        assert_eq!(got.residential, Some(ResidentialSpec::BrickSteel));
+        assert_eq!(got.height_limit, Some(30.0));
+        assert_eq!(got.policies.pollution_levy, 0.12);
+        // Run again (every load): nothing more to do.
+        assert_eq!(ds.adopt_stories(), 0);
     }
 }
