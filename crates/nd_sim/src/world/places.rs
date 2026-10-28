@@ -22,7 +22,7 @@ const CHOICE_TEMPERATURE: f32 = 0.2;
 /// Metres that cost as much as one point of experience, per kind of trip.
 const REACH_NIGHT: f32 = 700.0;
 const REACH_PARK: f32 = 500.0;
-const REACH_SHOP: f32 = 450.0;
+pub(super) const REACH_SHOP: f32 = 450.0;
 /// Looking for somewhere new on foot: within this of where they are.
 const EXPLORE_RADIUS: f32 = 450.0;
 /// A habitual grocer is kept unless the best other one is this much

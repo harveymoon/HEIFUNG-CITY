@@ -135,6 +135,8 @@ pub fn build_landscape_terrain(world: &World, palette: &Palette, cell: f32) -> M
         }
     }
     grid_indices(&mut mesh, 0, n, n);
+    // [p2-look] The strip mines' pits are dug below it.
+    crate::holes::cut_holes(&mut mesh, &crate::holes::ground_holes(world));
     mesh
 }
 
@@ -296,6 +298,8 @@ pub struct LandscapeTiles {
     spots: Vec<GroundSpot>,
     raw: Vec<f32>,
     kept: Vec<f32>,
+    /// [p2-look] The holes cut through the ground (`holes::ground_holes`).
+    holes: Vec<Vec<Vec2>>,
     meshes: Vec<MeshData>,
 }
 
@@ -307,7 +311,8 @@ impl LandscapeTiles {
         let n = landscape_n(cell);
         let per_side = (n - 1).div_ceil(Self::TILE);
         let (raw, kept) = landscape_heights(world, cell, n);
-        let mut t = Self { cell, n, per_side, colours: LandColours::new(world, palette), spots: ground_spots(world, cell, n), raw, kept, meshes: Vec::new() };
+        let holes = crate::holes::ground_holes(world);
+        let mut t = Self { cell, n, per_side, colours: LandColours::new(world, palette), spots: ground_spots(world, cell, n), raw, kept, holes, meshes: Vec::new() };
         t.meshes = (0..per_side * per_side).map(|k| t.build_tile(k)).collect();
         t
     }
@@ -332,6 +337,20 @@ impl LandscapeTiles {
                     dirty[tj * self.per_side + ti] = true;
                 }
             }
+        }
+        // [p2-look] A pit dug, grown or filled in: the tiles under it.
+        let holes = crate::holes::ground_holes(world);
+        if holes != self.holes {
+            let tile_of = |v: f32| (((v + LAND_HALF) / self.cell).floor().max(0.0) as usize / Self::TILE).min(self.per_side - 1);
+            for hole in self.holes.iter().chain(holes.iter()) {
+                let (lo, hi) = hole.iter().fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+                for tj in tile_of(lo.y)..=tile_of(hi.y) {
+                    for ti in tile_of(lo.x)..=tile_of(hi.x) {
+                        dirty[tj * self.per_side + ti] = true;
+                    }
+                }
+            }
+            self.holes = holes;
         }
         self.raw = raw;
         self.kept = kept;
@@ -379,6 +398,7 @@ impl LandscapeTiles {
             }
         }
         grid_indices(&mut mesh, 0, i1 - i0 + 1, j1 - j0 + 1);
+        crate::holes::cut_holes(&mut mesh, &self.holes);
         mesh
     }
 }

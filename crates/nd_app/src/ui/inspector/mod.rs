@@ -6,6 +6,7 @@ mod about;
 mod air;
 mod bot;
 mod building;
+mod site;
 mod unit;
 mod vehicle;
 

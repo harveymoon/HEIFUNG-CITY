@@ -36,10 +36,20 @@ pub(super) fn sync_lots(
     // while the Zone tool is out (they are what it paints).
     let show_parcels = overlays.zoning || tools.tool == crate::tools::Tool::Zone;
     let fresh = !assets.palette_changed && !sim.full_rebuild;
-    if state.lots_gate.same((sim.generation, w.lots.version(), w.parcels.version, w.zones.len(), w.roads.version, overlays.zoning, show_parcels)) && state.lots_signature.is_some() && fresh {
+    // [p2-look] A strip mine's plots are floored by the mine (its yard
+    // round the pit dug into them), not with the lot gravel; a mine opening
+    // or growing changes no lot, so they are in the gate.
+    let holed = nd_procgen::holes::holed_lots(w);
+    let holed_sig = {
+        let mut h = DefaultHasher::new();
+        holed.hash(&mut h);
+        h.finish()
+    };
+    if state.lots_gate.same((sim.generation, w.lots.version(), w.parcels.version, w.zones.len(), w.roads.version, overlays.zoning, show_parcels, holed_sig)) && state.lots_signature.is_some() && fresh {
         return;
     }
     let mut h = DefaultHasher::new();
+    holed_sig.hash(&mut h);
     for (id, lot) in w.lots.iter() {
         id.hash(&mut h);
         (lot.building.is_some(), lot.park.is_some(), lot.landlocked).hash(&mut h);
@@ -120,7 +130,7 @@ pub(super) fn sync_lots(
             }
         }
     }
-    for lot in w.lots.values() {
+    for (id, lot) in w.lots.iter() {
         if is_park_lot(lot) || lot.polygon.is_empty() {
             continue;
         }
@@ -129,6 +139,8 @@ pub(super) fn sync_lots(
             fill.ground_polygon(&lot.polygon, 0.02, scale(pal.ground, 1.15));
         } else if lot.building.is_none() {
             // Vacant: the zoning layer (above) shows what it is zoned for.
+        } else if holed.contains(&id) {
+            // [p2-look] A strip mine's: its own yard round the pit.
         } else if lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.service.is_some_and(|s| s.kind.is_landmark())) {
             // [attractions] A landmark floors its own (big, often notched)
             // site; a gravel fill lifted onto the ground vertex by vertex

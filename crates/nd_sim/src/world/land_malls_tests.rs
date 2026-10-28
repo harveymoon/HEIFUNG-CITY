@@ -200,6 +200,38 @@ fn a_thriving_mall_buys_the_block_and_becomes_a_mega_mall() {
     assert_eq!(w.ledger_sum(), 0);
 }
 
+/// [p2-look] A mega-mall wants a compact site: the block it buys is near
+/// square, and a long narrow strip of plots along the street (where a forced
+/// one came out a cramped row of small anchors) is refused.
+#[test]
+fn a_mega_mall_wants_a_compact_site() {
+    let mut w = block(LandUse::Commercial);
+    let (front, _) = front_with_backland(&w, LandUse::Commercial);
+    let id = w.build_on_as(front, Some(BusinessKind::Grocery)).expect("a site");
+    w.buildings[id].plot.form = Some(Form::Mall);
+    w.buildings[id].floors = 2;
+    w.finish_construction(id);
+    w.firm_of(id);
+    assert!(w.grow_mega_mall(id), "it buys the block");
+    let b = &w.buildings[id];
+    let site: Vec<LotId> = b.plot.extra_lots.iter().chain(b.plot.pending_lots.iter()).copied().collect();
+    let (across, deep) = w.site_extent(front, &site);
+    assert!(w.mega_mall_shape_ok(front, &site), "a compact block: {across:.0} by {deep:.0} m");
+    assert!(across.min(deep) >= across.max(deep) * super::malls::MEGA_MALL_MIN_ASPECT);
+    // And drawn on the whole block (a looser block fell back to the road
+    // plot alone when drawn).
+    let others: Vec<&Lot> = site.iter().filter_map(|l| w.lots.get(*l)).collect();
+    assert!(crate::estate::merged_lot_within(&w.lots[front], &others, super::malls::MALL_HULL_SLACK).is_some(), "the footprint joins every plot");
+    // Six road plots in a row along the street: long and narrow.
+    let mut row: Vec<(f32, LotId)> = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Commercial && !l.landlocked && l.car_access() && l.center.y < 60.0).map(|(id, l)| (l.center.x, id)).collect();
+    row.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    let strip: Vec<LotId> = row.iter().skip(1).take(5).map(|x| x.1).collect();
+    let (across, deep) = w.site_extent(row[0].1, &strip);
+    assert!(across > deep * 2.5, "a strip along the street: {across:.0} by {deep:.0} m");
+    assert!(!w.mega_mall_shape_ok(row[0].1, &strip), "a long narrow strip is refused");
+    assert_eq!(w.ledger_sum(), 0);
+}
+
 /// An old save (no unit roles, none of the new estate counters) loads: its
 /// units are shops, its counters zero.
 #[test]
