@@ -768,6 +768,7 @@ impl World {
         // a town that cannot sell more bread does not get another bakery.
         let viable: Vec<bool> = LandUse::ALL.iter().map(|&lu| self.business_kinds_viable(lu, None).is_none_or(|v| !v.is_empty())).collect();
         let any_policy = self.any_district_policy();
+        let decks = self.roads.alive_segments().any(|(sid, _)| self.roads.spans_lots(sid));
         for i in 0..vacant.len() {
             if built >= self.config.max_builds_per_interval {
                 break;
@@ -797,6 +798,11 @@ impl World {
             // and relief draw them.
             if any_policy {
                 chance *= self.district_pull(lot_id, lu);
+            }
+            // [r4-decks] Under a raised road the ground goes to low uses
+            // first: few want a home in the shade and din of a deck.
+            if decks && lu == LandUse::Residential && self.deck_cap(lot_id).is_some() {
+                chance *= UNDER_DECK_HOMES;
             }
             if self.rng.random::<f32>() < chance {
                 self.build_on(lot_id);
@@ -1034,6 +1040,15 @@ impl World {
             Some(k) => Some(k),
             None => self.business_for_new_building(lot_id, lu, b.jobs),
         };
+        // [r4-decks] Under a raised road an office opens as a shop or a
+        // market stall instead (the first shop kind the market wants), as
+        // under Shanghai's and Hong Kong's walkways.
+        if forced.is_none() && kind == Some(BusinessKind::Office) && self.deck_cap(lot_id).is_some() {
+            const SHOPS: [BusinessKind; 4] = [BusinessKind::Grocery, BusinessKind::Bakery, BusinessKind::Cafe, BusinessKind::GadgetShop];
+            if let Some(k) = self.kinds_viable(&SHOPS, Some(b.jobs)).first() {
+                kind = Some(*k);
+            }
+        }
         // [malls] A wide, deep road plot may be a strip mall (a shop or an
         // office keeps one unit, the rest let); a big one a mall round its
         // store. Not where a pressure or a move asked for a building.
@@ -1075,6 +1090,13 @@ impl World {
                     b.name = n;
                 }
             }
+        }
+        // [r4-decks] Under a raised road: no taller than its deck allows (a
+        // mall's floors are its own, set above).
+        let fit = self.deck_fit(lot_id, b.floors);
+        if fit < b.floors {
+            b.floors = fit;
+            b.recompute_capacity();
         }
         // Nothing opens overnight: the lot becomes a building site first.
         b.construction = Some(Construction::new(if mall.is_some() { Construction::days_for(b.floors, b.tier) } else { Construction::days_for(floors, tier) }));
@@ -1127,6 +1149,10 @@ impl World {
         self.pick_business_kind(lu, jobs)
     }
 }
+
+/// [r4-decks] How readily homes are built on ground under a raised road,
+/// against elsewhere.
+const UNDER_DECK_HOMES: f32 = 0.5;
 
 /// [balance x industry] An industrial kind whose takings cover less than
 /// this share of its costs is not built again unless the player asked for it.

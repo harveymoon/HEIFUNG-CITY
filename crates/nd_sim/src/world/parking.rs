@@ -146,6 +146,8 @@ impl World {
         let value = self.land_value.at(lot.center);
         let tier = Tier::for_land_value(value).min(Tier::Mid);
         let floors: u8 = if tier == Tier::Mid && area > 500.0 { self.rng.random_range(3..=5) } else { 0 };
+        // [r4-decks] Under a raised road a car park has the decks that fit.
+        let floors = self.deck_cap(lot_id).map_or(floors, |cap| floors.min(cap));
         // [parking] A surface lot has the bays its parcel fits (as drawn).
         let capacity = if floors == 0 { crate::parking_layout::surface_capacity(lot) } else { ((area / 32.0) as u16) * floors as u16 };
         if capacity < 4 {
@@ -242,6 +244,9 @@ impl World {
             .filter(|&l| Tier::for_land_value(self.land_value.at(self.lots[l].center)) != Tier::High)
             .map(|l| (self.lots[l].center.distance(at), l))
             .filter(|(d, _)| *d <= 220.0)
+            // [r4-decks] Ground under a raised road suits a car park: it
+            // counts as nearer.
+            .map(|(d, l)| (if self.deck_cap(l).is_some() { d - UNDER_DECK_PULL } else { d }, l))
             .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
             .map(|(_, l)| l)
     }
@@ -339,6 +344,9 @@ pub const PARKING_CIRCLING: u32 = 4;
 pub const PARKING_MIN_CAP: usize = 60;
 /// No new lot this near any other parking business, m.
 pub const PARKING_NEIGHBOUR: f32 = 70.0;
+/// [r4-decks] How much nearer a vacant lot under a raised road counts in
+/// the choice of a car park's site (`parking_site_near`), metres.
+pub const UNDER_DECK_PULL: f32 = 80.0;
 /// No new lot this near one opened in the last two days, m.
 pub const PARKING_SPACING: f32 = 150.0;
 /// What a founder must have to open a surface lot or a car park.
