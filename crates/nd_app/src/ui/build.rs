@@ -492,6 +492,9 @@ struct State {
     /// The tool last frame, to open the window when a building tool is
     /// picked elsewhere.
     last_tool: Option<Tool>,
+    /// The options column's width, set by dragging the divider left of it
+    /// (`None`: `INFO_WIDTH`).
+    info_w: Option<f32>,
 }
 
 fn state_id() -> egui::Id {
@@ -556,7 +559,8 @@ fn follow_tools(ctx: &egui::Context, tools: &ToolState) {
 const TILE: egui::Vec2 = egui::vec2(104.0, 140.0);
 const THUMB: f32 = 96.0;
 const TREE_WIDTH: f32 = 172.0;
-const INFO_WIDTH: f32 = 330.0;
+const INFO_WIDTH: f32 = 380.0;
+const INFO_MIN_WIDTH: f32 = 220.0;
 
 pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: Rect) {
     follow_tools(ctx, p.tools);
@@ -581,13 +585,23 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: Rect) {
             // hint in the options never widens the window.
             let full = ui.available_rect_before_wrap();
             ui.allocate_rect(full, egui::Sense::hover());
-            let info_w = INFO_WIDTH.min(full.width() * 0.4);
+            // The options column is as wide as the player drags it, leaving
+            // the grid room for at least one tile.
+            let max_info = (full.width() - TREE_WIDTH - TILE.x - 30.0).max(INFO_MIN_WIDTH);
+            let info_w = st.info_w.unwrap_or(INFO_WIDTH).clamp(INFO_MIN_WIDTH, max_info);
             let tree_r = Rect::from_min_size(full.min, egui::vec2(TREE_WIDTH, full.height()));
             let info_r = Rect::from_min_max(egui::pos2(full.right() - info_w, full.top()), full.max);
             let grid_r = Rect::from_min_max(egui::pos2(tree_r.right() + 8.0, full.top()), egui::pos2(info_r.left() - 8.0, full.bottom()));
             let line = egui::Stroke::new(1.0, Color32::from_rgb(50, 50, 62));
             ui.painter().vline(tree_r.right() + 4.0, full.y_range(), line);
-            ui.painter().vline(info_r.left() - 4.0, full.y_range(), line);
+            // The divider: drag it to widen or narrow the options.
+            let split = Rect::from_center_size(egui::pos2(info_r.left() - 4.0, full.center().y), egui::vec2(8.0, full.height()));
+            let drag = ui.interact(split, egui::Id::new("build_split"), egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+            if drag.dragged() {
+                st.info_w = Some((info_w - drag.drag_delta().x).clamp(INFO_MIN_WIDTH, max_info));
+            }
+            let split_line = if drag.hovered() || drag.dragged() { egui::Stroke::new(2.0, GOLD) } else { line };
+            ui.painter().vline(info_r.left() - 4.0, full.y_range(), split_line);
             let mut hovered: Option<Item> = None;
             let column = |ui: &mut egui::Ui, r: Rect, salt: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
                 // A child the window does not size itself by: whatever
@@ -602,6 +616,8 @@ pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: Rect) {
             column(ui, tree_r, "build_tree", &mut |ui| tree(ui, &mut st));
             column(ui, grid_r, "build_grid", &mut |ui| hovered = grid(ui, p, &st));
             column(ui, info_r, "build_info", &mut |ui| {
+                // Sliders fit the column (their label beside them).
+                ui.spacing_mut().slider_width = (info_r.width() - 150.0).clamp(80.0, 260.0);
                 // [build-highlight] What the section has on the map.
                 on_the_map(ui, p);
                 let shown = hovered.or(current_item(p.tools));
@@ -713,26 +729,34 @@ fn grid(ui: &mut egui::Ui, p: &mut UiCtx, st: &State) -> Option<Item> {
     let mut picked = None;
     for g in groups(cat).into_iter().filter(|g| st.sub.is_none_or(|s| s == g.name)) {
         section(ui, &g.name.to_uppercase());
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-            for item in g.items.iter().copied() {
-                let on = current.is_some_and(|c| c.same(item));
-                // [K16] A one-per-city attraction already built: greyed,
-                // not pickable, its name on hover.
-                let taken = item.placeable().and_then(|pl| p.sim.world.landmark_taken(pl)).and_then(|b| p.sim.world.buildings.get(b)).map(|b| b.name.clone());
-                let resp = ui.add_enabled_ui(taken.is_none(), |ui| tile(ui, p, item, on)).inner;
-                let resp = match &taken {
-                    Some(name) => resp.on_disabled_hover_text(format!("One per city: {name} is already built.")),
-                    None => resp,
-                };
-                if resp.hovered() {
-                    hovered = Some(item);
+        // Rows of as many tiles as the column fits (laid out by hand:
+        // `horizontal_wrapped` inside the scroll area did not wrap, and
+        // the last tile of a row was cut off at the column's edge).
+        let gap = 6.0;
+        let per_row = (((ui.available_width() + gap) / (TILE.x + gap)).floor() as usize).max(1);
+        for row in g.items.chunks(per_row) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(gap, gap);
+                for item in row.iter().copied() {
+                    let on = current.is_some_and(|c| c.same(item));
+                    // [K16] A one-per-city attraction already built: greyed,
+                    // not pickable, its name on hover.
+                    let taken = item.placeable().and_then(|pl| p.sim.world.landmark_taken(pl)).and_then(|b| p.sim.world.buildings.get(b)).map(|b| b.name.clone());
+                    let resp = ui.add_enabled_ui(taken.is_none(), |ui| tile(ui, p, item, on)).inner;
+                    let resp = match &taken {
+                        Some(name) => resp.on_disabled_hover_text(format!("One per city: {name} is already built.")),
+                        None => resp,
+                    };
+                    if resp.hovered() {
+                        hovered = Some(item);
+                    }
+                    if resp.clicked() && taken.is_none() {
+                        picked = Some(item);
+                    }
                 }
-                if resp.clicked() && taken.is_none() {
-                    picked = Some(item);
-                }
-            }
-        });
+            });
+            ui.add_space(gap);
+        }
     }
     if let Some(item) = picked {
         activate(item, p.tools);
