@@ -80,6 +80,8 @@ pub fn group(s: Style) -> &'static str {
         BeachResort | WaterfrontHotel | PierRestaurant | BeachBar | BoatRental => "Waterfront",
         DomeHouse | SaucerHouse | PopsicleDome | TwinDomes | DomePods | CapsuleTower | SaucerStack | StiltTower | DomeHall | DomeCampus => "Capsule district",
         StripMall | Mall | MegaMall => "Malls",
+        // [r4-brick] Foundry Row's look.
+        BrickRow | WarehouseLoft | MillLofts | BrickWorkshop | CornerPub | UnionHall | SawtoothFactory | FoundryWorks | GasWorks | LoftEstate => "Brick & Steel",
         LanternShophouse | AlleyWalkups | StallRows | FoodCourt | TeaHouse | LanternMarket | AlleyWorkshops | BackKitchens | LanternCompound => "Lantern Alley",
         #[allow(unreachable_patterns)]
         _ => "Other",
@@ -87,7 +89,7 @@ pub fn group(s: Style) -> &'static str {
 }
 
 /// Every section, in catalogue order.
-pub const GROUPS: [&str; 21] = [
+pub const GROUPS: [&str; 22] = [
     "Residential",
     "Commercial",
     "Industrial",
@@ -107,6 +109,7 @@ pub const GROUPS: [&str; 21] = [
     "Waterfront",
     "Capsule district",
     "Malls",
+    "Brick & Steel",
     "Lantern Alley",
     "Other",
 ];
@@ -114,7 +117,7 @@ pub const GROUPS: [&str; 21] = [
 /// The land use a section's forced styles are drawn for.
 fn group_land_use(g: &str) -> LandUse {
     match g {
-        "Residential" | "Homes and estates" | "Capsule district" | "Lantern Alley" => LandUse::Residential,
+        "Residential" | "Homes and estates" | "Capsule district" | "Brick & Steel" | "Lantern Alley" => LandUse::Residential,
         "Commercial" | "Shops and trades" | "Malls" | "Parking" | "League towers" => LandUse::Commercial,
         "Entertainment" | "Waterfront" => LandUse::Entertainment,
         "Civic" | "City services" | "Attractions" | "Transit and rail" => LandUse::Civic,
@@ -164,7 +167,7 @@ pub fn lot_size(s: Style, tier: Tier) -> (f32, f32) {
         },
         LanternMarket | FoodCourt => (40.0, 44.0),
         Stadium | Arena | GrandPark | Zoo | AmusementPark | BotanicalGarden | ConventionCentre | MegaMall | ShippingPort | PowerCoal | PowerNuclear | PowerSolar | PowerWind | PowerHydro | PowerTidal | PowerGeothermal | FreightYard | CentralStation | StripMine | OilField | Refinery | Farmstead | CowFarm | Feedlot | Prison | University | CasinoResort | Megastructure => (130.0, 110.0),
-        Hospital | School | MarketHall | Mall | MegaHotel | Mansion | ArtMuseum | ScienceMuseum | HistoryMuseum | ConcertHall | Cathedral | Aquarium | Observatory | PleasurePier | Station | ContainerYard | TruckLot | Smelter | ChemicalWorks | ChickenFarm | Slaughterhouse | TankFarm | Depot | Junkyard | Factory | FabPlant | BusDepot | TrashDepot | TrashCompany | MarinaLarge | FishingPortLarge | FerryTerminal | GolfRange | BeachResort | Beach | TrailerPark | Suburb | Supertall | CarDealer | StripMall | Casino | Cinema | DomeCampus | Courthouse | Ministry | CivicTower => (75.0, 65.0),
+        Hospital | School | MarketHall | Mall | MegaHotel | Mansion | ArtMuseum | ScienceMuseum | HistoryMuseum | ConcertHall | Cathedral | Aquarium | Observatory | PleasurePier | Station | ContainerYard | TruckLot | Smelter | ChemicalWorks | ChickenFarm | Slaughterhouse | TankFarm | Depot | Junkyard | Factory | FabPlant | BusDepot | TrashDepot | TrashCompany | MarinaLarge | FishingPortLarge | FerryTerminal | GolfRange | BeachResort | Beach | TrailerPark | Suburb | Supertall | CarDealer | StripMall | Casino | Cinema | DomeCampus | Courthouse | Ministry | CivicTower | FoundryWorks | GasWorks | LoftEstate | SawtoothFactory => (75.0, 65.0),
         _ => match tier {
             Tier::Low => (30.0, 32.0),
             Tier::Mid => (36.0, 38.0),

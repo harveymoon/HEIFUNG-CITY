@@ -613,12 +613,10 @@ impl World {
                 id
             }
         };
-        // [lantern] A story with its own big house (Lantern Alley's
-        // courtyard compound) builds it from the start, not a plain mansion
-        // the daily facelift refits days later. Other looks as before.
-        if let Some(l) = self.district_look_for(primary, LandUse::Residential).filter(|l| l.has_own_estates()) {
-            self.buildings[bid].look = Some(l);
-        }
+        // [r4-brick] Built in the district's look from the start (the daily
+        // facelift would give it later): a Foundry Row big house is a loft
+        // estate, not a McMansion refitted after the fact.
+        self.buildings[bid].look = self.district_look_for(primary, LandUse::Residential);
         if form == Form::Mansion {
             let n = self.estate.owners.get(owner).map(|o| o.name.clone()).unwrap_or_default();
             self.buildings[bid].name = format!("{n} Estate");
