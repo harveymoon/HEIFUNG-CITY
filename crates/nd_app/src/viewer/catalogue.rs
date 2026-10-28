@@ -139,6 +139,8 @@ fn lantern_land_use(s: Style) -> Option<LandUse> {
         AlleyWorkshops | BackKitchens => Some(LandUse::Industrial),
         _ => None,
     }
+}
+
 /// [garden] The land use a style off every zone menu is drawn for when its
 /// section's is not its own: the Garden Suburb's shops among its homes.
 fn own_land_use(s: Style) -> Option<LandUse> {
