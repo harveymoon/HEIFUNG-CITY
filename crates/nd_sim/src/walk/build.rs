@@ -64,7 +64,7 @@ impl WalkGraph {
         let k = self.crossings.len() as u32;
         let sg = roads.segment(segment);
         let lanes = sg.lanes_fwd.saturating_add(sg.lanes_bwd);
-        self.crossings.push(Crossing { a, b, segment, node, kind, mid, button: false, bridged: false, closed: false, ramp: false, shut: false, ring: false, lanes });
+        self.crossings.push(Crossing { a, b, segment, node, kind, mid, button: false, bridged: false, closed: false, ramp: false, shut: false, ring: false, lanes, near_bridge: false });
         let len = pa.distance(pb).max(0.05);
         self.adj[a as usize].push(WalkEdge { to: b, len, interior: false, park: false, cross: k, raised: false, gate: false });
         self.adj[b as usize].push(WalkEdge { to: a, len, interior: false, park: false, cross: k, raised: false, gate: false });
@@ -705,21 +705,30 @@ impl WalkGraph {
                     }
                 }
             }
-            // A path's zebra: at a road node (mid-block zebras have none).
-            if c.kind != CrossingKind::Zebra || c.node.is_none() || c.closed {
+            // [r4-crossings] Over a roundabout's ring a crossing is the
+            // unmarked way over to its island; it counts here like a zebra.
+            let proper = |o: &Crossing| matches!(o.kind, CrossingKind::Junction | CrossingKind::Zebra) || (o.kind == CrossingKind::Informal && o.ring);
+            if c.closed || !proper(c) {
                 continue;
             }
             let d = dir_of(c);
-            let near = self.crossings.iter().enumerate().any(|(j, o)| {
-                j != k
-                    && !o.closed
-                    && !close.contains(&(j as u32))
-                    && matches!(o.kind, CrossingKind::Junction | CrossingKind::Zebra)
-                    && o.mid.distance(c.mid) <= PATH_ZEBRA_NEAR
-                    && dir_of(o).dot(d).abs() > 0.8
-                    && (o.mid - c.mid).perp_dot(d).abs() < 6.0
-            });
-            if near {
+            let beside = |j: usize, o: &Crossing, reach: f32| {
+                j != k && !o.closed && !close.contains(&(j as u32)) && proper(o) && o.mid.distance(c.mid) <= reach && dir_of(o).dot(d).abs() > 0.8 && (o.mid - c.mid).perp_dot(d).abs() < 6.0
+            };
+            // A path's crossing: at a road node that is no junction (a
+            // footpath meeting the street; mid-block zebras have no node).
+            // [r4-crossings] Over a ring as well as a zebra (Harvey's ring
+            // had a path's crossing between two junctions' 1.8 m either
+            // side of it).
+            let path_meet = c.node.is_some_and(|n| !is_junction(roads, n));
+            if path_meet && self.crossings.iter().enumerate().any(|(j, o)| beside(j, o, PATH_ZEBRA_NEAR)) {
+                close.push(k as u32);
+                continue;
+            }
+            // [r4-crossings] Two junctions a few metres apart along a street
+            // set their crosswalks over it side by side (each set back from
+            // its own junction towards the other): the first one serves.
+            if !path_meet && c.node.is_some() && self.crossings.iter().enumerate().any(|(j, o)| j < k && o.node.is_some() && o.node != c.node && beside(j, o, CROSSING_MIN_GAP)) {
                 close.push(k as u32);
             }
         }

@@ -97,6 +97,15 @@ pub const RING_CROSS_PENALTY: f32 = 60.0;
 /// crosswalk (a junction's or another zebra, middle to middle) gets no zebra
 /// of its own (`close_redundant_path_zebras`).
 pub const PATH_ZEBRA_NEAR: f32 = 20.0;
+/// [r4-crossings] Two crosswalks of neighbouring junctions over the same
+/// street closer than this (middle to middle): only the first is kept.
+pub const CROSSING_MIN_GAP: f32 = 8.0;
+/// [r4-crossings] An at-grade crossing over a street this close to a
+/// footbridge or an underpass over (or under) the same street, middle to
+/// middle, costs a route `BRIDGED_GRADE_PENALTY` more: walkers go a short
+/// way round to cross off the road (Harvey: "walkers should prioritize an
+/// overpass nearby instead of a crosswalk if they can").
+pub const BRIDGE_DRAW: f32 = 50.0;
 /// [r1-roads] (K48) A dead-end street this short (junction to its end, in
 /// one piece) has no crosswalk over its mouth: the pavement round its end
 /// is a few steps further (`close_redundant_path_zebras`).
@@ -217,6 +226,9 @@ pub struct Crossing {
     pub ring: bool,
     /// [walk-crossings] Lanes of the street crossed, both ways together.
     pub lanes: u8,
+    /// [r4-crossings] A footbridge or an underpass crosses the same street
+    /// close by (`BRIDGE_DRAW`): walkers prefer it (`route_cost`).
+    pub near_bridge: bool,
 }
 
 impl Crossing {
@@ -253,7 +265,7 @@ impl Crossing {
         }
         // [tools] At grade under a footbridge: the bridge is worth a little
         // climbing.
-        if self.bridged {
+        if self.bridged || self.near_bridge {
             cost += BRIDGED_GRADE_PENALTY;
         }
         Some(cost)

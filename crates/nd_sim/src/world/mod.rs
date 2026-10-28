@@ -170,6 +170,8 @@ mod deck_ground_tests;
 #[cfg(test)]
 mod r1_roads_tests;
 #[cfg(test)]
+mod r4_crossings_tests;
+#[cfg(test)]
 mod ramp_tests;
 #[cfg(test)]
 mod parking_tests;

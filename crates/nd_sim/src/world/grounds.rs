@@ -129,6 +129,9 @@ impl World {
     pub(super) fn build_walk_graph(&mut self) {
         self.walk = crate::walk::WalkGraph::build(&self.roads, &self.lots, &self.land_value, self.walk.version + 1);
         self.walk.apply_upgrades(&self.crosswalks.rules, &self.roads);
+        // [r4-crossings] Crossings beside a footbridge or an underpass cost
+        // more, so walkers go over or under.
+        self.walk.mark_near_bridges(&self.roads);
         let grounds = self.grounds();
         let links: Vec<Vec2> = self.path_links.links.iter().map(|l| l.pos).collect();
         let joined = self.walk.add_grounds(&self.roads, &grounds, &links);

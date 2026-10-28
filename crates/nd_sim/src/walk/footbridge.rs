@@ -226,6 +226,45 @@ impl WalkGraph {
         self.footbridges.iter().find(|f| (f.top[0] == a && f.top[1] == b) || (f.top[0] == b && f.top[1] == a)).map(|f| f.crossing)
     }
 
+    /// [r4-crossings] Mark the at-grade crossings within `BRIDGE_DRAW` of
+    /// a way over the same street off the road (a footbridge, or a path
+    /// passing under or over it): walkers pay `BRIDGED_GRADE_PENALTY` to
+    /// use them, so they take the bridge or the underpass when it is a
+    /// short way round. Run after the footbridges are up.
+    pub fn mark_near_bridges(&mut self, roads: &RoadNetwork) {
+        let dir_of = |sid: SegmentId| {
+            let (s0, s1) = roads.segment_points(sid);
+            (s1 - s0).normalize_or_zero()
+        };
+        // (where it crosses, the street's direction there)
+        let mut over: Vec<(Vec2, Vec2)> = Vec::new();
+        for f in &self.footbridges {
+            let c = &self.crossings[f.crossing as usize];
+            if roads.try_segment(c.segment).is_some() {
+                over.push((c.mid, dir_of(c.segment)));
+            }
+        }
+        for x in roads.grade_crossings() {
+            let (u, l) = (roads.segment(x.upper.0), roads.segment(x.lower.0));
+            let street = match (u.kind, l.kind) {
+                (RoadKind::Path, RoadKind::Street) if l.walkable() => x.lower.0,
+                (RoadKind::Street, RoadKind::Path) if u.walkable() => x.upper.0,
+                _ => continue,
+            };
+            over.push((x.at, dir_of(street)));
+        }
+        if over.is_empty() {
+            return;
+        }
+        for c in &mut self.crossings {
+            if c.closed || c.bridged || roads.try_segment(c.segment).is_none() {
+                continue;
+            }
+            let d = dir_of(c.segment);
+            c.near_bridge = over.iter().any(|&(at, od)| d.dot(od).abs() > 0.8 && c.mid.distance(at) <= BRIDGE_DRAW && (c.mid - at).perp_dot(od).abs() < 6.0);
+        }
+    }
+
     /// [tools] Height above the ground of a walk node at exactly `p` (a
     /// point of a walker's path): 0 off the raised walkways.
     pub fn level_at_node(&self, p: Vec2) -> f32 {
