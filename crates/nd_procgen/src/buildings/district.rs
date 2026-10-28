@@ -129,6 +129,15 @@ pub fn look_styles(look: Look, lu: LandUse, tier: Tier) -> Option<Menu> {
         (Look::SolarpunkGreen, Entertainment, _) => &[(S::RepairCafe, 0.55), (S::GlassMarketHall, 0.25), (S::CoopStore, 0.2)],
         (Look::SolarpunkGreen, Industrial, Low) => &[(S::GreenhouseRows, 0.5), (S::BikeDepot, 0.3), (S::VerticalFarm, 0.2)],
         (Look::SolarpunkGreen, Industrial, _) => &[(S::VerticalFarm, 0.4), (S::GreenhouseRows, 0.35), (S::BikeDepot, 0.25)],
+        // [r4-patchwork] Shacks, stilt houses and self-built stacks for
+        // homes (more stacks where the land is dearer); the tarp market and
+        // kiosks for its trade, the shebeen for nights out; the scrap yard
+        // and lean-to workshops for its small industry.
+        (Look::Patchwork, Residential, Low) => &[(S::TinShacks, 0.5), (S::StiltHouses, 0.25), (S::PatchStack, 0.25)],
+        (Look::Patchwork, Residential, _) => &[(S::PatchStack, 0.45), (S::TinShacks, 0.3), (S::StiltHouses, 0.25)],
+        (Look::Patchwork, Commercial, _) => &[(S::TarpMarket, 0.45), (S::CornerKiosk, 0.4), (S::Shebeen, 0.15)],
+        (Look::Patchwork, Entertainment, _) => &[(S::Shebeen, 0.65), (S::TarpMarket, 0.2), (S::CornerKiosk, 0.15)],
+        (Look::Patchwork, Industrial, _) => &[(S::LeanToWorkshop, 0.55), (S::ScrapYard, 0.45)],
         _ => return None,
     })
 }
@@ -145,6 +154,8 @@ pub fn look_mansion(look: Look) -> Option<Style> {
         Look::Historic => Some(Style::StoneManor),
         // [r4-solarpunk] A planted solar villa in Eco Village.
         Look::SolarpunkGreen => Some(Style::SolarVilla),
+        // [r4-patchwork] The big man's walled compound in the Shantytown.
+        Look::Patchwork => Some(Style::BigManCompound),
         _ => None,
     }
 }
@@ -359,6 +370,23 @@ pub fn tint(look: Look) -> Tint {
             sign_scale: 0.4,
             grime: Some((0.3, 0.3)),
         },
+        // [r4-patchwork] Rust, zinc, faded paint and raw block; bare warm
+        // bulbs and the blue of a television; hand-painted signs in shop
+        // reds, yellows, greens and blues; tarps in blue, orange and green.
+        // Lived in: grimy and cluttered whatever the tier. The styles paint
+        // their own sheets (`buildings/patchwork.rs`).
+        Look::Patchwork => Tint {
+            walls: &[[0.46, 0.30, 0.20], [0.58, 0.60, 0.60], [0.30, 0.42, 0.52], [0.56, 0.52, 0.44], [0.62, 0.30, 0.22]],
+            trim: Some([0.32, 0.30, 0.28]),
+            windows: &[[1.45, 1.0, 0.5], [1.3, 1.15, 0.75], [0.7, 0.95, 1.4]],
+            signs: &[[2.0, 0.4, 0.3], [2.1, 1.7, 0.3], [0.4, 1.6, 0.5], [0.4, 0.8, 2.0]],
+            awnings: Some(&[[0.14, 0.30, 0.60], [0.80, 0.42, 0.12], [0.22, 0.44, 0.24], [0.60, 0.16, 0.14]]),
+            brick: Some(&[[0.62, 0.34, 0.22], [0.56, 0.30, 0.20]]),
+            plaster: Some(&[[0.70, 0.66, 0.58], [0.52, 0.66, 0.62], [0.78, 0.62, 0.50]]),
+            signage: None,
+            sign_scale: 0.3,
+            grime: Some((0.8, 0.9)),
+        },
         Look::Historic => Tint {
             walls: &[[0.55, 0.32, 0.24], [0.62, 0.56, 0.46], [0.48, 0.30, 0.22], [0.66, 0.60, 0.50]],
             trim: Some([0.74, 0.70, 0.60]),
@@ -434,6 +462,7 @@ mod tests {
                 Look::Garden => &[LandUse::Residential, LandUse::Commercial],
                 Look::HarbourPastel => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
                 Look::SolarpunkGreen => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
+                Look::Patchwork => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
             };
             for &lu in uses {
                 for tier in Tier::ALL {
@@ -445,8 +474,9 @@ mod tests {
             // Lantern Alley its small trades; [r4-harbour] Harbour Pastel its
             // fish market and net sheds; [r4-oldstone] Old Stone (Historic)
             // its mill, tannery and yards; [r4-solarpunk] Solarpunk Green its
-            // farms and bike depot. No other look dresses industry.
-            assert_eq!(look_styles(look, LandUse::Industrial, Tier::Mid).is_some(), matches!(look, Look::BrickSteel | Look::Lantern | Look::HarbourPastel | Look::Historic | Look::SolarpunkGreen));
+            // farms and bike depot; [r4-patchwork] Patchwork its scrap yard
+            // and workshops. No other look dresses industry.
+            assert_eq!(look_styles(look, LandUse::Industrial, Tier::Mid).is_some(), matches!(look, Look::BrickSteel | Look::Lantern | Look::HarbourPastel | Look::Historic | Look::SolarpunkGreen | Look::Patchwork));
         }
     }
 

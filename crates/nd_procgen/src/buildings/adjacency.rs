@@ -232,6 +232,10 @@ pub fn site_fit(style: Style, site: &Site) -> f32 {
         Style::SolarTownhouses | Style::CoopStore | Style::RepairCafe | Style::GlassMarketHall | Style::GreenhouseRows | Style::BikeDepot => low(3.0),
         Style::VineTower => tall(4.0),
         Style::VerticalFarm => tall(3.0),
+        // [r4-patchwork] Stalls, kiosks and the shebeen are low; the homes
+        // count their rooms whatever they look (shacks and stilt houses
+        // stand for as many households as a stack), so any height suits.
+        Style::TarpMarket | Style::CornerKiosk | Style::Shebeen => low(3.0),
         _ => 1.0,
     }
 }

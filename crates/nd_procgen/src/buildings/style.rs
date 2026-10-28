@@ -488,6 +488,30 @@ styles! {
     BikeDepot { label: "cargo-bike depot", family: Logistics, cluster: -0.4, draw: |g, c, r, _| solarpunk::bike_depot(g, c, r) },
     /// A family's or a billionaire's planted solar villa with a roof garden.
     SolarVilla { label: "planted solar villa", family: Special, cluster: 0.0, draw: |g, c, r, _| solarpunk::solar_villa(g, c, r) },
+    // -- [r4-patchwork] Patchwork, the Riverbank Shantytown's look
+    // (`buildings/patchwork.rs`), drawn only from its menus (the compound
+    // for its estates' forms, the workshop and the scrap yard for those
+    // trades there); appended so `ALL` keeps its order. Shacks, stilt
+    // houses and stalls crowd together; the kiosk and the shebeen stand
+    // on their corners. --
+    /// Corrugated-iron shacks grown room by room round dirt yards.
+    TinShacks { label: "corrugated shacks", family: Slum, cluster: 1.0, draw: |g, c, r, _| patchwork::tin_shacks(g, c, r) },
+    /// Plank houses up on piles by the water (on the ground inland), verandas.
+    StiltHouses { label: "stilt houses", family: Slum, cluster: 0.8, draw: |g, c, r, _| patchwork::stilt_houses(g, c, r) },
+    /// Self-built storeys stacked on an old concrete base, tanks on the roof.
+    PatchStack { label: "self-built stack", family: Slum, cluster: 0.4, draw: |g, c, r, _| patchwork::patch_stack(g, c, r) },
+    /// A market of stalls under sagging tarps, bulbs over the lanes.
+    TarpMarket { label: "tarp market", family: Retail, cluster: 0.5, draw: |g, c, r, _| patchwork::tarp_market(g, c, r) },
+    /// A painted kiosk with a lit fridge and a hand-painted sign, a home behind.
+    CornerKiosk { label: "corner kiosk", family: Retail, cluster: -0.4, draw: |g, c, r, _| patchwork::corner_kiosk(g, c, r) },
+    /// A tin-roofed bar, its yard under string lights, a fire barrel.
+    Shebeen { label: "shebeen", family: Night, cluster: -0.3, draw: |g, c, r, _| patchwork::shebeen(g, c, r) },
+    /// Heaps of scrap, sacks of cans and bottles behind a sheet fence.
+    ScrapYard { label: "scrap yard", family: Heavy, cluster: 0.3, draw: |g, c, r, _| patchwork::scrap_yard(g, c, r) },
+    /// A block shed with a deep lean-to over the bench, a car on blocks.
+    LeanToWorkshop { label: "lean-to workshop", family: Heavy, cluster: 0.6, draw: |g, c, r, _| patchwork::lean_to_workshop(g, c, r) },
+    /// A family's or a billionaire's bright concrete house behind a wall and wire.
+    BigManCompound { label: "walled compound", family: Special, cluster: 0.0, draw: |g, c, r, _| patchwork::big_man_compound(g, c, r) },
 }
 
 impl Style {
@@ -524,6 +548,9 @@ impl Style {
 
     /// [r4-solarpunk] Solarpunk Green's styles (Eco Village).
     pub const SOLARPUNK: [Style; 10] = [Style::TimberTerrace, Style::SolarTownhouses, Style::VineTower, Style::GlassMarketHall, Style::CoopStore, Style::RepairCafe, Style::VerticalFarm, Style::GreenhouseRows, Style::BikeDepot, Style::SolarVilla];
+
+    /// [r4-patchwork] Patchwork's styles (Riverbank Shantytown).
+    pub const PATCHWORK: [Style; 9] = [Style::TinShacks, Style::StiltHouses, Style::PatchStack, Style::TarpMarket, Style::CornerKiosk, Style::Shebeen, Style::ScrapYard, Style::LeanToWorkshop, Style::BigManCompound];
 }
 
 impl Style {

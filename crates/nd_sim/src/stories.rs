@@ -365,7 +365,9 @@ impl Story {
             Story::Promenade => (Some(R::HarbourPastel), Some(C::HarbourPastel), None, false, Some(60.0), Policies { bed_levy: 0.05, ..p }),
             Story::FoundryRow => (Some(R::BrickSteel), Some(C::BrickSteel), Some(IndustryKind::Manufacturing), false, None, Policies { pollution_levy: 0.05, rent_support: 0.10, ..p }),
             Story::LanternLanes => (Some(R::Lantern), Some(C::Lantern), None, false, None, Policies { late_hours: true, business_rate: -0.02, ..p }),
-            Story::Shantytown => (Some(R::Kowloon), None, None, false, Some(12.0), Policies { rent_support: 0.20, ..p }),
+            // [r4-patchwork] Its own look, Patchwork, for homes, its trade and
+            // its small industry; the 12 m limit and rent support kept.
+            Story::Shantytown => (Some(R::Patchwork), Some(C::Patchwork), None, false, Some(12.0), Policies { rent_support: 0.20, ..p }),
             Story::NeoTokyoHeights => (Some(R::Eco), Some(C::NeonStrip), None, false, None, Policies { business_rate: 0.03, late_hours: true, ..p }),
         };
         Preset { residential, commercial, industry, historic, height_limit, policies }
@@ -435,6 +437,9 @@ impl Story {
             // [r4-solarpunk] Eco Village: Eco homes, shops as they come,
             // farming industry.
             Story::EcoVillage => d.residential == Some(ResidentialSpec::Eco) && d.commercial.is_none() && d.industry == Some(IndustryKind::Farming) && !d.historic,
+            // [r4-patchwork] Riverbank Shantytown: Kowloon homes, shops as
+            // they come.
+            Story::Shantytown => d.residential == Some(ResidentialSpec::Kowloon) && d.commercial.is_none() && d.industry.is_none() && !d.historic,
             _ => false,
         }
     }

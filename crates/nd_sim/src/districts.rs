@@ -61,6 +61,10 @@ pub enum ResidentialSpec {
     /// terraces under planted roofs, solar-shingle townhouses, vine-covered
     /// towers with balcony gardens. Appended.
     SolarpunkGreen,
+    /// [r4-patchwork] Patchwork (Riverbank Shantytown): corrugated-iron
+    /// shacks grown room by room, stilt houses, self-built storeys stacked
+    /// on an old concrete base under water tanks. Appended.
+    Patchwork,
 }
 
 /// How the shops in a district grow.
@@ -95,10 +99,14 @@ pub enum CommercialSpec {
     /// rooftop farms, co-op stores, repair cafés; its small industry is
     /// vertical farms, greenhouse rows and the cargo-bike depot. Appended.
     SolarpunkGreen,
+    /// [r4-patchwork] Patchwork's trade: a market of stalls under tarps,
+    /// corner kiosks, a tin-roofed shebeen; its small industry is the scrap
+    /// yard and workshops under lean-tos. Appended.
+    Patchwork,
 }
 
 impl ResidentialSpec {
-    pub const ALL: [ResidentialSpec; 9] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule, ResidentialSpec::BrickSteel, ResidentialSpec::Lantern, ResidentialSpec::Garden, ResidentialSpec::HarbourPastel, ResidentialSpec::SolarpunkGreen];
+    pub const ALL: [ResidentialSpec; 10] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule, ResidentialSpec::BrickSteel, ResidentialSpec::Lantern, ResidentialSpec::Garden, ResidentialSpec::HarbourPastel, ResidentialSpec::SolarpunkGreen, ResidentialSpec::Patchwork];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -111,6 +119,7 @@ impl ResidentialSpec {
             ResidentialSpec::Garden => "Garden suburb",
             ResidentialSpec::HarbourPastel => "Harbour Pastel",
             ResidentialSpec::SolarpunkGreen => "Solarpunk Green",
+            ResidentialSpec::Patchwork => "Patchwork",
         }
     }
 
@@ -125,6 +134,7 @@ impl ResidentialSpec {
             ResidentialSpec::Garden => "garden",
             ResidentialSpec::HarbourPastel => "harbour_pastel",
             ResidentialSpec::SolarpunkGreen => "solarpunk_green",
+            ResidentialSpec::Patchwork => "patchwork",
         }
     }
 
@@ -134,7 +144,7 @@ impl ResidentialSpec {
 }
 
 impl CommercialSpec {
-    pub const ALL: [CommercialSpec; 10] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule, CommercialSpec::BrickSteel, CommercialSpec::Lantern, CommercialSpec::Garden, CommercialSpec::HarbourPastel, CommercialSpec::SolarpunkGreen];
+    pub const ALL: [CommercialSpec; 11] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule, CommercialSpec::BrickSteel, CommercialSpec::Lantern, CommercialSpec::Garden, CommercialSpec::HarbourPastel, CommercialSpec::SolarpunkGreen, CommercialSpec::Patchwork];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -148,6 +158,7 @@ impl CommercialSpec {
             CommercialSpec::Garden => "Garden suburb",
             CommercialSpec::HarbourPastel => "Harbour Pastel",
             CommercialSpec::SolarpunkGreen => "Solarpunk Green",
+            CommercialSpec::Patchwork => "Patchwork",
         }
     }
 
@@ -163,6 +174,7 @@ impl CommercialSpec {
             CommercialSpec::Garden => "garden",
             CommercialSpec::HarbourPastel => "harbour_pastel",
             CommercialSpec::SolarpunkGreen => "solarpunk_green",
+            CommercialSpec::Patchwork => "patchwork",
         }
     }
 
@@ -220,10 +232,18 @@ pub enum Look {
     /// trees for its small industry; solar canopies glowing after dark.
     /// Appended.
     SolarpunkGreen,
+    /// [r4-patchwork] Patchwork (Riverbank Shantytown): the homes nobody
+    /// planned, irregular, patched and lived in: corrugated-iron shacks
+    /// grown room by room, stilt houses on piles by the water, self-built
+    /// storeys on an old concrete base with water tanks on the roof,
+    /// laundry lines, dishes and tangled wires; a market under tarps, corner
+    /// kiosks, a tin-roofed shebeen; a scrap yard and workshops under
+    /// lean-tos; bare bulbs, TV glow and a fire barrel after dark. Appended.
+    Patchwork,
 }
 
 impl Look {
-    pub const ALL: [Look; 14] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule, Look::BrickSteel, Look::Lantern, Look::Garden, Look::HarbourPastel, Look::SolarpunkGreen];
+    pub const ALL: [Look; 15] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule, Look::BrickSteel, Look::Lantern, Look::Garden, Look::HarbourPastel, Look::SolarpunkGreen, Look::Patchwork];
 
     pub fn index(self) -> usize {
         self as usize
@@ -245,6 +265,7 @@ impl Look {
             Look::Garden => "garden suburb",
             Look::HarbourPastel => "harbour pastel",
             Look::SolarpunkGreen => "solarpunk green",
+            Look::Patchwork => "patchwork",
         }
     }
 
@@ -274,8 +295,25 @@ impl Look {
             // [r4-solarpunk] As the Eco homes it replaces in Eco Village:
             // the block's density, ten storeys at most (the vine towers).
             Look::SolarpunkGreen => floors.min(cap.max(1)).min(10),
+            // [r4-patchwork] As the Kowloon homes it replaces on the
+            // riverbank: self-built over what the block allows (nobody
+            // inspects), so the shacks hold as many households as the stacks
+            // did; seven storeys at most (the stacked homes; a shack lot
+            // counts its rooms).
+            Look::Patchwork => (floors as u16 + 3).min(cap as u16 + 4).min(7) as u8,
         };
         f.max(1)
+    }
+
+    /// [r4-patchwork] Floors for a new building of this look on `lu`
+    /// ([`Look::floors`]): Patchwork's shops, nights out and works keep to
+    /// the block's height as they did before the Shantytown had a look for
+    /// them (only its homes rise over it).
+    pub fn floors_for(self, lu: LandUse, floors: u8, cap: u8) -> u8 {
+        match self {
+            Look::Patchwork if lu != LandUse::Residential => floors.min(cap.max(1)).max(1),
+            _ => self.floors(floors, cap),
+        }
     }
 
     /// The tier a new building of this look is built at, from the tier the
@@ -285,6 +323,10 @@ impl Look {
         match self {
             Look::Kowloon if tier == Tier::High => Tier::Mid,
             Look::Kowloon => Tier::Low,
+            // [r4-patchwork] Cheap whatever the land, as the Kowloon homes
+            // it replaces on the riverbank.
+            Look::Patchwork if tier == Tier::High => Tier::Mid,
+            Look::Patchwork => Tier::Low,
             Look::NightMarket => tier.down(),
             Look::TechCampus => tier.up(),
             Look::Suburban if tier == Tier::Low => Tier::Mid,
@@ -321,6 +363,9 @@ impl Look {
             // [r4-solarpunk] The co-op grocer, the café-bakery, the bike
             // repairers.
             Look::SolarpunkGreen => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Bakery, 2.0), (BusinessKind::BikeShop, 2.0)],
+            // [r4-patchwork] The kiosk's groceries, the shebeen, the
+            // mechanic under his lean-to.
+            Look::Patchwork => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Venue, 2.0), (BusinessKind::Mechanic, 1.5)],
             _ => &[],
         }
     }
@@ -445,6 +490,7 @@ impl District {
                 ResidentialSpec::Garden => Look::Garden,
                 ResidentialSpec::HarbourPastel => Look::HarbourPastel,
                 ResidentialSpec::SolarpunkGreen => Look::SolarpunkGreen,
+                ResidentialSpec::Patchwork => Look::Patchwork,
             }),
             // Nightlife on a strip or in a market takes the street's look.
             LandUse::Commercial | LandUse::Entertainment => self.commercial.and_then(|s| match s {
@@ -464,6 +510,8 @@ impl District {
                 CommercialSpec::HarbourPastel => Some(Look::HarbourPastel),
                 // [r4-solarpunk] The repair café is the night out too.
                 CommercialSpec::SolarpunkGreen => Some(Look::SolarpunkGreen),
+                // [r4-patchwork] The shebeen is the night out.
+                CommercialSpec::Patchwork => Some(Look::Patchwork),
                 _ => None,
             }),
             // [r4-brick] Brick & Steel builds its works in brick too.
@@ -475,6 +523,8 @@ impl District {
             // [r4-solarpunk] Vertical farms, greenhouse rows, the bike depot
             // (farms keep their farmsteads: `nd_procgen::buildings::choose`).
             LandUse::Industrial if self.commercial == Some(CommercialSpec::SolarpunkGreen) => Some(Look::SolarpunkGreen),
+            // [r4-patchwork] The scrap yard and the lean-to workshops.
+            LandUse::Industrial if self.commercial == Some(CommercialSpec::Patchwork) => Some(Look::Patchwork),
             _ => None,
         }
     }
@@ -1194,6 +1244,71 @@ mod tests {
             assert_eq!(saved.list[i].story, None, "{}", saved.list[i].name);
             assert_eq!(saved.list[i].residential, Some(ResidentialSpec::Eco));
         }
+        // Every load runs it: nothing more to do.
+        assert_eq!(saved.adopt_stories(), 0);
+    }
+
+    /// [r4-patchwork] Patchwork gives its look to homes, its trade, nights
+    /// out and its small industry; the Riverbank Shantytown keeps what the
+    /// Kowloon homes gave it (cheap whatever the land, as many storeys, no
+    /// lift to the land), its 12 m limit and rent support. A Shantytown
+    /// saved with the old dials (Kowloon homes, shops as they come) takes
+    /// the look on load, keeping its height limit and policies, and so does
+    /// an old district with those dials and no story; the Walled Quarter
+    /// (Kowloon with the night market) keeps its stacks.
+    #[test]
+    fn patchwork_look_and_old_shantytown_saves() {
+        use crate::stories::Story;
+        let mut d = Districts::default();
+        let id = d.create(None, 1, 0).unwrap();
+        let dist = d.get_mut(id).unwrap();
+        dist.apply_story(Some(Story::Shantytown));
+        for lu in [LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial] {
+            assert_eq!(dist.look_for(lu), Some(Look::Patchwork), "{lu:?}");
+        }
+        assert_eq!(dist.look_for(LandUse::Civic), None);
+        assert_eq!(dist.height_limit, Some(12.0));
+        assert_eq!(dist.policies.rent_support, 0.20);
+        assert!(!dist.is_landmark() && !Look::Patchwork.tourist_quarter());
+        assert_eq!(Look::Patchwork.land_value(), Look::Kowloon.land_value());
+        for tier in Tier::ALL {
+            assert_eq!(Look::Patchwork.tier(tier), Look::Kowloon.tier(tier), "{tier:?}");
+        }
+        for (f, cap) in [(2, 3), (5, 3), (7, 3), (3, 1), (4, 9)] {
+            assert_eq!(Look::Patchwork.floors(f, cap), Look::Kowloon.floors(f, cap), "{f} floors, cap {cap}");
+        }
+        assert_eq!(Look::Patchwork.floors(20, 40), 7);
+        // Its shops, bars and works build as before: to the block's height.
+        assert_eq!(Look::Patchwork.floors_for(LandUse::Commercial, 2, 3), 2);
+        assert_eq!(Look::Patchwork.floors_for(LandUse::Industrial, 6, 3), 3);
+        assert_eq!(Look::Patchwork.floors_for(LandUse::Residential, 2, 3), Look::Kowloon.floors(2, 3));
+        assert_eq!(Look::Lantern.floors_for(LandUse::Commercial, 1, 1), Look::Lantern.floors(1, 1));
+        assert_eq!(Look::Patchwork.favours()[0].0, BusinessKind::Grocery);
+        assert_eq!(Look::ALL[Look::Patchwork.index()], Look::Patchwork);
+        assert_eq!(ResidentialSpec::parse("patchwork"), Some(ResidentialSpec::Patchwork));
+        assert_eq!(CommercialSpec::parse("Patchwork"), Some(CommercialSpec::Patchwork));
+        assert_eq!(ron::from_str::<Look>("Patchwork").unwrap(), Look::Patchwork);
+        // As saved before the look: the story with Kowloon homes, a lifted
+        // height limit and tuned rent support; an older district with those
+        // dials and no story; the Walled Quarter's dials.
+        let old = "(id: 3, name: \"Mud Flats\", color: 2, residential: Some(Kowloon), commercial: None, industry: None, historic: false, height_limit: Some(15.0), story: Some(Shantytown), policies: (rent_support: 0.3))";
+        let older = "(id: 4, name: \"Reed Bank\", color: 3, residential: Some(Kowloon), commercial: None, industry: None, historic: false)";
+        let walled = "(id: 5, name: \"Stack Row\", color: 4, residential: Some(Kowloon), commercial: Some(NightMarket), industry: None, historic: false)";
+        let mut saved = Districts::default();
+        for text in [old, older, walled] {
+            saved.list.push(ron::from_str(text).expect("old district loads"));
+        }
+        assert_eq!(saved.adopt_stories(), 3);
+        for (i, height) in [(0, Some(15.0)), (1, None)] {
+            let got = &saved.list[i];
+            assert_eq!(got.story, Some(Story::Shantytown), "{}", got.name);
+            assert_eq!((got.residential, got.commercial, got.industry), (Some(ResidentialSpec::Patchwork), Some(CommercialSpec::Patchwork), None));
+            assert_eq!(got.height_limit, height);
+            assert!(Story::Shantytown.fits(got));
+        }
+        assert_eq!(saved.list[0].policies.rent_support, 0.3);
+        assert_eq!(saved.list[2].story, Some(Story::WalledQuarter));
+        assert_eq!((saved.list[2].residential, saved.list[2].commercial), (Some(ResidentialSpec::Kowloon), Some(CommercialSpec::NightMarket)));
         // Every load runs it: nothing more to do.
         assert_eq!(saved.adopt_stories(), 0);
     }

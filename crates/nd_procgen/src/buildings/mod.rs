@@ -39,6 +39,8 @@ mod oldstone;
 mod oldstone_works;
 /// [r4-solarpunk] Solarpunk Green: terraces, towers, halls, farms, villa.
 mod solarpunk;
+/// [r4-patchwork] Patchwork: shacks, stilt houses, stalls, scrap, compound.
+mod patchwork;
 /// [districts] District looks: style menus and palettes, hotels.
 pub mod district;
 mod entertainment;
@@ -286,6 +288,9 @@ mod oldstone_tests;
 
 #[cfg(test)]
 mod solarpunk_tests;
+
+#[cfg(test)]
+mod patchwork_tests;
 
 #[cfg(test)]
 mod hk_tests;
