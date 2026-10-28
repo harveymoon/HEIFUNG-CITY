@@ -488,6 +488,29 @@ styles! {
     BikeDepot { label: "cargo-bike depot", family: Logistics, cluster: -0.4, draw: |g, c, r, _| solarpunk::bike_depot(g, c, r) },
     /// A family's or a billionaire's planted solar villa with a roof garden.
     SolarVilla { label: "planted solar villa", family: Special, cluster: 0.0, draw: |g, c, r, _| solarpunk::solar_villa(g, c, r) },
+    // -- [r4-glass] Glass Campus, Founders' Campus's look
+    // (`buildings/glasscampus.rs`), drawn only from its menus (the pavilion
+    // for its estates' forms, the server hall for the assembly halls
+    // there); appended so `ALL` keeps its order. Flats, sheds and halls
+    // repeat; the tower, the atrium office and the quad stand apart. --
+    /// A slab of student flats: bright panels by every window, galleries behind.
+    StudentFlats { label: "student flats", family: Slab, cluster: 0.8, draw: |g, c, r, e| glasscampus::student_flats(g, c, r, e) },
+    /// A tinted glass tower on a podium, lounges hung off it, a braced stair core.
+    CoLivingTower { label: "co-living tower", family: Slab, cluster: -0.4, draw: |g, c, r, e| glasscampus::coliving_tower(g, c, r, e) },
+    /// A glass lab in an exposed steel frame, fume stacks on the roof.
+    GlassLab { label: "glass lab", family: Tech, cluster: 0.4, draw: |g, c, r, e| glasscampus::glass_lab(g, c, r, e) },
+    /// A yard of cheap prefab sheds, some stacked, lit late, a shared deck.
+    StartupSheds { label: "start-up sheds", family: Tech, cluster: 0.7, draw: |g, c, r, e| glasscampus::startup_sheds(g, c, r, e) },
+    /// Tinted office slab with a full-height atrium lit all night, a screen in it.
+    AtriumOffice { label: "atrium office", family: Office, cluster: -0.3, draw: |g, c, r, e| glasscampus::atrium_office(g, c, r, e) },
+    /// Low glass wings round a lawn, a big screen, a cafe pavilion.
+    CampusQuad { label: "shared quad", family: Office, cluster: -1.0, draw: |g, c, r, e| glasscampus::campus_quad(g, c, r, e) },
+    /// A chamfered concrete research lab: ribbon windows, louvres, stacks.
+    ResearchLab { label: "research lab", family: Tech, cluster: 0.3, draw: |g, c, r, e| glasscampus::research_lab(g, c, r, e) },
+    /// A fenced windowless server hall, chillers on the roof, generators.
+    ServerHall { label: "server hall", family: Tech, cluster: 0.6, draw: |g, c, r, e| glasscampus::server_hall(g, c, r, e) },
+    /// A family's or a billionaire's glass pavilion house.
+    GlassPavilion { label: "glass pavilion house", family: Special, cluster: 0.0, draw: |g, c, r, e| glasscampus::glass_pavilion(g, c, r, e) },
 }
 
 impl Style {
@@ -524,6 +547,8 @@ impl Style {
 
     /// [r4-solarpunk] Solarpunk Green's styles (Eco Village).
     pub const SOLARPUNK: [Style; 10] = [Style::TimberTerrace, Style::SolarTownhouses, Style::VineTower, Style::GlassMarketHall, Style::CoopStore, Style::RepairCafe, Style::VerticalFarm, Style::GreenhouseRows, Style::BikeDepot, Style::SolarVilla];
+    /// [r4-glass] Glass Campus's styles (Founders' Campus).
+    pub const GLASS_CAMPUS: [Style; 9] = [Style::StudentFlats, Style::CoLivingTower, Style::GlassLab, Style::StartupSheds, Style::AtriumOffice, Style::CampusQuad, Style::ResearchLab, Style::ServerHall, Style::GlassPavilion];
 }
 
 impl Style {
