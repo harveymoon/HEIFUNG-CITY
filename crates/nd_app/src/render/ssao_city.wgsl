@@ -1,4 +1,4 @@
-// Neon District: Bevy 0.19.1's SSAO shader (bevy_pbr/src/ssao/ssao.wgsl,
+// HEIFUNG://CITY: Bevy 0.19.1's SSAO shader (bevy_pbr/src/ssao/ssao.wgsl,
 // MIT OR Apache-2.0) with one change, swapped in for the original by
 // `render/look.rs`: the effect radius grows with distance. Bevy's is a fixed
 // 0.73 m, which at a city-builder's camera distance (hundreds of metres) is

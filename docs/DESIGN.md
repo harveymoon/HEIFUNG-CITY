@@ -1,4 +1,4 @@
-# District 2040: design from the drawing board
+# HEIFUNG://CITY: design from the drawing board
 
 A procedural cyberpunk city builder that we keep tinkering with. This document is the
 living design doc. `IDEAS.md` next to it is the backlog where new ideas land first.

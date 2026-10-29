@@ -257,7 +257,9 @@ impl World {
                     look: Some(look),
                     ..Citizen::newcomer(name, seed, age, Some(home), Some(hid), pos, tick)
                 };
-                citizen.remember(tick, format!("Rolled into Neon District on day {} at {}.", self.clock.day() + 1, self.clock.format_hhmm()));
+                // The city by its own name (the game's brand is not a place).
+                let town = if self.identity.name.is_empty() { "town".to_string() } else { self.identity.name.clone() };
+                citizen.remember(tick, format!("Rolled into {town} on day {} at {}.", self.clock.day() + 1, self.clock.format_hhmm()));
                 if let Some(s) = by_train {
                     citizen.remember(tick, format!("Stepped off the train at {}.", self.buildings[s].name));
                 }

@@ -1,4 +1,6 @@
-# District 2040 (working title Neon District)
+# HEIFUNG://CITY
+
+(Formerly "District 2040", working title "Neon District". The exe is `heifung_city.exe`; the crates keep their `nd_` names.)
 
 A procedural near-future city builder built to be tinkered with: worn, realistic 2040 rather than neon. Rust, Bevy 0.19, egui.
 The simulation is engine-independent and deterministic; the renderer is a thin layer on top.
@@ -12,6 +14,9 @@ cargo test --profile fast --workspace          # the tests
 `headless` lays out its own small grid. The probes in `crates/nd_sim/examples/` (`land_probe`,
 `carlife_probe`, `jam_probe`, `peak_probe`, ...) run the demo district of
 `crates/nd_sim/tests/demo_city.rs`, the one the Dev window seeds.
+
+The logo and icons are drawn by `assets/brand/make_logo.py` (three candidates in
+`assets/brand/candidates/`; `python make_logo.py --pick b` makes another one live, then rebuild).
 
 First build takes several minutes (Bevy). After that, `cargo run -p nd_app --features fast-dev`
 links Bevy dynamically for quicker iteration.
