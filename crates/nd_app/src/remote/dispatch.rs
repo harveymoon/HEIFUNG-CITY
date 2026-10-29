@@ -840,6 +840,9 @@ pub(super) static COMMANDS: &[Cmd] = &[
     Cmd { name: "heat_vision", aliases: &["heat"], effect: View, run: look::heat_vision, help: &[
         ("on", "bool, omitted toggles: the drone thermal camera view (also key H)"),
     ] },
+    Cmd { name: "photo_mode", aliases: &["photo"], effect: View, run: look::photo_mode, help: &[
+        ("on", "bool, omitted toggles: hide every pane, bar, label and pin so screenshots show the city alone (also key F10)"),
+    ] },
     Cmd { name: "graphics", aliases: &["quality"], effect: View, run: look::graphics, help: &[
         ("quality", "auto|low|medium|high: pin the graphics tier (pin one before screenshots that must compare) or hand it back to the frame-rate throttler; omitted reports the setting, the tier in force, the smoothed frame time and the effects on the camera"),
     ] },

@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HEIFUNG://CITY</title>
+<meta name="description" content="HEIFUNG://CITY is an open-source, fully procedural near-future city builder in Rust and Bevy: lane-level traffic, metro and ferries, a living economy and citizens who remember their day.">
+<meta name="theme-color" content="#080a14">
+<meta property="og:title" content="HEIFUNG://CITY">
+<meta property="og:description" content="An open-source procedural city builder where every street, tower and citizen is generated.">
+<meta property="og:image" content="img/hero-night.jpg">
+<meta property="og:type" content="website">
+<link rel="icon" href="img/icon.png">
+<link rel="preload" href="fonts/ChakraPetch-SemiBold.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<nav class="addr" aria-label="Sections">
+  <a class="home" href="#top">HEIFUNG<b>://</b>CITY</a>
+  <ul>
+    <li><a href="#streets">/streets</a></li>
+    <li><a href="#transit">/transit</a></li>
+    <li><a href="#economy">/economy</a></li>
+    <li><a href="#people">/people</a></li>
+    <li><a href="#looks">/districts</a></li>
+    <li><a href="#cities">/cities</a></li>
+    <li><a href="#how">/how-it-works</a></li>
+    <li><a href="#build">/build</a></li>
+    <li><a href="#roadmap">/roadmap</a></li>
+    <li><a href="#refs">/references</a></li>
+  </ul>
+  <a class="gh" href="https://github.com/harveymoon/HEIFUNG-CITY">GitHub</a>
+</nav>
+
+<header class="hero" id="top">
+  <img class="bg" src="img/hero-night.jpg" alt="A generated city at night from above the rooftops: lit towers, neon signs and streets of traffic running to the horizon." width="1600" height="900" fetchpriority="high">
+  <div class="hero-inner">
+    <!-- The logo is this one file: swap site/img/logo.png to rebrand the page. -->
+    <img class="logo" src="img/logo.png" alt="" width="260" height="91">
+    <h1 class="wordmark">HEIFUNG<span class="sep">://</span><span class="city">CITY</span></h1>
+    <p class="pitch">A near-future city builder where every street, tower and citizen is generated, and every one of them is going somewhere.</p>
+    <div class="actions">
+      <a class="btn" href="https://github.com/harveymoon/HEIFUNG-CITY">Source on GitHub</a>
+      <a class="btn ghost" href="https://github.com/harveymoon/HEIFUNG-CITY/releases">Releases</a>
+      <a class="btn ghost" href="#build">Build from source</a>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<section id="intro">
+  <div class="wrap">
+    <p class="lede">Draw the roads, zone the land and watch a city of thousands move in. Each citizen has a home, a job, a commute and a mood; each shop has stock, cash and suppliers; each car follows its lane through junctions you can tune by hand. Nothing in the game is a hand-made model: the terrain, the 220-odd building styles, the signs, the names and the people all come out of code, so no two cities look the same.</p>
+    <p class="muted">Free and open source under MIT or Apache-2.0. Windows, Rust, Bevy 0.19, egui.</p>
+  </div>
+</section>
+
+<section id="streets">
+  <div class="wrap">
+    <h2><span class="path">/streets</span>Roads that behave like roads</h2>
+
+    <article class="feature">
+      <figure class="shot">
+        <a href="img/traffic-junction.jpg"><img src="img/traffic-junction.jpg" alt="Cars queueing in their lanes at a signalised junction, turn arrows painted on the road." loading="lazy" width="1600" height="900"></a>
+        <figcaption>Every car is simulated in its lane, from the kerb to the next junction.</figcaption>
+      </figure>
+      <div>
+        <h3>Lane-level traffic</h3>
+        <ul>
+          <li>Cars follow, brake and change lanes in a smooth glide, zip-merge where lanes end and route across the whole lane graph.</li>
+          <li>Actuated signals with protected left arrows; lane arrows set from the turning counts or by you.</li>
+          <li>Highways with ramps that merge without lights, and a diamond interchange preset.</li>
+          <li>Toll booths priced per lane, road wear, road rage, street races and warehouse raves after dark.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="feature">
+      <figure class="shot">
+        <a href="img/junction-editor.jpg"><img src="img/junction-editor.jpg" alt="The junction editor: a top-down view of a crossroads with signal phases and lane settings beside it." loading="lazy" width="1600" height="900"></a>
+        <figcaption>The junction editor: phases, arrows, crossings and footbridges.</figcaption>
+      </figure>
+      <div>
+        <h3>A junction editor and roundabouts</h3>
+        <p>Open any junction to set its signal timing phase by phase, ban a left turn, give lanes their arrows, or turn a crosswalk into a push-button signal or a footbridge with stairs. Roundabouts come in one to three lanes and 24 to 240 m across, with give-way entries and a middle you can zone.</p>
+        <div class="minis">
+          <figure class="shot"><a href="img/roundabout.jpg"><img src="img/roundabout.jpg" alt="A two-lane roundabout with traffic circulating." loading="lazy" width="800" height="450"></a></figure>
+          <figure class="shot"><a href="img/footbridge.jpg"><img src="img/footbridge.jpg" alt="A footbridge over a busy street with people crossing." loading="lazy" width="800" height="450"></a></figure>
+        </div>
+      </div>
+    </article>
+
+    <article class="feature">
+      <figure class="shot">
+        <a href="img/viaduct.jpg"><img src="img/viaduct.jpg" alt="A raised road on pillars curving over the streets and buildings below." loading="lazy" width="1600" height="900"></a>
+        <figcaption>Roads climb onto viaducts over lots, or drop into cuttings and bored tunnels.</figcaption>
+      </figure>
+      <div>
+        <h3>Up and down</h3>
+        <p>Raise or lower a road in 2 m steps from 20 m underground to 24 m up. High enough and it stands on pillars as a viaduct that can span over buildings; deep enough and it is a bored tunnel with portals and vent heads; in between it runs in a cutting with retaining walls. Underpasses appear where roads cross.</p>
+      </div>
+    </article>
+
+    <article class="feature">
+      <figure class="shot">
+        <a href="img/street-night.jpg"><img src="img/street-night.jpg" alt="Street level at night: pedestrians on the pavement under shop signs and lit windows." loading="lazy" width="1600" height="900"></a>
+        <figcaption>Walk the street yourself with <kbd>Tab</kbd>.</figcaption>
+      </figure>
+      <div>
+        <h3>People on foot, bikes and parking</h3>
+        <ul>
+          <li>A walking network along every pavement, down footpaths, through gates and alleys between lots; shops sell to the footfall that passes.</li>
+          <li>Zebra crossings, waits at the lights, jaywalkers and near misses.</li>
+          <li>Bikes for most of the poor, cars for the well-off, all by class.</li>
+          <li>Kerb parking with a two-hour limit and residents' permits, car parks that open where drivers circle, wardens, tickets and tow trucks.</li>
+        </ul>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section id="transit">
+  <div class="wrap">
+    <h2><span class="path">/transit</span>Everything that moves people</h2>
+
+    <article class="feature">
+      <figure class="shot">
+        <a href="img/metro.jpg"><img src="img/metro.jpg" alt="The underground view: metro lines and stations drawn beneath the city." loading="lazy" width="1600" height="900"></a>
+        <figcaption>The Underground view shows the metro, tunnels and stations below the streets.</figcaption>
+      </figure>
+      <div>
+        <h3>Buses, metro, rail, ferries, air taxis and taxis</h3>
+        <ul>
+          <li><b>Buses</b> on loops of kerbside stops, run from depots 05:30 to 23:30.</li>
+          <li><b>Metro</b> drawn station to station, trains every few minutes, lines that loop.</li>
+          <li><b>Rail</b>: a trunk line, branches you lay, stations, freight yards whose wagons really carry the goods, level crossings, and one Central Station per city.</li>
+          <li><b>Ferries</b> to towns off the map, freighters up the river, fishing fleets and marinas.</li>
+          <li><b>Air</b>: drone pads, vertiports and skyports for eVTOL air taxis, air ambulances and a police helicopter.</li>
+          <li><b>Taxis</b> run by companies that residents found when demand is there.</li>
+        </ul>
+      </div>
+    </article>
+
+    <div class="grid">
+      <figure class="shot"><a href="img/train.jpg"><img src="img/train.jpg" alt="A passenger train at a station platform." loading="lazy" width="1600" height="900"></a><figcaption><b>Rail.</b> Passenger trains call every two hours; freight comes in by the wagon.</figcaption></figure>
+      <figure class="shot"><a href="img/ferry.jpg"><img src="img/ferry.jpg" alt="A ferry crossing open water towards a harbour." loading="lazy" width="1600" height="900"></a><figcaption><b>Harbour.</b> Ferries, freighters and the waterfront that grows around them.</figcaption></figure>
+      <figure class="shot"><a href="img/bus.jpg"><img src="img/bus.jpg" alt="A bus at a kerbside stop with people waiting." loading="lazy" width="1600" height="900"></a><figcaption><b>Buses.</b> Riders wait at the stop, pay the fare and walk the last leg.</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section id="economy">
+  <div class="wrap">
+    <h2><span class="path">/economy</span>A city that has to pay its way</h2>
+
+    <article class="feature">
+      <figure class="shot">
+        <a href="img/ui-citydata.jpg"><img src="img/ui-citydata.jpg" alt="The City Data view with charts of the city's economy." loading="lazy" width="1600" height="900"></a>
+        <figcaption>City Data: every ledger line, market, class and concern, charted.</figcaption>
+      </figure>
+      <div>
+        <h3>Businesses, markets and land</h3>
+        <ul>
+          <li>Fourteen resources and recipe-driven businesses with stock, cash and floating prices. Supply chains run from grain to livestock to meat, trucks carry the deals, imports and exports fill the gaps.</li>
+          <li>Industry sub-zones for farming, oil, refining and more; dirty industry poisons the ground.</li>
+          <li>Land value on a 32 m grid, three tiers of homes, rents, wages, classes and displacement.</li>
+          <li>A land market: developers buy out low buildings, firms expand next door, towers rise with demand into a skyline league of supertalls and megatalls.</li>
+          <li>Up to four fictional mega-corps with their own logos and HQ towers; taxes per line and an itemised ledger.</li>
+          <li>When the city gets unequal enough, fictional billionaires arrive, buy up plots for mansions, and drive in convoys.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="feature">
+      <figure class="shot">
+        <a href="img/ui-build.jpg"><img src="img/ui-build.jpg" alt="The Build window open over the city with its sections for roads, zoning, power, services and transit." loading="lazy" width="1600" height="900"></a>
+        <figcaption>The Build window: one place for everything the city places.</figcaption>
+      </figure>
+      <div>
+        <h3>Power, services and emergencies</h3>
+        <p>Coal, solar, wind, nuclear, hydro with a dam, tidal and geothermal plants, batteries that trade on time-of-use prices, and brownouts that hit the cheap districts first. Police, fire, health, schools and 911 dispatch in three tiers: fires spread from building to building, crimes and illness happen, a dispatcher sends the nearest unit and you can follow it with its lights on. Parks, tourism, hotels and ten landmark attractions round it out.</p>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section id="people">
+  <div class="wrap">
+    <h2><span class="path">/people</span>Click anyone and read their day</h2>
+
+    <article class="feature">
+      <figure class="shot">
+        <a href="img/ui-person.jpg"><img src="img/ui-person.jpg" alt="The inspector open on a citizen, showing their portrait, mood, places and memories." loading="lazy" width="1600" height="900"></a>
+        <figcaption>A citizen's portrait, needs, places and memories.</figcaption>
+      </figure>
+      <div>
+        <h3>Citizens who remember</h3>
+        <ul>
+          <li>Each person keeps a memory stream, moods and concerns, and a book of favourite places and ones they never go back to.</li>
+          <li>Friends, partners, rivals and enemies; bands, clubs, street-art crews and start-ups that put on gigs, paint murals and petition the council, and protest when ignored.</li>
+          <li>Speech bubbles in the street, follow-cam behind anyone, and their own point of view.</li>
+          <li>A rule-based mind runs everyone instantly; optional LLM voices write lines and diaries for the people you spotlight. The simulation never waits on a model.</li>
+        </ul>
+      </div>
+    </article>
+
+    <article class="feature">
+      <figure class="shot">
+        <a href="img/ui-committee.jpg"><img src="img/ui-committee.jpg" alt="The mayor's committee in session, members arguing over a proposal." loading="lazy" width="1600" height="900"></a>
+        <figcaption>The committee meets every month. It works offline with no API key.</figcaption>
+      </figure>
+      <div>
+        <h3>The mayor's committee</h3>
+        <p>Six advisers drawn from a pool of fourteen, each with a temper and a leaning, watch the city's numbers, call meetings, argue proposals and vote, and you approve or veto. A sited proposal arrives as a planned project for you to build. They remember how past votes went. The built-in stand-in plays the whole thing offline; point it at a local model or the Claude API for live voices.</p>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section id="looks" class="looks">
+  <div class="wrap">
+    <h2><span class="path">/districts</span>Districts with a story and a look</h2>
+    <p>Paint districts on the map, give them a story and policies, and the buildings that grow there take its look. Each look is its own family of generated buildings, down to the lanterns, washing lines and solar shingles. Shown here in the building viewer.</p>
+    <div class="grid">
+      <figure class="shot"><a href="img/look-brick-steel.jpg"><img src="img/look-brick-steel.jpg" alt="A Brick and Steel building: brick mill lofts with steel windows." loading="lazy" width="1280" height="800"></a><figcaption><b>Brick &amp; Steel.</b> Mill lofts, sawtooth factories and corner pubs for Foundry Row.</figcaption></figure>
+      <figure class="shot"><a href="img/look-lantern-alley.jpg"><img src="img/look-lantern-alley.jpg" alt="A Lantern Alley shophouse at night strung with paper lanterns." loading="lazy" width="1280" height="800"></a><figcaption><b>Lantern Alley.</b> Shophouses, stall rows and night-market halls under paper lanterns.</figcaption></figure>
+      <figure class="shot"><a href="img/look-garden-suburb.jpg"><img src="img/look-garden-suburb.jpg" alt="A Garden Suburb house with a picket fence and garden." loading="lazy" width="1280" height="800"></a><figcaption><b>Garden Suburb.</b> Houses, a close, a parade and a garden centre for Quiet Acres.</figcaption></figure>
+      <figure class="shot"><a href="img/look-harbour-pastel.jpg"><img src="img/look-harbour-pastel.jpg" alt="A Harbour Pastel terrace with string bulbs along the front." loading="lazy" width="1280" height="800"></a><figcaption><b>Harbour Pastel.</b> Salt-faded terraces, boathouses and a lighthouse block for The Promenade.</figcaption></figure>
+      <figure class="shot"><a href="img/look-old-stone.jpg"><img src="img/look-old-stone.jpg" alt="An Old Stone building in weathered masonry." loading="lazy" width="1280" height="800"></a><figcaption><b>Old Stone.</b> The historic quarter of the Old Town Charter.</figcaption></figure>
+      <figure class="shot"><a href="img/look-solarpunk.jpg"><img src="img/look-solarpunk.jpg" alt="A Solarpunk Green terrace under planted roofs and solar shingles." loading="lazy" width="1280" height="800"></a><figcaption><b>Solarpunk Green.</b> Planted roofs, PV skins, vertical farms with magenta grow lights.</figcaption></figure>
+      <figure class="shot"><a href="img/look-glass-campus.jpg"><img src="img/look-glass-campus.jpg" alt="A Glass Campus lab in an exposed steel frame." loading="lazy" width="1280" height="800"></a><figcaption><b>Glass Campus.</b> Labs, start-up sheds and co-living towers for Founders' Campus.</figcaption></figure>
+      <figure class="shot"><a href="img/look-patchwork.jpg"><img src="img/look-patchwork.jpg" alt="A Patchwork self-built house of brick, block and corrugated sheet." loading="lazy" width="1280" height="800"></a><figcaption><b>Patchwork.</b> Shacks grown room by room, stilt houses and self-built stacks.</figcaption></figure>
+      <figure class="shot"><a href="img/look-kowloon.jpg"><img src="img/look-kowloon.jpg" alt="A dense walled tenement block covered in air conditioners, cages and signs." loading="lazy" width="1280" height="800"></a><figcaption><b>Kowloon stacks.</b> Walled blocks and pencil towers, the look the city started with.</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section id="cities">
+  <div class="wrap">
+    <h2><span class="path">/cities</span>No two cities alike</h2>
+    <p>Start on an empty landscape, or let the generator lay out a whole city in seconds: street plans grown from tensor fields, zoned and furnished, on river valleys, coasts, deltas, plains or islands, in a temperate, desert, tropical, arctic or volcanic climate. Day turns to night, weather drifts hour by hour, and rain and snow fall on the streets.</p>
+    <div class="grid">
+      <figure class="shot"><a href="img/city-grid-plaza.jpg"><img src="img/city-grid-plaza.jpg" alt="A generated grid city around a central plaza." loading="lazy" width="1600" height="900"></a><figcaption><b>Grid plaza</b>, desert.</figcaption></figure>
+      <figure class="shot"><a href="img/city-coastal-river.jpg"><img src="img/city-coastal-river.jpg" alt="A generated city where a river meets the coast." loading="lazy" width="1600" height="900"></a><figcaption><b>Coastal river</b>, tropical.</figcaption></figure>
+      <figure class="shot"><a href="img/city-old-town.jpg"><img src="img/city-old-town.jpg" alt="A generated old town with winding streets." loading="lazy" width="1600" height="900"></a><figcaption><b>Old town</b>, arctic, in the snow.</figcaption></figure>
+      <figure class="shot"><a href="img/city-twin-centres.jpg"><img src="img/city-twin-centres.jpg" alt="A generated city with two centres." loading="lazy" width="1600" height="900"></a><figcaption><b>Twin centres</b> on islands.</figcaption></figure>
+      <figure class="shot"><a href="img/city-perfect.jpg"><img src="img/city-perfect.jpg" alt="The fully furnished Perfect City at dusk." loading="lazy" width="1600" height="900"></a><figcaption><b>Perfect city</b>, furnished from day one.</figcaption></figure>
+      <figure class="shot"><a href="img/weather-rain.jpg"><img src="img/weather-rain.jpg" alt="Rain falling on wet streets that reflect the lights." loading="lazy" width="1600" height="900"></a><figcaption><b>Weather.</b> Storms, heat waves and cold snaps.</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <h2><span class="path">/how-it-works</span>How it works</h2>
+    <div class="pillars">
+      <div>
+        <h3>Everything procedural</h3>
+        <p>Terrain, parcels, every building, the signage, the names of people, firms and districts. There are no hand-made models or textures in the game; data files drive the generators and reload while it runs.</p>
+      </div>
+      <div>
+        <h3>A deterministic simulation</h3>
+        <p>The simulation is its own crate with no engine in it: same seed, same inputs, same city. It ticks on its own fixed clock, runs headless in tests and probes, and the renderer is a thin layer on top.</p>
+      </div>
+      <div>
+        <h3>Minds are pluggable</h3>
+        <p>Every citizen is driven by a mind. A fast rule-based mind runs everyone; an LLM-backed mind can speak for the few you spotlight, and the committee can think out loud through one. All optional: the game is complete without a model or a key.</p>
+      </div>
+      <div>
+        <h3>Built to be scripted</h3>
+        <p>A local JSON API with more than a hundred commands builds, inspects, moves the camera and takes screenshots; an MCP server wraps it for AI assistants. Every picture on this page was taken through it, with photo mode on.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="build">
+  <div class="wrap">
+    <h2><span class="path">/build</span>Build and run</h2>
+    <p>Windows 10 or 11 with a GPU that runs Vulkan or DirectX 12, and the stable Rust toolchain from <a href="https://rustup.rs">rustup.rs</a> (the MSVC build tools come with it). The first build compiles Bevy and takes several minutes.</p>
+    <ol class="steps">
+      <li>Get the source.
+<pre>git clone https://github.com/harveymoon/HEIFUNG-CITY
+cd HEIFUNG-CITY</pre></li>
+      <li>Build the game.
+<pre>cargo build -p nd_app --release</pre></li>
+      <li>Run it. The exe lands in <code>target/release/</code>; saves go into a <code>saves</code> folder beside it.
+<pre>target\release\heifung_city.exe</pre></li>
+      <li>Optional: run the tests or a headless city in the terminal.
+<pre>cargo test --profile fast --workspace
+cargo run --example headless -p nd_sim -- 3</pre></li>
+    </ol>
+    <h3>Getting around</h3>
+    <ul class="keys">
+      <li><kbd>Right-drag</kbd> rotate, <kbd>Middle-drag</kbd> pan, <kbd>Wheel</kbd> zoom, <kbd>WASD</kbd> <kbd>Q</kbd> <kbd>E</kbd> move</li>
+      <li><kbd>1</kbd>–<kbd>9</kbd> tools: inspect, roads, zones, edit, bulldoze and more</li>
+      <li><kbd>Ctrl</kbd>+<kbd>Enter</kbd> build the project, <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo</li>
+      <li><kbd>Space</kbd> pause, <kbd>-</kbd> <kbd>=</kbd> speed from 1× to 1024×</li>
+      <li><kbd>Tab</kbd> walk the street, <kbd>J</kbd> City Data, <kbd>X</kbd> building viewer</li>
+      <li><kbd>U</kbd> underground, <kbd>H</kbd> heat vision, <kbd>F10</kbd> photo mode</li>
+    </ul>
+  </div>
+</section>
+
+<section id="roadmap">
+  <div class="wrap">
+    <h2><span class="path">/roadmap</span>Where it goes next</h2>
+    <ul class="road">
+      <li><b>A big world</b>Seamless map edges, an expandable map, sister cities, and in the end a planet with real places on the globe.</li>
+      <li><b>Timetables</b>Night trains, rush-hour frequencies and service hours set per line.</li>
+      <li><b>Island towns</b>Islands reached only by ferry, with people who commute by boat.</li>
+      <li><b>A layered city</b>Life under and between raised roads: skywalks, markets under the flyovers, camps under the bridges.</li>
+      <li><b>Underground first</b>Full metro stations with platforms, halls and escalators, then an undercity.</li>
+      <li><b>Skyline Luxe and the future looks</b>Slim towers with screens, holographic billboards, skyways and smog days.</li>
+      <li><b>Drive mode</b>Take the wheel of a car in the traffic you built.</li>
+      <li><b>Talk to a citizen</b>Chat with anyone you click through the same optional model the committee uses.</li>
+      <li><b>More ways to move</b>Cable cars, a suspended monorail, hover-bike couriers.</li>
+      <li><b>A weekly paper</b>The city's news written up every week, optionally by a model.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="refs">
+  <div class="wrap">
+    <h2><span class="path">/references</span>Where it comes from</h2>
+    <p>HEIFUNG://CITY began as a cyberpunk-themed fork of <a href="https://github.com/citybound/citybound">Citybound</a>, Anselm Eickhoff's open-source city builder in Rust. The fork was a theme and a look; the game was then started again from an empty repository on Bevy, and none of Citybound's code is in it. What carried over were ideas: Rust for the simulation, a data-driven building grammar, roads drawn as polylines and zones as polygons, several planned projects side by side, and a window that can inspect anything. Thank you, Anselm.</p>
+    <div class="refs">
+      <div>
+        <h3>Games</h3>
+        <ul>
+          <li><a href="https://github.com/citybound/citybound">Citybound</a>: the starting point and the planning tools.</li>
+          <li>Cities: Skylines: the road tool, districts and policies, the metro, rail pieces and park paths.</li>
+          <li>SimCity: zoning, the city's demand for homes, shops and industry, the treasury that has to balance.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Places and pictures</h3>
+        <ul>
+          <li>Kowloon Walled City and the tenements, pencil towers and street life of Hong Kong.</li>
+          <li><i>Akira</i> and <i>Ghost in the Shell</i>: megastructures, glass terraces and one long low red bike.</li>
+          <li>Hong Kong and cyberpunk reference renders, used for style only: nothing is traced, copied or imported.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Research and tools</h3>
+        <ul>
+          <li>Chen, Esch, Wonka, Müller and Zhang, <i>Interactive Procedural Street Modeling</i> (2008): the tensor-field method the street generator follows, as ProbableTrain's MapGenerator does.</li>
+          <li>Park et al., <i>Generative Agents</i> (2023), behind each citizen's memory stream.</li>
+          <li><a href="https://bevyengine.org">Bevy</a>, <a href="https://github.com/emilk/egui">egui</a> and the Rust ecosystem, which make all of it possible.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <h3>HEIFUNG://CITY</h3>
+      <p>By harveymoon and contributors. Code under <a href="https://github.com/harveymoon/HEIFUNG-CITY/blob/main/LICENSE-MIT">MIT</a> or <a href="https://github.com/harveymoon/HEIFUNG-CITY/blob/main/LICENSE-APACHE">Apache-2.0</a>, at your choice.</p>
+    </div>
+    <div>
+      <h3>Licences and credits</h3>
+      <p>The game's fonts are Chakra Petch, IBM Plex Sans, IBM Plex Mono and Noto Sans Symbols 2, all under the <a href="fonts/OFL-ChakraPetch.txt">SIL Open Font License 1.1</a>; this page uses Chakra Petch. Every image here is a screenshot of the game. All people, firms and billionaires in it are fictional.</p>
+    </div>
+    <div>
+      <h3>Contribute</h3>
+      <p>Issues and pull requests are welcome on <a href="https://github.com/harveymoon/HEIFUNG-CITY">GitHub</a>. Start with the design doc in <code>docs/DESIGN.md</code>.</p>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

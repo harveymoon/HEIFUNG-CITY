@@ -133,6 +133,14 @@ pub(super) fn heat_vision(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     Ok(json!({ "heat_vision": l.heat }))
 }
 
+/// [photo] `photo_mode {on?}`: hide all of egui (F10 in game); applied
+/// from this frame's pass on, so a following `screenshot` is clean.
+pub(super) fn photo_mode(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let f = &mut ctx.flags;
+    f.photo_mode = opt_bool(cmd, "on")?.unwrap_or(!f.photo_mode);
+    Ok(json!({ "photo_mode": f.photo_mode }))
+}
+
 /// [look] `graphics {quality: auto|low|medium|high}` pins the tier (for
 /// screenshots that must compare) or hands it back to Auto.
 pub(super) fn graphics(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
