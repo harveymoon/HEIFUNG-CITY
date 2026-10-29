@@ -40,8 +40,8 @@ use rand::Rng;
 const TINTS: [[f32; 3]; 4] = [[0.07, 0.09, 0.13], [0.16, 0.13, 0.09], [0.07, 0.12, 0.14], [0.11, 0.11, 0.13]];
 /// What the weather and the street's soot smear onto the glass.
 const SMEAR: [f32; 3] = [0.30, 0.29, 0.27];
-/// Spandrels and fins: graphite, champagne, black.
-const SPANDRELS: [[f32; 3]; 3] = [[0.15, 0.15, 0.16], [0.52, 0.46, 0.36], [0.06, 0.06, 0.07]];
+/// Spandrels and fins: graphite, dark bronze, black.
+const SPANDRELS: [[f32; 3]; 3] = [[0.15, 0.15, 0.16], [0.30, 0.25, 0.18], [0.06, 0.06, 0.07]];
 /// Brass and bronze trim for the money.
 const BRASS: [f32; 3] = [0.60, 0.46, 0.22];
 /// Street-level dirt.
@@ -529,7 +529,7 @@ pub fn twin_towers(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras) {
     }
     let pf = podium_floors(floors);
     let ph = street_podium(g, c, rng, &pod, pf, fh + 0.4);
-    let gap = (pod.w() * 0.18).clamp(4.0, 10.0);
+    let gap = (pod.w() * 0.24).clamp(4.5, 12.0);
     let tw = ((pod.w() - gap - 1.6) * 0.5).min(16.0);
     let td = (pod.d() * 0.62).clamp(6.5, 16.0).min(pod.d() - 1.5);
     let tv0 = pod.v0 + (pod.d() - td).clamp(0.8, 3.0);
@@ -859,7 +859,15 @@ pub fn boutique_row(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, _e: &Extras) 
         fr.glaze(g, c, 0.0, 0.2 + wh * 0.5, 0.05, ww, wh, Pane::Dark);
         let lit = mul(pick(rng, &c.style.window_colors), rng.random_range(0.6..0.9));
         fr.glaze(g, c, 0.0, 0.2 + wh * 0.5, 0.07, ww - 0.3, wh - 0.3, Pane::Lit(lit));
-        g.lod(Lod::Mid, |g| fr.window_frame(g, c, 0.0, 0.2 + wh * 0.5, ww, wh, 0.25, mul(BRASS, 1.0 - 0.3 * c.wear)));
+        g.lod(Lod::Mid, |g| {
+            fr.window_frame(g, c, 0.0, 0.2 + wh * 0.5, ww, wh, 0.25, mul(BRASS, 1.0 - 0.3 * c.wear));
+            // Brass glazing bars and a transom over the door.
+            let k = ((ww / 1.6).floor() as i32).max(1);
+            for j in 1..k {
+                fr.decal(g, f, Matte, -ww * 0.5 + j as f32 * ww / k as f32, 0.2 + wh * 0.5, 0.095, 0.07, wh, mul(BRASS, 0.9));
+            }
+            fr.decal(g, f, Matte, 0.0, 0.2 + wh * 0.72, 0.096, ww, 0.07, mul(BRASS, 0.9));
+        });
         // Its sign over the window, its canopy, a neon line under the cornice.
         let sy = 0.2 + wh + 0.55;
         if sy + 0.5 < h {
