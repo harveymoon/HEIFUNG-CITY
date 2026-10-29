@@ -1039,6 +1039,11 @@ impl World {
         // player's, else the city's pick; leisure is a night out.
         let sub = if forced.is_none() && lu == LandUse::Commercial { self.commercial_sub_for_new_building(lot_id, None) } else { None };
         let lu = if sub == Some(crate::commercial::CommercialSub::Leisure) { LandUse::Entertainment } else { lu };
+        // A sub-zone the player set keeps to its menu; on auto the city's
+        // offices pick does too, while a shops pick (neighbourhood or retail,
+        // much the same kinds today) still lets the market choose from the
+        // whole commercial menu, offices included, as before.
+        let sub = sub.filter(|s| *s == crate::commercial::CommercialSub::Offices || self.commercial_sub_set(lot_id).is_some());
         // [industry] land value as the land use feels it
         let value = self.lot_value(lot_id);
         let mut tier = Tier::for_land_value(value);
