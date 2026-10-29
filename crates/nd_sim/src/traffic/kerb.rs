@@ -30,19 +30,29 @@ impl Traffic {
     /// passes, drawn at the kerb, and afterwards it pulls out like a car
     /// leaving a space. Its route from here must already be set.
     pub fn pull_in(&mut self, id: CarId, secs: f32) {
+        self.pull_in_at(id, secs, false);
+    }
+
+    /// [r4-flags-look] (flag day 13 at (-589,89), "stacked trucks") As
+    /// `pull_in`, for a lorry unloading at a site's kerb: it pulls in behind
+    /// (or ahead of) whoever already stands there, never on top of them
+    /// (every lorry for one site stopped at the same spot, eight drawn as
+    /// one). A lorry pulled in again (stranded, retrying) moves off one it
+    /// was left standing on, so old stacks part. Other stops keep their
+    /// exact spot: a bus at its stop, a tow truck at its wreck, a car at
+    /// its space are found there by reach.
+    pub fn pull_in_queued(&mut self, id: CarId, secs: f32) {
+        self.pull_in_at(id, secs, true);
+    }
+
+    fn pull_in_at(&mut self, id: CarId, secs: f32, queue: bool) {
         let Some(c) = self.cars.get(id) else { return };
         let lane = c.route[c.idx];
         let kerb = self.net.lanes[lane as usize].right.is_none();
-        let was_entering = c.entering;
-        if !was_entering {
+        if !c.entering {
             self.net.lanes[lane as usize].cars.retain(|&o| o != id);
         }
-        // [r4-flags-look] (flag day 13 at (-589,89), "stacked trucks")
-        // Pulled in behind (or ahead of) whoever already stands at this
-        // kerb, never on top of them: every lorry for one site stopped at
-        // the same spot, eight drawn as one. (A stranded lorry pulled in
-        // again moves off one it was left standing on, so old stacks part.)
-        if kerb {
+        if kerb && queue {
             let s = self.kerb_room(lane, id);
             self.cars[id].s = s;
         }

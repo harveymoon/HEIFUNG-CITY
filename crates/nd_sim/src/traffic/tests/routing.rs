@@ -272,7 +272,7 @@ fn vehicles_pulling_in_at_one_spot_line_up_along_the_kerb() {
     for _ in 0..3 {
         let car = t.spawn_car(CitizenId::default(), None, route.clone(), s0, s1, 0);
         assert!(!t.cars[car].entering, "set off into the lane");
-        t.pull_in(car, 60.0);
+        t.pull_in_queued(car, 60.0);
         cars.push(car);
     }
     for _ in 0..4 {

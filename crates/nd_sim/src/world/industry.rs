@@ -532,7 +532,7 @@ impl World {
             }
             // A full lot (or a lorry stranded earlier): drive on.
             if !self.drive_lorry_on(car_id, cargo.to, home) && self.traffic.cars.contains_key(car_id) {
-                self.traffic.pull_in(car_id, STRANDED_RETRY_SECONDS);
+                self.traffic.pull_in_queued(car_id, STRANDED_RETRY_SECONDS);
             }
             return;
         }
@@ -549,7 +549,7 @@ impl World {
             }
         }
         if self.traffic.cars.contains_key(car_id) {
-            self.traffic.pull_in(car_id, UNLOAD_SECONDS);
+            self.traffic.pull_in_queued(car_id, UNLOAD_SECONDS);
         }
     }
 
