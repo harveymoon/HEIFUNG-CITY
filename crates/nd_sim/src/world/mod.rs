@@ -205,6 +205,8 @@ mod rail_travel;
 mod transit_report;
 #[cfg(test)]
 mod transit_tests;
+#[cfg(test)]
+mod metro_loop_tests;
 pub use transit_report::RidershipReport;
 mod tourism;
 mod trips;

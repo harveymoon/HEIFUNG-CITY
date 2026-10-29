@@ -692,6 +692,15 @@ impl Citizen {
         matches!(self.activity, Activity::Traveling { .. } | Activity::Idle | Activity::Sitting { .. } | Activity::Waiting { .. } | Activity::Passenger { seated: false, .. }) && !self.on_platform()
     }
 
+    /// [r4-metroloop] At a stop, platform, pad or kerb waiting for the
+    /// bus, metro, train, drone or cab of a trip under way: as good as on
+    /// it. The ordinary decisions leave them be (they used to decide again
+    /// as soon as one was due and set off afresh from where they stood);
+    /// the wait ends when the ride comes or they give up on it.
+    pub fn waiting_for_ride(&self) -> bool {
+        matches!(self.activity, Activity::Waiting { .. }) && self.transit.is_some()
+    }
+
     /// [pt-transit] Waiting on a metro platform, underground: not drawn at
     /// street level (the underground view may show them there).
     pub fn on_platform(&self) -> bool {

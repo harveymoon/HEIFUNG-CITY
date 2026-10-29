@@ -33,6 +33,43 @@ impl WalkGraph {
         best.map(|(_, i)| i)
     }
 
+    /// [r4-metroloop] The node a walk from (or to) `p` starts (or ends) at:
+    /// the nearest, unless that is up on a deck (`WalkNode::deck`) while
+    /// `p` is out from under it, on the ground: then the nearest that is
+    /// not (any node if none is in reach). A metro rider setting off from
+    /// the platform under Harvey's Kessler Drive viaduct was snapped onto
+    /// its pavement 12 m up, walked it round for 40 minutes and came back
+    /// down to the same station. A point at a node itself (a walk planned
+    /// again on its way) stays at that node, deck or not.
+    pub fn snap_end(&self, p: Vec2) -> Option<u32> {
+        let n = self.nearest(p, 60.0)?;
+        let node = &self.nodes[n as usize];
+        if !node.deck || node.pos.distance(p) < 0.01 || self.under_deck(p) {
+            return Some(n);
+        }
+        let within = |i: u32| {
+            let x = &self.nodes[i as usize];
+            let d = x.pos.distance(p);
+            if d <= 60.0 && x.level == 0.0 && !x.deck { d } else { f32::INFINITY }
+        };
+        let ground = if self.index.len() == self.nodes.len() {
+            self.index.nearest(p, within).map(|(i, _)| i)
+        } else {
+            (0..self.nodes.len() as u32).filter(|&i| within(i).is_finite()).min_by(|&x, &y| within(x).total_cmp(&within(y)).then(x.cmp(&y)))
+        };
+        Some(ground.unwrap_or(n))
+    }
+
+    /// [r4-metroloop] Is `p` on or under a deck (within its footprint,
+    /// where the way stands `VIADUCT_LEVEL` or more up)? Only there can a
+    /// point be up on one; in 2D the ground beneath looks the same.
+    pub fn under_deck(&self, p: Vec2) -> bool {
+        self.decks.iter().any(|&(a, b, la, lb, reach)| {
+            let (t, q) = geom::project_on_segment(p, a, b);
+            q.distance(p) <= reach && la + (lb - la) * t >= crate::roads::VIADUCT_LEVEL
+        })
+    }
+
     /// [ped-highway] Nearest node at ground level within `max_dist` that
     /// has an edge and passes `keep`; exact ties go to the lower index.
     pub fn nearest_matching(&self, p: Vec2, max_dist: f32, keep: impl Fn(u32) -> bool) -> Option<u32> {
@@ -197,8 +234,8 @@ impl WalkGraph {
 
     /// [`route`](Self::route), letting a jaywalker take `Jay` edges.
     pub fn route_with(&self, from: Vec2, to: Vec2, jaywalk: bool) -> Option<(Vec<Vec2>, Vec<u32>)> {
-        let a = self.nearest(from, 60.0)?;
-        let b = self.nearest(to, 60.0)?;
+        let a = self.snap_end(from)?;
+        let b = self.snap_end(to)?;
         // [under-construction] Not to a spot inside a shut park: the
         // nearest node outside it instead.
         let b = if self.node_closed(b) && !self.node_closed(a) { self.nearest_matching(to, 60.0, |n| !self.node_closed(n)).unwrap_or(b) } else { b };

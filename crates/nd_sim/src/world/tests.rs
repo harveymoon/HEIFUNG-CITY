@@ -540,6 +540,16 @@ fn trains_call_at_stations_and_yards_bring_freight() {
     // fifth, and the next freight train brings it in.
     let buyer = shop;
     assert!(w.buildings[buyer].business.is_some(), "the shop is a business that imports");
+    // [r4-metroloop] The order goes out with the next train: not while
+    // one already loaded at the edge is on its way in (with an earlier
+    // order of the shop's aboard), which would read as this one "left
+    // waiting".
+    for _ in 0..600 {
+        if !w.rail.trains.values().any(|t| t.kind == TrainKind::Freight) {
+            break;
+        }
+        w.tick(&mut minds);
+    }
     let money0 = w.buildings[buyer].business.as_ref().unwrap().money;
     let queued0 = w.rail.orders_for(yard).0;
     w.import(buyer, Resource::Parts, 10.0, 100.0);
