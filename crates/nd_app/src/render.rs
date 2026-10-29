@@ -434,8 +434,11 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, fishing::sync_trawlers.in_set(SimSet::Sync).after(sync_ships));
         // [berthing] The quay cranes working the freighters at the berth.
         app.add_systems(Update, landscape::sync_port_cranes.in_set(SimSet::Sync).after(sync_ships));
-        // The ground and water out past the map, into the fog.
+        // [horizon] The world past the map out to the horizon: far ground and
+        // water, ridges, the towns the ways lead to and their lights. Their
+        // materials follow the fog and the night once the fog is set.
         app.init_resource::<far::FarRender>().add_systems(Update, far::sync_far.in_set(SimSet::Sync).after(sync_landscape));
+        app.add_systems(PostUpdate, far::update_far_look.after(street_look::sync_fog_reach).after(heat::apply_heat).after(focus::focus_fog));
         app.add_systems(Update, retaining::sync_retaining.in_set(SimSet::Sync).after(sync_landscape));
         app.add_systems(Update, (waterside::sync_moored_boats, waterside::sync_boardwalks).in_set(SimSet::Sync).after(sync_landscape));
         // [carlife] Cars parked at the kerb, after the cars on the road.

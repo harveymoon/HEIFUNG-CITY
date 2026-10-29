@@ -516,7 +516,10 @@ pub(super) fn sync_fog_reach(sim: Res<Sim>, look: Res<sky::SkyLook>, mode: Res<C
     let vis = visibility(w.landscape.params.climate, look.daylight, precip);
     let Some((cam, tf)) = cams.iter().next() else { return };
     let eye = tf.translation();
-    let edge = (nd_sim::landscape::FAR_GROUND - eye.x.abs().max(eye.z.abs())).hypot(eye.y.max(0.0)) - 150.0;
+    // [horizon] The opaque far ground's edge (the ridges and the sky dome's
+    // fog-coloured horizon lie past it).
+    let reach = *nd_procgen::horizon::GROUND_REACH.last().unwrap_or(&nd_sim::landscape::FAR_GROUND);
+    let edge = (reach - eye.x.abs().max(eye.z.abs())).hypot(eye.y.max(0.0)) - 150.0;
     let (start, end) = fog_short_of_edge(fog_falloff(*mode, vis, cam.distance), edge);
     for mut fog in &mut fogs {
         let differs = match fog.falloff {

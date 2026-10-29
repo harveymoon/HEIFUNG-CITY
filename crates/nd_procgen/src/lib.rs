@@ -17,6 +17,9 @@ pub mod footbridge;
 pub mod hash;
 /// [p2-look] Holes cut through the ground (a strip mine's pit).
 pub mod holes;
+/// [horizon] The world past the map out to the horizon: far ground, water,
+/// ridges, the ways on to the neighbouring towns and their skylines.
+pub mod horizon;
 /// [mapgen] Whole example cities traced through a tensor field.
 pub mod citygen;
 pub mod lights;
