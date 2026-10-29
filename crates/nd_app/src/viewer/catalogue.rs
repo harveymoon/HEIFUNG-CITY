@@ -90,6 +90,8 @@ pub fn group(s: Style) -> &'static str {
         StoneHouse | GabledRow | CourtyardHouse | MarketArcade | GuildHall | ClockTower | OldInn | WaterMill | Tannery | CobbledYard | StoneManor => "Old Stone",
         // [r4-solarpunk] Eco Village's look.
         TimberTerrace | SolarTownhouses | VineTower | GlassMarketHall | CoopStore | RepairCafe | VerticalFarm | GreenhouseRows | BikeDepot | SolarVilla => "Solarpunk Green",
+        // [r4-glass] Founders' Campus's look.
+        StudentFlats | CoLivingTower | GlassLab | StartupSheds | AtriumOffice | CampusQuad | ResearchLab | ServerHall | GlassPavilion => "Glass Campus",
         // [r4-patchwork] The Riverbank Shantytown's look.
         TinShacks | StiltHouses | PatchStack | TarpMarket | CornerKiosk | Shebeen | ScrapYard | LeanToWorkshop | BigManCompound => "Patchwork",
         #[allow(unreachable_patterns)]
@@ -98,7 +100,7 @@ pub fn group(s: Style) -> &'static str {
 }
 
 /// Every section, in catalogue order.
-pub const GROUPS: [&str; 27] = [
+pub const GROUPS: [&str; 28] = [
     "Residential",
     "Commercial",
     "Industrial",
@@ -124,6 +126,7 @@ pub const GROUPS: [&str; 27] = [
     "Harbour Pastel",
     "Old Stone",
     "Solarpunk Green",
+    "Glass Campus",
     "Patchwork",
     "Other",
 ];
@@ -131,7 +134,7 @@ pub const GROUPS: [&str; 27] = [
 /// The land use a section's forced styles are drawn for.
 fn group_land_use(g: &str) -> LandUse {
     match g {
-        "Residential" | "Homes and estates" | "Capsule district" | "Brick & Steel" | "Lantern Alley" | "Garden suburb" | "Harbour Pastel" | "Solarpunk Green" | "Old Stone" | "Patchwork" => LandUse::Residential,
+        "Residential" | "Homes and estates" | "Capsule district" | "Brick & Steel" | "Lantern Alley" | "Garden suburb" | "Harbour Pastel" | "Solarpunk Green" | "Old Stone" | "Glass Campus" | "Patchwork" => LandUse::Residential,
         "Commercial" | "Shops and trades" | "Malls" | "Parking" | "League towers" => LandUse::Commercial,
         "Entertainment" | "Waterfront" => LandUse::Entertainment,
         "Civic" | "City services" | "Attractions" | "Transit and rail" => LandUse::Civic,
@@ -163,6 +166,11 @@ fn lantern_land_use(s: Style) -> Option<LandUse> {
         GlassMarketHall | CoopStore => Some(LandUse::Commercial),
         RepairCafe => Some(LandUse::Entertainment),
         VerticalFarm | GreenhouseRows | BikeDepot => Some(LandUse::Industrial),
+        // [r4-glass] Glass Campus's, likewise.
+        StudentFlats | CoLivingTower | GlassPavilion => Some(LandUse::Residential),
+        GlassLab | AtriumOffice => Some(LandUse::Commercial),
+        StartupSheds | CampusQuad => Some(LandUse::Entertainment),
+        ResearchLab | ServerHall => Some(LandUse::Industrial),
         // [r4-patchwork] Patchwork's, likewise.
         TinShacks | StiltHouses | PatchStack | BigManCompound => Some(LandUse::Residential),
         TarpMarket | CornerKiosk => Some(LandUse::Commercial),
@@ -217,6 +225,13 @@ pub fn lot_size(s: Style, tier: Tier) -> (f32, f32) {
             _ => (32.0, 40.0),
         },
         GlassMarketHall | GreenhouseRows | BikeDepot => (48.0, 44.0),
+        // [r4-glass] A pavilion on a family's two plots, an estate's four;
+        // a quad round its lawn, a server hall in its yard.
+        GlassPavilion => match tier {
+            Tier::High => (64.0, 52.0),
+            _ => (44.0, 40.0),
+        },
+        CampusQuad | ServerHall => (52.0, 48.0),
         // [r4-patchwork] A compound on a family's two plots, an estate's four.
         BigManCompound => match tier {
             Tier::High => (64.0, 52.0),
@@ -318,6 +333,10 @@ pub fn geometry(e: &Entry, v: Variant, rules: &BuildingRules, palette: &Palette)
     // top tier as a billionaire's (the estate with its wing).
     let look = look.or(Style::SOLARPUNK.contains(&e.style).then_some(nd_sim::districts::Look::SolarpunkGreen));
     let form = form.or((e.style == Style::SolarVilla && v.tier == Tier::High).then_some(nd_sim::estate::Form::Mansion));
+    // [r4-glass] Glass Campus's in its colours, its pavilion at the top
+    // tier as a billionaire's.
+    let look = look.or(Style::GLASS_CAMPUS.contains(&e.style).then_some(nd_sim::districts::Look::GlassCampus));
+    let form = form.or((e.style == Style::GlassPavilion && v.tier == Tier::High).then_some(nd_sim::estate::Form::Mansion));
     // [r4-patchwork] Patchwork's in its colours, its compound at the top
     // tier as a billionaire's; the stilt houses up on their piles by the
     // water (behind the lot, as Harbour Pastel's).

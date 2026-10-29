@@ -232,6 +232,15 @@ pub fn site_fit(style: Style, site: &Site) -> f32 {
         Style::SolarTownhouses | Style::CoopStore | Style::RepairCafe | Style::GlassMarketHall | Style::GreenhouseRows | Style::BikeDepot => low(3.0),
         Style::VineTower => tall(4.0),
         Style::VerticalFarm => tall(3.0),
+        // [r4-glass] Sheds and the quad are low, the flats mid-rise, the
+        // tower and the atrium office want floors.
+        Style::StartupSheds => low(2.0),
+        Style::CampusQuad => low(6.0),
+        Style::GlassLab | Style::ResearchLab => low(8.0),
+        Style::StudentFlats => tall(3.0) * low(16.0),
+        Style::CoLivingTower => tall(6.0),
+        Style::AtriumOffice => tall(4.0),
+        Style::ServerHall => low(4.0),
         // [r4-patchwork] Stalls, kiosks and the shebeen are low; the homes
         // count their rooms whatever they look (shacks and stilt houses
         // stand for as many households as a stack), so any height suits.

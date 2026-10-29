@@ -129,6 +129,19 @@ pub fn look_styles(look: Look, lu: LandUse, tier: Tier) -> Option<Menu> {
         (Look::SolarpunkGreen, Entertainment, _) => &[(S::RepairCafe, 0.55), (S::GlassMarketHall, 0.25), (S::CoopStore, 0.2)],
         (Look::SolarpunkGreen, Industrial, Low) => &[(S::GreenhouseRows, 0.5), (S::BikeDepot, 0.3), (S::VerticalFarm, 0.2)],
         (Look::SolarpunkGreen, Industrial, _) => &[(S::VerticalFarm, 0.4), (S::GreenhouseRows, 0.35), (S::BikeDepot, 0.25)],
+        // [r4-glass] Student flats and co-living towers for homes; labs,
+        // sheds, atrium offices and quads for the campus; the quad and the
+        // sheds' bars for nights out; research labs and server halls for
+        // its small industry.
+        (Look::GlassCampus, Residential, Low) => &[(S::StudentFlats, 0.8), (S::CoLivingTower, 0.2)],
+        (Look::GlassCampus, Residential, Mid) => &[(S::StudentFlats, 0.55), (S::CoLivingTower, 0.45)],
+        (Look::GlassCampus, Residential, High) => &[(S::CoLivingTower, 0.6), (S::StudentFlats, 0.4)],
+        (Look::GlassCampus, Commercial, Low) => &[(S::StartupSheds, 0.4), (S::GlassLab, 0.35), (S::CampusQuad, 0.25)],
+        (Look::GlassCampus, Commercial, Mid) => &[(S::GlassLab, 0.3), (S::AtriumOffice, 0.3), (S::CampusQuad, 0.2), (S::StartupSheds, 0.2)],
+        (Look::GlassCampus, Commercial, High) => &[(S::AtriumOffice, 0.5), (S::GlassLab, 0.3), (S::CampusQuad, 0.2)],
+        (Look::GlassCampus, Entertainment, _) => &[(S::CampusQuad, 0.55), (S::StartupSheds, 0.45)],
+        (Look::GlassCampus, Industrial, Low) => &[(S::ResearchLab, 0.5), (S::ServerHall, 0.3), (S::StartupSheds, 0.2)],
+        (Look::GlassCampus, Industrial, _) => &[(S::ServerHall, 0.5), (S::ResearchLab, 0.5)],
         // [r4-patchwork] Shacks, stilt houses and self-built stacks for
         // homes (more stacks where the land is dearer); the tarp market and
         // kiosks for its trade, the shebeen for nights out; the scrap yard
@@ -154,6 +167,8 @@ pub fn look_mansion(look: Look) -> Option<Style> {
         Look::Historic => Some(Style::StoneManor),
         // [r4-solarpunk] A planted solar villa in Eco Village.
         Look::SolarpunkGreen => Some(Style::SolarVilla),
+        // [r4-glass] A glass pavilion house on Founders' Campus.
+        Look::GlassCampus => Some(Style::GlassPavilion),
         // [r4-patchwork] The big man's walled compound in the Shantytown.
         Look::Patchwork => Some(Style::BigManCompound),
         _ => None,
@@ -370,6 +385,22 @@ pub fn tint(look: Look) -> Tint {
             sign_scale: 0.4,
             grime: Some((0.3, 0.3)),
         },
+        // [r4-glass] Tinted glass and pale concrete, cool white office light
+        // and warm flats; signs few and screen-bright (cyan, white, violet,
+        // lime). The styles carry their own glass and panels
+        // (`buildings/glasscampus.rs`); a little grime, a campus not a render.
+        Look::GlassCampus => Tint {
+            walls: &[[0.74, 0.74, 0.72], [0.58, 0.60, 0.62], [0.82, 0.82, 0.80], [0.46, 0.48, 0.50]],
+            trim: Some([0.20, 0.21, 0.22]),
+            windows: &[[0.95, 1.1, 1.4], [1.15, 1.15, 1.1], [1.3, 1.05, 0.75]],
+            signs: &[[0.3, 1.7, 2.4], [2.0, 2.1, 2.3], [1.3, 0.5, 2.4], [1.1, 2.2, 0.4]],
+            awnings: Some(&[[0.20, 0.21, 0.22], [0.60, 0.62, 0.64]]),
+            brick: None,
+            plaster: Some(&[[0.80, 0.80, 0.78], [0.70, 0.71, 0.72]]),
+            signage: None,
+            sign_scale: 0.4,
+            grime: Some((0.25, 0.3)),
+        },
         // [r4-patchwork] Rust, zinc, faded paint and raw block; bare warm
         // bulbs and the blue of a television; hand-painted signs in shop
         // reds, yellows, greens and blues; tarps in blue, orange and green.
@@ -462,6 +493,7 @@ mod tests {
                 Look::Garden => &[LandUse::Residential, LandUse::Commercial],
                 Look::HarbourPastel => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
                 Look::SolarpunkGreen => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
+                Look::GlassCampus => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
                 Look::Patchwork => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
             };
             for &lu in uses {
@@ -474,9 +506,10 @@ mod tests {
             // Lantern Alley its small trades; [r4-harbour] Harbour Pastel its
             // fish market and net sheds; [r4-oldstone] Old Stone (Historic)
             // its mill, tannery and yards; [r4-solarpunk] Solarpunk Green its
-            // farms and bike depot; [r4-patchwork] Patchwork its scrap yard
-            // and workshops. No other look dresses industry.
-            assert_eq!(look_styles(look, LandUse::Industrial, Tier::Mid).is_some(), matches!(look, Look::BrickSteel | Look::Lantern | Look::HarbourPastel | Look::Historic | Look::SolarpunkGreen | Look::Patchwork));
+            // farms and bike depot; [r4-glass] Glass Campus its research labs
+            // and server halls; [r4-patchwork] Patchwork its scrap yard and
+            // workshops. No other look dresses industry.
+            assert_eq!(look_styles(look, LandUse::Industrial, Tier::Mid).is_some(), matches!(look, Look::BrickSteel | Look::Lantern | Look::HarbourPastel | Look::Historic | Look::SolarpunkGreen | Look::GlassCampus | Look::Patchwork));
         }
     }
 

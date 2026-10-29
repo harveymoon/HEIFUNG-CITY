@@ -875,9 +875,16 @@ fn stall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, r: &R) {
     let f = &c.frame;
     let h = rng.random_range(2.1..2.5);
     let wood = mul(c.palette.wood, rng.random_range(0.5..0.75));
-    for (u, v) in [(r.u0, r.v0), (r.u1, r.v0), (r.u0, r.v1), (r.u1, r.v1)] {
-        f.bx(g, Wood, u, h * 0.5, v, Vec3::new(0.08, h, 0.08), wood);
+    // Poles at the lane side; the back ones, hidden under the tarps from
+    // afar, are detail.
+    for u in [r.u0, r.u1] {
+        f.bx(g, Wood, u, h * 0.5, r.v0, Vec3::new(0.08, h, 0.08), wood);
     }
+    g.lod(Lod::Mid, |g| {
+        for u in [r.u0, r.u1] {
+            f.bx(g, Wood, u, h * 0.5, r.v1, Vec3::new(0.08, h, 0.08), wood);
+        }
+    });
     // The counter along the lane side.
     f.bx(g, Wood, r.c().x, 0.45, r.v0 + 0.35, Vec3::new(r.w() - 0.3, 0.9, 0.6), mul(wood, 1.2));
     g.lod(Lod::Mid, |g| {
@@ -888,14 +895,22 @@ fn stall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, r: &R) {
             f.bx(g, Tarp, u, 0.98, r.v0 + 0.35, Vec3::new(0.45, 0.16, 0.45), col);
         }
     });
-    // A bare bulb hung under the tarp over the counter.
+    // A bare bulb hung under the tarp over the counter, at every other.
+    if !coin(rng, 0.55) {
+        return tarp(g, c, rng, r, h);
+    }
     let (bu, bv) = (r.c().x + rng.random_range(-0.4..0.4), r.v0 + 0.6);
     g.lod(Lod::Mid, |g| f.bx(g, Matte, bu, h - 0.4, bv, Vec3::new(0.02, 0.5, 0.02), DARK));
     let from = g.part(Glow).positions.len();
     f.bx(g, Glow, bu, h - 0.72, bv, Vec3::splat(0.14), mul(BULB, 1.0 - 0.25 * c.wear));
     mark_glow(g, from, NIGHT_MARK);
-    // The tarp: two slopes meeting low in the middle (it sags), seen from
-    // above and below.
+    tarp(g, c, rng, r, h);
+}
+
+/// A stall's tarp: two slopes meeting low in the middle (it sags), seen
+/// from above and below.
+fn tarp(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, r: &R, h: f32) {
+    let f = &c.frame;
     let col = rgba(mul(any(rng, &TARPS), 1.0 - 0.3 * c.wear));
     let under = rgba(mul(any(rng, &TARPS), 0.55));
     let o = 0.25;
@@ -918,16 +933,18 @@ pub fn tarp_market(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let yard_poly = yard(g, c, 0.3, Dirt, mul(dirt(c), 1.05));
     let area = R::of(&c.poly);
-    let lane = 2.6;
-    let sd = 2.4;
+    let lane = 2.8;
+    let sd = 2.6;
+    // The market keeps to the street's side of a deep lot; homes behind.
+    let end = area.v1.min(area.v0 + 24.0);
     let mut rooms: Vec<R> = Vec::new();
     // Rows of stalls across the lot, a lane in front of each pair.
     let mut v = area.v0 + lane;
     let mut row = 0;
-    while v + sd <= area.v1 - 0.3 {
+    while v + sd <= end - 0.3 {
         let mut u = area.u0 + 0.2;
-        while u + 2.2 <= area.u1 - 0.2 {
-            let w = rng.random_range(2.2f32..3.2).min(area.u1 - 0.2 - u);
+        while u + 2.6 <= area.u1 - 0.2 {
+            let w = rng.random_range(2.6f32..3.8).min(area.u1 - 0.2 - u);
             let r = R::new(u + 0.1, u + w - 0.1, v, v + sd);
             if on_lot(c, &r) && !coin(rng, 0.08) {
                 stall(g, c, rng, &r);
@@ -982,6 +999,11 @@ pub fn tarp_market(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     if let Some(q) = clear_spot(c, rng, &rooms, 0.8) {
         fire_barrel(g, c, q);
+    }
+    let mut eaves = Vec::new();
+    fill(g, c, rng, &R::new(area.u0, area.u1, v + 1.0, area.v1), &mut rooms, &mut eaves);
+    if !eaves.is_empty() {
+        wire_up(g, c, rng, &rooms, &eaves);
     }
     weeds(g, c, rng, &yard_poly, 3);
 }

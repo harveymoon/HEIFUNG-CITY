@@ -61,6 +61,8 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         // [r4-solarpunk] Eco Village's vertical farm and repair café (farms
         // keep their farmsteads, other trades their own looks).
         (None, None) if !extras.rooftop_pad && extras.look == Some(nd_sim::districts::Look::SolarpunkGreen) && solarpunk::trade_style(extras.business).is_some() => solarpunk::trade_style(extras.business).unwrap(),
+        // [r4-glass] On Founders' Campus the assembly halls are server halls.
+        (None, None) if !extras.rooftop_pad && extras.look == Some(nd_sim::districts::Look::GlassCampus) && glasscampus::trade_style(extras.business, tier).is_some() => glasscampus::trade_style(extras.business, tier).unwrap(),
         // [r4-patchwork] The Shantytown's mechanic and bike repairer under a
         // lean-to, its tow yard a scrap yard (other trades keep theirs).
         (None, None) if !extras.rooftop_pad && extras.look == Some(nd_sim::districts::Look::Patchwork) && patchwork::trade_style(extras.business).is_some() => patchwork::trade_style(extras.business).unwrap(),

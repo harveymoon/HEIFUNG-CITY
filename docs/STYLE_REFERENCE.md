@@ -215,6 +215,30 @@ a view down one street shows a few dozen such towers.
   solar canopy, string bulbs (Harbour's), the vertical farm's magenta grow
   lights floor by floor, greenhouses' sodium lamps, post lamps and the
   depot's charge lights. Bikes and cargo bikes are near detail.
+- Done (r4-glass): **Glass Campus** (`buildings/glasscampus.rs`, Founders'
+  Campus's look): student flats (a bright panel by every window, coloured
+  by column, deck-access galleries behind, an exposed stair), a co-living
+  tower on a podium with glass lounges hung off it, a glass lab in an
+  exposed steel frame with X braces and fume stacks, a yard of prefab
+  start-up sheds (some stacked, a steel stair up), an atrium office, a
+  shared quad round a lawn with a screen on a frame and a café pavilion, a
+  chamfered concrete research lab, a fenced server hall, and a glass
+  pavilion house for the story's mansions. From section 2 it takes the
+  chamfered mass with panel seams (near), louvred vent bays (mid slats),
+  the braced stair core (posts base, ring beams and braces mid, flights
+  near), lit glass storeys with screens (`led_screen` in the atrium), roof
+  rails (near), rooftop plant (`chiller`, round coolers, a duct run mid),
+  roller doors and cable trays (mid, the cables near). The curtain wall is
+  the block's own `Glass` walls in a dark tint: a spandrel decal at each
+  slab, one window light per floor and face (the renderer lights an office
+  floor at a time), mullions mid, smears and rain streaks near, each at
+  its own depth. Atria and lounges: tinted glass by day, a glow box just
+  round the glass marked `NIGHT_MARK` after dark (lit all night), their
+  frame and floor lines mid detail over it. Lamps, landing lights,
+  floodlights and the server hall's status strip are `NIGHT_MARK` too;
+  screens are unmarked glow, as signs. Bikes (frames mid, wheels near),
+  hire scooters dropped about (near), a skip, gas bottle cages; rust at the
+  steel's feet, smears and grime with wear.
 - Done (r4-patchwork): **Patchwork** (`buildings/patchwork.rs`, the
   Riverbank Shantytown's look): corrugated-iron shacks grown room by room
   (a first room on each patch of swept earth, two to four more added on
@@ -251,5 +275,5 @@ a view down one street shows a few dozen such towers.
   floodlights.
 - Left for later: the cyberpunk family (section 2) on the Neon strip,
   offices and industry; the street-level props round the plot; the other
-  looks (Skyline Luxe, Glass Campus); slopes for the stilt houses (lots are
+  looks (Skyline Luxe); slopes for the stilt houses (lots are
   levelled pads, a style does not know the hillside it stands on).

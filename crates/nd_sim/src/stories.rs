@@ -357,7 +357,8 @@ impl Story {
             Story::EcoVillage => (Some(R::SolarpunkGreen), Some(C::SolarpunkGreen), Some(IndustryKind::Farming), false, Some(40.0), Policies { pollution_levy: 0.10, ..p }),
             Story::WalledQuarter => (Some(R::Kowloon), Some(C::NightMarket), None, false, None, Policies { late_hours: true, business_rate: -0.02, ..p }),
             Story::AfterglowMile => (None, Some(C::NeonStrip), None, false, None, Policies { late_hours: true, nightlife_levy: 0.08, ..p }),
-            Story::FoundersCampus => (Some(R::Eco), Some(C::TechCampus), None, false, None, Policies { rent_support: 0.15, business_rate: -0.02, ..p }),
+            // [r4-glass] Its own look, Glass Campus, for homes, the campus and its small industry.
+            Story::FoundersCampus => (Some(R::GlassCampus), Some(C::GlassCampus), None, false, None, Policies { rent_support: 0.15, business_rate: -0.02, ..p }),
             Story::OldTownCharter => (None, None, None, true, Some(24.0), Policies { heritage_grant: 40.0, bed_levy: 0.05, ..p }),
             // [garden] The Garden Suburb, homes and shops.
             Story::QuietAcres => (Some(R::Garden), Some(C::Garden), None, false, Some(18.0), Policies { nightlife_levy: 0.10, ..p }),
@@ -437,6 +438,8 @@ impl Story {
             // [r4-solarpunk] Eco Village: Eco homes, shops as they come,
             // farming industry.
             Story::EcoVillage => d.residential == Some(ResidentialSpec::Eco) && d.commercial.is_none() && d.industry == Some(IndustryKind::Farming) && !d.historic,
+            // [r4-glass] Founders' Campus: Eco homes and the Tech campus.
+            Story::FoundersCampus => d.residential == Some(ResidentialSpec::Eco) && d.commercial == Some(crate::districts::CommercialSpec::TechCampus) && d.industry.is_none() && !d.historic,
             // [r4-patchwork] Riverbank Shantytown: Kowloon homes, shops as
             // they come.
             Story::Shantytown => d.residential == Some(ResidentialSpec::Kowloon) && d.commercial.is_none() && d.industry.is_none() && !d.historic,
