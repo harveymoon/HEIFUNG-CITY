@@ -1010,6 +1010,7 @@ mod dispatch_tests {
             .init_resource::<crate::city_reset::CityEpoch>()
             .init_resource::<crate::viewer::Viewer>()
             .init_resource::<crate::render::Turntable>()
+            .init_resource::<crate::render::land_tiles::PickedTile>()
             .init_resource::<crate::viewer::notes::BuildingNotes>()
             .insert_resource(crate::audio::Sound::silent());
         app
