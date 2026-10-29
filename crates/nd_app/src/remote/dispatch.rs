@@ -271,6 +271,17 @@ pub(super) static COMMANDS: &[Cmd] = &[
     Cmd { name: "landscape", aliases: &[], effect: Read, run: |_, ctx| Ok(land::summary(&ctx.sim.world)), help: &[
         ("returns", "preset and levers, rivers (width, current, hydro_ok), lakes, sea, hot spots, highway ends and through cars, bridges, docks, ships"),
     ] },
+    Cmd { name: "tiles", aliases: &["land_tiles"], effect: Read, run: |_, ctx| Ok(tiles::list(&ctx.sim.world)), help: &[
+        ("returns", "[r4-tiles] the land round the starting map in tiles of 1.2 km (tile [i, j] centred on [i, j] * 1200; the start map is i, j in -1..1): tile_m, max_half_m, bought, treasury, and per tile: owned, buyable (next to the city's land), price, bounds, land / sea / river / lake / level / buildable shares, height low-mean-high, slope, fertility, oil, rock, hot_spots, river_crosses, highway, rail, roads, summary"),
+    ] },
+    Cmd { name: "buy_tile", aliases: &[], effect: Game, run: tiles::buy, help: &[
+        ("tile", "[i, j] the tile (or pos: [x, y], a point in it)"),
+        ("dry_run", "bool: only the price, or why it cannot be bought"),
+        ("returns", "[r4-tiles] paid, treasury, land_half_m, bought; refused with the reason (not next to the city's land, past the outer ring, already owned, the treasury short)"),
+    ] },
+    Cmd { name: "pick_tile", aliases: &[], effect: View, run: tiles::pick, help: &[
+        ("tile", "[i, j], or null: the tile picked in the Land for sale window (turns the layer on)"),
+    ] },
     Cmd { name: "ships", aliases: &[], effect: Read, run: |_, ctx| Ok(economy::ships(&ctx.sim.world)), help: &[
         ("returns", "every ship and boat: freighters, ferries, marina boats and (fishing) trawlers with name, port, at, heading_deg, state (in_port|outbound|fishing|hauling|returning|unloading), at_sea, nets_out, fish_aboard, catch_today; count, trawlers_at_sea"),
     ] },

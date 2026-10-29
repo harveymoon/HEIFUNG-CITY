@@ -106,6 +106,8 @@ pub(super) fn map_signature(w: &World) -> u64 {
     format!("{:?}", w.landscape.params).hash(&mut h);
     w.landscape.rivers.len().hash(&mut h);
     w.landscape.is_flat().hash(&mut h);
+    // [r4-tiles] Land bought grows the ground and the water sheet.
+    w.landscape.land_half().to_bits().hash(&mut h);
     h.finish()
 }
 
@@ -114,6 +116,7 @@ pub(super) fn landscape_signature(w: &World) -> u64 {
     w.landscape.params.seed.hash(&mut h);
     format!("{:?}", w.landscape.params.preset).hash(&mut h);
     w.landscape.rivers.len().hash(&mut h);
+    w.landscape.tiles.hash(&mut h);
     w.roads.version.hash(&mut h);
     w.lots.len().hash(&mut h);
     w.ports.ports.len().hash(&mut h);

@@ -6,6 +6,8 @@ use super::*;
 /// Heights and signed distance to water (negative in the water), sampled
 /// every `CELL` metres over the generated square.
 pub(super) struct Raster {
+    /// [r4-tiles] Half the side it covers: the land's (`land_half`).
+    pub(super) half: f32,
     pub(super) n: usize,
     pub(super) h: Vec<f32>,
     pub(super) d: Vec<f32>,
@@ -13,7 +15,7 @@ pub(super) struct Raster {
 
 impl Clone for Raster {
     fn clone(&self) -> Self {
-        Raster { n: self.n, h: self.h.clone(), d: self.d.clone() }
+        Raster { half: self.half, n: self.n, h: self.h.clone(), d: self.d.clone() }
     }
 }
 
@@ -52,7 +54,7 @@ impl Landscape {
                 return Some(WaterHit { kind: WaterKind::Lake, index: i, current: 0.0, width: size, flow: Vec2::ZERO });
             }
         }
-        if let Some(sea) = &self.sea {
+        if let Some(sea) = self.sea_now() {
             if sea.contains(p) {
                 return Some(WaterHit { kind: WaterKind::Sea, index: 0, current: 0.4, width: f32::INFINITY, flow: Vec2::ZERO });
             }
@@ -87,7 +89,7 @@ impl Landscape {
                 consider(q.distance(p), q);
             }
         }
-        if let Some(sea) = &self.sea {
+        if let Some(sea) = self.sea_now() {
             for line in sea.shores() {
                 for w in line.windows(2) {
                     let (_, q) = project_on_segment(p, w[0], w[1]);
@@ -112,10 +114,10 @@ impl Landscape {
     #[cfg(test)]
     pub(crate) fn reshape_for_test(&mut self, f: impl Fn(Vec2, f32) -> f32) {
         let mut r = self.raster().clone();
-        let n = r.n;
+        let (n, half) = (r.n, r.half);
         for j in 0..n {
             for i in 0..n {
-                let p = Vec2::new(-LAND_HALF + i as f32 * CELL, -LAND_HALF + j as f32 * CELL);
+                let p = Vec2::new(-half + i as f32 * CELL, -half + j as f32 * CELL);
                 r.h[j * n + i] = f(p, r.h[j * n + i]);
             }
         }
@@ -124,12 +126,16 @@ impl Landscape {
     }
 
     pub(super) fn build_raster(&self) -> Raster {
-        let n = (LAND_HALF * 2.0 / CELL) as usize + 1;
-        let at = |i: usize, j: usize| Vec2::new(-LAND_HALF + i as f32 * CELL, -LAND_HALF + j as f32 * CELL);
+        // [r4-tiles] Over the starting map, or with land bought the whole
+        // ring round it (the land not yet bought there is as the horizon
+        // showed it either way).
+        let half = self.land_half();
+        let n = (half * 2.0 / CELL) as usize + 1;
+        let at = |i: usize, j: usize| Vec2::new(-half + i as f32 * CELL, -half + j as f32 * CELL);
         let mut d = vec![FAR; n * n];
         let cell_range = |lo: f32, hi: f32| -> (usize, usize) {
-            let a = (((lo + LAND_HALF) / CELL).floor().max(0.0) as usize).min(n - 1);
-            let b = (((hi + LAND_HALF) / CELL).ceil().max(0.0) as usize).min(n - 1);
+            let a = (((lo + half) / CELL).floor().max(0.0) as usize).min(n - 1);
+            let b = (((hi + half) / CELL).ceil().max(0.0) as usize).min(n - 1);
             (a, b)
         };
         // Rivers: distance to the centreline less the half width.
@@ -193,7 +199,7 @@ impl Landscape {
                 }
             }
         }
-        if let Some(sea) = &self.sea {
+        if let Some(sea) = self.sea_now() {
             for line in sea.shores() {
                 let closed = false;
                 shore_d(&line, closed, &|p| sea.contains(p), &mut d);
@@ -205,13 +211,17 @@ impl Landscape {
             }
         }
         let mut h = vec![0.0; n * n];
+        let grown = self.is_grown();
         for j in 0..n {
             for i in 0..n {
                 let k = j * n + i;
-                h[k] = self.carve(self.base_height(at(i, j)), d[k]);
+                let p = at(i, j);
+                // [r4-tiles] Past the starting map, the ground the far
+                // landscape drew there.
+                h[k] = if grown && chebyshev(p) > LAND_HALF { self.grown_height(p) } else { self.carve(self.base_height(p), d[k]) };
             }
         }
-        Raster { n, h, d }
+        Raster { half, n, h, d }
     }
 
     /// Land height given the base height and the signed distance to water.
@@ -234,8 +244,8 @@ impl Landscape {
     pub(super) fn sample(&self, grid: impl Fn(&Raster) -> &Vec<f32>, p: Vec2) -> f32 {
         let r = self.raster();
         let n = r.n;
-        let fx = ((p.x + LAND_HALF) / CELL).clamp(0.0, (n - 1) as f32 - 1e-3);
-        let fy = ((p.y + LAND_HALF) / CELL).clamp(0.0, (n - 1) as f32 - 1e-3);
+        let fx = ((p.x + r.half) / CELL).clamp(0.0, (n - 1) as f32 - 1e-3);
+        let fy = ((p.y + r.half) / CELL).clamp(0.0, (n - 1) as f32 - 1e-3);
         let (i, j) = (fx.floor() as usize, fy.floor() as usize);
         let (tx, ty) = (fx - i as f32, fy - j as f32);
         let g = grid(r);
@@ -253,14 +263,20 @@ impl Landscape {
         if self.is_flat() {
             return self.base_height(p);
         }
-        if p.x.abs() > LAND_HALF || p.y.abs() > LAND_HALF {
+        let half = self.land_half();
+        if p.x.abs() > half || p.y.abs() > half {
+            // [r4-tiles] With land bought, past it is the far land as drawn.
+            if self.is_grown() {
+                return self.grown_height(p);
+            }
             return self.carve(self.base_height(p), self.far_water_distance(p));
         }
         self.sample(|r| &r.h, p)
     }
 
     /// Signed distance to water beyond the raster (the rivers carried off
-    /// the map, the open sea), capped like the raster's.
+    /// the map, the open sea), capped like the raster's. [r4-tiles] Always
+    /// the generated sea (the ground the far landscape is drawn on).
     pub(super) fn far_water_distance(&self, p: Vec2) -> f32 {
         let mut d = FAR;
         for r in &self.rivers {
@@ -456,7 +472,7 @@ impl Landscape {
         for l in &self.lakes {
             out.push((l.outline.clone(), Vec::new()));
         }
-        if let Some(sea) = &self.sea {
+        if let Some(sea) = self.sea_now() {
             out.push((sea.outline.clone(), sea.islands.clone()));
         }
         out

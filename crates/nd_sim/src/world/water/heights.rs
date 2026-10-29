@@ -102,7 +102,8 @@ impl World {
         if self.landscape.is_flat() {
             return base;
         }
-        let edge = crate::landscape::LAND_HALF;
+        // [r4-tiles] Out to the edge of the land bought.
+        let edge = self.landscape.land_half();
         let mut r = base;
         for (id, s) in self.roads.alive_segments() {
             if s.is_rail() || s.fronts_nothing() {
@@ -123,7 +124,7 @@ impl World {
     /// square and 200 m round it (as it always was round `half_extent`),
     /// so every lot's pad is levelled into the ground.
     pub fn ground_half(&self) -> f32 {
-        (self.parcel_half() + 200.0).min(crate::landscape::LAND_HALF)
+        (self.parcel_half() + 200.0).min(self.landscape.land_half())
     }
 
     /// [sweep-sim] Half extent of the land-value and estate-pressure grids
@@ -134,7 +135,7 @@ impl World {
     /// grids are not resized as roads reach further out.
     pub fn grid_half(&self, cell: f32) -> f32 {
         let base = self.config.half_extent + 200.0;
-        let reach = crate::landscape::LAND_HALF;
+        let reach = self.landscape.land_half();
         if self.landscape.is_flat() || reach <= base || cell <= 0.0 {
             return base;
         }
@@ -171,7 +172,7 @@ impl World {
         let roads = &self.roads;
         // Out past the map a way to elsewhere keeps the level it had at
         // the edge: the far hills are cut and filled for it.
-        let edge = crate::landscape::LAND_HALF;
+        let edge = land.land_half();
         let mut z: Vec<f32> = roads.nodes.iter().map(|nd| land.height(nd.pos.clamp(Vec2::splat(-edge), Vec2::splat(edge))).max(floor) + nd.level).collect();
         let mut fixed: Vec<bool> = roads.nodes.iter().map(|nd| nd.level != 0.0).collect();
         let mut least = vec![f32::NEG_INFINITY; z.len()];

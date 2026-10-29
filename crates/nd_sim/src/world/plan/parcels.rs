@@ -178,6 +178,8 @@ impl World {
     /// [p1-sim] Those under a raised road's low deck or its columns are
     /// marked (`mark_under_decks`).
     fn published_parcels(&self, raw: Vec<Parcel>) -> Vec<Parcel> {
+        // [r4-tiles] Only on the city's land: none in a tile not bought.
+        let raw: Vec<Parcel> = if self.landscape.is_grown() { raw.into_iter().filter(|p| self.landscape.owns(p.center)).collect() } else { raw };
         let footprints = self.structure_footprints();
         let mut out: Vec<Parcel> = if footprints.is_empty() {
             raw
@@ -594,6 +596,9 @@ impl World {
         }
         if self.under_facility(p) || self.ports.ports.values().any(|d| point_in_polygon(p, &d.corners())) {
             return Some("a station, yard or dock takes this ground");
+        }
+        if !self.landscape.is_flat() && !self.landscape.owns(p) && crate::landscape::tile_ring(crate::landscape::tile_of(p)) <= crate::landscape::MAX_RING {
+            return Some("land the city has not bought: buy this tile first (Map, Buy land)");
         }
         let h = self.parcel_half();
         if p.x.abs() > h || p.y.abs() > h {

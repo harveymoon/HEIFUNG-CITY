@@ -43,7 +43,7 @@ impl Landscape {
         let n = (a.distance(b) / 4.0).ceil().max(1.0) as usize;
         (0..=n).all(|i| {
             let p = a.lerp(b, i as f32 / n as f32);
-            chebyshev(p) > LAND_HALF || self.is_water(p)
+            chebyshev(p) > self.land_half() || self.is_water(p)
         })
     }
 
@@ -56,11 +56,11 @@ impl Landscape {
             return vec![a, b];
         }
         const CELL: f32 = 30.0;
-        let half = LAND_HALF + 2.0 * CELL;
+        let half = self.land_half() + 2.0 * CELL;
         let n = (2.0 * half / CELL).ceil() as i32;
         let centre = |i: i32, j: i32| Vec2::new(-half + (i as f32 + 0.5) * CELL, -half + (j as f32 + 0.5) * CELL);
         let wet = self.water_cache.sea_grid(self, || {
-            let water = |p: Vec2| chebyshev(p) > LAND_HALF || self.is_water(p);
+            let water = |p: Vec2| chebyshev(p) > self.land_half() || self.is_water(p);
             // A cell is open water when its centre and all four corners are, so
             // a hop between neighbours never clips a point of land.
             let corner: Vec<bool> = (0..(n + 1) * (n + 1)).map(|k| water(Vec2::new(-half + (k % (n + 1)) as f32 * CELL, -half + (k / (n + 1)) as f32 * CELL))).collect();
@@ -231,7 +231,7 @@ impl Landscape {
     /// Everything the water routes read: the parameters and the water
     /// features, exactly (floats print round-trip).
     fn water_key(&self) -> String {
-        format!("{:?}|{:?}|{:?}|{:?}", self.params, self.rivers, self.lakes, self.sea)
+        format!("{:?}|{:?}|{:?}|{:?}|{:?}", self.params, self.rivers, self.lakes, self.sea, self.tiles)
     }
 
     /// The river graph, built once per set of water features.
@@ -265,9 +265,9 @@ impl WaterGraph {
             for (k, p) in r.points.iter().enumerate() {
                 g.nodes.push(*p);
                 g.adj.push(Vec::new());
-                let edge = p.x.abs() >= LAND_HALF - 30.0 || p.y.abs() >= LAND_HALF - 30.0;
+                let edge = p.x.abs() >= l.land_half() - 30.0 || p.y.abs() >= l.land_half() - 30.0;
                 g.exit.push(edge && (k == 0 || k + 1 == r.points.len()));
-                g.sea.push(l.sea.as_ref().is_some_and(|s| s.contains(*p)));
+                g.sea.push(l.sea_now().is_some_and(|s| s.contains(*p)));
                 if k > 0 {
                     let i = g.nodes.len() - 1;
                     g.adj[i].push(i - 1);
@@ -392,9 +392,9 @@ impl WaterGraph {
 
     /// [ferries] The nearest way out across each edge of the map.
     pub(super) fn routes_out(&self, l: &Landscape, from: Vec2) -> Vec<(MapEdge, Vec<Vec2>)> {
-        let in_sea = |p: Vec2| l.sea.as_ref().is_some_and(|s| s.contains(p));
+        let in_sea = |p: Vec2| l.sea_now().is_some_and(|s| s.contains(p));
         if in_sea(from) {
-            let Some(sea) = l.sea.as_ref() else { return Vec::new() };
+            let Some(sea) = l.sea_now() else { return Vec::new() };
             let out = sea.exit_from(from);
             return vec![(MapEdge::of(out), l.sea_way(from, out))];
         }
@@ -409,7 +409,7 @@ impl WaterGraph {
             }
             let p = self.nodes[k];
             let out = if self.sea[k] {
-                match l.sea.as_ref() {
+                match l.sea_now() {
                     Some(s) => s.exit_from(p),
                     None => continue,
                 }
@@ -450,7 +450,7 @@ impl WaterGraph {
     }
 
     pub(super) fn route(&self, l: &Landscape, from: Vec2, to: Option<Vec2>) -> Option<Vec<Vec2>> {
-        let in_sea = |p: Vec2| l.sea.as_ref().is_some_and(|s| s.contains(p));
+        let in_sea = |p: Vec2| l.sea_now().is_some_and(|s| s.contains(p));
         let lake_of = |p: Vec2| l.lakes.iter().position(|k| point_in_polygon(p, &k.outline));
         // The sea and lakes are crossed straight.
         if let Some(t) = to {
@@ -461,7 +461,7 @@ impl WaterGraph {
                 return Some(vec![from, t]);
             }
         } else if in_sea(from) {
-            return Some(l.sea_way(from, l.sea.as_ref()?.exit_from(from)));
+            return Some(l.sea_way(from, l.sea_now()?.exit_from(from)));
         }
         let start = self.nearest(l, from);
         let mut out = vec![from];
@@ -485,7 +485,7 @@ impl WaterGraph {
                 let last = *path.last()?;
                 if self.sea[last] {
                     let p = self.nodes[last];
-                    out.extend(l.sea_way(p, l.sea.as_ref()?.exit_from(p)).into_iter().skip(1));
+                    out.extend(l.sea_way(p, l.sea_now()?.exit_from(p)).into_iter().skip(1));
                 } else {
                     // Carry on past the edge.
                     let p = self.nodes[last];

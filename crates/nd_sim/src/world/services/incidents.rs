@@ -116,7 +116,7 @@ impl World {
         // a crash is the next town's business: their police and ambulances
         // take it, and it is never a call of ours. The hurt are patched up
         // and go on; the wreck is towed in its own time.
-        if at.x.abs().max(at.y.abs()) > crate::landscape::MAP_EDGE {
+        if self.landscape.beyond_map_edge(at, 0.0) {
             let tick = self.clock.tick;
             for &p in injured {
                 if let Some(c) = self.citizens.get_mut(p) {
