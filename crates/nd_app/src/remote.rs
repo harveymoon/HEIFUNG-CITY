@@ -16,6 +16,8 @@
 
 // The plumbing: the HTTP thread, the bundle commands run against, the
 // dispatcher and its help.
+/// [sound] The mixer, the beds' readout, WAV captures.
+mod audio;
 mod ctx;
 mod dispatch;
 mod events;

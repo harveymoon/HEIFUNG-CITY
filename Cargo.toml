@@ -12,6 +12,7 @@ repository = ""
 nd_sim = { path = "crates/nd_sim" }
 nd_procgen = { path = "crates/nd_procgen" }
 nd_minds = { path = "crates/nd_minds" }
+nd_audio = { path = "crates/nd_audio" }
 
 serde = { version = "1", features = ["derive"] }
 ron = "0.12"

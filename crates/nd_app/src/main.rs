@@ -3,6 +3,8 @@
 
 mod air_select;
 mod assets;
+/// [sound] The synthesised sound: the mixer, UI cues, the ambience beds.
+mod audio;
 /// [overlay] What is drawn over the city: the selection, previews, highlights.
 mod overlay;
 /// [build-highlight] A Build window section's buildings and service areas on the map.
@@ -74,7 +76,9 @@ fn main() {
     crash::install();
     App::new()
         .insert_resource(ClearColor(Color::linear_rgb(0.02, 0.018, 0.028)))
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
+        // [sound] Bevy's own audio is not used (`nd_audio` synthesises
+        // everything); left in, it would hold a second, idle output stream.
+        .add_plugins(DefaultPlugins.build().disable::<bevy::audio::AudioPlugin>().set(WindowPlugin {
             primary_window: Some(Window {
                 title: "HEIFUNG://CITY".into(),
                 // `ND_WINDOW=1268x900` for another starting size (UI layout checks).
@@ -129,7 +133,7 @@ struct PlayerPlugins;
 
 impl PluginGroup for PlayerPlugins {
     fn build(self) -> PluginGroupBuilder {
-        PluginGroupBuilder::start::<Self>().add(tools::ToolsPlugin).add(ui::UiPlugin).add(district_tool::DistrictToolPlugin).add(committee::CommitteePlugin).add(viewer::ViewerPlugin)
+        PluginGroupBuilder::start::<Self>().add(tools::ToolsPlugin).add(ui::UiPlugin).add(district_tool::DistrictToolPlugin).add(committee::CommitteePlugin).add(viewer::ViewerPlugin).add(audio::SoundPlugin)
     }
 }
 
