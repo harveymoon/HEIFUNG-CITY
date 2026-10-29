@@ -316,7 +316,10 @@ impl World {
         let others: Vec<BuildingId> = self.ports.ports.iter().filter(|(oid, o)| *oid != pid && o.kind.is_ferry() && o.sails()).filter_map(|(_, o)| o.building).collect();
         let has = |to: LineEnd| net.find(b, to).is_some();
         let free = self.ferry_free_at(b);
-        let mut t = Self::dispatch_tick(Self::in_service((port.last_sailing + ports::FERRY_HEADWAY).max(self.clock.tick).max(free)));
+        // [r4-timetable] On the terminal's own timetable when it has one.
+        let open = |t: u64| if port.timetable.is_some() { port.schedule().next_running(t, crate::timetable::Kind::Ferry) } else { Self::in_service(t) };
+        let gap = |t: u64| port.ferry_headway_at((t % 1440) as u32).unwrap_or(ports::FERRY_HEADWAY);
+        let mut t = Self::dispatch_tick(open((port.last_sailing + gap(port.last_sailing)).max(self.clock.tick).max(free)));
         let mut out = Vec::new();
         for k in 0..turns {
             let turn = port.sailings as usize + k as usize;
@@ -333,7 +336,7 @@ impl World {
             if let Some(d) = dest {
                 out.push((t, d));
             }
-            t = Self::dispatch_tick(Self::in_service(t + ports::FERRY_HEADWAY));
+            t = Self::dispatch_tick(open(t + gap(t)));
         }
         out
     }

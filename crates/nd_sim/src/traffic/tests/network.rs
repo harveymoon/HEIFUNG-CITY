@@ -147,7 +147,7 @@ fn turning_cars_stay_in_their_lane_through_a_junction() {
         t.rebuild(&roads);
         let car = send(&mut t, &roads, from, to);
         if bus {
-            t.cars[car].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 0, passengers: Vec::new(), to_depot: false, depot: BuildingId::default() });
+            t.cars[car].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 0, passengers: Vec::new(), to_depot: false, retiring: false, depot: BuildingId::default() });
         }
         let (drawn, blend, arrived) = turn_drawn(&mut t, car);
         assert!(arrived, "the car got through");

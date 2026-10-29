@@ -134,6 +134,8 @@ impl World {
         crate::prof!("daily_services", self.daily_services());
         // [subway] Upkeep before the books close.
         crate::prof!("daily_subway", self.daily_subway());
+        // [r4-timetable] Extra runs paid for, then the timelines roll.
+        crate::prof!("daily_timetables", self.daily_timetables());
         // [events] Roads wear and the crews resurface, before the books close.
         crate::prof!("daily_roads", self.daily_roads());
         // [road-inspect] Each piece's wear a day and its repairs, read off.

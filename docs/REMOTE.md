@@ -798,6 +798,61 @@ can refuse a click.
 {"cmd": "metro_line", "cancel": true}
 ```
 
+### Timetables and the day on each line [r4-timetable]
+
+`timetable {action, line?, ...}` (also `timetables`, `schedule`; `nd_app/src/remote/timetable.rs`)
+reads and sets each line's timetable and returns its day hour by hour. The Lines window shows the
+same: under every open bus and metro line, and for the passenger trains and each ferry terminal, a
+24-hour chart (riders boarding each hour, today filled, yesterday outlined; riders waiting and on
+board, averaged over quarter-hour samples) over the timetable's parts, with the part edges to drag
+and a dial per part. City Data, Transit, has the chart for any line ("A day on each line").
+
+A line is `line: {"bus": id}`, `{"metro": id}`, `"rail"` (the railway's one passenger service) or
+`{"ferry": id}` (a ferry terminal's building id), or `kind` (`bus | metro | rail | ferry`) and `id`.
+
+A timetable is the service hours (`start`..`end`; `end` up to `"24:00"`), a morning and an evening
+rush inside them, and an optional night service through the hours outside. The day falls in five
+parts: `morning_rush`, `day` (before the morning rush and between the rushes), `evening_rush`,
+`evening` (after the evening rush to the end) and `night`. Each part has a value: buses out for a
+bus line (extra buses leave the depot as a busier part starts; a bus no longer wanted takes nobody
+on, lets its riders off at their stops and goes home), minutes between departures for the metro,
+the trains and the ferries. A line with no timetable of its own runs the standard: its kind's old
+hours and one frequency all day (buses 05:30–23:30, the metro 05:00–24:00, trains 05:00–23:00,
+ferries 06:00–22:00), so an older save runs as it did. Presets scale from the line's day value:
+`commuter` (twice as often in the rushes, a third less in the evening), `all_day` (the standard
+hours, one value), `24h` (round the clock), `night_owl` (the evening as busy as the day and a
+sparse night service). Running costs follow the runs: buses per bus-minute, the metro per run;
+trains and ferries pay their stations' and terminals' upkeep for the standard timetable and
+`RAIL_RUN_COST` (60) a train, `FERRY_RUN_COST` (40) a sailing beyond it. Riders only choose a line
+that will still run when they reach the stop or platform (for the metro: a train still due at
+their station, within a headway), and riders still waiting give up only once their line's own
+service has ended (`transit::service_over` on its hours, plus `LAST_RUN_GRACE`).
+
+| action | does |
+| --- | --- |
+| `list` (default) | `default` (the city's timetable for new lines), `presets`, `lines`: every line's `{line, name, timetable, now}` |
+| `get` (also `timeline`) | one line: `timetable`, `now` (the part running now) and `timeline` {today, yesterday: {boarded, mean_wait_min, missed, runs, by_part [{part, boarded, mean_wait_min}], hours [{hour, boarded, mean_wait_min, waiting, riding, runs, missed}]}} |
+| `set` | change the line's timetable: `start`, `end`, `am_rush` [from, to], `pm_rush`, `night` (bool), `values` ({part: n} or five numbers), or `part` + `value`; `standard: true` goes back to the standard. Values are clamped (buses 0..10; metro 4..60 min; trains and ferries 30..240 min); edges are kept in order inside the hours |
+| `preset` | `preset: commuter | all_day | 24h | night_owl | standard` |
+| `default` | `preset` for new lines (`standard` for none); `apply: true` gives every line it too |
+
+A `timetable` reply: kind, custom, preset (or null for an edited one), hours ("05:00–24:00", "24
+hours", "... and a night service"), start, end, am_rush, pm_rush, night, unit, parts [{part, value,
+text, runs, spans}], departures_per_day (one way) or bus_minutes_per_day. Times are "HH:MM"; `set`
+takes "HH:MM" or minutes of the day. `runs` in the timeline counts departures (both directions for
+the metro); for a bus line it is buses out summed over the quarter-hour samples. Ferry riders turn
+up at the pier untimed, so a ferry's waits are null.
+
+```json
+{"cmd": "timetable"}
+{"cmd": "timetable", "action": "get", "line": {"metro": "1:1"}}
+{"cmd": "timetable", "action": "preset", "line": {"bus": "3:1"}, "preset": "commuter"}
+{"cmd": "timetable", "action": "set", "line": {"metro": "1:1"}, "values": {"morning_rush": 6, "evening_rush": 6}, "night": true}
+{"cmd": "timetable", "action": "set", "kind": "rail", "start": "06:00", "end": "24:00", "values": {"day": 90}}
+{"cmd": "timetable", "action": "set", "line": {"ferry": "40:2"}, "standard": true}
+{"cmd": "timetable", "action": "default", "preset": "night_owl", "apply": true}
+```
+
 ### Finding and inspecting
 
 `find {what, near?, radius?, filter?, limit?}`, with `what` one of citizens, buildings, lots, cars,

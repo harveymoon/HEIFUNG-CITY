@@ -22,6 +22,7 @@ use crate::landscape::{Landscape, MapEdge, WaterKind};
 use crate::traffic::Cargo;
 use crate::zoning::LotId;
 use glam::Vec2;
+use crate::timetable::{Kind, Timeline, Timetable};
 use serde::{Deserialize, Serialize};
 use slotmap::new_key_type;
 
@@ -350,6 +351,14 @@ pub struct Port {
     /// the first count (an older save): every berth drawn taken.
     #[serde(default)]
     pub moored: Option<Moored>,
+    /// [r4-timetable] A ferry terminal's sailing hours and headway part by
+    /// part; `None` sails every `FERRY_HEADWAY` from 06:00 to 22:00
+    /// (`Port::schedule`).
+    #[serde(default)]
+    pub timetable: Option<Timetable>,
+    /// [r4-timetable] A ferry terminal's day hour by hour.
+    #[serde(default)]
+    pub timeline: Timeline,
 }
 
 /// [pt-visual] See [`Port::moored`].
@@ -366,6 +375,21 @@ impl Port {
     /// [dock-access] Ships sail from it: a ferry terminal runs its boats on
     /// the water alone (carrying no one until people can reach it); a
     /// port, marina or fishing port needs the roads for what it lands.
+    /// [r4-timetable] A ferry terminal's timetable: its own, else a boat
+    /// every `FERRY_HEADWAY` through the standard hours.
+    pub fn schedule(&self) -> Timetable {
+        self.timetable.unwrap_or_else(|| Timetable::flat(Kind::Ferry, FERRY_HEADWAY as u32))
+    }
+
+    /// [r4-timetable] Minutes between sailings at minute `m` of the day,
+    /// `None` while the boats do not sail.
+    pub fn ferry_headway_at(&self, m: u32) -> Option<u64> {
+        match &self.timetable {
+            Some(t) => t.value_at(m).map(u64::from),
+            None => (FERRY_SERVICE_START..FERRY_SERVICE_END).contains(&(m % 1440)).then_some(FERRY_HEADWAY),
+        }
+    }
+
     pub fn sails(&self) -> bool {
         match self.kind {
             PortKind::FerryTerminal | PortKind::FerryTerminalLarge => true,
@@ -463,7 +487,7 @@ impl Port {
         let root = shore.point - seaward * (back + 1.0);
         let tip = shore.point + seaward * reach;
         let berth = shore.point + seaward * (reach + if matches!(kind, PortKind::ShippingPort | PortKind::FishingPortLarge) { 9.0 } else { 5.0 }).min(if w.width.is_finite() { w.width * 0.5 } else { f32::MAX });
-        let port = Port { kind, center, along, seaward, pier: [root, tip], berth, water: w.kind, building: None, lot: None, road_connected: false, walk_connected: false, reaches_elsewhere: false, last_sailing: 0, remote: Vec::new(), sailings: 0, stub: None, moored: None };
+        let port = Port { kind, center, along, seaward, pier: [root, tip], berth, water: w.kind, building: None, lot: None, road_connected: false, walk_connected: false, reaches_elsewhere: false, last_sailing: 0, remote: Vec::new(), sailings: 0, stub: None, moored: None, timetable: None, timeline: Timeline::default() };
         for c in port.corners().iter().chain(std::iter::once(&center)) {
             if land.is_water(*c) {
                 return Err("the shore is too ragged here: part of the dock would stand in the water".into());
