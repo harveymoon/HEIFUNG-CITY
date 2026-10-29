@@ -59,6 +59,11 @@ pub struct Lane {
     /// `crate::road_wear`): set by the world after every rebuild and each
     /// night. Drivers keep under the limit (`limit_at`) and misjudge more.
     pub rough: f32,
+    /// [r4-hillside] How steeply the lane climbs, rise over run along its
+    /// direction (negative downhill), set by the world from the road
+    /// heights (`World::apply_road_wear`): drivers slow on a steep street
+    /// (`climb_factor`).
+    pub climb: f32,
     /// [r2-traffic] A connector turning back the way it came at a
     /// junction (not a dead end): the U-turn from the left-turn lane of a
     /// wide street at a signalled junction, driven as a left turn on the
@@ -97,7 +102,7 @@ impl Lane {
             cum.push(cum.last().unwrap() + w[0].distance(w[1]));
         }
         let length = *cum.last().unwrap();
-        Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, limit_end: speed_limit, highway: false, ramp: false, end_node, left: None, right: None, prev: Vec::new(), turn: 0, arrows: 0, permitted: true, approach: u32::MAX, red_for: 0.0, blocked: false, rail_closed: false, toll: None, rough: 0.0, uturn: false, turnaround: false }
+        Self { points, cum, length, next: Vec::new(), kind, cars: Vec::new(), green: true, speed_limit, limit_end: speed_limit, highway: false, ramp: false, end_node, left: None, right: None, prev: Vec::new(), turn: 0, arrows: 0, permitted: true, approach: u32::MAX, red_for: 0.0, blocked: false, rail_closed: false, toll: None, rough: 0.0, climb: 0.0, uturn: false, turnaround: false }
     }
 
     pub fn is_connector(&self) -> bool {
@@ -113,6 +118,12 @@ impl Lane {
         }
         let t = (s / self.length).clamp(0.0, 1.0);
         (self.speed_limit + (self.limit_end - self.speed_limit) * t) * rough
+    }
+
+    /// [r4-hillside] The share of the limit a driver keeps on this lane
+    /// (`climb_factor`).
+    pub fn climb_share(&self, heavy: bool) -> f32 {
+        climb_factor(self.climb, heavy)
     }
 
     /// Set one limit for the whole lane.
@@ -269,4 +280,29 @@ pub(super) fn connector_curve(p_in: Vec2, d_in: Vec2, p_out: Vec2, d_out: Vec2, 
     // A U-turn or a bend whose lanes meet outside the junction.
     let h = if cos < -0.9 { (dist * 0.7).max(2.0) } else { dist * 0.4 };
     cubic_join(p_in, d_in, p_out, d_out, h, 12)
+}
+
+/// [r4-hillside] Climbs gentler than this are driven at the limit by a car
+/// (a bus or a lorry: `CLIMB_EASY_HEAVY`): a town street's ordinary 5-7%
+/// is driven as the flat.
+pub const CLIMB_EASY: f32 = 0.08;
+/// [r4-hillside] The same for a bus or a lorry.
+pub const CLIMB_EASY_HEAVY: f32 = 0.06;
+/// [r4-hillside] Descents gentler than this are driven at the limit.
+pub const DESCENT_EASY: f32 = 0.10;
+
+/// [r4-hillside] The share of the speed limit driven on a lane climbing
+/// `climb` (rise over run, negative downhill): a car slows on a climb past
+/// 8% (to about 60% of the limit up a 25% street), a bus or a lorry past
+/// 6% and more (about 45%), and everyone brakes down a descent steeper
+/// than 10%.
+pub fn climb_factor(climb: f32, heavy: bool) -> f32 {
+    let (easy, k, least) = if heavy { (CLIMB_EASY_HEAVY, 2.9, 0.35) } else { (CLIMB_EASY, 2.3, 0.5) };
+    if climb > easy {
+        (1.0 - (climb - easy) * k).max(least)
+    } else if climb < -DESCENT_EASY {
+        (1.0 - (-climb - DESCENT_EASY) * 1.3).max(0.65)
+    } else {
+        1.0
+    }
 }

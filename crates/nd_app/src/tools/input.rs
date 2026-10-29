@@ -242,7 +242,10 @@ pub(crate) fn tool_input(
             (Some(down), Some(up)) => down.distance(up) < 6.0,
             _ => false,
         };
-    let finish = (map_key(KeyCode::Enter) && !ctrl) || right_click;
+    // [r4-hillside] X (or the Road pane's button) lays the zig-zag offered
+    // for a leg too steep for its kind.
+    let zigzag = tools.tool == Tool::Road && !ctrl && (key(KeyCode::KeyX) || std::mem::take(&mut tools.switchback_asked)) && tools.take_switchback();
+    let finish = (map_key(KeyCode::Enter) && !ctrl) || right_click || zigzag;
     let right_down = buttons.just_pressed(MouseButton::Right) && !flags.pointer_over_ui;
     let click = buttons.just_pressed(MouseButton::Left) && !shift && !flags.pointer_over_ui;
     let shift_click = buttons.just_pressed(MouseButton::Left) && shift && !flags.pointer_over_ui;

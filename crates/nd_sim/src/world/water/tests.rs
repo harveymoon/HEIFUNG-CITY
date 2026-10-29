@@ -55,7 +55,9 @@ fn no_lots_on_water_and_bridges_where_roads_cross_it() {
     for (id, s) in w.roads.alive_segments().filter(|(_, s)| s.is_street()) {
         let (pa, pb) = w.roads.segment_points(id);
         let dz = (w.road_z[s.a.0 as usize] - w.road_z[s.b.0 as usize]).abs();
-        assert!(dz <= pa.distance(pb) * STREET_GRADE + 0.05, "grade on {id:?}");
+        // [r4-hillside] Each within its own grade (a local street on the
+        // land climbs to `LOCAL_STREET_GRADE`, a deck's approach 7%).
+        assert!(dz <= pa.distance(pb) * super::segment_grade(&w.roads, s) + 0.05, "grade on {id:?}");
     }
     let zone = vec![p + n * 150.0 - flow * 120.0, p + n * 150.0 + flow * 120.0, p - n * 150.0 + flow * 120.0, p - n * 150.0 - flow * 120.0];
     w.add_zone(zone, LandUse::Residential);

@@ -200,6 +200,14 @@ fn by_rows<T: Send + Clone>(n: usize, f: impl Fn(usize, usize) -> T + Sync) -> V
     parts.concat()
 }
 
+/// [r4-hillside] The terrain's colour at a point and height (as the
+/// ground mesh paints it, without the fine variation), for ground drawn
+/// over it (`works::bench_skins`).
+pub(super) fn land_colourer<'a>(world: &'a World, palette: &Palette) -> impl Fn(Vec2, f32) -> [f32; 3] + 'a {
+    let colours = LandColours::new(world, palette);
+    move |p: Vec2, h: f32| colours.rgb(GroundSpot { v: 0.0, d: world.landscape.water_distance(p), hot: None }, h)
+}
+
 /// The landscape's colours: ground and hills from the palette, the shore
 /// and the hot ground from the climate's row.
 struct LandColours {
@@ -421,7 +429,14 @@ fn keep_under_streets(world: &World, cell: f32, n: usize, heights: &mut [f32]) {
     let reach = cell * std::f32::consts::SQRT_2;
     let index = |v: f32| (((v + half) / cell).floor().max(0.0) as usize).min(n - 1);
     for (sid, s) in roads.alive_segments() {
-        if !s.is_street() || s.bridge || s.viaduct || s.tunnel || roads.node(s.a).level < 0.0 || roads.node(s.b).level < 0.0 {
+        if s.bridge || s.viaduct || s.tunnel || roads.node(s.a).level < 0.0 || roads.node(s.b).level < 0.0 || s.is_rail() {
+            continue;
+        }
+        // [r4-hillside] A path is kept under only where it stands in a
+        // bench on a hillside: there the land beside it is steep enough to
+        // poke up through its edge between the terrain's vertices.
+        let hold = nd_sim::landscape::earthwork_hold(&world.landscape, roads, &world.road_z, &world.road_inner, sid);
+        if !s.is_street() && hold != Some(nd_sim::landscape::Hold::Bench) {
             continue;
         }
         let (a, b) = roads.segment_points(sid);
@@ -429,8 +444,10 @@ fn keep_under_streets(world: &World, cell: f32, n: usize, heights: &mut [f32]) {
         // holds only its band: the vertices past the wall stay the land the
         // wall holds back (pulled down, they sank the grass beside it and
         // left the wall standing proud, F11).
-        let held = nd_sim::landscape::earthwork_hold(&world.landscape, roads, &world.road_z, &world.road_inner, sid).is_some();
-        let r = if held { nd_sim::landscape::earthwork_band(s).1 } else { s.half_width() + reach };
+        let r = match hold {
+            Some(h) => nd_sim::landscape::held_band(s, h).1,
+            None => s.half_width() + reach,
+        };
         let (lo, hi) = (a.min(b) - Vec2::splat(r), a.max(b) + Vec2::splat(r));
         for j in index(lo.y)..=(index(hi.y) + 1).min(n - 1) {
             for i in index(lo.x)..=(index(hi.x) + 1).min(n - 1) {

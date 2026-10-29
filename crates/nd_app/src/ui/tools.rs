@@ -193,6 +193,13 @@ fn road(ui: &mut egui::Ui, tools: &mut ToolState) {
     for w in &tools.grade_warnings {
         ui.label(egui::RichText::new(format!("! {w}")).color(WARN).small());
     }
+    // [r4-hillside] The zig-zag up a slope too steep for the road.
+    if let Some(z) = &tools.switchback {
+        let legs = z.len() - 1;
+        if ui.button(format!("Zig-zag up the slope ({legs} legs) [X]")).on_hover_text("Lay the road as a switchback: legs across the slope, each within this kind's grade (local street 25%, avenue 11%, highway 7%, path 60%), with hairpins between them.").clicked() {
+            tools.switchback_asked = true;
+        }
+    }
     match tools.kind {
         RoadKind::Path => hint(ui, help::ROAD_PATH),
         RoadKind::Rail => hint(ui, help::ROAD_RAIL),
@@ -288,6 +295,11 @@ fn zone(ui: &mut egui::Ui, sim: &Sim, tools: &mut ToolState, assets: &GameAssets
         let water = if p.water_frontage >= nd_sim::zoning::LotShore::MIN_FRONTAGE { format!(" · waterfront {:.0} m", p.water_frontage) } else { String::new() };
         // [hillside] Steep ground, terraced: not for works or civic grounds.
         let water = if p.hillside { format!("{water} · steep hillside (terraced homes, shops, clubs)") } else { water };
+        // [r4-hillside] How steep, and what that allows.
+        let water = match tools.hover_parcel.and_then(|i| sim.world.parcel_ground_note(i)) {
+            Some(note) => format!("{water} · {note}"),
+            None => water,
+        };
         let verdict = if tools.unzone {
             String::new()
         } else if tools.painting_beach() {

@@ -342,6 +342,51 @@ impl Landscape {
         LotGround::Level
     }
 
+    /// [r4-hillside] How steep a lot's ground is and what that allows, in
+    /// plain words with the numbers (for the Zone tool's hover and the
+    /// API), or None on ground level enough to grade: the slope and rise
+    /// across it against the limits for graded lots (`MAX_GRADED_SLOPE`,
+    /// `MAX_LOT_RELIEF`) and terraces (`MAX_TERRACE_SLOPE`,
+    /// `MAX_TERRACE_RELIEF`).
+    pub fn lot_ground_detail(&self, polygon: &[Vec2], center: Vec2) -> Option<String> {
+        if self.is_flat() || self.is_water(center) {
+            return None;
+        }
+        let n = polygon.len();
+        let mut pts: Vec<Vec2> = Vec::with_capacity(n * 2 + 1);
+        for k in 0..n {
+            pts.push(polygon[k]);
+            pts.push(polygon[k].lerp(polygon[(k + 1) % n], 0.5));
+        }
+        pts.push(center);
+        let slope = self.slope_over(&pts);
+        let (lo, hi) = pts.iter().map(|p| self.height(*p)).fold((f32::MAX, f32::MIN), |(lo, hi), h| (lo.min(h), hi.max(h)));
+        let rise = hi - lo;
+        let pc = |x: f32| (x * 100.0).round();
+        if slope > MAX_TERRACE_SLOPE {
+            Some(format!(
+                "the ground here climbs {:.0}% (over {:.0} m across the plot): terraces go up to {:.0}%; a path with stairs still climbs it",
+                pc(slope),
+                rise,
+                pc(MAX_TERRACE_SLOPE)
+            ))
+        } else if rise > MAX_TERRACE_RELIEF {
+            Some(format!(
+                "the ground falls {rise:.0} m across this plot ({:.0}%): a terrace takes at most {MAX_TERRACE_RELIEF:.0} m; streets closer together along the slope cut shallower plots that fit",
+                pc(slope)
+            ))
+        } else if slope > MAX_GRADED_SLOPE || rise > MAX_LOT_RELIEF {
+            Some(format!(
+                "a hillside: the ground climbs {:.0}% ({rise:.0} m across the plot); terraced homes, shops and clubs go up to {:.0}% and {MAX_TERRACE_RELIEF:.0} m, works yards, offices and civic grounds need under {:.0}% and {MAX_LOT_RELIEF:.0} m",
+                pc(slope),
+                pc(MAX_TERRACE_SLOPE),
+                pc(MAX_GRADED_SLOPE)
+            ))
+        } else {
+            None
+        }
+    }
+
     /// Steepest rise over run between any two of `pts`.
     pub fn slope_over(&self, pts: &[Vec2]) -> f32 {
         let hs: Vec<f32> = pts.iter().map(|p| self.height(*p)).collect();

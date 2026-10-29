@@ -290,6 +290,7 @@ pub fn sync_draw_hologram(
     despawn_all(&mut commands, &existing);
     let Some((ctrl, ctrl_levels)) = drawn else {
         tools.grade_warnings.clear();
+        tools.switchback = None;
         tools.pillars = Default::default();
         return;
     };
@@ -332,6 +333,9 @@ pub fn sync_draw_hologram(
         return;
     }
     tools.grade_warnings = w.road_grade_warnings(&ctrl, &ctrl_levels, kind, f, b);
+    // [r4-hillside] One leg on the ground, too steep for its kind: a
+    // zig-zag up the slope is offered (X).
+    tools.switchback = if ctrl.len() == 2 && ctrl_levels.iter().all(|l| *l == 0.0) && !tools.curved && !tools.circle { w.switchback(ctrl[0], ctrl[1], kind, f, b) } else { None };
     // [pt-visual] A curved road bends through its points: no sharp corners.
     let curved = tools.curved || tools.circle;
     if curved {

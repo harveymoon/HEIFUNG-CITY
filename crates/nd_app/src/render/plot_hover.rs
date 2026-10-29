@@ -131,7 +131,11 @@ pub fn hover_site(w: &World, tools: &ToolState, p: SVec2) -> Option<HoverSite> {
             };
             let parcel = w.parcels.parcels.get(i)?;
             let verdict = match w.parcel_refusal(i, Some(lu)) {
-                Some(why) => Err(why.to_string()),
+                // [r4-hillside] Steep ground: how steep, and what is allowed.
+                Some(why) => Err(match w.parcel_ground_note(i) {
+                    Some(note) => format!("{why} ({note})"),
+                    None => why.to_string(),
+                }),
                 None => Ok(format!("{} zoning", lu.label())),
             };
             let warning = if verdict.is_ok() { dirt_warning(w, nd_sim::geom::polygon_centroid(&parcel.polygon), lu) } else { None };

@@ -246,50 +246,162 @@ pub(super) fn footpath(g: &mut Geometry, pal: &Palette, roads: &RoadNetwork, run
 
 /// [pt-walk] A path steeper than this is drawn as a flight of steps.
 pub const STAIRS_FROM: f32 = 0.12;
+/// [r4-hillside] A flight carries on over a stretch this gentle (a
+/// landing) rather than stopping and starting at every bend in the slope.
+pub const STAIRS_UNTIL: f32 = 0.08;
 /// Rise of one step of a path's stairs.
 pub const STAIR_RISE: f32 = 0.17;
+/// [r4-hillside] Flights rising more than this get a handrail each side.
+pub const HANDRAIL_FROM: f32 = 1.2;
 
 /// [pt-walk] Steps on the steep stretches of a path drawn along `pts`
 /// (the geometry is set on the run's profile afterwards, `height` being
 /// that profile): each step a flat tread at the height of its upper edge
 /// and a riser at its lower, set on the sloping paving, so the flight
 /// reads as stairs however the slope runs.
+///
+/// [r4-hillside] The flights follow the real slope, not the legs of the
+/// polyline: the path is walked in half-metre pieces, a flight starts where
+/// the ground climbs `STAIRS_FROM` and runs on until it eases under
+/// `STAIRS_UNTIL`, and a riser stands wherever the profile has climbed
+/// another `STAIR_RISE`. Steps were laid leg by leg (every 6 m on a
+/// hillside path) as an even count per leg: a leg just under the grade had
+/// none between two that had, and every rounding showed as a lurch in the
+/// treads (Harvey's "really weird stairs"). Long flights get handrails.
 pub(super) fn stairs(g: &mut Geometry, pal: &Palette, pts: &[Vec2], height: impl Fn(Vec2) -> f32) {
+    const PIECE: f32 = 0.5;
     let col = rgba(mul(pal.concrete(0), 1.05));
+    let riser_c = rgba(mul(pal.concrete(0), 0.85));
+    let side_c = rgba(mul(pal.concrete(0), 0.9));
+    let rail_c = rgba(mul(pal.steel, 0.55));
     let half = PATH_HALF_WIDTH - 0.05;
+    // The path as a list of (point, direction, distance along).
+    let mut at: Vec<(Vec2, Vec2)> = Vec::new();
     for w in pts.windows(2) {
         let (a, b) = (w[0], w[1]);
         let len = a.distance(b);
-        if len < 0.3 {
-            continue;
-        }
-        let (ha, hb) = (height(a), height(b));
-        let grade = (hb - ha).abs() / len;
-        if grade < STAIRS_FROM {
+        if len < 1e-3 {
             continue;
         }
         let d = (b - a) / len;
+        let n = (len / PIECE).ceil().max(1.0) as usize;
+        for k in 0..n {
+            at.push((a + d * (len * k as f32 / n as f32), d));
+        }
+    }
+    if let Some(&last) = pts.last() {
+        let d = at.last().map(|x| x.1).unwrap_or(Vec2::X);
+        at.push((last, d));
+    }
+    if at.len() < 3 {
+        return;
+    }
+    let hs: Vec<f32> = at.iter().map(|(p, _)| height(*p)).collect();
+    let n = at.len();
+    // Grade round each piece, over a couple of metres.
+    let grade = |k: usize| {
+        let (k0, k1) = (k.saturating_sub(2), (k + 2).min(n - 1));
+        let run: f32 = (k0..k1).map(|i| at[i].0.distance(at[i + 1].0)).sum();
+        if run < 1e-3 { 0.0 } else { (hs[k1] - hs[k0]).abs() / run }
+    };
+    let grades: Vec<f32> = (0..n - 1).map(grade).collect();
+    let mut k = 0;
+    while k < n - 1 {
+        if grades[k] < STAIRS_FROM {
+            k += 1;
+            continue;
+        }
+        let start = k;
+        while k < n - 1 && grades[k] >= STAIRS_UNTIL {
+            k += 1;
+        }
+        flight(g, &at[start..=k], &hs[start..=k], &height, half, col, riser_c, side_c, rail_c);
+    }
+}
+
+/// One flight of steps over the pieces `at` (heights `hs`): a riser
+/// wherever the profile crosses another `STAIR_RISE` from the flight's
+/// lowest point, each tread level at the higher of its two edges.
+#[allow(clippy::too_many_arguments)]
+fn flight(g: &mut Geometry, at: &[(Vec2, Vec2)], hs: &[f32], height: &impl Fn(Vec2) -> f32, half: f32, col: [f32; 4], riser_c: [f32; 4], side_c: [f32; 4], rail_c: [f32; 4]) {
+    let n = at.len();
+    if n < 2 {
+        return;
+    }
+    let base = hs.iter().copied().fold(f32::INFINITY, f32::min);
+    let top = hs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    if top - base < STAIR_RISE * 0.75 {
+        return;
+    }
+    let level = |h: f32| ((h - base) / STAIR_RISE).floor() as i32;
+    // The step edges: where the profile crosses a level, as a point and
+    // its direction along the path.
+    let mut edges: Vec<(Vec2, Vec2)> = vec![at[0]];
+    for i in 0..n - 1 {
+        let (l0, l1) = (level(hs[i]), level(hs[i + 1]));
+        if l0 == l1 {
+            continue;
+        }
+        let (lo, hi) = (l0.min(l1), l0.max(l1));
+        for l in lo + 1..=hi {
+            let h = base + l as f32 * STAIR_RISE;
+            let f = ((h - hs[i]) / (hs[i + 1] - hs[i])).clamp(0.0, 1.0);
+            let p = at[i].0.lerp(at[i + 1].0, f);
+            // Treads shorter than a foot merge into the next step.
+            if edges.last().is_some_and(|e| e.0.distance(p) < 0.28) {
+                continue;
+            }
+            edges.push((p, at[i].1));
+        }
+    }
+    let end = at[n - 1];
+    if edges.last().is_some_and(|e| e.0.distance(end.0) < 0.28) {
+        edges.pop();
+    }
+    edges.push(end);
+    let v = |p: Vec2, abs: f32| Vec3::new(p.x, ASPHALT_Y + 0.02 + abs - height(p), p.y);
+    for w in edges.windows(2) {
+        let ((p0, d), (p1, _)) = (w[0], w[1]);
         let right = Vec2::new(-d.y, d.x);
-        let steps = ((hb - ha).abs() / STAIR_RISE).round().max(1.0) as usize;
-        let tread = len / steps as f32;
-        for k in 0..steps {
-            let (p0, p1) = (a + d * (tread * k as f32), a + d * (tread * (k + 1) as f32));
-            // The top is level at the higher edge's height; the riser
-            // stands at the lower edge.
-            let (lo, hi) = if hb > ha { (p0, p1) } else { (p1, p0) };
-            let top = height(hi);
-            // Heights relative to the profile, which lifts every vertex
-            // by its own height later.
-            let v = |p: Vec2, abs: f32| Vec3::new(p.x, ASPHALT_Y + 0.02 + abs - height(p), p.y);
-            let (l0, r0, l1, r1) = (lo + right * half, lo - right * half, hi + right * half, hi - right * half);
-            let up = Vec3::Y;
-            g.part(Concrete).quad_facing([v(l0, top), v(l1, top), v(r1, top), v(r0, top)], up, col);
-            let back = Vec3::new(lo.x - hi.x, 0.0, lo.y - hi.y).normalize_or_zero();
-            g.part(Concrete).quad_facing([v(l0, height(lo)), v(r0, height(lo)), v(r0, top), v(l0, top)], back, rgba(mul(pal.concrete(0), 0.85)));
-            for (e0, e1, n) in [(l0, l1, Vec3::new(right.x, 0.0, right.y)), (r0, r1, Vec3::new(-right.x, 0.0, -right.y))] {
-                g.part(Concrete).quad_facing([v(e0, height(e0)), v(e1, height(e1)), v(e1, top), v(e0, top)], n, rgba(mul(pal.concrete(0), 0.9)));
+        let (h0, h1) = (height(p0), height(p1));
+        let (lo, hi) = if h1 > h0 { (p0, p1) } else { (p1, p0) };
+        let top = h0.max(h1);
+        let (l0, r0, l1, r1) = (lo + right * half, lo - right * half, hi + right * half, hi - right * half);
+        g.part(Concrete).quad_facing([v(l0, top), v(l1, top), v(r1, top), v(r0, top)], Vec3::Y, col);
+        let back = Vec3::new(lo.x - hi.x, 0.0, lo.y - hi.y).normalize_or_zero();
+        g.part(Concrete).quad_facing([v(l0, height(lo)), v(r0, height(lo)), v(r0, top), v(l0, top)], back, riser_c);
+        for (e0, e1, nrm) in [(l0, l1, Vec3::new(right.x, 0.0, right.y)), (r0, r1, Vec3::new(-right.x, 0.0, -right.y))] {
+            g.part(Concrete).quad_facing([v(e0, height(e0)), v(e1, height(e1)), v(e1, top), v(e0, top)], nrm, side_c);
+        }
+    }
+    // [r4-hillside] Handrails on a long flight: a steel rail on posts at
+    // each edge, following the stair line (set on the profile with it).
+    let rise = (height(at[n - 1].0) - height(at[0].0)).abs();
+    if rise < HANDRAIL_FROM {
+        return;
+    }
+    let mut s = 0.0f32;
+    let mut next_post = 0.0f32;
+    for i in 0..n - 1 {
+        let (p, d) = at[i];
+        let q = at[i + 1].0;
+        let len = p.distance(q);
+        let right = Vec2::new(-d.y, d.x);
+        let yaw = d.y.atan2(d.x);
+        for side in [1.0f32, -1.0] {
+            let off = right * side * (PATH_HALF_WIDTH + 0.02);
+            let (a, b) = (p + off, q + off);
+            let mid = (a + b) * 0.5;
+            // Relative to the profile: the rail rises with the flight.
+            g.part(Metal).boxed(Vec3::new(mid.x, ASPHALT_Y + 0.95, mid.y), Vec3::new(len + 0.02, 0.05, 0.05), yaw, rail_c);
+            if s >= next_post {
+                g.part(Metal).boxed(Vec3::new(a.x, ASPHALT_Y + 0.5, a.y), Vec3::new(0.05, 0.95, 0.05), yaw, rail_c);
             }
         }
+        if s >= next_post {
+            next_post = s + 2.5;
+        }
+        s += len;
     }
 }
 
@@ -344,5 +456,31 @@ mod pt_walk_tests {
         let mut flat = Geometry::default();
         stairs(&mut flat, &pal, &pts, |p| p.x * 0.05);
         assert!(flat.get(Surface::Concrete).positions.is_empty(), "a ramp, not stairs");
+    }
+
+    /// [r4-hillside] The flights follow the slope, not the legs of the
+    /// path: a hillside path's 6 m legs climbing 11% and 13% by turns get
+    /// one flight of even steps (laid leg by leg, every 11% leg had none),
+    /// with handrails on so long a climb.
+    #[test]
+    fn steps_follow_the_slope_not_the_legs() {
+        let pal = Palette::default();
+        let pts: Vec<Vec2> = (0..=10).map(|k| Vec2::new(k as f32 * 6.0, 0.0)).collect();
+        let grade = |i: usize| if i % 2 == 0 { 0.11 } else { 0.13 };
+        let h = move |p: Vec2| {
+            let k = (p.x / 6.0).floor().clamp(0.0, 9.0) as usize;
+            let base: f32 = (0..k).map(|i| grade(i) * 6.0).sum();
+            base + (p.x - k as f32 * 6.0) * grade(k)
+        };
+        let mut g = Geometry::default();
+        stairs(&mut g, &pal, &pts, h);
+        let m = g.get(Surface::Concrete);
+        let mut tops: Vec<i32> = m.positions.iter().map(|p| ((p[1] - ASPHALT_Y - 0.02 + h(Vec2::new(p[0], p[2]))) / STAIR_RISE).round() as i32).collect();
+        tops.sort();
+        tops.dedup();
+        // From the first steep leg (6 m in) to the top.
+        let want = ((h(Vec2::new(60.0, 0.0)) - h(Vec2::new(6.0, 0.0))) / STAIR_RISE).floor() as usize;
+        assert!(tops.len() >= want, "a step for each rise all the way up: {} of {want}", tops.len());
+        assert!(!g.get(Surface::Metal).positions.is_empty(), "handrails on a long flight");
     }
 }

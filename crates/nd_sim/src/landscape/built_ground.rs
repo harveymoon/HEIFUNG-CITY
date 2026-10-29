@@ -229,6 +229,37 @@ pub struct Retaining {
     pub top: f32,
     /// Unit vector from the edge into the lot.
     pub inward: Vec2,
+    /// [r4-hillside] A wall holding the hillside back above the lot (the
+    /// lot cut into the slope): `foot_a`/`foot_b` are then the hill's
+    /// height behind it at each end, above the pad (`top`), and the face
+    /// looks into the lot. Otherwise the lot stands over the ground beyond
+    /// (a podium over the drop) and the face looks out.
+    pub holds_back: bool,
+}
+
+/// [r4-hillside] A lot whose pad stands this far off its natural ground
+/// somewhere, on a hillside steeper than `BENCH_CROSS_SLOPE`, is a walled
+/// terrace: its ground is held at the pad within its outline and the land
+/// round it left alone, with a wall wherever the two part
+/// (`Ground::find_terrace_walls`). Graded with 1-in-2.5 slopes, a terrace
+/// on a steep hillside buried the lots below it and cut into those above.
+pub const TERRACE_WALL_FROM: f32 = 1.5;
+
+/// [r4-hillside] Is `lot`, levelled to `pad`, a walled terrace
+/// (`TERRACE_WALL_FROM`)?
+pub fn walled_terrace(land: &Landscape, lot: &Lot, pad: f32) -> bool {
+    if land.is_flat() || lot.polygon.len() < 3 {
+        return false;
+    }
+    let n = lot.polygon.len();
+    let mut pts: Vec<Vec2> = Vec::with_capacity(n * 2 + 1);
+    for k in 0..n {
+        pts.push(lot.polygon[k]);
+        pts.push(lot.polygon[k].lerp(lot.polygon[(k + 1) % n], 0.5));
+    }
+    pts.push(lot.center);
+    let off = pts.iter().map(|p| (land.height(*p).max(BANK_HEIGHT) - pad).abs()).fold(0.0f32, f32::max);
+    off >= TERRACE_WALL_FROM && land.slope_over(&pts) >= BENCH_CROSS_SLOPE
 }
 
 #[derive(Clone, Debug)]
@@ -329,6 +360,29 @@ pub(super) fn settle(natural: f32, lo: f32, hi: f32) -> f32 {
     z.clamp(lo, hi)
 }
 
+/// [r4-hillside] A side slope gentler than this (rise over run) is only a
+/// cutting's or embankment's own; on land falling faster the side slope
+/// is the land's own plus `STEEP_SIDE_MARGIN`, up to `ROCK_CUT_SLOPE`.
+pub const STEEP_SIDE_MARGIN: f32 = 0.15;
+/// [r4-hillside] Steepest side slope dressed as a slope (1 in 1.5): on
+/// land steeper still the side follows the land a little steeper than it.
+pub const ROCK_CUT_SLOPE: f32 = 0.66;
+
+/// [r4-hillside] The rise of a side slope over one step of the raster
+/// whose run gives `step` at the standard 1 in `EMBANKMENT_SLOPE`, between
+/// cells whose natural heights are `a` and `b`: at least the standard; on
+/// land climbing faster than that, steeper than the land by
+/// `STEEP_SIDE_MARGIN` (to `ROCK_CUT_SLOPE`, or a hair over the land past
+/// it). A 1-in-2.5 cone off a way on a hillside steeper than 1 in 2.5
+/// never met the land again: it regraded the whole mountainside round a
+/// path (Harvey's flag, claude_flags line 135).
+pub(super) fn side_rise(step: f32, a: f32, b: f32) -> f32 {
+    let run = step * EMBANKMENT_SLOPE;
+    let land = (a - b).abs() / run;
+    let side = if land + STEEP_SIDE_MARGIN <= ROCK_CUT_SLOPE { land + STEEP_SIDE_MARGIN } else { ROCK_CUT_SLOPE.max(land + 0.02) };
+    step.max(side * run)
+}
+
 /// Grade the free cells of an `n`×`n` raster to the cells that are held
 /// (`fix`, at `set`). Each held road or pad cell is the apex of two cones
 /// of side slope 1 in `EMBANKMENT_SLOPE`: one below it (`lo`, the least the
@@ -377,6 +431,7 @@ pub(super) fn grade_free_ground(n: usize, natural: &[f32], fix: &[Fix], set: &[f
                         continue;
                     }
                     let m = jj as usize * n + ii as usize;
+                    let s = side_rise(s, natural[k], natural[m]);
                     l = l.max(lo[m] - s);
                     h = h.min(hi[m] + s);
                 }
@@ -517,12 +572,16 @@ impl Ground {
             // A road the player sank (a cutting, a portal ramp) is held by
             // retaining walls: the ground comes down to it within metres.
             // [pt-visual] So is a deep cutting or a high fill (`earthwork_hold`).
-            let walled = earthwork_hold(land, roads, node_z, inner, sid).is_some();
+            let hold = earthwork_hold(land, roads, node_z, inner, sid);
+            let walled = hold.is_some();
             let (a, b) = (roads.node(seg.a).pos, roads.node(seg.b).pos);
             let (za, zb) = (node_z.get(seg.a.0 as usize).copied().unwrap_or(0.0), node_z.get(seg.b.0 as usize).copied().unwrap_or(0.0));
             // [pt-visual] A walled motorway has no pavement: its wall band
             // starts at the hard shoulder (`earthwork_band`).
-            let core = if walled { earthwork_band(seg).1 } else { seg.corridor_half_width() };
+            let core = match hold {
+                Some(h) => held_band(seg, h).1,
+                None => seg.corridor_half_width(),
+            };
             // A road the player sank is held by retaining walls: it holds its
             // own cells and grades nothing beside it.
             let reach = if walled { core } else { core + seed_band };
@@ -605,6 +664,7 @@ impl Ground {
         let order = lots.iter().filter(|(id, _)| !last.contains(id)).chain(last.iter().filter_map(|id| lots.get(*id).map(|l| (*id, l))));
         for (id, lot) in order {
             let pad = pads[&id];
+            let terraced = walled_terrace(land, lot, pad);
             let (lo_b, hi_b) = crate::geom::bounds(&lot.polygon);
             let (i0, i1) = range(lo_b.x - 2.0, hi_b.x + 2.0);
             let (j0, j1) = range(lo_b.y - 2.0, hi_b.y + 2.0);
@@ -618,7 +678,9 @@ impl Ground {
                     // lot levelled to its higher street used to lift the
                     // side street's kerb and lanes to its pad.
                     if inside && !matches!(fix[k], Fix::Road | Fix::Wall) {
-                        fix[k] = Fix::Pad;
+                        // [r4-hillside] A walled terrace holds its own
+                        // ground and grades nothing round it.
+                        fix[k] = if terraced { Fix::Wall } else { Fix::Pad };
                         set[k] = floor_at(p, pad);
                     }
                 }
@@ -629,7 +691,122 @@ impl Ground {
         let mut g = Ground { half, n, h, fix, pads, decks, underpasses, bridge_decks, outer, outer_index, retaining: Vec::new(), terraces: Vec::new(), terrace_index: Default::default() };
         g.blend_into_outer(land);
         g.find_retaining(roads, node_z, inner, lots);
+        g.find_terrace_walls(land, roads, lots);
         g
+    }
+
+    /// [r4-hillside] The walls round each walled terrace
+    /// (`walled_terrace`): along every edge of the lot not on a way, where
+    /// the ground beyond stands `RETAIN_MIN` or more below the pad (the lot
+    /// a podium over the drop) or above it (the hill held back). A wall
+    /// between two terraces belongs to the higher one: its podium face is
+    /// the lower one's back wall.
+    pub(super) fn find_terrace_walls(&mut self, land: &Landscape, roads: &RoadNetwork, lots: &SlotMap<LotId, Lot>) {
+        const SAMPLES: [f32; 5] = [0.1, 0.3, 0.5, 0.7, 0.9];
+        const OUT: f32 = 2.5;
+        let mut ids: Vec<LotId> = lots.keys().collect();
+        ids.sort();
+        let terraced: std::collections::HashSet<LotId> = ids.iter().copied().filter(|id| self.pads.get(id).is_some_and(|&pad| walled_terrace(land, &lots[*id], pad))).collect();
+        if terraced.is_empty() {
+            return;
+        }
+        // The lots by square, to find the one beyond an edge.
+        let bucket = |v: f32| (v / TERRACE_BUCKET).floor() as i32;
+        let mut by_cell: std::collections::HashMap<(i32, i32), Vec<LotId>> = Default::default();
+        for &id in &ids {
+            let (lo, hi) = crate::geom::bounds(&lots[id].polygon);
+            for bx in bucket(lo.x)..=bucket(hi.x) {
+                for by in bucket(lo.y)..=bucket(hi.y) {
+                    by_cell.entry((bx, by)).or_default().push(id);
+                }
+            }
+        }
+        for id in ids {
+            let lot = &lots[id];
+            let Some(&pad) = self.pads.get(&id) else { continue };
+            if !terraced.contains(&id) {
+                continue;
+            }
+            let m = lot.polygon.len();
+            let mut walls = Vec::new();
+            for k in 0..m {
+                let (a, b) = (lot.polygon[k], lot.polygon[(k + 1) % m]);
+                let len = a.distance(b);
+                if len < 1.5 {
+                    continue;
+                }
+                let d = (b - a) / len;
+                // Into the lot: the side its centre is on.
+                let mut inward = Vec2::new(-d.y, d.x);
+                if (lot.center - a).dot(inward) < 0.0 {
+                    inward = -inward;
+                }
+                let beyond = |f: f32| a.lerp(b, f) - inward * OUT;
+                // Not along a way: the street's own walls and the lot's
+                // front are there.
+                let on_way = SAMPLES
+                    .iter()
+                    .filter(|&&f| {
+                        let q = beyond(f);
+                        roads.segments_in_box(q - Vec2::splat(20.0), q + Vec2::splat(20.0)).any(|sid| {
+                            let sg = roads.segment(sid);
+                            let (p0, p1) = roads.segment_points(sid);
+                            sg.alive && !sg.tunnel && project_on_segment(q, p0, p1).1.distance(q) <= sg.corridor_half_width() + GROUND_CELL + 0.5
+                        })
+                    })
+                    .count();
+                if on_way >= 2 {
+                    continue;
+                }
+                let terrace_at = |q: Vec2| by_cell.get(&(bucket(q.x), bucket(q.y))).is_some_and(|v| v.iter().any(|&o| o != id && terraced.contains(&o) && lots[o].contains(q)));
+                let hs: Vec<(f32, bool)> = SAMPLES.iter().map(|&f| {
+                    let q = beyond(f);
+                    (self.raster_height(land, q), terrace_at(q))
+                }).collect();
+                let below = hs.iter().filter(|(h, _)| pad - h >= RETAIN_MIN).count();
+                let above = hs.iter().filter(|(h, terrace)| h - pad >= RETAIN_MIN && !terrace).count();
+                let (h0, h1) = (hs[0].0, hs[hs.len() - 1].0);
+                if below >= 3 {
+                    walls.push(self.retaining.len() as u32);
+                    self.retaining.push(Retaining { lot: id, a, b, foot_a: h0.min(pad), foot_b: h1.min(pad), top: pad, inward, holds_back: false });
+                } else if above >= 3 {
+                    walls.push(self.retaining.len() as u32);
+                    self.retaining.push(Retaining { lot: id, a, b, foot_a: h0.max(pad), foot_b: h1.max(pad), top: pad, inward, holds_back: true });
+                }
+            }
+            if walls.is_empty() {
+                continue;
+            }
+            // A lot walled along a side street already has its terrace.
+            if let Some(t) = self.terraces.iter_mut().find(|t| t.polygon == lot.polygon) {
+                t.walls.extend(walls);
+                continue;
+            }
+            let (lo, hi) = crate::geom::bounds(&lot.polygon);
+            let t = self.terraces.len() as u32;
+            for bx in bucket(lo.x - 0.1)..=bucket(hi.x + 0.1) {
+                for by in bucket(lo.y - 0.1)..=bucket(hi.y + 0.1) {
+                    self.terrace_index.entry((bx, by)).or_default().push(t);
+                }
+            }
+            self.terraces.push(Terrace { polygon: lot.polygon.clone(), pad, lo, hi, walls });
+        }
+    }
+
+    /// [r4-hillside] The raster's height at `p` (no terraces), the
+    /// natural terrain outside it.
+    pub(super) fn raster_height(&self, land: &Landscape, p: Vec2) -> f32 {
+        if self.n < 2 || p.x.abs() >= self.half || p.y.abs() >= self.half {
+            return land.height(p).max(BANK_HEIGHT);
+        }
+        let n = self.n;
+        let fx = ((p.x + self.half) / GROUND_CELL).clamp(0.0, (n - 1) as f32 - 1e-3);
+        let fy = ((p.y + self.half) / GROUND_CELL).clamp(0.0, (n - 1) as f32 - 1e-3);
+        let (i, j) = (fx.floor() as usize, fy.floor() as usize);
+        let (tx, ty) = (fx - i as f32, fy - j as f32);
+        let top = self.h[j * n + i] + (self.h[j * n + i + 1] - self.h[j * n + i]) * tx;
+        let bot = self.h[(j + 1) * n + i] + (self.h[(j + 1) * n + i + 1] - self.h[(j + 1) * n + i]) * tx;
+        top + (bot - top) * ty
     }
 
     /// [review] Every lot edge along a street the lot does not front where
@@ -688,7 +865,7 @@ impl Ground {
                     inward = -inward;
                 }
                 walls.push(self.retaining.len() as u32);
-                self.retaining.push(Retaining { lot: id, a, b, foot_a: fa, foot_b: fb, top: pad, inward });
+                self.retaining.push(Retaining { lot: id, a, b, foot_a: fa, foot_b: fb, top: pad, inward, holds_back: false });
             }
             if walls.is_empty() {
                 continue;
@@ -930,6 +1107,51 @@ pub enum Hold {
     Cut,
     /// Above the land: walls hold the fill up.
     Fill,
+    /// [r4-hillside] A town street or a path across a steep hillside (or
+    /// cut into it along its length): a bench as wide as the way, the hill
+    /// held back by a wall on the high side and the edge held up on the
+    /// low, each where the land needs it. Graded with 1-in-2.5 slopes the
+    /// way regraded the hillside out of sight: on ground steeper than the
+    /// slopes themselves the cut never met the land again.
+    Bench,
+}
+
+/// [r4-hillside] Land falling at least this steeply across a town street or
+/// path (rise over run, from one side of its band to the other) is held in a
+/// bench by walls (`Hold::Bench`) rather than graded: 1-in-2.5 slopes off a
+/// bench on a 25% hillside reach out several times the cut's depth.
+pub const BENCH_CROSS_SLOPE: f32 = 0.25;
+/// [r4-hillside] A town street or path this far into (or above) the land
+/// along most of its length is held in a bench too.
+pub const BENCH_DEPTH: f32 = 1.5;
+
+/// [r4-hillside] Whether the town street or path `sid` stands in a bench on
+/// a hillside (`Hold::Bench`): the land falls `BENCH_CROSS_SLOPE` or more
+/// across its band at its quarter points on average, or it runs
+/// `BENCH_DEPTH` into or above the land at two of them.
+pub fn hillside_bench(land: &Landscape, roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], sid: crate::roads::SegmentId) -> bool {
+    let seg = roads.segment(sid);
+    if land.is_flat() || !seg.alive || seg.bridge || seg.viaduct || seg.tunnel || seg.ring || seg.is_rail() || seg.is_motorway() {
+        return false;
+    }
+    if roads.node(seg.a).level != 0.0 || roads.node(seg.b).level != 0.0 {
+        return false;
+    }
+    let (a, b) = roads.segment_points(sid);
+    let len = a.distance(b);
+    if len < 4.0 {
+        return false;
+    }
+    let side = ((b - a) / len).perp();
+    let w = seg.corridor_half_width() + GROUND_CELL;
+    let h = |p: Vec2| land.height(p).max(BANK_HEIGHT);
+    let ts = [0.25f32, 0.5, 0.75];
+    let cross = ts.iter().map(|&t| {
+        let p = a.lerp(b, t);
+        (h(p + side * w) - h(p - side * w)).abs() / (2.0 * w)
+    }).sum::<f32>() / ts.len() as f32;
+    let deep = ts.iter().filter(|&&t| (h(a.lerp(b, t)) - way_height(roads, node_z, inner, sid, t)).abs() >= BENCH_DEPTH).count();
+    cross >= BENCH_CROSS_SLOPE || deep >= 2
 }
 
 /// The cut or fill (metres, either way) from which a motorway (highway or
@@ -939,8 +1161,9 @@ pub const HOLD_DEPTH_MOTORWAY: f32 = 3.0;
 /// Whether the way `sid` stands in a held cutting or on a held fill: a
 /// road the player sank always is (a portal ramp, a cutting); otherwise
 /// when the way is that far below (above) the natural land at its middle
-/// and at both quarter points, for motorways and railways. Bridges,
-/// viaducts, tunnels, streets and paths never.
+/// and at both quarter points, for motorways and railways; [r4-hillside]
+/// a town street or path on a steep hillside stands in a bench
+/// (`hillside_bench`). Bridges, viaducts and tunnels never.
 pub fn earthwork_hold(land: &Landscape, roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], sid: crate::roads::SegmentId) -> Option<Hold> {
     let seg = roads.segment(sid);
     if seg.bridge || seg.viaduct || seg.tunnel || !seg.alive {
@@ -951,6 +1174,9 @@ pub fn earthwork_hold(land: &Landscape, roads: &RoadNetwork, node_z: &[f32], inn
     }
     if let Some(h) = hold_by_depth(land, roads, node_z, inner, sid, HOLD_DEPTH_MOTORWAY) {
         return Some(h);
+    }
+    if hillside_bench(land, roads, node_z, inner, sid) {
+        return Some(Hold::Bench);
     }
     // A piece carrying on from a held one is held too while it is still
     // a third as deep: a cutting's shallower ends were graded, and their
@@ -994,6 +1220,22 @@ fn hold_by_depth(land: &Landscape, roads: &RoadNetwork, node_z: &[f32], inner: &
 /// way's height out to the back (`Ground::build`), the wall fills the band
 /// from its face to the back (`nd_procgen::terrain::works`), so the drawn
 /// wall and the held ground are one and the same.
+/// [r4-hillside] [`earthwork_band`] for a way held as `hold`: a bench on a
+/// hillside (`Hold::Bench`) is held only to a wall's thickness past its
+/// verge, so the hill comes right down to the wall.
+pub fn held_band(seg: &crate::roads::Segment, hold: Hold) -> (f32, f32) {
+    if hold == Hold::Bench {
+        let c = seg.corridor_half_width();
+        (c + 0.3, c + BENCH_WALL)
+    } else {
+        earthwork_band(seg)
+    }
+}
+
+/// [r4-hillside] How far past a bench's verge its ground is held: the
+/// retaining wall's thickness.
+pub const BENCH_WALL: f32 = 1.2;
+
 pub fn earthwork_band(seg: &crate::roads::Segment) -> (f32, f32) {
     if seg.is_motorway() {
         (seg.half_width() + 1.2, seg.half_width() + 1.0 + GROUND_CELL)

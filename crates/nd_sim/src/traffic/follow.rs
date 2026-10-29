@@ -51,7 +51,9 @@ impl Traffic {
     /// when a lane ahead on its route has a lower one it must brake for
     /// now to meet it at `ANTICIPATE_BRAKE` (a ramp easing down, a turn).
     pub(super) fn limit_ahead(&self, car: &Car, lane: &Lane) -> f32 {
-        let mut limit = lane.limit_at(car.s);
+        // [r4-hillside] Slower up (and down) a steep street; a bus or a
+        // lorry slower still.
+        let mut limit = lane.limit_at(car.s) * lane.climb_share(car.bus.is_some() || car.cargo.is_some());
         // The end of this lane (a ramp lane easing down).
         let to_end = (lane.length - car.s).max(0.0);
         limit = limit.min((lane.limit_end * lane.limit_end + 2.0 * ANTICIPATE_BRAKE * to_end).sqrt());

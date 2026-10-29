@@ -543,6 +543,17 @@ impl World {
         None
     }
 
+    /// [r4-hillside] Why the ground of parcel `i` limits what is zoned there,
+    /// with the numbers (`Landscape::lot_ground_detail`): None unless it is
+    /// a hillside or too steep to build on.
+    pub fn parcel_ground_note(&self, i: usize) -> Option<String> {
+        let p = self.parcels.parcels.get(i)?;
+        if !(p.hillside || (p.rough && p.rough_why.is_some_and(|w| w.contains("cliff") || w.contains("drops")))) {
+            return None;
+        }
+        self.landscape.lot_ground_detail(&p.polygon, p.center)
+    }
+
     /// [fix/roads-tools] Could backland parcel `i` be folded into a lot of
     /// `lu` in front of it (a neighbouring parcel with a frontage for it)?
     pub fn backland_has_a_front(&self, i: usize, lu: LandUse) -> bool {

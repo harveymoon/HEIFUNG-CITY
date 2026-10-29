@@ -160,6 +160,12 @@ pub struct ToolState {
     /// What is wrong with the road being drawn (too steep, crossing at an
     /// awkward height), refreshed with its preview.
     pub grade_warnings: Vec<String>,
+    /// [r4-hillside] A zig-zag up the slope for the road being drawn
+    /// (`World::switchback`), when its one leg climbs faster than its
+    /// kind allows: X (or the pane's button) lays it instead.
+    pub switchback: Option<Vec<SVec2>>,
+    /// [r4-hillside] The pane's Zig-zag button was pressed.
+    pub switchback_asked: bool,
     /// A point set by the remote API (`tool {cursor}`) that stands in for
     /// the pointer in the road preview until the mouse moves.
     pub cursor_pin: Option<SVec2>,
@@ -462,6 +468,20 @@ impl ToolState {
         (pts, levels)
     }
 
+    /// [r4-hillside] Put the offered zig-zag (`switchback`) in place of the
+    /// road being drawn, every point on the ground. False when none is
+    /// offered.
+    pub fn take_switchback(&mut self) -> bool {
+        let Some(z) = self.switchback.take() else { return false };
+        if z.len() < 2 {
+            return false;
+        }
+        self.points = z.clone();
+        self.point_levels = vec![0.0; z.len()];
+        self.point_clicks = z.iter().map(|&p| PointClick { at: p, level: 0.0, snapped: false }).collect();
+        true
+    }
+
     /// The levels of `points`, one each.
     pub fn levels(&self) -> Vec<f32> {
         let mut l = self.point_levels.clone();
@@ -744,6 +764,8 @@ impl Default for ToolState {
             tunnel: false,
             depth: Depth::Ground,
             grade_warnings: Vec::new(),
+            switchback: None,
+            switchback_asked: false,
             cursor_pin: None,
             pillars: Default::default(),
             junction_editor: None,

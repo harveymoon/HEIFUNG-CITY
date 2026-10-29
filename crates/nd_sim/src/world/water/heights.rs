@@ -191,7 +191,7 @@ impl World {
             .alive_segments()
             .map(|(id, s)| {
                 let (a, b) = roads.segment_points(id);
-                (s.a.0 as usize, s.b.0 as usize, a.distance(b), way_grade(s.kind))
+                (s.a.0 as usize, s.b.0 as usize, a.distance(b), segment_grade(roads, s))
             })
             .collect();
         let crossings = roads.grade_crossings();
@@ -344,7 +344,7 @@ impl World {
                 if lv(i) != 0.0 || lv(i + 1) != 0.0 {
                     continue;
                 }
-                let e = self.leg_earthwork(points[i], points[i + 1], z(i), z(i + 1), kind, highway);
+                let e = self.leg_earthwork(points[i], points[i + 1], z(i), z(i + 1), kind, lanes_fwd, lanes_bwd);
                 if e.abs() >= TERRAIN_FIT_WARN && e.abs() < TERRAIN_REFUSE {
                     out.push(format!(
                         "between points {} and {} it {} up to {:.0} m: it will run in a walled {}; follow the slope, or use a {} there",
@@ -355,6 +355,27 @@ impl World {
                         if e > 0.0 { "cutting" } else { "fill" },
                         if e > 0.0 { "tunnel" } else if highway { "viaduct" } else { "bridge" },
                     ));
+                }
+            }
+        }
+        // [r4-hillside] Land steeper than the way's kind takes: said with
+        // what to do (a zig-zag, a stair street) rather than left to show
+        // as cuttings and fills.
+        if !land.is_flat() && kind != RoadKind::Rail {
+            let limit = land_grade(kind, lanes_fwd, lanes_bwd);
+            for i in 0..points.len() - 1 {
+                if lv(i) != 0.0 || lv(i + 1) != 0.0 {
+                    continue;
+                }
+                let g = self.land_climb(points[i], points[i + 1]);
+                if g > limit + 0.005 {
+                    let what = land_grade_label(kind, lanes_fwd, lanes_bwd);
+                    let tail = match kind {
+                        RoadKind::Path => "it will run on a bench cut into the slope; zig-zag up it (X: switchback)".to_string(),
+                        _ if limit < LOCAL_STREET_GRADE => format!("it will be eased onto cuttings and fills; zig-zag up the slope (X: switchback), or use a local street (to {:.0}%)", LOCAL_STREET_GRADE * 100.0),
+                        _ => "it will be eased onto cuttings and fills; zig-zag up the slope (X: switchback), or make it a stair street: a path, which climbs in flights of steps and fronts homes".to_string(),
+                    };
+                    out.push(format!("between points {} and {} the land climbs {:.0}%: steeper than {what} takes ({:.0}% at most); {tail}", i + 1, i + 2, g * 100.0, limit * 100.0));
                 }
             }
         }
@@ -414,7 +435,7 @@ impl World {
                 if lv(i) != 0.0 || lv(i + 1) != 0.0 {
                     continue;
                 }
-                let e = self.leg_earthwork(points[i], points[i + 1], z(i), z(i + 1), kind, highway);
+                let e = self.leg_earthwork(points[i], points[i + 1], z(i), z(i + 1), kind, lanes_fwd, lanes_bwd);
                 if e.abs() >= TERRAIN_REFUSE {
                     return Some(format!(
                         "between points {} and {} the land {} {:.0} m: too much to {} at grade (at most {TERRAIN_REFUSE:.0} m); follow the slope, or raise or lower the road there ({})",
@@ -571,14 +592,16 @@ impl World {
     /// sim would build. A highway, a railway or a slip road runs straight
     /// between its ends' heights; a street follows the land within its
     /// grade from either end (as `inner_heights` lays it).
-    pub fn leg_earthwork(&self, a: Vec2, b: Vec2, za: f32, zb: f32, kind: RoadKind, highway: bool) -> f32 {
+    pub fn leg_earthwork(&self, a: Vec2, b: Vec2, za: f32, zb: f32, kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> f32 {
+        let highway = crate::roads::is_highway_spec(kind, lanes_fwd, lanes_bwd);
         let land = &self.landscape;
         let floor = if land.is_flat() { 0.0 } else { crate::landscape::BANK_HEIGHT };
         let len = a.distance(b);
         if len < 1.0 {
             return 0.0;
         }
-        let grade = way_grade(kind);
+        // [r4-hillside] A town street follows the land at its own grade.
+        let grade = land_grade(kind, lanes_fwd, lanes_bwd);
         let straight = highway || kind == RoadKind::Rail;
         let n = (len / 8.0).ceil().max(1.0) as usize;
         let mut worst = 0.0f32;
@@ -602,6 +625,82 @@ impl World {
         worst
     }
 
+    /// [r4-hillside] The steepest the land climbs along the leg `a`-`b`,
+    /// over any 20 m of it (the whole leg if shorter): what a way laid on
+    /// the land there would have to climb.
+    pub fn land_climb(&self, a: Vec2, b: Vec2) -> f32 {
+        let land = &self.landscape;
+        let floor = if land.is_flat() { 0.0 } else { crate::landscape::BANK_HEIGHT };
+        let len = a.distance(b);
+        if len < 1.0 || land.is_flat() {
+            return 0.0;
+        }
+        let window = len.min(20.0);
+        let n = (len / 5.0).ceil().max(1.0) as usize;
+        let h: Vec<f32> = (0..=n).map(|k| land.height(a.lerp(b, k as f32 / n as f32)).max(floor)).collect();
+        let span = ((window / len) * n as f32).round().max(1.0) as usize;
+        let ds = len / n as f32;
+        (0..=n.saturating_sub(span)).map(|k| (h[k + span] - h[k]).abs() / (span as f32 * ds)).fold(0.0, f32::max)
+    }
+
+    /// [r4-hillside] A zig-zag up the slope between the ends of a way drawn
+    /// from `a` to `b` that would climb faster than its kind allows: the
+    /// points of a switchback whose legs each climb within the grade, or
+    /// None when the straight way is gentle enough already (or the land is
+    /// flat, or no zig-zag of reasonable width fits on dry land). The Road
+    /// tool offers it (X) and the API returns it with the warnings.
+    pub fn switchback(&self, a: Vec2, b: Vec2, kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> Option<Vec<Vec2>> {
+        let land = &self.landscape;
+        if land.is_flat() || kind == RoadKind::Rail {
+            return None;
+        }
+        let floor = crate::landscape::BANK_HEIGHT;
+        let grade = land_grade(kind, lanes_fwd, lanes_bwd) * 0.85;
+        let d = a.distance(b);
+        if d < 10.0 {
+            return None;
+        }
+        let rise = (land.height(b).max(floor) - land.height(a).max(floor)).abs();
+        if rise <= d * grade / 0.85 {
+            return None;
+        }
+        let u = (b - a) / d;
+        let v = u.perp();
+        let need = rise / grade;
+        // Half the zig-zag's width: room for a hairpin turn.
+        let hw = crate::roads::half_width_spec(kind, lanes_fwd, lanes_bwd);
+        let half = if kind == RoadKind::Path { 14.0 } else { (hw * 5.0).max(24.0) };
+        let leg_len = |n: usize, w: f32| {
+            let along = d / n as f32;
+            // First and last legs go half way across, the rest all the way.
+            let inner = (along * along + (2.0 * w) * (2.0 * w)).sqrt();
+            let outer = (along * along + w * w).sqrt();
+            if n == 1 { d } else { 2.0 * outer + (n as f32 - 2.0) * inner }
+        };
+        let mut best = None;
+        for w in [half, half * 1.5, half * 2.0, half * 3.0] {
+            let Some(n) = (2..=16).find(|&n| leg_len(n, w) >= need) else { continue };
+            let pts: Vec<Vec2> = (0..=n)
+                .map(|k| {
+                    let s = if k == 0 || k == n { 0.0 } else if k % 2 == 1 { 1.0 } else { -1.0 };
+                    a + u * (d * k as f32 / n as f32) + v * (s * w)
+                })
+                .collect();
+            if pts.iter().any(|p| land.is_water(*p)) {
+                continue;
+            }
+            // Each leg within the grade on the land (with a little slack:
+            // the land is not a plane).
+            // Each leg within the kind's grade on the land as it lies (its
+            // steepest 20 m, as the warning judges it).
+            let ok = pts.windows(2).all(|p| self.land_climb(p[0], p[1]) <= grade / 0.85 + 0.01);
+            if ok {
+                best = Some(pts);
+                break;
+            }
+        }
+        best
+    }
     /// Height of the road at a point on a segment.
     pub fn road_height(&self, sid: SegmentId, t: f32) -> f32 {
         crate::landscape::way_height(&self.roads, &self.road_z, &self.road_inner, sid, t)

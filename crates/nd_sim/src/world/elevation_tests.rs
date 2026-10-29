@@ -602,7 +602,8 @@ fn long_streets_follow_the_land_between_their_ends() {
     for i in 1..=60 {
         let t = i as f32 / 60.0;
         let z = w.road_height(sid, t);
-        assert!((z - prev).abs() <= water::STREET_GRADE * len / 60.0 + 1e-3, "too steep at t = {t}");
+        // [r4-hillside] Within its own grade: a local street on the land.
+        assert!((z - prev).abs() <= water::segment_grade(&w.roads, w.roads.segment(sid)) * len / 60.0 + 1e-3, "too steep at t = {t}");
         prev = z;
         let land = w.landscape.height(a.lerp(b, t)).max(crate::landscape::BANK_HEIGHT);
         let za = w.road_z[w.roads.segment(sid).a.0 as usize];

@@ -142,7 +142,7 @@ pub(super) fn paint(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     };
     let beach = matches!(lu_s.trim().to_ascii_lowercase().as_str(), "beach" | "public_beach" | "public beach");
     let refused: Vec<Value> = match land_use {
-        Some(lu) => ids.iter().filter_map(|&i| (if beach { w.beach_refusal(i) } else { w.parcel_refusal(i, Some(lu)) }).map(|why| json!({ "parcel": i, "center": v2(w.parcels.parcels[i].center), "why": why }))).collect(),
+        Some(lu) => ids.iter().filter_map(|&i| (if beach { w.beach_refusal(i) } else { w.parcel_refusal(i, Some(lu)) }).map(|why| json!({ "parcel": i, "center": v2(w.parcels.parcels[i].center), "why": why, "ground": w.parcel_ground_note(i) }))).collect(),
         None => Vec::new(),
     };
     // [island-lots] Nothing under the brush: why (water, too far from a
@@ -297,6 +297,15 @@ pub(super) fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             .collect::<Vec<_>>());
     }
     v["grade_warnings"] = json!(warnings);
+    // [r4-hillside] A zig-zag up the slope for a one-leg way too steep for
+    // its kind (`World::switchback`): send these points to lay it.
+    if let Some(Gesture::Road { points, elevation, curved: false, .. }) = ctx.sim.world.gesture(id) {
+        if points.len() == 2 && elevation.iter().all(|l| *l == 0.0) {
+            if let Some(z) = ctx.sim.world.switchback(points[0], points[1], kind, lf, lb) {
+                v["switchback"] = json!(z.iter().map(|p| [p.x, p.y]).collect::<Vec<_>>());
+            }
+        }
+    }
     Ok(v)
 }
 

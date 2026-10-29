@@ -167,7 +167,7 @@ pub(super) fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                         let accepts: Vec<&str> = nd_sim::LandUse::ALL.iter().filter(|l| p.accepts(**l)).map(|l| l.label()).collect();
                         json!({
                             "index": i, "center": v2(p.center), "area": round(p.area), "land_use": built, "planned": plan,
-                            "landlocked": p.landlocked(), "street": p.street_frontage, "rough": p.rough, "rough_why": p.rough_why, "hillside": p.hillside, "accepts": accepts, "water_frontage_m": round(p.water_frontage),
+                            "landlocked": p.landlocked(), "street": p.street_frontage, "rough": p.rough, "rough_why": p.rough_why, "hillside": p.hillside, "ground_note": w.parcel_ground_note(i), "accepts": accepts, "water_frontage_m": round(p.water_frontage),
                             "lot": p.lot.map(key_str), "key": [p.key.center.0, p.key.center.1],
                         })
                     })));

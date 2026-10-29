@@ -168,6 +168,34 @@ impl World {
                 LaneKind::Connector { .. } => 0.0,
             };
         }
+        self.apply_lane_climbs();
+    }
+
+    /// [r4-hillside] Each road lane's climb (`Lane::climb`) from the road's
+    /// heights: the mean grade of its piece, steepest third first (a street
+    /// eased over a crest climbs harder at one end than on average).
+    pub(crate) fn apply_lane_climbs(&mut self) {
+        let relief = self.relief;
+        for k in 0..self.traffic.net.lanes.len() {
+            let climb = match self.traffic.net.lanes[k].kind {
+                LaneKind::Road { segment, forward, .. } if relief && self.roads.try_segment(segment).is_some() => {
+                    let (a, b) = self.roads.segment_points(segment);
+                    let len = a.distance(b);
+                    if len < 1.0 {
+                        0.0
+                    } else {
+                        let z = |t: f32| self.road_height(segment, t);
+                        // The steepest third of the piece, along the lane.
+                        let g = [(0.0, 1.0 / 3.0), (1.0 / 3.0, 2.0 / 3.0), (2.0 / 3.0, 1.0)].iter().map(|&(t0, t1)| (z(t1) - z(t0)) / (len / 3.0)).map(|g| if forward { g } else { -g }).fold(f32::NEG_INFINITY, f32::max);
+                        let mean = (z(1.0) - z(0.0)) / len * if forward { 1.0 } else { -1.0 };
+                        // Up: the hardest third; down: the mean descent.
+                        if g > 0.0 { g } else { mean }
+                    }
+                }
+                _ => 0.0,
+            };
+            self.traffic.net.lanes[k].climb = climb;
+        }
     }
 
     /// Set the road maintenance funding level (0 to `MAX_FUNDING`, 1 is

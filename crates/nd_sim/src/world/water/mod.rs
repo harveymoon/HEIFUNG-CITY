@@ -18,8 +18,21 @@ mod tests;
 
 /// Price of a metre of new bridge deck.
 pub const BRIDGE_COST_PER_M: f32 = 60.0;
-/// Steepest grade a street keeps; rail and paths have their own.
+/// Steepest grade a highway, a slip road, a roundabout or a ramp onto a
+/// deck or down to a cutting keeps; rail and paths have their own, and
+/// [r4-hillside] town streets laid on the land follow it steeper
+/// ([`LOCAL_STREET_GRADE`], [`AVENUE_GRADE`]).
 pub const STREET_GRADE: f32 = 0.07;
+/// [r4-hillside] Steepest a local street (up to three lanes, not a
+/// highway) climbs on the land: San Francisco's steepest blocks run 30%,
+/// Hong Kong's Mid-Levels lanes as much. It was 7% for every street, so a
+/// street up a hillside was eased onto cuttings and embankments that
+/// carved the hill. Cars and buses slow on the climb
+/// (`traffic::climb_factor`).
+pub const LOCAL_STREET_GRADE: f32 = 0.25;
+/// [r4-hillside] Steepest an avenue (four lanes or more, two each way)
+/// climbs on the land.
+pub const AVENUE_GRADE: f32 = 0.11;
 pub const RAIL_GRADE: f32 = 0.03;
 /// [pt-walk] A path may climb as steeply as a flight of stairs (drawn as
 /// steps past `nd_procgen::street::STAIRS_FROM`): it follows the land down
@@ -105,7 +118,7 @@ fn inner_heights(land: &crate::landscape::Landscape, roads: &crate::roads::RoadN
             continue;
         }
         let (za, zb) = (z.get(s.a.0 as usize).copied().unwrap_or(0.0), z.get(s.b.0 as usize).copied().unwrap_or(0.0));
-        let g = way_grade(s.kind);
+        let g = segment_grade(roads, s);
         let m = (len / step).round().max(2.0) as usize;
         let ds = len / m as f32;
         let mut h: Vec<f32> = (1..m)
@@ -137,12 +150,51 @@ fn inner_heights(land: &crate::landscape::Landscape, roads: &crate::roads::RoadN
     out
 }
 
-/// Steepest grade a way of this kind keeps.
+/// Steepest grade a way of this kind keeps off the land: on a deck, down to
+/// a cutting or a tunnel, a ramp between levels.
 pub fn way_grade(kind: RoadKind) -> f32 {
     match kind {
         RoadKind::Rail => RAIL_GRADE,
         RoadKind::Path => PATH_GRADE,
         RoadKind::Street => STREET_GRADE,
+    }
+}
+
+/// [r4-hillside] Steepest grade a way of this kind and lanes climbs on the
+/// land: a local street [`LOCAL_STREET_GRADE`], an avenue
+/// [`AVENUE_GRADE`], a highway [`STREET_GRADE`] as before (a built slip
+/// road too, `segment_grade`), rail and paths their own.
+pub fn land_grade(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> f32 {
+    match kind {
+        RoadKind::Street if crate::roads::is_highway_spec(kind, lanes_fwd, lanes_bwd) => STREET_GRADE,
+        RoadKind::Street if lanes_fwd + lanes_bwd >= 4 || (lanes_fwd >= 2 && lanes_bwd >= 2) => AVENUE_GRADE,
+        RoadKind::Street => LOCAL_STREET_GRADE,
+        _ => way_grade(kind),
+    }
+}
+
+/// [r4-hillside] What the grade limit of [`land_grade`] is called, for the
+/// Road tool's warnings.
+pub fn land_grade_label(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> &'static str {
+    match kind {
+        RoadKind::Rail => "a railway",
+        RoadKind::Path => "a path's stairs",
+        RoadKind::Street if crate::roads::is_highway_spec(kind, lanes_fwd, lanes_bwd) => "a highway",
+        RoadKind::Street if land_grade(kind, lanes_fwd, lanes_bwd) == AVENUE_GRADE => "an avenue",
+        RoadKind::Street => "a local street",
+    }
+}
+
+/// [r4-hillside] The grade the built segment `s` keeps: the land grade of
+/// its kind (`land_grade`) on the land, its kind's structure grade
+/// (`way_grade`) where it is off the land (a deck, a tunnel, an end the
+/// player raised or sank, a roundabout's ring, a motorway).
+pub fn segment_grade(roads: &crate::roads::RoadNetwork, s: &crate::roads::Segment) -> f32 {
+    let structure = s.bridge || s.viaduct || s.tunnel || s.ring || s.is_motorway() || roads.node(s.a).level != 0.0 || roads.node(s.b).level != 0.0;
+    if structure {
+        way_grade(s.kind)
+    } else {
+        land_grade(s.kind, s.lanes_fwd, s.lanes_bwd)
     }
 }
 

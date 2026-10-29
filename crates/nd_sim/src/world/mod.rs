@@ -35,6 +35,8 @@ mod cargo_hubs;
 mod cargo_hub_tests;
 #[cfg(test)]
 mod island_lots_tests;
+#[cfg(test)]
+mod hillside_tests;
 mod cars;
 mod chases;
 mod enforcement;
