@@ -135,10 +135,31 @@ pub(super) fn heat_vision(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
 
 /// [photo] `photo_mode {on?}`: hide all of egui (F10 in game); applied
 /// from this frame's pass on, so a following `screenshot` is clean.
+/// `size: [w, h]` also sets the window's inner size in physical pixels,
+/// so shots come out at a known size whatever the desktop did to the window.
 pub(super) fn photo_mode(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let size = match cmd.get("size") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let wh = v.as_array().filter(|a| a.len() == 2).and_then(|a| Some((a[0].as_u64()?, a[1].as_u64()?)));
+            match wh {
+                Some((w, h)) if (320..=7680).contains(&w) && (240..=4320).contains(&h) => Some((w as u32, h as u32)),
+                _ => return Err("size must be [w, h] in pixels, 320..7680 by 240..4320".into()),
+            }
+        }
+    };
+    // `on` alone toggles only when nothing else was asked for.
+    let on = opt_bool(cmd, "on")?;
     let f = &mut ctx.flags;
-    f.photo_mode = opt_bool(cmd, "on")?.unwrap_or(!f.photo_mode);
-    Ok(json!({ "photo_mode": f.photo_mode }))
+    f.photo_mode = on.unwrap_or(if size.is_some() { f.photo_mode } else { !f.photo_mode });
+    let mut window_size = None;
+    if let Ok(mut win) = ctx.window.single_mut() {
+        if let Some((w, h)) = size {
+            win.resolution.set_physical_resolution(w, h);
+        }
+        window_size = Some([win.resolution.physical_width(), win.resolution.physical_height()]);
+    }
+    Ok(json!({ "photo_mode": f.photo_mode, "window": window_size }))
 }
 
 /// [look] `graphics {quality: auto|low|medium|high}` pins the tier (for

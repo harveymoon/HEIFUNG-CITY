@@ -56,4 +56,6 @@ pub(super) struct Ctx<'w, 's> {
     pub(super) viewer: ResMut<'w, crate::viewer::Viewer>,
     pub(super) turntable: ResMut<'w, crate::render::Turntable>,
     pub(super) notes: ResMut<'w, crate::viewer::notes::BuildingNotes>,
+    /// [photo] The game window, for `photo_mode {size}`.
+    pub(super) window: Query<'w, 's, &'static mut Window, With<bevy::window::PrimaryWindow>>,
 }

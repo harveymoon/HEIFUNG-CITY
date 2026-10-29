@@ -67,10 +67,12 @@ pub(super) fn status(ctx: &Ctx) -> Value {
         "render": { "fps": round(fps as f32), "ticks_per_frame": sim.ticks_last_frame, "triangles": ctx.stats.street_triangles + ctx.stats.building_triangles, "building_meshes": ctx.stats.building_entities, "detail_triangles": { "mid": ctx.stats.detail_triangles[0], "near": ctx.stats.detail_triangles[1] }, "detail_in_range": { "mid": ctx.stats.detail_in_range[0], "near": ctx.stats.detail_in_range[1] }, "drawn_triangles": ctx.stats.street_triangles + ctx.stats.building_triangles - ctx.stats.detail_triangles.iter().sum::<usize>() + ctx.stats.detail_in_range.iter().sum::<usize>(), "graphics": look::graphics_json(ctx) },
         "camera": camera::camera_pose(ctx), "tool": tool::tool_state(&ctx.tools), "selection": selection(w, *ctx.selection),
         "project": planning::project_state(ctx)["project"], "overlays": look::overlays_json(&ctx.overlays),
-        "lighting": { "follow_clock": ctx.lighting.follow_clock, "hour": round(ctx.lighting.hour), "heat_vision": ctx.lighting.heat }, "photo_mode": ctx.flags.photo_mode,
+        "lighting": { "follow_clock": ctx.lighting.follow_clock, "hour": round(ctx.lighting.hour), "heat_vision": ctx.lighting.heat },
         "message": ctx.flags.message, "tool_status": ctx.tools.status, "event_seq": ctx.log.seq,
         "favourites": ctx.tools.favorites.iter().map(|&f| key_str(f)).collect::<Vec<_>>(),
     });
+    // [photo] Whether the UI is hidden (`photo_mode`).
+    v["photo_mode"] = json!(ctx.flags.photo_mode);
     // [camera] What the camera is locked on, if anything.
     v["following"] = json!(ctx.follow.target.map(|s| selection(w, s)));
     // [chase-cam] How it follows, and what the chase camera cuts away.

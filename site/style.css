@@ -178,15 +178,15 @@ kbd {
 }
 
 /* A screenshot in a camera-HUD frame: corner brackets say "this is the game". */
-.shot { position: relative; margin: 0; }
-.shot a { display: block; }
+.shot { margin: 0; }
+.shot > a { display: block; position: relative; }
 .shot img { width: 100%; background: var(--deck); aspect-ratio: 16 / 9; object-fit: cover; }
-.shot::before, .shot::after {
+.shot > a::before, .shot > a::after {
   content: ""; position: absolute; width: 22px; height: 22px; pointer-events: none;
   border: 2px solid var(--cyan);
 }
-.shot::before { top: -6px; left: -6px; border-right: 0; border-bottom: 0; }
-.shot::after { bottom: -6px; right: -6px; border-left: 0; border-top: 0; }
+.shot > a::before { top: -6px; left: -6px; border-right: 0; border-bottom: 0; }
+.shot > a::after { bottom: -6px; right: -6px; border-left: 0; border-top: 0; }
 .shot figcaption { margin-top: 10px; font-size: 0.92rem; color: var(--haze); max-width: none; }
 
 /* Feature rows: picture and words side by side, alternating. */
@@ -206,15 +206,16 @@ kbd {
 .feature li { margin: 0 0 0.35em; }
 .feature li::marker { color: var(--magenta); }
 .minis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
-.minis .shot::before, .minis .shot::after { width: 12px; height: 12px; border-width: 1.5px; top: -4px; left: -4px; }
-.minis .shot::after { top: auto; left: auto; bottom: -4px; right: -4px; }
+.minis .shot > a::before, .minis .shot > a::after { width: 12px; height: 12px; border-width: 1.5px; }
+.minis .shot > a::before { top: -4px; left: -4px; }
+.minis .shot > a::after { bottom: -4px; right: -4px; }
 
 /* Galleries */
 .grid { display: grid; gap: 28px 22px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); margin-top: 36px; }
 .grid .shot figcaption b { color: var(--ivory); font-weight: 600; }
 
 .looks .shot img { aspect-ratio: 8 / 5; }
-.looks .shot::before, .looks .shot::after { border-color: var(--gold); }
+.looks .shot > a::before, .looks .shot > a::after { border-color: var(--gold); }
 
 /* How it works */
 .pillars { display: grid; gap: 30px 40px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); margin-top: 36px; }

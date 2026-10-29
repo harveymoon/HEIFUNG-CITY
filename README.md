@@ -12,7 +12,7 @@
   <a href="#build-and-run">Build from source</a>
 </p>
 
-![A generated city at night](site/img/hero-night.jpg)
+![A city at night after 48 days of play](site/img/hero-night.jpg)
 
 Draw the roads, zone the land and watch a city of thousands move in. Each citizen has a home, a
 job, a commute and a mood; each shop has stock, cash and suppliers; each car follows its lane
@@ -31,6 +31,8 @@ renderer is a thin layer on top.
 | ![The metro in the Underground view](site/img/metro.jpg) | ![Street level at night](site/img/street-night.jpg) |
 | ![A citizen in the inspector](site/img/ui-person.jpg) | ![City Data charts](site/img/ui-citydata.jpg) |
 | ![A generated coastal river city](site/img/city-coastal-river.jpg) | ![An arctic old town in the snow](site/img/city-old-town.jpg) |
+| ![Ring roads and roundabouts](site/img/roundabout.jpg) | ![Tenements and towers at night](site/img/canyon-night.jpg) |
+| ![District looks: Lantern Alley](site/img/look-lantern-alley.jpg) | ![District looks: Patchwork](site/img/look-patchwork.jpg) |
 
 More on the [project page](https://harveymoon.github.io/HEIFUNG-CITY/), all taken in the game.
 
@@ -94,8 +96,9 @@ More on the [project page](https://harveymoon.github.io/HEIFUNG-CITY/), all take
   Foundry Row, The Promenade, Quiet Acres, Eco Village, Riverbank Shantytown, ...) and its
   **policies** (rent support, nightlife levy, heritage grant, ...).
 - Each story grows its own **procedural look**: Kowloon stacks, Brick & Steel, Lantern Alley,
-  Garden Suburb, Harbour Pastel, Old Stone, Solarpunk Green, Glass Campus, Patchwork, plus neon
-  strips, night markets, capsule pods, tech campuses and more: 16 looks over some 220 styles.
+  Garden Suburb, Harbour Pastel, Old Stone, Solarpunk Green, Glass Campus, Patchwork, Skyline Luxe,
+  plus neon
+  strips, night markets, capsule pods, tech campuses and more.
 
 ### Citizens and minds
 - Every citizen has a generated look, a schedule, hunger, a **memory stream**, **moods** and
@@ -205,7 +208,7 @@ Design notes live in [`docs/DESIGN.md`](docs/DESIGN.md), the art direction in
 
 A big world with seamless edges and in the end a planet; timetables with night trains and rush-hour
 service; islands reached only by ferry; a layered city with life under and between raised roads;
-full metro stations and an undercity; the Skyline Luxe look; a drive mode; talking to any citizen;
+full metro stations and an undercity; holographic billboards and skyways; a drive mode; talking to any citizen;
 cable cars and a monorail; a weekly city paper. See [`todo.md`](todo.md).
 
 ## Contributing
