@@ -53,7 +53,8 @@ fn lu_name(lu: LandUse) -> &'static str {
         LandUse::Residential => "residential",
         LandUse::Commercial => "commercial",
         LandUse::Industrial => "industrial",
-        LandUse::Entertainment => "entertainment",
+        // [r4-leisure] commercial land's leisure sub-zone (the nightlife lines)
+        LandUse::Entertainment => "leisure",
         LandUse::Civic => "civic",
         LandUse::Park => "park",
     }
@@ -79,7 +80,7 @@ fn rate_of(v: &Value) -> Result<f32, String> {
 
 /// `taxes {}` reads; `{set: {line: rate, ...}}` sets lines (a key, an
 /// industry kind, or a land use name for its whole group: residential,
-/// commercial, entertainment, industrial); `{category, rate}` sets one;
+/// commercial, leisure (or entertainment), industrial); `{category, rate}` sets one;
 /// `{import_duty}` sets the duty; `{tourist_tax}` the tax on a hotel
 /// night; `{reset: true}` goes back to standard.
 pub fn command(cmd: &Value, w: &mut World) -> Result<Value, String> {
@@ -95,7 +96,7 @@ pub fn command(cmd: &Value, w: &mut World) -> Result<Value, String> {
             Some(c) => vec![c],
             None => match land_use_of(key) {
                 Ok(lu) if !TaxCategory::group(lu).is_empty() => TaxCategory::group(lu),
-                _ => return Err(format!("unknown tax line {key:?}; one of {} or a land use (residential, commercial, entertainment, industrial)", TaxCategory::ALL.iter().map(|c| c.key()).collect::<Vec<_>>().join(", "))),
+                _ => return Err(format!("unknown tax line {key:?}; one of {} or a land use (residential, commercial, leisure (or entertainment), industrial)", TaxCategory::ALL.iter().map(|c| c.key()).collect::<Vec<_>>().join(", "))),
             },
         };
         for c in cats {

@@ -288,7 +288,10 @@ impl Toggle {
             Toggle::Viewer => crate::viewer::toggle(ui),
             Toggle::Window(info) => {
                 let open = info.is_open(ui.ctx());
-                if ui.selectable_label(open, info.title()).clicked() {
+                let r = ui.selectable_label(open, info.title());
+                // [r4-leisure]
+                let r = if info == Info::Demand { r.on_hover_text("Demand for new buildings: a small window to keep beside the city while you build") } else { r };
+                if r.clicked() {
                     info.set_open(ui.ctx(), !open);
                 }
             }

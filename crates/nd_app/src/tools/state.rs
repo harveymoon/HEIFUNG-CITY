@@ -118,6 +118,10 @@ pub struct ToolState {
     /// Zone tool, industrial land: the sub-zone painting sets (a key of
     /// `nd_sim::world::INDUSTRY_CHOICES`; "auto" lets the ground decide).
     pub industry: &'static str,
+    /// [r4-leisure] Zone tool, commercial land: the sub-zone painting sets
+    /// (a key of `nd_sim::commercial::COMMERCIAL_CHOICES`; "auto" lets the
+    /// city decide; "leisure" paints leisure land, the old Entertainment).
+    pub commercial: &'static str,
     /// [waterfront] Zone tool, parks: paint public beaches (parcels that
     /// run down to the water) instead of green parks.
     pub beach: bool,
@@ -562,6 +566,7 @@ impl ToolState {
             brush_radius: self.brush_radius,
             unzone: self.unzone,
             industry: self.industry,
+            commercial: self.commercial,
             beach: self.beach,
             roundabout: self.roundabout,
             interchange: self.interchange,
@@ -729,6 +734,7 @@ impl Default for ToolState {
             hover_ground: None,
             rename: None,
             industry: "auto",
+            commercial: "auto",
             beach: false,
             roundabout: false,
             interchange: false,
@@ -793,10 +799,34 @@ impl ToolState {
         }
         match self.land_use {
             LandUse::Industrial => Some(self.industry),
+            // [r4-leisure] commercial land's sub-zone (leisure included)
+            LandUse::Commercial | LandUse::Entertainment => Some(self.commercial),
             // [waterfront] a park painted as a public beach
             LandUse::Park if self.beach => Some(nd_sim::shore::BEACH_SUBZONE),
             _ => None,
         }
+    }
+
+    /// [r4-leisure] Pick a land use for the Zone tool: leisure (the old
+    /// Entertainment) is Commercial with the leisure sub-zone.
+    pub fn set_zone_use(&mut self, lu: LandUse) {
+        if lu == LandUse::Entertainment {
+            self.land_use = LandUse::Commercial;
+            self.commercial = "leisure";
+        } else {
+            self.land_use = lu;
+        }
+    }
+
+    /// [r4-leisure] Set the commercial sub-zone by key ("auto", "offices",
+    /// "entertainment" for leisure, ...).
+    pub fn set_commercial(&mut self, key: &str) -> Result<(), String> {
+        use nd_sim::commercial::{CommercialSub, COMMERCIAL_CHOICES};
+        if !CommercialSub::is_choice(key) {
+            return Err(format!("unknown commercial sub-zone {key:?}; one of {}", COMMERCIAL_CHOICES.map(|c| c.0).join(", ")));
+        }
+        self.commercial = CommercialSub::from_key(key).map_or("auto", |s| s.key());
+        Ok(())
     }
 
     /// [waterfront] Painting public beaches.

@@ -150,6 +150,9 @@ struct Settings {
     /// [sound] The mixer's sliders, mute and what losing focus does.
     #[serde(default)]
     audio: Option<crate::audio::AudioSettings>,
+    /// [r4-leisure] The Demand window: open, where, and its checkbox.
+    #[serde(default)]
+    demand: Option<super::demand::DemandPrefs>,
 }
 
 fn load_settings() -> Settings {
@@ -207,6 +210,34 @@ pub fn save_audio(audio: &crate::audio::AudioSettings) {
     let mut settings = load_settings();
     settings.audio = Some(*audio);
     save_settings(&settings);
+}
+
+/// [r4-leisure] The Demand window's state saved last run, if any.
+pub fn saved_demand() -> Option<super::demand::DemandPrefs> {
+    load_settings().demand
+}
+
+/// [r4-leisure] Save the Demand window's state for the next run.
+pub fn save_demand(prefs: &super::demand::DemandPrefs) {
+    let mut settings = load_settings();
+    settings.demand = Some(*prefs);
+    save_settings(&settings);
+}
+
+/// [r4-leisure] `settings.ron`'s text with the Demand window's state put
+/// in, everything else kept (for the tests: the file itself is written by
+/// [`save_demand`]).
+#[cfg(test)]
+pub fn settings_text_with_demand(text: &str, prefs: &super::demand::DemandPrefs) -> String {
+    let mut settings = ron::from_str::<Settings>(text).unwrap_or_default();
+    settings.demand = Some(*prefs);
+    ron::ser::to_string_pretty(&settings, Default::default()).unwrap()
+}
+
+/// [r4-leisure] The Demand window's state in a `settings.ron`'s text.
+#[cfg(test)]
+pub fn demand_from_settings_text(text: &str) -> Option<super::demand::DemandPrefs> {
+    ron::from_str::<Settings>(text).ok().and_then(|s| s.demand)
 }
 
 fn clamp_scale(s: f32) -> f32 {

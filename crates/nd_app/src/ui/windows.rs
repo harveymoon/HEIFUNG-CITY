@@ -32,10 +32,14 @@ pub enum Info {
     Alerts,
     /// [settings] Graphics, text size, speech bubbles and the controls.
     Settings,
+    /// [r4-leisure] Demand for new buildings: a small window to keep open
+    /// beside the city while building (ui/demand.rs); its place and open
+    /// state are kept between sessions.
+    Demand,
 }
 
 impl Info {
-    pub const ALL: [Info; 7] = [Info::Lines, Info::Land, Info::Alerts, Info::Saves, Info::Settings, Info::Help, Info::Dev];
+    pub const ALL: [Info; 8] = [Info::Demand, Info::Lines, Info::Land, Info::Alerts, Info::Saves, Info::Settings, Info::Help, Info::Dev];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -46,6 +50,7 @@ impl Info {
             Info::Dev => "Dev",
             Info::Alerts => "Alerts",
             Info::Settings => "Settings",
+            Info::Demand => "Demand",
         }
     }
 
@@ -61,6 +66,8 @@ impl Info {
             Info::Land => 380.0,
             Info::Alerts => 420.0,
             Info::Settings => 420.0,
+            // [r4-leisure] narrow: it sits beside the Build pane
+            Info::Demand => super::demand::WINDOW_BAR_WIDTH + 16.0,
         }
     }
 
@@ -82,11 +89,24 @@ impl Info {
 /// Each draws its own header (`pane::header`: title and close) in place of
 /// egui's title bar; the window still drags by any empty part of it.
 pub fn show_all(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
+    // [r4-leisure] The Demand window opens as it was left last session.
+    static RESTORED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !RESTORED.swap(true, std::sync::atomic::Ordering::Relaxed) && super::demand::prefs().open {
+        Info::Demand.set_open(ctx, true);
+    }
+    let mut demand_pos = None;
     for (i, info) in Info::ALL.into_iter().enumerate() {
         if !info.is_open(ctx) {
             continue;
         }
         let cascade = content.left_top() + egui::vec2(12.0 + 28.0 * i as f32, 12.0 + 30.0 * i as f32);
+        // [r4-leisure] The Demand window: where it was left, else the top
+        // right of the map, clear of the Build pane at the bottom left.
+        let cascade = if info == Info::Demand {
+            super::demand::prefs().pos.map_or(egui::pos2(content.right() - info.width() - 24.0, content.top() + 12.0), |p| egui::pos2(p[0], p[1]))
+        } else {
+            cascade
+        };
         // A window keeps its width: content sized from the space it has must
         // never push it wider frame after frame. [fix/buildings-ui] The
         // Lines window may be dragged wider, up to the map's width (its
@@ -113,7 +133,7 @@ pub fn show_all(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
             window
         };
         let mut keep = true;
-        window.show(ctx, |ui| {
+        let shown = window.show(ctx, |ui| {
             keep = pane::header(ui, info);
             let out = egui::ScrollArea::vertical().id_salt(("info_scroll", info.title())).show(ui, |ui| body(ui, p, info));
             if info == Info::Lines {
@@ -121,10 +141,15 @@ pub fn show_all(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
                 ui.ctx().data_mut(|d| d.insert_temp(fit_id, h));
             }
         });
+        if info == Info::Demand {
+            demand_pos = shown.map(|r| r.response.rect.min);
+        }
         if !keep {
             info.set_open(ctx, false);
         }
     }
+    // [r4-leisure] Its open state and place, saved when they change.
+    super::demand::remember(ctx, Info::Demand.is_open(ctx), demand_pos);
 }
 
 fn body(ui: &mut egui::Ui, p: &mut UiCtx, info: Info) {
@@ -136,6 +161,7 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, info: Info) {
         Info::Dev => dev(ui, p),
         Info::Alerts => super::alerts::body(ui, p),
         Info::Settings => settings(ui, p),
+        Info::Demand => super::demand::panel(ui, p, true),
     }
 }
 

@@ -60,6 +60,10 @@ pub enum LandUse {
     Residential,
     Commercial,
     Industrial,
+    /// [r4-leisure] Commercial land of the leisure sub-zone (bars, clubs,
+    /// venues): the old Entertainment zone, kept as its own value so saves,
+    /// clubs and nights out work as before. The player zones it as
+    /// Commercial with the leisure sub-zone ([`crate::commercial`]).
     Entertainment,
     Civic,
     Park,
@@ -80,7 +84,7 @@ impl LandUse {
             LandUse::Residential => "Residential",
             LandUse::Commercial => "Commercial",
             LandUse::Industrial => "Industrial",
-            LandUse::Entertainment => "Entertainment",
+            LandUse::Entertainment => "Leisure",
             LandUse::Civic => "Civic",
             LandUse::Park => "Park",
         }
@@ -88,6 +92,25 @@ impl LandUse {
 
     pub fn index(self) -> usize {
         LandUse::ALL.iter().position(|&l| l == self).unwrap()
+    }
+
+    /// [r4-leisure] The land uses the player zones (the Build window, the
+    /// Zone tool, the Demand panel): leisure is a sub-zone of Commercial.
+    pub const ZONED: [LandUse; 5] = [LandUse::Residential, LandUse::Commercial, LandUse::Industrial, LandUse::Civic, LandUse::Park];
+
+    /// [r4-leisure] The zone as the player sees it: leisure land is
+    /// commercial.
+    pub fn zoned_as(self) -> LandUse {
+        if self == LandUse::Entertainment {
+            LandUse::Commercial
+        } else {
+            self
+        }
+    }
+
+    /// [r4-leisure] Commercial land of any sub-zone, leisure included.
+    pub fn is_commercial(self) -> bool {
+        matches!(self, LandUse::Commercial | LandUse::Entertainment)
     }
 
     /// [hillside] May go on a steep hillside, terraced: homes (the
@@ -150,9 +173,14 @@ impl LandUse {
         self.lot_width() * self.lot_depth() * 1.15
     }
 
-    /// Parse a label or key ("residential", "Park", ...).
+    /// Parse a label or key ("residential", "Park", ...). [r4-leisure]
+    /// "entertainment" and "nightlife", the old zone's names, are leisure.
     pub fn parse(s: &str) -> Option<LandUse> {
-        LandUse::ALL.into_iter().find(|l| l.label().eq_ignore_ascii_case(s.trim()))
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("entertainment") || s.eq_ignore_ascii_case("nightlife") {
+            return Some(LandUse::Entertainment);
+        }
+        LandUse::ALL.into_iter().find(|l| l.label().eq_ignore_ascii_case(s))
     }
 }
 

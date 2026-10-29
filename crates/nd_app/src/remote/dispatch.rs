@@ -359,7 +359,8 @@ pub(super) static COMMANDS: &[Cmd] = &[
     ] },
     Cmd { name: "add_zone", aliases: &[], effect: Game, run: planning::add_zone, help: &[
         ("polygon", "[[x,y],...] (3+)"),
-        ("land_use", "residential|commercial|industrial|entertainment|civic|park"),
+        ("land_use", "residential|commercial|industrial|civic|park, or leisure (commercial with the leisure sub-zone; entertainment is an alias)"),
+        ("sub_zone", "commercial only: auto|neighbourhood|retail|offices|leisure"),
         ("implement", "bool"),
     ] },
     Cmd { name: "paint", aliases: &[], effect: Game, run: planning::paint, help: &[
@@ -367,6 +368,7 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("at", "[x,y] brush centre"),
         ("radius", "m (default the tool's)"),
         ("industry", "industrial only: auto|farming|oil|refinery|manufacturing|logistics|fishing|tech|mining|smelting|factory_farming, the sub-zone set on implement"),
+        ("sub_zone", "commercial only: auto (the city picks per lot) | neighbourhood | retail | offices | leisure (the old entertainment zone; land_use leisure or entertainment does the same)"),
         ("rect", "[[x0,y0],[x1,y1]] marquee"),
         ("polygon", "[[x,y],...]"),
         ("implement", "bool"),
@@ -799,6 +801,7 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("radius", "zone brush radius m"),
         ("unzone", "bool"),
         ("industry", "zone tool sub-zone for industrial land: auto|farming|oil|..."),
+        ("sub_zone", "zone tool sub-zone for commercial land: auto|neighbourhood|retail|offices|leisure"),
         ("land_use", "(or none: the brush unzones)"),
         ("lanes_fwd", ""),
         ("lanes_bwd", ""),

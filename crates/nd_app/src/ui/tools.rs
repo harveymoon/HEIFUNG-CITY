@@ -242,7 +242,15 @@ fn zone(ui: &mut egui::Ui, sim: &Sim, tools: &mut ToolState, assets: &GameAssets
     // The land use is picked in the Build window (Zoning, Parks).
     ui.horizontal_wrapped(|ui| {
         let colour = super::theme::rgb_f(assets.palette.zone_color(tools.land_use));
-        let text = if tools.unzone { egui::RichText::new("Unzoning").strong() } else { egui::RichText::new(format!("Zoning: {}", if tools.painting_beach() { "Public beach" } else { tools.land_use.label() })).strong().color(colour) };
+        let what = if tools.painting_beach() {
+            "Public beach".to_string()
+        } else if tools.land_use == LandUse::Commercial {
+            // [r4-leisure] with its sub-zone
+            format!("Commercial · {}", nd_sim::commercial::COMMERCIAL_CHOICES.iter().find(|c| c.0 == tools.commercial).map_or("auto", |c| c.1))
+        } else {
+            tools.land_use.label().to_string()
+        };
+        let text = if tools.unzone { egui::RichText::new("Unzoning").strong() } else { egui::RichText::new(format!("Zoning: {what}")).strong().color(colour) };
         ui.label(text);
         if tools.zone_mode != ZoneMode::Polygon && ui.selectable_label(tools.unzone, "Unzone").on_hover_text("Left button erases parcels back to unzoned (the right button always does)").clicked() {
             tools.unzone = !tools.unzone;
@@ -258,6 +266,19 @@ fn zone(ui: &mut egui::Ui, sim: &Sim, tools: &mut ToolState, assets: &GameAssets
                 }
             }
         });
+    }
+    // [r4-leisure] Commercial land: its sub-zone, leisure the old
+    // Entertainment zone.
+    if tools.land_use == LandUse::Commercial && !tools.unzone {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("sub-zone").small());
+            for (key, label) in nd_sim::commercial::COMMERCIAL_CHOICES {
+                if ui.selectable_label(tools.commercial == key, label).on_hover_text(nd_sim::commercial::choice_note(key)).clicked() {
+                    tools.commercial = key;
+                }
+            }
+        });
+        hint(ui, nd_sim::commercial::choice_note(tools.commercial));
     }
     ui.horizontal_wrapped(|ui| {
         for m in ZoneMode::ALL {
@@ -304,6 +325,20 @@ fn zone(ui: &mut egui::Ui, sim: &Sim, tools: &mut ToolState, assets: &GameAssets
         hint(ui, &format!("Parcel {:.0} m² · {front} · {built}{plan_note}{water}{verdict}", p.area));
         if let Some((_, s)) = p.lot.and_then(|l| sim.world.beach_on(l)) {
             hint(ui, &format!("{}: {}", s.name, s.note.clone().unwrap_or_else(|| format!("{} on the sand", s.visitors))));
+        }
+        // [r4-leisure] Commercial land: the sub-zone set, or the city's pick.
+        if p.land_use.is_some_and(|l| l.is_commercial()) {
+            let lot = p.lot.filter(|l| sim.world.lots.contains_key(*l));
+            let set = lot.and_then(|l| sim.world.commercial_sub_set(l));
+            let text = match (set, lot) {
+                (Some(s), _) => format!("sub-zone: {}", s.label().to_lowercase()),
+                (None, Some(l)) => match sim.world.commercial_auto_pick(l, None) {
+                    Some(s) => format!("sub-zone: auto, the city would build {} here now", s.label().to_lowercase()),
+                    None => "sub-zone: auto, the market wants no new shops, offices or venues now".to_string(),
+                },
+                (None, None) => "sub-zone: auto".to_string(),
+            };
+            hint(ui, &text);
         }
         if tools.land_use == LandUse::Industrial {
             let i = tools.hover_parcel.unwrap_or_default();

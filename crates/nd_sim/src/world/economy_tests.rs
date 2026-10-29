@@ -377,7 +377,7 @@ fn a_lot_need_reads_as_what_to_zone() {
     let n = LotNeed { uses: vec![LandUse::Industrial], min_area: 500.0, needs_street: true, waterfront: false, anchors: vec![Vec2::ZERO], reach: Some(1400.0), near: "a fishing port" };
     assert_eq!(n.text(), "needs a vacant industrial lot of 500 m² or more on a street within 1.4 km of a fishing port");
     let n = LotNeed { uses: vec![LandUse::Commercial, LandUse::Entertainment], min_area: 0.0, needs_street: false, reach: Some(900.0), near: "a marina or fishing port", ..n };
-    assert_eq!(n.text(), "needs a vacant commercial or entertainment lot within 900 m of a marina or fishing port");
+    assert_eq!(n.text(), "needs a vacant commercial or leisure lot within 900 m of a marina or fishing port");
     let n = LotNeed { uses: vec![LandUse::Industrial], min_area: 600.0, needs_street: true, reach: None, near: "the buildings no trash company serves", ..n };
     assert_eq!(n.text(), "needs a vacant industrial lot of 600 m² or more on a street, best near the buildings no trash company serves");
 }

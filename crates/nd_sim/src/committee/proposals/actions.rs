@@ -27,7 +27,8 @@ pub fn parse_land_use(s: &str) -> Option<LandUse> {
         "residential" | "housing" | "homes" => Some(LandUse::Residential),
         "commercial" | "shops" => Some(LandUse::Commercial),
         "industrial" | "industry" => Some(LandUse::Industrial),
-        "entertainment" | "nightlife" => Some(LandUse::Entertainment),
+        // [r4-leisure] leisure: commercial land of the leisure sub-zone
+        "leisure" | "entertainment" | "nightlife" => Some(LandUse::Entertainment),
         "park" | "parks" | "green" => Some(LandUse::Park),
         _ => None,
     }

@@ -287,7 +287,8 @@ pub fn swatches(ui: &mut egui::Ui, items: &[(Color32, String)], round: bool) {
 }
 
 fn legend_zoning(ui: &mut egui::Ui, cx: &LegendCtx) {
-    let items: Vec<(Color32, String)> = LandUse::ALL.iter().map(|lu| (linear(cx.assets.palette.zone_color(*lu)), lu.label().to_string())).collect();
+    // [r4-leisure] leisure is commercial land's sub-zone
+    let items: Vec<(Color32, String)> = LandUse::ALL.iter().map(|lu| (linear(cx.assets.palette.zone_color(*lu)), if *lu == LandUse::Entertainment { "Commercial · leisure".to_string() } else { lu.label().to_string() })).collect();
     swatches(ui, &items, false);
     small(ui, "glowing outlines: zoned lots by use; plain outlines: vacant lots; pale steel outlines: docks and stations (their own ground, no zone)");
 }

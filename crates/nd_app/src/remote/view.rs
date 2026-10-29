@@ -134,7 +134,9 @@ pub fn req_points(cmd: &Value, name: &str) -> Result<Vec<SVec2>, String> {
 }
 
 pub fn land_use_of(s: &str) -> Result<LandUse, String> {
-    LandUse::ALL.iter().copied().find(|lu| lu.label().eq_ignore_ascii_case(s.trim())).ok_or_else(|| format!("unknown land_use {s:?}; one of residential, commercial, industrial, entertainment, civic, park"))
+    // [r4-leisure] "leisure" (and the old "entertainment") is commercial
+    // land of the leisure sub-zone.
+    LandUse::parse(s).ok_or_else(|| format!("unknown land_use {s:?}; one of residential, commercial, industrial, civic, park, or leisure (commercial with the leisure sub-zone; \"entertainment\" also works)"))
 }
 
 pub fn road_kind_of(s: &str) -> Result<RoadKind, String> {
@@ -642,9 +644,18 @@ pub fn dirt_json(w: &World, id: BuildingId) -> Value {
 
 // ── lots ────────────────────────────────────────────────────────────────────
 
+/// [r4-leisure] Commercial land's sub-zone: its key, "auto" when the city
+/// picks; null off commercial land.
+pub fn sub_zone(w: &World, id: LotId, l: &Lot) -> Value {
+    if !l.land_use.is_commercial() {
+        return Value::Null;
+    }
+    json!(w.commercial_sub_set(id).map_or("auto", |s| s.key()))
+}
+
 pub fn lot_row(w: &World, id: LotId, l: &Lot) -> Value {
     json!({
-        "id": key_str(id), "land_use": l.land_use.label(), "pos": v2(l.center), "area": round(l.area()),
+        "id": key_str(id), "land_use": l.land_use.label(), "zoned_as": l.land_use.zoned_as().label(), "sub_zone": sub_zone(w, id, l), "pos": v2(l.center), "area": round(l.area()),
         "building": opt_key(l.building), "vacant": l.building.is_none() && l.usable(), "landlocked": l.landlocked,
         "park": l.park.is_some(), "land_value": round(w.land_value.at(l.center)), "car_access": l.car_access(),
         "city_ground": w.is_city_ground(l),
@@ -656,7 +667,9 @@ pub fn lot_detail(w: &World, id: LotId, l: &Lot) -> Value {
     let value = w.land_value.at(l.center);
     let zone = w.zones.get(l.zone).map(|z| json!({ "id": key_str(l.zone), "land_use": z.land_use.label(), "area": round(polygon_area(&z.polygon).abs()) }));
     json!({
-        "id": key_str(id), "land_use": l.land_use.label(), "city_ground": w.is_city_ground(l), "pos": v2(l.center), "polygon": points(&l.polygon), "area": round(l.area()),
+        "id": key_str(id), "land_use": l.land_use.label(), "zoned_as": l.land_use.zoned_as().label(), "sub_zone": sub_zone(w, id, l),
+        "sub_zone_auto_pick": (l.land_use == nd_sim::LandUse::Commercial).then(|| w.commercial_auto_pick(id, None).map(|s| s.key())),
+        "city_ground": w.is_city_ground(l), "pos": v2(l.center), "polygon": points(&l.polygon), "area": round(l.area()),
         "width": round(l.width()), "depth": round(l.depth()), "entrance": v2(l.entrance()), "front_dir": v2(l.front_dir),
         "front_segment": l.front_segment.0, "car_segment": l.car_segment.map(|s| s.0),
         "building": opt_key(l.building), "building_name": building_name(w, l.building),

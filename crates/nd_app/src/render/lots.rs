@@ -174,7 +174,9 @@ pub(super) fn zone_layer_color(lu: nd_sim::LandUse) -> [f32; 3] {
         nd_sim::LandUse::Residential => [0.15, 1.15, 0.25],
         nd_sim::LandUse::Commercial => [0.2, 0.55, 1.25],
         nd_sim::LandUse::Industrial => [1.2, 0.95, 0.05],
-        nd_sim::LandUse::Entertainment => [1.2, 0.2, 1.05],
+        // [r4-leisure] commercial land of the leisure sub-zone: commercial's
+        // blue leaning violet, one family on the map
+        nd_sim::LandUse::Entertainment => [0.55, 0.35, 1.3],
         nd_sim::LandUse::Civic => [0.05, 1.05, 1.15],
         nd_sim::LandUse::Park => [0.1, 0.55, 0.15],
     }

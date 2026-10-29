@@ -150,6 +150,13 @@ pub(super) fn paint(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let none_why = if ids.is_empty() { opt_vec2(cmd, "at")?.and_then(|at| w.no_parcel_why(at)) } else { None };
     let industry = match opt_str(cmd, "industry")? {
         _ if beach => Some(nd_sim::shore::BEACH_SUBZONE),
+        // [r4-leisure] commercial land's sub-zone: auto, neighbourhood,
+        // retail, offices or leisure
+        _ if land_use.is_some_and(|l| l.is_commercial()) => match opt_str(cmd, "sub_zone")? {
+            Some(k) if nd_sim::commercial::CommercialSub::is_choice(k) => Some(nd_sim::commercial::CommercialSub::from_key(k).map_or("auto", |s| s.key())),
+            Some(k) => return Err(format!("unknown sub_zone {k:?}; one of {}", nd_sim::commercial::COMMERCIAL_CHOICES.map(|c| c.0).join(", "))),
+            None => None,
+        },
         Some(k) => Some(nd_sim::world::INDUSTRY_CHOICES.iter().map(|(key, _)| *key).find(|key| key.eq_ignore_ascii_case(k.trim())).ok_or_else(|| format!("unknown industry {k:?}; one of {}", nd_sim::world::INDUSTRY_CHOICES.map(|c| c.0).join(", ")))?),
         None => None,
     };
@@ -432,7 +439,17 @@ pub(super) fn add_zone(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         return Err("a zone needs at least three corners".into());
     }
     let land_use = land_use_of(req_str(cmd, "land_use")?)?;
-    let id = ctx.sim.world.add_gesture(Gesture::Zone { polygon, land_use });
+    // [r4-leisure] commercial land with a sub-zone: the zone and the
+    // sub-zone painted over its parcels, one step
+    let sub = match opt_str(cmd, "sub_zone")? {
+        Some(k) if land_use.is_commercial() && nd_sim::commercial::CommercialSub::is_choice(k) => Some(nd_sim::commercial::CommercialSub::from_key(k).map_or("auto", |s| s.key())),
+        Some(k) => return Err(format!("sub_zone {k:?} is not one of {} for commercial land", nd_sim::commercial::COMMERCIAL_CHOICES.map(|c| c.0).join(", "))),
+        None => None,
+    };
+    let id = match sub {
+        Some(k) => ctx.sim.world.add_zone_gesture(polygon, land_use, Some(k)),
+        None => ctx.sim.world.add_gesture(Gesture::Zone { polygon, land_use }),
+    };
     let implemented = opt_bool(cmd, "implement")?.unwrap_or(false);
     if implemented {
         ctx.sim.world.implement();

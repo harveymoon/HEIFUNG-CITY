@@ -768,6 +768,9 @@ impl World {
         // a town that cannot sell more bread does not get another bakery.
         let viable: Vec<bool> = LandUse::ALL.iter().map(|&lu| self.business_kinds_viable(lu, None).is_none_or(|v| !v.is_empty())).collect();
         let any_policy = self.any_district_policy();
+        // [r4-leisure] Commercial lots the player set a sub-zone on wait
+        // while the market wants none of its kinds.
+        let subs_viable = if self.commercial_bias.is_empty() { [true; 4] } else { self.commercial_subs_viable(None) };
         let decks = self.roads.alive_segments().any(|(sid, _)| self.roads.spans_lots(sid));
         for i in 0..vacant.len() {
             if built >= self.config.max_builds_per_interval {
@@ -778,8 +781,14 @@ impl World {
             if !viable[lu.index()] {
                 continue;
             }
+            if lu == LandUse::Commercial && !self.commercial_bias.is_empty() && self.commercial_sub_set(lot_id).is_some_and(|s| !subs_viable[s.index()]) {
+                continue;
+            }
             let mut chance = match lu {
                 LandUse::Park => 0.05,
+                // [r4-leisure] on auto in a nightlife district, as readily
+                // as nights out are wanted
+                LandUse::Commercial => self.commercial_demand_at(&self.lots[lot_id]) * 0.06,
                 _ => self.economy.demand_for(lu) * 0.06,
             };
             // [tax] Homes of a tier taxed over the standard go up less
@@ -896,7 +905,17 @@ impl World {
     /// while the town is short of them, else one of the viable kinds, else
     /// (when a player or script builds anyway) the kind doing best.
     pub(super) fn pick_business_kind(&mut self, lu: LandUse, jobs: u16) -> Option<BusinessKind> {
-        let viable = self.business_kinds_viable(lu, Some(jobs))?;
+        let candidates = BusinessKind::candidates(lu);
+        if candidates.is_empty() {
+            return None;
+        }
+        self.pick_business_kind_from(candidates, jobs)
+    }
+
+    /// [r4-leisure] [`World::pick_business_kind`] over a menu of its own
+    /// (a commercial sub-zone's).
+    pub(super) fn pick_business_kind_from(&mut self, candidates: &'static [BusinessKind], jobs: u16) -> Option<BusinessKind> {
+        let viable = self.kinds_viable(candidates, Some(jobs));
         if viable.contains(&BusinessKind::Grocery) && self.rng.random_bool(0.6) {
             return Some(BusinessKind::Grocery);
         }
@@ -922,7 +941,7 @@ impl World {
             return Some(*kind);
         }
         let e = &self.economy;
-        BusinessKind::candidates(lu).iter().copied().filter(|k| !k.needs_site()).max_by(|a, b| e.cover_of(*a).unwrap_or(1.0).total_cmp(&e.cover_of(*b).unwrap_or(1.0)))
+        candidates.iter().copied().filter(|k| !k.needs_site()).max_by(|a, b| e.cover_of(*a).unwrap_or(1.0).total_cmp(&e.cover_of(*b).unwrap_or(1.0)))
     }
 
     /// A building rebuilt bigger reopens as whatever the market wants now,
@@ -936,7 +955,13 @@ impl World {
         if matches!(kind, BusinessKind::Office | BusinessKind::Parking | BusinessKind::TaxiCompany) || self.economy.cover_of(kind).is_none_or(|c| c >= COVER_TO_EXPAND) {
             return;
         }
-        if let Some(new) = self.pick_business_kind(lu, jobs).filter(|k| *k != kind) {
+        // [r4-leisure] within the sub-zone the player set
+        let menu = if lu == LandUse::Commercial { self.commercial_sub_set(b.lot).map(|s| s.menu()) } else { None };
+        let new = match menu {
+            Some(m) => self.pick_business_kind_from(m, jobs),
+            None => self.pick_business_kind(lu, jobs),
+        };
+        if let Some(new) = new.filter(|k| *k != kind) {
             self.set_business(bid, Some(Business::new(new, jobs)));
             self.fit_business_name(bid);
         }
@@ -1010,6 +1035,10 @@ impl World {
             return None;
         }
         let lu = self.lots[lot_id].land_use;
+        // [r4-leisure] Commercial land goes up as its sub-zone: the
+        // player's, else the city's pick; leisure is a night out.
+        let sub = if forced.is_none() && lu == LandUse::Commercial { self.commercial_sub_for_new_building(lot_id, None) } else { None };
+        let lu = if sub == Some(crate::commercial::CommercialSub::Leisure) { LandUse::Entertainment } else { lu };
         // [industry] land value as the land use feels it
         let value = self.lot_value(lot_id);
         let mut tier = Tier::for_land_value(value);
@@ -1038,7 +1067,7 @@ impl World {
         }
         let mut kind = match forced {
             Some(k) => Some(k),
-            None => self.business_for_new_building(lot_id, lu, b.jobs),
+            None => self.business_for_new_building(lot_id, lu, b.jobs, sub),
         };
         // [r4-decks] Under a raised road an office opens as a shop or a
         // market stall instead (the first shop kind the market wants), as
@@ -1124,7 +1153,7 @@ impl World {
     /// ground, neighbours and the player's bias ([industry]); the market
     /// reading ([balance]) vetoes an unforced industrial kind that is
     /// losing money and picks every other land use.
-    fn business_for_new_building(&mut self, lot_id: LotId, lu: LandUse, jobs: u16) -> Option<BusinessKind> {
+    fn business_for_new_building(&mut self, lot_id: LotId, lu: LandUse, jobs: u16, sub: Option<crate::commercial::CommercialSub>) -> Option<BusinessKind> {
         // [tourism x districts] hotels where visitors lack beds, and the
         // trades a district's policy favours
         if let Some(k) = self.district_business(lot_id, lu, jobs) {
@@ -1145,6 +1174,10 @@ impl World {
                     return Some(k);
                 }
             }
+        }
+        // [r4-leisure] Shops and offices from their sub-zone's menu.
+        if let Some(s) = sub.filter(|_| lu == LandUse::Commercial) {
+            return self.pick_business_kind_from(s.menu(), jobs);
         }
         self.pick_business_kind(lu, jobs)
     }
