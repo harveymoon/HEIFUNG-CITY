@@ -1,0 +1,12 @@
+[package]
+name = "nd_audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HEIFUNG://CITY: the synthesised sound engine (no samples), its mixer and ambience beds"
+
+[dependencies]
+# [sound] The sound card: the same cpal Bevy's own audio already pulls in
+# (Apache-2.0), so it adds nothing to the build. Pinned: the DSP below is
+# ours, cpal only hands us the buffers.
+cpal = "=0.17.3"

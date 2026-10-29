@@ -16,6 +16,8 @@
 
 // The plumbing: the HTTP thread, the bundle commands run against, the
 // dispatcher and its help.
+/// [sound] The mixer, the beds' readout, WAV captures.
+mod audio;
 mod ctx;
 mod dispatch;
 mod events;
@@ -109,6 +111,8 @@ mod subway;
 mod taxes;
 /// [taxis] Taxi companies and cargo hubs in the report and inspector.
 mod taxis;
+/// [r4-timetable] Every line's timetable and its day's timeline.
+mod timetable;
 /// [toll-inspect] A toll booth in full for `inspect {toll}`.
 mod tolls;
 mod trains;

@@ -7,6 +7,7 @@
 use crate::roads::{RoadNetwork, SegmentId};
 use crate::traffic::{CarId, LaneId, LaneNetwork};
 
+use crate::timetable::{Kind, Timeline, Timetable};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use slotmap::{new_key_type, SlotMap};
@@ -280,6 +281,18 @@ pub struct BusRoute {
     /// of round a loop one way.
     #[serde(default)]
     pub two_way: bool,
+    /// [r4-timetable] Hours and buses out part by part; `None` (an older
+    /// save, or never set) runs `buses` all through the standard hours
+    /// (`BusRoute::schedule`).
+    #[serde(default)]
+    pub timetable: Option<Timetable>,
+    /// [r4-timetable] The line's day hour by hour, today and yesterday.
+    #[serde(default)]
+    pub timeline: Timeline,
+    /// [r4-timetable] Buses out beyond what the timetable wants now: that
+    /// many go home from their next stop (`World::step_transit`).
+    #[serde(skip)]
+    pub retire: u32,
 }
 
 /// [pt-transit] Why a line that wants a bus did not get one.
@@ -317,8 +330,9 @@ pub enum LineProblem {
     FleetShort { wanted: u32, capacity: u32 },
     /// Every depot has its fleet out: this line waits for a bus.
     DepotsFull,
-    /// Night: the buses are home until `SERVICE_START`.
-    OutOfService,
+    /// Night: the buses are home until the line's timetable starts them
+    /// (`start`; they stopped at `end`).
+    OutOfService { start: u32, end: u32 },
 }
 
 impl LineProblem {
@@ -347,7 +361,7 @@ impl LineProblem {
             LineProblem::DepotUnreachable => "depot_unreachable",
             LineProblem::FleetShort { .. } => "fleet_short",
             LineProblem::DepotsFull => "depots_full",
-            LineProblem::OutOfService => "out_of_service",
+            LineProblem::OutOfService { .. } => "out_of_service",
         }
     }
 }
@@ -365,7 +379,7 @@ impl std::fmt::Display for LineProblem {
             LineProblem::DepotUnreachable => write!(f, "no depot can reach the first stop by road"),
             LineProblem::FleetShort { wanted, capacity } => write!(f, "the lines want {wanted} buses but the depots hold {capacity}: build another depot or run fewer buses"),
             LineProblem::DepotsFull => write!(f, "every depot has its buses out: this line waits for one"),
-            LineProblem::OutOfService => write!(f, "night: buses run {} to {}", hm(SERVICE_START), hm(SERVICE_END)),
+            LineProblem::OutOfService { start, end } => write!(f, "night: buses run {} to {}", hm(*start), hm(*end)),
         }
     }
 }
@@ -392,7 +406,35 @@ impl BusRoute {
             bus_minutes_today: 0,
             upkeep_yesterday: 0.0,
             two_way: false,
+            timetable: None,
+            timeline: Timeline::default(),
+            retire: 0,
         }
+    }
+
+    /// [r4-timetable] The line's timetable: its own, else `buses` all
+    /// through the standard hours (as every line ran before timetables).
+    pub fn schedule(&self) -> Timetable {
+        self.timetable.unwrap_or_else(|| Timetable::flat(Kind::Bus, self.buses as u32))
+    }
+
+    /// [r4-timetable] Buses the line wants out at minute `m` of the day.
+    pub fn buses_at(&self, m: u32) -> u32 {
+        match &self.timetable {
+            Some(t) => t.value_at(m).unwrap_or(0),
+            None if Transit::in_service(m % 1440) => self.buses as u32,
+            None => 0,
+        }
+    }
+
+    /// [r4-timetable] The most buses the line runs at any time of day.
+    pub fn peak_buses(&self) -> u32 {
+        self.timetable.map_or(self.buses as u32, |t| t.peak(Kind::Bus))
+    }
+
+    /// [r4-timetable] Ticks between buses with `n` of them out.
+    pub fn headway_with(&self, traffic_seconds_per_tick: f32, n: u32) -> u64 {
+        ((self.loop_minutes(traffic_seconds_per_tick) / n.max(1) as f32).round() as u64).max(DISPATCH_GAP)
     }
 
     /// [w1] Stops on the way out: all but a two-way line's way back (which
@@ -411,8 +453,7 @@ impl BusRoute {
     /// out: the loop over the fleet. Buses leave the depot this far apart
     /// and are held at stops to keep it.
     pub fn headway(&self, traffic_seconds_per_tick: f32) -> u64 {
-        let n = self.buses.max(1) as f32;
-        ((self.loop_minutes(traffic_seconds_per_tick) / n).round() as u64).max(DISPATCH_GAP)
+        self.headway_with(traffic_seconds_per_tick, self.buses as u32)
     }
 
     /// [pt-transit] Ticks between two of this line's buses leaving the
@@ -582,6 +623,10 @@ pub struct Transit {
     pub bike_rack_rides_total: u64,
     #[serde(default)]
     pub bike_rack_full_total: u64,
+    /// [r4-timetable] The city's default timetable: new lines of every
+    /// kind start on it (`None`: the standard hours, one frequency all day).
+    #[serde(default)]
+    pub default_preset: Option<crate::timetable::Preset>,
 }
 
 impl Transit {
@@ -589,7 +634,10 @@ impl Transit {
         self.next_line += 1;
         let n = self.next_line;
         self.version += 1;
-        self.routes.insert(BusRoute::new(format!("Line {n}"), (n % 8) as u8))
+        let mut r = BusRoute::new(format!("Line {n}"), (n % 8) as u8);
+        // [r4-timetable] On the city's default timetable.
+        r.timetable = self.default_preset.map(|p| p.timetable(Kind::Bus, r.buses as u32));
+        self.routes.insert(r)
     }
 
     /// Recompute every leg's lane polyline after stops or roads change.
@@ -685,6 +733,13 @@ impl Transit {
     /// So a rider whose nearest stop is just past the destination's does
     /// not go all the way round; a stop a little further back may do.
     pub fn plan_trip(&self, from: Vec2, to: Vec2) -> Option<(RouteId, usize, usize)> {
+        self.plan_trip_when(from, to, &|_, _| true)
+    }
+
+    /// [r4-timetable] `plan_trip` among the lines `runs` accepts: given a
+    /// line and the metres walked to its boarding stop, does it run when
+    /// the rider gets there?
+    pub fn plan_trip_when(&self, from: Vec2, to: Vec2, runs: &dyn Fn(&BusRoute, f32) -> bool) -> Option<(RouteId, usize, usize)> {
         let direct = from.distance(to);
         if direct < BUS_TRIP_MIN {
             return None;
@@ -693,7 +748,7 @@ impl Transit {
         for (id, route) in &self.routes {
             // [pt-transit] Nor lines no bus can be sent to: riders stood
             // there for hours and learnt to hate the bus.
-            if !route.runnable() || route.buses == 0 || matches!(route.dispatch, Some(DispatchProblem::NoDepot | DispatchProblem::Unreachable)) {
+            if !route.runnable() || route.peak_buses() == 0 || matches!(route.dispatch, Some(DispatchProblem::NoDepot | DispatchProblem::Unreachable)) {
                 continue;
             }
             let within = |p: Vec2| -> Vec<(usize, f32)> { route.stops.iter().enumerate().map(|(i, s)| (i, s.pos.distance(p))).filter(|(_, d)| *d <= STOP_REACH).collect() };
@@ -707,7 +762,7 @@ impl Transit {
                     if walking + 60.0 > direct {
                         continue;
                     }
-                    if route.ride_length(a, b) > direct * RIDE_DETOUR + RIDE_SLACK {
+                    if route.ride_length(a, b) > direct * RIDE_DETOUR + RIDE_SLACK || !runs(route, da) {
                         continue;
                     }
                     if best.is_none_or(|(w, ..)| walking < w) {
@@ -726,11 +781,18 @@ impl Transit {
     /// `plan_trip`. Riders take the first leg; at its end they decide
     /// again, and the second line is the direct ride from there.
     pub fn plan_transfer(&self, from: Vec2, to: Vec2) -> Option<(RouteId, usize, usize, RouteId, usize, usize)> {
+        self.plan_transfer_when(from, to, &|_, _| true)
+    }
+
+    /// [r4-timetable] `plan_transfer` among the lines `runs` accepts (as
+    /// for `plan_trip_when`; the second line is asked with the walk to
+    /// the change counted from the start).
+    pub fn plan_transfer_when(&self, from: Vec2, to: Vec2, runs: &dyn Fn(&BusRoute, f32) -> bool) -> Option<(RouteId, usize, usize, RouteId, usize, usize)> {
         let direct = from.distance(to);
         if direct < BUS_TRIP_MIN {
             return None;
         }
-        let lines: Vec<(RouteId, &BusRoute)> = self.routes.iter().filter(|(_, r)| r.runnable() && r.buses > 0 && !matches!(r.dispatch, Some(DispatchProblem::NoDepot | DispatchProblem::Unreachable))).collect();
+        let lines: Vec<(RouteId, &BusRoute)> = self.routes.iter().filter(|(_, r)| r.runnable() && r.peak_buses() > 0 && !matches!(r.dispatch, Some(DispatchProblem::NoDepot | DispatchProblem::Unreachable))).collect();
         let mut best: Option<(f32, (RouteId, usize, usize, RouteId, usize, usize))> = None;
         for &(ia, a) in &lines {
             let boards: Vec<(usize, f32)> = a.stops.iter().enumerate().map(|(i, s)| (i, s.pos.distance(from))).filter(|(_, d)| *d <= STOP_REACH).collect();
@@ -752,7 +814,7 @@ impl Transit {
                             continue;
                         }
                         for &(p, dp) in &boards {
-                            if p == x || a.ride_length(p, x) > from.distance(sx.pos) * RIDE_DETOUR + RIDE_SLACK {
+                            if p == x || a.ride_length(p, x) > from.distance(sx.pos) * RIDE_DETOUR + RIDE_SLACK || !runs(a, dp) {
                                 continue;
                             }
                             for &(q, dq) in &alights {
@@ -785,7 +847,7 @@ impl Transit {
         if direct < BUS_TRIP_MIN {
             return Some(NoBus::TooShort);
         }
-        let lines: Vec<&BusRoute> = self.routes.values().filter(|r| r.runnable() && r.buses > 0).collect();
+        let lines: Vec<&BusRoute> = self.routes.values().filter(|r| r.runnable() && r.peak_buses() > 0).collect();
         if lines.is_empty() {
             return Some(NoBus::NoLine);
         }

@@ -147,6 +147,9 @@ struct Settings {
     /// [settings] The graphics setting ("Auto", "Low", "Medium", "High").
     #[serde(default)]
     quality: Option<String>,
+    /// [sound] The mixer's sliders, mute and what losing focus does.
+    #[serde(default)]
+    audio: Option<crate::audio::AudioSettings>,
 }
 
 fn load_settings() -> Settings {
@@ -191,6 +194,18 @@ pub fn saved_quality() -> Option<String> {
 pub fn save_quality(label: &str) {
     let mut settings = load_settings();
     settings.quality = Some(label.to_string());
+    save_settings(&settings);
+}
+
+/// [sound] The sound settings saved last run, if any.
+pub fn saved_audio() -> Option<crate::audio::AudioSettings> {
+    load_settings().audio
+}
+
+/// [sound] Save the sound settings for the next run.
+pub fn save_audio(audio: &crate::audio::AudioSettings) {
+    let mut settings = load_settings();
+    settings.audio = Some(*audio);
     save_settings(&settings);
 }
 
@@ -463,6 +478,27 @@ mod tests {
                 assert!(covered(&defs, &family, c), "{c:?} has no glyph in {family:?}");
             }
         }
+    }
+
+    /// [sound] A settings file from before sound loads (with the default
+    /// sound), one with only some sound fields fills in the rest, and the
+    /// sound settings survive a save and load.
+    #[test]
+    fn sound_settings_round_trip_and_old_files_load() {
+        let old = "(ui_scale: Some(1.15), speech_bubbles: Some(true), quality: Some(\"High\"))";
+        let s: Settings = ron::from_str(old).unwrap();
+        assert_eq!(s.ui_scale, Some(1.15));
+        assert!(s.audio.is_none());
+        let partial = "(quality: Some(\"Low\"), audio: Some((master: 0.3, muted: true)))";
+        let s: Settings = ron::from_str(partial).unwrap();
+        let a = s.audio.unwrap();
+        assert_eq!((a.master, a.muted), (0.3, true));
+        let d = crate::audio::AudioSettings::default();
+        assert_eq!((a.ambience, a.ui, a.unfocused), (d.ambience, d.ui, d.unfocused));
+        let mine = crate::audio::AudioSettings { master: 0.55, ambience: 0.1, effects: 0.9, ui: 0.25, music: 0.0, muted: false, unfocused: crate::audio::Unfocused::Duck };
+        let text = ron::ser::to_string_pretty(&Settings { audio: Some(mine), ..Default::default() }, Default::default()).unwrap();
+        let back: Settings = ron::from_str(&text).unwrap();
+        assert_eq!(back.audio, Some(mine));
     }
 
     #[test]

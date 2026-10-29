@@ -74,7 +74,7 @@ fn a_line_no_depot_can_reach_says_so_and_does_not_hold_up_the_others() {
     // At night the line says the buses are home, and when they come out.
     run_to(&mut w, 23 * 60 + 45);
     let night = w.line_problems(line);
-    assert!(night.contains(&LineProblem::OutOfService) && night.iter().any(|p| p.to_string().contains("05:30")), "{night:?}");
+    assert!(night.iter().any(|p| matches!(p, LineProblem::OutOfService { .. })) && night.iter().any(|p| p.to_string().contains("05:30")), "{night:?}");
 }
 
 #[test]
@@ -235,4 +235,87 @@ fn a_single_station_brings_people_in_from_out_of_town() {
     assert!(came > 0, "commuters came in by train to a town with one station");
     assert!(w.rail.stats.riders_today > 0 && w.rail.stats.fares_today > 0.0, "and are the station's riders");
     assert!(w.tourism.tourists.values().any(|t| t.commuter.is_some() && t.via == crate::tourism::Arrival::Rail), "commuters off the train");
+}
+
+/// [r4-timetable] A commuter timetable on a one-bus line: a second bus
+/// joins it for the morning rush and goes home when the rush is over (its
+/// riders set down at a stop on the way), and the line's books charge the
+/// extra bus-minutes.
+#[test]
+fn a_rush_hour_timetable_sends_extra_buses_out_and_home_again() {
+    use crate::timetable::{LineRef, Part, Preset};
+    let mut w = block_town();
+    let line = block_line(&mut w);
+    depot(&mut w);
+    let t = w.set_line_preset(LineRef::Bus(line), Preset::Commuter).unwrap();
+    assert_eq!((t.value(Part::MorningRush), t.value(Part::Day), t.value(Part::Evening)), (2, 1, 1));
+    assert_eq!(w.transit.routes[line].buses, 1, "the day's fleet");
+    let out = |w: &World| buses_on(w, line).into_iter().filter(|id| !w.traffic.cars[*id].bus.as_ref().unwrap().to_depot).count();
+    run_to(&mut w, 5 * 60 + 50);
+    assert_eq!(out(&w), 1, "before the rush: one bus");
+    run_to(&mut w, 6 * 60 + 40);
+    assert_eq!(out(&w), 2, "the rush: a second bus out");
+    assert_eq!(w.transit.routes[line].buses_at(7 * 60), 2);
+    run_to(&mut w, 10 * 60);
+    assert_eq!(out(&w), 1, "after the rush the extra bus went home");
+    assert!(buses_on(&w, line).len() <= 2);
+    // The day's books: more than one bus-day for the line, less than two.
+    run_to(&mut w, 0);
+    let r = &w.transit.routes[line];
+    assert!(r.upkeep_yesterday > transit::BUS_UPKEEP_PER_DAY * 1.2 && r.upkeep_yesterday < transit::BUS_UPKEEP_PER_DAY * 2.0, "upkeep {}", r.upkeep_yesterday);
+    // The timeline counted buses out by the hour: two in the rush.
+    let tl = &r.timeline.yesterday;
+    assert_eq!(tl.len(), 24);
+    assert!(tl[7].runs > tl[12].runs && tl[12].runs > 0, "buses out by the hour: rush {} midday {}", tl[7].runs, tl[12].runs);
+    assert_eq!(tl[3].runs, 0, "nothing at night");
+}
+
+/// [r4-timetable] A night service keeps a bus out through the small hours
+/// (and costs a full bus-day), and its riders do not give up at the old
+/// end of service.
+#[test]
+fn a_24_hour_bus_line_runs_through_the_night_and_pays_for_it() {
+    use crate::timetable::{LineRef, Preset};
+    let mut w = block_town();
+    let line = block_line(&mut w);
+    depot(&mut w);
+    w.set_line_preset(LineRef::Bus(line), Preset::Hours24).unwrap();
+    run_to(&mut w, 2 * 60);
+    run_to(&mut w, 3 * 60);
+    assert_eq!(buses_on(&w, line).len(), 1, "a bus out at 03:00");
+    assert!(!w.line_problems(line).iter().any(|p| matches!(p, LineProblem::OutOfService { .. })));
+    let leg = TransitLeg::Bus { route: line, board: 0, alight: 2 };
+    assert!(!w.leg_service_over(&leg, 3 * 60), "the night bus is coming");
+    run_to(&mut w, 0);
+    run_to(&mut w, 0);
+    let r = &w.transit.routes[line];
+    // Round the clock: 1440 bus-minutes over the 1080 a service day has.
+    assert!(r.upkeep_yesterday > transit::BUS_UPKEEP_PER_DAY * 1.25, "upkeep {}", r.upkeep_yesterday);
+    // Back to the standard: night riders give up again.
+    w.set_line_timetable(LineRef::Bus(line), None).unwrap();
+    assert!(w.leg_service_over(&leg, 3 * 60));
+}
+
+/// [r4-timetable] Mode choice asks each line's timetable whether it runs
+/// when the rider reaches the stop: a line whose evening ends early is not
+/// offered after it ends, the others still are.
+#[test]
+fn riders_are_not_offered_a_bus_line_that_has_stopped() {
+    use crate::timetable::{LineRef, Preset};
+    let mut w = block_town();
+    let line = block_line(&mut w);
+    depot(&mut w);
+    let (from, to) = (Vec2::new(-200.0, 20.0), Vec2::new(200.0, 20.0));
+    let mut t = Preset::AllDay.timetable(crate::timetable::Kind::Bus, 1);
+    t.end = 20 * 60;
+    w.set_line_timetable(LineRef::Bus(line), Some(t)).unwrap();
+    let walk = w.config.walk_speed;
+    let now = |m: u32| move |r: &transit::BusRoute, d: f32| r.buses_at(m + (d * 1.25 / walk).ceil() as u32) > 0;
+    assert_eq!(w.transit.plan_trip_when(from, to, &now(12 * 60)).map(|p| p.0), Some(line));
+    assert_eq!(w.transit.plan_trip_when(from, to, &now(19 * 60 + 59)), None, "the line stops at 20:00, before the rider gets to the stop");
+    assert_eq!(w.transit.plan_trip_when(from, to, &now(21 * 60)), None);
+    assert!(w.transit.plan_trip(from, to).is_some(), "the route itself still serves the trip");
+    // The give-up follows the line's hours too.
+    let leg = TransitLeg::Bus { route: line, board: 0, alight: 1 };
+    assert!(w.leg_service_over(&leg, 20 * 60 + 40) && !w.leg_service_over(&leg, 20 * 60 + 10));
 }

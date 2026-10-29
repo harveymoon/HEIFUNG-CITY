@@ -279,14 +279,25 @@ impl World {
         // the wait, the ride, the fare; the unsociable mind the crowd.
         let crowd = 6.0 - 6.0 * sociable;
         // Only while the buses run: at night a rider would stand at the
-        // stop until morning (or give up hours later).
-        if q.allow_transit && self.economy.transit.buses > 0 && crate::transit::Transit::in_service(self.clock.minute_of_day() as u32) {
-            if let Some((route, board, alight)) = self.transit.plan_trip(q.from, q.to) {
+        // stop until morning (or give up hours later). [r4-timetable] By
+        // each line's timetable, when the rider gets to the stop.
+        let now = self.clock.minute_of_day() as u32;
+        let arrive = |metres: f32| now + (metres * 1.25 / walk).ceil() as u32;
+        if q.allow_transit && self.economy.transit.buses > 0 {
+            // Buses out when they get there, and still out a headway later
+            // (at the end of the evening the buses go home from their next
+            // stop, so a rider just before the end would wait in vain).
+            let runs = |r: &crate::transit::BusRoute, d: f32| {
+                let n = r.buses_at(arrive(d));
+                n > 0 && r.buses_at(arrive(d) + (r.headway_with(secs, n) as u32).min(transit::MAX_EXPECTED_WAIT as u32 * 2)) > 0
+            };
+            if let Some((route, board, alight)) = self.transit.plan_trip_when(q.from, q.to, &runs) {
                 let r = &self.transit.routes[route];
                 let (s0, s1) = (r.stops[board].pos, r.stops[alight].pos);
                 // [pt-transit] The wait is half the line's headway (more
                 // buses, shorter waits), not a flat twelve minutes.
-                let wait = (r.headway(secs) as f32 * 0.5).clamp(transit::MIN_EXPECTED_WAIT, transit::MAX_EXPECTED_WAIT);
+                // [r4-timetable] With the buses out when the rider gets there.
+                let wait = (r.headway_with(secs, r.buses_at(arrive(q.from.distance(s0)))) as f32 * 0.5).clamp(transit::MIN_EXPECTED_WAIT, transit::MAX_EXPECTED_WAIT);
                 let minutes = (q.from.distance(s0) + s1.distance(q.to)) / walk + wait + r.ride_length(board, alight) / (7.0 * secs);
                 push(TripMode::Bus, minutes, r.fare, crowd, ModePlan::Bus { route, board, alight, stop: s0, bike: false });
                 // [bike-racks] A cyclist facing a long ride may put the bike
@@ -300,20 +311,22 @@ impl World {
                     let comfort = crowd + 3.0 + (ends * 1.2 / bike) * 0.25 * (0.5 + caution) * frail;
                     push(TripMode::Bus, minutes, r.fare, comfort, ModePlan::Bus { route, board, alight, stop: s0, bike: true });
                 }
-            } else if let Some((ra, board, x, rb, y, alight)) = self.transit.plan_transfer(q.from, q.to) {
+            } else if let Some((ra, board, x, rb, y, alight)) = self.transit.plan_transfer_when(q.from, q.to, &runs) {
                 // [pt-transit] Two lines with a change between: the first
                 // leg is booked; at its end the rider decides again and the
                 // second line is the direct ride from there.
                 let (a, b) = (&self.transit.routes[ra], &self.transit.routes[rb]);
-                let wait = |r: &crate::transit::BusRoute| (r.headway(secs) as f32 * 0.5).clamp(transit::MIN_EXPECTED_WAIT, transit::MAX_EXPECTED_WAIT);
+                let wait = |r: &crate::transit::BusRoute| (r.headway_with(secs, r.buses_at(now).max(1)) as f32 * 0.5).clamp(transit::MIN_EXPECTED_WAIT, transit::MAX_EXPECTED_WAIT);
                 let walking = q.from.distance(a.stops[board].pos) + a.stops[x].pos.distance(b.stops[y].pos) + b.stops[alight].pos.distance(q.to);
                 let riding = (a.ride_length(board, x) + b.ride_length(y, alight)) / (7.0 * secs);
                 let minutes = walking / walk + wait(a) + wait(b) + transit::TRANSFER_PENALTY + riding;
                 push(TripMode::Bus, minutes, a.fare + b.fare, crowd, ModePlan::Bus { route: ra, board, alight: x, stop: a.stops[board].pos, bike: false });
             }
         }
-        if q.allow_transit && Rail::in_service(self.clock.minute_of_day() as u32) {
-            if let Some((board, alight, stop)) = self.plan_rail_trip(q.from, q.to) {
+        // [r4-timetable] Only if a train still runs (or has started) when
+        // the rider reaches the platform.
+        if q.allow_transit && (Rail::in_service(now) || self.rail.timetable.is_some()) {
+            if let Some((board, alight, stop)) = self.plan_rail_trip(q.from, q.to).filter(|(_, _, stop)| self.rail.headway_at(arrive(q.from.distance(*stop))).is_some()) {
                 let end = self.building_entrance(alight).unwrap_or(q.to);
                 let wait = match self.rail.stats.next_passenger_in {
                     0 => 30.0,
@@ -326,9 +339,12 @@ impl World {
         // [subway] The metro: the walk to an entrance, the stairs, half a
         // headway on the platform, the ride. Out of the weather and the
         // traffic, so a little kinder than the bus to the crowd-shy.
-        if q.allow_transit && crate::subway::Subway::in_service(self.clock.minute_of_day() as u32) {
-            if let Some(p) = self.plan_subway_trip(q.from, q.to) {
-                let headway = self.subway.lines.get(p.line).map_or(crate::subway::DEFAULT_HEADWAY, |l| l.headway) as f32;
+        // [r4-timetable] Only lines still running when the rider gets to
+        // the platform, at the headway they run then.
+        if q.allow_transit {
+            if let Some(p) = self.plan_subway_trip_now(q.from, q.to) {
+                let at = arrive(q.from.distance(p.entrance));
+                let headway = self.subway.lines.get(p.line).map_or(crate::subway::DEFAULT_HEADWAY, |l| l.headway_at(at).unwrap_or(l.headway)) as f32;
                 let minutes = (q.from.distance(p.entrance) + p.exit.distance(q.to)) / walk + 2.0 + headway * 0.5 + p.minutes_riding;
                 push(TripMode::Subway, minutes, crate::subway::FARE, crowd * 0.8, ModePlan::Subway { line: p.line, board: p.board, alight: p.alight, stop: p.entrance });
             }

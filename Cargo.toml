@@ -6,12 +6,13 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = ""
+repository = "https://github.com/harveymoon/HEIFUNG-CITY"
 
 [workspace.dependencies]
 nd_sim = { path = "crates/nd_sim" }
 nd_procgen = { path = "crates/nd_procgen" }
 nd_minds = { path = "crates/nd_minds" }
+nd_audio = { path = "crates/nd_audio" }
 
 serde = { version = "1", features = ["derive"] }
 ron = "0.12"
