@@ -866,6 +866,10 @@ pub(super) static COMMANDS: &[Cmd] = &[
     Cmd { name: "heat_vision", aliases: &["heat"], effect: View, run: look::heat_vision, help: &[
         ("on", "bool, omitted toggles: the drone thermal camera view (also key H)"),
     ] },
+    Cmd { name: "photo_mode", aliases: &["photo"], effect: View, run: look::photo_mode, help: &[
+        ("on", "bool, omitted toggles: hide every pane, bar, label and pin so screenshots show the city alone (also key F10)"),
+        ("size", "[w, h]: also set the window's size in physical pixels (for screenshots of a known size); reply `window` is the size now"),
+    ] },
     Cmd { name: "graphics", aliases: &["quality"], effect: View, run: look::graphics, help: &[
         ("quality", "auto|low|medium|high: pin the graphics tier (pin one before screenshots that must compare) or hand it back to the frame-rate throttler; omitted reports the setting, the tier in force, the smoothed frame time and the effects on the camera"),
     ] },
@@ -1299,5 +1303,25 @@ mod dispatch_tests {
         for (a, c) in aliases {
             assert_eq!(lookup(a).map(|x| x.name), c.as_str(), "alias {a}");
         }
+    }
+
+    /// [photo] `photo_mode` sets, toggles and reports the flag the UI's
+    /// drawing reads; a bad `size` is refused and changes nothing; with no
+    /// window (as here) the reply's `window` is null.
+    #[test]
+    fn photo_mode_sets_and_toggles() {
+        let mut app = app();
+        let (status, body) = send(&mut app, json!({ "cmd": "photo_mode", "on": true }));
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["photo_mode"], true);
+        assert!(body["window"].is_null(), "{body}");
+        assert!(app.world().resource::<UiFlags>().photo_mode);
+        let (_, body) = send(&mut app, json!({ "cmd": "photo" }));
+        assert_eq!(body["photo_mode"], false, "no `on`: toggles");
+        let (status, _) = send(&mut app, json!({ "cmd": "photo_mode", "on": true, "size": [10, 10] }));
+        assert_eq!(status, 400);
+        assert!(!app.world().resource::<UiFlags>().photo_mode, "a refused command changes nothing");
+        let (_, body) = send(&mut app, json!({ "cmd": "status" }));
+        assert_eq!(body["photo_mode"], false);
     }
 }

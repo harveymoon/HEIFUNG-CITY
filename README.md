@@ -1,174 +1,263 @@
-# HEIFUNG://CITY
+<p align="center">
+  <img src="site/img/logo.png" alt="HEIFUNG://CITY" width="420">
+</p>
 
-(Formerly "District 2040", working title "Neon District". The exe is `heifung_city.exe`; the crates keep their `nd_` names.)
+<h1 align="center">HEIFUNG://CITY</h1>
 
-A procedural near-future city builder built to be tinkered with: worn, realistic 2040 rather than neon. Rust, Bevy 0.19, egui.
-The simulation is engine-independent and deterministic; the renderer is a thin layer on top.
+<p align="center">
+  <b>A near-future city builder where every street, tower and citizen is generated.</b><br>
+  Open source. Rust, Bevy 0.19, egui.<br>
+  <a href="https://harveymoon.github.io/HEIFUNG-CITY/">Project page</a> ·
+  <a href="https://github.com/harveymoon/HEIFUNG-CITY/releases">Releases</a> ·
+  <a href="#build-and-run">Build from source</a>
+</p>
+
+![A city at night after 48 days of play](site/img/hero-night.jpg)
+
+Draw the roads, zone the land and watch a city of thousands move in. Each citizen has a home, a
+job, a commute and a mood; each shop has stock, cash and suppliers; each car follows its lane
+through junctions you can tune by hand. Nothing in the game is a hand-made model or a recorded sound:
+the terrain, the 220-odd building styles, the signs, the names, the people and the sound all come
+out of code, so no two cities look the same.
+
+The simulation is engine-independent and deterministic (same seed, same inputs, same city); the
+renderer is a thin layer on top.
+
+Formerly "District 2040" (working title "Neon District"). The exe is `heifung_city.exe`; the
+crates keep their `nd_` names.
+
+## Screenshots
+
+| | |
+| --- | --- |
+| ![Lane-level traffic at a junction](site/img/traffic-junction.jpg) | ![A raised road on a viaduct](site/img/viaduct.jpg) |
+| ![The metro in the Underground view](site/img/metro.jpg) | ![Street level at night](site/img/street-night.jpg) |
+| ![A citizen in the inspector](site/img/ui-person.jpg) | ![City Data charts](site/img/ui-citydata.jpg) |
+| ![A generated coastal river city](site/img/city-coastal-river.jpg) | ![An arctic old town in the snow](site/img/city-old-town.jpg) |
+| ![Ring roads and roundabouts](site/img/roundabout.jpg) | ![Tenements and towers at night](site/img/canyon-night.jpg) |
+| ![District looks: Lantern Alley](site/img/look-lantern-alley.jpg) | ![District looks: Patchwork](site/img/look-patchwork.jpg) |
+
+More on the [project page](https://harveymoon.github.io/HEIFUNG-CITY/), all taken in the game.
+
+## Features
+
+### Roads and traffic
+- **Lane-level traffic**: every car is simulated in its lane, follows the car ahead (IDM), changes
+  lanes in a smooth glide, zip-merges, and routes over the whole lane graph.
+- **Signals** with actuated phases and protected left arrows; lane arrows set from turning counts or
+  by hand.
+- **Junction editor**: per-phase green times, banned turns, lane arrows, and crosswalks upgraded to
+  push-button signals or **footbridges** with stairs.
+- **Roundabouts** of one to three lanes, 24 to 240 m across, with give-way entries and a middle you
+  can zone; rings can nest.
+- **Raised and sunken roads**: 2 m steps from −20 m to +24 m. **Viaducts** on pillars that can span
+  over lots, **bored tunnels** with portals and vent heads, cuttings with retaining walls, automatic
+  underpasses.
+- **Curved roads**, lane presets from a footpath to a highway, one-ways, **highways** with ramps that
+  merge without lights and a diamond **interchange** preset; bridges over water.
+- **Planning in projects**: everything you draw is a hologram in a named project with its own undo;
+  several projects can be planned side by side, then implemented.
+- Toll booths priced per lane, road wear and budgets, road rage, street races, moto packs and
+  warehouse raves after dark.
+
+### People on foot, bikes and parking
+- A **walking network** along pavements, footpaths, gates and alleys between lots; shops sell to
+  the footfall that passes.
+- Zebra crossings, waits at the lights, jaywalkers and near misses; bikes and cars owned by class.
+- **Parking**: kerb spaces with a two-hour limit and residents' permits, car parks that open where
+  drivers circle, parking wardens, tickets, clamps and **tow trucks**.
+
+### Transit
+- **Buses** on loops of kerbside stops, run from depots.
+- **Metro** drawn station to station, looping lines, and an **Underground view**.
+- **Rail**: a trunk line, branches you lay, stations, freight yards whose wagons really carry the
+  goods, level crossings, and one Central Station per city.
+- **Ferries** to towns off the map, freighters up the rivers, shipping ports, fishing fleets,
+  marinas, beaches and private jetties.
+- **Air**: drone pads, vertiports and skyports for eVTOL **air taxis**, air ambulances and a police
+  helicopter.
+- **Taxis** run by companies residents found when the demand is there.
+- **Timetables** for every bus line, metro line, the passenger trains and each ferry terminal:
+  service hours, morning and evening rushes, optional night service (off, sparse or 24 hours), and
+  a day timeline per line of who boarded and who was left waiting.
+
+### Economy and land
+- Fourteen resources and recipe-driven **businesses** with stock, cash and floating prices; supply
+  chains such as grain → livestock → meat; trucks deliver the deals, imports and exports fill gaps.
+- Industry sub-zones (farming, oil, refining, ...) and dirty industry that contaminates the ground.
+- **Land value** on a 32 m grid, three tiers of homes, **rent**, wages, classes, displacement and an
+  inequality chart with a Lorenz curve.
+- A **land market**: towers rise with demand (2 to 40 floors and a skyline league of skyscrapers,
+  supertalls and megatalls), developers buy out low buildings, firms expand next door.
+- Up to four fictional **mega-corps** with logos and HQ towers; universities; taxes per line, an
+  import duty and an itemised **ledger**.
+- **Billionaires and mansions**: when the city gets unequal enough, fictional billionaires arrive,
+  buy two to four plots for a mansion in the local style, and drive in convoys with escorts.
+- **Tourism**: hotels, a tourist tax, visitors by road, rail, ferry and air, ten landmark
+  attractions.
+
+### Districts and looks
+- Paint **districts** with a brush or polygon, give each one of twelve **stories** (Lantern Lanes,
+  Foundry Row, The Promenade, Quiet Acres, Eco Village, Riverbank Shantytown, ...) and its
+  **policies** (rent support, nightlife levy, heritage grant, ...).
+- Each story grows its own **procedural look**: Kowloon stacks, Brick & Steel, Lantern Alley,
+  Garden Suburb, Harbour Pastel, Old Stone, Solarpunk Green, Glass Campus, Patchwork, Skyline Luxe,
+  plus neon
+  strips, night markets, capsule pods, tech campuses and more.
+
+### Citizens and minds
+- Every citizen has a generated look, a schedule, hunger, a **memory stream**, **moods** and
+  concerns, and a book of favourite places and places they never go back to.
+- **Social life**: friends, partners, rivals and enemies; bands, clubs, street-art crews and
+  start-ups that put on gigs, paint murals, open businesses, petition and protest. Speech bubbles
+  in the street.
+- **Minds are pluggable**: a fast rule-based mind for everyone; optional LLM voices write lines and
+  diaries for spotlighted citizens. The simulation never waits on a model.
+- **The mayor's committee**: six advisers from a pool of fourteen watch the numbers, call meetings,
+  argue proposals and vote, and you approve or veto. Runs **fully offline with no API key** (a
+  seeded stand-in); optionally a local OpenAI-compatible server or the Claude API.
+- Crime, homelessness, camps and RVs, trash.
+
+### Services, power and emergencies
+- **Power**: coal, solar, wind, nuclear, hydro with a dam, tidal and geothermal plants; batteries on
+  time-of-use prices; brownouts that hit cheap districts first; smog, CO2 and noise.
+- **Services** in three tiers: police, fire, health, schools, 911 dispatch, jails, trash depots,
+  parking enforcement, monuments, stadiums.
+- **Emergencies**: fires that spread, crimes and illness; a dispatcher sends the nearest unit with
+  lights and sirens, police chases, fire engines working the scene, help from out of town (billed)
+  when you have none.
+
+### The world
+- **Landscapes**: river valley, islands, coast, delta, plains or flat, with levers for water,
+  relief, river branching and islands, and a mini-map.
+- **Climates**: temperate, desert, tropical, arctic and volcanic; hourly cloud, wind and
+  temperature, heat waves, cold snaps and storms; **rain and snow**; a full **day and night** with
+  bloom and window lights that follow who is home.
+- **City generator**: a whole city in seconds (`grid_plaza`, `coastal_river`, `old_town`,
+  `twin_centres`, `perfect_city`), streets traced through tensor fields after Chen et al. 2008.
+
+### Sound
+- **Synthesised sound**: every sound is generated in code, no recorded samples. A mixer in
+  Settings → Sound, UI cues, and ambience beds that change with the zoom, the district and the
+  weather.
+
+### Seeing it
+- Orbit camera, **walk mode** at street level, a **chase camera** behind anyone or anything, their
+  **point of view**, drone **heat vision**, the Underground view, map layers (land value, traffic,
+  pollution, land survey, ...).
+- **City Data**: one full-screen view of every report, chart and directory.
+- **Building viewer**: a turntable for every building in the city and every style in the
+  catalogue, day or night.
+- **Photo mode** (`F10`): hides the UI for clean screenshots.
+
+### Built to be tinkered with
+- **Remote API**: a local JSON API (127.0.0.1:4817) with more than a hundred commands to build,
+  inspect, move the camera and take screenshots; [`tools/mcp/nd_mcp.py`](tools/mcp/README.md) wraps
+  it as an MCP server for AI assistants. See [`docs/REMOTE.md`](docs/REMOTE.md).
+- **Brand**: the logo and icons are drawn in code by `assets/brand/make_logo.py` (candidates in
+  `assets/brand/candidates/`).
+- **Hot-reloading data**: `assets/palette.ron` (every world colour; glow above 1.0 blooms) and
+  `assets/rules/buildings.ron` (the building grammar and style table) reload while the game runs.
+- **Saves** as compressed RON snapshots with a picture, grouped by game on the title screen, with
+  daily autosaves kept as history you can revert to.
+- **Playtest flags**: `F8` bookmarks whatever is selected with a note and a snapshot of its state,
+  so whoever fixes it sees exactly what was meant.
+- **Headless**: the simulation runs in tests, probes and a terminal with no window.
+
+## Build and run
+
+Requirements: Windows 10 or 11, a GPU with Vulkan or DirectX 12, and stable Rust from
+[rustup.rs](https://rustup.rs) (MSVC toolchain). The first build compiles Bevy and takes several
+minutes.
 
 ```
-cargo run --release -p nd_app                  # the game
-cargo run --example headless -p nd_sim -- 3    # simulate a small grid city for 3 days in the terminal
+git clone https://github.com/harveymoon/HEIFUNG-CITY
+cd HEIFUNG-CITY
+cargo build -p nd_app --release
+target\release\heifung_city.exe
+```
+
+Or simply `cargo run --release -p nd_app`. Saves go to a `saves` folder next to the exe.
+
+Other useful commands:
+
+```
+cargo run --example headless -p nd_sim -- 3    # simulate a small city for 3 days in the terminal
 cargo test --profile fast --workspace          # the tests
+cargo run -p nd_app --features fast-dev        # links Bevy dynamically for quicker iteration
 ```
 
-`headless` lays out its own small grid. The probes in `crates/nd_sim/examples/` (`land_probe`,
-`carlife_probe`, `jam_probe`, `peak_probe`, ...) run the demo district of
-`crates/nd_sim/tests/demo_city.rs`, the one the Dev window seeds.
+## Controls
 
-The logo and icons are drawn by `assets/brand/make_logo.py` (three candidates in
-`assets/brand/candidates/`; `python make_logo.py --pick b` makes another one live, then rebuild).
+| Keys | Does |
+| --- | --- |
+| Right-drag, middle-drag or Shift-drag, wheel | rotate, pan, zoom |
+| `W A S D`, `Q` `E` | pan, turn |
+| `1`–`9` | tools: inspect, roads, zones, edit, bulldoze, buildings, buses, rail, ... |
+| `Ctrl+Enter`, `Ctrl+Z`, `Ctrl+Y` | implement the project, undo, redo |
+| `Space`, `-`, `=` | pause, slower, faster (1× to 1024×) |
+| `Tab` | walk the street (Esc returns) |
+| `J`, `X` | City Data, building viewer |
+| `U`, `H`, `V`, `P` | underground view, heat vision, land value, pedestrian network |
+| `F5`–`F12` | camera jumps (station, busiest junction, a building per tier, plant, park); `F8` flag a note, `F10` photo mode |
 
-First build takes several minutes (Bevy). After that, `cargo run -p nd_app --features fast-dev`
-links Bevy dynamically for quicker iteration.
-
-## Playing
-
-- **Screen**: the top bar holds the clock, pause and speed (a red percentage when the sim cannot keep
-  up), the treasury and population, buttons that open the info windows (City, Economy, Market,
-  People, Power, Transit, Land, Saves, Help, Dev) and the Orbit/Walk camera switch. The **Dev** window
-  there seeds the demo district and shows frame figures. The bottom toolbar has one button per tool
-  with its hotkey; above it a sub-pane shows only the active tool's settings and status, and the
-  project controls (a Projects dropdown, Implement, Undo, Redo, Discard) sit beside the buttons. Windows drag anywhere and
-  remember where they were; messages appear briefly above the toolbar.
-- Everything you draw goes into the active **project**. `Ctrl+Enter` implements it, `Ctrl+Z` /
-  `Ctrl+Y` undo and redo, Discard throws it away. Planned roads and zoning show as holograms,
-  removals in red. The Projects dropdown starts, switches, renames and parks projects: several can
-  be planned side by side, each with its own undo, the others drawn dim ("show others"); where two
-  change the same road or parcels, the one implemented later wins and you are warned.
-- **Road tool [2]**: pick a preset (Lane, Street, Avenue, One-way, Ramp, Highway) or set lanes per
-  direction, choose Straight or Curved (`C`), click points, Enter or right-click to add. Ends dropped
-  near any road snap onto it (white ring) and split it into a junction; curved roads bend smoothly
-  through every point. A one-way Ramp joining a road becomes a yield merge with no signals. Roads snap
-  to existing nodes and split anything they cross.
-- **Zone tool [3]**: parcels are cut along every road as soon as it is built (grey outlines). Pick
-  a land use, then **Brush** (drag to paint the parcels under the circle, slider for its size,
-  right-drag erases to unzoned), **Marquee** (drag a box, release to zone the parcels inside) or
-  **Polygon** (click corners, Enter; every parcel whose centre it holds takes the use; Ctrl-click
-  inside a zone to repaint it). Parcels only take a use they may have: parks anywhere, homes on a
-  street or path, the rest on a street; the read-out says why a parcel refuses. Industrial land has
-  a sub-zone row (Auto, Farming, Oil, ...). Industry and civic sites join neighbouring parcels into
-  bigger lots.
-- **Edit [4]**: click a road to select it and change its lanes, preset, direction (flip) or curve in
-  the tool's sub-pane; buildings along it stay. Drag control points of any road or zone, shift-click an edge to insert a point,
-  Delete to remove the hovered point. Changing a built road rebuilds it on implement.
-- **Bulldoze [5]**: click a road or zone to mark it for removal.
-- **Inspect [1]**: click a glowing citizen, a car, or a building. Tick *Spotlight* to route a
-  citizen through the LLM mind (a mock backend today).
-- Traffic: cars follow lanes, queue, and obey the signals at junctions with three or more roads.
-- Space pauses, `-`/`=` change speed. Camera: right-drag rotate, middle-drag or shift-drag pan,
-  wheel zoom, WASD/QE, `Tab` walks the street (Esc returns). Tools by digit `1`–`8` (letters
-  `I R Z B N T Y` also work), `O` toggles zoning outlines, `V` land value, `P` the pedestrian
-  network, `G` seeds a demo district on an empty map (Seed in the Dev window adds it to any
-  map), `F5`–`F12` jump the camera (`F5` station or yard, `F6` busiest junction, `F7`–`F9` tiers,
-  `F11` plant, `F12` park), Backspace drops the last point or stop, Delete removes the hovered one,
-  Esc clears points and the selection. Hotkeys stand down while a text field has focus.
-- Saving (the **Saves** window in the top bar): **Save** writes `saves/city.ron` (always the latest) and a dated slot `saves/city-<time>-day<N>.ron`
-  (the newest eight are kept); the game autosaves to `saves/autosave.ron` at the start of each day.
-  **Load** on a running city asks first, then comes up paused with the tools reset.
-- Every shop, plant and venue is a business with stock, cash and prices. Grocers need produce, flour,
-  meat and dairy; mills need grain; assembly plants need parts. Businesses buy from the cheapest
-  supplier (trucks drive the goods over) or import at a markup. Citizens get hungry, shop, and
-  leave if they cannot eat. Businesses that cannot pay wages close and go derelict.
-- Buildings appear on vacant lots when demand is high, in the tier the land value supports. People
-  move in when they can afford a home, take jobs, commute, and move or leave when rent bites.
-  `V` toggles the land value overlay; the People window shows class counts, rents, the Gini index and an income-inequality
-  histogram (people over daily income, coloured by class) with a Lorenz curve.
-  `F7`/`F8`/`F9` jump the camera to a random low, middle or high tier building; `[` and `]` zoom.
-- **Paths**: the Path preset draws a 3 m way for walkers and bikes only. Cars never route over it, it
-  joins streets at junctions without signals, and where it crosses a street mid-block it gets a zebra.
-  Homes may line a path (shops and industry may not); residents of such homes leave the car at the
-  nearest street and park in a lot nearby.
-- **Getting around**: everyone walks at human pace, bike owners cycle trips over 40 m on the road
-  shoulder or down paths, car owners drive trips over 60 m. Ownership follows class: most poor
-  citizens have a bike and no car, the well-off have both and take bike rides to parks. Figures
-  move smoothly between ticks; one sim minute shows 1.5 seconds of motion, the same scale as traffic.
-- **Walking**: people route over a pedestrian network that runs along pavements, down paths, around
-  the setbacks of every lot, through the alleys of the Stacks and through gates between neighbouring
-  lots, so they cut through blocks. Shops count the feet that pass and sell to walk-ins; `P` shows
-  the network, the inspector shows a lot's foot traffic.
-- **Parking**: drivers need a space. Towers have their own, middle blocks a few, cheap buildings none.
-  When drivers keep circling, a parking lot opens nearby (surface lot on cheap land, multi-storey car
-  park in the middle) and charges per visit; its bays fill visibly as spaces are taken. The City
-  window shows spaces, lots, drivers circling and fees.
-- **Parks**: park zones may line footpaths. Every park parcel that touches another is one park:
-  paths run from lot to lot, features are spread over the lots by area, and every lot gets benches.
-  Cheap land gets a bare lot with a court; the middle gets playgrounds, a pond and a kiosk; dear land
-  gets a lake, a fountain, a bandstand, a carousel and a ferris wheel. Park paths are part of the
-  walking network, so people cut through parks, and a visit ends on a bench, sitting, in the open.
-- **Rail [8]**: a trunk line already crosses the map to the south. Lay branches with the Road tool's
-  Rail preset (track snaps only to track, forks leave tangentially, corners are rounded; crossing a
-  street makes a level crossing). Stations and freight yards are pieces with track along one side and
-  a street along the other: drop them anywhere, even in open country. Beside track or a street they
-  fuse to it; otherwise join track and road to the stubs they lay out. Nothing runs until both sides
-  are connected. Passenger trains call every two hours and people ride between stations
-  for long trips; freight trains bring imports to the yard at a discount and lorries take them on.
-  `F5` jumps the camera to a station or yard.
-- **Buses [7]**: draw a line by clicking streets round a loop (the side you click is the kerb the bus
-  serves); Enter closes it. Click a stop to select its line, drag to move, Delete to remove. The tool's
-  sub-pane sets buses per line; the Transit window shows lines, riders and fares for buses and rail. Place a depot (Depot mode) on a vacant lot by a street: no depot, no buses.
-  Buses leave at 05:30, dwell at every stop, and go home at 23:30. People without a bike ride when a
-  line serves both ends of a long trip; they wait at the stop, pay a fare, and walk the last leg.
-- **Buildings [6]**: one tool for everything the city places, by sub-category: Power (coal, solar,
-  wind, nuclear), Services (police, fire, health, education, 911 dispatch, each in three tiers),
-  Transit (bus depot), Rail (station, freight yard) and Attractions (monument, stadium). The preview
-  outlines the lot green or red and rings the coverage radius; whatever grew on the lot is bought out.
-- **Services and emergencies**: police, fire and health stations cover the homes within their road
-  radius and run vehicles. Fires break out (cheap, worn, industrial buildings most), crimes happen
-  (low land value, unemployment, night) and people fall ill (age, hunger); someone calls 911, a
-  dispatcher at a dispatch centre sends the nearest free unit (slow without one on shift), the fire
-  engine, police car or ambulance drives there with lights flashing, works on scene and returns; the
-  sick go to a hospital bed. Fires nobody fights spread and burn buildings down to rubble. Coverage
-  cuts the risks and lifts land value; schools raise the wages of workers living near them; stadiums
-  host games some evenings (crowds, tickets); monuments lift the land around them. Jails hold the
-  arrested for days (without one they are let go after a few hours). With no station of the right
-  kind, a dispatcher calls in help from out of town: slow and billed. The **Emergencies** window lists
-  every call live and on record: who called, the dispatcher, the unit, times from dispatch to scene
-  and on scene, the people involved and where they were taken, and fire damage.
-- **Power**: buildings need electricity. The Buildings tool's Power category places a coal plant, solar farm, wind
-  farm or nuclear plant on a vacant lot, paid from the treasury. Coal is cheap and steady but hangs a
-  toxic haze over the district and drags land value down; solar and wind are clean but follow the sun,
-  cloud and wind; nuclear is enormous and expensive. The regional grid sells a little power to cover
-  gaps; beyond that the rich are served first and cheap districts go dark: windows out, shops
-  producing less, residents complaining. The Power window shows supply, demand, weather and costs, the Economy window the treasury and yesterday's ledger;
-  the inspector flags UNDERPOWERED buildings. `F11` jumps the camera to a plant, `F12` to a park.
-- `Tab` walks the street: first-person on the pavement nearest the camera target, mouse to look,
-  WASD to walk, Shift to run, Tab or Esc to return. Tools are off while walking.
-- Each land use has its own architecture per tier: junkyards and rusted sheds on cheap industrial
-  land, datacentres and container depots on dear land; shophouses to twist towers; shack bars to
-  casinos. Parcels follow the roads, so corner and diagonal lots get odd-shaped buildings. The
-  inspector names a building's style.
-  Save and Load use `saves/city.ron`.
-- **Landscape**: **New game…** in the top bar picks a landscape (river valley, islands, coast, delta,
-  plains, or the old flat map) with levers for water, height variation, river branching, islands and
-  the seed, and a mini-map of the result. Rivers and streams carry a current (streams run faster),
-  lakes and the sea are still; the middle of the map is always dry land. Roads follow the ground at
-  gentle grades and bridge water on decks (60 per metre of new bridge); lots never sit on water or on
-  ground too steep to level, and buildings stand on levelled pads. A three-lane highway crosses the
-  map from the start with through traffic from elsewhere; it passes over streets without junctions,
-  so join it with the Ramp preset (a one-way lane dropped onto a carriageway merges without lights).
-- **Docks** (Rail tool [8], Shipping port / Ferry terminal): set down at the water's edge, they build a
-  pier and a street stub. Freighters bring imports at 70% of the price (exports earn 25% more) and
-  hand them to lorries; ferries sail to every other terminal on connected water, or out to elsewhere,
-  carrying fare-paying riders. **Hydro** (beside flowing water), **tidal** (sea shore) and
-  **geothermal** (yellow ground with steaming vents) plants join the power list.
-- **Remote control**: the game serves a JSON API on `http://127.0.0.1:4817` (`ND_REMOTE_PORT`,
-  `ND_REMOTE=0` to disable) for scripts and AI assistants to build, inspect, move the camera and take
-  screenshots; `tools/mcp/nd_mcp.py` wraps it as an MCP server. See `docs/REMOTE.md`.
-
-## Tinkering
-
-- `assets/palette.ron`: every world colour. Glow colours above 1.0 bloom.
-- `assets/rules/buildings.ron`: the building grammar per land use (floor height, windows, signs) and
-  the `styles` table: which styles each (land use, tier) draws from and how often. Delete the file
-  to regenerate it after an update.
-  Both files hot-reload while the game runs and are created with defaults on first launch.
-- `docs/DESIGN.md` is the living design doc, `docs/IDEAS.md` the backlog.
+The in-game Help window lists everything.
 
 ## Layout
 
 | Crate | What |
 | --- | --- |
-| `nd_sim` | roads, zoning, lots, buildings, citizens, economy, clock, save/load, the `MindProvider` trait |
-| `nd_procgen` | terrain, parcels' buildings (35 styles, parts toolkit), streets, seamless textures, palette |
-| `nd_minds` | `RuleBasedMind`, `HybridMind` + `MindBackend` trait (`MockBackend` now, LLM backends next) |
-| `nd_app` | Bevy front end: rendering, camera, tools, egui UI, hot reload |
+| `nd_sim` | the deterministic simulation: roads, traffic, zoning, lots, buildings, citizens, economy, transit, services, save/load. No engine. |
+| `nd_procgen` | terrain, parcels, the city generator, every building style and its parts, textures, palette |
+| `nd_minds` | the rule-based and hybrid minds, the committee and the LLM backends |
+| `nd_audio` | the synthesised sound engine: voices, ambience beds and the mixer |
+| `nd_app` | the Bevy front end: rendering, camera, tools, egui UI, the remote API, hot reload |
+
+Design notes live in [`docs/DESIGN.md`](docs/DESIGN.md), the art direction in
+[`docs/STYLE_REFERENCE.md`](docs/STYLE_REFERENCE.md), the committee in
+[`docs/AI_COMMITTEE.md`](docs/AI_COMMITTEE.md), and the work list in [`todo.md`](todo.md).
+
+## Roadmap
+
+A big world with seamless edges and in the end a planet; islands reached only by ferry; a layered city with life under and between raised roads;
+full metro stations and an undercity; holographic billboards and skyways; a drive mode; talking to any citizen;
+cable cars and a monorail; a weekly city paper. See [`todo.md`](todo.md).
+
+## Contributing
+
+Issues and pull requests are welcome. Please keep the simulation deterministic (no new unseeded
+randomness, no hash-map iteration order in the sim), keep old saves loading, and run the test suite
+before sending a change. Everything visual is generated in code: please don't add third-party
+images, models or textures.
+
+## References and thanks
+
+HEIFUNG://CITY began as a cyberpunk-themed fork of [Citybound](https://github.com/citybound/citybound),
+Anselm Eickhoff's open-source city builder in Rust. That fork was a theme and a look; the game was
+then started again from an empty repository on Bevy, and none of Citybound's code is in it. What
+carried over were ideas: Rust for the simulation, a data-driven building grammar, roads drawn as
+polylines and zones as polygons, several planned projects side by side, and a window that can
+inspect anything. Thank you, Anselm.
+
+Other inspirations:
+- **Cities: Skylines**: the road tool, districts and policies, the metro, rail pieces, park paths.
+- **SimCity**: zoning, demand for homes, shops and industry, a treasury that has to balance.
+- **Kowloon Walled City** and the tenements, pencil towers and streets of **Hong Kong**.
+- **Akira** and **Ghost in the Shell**: megastructures, glass terraces, one long low red bike.
+- Chen, Esch, Wonka, Müller and Zhang, *Interactive Procedural Street Modeling* (2008), the method
+  the street generator follows (as ProbableTrain's MapGenerator does).
+- Park et al., *Generative Agents* (2023), the model for each citizen's memory stream.
+- [Bevy](https://bevyengine.org), [egui](https://github.com/emilk/egui) and the Rust ecosystem.
+
+Reference pictures were used for style only and are not part of the repository; nothing is traced,
+copied or imported.
+
+## Licences
+
+The code is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+
+The fonts in `assets/fonts` (Chakra Petch, IBM Plex Sans, IBM Plex Mono, Noto Sans Symbols 2) are
+under the SIL Open Font License 1.1; their licence files sit beside them. All Rust dependencies are
+under permissive licences (MIT, Apache-2.0, BSD, Zlib, ISC, Unicode and similar).
+
+All people, companies and billionaires in the game are fictional.
