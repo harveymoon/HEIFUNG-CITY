@@ -162,7 +162,7 @@ fn draw(ui: &mut egui::Ui, p: &mut UiCtx, g: Group, width: f32) {
             return;
         }
         Group::Clock => ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("DISTRICT 2040").color(GOLD).strong().font(crate::ui::theme::lead()));
+            ui.label(egui::RichText::new("HEIFUNG://CITY").color(GOLD).strong().font(crate::ui::theme::lead()));
             ui.separator();
             clock_and_speed(ui, p);
         }),

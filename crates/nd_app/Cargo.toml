@@ -3,10 +3,10 @@ name = "nd_app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Neon District: Bevy front end"
+description = "HEIFUNG://CITY: Bevy front end"
 
 [[bin]]
-name = "neon_district"
+name = "heifung_city"
 path = "src/main.rs"
 
 [dependencies]

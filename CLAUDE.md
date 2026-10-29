@@ -1,4 +1,7 @@
-# Neon District: notes for Claude Code agents
+# HEIFUNG://CITY: notes for Claude Code agents
+
+The game was called Neon District (and District 2040); internal names keep the `nd_` prefix
+(crates, `ND_HOME`, `ND_REMOTE_PORT`, ...). The exe is `heifung_city.exe`.
 
 A Rust / Bevy 0.19 city builder. Design: `docs/DESIGN.md`. Remote API: `docs/REMOTE.md`.
 Open work: `todo.md` (sorted by area; tick items with "→ DONE [branch]: what").
@@ -17,10 +20,10 @@ Open work: `todo.md` (sorted by area; tick items with "→ DONE [branch]: what")
 ## Rules
 - **Never touch Harvey's running game:** remote API port 4817, and `target/release`
   (including `target/release/saves`). Read-only API calls on 4817 only when asked. Never kill
-  a `neon_district.exe` you did not start.
+  a `heifung_city.exe` (or an older `neon_district.exe`) you did not start.
 - Stop your own instance only by its PID or by a copy of the exe with your own unique file name
   (e.g. `taskkill //PID <pid>` or `taskkill //IM nd_<yourbranch>.exe`). Never use filter-based
-  kills (`taskkill //FI ...`, `//IM neon_district.exe`, `Stop-Process -Name ...`): they can hit
+  kills (`taskkill //FI ...`, `//IM heifung_city.exe`, `Stop-Process -Name ...`): they can hit
   Harvey's game.
 - Never send scripted clicks or keys to other windows. Never use Ctrl+Shift+G (a system
   shortcut on this machine).
@@ -36,7 +39,7 @@ Open work: `todo.md` (sorted by area; tick items with "→ DONE [branch]: what")
   builds). Use `--profile fast` (release without LTO, 16 codegen units) for tests:
   `cargo test --profile fast --workspace`
 - The playable exe is `cargo build -p nd_app --release` into `target/release` (main checkout
-  only). Move a running `neon_district.exe` aside first (`mv` it to `neon_district.old-HHMM.exe`), and
+  only). Move a running `heifung_city.exe` aside first (`mv` it to `heifung_city.old-HHMM.exe`), and
   delete the old copy only after the new exe exists. If rustc dies with STATUS_STACK_BUFFER_OVERRUN
   (0xc0000409) on the release link of nd_app, rebuild with `RUST_MIN_STACK=268435456` and `-j 2`.
 - `society_demo`'s 911 thresholds are borderline at a fixed seed; unrelated changes can flip it.

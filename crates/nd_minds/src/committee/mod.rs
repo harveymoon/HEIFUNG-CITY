@@ -252,19 +252,19 @@ pub trait CommitteeBackend: Send + Sync {
 pub fn system_prompt(req: &TurnRequest) -> String {
     match &req.task {
         Task::Dialogue { a, .. } => {
-            return format!("You write one line of dialogue for {}, a fictional citizen of {}, a cyberpunk city in the game Neon District. Who they are: {}. Reply with the line only: one short spoken sentence (at most 20 words), no quotes, no name, no stage directions.", a.name, req.city, a.describe());
+            return format!("You write one line of dialogue for {}, a fictional citizen of {}, a cyberpunk city in the game HEIFUNG://CITY. Who they are: {}. Reply with the line only: one short spoken sentence (at most 20 words), no quotes, no name, no stage directions.", a.name, req.city, a.describe());
         }
         Task::Diary { who, .. } => {
-            return format!("You write the private diary of {}, a fictional citizen of {}, a cyberpunk city in the game Neon District. Who they are: {}. Write in the first person, in their voice, 60 to 120 words, plain prose. Use only the events you are given; never invent places, people or numbers.", who.name, req.city, who.describe());
+            return format!("You write the private diary of {}, a fictional citizen of {}, a cyberpunk city in the game HEIFUNG://CITY. Who they are: {}. Write in the first person, in their voice, 60 to 120 words, plain prose. Use only the events you are given; never invent places, people or numbers.", who.name, req.city, who.describe());
         }
         _ => {}
     }
     let mut s = String::new();
     let question = matches!(req.task, Task::Question { .. });
     if question {
-        s.push_str(&format!("This is question time in a city-builder game, Neon District: between meetings the mayor of {}, a fictional cyberpunk city, has put a question to the committee in its chat room. Everyone in the room is fictional.\n", req.city));
+        s.push_str(&format!("This is question time in a city-builder game, HEIFUNG://CITY: between meetings the mayor of {}, a fictional cyberpunk city, has put a question to the committee in its chat room. Everyone in the room is fictional.\n", req.city));
     } else {
-        s.push_str(&format!("This is a turn in a city-builder game, Neon District: a meeting of the mayor's committee of {}, a fictional cyberpunk city. Everyone in the room is fictional.\n", req.city));
+        s.push_str(&format!("This is a turn in a city-builder game, HEIFUNG://CITY: a meeting of the mayor's committee of {}, a fictional cyberpunk city. Everyone in the room is fictional.\n", req.city));
     }
     match &req.speaker {
         Some(p) => {

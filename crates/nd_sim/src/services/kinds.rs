@@ -617,7 +617,7 @@ impl ServiceKind {
             ServiceKind::ConventionCentre => match n % 3 {
                 0 => format!("{place} Convention Centre"),
                 1 => format!("{place} Exhibition Halls"),
-                _ => "Neon District Convention Centre".to_string(),
+                _ => "Grand Lantern Convention Centre".to_string(),
             },
             ServiceKind::Cathedral => ["Cathedral of the Harbor Light", format!("{place} Cathedral").as_str(), "Basilica of Saint Aldric", "Cathedral of the Lanterns"][n as usize % 4].to_string(),
             ServiceKind::CasinoResort => ["The Gilded Lantern Resort and Casino", "Jade Tide Casino Resort", "The Velvet Comet", "Lucky Heron Resort and Casino"][n as usize % 4].to_string(),

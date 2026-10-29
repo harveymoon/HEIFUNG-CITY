@@ -240,7 +240,7 @@ fn memory_reason(text: &str) -> String {
     const KNOWN: &[&str] = &[
         "Rent got too steep", "Couldn't keep myself fed", "Couldn't afford anything at", "Shelves were empty at", "Grabbed a bite at",
         "Treated myself to something new at", "Circled for ages", "Sat in the dark at", "Bought a bike", "Bought a car", "Sold the car",
-        "Rolled into Neon District", "Stepped off the train", "Moved into", "Got hired at", "Sat on a bench in", "Spent the evening at",
+        "Rolled into " /* old saves: "Rolled into Neon District" */, "Stepped off the train", "Moved into", "Got hired at", "Sat on a bench in", "Spent the evening at",
         "Moving up to", "Paid ", "was demolished", "was torn down and rebuilt",
     ];
     for k in KNOWN {
@@ -1675,4 +1675,18 @@ pub fn sim_history(w: &World, days: usize) -> Value {
         "days_kept": h.days.len(), "days": cols, "hours": hcols,
         "note": "kept in the save (nd_sim::history): up to 365 days and 72 hours; a day's record closes at midnight, so counters are that day's totals and levels are as it closed",
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::memory_reason;
+
+    /// [rebrand] Arrivals group together whether the memory names the city
+    /// (new) or the game's old name (saves from before the rename).
+    #[test]
+    fn arrivals_group_under_one_reason_old_and_new() {
+        assert_eq!(memory_reason("Rolled into Neon District on day 2 at 19:45."), "Rolled into");
+        assert_eq!(memory_reason("Rolled into Kowloon Bay on day 9 at 07:15."), "Rolled into");
+        assert_eq!(memory_reason("Rolled into town on day 1 at 00:15."), "Rolled into");
+    }
 }

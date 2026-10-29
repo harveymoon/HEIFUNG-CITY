@@ -1,4 +1,4 @@
-"""Tiny client for a Neon District test instance's remote API (never 4817,
+"""Tiny client for a HEIFUNG://CITY test instance's remote API (never 4817,
 Harvey's game): set PORT to the instance's ND_REMOTE_PORT. Screenshot paths
 are relative to the game's working directory."""
 import json, sys, time, urllib.request, os

@@ -142,7 +142,7 @@ pub(super) fn export(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         tables.insert(what.to_string(), json!(list::rows(w, what)?));
     }
     let doc = json!({
-        "format": "district-2040 city export v1",
+        "format": "heifung-city city export v1",
         "exported_unix": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()),
         "clock": clock(&ctx.sim),
         "report": report::report(w, &[])?,

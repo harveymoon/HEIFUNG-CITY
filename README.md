@@ -23,6 +23,9 @@ cities look the same.
 The simulation is engine-independent and deterministic (same seed, same inputs, same city); the
 renderer is a thin layer on top.
 
+Formerly "District 2040" (working title "Neon District"). The exe is `heifung_city.exe`; the
+crates keep their `nd_` names.
+
 ## Screenshots
 
 | | |
@@ -144,6 +147,8 @@ More on the [project page](https://harveymoon.github.io/HEIFUNG-CITY/), all take
 - **Remote API**: a local JSON API (127.0.0.1:4817) with more than a hundred commands to build,
   inspect, move the camera and take screenshots; [`tools/mcp/nd_mcp.py`](tools/mcp/README.md) wraps
   it as an MCP server for AI assistants. See [`docs/REMOTE.md`](docs/REMOTE.md).
+- **Brand**: the logo and icons are drawn in code by `assets/brand/make_logo.py` (candidates in
+  `assets/brand/candidates/`).
 - **Hot-reloading data**: `assets/palette.ron` (every world colour; glow above 1.0 blooms) and
   `assets/rules/buildings.ron` (the building grammar and style table) reload while the game runs.
 - **Saves** as compressed RON snapshots with a picture, grouped by game on the title screen, with
