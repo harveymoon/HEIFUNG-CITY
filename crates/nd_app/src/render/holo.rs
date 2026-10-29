@@ -52,15 +52,9 @@ fn drawn_road(tools: &ToolState, sim: &Sim, cursor: Option<SVec2>) -> Option<(Ve
         let levels = vec![tools.elevation; pts.len()];
         return Some((pts, levels));
     }
-    let mut pts = tools.points.clone();
-    let mut levels = tools.levels();
-    if let Some(c) = tools.cursor_pin.or(cursor) {
-        let (c, _, l) = ToolState::road_snap_level(sim, c, tools.kind, tools.elevation, pts.is_empty());
-        if pts.last().is_none_or(|p| p.distance(c) > 0.5) {
-            pts.push(c);
-            levels.push(l);
-        }
-    }
+    // [r4-ramp] The pointer's point is the end: on a road it takes that
+    // road's height, as clicking it there would.
+    let (pts, levels) = tools.road_with_cursor(sim, tools.cursor_pin.or(cursor));
     (pts.len() >= 2).then_some((pts, levels))
 }
 
@@ -91,6 +85,11 @@ fn hologram(w: &World, pal: &nd_procgen::Palette, pts: &[SVec2], levels: &[f32],
     // hologram used to show the line as drawn while the build ran it
     // alongside the highway first.
     let (pts, levels) = nd_sim::roads::ease_ramp_way(pts, levels, f, b, kind, &w.roads);
+    // [r4-ramp] Its ends where and at the height the network lays them (an
+    // end on a road at that road's height), so the steep legs shown red are
+    // the ones built, as the columns (`road_pillar_plan`) and the warnings
+    // (`road_grade_warnings`) see them.
+    let (pts, levels) = w.roads.as_built(&pts, &levels, kind);
     let (pts, levels) = (&pts[..], &levels[..]);
     let steep = w.steep_legs(pts, levels, kind);
     // [r1-roads] (K13) A road changed in the Edit tool: the road as it was

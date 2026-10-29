@@ -63,16 +63,23 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, _selection:
     }
     if click {
         if let Some(p) = ground {
-            let first = tools.points.is_empty();
             let snap = ToolState::grounds_snap(sim, p, tools.kind);
             let hub = snap.is_some_and(|q| sim.world.park_hub_near(q, 0.01).is_some());
             let grounds = snap.and_then(|q| sim.world.grounds_junction_near(q, 0.01).map(|j| j.kind.label()));
-            let (p, snapped, level) = ToolState::road_snap_level(sim, p, tools.kind, tools.elevation, first);
-            tools.push_point(p, level);
+            // [r4-ramp] On a road the point takes the road's height there
+            // while it is the end, whatever the Level dial says.
+            let dial = tools.elevation;
+            let (_, snapped, level) = tools.click_road_point(sim, p, dial);
             if hub {
                 tools.status = "Snapped to the park's hub: the path is laid to the park's edge gate on this side and the park's walkway carries on to the hub (the park is not cut in two).".into();
             } else if let Some(what) = grounds {
                 tools.status = format!("Snapped to the {what}'s gate: the path joins its walkways there once implemented.");
+            } else if snapped && !tools.interchange && (level - dial).abs() >= nd_sim::roads::GRADE_SEPARATION {
+                tools.status = format!(
+                    "Snapped to the road at {}: the end takes its height (the Level dial, {}, sets the points on open ground) and a junction forms there.",
+                    elevation_label(level),
+                    elevation_label(dial)
+                );
             } else if snapped && !tools.interchange {
                 tools.status = format!("Snapped to the road at {}: a junction forms there.", elevation_label(level));
             }
@@ -185,7 +192,10 @@ pub(super) fn preview(gizmos: &mut Gizmos, p: &Preview) {
     // The road itself is a hologram (render/holo.rs); here only the
     // control points, each at its level with a stalk to the ground.
     let at = |p: SVec2, level: f32| Vec3::new(p.x, sim.world.ground_height(p).max(if sim.world.landscape.is_flat() { 0.0 } else { nd_sim::landscape::WATER_LEVEL }) + level + 0.8, p.y);
-    let levels = tools.levels();
+    // [r4-ramp] The points as the preview lays them: the pointer's is the
+    // end, the last one clicked a point between.
+    let cursor_at = tools.cursor_pin.or(cursor.ground);
+    let (drawn, levels) = tools.road_with_cursor(&sim, cursor_at);
     let mut ctrl: Vec<SVec2> = tools.points.clone();
     // [park-paths] Drawing a path: every gate of a park or other
     // grounds near the pointer shows as a small ring (green where a
@@ -217,7 +227,7 @@ pub(super) fn preview(gizmos: &mut Gizmos, p: &Preview) {
         }
     }
     if let Some(c) = tools.cursor_pin.or(cursor.ground) {
-        let (c, snapped, level) = ToolState::road_snap_level(&sim, c, tools.kind, tools.elevation, tools.points.is_empty());
+        let (c, snapped, level) = ToolState::road_snap_level(&sim, c, tools.kind, tools.elevation, true);
         let top = at(c, level);
         let ring = if gate_snap.is_some() { green } else if snapped { white } else { cyan };
         gizmos.circle(flat_at(top), if snapped { 4.5 } else { 3.0 }, ring);
@@ -226,7 +236,7 @@ pub(super) fn preview(gizmos: &mut Gizmos, p: &Preview) {
         }
         ctrl.push(c);
     }
-    for (i, &p) in tools.points.iter().enumerate() {
+    for (i, &p) in drawn.iter().enumerate().take(tools.points.len()) {
         let l = levels.get(i).copied().unwrap_or(0.0);
         gizmos.circle(flat_at(at(p, l)), 2.0, cyan);
         if l != 0.0 {

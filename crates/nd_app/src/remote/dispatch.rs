@@ -1135,6 +1135,29 @@ mod dispatch_tests {
     }
 
     /// [viewer] The viewer is driven and its notes kept through the API: a
+    /// [r4-ramp] `tool {draw}` puts the points as clicks do: the ramp from
+    /// the viaduct to the street takes both roads' heights with the dial at
+    /// the deck's level, and says it is too steep and how long it must be;
+    /// `add_road` lays an end given the deck's level over the street at the
+    /// street's height, and warns the same.
+    #[test]
+    fn a_ramp_drawn_through_the_api_takes_the_roads_heights() {
+        let mut app = app();
+        app.world_mut().resource_mut::<Sim>().world = crate::tools::ramp_tests::ramp_town().world;
+        let (s, v) = send(&mut app, json!({"cmd": "tool", "name": "road", "elevation": 12.0, "draw": [[0.0, 203.0], [0.0, 121.0]]}));
+        assert_eq!(s, 200, "{v}");
+        let levels: Vec<f64> = v["tool"]["point_levels"].as_array().expect("levels").iter().map(|l| l.as_f64().unwrap()).collect();
+        assert!((levels[0] - 12.0).abs() < 0.5 && levels[1].abs() < 0.5, "{levels:?}");
+        let (s, v) = send(&mut app, json!({"cmd": "add_road", "points": [[0.0, 203.0, 12.0], [0.0, 121.0, 12.0]]}));
+        assert_eq!(s, 200, "{v}");
+        let warn = v["grade_warnings"].to_string();
+        assert!(warn.contains("a ramp needs 171 m for 12 m at 7%"), "{warn}");
+        let id = nd_sim::GestureId(v["gesture_id"].as_u64().unwrap() as _);
+        let w = &app.world().resource::<Sim>().world;
+        let g = w.gesture(id).expect("the gesture");
+        assert!((g.level(0) - 12.0).abs() < 0.5 && g.level(1).abs() < 0.5, "{:?}", (g.level(0), g.level(1)));
+    }
+
     /// city building and a catalogue style are picked, a note is left on
     /// each, answered and resolved, and the lists say so.
     #[test]
