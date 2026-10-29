@@ -870,6 +870,9 @@ Not yet in the list (the stuck police cars, footbridge braking, the racer are fi
 - [ ] Riots, protests, parades taking over roads
 - [ ] Police gunships, SWAT, armoured trucks, raids
 
+## Brand
+- [x] Rename the game to HEIFUNG://CITY (Harvey 2026-10-28; was "Neon District" / "District 2040") → DONE [rebrand]: window title, top bar, title logo, crash log, exe `heifung_city.exe` with icon and version info, docs, MCP tool text, committee prompts; citizens now "roll into" their city by its own name. Three procedural logo candidates in assets/brand/candidates (a blade sign, b terminal, c skyline); a is live, `make_logo.py --pick b|c` swaps. Internal names (nd_* crates, ND_* env vars) stay. Left: Harvey picks the logo.
+
 ## Extras (ideas, not scheduled; Harvey adds, starts only when he says)
 - [ ] CSUR-style road lanes (Harvey 2026-10-26, idea from github.com/citiesskylines-csur/CSUR, a Cities: Skylines road framework: borrow the ideas only, no code or models; check its licence before quoting anything). Describe every road as lanes on a fixed half-lane grid from the centre line, so a road can be uneven (3 one way, 2 the other) and offset sideways, and lanes line up through an interchange. Generate the in-between pieces as road, not junctions: lane add/drop tapers, sideways lane shifts, and ramps as a road splitting or merging (today a ramp is "a one-lane one-way road joining with a yield"). Procedural markings to match: gore chevrons where ramps split, solid lines near ramps, lane-drop arrows and "lane ends" marks. A compact road code (e.g. "3+2 off 1") that is the lane layout, for presets, saves and the remote API. Touches traffic lane building (traffic/build.rs) and the road meshes; feeds the interchange stamp tool (section C) and the parclo/cloverleaf leftovers. Medium–large.
 

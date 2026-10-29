@@ -1,4 +1,4 @@
-# neon-district MCP server
+# heifung-city MCP server (HEIFUNG://CITY)
 
 `nd_mcp.py` exposes the game's remote API (see [`docs/REMOTE.md`](../../docs/REMOTE.md)) as MCP
 tools, so Claude Code (or any MCP client) can drive and inspect a running game. Python 3 standard
@@ -7,14 +7,16 @@ library only: no `pip install`.
 ## Register with Claude Code
 
 ```
-claude mcp add --scope user neon-district -- python C:\CODE\Neon_District\tools\mcp\nd_mcp.py
+claude mcp add --scope user heifung-city -- python C:\CODE\Neon_District\tools\mcp\nd_mcp.py
 ```
+
+(An older registration under the name `neon-district` keeps working; only its tool prefix differs.)
 
 Then start the game (`cargo run --release -p nd_app`); the tools fail with "game not reachable"
 until it is up. If the game runs on another port, pass the same `ND_REMOTE_PORT` to both:
 
 ```
-claude mcp add --scope user neon-district -e ND_REMOTE_PORT=4900 -- python C:\CODE\Neon_District\tools\mcp\nd_mcp.py
+claude mcp add --scope user heifung-city -e ND_REMOTE_PORT=4900 -- python C:\CODE\Neon_District\tools\mcp\nd_mcp.py
 ```
 
 ## Tools

@@ -1,4 +1,4 @@
-//! Neon District: Bevy front end. The simulation lives in `nd_sim`; this
+//! HEIFUNG://CITY: Bevy front end. The simulation lives in `nd_sim`; this
 //! crate renders it, drives it, and gives the player tools.
 
 mod air_select;
@@ -76,7 +76,7 @@ fn main() {
         .insert_resource(ClearColor(Color::linear_rgb(0.02, 0.018, 0.028)))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "District 2040".into(),
+                title: "HEIFUNG://CITY".into(),
                 // `ND_WINDOW=1268x900` for another starting size (UI layout checks).
                 resolution: window_size(),
                 // `ND_NO_VSYNC=1` for measuring frame rates.
@@ -133,7 +133,7 @@ impl PluginGroup for PlayerPlugins {
     }
 }
 
-/// The District 2040 icon on the window and its taskbar button, set once the
+/// The HEIFUNG://CITY icon on the window and its taskbar button, set once the
 /// winit window exists (winit windows live on the main thread, hence the
 /// marker).
 fn window_icon(mut done: Local<bool>, primary: Query<Entity, With<bevy::window::PrimaryWindow>>, _main: bevy::ecs::system::NonSendMarker) {
