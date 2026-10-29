@@ -50,7 +50,9 @@ fn old_save_districts_take_the_story_their_dials_are() {
     assert_eq!(get(campus).story, Some(Story::FoundersCampus));
     assert_eq!(get(campus).height_limit, Some(90.0), "its own height limit kept");
     assert_eq!(get(campus).policies, Story::FoundersCampus.preset().policies, "the story's policies");
-    assert_eq!(get(campus).residential, Some(ResidentialSpec::Eco), "nothing about its buildings changed");
+    // [r4-glass] The story's own look since: Eco homes and the Tech campus
+    // were Founders' Campus before Glass Campus, so the district takes it.
+    assert_eq!((get(campus).residential, get(campus).commercial), (Some(ResidentialSpec::GlassCampus), Some(CommercialSpec::GlassCampus)), "the story's look now");
     assert_eq!(get(strip).story, Some(Story::AfterglowMile));
     assert_eq!(get(odd).story, None);
     assert!(get(odd).is_custom() && get(odd).policies.is_none(), "custom: its dials and no policies");
