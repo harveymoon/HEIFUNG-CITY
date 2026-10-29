@@ -27,7 +27,7 @@ logo_800x280.rgba.
 """
 import io, os, random, shutil, sys
 
-PICK = "a"  # the live logo and icon (a, b or c)
+PICK = "c"  # the live logo and icon (a, b or c)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FILES = ["icon.svg", "logo.svg", "icon_1024.png", "icon_256.png", "icon_128.png", "icon_64.png", "icon_32.png",
