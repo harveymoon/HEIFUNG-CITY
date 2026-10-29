@@ -937,7 +937,11 @@ pub fn garden_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
     let fh = c.fh();
-    let floors = (c.floors as i32).clamp(6, 22);
+    // [r4-flags-look] (flag day 46 at (-427,329), "this building is coming
+    // through my elevated road") As many floors as the building has: a
+    // one-storey garden house under a walkway deck (held to one floor by
+    // the deck's clearance) was drawn six storeys high, up through the deck.
+    let floors = (c.floors as i32).clamp(1, 22);
     let white = mul(pick(rng, &pal.plaster), 1.2);
     let base = c.poly.clone();
     let step = (inradius(&base) * 0.7 / floors as f32).clamp(0.12, 0.6);
@@ -972,12 +976,19 @@ pub fn garden_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let top = floors as f32 * fh;
     extrude(g, f, Concrete, &prev, top, top + 0.35, white);
     let roof = offset_poly(&prev, 1.0);
-    if roof.len() >= 3 && inradius(&roof) > 3.0 {
+    // A low garden house (under a deck, say) has a planted roof, no pool
+    // terrace, tree or mast standing up off it.
+    let low = floors < 4;
+    if roof.len() >= 3 && inradius(&roof) > 3.0 && !low {
         pool(g, c, poly_center(&roof).x, poly_center(&roof).y, inradius(&roof) * 0.8, inradius(&roof) * 0.5);
         let w = f.to_world(poly_center(&roof).x + inradius(&roof) * 0.6, poly_center(&roof).y);
         tree_kind(g, w, top + 0.35, TreeKind::Round, 1.9, 2.6, pal.bark, pal.foliage);
     }
-    antenna_mast(g, c, poly_center(&prev), top + 0.35, 4.0);
+    if !low {
+        antenna_mast(g, c, poly_center(&prev), top + 0.35, 4.0);
+    } else if prev.len() >= 3 && inradius(&prev) > 2.0 {
+        green_roof(g, c, &prev, top + 0.35);
+    }
     let front = c.front_face(&base);
     entrance(g, c, rng, &front, 0.0, 3.2, 3.4);
     for k in 0..3 {
