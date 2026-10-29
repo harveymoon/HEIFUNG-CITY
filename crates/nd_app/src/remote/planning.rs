@@ -238,12 +238,13 @@ pub(super) fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     }
     // Snap the ends to the network like the Road tool does, so the road
     // joins existing roads instead of stopping a metre short of them.
-    // Points snap onto a road at about their level; an end given no level of
-    // its own takes the level of the road it snaps onto (a ramp or portal).
+    // Points snap onto a road at about their level; an end takes the level
+    // of the road it snaps onto (a ramp or portal), [r4-ramp] whatever level
+    // it was given, as the network lays it (`RoadNetwork::as_built`).
     if opt_bool(cmd, "snap")?.unwrap_or(true) {
         let last = pts.len() - 1;
         for (i, p) in pts.iter_mut().enumerate() {
-            let end = (i == 0 || i == last) && given[i].is_none();
+            let end = i == 0 || i == last;
             let (q, snapped, l) = ToolState::road_snap_level(&ctx.sim, *p, kind, levels[i], end);
             *p = q;
             if snapped {

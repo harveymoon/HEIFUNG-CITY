@@ -255,6 +255,46 @@ impl RoadNetwork {
         self.snap_point_kind(p, radius, RoadKind::Street)
     }
 
+    /// [r4-ramp] Where a drawing tool's point dropped at `p` snaps onto a
+    /// way of `kind`, and that way's level there: a node within `radius`,
+    /// else the nearest point on a way within its half width plus `radius`
+    /// (the reach of `snap_point_kind`). Of what is in reach, a way at about
+    /// `level` (`GRADE_SEPARATION`) wins: a point drawn at grade where a
+    /// viaduct passes over a street lands on the street, one drawn at the
+    /// deck's level on the deck. With nothing at that level in reach, `any`
+    /// takes the nearest way at another level (the end of a ramp or a
+    /// portal: it climbs or dips to the road it is put on, as the network
+    /// lays it, `end_target`); without `any` the point snaps to nothing (a
+    /// road drawn under a viaduct passes under it).
+    pub fn snap_point_level(&self, p: Vec2, radius: f32, kind: RoadKind, level: f32, any: bool) -> Option<(Vec2, f32)> {
+        let at_level = |l: f32| (l - level).abs() < GRADE_SEPARATION;
+        let live = |net: &Self, n: NodeId| net.node(n).segments.iter().any(|&s| net.segment(s).alive);
+        let mut ways: Vec<(f32, SegmentId, f32, Vec2)> = self
+            .segments_near(p, radius + 30.0)
+            .into_iter()
+            .filter(|&sid| Self::joins(self.segment(sid).kind, kind))
+            .map(|sid| {
+                let (a, b) = self.segment_points(sid);
+                let (t, q) = project_on_segment(p, a, b);
+                (q.distance(p), sid, t, q)
+            })
+            .filter(|w| w.0 <= self.segment(w.1).half_width() + radius)
+            .collect();
+        ways.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
+        let passes: &[bool] = if any { &[true, false] } else { &[true] };
+        for &same_level in passes {
+            let ok = |l: f32| !same_level || at_level(l);
+            if let Some(id) = self.node_near_kind_where(p, radius, kind, |net, n| !live(net, n) || ok(net.node(n).level)) {
+                let n = self.node(id);
+                return Some((n.pos, if live(self, id) { n.level } else { level }));
+            }
+            if let Some(&(_, sid, t, q)) = ways.iter().find(|w| ok(self.segment_level(w.1, w.2))) {
+                return Some((q, self.segment_level(sid, t)));
+            }
+        }
+        None
+    }
+
     /// Track ends join track; road and path ends join roads and paths.
     pub fn snap_point_kind(&self, p: Vec2, radius: f32, kind: RoadKind) -> (Vec2, bool) {
         if let Some(id) = self.node_near_kind(p, radius, kind) {

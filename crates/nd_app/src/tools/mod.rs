@@ -19,6 +19,8 @@ pub mod metro_edit;
 mod pick;
 mod plan_cache;
 mod rail;
+#[cfg(test)]
+pub(crate) mod ramp_tests;
 mod road;
 mod state;
 mod transit;
