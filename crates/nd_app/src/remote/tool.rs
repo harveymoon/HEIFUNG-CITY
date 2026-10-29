@@ -85,9 +85,13 @@ pub(super) fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         t.roundabout = false;
         t.points.clear();
         t.point_levels.clear();
+        // [r4-ramp] As if clicked: a point snaps onto a road as a click
+        // there does (an end at the road's height, whatever its level; a
+        // point between only onto a road at about its level), one given no
+        // level of its own put at the Level dial's.
         for (p, l) in pts.into_iter().zip(levels) {
             let l = l.unwrap_or(t.elevation);
-            t.push_point(p, l);
+            t.click_road_point(&ctx.sim, p, l);
         }
     }
     if let Some(c) = opt_vec2(cmd, "cursor")? {
