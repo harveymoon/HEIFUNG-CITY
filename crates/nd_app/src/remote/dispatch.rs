@@ -636,6 +636,22 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("headway", "minutes (line)"),
         ("station", "id or [x,y]"),
     ] },
+    Cmd { name: "timetable", aliases: &["timetables", "schedule"], effect: Game, run: |cmd, ctx| timetable::command(cmd, &mut ctx.sim.world), help: &[
+        ("action", "list (default) | get | timeline (= get) | set | preset | default"),
+        ("line", "{\"bus\": id} | {\"metro\": id} | \"rail\" | {\"ferry\": terminal id}; or kind (bus|metro|rail|ferry) and id"),
+        ("start", "set: first run, \"HH:MM\" or minutes of the day"),
+        ("end", "set: last run, \"HH:MM\" (\"24:00\" for midnight)"),
+        ("am_rush", "set: [from, to]"),
+        ("pm_rush", "set: [from, to]"),
+        ("night", "set: bool, a night service through the hours outside start..end"),
+        ("values", "set: {morning_rush|day|evening_rush|evening|night: n} or [5 numbers]: buses out (bus) or minutes between departures (metro, rail, ferry)"),
+        ("part", "set: one part, with value"),
+        ("value", "set: that part's buses or headway"),
+        ("standard", "set: true, back to the standard hours and one frequency all day"),
+        ("preset", "preset: commuter | all_day | 24h | night_owl | standard; default: the same, for new lines"),
+        ("apply", "default: bool, every line takes it too"),
+        ("returns", "list: every line's timetable and the city default; get: the timetable, the part running now, and the timeline today and yesterday (hourly boarded, mean wait, waiting, riding, runs, missed; by part)"),
+    ] },
     Cmd { name: "metro_line", aliases: &[], effect: Game, run: |cmd, ctx| subway::metro_line(cmd, &mut ctx.sim.world, &mut ctx.tools), help: &[
         ("stations", "[id or [x,y], ...]: clicked in order, as the player does"),
         ("click", "id or [x,y]: one more"),
@@ -852,6 +868,10 @@ pub(super) static COMMANDS: &[Cmd] = &[
     ] },
     Cmd { name: "heat_vision", aliases: &["heat"], effect: View, run: look::heat_vision, help: &[
         ("on", "bool, omitted toggles: the drone thermal camera view (also key H)"),
+    ] },
+    Cmd { name: "photo_mode", aliases: &["photo"], effect: View, run: look::photo_mode, help: &[
+        ("on", "bool, omitted toggles: hide every pane, bar, label and pin so screenshots show the city alone (also key F10)"),
+        ("size", "[w, h]: also set the window's size in physical pixels (for screenshots of a known size); reply `window` is the size now"),
     ] },
     Cmd { name: "graphics", aliases: &["quality"], effect: View, run: look::graphics, help: &[
         ("quality", "auto|low|medium|high: pin the graphics tier (pin one before screenshots that must compare) or hand it back to the frame-rate throttler; omitted reports the setting, the tier in force, the smoothed frame time and the effects on the camera"),
@@ -1286,5 +1306,25 @@ mod dispatch_tests {
         for (a, c) in aliases {
             assert_eq!(lookup(a).map(|x| x.name), c.as_str(), "alias {a}");
         }
+    }
+
+    /// [photo] `photo_mode` sets, toggles and reports the flag the UI's
+    /// drawing reads; a bad `size` is refused and changes nothing; with no
+    /// window (as here) the reply's `window` is null.
+    #[test]
+    fn photo_mode_sets_and_toggles() {
+        let mut app = app();
+        let (status, body) = send(&mut app, json!({ "cmd": "photo_mode", "on": true }));
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["photo_mode"], true);
+        assert!(body["window"].is_null(), "{body}");
+        assert!(app.world().resource::<UiFlags>().photo_mode);
+        let (_, body) = send(&mut app, json!({ "cmd": "photo" }));
+        assert_eq!(body["photo_mode"], false, "no `on`: toggles");
+        let (status, _) = send(&mut app, json!({ "cmd": "photo_mode", "on": true, "size": [10, 10] }));
+        assert_eq!(status, 400);
+        assert!(!app.world().resource::<UiFlags>().photo_mode, "a refused command changes nothing");
+        let (_, body) = send(&mut app, json!({ "cmd": "status" }));
+        assert_eq!(body["photo_mode"], false);
     }
 }

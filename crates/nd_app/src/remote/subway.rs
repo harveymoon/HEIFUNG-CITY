@@ -20,6 +20,9 @@ pub fn line_row(w: &World, id: MetroLineId) -> Value {
         "length_m": round(l.length()), "stations": l.stations.iter().map(|&s| json!({ "id": key_str(s), "name": building_name(w, Some(s)) })).collect::<Vec<_>>(),
         "trains": trains, "waiting": waiting, "riding": riding,
         "riders_today": l.riders_today, "riders_yesterday": l.riders_yesterday, "runs_today": l.runs_today,
+        // [r4-timetable] The headway now and the line's hours (`timetable` has the rest).
+        "headway_now_min": l.headway_at(w.clock.minute_of_day() as u32), "hours": l.schedule().hours_text(),
+        "timetable": if l.timetable.is_some() { l.schedule().preset(nd_sim::timetable::Kind::Metro).map_or("own", |p| p.key()) } else { "standard" },
     })
 }
 

@@ -106,7 +106,7 @@ the replies back. So:
 Every example is the POST body; the reply always carries `"ok"`.
 
 **Other names.** Some commands answer to other names as well (`help` lists them under `aliases`):
-`add_interchange` (`interchange`); `campus` (`university`); `city_name` (`city_identity`); `cleanup` (`clean_up`); `committee_meeting` (`meeting`); `corps` (`corp`, `megacorp`); `dirt_at` (`contamination_at`); `district` (`districts`); `estate` (`land_market`); `favourite` (`favorite`); `graphics` (`quality`); `grounds_junctions` (`park_junctions`); `heat_vision` (`heat`); `level_crossings` (`level_crossing`, `crossings`, `rail_crossings`); `pressure` (`pressures`); `roads` (`road_condition`, `road_budget`); `shore` (`waterfront`); `skyline` (`towers`, `height_limit`); `street_events` (`nights`); `subway` (`metro`); `taxes` (`tax`); `tolls` (`toll`); `tourism` (`tourists`); `tow_car` (`tow`, `boot`); `zoom_to` (`zoom`).
+`add_interchange` (`interchange`); `campus` (`university`); `city_name` (`city_identity`); `cleanup` (`clean_up`); `committee_meeting` (`meeting`); `corps` (`corp`, `megacorp`); `dirt_at` (`contamination_at`); `district` (`districts`); `estate` (`land_market`); `favourite` (`favorite`); `graphics` (`quality`); `grounds_junctions` (`park_junctions`); `heat_vision` (`heat`); `level_crossings` (`level_crossing`, `crossings`, `rail_crossings`); `photo_mode` (`photo`); `pressure` (`pressures`); `roads` (`road_condition`, `road_budget`); `shore` (`waterfront`); `skyline` (`towers`, `height_limit`); `street_events` (`nights`); `subway` (`metro`); `taxes` (`tax`); `tolls` (`toll`); `tourism` (`tourists`); `tow_car` (`tow`, `boot`); `zoom_to` (`zoom`).
 
 `help` is checked against the dispatcher by a unit test (`remote::dispatch_tests`): every command
 it runs is documented in `help` or named as an alias, and nothing else is.
@@ -798,6 +798,61 @@ can refuse a click.
 {"cmd": "metro_line", "cancel": true}
 ```
 
+### Timetables and the day on each line [r4-timetable]
+
+`timetable {action, line?, ...}` (also `timetables`, `schedule`; `nd_app/src/remote/timetable.rs`)
+reads and sets each line's timetable and returns its day hour by hour. The Lines window shows the
+same: under every open bus and metro line, and for the passenger trains and each ferry terminal, a
+24-hour chart (riders boarding each hour, today filled, yesterday outlined; riders waiting and on
+board, averaged over quarter-hour samples) over the timetable's parts, with the part edges to drag
+and a dial per part. City Data, Transit, has the chart for any line ("A day on each line").
+
+A line is `line: {"bus": id}`, `{"metro": id}`, `"rail"` (the railway's one passenger service) or
+`{"ferry": id}` (a ferry terminal's building id), or `kind` (`bus | metro | rail | ferry`) and `id`.
+
+A timetable is the service hours (`start`..`end`; `end` up to `"24:00"`), a morning and an evening
+rush inside them, and an optional night service through the hours outside. The day falls in five
+parts: `morning_rush`, `day` (before the morning rush and between the rushes), `evening_rush`,
+`evening` (after the evening rush to the end) and `night`. Each part has a value: buses out for a
+bus line (extra buses leave the depot as a busier part starts; a bus no longer wanted takes nobody
+on, lets its riders off at their stops and goes home), minutes between departures for the metro,
+the trains and the ferries. A line with no timetable of its own runs the standard: its kind's old
+hours and one frequency all day (buses 05:30–23:30, the metro 05:00–24:00, trains 05:00–23:00,
+ferries 06:00–22:00), so an older save runs as it did. Presets scale from the line's day value:
+`commuter` (twice as often in the rushes, a third less in the evening), `all_day` (the standard
+hours, one value), `24h` (round the clock), `night_owl` (the evening as busy as the day and a
+sparse night service). Running costs follow the runs: buses per bus-minute, the metro per run;
+trains and ferries pay their stations' and terminals' upkeep for the standard timetable and
+`RAIL_RUN_COST` (60) a train, `FERRY_RUN_COST` (40) a sailing beyond it. Riders only choose a line
+that will still run when they reach the stop or platform (for the metro: a train still due at
+their station, within a headway), and riders still waiting give up only once their line's own
+service has ended (`transit::service_over` on its hours, plus `LAST_RUN_GRACE`).
+
+| action | does |
+| --- | --- |
+| `list` (default) | `default` (the city's timetable for new lines), `presets`, `lines`: every line's `{line, name, timetable, now}` |
+| `get` (also `timeline`) | one line: `timetable`, `now` (the part running now) and `timeline` {today, yesterday: {boarded, mean_wait_min, missed, runs, by_part [{part, boarded, mean_wait_min}], hours [{hour, boarded, mean_wait_min, waiting, riding, runs, missed}]}} |
+| `set` | change the line's timetable: `start`, `end`, `am_rush` [from, to], `pm_rush`, `night` (bool), `values` ({part: n} or five numbers), or `part` + `value`; `standard: true` goes back to the standard. Values are clamped (buses 0..10; metro 4..60 min; trains and ferries 30..240 min); edges are kept in order inside the hours |
+| `preset` | `preset: commuter | all_day | 24h | night_owl | standard` |
+| `default` | `preset` for new lines (`standard` for none); `apply: true` gives every line it too |
+
+A `timetable` reply: kind, custom, preset (or null for an edited one), hours ("05:00–24:00", "24
+hours", "... and a night service"), start, end, am_rush, pm_rush, night, unit, parts [{part, value,
+text, runs, spans}], departures_per_day (one way) or bus_minutes_per_day. Times are "HH:MM"; `set`
+takes "HH:MM" or minutes of the day. `runs` in the timeline counts departures (both directions for
+the metro); for a bus line it is buses out summed over the quarter-hour samples. Ferry riders turn
+up at the pier untimed, so a ferry's waits are null.
+
+```json
+{"cmd": "timetable"}
+{"cmd": "timetable", "action": "get", "line": {"metro": "1:1"}}
+{"cmd": "timetable", "action": "preset", "line": {"bus": "3:1"}, "preset": "commuter"}
+{"cmd": "timetable", "action": "set", "line": {"metro": "1:1"}, "values": {"morning_rush": 6, "evening_rush": 6}, "night": true}
+{"cmd": "timetable", "action": "set", "kind": "rail", "start": "06:00", "end": "24:00", "values": {"day": 90}}
+{"cmd": "timetable", "action": "set", "line": {"ferry": "40:2"}, "standard": true}
+{"cmd": "timetable", "action": "default", "preset": "night_owl", "apply": true}
+```
+
 ### Finding and inspecting
 
 `find {what, near?, radius?, filter?, limit?}`, with `what` one of citizens, buildings, lots, cars,
@@ -1195,6 +1250,7 @@ Skyline page (`city_data {tab: "city", sub: "skyline"}`) shows the same.
 | `tool` | `name` (inspect, road, zone, edit, bulldoze, buildings (alias power), transit, rail, district; the building ones are what the Build window's items pick: road and its presets for Roads and Rail track, zone for Zoning and Parks, buildings for Power, Services, Transit placeables, Water and Attractions, rail for stations and yards, transit for bus and metro lines; the metro line tool is `tool {name: transit, kind: metro}`, see `metro_line`), `preset` (Path, Rail, Lane, Street, Avenue, One-way, Ramp, Highway, Roundabout), `diameter` and `ring_lanes` (roundabout), `ring_at` `[x,y]` (show the roundabout preview there as if hovered, until the mouse is used), `kind` (the active tool's sub-mode: road kind, for buildings a category power / services / transit / rail / attractions or any `place` kind, station / freight_yard, route / depot, land use or zone mode), `mode` (zone: polygon / brush / marquee), `radius` (zone brush), `unzone`, `industry` (zone, industrial: auto / farming / oil / ...), `sub_zone` (zone, commercial: auto / neighbourhood / retail / offices / leisure; `land_use` leisure or entertainment picks commercial with leisure), `tier` (buildings: low / mid / high), `land_use`, `lanes_fwd`, `lanes_bwd`, `curved`, `show_routes`, `route`, `selected_gesture`, `elevation` (the Road tool's level for the next point, m), `depth` (underground / ground / sky: the view layer; the Tunnel preset switches to underground, other presets back), `draw` `[[x,y,level?],...]` (the road being drawn, as if clicked, so its hologram shows: [r4-ramp] each point snaps as a click there does, an end onto any road at that road's height, a point between only onto a road at about its level; `level` stands in for the Level dial for that point), `cursor` `[x,y]` (where the pointer stands for that hologram until the mouse is used); also the Buildings tool's and the Zone brush/marquee's plot highlight), `hover` `[x,y]` (the same pin, named for the plot highlight: with the Buildings tool the site there (a lot, or the unzoned parcels a lot would be made of, as `place {check}`) gets its outline and light wall, green if a click would build and red with the reason if not, and the Build window's "Here:" line follows the pin; with the Zone tool's brush or marquee, the parcel being painted. The pin holds until the real pointer moves over the map). The reply's tool state has `elevation`, `elevation_label`, `point_levels`, `tunnel`, `depth`, `grade_warnings`, and (refreshed with the road preview, a frame later) `pillars` {count, at, buyouts (building names a pillar would buy out), empty_lots, gaps ([{from, to, end_in_the_air, over_road, level, reason}]: stretches with no room for a pillar), refusal}, and `intersection_editor` (where the editor is open, or null). With a `cursor`/`hover` pin set, the reply also has `hover`: {`at`, `ok`, `note` (what a click would do), `reason` (why it would be refused), `outline` (the plot's polygon)}, or null where the tool has no plot there (roads, tolls, rail pieces and docks have their own previews) |
 | `overlay` | **Map layers are exclusive**: one shows at a time (as the top bar's Layer button), with its key in the legend. `active` a layer key or `none`: show it alone. `layer` (zoning, land_value, districts, traffic, traffic_types, danger, paths, walk_networks, people, pollution, crime, map, metro, parking, trails, density, construction, or a land survey layer, below; [w1] `construction` dims the city and outlines every building site (cyan going up, with a wire box to the planned height; amber coming down for a rebuild; red coming down for good) with a progress label; [pt-ux] `paths` (Pedestrian network) draws every walkway by kind and makes everyone on foot glow over a dimmed city; `parking` colours each street by the legal parking a driver finds (free kerb slots plus public lots within 220 m) and outlines every public lot by how full it is with a "P used/capacity" label; `trails` is a long exposure: the city nearly black and every mover leaving a streak that fades over about ten seconds; `density` is a heat map of how densely each plot is built (floor area over plot area until the growth model's land density lands); `traffic` and `crime` also dim the city and light up the vehicles they are about, `map` is the street map view with street names and pins; `metro` dims the city and shows the metro lines in their colours and every station as a named marker, and picking the metro line tool switches to it, leaving it puts back the layer before) with `on` (bool; omitted toggles): on shows it and hides every other, off hides it if it shows. `land` a land survey layer key (shown alone) or `none`. Older form, a bool per layer name: true shows that layer alone (several trues: the last listed in the registry wins), false hides it if it shows. `projects` (bool, or `layer: "projects"`) is the dim other-projects switch, not a layer, and is left alone by the rest. Reply: every flag layer and whether it is on, `land` (the survey layer shown, or null), `active` (the key of the layer showing, or null) and `projects` (also in `status.overlays`). New layers are added as one entry in `crate::map_layers::MAP_LAYERS` and appear here by their key |
 | `lighting` | `follow_clock`, `hour` (0..24; setting an hour unpins lighting from the clock) |
+| `photo_mode` (alias `photo`) | `on` (bool, omitted toggles) | [photo] Photo mode, F10 in game: every egui pane, bar, toast, label and pin is hidden (egui still runs, so windows keep their state; the map's own rings and overlays stay) and the panes stop holding the pointer. Applied from the same frame, so a following `screenshot` shows the city alone. `size: [w, h]` also sets the window's size in physical pixels (a screenshot is the window's size; with `size` and no `on` the mode is left as it is). Reply `photo_mode`, `window` [w, h]; `status.photo_mode` |
 | `heat_vision` (alias `heat`) | `on` (bool; omitted toggles). Drone heat vision: buildings, ground and roads go near-black, people, vehicles, fires and drones glow by temperature (lights and engines white-hot), with motion blur, scanlines, noise, a vignette and a reticle. Same as key H and the top bar's Heat button. Reply `heat_vision`; also `status.lighting.heat_vision` |
 | `graphics` (alias `quality`) | `quality` auto / low / medium / high. Pins the graphics tier (Low: MSAA, no SSAO or haze, no rain or snow, street lamps only glow; Medium: TAA, light SSAO, real light from the 18 street lamps nearest the view at night; High: TAA, full SSAO, volumetric haze, big shadows, 40 lit lamps. Every tier: wet, glossy roads while it rains, fog tinted and thickened by climate and weather) or hands it back to the frame-rate throttler (Auto). Pin one before screenshots that must compare. Reply `quality`, `tier` (in force from the next frame), `frame_ms` (smoothed), `sim_ms`, `auto_steps`, `reason`, `effects`, `long_frames` ([saves] the last 24 frames over 500 ms, oldest first: `ms`, `sim_ms` the tick time in that frame, `tick`; loads left out: hitches to chase); also `status.render.graphics`. `ND_QUALITY` sets the starting setting, else [settings] the one saved from the Settings window |
 | `window` | `name` a tool window: lines / view (also `land`, `layers`, `map`: the View window, once Land) / alerts ([pt-ux] the draggable Alerts window: every toast as it happened with a "go" where it has a place, and the city's problems now, the `report` alerts) / saves / settings ([settings] graphics, text size, speech bubbles, the controls) / help / dev / demand ([r4-leisure] the small Demand for new buildings window; its place and open state are kept in settings.ron), `open` (omit to toggle). Reply `open`, `windows_open`. Applied in the egui pass of the same frame, so a following `screenshot` shows it. The old report windows are City Data pages now: `name` city / economy / market / people / services opens that tab (at its last sub-tab), taxes / power / transit / emergencies / districts / tourism their page (Economy › Taxes, Services › Power, ...); `sub` (or People's old `tab` overview / concerns / social) picks a sub-tab, `open` false closes the view, omitted toggles, `expanded` is accepted and opens. The reply is `city_data`'s. `name: "build"`: the Build window, `open` (omit to toggle), `section` roads / zoning / parks / districts / power / services / transit / rail / water / attractions (opens it there); `status.build_window` {open, section}. A building tool picked with `tool` opens the Build window at its section, as its hotkey does. `name: "title"`: the title screen (above) |

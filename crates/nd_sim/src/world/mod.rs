@@ -208,6 +208,9 @@ mod trains;
 mod rail_travel;
 // [pt-transit] Why people do (not) ride.
 mod transit_report;
+pub mod timetables;
+#[cfg(test)]
+mod timetable_tests;
 #[cfg(test)]
 mod transit_tests;
 #[cfg(test)]

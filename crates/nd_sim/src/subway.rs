@@ -15,6 +15,7 @@
 
 use crate::buildings::BuildingId;
 use crate::rail::{path_length, point_along, Train, TrainKind};
+use crate::timetable::{Kind, Timeline, Timetable};
 use crate::roads::RoadNetwork;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
@@ -113,6 +114,14 @@ pub struct MetroLine {
     /// station; the way home to the first is at [`MetroLine::length`].
     #[serde(default)]
     pub looped: bool,
+    /// [r4-timetable] Hours and headway part by part; `None` (an older
+    /// save, or never set) runs `headway` all through the standard hours
+    /// (`MetroLine::schedule`).
+    #[serde(default)]
+    pub timetable: Option<Timetable>,
+    /// [r4-timetable] The line's day hour by hour, today and yesterday.
+    #[serde(default)]
+    pub timeline: Timeline,
 }
 
 fn default_headway() -> u32 {
@@ -120,6 +129,60 @@ fn default_headway() -> u32 {
 }
 
 impl MetroLine {
+    /// [r4-timetable] The line's timetable: its own, else `headway` all
+    /// through the standard hours (05:00 to midnight).
+    pub fn schedule(&self) -> Timetable {
+        self.timetable.unwrap_or_else(|| Timetable::flat(Kind::Metro, self.headway))
+    }
+
+    /// [r4-timetable] Will a train the way from station `board` to
+    /// `alight` still call at `board` at or after tick `at`? The trains to
+    /// come are replayed from the last departure (`now` is the clock): each
+    /// leaves a headway after the one before while the line runs, and
+    /// reaches the station its running time from the terminus later.
+    /// Cheap when the line runs on for an hour after `at`.
+    pub fn still_calls(&self, now: u64, at: u64, board: usize, alight: usize, seconds_per_tick: f32) -> bool {
+        let (Some(&b), Some(&a)) = (self.stations.get(board), self.stations.get(alight)) else { return false };
+        if self.headway_at((at % 1440) as u32).is_some() && self.headway_at(((at + 60) % 1440) as u32).is_some() {
+            return true;
+        }
+        let forward = self.serves(true, b, a);
+        let secs = seconds_per_tick.max(0.1);
+        let total = self.length();
+        let along = self.stops.get(board).map_or(0.0, |s| if forward { *s } else { total - s });
+        let calls = self.call_position(forward, board, false) as f32;
+        let offset = (along / (SPEED * secs) + calls * DWELL_SECONDS / secs) as u64;
+        // The departure out now, if any, and the ones to come.
+        let mut d = if self.last_dispatch == 0 || self.last_dispatch > now { None } else { Some(self.last_dispatch) };
+        if d.is_some_and(|d| d + offset >= at) {
+            return true;
+        }
+        // Within a headway of getting there (half an hour at least): nobody
+        // plans on an hour on the platform for the first train.
+        let mut t = now;
+        while t <= at + 60 {
+            if let Some(h) = self.headway_at((t % 1440) as u32) {
+                if d.is_none_or(|d| t - d >= h as u64) {
+                    if t + offset >= at {
+                        return t + offset <= at + (h as u64).max(30);
+                    }
+                    d = Some(t);
+                }
+            }
+            t += 1;
+        }
+        false
+    }
+
+    /// [r4-timetable] Minutes between trains at minute `m` of the day,
+    /// `None` while the line does not run.
+    pub fn headway_at(&self, m: u32) -> Option<u32> {
+        match &self.timetable {
+            Some(t) => t.value_at(m),
+            None => Subway::in_service(m % 1440).then_some(self.headway),
+        }
+    }
+
     pub fn length(&self) -> f32 {
         path_length(&self.path)
     }
@@ -328,7 +391,10 @@ impl Subway {
     /// short enough that riding saves real distance. Of near-equal plans
     /// (within a thousandth of a minute) the first found, in line and
     /// station order, is kept.
-    pub fn plan_trip(&self, from: Vec2, to: Vec2, seconds_per_tick: f32, walk_per_tick: f32, entrance: impl Fn(BuildingId) -> Option<(Vec2, f32)>) -> Option<MetroPlan> {
+    /// [r4-timetable] `open` says whether a train still comes when the
+    /// rider gets to the platform, given the line, the stations boarded and
+    /// left (indices) and the metres walked to the entrance.
+    pub fn plan_trip(&self, from: Vec2, to: Vec2, seconds_per_tick: f32, walk_per_tick: f32, entrance: impl Fn(BuildingId) -> Option<(Vec2, f32)>, open: impl Fn(&MetroLine, usize, usize, f32) -> bool) -> Option<MetroPlan> {
         let direct = from.distance(to);
         if direct < TRIP_MIN {
             return None;
@@ -350,7 +416,7 @@ impl Subway {
                         continue;
                     }
                     let d_out = pj.distance(to);
-                    if d_out > rj || d_in + d_out + 150.0 > direct {
+                    if d_out > rj || d_in + d_out + 150.0 > direct || !open(line, i, j, d_in) {
                         continue;
                     }
                     let riding = line.ride_minutes(i, j, seconds_per_tick);
@@ -638,7 +704,7 @@ mod tests {
     fn line(sub: &mut Subway, pts: &[Vec2], first: u64) -> MetroLineId {
         let (path, stops) = lay_tunnel(pts);
         let stations = (0..pts.len() as u64).map(|i| bid(first + i)).collect();
-        sub.lines.insert(MetroLine { name: "Line 1".into(), color: 0, stations, path, stops, headway: DEFAULT_HEADWAY, last_dispatch: 0, riders_today: 0, riders_yesterday: 0, runs_today: 0, looped: false })
+        sub.lines.insert(MetroLine { name: "Line 1".into(), color: 0, stations, path, stops, headway: DEFAULT_HEADWAY, last_dispatch: 0, riders_today: 0, riders_yesterday: 0, runs_today: 0, looped: false, timetable: None, timeline: Default::default() })
     }
 
     #[test]
@@ -691,20 +757,20 @@ mod tests {
         let id = line(&mut sub, &pts, 1);
         let at = |b: BuildingId| -> Option<(Vec2, f32)> { (1..=3).find(|i| bid(*i) == b).map(|i| (pts[i as usize - 1], REACH)) };
         let walk = 1.4 * 4.0;
-        let p = sub.plan_trip(Vec2::new(50.0, 100.0), Vec2::new(1550.0, -80.0), 4.0, walk, at).expect("a ride end to end");
+        let p = sub.plan_trip(Vec2::new(50.0, 100.0), Vec2::new(1550.0, -80.0), 4.0, walk, at, |_, _, _, _| true).expect("a ride end to end");
         assert_eq!((p.line, p.board, p.alight), (id, bid(1), bid(3)));
         // The other way round boards at the far end.
-        let back = sub.plan_trip(Vec2::new(1550.0, -80.0), Vec2::new(820.0, 60.0), 4.0, walk, at).unwrap();
+        let back = sub.plan_trip(Vec2::new(1550.0, -80.0), Vec2::new(820.0, 60.0), 4.0, walk, at, |_, _, _, _| true).unwrap();
         assert_eq!((back.board, back.alight), (bid(3), bid(2)));
         // Too short, out of reach, or a walk the ride would not shorten.
-        assert!(sub.plan_trip(Vec2::new(0.0, 10.0), Vec2::new(300.0, 0.0), 4.0, walk, at).is_none(), "under the trip minimum");
-        assert!(sub.plan_trip(Vec2::new(0.0, 900.0), Vec2::new(1600.0, 900.0), 4.0, walk, at).is_none(), "no entrance within reach");
-        assert!(sub.plan_trip(Vec2::new(400.0, 300.0), Vec2::new(400.0, -300.0), 4.0, walk, at).is_none(), "walking to the stations is no shorter");
+        assert!(sub.plan_trip(Vec2::new(0.0, 10.0), Vec2::new(300.0, 0.0), 4.0, walk, at, |_, _, _, _| true).is_none(), "under the trip minimum");
+        assert!(sub.plan_trip(Vec2::new(0.0, 900.0), Vec2::new(1600.0, 900.0), 4.0, walk, at, |_, _, _, _| true).is_none(), "no entrance within reach");
+        assert!(sub.plan_trip(Vec2::new(400.0, 300.0), Vec2::new(400.0, -300.0), 4.0, walk, at, |_, _, _, _| true).is_none(), "walking to the stations is no shorter");
         // A Central Station's longer reach draws riders from further off.
         let far = Vec2::new(0.0, 420.0);
-        assert!(sub.plan_trip(far, Vec2::new(1600.0, 50.0), 4.0, walk, at).is_none());
+        assert!(sub.plan_trip(far, Vec2::new(1600.0, 50.0), 4.0, walk, at, |_, _, _, _| true).is_none());
         let wide = |b: BuildingId| at(b).map(|(p, _)| (p, if b == bid(1) { CENTRAL_REACH } else { REACH }));
-        assert_eq!(sub.plan_trip(far, Vec2::new(1600.0, 50.0), 4.0, walk, wide).map(|p| p.board), Some(bid(1)));
+        assert_eq!(sub.plan_trip(far, Vec2::new(1600.0, 50.0), 4.0, walk, wide, |_, _, _, _| true).map(|p| p.board), Some(bid(1)));
     }
 
     #[test]
@@ -785,7 +851,7 @@ mod tests {
         let pts = [Vec2::new(0.0, 0.0), Vec2::new(800.0, 0.0), Vec2::new(800.0, 700.0), Vec2::new(0.0, 700.0)];
         let (path, stops) = lay_loop_tunnel(&pts);
         let stations: Vec<BuildingId> = (1..=4).map(bid).collect();
-        let id = sub.lines.insert(MetroLine { name: "Loop".into(), color: 1, stations: stations.clone(), path, stops, headway: DEFAULT_HEADWAY, last_dispatch: 0, riders_today: 0, riders_yesterday: 0, runs_today: 0, looped: true });
+        let id = sub.lines.insert(MetroLine { name: "Loop".into(), color: 1, stations: stations.clone(), path, stops, headway: DEFAULT_HEADWAY, last_dispatch: 0, riders_today: 0, riders_yesterday: 0, runs_today: 0, looped: true, timetable: None, timeline: Default::default() });
         let l = &sub.lines[id];
         let fwd = l.run(true, 1);
         let back = l.run(false, 1);

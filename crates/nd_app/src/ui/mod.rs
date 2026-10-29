@@ -52,6 +52,8 @@ pub mod people;
 mod person;
 /// [camera] A selected person's home / work / owned pins.
 mod pins;
+// [photo] F10 / `photo_mode`: hide all of egui for clean screenshots.
+mod photo;
 mod places;
 /// [social] Friends and foes, the Social tab, speech bubbles.
 pub mod social;
@@ -143,6 +145,9 @@ pub struct UiFlags {
     /// [r4-hunger] The held business pressure whose lot need the map shows
     /// ("show where", `pressure_where`).
     pub pressure_where: Option<nd_sim::pressure::PressureKind>,
+    /// [photo] Photo mode: egui still runs but nothing it lays out is
+    /// drawn (`photo.rs`; F10 or the remote `photo_mode`).
+    pub photo_mode: bool,
 }
 
 impl UiFlags {
@@ -161,6 +166,7 @@ impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<UiFlags>()
             .init_resource::<Saves>()
+            .add_plugins(photo::PhotoPlugin)
             // [fonts] Before the pass begins, so the first pass already has them.
             .add_systems(PreUpdate, install_fonts.after(EguiPreUpdateSet::InitContexts).before(EguiPreUpdateSet::BeginPass))
             .add_systems(PreUpdate, read_input_flags.after(EguiPreUpdateSet::BeginPass))
@@ -191,6 +197,11 @@ pub(crate) fn read_input_flags(mut contexts: EguiContexts, mut flags: ResMut<UiF
     let Ok(ctx) = contexts.ctx_mut() else { return };
     let over_bars = ctx.pointer_latest_pos().is_some_and(|p| flags.panel_rects.iter().any(|r| r.contains(p)));
     flags.pointer_over_ui = over_bars || ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input();
+    // [photo] Panes that are not drawn do not hold the pointer: the map's
+    // camera drags and wheel work across the whole window.
+    if flags.photo_mode {
+        flags.pointer_over_ui = false;
+    }
     // Only a text field keeps focus across frames (see the surrender below),
     // so this is true exactly while one is being typed into.
     flags.keyboard_captured = ctx.egui_wants_keyboard_input();

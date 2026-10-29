@@ -96,6 +96,7 @@ pub mod takeover;
 /// [tax] Tax rates per land use and sub-type, and the import duty.
 pub mod tax;
 /// [tolls] Toll booths on the roads.
+pub mod timetable;
 pub mod tolls;
 /// [supertall] The skyscraper league: skyscrapers, supertalls and megatalls.
 pub mod towers;

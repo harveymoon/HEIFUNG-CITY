@@ -142,7 +142,9 @@ impl World {
                 // [economy] Boats are sent by `World::step_boats`.
                 PortKind::MarinaSmall | PortKind::MarinaLarge | PortKind::FishingPortSmall | PortKind::FishingPortLarge => {}
                 PortKind::FerryTerminal | PortKind::FerryTerminalLarge => {
-                    if !(ports::FERRY_SERVICE_START..ports::FERRY_SERVICE_END).contains(&minute) || tick.saturating_sub(port.last_sailing) < ports::FERRY_HEADWAY {
+                    // [r4-timetable] The terminal's own timetable: its hours
+                    // and the headway of the part of the day it is in.
+                    if port.ferry_headway_at(minute).is_none_or(|h| tick.saturating_sub(port.last_sailing) < h) {
                         continue;
                     }
                     // [ferries] Take turns: a run to a town off the map,
@@ -208,6 +210,9 @@ impl World {
                     self.ports.stats.ferry_riders_today += riders;
                     self.ports.stats.ferry_fares_today += fares;
                     self.ports.count_line_riders(b, to, remote, riders);
+                    let tl = &mut self.ports.ports[*pid].timeline;
+                    tl.board_untimed(minute / 60, riders);
+                    tl.run(minute / 60, 1);
                     let kind = if port.kind.car_deck() > 0 { ShipKind::CarFerry } else { ShipKind::Ferry };
                     self.ports.ships.insert(Ship { kind, path, s: 0.0, prev_s: 0.0, speed, dwell: ports::FERRY_DWELL, port: b, to, cargo: Vec::new(), passengers: riders, docked: false, berth_s, color: 0, remote, home: false, quay: None, boxes_in: 0, boxes_out: 0, cars });
                     self.ports.ports[*pid].last_sailing = tick;

@@ -16,7 +16,7 @@ fn the_lookahead_sees_a_bus_as_long_as_it_is() {
     // A bus standing just past the start of the far lane.
     let bus_route = vec![route[2]];
     let bus = t.spawn_car(CitizenId::default(), None, bus_route, 6.0, 150.0, 0);
-    t.cars[bus].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 0, passengers: Vec::new(), to_depot: false, depot: BuildingId::default() });
+    t.cars[bus].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 0, passengers: Vec::new(), to_depot: false, retiring: false, depot: BuildingId::default() });
     let car = t.spawn_car(CitizenId::default(), None, route.clone(), s0, s1, 0);
     let lane = &t.net.lanes[route[0] as usize];
     let (gap, lead_v, _, _) = t.lookahead(&t.cars[car], lane);
