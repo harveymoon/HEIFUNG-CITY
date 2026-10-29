@@ -535,6 +535,25 @@ styles! {
     LeanToWorkshop { label: "lean-to workshop", family: Heavy, cluster: 0.6, draw: |g, c, r, _| patchwork::lean_to_workshop(g, c, r) },
     /// A family's or a billionaire's bright concrete house behind a wall and wire.
     BigManCompound { label: "walled compound", family: Special, cluster: 0.0, draw: |g, c, r, _| patchwork::big_man_compound(g, c, r) },
+    // -- [r4-skyline] Skyline Luxe, Neo Tokyo Heights' look
+    // (`buildings/skyline.rs`), drawn only from its menus (the sky villa for
+    // its estates' forms, the helipad tower for its hotels); appended so
+    // `ALL` keeps its order. The towers stand apart; the boutique row and
+    // the mall line the street. --
+    /// A slim glass residence tower on a podium of noisy shops, glass boxes hung off it.
+    LuxeTower { label: "glass residence tower", family: Spire, cluster: -0.3, draw: |g, c, r, e| skyline::luxe_tower(g, c, r, e) },
+    /// Two glass towers on one podium joined by a lit sky bridge.
+    TwinTowers { label: "twin towers with a sky bridge", family: Spire, cluster: -0.8, draw: |g, c, r, e| skyline::twin_towers(g, c, r, e) },
+    /// A glass tower with an infinity pool and cabanas on its roof.
+    PoolTower { label: "rooftop pool tower", family: Spire, cluster: -0.5, draw: |g, c, r, e| skyline::pool_tower(g, c, r, e) },
+    /// A hotel or office tower with a helipad over its roof, a brand sign under it.
+    HelipadTower { label: "helipad tower", family: Spire, cluster: -0.7, draw: |g, c, r, e| skyline::helipad_tower(g, c, r, e) },
+    /// A vertical mall: stacked levels of signs and screens, an atrium lit all night.
+    MallPodium { label: "vertical mall", family: Retail, cluster: -0.4, draw: |g, c, r, e| skyline::mall_podium(g, c, r, e) },
+    /// Luxury boutiques under neon, the street's vending machines and mopeds between.
+    BoutiqueRow { label: "boutique row", family: Retail, cluster: 0.6, draw: |g, c, r, e| skyline::boutique_row(g, c, r, e) },
+    /// A family's or a billionaire's sky villa: a glass penthouse and pool on a low block.
+    SkyVilla { label: "sky villa", family: Special, cluster: 0.0, draw: |g, c, r, e| skyline::sky_villa(g, c, r, e) },
 }
 
 impl Style {
@@ -576,6 +595,8 @@ impl Style {
 
     /// [r4-patchwork] Patchwork's styles (Riverbank Shantytown).
     pub const PATCHWORK: [Style; 9] = [Style::TinShacks, Style::StiltHouses, Style::PatchStack, Style::TarpMarket, Style::CornerKiosk, Style::Shebeen, Style::ScrapYard, Style::LeanToWorkshop, Style::BigManCompound];
+    /// [r4-skyline] Skyline Luxe's styles (Neo Tokyo Heights).
+    pub const SKYLINE_LUXE: [Style; 7] = [Style::LuxeTower, Style::TwinTowers, Style::PoolTower, Style::HelipadTower, Style::MallPodium, Style::BoutiqueRow, Style::SkyVilla];
 }
 
 impl Style {
@@ -651,6 +672,8 @@ impl Style {
             Style::Crystal | Style::Fortress | Style::GardenTower | Style::PencilTower | Style::TwinSlab | Style::GlassTerraces | Style::Megastructure | Style::SlabTower | Style::TwistTower
                 // [capsule] Their own round deck on a mast over the crown.
                 | Style::CapsuleTower | Style::SaucerStack | Style::StiltTower
+                // [r4-skyline] Its own helipad over the roof.
+                | Style::HelipadTower
         )
     }
 

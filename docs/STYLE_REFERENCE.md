@@ -273,7 +273,45 @@ a view down one street shows a few dozen such towers.
   shebeen's yard, the blue of a television in some windows, the kiosk's
   fridge, the shebeen's hatch, a fire in a barrel, the compound's
   floodlights.
+- Done (r4-skyline): **Skyline Luxe** (`buildings/skyline.rs`, Neo Tokyo
+  Heights' look): a slim glass residence tower on a podium of noisy shops,
+  twin towers of different heights on one podium joined by a lit sky
+  bridge (two on tall ones), a tower with an infinity pool, cabanas,
+  loungers and a bar pavilion on its roof, a hotel or office tower with a
+  helipad on steel legs over its roof (a hotel in the district is one, and
+  it carries the air taxis' pad), a vertical mall of stacked levels pushed
+  out over the pavement in turn, wrapped in tenant signs and screens round
+  an atrium lit all night, a boutique row of black glass, pale stone and
+  bronze units with double-height lit windows in brass frames under a neon
+  line, and a sky villa for the story's mansions (a low block of dark
+  glass between stone fins, a glass penthouse lit warm under a floating
+  roof, an infinity pool and a planted bed on the roof terrace, a stone
+  wall, gate and drive; on an estate's four plots a floor more, a second
+  pavilion and a helipad on the penthouse). From section 2: the
+  cantilevered glass-box floors (two-storey boxes off the front every four
+  to six floors, panel soffits, a light per floor, rails on top), exposed
+  bracing up a flank (columns base, the X per four floors mid), big lit
+  brand signs under the crown (fictional brands: KAIROS, NOVASEI,
+  TAKAMINE, MIRAIQ, SORA-9, LUMENKAI, ZENKO, VANTA; one glow block per
+  letter, dead ones with wear), a corner screen down a tall tower's flank,
+  railings round every roof, terrace and box (near), rooftop plant
+  (`glasscampus::roof_plant`), the deep soffit over the shops with strip
+  lights under it (`NIGHT_MARK`), and the street level round the plot:
+  narrow shop units of lit glass or a shutter half down (slats near), a lit
+  fascia sign each, awnings (mid), vending machines (lit fronts, as signs),
+  a sign hung out over the pavement, mopeds parked nose to tail (bodies
+  mid, wheels, seats and delivery boxes near), AC units up the podium's
+  sides (near), a dirt band at the foot of every face and grime down them.
+  The towers' curtain walls are Glass Campus's (`curtain_block`: smeared
+  tinted glass, a light per floor and face for the renderer to switch,
+  mullions mid, smears near) in its own tints (blue-black, champagne
+  bronze, teal, smoke) and spandrels. Pools are water-tinted glass by day
+  inside a glow box marked `NIGHT_MARK` after dark; the bridge, the bar,
+  the penthouse eave, gate lanterns, lamps and the helipad's markings and
+  edge lights are `NIGHT_MARK` too. Drawn floors are the sim's (a refit
+  keeps its height); a forty-floor tower costs about 2,000 base triangles
+  (about 800 at six floors) and 5,000 to 6,600 detail.
 - Left for later: the cyberpunk family (section 2) on the Neon strip,
-  offices and industry; the street-level props round the plot; the other
-  looks (Skyline Luxe); slopes for the stilt houses (lots are
-  levelled pads, a style does not know the hillside it stands on).
+  offices and industry; the street-level props round the plot for the
+  other looks; slopes for the stilt houses (lots are levelled pads, a
+  style does not know the hillside it stands on).

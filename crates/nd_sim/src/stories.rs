@@ -369,7 +369,8 @@ impl Story {
             // [r4-patchwork] Its own look, Patchwork, for homes, its trade and
             // its small industry; the 12 m limit and rent support kept.
             Story::Shantytown => (Some(R::Patchwork), Some(C::Patchwork), None, false, Some(12.0), Policies { rent_support: 0.20, ..p }),
-            Story::NeoTokyoHeights => (Some(R::Eco), Some(C::NeonStrip), None, false, None, Policies { business_rate: 0.03, late_hours: true, ..p }),
+            // [r4-skyline] Its own look, Skyline Luxe, for the towers and the street under them.
+            Story::NeoTokyoHeights => (Some(R::SkylineLuxe), Some(C::SkylineLuxe), None, false, None, Policies { business_rate: 0.03, late_hours: true, ..p }),
         };
         Preset { residential, commercial, industry, historic, height_limit, policies }
     }
@@ -443,6 +444,8 @@ impl Story {
             // [r4-patchwork] Riverbank Shantytown: Kowloon homes, shops as
             // they come.
             Story::Shantytown => d.residential == Some(ResidentialSpec::Kowloon) && d.commercial.is_none() && d.industry.is_none() && !d.historic,
+            // [r4-skyline] Neo Tokyo Heights: Eco homes and the Neon strip.
+            Story::NeoTokyoHeights => d.residential == Some(ResidentialSpec::Eco) && d.commercial == Some(crate::districts::CommercialSpec::NeonStrip) && d.industry.is_none() && !d.historic,
             _ => false,
         }
     }
