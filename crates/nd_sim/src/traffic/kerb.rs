@@ -40,8 +40,9 @@ impl Traffic {
         // [r4-flags-look] (flag day 13 at (-589,89), "stacked trucks")
         // Pulled in behind (or ahead of) whoever already stands at this
         // kerb, never on top of them: every lorry for one site stopped at
-        // the same spot, eight drawn as one.
-        if kerb && !was_entering {
+        // the same spot, eight drawn as one. (A stranded lorry pulled in
+        // again moves off one it was left standing on, so old stacks part.)
+        if kerb {
             let s = self.kerb_room(lane, id);
             self.cars[id].s = s;
         }
