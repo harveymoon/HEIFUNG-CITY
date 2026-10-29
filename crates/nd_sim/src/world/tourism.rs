@@ -749,8 +749,9 @@ impl World {
             let taste = if b.tier == class { 2.0 } else { 1.0 };
             // A neon strip or night market is where visitors go to shop.
             let strip = match b.look {
-                // [r4-harbour] The pastel front too.
-                Some(crate::districts::Look::NeonStrip | crate::districts::Look::NightMarket | crate::districts::Look::Tourist | crate::districts::Look::HarbourPastel) => 2.5,
+                // [r4-harbour] The pastel front too. [r4-skyline] And the
+                // street under the towers, as the Neon strip it replaces.
+                Some(crate::districts::Look::NeonStrip | crate::districts::Look::NightMarket | crate::districts::Look::Tourist | crate::districts::Look::HarbourPastel | crate::districts::Look::SkylineLuxe) => 2.5,
                 _ => 1.0,
             };
             options.push((id, taste * strip / (1.0 + d / 250.0)));
