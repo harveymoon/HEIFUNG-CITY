@@ -174,6 +174,8 @@ mod r4_crossings_tests;
 #[cfg(test)]
 mod ramp_tests;
 #[cfg(test)]
+mod ramp_draw_tests;
+#[cfg(test)]
 mod parking_tests;
 #[cfg(test)]
 mod edge_tests;

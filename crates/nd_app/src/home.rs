@@ -41,7 +41,7 @@ mod tests {
     #[test]
     fn home_is_the_exe_folder_unless_nd_home_says() {
         let cwd = Path::new("/work/repo");
-        let exe = Path::new("/games/nd/target/release/neon_district.exe");
+        let exe = Path::new("/games/nd/target/release/heifung_city.exe");
         assert_eq!(resolve(None, Some(exe), cwd), PathBuf::from("/games/nd/target/release"));
         assert_eq!(resolve(Some("  "), Some(exe), cwd), PathBuf::from("/games/nd/target/release"), "blank is unset");
         assert_eq!(resolve(Some("."), Some(exe), cwd), cwd.join("."));
@@ -49,6 +49,6 @@ mod tests {
         let abs = std::env::temp_dir();
         assert_eq!(resolve(Some(abs.to_str().unwrap()), Some(exe), cwd), abs);
         assert_eq!(resolve(None, None, cwd), cwd);
-        assert_eq!(resolve(None, Some(Path::new("neon_district.exe")), cwd), cwd, "no folder in the exe path");
+        assert_eq!(resolve(None, Some(Path::new("heifung_city.exe")), cwd), cwd, "no folder in the exe path");
     }
 }

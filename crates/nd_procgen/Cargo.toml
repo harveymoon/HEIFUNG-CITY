@@ -3,7 +3,7 @@ name = "nd_procgen"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Procedural generators (terrain, buildings, names) for Neon District"
+description = "Procedural generators (terrain, buildings, names) for HEIFUNG://CITY"
 
 [dependencies]
 nd_sim = { workspace = true }

@@ -1,4 +1,4 @@
-// Neon District: Bevy 0.19.1's volumetric fog shader
+// HEIFUNG://CITY: Bevy 0.19.1's volumetric fog shader
 // (bevy_pbr/src/volumetric_fog/volumetric_fog.wgsl, MIT OR Apache-2.0) with
 // one change, swapped in for the original by `render/look.rs`: the ambient
 // light. Bevy's starts the ray's colour at
@@ -229,7 +229,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     // [2]: https://en.wikipedia.org/wiki/Beer%E2%80%93Lambert_law
 
     // Use Beer's law again to accumulate the ambient light all along the path.
-    // [Neon District] Started at zero; the ambient goes in at the end, once
+    // [HEIFUNG://CITY] Started at zero; the ambient goes in at the end, once
     // the ray's transmittance is known.
     var accumulated_color = vec3(0.0);
 
@@ -456,7 +456,7 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         accumulated_color += sample_color * background_alpha;
     }
 
-    // [Neon District] Ambient in-scattering: the light the fog along this ray
+    // [HEIFUNG://CITY] Ambient in-scattering: the light the fog along this ray
     // scatters towards the camera, `1 - transmittance` of the ambient times
     // the scattering albedo, exposed like everything else.
     let albedo = scattering / max(absorption + scattering, 1e-6);

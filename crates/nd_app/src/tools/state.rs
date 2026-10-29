@@ -7,6 +7,17 @@ use nd_sim::{BuildingId, CitizenId, GestureId, LandUse, Vec2 as SVec2};
 use super::{Depth, PaintStroke, Tool, TransitMode, ZoneMode, ELEVATION_MAX, ELEVATION_MIN, ELEVATION_STEP, POINT_PICK_RADIUS};
 use crate::sim::Sim;
 
+/// [r4-ramp] A point of the road being drawn as it was put.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PointClick {
+    /// Where it was clicked.
+    pub at: SVec2,
+    /// The level it was put at (the Level dial's, or given).
+    pub level: f32,
+    /// It snapped onto a road (and took its height).
+    pub snapped: bool,
+}
+
 #[derive(Resource)]
 pub struct ToolState {
     pub tool: Tool,
@@ -135,6 +146,12 @@ pub struct ToolState {
     pub elevation: f32,
     /// The level of each of `points` (kept in step by `push_point`).
     pub point_levels: Vec<f32>,
+    /// [r4-ramp] Each of `points` as it was put: where it was clicked, the
+    /// level it was put at (the Level dial's) and whether it snapped onto a
+    /// road. The last point is the road's end for now and takes the height
+    /// of a road it snaps to whatever the dial says; once another point
+    /// follows it is put again from here as a point between (`click_road_point`).
+    pub point_clicks: Vec<PointClick>,
     /// Road tool: drawing tunnels (deep, joined only to tunnels; portals
     /// where they climb to the ground).
     pub tunnel: bool,
@@ -334,8 +351,11 @@ impl ToolState {
 
     /// Where a point placed at `p` at `level` lands, and its level: it snaps
     /// onto a road only at about the same level (a viaduct passes over the
-    /// street under it), unless `any` (the first point: a ramp or a portal
-    /// starts on whatever road it is put on, at that road's level).
+    /// street under it), unless `any` (an end, first or last: a ramp or a
+    /// portal starts or ends on whatever road it is put on, at that road's
+    /// height there, whatever the Level dial says, as the network lays it).
+    /// [r4-ramp] Of the roads in reach, one at about `level` wins (a street
+    /// under a viaduct for a point drawn at grade), then the nearest.
     pub fn road_snap_level(sim: &Sim, p: SVec2, kind: RoadKind, level: f32, any: bool) -> (SVec2, bool, f32) {
         // [park-paths] A path snaps onto a park's (or other grounds') gate
         // when one is nearer than any road; streets never do.
@@ -352,15 +372,9 @@ impl ToolState {
                 }
             }
         }
-        let (q, snapped) = roads.snap_point_kind(p, POINT_PICK_RADIUS, kind);
-        if !snapped {
-            return (p, false, level);
-        }
-        let at = roads.snap_level(p, POINT_PICK_RADIUS, kind).unwrap_or(0.0);
-        if any || (at - level).abs() < nd_sim::roads::GRADE_SEPARATION {
-            (q, true, at)
-        } else {
-            (p, false, level)
+        match roads.snap_point_level(p, POINT_PICK_RADIUS, kind, level, any) {
+            Some((q, at)) => (q, true, at),
+            None => (p, false, level),
         }
     }
 
@@ -381,9 +395,71 @@ impl ToolState {
 
     /// Add a point of the road being drawn with its level.
     pub fn push_point(&mut self, p: SVec2, level: f32) {
-        self.point_levels.resize(self.points.len(), self.elevation);
+        self.push_resolved(PointClick { at: p, level, snapped: false }, p, level);
+    }
+
+    fn push_resolved(&mut self, click: PointClick, p: SVec2, level: f32) {
+        self.sync_clicks();
         self.points.push(p);
         self.point_levels.push(level);
+        self.point_clicks.push(click);
+    }
+
+    /// `point_levels` and `point_clicks` one per point (the points are
+    /// cleared and popped in many places; a point missing is taken as put).
+    fn sync_clicks(&mut self) {
+        let n = self.points.len();
+        self.point_levels.resize(n, self.elevation);
+        self.point_clicks.truncate(n);
+        for i in self.point_clicks.len()..n {
+            self.point_clicks.push(PointClick { at: self.points[i], level: self.point_levels[i], snapped: false });
+        }
+    }
+
+    /// [r4-ramp] Click a point of the road being drawn at `p`, put at
+    /// `level` where it lands on open ground. It is the road's end for now,
+    /// so on a road it takes that road's height there whatever `level` is
+    /// (a ramp from a viaduct down to a street); the point before it, no
+    /// longer the end, is put again as a point between (it snaps only onto
+    /// a road at about its own level: a road drawn under a viaduct passes
+    /// under it). Where it lands, whether it snapped, its level.
+    pub fn click_road_point(&mut self, sim: &Sim, p: SVec2, level: f32) -> (SVec2, bool, f32) {
+        self.sync_clicks();
+        let n = self.points.len();
+        if n >= 2 {
+            let c = self.point_clicks[n - 1];
+            let (q, snapped, l) = Self::road_snap_level(sim, c.at, self.kind, c.level, false);
+            self.points[n - 1] = q;
+            self.point_levels[n - 1] = l;
+            self.point_clicks[n - 1].snapped = snapped;
+        }
+        let (q, snapped, l) = Self::road_snap_level(sim, p, self.kind, level, true);
+        self.push_resolved(PointClick { at: p, level, snapped }, q, l);
+        (q, snapped, l)
+    }
+
+    /// [r4-ramp] The road being drawn with the pointer at `cursor` as its
+    /// next point (the preview: hologram, grade warnings, columns): that
+    /// point is the end, so it takes the height of a road it is on, and the
+    /// last point clicked is then a point between.
+    pub fn road_with_cursor(&self, sim: &Sim, cursor: Option<SVec2>) -> (Vec<SVec2>, Vec<f32>) {
+        let mut pts = self.points.clone();
+        let mut levels = self.levels();
+        let Some(c) = cursor else { return (pts, levels) };
+        let (c, _, l) = Self::road_snap_level(sim, c, self.kind, self.elevation, true);
+        if pts.last().is_some_and(|p| p.distance(c) <= 0.5) {
+            return (pts, levels);
+        }
+        let n = pts.len();
+        if n >= 2 && self.point_clicks.len() == n {
+            let k = self.point_clicks[n - 1];
+            let (q, _, kl) = Self::road_snap_level(sim, k.at, self.kind, k.level, false);
+            pts[n - 1] = q;
+            levels[n - 1] = kl;
+        }
+        pts.push(c);
+        levels.push(l);
+        (pts, levels)
     }
 
     /// The levels of `points`, one each.
@@ -579,14 +655,17 @@ impl ToolState {
 
     /// [tools] Raise or lower the whole road being drawn a step: every
     /// point placed so far and the next one.
+    /// [r4-ramp] A point on a road stays at that road's height.
     pub fn step_whole_road(&mut self, up: bool) {
         let max = if self.tunnel { 0.0 } else { ELEVATION_MAX };
         let d = if up { ELEVATION_STEP } else { -ELEVATION_STEP };
-        let mut levels = self.levels();
-        for l in &mut levels {
-            *l = (*l + d).clamp(ELEVATION_MIN, max);
+        self.sync_clicks();
+        for (l, c) in self.point_levels.iter_mut().zip(&mut self.point_clicks) {
+            c.level = (c.level + d).clamp(ELEVATION_MIN, max);
+            if !c.snapped {
+                *l = (*l + d).clamp(ELEVATION_MIN, max);
+            }
         }
-        self.point_levels = levels;
         self.step_elevation(up);
     }
 
@@ -661,6 +740,7 @@ impl Default for ToolState {
             ring_pin: None,
             elevation: 0.0,
             point_levels: Vec::new(),
+            point_clicks: Vec::new(),
             tunnel: false,
             depth: Depth::Ground,
             grade_warnings: Vec::new(),

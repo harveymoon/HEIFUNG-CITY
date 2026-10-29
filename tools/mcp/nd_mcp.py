@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""MCP server for District 2040 (Neon District).
+"""MCP server for HEIFUNG://CITY (formerly District 2040 / Neon District).
 
 Wraps the game's localhost HTTP API (docs/REMOTE.md) as MCP tools, so an MCP
 client such as Claude Code can drive and inspect a running game. Python 3
 standard library only; speaks MCP over stdio (JSON-RPC 2.0, one message per
 line).
 
-    claude mcp add --scope user neon-district -- python C:\\CODE\\Neon_District\\tools\\mcp\\nd_mcp.py
+    claude mcp add --scope user heifung-city -- python C:\\CODE\\Neon_District\\tools\\mcp\\nd_mcp.py
 
 The game must be running (it listens on 127.0.0.1:4817 unless ND_REMOTE_PORT
 says otherwise). Every tool forwards one command and returns the game's JSON
@@ -23,7 +23,7 @@ import urllib.request
 
 PORT = int(os.environ.get("ND_REMOTE_PORT", "4817"))
 BASE = f"http://127.0.0.1:{PORT}"
-SERVER_INFO = {"name": "neon-district", "version": "0.1.0"}
+SERVER_INFO = {"name": "heifung-city", "version": "0.1.0"}
 PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"]
 # Big screenshots blow up a conversation (and the Claude API refuses images
 # over 5 MB); above this the image is not attached, only its path.
@@ -44,7 +44,7 @@ def call_game(cmd, timeout=15.0):
         except Exception:
             return {"ok": False, "error": f"HTTP {e.code}"}
     except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as e:
-        return {"ok": False, "error": f"game not reachable at {BASE} ({e}). Is District 2040 running? (ND_REMOTE_PORT={PORT})"}
+        return {"ok": False, "error": f"game not reachable at {BASE} ({e}). Is HEIFUNG://CITY running? (ND_REMOTE_PORT={PORT})"}
 
 
 # ── tool definitions ────────────────────────────────────────────────────────
@@ -392,7 +392,7 @@ def handle(msg):
             "protocolVersion": version,
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": SERVER_INFO,
-            "instructions": "Drive the running District 2040 game. Start with `status`; to review how the city is doing call `report` first (ranked alerts with locations and ids), then `map` (where), `history` (trends), `list` (tables) and `inspect` (one thing); ids are \"idx:version\" strings from find/status; positions are [x, y] sim metres (the map spans about -1000..1000). Build with `build` (pending until implemented), then `control step` to let time pass.",
+            "instructions": "Drive the running HEIFUNG://CITY game. Start with `status`; to review how the city is doing call `report` first (ranked alerts with locations and ids), then `map` (where), `history` (trends), `list` (tables) and `inspect` (one thing); ids are \"idx:version\" strings from find/status; positions are [x, y] sim metres (the map spans about -1000..1000). Build with `build` (pending until implemented), then `control step` to let time pass.",
         }
     if method == "ping":
         return {}

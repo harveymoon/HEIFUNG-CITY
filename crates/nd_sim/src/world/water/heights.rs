@@ -306,6 +306,11 @@ impl World {
         if points.len() < 2 {
             return out;
         }
+        // [r4-ramp] Judged as the network lays it: an end on a road at
+        // that road's height (a ramp from a viaduct to a street climbs the
+        // deck's height, whatever level its end was drawn at).
+        let (points, levels) = self.roads.as_built(points, levels, kind);
+        let (points, levels) = (&points[..], &levels[..]);
         let land = &self.landscape;
         let floor = if land.is_flat() { 0.0 } else { crate::landscape::BANK_HEIGHT };
         let lv = |i: usize| levels.get(i).copied().unwrap_or(0.0);
@@ -314,8 +319,20 @@ impl World {
         for i in self.steep_legs(points, levels, kind) {
             let len = points[i].distance(points[i + 1]);
             let g = (z(i + 1) - z(i)).abs() / len;
-            let need = (z(i + 1) - z(i)).abs() / grade;
-            out.push(format!("too steep between points {} and {}: {:.0}% over {:.0} m (at most {:.0}%; needs {:.0} m)", i + 1, i + 2, g * 100.0, len, grade * 100.0, need));
+            let rise = (z(i + 1) - z(i)).abs();
+            let need = rise / grade;
+            // [r4-ramp] How long a ramp the height wants at the grade.
+            out.push(format!(
+                "too steep between points {} and {}: {:.0}% over {:.0} m (at most {:.0}%): a ramp needs {:.0} m for {:.0} m at {:.0}%",
+                i + 1,
+                i + 2,
+                g * 100.0,
+                len,
+                grade * 100.0,
+                need,
+                rise,
+                grade * 100.0
+            ));
         }
         // [pt-visual] Fitting the land (F31): an at-grade leg over ground
         // that climbs or falls far faster than the grade will be cut deep
