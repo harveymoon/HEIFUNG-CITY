@@ -473,7 +473,14 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
                 // [r4-hillside] A bench's wall meets the land itself: the
                 // hillside is left as it was right behind it.
                 let natural = |p: Vec2| world.landscape.height(p).max(BANK_HEIGHT);
-                let (g0, g1) = if bench { (natural(p0 + out2 * (back + 0.5)), natural(p1 + out2 * (back + 0.5))) } else { (world.ground_height(p0 + probe), world.ground_height(p1 + probe)) };
+                // Never taller than `BENCH_WALL_MAX`: past it the hill is
+                // cut back (or the fill banked) as the built ground shows.
+                let cap = nd_sim::landscape::BENCH_WALL_MAX;
+                let (g0, g1) = if bench {
+                    (natural(p0 + out2 * (back + 0.5)).clamp(r0 - cap, r0 + cap), natural(p1 + out2 * (back + 0.5)).clamp(r1 - cap, r1 + cap))
+                } else {
+                    (world.ground_height(p0 + probe), world.ground_height(p1 + probe))
+                };
                 let (q0, q1) = (p0 + out2 * face, p1 + out2 * face);
                 let (e0, e1) = (p0 + out2 * back, p1 + out2 * back);
                 // [sweep-visual] Not across another way: at a junction on a
@@ -500,7 +507,7 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
                         // [r4-hillside] A thin wall up to the hillside with
                         // a narrow coping; the slope above is drawn over the
                         // terrain mesh's coarse cells (`bench_skins`).
-                        let (t0, t1) = (natural(q0).max(r0) + 0.35, natural(q1).max(r1) + 0.35);
+                        let (t0, t1) = (natural(q0).clamp(r0, r0 + cap) + 0.35, natural(q1).clamp(r1, r1 + cap) + 0.35);
                         let (c0, c1) = (q0 + out2 * 0.45, q1 + out2 * 0.45);
                         m.quad_facing([Vec3::new(q0.x, r0 - 0.5, q0.y), Vec3::new(q1.x, r1 - 0.5, q1.y), Vec3::new(q1.x, t1, q1.y), Vec3::new(q0.x, t0, q0.y)], -out, wall);
                         m.quad_facing([Vec3::new(q0.x, t0, q0.y), Vec3::new(q1.x, t1, q1.y), Vec3::new(c1.x, t1, c1.y), Vec3::new(c0.x, t0, c0.y)], Vec3::Y, coping);
@@ -576,20 +583,40 @@ pub fn bench_skins(world: &World, palette: &Palette, g: &mut Geometry) {
                 if (0..=rings).any(|i| on_other_way(roads, sid, at(p0, i)) || on_other_way(roads, sid, at(p1, i))) {
                     continue;
                 }
-                // Only over ground the sim leaves as the land (not a lot's
-                // pad, another way's works or a terrace).
-                let untouched = |p: Vec2| (world.ground_height(p) - natural(p)).abs() < 0.3;
+                // The hillside as built: the land, or the rock face cut back
+                // above a wall at its cap (`BENCH_WALL_MAX`). Only where that
+                // is what the built ground holds (not a lot's pad, another
+                // way's works or a terrace).
+                let cap = nd_sim::landscape::BENCH_WALL_MAX;
+                let back = nd_sim::landscape::held_band(seg, Hold::Bench).1;
+                let hill = |p: Vec2, r: f32, i: usize| {
+                    let d = from + (to - from) * i as f32 / rings as f32;
+                    natural(p).min(r + cap + (d - back).max(0.0) * nd_sim::landscape::BENCH_ROCK_SLOPE)
+                };
+                let untouched = |p: Vec2, r: f32, i: usize| (world.ground_height(p) - hill(p, r, i)).abs() < 0.4;
                 let m = g.part(Surface::Dirt);
+                let first = m.positions.len();
                 for i in 0..rings {
-                    if !(untouched(at(p0, i + 1)) && untouched(at(p1, i + 1)) && (i == 0 || (untouched(at(p0, i)) && untouched(at(p1, i))))) {
+                    let ok = untouched(at(p0, i + 1), r0, i + 1) && untouched(at(p1, i + 1), r1, i + 1) && (i == 0 || (untouched(at(p0, i), r0, i) && untouched(at(p1, i), r1, i)));
+                    if !ok {
                         continue;
                     }
-                    let v = |p: Vec2| {
-                        let h = natural(p) + if i == 0 { 0.0 } else { 0.06 };
+                    let v = |p: Vec2, r: f32, j: usize| {
+                        let h = hill(p, r, j) + if j == 0 { 0.0 } else { 0.06 };
                         (Vec3::new(p.x, h, p.y), rgba(colour(p, h)))
                     };
-                    let (a0, a1, b1, b0) = (v(at(p0, i)), v(at(p1, i)), v(at(p1, i + 1)), v(at(p0, i + 1)));
+                    let (a0, a1, b1, b0) = (v(at(p0, i), r0, i), v(at(p1, i), r1, i), v(at(p1, i + 1), r1, i + 1), v(at(p0, i + 1), r0, i + 1));
                     m.quad_facing([a0.0, a1.0, b1.0, b0.0], Vec3::Y, a0.1);
+                }
+                // Shaded as the terrain is (smooth, from the slope of the
+                // built ground), not quad by quad: faceted, the strips drew
+                // light and dark zig-zags down the hillside.
+                for k in first..m.positions.len() {
+                    let [x, _, z] = m.positions[k];
+                    let e = 4.0;
+                    let h = |dx: f32, dz: f32| world.ground_height(Vec2::new(x + dx, z + dz));
+                    let n = Vec3::new(h(-e, 0.0) - h(e, 0.0), 2.0 * e, h(0.0, -e) - h(0.0, e)).normalize_or_zero();
+                    m.normals[k] = n.to_array();
                 }
             }
         }

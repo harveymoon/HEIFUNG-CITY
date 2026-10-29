@@ -199,7 +199,8 @@ fn vehicles_slow_on_steep_streets() {
 /// [r4-hillside] Lots on a steep hillside are walled terraces: their
 /// ground held at the pad, walls where it parts from the land, and the
 /// hillside beyond them left as it was (graded, a terrace buried the lots
-/// below it).
+/// below it); a terrace higher than a wall's cap over the drop stands
+/// on a bank below its wall.
 #[test]
 fn terraces_on_a_steep_hillside_are_walled_not_graded() {
     let mut w = hilly_world();
@@ -229,8 +230,26 @@ fn terraces_on_a_steep_hillside_are_walled_not_graded() {
         if w.lots.values().any(|o| o.contains(p)) || w.roads.segments_near(p, 12.0).len() > 0 {
             continue;
         }
-        let moved = (w.ground_height(p) - natural(&w, p)).abs();
-        assert!(moved < 1.0, "the hillside behind a terrace moved {moved:.1} m");
+        // Left as the land, unless the hill there stands so far over the
+        // pad that it is cut back above the wall's cap (a rock face).
+        // (any terrace's within reach: each holds its walls to the cap).
+        let rock = terraced
+            .iter()
+            .map(|o| (crate::geom::distance_to_outline(p, &w.lots[*o].polygon), w.ground.pads[o]))
+            .filter(|(edge, _)| *edge <= 2.0 + crate::landscape::BENCH_CAP_REACH)
+            .map(|(edge, pad)| pad + crate::landscape::BENCH_WALL_MAX + (edge - 2.0).max(0.0) * crate::landscape::BENCH_ROCK_SLOPE)
+            .fold(f32::INFINITY, f32::min);
+        // And the bank under a podium higher than the cap.
+        let bank = terraced
+            .iter()
+            .map(|o| (crate::geom::distance_to_outline(p, &w.lots[*o].polygon), w.ground.pads[o]))
+            .filter(|(edge, _)| *edge <= 2.0 + crate::landscape::BENCH_CAP_REACH)
+            .map(|(edge, pad)| pad - crate::landscape::BENCH_WALL_MAX - (edge - 2.0).max(0.0) * crate::landscape::BENCH_FILL_SLOPE)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let want = natural(&w, p).min(rock).max(bank);
+        let moved = (w.ground_height(p) - want).abs();
+        // (A metre and a half: the grading rounds the bank's toe.)
+        assert!(moved < 1.5, "the hillside behind a terrace moved {moved:.1} m from the land (or its rock face): ground {:.1} natural {:.1} rock {rock:.1} pad {pad:.1} at {p} lot {}", w.ground_height(p), natural(&w, p), l.center);
     }
 }
 
@@ -261,5 +280,59 @@ fn zoning_says_how_steep_a_hillside_is_and_what_is_allowed() {
     flat.add_road(&[at - Vec2::new(120.0, 0.0), at + Vec2::new(120.0, 0.0)], 1, 1);
     for i in flat.parcels.in_circle(at, 70.0) {
         assert!(flat.parcel_ground_note(i).is_none());
+    }
+}
+
+/// [r4-hillside] A bench's retaining walls stand at most `BENCH_WALL_MAX`
+/// high: a street eased into a hillside much steeper than it may climb (a
+/// 60% slope straight up) cuts deep, and past the cap the hill is cut back
+/// as a rock face rather than held by a sheer wall 20 m and more high.
+#[test]
+fn bench_walls_are_never_taller_than_the_cap() {
+    use crate::landscape::{BENCH_ROCK_SLOPE, BENCH_WALL_MAX};
+    let mut w = hilly_world();
+    let at = dry_spot(&w);
+    plane(&mut w, at, 0.6);
+    let (a, b) = (at - Vec2::new(0.0, 160.0), at + Vec2::new(0.0, 160.0));
+    w.add_road(&[a, b], 1, 1);
+    let mut deepest = 0.0f32;
+    for sid in laid(&w, a, b) {
+        let seg = w.roads.segment(sid);
+        assert_eq!(earthwork_hold(&w.landscape, &w.roads, &w.road_z, &w.road_inner, sid), Some(Hold::Bench));
+        let (p, q) = w.roads.segment_points(sid);
+        let (_, back) = held_band(seg, Hold::Bench);
+        for k in 1..10 {
+            let t = k as f32 / 10.0;
+            let c = p.lerp(q, t);
+            let z = w.road_height(sid, t);
+            deepest = deepest.max(natural(&w, c) - z);
+            for s in [-1.0f32, 1.0] {
+                for out in [1.0f32, 6.0, 12.0] {
+                    let x = c + Vec2::X * s * (back + out);
+                    let cap = z + BENCH_WALL_MAX + out * BENCH_ROCK_SLOPE + 1.0;
+                    assert!(w.ground_height(x) <= cap, "ground {:.1} m over the way {out} m past its wall (cap {:.1})", w.ground_height(x) - z, cap - z);
+                }
+            }
+        }
+    }
+    assert!(deepest > BENCH_WALL_MAX + 2.0, "a cut deeper than the cap to test ({deepest:.1} m)");
+}
+
+/// [r4-hillside] No terrace wall is taller than a bench's cap either.
+#[test]
+fn terrace_walls_are_never_taller_than_the_cap() {
+    let mut w = hilly_world();
+    let at = dry_spot(&w);
+    plane(&mut w, at, 1.1);
+    w.add_road(&[at - Vec2::new(120.0, 0.0), at + Vec2::new(120.0, 0.0)], 1, 1);
+    let ids: Vec<usize> = w.parcels.in_circle(at, 70.0).into_iter().filter(|&i| w.parcels.parcels[i].street_frontage && w.parcel_refusal(i, Some(LandUse::Residential)).is_none()).collect();
+    assert!(!ids.is_empty(), "terraceable parcels on a 110% hillside");
+    w.paint_parcels(&ids, Some(LandUse::Residential), None);
+    w.implement();
+    assert!(!w.ground.retaining.is_empty());
+    for r in &w.ground.retaining {
+        for f in [r.foot_a, r.foot_b] {
+            assert!((f - r.top).abs() <= crate::landscape::BENCH_WALL_MAX + 0.01, "a wall {:.1} m high", (f - r.top).abs());
+        }
     }
 }

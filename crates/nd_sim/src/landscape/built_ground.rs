@@ -394,7 +394,12 @@ pub(super) fn side_rise(step: f32, a: f32, b: f32) -> f32 {
 /// slopes are even and never steeper than the limit, they blend into the
 /// terrain, and where two works meet the ground runs from one to the other
 /// instead of whichever is nearer winning cell by cell.
-pub(super) fn grade_free_ground(n: usize, natural: &[f32], fix: &[Fix], set: &[f32], mut lo: Vec<f32>, mut hi: Vec<f32>) -> Vec<f32> {
+///
+/// [r4-hillside] `cap` bounds some free cells outright, after the cones have
+/// spread: (least, most) of the rock face and bank past a wall's cap
+/// (`BENCH_WALL_MAX`). They do not spread themselves: spread at the side
+/// slopes, a rock face cut back above a wall fanned out over the hill.
+pub(super) fn grade_free_ground(n: usize, natural: &[f32], fix: &[Fix], set: &[f32], mut lo: Vec<f32>, mut hi: Vec<f32>, cap: &[(f32, f32)]) -> Vec<f32> {
     let step = GROUND_CELL / EMBANKMENT_SLOPE;
     let diag = step * std::f32::consts::SQRT_2;
     for k in 0..n * n {
@@ -446,7 +451,15 @@ pub(super) fn grade_free_ground(n: usize, natural: &[f32], fix: &[Fix], set: &[f
             break;
         }
     }
-    let raw: Vec<f32> = (0..n * n).map(|k| if fix[k] == Fix::Free { settle(natural[k], lo[k], hi[k]) } else { set[k] }).collect();
+    let raw: Vec<f32> = (0..n * n)
+        .map(|k| {
+            if fix[k] != Fix::Free {
+                return set[k];
+            }
+            let (cl, ch) = cap.get(k).copied().unwrap_or((f32::NEG_INFINITY, f32::INFINITY));
+            settle(natural[k], lo[k].max(cl), hi[k].min(ch))
+        })
+        .collect();
     // One pass of smoothing over the free ground takes the crease off the
     // top and the foot of every slope. A cut's walls stay sharp.
     let mut h = raw.clone();
@@ -552,6 +565,8 @@ impl Ground {
         // staircase along its edge.
         let mut lo = vec![f32::NEG_INFINITY; n * n];
         let mut hi = vec![f32::INFINITY; n * n];
+        // [r4-hillside] Rock faces and banks past a wall's cap.
+        let mut cap = vec![(f32::NEG_INFINITY, f32::INFINITY); n * n];
         // Never carve the built ground below the waterline beside the
         // water; a cutting away from it may go deeper.
         let floor_at = |p: Vec2, z: f32| if z < WATER_LEVEL + 0.4 && land.water_distance(p) < 40.0 { WATER_LEVEL + 0.4 } else { z };
@@ -584,7 +599,11 @@ impl Ground {
             };
             // A road the player sank is held by retaining walls: it holds its
             // own cells and grades nothing beside it.
-            let reach = if walled { core } else { core + seed_band };
+            // [r4-hillside] A bench's walls stand at most `BENCH_WALL_MAX`
+            // high: past that the hill is cut back above the wall (a rock
+            // face) or the fill banked below it, out to `BENCH_CAP_REACH`.
+            let bench = hold == Some(Hold::Bench);
+            let reach = if bench { core + BENCH_CAP_REACH } else if walled { core } else { core + seed_band };
             // Where this way passes over another, the ground under it is the
             // other's.
             let dir = (b - a).normalize_or_zero();
@@ -634,6 +653,10 @@ impl Ground {
                             set[k] = z;
                         }
                         fix[k] = if walled && fix[k] != Fix::Road { Fix::Wall } else { Fix::Road };
+                    } else if bench {
+                        let out = d - core;
+                        cap[k].0 = cap[k].0.max(z - BENCH_WALL_MAX - out * BENCH_FILL_SLOPE);
+                        cap[k].1 = cap[k].1.min(z + BENCH_WALL_MAX + out * BENCH_ROCK_SLOPE);
                     } else {
                         let e = (d - core) * rise;
                         lo[k] = lo[k].max(z - e);
@@ -666,13 +689,27 @@ impl Ground {
             let pad = pads[&id];
             let terraced = walled_terrace(land, lot, pad);
             let (lo_b, hi_b) = crate::geom::bounds(&lot.polygon);
-            let (i0, i1) = range(lo_b.x - 2.0, hi_b.x + 2.0);
-            let (j0, j1) = range(lo_b.y - 2.0, hi_b.y + 2.0);
+            // [r4-hillside] Round a walled terrace its walls stand at most
+            // `BENCH_WALL_MAX` high: past that the hill above is cut back,
+            // the drop below banked, as round a bench.
+            let margin = if terraced { 2.0 + BENCH_CAP_REACH } else { 2.0 };
+            let (i0, i1) = range(lo_b.x - margin, hi_b.x + margin);
+            let (j0, j1) = range(lo_b.y - margin, hi_b.y + margin);
             for j in j0..=j1 {
                 for i in i0..=i1 {
                     let p = at(i, j);
-                    let inside = point_in_polygon(p, &lot.polygon) || distance_to_outline(p, &lot.polygon) < 2.0;
+                    let inside_poly = point_in_polygon(p, &lot.polygon);
+                    let edge = if inside_poly { 0.0 } else { distance_to_outline(p, &lot.polygon) };
+                    let inside = inside_poly || edge < 2.0;
                     let k = j * n + i;
+                    if !inside {
+                        if terraced && edge <= margin && fix[k] == Fix::Free {
+                            let out = edge - 2.0;
+                            cap[k].0 = cap[k].0.max(pad - BENCH_WALL_MAX - out * BENCH_FILL_SLOPE);
+                            cap[k].1 = cap[k].1.min(pad + BENCH_WALL_MAX + out * BENCH_ROCK_SLOPE);
+                        }
+                        continue;
+                    }
                     // A road's corridor keeps its own height: the margin
                     // round a lot reaches over the pavement, and a corner
                     // lot levelled to its higher street used to lift the
@@ -686,7 +723,7 @@ impl Ground {
                 }
             }
         }
-        let h = grade_free_ground(n, &natural, &fix, &set, lo, hi);
+        let h = grade_free_ground(n, &natural, &fix, &set, lo, hi, &cap);
         let outer_index = index_outer(&outer);
         let mut g = Ground { half, n, h, fix, pads, decks, underpasses, bridge_decks, outer, outer_index, retaining: Vec::new(), terraces: Vec::new(), terrace_index: Default::default() };
         g.blend_into_outer(land);
@@ -765,7 +802,9 @@ impl Ground {
                 }).collect();
                 let below = hs.iter().filter(|(h, _)| pad - h >= RETAIN_MIN).count();
                 let above = hs.iter().filter(|(h, terrace)| h - pad >= RETAIN_MIN && !terrace).count();
-                let (h0, h1) = (hs[0].0, hs[hs.len() - 1].0);
+                // Never taller than a bench's cap: past it the ground is cut
+                // back or banked (`Ground::build_with`).
+                let (h0, h1) = (hs[0].0.clamp(pad - BENCH_WALL_MAX, pad + BENCH_WALL_MAX), hs[hs.len() - 1].0.clamp(pad - BENCH_WALL_MAX, pad + BENCH_WALL_MAX));
                 if below >= 3 {
                     walls.push(self.retaining.len() as u32);
                     self.retaining.push(Retaining { lot: id, a, b, foot_a: h0.min(pad), foot_b: h1.min(pad), top: pad, inward, holds_back: false });
@@ -1235,6 +1274,21 @@ pub fn held_band(seg: &crate::roads::Segment, hold: Hold) -> (f32, f32) {
 /// [r4-hillside] How far past a bench's verge its ground is held: the
 /// retaining wall's thickness.
 pub const BENCH_WALL: f32 = 1.2;
+/// [r4-hillside] Tallest a bench's retaining wall stands over (or under)
+/// its way. A street eased into a steeper hillside than it may climb cut
+/// 20 m and more into it, and its wall rose as a sheer slab that high.
+/// Past this the hill above is cut back as a rock face
+/// (`BENCH_ROCK_SLOPE`), the fill below banked (`BENCH_FILL_SLOPE`).
+pub const BENCH_WALL_MAX: f32 = 12.0;
+/// [r4-hillside] Rise over run of the rock face cut back above a bench's
+/// wall where the hill stands higher than `BENCH_WALL_MAX`.
+pub const BENCH_ROCK_SLOPE: f32 = 1.5;
+/// [r4-hillside] Fall over run of the bank below a bench's wall where the
+/// land lies lower than `BENCH_WALL_MAX` under it.
+pub const BENCH_FILL_SLOPE: f32 = 1.0;
+/// [r4-hillside] How far out from a bench its capped rock face or bank is
+/// seeded (the grading carries it on from there).
+pub const BENCH_CAP_REACH: f32 = 24.0;
 
 pub fn earthwork_band(seg: &crate::roads::Segment) -> (f32, f32) {
     if seg.is_motorway() {
