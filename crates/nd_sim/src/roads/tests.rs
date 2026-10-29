@@ -354,3 +354,27 @@ fn a_path_dropped_by_a_street_lands_on_its_pavement() {
     // A path nearer than the street keeps its own snapping.
     assert!(net.pavement_snap(Vec2::new(q.x + 0.2, 40.0), 8.0).is_none());
 }
+
+/// [r4-flags-sim] Harvey's Pylon Boulevard (flags day 8 and 13): it ended
+/// on the start of an on-ramp 2.2 m from a vertex of the avenue beside it,
+/// so it met the ramp alone and the avenue ran past "underneath" it. Street
+/// nodes that close are one junction.
+#[test]
+fn a_street_ending_beside_a_ramp_start_joins_the_avenue_there() {
+    let mut roads = RoadNetwork::default();
+    // A highway, and its slip road starting at (244, 489).
+    roads.add_polyline(&[Vec2::new(200.0, 300.0), Vec2::new(500.0, 400.0)], 3, 0);
+    roads.add_polyline_use(&[Vec2::new(244.0, 489.0), Vec2::new(280.0, 445.0), Vec2::new(350.0, 350.0)], &[], 1, 0, RoadKind::Street, Some(true));
+    // The avenue, its vertex 2.2 m off the ramp's start.
+    roads.add_polyline_use(&[Vec2::new(100.0, 489.0), Vec2::new(242.0, 488.0), Vec2::new(349.0, 571.0)], &[], 2, 2, RoadKind::Street, Some(false));
+    // The boulevard, dropped on the ramp's start.
+    roads.add_polyline_use(&[Vec2::new(491.0, 505.0), Vec2::new(244.0, 489.0)], &[], 2, 2, RoadKind::Street, Some(false));
+    fn near(roads: &RoadNetwork, p: Vec2) -> usize {
+        (0..roads.nodes.len()).filter(|&n| roads.nodes[n].pos.distance(p) < 4.0 && roads.nodes[n].segments.iter().any(|&s| roads.segment(s).alive)).count()
+    }
+    assert_eq!(near(&roads, Vec2::new(243.0, 488.5)), 2, "before: two nodes side by side");
+    assert!(roads.weld_close_street_nodes());
+    assert_eq!(near(&roads, Vec2::new(243.0, 488.5)), 1, "one junction");
+    let n = (0..roads.nodes.len()).find(|&n| roads.nodes[n].pos.distance(Vec2::new(243.0, 488.5)) < 4.0 && !roads.nodes[n].segments.is_empty()).unwrap();
+    assert_eq!(roads.streets_at(NodeId(n as u32)).count(), 4, "boulevard, both arms of the avenue and the ramp meet");
+}

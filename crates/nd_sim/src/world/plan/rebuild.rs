@@ -380,6 +380,10 @@ impl World {
                 raised.push((key, pts, lv, super::deck_half_width_use(kind, fwd, bwd, car_only)));
             }
         }
+        // [r4-flags-sim] Street ends left a few metres off a junction join it.
+        if roads.weld_close_street_nodes() {
+            roads.classify();
+        }
         (roads, raised)
     }
 

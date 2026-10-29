@@ -48,6 +48,9 @@ pub const END_SNAP_RADIUS: f32 = 9.0;
 /// half width plus a metre) leaves its lanes no length: Harvey's ring had a
 /// 1.9 m piece beside a junction, where an underpass passed under it.
 pub const MIN_PIECE: f32 = 6.0;
+/// [r4-flags-sim] Street nodes closer than this at about one level are one
+/// junction (`RoadNetwork::weld_close_street_nodes`).
+pub const WELD_RADIUS: f32 = 3.0;
 /// [r4-crossings] A path ending on a street this close (along it) to where
 /// another path already meets that street joins it there: two paths drawn
 /// to either pavement a few steps apart meet the street at one point and
