@@ -351,7 +351,7 @@ impl World {
     /// the water left (hurried past the map edge on a run off it), the
     /// dwell at the far berth if it is not there yet, and on a run off the
     /// map the unloading at home.
-    fn ship_ticks_left(s: &Ship) -> u64 {
+    fn ship_ticks_left(land: &crate::landscape::Landscape, s: &Ship) -> u64 {
         let total = crate::geom::path_length(&s.path);
         let speed = s.speed.max(0.01);
         let mut ticks = s.dwell as f32;
@@ -364,7 +364,7 @@ impl World {
         while x < total {
             let d = step.min(total - x);
             let p = s.pose_at(x + d * 0.5).0;
-            let off = s.remote.is_some() && p.x.abs().max(p.y.abs()) > crate::landscape::MAP_EDGE + 400.0;
+            let off = s.remote.is_some() && land.beyond_map_edge(p, 400.0);
             ticks += d / (speed * if off { ports::OFF_MAP_SPEEDUP } else { 1.0 });
             x += d;
         }
@@ -394,12 +394,12 @@ impl World {
                 // Boarding at its own pier: the dwell, then out past 40 m.
                 now + s.dwell as u64 + ((40.0 - s.s).max(0.0) / s.speed.max(0.01)).ceil() as u64 + 1
             } else {
-                now + Self::ship_ticks_left(s)
+                now + Self::ship_ticks_left(&self.landscape, s)
             };
             free = free.max(clear);
         }
         if mine.len() >= ports::FERRIES_PER_TERMINAL {
-            let first_home = mine.iter().map(|s| now + Self::ship_ticks_left(s)).min().unwrap_or(now);
+            let first_home = mine.iter().map(|s| now + Self::ship_ticks_left(&self.landscape, s)).min().unwrap_or(now);
             free = free.max(first_home);
         }
         free

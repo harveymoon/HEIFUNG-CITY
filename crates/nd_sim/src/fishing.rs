@@ -22,7 +22,7 @@
 //! is `world/fishing.rs`. Nothing here draws a random number.
 
 use crate::buildings::BuildingId;
-use crate::landscape::{Landscape, MAP_EDGE};
+use crate::landscape::Landscape;
 use crate::ports::{Port, PortKind};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
@@ -431,7 +431,8 @@ pub struct WaterGrid {
 
 impl WaterGrid {
     pub fn build(land: &Landscape) -> Self {
-        let half = MAP_EDGE - 20.0;
+        // [r4-tiles] Over the land bought too (the map's edge less 20 m).
+        let half = land.land_half() - 60.0;
         let n = ((half * 2.0) / GRID).ceil() as usize;
         let mut clear = vec![0.0; n * n];
         if !land.is_flat() {
@@ -584,7 +585,7 @@ pub fn find_grounds(land: &Landscape, grid: &WaterGrid, offing: Vec2, lanes: &[V
 #[allow(clippy::too_many_arguments)]
 fn pick_grounds(land: &Landscape, grid: &WaterGrid, offing: Vec2, lanes: &[Vec<Vec2>], docks: &[Vec2], dist: &[f32], parent: &[u32], least: f32) -> Vec<FishingGround> {
     let seed = land.params.seed ^ 0xF15B_0A75;
-    let edge = MAP_EDGE - 120.0;
+    let edge = land.land_half() - 160.0;
     let mut cands: Vec<(f32, usize, f32, f32)> = Vec::new();
     for (k, &d) in dist.iter().enumerate() {
         if !d.is_finite() || !(GROUND_MIN_RUN..=GROUND_MAX_RUN).contains(&d) {

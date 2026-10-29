@@ -20,7 +20,7 @@ use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use nd_procgen::horizon::{self, towns, ways, FarLand, Seam};
 use nd_procgen::{MeshData, Surface};
-use nd_sim::landscape::{LAND_HALF, WAY_REACH};
+use nd_sim::landscape::WAY_REACH;
 use nd_sim::{Vec2 as SVec2, World};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -79,6 +79,8 @@ fn far_key(w: &World, seam: u64) -> u64 {
     format!("{:?}", w.landscape.params).hash(&mut h);
     w.landscape.is_flat().hash(&mut h);
     w.landscape.rivers.len().hash(&mut h);
+    // [r4-tiles] Land bought moves the seam out.
+    w.landscape.land_half().to_bits().hash(&mut h);
     seam.hash(&mut h);
     for (a, b, hw) in far_ways(w) {
         for v in [a.x, a.y, b.x, b.y, hw] {
@@ -95,7 +97,7 @@ fn far_key(w: &World, seam: u64) -> u64 {
         for (_, s) in w.roads.alive_segments() {
             for n in [s.a, s.b] {
                 let p = w.roads.node(n).pos;
-                if p.x.abs().max(p.y.abs()) > LAND_HALF - 300.0 {
+                if p.x.abs().max(p.y.abs()) > w.landscape.land_half() - 300.0 {
                     (w.road_z.get(n.0 as usize).copied().unwrap_or(0.0).round() as i32).hash(&mut h);
                 }
             }
@@ -170,7 +172,7 @@ pub(super) fn sync_far(
             state.key = None;
             return;
         };
-        Seam::from_meshes((0..tiles.len()).map(|t| tiles.mesh(t)), LAND_HALF, 8.0)
+        Seam::from_meshes((0..tiles.len()).map(|t| tiles.mesh(t)), w.landscape.land_half(), 8.0)
     };
     let key = far_key(w, seam_hash(&seam));
     if state.key == Some(key) && !forced {
@@ -296,8 +298,9 @@ fn near_lamps(w: &World, ground: &dyn Fn(SVec2) -> f32) -> MeshData {
             let p = a + dir * t;
             let r = p.x.abs().max(p.y.abs());
             // Past where the fog takes the map's own lamps.
-            if r > LAND_HALF + 1200.0 && r < WAY_REACH {
-                let k = (1.0 - (r - LAND_HALF) / 9000.0).clamp(0.3, 1.0) * 0.6;
+            let edge = w.landscape.land_half();
+            if r > edge + 1200.0 && r < WAY_REACH {
+                let k = (1.0 - (r - edge) / 9000.0).clamp(0.3, 1.0) * 0.6;
                 for q in [p + side, p - side] {
                     let y = ground(q).max(nd_sim::landscape::WATER_LEVEL + 1.0);
                     towns::light_dot(&mut m, Vec3::new(q.x, y + 9.0, q.y), 3.0, [k, 0.5 * k, 0.15 * k]);

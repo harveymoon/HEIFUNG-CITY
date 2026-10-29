@@ -698,10 +698,13 @@ fn control_camera(
         }
         // [sweep-sim] As far as there is land to build on (lots on far
         // islands), not just the configured square.
-        let limit = (sim.world.parcel_half() + 150.0).min(nd_sim::landscape::LAND_HALF);
+        let limit = (sim.world.parcel_half() + 150.0).min(sim.world.landscape.land_half());
         let limit = limit.max(sim.world.config.half_extent + 150.0);
-        walk.pos.x = walk.pos.x.clamp(-limit, limit);
-        walk.pos.z = walk.pos.z.clamp(-limit, limit);
+        // [r4-tiles] Not into land not bought.
+        let b = camera_bounds(&sim.world);
+        let m = BOUND - nd_sim::landscape::LAND_HALF;
+        walk.pos.x = walk.pos.x.clamp((-limit).max(b[0] + m), limit.min(b[1] - m));
+        walk.pos.z = walk.pos.z.clamp((-limit).max(b[2] + m), limit.min(b[3] - m));
         // Eyes above whatever is underfoot: hills, bridge decks.
         walk.pos.y = EYE_HEIGHT + sim.world.surface_height(Vec2::new(walk.pos.x, walk.pos.z));
         let (sp, cp) = walk.pitch.sin_cos();
@@ -881,7 +884,7 @@ fn control_camera(
     // The orbit centre rides on the ground, eased so hills do not jolt it.
     let ground = sim.world.surface_height(Vec2::new(cam.target.x, cam.target.z));
     cam.target.y += (ground - cam.target.y) * (dt * 6.0).min(1.0);
-    place_orbit(&mut cam, &mut tf);
+    place_orbit(&mut cam, &mut tf, camera_bounds(&sim.world));
 }
 
 /// The steepest the orbit looks down.
@@ -907,11 +910,23 @@ pub(crate) fn settle_pitch(pitch: f32, depth: crate::tools::Depth, dt: f32) -> f
     next.min(lo)
 }
 
+/// [r4-tiles] Where the orbit camera may go: over the city's land (the
+/// starting map and the tiles bought) and 200 m past it, as `(x lo, x hi,
+/// z lo, z hi)`.
+pub(crate) fn camera_bounds(w: &nd_sim::World) -> [f32; 4] {
+    if !w.landscape.is_grown() {
+        return [-BOUND, BOUND, -BOUND, BOUND];
+    }
+    let (lo, hi) = w.landscape.owned_bounds();
+    let m = BOUND - nd_sim::landscape::LAND_HALF;
+    [lo.x - m, hi.x + m, lo.y - m, hi.y + m]
+}
+
 /// The camera stays over the map: target and eye within the bound. Then
 /// the eye is set from the orbit's target, angles and distance.
-fn place_orbit(cam: &mut OrbitCamera, tf: &mut Transform) {
-    cam.target.x = cam.target.x.clamp(-BOUND, BOUND);
-    cam.target.z = cam.target.z.clamp(-BOUND, BOUND);
+fn place_orbit(cam: &mut OrbitCamera, tf: &mut Transform, b: [f32; 4]) {
+    cam.target.x = cam.target.x.clamp(b[0], b[1]);
+    cam.target.z = cam.target.z.clamp(b[2], b[3]);
     let (sy, cy) = cam.yaw.sin_cos();
     let (sp, cp) = cam.pitch.sin_cos();
     let offset = Vec3::new(sy * cp, sp, cy * cp) * cam.distance;
@@ -919,7 +934,7 @@ fn place_orbit(cam: &mut OrbitCamera, tf: &mut Transform) {
     // keeping its angle (clamping the eye alone stacked it over the
     // target and the camera looked straight down).
     let eye = cam.target + offset;
-    let over = Vec3::new(eye.x - eye.x.clamp(-BOUND, BOUND), 0.0, eye.z - eye.z.clamp(-BOUND, BOUND));
+    let over = Vec3::new(eye.x - eye.x.clamp(b[0], b[1]), 0.0, eye.z - eye.z.clamp(b[2], b[3]));
     cam.target -= over;
     let eye = cam.target + offset;
     tf.translation = eye;
@@ -982,7 +997,7 @@ fn follow_and_fly(
         cam.target = from.lerp(g, e);
         cam.distance = (from_d.ln() + (to_d.ln() - from_d.ln()) * e).exp() + hop;
         cam.pitch = from_p + (to_p - from_p) * e;
-        place_orbit(&mut cam, &mut tf);
+        place_orbit(&mut cam, &mut tf, camera_bounds(&sim.world));
         if flight.t >= 1.0 {
             fly.flight = None;
         }
@@ -1066,7 +1081,7 @@ fn follow_and_fly(
     }
     follow.chase_on = false;
     cam.target = Vec3::new(pose.pos.x, w.surface_height(pose.pos), pose.pos.y);
-    place_orbit(&mut cam, &mut tf);
+    place_orbit(&mut cam, &mut tf, camera_bounds(&sim.world));
 }
 
 /// [chase-cam] Chasing something into a tunnel or the metro switches the

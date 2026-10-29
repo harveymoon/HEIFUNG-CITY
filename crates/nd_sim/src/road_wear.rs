@@ -169,7 +169,9 @@ impl Default for RoadCondition {
 /// looks after).
 pub fn wears(roads: &RoadNetwork, i: usize) -> bool {
     roads.segments.get(i).is_some_and(|s| {
-        let edge = crate::landscape::MAP_EDGE;
+        // [r4-tiles] Out to the edge of land that can be bought (the
+        // roads in a bought tile are the city's).
+        let edge = crate::landscape::GROWN_HALF - 40.0;
         let inside = |n: crate::roads::NodeId| roads.node(n).pos.abs().max_element() <= edge;
         s.alive && s.is_street() && !s.tunnel && !s.is_highway() && inside(s.a) && inside(s.b)
     })

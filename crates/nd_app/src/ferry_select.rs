@@ -195,7 +195,7 @@ pub fn ship_doing(w: &World, id: ShipId) -> String {
     let Some(s) = w.ports.ships.get(id) else { return String::new() };
     let home = w.buildings.get(s.port).map_or("its terminal".to_string(), |b| b.name.clone());
     let p = s.pose().0;
-    let off_map = p.x.abs().max(p.y.abs()) > nd_sim::landscape::LAND_HALF;
+    let off_map = p.x.abs().max(p.y.abs()) > w.landscape.land_half();
     match s.kind {
         ShipKind::Freighter => {
             if s.docked && s.dwell > 0 {

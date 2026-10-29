@@ -46,15 +46,22 @@ const RIDGE_CELL: f32 = 256.0;
 /// The fine water sheet (`terrain::build_water`) reaches this far.
 pub const FINE_WATER: f32 = LAND_HALF + 400.0;
 
-/// The far water's rings, from the fine sheet's edge.
-pub fn water_rings() -> [Ring; 5] {
-    [
-        Ring { inner: FINE_WATER, outer: 3200.0, cell: 40.0 },
-        Ring { inner: 3200.0, outer: 4800.0, cell: 80.0 },
-        Ring { inner: 4800.0, outer: 8000.0, cell: 160.0 },
-        Ring { inner: 8000.0, outer: 12800.0, cell: 320.0 },
-        Ring { inner: 12800.0, outer: HORIZON, cell: 640.0 },
-    ]
+/// The far water's rings, from the fine sheet's edge (400 m past the
+/// land's, `half`): 40 m cells to the first boundary past it, then each
+/// ring twice as coarse.
+pub fn water_rings(half: f32) -> Vec<Ring> {
+    let steps = [(3200.0, 40.0), (4800.0, 80.0), (8000.0, 160.0), (12800.0, 320.0), (HORIZON, 640.0)];
+    let mut out: Vec<Ring> = Vec::new();
+    let mut at = half + 400.0;
+    for (outer, cell) in steps {
+        if outer <= at {
+            continue;
+        }
+        let cell = if out.is_empty() { 40.0 } else { cell };
+        out.push(Ring { inner: at, outer, cell });
+        at = outer;
+    }
+    out
 }
 
 /// The playable ground's outermost vertices (on the square of half side
@@ -227,7 +234,7 @@ pub fn far_water(far: &FarLand, palette: &Palette) -> [MeshData; 4] {
         let k = cell * 0.5;
         [Vec2::ZERO, Vec2::new(-k, -k), Vec2::new(k, -k), Vec2::new(-k, k), Vec2::new(k, k)].iter().any(|o| far.water_distance(c + *o) < k)
     };
-    rings::build(&water_rings(), &sample, &keep)
+    rings::build(&water_rings(land.land_half()), &sample, &keep)
 }
 
 #[cfg(test)]

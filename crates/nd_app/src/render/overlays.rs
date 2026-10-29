@@ -63,11 +63,14 @@ pub struct Overlays {
     /// connected network of the walk graph it is on, over a dimmed city,
     /// buildings off the main network outlined (`sync_walk_networks`).
     pub walk_networks: bool,
+    /// [r4-tiles] Land for sale: the tiles round the city outlined, the
+    /// ones that can be bought with their price (`land_tiles`, `ui::land`).
+    pub land_tiles: bool,
 }
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: false, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false, parking: false, trails: false, density: false, park_access: false, construction: false, walk_networks: false }
+        Self { land_value: false, paths: false, zoning: false, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false, parking: false, trails: false, density: false, park_access: false, construction: false, walk_networks: false, land_tiles: false }
     }
 }
 

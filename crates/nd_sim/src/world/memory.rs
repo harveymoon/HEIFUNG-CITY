@@ -26,7 +26,7 @@ impl World {
             lots buildings citizens households traffic walk weather transit rail facilities economy
             services land_value land_value_work events next_seed road_component drive_component connectivity walk_networks deferred_intents stations
             yards halts seller_index seller_index_hour available groceries_for_sale meals_for_sale
-            landscape ports fishing road_z road_inner relief ground bridge_metres bots driving journeys
+            landscape land_tile_grounds ports fishing road_z road_inner relief ground bridge_metres bots driving journeys
             peds waiting_cache crowds_cache seats society vehicles enforcement air contamination cleanups
             industry_bias commercial_bias places concerns districts tourism subway tolls taxis cargo_hubs rides streets
             pillars pillar_gaps crosswalks estate skyline pressure scene identity street_events road_wear

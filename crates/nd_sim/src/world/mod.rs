@@ -76,6 +76,9 @@ mod districts_tests;
 mod driving;
 mod industry;
 mod kinds;
+pub mod land_tiles;
+#[cfg(test)]
+mod land_tiles_tests;
 mod ledger;
 mod save;
 /// [saves] Compressed saves: reading either form.
@@ -696,6 +699,9 @@ pub struct World {
     /// spreads and fades daily. Old saves load clean.
     #[serde(default)]
     pub contamination: crate::ground::Contamination,
+    /// [r4-tiles] The ground of the tiles round the map, surveyed once.
+    #[serde(skip)]
+    land_tile_grounds: std::sync::OnceLock<Vec<land_tiles::TileGround>>,
     /// [dirty-industry] Clean-up crews digging out poisoned ground, paid
     /// for up front (`world/dirt.rs`, `World::start_cleanup`).
     #[serde(default)]
@@ -946,6 +952,7 @@ impl World {
             enforcement: Default::default(),
             air: Default::default(),
             contamination: crate::ground::Contamination::new(half + 200.0, crate::ground::CONTAMINATION_CELL),
+            land_tile_grounds: Default::default(),
             cleanups: Vec::new(),
             industry_bias: Vec::new(),
             commercial_bias: Vec::new(),

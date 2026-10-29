@@ -36,7 +36,7 @@ impl World {
             // along, so the next town is hours away, not half a day.
             let off_map = ship.remote.is_some() && {
                 let p = ship.pose().0;
-                p.x.abs().max(p.y.abs()) > crate::landscape::MAP_EDGE + 400.0
+                self.landscape.beyond_map_edge(p, 400.0)
             };
             ship.s += ship.speed * if off_map { ports::OFF_MAP_SPEEDUP } else { 1.0 };
             if ship.remote.is_some() && ship.docked && ship.s >= total {
