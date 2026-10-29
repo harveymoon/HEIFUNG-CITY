@@ -233,7 +233,7 @@ impl Traffic {
     /// `SIREN_WARNING` metres (one already over the crossing does not count).
     pub fn siren_near(&self, lane: LaneId, s: f32) -> bool {
         let Some(l) = self.net.lanes.get(lane as usize) else { return false };
-        if l.cars.iter().any(|&c| self.cars[c].siren && self.cars[c].s <= s + HOLD_DEPTH_MAX && s - self.cars[c].s < SIREN_WARNING) {
+        if l.cars.iter().filter_map(|&c| self.cars.get(c)).any(|c| c.siren && c.s <= s + HOLD_DEPTH_MAX && s - c.s < SIREN_WARNING) {
             return true;
         }
         let mut frontier: Vec<(LaneId, f32)> = l.prev.iter().map(|&p| (p, s)).collect();
@@ -241,7 +241,7 @@ impl Traffic {
             let mut next = Vec::new();
             for (p, ahead) in frontier {
                 let pl = &self.net.lanes[p as usize];
-                if pl.cars.iter().any(|&c| self.cars[c].siren && pl.length - self.cars[c].s + ahead < SIREN_WARNING) {
+                if pl.cars.iter().filter_map(|&c| self.cars.get(c)).any(|c| c.siren && pl.length - c.s + ahead < SIREN_WARNING) {
                     return true;
                 }
                 if pl.length + ahead < SIREN_WARNING {

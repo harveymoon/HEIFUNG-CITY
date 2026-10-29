@@ -283,21 +283,21 @@ pub(super) fn connector_curve(p_in: Vec2, d_in: Vec2, p_out: Vec2, d_out: Vec2, 
 }
 
 /// [r4-hillside] Climbs gentler than this are driven at the limit by a car
-/// (a bus or a lorry: `CLIMB_EASY_HEAVY`): a town street's ordinary 5-7%
-/// is driven as the flat.
-pub const CLIMB_EASY: f32 = 0.08;
+/// (a bus or a lorry: `CLIMB_EASY_HEAVY`): a car takes an ordinary hill
+/// street (to 12%) as the flat.
+pub const CLIMB_EASY: f32 = 0.12;
 /// [r4-hillside] The same for a bus or a lorry.
-pub const CLIMB_EASY_HEAVY: f32 = 0.06;
+pub const CLIMB_EASY_HEAVY: f32 = 0.08;
 /// [r4-hillside] Descents gentler than this are driven at the limit.
-pub const DESCENT_EASY: f32 = 0.10;
+pub const DESCENT_EASY: f32 = 0.12;
 
 /// [r4-hillside] The share of the speed limit driven on a lane climbing
 /// `climb` (rise over run, negative downhill): a car slows on a climb past
-/// 8% (to about 60% of the limit up a 25% street), a bus or a lorry past
-/// 6% and more (about 45%), and everyone brakes down a descent steeper
-/// than 10%.
+/// 12% (to about 60% of the limit up a 25% street), a bus or a lorry past
+/// 8% and more (about 50%), and everyone brakes down a descent steeper
+/// than 12%.
 pub fn climb_factor(climb: f32, heavy: bool) -> f32 {
-    let (easy, k, least) = if heavy { (CLIMB_EASY_HEAVY, 2.9, 0.35) } else { (CLIMB_EASY, 2.3, 0.5) };
+    let (easy, k, least) = if heavy { (CLIMB_EASY_HEAVY, 2.9, 0.35) } else { (CLIMB_EASY, 3.0, 0.5) };
     if climb > easy {
         (1.0 - (climb - easy) * k).max(least)
     } else if climb < -DESCENT_EASY {

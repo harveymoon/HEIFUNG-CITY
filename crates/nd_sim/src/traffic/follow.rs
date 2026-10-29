@@ -52,8 +52,10 @@ impl Traffic {
     /// now to meet it at `ANTICIPATE_BRAKE` (a ramp easing down, a turn).
     pub(super) fn limit_ahead(&self, car: &Car, lane: &Lane) -> f32 {
         // [r4-hillside] Slower up (and down) a steep street; a bus or a
-        // lorry slower still.
-        let mut limit = lane.limit_at(car.s) * lane.climb_share(car.bus.is_some() || car.cargo.is_some());
+        // lorry slower still. A unit on a call under its siren keeps its
+        // foot down: everyone else gives way to it on the hill.
+        let share = if car.siren { 1.0 } else { lane.climb_share(car.bus.is_some() || car.cargo.is_some()) };
+        let mut limit = lane.limit_at(car.s) * share;
         // The end of this lane (a ramp lane easing down).
         let to_end = (lane.length - car.s).max(0.0);
         limit = limit.min((lane.limit_end * lane.limit_end + 2.0 * ANTICIPATE_BRAKE * to_end).sqrt());

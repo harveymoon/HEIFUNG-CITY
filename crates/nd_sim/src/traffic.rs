@@ -389,8 +389,15 @@ impl Traffic {
 
     pub fn remove_car(&mut self, id: CarId) -> Option<Car> {
         let car = self.cars.remove(id)?;
-        if let Some(&lane) = car.route.get(car.idx) {
-            if let Some(l) = self.net.lanes.get_mut(lane as usize) {
+        // [r4-hillside] Off every lane listing it: usually only the one it
+        // is on, but a car part way through a lane change or just over a
+        // lane's end can be listed on another too, and an id left behind
+        // there pointed at nothing (a crossing's look-up panicked on it).
+        if let Some(l) = car.route.get(car.idx).and_then(|&lane| self.net.lanes.get_mut(lane as usize)) {
+            l.cars.retain(|&c| c != id);
+        }
+        for l in self.net.lanes.iter_mut() {
+            if l.cars.contains(&id) {
                 l.cars.retain(|&c| c != id);
             }
         }
@@ -438,6 +445,16 @@ impl Traffic {
     /// reached their destination (they stay in `cars` until removed).
     pub fn step(&mut self, seconds: f32, substeps: usize) -> Vec<CarId> {
         let dt = seconds / substeps.max(1) as f32;
+        // [r4-hillside] No lane lists a car that is gone: one left behind
+        // (by a removal that missed the lane it was listed on) made the
+        // crossings' look-ups panic on a citygen town once climbs changed
+        // the traffic's timing.
+        let cars = &self.cars;
+        for l in self.net.lanes.iter_mut() {
+            if l.cars.iter().any(|&c| !cars.contains_key(c)) {
+                l.cars.retain(|&c| cars.contains_key(c));
+            }
+        }
         self.drop_dead_end_changes();
         for car in self.cars.values_mut() {
             car.prev_pos = car.pos;
