@@ -3953,6 +3953,7 @@ dependencies = [
  "glam",
  "image",
  "naga",
+ "nd_audio",
  "nd_minds",
  "nd_procgen",
  "nd_sim",
@@ -3964,6 +3965,13 @@ dependencies = [
  "tiny_http",
  "ttf-parser",
  "winit",
+]
+
+[[package]]
+name = "nd_audio"
+version = "0.1.0"
+dependencies = [
+ "cpal",
 ]
 
 [[package]]

@@ -56,4 +56,6 @@ pub(super) struct Ctx<'w, 's> {
     pub(super) viewer: ResMut<'w, crate::viewer::Viewer>,
     pub(super) turntable: ResMut<'w, crate::render::Turntable>,
     pub(super) notes: ResMut<'w, crate::viewer::notes::BuildingNotes>,
+    /// [sound] The sound engine's handle and what it last heard.
+    pub(super) sound: Res<'w, crate::audio::Sound>,
 }

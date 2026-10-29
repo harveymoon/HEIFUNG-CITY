@@ -1455,6 +1455,29 @@ when the GPU copy lands: poll for it (the MCP tool waits up to 5 s). It captures
 UI panel included, at the window's size (a full-HD window makes a 2–5 MB PNG). PNG only. A
 minimised window renders nothing and produces no file.
 
+### Sound [sound]
+
+The game's sound is synthesised in code (`crates/nd_audio`: no samples) and never touches the sim:
+three ambience beds crossfaded by camera height (high: the distant city's wash and wind; mid: the
+traffic roar; street: tyres and pass-bys, the crowd's murmur and footsteps, air-conditioning hum,
+neon buzz), with rain, birds by day or crickets at night over green, water lapping, all muffled by
+snow or the Underground view; and short UI cues. `ND_AUDIO=0` runs without opening the sound card
+(agents' test instances: please set it).
+
+| Command | Fields | Reply |
+|---|---|---|
+| `audio` (`sound`) | none or `get` | `settings` {master, ambience, effects, ui, music (0..1 slider positions; gain is the square), muted, unfocused: mute\|duck\|keep}, `status` {playing, device, sample_rate, channels} or {playing: false, why}, `focused`, `bus_gains` (after master, mute and focus), `beds` {weights {high, mid, street} (equal power), level_db per group {high, mid, street, weather_nature} (RMS before the bus), target (the bed parameters the camera's surroundings call for)}, `heard` (what was sampled: height_m, radius_m, cars_close/near, car_speed_ms, walkers_close/near, density, neon, green, industry, water, daylight, rain, snow, wind, underground), `voices` {ui, spot, ui_cap, spot_cap}, `cues_played`, `output_peak_db`, `limiter_gain`, `audio_thread_cpu_pct` (callback time over buffer time), `frames_rendered` |
+| `audio` | `set` {master?, ambience?, effects?, ui?, music?, muted?, unfocused?} | changes them (saved in `settings.ron` a second later, like the Settings window's sliders); replies as `get` |
+| `audio` | `play: "<cue>"` | plays a UI cue through the rate limiter: click, tool_change, road_point, road_done, implement, building_placed, bulldoze, zone_paint, window_open, window_close, error, alert, speed_up, speed_down, pause, resume |
+| `audio_capture` | `path?` (.wav, default `exports/wav/capture-<unix ms>.wav`), `seconds?` (0.5..60, default 6), `as_set?` | renders what the camera hears now (the beds as last sampled; at the default sliders, or with `as_set: true` the player's; no focus ducking) offline with the same engine: path, peak_db, rms_db, dc, clipped, correlation, bands_db (octave bands 63 Hz..16 kHz) |
+
+The beds are sampled four times a second around the spot under the camera; the engine eases every
+change over a second or so. The UI cues come from watching what changed (tool, road points, project
+steps, implement, buildings, refusals, speed and pause, windows, City Data, the selection, toasts,
+and egui's button clicks); each has a shortest gap, repeats play softer, at most 10 a second, and a
+click gives way to the cue it caused. Offline renders of every cue and bed state:
+`cargo run -p nd_audio --example render_wavs -- <out dir>`.
+
 ### Events
 
 `events {since?, limit?}`: a ring buffer of the last 2000 events, each with a running `seq` and the
