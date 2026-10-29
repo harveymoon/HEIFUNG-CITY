@@ -19,12 +19,19 @@ pub fn build_water(world: &World, palette: &Palette) -> MeshData {
     // [climate] Still water frozen over: lakes, and the sea out to
     // `sea_ice` from the shore. Rivers and streams keep running.
     let crack = Fbm::<Perlin>::new(land.params.seed as u32 ^ 0x1CE).set_octaves(3);
+    // [horizon] Past the map the far land says where the water is (the sea
+    // running on past where the map's sea polygon ended), so the sheet
+    // meets the far water's rings with no gap and no straight edge.
+    let far = crate::horizon::FarLand::new(land);
+    let inside = |p: Vec2| p.x.abs() <= LAND_HALF && p.y.abs() <= LAND_HALF;
     let frozen = |p: Vec2, d: f32| -> bool {
-        look.ice.is_some() && (land.lakes.iter().any(|l| l.center.distance(p) < 400.0 && nd_sim::geom::point_in_polygon(p, &l.outline)) || (d > -look.sea_ice * (0.5 + 0.9 * (crack.get([p.x as f64 * 0.004, p.y as f64 * 0.004]) as f32 * 0.5 + 0.5)) && p.x.abs() < LAND_HALF && p.y.abs() < LAND_HALF && land.sea.as_ref().is_some_and(|s| s.contains(p))))
+        let sea = if inside(p) { land.sea.as_ref().is_some_and(|s| s.contains(p)) } else { land.sea.is_some() };
+        look.ice.is_some() && (land.lakes.iter().any(|l| l.center.distance(p) < 400.0 && nd_sim::geom::point_in_polygon(p, &l.outline)) || (d > -look.sea_ice * (0.5 + 0.9 * (crack.get([p.x as f64 * 0.004, p.y as f64 * 0.004]) as f32 * 0.5 + 0.5)) && sea))
     };
     let wet = |p: Vec2| -> Option<f32> {
-        if p.x.abs() > LAND_HALF || p.y.abs() > LAND_HALF {
-            return if land.is_water(p) { Some(-60.0) } else { None };
+        if !inside(p) {
+            let d = far.water_distance(p);
+            return (d < 12.0).then_some(d);
         }
         let d = land.water_distance(p);
         (d < 12.0).then_some(d)

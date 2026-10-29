@@ -153,10 +153,10 @@ fn grid_xz(cell: f32, i: usize, j: usize) -> (f32, f32) {
 /// What a vertex's colour takes from the map alone (fixed for a landscape):
 /// the detail noise, the distance to water and how far into a hot spot.
 #[derive(Clone, Copy)]
-struct GroundSpot {
-    v: f32,
-    d: f32,
-    hot: Option<f32>,
+pub(crate) struct GroundSpot {
+    pub(crate) v: f32,
+    pub(crate) d: f32,
+    pub(crate) hot: Option<f32>,
 }
 
 fn ground_spots(world: &World, cell: f32, n: usize) -> Vec<GroundSpot> {
@@ -202,7 +202,7 @@ fn by_rows<T: Send + Clone>(n: usize, f: impl Fn(usize, usize) -> T + Sync) -> V
 
 /// The landscape's colours: ground and hills from the palette, the shore
 /// and the hot ground from the climate's row.
-struct LandColours {
+pub(crate) struct LandColours {
     ground: [f32; 3],
     variation: [f32; 3],
     hills: [f32; 3],
@@ -213,7 +213,12 @@ struct LandColours {
 
 impl LandColours {
     fn new(world: &World, palette: &Palette) -> Self {
-        let look = climate::look(world.landscape.params.climate);
+        Self::for_climate(world.landscape.params.climate, palette)
+    }
+
+    /// [horizon] The same colours for a climate (the far ground's).
+    pub(crate) fn for_climate(climate: nd_sim::Climate, palette: &Palette) -> Self {
+        let look = climate::look(climate);
         Self {
             ground: palette.ground,
             variation: palette.ground_variation,
@@ -227,7 +232,7 @@ impl LandColours {
     /// A vertex's colour at height `h` (the graded ground's, before it is
     /// held under the streets): hills up high, sand along the water, mud
     /// under it, sulphur at the hot spots.
-    fn rgb(&self, s: GroundSpot, h: f32) -> [f32; 3] {
+    pub(crate) fn rgb(&self, s: GroundSpot, h: f32) -> [f32; 3] {
         let hill_t = ((h - 12.0) / 120.0).clamp(0.0, 1.0);
         let mut flat = [0.0f32; 3];
         for k in 0..3 {

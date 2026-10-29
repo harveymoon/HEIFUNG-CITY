@@ -215,7 +215,9 @@ impl Landscape {
     }
 
     /// Land height given the base height and the signed distance to water.
-    pub(super) fn carve(&self, base: f32, d: f32) -> f32 {
+    /// [horizon] Public so the far landscape past the map (`nd_procgen::horizon`)
+    /// carves its banks exactly as the map's own are.
+    pub fn carve(&self, base: f32, d: f32) -> f32 {
         if d >= FAR {
             return base;
         }
