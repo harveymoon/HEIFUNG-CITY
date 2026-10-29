@@ -96,6 +96,7 @@ impl World {
             leisure_demand: self.economy.demand_for(LandUse::Entertainment),
             nightlife,
             population: self.citizens.len() as u32,
+            unemployment: self.economy.unemployment_share(),
             seed: crate::hash::mix(self.config.seed, (l.center.x.to_bits() as u64) << 32 | l.center.y.to_bits() as u64),
         })
     }

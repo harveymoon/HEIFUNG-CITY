@@ -157,6 +157,9 @@ pub struct AutoSite {
     /// People in town: a night out on demand alone waits for a town big
     /// enough to fill one (`LEISURE_ON_DEMAND_POP`).
     pub population: u32,
+    /// Share of working-age people out of work: offices take on the
+    /// jobless, so a town short of work leans to them.
+    pub unemployment: f32,
     /// A hash of the lot, to settle near ties without a random draw.
     pub seed: u64,
 }
@@ -184,7 +187,8 @@ impl AutoSite {
         let jitter = |i: u64| crate::hash::unit(crate::hash::mix(self.seed, 0xC0_5B + i)) * 0.06;
         let neighbourhood = 0.35 + 0.55 * homes - 0.45 * busy - 0.3 * dear;
         let retail = 0.15 + 0.7 * busy + 0.1 * (1.0 - homes);
-        let offices = 0.05 + 0.95 * dear + 0.15 * busy * dear;
+        let jobless = ((self.unemployment - 0.04) * 5.0).clamp(0.0, 1.0);
+        let offices = 0.05 + 0.95 * dear + 0.15 * busy * dear + 0.9 * jobless;
         let hungry = if self.population >= LEISURE_ON_DEMAND_POP { (self.leisure_demand - self.shop_demand - 0.3).max(0.0) } else { 0.0 };
         let leisure = if self.nightlife { 0.75 } else { 0.0 } + 1.2 * hungry + 0.1 * busy;
         [neighbourhood + jitter(0), retail + jitter(1), offices + jitter(2), leisure + jitter(3)]
@@ -203,7 +207,7 @@ mod tests {
     use super::*;
 
     fn site() -> AutoSite {
-        AutoSite { lanes: 2, homes_near: 0.0, land_value: 0.4, shop_demand: 0.5, leisure_demand: 0.5, nightlife: false, population: 5000, seed: 7 }
+        AutoSite { lanes: 2, homes_near: 0.0, land_value: 0.4, shop_demand: 0.5, leisure_demand: 0.5, nightlife: false, population: 5000, unemployment: 0.03, seed: 7 }
     }
 
     const ALL: [bool; 4] = [true; 4];
@@ -219,6 +223,9 @@ mod tests {
         // Dear downtown land: offices.
         let downtown = AutoSite { lanes: 4, land_value: 0.95, ..site() };
         assert_eq!(downtown.pick(ALL), Some(CommercialSub::Offices));
+        // A town short of work: offices, which take on the jobless.
+        let jobless = AutoSite { homes_near: 150.0, unemployment: 0.25, ..site() };
+        assert_eq!(jobless.pick(ALL), Some(CommercialSub::Offices));
         // A nightlife story leans leisure on an ordinary street.
         let strip = AutoSite { nightlife: true, ..site() };
         assert_eq!(strip.pick(ALL), Some(CommercialSub::Leisure));
