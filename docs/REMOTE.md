@@ -2365,3 +2365,24 @@ curl -d '{"cmd":"committee","action":"implement","project":21}' http://127.0.0.1
 curl -d '{"cmd":"committee","action":"ask","text":"Why are rents so high?"}' http://127.0.0.1:4817/cmd
 curl -d '{"cmd":"committee","action":"questions","limit":5}' http://127.0.0.1:4817/cmd
 ```
+
+## Shipping containers [K34]
+
+Every shipping container in town is a record (`nd_sim::containers`): its number (owner code of its
+fictional line + `U` + six-digit serial + ISO 6346 check digit, e.g. `KOLU 482913 7`), line, size and
+build, origin port, age, wear and marks, owner and where it is, and a short history.
+
+- `containers` (alias `boxes`), no fields: `boxes` {total, on_trains, on_lorries, stored, stored_full,
+  on_home_sites, in_homes, at_scrap_yards}, `since_records_began` {arrived_by_rail/sea/road, delivered,
+  sold_to_stack_developers, bought_off_the_lorry, bought_out_of_town_for_homes, stacks_homes_built,
+  bought_by_yards, sent_back_out, sold_out_of_town, scrapped, steel_made}, `today`, `awaiting_scrap`,
+  `depots` [{building, name, kind, stored, capacity}], `homes` [{building, name, boxes, wants, finished}].
+- `containers {box}`: one box's life story (as `inspect {box}`); `box` is an `"idx:version"` id or a
+  number (spaces optional). `containers {building}`: the boxes a building holds.
+- `inspect {box}` and `select {box}`: the box (also picked with a click on a box in a depot's stacks or
+  on a train); the reply has number, line, size, kind, origin, age_years, condition, wear, marks, owner,
+  owner_building, now, where {kind: train/lorry/stored/home_site/home/scrap, ...}, goods, visits,
+  history [{time, what, where, building}].
+- A building's `inspect` carries `containers`: a depot's {kind, stored, capacity, full, boxes} or a
+  Stacks home's {built_of, wants, finished, boxes}; a car's `inspect` carries the boxes on its trailer.
+- `pressure` has `scrap_yard`: old boxes a day with no scrap yard to cut them up.

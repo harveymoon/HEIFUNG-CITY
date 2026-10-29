@@ -229,6 +229,13 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         if !poly_inside(c, &rect_yaw(lp.x, lp.y, 3.1, 1.3, along.y.atan2(along.x) - f.yaw())) {
             continue;
         }
+        if c.real_boxes {
+            // [K34] The yard's real boxes stand here.
+            for level in 0..3 {
+                box_slot(g, c, lp.x, lp.y, along.y.atan2(along.x) - f.yaw(), 0.0, level, false);
+            }
+            continue;
+        }
         let stack = rng.random_range(1..=3);
         for level in 0..stack {
             // [r4] (K33) The standard box, in a line's colours.
@@ -297,6 +304,8 @@ fn draw_free(seed: u64, wear: f32, pal: &Palette, draw: impl FnOnce(&mut Geometr
         shore: None,
         pier: None,
         park_look: None,
+        boxes: Vec::new(),
+        real_boxes: false,
     };
     let mut g = Geometry::default();
     draw(&mut g, &c);
@@ -313,6 +322,24 @@ pub fn container_geometry(forty: bool, look: BoxLook, seed: u64, wear: f32, pal:
         let mut rng = rng_for(seed, 0xC0E7);
         iso_container(g, c, &mut rng, 0.0, 0.0, 0.0, forty, 0.0, shipping_line(seed), look);
     })
+}
+
+/// [K34] One real box on its own, as its record says (line, build, wear,
+/// marks; its number on when `numbered`), placed like
+/// [`container_geometry`]'s.
+pub fn real_box_geometry(face: &nd_sim::containers::BoxFace, numbered: bool, pal: &Palette) -> Geometry {
+    draw_free(face.seed, face.wear, pal, |g, c| real_box(g, c, 0.0, 0.0, 0.0, 0.0, face, numbered))
+}
+
+/// [K34] A box's number alone (both sides and the door), in the same
+/// place: the renderer lays it over the shared box mesh close up.
+pub fn box_number_mesh(face: &nd_sim::containers::BoxFace) -> crate::mesh::MeshData {
+    let f = Frame { center: Vec2::ZERO, along: Vec2::X, inward: Vec2::Y, width: 80.0, depth: 80.0 };
+    let mut m = crate::mesh::MeshData::default();
+    if face.kind != nd_sim::rail::BoxKind::Tank {
+        box_number(&mut m, &f, 0.0, 0.0, 0.0, 0.0, face, box_life(face).door);
+    }
+    m
 }
 
 /// [r4] (K33) A container ship's deck cargo: bays of forty-foot boxes across

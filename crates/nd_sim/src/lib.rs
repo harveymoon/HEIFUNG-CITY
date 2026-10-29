@@ -31,6 +31,8 @@ pub mod stories;
 pub mod dams;
 /// [r4-leisure] Commercial sub-zones: neighbourhood, retail, offices, leisure.
 pub mod commercial;
+/// [K34] Shipping containers, box by box: numbers, wear, owners and lives.
+pub mod containers;
 pub mod economy;
 pub mod enforcement;
 /// [land] The land market: pressure, prices, owners, merged plots, the super-elite.

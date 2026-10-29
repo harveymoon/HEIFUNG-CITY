@@ -38,6 +38,9 @@ pub(super) struct VehicleRender {
     pub(super) bots: HashMap<nd_sim::BotId, Vec<Entity>>,
     /// [camera] Each shop's robot fleet in its own paint (`bots::fleet_colour`).
     pub(super) fleet_paint: HashMap<nd_sim::BuildingId, Handle<StandardMaterial>>,
+    /// [K34] The look each car was drawn with: a lorry whose trailer box
+    /// comes or goes is drawn again.
+    pub(super) models: HashMap<CarId, nd_sim::VehicleModel>,
 }
 
 impl VehicleRender {
@@ -174,6 +177,14 @@ pub(super) fn sync_cars(
     let traffic = &sim.world.traffic;
     let f = sim.frac();
     for (id, car) in traffic.cars.iter() {
+        // [K34] A trailer's box changed: drawn again.
+        if vr.models.get(&id).is_some_and(|m| m.boxed != car_model(car).boxed) {
+            if let Some(ents) = state.cars.remove(&id) {
+                for e in ents {
+                    commands.entity(e).despawn();
+                }
+            }
+        }
         if !state.cars.contains_key(&id) {
             // Left over from entities a full rebuild drained.
             if let Some(e) = vr.car_fx.remove(&id) {
@@ -196,6 +207,16 @@ pub(super) fn sync_cars(
             let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, CarTag, SelfLifted, InTunnel(tunnel))).id();
             let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), pose, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted, InTunnel(tunnel))).id();
             state.cars.insert(id, [body, lights]);
+            vr.models.insert(id, model);
+            // [K34] The real box on a semi's trailer: its number close up.
+            if model.body == nd_sim::BodyType::Semi {
+                let day = sim.world.clock.day() as i64;
+                if let Some(face) = sim.world.boxes_on_truck(id).first().and_then(|b| sim.world.containers.boxes.get(*b).map(|r| r.face(*b, day))) {
+                    // A twenty-footer as the trailer draws it, its doors at the back.
+                    let face = nd_sim::containers::BoxFace { forty: false, seed: face.seed | 1, ..face };
+                    commands.entity(body).insert(super::boxes::BoxTag { id: face.id, face, offset: Vec3::new(-1.77, 1.15, 0.0) });
+                }
+            }
             if let Some(fx) = v.fx {
                 let e = commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), pose, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted, InTunnel(tunnel))).id();
                 vr.car_fx.insert(id, e);
@@ -219,6 +240,7 @@ pub(super) fn sync_cars(
             }
         }
     }
+    vr.models.retain(|id, _| traffic.cars.contains_key(*id));
     let gone: Vec<CarId> = state.cars.keys().copied().filter(|id| !traffic.cars.contains_key(*id)).collect();
     for id in gone {
         if let Some(ents) = state.cars.remove(&id) {

@@ -227,6 +227,15 @@ pub struct VehicleModel {
     /// Paint index into the vehicle palette (`0..PAINTS`).
     #[serde(default)]
     pub paint: u8,
+    /// [K34] The shipping container on a semi's trailer, as `1 + line +
+    /// 10 * wear step` (`containers::truck_look`); 0: the trailer's own
+    /// box as before (a line picked by the variant).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub boxed: u8,
+}
+
+fn is_zero(x: &u8) -> bool {
+    *x == 0
 }
 
 /// Daily income from which `Tier::for_income` counts someone rich.
@@ -249,7 +258,7 @@ pub fn hedonism_of(seed: u64) -> f32 {
 
 impl VehicleModel {
     pub fn new(class: VehicleClass, body: BodyType) -> Self {
-        Self { class, body, wear: 0, tuned: false, livery: Livery::None, paint: 0 }
+        Self { class, body, wear: 0, tuned: false, livery: Livery::None, paint: 0, boxed: 0 }
     }
 
     /// What it costs to buy (and roughly a half back when sold).
@@ -381,13 +390,13 @@ impl VehicleModel {
             }
             _ => BodyType::DeliveryVan,
         };
-        Self { class: VehicleClass::Mid, body, wear: 0, tuned: false, livery, paint: rng.random_range(0..PAINTS) }
+        Self { class: VehicleClass::Mid, body, wear: 0, tuned: false, livery, paint: rng.random_range(0..PAINTS), boxed: 0 }
     }
 
     /// A bus for a line drawn in route colour `paint`.
     pub fn bus(paint: u8, rng: &mut impl Rng) -> Self {
         let body = if rng.random_bool(0.25) { BodyType::ArticulatedBus } else { BodyType::BubbleBus };
-        Self { class: VehicleClass::Expensive, body, wear: 0, tuned: false, livery: Livery::Transit, paint: paint % PAINTS }
+        Self { class: VehicleClass::Expensive, body, wear: 0, tuned: false, livery: Livery::Transit, paint: paint % PAINTS, boxed: 0 }
     }
 
     /// Through traffic crossing the map: anybody's car, a few lorries, the

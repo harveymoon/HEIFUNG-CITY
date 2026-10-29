@@ -197,7 +197,7 @@ impl Specialty {
             K::Grocery | K::Bakery | K::Cafe | K::VertFarm | K::GrainFarm | K::Dairy | K::ProteinVat | K::Mill | K::CowFarm | K::ChickenFarm | K::Slaughterhouse | K::Feedlot | K::Fishery | K::FishPlant | K::FishMarket | K::FishingPort | K::FishGutting | K::FishStickFactory => Specialty::Food,
             K::Hotel | K::Venue | K::GolfRange | K::BeachResort | K::PierRestaurant | K::BeachBar | K::BoatRental | K::SeafoodRestaurant | K::Marina | K::Gallery | K::ArtStudio => Specialty::Leisure,
             K::OilWell | K::Refinery | K::ChemicalWorks => Specialty::Energy,
-            K::Fab | K::Smelter | K::StripMine | K::TrashCompany => Specialty::Industry,
+            K::Fab | K::Smelter | K::StripMine | K::TrashCompany | K::ScrapYard => Specialty::Industry,
             K::Office => Specialty::Property,
         }
     }

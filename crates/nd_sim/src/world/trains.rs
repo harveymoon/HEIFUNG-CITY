@@ -508,7 +508,9 @@ impl World {
             prev_acc = acc;
         }
         // [r4] (K33) Imports in their containers, wagon by wagon.
-        let boxes = if kind == TrainKind::Freight { rail::box_cargo(&cargo, cars, crate::hash::mix(self.clock.tick, self.rail.stats.freight_trains_today as u64) as u32) } else { Vec::new() };
+        let mut boxes = if kind == TrainKind::Freight { rail::box_cargo(&cargo, cars, crate::hash::mix(self.clock.tick, self.rail.stats.freight_trains_today as u64) as u32) } else { Vec::new() };
+        // [K34] Each box its own record.
+        self.boxes_board_train(&mut boxes);
         let mut t = Train { kind, cars, nodes, poly, s: 0.0, prev_s: 0.0, speed, stops, next_stop: 0, dwell: 0.0, passengers: Vec::new(), cargo, color, held: false, branch, exports: 0.0, unloaded: 0.0, v: speed, dwell_total: 0.0, boxes };
         self.pull_into_calls(&mut t);
         self.rail.trains.insert(t);
@@ -818,12 +820,14 @@ impl World {
                 // [r4] (K33) The yard crane's work, box by box: this yard's
                 // imports off, then the exports on into the slots left, and
                 // the train stands as long as that takes.
-                {
+                let off_ids: Vec<crate::containers::BoxId> = {
                     let t = &mut self.rail.trains[id];
                     let mut moves = 0u8;
+                    let mut off = Vec::new();
                     for b in t.boxes.iter_mut().filter(|b| b.yard == Some(at) && b.lift == rail::Lift::Aboard) {
                         b.lift = rail::Lift::Off(moves);
                         moves = moves.saturating_add(1);
+                        off.extend(b.id);
                     }
                     let mut teu = ((exports / rail::TEU_UNITS).ceil() as usize).min(64);
                     let free = rail::free_slots(&t.boxes.iter().filter(|b| !matches!(b.lift, rail::Lift::Off(_))).copied().collect::<Vec<_>>(), t.cars);
@@ -835,12 +839,22 @@ impl World {
                             slots.next();
                         }
                         let seed = crate::hash::mix(slotmap::Key::data(&at).as_ffi(), ((t.boxes.len() as u64) << 8) ^ moves as u64 ^ self.clock.tick) as u32;
-                        t.boxes.push(rail::BoxLoad { wagon, slot, forty, kind: rail::BoxKind::Dry, resource: None, yard: None, seed, lift: rail::Lift::On(moves) });
+                        t.boxes.push(rail::BoxLoad { wagon, slot, forty, kind: rail::BoxKind::Dry, resource: None, yard: None, seed, lift: rail::Lift::On(moves), id: None });
                         moves = moves.saturating_add(1);
                         teu -= if forty { 2 } else { 1 };
                     }
                     t.dwell = rail::freight_dwell(moves as usize);
                     t.dwell_total = t.dwell;
+                    off
+                };
+                // [K34] The boxes set down here are in the yard now, and
+                // empties stored here are what the exports go out in.
+                {
+                    let on = self.rail.trains[id].boxes.iter().filter(|b| matches!(b.lift, rail::Lift::On(_)) && b.id.is_none()).count();
+                    let mut ids = self.boxes_train_call(at, &off_ids, on).into_iter();
+                    for b in self.rail.trains[id].boxes.iter_mut().filter(|b| matches!(b.lift, rail::Lift::On(_)) && b.id.is_none()) {
+                        b.id = ids.next().flatten();
+                    }
                 }
                 for cargo in queued {
                     self.rail.stats.freight_in_today += cargo.amount;

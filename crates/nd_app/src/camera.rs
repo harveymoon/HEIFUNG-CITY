@@ -290,6 +290,8 @@ pub fn zoom_distance(sim: &Sim, sel: Selection) -> f32 {
         // [feat/pt-ux] An aircraft from a little way off; a camper close.
         Selection::Drone(_) => 70.0,
         Selection::Rv(_) => 30.0,
+        // [K34] A box close up: its number readable.
+        Selection::Box(_) => 22.0,
         Selection::Building(id) => {
             let w = &sim.world;
             let r = w.buildings.get(id).and_then(|b| w.lots.get(b.lot)).map_or(30.0, |l| l.polygon.iter().map(|p| p.distance(l.center)).fold(0.0, f32::max));
@@ -376,6 +378,8 @@ pub fn thing_pose(sim: &Sim, sel: Selection) -> Option<ThingPose> {
         // [feat/pt-ux] In the cabin; a camper from its driver's seat.
         Selection::Drone(id) => crate::air_select::pose(w, id, f).map(|(at, h)| ThingPose { pos: Vec2::new(at.x, at.z), heading: Some(h), eye: at.y + 1.2 }),
         Selection::Rv(seed) => w.society.homeless.rv(seed).map(|r| ThingPose { pos: r.pos, heading: Some(r.heading), eye: ground(r.pos) + 1.8 }),
+        // [K34] Stood on the box's roof.
+        Selection::Box(id) => crate::box_select::pose(sim, id).map(|(at, h, _)| ThingPose { pos: Vec2::new(at.x, at.z), heading: Some(h), eye: at.y + nd_procgen::CONTAINER_H + EYE_HEIGHT }),
         Selection::Bot(id) => w.bots.bots.get(id).map(|b| {
             let p = if b.prev_pos.distance(b.pos) < 30.0 { b.prev_pos.lerp(b.pos, f) } else { b.pos };
             ThingPose { pos: p, heading: Some(lerp_angle(b.prev_heading, b.heading, f)), eye: ground(p) + 0.75 }
@@ -424,7 +428,7 @@ pub fn chase_subject(sim: &Sim, sel: Selection) -> Option<Subject> {
     };
     let simple = |pos: Vec2, heading: f32, floor: f32, kind: SubjectKind| Subject { pos, heading, floor, kind, underground: false };
     match sel {
-        Selection::None | Selection::Building(_) | Selection::Toll(_) | Selection::Road(_) => None,
+        Selection::None | Selection::Building(_) | Selection::Toll(_) | Selection::Road(_) | Selection::Box(_) => None,
         Selection::Car(id) => on_road(id, None),
         Selection::Parked(id) => w.vehicles.cars.get(id).and_then(|c| c.spot()).map(|s| simple(s.pos, s.heading, ground(s.pos), SubjectKind::Car)),
         Selection::Unit(id) => {

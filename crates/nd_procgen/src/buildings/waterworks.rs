@@ -226,6 +226,16 @@ pub fn shipping_port(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let v = lo.y + d * (0.42 + row as f32 * 0.12);
         let mut u = lo.x + w * 0.42;
         while u < hi.x - 8.0 {
+            if c.real_boxes {
+                // [K34] The port's real boxes, three high.
+                if poly_inside(c, &rect(u, v, 6.4, 1.4)) {
+                    for t in 0..3 {
+                        box_slot(g, c, u, v, 0.0, 0.0, t, true);
+                    }
+                }
+                u += 13.0;
+                continue;
+            }
             let tiers = rng.random_range(1..4);
             for t in 0..tiers {
                 let col = crate::palette::at(colors, rng.random_range(0..colors.len().max(1)));

@@ -7,6 +7,11 @@ use super::*;
 /// [r2-traffic] Site lorries allowed on the road past `MAX_TRUCKS`, and
 /// minutes before a site no lorry could reach is tried again.
 const SITE_TRUCKS_EXTRA: usize = 40;
+/// [K34] Room for this many lorries past the cap for loads that leave a
+/// yard or the port in their shipping containers: the boxes go out on the
+/// road to the buyer (in a city whose building sites fill the cap, every
+/// such load was handed over on the spot).
+const BOX_TRUCKS_EXTRA: usize = 20;
 const SITE_RETRY: u64 = 60;
 /// [ledger] The most of a day's profit a business's unit rent takes
 /// (`World::shop_rent` is the full rent).
@@ -427,6 +432,8 @@ impl World {
                     continue;
                 }
                 let keep = per * jobs as f32 * crate::market::JOB_RATE * r.export_keep_hours();
+                // [K34] A scrap yard keeps a stock of steel for the sites.
+                let keep = if bz.kind == BusinessKind::ScrapYard { keep.max(40.0) } else { keep };
                 let have = bz.stock_of(*r);
                 if have > keep * 1.2 {
                     let surplus = have - keep;
@@ -764,8 +771,11 @@ impl World {
         // a boom, is it delivered on the spot as other loads are. (Queued
         // behind the cap instead, a growing city's sites starved: a
         // generated city opened 17 businesses by day 4 instead of 20+.)
-        let cap = crate::market::MAX_TRUCKS + if to_site { SITE_TRUCKS_EXTRA } else { 0 };
+        let boxed = !to_site && self.has_full_boxes(cargo.from, cargo.resource, cargo.to);
+        let cap = crate::market::MAX_TRUCKS + if to_site { SITE_TRUCKS_EXTRA } else if boxed { BOX_TRUCKS_EXTRA } else { 0 };
         if self.truck_count() >= cap {
+            // [K34] Its boxes go with it.
+            self.boxes_follow(&cargo);
             self.deliver(cargo);
             return;
         }
@@ -822,8 +832,13 @@ impl World {
                         self.traffic.cars[id].model.livery = crate::vehicle::Livery::fleet(crate::vehicle::Livery::Construction, c);
                     }
                 }
+                // [K34] The boxes the load is in ride with it.
+                self.boxes_on_dispatch(id, matches!(origin, TruckOrigin::CityEdge), &cargo, to_site);
             }
-            None => self.deliver(cargo),
+            None => {
+                self.boxes_follow(&cargo);
+                self.deliver(cargo)
+            }
         }
     }
 

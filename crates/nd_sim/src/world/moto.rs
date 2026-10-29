@@ -282,7 +282,7 @@ impl World {
             let leader = k == 0;
             let phase = hash01(key_of(car), 0x070_7AFE, 1);
             let tc = &mut self.traffic.cars[car];
-            tc.model = VehicleModel { class: VehicleClass::Expensive, body, wear: 1, tuned: false, livery: Livery::None, paint: rng.random_range(0..crate::vehicle::PAINTS) };
+            tc.model = VehicleModel { class: VehicleClass::Expensive, body, wear: 1, tuned: false, livery: Livery::None, paint: rng.random_range(0..crate::vehicle::PAINTS), boxed: 0 };
             tc.drive.gang = Some(GangRole { takeover: p.id, phase: GangPhase::Leaving, race: false, pack: true });
             tc.drive.profile = moto_profile(phase, leader, hash01(key_of(car), 0x070_7AFE, 2));
             p.riders.push(Rider { car, citizen: None, riding: true, last_run: None, lane: None });

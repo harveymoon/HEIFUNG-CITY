@@ -26,7 +26,7 @@ const POUND_REACH: f32 = 25.0;
 /// What a tow truck looks like (as the driving agent's wreck trucks do): a
 /// wrecker with a boom and a wheel lift.
 pub(super) fn tow_model() -> VehicleModel {
-    VehicleModel { class: VehicleClass::Mid, body: BodyType::TowTruck, wear: 1, tuned: false, livery: Livery::Utility, paint: 3 }
+    VehicleModel { class: VehicleClass::Mid, body: BodyType::TowTruck, wear: 1, tuned: false, livery: Livery::Utility, paint: 3, boxed: 0 }
 }
 
 /// [tow] The tow truck sent for a vehicle with this body: a heavy wrecker
@@ -41,7 +41,7 @@ pub(super) fn tow_model_for(towed: BodyType) -> VehicleModel {
 
 /// A parking officer's small car.
 fn patrol_model() -> VehicleModel {
-    VehicleModel { class: VehicleClass::Mid, body: BodyType::Hatchback, wear: 0, tuned: false, livery: Livery::Utility, paint: 6 }
+    VehicleModel { class: VehicleClass::Mid, body: BodyType::Hatchback, wear: 0, tuned: false, livery: Livery::Utility, paint: 6, boxed: 0 }
 }
 
 impl World {

@@ -95,6 +95,7 @@ mod economy_tests;
 #[cfg(test)]
 mod pt_visual_tests;
 pub use parts::{NEON_MARK, NIGHT_MARK, WINDOW_LIGHT_MARK};
+pub use parts::{box_life, box_number, real_box, BoxLife, BoxSlot};
 pub use construction::{crane_paint, crane_slew, CraneRig, CRANE_LIFT_MINUTES, CRANE_SLEW_RANGE};
 pub use services::GameRig;
 pub use power::{battery_lights, coal_vents, CoalVent, solar_head, solar_trackers, wind_rotor, wind_turbines, PlantField, SolarTracker, Turbine, SOLAR_HUB, SOLAR_MAX_TILT, TURBINE_MAST, TURBINE_RADIUS, TURBINE_ROTOR_H};

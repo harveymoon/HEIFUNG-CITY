@@ -224,7 +224,7 @@ impl World {
                 *[BodyType::Coupe, BodyType::Coupe, BodyType::Sedan, BodyType::Suv, BodyType::Hatchback].choose(&mut rng).unwrap()
             };
             let tc = &mut self.traffic.cars[car];
-            tc.model = VehicleModel { class: VehicleClass::Expensive, body, wear: 0, tuned: !body.two_wheeler(), livery: Livery::None, paint: rng.random_range(0..crate::vehicle::PAINTS) };
+            tc.model = VehicleModel { class: VehicleClass::Expensive, body, wear: 0, tuned: !body.two_wheeler(), livery: Livery::None, paint: rng.random_range(0..crate::vehicle::PAINTS), boxed: 0 };
             tc.drive.gang = Some(GangRole { takeover: t.id, phase: GangPhase::Joining, race: false, pack: false });
             t.cars.push(car);
             t.outsiders += 1;

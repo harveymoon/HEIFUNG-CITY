@@ -261,7 +261,20 @@ pub(super) fn sync_buildings(
             let mut cells: Vec<Geometry> = (0..DETAIL_SPLIT * DETAIL_SPLIT).map(|_| Geometry::default()).collect();
             for &id in &ids {
                 let rigs_before = geo.games.len();
-                if let Some(top) = append_building(&mut geo, &mut cells, &sim.world, &assets, &sim.styles, id) {
+                let slots_before = geo.box_slots.len();
+                let drawn = append_building(&mut geo, &mut cells, &sim.world, &assets, &sim.styles, id);
+                // [K34] A depot's stacks are where its real boxes stand.
+                let slots: Vec<nd_procgen::BoxSlot> = geo.box_slots.drain(slots_before..).collect();
+                if slots.is_empty() {
+                    if sim.depot_slots.remove(&id).is_some() {
+                        sim.depot_slots_version += 1;
+                    }
+                } else {
+                    sim.depot_slots_version += 1;
+                    let v = sim.depot_slots_version;
+                    sim.depot_slots.insert(id, (v, slots));
+                }
+                if let Some(top) = drawn {
                     // [games] A stadium's game-day dressing knows its building.
                     for rig in geo.games[rigs_before..].iter_mut() {
                         rig.building = Some(id);

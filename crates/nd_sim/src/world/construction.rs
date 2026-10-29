@@ -152,6 +152,21 @@ impl World {
         if let Some(c) = self.buildings[bid].construction.as_mut() {
             c.ordered = true;
         }
+        // [K34] Steel cut from old containers at a scrap yard in town goes
+        // into the frame first.
+        if let Some(yard) = self.scrap_steel_for(at, amount * 0.5) {
+            let got = self.buildings[yard].business.as_mut().unwrap().take(Resource::Metal, amount * 0.5);
+            let cost = got * Resource::Metal.base_price();
+            if let Some(z) = self.buildings[yard].business.as_mut() {
+                z.revenue_today += cost;
+                z.deals += 1;
+            }
+            let payer = self.site_payer(bid);
+            self.transfer(payer, Account::Business(yard), cost, Kind::Building);
+            self.economy.market.deals_today += 1;
+            self.ship(yard, bid, Resource::Metal, got, cost);
+            return;
+        }
         let seller = self.best_seller(resource, at, amount, bid);
         if let Some((seller_id, price)) = seller {
             let got = self.buildings[seller_id].business.as_mut().unwrap().take(resource, amount);
@@ -213,6 +228,8 @@ impl World {
                 c.next_decision_tick = tick + 1;
             }
         }
+        // [K34] A stack developer's home is built from its boxes.
+        self.box_home_finished(bid);
         self.events.push(SimEvent::BuildingChanged(bid));
         // [land] The buyer moves in; a mansion starts its NIMBY pull.
         self.estate_finished(bid);

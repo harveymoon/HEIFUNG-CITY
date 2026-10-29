@@ -116,6 +116,8 @@ mod timetable;
 /// [toll-inspect] A toll booth in full for `inspect {toll}`.
 mod tolls;
 mod trains;
+/// [K34] Shipping containers.
+mod containers;
 /// [fire-scene] Emergency units: inspect, select, list.
 mod units;
 

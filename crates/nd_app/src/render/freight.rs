@@ -185,6 +185,7 @@ pub(super) fn sync_freight(
     assets: Res<GameAssets>,
     mats: Res<Materials>,
     mut boxes_mesh: ResMut<ContainerMeshes>,
+    mut real_mesh: ResMut<super::boxes::BoxMeshes>,
     mut state: ResMut<FreightRender>,
     mut q: Query<&mut Transform, Or<(With<FreightBoxTag>, With<YardCraneTag>)>>,
 ) {
@@ -246,10 +247,22 @@ pub(super) fn sync_freight(
             }
             keep
         });
+        let day = w.clock.day() as i64;
         for b in &t.boxes {
             if !ents.contains_key(&b.seed) {
-                let parts = boxes_mesh.get(&mut meshes, &assets.palette, b.forty, b.kind, b.seed);
-                ents.insert(b.seed, spawn_box(&mut commands, &mats, &parts, FreightBoxTag));
+                // [K34] A box with a record is drawn as it is, its number on close up.
+                let face = b.id.and_then(|id| w.containers.boxes.get(id).map(|r| r.face(id, day)));
+                let e = match face {
+                    Some(f) => {
+                        let parts = real_mesh.get(&mut meshes, &assets.palette, &f);
+                        super::boxes::spawn_real_box(&mut commands, &mats, &parts, Transform::IDENTITY, super::boxes::BoxTag { id: f.id, face: f, offset: Vec3::ZERO }, super::lift::Grounded, FreightBoxTag)
+                    }
+                    None => {
+                        let parts = boxes_mesh.get(&mut meshes, &assets.palette, b.forty, b.kind, b.seed);
+                        spawn_box(&mut commands, &mats, &parts, FreightBoxTag)
+                    }
+                };
+                ents.insert(b.seed, e);
             }
         }
         let yard = t.dwelling_at().and_then(|at| yard_of(w, at).map(|y| (at, y)));

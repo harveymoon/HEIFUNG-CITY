@@ -989,3 +989,77 @@ fn capsule_sites_rise_in_their_own_shape() {
     }
 }
 
+
+/// [K34] A record's box for the tests: line, size, wear and marks.
+fn test_box(c: &mut nd_sim::containers::Containers, line: u8, serial: u32, forty: bool, years: i32) -> nd_sim::containers::BoxId {
+    use nd_sim::containers::*;
+    c.boxes.insert(BoxRec { line, serial, forty, kind: nd_sim::rail::BoxKind::Dry, origin: 3, built: -365 * years, knocks: (years * 5) as u16, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new() })
+}
+
+/// [K34] A real box drawn with its number carries the number's strokes on
+/// top of the box, within a sane budget; worn, it shows more marks.
+#[test]
+fn a_real_box_carries_its_number_and_its_wear() {
+    let pal = Palette::default();
+    let mut c = nd_sim::containers::Containers::default();
+    let young = test_box(&mut c, 0, 482913, false, 1);
+    let old = test_box(&mut c, 4, 77, true, 19);
+    let fy = c.boxes[young].face(young, 0);
+    let fo = c.boxes[old].face(old, 0);
+    let bare = crate::buildings::rail::real_box_geometry(&fy, false, &pal);
+    let numbered = crate::buildings::rail::real_box_geometry(&fy, true, &pal);
+    check_mesh(&numbered, "numbered box");
+    let (tb, tn) = (bare.triangle_count(), numbered.triangle_count());
+    assert!(tn > tb + 60, "the number adds strokes: {tb} -> {tn}");
+    assert!(tn < 900, "a numbered box stays affordable: {tn} triangles");
+    let worn = crate::buildings::rail::real_box_geometry(&fo, false, &pal);
+    assert!(fo.wear > fy.wear + 0.3 && worn.triangle_count() > tb, "an old box shows more wear: {} vs {tb}", worn.triangle_count());
+    assert!(!crate::buildings::rail::box_number_mesh(&fy).positions.is_empty());
+}
+
+/// [K34] A Stacks home a stack developer built is drawn as the Stacks, from
+/// its own boxes: every unit is one of them (no trailers, no stand-ins).
+#[test]
+fn a_box_home_is_built_from_its_boxes() {
+    let rules = BuildingRules::default();
+    let pal = Palette::default();
+    let zone = vec![Vec2::new(-100.0, -20.0), Vec2::new(100.0, -20.0), Vec2::new(100.0, 120.0), Vec2::new(-100.0, 120.0)];
+    let lots = lots(zone, LandUse::Residential);
+    let lot = lots.iter().max_by(|a, b| a.area().total_cmp(&b.area())).unwrap();
+    let mut c = nd_sim::containers::Containers::default();
+    let ids: Vec<_> = (0..12).map(|k| test_box(&mut c, (k % 10) as u8, 1000 + k, k % 3 == 0, (k % 15) as i32)).collect();
+    let home = nd_sim::BuildingId::default();
+    c.homes.insert(home, nd_sim::containers::BoxHome { want: 12, boxes: ids.clone(), done: true });
+    let extras = Extras { boxes_of: Some((&c, home, 0)), ..Extras::default() };
+    let style = choose_style(lot, LandUse::Residential, 3, Tier::Mid, 7, &rules, &extras);
+    assert_eq!(style, Style::Stacks, "a box home is the Stacks whatever its tier");
+    let g = generate_building(lot, LandUse::Residential, 3, Tier::Low, 0.5, 7, &rules, &pal, &extras);
+    check_mesh(&g, "box home");
+    let plain = generate_styled(lot, LandUse::Residential, 3, Tier::Low, 0.5, 7, Style::Stacks, &rules, &pal);
+    assert!(g.triangle_count() > plain.triangle_count() / 2, "drawn: {} vs {}", g.triangle_count(), plain.triangle_count());
+    assert!(g.triangle_count() < 60_000, "{}", g.triangle_count());
+}
+
+/// [K34] A depot whose boxes are real leaves its stacks out and hands the
+/// renderer their slots instead.
+#[test]
+fn a_depot_with_real_boxes_hands_over_its_slots() {
+    let rules = BuildingRules::default();
+    let pal = Palette::default();
+    let zone = vec![Vec2::new(-100.0, -20.0), Vec2::new(100.0, -20.0), Vec2::new(100.0, 120.0), Vec2::new(-100.0, 120.0)];
+    let lots = lots(zone, LandUse::Industrial);
+    let lot = lots.iter().max_by(|a, b| a.area().total_cmp(&b.area())).unwrap();
+    for style in [Style::ContainerYard, Style::Depot, Style::Junkyard, Style::ShippingPort] {
+        let real = Extras { real_boxes: true, ..Extras::default() };
+        let g = generate_styled_extras(lot, LandUse::Industrial, 1, Tier::Mid, 0.8, 5, style, &rules, &pal, &real);
+        let plain = generate_styled(lot, LandUse::Industrial, 1, Tier::Mid, 0.8, 5, style, &rules, &pal);
+        assert!(plain.box_slots.is_empty(), "{style:?}: no slots without real boxes");
+        if style != Style::ShippingPort {
+            assert!(!g.box_slots.is_empty(), "{style:?}: slots for its boxes");
+            assert!(g.get(Surface::Container).indices.len() < plain.get(Surface::Container).indices.len() || style == Style::Junkyard, "{style:?}: its own stacks left out");
+        }
+        for s in &g.box_slots {
+            assert!(s.at.is_finite() && s.yaw.is_finite());
+        }
+    }
+}

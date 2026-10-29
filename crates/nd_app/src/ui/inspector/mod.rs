@@ -5,6 +5,8 @@
 mod about;
 mod air;
 mod bot;
+/// [K34] Shipping containers.
+mod boxes;
 mod building;
 mod site;
 mod unit;
@@ -28,7 +30,7 @@ pub use vehicle::occupants;
 /// The inspector window on a selected building or car, on the right where
 /// the person pane opens too. Closing it deselects.
 pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
-    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_) | Selection::Ship(_) | Selection::Drone(_) | Selection::Rv(_)) {
+    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_) | Selection::Ship(_) | Selection::Drone(_) | Selection::Rv(_) | Selection::Box(_)) {
         return;
     }
     let mut open = true;
@@ -82,8 +84,16 @@ fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets: &Ga
                 return;
             }
             building(ui, sim, selection, assets, id);
+            // [K34] A depot's boxes, or the boxes a Stacks home is built of.
+            boxes::building_boxes(ui, sim, selection, id);
         }
-        Selection::Car(id) => car(ui, sim, selection, id),
+        Selection::Car(id) => {
+            car(ui, sim, selection, id);
+            // [K34] The box on its trailer.
+            boxes::truck_boxes(ui, sim, selection, id);
+        }
+        // [K34]
+        Selection::Box(id) => boxes::card(ui, sim, selection, id),
         Selection::Bot(id) => bot(ui, &sim.world, selection, id),
         // [fire-scene]
         Selection::Unit(id) => unit(ui, sim, selection, assets, id),

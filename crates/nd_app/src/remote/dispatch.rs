@@ -151,6 +151,11 @@ use Effect::*;
 
 pub(super) static COMMANDS: &[Cmd] = &[
     Cmd { name: "help", aliases: &[], effect: Read, run: |_, _| Ok(help::help()), help: &[] },
+    Cmd { name: "containers", aliases: &["boxes"], effect: Read, run: containers::containers, help: &[
+        ("note", "[K34] (no fields) the town's shipping containers: where they are, the counts since records began (arrived by rail/sea/road, delivered, sold to stack developers, bought off the lorry, sent out, sold, scrapped, steel made), the depots and the Stacks homes built of boxes"),
+        ("box", "an id or a box number (\"KOLU 482913 7\"): its life story (as inspect {box})"),
+        ("building", "id: the boxes it holds (a depot's stock, a home's walls)"),
+    ] },
     Cmd { name: "status", aliases: &[], effect: Read, run: |_, ctx| Ok(status::status(ctx)), help: &[] },
     Cmd { name: "memory", aliases: &[], effect: Read, run: |_, ctx| Ok(status::memory_json(ctx)), help: &[
         ("note", "[memory] the process working set, peak and commit charge (MB), the renderer's mesh/material/image and entity counts, and the world's big counts"),

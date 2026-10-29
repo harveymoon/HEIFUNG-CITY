@@ -98,6 +98,12 @@ fn pick_on_ray(sim: &Sim, click: &Click) -> Option<Selection> {
     let ground_t = click.ground.map_or(f32::INFINITY, |g| (Vec3::new(g.x, w.surface_height(g), g.y) - o).length());
     let air = crate::air_select::pick_ray(w, sim.frac(), o, d).filter(|(t, _)| *t < ground_t + 2.0);
     let bld = building_on_ray(w, &sim.building_tops, o, d).filter(|(t, _)| *t < ground_t - 0.5);
+    // [K34] A shipping container in a depot's stacks or on a train, close up.
+    if let Some((tb, id)) = crate::box_select::pick_ray(sim, o, d).filter(|(t, _)| *t < ground_t + 1.0 && *t < 160.0) {
+        if air.is_none_or(|(ta, _)| tb < ta) {
+            return Some(Selection::Box(id));
+        }
+    }
     match (air, bld) {
         (Some((ta, a)), Some((tb, _))) if ta <= tb => Some(Selection::Drone(a)),
         (Some((_, a)), None) => Some(Selection::Drone(a)),

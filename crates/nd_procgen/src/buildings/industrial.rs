@@ -33,6 +33,32 @@ pub fn junkyard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         graffiti(g, c, rng, &inner, 0.1, 2.4, 2.0);
     }
 
+    // [K34] A scrap yard cutting containers: a slab along the back where
+    // the boxes wait two high, a pile of cut panels beside it.
+    if c.real_boxes {
+        let (lo, hi) = bounds(&offset_poly(&poly, 1.5));
+        let v = hi.y - 3.0;
+        if hi.y - lo.y > 14.0 {
+            let slab = clip_v(&offset_poly(&poly, 1.0), v - 2.0, v + 2.0);
+            if slab.len() >= 3 {
+                ground(g, f, Concrete, &slab, 0.05, mul(pal.concrete(0), 0.75));
+            }
+            let mut u = lo.x + 7.0;
+            while u + 6.3 < hi.x {
+                if c.inside_local(Vec2::new(u - 6.2, v)) && c.inside_local(Vec2::new(u + 6.2, v)) {
+                    box_slot(g, c, u, v, 0.0, 0.06, 0, true);
+                    box_slot(g, c, u, v, 0.0, 0.06, 1, true);
+                }
+                u += 13.2;
+            }
+            let p = Vec2::new(lo.x + 3.0, v - 5.0);
+            if c.inside_local(p) {
+                for k in 0..rng.random_range(4..9) {
+                    f.bx_yaw(g, Rust, p.x, 0.08 + k as f32 * 0.09, p.y, Vec3::new(2.3, 0.08, 1.1), mul(pal.rust, rng.random_range(0.7..1.0)), rng.random_range(-0.3..0.3));
+                }
+            }
+        }
+    }
     // Piles and wrecks.
     for _ in 0..rng.random_range(2..5) {
         if let Some(p) = c.random_inside(rng, 4.0) {
@@ -537,11 +563,21 @@ pub fn depot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let cols = ((yard_hi.x - yard_lo.x) / 13.0).floor() as i32;
         for r in 0..rows {
             for col in 0..cols {
+                let u = yard_lo.x + 6.5 + col as f32 * 13.0;
+                let v = yard_lo.y + 1.5 + r as f32 * 3.6;
+                if c.real_boxes {
+                    // [K34] Real boxes stand here, three high at most.
+                    let forty = c.inside_local(Vec2::new(u + CONTAINER_40 * 0.5, v)) && c.inside_local(Vec2::new(u - CONTAINER_40 * 0.5, v));
+                    if forty || (c.inside_local(Vec2::new(u + CONTAINER_20 * 0.5, v)) && c.inside_local(Vec2::new(u - CONTAINER_20 * 0.5, v))) {
+                        for k in 0..3 {
+                            box_slot(g, c, u, v, 0.0, 0.0, k, forty);
+                        }
+                    }
+                    continue;
+                }
                 if rng.random_bool(0.25) {
                     continue;
                 }
-                let u = yard_lo.x + 6.5 + col as f32 * 13.0;
-                let v = yard_lo.y + 1.5 + r as f32 * 3.6;
                 let stack = rng.random_range(1..=3);
                 for k in 0..stack {
                     let forty = rng.random_bool(0.7);
@@ -888,11 +924,21 @@ pub fn container_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Stacks: rows of 12 m boxes, two to four high.
     let mut v = lane_v + 6.0;
     let mut rows = 0;
+    let mut stood = 0;
     while v + 2.6 < hi.y && rows < 12 {
         let mut u = lo.x + 6.5;
         while u + 6.1 < hi.x {
             let p = Vec2::new(u, v);
-            if c.inside_local(p + Vec2::new(-6.2, -1.3)) && c.inside_local(p + Vec2::new(6.2, 1.3)) && c.inside_local(p + Vec2::new(6.2, -1.3)) && c.inside_local(p + Vec2::new(-6.2, 1.3)) && !coin(rng, 0.15) {
+            let fits = c.inside_local(p + Vec2::new(-6.2, -1.3)) && c.inside_local(p + Vec2::new(6.2, 1.3)) && c.inside_local(p + Vec2::new(6.2, -1.3)) && c.inside_local(p + Vec2::new(-6.2, 1.3));
+            if fits {
+                stood += 1;
+            }
+            if fits && c.real_boxes {
+                // [K34] The yard's real boxes, four high at most.
+                for k in 0..4 {
+                    box_slot(g, c, u, v, 0.0, 0.0, k, true);
+                }
+            } else if fits && !coin(rng, 0.15) {
                 let high = rng.random_range(2..=4);
                 for k in 0..high {
                     // [r4] (K33) The standard box, in a line's colours.
@@ -905,6 +951,31 @@ pub fn container_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
         v += if rows % 2 == 0 { 2.8 } else { 6.0 };
         rows += 1;
+    }
+    // [K34] A yard too narrow for rows across it stacks its boxes in
+    // rows down its depth instead.
+    if stood == 0 {
+        let half = std::f32::consts::FRAC_PI_2;
+        let mut u = lo.x + 2.0;
+        while u + 1.3 < hi.x {
+            let mut v = lane_v + 9.5;
+            while v + 6.2 < hi.y {
+                let p = Vec2::new(u, v);
+                let fits = [Vec2::new(-1.3, -6.2), Vec2::new(1.3, 6.2), Vec2::new(1.3, -6.2), Vec2::new(-1.3, 6.2)].iter().all(|d| c.inside_local(p + *d));
+                if fits && c.real_boxes {
+                    for k in 0..3 {
+                        box_slot(g, c, u, v, half, 0.0, k, true);
+                    }
+                } else if fits && !coin(rng, 0.2) {
+                    for k in 0..rng.random_range(1..=3) {
+                        let line = shipping_line(rng.random());
+                        iso_container(g, c, rng, u, v, half, true, k as f32 * CONTAINER_H, line, BoxLook::Dry);
+                    }
+                }
+                v += 13.2;
+            }
+            u += if ((u - lo.x) / 2.8) as i32 % 2 == 0 { 2.8 } else { 5.0 };
+        }
     }
     // A rail-mounted gantry over the stacks.
     let (gu, gv0, gv1) = ((lo.x + hi.x) * 0.5, lane_v + 4.0, hi.y - 1.0);

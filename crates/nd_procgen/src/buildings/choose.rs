@@ -11,6 +11,8 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
     let mut rng = rng_for(seed, 11);
     match (extras.plant, extras.parking) {
         _ if extras.service.is_some() => Style::for_service(extras.service.unwrap()),
+        // [K34] A stack developer's home is the Stacks, built of its boxes.
+        _ if extras.boxes_of.is_some() && land_use == LandUse::Residential => Style::Stacks,
         // [waterfront] A public beach is sand, not a lawn. [K19] Before the
         // annexes: a campus that took a beach over as a "plaza" drew a lawn
         // over the sand, its towel spots sunk under the grass.
@@ -133,6 +135,8 @@ pub fn industry_styles(kind: nd_sim::BusinessKind, tier: Tier) -> Option<&'stati
         B::TowYard => &[(Style::TruckLot, 1.0)],
         // A cargo hub: container stacks, a gantry crane, lorries in bays.
         B::CargoHub => &[(Style::ContainerYard, 1.0)],
+        // [K34] A scrap yard: the junk piles, and boxes waiting to be cut up.
+        B::ScrapYard => &[(Style::Junkyard, 1.0)],
         B::Fishery | B::FishPlant => &[(Style::FishProcessing, 1.0)],
         // [economy] One look per new trade, whatever the land use.
         B::Mechanic => &[(Style::Mechanic, 1.0)],
@@ -183,7 +187,7 @@ pub fn business_look_wins(kind: nd_sim::BusinessKind) -> bool {
     use nd_sim::BusinessKind as B;
     matches!(
         kind,
-        B::Mechanic | B::CarDealer | B::TrashCompany | B::BikeShop | B::CowFarm | B::ChickenFarm | B::Slaughterhouse | B::StripMine | B::Marina | B::FishingPort | B::FishGutting | B::FishStickFactory | B::FishMarket | B::SeafoodRestaurant | B::GolfRange | B::ArtStudio | B::Gallery | B::Smelter | B::Feedlot | B::ChemicalWorks | B::BeachResort | B::PierRestaurant | B::BeachBar | B::BoatRental
+        B::Mechanic | B::CarDealer | B::TrashCompany | B::BikeShop | B::CowFarm | B::ChickenFarm | B::Slaughterhouse | B::StripMine | B::Marina | B::FishingPort | B::FishGutting | B::FishStickFactory | B::FishMarket | B::SeafoodRestaurant | B::GolfRange | B::ArtStudio | B::Gallery | B::Smelter | B::Feedlot | B::ChemicalWorks | B::BeachResort | B::PierRestaurant | B::BeachBar | B::BoatRental | B::ScrapYard
     )
 }
 

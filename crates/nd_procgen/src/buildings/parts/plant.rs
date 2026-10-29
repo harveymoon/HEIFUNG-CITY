@@ -176,6 +176,23 @@ pub fn iso_container(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f32, v: f
 /// box has a tarp for a roof. Within [`CONTAINER_TRIS_EX`].
 #[allow(clippy::too_many_arguments)]
 pub fn container_unit_ex(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f32, v: f32, yaw: f32, len: f32, wid: f32, h: f32, y0: f32, livery: Livery, look: BoxLook) {
+    container_core(g, c, rng, u, v, yaw, len, wid, h, y0, livery, look, None);
+}
+
+/// [K34] A real box's life as its paint shows it: how worn it is, its
+/// patched panels and dents, and which end its doors are (+1 or -1 along
+/// its length). Drawn by [`container_core`] instead of the dice.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoxLife {
+    pub wear: f32,
+    pub patches: u8,
+    pub dents: u8,
+    pub door: f32,
+}
+
+/// [`container_unit_ex`], or with `life` a real box drawn as it is.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn container_core(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f32, v: f32, yaw: f32, len: f32, wid: f32, h: f32, y0: f32, livery: Livery, look: BoxLook, life: Option<BoxLife>) {
     let f = &c.frame;
     let pal = c.palette;
     let (s, co) = yaw.sin_cos();
@@ -192,6 +209,7 @@ pub fn container_unit_ex(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f32, 
     let (rail_out, post_out) = (0.025, 0.045);
     let tier_wear = if c.tier == nd_sim::Tier::Low { 0.2 } else { 0.0 };
     let wear = (c.wear * 0.75 + tier_wear + rng.random_range(-0.1..0.2)).clamp(0.0, 1.0);
+    let wear = life.map_or(wear, |l| l.wear.clamp(0.0, 1.0));
     let base = match (livery, look) {
         (_, BoxLook::Reefer) => [0.78, 0.78, 0.75],
         (Livery::Any(col), _) => col,
@@ -200,6 +218,7 @@ pub fn container_unit_ex(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f32, 
     let paint = container_paint(rng, base, wear);
     let frame_col = mul(paint, 0.72);
     let door = if rng.random_bool(0.5) { -1.0f32 } else { 1.0 };
+    let door = life.map_or(door, |l| l.door.signum());
 
     if look == BoxLook::Tank {
         // [r4] The ISO tank: a barrel slung in a twenty-foot frame of
@@ -289,8 +308,11 @@ pub fn container_unit_ex(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f32, 
             }
         }
         m.decal(at(door * (hl + 0.02), wall_mid, 0.0), across, Vec3::Y, 0.035, wall_h, long * door, rgba(DARK));
-        // ID marking stencilled on one leaf.
-        m.decal(at(door * (hl + 0.025), wall_b - 0.32, -door * hw * 0.5), across, Vec3::Y, 0.7, 0.18, long * door, rgba(mix(pal.chalk, paint, 0.25)));
+        // ID marking stencilled on one leaf (a real box's number is
+        // stencilled on by `box_number`).
+        if life.is_none() {
+            m.decal(at(door * (hl + 0.025), wall_b - 0.32, -door * hw * 0.5), across, Vec3::Y, 0.7, 0.18, long * door, rgba(mix(pal.chalk, paint, 0.25)));
+        }
         if look == BoxLook::Reefer {
             // [r4] The refrigeration unit filling the front end: a dark
             // grille, the fan behind it and the control box.
@@ -300,8 +322,10 @@ pub fn container_unit_ex(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f32, 
             m.decal(at(fx - door * 0.005, wall_a + wall_h * 0.18, hw * 0.35), across, Vec3::Y, 0.5, 0.36, long * -door, rgba(mix(pal.steel, paint, 0.3)));
         }
     }
-    // Livery and wear: at most three more decals per unit.
+    // Livery and wear: at most three more decals per unit (a real box
+    // shows all its patches and dents).
     let mut extras = 0;
+    let cap = if life.is_some() { 8 } else { 3 };
     let side_decal = |g: &mut Geometry, side: f32, lu: f32, y: f32, off: f32, w: f32, hh: f32, col: [f32; 3]| {
         g.part(Container).decal(at(lu, y, side * (hw + off)), long, Vec3::Y, w, hh, across * side, rgba(col));
     };
@@ -345,7 +369,11 @@ pub fn container_unit_ex(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f32, 
             }
         }
     }
-    if coin(rng, 0.1 + 0.25 * wear) && extras < 3 {
+    let patches = life.map_or(if coin(rng, 0.1 + 0.25 * wear) { 1 } else { 0 }, |l| l.patches.min(3));
+    for _ in 0..patches {
+        if extras >= cap {
+            break;
+        }
         // A repainted patch in not-quite-matching paint, or bare primer.
         let col = if rng.random_bool(0.7) { container_paint(rng, paint, 0.0) } else { mix([0.42, 0.40, 0.37], paint, 0.2) };
         let (pw, ph) = (rng.random_range(0.6..2.4f32).min(len * 0.4), rng.random_range(0.5..1.6f32).min(wall_h * 0.8));
@@ -355,7 +383,11 @@ pub fn container_unit_ex(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f32, 
         side_decal(g, side, lu, y, 0.013, pw, ph, col);
         extras += 1;
     }
-    if coin(rng, 0.15 + 0.4 * wear) && extras < 3 {
+    let dents = life.map_or(if coin(rng, 0.15 + 0.4 * wear) { 1 } else { 0 }, |l| l.dents.min(3));
+    for _ in 0..dents {
+        if extras >= cap {
+            break;
+        }
         // A dent from a twistlock or a forklift: a darker patch low down.
         let (dw, dh) = (rng.random_range(0.3..0.9f32), rng.random_range(0.2..0.6f32));
         let lu = rng.random_range(-1.0..1.0f32) * (hl - dw * 0.5 - 0.3).max(0.0);
@@ -364,7 +396,8 @@ pub fn container_unit_ex(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f32, 
         extras += 1;
     }
     // Rust bleeding down from the top rail and out of the castings.
-    let streaks = ((wear * 2.6 + rng.random_range(0.0..0.8)) as usize).min(3 - extras);
+    let room = if life.is_some() { 4 } else { 3usize.saturating_sub(extras) };
+    let streaks = ((wear * 2.6 + rng.random_range(0.0..0.8)) as usize).min(room);
     for _ in 0..streaks {
         let side = if rng.random_bool(0.5) { 1.0f32 } else { -1.0 };
         let at_casting = rng.random_bool(0.4);

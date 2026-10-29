@@ -287,6 +287,9 @@ pub struct Geometry {
     /// the away fans), left out of the mesh for the renderer to show on a
     /// game day.
     pub games: Vec<crate::buildings::GameRig>,
+    /// [K34] Where a depot stacks its real boxes (`Ctx::real_boxes`): the
+    /// renderer stands the boxes stored there in these, in order.
+    pub box_slots: Vec<crate::buildings::BoxSlot>,
     /// [r4-style] The detail layers ([`Lod::DETAIL`] order), each split by
     /// surface like `parts`; empty until a generator draws into one (with
     /// [`Geometry::lod`]). Never holds glow: lit windows and signs stay in
@@ -298,7 +301,7 @@ pub struct Geometry {
 
 impl Default for Geometry {
     fn default() -> Self {
-        Self { parts: (0..Surface::ALL.len()).map(|_| MeshData::default()).collect(), pads: Vec::new(), cranes: Vec::new(), lamps: Vec::new(), games: Vec::new(), detail: [Vec::new(), Vec::new()], lod: Lod::Base }
+        Self { parts: (0..Surface::ALL.len()).map(|_| MeshData::default()).collect(), pads: Vec::new(), cranes: Vec::new(), lamps: Vec::new(), games: Vec::new(), box_slots: Vec::new(), detail: [Vec::new(), Vec::new()], lod: Lod::Base }
     }
 }
 
@@ -383,6 +386,7 @@ impl Geometry {
         self.cranes.extend(other.cranes.iter().cloned());
         self.lamps.extend_from_slice(&other.lamps);
         self.games.extend(other.games.iter().cloned());
+        self.box_slots.extend_from_slice(&other.box_slots);
     }
 
     /// Move every surface that has a weathered variant onto it: the whole

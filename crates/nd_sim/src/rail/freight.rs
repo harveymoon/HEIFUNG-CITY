@@ -151,6 +151,9 @@ pub struct BoxLoad {
     pub yard: Option<BuildingId>,
     pub seed: u32,
     pub lift: Lift,
+    /// [K34] The box's record (`World::containers`), when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<crate::containers::BoxId>,
 }
 
 /// [r4] (K33) Box loads for `cargo` on a train of `wagons` wagons: each
@@ -172,7 +175,7 @@ pub fn box_cargo(cargo: &[Cargo], wagons: u8, seed: u32) -> Vec<BoxLoad> {
                 slots.next();
             }
             let n = boxes.len() as u32;
-            boxes.push(BoxLoad { wagon, slot, forty, kind, resource: Some(c.resource), yard: Some(c.from), seed: crate::hash::mix(seed as u64, ((i as u64) << 20) ^ n as u64) as u32, lift: Lift::Aboard });
+            boxes.push(BoxLoad { wagon, slot, forty, kind, resource: Some(c.resource), yard: Some(c.from), seed: crate::hash::mix(seed as u64, ((i as u64) << 20) ^ n as u64) as u32, lift: Lift::Aboard, id: None });
             teu -= if forty { 2 } else { 1 };
         }
     }

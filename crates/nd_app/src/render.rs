@@ -136,6 +136,8 @@ mod parked;
 mod overlays;
 mod trains;
 mod freight;
+/// [K34] Real shipping containers in the depots, and their numbers close up.
+mod boxes;
 mod landscape;
 mod lift;
 pub(crate) use self::mesh_util::*;
@@ -268,7 +270,7 @@ pub(crate) fn lifts(sel: Selection) -> Lifts {
         Selection::Car(c) => Lifts { car: Some(c), ..Default::default() },
         Selection::Unit(u) => Lifts { unit: Some(u), ..Default::default() },
         // Outlined by their own gizmos or meshes, not lifted.
-        Selection::None | Selection::Building(_) | Selection::Parked(_) | Selection::Toll(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Road(_) | Selection::Ship(_) | Selection::Drone(_) | Selection::Rv(_) => Lifts::default(),
+        Selection::None | Selection::Building(_) | Selection::Parked(_) | Selection::Toll(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Road(_) | Selection::Ship(_) | Selection::Drone(_) | Selection::Rv(_) | Selection::Box(_) => Lifts::default(),
     }
 }
 
@@ -471,6 +473,8 @@ impl Plugin for RenderPlugin {
         // [rail-crossing] Level crossing gear: flashing lamps, swinging arms.
         // [r4] (K33) Containers on the freight trains and the yard cranes.
         app.init_resource::<freight::ContainerMeshes>().init_resource::<freight::FreightRender>().add_systems(Update, freight::sync_freight.after(sync_trains).before(update_daylight).in_set(SimSet::Sync));
+        // [K34] The depots' real boxes, numbers close up, and where they are for picking.
+        app.init_resource::<boxes::BoxMeshes>().init_resource::<boxes::DepotBoxRender>().init_resource::<boxes::NumberRender>().add_systems(Update, (boxes::sync_depot_boxes.after(freight::sync_freight), boxes::box_numbers.after(boxes::sync_depot_boxes), boxes::box_spots.after(boxes::box_numbers)).before(update_daylight).in_set(SimSet::Sync));
         app.add_systems(Update, crossings::sync_crossings.after(sync_trains).before(update_daylight).in_set(SimSet::Sync));
         // [pt-visual] The crossings' red light on the road at night.
         app.add_systems(Update, crossings::sync_crossing_lights.after(update_daylight).in_set(SimSet::Sync));

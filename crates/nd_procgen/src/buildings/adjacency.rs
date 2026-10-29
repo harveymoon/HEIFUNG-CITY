@@ -465,6 +465,9 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
         port: b.port,
         neighbours,
         rooftop_pad: world.air.has_rooftop(id),
+        // [K34] a home built of real boxes; a depot whose boxes are real
+        boxes_of: world.containers.homes.get(&id).filter(|h| h.done && !h.boxes.is_empty()).map(|_| (&world.containers, id, world.clock.day() as i64)),
+        real_boxes: world.containers.live && world.box_depot(id).is_some(),
         // Placed services (a vertiport among them) are their own style.
         service: b.service.map(|s| s.kind),
         business: b.business.as_ref().map(|z| z.kind),
