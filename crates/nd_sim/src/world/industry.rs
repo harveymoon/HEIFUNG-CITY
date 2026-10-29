@@ -532,6 +532,9 @@ impl World {
             }
             // A full lot (or a lorry stranded earlier): drive on.
             if !self.drive_lorry_on(car_id, cargo.to, home) && self.traffic.cars.contains_key(car_id) {
+                // [r4-flags-sim] Stranded in a pocket with no road out: the
+                // city lifts it out (its turn may come at a later retry).
+                self.rescue_trapped(car_id);
                 self.traffic.pull_in(car_id, STRANDED_RETRY_SECONDS);
             }
             return;

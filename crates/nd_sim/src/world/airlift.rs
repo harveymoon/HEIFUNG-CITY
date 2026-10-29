@@ -127,8 +127,36 @@ impl World {
         if self.economy.treasury < AIRLIFT_COST {
             return Err(format!("the treasury has {:.0}; an airlift costs {AIRLIFT_COST:.0}", self.economy.treasury.max(0.0)));
         }
-        let (at, heading, model, owned) = (c.pos, c.heading, c.model, c.owned);
         self.economy.debit(Flow::ServiceUpkeep, AIRLIFT_COST);
+        self.send_airlift(car);
+        Ok(())
+    }
+
+    /// [r4-flags-sim] A vehicle standing in a pocket of road with no way
+    /// out (`LaneNetwork::trap`: one-way streets lead in, none lead out)
+    /// that has nowhere to drive: the city lifts it out, free, at most
+    /// `RESCUE_AIRLIFTS` at a time (the rest wait their turn at the kerb).
+    /// Whether one is on its way for it.
+    pub(in crate::world) fn rescue_trapped(&mut self, car: CarId) -> bool {
+        const RESCUE_AIRLIFTS: usize = 2;
+        let Some(c) = self.traffic.cars.get(car) else { return false };
+        if c.bus.is_some() || !self.traffic.net.trap.get(c.route[c.idx] as usize).copied().unwrap_or(false) {
+            return false;
+        }
+        if self.airlifts.iter().any(|a| a.car == Some(car)) {
+            return true;
+        }
+        if self.airlifts.iter().filter(|a| a.car.is_some()).count() >= RESCUE_AIRLIFTS {
+            return false;
+        }
+        self.send_airlift(car);
+        true
+    }
+
+    /// The helicopter on its way to `car` (paid for or not by the caller).
+    fn send_airlift(&mut self, car: CarId) {
+        let c = &self.traffic.cars[car];
+        let (at, heading, model, owned) = (c.pos, c.heading, c.model, c.owned);
         let half = crate::landscape::MAP_EDGE;
         let from = off_map_near(at, half);
         // A resident's car goes to the pound; anything else off the map.
@@ -139,7 +167,6 @@ impl World {
         };
         let tick = self.clock.tick;
         self.airlifts.push(Airlift { car: Some(car), model, at, heading, from, to, pound, started: tick });
-        Ok(())
     }
 
     /// [airlift] Lift the vehicles the helicopters are over; done ones go.
@@ -207,7 +234,7 @@ impl World {
             return;
         }
         // A lorry's load is delivered as if it got there.
-        if let Some(cg) = cargo {
+        if let Some(cg) = cargo.filter(|c| !crate::world::is_return_trip(c)) {
             self.deliver(cg);
         }
         self.games.driving_in.retain(|f| f.car != car);
