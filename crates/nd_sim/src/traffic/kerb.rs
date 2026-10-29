@@ -33,8 +33,17 @@ impl Traffic {
         let Some(c) = self.cars.get(id) else { return };
         let lane = c.route[c.idx];
         let kerb = self.net.lanes[lane as usize].right.is_none();
-        if !c.entering {
+        let was_entering = c.entering;
+        if !was_entering {
             self.net.lanes[lane as usize].cars.retain(|&o| o != id);
+        }
+        // [r4-flags-look] (flag day 13 at (-589,89), "stacked trucks")
+        // Pulled in behind (or ahead of) whoever already stands at this
+        // kerb, never on top of them: every lorry for one site stopped at
+        // the same spot, eight drawn as one.
+        if kerb && !was_entering {
+            let s = self.kerb_room(lane, id);
+            self.cars[id].s = s;
         }
         let c = &mut self.cars[id];
         c.entering = true;
@@ -100,6 +109,40 @@ impl Traffic {
             }
         }
         room
+    }
+
+    /// [r4-flags-look] Where on `lane` vehicle `id` can stand pulled in at
+    /// the kerb (the position of its front) without overlapping the others
+    /// already standing there: where it is if that is clear, else the
+    /// nearest clear spot behind it (a metre apart), else ahead of them, else
+    /// where it is (a lane too short for all of them).
+    pub(super) fn kerb_room(&self, lane: LaneId, id: CarId) -> f32 {
+        const GAP: f32 = 1.0;
+        let (s, len) = (self.cars[id].s, self.cars[id].length());
+        let lane_len = self.net.lanes[lane as usize].length;
+        let mut taken: Vec<(f32, f32)> = self
+            .cars
+            .iter()
+            .filter(|&(o, c)| o != id && c.entering && c.route.get(c.idx) == Some(&lane))
+            .map(|(_, c)| (c.s - c.length(), c.s))
+            .collect();
+        if taken.is_empty() {
+            return s;
+        }
+        taken.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let clear = |f: f32| taken.iter().all(|&(t0, t1)| f - len >= t1 + GAP || f + GAP <= t0);
+        if clear(s) {
+            return s;
+        }
+        // Behind: just short of the tail of each one standing behind us.
+        let mut back: Vec<f32> = taken.iter().map(|&(t0, _)| t0 - GAP).filter(|&f| f <= s && f >= len).collect();
+        back.sort_by(|a, b| b.total_cmp(a));
+        if let Some(f) = back.into_iter().find(|&f| clear(f)) {
+            return f;
+        }
+        let mut ahead: Vec<f32> = taken.iter().map(|&(_, t1)| t1 + GAP + len).filter(|&f| f >= s && f <= lane_len).collect();
+        ahead.sort_by(|a, b| a.total_cmp(b));
+        ahead.into_iter().find(|&f| clear(f)).unwrap_or(s)
     }
 
     /// The nearest place behind `s` on `lane` (within `KERB_SLIDE_REACH`)
