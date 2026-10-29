@@ -63,6 +63,9 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         (None, None) if !extras.rooftop_pad && extras.look == Some(nd_sim::districts::Look::SolarpunkGreen) && solarpunk::trade_style(extras.business).is_some() => solarpunk::trade_style(extras.business).unwrap(),
         // [r4-glass] On Founders' Campus the assembly halls are server halls.
         (None, None) if !extras.rooftop_pad && extras.look == Some(nd_sim::districts::Look::GlassCampus) && glasscampus::trade_style(extras.business, tier).is_some() => glasscampus::trade_style(extras.business, tier).unwrap(),
+        // [r4-skyline] In Neo Tokyo Heights a hotel is a tower with a helipad
+        // (a pad of its own, so a flagged one keeps it too).
+        (None, None) if extras.look == Some(nd_sim::districts::Look::SkylineLuxe) && skyline::trade_style(extras.business).is_some() => skyline::trade_style(extras.business).unwrap(),
         (None, None) if extras.business.is_some_and(business_look_wins) => {
             let options = industry_styles(extras.business.unwrap(), tier).unwrap();
             pick_industry_style(options, extras.neighbours, &mut rng)
@@ -78,9 +81,10 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
             district::pick(menu, &adjacency::Site { floors, frontage: lot.width() }, extras.neighbours, &mut rng)
         }
         // [capsule] A tower with a pad in the Capsule district keeps the
-        // look: its towers carry their own round deck.
-        (None, None) if extras.rooftop_pad && extras.look == Some(nd_sim::districts::Look::Capsule) && district::look_styles(nd_sim::districts::Look::Capsule, land_use, tier).is_some_and(|m| m.iter().any(|(s, _)| s.pad_capable())) => {
-            let menu: Vec<(Style, f32)> = district::look_styles(nd_sim::districts::Look::Capsule, land_use, tier).unwrap().iter().copied().filter(|(s, _)| s.pad_capable()).collect();
+        // look: its towers carry their own round deck. [r4-skyline] So does
+        // one in Neo Tokyo Heights (the helipad tower).
+        (None, None) if extras.rooftop_pad && matches!(extras.look, Some(nd_sim::districts::Look::Capsule | nd_sim::districts::Look::SkylineLuxe)) && district::look_styles(extras.look.unwrap(), land_use, tier).is_some_and(|m| m.iter().any(|(s, _)| s.pad_capable())) => {
+            let menu: Vec<(Style, f32)> = district::look_styles(extras.look.unwrap(), land_use, tier).unwrap().iter().copied().filter(|(s, _)| s.pad_capable()).collect();
             let weights: Vec<f32> = menu.iter().map(|(s, w)| w * adjacency::neighbour_factor(*s, extras.neighbours)).collect();
             weighted_index(&weights, &mut rng).map_or(menu[0].0, |i| menu[i].0)
         }

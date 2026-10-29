@@ -142,6 +142,18 @@ pub fn look_styles(look: Look, lu: LandUse, tier: Tier) -> Option<Menu> {
         (Look::GlassCampus, Entertainment, _) => &[(S::CampusQuad, 0.55), (S::StartupSheds, 0.45)],
         (Look::GlassCampus, Industrial, Low) => &[(S::ResearchLab, 0.5), (S::ServerHall, 0.3), (S::StartupSheds, 0.2)],
         (Look::GlassCampus, Industrial, _) => &[(S::ServerHall, 0.5), (S::ResearchLab, 0.5)],
+        // [r4-skyline] Glass towers for homes (twins and pool towers where
+        // the land is dear, a helipad on the dearest); the boutique row, the
+        // vertical mall and the hotel and office towers for shops; the
+        // mall and the boutiques' bars for nights out. No industry, as the
+        // Neon strip had none.
+        (Look::SkylineLuxe, Residential, Low) => &[(S::LuxeTower, 0.6), (S::PoolTower, 0.25), (S::TwinTowers, 0.15)],
+        (Look::SkylineLuxe, Residential, Mid) => &[(S::LuxeTower, 0.4), (S::TwinTowers, 0.3), (S::PoolTower, 0.3)],
+        (Look::SkylineLuxe, Residential, High) => &[(S::TwinTowers, 0.3), (S::PoolTower, 0.3), (S::LuxeTower, 0.25), (S::HelipadTower, 0.15)],
+        (Look::SkylineLuxe, Commercial, Low) => &[(S::BoutiqueRow, 0.6), (S::MallPodium, 0.4)],
+        (Look::SkylineLuxe, Commercial, Mid) => &[(S::MallPodium, 0.35), (S::BoutiqueRow, 0.35), (S::HelipadTower, 0.3)],
+        (Look::SkylineLuxe, Commercial, High) => &[(S::HelipadTower, 0.45), (S::MallPodium, 0.35), (S::BoutiqueRow, 0.2)],
+        (Look::SkylineLuxe, Entertainment, _) => &[(S::MallPodium, 0.55), (S::BoutiqueRow, 0.45)],
         _ => return None,
     })
 }
@@ -160,6 +172,8 @@ pub fn look_mansion(look: Look) -> Option<Style> {
         Look::SolarpunkGreen => Some(Style::SolarVilla),
         // [r4-glass] A glass pavilion house on Founders' Campus.
         Look::GlassCampus => Some(Style::GlassPavilion),
+        // [r4-skyline] A sky villa in Neo Tokyo Heights.
+        Look::SkylineLuxe => Some(Style::SkyVilla),
         _ => None,
     }
 }
@@ -390,6 +404,22 @@ pub fn tint(look: Look) -> Tint {
             sign_scale: 0.4,
             grime: Some((0.25, 0.3)),
         },
+        // [r4-skyline] The Neon strip's dark street walls and loud signs
+        // (pink, cyan, gold, violet, red) under the towers, a cool white
+        // and warm gold in the flats; plenty of signage, grime at the foot.
+        // The towers carry their own smeared glass (`buildings/skyline.rs`).
+        Look::SkylineLuxe => Tint {
+            walls: &[[0.17, 0.16, 0.19], [0.22, 0.20, 0.22], [0.14, 0.15, 0.18], [0.26, 0.24, 0.23]],
+            trim: Some([0.10, 0.10, 0.11]),
+            windows: &[[1.15, 1.12, 1.05], [1.35, 1.05, 0.70], [0.85, 1.05, 1.40]],
+            signs: &[[2.8, 0.3, 1.6], [0.3, 2.4, 2.8], [2.6, 1.9, 0.4], [1.4, 0.4, 2.8], [2.8, 0.5, 0.4]],
+            awnings: Some(&[[0.55, 0.10, 0.12], [0.10, 0.30, 0.45], [0.12, 0.12, 0.13], [0.60, 0.45, 0.12]]),
+            brick: None,
+            plaster: None,
+            signage: Some((0.9, 0.7)),
+            sign_scale: 1.0,
+            grime: Some((0.4, 0.5)),
+        },
         Look::Historic => Tint {
             walls: &[[0.55, 0.32, 0.24], [0.62, 0.56, 0.46], [0.48, 0.30, 0.22], [0.66, 0.60, 0.50]],
             trim: Some([0.74, 0.70, 0.60]),
@@ -466,6 +496,7 @@ mod tests {
                 Look::HarbourPastel => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
                 Look::SolarpunkGreen => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
                 Look::GlassCampus => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment, LandUse::Industrial],
+                Look::SkylineLuxe => &[LandUse::Residential, LandUse::Commercial, LandUse::Entertainment],
             };
             for &lu in uses {
                 for tier in Tier::ALL {

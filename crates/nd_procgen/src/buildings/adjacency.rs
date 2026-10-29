@@ -241,6 +241,13 @@ pub fn site_fit(style: Style, site: &Site) -> f32 {
         Style::CoLivingTower => tall(6.0),
         Style::AtriumOffice => tall(4.0),
         Style::ServerHall => low(4.0),
+        // [r4-skyline] The towers want floors (the twins the most, and a
+        // wide plot), the boutique row is low, the mall mid-rise.
+        Style::LuxeTower | Style::PoolTower => tall(5.0),
+        Style::TwinTowers => tall(9.0) * if w > 0.0 && w < 20.0 { 0.2 } else { 1.0 },
+        Style::HelipadTower => tall(8.0),
+        Style::BoutiqueRow => low(4.0),
+        Style::MallPodium => low(8.0),
         _ => 1.0,
     }
 }

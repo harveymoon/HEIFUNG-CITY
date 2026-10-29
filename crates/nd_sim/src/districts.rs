@@ -64,6 +64,10 @@ pub enum ResidentialSpec {
     /// [r4-glass] Glass Campus (Founders' Campus): student flats with
     /// bright panels, co-living towers with glass lounges. Appended.
     GlassCampus,
+    /// [r4-skyline] Skyline Luxe (Neo Tokyo Heights): slim glass towers for
+    /// the rich over a hectic podium of shops, twin towers on a sky bridge,
+    /// pools on the roofs. Appended.
+    SkylineLuxe,
 }
 
 /// How the shops in a district grow.
@@ -103,10 +107,16 @@ pub enum CommercialSpec {
     /// step up from the cheapest; its small industry is research labs and
     /// fenced server halls. Appended.
     GlassCampus,
+    /// [r4-skyline] Skyline Luxe's shops: a vertical mall podium wrapped in
+    /// screens, a boutique row under neon, hotel and office towers with a
+    /// helipad; the street level stays the Neon strip's (gadget shops and
+    /// bakeries first). A spec of its own: the Neon strip keeps its towers
+    /// for Afterglow Mile and custom districts. Appended.
+    SkylineLuxe,
 }
 
 impl ResidentialSpec {
-    pub const ALL: [ResidentialSpec; 10] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule, ResidentialSpec::BrickSteel, ResidentialSpec::Lantern, ResidentialSpec::Garden, ResidentialSpec::HarbourPastel, ResidentialSpec::SolarpunkGreen, ResidentialSpec::GlassCampus];
+    pub const ALL: [ResidentialSpec; 11] = [ResidentialSpec::Kowloon, ResidentialSpec::Suburban, ResidentialSpec::Eco, ResidentialSpec::Capsule, ResidentialSpec::BrickSteel, ResidentialSpec::Lantern, ResidentialSpec::Garden, ResidentialSpec::HarbourPastel, ResidentialSpec::SolarpunkGreen, ResidentialSpec::GlassCampus, ResidentialSpec::SkylineLuxe];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -120,6 +130,7 @@ impl ResidentialSpec {
             ResidentialSpec::HarbourPastel => "Harbour Pastel",
             ResidentialSpec::SolarpunkGreen => "Solarpunk Green",
             ResidentialSpec::GlassCampus => "Glass Campus",
+            ResidentialSpec::SkylineLuxe => "Skyline Luxe",
         }
     }
 
@@ -135,6 +146,7 @@ impl ResidentialSpec {
             ResidentialSpec::HarbourPastel => "harbour_pastel",
             ResidentialSpec::SolarpunkGreen => "solarpunk_green",
             ResidentialSpec::GlassCampus => "glass_campus",
+            ResidentialSpec::SkylineLuxe => "skyline_luxe",
         }
     }
 
@@ -144,7 +156,7 @@ impl ResidentialSpec {
 }
 
 impl CommercialSpec {
-    pub const ALL: [CommercialSpec; 11] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule, CommercialSpec::BrickSteel, CommercialSpec::Lantern, CommercialSpec::Garden, CommercialSpec::HarbourPastel, CommercialSpec::SolarpunkGreen, CommercialSpec::GlassCampus];
+    pub const ALL: [CommercialSpec; 12] = [CommercialSpec::NeonStrip, CommercialSpec::TechCampus, CommercialSpec::NightMarket, CommercialSpec::Tourist, CommercialSpec::Capsule, CommercialSpec::BrickSteel, CommercialSpec::Lantern, CommercialSpec::Garden, CommercialSpec::HarbourPastel, CommercialSpec::SolarpunkGreen, CommercialSpec::GlassCampus, CommercialSpec::SkylineLuxe];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -159,6 +171,7 @@ impl CommercialSpec {
             CommercialSpec::HarbourPastel => "Harbour Pastel",
             CommercialSpec::SolarpunkGreen => "Solarpunk Green",
             CommercialSpec::GlassCampus => "Glass Campus",
+            CommercialSpec::SkylineLuxe => "Skyline Luxe",
         }
     }
 
@@ -175,6 +188,7 @@ impl CommercialSpec {
             CommercialSpec::HarbourPastel => "harbour_pastel",
             CommercialSpec::SolarpunkGreen => "solarpunk_green",
             CommercialSpec::GlassCampus => "glass_campus",
+            CommercialSpec::SkylineLuxe => "skyline_luxe",
         }
     }
 
@@ -238,10 +252,18 @@ pub enum Look {
     /// small industry; smeared tinted curtain walls with lit floors,
     /// screens, and atria lit all night. Appended.
     GlassCampus,
+    /// [r4-skyline] Skyline Luxe (Neo Tokyo Heights): luxury towers for the
+    /// rich over a hectic street. Slim smeared-glass towers on podiums of
+    /// noisy shops (signs, awnings, vending machines, scooters), twin
+    /// towers on a sky bridge, rooftop pools and cabanas, hotel and office
+    /// towers with a helipad, a vertical mall in screens, a boutique row
+    /// under neon; a sky villa for its mansions. Floors light one at a time
+    /// after dark, big lit brand signs. Appended.
+    SkylineLuxe,
 }
 
 impl Look {
-    pub const ALL: [Look; 15] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule, Look::BrickSteel, Look::Lantern, Look::Garden, Look::HarbourPastel, Look::SolarpunkGreen, Look::GlassCampus];
+    pub const ALL: [Look; 16] = [Look::Kowloon, Look::Suburban, Look::Eco, Look::NeonStrip, Look::TechCampus, Look::NightMarket, Look::Tourist, Look::Historic, Look::Capsule, Look::BrickSteel, Look::Lantern, Look::Garden, Look::HarbourPastel, Look::SolarpunkGreen, Look::GlassCampus, Look::SkylineLuxe];
 
     pub fn index(self) -> usize {
         self as usize
@@ -264,6 +286,7 @@ impl Look {
             Look::HarbourPastel => "harbour pastel",
             Look::SolarpunkGreen => "solarpunk green",
             Look::GlassCampus => "glass campus",
+            Look::SkylineLuxe => "skyline luxe",
         }
     }
 
@@ -296,6 +319,10 @@ impl Look {
             // [r4-glass] A campus reaches a floor over the block (as the
             // Tech campus did), twelve at most: flats, co-living, labs.
             Look::GlassCampus => (floors + 1).min(cap.max(1) + 1).min(12),
+            // [r4-skyline] Towers: a floor over the block as the Neon strip
+            // rose (the Eco homes' ten-storey cap gone), and never under a
+            // podium and two floors of flats where the block allows them.
+            Look::SkylineLuxe => (floors + 1).max(3).min(cap.max(1) + 1),
         };
         f.max(1)
     }
@@ -321,6 +348,10 @@ impl Look {
             // [r4-glass] The campus is built a step up from the cheapest
             // land, but its student flats stay within reach on the middle.
             Look::GlassCampus if tier == Tier::Low => Tier::Mid,
+            // [r4-skyline] Luxury: built a step up from what the land
+            // supports, as the Tech campus is (the street's cheap shops are
+            // the trades it favours, not the tier).
+            Look::SkylineLuxe => tier.up(),
             _ => tier,
         }
     }
@@ -348,6 +379,9 @@ impl Look {
             Look::SolarpunkGreen => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Bakery, 2.0), (BusinessKind::BikeShop, 2.0)],
             // [r4-glass] Offices first and gadget shops, as the Tech campus.
             Look::GlassCampus => &[(BusinessKind::Office, 5.0), (BusinessKind::GadgetShop, 2.0)],
+            // [r4-skyline] The hectic street of the Neon strip it replaces:
+            // gadget shops and bakeries first; the towers' hotels too.
+            Look::SkylineLuxe => &[(BusinessKind::GadgetShop, 4.0), (BusinessKind::Bakery, 2.0), (BusinessKind::Hotel, 2.0)],
             _ => &[],
         }
     }
@@ -383,6 +417,9 @@ impl Look {
             // [r4-glass] Between the Eco homes' lift and the Tech campus's,
             // which it replaces on Founders' Campus.
             Look::GlassCampus => Some((130.0, 0.05)),
+            // [r4-skyline] The Eco homes' lift, which it replaces on Neo
+            // Tokyo Heights.
+            Look::SkylineLuxe => Some((140.0, 0.06)),
             _ => None,
         }
     }
@@ -476,6 +513,7 @@ impl District {
                 ResidentialSpec::HarbourPastel => Look::HarbourPastel,
                 ResidentialSpec::SolarpunkGreen => Look::SolarpunkGreen,
                 ResidentialSpec::GlassCampus => Look::GlassCampus,
+                ResidentialSpec::SkylineLuxe => Look::SkylineLuxe,
             }),
             // Nightlife on a strip or in a market takes the street's look.
             LandUse::Commercial | LandUse::Entertainment => self.commercial.and_then(|s| match s {
@@ -497,6 +535,9 @@ impl District {
                 CommercialSpec::SolarpunkGreen => Some(Look::SolarpunkGreen),
                 // [r4-glass] The quad's café and the sheds' bars too.
                 CommercialSpec::GlassCampus => Some(Look::GlassCampus),
+                // [r4-skyline] The strip's nights out too: the mall's and
+                // the boutique row's bars.
+                CommercialSpec::SkylineLuxe => Some(Look::SkylineLuxe),
                 _ => None,
             }),
             // [r4-brick] Brick & Steel builds its works in brick too.
@@ -580,7 +621,7 @@ impl District {
 
     /// Draws visitors in its own right: a landmark district.
     pub fn is_landmark(&self) -> bool {
-        self.historic || matches!(self.commercial, Some(CommercialSpec::NeonStrip | CommercialSpec::NightMarket | CommercialSpec::Tourist | CommercialSpec::Lantern | CommercialSpec::HarbourPastel))
+        self.historic || matches!(self.commercial, Some(CommercialSpec::NeonStrip | CommercialSpec::NightMarket | CommercialSpec::Tourist | CommercialSpec::Lantern | CommercialSpec::HarbourPastel | CommercialSpec::SkylineLuxe))
     }
 }
 
@@ -1307,6 +1348,70 @@ mod tests {
         assert_eq!(saved.list[1].policies, Story::FoundersCampus.preset().policies, "the story's policies to start with");
         assert_eq!(saved.list[2].story, None);
         assert_eq!(saved.list[2].commercial, Some(CommercialSpec::TechCampus));
+        // Every load runs it: nothing more to do.
+        assert_eq!(saved.adopt_stories(), 0);
+    }
+
+    /// [r4-skyline] Skyline Luxe gives its look to homes, shops and nights
+    /// out (no industry, as the Neon strip had none); it keeps the Neon
+    /// strip's street (gadget shops and bakeries first, a landmark) and the
+    /// Eco homes' land lift, rises a floor over the block with no ten-storey
+    /// cap, and builds a step up. A Neo Tokyo Heights district saved with
+    /// the old dials (Eco homes, the Neon strip) takes the look on load
+    /// keeping its height limit and policies; so does a district from
+    /// before stories with exactly those dials; the Neon strip alone stays
+    /// Afterglow Mile's, Eco homes alone stay custom.
+    #[test]
+    fn skyline_luxe_look_and_old_neo_tokyo_saves() {
+        use crate::stories::Story;
+        let mut d = Districts::default();
+        let id = d.create(None, 1, 0).unwrap();
+        let dist = d.get_mut(id).unwrap();
+        dist.apply_story(Some(Story::NeoTokyoHeights));
+        for lu in [LandUse::Residential, LandUse::Commercial, LandUse::Entertainment] {
+            assert_eq!(dist.look_for(lu), Some(Look::SkylineLuxe), "{lu:?}");
+        }
+        assert_eq!(dist.look_for(LandUse::Industrial), None);
+        assert_eq!(dist.look_for(LandUse::Civic), None);
+        assert!(dist.is_landmark(), "the street is a sight, as the Neon strip's");
+        assert_eq!(Look::SkylineLuxe.favours()[..2], Look::NeonStrip.favours()[..2]);
+        assert_eq!(Look::SkylineLuxe.land_value(), Look::Eco.land_value());
+        assert_eq!(Look::SkylineLuxe.tier(Tier::Low), Tier::Mid);
+        assert_eq!(Look::SkylineLuxe.tier(Tier::Mid), Tier::High);
+        assert_eq!(Look::SkylineLuxe.floors(4, 3), 4);
+        assert_eq!(Look::SkylineLuxe.floors(1, 6), 3, "a podium and two floors");
+        assert_eq!(Look::SkylineLuxe.floors(30, 40), 31, "no ten-storey cap");
+        assert_eq!(Look::SkylineLuxe.floors(30, 12), 13, "the block's cap holds");
+        assert!(!Look::SkylineLuxe.tourist_quarter() && !Look::SkylineLuxe.favours_only());
+        assert_eq!(Look::ALL[Look::SkylineLuxe.index()], Look::SkylineLuxe);
+        assert_eq!(ResidentialSpec::parse("skyline_luxe"), Some(ResidentialSpec::SkylineLuxe));
+        assert_eq!(CommercialSpec::parse("Skyline Luxe"), Some(CommercialSpec::SkylineLuxe));
+        assert_eq!(ron::from_str::<Look>("SkylineLuxe").unwrap(), Look::SkylineLuxe);
+        // As saved before the look: the story with Eco homes and the Neon
+        // strip, a height limit and tuned business rate; an older district
+        // with those dials and no story; the strip alone; Eco homes alone.
+        let old = "(id: 3, name: \"Kasumi Heights\", color: 2, residential: Some(Eco), commercial: Some(NeonStrip), industry: None, historic: false, height_limit: Some(120.0), story: Some(NeoTokyoHeights), policies: (business_rate: 0.05, late_hours: true))";
+        let older = "(id: 4, name: \"Mirror Row\", color: 3, residential: Some(Eco), commercial: Some(NeonStrip), industry: None, historic: false)";
+        let strip = "(id: 5, name: \"Afterglow\", color: 4, residential: None, commercial: Some(NeonStrip), industry: None, historic: false)";
+        let eco = "(id: 6, name: \"Jade Commons\", color: 5, residential: Some(Eco), commercial: None, industry: None, historic: false)";
+        let mut saved = Districts::default();
+        for text in [old, older, strip, eco] {
+            saved.list.push(ron::from_str(text).expect("old district loads"));
+        }
+        assert_eq!(saved.adopt_stories(), 3);
+        for (i, height) in [(0, Some(120.0)), (1, None)] {
+            let got = &saved.list[i];
+            assert_eq!(got.story, Some(Story::NeoTokyoHeights), "{}", got.name);
+            assert_eq!((got.residential, got.commercial), (Some(ResidentialSpec::SkylineLuxe), Some(CommercialSpec::SkylineLuxe)));
+            assert_eq!(got.height_limit, height);
+            assert!(Story::NeoTokyoHeights.fits(got));
+        }
+        assert_eq!((saved.list[0].policies.business_rate, saved.list[0].policies.late_hours), (0.05, true), "its own policies kept");
+        assert_eq!(saved.list[1].policies, Story::NeoTokyoHeights.preset().policies, "the story's policies to start with");
+        assert_eq!(saved.list[2].story, Some(Story::AfterglowMile));
+        assert_eq!(saved.list[2].commercial, Some(CommercialSpec::NeonStrip));
+        assert_eq!(saved.list[3].story, None);
+        assert_eq!(saved.list[3].residential, Some(ResidentialSpec::Eco));
         // Every load runs it: nothing more to do.
         assert_eq!(saved.adopt_stories(), 0);
     }
