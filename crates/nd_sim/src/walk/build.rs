@@ -34,7 +34,7 @@ pub(super) type End = (u32, SegmentId, i8);
 
 impl WalkGraph {
     pub(crate) fn add_node(&mut self, pos: Vec2, lot: Option<LotId>) -> u32 {
-        self.nodes.push(WalkNode { pos, lot, near: Vec::new(), level: 0.0 });
+        self.nodes.push(WalkNode { pos, lot, near: Vec::new(), level: 0.0, deck: false, lifted: false });
         self.adj.push(Vec::new());
         (self.nodes.len() - 1) as u32
     }
@@ -340,6 +340,24 @@ impl WalkGraph {
                     n.level = (la + (lb - la) * t).min(-0.5);
                 }
             }
+            // [r4-metroloop] Up on a viaduct or a raised bridge: its
+            // pavements are marked as a deck, so a walk from the ground
+            // beside it (a metro platform under Harvey's Kessler Drive
+            // viaduct) is not snapped up onto it.
+            let (la, lb) = (roads.node(seg.a).level, roads.node(seg.b).level);
+            if !seg.tunnel && (seg.bridge || seg.viaduct || la.abs() > 0.3 || lb.abs() > 0.3) {
+                for n in &mut g.nodes[first_node..] {
+                    n.lifted = true;
+                }
+            }
+            if !seg.tunnel && la.max(lb) >= crate::roads::VIADUCT_LEVEL {
+                for n in &mut g.nodes[first_node..] {
+                    let t = geom::project_on_segment(n.pos, a, b).0;
+                    n.deck = la + (lb - la) * t >= crate::roads::VIADUCT_LEVEL;
+                }
+                let side = if seg.is_street() { crate::zoning::SIDEWALK } else { 0.0 };
+                g.decks.push((a, b, la, lb, seg.half_width() + side + 0.5));
+            }
         }
         // Joins at road nodes: plain bends link matching sides directly;
         // junctions get crosswalks and corners; a footpath meeting a street
@@ -442,6 +460,13 @@ impl WalkGraph {
             if underground {
                 for n in &mut g.nodes[from..to] {
                     n.level = rn.level.min(-0.5);
+                }
+            }
+            // [r4-metroloop] A junction up on a viaduct: its corners too.
+            if !underground && rn.level.abs() > 0.3 {
+                for n in &mut g.nodes[from..to] {
+                    n.lifted = true;
+                    n.deck = rn.level >= crate::roads::VIADUCT_LEVEL;
                 }
             }
         }
@@ -747,6 +772,7 @@ impl WalkGraph {
             self.cross_at.insert(pos_key(pb, pa), k as u32);
         }
         self.raised_at = self.nodes.iter().filter(|n| n.level != 0.0).map(|n| ((n.pos.x.to_bits(), n.pos.y.to_bits()), n.level)).collect();
+        self.on_deck_at = self.nodes.iter().map(|n| ((n.pos.x.to_bits(), n.pos.y.to_bits()), (n.deck, n.lifted))).collect();
     }
 
     /// [tools] Put the Intersection editor's crosswalk upgrades on the

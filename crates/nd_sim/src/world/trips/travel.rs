@@ -4,6 +4,7 @@ use super::*;
 
 impl World {
     pub(in crate::world) fn leave_building(&mut self, id: CitizenId) -> Option<Vec2> {
+        self.up_from_platform(id);
         if matches!(self.citizens[id].activity, Activity::Waiting { .. }) {
             self.citizens[id].activity = Activity::Idle;
         }
@@ -26,6 +27,25 @@ impl World {
         // [clarity] Where the trip starts, for "coming from".
         self.note_left(id, inside);
         self.building_entrance(inside)
+    }
+
+    /// [r4-metroloop] Someone waiting on a metro platform who goes
+    /// anywhere else comes up to the station's street entrance first: a
+    /// trip planned from the platform (under the middle of the lot) set off
+    /// from underground and was snapped onto whatever walkway was nearest,
+    /// a viaduct's overhead in Harvey's city. The give-up and line-closed
+    /// paths did this already; now every way out does.
+    pub(in crate::world) fn up_from_platform(&mut self, id: CitizenId) {
+        let Some(c) = self.citizens.get(id) else { return };
+        if !c.on_platform() {
+            return;
+        }
+        let Some(TransitLeg::Subway { board, .. }) = c.transit.map(|t| t.leg) else { return };
+        if let Some(p) = self.building_entrance(board) {
+            let c = &mut self.citizens[id];
+            c.pos = p;
+            c.prev_pos = p;
+        }
     }
 
     /// Where a citizen currently touches the road network: segment, point, node.
@@ -75,6 +95,7 @@ impl World {
             return;
         }
         let origin = self.citizens[id].inside;
+        self.up_from_platform(id);
         self.citizens[id].transit = None;
         self.citizens[id].to_car = None;
         if fresh && purpose != Purpose::Home {

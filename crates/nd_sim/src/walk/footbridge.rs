@@ -265,6 +265,19 @@ impl WalkGraph {
         }
     }
 
+    /// [r4-metroloop] Is the walk node at exactly `p` (a point of a
+    /// walker's path) up on a deck (`WalkNode::deck`)? None when no node
+    /// stands there (a stop, a door, a rider's line along the road).
+    pub fn deck_at_node(&self, p: Vec2) -> Option<bool> {
+        self.on_deck_at.get(&(p.x.to_bits(), p.y.to_bits())).map(|x| x.0)
+    }
+
+    /// [r4-metroloop] Is the walk node at exactly `p` laid along a way off
+    /// the ground (`WalkNode::lifted`)? None when no node stands there.
+    pub fn lifted_at_node(&self, p: Vec2) -> Option<bool> {
+        self.on_deck_at.get(&(p.x.to_bits(), p.y.to_bits())).map(|x| x.1)
+    }
+
     /// [tools] Height above the ground of a walk node at exactly `p` (a
     /// point of a walker's path): 0 off the raised walkways.
     pub fn level_at_node(&self, p: Vec2) -> f32 {
