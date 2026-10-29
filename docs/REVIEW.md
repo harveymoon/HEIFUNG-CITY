@@ -1,4 +1,4 @@
-# Code review — District 2040 at commit 97e3326 (October 2026)
+# Code review — HEIFUNG://CITY (then District 2040) at commit 97e3326 (October 2026)
 
 Four independent read-only reviews were run in parallel over the whole workspace
 (nd_sim core; nd_sim networks and geometry; nd_procgen; nd_app and project-level),

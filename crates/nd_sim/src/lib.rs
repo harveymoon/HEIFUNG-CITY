@@ -1,4 +1,4 @@
-//! Engine-independent simulation for Neon District.
+//! Engine-independent simulation for HEIFUNG://CITY.
 //!
 //! One tick is one simulated minute. The [`World`] owns every system and is
 //! fully serialisable, so saves are plain snapshots and the same seed with the

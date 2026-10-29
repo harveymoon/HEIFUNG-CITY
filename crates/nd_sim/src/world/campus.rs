@@ -288,7 +288,8 @@ impl World {
             ..Citizen::newcomer(name, seed, age, Some(dorm), Some(hid), pos, tick)
         };
         c.memories.clear();
-        c.remember(tick, format!("Came to Neon District to study at {campus}. Moved into the dorm."));
+        let town = if self.identity.name.is_empty() { "town".to_string() } else { self.identity.name.clone() };
+        c.remember(tick, format!("Came to {town} to study at {campus}. Moved into the dorm."));
         let id = self.citizens.insert(c);
         self.households[hid].members.push(id);
         self.buildings[dorm].households.push(hid);

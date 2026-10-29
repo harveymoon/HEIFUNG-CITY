@@ -134,7 +134,7 @@ fn write_log(body: &str) {
     let _ = std::fs::create_dir_all(&dir);
     rotate(&dir);
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let head = format!("Neon District {} crash, unix time {secs}\n", env!("CARGO_PKG_VERSION"));
+    let head = format!("HEIFUNG://CITY {} crash, unix time {secs}\n", env!("CARGO_PKG_VERSION"));
     if let Ok(mut f) = std::fs::File::create(log_path(&dir, 0)) {
         let _ = f.write_all(head.as_bytes());
         let _ = f.write_all(body.as_bytes());

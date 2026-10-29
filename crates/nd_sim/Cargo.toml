@@ -3,7 +3,7 @@ name = "nd_sim"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Engine-independent city simulation for Neon District"
+description = "Engine-independent city simulation for HEIFUNG://CITY"
 
 [dependencies]
 serde = { workspace = true }

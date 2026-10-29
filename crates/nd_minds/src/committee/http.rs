@@ -160,7 +160,7 @@ pub fn spawn_test(s: &CommitteeSettings) -> Receiver<Result<String, String>> {
             Ok(None) => Ok("the stand-in needs no connection".to_string()),
             Ok(Some(f)) => {
                 let agent = ureq::AgentBuilder::new().timeout(timeout).build();
-                let req = TurnRequest { speaker: None, task: Task::Ping, city: "Neon District".into(), day: 0, report: String::new(), seed: 0, max_tokens: 16 };
+                let req = TurnRequest { speaker: None, task: Task::Ping, city: "the city".into(), day: 0, report: String::new(), seed: 0, max_tokens: 16 };
                 let start = std::time::Instant::now();
                 call(&agent, &f, &req).map(|r| format!("{} answered in {:.1} s: \"{}\"", f.label(), start.elapsed().as_secs_f32(), r.text.chars().take(60).collect::<String>()))
             }
