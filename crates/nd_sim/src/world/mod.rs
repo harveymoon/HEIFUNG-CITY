@@ -137,6 +137,9 @@ mod places_tests;
 #[cfg(test)]
 mod under_construction_tests;
 mod industry_bridge;
+mod commercial;
+#[cfg(test)]
+mod commercial_tests;
 pub use plan::{insert_on_leg, leg_near, Blocker, Joint, ProjectCheck, ProjectInfo, ProjectPreview, JOINT_SAME};
 mod power;
 pub use power::{GridAsset, GridHour, PlantRow};
@@ -695,6 +698,10 @@ pub struct World {
     /// The player's industry sub-zone bias over areas, newest last.
     #[serde(default)]
     pub industry_bias: Vec<crate::industry::IndustryBias>,
+    /// [r4-leisure] The player's commercial sub-zone over areas, newest
+    /// last (`world/commercial.rs`).
+    #[serde(default)]
+    pub commercial_bias: Vec<crate::commercial::CommercialBias>,
     /// [places] Venue, shop and park reputations (`world/places.rs`).
     #[serde(default)]
     pub places: crate::places::Places,
@@ -930,6 +937,7 @@ impl World {
             contamination: crate::ground::Contamination::new(half + 200.0, crate::ground::CONTAMINATION_CELL),
             cleanups: Vec::new(),
             industry_bias: Vec::new(),
+            commercial_bias: Vec::new(),
             places: Default::default(),
             concerns: Default::default(),
             districts: Default::default(),

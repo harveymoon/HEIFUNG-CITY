@@ -35,10 +35,14 @@ impl World {
     /// on implement. With a sub-zone, parcels already planned industrial are
     /// painted again so their sub-zone changes.
     pub fn paint_parcels_with(&mut self, ids: &[usize], land_use: Option<LandUse>, industry: Option<&str>, stroke: Option<GestureId>) -> (Option<GestureId>, usize) {
+        // [r4-leisure] Commercial with the leisure sub-zone is leisure land.
+        let (land_use, industry) = commercial_paint(land_use, industry);
         // [waterfront] A park may be painted as a public beach (its
         // sub-zone), on parcels that run down to the water.
         let beach = land_use == Some(LandUse::Park) && industry == Some(crate::shore::BEACH_SUBZONE);
-        let industry = industry.filter(|k| land_use == Some(LandUse::Industrial) || (beach && *k == crate::shore::BEACH_SUBZONE)).map(str::to_string);
+        let industry = industry
+            .filter(|k| land_use == Some(LandUse::Industrial) || (beach && *k == crate::shore::BEACH_SUBZONE) || (land_use == Some(LandUse::Commercial) && crate::commercial::CommercialSub::is_choice(k)))
+            .map(str::to_string);
         // Plain park over a beach turns it back into a park.
         let beaches_now = if land_use == Some(LandUse::Park) && !beach { self.planned_beaches() } else { Vec::new() };
         let planned = self.planned_zoning();
@@ -85,10 +89,14 @@ impl World {
     /// A zone polygon, and with an industry sub-zone the same parcels
     /// painted with it, as one step (one undo).
     pub fn add_zone_gesture(&mut self, polygon: Vec<Vec2>, land_use: LandUse, industry: Option<&str>) -> GestureId {
+        // [r4-leisure] Commercial with the leisure sub-zone is leisure land.
+        let (lu, industry) = commercial_paint(Some(land_use), industry);
+        let land_use = lu.unwrap_or(land_use);
         let zone = GestureId(self.next_gesture);
         self.next_gesture += 1;
         let mut changes = vec![(zone, Some(Gesture::Zone { polygon: polygon.clone(), land_use }))];
-        if let (LandUse::Industrial, Some(ind)) = (land_use, industry) {
+        let subzoned = land_use == LandUse::Industrial || (land_use == LandUse::Commercial && industry.is_some_and(crate::commercial::CommercialSub::is_choice));
+        if let (true, Some(ind)) = (subzoned, industry) {
             let mut keys: Vec<ParcelKey> = self.parcels.in_polygon(&polygon).into_iter().filter(|&i| self.parcel_refusal(i, Some(land_use)).is_none()).map(|i| self.parcels.parcels[i].key).collect();
             keys.sort();
             if !keys.is_empty() {
@@ -117,15 +125,25 @@ impl World {
     pub(super) fn apply_industry_strokes(&mut self, project: &Project) {
         let touched: std::collections::BTreeSet<GestureId> = project.touched().collect();
         let mut patches: Vec<(Vec<Vec2>, String)> = Vec::new();
+        // [r4-leisure] and the commercial sub-zones, the same way
+        let mut shops: Vec<(Vec<Vec2>, String)> = Vec::new();
         for id in touched {
-            let Some(Gesture::ParcelZone { parcels, land_use: Some(LandUse::Industrial), industry: Some(kind) }) = self.master.gestures.get(&id) else { continue };
+            let (out, kind) = match self.master.gestures.get(&id) {
+                Some(Gesture::ParcelZone { parcels, land_use: Some(LandUse::Industrial), industry: Some(kind) }) => ((&mut patches, parcels), kind),
+                Some(Gesture::ParcelZone { parcels, land_use: Some(LandUse::Commercial), industry: Some(kind) }) => ((&mut shops, parcels), kind),
+                _ => continue,
+            };
+            let (out, parcels) = out;
             let polys: Vec<Vec<Vec2>> = parcels.iter().filter_map(|k| self.parcels.find(k)).map(|i| self.parcels.parcels[i].polygon.clone()).collect();
             for outline in crate::zoning::union_outlines(&polys) {
-                patches.push((outline, kind.clone()));
+                out.push((outline, kind.clone()));
             }
         }
         for (outline, kind) in patches {
             self.apply_industry_choice(outline, &kind);
+        }
+        for (outline, kind) in shops {
+            self.apply_commercial_choice(outline, &kind);
         }
     }
 
@@ -620,4 +638,17 @@ pub(in crate::world) fn refresh_lot_roads(lot: &mut Lot, roads: &RoadNetwork, pl
     lot.car_segment = f.car_segment;
     lot.car_point = f.car_point;
     lot.landlocked = f.landlocked;
+}
+
+/// [r4-leisure] A commercial stroke's sub-zone: leisure paints leisure land
+/// (`LandUse::Entertainment`, its sub-zone the land use itself); leisure
+/// land painted with another sub-zone is plain commercial with it.
+fn commercial_paint(land_use: Option<LandUse>, sub: Option<&str>) -> (Option<LandUse>, Option<&str>) {
+    use crate::commercial::CommercialSub;
+    match (land_use, sub.map(|k| (k, CommercialSub::from_key(k)))) {
+        (Some(LandUse::Commercial), Some((_, Some(CommercialSub::Leisure)))) => (Some(LandUse::Entertainment), None),
+        (Some(LandUse::Entertainment), Some((k, s))) if s != Some(CommercialSub::Leisure) && CommercialSub::is_choice(k) => (Some(LandUse::Commercial), Some(k)),
+        (Some(LandUse::Entertainment), _) => (Some(LandUse::Entertainment), None),
+        _ => (land_use, sub),
+    }
 }

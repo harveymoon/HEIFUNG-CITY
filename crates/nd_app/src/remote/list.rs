@@ -103,7 +103,7 @@ fn lazy_rows<'a>(w: &'a World, what: &str) -> Result<Vec<Row<'a>>, String> {
             .map(|(id, l)| -> Row<'a> {
                 Box::new(move || {
                     json!({
-                        "id": key_str(id), "land_use": lu_key(l.land_use), "area": round(l.area()), "land_value": round(w.land_value.at(l.center)),
+                        "id": key_str(id), "land_use": lu_key(l.land_use), "sub_zone": super::view::sub_zone(w, id, l), "area": round(l.area()), "land_value": round(w.land_value.at(l.center)),
                         "building": opt_key(l.building), "vacant": l.building.is_none() && l.usable(), "landlocked": l.landlocked,
                         "car_access": l.car_access(), "park": l.park.is_some(), "footfall_today": l.footfall_today, "pos": v2(l.center), "waterfront": l.shore.is_waterfront(), "beach": l.shore.beach,
                     })

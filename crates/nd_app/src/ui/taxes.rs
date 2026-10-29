@@ -19,6 +19,16 @@ use super::{hint, UiCtx, GOLD, WARN};
 const LESS: egui::Color32 = super::theme::GOOD;
 const AVG_TICK: egui::Color32 = egui::Color32::from_rgb(235, 225, 200);
 
+/// [r4-leisure] A group's name: the nightlife lines are commercial land's
+/// leisure sub-zone.
+fn group_label(lu: LandUse) -> &'static str {
+    if lu == LandUse::Entertainment {
+        "Commercial · leisure (nightlife)"
+    } else {
+        lu.label()
+    }
+}
+
 pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
     let rows = p.sim.world.tax_breakdown();
     let palette = &p.assets.palette;
@@ -105,7 +115,7 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
     let mut tip = Vec::new();
     for lu in groups {
         let sum: f32 = rows.iter().filter(|r| r.category.land_use() == lu).map(|r| r.today).sum();
-        tip.push(format!("{}: {:.0}", lu.label(), sum));
+        tip.push(format!("{}: {:.0}", group_label(lu), sum));
         if total_today <= 0.0 || sum <= 0.0 {
             continue;
         }
@@ -137,7 +147,7 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
         let what = if lu == LandUse::Residential { "income tax by home tier" } else { "tax on takings" };
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(lu.label().to_uppercase()).small().strong().color(col));
+            ui.label(egui::RichText::new(group_label(lu).to_uppercase()).small().strong().color(col));
             ui.label(egui::RichText::new(format!("{what} · {buildings} buildings · {take:.0}")).small().weak());
         });
         egui::Grid::new(("tax_lines", lu.index())).num_columns(4).spacing(egui::vec2(8.0, 3.0)).show(ui, |ui| {

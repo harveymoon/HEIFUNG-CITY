@@ -29,6 +29,8 @@ pub mod districts;
 pub mod stories;
 /// [dams] (H1) Hydro dam walls the player draws.
 pub mod dams;
+/// [r4-leisure] Commercial sub-zones: neighbourhood, retail, offices, leisure.
+pub mod commercial;
 pub mod economy;
 pub mod enforcement;
 /// [land] The land market: pressure, prices, owners, merged plots, the super-elite.

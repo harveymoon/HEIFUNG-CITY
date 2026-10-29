@@ -190,6 +190,14 @@ fn demand(w: &World) -> Value {
     LandUse::ALL.iter().map(|&lu| (lu_key(lu), json!(round(w.economy.demand_for(lu))))).collect::<Map<_, _>>().into()
 }
 
+/// [r4-leisure] The commercial bar of the Demand window and its sub-zones.
+fn commercial_demand(w: &World) -> Value {
+    let d = w.commercial_demand();
+    let mut m: Map<String, Value> = nd_sim::commercial::CommercialSub::ALL.iter().map(|s| (s.key().to_string(), json!(round(d[s.index()])))).collect();
+    m.insert("overall".into(), json!(round(w.commercial_demand_overall())));
+    m.into()
+}
+
 /// [w1] The demand the sites going up already meet, per land use.
 fn demand_met(w: &World) -> Value {
     let u = w.demand_under_way();
@@ -229,6 +237,9 @@ fn overview(w: &World, alerts: &[Alert]) -> Value {
         "demand_by_land_use": demand(w),
         // [w1] The demand the sites going up already meet (the Demand panel's light extension).
         "demand_met_by_sites": demand_met(w),
+        // [r4-leisure] Commercial land by sub-zone (leisure is the old
+        // entertainment, `demand_by_land_use.leisure`).
+        "commercial_demand": commercial_demand(w),
         "headline_alerts": alerts.iter().take(5).map(|a| a.message.clone()).collect::<Vec<_>>(),
     })
 }

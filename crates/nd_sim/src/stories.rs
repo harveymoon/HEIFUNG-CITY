@@ -249,6 +249,12 @@ pub enum Story {
 }
 
 impl Story {
+    /// [r4-leisure] The nightlife stories: commercial land on auto there
+    /// leans to the leisure sub-zone.
+    pub fn is_nightlife(self) -> bool {
+        matches!(self, Story::AfterglowMile | Story::LanternLanes)
+    }
+
     pub const ALL: [Story; 12] = [
         Story::Capsule,
         Story::EcoVillage,

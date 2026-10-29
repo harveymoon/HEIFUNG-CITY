@@ -25,6 +25,8 @@ mod concerns;
 /// [city-data] The full-screen City Data view: tabs, sub-tabs, pages.
 pub mod city_data;
 mod detail;
+/// [r4-leisure] Demand for new buildings: City Data's panel and its window.
+pub mod demand;
 /// [directory] City Data's Directory: every business and person, sortable.
 pub mod directory;
 mod economy;

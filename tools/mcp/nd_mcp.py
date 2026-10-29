@@ -133,7 +133,7 @@ TOOLS = [
             "curved": {"type": "boolean"},
             "snap": {"type": "boolean", "description": "snap road ends to the network (default true)"},
             "polygon": POINTS,
-            "land_use": {"type": "string", "enum": ["residential", "commercial", "industrial", "entertainment", "civic", "park"]},
+            "land_use": {"type": "string", "enum": ["residential", "commercial", "industrial", "leisure", "entertainment", "civic", "park"]},
             "gesture_id": {"type": "integer"},
             "project_action": {"type": "string", "enum": ["start", "implement", "undo", "redo", "discard"]},
             "implement": {"type": "boolean"},

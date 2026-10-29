@@ -28,7 +28,7 @@ impl World {
             yards halts seller_index seller_index_hour available groceries_for_sale meals_for_sale
             landscape ports fishing road_z road_inner relief ground bridge_metres bots driving journeys
             peds waiting_cache crowds_cache seats society vehicles enforcement air contamination cleanups
-            industry_bias places concerns districts tourism subway tolls taxis cargo_hubs rides streets
+            industry_bias commercial_bias places concerns districts tourism subway tolls taxis cargo_hubs rides streets
             pillars pillar_gaps crosswalks estate skyline pressure scene identity street_events road_wear
             dirty road_log social social_concern committee path_links corps shore level_crossings attractions
             freight_queue games airlifts dams parks insight

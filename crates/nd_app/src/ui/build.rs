@@ -245,7 +245,9 @@ fn make_groups(cat: Cat) -> Vec<Group> {
             }
         }
         Cat::Zoning => {
-            for lu in LandUse::ALL.into_iter().filter(|l| *l != LandUse::Park) {
+            // [r4-leisure] No Entertainment zone: leisure is Commercial's
+            // sub-zone (the Zone tool's options).
+            for lu in LandUse::ZONED.into_iter().filter(|l| *l != LandUse::Park) {
                 add("Land use", Item::Zone(lu));
             }
         }
@@ -359,7 +361,7 @@ pub fn activate(item: Item, t: &mut ToolState) {
             t.pick_preset("Rail");
         }
         Item::Zone(lu) => {
-            t.land_use = lu;
+            t.set_zone_use(lu);
             t.unzone = false;
             t.beach = false;
         }
@@ -910,7 +912,8 @@ fn info(ui: &mut egui::Ui, p: &mut UiCtx, item: Item, hovered: bool) {
             hint(ui, BEACH_NOTE);
         }
         Item::Zone(lu) => {
-            let demand = p.sim.world.economy.demand_for(lu);
+            // [r4-leisure] Commercial: the highest of its sub-zones'.
+            let demand = if lu == LandUse::Commercial { p.sim.world.commercial_demand_overall() } else { p.sim.world.economy.demand_for(lu) };
             let col = super::theme::rgb_f(p.assets.palette.zone_color(lu));
             ui.add(egui::ProgressBar::new(demand).text(format!("demand {:.0}%", demand * 100.0)).fill(col.gamma_multiply(0.7)).desired_height(18.0));
             // [civic-demand] What the city is short of, for civic and parks.
@@ -1022,7 +1025,7 @@ fn row(ui: &mut egui::Ui, label: &str, value: String) {
 fn zone_note(lu: LandUse) -> &'static str {
     match lu {
         LandUse::Residential => "Homes. Newcomers move in when there are jobs; rents follow land value.",
-        LandUse::Commercial => "Shops and offices: jobs, groceries and goods. Needs a street out front.",
+        LandUse::Commercial => "Shops, offices and nightlife: jobs, groceries and goods, nights out. Needs a street out front. Pick a sub-zone in the options (neighbourhood, retail, offices, leisure), or leave it on auto and the city decides lot by lot.",
         LandUse::Industrial => "Works yards and plants: jobs and goods, noise and pollution. Pick a sub-zone in the options.",
         LandUse::Entertainment => "Bars, clubs, cinemas: nightlife and jobs, some noise at night.",
         LandUse::Civic => "Public offices (halls, courts, agencies): well-paid jobs, lift land value around them. The town needs more floor space of them as it grows.",

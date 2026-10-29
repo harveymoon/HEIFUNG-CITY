@@ -392,7 +392,10 @@ impl World {
                 return true;
             }
         }
-        // No way on from here: park nearby and walk.
+        // No way on from here (the next place is behind the car on its
+        // lane): park nearby and walk. [r4-leisure] Still a new leg from
+        // the stop: the time to the stop is not this leg's.
+        self.begin_leg(car_id);
         false
     }
 

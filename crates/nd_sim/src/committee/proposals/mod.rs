@@ -83,9 +83,9 @@ pub enum Action {
 pub const ACTION_HELP: &str = r#"build_service {service: police|fire|health|school|trash_depot|dispatch, tier: low|mid|high, near: <area>}
 build_power {plant: solar|wind|coal, near: <area>}
 build_depot {near: <area>}
-rezone {area: <area>, to: residential|commercial|industrial|entertainment|park}
+rezone {area: <area>, to: residential|commercial|industrial|leisure|park}
 add_bus_line {from: <area>, to: <area>}
-change_tax {category: residential|commercial|industrial|entertainment|<category key>, delta_pct: -5..5}
+change_tax {category: residential|commercial|industrial|leisure|<category key>, delta_pct: -5..5}
 set_toll {toll: <id or omit for all>, price: 0..50}
 road_repair {funding: 0..1.5}
 remediate {area: <area>}"#;
