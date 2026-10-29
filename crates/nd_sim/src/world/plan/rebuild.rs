@@ -253,6 +253,12 @@ impl World {
         crate::prof!("rb.kerbs", self.refresh_kerbs());
         crate::prof!("rb.links", { self.refresh_rail_links(); self.refresh_port_links() });
         crate::prof!("rb.walk", self.rebuild_walk());
+        // [r4-flags-sim] Footbridges and buttons follow a crosswalk that
+        // moved with its junction (Harvey moved a junction a little and
+        // "all the footbridges I made are now gone", flag day 8).
+        if roads_changed && self.reanchor_crossing_rules() {
+            self.build_walk_graph();
+        }
         // [fix/buildings-ui] Camps the works paved over move on now (G16).
         crate::prof!("rb.camps", self.move_camps_on(false));
         // Coverage is per lot key: the old map names other lots now.
