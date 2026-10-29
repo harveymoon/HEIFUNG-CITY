@@ -14,6 +14,7 @@ use crate::citizens::CitizenId;
 use crate::roads::{project_on_segment, NodeId, RoadNetwork, SegmentId, END_SNAP_RADIUS, RAIL_HALF_WIDTH};
 use crate::traffic::Cargo;
 use glam::Vec2;
+use crate::timetable::{Kind, Timeline, Timetable};
 use serde::{Deserialize, Serialize};
 use slotmap::{new_key_type, SlotMap};
 
@@ -162,6 +163,12 @@ pub struct Rail {
     /// [freight] Imports ordered by rail, waiting out of town for the next
     /// freight train to their yard.
     pub orders: Vec<RailOrder>,
+    /// [r4-timetable] The passenger service's hours and headway part by
+    /// part; `None` runs a train every `PASSENGER_HEADWAY` from 05:00 to
+    /// 23:00 (`Rail::schedule`).
+    pub timetable: Option<Timetable>,
+    /// [r4-timetable] The passenger service's day hour by hour.
+    pub timeline: Timeline,
 }
 
 /// [freight] What a save keeps of the railway. Trains are not saved, but
@@ -177,11 +184,15 @@ struct RailSave {
     last_freight_tick: u64,
     #[serde(default)]
     orders: Vec<RailOrder>,
+    #[serde(default)]
+    timetable: Option<Timetable>,
+    #[serde(default)]
+    timeline: Timeline,
 }
 
 impl From<RailSave> for Rail {
     fn from(s: RailSave) -> Self {
-        Rail { trains: SlotMap::with_key(), stats: s.stats, last_passenger_tick: s.last_passenger_tick, last_freight_tick: s.last_freight_tick, orders: s.orders }
+        Rail { trains: SlotMap::with_key(), stats: s.stats, last_passenger_tick: s.last_passenger_tick, last_freight_tick: s.last_freight_tick, orders: s.orders, timetable: s.timetable, timeline: s.timeline }
     }
 }
 
@@ -193,13 +204,28 @@ impl From<Rail> for RailSave {
         for t in r.trains.values() {
             orders.extend(t.cargo.iter().map(|c| RailOrder { cargo: *c, since }));
         }
-        RailSave { stats: r.stats, last_passenger_tick: r.last_passenger_tick, last_freight_tick: r.last_freight_tick, orders }
+        RailSave { stats: r.stats, last_passenger_tick: r.last_passenger_tick, last_freight_tick: r.last_freight_tick, orders, timetable: r.timetable, timeline: r.timeline }
     }
 }
 
 impl Rail {
     pub fn in_service(minute_of_day: u32) -> bool {
         (SERVICE_START..SERVICE_END).contains(&minute_of_day)
+    }
+
+    /// [r4-timetable] The passenger service's timetable: its own, else a
+    /// train every `PASSENGER_HEADWAY` through the standard hours.
+    pub fn schedule(&self) -> Timetable {
+        self.timetable.unwrap_or_else(|| Timetable::flat(Kind::Rail, PASSENGER_HEADWAY as u32))
+    }
+
+    /// [r4-timetable] Minutes between passenger trains at minute `m` of
+    /// the day, `None` while they do not run.
+    pub fn headway_at(&self, m: u32) -> Option<u64> {
+        match &self.timetable {
+            Some(t) => t.value_at(m).map(u64::from),
+            None => Rail::in_service(m % 1440).then_some(PASSENGER_HEADWAY),
+        }
     }
 
     /// Whether `train` must wait: another train's head or tail stands on

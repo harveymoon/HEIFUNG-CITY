@@ -641,7 +641,7 @@ mod tests {
         let (from, _) = arm_points(Vec2::X, 1, 0);
         let (_, to) = arm_points(Vec2::Y, 1, 0);
         let bus = send(&mut t, &roads, from, to);
-        t.cars[bus].bus = Some(Bus { route: Default::default(), next_stop: 0, passengers: Vec::new(), to_depot: false, depot: Default::default() });
+        t.cars[bus].bus = Some(Bus { route: Default::default(), next_stop: 0, passengers: Vec::new(), to_depot: false, retiring: false, depot: Default::default() });
         let truck = send(&mut t, &roads, from * 0.8, to);
         t.cars[truck].cargo = Some(Cargo { from: Default::default(), to: Default::default(), resource: crate::market::Resource::Parts, amount: 1.0, price: 1.0 });
         let mut done = Vec::new();

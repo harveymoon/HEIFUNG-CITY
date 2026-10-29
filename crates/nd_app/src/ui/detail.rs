@@ -598,6 +598,35 @@ pub fn transit(ui: &mut egui::Ui, p: &mut UiCtx) {
         pane::line_chart(ui, &pane::hour_labels(&hours), &series, 100.0, &|x| format!("{x:.0}"));
         legend(ui, &series);
 
+        // [r4-timetable] One line's day, picked here: boardings each hour
+        // today against yesterday, riders waiting and on board, over its
+        // timetable's parts; the Lines window edits the timetable.
+        let lines = w.timetabled_lines();
+        if !lines.is_empty() {
+            use nd_sim::timetable::{LineRef, Part};
+            heading(ui, "A day on each line");
+            let pick_id = egui::Id::new("city_data_day_line");
+            let mut line: LineRef = ui.ctx().data(|d| d.get_temp::<LineRef>(pick_id)).filter(|l| lines.contains(l)).unwrap_or(lines[0]);
+            let kind_name = |l: LineRef| match l {
+                LineRef::Bus(_) => "bus",
+                LineRef::Metro(_) => "metro",
+                LineRef::Rail => "trains",
+                LineRef::Ferry(_) => "ferry",
+            };
+            egui::ComboBox::from_id_salt("city_data_day_combo").selected_text(format!("{} ({})", w.line_name(line).unwrap_or_default(), kind_name(line))).show_ui(ui, |ui| {
+                for l in &lines {
+                    ui.selectable_value(&mut line, *l, format!("{} ({})", w.line_name(*l).unwrap_or_default(), kind_name(*l)));
+                }
+            });
+            ui.ctx().data_mut(|d| d.insert_temp(pick_id, line));
+            if let (Some((t, custom)), Some(tl)) = (w.line_schedule(line), w.line_timeline(line)) {
+                super::lines::timeline::show(ui, egui::Id::new(("city_data_day", line)), line.kind(), &t, custom, tl, w.clock.minute_of_day() as u32, false);
+                let by = tl.by_part(&t, true);
+                let parts: Vec<String> = t.parts().into_iter().map(|p: Part| format!("{} {} ({} boarded, wait {})", p.label(), line.kind().value_text(t.value(p)), by[p.index()].0, by[p.index()].1.map_or("—".into(), |m| format!("{m:.0} min")))).collect();
+                hint(ui, &format!("{} · yesterday by part: {}. The Lines window (top bar) sets the timetable.", t.hours_text(), parts.join(" · ")));
+            }
+        }
+
         if !w.transit.routes.is_empty() {
             heading(ui, "Bus lines");
             hint(ui, "Click a line to pick it: it shows on the map when the view closes. The Lines window (top bar) edits it stop by stop.");

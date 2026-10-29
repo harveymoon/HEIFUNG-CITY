@@ -972,6 +972,8 @@ pub fn route_row(id: RouteId, r: &nd_sim::BusRoute) -> Value {
         "riders_yesterday": r.boardings_yesterday(),
         "stops": r.stops.iter().map(|s| json!({ "pos": v2(s.pos), "segment": s.segment.0, "on_today": s.stats.on_today, "off_today": s.stats.off_today, "back": s.back })).collect::<Vec<_>>(),
         "broken_legs": r.broken, "legs": r.legs.len(), "two_way": r.two_way, "outbound_stops": r.outbound_len(),
+        // [r4-timetable] The line's hours and its own timetable or the standard.
+        "hours": r.schedule().hours_text(), "timetable": if r.timetable.is_some() { r.schedule().preset(nd_sim::timetable::Kind::Bus).map_or("own", |p| p.key()) } else { "standard" },
     })
 }
 

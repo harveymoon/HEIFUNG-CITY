@@ -734,6 +734,88 @@ pub fn stacked_bars(ui: &mut egui::Ui, labels: &[String], series: &[Series], hei
     }
 }
 
+/// [r4-timetable] A shaded stretch of a day chart: from and to (minutes of
+/// the day), its colour and what it is (a timetable's part).
+pub struct Band {
+    pub from: u32,
+    pub to: u32,
+    pub color: Color32,
+    pub label: String,
+}
+
+/// [r4-timetable] A day from midnight to midnight, hour by hour: `bars`
+/// side by side in each hour (the first filled, the others drawn as
+/// outlines behind it: today against yesterday), `lines` through the
+/// hours' middles on the same scale, over shaded `bands` (a timetable's
+/// parts) and a mark at `now`. Returns the plot's rect and how wide a
+/// minute is, for handles drawn over it.
+pub fn day_chart(ui: &mut egui::Ui, bands: &[Band], bars: &[Series], lines: &[Series], now: Option<u32>, height: f32, fmt: &dyn Fn(f32) -> String) -> Rect {
+    let (resp, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+    let mut plot = plot_rect(resp.rect);
+    // Room for the bands' names along the top.
+    plot.min.y += 14.0;
+    painter.rect_filled(plot, 2.0, PLOT_BG);
+    let x_of = |m: f32| plot.left() + plot.width() * m / 1440.0;
+    let small = crate::ui::theme::small();
+    for b in bands {
+        let r = Rect::from_min_max(egui::pos2(x_of(b.from as f32), plot.top() - 14.0), egui::pos2(x_of(b.to as f32), plot.bottom()));
+        painter.rect_filled(Rect::from_min_max(egui::pos2(r.left(), plot.top()), r.max), 0.0, b.color.gamma_multiply(0.16));
+        painter.rect_filled(Rect::from_min_max(r.min, egui::pos2(r.right(), plot.top() - 1.0)), 0.0, b.color.gamma_multiply(0.45));
+        if r.width() > 34.0 {
+            let galley = painter.layout_no_wrap(b.label.clone(), small.clone(), IVORY);
+            if galley.size().x + 4.0 < r.width() {
+                painter.galley(egui::pos2(r.center().x - galley.size().x * 0.5, r.top()), galley, IVORY);
+            }
+        }
+    }
+    let at = |s: &Series, h: usize| s.values.get(h).copied().unwrap_or(0.0);
+    let max = bars.iter().chain(lines.iter()).flat_map(|s| s.values.iter().copied()).fold(0.0f32, f32::max);
+    let top = nice(max.max(1.0));
+    let y_of = |v: f32| plot.bottom() - plot.height() * (v / top).clamp(0.0, 1.0);
+    let hw = plot.width() / 24.0;
+    for h in 0..24 {
+        let x0 = plot.left() + h as f32 * hw + 1.0;
+        let x1 = plot.left() + (h + 1) as f32 * hw - 1.0;
+        for (k, s) in bars.iter().enumerate().rev() {
+            let v = at(s, h);
+            if v <= 0.0 {
+                continue;
+            }
+            let r = Rect::from_min_max(egui::pos2(x0, y_of(v)), egui::pos2(x1.max(x0 + 1.0), plot.bottom()));
+            if k == 0 {
+                painter.rect_filled(r.shrink2(egui::vec2(hw * 0.12, 0.0)), 0.0, s.color);
+            } else {
+                painter.rect_stroke(r, 0.0, Stroke::new(1.0, s.color), egui::StrokeKind::Inside);
+            }
+        }
+    }
+    for s in lines {
+        let pts: Vec<Pos2> = (0..24).map(|h| egui::pos2(plot.left() + (h as f32 + 0.5) * hw, y_of(at(s, h)))).collect();
+        painter.line(pts, Stroke::new(1.6, s.color));
+    }
+    if let Some(m) = now {
+        painter.vline(x_of(m as f32), plot.y_range(), Stroke::new(1.0, IVORY.gamma_multiply(0.7)));
+    }
+    painter.text(egui::pos2(plot.left() - 3.0, plot.top()), egui::Align2::RIGHT_TOP, super::fmt::compact(top), small.clone(), TICK);
+    painter.text(egui::pos2(plot.left() - 3.0, plot.bottom()), egui::Align2::RIGHT_BOTTOM, "0", small.clone(), TICK);
+    for h in [0, 6, 12, 18, 24] {
+        let align = match h {
+            0 => egui::Align2::LEFT_TOP,
+            24 => egui::Align2::RIGHT_TOP,
+            _ => egui::Align2::CENTER_TOP,
+        };
+        painter.text(egui::pos2(x_of(h as f32 * 60.0), plot.bottom() + 2.0), align, format!("{h:02}:00"), small.clone(), TICK);
+    }
+    if let Some(pos) = resp.hover_pos().filter(|p| plot.expand(4.0).contains(*p)) {
+        let h = (((pos.x - plot.left()) / hw).floor().max(0.0) as usize).min(23);
+        painter.rect_stroke(Rect::from_min_max(egui::pos2(plot.left() + h as f32 * hw, plot.top()), egui::pos2(plot.left() + (h + 1) as f32 * hw, plot.bottom())), 0.0, Stroke::new(1.0, Color32::from_gray(150)), egui::StrokeKind::Inside);
+        let part = bands.iter().find(|b| (b.from..b.to).contains(&(h as u32 * 60 + 30))).map_or(" · no service".to_string(), |b| format!(" · {}", b.label));
+        let rows = bars.iter().chain(lines.iter()).map(|s| (s.name.clone(), s.color, at(s, h))).collect();
+        readout(resp, &format!("{h:02}:00–{:02}:00{part}", h + 1), rows, None, fmt);
+    }
+    plot
+}
+
 /// A small chart for a compact view: one line, no axes but the last value.
 pub fn sparkline(ui: &mut egui::Ui, values: &[f32], color: Color32, height: f32, tip: &str) {
     let (resp, painter) = ui.allocate_painter(egui::vec2(ui.available_width(), height), egui::Sense::hover());

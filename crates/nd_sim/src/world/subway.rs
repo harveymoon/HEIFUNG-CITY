@@ -4,10 +4,13 @@
 //! `walk_to_transit` and `board_waiting` (`world/trains.rs`).
 
 use super::*;
-use crate::subway::{self as metro, MetroLine, MetroLineId, MetroPlan, MetroTrain, MetroTrainId, Subway};
+use crate::subway::{self as metro, MetroLine, MetroLineId, MetroPlan, MetroTrain, MetroTrainId};
 
 /// At most this many metro trains run at once, city-wide.
 const MAX_METRO_TRAINS: usize = 80;
+/// [r4-timetable] Minutes from the entrance down to the platform, for
+/// whether a line still runs when a rider gets there.
+const METRO_STAIRS: u64 = 2;
 
 impl World {
     /// Put a metro entrance on a lot (whatever grew there is bought out):
@@ -167,7 +170,7 @@ impl World {
         self.economy.debit(Flow::Construction, cost);
         self.subway.next_line += 1;
         let n = self.subway.next_line;
-        let line = MetroLine { name: format!("Line {n}"), color: ((n - 1) % metro::LINE_COLOURS as u32) as u8, stations: seen, path, stops, headway: metro::DEFAULT_HEADWAY, last_dispatch: 0, riders_today: 0, riders_yesterday: 0, runs_today: 0, looped };
+        let line = MetroLine { name: format!("Line {n}"), color: ((n - 1) % metro::LINE_COLOURS as u32) as u8, stations: seen, path, stops, headway: metro::DEFAULT_HEADWAY, last_dispatch: 0, riders_today: 0, riders_yesterday: 0, runs_today: 0, looped, timetable: self.transit.default_preset.map(|p| p.timetable(crate::timetable::Kind::Metro, metro::DEFAULT_HEADWAY)), timeline: Default::default() };
         let id = self.subway.lines.insert(line);
         self.subway.version += 1;
         Ok(id)
@@ -192,6 +195,11 @@ impl World {
     pub fn set_metro_headway(&mut self, id: MetroLineId, minutes: u32) -> Result<u32, String> {
         let l = self.subway.lines.get_mut(id).ok_or("no such line")?;
         l.headway = minutes.clamp(metro::MIN_HEADWAY, metro::MAX_HEADWAY);
+        // [r4-timetable] With a timetable: the day's headway (the rushes,
+        // the evening and the night keep theirs).
+        if let Some(t) = l.timetable.as_mut() {
+            t.values[crate::timetable::Part::Day.index()] = l.headway;
+        }
         Ok(l.headway)
     }
 
@@ -200,7 +208,20 @@ impl World {
         if self.subway.lines.is_empty() {
             return None;
         }
-        self.subway.plan_trip(from, to, self.config.traffic_seconds_per_tick, self.config.walk_speed, |s| self.metro_entrance(s))
+        self.subway.plan_trip(from, to, self.config.traffic_seconds_per_tick, self.config.walk_speed, |s| self.metro_entrance(s), |_, _, _, _| true)
+    }
+
+    /// [r4-timetable] The best metro ride for a trip setting off now: only
+    /// lines whose trains still run (or have started) by the time the
+    /// rider has walked to the platform. (Some 300 a night chose the
+    /// metro at 23:xx and reached the platform after the last train.)
+    pub(super) fn plan_subway_trip_now(&self, from: Vec2, to: Vec2) -> Option<MetroPlan> {
+        if self.subway.lines.is_empty() {
+            return None;
+        }
+        let now = self.clock.tick;
+        let (walk, secs) = (self.config.walk_speed.max(0.1), self.config.traffic_seconds_per_tick);
+        self.subway.plan_trip(from, to, secs, self.config.walk_speed, |s| self.metro_entrance(s), |l, i, j, d| l.still_calls(now, now + (d * 1.5 / walk).ceil() as u64 + METRO_STAIRS, i, j, secs))
     }
 
     /// Lines lose stations that were pulled down (the tunnel is re-laid
@@ -278,8 +299,10 @@ impl World {
         let tick = self.clock.tick;
         let minute = self.clock.minute_of_day() as u32;
         let seconds = self.config.traffic_seconds_per_tick;
-        if Subway::in_service(minute) {
-            let due: Vec<MetroLineId> = self.subway.lines.iter().filter(|(_, l)| l.stations.len() >= 2 && (l.last_dispatch == 0 || l.last_dispatch > tick || tick - l.last_dispatch >= l.headway as u64)).map(|(id, _)| id).collect();
+        // [r4-timetable] Each line on its own timetable: its hours, and the
+        // headway of the part of the day it is in.
+        {
+            let due: Vec<MetroLineId> = self.subway.lines.iter().filter(|(_, l)| l.stations.len() >= 2 && l.headway_at(minute).is_some_and(|h| l.last_dispatch == 0 || l.last_dispatch > tick || tick - l.last_dispatch >= h as u64)).map(|(id, _)| id).collect();
             for id in due {
                 if self.subway.trains.len() + 2 > MAX_METRO_TRAINS {
                     break;
@@ -287,6 +310,7 @@ impl World {
                 let l = &mut self.subway.lines[id];
                 l.last_dispatch = tick.max(1);
                 l.runs_today += 2;
+                l.timeline.run(minute / 60, 2);
                 let color = l.color;
                 for forward in [true, false] {
                     let run = self.subway.lines[id].run(forward, color);
@@ -393,6 +417,11 @@ impl World {
             let name = self.buildings.get(at).map(|b| b.name.clone()).unwrap_or_default();
             let boarding = self.board_waiting(|t| matches!(&t.leg, TransitLeg::Subway { line: ll, board, alight } if *ll == line && *board == at && l.serves(forward, *board, *alight)), metro::CAPACITY.saturating_sub(keep.len()), metro::FARE, Flow::SubwayFares, Item::Named(name.to_string()), &format!("Took the {} from {name}.", l.name));
             let n = boarding.len() as u32;
+            let tick = self.clock.tick;
+            let waited: u64 = boarding.iter().map(|&p| self.citizens[p].transit.map_or(0, |t| if t.since > 0 { tick.saturating_sub(t.since) } else { 0 })).sum();
+            if let Some(l) = self.subway.lines.get_mut(line) {
+                l.timeline.board(self.clock.minute_of_day() as u32 / 60, n, waited as u32);
+            }
             for p in boarding {
                 self.citizens[p].activity = Activity::OnMetro { train: id };
                 keep.push(p);
@@ -919,5 +948,85 @@ mod tests {
         };
         let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
         assert!(back.subway.lines[line2].looped);
+    }
+
+    /// [r4-timetable] A line's trains follow its timetable: twice as often
+    /// in the morning rush as at midday, and with a 24-hour timetable on
+    /// through the night, each run on the line's timeline and paid for.
+    #[test]
+    fn metro_trains_run_to_the_lines_timetable() {
+        use crate::timetable::{LineRef, Part, Preset};
+        let mut w = town();
+        let mut mind = IdleMind;
+        let a = w.build_metro_station(lot_near(&w, Vec2::new(-900.0, 30.0))).unwrap();
+        let b = w.build_metro_station(lot_near(&w, Vec2::new(900.0, 30.0))).unwrap();
+        let line = w.add_metro_line(&[a, b]).unwrap();
+        w.set_metro_headway(line, 20).unwrap();
+        let t = w.set_line_preset(LineRef::Metro(line), Preset::Commuter).unwrap();
+        assert_eq!((t.value(Part::MorningRush), t.value(Part::Day), t.value(Part::Evening)), (10, 20, 30));
+        w.clock = SimClock::starting_at(0, 5, 0);
+        while w.clock.minute_of_day() < 13 * 60 {
+            w.tick(&mut mind);
+        }
+        let tl = &w.subway.lines[line].timeline.today;
+        assert_eq!(tl[7].runs, 2 * 6, "every 10 min in the rush, both ways");
+        assert_eq!(tl[11].runs, 2 * 3, "every 20 min at midday");
+        // Out of hours, nothing; 24 hours, a train at 02:00.
+        w.clock = SimClock::starting_at(1, 1, 0);
+        for _ in 0..120 {
+            w.tick(&mut mind);
+        }
+        assert!(w.subway.trains.values().all(|t| t.line != line), "no trains in the night");
+        w.set_line_preset(LineRef::Metro(line), Preset::Hours24).unwrap();
+        let before = w.subway.lines[line].runs_today;
+        for _ in 0..30 {
+            w.tick(&mut mind);
+        }
+        assert!(w.subway.lines[line].runs_today > before, "the night train ran");
+        assert!(w.subway.trains.values().any(|t| t.line == line));
+        assert_eq!(w.subway.lines[line].headway, 20, "the line's day headway kept");
+    }
+
+    /// [r4-timetable] Mode choice will not send a rider to a metro that
+    /// has stopped by the time they reach the platform (Harvey's day 46:
+    /// some 300 a night chose it at 23:xx and found the last train gone),
+    /// and a 24-hour line is offered all night. Riders who board are on the
+    /// timeline with their wait.
+    #[test]
+    fn riders_do_not_choose_a_metro_that_will_have_stopped() {
+        use crate::timetable::{LineRef, Preset};
+        let mut w = town();
+        let mut mind = IdleMind;
+        let a = w.build_metro_station(lot_near(&w, Vec2::new(-900.0, 30.0))).unwrap();
+        let b = w.build_metro_station(lot_near(&w, Vec2::new(900.0, 30.0))).unwrap();
+        let line = w.add_metro_line(&[a, b]).unwrap();
+        // A few minutes' walk from the entrance.
+        let ea = w.building_entrance(a).unwrap();
+        let from = ea + Vec2::new(-250.0, 0.0);
+        let to = w.building_entrance(b).unwrap() + Vec2::new(60.0, 0.0);
+        let walk_min = from.distance(ea) * 1.25 / w.config.walk_speed;
+        assert!(walk_min > 4.0, "a walk to the entrance: {walk_min}");
+        w.clock = SimClock::starting_at(0, 12, 0);
+        assert!(w.plan_subway_trip_now(from, to).is_some(), "midday: the metro");
+        w.clock = SimClock::starting_at(0, 23, 59);
+        assert!(w.plan_subway_trip(from, to).is_some(), "the line serves the trip");
+        assert!(w.plan_subway_trip_now(from, to).is_none(), "but it stops at midnight, before they reach it");
+        w.set_line_preset(LineRef::Metro(line), Preset::Hours24).unwrap();
+        assert!(w.plan_subway_trip_now(from, to).is_some(), "a 24-hour line still takes them");
+        // A rider on the platform at 00:40 on the 24-hour line waits for
+        // the night train and boards it; the wait is on the timeline.
+        let rider = walker(&mut w, ea);
+        w.clock = SimClock::starting_at(1, 0, 40);
+        w.citizens[rider].transit = Some(TransitTrip { leg: TransitLeg::Subway { line, board: a, alight: b }, target: b, purpose: Purpose::Wander, since: w.clock.tick, bike: false });
+        w.citizens[rider].activity = Activity::Waiting { at: ea };
+        let mut rode = false;
+        for _ in 0..40 {
+            w.tick(&mut mind);
+            rode |= matches!(w.citizens[rider].activity, Activity::OnMetro { .. });
+        }
+        assert!(rode, "boarded the night train: {} ({})", w.citizens[rider].activity.label(), w.citizens[rider].thought);
+        let slot = w.subway.lines[line].timeline.today[0];
+        assert_eq!((slot.boarded, slot.timed), (1, 1));
+        assert!(slot.wait_min <= 12 && slot.samples > 0, "{slot:?}");
     }
 }

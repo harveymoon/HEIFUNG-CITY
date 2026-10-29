@@ -1772,7 +1772,7 @@ fn removing_a_bus_stop_shifts_riders_and_buses_and_cancels_trips_through_it() {
     let (lanes, s0, s1) = w.traffic.net.find_route(stops[1].segment, stops[1].pos, stops[3].segment, stops[3].pos).expect("route");
     let car = w.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, 0);
     let depot = w.buildings.iter().find(|(_, b)| b.depot).map(|(id, _)| id).unwrap();
-    w.traffic.cars[car].bus = Some(Bus { route, next_stop: 3, passengers: Vec::new(), to_depot: false, depot });
+    w.traffic.cars[car].bus = Some(Bus { route, next_stop: 3, passengers: Vec::new(), to_depot: false, retiring: false, depot });
     w.remove_bus_stop(route, 2);
     assert_eq!(w.transit.routes[route].stops.len(), 5);
     assert_eq!(w.traffic.cars[car].bus.as_ref().unwrap().next_stop, 2, "the bus's next stop moved down one");

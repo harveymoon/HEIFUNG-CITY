@@ -599,10 +599,13 @@ impl World {
         let room = self.rail.trains.len() < rail::MAX_TRAINS && !queued;
         // [dock-access] Trains call at stations not yet on the roads too
         // (rail to rail); nobody gets on or off there.
-        if room && Rail::in_service(minute) && !(self.stations.is_empty() && self.halts.is_empty()) && tick.saturating_sub(self.rail.last_passenger_tick) >= rail::PASSENGER_HEADWAY {
+        // [r4-timetable] On the passenger timetable: its hours, and the
+        // headway of the part of the day it is in.
+        if room && self.rail.headway_at(minute).is_some_and(|h| tick.saturating_sub(self.rail.last_passenger_tick) >= h) && !(self.stations.is_empty() && self.halts.is_empty()) {
             let stations: Vec<BuildingId> = self.stations.iter().chain(self.halts.iter()).copied().collect();
             if self.spawn_train(TrainKind::Passenger, &stations) {
                 self.rail.stats.passenger_trains_today += 1;
+                self.rail.timeline.run(minute / 60, 1);
             }
             self.rail.last_passenger_tick = tick;
         }
@@ -729,7 +732,17 @@ impl World {
         // worth keeping to the minute.
         self.rail.stats.trains = self.rail.trains.len() as u32;
         self.plan_rail_day_trips();
-        self.rail.stats.next_passenger_in = if self.stations.is_empty() && self.halts.is_empty() { 0 } else { rail::PASSENGER_HEADWAY.saturating_sub(tick.saturating_sub(self.rail.last_passenger_tick)) as u32 };
+        self.rail.stats.next_passenger_in = if self.stations.is_empty() && self.halts.is_empty() {
+            0
+        } else {
+            // [r4-timetable] The headway in force now; out of hours, until
+            // the first train of the morning.
+            let m = self.clock.minute_of_day() as u32;
+            match self.rail.headway_at(m) {
+                Some(h) => h.saturating_sub(tick.saturating_sub(self.rail.last_passenger_tick)) as u32,
+                None => (self.rail.schedule().next_running(tick, crate::timetable::Kind::Rail) - tick) as u32,
+            }
+        };
     }
 
     /// A train stands at a station or yard: people off and on, goods off.
@@ -766,7 +779,11 @@ impl World {
                 }
                 let name = self.buildings.get(at).map(|b| b.name.clone()).unwrap_or_default();
                 let boarding = self.board_waiting(|t| matches!(&t.leg, TransitLeg::Rail { board, .. } if *board == at), rail::TRAIN_CAPACITY.saturating_sub(keep.len()), rail::RAIL_FARE, Flow::RailFares, Item::Building(at), &format!("Took the train from {name}."));
+                let tick = self.clock.tick;
+                let hour = self.clock.minute_of_day() as u32 / 60;
                 for p in boarding {
+                    let waited = self.citizens[p].transit.map_or(0, |t| if t.since > 0 { tick.saturating_sub(t.since) } else { 0 });
+                    self.rail.timeline.board(hour, 1, waited as u32);
                     self.citizens[p].activity = Activity::OnTrain { train: id };
                     keep.push(p);
                     self.rail.stats.fares_today += rail::RAIL_FARE;

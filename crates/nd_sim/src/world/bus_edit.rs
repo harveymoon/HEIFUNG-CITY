@@ -185,7 +185,7 @@ mod tests {
         let (a, b) = (w.transit.routes[route].stops[1], w.transit.routes[route].stops[2]);
         let (lanes, s0, s1) = w.traffic.net.find_route(a.segment, a.pos, b.segment, b.pos).expect("a road between");
         let id = w.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, 0);
-        w.traffic.cars[id].bus = Some(Bus { route, next_stop: 2, passengers: Vec::new(), to_depot: false, depot: BuildingId::default() });
+        w.traffic.cars[id].bus = Some(Bus { route, next_stop: 2, passengers: Vec::new(), to_depot: false, retiring: false, depot: BuildingId::default() });
         w.transit.departures.insert(id, (1, 0));
         let at = w.insert_bus_stop(route, Some(1), v(0.0, 4.0)).unwrap();
         assert_eq!(at, 1);

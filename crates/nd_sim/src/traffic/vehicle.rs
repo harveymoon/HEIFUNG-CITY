@@ -267,5 +267,9 @@ pub struct Bus {
     pub passengers: Vec<CitizenId>,
     /// Finish the loop at the next stop and go home.
     pub to_depot: bool,
+    /// [r4-timetable] Taken off the line as a busier part of the day ends:
+    /// it takes nobody on and goes home once its riders are off.
+    #[serde(default)]
+    pub retiring: bool,
     pub depot: crate::buildings::BuildingId,
 }

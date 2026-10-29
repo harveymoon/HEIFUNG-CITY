@@ -33,8 +33,9 @@ pub fn cached(ctx: &bevy_egui::egui::Context, w: &World, generation: u64) -> std
     let id = bevy_egui::egui::Id::new("lines_problems");
     let depots = w.buildings.values().filter(|b| b.working_depot()).count();
     let service = nd_sim::transit::Transit::in_service(w.clock.minute_of_day() as u32);
-    // Re-checked every game hour too (buses out, depots full).
-    let key = (generation, w.transit.version, w.transit.routes.len(), depots, service, w.clock.tick / 60);
+    // Re-checked every game quarter hour too (buses out, depots full, a
+    // timetable part changing: [r4-timetable]).
+    let key = (generation, w.transit.version, w.transit.routes.len(), depots, service, w.clock.tick / 15);
     if let Some(c) = ctx.data(|d| d.get_temp::<Cache>(id)).filter(|c| c.key == key) {
         return c.problems;
     }

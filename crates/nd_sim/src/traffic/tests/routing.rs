@@ -12,7 +12,7 @@ fn a_stalled_vehicle_is_replanned_never_removed() {
     let (route, s0, s1) = t.net.find_route(west, Vec2::new(-150.0, -2.0), north, Vec2::new(2.0, 150.0)).expect("route");
     let goal = *route.last().unwrap();
     let bus = t.spawn_car(CitizenId::default(), None, route.clone(), s0, s1, 0);
-    t.cars[bus].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 1, passengers: Vec::new(), to_depot: false, depot: BuildingId::default() });
+    t.cars[bus].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 1, passengers: Vec::new(), to_depot: false, retiring: false, depot: BuildingId::default() });
     let car = t.spawn_car(CitizenId::default(), None, route, s0 + 20.0, s1, 0);
     // Both have been out far too long; neither has moved.
     t.cars[bus].age = REPLAN_AFTER + 1.0;
@@ -32,7 +32,7 @@ fn a_stalled_vehicle_is_replanned_never_removed() {
     let east = roads.nearest_street(Vec2::new(150.0, 0.0)).unwrap().0;
     let (lane, s, _) = t.net.nearest_lane_on(east, Vec2::new(150.0, 2.0)).unwrap();
     let stuck = t.spawn_car(CitizenId::default(), None, vec![lane], s, s - 20.0, 0);
-    t.cars[stuck].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 1, passengers: Vec::new(), to_depot: false, depot: BuildingId::default() });
+    t.cars[stuck].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 1, passengers: Vec::new(), to_depot: false, retiring: false, depot: BuildingId::default() });
     t.cars[stuck].age = REPLAN_AFTER + 1.0;
     t.step(1.0, 1);
     assert!(t.cars.contains_key(stuck), "past its stop it arrives where it stands; nothing is deleted");
@@ -105,7 +105,7 @@ fn a_bus_pulls_out_of_a_depot_beside_a_saturated_lane() {
         send(&mut t, &roads, Vec2::new(-380.0, 0.5 * w), Vec2::new(380.0, 0.5 * w));
         if tick == 120 {
             let id = send(&mut t, &roads, Vec2::new(-100.0, 0.5 * w), Vec2::new(300.0, 0.5 * w));
-            t.cars[id].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 0, passengers: Vec::new(), to_depot: false, depot: BuildingId::default() });
+            t.cars[id].bus = Some(Bus { route: crate::transit::RouteId::default(), next_stop: 0, passengers: Vec::new(), to_depot: false, retiring: false, depot: BuildingId::default() });
             if !t.cars[id].entering {
                 // Out of the depot gate, not yet on the road.
                 let lane = t.cars[id].route[0];

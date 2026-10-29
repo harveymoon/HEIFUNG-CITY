@@ -1,6 +1,7 @@
 //! Buses: depots, routes and stops, dispatch and the bus loop.
 
 use super::*;
+use crate::timetable::{self, Kind};
 
 /// [services] How near its depot's driveway a bus going home must stand to
 /// be in (metres): farther, it drives there first.
@@ -211,7 +212,7 @@ impl World {
     pub fn line_problems(&self, route: RouteId) -> Vec<LineProblem> {
         let Some(r) = self.transit.routes.get(route) else { return Vec::new() };
         let mut out = r.route_problems();
-        if r.buses == 0 {
+        if r.peak_buses() == 0 {
             out.push(LineProblem::NoBuses);
         }
         let depots: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.working_depot()).map(|(id, _)| id).collect();
@@ -235,8 +236,10 @@ impl World {
                 out.push(LineProblem::DepotsFull);
             }
         }
-        if !Transit::in_service(self.clock.minute_of_day() as u32) {
-            out.push(LineProblem::OutOfService);
+        // [r4-timetable] By the line's own hours.
+        let t = r.schedule();
+        if !t.runs_at(self.clock.minute_of_day() as u32, Kind::Bus) {
+            out.push(LineProblem::OutOfService { start: t.start, end: t.end });
         }
         out
     }
@@ -245,7 +248,10 @@ impl World {
     /// many the working depots hold (their own bays and the truck lots
     /// they overflow into).
     pub fn fleet_balance(&self) -> (u32, u32) {
-        let wanted = self.transit.routes.values().filter(|r| r.runnable()).map(|r| r.buses as u32).sum();
+        // [r4-timetable] At the busiest quarter hour of the day: one line's
+        // rush may fall in another's quiet evening.
+        let lines: Vec<&transit::BusRoute> = self.transit.routes.values().filter(|r| r.runnable()).collect();
+        let wanted = (0..timetable::DAY).step_by(timetable::SNAP as usize).map(|m| lines.iter().map(|r| r.buses_at(m)).sum::<u32>()).max().unwrap_or(0);
         let capacity = self.buildings.iter().filter(|(_, b)| b.working_depot()).map(|(id, _)| transit::DEPOT_CAPACITY + self.depot_overflow(id)).sum();
         (wanted, capacity)
     }
@@ -259,7 +265,7 @@ impl World {
     /// depot with room that can reach its first stop. `running` and
     /// `at_depot` count the buses out (per line, per depot) and are kept
     /// up to date. Returns why none went, if none did.
-    fn dispatch_bus(&mut self, route: RouteId, running: &mut HashMap<RouteId, u32>, at_depot: &mut HashMap<BuildingId, u32>) -> Option<DispatchProblem> {
+    fn dispatch_bus(&mut self, route: RouteId, wanted: u32, running: &mut HashMap<RouteId, u32>, at_depot: &mut HashMap<BuildingId, u32>) -> Option<DispatchProblem> {
         let tick = self.clock.tick;
         // [pt-transit] The buses join the loop spread round it: the k-th of
         // n out starts at the stop k/n of the way round, so a long line is
@@ -267,7 +273,7 @@ impl World {
         let start = {
             let r = &self.transit.routes[route];
             let out = running.get(&route).copied().unwrap_or(0) as usize;
-            (out * r.stops.len() / (r.buses.max(1) as usize)) % r.stops.len()
+            (out * r.stops.len() / (wanted.max(1) as usize)) % r.stops.len()
         };
         let first = self.transit.routes[route].stops[start];
         let mut depots: Vec<(f32, BuildingId)> = self.buildings.iter().filter(|(_, b)| b.working_depot()).filter_map(|(id, _)| self.building_lot(id).map(|l| (l.car_point.distance(first.pos), id))).collect();
@@ -287,7 +293,7 @@ impl World {
             let color = self.transit.routes[route].color;
             let id = self.traffic.spawn_car(CitizenId::default(), None, lanes, s0, s1, color);
             self.traffic.cars[id].model = crate::vehicle::VehicleModel::bus(color, &mut crate::vehicle::model_rng(tick, slotmap::Key::data(&id).as_ffi()));
-            self.traffic.cars[id].bus = Some(Bus { route, next_stop: start, passengers: Vec::new(), to_depot: false, depot });
+            self.traffic.cars[id].bus = Some(Bus { route, next_stop: start, passengers: Vec::new(), to_depot: false, retiring: false, depot });
             self.transit.last_dispatch_tick = tick;
             *running.entry(route).or_default() += 1;
             *at_depot.entry(depot).or_default() += 1;
@@ -458,9 +464,14 @@ impl World {
         self.transit.refresh_legs(&self.traffic.net);
     }
 
+    /// The line's buses; with a timetable, its day's (the rushes, the
+    /// evening and the night keep theirs).
     pub fn set_route_buses(&mut self, route: RouteId, n: u8) {
         if let Some(r) = self.transit.routes.get_mut(route) {
             r.buses = n.min(transit::DEPOT_CAPACITY as u8);
+            if let Some(t) = r.timetable.as_mut() {
+                t.values[timetable::Part::Day.index()] = r.buses as u32;
+            }
             self.transit.version += 1;
         }
     }
@@ -471,19 +482,28 @@ impl World {
         let tick = self.clock.tick;
         let minute = self.clock.minute_of_day();
         let in_service = Transit::in_service(minute as u32);
+        // [r4-timetable] Buses each line's timetable wants out now.
+        let wanted: HashMap<RouteId, u32> = self.transit.routes.iter().map(|(id, r)| (id, r.buses_at(minute as u32))).collect();
+        let want = |id: RouteId| wanted.get(&id).copied().unwrap_or(0);
         // Buses out per line, and per depot.
         let mut running: HashMap<RouteId, u32> = HashMap::new();
         let mut at_depot: HashMap<BuildingId, u32> = HashMap::new();
+        // [r4-timetable] Buses being taken off after a rush still carry
+        // their riders (and are paid for) but no longer count to the line.
+        let mut charged: HashMap<RouteId, u32> = HashMap::new();
         for car in self.traffic.cars.values() {
             if let Some(bus) = &car.bus {
                 if !bus.to_depot {
-                    *running.entry(bus.route).or_default() += 1;
+                    *charged.entry(bus.route).or_default() += 1;
+                    if !bus.retiring {
+                        *running.entry(bus.route).or_default() += 1;
+                    }
                 }
                 *at_depot.entry(bus.depot).or_default() += 1;
             }
         }
         // [pt-transit] Each line's buses for the bus-minutes it is charged.
-        for (route, n) in &running {
+        for (route, n) in &charged {
             if let Some(r) = self.transit.routes.get_mut(*route) {
                 r.bus_minutes_today = r.bus_minutes_today.saturating_add(*n);
             }
@@ -492,14 +512,16 @@ impl World {
         // headway: a line that cannot be served (no depot reaches it) no
         // longer holds up the lines after it, and a line's buses leave the
         // depot a headway apart instead of all at once (they bunched).
-        if in_service && tick.saturating_sub(self.transit.last_dispatch_tick) >= transit::DISPATCH_GAP {
+        // [r4-timetable] Each line on its own hours: a rush sends extra
+        // buses out.
+        if tick.saturating_sub(self.transit.last_dispatch_tick) >= transit::DISPATCH_GAP {
             let secs = self.config.traffic_seconds_per_tick;
-            let due: Vec<RouteId> = self.transit.routes.iter().filter(|(id, r)| r.runnable() && running.get(id).copied().unwrap_or(0) < r.buses as u32 && tick >= r.next_release).map(|(id, _)| id).collect();
+            let due: Vec<RouteId> = self.transit.routes.iter().filter(|(id, r)| r.runnable() && running.get(id).copied().unwrap_or(0) < want(*id) && tick >= r.next_release).map(|(id, _)| id).collect();
             for route in due {
-                let problem = self.dispatch_bus(route, &mut running, &mut at_depot);
+                let problem = self.dispatch_bus(route, want(route), &mut running, &mut at_depot);
                 let r = &mut self.transit.routes[route];
                 r.dispatch = problem;
-                r.next_release = tick + if problem.is_some() { transit::DISPATCH_RETRY } else { r.release_gap(secs) };
+                r.next_release = tick + if problem.is_some() { transit::DISPATCH_RETRY } else { r.headway_with(secs, want(route)).min(transit::MAX_RELEASE_GAP) };
                 // One bus a tick from all the depots at most, as before.
                 if problem.is_none() {
                     break;
@@ -507,16 +529,31 @@ impl World {
             }
         }
         for (id, r) in self.transit.routes.iter_mut() {
-            if r.dispatch.is_some() && running.get(&id).copied().unwrap_or(0) >= r.buses as u32 {
+            let n = running.get(&id).copied().unwrap_or(0);
+            if r.dispatch.is_some() && want(id) > 0 && n >= want(id) {
                 r.dispatch = None;
             }
+            // [r4-timetable] Past a rush: the buses beyond the timetable go
+            // home from their next stop (`bus_arrived`).
+            r.retire = if want(id) > 0 { n.saturating_sub(want(id)) } else { 0 };
         }
-        if !in_service {
-            for car in self.traffic.cars.values_mut() {
-                if let Some(bus) = car.bus.as_mut() {
+        // Out of hours (the line's own; for a bus whose line has gone, the
+        // standard ones): every bus home.
+        for car in self.traffic.cars.values_mut() {
+            if let Some(bus) = car.bus.as_mut() {
+                let home = match wanted.get(&bus.route) {
+                    Some(n) => *n == 0,
+                    None => !in_service,
+                };
+                if home {
                     bus.to_depot = true;
                 }
             }
+        }
+        // [r4-timetable] The timelines' quarter-hour sample: who waits for
+        // each line and who rides it.
+        if tick % timetable::SAMPLE_EVERY == 0 {
+            self.sample_timelines();
         }
         // Riders who gave up: checked every ten ticks, since the limit is
         // hours and the scan is everyone.
@@ -525,12 +562,8 @@ impl World {
             // has had `LAST_RUN_GRACE` to come, everyone still waiting for
             // one: nothing more comes until the morning. (Waiting riders
             // used to decide again, and went home or on another way.)
-            let over = |leg: &TransitLeg| match leg {
-                TransitLeg::Bus { .. } => transit::service_over(minute as u32, transit::SERVICE_START, transit::SERVICE_END, transit::LAST_RUN_GRACE),
-                TransitLeg::Subway { .. } => transit::service_over(minute as u32, crate::subway::SERVICE_START, crate::subway::SERVICE_END, transit::LAST_RUN_GRACE),
-                TransitLeg::Rail { .. } => transit::service_over(minute as u32, crate::rail::SERVICE_START, crate::rail::SERVICE_END, transit::LAST_RUN_GRACE * 2),
-                _ => false,
-            };
+            // [r4-timetable] By each line's own timetable.
+            let over = |leg: &TransitLeg| self.leg_service_over(leg, minute as u32);
             let tired: Vec<(CitizenId, bool)> = self
                 .citizens
                 .iter()
@@ -544,6 +577,11 @@ impl World {
                 .collect();
             for (id, night) in tired {
                 let Some(trip) = self.citizens[id].transit.take() else { continue };
+                if night {
+                    if let Some(l) = self.leg_timeline(&trip.leg) {
+                        l.miss(minute as u32 / 60);
+                    }
+                }
                 // [pt-transit] Up from the metro platform to the street first.
                 if let TransitLeg::Subway { board, .. } = trip.leg {
                     if let Some(p) = self.building_entrance(board) {
@@ -646,8 +684,19 @@ impl World {
         };
         // Off.
         let mut passengers = bus.passengers.clone();
+        // [r4-timetable] A bus the timetable no longer wants (a rush is
+        // over) is taken off from here: it takes nobody on, lets its riders
+        // off at their stops, and goes home once it is empty.
+        let retiring = !bus.to_depot
+            && (bus.retiring
+                || self.transit.routes.get_mut(bus.route).is_some_and(|r| {
+                    let go = r.retire > 0;
+                    r.retire = r.retire.saturating_sub(1);
+                    go
+                }));
         let alighting: Vec<CitizenId> = passengers.iter().copied().filter(|p| self.citizens.get(*p).and_then(|c| c.transit).is_none_or(|t| match t.leg { TransitLeg::Bus { route, alight, .. } => alight == stop_idx || route != bus.route, _ => true })).collect();
         passengers.retain(|p| !alighting.contains(p));
+        let home_now = retiring && passengers.is_empty();
         // [lines] Count the stop's riders off, and time the leg that brought
         // the bus here if it came straight from the stop before.
         {
@@ -673,7 +722,7 @@ impl World {
         }
         // On, up to the capacity.
         let memory = format!("Caught the {} bus.", self.transit.routes[bus.route].name);
-        let at_stop = |t: &TransitTrip| matches!(t.leg, TransitLeg::Bus { route, board, .. } if route == bus.route && board == stop_idx);
+        let at_stop = |t: &TransitTrip| !retiring && matches!(t.leg, TransitLeg::Bus { route, board, .. } if route == bus.route && board == stop_idx);
         let mut boarding = self.board_waiting(|t| !t.bike && at_stop(t), transit::BUS_CAPACITY.saturating_sub(passengers.len()), fare, Flow::BusFares, Item::Route(bus.route), &memory);
         // [bike-racks] Cyclists with their bikes, while the front rack has
         // a place; the rest wait for the next bus.
@@ -697,7 +746,11 @@ impl World {
                 }
             }
         }
+        let hour = self.clock.minute_of_day() as u32 / 60;
         for p in boarding {
+            // [r4-timetable] On the line's timeline, with the wait.
+            let waited = self.citizens[p].transit.map_or(0, |t| if t.since > 0 { tick.saturating_sub(t.since) } else { 0 });
+            self.transit.routes[bus.route].timeline.board(hour, 1, waited as u32);
             self.citizens[p].activity = Activity::Riding { bus: car_id };
             passengers.push(p);
             self.economy.transit.fares_today += fare;
@@ -716,15 +769,17 @@ impl World {
         let hold = {
             let secs = self.config.traffic_seconds_per_tick.max(0.1);
             let r = &mut self.transit.routes[bus.route];
-            let half = r.headway(secs) as f32 * 0.5;
+            // [r4-timetable] Spaced for the buses out now.
+            let now = r.buses_at(self.clock.minute_of_day() as u32);
+            let half = r.headway_with(secs, now) as f32 * 0.5;
             let last = r.stops[stop_idx].stats.last_call;
             r.stops[stop_idx].stats.last_call = tick;
             let gap = tick.saturating_sub(last) as f32;
-            let extra = if passable && last > 0 && !bus.to_depot && r.buses > 1 && gap < half { ((half - gap) * secs).min(transit::HOLD_MAX_SECONDS) } else { 0.0 };
+            let extra = if passable && last > 0 && !bus.to_depot && !retiring && now > 1 && gap < half { ((half - gap) * secs).min(transit::HOLD_MAX_SECONDS) } else { 0.0 };
             transit::DWELL_SECONDS + extra
         };
         // On to the next stop, or home.
-        let (next_idx, to_seg, to_pos) = if bus.to_depot {
+        let (next_idx, to_seg, to_pos) = if bus.to_depot || home_now {
             match self.car_stop(bus.depot) {
                 Some((s, p)) => (usize::MAX, s, p),
                 None => {
@@ -758,6 +813,8 @@ impl World {
                 if let Some(b) = car.bus.as_mut() {
                     b.next_stop = next_idx;
                     b.passengers = passengers;
+                    b.to_depot |= home_now;
+                    b.retiring = retiring && !home_now;
                 }
                 // [pt-transit] Each leg is a drive of its own: timed from
                 // this stop (the inspector said "568 min on the road" for

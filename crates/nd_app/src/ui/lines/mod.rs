@@ -15,9 +15,11 @@
 
 pub mod diagram;
 pub mod problems;
+pub mod timeline;
 
 use bevy::prelude::Vec2;
 use bevy_egui::egui::{self, Color32};
+use nd_sim::timetable::{LineRef, Preset, Timetable};
 use nd_sim::{MetroLineId, RouteId};
 
 use super::{hint, section, UiCtx, GOLD, IVORY, WARN};
@@ -74,6 +76,33 @@ enum Act {
     MetroSlot(usize),
     /// [w1] Run a bus line both ways or as a loop.
     TwoWay(RouteId, bool),
+    /// [r4-timetable] A line's own timetable (or the standard), a preset,
+    /// the city's default for new lines (and to every line), and the rail
+    /// or ferry row opened.
+    Timetable(LineRef, Option<Timetable>),
+    Preset(LineRef, Preset),
+    DefaultPreset(Option<Preset>, bool),
+    PickOther(Option<LineRef>),
+}
+
+/// [r4-timetable] The rail or ferry row open in the window (bus and metro
+/// lines are picked in the tools' state, as the map shows them).
+fn other_open(ctx: &egui::Context) -> Option<LineRef> {
+    ctx.data(|d| d.get_temp::<Option<LineRef>>(egui::Id::new("lines_other_open"))).flatten()
+}
+
+/// [r4-timetable] An open line's day: the timeline chart and its
+/// timetable, editable.
+fn day_section(ui: &mut egui::Ui, p: &UiCtx, line: LineRef, act: &mut Option<Act>) {
+    let w = &p.sim.world;
+    let (Some((t, custom)), Some(tl)) = (w.line_schedule(line), w.line_timeline(line)) else { return };
+    section(ui, "THE DAY ON THIS LINE");
+    let id = egui::Id::new(("line_day", p.sim.generation, line));
+    match timeline::show(ui, id, line.kind(), &t, custom, tl, w.clock.minute_of_day() as u32, true) {
+        Some(timeline::Edit::Set(x)) => *act = Some(Act::Timetable(line, x)),
+        Some(timeline::Edit::Preset(pr)) => *act = Some(Act::Preset(line, pr)),
+        None => {}
+    }
 }
 
 /// Stop names, worked out once per edit of the lines: the nearest building
@@ -132,6 +161,24 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
                 }
             }
         });
+        // [r4-timetable] The timetable new lines start on.
+        ui.horizontal(|ui| {
+            let cur = w.transit.default_preset;
+            ui.label(egui::RichText::new("new lines run").small().weak());
+            let mut pick = cur;
+            egui::ComboBox::from_id_salt("lines_default_timetable").selected_text(egui::RichText::new(cur.map_or("Standard", |p| p.label())).small()).show_ui(ui, |ui| {
+                ui.selectable_value(&mut pick, None, "Standard").on_hover_text("The standard hours, one frequency all day");
+                for pr in Preset::ALL {
+                    ui.selectable_value(&mut pick, Some(pr), pr.label()).on_hover_text(pr.blurb());
+                }
+            });
+            if pick != cur {
+                act = Some(Act::DefaultPreset(pick, false));
+            }
+            if ui.small_button("apply to every line").on_hover_text("Every bus, metro, train and ferry line takes this timetable, scaled from its own day").clicked() {
+                act = Some(Act::DefaultPreset(cur, true));
+            }
+        });
         if w.transit.routes.is_empty() && w.subway.lines.is_empty() {
             hint(ui, "No lines yet. New bus line starts one (or the Buses tool: click a street); metro lines join metro stations (Build, Transit, Metro).");
         }
@@ -147,12 +194,16 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
             let out = w.traffic.cars.values().filter(|c| c.bus.as_ref().is_some_and(|b| b.route == id)).count();
             let open = sel == Some(id);
             let dimmed = editing.is_some_and(|e| e.route != id);
-            let row = line_row(ui, line_color(r.color), &r.name, open, dimmed, mark, [format!("{}", r.stops.len()), format!("{out}/{}", r.buses), format!("{}", r.riders_today), format!("{}", r.boardings_yesterday())]);
+            let want = r.buses_at(w.clock.minute_of_day() as u32);
+            let row = line_row(ui, line_color(r.color), &r.name, open, dimmed, mark, [format!("{}", r.stops.len()), format!("{out}/{want}"), format!("{}", r.riders_today), format!("{}", r.boardings_yesterday())]);
             if row.on_hover_text(if open { "Close this line" } else { "Open this line: its stops, buses and times" }).clicked() {
                 act = Some(Act::Pick(if open { None } else { Some(id) }));
             }
             if open {
-                egui::Frame::new().inner_margin(egui::Margin { left: 10, right: 2, top: 4, bottom: 8 }).show(ui, |ui| bus_line(ui, p, id, probs, &mut act));
+                egui::Frame::new().inner_margin(egui::Margin { left: 10, right: 2, top: 4, bottom: 8 }).show(ui, |ui| {
+                    bus_line(ui, p, id, probs, &mut act);
+                    day_section(ui, p, LineRef::Bus(id), &mut act);
+                });
             }
         }
         if !w.subway.lines.is_empty() {
@@ -168,9 +219,59 @@ pub fn window(ui: &mut egui::Ui, p: &mut UiCtx) {
                 act = Some(Act::PickMetro(if open { None } else { Some(id) }));
             }
             if open {
-                egui::Frame::new().inner_margin(egui::Margin { left: 10, right: 2, top: 4, bottom: 8 }).show(ui, |ui| metro_line(ui, p, id, &mut act));
+                egui::Frame::new().inner_margin(egui::Margin { left: 10, right: 2, top: 4, bottom: 8 }).show(ui, |ui| {
+                    metro_line(ui, p, id, &mut act);
+                    day_section(ui, p, LineRef::Metro(id), &mut act);
+                });
             }
         }
+        // [r4-timetable] The railway's passenger trains and each ferry
+        // terminal's boats, with their days and timetables too.
+        let other = other_open(ui.ctx());
+        let lines = w.timetabled_lines();
+        if lines.contains(&LineRef::Rail) {
+            section(ui, "PASSENGER TRAINS");
+            header_row(ui, ["service", "stations", "trains", "today", "yday"]);
+            let open = other == Some(LineRef::Rail);
+            let trains = w.rail.trains.values().filter(|t| t.kind == nd_sim::rail::TrainKind::Passenger).count();
+            let row = line_row(ui, Color32::from_rgb(150, 200, 255), "Passenger trains", open, editing.is_some(), None, [format!("{}", w.rail.stats.stations), format!("{trains}"), format!("{}", w.rail.stats.riders_today), format!("{}", w.rail.timeline.totals(true).0)]);
+            if row.on_hover_text(if open { "Close" } else { "Open: the trains' day and timetable" }).clicked() {
+                act = Some(Act::PickOther(if open { None } else { Some(LineRef::Rail) }));
+            }
+            if open {
+                egui::Frame::new().inner_margin(egui::Margin { left: 10, right: 2, top: 4, bottom: 8 }).show(ui, |ui| {
+                    let r = &w.rail.stats;
+                    hint(ui, &format!("{} riders today · {} waiting · {} riding · next train in {} min · one service for the whole railway, calling at every station.", r.riders_today, r.waiting, r.riding, r.next_passenger_in));
+                    day_section(ui, p, LineRef::Rail, &mut act);
+                });
+            }
+        }
+        let ferries: Vec<nd_sim::BuildingId> = lines.iter().filter_map(|l| if let LineRef::Ferry(b) = l { Some(*b) } else { None }).collect();
+        if !ferries.is_empty() {
+            section(ui, "FERRIES");
+            header_row(ui, ["terminal", "boats out", "sailings", "today", "yday"]);
+        }
+        for b in ferries {
+            let line = LineRef::Ferry(b);
+            let open = other == Some(line);
+            let Some(tl) = w.line_timeline(line) else { continue };
+            let out = w.ports.ships.values().filter(|s| s.port == b && s.kind.is_ferry() && !s.home).count();
+            let (today, _, _, sailings) = tl.totals(false);
+            let row = line_row(ui, Color32::from_rgb(70, 200, 190), &w.line_name(line).unwrap_or_default(), open, editing.is_some(), None, [format!("{out}"), format!("{sailings}"), format!("{today}"), format!("{}", tl.totals(true).0)]);
+            if row.on_hover_text(if open { "Close" } else { "Open: this terminal's day and sailing timetable" }).clicked() {
+                act = Some(Act::PickOther(if open { None } else { Some(line) }));
+            }
+            if open {
+                egui::Frame::new().inner_margin(egui::Margin { left: 10, right: 2, top: 4, bottom: 8 }).show(ui, |ui| {
+                    hint(ui, "The terminal's boats take turns between its destinations, a headway apart; the timetable sets the headway and the hours. Riders turn up at the pier, so their wait is not timed.");
+                    day_section(ui, p, line, &mut act);
+                });
+            }
+        }
+    }
+    if let Some(Act::PickOther(l)) = &act {
+        let l = *l;
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("lines_other_open"), l));
     }
     apply(p, act);
 }
@@ -253,7 +354,7 @@ fn bus_line(ui: &mut egui::Ui, p: &UiCtx, rid: RouteId, probs: &[problems::Probl
             *act = Some(Act::Edit(rid));
         }
         ui.add_space(6.0);
-        ui.label(egui::RichText::new(format!("buses {} out of {}", buses_out.len(), r.buses)).small());
+        ui.label(egui::RichText::new(format!("buses {} out of {}", buses_out.len(), r.buses_at(w.clock.minute_of_day() as u32))).small()).on_hover_text("Out now, of what the timetable wants now; − and + set the day's buses (the timetable below sets each part)");
         if ui.small_button("−").on_hover_text("One bus fewer").clicked() && r.buses > 0 {
             *act = Some(Act::Buses(rid, r.buses - 1));
         }
@@ -454,7 +555,8 @@ fn metro_line(ui: &mut egui::Ui, p: &UiCtx, id: MetroLineId, act: &mut Option<Ac
         } else if ui.button("Edit stops").on_hover_text("Add, insert, move and remove stations on the map; only new tunnel is dug").clicked() {
             *act = Some(Act::EditMetro(id));
         }
-        ui.label(egui::RichText::new(format!("every {} min", l.headway)).small());
+        // [r4-timetable] The headway in force now; − and + set the day's.
+        ui.label(egui::RichText::new(l.headway_at(w.clock.minute_of_day() as u32).map_or("closed now".to_string(), |h| format!("every {h} min"))).small()).on_hover_text(format!("The day's headway is {} min; the timetable below sets each part of the day", l.headway));
         if ui.small_button("−").on_hover_text("Trains more often").clicked() && l.headway > 2 {
             *act = Some(Act::Headway(id, l.headway - 2));
         }
@@ -525,7 +627,7 @@ fn metro_line(ui: &mut egui::Ui, p: &UiCtx, id: MetroLineId, act: &mut Option<Ac
         None => {}
     }
     if empty {
-        hint(ui, &format!("No train in the tunnel now (trains run {:02}:00 to midnight).", 5));
+        hint(ui, &format!("No train in the tunnel now (trains run {}).", l.schedule().hours_text()));
     }
 }
 
@@ -622,6 +724,21 @@ fn apply(p: &mut UiCtx, act: Option<Act>) {
                 };
             }
         }
+        Act::Timetable(line, t) => {
+            if let Err(e) = w.set_line_timetable(line, t) {
+                p.flags.message = e;
+            }
+        }
+        Act::Preset(line, pr) => match w.set_line_preset(line, pr) {
+            Ok(t) => p.flags.message = format!("{}: {} timetable, {}.", w.line_name(line).unwrap_or_default(), pr.label(), t.hours_text()),
+            Err(e) => p.flags.message = e,
+        },
+        Act::DefaultPreset(pr, all) => match w.set_default_preset(pr, all) {
+            Ok(()) => p.flags.message = format!("{} {}.", if all { "Every line now runs" } else { "New lines will run" }, pr.map_or("the standard timetable", |p| p.label())),
+            Err(e) => p.flags.message = e,
+        },
+        // Kept in the window's memory (`window`).
+        Act::PickOther(_) => {}
         Act::TwoWay(r, on) => match w.set_bus_route_two_way(r, on) {
             Ok(()) => {
                 p.tools.stop_sel = None;
