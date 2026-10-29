@@ -396,7 +396,17 @@ pub(crate) fn container_core(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f
         extras += 1;
     }
     // Rust bleeding down from the top rail and out of the castings.
-    let room = if life.is_some() { 4 } else { 3usize.saturating_sub(extras) };
+    let room = if life.is_some() { 3 + (wear * 4.0) as usize } else { 3usize.saturating_sub(extras) };
+    if life.is_some() && wear > 0.4 {
+        // [K34] An old box: rust creeping up from the bottom rail along
+        // both sides, the paint gone dull and brown above it.
+        let k = ((wear - 0.4) / 0.6).clamp(0.0, 1.0);
+        let rust = mix(pal.rust_stain, pal.rust, 0.5);
+        for side in [-1.0f32, 1.0] {
+            let hh = wall_h * (0.18 + 0.3 * k);
+            streak_decal(g.part(Container), at(0.0, wall_a + hh * 0.5, side * (hw + 0.012)), long, len - 0.5, hh, across * side, mix(paint, rust, 0.15 + 0.2 * k), mix(paint, rust, 0.55 + 0.35 * k));
+        }
+    }
     let streaks = ((wear * 2.6 + rng.random_range(0.0..0.8)) as usize).min(room);
     for _ in 0..streaks {
         let side = if rng.random_bool(0.5) { 1.0f32 } else { -1.0 };

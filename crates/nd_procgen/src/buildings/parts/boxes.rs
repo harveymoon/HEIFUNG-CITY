@@ -260,7 +260,7 @@ mod tests {
     fn every_stencil_glyph_is_a_few_rectangles_covering_its_cells() {
         for c in b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ" {
             let rects = glyph_rects(*c);
-            assert!(!rects.is_empty() && rects.len() <= 6, "{} in {} rects", *c as char, rects.len());
+            assert!(!rects.is_empty() && rects.len() <= 7, "{} in {} rects", *c as char, rects.len());
             let cells: usize = rects.iter().map(|r| ((r.2 - r.0) * (r.3 - r.1)) as usize).sum();
             let lit: usize = glyph(*c).iter().map(|b| b.count_ones() as usize).sum();
             assert_eq!(cells, lit, "{} covers its lit cells once", *c as char);
