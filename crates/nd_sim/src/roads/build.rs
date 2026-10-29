@@ -473,12 +473,80 @@ impl RoadNetwork {
             let b = if i + 1 == last { self.end_node(w[1], END_SNAP_RADIUS, kind, level(i + 1), &out) } else { self.get_or_add_node_kind(w[1], kind, level(i + 1), class) };
             out.extend(self.add_segment_between(a, b, lanes_fwd, lanes_bwd, kind));
         }
+        if kind != RoadKind::Rail {
+            self.weld_own_ends(&mut out);
+        }
         self.laying_ring = false;
         if !out.is_empty() {
             self.version += 1;
             self.classify();
         }
         out
+    }
+
+    /// [r4-flags-look] (flag day 8 at (279,493)) A way just laid (`out`, in
+    /// order) whose end landed beside a vertex of its own further back
+    /// along it (within `SNAP_RADIUS`, at about its level) meets itself
+    /// there: the vertex is welded onto the end's node. Harvey's avenue came
+    /// round a loop and ended on the start of a car-only road laid before it,
+    /// 1.9 m from its own vertex (which, being a street's, could not join the
+    /// car-only road's node): two nodes side by side, the lanes overlapping
+    /// with no junction.
+    pub(super) fn weld_own_ends(&mut self, out: &mut Vec<SegmentId>) {
+        if out.len() < 3 {
+            return;
+        }
+        // The way's nodes in order with their distance along it.
+        let mut order: Vec<(NodeId, f32)> = Vec::new();
+        let first = self.segment(out[0]);
+        let mut at = if out.len() > 1 && [self.segment(out[1]).a, self.segment(out[1]).b].contains(&first.a) { first.b } else { first.a };
+        let mut along = 0.0;
+        order.push((at, 0.0));
+        for &s in out.iter() {
+            let sg = self.segment(s);
+            let next = if sg.a == at { sg.b } else if sg.b == at { sg.a } else { return };
+            along += self.node(sg.a).pos.distance(self.node(sg.b).pos);
+            order.push((next, along));
+            at = next;
+        }
+        let total = along;
+        let ends = [(order[0].0, true), (order[order.len() - 1].0, false)];
+        for (end, from_start) in ends {
+            let (p, level) = (self.node(end).pos, self.node(end).level);
+            let far = |&(n, d): &(NodeId, f32)| n != end && if from_start { d > OWN_END_REACH } else { total - d > OWN_END_REACH };
+            let Some(&(m, _)) = order
+                .iter()
+                .filter(|o| far(o))
+                .filter(|(n, _)| self.node(*n).pos.distance(p) < SNAP_RADIUS && (self.node(*n).level - level).abs() < GRADE_SEPARATION)
+                .min_by(|x, y| self.node(x.0).pos.distance(p).total_cmp(&self.node(y.0).pos.distance(p)))
+            else {
+                continue;
+            };
+            if self.find_link(m, end).is_some() {
+                continue;
+            }
+            // Move every way at `m` onto `end`.
+            let at_m: Vec<SegmentId> = self.node(m).segments.iter().copied().filter(|&s| self.segment(s).alive).collect();
+            self.index.take();
+            for s in at_m {
+                let sg = self.segments[s.0 as usize].clone();
+                let (a, b) = if sg.a == m { (end, sg.b) } else { (sg.a, end) };
+                self.segments[s.0 as usize].alive = false;
+                for n in [sg.a, sg.b] {
+                    self.nodes[n.0 as usize].segments.retain(|&x| x != s);
+                }
+                if a == b {
+                    continue;
+                }
+                let id = self.link(a, b, sg.lanes_fwd, sg.lanes_bwd, sg.kind);
+                let seg = &mut self.segments[id.0 as usize];
+                (seg.bridge, seg.viaduct, seg.tunnel, seg.ring, seg.ramp, seg.car_only) = (sg.bridge, sg.viaduct, sg.tunnel, sg.ring, sg.ramp, sg.car_only);
+                for o in out.iter_mut().filter(|o| **o == s) {
+                    *o = id;
+                }
+            }
+            return;
+        }
     }
 
     pub(super) fn add_segment_between(&mut self, a: NodeId, b: NodeId, lanes_fwd: u8, lanes_bwd: u8, kind: RoadKind) -> Vec<SegmentId> {
