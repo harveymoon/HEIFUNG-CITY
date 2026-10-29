@@ -12,7 +12,9 @@ pub fn build_water(world: &World, palette: &Palette) -> MeshData {
         return mesh;
     }
     let cell = 10.0;
-    let half = LAND_HALF + 400.0;
+    // [r4-tiles] Over the land bought too.
+    let edge = land.land_half();
+    let half = edge + 400.0;
     let n = ((half * 2.0) / cell) as i32;
     let look = climate::look(land.params.climate);
     let (shallow, deep) = look.water.unwrap_or((mix(mul(palette.water, 0.45), [0.2, 0.3, 0.28], 0.4), mul(palette.water, 0.22)));
@@ -23,9 +25,9 @@ pub fn build_water(world: &World, palette: &Palette) -> MeshData {
     // running on past where the map's sea polygon ended), so the sheet
     // meets the far water's rings with no gap and no straight edge.
     let far = crate::horizon::FarLand::new(land);
-    let inside = |p: Vec2| p.x.abs() <= LAND_HALF && p.y.abs() <= LAND_HALF;
+    let inside = |p: Vec2| p.x.abs() <= edge && p.y.abs() <= edge;
     let frozen = |p: Vec2, d: f32| -> bool {
-        let sea = if inside(p) { land.sea.as_ref().is_some_and(|s| s.contains(p)) } else { land.sea.is_some() };
+        let sea = if inside(p) { land.sea_now().is_some_and(|s| s.contains(p)) } else { land.sea.is_some() };
         look.ice.is_some() && (land.lakes.iter().any(|l| l.center.distance(p) < 400.0 && nd_sim::geom::point_in_polygon(p, &l.outline)) || (d > -look.sea_ice * (0.5 + 0.9 * (crack.get([p.x as f64 * 0.004, p.y as f64 * 0.004]) as f32 * 0.5 + 0.5)) && sea))
     };
     let wet = |p: Vec2| -> Option<f32> {

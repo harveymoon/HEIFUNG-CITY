@@ -7,6 +7,8 @@
 //! of the HUD lives in its own module.
 
 // The Build window: every road, zone and building in one catalogue.
+/// [r4-tiles] Buying land: the Land for sale labels and window.
+mod land;
 pub mod build;
 /// [pt-ux] The Alerts window: the toasts as they happened, the problems now.
 pub mod alerts;
@@ -171,7 +173,7 @@ impl Plugin for UiPlugin {
             .add_systems(PreUpdate, install_fonts.after(EguiPreUpdateSet::InitContexts).before(EguiPreUpdateSet::BeginPass))
             .add_systems(PreUpdate, read_input_flags.after(EguiPreUpdateSet::BeginPass))
             .add_systems(Update, saves::autosave.in_set(SimSet::Sync))
-            .add_systems(EguiPrimaryContextPass, (side_panel, pins::map_pins.after(side_panel), social::bubbles.after(side_panel), junction::hover_button.after(side_panel), junction::on_map.after(side_panel), junction::hold_time.after(side_panel)));
+            .add_systems(EguiPrimaryContextPass, (side_panel, pins::map_pins.after(side_panel), social::bubbles.after(side_panel), junction::hover_button.after(side_panel), junction::on_map.after(side_panel), junction::hold_time.after(side_panel), land::land_window.after(side_panel)));
     }
 }
 

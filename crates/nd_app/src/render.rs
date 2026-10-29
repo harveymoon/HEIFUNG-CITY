@@ -137,6 +137,8 @@ mod overlays;
 mod trains;
 mod freight;
 mod landscape;
+/// [r4-tiles] The Land for sale layer's outlines.
+pub mod land_tiles;
 mod lift;
 pub(crate) use self::mesh_util::*;
 use self::materials::*;
@@ -498,6 +500,7 @@ impl Plugin for RenderPlugin {
         app.insert_gizmo_config(layers::LoadGizmos, bevy::gizmos::config::GizmoConfig { depth_bias: -1.0, line: bevy::gizmos::config::GizmoLineConfig { width: 5.0, ..default() }, ..default() });
         app.add_systems(Update, layers::load_gizmos.in_set(SimSet::Sync).after(lift_movers));
         app.add_systems(Update, layers::danger_gizmos.in_set(SimSet::Sync).after(lift_movers));
+        app.init_resource::<land_tiles::PickedTile>().add_systems(Update, land_tiles::land_tile_gizmos.in_set(SimSet::Sync).after(lift_movers));
         app.add_systems(Update, walk_network_gizmos.in_set(SimSet::Sync).after(lift_movers));
         app.add_plugins(pt_layers::PtLayersPlugin);
         app.add_plugins(sites_layer::SitesLayerPlugin);

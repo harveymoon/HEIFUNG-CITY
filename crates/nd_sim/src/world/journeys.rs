@@ -183,8 +183,7 @@ impl World {
 
     /// Near the edge of the map (where roads run on to elsewhere).
     pub fn point_at_map_edge(&self, p: Vec2) -> bool {
-        let e = crate::landscape::MAP_EDGE - 30.0;
-        p.x.abs() > e || p.y.abs() > e
+        self.landscape.beyond_map_edge(p, -30.0)
     }
 
     fn place_of_origin(&self, o: Origin) -> Place {

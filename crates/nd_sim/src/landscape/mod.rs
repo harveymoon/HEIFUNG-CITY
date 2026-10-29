@@ -24,12 +24,14 @@ use slotmap::SlotMap;
 use std::sync::OnceLock;
 
 mod built_ground;
+pub mod far;
 mod features;
 mod generate;
 mod noise;
 mod params;
 mod raster;
 mod routing;
+pub mod tiles;
 
 pub use built_ground::*;
 pub use features::*;
@@ -38,6 +40,7 @@ pub use params::*;
 use raster::*;
 pub use raster::LotGround;
 pub use routing::*;
+pub use tiles::*;
 
 /// Height of every water surface.
 pub const WATER_LEVEL: f32 = 0.0;
@@ -185,8 +188,20 @@ pub struct Landscape {
     pub lakes: Vec<Lake>,
     pub sea: Option<Sea>,
     pub hot_spots: Vec<HotSpot>,
+    /// [r4-tiles] The land bought past the starting map: tiles of
+    /// [`TILE`] metres by (column, row), sorted. Only these are saved; the
+    /// ground on them is generated from the seed and the features above.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tiles: Vec<(i32, i32)>,
     #[serde(skip)]
     raster: OnceLock<Raster>,
+    /// [r4-tiles] The coast and rivers carried on past the map ([`far`]).
+    #[serde(skip)]
+    far: OnceLock<far::FarCore>,
+    /// [r4-tiles] With land bought, the sea as it runs on across it (the
+    /// coast carried on past the generated one); None without.
+    #[serde(skip)]
+    grown_sea: OnceLock<Option<Sea>>,
     /// [review] The water graph and the sea-way grid, kept between
     /// routing calls (they were rebuilt on every one).
     #[serde(skip)]
@@ -196,7 +211,7 @@ pub struct Landscape {
 impl Default for Landscape {
     /// The flat map an old save had: no water, hills only outside the basin.
     fn default() -> Self {
-        Self { params: LandscapeParams::flat(), rivers: Vec::new(), lakes: Vec::new(), sea: None, hot_spots: Vec::new(), raster: OnceLock::new(), water_cache: WaterCache::default() }
+        Self { params: LandscapeParams::flat(), rivers: Vec::new(), lakes: Vec::new(), sea: None, hot_spots: Vec::new(), tiles: Vec::new(), raster: OnceLock::new(), far: OnceLock::new(), grown_sea: OnceLock::new(), water_cache: WaterCache::default() }
     }
 }
 

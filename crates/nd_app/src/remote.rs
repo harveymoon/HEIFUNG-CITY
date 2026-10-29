@@ -98,6 +98,8 @@ mod road;
 mod shore;
 /// [dams] (H1) Hydro dam walls.
 mod dams;
+// [r4-tiles] Land for sale.
+mod tiles;
 /// [parks] (D5) Parks, clean-ups, nature preserves.
 mod parks;
 /// [supertall] the skyscraper league

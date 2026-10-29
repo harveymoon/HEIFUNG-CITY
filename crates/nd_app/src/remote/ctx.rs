@@ -60,4 +60,6 @@ pub(super) struct Ctx<'w, 's> {
     pub(super) window: Query<'w, 's, &'static mut Window, With<bevy::window::PrimaryWindow>>,
     /// [sound] The sound engine's handle and what it last heard.
     pub(super) sound: Res<'w, crate::audio::Sound>,
+    /// [r4-tiles] The tile picked in the Land for sale window.
+    pub(super) picked_tile: ResMut<'w, crate::render::land_tiles::PickedTile>,
 }

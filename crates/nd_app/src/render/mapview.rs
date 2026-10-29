@@ -111,7 +111,7 @@ fn build_map(w: &World) -> MeshData {
     let mut m = MeshData::default();
     // Well past the buildable square, so the map does not end in the sky's
     // haze at the edge of the view.
-    let half = w.config.half_extent + 900.0;
+    let half = (w.config.half_extent + 900.0).max(if w.landscape.is_grown() { w.landscape.land_half() + 300.0 } else { 0.0 });
     // Land: a grid on the ground, open over the water so it shows through.
     let g = HeatGrid::covering(SVec2::splat(-half), SVec2::splat(half), 16.0, 40_000);
     let n = g.cols + 1;
