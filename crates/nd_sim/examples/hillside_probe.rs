@@ -242,6 +242,43 @@ fn main() {
                 y -= step;
             }
         }
+        "scene" => {
+            // The screenshot scene on a copy of Harvey's island: his path
+            // rebuilt, a street up the mountain, homes zoned along it; then
+            // the built ground against the land round a point.
+            let mut w = World::read_save(&args[2]).expect("load");
+            w.economy.treasury = 1e9;
+            let v = |a: &[f32]| a.chunks(2).map(|c| Vec2::new(c[0], c[1])).collect::<Vec<_>>();
+            w.add_path(&v(&[1230.0, 20.0, 1250.0, -40.0, 1290.0, -80.0, 1350.0, -60.0, 1420.0, -20.0, 1450.0, 30.0, 1426.6, 53.3, 1399.4, 25.6]));
+            w.add_road(&v(&[1240.0, -60.0, 1300.0, -40.0, 1360.0, 0.0, 1400.0, 60.0, 1440.0, 120.0]), 1, 1);
+            for c in [[1300.0, -40.0], [1330.0, -20.0], [1380.0, 30.0], [1420.0, 90.0]] {
+                let ids: Vec<usize> = w.parcels.in_circle(Vec2::new(c[0], c[1]), 28.0).into_iter().filter(|&i| w.parcel_refusal(i, Some(nd_sim::LandUse::Residential)).is_none()).collect();
+                w.paint_parcels(&ids, Some(nd_sim::LandUse::Residential), None);
+            }
+            w.implement();
+            let (c, r, step) = (Vec2::new(args[3].parse().unwrap(), args[4].parse().unwrap()), args[5].parse::<f32>().unwrap(), 4.0);
+            println!("ground - land (m), L = on a lot, # = on a way");
+            let mut y = c.y + r;
+            while y >= c.y - r {
+                let mut row = format!("{y:>6.0} ");
+                let mut x = c.x - r;
+                while x <= c.x + r {
+                    let p = Vec2::new(x, y);
+                    let on_lot = w.parcels.at(p).and_then(|i| w.parcels.parcels.get(i)).is_some_and(|q| q.lot.is_some());
+                    let on_way = w.roads.segments_near(p, 1.0).into_iter().any(|sid| { let (a, b) = w.roads.segment_points(sid); nd_sim::geom::project_on_segment(p, a, b).1.distance(p) < w.roads.segment(sid).corridor_half_width() });
+                    let d = w.ground_height(p) - w.landscape.height(p).max(nd_sim::landscape::BANK_HEIGHT);
+                    row.push_str(&format!("{:>6.1}{}", d, if on_way { '#' } else if on_lot { 'L' } else { ' ' }));
+                    x += step;
+                }
+                println!("{row}");
+                y -= step;
+            }
+            for r in &w.ground.retaining {
+                if r.a.distance(c) < 60.0 {
+                    println!("wall lot {:?} ({:.0},{:.0})-({:.0},{:.0}) top {:.1} feet {:.1}/{:.1} holds_back {}", r.lot, r.a.x, r.a.y, r.b.x, r.b.y, r.top, r.foot_a, r.foot_b, r.holds_back);
+                }
+            }
+        }
         "addpath" | "addstreet" => {
             // Lay a way along the points given on a copy of a save, and
             // measure it (the ground it moves, against before).

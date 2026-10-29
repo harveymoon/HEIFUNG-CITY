@@ -476,8 +476,12 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
                 // Never taller than `BENCH_WALL_MAX`: past it the hill is
                 // cut back (or the fill banked) as the built ground shows.
                 let cap = nd_sim::landscape::BENCH_WALL_MAX;
+                // A lot beside a bench is levelled to the way: the ground
+                // there is its pad (no wall up to the hill it replaced).
+                let on_lot = |p: Vec2| world.parcels.at(p).and_then(|i| world.parcels.parcels.get(i)).is_some_and(|q| q.lot.is_some());
+                let side_ground = |p: Vec2, r: f32| if on_lot(p) { world.ground_height(p) } else { natural(p).clamp(r - cap, r + cap) };
                 let (g0, g1) = if bench {
-                    (natural(p0 + out2 * (back + 0.5)).clamp(r0 - cap, r0 + cap), natural(p1 + out2 * (back + 0.5)).clamp(r1 - cap, r1 + cap))
+                    (side_ground(p0 + out2 * (back + 2.0), r0), side_ground(p1 + out2 * (back + 2.0), r1))
                 } else {
                     (world.ground_height(p0 + probe), world.ground_height(p1 + probe))
                 };
@@ -505,9 +509,9 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
                 match hold {
                     Hold::Cut if bench => {
                         // [r4-hillside] A thin wall up to the hillside with
-                        // a narrow coping; the slope above is drawn over the
-                        // terrain mesh's coarse cells (`bench_skins`).
-                        let (t0, t1) = (natural(q0).clamp(r0, r0 + cap) + 0.35, natural(q1).clamp(r1, r1 + cap) + 0.35);
+                        // a narrow coping; the ground mesh is cut out to its
+                        // face (`holes::bench_holes`).
+                        let (t0, t1) = (g0.min(natural(q0)).clamp(r0, r0 + cap) + 0.35, g1.min(natural(q1)).clamp(r1, r1 + cap) + 0.35);
                         let (c0, c1) = (q0 + out2 * 0.45, q1 + out2 * 0.45);
                         m.quad_facing([Vec3::new(q0.x, r0 - 0.5, q0.y), Vec3::new(q1.x, r1 - 0.5, q1.y), Vec3::new(q1.x, t1, q1.y), Vec3::new(q0.x, t0, q0.y)], -out, wall);
                         m.quad_facing([Vec3::new(q0.x, t0, q0.y), Vec3::new(q1.x, t1, q1.y), Vec3::new(c1.x, t1, c1.y), Vec3::new(c0.x, t0, c0.y)], Vec3::Y, coping);
@@ -540,19 +544,14 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
     }
 }
 
-/// [r4-hillside] The hillside over a bench's cut wall (`Hold::Bench`): the
-/// terrain mesh's 8 m cells are held down to the way within a cell's
-/// reach of it (`keep_under_streets`), which on a steep hillside dug a
-/// trench behind the wall. A strip of ground at the land's own height is
-/// drawn over it, from the wall's coping out past that reach, in the
-/// terrain's colours.
-pub fn bench_skins(world: &World, palette: &Palette, g: &mut Geometry) {
+/// [r4-hillside] The verge of a way in a bench on a hillside, from the edge
+/// of its paving (a street's pavement) to its walls' faces, at the way's
+/// height: the ground mesh is cut out there (`holes::bench_holes`).
+pub fn bench_verges(world: &World, g: &mut Geometry, concrete: [f32; 3]) {
     use glam::Vec3;
     use nd_sim::landscape::Hold;
-    const CELL: f32 = 8.0;
     let roads = &world.roads;
-    let colour = super::heightfield::land_colourer(world, palette);
-    let natural = |p: Vec2| world.landscape.height(p).max(BANK_HEIGHT);
+    let col = rgba(mul(concrete, 0.7));
     for (sid, seg) in roads.alive_segments() {
         if nd_sim::landscape::earthwork_hold(&world.landscape, roads, &world.road_z, &world.road_inner, sid) != Some(Hold::Bench) {
             continue;
@@ -565,59 +564,19 @@ pub fn bench_skins(world: &World, palette: &Palette, g: &mut Geometry) {
         let dir = (b - a) / len;
         let side = Vec2::new(-dir.y, dir.x);
         let (face, _) = nd_sim::landscape::held_band(seg, Hold::Bench);
-        let from = face + 0.45;
-        let to = seg.half_width() + CELL * std::f32::consts::SQRT_2 + CELL;
-        let steps = (len / 4.0).ceil().max(1.0) as usize;
-        let rings = 5usize;
+        // From the paving's edge (a street's pavement is drawn with it).
+        let from = if seg.is_street() { seg.corridor_half_width() } else { seg.half_width() } - 0.05;
+        let steps = (len / 2.0).ceil().max(1.0) as usize;
+        let m = g.part(Surface::Concrete);
         for k in 0..steps {
             let (t0, t1) = (k as f32 / steps as f32, (k + 1) as f32 / steps as f32);
-            let (p0, p1) = (a.lerp(b, t0), a.lerp(b, t1));
-            let (r0, r1) = (world.road_height(sid, t0), world.road_height(sid, t1));
+            // A little past the ends, under the next piece's verge.
+            let (p0, p1) = (a.lerp(b, t0) - dir * if k == 0 { 0.3 } else { 0.0 }, a.lerp(b, t1) + dir * if k + 1 == steps { 0.3 } else { 0.0 });
+            let (r0, r1) = (world.road_height(sid, t0) + 0.03, world.road_height(sid, t1) + 0.03);
             for sgn in [-1.0f32, 1.0] {
-                let out2 = side * sgn;
-                // Only where the hill stands over the way (a cut).
-                if natural(p0 + out2 * from) - r0 < 0.5 || natural(p1 + out2 * from) - r1 < 0.5 {
-                    continue;
-                }
-                let at = |p: Vec2, i: usize| p + out2 * (from + (to - from) * i as f32 / rings as f32);
-                if (0..=rings).any(|i| on_other_way(roads, sid, at(p0, i)) || on_other_way(roads, sid, at(p1, i))) {
-                    continue;
-                }
-                // The hillside as built: the land, or the rock face cut back
-                // above a wall at its cap (`BENCH_WALL_MAX`). Only where that
-                // is what the built ground holds (not a lot's pad, another
-                // way's works or a terrace).
-                let cap = nd_sim::landscape::BENCH_WALL_MAX;
-                let back = nd_sim::landscape::held_band(seg, Hold::Bench).1;
-                let hill = |p: Vec2, r: f32, i: usize| {
-                    let d = from + (to - from) * i as f32 / rings as f32;
-                    natural(p).min(r + cap + (d - back).max(0.0) * nd_sim::landscape::BENCH_ROCK_SLOPE)
-                };
-                let untouched = |p: Vec2, r: f32, i: usize| (world.ground_height(p) - hill(p, r, i)).abs() < 0.4;
-                let m = g.part(Surface::Dirt);
-                let first = m.positions.len();
-                for i in 0..rings {
-                    let ok = untouched(at(p0, i + 1), r0, i + 1) && untouched(at(p1, i + 1), r1, i + 1) && (i == 0 || (untouched(at(p0, i), r0, i) && untouched(at(p1, i), r1, i)));
-                    if !ok {
-                        continue;
-                    }
-                    let v = |p: Vec2, r: f32, j: usize| {
-                        let h = hill(p, r, j) + if j == 0 { 0.0 } else { 0.06 };
-                        (Vec3::new(p.x, h, p.y), rgba(colour(p, h)))
-                    };
-                    let (a0, a1, b1, b0) = (v(at(p0, i), r0, i), v(at(p1, i), r1, i), v(at(p1, i + 1), r1, i + 1), v(at(p0, i + 1), r0, i + 1));
-                    m.quad_facing([a0.0, a1.0, b1.0, b0.0], Vec3::Y, a0.1);
-                }
-                // Shaded as the terrain is (smooth, from the slope of the
-                // built ground), not quad by quad: faceted, the strips drew
-                // light and dark zig-zags down the hillside.
-                for k in first..m.positions.len() {
-                    let [x, _, z] = m.positions[k];
-                    let e = 4.0;
-                    let h = |dx: f32, dz: f32| world.ground_height(Vec2::new(x + dx, z + dz));
-                    let n = Vec3::new(h(-e, 0.0) - h(e, 0.0), 2.0 * e, h(0.0, -e) - h(0.0, e)).normalize_or_zero();
-                    m.normals[k] = n.to_array();
-                }
+                let o = side * sgn;
+                let v = |p: Vec2, h: f32| Vec3::new(p.x, h, p.y);
+                m.quad_facing([v(p0 + o * from, r0), v(p1 + o * from, r1), v(p1 + o * face, r1), v(p0 + o * face, r0)], Vec3::Y, col);
             }
         }
     }
@@ -830,7 +789,7 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
     }
     viaducts(world, &mut g, concrete, steel);
     tunnel_works(world, &mut g, concrete, steel);
-    bench_skins(world, palette, &mut g);
+    bench_verges(world, &mut g, concrete);
     bridges(world, &mut g, concrete, steel);
     underpasses(world, &mut g, concrete, steel);
     port_docks(world, palette, &mut g, concrete);

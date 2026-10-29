@@ -67,7 +67,11 @@ pub const MAX_LOT_RELIEF: f32 = 18.0;
 /// villa, a Hong Kong stair street), not works yards or civic grounds. Past
 /// this it is a sheer cliff and nothing is built.
 pub const MAX_TERRACE_SLOPE: f32 = 1.8;
-/// [hillside] Most rise across a terraced hillside lot.
+/// [hillside] Most rise across a terraced hillside lot. [r4-hillside] Its
+/// pad is set within a retaining wall's height (`BENCH_WALL_MAX`) of all its
+/// ground where it can be (up to twice that rise, `lot_pad`); past it the
+/// hill above its walls is cut back as a rock face and the drop below
+/// banked.
 pub const MAX_TERRACE_RELIEF: f32 = 40.0;
 /// Slowest water a hydro plant can use, in metres per second.
 pub const MIN_HYDRO_CURRENT: f32 = 0.8;

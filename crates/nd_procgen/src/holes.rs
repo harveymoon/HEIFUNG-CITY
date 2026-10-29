@@ -162,11 +162,41 @@ pub fn cut_holes(mesh: &mut MeshData, holes: &[Vec<Vec2>]) {
 /// edge its benches are drawn from (`strip_mine_hole` on the building's
 /// footprint).
 pub fn ground_holes(world: &nd_sim::World) -> Vec<Vec<Vec2>> {
-    world
+    let mut out: Vec<Vec<Vec2>> = world
         .buildings
         .iter()
         .filter(|(_, b)| b.construction.is_none() && b.demolition.is_none() && b.business.as_ref().is_some_and(|z| z.kind == nd_sim::BusinessKind::StripMine))
         .filter_map(|(id, _)| world.footprint(id).and_then(|lot| crate::buildings::strip_mine_hole(&lot)))
+        .collect();
+    out.extend(bench_holes(world));
+    out
+}
+
+/// [r4-hillside] The ground cut out under every way standing in a bench on
+/// a hillside (`nd_sim::landscape::Hold::Bench`), out to its walls' faces:
+/// the way draws its own surface and verge there and the walls their faces,
+/// and the hill beside it keeps its own shape (held down to the way, the
+/// coarse cells dug a trench and fanned the slope into zig-zags).
+pub fn bench_holes(world: &nd_sim::World) -> Vec<Vec<Vec2>> {
+    let roads = &world.roads;
+    if world.landscape.is_flat() {
+        return Vec::new();
+    }
+    roads
+        .alive_segments()
+        .filter(|(sid, _)| nd_sim::landscape::earthwork_hold(&world.landscape, roads, &world.road_z, &world.road_inner, *sid) == Some(nd_sim::landscape::Hold::Bench))
+        .filter_map(|(sid, seg)| {
+            let (a, b) = roads.segment_points(sid);
+            let len = a.distance(b);
+            if len < 0.5 {
+                return None;
+            }
+            let d = (b - a) / len;
+            let side = Vec2::new(-d.y, d.x);
+            let (face, _) = nd_sim::landscape::held_band(seg, nd_sim::landscape::Hold::Bench);
+            let (a, b) = (a - d * 0.3, b + d * 0.3);
+            Some(vec![a - side * face, b - side * face, b + side * face, a + side * face])
+        })
         .collect()
 }
 
@@ -187,6 +217,8 @@ pub fn holed_lots(world: &nd_sim::World) -> Vec<nd_sim::LotId> {
 pub fn holes_key(world: &nd_sim::World) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
+    // [r4-hillside] The benches follow the roads.
+    world.roads.version.hash(&mut h);
     for (id, b) in world.buildings.iter() {
         if b.construction.is_none() && b.demolition.is_none() && b.business.as_ref().is_some_and(|z| z.kind == nd_sim::BusinessKind::StripMine) {
             id.hash(&mut h);

@@ -779,8 +779,12 @@ impl Ground {
                     inward = -inward;
                 }
                 let beyond = |f: f32| a.lerp(b, f) - inward * OUT;
-                // Not along a way: the street's own walls and the lot's
-                // front are there.
+                // Not along a street: its own walls, the lot's front and the
+                // side-street walls (`find_retaining`) are there. Along a
+                // path the wall stands (the hill or the path's bench held
+                // back over the lot, or the lot over the path): left out, the
+                // coarse ground mesh ran from the pad up to the hill in
+                // zig-zag facets between them.
                 let on_way = SAMPLES
                     .iter()
                     .filter(|&&f| {
@@ -788,7 +792,7 @@ impl Ground {
                         roads.segments_in_box(q - Vec2::splat(20.0), q + Vec2::splat(20.0)).any(|sid| {
                             let sg = roads.segment(sid);
                             let (p0, p1) = roads.segment_points(sid);
-                            sg.alive && !sg.tunnel && project_on_segment(q, p0, p1).1.distance(q) <= sg.corridor_half_width() + GROUND_CELL + 0.5
+                            sg.alive && !sg.tunnel && sg.is_street() && sid != lot.front_segment && project_on_segment(q, p0, p1).1.distance(q) <= sg.corridor_half_width() + GROUND_CELL + 0.5
                         })
                     })
                     .count();
@@ -1097,14 +1101,34 @@ impl Ground {
 pub const PORTAL_HOLD: f32 = GROUND_CELL * 2.0;
 
 /// The level a lot is graded to: its street's height at the frontage.
+///
+/// [r4-hillside] A walled terrace (`walled_terrace`) is levelled within a
+/// retaining wall's height (`BENCH_WALL_MAX`) of every part of its ground:
+/// as near its street's height as that allows (steps up or down to it at
+/// the front, `Ground::find_terrace_walls`). At its street's height a
+/// deep plot up a steep hillside stood 20 m under the hill at its back.
 pub fn lot_pad(roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], lot: &Lot, land: &Landscape) -> f32 {
     if land.is_flat() {
         return 0.0;
     }
-    match roads.try_segment(lot.front_segment) {
+    let street = match roads.try_segment(lot.front_segment) {
         Some(seg) if !seg.bridge => way_height(roads, node_z, inner, lot.front_segment, lot.front_t),
-        _ => land.height(lot.center).max(BANK_HEIGHT),
+        _ => return land.height(lot.center).max(BANK_HEIGHT),
+    };
+    if !walled_terrace(land, lot, street) {
+        return street;
     }
+    let n = lot.polygon.len();
+    let (lo, hi) = (0..n)
+        .flat_map(|k| [lot.polygon[k], lot.polygon[k].lerp(lot.polygon[(k + 1) % n], 0.5)])
+        .chain(std::iter::once(lot.center))
+        .map(|p| land.height(p).max(BANK_HEIGHT))
+        .fold((f32::MAX, f32::MIN), |(lo, hi), h| (lo.min(h), hi.max(h)));
+    let (least, most) = (hi - BENCH_WALL_MAX, lo + BENCH_WALL_MAX);
+    if least > most {
+        return 0.5 * (lo + hi);
+    }
+    street.clamp(least, most)
 }
 
 /// Height of a way at `t` along segment `sid`: between its nodes' heights
