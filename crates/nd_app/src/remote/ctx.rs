@@ -58,4 +58,6 @@ pub(super) struct Ctx<'w, 's> {
     pub(super) notes: ResMut<'w, crate::viewer::notes::BuildingNotes>,
     /// [photo] The game window, for `photo_mode {size}`.
     pub(super) window: Query<'w, 's, &'static mut Window, With<bevy::window::PrimaryWindow>>,
+    /// [sound] The sound engine's handle and what it last heard.
+    pub(super) sound: Res<'w, crate::audio::Sound>,
 }

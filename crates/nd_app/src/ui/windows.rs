@@ -164,14 +164,16 @@ pub(super) fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
             }
         });
     }
-    hint(ui, "Graphics, text size and speech bubbles: the Settings window.");
+    hint(ui, "Graphics, text size, speech bubbles and sound: the Settings window.");
 }
 
-/// [settings] The Settings window: graphics, text size and speech bubbles
-/// (kept in `settings.ron` in the game's home folder), and the controls.
+/// [settings] The Settings window: graphics, text size, speech bubbles and
+/// sound (kept in `settings.ron` in the game's home folder), and the controls.
 fn settings(ui: &mut egui::Ui, p: &mut UiCtx) {
     graphics_setting(ui, p);
     super::theme::scale_setting(ui);
+    // [sound] The mixer.
+    crate::audio::settings_ui(ui);
     section(ui, "CONTROLS");
     hint(ui, "The camera and the keys; the Help window has the tools.");
     ui.label(egui::RichText::new(help::CAMERA_ORBIT).small());

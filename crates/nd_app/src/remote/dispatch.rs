@@ -155,6 +155,16 @@ pub(super) static COMMANDS: &[Cmd] = &[
     Cmd { name: "memory", aliases: &[], effect: Read, run: |_, ctx| Ok(status::memory_json(ctx)), help: &[
         ("note", "[memory] the process working set, peak and commit charge (MB), the renderer's mesh/material/image and entity counts, and the world's big counts"),
     ] },
+    Cmd { name: "audio", aliases: &["sound"], effect: View, run: audio::audio, help: &[
+        ("get", "[sound] (or no fields) the sliders, mute, focus rule, sound card, bus gains, the beds' weights, levels and targets, what the camera hears, voices, audio-thread CPU %"),
+        ("set", "{master, ambience, effects, ui, music: 0..1, muted: bool, unfocused: mute|duck|keep}: any of them; saved in settings.ron"),
+        ("play", "a UI cue by name (click, tool_change, road_point, road_done, implement, building_placed, bulldoze, zone_paint, window_open, window_close, error, alert, speed_up, speed_down, pause, resume), rate limited"),
+    ] },
+    Cmd { name: "audio_capture", aliases: &[], effect: Files, run: audio::capture, help: &[
+        ("path", "[sound] optional .wav (see files); default exports/wav/capture-<unix ms>.wav: what the camera hears now, rendered offline by the same engine"),
+        ("seconds", "0.5..60, default 6"),
+        ("as_set", "true: at the player's sliders (default: the default sliders, so captures compare)"),
+    ] },
     Cmd { name: "pause", aliases: &[], effect: Game, run: time::pause, help: &[
         ("paused", "bool, omitted toggles"),
     ] },
@@ -970,8 +980,33 @@ mod dispatch_tests {
             .init_resource::<crate::city_reset::CityEpoch>()
             .init_resource::<crate::viewer::Viewer>()
             .init_resource::<crate::render::Turntable>()
-            .init_resource::<crate::viewer::notes::BuildingNotes>();
+            .init_resource::<crate::viewer::notes::BuildingNotes>()
+            .insert_resource(crate::audio::Sound::silent());
         app
+    }
+
+    /// [sound] `audio` reads the mixer, sets sliders (refusing nonsense)
+    /// and names its cues; with no sound card it says so.
+    #[test]
+    fn audio_reads_and_sets_the_mixer() {
+        let mut app = app();
+        let (code, body) = send(&mut app, json!({"cmd": "audio"}));
+        assert_eq!(code, 200, "{body}");
+        assert_eq!(body["status"]["playing"], json!(false));
+        assert!(body["beds"]["weights"].is_object() && body["voices"]["ui_cap"].as_u64() == Some(8));
+        let (code, body) = send(&mut app, json!({"cmd": "audio", "set": {"master": 0.3, "muted": true, "unfocused": "duck"}}));
+        assert_eq!(code, 200, "{body}");
+        assert_eq!(body["settings"]["master"], json!(0.3f32));
+        assert_eq!(body["settings"]["muted"], json!(true));
+        assert_eq!(body["settings"]["unfocused"], json!("duck"));
+        let (code, _) = send(&mut app, json!({"cmd": "audio", "set": {"master": 2.0}}));
+        assert_eq!(code, 400);
+        let (code, _) = send(&mut app, json!({"cmd": "audio", "set": {"volume": 1.0}}));
+        assert_eq!(code, 400);
+        let (code, _) = send(&mut app, json!({"cmd": "audio", "play": "kazoo"}));
+        assert_eq!(code, 400);
+        let (code, _) = send(&mut app, json!({"cmd": "sound", "play": "click", "set": {"muted": false}}));
+        assert_eq!(code, 200);
     }
 
     /// Run one command as the API does; (HTTP status, body).

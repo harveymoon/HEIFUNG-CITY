@@ -45,6 +45,8 @@ Open work: `todo.md` (sorted by area; tick items with "→ DONE [branch]: what")
 - `society_demo`'s 911 thresholds are borderline at a fixed seed; unrelated changes can flip it.
 
 ## Running a test instance
+- [sound] `ND_AUDIO=0` keeps a test instance silent (no sound card opened): set it for agent
+  instances so they do not play through Harvey's speakers.
 - `ND_REMOTE_PORT=48xx` (pick a free port, never 4817), `ND_TITLE=0` (skip the title screen),
   `ND_QUALITY=low|medium|high|auto`. [home] The game keeps `saves/`, `flags/`, `assets/` and
   its settings in its home folder: the exe's folder, whatever the working directory, or `ND_HOME`

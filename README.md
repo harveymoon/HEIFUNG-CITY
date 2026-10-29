@@ -16,9 +16,9 @@
 
 Draw the roads, zone the land and watch a city of thousands move in. Each citizen has a home, a
 job, a commute and a mood; each shop has stock, cash and suppliers; each car follows its lane
-through junctions you can tune by hand. Nothing in the game is a hand-made model: the terrain, the
-220-odd building styles, the signs, the names and the people all come out of code, so no two
-cities look the same.
+through junctions you can tune by hand. Nothing in the game is a hand-made model or a recorded sound:
+the terrain, the 220-odd building styles, the signs, the names, the people and the sound all come
+out of code, so no two cities look the same.
 
 The simulation is engine-independent and deterministic (same seed, same inputs, same city); the
 renderer is a thin layer on top.
@@ -134,6 +134,11 @@ More on the [project page](https://harveymoon.github.io/HEIFUNG-CITY/), all take
 - **City generator**: a whole city in seconds (`grid_plaza`, `coastal_river`, `old_town`,
   `twin_centres`, `perfect_city`), streets traced through tensor fields after Chen et al. 2008.
 
+### Sound
+- **Synthesised sound**: every sound is generated in code, no recorded samples. A mixer in
+  Settings → Sound, UI cues, and ambience beds that change with the zoom, the district and the
+  weather.
+
 ### Seeing it
 - Orbit camera, **walk mode** at street level, a **chase camera** behind anyone or anything, their
   **point of view**, drone **heat vision**, the Underground view, map layers (land value, traffic,
@@ -203,6 +208,7 @@ The in-game Help window lists everything.
 | `nd_sim` | the deterministic simulation: roads, traffic, zoning, lots, buildings, citizens, economy, transit, services, save/load. No engine. |
 | `nd_procgen` | terrain, parcels, the city generator, every building style and its parts, textures, palette |
 | `nd_minds` | the rule-based and hybrid minds, the committee and the LLM backends |
+| `nd_audio` | the synthesised sound engine: voices, ambience beds and the mixer |
 | `nd_app` | the Bevy front end: rendering, camera, tools, egui UI, the remote API, hot reload |
 
 Design notes live in [`docs/DESIGN.md`](docs/DESIGN.md), the art direction in

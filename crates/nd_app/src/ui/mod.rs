@@ -421,13 +421,13 @@ fn neon(ui: &mut egui::Ui, text: &str) {
     ui.label(egui::RichText::new(text).color(IVORY).strong());
 }
 
-fn section(ui: &mut egui::Ui, text: &str) {
+pub(crate) fn section(ui: &mut egui::Ui, text: &str) {
     ui.add_space(2.0);
     ui.label(egui::RichText::new(text).small().strong().color(GOLD));
 }
 
 /// Small, weak help text.
-fn hint(ui: &mut egui::Ui, text: &str) {
+pub(crate) fn hint(ui: &mut egui::Ui, text: &str) {
     ui.label(egui::RichText::new(text).small().weak());
 }
 
