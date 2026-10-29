@@ -54,7 +54,7 @@ impl World {
             // along, so the next town is hours away, not half a day.
             let off_map = ship.remote.is_some() && {
                 let p = ship.pose().0;
-                p.x.abs().max(p.y.abs()) > crate::landscape::MAP_EDGE + 400.0
+                self.landscape.beyond_map_edge(p, 400.0)
             };
             if ship.kind.is_big() {
                 // The berth it is making for: the far one, then home.
@@ -275,7 +275,8 @@ impl World {
             }
         }
         let total = crate::geom::path_length(&pts);
-        let wet = |p: Vec2| p.x.abs().max(p.y.abs()) > crate::landscape::MAP_EDGE || self.landscape.is_water(p);
+        let edge = self.landscape.land_half() - 40.0;
+        let wet = |p: Vec2| p.x.abs().max(p.y.abs()) > edge || self.landscape.is_water(p);
         let mut along = 0.0;
         let last = pts.len() - 1;
         let mut out = Vec::with_capacity(pts.len());

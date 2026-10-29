@@ -974,7 +974,8 @@ impl Ground {
     /// ground never rises over the road.
     pub(super) fn outer_height(&self, land: &Landscape, p: Vec2) -> f32 {
         let natural = land.height(p);
-        let far = smoothstep(LAND_HALF - 100.0, LAND_HALF + 200.0, chebyshev(p));
+        let edge = land.land_half();
+        let far = smoothstep(edge - 100.0, edge + 200.0, chebyshev(p));
         let floor = WATER_LEVEL + 0.4;
         let rise = 1.0 / EMBANKMENT_SLOPE;
         let mut on = f32::NEG_INFINITY;

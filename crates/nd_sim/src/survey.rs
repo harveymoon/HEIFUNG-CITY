@@ -23,7 +23,7 @@
 
 use crate::ground::{self, GroundSample};
 use crate::industry::IndustryKind;
-use crate::landscape::{Landscape, WaterKind, LAND_HALF};
+use crate::landscape::{Landscape, WaterKind};
 use crate::ports::{PortKind, SHORE_REACH};
 use glam::Vec2;
 
@@ -291,7 +291,7 @@ impl LandSurvey {
     /// 16 m or a little more: fine enough that a hot spot or a river bank
     /// reads, coarse enough to build in a blink.
     pub fn square(land: &Landscape, half: f32) -> Self {
-        let h = half.min(LAND_HALF);
+        let h = half.min(land.land_half());
         Self::new(land, Vec2::splat(-h), Vec2::splat(h), 16.0, 24_000)
     }
 

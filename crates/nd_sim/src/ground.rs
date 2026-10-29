@@ -185,6 +185,20 @@ impl Contamination {
         Self { cell, half, n, cells: BTreeMap::new(), version: 0 }
     }
 
+    /// [r4-tiles] Grow the raster out to at least `half` by whole cells,
+    /// every cell staying where it was.
+    pub fn grow_to(&mut self, half: f32) {
+        if half <= self.half || self.cell <= 0.0 {
+            return;
+        }
+        let add = ((half - self.half) / self.cell).ceil() as usize;
+        let n = self.n + 2 * add;
+        self.cells = self.cells.iter().map(|(&k, &v)| (((k as usize / self.n + add) * n + k as usize % self.n + add) as u32, v)).collect();
+        self.half += add as f32 * self.cell;
+        self.n = n;
+        self.version += 1;
+    }
+
     fn coords(&self, p: Vec2) -> Option<(usize, usize)> {
         let x = ((p.x + self.half) / self.cell).floor();
         let y = ((p.y + self.half) / self.cell).floor();

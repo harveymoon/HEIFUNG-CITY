@@ -350,7 +350,9 @@ impl World {
             // Track is eased into smooth curves and tangential switches.
             let points = if kind == RoadKind::Rail { rail::smooth_track(&drawn, &roads) } else { drawn.clone() };
             // An end at the map edge runs on out of sight: a way to elsewhere.
-            let points = crate::landscape::reach_elsewhere(&points);
+            // [r4-tiles] An end inside a bought tile stays; one at the
+            // edge of the land bought runs on.
+            let points = self.landscape.reach_elsewhere(&points);
             // Ramps meet the highway tangentially: a lead point before a
             // merge (after a diverge) brings the last piece alongside.
             // (A roundabout's ring is a one-way street too, but no ramp.)

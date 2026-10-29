@@ -157,7 +157,7 @@ impl World {
     fn send_airlift(&mut self, car: CarId) {
         let c = &self.traffic.cars[car];
         let (at, heading, model, owned) = (c.pos, c.heading, c.model, c.owned);
-        let half = crate::landscape::MAP_EDGE;
+        let half = self.landscape.land_half() - 40.0;
         let from = off_map_near(at, half);
         // A resident's car goes to the pound; anything else off the map.
         let pound = owned.filter(|v| self.vehicles.cars.contains_key(*v)).and_then(|_| self.tow_company_near(at));

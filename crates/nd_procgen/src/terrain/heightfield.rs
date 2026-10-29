@@ -118,7 +118,8 @@ pub fn build_terrain(cfg: &TerrainConfig, palette: &Palette) -> MeshData {
 /// For the flat map use [`build_terrain`]. The renderer draws the same
 /// ground in tiles it rebuilds one by one ([`LandscapeTiles`]).
 pub fn build_landscape_terrain(world: &World, palette: &Palette, cell: f32) -> MeshData {
-    let n = landscape_n(cell);
+    let half = world.landscape.land_half();
+    let n = landscape_n(half, cell);
     let colours = LandColours::new(world, palette);
     let spots = ground_spots(world, cell, n);
     let (raw, kept) = landscape_heights(world, cell, n);
@@ -126,7 +127,7 @@ pub fn build_landscape_terrain(world: &World, palette: &Palette, cell: f32) -> M
     for j in 0..n {
         for i in 0..n {
             let k = j * n + i;
-            let (x, z) = grid_xz(cell, i, j);
+            let (x, z) = grid_xz(half, cell, i, j);
             let rgb = colours.rgb(spots[k], raw[k]);
             mesh.positions.push([x, kept[k], z]);
             mesh.normals.push(grid_normal(&kept, n, cell, i, j));
@@ -141,13 +142,13 @@ pub fn build_landscape_terrain(world: &World, palette: &Palette, cell: f32) -> M
 }
 
 /// Vertices along a side of the landscape's ground at `cell`.
-fn landscape_n(cell: f32) -> usize {
-    ((LAND_HALF * 2.0) / cell).ceil() as usize + 1
+fn landscape_n(half: f32, cell: f32) -> usize {
+    ((half * 2.0) / cell).ceil() as usize + 1
 }
 
 /// World x, z of grid vertex (i, j).
-fn grid_xz(cell: f32, i: usize, j: usize) -> (f32, f32) {
-    (-LAND_HALF + i as f32 * cell, -LAND_HALF + j as f32 * cell)
+fn grid_xz(half: f32, cell: f32, i: usize, j: usize) -> (f32, f32) {
+    (-half + i as f32 * cell, -half + j as f32 * cell)
 }
 
 /// What a vertex's colour takes from the map alone (fixed for a landscape):
@@ -163,7 +164,7 @@ fn ground_spots(world: &World, cell: f32, n: usize) -> Vec<GroundSpot> {
     let land = &world.landscape;
     let detail = Fbm::<Perlin>::new(land.params.seed as u32 ^ 99).set_octaves(3);
     by_rows(n, |i, j| {
-        let (x, z) = grid_xz(cell, i, j);
+        let (x, z) = grid_xz(land.land_half(), cell, i, j);
         let p = Vec2::new(x, z);
         let v = detail.get([x as f64 * 0.02, z as f64 * 0.02]) as f32 * 0.5 + 0.5;
         let d = land.water_distance(p);
@@ -257,7 +258,7 @@ impl LandColours {
 /// and lot meshes win), and the same held under the streets.
 fn landscape_heights(world: &World, cell: f32, n: usize) -> (Vec<f32>, Vec<f32>) {
     let raw = by_rows(n, |i, j| {
-        let (x, z) = grid_xz(cell, i, j);
+        let (x, z) = grid_xz(world.landscape.land_half(), cell, i, j);
         world.ground_height(Vec2::new(x, z)) - 0.08
     });
     let mut kept = raw.clone();
@@ -296,6 +297,8 @@ fn grid_indices(mesh: &mut MeshData, base: u32, w: usize, h: usize) {
 /// the normals) moved. Together the tiles hold exactly the triangles of
 /// [`build_landscape_terrain`] at the same cell.
 pub struct LandscapeTiles {
+    /// [r4-tiles] Half the side of the ground drawn: the land's.
+    half: f32,
     cell: f32,
     n: usize,
     per_side: usize,
@@ -313,11 +316,12 @@ impl LandscapeTiles {
     pub const TILE: usize = 16;
 
     pub fn new(world: &World, palette: &Palette, cell: f32) -> Self {
-        let n = landscape_n(cell);
+        let half = world.landscape.land_half();
+        let n = landscape_n(half, cell);
         let per_side = (n - 1).div_ceil(Self::TILE);
         let (raw, kept) = landscape_heights(world, cell, n);
         let holes = crate::holes::ground_holes(world);
-        let mut t = Self { cell, n, per_side, colours: LandColours::new(world, palette), spots: ground_spots(world, cell, n), raw, kept, holes, meshes: Vec::new() };
+        let mut t = Self { half, cell, n, per_side, colours: LandColours::new(world, palette), spots: ground_spots(world, cell, n), raw, kept, holes, meshes: Vec::new() };
         t.meshes = (0..per_side * per_side).map(|k| t.build_tile(k)).collect();
         t
     }
@@ -346,7 +350,7 @@ impl LandscapeTiles {
         // [p2-look] A pit dug, grown or filled in: the tiles under it.
         let holes = crate::holes::ground_holes(world);
         if holes != self.holes {
-            let tile_of = |v: f32| (((v + LAND_HALF) / self.cell).floor().max(0.0) as usize / Self::TILE).min(self.per_side - 1);
+            let tile_of = |v: f32| (((v + self.half) / self.cell).floor().max(0.0) as usize / Self::TILE).min(self.per_side - 1);
             for hole in self.holes.iter().chain(holes.iter()) {
                 let (lo, hi) = hole.iter().fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
                 for tj in tile_of(lo.y)..=tile_of(hi.y) {
@@ -394,7 +398,7 @@ impl LandscapeTiles {
         for j in j0..=j1 {
             for i in i0..=i1 {
                 let k = j * n + i;
-                let (x, z) = grid_xz(cell, i, j);
+                let (x, z) = grid_xz(self.half, cell, i, j);
                 let rgb = self.colours.rgb(self.spots[k], self.raw[k]);
                 mesh.positions.push([x, self.kept[k], z]);
                 mesh.normals.push(grid_normal(&self.kept, n, cell, i, j));
@@ -420,7 +424,7 @@ impl LandscapeTiles {
 /// everywhere between. Sunken roads between retaining walls, tunnels and
 /// decks are left alone: their walls and portals meet the ground as built.
 fn keep_under_streets(world: &World, cell: f32, n: usize, heights: &mut [f32]) {
-    let half = LAND_HALF;
+    let half = world.landscape.land_half();
     let roads = &world.roads;
     // A vertex reaches a point at most a cell's diagonal from it.
     let reach = cell * std::f32::consts::SQRT_2;
@@ -560,11 +564,11 @@ mod tile_tests {
             (t4 - t3).as_secs_f64() * 1e3
         );
         let t5 = Instant::now();
-        let n = landscape_n(8.0);
+        let n = landscape_n(LAND_HALF, 8.0);
         let mut raw = Vec::with_capacity(n * n);
         for j in 0..n {
             for i in 0..n {
-                let (x, z) = grid_xz(8.0, i, j);
+                let (x, z) = grid_xz(LAND_HALF, 8.0, i, j);
                 raw.push(w.ground_height(Vec2::new(x, z)) - 0.08);
             }
         }

@@ -34,7 +34,8 @@ const MIN_REBUILD_SECS: f32 = 3.0;
 
 /// The survey half-size: the buildable square and a margin.
 fn survey_half(w: &World) -> f32 {
-    w.config.half_extent + 300.0
+    // [r4-tiles] Over the land bought too.
+    if w.landscape.is_grown() { w.landscape.land_half() } else { w.config.half_extent + 300.0 }
 }
 
 #[derive(Default)]

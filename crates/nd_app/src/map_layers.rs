@@ -60,6 +60,8 @@ pub struct MapLayer {
 pub const MAP_LAYERS: &[MapLayer] = &[
     MapLayer { key: "zoning", label: "Zoning", group: "City", hotkey: "O", hint: "Zone outline glows and vacant lots (the ground tint stays)", flag: |o| &mut o.zoning, legend: legend_zoning },
     MapLayer { key: "land_value", label: "Land value", group: "City", hotkey: "V", hint: "What the land is worth: rents and tiers follow it", flag: |o| &mut o.land_value, legend: legend_land_value },
+    // [r4-tiles] (render/land_tiles.rs, ui/land.rs)
+    MapLayer { key: "land_tiles", label: "Land for sale", group: "City", hotkey: "", hint: "The land round the city in tiles: what each holds and what it costs; buy the next one", flag: |o| &mut o.land_tiles, legend: legend_land_tiles },
     MapLayer { key: "districts", label: "Districts", group: "City", hotkey: "", hint: "Named districts: areas, borders and names", flag: |o| &mut o.districts, legend: legend_districts },
     MapLayer { key: "traffic", label: "Traffic load", group: "Traffic", hotkey: "L", hint: "Per lane: how full and how slow", flag: |o| &mut o.traffic, legend: legend_traffic },
     MapLayer { key: "traffic_types", label: "Traffic types", group: "Traffic", hotkey: "L", hint: "A disc under every vehicle by type", flag: |o| &mut o.traffic_types, legend: legend_traffic_types },
@@ -314,6 +316,15 @@ fn legend_traffic(ui: &mut egui::Ui, _: &LegendCtx) {
     small(ui, "per lane: how full and how slow");
     swatches(ui, &[(linear(crate::render::TRAFFIC_BLUE), "every vehicle".into()), (linear([0.25, 0.5, 1.0]), "tunnels, seen through".into()), (linear([3.5, 0.3, 0.15]), "a crash in the road".into())], false);
     small(ui, "the city is dimmed; load lines, crashes and cars in tunnels show through everything");
+}
+
+fn legend_land_tiles(ui: &mut egui::Ui, ctx: &LegendCtx) {
+    let items: Vec<(Color32, String)> = [(crate::render::land_tiles::OWNED, "the city's land"), (crate::render::land_tiles::FOR_SALE, "for sale now"), (crate::render::land_tiles::LATER, "for sale later")].iter().map(|(rgb, t)| (linear(*rgb), t.to_string())).collect();
+    swatches(ui, &items, false);
+    small(ui, "click a price on the map, or pick a tile in the Land for sale window");
+    let w = ctx.world;
+    let n = w.landscape.tiles.len();
+    small(ui, &format!("tiles of {:.1} km; {n} of {} bought; each costs more than the last", nd_sim::landscape::TILE / 1000.0, nd_sim::landscape::outer_tiles().len()));
 }
 
 fn legend_danger(ui: &mut egui::Ui, ctx: &LegendCtx) {
