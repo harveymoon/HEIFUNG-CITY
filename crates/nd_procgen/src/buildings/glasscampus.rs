@@ -71,7 +71,7 @@ fn concrete(c: &Ctx, rng: &mut impl Rng) -> [f32; 3] {
 }
 
 /// A light marked to show only after dark.
-fn night_box(g: &mut Geometry, c: &Ctx, u: f32, y: f32, v: f32, size: Vec3, col: [f32; 3]) {
+pub(super) fn night_box(g: &mut Geometry, c: &Ctx, u: f32, y: f32, v: f32, size: Vec3, col: [f32; 3]) {
     let from = g.part(Glow).positions.len();
     c.frame.bx(g, Glow, u, y, v, size, mul(col, 1.0 - 0.3 * c.wear));
     mark_glow(g, from, NIGHT_MARK);
@@ -79,7 +79,7 @@ fn night_box(g: &mut Geometry, c: &Ctx, u: f32, y: f32, v: f32, size: Vec3, col:
 
 /// A slim lamp post at lot-local `p`, lit after dark; nothing where it
 /// would hang over the street.
-fn lamp(g: &mut Geometry, c: &Ctx, p: Vec2, h: f32) {
+pub(super) fn lamp(g: &mut Geometry, c: &Ctx, p: Vec2, h: f32) {
     if !c.inside_local(p) || distance_to_boundary(p, &c.lot_poly) < 0.5 {
         return;
     }
@@ -96,7 +96,7 @@ fn lamp(g: &mut Geometry, c: &Ctx, p: Vec2, h: f32) {
 /// face, so the renderer switches a floor at a time; some only a stretch
 /// lit), mullions (mid detail), smears and rain streaks (near).
 #[allow(clippy::too_many_arguments)]
-fn curtain_face(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0: f32, floors: i32, fh: f32, span_col: [f32; 3]) {
+pub(super) fn curtain_face(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0: f32, floors: i32, fh: f32, span_col: [f32; 3]) {
     let f = &c.frame;
     if face.len < 1.2 || floors < 1 {
         return;
@@ -139,7 +139,7 @@ fn curtain_face(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0: 
 /// glass, every face dressed by [`curtain_face`], a coping slab on top.
 /// Returns its top.
 #[allow(clippy::too_many_arguments)]
-fn curtain_block(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, r: &R, y0: f32, floors: i32, fh: f32, glass: [f32; 3], span_col: [f32; 3]) -> f32 {
+pub(super) fn curtain_block(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, r: &R, y0: f32, floors: i32, fh: f32, glass: [f32; 3], span_col: [f32; 3]) -> f32 {
     let h = y0 + floors as f32 * fh;
     block(g, c, Glass, r, y0, h, glass);
     for face in r.faces() {
@@ -151,7 +151,7 @@ fn curtain_block(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, r: &R, y0: f32, 
 
 /// Posts every metre and a half round a roof or a deck and two rails
 /// (near detail).
-fn rails(g: &mut Geometry, c: &Ctx, r: &R, y: f32, col: [f32; 3]) {
+pub(super) fn rails(g: &mut Geometry, c: &Ctx, r: &R, y: f32, col: [f32; 3]) {
     let f = &c.frame;
     g.lod(Lod::Near, |g| {
         for face in r.faces() {
@@ -170,7 +170,7 @@ fn rails(g: &mut Geometry, c: &Ctx, r: &R, y: f32, col: [f32; 3]) {
 /// Rooftop plant inside `r` at `y`: chillers with their fans, round
 /// cooling units, a duct run between them, a dish or a mast; rails round
 /// the roof's edge.
-fn roof_plant(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, r: &R, y: f32) {
+pub(super) fn roof_plant(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, r: &R, y: f32) {
     let f = &c.frame;
     let pal = c.palette;
     rails(g, c, &r.inset(0.25), y, mul(pal.steel, 0.7));
@@ -216,7 +216,7 @@ fn roof_plant(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, r: &R, y: f32) {
 /// per floor (mid), flights inside (near), a lamp on each landing after
 /// dark.
 #[allow(clippy::too_many_arguments)]
-fn steel_core(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, r: &R, y0: f32, h: f32, fh: f32) {
+pub(super) fn steel_core(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, r: &R, y0: f32, h: f32, fh: f32) {
     let f = &c.frame;
     let col = steel(c, rng);
     for (u, v) in [(r.u0, r.v0), (r.u1, r.v0), (r.u1, r.v1), (r.u0, r.v1)] {
@@ -254,7 +254,7 @@ fn steel_core(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, r: &R, y0: f32, h: 
 /// glass, marked `NIGHT_MARK`), its frame and floor lines (mid) dark over
 /// the light; a screen hung inside it on the larger ones.
 #[allow(clippy::too_many_arguments)]
-fn atrium(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f32, w: f32, out: f32, y0: f32, y1: f32, glass: [f32; 3], fh: f32, light: [f32; 3]) {
+pub(super) fn atrium(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f32, w: f32, out: f32, y0: f32, y1: f32, glass: [f32; 3], fh: f32, light: [f32; 3]) {
     let f = &c.frame;
     let h = y1 - y0;
     if w < 2.0 || h < 2.0 || out < 0.5 {
@@ -943,7 +943,7 @@ pub fn campus_quad(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras) {
 // ── the campus's small industry ───────────────────────────────────────────────
 
 /// Corners cut off a rectangle by `k`: the chamfered concrete mass.
-fn chamfered(r: &R, k: f32) -> Vec<Vec2> {
+pub(super) fn chamfered(r: &R, k: f32) -> Vec<Vec2> {
     let k = k.min(r.w() * 0.3).min(r.d() * 0.3);
     vec![
         Vec2::new(r.u0 + k, r.v0),

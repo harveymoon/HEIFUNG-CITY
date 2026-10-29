@@ -245,6 +245,13 @@ pub fn site_fit(style: Style, site: &Site) -> f32 {
         // count their rooms whatever they look (shacks and stilt houses
         // stand for as many households as a stack), so any height suits.
         Style::TarpMarket | Style::CornerKiosk | Style::Shebeen => low(3.0),
+        // [r4-skyline] The towers want floors (the twins the most, and a
+        // wide plot), the boutique row is low, the mall mid-rise.
+        Style::LuxeTower | Style::PoolTower => tall(5.0),
+        Style::TwinTowers => tall(9.0) * if w > 0.0 && w < 20.0 { 0.2 } else { 1.0 },
+        Style::HelipadTower => tall(8.0),
+        Style::BoutiqueRow => low(4.0),
+        Style::MallPodium => low(8.0),
         _ => 1.0,
     }
 }
