@@ -154,6 +154,16 @@ pub struct WalkNode {
     /// [tools] Height above the ground, metres: 0 at grade, the walkway's
     /// height on a raised walkway (a footbridge, later a skywalk).
     pub level: f32,
+    /// [r4-metroloop] A pavement up on a deck: laid along a viaduct or a
+    /// raised bridge where the way stands `VIADUCT_LEVEL` or more above
+    /// the ground. Still at `level` 0 (the way's own height says how high,
+    /// `World::way_height_on_leg`), but a walk that starts or ends on the
+    /// ground is not snapped onto it (`WalkGraph::snap_end`).
+    pub deck: bool,
+    /// [r4-metroloop] Laid along a way off the ground (a deck, a bridge, an
+    /// embankment or cutting: what `World::way_height_on_leg` lifts a
+    /// walker onto). A leg between nodes that are not is at grade.
+    pub lifted: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -299,6 +309,13 @@ pub struct WalkGraph {
     pub footbridge_links: Vec<[Vec2; 2]>,
     /// [tools] Level of each raised node by its exact position.
     raised_at: HashMap<(u32, u32), f32>,
+    /// [r4-metroloop] The footprint of every deck (`WalkNode::deck`): the
+    /// way's ends, their levels and how far out from its centre line the
+    /// deck and its pavements reach. Under or on it, a point may be up on
+    /// the deck; anywhere else it is on the ground.
+    pub(super) decks: Vec<(Vec2, Vec2, f32, f32, f32)>,
+    /// [r4-metroloop] Every node by its exact position: (`deck`, `lifted`).
+    on_deck_at: HashMap<(u32, u32), (bool, bool)>,
     /// [park-paths] Where a player path may join the walkways of a park or
     /// other public grounds (`add_grounds`): the Path tool's snap points,
     /// and the ones a path is joined to.

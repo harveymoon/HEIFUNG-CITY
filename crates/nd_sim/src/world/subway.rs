@@ -753,6 +753,132 @@ mod tests {
         assert!(w.add_metro_line(&[a, b, a]).is_err());
     }
 
+    /// [r4-metroloop] A mind that always wants to be off somewhere: a
+    /// stroll, whenever it is asked.
+    struct RestlessMind;
+
+    impl crate::mind::MindProvider for RestlessMind {
+        fn decide(&mut self, _ctx: &crate::mind::MindContext) -> Option<crate::mind::Decision> {
+            Some(crate::mind::Decision { intent: crate::mind::Intent::Wander, thought: String::new(), memory: None })
+        }
+
+        fn name(&self) -> &'static str {
+            "restless"
+        }
+    }
+
+    /// A rider walking in at A's entrance for a ride to B, their next
+    /// decision already due when they get there.
+    fn rider_due_at_a(w: &mut World) -> (CitizenId, BuildingId, BuildingId, MetroLineId) {
+        let a = w.build_metro_station(lot_near(w, Vec2::new(-900.0, 30.0))).unwrap();
+        let b = w.build_metro_station(lot_near(w, Vec2::new(900.0, 30.0))).unwrap();
+        let line = w.add_metro_line(&[a, b]).unwrap();
+        w.set_metro_headway(line, 6).unwrap();
+        let at = w.building_entrance(a).unwrap();
+        let rider = walker(w, at);
+        w.clock = SimClock::starting_at(0, 8, 0);
+        let c = &mut w.citizens[rider];
+        c.transit = Some(TransitTrip { leg: TransitLeg::Subway { line, board: a, alight: b }, target: b, purpose: Purpose::Wander, since: 0, bike: false });
+        c.activity = Activity::Traveling { to: Some(b), purpose: Purpose::ToStop, path: vec![at], idx: 0 };
+        c.next_decision_tick = 0;
+        (rider, a, b, line)
+    }
+
+    /// [r4-metroloop] Harvey's day 46: Ezra Varga walked to Steam Alley,
+    /// went down to the platform and a minute later set off again, on a
+    /// 42-minute walk round a viaduct back to the same platform, five
+    /// times. A rider whose decision falls due on the platform is not
+    /// asked again: they wait (the wait's start stays put, so giving up
+    /// can still come) and board the next train.
+    #[test]
+    fn a_waiting_metro_rider_whose_decision_is_due_waits_for_the_train() {
+        let mut w = town();
+        let mut mind = RestlessMind;
+        let (rider, ..) = rider_due_at_a(&mut w);
+        let mut since: Option<u64> = None;
+        let mut boarded = false;
+        for _ in 0..60 {
+            w.tick(&mut mind);
+            let c = &w.citizens[rider];
+            match &c.activity {
+                Activity::Waiting { .. } => {
+                    assert!(c.on_platform(), "waiting down on the platform");
+                    let s = c.transit.unwrap().since;
+                    assert!(since.is_none_or(|x| x == s), "the wait began once: {since:?} then {s}");
+                    since = Some(s);
+                }
+                Activity::OnMetro { .. } => {
+                    boarded = true;
+                    break;
+                }
+                Activity::Traveling { purpose: Purpose::ToStop, .. } if since.is_none() => {}
+                other => panic!("left the platform without the train: {}", other.label()),
+            }
+        }
+        assert!(since.is_some(), "they waited");
+        assert!(boarded, "and boarded the next train: {}", w.citizens[rider].activity.label());
+    }
+
+    /// [r4-metroloop] A late answer from the mind for someone on the
+    /// platform waits too (as for someone on the train), and any trip
+    /// planned from the platform after all sets off from the street
+    /// entrance, not from under the middle of the lot.
+    #[test]
+    fn a_trip_planned_again_from_the_platform_starts_at_the_entrance() {
+        let mut w = town();
+        let mut mind = IdleMind;
+        let (rider, a, b, _) = rider_due_at_a(&mut w);
+        w.citizens[rider].next_decision_tick = u64::MAX / 2;
+        for _ in 0..5 {
+            w.tick(&mut mind);
+            if w.citizens[rider].on_platform() {
+                break;
+            }
+        }
+        let platform = w.metro_platform(a).unwrap();
+        let entrance = w.building_entrance(a).unwrap();
+        assert!(w.citizens[rider].on_platform() && w.citizens[rider].pos.distance(platform) < 1.0);
+        w.apply_late_decision(rider, crate::mind::Decision { intent: crate::mind::Intent::Wander, thought: "Fancy a stroll.".into(), memory: None });
+        assert!(w.citizens[rider].on_platform(), "still waiting: {}", w.citizens[rider].activity.label());
+        assert!(w.deferred_intents.contains_key(&rider), "the stroll keeps for later");
+        // Something else sends them off (a friend calling, say).
+        w.travel_to_impl(rider, Some(b), Purpose::Wander, false, false);
+        let c = &w.citizens[rider];
+        let Activity::Traveling { path, .. } = &c.activity else { panic!("on their way: {}", c.activity.label()) };
+        assert!(c.pos.distance(entrance) < 1.0, "up at the entrance: {:?} vs {:?}", c.pos, entrance);
+        assert!(path[0].distance(entrance) < path[0].distance(platform) || path[0].distance(entrance) < 15.0, "the walk starts at the street: {:?}", path[0]);
+    }
+
+    /// [r4-metroloop] After the last train (and a grace for it to come),
+    /// whoever is still on the platform comes up and goes another way:
+    /// waiting riders no longer decide again, so nothing else would send
+    /// them on until `WAIT_GIVE_UP`.
+    #[test]
+    fn riders_still_waiting_after_the_last_train_go_another_way() {
+        let mut w = town();
+        let mut mind = IdleMind;
+        let (rider, a, ..) = rider_due_at_a(&mut w);
+        w.clock = SimClock::starting_at(0, 0, 20);
+        for _ in 0..5 {
+            w.tick(&mut mind);
+            if w.citizens[rider].on_platform() {
+                break;
+            }
+        }
+        assert!(w.citizens[rider].on_platform(), "down to wait at 00:2x");
+        for _ in 0..30 {
+            w.tick(&mut mind);
+        }
+        let c = &w.citizens[rider];
+        assert!(!matches!(c.activity, Activity::Waiting { .. }) && c.transit.is_none(), "gave up: {}", c.activity.label());
+        assert!(c.pos.distance(w.metro_platform(a).unwrap()) > 3.0, "and came up from the platform");
+        assert!(c.thought.contains("last train"), "{}", c.thought);
+        assert!(crate::transit::service_over(35, metro::SERVICE_START, metro::SERVICE_END, crate::transit::LAST_RUN_GRACE));
+        assert!(!crate::transit::service_over(10, metro::SERVICE_START, metro::SERVICE_END, crate::transit::LAST_RUN_GRACE));
+        assert!(!crate::transit::service_over(12 * 60, crate::transit::SERVICE_START, crate::transit::SERVICE_END, crate::transit::LAST_RUN_GRACE));
+        assert!(crate::transit::service_over(2, crate::transit::SERVICE_START, crate::transit::SERVICE_END, crate::transit::LAST_RUN_GRACE), "the buses end at 23:30");
+    }
+
     #[test]
     fn a_loop_line_runs_round_and_shrinks_to_a_plain_line() {
         let mut w = town();

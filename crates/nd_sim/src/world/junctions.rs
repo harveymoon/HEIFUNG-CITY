@@ -464,6 +464,15 @@ impl World {
         let leg = to - from;
         let len = leg.length();
         let dir = (len > 0.5).then(|| leg / len);
+        // [r4-metroloop] A leg of the walk graph at grade (a node laid on
+        // the ground at one end, the other not along a raised way either)
+        // is on the ground, whatever runs overhead or alongside: the loop
+        // round a station lot a viaduct's ramp passes over was drawn up on
+        // the ramp, people "jumping up and down on an elevated road".
+        let (lf, lt) = (self.walk.lifted_at_node(from), self.walk.lifted_at_node(to));
+        if (lf == Some(false) && lt != Some(true)) || (lt == Some(false) && lf != Some(true)) {
+            return None;
+        }
         let mut best: Option<(f32, f32)> = None;
         for sid in self.roads.segments_near(pos, 12.0) {
             let s = self.roads.segment(sid);

@@ -92,6 +92,8 @@ pub fn group(s: Style) -> &'static str {
         TimberTerrace | SolarTownhouses | VineTower | GlassMarketHall | CoopStore | RepairCafe | VerticalFarm | GreenhouseRows | BikeDepot | SolarVilla => "Solarpunk Green",
         // [r4-glass] Founders' Campus's look.
         StudentFlats | CoLivingTower | GlassLab | StartupSheds | AtriumOffice | CampusQuad | ResearchLab | ServerHall | GlassPavilion => "Glass Campus",
+        // [r4-patchwork] The Riverbank Shantytown's look.
+        TinShacks | StiltHouses | PatchStack | TarpMarket | CornerKiosk | Shebeen | ScrapYard | LeanToWorkshop | BigManCompound => "Patchwork",
         // [r4-skyline] Neo Tokyo Heights' look.
         LuxeTower | TwinTowers | PoolTower | HelipadTower | MallPodium | BoutiqueRow | SkyVilla => "Skyline Luxe",
         #[allow(unreachable_patterns)]
@@ -100,7 +102,7 @@ pub fn group(s: Style) -> &'static str {
 }
 
 /// Every section, in catalogue order.
-pub const GROUPS: [&str; 28] = [
+pub const GROUPS: [&str; 29] = [
     "Residential",
     "Commercial",
     "Industrial",
@@ -127,6 +129,7 @@ pub const GROUPS: [&str; 28] = [
     "Old Stone",
     "Solarpunk Green",
     "Glass Campus",
+    "Patchwork",
     "Skyline Luxe",
     "Other",
 ];
@@ -134,7 +137,7 @@ pub const GROUPS: [&str; 28] = [
 /// The land use a section's forced styles are drawn for.
 fn group_land_use(g: &str) -> LandUse {
     match g {
-        "Residential" | "Homes and estates" | "Capsule district" | "Brick & Steel" | "Lantern Alley" | "Garden suburb" | "Harbour Pastel" | "Solarpunk Green" | "Old Stone" | "Glass Campus" | "Skyline Luxe" => LandUse::Residential,
+        "Residential" | "Homes and estates" | "Capsule district" | "Brick & Steel" | "Lantern Alley" | "Garden suburb" | "Harbour Pastel" | "Solarpunk Green" | "Old Stone" | "Glass Campus" | "Patchwork" | "Skyline Luxe" => LandUse::Residential,
         "Commercial" | "Shops and trades" | "Malls" | "Parking" | "League towers" => LandUse::Commercial,
         "Entertainment" | "Waterfront" => LandUse::Entertainment,
         "Civic" | "City services" | "Attractions" | "Transit and rail" => LandUse::Civic,
@@ -171,6 +174,11 @@ fn lantern_land_use(s: Style) -> Option<LandUse> {
         GlassLab | AtriumOffice => Some(LandUse::Commercial),
         StartupSheds | CampusQuad => Some(LandUse::Entertainment),
         ResearchLab | ServerHall => Some(LandUse::Industrial),
+        // [r4-patchwork] Patchwork's, likewise.
+        TinShacks | StiltHouses | PatchStack | BigManCompound => Some(LandUse::Residential),
+        TarpMarket | CornerKiosk => Some(LandUse::Commercial),
+        Shebeen => Some(LandUse::Entertainment),
+        ScrapYard | LeanToWorkshop => Some(LandUse::Industrial),
         // [r4-skyline] Skyline Luxe's, likewise.
         LuxeTower | TwinTowers | PoolTower | SkyVilla => Some(LandUse::Residential),
         HelipadTower | BoutiqueRow => Some(LandUse::Commercial),
@@ -231,6 +239,12 @@ pub fn lot_size(s: Style, tier: Tier) -> (f32, f32) {
             _ => (44.0, 40.0),
         },
         CampusQuad | ServerHall => (52.0, 48.0),
+        // [r4-patchwork] A compound on a family's two plots, an estate's four.
+        BigManCompound => match tier {
+            Tier::High => (64.0, 52.0),
+            _ => (40.0, 36.0),
+        },
+        ScrapYard => (48.0, 44.0),
         // [r4-skyline] A sky villa on a family's two plots, an estate's
         // four; twin towers on a wide plot.
         SkyVilla => match tier {
@@ -337,11 +351,16 @@ pub fn geometry(e: &Entry, v: Variant, rules: &BuildingRules, palette: &Palette)
     // tier as a billionaire's.
     let look = look.or(Style::GLASS_CAMPUS.contains(&e.style).then_some(nd_sim::districts::Look::GlassCampus));
     let form = form.or((e.style == Style::GlassPavilion && v.tier == Tier::High).then_some(nd_sim::estate::Form::Mansion));
+    // [r4-patchwork] Patchwork's in its colours, its compound at the top
+    // tier as a billionaire's; the stilt houses up on their piles by the
+    // water (behind the lot, as Harbour Pastel's).
+    let look = look.or(Style::PATCHWORK.contains(&e.style).then_some(nd_sim::districts::Look::Patchwork));
+    let form = form.or((e.style == Style::BigManCompound && v.tier == Tier::High).then_some(nd_sim::estate::Form::Mansion));
     // [r4-skyline] Skyline Luxe's in its colours, its sky villa at the top
     // tier as a billionaire's (the helipad on the penthouse).
     let look = look.or(Style::SKYLINE_LUXE.contains(&e.style).then_some(nd_sim::districts::Look::SkylineLuxe));
     let form = form.or((e.style == Style::SkyVilla && v.tier == Tier::High).then_some(nd_sim::estate::Form::Mansion));
-    let shore = harbour.then(|| nd_procgen::buildings::ShoreLook { seaward: (lot.center - (lot.front_edge[0] + lot.front_edge[1]) * 0.5).normalize_or_zero(), drop: 1.2, beach: None });
+    let shore = (harbour || e.style == Style::StiltHouses).then(|| nd_procgen::buildings::ShoreLook { seaward: (lot.center - (lot.front_edge[0] + lot.front_edge[1]) * 0.5).normalize_or_zero(), drop: 1.2, beach: None });
     let extras = Extras { powered: 1.0, dynamic_lights: true, tower, look, form, shore, ..Extras::default() };
     generate_styled_extras(&lot, e.land_use, v.floors, v.tier, 0.9, v.seed, e.style, rules, palette, &extras)
 }

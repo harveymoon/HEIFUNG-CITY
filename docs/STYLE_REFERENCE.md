@@ -239,6 +239,40 @@ a view down one street shows a few dozen such towers.
   screens are unmarked glow, as signs. Bikes (frames mid, wheels near),
   hire scooters dropped about (near), a skip, gas bottle cages; rust at the
   steel's feet, smears and grime with wear.
+- Done (r4-patchwork): **Patchwork** (`buildings/patchwork.rs`, the
+  Riverbank Shantytown's look): corrugated-iron shacks grown room by room
+  (a first room on each patch of swept earth, two to four more added on
+  lower, a room up on the slab on a taller lot, reached by a ladder),
+  stilt houses (plank walls under a sheet gable, a veranda with a rail and
+  steps; up on braced piles on a lot by the water (`Ctx::shore`) with a
+  rickety plank walk out over it to a tied canoe, on a low block plinth
+  inland), self-built stacks (an old concrete base with a roller door, then
+  each storey in raw brick, block, render or sheet, jogged out of line, a
+  tin room and a terrace on top with tanks, washing and the starter bars
+  for the next floor), a tarp market (stalls whose tarps sag in the
+  middle, seen from above and below), a corner kiosk (a drinks livery,
+  hatch, grille and fridge, a hand-painted sign, a parasol), a shebeen
+  (a painted sheet hall, a lean-to over tables, bulbs to poles at the
+  street, speakers, crates of empties), a scrap yard (a sheet fence, heaps,
+  wrecks, sacks of cans and bottles, a sorting shed), a lean-to workshop
+  (a block shed, a car on blocks, a bench and an engine hoist), and for
+  the story's mansions the big man's walled compound (a loud-painted
+  concrete house, columned porch, balcony, barred windows, a big dish,
+  tanks on a stand, a caged generator, a car; razor wire on the wall; a
+  tin room at the back, an extension half built; a third storey and a
+  guesthouse on a billionaire's four plots). Irregular and patched, not a
+  joke: every room's size, height, sheet and the way its roof falls are
+  the seed's; one to three patches of other sheets (rusted, zinc, faded
+  paint) on each wall at two depths of their own (0.012, 0.023); doors
+  at 0.036; roofs held down by stones and tyres (near). Grain in the
+  detail layers: wires from a leaning pole, washing lines, dishes, ladders,
+  window frames and curtains, burglar bars, rails, razor wire (mid);
+  bulbs' glass, stones on roofs, crates, chairs, sign lettering (near).
+  Glow, all base and marked `NIGHT_MARK`: bare bulbs over doors (12
+  triangles each), Harbour's string bulbs over the market lanes and the
+  shebeen's yard, the blue of a television in some windows, the kiosk's
+  fridge, the shebeen's hatch, a fire in a barrel, the compound's
+  floodlights.
 - Done (r4-skyline): **Skyline Luxe** (`buildings/skyline.rs`, Neo Tokyo
   Heights' look): a slim glass residence tower on a podium of noisy shops,
   twin towers of different heights on one podium joined by a lit sky
@@ -279,4 +313,5 @@ a view down one street shows a few dozen such towers.
   (about 800 at six floors) and 5,000 to 6,600 detail.
 - Left for later: the cyberpunk family (section 2) on the Neon strip,
   offices and industry; the street-level props round the plot for the
-  other looks.
+  other looks; slopes for the stilt houses (lots are levelled pads, a
+  style does not know the hillside it stands on).

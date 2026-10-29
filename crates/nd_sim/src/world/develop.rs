@@ -1024,7 +1024,7 @@ impl World {
         }
         let mut floors = self.pick_floors(lot_id, lu, tier);
         if let Some(l) = look {
-            floors = l.floors(floors, self.height_cap(lot_id));
+            floors = l.floors_for(lu, floors, self.height_cap(lot_id));
         }
         let seed = self.fresh_seed();
         let name = match named {

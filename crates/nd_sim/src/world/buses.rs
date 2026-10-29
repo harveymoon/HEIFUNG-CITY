@@ -521,13 +521,28 @@ impl World {
         // Riders who gave up: checked every ten ticks, since the limit is
         // hours and the scan is everyone.
         if tick % 10 == 0 {
-            let tired: Vec<CitizenId> = self
+            // [r4-metroloop] And, once the last bus or train of the night
+            // has had `LAST_RUN_GRACE` to come, everyone still waiting for
+            // one: nothing more comes until the morning. (Waiting riders
+            // used to decide again, and went home or on another way.)
+            let over = |leg: &TransitLeg| match leg {
+                TransitLeg::Bus { .. } => transit::service_over(minute as u32, transit::SERVICE_START, transit::SERVICE_END, transit::LAST_RUN_GRACE),
+                TransitLeg::Subway { .. } => transit::service_over(minute as u32, crate::subway::SERVICE_START, crate::subway::SERVICE_END, transit::LAST_RUN_GRACE),
+                TransitLeg::Rail { .. } => transit::service_over(minute as u32, crate::rail::SERVICE_START, crate::rail::SERVICE_END, transit::LAST_RUN_GRACE * 2),
+                _ => false,
+            };
+            let tired: Vec<(CitizenId, bool)> = self
                 .citizens
                 .iter()
-                .filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }) && c.transit.is_some_and(|t| t.since > 0 && tick.saturating_sub(t.since) > if matches!(t.leg, TransitLeg::Rail { .. }) { transit::WAIT_GIVE_UP * 2 } else { transit::WAIT_GIVE_UP }))
-                .map(|(id, _)| id)
+                .filter(|(_, c)| matches!(c.activity, Activity::Waiting { .. }))
+                .filter_map(|(id, c)| {
+                    let t = c.transit?;
+                    let night = over(&t.leg);
+                    let long = t.since > 0 && tick.saturating_sub(t.since) > if matches!(t.leg, TransitLeg::Rail { .. }) { transit::WAIT_GIVE_UP * 2 } else { transit::WAIT_GIVE_UP };
+                    (night || long).then_some((id, night && !long))
+                })
                 .collect();
-            for id in tired {
+            for (id, night) in tired {
                 let Some(trip) = self.citizens[id].transit.take() else { continue };
                 // [pt-transit] Up from the metro platform to the street first.
                 if let TransitLeg::Subway { board, .. } = trip.leg {
@@ -537,9 +552,17 @@ impl World {
                         c.prev_pos = p;
                     }
                 }
-                self.citizens[id].thought = "No bus is coming. Walking it.".to_string();
-                // [carlife] Remembered when choosing how to travel next time.
-                self.transit_failed(id);
+                if night {
+                    self.citizens[id].thought = match trip.leg {
+                        TransitLeg::Bus { .. } => "Missed the last bus. Walking it.",
+                        _ => "Missed the last train. Walking it.",
+                    }
+                    .to_string();
+                } else {
+                    self.citizens[id].thought = "No bus is coming. Walking it.".to_string();
+                    // [carlife] Remembered when choosing how to travel next time.
+                    self.transit_failed(id);
+                }
                 self.travel_to_impl(id, Some(trip.target), trip.purpose, false, false);
             }
         }

@@ -41,6 +41,8 @@ mod oldstone_works;
 mod solarpunk;
 /// [r4-glass] Glass Campus: flats, towers, labs, sheds, offices, quads, halls.
 mod glasscampus;
+/// [r4-patchwork] Patchwork: shacks, stilt houses, stalls, scrap, compound.
+mod patchwork;
 /// [r4-skyline] Skyline Luxe: towers, twin towers, pools, helipads, a mall, boutiques, the sky villa.
 mod skyline;
 /// [districts] District looks: style menus and palettes, hotels.
@@ -293,6 +295,9 @@ mod solarpunk_tests;
 
 #[cfg(test)]
 mod glasscampus_tests;
+
+#[cfg(test)]
+mod patchwork_tests;
 
 #[cfg(test)]
 mod skyline_tests;

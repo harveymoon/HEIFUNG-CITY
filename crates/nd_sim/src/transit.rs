@@ -35,6 +35,19 @@ pub const DWELL_SECONDS: f32 = 18.0;
 pub const WAIT_GIVE_UP: u64 = 180;
 pub const SERVICE_START: u32 = 5 * 60 + 30;
 pub const SERVICE_END: u32 = 23 * 60 + 30;
+/// [r4-metroloop] Minutes after a service ends that the last run may still
+/// call (twice that for the trains, which cross the map); then whoever is
+/// still waiting gives up (`service_over`).
+pub const LAST_RUN_GRACE: u32 = 30;
+
+/// [r4-metroloop] Has a service running `start..end` (minutes of the day;
+/// `end` may be 1440) stopped for the night at least `grace` minutes ago?
+pub fn service_over(minute_of_day: u32, start: u32, end: u32, grace: u32) -> bool {
+    if (start..end).contains(&minute_of_day) {
+        return false;
+    }
+    (minute_of_day + 1440 - end) % 1440 >= grace
+}
 /// Ticks between two buses leaving a depot.
 pub const DISPATCH_GAP: u64 = 4;
 /// [pt-transit] How far riders walk to change from one line to another.
