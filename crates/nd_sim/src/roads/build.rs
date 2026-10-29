@@ -101,7 +101,23 @@ impl RoadNetwork {
     pub(super) fn end_node(&mut self, p: Vec2, radius: f32, kind: RoadKind, level: f32, own: &[SegmentId]) -> NodeId {
         // Its own start stays a target, so a closed loop (a ring) closes.
         let start = own.first().map(|&s| self.segment(s).a);
-        let own_nodes: Vec<NodeId> = own.iter().flat_map(|&s| [self.segment(s).a, self.segment(s).b]).filter(|&n| Some(n) != start).collect();
+        // [r4-flags-look] (flag day 8 at (279,493)) Only the way's own
+        // pieces near its end are left out: a road that loops back and
+        // ends by an earlier stretch of itself joins it in a junction, as
+        // it would join any other road. Its end used to stand 1.9 m from
+        // its own vertex, two nodes side by side, the lanes overlapping
+        // with no junction (the piece "went underneath the intersection").
+        let mut near_end: Vec<NodeId> = Vec::new();
+        let mut back = own.last().map_or(0.0, |&s| self.node(self.segment(s).b).pos.distance(p));
+        for &s in own.iter().rev() {
+            if back > OWN_END_REACH {
+                break;
+            }
+            let sg = self.segment(s);
+            near_end.extend([sg.a, sg.b]);
+            back += self.node(sg.a).pos.distance(self.node(sg.b).pos);
+        }
+        let own_nodes: Vec<NodeId> = near_end.into_iter().filter(|&n| Some(n) != start).collect();
         match self.end_target(p, radius, kind, level, &own_nodes) {
             Some(EndTarget::Node(id)) => id,
             Some(EndTarget::On(sid, t, q)) => {
