@@ -68,9 +68,8 @@ More on the [project page](https://harveymoon.github.io/HEIFUNG-CITY/), all take
   drivers circle, parking wardens, tickets, clamps and **tow trucks**.
 
 ### Transit
-- **Buses** on loops of kerbside stops, from depots, 05:30 to 23:30.
-- **Metro** drawn station to station, looping lines, trains every 10 minutes by default, and an
-  **Underground view**.
+- **Buses** on loops of kerbside stops, run from depots.
+- **Metro** drawn station to station, looping lines, and an **Underground view**.
 - **Rail**: a trunk line, branches you lay, stations, freight yards whose wagons really carry the
   goods, level crossings, and one Central Station per city.
 - **Ferries** to towns off the map, freighters up the rivers, shipping ports, fishing fleets,
@@ -78,6 +77,9 @@ More on the [project page](https://harveymoon.github.io/HEIFUNG-CITY/), all take
 - **Air**: drone pads, vertiports and skyports for eVTOL **air taxis**, air ambulances and a police
   helicopter.
 - **Taxis** run by companies residents found when the demand is there.
+- **Timetables** for every bus line, metro line, the passenger trains and each ferry terminal:
+  service hours, morning and evening rushes, optional night service (off, sparse or 24 hours), and
+  a day timeline per line of who boarded and who was left waiting.
 
 ### Economy and land
 - Fourteen resources and recipe-driven **businesses** with stock, cash and floating prices; supply
@@ -217,8 +219,7 @@ Design notes live in [`docs/DESIGN.md`](docs/DESIGN.md), the art direction in
 
 ## Roadmap
 
-A big world with seamless edges and in the end a planet; timetables with night trains and rush-hour
-service; islands reached only by ferry; a layered city with life under and between raised roads;
+A big world with seamless edges and in the end a planet; islands reached only by ferry; a layered city with life under and between raised roads;
 full metro stations and an undercity; holographic billboards and skyways; a drive mode; talking to any citizen;
 cable cars and a monorail; a weekly city paper. See [`todo.md`](todo.md).
 
