@@ -150,7 +150,7 @@ impl World {
     }
 
     /// [`World::joint_of_node`] on network `roads` (one laid from `plan`).
-    fn joint_in(roads: &RoadNetwork, plan: &Plan, n: NodeId) -> Joint {
+    pub(in crate::world) fn joint_in(roads: &RoadNetwork, plan: &Plan, n: NodeId) -> Joint {
         let node = roads.node(n);
         let (q, level) = (node.pos, node.level);
         let mut j = Joint { at: q, node: Some(n), ..Default::default() };

@@ -55,4 +55,8 @@ pub enum SimEvent {
     /// end there when the grounds went: cut back, or removed if nothing
     /// was left (`world/grounds.rs`).
     PathTrimmed { gesture: crate::plan::GestureId, removed: bool, grounds: crate::walk::GroundsKind },
+    /// [r4-edge-bridges] A crossing upgrade (a footbridge, a push button, a
+    /// removed crosswalk) went with the leg of its junction it crossed:
+    /// where the junction was, what it was, the street's name.
+    CrossingRuleRemoved { at: glam::Vec2, upgrade: crate::junctions::CrossingUpgrade, street: String },
 }

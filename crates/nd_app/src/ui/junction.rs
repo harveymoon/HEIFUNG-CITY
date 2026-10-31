@@ -790,6 +790,12 @@ fn crossing_controls(ui: &mut egui::Ui, w: &mut World, st: &mut EditorState, c: 
     } else if c.closed && c.upgrade == CrossingUpgrade::None {
         ui.label(egui::RichText::new("replaced by the footbridge next to it").small().weak());
     }
+    // [r4-edge-bridges] Which junction it belongs to: it moves with it.
+    if let (CrossingUpgrade::Footbridge, Some((at, _))) = (c.upgrade, c.belongs_to.as_ref()) {
+        let streets = w.junction_streets(*at);
+        let name = if streets.is_empty() { format!("({:.0}, {:.0})", at.x, at.y) } else { streets.join(" / ") };
+        ui.label(egui::RichText::new(format!("part of the junction {name}: moves with it")).small().weak());
+    }
     // [footbridge] The crosswalk under a footbridge goes, unless kept.
     if c.upgrade == CrossingUpgrade::Footbridge {
         let mut keep = c.kept;

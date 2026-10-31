@@ -136,6 +136,10 @@ mod site_access_tests;
 mod ped_highway_tests;
 mod pillars;
 pub use pillars::{deck_half_width, deck_half_width_use};
+mod crossing_anchors;
+#[cfg(test)]
+mod crossing_anchor_tests;
+pub use crossing_anchors::MIGRATE_REACH;
 mod junctions;
 pub use junctions::{ApproachView, CrossingView, IntersectionView, LaneView, MoveView, PhaseView};
 mod riders;

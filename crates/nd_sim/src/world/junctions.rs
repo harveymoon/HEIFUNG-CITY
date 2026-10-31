@@ -100,6 +100,10 @@ pub struct CrossingView {
     /// [walk-crossings] Shut to walkers now (a slip road's mouth with no
     /// walk lights, button or bridge).
     pub shut: bool,
+    /// [r4-edge-bridges] Its upgrade's junction (the upgrade follows it
+    /// when the junction is moved): the junction's middle and the name of
+    /// the street crossed. None with no upgrade, or on a lone zebra.
+    pub belongs_to: Option<(Vec2, String)>,
 }
 
 /// What the Intersection editor shows and edits.
@@ -196,6 +200,7 @@ impl World {
             closed: c.closed,
             ramp: c.ramp,
             shut: c.shut,
+            belongs_to: self.crossing_junction(k),
         })
     }
 
