@@ -136,6 +136,9 @@ pub fn draw_selection(gizmos: &mut Gizmos, pens: &mut Pens, cx: &SelectionCx) {
         Selection::Drone(_) => {}
         Selection::Rv(seed) if outside && !cx.under => crate::rv_select::draw(gizmos, w, seed),
         Selection::Rv(_) => {}
+        // [K34] A shipping container: an outline round it.
+        Selection::Box(id) if outside => crate::box_select::draw(gizmos, sim, id),
+        Selection::Box(_) => {}
     }
 }
 

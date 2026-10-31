@@ -52,6 +52,10 @@ pub struct Ctx<'a> {
     pub pier: Option<nd_sim::attractions::PierDeck>,
     /// [parks] See [`Extras::park_look`].
     pub park_look: Option<super::park::ParkLook>,
+    /// [K34] The real boxes a Stacks home is built from, in building order.
+    pub boxes: Vec<nd_sim::containers::BoxFace>,
+    /// [K34] A depot's stacks are the renderer's (see `Extras::real_boxes`).
+    pub real_boxes: bool,
 }
 
 /// Per-building state that changes the look beyond style and condition.
@@ -126,11 +130,19 @@ pub struct Extras<'a> {
     /// [tenants] The units it is let in (`nd_sim::buildings::Unit`): a sign over each
     /// shopfront.
     pub units: &'a [nd_sim::buildings::Unit],
+    /// [K34] A Stacks home a stack developer built from real boxes: the
+    /// records, the building and the day (for their wear). Forces the
+    /// Stacks style and draws those boxes.
+    pub boxes_of: Option<(&'a nd_sim::containers::Containers, nd_sim::BuildingId, i64)>,
+    /// [K34] A depot whose boxes are real (`nd_sim::containers`): its
+    /// stacks are left out and their slots handed to the renderer
+    /// (`Geometry::box_slots`), which stands the boxes stored there.
+    pub real_boxes: bool,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[] }
+        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[], boxes_of: None, real_boxes: false }
     }
 }
 
@@ -190,6 +202,8 @@ impl<'a> Ctx<'a> {
             shore: extras.shore,
             pier: extras.pier.cloned(),
             park_look: extras.park_look,
+            boxes: extras.boxes_of.map(|(c, b, day)| c.home_faces(b, day)).unwrap_or_default(),
+            real_boxes: extras.real_boxes,
         }
     }
 }

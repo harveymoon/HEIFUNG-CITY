@@ -60,6 +60,14 @@ pub struct Sim {
     /// [fire-scene] Every building's drawn height, filled by the renderer
     /// the same way (`fire_scene::BuildingTops`).
     pub building_tops: crate::fire_scene::BuildingTops,
+    /// [K34] Each depot's slots for its real boxes (from its drawn style,
+    /// `Geometry::box_slots`), with the version they were drawn at; and a
+    /// count bumped whenever they change.
+    pub depot_slots: std::collections::HashMap<nd_sim::BuildingId, (u64, Vec<nd_procgen::BoxSlot>)>,
+    pub depot_slots_version: u64,
+    /// [K34] The real boxes on screen (depots and trains), for picking:
+    /// record, floor centre, rotation, forty-footer.
+    pub box_spots: Vec<(nd_sim::containers::BoxId, bevy::math::Vec3, bevy::math::Quat, bool)>,
 }
 
 impl Sim {
@@ -82,6 +90,9 @@ impl Sim {
             effective_speed: 1.0,
             styles: nd_procgen::StyleBook::default(),
             building_tops: Default::default(),
+            depot_slots: Default::default(),
+            depot_slots_version: 0,
+            box_spots: Vec::new(),
         }
     }
 

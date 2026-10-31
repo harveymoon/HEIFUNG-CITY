@@ -165,6 +165,7 @@ fn trade_words(kind: BusinessKind) -> Option<(&'static [&'static str], &'static 
         B::ArtStudio => (&["Rust", "Loft", "Warehouse", "Static"], &["Studios", "Collective", "Atelier", "=Starving Artists Co-op", "=Paint by Numbers"]),
         B::Cafe => (&["Blue", "Velvet", "Static", "Neon", "Lotus", "Night Owl"], &["Café", "Coffee", "Espresso Bar", "=Bean There", "=Brew-tal Coffee", "=Grounds for Divorce", "=Deja Brew", "=The Daily Grind"]),
         B::Bookshop => (&["Old", "Velvet", "Ink", "Night", "Paper"], &["Books", "Bookshop", "Booksellers", "=Shelf Indulgence", "=Paperback Writer", "=Read Between the Wines"]),
+        B::ScrapYard => (&["Rust", "Iron", "Torch", "Eastside", "Breakwater"], &["Scrap", "Salvage", "Metals", "Breakers", "=Cut & Run Salvage", "=Heavy Metal Recycling", "=Scrap Happy"]),
         B::Fab => (&["Aramund", "Koridan", "Helix", "Kessler", "Fulcrum", "Argent"], &["Fab", "Parts", "Precision", "Machining"]),
         B::Assembly => (&["Aramund", "Koridan", "Helix", "Kessler", "Fulcrum", "Zenith"], &["Assembly", "Electronics", "Circuits", "=Some Assembly Required"]),
         B::VertFarm => (&["Green", "Leaf", "Stack", "Jade", "Sky"], &["Greens", "Vertical Farms", "Grow Tower", "=Lettuce Turnip the Beet", "=Kale Storm"]),

@@ -31,6 +31,11 @@ mod buses;
 /// [lines] Inserting and sharing bus stops.
 pub mod bus_edit;
 mod cargo_hubs;
+/// [K34] Shipping containers' lives (`crate::containers`).
+mod containers;
+pub use containers::{truck_look, BoxCounts, BoxStory, DepotKind};
+#[cfg(test)]
+mod containers_tests;
 #[cfg(test)]
 mod cargo_hub_tests;
 #[cfg(test)]
@@ -861,6 +866,12 @@ pub struct World {
     /// load with none.
     #[serde(default)]
     pub insight: crate::insight::Insight,
+    /// [K34] Every shipping container in town, one by one: numbers, lines,
+    /// wear, where each is and has been, and the Stacks homes built from
+    /// them (`crate::containers`, `world/containers.rs`). Old saves load
+    /// with none and are given a starting stock on load.
+    #[serde(default)]
+    pub containers: crate::containers::Containers,
 }
 
 impl World {
@@ -980,6 +991,8 @@ impl World {
             dams: Default::default(),
             parks: Default::default(),
             insight: Default::default(),
+            // [K34] A new city keeps records from its first box.
+            containers: crate::containers::Containers { live: true, ..Default::default() },
         };
         w.landscape.set(Landscape::new(&w.config.landscape));
         // [sweep-sim] Grids over the whole buildable land (far islands too).

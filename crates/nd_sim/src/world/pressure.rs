@@ -324,6 +324,8 @@ impl World {
             beaches_open: self.shore.beaches.values().filter(|b| b.usable()).count() as f32,
             beach_appeal: self.beach_appeal_season(),
             waterfront_sites: self.lots.values().filter(|l| l.building.is_none() && l.usable() && l.shore.is_waterfront() && !l.shore.beach && l.land_use != LandUse::Park).count() as f32,
+            // [K34] yesterday's boxes due for scrap with no yard to cut them
+            old_boxes: self.containers.stats.due_scrap_today as f32,
         }
     }
 
@@ -654,6 +656,14 @@ impl World {
                     anchors.push(self.city_centre());
                 }
                 Placement { uses: &[Commercial, Entertainment], anchors, reach: f32::INFINITY, min_area: 0.0, value: 0.2, needs_street: false, near: "a beach or marina" }
+            }
+            // [K34] By the yards and the port, where the old boxes are.
+            PressureKind::ScrapYard => {
+                let mut anchors = self.box_depot_spots();
+                if anchors.is_empty() {
+                    anchors.push(self.city_centre());
+                }
+                Placement { uses: &[Industrial], anchors, reach: f32::INFINITY, min_area: 500.0, value: -1.0, needs_street: true, near: "the container yards" }
             }
             PressureKind::Marina => return None,
         };

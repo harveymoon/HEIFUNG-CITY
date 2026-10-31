@@ -15,6 +15,35 @@ pub(super) fn is_vacant_lot(lot: &nd_sim::Lot) -> bool {
     lot.building.is_none() && lot.park.is_none() && !lot.landlocked
 }
 
+/// What floors a lot under whatever stands on it.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum LotFill {
+    /// Unusable ground: plain earth, no outline.
+    Earth,
+    /// A built lot's gravel.
+    Gravel,
+    None,
+}
+
+/// The floor of a lot (not a park's): plain earth for unusable ground with
+/// nothing on it, gravel under a building; nothing on a vacant lot (the
+/// zoning layer shows what it is zoned for), under a strip mine (its own
+/// yard round the pit) or what floors its own ground (`own_floor`): a
+/// landmark (its big, often notched site: a gravel fill lifted onto the
+/// ground vertex by vertex rose over its lawns and paths), a beach or a
+/// built park. [r4-flags-look] (K19, flag day 27 at (470,314)) A beach on
+/// backland was floored with the unusable ground's green earth, a few
+/// centimetres under its sand on a raised pad and drawn over it: the
+/// umbrellas and loungers stood in "a layer of grass".
+pub(super) fn lot_fill(landlocked: bool, built: bool, holed: bool, own_floor: bool) -> LotFill {
+    match (landlocked, built) {
+        (true, false) => LotFill::Earth,
+        (_, false) => LotFill::None,
+        _ if holed || own_floor => LotFill::None,
+        _ => LotFill::Gravel,
+    }
+}
+
 /// Lot ground fills and (with the zoning overlay, toggled with O) the zone
 /// outline glows and vacant-lot outlines: three meshes for the whole city,
 /// rebuilt when a lot appears, disappears, or changes between built, vacant
@@ -134,19 +163,12 @@ pub(super) fn sync_lots(
         if is_park_lot(lot) || lot.polygon.is_empty() {
             continue;
         }
-        if lot.landlocked {
-            // Unusable ground: plain earth, no outline.
-            fill.ground_polygon(&lot.polygon, 0.02, scale(pal.ground, 1.15));
-        } else if lot.building.is_none() {
-            // Vacant: the zoning layer (above) shows what it is zoned for.
-        } else if holed.contains(&id) {
-            // [p2-look] A strip mine's: its own yard round the pit.
-        } else if lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.service.is_some_and(|s| s.kind.is_landmark())) {
-            // [attractions] A landmark floors its own (big, often notched)
-            // site; a gravel fill lifted onto the ground vertex by vertex
-            // rose over its lawns and paths in the middle.
-        } else {
-            fill.ground_polygon(&lot.polygon, 0.02, rgba(pal.gravel));
+        // A landmark, a beach or a built park floors its own ground.
+        let own_floor = lot.land_use == nd_sim::LandUse::Park || lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.service.is_some_and(|s| s.kind.is_landmark()));
+        match lot_fill(lot.landlocked, lot.building.is_some(), holed.contains(&id), own_floor) {
+            LotFill::Earth => fill.ground_polygon(&lot.polygon, 0.02, scale(pal.ground, 1.15)),
+            LotFill::Gravel => fill.ground_polygon(&lot.polygon, 0.02, rgba(pal.gravel)),
+            LotFill::None => {}
         }
     }
     if !fill.is_empty() {
@@ -314,5 +336,23 @@ pub(super) fn sync_vacant(
         nd_procgen::climate::snow_cover(&mut geo, pal.snow);
         let ents = if geo.triangle_count() > 0 { spawn_geometry(&mut commands, &mut meshes, &mats, &geo, VacantTag) } else { Vec::new() };
         state.vacant_chunks.insert(k, (key, ents));
+    }
+}
+
+#[cfg(test)]
+mod lot_fill_tests {
+    use super::*;
+
+    /// [r4-flags-look] (K19) A built lot on backland is floored like any
+    /// built lot, not with the unusable ground's earth.
+    #[test]
+    fn built_backland_is_not_floored_as_unusable_ground() {
+        assert_eq!(lot_fill(true, false, false, false), LotFill::Earth, "empty backland");
+        assert_eq!(lot_fill(true, true, false, false), LotFill::Gravel, "a company's building on backland");
+        assert_eq!(lot_fill(true, true, false, true), LotFill::None, "a beach on backland floors its own sand");
+        assert_eq!(lot_fill(false, true, false, false), LotFill::Gravel);
+        assert_eq!(lot_fill(false, false, false, false), LotFill::None, "vacant");
+        assert_eq!(lot_fill(false, true, true, false), LotFill::None, "a strip mine");
+        assert_eq!(lot_fill(false, true, false, true), LotFill::None, "a landmark or a park");
     }
 }

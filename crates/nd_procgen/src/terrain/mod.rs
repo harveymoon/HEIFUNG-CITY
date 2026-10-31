@@ -212,6 +212,9 @@ pub fn raise_geometry(geo: &mut Geometry, dy: f32) {
     for rig in geo.cranes.iter_mut() {
         raise_geometry(&mut rig.head, dy);
     }
+    for s in geo.box_slots.iter_mut() {
+        s.at.y += dy;
+    }
     for rig in geo.games.iter_mut() {
         raise_geometry(&mut rig.stands, dy);
         raise_geometry(&mut rig.pitch, dy);

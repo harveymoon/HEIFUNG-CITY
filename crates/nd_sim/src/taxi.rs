@@ -123,7 +123,7 @@ pub fn cab_model(number: u16) -> VehicleModel {
         3 => BodyType::Suv,
         _ => BodyType::Sedan,
     };
-    VehicleModel { class: VehicleClass::Mid, body, wear: (number % 7 == 6) as u8, tuned: false, livery: Livery::Taxi, paint: (number % crate::vehicle::PAINTS as u16) as u8 }
+    VehicleModel { class: VehicleClass::Mid, body, wear: (number % 7 == 6) as u8, tuned: false, livery: Livery::Taxi, paint: (number % crate::vehicle::PAINTS as u16) as u8, boxed: 0 }
 }
 
 /// Where a cab is.

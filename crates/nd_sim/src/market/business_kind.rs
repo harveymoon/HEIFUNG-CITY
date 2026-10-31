@@ -117,6 +117,11 @@ pub enum BusinessKind {
     /// A bookshop: books and stationery (goods printed on plastics-grade
     /// paper stock); by campuses and downtown.
     Bookshop,
+    /// [K34] Scrap yard: worn-out shipping containers (and other scrap)
+    /// cut up into steel, sold to building sites and out of town. Opened by
+    /// pressure when old boxes pile up. Appended so saved kinds keep their
+    /// order.
+    ScrapYard,
 }
 
 /// What a business turns into what, per filled job per hour.
@@ -127,7 +132,7 @@ pub struct Recipe {
 }
 
 impl BusinessKind {
-    pub const COUNT: usize = 49;
+    pub const COUNT: usize = 50;
     /// Every kind, in `index` order.
     pub const ALL: [BusinessKind; Self::COUNT] = [
         BusinessKind::VertFarm,
@@ -179,6 +184,7 @@ impl BusinessKind {
         BusinessKind::BoatRental,
         BusinessKind::Cafe,
         BusinessKind::Bookshop,
+        BusinessKind::ScrapYard,
     ];
 
     pub fn index(self) -> usize {
@@ -236,6 +242,7 @@ impl BusinessKind {
             BusinessKind::BoatRental => "boat rental",
             BusinessKind::Cafe => "cafe",
             BusinessKind::Bookshop => "bookshop",
+            BusinessKind::ScrapYard => "scrap yard",
         }
     }
 
@@ -337,6 +344,10 @@ impl BusinessKind {
             // bookseller's about 17 against a gadget seller's 25.
             BusinessKind::Cafe => Recipe { inputs: &[(Resource::Flour, 0.6), (Resource::Dairy, 0.3)], outputs: &[(Resource::BakedGoods, 2.5)] },
             BusinessKind::Bookshop => Recipe { inputs: &[(Resource::Plastics, 0.25)], outputs: &[(Resource::Goods, 0.35)] },
+            // [K34] Its steel comes from the boxes it cuts up
+            // (`World::cut_up_boxes`); the trickle here is the other scrap
+            // brought in over the gate (cars, sheet, appliances).
+            BusinessKind::ScrapYard => Recipe { inputs: &[], outputs: &[(Resource::Metal, 0.04)] },
         }
     }
 
@@ -411,6 +422,7 @@ impl BusinessKind {
             BusinessKind::BoatRental => Hours::new(8, 20),
             BusinessKind::Cafe => Hours::new(7, 21),
             BusinessKind::Bookshop => Hours::new(9, 20),
+            BusinessKind::ScrapYard => Hours::new(7, 18),
         }
     }
 
@@ -523,6 +535,7 @@ impl BusinessKind {
                 | BusinessKind::BoatRental
                 | BusinessKind::Cafe
                 | BusinessKind::Bookshop
+                | BusinessKind::ScrapYard
         )
     }
 
@@ -548,7 +561,7 @@ impl BusinessKind {
     /// forecourts and ranges stay low.
     pub fn max_floors(self) -> Option<u8> {
         Some(match self {
-            BusinessKind::Mechanic | BusinessKind::TrashCompany | BusinessKind::GolfRange | BusinessKind::StripMine | BusinessKind::CowFarm | BusinessKind::ChickenFarm | BusinessKind::CarDealer | BusinessKind::BikeShop | BusinessKind::Feedlot => 1,
+            BusinessKind::Mechanic | BusinessKind::ScrapYard | BusinessKind::TrashCompany | BusinessKind::GolfRange | BusinessKind::StripMine | BusinessKind::CowFarm | BusinessKind::ChickenFarm | BusinessKind::CarDealer | BusinessKind::BikeShop | BusinessKind::Feedlot => 1,
             BusinessKind::Smelter | BusinessKind::ChemicalWorks => 2,
             BusinessKind::FishMarket | BusinessKind::SeafoodRestaurant | BusinessKind::ArtStudio | BusinessKind::Gallery | BusinessKind::FishGutting => 2,
             BusinessKind::Slaughterhouse | BusinessKind::FishStickFactory => 3,

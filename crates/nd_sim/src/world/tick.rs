@@ -149,6 +149,8 @@ impl World {
         // [economy] the city's needs read and met, before the vehicles' day rolls
         crate::prof!("daily_pressure", self.daily_pressure());
         self.daily_vehicles();
+        // [K34] The scrap yards cut up, the box owners' round.
+        crate::prof!("daily_containers", self.daily_containers());
         self.industry_daily();
         self.daily_places();
         // [social] ties fade, friends help, groups form and make things
@@ -204,6 +206,10 @@ impl World {
     // [parks] the park list (one per park of lots side by side) and who is in each
     if tick % 60 == 37 {
         crate::prof!("hourly_parks", self.hourly_parks());
+    }
+    // [K34] Shipping containers: lorries and trains gone, stack developers.
+    if tick % 60 == 17 {
+        crate::prof!("hourly_containers", self.hourly_containers());
     }
     // [land] People present and moving, at :13 clear of the rest.
     if tick % 60 == 13 {

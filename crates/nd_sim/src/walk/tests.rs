@@ -299,3 +299,22 @@ fn components_label_the_pieces_and_refuse_routes_between_them() {
     let near: Vec<u32> = g.nodes_in_box(Vec2::new(-1.0, -1.0), Vec2::new(15.0, 1.0));
     assert_eq!(near.len(), 2);
 }
+
+/// [r4-flags-look] (flag day 3 at (974,417)) No mid-block zebra out on a
+/// raised deck or a bridge (one was painted over the highway on an
+/// overpass's span); the long run's zebras on the ground stay.
+#[test]
+fn no_midblock_zebra_on_a_deck_or_bridge() {
+    let mut roads = RoadNetwork::default();
+    let pts: Vec<Vec2> = (0..=6).map(|k| Vec2::new(-300.0 + 100.0 * k as f32, 0.0)).collect();
+    roads.add_polyline(&pts, 1, 1);
+    let before = midblock_crossings(&roads).len();
+    assert!(before >= 3, "a 600 m run gets its zebras ({before})");
+    let raised: Vec<SegmentId> = roads.alive_segments().filter(|(_, s)| { let m = (roads.node(s.a).pos.x + roads.node(s.b).pos.x) * 0.5; m.abs() < 150.0 }).map(|(id, _)| id).collect();
+    for (k, &s) in raised.iter().enumerate() {
+        if k % 2 == 0 { roads.segments[s.0 as usize].viaduct = true } else { roads.segments[s.0 as usize].bridge = true }
+    }
+    let after = midblock_crossings(&roads);
+    assert!(after.iter().all(|(s, _)| !raised.contains(s)), "a zebra on the deck: {after:?}");
+    assert!(!after.is_empty() && after.len() < before, "the ground's zebras stay ({} of {before})", after.len());
+}

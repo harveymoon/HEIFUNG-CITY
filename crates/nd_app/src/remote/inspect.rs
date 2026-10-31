@@ -222,10 +222,16 @@ pub(super) fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         return Ok(json!({ "citizen": v }));
     }
+    if let Some(v) = field(cmd, "box") {
+        // [K34] A shipping container's life story.
+        return Ok(json!({ "box": super::containers::box_json(w, super::containers::box_id(w, v)?) }));
+    }
     if let Some(v) = field(cmd, "building") {
         let id = key_from(v)?;
         let b = w.buildings.get(id).ok_or("no such building")?;
         let mut v = building_detail(w, id, b, building_style(&ctx.sim, id, &ctx.assets));
+        // [K34] a depot's boxes, or the boxes a Stacks home is built of
+        v["containers"] = super::containers::building_boxes(w, id);
         v["place"] = places::building_place(w, id);
         // [land] owner, sale price, plots, form, pressure
         v["land"] = property::building_land(w, id);
@@ -357,6 +363,7 @@ pub(super) fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         Selection::Ship(id) => inspect(&json!({ "ship": key_str(id) }), ctx),
         Selection::Drone(id) => Ok(drone_json(&ctx.sim.world, id)),
         Selection::Rv(seed) => Ok(rv_json(&ctx.sim.world, seed)),
+        Selection::Box(id) => Ok(json!({ "box": super::containers::box_json(&ctx.sim.world, id) })),
         Selection::None => Err("inspect needs one of citizen, building, lot, car, bot, train, metro, toll, road, segment, route, gesture (an id), or a selection".into()),
     }
 }
@@ -419,6 +426,7 @@ pub fn selected_detail(sim: &crate::sim::Sim, sel: Selection, route_sel: Option<
         Selection::Ship(id) => ferry::ship_json(w, id).unwrap_or(Value::Null),
         Selection::Drone(id) => drone_json(w, id),
         Selection::Rv(seed) => rv_json(w, seed),
+        Selection::Box(id) => super::containers::box_json(w, id),
     };
     let bus_line = route_sel.and_then(|r| w.transit.routes.get(r).map(|route| {
         let mut v = route_row(r, route);
@@ -520,6 +528,9 @@ pub(super) fn select(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             return Err("no such drone".into());
         }
         Selection::Drone(id)
+    } else if let Some(v) = field(cmd, "box") {
+        // [K34] A shipping container by its id or number.
+        Selection::Box(super::containers::box_id(w, v)?)
     } else if let Some(v) = field(cmd, "rv") {
         // [feat/pt-ux] A camper or van at the kerb, by its id (`society`'s `rv_list`).
         let seed = v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).ok_or("rv: an id (a number)")?;

@@ -162,6 +162,8 @@ impl World {
             self.strand_car(car);
         }
         self.vehicles_after_load();
+        // [K34] A save from before the box records: a starting stock.
+        self.containers_after_load();
         // [services] Which car is which unit's is not saved: without it the
         // first unit car to arrive after a load went unclaimed.
         self.services.by_car = self.services.units.iter().filter_map(|(id, u)| u.car.map(|c| (c, id))).collect();

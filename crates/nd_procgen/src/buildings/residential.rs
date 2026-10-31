@@ -30,6 +30,8 @@ struct Unit {
     level: i32,
     y0: f32,
     color: [f32; 3],
+    /// [K34] The real box it is (`Ctx::boxes`), if any.
+    face: Option<usize>,
 }
 
 impl Unit {
@@ -121,6 +123,10 @@ fn place_units(c: &Ctx, rng: &mut impl Rng, lo: Vec2, hi: Vec2) -> Vec<Unit> {
     let pal = c.palette;
     let area = nd_sim::zoning::polygon_area(&c.lot_poly).abs();
     let mut units: Vec<Unit> = Vec::new();
+    // [K34] A stack developer's home is piled from the boxes it bought, in
+    // order; it uses each once and no trailers.
+    let real = !c.boxes.is_empty();
+    let mut next = 0usize;
     let ground_target = ((area / 40.0) as i32).clamp(2, 10);
     let levels = ((c.floors as f32 * 1.3) as i32).clamp(2, 8);
     let mut prev_count = ground_target;
@@ -128,10 +134,23 @@ fn place_units(c: &Ctx, rng: &mut impl Rng, lo: Vec2, hi: Vec2) -> Vec<Unit> {
         let target = if level == 0 { ground_target } else { ((prev_count as f32 * rng.random_range(0.6..0.9)).round() as i32).max(1) };
         let mut placed = 0;
         let mut attempts = 0;
-        while placed < target && attempts < 90 {
+        while placed < target && attempts < if real { 160 } else { 90 } {
             attempts += 1;
+            if real && next >= c.boxes.len() {
+                break;
+            }
             let trailer = rng.random_bool(0.2);
-            let (len, wid, h) = if trailer { (rng.random_range(6.5..8.5), 2.7, 2.9) } else if rng.random_bool(0.3) { (CONTAINER_40, CONTAINER_W, CONTAINER_H) } else { (CONTAINER_20, CONTAINER_W, CONTAINER_H) };
+            let (len, wid, h) = if real {
+                let forty = c.boxes[next].forty && c.boxes[next].kind != nd_sim::rail::BoxKind::Tank;
+                (if forty { CONTAINER_40 } else { CONTAINER_20 }, CONTAINER_W, CONTAINER_H)
+            } else if trailer {
+                (rng.random_range(6.5..8.5), 2.7, 2.9)
+            } else if rng.random_bool(0.3) {
+                (CONTAINER_40, CONTAINER_W, CONTAINER_H)
+            } else {
+                (CONTAINER_20, CONTAINER_W, CONTAINER_H)
+            };
+            let trailer = trailer && !real;
             let yaw = match rng.random_range(0..10) {
                 0..=5 => 0.0,
                 6..=8 => std::f32::consts::FRAC_PI_2,
@@ -148,7 +167,9 @@ fn place_units(c: &Ctx, rng: &mut impl Rng, lo: Vec2, hi: Vec2) -> Vec<Unit> {
                 (support.u + off.x, support.v + off.y, support.top())
             };
             let color = if trailer { mul([0.68, 0.66, 0.60], rng.random_range(0.6..0.95)) } else { pick(rng, &pal.container_colors) };
-            let cand = Unit { u, v, yaw, len, wid, h, level, y0, color };
+            let face = real.then_some(next);
+            let color = face.map_or(color, |i| SHIPPING_LINES[c.boxes[i].line as usize % SHIPPING_LINES.len()].body);
+            let cand = Unit { u, v, yaw, len, wid, h, level, y0, color, face };
             // Stay inside the parcel (an overhang of half a metre is fine).
             if cand.corners().iter().any(|p| !c.inside_local(*p) && distance_to_boundary(*p, &c.lot_poly) > 0.6) {
                 continue;
@@ -179,6 +200,9 @@ fn place_units(c: &Ctx, rng: &mut impl Rng, lo: Vec2, hi: Vec2) -> Vec<Unit> {
             }
             units.push(cand);
             placed += 1;
+            if real {
+                next += 1;
+            }
         }
         if placed == 0 {
             break;
@@ -196,7 +220,11 @@ fn dress_unit(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, unit: &Unit, units:
     // Each unit jitters and fades its own paint in `container_unit`.
     let col = mul(unit.color, 1.0 - 0.3 * c.wear);
     let yc = unit.y0 + unit.h * 0.5;
-    container_unit(g, c, rng, unit.u, unit.v, unit.yaw, unit.len, unit.wid, unit.h, unit.y0, col);
+    match unit.face {
+        // [K34] The very box bought: its line, wear and number.
+        Some(i) => real_box(g, c, unit.u, unit.v, unit.yaw, unit.y0, &c.boxes[i], true),
+        None => container_unit(g, c, rng, unit.u, unit.v, unit.yaw, unit.len, unit.wid, unit.h, unit.y0, col),
+    }
     // Tags along a long side of the lower units, where a spray can reaches.
     if unit.level <= 1 && rng.random_bool(0.55) {
         let s = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
@@ -937,7 +965,11 @@ pub fn garden_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;
     let pal = c.palette;
     let fh = c.fh();
-    let floors = (c.floors as i32).clamp(6, 22);
+    // [r4-flags-look] (flag day 46 at (-427,329), "this building is coming
+    // through my elevated road") As many floors as the building has: a
+    // one-storey garden house under a walkway deck (held to one floor by
+    // the deck's clearance) was drawn six storeys high, up through the deck.
+    let floors = (c.floors as i32).clamp(1, 22);
     let white = mul(pick(rng, &pal.plaster), 1.2);
     let base = c.poly.clone();
     let step = (inradius(&base) * 0.7 / floors as f32).clamp(0.12, 0.6);
@@ -972,12 +1004,19 @@ pub fn garden_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let top = floors as f32 * fh;
     extrude(g, f, Concrete, &prev, top, top + 0.35, white);
     let roof = offset_poly(&prev, 1.0);
-    if roof.len() >= 3 && inradius(&roof) > 3.0 {
+    // A low garden house (under a deck, say) has a planted roof, no pool
+    // terrace, tree or mast standing up off it.
+    let low = floors < 4;
+    if roof.len() >= 3 && inradius(&roof) > 3.0 && !low {
         pool(g, c, poly_center(&roof).x, poly_center(&roof).y, inradius(&roof) * 0.8, inradius(&roof) * 0.5);
         let w = f.to_world(poly_center(&roof).x + inradius(&roof) * 0.6, poly_center(&roof).y);
         tree_kind(g, w, top + 0.35, TreeKind::Round, 1.9, 2.6, pal.bark, pal.foliage);
     }
-    antenna_mast(g, c, poly_center(&prev), top + 0.35, 4.0);
+    if !low {
+        antenna_mast(g, c, poly_center(&prev), top + 0.35, 4.0);
+    } else if prev.len() >= 3 && inradius(&prev) > 2.0 {
+        green_roof(g, c, &prev, top + 0.35);
+    }
     let front = c.front_face(&base);
     entrance(g, c, rng, &front, 0.0, 3.2, 3.4);
     for k in 0..3 {

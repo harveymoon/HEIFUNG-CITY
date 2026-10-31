@@ -199,6 +199,10 @@ pub fn variant_key(m: &VehicleModel) -> VehicleModel {
     let mut k = *m;
     k.wear = k.wear.min(2);
     k.paint %= PAINTS;
+    // [K34] Only a semi's trailer carries a real box.
+    if k.body != BodyType::Semi {
+        k.boxed = 0;
+    }
     if k.body == BodyType::DeliveryBot || k.body == BodyType::AkiraBike || k.body.flies() {
         k.tuned = false;
     }
@@ -212,11 +216,11 @@ pub fn catalogue() -> Vec<VehicleModel> {
     for body in BodyType::ALL {
         for class in [VehicleClass::Cheap, VehicleClass::Mid, VehicleClass::Expensive] {
             for (wear, tuned) in [(0u8, false), (2, false), (0, true)] {
-                out.push(VehicleModel { class, body, wear, tuned, livery: Livery::None, paint: (body as u8 + wear) % PAINTS });
+                out.push(VehicleModel { class, body, wear, tuned, livery: Livery::None, paint: (body as u8 + wear) % PAINTS, boxed: 0 });
             }
         }
         for livery in Livery::ALL {
-            out.push(VehicleModel { class: VehicleClass::Mid, body, wear: 1, tuned: false, livery, paint: 3 });
+            out.push(VehicleModel { class: VehicleClass::Mid, body, wear: 1, tuned: false, livery, paint: 3, boxed: 0 });
         }
     }
     out
@@ -609,7 +613,15 @@ fn semi(b: &mut B, col: [f32; 3]) {
     // in a shipping line's colours and mark.
     let cfront = (rx + crate::CONTAINER_20).min(cr - 0.35);
     let line = &crate::SHIPPING_LINES[b.rng.random_range(0..crate::SHIPPING_LINES.len())];
-    let ccol = line.body;
+    // [K34] A real box on the trailer: its line, faded and rusted as worn.
+    let worn = if m.boxed > 0 { ((m.boxed - 1) / 10) as f32 / 4.0 } else { 0.0 };
+    let line = if m.boxed > 0 { &crate::SHIPPING_LINES[((m.boxed - 1) % 10) as usize] } else { line };
+    let ccol = if m.boxed > 0 {
+        let l = 0.3 * line.body[0] + 0.55 * line.body[1] + 0.15 * line.body[2];
+        mix(mul(line.body, 1.0 - 0.15 * worn), [l * 1.2 + 0.07, l * 1.18 + 0.07, l * 1.15 + 0.07], 0.35 * worn)
+    } else {
+        line.body
+    };
     let (cb, ct) = (1.15, 1.15 + crate::CONTAINER_H);
     b.ext(&[(rx, cb), (cfront, cb), (cfront, ct), (rx, ct)], crate::CONTAINER_W * 0.5, ccol);
     if b.detail {
@@ -623,6 +635,13 @@ fn semi(b: &mut B, col: [f32; 3]) {
             b.sides(rx + 1.4, (cb + ct) * 0.5 + 0.2, crate::CONTAINER_W * 0.5 + 0.004, 1.8, 0.9, line.mark);
         }
         b.lamp(rx - 0.005, (cb + ct) * 0.5, 0.0, 0.04, crate::CONTAINER_H - 0.1, -1.0, mul(ccol, 0.5));
+        if worn > 0.4 {
+            // Rust run down from the top rail, a dent low on the side.
+            let rust = [0.32, 0.14, 0.06];
+            b.sides(rx + (cfront - rx) * 0.3, ct - 0.6, crate::CONTAINER_W * 0.5 + 0.006, 0.35, 0.9 * worn, rust);
+            b.sides(rx + (cfront - rx) * 0.75, ct - 0.5, crate::CONTAINER_W * 0.5 + 0.006, 0.25, 0.7 * worn, mul(rust, 0.8));
+            b.sides(rx + (cfront - rx) * 0.55, cb + 0.5, crate::CONTAINER_W * 0.5 + 0.008, 0.8, 0.4, mul(ccol, 0.7));
+        }
     }
     b.bx(((rx + cfront) * 0.5 + 0.5, 0.95, 0.0), (cfront - rx, 0.3, hw * 1.2), TRIM);
     let r = 0.5;
@@ -1151,7 +1170,7 @@ pub fn draw_parked(g: &mut Geometry, pal: &Palette, rng: &mut impl Rng, at: Vec2
         Parked::Bus => (BodyType::BubbleBus, VehicleClass::Expensive, 0, Livery::Transit),
         Parked::Wreck => (if rng.random_bool(0.5) { BodyType::Sedan } else { BodyType::Hatchback }, VehicleClass::Cheap, 2, Livery::None),
     };
-    let model = VehicleModel { class, body, wear, tuned: false, livery, paint: rng.random_range(0..PAINTS) };
+    let model = VehicleModel { class, body, wear, tuned: false, livery, paint: rng.random_range(0..PAINTS), boxed: 0 };
     let paint = if kind == Parked::Wreck { mix(color, pal.rust, 0.5) } else { color };
     let v = build(&model, paint, false, pal);
     let surface = if kind == Parked::Wreck { Surface::Rust } else { Surface::Metal };
@@ -1215,7 +1234,7 @@ mod tests {
     #[test]
     fn triangle_counts_per_body() {
         for body in BodyType::ALL {
-            let n = |class, tuned, livery| vehicle_mesh(&VehicleModel { body, class, tuned, livery, wear: 2, paint: 1 }).triangles();
+            let n = |class, tuned, livery| vehicle_mesh(&VehicleModel { body, class, tuned, livery, wear: 2, paint: 1, boxed: 0 }).triangles();
             eprintln!("{:16} cheap {:4} mid {:4} exp {:4} tuned {:4} livery {:4}", body.label(), n(VehicleClass::Cheap, false, Livery::None), n(VehicleClass::Mid, false, Livery::None), n(VehicleClass::Expensive, false, Livery::None), n(VehicleClass::Expensive, true, Livery::None), n(VehicleClass::Mid, false, Livery::Pizza));
         }
     }

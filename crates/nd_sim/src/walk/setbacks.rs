@@ -90,6 +90,10 @@ pub(super) fn acute_setback(roads: &RoadNetwork, node: NodeId, seg: SegmentId) -
 /// two streets and nothing else meet); highways get none, and nor do
 /// tunnels: nobody crosses a carriageway in the bore, they walk to a portal
 /// or a junction (a zebra there was also drawn on the surface above).
+/// [r4-flags-look] (flag day 3 at (974,417)) Nor out on a raised deck or a
+/// bridge: a zebra painted over the highway on an overpass's span led
+/// nowhere (nothing fronts a deck); the run's zebra that would fall there
+/// is left out.
 pub fn midblock_crossings(roads: &RoadNetwork) -> Vec<(SegmentId, f32)> {
     let plain = |n: NodeId| roads.node(n).segments.iter().filter(|&&s| roads.segment(s).alive).count() == 2 && roads.street_degree(n) == 2;
     let ok = |s: SegmentId| {
@@ -149,8 +153,11 @@ pub fn midblock_crossings(roads: &RoadNetwork) -> Vec<(SegmentId, f32)> {
             let mut acc = 0.0;
             for &(s, fwd, len) in &chain {
                 if acc + len >= target {
-                    let u = ((target - acc) / len.max(1e-3)).clamp(0.05, 0.95);
-                    out.push((s, if fwd { u } else { 1.0 - u }));
+                    let sg = roads.segment(s);
+                    if !(sg.viaduct || sg.bridge) {
+                        let u = ((target - acc) / len.max(1e-3)).clamp(0.05, 0.95);
+                        out.push((s, if fwd { u } else { 1.0 - u }));
+                    }
                     break;
                 }
                 acc += len;

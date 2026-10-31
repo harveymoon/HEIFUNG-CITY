@@ -169,20 +169,20 @@ fn elite_income(net_worth: f64) -> f32 {
 /// A billionaire's supercar: a souped-up, glossy coupe.
 pub fn supercar(seed: u64) -> VehicleModel {
     use crate::vehicle::{BodyType, Livery, VehicleClass, PAINTS};
-    VehicleModel { class: VehicleClass::Expensive, body: BodyType::Coupe, wear: 0, tuned: true, livery: Livery::None, paint: (seed % PAINTS as u64) as u8 }
+    VehicleModel { class: VehicleClass::Expensive, body: BodyType::Coupe, wear: 0, tuned: true, livery: Livery::None, paint: (seed % PAINTS as u64) as u8, boxed: 0 }
 }
 
 /// The black SUVs of an escort.
 pub fn escort_model() -> VehicleModel {
     use crate::vehicle::{BodyType, Livery, VehicleClass};
-    VehicleModel { class: VehicleClass::Expensive, body: BodyType::Suv, wear: 0, tuned: false, livery: Livery::None, paint: 0 }
+    VehicleModel { class: VehicleClass::Expensive, body: BodyType::Suv, wear: 0, tuned: false, livery: Livery::None, paint: 0, boxed: 0 }
 }
 
 /// The police car leading the richest one's convoy (the renderer adds the
 /// light bar: `render/convoys.rs`).
 pub fn police_escort_model() -> VehicleModel {
     use crate::vehicle::{BodyType, Livery, VehicleClass};
-    VehicleModel { class: VehicleClass::Mid, body: BodyType::Sedan, wear: 0, tuned: false, livery: Livery::None, paint: 3 }
+    VehicleModel { class: VehicleClass::Mid, body: BodyType::Sedan, wear: 0, tuned: false, livery: Livery::None, paint: 3, boxed: 0 }
 }
 
 #[cfg(test)]

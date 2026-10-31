@@ -128,10 +128,12 @@ pub enum PressureKind {
     PierRestaurant,
     BeachBar,
     BoatRental,
+    /// [K34] Old shipping containers waiting to be cut up. Appended.
+    ScrapYard,
 }
 
 impl PressureKind {
-    pub const ALL: [PressureKind; 18] = [
+    pub const ALL: [PressureKind; 19] = [
         PressureKind::TowCompany,
         PressureKind::Mechanic,
         PressureKind::CarDealer,
@@ -150,6 +152,7 @@ impl PressureKind {
         PressureKind::PierRestaurant,
         PressureKind::BeachBar,
         PressureKind::BoatRental,
+        PressureKind::ScrapYard,
     ];
 
     pub fn index(self) -> usize {
@@ -177,6 +180,7 @@ impl PressureKind {
             PressureKind::PierRestaurant => BusinessKind::PierRestaurant,
             PressureKind::BeachBar => BusinessKind::BeachBar,
             PressureKind::BoatRental => BusinessKind::BoatRental,
+            PressureKind::ScrapYard => BusinessKind::ScrapYard,
         })
     }
 
@@ -210,6 +214,7 @@ impl PressureKind {
             PressureKind::PierRestaurant => "pier restaurant",
             PressureKind::BeachBar => "beach bar",
             PressureKind::BoatRental => "boat rental",
+            PressureKind::ScrapYard => "scrap yard",
         }
     }
 
@@ -234,6 +239,7 @@ impl PressureKind {
             PressureKind::PierRestaurant => "pier_restaurant",
             PressureKind::BeachBar => "beach_bar",
             PressureKind::BoatRental => "boat_rental",
+            PressureKind::ScrapYard => "scrap_yard",
         }
     }
 
@@ -313,6 +319,10 @@ pub struct Signals {
     /// (H4) Residents in town.
     #[serde(default)]
     pub people: f32,
+    /// [K34] Shipping containers due for scrap a day, with no scrap yard
+    /// in town to take them (a flow).
+    #[serde(default)]
+    pub old_boxes: f32,
 }
 
 impl Signals {
@@ -333,6 +343,7 @@ impl Signals {
         mix(&mut self.fish, today.fish);
         mix(&mut self.fillets, today.fillets);
         mix(&mut self.beach_visits, today.beach_visits);
+        mix(&mut self.old_boxes, today.old_boxes);
         self.cars = today.cars;
         self.tow_backlog = today.tow_backlog;
         self.rich_households = today.rich_households;
@@ -538,6 +549,11 @@ pub fn assess(s: &Signals, supply: &Supply) -> Vec<Pressure> {
             PressureKind::BoatRental => {
                 let wanted = if s.has_water { (s.tourists / TOURISTS_PER_RENTAL + s.rich_near_water / RICH_PER_RENTAL) * (0.4 + 0.6 * s.beach_appeal) } else { 0.0 };
                 (wanted, format!("{} visitors and {} wealthy households near the water want to get out on it; {ht}", s.tourists.round(), s.rich_near_water.round()))
+            }
+            // [K34] Old boxes in the yards with nowhere to be cut up.
+            PressureKind::ScrapYard => {
+                let have_open = supply.open[BusinessKind::ScrapYard.index()] as f32;
+                (have_open + s.old_boxes / crate::containers::BOXES_PER_SCRAP_YARD, format!("{} worn-out shipping containers a day with no scrap yard to cut them up; {ht}", s.old_boxes.round()))
             }
         };
         let mut p = Pressure::new(kind, wanted, supply, why);

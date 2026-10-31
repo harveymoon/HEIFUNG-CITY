@@ -158,3 +158,23 @@ fn green_and_solar_roofs_stay_on_the_roof() {
         }
     }
 }
+
+/// [r4-flags-look] (flag day 46 at (-427,329), "this building is coming
+/// through my elevated road") A one-storey garden tower (held to one floor
+/// under a walkway deck) stands one storey high: it was drawn six floors
+/// and a mast tall, up through the deck.
+#[test]
+fn a_one_storey_garden_tower_is_one_storey_high() {
+    let rules = BuildingRules::default();
+    let pal = Palette::default();
+    let lot = lot_of(&rect(18.0, 16.0), 0.3, Vec2::new(-40.0, 25.0));
+    for floors in [1u8, 2] {
+        let c = ctx(&lot, Style::GardenTower, LandUse::Residential, floors, Tier::High, &rules, &pal);
+        let mut g = Geometry::default();
+        let mut rng = nd_sim::rng_for(9, 1);
+        residential::garden_tower(&mut g, &c, &mut rng);
+        let top = g.iter().flat_map(|(_, m)| m.positions.iter()).map(|p| p[1]).fold(0.0f32, f32::max);
+        let allowed = floors as f32 * c.fh() + 1.5;
+        assert!(top > 2.0 && top <= allowed, "a {floors}-floor garden tower stands {top:.1} m (at most {allowed:.1})");
+    }
+}

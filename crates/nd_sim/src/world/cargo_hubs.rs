@@ -121,6 +121,8 @@ impl World {
             && self.cargo_hub_works(cargo.to)
             && self.building_entrance(at).zip(self.building_entrance(cargo.to)).is_some_and(|(a, b)| a.distance(b) <= hub::SIDING_REACH);
         if beside {
+            // [K34] Its boxes straight into the hub.
+            self.boxes_follow(&cargo);
             self.deliver(cargo);
         } else {
             // [delivery-hours] On to the buyer in working hours.

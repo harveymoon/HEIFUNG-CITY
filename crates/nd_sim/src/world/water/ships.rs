@@ -167,6 +167,8 @@ impl World {
                     let boxes_in = cargo.iter().map(|c| ports::boxes_for(c.amount)).sum::<u32>().min(ports::MAX_BOXES);
                     let boxes_out = ((self.ports.outbound / ports::CONTAINER_UNITS) as u32).min(ports::MAX_BOXES);
                     self.ports.outbound = (self.ports.outbound - boxes_out as f32 * ports::CONTAINER_UNITS).max(0.0);
+                    // [K34] The exports go out in the port's empties.
+                    self.boxes_out_by_sea(b, boxes_out as usize);
                     self.ports.ships.insert(Ship { kind: ShipKind::Freighter, path, s: 0.0, prev_s: 0.0, speed, dwell: 0, port: b, to: None, cargo, passengers: 0, docked: false, berth_s, color, remote: None, home: false, quay, boxes_in, boxes_out, cars: 0 });
                     self.ports.ports[*pid].last_sailing = tick;
                 }
@@ -345,6 +347,8 @@ impl World {
             let cargo = std::mem::take(&mut ship.cargo);
             self.ports.stats.freight_landed_today += cargo.len() as u32;
             for c in cargo {
+                // [K34] Its boxes on the quay, full.
+                self.boxes_landed_by_sea(port, &c);
                 // Into a cargo hub on the quay, else a lorry.
                 self.unload_freight(port, c);
             }

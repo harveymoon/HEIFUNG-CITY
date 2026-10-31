@@ -256,3 +256,33 @@ fn a_car_waits_at_a_full_exit_rather_than_take_a_huge_detour() {
     t.reroute_stalled(1.0);
     assert_eq!(t.cars[car].route, route, "it waits its turn instead of a loop of kilometres");
 }
+
+/// [r4-flags-look] (flag day 13 at (-589,89), "stacked trucks") Vehicles
+/// pulling in at one kerb spot line up along it instead of standing on top
+/// of each other.
+#[test]
+fn vehicles_pulling_in_at_one_spot_line_up_along_the_kerb() {
+    let roads = cross();
+    let mut t = Traffic::default();
+    t.rebuild(&roads);
+    let west = roads.nearest_on_network(Vec2::new(-150.0, 0.0)).unwrap().0;
+    let north = roads.nearest_on_network(Vec2::new(0.0, 150.0)).unwrap().0;
+    let (route, s0, s1) = t.net.find_route(west, Vec2::new(-120.0, -2.0), north, Vec2::new(2.0, 150.0)).expect("route");
+    let mut cars = Vec::new();
+    for _ in 0..3 {
+        let car = t.spawn_car(CitizenId::default(), None, route.clone(), s0, s1, 0);
+        assert!(!t.cars[car].entering, "set off into the lane");
+        t.pull_in_queued(car, 60.0);
+        cars.push(car);
+    }
+    for _ in 0..4 {
+        t.step(0.5, 1);
+    }
+    for (i, &a) in cars.iter().enumerate() {
+        for &b in &cars[i + 1..] {
+            let (ca, cb) = (&t.cars[a], &t.cars[b]);
+            let apart = ca.pos.distance(cb.pos);
+            assert!(apart >= ca.length().min(cb.length()), "two vehicles at the kerb {apart:.2} m apart");
+        }
+    }
+}

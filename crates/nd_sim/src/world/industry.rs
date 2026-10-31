@@ -515,8 +515,20 @@ impl World {
     /// its business's yard, or has reached the map edge. One with nowhere
     /// to go waits where it is and tries again: it never vanishes.
     pub(super) fn lorry_arrived(&mut self, car_id: CarId) {
+        let at = self.traffic.cars.get(car_id).and_then(|c| c.cargo).map(|c| c.to).unwrap_or_default();
+        self.lorry_arrived_here(car_id);
+        // [K34] A lorry gone off the road with boxes aboard sets them down.
+        self.boxes_check_truck(car_id, at);
+    }
+
+    fn lorry_arrived_here(&mut self, car_id: CarId) {
         let Some(car) = self.traffic.cars.get(car_id) else { return };
         let Some(cargo) = car.cargo else { return };
+        if is_return_trip(&cargo) {
+            // [K34] Boxes bound here come off; empties at a depot.
+            self.boxes_drop(car_id, cargo.to);
+        }
+        let Some(car) = self.traffic.cars.get(car_id) else { return };
         let model = car.model;
         if is_return_trip(&cargo) {
             let home = cargo.from;
@@ -535,12 +547,14 @@ impl World {
                 // [r4-flags-sim] Stranded in a pocket with no road out: the
                 // city lifts it out (its turn may come at a later retry).
                 self.rescue_trapped(car_id);
-                self.traffic.pull_in(car_id, STRANDED_RETRY_SECONDS);
+                self.traffic.pull_in_queued(car_id, STRANDED_RETRY_SECONDS);
             }
             return;
         }
         let at = cargo.to;
         let home = cargo.from;
+        // [K34] The boxes it brings: unpacked at a hub, emptied at the buyer.
+        self.boxes_arrive(car_id, &cargo);
         self.deliver(cargo);
         // Unloading out front, then on its way; the next stop is set now so
         // the inspector shows where it goes.
@@ -551,8 +565,10 @@ impl World {
                 c.cargo = Some(return_cargo(home, at));
             }
         }
+        // [K34] A box bought off it (or going for scrap) is taken there first.
+        self.boxes_after_delivery(car_id, at, home);
         if self.traffic.cars.contains_key(car_id) {
-            self.traffic.pull_in(car_id, UNLOAD_SECONDS);
+            self.traffic.pull_in_queued(car_id, UNLOAD_SECONDS);
         }
     }
 
