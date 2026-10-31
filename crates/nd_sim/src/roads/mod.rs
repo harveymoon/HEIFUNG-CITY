@@ -41,6 +41,10 @@ pub const LANE_WIDTH: f32 = 3.5;
 pub const SHOULDER: f32 = 1.5;
 /// How far a road end may be dropped from an existing road and still join it.
 pub const END_SNAP_RADIUS: f32 = 9.0;
+/// [r4-flags-look] A way's end never snaps back onto its own pieces within
+/// this distance along it (a curve's last samples lie closer together than
+/// the snap radius); further back, it joins itself like any other road.
+pub const OWN_END_REACH: f32 = 4.0 * END_SNAP_RADIUS;
 /// [r4-crossings] The shortest piece a street is cut into where a path
 /// ends on it or a way passes under it: closer than this to one of the
 /// street's nodes, the path joins that node and the way below gets no
@@ -48,6 +52,9 @@ pub const END_SNAP_RADIUS: f32 = 9.0;
 /// half width plus a metre) leaves its lanes no length: Harvey's ring had a
 /// 1.9 m piece beside a junction, where an underpass passed under it.
 pub const MIN_PIECE: f32 = 6.0;
+/// [r4-flags-sim] Street nodes closer than this at about one level are one
+/// junction (`RoadNetwork::weld_close_street_nodes`).
+pub const WELD_RADIUS: f32 = 3.0;
 /// [r4-crossings] A path ending on a street this close (along it) to where
 /// another path already meets that street joins it there: two paths drawn
 /// to either pavement a few steps apart meet the street at one point and

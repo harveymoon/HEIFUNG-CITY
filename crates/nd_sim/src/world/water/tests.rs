@@ -338,3 +338,59 @@ fn a_large_ferry_terminal_runs_car_ferries_and_terminals_are_estimated() {
     assert_eq!(kind, ShipKind::CarFerry);
     assert!(cars <= PortKind::FerryTerminalLarge.car_deck());
 }
+
+/// [r4-flags-sim] Harvey's day-4 flag: "boats are overlapping, there
+/// should be a queue". A ferry coming in to a berth another ship lies at
+/// holds off until it has gone, then comes in.
+#[test]
+fn a_ferry_holds_off_a_busy_berth_until_it_is_clear() {
+    let mut w = valley(8);
+    let (p, flow, _, _) = river_spot(&w);
+    let speed = w.config.metres_per_tick(ports::FERRY_SPEED);
+    let ship = |path: Vec<Vec2>, berth_s: f32, s: f32, docked: bool, dwell: u32| Ship { kind: ShipKind::Ferry, berth_s, path, s, prev_s: s, speed, dwell, port: BuildingId::default(), to: None, cargo: Vec::new(), passengers: 0, docked, color: 0, remote: None, home: false, quay: None, boxes_in: 0, boxes_out: 0, cars: 0 };
+    // One lying at the berth for 30 minutes; one coming in along the river.
+    w.ports.ships.insert(ship(vec![p, p + flow * 400.0], 0.0, 0.0, true, 30));
+    let coming = w.ports.ships.insert(ship(vec![p - flow * 600.0, p, p - flow * 600.0], 600.0, 300.0, false, 0));
+    let mut closest = f32::MAX;
+    let mut arrived = None;
+    for t in 0..120 {
+        w.step_ships();
+        let Some(c) = w.ports.ships.get(coming) else { break };
+        let at = c.pose().0;
+        if let Some(o) = w.ports.ships.iter().find(|(id, _)| *id != coming).map(|(_, s)| s.pose().0) {
+            closest = closest.min(at.distance(o));
+        }
+        if c.docked && arrived.is_none() {
+            arrived = Some(t);
+        }
+    }
+    assert!(closest > 28.0, "never sails into the ship at the berth (came within {closest:.0} m)");
+    assert!(arrived.is_some_and(|t| t >= 30), "comes in once the berth is clear: {arrived:?}");
+}
+
+/// [r4-flags-sim] Ships keep to the right of their route, so two going
+/// opposite ways on the same water pass apart instead of through each other.
+#[test]
+fn ships_going_opposite_ways_pass_apart() {
+    let w = valley(8);
+    let r = &w.landscape.rivers[0];
+    let k = (0..r.points.len()).min_by(|&a, &b| r.points[a].length().total_cmp(&r.points[b].length())).unwrap();
+    let (mut lo, mut hi) = (k, k);
+    while lo > 0 && r.points[lo].distance(r.points[k]) < 300.0 {
+        lo -= 1;
+    }
+    while hi + 1 < r.points.len() && r.points[hi].distance(r.points[k]) < 300.0 {
+        hi += 1;
+    }
+    let route: Vec<Vec2> = r.points[lo..=hi].to_vec();
+    assert!(crate::geom::path_length(&route) > 400.0);
+    let back: Vec<Vec2> = route.iter().rev().copied().collect();
+    let out = w.keep_to_starboard(&route, 22.0);
+    let ret = w.keep_to_starboard(&back, 22.0);
+    let mid = |path: &[Vec2]| crate::geom::point_along(path, crate::geom::path_length(path) * 0.5).0;
+    let gap = mid(&out).distance(mid(&ret));
+    assert_eq!((out[0], *out.last().unwrap()), (route[0], *route.last().unwrap()), "still leaves from and comes in to the berths");
+    assert!(gap >= 20.0 || r.width < 50.0, "they pass {gap:.0} m apart on a {:.0} m river", r.width);
+    let wet_line = route.iter().filter(|&&q| w.landscape.is_water(q)).count();
+    assert!(out.iter().chain(&ret).filter(|&&q| w.landscape.is_water(q)).count() >= 2 * wet_line - 2, "kept on the water");
+}

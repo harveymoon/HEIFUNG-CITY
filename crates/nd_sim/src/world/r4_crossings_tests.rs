@@ -234,3 +234,23 @@ fn an_old_save_is_laid_again_and_keeps_its_footbridges() {
     let again = World::from_ron(&back.to_save_ron().unwrap()).unwrap();
     assert_eq!(again.roads.nodes.len(), back.roads.nodes.len());
 }
+
+/// [r4-flags-sim] Harvey moved a junction a little and "all the
+/// footbridges I made are now gone" (flag day 8): the footbridge's rule
+/// stayed where the crosswalk had been. It now follows its crosswalk.
+#[test]
+fn a_footbridge_follows_its_junction_moved_a_few_metres() {
+    let mut w = flat();
+    w.add_road(&[v(-200.0, 0.0), v(200.0, 0.0)], 1, 1);
+    let side = w.add_road(&[v(0.0, 0.0), v(0.0, 150.0)], 1, 1);
+    let cr = w.walk.crossings.iter().position(|c| c.kind == CrossingKind::Junction && c.mid.y.abs() < 1.0 && c.mid.x > 0.0).expect("the crosswalk east of the junction") as u32;
+    w.economy.treasury = 1.0e6;
+    w.set_crossing_upgrade(cr, CrossingUpgrade::Footbridge).unwrap();
+    assert_eq!(w.walk.footbridges.len(), 1);
+    // The side street (and so the junction) moved 8 m east.
+    let Some(Gesture::Road { lanes_fwd, lanes_bwd, kind, car_only, .. }) = w.gesture(side) else { panic!("the side street") };
+    w.set_gesture(side, Gesture::Road { points: vec![v(8.0, 0.0), v(8.0, 150.0)], lanes_fwd, lanes_bwd, curved: false, kind, elevation: Vec::new(), car_only }, true);
+    w.implement();
+    assert!(w.roads.nodes.iter().any(|n| n.pos.distance(v(8.0, 0.0)) < 0.5 && n.segments.len() >= 3), "the junction moved");
+    assert_eq!(w.walk.footbridges.len(), 1, "the footbridge is kept");
+}

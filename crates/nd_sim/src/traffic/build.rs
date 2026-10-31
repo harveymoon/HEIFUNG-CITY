@@ -102,6 +102,9 @@ pub struct LaneNetwork {
     /// [rail-crossing] Some connector is closed for a level crossing (skips
     /// the crossing checks when none is).
     pub rail_closed_any: bool,
+    /// [r4-flags-sim] Per lane: no way out of it to the rest of the roads
+    /// (`mark_traps`).
+    pub trap: Vec<bool>,
 }
 
 /// [r2-traffic] A street wide enough for a U-turn at its junctions: two
@@ -308,8 +311,14 @@ impl LaneNetwork {
                 let d_in = self.lanes[inc as usize].end_dir();
                 // Exits from this approach, leftmost first, with their turn.
                 let mut exits: Vec<(SegmentId, f32)> = Vec::new();
+                // [r4-flags-sim] A two-way street that meets only a one-way
+                // street pointing into it (Harvey's day-13 flag: "stacked
+                // trucks" jittering at a kerb for days) has no way on but
+                // back: it turns round there as at a dead end. Lorries that
+                // delivered down it were trapped for good.
+                let other_exit = outgoing.iter().any(|&(_, s)| s != inc_seg);
                 for &(out, out_seg) in &outgoing {
-                    if (out_seg == inc_seg && approaches.len() > 1) || exits.iter().any(|&(s, _)| s == out_seg) {
+                    if (out_seg == inc_seg && approaches.len() > 1 && other_exit) || exits.iter().any(|&(s, _)| s == out_seg) {
                         continue; // U-turns only at dead ends
                     }
                     let d_out = self.lanes[out as usize].start_dir();
@@ -434,6 +443,123 @@ impl LaneNetwork {
         self.apply_roundabouts(roads);
         self.apply_signals();
         self.refresh_uturns();
+        self.mark_traps();
+    }
+
+    /// [r4-flags-sim] Lanes no vehicle could drive out of again (`trap`):
+    /// those that cannot reach the biggest strongly connected part of the
+    /// lane graph they are joined to, nor a lane leading nowhere (off the
+    /// map, or a one-way dead end) (a two-way street both of whose ends
+    /// meet only one-way streets pointing into it). Harvey's city had 50
+    /// lorries stranded in two such pockets for weeks, standing on top of
+    /// each other at the kerb. Routes never enter one from outside
+    /// (`route_search_in`); lane changes count as steps both ways.
+    pub(super) fn mark_traps(&mut self) {
+        let n = self.lanes.len();
+        let succ = |l: usize| -> Vec<usize> {
+            let lane = &self.lanes[l];
+            lane.next.iter().map(|&x| x as usize).chain(lane.left.map(|x| x as usize)).chain(lane.right.map(|x| x as usize)).collect()
+        };
+        // Tarjan's strongly connected components, without recursion.
+        let mut index = vec![u32::MAX; n];
+        let mut low = vec![0u32; n];
+        let mut on = vec![false; n];
+        let mut comp = vec![u32::MAX; n];
+        let mut stack: Vec<usize> = Vec::new();
+        let mut counter = 0u32;
+        let mut ncomp = 0u32;
+        for root in 0..n {
+            if index[root] != u32::MAX {
+                continue;
+            }
+            let mut work: Vec<(usize, Vec<usize>, usize)> = vec![(root, succ(root), 0)];
+            index[root] = counter;
+            low[root] = counter;
+            counter += 1;
+            stack.push(root);
+            on[root] = true;
+            while let Some((v, ref ws, k)) = work.last().cloned() {
+                if k < ws.len() {
+                    work.last_mut().unwrap().2 += 1;
+                    let w = ws[k];
+                    if index[w] == u32::MAX {
+                        index[w] = counter;
+                        low[w] = counter;
+                        counter += 1;
+                        stack.push(w);
+                        on[w] = true;
+                        work.push((w, succ(w), 0));
+                    } else if on[w] {
+                        low[v] = low[v].min(index[w]);
+                    }
+                    continue;
+                }
+                work.pop();
+                if let Some(&(u, _, _)) = work.last() {
+                    low[u] = low[u].min(low[v]);
+                }
+                if low[v] == index[v] {
+                    while let Some(w) = stack.pop() {
+                        on[w] = false;
+                        comp[w] = ncomp;
+                        if w == v {
+                            break;
+                        }
+                    }
+                    ncomp += 1;
+                }
+            }
+        }
+        // Weakly joined parts (islands of road), and the biggest strongly
+        // connected component in each: its main network.
+        let mut part: Vec<usize> = (0..n).collect();
+        fn find(p: &mut [usize], mut x: usize) -> usize {
+            while p[x] != x {
+                p[x] = p[p[x]];
+                x = p[x];
+            }
+            x
+        }
+        for l in 0..n {
+            for s in succ(l) {
+                let (a, b) = (find(&mut part, l), find(&mut part, s));
+                if a != b {
+                    part[a.max(b)] = a.min(b);
+                }
+            }
+        }
+        let mut size = vec![0u32; ncomp as usize];
+        for l in 0..n {
+            size[comp[l] as usize] += 1;
+        }
+        let mut main: HashMap<usize, u32> = HashMap::new();
+        for l in 0..n {
+            let p = find(&mut part, l);
+            let c = comp[l];
+            let e = main.entry(p).or_insert(c);
+            if size[c as usize] > size[*e as usize] || (size[c as usize] == size[*e as usize] && c < *e) {
+                *e = c;
+            }
+        }
+        // Lanes that reach their main component: back from it over `prev`
+        // and lane changes.
+        let mut reach = vec![false; n];
+        // A lane that leads nowhere is an end in itself: a road off the
+        // map (through traffic leaves there), or a one-way dead end.
+        let mut todo: Vec<usize> = (0..n).filter(|&l| self.lanes[l].next.is_empty() || main.get(&find(&mut part, l)) == Some(&comp[l])).collect();
+        for &l in &todo {
+            reach[l] = true;
+        }
+        while let Some(l) = todo.pop() {
+            let lane = &self.lanes[l];
+            for p in lane.prev.iter().map(|&x| x as usize).chain(lane.left.map(|x| x as usize)).chain(lane.right.map(|x| x as usize)) {
+                if !reach[p] {
+                    reach[p] = true;
+                    todo.push(p);
+                }
+            }
+        }
+        self.trap = reach.into_iter().map(|r| !r).collect();
     }
 
     pub(super) fn push_connector(&mut self, inc: LaneId, out: LaneId, nid: NodeId, approach: usize, radius: f32, approaches: usize) -> LaneId {

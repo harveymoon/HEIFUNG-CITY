@@ -185,3 +185,33 @@ fn cars_in_the_junction_count_against_the_room_on_its_exit() {
     assert_eq!(t.net.lanes[conn as usize].cars, vec![inside]);
     assert!(t.exit_blocked(&t.net.lanes[conn as usize], out, true), "that room is taken by the car already in the junction");
 }
+
+/// [r4-flags-sim] Harvey's "stacked trucks" (day 13): a two-way street
+/// whose two ends meet only one-way streets pointing into it. Its lanes
+/// turn round at those ends (no way on but back), the pocket is marked a
+/// trap, and no route from the rest of the roads goes into it.
+#[test]
+fn a_pocket_fed_only_by_one_way_streets_is_never_routed_into() {
+    let mut roads = RoadNetwork::default();
+    roads.add_polyline(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+    roads.add_polyline(&[Vec2::new(-100.0, 0.0), Vec2::new(-100.0, 100.0)], 1, 0);
+    let pocket = roads.add_polyline(&[Vec2::new(-100.0, 100.0), Vec2::new(100.0, 100.0)], 1, 1);
+    roads.add_polyline(&[Vec2::new(100.0, 0.0), Vec2::new(100.0, 100.0)], 1, 0);
+    let mut net = LaneNetwork::default();
+    net.rebuild(&roads);
+    let pocket_lanes: Vec<LaneId> = pocket.iter().flat_map(|s| net.segment_lanes[s].clone()).collect();
+    assert!(!pocket_lanes.is_empty());
+    // Before: the pocket's lanes ran into its ends and stopped dead.
+    assert!(pocket_lanes.iter().all(|&l| !net.lanes[l as usize].next.is_empty()), "the pocket's lanes turn round at its ends");
+    assert!(pocket_lanes.iter().all(|&l| net.trap[l as usize]), "no way out of the pocket");
+    let main = roads.nearest_street(Vec2::new(-200.0, 0.0)).unwrap().0;
+    let main_lanes = net.segment_lanes[&main].clone();
+    assert!(main_lanes.iter().all(|&l| !net.trap[l as usize]));
+    for &m in &main_lanes {
+        for &p in &pocket_lanes {
+            assert!(net.route_lanes(m, 0.0, p, 1.0).is_none(), "never routed into the pocket");
+        }
+    }
+    // A vehicle already in there still finds its way about it.
+    assert!(net.route_lanes(pocket_lanes[0], 0.0, pocket_lanes[1], 1.0).is_some());
+}

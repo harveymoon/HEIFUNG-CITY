@@ -129,6 +129,7 @@ impl LaneNetwork {
     #[allow(clippy::too_many_arguments)]
     fn route_search_in(&self, sc: &mut SearchScratch, start: LaneId, s_start: f32, goal: LaneId, s_end: f32, to: Vec2, d: &Detour) -> Option<(Vec<LaneId>, f32, f32)> {
         let tolls = d.tolls;
+        let start_trapped = self.trap.get(start as usize).copied().unwrap_or(false);
         let mut open = BinaryHeap::new();
         let start_cost = self.lanes[start as usize].length - s_start;
         sc.set(start, start_cost, None);
@@ -191,6 +192,10 @@ impl LaneNetwork {
             let beside = [here.left, here.right].into_iter().flatten().map(|n| (n, LANE_CHANGE_COST + short + CUT_IN_COST * late * self.lanes[n as usize].cars.len() as f32));
             for (next, step) in ahead.chain(beside) {
                 if next == start || d.lanes.contains(&next) || Some((lane, next)) == d.step {
+                    continue;
+                }
+                // [r4-flags-sim] Never into a pocket with no way out.
+                if !start_trapped && self.trap.get(next as usize).copied().unwrap_or(false) {
                     continue;
                 }
                 // Changing onto the goal lane from the start puts the car
