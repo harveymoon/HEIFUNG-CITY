@@ -55,8 +55,11 @@ fn word_board(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, w: f32, ma
 
 /// A sign on a pole at the street corner: a lit box with a word both ways.
 #[allow(clippy::too_many_arguments)]
-fn pole_sign(g: &mut Geometry, c: &Ctx, p: Vec2, h: f32, w: f32, text: &[u8], color: [f32; 3], frame_col: [f32; 3]) {
+fn pole_sign(g: &mut Geometry, c: &Ctx, p: Vec2, h: f32, w: f32, text: &[u8], color: [f32; 3], frame_col: [f32; 3]) -> bool {
     let f = &c.frame;
+    if !c.all_inside(&rect(p.x, p.y, w * 0.5 + 0.2, 0.45)) {
+        return false;
+    }
     f.bx(g, Metal, p.x, h * 0.5, p.y, Vec3::new(0.35, h, 0.35), c.palette.steel);
     let bh = fit_h(text, w * 0.85, 1.4) * 1.8;
     f.bx(g, Panel, p.x, h + bh * 0.5, p.y, Vec3::new(w, bh, 0.5), frame_col);
@@ -65,6 +68,24 @@ fn pole_sign(g: &mut Geometry, c: &Ctx, p: Vec2, h: f32, w: f32, text: &[u8], co
         let face = Face::new(p + Vec2::new(-w * 0.5, out.y * 0.25), p + Vec2::new(w * 0.5, out.y * 0.25), out);
         let lh = fit_h(text, w * 0.85, 1.4);
         neon_word(g, c, &face, 0.0, h + bh * 0.5, 0.04, lh, text, color);
+    }
+    true
+}
+
+/// A line on the ground from `a` to `b` (both inside the lot): a painted bay.
+fn ground_line(g: &mut Geometry, c: &Ctx, a: Vec2, b: Vec2, color: [f32; 3]) {
+    if !(c.inside_local(a) && c.inside_local(b)) {
+        return;
+    }
+    let m = (a + b) * 0.5;
+    let d = b - a;
+    c.frame.bx_yaw(g, Glow, m.x, 0.06, m.y, Vec3::new(d.length(), 0.02, 0.08), color, d.y.atan2(d.x));
+}
+
+/// String lights from `a` to `b` at `y`, only when the run stays over the lot.
+fn lights_over(g: &mut Geometry, c: &Ctx, a: Vec2, b: Vec2, y: f32, n: i32, color: [f32; 3]) {
+    if (0..=8).all(|k| c.inside_local(a.lerp(b, k as f32 / 8.0))) {
+        string_lights(g, &c.frame, Vec3::new(a.x, y, a.y), Vec3::new(b.x, y, b.y), n, color);
     }
 }
 
@@ -80,7 +101,13 @@ fn street_block(c: &Ctx, w: f32, d: f32, setback: f32) -> Option<R> {
     let w = w.min(area.w());
     let v0 = area.v0 + setback.min(area.d() * 0.4);
     let want = R::new(area.c().x - w * 0.5, area.c().x + w * 0.5, v0, (v0 + d).min(area.v1));
-    fit(c, want, 3.0)
+    // An odd lot: smaller and nearer its middle until it stands on it.
+    fit(c, want, 3.0).or_else(|| {
+        [0.7f32, 0.5].into_iter().find_map(|k| {
+            let m = area.c();
+            fit(c, R::new(m.x - w * k * 0.5, m.x + w * k * 0.5, m.y - d.min(area.d()) * k * 0.5, m.y + d.min(area.d()) * k * 0.5), 3.0)
+        })
+    })
 }
 
 /// Floors a style draws: the building's, kept between `lo` and `hi`.
@@ -148,8 +175,7 @@ pub fn diner(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let word: &[u8] = if c.seed % 3 == 0 { b"EAT" } else { b"DINER" };
     word_board(g, c, &fr, 0.0, h + 0.7, fr.len * 0.5, 0.9, word, if t == 0 { NEON_RED } else { NEON_TEAL });
     let pole = Vec2::new(area.u0 + 1.5, area.v0 + 1.0);
-    if c.inside_local(pole) {
-        pole_sign(g, c, pole, 5.5 + t as f32, 3.6, b"DINER", NEON_RED, mul(stripe, 0.7));
+    if pole_sign(g, c, pole, 5.5 + t as f32, 3.6, b"DINER", NEON_RED, mul(stripe, 0.7)) {
         f.bx(g, Glow, pole.x, 4.6 + t as f32, pole.y, Vec3::new(2.4, 0.3, 0.55), NEON_AMBER);
     }
     // A vent on the roof over the grill, and the cars of the breakfast crowd.
@@ -270,7 +296,9 @@ pub fn pizza_place(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let k = ((r.w() - 2.0) / 2.6) as i32;
         for i in 0..k.min(4) {
             let p = Vec2::new(r.u0 + 1.3 + i as f32 * 2.6, area.v0 + front_d * 0.5);
-            table(g, f, p, 0.0, mul(pal.wood, 1.1), if i % 2 == 0 { Some([0.75, 0.12, 0.1]) } else { None });
+            if c.all_inside(&rect(p.x, p.y, 1.3, 1.3)) {
+                table(g, f, p, 0.0, mul(pal.wood, 1.1), if i % 2 == 0 { Some([0.75, 0.12, 0.1]) } else { None });
+            }
         }
     }
     roof_gear(g, c, rng, &r.poly(), h, 0.3);
@@ -319,9 +347,7 @@ pub fn fast_food(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         rf.bx(g, f, Panel, 0.0, 2.4, 0.4, Vec3::new(2.2, 0.15, 0.8), brand);
         for k in 0..3 {
             let p = Vec2::new(right.c().x, right.v0 + 2.0 + k as f32 * 3.0);
-            if c.inside_local(p) {
-                f.bx(g, Glow, p.x, 0.07, p.y, Vec3::new(0.25, 0.02, 1.2), mul(pal.lane_marker, 0.8));
-            }
+            ground_line(g, c, Vec2::new(p.x, p.y - 0.6), Vec2::new(p.x, p.y + 0.6), mul(pal.lane_marker, 0.8));
         }
         // The menu board: a lit panel on legs by the lane.
         let mb = Vec2::new(right.u1 - 0.4, back.v0 - 0.5);
@@ -332,8 +358,7 @@ pub fn fast_food(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     // The pylon over the road, seen from far off.
     let pylon = Vec2::new(area.u0 + 1.2, area.v0 + 1.2);
-    if c.inside_local(pylon) {
-        pole_sign(g, c, pylon, 8.0, 3.6, b"EAT", NEON_AMBER, brand);
+    if pole_sign(g, c, pylon, 8.0, 3.6, b"EAT", NEON_AMBER, brand) {
         f.bx(g, Glow, pylon.x, 9.0 + 2.6, pylon.y, Vec3::new(1.2, 0.8, 0.6), NEON_RED);
     }
     // Bays in front, a car at the window.
@@ -341,7 +366,7 @@ pub fn fast_food(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for k in 0..bays.min(5) {
         let p = Vec2::new(r.u0 + 1.4 + k as f32 * 2.8, area.v0 + (r.v0 - area.v0) * 0.55);
         if c.inside_local(p) {
-            f.bx(g, Glow, p.x - 1.4, 0.06, p.y, Vec3::new(0.08, 0.02, 4.0), mul(pal.lane_marker, 0.6));
+            ground_line(g, c, Vec2::new(p.x - 1.4, p.y - 2.0), Vec2::new(p.x - 1.4, p.y + 2.0), mul(pal.lane_marker, 0.6));
             if coin(rng, 0.5) && vehicle_fits(c, p, std::f32::consts::FRAC_PI_2, Vehicle::Car) {
                 let paint = pick(rng, &pal.car_colors);
                 vehicle(g, f, pal, rng, p, 0.0, std::f32::consts::FRAC_PI_2, Vehicle::Car, paint);
@@ -402,11 +427,11 @@ pub fn food_hall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let n = ((r.w() - 2.0) / 3.5) as i32;
         for i in 0..n.min(6) {
             let p = Vec2::new(r.u0 + 1.8 + i as f32 * 3.5, area.v0 + court * 0.5);
-            table(g, f, p, 0.0, mul(pal.wood, 1.0), None);
+            if c.all_inside(&rect(p.x, p.y, 1.3, 1.3)) {
+                table(g, f, p, 0.0, mul(pal.wood, 1.0), None);
+            }
         }
-        let a = Vec3::new(r.u0 + 0.5, 3.6, area.v0 + 0.6);
-        let b = Vec3::new(r.u1 - 0.5, 3.6, area.v0 + 0.6);
-        string_lights(g, f, a, b, 16, [1.5, 1.1, 0.55]);
+        lights_over(g, c, Vec2::new(r.u0 + 0.5, area.v0 + 0.6), Vec2::new(r.u1 - 0.5, area.v0 + 0.6), 3.6, 16, [1.5, 1.1, 0.55]);
     }
 }
 
@@ -445,20 +470,18 @@ pub fn street_food(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // The arch over the way in.
     let a = front.at(-1.6, -0.6);
     let b = front.at(1.6, -0.6);
-    for p in [a, b] {
-        f.bx(g, Metal, p.x, 2.2, p.y, Vec3::new(0.2, 4.4, 0.2), pal.steel);
+    if c.all_inside(&[front.at(-2.0, -0.2), front.at(2.0, -0.2), front.at(-2.0, -1.0), front.at(2.0, -1.0)]) {
+        for p in [a, b] {
+            f.bx(g, Metal, p.x, 2.2, p.y, Vec3::new(0.2, 4.4, 0.2), pal.steel);
+        }
+        front.bx(g, f, Matte, 0.0, 4.6, -0.6, Vec3::new(3.6, 0.7, 0.15), DARK);
+        let word: &[u8] = if c.seed % 2 == 0 { b"EATS" } else { b"STREET FOOD" };
+        neon_word(g, c, &front, 0.0, 4.6, -0.5, fit_h(word, 3.2, 0.5), word, NEON_PINK);
     }
-    let mid = front.at(0.0, -0.6);
-    let arch = Face::new(a, b, front.out);
-    f.bx(g, Matte, mid.x, 4.6, mid.y, Vec3::new(3.6, 0.7, 0.15), DARK);
-    let _ = arch;
-    let word: &[u8] = if c.seed % 2 == 0 { b"EATS" } else { b"STREET FOOD" };
-    let wf = Face::new(front.at(-1.8, -0.5), front.at(1.8, -0.5), front.out);
-    neon_word(g, c, &wf, 0.0, 4.6, 0.05, fit_h(word, 3.2, 0.5), word, NEON_PINK);
     // Tables in the middle, lights overhead, a drum fire on a cheap one.
     for _ in 0..5 {
         if let Some(p) = c.random_inside(rng, 3.0) {
-            if p.y > area.v0 + 3.5 && p.y < area.v1 - 5.5 {
+            if p.y > area.v0 + 3.5 && p.y < area.v1 - 5.5 && c.all_inside(&rect(p.x, p.y, 1.3, 1.3)) {
                 table(g, f, p, 0.0, mul(pal.wood, 0.9), if coin(rng, 0.4) { Some(pick(rng, &pal.tarp_colors)) } else { None });
             }
         }
@@ -470,9 +493,7 @@ pub fn street_food(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
     }
     for (i, j) in [(0usize, 2usize), (1, 3)] {
-        if c.inside_local(corners[i]) && c.inside_local(corners[j]) {
-            string_lights(g, f, Vec3::new(corners[i].x, 4.1, corners[i].y), Vec3::new(corners[j].x, 4.1, corners[j].y), 18, [1.5, 1.05, 0.5]);
-        }
+        lights_over(g, c, corners[i], corners[j], 4.1, 18, [1.5, 1.05, 0.5]);
     }
     if c.wear > 0.4 {
         if let Some(p) = c.random_inside(rng, 2.0) {
@@ -780,7 +801,15 @@ pub fn theatre(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     for face in [foyer.left(), foyer.right()] {
         pane_row(g, c, rng, &face, 4.0, ((h - 4.0) / 3.4) as i32, 3.4, 2.6, 1.2, 2.0, true);
+        grime(g, c, rng, &face, 0.0, h, 0.8);
     }
+    // Stage doors and the get-in at the back, the foyer's plant on its roof.
+    if stage.d() > 3.0 {
+        let back = stage.back();
+        roller_door(g, c, &back, 0.0, 3.0, 3.6, mul(pal.steel, 0.6));
+        fire_escape(g, c, rng, &stage.left(), 0.0, 0.0, 3, h * 0.45);
+    }
+    roof_gear(g, c, rng, &foyer.poly(), h, 0.4);
 }
 
 // ── live-music hall ──────────────────────────────────────────────────────────
@@ -870,7 +899,8 @@ pub fn bowling_alley(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     for k in 0..n.min(10) {
         let q = Vec2::new(area.u0 + 1.4 + k as f32 * 2.8, area.v0 + park * 0.5);
         if c.inside_local(q) {
-            f.bx(g, Glow, q.x - 1.4, 0.06, q.y, Vec3::new(0.08, 0.02, (park - 1.0).min(4.5)), mul(pal.lane_marker, 0.5));
+            let half = (park - 1.0).min(4.5) * 0.5;
+            ground_line(g, c, Vec2::new(q.x - 1.4, q.y - half), Vec2::new(q.x - 1.4, q.y + half), mul(pal.lane_marker, 0.5));
             if coin(rng, 0.45) && vehicle_fits(c, q, std::f32::consts::FRAC_PI_2, Vehicle::Car) {
                 let paint = pick(rng, &pal.car_colors);
                 vehicle(g, f, pal, rng, q, 0.0, std::f32::consts::FRAC_PI_2, Vehicle::Car, paint);

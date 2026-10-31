@@ -335,7 +335,7 @@ fn places_to_eat_and_go_out_wear_their_own_looks() {
                 for (tier, floors) in [(Tier::Low, 1u8), (Tier::Mid, 3), (Tier::High, 8)] {
                     let g = generate_styled(lot, lu, floors, tier, 0.6, 11 + i as u64, style, &rules, &pal);
                     let tris = g.triangle_count();
-                    assert!(tris > 200, "{style:?} {tier:?} on lot {i} drew only {tris} triangles");
+                    assert!(tris > 150, "{style:?} {tier:?} on lot {i} drew only {tris} triangles");
                     let glow = g.get(crate::surface::Surface::Glow).positions.len();
                     assert!(glow >= 16, "{style:?} {tier:?} on lot {i}: no sign ({glow} glow vertices)");
                     valid(&g, &format!("{style:?} {tier:?}"));
