@@ -143,6 +143,38 @@ fn a_self_crossing_polyline_splits_itself_at_the_crossing() {
     assert_eq!(net.leaf_nodes().len(), 2);
 }
 
+/// [r4-flags-look] (flag day 8 at (279,493)) A street drawn round a loop
+/// whose end comes back beside an earlier vertex of its own joins itself
+/// there in a junction: it used to stop 1.9 m off it, two nodes side by
+/// side with overlapping lanes and no junction.
+#[test]
+fn a_looping_road_ending_by_its_own_vertex_joins_it() {
+    let mut net = RoadNetwork::default();
+    let pts = [Vec2::new(-200.0, 0.0), Vec2::new(0.0, 0.0), Vec2::new(100.0, 80.0), Vec2::new(250.0, 20.0), Vec2::new(1.5, 1.1)];
+    net.add_polyline(&pts, 2, 2);
+    let at = net.node_near(Vec2::ZERO, 1.0).expect("the loop's vertex");
+    assert_eq!(net.neighbors(at).count(), 3, "the end joins the vertex: a T junction");
+    assert!(net.node_near(Vec2::new(1.5, 1.1), 0.5).is_none_or(|n| n == at), "no second node beside it");
+    // Harvey's: a car-only road was laid first from beside the vertex; the
+    // avenue's end lands on its start, 1.9 m from the avenue's own vertex
+    // (which, a street's, may not join the car-only road's node). The
+    // vertex is welded onto the end: one junction of all four pieces.
+    let mut net = RoadNetwork::default();
+    let p = Vec2::new(1.55, 1.06);
+    net.add_polyline_use(&[p, Vec2::new(90.0, -60.0)], &[], 1, 0, RoadKind::Street, Some(true));
+    net.add_polyline_use(&[Vec2::new(-200.0, 0.0), Vec2::new(0.0, 0.0), Vec2::new(100.0, 80.0), Vec2::new(250.0, 20.0), p], &[], 2, 2, RoadKind::Street, Some(false));
+    let j = net.node_near(p, 0.5).expect("the end's node");
+    let live = |n: NodeId| net.node(n).segments.iter().filter(|&&s| net.segment(s).alive).count();
+    assert_eq!(live(j), 4, "the avenue's vertex, its end and the car-only road meet at one junction");
+    assert!(net.nodes.iter().enumerate().all(|(i, n)| NodeId(i as u32) == j || n.pos.distance(p) > 3.0 || n.segments.iter().all(|&s| !net.segment(s).alive)), "no second live node beside it");
+    // A curve's last samples, close together, still never snap back.
+    let mut net = RoadNetwork::default();
+    let arc: Vec<Vec2> = (0..=12).map(|k| { let a = k as f32 * 0.12; Vec2::new(60.0 * a.cos(), 60.0 * a.sin()) }).collect();
+    let made = net.add_polyline(&arc, 1, 1);
+    assert_eq!(made.len(), 12, "every sample its own piece");
+    assert_eq!(net.leaf_nodes().len(), 2);
+}
+
 #[test]
 fn a_road_drawn_through_a_junction_joins_it() {
     let mut net = RoadNetwork::default();

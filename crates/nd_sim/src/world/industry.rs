@@ -544,7 +544,7 @@ impl World {
             }
             // A full lot (or a lorry stranded earlier): drive on.
             if !self.drive_lorry_on(car_id, cargo.to, home) && self.traffic.cars.contains_key(car_id) {
-                self.traffic.pull_in(car_id, STRANDED_RETRY_SECONDS);
+                self.traffic.pull_in_queued(car_id, STRANDED_RETRY_SECONDS);
             }
             return;
         }
@@ -565,7 +565,7 @@ impl World {
         // [K34] A box bought off it (or going for scrap) is taken there first.
         self.boxes_after_delivery(car_id, at, home);
         if self.traffic.cars.contains_key(car_id) {
-            self.traffic.pull_in(car_id, UNLOAD_SECONDS);
+            self.traffic.pull_in_queued(car_id, UNLOAD_SECONDS);
         }
     }
 
