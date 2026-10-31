@@ -32,16 +32,18 @@ struct ShopUnit {
     role: UnitRole,
     lo: u8,
     main: bool,
+    /// [r4-leisure-places] The word over a place to eat or go out.
+    word: Option<&'static [u8]>,
 }
 
 /// The shop units, or a stand-in row of `n` (a style preview with no sim
 /// building behind it: half of them let).
 fn shops_or(units: &[Unit], n: usize) -> Vec<ShopUnit> {
-    let v: Vec<ShopUnit> = units.iter().filter(|u| u.shopfront).map(|u| ShopUnit { lit: !u.vacant(), role: u.role, lo: u.lo, main: u.occupant == nd_sim::buildings::Occupant::Main }).collect();
+    let v: Vec<ShopUnit> = units.iter().filter(|u| u.shopfront).map(|u| ShopUnit { lit: !u.vacant(), role: u.role, lo: u.lo, main: u.occupant == nd_sim::buildings::Occupant::Main, word: u.sign.and_then(nd_sim::leisure::sign_word) }).collect();
     if !v.is_empty() {
         return v;
     }
-    (0..n).map(|i| ShopUnit { lit: i % 2 == 0, role: UnitRole::Shop, lo: (i % 2) as u8, main: false }).collect()
+    (0..n).map(|i| ShopUnit { lit: i % 2 == 0, role: UnitRole::Shop, lo: (i % 2) as u8, main: false, word: None }).collect()
 }
 
 /// A shop's sign colour: its unit's place in the building and the seed.
@@ -104,7 +106,7 @@ fn bays_in(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, r: &R, share: f32, row
 /// `walk` out from the face: lit box letters in its tenant's neon on a
 /// dark board, or a pale board when to let.
 #[allow(clippy::too_many_arguments)]
-fn fascia_sign(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, walk: f32, w: f32, let_: bool, col: [f32; 3]) {
+fn fascia_sign(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, walk: f32, w: f32, let_: bool, col: [f32; 3], word: Option<&[u8]>) {
     let f = &c.frame;
     let d = walk + 0.2;
     if !let_ {
@@ -112,6 +114,11 @@ fn fascia_sign(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, walk: f32
         return;
     }
     face.bx(g, f, Matte, t, y, d, Vec3::new(w, 0.95, 0.12), DARK);
+    if let Some(word) = word {
+        let h = ((w * 0.85) / ((4 * word.len()) as f32 - 1.0) * 5.0).min(0.6);
+        super::eatout::neon_word(g, c, face, t, y, d + 0.07, h, word, mul(col, 1.8));
+        return;
+    }
     let letters = ((w / 0.75).floor() as i32).clamp(3, 9);
     let lw = w * 0.86 / letters as f32;
     for k in 0..letters {
@@ -209,7 +216,7 @@ pub fn strip_mall(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras) {
         // walk's roof it was hidden from every camera above it); a small
         // board over the door under the walk.
         if walk > 1.0 {
-            fascia_sign(g, c, &front, t, ground_h - 0.25, walk, (seg * 0.82).min(7.0), *let_, sign_colour(c, i));
+            fascia_sign(g, c, &front, t, ground_h - 0.25, walk, (seg * 0.82).min(7.0), *let_, sign_colour(c, i), u.word);
             front.bx(g, f, Matte, t + seg * 0.28, 2.75, 0.12, Vec3::new(1.2, 0.35, 0.08), if *let_ { mul(sign_colour(c, i), 0.6) } else { TO_LET });
         } else {
             shop_sign(g, c, &front, t, ground_h - 0.55, (seg * 0.8).min(7.0), *let_, sign_colour(c, i));

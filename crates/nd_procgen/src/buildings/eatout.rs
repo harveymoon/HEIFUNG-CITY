@@ -813,7 +813,10 @@ pub fn theatre(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let reach = (c.reach_out(&fr) - 0.3).clamp(0.8, 2.5);
     fr.bx(g, f, Metal, 0.0, 4.2, reach * 0.5, Vec3::new(fr.len * 0.6, 0.35, reach), [0.3, 0.1, 0.1]);
     fr.bx(g, f, Glow, 0.0, 4.0, reach * 0.5, Vec3::new(fr.len * 0.55, 0.04, reach * 0.8), [1.4, 1.1, 0.6]);
-    word_board(g, c, &fr, 0.0, h * 0.72, fr.len * 0.6, 1.0, b"THEATRE", [1.5, 1.15, 0.6]);
+    // The name on a board across the column heads, clear of them.
+    let lh = fit_h(b"THEATRE", fr.len * 0.55, 0.9);
+    fr.bx(g, f, Matte, 0.0, h * 0.92, 0.85, Vec3::new(word_w(7, lh) + lh, lh * 1.6, 0.14), DARK);
+    neon_word(g, c, &fr, 0.0, h * 0.92, 0.95, lh, b"THEATRE", [1.5, 1.15, 0.6]);
     // Banners between the columns.
     let banner = house(c, 0x7E, &[[0.6, 0.08, 0.1], [0.1, 0.2, 0.45], [0.15, 0.35, 0.2]]);
     for k in [-1.0f32, 1.0] {
