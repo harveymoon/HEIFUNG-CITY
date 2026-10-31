@@ -254,7 +254,9 @@ copied or imported.
 
 ## Licences
 
-The code is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+The game is free and its code is under the [PolyForm Noncommercial License 1.0.0](LICENSE.md): you may
+use, copy, change and share it for any noncommercial purpose, but you may not sell it or use it
+commercially.
 
 The fonts in `assets/fonts` (Chakra Petch, IBM Plex Sans, IBM Plex Mono, Noto Sans Symbols 2) are
 under the SIL Open Font License 1.1; their licence files sit beside them. All Rust dependencies are
