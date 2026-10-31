@@ -320,7 +320,10 @@ impl World {
             daily += hh.members.len() as f32 * KG_PER_PERSON_DAY[Tier::for_income(income / earners).index()];
         }
         let lu = if b.service.is_some() { LandUse::Civic } else { b.land_use };
-        daily += b.workers.len() as f32 * kg_per_job_day(lu);
+        // [r4-leisure-places] Takeaway boxes and cups: the kitchens and
+        // nights out by their kind.
+        let factor = b.business.as_ref().map_or(1.0, |z| z.kind.trash_factor());
+        daily += b.workers.len() as f32 * kg_per_job_day(lu) * factor;
         // Bins are sized (and added) for the people using the building.
         (daily, (daily * BIN_DAYS).max(MIN_BIN))
     }

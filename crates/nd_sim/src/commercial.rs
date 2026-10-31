@@ -91,33 +91,77 @@ impl CommercialSub {
     pub fn kinds(self) -> &'static [BusinessKind] {
         use BusinessKind as K;
         match self {
-            CommercialSub::Neighbourhood => &[K::Grocery, K::Bakery, K::GadgetShop, K::Cafe, K::Bookshop],
-            CommercialSub::Retail => &[K::GadgetShop, K::Grocery, K::CarDealer, K::BikeShop],
-            CommercialSub::Offices => &[K::Office],
-            CommercialSub::Leisure => &[K::Venue, K::GolfRange, K::BeachBar, K::Cafe],
+            CommercialSub::Neighbourhood => &[K::Grocery, K::Bakery, K::GadgetShop, K::Cafe, K::Bookshop, K::Diner, K::NoodleBar, K::PizzaPlace, K::BubbleTea],
+            CommercialSub::Retail => &[K::GadgetShop, K::Grocery, K::FastFood, K::FoodHall, K::PizzaPlace, K::Gym, K::CarDealer, K::BikeShop],
+            CommercialSub::Offices => &[K::Office, K::Cafe, K::FoodHall, K::BubbleTea],
+            CommercialSub::Leisure => &[
+                K::Venue,
+                K::Bar,
+                K::KaraokeBox,
+                K::Cinema,
+                K::Theatre,
+                K::ConcertHall,
+                K::BowlingAlley,
+                K::Arcade,
+                K::ComedyClub,
+                K::FineDining,
+                K::StreetFood,
+                K::NoodleBar,
+                K::GolfRange,
+                K::BeachBar,
+            ],
         }
     }
 
     /// What a new building of this sub-zone may open as by the market:
     /// the land use's menu (`BusinessKind::candidates`) narrowed to the
-    /// sub-zone, repeats kept (groceries count twice).
+    /// sub-zone, repeats kept (groceries count twice). [r4-leisure-places]
+    /// Neighbourhood and retail now differ: corner places to eat by the
+    /// homes, drive-throughs, food halls and gyms on the main roads.
     pub fn menu(self) -> &'static [BusinessKind] {
         use BusinessKind as K;
         match self {
-            CommercialSub::Neighbourhood => &[K::Grocery, K::Grocery, K::Bakery, K::GadgetShop],
-            CommercialSub::Retail => &[K::GadgetShop, K::Grocery],
+            CommercialSub::Neighbourhood => &[K::Grocery, K::Grocery, K::Bakery, K::GadgetShop, K::Diner, K::NoodleBar, K::PizzaPlace, K::BubbleTea],
+            CommercialSub::Retail => &[K::GadgetShop, K::Grocery, K::FastFood, K::FoodHall, K::PizzaPlace, K::Gym],
             CommercialSub::Offices => &[K::Office],
             CommercialSub::Leisure => BusinessKind::candidates(LandUse::Entertainment),
         }
     }
 
+    /// [r4-leisure-places] The menu when the city picked the sub-zone (the
+    /// lot is on auto): the sub-zone's own, with offices still let in on
+    /// shop streets as before (they take on the jobless).
+    pub fn auto_menu(self) -> &'static [BusinessKind] {
+        use BusinessKind as K;
+        match self {
+            CommercialSub::Neighbourhood => &[K::Grocery, K::Grocery, K::Bakery, K::GadgetShop, K::Diner, K::NoodleBar, K::PizzaPlace, K::BubbleTea, K::Office],
+            CommercialSub::Retail => &[K::GadgetShop, K::Grocery, K::FastFood, K::FoodHall, K::PizzaPlace, K::Gym, K::Office],
+            _ => self.menu(),
+        }
+    }
+
+    /// [r4-leisure-places] The sub-zone a business of this kind belongs
+    /// to, when it is one only one sub-zone grows (`None`: shops several
+    /// grow, and everything off commercial land).
+    pub fn of_kind(kind: BusinessKind) -> Option<CommercialSub> {
+        use BusinessKind as K;
+        Some(match kind {
+            K::Office => CommercialSub::Offices,
+            K::Diner | K::BubbleTea => CommercialSub::Neighbourhood,
+            K::FastFood | K::FoodHall | K::Gym | K::CarDealer => CommercialSub::Retail,
+            K::NoodleBar | K::PizzaPlace | K::Grocery | K::Bakery | K::GadgetShop | K::Cafe | K::Bookshop | K::BikeShop => return None,
+            k if BusinessKind::candidates(LandUse::Entertainment).contains(&k) || k == K::GolfRange || k == K::BeachBar => CommercialSub::Leisure,
+            _ => return None,
+        })
+    }
+
     /// One line on what the sub-zone grows, for the Zone tool.
     pub fn note(self) -> &'static str {
         match self {
-            CommercialSub::Neighbourhood => "Corner groceries, bakeries, small shops; low, near homes.",
-            CommercialSub::Retail => "Bigger shops on the main roads.",
-            CommercialSub::Offices => "Office buildings and towers.",
-            CommercialSub::Leisure => "Bars, clubs and venues: nightlife and jobs, some noise at night (the old Entertainment zone).",
+            CommercialSub::Neighbourhood => "Corner groceries, bakeries, diners, noodle bars, pizza and bubble tea; low, near homes.",
+            CommercialSub::Retail => "Bigger shops, drive-through fast food, food halls and gyms on the main roads.",
+            CommercialSub::Offices => "Office buildings and towers, cafés and food courts on the ground floor.",
+            CommercialSub::Leisure => "Bars, clubs, karaoke, cinemas, theatres, live music, bowling, arcades, comedy, fine dining and street food: nightlife and jobs, some noise at night.",
         }
     }
 }
@@ -264,7 +308,7 @@ mod tests {
         assert_eq!(CommercialSub::Offices.land_use(), LandUse::Commercial);
         // The development menus stay within the land use's menu.
         for c in CommercialSub::ALL {
-            for k in c.menu() {
+            for k in c.menu().iter().chain(c.auto_menu()) {
                 assert!(BusinessKind::candidates(c.land_use()).contains(k), "{c:?} {k:?}");
             }
         }

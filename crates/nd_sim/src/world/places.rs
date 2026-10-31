@@ -124,6 +124,25 @@ impl World {
         (regulars, there)
     }
 
+    /// [r4-leisure-places] A citizen as the places to go out see them.
+    pub fn outgoer(&self, id: CitizenId) -> Option<crate::leisure::Outgoer> {
+        let c = self.citizens.get(id)?;
+        let kids = c.household.and_then(|h| self.households.get(h)).is_some_and(|h| h.members.iter().any(|m| *m != id && self.citizens.get(*m).is_some_and(|x| x.stage() == crate::citizens::LifeStage::Child)));
+        let partner = self.social.circles.get(&id).and_then(|t| t.partner()).is_some();
+        let [sociability, ambition, hedonism, caution, _] = places::traits(c.seed);
+        Some(crate::leisure::Outgoer {
+            age: c.age,
+            stage: c.stage(),
+            hungry: c.satiety < 0.5,
+            kids,
+            partner,
+            class: c.class(),
+            gym_goer: crate::leisure::gym_goer(c.seed, ambition, caution),
+            hedonism,
+            sociability,
+        })
+    }
+
     /// Where to go for `lu` (a night out, a park, anywhere of that use).
     /// Favourites weighed by how it went and how far, sometimes somewhere
     /// new; `explore` looks only at unknown places near by first ("looking
@@ -144,6 +163,10 @@ impl World {
         let mut known: Vec<(BuildingId, f32, f32)> = Vec::new();
         let mut fresh: Vec<(BuildingId, f32, f32)> = Vec::new();
         let empty: Vec<CitizenId> = Vec::new();
+        // [r4-leisure-places] Who is going out, for what suits them at this
+        // hour: lunch when hungry, the gym in the morning, the bowling
+        // alley with the kids, fine dining with a partner.
+        let who = if lu == LandUse::Entertainment { self.outgoer(id) } else { None };
         for (bid, b) in self.buildings.iter() {
             // [economy] A night out also finds the restaurants, driving
             // ranges, galleries and marina clubhouses on other land.
@@ -172,6 +195,9 @@ impl World {
             let inside = crowds.get(&bid).unwrap_or(&empty);
             let (regular_friends, friends_there) = self.friends_at(id, bid, inside);
             let mut social = 0.08 * regular_friends.min(3) as f32 + 0.15 * friends_there.min(2) as f32;
+            if let (Some(w), Some(z)) = (&who, b.business.as_ref()) {
+                social += crate::leisure::appeal(z.kind, hour, w);
+            }
             // [social] Friends draw, enemies repel, a friend's band tonight.
             social += self.social_pull(id, bid, inside);
             // [waterfront] A beach on a hot day.
@@ -322,6 +348,9 @@ impl World {
             return;
         }
         let name = c.name.clone();
+        // [r4-leisure-places] A bowling alley, a cinema, a pizza place before
+        // nine: the family comes, children too.
+        let family_place = lu == LandUse::Entertainment && hour < 21 && self.buildings.get(target).and_then(|b| b.business.as_ref()).is_some_and(|z| z.kind.family_friendly());
         let mut pool: Vec<(CitizenId, bool)> = Vec::new();
         if let Some(h) = c.household.and_then(|h| self.households.get(h)) {
             pool.extend(h.members.iter().filter(|m| **m != id).map(|m| (*m, true)));
@@ -341,14 +370,32 @@ impl World {
                     && !x.asleep
                     && x.wakefulness > crate::citizens::TIRED + 0.1
                     && !on_shift
-                    && (grown || (family && lu == LandUse::Park))
+                    && (grown || (family && (lu == LandUse::Park || family_place)))
                     && !x.places.is_never(target)
                     && x.home.is_some()
             })
+            .filter(|(m, _)| !self.services.in_custody(*m) && !self.is_patient(*m))
+            .collect::<Vec<(CitizenId, bool)>>()
+            .into_iter()
             .map(|(m, _)| m)
-            .filter(|m| !self.services.in_custody(*m) && !self.is_patient(*m))
             .collect();
+        // The whole family (up to four more) to a family place; else one.
+        let household: Vec<CitizenId> = if family_place { c.household.and_then(|h| self.households.get(h)).map_or(Vec::new(), |h| free.iter().copied().filter(|m| h.members.contains(m)).take(4).collect()) } else { Vec::new() };
+        if household.len() >= 2 {
+            for m in household {
+                self.come_along(m, id, &name, target, purpose);
+            }
+            self.places.family_outings_today += 1;
+            return;
+        }
         let Some(&mate) = free.choose(&mut rng) else { return };
+        self.come_along(mate, id, &name, target, purpose);
+    }
+
+    /// One person joins `id`'s outing to `target`: in the car when setting
+    /// off together, else under their own steam.
+    fn come_along(&mut self, mate: CitizenId, id: CitizenId, name: &str, target: BuildingId, purpose: Purpose) {
+        let tick = self.clock.tick;
         let place = self.buildings.get(target).map(|b| b.name.clone()).unwrap_or_default();
         {
             let x = &mut self.citizens[mate];
@@ -512,6 +559,7 @@ impl World {
             }
         }
         self.places.outings_together_today = 0;
+        self.places.family_outings_yesterday = std::mem::take(&mut self.places.family_outings_today);
     }
 
     /// The citizen's favourite places, best first: (building, memory).

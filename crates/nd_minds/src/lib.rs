@@ -232,6 +232,10 @@ impl MindProvider for RuleBasedMind {
             return decide(Intent::Shop(Resource::Groceries), t);
         }
 
+        // [r4-leisure-places] A gym-goer's morning: the gym before work.
+        if ctx.workout && grown && ctx.at_home && !ctx.on_shift && ctx.available[LandUse::Entertainment.index()] {
+            return decide(Intent::Visit(LandUse::Entertainment), "Gym before work.".to_string());
+        }
         // Shifts follow the workplace's opening hours.
         if ctx.on_shift {
             let t = commute_thought(ctx.citizen).map(str::to_string).unwrap_or_else(|| self.pick(WORK_THOUGHTS));
@@ -249,6 +253,10 @@ impl MindProvider for RuleBasedMind {
             if roll < 0.35 && ctx.stage == LifeStage::Retiree {
                 let t = self.pick(RETIREE_THOUGHTS);
                 return decide(Intent::Wander, t);
+            }
+            // [r4-leisure-places] A matinee, a diner lunch, a game of bowls.
+            if roll < 0.42 && ctx.stage == LifeStage::Retiree && clock.hour() >= 10 && ctx.available[LandUse::Entertainment.index()] {
+                return decide(Intent::Visit(LandUse::Entertainment), "A matinee, then a bite.".to_string());
             }
             let t = self.pick(if ctx.stage == LifeStage::Child { KID_THOUGHTS } else { HOME_THOUGHTS });
             return decide(Intent::GoHome, t);
@@ -576,11 +584,13 @@ mod tests {
         places_known: usize,
         /// [r4-hunger] No home.
         homeless: bool,
+        /// [r4-leisure-places] A gym-goer's morning.
+        workout: bool,
     }
 
     impl Default for Case {
         fn default() -> Self {
-            Self { hour: 10, stage_age: 35, wakefulness: 0.8, asleep: false, at_home: false, on_shift: false, satiety: 0.9, groceries: 5.0, pantry_low: false, regular_spot: None, places_known: 0, homeless: false }
+            Self { hour: 10, stage_age: 35, wakefulness: 0.8, asleep: false, at_home: false, on_shift: false, satiety: 0.9, groceries: 5.0, pantry_low: false, regular_spot: None, places_known: 0, homeless: false, workout: false }
         }
     }
 
@@ -618,6 +628,7 @@ mod tests {
                     pantry_low: case.pantry_low,
                     regular_spot: case.regular_spot,
                     places_known: case.places_known,
+                    workout: case.workout,
                 };
                 mind.decide(&ctx).map(|d| d.intent)
             })
@@ -686,5 +697,25 @@ mod tests {
             assert!(days.iter().all(|i| *i != Intent::GoWork));
             assert!(days.iter().all(|i| *i != Intent::Visit(LandUse::Entertainment)) || age > 17);
         }
+    }
+
+    /// [r4-leisure-places] Gym-goers head out from home before work; the
+    /// rest (and anyone on shift) do not.
+    #[test]
+    fn gym_goers_work_out_before_work() {
+        let gym = intents(Case { hour: 6, at_home: true, workout: true, ..Default::default() });
+        assert!(gym.iter().all(|i| *i == Intent::Visit(LandUse::Entertainment)));
+        let rest = intents(Case { hour: 6, at_home: true, ..Default::default() });
+        assert!(rest.iter().all(|i| *i != Intent::Visit(LandUse::Entertainment)));
+        let shift = intents(Case { hour: 6, at_home: true, workout: true, on_shift: true, ..Default::default() });
+        assert!(shift.iter().all(|i| *i == Intent::GoWork));
+    }
+
+    /// [r4-leisure-places] Retirees have their days: some go out to a
+    /// matinee or a diner lunch.
+    #[test]
+    fn retirees_sometimes_go_out_by_day() {
+        let days = intents(Case { hour: 14, stage_age: 72, ..Default::default() });
+        assert!(days.iter().any(|i| *i == Intent::Visit(LandUse::Entertainment)));
     }
 }

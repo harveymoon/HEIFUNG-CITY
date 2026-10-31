@@ -78,6 +78,8 @@ mod monuments;
 mod sanitation;
 /// [economy] Shops, garages and places to go out opened by the economy.
 mod trades;
+// [r4-leisure-places] places to eat and go out
+mod eatout;
 /// [economy] Farms, slaughterhouse, strip mine, trash company, fish trades.
 mod rural;
 /// [economy] Land side of marinas and fishing ports.

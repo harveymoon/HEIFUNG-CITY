@@ -103,7 +103,7 @@ pub fn is_place(b: &Building) -> bool {
     if b.service.is_some() || b.is_power() || b.rail.is_some() || b.port.is_some() {
         return false;
     }
-    b.land_use == LandUse::Park || b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::Venue | BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Cafe | BusinessKind::Bookshop))
+    b.land_use == LandUse::Park || b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::Venue | BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Cafe | BusinessKind::Bookshop) || z.kind.is_eat_or_go_out())
 }
 
 /// The vibe of a place: venues by the word in their name and their tier
@@ -116,6 +116,22 @@ pub fn vibe_of(b: &Building) -> Vibe {
         Some(BusinessKind::Grocery) => return Vibe::Grocer,
         Some(BusinessKind::Bakery | BusinessKind::Cafe) => return Vibe::Cafe,
         Some(BusinessKind::GadgetShop | BusinessKind::Bookshop) => return Vibe::Boutique,
+        // [r4-leisure-places] The new places by what they are (the vibes
+        // stay as saved tastes know them).
+        Some(k) if k.is_eat_or_go_out() => {
+            use BusinessKind as K;
+            return match k {
+                K::Diner | K::NoodleBar | K::PizzaPlace | K::FastFood | K::BubbleTea => Vibe::Cafe,
+                K::FoodHall | K::StreetFood => Vibe::NightMarket,
+                K::FineDining | K::Cinema | K::Gym => Vibe::Lounge,
+                K::Bar if b.tier == Tier::High => Vibe::Lounge,
+                K::Bar => Vibe::DiveBar,
+                K::KaraokeBox => Vibe::Karaoke,
+                K::Theatre | K::ComedyClub => Vibe::Cabaret,
+                K::ConcertHall => Vibe::Club,
+                _ => Vibe::Arcade,
+            };
+        }
         _ => {}
     }
     let n = b.name.as_str();
@@ -630,6 +646,10 @@ pub struct Places {
     pub explorations_total: u32,
     pub never_again_total: u32,
     pub regulars_made_total: u32,
+    /// [r4-leisure-places] Families out together (children too) at a
+    /// bowling alley, cinema or pizza place today, and yesterday.
+    pub family_outings_today: u32,
+    pub family_outings_yesterday: u32,
 }
 
 #[cfg(test)]

@@ -229,11 +229,34 @@ impl World {
                 }
                 c.activity = Activity::Visiting(b);
                 c.inside = Some(b);
+                let hour = self.clock.hour() as u8;
                 if let Some(bld) = self.buildings.get_mut(b) {
                     bld.visitors += 1;
                     let name = bld.name.clone();
-                    c.remember(tick, format!("Spent the evening at {name}."));
+                    let kind = bld.business.as_ref().map(|z| z.kind);
+                    // [r4-leisure-places] Counted by kind and hour; each
+                    // place is remembered for what it is.
+                    if let Some(k) = kind {
+                        self.economy.market.leisure.note(k, hour);
+                    }
+                    c.remember(tick, crate::leisure::visit_memory(kind, &name));
                     c.mood = (c.mood + 0.05).min(1.0);
+                    // A kitchen feeds the hungry from what it cooked.
+                    if let Some(bz) = bld.business.as_mut().filter(|z| z.kind.is_eatery() && !z.closed) {
+                        if c.satiety < 0.7 {
+                            let fed = if bz.kind.cooks_meals() {
+                                bz.take(Resource::BakedGoods, crate::leisure::MEAL) > 0.0
+                            } else {
+                                // The fine-dining kitchen cooks to order.
+                                bz.take(Resource::Meat, 0.15) + bz.take(Resource::Produce, 0.15) > 0.0
+                            };
+                            if fed {
+                                c.satiety = (c.satiety + 0.5).min(1.0);
+                                self.economy.market.meals_sold_today += 1;
+                                self.economy.market.leisure.meals_in_today += 1;
+                            }
+                        }
+                    }
                     if let (Some(cover), Some(bz)) = (cover, bld.business.as_mut()) {
                         covers.push((b, cover));
                         bz.revenue_today += cover;
@@ -248,8 +271,13 @@ impl World {
             (Purpose::Shop(r), Some(b)) => {
                 c.activity = Activity::Visiting(b);
                 c.inside = Some(b);
+                let hour = self.clock.hour() as u8;
                 if let Some(bld) = self.buildings.get_mut(b) {
                     bld.visitors += 1;
+                    // [r4-leisure-places] A lunch at a noodle bar counts as a visit.
+                    if let Some(k) = bld.business.as_ref().map(|z| z.kind) {
+                        self.economy.market.leisure.note(k, hour);
+                    }
                 }
                 c.next_decision_tick = tick + 10 + self.rng.random_range(0..20);
                 self.buy(id, b, r);

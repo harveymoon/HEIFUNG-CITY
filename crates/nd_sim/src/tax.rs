@@ -149,7 +149,7 @@ impl TaxCategory {
             ResidentialMid => "middle-tier homes",
             ResidentialHigh => "high-tier homes",
             Grocery => "grocers",
-            Bakery => "bakeries",
+            Bakery => "bakeries, cafés & eateries",
             GadgetShop => "gadget shops",
             Parking => "car parks",
             NightlifeLow => "dive bars & clubs",
@@ -233,6 +233,15 @@ impl TaxCategory {
             BusinessKind::Bakery | BusinessKind::Cafe => TaxCategory::Bakery,
             BusinessKind::GadgetShop | BusinessKind::Bookshop => TaxCategory::GadgetShop,
             BusinessKind::Parking => TaxCategory::Parking,
+            // [r4-leisure-places] The everyday kitchens with the cafés and
+            // bakeries; the nights out (and the fine-dining room) on the
+            // nightlife lines.
+            BusinessKind::Diner | BusinessKind::NoodleBar | BusinessKind::PizzaPlace | BusinessKind::FastFood | BusinessKind::FoodHall | BusinessKind::StreetFood | BusinessKind::BubbleTea => TaxCategory::Bakery,
+            k if k.is_eat_or_go_out() => match tier {
+                Tier::Low => TaxCategory::NightlifeLow,
+                Tier::Mid => TaxCategory::NightlifeMid,
+                Tier::High => TaxCategory::NightlifeHigh,
+            },
             BusinessKind::Venue | BusinessKind::SeafoodRestaurant | BusinessKind::GolfRange | BusinessKind::Gallery | BusinessKind::Marina => match tier {
                 Tier::Low => TaxCategory::NightlifeLow,
                 Tier::Mid => TaxCategory::NightlifeMid,

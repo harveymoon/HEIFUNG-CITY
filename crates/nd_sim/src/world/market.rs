@@ -186,6 +186,7 @@ impl World {
         self.economy.market.meals_sold_today = 0;
         self.economy.market.grocery_imports_today = 0.0;
         self.economy.market.turned_away_today = 0;
+        self.economy.market.leisure.roll();
         self.wages_paid.clear();
     }
 
@@ -590,6 +591,23 @@ impl World {
             if bz.kind == BusinessKind::SeafoodRestaurant && bz.take(Resource::Fillets, 0.3) < 0.3 {
                 tab *= 0.5;
             }
+            // [r4-leisure-places] An hour at a bar, a fine-dining table or a
+            // cinema takes its stock (drinks and snacks from the grocers, a
+            // fine kitchen's produce); short of it the evening is short too.
+            // The kitchens' meals are eaten on arrival (`World::arrive`).
+            if bz.kind.is_eat_or_go_out() && !bz.kind.cooks_meals() {
+                let mut short = false;
+                let seats = bz.kind.customers_per_job().unwrap_or(4).max(1) as f32;
+                for (r, per) in bz.kind.recipe().inputs {
+                    let want = per * crate::market::JOB_RATE * VISIT_STOCK / seats;
+                    if bz.take(*r, want) < want * 0.5 {
+                        short = true;
+                    }
+                }
+                if short {
+                    tab *= 0.6;
+                }
+            }
             if c.savings < tab {
                 continue;
             }
@@ -603,6 +621,17 @@ impl World {
         // [ledger] The rounds, from the pocket to the venue.
         for (cid, b, tab) in tabs {
             self.transfer(Account::Person(cid), Account::Business(b), tab, Kind::Outings);
+            // [r4-leisure-places] What is on was booked from out of town: the
+            // film's distributor, the touring company, the band take a share.
+            let share = self.buildings.get(b).and_then(|x| x.business.as_ref()).map_or(0.0, |z| z.kind.booking_share());
+            if share > 0.0 {
+                let fee = tab * share;
+                if let Some(bz) = self.buildings.get_mut(b).and_then(|x| x.business.as_mut()) {
+                    bz.spend_today += fee;
+                }
+                self.economy.market.leisure.bookings_today += fee;
+                self.transfer(Account::Business(b), Account::Outside, fee, Kind::Imports);
+            }
         }
     }
 
@@ -1025,6 +1054,11 @@ impl World {
 
 /// A round at a venue, per hour spent there.
 pub(super) const VENUE_TAB: f32 = 5.0;
+/// [r4-leisure-places] A visitor's hour at a place to go out takes this
+/// many job-hours of its recipe over its seats per job (a round of drinks,
+/// a box of popcorn, a course): a full house goes through its stock of
+/// `target_hours` in about twelve.
+const VISIT_STOCK: f32 = 3.0;
 
 /// Where a truck sets off from.
 #[derive(Clone, Copy, Debug)]

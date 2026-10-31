@@ -148,6 +148,8 @@ mod industry_bridge;
 mod commercial;
 #[cfg(test)]
 mod commercial_tests;
+#[cfg(test)]
+mod leisure_places_tests;
 pub use plan::{insert_on_leg, leg_near, Blocker, Joint, ProjectCheck, ProjectInfo, ProjectPreview, JOINT_SAME};
 mod power;
 pub use power::{GridAsset, GridHour, PlantRow};
@@ -623,6 +625,9 @@ pub struct World {
     groceries_for_sale: bool,
     #[serde(skip)]
     meals_for_sale: bool,
+    /// [r4-leisure-places] A gym is open in town (for the morning workout).
+    #[serde(skip)]
+    gyms_open: bool,
     /// Heightfield, rivers, lakes, sea and hot spots. Old saves load flat.
     #[serde(default)]
     pub landscape: crate::versioned::Versioned<Landscape>,
@@ -932,6 +937,7 @@ impl World {
             available: [false; 6],
             groceries_for_sale: false,
             meals_for_sale: false,
+            gyms_open: false,
             landscape: Default::default(),
             ports: Ports::default(),
             fishing: Default::default(),

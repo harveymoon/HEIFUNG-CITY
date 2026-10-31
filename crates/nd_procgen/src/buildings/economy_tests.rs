@@ -308,3 +308,52 @@ fn a_strip_mine_pit_is_dug_below_the_ground() {
         }
     }
 }
+
+/// [r4-leisure-places] Every place to eat and go out wears its own look in
+/// any zone and district, builds at every tier and height within budget,
+/// the same seed drawing the same thing; and says what it is in neon.
+#[test]
+fn places_to_eat_and_go_out_wear_their_own_looks() {
+    use nd_sim::districts::Look;
+    let rules = BuildingRules::default();
+    let pal = Palette::default();
+    let kinds: Vec<B> = nd_sim::leisure::EATERIES.into_iter().chain(nd_sim::leisure::NIGHTS_OUT).collect();
+    assert_eq!(kinds.len(), Style::EAT_OUT.len());
+    for (kind, want) in kinds.iter().zip(Style::EAT_OUT) {
+        for lu in [LandUse::Commercial, LandUse::Entertainment] {
+            let lot = &sample_lots(lu)[0];
+            for look in [None, Some(Look::NeonStrip), Some(Look::Lantern), Some(Look::HarbourPastel), Some(Look::Patchwork), Some(Look::SkylineLuxe), Some(Look::GlassCampus), Some(Look::SolarpunkGreen)] {
+                let extras = Extras { business: Some(*kind), look, ..Extras::default() };
+                assert_eq!(choose_style(lot, lu, 2, Tier::Mid, 3, &rules, &extras), want, "{kind:?} on {lu:?} under {look:?}");
+            }
+        }
+    }
+    let mut heaviest = (0, Style::Diner);
+    for style in Style::EAT_OUT {
+        for lu in [LandUse::Commercial, LandUse::Entertainment] {
+            for (i, lot) in sample_lots(lu).iter().enumerate() {
+                for (tier, floors) in [(Tier::Low, 1u8), (Tier::Mid, 3), (Tier::High, 8)] {
+                    let g = generate_styled(lot, lu, floors, tier, 0.6, 11 + i as u64, style, &rules, &pal);
+                    let tris = g.triangle_count();
+                    assert!(tris > 200, "{style:?} {tier:?} on lot {i} drew only {tris} triangles");
+                    let glow = g.get(crate::surface::Surface::Glow).positions.len();
+                    assert!(glow >= 16, "{style:?} {tier:?} on lot {i}: no sign ({glow} glow vertices)");
+                    valid(&g, &format!("{style:?} {tier:?}"));
+                    if tris > heaviest.0 {
+                        heaviest = (tris, style);
+                    }
+                }
+            }
+        }
+        let a = generate_styled(&sample_lots(LandUse::Commercial)[0], LandUse::Commercial, 2, Tier::Mid, 0.6, 3, style, &rules, &pal);
+        let b = generate_styled(&sample_lots(LandUse::Commercial)[0], LandUse::Commercial, 2, Tier::Mid, 0.6, 3, style, &rules, &pal);
+        assert_eq!(a.triangle_count(), b.triangle_count(), "{style:?} is not deterministic");
+        assert_ne!(style.label(), "");
+    }
+    eprintln!("heaviest place to eat or go out: {heaviest:?}");
+    // The block keeps its place at the end of the styles.
+    let first = Style::EAT_OUT[0].index();
+    for (k, s) in Style::EAT_OUT.iter().enumerate() {
+        assert_eq!(Style::ALL[first + k], *s);
+    }
+}

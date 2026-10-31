@@ -67,9 +67,9 @@ impl World {
         if let Some(s) = self.commercial_sub_set(b.lot) {
             return Some(s);
         }
-        Some(match b.business.as_ref().map(|z| z.kind) {
-            Some(BusinessKind::Office) => CommercialSub::Offices,
-            Some(k) if CommercialSub::Leisure.kinds().contains(&k) && k != BusinessKind::Cafe => CommercialSub::Leisure,
+        // [r4-leisure-places] by its kind when only one sub-zone grows it
+        Some(match b.business.as_ref().map(|z| z.kind).and_then(CommercialSub::of_kind) {
+            Some(s) => s,
             _ if b.plot.form.is_some_and(|f| f.is_mall()) || b.floors >= 4 => CommercialSub::Retail,
             _ => CommercialSub::Neighbourhood,
         })

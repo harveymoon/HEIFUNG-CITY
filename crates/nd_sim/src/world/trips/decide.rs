@@ -105,6 +105,10 @@ impl World {
                     pantry_low: hh.is_some_and(|h| h.groceries < h.pantry_target() * 0.5),
                     regular_spot: c.places.regular_of(LandUse::Entertainment).and_then(|p| self.buildings.get(p.place)).filter(|b| b.serves_at(hour)).map(|b| b.name.as_str()),
                     places_known: c.places.known(LandUse::Entertainment),
+                    workout: self.gyms_open && crate::leisure::workout_hour(self.clock.hour()) && {
+                        let [_, ambition, _, caution, _] = crate::places::traits(c.seed);
+                        crate::leisure::gym_goer(c.seed, ambition, caution) && crate::leisure::gym_day(c.seed, self.clock.day())
+                    },
                 };
                 minds.decide(&ctx)
             };

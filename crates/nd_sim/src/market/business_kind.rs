@@ -122,6 +122,43 @@ pub enum BusinessKind {
     /// pressure when old boxes pile up. Appended so saved kinds keep their
     /// order.
     ScrapYard,
+    // -- [r4-leisure-places] places to eat and go out (`crate::leisure`),
+    // grown on commercial land by sub-zone and on leisure land. Appended
+    // so saved kinds keep their order. --
+    /// A diner: booths, a counter and breakfast all day; near homes.
+    Diner,
+    /// A noodle or ramen bar: a counter, steam and a short menu.
+    NoodleBar,
+    /// A pizza place: a wood oven, slices to go, families in the booths.
+    PizzaPlace,
+    /// A fast-food joint with a drive-through lane, on the main roads.
+    FastFood,
+    /// A food hall: many counters under one roof, long shared tables.
+    FoodHall,
+    /// Street-food stalls and food trucks on an open lot.
+    StreetFood,
+    /// A fine-dining restaurant: few tables, a long evening, dear.
+    FineDining,
+    /// A bubble-tea and juice bar.
+    BubbleTea,
+    /// A bar or pub (the nightclub is the `Venue`).
+    Bar,
+    /// Karaoke boxes: private rooms by the hour.
+    KaraokeBox,
+    /// A cinema: films booked from the distributors.
+    Cinema,
+    /// A theatre: shows booked from touring companies.
+    Theatre,
+    /// A concert hall and live-music venue: bands booked by the night.
+    ConcertHall,
+    /// A bowling alley: lanes, shoes and a snack bar; families.
+    BowlingAlley,
+    /// An arcade and VR arcade.
+    Arcade,
+    /// A gym: early mornings and after work.
+    Gym,
+    /// A comedy club: a stage, a brick wall, a two-drink minimum.
+    ComedyClub,
 }
 
 /// What a business turns into what, per filled job per hour.
@@ -132,7 +169,7 @@ pub struct Recipe {
 }
 
 impl BusinessKind {
-    pub const COUNT: usize = 50;
+    pub const COUNT: usize = 67;
     /// Every kind, in `index` order.
     pub const ALL: [BusinessKind; Self::COUNT] = [
         BusinessKind::VertFarm,
@@ -185,6 +222,23 @@ impl BusinessKind {
         BusinessKind::Cafe,
         BusinessKind::Bookshop,
         BusinessKind::ScrapYard,
+        BusinessKind::Diner,
+        BusinessKind::NoodleBar,
+        BusinessKind::PizzaPlace,
+        BusinessKind::FastFood,
+        BusinessKind::FoodHall,
+        BusinessKind::StreetFood,
+        BusinessKind::FineDining,
+        BusinessKind::BubbleTea,
+        BusinessKind::Bar,
+        BusinessKind::KaraokeBox,
+        BusinessKind::Cinema,
+        BusinessKind::Theatre,
+        BusinessKind::ConcertHall,
+        BusinessKind::BowlingAlley,
+        BusinessKind::Arcade,
+        BusinessKind::Gym,
+        BusinessKind::ComedyClub,
     ];
 
     pub fn index(self) -> usize {
@@ -243,6 +297,23 @@ impl BusinessKind {
             BusinessKind::Cafe => "cafe",
             BusinessKind::Bookshop => "bookshop",
             BusinessKind::ScrapYard => "scrap yard",
+            BusinessKind::Diner => "diner",
+            BusinessKind::NoodleBar => "noodle bar",
+            BusinessKind::PizzaPlace => "pizza place",
+            BusinessKind::FastFood => "fast-food drive-through",
+            BusinessKind::FoodHall => "food hall",
+            BusinessKind::StreetFood => "street-food stalls",
+            BusinessKind::FineDining => "fine-dining restaurant",
+            BusinessKind::BubbleTea => "bubble-tea bar",
+            BusinessKind::Bar => "bar",
+            BusinessKind::KaraokeBox => "karaoke box",
+            BusinessKind::Cinema => "cinema",
+            BusinessKind::Theatre => "theatre",
+            BusinessKind::ConcertHall => "live-music hall",
+            BusinessKind::BowlingAlley => "bowling alley",
+            BusinessKind::Arcade => "arcade",
+            BusinessKind::Gym => "gym",
+            BusinessKind::ComedyClub => "comedy club",
         }
     }
 
@@ -348,6 +419,25 @@ impl BusinessKind {
             // (`World::cut_up_boxes`); the trickle here is the other scrap
             // brought in over the gate (cars, sheet, appliances).
             BusinessKind::ScrapYard => Recipe { inputs: &[], outputs: &[(Resource::Metal, 0.04)] },
+            // [r4-leisure-places] Kitchens cook meals (sold as baked goods:
+            // over the counter, at lunch and to diners in) from the farms'
+            // and mills' produce, meat, flour and milk; a job adds about 7-10
+            // an hour at base prices, as a cafe's. The rest take their stock
+            // (drinks and snacks from the grocers, a fine kitchen's produce)
+            // by the visitor-hour (`World::venue_tabs`).
+            BusinessKind::Diner => Recipe { inputs: &[(Resource::Meat, 0.3), (Resource::Dairy, 0.3), (Resource::Flour, 0.4), (Resource::Produce, 0.4)], outputs: &[(Resource::BakedGoods, 2.5)] },
+            BusinessKind::NoodleBar => Recipe { inputs: &[(Resource::Flour, 0.5), (Resource::Meat, 0.25), (Resource::Produce, 0.4)], outputs: &[(Resource::BakedGoods, 2.6)] },
+            BusinessKind::PizzaPlace => Recipe { inputs: &[(Resource::Flour, 0.6), (Resource::Dairy, 0.4), (Resource::Meat, 0.15), (Resource::Produce, 0.2)], outputs: &[(Resource::BakedGoods, 2.6)] },
+            BusinessKind::FastFood => Recipe { inputs: &[(Resource::Meat, 0.4), (Resource::Flour, 0.4), (Resource::Produce, 0.3)], outputs: &[(Resource::BakedGoods, 3.2)] },
+            BusinessKind::FoodHall => Recipe { inputs: &[(Resource::Groceries, 0.3), (Resource::Meat, 0.2), (Resource::Produce, 0.4)], outputs: &[(Resource::BakedGoods, 2.4)] },
+            BusinessKind::StreetFood => Recipe { inputs: &[(Resource::Meat, 0.3), (Resource::Produce, 0.4), (Resource::Flour, 0.3)], outputs: &[(Resource::BakedGoods, 2.4)] },
+            BusinessKind::BubbleTea => Recipe { inputs: &[(Resource::Dairy, 0.4), (Resource::Produce, 0.3)], outputs: &[(Resource::BakedGoods, 2.2)] },
+            BusinessKind::FineDining => Recipe { inputs: &[(Resource::Meat, 0.3), (Resource::Produce, 0.3), (Resource::Dairy, 0.2)], outputs: &[] },
+            BusinessKind::Bar | BusinessKind::KaraokeBox => Recipe { inputs: &[(Resource::Groceries, 0.3)], outputs: &[] },
+            BusinessKind::Cinema | BusinessKind::Theatre | BusinessKind::ConcertHall | BusinessKind::ComedyClub | BusinessKind::BowlingAlley => Recipe { inputs: &[(Resource::Groceries, 0.12)], outputs: &[] },
+            // Machines wear out: a little electronics for spares.
+            BusinessKind::Arcade => Recipe { inputs: &[(Resource::Electronics, 0.02)], outputs: &[] },
+            BusinessKind::Gym => Recipe { inputs: &[], outputs: &[] },
         }
     }
 
@@ -382,8 +472,37 @@ impl BusinessKind {
                 BusinessKind::Feedlot,
                 BusinessKind::ChemicalWorks,
             ],
-            LandUse::Commercial => &[BusinessKind::Grocery, BusinessKind::Grocery, BusinessKind::Bakery, BusinessKind::GadgetShop, BusinessKind::Office],
-            LandUse::Entertainment => &[BusinessKind::Venue],
+            // [r4-leisure-places] Every commercial sub-zone's menu but
+            // leisure's (`CommercialSub::menu`): neighbourhood, retail, offices.
+            LandUse::Commercial => &[
+                BusinessKind::Grocery,
+                BusinessKind::Grocery,
+                BusinessKind::Bakery,
+                BusinessKind::GadgetShop,
+                BusinessKind::Office,
+                BusinessKind::Diner,
+                BusinessKind::NoodleBar,
+                BusinessKind::PizzaPlace,
+                BusinessKind::BubbleTea,
+                BusinessKind::FastFood,
+                BusinessKind::FoodHall,
+                BusinessKind::Gym,
+            ],
+            // Leisure land: the nightclub and the rest of the nights out.
+            LandUse::Entertainment => &[
+                BusinessKind::Venue,
+                BusinessKind::Bar,
+                BusinessKind::KaraokeBox,
+                BusinessKind::Cinema,
+                BusinessKind::Theatre,
+                BusinessKind::ConcertHall,
+                BusinessKind::BowlingAlley,
+                BusinessKind::Arcade,
+                BusinessKind::ComedyClub,
+                BusinessKind::FineDining,
+                BusinessKind::StreetFood,
+                BusinessKind::NoodleBar,
+            ],
             LandUse::Civic => &[BusinessKind::Office],
             _ => &[],
         }
@@ -423,6 +542,24 @@ impl BusinessKind {
             BusinessKind::Cafe => Hours::new(7, 21),
             BusinessKind::Bookshop => Hours::new(9, 20),
             BusinessKind::ScrapYard => Hours::new(7, 18),
+            // [r4-leisure-places]
+            BusinessKind::Diner => Hours::new(6, 23),
+            BusinessKind::NoodleBar => Hours::new(11, 2),
+            BusinessKind::PizzaPlace => Hours::new(11, 23),
+            BusinessKind::FastFood => Hours::new(6, 2),
+            BusinessKind::FoodHall => Hours::new(10, 22),
+            BusinessKind::StreetFood => Hours::new(11, 2),
+            BusinessKind::FineDining => Hours::new(18, 24),
+            BusinessKind::BubbleTea => Hours::new(10, 22),
+            BusinessKind::Bar => Hours::new(16, 2),
+            BusinessKind::KaraokeBox => Hours::new(19, 5),
+            BusinessKind::Cinema => Hours::new(12, 24),
+            BusinessKind::Theatre => Hours::new(14, 23),
+            BusinessKind::ConcertHall => Hours::new(19, 1),
+            BusinessKind::BowlingAlley => Hours::new(10, 24),
+            BusinessKind::Arcade => Hours::new(10, 24),
+            BusinessKind::Gym => Hours::new(6, 23),
+            BusinessKind::ComedyClub => Hours::new(19, 1),
         }
     }
 
@@ -438,6 +575,16 @@ impl BusinessKind {
             BusinessKind::PierRestaurant => Some(6),
             BusinessKind::BeachBar => Some(10),
             BusinessKind::BoatRental => Some(5),
+            // [r4-leisure-places]
+            BusinessKind::Diner | BusinessKind::PizzaPlace => Some(4),
+            BusinessKind::NoodleBar => Some(5),
+            BusinessKind::FastFood | BusinessKind::BubbleTea | BusinessKind::KaraokeBox => Some(6),
+            BusinessKind::FoodHall | BusinessKind::StreetFood | BusinessKind::Bar | BusinessKind::BowlingAlley => Some(8),
+            BusinessKind::FineDining => Some(3),
+            BusinessKind::Arcade => Some(10),
+            BusinessKind::Gym | BusinessKind::ComedyClub => Some(12),
+            BusinessKind::Theatre => Some(20),
+            BusinessKind::Cinema | BusinessKind::ConcertHall => Some(25),
             _ => None,
         }
     }
@@ -483,7 +630,7 @@ impl BusinessKind {
     /// (`World::venue_tabs`): venues, and the restaurants, ranges and
     /// galleries that open by pressure on whatever land suits them.
     pub fn is_outing(self) -> bool {
-        matches!(self, BusinessKind::Venue | BusinessKind::SeafoodRestaurant | BusinessKind::GolfRange | BusinessKind::Gallery | BusinessKind::Marina | BusinessKind::PierRestaurant | BusinessKind::BeachBar | BusinessKind::BoatRental)
+        matches!(self, BusinessKind::Venue | BusinessKind::SeafoodRestaurant | BusinessKind::GolfRange | BusinessKind::Gallery | BusinessKind::Marina | BusinessKind::PierRestaurant | BusinessKind::BeachBar | BusinessKind::BoatRental) || self.is_eat_or_go_out()
     }
 
     /// [economy] What an hour's tab costs here against a venue's.
@@ -500,6 +647,9 @@ impl BusinessKind {
             BusinessKind::Marina => 1.3,
             // Entry is free; sales and donations pay (`world/pressure.rs`).
             BusinessKind::Gallery => 0.4,
+            // [r4-leisure-places] A bowl of noodles to a night at the
+            // theatre (`crate::leisure`).
+            k if k.is_eat_or_go_out() => crate::leisure::tab_factor(k),
             _ => 1.0,
         }
     }
@@ -547,6 +697,9 @@ impl BusinessKind {
             BusinessKind::Grocery => Some(Resource::Groceries),
             BusinessKind::Bakery | BusinessKind::Cafe => Some(Resource::BakedGoods),
             BusinessKind::GadgetShop | BusinessKind::Bookshop => Some(Resource::Goods),
+            // [r4-leisure-places] Meals to go and to eat in, sold as baked
+            // goods: the lunch crowd and passers-by.
+            k if k.cooks_meals() => Some(Resource::BakedGoods),
             _ => None,
         }
     }
@@ -554,7 +707,7 @@ impl BusinessKind {
     /// [megacorp] [sweep-sim] The trades students drop into by campus:
     /// pizza places (bakeries), cafés and bookshops.
     pub fn student_trade(self) -> bool {
-        matches!(self, BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Cafe | BusinessKind::Bookshop)
+        matches!(self, BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Cafe | BusinessKind::Bookshop | BusinessKind::NoodleBar | BusinessKind::PizzaPlace | BusinessKind::BubbleTea | BusinessKind::FastFood)
     }
 
     /// [economy] Most floors a building of this kind goes up with: sheds,
@@ -569,6 +722,14 @@ impl BusinessKind {
             BusinessKind::BeachBar | BusinessKind::BoatRental => 1,
             BusinessKind::PierRestaurant => 2,
             BusinessKind::BeachResort => 5,
+            // [r4-leisure-places] A diner and a drive-through are one storey;
+            // halls and alleys stay low; karaoke stacks its boxes.
+            BusinessKind::Diner | BusinessKind::FastFood | BusinessKind::StreetFood => 1,
+            BusinessKind::PizzaPlace | BusinessKind::BubbleTea | BusinessKind::FoodHall | BusinessKind::BowlingAlley => 2,
+            BusinessKind::NoodleBar | BusinessKind::FineDining | BusinessKind::Bar | BusinessKind::Arcade | BusinessKind::Gym | BusinessKind::ComedyClub => 3,
+            BusinessKind::Cinema => 4,
+            BusinessKind::Theatre | BusinessKind::ConcertHall => 5,
+            BusinessKind::KaraokeBox => 7,
             _ => return None,
         })
     }
@@ -607,6 +768,7 @@ impl BusinessKind {
     pub fn target_hours(self) -> f32 {
         match self {
             BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Cafe | BusinessKind::Bookshop | BusinessKind::Venue | BusinessKind::FishMarket | BusinessKind::SeafoodRestaurant | BusinessKind::Gallery | BusinessKind::PierRestaurant | BusinessKind::BeachBar => 36.0,
+            k if k.is_eat_or_go_out() => 36.0,
             _ => 24.0,
         }
     }

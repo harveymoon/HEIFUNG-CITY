@@ -624,6 +624,21 @@ impl Economy {
         self.business_cover_seen[i].then_some(self.business_cover[i])
     }
 
+    /// [r4-leisure-places] How the nights out pay, across every kind that
+    /// grows on leisure land (the nightclub counts twice): the leisure
+    /// demand follows it. `None` until one has shown.
+    pub fn leisure_cover(&self) -> Option<f32> {
+        let (mut sum, mut n) = (0.0, 0.0);
+        for k in crate::market::BusinessKind::candidates(LandUse::Entertainment) {
+            if let Some(c) = self.cover_of(*k) {
+                let w = if *k == crate::market::BusinessKind::Venue { 2.0 } else { 1.0 };
+                sum += c * w;
+                n += w;
+            }
+        }
+        (n > 0.0).then(|| sum / n)
+    }
+
     /// Fold one day's takings and costs of a kind into its cover.
     pub fn record_cover(&mut self, kind: crate::market::BusinessKind, takings: f32, costs: f32) {
         if costs <= 0.0 {
@@ -676,9 +691,9 @@ impl Economy {
         let pop = self.population;
         // Venues follow the market: more open while the ones in town pay.
         if lu == LandUse::Entertainment {
-            return Some(match self.cover_of(crate::market::BusinessKind::Venue) {
-                Some(c) if c < 1.2 => format!("The town's venues take in {:.0}% of their costs: fewer new ones open until that is back over 120%.", c * 100.0),
-                Some(c) => format!("The town's venues take in {:.0}% of their costs: they pay, so more are wanted.", c * 100.0),
+            return Some(match self.leisure_cover() {
+                Some(c) if c < 1.2 => format!("The town's nights out take in {:.0}% of their costs: fewer new ones open until that is back over 120%.", c * 100.0),
+                Some(c) => format!("The town's nights out take in {:.0}% of their costs: they pay, so more are wanted.", c * 100.0),
                 None => "Nightlife follows the population until the first venues show whether they pay.".to_string(),
             });
         }
@@ -724,7 +739,7 @@ impl Economy {
         let home_damp = (1.0 - (unemployment - 0.04).max(0.0) * 4.0 - gap.max(0.0) * 1.5).clamp(0.2, 1.0);
         let entertainment_pressure = (pop / 40.0).min(1.0);
         // New venues open only while the ones in town pay their way.
-        let venue_room = self.cover_of(crate::market::BusinessKind::Venue).map_or(1.0, |c| ((c - 0.8) / 0.4).clamp(0.1, 1.0));
+        let venue_room = self.leisure_cover().map_or(1.0, |c| ((c - 0.8) / 0.4).clamp(0.1, 1.0));
 
         let mut d = [0.0f32; 6];
         // Residential demand: a trickle so the city starts, held back while

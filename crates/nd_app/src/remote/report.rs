@@ -64,7 +64,7 @@ pub const MEMORY_WINDOW_TICKS: u64 = 2 * 1440;
 /// Example ids carried by each alert.
 const ALERT_EXAMPLES: usize = 5;
 
-pub const SECTIONS: &[&str] = &["overview", "people", "economy", "land", "services", "industry", "society", "pressure", "alerts", "history", "ridership"];
+pub const SECTIONS: &[&str] = &["overview", "people", "economy", "land", "services", "industry", "society", "pressure", "alerts", "history", "ridership", "leisure"];
 
 const KINDS: [BusinessKind; BusinessKind::COUNT] = BusinessKind::ALL;
 
@@ -169,10 +169,54 @@ pub fn report(w: &World, sections: &[String]) -> Result<Value, String> {
     }
     // [pt-transit] Who rides and why not: only when asked for by name
     // (it weighs every sampled commute's options).
+    // [r4-leisure-places] Places to eat and go out: only when asked for.
+    if sections.iter().any(|x| x == "leisure") {
+        out.insert("leisure".into(), leisure(w));
+    }
     if sections.iter().any(|x| x == "ridership") {
         out.insert("ridership".into(), serde_json::to_value(w.ridership_report(1500)).unwrap_or(Value::Null));
     }
     Ok(Value::Object(out))
+}
+
+/// [r4-leisure-places] Each place to eat or go out: how many are open,
+/// their staff, visits yesterday by hour, how they pay; the bookings paid
+/// out of town and the nightlife tax.
+fn leisure(w: &World) -> Value {
+    use nd_sim::tax::TaxCategory as T;
+    let st = &w.economy.market.leisure;
+    let mut kinds = Map::new();
+    for k in nd_sim::leisure::ALL_NIGHTS_OUT {
+        let (mut open, mut staff, mut jobs, mut takings) = (0u32, 0usize, 0u32, 0.0f32);
+        for b in w.buildings.values() {
+            let Some(z) = b.business.as_ref().filter(|z| z.kind == k && !z.closed) else { continue };
+            if !b.operating() {
+                continue;
+            }
+            open += 1;
+            staff += b.workers.len();
+            jobs += b.jobs as u32;
+            takings += z.books.last().map_or(0.0, |d| d.revenue);
+        }
+        kinds.insert(
+            k.key(),
+            json!({
+                "open": open, "staff": staff, "jobs": jobs, "takings_yesterday": r3(takings),
+                "visits_yesterday": st.visits(k, true), "visits_today": st.visits(k, false),
+                "by_hour_yesterday": st.by_hour(k, true).to_vec(),
+                "cover": w.economy.cover_of(k).map(r3),
+            }),
+        );
+    }
+    let t = &w.economy.taxes;
+    json!({
+        "kinds": kinds,
+        "bookings_yesterday": r3(st.bookings_yesterday), "bookings_today": r3(st.bookings_today),
+        "meals_in_yesterday": st.meals_in_yesterday,
+        "family_outings_yesterday": w.places.family_outings_yesterday,
+        "nightlife_tax_yesterday": r3(t.yesterday_of(T::NightlifeLow) + t.yesterday_of(T::NightlifeMid) + t.yesterday_of(T::NightlifeHigh)),
+        "eatery_tax_yesterday": r3(t.yesterday_of(T::Bakery)),
+    })
 }
 
 fn ledger_map(values: &[f32]) -> Value {

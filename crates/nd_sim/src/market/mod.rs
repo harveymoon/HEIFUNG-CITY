@@ -74,6 +74,10 @@ pub struct MarketStats {
     /// [tenants] Empty units taken by a business growing next door, ever.
     #[serde(default)]
     pub units_taken_total: u32,
+    /// [r4-leisure-places] Visits to the places to eat and go out, by
+    /// kind and hour, and what they paid out for films and acts.
+    #[serde(default)]
+    pub leisure: crate::leisure::LeisureStats,
 }
 
 #[cfg(test)]

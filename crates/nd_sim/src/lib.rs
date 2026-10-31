@@ -51,6 +51,8 @@ pub mod ground;
 pub mod industry;
 pub mod junctions;
 pub mod land_value;
+// [r4-leisure-places] places to eat and go out
+pub mod leisure;
 pub mod landscape;
 pub mod level_crossing;
 /// [looks] What citizens look like.

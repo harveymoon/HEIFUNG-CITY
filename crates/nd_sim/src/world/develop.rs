@@ -176,6 +176,7 @@ impl World {
         self.available = self.available_land_uses();
         self.groceries_for_sale = self.retail_available(Resource::Groceries);
         self.meals_for_sale = self.retail_available(Resource::BakedGoods);
+        self.gyms_open = self.buildings.values().any(|b| b.operating() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Gym && !z.closed));
     }
 
     /// Sum accessibility, amenities, nuisances, traffic and neighbours into the
@@ -423,7 +424,19 @@ impl World {
                 LandUse::Entertainment => {
                     b.channel(Channel::Commerce);
                     b.splat(c, 110.0, 0.06);
-                    b.channel(Channel::Other);
+                    // [r4-leisure-places] A theatre or a fine-dining room lifts the
+            // street; a club, a bar, a drive-through is noise next door.
+            if let Some(kind) = bld.business.as_ref().filter(|z| !z.closed).map(|z| z.kind) {
+                if let Some((r, w)) = kind.land_value_lift() {
+                    b.channel(Channel::Commerce);
+                    b.splat(c, r, w);
+                }
+                let loud = kind.loudness();
+                if kind.is_eat_or_go_out() && loud >= 0.4 {
+                    b.splat_nuisance(c, 70.0 + 60.0 * loud, 0.02 * loud);
+                }
+            }
+            b.channel(Channel::Other);
                     b.splat(c, 50.0, -0.08);
                 }
                 // [industry] by sub-zone: nuisance plus a lift on cheap land
@@ -868,6 +881,13 @@ impl World {
             }
         }
         let room = |i: usize| day[i] <= 0.0 || stock[i] < day[i] * MARKET_FULL_DAYS;
+        // [r4-leisure-places] New kinds of places to eat and go out are
+        // tried one at a time, and a town carries one kind more for every
+        // `leisure::PEOPLE_PER_KIND` people.
+        let new_kind = |k: &BusinessKind| k.is_eat_or_go_out();
+        let new_sites: u32 = BusinessKind::ALL.iter().filter(|k| new_kind(k)).map(|k| sites[k.index()]).sum();
+        let new_kinds_open = BusinessKind::ALL.iter().filter(|k| new_kind(k) && open[k.index()] > 0).count() as u32;
+        let new_room = new_sites == 0 && new_kinds_open < self.economy.population / crate::leisure::PEOPLE_PER_KIND;
         let grocery_jobs_needed = self.grocery_jobs_needed();
         let mut out: Vec<BusinessKind> = Vec::new();
         for &kind in candidates {
@@ -876,10 +896,17 @@ impl World {
             if kind.needs_site() {
                 continue;
             }
+            // [r4-leisure-places] A hamlet has its grocer, its baker and its
+            // club; the diners, cinemas and gyms come once enough people
+            // live here to fill them.
+            if kind.is_eat_or_go_out() && self.economy.population < crate::leisure::MIN_TOWN {
+                continue;
+            }
             let i = kind.index();
             let ok = match kind {
                 BusinessKind::Office => true,
                 BusinessKind::Grocery if (jobs[i] as f32) < grocery_jobs_needed && self.economy.cover_of(kind).is_none_or(|c| c >= 0.85) => true,
+                _ if open[i] == 0 && kind.is_eat_or_go_out() => new_room && jobs_here.is_none_or(|j| j <= TRIAL_MAX_JOBS),
                 _ if open[i] == 0 => sites[i] == 0 && jobs_here.is_none_or(|j| j <= TRIAL_MAX_JOBS),
                 _ => self.economy.cover_of(kind).is_some_and(|c| c >= COVER_TO_EXPAND) && room(i) && sites[i] <= open[i] / 4,
             };
@@ -1039,11 +1066,14 @@ impl World {
         // player's, else the city's pick; leisure is a night out.
         let sub = if forced.is_none() && lu == LandUse::Commercial { self.commercial_sub_for_new_building(lot_id, None) } else { None };
         let lu = if sub == Some(crate::commercial::CommercialSub::Leisure) { LandUse::Entertainment } else { lu };
-        // A sub-zone the player set keeps to its menu; on auto the city's
-        // offices pick does too, while a shops pick (neighbourhood or retail,
-        // much the same kinds today) still lets the market choose from the
-        // whole commercial menu, offices included, as before.
-        let sub = sub.filter(|s| *s == crate::commercial::CommercialSub::Offices || self.commercial_sub_set(lot_id).is_some());
+        // A sub-zone the player set keeps to its menu; [r4-leisure-places]
+        // on auto the city's pick keeps to its own (with offices let in on
+        // shop streets, `CommercialSub::auto_menu`): corner diners and noodle
+        // bars by the homes, drive-throughs and food halls on the avenues.
+        let auto = forced.is_none() && lu == LandUse::Commercial && self.commercial_sub_set(lot_id).is_none();
+        // A hamlet's shops on auto come from the whole commercial menu, as
+        // before (its places to eat wait for a town, `leisure::MIN_TOWN`).
+        let sub = sub.filter(|s| !auto || *s == crate::commercial::CommercialSub::Offices || self.economy.population >= crate::leisure::MIN_TOWN);
         // [industry] land value as the land use feels it
         let value = self.lot_value(lot_id);
         let mut tier = Tier::for_land_value(value);
@@ -1061,6 +1091,7 @@ impl World {
             floors = l.floors_for(lu, floors, self.height_cap(lot_id));
         }
         let seed = self.fresh_seed();
+        let given_name = named.is_some();
         let name = match named {
             Some(n) => n,
             None => names::building_name(&mut self.rng, lu),
@@ -1072,7 +1103,7 @@ impl World {
         }
         let mut kind = match forced {
             Some(k) => Some(k),
-            None => self.business_for_new_building(lot_id, lu, b.jobs, sub),
+            None => self.business_for_new_building(lot_id, lu, b.jobs, sub, auto),
         };
         // [r4-decks] Under a raised road an office opens as a shop or a
         // market stall instead (the first shop kind the market wants), as
@@ -1089,6 +1120,9 @@ impl World {
         let mall = if forced.is_none() && b.plot.tower.is_none() { self.mall_form_for(lot_id, b.tier, b.seed) } else { None };
         let mall = match (mall, kind) {
             (Some(crate::estate::Form::StripMall), Some(k)) if !super::tenants::fits_shopfront(k) && k != BusinessKind::Office => None,
+            // [r4-leisure-places] A diner, a cinema, a drive-through stands
+            // as itself (they open in malls as tenants).
+            (Some(_), Some(k)) if k.is_eat_or_go_out() => None,
             (m, _) => m,
         };
         if let Some(form) = mall {
@@ -1118,8 +1152,10 @@ impl World {
             if let Some(n) = crate::shore::trade_name(kind, b.seed) {
                 b.name = n;
             }
-            // [pt-visual] and every other trade by what it is (F38)
-            if names::name_misfits(&b.name, kind) {
+            // [pt-visual] and every other trade by what it is (F38); a
+            // [r4-leisure-places] place to eat or go out always (a cinema
+            // is never "Neon Club")
+            if names::name_misfits(&b.name, kind) || (kind.is_eat_or_go_out() && !given_name) {
                 if let Some(n) = names::business_name(kind, b.seed) {
                     b.name = n;
                 }
@@ -1158,7 +1194,7 @@ impl World {
     /// ground, neighbours and the player's bias ([industry]); the market
     /// reading ([balance]) vetoes an unforced industrial kind that is
     /// losing money and picks every other land use.
-    fn business_for_new_building(&mut self, lot_id: LotId, lu: LandUse, jobs: u16, sub: Option<crate::commercial::CommercialSub>) -> Option<BusinessKind> {
+    fn business_for_new_building(&mut self, lot_id: LotId, lu: LandUse, jobs: u16, sub: Option<crate::commercial::CommercialSub>, auto: bool) -> Option<BusinessKind> {
         // [tourism x districts] hotels where visitors lack beds, and the
         // trades a district's policy favours
         if let Some(k) = self.district_business(lot_id, lu, jobs) {
@@ -1180,9 +1216,15 @@ impl World {
                 }
             }
         }
+        // [r4-leisure-places] A town's first night out is the club (none open
+        // or going up): the rest of the leisure menu comes after it.
+        // (A hamlet's leisure menu is the club alone anyway: `MIN_TOWN`.)
+        if lu == LandUse::Entertainment && self.economy.population >= crate::leisure::MIN_TOWN && !self.buildings.values().any(|b| b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Venue && !z.closed)) {
+            return Some(BusinessKind::Venue);
+        }
         // [r4-leisure] Shops and offices from their sub-zone's menu.
         if let Some(s) = sub.filter(|_| lu == LandUse::Commercial) {
-            return self.pick_business_kind_from(s.menu(), jobs);
+            return self.pick_business_kind_from(if auto { s.auto_menu() } else { s.menu() }, jobs);
         }
         self.pick_business_kind(lu, jobs)
     }

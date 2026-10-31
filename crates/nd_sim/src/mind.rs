@@ -66,6 +66,8 @@ pub struct MindContext<'a> {
     pub regular_spot: Option<&'a str>,
     /// [places] Places for a night out known (and not sworn off).
     pub places_known: usize,
+    /// [r4-leisure-places] A gym-goer's morning, a gym day, a gym open.
+    pub workout: bool,
 }
 
 pub trait MindProvider {

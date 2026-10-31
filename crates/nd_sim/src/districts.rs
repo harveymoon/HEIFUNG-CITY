@@ -402,32 +402,38 @@ impl Look {
     /// viable, and by how much (others weigh 1).
     pub fn favours(self) -> &'static [(BusinessKind, f32)] {
         match self {
-            Look::NeonStrip => &[(BusinessKind::GadgetShop, 4.0), (BusinessKind::Bakery, 2.0)],
-            Look::TechCampus => &[(BusinessKind::Office, 5.0), (BusinessKind::GadgetShop, 2.0)],
-            Look::NightMarket => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Bakery, 4.0)],
-            Look::Tourist => &[(BusinessKind::Hotel, 6.0), (BusinessKind::GadgetShop, 2.0), (BusinessKind::Bakery, 2.0)],
-            Look::Capsule => &[(BusinessKind::Office, 4.0), (BusinessKind::GadgetShop, 3.0)],
+            Look::NeonStrip => &[(BusinessKind::GadgetShop, 4.0), (BusinessKind::Bakery, 2.0), (BusinessKind::KaraokeBox, 5.0), (BusinessKind::Bar, 3.0), (BusinessKind::Arcade, 3.0), (BusinessKind::NoodleBar, 3.0), (BusinessKind::Venue, 2.0), (BusinessKind::BubbleTea, 2.0)],
+            Look::TechCampus => &[(BusinessKind::Office, 5.0), (BusinessKind::GadgetShop, 2.0), (BusinessKind::FoodHall, 2.0), (BusinessKind::BubbleTea, 2.0), (BusinessKind::Gym, 2.0)],
+            Look::NightMarket => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Bakery, 4.0), (BusinessKind::StreetFood, 6.0), (BusinessKind::NoodleBar, 4.0), (BusinessKind::BubbleTea, 3.0), (BusinessKind::KaraokeBox, 2.0)],
+            Look::Tourist => &[(BusinessKind::Hotel, 6.0), (BusinessKind::GadgetShop, 2.0), (BusinessKind::Bakery, 2.0), (BusinessKind::Theatre, 4.0), (BusinessKind::FineDining, 3.0), (BusinessKind::FoodHall, 2.0), (BusinessKind::ConcertHall, 2.0)],
+            Look::Capsule => &[(BusinessKind::Office, 4.0), (BusinessKind::GadgetShop, 3.0), (BusinessKind::Arcade, 2.0), (BusinessKind::BubbleTea, 2.0)],
             // [r4-brick] Workers' shops: the baker and the grocer.
-            Look::BrickSteel => &[(BusinessKind::Bakery, 2.0), (BusinessKind::Grocery, 2.0)],
+            Look::BrickSteel => &[(BusinessKind::Bakery, 2.0), (BusinessKind::Grocery, 2.0), (BusinessKind::Bar, 4.0), (BusinessKind::ConcertHall, 3.0), (BusinessKind::Diner, 2.0), (BusinessKind::BowlingAlley, 2.0), (BusinessKind::ComedyClub, 2.0)],
             // [lantern] Food first: grocers, bakers and kitchens open late.
-            Look::Lantern => &[(BusinessKind::Bakery, 4.0), (BusinessKind::Grocery, 3.0), (BusinessKind::Venue, 2.0)],
+            Look::Lantern => &[(BusinessKind::Bakery, 4.0), (BusinessKind::Grocery, 3.0), (BusinessKind::Venue, 2.0), (BusinessKind::NoodleBar, 5.0), (BusinessKind::StreetFood, 5.0), (BusinessKind::KaraokeBox, 3.0), (BusinessKind::BubbleTea, 3.0)],
             // The parade's grocer and the café-bakery.
-            Look::Garden => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Bakery, 3.0)],
+            Look::Garden => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Bakery, 3.0), (BusinessKind::Diner, 3.0), (BusinessKind::PizzaPlace, 3.0), (BusinessKind::BowlingAlley, 3.0), (BusinessKind::Cinema, 2.0), (BusinessKind::Gym, 2.0)],
             // [r4-harbour] A tourist quarter's hotels first (as the Tourist
             // look it replaces), then cafés and bars along the front.
-            Look::HarbourPastel => &[(BusinessKind::Hotel, 6.0), (BusinessKind::Bakery, 3.0), (BusinessKind::Venue, 2.0)],
+            Look::HarbourPastel => &[(BusinessKind::Hotel, 6.0), (BusinessKind::Bakery, 3.0), (BusinessKind::Venue, 2.0), (BusinessKind::FineDining, 3.0), (BusinessKind::Bar, 3.0), (BusinessKind::BubbleTea, 2.0)],
             // [r4-solarpunk] The co-op grocer, the café-bakery, the bike
             // repairers.
-            Look::SolarpunkGreen => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Bakery, 2.0), (BusinessKind::BikeShop, 2.0)],
+            Look::SolarpunkGreen => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Bakery, 2.0), (BusinessKind::BikeShop, 2.0), (BusinessKind::BubbleTea, 3.0), (BusinessKind::Gym, 2.0), (BusinessKind::FoodHall, 2.0)],
             // [r4-glass] Offices first and gadget shops, as the Tech campus.
-            Look::GlassCampus => &[(BusinessKind::Office, 5.0), (BusinessKind::GadgetShop, 2.0)],
+            Look::GlassCampus => &[(BusinessKind::Office, 5.0), (BusinessKind::GadgetShop, 2.0), (BusinessKind::BubbleTea, 3.0), (BusinessKind::FoodHall, 2.0), (BusinessKind::Gym, 2.0), (BusinessKind::Arcade, 2.0)],
             // [r4-patchwork] The kiosk's groceries, the shebeen, the
             // mechanic under his lean-to.
-            Look::Patchwork => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Venue, 2.0), (BusinessKind::Mechanic, 1.5)],
+            Look::Patchwork => &[(BusinessKind::Grocery, 3.0), (BusinessKind::Venue, 2.0), (BusinessKind::Mechanic, 1.5), (BusinessKind::StreetFood, 4.0), (BusinessKind::Bar, 3.0), (BusinessKind::FastFood, 2.0)],
             // [r4-skyline] The hectic street of the Neon strip it replaces:
             // gadget shops and bakeries first; the towers' hotels too.
-            Look::SkylineLuxe => &[(BusinessKind::GadgetShop, 4.0), (BusinessKind::Bakery, 2.0), (BusinessKind::Hotel, 2.0)],
-            _ => &[],
+            Look::SkylineLuxe => &[(BusinessKind::GadgetShop, 4.0), (BusinessKind::Bakery, 2.0), (BusinessKind::Hotel, 2.0), (BusinessKind::FineDining, 4.0), (BusinessKind::Theatre, 3.0), (BusinessKind::Gym, 2.0), (BusinessKind::Bar, 2.0)],
+            // [r4-leisure-places] The old town's theatre, inn-bar and supper
+            // rooms; the suburbs' diners, pizza and bowling; the walled
+            // quarter's noodle bars, stalls and karaoke.
+            Look::Historic => &[(BusinessKind::Theatre, 4.0), (BusinessKind::FineDining, 3.0), (BusinessKind::Bar, 3.0), (BusinessKind::ComedyClub, 2.0)],
+            Look::Suburban => &[(BusinessKind::Diner, 3.0), (BusinessKind::PizzaPlace, 3.0), (BusinessKind::FastFood, 2.0), (BusinessKind::BowlingAlley, 3.0), (BusinessKind::Cinema, 2.0), (BusinessKind::Gym, 2.0)],
+            Look::Kowloon => &[(BusinessKind::NoodleBar, 4.0), (BusinessKind::StreetFood, 3.0), (BusinessKind::KaraokeBox, 3.0), (BusinessKind::Arcade, 2.0)],
+            Look::Eco => &[(BusinessKind::BubbleTea, 3.0), (BusinessKind::Gym, 2.0)],
         }
     }
 

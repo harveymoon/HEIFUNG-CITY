@@ -756,6 +756,15 @@ fares_yesterday, upkeep_yesterday, net_yesterday, bus_minutes_today}`: each line
 for the bus-minutes it ran. `report {section: "ridership"}` explains who takes the bus and why
 the rest do not.
 
+[r4-leisure-places] `report {section: "leisure"}` (only when named) lists every place to eat
+and go out by kind key (`diner`, `noodle_bar`, `pizza_place`, `fastfood_drivethrough`,
+`food_hall`, `streetfood_stalls`, `finedining_restaurant`, `bubbletea_bar`, `bar`,
+`karaoke_box`, `cinema`, `theatre`, `livemusic_hall`, `bowling_alley`, `arcade`, `gym`,
+`comedy_club`, `venue`): `open`, `staff`, `jobs`, `takings_yesterday`, `visits_yesterday`,
+`visits_today`, `by_hour_yesterday` (24 arrivals), `cover`; and `bookings_yesterday` (films and
+acts paid out of town), `meals_in_yesterday`, `family_outings_yesterday`,
+`nightlife_tax_yesterday`, `eatery_tax_yesterday`.
+
 Rows (`list`, and the `row` the edits return) carry `riders_yesterday` and each stop's
 `on_today`/`off_today`. The Lines window is `window {name: "lines"}`.
 

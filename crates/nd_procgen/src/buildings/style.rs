@@ -554,6 +554,27 @@ styles! {
     BoutiqueRow { label: "boutique row", family: Retail, cluster: 0.6, draw: |g, c, r, e| skyline::boutique_row(g, c, r, e) },
     /// A family's or a billionaire's sky villa: a glass penthouse and pool on a low block.
     SkyVilla { label: "sky villa", family: Special, cluster: 0.0, draw: |g, c, r, e| skyline::sky_villa(g, c, r, e) },
+    // -- [r4-leisure-places] places to eat and go out (`buildings/eatout.rs`),
+    // forced by their business, never drawn from a menu; appended so `ALL`
+    // keeps its order. Shopfront places repeat along a street; the halls,
+    // the theatre and the drive-through stand apart. --
+    Diner { label: "diner", family: Retail, cluster: 0.2, draw: |g, c, r, _| eatout::diner(g, c, r) },
+    NoodleBar { label: "noodle bar", family: Night, cluster: 0.7, draw: |g, c, r, _| eatout::noodle_bar(g, c, r) },
+    PizzaPlace { label: "pizza place", family: Retail, cluster: 0.4, draw: |g, c, r, _| eatout::pizza_place(g, c, r) },
+    DriveThrough { label: "fast-food drive-through", family: Retail, cluster: -0.6, draw: |g, c, r, _| eatout::fast_food(g, c, r) },
+    FoodHallShed { label: "food hall", family: Retail, cluster: -0.6, draw: |g, c, r, _| eatout::food_hall(g, c, r) },
+    StreetFoodLot { label: "street-food lot", family: Night, cluster: 0.5, draw: |g, c, r, _| eatout::street_food(g, c, r) },
+    FineDining { label: "fine-dining restaurant", family: Luxury, cluster: -0.2, draw: |g, c, r, _| eatout::fine_dining(g, c, r) },
+    BubbleTea { label: "bubble-tea bar", family: Retail, cluster: 0.3, draw: |g, c, r, _| eatout::bubble_tea(g, c, r) },
+    Pub { label: "bar", family: Night, cluster: 0.4, draw: |g, c, r, _| eatout::bar(g, c, r) },
+    KaraokeBoxes { label: "karaoke boxes", family: Night, cluster: 0.2, draw: |g, c, r, _| eatout::karaoke(g, c, r) },
+    Multiplex { label: "multiplex cinema", family: Night, cluster: -1.0, draw: |g, c, r, _| eatout::multiplex(g, c, r) },
+    Theatre { label: "theatre", family: Night, cluster: -1.2, draw: |g, c, r, _| eatout::theatre(g, c, r) },
+    MusicHall { label: "live-music hall", family: Night, cluster: -0.8, draw: |g, c, r, _| eatout::music_hall(g, c, r) },
+    BowlingAlley { label: "bowling alley", family: Retail, cluster: -1.0, draw: |g, c, r, _| eatout::bowling_alley(g, c, r) },
+    GameArcade { label: "arcade", family: Night, cluster: 0.3, draw: |g, c, r, _| eatout::arcade(g, c, r) },
+    Gym { label: "gym", family: Retail, cluster: -0.4, draw: |g, c, r, _| eatout::gym(g, c, r) },
+    ComedyClub { label: "comedy club", family: Night, cluster: -0.3, draw: |g, c, r, _| eatout::comedy_club(g, c, r) },
 }
 
 impl Style {
@@ -597,6 +618,26 @@ impl Style {
     pub const PATCHWORK: [Style; 9] = [Style::TinShacks, Style::StiltHouses, Style::PatchStack, Style::TarpMarket, Style::CornerKiosk, Style::Shebeen, Style::ScrapYard, Style::LeanToWorkshop, Style::BigManCompound];
     /// [r4-skyline] Skyline Luxe's styles (Neo Tokyo Heights).
     pub const SKYLINE_LUXE: [Style; 7] = [Style::LuxeTower, Style::TwinTowers, Style::PoolTower, Style::HelipadTower, Style::MallPodium, Style::BoutiqueRow, Style::SkyVilla];
+    /// [r4-leisure-places] The places to eat and go out, in `ALL` order.
+    pub const EAT_OUT: [Style; 17] = [
+        Style::Diner,
+        Style::NoodleBar,
+        Style::PizzaPlace,
+        Style::DriveThrough,
+        Style::FoodHallShed,
+        Style::StreetFoodLot,
+        Style::FineDining,
+        Style::BubbleTea,
+        Style::Pub,
+        Style::KaraokeBoxes,
+        Style::Multiplex,
+        Style::Theatre,
+        Style::MusicHall,
+        Style::BowlingAlley,
+        Style::GameArcade,
+        Style::Gym,
+        Style::ComedyClub,
+    ];
 }
 
 impl Style {

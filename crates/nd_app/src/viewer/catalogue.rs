@@ -96,13 +96,15 @@ pub fn group(s: Style) -> &'static str {
         TinShacks | StiltHouses | PatchStack | TarpMarket | CornerKiosk | Shebeen | ScrapYard | LeanToWorkshop | BigManCompound => "Patchwork",
         // [r4-skyline] Neo Tokyo Heights' look.
         LuxeTower | TwinTowers | PoolTower | HelipadTower | MallPodium | BoutiqueRow | SkyVilla => "Skyline Luxe",
+        // [r4-leisure-places]
+        Diner | NoodleBar | PizzaPlace | DriveThrough | FoodHallShed | StreetFoodLot | FineDining | BubbleTea | Pub | KaraokeBoxes | Multiplex | Theatre | MusicHall | BowlingAlley | GameArcade | Gym | ComedyClub => "Eat and go out",
         #[allow(unreachable_patterns)]
         _ => "Other",
     }
 }
 
 /// Every section, in catalogue order.
-pub const GROUPS: [&str; 29] = [
+pub const GROUPS: [&str; 30] = [
     "Residential",
     "Commercial",
     "Industrial",
@@ -131,6 +133,7 @@ pub const GROUPS: [&str; 29] = [
     "Glass Campus",
     "Patchwork",
     "Skyline Luxe",
+    "Eat and go out",
     "Other",
 ];
 
@@ -139,7 +142,7 @@ fn group_land_use(g: &str) -> LandUse {
     match g {
         "Residential" | "Homes and estates" | "Capsule district" | "Brick & Steel" | "Lantern Alley" | "Garden suburb" | "Harbour Pastel" | "Solarpunk Green" | "Old Stone" | "Glass Campus" | "Patchwork" | "Skyline Luxe" => LandUse::Residential,
         "Commercial" | "Shops and trades" | "Malls" | "Parking" | "League towers" => LandUse::Commercial,
-        "Entertainment" | "Waterfront" => LandUse::Entertainment,
+        "Entertainment" | "Waterfront" | "Eat and go out" => LandUse::Entertainment,
         "Civic" | "City services" | "Attractions" | "Transit and rail" => LandUse::Civic,
         "Parks and beaches" => LandUse::Park,
         _ => LandUse::Industrial,
@@ -252,6 +255,8 @@ pub fn lot_size(s: Style, tier: Tier) -> (f32, f32) {
             _ => (40.0, 38.0),
         },
         TwinTowers => (40.0, 36.0),
+        // [r4-leisure-places] the halls and lots on a big plot
+        FoodHallShed | StreetFoodLot | DriveThrough | Multiplex | Theatre | MusicHall | BowlingAlley => (48.0, 44.0),
         Stadium | Arena | GrandPark | Zoo | AmusementPark | BotanicalGarden | ConventionCentre | MegaMall | ShippingPort | PowerCoal | PowerNuclear | PowerSolar | PowerWind | PowerHydro | PowerTidal | PowerGeothermal | FreightYard | CentralStation | StripMine | OilField | Refinery | Farmstead | CowFarm | Feedlot | Prison | University | CasinoResort | Megastructure => (130.0, 110.0),
         Hospital | School | MarketHall | Mall | MegaHotel | Mansion | ArtMuseum | ScienceMuseum | HistoryMuseum | ConcertHall | Cathedral | Aquarium | Observatory | PleasurePier | Station | ContainerYard | TruckLot | Smelter | ChemicalWorks | ChickenFarm | Slaughterhouse | TankFarm | Depot | Junkyard | Factory | FabPlant | BusDepot | TrashDepot | TrashCompany | MarinaLarge | FishingPortLarge | FerryTerminal | GolfRange | BeachResort | Beach | TrailerPark | Suburb | Supertall | CarDealer | StripMall | Casino | Cinema | DomeCampus | Courthouse | Ministry | CivicTower | FoundryWorks | GasWorks | LoftEstate | SawtoothFactory | CulDeSac | GardenManor | StoneManor => (75.0, 65.0),
         _ => match tier {

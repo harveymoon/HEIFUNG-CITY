@@ -54,6 +54,9 @@ pub const SHUT_DAYS: u8 = 3;
 /// Kinds that fit a shopfront: shops customers walk into.
 pub fn fits_shopfront(kind: BusinessKind) -> bool {
     matches!(kind, BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Cafe | BusinessKind::Bookshop | BusinessKind::BikeShop)
+        // [r4-leisure-places] the kitchens and the small nights out
+        || (kind.is_eatery() && !matches!(kind, BusinessKind::FastFood | BusinessKind::StreetFood))
+        || matches!(kind, BusinessKind::Bar | BusinessKind::KaraokeBox | BusinessKind::Arcade | BusinessKind::Gym | BusinessKind::ComedyClub)
 }
 
 /// The units a building would be let in, all empty, from its floors, its
@@ -394,16 +397,34 @@ impl World {
         let mall = h.plot.form.is_some_and(|f| f.is_mall());
         // [malls] Anchors are big stores, the food court cafés and bakeries;
         // a mall's shops are the whole menu (it is where the shops are).
+        // [r4-leisure-places] Shops under flats are the neighbourhood's
+        // corner places to eat; an office block's ground floor its lunch
+        // counters; a leisure block's its bars and karaoke; malls get food
+        // courts, arcades and gyms.
+        use BusinessKind as K;
         let menu: &[BusinessKind] = if role == UnitRole::Anchor {
-            &[BusinessKind::Grocery, BusinessKind::GadgetShop]
+            &[K::Grocery, K::GadgetShop, K::Gym]
         } else if role == UnitRole::FoodCourt {
-            &[BusinessKind::Cafe, BusinessKind::Bakery]
-        } else if dear || mall {
-            &[BusinessKind::Grocery, BusinessKind::Bakery, BusinessKind::GadgetShop, BusinessKind::Cafe, BusinessKind::Bookshop]
+            &[K::Cafe, K::Bakery, K::NoodleBar, K::PizzaPlace, K::BubbleTea, K::Diner]
+        } else if h.land_use == LandUse::Entertainment {
+            &[K::Bar, K::KaraokeBox, K::ComedyClub, K::Arcade, K::NoodleBar]
+        } else if h.business.as_ref().is_some_and(|z| z.kind == K::Office) {
+            &[K::Cafe, K::BubbleTea, K::NoodleBar, K::Diner, K::FoodHall]
+        } else if mall {
+            &[K::Grocery, K::Bakery, K::GadgetShop, K::Cafe, K::Bookshop, K::Arcade, K::Gym, K::BubbleTea]
+        } else if dear {
+            &[K::Grocery, K::Bakery, K::GadgetShop, K::Cafe, K::Bookshop, K::NoodleBar, K::BubbleTea]
+        } else if h.homes > 0 {
+            &[K::Grocery, K::Bakery, K::GadgetShop, K::Diner, K::NoodleBar, K::PizzaPlace, K::BubbleTea]
         } else {
-            &[BusinessKind::Grocery, BusinessKind::Bakery, BusinessKind::GadgetShop]
+            &[K::Grocery, K::Bakery, K::GadgetShop]
         };
-        let viable = self.kinds_viable(menu, Some(jobs));
+        let mut viable = self.kinds_viable(menu, Some(jobs));
+        // A block of offices or a leisure block in a hamlet (no lunch counter
+        // or bar would pay yet) lets its shopfronts as any street does.
+        if viable.is_empty() && (h.land_use == LandUse::Entertainment || h.business.as_ref().is_some_and(|z| z.kind == K::Office)) {
+            viable = self.kinds_viable(&[K::Grocery, K::Bakery, K::GadgetShop], Some(jobs));
+        }
         if viable.is_empty() {
             return None;
         }

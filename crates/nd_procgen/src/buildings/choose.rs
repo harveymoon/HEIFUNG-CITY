@@ -163,6 +163,24 @@ pub fn industry_styles(kind: nd_sim::BusinessKind, tier: Tier) -> Option<&'stati
         B::GolfRange => &[(Style::GolfRange, 1.0)],
         B::ArtStudio => &[(Style::ArtStudio, 1.0)],
         B::Gallery => &[(Style::Gallery, 1.0)],
+        // [r4-leisure-places] one look per place to eat or go out
+        B::Diner => &[(Style::Diner, 1.0)],
+        B::NoodleBar => &[(Style::NoodleBar, 1.0)],
+        B::PizzaPlace => &[(Style::PizzaPlace, 1.0)],
+        B::FastFood => &[(Style::DriveThrough, 1.0)],
+        B::FoodHall => &[(Style::FoodHallShed, 1.0)],
+        B::StreetFood => &[(Style::StreetFoodLot, 1.0)],
+        B::FineDining => &[(Style::FineDining, 1.0)],
+        B::BubbleTea => &[(Style::BubbleTea, 1.0)],
+        B::Bar => &[(Style::Pub, 1.0)],
+        B::KaraokeBox => &[(Style::KaraokeBoxes, 1.0)],
+        B::Cinema => &[(Style::Multiplex, 1.0)],
+        B::Theatre => &[(Style::Theatre, 1.0)],
+        B::ConcertHall => &[(Style::MusicHall, 1.0)],
+        B::BowlingAlley => &[(Style::BowlingAlley, 1.0)],
+        B::Arcade => &[(Style::GameArcade, 1.0)],
+        B::Gym => &[(Style::Gym, 1.0)],
+        B::ComedyClub => &[(Style::ComedyClub, 1.0)],
         // A dock's operator: normally drawn by its port kind (`extras.port`);
         // this is the fallback when the port is not passed.
         B::Marina => match tier {
@@ -188,7 +206,7 @@ pub fn business_look_wins(kind: nd_sim::BusinessKind) -> bool {
     matches!(
         kind,
         B::Mechanic | B::CarDealer | B::TrashCompany | B::BikeShop | B::CowFarm | B::ChickenFarm | B::Slaughterhouse | B::StripMine | B::Marina | B::FishingPort | B::FishGutting | B::FishStickFactory | B::FishMarket | B::SeafoodRestaurant | B::GolfRange | B::ArtStudio | B::Gallery | B::Smelter | B::Feedlot | B::ChemicalWorks | B::BeachResort | B::PierRestaurant | B::BeachBar | B::BoatRental | B::ScrapYard
-    )
+    ) || kind.is_eat_or_go_out()
 }
 
 /// Weighted pick among an industry's looks, clustering by neighbours (not

@@ -97,7 +97,7 @@ impl World {
                         out.push(Attraction { kind: AttractionKind::Park, name: b.name.clone(), pos: lot.center, building: Some(id), score });
                     }
                 }
-                LandUse::Entertainment if b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Venue && !z.closed) && !b.is_derelict() => {
+                LandUse::Entertainment if b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::Venue | BusinessKind::Theatre | BusinessKind::ConcertHall) && !z.closed) && !b.is_derelict() => {
                     out.push(Attraction { kind: AttractionKind::Nightlife, name: b.name.clone(), pos: entrance(self, id), building: Some(id), score: tm::nightlife_score(b.tier) });
                 }
                 _ => {}
@@ -550,11 +550,24 @@ impl World {
         let jobs = bld.jobs;
         let mut paid = 0.0;
         let mut venue = false;
+        let mut bookings = 0.0;
         if let Some(bz) = bld.business.as_mut().filter(|z| !z.closed && open) {
             match bz.kind {
                 BusinessKind::Venue => {
                     venue = true;
                     paid = want;
+                }
+                // [r4-leisure-places] A show, a gig, a meal out: paid at the door.
+                k if k.is_eat_or_go_out() => {
+                    venue = true;
+                    paid = want * crate::leisure::tab_factor(k).min(2.0);
+                    if k.cooks_meals() {
+                        let got = bz.take(Resource::BakedGoods, 1.0);
+                        self.economy.market.meals_sold_today += got as u32;
+                    }
+                    if k.booking_share() > 0.0 {
+                        bookings = paid * k.booking_share();
+                    }
                 }
                 BusinessKind::GadgetShop | BusinessKind::Bakery | BusinessKind::Grocery | BusinessKind::Cafe | BusinessKind::Bookshop => {
                     let r = bz.kind.walk_in_sale().unwrap_or(Resource::Groceries);
@@ -575,6 +588,17 @@ impl World {
         // [ledger] From the visitor's wallet to the shop or venue.
         if self.business_account(b).is_some() {
             self.transfer(Account::Tourist(id), Account::Business(b), paid, Kind::Tourism);
+            // [r4-leisure-places] The touring company's share, and the visit.
+            if bookings > 0.0 {
+                if let Some(bz) = self.buildings.get_mut(b).and_then(|x| x.business.as_mut()) {
+                    bz.spend_today += bookings;
+                }
+                self.economy.market.leisure.bookings_today += bookings;
+                self.transfer(Account::Business(b), Account::Outside, bookings, Kind::Imports);
+            }
+            if let Some(k) = self.buildings.get(b).and_then(|x| x.business.as_ref()).map(|z| z.kind).filter(|_| paid > 0.0) {
+                self.economy.market.leisure.note(k, hour);
+            }
         }
         let s = &mut self.tourism.stats;
         if venue {
@@ -737,7 +761,10 @@ impl World {
             let Some(z) = b.business.as_ref() else { continue };
             // [waterfront] the restaurants on piers, beach bars and boat rentals too
             let shore = matches!(z.kind, BusinessKind::PierRestaurant | BusinessKind::BeachBar) || (!night && z.kind == BusinessKind::BoatRental);
-            let wanted = shore || if night { z.kind == BusinessKind::Venue } else { matches!(z.kind, BusinessKind::GadgetShop | BusinessKind::Bakery | BusinessKind::Cafe | BusinessKind::Bookshop) || (z.kind == BusinessKind::Venue && hour >= 18) };
+            // [r4-leisure-places] Visitors take in a show, eat out, try the
+            // street food; nobody flies in for the gym.
+            let out = z.kind.is_eat_or_go_out() && z.kind != BusinessKind::Gym;
+            let wanted = shore || out || if night { z.kind == BusinessKind::Venue } else { matches!(z.kind, BusinessKind::GadgetShop | BusinessKind::Bakery | BusinessKind::Cafe | BusinessKind::Bookshop) || (z.kind == BusinessKind::Venue && hour >= 18) };
             if !wanted || z.closed || !b.operating() || !b.opening_hours().contains(hour) {
                 continue;
             }
@@ -747,6 +774,7 @@ impl World {
                 continue;
             }
             let taste = if b.tier == class { 2.0 } else { 1.0 };
+            let taste = taste * crate::leisure::tourist_pull(z.kind, hour);
             // A neon strip or night market is where visitors go to shop.
             let strip = match b.look {
                 // [r4-harbour] The pastel front too. [r4-skyline] And the

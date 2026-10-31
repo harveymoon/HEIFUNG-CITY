@@ -172,7 +172,8 @@ impl World {
     /// - otherwise a weighted pick of the viable kinds, the district's
     ///   favoured trades weighing more.
     pub(super) fn district_business(&mut self, lot: LotId, lu: LandUse, jobs: u16) -> Option<BusinessKind> {
-        if lu != LandUse::Commercial {
+        // [r4-leisure-places] Leisure land too: the story's nights out.
+        if lu != LandUse::Commercial && lu != LandUse::Entertainment {
             return None;
         }
         let look = self.district_look_for(lot, lu);
@@ -184,7 +185,7 @@ impl World {
         // builds them twice as eagerly.
         let need = crate::tourism::HOTEL_DEMAND_TO_BUILD * if tourist_quarter { 0.5 } else { 1.0 };
         let hotel_cover_ok = self.economy.cover_of(BusinessKind::Hotel).is_none_or(|c| c >= 0.85);
-        if demand >= need && hotels_building < 1 + (demand / 25.0) as usize && hotel_cover_ok {
+        if lu == LandUse::Commercial && demand >= need && hotels_building < 1 + (demand / 25.0) as usize && hotel_cover_ok {
             return Some(BusinessKind::Hotel);
         }
         let look = look?;
