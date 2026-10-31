@@ -1397,7 +1397,7 @@ each in seeded variants: the tiers whose zone menus offer it, or all three for a
 times one to three heights, times 3 seeds) and **notes**. Filters: search words, `group` (a
 catalogue section: Residential, Commercial, Industrial, Entertainment, Civic, Parks and beaches,
 Parking, Power, Transit and rail, Docks, City services, Attractions, Industry trades, Shops and
-trades, Homes and estates, League towers, Waterfront, Capsule district, Malls, Lantern Alley, Garden suburb, Harbour Pastel, Old Stone, Solarpunk Green, Glass Campus, Patchwork, Skyline Luxe), `form`, `land_use`,
+trades, Homes and estates, League towers, Waterfront, Capsule district, Malls, Lantern Alley, Garden suburb, Harbour Pastel, Old Stone, Solarpunk Green, Glass Campus, Patchwork, Skyline Luxe, Eat and go out), `form`, `land_use`,
 `district`, `story`, `business` (a kind's label), `tier`, `noted` (only what has open notes).
 
 `viewer` fields: `action` status (default) / open / close / toggle / select / next / prev / list /

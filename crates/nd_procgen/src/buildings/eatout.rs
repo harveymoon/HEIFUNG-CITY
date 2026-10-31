@@ -30,7 +30,7 @@ pub(crate) fn neon_word(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y: f32, 
     let read = (-out).cross(Vec3::Y).normalize_or_zero();
     let seed = c.seed;
     let wear = c.wear;
-    stencil(g.part(Glow), centre, read, out, h, text, rgba(color), move |k| wear > 0.45 && nd_sim::hash::unit(nd_sim::hash::mix(seed, k as u64 ^ 0x5EED)) < (wear - 0.45) * 0.5)
+    stencil(g.part(Glow), centre, read, out, h, text, rgba(color), move |k| wear > 0.6 && nd_sim::hash::unit(nd_sim::hash::mix(seed, k as u64 ^ 0x5EED)) < (wear - 0.6) * 0.5)
 }
 
 /// Width a word of `n` letters takes at height `h` (as `stencil` lays it).
@@ -512,7 +512,7 @@ pub fn fine_dining(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     yard(g, c, 0.3, Paving, mul(pal.paving, 1.15));
     let area = R::of(&c.poly);
     let Some(r) = street_block(c, area.w().min(16.0), area.d().min(14.0), (area.d() * 0.2).clamp(1.5, 4.0)) else { return };
-    let n = floors(c, 1, 3);
+    let n = floors(c, 1, 2);
     let fh = 4.2;
     let h = n as f32 * fh;
     let stone = c.tier != nd_sim::Tier::High;
@@ -535,6 +535,27 @@ pub fn fine_dining(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     fr.bx(g, f, Matte, 0.0, 3.2, reach * 0.5, Vec3::new(2.6, 0.12, reach), CHARCOAL);
     fr.bx(g, f, Glow, 0.0, 3.12, reach * 0.5, Vec3::new(2.0, 0.03, reach * 0.6), [1.2, 0.85, 0.45]);
     neon_word(g, c, &fr, -fr.len * 0.25, 3.45, 0.08, 0.28, b"MAISON", brass);
+    // A slim brass blade by the door, lit from below.
+    let bt = fr.len * 0.5 - 0.5;
+    fr.bx(g, f, Metal, bt, 2.6, 0.5, Vec3::new(0.12, 3.2, 0.9), [0.12, 0.1, 0.08]);
+    fr.bx(g, f, Glow, bt, 1.0, 0.5, Vec3::new(0.16, 0.08, 0.95), brass);
+    // A roof terrace: planters round its edge, a pergola of warm lights.
+    let roof = r.inset(1.2);
+    if roof.w() > 4.0 && roof.d() > 4.0 {
+        for face in roof.faces() {
+            let n = (face.len / 2.2) as i32;
+            for k in 0..n.max(1) {
+                let p = face.at(-face.len * 0.5 + (k as f32 + 0.5) * face.len / n.max(1) as f32, -0.4);
+                f.bx(g, Wood, p.x, h + 0.35, p.y, Vec3::new(0.9, 0.7, 0.9), mul(pal.wood, 0.5));
+                f.bx(g, Foliage, p.x, h + 0.95, p.y, Vec3::new(0.8, 0.6, 0.8), mul(pal.foliage, 0.8));
+            }
+        }
+        let (a, b) = (Vec2::new(roof.u0 + 0.5, roof.c().y), Vec2::new(roof.u1 - 0.5, roof.c().y));
+        string_lights(g, f, Vec3::new(a.x, h + 2.6, a.y), Vec3::new(b.x, h + 2.6, b.y), 14, [1.5, 1.05, 0.55]);
+        for p in [a, b] {
+            f.bx(g, Metal, p.x, h + 1.3, p.y, Vec3::new(0.12, 2.6, 0.12), CHARCOAL);
+        }
+    }
     if n > 1 {
         for face in r.faces() {
             if face.len > 3.0 {
@@ -551,7 +572,6 @@ pub fn fine_dining(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
     }
     parapet(g, c, &r.poly(), h, 0.5, 0.2, Stone, mul(pal.stone, 0.4));
-    roof_gear(g, c, rng, &r.poly(), h, 0.2);
 }
 
 // ── bubble tea ───────────────────────────────────────────────────────────────

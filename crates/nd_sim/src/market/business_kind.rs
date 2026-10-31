@@ -725,11 +725,11 @@ impl BusinessKind {
             // [r4-leisure-places] A diner and a drive-through are one storey;
             // halls and alleys stay low; karaoke stacks its boxes.
             BusinessKind::Diner | BusinessKind::FastFood | BusinessKind::StreetFood => 1,
-            BusinessKind::PizzaPlace | BusinessKind::BubbleTea | BusinessKind::FoodHall | BusinessKind::BowlingAlley => 2,
-            BusinessKind::NoodleBar | BusinessKind::FineDining | BusinessKind::Bar | BusinessKind::Arcade | BusinessKind::Gym | BusinessKind::ComedyClub => 3,
+            BusinessKind::PizzaPlace | BusinessKind::BubbleTea | BusinessKind::FoodHall | BusinessKind::BowlingAlley | BusinessKind::FineDining => 2,
+            BusinessKind::NoodleBar | BusinessKind::Bar | BusinessKind::Arcade | BusinessKind::Gym | BusinessKind::ComedyClub => 3,
             BusinessKind::Cinema => 4,
             BusinessKind::Theatre | BusinessKind::ConcertHall => 5,
-            BusinessKind::KaraokeBox => 7,
+            BusinessKind::KaraokeBox => 4,
             _ => return None,
         })
     }

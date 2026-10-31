@@ -127,6 +127,32 @@ impl BusinessKind {
     }
 }
 
+/// The word over a shopfront of this kind (a tenant's sign); `None` for
+/// the older shops, which keep their plain lit boards.
+pub fn sign_word(kind: BusinessKind) -> Option<&'static [u8]> {
+    Some(match kind {
+        K::Diner => b"DINER",
+        K::NoodleBar => b"NOODLES",
+        K::PizzaPlace => b"PIZZA",
+        K::FastFood => b"BURGERS",
+        K::FoodHall => b"FOOD HALL",
+        K::StreetFood => b"EATS",
+        K::FineDining => b"DINING",
+        K::BubbleTea => b"BOBA",
+        K::Bar => b"BAR",
+        K::KaraokeBox => b"KARAOKE",
+        K::Cinema => b"CINEMA",
+        K::Theatre => b"THEATRE",
+        K::ConcertHall => b"LIVE",
+        K::BowlingAlley => b"BOWL",
+        K::Arcade => b"ARCADE",
+        K::Gym => b"GYM",
+        K::ComedyClub => b"COMEDY",
+        K::Cafe => b"CAFE",
+        _ => return None,
+    })
+}
+
 /// What an hour here costs against a nightclub round (`VENUE_TAB`).
 pub fn tab_factor(kind: BusinessKind) -> f32 {
     match kind {
@@ -150,9 +176,12 @@ pub fn tab_factor(kind: BusinessKind) -> f32 {
 /// out (`World::kinds_viable`); a pressure or the player may sooner.
 pub const MIN_TOWN: u32 = 300;
 /// People per kind of place to eat or go out a town carries: a new kind
-/// is tried only while the town has fewer kinds open than this goes into
-/// its people (and none is being tried already).
+/// is tried only while the town has fewer kinds open (or going up) than
+/// this goes into its people, a few at a time (`PEOPLE_PER_TRIAL`).
 pub const PEOPLE_PER_KIND: u32 = 400;
+/// People per new kind tried at once: a hamlet tries one at a time, a
+/// city of 14,000 fourteen.
+pub const PEOPLE_PER_TRIAL: u32 = 1000;
 
 /// Meals (baked goods) a hungry diner eats on arrival.
 pub const MEAL: f32 = 1.0;

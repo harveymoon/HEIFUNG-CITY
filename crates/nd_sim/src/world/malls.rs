@@ -98,7 +98,7 @@ pub const MALL_REACH: f32 = 1.6;
 pub const MEGA_MALL_REACH: f32 = 3.0;
 
 fn unit(lo: u8, hi: u8, share: f32, area: f32, role: UnitRole) -> Unit {
-    Unit { lo, hi, share, area, shopfront: true, jobs: 0, occupant: Occupant::Vacant, vacant_since: 0, role }
+    Unit { lo, hi, share, area, shopfront: true, jobs: 0, occupant: Occupant::Vacant, vacant_since: 0, role, sign: None }
 }
 
 /// The units of a strip mall, mall or mega-mall of `floors`, street front

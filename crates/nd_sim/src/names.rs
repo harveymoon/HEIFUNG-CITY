@@ -246,6 +246,16 @@ pub fn name_misfits(name: &str, kind: BusinessKind) -> bool {
     !fits
 }
 
+/// [r4-leisure-places] Whether `name` says it is a `kind` business: one of
+/// its trade words ends it, or it is one of the kind's whole names.
+pub fn name_says_trade(name: &str, kind: BusinessKind) -> bool {
+    let Some((_, trades)) = trade_words(kind) else { return true };
+    trades.iter().any(|t| match t.strip_prefix('=') {
+        Some(whole) => name == whole,
+        None => name.ends_with(t),
+    })
+}
+
 /// The indefinite article for `word` by its sound: "an" before a vowel
 /// sound ("an observatory", "an hour", "an 8-floor block", "an EV"), "a"
 /// otherwise ("a university", "a one-way street", "a 12-floor block").

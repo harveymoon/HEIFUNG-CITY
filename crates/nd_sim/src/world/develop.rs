@@ -857,7 +857,14 @@ impl World {
 
     /// [tenants] [`World::business_kinds_viable`] over a menu of kinds of
     /// one's own (a shopfront's).
-    pub(super) fn kinds_viable(&self, candidates: &[BusinessKind], jobs_here: Option<u16>) -> Vec<BusinessKind> {
+    pub(crate) fn kinds_viable(&self, candidates: &[BusinessKind], jobs_here: Option<u16>) -> Vec<BusinessKind> {
+        self.kinds_viable_as(candidates, jobs_here, false)
+    }
+
+    /// [r4-leisure-places] [`World::kinds_viable`] for an empty unit: a
+    /// tenant opens at once, so trying a new kind of place there does not
+    /// wait on the new places going up elsewhere.
+    pub(crate) fn kinds_viable_as(&self, candidates: &[BusinessKind], jobs_here: Option<u16>, unit: bool) -> Vec<BusinessKind> {
         let (mut open, mut sites, mut jobs) = ([0u32; BusinessKind::COUNT], [0u32; BusinessKind::COUNT], [0u32; BusinessKind::COUNT]);
         // Output on the shelves of each kind, against a day of what they
         // make at full staff: over most of a day and the market is full.
@@ -887,7 +894,8 @@ impl World {
         let new_kind = |k: &BusinessKind| k.is_eat_or_go_out();
         let new_sites: u32 = BusinessKind::ALL.iter().filter(|k| new_kind(k)).map(|k| sites[k.index()]).sum();
         let new_kinds_open = BusinessKind::ALL.iter().filter(|k| new_kind(k) && open[k.index()] > 0).count() as u32;
-        let new_room = new_sites == 0 && new_kinds_open < self.economy.population / crate::leisure::PEOPLE_PER_KIND;
+        let pop = self.economy.population;
+        let new_room = (unit || new_sites < (pop / crate::leisure::PEOPLE_PER_TRIAL).max(1)) && new_kinds_open + new_sites < pop / crate::leisure::PEOPLE_PER_KIND;
         let grocery_jobs_needed = self.grocery_jobs_needed();
         let mut out: Vec<BusinessKind> = Vec::new();
         for &kind in candidates {
@@ -915,6 +923,13 @@ impl World {
             }
         }
         out
+    }
+
+    /// [r4-leisure-places] For probes: the kinds of `menu` the market would
+    /// open now in a building of `jobs`.
+    #[doc(hidden)]
+    pub fn probe_kinds_viable(&self, menu: &[BusinessKind], jobs: Option<u16>) -> Vec<BusinessKind> {
+        self.kinds_viable(menu, jobs)
     }
 
     /// Grocers' jobs the town needs for the people it has and most of those
@@ -1000,7 +1015,9 @@ impl World {
     pub(crate) fn fit_business_name(&mut self, bid: BuildingId) {
         let Some(b) = self.buildings.get_mut(bid) else { return };
         let Some(kind) = b.business.as_ref().map(|z| z.kind) else { return };
-        if names::name_misfits(&b.name, kind) {
+        // [r4-leisure-places] A diner that opens in a car dealer's old
+        // building is not "No Refunds Motors".
+        if names::name_misfits(&b.name, kind) || (kind.is_eat_or_go_out() && !names::name_says_trade(&b.name, kind)) {
             if let Some(n) = names::business_name(kind, b.seed) {
                 b.name = n;
             }

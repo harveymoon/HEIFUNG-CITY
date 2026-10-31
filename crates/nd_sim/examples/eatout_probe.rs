@@ -16,6 +16,7 @@ fn main() {
     let mut w = World::read_save(src).expect("load");
     let mut minds = RuleBasedMind::default();
     println!("loaded day {} hour {} pop {}", w.clock.day(), w.clock.hour(), w.citizens.len());
+    probe_viable(&w);
     let mut prev: std::collections::HashMap<nd_sim::CitizenId, Option<nd_sim::BuildingId>> = Default::default();
     for d in 0..days {
         let t0 = std::time::Instant::now();
@@ -45,6 +46,7 @@ fn main() {
             started = true;
         }
         let secs = t0.elapsed().as_secs_f64();
+        probe_viable(&w);
         let mut open: BTreeMap<&'static str, (u32, usize)> = BTreeMap::new();
         for b in w.buildings.values() {
             if let Some(z) = b.business.as_ref().filter(|z| !z.closed && b.operating()) {
@@ -80,4 +82,11 @@ fn main() {
             }
         }
     }
+}
+
+#[allow(unused)]
+fn probe_viable(w: &World) {
+    let all: Vec<BusinessKind> = BusinessKind::ALL.to_vec();
+    println!("viable now (10 jobs): {:?}", w.probe_kinds_viable(&all, Some(10)).iter().map(|k| k.label()).collect::<Vec<_>>());
+    println!("pop stat {} sites: {:?}", w.economy.population, w.buildings.values().filter(|b| b.construction.is_some()).filter_map(|b| b.business.as_ref().map(|z| z.kind.label())).collect::<Vec<_>>());
 }

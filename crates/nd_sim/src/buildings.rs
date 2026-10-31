@@ -559,6 +559,10 @@ pub struct Unit {
     /// elsewhere), an anchor store or a food-court counter.
     #[serde(default)]
     pub role: UnitRole,
+    /// [r4-leisure-places] The trade over its door, for the sign: the
+    /// business in it (kept by `World::sync_tenants`); `None` when empty.
+    #[serde(default)]
+    pub sign: Option<crate::market::BusinessKind>,
 }
 
 /// [malls] A mall unit's part: an ordinary shop, a big anchor store at an

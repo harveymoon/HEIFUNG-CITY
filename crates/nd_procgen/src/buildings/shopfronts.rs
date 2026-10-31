@@ -44,7 +44,14 @@ pub fn draw(g: &mut Geometry, c: &Ctx, units: &[nd_sim::buildings::Unit], seed: 
         let k = (nd_sim::hash::mix2(seed, i as u64 + 1) % signs.len().max(1) as u64) as usize;
         let col = signs.get(k).copied().unwrap_or([1.0, 0.3, 0.8]);
         front.bx(g, f, Matte, t, SIGN_Y, 0.0, Vec3::new(w, 0.8, 0.16), BOARD);
-        front.decal(g, f, Glow, t, SIGN_Y, 0.1, w * 0.9, 0.42, mul(col, 2.2));
+        // [r4-leisure-places] A place to eat or go out spells out its trade.
+        match u.sign.and_then(nd_sim::leisure::sign_word) {
+            Some(word) => {
+                let h = ((w * 0.85) / ((4 * word.len()) as f32 - 1.0) * 5.0).min(0.5);
+                super::eatout::neon_word(g, c, &front, t, SIGN_Y, 0.1, h, word, mul(col, 1.6));
+            }
+            None => front.decal(g, f, Glow, t, SIGN_Y, 0.1, w * 0.9, 0.42, mul(col, 2.2)),
+        }
     }
 }
 
@@ -67,7 +74,7 @@ mod tests {
         lots.sort_by(|a, b| b.area().total_cmp(&a.area()));
         let lot = &lots[0];
         let (rules, pal) = (BuildingRules::default(), Palette::default());
-        let unit = |occupant| Unit { lo: 0, hi: 0, share: 1.0 / 3.0, area: 80.0, shopfront: true, jobs: 3, occupant, vacant_since: 0, role: Default::default() };
+        let unit = |occupant| Unit { lo: 0, hi: 0, share: 1.0 / 3.0, area: 80.0, shopfront: true, jobs: 3, occupant, vacant_since: 0, role: Default::default(), sign: None };
         let units = [unit(Occupant::Main), unit(Occupant::Vacant), unit(Occupant::Main)];
         let mut drawn = 0;
         for seed in 0..12u64 {

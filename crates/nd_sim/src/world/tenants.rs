@@ -94,7 +94,7 @@ pub fn unit_layout(b: &Building, frontage: f32, plate: f32) -> Vec<Unit> {
     let mut v = Vec::new();
     let share = 1.0 / shops as f32;
     for _ in 0..shops {
-        v.push(Unit { lo: 0, hi: base_top, share, area: plate * share * (base_top + 1) as f32, shopfront: true, jobs: 0, occupant: Occupant::Vacant, vacant_since: 0, role: UnitRole::Shop });
+        v.push(Unit { lo: 0, hi: base_top, share, area: plate * share * (base_top + 1) as f32, shopfront: true, jobs: 0, occupant: Occupant::Vacant, vacant_since: 0, role: UnitRole::Shop, sign: None });
     }
     if b.land_use == LandUse::Commercial {
         // Upper floors in ranges: a floor each in a low block, up to eight
@@ -106,7 +106,7 @@ pub fn unit_layout(b: &Building, frontage: f32, plate: f32) -> Vec<Unit> {
             let mut lo = first;
             while lo < floors {
                 let hi = (lo + band - 1).min(floors - 1);
-                v.push(Unit { lo, hi, share: 1.0, area: plate * (hi - lo + 1) as f32, shopfront: false, jobs: 0, occupant: Occupant::Vacant, vacant_since: 0, role: UnitRole::Shop });
+                v.push(Unit { lo, hi, share: 1.0, area: plate * (hi - lo + 1) as f32, shopfront: false, jobs: 0, occupant: Occupant::Vacant, vacant_since: 0, role: UnitRole::Shop, sign: None });
                 lo = hi + 1;
             }
         }
@@ -346,6 +346,38 @@ impl World {
     /// does (its lot, condition, tier, look, rent) and staff the units they
     /// have.
     pub(super) fn sync_tenants(&mut self) {
+        // [r4-leisure-places] The sign over each unit's door: its trade.
+        let mut changed: Vec<BuildingId> = Vec::new();
+        let kind_of = |b: &Building| b.business.as_ref().filter(|z| !z.closed).map(|z| z.kind);
+        let signs: Vec<(BuildingId, Vec<Option<BusinessKind>>)> = self
+            .buildings
+            .iter()
+            .filter(|(_, b)| !b.units.is_empty())
+            .map(|(id, b)| {
+                let v = b.units.iter().map(|u| match u.occupant {
+                    Occupant::Main => kind_of(b),
+                    Occupant::Tenant(t) => self.buildings.get(t).and_then(kind_of),
+                    Occupant::Vacant => None,
+                });
+                (id, v.collect())
+            })
+            .collect();
+        for (id, v) in signs {
+            let b = &mut self.buildings[id];
+            let mut any = false;
+            for (u, s) in b.units.iter_mut().zip(v) {
+                if u.sign != s {
+                    u.sign = s;
+                    any |= u.shopfront;
+                }
+            }
+            if any {
+                changed.push(id);
+            }
+        }
+        for id in changed {
+            self.events.push(SimEvent::BuildingChanged(id));
+        }
         let tenants: Vec<(BuildingId, BuildingId)> = self.buildings.iter().filter_map(|(id, b)| b.unit_of.map(|h| (id, h))).collect();
         for (tid, host) in tenants {
             let ok = self.buildings.get(host).is_some_and(|h| h.operating() && h.units.iter().any(|u| u.occupant == Occupant::Tenant(tid)));
@@ -419,7 +451,7 @@ impl World {
         } else {
             &[K::Grocery, K::Bakery, K::GadgetShop]
         };
-        let mut viable = self.kinds_viable(menu, Some(jobs));
+        let mut viable = self.kinds_viable_as(menu, Some(jobs), true);
         // A block of offices or a leisure block in a hamlet (no lunch counter
         // or bar would pay yet) lets its shopfronts as any street does.
         if viable.is_empty() && (h.land_use == LandUse::Entertainment || h.business.as_ref().is_some_and(|z| z.kind == K::Office)) {
