@@ -523,6 +523,12 @@ impl ShipKind {
     pub fn is_ferry(self) -> bool {
         matches!(self, ShipKind::Ferry | ShipKind::CarFerry)
     }
+
+    /// [r4-flags-sim] A ferry or a freighter: the ships that queue for a
+    /// berth and keep to the right on a route (not marina or fishing boats).
+    pub fn is_big(self) -> bool {
+        matches!(self, ShipKind::Ferry | ShipKind::CarFerry | ShipKind::Freighter)
+    }
 }
 
 /// A ship under way: along `path`, standing `dwell` minutes at each end

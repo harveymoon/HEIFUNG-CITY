@@ -138,6 +138,8 @@ impl World {
         c.siren = false;
         c.errand = Errand::Out;
         if !self.redirect_out(car) {
+            // [r4-flags-sim] No road out of the pocket it stands in.
+            self.rescue_trapped(car);
             self.traffic.pull_in(car, RETIRE_RETRY_SECONDS);
         }
     }

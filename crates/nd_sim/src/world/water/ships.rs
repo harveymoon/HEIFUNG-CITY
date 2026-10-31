@@ -4,6 +4,19 @@ use super::*;
 
 use crate::ports::FerryEstimate;
 
+/// [r4-flags-sim] A ship coming in holds this far short of a berth another
+/// ship is lying at, and the room it wants between hulls there.
+const BERTH_HOLD: f32 = 140.0;
+const BERTH_CLEAR: f32 = 6.0;
+/// [r4-flags-sim] How far to the right of a route ferries and freighters
+/// keep (`keep_to_starboard`), eased over `STARBOARD_EASE` from each end,
+/// with `STARBOARD_BEAM` of water beyond; points every `STARBOARD_STEP`.
+const STARBOARD_FERRY: f32 = 22.0;
+const STARBOARD_FREIGHTER: f32 = 30.0;
+const STARBOARD_EASE: f32 = 180.0;
+const STARBOARD_BEAM: f32 = 10.0;
+const STARBOARD_STEP: f32 = 60.0;
+
 impl World {
     /// Sail ships, dispatch new ones on their headways, land freight and
     /// ferry passengers.
@@ -16,6 +29,11 @@ impl World {
             self.dispatch_ships();
         }
         let ids: Vec<crate::ports::ShipId> = self.ports.ships.keys().collect();
+        // [r4-flags-sim] Where every big ship lies now, so one coming in
+        // to a berth another is lying at (or about to leave) holds off
+        // until it is clear instead of sailing into it (Harvey: "boats are
+        // overlapping, there should be a queue").
+        let lying: Vec<(crate::ports::ShipId, Vec2, f32)> = self.ports.ships.iter().filter(|(_, s)| s.kind.is_big()).map(|(id, s)| (id, s.pose().0, s.length())).collect();
         let mut docked = Vec::new();
         let mut done = Vec::new();
         let mut returned = Vec::new();
@@ -38,6 +56,16 @@ impl World {
                 let p = ship.pose().0;
                 self.landscape.beyond_map_edge(p, 400.0)
             };
+            if ship.kind.is_big() {
+                // The berth it is making for: the far one, then home.
+                let goal_s = if ship.docked { total } else { ship.berth_s };
+                let (goal, len) = (ship.pose_at(goal_s).0, ship.length());
+                let to_go = goal_s - ship.s;
+                let busy = lying.iter().any(|&(o, p, l)| o != id && p.distance(goal) < 0.5 * (len + l) + BERTH_CLEAR);
+                if busy && to_go > 0.0 && to_go <= BERTH_HOLD + ship.speed {
+                    continue;
+                }
+            }
             ship.s += ship.speed * if off_map { ports::OFF_MAP_SPEEDUP } else { 1.0 };
             if ship.remote.is_some() && ship.docked && ship.s >= total {
                 // Back from the town off the map: tie up and let them off.
@@ -101,7 +129,9 @@ impl World {
             // [ferries] A terminal runs two boats, one away while the next
             // sails, but never two at its pier at once.
             let mine: Vec<&Ship> = self.ports.ships.values().filter(|s| s.port == b).collect();
-            let at_pier = mine.iter().any(|s| s.pose().0.distance(port.berth) < 40.0);
+            // [r4-flags-sim] Any big ship at the pier: a visitor from
+            // another terminal lies there too.
+            let at_pier = self.ports.ships.values().any(|s| s.kind.is_big() && s.pose().0.distance(port.berth) < 40.0);
             let busy = match port.kind {
                 PortKind::ShippingPort => !mine.is_empty(),
                 PortKind::FerryTerminal | PortKind::FerryTerminalLarge => at_pier || mine.len() >= ports::FERRIES_PER_TERMINAL,
@@ -119,9 +149,10 @@ impl World {
                     }
                     let Some(out) = self.landscape.water_route(port.berth, None) else { continue };
                     // In from elsewhere, to the berth, and back out.
-                    let mut path: Vec<Vec2> = out.iter().rev().copied().collect();
+                    let inbound: Vec<Vec2> = out.iter().rev().copied().collect();
+                    let mut path = self.keep_to_starboard(&inbound, STARBOARD_FREIGHTER);
                     let berth_s = crate::geom::path_length(&path);
-                    path.extend(out.iter().skip(1).copied());
+                    path.extend(self.keep_to_starboard(&out, STARBOARD_FREIGHTER).into_iter().skip(1));
                     let cargo: Vec<Cargo> = {
                         let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.ports.inbound).into_iter().partition(|(p, _)| *p == b);
                         self.ports.inbound = rest;
@@ -172,9 +203,12 @@ impl World {
                         }
                     }
                     let Some((to, remote, route)) = chosen else { continue };
-                    let berth_s = crate::geom::path_length(&route);
-                    let mut path = route.clone();
-                    path.extend(route.iter().rev().skip(1).copied());
+                    // [r4-flags-sim] Out and back each on its own right
+                    // hand side, so boats meeting on a route pass apart.
+                    let mut path = self.keep_to_starboard(&route, STARBOARD_FERRY);
+                    let berth_s = crate::geom::path_length(&path);
+                    let back: Vec<Vec2> = route.iter().rev().copied().collect();
+                    path.extend(self.keep_to_starboard(&back, STARBOARD_FERRY).into_iter().skip(1));
                     let speed = self.config.metres_per_tick(ports::FERRY_SPEED);
                     // Locals hopping across town, and on a run off the map
                     // whoever is waiting at the pier to leave.
@@ -222,6 +256,49 @@ impl World {
                 }
             }
         }
+    }
+
+    /// [r4-flags-sim] `route` kept `side` metres to the right of the way
+    /// it runs, eased in and out over `STARBOARD_EASE` from each end (it
+    /// still leaves from and comes in to the pier), only where there is
+    /// water there with room for the hull (half as far, or on the line
+    /// itself, where the channel is narrower). Ships on the same water
+    /// going opposite ways then pass each other instead of through.
+    pub(super) fn keep_to_starboard(&self, route: &[Vec2], side: f32) -> Vec<Vec2> {
+        if route.len() < 2 {
+            return route.to_vec();
+        }
+        // A point every `STARBOARD_STEP` or so, so a long straight leg can bend out.
+        let mut pts: Vec<Vec2> = vec![route[0]];
+        for w in route.windows(2) {
+            let n = (w[0].distance(w[1]) / STARBOARD_STEP).ceil().max(1.0) as usize;
+            for k in 1..=n {
+                pts.push(w[0].lerp(w[1], k as f32 / n as f32));
+            }
+        }
+        let total = crate::geom::path_length(&pts);
+        let edge = self.landscape.land_half() - 40.0;
+        let wet = |p: Vec2| p.x.abs().max(p.y.abs()) > edge || self.landscape.is_water(p);
+        let mut along = 0.0;
+        let last = pts.len() - 1;
+        let mut out = Vec::with_capacity(pts.len());
+        for i in 0..pts.len() {
+            if i > 0 {
+                along += pts[i].distance(pts[i - 1]);
+            }
+            let p = pts[i];
+            let x = (along.min(total - along) / STARBOARD_EASE).clamp(0.0, 1.0);
+            let ease = x * x * (3.0 - 2.0 * x);
+            if i == 0 || i == last || ease <= 0.0 {
+                out.push(p);
+                continue;
+            }
+            let d = (pts[i + 1] - pts[i - 1]).normalize_or_zero();
+            let right = Vec2::new(d.y, -d.x);
+            let q = [1.0, 0.5].into_iter().map(|f| side * f * ease).find(|&o| wet(p + right * o) && wet(p + right * (o + STARBOARD_BEAM))).map_or(p, |o| p + right * o);
+            out.push(q);
+        }
+        out
     }
 
     /// People living near either end of a sailing who take the ferry.

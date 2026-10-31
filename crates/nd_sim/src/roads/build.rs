@@ -432,6 +432,59 @@ impl RoadNetwork {
         }
     }
 
+    /// [r4-flags-sim] Street nodes left a few metres apart at about the
+    /// same level become one junction. Harvey's Pylon Boulevard ended on
+    /// the start of an on-ramp 2.2 m from where the avenue beside it had a
+    /// vertex: the avenue only meets a ramp's node when a vertex lies right
+    /// on it (`SNAP_EXACT`), so the boulevard joined the ramp alone and the
+    /// avenue ran past "underneath" it (flags day 8), and his bus line
+    /// could not turn from one onto the other ("one-way street", day 13).
+    /// Two street nodes this close always share asphalt. Whether any were
+    /// joined.
+    pub fn weld_close_street_nodes(&mut self) -> bool {
+        let street_at = |net: &Self, n: usize| net.nodes[n].segments.iter().any(|&s| {
+            let g = net.segment(s);
+            g.alive && g.is_street() && !g.is_motorway()
+        });
+        let mut welded = false;
+        for a in 0..self.nodes.len() {
+            if !street_at(self, a) {
+                continue;
+            }
+            let pa = self.nodes[a].pos;
+            let la = self.nodes[a].level;
+            let close: Vec<usize> = self
+                .segments_in_box(pa - Vec2::splat(WELD_RADIUS + 1.0), pa + Vec2::splat(WELD_RADIUS + 1.0))
+                .flat_map(|s| [self.segment(s).a.0 as usize, self.segment(s).b.0 as usize])
+                .filter(|&b| b > a && self.nodes[b].pos.distance(pa) < WELD_RADIUS && (self.nodes[b].level - la).abs() < 0.5)
+                .collect();
+            for b in close {
+                if self.nodes[b].segments.is_empty() || !street_at(self, b) {
+                    continue;
+                }
+                // Not two ends of one piece (that piece is the street).
+                if self.nodes[b].segments.iter().any(|&s| self.nodes[a].segments.contains(&s)) {
+                    continue;
+                }
+                let moved = std::mem::take(&mut self.nodes[b].segments);
+                for s in moved {
+                    let seg = &mut self.segments[s.0 as usize];
+                    if seg.a.0 as usize == b {
+                        seg.a = NodeId(a as u32);
+                    }
+                    if seg.b.0 as usize == b {
+                        seg.b = NodeId(a as u32);
+                    }
+                    self.nodes[a].segments.push(s);
+                }
+                self.index.take();
+                self.version += 1;
+                welded = true;
+            }
+        }
+        welded
+    }
+
     /// Add a road along `points`. Crossing existing segments splits them so
     /// intersections become real nodes. Returns the created segments.
     pub fn add_polyline(&mut self, points: &[Vec2], lanes_fwd: u8, lanes_bwd: u8) -> Vec<SegmentId> {
