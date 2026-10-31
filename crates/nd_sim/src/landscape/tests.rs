@@ -448,3 +448,55 @@ fn deep_highway_cuttings_and_fills_are_held_by_walls() {
     }
     assert!(found > 0, "no held highway earthworks to check");
 }
+
+/// [r4-edge-bridges] Harvey's flag "weird straight borders on the water":
+/// the water runs on across the map's edge on every preset (and an Arctic
+/// coast), wet on one side means wet on the other and the ground steps no
+/// more than a bank's height; and so across the seam of a bought tile and
+/// the edge of the land bought.
+#[test]
+fn the_water_is_continuous_across_the_map_edge_and_the_tile_seams() {
+    use super::far::FarLand;
+    let cases = [
+        (LandscapePreset::RiverValley, Climate::Temperate),
+        (LandscapePreset::Islands, Climate::Tropical),
+        (LandscapePreset::Coast, Climate::Temperate),
+        (LandscapePreset::Delta, Climate::Temperate),
+        (LandscapePreset::Plains, Climate::Temperate),
+        (LandscapePreset::Coast, Climate::Arctic),
+    ];
+    // Wet within a metre on one side, dry by more than one on the other.
+    let differ = |a: f32, b: f32| (a < -2.0 && b > 2.0) || (a > 2.0 && b < -2.0);
+    for (preset, climate) in cases {
+        for seed in [3, 7] {
+            let land = Landscape::new(&LandscapeParams { climate, ..LandscapeParams::preset(preset, seed) });
+            let far = FarLand::new(&land);
+            let grown = land.with_tiles(&[(2, 0), (-2, 0), (0, -2), (0, 2)]);
+            let grown_far = FarLand::new(&grown);
+            let (mut wet, mut wrong, mut step) = (0, 0, 0.0f32);
+            let mut t = -LAND_HALF;
+            while t <= LAND_HALF {
+                for (n, e) in [(Vec2::X, Vec2::Y), (Vec2::NEG_X, Vec2::Y), (Vec2::Y, Vec2::X), (Vec2::NEG_Y, Vec2::X)] {
+                    let on = n * LAND_HALF + e * t;
+                    let (inside, outside) = (on - n * 0.5, on + n * 0.5);
+                    // The map's edge: its raster against the far land.
+                    let (a, b) = (land.water_distance(inside), far.water_distance(outside));
+                    wet += (a < 0.0) as usize;
+                    wrong += differ(a, b) as usize;
+                    step = step.max((land.height(inside) - far.natural(outside)).abs());
+                    // The seam of a bought tile: both sides the grown raster.
+                    wrong += differ(grown.water_distance(inside), grown.water_distance(outside)) as usize;
+                    // The edge of the land bought: its raster against the far land.
+                    let (gi, go) = (n * GROWN_HALF + e * t - n * 0.5, n * GROWN_HALF + e * t + n * 0.5);
+                    wrong += differ(grown.water_distance(gi), grown_far.water_distance(go)) as usize;
+                }
+                t += 5.0;
+            }
+            assert_eq!(wrong, 0, "{preset:?} {climate:?} seed {seed}: wet on one side of an edge and dry on the other");
+            assert!(step < 3.0, "{preset:?} {climate:?} seed {seed}: a {step:.1} m step in the ground at the map's edge");
+            if preset != LandscapePreset::RiverValley && preset != LandscapePreset::Plains {
+                assert!(wet > 50, "{preset:?}: water at the edge to compare ({wet})");
+            }
+        }
+    }
+}

@@ -32,7 +32,7 @@ use crate::palette::Palette;
 use crate::terrain::{GroundSpot, LandColours};
 use glam::Vec2;
 use nd_sim::geom::smoothstep;
-use nd_sim::landscape::{Climate, LAND_HALF, WATER_LEVEL};
+use nd_sim::landscape::{Climate, BANK_HEIGHT, LAND_HALF, WATER_LEVEL};
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 use std::collections::HashMap;
 
@@ -160,12 +160,43 @@ pub fn far_ground(far: &FarLand, near: &(dyn Fn(Vec2) -> f32 + Sync), seam: &Sea
     // metre a cell out, so the ways out there are never covered.
     let sink = |p: Vec2| 0.08 + 0.42 * smoothstep(half, half + seam.cell(), p.x.abs().max(p.y.abs()));
     let height = |p: Vec2| near(p) + far.extra(p);
-    let shaded = |p: Vec2| height(p) - sink(p);
+    // [r4-edge-bridges] Within a cell or so of the water the ground runs
+    // through the waterline linearly in the distance to it, so the shore
+    // the water sheet draws on these coarse cells follows the true shore.
+    // With the banks' step (a flat bed, a flat strip a metre above the
+    // water) the waterline fell at the same fraction of every cell side
+    // and ran along the grid: a staircase of straight water borders past
+    // the map's edge (Harvey's flag "weird straight borders on the water").
+    let shore = |p: Vec2, cell: f32| -> f32 {
+        let h = height(p);
+        // Linear in the distance within a cell and a half of the water (so
+        // a cell side, even across, from one side of the shore to the
+        // other crosses the waterline where the shore is), eased back
+        // into the ground over as far again.
+        let lin = cell * 1.5;
+        let band = lin * 2.0;
+        let d = far.water_distance(p);
+        if d.abs() >= band {
+            return h;
+        }
+        // Not on the first ring, the map's own cells, where the far ground
+        // meets the map's ground (whose 8 m cells draw the shore well).
+        let reach = smoothstep(half + seam.cell(), half + 5.0 * seam.cell(), p.x.abs().max(p.y.abs()));
+        if reach <= 0.0 {
+            return h;
+        }
+        // (The ground is drawn `sink` under its height: the line is drawn
+        // through the water's level.)
+        let line = WATER_LEVEL + sink(p) + BANK_HEIGHT * d / lin;
+        let soft = line + (h - line) * smoothstep(lin, band, d.abs());
+        h + (soft - h) * reach
+    };
     let sample = |p: Vec2, cell: f32| -> Sample {
         if let Some(s) = seam.get(p) {
             return s;
         }
-        let h = height(p);
+        let shaded = |q: Vec2| shore(q, cell) - sink(q);
+        let h = shore(p, cell);
         let w = FarLand::blend(p);
         let v_fine = fine.get([p.x as f64 * 0.02, p.y as f64 * 0.02]) as f32 * 0.5 + 0.5;
         let v_far = coarse.get([p.x as f64 * 0.004, p.y as f64 * 0.004]) as f32 * 0.5 + 0.5;
@@ -220,7 +251,8 @@ pub fn far_water(far: &FarLand, palette: &Palette) -> [MeshData; 4] {
         let t = ((-d) / 25.0).clamp(0.0, 1.0);
         let reach = look.sea_ice * (0.5 + 0.9 * (crack.get([p.x as f64 * 0.004, p.y as f64 * 0.004]) as f32 * 0.5 + 0.5));
         let (rgb, a) = match look.ice {
-            Some(ice) if d < 0.0 && d > -reach => {
+            // [r4-edge-bridges] The sea's ice only: rivers keep running.
+            Some(ice) if d < 0.0 && d > -reach && far.is_sea(p) => {
                 let v = crack.get([p.x as f64 * 0.03, p.y as f64 * 0.03]) as f32;
                 (mul(ice, 0.85 + 0.3 * v.abs() + 0.15 * (1.0 - t)), 0.97)
             }
