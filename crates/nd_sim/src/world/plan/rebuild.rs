@@ -319,7 +319,9 @@ impl World {
         let mut held: Vec<bool> = live.iter().map(|c| self.crosswalks.rules.iter().any(|r| matches(r.at, r.dir, c))).collect();
         let mut moved = false;
         for r in &mut self.crosswalks.rules {
-            if live.iter().any(|c| matches(r.at, r.dir, c)) {
+            // [r4-edge-bridges] A rule belonging to a junction follows that
+            // junction (`fit_crossing_rules`), not the nearest crossing.
+            if r.anchor.is_some() || live.iter().any(|c| matches(r.at, r.dir, c)) {
                 continue;
             }
             let best = live

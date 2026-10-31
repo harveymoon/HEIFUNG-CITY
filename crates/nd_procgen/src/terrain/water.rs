@@ -27,7 +27,10 @@ pub fn build_water(world: &World, palette: &Palette) -> MeshData {
     let far = crate::horizon::FarLand::new(land);
     let inside = |p: Vec2| p.x.abs() <= edge && p.y.abs() <= edge;
     let frozen = |p: Vec2, d: f32| -> bool {
-        let sea = if inside(p) { land.sea_now().is_some_and(|s| s.contains(p)) } else { land.sea.is_some() };
+        // [r4-edge-bridges] Past the map only the sea freezes, as on it: a
+        // river running off the map stayed open to the edge and froze
+        // over in a straight line past it.
+        let sea = if inside(p) { land.sea_now().is_some_and(|s| s.contains(p)) } else { far.is_sea(p) };
         look.ice.is_some() && (land.lakes.iter().any(|l| l.center.distance(p) < 400.0 && nd_sim::geom::point_in_polygon(p, &l.outline)) || (d > -look.sea_ice * (0.5 + 0.9 * (crack.get([p.x as f64 * 0.004, p.y as f64 * 0.004]) as f32 * 0.5 + 0.5)) && sea))
     };
     let wet = |p: Vec2| -> Option<f32> {

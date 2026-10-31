@@ -72,6 +72,18 @@ fn path_trim_toasts(sim: Res<Sim>, mut flags: ResMut<UiFlags>) {
                 format!("The {} a path was joined to is gone: the path is cut back to its last point.", grounds.label())
             };
         }
+        // [r4-edge-bridges] A footbridge (or push button) over a junction's
+        // leg goes with the leg; the junction's others stay.
+        if let nd_sim::SimEvent::CrossingRuleRemoved { upgrade, street, .. } = e {
+            use nd_sim::junctions::CrossingUpgrade;
+            let what = match upgrade {
+                CrossingUpgrade::Footbridge => "footbridge",
+                CrossingUpgrade::Button => "push-button crossing",
+                _ => "crossing setting",
+            };
+            let over = if street.is_empty() { "the street it crossed".to_string() } else { street.clone() };
+            flags.message = format!("The {what} over {over} was taken down: that street no longer meets the junction.");
+        }
     }
 }
 

@@ -128,6 +128,9 @@ impl World {
     /// `settle_path_links`.
     pub(super) fn build_walk_graph(&mut self) {
         self.walk = crate::walk::WalkGraph::build(&self.roads, &self.lots, &self.land_value, self.walk.version + 1);
+        // [r4-edge-bridges] Footbridges follow their junction (moved, or its
+        // legs edited) onto its crossings as laid now.
+        self.fit_crossing_rules();
         self.walk.apply_upgrades(&self.crosswalks.rules, &self.roads);
         // [r4-crossings] Crossings beside a footbridge or an underpass cost
         // more, so walkers go over or under.

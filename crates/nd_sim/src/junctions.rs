@@ -10,6 +10,11 @@
 //! junction or crosswalk is gone does nothing; it comes back to life if
 //! the same junction is drawn again.
 //!
+//! [r4-edge-bridges] A crossing rule at a junction also belongs to that
+//! junction (`CrossingAnchor`): the roads of the plan meeting there and
+//! the leg it crosses. Moving the junction, or editing its legs, carries
+//! it along; deleting the leg takes it away (`World::fit_crossing_rules`).
+//!
 //! Lane permissions per lane are the player's lane arrows
 //! (`traffic::LaneUseRule`), set from the editor as well.
 
@@ -195,8 +200,30 @@ impl CrossingUpgrade {
     }
 }
 
+/// [r4-edge-bridges] The junction a crossing rule belongs to, as last
+/// fitted: where it was, the plan's roads meeting there, the road of the
+/// leg crossed and the direction that leg leaves the junction in. The
+/// rule follows the junction these roads make wherever it is moved.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CrossingAnchor {
+    /// The junction's middle when last fitted.
+    pub junction: Vec2,
+    /// The plan's roads (gestures) meeting at the junction.
+    #[serde(default)]
+    pub roads: Vec<crate::plan::GestureId>,
+    /// The road the crossed leg is part of.
+    #[serde(default)]
+    pub leg: Option<crate::plan::GestureId>,
+    /// Unit direction the crossed leg leaves the junction in.
+    #[serde(default)]
+    pub leg_dir: Vec2,
+    /// The crossed street's name (for the message when it goes).
+    #[serde(default)]
+    pub street: String,
+}
+
 /// An upgrade on one crosswalk.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CrossingRule {
     /// The crossing's middle, on the street's centre line.
     pub at: Vec2,
@@ -208,6 +235,10 @@ pub struct CrossingRule {
     /// footbridge replaces its crosswalk.
     #[serde(default)]
     pub keep_crosswalk: bool,
+    /// [r4-edge-bridges] The junction it belongs to (None: a lone zebra's,
+    /// or one not fitted yet; a save from before fits it on load).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<CrossingAnchor>,
 }
 
 /// Every crosswalk upgrade in the city.
@@ -226,7 +257,7 @@ impl Crosswalks {
     pub fn set(&mut self, at: Vec2, dir: Vec2, upgrade: CrossingUpgrade) {
         self.rules.retain(|r| !(r.at.distance(at) < 2.0 && r.dir.dot(dir).abs() > 0.9));
         if upgrade != CrossingUpgrade::None {
-            self.rules.push(CrossingRule { at, dir, upgrade, keep_crosswalk: false });
+            self.rules.push(CrossingRule { at, dir, upgrade, keep_crosswalk: false, anchor: None });
         }
     }
 

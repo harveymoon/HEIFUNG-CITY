@@ -260,3 +260,68 @@ fn towns_stand_where_the_ways_lead() {
         }
     }
 }
+
+/// [r4-edge-bridges] Harvey's flag "weird straight borders on the water":
+/// past the map the far ground's coarse cells drew the shore as a
+/// staircase along the grid. Where the far ground crosses the waterline
+/// now it is on the shore: every crossing on a cell side lies within a few
+/// metres of where the far land puts the water's edge.
+#[test]
+fn the_far_waterline_follows_the_shore() {
+    let pal = Palette::default();
+    for (preset, seed) in [(LandscapePreset::RiverValley, 7), (LandscapePreset::Delta, 3), (LandscapePreset::Coast, 3), (LandscapePreset::Islands, 3)] {
+        // (Not the plains: their streams are narrower than these cells.)
+        let w = world(preset, seed, Climate::Temperate);
+        let far = FarLand::new(&w.landscape);
+        let g = build(&w, &pal);
+        let (mut n, mut off, mut worst) = (0usize, 0usize, 0.0f32);
+        for m in &g.ground {
+            for t in m.indices.chunks(3) {
+                for (i, j) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                    let (a, b) = (m.positions[i as usize], m.positions[j as usize]);
+                    let (pa, pb) = (Vec2::new(a[0], a[2]), Vec2::new(b[0], b[2]));
+                    let r = pa.x.abs().max(pa.y.abs()).min(pb.x.abs().max(pb.y.abs()));
+                    // Past the first rings, out to where the cells (64 m and
+                    // more) are wider than a river and the fog thickens.
+                    if r < LAND_HALF + 48.0 || r > 3200.0 || (a[1] - WATER_LEVEL).signum() == (b[1] - WATER_LEVEL).signum() {
+                        continue;
+                    }
+                    let q = pa.lerp(pb, (WATER_LEVEL - a[1]) / (b[1] - a[1]));
+                    let d = far.water_distance(q).abs();
+                    n += 1;
+                    off += (d > 6.0) as usize;
+                    worst = worst.max(d);
+                }
+            }
+        }
+        if n == 0 {
+            continue;
+        }
+        // (A few where a stream not much wider than a cell runs.)
+        assert!(off * 20 <= n, "{preset:?}: {off} of {n} waterline crossings more than 6 m off the shore (worst {worst:.1} m)");
+    }
+}
+
+/// [r4-edge-bridges] Past the map only the sea freezes, as on the map: an
+/// Arctic river ran open to the edge and froze over in a straight line
+/// 400 m past it, where the fine sheet gave way to the far water.
+#[test]
+fn an_arctic_river_runs_open_past_the_map() {
+    let pal = Palette::default();
+    let ice = |c: &[f32; 4]| (c[3] - 0.97).abs() < 1e-3;
+    let w = world(LandscapePreset::RiverValley, 7, Climate::Arctic);
+    let far = FarLand::new(&w.landscape);
+    let fine = build_water(&w, &pal);
+    let rings = far_water(&far, &pal);
+    let outside = |p: &[f32; 3]| p[0].abs().max(p[2].abs()) > LAND_HALF;
+    let frozen = fine.positions.iter().zip(&fine.colors).filter(|(p, c)| outside(p) && ice(c)).count() + rings.iter().map(|m| m.colors.iter().filter(|c| ice(c)).count()).sum::<usize>();
+    assert_eq!(frozen, 0, "no ice on a river past the map");
+    // A coast's sea still freezes along its shore, on the map and past it.
+    let w = world(LandscapePreset::Coast, 7, Climate::Arctic);
+    let far = FarLand::new(&w.landscape);
+    let fine = build_water(&w, &pal);
+    let rings = far_water(&far, &pal);
+    let inside_ice = fine.positions.iter().zip(&fine.colors).filter(|(p, c)| !outside(p) && ice(c)).count();
+    let past_ice = fine.positions.iter().zip(&fine.colors).filter(|(p, c)| outside(p) && ice(c)).count() + rings.iter().map(|m| m.colors.iter().filter(|c| ice(c)).count()).sum::<usize>();
+    assert!(inside_ice > 100 && past_ice > 100, "sea ice on the map {inside_ice} and past it {past_ice}");
+}

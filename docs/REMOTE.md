@@ -973,9 +973,17 @@ Reply: `intersection` {`at`, `junction` (false for a lone crosswalk), `node`, `r
 `approaches` [{index, segment, street, dir (the way it leaves the junction), from, lanes, offered,
 set_by_player, left_forbidden, left_possible, queued, lane_ends [{end, dir, moves [{move, allowed}]}]}], `phases` [{index, approaches, green_s,
 running}], `crossings` [{index, mid, ends, upgrade, signalised, kind, button_light, footbridge
-{walkway, stair_feet, width}, crosswalk_kept, crosswalk_removed, ramp, shut}], `footbridges` (in the city), `button_presses_total`}, `done` (what
+{walkway, stair_feet, width}, crosswalk_kept, crosswalk_removed, ramp, shut, belongs_to}], `footbridges` (in the city), `button_presses_total`}, `done` (what
 was changed) and `editor_open`. Everything is saved with the city (`Traffic::junction_rules`,
 `World::crosswalks`, serde defaults) and found again by position after the roads are rebuilt.
+[r4-edge-bridges] A crossing upgrade at a junction (footbridge, push button, removed crosswalk)
+belongs to that junction: `belongs_to` {`junction` [x,y], `streets` (the names meeting there),
+`crosses` (the street it is over)}, null on a lone zebra. Moving the junction with the Edit tool
+(`tool {edit_drag}`) or editing its legs carries it onto the junction's crossing over the same
+leg (stairs and span laid again); deleting that leg removes it (the event log gets
+`CrossingRuleRemoved` {`junction`, `upgrade`, `street`} and the game a toast). An older save's
+footbridges are attached to their junction on load (one left a few metres off every crossing by a
+junction moved before this goes to the junction crossing it clearly belongs to, within 15 m).
 
 ```json
 {"cmd": "intersection", "at": [209, -149], "greens": [25, 14], "left_arrow": "always", "no_left": [2]}

@@ -37,6 +37,8 @@ pub fn view_json(w: &World, v: &IntersectionView) -> Value {
                 "kind": format!("{:?}", c.kind).to_lowercase(), "button_light": c.light.map(|l| l.label()),
                 "footbridge": c.footbridge.map(|(top, foot, width)| json!({ "walkway": [v2(top[0]), v2(top[1])], "stair_feet": [v2(foot[0]), v2(foot[1])], "width": round(width) })),
                 "crosswalk_kept": c.kept, "crosswalk_removed": c.closed, "ramp": c.ramp, "shut": c.shut,
+                // [r4-edge-bridges] The junction its upgrade belongs to (it follows the junction when moved).
+                "belongs_to": c.belongs_to.as_ref().map(|(at, street)| json!({ "junction": v2(*at), "streets": w.junction_streets(*at), "crosses": street })),
             })
         })
         .collect();
