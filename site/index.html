@@ -99,7 +99,7 @@
       </figure>
       <div>
         <h3>Up and down</h3>
-        <p>Raise or lower a road in 2 m steps from 20 m underground to 24 m up. High enough and it stands on pillars as a viaduct that can span over buildings; deep enough and it is a bored tunnel with portals and vent heads; in between it runs in a cutting with retaining walls. Underpasses appear where roads cross.</p>
+        <p>Raise or lower a road in 2 m steps from 20 m underground to 24 m up. High enough and it stands on pillars as a viaduct that can span over buildings; deep enough and it is a bored tunnel with portals and vent heads; in between it runs in a cutting with retaining walls. Underpasses appear where roads cross. Under a raised deck the city moves in: stalls, workshops and parking bays fill the undercroft, and low buildings fit beneath it. Footbridges climb by spiral or switchback stairs, and hillside lots step down the slope.</p>
       </div>
     </article>
 
@@ -115,7 +115,7 @@
           <li>Zebra crossings, waits at the lights, jaywalkers and near misses.</li>
           <li>Bikes for most of the poor, cars for the well-off, all by class.</li>
           <li>Kerb parking with a two-hour limit and residents' permits, car parks that open where drivers circle, wardens, tickets and tow trucks.</li>
-        </ul>
+            </ul>
       </div>
     </article>
   </div>
@@ -136,7 +136,7 @@
           <li><b>Buses</b> on loops of kerbside stops, run from depots.</li>
           <li><b>Metro</b> drawn station to station, lines that loop.</li>
           <li><b>Rail</b>: a trunk line, branches you lay, stations, freight yards whose wagons really carry the goods, level crossings, and one Central Station per city.</li>
-          <li><b>Ferries</b> to towns off the map, freighters up the river, fishing fleets and marinas.</li>
+          <li><b>Ferries</b> to island towns reached only by boat and to towns off the map, freighters up the river, fishing fleets and marinas.</li>
           <li><b>Air</b>: drone pads, vertiports and skyports for eVTOL air taxis, air ambulances and a police helicopter.</li>
           <li><b>Taxis</b> run by companies that residents found when demand is there.</li>
           <li><b>Timetables</b> for every line: service hours, rush hours and night service, with a day timeline of who boarded and who was left waiting.</li>
@@ -168,7 +168,8 @@
           <li>Industry sub-zones for farming, oil, refining and more; dirty industry poisons the ground.</li>
           <li>Land value on a 32 m grid, three tiers of homes, rents, wages, classes and displacement.</li>
           <li>A land market: developers buy out low buildings, firms expand next door, towers rise with demand into a skyline league of supertalls and megatalls.</li>
-          <li>Up to four fictional mega-corps with their own logos and HQ towers; taxes per line and an itemised ledger.</li>
+          <li>Up to four fictional mega-corps with their own logos and HQ towers; click one of their buildings and arcs reach out from the HQ to everything they own. Taxes per line and an itemised ledger.</li>
+          <li>Mega-blocks: in a big enough city a mega-corp may raise a whole self-contained block of homes, shops and work.</li>
           <li>When the city gets unequal enough, fictional billionaires arrive, buy up plots for mansions, and drive in convoys.</li>
         </ul>
       </div>
@@ -181,7 +182,7 @@
       </figure>
       <div>
         <h3>Power, services and emergencies</h3>
-        <p>Coal, solar, wind, nuclear, hydro with a dam, tidal and geothermal plants, batteries that trade on time-of-use prices, and brownouts that hit the cheap districts first. Police, fire, health, schools and 911 dispatch in three tiers: fires spread from building to building, crimes and illness happen, a dispatcher sends the nearest unit and you can follow it with its lights on. Parks, tourism, hotels and ten landmark attractions round it out.</p>
+        <p>Coal, solar, wind, nuclear, hydro with a dam, tidal and geothermal plants, batteries that trade on time-of-use prices, and brownouts that hit the cheap districts first. Police, fire, health, schools and 911 dispatch in three tiers: fires spread from building to building, crimes and illness happen, a dispatcher sends the nearest unit and you can follow it with its lights on. Trash has to go somewhere: depots send their trucks to landfills, incinerators that burn it for power, recycling plants and transfer stations, and a Trashy streets view shows where it piles up. Parks, tourism, hotels and ten landmark attractions round it out.</p>
       </div>
     </article>
   </div>
@@ -202,6 +203,7 @@
           <li>Each person keeps a memory stream, moods and concerns, and a book of favourite places and ones they never go back to.</li>
           <li>Friends, partners, rivals and enemies; bands, clubs, street-art crews and start-ups that put on gigs, paint murals and petition the council, and protest when ignored.</li>
           <li>Speech bubbles in the street, follow-cam behind anyone, and their own point of view.</li>
+          <li><b>Talk</b> to anyone you click. A built-in stand-in answers without a model; plug in a key for real conversation.</li>
           <li>A rule-based mind runs everyone instantly; optional LLM voices write lines and diaries for the people you spotlight. The simulation never waits on a model.</li>
         </ul>
       </div>
@@ -263,7 +265,7 @@
     <div class="pillars">
       <div>
         <h3>Everything procedural</h3>
-        <p>Terrain, parcels, every building, the signage, the names of people, firms and districts, even the sound: UI cues and ambience that shifts with the zoom, the district and the weather are synthesised live. There are no hand-made models, textures or recorded samples in the game; data files drive the generators and reload while it runs.</p>
+        <p>Terrain, parcels, every building, the signage, the names of people, firms and districts, even the sound: UI cues, ambience that shifts with the zoom, the district and the weather, and spot sounds from trains, sirens, building sites and clubs are synthesised live. There are no hand-made models, textures or recorded samples in the game; data files drive the generators and reload while it runs.</p>
       </div>
       <div>
         <h3>A deterministic simulation</h3>
@@ -300,10 +302,11 @@ cargo run --example headless -p nd_sim -- 3</pre></li>
     <h3>Getting around</h3>
     <ul class="keys">
       <li><kbd>Right-drag</kbd> rotate, <kbd>Middle-drag</kbd> pan, <kbd>Wheel</kbd> zoom, <kbd>WASD</kbd> <kbd>Q</kbd> <kbd>E</kbd> move</li>
+      <li>No mouse? On a touchpad or over remote desktop: <kbd>Left-drag</kbd> pans in Inspect, <kbd>Alt</kbd>+drag rotates, pinch or <kbd>Ctrl</kbd>+scroll zooms, <kbd>,</kbd> <kbd>.</kbd> zoom from the keyboard, and an on-screen pad does the rest.</li>
       <li><kbd>1</kbd>–<kbd>9</kbd> tools: inspect, roads, zones, edit, bulldoze and more</li>
       <li><kbd>Ctrl</kbd>+<kbd>Enter</kbd> build the project, <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo</li>
       <li><kbd>Space</kbd> pause, <kbd>-</kbd> <kbd>=</kbd> speed from 1× to 1024×</li>
-      <li><kbd>Tab</kbd> walk the street, <kbd>J</kbd> City Data, <kbd>X</kbd> building viewer</li>
+      <li><kbd>Tab</kbd> walk the street, <kbd>Shift</kbd>+<kbd>Tab</kbd> drive, <kbd>J</kbd> City Data, <kbd>X</kbd> building viewer</li>
       <li><kbd>U</kbd> underground, <kbd>H</kbd> heat vision, <kbd>F10</kbd> photo mode</li>
     </ul>
   </div>
@@ -314,13 +317,11 @@ cargo run --example headless -p nd_sim -- 3</pre></li>
     <h2><span class="path">/roadmap</span>Where it goes next</h2>
     <ul class="road">
       <li><b>A big world</b>Seamless map edges, an expandable map, sister cities, and in the end a planet with real places on the globe.</li>
-      <li><b>Island towns</b>Islands reached only by ferry, with people who commute by boat.</li>
-      <li><b>A layered city</b>Life under and between raised roads: skywalks, markets under the flyovers, camps under the bridges.</li>
       <li><b>Underground first</b>Full metro stations with platforms, halls and escalators, then an undercity.</li>
       <li><b>Future-city looks</b>Holographic billboards, skyways and smog days.</li>
       <li><b>Drive mode</b>Take the wheel of a car in the traffic you built.</li>
-      <li><b>Talk to a citizen</b>Chat with anyone you click through the same optional model the committee uses.</li>
       <li><b>More ways to move</b>Cable cars, a suspended monorail, hover-bike couriers.</li>
+      <li><b>Music</b>Generative music under the city's sound.</li>
       <li><b>A weekly paper</b>The city's news written up every week, optionally by a model.</li>
     </ul>
   </div>
