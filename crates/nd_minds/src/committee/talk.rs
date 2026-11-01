@@ -447,11 +447,11 @@ pub fn mock_chat(who: &TalkCard, said: &str, seed: u64, first: bool) -> String {
         },
         Topic::Places => {
             let mut s = match who.favourites.first() {
-                Some(f) => format!("My spot is {f}."),
+                Some(f) => format!("My spot is {}.", bare(f)),
                 None => "Haven't found a favourite place yet.".into(),
             };
             if let Some(n) = who.never_again.first() {
-                s.push_str(&format!(" Never going back to {n}, though."));
+                s.push_str(&format!(" Never going back to {}, though.", bare(n)));
             }
             s
         }
@@ -474,6 +474,11 @@ pub fn mock_chat(who: &TalkCard, said: &str, seed: u64, first: bool) -> String {
         }
     };
     format!("{opener} {}", body.trim()).trim().to_string()
+}
+
+/// A place's name without the prompt's note ("Blue Corner (shop, 3 visits)").
+fn bare(s: &str) -> &str {
+    s.split(" (").next().unwrap_or(s)
 }
 
 fn capital(s: &str) -> String {
