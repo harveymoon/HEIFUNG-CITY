@@ -541,7 +541,7 @@ mod tests {
         assert_eq!((a.master, a.muted), (0.3, true));
         let d = crate::audio::AudioSettings::default();
         assert_eq!((a.ambience, a.ui, a.unfocused), (d.ambience, d.ui, d.unfocused));
-        let mine = crate::audio::AudioSettings { master: 0.55, ambience: 0.1, effects: 0.9, ui: 0.25, music: 0.0, muted: false, unfocused: crate::audio::Unfocused::Duck };
+        let mine = crate::audio::AudioSettings { master: 0.55, ambience: 0.1, effects: 0.9, ui: 0.25, music: 0.0, muted: false, unfocused: crate::audio::Unfocused::Duck, spots: crate::audio::SpotLevels { horns: 0.4, ..Default::default() } };
         let text = ron::ser::to_string_pretty(&Settings { audio: Some(mine), ..Default::default() }, Default::default()).unwrap();
         let back: Settings = ron::from_str(&text).unwrap();
         assert_eq!(back.audio, Some(mine));
