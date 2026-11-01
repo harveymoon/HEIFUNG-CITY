@@ -218,6 +218,32 @@ fn recycling_sells_what_it_recovers_and_sends_the_rest_on() {
     assert!((d.t_today[Dest::Road.index()] - residue).abs() < 0.01);
 }
 
+/// [r6-perfect-city] What a recycling plant cannot recover is burnt before
+/// it is tipped: with an incinerator and a landfill in town the residue goes
+/// to the furnace, and only its ash to the tip.
+#[test]
+fn recycling_residue_is_burnt_before_it_is_tipped() {
+    let (mut w, _, crew) = town_with_depot(36);
+    let tip = place(&mut w, ServiceKind::Landfill, Tier::Low, -450.0);
+    let burner = place(&mut w, ServiceKind::Incinerator, Tier::Mid, 450.0);
+    let plant = place(&mut w, ServiceKind::RecyclingPlant, Tier::Low, -150.0);
+    for (k, b) in [plant, burner, tip].into_iter().enumerate() {
+        let jobs = (w.buildings[b].jobs as usize).min(6);
+        staff(&mut w, b, &crew[k * 6..k * 6 + jobs]);
+    }
+    at_hour(&mut w, 10);
+    w.hourly_waste();
+    assert!(w.tip_at_site(plant, 8_000.0) > 7_900.0);
+    w.hourly_waste();
+    let d = &w.society.trash.disposal;
+    let s = &d.sites[&plant];
+    let residue = s.done_today_t - s.recovered_today_t;
+    assert!(residue > 0.0);
+    assert!(d.sites.get(&burner).is_some_and(|b| b.in_today_t >= residue - 0.01), "the residue went to the incinerator: {:?}", d.sites.get(&burner).map(|b| b.in_today_t));
+    assert!(d.sites.get(&tip).map_or(0.0, |t| t.in_today_t) < residue * 0.5, "not to the tip");
+    assert!(d.t_today[Dest::Road.index()] < 0.01, "nothing on the lorries");
+}
+
 #[test]
 fn a_transfer_station_ships_by_road_without_a_freight_yard() {
     let (mut w, _, crew) = town_with_depot(36);

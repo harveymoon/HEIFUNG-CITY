@@ -640,11 +640,23 @@ fn services(cx: &mut Ctx) {
     }
     // [r5-trash] Where the trash goes: a landfill out by the works, away
     // from downtown, and a recycling plant among the works.
+    // [r6-perfect-city] Sized for the grown city, not day 1: a city of
+    // ~20k makes ~60 t a day, which a mid recycling plant (28 t) and a
+    // landfill alone took as ~45 t a day of tipping, filling the biggest
+    // tip (6,500 t) in about five months. A big recycling plant sorts it
+    // first (70 t a day), a waste-to-energy plant downwind burns the
+    // residue (120 t, power on the grid), and the landfill takes the ash:
+    // years of room, and nothing left for the lorries once the starter
+    // contract ends.
     if !depots.is_empty() {
         let w3 = works.clone();
         cx.place("landfill", Placeable::Service(ServiceKind::Landfill, Tier::High), industrial, move |c, _| nearest(c, &w3) - c.distance(dt) * 0.25);
         let w4 = works.clone();
-        cx.place("recycling plant", Placeable::Service(ServiceKind::RecyclingPlant, Tier::Mid), industrial, move |c, _| nearest(c, &w4));
+        cx.place("recycling plant", Placeable::Service(ServiceKind::RecyclingPlant, Tier::High), industrial, move |c, _| nearest(c, &w4));
+        // In the works and as far downwind (east) as they go: its smoke
+        // and fallout blow out past the edge of town.
+        let w5 = works.clone();
+        cx.place("incinerator (waste-to-energy)", Placeable::Service(ServiceKind::Incinerator, Tier::High), industrial, move |c, _| nearest(c, &w5) - c.x * 0.3);
     }
     cx.place("monument", Placeable::Service(ServiceKind::Monument, Tier::High), not_park, |c, _| c.distance(dt));
     cx.place("stadium", Placeable::Service(ServiceKind::Stadium, Tier::High), not_park, move |c, _| c.distance(mt + Vec2::new(320.0, 140.0)));
