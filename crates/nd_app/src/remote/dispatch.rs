@@ -161,14 +161,15 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("note", "[memory] the process working set, peak and commit charge (MB), the renderer's mesh/material/image and entity counts, and the world's big counts"),
     ] },
     Cmd { name: "audio", aliases: &["sound"], effect: View, run: audio::audio, help: &[
-        ("get", "[sound] (or no fields) the sliders, mute, focus rule, sound card, bus gains, the beds' weights, levels and targets, what the camera hears, voices, audio-thread CPU %"),
-        ("set", "{master, ambience, effects, ui, music: 0..1, muted: bool, unfocused: mute|duck|keep}: any of them; saved in settings.ron"),
+        ("get", "[sound] (or no fields) the sliders, mute, focus rule, sound card, bus gains, the beds' weights, levels and targets, what the camera hears, the spot sounds held (kind, gain, distance, pan) and candidates near, voices, audio-thread CPU %"),
+        ("set", "{master, ambience, effects, ui, music: 0..1, muted: bool, unfocused: mute|duck|keep, spots: {transit, sirens, works, nightlife, horns, weather: 0..1}}: any of them; saved in settings.ron"),
         ("play", "a UI cue by name (click, tool_change, road_point, road_done, implement, building_placed, bulldoze, zone_paint, window_open, window_close, error, alert, speed_up, speed_down, pause, resume), rate limited"),
     ] },
     Cmd { name: "audio_capture", aliases: &[], effect: Files, run: audio::capture, help: &[
         ("path", "[sound] optional .wav (see files); default exports/wav/capture-<unix ms>.wav: what the camera hears now, rendered offline by the same engine"),
         ("seconds", "0.5..60, default 6"),
         ("as_set", "true: at the player's sliders (default: the default sliders, so captures compare)"),
+        ("spots", "false: the beds alone (default: with the spot sounds held now)"),
     ] },
     Cmd { name: "pause", aliases: &[], effect: Game, run: time::pause, help: &[
         ("paused", "bool, omitted toggles"),
@@ -1057,6 +1058,19 @@ mod dispatch_tests {
         let (code, _) = send(&mut app, json!({"cmd": "audio", "play": "kazoo"}));
         assert_eq!(code, 400);
         let (code, _) = send(&mut app, json!({"cmd": "sound", "play": "click", "set": {"muted": false}}));
+        assert_eq!(code, 200);
+        // [sound] The spot groups: set one, refuse nonsense, read the spots.
+        let (code, body) = send(&mut app, json!({"cmd": "audio", "set": {"spots": {"horns": 0.25}}}));
+        assert_eq!(code, 200, "{body}");
+        assert_eq!(body["settings"]["spots"]["horns"], json!(0.25f32));
+        assert_eq!(body["settings"]["spots"]["transit"], json!(1.0f32));
+        assert!(body["spots"]["held"].is_array() && body["spots"]["candidates"]["train"].is_u64(), "{body}");
+        assert_eq!(body["voices"]["spot_cap"].as_u64(), Some(nd_audio::engine::SPOT_VOICES as u64));
+        let (code, _) = send(&mut app, json!({"cmd": "audio", "set": {"spots": {"kazoos": 0.5}}}));
+        assert_eq!(code, 400);
+        let (code, _) = send(&mut app, json!({"cmd": "audio", "set": {"spots": {"horns": 1.5}}}));
+        assert_eq!(code, 400);
+        let (code, _) = send(&mut app, json!({"cmd": "audio", "set": {"spots": {"horns": 1.0}}}));
         assert_eq!(code, 200);
     }
 
