@@ -245,8 +245,8 @@ fn podium(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras, m: &MegaBlo
             // The grand entrance: a two-storey portal under a canopy, its
             // name on an LED band, lamps either side.
             let w = (face.len * 0.25).clamp(6.0, 18.0);
-            face.decal(g, f, Glass, 0.0, halls_top * 0.5, -0.74, w, halls_top * 0.9, mul(pal.glass_dark, 0.8));
-            window_light(g, c, |g| face.decal(g, f, Glow, 0.0, halls_top * 0.45, -0.72, w * 0.9, halls_top * 0.7, mul(pal.window_warm, 0.6)));
+            face.decal(g, f, Glass, 0.0, halls_top * 0.5, -0.70, w, halls_top * 0.9, mul(pal.glass_dark, 0.8));
+            window_light(g, c, |g| face.decal(g, f, Glow, 0.0, halls_top * 0.45, -0.68, w * 0.9, halls_top * 0.7, mul(pal.window_warm, 0.6)));
             if c.reach_out(face) > 1.5 {
                 canopy(g, c, face, 0.0, halls_top - 0.6, w + 3.0, 2.4, mul(pal.steel, 0.6));
             }

@@ -76,8 +76,8 @@ pub fn group(s: Style) -> &'static str {
         Farmstead | OilField | Refinery | ContainerYard | FishProcessing | TruckLot | Smelter | Feedlot | ChemicalWorks | CowFarm | ChickenFarm | Slaughterhouse | StripMine | FishGutting | FishStickFactory | TrashCompany => "Industry trades",
         Mechanic | CarDealer | BikeShop | FishMarket | SeafoodRestaurant | GolfRange | ArtStudio | Gallery => "Shops and trades",
         Shacks | TrailerPark | Huts | Suburb | McMansion | Mansion | MegaHotel | Museum => "Homes and estates",
-        Supertall => "League towers",
-        MegaBlock => "Mega-blocks",
+        // [megablocks] the corps' arcologies sit with the league towers
+        Supertall | MegaBlock => "League towers",
         BeachResort | WaterfrontHotel | PierRestaurant | BeachBar | BoatRental => "Waterfront",
         DomeHouse | SaucerHouse | PopsicleDome | TwinDomes | DomePods | CapsuleTower | SaucerStack | StiltTower | DomeHall | DomeCampus => "Capsule district",
         StripMall | Mall | MegaMall => "Malls",
