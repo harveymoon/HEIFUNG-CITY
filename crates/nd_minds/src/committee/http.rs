@@ -175,12 +175,15 @@ pub fn call(agent: &ureq::Agent, flavor: &Flavor, req: &TurnRequest) -> Result<T
     let system = system_prompt(req);
     let user = user_prompt(req);
     let wants_json = req.task.wants_json();
+    let chat = matches!(req.task, Task::Chat { .. });
     match flavor {
         Flavor::OpenAi { base_url, model, max_tokens } => {
+            // [talk] A chat line has its own, smaller cap.
+            let cap = if chat { req.max_tokens } else { (*max_tokens).max(req.max_tokens) };
             let body = json!({
                 "model": model,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                "max_tokens": (*max_tokens).max(req.max_tokens),
+                "max_tokens": cap,
                 "temperature": 0.8,
                 "stream": false,
             });
@@ -192,7 +195,8 @@ pub fn call(agent: &ureq::Agent, flavor: &Flavor, req: &TurnRequest) -> Result<T
         Flavor::Claude { url, model, key, effort, fallbacks, max_tokens } => {
             let mut body = json!({
                 "model": model,
-                "max_tokens": max_tokens,
+                // [talk] A chat line has its own, smaller cap (thinking included).
+                "max_tokens": if chat { req.max_tokens } else { *max_tokens },
                 "system": system,
                 "messages": [{"role": "user", "content": user}],
             });

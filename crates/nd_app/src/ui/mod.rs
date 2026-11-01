@@ -22,6 +22,8 @@ mod parks;
 pub mod committee;
 /// [voices] A citizen's diary, on demand.
 pub mod diary;
+/// [talk] Chat with the selected citizen (in the person pane).
+pub mod talk;
 /// [concerns] City Data's People, Complaints and concerns.
 mod concerns;
 /// [city-data] The full-screen City Data view: tabs, sub-tabs, pages.
@@ -262,7 +264,7 @@ pub(crate) fn side_panel(
     cursor: Res<Cursor>,
     cams: Query<&OrbitCamera>,
     assets: Res<GameAssets>,
-    (stats, diagnostics, thumbs): (Res<RenderStats>, Res<DiagnosticsStore>, Res<Thumbs>),
+    (stats, diagnostics, thumbs, mut committee): (Res<RenderStats>, Res<DiagnosticsStore>, Res<Thumbs>, Option<ResMut<crate::committee::CommitteeRt>>),
     (mut follow, mut fly, mut highlight, mut nav, nav_input): (ResMut<CameraFollow>, ResMut<CameraFly>, ResMut<crate::build_highlight::BuildHighlight>, ResMut<crate::nav::NavSettings>, Res<crate::nav::NavInput>),
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
@@ -350,7 +352,7 @@ pub(crate) fn side_panel(
         fly.to(FlyGoal::Point(p), Some(d), Some(0.7));
     }
 
-    person::pane(ctx, &mut sim, &mut tools, &mut selection, &mut flags, content, (&mut follow, &mut fly, &mut mode));
+    person::pane(ctx, &mut sim, &mut tools, &mut selection, &mut flags, content, (&mut follow, &mut fly, &mut mode), committee.as_deref_mut());
     if data_rect.is_none() {
         follow::banner(ctx, &sim, &mut follow, &mut fly, &mut mode, &mut selection, content);
     }

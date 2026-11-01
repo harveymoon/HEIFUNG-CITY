@@ -227,6 +227,37 @@ Both are display only: kept in the app (`Voices`, not the save), never read by t
 failed or slow request leaves the template (the courier's fallback). Spotlit citizens' thoughts
 still go through the separate `HybridMind` path.
 
+### Talk to a citizen
+
+The person pane's **Talk** button opens a chat with the selected citizen inside the pane
+(`nd_minds::committee::talk`, `ui/talk.rs`, remote `talk`). Each line the mayor sends is one
+request (`Task::Chat`) through the committee's backend and settings: the stand-in offline, a local
+model or Claude when switched on. The citizen answers in character, 1 to 3 sentences, from a
+`TalkCard` built from their real state: name, age, life stage, class, personality, mood and
+thought, home, work and household, income, rent, savings and rent stress, hunger, what they are
+doing now, how they get to work and why (`World::commute_choice`: the options `mode_options`
+weighs, cheapest first, and why no bus runs for the trip), how each mode has felt lately, their
+last ten memories, favourite and never-again places, people they know and faces at their regular
+spots. The prompt says they know only that, that the city and everyone in it are fictional, and
+never to name real people, companies, brands or places. Earlier lines of the chat (up to eight)
+go in the prompt.
+
+- **Async**: a model's reply comes on a later frame ("typing..." meanwhile); one line in flight
+  per person, three chats at most. The stand-in answers at once from the same card (by the topic
+  of the line: getting around, money, work, food, people, places, today, mood).
+- **Cost**: replies are capped (`talk_max_tokens`, default 600 including Claude's thinking, low
+  effort) and counted against a daily budget (`talk_daily_budget`, default 60 model messages a UTC
+  day, kept in `talk_usage.ron`); past it, or with no key, the stand-in answers and the pane says
+  so. With Claude Sonnet 5.5 a line costs well under a cent (about 1,500 tokens in, a few hundred
+  out).
+- **Saved**: the chat is in `World::talks` (`nd_sim::talk`): 16 lines per person, 40 people, 500
+  characters a line; nothing in the sim reads it.
+- **Memory**: optionally ("Leave a memory", `talk_memories`), a chat leaves one memory a game day
+  in the citizen: "Talked to the mayor about getting around." That is the only way a chat changes
+  the sim, and it uses no RNG.
+- **Secrets**: the key is never in a prompt, a reply, the save, the API output or an error; a
+  line holding something key-shaped (or the configured key) is refused and not kept.
+
 ### Ask the committee
 
 The Committee window's **Ask** tab is a chat room between meetings (`nd_minds::committee::questions`,

@@ -362,3 +362,38 @@ pub fn voices(cmd: &Value, sim: &Sim, rt: &CommitteeRt) -> Result<Value, String>
         .collect();
     Ok(json!({ "backend": rt.courier.backend_name(), "lines_written": rt.voices.lines_written, "diaries_written": rt.voices.diaries_written, "lines": lines }))
 }
+
+/// [talk] `talk {citizen, text?, memory?, clear?}`: the mayor says `text`
+/// to a citizen and reads the chat back. Offline (the stand-in) the reply
+/// is there at once; through a model it comes later (`typing`: call again
+/// without `text` to read it). Never takes or returns a key.
+pub fn talk(cmd: &Value, sim: &mut Sim, rt: &mut CommitteeRt) -> Result<Value, String> {
+    use nd_minds::committee::talk::Sent;
+    let id: nd_sim::CitizenId = key_from(field(cmd, "citizen").ok_or("missing citizen id")?)?;
+    if !sim.world.citizens.contains_key(id) {
+        return Err("no such citizen".into());
+    }
+    if opt_bool(cmd, "clear")?.unwrap_or(false) {
+        sim.world.talks.clear(id);
+    }
+    if let Some(open) = opt_bool(cmd, "open")? {
+        rt.talk_open_request = Some(open);
+    }
+    let mut sent = None;
+    if let Some(text) = opt_str(cmd, "text")? {
+        let memory = opt_bool(cmd, "memory")?.unwrap_or(rt.settings.talk_memories);
+        sent = Some(rt.talk(&mut sim.world, id, text, memory)?);
+    }
+    let typing = rt.talker.typing(id);
+    let lines = sim.world.talks.lines(id);
+    let reply = sent.filter(|_| !typing).and_then(|_| lines.last().filter(|l| !l.mayor)).map(|l| l.text.clone());
+    let used = rt.talker.used_today();
+    Ok(json!({
+        "citizen": key_str(id), "name": sim.world.citizens[id].name,
+        "sent": sent.map(|s| match s { Sent::Model => "model", Sent::StandIn => "stand_in", Sent::OverBudget => "over_budget" }),
+        "reply": reply, "typing": typing,
+        "lines": lines.iter().map(|l| json!({ "day": l.tick / 1440 + 1, "tick": l.tick, "who": if l.mayor { "mayor" } else { "citizen" }, "text": l.text, "stand_in": l.stand_in })).collect::<Vec<_>>(),
+        "status": rt.talk_status(), "backend": rt.courier.backend_name(),
+        "model_messages_today": used, "daily_budget": rt.settings.talk_daily_budget, "memories": rt.settings.talk_memories,
+    }))
+}

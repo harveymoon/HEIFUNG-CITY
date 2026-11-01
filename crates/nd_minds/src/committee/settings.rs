@@ -73,6 +73,15 @@ pub struct CommitteeSettings {
     pub max_tokens: u32,
     /// Seconds before a turn is given to the stand-in.
     pub timeout_s: u64,
+    /// [talk] Reply cap of one chat line with a citizen (Claude's thinking
+    /// counts against it).
+    pub talk_max_tokens: u32,
+    /// [talk] Chat lines a day (UTC) sent to a model; past it the
+    /// stand-in answers. 0: chats never use the model.
+    pub talk_daily_budget: u32,
+    /// [talk] A chat leaves a memory in the citizen ("Talked to the mayor
+    /// about ..."), one a game day.
+    pub talk_memories: bool,
 }
 
 impl Default for CommitteeSettings {
@@ -88,6 +97,9 @@ impl Default for CommitteeSettings {
             claude_fallbacks: true,
             max_tokens: 400,
             timeout_s: 90,
+            talk_max_tokens: 600,
+            talk_daily_budget: 60,
+            talk_memories: true,
         }
     }
 }
@@ -106,6 +118,9 @@ impl std::fmt::Debug for CommitteeSettings {
             .field("claude_fallbacks", &self.claude_fallbacks)
             .field("max_tokens", &self.max_tokens)
             .field("timeout_s", &self.timeout_s)
+            .field("talk_max_tokens", &self.talk_max_tokens)
+            .field("talk_daily_budget", &self.talk_daily_budget)
+            .field("talk_memories", &self.talk_memories)
             .finish()
     }
 }

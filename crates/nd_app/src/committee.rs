@@ -50,6 +50,11 @@ pub struct CommitteeRt {
     pub shown_site: Option<(u32, f64)>,
     /// [ask-committee] The mayor's questions in flight.
     pub asker: nd_minds::committee::questions::Asker,
+    /// [talk] The mayor's chats with citizens in flight (the lines are in
+    /// `World::talks`), and today's model budget.
+    pub talker: nd_minds::committee::talk::Talker,
+    /// [talk] Open (or close) the person pane's Talk (the remote `talk {open}`).
+    pub talk_open_request: Option<bool>,
 }
 
 /// [fix/roads-tools] How long a project's Show outlines its site, seconds.
@@ -76,6 +81,8 @@ impl Default for CommitteeRt {
             remote_may_switch: false,
             shown_site: None,
             asker: Default::default(),
+            talker: nd_minds::committee::talk::Talker::with_usage_file(nd_minds::committee::talk::USAGE_FILE.into()),
+            talk_open_request: None,
         };
         rt.apply_settings();
         rt
@@ -117,8 +124,30 @@ impl CommitteeRt {
     /// Hand a reply to whoever asked for it: the meeting, a question, or a
     /// citizen's voice (none of them: an answer to something forgotten).
     pub fn hand_on(&mut self, w: &mut nd_sim::World, d: &nd_minds::committee::Delivered) {
-        if !self.driver.take(w, d) && !self.asker.take(w, d) {
+        if !self.driver.take(w, d) && !self.asker.take(w, d) && !self.talker.take(w, d) {
             self.voices.take(d);
+        }
+    }
+
+    /// [talk] The mayor says `text` to citizen `id` (the person pane, the
+    /// remote `talk`). Offline the stand-in's reply is in the chat at once.
+    pub fn talk(&mut self, w: &mut nd_sim::World, id: nd_sim::CitizenId, text: &str, memory: bool) -> Result<nd_minds::committee::talk::Sent, String> {
+        self.talker.send(w, id, text, &mut self.courier, &self.settings, memory)
+    }
+
+    /// [talk] How the chat is answered now, for the pane and the API.
+    pub fn talk_status(&mut self) -> String {
+        let used = self.talker.used_today();
+        let budget = self.settings.talk_daily_budget;
+        if self.courier.is_mock() {
+            match &self.backend_error {
+                Some(e) => format!("Offline ({e}): the stand-in answers from their records"),
+                None => "Offline: the stand-in answers from their records (switch the committee to a model in its settings)".to_string(),
+            }
+        } else if used >= budget {
+            format!("Today's chat budget is spent ({used}/{budget}): the stand-in answers until tomorrow")
+        } else {
+            format!("Through {} · {used}/{budget} model messages today", self.courier.backend_name())
         }
     }
 
@@ -197,6 +226,7 @@ fn committee_tick(mut sim: ResMut<Sim>, mut rt: ResMut<CommitteeRt>, mut flags: 
         rt.driver.reset();
         rt.voices.reset();
         rt.asker.reset();
+        rt.talker.reset();
         rt.last_day = None;
         rt.paused_before = None;
         rt.shown = (0, 0);

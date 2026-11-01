@@ -112,6 +112,8 @@ pub mod society;
 /// [social] Ties between citizens, conversations, crews and clubs.
 pub mod social;
 pub mod survey;
+/// [talk] The mayor's chats with citizens, saved with the city.
+pub mod talk;
 /// [tourism] Visitors, attractions and hotels.
 pub mod tourism;
 /// [subway] Metro stations, lines and trains.
