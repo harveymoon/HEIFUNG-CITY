@@ -15,6 +15,8 @@ pub mod depth;
 pub mod footbridge;
 /// Stateless hashes and their salts.
 pub mod hash;
+// [r5-hillside] storeys stepping down the hill under a building
+pub mod hill_plinth;
 /// [p2-look] Holes cut through the ground (a strip mine's pit).
 pub mod holes;
 /// [horizon] The world past the map out to the horizon: far ground, water,

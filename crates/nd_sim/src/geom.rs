@@ -169,6 +169,25 @@ pub fn shared_boundary(a: &[Vec2], b: &[Vec2]) -> f32 {
     total
 }
 
+/// [r5-hillside] The part of polygon `poly` on the side of the line
+/// through `at` that `keep` points away from (where `(p - at) . keep <= 0`),
+/// Sutherland-Hodgman style; empty if none of it is.
+pub fn clip_half_plane(poly: &[Vec2], at: Vec2, keep: Vec2) -> Vec<Vec2> {
+    let n = poly.len();
+    let mut out = Vec::with_capacity(n + 2);
+    for k in 0..n {
+        let (a, b) = (poly[k], poly[(k + 1) % n]);
+        let (da, db) = ((a - at).dot(keep), (b - at).dot(keep));
+        if da <= 0.0 {
+            out.push(a);
+        }
+        if (da <= 0.0) != (db <= 0.0) && (da - db).abs() > 1e-6 {
+            out.push(a.lerp(b, da / (da - db)));
+        }
+    }
+    out
+}
+
 /// Axis-aligned bounds `(lo, hi)` of a point set. An empty set gives an
 /// inverted box (`lo` is `MAX`, `hi` is `MIN`), which overlaps nothing.
 pub fn bounds(pts: &[Vec2]) -> (Vec2, Vec2) {

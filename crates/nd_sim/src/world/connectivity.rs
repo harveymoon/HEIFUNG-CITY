@@ -92,6 +92,27 @@ impl StrandedArea {
     }
 }
 
+/// [ferry-islands] A walk network cut off from the main one that ferries
+/// join to it: not stranded, an island (`world/islands.rs`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Island {
+    /// Its walk component.
+    pub comp: u32,
+    /// Its ferry terminals, and the terminals on the main network they
+    /// sail to.
+    pub terminals: Vec<BuildingId>,
+    pub mainland: Vec<BuildingId>,
+    /// A car ferry runs (large terminals at both ends of a crossing).
+    pub car_ferry: bool,
+    pub center: Vec2,
+    pub lo: Vec2,
+    pub hi: Vec2,
+    pub lots: Vec<LotId>,
+    pub buildings: Vec<BuildingId>,
+    pub residents: u32,
+    pub workers: u32,
+}
+
 /// One trip that found no way at all.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FailedTrip {
@@ -149,6 +170,12 @@ pub struct Connectivity {
     pub walk_cut: std::collections::BTreeSet<LotId>,
     #[serde(skip)]
     pub road_cut: std::collections::BTreeSet<LotId>,
+    /// [ferry-islands] Islands reached by ferry (not stranded), and the
+    /// island each of their lots is on.
+    #[serde(skip)]
+    pub islands: Vec<Island>,
+    #[serde(skip)]
+    pub island_lots: HashMap<LotId, usize>,
     /// [pt-walk] Who is standing about because their last trip found no
     /// way, to which building and since when (for "doing").
     #[serde(skip)]
@@ -313,23 +340,50 @@ impl World {
             }
         }
         let drive_main = dcount.iter().max_by(|a, b| a.1.cmp(b.1).then(b.0.cmp(a.0))).map(|(c, _)| *c);
+        // [ferry-islands] Walk networks joined to the main one by ferry.
+        let mut islands = walk_main.map_or(Vec::new(), |m| self.find_islands(m, &walk_comps));
+        let island_comp = |cs: &Vec<u32>| islands.iter().position(|i| cs.contains(&i.comp));
+        let mut island_lots: HashMap<LotId, usize> = HashMap::new();
         // ── the areas.
         let mut groups: std::collections::BTreeMap<(u8, u32), Vec<(LotId, BuildingId)>> = Default::default();
         let mut walk_cut = std::collections::BTreeSet::new();
         let mut road_cut = std::collections::BTreeSet::new();
         for &(l, b) in &built {
             if let (Some(main), Some(cs)) = (walk_main, walk_comps.get(&l)) {
-                if !cs.contains(&main) {
+                let island = if cs.contains(&main) { None } else { island_comp(cs) };
+                if let Some(k) = island {
+                    island_lots.insert(l, k);
+                } else if !cs.contains(&main) {
                     walk_cut.insert(l);
                     groups.entry((0, *cs.iter().min().unwrap())).or_default().push((l, b));
                 }
             }
             if let (Some(main), Some(c)) = (drive_main, self.lots.get(l).and_then(drive_of)) {
-                if c != main {
+                // [ferry-islands] An island's own streets are reached by
+                // ferry too (a car ferry, or none: the inspector says which).
+                if c != main && !island_lots.contains_key(&l) {
                     road_cut.insert(l);
                     groups.entry((1, c)).or_default().push((l, b));
                 }
             }
+        }
+        // [ferry-islands] Each island's lots, buildings and people.
+        for (&l, &k) in &island_lots {
+            let i = &mut islands[k];
+            i.lots.push(l);
+            if let Some(b) = self.lots.get(l).and_then(|x| x.building).and_then(|b| self.buildings.get(b).map(|x| (b, x))) {
+                i.buildings.push(b.0);
+                i.residents += b.1.residents.len() as u32;
+                i.workers += b.1.workers.len() as u32;
+            }
+        }
+        for i in &mut islands {
+            i.lots.sort();
+            i.buildings.sort();
+            let pts: Vec<Vec2> = i.lots.iter().filter_map(|l| self.lots.get(*l).map(|x| x.center)).chain(i.terminals.iter().filter_map(|t| self.building_entrance(*t))).collect();
+            i.lo = pts.iter().fold(Vec2::splat(f32::INFINITY), |a, p| a.min(*p));
+            i.hi = pts.iter().fold(Vec2::splat(f32::NEG_INFINITY), |a, p| a.max(*p));
+            i.center = if pts.is_empty() { Vec2::ZERO } else { pts.iter().copied().sum::<Vec2>() / pts.len() as f32 };
         }
         let mut areas = Vec::new();
         for ((net, comp), members) in groups {
@@ -400,6 +454,8 @@ impl World {
         k.areas = areas;
         k.walk_cut = walk_cut;
         k.road_cut = road_cut;
+        k.islands = islands;
+        k.island_lots = island_lots;
     }
 
     /// The areas cut off from the main networks (as last computed).
@@ -418,7 +474,14 @@ impl World {
     /// The inspector's warning lines for a building's lot ("! not connected
     /// to the rest of the pedestrian grid").
     pub fn lot_link_warnings(&self, l: LotId) -> Vec<String> {
-        [Net::Walk, Net::Road].into_iter().filter(|&n| self.lot_cut_off(l, n)).map(Net::warning).collect()
+        let mut out: Vec<String> = [Net::Walk, Net::Road].into_iter().filter(|&n| self.lot_cut_off(l, n)).map(Net::warning).collect();
+        // [ferry-islands] On an island: how it is reached.
+        if let Some(i) = self.connectivity.island_lots.get(&l).and_then(|&k| self.connectivity.islands.get(k)) {
+            let to: Vec<String> = i.mainland.iter().filter_map(|b| self.buildings.get(*b).map(|x| x.name.clone())).collect();
+            let how = if i.car_ferry { "car ferry" } else { "passenger ferry" };
+            out.push(format!("~ on an island: no road or path to the rest of the city, reached by {how} from {}", to.join(", ")));
+        }
+        out
     }
 
     /// The walk-graph node a segment's walkers use near its middle: the
@@ -467,6 +530,12 @@ impl World {
         let name = b.name.clone();
         let there = self.lot_cut_off(b.lot, Net::Walk);
         let here = self.walk.nearest_within(from, 20.0).and_then(|k| self.walk.component(k)).zip(self.connectivity.walk_main).is_some_and(|(c, m)| c != m);
+        // [ferry-islands] Across the water: say what the ferry is doing.
+        let island_there = self.connectivity.island_lots.contains_key(&b.lot);
+        let island_here = self.walk_comp_at(from).is_some_and(|c| self.connectivity.islands.iter().any(|i| i.comp == c));
+        if island_there || island_here {
+            return super::islands::NO_FERRY.into();
+        }
         match (here, there) {
             (_, true) => format!("{name} isn't connected to the rest of the pedestrian grid"),
             (true, false) => "I'm cut off from the rest of the pedestrian grid".into(),

@@ -182,6 +182,9 @@ pub struct Ground {
     pub(super) fix: Vec<Fix>,
     /// Lot pads, by lot.
     pub pads: std::collections::HashMap<LotId, f32>,
+    /// [r5-hillside] Lots stepped down (or up) the hill onto a second pad
+    /// behind the first (`PadStep`), by lot.
+    pub steps: std::collections::HashMap<LotId, PadStep>,
     /// Bridge decks: ends, half width (with the pavement), end heights.
     /// Underpass decks are among them, so what drives over one stays up.
     pub decks: Vec<(Vec2, Vec2, f32, f32, f32)>,
@@ -270,7 +273,145 @@ pub(super) struct Terrace {
     pub(super) hi: Vec2,
     /// Indices into `Ground::retaining` of this lot's walls.
     pub(super) walls: Vec<u32>,
+    /// [r5-hillside] Its step onto a second pad, if any.
+    pub(super) step: Option<PadStep>,
 }
+
+/// [r5-hillside] A terraced lot too deep for its slope stands on two pads:
+/// the front one (`Ground::pads`) near its street's height, so its door is
+/// at street level, and behind a step across the lot (from `a` to `b`, on
+/// its outline) a back one stepped down or up the hill (Hong Kong's
+/// Mid-Levels: the street door at the top, floors stepping down behind).
+/// The step is a retaining wall (`Ground::find_terrace_walls`); a
+/// building over a back pad below its front one is drawn with storeys
+/// down to it (`nd_procgen::hill_plinth`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PadStep {
+    pub a: Vec2,
+    pub b: Vec2,
+    /// Unit vector from the step into the back part.
+    pub back_dir: Vec2,
+    /// The back part's pad.
+    pub back: f32,
+}
+
+impl PadStep {
+    /// Is `p` behind the step?
+    pub fn in_back(&self, p: Vec2) -> bool {
+        (p - self.a).dot(self.back_dir) > 0.0
+    }
+
+    /// The pad at `p`: `back` behind the step, else `front`.
+    pub fn pad_at(&self, p: Vec2, front: f32) -> f32 {
+        if self.in_back(p) {
+            self.back
+        } else {
+            front
+        }
+    }
+}
+
+/// [r5-hillside] A lot rising or falling this much from front to back on
+/// a terraced hillside steps onto a second pad (`PadStep`).
+pub const STEP_RELIEF: f32 = 10.0;
+/// [r5-hillside] Least depth of each part of a stepped lot.
+pub const STEP_MIN_DEPTH: f32 = 8.0;
+/// [r5-hillside] Least height of a step worth building.
+pub const STEP_MIN: f32 = 2.5;
+
+/// [r5-hillside] The edges of `poly` (closed), cut where `step` crosses
+/// them so each piece lies on one side of it.
+pub fn lot_edges(poly: &[Vec2], step: Option<&PadStep>) -> Vec<(Vec2, Vec2)> {
+    let m = poly.len();
+    let mut out = Vec::with_capacity(m + 2);
+    for k in 0..m {
+        let (a, b) = (poly[k], poly[(k + 1) % m]);
+        if let Some(st) = step {
+            let (da, db) = ((a - st.a).dot(st.back_dir), (b - st.a).dot(st.back_dir));
+            if (da > 0.0) != (db > 0.0) && (da - db).abs() > 1e-4 {
+                let x = a.lerp(b, da / (da - db));
+                out.push((a, x));
+                out.push((x, b));
+                continue;
+            }
+        }
+        out.push((a, b));
+    }
+    out
+}
+
+/// [r5-hillside] Lowest and highest natural ground (`BANK_HEIGHT` at
+/// least) over `pts`.
+fn ground_range(land: &Landscape, pts: impl Iterator<Item = Vec2>) -> (f32, f32) {
+    pts.map(|p| land.height(p).max(BANK_HEIGHT)).fold((f32::MAX, f32::MIN), |(lo, hi), h| (lo.min(h), hi.max(h)))
+}
+
+/// [r5-hillside] A pad as near `want` as stands within a wall's height
+/// (`BENCH_WALL_MAX`) of ground from `lo` to `hi` (halfway between, past
+/// twice that).
+fn pad_within(want: f32, lo: f32, hi: f32) -> f32 {
+    let (least, most) = (hi - BENCH_WALL_MAX, lo + BENCH_WALL_MAX);
+    if least > most {
+        0.5 * (lo + hi)
+    } else {
+        want.clamp(least, most)
+    }
+}
+
+/// [r5-hillside] Where a terraced lot steps (`PadStep`): across it halfway
+/// back from its front, if it is deep enough and climbs `STEP_RELIEF` or
+/// more. The front part's pad is as near the street's height (`street`) as
+/// its own ground allows, the back's as near the front's.
+fn lot_step(land: &Landscape, lot: &Lot, street: f32) -> Option<(f32, PadStep)> {
+    let n = lot.polygon.len();
+    let back_dir = (-lot.front_dir).normalize_or_zero();
+    if n < 3 || back_dir == Vec2::ZERO {
+        return None;
+    }
+    let front = (lot.front_edge[0] + lot.front_edge[1]) * 0.5;
+    let (d0, d1) = lot.polygon.iter().map(|p| (*p - front).dot(back_dir)).fold((f32::MAX, f32::MIN), |(a, b), d| (a.min(d), b.max(d)));
+    if d1 - d0 < STEP_MIN_DEPTH * 2.0 {
+        return None;
+    }
+    // Samples round the outline (five to an edge) and across the middle.
+    let mut pts: Vec<Vec2> = Vec::with_capacity(n * 5 + 8);
+    for k in 0..n {
+        for f in [0.0, 0.25, 0.5, 0.75] {
+            pts.push(lot.polygon[k].lerp(lot.polygon[(k + 1) % n], f));
+        }
+    }
+    let (lo, hi) = ground_range(land, pts.iter().copied().chain(std::iter::once(lot.center)));
+    if hi - lo < STEP_RELIEF {
+        return None;
+    }
+    // The step line, clipped to the outline.
+    let at = front + back_dir * (0.5 * (d0 + d1));
+    let across = Vec2::new(-back_dir.y, back_dir.x);
+    let mut ts: Vec<f32> = Vec::new();
+    for k in 0..n {
+        let (a, b) = (lot.polygon[k], lot.polygon[(k + 1) % n]);
+        let (da, db) = ((a - at).dot(back_dir), (b - at).dot(back_dir));
+        if (da > 0.0) != (db > 0.0) && (da - db).abs() > 1e-4 {
+            ts.push((a.lerp(b, da / (da - db)) - at).dot(across));
+        }
+    }
+    let (t0, t1) = ts.iter().fold((f32::MAX, f32::MIN), |(a, b), &t| (a.min(t), b.max(t)));
+    if ts.len() < 2 || t1 - t0 < 4.0 {
+        return None;
+    }
+    let (a, b) = (at + across * t0, at + across * t1);
+    let line = [a, a.lerp(b, 0.25), a.lerp(b, 0.5), a.lerp(b, 0.75), b];
+    let side = |back: bool| pts.iter().copied().filter(move |p| ((*p - at).dot(back_dir) > 0.0) == back).chain(line);
+    let (flo, fhi) = ground_range(land, side(false));
+    let (blo, bhi) = ground_range(land, side(true));
+    let front_pad = pad_within(street, flo, fhi);
+    let back = pad_within(front_pad, blo, bhi).clamp(front_pad - BENCH_WALL_MAX, front_pad + BENCH_WALL_MAX);
+    if (back - front_pad).abs() < STEP_MIN {
+        return None;
+    }
+    Some((front_pad, PadStep { a, b, back_dir, back }))
+}
+
 
 /// What holds a cell of the built-ground raster.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -512,9 +653,16 @@ impl Ground {
     #[allow(clippy::too_many_arguments)]
     pub fn build_with(land: &Landscape, roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], lots: &SlotMap<LotId, Lot>, half: f32, last: &[LotId], pad_at: &std::collections::HashMap<LotId, f32>) -> Ground {
         let mut pads = std::collections::HashMap::new();
+        let mut steps = std::collections::HashMap::new();
         for (id, lot) in lots.iter() {
-            let pad = pad_at.get(&id).copied().unwrap_or_else(|| lot_pad(roads, node_z, inner, lot, land));
+            let (pad, step) = match pad_at.get(&id) {
+                Some(&z) => (z, None),
+                None => lot_pads(roads, node_z, inner, lot, land),
+            };
             pads.insert(id, pad);
+            if let Some(st) = step {
+                steps.insert(id, st);
+            }
         }
         let mut decks: Vec<(Vec2, Vec2, f32, f32, f32)> = roads
             .alive_segments()
@@ -550,7 +698,7 @@ impl Ground {
         if land.is_flat() {
             // No raster: the flat map's ground is level, and a way below
             // it runs out of sight.
-            return Ground { half, n: 0, h: Vec::new(), fix: Vec::new(), pads, decks, underpasses, bridge_decks, outer: Vec::new(), outer_index: Vec::new(), retaining: Vec::new(), terraces: Vec::new(), terrace_index: Default::default() };
+            return Ground { half, n: 0, h: Vec::new(), fix: Vec::new(), pads, steps, decks, underpasses, bridge_decks, outer: Vec::new(), outer_index: Vec::new(), retaining: Vec::new(), terraces: Vec::new(), terrace_index: Default::default() };
         }
         let n = (half * 2.0 / GROUND_CELL) as usize + 1;
         let at = |i: usize, j: usize| Vec2::new(-half + i as f32 * GROUND_CELL, -half + j as f32 * GROUND_CELL);
@@ -688,6 +836,9 @@ impl Ground {
         for (id, lot) in order {
             let pad = pads[&id];
             let terraced = walled_terrace(land, lot, pad);
+            // [r5-hillside] A stepped lot's back part stands on its own pad.
+            let step = steps.get(&id).copied();
+            let pad_of = |p: Vec2| step.map_or(pad, |st| st.pad_at(p, pad));
             let (lo_b, hi_b) = crate::geom::bounds(&lot.polygon);
             // [r4-hillside] Round a walled terrace its walls stand at most
             // `BENCH_WALL_MAX` high: past that the hill above is cut back,
@@ -705,6 +856,7 @@ impl Ground {
                     if !inside {
                         if terraced && edge <= margin && fix[k] == Fix::Free {
                             let out = edge - 2.0;
+                            let pad = pad_of(p);
                             cap[k].0 = cap[k].0.max(pad - BENCH_WALL_MAX - out * BENCH_FILL_SLOPE);
                             cap[k].1 = cap[k].1.min(pad + BENCH_WALL_MAX + out * BENCH_ROCK_SLOPE);
                         }
@@ -718,14 +870,14 @@ impl Ground {
                         // [r4-hillside] A walled terrace holds its own
                         // ground and grades nothing round it.
                         fix[k] = if terraced { Fix::Wall } else { Fix::Pad };
-                        set[k] = floor_at(p, pad);
+                        set[k] = floor_at(p, pad_of(p));
                     }
                 }
             }
         }
         let h = grade_free_ground(n, &natural, &fix, &set, lo, hi, &cap);
         let outer_index = index_outer(&outer);
-        let mut g = Ground { half, n, h, fix, pads, decks, underpasses, bridge_decks, outer, outer_index, retaining: Vec::new(), terraces: Vec::new(), terrace_index: Default::default() };
+        let mut g = Ground { half, n, h, fix, pads, steps, decks, underpasses, bridge_decks, outer, outer_index, retaining: Vec::new(), terraces: Vec::new(), terrace_index: Default::default() };
         g.blend_into_outer(land);
         g.find_retaining(roads, node_z, inner, lots);
         g.find_terrace_walls(land, roads, lots);
@@ -764,10 +916,19 @@ impl Ground {
             if !terraced.contains(&id) {
                 continue;
             }
-            let m = lot.polygon.len();
+            let step = self.steps.get(&id).copied();
             let mut walls = Vec::new();
-            for k in 0..m {
-                let (a, b) = (lot.polygon[k], lot.polygon[(k + 1) % m]);
+            // [r5-hillside] A stepped lot's edges are cut where the step
+            // crosses them, each piece walled from its own pad; the step
+            // itself is a wall from the lower pad up to the higher.
+            if let Some(st) = step {
+                let (hi, lo) = (pad.max(st.back), pad.min(st.back));
+                let inward = if st.back > pad { st.back_dir } else { -st.back_dir };
+                walls.push(self.retaining.len() as u32);
+                self.retaining.push(Retaining { lot: id, a: st.a, b: st.b, foot_a: lo, foot_b: lo, top: hi, inward, holds_back: false });
+            }
+            for (a, b) in lot_edges(&lot.polygon, step.as_ref()) {
+                let pad = step.map_or(pad, |st| st.pad_at(a.lerp(b, 0.5), pad));
                 let len = a.distance(b);
                 if len < 1.5 {
                     continue;
@@ -832,7 +993,7 @@ impl Ground {
                     self.terrace_index.entry((bx, by)).or_default().push(t);
                 }
             }
-            self.terraces.push(Terrace { polygon: lot.polygon.clone(), pad, lo, hi, walls });
+            self.terraces.push(Terrace { polygon: lot.polygon.clone(), pad, lo, hi, walls, step });
         }
     }
 
@@ -861,14 +1022,15 @@ impl Ground {
     pub(super) fn find_retaining(&mut self, roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], lots: &SlotMap<LotId, Lot>) {
         const SAMPLES: [f32; 5] = [0.1, 0.3, 0.5, 0.7, 0.9];
         for (id, lot) in lots.iter() {
-            let Some(&pad) = self.pads.get(&id) else { continue };
+            let Some(&front_pad) = self.pads.get(&id) else { continue };
             let m = lot.polygon.len();
             if m < 3 {
                 continue;
             }
+            let step = self.steps.get(&id).copied();
             let mut walls = Vec::new();
-            for k in 0..m {
-                let (a, b) = (lot.polygon[k], lot.polygon[(k + 1) % m]);
+            for (a, b) in lot_edges(&lot.polygon, step.as_ref()) {
+                let pad = step.map_or(front_pad, |st| st.pad_at(a.lerp(b, 0.5), front_pad));
                 if a.distance(b) < 1.0 {
                     continue;
                 }
@@ -921,8 +1083,16 @@ impl Ground {
                     self.terrace_index.entry((bx, by)).or_default().push(t);
                 }
             }
-            self.terraces.push(Terrace { polygon: lot.polygon.clone(), pad, lo, hi, walls });
+            self.terraces.push(Terrace { polygon: lot.polygon.clone(), pad: front_pad, lo, hi, walls, step });
         }
+    }
+
+    /// [r5-hillside] The pad under `p` of lot `lot` (its back pad behind
+    /// its step, if it has one); at or beyond its outline, the pad of the
+    /// part nearest.
+    pub fn pad_near(&self, lot: LotId, p: Vec2) -> Option<f32> {
+        let pad = *self.pads.get(&lot)?;
+        Some(self.steps.get(&lot).map_or(pad, |st| st.pad_at(p, pad)))
     }
 
     /// The pad of a lot behind a retaining wall that `p` lies in (or on one
@@ -944,7 +1114,7 @@ impl Ground {
                 })
             };
             if point_in_polygon(p, &tr.polygon) || on_wall() {
-                return Some(tr.pad);
+                return Some(tr.step.map_or(tr.pad, |st| st.pad_at(p, tr.pad)));
             }
         }
         None
@@ -1109,15 +1279,26 @@ pub const PORTAL_HOLD: f32 = GROUND_CELL * 2.0;
 /// the front, `Ground::find_terrace_walls`). At its street's height a
 /// deep plot up a steep hillside stood 20 m under the hill at its back.
 pub fn lot_pad(roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], lot: &Lot, land: &Landscape) -> f32 {
+    lot_pads(roads, node_z, inner, lot, land).0
+}
+
+/// [r5-hillside] A lot's pad (`lot_pad`) and, for a terraced lot deep
+/// enough on a steep enough hillside, its step onto a second pad behind
+/// (`PadStep`): the front pad then as near the street's height as the
+/// front part's own ground allows, so its door opens at street level.
+pub fn lot_pads(roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], lot: &Lot, land: &Landscape) -> (f32, Option<PadStep>) {
     if land.is_flat() {
-        return 0.0;
+        return (0.0, None);
     }
     let street = match roads.try_segment(lot.front_segment) {
         Some(seg) if !seg.bridge => way_height(roads, node_z, inner, lot.front_segment, lot.front_t),
-        _ => return land.height(lot.center).max(BANK_HEIGHT),
+        _ => return (land.height(lot.center).max(BANK_HEIGHT), None),
     };
     if !walled_terrace(land, lot, street) {
-        return street;
+        return (street, None);
+    }
+    if let Some((front, step)) = lot_step(land, lot, street) {
+        return (front, Some(step));
     }
     let n = lot.polygon.len();
     let (lo, hi) = (0..n)
@@ -1125,11 +1306,7 @@ pub fn lot_pad(roads: &RoadNetwork, node_z: &[f32], inner: &[Vec<(f32, f32)>], l
         .chain(std::iter::once(lot.center))
         .map(|p| land.height(p).max(BANK_HEIGHT))
         .fold((f32::MAX, f32::MIN), |(lo, hi), h| (lo.min(h), hi.max(h)));
-    let (least, most) = (hi - BENCH_WALL_MAX, lo + BENCH_WALL_MAX);
-    if least > most {
-        return 0.5 * (lo + hi);
-    }
-    street.clamp(least, most)
+    (pad_within(street, lo, hi), None)
 }
 
 /// Height of a way at `t` along segment `sid`: between its nodes' heights

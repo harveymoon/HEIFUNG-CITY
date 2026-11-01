@@ -165,6 +165,13 @@ pub enum Activity {
         town: u8,
         until: u64,
     },
+    /// [ferry-islands] Aboard a ferry between two terminals in town, from
+    /// `from`'s pier to `to`'s (out of sight on deck). Ships are not saved:
+    /// after a load the rider is set down at `to` (`ferries_after_load`).
+    OnFerry {
+        from: BuildingId,
+        to: BuildingId,
+    },
 }
 
 impl Activity {
@@ -184,6 +191,7 @@ impl Activity {
             Activity::Passenger { seated: true, .. } => "riding in a car",
             Activity::Passenger { .. } => "walking to the car",
             Activity::Abroad { .. } => "away on a day trip",
+            Activity::OnFerry { .. } => "on the ferry",
             Activity::Traveling { purpose, .. } | Activity::Driving { purpose, .. } => match purpose {
                 Purpose::Home => "heading home",
                 Purpose::Work => "commuting",
@@ -197,7 +205,7 @@ impl Activity {
     }
 
     pub fn is_traveling(&self) -> bool {
-        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } | Activity::Flying { .. } | Activity::OnMetro { .. } | Activity::Passenger { .. } | Activity::Abroad { .. })
+        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } | Activity::Flying { .. } | Activity::OnMetro { .. } | Activity::Passenger { .. } | Activity::Abroad { .. } | Activity::OnFerry { .. })
     }
 }
 
@@ -224,10 +232,13 @@ pub enum TripMode {
     Subway,
     /// [taxis] A cab hailed at the kerb (`crate::taxi`).
     Taxi,
+    /// [ferry-islands] A ferry between two terminals in town, with a walk
+    /// at each end (`TransitLeg::Ferry`).
+    Ferry,
 }
 
 impl TripMode {
-    pub const ALL: [TripMode; 7] = [TripMode::Walk, TripMode::Bike, TripMode::Bus, TripMode::Train, TripMode::Car, TripMode::Subway, TripMode::Taxi];
+    pub const ALL: [TripMode; 8] = [TripMode::Walk, TripMode::Bike, TripMode::Bus, TripMode::Train, TripMode::Car, TripMode::Subway, TripMode::Taxi, TripMode::Ferry];
 
     pub fn index(self) -> usize {
         match self {
@@ -238,6 +249,7 @@ impl TripMode {
             TripMode::Car => 4,
             TripMode::Subway => 5,
             TripMode::Taxi => 6,
+            TripMode::Ferry => 7,
         }
     }
 
@@ -250,6 +262,7 @@ impl TripMode {
             TripMode::Car => "car",
             TripMode::Subway => "subway",
             TripMode::Taxi => "taxi",
+            TripMode::Ferry => "ferry",
         }
     }
 }

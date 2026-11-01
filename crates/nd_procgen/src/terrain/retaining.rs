@@ -52,9 +52,7 @@ pub fn retaining_walls(world: &World, palette: &Palette) -> (MeshData, MeshData)
             }
             if !capped.contains(&r.lot) {
                 capped.push(r.lot);
-                if let Some(lot) = world.lots.get(r.lot) {
-                    caps.ground_polygon(&lot.polygon, r.top + 0.01, ground);
-                }
+                cap_lot(&mut caps, world, r.lot, r.top, ground);
             }
             continue;
         }
@@ -100,10 +98,26 @@ pub fn retaining_walls(world: &World, palette: &Palette) -> (MeshData, MeshData)
         }
         if !capped.contains(&r.lot) {
             capped.push(r.lot);
-            if let Some(lot) = world.lots.get(r.lot) {
-                caps.ground_polygon(&lot.polygon, r.top + 0.01, ground);
-            }
+            cap_lot(&mut caps, world, r.lot, r.top, ground);
         }
     }
     (walls, caps)
+}
+
+/// The ground of a walled lot as one level cap at its pad (`top`);
+/// [r5-hillside] a stepped lot's two parts each at their own pad.
+fn cap_lot(caps: &mut MeshData, world: &World, id: nd_sim::LotId, top: f32, ground: [f32; 4]) {
+    let Some(lot) = world.lots.get(id) else { return };
+    match (world.ground.steps.get(&id), world.ground.pads.get(&id)) {
+        (Some(st), Some(&front)) => {
+            let near = nd_sim::geom::clip_half_plane(&lot.polygon, st.a, st.back_dir);
+            let far = nd_sim::geom::clip_half_plane(&lot.polygon, st.a, -st.back_dir);
+            for (poly, z) in [(near, front), (far, st.back)] {
+                if poly.len() >= 3 {
+                    caps.ground_polygon(&poly, z + 0.01, ground);
+                }
+            }
+        }
+        _ => caps.ground_polygon(&lot.polygon, top + 0.01, ground),
+    }
 }

@@ -172,6 +172,8 @@ impl World {
                 ModePlan::Bus { route, board, alight, stop, bike: true } => self.ride_to_bus_stop(id, stop, TransitLeg::Bus { route, board, alight }, target, purpose, fresh),
                 ModePlan::Subway { line, board, alight, stop } => self.walk_to_transit(id, stop, TransitLeg::Subway { line, board, alight }, target, purpose, fresh),
                 ModePlan::Taxi { segment, at, wait_at } => self.hail_taxi(id, segment, at, wait_at, target, purpose, fresh),
+                // [ferry-islands] To the pier, to wait for the boat.
+                ModePlan::Ferry { board, alight, stop } => self.set_off_for_pier(id, walk_from, board, alight, stop, target, purpose, fresh),
                 ModePlan::Walk | ModePlan::Bike => {
                     let mode = if matches!(opt.plan, ModePlan::Bike) { TravelMode::Bike } else { TravelMode::Walk };
                     if !self.walk_or_ride(id, target, purpose, mode, from_node, to_node, walk_from, entrance, fresh) {
@@ -193,6 +195,15 @@ impl World {
         // the walker), log it for the "no route found" alert, and show them
         // as stuck rather than merely loitering.
         let why = self.no_route_reason(walk_from, target);
+        // [ferry-islands] Across the water with the boats stopped (or
+        // stopping before they could get back): they stay put, no alarm.
+        if why == super::super::islands::NO_FERRY {
+            let c = &mut self.citizens[id];
+            c.thought = "The last boat's too soon. Staying this side of the water tonight.".to_string();
+            c.activity = Activity::Idle;
+            c.next_decision_tick = self.clock.tick + 20;
+            return;
+        }
         let thought = match why.as_str() {
             "the grid doesn't connect" => "No way through. The grid doesn't connect.".to_string(),
             w => format!("No way through: {w}."),
@@ -394,6 +405,14 @@ impl World {
         // [taxis] A cab, when a company has one on duty within reach.
         if q.allow_transit {
             if let Some(o) = self.taxi_option(id, q, false) {
+                out.push(o);
+            }
+        }
+        // [ferry-islands] Across the water to (or from) an island: the
+        // ferry, and no walking, riding or cab there (no way joins them).
+        if q.allow_transit {
+            if let Some(o) = self.ferry_option(id, q, &arrive) {
+                out.retain(|o| !matches!(o.mode, TripMode::Walk | TripMode::Bike | TripMode::Taxi) && !matches!(o.plan, ModePlan::Lift { .. }));
                 out.push(o);
             }
         }

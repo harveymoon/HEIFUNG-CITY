@@ -347,7 +347,7 @@ fn a_ferry_holds_off_a_busy_berth_until_it_is_clear() {
     let mut w = valley(8);
     let (p, flow, _, _) = river_spot(&w);
     let speed = w.config.metres_per_tick(ports::FERRY_SPEED);
-    let ship = |path: Vec<Vec2>, berth_s: f32, s: f32, docked: bool, dwell: u32| Ship { kind: ShipKind::Ferry, berth_s, path, s, prev_s: s, speed, dwell, port: BuildingId::default(), to: None, cargo: Vec::new(), passengers: 0, docked, color: 0, remote: None, home: false, quay: None, boxes_in: 0, boxes_out: 0, cars: 0 };
+    let ship = |path: Vec<Vec2>, berth_s: f32, s: f32, docked: bool, dwell: u32| Ship { kind: ShipKind::Ferry, berth_s, path, s, prev_s: s, speed, dwell, port: BuildingId::default(), to: None, cargo: Vec::new(), passengers: 0, docked, color: 0, remote: None, home: false, quay: None, boxes_in: 0, boxes_out: 0, cars: 0, riders: Vec::new() };
     // One lying at the berth for 30 minutes; one coming in along the river.
     w.ports.ships.insert(ship(vec![p, p + flow * 400.0], 0.0, 0.0, true, 30));
     let coming = w.ports.ships.insert(ship(vec![p - flow * 600.0, p, p - flow * 600.0], 600.0, 300.0, false, 0));
@@ -366,6 +366,26 @@ fn a_ferry_holds_off_a_busy_berth_until_it_is_clear() {
     }
     assert!(closest > 28.0, "never sails into the ship at the berth (came within {closest:.0} m)");
     assert!(arrived.is_some_and(|t| t >= 30), "comes in once the berth is clear: {arrived:?}");
+}
+
+/// [ferry-islands] Two car ferries coming in to the same pier side by side
+/// (both home at once on a short crossing in Harvey's Neo York) never wait
+/// on each other for good: the one nearer goes in first.
+#[test]
+fn two_ferries_coming_in_to_one_pier_take_turns() {
+    let mut w = valley(8);
+    let (p, flow, n, _) = river_spot(&w);
+    let speed = w.config.metres_per_tick(ports::FERRY_SPEED);
+    let ship = |path: Vec<Vec2>, berth_s: f32, s: f32| Ship { kind: ShipKind::CarFerry, berth_s, path, s, prev_s: s, speed, dwell: 0, port: BuildingId::default(), to: None, cargo: Vec::new(), passengers: 0, docked: false, color: 0, remote: None, home: false, quay: None, boxes_in: 0, boxes_out: 0, cars: 0, riders: Vec::new() };
+    let a = w.ports.ships.insert(ship(vec![p - flow * 300.0, p, p - flow * 300.0], 300.0, 250.0));
+    let b = w.ports.ships.insert(ship(vec![p - flow * 300.0 + n * 4.0, p, p - flow * 300.0], 300.0, 252.0));
+    let mut docked = (false, false);
+    for _ in 0..400 {
+        w.step_ships();
+        docked.0 |= w.ports.ships.get(a).is_none_or(|s| s.docked);
+        docked.1 |= w.ports.ships.get(b).is_none_or(|s| s.docked);
+    }
+    assert!(docked.0 && docked.1, "both came in: {docked:?}");
 }
 
 /// [r4-flags-sim] Ships keep to the right of their route, so two going

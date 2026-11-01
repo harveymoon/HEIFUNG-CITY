@@ -323,7 +323,8 @@ impl World {
         let mut out = Vec::new();
         for k in 0..turns {
             let turn = port.sailings as usize + k as usize;
-            let remote_turn = !port.remote.is_empty() && (others.is_empty() || turn % 2 == 0);
+            // [ferry-islands] As `dispatch_ships` takes turns.
+            let remote_turn = self.remote_turn(port, others.is_empty(), turn, (t % 1440) as u32);
             let mut dest = None;
             if remote_turn {
                 let n = (turn / 2) % port.remote.len();

@@ -38,6 +38,7 @@ pub fn act_of(c: &Citizen) -> Act {
         Activity::OnMetro { train } => (12, ffi(Some(*train))),
         Activity::Passenger { driver, .. } => (13, ffi(Some(*driver))),
         Activity::Abroad { terminal, .. } => (14, k(Some(*terminal))),
+        Activity::OnFerry { to, .. } => (15, k(Some(*to))),
     };
     let mode = if tag == 5 && c.mode == TravelMode::Bike { 1 } else { 0 };
     Act { tag, with, mode }

@@ -571,7 +571,14 @@ impl World {
                 .filter_map(|(id, c)| {
                     let t = c.transit?;
                     let night = over(&t.leg);
-                    let long = t.since > 0 && tick.saturating_sub(t.since) > if matches!(t.leg, TransitLeg::Rail { .. }) { transit::WAIT_GIVE_UP * 2 } else { transit::WAIT_GIVE_UP };
+                    // [ferry-islands] A ferry rider waits out the night on
+                    // the pier for the first boat (no walking it).
+                    let limit = match t.leg {
+                        TransitLeg::Rail { .. } => transit::WAIT_GIVE_UP * 2,
+                        TransitLeg::Ferry { .. } => super::islands::FERRY_GIVE_UP,
+                        _ => transit::WAIT_GIVE_UP,
+                    };
+                    let long = t.since > 0 && tick.saturating_sub(t.since) > limit;
                     (night || long).then_some((id, night && !long))
                 })
                 .collect();
@@ -596,6 +603,10 @@ impl World {
                         _ => "Missed the last train. Walking it.",
                     }
                     .to_string();
+                } else if matches!(trip.leg, TransitLeg::Ferry { .. }) {
+                    self.citizens[id].thought = "No boat came all night. Giving up on the ferry.".to_string();
+                    self.ports.missed.remove(&id);
+                    self.transit_failed(id);
                 } else {
                     self.citizens[id].thought = "No bus is coming. Walking it.".to_string();
                     // [carlife] Remembered when choosing how to travel next time.
