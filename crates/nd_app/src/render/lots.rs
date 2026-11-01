@@ -264,7 +264,9 @@ pub(super) fn sync_parks(
         let lot = &w.lots[id];
         let Some(layout) = &lot.park else { continue };
         let seed = (lot.center.x * 31.0 + lot.center.y * 17.0).abs() as u64;
-        let extras = Extras { park: Some(layout), ..Extras::default() };
+        // [r5-layered] No trees under a raised deck over the park.
+        let overhead = nd_procgen::undercroft::deck_quads(w, &lot.polygon);
+        let extras = Extras { park: Some(layout), overhead: &overhead, ..Extras::default() };
         let mut geo = generate_building(lot, nd_sim::LandUse::Park, 1, layout.tier, 1.0, seed, &assets.rules, &assets.palette, &extras);
         nd_procgen::climate::snow_cover(&mut geo, assets.palette.snow);
         let ents = spawn_geometry(&mut commands, &mut meshes, &mats, &geo, ParkTag);

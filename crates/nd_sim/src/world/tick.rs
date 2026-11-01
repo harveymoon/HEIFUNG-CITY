@@ -160,6 +160,8 @@ impl World {
         self.rides.stats.roll();
         // [benches] seats and bench-neighbour tallies
         self.daily_benches();
+        // [r5-layered] bays under the decks
+        self.daily_undercroft();
         // [districts] facelifts; [tourism] hotel nights and the books.
         crate::prof!("daily_districts", self.daily_districts());
         // [stories] late licences, noise, heritage grants
@@ -247,6 +249,10 @@ impl World {
     // [social] Outings, group nights, gigs and protests at :25.
     if tick % 60 == 25 {
         self.hourly_social();
+    }
+    // [r5-layered] Bays under the decks: found again, camps, stallholders.
+    if tick % 60 == 29 {
+        crate::prof!("hourly_undercroft", self.hourly_undercroft());
     }
     }
 

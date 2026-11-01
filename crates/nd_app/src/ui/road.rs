@@ -220,6 +220,12 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, sid: nd
         }
     }
 
+    // [r5-layered] The ground under a raised road: its bays and what they
+    // have become.
+    if !compact {
+        under_deck(ui, w, sid);
+    }
+
     // [rail-crossing] A level crossing at either end.
     if !compact {
         let seg = w.roads.segment(sid);
@@ -275,6 +281,36 @@ pub fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, sid: nd
         });
     }
     None
+}
+
+/// [r5-layered] "Under the deck": the bays under this raised road (the
+/// whole named street, or this piece), by use, and how busy they were.
+fn under_deck(ui: &mut egui::Ui, w: &nd_sim::World, sid: nd_sim::SegmentId) {
+    use nd_sim::undercroft::UnderUse;
+    let name = w.streets.of(sid).map(|s| s.name.as_str()).unwrap_or("");
+    let bays: Vec<&nd_sim::undercroft::Bay> = if name.is_empty() { w.bays_under(sid) } else { w.undercroft.bays.iter().filter(|b| b.under == name).collect() };
+    if bays.is_empty() {
+        return;
+    }
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new("Under the deck").strong());
+    let mut parts = Vec::new();
+    for u in UnderUse::ALL {
+        let n = bays.iter().filter(|b| b.use_ == u).count();
+        if n > 0 {
+            parts.push(format!("{n} {}", u.label()));
+        }
+    }
+    ui.label(egui::RichText::new(format!("{} of sheltered ground: {}", plural(bays.len() as u32, "bay", "bays"), parts.join(", "))).small())
+        .on_hover_text("The ground between the columns, under the deck, where nothing else stands. The blocks round it decide what it becomes: market stalls and hawkers where people live and work, lock-up workshops by a street on cheap land, a ball court for the young, a camp where people have nowhere to live. Households from nearby run the stalls.");
+    let visits: u32 = bays.iter().map(|b| b.visits_yesterday).sum();
+    let takings: f32 = bays.iter().map(|b| b.takings_yesterday).sum();
+    let today: u32 = bays.iter().map(|b| b.visits_today).sum();
+    if visits + today > 0 {
+        ui.label(egui::RichText::new(format!("{visits} visits yesterday ({today} so far today), {takings:.0} taken by the stallholders")).small());
+    }
+    let low = bays.iter().map(|b| b.clearance).fold(f32::MAX, f32::min);
+    hint(ui, &format!("Headroom under it: {low:.1} m and up"));
 }
 
 /// [rail-crossing] A level crossing's section: its guard, where it is in

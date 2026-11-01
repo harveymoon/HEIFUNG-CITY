@@ -42,7 +42,7 @@ pub(super) fn sync_society(mut commands: Commands, mut meshes: ResMut<Assets<Mes
     let s = &w.society;
     let mut h = DefaultHasher::new();
     for c in &s.homeless.camps {
-        (c.id, c.tents(), c.sidewalk, camp_visible(w, c.pos)).hash(&mut h);
+        (c.id, c.tents(), c.sidewalk, c.under, camp_visible(w, c.pos)).hash(&mut h);
         hash_f32s(&mut h, [c.pos]);
     }
     // [pt-growth] An RV shows once it has pulled up.
@@ -67,12 +67,27 @@ pub(super) fn sync_society(mut commands: Commands, mut meshes: ResMut<Assets<Mes
     }
     let pal = &assets.palette;
     let mut geo = Geometry::default();
+    // [r5-layered] Camps under a deck: on the ground under it (not up on
+    // the deck), tents in a file along it, whatever the land is worth.
+    let mut under = Geometry::default();
     for c in &s.homeless.camps {
-        if !camp_visible(w, c.pos) {
+        if !c.under && !camp_visible(w, c.pos) {
             continue;
         }
         let out = if c.out != SVec2::ZERO { c.out } else { c.lot.and_then(|l| w.lots.get(l)).map_or(SVec2::Y, |l| l.front_dir) };
-        geo.append(&camp(c.pos, c.dir, out, c.tents(), c.sidewalk, w.config.seed ^ c.id as u64 * 0x9E37, pal));
+        let g = camp(c.pos, c.dir, out, c.tents(), c.sidewalk || c.under, w.config.seed ^ c.id as u64 * 0x9E37, pal);
+        if c.under {
+            under.append(&g);
+        } else {
+            geo.append(&g);
+        }
+    }
+    if !w.landscape.is_flat() {
+        for part in under.parts.iter_mut().chain(under.detail.iter_mut().flatten()) {
+            for p in part.positions.iter_mut() {
+                p[1] += w.ground_height(SVec2::new(p[0], p[2]));
+            }
+        }
     }
     for r in s.homeless.rvs.iter().filter(|r| r.parked(tick)) {
         geo.append(&nd_procgen::society::rv_kept(r.pos, r.heading, r.camper, r.seed, r.abandoned.is_some(), pal));
@@ -92,9 +107,6 @@ pub(super) fn sync_society(mut commands: Commands, mut meshes: ResMut<Assets<Mes
         let seed = w.config.seed ^ (lot.center.x.to_bits() as u64).wrapping_mul(31) ^ lot.center.y.to_bits() as u64;
         geo.append(&trash_pile(p, along, lot.front_dir, step as f32 / 3.0, dumpster, seed, pal));
     }
-    if geo.triangle_count() == 0 {
-        return;
-    }
     // Onto the ground (or a bridge deck) where the landscape is not flat.
     if !w.landscape.is_flat() {
         for part in geo.parts.iter_mut() {
@@ -102,6 +114,10 @@ pub(super) fn sync_society(mut commands: Commands, mut meshes: ResMut<Assets<Mes
                 p[1] += w.surface_height(SVec2::new(p[0], p[2]));
             }
         }
+    }
+    geo.append(&under);
+    if geo.triangle_count() == 0 {
+        return;
     }
     state.ents = spawn_geometry(&mut commands, &mut meshes, &mats, &geo, SocietyTag);
 }

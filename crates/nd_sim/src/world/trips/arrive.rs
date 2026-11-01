@@ -60,6 +60,11 @@ impl World {
         if purpose != Purpose::ToStop {
             self.settle_footfall(id);
         }
+        // [r5-layered] At a bay under a deck: the stalls, hawkers, lock-ups
+        // or court (`world/undercroft.rs`).
+        if purpose == Purpose::Wander && to.is_none() && self.under_arrive(id) {
+            return;
+        }
         // A park is not a building to go inside: walk its paths to a free
         // seat on a bench ([benches]), held from now so nobody else takes it.
         // [under-construction] A park that is a site (or coming down) has

@@ -35,7 +35,9 @@ pub(super) fn listen(
     eyes: Query<(&GlobalTransform, &OrbitCamera)>,
 ) {
     let now = time.elapsed_secs_f64();
-    if now < *next || !sound.handle.playing() {
+    // [sound] Sampled even when silent (ND_AUDIO=0) so the remote readout
+    // shows what would be heard; four times a second, cheap.
+    if now < *next {
         return;
     }
     *next = now + EVERY;

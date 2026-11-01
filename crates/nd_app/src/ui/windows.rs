@@ -200,9 +200,12 @@ fn settings(ui: &mut egui::Ui, p: &mut UiCtx) {
     super::theme::scale_setting(ui);
     // [sound] The mixer.
     crate::audio::settings_ui(ui);
+    // [laptop-nav] Scroll, touchpad, the on-screen pad, speeds and inverts.
+    super::nav_pad::settings_ui(ui, p.nav, p.nav_input);
     section(ui, "CONTROLS");
     hint(ui, "The camera and the keys; the Help window has the tools.");
     ui.label(egui::RichText::new(help::CAMERA_ORBIT).small());
+    ui.label(egui::RichText::new(format!("Laptop and remote desktop: {}", help::CAMERA_LAPTOP)).small());
     ui.label(egui::RichText::new(format!("Walk mode: {}", help::CAMERA_WALK)).small());
     ui.label(egui::RichText::new(help::HOTKEYS).small());
     ui.label(egui::RichText::new(help::TOOL_KEYS).small());
@@ -231,6 +234,7 @@ fn help_window(ui: &mut egui::Ui) {
     ui.label(egui::RichText::new(help::WINDOWS).small());
     section(ui, "CAMERA");
     ui.label(egui::RichText::new(help::CAMERA_ORBIT).small());
+    ui.label(egui::RichText::new(format!("Laptop and remote desktop: {}", help::CAMERA_LAPTOP)).small());
     ui.label(egui::RichText::new(format!("Walk mode: {}", help::CAMERA_WALK)).small());
     section(ui, "KEYS");
     ui.label(egui::RichText::new(help::HOTKEYS).small());

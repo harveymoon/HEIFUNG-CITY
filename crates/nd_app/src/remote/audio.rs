@@ -11,7 +11,8 @@ use nd_audio::engine::load;
 use nd_audio::{Cue, Status};
 
 /// `audio {get?}` reads; `audio {set: {master, ambience, effects, ui,
-/// music, muted, unfocused}}` changes (and saves) them; `audio {play: "<cue>"}`
+/// music, muted, unfocused, spots: {transit, sirens, works, nightlife, horns,
+/// weather}}}` changes (and saves) them; `audio {play: "<cue>"}`
 /// plays a UI cue through the rate limiter.
 pub(super) fn audio(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(set) = cmd.get("set") {
@@ -27,7 +28,15 @@ pub(super) fn audio(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                 "music" => changed.music = level()?,
                 "muted" => changed.muted = v.as_bool().ok_or("muted must be true or false")?,
                 "unfocused" => changed.unfocused = v.as_str().and_then(Unfocused::parse).ok_or("unfocused must be mute, duck or keep")?,
-                other => return Err(format!("unknown audio setting {other:?} (master, ambience, effects, ui, music, muted, unfocused)")),
+                "spots" => {
+                    let groups = v.as_object().ok_or("spots must be an object: {transit, sirens, works, nightlife, horns, weather (0..1)}")?;
+                    for (g, x) in groups {
+                        let group = nd_audio::Group::parse(g).ok_or_else(|| format!("unknown spot group {g:?}; one of {}", nd_audio::Group::ALL.map(|g| g.key()).join(", ")))?;
+                        let x = x.as_f64().map(|x| x as f32).filter(|x| x.is_finite() && (0.0..=1.0).contains(x)).ok_or(format!("spots.{g} must be a number 0..1"))?;
+                        *changed.spots.get_mut(group) = x;
+                    }
+                }
+                other => return Err(format!("unknown audio setting {other:?} (master, ambience, effects, ui, music, muted, unfocused, spots)")),
             }
         }
         update_settings(|s| *s = changed);
@@ -51,8 +60,19 @@ fn readout(ctx: &Ctx) -> Value {
     let r3 = |x: f32| (x * 1000.0).round() / 1000.0;
     let b = &sound.beds;
     let h = &sound.heard;
+    let sp = &sound.spots;
+    let spots = json!({
+        "held": sp.held.iter().map(|u| json!({ "kind": u.kind.key(), "id": u.id, "gain_db": db(u.gain), "dist_m": r3(u.dist), "pan": r3(u.pan), "muffle": r3(u.muffle), "pitch": r3(u.pitch), "speed_ms": r3(u.speed), "intensity": r3(u.intensity) })).collect::<Vec<_>>(),
+        "candidates": nd_audio::SpotKind::ALL.iter().map(|k| (k.key(), sp.candidates[*k as usize])).collect::<std::collections::BTreeMap<_, _>>(),
+        "horns_sent": sp.horns, "thunder_sent": sp.thunder, "storm": r3(sp.storm), "room": r3(sp.room),
+        "sample_cost_us": sp.cost_us.round(),
+    });
     json!({
-        "settings": { "master": s.master, "ambience": s.ambience, "effects": s.effects, "ui": s.ui, "music": s.music, "muted": s.muted, "unfocused": s.unfocused.key() },
+        "settings": {
+            "master": s.master, "ambience": s.ambience, "effects": s.effects, "ui": s.ui, "music": s.music, "muted": s.muted, "unfocused": s.unfocused.key(),
+            "spots": nd_audio::Group::ALL.iter().map(|g| (g.key(), s.spots.get(*g))).collect::<std::collections::BTreeMap<_, _>>(),
+        },
+        "spots": spots,
         "status": status,
         "focused": sound.focused,
         "bus_gains": nd_audio::Bus::ALL.iter().map(|b| (b.key(), r3(sound.mix.bus_gains()[b.index()]))).collect::<std::collections::BTreeMap<_, _>>(),
@@ -79,10 +99,11 @@ fn readout(ctx: &Ctx) -> Value {
     })
 }
 
-/// `audio_capture {path?, seconds?}`: what the camera hears now (the beds as
-/// last sampled, at the default sliders or with `as_set` the player's,
-/// without focus ducking) rendered
-/// offline to a 48 kHz WAV, with its levels.
+/// `audio_capture {path?, seconds?, spots?}`: what the camera hears now (the
+/// beds as last sampled and, unless `spots: false`, the spot sounds picked
+/// last, held as they are; at the default sliders or with `as_set` the
+/// player's, without focus ducking) rendered offline to a 48 kHz WAV, with
+/// its levels.
 pub(super) fn capture(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let secs = opt_f32(cmd, "seconds")?.unwrap_or(6.0);
     if !(0.5..=60.0).contains(&secs) {
@@ -92,12 +113,17 @@ pub(super) fn capture(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let path = super::files::allowed_path(opt_str(cmd, "path")?.unwrap_or(&default), "wav", true)?;
     // The default sliders unless asked for the player's, so captures compare.
     let mix = if opt_bool(cmd, "as_set")?.unwrap_or(false) { settings().mix(true) } else { nd_audio::MixLevels::default() };
-    let out = nd_audio::wav::render_beds(ctx.sound.beds, nd_audio::MixLevels { muted: false, ..mix }, secs);
+    let held = if opt_bool(cmd, "spots")?.unwrap_or(true) { ctx.sound.spots.held.clone() } else { Vec::new() };
+    let room = ctx.sound.spots.room;
+    let out = nd_audio::wav::render_scene(ctx.sound.beds, nd_audio::MixLevels { muted: false, ..mix }, secs, |_| {
+        std::iter::once(nd_audio::Command::Room(room)).chain(held.iter().map(|u| nd_audio::Command::Spot(*u))).collect()
+    });
     nd_audio::wav::write_wav(&path, &out, nd_audio::wav::SR).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     let a = nd_audio::wav::analyse(&out, nd_audio::wav::SR);
     Ok(json!({
         "path": path.to_string_lossy().replace('\\', "/"),
         "seconds": secs,
+        "spots": held.len(),
         "peak_db": a.peak_db, "rms_db": a.rms_db, "dc": a.dc, "clipped": a.clipped, "correlation": a.correlation,
         "bands_db": nd_audio::wav::BANDS.iter().zip(a.bands).map(|(hz, v)| json!({ "hz": hz, "db": (v * 10.0).round() / 10.0 })).collect::<Vec<_>>(),
     }))

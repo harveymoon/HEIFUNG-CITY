@@ -238,6 +238,11 @@ impl World {
         if self.roads.nodes.is_empty() {
             return;
         }
+        // [r5-layered] A stroll may stop at the stalls, the hawkers or the
+        // court under a raised road near by.
+        if self.under_stroll(id) {
+            return;
+        }
         // Bike owners who are comfortable take joy rides to a park when there is one.
         let (owns_bike, class) = {
             let c = &self.citizens[id];

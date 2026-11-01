@@ -1,4 +1,4 @@
-//! The engine: the beds, the UI voices and (later) the spot voices mixed
+//! The engine: the beds, the UI voices and the spot voices mixed
 //! into the buses, then a DC blocker and the master limiter. It runs in the
 //! sound card's callback, fed by [`Command`]s; the same code renders WAVs
 //! offline ([`Engine::render`] on a buffer).
@@ -11,6 +11,8 @@ use crate::cues::{Cue, Voice};
 use crate::dsp::{dc_pole, one_pole, DcBlock, Rng, Smooth};
 use crate::mix::{Bus, Limiter, MixLevels};
 use crate::scene::BedParams;
+use crate::spots::SpotUpdate;
+use crate::voices::Spots;
 
 /// What the game tells the engine.
 #[derive(Clone, Copy, Debug)]
@@ -21,14 +23,19 @@ pub enum Command {
     Beds(BedParams),
     /// Play a UI cue at this gain (from the rate limiter).
     Cue(Cue, f32),
+    /// A spot sound: a held source's update (it fades out when they
+    /// stop coming) or a one-shot (horn, thunder).
+    Spot(SpotUpdate),
+    /// How much the buildings around echo the spot sounds, `0..1`.
+    Room(f32),
 }
 
 /// At most this many UI cues sound at once; a new one takes the place of
 /// the quietest.
 pub const UI_VOICES: usize = 8;
-/// [sound] Phase 2's spot sounds (trains, sirens, horns) will share a cap
-/// like this one, loudest kept, each at [`distance_gain`] for its
-/// distance from the listener.
+/// [sound] The spot sounds (trains, sirens, horns, venues, thunder) share
+/// this cap, loudest kept, each at [`distance_gain`] for its distance
+/// from the listener.
 pub const SPOT_VOICES: usize = 20;
 
 /// A spot sound's gain at `d` metres: full inside `near`, then falling off
@@ -93,7 +100,7 @@ pub struct Telemetry {
     pub weights: [AtomicU32; 3],
     /// UI voices sounding.
     pub ui_voices: AtomicU32,
-    /// Spot voices sounding (phase 2; 0 for now).
+    /// Spot voices sounding.
     pub spot_voices: AtomicU32,
     /// The callback's share of the time it is given (render time over the
     /// buffer's duration), smoothed, f32 bits.
@@ -121,6 +128,7 @@ pub struct Engine {
     sr: f32,
     beds: Beds,
     ui: VoicePool<Voice>,
+    spots: Spots,
     mix: MixLevels,
     /// The buses' gains eased towards `mix` (no clicks when a slider moves
     /// or the window loses focus).
@@ -143,6 +151,7 @@ impl Engine {
             sr,
             beds: Beds::new(sr, 0x0c17_7a11),
             ui: VoicePool::new(UI_VOICES),
+            spots: Spots::new(sr),
             mix: MixLevels::default(),
             gains: [Smooth::new(0.0); 4],
             gain_coef: one_pole(0.08, sr),
@@ -172,6 +181,12 @@ impl Engine {
                     self.ui.push(v, Voice::loudness);
                 }
             }
+            Command::Spot(u) => {
+                if !self.mix.muted {
+                    self.spots.apply(u);
+                }
+            }
+            Command::Room(r) => self.spots.set_room(r),
         }
     }
 
@@ -207,6 +222,7 @@ impl Engine {
         if silent {
             // Muted and faded: skip the work, keep the voices from piling up.
             self.ui.retain(|_| false);
+            self.spots.clear();
             for g in &mut self.gains {
                 g.v = 0.0;
             }
@@ -228,6 +244,10 @@ impl Engine {
             let amb = g[Bus::Ambience.index()];
             if amb > 1e-6 {
                 self.beds.render(block, amb);
+            }
+            let fx = g[Bus::Effects.index()];
+            if !self.spots.is_empty() {
+                self.spots.render(block, fx);
             }
             let ui = g[Bus::Ui.index()];
             let sr = self.sr;
@@ -268,6 +288,7 @@ impl Engine {
         }
         store(&t.limiter, self.limiter.gain);
         t.ui_voices.store(self.ui.len() as u32, Ordering::Relaxed);
+        t.spot_voices.store(self.spots.len() as u32, Ordering::Relaxed);
         t.frames.fetch_add(frames as u32, Ordering::Relaxed);
     }
 }
@@ -315,6 +336,48 @@ mod tests {
         e.render(&mut out);
         assert!(out.iter().all(|x| *x == 0.0));
         assert_eq!(t.ui_voices.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn a_busy_city_of_spot_sounds_is_a_mix_under_full_scale() {
+        use crate::spots::{pick, Candidate, HornClock, Listener, SpotKind, Strike, ThunderClock, ALL_ON};
+        let l = Listener { eye: [0.0, 12.0, -25.0], focus: [0.0; 3], right: [-1.0, 0.0, 0.0], height: 12.0, underground: false };
+        let cands: Vec<Candidate> = SpotKind::ALL
+            .into_iter()
+            .filter(|k| !k.one_shot())
+            .flat_map(|k| (0..5u64).map(move |j| Candidate { vel: [10.0, 0.0, 0.0], ..Candidate::at(k as u64 * 10 + j, k, 6.0 * j as f32 - 12.0, 0.0, 8.0 + 3.0 * j as f32) }))
+            .collect();
+        let jams: Vec<Candidate> = (0..20).map(|i| Candidate { intensity: 1.0, ..Candidate::at(500 + i, SpotKind::Horn, i as f32, 0.0, 6.0) }).collect();
+        let run = |mix: MixLevels| {
+            let t = Arc::new(Telemetry::default());
+            let mut e = Engine::new(48_000.0, t.clone());
+            e.apply(Command::Mix(mix));
+            e.apply(Command::Room(1.0));
+            let mut horns = HornClock::default();
+            let mut thunder = ThunderClock::default();
+            let mut out = vec![0.0; 2 * 48_000 * 8];
+            let mut most = 0;
+            for (i, chunk) in out.chunks_mut(2 * 12_000).enumerate() {
+                for u in pick(&cands, &l, &ALL_ON).into_iter().chain(horns.tick(&jams, &l, &ALL_ON, 0.25)) {
+                    e.apply(Command::Spot(u));
+                }
+                if i % 8 == 0 {
+                    e.apply(Command::Spot(thunder.thunder(Strike { dist: 260.0, pan: 0.0 }, 1.0, 1.0, false, 0.0)));
+                }
+                e.render(chunk);
+                most = most.max(t.spot_voices.load(Ordering::Relaxed) as usize);
+            }
+            (out.iter().fold(0.0f32, |m, x| m.max(x.abs())), most)
+        };
+        let (peak, voices) = run(MixLevels::default());
+        assert!(voices <= SPOT_VOICES && voices >= 10, "{voices}");
+        // At the default sliders the limiter has headroom to spare.
+        assert!(peak < 0.7, "{peak}");
+        let (peak, _) = run(MixLevels { master: 1.0, effects: 1.0, ..Default::default() });
+        assert!(peak < 0.99, "{peak}");
+        // Effects at zero: nothing.
+        let (peak, _) = run(MixLevels { effects: 0.0, ambience: 0.0, ..Default::default() });
+        assert_eq!(peak, 0.0);
     }
 
     #[test]

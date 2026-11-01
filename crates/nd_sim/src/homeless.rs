@@ -30,6 +30,12 @@ use serde::{Deserialize, Serialize};
 /// Land value below which people camp on a street or a vacant lot (and the
 /// renderer shows the camp).
 pub const SKID_ROW_LV: f32 = 0.36;
+/// [r5-layered] Under a raised road people shelter on dearer land than
+/// out in the open (the deck keeps the rain off; Harvey: "usually in
+/// poorer areas but all over"): a camp pitches in a bay under a deck
+/// below this land value, and counts it this many metres nearer.
+pub const UNDER_CAMP_LV: f32 = 0.52;
+pub const UNDER_CAMP_PULL: f32 = 140.0;
 /// Share of evicted households with nowhere to go who stay on the street
 /// rather than leave town.
 pub const STAY_SHARE: f32 = 0.7;
@@ -108,6 +114,10 @@ pub struct Camp {
     /// People living here, refreshed hourly.
     pub people: u16,
     pub founded: u64,
+    /// [r5-layered] In a bay under a raised road (`crate::undercroft`):
+    /// tents in a row under the deck, out of the rain.
+    #[serde(default)]
+    pub under: bool,
 }
 
 impl Camp {
@@ -246,6 +256,7 @@ struct Spot {
     out: Vec2,
     lot: Option<LotId>,
     sidewalk: bool,
+    under: bool,
 }
 
 impl World {
@@ -343,10 +354,10 @@ impl World {
             match l.building {
                 None if !self.services.is_rubble(id) => {
                     let (pos, dir) = camp_pitch(l, id, along);
-                    out.push(Spot { pos, dir, out: l.front_dir, lot: Some(id), sidewalk: false })
+                    out.push(Spot { pos, dir, out: l.front_dir, lot: Some(id), sidewalk: false, under: false })
                 }
                 // Built lots lend their pavement, if it is on a street.
-                Some(_) if l.car_access() => out.push(Spot { pos: l.entrance() + l.front_dir.normalize_or_zero() * 1.5, dir: along, out: l.front_dir, lot: Some(id), sidewalk: true }),
+                Some(_) if l.car_access() => out.push(Spot { pos: l.entrance() + l.front_dir.normalize_or_zero() * 1.5, dir: along, out: l.front_dir, lot: Some(id), sidewalk: true, under: false }),
                 _ => {}
             }
         }
@@ -360,10 +371,15 @@ impl World {
             }
             let along = (p.front_edge[1] - p.front_edge[0]).normalize_or_zero();
             let mid = (p.front_edge[0] + p.front_edge[1]) * 0.5;
-            out.push(Spot { pos: p.center, dir: along, out: (mid - p.center).normalize_or_zero(), lot: None, sidewalk: false });
+            out.push(Spot { pos: p.center, dir: along, out: (mid - p.center).normalize_or_zero(), lot: None, sidewalk: false, under: false });
         }
         // [fix/buildings-ui] Never pitched across a way.
         out.retain(|s: &Spot| s.sidewalk || !camp_on_way(&self.roads, s.pos, s.dir, s.out));
+        // [r5-layered] Bays under the raised roads (checked clear of the
+        // ways below when found).
+        for (pos, dir) in self.under_camp_spots() {
+            out.push(Spot { pos, dir, out: dir.perp(), lot: None, sidewalk: false, under: true });
+        }
         out
     }
 
@@ -436,12 +452,14 @@ impl World {
             Some(id) => Some(id),
             None => {
                 let camps = &self.society.homeless.camps;
-                let spot = self.camp_spots().into_iter().filter(|s| camps.iter().all(|c| c.pos.distance(s.pos) >= CAMP_GAP)).min_by(|a, b| a.pos.distance(origin).total_cmp(&b.pos.distance(origin)));
+                // [r5-layered] Under a deck counts nearer: out of the rain.
+                let reach = |s: &Spot| s.pos.distance(origin) - if s.under { UNDER_CAMP_PULL } else { 0.0 };
+                let spot = self.camp_spots().into_iter().filter(|s| camps.iter().all(|c| c.pos.distance(s.pos) >= CAMP_GAP)).min_by(|a, b| reach(a).total_cmp(&reach(b)));
                 spot.map(|s| {
                     let h = &mut self.society.homeless;
                     let id = h.next_camp;
                     h.next_camp += 1;
-                    h.camps.push(Camp { id, pos: s.pos, dir: s.dir, out: s.out, lot: s.lot, sidewalk: s.sidewalk, households: Vec::new(), people: 0, founded: tick });
+                    h.camps.push(Camp { id, pos: s.pos, dir: s.dir, out: s.out, lot: s.lot, sidewalk: s.sidewalk, households: Vec::new(), people: 0, founded: tick, under: s.under });
                     id
                 })
             }
@@ -468,6 +486,8 @@ impl World {
     /// lot re-cut away, G16), or (`dear`, the hourly round) land that got
     /// too dear. Called hourly and straight after road works.
     pub(crate) fn move_camps_on(&mut self, dear: bool) {
+        // [r5-layered] A camp under a deck stays while its bay does.
+        let bays: Vec<crate::undercroft::Bay> = if self.society.homeless.camps.iter().any(|c| c.under) { self.undercroft.bays.clone() } else { Vec::new() };
         let lv = &self.land_value;
         let lots = &self.lots;
         let roads = &self.roads;
@@ -486,7 +506,9 @@ impl World {
             // A pavement camp sits beside its street by design; tents on a
             // lot or a parcel must not be on a carriageway or a path.
             let paved_over = !c.sidewalk && camp_on_way(roads, c.pos, c.dir, c.out);
-            let ok = (!dear || lv.at(c.pos) < SKID_ROW_LV + 0.08) && ground && !paved_over;
+            let cheap = if c.under { lv.at(c.pos) < UNDER_CAMP_LV + 0.08 } else { lv.at(c.pos) < SKID_ROW_LV + 0.08 };
+            let sheltered = !c.under || bays.iter().any(|b| b.contains(c.pos, 1.0) && matches!(b.use_, crate::undercroft::UnderUse::Bare | crate::undercroft::UnderUse::Shelter));
+            let ok = (!dear || cheap) && ground && !paved_over && sheltered;
             if !ok {
                 displaced.extend(c.households.iter().copied());
             }
@@ -609,8 +631,9 @@ impl World {
                 let here = c.pos;
                 let k = slotmap::Key::data(&m).as_ffi();
                 let jitter = Vec2::new(((k % 7) as f32 - 3.0) * 0.9, ((k / 7 % 5) as f32 - 2.0) * 0.9);
-                if let Some((mut path, _)) = self.walk.route(here, bed + jitter) {
-                    path.push(bed + jitter);
+                // [r5-layered] Under a deck by way of the bay's edge, so the
+                // walk ends on the ground and not on the deck overhead.
+                if let Some(path) = self.ground_route(here, bed + jitter) {
                     let c = &mut self.citizens[m];
                     c.mode = crate::citizens::TravelMode::Walk;
                     c.activity = Activity::Traveling { to: None, purpose: Purpose::Wander, path, idx: 0 };

@@ -312,6 +312,57 @@ impl World {
         cap
     }
 
+    /// [r5-layered] Height (world z) of the lowest deck soffit over a lot
+    /// of this outline, as built, None with no deck over it: what a
+    /// building there must stay under as drawn. On a hilly map a deck's
+    /// height over the ground is not its planned level, so it is measured
+    /// over a grid of the lot; on flat ground it is the level less the slab.
+    pub fn deck_soffit_over(&self, poly: &[Vec2]) -> Option<f32> {
+        if poly.len() < 3 {
+            return None;
+        }
+        let (lo, hi) = crate::geom::bounds(poly);
+        let any = self.roads.segments_in_box(lo - Vec2::splat(20.0), hi + Vec2::splat(20.0)).any(|sid| {
+            let seg = self.roads.segment(sid);
+            seg.alive && seg.viaduct && !seg.tunnel && {
+                let (a, b) = self.roads.segment_points(sid);
+                segment_polygon_distance(a, b, poly) < deck_half_width(seg.kind, seg.lanes_fwd, seg.lanes_bwd)
+            }
+        });
+        if !any {
+            return None;
+        }
+        let slab = pillars::DECK_DEPTH + 0.2;
+        let mut soffit: Option<f32> = None;
+        const N: usize = 6;
+        for i in 0..=N {
+            for j in 0..=N {
+                let q = Vec2::new(lo.x + (hi.x - lo.x) * i as f32 / N as f32, lo.y + (hi.y - lo.y) * j as f32 / N as f32);
+                if !point_in_polygon(q, poly) && distance_to_outline(q, poly) > 0.5 {
+                    continue;
+                }
+                let z = if self.relief {
+                    let g = self.ground_height(q);
+                    self.ground.decks_at(q).into_iter().filter(|&z| z > g + 1.0).reduce(f32::min)
+                } else {
+                    self.roads.segments_in_box(q - Vec2::splat(20.0), q + Vec2::splat(20.0)).filter_map(|sid| {
+                        let seg = self.roads.segment(sid);
+                        if !seg.alive || !seg.viaduct || seg.tunnel {
+                            return None;
+                        }
+                        let (a, b) = self.roads.segment_points(sid);
+                        let (t, p) = crate::roads::project_on_segment(q, a, b);
+                        (p.distance(q) < deck_half_width(seg.kind, seg.lanes_fwd, seg.lanes_bwd)).then(|| self.roads.segment_level(sid, t))
+                    }).filter(|&z| z > 1.0).reduce(f32::min)
+                };
+                if let Some(z) = z {
+                    soffit = Some(soffit.map_or(z - slab, |s: f32| s.min(z - slab)));
+                }
+            }
+        }
+        soffit
+    }
+
     /// `deck_cap_of` a lot.
     pub fn deck_cap(&self, lot: LotId) -> Option<u8> {
         self.lots.get(lot).and_then(|l| self.deck_cap_of(&l.polygon))

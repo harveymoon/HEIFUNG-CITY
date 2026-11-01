@@ -31,6 +31,8 @@ mod view;
 // Commands, by area.
 mod bus;
 mod camera;
+/// [laptop-nav] `nav` and `input`.
+mod nav;
 mod city;
 mod dev;
 mod files;
@@ -108,6 +110,8 @@ mod skyline;
 mod social;
 /// [society] crime, homelessness and trash.
 mod society;
+/// [r5-layered] Bays under the raised roads.
+mod undercroft;
 /// [subway] The `subway` command and report section.
 mod subway;
 mod taxes;

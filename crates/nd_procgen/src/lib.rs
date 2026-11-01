@@ -37,6 +37,8 @@ pub mod society;
 pub mod social;
 pub mod street;
 pub mod surface;
+/// [r5-layered] Bays under the raised roads: markets, hawkers, lock-ups, courts.
+pub mod undercroft;
 pub mod terrain;
 pub mod toll;
 pub mod textures;

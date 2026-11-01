@@ -161,14 +161,15 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("note", "[memory] the process working set, peak and commit charge (MB), the renderer's mesh/material/image and entity counts, and the world's big counts"),
     ] },
     Cmd { name: "audio", aliases: &["sound"], effect: View, run: audio::audio, help: &[
-        ("get", "[sound] (or no fields) the sliders, mute, focus rule, sound card, bus gains, the beds' weights, levels and targets, what the camera hears, voices, audio-thread CPU %"),
-        ("set", "{master, ambience, effects, ui, music: 0..1, muted: bool, unfocused: mute|duck|keep}: any of them; saved in settings.ron"),
+        ("get", "[sound] (or no fields) the sliders, mute, focus rule, sound card, bus gains, the beds' weights, levels and targets, what the camera hears, the spot sounds held (kind, gain, distance, pan) and candidates near, voices, audio-thread CPU %"),
+        ("set", "{master, ambience, effects, ui, music: 0..1, muted: bool, unfocused: mute|duck|keep, spots: {transit, sirens, works, nightlife, horns, weather: 0..1}}: any of them; saved in settings.ron"),
         ("play", "a UI cue by name (click, tool_change, road_point, road_done, implement, building_placed, bulldoze, zone_paint, window_open, window_close, error, alert, speed_up, speed_down, pause, resume), rate limited"),
     ] },
     Cmd { name: "audio_capture", aliases: &[], effect: Files, run: audio::capture, help: &[
         ("path", "[sound] optional .wav (see files); default exports/wav/capture-<unix ms>.wav: what the camera hears now, rendered offline by the same engine"),
         ("seconds", "0.5..60, default 6"),
         ("as_set", "true: at the player's sliders (default: the default sliders, so captures compare)"),
+        ("spots", "false: the beds alone (default: with the spot sounds held now)"),
     ] },
     Cmd { name: "pause", aliases: &[], effect: Game, run: time::pause, help: &[
         ("paused", "bool, omitted toggles"),
@@ -466,6 +467,14 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("citizen", "id (offend)"),
         ("kind", "theft|burglary|assault|murder|vandalism (offend, with building)"),
         ("kg", "trash to add, default 100"),
+    ] },
+    Cmd { name: "under_decks", aliases: &["undercroft", "bays"], effect: Game, run: |cmd, ctx| undercroft::command(cmd, &mut ctx.sim.world), help: &[
+        ("near", "optional [x, y]: only bays within r of it"),
+        ("r", "metres, with near (default 300)"),
+        ("action", "optional: set (give a bay a use, with bay and use)"),
+        ("bay", "id (set)"),
+        ("use", "bare|market|hawkers|workshop|court (set)"),
+        ("returns", "bays, by_use, visits/takings totals and yesterday, camps_under_decks, list (id, use, label, pos, len_m, width_m, headroom_m, under, walkway, park, open, since_day, holders, people_here, on_the_way, visits_today/yesterday, takings_today/yesterday, visits_total)"),
     ] },
     Cmd { name: "social", aliases: &[], effect: Read, run: |cmd, ctx| social::command(cmd, &ctx.sim.world), help: &[
         ("days", "daily history to include (default 7)"),
@@ -854,6 +863,17 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("follow", "citizen/car id or {citizen|car|bot|building: id}; any camera command ends a follow"),
         ("mode", "orbit|walk"),
     ] },
+    Cmd { name: "nav", aliases: &[], effect: View, run: nav::nav, help: &[
+        ("do", "pan_up|pan_down|pan_left|pan_right|zoom_in|zoom_out|rotate_left|rotate_right|tilt_up|tilt_down (as the on-screen pad's buttons), north, reset"),
+        ("seconds", "how long the move is held, default 0.25"),
+        ("set", "{scroll: auto|zoom|pan, pad: auto|on|off, pan_speed, zoom_speed, turn_speed (0.1..5), invert_zoom, invert_scroll_pan, invert_tilt, left_drag_pan, drag_look}"),
+        ("note", "reads back the settings, whether raw mouse motion is trusted, the last scroll's kind and the camera"),
+    ] },
+    Cmd { name: "input", aliases: &[], effect: View, run: nav::input, help: &[
+        ("frames", "[[event, ...], ...] one list a frame, or {wait: n}; events {cursor:[x,y]} {leave:true} {button:left|right|middle, down} {wheel:[x,y], unit: line|pixel} {pinch: f} {rotate: deg} {raw:[dx,dy]} {key: \"W\"|\"PageUp\"|..., down}"),
+        ("drag", "{button, from:[x,y], to:[x,y], frames: 20, hold: [\"Alt\"|\"Shift\"]}: press, move, release"),
+        ("note", "synthetic window input (logical px), as a laptop or remote desktop sends it; the real cursor is not moved"),
+    ] },
     Cmd { name: "follow", aliases: &[], effect: View, run: follow::follow, help: &[
         ("citizen|car|bot|building|vehicle", "id, or the selection"),
         ("stop", "bool: end the follow (also on: false)"),
@@ -1020,6 +1040,10 @@ mod dispatch_tests {
             .init_resource::<crate::render::Turntable>()
             .init_resource::<crate::render::land_tiles::PickedTile>()
             .init_resource::<crate::viewer::notes::BuildingNotes>()
+            .init_resource::<crate::nav::NavSettings>()
+            .init_resource::<crate::nav::NavInput>()
+            .init_resource::<crate::nav::NavPad>()
+            .init_resource::<crate::nav::NavRemote>()
             .insert_resource(crate::audio::Sound::silent());
         app
     }
@@ -1045,6 +1069,19 @@ mod dispatch_tests {
         let (code, _) = send(&mut app, json!({"cmd": "audio", "play": "kazoo"}));
         assert_eq!(code, 400);
         let (code, _) = send(&mut app, json!({"cmd": "sound", "play": "click", "set": {"muted": false}}));
+        assert_eq!(code, 200);
+        // [sound] The spot groups: set one, refuse nonsense, read the spots.
+        let (code, body) = send(&mut app, json!({"cmd": "audio", "set": {"spots": {"horns": 0.25}}}));
+        assert_eq!(code, 200, "{body}");
+        assert_eq!(body["settings"]["spots"]["horns"], json!(0.25f32));
+        assert_eq!(body["settings"]["spots"]["transit"], json!(1.0f32));
+        assert!(body["spots"]["held"].is_array() && body["spots"]["candidates"]["train"].is_u64(), "{body}");
+        assert_eq!(body["voices"]["spot_cap"].as_u64(), Some(nd_audio::engine::SPOT_VOICES as u64));
+        let (code, _) = send(&mut app, json!({"cmd": "audio", "set": {"spots": {"kazoos": 0.5}}}));
+        assert_eq!(code, 400);
+        let (code, _) = send(&mut app, json!({"cmd": "audio", "set": {"spots": {"horns": 1.5}}}));
+        assert_eq!(code, 400);
+        let (code, _) = send(&mut app, json!({"cmd": "audio", "set": {"spots": {"horns": 1.0}}}));
         assert_eq!(code, 200);
     }
 

@@ -192,7 +192,17 @@ cargo run -p nd_app --features fast-dev        # links Bevy dynamically for quic
 | Keys | Does |
 | --- | --- |
 | Right-drag, middle-drag or Shift-drag, wheel | rotate, pan, zoom |
-| `W A S D`, `Q` `E` | pan, turn |
+| `W A S D` or arrows, `Q` `E`, `Home` `End` | pan, turn, tilt (Shift+`W`/`S` tilts too) |
+| `.` `,` (or `[` `]`, `Page Up`/`Down` outside the Road tool) | zoom in, out |
+
+**Laptop, touchpad or remote desktop** (no middle or right button needed; see `docs/NAVIGATION.md`):
+
+| Input | Does |
+| --- | --- |
+| Left-drag on the map (Inspect tool) | pan; a click without dragging still selects |
+| `Alt`+left-drag, `Shift`+left-drag (any tool) | rotate and tilt, pan |
+| Two-finger scroll, pinch or `Ctrl`+scroll | pan, zoom (Settings: make scroll zoom instead) |
+| The pad at the bottom left of the map | pan, turn, tilt, zoom, face north, with left clicks (hold to keep going) |
 | `1`–`9` | tools: inspect, roads, zones, edit, bulldoze, buildings, buses, rail, ... |
 | `Ctrl+Enter`, `Ctrl+Z`, `Ctrl+Y` | implement the project, undo, redo |
 | `Space`, `-`, `=` | pause, slower, faster (1× to 1024×) |
