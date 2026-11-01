@@ -1362,6 +1362,42 @@ Citizens are rendered from their simulated positions every frame.
   The inspector's ATTRACTION card says what it is and does, open or not and why, today's and
   yesterday's visitors and takings, its land value lift and pull, the pier's deck and the
   observatory's rise; `inspect` carries the same as `attraction`.
+- **The architects' league** [r6-architects] (`nd_procgen::buildings::architects`, kinds
+  `ServiceKind::LedgeHouse..CultureHouse`, appended after the waste sites so saves keep their order):
+  six more landmarks under Build > Attractions, one of each per city on joined sites like the rest,
+  in the spirit of three modern masters (inspiration only, noted in the code; every in-game name is
+  invented). Organic/Prairie: the **cantilever house museum** (pale concrete trays crossing one over
+  another from a rough stone hearth, red steel sashes, a trellis over the way in, a wood round it) and
+  the **prairie arts hall** (long low wings of roman brick on a stone water table, art-glass ribbon
+  windows between brick piers under deep hipped copper eaves, a raised clerestory, a broad chimney, a
+  cross wing, terraces with stone urns). White modernism: the **pilgrimage chapel** (bowed white
+  walls, the street wall pierced by deep coloured slots, a thick dark concrete roof sailing up to its
+  prow, a line of light under it, round towers with hoods, an enamelled door, an open-air pulpit and
+  benches on the meadow, a stone pyramid) and the **sky-street housing block** (a slab on pairs of
+  tapering pillars, coloured loggias behind a deep concrete sun-screen, a louvred shopping street half
+  way up, a stair tower, a roof terrace with a funnel stack, a gym vault, a track and a pool, the
+  roof bar's lights). Nordic organic: the **wave library** (a white block on a granite plinth, a
+  rippling timber canopy at the door, a reading hall fanning out under round skylights with
+  clerestory light and battens along its arc, grass steps, birches) and the **house of culture** (a
+  red-brick fan hall whose copper roof climbs in steps with clerestory glass in every riser, a
+  ribbed curved back, a stage house, a brick office wing, a glazed foyer under a timber wave, a
+  courtyard of grass steps). **Fitted to the site**: each finds the biggest rectangle along the
+  site's grain (`best_plan`), its street front and its size (bigger sites, bigger and richer: more
+  trays, longer wings, a cross wing, more bays and storeys, wider fans and more steps), and reads
+  what lies off it (`SiteLook`, `architects::site_look`, carried in `Extras::site`): open water
+  within 60 m (the way out over it), else the way the ground falls 1.5 m or more below the pad, and
+  how far. The house's trays reach toward the water (up to 2.4 m past the lot line there, nowhere
+  else) or down the slope, standing on stone piers down the drop; on level ground they reach out over
+  a rock pool and cascade of its own. The chapel's roof rises to the view; the library's and the
+  hall's fans open toward it; the slab runs along the long side. A seeded stream varies proportions,
+  colours, counts and which way things turn. Night: lit glazing through the window lights, warm
+  lines under the trays and roofs, the chapel's coloured slots, skylights, a few amber and cyan
+  lines (dimmed by day as a landmark's neon). Detail (mullions, louvres, battens, ribs, railings,
+  benches, the trellis) is in the LOD layers. **Figures**: admissions 14 / 6 / free / 4 / free / 10,
+  pulls 24 / 18 / 24 / 16 / 16 / 24, land value (380 m, 0.30) / (360, 0.28) / (380, 0.30) / (420,
+  0.24) / (420, 0.32) / (440, 0.32), 40,000-80,000 to build, 160-640 a day, 4-30 jobs, sites of
+  1,400-2,800 m²; the block's roof terrace and the house of culture's concerts are a night out too.
+  The housing block has no homes of its own yet (tours, the roof terrace, a hotel floor's staff).
 - **Fire engines at the scene** (`world/scenes.rs`, `traffic/scene.rs`): an engine is sent to the
   burning building's street, clear of the junctions at either end (18 m, `SCENE_JUNCTION_CLEAR`), up
   whichever side is quicker, and on arrival pulls in to the kerb on the building's side (crossing

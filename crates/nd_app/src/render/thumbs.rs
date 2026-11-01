@@ -126,6 +126,8 @@ fn service_floors(k: ServiceKind) -> u8 {
         ServiceKind::Pier | ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::BotanicalGarden | ServiceKind::AmusementPark => 1,
         ServiceKind::Cathedral => 4,
         ServiceKind::CasinoResort => 14,
+        ServiceKind::PrairieHall => 2,
+        ServiceKind::SkySlab => 12,
         k if k.is_landmark() => 3,
         _ => 2,
     }

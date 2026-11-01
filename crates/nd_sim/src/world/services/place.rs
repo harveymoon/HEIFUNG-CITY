@@ -219,7 +219,7 @@ impl World {
             ServiceKind::Health | ServiceKind::School => [4, 10, 24][tier.index()],
             ServiceKind::University => [10, 24, 50][tier.index()],
             // [attractions] Visitors' car parks.
-            ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::ConcertHall => 60,
+            ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::ConcertHall | ServiceKind::CultureHouse => 60,
             // (D4) Coaches and cars by the hundred.
             ServiceKind::AmusementPark | ServiceKind::ConventionCentre | ServiceKind::CasinoResort => 90,
             ServiceKind::Pier => 40,

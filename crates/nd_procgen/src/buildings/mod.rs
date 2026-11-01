@@ -74,6 +74,11 @@ pub use adjacency::{building_style, style_extras, Neighbour, StyleBook};
 mod services;
 /// [attractions] The landmark attractions' looks.
 mod attractions;
+/// [r6-architects] The architects' league: landmarks fitted to their site.
+pub mod architects;
+pub use architects::{site_look, SiteLook};
+#[cfg(test)]
+mod architects_tests;
 /// [pt-visual] Player-placed monuments: obelisks, statues, arches, memorials, halos.
 mod monuments;
 /// [society] The trash depot.

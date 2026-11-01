@@ -584,6 +584,20 @@ styles! {
     // drawn only for its `Form`; appended so `ALL` keeps its order. --
     /// A podium of street halls, towers of flats, sky gardens and bridges.
     MegaBlock { label: "mega-block", family: Special, cluster: -2.5, draw: |g, c, r, e| megablock::megablock(g, c, r, e) },
+    // -- [r6-architects] the architects' league (`buildings/architects.rs`),
+    // landmarks fitted to their site; appended so `ALL` keeps its order. --
+    /// Pale concrete trays cantilevered from a stone hearth toward the view.
+    LedgeHouse { label: "cantilever house museum", family: Special, cluster: -1.5, draw: |g, c, r, _| architects::ledge_house(g, c, r) },
+    /// Long low brick wings under deep hipped eaves, art-glass ribbons.
+    PrairieHall { label: "prairie arts hall", family: Special, cluster: -1.5, draw: |g, c, r, _| architects::prairie_hall(g, c, r) },
+    /// Curved white walls, coloured slots, a dark roof sailing up.
+    HillChapel { label: "pilgrimage chapel", family: Special, cluster: -1.5, draw: |g, c, r, _| architects::hill_chapel(g, c, r) },
+    /// A slab on pilotis: loggias, a sun-screen, a roof terrace.
+    SkySlab { label: "sky-street housing block", family: Special, cluster: -1.5, draw: |g, c, r, _| architects::sky_slab(g, c, r) },
+    /// A white block, a timber wave, a reading hall fanning out.
+    FanLibrary { label: "wave library", family: Special, cluster: -1.5, draw: |g, c, r, _| architects::fan_library(g, c, r) },
+    /// A red-brick fan hall with stepped clerestories, a courtyard.
+    CultureHouse { label: "house of culture", family: Special, cluster: -1.5, draw: |g, c, r, _| architects::culture_house(g, c, r) },
 }
 
 impl Style {
@@ -655,6 +669,8 @@ impl Style {
         matches!(
             self,
             Style::ArtMuseum | Style::ScienceMuseum | Style::HistoryMuseum | Style::PleasurePier | Style::GrandPark | Style::Zoo | Style::Observatory | Style::Aquarium | Style::BotanicalGarden | Style::ConcertHall
+                // [r6-architects]
+                | Style::LedgeHouse | Style::PrairieHall | Style::HillChapel | Style::SkySlab | Style::FanLibrary | Style::CultureHouse
         )
     }
 
@@ -763,6 +779,12 @@ impl Style {
             K::Incinerator => Style::Incinerator,
             K::RecyclingPlant => Style::RecyclingPlant,
             K::TransferStation => Style::TransferStation,
+            K::LedgeHouse => Style::LedgeHouse,
+            K::PrairieHall => Style::PrairieHall,
+            K::HillChapel => Style::HillChapel,
+            K::SkySlab => Style::SkySlab,
+            K::FanLibrary => Style::FanLibrary,
+            K::CultureHouse => Style::CultureHouse,
         }
     }
 }

@@ -502,6 +502,11 @@ within 80 m is used, as before.
   raw_weight}, pier {root, tip, length_m, width_m, head_m} (the deck over the water), rise_above_town_m}.
   The grand park, zoo, botanical garden and pier lay out walkways and benches (`park` in `inspect`;
   their gates are `grounds_junctions` of kind `attraction`), the pier's out along its deck.
+- [r6-architects] The architects' league, the same way: `ledge_house` (also `cantilever_house`,
+  1,600 m²), `prairie_hall` (also `arts_centre`, 2,000), `hill_chapel` (also `chapel`, 1,400),
+  `sky_slab` (also `housing_block`, `sky_street`, 2,400), `fan_library` (also `library`,
+  `wave_library`, 2,000), `culture_house` (also `house_of_culture`, `cultural_centre`, 2,800). Each
+  turns to the water or the fall off its site: `inspect`'s `attraction` adds `site` {view, water_m, fall_m}.
 
 Reply: `building` id, `message`, `row`, `treasury`; or the sim's reason as `error`. For a dock,
 station or yard the reply adds [dock-access] `road_access` {`connected`, `stub_ends` ([[x, y]]: the

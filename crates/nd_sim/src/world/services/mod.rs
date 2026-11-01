@@ -64,6 +64,11 @@ fn service_floors(kind: ServiceKind, tier: Tier) -> u8 {
         ServiceKind::ConventionCentre => [3, 3, 3],
         ServiceKind::Cathedral => [4, 4, 4],
         ServiceKind::CasinoResort => [14, 14, 14],
+        // [r6-architects] The house and halls are low; the housing slab
+        // stands on its pillars twelve storeys up.
+        ServiceKind::LedgeHouse | ServiceKind::HillChapel | ServiceKind::FanLibrary | ServiceKind::CultureHouse => [3, 3, 3],
+        ServiceKind::PrairieHall => [2, 2, 2],
+        ServiceKind::SkySlab => [12, 12, 12],
         // [r5-trash] Low sheds; the incinerator hall is tall.
         ServiceKind::Landfill => [1, 1, 1],
         ServiceKind::Incinerator => [3, 4, 5],
