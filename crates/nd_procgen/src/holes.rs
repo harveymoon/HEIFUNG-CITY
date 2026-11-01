@@ -169,7 +169,18 @@ pub fn ground_holes(world: &nd_sim::World) -> Vec<Vec<Vec2>> {
         .filter_map(|(id, _)| world.footprint(id).and_then(|lot| crate::buildings::strip_mine_hole(&lot)))
         .collect();
     out.extend(bench_holes(world));
+    out.extend(step_holes(world));
     out
+}
+
+/// [r5-hillside] The ground cut out under every lot stepped onto two pads
+/// (`nd_sim::landscape::PadStep`): its two caps and the wall between them
+/// are drawn (`terrain::retaining_walls`), and the coarse cells ramped
+/// from one pad to the other across the step, poking through the wall.
+pub fn step_holes(world: &nd_sim::World) -> Vec<Vec<Vec2>> {
+    let mut ids: Vec<nd_sim::LotId> = world.ground.steps.keys().copied().collect();
+    ids.sort();
+    ids.into_iter().filter_map(|id| world.lots.get(id)).filter(|l| l.polygon.len() >= 3).map(|l| l.polygon.clone()).collect()
 }
 
 /// [r4-hillside] The ground cut out under every way standing in a bench on
@@ -219,6 +230,10 @@ pub fn holes_key(world: &nd_sim::World) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     // [r4-hillside] The benches follow the roads.
     world.roads.version.hash(&mut h);
+    // [r5-hillside] And the stepped lots.
+    let mut steps: Vec<(nd_sim::LotId, u32)> = world.ground.steps.iter().map(|(id, st)| (*id, st.back.to_bits())).collect();
+    steps.sort();
+    steps.hash(&mut h);
     for (id, b) in world.buildings.iter() {
         if b.construction.is_none() && b.demolition.is_none() && b.business.as_ref().is_some_and(|z| z.kind == nd_sim::BusinessKind::StripMine) {
             id.hash(&mut h);

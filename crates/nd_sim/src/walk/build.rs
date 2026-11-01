@@ -810,8 +810,7 @@ impl WalkGraph {
                     }
                 }
                 CrossingUpgrade::Footbridge => {
-                    let along = self.stair_dirs(c, roads);
-                    self.add_footbridge(k as u32, along, roads);
+                    self.add_footbridge(k as u32, roads);
                     // [footbridge] The bridge replaces the crosswalk under
                     // it unless the player kept it: everyone crossing here
                     // climbs over, and nobody waits in the road.

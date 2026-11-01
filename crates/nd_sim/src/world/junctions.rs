@@ -332,8 +332,8 @@ impl World {
         // new bridge's end without stairs there: only what stands clear
         // of such a corner must keep its distance.
         if upgrade == CrossingUpgrade::Footbridge {
-            if let Some((top, foot)) = self.walk.footbridge_shape(k, &self.roads) {
-                if let Some(e) = self.footbridge_clash(k, top, foot) {
+            if let Some((top, stairs)) = self.walk.footbridge_plan(k, &self.roads) {
+                if let Some(e) = self.footbridge_clash(k, top, &stairs) {
                     return Err(e);
                 }
             }
@@ -353,11 +353,12 @@ impl World {
         Ok(())
     }
 
-    /// [pt-walk] Would a footbridge with walkway `top` and stair feet `foot`
-    /// over crossing `k` stand in the way of another? Ends within
+    /// [pt-walk] Would a footbridge with walkway `top` and `stairs` (their
+    /// walk lines, [r5-stairs]) over crossing `k` stand in the way of
+    /// another? Ends within
     /// `CORNER_JOIN` of another's end join it (no stairs there), and the
     /// ground round such a corner is shared, so it is not counted.
-    fn footbridge_clash(&self, k: u32, top: [Vec2; 2], foot: [Vec2; 2]) -> Option<String> {
+    fn footbridge_clash(&self, k: u32, top: [Vec2; 2], stairs: &[crate::walk::Stair; 2]) -> Option<String> {
         use crate::walk::CORNER_JOIN;
         let clear = crate::junctions::FOOTBRIDGE_WIDTH + 0.5;
         let others: Vec<&crate::walk::Footbridge> = self.walk.footbridges.iter().filter(|f| f.crossing != k).collect();
@@ -379,10 +380,11 @@ impl World {
                 }
             }
         }
+        let pieces = |s: &crate::walk::Stair| s.path.windows(2).map(|w| (w[0].0, w[1].0)).collect::<Vec<_>>();
         let mut mine = vec![(top[0], top[1])];
         for i in 0..2 {
             if !joined[i] {
-                mine.push((top[i], foot[i]));
+                mine.extend(pieces(&stairs[i]));
             }
         }
         let shared = |p: Vec2| corners.iter().any(|c| c.distance(p) < CORNER_JOIN * 0.5 + clear);
@@ -390,7 +392,7 @@ impl World {
             let mut theirs = vec![(f.top[0], f.top[1])];
             for j in 0..2 {
                 if !f.joined[j] {
-                    theirs.push((f.top[j], f.foot[j]));
+                    theirs.extend(pieces(&f.stairs[j]));
                 }
             }
             // Sample my pieces every half metre, away from shared corners.

@@ -218,7 +218,8 @@ fn terraces_on_a_steep_hillside_are_walled_not_graded() {
     assert!(walls.iter().any(|r| r.holds_back), "a wall holding the hill back");
     for id in &terraced {
         let l = &w.lots[*id];
-        let pad = w.ground.pads[id];
+        // [r5-hillside] (its back pad behind a step)
+        let pad = w.ground.pad_near(*id, l.center).unwrap();
         assert!((w.ground_height(l.center) - pad).abs() < 0.3, "the lot's ground is its pad");
         // The hillside 10 m past the lot's back edge (away from the street)
         // is the land, unless another lot or way is there.
@@ -233,16 +234,17 @@ fn terraces_on_a_steep_hillside_are_walled_not_graded() {
         // Left as the land, unless the hill there stands so far over the
         // pad that it is cut back above the wall's cap (a rock face).
         // (any terrace's within reach: each holds its walls to the cap).
+        let pad = w.ground.pad_near(*id, p).unwrap();
         let rock = terraced
             .iter()
-            .map(|o| (crate::geom::distance_to_outline(p, &w.lots[*o].polygon), w.ground.pads[o]))
+            .map(|o| (crate::geom::distance_to_outline(p, &w.lots[*o].polygon), w.ground.pad_near(*o, p).unwrap()))
             .filter(|(edge, _)| *edge <= 2.0 + crate::landscape::BENCH_CAP_REACH)
             .map(|(edge, pad)| pad + crate::landscape::BENCH_WALL_MAX + (edge - 2.0).max(0.0) * crate::landscape::BENCH_ROCK_SLOPE)
             .fold(f32::INFINITY, f32::min);
         // And the bank under a podium higher than the cap.
         let bank = terraced
             .iter()
-            .map(|o| (crate::geom::distance_to_outline(p, &w.lots[*o].polygon), w.ground.pads[o]))
+            .map(|o| (crate::geom::distance_to_outline(p, &w.lots[*o].polygon), w.ground.pad_near(*o, p).unwrap()))
             .filter(|(edge, _)| *edge <= 2.0 + crate::landscape::BENCH_CAP_REACH)
             .map(|(edge, pad)| pad - crate::landscape::BENCH_WALL_MAX - (edge - 2.0).max(0.0) * crate::landscape::BENCH_FILL_SLOPE)
             .fold(f32::NEG_INFINITY, f32::max);
@@ -335,4 +337,53 @@ fn terrace_walls_are_never_taller_than_the_cap() {
             assert!((f - r.top).abs() <= crate::landscape::BENCH_WALL_MAX + 0.01, "a wall {:.1} m high", (f - r.top).abs());
         }
     }
+}
+
+/// [r5-hillside] A deep plot up a steep hillside stands on two pads, a
+/// step across it halfway back: the front one as near its street as its
+/// own ground allows (its door at street level, never further from the
+/// street than one pad for the whole plot stood), the back one down or up
+/// the hill, a wall no taller than the cap between them. The lot's ground
+/// is each part's pad, and a building over a lower back pad is drawn with
+/// storeys down to it (`nd_procgen::hill_plinth`).
+#[test]
+fn deep_plots_on_a_steep_hillside_step_onto_two_pads() {
+    use crate::landscape::{lot_edges, BENCH_WALL_MAX};
+    let mut w = hilly_world();
+    let at = dry_spot(&w);
+    plane(&mut w, at, 0.8);
+    w.add_road(&[at - Vec2::new(120.0, 0.0), at + Vec2::new(120.0, 0.0)], 1, 1);
+    let ids: Vec<usize> = w.parcels.in_circle(at, 70.0).into_iter().filter(|&i| w.parcels.parcels[i].street_frontage && w.parcel_refusal(i, Some(LandUse::Residential)).is_none()).collect();
+    assert!(!ids.is_empty(), "terraceable parcels on an 80% hillside");
+    w.paint_parcels(&ids, Some(LandUse::Residential), None);
+    w.implement();
+    let stepped: Vec<LotId> = w.ground.steps.keys().copied().filter(|id| w.lots.contains_key(*id)).collect();
+    assert!(!stepped.is_empty(), "stepped plots ({} lots)", w.lots.len());
+    let mut down = 0;
+    for id in stepped {
+        let l = &w.lots[id];
+        let st = w.ground.steps[&id];
+        let front = w.ground.pads[&id];
+        assert!((st.back - front).abs() <= BENCH_WALL_MAX + 0.01 && (st.back - front).abs() >= crate::landscape::STEP_MIN - 0.01);
+        if st.back < front {
+            down += 1;
+        }
+        // Each part's ground is its pad.
+        let mid = st.a.lerp(st.b, 0.5);
+        for (p, want) in [(mid - st.back_dir * 3.0, front), (mid + st.back_dir * 3.0, st.back)] {
+            assert!(l.contains(p));
+            assert!((w.ground_height(p) - want).abs() < 0.3, "ground {:.1} at {p}, pad {want:.1}", w.ground_height(p));
+        }
+        // The door nearer the street than one pad over the whole plot.
+        let street = w.road_height(l.front_segment, l.front_t);
+        let n = l.polygon.len();
+        let (lo, hi) = (0..n).flat_map(|k| [l.polygon[k], l.polygon[k].lerp(l.polygon[(k + 1) % n], 0.5)]).chain(std::iter::once(l.center)).map(|p| w.landscape.height(p).max(crate::landscape::BANK_HEIGHT)).fold((f32::MAX, f32::MIN), |(a, b), h| (a.min(h), b.max(h)));
+        let one = if hi - BENCH_WALL_MAX > lo + BENCH_WALL_MAX { 0.5 * (lo + hi) } else { street.clamp(hi - BENCH_WALL_MAX, lo + BENCH_WALL_MAX) };
+        assert!((front - street).abs() <= (one - street).abs() + 0.01, "front pad {front:.1} street {street:.1} one pad {one:.1}");
+        // The step is walled.
+        assert!(w.ground.retaining.iter().any(|r| r.lot == id && r.a == st.a && r.b == st.b && (r.top - front.max(st.back)).abs() < 1e-3));
+        // The outline is cut where the step crosses it.
+        assert_eq!(lot_edges(&l.polygon, Some(&st)).len(), n + 2);
+    }
+    let _ = down;
 }
