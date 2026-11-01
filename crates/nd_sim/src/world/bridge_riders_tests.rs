@@ -303,3 +303,58 @@ fn a_rider_on_the_way_when_a_footbridge_goes_up_takes_it() {
     }
     assert!(up > 3.0, "over the bridge: highest {up:.1} m");
 }
+
+/// [r5-fixes] Harvey's flag 2 (day 64, Delacroix Boulevard): "people
+/// walking on grass off of roads or any pathways". Cyclists riding along
+/// the boulevard to its end, where it meets a one-way street with a
+/// footbridge over that street's crossing by the junction, were sent "over
+/// the bridge" they never cross: the long leg along the boulevard passed
+/// near the crossing, so the ride was cut from 235 m back straight to the
+/// bridge's foot, 15-20 m off the road across the grass. A ride is taken
+/// over a footbridge only where it really crosses that street, and it
+/// leaves its own line only at the bridge.
+#[test]
+fn a_rider_turning_onto_a_bridged_street_stays_on_the_road() {
+    let mut w = flat();
+    let o = Vec2::new(1000.0, 680.0);
+    let at = |x: f32, y: f32| Vec2::new(x, y) - o;
+    w.add_road(&[at(865.2, 687.8), at(1101.3, 675.7)], 2, 2);
+    // A three-lane one-way street (mixed: pavements, crossings), as his.
+    let pts = vec![at(1097.0, 600.0), at(1098.5, 665.6), at(1101.3, 675.7), at(1104.7, 685.0), at(1109.0, 694.1), at(1113.9, 702.8), at(1140.0, 760.0)];
+    w.add_gesture(crate::plan::Gesture::Road { points: pts, lanes_fwd: 3, lanes_bwd: 0, curved: false, kind: crate::roads::RoadKind::Street, elevation: Vec::new(), car_only: Some(false) });
+    w.implement();
+    w.add_road(&[at(865.2, 687.8), at(745.0, 680.0)], 2, 2);
+    people(&mut w);
+    let ramp = w.roads.nearest_street(at(1103.0, 680.0)).unwrap().0;
+    let junction = at(1101.3, 675.7);
+    let cr = w
+        .walk
+        .crossings
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.segment == ramp)
+        .min_by(|a, b| a.1.mid.distance(junction).total_cmp(&b.1.mid.distance(junction)))
+        .map(|(i, _)| i as u32)
+        .expect("a crossing over the one-way street by the junction");
+    w.economy.treasury = 1.0e6;
+    w.set_crossing_upgrade(cr, CrossingUpgrade::Footbridge).unwrap();
+    // Up the one-way street with its traffic, and against it (riders
+    // keep right: the far side, over the bridge).
+    for end in [at(1140.0, 760.0), at(1097.0, 600.0)] {
+        let nodes = w.roads.foot_path(node_at(&w, at(745.0, 680.0)), node_at(&w, end)).expect("along the boulevard and on along the one-way street");
+        let mut path = w.route_path(&nodes, TravelMode::Bike);
+        w.bike_over_footbridges(&mut path);
+        // Every leg of the ride stays on (or over) a road: its middle and its
+        // ends within the road's width of one.
+        let near_road = |p: Vec2| w.roads.segments_near(p, 25.0).into_iter().any(|s| {
+            let (a, b) = w.roads.segment_points(s);
+            crate::geom::segment_distance_between(p, p, a, b) < w.roads.segment(s).half_width() + 3.0
+        });
+        for leg in path.windows(2) {
+            for k in 0..=10 {
+                let p = leg[0].lerp(leg[1], k as f32 / 10.0);
+                assert!(near_road(p), "the ride leaves the road at ({:.1}, {:.1}) on the leg {:?}: {path:?}", p.x + o.x, p.y + o.y, leg);
+            }
+        }
+    }
+}
