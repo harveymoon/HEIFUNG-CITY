@@ -37,11 +37,11 @@ const WATER: [f32; 3] = [0.1, 0.32, 0.4];
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 /// A lot-local point in world space.
-fn wv(c: &Ctx, p: Vec2) -> Vec2 {
+pub(super) fn wv(c: &Ctx, p: Vec2) -> Vec2 {
     c.frame.to_world(p.x, p.y)
 }
 
-fn w3(c: &Ctx, p: Vec2, y: f32) -> Vec3 {
+pub(super) fn w3(c: &Ctx, p: Vec2, y: f32) -> Vec3 {
     c.frame.at2(p, y)
 }
 
@@ -101,7 +101,7 @@ fn perimeter_fence(g: &mut Geometry, c: &Ctx, h: f32, rail: bool) {
     }
 }
 
-fn fill_site(g: &mut Geometry, c: &Ctx, s: Surface, y: f32, color: [f32; 3]) {
+pub(super) fn fill_site(g: &mut Geometry, c: &Ctx, s: Surface, y: f32, color: [f32; 3]) {
     let poly = clean_poly(&c.lot_poly, 0.3);
     ground(g, &c.frame, s, &poly, y, color);
     if is_convex_local(&poly) {
@@ -167,12 +167,12 @@ fn share_pt(c: &Ctx, u: f32, v: f32) -> Vec2 {
 
 /// A circle of radius `r` round `p` stays on the lot `margin` in from its
 /// edge.
-fn fits(c: &Ctx, p: Vec2, r: f32, margin: f32) -> bool {
+pub(super) fn fits(c: &Ctx, p: Vec2, r: f32, margin: f32) -> bool {
     c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) >= r + margin
 }
 
 /// Shrink `r` until a circle round `p` fits; None when not even `min` does.
-fn fit_radius(c: &Ctx, p: Vec2, r: f32, min: f32) -> Option<f32> {
+pub(super) fn fit_radius(c: &Ctx, p: Vec2, r: f32, min: f32) -> Option<f32> {
     if !c.inside_local(p) {
         return None;
     }
@@ -182,7 +182,7 @@ fn fit_radius(c: &Ctx, p: Vec2, r: f32, min: f32) -> Option<f32> {
 }
 
 /// A neon tube along a lot-local polyline at height `y`.
-fn neon_line(g: &mut Geometry, c: &Ctx, pts: &[Vec2], y: f32, closed: bool, color: [f32; 3]) {
+pub(super) fn neon_line(g: &mut Geometry, c: &Ctx, pts: &[Vec2], y: f32, closed: bool, color: [f32; 3]) {
     let n = pts.len();
     let segs = if closed { n } else { n.saturating_sub(1) };
     for i in 0..segs {
@@ -223,7 +223,7 @@ fn marquee(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, t: f32, y
 }
 
 /// Lamp posts along the lot's front, `n` of them.
-fn front_lamps(g: &mut Geometry, c: &Ctx, n: usize) {
+pub(super) fn front_lamps(g: &mut Geometry, c: &Ctx, n: usize) {
     let front = c.front_face(&c.lot_poly);
     for k in 0..n {
         let t = (k as f32 + 0.5) / n as f32 - 0.5;

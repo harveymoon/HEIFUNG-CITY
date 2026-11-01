@@ -445,3 +445,59 @@ fn grounds_side_by_side_join_their_walks() {
     let joined = w.walk.nodes.iter().enumerate().filter(|(_, n)| n.lot == Some(zoo_lot)).any(|(i, _)| w.walk.adj[i].iter().any(|e| w.walk.nodes[e.to as usize].lot == Some(garden_lot) && e.park));
     assert!(joined, "the zoo's walks join the garden's");
 }
+
+// ── [r6-architects] the architects' league ──────────────────────────────────
+
+const ARCHITECTS: [ServiceKind; 6] = [ServiceKind::LedgeHouse, ServiceKind::PrairieHall, ServiceKind::HillChapel, ServiceKind::SkySlab, ServiceKind::FanLibrary, ServiceKind::CultureHouse];
+
+#[test]
+fn the_architects_landmarks_each_go_down_once_on_a_joined_site() {
+    let mut w = town();
+    for (i, k) in ARCHITECTS.into_iter().enumerate() {
+        assert!(k.is_landmark() && ServiceKind::from_key(k.key()) == Some(k), "{k:?}");
+        assert!(!crate::attractions::about(k).is_empty() && k.tourist_pull() > 0.0, "{k:?} says what it is and draws visitors");
+        assert!(AttractionKind::for_landmark(k).is_some(), "{k:?} is a sight for tourists");
+        let (radius, weight) = k.land_value(Tier::Mid);
+        assert!(radius >= 350.0 && weight > 0.2, "{k:?} lifts its quarter");
+        // Every name is invented: none borrows an architect's.
+        for n in 0..12 {
+            let name = k.name(Tier::Mid, n).to_lowercase();
+            for real in ["wright", "corbusier", "aalto", "fallingwater", "ronchamp", "unite", "guggenheim", "robie", "viipuri", "baker house", "finlandia"] {
+                assert!(!name.contains(real), "{k:?}: {name}");
+            }
+        }
+        let what = landmark(k);
+        // Along the north and south blocks in turn, well apart.
+        let x = -560.0 + i as f32 * 210.0;
+        let lot = home_lot(&w, Vec2::new(x, if i % 2 == 0 { -30.0 } else { 30.0 }));
+        assert!(w.placement_problem(what, lot).is_some_and(|p| p.contains("too small")), "{k:?}: a plot alone is too small");
+        let id = w.place_building(what, w.lots[lot].center).unwrap_or_else(|e| panic!("{k:?}: {e}"));
+        assert!(w.lots[w.buildings[id].lot].area() >= what.min_area() * 0.98, "{k:?} on a joined site");
+        assert_eq!(w.landmark(k), Some(id));
+        let again = home_lot(&w, Vec2::new(x + 100.0, 30.0));
+        let err = w.place_building(what, w.lots[again].center).expect_err("one per city");
+        assert!(err.contains("one per city"), "{k:?}: {err}");
+    }
+    finish_all(&mut w);
+    for k in ARCHITECTS {
+        let b = &w.buildings[w.landmark(k).unwrap()];
+        assert!(b.operating() && b.jobs > 0, "{k:?} opens with staff to hire");
+    }
+}
+
+#[test]
+fn a_ledge_house_lifts_the_land_round_it() {
+    let lift = lift(landmark(ServiceKind::LedgeHouse), Vec2::new(0.0, -30.0), 0.0, 140.0);
+    assert!(lift > 0.05, "the blocks round it rise: +{lift:.3}");
+}
+
+#[test]
+fn old_saves_keep_their_kinds_in_order() {
+    // The new kinds are appended: every earlier kind keeps its index.
+    let idx = |k: ServiceKind| ServiceKind::ALL.iter().position(|x| *x == k).unwrap();
+    assert_eq!(idx(ServiceKind::TransferStation), 29);
+    assert_eq!(idx(ServiceKind::LedgeHouse), 30);
+    assert_eq!(ServiceKind::LANDMARKS[13], ServiceKind::CasinoResort);
+    let a = AttractionKind::ALL.iter().position(|x| *x == AttractionKind::CasinoResort).unwrap();
+    assert_eq!(a, 20);
+}

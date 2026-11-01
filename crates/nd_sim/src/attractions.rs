@@ -193,6 +193,13 @@ pub fn about(kind: ServiceKind) -> &'static str {
         ServiceKind::ConventionCentre => "Exhibition halls under a long glass-fronted roof and a plaza for the crowds. Trade fairs and expos bring visitors who fill the hotels.",
         ServiceKind::Cathedral => "A nave of stone under twin towers and spires, a rose window lit at night, and a square before it. Free to visit; pilgrims and sightseers come from far off.",
         ServiceKind::CasinoResort => "A hotel tower over a neon casino floor and a pool deck. Open all hours: visitors come for the tables and the shows; the land round it gains less than you might think.",
+        // [r6-architects]
+        ServiceKind::LedgeHouse => "A house of stone and pale concrete terraces cantilevered out over the water or down the slope, round a great hearth. Guided tours by day; lifts the land value round it.",
+        ServiceKind::PrairieHall => "Long, low craft halls under deep hipped eaves, ribbon windows of art glass and a broad brick chimney. Workshops and shows by day; lifts the land value round it.",
+        ServiceKind::HillChapel => "A white chapel of thick curved walls pierced with coloured slots under a dark concrete roof that sails up to the view. Free to visit; pilgrims and architecture lovers come from far off.",
+        ServiceKind::SkySlab => "A housing slab raised on sculpted pillars: coloured loggias behind a concrete sun-screen, a shopping street half way up and a roof terrace with a track and a cafe. Tours by day, the roof bar till late.",
+        ServiceKind::FanLibrary => "A white library with a timber wave at its door and a reading hall that fans out to the view under round skylights. Free; open into the evening; lifts the land value round it.",
+        ServiceKind::CultureHouse => "A red-brick concert hall shaped like a fan, stepped clerestories over its roof, round a courtyard of grass steps. Concerts and talks into the night.",
         _ => "",
     }
 }

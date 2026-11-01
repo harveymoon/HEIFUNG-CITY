@@ -77,10 +77,26 @@ pub enum ServiceKind {
     /// A transfer station: trash compacted into boxes and shipped out of
     /// town by rail or ship (cheaper than lorries), else by road.
     TransferStation,
+    // [r6-architects] The architects' league: landmarks in the spirit of
+    // three modern masters (organic Prairie houses, white modernism on
+    // pilotis, Nordic brick-and-timber). Inspiration only: every name in
+    // the game is invented. Appended so saved kinds keep their order.
+    /// A house museum cantilevered in terraces out over water or a slope.
+    LedgeHouse,
+    /// A long, low arts-and-crafts hall under deep hipped eaves.
+    PrairieHall,
+    /// A sculptural white pilgrimage chapel under a curved concrete roof.
+    HillChapel,
+    /// A housing slab on pilotis: coloured loggias, a roof terrace.
+    SkySlab,
+    /// A library whose reading hall fans out to the view under skylights.
+    FanLibrary,
+    /// A red-brick house of culture: a fan-shaped hall round a courtyard.
+    CultureHouse,
 }
 
 impl ServiceKind {
-    pub const ALL: [ServiceKind; 30] = [
+    pub const ALL: [ServiceKind; 36] = [
         ServiceKind::Police,
         ServiceKind::Fire,
         ServiceKind::Health,
@@ -111,11 +127,17 @@ impl ServiceKind {
         ServiceKind::Incinerator,
         ServiceKind::RecyclingPlant,
         ServiceKind::TransferStation,
+        ServiceKind::LedgeHouse,
+        ServiceKind::PrairieHall,
+        ServiceKind::HillChapel,
+        ServiceKind::SkySlab,
+        ServiceKind::FanLibrary,
+        ServiceKind::CultureHouse,
     ];
     /// [r5-trash] The disposal sites, in menu order.
     pub const WASTE: [ServiceKind; 4] = [ServiceKind::Landfill, ServiceKind::Incinerator, ServiceKind::RecyclingPlant, ServiceKind::TransferStation];
     /// [attractions] The landmark attractions, in menu order.
-    pub const LANDMARKS: [ServiceKind; 14] = [
+    pub const LANDMARKS: [ServiceKind; 20] = [
         ServiceKind::ArtMuseum,
         ServiceKind::ScienceMuseum,
         ServiceKind::HistoryMuseum,
@@ -130,6 +152,12 @@ impl ServiceKind {
         ServiceKind::ConventionCentre,
         ServiceKind::Cathedral,
         ServiceKind::CasinoResort,
+        ServiceKind::LedgeHouse,
+        ServiceKind::PrairieHall,
+        ServiceKind::HillChapel,
+        ServiceKind::SkySlab,
+        ServiceKind::FanLibrary,
+        ServiceKind::CultureHouse,
     ];
     /// The four that cover the city by road distance, in coverage-index order.
     pub const COVERING: [ServiceKind; 4] = [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School];
@@ -167,6 +195,12 @@ impl ServiceKind {
             ServiceKind::Incinerator => "incinerator",
             ServiceKind::RecyclingPlant => "recycling_plant",
             ServiceKind::TransferStation => "transfer_station",
+            ServiceKind::LedgeHouse => "ledge_house",
+            ServiceKind::PrairieHall => "prairie_hall",
+            ServiceKind::HillChapel => "hill_chapel",
+            ServiceKind::SkySlab => "sky_slab",
+            ServiceKind::FanLibrary => "fan_library",
+            ServiceKind::CultureHouse => "culture_house",
         }
     }
 
@@ -202,6 +236,12 @@ impl ServiceKind {
             "incinerator" | "waste_to_energy" | "wte" => Some(ServiceKind::Incinerator),
             "recycling_plant" | "recycling" | "mrf" => Some(ServiceKind::RecyclingPlant),
             "transfer_station" | "waste_transfer" => Some(ServiceKind::TransferStation),
+            "ledge_house" | "cantilever_house" | "house_museum" => Some(ServiceKind::LedgeHouse),
+            "prairie_hall" | "arts_centre" | "craft_hall" => Some(ServiceKind::PrairieHall),
+            "hill_chapel" | "chapel" | "pilgrimage_chapel" => Some(ServiceKind::HillChapel),
+            "sky_slab" | "housing_block" | "sky_street" => Some(ServiceKind::SkySlab),
+            "fan_library" | "library" | "wave_library" => Some(ServiceKind::FanLibrary),
+            "culture_house" | "house_of_culture" | "cultural_centre" => Some(ServiceKind::CultureHouse),
             _ => None,
         }
     }
@@ -238,6 +278,12 @@ impl ServiceKind {
             ServiceKind::Incinerator => "incinerator",
             ServiceKind::RecyclingPlant => "recycling plant",
             ServiceKind::TransferStation => "transfer station",
+            ServiceKind::LedgeHouse => "cantilever house museum",
+            ServiceKind::PrairieHall => "prairie arts hall",
+            ServiceKind::HillChapel => "pilgrimage chapel",
+            ServiceKind::SkySlab => "sky-street housing block",
+            ServiceKind::FanLibrary => "wave library",
+            ServiceKind::CultureHouse => "house of culture",
         }
     }
 
@@ -303,6 +349,15 @@ impl ServiceKind {
             ServiceKind::Incinerator => Hours::ALWAYS,
             ServiceKind::Landfill | ServiceKind::TransferStation => Hours::new(5, 20),
             ServiceKind::RecyclingPlant => Hours::new(6, 22),
+            // [r6-architects] House tours by day; the chapel from early to
+            // late; the library into the evening; the block's roof terrace
+            // and the house of culture's concerts late.
+            ServiceKind::LedgeHouse => Hours::new(10, 18),
+            ServiceKind::PrairieHall => Hours::new(9, 19),
+            ServiceKind::HillChapel => Hours::new(7, 21),
+            ServiceKind::SkySlab => Hours::new(8, 23),
+            ServiceKind::FanLibrary => Hours::new(9, 21),
+            ServiceKind::CultureHouse => Hours::new(10, 0),
         }
     }
 
@@ -330,12 +385,12 @@ impl ServiceKind {
 
     /// [attractions] An afternoon out (citizens' park trips find it).
     pub fn day_out(self) -> bool {
-        matches!(self, ServiceKind::ArtMuseum | ServiceKind::ScienceMuseum | ServiceKind::HistoryMuseum | ServiceKind::Pier | ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::Aquarium | ServiceKind::BotanicalGarden | ServiceKind::AmusementPark | ServiceKind::ConventionCentre | ServiceKind::Cathedral)
+        matches!(self, ServiceKind::ArtMuseum | ServiceKind::ScienceMuseum | ServiceKind::HistoryMuseum | ServiceKind::Pier | ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::Aquarium | ServiceKind::BotanicalGarden | ServiceKind::AmusementPark | ServiceKind::ConventionCentre | ServiceKind::Cathedral | ServiceKind::LedgeHouse | ServiceKind::PrairieHall | ServiceKind::HillChapel | ServiceKind::SkySlab | ServiceKind::FanLibrary | ServiceKind::CultureHouse)
     }
 
     /// [attractions] A night out (citizens' evenings find it).
     pub fn night_out(self) -> bool {
-        matches!(self, ServiceKind::Pier | ServiceKind::Observatory | ServiceKind::ConcertHall | ServiceKind::AmusementPark | ServiceKind::CasinoResort)
+        matches!(self, ServiceKind::Pier | ServiceKind::Observatory | ServiceKind::ConcertHall | ServiceKind::AmusementPark | ServiceKind::CasinoResort | ServiceKind::SkySlab | ServiceKind::CultureHouse)
     }
 
     /// [attractions] What a visit costs at the door (citizens and
@@ -359,6 +414,13 @@ impl ServiceKind {
             ServiceKind::ConventionCentre => 10.0,
             ServiceKind::Cathedral => 2.0,
             ServiceKind::CasinoResort => 24.0,
+            // [r6-architects] A guided house tour; a craft-hall ticket; the
+            // chapel and the library are free; a roof-terrace pass; a
+            // concert, on average.
+            ServiceKind::LedgeHouse => 14.0,
+            ServiceKind::PrairieHall => 6.0,
+            ServiceKind::SkySlab => 4.0,
+            ServiceKind::CultureHouse => 10.0,
             _ => 0.0,
         }
     }
@@ -381,6 +443,13 @@ impl ServiceKind {
             ServiceKind::ConventionCentre => 24.0,
             ServiceKind::Cathedral => 30.0,
             ServiceKind::CasinoResort => 36.0,
+            // [r6-architects] Architecture lovers come a long way for these.
+            ServiceKind::LedgeHouse => 24.0,
+            ServiceKind::PrairieHall => 18.0,
+            ServiceKind::HillChapel => 24.0,
+            ServiceKind::SkySlab => 16.0,
+            ServiceKind::FanLibrary => 16.0,
+            ServiceKind::CultureHouse => 24.0,
             _ => 0.0,
         }
     }
@@ -437,6 +506,12 @@ impl ServiceKind {
             ServiceKind::Incinerator => 38_000.0,
             ServiceKind::RecyclingPlant => 22_000.0,
             ServiceKind::TransferStation => 12_000.0,
+            ServiceKind::LedgeHouse => 70_000.0,
+            ServiceKind::PrairieHall => 50_000.0,
+            ServiceKind::HillChapel => 40_000.0,
+            ServiceKind::SkySlab => 80_000.0,
+            ServiceKind::FanLibrary => 55_000.0,
+            ServiceKind::CultureHouse => 75_000.0,
         };
         base * [0.5, 1.0, 2.2][tier.index()]
     }
@@ -473,6 +548,12 @@ impl ServiceKind {
             ServiceKind::Incinerator => 420.0,
             ServiceKind::RecyclingPlant => 300.0,
             ServiceKind::TransferStation => 180.0,
+            ServiceKind::LedgeHouse => 360.0,
+            ServiceKind::PrairieHall => 340.0,
+            ServiceKind::HillChapel => 160.0,
+            ServiceKind::SkySlab => 480.0,
+            ServiceKind::FanLibrary => 480.0,
+            ServiceKind::CultureHouse => 640.0,
         };
         base * [0.6, 1.0, 1.8][tier.index()]
     }
@@ -515,6 +596,15 @@ impl ServiceKind {
             ServiceKind::Incinerator => 14,
             ServiceKind::RecyclingPlant => 30,
             ServiceKind::TransferStation => 8,
+            // [r6-architects] Guides, a caretaker and a cafe; workshop
+            // tutors; a warden; the block's concierges, the roof cafe and
+            // the hotel floor; librarians; the hall's ushers and crew.
+            ServiceKind::LedgeHouse => 10,
+            ServiceKind::PrairieHall => 16,
+            ServiceKind::HillChapel => 4,
+            ServiceKind::SkySlab => 22,
+            ServiceKind::FanLibrary => 22,
+            ServiceKind::CultureHouse => 30,
         };
         match tier {
             Tier::Low => base.div_ceil(2),
@@ -571,6 +661,12 @@ impl ServiceKind {
             ServiceKind::ConventionCentre => 2000,
             ServiceKind::Cathedral => 800,
             ServiceKind::CasinoResort => 1200,
+            ServiceKind::LedgeHouse => 120,
+            ServiceKind::PrairieHall => 260,
+            ServiceKind::HillChapel => 200,
+            ServiceKind::SkySlab => 300,
+            ServiceKind::FanLibrary => 400,
+            ServiceKind::CultureHouse => 700,
             _ => 0,
         }
     }
@@ -648,6 +744,14 @@ impl ServiceKind {
             ServiceKind::Incinerator => (320.0 * k, -0.10 * k),
             ServiceKind::RecyclingPlant => (200.0 * k, -0.04 * k),
             ServiceKind::TransferStation => (200.0 * k, -0.05 * k),
+            // [r6-architects] Fine architecture lifts a quarter; the library
+            // and the house of culture most, the big housing block least.
+            ServiceKind::LedgeHouse => (380.0, 0.30),
+            ServiceKind::PrairieHall => (360.0, 0.28),
+            ServiceKind::HillChapel => (380.0, 0.30),
+            ServiceKind::SkySlab => (420.0, 0.24),
+            ServiceKind::FanLibrary => (420.0, 0.32),
+            ServiceKind::CultureHouse => (440.0, 0.32),
         }
     }
 
@@ -697,6 +801,13 @@ impl ServiceKind {
             ServiceKind::Incinerator => format!("{place} {}", ["Incinerator", "Waste-to-Energy", "Energy-from-Waste Works"][tier.index()]),
             ServiceKind::RecyclingPlant => format!("{place} {}", ["Sorting Shed", "Recycling Plant", "Materials Recovery"][tier.index()]),
             ServiceKind::TransferStation => format!("{place} {}", ["Transfer Shed", "Transfer Station", "Waste Freight Terminal"][tier.index()]),
+            // [r6-architects] Invented names, never a real building's.
+            ServiceKind::LedgeHouse => ["Stillwater Ledge House", "Fernbrook House", "Hollowfall Retreat", "Cedar Ledge House", "Kestrel Run House"][n as usize % 5].to_string(),
+            ServiceKind::PrairieHall => ["Broad Eaves Arts Centre", "Long Meadow Craft Hall", "Hearthstone Arts and Crafts Hall", format!("{place} Prairie Hall").as_str()][n as usize % 4].to_string(),
+            ServiceKind::HillChapel => ["Chapel of the High Meadow", "Chapel of the Lantern Hill", "Chapel of Saint Corvin", "Chapel of the Quiet Light"][n as usize % 4].to_string(),
+            ServiceKind::SkySlab => ["The Sunline Block", "Meridian Habitation", format!("{place} Sky Street").as_str(), "The Brightwater Unit"][n as usize % 4].to_string(),
+            ServiceKind::FanLibrary => ["Birchlight Library", format!("{place} Public Library").as_str(), "Saltmarsh Reading Hall", "Lakewood Library"][n as usize % 4].to_string(),
+            ServiceKind::CultureHouse => ["Redbrick House of Culture", format!("{place} House of Culture").as_str(), "Copperfan Hall", "Kestrel House of Culture"][n as usize % 4].to_string(),
         }
     }
 }
@@ -704,7 +815,7 @@ impl ServiceKind {
 /// [attractions] The smallest site each landmark attraction goes on, m²,
 /// in `ServiceKind::LANDMARKS` order: well over an ordinary plot (a
 /// parcel along a street is some 400 to 900 m²), so each takes several.
-pub const ATTRACTION_AREA: [f32; 14] = [2200.0, 2600.0, 1800.0, 1200.0, 7000.0, 5200.0, 1500.0, 2400.0, 3800.0, 2600.0, 6000.0, 3200.0, 2000.0, 3600.0];
+pub const ATTRACTION_AREA: [f32; 20] = [2200.0, 2600.0, 1800.0, 1200.0, 7000.0, 5200.0, 1500.0, 2400.0, 3800.0, 2600.0, 6000.0, 3200.0, 2000.0, 3600.0, 1600.0, 2000.0, 1400.0, 2400.0, 2000.0, 2800.0];
 
 /// The service a building provides, stored on the building.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

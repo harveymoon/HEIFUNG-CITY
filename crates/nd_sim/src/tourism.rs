@@ -121,10 +121,17 @@ pub enum AttractionKind {
     ConventionCentre,
     Cathedral,
     CasinoResort,
+    // [r6-architects]
+    LedgeHouse,
+    PrairieHall,
+    HillChapel,
+    SkySlab,
+    FanLibrary,
+    CultureHouse,
 }
 
 impl AttractionKind {
-    pub const ALL: [AttractionKind; 21] = [
+    pub const ALL: [AttractionKind; 27] = [
         AttractionKind::Monument,
         AttractionKind::Stadium,
         AttractionKind::Park,
@@ -146,6 +153,12 @@ impl AttractionKind {
         AttractionKind::ConventionCentre,
         AttractionKind::Cathedral,
         AttractionKind::CasinoResort,
+        AttractionKind::LedgeHouse,
+        AttractionKind::PrairieHall,
+        AttractionKind::HillChapel,
+        AttractionKind::SkySlab,
+        AttractionKind::FanLibrary,
+        AttractionKind::CultureHouse,
     ];
 
     /// [attractions] The landmark a sight of this kind is.
@@ -166,6 +179,12 @@ impl AttractionKind {
             AttractionKind::ConventionCentre => K::ConventionCentre,
             AttractionKind::Cathedral => K::Cathedral,
             AttractionKind::CasinoResort => K::CasinoResort,
+            AttractionKind::LedgeHouse => K::LedgeHouse,
+            AttractionKind::PrairieHall => K::PrairieHall,
+            AttractionKind::HillChapel => K::HillChapel,
+            AttractionKind::SkySlab => K::SkySlab,
+            AttractionKind::FanLibrary => K::FanLibrary,
+            AttractionKind::CultureHouse => K::CultureHouse,
             _ => return None,
         })
     }

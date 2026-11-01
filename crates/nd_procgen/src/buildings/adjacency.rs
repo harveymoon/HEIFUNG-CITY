@@ -490,6 +490,8 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
         units: &b.units,
         // [r5-trash] a landfill's mound
         waste_fill: world.landfill_fill(id).unwrap_or(0.0),
+        // [r6-architects] the water or the fall off a landmark's site
+        site: super::architects::site_look(world, id),
         ..Extras::default()
     }
 }

@@ -60,6 +60,8 @@ pub struct Ctx<'a> {
     pub overhead: Vec<[Vec2; 4]>,
     /// [r5-trash] See [`Extras::waste_fill`].
     pub waste_fill: f32,
+    /// [r6-architects] See [`Extras::site`].
+    pub site: Option<super::architects::SiteLook>,
 }
 
 /// Per-building state that changes the look beyond style and condition.
@@ -151,11 +153,14 @@ pub struct Extras<'a> {
     /// [r5-trash] A landfill's share full (`World::landfill_fill`): its
     /// mound grows with it.
     pub waste_fill: f32,
+    /// [r6-architects] What lies off an architects' landmark's site: the
+    /// water or the fall it turns toward (`architects::site_look`).
+    pub site: Option<super::architects::SiteLook>,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, megablock: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[], boxes_of: None, real_boxes: false, overhead: &[], waste_fill: 0.0 }
+        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, megablock: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[], boxes_of: None, real_boxes: false, overhead: &[], waste_fill: 0.0, site: None }
     }
 }
 
@@ -219,6 +224,7 @@ impl<'a> Ctx<'a> {
             real_boxes: extras.real_boxes,
             overhead: extras.overhead.to_vec(),
             waste_fill: extras.waste_fill,
+            site: extras.site,
         }
     }
 }

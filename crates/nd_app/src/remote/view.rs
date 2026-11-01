@@ -614,6 +614,8 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
             "land_value_lift": { "radius_m": r, "raw_weight": round(wt * (0.55 + 0.45 * b.staffing())) },
             "pier": w.attractions.piers.get(&id).map(|d| json!({ "root": v2(d.root), "tip": v2(d.tip), "length_m": round(d.length()), "width_m": d.width, "head_m": d.head })),
             "rise_above_town_m": lot.and_then(|l| w.rise_above_town(l.center)).map(round),
+            // [r6-architects] what the site looks out on (the water or the fall)
+            "site": nd_procgen::buildings::site_look(w, id).map(|s| json!({ "view": v2(s.view), "water_m": s.water.map(round), "fall_m": round(s.fall) })),
         });
     }
     // [dock-access] A dock, station or yard: on the road network or not, and
