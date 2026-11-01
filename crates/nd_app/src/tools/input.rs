@@ -65,6 +65,7 @@ pub(crate) fn tool_input(
     mut eplan: ResMut<EffectivePlan>,
     cams: Query<&OrbitCamera>,
     scroll: Res<AccumulatedMouseScroll>,
+    nav: Res<crate::nav::NavInput>,
 ) {
     if *mode == CameraMode::Walk {
         tools.drag = None;
@@ -74,6 +75,8 @@ pub(crate) fn tool_input(
     let yaw = cams.iter().next().map_or(0.0, |c| c.yaw);
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    // [laptop-nav] Alt+left-drag turns the camera: not a click for the tools.
+    let alt = keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight);
     // While an egui text field has focus every key is typing, not a hotkey.
     let key = |k: KeyCode| !flags.keyboard_captured && keys.just_pressed(k);
     // Keys that stand in for a click on the map count only when the pointer
@@ -247,8 +250,8 @@ pub(crate) fn tool_input(
     let zigzag = tools.tool == Tool::Road && !ctrl && (key(KeyCode::KeyX) || std::mem::take(&mut tools.switchback_asked)) && tools.take_switchback();
     let finish = (map_key(KeyCode::Enter) && !ctrl) || right_click || zigzag;
     let right_down = buttons.just_pressed(MouseButton::Right) && !flags.pointer_over_ui;
-    let click = buttons.just_pressed(MouseButton::Left) && !shift && !flags.pointer_over_ui;
-    let shift_click = buttons.just_pressed(MouseButton::Left) && shift && !flags.pointer_over_ui;
+    let click = buttons.just_pressed(MouseButton::Left) && !shift && !alt && !flags.pointer_over_ui;
+    let shift_click = buttons.just_pressed(MouseButton::Left) && shift && !alt && !flags.pointer_over_ui;
     // [fix/review-app] A middle click on a panel is not a map click: it
     // used to clear the remote API's pins.
     let middle = buttons.just_pressed(MouseButton::Middle) && !flags.pointer_over_ui;
@@ -275,7 +278,10 @@ pub(crate) fn tool_input(
             // [feat/pt-ux] By the pointer's ray: a tower by its walls, an
             // aircraft in the air (even against the sky), and from far out
             // not the people.
-            if click && (ground.is_some() || cursor.ray.is_some()) {
+            // [laptop-nav] On the button's release, and only when it did not
+            // drag: a left-drag pans the map in this tool.
+            let tap = nav.left_tap && !shift && !alt && !flags.pointer_over_ui;
+            if tap && (ground.is_some() || cursor.ray.is_some()) {
                 {
                     let picked = super::pick_click(sim, &super::Click { ground, depth: tools.depth, ray: cursor.ray, view_dist: if ground.is_some() { cursor.view_dist } else { f32::INFINITY } });
                     apply_pick(sim, tools, selection, picked);

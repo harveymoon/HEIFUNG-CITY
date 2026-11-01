@@ -1554,6 +1554,33 @@ pane; clicking either selects the building.
 {"cmd": "camera", "look_at": [0, 0], "distance": 400, "pitch": 0.9}
 ```
 
+### Navigation input [laptop-nav]
+
+`nav {do?, seconds?, set?}` reads and drives the navigation (`docs/NAVIGATION.md`). `do` presses an
+on-screen pad button for `seconds` (default 0.25): `pan_up`, `pan_down`, `pan_left`, `pan_right`,
+`zoom_in`, `zoom_out`, `rotate_left`, `rotate_right`, `tilt_up` (steeper), `tilt_down`, or `north` /
+`reset` (face north; reset also levels the tilt). `set` changes the settings (saved like the Settings
+window): `scroll` auto|zoom|pan, `pad` auto|on|off, `pan_speed`, `zoom_speed`, `turn_speed`
+(0.1..5), `invert_zoom`, `invert_scroll_pan`, `invert_tilt`, `left_drag_pan`, `drag_look`. Reply: the
+settings, `raw_reliable` (false once the raw mouse motion looked like a remote desktop's absolute
+pointer, or Walk mouselook got none), `wheel_seen`, `touchpad_seen`, `last_scroll`, `pad_shown`, and
+the camera pose.
+
+`input {frames?, drag?}` plays synthetic window input into the game, one list of events a frame,
+starting next frame, through the same path real input takes (nothing reaches the operating system;
+the real cursor is not moved). Events: `{cursor: [x, y]}` (logical px in the window), `{leave: true}`,
+`{button: "left"|"right"|"middle", down: bool}`, `{wheel: [x, y], unit: "line"|"pixel"}` (a mouse
+notch is a whole line; a Windows touchpad sends fractions), `{pinch: f}`, `{rotate: degrees}`,
+`{raw: [dx, dy]}` (raw device motion; RDP sends absolute coordinates here), `{key: "W"|"PageUp"|"Alt"|...,
+down: bool}`; a frame may also be `{wait: n}`. `drag {button, from, to, frames: 20, hold: ["Alt"]}`
+presses, moves and releases. Read `camera` afterwards (allow a few frames).
+
+```sh
+curl -d '{"cmd":"input","drag":{"button":"right","from":[600,400],"to":[700,400],"frames":10}}' ...
+curl -d '{"cmd":"input","frames":[[{"wheel":[0,-0.08]}],[{"wheel":[0,-0.08]}]]}' ...   # touchpad: pans
+curl -d '{"cmd":"nav","do":"zoom_in","seconds":0.5}' ...
+```
+
 ### Screenshot
 
 `screenshot {path?}`: queues a capture of the window (`Screenshot::primary_window()` with

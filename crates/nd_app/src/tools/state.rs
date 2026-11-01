@@ -673,6 +673,12 @@ impl ToolState {
         true
     }
 
+    /// [laptop-nav] Page Up / Page Down step the Road tool's level (not a
+    /// roundabout's): no zoom on them then.
+    pub fn captures_pages(&self) -> bool {
+        self.tool == Tool::Road && !self.roundabout
+    }
+
     pub fn captures_brackets(&self) -> bool {
         // [w1-roads] A roundabout too: [ and ] raise and lower the ring.
         self.tool == Tool::Road

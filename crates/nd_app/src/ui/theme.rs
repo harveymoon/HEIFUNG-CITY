@@ -153,6 +153,9 @@ struct Settings {
     /// [r4-leisure] The Demand window: open, where, and its checkbox.
     #[serde(default)]
     demand: Option<super::demand::DemandPrefs>,
+    /// [laptop-nav] Scroll, touchpad and navigation pad settings.
+    #[serde(default)]
+    nav: Option<crate::nav::NavSettings>,
 }
 
 fn load_settings() -> Settings {
@@ -221,6 +224,18 @@ pub fn saved_demand() -> Option<super::demand::DemandPrefs> {
 pub fn save_demand(prefs: &super::demand::DemandPrefs) {
     let mut settings = load_settings();
     settings.demand = Some(*prefs);
+    save_settings(&settings);
+}
+
+/// [laptop-nav] The navigation settings saved last run, if any.
+pub fn saved_nav() -> Option<crate::nav::NavSettings> {
+    load_settings().nav
+}
+
+/// [laptop-nav] Save the navigation settings for the next run.
+pub fn save_nav(nav: &crate::nav::NavSettings) {
+    let mut settings = load_settings();
+    settings.nav = Some(*nav);
     save_settings(&settings);
 }
 

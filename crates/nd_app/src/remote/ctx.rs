@@ -62,4 +62,10 @@ pub(super) struct Ctx<'w, 's> {
     pub(super) sound: Res<'w, crate::audio::Sound>,
     /// [r4-tiles] The tile picked in the Land for sale window.
     pub(super) picked_tile: ResMut<'w, crate::render::land_tiles::PickedTile>,
+    /// [laptop-nav] Navigation settings, this frame's input, the pad and
+    /// the synthetic input queue.
+    pub(super) nav_settings: ResMut<'w, crate::nav::NavSettings>,
+    pub(super) nav_input: Res<'w, crate::nav::NavInput>,
+    pub(super) nav_pad: ResMut<'w, crate::nav::NavPad>,
+    pub(super) nav_remote: ResMut<'w, crate::nav::NavRemote>,
 }
