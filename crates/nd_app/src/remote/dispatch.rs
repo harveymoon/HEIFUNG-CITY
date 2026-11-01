@@ -851,6 +851,17 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("follow", "citizen/car id or {citizen|car|bot|building: id}; any camera command ends a follow"),
         ("mode", "orbit|walk"),
     ] },
+    Cmd { name: "nav", aliases: &[], effect: View, run: nav::nav, help: &[
+        ("do", "pan_up|pan_down|pan_left|pan_right|zoom_in|zoom_out|rotate_left|rotate_right|tilt_up|tilt_down (as the on-screen pad's buttons), north, reset"),
+        ("seconds", "how long the move is held, default 0.25"),
+        ("set", "{scroll: auto|zoom|pan, pad: auto|on|off, pan_speed, zoom_speed, turn_speed (0.1..5), invert_zoom, invert_scroll_pan, invert_tilt, left_drag_pan, drag_look}"),
+        ("note", "reads back the settings, whether raw mouse motion is trusted, the last scroll's kind and the camera"),
+    ] },
+    Cmd { name: "input", aliases: &[], effect: View, run: nav::input, help: &[
+        ("frames", "[[event, ...], ...] one list a frame, or {wait: n}; events {cursor:[x,y]} {leave:true} {button:left|right|middle, down} {wheel:[x,y], unit: line|pixel} {pinch: f} {rotate: deg} {raw:[dx,dy]} {key: \"W\"|\"PageUp\"|..., down}"),
+        ("drag", "{button, from:[x,y], to:[x,y], frames: 20, hold: [\"Alt\"|\"Shift\"]}: press, move, release"),
+        ("note", "synthetic window input (logical px), as a laptop or remote desktop sends it; the real cursor is not moved"),
+    ] },
     Cmd { name: "follow", aliases: &[], effect: View, run: follow::follow, help: &[
         ("citizen|car|bot|building|vehicle", "id, or the selection"),
         ("stop", "bool: end the follow (also on: false)"),
@@ -1017,6 +1028,10 @@ mod dispatch_tests {
             .init_resource::<crate::render::Turntable>()
             .init_resource::<crate::render::land_tiles::PickedTile>()
             .init_resource::<crate::viewer::notes::BuildingNotes>()
+            .init_resource::<crate::nav::NavSettings>()
+            .init_resource::<crate::nav::NavInput>()
+            .init_resource::<crate::nav::NavPad>()
+            .init_resource::<crate::nav::NavRemote>()
             .insert_resource(crate::audio::Sound::silent());
         app
     }
