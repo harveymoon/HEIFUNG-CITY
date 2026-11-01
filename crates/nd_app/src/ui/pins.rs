@@ -14,7 +14,7 @@ use crate::tools::Selection;
 
 pub fn map_pins(mut contexts: EguiContexts, sim: Res<Sim>, mut selection: ResMut<Selection>, mode: Res<CameraMode>, cams: Query<(&Camera, &GlobalTransform), With<OrbitCamera>>, mut flags: ResMut<super::UiFlags>) -> Result {
     let Selection::Citizen(id) = *selection else { return Ok(()) };
-    if *mode == CameraMode::Walk {
+    if mode.street() {
         return Ok(());
     }
     let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };

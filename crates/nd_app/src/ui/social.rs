@@ -306,7 +306,7 @@ pub fn bubbles(mut contexts: EguiContexts, sim: Res<Sim>, voices: Res<crate::com
     let now = ctx.input(|i| i.time);
     let w = &sim.world;
     let eye = gt.translation();
-    let close = *mode == CameraMode::Walk || orbit.distance < BUBBLE_RANGE;
+    let close = mode.street() || orbit.distance < BUBBLE_RANGE;
     // Remember when each talk first showed. [fix/review-app] A new city
     // numbers its talks from 1 again: start over.
     if seen.0 != sim.generation {

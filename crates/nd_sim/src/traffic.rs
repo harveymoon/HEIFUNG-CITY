@@ -43,6 +43,7 @@ mod kerb;
 mod lane;
 mod lane_change;
 mod place;
+mod player;
 mod ramps;
 mod remap;
 mod roundabout;
@@ -69,6 +70,9 @@ pub use driver::*;
 use follow::idm_with;
 pub use gridlock::*;
 pub use lane::*;
+/// [r5-drive] A vehicle's body width, for the player's car to bump into.
+pub use hazard::body_width as hazard_width;
+pub use player::{PlayerCar, PLAYER_HALF_LEN, PLAYER_HALF_WID, PLAYER_LATERAL};
 pub use signals::*;
 use stunt::step_stunt;
 pub use vehicle::*;
@@ -326,6 +330,16 @@ pub struct Traffic {
     /// onto, re-plans and why. Recording only.
     #[serde(skip)]
     pub notes: Vec<(CarId, crate::insight::Note)>,
+    /// [r5-drive] The player's own car in Drive mode, set by the app before
+    /// every tick (`traffic/player.rs`); never saved, `None` otherwise.
+    #[serde(skip)]
+    pub player: Option<PlayerCar>,
+    /// [r5-drive] Vehicles the player's car held back on the last substep.
+    #[serde(skip)]
+    pub player_held: Vec<CarId>,
+    /// [r5-drive] Seconds into the current step (the player's prediction).
+    #[serde(skip)]
+    player_clock: f32,
 }
 
 impl Traffic {
@@ -464,7 +478,9 @@ impl Traffic {
             car.drive.poses.push((car.pos, car.heading));
         }
         let mut arrived = Vec::new();
+        self.player_clock = 0.0;
         for _ in 0..substeps {
+            self.player_held.clear();
             let mut demand = self.signal_demand();
             self.ped_demand(&mut demand);
             self.net.step_signals(dt, Some(&demand));
@@ -493,6 +509,7 @@ impl Traffic {
             self.crosswalk_conflicts();
             self.hazards(dt);
             self.place_cars(dt);
+            self.player_clock += dt;
         }
         self.reroute_stalled(seconds);
         self.adapt_clock += seconds;

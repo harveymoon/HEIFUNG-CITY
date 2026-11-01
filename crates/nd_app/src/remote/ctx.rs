@@ -68,4 +68,6 @@ pub(super) struct Ctx<'w, 's> {
     pub(super) nav_input: Res<'w, crate::nav::NavInput>,
     pub(super) nav_pad: ResMut<'w, crate::nav::NavPad>,
     pub(super) nav_remote: ResMut<'w, crate::nav::NavRemote>,
+    /// [r5-drive] Drive mode's car.
+    pub(super) drive: ResMut<'w, crate::drive::Drive>,
 }

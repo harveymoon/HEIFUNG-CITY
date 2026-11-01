@@ -75,7 +75,7 @@ const LAMP_RGB: [f32; 3] = [1.0, 0.72, 0.45];
 /// when it is low.
 pub(super) fn lamp_focus(mode: CameraMode, eye: Vec3, cam: &OrbitCamera) -> Vec3 {
     match mode {
-        CameraMode::Walk => eye,
+        CameraMode::Walk | CameraMode::Drive => eye,
         CameraMode::Orbit => {
             let low = 1.0 - smoothstep(30.0, 160.0, eye.y - cam.target.y);
             cam.target.lerp(eye, low * 0.5)
@@ -483,6 +483,8 @@ pub(super) fn fog_falloff(mode: CameraMode, vis: f32, distance: f32) -> (f32, f3
     let sight = nd_sim::landscape::SIGHT;
     match mode {
         CameraMode::Walk => (120.0 * vis, 900.0 * vis),
+        // [r5-drive] At a car's speed the street ahead needs more reach.
+        CameraMode::Drive => (220.0 * vis, 1500.0 * vis),
         // The far end stays at the edge of what is drawn, a little nearer
         // in thick weather. [w1-render] Pulled back as the camera does:
         // the city under a camera zoomed far out sits 2-3 km away, and

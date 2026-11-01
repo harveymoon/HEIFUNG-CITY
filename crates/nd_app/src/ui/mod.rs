@@ -41,7 +41,7 @@ pub mod follow;
 pub mod fmt;
 /// [land] Ownership, sale price and merged plots in the inspector.
 mod estate;
-mod help;
+pub(crate) mod help;
 /// [identity] The Game history window: autosaves, bookmarks, revert.
 pub mod history;
 mod hover;

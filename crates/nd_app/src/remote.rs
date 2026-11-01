@@ -33,6 +33,8 @@ mod bus;
 mod camera;
 /// [laptop-nav] `nav` and `input`.
 mod nav;
+/// [r5-drive] Drive mode.
+mod drive;
 mod city;
 mod dev;
 mod files;

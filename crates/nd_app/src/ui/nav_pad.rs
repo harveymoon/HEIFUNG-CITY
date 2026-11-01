@@ -55,15 +55,20 @@ pub fn pad(
     }
     let map = flags.map_rect(ctx.content_rect());
     let yaw = match *mode {
-        CameraMode::Orbit => cams.iter().next().map_or(0.0, |c| c.yaw),
+        // [r5-drive] Driving, the orbit follows the camera behind the car.
+        CameraMode::Orbit | CameraMode::Drive => cams.iter().next().map_or(0.0, |c| c.yaw),
         // Walk: the way the eyes face, as an orbit yaw.
         CameraMode::Walk => walk.yaw + std::f32::consts::PI,
     };
     let walking = *mode == CameraMode::Walk;
-    let size = egui::vec2(CELL * 4.0 + GAP * 5.0 + 4.0, CELL * 3.0 + GAP * 2.0 + 10.0);
+    let driving = *mode == CameraMode::Drive;
+    // [r5-drive] Driving: a row more for the handbrake and the horn.
+    let extra = if driving { CELL + GAP } else { 0.0 };
+    let size = egui::vec2(CELL * 4.0 + GAP * 5.0 + 4.0, CELL * 3.0 + GAP * 2.0 + 10.0 + extra);
     let mut hold = NavMove::default();
     let mut tap = NavMove::default();
     let mut north = false;
+    let (mut handbrake, mut horn) = (false, false);
     egui::Area::new(egui::Id::new("nav_pad"))
         .order(egui::Order::Middle)
         .fixed_pos(egui::pos2(map.left() + 12.0, map.bottom() - 12.0))
@@ -73,18 +78,18 @@ pub fn pad(
                 let (area, _) = ui.allocate_exact_size(size, Sense::hover());
                 let o = area.min;
                 let cell = |col: f32, row: f32| Rect::from_min_size(o + egui::vec2(col * (CELL + GAP), row * (CELL + GAP)), egui::vec2(CELL, CELL));
-                let (pan, turn, tilt) = if walking { ("Walk", "Turn", "Look") } else { ("Pan", "Turn", "Tilt") };
+                let (pan, turn, tilt) = if walking { ("Walk", "Turn", "Look") } else if driving { ("Drive", "Look", "Look") } else { ("Pan", "Turn", "Tilt") };
                 let buttons: [(Rect, Glyph, NavMove, String); 10] = [
-                    (cell(1.0, 0.0), Glyph::Arrow(0.0), mv(Vec2::Y, 0.0, 0.0, 0.0), format!("{pan} up (W / ↑)")),
-                    (cell(1.0, 2.0), Glyph::Arrow(std::f32::consts::PI), mv(-Vec2::Y, 0.0, 0.0, 0.0), format!("{pan} down (S / ↓)")),
-                    (cell(0.0, 1.0), Glyph::Arrow(-std::f32::consts::FRAC_PI_2), mv(-Vec2::X, 0.0, 0.0, 0.0), format!("{pan} left (A / ←)")),
-                    (cell(2.0, 1.0), Glyph::Arrow(std::f32::consts::FRAC_PI_2), mv(Vec2::X, 0.0, 0.0, 0.0), format!("{pan} right (D / →)")),
+                    (cell(1.0, 0.0), Glyph::Arrow(0.0), mv(Vec2::Y, 0.0, 0.0, 0.0), if driving { "Accelerate (W / ↑)".into() } else { format!("{pan} up (W / ↑)") }),
+                    (cell(1.0, 2.0), Glyph::Arrow(std::f32::consts::PI), mv(-Vec2::Y, 0.0, 0.0, 0.0), if driving { "Brake, then reverse (S / ↓)".into() } else { format!("{pan} down (S / ↓)") }),
+                    (cell(0.0, 1.0), Glyph::Arrow(-std::f32::consts::FRAC_PI_2), mv(-Vec2::X, 0.0, 0.0, 0.0), if driving { "Steer left (A / ←)".into() } else { format!("{pan} left (A / ←)") }),
+                    (cell(2.0, 1.0), Glyph::Arrow(std::f32::consts::FRAC_PI_2), mv(Vec2::X, 0.0, 0.0, 0.0), if driving { "Steer right (D / →)".into() } else { format!("{pan} right (D / →)") }),
                     (cell(0.0, 0.0), Glyph::Turn(true), mv(Vec2::ZERO, 0.0, 1.0, 0.0), format!("{turn} left (Q)")),
                     (cell(2.0, 0.0), Glyph::Turn(false), mv(Vec2::ZERO, 0.0, -1.0, 0.0), format!("{turn} right (E)")),
-                    (cell(0.0, 2.0), Glyph::Tilt(true), mv(Vec2::ZERO, 0.0, 0.0, 1.0), if walking { "Look up (R / Home)".into() } else { format!("{tilt}: look more steeply down (Home, Shift+W)") }),
-                    (cell(2.0, 2.0), Glyph::Tilt(false), mv(Vec2::ZERO, 0.0, 0.0, -1.0), if walking { "Look down (F / End)".into() } else { format!("{tilt}: towards the horizon (End, Shift+S)") }),
-                    (zoom_rect(o, true), Glyph::Plus, mv(Vec2::ZERO, 1.0, 0.0, 0.0), if walking { "Walk forward".into() } else { "Zoom in (wheel, pinch, Ctrl+scroll, [ or . or Page Up)".into() }),
-                    (zoom_rect(o, false), Glyph::Minus, mv(Vec2::ZERO, -1.0, 0.0, 0.0), if walking { "Walk back".into() } else { "Zoom out (wheel, pinch, Ctrl+scroll, ] or , or Page Down)".into() }),
+                    (cell(0.0, 2.0), Glyph::Tilt(true), mv(Vec2::ZERO, 0.0, 0.0, 1.0), if walking || driving { "Look up (R / Home)".into() } else { format!("{tilt}: look more steeply down (Home, Shift+W)") }),
+                    (cell(2.0, 2.0), Glyph::Tilt(false), mv(Vec2::ZERO, 0.0, 0.0, -1.0), if walking || driving { "Look down (F / End)".into() } else { format!("{tilt}: towards the horizon (End, Shift+S)") }),
+                    (zoom_rect(o, true), Glyph::Plus, mv(Vec2::ZERO, 1.0, 0.0, 0.0), if walking { "Walk forward".into() } else if driving { "Camera closer (. or wheel)".into() } else { "Zoom in (wheel, pinch, Ctrl+scroll, [ or . or Page Up)".into() }),
+                    (zoom_rect(o, false), Glyph::Minus, mv(Vec2::ZERO, -1.0, 0.0, 0.0), if walking { "Walk back".into() } else if driving { "Camera further back (, or wheel)".into() } else { "Zoom out (wheel, pinch, Ctrl+scroll, ] or , or Page Down)".into() }),
                 ];
                 for (i, (rect, glyph, m, tip)) in buttons.into_iter().enumerate() {
                     let resp = ui.interact(rect, ui.id().with(("nav_btn", i)), Sense::click_and_drag()).on_hover_text(tip);
@@ -105,6 +110,23 @@ pub fn pad(
                     north = true;
                 }
                 paint_compass(ui.painter(), c, yaw, resp.hovered());
+                // [r5-drive] The handbrake and the horn, held.
+                if driving {
+                    let w = (CELL * 3.0 + GAP * 2.0 - GAP) / 2.0;
+                    let row = o.y + 3.0 * (CELL + GAP);
+                    for (k, (label, tip)) in [("HANDBRAKE", "Handbrake (Space)"), ("HORN", "Horn (H)")].into_iter().enumerate() {
+                        let rect = Rect::from_min_size(egui::pos2(o.x + k as f32 * (w + GAP), row), egui::vec2(w, CELL));
+                        let resp = ui.interact(rect, ui.id().with(("drive_btn", k)), Sense::click_and_drag()).on_hover_text(tip);
+                        let down = resp.is_pointer_button_down_on();
+                        if down {
+                            if k == 0 { handbrake = true } else { horn = true }
+                        }
+                        let ink = if down { GOLD } else if resp.hovered() { Color32::WHITE } else { CYAN };
+                        let fill = if down { Color32::from_rgb(60, 44, 16) } else { Color32::from_rgb(14, 16, 28) };
+                        ui.painter().rect(rect, 4.0, fill, Stroke::new(1.0, ink.gamma_multiply(0.45)), egui::StrokeKind::Inside);
+                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, label, super::theme::display(10.0), ink);
+                    }
+                }
             });
         });
     pad.hold = hold;
@@ -114,6 +136,8 @@ pub fn pad(
     if north {
         pad.north = true;
     }
+    pad.handbrake = handbrake;
+    pad.horn = horn;
     Ok(())
 }
 

@@ -14,6 +14,8 @@ mod camera;
 mod nav;
 /// [chase-cam] The chase camera's maths: pose, smoothing, ground, cut-away.
 mod chase;
+/// [r5-drive] Drive mode: the player at the wheel of a car.
+mod drive;
 /// [fix/review-app] The one reset of app state when a different city starts.
 mod city_reset;
 /// [committee] The mayor's AI committee in the running game.
@@ -121,6 +123,7 @@ impl PluginGroup for WorldViewPlugins {
     fn build(self) -> PluginGroupBuilder {
         PluginGroupBuilder::start::<Self>()
             .add(camera::CameraPlugin)
+            .add(drive::DrivePlugin)
             .add(render::RenderPlugin)
             .add(map_layers::MapLayersPlugin)
             .add(marks::MarksPlugin)

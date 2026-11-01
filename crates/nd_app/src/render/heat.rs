@@ -177,8 +177,9 @@ fn add_shader(mut shaders: ResMut<Assets<Shader>>) {
     let _ = shaders.insert(HEAT_SHADER.id(), Shader::from_wgsl(HEAT_SHADER_SRC, "nd_app/heat_vision.wgsl"));
 }
 
-fn toggle_key(keys: Res<ButtonInput<KeyCode>>, flags: Res<UiFlags>, mut lighting: ResMut<Lighting>) {
-    if keys.just_pressed(KeyCode::KeyH) && !flags.keyboard_captured {
+fn toggle_key(keys: Res<ButtonInput<KeyCode>>, flags: Res<UiFlags>, mode: Res<crate::camera::CameraMode>, mut lighting: ResMut<Lighting>) {
+    // [r5-drive] At the wheel H is the horn.
+    if keys.just_pressed(KeyCode::KeyH) && !flags.keyboard_captured && *mode != crate::camera::CameraMode::Drive {
         lighting.heat = !lighting.heat;
     }
 }
