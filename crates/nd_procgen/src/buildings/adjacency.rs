@@ -486,6 +486,8 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
         park_look: world.parks.of(id).map(|s| super::park::ParkLook { trash: s.trash, dealers: s.dealers }),
         // [tenants] signs over its shops
         units: &b.units,
+        // [r5-trash] a landfill's mound
+        waste_fill: world.landfill_fill(id).unwrap_or(0.0),
         ..Extras::default()
     }
 }

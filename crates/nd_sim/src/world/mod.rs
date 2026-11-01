@@ -36,6 +36,9 @@ mod containers;
 pub use containers::{truck_look, BoxCounts, BoxStory, DepotKind};
 #[cfg(test)]
 mod containers_tests;
+/// [r5-trash] Where the trash goes (`crate::waste`).
+#[cfg(test)]
+mod waste_tests;
 #[cfg(test)]
 mod cargo_hub_tests;
 #[cfg(test)]

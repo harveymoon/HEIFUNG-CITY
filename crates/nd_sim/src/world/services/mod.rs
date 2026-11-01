@@ -64,6 +64,10 @@ fn service_floors(kind: ServiceKind, tier: Tier) -> u8 {
         ServiceKind::ConventionCentre => [3, 3, 3],
         ServiceKind::Cathedral => [4, 4, 4],
         ServiceKind::CasinoResort => [14, 14, 14],
+        // [r5-trash] Low sheds; the incinerator hall is tall.
+        ServiceKind::Landfill => [1, 1, 1],
+        ServiceKind::Incinerator => [3, 4, 5],
+        ServiceKind::RecyclingPlant | ServiceKind::TransferStation => [1, 2, 2],
     };
     f[tier.index()]
 }

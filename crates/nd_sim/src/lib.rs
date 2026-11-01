@@ -119,6 +119,7 @@ pub mod subway;
 pub mod traffic;
 pub mod transit;
 pub mod trash;
+pub mod waste;
 pub mod vehicle;
 pub mod versioned;
 pub mod walk;

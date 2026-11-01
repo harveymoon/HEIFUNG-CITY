@@ -48,7 +48,7 @@ fn furnished_and_saved() {
     for kind in [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School] {
         assert!(count_service(&w, kind) >= 2, "{kind:?}: {}", count_service(&w, kind));
     }
-    for kind in [ServiceKind::University, ServiceKind::Dispatch, ServiceKind::Jail, ServiceKind::TrashDepot] {
+    for kind in [ServiceKind::University, ServiceKind::Dispatch, ServiceKind::Jail, ServiceKind::TrashDepot, ServiceKind::Landfill, ServiceKind::RecyclingPlant] {
         assert!(count_service(&w, kind) >= 1, "no {kind:?}");
     }
     let plants = |k: PowerPlantKind| w.buildings.values().filter(|b| b.plant == Some(k)).count();

@@ -67,13 +67,20 @@ pub enum Flow {
     /// [stories] What a district's policies pay out: rent support,
     /// heritage grants, business-rate relief.
     DistrictSpending,
+    /// [r5-trash] What getting rid of the trash costs by the tonne: tipping,
+    /// burning, sorting, shipping it out by rail or ship, or (dearest) by
+    /// lorry out of town (`crate::waste`).
+    WasteDisposal,
+    /// [r5-trash] Metal, plastics, paper and glass the recycling plants
+    /// sell (to the scrap yards and works in town first, the rest out).
+    RecyclingSales,
 }
 
 /// Number of `Flow`s; the ledger's row length.
-pub const FLOWS: usize = 26;
+pub const FLOWS: usize = 28;
 
 impl Flow {
-    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep, Flow::GridExport, Flow::Gifts, Flow::RoadMaintenance, Flow::Fines, Flow::PropertyTax, Flow::DistrictLevies, Flow::DistrictSpending];
+    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep, Flow::GridExport, Flow::Gifts, Flow::RoadMaintenance, Flow::Fines, Flow::PropertyTax, Flow::DistrictLevies, Flow::DistrictSpending, Flow::WasteDisposal, Flow::RecyclingSales];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -103,6 +110,8 @@ impl Flow {
             Flow::PropertyTax => "property tax",
             Flow::DistrictLevies => "district levies",
             Flow::DistrictSpending => "district spending",
+            Flow::WasteDisposal => "waste disposal",
+            Flow::RecyclingSales => "recycling sales",
         }
     }
 

@@ -262,6 +262,11 @@ fn pin_of(b: &nd_sim::Building) -> Option<(&'static str, [u8; 3], u8)> {
             K::Monument => ("M", [200, 170, 255], 1),
             K::Stadium => ("A", [255, 80, 220], 1),
             K::TrashDepot => ("T", [140, 160, 110], 2),
+            // [r5-trash] the disposal sites
+            K::Landfill => ("L", [150, 120, 70], 1),
+            K::Incinerator => ("I", [230, 110, 50], 1),
+            K::RecyclingPlant => ("R", [90, 200, 110], 2),
+            K::TransferStation => ("X", [140, 160, 110], 2),
             K::Vertiport => ("V", [80, 230, 255], 1),
             K::ParkingEnforcement => ("E", [170, 170, 120], 2),
             K::University => ("U", [120, 200, 255], 1),

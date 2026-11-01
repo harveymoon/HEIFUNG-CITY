@@ -399,6 +399,10 @@ pub(super) fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_s
         if s.kind.is_landmark() {
             attraction_lines(ui, w, id, b, s.kind);
         }
+        // [r5-trash] where the trash goes
+        if s.kind.is_waste() || s.kind == nd_sim::ServiceKind::TrashDepot {
+            crate::ui::trash::inspector_lines(ui, w, id, s.kind);
+        }
     }
     if let Some(kind) = b.plant {
         // [plant-groups] A Sunfield or Wind Park: the whole park's figures.

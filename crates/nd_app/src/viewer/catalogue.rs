@@ -71,7 +71,7 @@ pub fn group(s: Style) -> &'static str {
         PowerCoal | PowerSolar | PowerWind | PowerNuclear | PowerHydro | PowerTidal | PowerGeothermal | PowerBattery => "Power",
         BusDepot | Station | FreightYard | MetroEntrance | CentralStation | Vertiport => "Transit and rail",
         ShippingPort | FerryTerminal | MarinaSmall | MarinaLarge | FishingPortSmall | FishingPortLarge => "Docks",
-        PoliceStation | FireStation | Hospital | School | DispatchCenter | Prison | TrashDepot | University => "City services",
+        PoliceStation | FireStation | Hospital | School | DispatchCenter | Prison | TrashDepot | University | Landfill | Incinerator | RecyclingPlant | TransferStation => "City services",
         Landmark | Stadium | ArtMuseum | ScienceMuseum | HistoryMuseum | PleasurePier | GrandPark | Zoo | Observatory | Aquarium | BotanicalGarden | ConcertHall | AmusementPark | ConventionCentre | Cathedral | CasinoResort => "Attractions",
         Farmstead | OilField | Refinery | ContainerYard | FishProcessing | TruckLot | Smelter | Feedlot | ChemicalWorks | CowFarm | ChickenFarm | Slaughterhouse | StripMine | FishGutting | FishStickFactory | TrashCompany => "Industry trades",
         Mechanic | CarDealer | BikeShop | FishMarket | SeafoodRestaurant | GolfRange | ArtStudio | Gallery => "Shops and trades",
@@ -248,6 +248,8 @@ pub fn lot_size(s: Style, tier: Tier) -> (f32, f32) {
             _ => (40.0, 36.0),
         },
         ScrapYard => (48.0, 44.0),
+        // [r5-trash] a tip over several plots
+        Landfill => (95.0, 80.0),
         // [r4-skyline] A sky villa on a family's two plots, an estate's
         // four; twin towers on a wide plot.
         SkyVilla => match tier {
@@ -258,7 +260,7 @@ pub fn lot_size(s: Style, tier: Tier) -> (f32, f32) {
         // [r4-leisure-places] the halls and lots on a big plot
         FoodHallShed | StreetFoodLot | DriveThrough | Multiplex | Theatre | MusicHall | BowlingAlley => (48.0, 44.0),
         Stadium | Arena | GrandPark | Zoo | AmusementPark | BotanicalGarden | ConventionCentre | MegaMall | ShippingPort | PowerCoal | PowerNuclear | PowerSolar | PowerWind | PowerHydro | PowerTidal | PowerGeothermal | FreightYard | CentralStation | StripMine | OilField | Refinery | Farmstead | CowFarm | Feedlot | Prison | University | CasinoResort | Megastructure => (130.0, 110.0),
-        Hospital | School | MarketHall | Mall | MegaHotel | Mansion | ArtMuseum | ScienceMuseum | HistoryMuseum | ConcertHall | Cathedral | Aquarium | Observatory | PleasurePier | Station | ContainerYard | TruckLot | Smelter | ChemicalWorks | ChickenFarm | Slaughterhouse | TankFarm | Depot | Junkyard | Factory | FabPlant | BusDepot | TrashDepot | TrashCompany | MarinaLarge | FishingPortLarge | FerryTerminal | GolfRange | BeachResort | Beach | TrailerPark | Suburb | Supertall | CarDealer | StripMall | Casino | Cinema | DomeCampus | Courthouse | Ministry | CivicTower | FoundryWorks | GasWorks | LoftEstate | SawtoothFactory | CulDeSac | GardenManor | StoneManor => (75.0, 65.0),
+        Hospital | School | MarketHall | Mall | MegaHotel | Mansion | ArtMuseum | ScienceMuseum | HistoryMuseum | ConcertHall | Cathedral | Aquarium | Observatory | PleasurePier | Station | ContainerYard | TruckLot | Smelter | ChemicalWorks | ChickenFarm | Slaughterhouse | TankFarm | Depot | Junkyard | Factory | FabPlant | BusDepot | TrashDepot | Incinerator | RecyclingPlant | TransferStation | TrashCompany | MarinaLarge | FishingPortLarge | FerryTerminal | GolfRange | BeachResort | Beach | TrailerPark | Suburb | Supertall | CarDealer | StripMall | Casino | Cinema | DomeCampus | Courthouse | Ministry | CivicTower | FoundryWorks | GasWorks | LoftEstate | SawtoothFactory | CulDeSac | GardenManor | StoneManor => (75.0, 65.0),
         _ => match tier {
             Tier::Low => (30.0, 32.0),
             Tier::Mid => (36.0, 38.0),
@@ -366,7 +368,9 @@ pub fn geometry(e: &Entry, v: Variant, rules: &BuildingRules, palette: &Palette)
     let look = look.or(Style::SKYLINE_LUXE.contains(&e.style).then_some(nd_sim::districts::Look::SkylineLuxe));
     let form = form.or((e.style == Style::SkyVilla && v.tier == Tier::High).then_some(nd_sim::estate::Form::Mansion));
     let shore = (harbour || e.style == Style::StiltHouses).then(|| nd_procgen::buildings::ShoreLook { seaward: (lot.center - (lot.front_edge[0] + lot.front_edge[1]) * 0.5).normalize_or_zero(), drop: 1.2, beach: None });
-    let extras = Extras { powered: 1.0, dynamic_lights: true, tower, look, form, shore, ..Extras::default() };
+    // [r5-trash] A landfill shown well filled (its mound grows with the fill).
+    let waste_fill = if e.style == Style::Landfill { 0.7 } else { 0.0 };
+    let extras = Extras { powered: 1.0, dynamic_lights: true, tower, look, form, shore, waste_fill, ..Extras::default() };
     generate_styled_extras(&lot, e.land_use, v.floors, v.tier, 0.9, v.seed, e.style, rules, palette, &extras)
 }
 

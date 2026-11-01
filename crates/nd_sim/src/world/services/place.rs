@@ -156,7 +156,7 @@ impl World {
                 }
             }
         }
-        let needs_street = matches!(what, Placeable::BusDepot | Placeable::ParkingLot(_) | Placeable::CargoHub) || matches!(what, Placeable::Service(k, _) if k.unit_kind().is_some() || k == ServiceKind::Stadium || k == ServiceKind::TrashDepot || k == ServiceKind::ParkingEnforcement || k == ServiceKind::University || k.is_landmark());
+        let needs_street = matches!(what, Placeable::BusDepot | Placeable::ParkingLot(_) | Placeable::CargoHub) || matches!(what, Placeable::Service(k, _) if k.unit_kind().is_some() || k == ServiceKind::Stadium || k == ServiceKind::TrashDepot || k.is_waste() || k == ServiceKind::ParkingEnforcement || k == ServiceKind::University || k.is_landmark());
         if needs_street && !lot.car_access() {
             return Some(format!("{} needs a street out front", crate::names::a(what.label())));
         }

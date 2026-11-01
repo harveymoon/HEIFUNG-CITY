@@ -21,6 +21,48 @@ fn by_kind(counts: &[u32; 5]) -> Value {
     Value::Object(m)
 }
 
+/// [r5-trash] Where the trash goes: tonnes and costs by way, the sites,
+/// the depots' yards, the starter contract, litter.
+pub fn disposal(w: &World) -> Value {
+    use nd_sim::waste::Dest;
+    let t = &w.society.trash;
+    let d = &t.disposal;
+    let by = |a: &[f32; Dest::COUNT]| {
+        let mut m = Map::new();
+        for k in Dest::ALL {
+            m.insert(k.key().into(), json!(round(a[k.index()])));
+        }
+        Value::Object(m)
+    };
+    let sites: Vec<Value> = w
+        .waste_sites()
+        .iter()
+        .map(|s| {
+            let st = d.sites.get(&s.id).cloned().unwrap_or_default();
+            json!({ "id": key_str(s.id), "name": building_name(w, Some(s.id)), "kind": s.kind.key(), "tier": format!("{:?}", s.tier).to_lowercase(), "pos": v2(s.pos),
+                "staffing": round(s.staffing), "capacity_t": round(nd_sim::waste::site_capacity(s.kind, s.tier)), "room_t": round(w.site_room_t(s)),
+                "filled_t": round(st.filled_t), "fill": w.landfill_fill(s.id).map(round), "backlog_t": round(st.backlog_t),
+                "in_today_t": round(st.in_today_t), "in_yesterday_t": round(st.in_yesterday_t), "done_yesterday_t": round(st.done_yesterday_t),
+                "recovered_yesterday_t": round(st.recovered_yesterday_t), "mw": round(st.mw), "mwh_yesterday": round(st.mwh_yesterday),
+                "cost_yesterday": round(st.cost_yesterday), "sales_yesterday": round(st.sales_yesterday), "turned_away_yesterday": st.turned_away_yesterday })
+        })
+        .collect();
+    let yards: Vec<Value> = d.yards.iter().map(|(id, tt)| json!({ "depot": key_str(*id), "name": building_name(w, Some(*id)), "held_t": round(*tt) })).collect();
+    let trucks_dumping = t.trucks.values().filter(|x| x.dump.is_some()).count();
+    let contractor = t.trucks.values().filter(|x| matches!(x.hauler, Hauler::Contractor(_))).count();
+    json!({
+        "unit": "t", "starter_contract": d.starter_on(w.clock.day()), "starter_until_day": d.starter_until, "road_price_per_t": round(w.road_price()),
+        "today_t": by(&d.t_today), "yesterday_t": by(&d.t_yesterday), "total_t": by(&d.t_total),
+        "cost_today": by(&d.cost_today), "cost_yesterday": by(&d.cost_yesterday), "cost_total": round(d.cost_total),
+        "sales_yesterday": round(d.sales_yesterday), "sales_total": round(d.sales_total),
+        "held_in_yards_t": round(d.held_t()), "yards": yards, "blocked_loads_yesterday": d.blocked_yesterday, "yard_full_days": d.yard_full_days,
+        "waste_mw": round(w.waste_mw()), "ships_by_rail": w.waste_ships_by_rail(), "sites": sites,
+        "trucks_to_sites": trucks_dumping, "contractor_lorries": contractor,
+        "littered_streets": t.litter.values().filter(|l| **l >= 0.25).count(), "litter_total": round(t.litter.values().sum::<f32>()),
+        "scavengers_last_night": d.scavengers_yesterday, "scavenged_total": round(d.scavenged_total), "landfill_illness_total": d.landfill_ill_total,
+    })
+}
+
 /// The `society` report section.
 pub fn society(w: &World) -> Value {
     let s = &w.society;
@@ -57,6 +99,8 @@ pub fn society(w: &World) -> Value {
             "trucks": { "city": trucks_city, "private": trucks_private, "on_road": t.trucks.values().filter(|x| x.car.is_some()).count() },
             "depots": depots,
             "private_hauler": { "company": COMPANY, "clients": t.stats.private_clients, "revenue_yesterday": round(t.stats.private_revenue_yesterday), "revenue_total": round(t.stats.private_revenue_total) },
+            // [r5-trash] where it goes
+            "disposal": disposal(w),
         },
         "crime": {
             "criminals_free": c.offenders.len() - in_custody, "in_custody": in_custody,
@@ -119,6 +163,25 @@ pub fn alerts(w: &World) -> Vec<Alert> {
             a.add(key_str(**id), w.buildings.get(**id).and_then(|b| building_pos(w, b)));
         }
         a.message = format!("{} buildings' bins are overflowing ({:.0}% of them); residents complain and the land loses value", over.len(), share * 100.0);
+        out.push(a);
+    }
+    // [r5-trash] Depots that cannot unload, landfills filling up.
+    let d = &s.trash.disposal;
+    if d.blocked_yesterday > 0 {
+        let mut a = Alert::new("trash_yards_full", 3, "build a landfill, incinerator, recycling plant or transfer station within 3 km of the depots (Buildings > Services > Sanitation), or get the treasury out of the red so the contractor hauls in full");
+        for (id, _) in d.yards.iter().filter(|(_, t)| **t > 0.0) {
+            a.add(key_str(*id), w.buildings.get(*id).and_then(|b| building_pos(w, b)));
+        }
+        a.message = format!("{} truckloads could not be unloaded yesterday: the depots' yards are full, so the trucks stop collecting", d.blocked_yesterday);
+        out.push(a);
+    }
+    let filling: Vec<_> = w.waste_sites().into_iter().filter(|s| s.kind == ServiceKind::Landfill && w.landfill_fill(s.id).is_some_and(|f| f >= 0.85)).collect();
+    if !filling.is_empty() {
+        let mut a = Alert::new("landfill_nearly_full", 2, "build another landfill, or burn, sort or ship more (an incinerator, a recycling plant, a transfer station)");
+        for s in &filling {
+            a.add(key_str(s.id), Some(s.pos));
+        }
+        a.message = format!("{} landfill{} 85% full or more", filling.len(), if filling.len() == 1 { " is" } else { "s are" });
         out.push(a);
     }
     out

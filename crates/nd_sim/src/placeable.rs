@@ -77,7 +77,7 @@ impl BuildCategory {
     pub fn items(self) -> Vec<Placeable> {
         match self {
             BuildCategory::Power => PowerPlantKind::ALL.iter().map(|&k| Placeable::Plant(k)).chain(crate::power::BatteryKind::ALL.iter().map(|&k| Placeable::Battery(k))).collect(),
-            BuildCategory::Services => [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::University, ServiceKind::Dispatch, ServiceKind::Jail, ServiceKind::TrashDepot, ServiceKind::ParkingEnforcement].iter().map(|&k| Placeable::Service(k, Tier::Mid)).collect(),
+            BuildCategory::Services => [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School, ServiceKind::University, ServiceKind::Dispatch, ServiceKind::Jail, ServiceKind::TrashDepot, ServiceKind::Landfill, ServiceKind::Incinerator, ServiceKind::RecyclingPlant, ServiceKind::TransferStation, ServiceKind::ParkingEnforcement].iter().map(|&k| Placeable::Service(k, Tier::Mid)).collect(),
             BuildCategory::Transit => {
                 let mut v = vec![Placeable::BusDepot, Placeable::MetroStation, Placeable::Service(ServiceKind::Vertiport, Tier::Mid)];
                 v.extend(crate::enforcement::LotSize::OFFERED.iter().map(|&s| Placeable::ParkingLot(s)));
@@ -172,6 +172,10 @@ impl Placeable {
                 ServiceKind::ConventionCentre => "Convention centre",
                 ServiceKind::Cathedral => "Cathedral",
                 ServiceKind::CasinoResort => "Casino resort",
+                ServiceKind::Landfill => "Landfill",
+                ServiceKind::Incinerator => "Incinerator (waste-to-energy)",
+                ServiceKind::RecyclingPlant => "Recycling plant",
+                ServiceKind::TransferStation => "Transfer station (rail / ship export)",
             },
             Placeable::ParkingLot(s) => s.menu_label(),
             Placeable::Toll(s) => s.menu_label(),

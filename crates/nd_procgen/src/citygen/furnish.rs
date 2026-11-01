@@ -638,6 +638,14 @@ fn services(cx: &mut Ctx) {
             None => break,
         }
     }
+    // [r5-trash] Where the trash goes: a landfill out by the works, away
+    // from downtown, and a recycling plant among the works.
+    if !depots.is_empty() {
+        let w3 = works.clone();
+        cx.place("landfill", Placeable::Service(ServiceKind::Landfill, Tier::High), industrial, move |c, _| nearest(c, &w3) - c.distance(dt) * 0.25);
+        let w4 = works.clone();
+        cx.place("recycling plant", Placeable::Service(ServiceKind::RecyclingPlant, Tier::Mid), industrial, move |c, _| nearest(c, &w4));
+    }
     cx.place("monument", Placeable::Service(ServiceKind::Monument, Tier::High), not_park, |c, _| c.distance(dt));
     cx.place("stadium", Placeable::Service(ServiceKind::Stadium, Tier::High), not_park, move |c, _| c.distance(mt + Vec2::new(320.0, 140.0)));
     cx.place("parking wardens", Placeable::Service(ServiceKind::ParkingEnforcement, Tier::High), civic_or_shops, |c, _| c.distance(dt + Vec2::new(0.0, 200.0)));

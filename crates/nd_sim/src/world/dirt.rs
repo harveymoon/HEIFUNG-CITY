@@ -133,6 +133,8 @@ impl World {
             let filters = if any_policy { self.district_filters(id) } else { 1.0 };
             out.push(DirtySource { building: id, pos: l.center, as_kind, level: d * activity * filters, reach: industry::dirt_reach(d) });
         }
+        // [r5-trash] The tip, the furnace and the sheds.
+        out.extend(self.waste_dirt());
         self.dirty = out;
     }
 
@@ -187,7 +189,7 @@ impl World {
                 let what = match (&src.business, src.plant) {
                     (Some(z), _) => z.kind.label().to_string(),
                     (None, Some(k)) => k.label().to_string(),
-                    _ => "plant".to_string(),
+                    _ => src.service.map_or("plant", |s| s.kind.label()).to_string(),
                 };
                 Some(DirtyNeighbour { source: s.building, name: src.name.clone(), what, distance, hit })
             })

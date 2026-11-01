@@ -72,6 +72,8 @@ pub const MAP_LAYERS: &[MapLayer] = &[
     MapLayer { key: "walk_networks", label: "Walk networks", group: "Traffic", hotkey: "", hint: "Every walkway coloured by the network it belongs to: places people cannot walk between show in different colours; buildings off the main network outlined", flag: |o| &mut o.walk_networks, legend: legend_walk_networks },
     MapLayer { key: "people", label: "People", group: "People", hotkey: "L", hint: "Where everyone is right now", flag: |o| &mut o.people, legend: legend_people },
     MapLayer { key: "pollution", label: "Pollution and noise", group: "Environment", hotkey: "L", hint: "From plants, industry, nightlife and traffic", flag: |o| &mut o.pollution, legend: legend_pollution },
+    // [r5-trash] (render/pt_layers.rs `trash_gizmos`)
+    MapLayer { key: "trash", label: "Trashy streets", group: "Environment", hotkey: "", hint: "Streets and blocks by overflowing bins and litter on the pavement, littered parks, and where the trash goes: landfills, incinerators, recycling plants and transfer stations marked", flag: |o| &mut o.trash, legend: legend_trash },
     // [layers] (render/focus.rs, render/layers.rs, render/mapview.rs)
     MapLayer { key: "crime", label: "Crime", group: "People", hotkey: "L", hint: "Where offences pile up; police cars and their routes lit over a dimmed city, the police stations marked and the ground they cover outlined", flag: |o| &mut o.crime, legend: legend_crime },
     // [events] (render/nights.rs)
@@ -546,6 +548,21 @@ fn legend_park_access(ui: &mut egui::Ui, _: &LegendCtx) {
         None => small(ui, "measuring..."),
     }
     small(ui, "a park counts once it is laid out and open; minutes are by the walking paths, updated every two game hours");
+}
+
+/// [r5-trash] The Trashy streets layer's key.
+fn legend_trash(ui: &mut egui::Ui, cx: &LegendCtx) {
+    ramp(ui, |t| linear(crate::render::trash_color(t)), "clean", "buried");
+    swatches(ui, &[(linear(crate::render::TRASH_SITE_COLOR), "landfill, incinerator, recycling, transfer".to_string()), (linear(crate::render::trash_color(1.0)), "building with overflowing bins".to_string())], false);
+    let w = cx.world;
+    let t = &w.society.trash;
+    let d = &t.disposal;
+    let over = t.bins.values().filter(|b| b.overflow() > 0.0).count();
+    let littered = t.litter.values().filter(|l| **l >= 0.25).count();
+    small(ui, &format!("{over} of {} buildings overflowing · {littered} littered street pieces · yesterday {:.1} t left the depots, {:.0} spent", t.bins.len(), d.yesterday_t(), d.cost_yesterday.iter().sum::<f32>()));
+    if d.starter_on(w.clock.day()) {
+        small(ui, &format!("starter contract: lorries out of town at half price until day {}", d.starter_until + 1));
+    }
 }
 
 /// [pt-ux] The Land density layer's key.

@@ -55,7 +55,7 @@ pub use buildings::rail::{box_number_mesh, container_geometry, freighter_cargo, 
 pub use buildings::BoxSlot;
 pub use buildings::parts::{BoxLook, ShippingLine, SHIPPING_LINES, shipping_line, CONTAINER_20, CONTAINER_40, CONTAINER_W, CONTAINER_H};
 pub use buildings::strip_mine_hole;
-pub use buildings::{battery_lights, solar_head, solar_trackers, SolarTracker, SOLAR_HUB, SOLAR_MAX_TILT, building_style, style_extras, coal_vents, CoalVent, generate_building, wind_rotor, wind_turbines, BuildingRules, PlantField, CraneRig, crane_slew, GameRig, Extras, LandUseRules, Neighbour, Style, StyleBook, Turbine, NEON_MARK, NIGHT_MARK, WINDOW_LIGHT_MARK};
+pub use buildings::{battery_lights, solar_head, solar_trackers, SolarTracker, SOLAR_HUB, SOLAR_MAX_TILT, building_style, style_extras, coal_vents, incinerator_vents, CoalVent, generate_building, wind_rotor, wind_turbines, BuildingRules, PlantField, CraneRig, crane_slew, GameRig, Extras, LandUseRules, Neighbour, Style, StyleBook, Turbine, NEON_MARK, NIGHT_MARK, WINDOW_LIGHT_MARK};
 pub use mesh::MeshData;
 pub use palette::Palette;
 pub use surface::{Geometry, Lod, Surface};
