@@ -4,13 +4,13 @@
 
 use bevy::camera::Hdr;
 use bevy::core_pipeline::tonemapping::Tonemapping;
-use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 use crate::chase::{clear_ground, Chase, Cut, Nudge, Subject, SubjectKind};
+use crate::nav::{left_drag_role, north_of, orbit_keys, walk_keys, KeyCaptures, LeftDrag, NavInput, NavMove, NavPad, NavRemote, NavSettings, TAP_SECS};
 use crate::overlay::shapes::lerp_angle;
 use crate::sim::{Sim, SimSet};
 use crate::tools::Selection;
@@ -519,6 +519,7 @@ impl Plugin for CameraPlugin {
             .init_resource::<CameraFollow>()
             .init_resource::<CameraFly>()
             .init_resource::<CameraCut>()
+            .add_plugins(crate::nav::NavPlugin)
             .add_systems(Startup, spawn_camera)
             .add_systems(Update, (control_camera, project_cursor).chain().before(SimSet::Input))
             // After the sim has stepped and the renderer has placed things,
@@ -544,14 +545,15 @@ fn spawn_camera(mut commands: Commands) {
     ));
 }
 
+/// The default orbit tilt (as the camera starts; the pad's level button).
+pub const DEFAULT_PITCH: f32 = 0.85;
+
 #[allow(clippy::too_many_arguments)]
-fn control_camera(
+pub(crate) fn control_camera(
     time: Res<Time>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
-    motion: Res<AccumulatedMouseMotion>,
-    scroll: Res<AccumulatedMouseScroll>,
-    flags: Res<UiFlags>,
+    mut flags: ResMut<UiFlags>,
     sim: Res<Sim>,
     mut mode: ResMut<CameraMode>,
     mut walk: ResMut<WalkState>,
@@ -559,9 +561,34 @@ fn control_camera(
     mut cursors: Query<&mut CursorOptions, With<PrimaryWindow>>,
     tools: Res<crate::tools::ToolState>,
     (mut follow, mut fly): (ResMut<CameraFollow>, ResMut<CameraFly>),
+    (mut nav, settings, mut pad, mut remote): (ResMut<NavInput>, Res<NavSettings>, ResMut<NavPad>, ResMut<NavRemote>),
 ) {
     let Ok((mut cam, mut tf, mut proj, mut fog)) = q.single_mut() else { return };
     let dt = time.delta_secs();
+    // [laptop-nav] The on-screen pad's buttons and the remote API's timed
+    // holds, as rates; a tap is a short step at once.
+    let mut padmove = pad.hold;
+    if !pad.tap.is_zero() && dt > 0.0 {
+        padmove.add(pad.tap.scaled(TAP_SECS / dt));
+    }
+    for (m, left) in remote.holds.iter_mut() {
+        padmove.add(*m);
+        *left -= dt;
+    }
+    remote.holds.retain(|(_, left)| *left > 0.0);
+    pad.hold = NavMove::default();
+    pad.tap = NavMove::default();
+    // [laptop-nav] Drags follow the cursor (remote desktops too), the raw
+    // motion only where the cursor cannot (`nav`).
+    let drag = nav.drag_delta();
+    let turn_k = settings.turn_speed;
+    let tilt_k = if settings.invert_tilt { -turn_k } else { turn_k };
+    let alt = keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight);
+    let shift_held = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    let role = left_drag_role(nav.left_on_map && buttons.pressed(MouseButton::Left), alt, shift_held, tools.tool == crate::tools::Tool::Inspect, settings.left_drag_pan, nav.left_dragging);
+    // Walk mode without mouselook: the pointer stays free and a drag turns
+    // the head (asked for, or the raw motion is unusable here).
+    let drag_look = settings.drag_look || !nav.raw_reliable;
     // [camera] A loaded or new city: the followed id means someone else now.
     if follow.target.is_some() && follow.generation != sim.generation {
         follow.stop();
@@ -583,10 +610,11 @@ fn control_camera(
     // egui uses Tab for focus traversal and takes typed keys while a text
     // field has focus, so the one-shot keys stand down then. Escape always
     // works: it is how you get off the pavement.
-    let key = |k: KeyCode| !flags.keyboard_captured && keys.just_pressed(k);
+    let typing = flags.keyboard_captured;
+    let key = |k: KeyCode| !typing && keys.just_pressed(k);
     // Held movement keys stand down too: typing "Westside" into a name
     // field must not pan and turn the camera.
-    let held = |k: KeyCode| !flags.keyboard_captured && keys.pressed(k);
+    let held = |k: KeyCode| !typing && keys.pressed(k);
 
     // Tab toggles walk mode; Escape leaves it.
     if key(KeyCode::Tab) || (keys.just_pressed(KeyCode::Escape) && !flags.data_view && *mode == CameraMode::Walk) {
@@ -634,9 +662,11 @@ fn control_camera(
                 follow.pov_look = Vec2::ZERO;
                 // Through someone's eyes the pointer stays free for the
                 // banner's buttons; walking yourself, the mouse is the head.
+                // [laptop-nav] Unless the head turns by dragging.
+                let free = pov || drag_look;
                 for mut c in &mut cursors {
-                    c.grab_mode = if pov { CursorGrabMode::None } else { CursorGrabMode::Locked };
-                    c.visible = pov;
+                    c.grab_mode = if free { CursorGrabMode::None } else { CursorGrabMode::Locked };
+                    c.visible = free;
                 }
             }
             CameraMode::Orbit => {
@@ -656,9 +686,14 @@ fn control_camera(
     // [camera] Their point of view: `follow_and_fly` places the eye; here
     // only the head turns, with a right-drag, and springs back when let go.
     if *mode == CameraMode::Walk && pov {
-        if buttons.pressed(MouseButton::Right) {
-            follow.pov_look.x -= motion.delta.x * LOOK_SPEED;
-            follow.pov_look.y = (follow.pov_look.y - motion.delta.y * LOOK_SPEED).clamp(-1.2, 1.2);
+        // [laptop-nav] Or Alt+left-drag, Q/E and R/F, the pad.
+        let (_, kturn, klook) = walk_keys(held);
+        let dragging = buttons.pressed(MouseButton::Right) || role == LeftDrag::Orbit;
+        let keyed = kturn != 0.0 || klook != 0.0 || padmove.yaw != 0.0 || padmove.tilt != 0.0;
+        if dragging || keyed {
+            let d = if dragging { drag } else { Vec2::ZERO };
+            follow.pov_look.x += -d.x * LOOK_SPEED * turn_k + (kturn + padmove.yaw) * 1.2 * dt;
+            follow.pov_look.y = (follow.pov_look.y - d.y * LOOK_SPEED * tilt_k + (klook + padmove.tilt) * dt).clamp(-1.2, 1.2);
         } else {
             let k = (dt * 2.5).min(1.0);
             follow.pov_look *= 1.0 - k;
@@ -672,25 +707,35 @@ fn control_camera(
         return;
     }
     if *mode == CameraMode::Walk {
-        walk.yaw -= motion.delta.x * LOOK_SPEED;
-        walk.pitch = (walk.pitch - motion.delta.y * LOOK_SPEED).clamp(-1.35, 1.35);
+        // [laptop-nav] Mouselook from the raw motion; where that is not
+        // usable (a remote desktop) or not wanted, the pointer is set free
+        // and a left- or right-drag turns the head. Keys and the pad too.
+        let want = if drag_look { CursorGrabMode::None } else { CursorGrabMode::Locked };
+        for mut c in &mut cursors {
+            if c.grab_mode != want {
+                c.grab_mode = want;
+                c.visible = drag_look;
+                if drag_look && !settings.drag_look {
+                    flags.message = "No usable mouse motion here (a remote desktop?): drag to look round, or Q/E and R/F.".into();
+                }
+            }
+        }
+        let look = if drag_look {
+            let held_button = buttons.pressed(MouseButton::Left) || buttons.pressed(MouseButton::Right);
+            if held_button && !flags.pointer_over_ui { drag } else { Vec2::ZERO }
+        } else {
+            nav.note_walk_look();
+            nav.raw
+        };
+        let (kmove, kturn, klook) = walk_keys(held);
+        walk.yaw += -look.x * LOOK_SPEED * turn_k + (kturn + padmove.yaw) * 1.6 * dt;
+        walk.pitch = (walk.pitch - look.y * LOOK_SPEED * tilt_k + (klook + padmove.tilt) * dt).clamp(-1.35, 1.35);
         let (sy, cy) = walk.yaw.sin_cos();
         let forward = Vec3::new(sy, 0.0, cy);
         // right = forward x up in this Y-up, right-handed world.
         let right = Vec3::new(-cy, 0.0, sy);
-        let mut mv = Vec3::ZERO;
-        if held(KeyCode::KeyW) || held(KeyCode::ArrowUp) {
-            mv += forward;
-        }
-        if held(KeyCode::KeyS) || held(KeyCode::ArrowDown) {
-            mv -= forward;
-        }
-        if held(KeyCode::KeyD) || held(KeyCode::ArrowRight) {
-            mv += right;
-        }
-        if held(KeyCode::KeyA) || held(KeyCode::ArrowLeft) {
-            mv -= right;
-        }
+        let step = kmove + padmove.pan + Vec2::new(0.0, padmove.zoom);
+        let mv = right * step.x + forward * step.y;
         let run = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
         let speed = if run { RUN_SPEED } else { WALK_SPEED };
         if mv != Vec3::ZERO {
@@ -720,34 +765,24 @@ fn control_camera(
     let chase = follow.target.is_some() && follow.view == FollowView::Chase && !fly.flying() && follow.target.and_then(|t| chase_subject(&sim, t)).is_some();
     if chase {
         let mut turn = Vec2::ZERO;
-        let dragging = buttons.pressed(MouseButton::Right) && !tools.captures_right_drag();
+        let dragging = (buttons.pressed(MouseButton::Right) && !tools.captures_right_drag()) || role == LeftDrag::Orbit;
         if dragging {
-            turn += Vec2::new(motion.delta.x, motion.delta.y) * 0.005;
+            turn += Vec2::new(drag.x * turn_k, drag.y * tilt_k) * 0.005;
         }
-        if held(KeyCode::KeyQ) {
-            turn.x -= 1.2 * dt;
-        }
-        if held(KeyCode::KeyE) {
-            turn.x += 1.2 * dt;
-        }
+        // [laptop-nav] Q/E, Home/End (or Shift+W/S), the pad and a rotate gesture.
+        let mut km = orbit_keys(held, shift_held, KeyCaptures { brackets: tools.captures_brackets(), pages: tools.captures_pages() });
+        km.add(padmove);
+        turn.x -= km.yaw * 1.2 * dt + nav.rotate;
+        turn.y += km.tilt * dt;
         follow.nudge.turn(turn);
-        let turning = dragging || held(KeyCode::KeyQ) || held(KeyCode::KeyE);
+        let turning = dragging || km.yaw != 0.0 || km.tilt != 0.0 || nav.rotate != 0.0;
         follow.nudge.settle(dt, turning);
         let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
-        if !flags.pointer_over_ui && !tools.captures_wheel(ctrl) {
-            let lines = match scroll.unit {
-                MouseScrollUnit::Line => scroll.delta.y,
-                MouseScrollUnit::Pixel => scroll.delta.y / 60.0,
-            };
-            if lines != 0.0 {
-                follow.nudge.zoom_by(lines);
-            }
+        if !flags.pointer_over_ui && !tools.captures_wheel(ctrl) && nav.zoom != 0.0 {
+            follow.nudge.zoom_by(nav.zoom);
         }
-        if held(KeyCode::BracketLeft) && !tools.captures_brackets() {
-            follow.nudge.zoom_by(1.5 * dt / 0.12);
-        }
-        if held(KeyCode::BracketRight) && !tools.captures_brackets() {
-            follow.nudge.zoom_by(-1.5 * dt / 0.12);
+        if km.zoom != 0.0 {
+            follow.nudge.zoom_by(km.zoom * 1.5 * dt / 0.12);
         }
         return;
     }
@@ -817,66 +852,61 @@ fn control_camera(
         }
     }
 
-    // Rotate with the right mouse button, pan with the middle button or shift+left.
-    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    // Rotate with the right mouse button (or Alt+left), pan with the
+    // middle button, Shift+left or (Inspect tool) a plain left-drag.
     // The zone brush and marquee erase with a right-drag: no orbit then.
-    if buttons.pressed(MouseButton::Right) && !tools.captures_right_drag() {
-        cam.yaw -= motion.delta.x * 0.005;
-        cam.pitch = (cam.pitch + motion.delta.y * 0.005).clamp(min_pitch(tools.depth), MAX_PITCH);
-    } else if !locked && (buttons.pressed(MouseButton::Middle) || (shift && buttons.pressed(MouseButton::Left))) {
-        let (s, c) = cam.yaw.sin_cos();
-        let right = Vec3::new(c, 0.0, -s);
-        let forward = Vec3::new(s, 0.0, c);
-        let k = cam.distance * 0.0016;
-        cam.target -= right * motion.delta.x * k;
-        cam.target -= forward * motion.delta.y * k;
+    if (buttons.pressed(MouseButton::Right) && !tools.captures_right_drag()) || role == LeftDrag::Orbit {
+        cam.yaw -= drag.x * 0.005 * turn_k;
+        cam.pitch = (cam.pitch + drag.y * 0.005 * tilt_k).clamp(min_pitch(tools.depth), MAX_PITCH);
+    } else if !locked && (buttons.pressed(MouseButton::Middle) || role == LeftDrag::Pan) {
+        drag_pan(&mut cam, drag);
     }
 
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+    // [laptop-nav] The wheel, a pinch and Ctrl+scroll zoom; a touchpad's
+    // two-finger scroll pans (`nav::scroll_effect`); a rotate gesture turns.
     // Ctrl+wheel sizes the Road tool's roundabout instead of zooming.
-    if !flags.pointer_over_ui && !tools.captures_wheel(ctrl) {
-        let lines = match scroll.unit {
-            MouseScrollUnit::Line => scroll.delta.y,
-            MouseScrollUnit::Pixel => scroll.delta.y / 60.0,
-        };
-        if lines != 0.0 && !fly.flying() {
-            cam.distance = (cam.distance * (1.0 - lines * 0.12)).clamp(12.0, 2500.0);
+    if !flags.pointer_over_ui && !tools.captures_wheel(ctrl) && !fly.flying() {
+        if nav.zoom != 0.0 {
+            cam.distance = wheel_zoom(cam.distance, nav.zoom);
         }
+        if nav.pan != Vec2::ZERO && !locked {
+            drag_pan(&mut cam, nav.pan);
+        }
+        cam.yaw += nav.rotate;
     }
 
-    // Keyboard pan and rotate.
-    let mut pan = Vec2::ZERO;
-    if held(KeyCode::KeyW) || held(KeyCode::ArrowUp) {
-        pan.y += 1.0;
-    }
-    if held(KeyCode::KeyS) || held(KeyCode::ArrowDown) {
-        pan.y -= 1.0;
-    }
-    if held(KeyCode::KeyA) || held(KeyCode::ArrowLeft) {
-        pan.x -= 1.0;
-    }
-    if held(KeyCode::KeyD) || held(KeyCode::ArrowRight) {
-        pan.x += 1.0;
-    }
-    if pan != Vec2::ZERO && !locked {
+    // Keyboard and pad: pan, zoom, turn and tilt. [tools] The Road tool
+    // keeps [ ] and Page Up/Down for its levels: . and , zoom then.
+    let mut km = orbit_keys(held, shift_held, KeyCaptures { brackets: tools.captures_brackets(), pages: tools.captures_pages() });
+    km.add(padmove);
+    if km.pan != Vec2::ZERO && !locked {
         let (s, c) = cam.yaw.sin_cos();
         let right = Vec3::new(c, 0.0, -s);
         let forward = Vec3::new(-s, 0.0, -c);
         let speed = cam.distance * 0.9 * dt;
-        cam.target += (right * pan.x + forward * pan.y) * speed;
+        cam.target += (right * km.pan.x + forward * km.pan.y) * speed;
     }
-    // [tools] The Road tool raises and lowers with [ and ]: no zoom then.
-    if held(KeyCode::BracketLeft) && !tools.captures_brackets() {
-        cam.distance = (cam.distance * (1.0 - 1.5 * dt)).max(12.0);
+    if km.zoom != 0.0 && !fly.flying() {
+        cam.distance = (cam.distance * (-1.5 * dt * km.zoom).exp()).clamp(12.0, 2500.0);
     }
-    if held(KeyCode::BracketRight) && !tools.captures_brackets() {
-        cam.distance = (cam.distance * (1.0 + 1.5 * dt)).min(2500.0);
+    cam.yaw += km.yaw * 1.2 * dt;
+    if km.tilt != 0.0 {
+        cam.pitch = (cam.pitch + km.tilt * 0.9 * dt).clamp(min_pitch(tools.depth), MAX_PITCH);
     }
-    if held(KeyCode::KeyQ) {
-        cam.yaw += 1.2 * dt;
-    }
-    if held(KeyCode::KeyE) {
-        cam.yaw -= 1.2 * dt;
+    // [laptop-nav] The pad's compass: turn to face north (and level the tilt).
+    if pad.north {
+        let goal = north_of(cam.yaw);
+        let k = (dt * 8.0).min(1.0);
+        cam.yaw += (goal - cam.yaw) * k;
+        if pad.level {
+            cam.pitch += (DEFAULT_PITCH - cam.pitch) * k;
+        }
+        if (goal - cam.yaw).abs() < 0.002 && (!pad.level || (DEFAULT_PITCH - cam.pitch).abs() < 0.002) {
+            cam.yaw = goal;
+            pad.north = false;
+            pad.level = false;
+        }
     }
 
     // [pt-ux] Back above the ground once the view leaves Underground.
@@ -885,6 +915,23 @@ fn control_camera(
     let ground = sim.world.surface_height(Vec2::new(cam.target.x, cam.target.z));
     cam.target.y += (ground - cam.target.y) * (dt * 6.0).min(1.0);
     place_orbit(&mut cam, &mut tf, camera_bounds(&sim.world));
+}
+
+/// [laptop-nav] Pan the orbit as a drag of `d` pixels: the map moves with
+/// the pointer.
+pub(crate) fn drag_pan(cam: &mut OrbitCamera, d: Vec2) {
+    let (s, c) = cam.yaw.sin_cos();
+    let right = Vec3::new(c, 0.0, -s);
+    let forward = Vec3::new(s, 0.0, c);
+    let k = cam.distance * 0.0016;
+    cam.target -= right * d.x * k;
+    cam.target -= forward * d.y * k;
+}
+
+/// [laptop-nav] The orbit distance after `lines` of wheel zoom (+ in):
+/// 12% a notch as before, smooth for a touchpad's fractions.
+pub(crate) fn wheel_zoom(distance: f32, lines: f32) -> f32 {
+    (distance * (1.0 - lines * 0.12).max(0.2)).clamp(12.0, 2500.0)
 }
 
 /// The steepest the orbit looks down.

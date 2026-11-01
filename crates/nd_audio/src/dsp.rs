@@ -254,7 +254,7 @@ pub fn pulse(p: f32, dt: f32, w: f32) -> f32 {
 
 /// A slow wandering value in `0..1`: a new random target every `period`
 /// seconds (jittered), approached smoothly. Gusts, crowd swells, flicker.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Drift {
     pub value: Smooth,
     target: f32,

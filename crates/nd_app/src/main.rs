@@ -10,6 +10,8 @@ mod overlay;
 /// [build-highlight] A Build window section's buildings and service areas on the map.
 mod build_highlight;
 mod camera;
+/// [laptop-nav] Navigation input for touchpads, keys, the on-screen pad and remote desktops.
+mod nav;
 /// [chase-cam] The chase camera's maths: pose, smoothing, ground, cut-away.
 mod chase;
 /// [fix/review-app] The one reset of app state when a different city starts.

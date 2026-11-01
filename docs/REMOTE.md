@@ -1554,6 +1554,33 @@ pane; clicking either selects the building.
 {"cmd": "camera", "look_at": [0, 0], "distance": 400, "pitch": 0.9}
 ```
 
+### Navigation input [laptop-nav]
+
+`nav {do?, seconds?, set?}` reads and drives the navigation (`docs/NAVIGATION.md`). `do` presses an
+on-screen pad button for `seconds` (default 0.25): `pan_up`, `pan_down`, `pan_left`, `pan_right`,
+`zoom_in`, `zoom_out`, `rotate_left`, `rotate_right`, `tilt_up` (steeper), `tilt_down`, or `north` /
+`reset` (face north; reset also levels the tilt). `set` changes the settings (saved like the Settings
+window): `scroll` auto|zoom|pan, `pad` auto|on|off, `pan_speed`, `zoom_speed`, `turn_speed`
+(0.1..5), `invert_zoom`, `invert_scroll_pan`, `invert_tilt`, `left_drag_pan`, `drag_look`. Reply: the
+settings, `raw_reliable` (false once the raw mouse motion looked like a remote desktop's absolute
+pointer, or Walk mouselook got none), `wheel_seen`, `touchpad_seen`, `last_scroll`, `pad_shown`, and
+the camera pose.
+
+`input {frames?, drag?}` plays synthetic window input into the game, one list of events a frame,
+starting next frame, through the same path real input takes (nothing reaches the operating system;
+the real cursor is not moved). Events: `{cursor: [x, y]}` (logical px in the window), `{leave: true}`,
+`{button: "left"|"right"|"middle", down: bool}`, `{wheel: [x, y], unit: "line"|"pixel"}` (a mouse
+notch is a whole line; a Windows touchpad sends fractions), `{pinch: f}`, `{rotate: degrees}`,
+`{raw: [dx, dy]}` (raw device motion; RDP sends absolute coordinates here), `{key: "W"|"PageUp"|"Alt"|...,
+down: bool}`; a frame may also be `{wait: n}`. `drag {button, from, to, frames: 20, hold: ["Alt"]}`
+presses, moves and releases. Read `camera` afterwards (allow a few frames).
+
+```sh
+curl -d '{"cmd":"input","drag":{"button":"right","from":[600,400],"to":[700,400],"frames":10}}' ...
+curl -d '{"cmd":"input","frames":[[{"wheel":[0,-0.08]}],[{"wheel":[0,-0.08]}]]}' ...   # touchpad: pans
+curl -d '{"cmd":"nav","do":"zoom_in","seconds":0.5}' ...
+```
+
 ### Screenshot
 
 `screenshot {path?}`: queues a capture of the window (`Screenshot::primary_window()` with
@@ -1570,22 +1597,30 @@ The game's sound is synthesised in code (`crates/nd_audio`: no samples) and neve
 three ambience beds crossfaded by camera height (high: the distant city's wash and wind; mid: the
 traffic roar; street: tyres and pass-bys, the crowd's murmur and footsteps, air-conditioning hum,
 neon buzz), with rain, birds by day or crickets at night over green, water lapping, all muffled by
-snow or the Underground view; and short UI cues. `ND_AUDIO=0` runs without opening the sound card
+snow or the Underground view; spot sounds near the camera (trains, metro trains, sirens of units on
+a call, building sites in work hours, open clubs, bars, karaoke boxes and concert halls, horns from
+stuck angry drivers, thunder in a storm); and short UI cues. `ND_AUDIO=0` runs without opening the sound card
 (agents' test instances: please set it).
 
 | Command | Fields | Reply |
 |---|---|---|
-| `audio` (`sound`) | none or `get` | `settings` {master, ambience, effects, ui, music (0..1 slider positions; gain is the square), muted, unfocused: mute\|duck\|keep}, `status` {playing, device, sample_rate, channels} or {playing: false, why}, `focused`, `bus_gains` (after master, mute and focus), `beds` {weights {high, mid, street} (equal power), level_db per group {high, mid, street, weather_nature} (RMS before the bus), target (the bed parameters the camera's surroundings call for)}, `heard` (what was sampled: height_m, radius_m, cars_close/near, car_speed_ms, walkers_close/near, density, neon, green, industry, water, daylight, rain, snow, wind, underground), `voices` {ui, spot, ui_cap, spot_cap}, `cues_played`, `output_peak_db`, `limiter_gain`, `audio_thread_cpu_pct` (callback time over buffer time), `frames_rendered` |
-| `audio` | `set` {master?, ambience?, effects?, ui?, music?, muted?, unfocused?} | changes them (saved in `settings.ron` a second later, like the Settings window's sliders); replies as `get` |
+| `audio` (`sound`) | none or `get` | `settings` {master, ambience, effects, ui, music (0..1 slider positions; gain is the square), muted, unfocused: mute\|duck\|keep, spots {transit, sirens, works, nightlife, horns, weather}}, `spots` {held: [{kind, id, gain_db, dist_m, pan, muffle, pitch, speed_ms, intensity}] loudest first, candidates per kind, horns_sent, thunder_sent, storm, room (echo), sample_cost_us}, `status` {playing, device, sample_rate, channels} or {playing: false, why}, `focused`, `bus_gains` (after master, mute and focus), `beds` {weights {high, mid, street} (equal power), level_db per group {high, mid, street, weather_nature} (RMS before the bus), target (the bed parameters the camera's surroundings call for)}, `heard` (what was sampled: height_m, radius_m, cars_close/near, car_speed_ms, walkers_close/near, density, neon, green, industry, water, daylight, rain, snow, wind, underground), `voices` {ui, spot, ui_cap, spot_cap}, `cues_played`, `output_peak_db`, `limiter_gain`, `audio_thread_cpu_pct` (callback time over buffer time), `frames_rendered` |
+| `audio` | `set` {master?, ambience?, effects?, ui?, music?, muted?, unfocused?, spots? {transit?, sirens?, works?, nightlife?, horns?, weather?}} | changes them (saved in `settings.ron` a second later, like the Settings window's sliders); replies as `get` |
 | `audio` | `play: "<cue>"` | plays a UI cue through the rate limiter: click, tool_change, road_point, road_done, implement, building_placed, bulldoze, zone_paint, window_open, window_close, error, alert, speed_up, speed_down, pause, resume |
-| `audio_capture` | `path?` (.wav, default `exports/wav/capture-<unix ms>.wav`), `seconds?` (0.5..60, default 6), `as_set?` | renders what the camera hears now (the beds as last sampled; at the default sliders, or with `as_set: true` the player's; no focus ducking) offline with the same engine: path, peak_db, rms_db, dc, clipped, correlation, bands_db (octave bands 63 Hz..16 kHz) |
+| `audio_capture` | `path?` (.wav, default `exports/wav/capture-<unix ms>.wav`), `seconds?` (0.5..60, default 6), `as_set?`, `spots?` (false: beds only) | renders what the camera hears now (the beds as last sampled and the spot sounds held now; at the default sliders, or with `as_set: true` the player's; no focus ducking) offline with the same engine: path, peak_db, rms_db, dc, clipped, correlation, bands_db (octave bands 63 Hz..16 kHz) |
 
 The beds are sampled four times a second around the spot under the camera; the engine eases every
 change over a second or so. The UI cues come from watching what changed (tool, road points, project
 steps, implement, buildings, refusals, speed and pause, windows, City Data, the selection, toasts,
 and egui's button clicks); each has a shortest gap, repeats play softer, at most 10 a second, and a
-click gives way to the cue it caused. Offline renders of every cue and bed state:
-`cargo run -p nd_audio --example render_wavs -- <out dir>`.
+click gives way to the cue it caused. Spot sounds are picked four times a second too: each kind
+has a range and a cap (3 trains, 2 metro, 3 sirens, 3 sites, 2 clubs, 3 bars, 2 karaoke, 1 hall),
+at most 16 held plus horns and thunder (20 voices), the loudest win, and the sum is held to one
+close train's loudness, so a busy district is livelier, not louder. Distance counts half the camera's
+height (zooming out turns them down; a siren still carries from 600 m up); the far are duller, the
+ones behind the camera a little muffled; trains and sirens shift pitch (Doppler). Offline renders of
+every cue and bed state: `cargo run -p nd_audio --example render_wavs -- <out dir>`; of every spot
+sound and mixed city scenes: `cargo run -p nd_audio --example render_spots -- <out dir>`.
 
 ### Events
 

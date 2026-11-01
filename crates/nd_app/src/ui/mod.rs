@@ -82,6 +82,8 @@ pub mod junction;
 pub(crate) mod lines;
 /// [events] Street races, raves and road maintenance in the HUD.
 mod nights;
+/// [laptop-nav] The on-screen navigation pad and the navigation settings.
+pub mod nav_pad;
 mod toolbar;
 /// [fix/roads-tools] The plan bar: Implement / Discard while a plan is pending.
 mod plan_bar;
@@ -173,7 +175,7 @@ impl Plugin for UiPlugin {
             .add_systems(PreUpdate, install_fonts.after(EguiPreUpdateSet::InitContexts).before(EguiPreUpdateSet::BeginPass))
             .add_systems(PreUpdate, read_input_flags.after(EguiPreUpdateSet::BeginPass))
             .add_systems(Update, saves::autosave.in_set(SimSet::Sync))
-            .add_systems(EguiPrimaryContextPass, (side_panel, pins::map_pins.after(side_panel), social::bubbles.after(side_panel), junction::hover_button.after(side_panel), junction::on_map.after(side_panel), junction::hold_time.after(side_panel), land::land_window.after(side_panel)));
+            .add_systems(EguiPrimaryContextPass, (side_panel, pins::map_pins.after(side_panel), social::bubbles.after(side_panel), junction::hover_button.after(side_panel), junction::on_map.after(side_panel), junction::hold_time.after(side_panel), land::land_window.after(side_panel), nav_pad::pad.after(side_panel)));
     }
 }
 
@@ -235,6 +237,10 @@ pub struct UiCtx<'a> {
     /// [build-highlight] The Build window's section on the map: the window
     /// sets what to show and reads back the summary.
     pub highlight: &'a mut crate::build_highlight::BuildHighlight,
+    /// [laptop-nav] The navigation settings (Settings window) and this
+    /// frame's input (what the last scroll was).
+    pub nav: &'a mut crate::nav::NavSettings,
+    pub nav_input: &'a crate::nav::NavInput,
 }
 
 /// The whole HUD, once per frame. The name is historical: this used to lay
@@ -257,7 +263,7 @@ pub(crate) fn side_panel(
     cams: Query<&OrbitCamera>,
     assets: Res<GameAssets>,
     (stats, diagnostics, thumbs): (Res<RenderStats>, Res<DiagnosticsStore>, Res<Thumbs>),
-    (mut follow, mut fly, mut highlight): (ResMut<CameraFollow>, ResMut<CameraFly>, ResMut<crate::build_highlight::BuildHighlight>),
+    (mut follow, mut fly, mut highlight, mut nav, nav_input): (ResMut<CameraFollow>, ResMut<CameraFly>, ResMut<crate::build_highlight::BuildHighlight>, ResMut<crate::nav::NavSettings>, Res<crate::nav::NavInput>),
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     // Visuals persist in the context; setting them every frame only churns.
@@ -286,6 +292,8 @@ pub(crate) fn side_panel(
         diagnostics: &diagnostics,
         thumbs: &thumbs,
         highlight: &mut highlight,
+        nav: &mut nav,
+        nav_input: &nav_input,
     };
     let top = egui::Panel::top("top_bar").frame(bar_frame()).show(&mut root, |ui| topbar::show(ui, &mut p));
     let bottom = egui::Panel::bottom("tool_bar").frame(bar_frame()).show(&mut root, |ui| toolbar::show(ui, &mut p));

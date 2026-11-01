@@ -31,6 +31,8 @@ mod view;
 // Commands, by area.
 mod bus;
 mod camera;
+/// [laptop-nav] `nav` and `input`.
+mod nav;
 mod city;
 mod dev;
 mod files;
