@@ -47,6 +47,29 @@ pub fn render_cue(cue: Cue, mix: MixLevels, secs: f32) -> Vec<f32> {
     out
 }
 
+/// `secs` of a scene: the beds at `params` (settled), and every quarter
+/// second `feed(t)` asked for the commands to send (spot updates, cues),
+/// as the game sends them. Starts after a second's warm-up of the beds.
+pub fn render_scene(params: BedParams, mix: MixLevels, secs: f32, mut feed: impl FnMut(f32) -> Vec<Command>) -> Vec<f32> {
+    let mut e = Engine::new(SR as f32, Arc::new(Telemetry::default()));
+    e.apply(Command::Mix(mix));
+    e.apply(Command::Beds(params));
+    e.settle();
+    let mut warm = vec![0.0; SR as usize];
+    e.render(&mut warm);
+    let mut out = vec![0.0; (SR as f32 * secs) as usize * 2];
+    let step = SR as usize / 4;
+    for (i, chunk) in out.chunks_mut(step * 2).enumerate() {
+        for c in feed(i as f32 * 0.25) {
+            e.apply(c);
+        }
+        for part in chunk.chunks_mut(1024) {
+            e.render(part);
+        }
+    }
+    out
+}
+
 /// Write interleaved stereo `f32` as a 16-bit PCM WAV.
 pub fn write_wav(path: &Path, stereo: &[f32], sr: u32) -> std::io::Result<()> {
     let data_len = (stereo.len() * 2) as u32;

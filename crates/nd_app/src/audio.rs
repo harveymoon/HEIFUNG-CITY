@@ -7,7 +7,10 @@
 //! `ND_AUDIO=0` runs without opening the sound card (test instances).
 
 mod listen;
+mod spots;
 mod watch;
+
+pub use spots::SpotReport;
 
 use std::sync::Mutex;
 
@@ -58,6 +61,45 @@ impl Unfocused {
 /// (a gain on the master: -12 dB).
 pub const DUCK: f32 = 0.25;
 
+/// [sound] The spot sounds' group sliders (under Effects): each `0..1`,
+/// all full by default.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SpotLevels {
+    pub transit: f32,
+    pub sirens: f32,
+    pub works: f32,
+    pub nightlife: f32,
+    pub horns: f32,
+    pub weather: f32,
+}
+
+impl Default for SpotLevels {
+    fn default() -> Self {
+        Self { transit: 1.0, sirens: 1.0, works: 1.0, nightlife: 1.0, horns: 1.0, weather: 1.0 }
+    }
+}
+
+impl SpotLevels {
+    /// The slider for a group.
+    pub fn get_mut(&mut self, g: nd_audio::Group) -> &mut f32 {
+        use nd_audio::Group as G;
+        match g {
+            G::Transit => &mut self.transit,
+            G::Sirens => &mut self.sirens,
+            G::Works => &mut self.works,
+            G::Nightlife => &mut self.nightlife,
+            G::Horns => &mut self.horns,
+            G::Weather => &mut self.weather,
+        }
+    }
+
+    pub fn get(&self, g: nd_audio::Group) -> f32 {
+        let mut c = *self;
+        *c.get_mut(g)
+    }
+}
+
 /// [sound] The player's sound settings, saved in `settings.ron` beside the
 /// other settings. Every field has a default, so a file from before sound
 /// (or with only some of these) loads.
@@ -72,12 +114,15 @@ pub struct AudioSettings {
     pub music: f32,
     pub muted: bool,
     pub unfocused: Unfocused,
+    /// [sound] The spot sounds' groups (trains, sirens, works, nightlife,
+    /// horns, thunder), each under the Effects slider.
+    pub spots: SpotLevels,
 }
 
 impl Default for AudioSettings {
     fn default() -> Self {
         let m = MixLevels::default();
-        Self { master: m.master, ambience: m.ambience, effects: m.effects, ui: m.ui, music: m.music, muted: false, unfocused: Unfocused::Mute }
+        Self { master: m.master, ambience: m.ambience, effects: m.effects, ui: m.ui, music: m.music, muted: false, unfocused: Unfocused::Mute, spots: SpotLevels::default() }
     }
 }
 
@@ -87,7 +132,16 @@ impl AudioSettings {
         for v in [&mut self.master, &mut self.ambience, &mut self.effects, &mut self.ui, &mut self.music] {
             *v = if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.5 };
         }
+        for g in nd_audio::Group::ALL {
+            let v = self.spots.get_mut(g);
+            *v = if v.is_finite() { v.clamp(0.0, 1.0) } else { 1.0 };
+        }
         self
+    }
+
+    /// The spot groups' sliders as gains (squared, like the buses).
+    pub fn group_gains(&self) -> nd_audio::spots::GroupGains {
+        nd_audio::Group::ALL.map(|g| nd_audio::mix::slider_gain(self.spots.get(g)))
     }
 
     /// The mixer's levels with the window focused or not.
@@ -158,6 +212,8 @@ pub struct Sound {
     /// What the camera hears, as last sampled, and the beds it called for.
     pub heard: nd_audio::Surroundings,
     pub beds: nd_audio::BedParams,
+    /// [sound] The spot sounds picked last.
+    pub spots: SpotReport,
     pub mix: MixLevels,
     pub focused: bool,
     /// The settings version last applied and when to save them.
@@ -195,6 +251,7 @@ impl Sound {
             frame: 0,
             heard: Default::default(),
             beds: Default::default(),
+            spots: SpotReport::default(),
             mix: MixLevels::default(),
             focused: true,
             applied: u64::MAX,
@@ -217,7 +274,7 @@ impl Plugin for SoundPlugin {
         app.insert_resource(Sound::new())
             .init_resource::<watch::Seen>()
             .add_systems(Update, watch::actions.in_set(SimSet::Input).after(crate::tools::tool_input))
-            .add_systems(Update, (watch::snapshot, listen::listen).in_set(SimSet::Sync))
+            .add_systems(Update, (watch::snapshot, listen::listen, spots::spots.after(listen::listen)).in_set(SimSet::Sync))
             .add_systems(PostUpdate, watch::ui_events.after(bevy_egui::EguiPostUpdateSet::EndPass).before(bevy_egui::EguiPostUpdateSet::ProcessOutput))
             .add_systems(Last, (mixer, play_cues).chain());
     }
@@ -299,6 +356,13 @@ pub fn settings_ui(ui: &mut bevy_egui::egui::Ui) {
             ui.add(egui::Slider::new(v, 0.0..=1.0).text(label).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)));
         }
     });
+    ui.add_enabled_ui(!s.muted, |ui| {
+        egui::CollapsingHeader::new(egui::RichText::new("Effects by kind").small()).id_salt("sound_spot_groups").show(ui, |ui| {
+            for g in nd_audio::Group::ALL {
+                ui.add(egui::Slider::new(s.spots.get_mut(g), 0.0..=1.0).text(g.label()).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)));
+            }
+        });
+    });
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Out of focus").small());
         for u in Unfocused::ALL {
@@ -311,7 +375,7 @@ pub fn settings_ui(ui: &mut bevy_egui::egui::Ui) {
         update_settings(|now| *now = s);
     }
     let status = STATUS.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    crate::ui::hint(ui, &format!("{status} All synthesised: the city's hum changes with height, traffic, crowds, the district, the hour and the weather. Music comes later."));
+    crate::ui::hint(ui, &format!("{status} All synthesised: the city's hum changes with height, traffic, crowds, the district, the hour and the weather; near the camera, trains, the metro, sirens, building works, clubs, bars, karaoke, music halls, horns in jams and thunder. Music comes later."));
 }
 
 #[cfg(test)]
@@ -334,7 +398,19 @@ mod tests {
 
     #[test]
     fn wild_sliders_are_clamped() {
-        let s = AudioSettings { master: 7.0, ambience: -1.0, effects: f32::NAN, ..Default::default() }.clamped();
+        let s = AudioSettings { master: 7.0, ambience: -1.0, effects: f32::NAN, spots: SpotLevels { horns: 3.0, sirens: f32::NAN, ..Default::default() }, ..Default::default() }.clamped();
         assert_eq!((s.master, s.ambience, s.effects), (1.0, 0.0, 0.5));
+        assert_eq!((s.spots.horns, s.spots.sirens), (1.0, 1.0));
+    }
+
+    #[test]
+    fn old_settings_without_spot_groups_load_with_them_full() {
+        let s: AudioSettings = ron::from_str("(master: 0.5, effects: 0.3)").unwrap();
+        assert_eq!(s.spots, SpotLevels::default());
+        assert_eq!(s.group_gains(), [1.0; 6]);
+        let half = AudioSettings { spots: SpotLevels { nightlife: 0.5, ..Default::default() }, ..s };
+        assert_eq!(half.group_gains()[nd_audio::Group::Nightlife.index()], 0.25);
+        let back: AudioSettings = ron::from_str(&ron::to_string(&half).unwrap()).unwrap();
+        assert_eq!(back, half);
     }
 }
