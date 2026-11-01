@@ -70,7 +70,8 @@ fn a_street_on_a_hillside_gets_graded_lots_that_can_be_zoned() {
         // Graded: each lot's ground is its pad, level with its street.
         for id in lots {
             let l = &w.lots[id];
-            let pad = w.ground.pads[&id];
+            // [r5-hillside] (its back pad behind a step, on a deep plot)
+            let pad = w.ground.pad_near(id, l.center).unwrap();
             let g = w.ground_height(l.center);
             assert!((g - pad).abs() < 0.3, "slope {slope}: lot ground {g:.2} at its pad {pad:.2}");
         }
