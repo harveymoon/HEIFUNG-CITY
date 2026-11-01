@@ -56,6 +56,8 @@ pub struct Ctx<'a> {
     pub boxes: Vec<nd_sim::containers::BoxFace>,
     /// [K34] A depot's stacks are the renderer's (see `Extras::real_boxes`).
     pub real_boxes: bool,
+    /// [r5-layered] See [`Extras::overhead`].
+    pub overhead: Vec<[Vec2; 4]>,
 }
 
 /// Per-building state that changes the look beyond style and condition.
@@ -138,11 +140,15 @@ pub struct Extras<'a> {
     /// stacks are left out and their slots handed to the renderer
     /// (`Geometry::box_slots`), which stands the boxes stored there.
     pub real_boxes: bool,
+    /// [r5-layered] The footprints of the raised decks over the lot (world
+    /// coordinates, `undercroft::deck_quads`): a park plants no tree and
+    /// puts up no wheel or bandstand under one.
+    pub overhead: &'a [[Vec2; 4]],
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[], boxes_of: None, real_boxes: false }
+        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[], boxes_of: None, real_boxes: false, overhead: &[] }
     }
 }
 
@@ -204,6 +210,7 @@ impl<'a> Ctx<'a> {
             park_look: extras.park_look,
             boxes: extras.boxes_of.map(|(c, b, day)| c.home_faces(b, day)).unwrap_or_default(),
             real_boxes: extras.real_boxes,
+            overhead: extras.overhead.to_vec(),
         }
     }
 }

@@ -464,6 +464,14 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("kind", "theft|burglary|assault|murder|vandalism (offend, with building)"),
         ("kg", "trash to add, default 100"),
     ] },
+    Cmd { name: "under_decks", aliases: &["undercroft", "bays"], effect: Game, run: |cmd, ctx| undercroft::command(cmd, &mut ctx.sim.world), help: &[
+        ("near", "optional [x, y]: only bays within r of it"),
+        ("r", "metres, with near (default 300)"),
+        ("action", "optional: set (give a bay a use, with bay and use)"),
+        ("bay", "id (set)"),
+        ("use", "bare|market|hawkers|workshop|court (set)"),
+        ("returns", "bays, by_use, visits/takings totals and yesterday, camps_under_decks, list (id, use, label, pos, len_m, width_m, headroom_m, under, walkway, park, open, since_day, holders, people_here, on_the_way, visits_today/yesterday, takings_today/yesterday, visits_total)"),
+    ] },
     Cmd { name: "social", aliases: &[], effect: Read, run: |cmd, ctx| social::command(cmd, &ctx.sim.world), help: &[
         ("days", "daily history to include (default 7)"),
         ("talks", "latest conversations to list (default 10)"),

@@ -108,6 +108,8 @@ mod skyline;
 mod social;
 /// [society] crime, homelessness and trash.
 mod society;
+/// [r5-layered] Bays under the raised roads.
+mod undercroft;
 /// [subway] The `subway` command and report section.
 mod subway;
 mod taxes;

@@ -135,6 +135,9 @@ mod site_access_tests;
 #[cfg(test)]
 mod ped_highway_tests;
 mod pillars;
+mod undercroft;
+#[cfg(test)]
+mod undercroft_tests;
 pub use pillars::{deck_half_width, deck_half_width_use};
 mod crossing_anchors;
 #[cfg(test)]
@@ -766,6 +769,10 @@ pub struct World {
     /// last rebuild (the trial rebuild of a project refuses on them).
     #[serde(skip)]
     pub pillar_gaps: Vec<crate::pillars::Gap>,
+    /// [r5-layered] The bays of ground under the decks and what they are
+    /// used for (`world/undercroft.rs`).
+    #[serde(default)]
+    pub undercroft: crate::undercroft::Undercroft,
     /// [tools] Crosswalk upgrades from the Intersection editor (push-button
     /// signals, footbridges): `world/junctions.rs`. The junctions' own
     /// settings live with the traffic (`Traffic::junction_rules`).
@@ -978,6 +985,7 @@ impl World {
             streets: Default::default(),
             pillars: Vec::new(),
             pillar_gaps: Vec::new(),
+            undercroft: Default::default(),
             crosswalks: Default::default(),
             estate: Default::default(),
             skyline: Default::default(),

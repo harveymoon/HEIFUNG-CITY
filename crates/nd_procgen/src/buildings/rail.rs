@@ -306,6 +306,7 @@ fn draw_free(seed: u64, wear: f32, pal: &Palette, draw: impl FnOnce(&mut Geometr
         park_look: None,
         boxes: Vec::new(),
         real_boxes: false,
+        overhead: Vec::new(),
     };
     let mut g = Geometry::default();
     draw(&mut g, &c);

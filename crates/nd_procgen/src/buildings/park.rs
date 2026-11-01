@@ -50,6 +50,8 @@ struct Park<'a> {
     /// seam, so a park of several lots read as a row of small ones.
     open_edges: Vec<(Vec2, Vec2)>,
     path_width: f32,
+    /// [r5-layered] Raised decks over the lot (world quads).
+    overhead: &'a [[Vec2; 4]],
 }
 
 impl Park<'_> {
@@ -87,6 +89,12 @@ impl Park<'_> {
 
     fn clear_of_features(&self, w: Vec2, margin: f32) -> bool {
         self.layout.features.iter().all(|f| f.pos.distance(w) >= f.radius + margin)
+    }
+
+    /// [r5-layered] Under (or within `margin` of) a raised deck over the
+    /// park: no tree grows and nothing tall stands there.
+    fn covered(&self, w: Vec2, margin: f32) -> bool {
+        self.overhead.iter().any(|q| nd_sim::zoning::point_in_polygon(w, q) || nd_sim::geom::distance_to_outline(w, q) < margin)
     }
 
     fn clear_of_benches(&self, w: Vec2, margin: f32) -> bool {
@@ -130,6 +138,7 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             Tier::Mid => 2.0,
             Tier::High => 2.4,
         },
+        overhead: &c.overhead,
     };
     let inner = offset_poly(&c.lot_poly, 0.3);
     // The lawn runs right up to (a hair over) the edges shared with the
@@ -145,6 +154,11 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     park_paths(g, c, &park);
     park_benches(g, c, rng, &park);
     for slot in &layout.features {
+        // [r5-layered] Nothing tall under a deck over the park.
+        let tall = matches!(slot.kind, ParkFeature::FerrisWheel | ParkFeature::Carousel | ParkFeature::Bandstand | ParkFeature::Statue | ParkFeature::Kiosk);
+        if tall && park.covered(slot.pos, slot.radius) {
+            continue;
+        }
         feature(g, rng, &park, slot, pal);
     }
 
@@ -595,7 +609,7 @@ fn trees(g: &mut Geometry, rng: &mut impl Rng, park: &Park, pal: &Palette) {
                 while s < len - 4.0 {
                     for side in [-1.0f32, 1.0] {
                         let w = a + d * s + right * side * (park.path_width * 0.5 + 2.4);
-                        if park.inside_world(w, 2.6) && park.clear_of_features(w, 1.5) && park.clear_of_benches(w, 1.6) && placed.iter().all(|(p, _)| p.distance(w) > 5.0) && park.path_distance(w) > park.path_width * 0.5 + 1.6 {
+                        if park.inside_world(w, 2.6) && !park.covered(w, 2.6) && park.clear_of_features(w, 1.5) && park.clear_of_benches(w, 1.6) && placed.iter().all(|(p, _)| p.distance(w) > 5.0) && park.path_distance(w) > park.path_width * 0.5 + 1.6 {
                             crate::climate::climate_tree(g, pal, w, 5.5, 2.4, mul(pal.foliage, 0.95));
                             placed.push((w, 2.4));
                         }
@@ -649,7 +663,7 @@ fn trees(g: &mut Geometry, rng: &mut impl Rng, park: &Park, pal: &Palette) {
             3 => 3.6,
             _ => canopy * 0.5 + 0.6,
         };
-        if !park.inside_world(w, reach) || park.path_distance(w) < park.path_width * 0.5 + canopy * 0.6 + 0.6 || !park.clear_of_features(w, canopy * 0.5 + 1.0) || !park.clear_of_benches(w, 1.4) {
+        if !park.inside_world(w, reach) || park.covered(w, reach) || park.path_distance(w) < park.path_width * 0.5 + canopy * 0.6 + 0.6 || !park.clear_of_features(w, canopy * 0.5 + 1.0) || !park.clear_of_benches(w, 1.4) {
             continue;
         }
         if placed.iter().any(|(p, pc)| p.distance(w) < spacing.min(canopy + pc + 1.0).max(spacing * 0.6)) {
