@@ -15,7 +15,7 @@ impl Traffic {
         let lane = route[0];
         let (pos, dir) = self.net.lanes[lane as usize].point_at(s_start);
         let heading = dir.y.atan2(dir.x);
-        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, blocked_by: None, replans: 0, avoided: Vec::new(), passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), owned: None, errand: Default::default(), drive: DriveState::default(), toll_booth: 0, toll_paid: false, occupants: Vec::new(), glide_from: 0.0, glide_len: 0.0, glide_done: 0.0 });
+        let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, blocked_by: None, replans: 0, avoided: Vec::new(), passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), owned: None, errand: Default::default(), drive: DriveState::default(), toll_booth: 0, toll_paid: false, occupants: Vec::new(), glide_from: 0.0, glide_len: 0.0, glide_done: 0.0, stranded: false });
         self.pull_out(id);
         // [toll-inspect] Did it set off round a booth? (The world looks,
         // once it knows whether this is a bus or a city vehicle.)
@@ -47,6 +47,16 @@ impl Traffic {
 
     fn pull_in_at(&mut self, id: CarId, secs: f32, queue: bool) {
         let Some(c) = self.cars.get(id) else { return };
+        // [r5-fixes] A car in a stunt is off the lanes already and goes
+        // back on only by `end_stunt`. Pulled in here (a takeover car that
+        // hit a walker), it was marked waiting at the kerb, so the kerb
+        // pulled it out into its lane list while it carried on with the
+        // show; `end_stunt` then listed it on its new lane too, and the
+        // old entry outlived the car: the "invalid SlotMap key" crash at a
+        // crossing's siren look-up on fresh generated cities (day 5-6).
+        if c.in_stunt() {
+            return;
+        }
         let lane = c.route[c.idx];
         let kerb = self.net.lanes[lane as usize].right.is_none();
         if !c.entering {
@@ -54,7 +64,14 @@ impl Traffic {
         }
         if kerb && queue {
             let s = self.kerb_room(lane, id);
-            self.cars[id].s = s;
+            let c = &mut self.cars[id];
+            c.s = s;
+            // [r5-fixes] Lined up past the end of its route (Harvey's day-63
+            // lorries stood at 14 m on a route ending at 4 m): it has
+            // arrived where it stands, not short of a point behind it.
+            if c.idx + 1 >= c.route.len() && c.s_end < s {
+                c.s_end = s;
+            }
         }
         let c = &mut self.cars[id];
         c.entering = true;
@@ -76,6 +93,11 @@ impl Traffic {
     /// keeps the spot covered for `KERB_SLIDE_AFTER` it pulls out into the
     /// nearest real gap behind instead. So the kerb can never deadlock.
     pub(super) fn pull_out(&mut self, id: CarId) -> bool {
+        // [r5-fixes] Off the lanes in a stunt: only `end_stunt` (which
+        // ends it first) puts it back.
+        if self.cars[id].in_stunt() {
+            return false;
+        }
         let lane = self.cars[id].route[self.cars[id].idx];
         let (waited, len, s) = (self.cars[id].stalled, self.cars[id].length(), self.cars[id].s);
         // [services] Lights and sirens pull straight out; traffic yields.
@@ -107,7 +129,10 @@ impl Traffic {
                 c.cooldown = LC_COOLDOWN;
             }
             c.blocked_by = None;
-            self.insert_sorted(lane, id);
+            // [r5-fixes] Listed once, on the lane it drives.
+            if !self.net.lanes[lane as usize].cars.contains(&id) {
+                self.insert_sorted(lane, id);
+            }
         } else {
             c.blocked_by = blocker;
             if !c.entering {

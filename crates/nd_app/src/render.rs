@@ -103,6 +103,8 @@ mod survey;
 mod subway;
 /// [society] Camps, RVs and overflowing bins.
 mod society;
+/// [r5-layered] Markets, hawkers, lock-ups and courts under the raised roads.
+mod undercroft;
 /// [social] Murals and community gardens.
 mod social;
 /// [dirty-industry] Clean-up crews digging out contaminated ground.
@@ -462,6 +464,10 @@ impl Plugin for RenderPlugin {
         app.add_systems(Update, (nights::sync_road_wear, nights::sync_raves, nights::race_gizmos).in_set(SimSet::Sync).after(sync_cars).before(lift_movers));
         // [society] Skid row and the trash.
         app.init_resource::<society::SocietyRender>().add_systems(Update, society::sync_society.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
+        // [r5-layered] Life under the raised roads, and its sodium light at night.
+        app.init_resource::<undercroft::UndercroftRender>()
+            .add_systems(Update, undercroft::sync_undercroft.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync))
+            .add_systems(Update, undercroft::sync_under_lights.after(update_daylight).in_set(SimSet::Sync));
         // [waterfront] jetties, piers and pontoons off the waterfront lots
         app.init_resource::<shore::JettyRender>().add_systems(Update, shore::sync_jetties.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
         app.add_systems(Update, shore::sync_coasters.in_set(SimSet::Sync).after(update_daylight));

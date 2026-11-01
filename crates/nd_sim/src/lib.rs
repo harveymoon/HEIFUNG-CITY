@@ -66,6 +66,8 @@ pub mod parks;
 pub mod parking_layout;
 pub mod pedestrians;
 pub mod pillars;
+/// [r5-layered] Life under the raised roads: bays, markets, camps.
+pub mod undercroft;
 /// What the Buildings tool places: the catalogue, its categories and costs.
 pub mod placeable;
 pub mod places;

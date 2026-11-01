@@ -2098,6 +2098,29 @@ criminal and has them strike; `trash {kg, building?}` adds trash to bins. `place
 "trash_depot"}` (also `trash`, `garbage`) puts down a depot (any lot or unzoned ground, a street out
 front). Garbage trucks are cars in `find {what: "cars"}` with a garbage truck body.
 
+### Life under the raised roads [r5-layered]
+
+The ground between a raised road's columns, under its deck, is cut into *bays* wherever it is free
+(no road, path or rail under it, no lot but a park's, no water) and the headroom is 3 m or more.
+Each takes a use from the blocks round it (homes, jobs, land value, a street for vans, what the
+bays near it already are): `market` (stalls under tarps), `hawkers` (food stalls, stools),
+`workshop` (lock-ups, not in a park), `court` (a ball court, 4.5 m headroom), `camp` (homeless
+people shelter there: camps prefer a bay under a deck on land below 0.52), or `bare`. Trades are
+run by households from within 380 m (those with nobody in work first), one of each at the stall in
+its shift; people out for a stroll stop at an open bay within 420 m (hawkers feed them, the market
+fills the pantry a little), pay the stallholders (40% buys stock from out of town) and stay a while.
+A trade with no custom for four days packs up. Drawn under the deck: worn concrete, stains and
+puddles, sodium lamps on the soffit (lit at night, real lights near the view), posters and tags on
+the columns, and the stalls, carts, lock-ups or court; parks under a deck plant no trees and put no
+tall feature there.
+
+`under_decks {near?, r?}` (also `undercroft`, `bays`): `bays`, `by_use`, `visits_total`,
+`takings_total`, `visits_yesterday`, `takings_yesterday`, `camps_under_decks`, and `list` of bays
+(`id`, `use`, `label`, `pos`, `len_m`, `width_m`, `headroom_m`, `under` (the way's name), `walkway`,
+`park`, `open`, `since_day`, `holders`, `people_here`, `on_the_way`, visits and takings today and
+yesterday, `visits_total`). `under_decks {action: "set", bay, use}` gives a bay a use now (a trade
+takes stallholders from nearby). The road inspector of a raised road has an "Under the deck" line.
+
 ## Business pressure, the waterfront and the art scene
 
 `report {sections: ["pressure"]}` (also the `pressure` command with no fields): `pressures` (every

@@ -158,6 +158,8 @@ impl World {
         self.build_walk_graph();
         // [tools] Columns for raised roads from a save without them.
         self.pillars_after_load();
+        // [r5-layered] The bays under the decks, on the ground as loaded.
+        self.undercroft_after_load();
         for (_, car) in self.traffic.reattach_cars() {
             self.strand_car(car);
         }

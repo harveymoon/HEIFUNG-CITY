@@ -94,6 +94,8 @@ pub(crate) fn building_geometry(world: &World, assets: &GameAssets, styles: &Sty
     let footprint = world.footprint(id)?;
     let lot: &nd_sim::Lot = &footprint;
     let field = if b.construction.is_none() && b.demolition.is_none() { plant_field(world, id) } else { None };
+    // [r5-layered] The decks over a park: no trees or tall features there.
+    let overhead = if b.land_use == nd_sim::LandUse::Park { nd_procgen::undercroft::deck_quads(world, &lot.polygon) } else { Vec::new() };
     // What decides the style comes from `style_extras`, the same inputs the
     // style book and the inspector's label use (a taxi company's yard is a
     // surface lot whose cabs `render/taxis.rs` stands in the bays); only
@@ -108,6 +110,7 @@ pub(crate) fn building_geometry(world: &World, assets: &GameAssets, styles: &Sty
         animated_cranes: true,
         dynamic_lights: true,
         fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
+        overhead: &overhead,
         ..nd_procgen::style_extras(world, id, styles.neighbours(id))
     };
     let g = match &b.demolition {
@@ -120,7 +123,38 @@ pub(crate) fn building_geometry(world: &World, assets: &GameAssets, styles: &Sty
         }
         None => generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras),
     };
+    // [r5-layered] (flag line 147, Cinder Stacks through the raised ring)
+    // Under a deck the building is held to the clearance in the sim; a
+    // style whose roof, parapet or rooftop clutter would still reach the
+    // deck is drawn squat enough to stand under it.
+    let mut g = g;
+    if b.land_use != nd_sim::LandUse::Park {
+        if let Some(soffit) = world.deck_soffit_over(&lot.polygon) {
+            fit_under(&mut g, soffit - world.lot_pad(b.lot) - 0.25);
+        }
+    }
     Some(g)
+}
+
+/// [r5-layered] Squash a building's geometry (heights over its ground) so
+/// its top is at most `room` up.
+pub(crate) fn fit_under(g: &mut Geometry, room: f32) {
+    let top = g.parts.iter().chain(g.detail.iter().flatten()).flat_map(|p| p.positions.iter()).map(|p| p[1]).fold(0.0f32, f32::max);
+    if room <= 0.5 || top <= room {
+        return;
+    }
+    let k = room / top;
+    for part in g.parts.iter_mut().chain(g.detail.iter_mut().flatten()) {
+        for p in part.positions.iter_mut() {
+            p[1] *= k;
+        }
+    }
+    for p in g.pads.iter_mut() {
+        p.y *= k;
+    }
+    for p in g.lamps.iter_mut() {
+        p.y *= k;
+    }
 }
 
 /// The chunk a building is drawn in: by its lot centre, so a building and

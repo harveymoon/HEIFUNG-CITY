@@ -146,6 +146,13 @@ fn a_company_past_the_thresholds_becomes_a_mega_corp_with_a_brand_and_an_hq() {
     assert_eq!(h.tier, Tier::High);
     assert_eq!(w.brand_mark(hq).map(|m| m.role), Some(BrandRole::Headquarters));
     assert_eq!(w.brand_mark(b).map(|m| m.role), Some(BrandRole::Holding));
+    // [r5-fixes] Its ownership arcs spring from the HQ, whichever holding
+    // is picked, and reach every other one.
+    for pick in [a, b, hq] {
+        let (hub, rest) = w.ownership_arcs(pick).expect("arcs");
+        assert_eq!(hub, hq, "from the headquarters");
+        assert!(rest.contains(&a) && rest.contains(&b) && !rest.contains(&hq), "{rest:?}");
+    }
     // Its fleet wears the brand.
     let letter = c.brand.monogram as u8 - b'A';
     assert_eq!(w.corp_livery(b), Some(crate::vehicle::Livery::Corp(c.brand.colour, c.brand.shape as u8 | (letter << 3))));

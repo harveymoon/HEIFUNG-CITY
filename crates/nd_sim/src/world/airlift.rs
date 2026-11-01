@@ -14,6 +14,9 @@ use super::*;
 use crate::{Errand, VehicleId};
 use serde::{Deserialize, Serialize};
 
+/// [r5-fixes] A vehicle stranded at the kerb this long (minutes of its
+/// trip) with no road anywhere is lifted out free.
+pub const STRANDED_AIRLIFT_MIN: f32 = 360.0;
 /// What an airlift costs the city.
 pub const AIRLIFT_COST: f32 = 4000.0;
 /// Ticks flying in, hovering to hook on, and flying out.
@@ -42,6 +45,9 @@ pub struct Airlift {
     /// The pound it takes a private car to (None: off the map).
     pub pound: Option<BuildingId>,
     pub started: u64,
+    /// [r5-fixes] Why the city sent it, free (empty: the player called it).
+    #[serde(default)]
+    pub reason: String,
 }
 
 /// Where an airlift's helicopter is: position (x, height, y), heading,
@@ -132,15 +138,24 @@ impl World {
         Ok(())
     }
 
-    /// [r4-flags-sim] A vehicle standing in a pocket of road with no way
-    /// out (`LaneNetwork::trap`: one-way streets lead in, none lead out)
-    /// that has nowhere to drive: the city lifts it out, free, at most
-    /// `RESCUE_AIRLIFTS` at a time (the rest wait their turn at the kerb).
-    /// Whether one is on its way for it.
+    /// [r4-flags-sim] A vehicle with nowhere to drive: standing in a
+    /// pocket of road with no way out (`LaneNetwork::trap`: one-way streets
+    /// lead in, none lead out), or [r5-fixes] stranded at the kerb for
+    /// `STRANDED_AIRLIFT_MIN` and four times its trip's expected time (no
+    /// road anywhere from where it stands). The city lifts it out, free, at
+    /// most `RESCUE_AIRLIFTS` at a time (the rest wait their turn at the
+    /// kerb), and says why (`SimEvent::Airlift`). Whether one is on its
+    /// way for it.
     pub(in crate::world) fn rescue_trapped(&mut self, car: CarId) -> bool {
         const RESCUE_AIRLIFTS: usize = 2;
         let Some(c) = self.traffic.cars.get(car) else { return false };
-        if c.bus.is_some() || !self.traffic.net.trap.get(c.route[c.idx] as usize).copied().unwrap_or(false) {
+        if c.bus.is_some() {
+            return false;
+        }
+        let lane = c.route[c.idx];
+        let trapped = self.traffic.net.trap.get(lane as usize).copied().unwrap_or(false);
+        let stranded = self.car_trip_minutes(car).is_some_and(|(e, x)| e > STRANDED_AIRLIFT_MIN && e > 4.0 * x);
+        if !trapped && !stranded {
             return false;
         }
         if self.airlifts.iter().any(|a| a.car == Some(car)) {
@@ -149,8 +164,51 @@ impl World {
         if self.airlifts.iter().filter(|a| a.car.is_some()).count() >= RESCUE_AIRLIFTS {
             return false;
         }
+        let reason = self.rescue_reason(car, trapped);
+        // One line when the lifts begin, not one per vehicle: none of the
+        // city's own were in the air.
+        let quiet = self.airlifts.iter().any(|a| !a.reason.is_empty());
         self.send_airlift(car);
+        if let Some(a) = self.airlifts.last_mut() {
+            a.reason = reason.clone();
+        }
+        if !quiet {
+            let at = self.traffic.cars[car].pos;
+            let waiting = self.traffic.cars.iter().filter(|(id, c)| *id != car && c.entering && c.bus.is_none() && self.traffic.net.trap.get(c.route[c.idx] as usize).copied().unwrap_or(false)).count();
+            let more = match waiting {
+                0 => String::new(),
+                1 => " 1 more waits there.".into(),
+                n => format!(" {n} more wait there, lifted two at a time."),
+            };
+            self.events.push(SimEvent::Airlift { at, text: format!("Airlift (free): {reason}.{more}") });
+        }
         true
+    }
+
+    /// [r5-fixes] Why a free airlift was sent for `car`, in words: "a
+    /// lorry stuck in a dead-end pocket off Cinder Street (one-way streets
+    /// lead in, none lead out)".
+    fn rescue_reason(&self, car: CarId, trapped: bool) -> String {
+        let c = &self.traffic.cars[car];
+        let what = if c.cargo.is_some() {
+            "a lorry"
+        } else if c.errand == Errand::Out {
+            "a city vehicle"
+        } else {
+            "a vehicle"
+        };
+        let lane = c.route[c.idx];
+        let street = match self.traffic.net.lanes.get(lane as usize).map(|l| &l.kind) {
+            Some(crate::traffic::LaneKind::Road { segment, .. }) => self.streets.of(*segment).map(|s| s.name.clone()),
+            _ => None,
+        }
+        .unwrap_or_else(|| self.street_name_near(c.pos));
+        if trapped {
+            format!("{what} stuck in a dead-end pocket off {street} (one-way streets lead in, none lead out)")
+        } else {
+            let hours = self.car_trip_minutes(car).map_or(0.0, |(e, _)| e / 60.0);
+            format!("{what} stranded on {street} for {hours:.0} h with no road anywhere from there")
+        }
     }
 
     /// The helicopter on its way to `car` (paid for or not by the caller).
@@ -166,7 +224,7 @@ impl World {
             None => off_map_near(at + (at - from).normalize_or_zero() * 10.0, half),
         };
         let tick = self.clock.tick;
-        self.airlifts.push(Airlift { car: Some(car), model, at, heading, from, to, pound, started: tick });
+        self.airlifts.push(Airlift { car: Some(car), model, at, heading, from, to, pound, started: tick, reason: String::new() });
     }
 
     /// [airlift] Lift the vehicles the helicopters are over; done ones go.
@@ -275,7 +333,7 @@ mod tests {
 
     #[test]
     fn the_helicopter_flies_in_hovers_lifts_and_flies_out() {
-        let a = Airlift { car: None, model: Default::default(), at: Vec2::new(100.0, 50.0), heading: 0.0, from: Vec2::new(1400.0, 50.0), to: Vec2::new(-1400.0, 50.0), pound: None, started: 100 };
+        let a = Airlift { car: None, model: Default::default(), at: Vec2::new(100.0, 50.0), heading: 0.0, from: Vec2::new(1400.0, 50.0), to: Vec2::new(-1400.0, 50.0), pound: None, started: 100, reason: String::new() };
         let p0 = a.pose(100, 0.0, 0.0);
         assert!(p0.pos.distance(a.from) < 1.0 && p0.height > AIRLIFT_CRUISE - 1.0 && !p0.carrying);
         let over = a.pose(100 + AIRLIFT_INBOUND, 0.0, 0.0);

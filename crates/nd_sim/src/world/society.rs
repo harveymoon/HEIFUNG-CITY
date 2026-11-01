@@ -483,7 +483,7 @@ mod tests {
         let hid = w.households.keys().next().unwrap();
         w.households[hid].home = None;
         w.society.homeless.since.push((hid, w.clock.tick));
-        w.society.homeless.camps.push(Camp { id: 99, pos, dir, out, lot: Some(lot), sidewalk: false, households: vec![hid], people: 1, founded: 0 });
+        w.society.homeless.camps.push(Camp { id: 99, pos, dir, out, lot: Some(lot), sidewalk: false, households: vec![hid], people: 1, founded: 0, under: false });
         assert!(!camp_on_way(&w.roads, pos, dir, out));
         w.hourly_homeless();
         assert!(w.society.homeless.camps.iter().any(|c| c.id == 99), "the camp stands while its lot is vacant");
