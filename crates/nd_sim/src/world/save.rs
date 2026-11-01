@@ -201,6 +201,10 @@ impl World {
             self.social_concern = self.concern_of_the_week();
         }
         self.subway_after_load();
+        // [ferry-islands] The crossings (not saved), and riders whose boat
+        // (ships are not saved) is gone set down where they were going.
+        self.refresh_ferry_links();
+        self.ferries_after_load();
         self.seats_after_load();
         // [dirty-industry] A save from before the dirty plants were kept
         // (or a stale entry): read them off the buildings.
@@ -313,6 +317,7 @@ impl World {
                 Some(TransitLeg::Air { from, to }) => buildings.contains_key(from) && buildings.contains_key(to),
                 Some(TransitLeg::Subway { line, board, alight }) => self.subway.lines.get(line).is_some_and(|l| l.index_of(board).is_some() && l.index_of(alight).is_some()),
                 Some(TransitLeg::Taxi) => true,
+                Some(TransitLeg::Ferry { board, alight }) => buildings.contains_key(board) && buildings.contains_key(alight),
             } && c.transit.is_none_or(|t| buildings.contains_key(t.target));
             if !trip_ok {
                 c.transit = None;
@@ -324,6 +329,7 @@ impl World {
                 Activity::AtHome => c.home.is_none(),
                 Activity::Working => c.work.is_none(),
                 Activity::Waiting { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } => c.transit.is_none(),
+                Activity::OnFerry { to, .. } => c.transit.is_none() || !buildings.contains_key(*to),
                 Activity::Flying { drone } => !self.air.drones.contains_key(*drone),
                 // Trains are not saved: `subway_after_load` sets riders down.
                 Activity::OnMetro { .. } => c.transit.is_none(),

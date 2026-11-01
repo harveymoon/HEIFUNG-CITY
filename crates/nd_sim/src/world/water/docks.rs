@@ -243,6 +243,9 @@ impl World {
                 self.link_remote_terminals(id);
             }
         }
+        // [ferry-islands] The crossings between terminals in town.
+        self.refresh_ferry_links();
+        self.connectivity.mark_dirty();
         // Goods waiting at a dock that no longer works go by road.
         let working: Vec<BuildingId> = self.ports.working(PortKind::ShippingPort);
         let stranded: Vec<Cargo> = {
@@ -304,6 +307,14 @@ impl World {
         s.commuters_out_today = 0;
         s.day_trips_today = 0;
         s.day_trippers_back_today = 0;
+        s.own_trips_today = 0;
+        s.loads_ferried_today = 0;
+        s.lorries_ferried_today = 0;
+        s.missed_last_boat_today = 0;
+        s.islanders_moved_off_today = 0;
+        s.island_jobs_quit_today = 0;
+        // [ferry-islands] Loads stuck at a pier for days go the old way.
+        self.daily_ferry_freight();
         self.ports.commuters_today.clear();
         self.ports.trips_today.clear();
         self.ports.line_riders.clear();

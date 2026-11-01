@@ -115,6 +115,11 @@ impl World {
         if path_home {
             return true;
         }
+        // [ferry-islands] On an island with boats to the city: crews and
+        // materials come over on the ferry.
+        if self.island_supplied(bid) {
+            return true;
+        }
         let Some((seg, _)) = self.truck_stop(bid) else { return false };
         let Some(s) = self.roads.try_segment(seg).filter(|s| s.alive && s.is_street()) else { return false };
         [s.a, s.b].into_iter().any(|n| self.drive_component(n).is_some_and(|c| nets.contains(&c)))
