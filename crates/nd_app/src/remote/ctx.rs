@@ -39,6 +39,8 @@ pub(super) struct Ctx<'w, 's> {
     pub(super) stats: Res<'w, RenderStats>,
     pub(super) assets: Res<'w, GameAssets>,
     pub(super) diagnostics: Res<'w, DiagnosticsStore>,
+    /// [r6-perf] Frame times for `frame_stats`.
+    pub(super) frame_stats: ResMut<'w, crate::frame_stats::FrameStats>,
     pub(super) commands: Commands<'w, 's>,
     pub(super) claude: ResMut<'w, crate::flags::ClaudeFlags>,
     /// [committee] The committee's backend and meeting driver.

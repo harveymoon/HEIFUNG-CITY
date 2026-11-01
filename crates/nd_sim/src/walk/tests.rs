@@ -318,3 +318,74 @@ fn no_midblock_zebra_on_a_deck_or_bridge() {
     assert!(after.iter().all(|(s, _)| !raised.contains(s)), "a zebra on the deck: {after:?}");
     assert!(!after.is_empty() && after.len() < before, "the ground's zebras stay ({} of {before})", after.len());
 }
+
+/// [r6-perf] A 30 x 30 grid of pavements 12 m apart, some of it park paths
+/// and some interior: big enough for the landmarks.
+fn big_grid() -> WalkGraph {
+    let n = 30u32;
+    let nodes: Vec<Vec2> = (0..n * n).map(|i| Vec2::new((i % n) as f32 * 12.0, (i / n) as f32 * 12.0)).collect();
+    let mut edges = Vec::new();
+    for y in 0..n {
+        for x in 0..n {
+            let i = y * n + x;
+            let h = (x * 7 + y * 13) % 10;
+            if x + 1 < n {
+                edges.push((i, i + 1, h == 3, h == 1));
+            }
+            if y + 1 < n && h != 5 {
+                edges.push((i, i + n, h == 7, h == 2));
+            }
+        }
+    }
+    let mut g = graph(&nodes, &edges);
+    g.compute_components();
+    g
+}
+
+/// [r6-perf] The landmark search finds routes that cost what the plain
+/// A* finds (the same route but where two cost exactly the same), and
+/// pops far fewer nodes doing it: the guard on the walking searches that
+/// were a quarter of a big city's tick.
+#[test]
+fn landmark_routes_cost_the_same_and_search_less() {
+    let g = big_grid();
+    let n = g.nodes.len() as u32;
+    let (mut fast, mut plain) = (0u64, 0u64);
+    for k in 0..300u32 {
+        let (a, b) = ((k * 7919) % n, (k * 104_729 + 17) % n);
+        let p0 = route::POPS.with(|p| p.get());
+        let got = g.route_nodes(a, b);
+        let p1 = route::POPS.with(|p| p.get());
+        let want = g.search_reference(a, b, false);
+        let p2 = route::POPS.with(|p| p.get());
+        fast += p1 - p0;
+        plain += p2 - p1;
+        assert_eq!(got.is_some(), want.is_some(), "{a} -> {b}");
+        if let (Some(x), Some(y)) = (&got, &want) {
+            let (cx, cy) = (g.path_cost(x, false), g.path_cost(y, false));
+            assert!((cx - cy).abs() <= 1e-4 * cy.max(1.0), "{a} -> {b}: {cx} against {cy}");
+            assert_eq!((x[0], *x.last().unwrap()), (a, b));
+        }
+    }
+    assert!(fast * 3 < plain, "the landmarks pop {fast} nodes against {plain} for the plain search");
+}
+
+/// [r6-perf] A remembered route is never handed out once a crossing on it
+/// closes or its lot shuts: the memo's stamp covers both.
+#[test]
+fn the_route_memo_forgets_closed_crossings() {
+    let (_, _, mut g) = crossing_town();
+    let (from, to) = (Vec2::new(-20.0, -62.0), Vec2::new(-20.0, -78.0));
+    let first = g.route(from, to).unwrap().1;
+    assert_eq!(g.route(from, to).unwrap().1, first, "asked again: the same way");
+    let used: Vec<u32> = first.windows(2).filter_map(|w| g.crossing_between(g.nodes[w[0] as usize].pos, g.nodes[w[1] as usize].pos)).collect();
+    assert!(!used.is_empty(), "the way crosses the street");
+    for &c in &used {
+        g.crossings[c as usize].closed = true;
+    }
+    let after = g.route(from, to).map(|r| r.1);
+    assert_ne!(after.as_ref(), Some(&first), "not over the closed crossing");
+    if let Some(r) = after {
+        assert!(r.windows(2).all(|w| g.crossing_between(g.nodes[w[0] as usize].pos, g.nodes[w[1] as usize].pos).is_none_or(|c| !used.contains(&c))));
+    }
+}

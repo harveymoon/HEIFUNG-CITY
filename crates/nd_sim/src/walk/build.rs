@@ -44,6 +44,7 @@ impl WalkGraph {
     }
 
     pub(super) fn link_kind(&mut self, a: u32, b: u32, interior: bool, park: bool) {
+        self.forget_routes();
         if a == b {
             return;
         }
@@ -54,6 +55,7 @@ impl WalkGraph {
 
     /// Join two pavement nodes across a street.
     pub(super) fn link_cross(&mut self, a: u32, b: u32, segment: SegmentId, node: Option<NodeId>, kind: CrossingKind, roads: &RoadNetwork) {
+        self.forget_routes();
         if a == b {
             return;
         }
@@ -764,6 +766,7 @@ impl WalkGraph {
 
     /// The node grid and the crossing lookup, after nodes were added.
     pub(super) fn reindex(&mut self) {
+        self.forget_routes();
         self.index = Grid::new(NODE_CELL, self.nodes.iter().map(|n| (n.pos, n.pos)));
         self.cross_at.clear();
         for (k, c) in self.crossings.iter().enumerate() {
@@ -779,6 +782,7 @@ impl WalkGraph {
     /// crossings they were made for (matched by position and the street's
     /// direction): a push button, or a footbridge with its raised walkway.
     pub fn apply_upgrades(&mut self, rules: &[crate::junctions::CrossingRule], roads: &RoadNetwork) {
+        self.forget_routes();
         use crate::junctions::CrossingUpgrade;
         if rules.is_empty() {
             return;

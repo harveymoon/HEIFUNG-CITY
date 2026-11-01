@@ -202,8 +202,18 @@ impl World {
 
     /// Has the park on `lot` benches, and every seat taken?
     pub fn park_full(&self, lot: LotId) -> bool {
-        let (total, held) = self.seats_in(lot);
-        total > 0 && held >= total
+        // [r6-perf] As `seats_in` (some seat, all held), stopping at the
+        // first free one: asked of every park for every outing.
+        let mut any = false;
+        for &(node, _, facing) in self.walk.benches_in(lot) {
+            for s in seat_positions(self.walk.nodes[node as usize].pos, facing) {
+                any = true;
+                if self.seat_free(seat_key(s)) {
+                    return false;
+                }
+            }
+        }
+        any
     }
 
     /// Daily: forget lapsed claims and reset the day's counts.

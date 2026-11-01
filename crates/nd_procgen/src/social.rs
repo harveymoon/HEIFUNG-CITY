@@ -804,6 +804,8 @@ fn lettering(day: &mut MeshData, night: &mut MeshData, spot: &FacadeSpot, tag: &
 /// design unlit and floodlit, for the app to show after dark). `crew`
 /// seeds the crew's palette, motif and style, `seed` this mural's layout;
 /// `quality` (`-1..1`) is art or a tag: poor crews scrawl.
+/// [r6-perf] `quality` is read only against -0.2, 0.1 and 0.35: the
+/// renderer keeps a painted facade while its band holds (`render/social.rs`).
 pub fn paint_mural(spot: &FacadeSpot, quality: f32, seed: u64, crew: u64, tag: &str, pal: &Palette) -> (Geometry, Geometry) {
     let mut day = Geometry::default();
     let mut night = Geometry::default();

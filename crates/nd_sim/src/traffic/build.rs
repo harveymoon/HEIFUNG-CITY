@@ -105,6 +105,9 @@ pub struct LaneNetwork {
     /// [r4-flags-sim] Per lane: no way out of it to the rest of the roads
     /// (`mark_traps`).
     pub trap: Vec<bool>,
+    /// [r6-perf] Per lane, what a route search reads of its shape
+    /// (`LaneNetwork::lane_room`), worked out once per network.
+    pub(super) room: super::routing::RoomCache,
 }
 
 /// [r2-traffic] A street wide enough for a U-turn at its junctions: two

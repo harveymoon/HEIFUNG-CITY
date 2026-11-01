@@ -107,6 +107,7 @@ impl WalkGraph {
     /// Gates within a road end's snap reach (`END_SNAP_RADIUS`) of a kerb
     /// are left out: a path drawn there joins the road instead.
     pub fn add_grounds(&mut self, roads: &RoadNetwork, grounds: &[Grounds], links: &[Vec2]) -> Vec<bool> {
+        self.forget_routes();
         let mut joined = Vec::with_capacity(links.len());
         for &p in links {
             let near = grounds

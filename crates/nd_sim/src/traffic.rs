@@ -481,37 +481,37 @@ impl Traffic {
         self.player_clock = 0.0;
         for _ in 0..substeps {
             self.player_held.clear();
-            let mut demand = self.signal_demand();
-            self.ped_demand(&mut demand);
-            self.net.step_signals(dt, Some(&demand));
-            self.update_walk(&demand);
+            let mut demand = crate::prof!("tr_signal_demand", self.signal_demand());
+            crate::prof!("tr_ped_demand", self.ped_demand(&mut demand));
+            crate::prof!("tr_step_signals", self.net.step_signals(dt, Some(&demand)));
+            crate::prof!("tr_update_walk", self.update_walk(&demand));
             for lane in self.net.lanes.iter_mut().filter(|l| l.is_connector()) {
                 lane.red_for = if lane.green { 0.0 } else { lane.red_for + dt };
             }
 
-            let claims = self.kerb_claims();
+            let claims = crate::prof!("tr_kerb_claims", self.kerb_claims());
             // [emergency] Sirens and fugitives plan their way round.
-            self.plan_offlaw(dt);
+            crate::prof!("tr_plan_offlaw", self.plan_offlaw(dt));
             // [scene] Fire engines at the kerb, tow trucks at work.
-            let zones = self.scene_zones();
-            let accs = self.plan_substep(dt, &claims, &zones);
-            self.apply_steps(accs, dt);
-            self.yield_to_sirens(dt);
-            self.pull_out_waiting(dt);
-            self.lane_changes();
-            self.advance_lanes(&mut arrived);
+            let zones = crate::prof!("tr_scene_zones", self.scene_zones());
+            let accs = crate::prof!("tr_plan_substep", self.plan_substep(dt, &claims, &zones));
+            crate::prof!("tr_apply_steps", self.apply_steps(accs, dt));
+            crate::prof!("tr_yield_to_sirens", self.yield_to_sirens(dt));
+            crate::prof!("tr_pull_out_waiting", self.pull_out_waiting(dt));
+            crate::prof!("tr_lane_changes", self.lane_changes());
+            crate::prof!("tr_advance_lanes", self.advance_lanes(&mut arrived));
             if self.net.tolls {
-                self.toll_gates();
+                crate::prof!("tr_toll_gates", self.toll_gates());
             }
-            self.reorder_passers();
-            self.offlaw_reorder();
-            self.collisions();
-            self.crosswalk_conflicts();
-            self.hazards(dt);
-            self.place_cars(dt);
+            crate::prof!("tr_reorder_passers", self.reorder_passers());
+            crate::prof!("tr_offlaw_reorder", self.offlaw_reorder());
+            crate::prof!("tr_collisions", self.collisions());
+            crate::prof!("tr_crosswalk_conflicts", self.crosswalk_conflicts());
+            crate::prof!("tr_hazards", self.hazards(dt));
+            crate::prof!("tr_place_cars", self.place_cars(dt));
             self.player_clock += dt;
         }
-        self.reroute_stalled(seconds);
+        crate::prof!("tr_reroute_stalled", self.reroute_stalled(seconds));
         self.adapt_clock += seconds;
         if self.adapt_clock >= ADAPT_SECONDS {
             self.adapt_clock = 0.0;

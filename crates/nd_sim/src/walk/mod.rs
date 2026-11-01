@@ -28,6 +28,7 @@ mod route;
 mod setbacks;
 
 pub use build::*;
+pub(crate) use route::verify_routes;
 pub use footbridge::*;
 pub use grounds::*;
 pub use setbacks::*;
@@ -330,6 +331,8 @@ pub struct WalkGraph {
     /// complete (`World::build_walk_graph`); empty until then. A route
     /// between two components is refused without a search.
     pub comp: Vec<u32>,
+    /// [r6-perf] Routes already searched (`route_nodes_with`).
+    routes: route::RouteMemo,
 }
 
 #[cfg(test)]

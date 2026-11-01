@@ -27,6 +27,8 @@ mod directory;
 mod district_tool;
 mod fire_scene;
 mod flags;
+// [r6-perf] Frame times for the remote `frame_stats`.
+mod frame_stats;
 /// [home] Saves, flags and settings beside the exe, not wherever it was started.
 mod home;
 mod map_layers;
@@ -96,6 +98,7 @@ fn main() {
             ..default()
         }))
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
+        .add_plugins(frame_stats::FrameStatsPlugin)
         .add_systems(Update, window_icon)
         .add_plugins(bevy_egui::EguiPlugin::default())
         .add_plugins((CorePlugins, WorldViewPlugins, PlayerPlugins, remote::RemotePlugin))
