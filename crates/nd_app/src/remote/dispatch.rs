@@ -564,6 +564,9 @@ pub(super) static COMMANDS: &[Cmd] = &[
     Cmd { name: "corps", aliases: &["corp", "megacorp"], effect: Game, run: |cmd, ctx| corp::command(cmd, &mut ctx.sim.world), help: &[
         ("action", "summary (default: corps with brand/logo, HQ, holdings by use and industry, staff, housing, market share; campuses; rules; biggest companies vs thresholds) | rules {allowed, max_share 0.02-0.25, levy 0-0.2} | promote {building} (dev: its company becomes a mega-corp now) | buy {corp|building, n} (dev) | finish {corp} (dev: HQ now, sites finished) | drive {corp, lot} (road metres from HQ)"),
     ] },
+    Cmd { name: "megablock", aliases: &["megablocks", "arcology"], effect: Game, run: |cmd, ctx| megablock::command(cmd, &mut ctx.sim.world), help: &[
+        ("action", "summary (default: every block with what is inside, its trips inside/out and sky garden visits; each corp may build or why not; stats) | start {corp?, force} (a corp breaks ground now; force (dev) skips the population, age and holdings gates) | force {corp?, progress 0..1} (dev: start if needed, clear the plots, set the stage; no progress = built and open)"),
+    ] },
     Cmd { name: "campus", aliases: &["university"], effect: Game, run: |cmd, ctx| corp::campus(cmd, &mut ctx.sim.world), help: &[
         ("action", "summary (default) | grow {building, days} (dev: run the campus's days with one annex each, sites finished)"),
     ] },

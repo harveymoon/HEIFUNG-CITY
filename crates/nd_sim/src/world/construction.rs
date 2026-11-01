@@ -235,6 +235,8 @@ impl World {
         self.estate_finished(bid);
         // [tenants] Cut into units to let, if it can be.
         self.plan_units(bid, false);
+        // [megablocks] An arcology opens, its corp's own shops with it.
+        self.megablock_opened(bid);
         // [relocate] A business that moved here takes its old staff back.
         self.rehire_moved_staff(bid);
         self.building_opened(bid);

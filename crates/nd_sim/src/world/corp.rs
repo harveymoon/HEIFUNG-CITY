@@ -369,7 +369,7 @@ impl World {
             self.events.push(SimEvent::BuildingChanged(p));
         }
         let day = self.clock.day() as u32;
-        self.corps.corps.push(MegaCorp { owner, brand, origin: kind, origin_name: origin_name.clone(), flagship: Some(bid), hq: None, cash: 2_000.0, founded_day: day, bought_total: 0, housed_total: 0, built_total: 0, levy_total: 0.0, revenue_yesterday: 0.0 });
+        self.corps.corps.push(MegaCorp { owner, brand, origin: kind, origin_name: origin_name.clone(), flagship: Some(bid), hq: None, cash: 2_000.0, founded_day: day, bought_total: 0, housed_total: 0, built_total: 0, levy_total: 0.0, revenue_yesterday: 0.0, megablock: None });
         self.corps.stats.promotions_total += 1;
         let tick = self.clock.tick;
         self.social.push_news(tick, format!("🏢 {origin_name} is now {name}, a mega-corp. Its tower is coming downtown."), pos, None);

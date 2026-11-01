@@ -104,6 +104,10 @@ impl World {
         if fresh {
             self.citizens[id].pending_footfall.clear();
         }
+        // [megablocks] Within one arcology: a lift ride, not the streets.
+        if self.trip_inside_megablock(id, origin, target, purpose) {
+            return;
+        }
         // [ped-highway] Someone out on a highway or ramp steps onto the
         // pavement before setting off.
         if self.citizens[id].inside.is_none() {

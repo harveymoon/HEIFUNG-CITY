@@ -308,6 +308,11 @@ impl World {
     pub(in crate::world) fn job_search(&mut self) {
         let jobless: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.work.is_none() && c.can_work()).map(|(id, _)| id).collect();
         for id in jobless {
+            // [megablocks] Downstairs first, for those living in an arcology.
+            if let Some(job) = self.megablock_job_for(id) {
+                self.assign_job(id, job);
+                continue;
+            }
             let Some(job) = self.pick_job() else { break };
             self.assign_job(id, job);
         }

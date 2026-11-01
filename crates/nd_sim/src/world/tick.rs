@@ -176,6 +176,8 @@ impl World {
         crate::prof!("daily_towers", self.daily_towers());
         // [megacorp] Mega-corps and campuses grow.
         crate::prof!("daily_corps", self.daily_corps());
+        // [megablocks] Their arcologies: tallies, jobs inside, new projects.
+        crate::prof!("daily_megablocks", self.daily_megablocks());
     }
 
     /// The periodic jobs by minute of the hour (or of two hours), staggered

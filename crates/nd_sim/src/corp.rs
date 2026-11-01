@@ -407,6 +407,9 @@ pub struct MegaCorp {
     /// Yesterday's gross revenue over its holdings.
     #[serde(default)]
     pub revenue_yesterday: f32,
+    /// [megablocks] Its flagship arcology, rising or standing.
+    #[serde(default)]
+    pub megablock: Option<BuildingId>,
 }
 
 impl MegaCorp {

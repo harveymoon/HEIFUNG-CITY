@@ -167,6 +167,8 @@ impl World {
         // hour: lunch when hungry, the gym in the morning, the bowling
         // alley with the kids, fine dining with a partner.
         let who = if lu == LandUse::Entertainment { self.outgoer(id) } else { None };
+        // [megablocks] A corp with a standing arcology: its brand draws.
+        let brands = self.megablock_brands();
         for (bid, b) in self.buildings.iter() {
             // [economy] A night out also finds the restaurants, driving
             // ranges, galleries and marina clubhouses on other land.
@@ -194,7 +196,7 @@ impl World {
             }
             let inside = crowds.get(&bid).unwrap_or(&empty);
             let (regular_friends, friends_there) = self.friends_at(id, bid, inside);
-            let mut social = 0.08 * regular_friends.min(3) as f32 + 0.15 * friends_there.min(2) as f32;
+            let mut social = 0.08 * regular_friends.min(3) as f32 + 0.15 * friends_there.min(2) as f32 + self.brand_pull(bid, &brands);
             if let (Some(w), Some(z)) = (&who, b.business.as_ref()) {
                 social += crate::leisure::appeal(z.kind, hour, w);
             }
@@ -306,8 +308,10 @@ impl World {
         let thrift = 0.3 + 0.5 * taste.cheap.max(0.0);
         let mut known = Vec::new();
         let mut fresh = Vec::new();
+        // [megablocks] A corp with a standing arcology: its brand draws.
+        let brands = self.megablock_brands();
         for &(bid, _, d, price) in &cands {
-            let price_pen = (price / base - 1.0) * thrift;
+            let price_pen = (price / base - 1.0) * thrift - self.brand_pull(bid, &brands);
             match book.get(bid) {
                 Some(m) => known.push((bid, 1.0 * m.score + if m.regular { 0.3 } else { 0.0 } - price_pen - d / REACH_SHOP, d)),
                 None => {

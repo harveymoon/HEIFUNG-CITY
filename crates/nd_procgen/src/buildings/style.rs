@@ -575,6 +575,10 @@ styles! {
     GameArcade { label: "arcade", family: Night, cluster: 0.3, draw: |g, c, r, _| eatout::arcade(g, c, r) },
     Gym { label: "gym", family: Retail, cluster: -0.4, draw: |g, c, r, _| eatout::gym(g, c, r) },
     ComedyClub { label: "comedy club", family: Night, cluster: -0.3, draw: |g, c, r, _| eatout::comedy_club(g, c, r) },
+    // -- [megablocks] a mega-corp's arcology (`buildings/megablock.rs`),
+    // drawn only for its `Form`; appended so `ALL` keeps its order. --
+    /// A podium of street halls, towers of flats, sky gardens and bridges.
+    MegaBlock { label: "mega-block", family: Special, cluster: -2.5, draw: |g, c, r, e| megablock::megablock(g, c, r, e) },
 }
 
 impl Style {
@@ -692,6 +696,7 @@ impl Style {
             Form::StripMall => Some(Style::StripMall),
             Form::Mall => Some(Style::Mall),
             Form::MegaMall => Some(Style::MegaMall),
+            Form::MegaBlock => Some(Style::MegaBlock),
         }
     }
 

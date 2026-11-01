@@ -77,6 +77,7 @@ pub fn group(s: Style) -> &'static str {
         Mechanic | CarDealer | BikeShop | FishMarket | SeafoodRestaurant | GolfRange | ArtStudio | Gallery => "Shops and trades",
         Shacks | TrailerPark | Huts | Suburb | McMansion | Mansion | MegaHotel | Museum => "Homes and estates",
         Supertall => "League towers",
+        MegaBlock => "Mega-blocks",
         BeachResort | WaterfrontHotel | PierRestaurant | BeachBar | BoatRental => "Waterfront",
         DomeHouse | SaucerHouse | PopsicleDome | TwinDomes | DomePods | CapsuleTower | SaucerStack | StiltTower | DomeHall | DomeCampus => "Capsule district",
         StripMall | Mall | MegaMall => "Malls",
@@ -257,7 +258,7 @@ pub fn lot_size(s: Style, tier: Tier) -> (f32, f32) {
         TwinTowers => (40.0, 36.0),
         // [r4-leisure-places] the halls and lots on a big plot
         FoodHallShed | StreetFoodLot | DriveThrough | Multiplex | Theatre | MusicHall | BowlingAlley => (48.0, 44.0),
-        Stadium | Arena | GrandPark | Zoo | AmusementPark | BotanicalGarden | ConventionCentre | MegaMall | ShippingPort | PowerCoal | PowerNuclear | PowerSolar | PowerWind | PowerHydro | PowerTidal | PowerGeothermal | FreightYard | CentralStation | StripMine | OilField | Refinery | Farmstead | CowFarm | Feedlot | Prison | University | CasinoResort | Megastructure => (130.0, 110.0),
+        Stadium | Arena | GrandPark | Zoo | AmusementPark | BotanicalGarden | ConventionCentre | MegaMall | ShippingPort | PowerCoal | PowerNuclear | PowerSolar | PowerWind | PowerHydro | PowerTidal | PowerGeothermal | FreightYard | CentralStation | StripMine | OilField | Refinery | Farmstead | CowFarm | Feedlot | Prison | University | CasinoResort | Megastructure | MegaBlock => (130.0, 110.0),
         Hospital | School | MarketHall | Mall | MegaHotel | Mansion | ArtMuseum | ScienceMuseum | HistoryMuseum | ConcertHall | Cathedral | Aquarium | Observatory | PleasurePier | Station | ContainerYard | TruckLot | Smelter | ChemicalWorks | ChickenFarm | Slaughterhouse | TankFarm | Depot | Junkyard | Factory | FabPlant | BusDepot | TrashDepot | TrashCompany | MarinaLarge | FishingPortLarge | FerryTerminal | GolfRange | BeachResort | Beach | TrailerPark | Suburb | Supertall | CarDealer | StripMall | Casino | Cinema | DomeCampus | Courthouse | Ministry | CivicTower | FoundryWorks | GasWorks | LoftEstate | SawtoothFactory | CulDeSac | GardenManor | StoneManor => (75.0, 65.0),
         _ => match tier {
             Tier::Low => (30.0, 32.0),

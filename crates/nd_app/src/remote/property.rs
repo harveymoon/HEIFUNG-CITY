@@ -35,6 +35,7 @@ fn form_key(f: Form) -> &'static str {
         Form::StripMall => "strip_mall",
         Form::Mall => "mall",
         Form::MegaMall => "mega_mall",
+        Form::MegaBlock => "mega_block",
     }
 }
 

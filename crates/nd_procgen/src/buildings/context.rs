@@ -118,6 +118,8 @@ pub struct Extras<'a> {
     pub plant_scale: f32,
     /// [supertall] A league tower: its height and form.
     pub tower: Option<nd_sim::towers::Tower>,
+    /// [megablocks] A mega-corp's arcology: its plan (towers, storeys).
+    pub megablock: Option<nd_sim::megablock::MegaBlock>,
     /// [megacorp] The owner's brand and where it is shown (`World::brand_mark`).
     pub brand: Option<nd_sim::corp::BrandMark>,
     /// [megacorp] A campus annex: its own look (`Style::for_annex`).
@@ -148,7 +150,7 @@ pub struct Extras<'a> {
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[], boxes_of: None, real_boxes: false, overhead: &[] }
+        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, megablock: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[], boxes_of: None, real_boxes: false, overhead: &[] }
     }
 }
 

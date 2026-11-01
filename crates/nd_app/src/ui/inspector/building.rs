@@ -106,6 +106,11 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
     }
     // [p2-look] A mall's shops, anchors, food court, owner, car park and
     // reach; a site grown over the plots next door.
+    // [megablocks] An arcology: its stage, or what is inside and its tallies.
+    if let Some(t) = super::site::megablock_section(ui, w, id) {
+        *selection = Selection::Building(t);
+        return;
+    }
     if let Some(t) = super::site::mall_section(ui, w, id) {
         *selection = Selection::Building(t);
         return;

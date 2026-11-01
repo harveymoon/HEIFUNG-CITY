@@ -59,6 +59,8 @@ mod committee;
 mod concerns;
 /// [megacorp] Mega-corps and universities.
 mod corp;
+/// [megablocks] Mega-corps' arcologies.
+mod megablock;
 /// [rail-crossing] Level crossings.
 mod crossings;
 /// [directory] `directory`: City Data's Directory rows, sorted and filtered.

@@ -238,7 +238,7 @@ impl World {
         for id in ids {
             let b = &self.buildings[id];
             // [supertall] a league tower keeps its own architecture
-            if !b.operating() || !b.is_grown() || b.plot.tower.is_some() {
+            if !b.operating() || !b.is_grown() || b.plot.tower.is_some() || b.plot.megablock.is_some() {
                 continue;
             }
             let Some(lot) = self.lots.get(b.lot) else { continue };

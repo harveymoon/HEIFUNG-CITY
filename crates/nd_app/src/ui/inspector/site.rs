@@ -144,3 +144,66 @@ pub(super) fn joined_site_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_s
     let pending = b.plot.pending_lots.len();
     hint(ui, &format!("{what}a {} spread over the plots behind and beside its road plot{}  ·  may grow to {cap} plots{}", kind.label(), if back > 0 { ", the backland among them" } else { "" }, if pending > 0 { format!("  ·  {pending} bought plot{} still clearing", fmt::s(pending)) } else { String::new() }));
 }
+
+/// [megablocks] The MEGA-BLOCK section of a corp's arcology: while it
+/// rises, the stage and what is planned; open, what is inside (homes and
+/// people, the street halls, the market hall, offices, sky gardens), the
+/// tenants (click one), how many trips stayed inside yesterday, and what
+/// it does to the streets round it. Returns a tenant to select.
+pub(super) fn megablock_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId) -> Option<nd_sim::BuildingId> {
+    let r = w.megablock_report(id)?;
+    section(ui, &format!("MEGA-BLOCK  ·  {}", r.corp));
+    if !r.open {
+        let stage = nd_sim::megablock::Stage::of_progress(r.progress);
+        let n = nd_sim::megablock::Stage::ALL.iter().position(|s| *s == stage).unwrap_or(0) + 1;
+        ui.label(egui::RichText::new(format!("Stage {n} of 4: {}", r.stage.unwrap_or(""))).color(GOLD));
+        hint(ui, &format!("{:.0}% built, about {:.0} days of work to go", r.progress * 100.0, r.days_left.ceil()));
+    }
+    ui.horizontal_wrapped(|ui| {
+        figure(ui, "towers", format!("{}", r.towers), IVORY);
+        figure(ui, "storeys", format!("{}", r.floors), IVORY);
+        figure(ui, "height", format!("{:.0} m", r.height_m), IVORY);
+        figure(ui, "homes", format!("{}", r.homes), IVORY);
+        if r.open {
+            figure(ui, "residents", format!("{}", r.residents), GOOD);
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        figure(ui, "shops", if r.open { format!("{} / {}", r.shops_let, r.shops) } else { format!("{}", r.shops) }, IVORY);
+        figure(ui, "market counters", if r.open { format!("{} / {}", r.counters_let, r.market_counters) } else { format!("{}", r.market_counters) }, IVORY);
+        figure(ui, "office suites", if r.open { format!("{} / {}", r.offices_let, r.offices) } else { format!("{}", r.offices) }, IVORY);
+        figure(ui, "sky gardens", format!("{}", r.gardens), GOOD);
+        figure(ui, "bridges", format!("{}", r.bridges), IVORY);
+    });
+    hint(ui, &format!("on {} plots, {:.0} m² · car decks for {} cars", r.plots, r.area_m2, r.parking));
+    if !r.open {
+        return None;
+    }
+    ui.horizontal_wrapped(|ui| {
+        figure(ui, "jobs inside", format!("{} / {}", r.jobs_filled, r.jobs), IVORY);
+        figure(ui, "residents working inside", format!("{} of {}", r.work_inside, r.workers), GOOD);
+    });
+    let all = r.inside_yesterday + r.out_yesterday;
+    if all > 0 {
+        hint(ui, &format!("Yesterday: {} trips never left the block ({:.0}%), {} went out to the streets, {} sky garden visits", r.inside_yesterday, 100.0 * r.inside_yesterday as f32 / all as f32, r.out_yesterday, r.gardens_yesterday));
+    }
+    hint(ui, &format!("Today so far: {} inside, {} out, {} up to the gardens · {} inside trips in all", r.inside_today, r.out_today, r.gardens_today, r.inside_total));
+    hint(ui, "Round it: land is worth more out to about 340 m, the plots next door sit in its shade; its corp's shops across town draw more custom while it stands.");
+    let mut pick = None;
+    if !r.tenants.is_empty() {
+        ui.label(egui::RichText::new("inside").small().color(GOLD));
+        egui::Grid::new(("inspector_megablock", id)).num_columns(2).spacing([8.0, 1.0]).show(ui, |ui| {
+            for (t, name, kind) in r.tenants.iter().take(14) {
+                ui.label(egui::RichText::new(*kind).small().weak());
+                if ui.link(egui::RichText::new(name).small()).clicked() {
+                    pick = Some(*t);
+                }
+                ui.end_row();
+            }
+        });
+        if r.tenants.len() > 14 {
+            hint(ui, &format!("and {} more", r.tenants.len() - 14));
+        }
+    }
+    pick
+}
