@@ -47,6 +47,16 @@ impl Traffic {
 
     fn pull_in_at(&mut self, id: CarId, secs: f32, queue: bool) {
         let Some(c) = self.cars.get(id) else { return };
+        // [r5-fixes] A car in a stunt is off the lanes already and goes
+        // back on only by `end_stunt`. Pulled in here (a takeover car that
+        // hit a walker), it was marked waiting at the kerb, so the kerb
+        // pulled it out into its lane list while it carried on with the
+        // show; `end_stunt` then listed it on its new lane too, and the
+        // old entry outlived the car: the "invalid SlotMap key" crash at a
+        // crossing's siren look-up on fresh generated cities (day 5-6).
+        if c.in_stunt() {
+            return;
+        }
         let lane = c.route[c.idx];
         let kerb = self.net.lanes[lane as usize].right.is_none();
         if !c.entering {
@@ -76,6 +86,11 @@ impl Traffic {
     /// keeps the spot covered for `KERB_SLIDE_AFTER` it pulls out into the
     /// nearest real gap behind instead. So the kerb can never deadlock.
     pub(super) fn pull_out(&mut self, id: CarId) -> bool {
+        // [r5-fixes] Off the lanes in a stunt: only `end_stunt` (which
+        // ends it first) puts it back.
+        if self.cars[id].in_stunt() {
+            return false;
+        }
         let lane = self.cars[id].route[self.cars[id].idx];
         let (waited, len, s) = (self.cars[id].stalled, self.cars[id].length(), self.cars[id].s);
         // [services] Lights and sirens pull straight out; traffic yields.
@@ -107,7 +122,10 @@ impl Traffic {
                 c.cooldown = LC_COOLDOWN;
             }
             c.blocked_by = None;
-            self.insert_sorted(lane, id);
+            // [r5-fixes] Listed once, on the lane it drives.
+            if !self.net.lanes[lane as usize].cars.contains(&id) {
+                self.insert_sorted(lane, id);
+            }
         } else {
             c.blocked_by = blocker;
             if !c.entering {

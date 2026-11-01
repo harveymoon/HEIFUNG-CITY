@@ -103,7 +103,7 @@ pub fn draw_selection(gizmos: &mut Gizmos, pens: &mut Pens, cx: &SelectionCx) {
                 citizen(gizmos, pens, sim, id);
             }
             // A selected person's places, from any camera.
-            places(gizmos, w, id);
+            places(gizmos, sim, id, cx.t);
         }
         Selection::Building(b) if outside => building(gizmos, sim, b, cx.t),
         Selection::Building(_) => {}
@@ -220,17 +220,76 @@ fn building(gizmos: &mut Gizmos, sim: &Sim, b: BuildingId, t: f32) {
         }
     }
     // [land] Everything its owner owns (a rich person's other homes
-    // and businesses), outlined and tied to it by a line.
-    let owned = w.owned_with(b);
-    if owned.len() > 1 {
-        let teal = Color::linear_rgb(0.4, 2.6, 2.2);
-        let from = w.footprint(b).map(|l| l.center);
-        for p in owned.into_iter().skip(1) {
-            lot_outline(gizmos, w, p, 1.3, teal);
-            if let (Some(a), Some(c)) = (from, w.footprint(p).map(|l| l.center)) {
-                gizmos.line(at(w, a, 6.0), at(w, c, 6.0), teal);
-            }
+    // and businesses), outlined and tied to the owner's headquarters by
+    // an arc ([r5-fixes] `ownership_arcs`).
+    if let Some((hub, rest)) = w.ownership_arcs(b) {
+        ownership_arcs(gizmos, sim, hub, &rest, t);
+    }
+}
+
+/// [r5-fixes] The owner's colour: the blue-green of the holdings.
+const OWNER: Color = Color::linear_rgb(0.4, 2.6, 2.2);
+
+/// [r5-fixes] Where an arc lands on a building: over the middle of its
+/// roof (the ground for a park or a plot with nothing drawn).
+fn roof_point(sim: &Sim, b: BuildingId) -> Option<Vec3> {
+    let w = &sim.world;
+    let c = w.footprint(b)?.center;
+    let top = crate::tools::building_prism(w, &sim.building_tops, b).map_or(w.surface_height(c) + 2.0, |(_, _, top)| top);
+    Some(Vec3::new(c.x, top + 1.5, c.y))
+}
+
+/// [r5-fixes] Points along the raised arc from `a` to `b`: a curve rising
+/// with the distance (higher for a far holding) above the taller end.
+pub fn arc_points(a: Vec3, b: Vec3, n: usize) -> Vec<Vec3> {
+    let d = SVec2::new(a.x - b.x, a.z - b.z).length();
+    let peak = a.y.max(b.y) + (0.28 * d).clamp(12.0, 260.0);
+    // A quadratic curve through its peak half way: the control point
+    // sits twice the peak's rise above the ends' mean.
+    let mid = (a + b) * 0.5;
+    let ctrl = Vec3::new(mid.x, 2.0 * peak - mid.y, mid.z);
+    (0..=n)
+        .map(|i| {
+            let s = i as f32 / n as f32;
+            a * (1.0 - s) * (1.0 - s) + ctrl * 2.0 * s * (1.0 - s) + b * s * s
+        })
+        .collect()
+}
+
+/// [r5-fixes] Ownership arcs (Harvey 2026-10-31: "clicking on one should
+/// make arcs not straight lines and they should epicenter at the
+/// headquarters/main building of the ownership"): every holding outlined
+/// and tied by a raised arc to the hub, the arcs fading from bright at
+/// the hub, a pulse running out along each, and rings breathing round
+/// the hub's roof.
+fn ownership_arcs(gizmos: &mut Gizmos, sim: &Sim, hub: BuildingId, rest: &[BuildingId], t: f32) {
+    let w = &sim.world;
+    let Some(from) = roof_point(sim, hub) else { return };
+    let o = OWNER.to_linear();
+    let shade = |k: f32, a: f32| Color::linear_rgba(o.red * k, o.green * k, o.blue * k, a);
+    lot_outline(gizmos, w, hub, 1.6, OWNER);
+    let breathe = 0.5 + 0.5 * (t * 2.4).sin();
+    for (i, r) in [5.0, 8.0 + 2.0 * breathe].into_iter().enumerate() {
+        super::shapes::ring(gizmos, from + Vec3::Y * (0.4 + i as f32 * 0.6), r, shade(1.4 - 0.5 * i as f32, 1.0));
+    }
+    const N: usize = 40;
+    for (k, &p) in rest.iter().enumerate() {
+        lot_outline(gizmos, w, p, 1.3, OWNER);
+        let Some(to) = roof_point(sim, p) else { continue };
+        let pts = arc_points(from, to, N);
+        gizmos.linestrip_gradient(pts.iter().enumerate().map(|(i, &q)| {
+            let s = i as f32 / N as f32;
+            (q, shade(1.5 - 0.8 * s, 0.95 - 0.35 * s))
+        }));
+        // The pulse: a bright stretch running from the hub out to the
+        // holding, each arc a little behind the last.
+        let phase = (t * 0.55 + k as f32 * 0.137).fract();
+        let head = (phase * N as f32) as usize;
+        let tail = head.saturating_sub(4);
+        if head > tail {
+            gizmos.linestrip(pts[tail..=head.min(N)].iter().copied(), shade(3.2, 1.0));
         }
+        super::shapes::ring(gizmos, to + Vec3::Y * 0.3, 3.0, shade(1.2, 0.9));
     }
 }
 
@@ -470,7 +529,13 @@ fn citizen(gizmos: &mut Gizmos, pens: &mut Pens, sim: &Sim, id: CitizenId) {
 /// [camera] A selected person's places: a post from each lot (home, work,
 /// a business they own) up to its pin, in the holding's colour (the pins'
 /// heads are drawn by `ui::pins`).
-fn places(gizmos: &mut Gizmos, w: &World, id: CitizenId) {
+fn places(gizmos: &mut Gizmos, sim: &Sim, id: CitizenId, t: f32) {
+    let w = &sim.world;
+    // [r5-fixes] An owner of more than their home: the arcs from their
+    // main building to the rest.
+    if let Some((hub, rest)) = w.ownership_arcs_of(id) {
+        ownership_arcs(gizmos, sim, hub, &rest, t);
+    }
     for (b, h) in w.holdings_of(id) {
         let Some(top) = crate::marks::pin_top(w, b) else { continue };
         let [r, g, bl] = crate::marks::holding_rgb(h);
@@ -672,5 +737,25 @@ mod tests {
         assert!(trail_fade(0.25) > 0.0 && trail_fade(0.25) < trail_fade(0.45));
         assert_eq!(trail_fade(0.6), 1.0);
         assert_eq!(trail_fade(1.0), 1.0);
+    }
+}
+
+#[cfg(test)]
+mod arc_tests {
+    use super::*;
+
+    /// [r5-fixes] An ownership arc leaves the hub's roof and lands on the
+    /// holding's, rising between them: higher for a farther holding.
+    #[test]
+    fn ownership_arcs_rise_between_their_ends() {
+        let (a, b) = (Vec3::new(0.0, 80.0, 0.0), Vec3::new(400.0, 20.0, 0.0));
+        let pts = arc_points(a, b, 40);
+        assert_eq!(pts.len(), 41);
+        assert!(pts[0].distance(a) < 1e-3 && pts[40].distance(b) < 1e-3);
+        let top = pts.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+        assert!((top - (80.0 + 0.28 * 400.0)).abs() < 2.0, "peak {top}");
+        assert!(pts[1..40].iter().all(|p| p.y > 20.0), "never below the lower end");
+        let near = arc_points(a, Vec3::new(40.0, 20.0, 0.0), 40).iter().map(|p| p.y).fold(f32::MIN, f32::max);
+        assert!(near < top, "a near holding gets a lower arc");
     }
 }

@@ -190,3 +190,49 @@ fn a_blocked_junction_holds_traffic_and_stunts_leave_the_lanes() {
     }
     assert!(arrived, "back on the lanes and away");
 }
+
+/// [r5-fixes] The day 5-6 crash on fresh generated cities ("invalid
+/// SlotMap key" at a crossing's siren look-up): a takeover car in its
+/// show hit a walker and was pulled in to the kerb; the kerb then pulled
+/// it out into its old lane's list while it carried on with the show, the
+/// end of the show listed it on its new lane too, and the old entry
+/// outlived the car. A car in a stunt now stays off every lane list until
+/// `end_stunt`, and is listed once, on the lane it drives.
+#[test]
+fn a_car_in_a_stunt_pulled_in_stays_off_the_lanes_and_leaves_no_stale_entry() {
+    let roads = cross();
+    let mut t = Traffic::default();
+    t.rebuild(&roads);
+    let west = roads.nearest_street(Vec2::new(-100.0, 0.0)).unwrap().0;
+    let north = roads.nearest_street(Vec2::new(0.0, 100.0)).unwrap().0;
+    let (a, b) = (lane_of(&t, west, Vec2::X, 0), lane_of(&t, north, Vec2::Y, 0));
+    let car = t.spawn_car(CitizenId::default(), None, vec![a], 50.0, 150.0, 0);
+    let listed = |t: &Traffic| -> Vec<usize> { t.net.lanes.iter().enumerate().filter(|(_, l)| l.cars.contains(&car)).map(|(i, _)| i).collect() };
+    assert_eq!(listed(&t), vec![a as usize]);
+    t.begin_stunt(car, StuntKind::Ring { at: Vec2::new(-20.0, 5.0), face: 0.0 });
+    assert!(listed(&t).is_empty(), "off the lanes for the show");
+    // A walker hit: the world pulls the car in.
+    t.pull_in(car, 150.0);
+    assert!(!t.cars[car].entering, "not waiting at the kerb: it is in the show");
+    for _ in 0..20 {
+        t.step(1.0, 4);
+    }
+    assert!(listed(&t).is_empty(), "the kerb never pulls a car in a show into a lane: {:?}", listed(&t));
+    // The show ends on a new route: listed there only.
+    t.end_stunt(car, vec![b], 20.0, 150.0);
+    assert!(listed(&t) == vec![b as usize] || (t.cars[car].entering && listed(&t).is_empty()), "{:?}", listed(&t));
+    for _ in 0..5 {
+        t.step(1.0, 4);
+    }
+    assert!(listed(&t).len() <= 1, "listed once: {:?}", listed(&t));
+    // Removed: no lane names it, and the crossings' look-ups hold.
+    t.remove_car(car);
+    assert!(listed(&t).is_empty());
+    assert!(!t.siren_near(a, 100.0));
+    // Even an id left behind by some other slip is only skipped.
+    t.net.lanes[a as usize].cars.push(car);
+    assert!(!t.siren_near(a, 100.0) && !t.siren_near(b, 10.0));
+    assert!(t.time_to_crossing(a, 100.0, 3.0).is_infinite());
+    t.step(1.0, 4);
+    assert!(listed(&t).is_empty(), "the next step drops it");
+}

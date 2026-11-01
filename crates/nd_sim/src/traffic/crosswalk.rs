@@ -212,7 +212,8 @@ impl Traffic {
             let Some(l) = self.net.lanes.get(lane as usize) else { continue };
             for h in hs {
                 for &cid in &l.cars {
-                    let c = &self.cars[cid];
+                    // [r5-fixes] A stale id is skipped, never a panic.
+                    let Some(c) = self.cars.get(cid) else { continue };
                     if c.s > h.s + 0.3 && c.s < h.s + h.depth + CAR_LENGTH * 0.5 && c.v > CONFLICT_SPEED && !c.crashed() {
                         found.push((cid, h.crossing, c.v));
                     }
@@ -270,7 +271,7 @@ impl Traffic {
         let mut best = f32::INFINITY;
         let Some(l) = self.net.lanes.get(lane as usize) else { return best };
         for &cid in &l.cars {
-            let c = &self.cars[cid];
+            let Some(c) = self.cars.get(cid) else { continue };
             if c.v < min_v || c.s > s + depth + CAR_LENGTH {
                 continue;
             }
@@ -281,7 +282,7 @@ impl Traffic {
         for &p in &l.prev {
             let pl = &self.net.lanes[p as usize];
             for &cid in &pl.cars {
-                let c = &self.cars[cid];
+                let Some(c) = self.cars.get(cid) else { continue };
                 if c.v < min_v || c.route.get(c.idx + 1) != Some(&lane) {
                     continue;
                 }
@@ -293,7 +294,7 @@ impl Traffic {
             for &pp in &pl.prev {
                 let ppl = &self.net.lanes[pp as usize];
                 for &cid in &ppl.cars {
-                    let c = &self.cars[cid];
+                    let Some(c) = self.cars.get(cid) else { continue };
                     if c.v < min_v || c.route.get(c.idx + 1) != Some(&p) || c.route.get(c.idx + 2) != Some(&lane) {
                         continue;
                     }

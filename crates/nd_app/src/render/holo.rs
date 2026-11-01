@@ -342,6 +342,8 @@ pub fn sync_draw_hologram(
         tools.grade_warnings.retain(|m| !m.starts_with("turns "));
     }
     let (pts, levels) = built(&ctrl, &ctrl_levels, curved);
+    // [r5-fixes] One-way streets into a pocket with no way out.
+    tools.grade_warnings.extend(w.road_trap_warnings(&pts, &levels, kind, f, b));
     let (mesh, red, plan) = hologram(w, &assets.palette, &pts, &levels, f, b, kind, tools.car_only_flag(), 0.55, &[]);
     // [tools] The columns, for the sub-pane and the remote API.
     tools.pillars = crate::tools::PillarNote::of(w, &plan);

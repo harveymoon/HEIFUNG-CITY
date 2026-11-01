@@ -50,11 +50,35 @@ impl World {
         let touched: std::collections::BTreeSet<GestureId> = self.master.gestures.iter().filter(|(id, g)| before.gestures.get(*id) != Some(*g)).map(|(id, _)| *id).collect();
         drop(before);
         self.mend_curves_through(&touched);
+        // [r5-fixes] Pockets of streets with no way out the works make.
+        let traps_before = self.roads.traps();
         self.rebuild_from_master();
         // [fix/roads-tools] Roads meeting at a junction share one point there.
         self.mend_junctions();
         self.apply_industry_strokes(&project);
+        let made = new_traps(&traps_before, &self.roads.traps());
+        self.plan_warnings.extend(made.iter().map(|t| format!("Warning: {}.", crate::roads::trap_warning(t))));
         Ok(())
+    }
+
+    /// [r5-fixes] The Road tool's warning while a street is drawn: the
+    /// pockets of streets with no way out (one-way streets leading into
+    /// streets nothing leads out of) that laying it would make, in words.
+    /// Traffic is never routed into such a pocket (`LaneNetwork::trap`),
+    /// so whatever stands there gets no deliveries, visits or services.
+    pub fn road_trap_warnings(&self, points: &[Vec2], levels: &[f32], kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> Vec<String> {
+        self.road_traps(points, levels, kind, lanes_fwd, lanes_bwd).iter().map(crate::roads::trap_warning).collect()
+    }
+
+    /// [r5-fixes] `road_trap_warnings`' pockets.
+    pub fn road_traps(&self, points: &[Vec2], levels: &[f32], kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> Vec<crate::roads::Trap> {
+        if kind != RoadKind::Street || points.len() < 2 || lanes_fwd + lanes_bwd == 0 {
+            return Vec::new();
+        }
+        let before = self.roads.traps();
+        let mut roads = self.roads.clone();
+        roads.add_polyline_levels(points, levels, lanes_fwd, lanes_bwd, kind);
+        new_traps(&before, &roads.traps())
     }
 
     /// The city's own structures (`is_civic_structure`) that the active
@@ -329,4 +353,11 @@ impl World {
         }
         out
     }
+}
+
+/// [r5-fixes] The pockets in `after` that were not there in `before` (a
+/// pocket's middle is the same however its streets are cut up).
+fn new_traps(before: &[crate::roads::Trap], after: &[crate::roads::Trap]) -> Vec<crate::roads::Trap> {
+    let old: Vec<Vec2> = before.iter().map(|t| t.at).collect();
+    after.iter().filter(|t| !old.iter().any(|o| o.distance(t.at) < 1.0)).cloned().collect()
 }
