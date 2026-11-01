@@ -201,6 +201,10 @@ mod edge_tests;
 #[cfg(test)]
 mod concerns_tests;
 pub mod connectivity;
+pub mod islands;
+pub use islands::{FerryPlan, IslandInfo};
+#[cfg(test)]
+mod islands_tests;
 pub mod walk_networks;
 #[cfg(test)]
 mod connectivity_tests;

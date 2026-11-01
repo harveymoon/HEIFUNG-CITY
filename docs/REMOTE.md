@@ -994,6 +994,21 @@ The reply also has `level_crossing` (null unless the junction's node lies on the
 below). At a level crossing that is no junction (a street straight over the track), `intersection`
 answers with `intersection: null` and the crossing as `level_crossing`.
 
+#### Islands: `islands` [ferry-islands]
+
+`islands`: the islands (walk networks off the main one that a ferry joins to it: not stranded) with
+`name`, `center`, `terminals` and `mainland` (the terminals at each end), `car_ferry` (large terminals
+at both ends of a crossing: lorries cross), `buildings`, `residents`, `workers`, `sail_minutes`,
+`wait_minutes_now` (null when no boat sails within a day), `police`/`fire`/`health` (a station on the
+island) and `loads_waiting`; `crossings` [{a, b, metres, car_ferry}] (every pair of terminals in town
+a boat can sail between); `today` {residents_carried, ferry_riders, loads_ferried, lorries_ferried,
+missed_last_boat, moved_to_mainland, island_jobs_given_up}; `now` {on_the_piers, aboard,
+loads_at_piers}. `connectivity` lists the same islands. Residents cross by ferry as a trip mode
+(`ferry` in the mode counts): walk to the pier, wait (people on the pier are drawn there), ride, walk
+on. A boat sails to the terminal with the most people waiting for a crossing (8 or more) instead of
+its turn; a terminal serving an island keeps its boats in town in the rush hours. The timetable
+(`timetable`) sets the hours: after the last boat riders wait on the pier for the first.
+
 #### Walk networks: `walk_networks` [walk-networks]
 
 `walk_networks {buildings? (8)}`: the walk graph's separate networks (places joined on foot), the
@@ -1001,7 +1016,7 @@ main one first (most buildings, then most walkways), each with `id` (kept across
 takes the id of the largest network it overlaps from before, so a merge keeps the larger one's id and
 colour), `main`, `name` ("around <its busiest building>", else "along <street>"), `color` (#hex, as the
 map layer draws it), `color_linear`, `nodes`, `edges`, `underground_edges`, `buildings`, `residents`,
-`workers`, `lo`/`hi`/`center` (its box) and `some_buildings` [{id, name}]. `layer` is the map layer's
+`workers`, `lo`/`hi`/`center` (its box), `island` (joined to the rest by ferry) and `some_buildings` [{id, name}]. `layer` is the map layer's
 key: `overlay {layer: "walk_networks"}` shows every walkway in its network's colour over a dimmed city,
 the buildings off the main network outlined, the legend listing the networks by size (hover names
 them, click flies there). Walkable: pavements, footpaths, crossings, footbridges, park walks, lot loops,

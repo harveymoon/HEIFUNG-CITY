@@ -19,6 +19,7 @@ fn kind(l: &TransitLeg) -> &'static str {
         TransitLeg::Rail { .. } => "rail",
         TransitLeg::Taxi => "taxi",
         TransitLeg::Air { .. } => "air",
+        TransitLeg::Ferry { .. } => "ferry",
     }
 }
 

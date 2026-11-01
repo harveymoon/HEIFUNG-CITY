@@ -81,6 +81,8 @@ impl World {
         crate::prof!("step_fishing", self.step_fishing());
         // [ferries] Day trips out, and anyone stranded abroad.
         crate::prof!("step_ferry_people", self.step_ferry_people());
+        // [ferry-islands] The last boat gone, and riders left aboard.
+        crate::prof!("step_ferry_piers", self.step_ferry_piers());
         crate::prof!("step_cargo_hubs", self.step_cargo_hubs());
         // [delivery-hours] Lorries due out now.
         crate::prof!("step_freight_queue", self.step_freight_queue());

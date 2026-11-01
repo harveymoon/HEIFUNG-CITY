@@ -277,7 +277,7 @@ pub struct Act {
 }
 
 /// The `Activity` names, by `Act::tag`.
-pub const ACT_NAMES: [&str; 16] = ["arriving", "at_home", "working", "visiting", "idle", "traveling", "driving", "sitting", "waiting", "riding_bus", "on_train", "flying", "on_metro", "passenger", "abroad", "unknown"];
+pub const ACT_NAMES: [&str; 17] = ["arriving", "at_home", "working", "visiting", "idle", "traveling", "driving", "sitting", "waiting", "riding_bus", "on_train", "flying", "on_metro", "passenger", "abroad", "on_ferry", "unknown"];
 
 /// One record of a log.
 #[derive(Clone, Debug, PartialEq)]

@@ -196,7 +196,15 @@ impl World {
             }
             let income: f32 = people.iter().map(|p| p.3).sum();
             let family = people.iter().any(|p| LifeStage::of_age(p.0) == LifeStage::Child);
-            let Some(home) = self.choose_home(income, None, family) else {
+            // [ferry-islands] An island home suits some households, not
+            // others: those it does not suit look on the mainland (and take
+            // the island home after all if there is nothing else).
+            let home = self.choose_home(income, None, family);
+            let home = match home {
+                Some(h) if !self.takes_island_home(&people, h) => self.choose_home_where(income, None, family, &|w, b| w.island_of(b).is_none()).or(Some(h)),
+                h => h,
+            };
+            let Some(home) = home else {
                 self.economy.priced_out_total += 1;
                 self.economy.waiting_immigrants = (self.economy.waiting_immigrants + 1).min(60);
                 self.economy.housing_demand_by_tier[Self::tier_affordable(income).index()] += 1.0;
@@ -308,6 +316,11 @@ impl World {
     pub(in crate::world) fn job_search(&mut self) {
         let jobless: Vec<CitizenId> = self.citizens.iter().filter(|(_, c)| c.work.is_none() && c.can_work()).map(|(id, _)| id).collect();
         for id in jobless {
+            // [ferry-islands] An islander takes work on the island first.
+            if let Some(job) = self.island_job_for(id) {
+                self.assign_job(id, job);
+                continue;
+            }
             let Some(job) = self.pick_job() else { break };
             self.assign_job(id, job);
         }

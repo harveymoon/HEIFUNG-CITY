@@ -821,6 +821,17 @@ impl World {
             let (to_seg, to_pt) = self.truck_stop(cargo.to)?;
             self.traffic.net.find_route(from_seg, from_pt, to_seg, to_pt)
         })();
+        // [ferry-islands] No road to an island: the load waits at the
+        // terminal for the next boat across (and comes off on the island).
+        if route.is_none() {
+            let from = match origin {
+                TruckOrigin::Building(b) => Some(b),
+                TruckOrigin::CityEdge => None,
+            };
+            if self.queue_ferry_load(from, cargo) {
+                return;
+            }
+        }
         // [r2-traffic] A site's load comes in from out of town by any road
         // that leads there (the one entry tried first may be on another
         // network: an island's own road, a stub); and with none at all,

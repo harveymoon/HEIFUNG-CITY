@@ -342,11 +342,14 @@ pub(super) static COMMANDS: &[Cmd] = &[
     Cmd { name: "connectivity", aliases: &["stranded", "no_route"], effect: Read, run: super::connectivity::connectivity, help: &[
         ("segments", "bool: also list the streets and paths cut off from the main networks (the connectivity layer's data)"),
         ("all", "with segments: every street and path, connected or not"),
-        ("returns", "stranded [{net walk|road, center, lots, buildings, residents, workers, here_now, text}], alerts [{seq, kind no_route|stranded_walk|stranded_road, pos, building, count, text}], failed_trips, failed_today, walk_main, drive_main"),
+        ("returns", "islands (as `islands`), stranded [{net walk|road, center, lots, buildings, residents, workers, here_now, text}], alerts [{seq, kind no_route|stranded_walk|stranded_road, pos, building, count, text}], failed_trips, failed_today, walk_main, drive_main"),
     ] },
     Cmd { name: "walk_networks", aliases: &["walknets", "pedestrian_networks"], effect: Read, run: super::connectivity::walk_networks, help: &[
         ("buildings", "how many building names to list per network (default 8)"),
         ("returns", "layer (the map layer key, for `overlay`), count, networks [{id (kept across rebuilds; a merge keeps the larger one's), main, name, color (#hex), color_linear, nodes, edges, underground_edges, buildings, residents, workers, lo, hi, center, some_buildings}], main first then by buildings and edges"),
+    ] },
+    Cmd { name: "islands", aliases: &["ferry_islands"], effect: Read, run: super::connectivity::islands, help: &[
+        ("returns", "islands [{name, center, car_ferry, terminals, mainland, buildings, residents, workers, sail_minutes, wait_minutes_now, police, fire, health, loads_waiting}] (walk networks off the main one that ferries join to it), crossings [{a, b, metres, car_ferry}], today {residents_carried, ferry_riders, loads_ferried, lorries_ferried, missed_last_boat, moved_to_mainland, island_jobs_given_up}, now {on_the_piers, aboard, loads_at_piers}"),
     ] },
     Cmd { name: "grounds_junctions", aliases: &["park_junctions"], effect: Read, run: planning::grounds_junctions, help: &[
         ("lot", "optional lot id"),

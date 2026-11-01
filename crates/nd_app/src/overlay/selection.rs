@@ -389,6 +389,13 @@ fn citizen(gizmos: &mut Gizmos, pens: &mut Pens, sim: &Sim, id: CitizenId) {
         }
         // [ferries] Away off the map: nothing to draw.
         Activity::Abroad { .. } => {}
+        // [ferry-islands] On deck: a ring round the boat they are on.
+        Activity::OnFerry { .. } => {
+            if let Some(s) = w.ports.ships.values().find(|s| s.riders.contains(&id)) {
+                let p = s.pose_at(s.prev_s + (s.s - s.prev_s) * f).0;
+                gizmos.circle(flat_at(at(p, 0.5)), s.length() * 0.6, GOLD);
+            }
+        }
         Activity::Riding { bus } => {
             if let Some(bus) = w.traffic.cars.get(*bus) {
                 let p = bus.pose_at(f).0;
