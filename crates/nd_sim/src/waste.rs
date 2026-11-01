@@ -413,16 +413,21 @@ impl World {
         self.society.trash.disposal.sites.values().map(|s| s.mw).sum::<f32>() + 0.0
     }
 
-    /// Residue or ash (`t` tonnes) from `from` goes on: to the landfill
-    /// with room nearest it, else (residue only) an incinerator with room,
-    /// else out of town by lorry.
+    /// Residue or ash (`t` tonnes) from `from` goes on: residue to an
+    /// incinerator with room first (the trucks' own order: burning before
+    /// the tip), then to the landfill with room nearest it, else out of
+    /// town by lorry; ash to a landfill or the lorries.
+    ///
+    /// [r6-perfect-city] Residue used to go to the landfill first, so a
+    /// city with a recycling plant, an incinerator and a landfill tipped
+    /// 58% of its trash and the incinerator stood idle.
     fn send_on(&mut self, t: f32, from: Vec2, may_burn: bool, sites: &[SiteInfo]) {
         if t <= 0.0 {
             return;
         }
         let mut left = t;
         let mut order: Vec<&SiteInfo> = sites.iter().filter(|s| s.kind == ServiceKind::Landfill || (may_burn && s.kind == ServiceKind::Incinerator)).collect();
-        order.sort_by(|a, b| (a.kind != ServiceKind::Landfill).cmp(&(b.kind != ServiceKind::Landfill)).then(a.pos.distance(from).total_cmp(&b.pos.distance(from))).then(a.id.cmp(&b.id)));
+        order.sort_by(|a, b| (a.kind != ServiceKind::Incinerator).cmp(&(b.kind != ServiceKind::Incinerator)).then(a.pos.distance(from).total_cmp(&b.pos.distance(from))).then(a.id.cmp(&b.id)));
         for s in order {
             if left <= 0.0 {
                 break;

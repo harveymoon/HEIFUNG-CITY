@@ -48,9 +48,30 @@ fn furnished_and_saved() {
     for kind in [ServiceKind::Police, ServiceKind::Fire, ServiceKind::Health, ServiceKind::School] {
         assert!(count_service(&w, kind) >= 2, "{kind:?}: {}", count_service(&w, kind));
     }
-    for kind in [ServiceKind::University, ServiceKind::Dispatch, ServiceKind::Jail, ServiceKind::TrashDepot, ServiceKind::Landfill, ServiceKind::RecyclingPlant] {
+    for kind in [ServiceKind::University, ServiceKind::Dispatch, ServiceKind::Jail, ServiceKind::TrashDepot, ServiceKind::Landfill, ServiceKind::RecyclingPlant, ServiceKind::Incinerator] {
         assert!(count_service(&w, kind) >= 1, "no {kind:?}");
     }
+    // [r6-perfect-city] Waste capacity for the grown city (~22k people make
+    // ~65 t a day by day 90), all within the trucks' reach of every depot:
+    // sorting and burning take a day's trash with room to spare, so the
+    // landfill gets ash and residue only and nothing goes on the lorries
+    // once the 14-day starter contract ends.
+    let mut daily = 0.0;
+    let mut tip = 0.0;
+    let depots: Vec<nd_sim::Vec2> = w.buildings.values().filter(|b| b.service.is_some_and(|s| s.kind == ServiceKind::TrashDepot)).filter_map(|b| w.lots.get(b.lot)).map(|l| l.center).collect();
+    for b in w.buildings.values() {
+        let Some(s) = b.service.filter(|s| s.kind.is_waste()) else { continue };
+        let at = w.lots[b.lot].center;
+        for d in &depots {
+            assert!(d.distance(at) <= nd_sim::waste::DUMP_REACH, "{:?} at {at} out of reach of the depot at {d}", s.kind);
+        }
+        match s.kind {
+            ServiceKind::Landfill => tip += nd_sim::waste::site_capacity(s.kind, s.tier),
+            _ => daily += nd_sim::waste::site_capacity(s.kind, s.tier),
+        }
+    }
+    assert!(daily >= 150.0, "sorting and burning for a grown city: {daily} t a day");
+    assert!(tip >= 6000.0, "a big landfill: {tip} t");
     let plants = |k: PowerPlantKind| w.buildings.values().filter(|b| b.plant == Some(k)).count();
     assert!(plants(PowerPlantKind::Solar) >= 1 && plants(PowerPlantKind::Wind) >= 1, "renewables");
     assert!(plants(PowerPlantKind::Coal) == 1, "one coal plant for base load");
@@ -101,4 +122,60 @@ fn grows_with_the_lights_on() {
     assert!(pops.windows(2).skip(2).all(|p| p[1] > p[0]), "growth stalled: {pops:?}");
     assert!(served_min > 0.98, "a blackout: {served_min}");
     assert!(w.economy.treasury > 10_000_000.0, "the treasury ran down: {}", w.economy.treasury);
+}
+
+/// [r6-perfect-city] The long check (about 50 minutes: run it by hand, or
+/// see the example `perfect_city 90`): two months on, past the trash
+/// starter contract, the city is big, mostly housed and working, the
+/// trash all goes somewhere in town and the landfill has years left.
+///
+/// cargo test --profile fast -p nd_procgen --test citygen_perfect_city -- --ignored --nocapture
+#[test]
+#[ignore]
+fn holds_up_for_two_months() {
+    let (mut w, _, _) = citygen::generate_world(PRESET, PRESET.default_seed());
+    let mut minds = RuleBasedMind::default();
+    let mut served_min: f32 = 1.0;
+    // Unemployment swings while whole blocks rebuild (the seed-5 city's
+    // worst was ~14% around day 39 in testing, back under 10% by day 50):
+    // the check is for a collapse, not the swing.
+    let mut worst_jobless: f32 = 0.0;
+    for _ in 0..60 {
+        for m in 0..1440 {
+            w.tick(&mut minds);
+            if m % 30 == 0 {
+                served_min = served_min.min(w.economy.power.served);
+            }
+        }
+        let d = &w.society.trash.disposal;
+        let road = d.t_yesterday[nd_sim::waste::Dest::Road.index()];
+        println!(
+            "day {}: pop {} homeless {} jobless {:.1}% trash {:.0} t (road {road:.0}) landfill {:?} treasury {:.0}",
+            w.clock.day(),
+            w.citizens.len(),
+            w.homeless_people(),
+            w.economy.unemployment_share() * 100.0,
+            d.yesterday_t(),
+            w.waste_sites().iter().filter_map(|s| w.landfill_fill(s.id)).collect::<Vec<_>>(),
+            w.economy.treasury
+        );
+        if w.clock.day() >= 20 {
+            worst_jobless = worst_jobless.max(w.economy.unemployment_share());
+        }
+        if w.clock.day() > 16 {
+            assert!(road < 1.0, "day {}: {road} t on the lorries after the starter contract", w.clock.day());
+        }
+    }
+    let pop = w.citizens.len();
+    assert!(pop > 18_000, "only {pop} people after two months");
+    assert!(w.homeless_people() * 100 < pop * 2, "{} sleeping rough of {pop}", w.homeless_people());
+    assert!(worst_jobless < 0.2, "unemployment reached {:.1}%", worst_jobless * 100.0);
+    assert!(w.economy.unemployment_share() < 0.12, "unemployment at day 60: {:.1}%", w.economy.unemployment_share() * 100.0);
+    assert!(served_min > 0.98, "a blackout: {served_min}");
+    for s in w.waste_sites() {
+        if let Some(f) = w.landfill_fill(s.id) {
+            assert!(f < 0.15, "the landfill is {:.0}% full after two months", f * 100.0);
+        }
+    }
+    assert!(w.economy.treasury > 40_000_000.0, "the treasury ran down: {}", w.economy.treasury);
 }
