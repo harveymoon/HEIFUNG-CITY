@@ -234,7 +234,16 @@ impl Crime {
 
     /// Heat within `r` of `p`, weighted by closeness.
     pub fn heat_at(&self, p: Vec2, r: f32) -> f32 {
-        self.hotspots.iter().map(|h| h.heat * (1.0 - h.pos.distance(p) / r).max(0.0)).sum()
+        // [r6-perf] A spot a whole radius off along either axis (with a
+        // margin for rounding in the distance) adds +0.0
+        // (heat is positive), which leaves a sum of them unchanged: it is
+        // skipped before the square root. Asked for every place a citizen
+        // weighs going to (a 38,000-person city has 600 spots: 17 ms a
+        // tick). The `+ 0.0` keeps the sum's zero positive, as the full sum
+        // over any spot at all left it.
+        let reach = r * 1.001;
+        let s: f32 = self.hotspots.iter().filter(|h| (h.pos.x - p.x).abs() <= reach && (h.pos.y - p.y).abs() <= reach).map(|h| h.heat * (1.0 - h.pos.distance(p) / r).max(0.0)).sum();
+        if self.hotspots.is_empty() { s } else { s + 0.0 }
     }
 
     pub fn offences_today(&self) -> u32 {
