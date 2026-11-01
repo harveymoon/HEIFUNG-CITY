@@ -120,7 +120,8 @@ fn lot(w: f32, d: f32, land_use: LandUse) -> Lot {
 fn service_floors(k: ServiceKind) -> u8 {
     match k {
         ServiceKind::Health => 4,
-        ServiceKind::Monument | ServiceKind::TrashDepot | ServiceKind::ParkingEnforcement => 1,
+        ServiceKind::Monument | ServiceKind::TrashDepot | ServiceKind::ParkingEnforcement | ServiceKind::Landfill => 1,
+        ServiceKind::Incinerator => 4,
         // [attractions] as the sim builds them
         ServiceKind::Pier | ServiceKind::GrandPark | ServiceKind::Zoo | ServiceKind::BotanicalGarden | ServiceKind::AmusementPark => 1,
         ServiceKind::Cathedral => 4,

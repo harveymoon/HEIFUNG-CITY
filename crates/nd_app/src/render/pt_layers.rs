@@ -40,8 +40,8 @@ pub(super) struct PtLayersPlugin;
 impl Plugin for PtLayersPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Trails>()
-            .add_systems(Update, (parking_gizmos, sync_trails, density_gizmos, park_access_gizmos).in_set(SimSet::Sync).after(super::lift_movers))
-            .add_systems(bevy_egui::EguiPrimaryContextPass, parking_labels.after(crate::ui::side_panel));
+            .add_systems(Update, (parking_gizmos, sync_trails, density_gizmos, park_access_gizmos, trash_gizmos).in_set(SimSet::Sync).after(super::lift_movers))
+            .add_systems(bevy_egui::EguiPrimaryContextPass, (parking_labels, trash_labels).after(crate::ui::side_panel));
     }
 }
 
@@ -577,5 +577,176 @@ mod tests {
         assert_eq!(floor_area_ratio(400.0, 40.0, 400.0), 1.0);
         assert_eq!(floor_area_ratio(0.0, 3.0, 400.0), 0.0);
         assert!(floor_area_ratio(200.0, 10.0, 400.0) > floor_area_ratio(200.0, 2.0, 400.0));
+    }
+}
+
+// ── [r5-trash] trashy streets ──────────────────────────────────────────────
+
+/// The colour of the site rings on the Trashy streets layer.
+pub const TRASH_SITE_COLOR: [f32; 3] = [0.75, 0.45, 1.0];
+
+/// Trash on a street or a block, `0..1`: green clean, yellow, orange,
+/// brown-red buried.
+pub fn trash_color(t: f32) -> [f32; 3] {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.5 {
+        let k = t / 0.5;
+        [0.15 + 0.85 * k, 0.75 + 0.1 * k, 0.3 - 0.2 * k]
+    } else {
+        let k = (t - 0.5) / 0.5;
+        [1.0 - 0.25 * k, 0.85 - 0.6 * k, 0.1]
+    }
+}
+
+/// How trashy a street piece is: its litter, and the overflow of the bins
+/// of the buildings fronting it (the worst counts, the rest a little).
+pub fn street_trash(litter: f32, overflows: &[f32]) -> f32 {
+    let worst = overflows.iter().copied().fold(0.0f32, f32::max);
+    let many = overflows.iter().filter(|o| **o > 0.0).count() as f32;
+    (litter + 0.45 * worst.min(2.0) + 0.06 * many).clamp(0.0, 1.0)
+}
+
+struct TrashView {
+    streets: Vec<(Vec3, Vec3, Color)>,
+    rings: Vec<(Vec<Vec3>, Color)>,
+}
+
+fn trash_view(w: &World) -> TrashView {
+    let t = &w.society.trash;
+    let mut by_seg: std::collections::HashMap<nd_sim::SegmentId, Vec<f32>> = std::collections::HashMap::new();
+    let mut rings = Vec::new();
+    for (id, bin) in &t.bins {
+        let Some(l) = w.building_lot(*id) else { continue };
+        let o = bin.overflow();
+        by_seg.entry(l.front_segment).or_default().push(o);
+        if o > 0.0 || bin.fill() > 0.85 {
+            let c = trash_color(if o > 0.0 { 0.55 + 0.25 * o.min(1.8) } else { 0.4 });
+            rings.push((lot_ring(w, l, 1.5, 0.9), Color::linear_rgb(c[0] * 1.9, c[1] * 1.9, c[2] * 1.9)));
+        }
+    }
+    // Littered parks.
+    for (_, s) in w.parks.parks.iter() {
+        if s.trash < 0.1 {
+            continue;
+        }
+        let c = trash_color(s.trash);
+        for lot in &s.lots {
+            if let Some(l) = w.lots.get(*lot) {
+                rings.push((lot_ring(w, l, 2.0, 0.8), Color::linear_rgb(c[0] * 1.6, c[1] * 1.6, c[2] * 1.6)));
+            }
+        }
+    }
+    // The disposal sites, ringed twice.
+    for s in w.waste_sites() {
+        let Some(l) = w.building_lot(s.id) else { continue };
+        let c = TRASH_SITE_COLOR;
+        for (inset, lift) in [(1.0, 1.2), (3.5, 1.6)] {
+            rings.push((lot_ring(w, l, inset, lift), Color::linear_rgb(c[0] * 2.4, c[1] * 2.4, c[2] * 2.4)));
+        }
+    }
+    let mut streets = Vec::new();
+    for (sid, s) in w.roads.alive_segments() {
+        if s.tunnel || !s.is_street() {
+            continue;
+        }
+        let v = street_trash(w.street_litter(sid), by_seg.get(&sid).map_or(&[][..], |v| v.as_slice()));
+        let (a, b) = w.roads.segment_points(sid);
+        let c = trash_color(v);
+        let k = 1.2 + 0.8 * v;
+        let col = Color::linear_rgba(c[0] * k, c[1] * k, c[2] * k, 0.9);
+        let (za, zb) = (w.road_height(sid, 0.0), w.road_height(sid, 1.0));
+        streets.push((Vec3::new(a.x, za + 0.9, a.y), Vec3::new(b.x, zb + 0.9, b.y), col));
+    }
+    TrashView { streets, rings }
+}
+
+/// The Trashy streets layer's lines, over a dimmed city.
+fn trash_gizmos(sim: Res<Sim>, overlays: Res<Overlays>, lighting: Res<super::Lighting>, time: Res<Time>, mut cache: Local<Option<(f32, TrashView)>>, mut gizmos: Gizmos<super::layers::LoadGizmos>) {
+    if lighting.heat || !overlays.trash {
+        *cache = None;
+        return;
+    }
+    let now = time.elapsed_secs();
+    if cache.as_ref().is_none_or(|(at, _)| now - at >= 2.0) || sim.full_rebuild {
+        *cache = Some((now, trash_view(&sim.world)));
+    }
+    let Some((_, v)) = cache.as_ref() else { return };
+    for (a, b, c) in &v.streets {
+        gizmos.line(*a, *b, *c);
+    }
+    for (pts, c) in &v.rings {
+        gizmos.linestrip(pts.iter().copied(), *c);
+    }
+}
+
+/// What a disposal site is doing, for its label on the layer.
+pub fn site_label(w: &World, s: &nd_sim::waste::SiteInfo) -> String {
+    use nd_sim::ServiceKind as K;
+    let st = w.society.trash.disposal.sites.get(&s.id);
+    let kind = s.kind.tier_label(s.tier);
+    let staff = if s.staffing < 0.5 { " · short of staff" } else { "" };
+    match s.kind {
+        K::Landfill => format!("{kind} {:.0}% full{staff}", 100.0 * w.landfill_fill(s.id).unwrap_or(0.0)),
+        K::Incinerator => format!("{kind} {:.1} MW · {:.0} t waiting{staff}", st.map_or(0.0, |x| x.mw), st.map_or(0.0, |x| x.backlog_t)),
+        _ => format!("{kind} {:.0} t yesterday · {:.0} t waiting{staff}", st.map_or(0.0, |x| x.done_yesterday_t), st.map_or(0.0, |x| x.backlog_t)),
+    }
+}
+
+/// A label over every disposal site and over each depot holding trash in
+/// its yard.
+fn trash_labels(mut contexts: EguiContexts, sim: Res<Sim>, overlays: Res<Overlays>, flags: Res<crate::ui::UiFlags>, cams: Query<(&Camera, &GlobalTransform), With<crate::camera::OrbitCamera>>) -> Result {
+    if !overlays.trash {
+        return Ok(());
+    }
+    let Some((camera, gt)) = cams.iter().next() else { return Ok(()) };
+    let ctx = contexts.ctx_mut()?;
+    if crate::ui::city_data::is_open(ctx) {
+        return Ok(());
+    }
+    let w = &sim.world;
+    let screen = flags.map_rect(ctx.viewport_rect());
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("trash_labels"))).with_clip_rect(screen);
+    let cam = gt.translation();
+    let mut items: Vec<(SVec2, String)> = w.waste_sites().iter().filter_map(|s| w.building_lot(s.id).map(|l| (l.center, site_label(w, s)))).collect();
+    for (depot, at, _, _) in w.trash_depots() {
+        let held = w.society.trash.disposal.yards.get(&depot).copied().unwrap_or(0.0);
+        if held >= 0.5 {
+            items.push((at, format!("depot yard {held:.0} t")));
+        }
+    }
+    for (p, text) in items {
+        let at3 = Vec3::new(p.x, w.surface_height(p) + 4.0, p.y);
+        if at3.distance(cam) > 2200.0 {
+            continue;
+        }
+        let Ok(v) = camera.world_to_viewport(gt, at3) else { continue };
+        let at = crate::ui::theme::to_points(ctx, v);
+        if !screen.contains(at) {
+            continue;
+        }
+        let c = TRASH_SITE_COLOR;
+        let col = egui::Color32::from(egui::Rgba::from_rgb(c[0], c[1], c[2]));
+        let galley = painter.layout_no_wrap(text, crate::ui::theme::small(), egui::Color32::WHITE);
+        let rect = egui::Rect::from_center_size(at, galley.size() + egui::vec2(10.0, 4.0));
+        painter.rect_filled(rect, 3.0, egui::Color32::from_black_alpha(200));
+        painter.rect_stroke(rect, 3.0, egui::Stroke::new(1.5, col), egui::StrokeKind::Outside);
+        painter.galley(rect.min + egui::vec2(5.0, 2.0), galley, egui::Color32::WHITE);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod trash_tests {
+    use super::*;
+
+    #[test]
+    fn trash_colours_run_green_to_brown_and_streets_add_up() {
+        let clean = trash_color(0.0);
+        let buried = trash_color(1.0);
+        assert!(clean[1] > clean[0] && buried[0] > buried[1]);
+        assert_eq!(street_trash(0.0, &[]), 0.0);
+        assert!(street_trash(0.0, &[0.5]) > street_trash(0.0, &[0.0, 0.0]));
+        assert!(street_trash(0.3, &[1.0, 1.0, 1.0]) > street_trash(0.3, &[1.0]));
+        assert_eq!(street_trash(1.0, &[3.0]), 1.0);
     }
 }

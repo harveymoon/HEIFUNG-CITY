@@ -575,6 +575,11 @@ styles! {
     GameArcade { label: "arcade", family: Night, cluster: 0.3, draw: |g, c, r, _| eatout::arcade(g, c, r) },
     Gym { label: "gym", family: Retail, cluster: -0.4, draw: |g, c, r, _| eatout::gym(g, c, r) },
     ComedyClub { label: "comedy club", family: Night, cluster: -0.3, draw: |g, c, r, _| eatout::comedy_club(g, c, r) },
+    // -- [r5-trash] the disposal sites, placed by the player (Services) --
+    Landfill { label: "landfill", family: Heavy, cluster: -1.0, draw: |g, c, r, _| sanitation::landfill(g, c, r) },
+    Incinerator { label: "incinerator", family: Heavy, cluster: -1.0, draw: |g, c, r, _| sanitation::incinerator(g, c, r) },
+    RecyclingPlant { label: "recycling plant", family: Heavy, cluster: -0.4, draw: |g, c, r, _| sanitation::recycling_plant(g, c, r) },
+    TransferStation { label: "transfer station", family: Heavy, cluster: -0.4, draw: |g, c, r, _| sanitation::transfer_station(g, c, r) },
 }
 
 impl Style {
@@ -749,6 +754,10 @@ impl Style {
             K::ConventionCentre => Style::ConventionCentre,
             K::Cathedral => Style::Cathedral,
             K::CasinoResort => Style::CasinoResort,
+            K::Landfill => Style::Landfill,
+            K::Incinerator => Style::Incinerator,
+            K::RecyclingPlant => Style::RecyclingPlant,
+            K::TransferStation => Style::TransferStation,
         }
     }
 }

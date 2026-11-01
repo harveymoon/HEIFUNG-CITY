@@ -63,10 +63,24 @@ pub enum ServiceKind {
     Cathedral,
     /// A casino resort: a hotel tower over a neon casino and a pool deck.
     CasinoResort,
+    // [r5-trash] Where the trash goes (`crate::waste`): the city's
+    // disposal sites, appended so saved kinds keep their order.
+    /// A landfill: the depots' trucks tip here; it fills, grows a mound,
+    /// smells, draws gulls and poisons the ground round it.
+    Landfill,
+    /// An incinerator (waste-to-energy): burns trash for power; smoke,
+    /// ash and fallout downwind.
+    Incinerator,
+    /// A recycling plant: sorting lines (many jobs) recover metal,
+    /// plastics, paper and glass; the rest goes on.
+    RecyclingPlant,
+    /// A transfer station: trash compacted into boxes and shipped out of
+    /// town by rail or ship (cheaper than lorries), else by road.
+    TransferStation,
 }
 
 impl ServiceKind {
-    pub const ALL: [ServiceKind; 26] = [
+    pub const ALL: [ServiceKind; 30] = [
         ServiceKind::Police,
         ServiceKind::Fire,
         ServiceKind::Health,
@@ -93,7 +107,13 @@ impl ServiceKind {
         ServiceKind::ConventionCentre,
         ServiceKind::Cathedral,
         ServiceKind::CasinoResort,
+        ServiceKind::Landfill,
+        ServiceKind::Incinerator,
+        ServiceKind::RecyclingPlant,
+        ServiceKind::TransferStation,
     ];
+    /// [r5-trash] The disposal sites, in menu order.
+    pub const WASTE: [ServiceKind; 4] = [ServiceKind::Landfill, ServiceKind::Incinerator, ServiceKind::RecyclingPlant, ServiceKind::TransferStation];
     /// [attractions] The landmark attractions, in menu order.
     pub const LANDMARKS: [ServiceKind; 14] = [
         ServiceKind::ArtMuseum,
@@ -143,6 +163,10 @@ impl ServiceKind {
             ServiceKind::ConventionCentre => "convention_centre",
             ServiceKind::Cathedral => "cathedral",
             ServiceKind::CasinoResort => "casino_resort",
+            ServiceKind::Landfill => "landfill",
+            ServiceKind::Incinerator => "incinerator",
+            ServiceKind::RecyclingPlant => "recycling_plant",
+            ServiceKind::TransferStation => "transfer_station",
         }
     }
 
@@ -174,6 +198,10 @@ impl ServiceKind {
             "casino_resort" | "casino" => Some(ServiceKind::CasinoResort),
             "botanical_garden" | "botanic_garden" | "conservatory" | "botanical" => Some(ServiceKind::BotanicalGarden),
             "concert_hall" | "opera_house" | "opera" | "philharmonic" => Some(ServiceKind::ConcertHall),
+            "landfill" | "dump" | "tip" => Some(ServiceKind::Landfill),
+            "incinerator" | "waste_to_energy" | "wte" => Some(ServiceKind::Incinerator),
+            "recycling_plant" | "recycling" | "mrf" => Some(ServiceKind::RecyclingPlant),
+            "transfer_station" | "waste_transfer" => Some(ServiceKind::TransferStation),
             _ => None,
         }
     }
@@ -206,6 +234,10 @@ impl ServiceKind {
             ServiceKind::ConventionCentre => "convention centre",
             ServiceKind::Cathedral => "cathedral",
             ServiceKind::CasinoResort => "casino resort",
+            ServiceKind::Landfill => "landfill",
+            ServiceKind::Incinerator => "incinerator",
+            ServiceKind::RecyclingPlant => "recycling plant",
+            ServiceKind::TransferStation => "transfer station",
         }
     }
 
@@ -224,6 +256,10 @@ impl ServiceKind {
             ServiceKind::Vertiport => ["drone pad", "vertiport", "skyport"],
             ServiceKind::ParkingEnforcement => ["parking warden post", "parking enforcement office", "parking authority"],
             ServiceKind::University => ["community college", "university", "institute of technology"],
+            ServiceKind::Landfill => ["tip", "landfill", "regional landfill"],
+            ServiceKind::Incinerator => ["incinerator", "waste-to-energy plant", "energy-from-waste works"],
+            ServiceKind::RecyclingPlant => ["sorting shed", "recycling plant", "materials recovery centre"],
+            ServiceKind::TransferStation => ["transfer shed", "transfer station", "waste freight terminal"],
             // [attractions] One size each: the label is the kind's.
             k => [k.label(); 3],
         };
@@ -261,6 +297,12 @@ impl ServiceKind {
             ServiceKind::ConventionCentre => Hours::new(8, 21),
             ServiceKind::Cathedral => Hours::new(7, 21),
             ServiceKind::CasinoResort => Hours::ALWAYS,
+            // [r5-trash] The furnace never goes out; the tip and the
+            // transfer shed take the trucks' hours and some; the sorting
+            // lines run two shifts.
+            ServiceKind::Incinerator => Hours::ALWAYS,
+            ServiceKind::Landfill | ServiceKind::TransferStation => Hours::new(5, 20),
+            ServiceKind::RecyclingPlant => Hours::new(6, 22),
         }
     }
 
@@ -272,6 +314,11 @@ impl ServiceKind {
     /// joined site, one size.
     pub fn is_landmark(self) -> bool {
         Self::LANDMARKS.contains(&self)
+    }
+
+    /// [r5-trash] A disposal site the depots' trucks tip at (`crate::waste`).
+    pub fn is_waste(self) -> bool {
+        Self::WASTE.contains(&self)
     }
 
     /// [attractions] A landmark people walk round (a park, a zoo, a
@@ -386,6 +433,10 @@ impl ServiceKind {
             ServiceKind::ConventionCentre => 90_000.0,
             ServiceKind::Cathedral => 80_000.0,
             ServiceKind::CasinoResort => 120_000.0,
+            ServiceKind::Landfill => 7_000.0,
+            ServiceKind::Incinerator => 38_000.0,
+            ServiceKind::RecyclingPlant => 22_000.0,
+            ServiceKind::TransferStation => 12_000.0,
         };
         base * [0.5, 1.0, 2.2][tier.index()]
     }
@@ -418,6 +469,10 @@ impl ServiceKind {
             ServiceKind::ConventionCentre => 760.0,
             ServiceKind::Cathedral => 380.0,
             ServiceKind::CasinoResort => 950.0,
+            ServiceKind::Landfill => 140.0,
+            ServiceKind::Incinerator => 420.0,
+            ServiceKind::RecyclingPlant => 300.0,
+            ServiceKind::TransferStation => 180.0,
         };
         base * [0.6, 1.0, 1.8][tier.index()]
     }
@@ -454,6 +509,12 @@ impl ServiceKind {
             ServiceKind::ConventionCentre => 36,
             ServiceKind::Cathedral => 12,
             ServiceKind::CasinoResort => 70,
+            // [r5-trash] Compactor drivers and the gate; furnace crews;
+            // the sorting lines (the most hands); the shed and crane.
+            ServiceKind::Landfill => 6,
+            ServiceKind::Incinerator => 14,
+            ServiceKind::RecyclingPlant => 30,
+            ServiceKind::TransferStation => 8,
         };
         match tier {
             Tier::Low => base.div_ceil(2),
@@ -523,6 +584,11 @@ impl ServiceKind {
             ServiceKind::Jail => 450.0,
             ServiceKind::Dispatch => 250.0,
             ServiceKind::TrashDepot => 500.0,
+            // [r5-trash] A tip wants room to heap; several plots, joined.
+            ServiceKind::Landfill => 1600.0,
+            ServiceKind::Incinerator => 900.0,
+            ServiceKind::RecyclingPlant => 800.0,
+            ServiceKind::TransferStation => 600.0,
             ServiceKind::Vertiport => 350.0,
             ServiceKind::ParkingEnforcement => 200.0,
             // [megacorp] A large campus.
@@ -576,6 +642,12 @@ impl ServiceKind {
             ServiceKind::ConventionCentre => (420.0, 0.30),
             ServiceKind::Cathedral => (440.0, 0.34),
             ServiceKind::CasinoResort => (380.0, 0.18),
+            // [r5-trash] Nobody wants a tip or a smokestack up the road
+            // (the stink itself is dirt exposure, `World::refresh_dirty`).
+            ServiceKind::Landfill => (360.0 * k, -0.12 * k),
+            ServiceKind::Incinerator => (320.0 * k, -0.10 * k),
+            ServiceKind::RecyclingPlant => (200.0 * k, -0.04 * k),
+            ServiceKind::TransferStation => (200.0 * k, -0.05 * k),
         }
     }
 
@@ -621,6 +693,10 @@ impl ServiceKind {
             },
             ServiceKind::Cathedral => ["Cathedral of the Harbor Light", format!("{place} Cathedral").as_str(), "Basilica of Saint Aldric", "Cathedral of the Lanterns"][n as usize % 4].to_string(),
             ServiceKind::CasinoResort => ["The Gilded Lantern Resort and Casino", "Jade Tide Casino Resort", "The Velvet Comet", "Lucky Heron Resort and Casino"][n as usize % 4].to_string(),
+            ServiceKind::Landfill => format!("{place} {}", ["Tip", "Landfill", "Regional Landfill"][tier.index()]),
+            ServiceKind::Incinerator => format!("{place} {}", ["Incinerator", "Waste-to-Energy", "Energy-from-Waste Works"][tier.index()]),
+            ServiceKind::RecyclingPlant => format!("{place} {}", ["Sorting Shed", "Recycling Plant", "Materials Recovery"][tier.index()]),
+            ServiceKind::TransferStation => format!("{place} {}", ["Transfer Shed", "Transfer Station", "Waste Freight Terminal"][tier.index()]),
         }
     }
 }

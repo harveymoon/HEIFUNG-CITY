@@ -69,6 +69,8 @@ pub mod saves;
 mod taxes;
 /// [toll-inspect] The inspector on a toll booth.
 mod toll;
+/// [r5-trash] Where the trash goes: City Data, Services, Trash; the inspector's lines.
+mod trash;
 /// [road-inspect] The card on a selected street piece.
 mod road;
 /// [supertall] The skyline: inspector line, City Data page, news toasts.

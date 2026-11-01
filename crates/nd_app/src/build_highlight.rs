@@ -81,6 +81,8 @@ impl Family {
                 ServiceKind::Dispatch => Family::Dispatch,
                 ServiceKind::Jail => Family::Jail,
                 ServiceKind::TrashDepot => Family::Trash,
+                // [r5-trash] the disposal sites outline with the depots
+                k if k.is_waste() => Family::Trash,
                 ServiceKind::ParkingEnforcement => Family::Wardens,
                 ServiceKind::Vertiport => Family::Air,
                 ServiceKind::Monument | ServiceKind::Stadium => Family::Attraction,

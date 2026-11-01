@@ -432,6 +432,8 @@ impl World {
             }
         }
         self.economy.power.supply_by_kind = by_kind;
+        // [r5-trash] What the incinerators burn goes on the grid too.
+        supply += self.waste_mw();
         // [grid-weather] Demand follows the hour and the weather.
         let (hour, temp) = (self.grid_hour(), self.weather.temp_c);
         let demand: f32 = self.buildings.values().map(|b| crate::power::demand_at(b, hour, temp)).sum::<f32>() + 0.0; // sum of nothing is -0.0

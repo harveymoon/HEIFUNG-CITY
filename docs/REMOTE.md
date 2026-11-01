@@ -2114,6 +2114,20 @@ criminal and has them strike; `trash {kg, building?}` adds trash to bins. `place
 "trash_depot"}` (also `trash`, `garbage`) puts down a depot (any lot or unzoned ground, a street out
 front). Garbage trucks are cars in `find {what: "cars"}` with a garbage truck body.
 
+[r5-trash] Where the trash goes: `trash.disposal` in the section holds `starter_contract` /
+`starter_until_day` (14 days of lorries at half price and no limit, for every city once),
+`road_price_per_t`, tonnes and costs by way (`today_t`, `yesterday_t`, `total_t`, `cost_today`,
+`cost_yesterday`: landfill, burned, recycled, shipped, road), `sales_*`, `held_in_yards_t`, `yards`
+(each depot's yard), `blocked_loads_yesterday` (loads a full yard refused), `waste_mw`,
+`ships_by_rail`, `sites` (every landfill, incinerator, recycling plant and transfer station:
+kind, tier, staffing, capacity, room, fill, backlog, throughput, MW, cost, sales, trucks turned
+away), `trucks_to_sites`, `contractor_lorries`, `littered_streets`, scavengers and landfill
+illness. `place {kind: "landfill" | "incinerator" | "recycling_plant" | "transfer_station", tier}`
+puts one down (Buildings > Services > Sanitation). Alerts `trash_yards_full`,
+`landfill_nearly_full`. `overlay {layer: "trash"}` is the Trashy streets layer; `city_data {tab:
+"services", sub: "trash"}` the page. Costs are the ledger's `waste disposal` and `recycling
+sales` flows.
+
 ### Life under the raised roads [r5-layered]
 
 The ground between a raised road's columns, under its deck, is cut into *bays* wherever it is free

@@ -395,6 +395,8 @@ impl World {
         match b.service.map(|s| s.kind) {
             Some(ServiceKind::Stadium) => Some(LandUse::Entertainment),
             Some(ServiceKind::TrashDepot) => Some(LandUse::Industrial),
+            // [r5-trash] The disposal sites are heavy industry.
+            Some(k) if k.is_waste() => Some(LandUse::Industrial),
             Some(_) => Some(LandUse::Civic),
             None => None,
         }

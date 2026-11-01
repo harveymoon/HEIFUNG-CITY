@@ -161,6 +161,8 @@ fn service_group(k: ServiceKind) -> &'static str {
         ServiceKind::Police | ServiceKind::Fire | ServiceKind::Dispatch | ServiceKind::Jail | ServiceKind::ParkingEnforcement => "Safety",
         ServiceKind::Health | ServiceKind::School | ServiceKind::University => "Health and education",
         ServiceKind::TrashDepot => "Sanitation",
+        // [r5-trash] where the trash goes
+        k if k.is_waste() => "Sanitation",
         _ => "Other",
     }
 }

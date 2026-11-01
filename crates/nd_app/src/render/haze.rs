@@ -180,12 +180,22 @@ pub(super) fn sync_haze(
         // [smoke-start] Only a finished plant smokes: not while its lot is
         // still being cleared (the old building coming down) or it is
         // being built.
-        if !b.plant.is_some_and(|k| k.makes_haze()) || !b.operating() {
+        // [r5-trash] An incinerator smokes from its one stack, as hard as
+        // its furnace burns.
+        let burner = b.service.filter(|s| s.kind == nd_sim::ServiceKind::Incinerator);
+        if !(b.plant.is_some_and(|k| k.makes_haze()) || burner.is_some()) || !b.operating() {
             continue;
         }
         let Some(lot) = w.lots.get(b.lot) else { continue };
         seen.push(id);
-        let intensity = plant_smoke(b.is_derelict(), w.plant_output_mw(b), b.workers.len(), b.jobs, draw);
+        let intensity = match burner {
+            Some(s) => {
+                let full = nd_sim::waste::BURN_T_DAY[s.tier.index()] / 24.0 * nd_sim::waste::MWH_PER_T;
+                let mw = w.society.trash.disposal.sites.get(&id).map_or(0.0, |x| x.mw);
+                if b.is_derelict() || full <= 0.0 { 0.0 } else { (0.25 + 0.75 * mw / full).clamp(0.0, 1.0) * (mw > 0.0) as u8 as f32 }
+            }
+            None => plant_smoke(b.is_derelict(), w.plant_output_mw(b), b.workers.len(), b.jobs, draw),
+        };
         let pad = w.lot_pad(b.lot);
         // [plant-scale] The stacks come from the station's own layout (its
         // seed and size), so they follow a rebuild of the plant too.
@@ -204,7 +214,11 @@ pub(super) fn sync_haze(
                 commands.entity(e).despawn();
             }
         }
-        let stacks: Vec<CoalVent> = coal_vents(lot, b.seed, scale).into_iter().map(|v| CoalVent { top: v.top + Vec3::Y * pad, ..v }).collect();
+        let vents = match burner {
+            Some(s) => nd_procgen::incinerator_vents(lot, s.tier),
+            None => coal_vents(lot, b.seed, scale),
+        };
+        let stacks: Vec<CoalVent> = vents.into_iter().map(|v| CoalVent { top: v.top + Vec3::Y * pad, ..v }).collect();
         let quad = state.quad.clone().unwrap_or_default();
         let mat = state.materials[0].clone();
         let mut entities = Vec::new();

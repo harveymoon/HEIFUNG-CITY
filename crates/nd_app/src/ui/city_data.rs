@@ -71,7 +71,7 @@ impl Tab {
             Tab::Economy => &[EconomyOverview, EconomyCashFlow, EconomyLedger, EconomyMoneyFlow, EconomyTaxes, EconomyCorporations],
             Tab::Market => &[MarketGoods, MarketBusinesses, MarketTrade],
             Tab::People => &[PeoplePopulation, PeopleInequality, PeopleConcerns, PeopleSocial, PeopleFavourites],
-            Tab::Services => &[ServicesPower, ServicesTransit, ServicesEmergencies],
+            Tab::Services => &[ServicesPower, ServicesTransit, ServicesEmergencies, ServicesTrash],
             Tab::Directory => &[DirectoryBusinesses, DirectoryCompanies, DirectoryPeople],
         }
     }
@@ -111,6 +111,8 @@ pub enum Page {
     ServicesPower,
     ServicesTransit,
     ServicesEmergencies,
+    /// [r5-trash] Where the trash goes.
+    ServicesTrash,
     DirectoryBusinesses,
     /// [companies] Every owner: builders, firms, corps, the university.
     DirectoryCompanies,
@@ -148,6 +150,7 @@ impl Page {
             ServicesPower => "Power",
             ServicesTransit => "Transit",
             ServicesEmergencies => "Emergencies",
+            ServicesTrash => "Trash",
             DirectoryBusinesses => "Businesses",
             DirectoryCompanies => "Companies",
             DirectoryPeople => "People",
@@ -180,6 +183,7 @@ impl Page {
             ServicesPower => "power",
             ServicesTransit => "transit",
             ServicesEmergencies => "emergencies",
+            ServicesTrash => "trash",
             DirectoryBusinesses => "businesses",
             DirectoryCompanies => "companies",
             DirectoryPeople => "people",
@@ -213,6 +217,7 @@ impl Page {
             ServicesPower => "Power",
             ServicesTransit => "Transit",
             ServicesEmergencies => "Emergencies",
+            ServicesTrash => "Where the trash goes",
             DirectoryBusinesses => "Every business",
             DirectoryCompanies => "Every company and owner",
             DirectoryPeople => "Everyone in town",
@@ -246,6 +251,7 @@ impl Page {
             ServicesPower => "Supply and demand hour by hour, the batteries, the grid's price, and every plant.",
             ServicesTransit => "Riders by mode and line, fares against upkeep; buses, rail, metro, taxis and cargo.",
             ServicesEmergencies => "Every 911 call, live and on record: response times, units, outcomes.",
+            ServicesTrash => "Tonnes collected, where they went (landfill, burnt, recycled, shipped, out by lorry) and what each cost; every disposal site and depot yard.",
             DirectoryBusinesses => "Every business in town: click a heading to sort, search or pick to narrow it, click a row to inspect it, go to fly there.",
             DirectoryCompanies => "Every owner in town (builders, firms, founders, corps, the university, billionaires), biggest first: what it owns, its rent and takings, staff, vehicles and history. Click a row to select its biggest building (the map outlines all it owns).",
             DirectoryPeople => "Every citizen: click a heading to sort, search or pick to narrow it, click a row to inspect them, go to fly there.",
@@ -303,6 +309,7 @@ impl Page {
             "power" => Target::Page(Page::ServicesPower),
             "transit" => Target::Page(Page::ServicesTransit),
             "emergencies" | "911" => Target::Page(Page::ServicesEmergencies),
+            "trash" | "waste" | "garbage" => Target::Page(Page::ServicesTrash),
             "districts" => Target::Page(Page::CityDistricts),
             "tourism" => Target::Page(Page::CityTourism),
             "parks" => Target::Page(Page::CityParks),
@@ -566,6 +573,7 @@ fn body_of(ui: &mut egui::Ui, p: &mut UiCtx, page: Page) {
         ServicesPower => super::detail::power(ui, p),
         ServicesTransit => super::detail::transit(ui, p),
         ServicesEmergencies => super::emergencies::page(ui, p),
+        ServicesTrash => super::trash::page(ui, p),
         DirectoryBusinesses => super::directory::businesses(ui, p),
         DirectoryCompanies => super::directory::companies(ui, p),
         DirectoryPeople => super::directory::people(ui, p),
@@ -591,7 +599,7 @@ mod tests {
                 assert_eq!(Page::parse(None, t.key(), Some(p.key())), Ok(*p));
             }
         }
-        assert_eq!(seen.len(), 26, "[parks] City, Parks added; [ledger] Economy, Money flow; [companies] Directory, Companies");
+        assert_eq!(seen.len(), 27, "[parks] City, Parks added; [ledger] Economy, Money flow; [companies] Directory, Companies; [r5-trash] Services, Trash");
     }
 
     /// The old window names still find their pages.

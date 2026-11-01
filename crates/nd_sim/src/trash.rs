@@ -84,6 +84,8 @@ pub const LOAD_BASE: u16 = 2;
 pub const LOAD_KG_PER_MIN: f32 = 300.0;
 pub const LOAD_MAX: u16 = 8;
 pub const UNLOAD_TICKS: u16 = 6;
+/// [r5-trash] Minutes a truck waits at a full yard before trying again.
+pub const YARD_RETRY: u16 = 30;
 /// The private hauler: daily fee per rich household and per job at a rich
 /// business, clients per truck and the most trucks it runs.
 pub const PRIVATE_FEE_HOUSEHOLD: f32 = 1.5;
@@ -126,6 +128,9 @@ pub enum Hauler {
     Private,
     /// [economy] A local trash company, from its yard.
     Company(BuildingId),
+    /// [r5-trash] The contractor's lorry taking a depot's yard out of town
+    /// (`crate::waste`): from the depot to the edge of the map, then gone.
+    Contractor(BuildingId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,7 +152,7 @@ impl TruckState {
             TruckState::Idle => "parked",
             TruckState::ToStop => "driving to a pickup",
             TruckState::Collecting => "loading",
-            TruckState::ToDump => "returning to the depot",
+            TruckState::ToDump => "driving to unload",
             TruckState::Unloading => "unloading",
             TruckState::Leaving => "hauling out of town",
         }
@@ -168,6 +173,10 @@ pub struct TrashTruck {
     pub load: f32,
     pub wait: u16,
     pub stops_today: u16,
+    /// [r5-trash] The landfill, incinerator, recycling plant or transfer
+    /// station it is taking its load to (`None`: its depot's yard).
+    #[serde(default)]
+    pub dump: Option<BuildingId>,
 }
 
 /// A building's bins.
@@ -243,6 +252,12 @@ pub struct Trash {
     pub bins: BTreeMap<BuildingId, Bin>,
     pub trucks: SlotMap<TruckId, TrashTruck>,
     pub stats: TrashStats,
+    /// [r5-trash] Where the trash goes: the disposal sites, the depots'
+    /// yards, the starter contract and the figures (`crate::waste`).
+    pub disposal: crate::waste::Disposal,
+    /// [r5-trash] Litter on each street piece, `0..1`, thrown there by
+    /// overflowing bins (`World::daily_litter`).
+    pub litter: BTreeMap<SegmentId, f32>,
 }
 
 impl Trash {
@@ -275,6 +290,11 @@ pub fn truck_model(h: Hauler, number: u8) -> VehicleModel {
         Hauler::Company(b) => {
             m.paint = (slotmap::Key::data(&b).as_ffi() % 6) as u8;
             m.wear = 1;
+        }
+        // [r5-trash] The contractor's grimy lorries.
+        Hauler::Contractor(_) => {
+            m.paint = 2;
+            m.wear = 2;
         }
     }
     m
@@ -444,6 +464,8 @@ impl World {
                 }
             }
         }
+        // [r5-trash] Where the trash goes.
+        self.hourly_waste();
     }
 
     // ── every tick: the trucks ─────────────────────────────────────────────
@@ -475,8 +497,7 @@ impl World {
                     if state == TruckState::Collecting {
                         self.load_truck(id);
                     } else {
-                        t.load = 0.0;
-                        t.state = TruckState::Idle;
+                        self.tip_truck(id);
                     }
                 }
                 TruckState::Idle if tick % 5 == 0 => self.next_job(id),
@@ -516,7 +537,7 @@ impl World {
                 let have = self.society.trash.trucks.values().filter(|t| t.hauler == Hauler::City(d)).count();
                 let home = self.kerb_of(d).map_or(at, |k| k.1);
                 for k in have..crewed {
-                    self.society.trash.trucks.insert(TrashTruck { hauler: Hauler::City(d), number: k as u8 + 1, state: TruckState::Idle, car: None, pos: home, heading: 0.0, dest: home, target: None, load: 0.0, wait: 0, stops_today: 0 });
+                    self.society.trash.trucks.insert(TrashTruck { hauler: Hauler::City(d), number: k as u8 + 1, state: TruckState::Idle, car: None, pos: home, heading: 0.0, dest: home, target: None, load: 0.0, wait: 0, stops_today: 0, dump: None });
                 }
             }
         }
@@ -545,7 +566,7 @@ impl World {
                 let have = self.society.trash.trucks.values().filter(|t| t.hauler == Hauler::Company(c)).count();
                 let home = self.kerb_of(c).map_or(at, |k| k.1);
                 for k in have..wanted {
-                    self.society.trash.trucks.insert(TrashTruck { hauler: Hauler::Company(c), number: k as u8 + 1, state: TruckState::Idle, car: None, pos: home, heading: 0.0, dest: home, target: None, load: 0.0, wait: 0, stops_today: 0 });
+                    self.society.trash.trucks.insert(TrashTruck { hauler: Hauler::Company(c), number: k as u8 + 1, state: TruckState::Idle, car: None, pos: home, heading: 0.0, dest: home, target: None, load: 0.0, wait: 0, stops_today: 0, dump: None });
                 }
             }
         }
@@ -557,7 +578,7 @@ impl World {
             if have < wanted {
                 if let Some(edge) = self.trash_edge() {
                     for k in have..wanted {
-                        self.society.trash.trucks.insert(TrashTruck { hauler: Hauler::Private, number: k as u8 + 1, state: TruckState::Idle, car: None, pos: edge, heading: 0.0, dest: edge, target: None, load: 0.0, wait: 0, stops_today: 0 });
+                        self.society.trash.trucks.insert(TrashTruck { hauler: Hauler::Private, number: k as u8 + 1, state: TruckState::Idle, car: None, pos: edge, heading: 0.0, dest: edge, target: None, load: 0.0, wait: 0, stops_today: 0, dump: None });
                     }
                 }
             }
@@ -581,7 +602,7 @@ impl World {
                 let s = b.service?;
                 Some((self.lots.get(b.lot)?.center, s.kind.radius(s.tier)))
             }
-            Hauler::Private | Hauler::Company(_) => None,
+            Hauler::Private | Hauler::Company(_) | Hauler::Contractor(_) => None,
         };
         let mut best: Option<(f32, BuildingId)> = None;
         for (bid, bin) in &self.society.trash.bins {
@@ -594,6 +615,7 @@ impl World {
                 // [economy] A local company's own clients; the hauler from
                 // out of town the rest.
                 (None, Hauler::Company(c)) => bin.private && bin.company == Some(c),
+                (None, Hauler::Contractor(_)) => false,
                 (None, _) => bin.private && bin.company.is_none(),
             };
             if !ok {
@@ -658,6 +680,7 @@ impl World {
         let on = match hauler {
             Hauler::City(_) => self.in_shift(SHIFT),
             Hauler::Private | Hauler::Company(_) => self.in_shift(PRIVATE_SHIFT),
+            Hauler::Contractor(_) => false,
         };
         let stop = if on && t.load < TRUCK_CAPACITY * TRUCK_FULL { self.pick_stop(id) } else { None };
         match stop.and_then(|b| self.kerb_of(b).map(|k| (b, k))) {
@@ -673,6 +696,27 @@ impl World {
     fn truck_home(&mut self, id: TruckId) {
         let Some(t) = self.society.trash.trucks.get_mut(id) else { return };
         t.target = None;
+        // [r5-trash] A loaded city truck takes its load to the best
+        // disposal site in reach (a landfill, an incinerator, a recycling
+        // plant, a transfer station), else to its depot's yard.
+        if let Hauler::City(d) = t.hauler {
+            let (pos, load) = (t.pos, t.load);
+            t.dump = None;
+            if load > 0.0 && self.buildings.contains_key(d) {
+                if let Some((site, kerb)) = self.dump_for(d, pos, load).and_then(|s| self.kerb_of(s).map(|k| (s, k))) {
+                    self.society.trash.trucks[id].dump = Some(site);
+                    if pos.distance(kerb.1) > 8.0 {
+                        self.drive_truck(id, kerb, TruckState::ToDump);
+                    } else {
+                        let t = &mut self.society.trash.trucks[id];
+                        t.state = TruckState::Unloading;
+                        t.wait = UNLOAD_TICKS;
+                    }
+                    return;
+                }
+            }
+        }
+        let t = &self.society.trash.trucks[id];
         match t.hauler {
             Hauler::City(d) | Hauler::Company(d) => {
                 let at_depot = self.kerb_of(d);
@@ -691,7 +735,7 @@ impl World {
                     None => self.truck_leaves(id),
                 }
             }
-            Hauler::Private => self.truck_leaves(id),
+            Hauler::Private | Hauler::Contractor(_) => self.truck_leaves(id),
         }
     }
 
@@ -722,6 +766,14 @@ impl World {
                 t.wait = (LOAD_BASE + (stored / LOAD_KG_PER_MIN) as u16).min(LOAD_MAX);
             }
             TruckState::ToDump => {
+                // [r5-trash] The site it was heading for is gone: on to
+                // the next best, or the depot.
+                if t.dump.is_some_and(|s| !self.buildings.contains_key(s)) {
+                    t.dump = None;
+                    t.state = TruckState::Idle;
+                    self.truck_home(id);
+                    return;
+                }
                 t.state = TruckState::Unloading;
                 t.wait = UNLOAD_TICKS;
             }
@@ -758,7 +810,7 @@ impl World {
                 s.collected_city_today += take;
                 s.collected_city_total += take;
             }
-            Hauler::Private | Hauler::Company(_) => {
+            Hauler::Private | Hauler::Company(_) | Hauler::Contractor(_) => {
                 s.collected_private_today += take;
                 s.collected_private_total += take;
             }
@@ -769,6 +821,53 @@ impl World {
         t.target = None;
         t.state = TruckState::Idle;
         self.next_job(id);
+    }
+
+    /// [r5-trash] Unloading done: a city truck's load goes into the site
+    /// it drove to or its depot's yard, as far as there is room. What does
+    /// not fit stays on the truck: at a full site it looks for another; at
+    /// a full yard it waits and tries again (and collects nothing more).
+    /// A company's or the hauler's load is its own business.
+    fn tip_truck(&mut self, id: TruckId) {
+        let Some(t) = self.society.trash.trucks.get(id) else { return };
+        let (hauler, dump, load) = (t.hauler, t.dump, t.load);
+        let left = match hauler {
+            Hauler::City(depot) if load > 0.0 => {
+                let took = match dump.filter(|s| self.buildings.contains_key(*s)) {
+                    Some(site) => self.tip_at_site(site, load),
+                    None => self.tip_at_depot(depot, load),
+                };
+                (load - took).max(0.0)
+            }
+            _ => 0.0,
+        };
+        let t = &mut self.society.trash.trucks[id];
+        t.dump = None;
+        if left > 1.0 {
+            t.load = left;
+            if dump.is_some() {
+                // The site filled up: the next one, or the depot.
+                t.state = TruckState::Idle;
+                self.truck_home(id);
+            } else {
+                t.state = TruckState::Unloading;
+                t.wait = YARD_RETRY;
+            }
+        } else {
+            t.load = 0.0;
+            t.state = TruckState::Idle;
+        }
+    }
+
+    /// [r5-trash] The contractor's lorry leaves a depot for the edge of
+    /// town with a load from its yard (one on the road per depot).
+    pub(crate) fn send_contractor(&mut self, depot: BuildingId) {
+        if self.society.trash.trucks.values().any(|t| t.hauler == Hauler::Contractor(depot)) {
+            return;
+        }
+        let Some(home) = self.kerb_of(depot).map(|k| k.1) else { return };
+        let id = self.society.trash.trucks.insert(TrashTruck { hauler: Hauler::Contractor(depot), number: 1, state: TruckState::Idle, car: None, pos: home, heading: 0.0, dest: home, target: None, load: TRUCK_CAPACITY * 0.9, wait: 0, stops_today: 0, dump: None });
+        self.truck_leaves(id);
     }
 
     /// The traffic model says a truck's car reached the end of its route.
@@ -866,6 +965,10 @@ impl World {
                 None => revenue += paid,
             }
         }
+        // [r5-trash] The disposal books and the landfills' neighbours;
+        // litter on the streets.
+        self.daily_waste();
+        self.daily_litter();
         let s = &mut self.society.trash.stats;
         s.private_revenue_today += revenue;
         s.private_revenue_total += revenue;
@@ -896,5 +999,6 @@ impl World {
                 b.splat(l.center, TRASH_LV_RADIUS, -TRASH_LV * (0.5 + o).min(2.0));
             }
         }
+        self.splat_waste(b);
     }
 }

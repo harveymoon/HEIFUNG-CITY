@@ -66,11 +66,16 @@ pub struct Overlays {
     /// [r4-tiles] Land for sale: the tiles round the city outlined, the
     /// ones that can be bought with their price (`land_tiles`, `ui::land`).
     pub land_tiles: bool,
+    /// [r5-trash] Trashy streets: every street piece by its litter and the
+    /// overflowing bins along it, buildings ringed by their bins, the
+    /// landfills, incinerators, recycling plants and transfer stations
+    /// marked (`pt_layers::trash_gizmos`).
+    pub trash: bool,
 }
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: false, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false, parking: false, trails: false, density: false, park_access: false, construction: false, walk_networks: false, land_tiles: false }
+        Self { land_value: false, paths: false, zoning: false, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false, parking: false, trails: false, density: false, park_access: false, construction: false, walk_networks: false, land_tiles: false, trash: false }
     }
 }
 

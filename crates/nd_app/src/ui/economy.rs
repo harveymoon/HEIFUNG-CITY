@@ -52,6 +52,8 @@ pub fn flow_color(f: Flow) -> Color32 {
         Flow::PropertyTax => Color32::from_rgb(100, 200, 120),
         Flow::DistrictLevies => Color32::from_rgb(200, 140, 230),
         Flow::DistrictSpending => Color32::from_rgb(150, 110, 200),
+        Flow::WasteDisposal => Color32::from_rgb(150, 120, 70),
+        Flow::RecyclingSales => Color32::from_rgb(90, 200, 110),
     }
 }
 
@@ -85,6 +87,8 @@ fn flow_note(f: Flow) -> &'static str {
         Flow::PropertyTax => "10% of every rent collected, paid by the building's owner (a resident, a company, a developer, the independent landlords), by building. Economy, Money flow shows where the rest of the rent goes.",
         Flow::DistrictLevies => "Each district's own levies, set by its story and fine-tuned on City Data, Districts: business rates, noise and alcohol levies, pollution levies and bed levies, by district and policy.",
         Flow::DistrictSpending => "What districts' policies pay out: rent support to residents, heritage grants to owners and business-rate relief, by district and policy.",
+        Flow::WasteDisposal => "Getting rid of the trash, by the tonne, paid at midnight: tipped at each landfill, burnt in each incinerator, sorted at each recycling plant, shipped from each transfer station, and the dearest, the lorries that haul the depots' yards out of town. Services, Trash in City Data shows where it all went.",
+        Flow::RecyclingSales => "Metal, plastics, paper and glass the recycling plants recover: sold to the scrap yards and works in town that are short, the rest out of town, by plant.",
     }
 }
 
