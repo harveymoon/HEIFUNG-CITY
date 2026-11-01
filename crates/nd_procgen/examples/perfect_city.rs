@@ -39,8 +39,10 @@ fn main() {
         let t = std::time::Instant::now();
         let (mut served_min, mut dark_max, mut stuck_max, mut grid_max, mut cars_max) = (1.0f32, 0usize, 0usize, 0usize, 0usize);
         let mut worst: Vec<nd_sim::Vec2> = Vec::new();
+        let mut airlifts: std::collections::BTreeSet<u64> = Default::default();
         for m in 0..1440 {
             world.tick(&mut minds);
+            airlifts.extend(world.airlifts.iter().filter(|a| !a.reason.is_empty()).map(|a| a.started));
             if m % 60 == 30 {
                 let e = &world.economy;
                 served_min = served_min.min(e.power.served);
@@ -92,6 +94,30 @@ fn main() {
         let total: u32 = st.trips_yesterday.iter().sum();
         let shares: Vec<String> = nd_sim::citizens::TripMode::ALL.iter().map(|m| format!("{} {:.0}%", m.key(), 100.0 * st.trips_yesterday[m.index()] as f32 / total.max(1) as f32)).collect();
         println!("      modes: {} | metro riders {}", shares.join(" "), world.subway.stats.riders_yesterday);
+        // [r6-perfect-city] Jobs, trash and the newer systems.
+        let tr = &world.society.trash;
+        let d = &tr.disposal;
+        let fill: Vec<String> = world.waste_sites().iter().filter_map(|s| world.landfill_fill(s.id)).map(|f| format!("{:.0}%", f * 100.0)).collect();
+        let dest: Vec<String> = nd_sim::waste::Dest::ALL.iter().map(|k| format!("{:?} {:.0}", k, d.t_yesterday[k.index()])).collect();
+        println!(
+            "      unemployed {:.1}% ({}) | cut off: areas {} walk lots {} road lots {} | trash made {:.0}t city {:.0}t private {:.0}t | {} | yards {:.0}t blocked {} overflow {} | landfill {} | cost {:.0}/day{} | airlifts {}",
+            e.unemployment_share() * 100.0,
+            e.unemployed,
+            world.connectivity.areas.len(),
+            world.connectivity.walk_cut.len(),
+            world.connectivity.road_cut.len(),
+            tr.stats.produced_yesterday / 1000.0,
+            tr.stats.collected_city_yesterday / 1000.0,
+            tr.stats.collected_private_yesterday / 1000.0,
+            dest.join(" "),
+            d.held_t(),
+            d.blocked_yesterday,
+            tr.stats.overflowing_buildings,
+            fill.join(","),
+            d.cost_yesterday.iter().sum::<f32>(),
+            if d.starter_on(world.clock.day()) { " (starter)" } else { "" },
+            airlifts.len(),
+        );
         if stuck_max >= 60 {
             let mut cells: std::collections::BTreeMap<(i32, i32), usize> = Default::default();
             for p in &worst {
