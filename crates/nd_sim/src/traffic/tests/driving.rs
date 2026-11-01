@@ -236,3 +236,30 @@ fn a_car_in_a_stunt_pulled_in_stays_off_the_lanes_and_leaves_no_stale_entry() {
     t.step(1.0, 4);
     assert!(listed(&t).is_empty(), "the next step drops it");
 }
+
+/// [r5-fixes] A lorry lined up along the kerb behind (or ahead of) others
+/// unloading at the same spot is never left standing past the end of its
+/// route (Harvey's day-63 lorries stood at 14 m on routes ending at 4 m),
+/// and one with nowhere to go shows as stranded, not unloading.
+#[test]
+fn a_lorry_lined_up_at_the_kerb_never_stands_past_its_route_end() {
+    let mut roads = RoadNetwork::default();
+    roads.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
+    let mut t = Traffic::default();
+    t.rebuild(&roads);
+    let seg = roads.nearest_street(Vec2::ZERO).unwrap().0;
+    let lane = lane_of(&t, seg, Vec2::X, 0);
+    let ids: Vec<CarId> = (0..4).map(|_| t.spawn_car(CitizenId::default(), None, vec![lane], 4.3, 4.3, 0)).collect();
+    for &id in &ids {
+        t.cars[id].model.body = crate::vehicle::BodyType::BoxVan;
+        t.pull_in_queued(id, 60.0);
+    }
+    for &id in &ids {
+        let c = &t.cars[id];
+        assert!(c.s <= c.s_end + 0.01, "s {} past its route end {}", c.s, c.s_end);
+    }
+    assert_eq!(t.stop_reason(ids[0]), StopReason::Unloading);
+    t.cars[ids[0]].stranded = true;
+    assert_eq!(t.stop_reason(ids[0]), StopReason::Stranded);
+    assert!(t.stop_reason(ids[0]).text(|_| String::new()).starts_with("stranded at the kerb"));
+}

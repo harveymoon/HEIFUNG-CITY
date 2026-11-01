@@ -390,6 +390,7 @@ impl Traffic {
             return;
         }
         self.note_replan(id, crate::insight::Why::NewRoute, None, Some(&route));
+        self.cars[id].stranded = false;
         let old_lane = self.cars[id].route[self.cars[id].idx];
         if route[0] == old_lane {
             let car = &mut self.cars[id];
@@ -481,6 +482,7 @@ impl Traffic {
         car.idx = 0;
         car.s_end = s_end;
         car.age = 0.0;
+        car.stranded = false;
         true
     }
 

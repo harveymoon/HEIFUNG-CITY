@@ -49,6 +49,9 @@ pub enum StopReason {
     BusStop,
     /// A lorry or van standing at the kerb on a job (unloading).
     Unloading,
+    /// [r5-fixes] Standing at the kerb with nowhere it can drive (a pocket
+    /// with no way out, no road anywhere): waiting for a way or the airlift.
+    Stranded,
     /// [r2-traffic] A private car or bike stopped at the kerb (dropping
     /// someone off, after a knock with a walker): not "on a job".
     PulledOver,
@@ -105,6 +108,7 @@ impl StopReason {
             StopReason::AtKerb { .. } => "at_kerb",
             StopReason::BusStop => "bus_stop",
             StopReason::Unloading => "unloading",
+            StopReason::Stranded => "stranded",
             StopReason::PulledOver => "pulled_over",
             StopReason::Arriving => "arriving",
             StopReason::Crashed { .. } => "crashed",
@@ -135,6 +139,7 @@ impl StopReason {
             StopReason::AtKerb { waiting_for } => or(waiting_for, "at the kerb, waiting to pull out past", "at the kerb, waiting to pull out"),
             StopReason::BusStop => "at a bus stop".into(),
             StopReason::Unloading => "stopped at the kerb on a job (unloading)".into(),
+            StopReason::Stranded => "stranded at the kerb: no road out from here (the city's airlift will lift it out)".into(),
             StopReason::PulledOver => "pulled over at the kerb".into(),
             StopReason::Arriving => "pulling up at its destination".into(),
             StopReason::Crashed { wrecked: true } => "written off in a crash, waiting for the tow".into(),
@@ -200,6 +205,9 @@ impl Traffic {
         }
         if let Some(cr) = c.drive.crash {
             return StopReason::Crashed { wrecked: cr.wrecked };
+        }
+        if (c.hold > 0.0 || c.wait == Wait::Dwell) && c.stranded {
+            return StopReason::Stranded;
         }
         if c.hold > 0.0 || c.wait == Wait::Dwell {
             return if c.bus.is_some() {
