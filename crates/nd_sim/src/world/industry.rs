@@ -532,6 +532,13 @@ impl World {
         let model = car.model;
         if is_return_trip(&cargo) {
             let home = cargo.from;
+            // [ferry-islands] Back at an island's terminal: onto the car
+            // ferry, home over the water.
+            if self.island_pier_for(cargo.to) == Some(cargo.to) {
+                self.traffic.remove_car(car_id);
+                self.ports.stats.lorries_ferried_today += 1;
+                return;
+            }
             if self.park_truck(cargo.to, home, model) {
                 self.traffic.remove_car(car_id);
                 return;
@@ -598,6 +605,20 @@ impl World {
     /// of town, driving from where it stands. False when no road leads
     /// anywhere (it keeps standing).
     fn drive_lorry_on(&mut self, car_id: CarId, at: BuildingId, home: BuildingId) -> bool {
+        // [ferry-islands] On an island with no road off it: back to the
+        // terminal for the car ferry home.
+        if let Some(t) = self.island_pier_for(at).filter(|t| *t != at) {
+            if let Some((seg, pt)) = self.truck_stop(t) {
+                if let Some((goal, s_end, _)) = self.traffic.net.nearest_lane_on(seg, pt) {
+                    if self.traffic.redirect(car_id, goal, s_end) {
+                        self.traffic.cars[car_id].cargo = Some(return_cargo(home, t));
+                        self.begin_leg(car_id);
+                        self.car_departs_from(car_id, at);
+                        return true;
+                    }
+                }
+            }
+        }
         let model = self.traffic.cars[car_id].model;
         let pos = self.building_lot(at).map(|l| l.center).unwrap_or(self.traffic.cars[car_id].pos);
         let home_ok = home != at && self.buildings.get(home).is_some_and(|h| h.operating() && !h.is_derelict());

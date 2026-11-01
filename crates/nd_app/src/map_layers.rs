@@ -442,7 +442,9 @@ fn legend_walk_networks(ui: &mut egui::Ui, cx: &LegendCtx) {
     const ROWS: usize = 12;
     for (k, n) in nets.list.iter().enumerate().take(ROWS) {
         let c = n.color();
-        let label = format!("{}{}: {} walkways, {} building{}, {} resident{}", if k == 0 { "main, " } else { "" }, n.name, n.edges, n.buildings.len(), crate::ui::fmt::s(n.buildings.len() as u32), n.residents, crate::ui::fmt::s(n.residents));
+        // [ferry-islands] An island the ferries join to the rest.
+        let island = cx.world.connectivity.islands.iter().any(|i| i.comp == n.comp);
+        let label = format!("{}{}: {} walkways, {} building{}, {} resident{}", if k == 0 { "main, " } else if island { "island by ferry, " } else { "" }, n.name, n.edges, n.buildings.len(), crate::ui::fmt::s(n.buildings.len() as u32), n.residents, crate::ui::fmt::s(n.residents));
         let r = ui
             .horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());

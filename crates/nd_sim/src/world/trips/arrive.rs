@@ -43,6 +43,12 @@ impl World {
                 return;
             }
         }
+        // [ferry-islands] At the terminal for a crossing: out onto the pier.
+        if let (Purpose::ToStop, Some(b)) = (purpose, to) {
+            if self.reach_pier(id, b) {
+                return;
+            }
+        }
         // [ferries] At the terminal for a day out: aboard.
         if let Some(b) = to {
             if self.board_day_trip(id, b) {
