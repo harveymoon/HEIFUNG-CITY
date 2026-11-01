@@ -86,6 +86,8 @@ impl World {
         // (arc position, half the street's width with its pavements, the
         // bridge's points in the order ridden)
         let mut hits: Vec<(f32, f32, Vec<Vec2>)> = Vec::new();
+        // [r5-fixes] The point on the leg ridden `p`..`q` abreast of `x`.
+        let abreast = |x: Vec2, p: Vec2, q: Vec2| crate::geom::project_on_segment(x, p, q).1;
         for f in &self.walk.footbridges {
             if path.iter().any(|p| f.top.contains(p)) {
                 continue;
@@ -135,7 +137,24 @@ impl World {
                 } else {
                     vec![f.foot[1], f.top[1], f.top[0], f.foot[0]]
                 };
-                hits.push((s, half, pts));
+                // [r5-fixes] Harvey's flag 2 (Delacroix Boulevard): the
+                // ride goes on along its own leg to abreast of the bridge's
+                // first foot and steps across to it there, and back onto
+                // the leg abreast of its last. Cut from the leg's far start
+                // straight to the foot, a 235 m leg along the boulevard
+                // became a diagonal 15-20 m out over the grass.
+                let (Some(&first), Some(&last)) = (pts.first(), pts.last()) else { break };
+                let mut ride = Vec::with_capacity(pts.len() + 2);
+                let on = abreast(first, p, q);
+                if on.distance(first) > 1.0 && on.distance(p) > 1.0 {
+                    ride.push(on);
+                }
+                ride.extend_from_slice(&pts);
+                let off = abreast(last, p, q);
+                if off.distance(last) > 1.0 && off.distance(q) > 1.0 {
+                    ride.push(off);
+                }
+                hits.push((s, half, ride));
                 break;
             }
         }

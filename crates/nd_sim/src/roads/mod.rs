@@ -15,10 +15,12 @@ mod grade;
 mod path;
 mod ramps;
 mod ring;
+mod traps;
 
 pub use grade::*;
 pub use ramps::*;
 pub use ring::*;
+pub use traps::*;
 
 /// Cell size of the segment index. Road pieces are 7 m (curves) to a few
 /// hundred metres (straight roads); a nearest query reads a 3x3 block of

@@ -237,6 +237,62 @@ impl World {
         out
     }
 
+    /// [r5-fixes] The ownership arcs for a selected building: the main
+    /// building of its owner's holdings (`ownership_hub`) and every other
+    /// building they own, each drawn as an arc from the hub. None for an
+    /// independent owner (nothing else to tie it to).
+    pub fn ownership_arcs(&self, bid: BuildingId) -> Option<(BuildingId, Vec<BuildingId>)> {
+        let owned = self.owned_with(bid);
+        if owned.len() < 2 {
+            return None;
+        }
+        let owner = self.owner_of(bid);
+        let person = owner.and_then(|(_, o)| match &o.kind {
+            OwnerKind::Person { citizen } | OwnerKind::Elite { citizen } => Some(*citizen),
+            OwnerKind::Company { founder } | OwnerKind::Builder { founder } => Some(*founder),
+            OwnerKind::Household { household } => self.households.get(*household).and_then(|h| h.members.first().copied()),
+            _ => None,
+        });
+        let hub = self.ownership_hub(&owned, owner.map(|(oid, _)| oid), person)?;
+        Some((hub, owned.into_iter().filter(|&b| b != hub).collect()))
+    }
+
+    /// [r5-fixes] The ownership arcs for a selected person who owns more
+    /// than their own home: the hub of what they own and the rest of it.
+    pub fn ownership_arcs_of(&self, cid: CitizenId) -> Option<(BuildingId, Vec<BuildingId>)> {
+        let owned = self.properties_of(cid);
+        let hub = self.ownership_hub(&owned, None, Some(cid))?;
+        let rest: Vec<BuildingId> = owned.into_iter().filter(|&b| b != hub).collect();
+        (!rest.is_empty()).then_some((hub, rest))
+    }
+
+    /// [r5-fixes] Where an owner's holdings are run from: a mega-corp's
+    /// headquarters (its flagship until the tower stands), a university's
+    /// main building, the owner's own home or the business they run
+    /// themselves, else the most valuable building among `owned`.
+    pub fn ownership_hub(&self, owned: &[BuildingId], owner: Option<OwnerId>, person: Option<CitizenId>) -> Option<BuildingId> {
+        let alive = |b: &BuildingId| self.buildings.contains_key(*b);
+        if let Some(o) = owner {
+            if let Some(c) = self.corps.corp_of_owner(o) {
+                if let Some(b) = c.hq.filter(alive).or(c.flagship.filter(alive)) {
+                    return Some(b);
+                }
+            }
+            if let Some(c) = self.corps.campus_of_owner(o).filter(|c| alive(&c.building)) {
+                return Some(c.building);
+            }
+        }
+        if let Some(cid) = person {
+            if let Some(home) = self.citizens.get(cid).and_then(|c| c.home).filter(|h| owned.contains(h)) {
+                return Some(home);
+            }
+            if let Some(&b) = owned.iter().find(|&&b| self.buildings[b].business.as_ref().is_some_and(|z| z.owner == Some(cid))) {
+                return Some(b);
+            }
+        }
+        owned.iter().copied().filter(alive).max_by(|a, b| self.sale_price(*a).total_cmp(&self.sale_price(*b)).then(b.cmp(a)))
+    }
+
     /// The owner record of a firm, made on its first branch or merge.
     pub(in crate::world) fn firm_of(&mut self, bid: BuildingId) -> Option<OwnerId> {
         let b = self.buildings.get(bid)?;

@@ -210,4 +210,6 @@ mod roundabout_tests;
 #[cfg(test)]
 mod piece_tests;
 #[cfg(test)]
+mod trap_tests;
+#[cfg(test)]
 mod joint_tests;
