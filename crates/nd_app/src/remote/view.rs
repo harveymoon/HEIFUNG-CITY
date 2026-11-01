@@ -357,6 +357,12 @@ fn activity(w: &World, c: &Citizen) -> Value {
             m.insert("town".into(), json!(w.ferry_town_name(*terminal, *town)));
             m.insert("back_after_tick".into(), json!(until));
         }
+        // [ferry-islands] On a ferry across town.
+        Activity::OnFerry { from, to } => {
+            m.insert("ferry_from".into(), json!(key_str(*from)));
+            m.insert("ferry_to".into(), json!(key_str(*to)));
+            m.insert("ferry_to_name".into(), name_of(Some(*to)));
+        }
         Activity::Arriving | Activity::AtHome | Activity::Working | Activity::Idle | Activity::Waiting { .. } => {}
     }
     if let Some(t) = &c.transit {

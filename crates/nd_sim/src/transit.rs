@@ -1062,6 +1062,9 @@ pub enum TransitLeg {
     /// [taxis] A cab from the kerb to the destination's kerb
     /// (`crate::taxi`); the cab is found by the dispatcher.
     Taxi,
+    /// [ferry-islands] A ferry from terminal `board`'s pier to `alight`'s,
+    /// both in town (`world/islands.rs`).
+    Ferry { board: crate::buildings::BuildingId, alight: crate::buildings::BuildingId },
 }
 
 /// A citizen's transit trip in progress: walk to the stop or station,

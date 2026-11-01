@@ -33,6 +33,25 @@ pub fn dock_routes(ui: &mut egui::Ui, w: &World, id: BuildingId) {
             hint(ui, &format!("{waiting} waiting to board for the towns off the map"));
         }
     }
+    // [ferry-islands] Residents crossing to and from an island here.
+    if ferry {
+        let pier = w.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Waiting { .. }) && matches!(c.transit.map(|t| t.leg), Some(nd_sim::transit::TransitLeg::Ferry { board, .. }) if board == id)).count();
+        let loads = w.ports.ferry_freight.iter().filter(|l| l.at == id).count();
+        if let Some(k) = w.island_of(id) {
+            let i = &w.connectivity.islands[k];
+            hint(ui, &format!("on an island: {} buildings, {} live there, {} work there; reached only by ferry", i.buildings.len(), i.residents, i.workers));
+        } else {
+            let served: Vec<_> = w.connectivity.islands.iter().filter(|i| i.mainland.contains(&id)).collect();
+            if !served.is_empty() {
+                let (live, work): (u32, u32) = served.iter().fold((0, 0), |a, i| (a.0 + i.residents, a.1 + i.workers));
+                let n = served.len();
+                hint(ui, &format!("serves {} island{}: {live} live there, {work} work there", if n == 1 { "an".to_string() } else { n.to_string() }, if n == 1 { "" } else { "s" }));
+            }
+        }
+        if pier > 0 || loads > 0 {
+            hint(ui, &format!("{pier} on the pier for a crossing  ·  {loads} load{} waiting for the boat across", super::fmt::s(loads as u32)));
+        }
+    }
     if w.ports.port_of(id).is_some_and(|p| !p.works()) {
         let why = if w.ports.port_of(id).is_some_and(|p| !p.road_connected && !p.walk_connected) { "join its street stub to the city's roads" } else if w.ports.port_of(id).is_some_and(|p| !p.road_connected) { "goods need a road to its street stub (a path is not enough)" } else { "no ship can reach it from off the map" };
         ui.label(egui::RichText::new(format!("not running: {why}")).color(WARN));
@@ -103,7 +122,12 @@ pub fn ship_card(ui: &mut egui::Ui, w: &World, selection: &mut Selection, id: nd
             ui.label(format!("{} load{} aboard  ·  {:.0} m long", s.cargo.len(), super::fmt::s(s.cargo.len()), s.length()));
         }
         _ => {
-            ui.label(format!("{} passenger{} aboard of {}  ·  {:.0} m long", s.passengers, super::fmt::s(s.passengers), nd_sim::ports::FERRY_CAPACITY, s.length()));
+            let cap = w.ports.kind_of(s.port).map_or(nd_sim::ports::FERRY_CAPACITY, |k| k.ferry_capacity());
+            ui.label(format!("{} passenger{} aboard of {}  ·  {:.0} m long", s.passengers, super::fmt::s(s.passengers), cap, s.length()));
+            // [ferry-islands] Residents on a crossing of their own, and freight.
+            if !s.riders.is_empty() || !s.cargo.is_empty() || s.cars > 0 {
+                hint(ui, &format!("{} resident{} crossing  ·  {} car{} on deck  ·  {} load{} for the far side", s.riders.len(), super::fmt::s(s.riders.len() as u32), s.cars, super::fmt::s(s.cars), s.cargo.len(), super::fmt::s(s.cargo.len() as u32)));
+            }
         }
     }
     let (_, net) = crate::ferry_select::net(w);

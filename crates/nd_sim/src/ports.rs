@@ -578,6 +578,10 @@ pub struct Ship {
     /// [ferries] (D6) Cars on a car ferry's deck.
     #[serde(default)]
     pub cars: u32,
+    /// [ferry-islands] Residents aboard on a trip of their own (a
+    /// `TransitLeg::Ferry`): set down at the pier their leg ends at.
+    #[serde(default)]
+    pub riders: Vec<crate::citizens::CitizenId>,
 }
 
 /// [berthing] Where a freighter lies at the berth: its centre and the
@@ -759,6 +763,25 @@ pub struct PortStats {
     pub day_trips_today: u32,
     #[serde(default)]
     pub day_trippers_back_today: u32,
+    /// [ferry-islands] Residents carried today on trips of their own
+    /// between terminals in town (to and from the islands).
+    #[serde(default)]
+    pub own_trips_today: u32,
+    /// [ferry-islands] Loads (and lorries) taken across to the islands today.
+    #[serde(default)]
+    pub loads_ferried_today: u32,
+    #[serde(default)]
+    pub lorries_ferried_today: u32,
+    /// [ferry-islands] Riders still on the pier when the last boat had gone.
+    #[serde(default)]
+    pub missed_last_boat_today: u32,
+    /// [ferry-islands] Island households that moved to the mainland today,
+    /// worn down by the crossing.
+    #[serde(default)]
+    pub islanders_moved_off_today: u32,
+    /// [ferry-islands] Mainlanders who gave up a job on an island today.
+    #[serde(default)]
+    pub island_jobs_quit_today: u32,
 }
 
 /// Every dock and the ships on the water.
@@ -800,7 +823,78 @@ pub struct Ports {
     /// works, taken by the containerful when one calls.
     #[serde(default)]
     pub outbound: f32,
+    /// [ferry-islands] Loads for an island with no road from the city,
+    /// waiting at the mainland terminal for the next boat across (a car
+    /// ferry drives the lorry aboard; a passenger boat takes a few
+    /// pallets in its hold).
+    #[serde(default)]
+    pub ferry_freight: Vec<FerryLoad>,
+    /// [ferry-islands] Residents on their way to a pier from far off.
+    #[serde(default)]
+    pub to_pier: Vec<ToPier>,
+    /// [ferry-islands] Every pair of ferry terminals in town that a boat
+    /// can sail between, worked out with the port links (not saved).
+    #[serde(skip)]
+    pub links: Vec<FerryLink>,
+    /// [ferry-islands] Riders on a pier who have been told the last boat
+    /// has gone (so it is said once a night).
+    #[serde(skip)]
+    pub missed: std::collections::BTreeSet<crate::citizens::CitizenId>,
 }
+
+/// [ferry-islands] Someone on their way to terminal `board` (by bus, car or
+/// on foot, as any trip) to take the ferry to `alight` and go on to
+/// `target`: at the terminal they walk out onto the pier.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct ToPier {
+    pub citizen: crate::citizens::CitizenId,
+    pub board: BuildingId,
+    pub alight: BuildingId,
+    pub target: BuildingId,
+    pub purpose: crate::citizens::Purpose,
+    pub since: u64,
+}
+
+/// [ferry-islands] A load on its way to an island: off the road at
+/// terminal `at`, for the boat to `to`, then on to `cargo.to`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct FerryLoad {
+    pub at: BuildingId,
+    pub to: BuildingId,
+    pub cargo: Cargo,
+    pub since: u64,
+}
+
+/// [ferry-islands] Two ferry terminals in town joined by water: the
+/// sailing between them (metres) and whether both have a linkspan for
+/// a car ferry (large terminals).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FerryLink {
+    pub a: BuildingId,
+    pub b: BuildingId,
+    pub metres: f32,
+    pub cars: bool,
+}
+
+impl FerryLink {
+    /// The other end, seen from `x` (one of its ends).
+    pub fn other(&self, x: BuildingId) -> Option<BuildingId> {
+        if self.a == x {
+            Some(self.b)
+        } else if self.b == x {
+            Some(self.a)
+        } else {
+            None
+        }
+    }
+}
+
+/// [ferry-islands] Pallets a passenger boat takes across in its hold;
+/// lorries per car ferry come off its car deck (`PortKind::car_deck`).
+pub const HOLD_LOADS: usize = 2;
+/// [ferry-islands] Of a car ferry's deck, the share kept for lorries to
+/// the islands (the rest for cars).
+pub const LORRY_LANES: u32 = 4;
 
 /// [ferry-routes] Riders today on the runs from `from` to another
 /// terminal (`to`) or to a town off the map (`town`).

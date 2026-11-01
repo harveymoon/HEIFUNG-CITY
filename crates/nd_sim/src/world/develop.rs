@@ -239,6 +239,8 @@ impl World {
                 // [waterfront] beaches, and lots on the water
                 b.channel(Channel::Shore);
                 self.splat_shore(&mut b);
+                // [ferry-islands] the quiet of an island, less the crossing
+                self.splat_islands(&mut b);
                 // [parks] run-down parks sour the land round them
                 b.channel(Channel::Blight);
                 self.splat_parks(&mut b);

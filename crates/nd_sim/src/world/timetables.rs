@@ -141,6 +141,8 @@ impl World {
             TransitLeg::Bus { route, .. } => self.transit.routes.get_mut(*route).map(|r| &mut r.timeline),
             TransitLeg::Subway { line, .. } => self.subway.lines.get_mut(*line).map(|l| &mut l.timeline),
             TransitLeg::Rail { .. } => Some(&mut self.rail.timeline),
+            // [ferry-islands] The terminal the rider boards at.
+            TransitLeg::Ferry { board, .. } => self.ports.ports.values_mut().find(|p| p.building == Some(*board)).map(|p| &mut p.timeline),
             _ => None,
         }
     }
@@ -152,6 +154,7 @@ impl World {
         let mut bus_wait: HashMap<RouteId, u32> = HashMap::new();
         let mut metro_wait: HashMap<MetroLineId, u32> = HashMap::new();
         let mut rail_wait = 0;
+        let mut pier_wait: HashMap<BuildingId, u32> = HashMap::new();
         for c in self.citizens.values() {
             if !matches!(c.activity, Activity::Waiting { .. }) {
                 continue;
@@ -160,6 +163,7 @@ impl World {
                 Some(TransitLeg::Bus { route, .. }) => *bus_wait.entry(route).or_default() += 1,
                 Some(TransitLeg::Subway { line, .. }) => *metro_wait.entry(line).or_default() += 1,
                 Some(TransitLeg::Rail { .. }) => rail_wait += 1,
+                Some(TransitLeg::Ferry { board, .. }) => *pier_wait.entry(board).or_default() += 1,
                 _ => {}
             }
         }
@@ -198,7 +202,7 @@ impl World {
         let boarding = &self.ports.boarding;
         for p in self.ports.ports.values_mut().filter(|p| p.kind.is_ferry()) {
             let Some(b) = p.building else { continue };
-            p.timeline.sample(hour, boarding.get(&b).copied().unwrap_or(0), ferry_ride.get(&b).copied().unwrap_or(0));
+            p.timeline.sample(hour, boarding.get(&b).copied().unwrap_or(0) + pier_wait.get(&b).copied().unwrap_or(0), ferry_ride.get(&b).copied().unwrap_or(0));
         }
     }
 

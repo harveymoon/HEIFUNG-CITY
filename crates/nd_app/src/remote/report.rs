@@ -395,11 +395,13 @@ fn people(w: &World) -> Value {
             Activity::Riding { .. } => Some("bus"),
             Activity::OnTrain { .. } => Some("train"),
             Activity::OnMetro { .. } => Some("subway"),
+            Activity::OnFerry { .. } => Some("ferry"),
             Activity::Waiting { .. } => Some(match c.transit.map(|t| t.leg) {
                 Some(TransitLeg::Rail { .. }) => "train",
                 Some(TransitLeg::Subway { .. }) => "subway",
                 Some(TransitLeg::Air { .. }) => "air",
                 Some(TransitLeg::Taxi) => "taxi",
+                Some(TransitLeg::Ferry { .. }) => "ferry",
                 _ => "bus",
             }),
             Activity::Flying { .. } => Some("air"),
@@ -785,7 +787,7 @@ fn services(w: &World) -> Value {
             match c.transit.map(|t| t.leg) {
                 Some(TransitLeg::Bus { route, .. }) => *route_waiting.entry(key_str(route)).or_default() += 1,
                 Some(TransitLeg::Rail { board, .. }) => *station_waiting.entry(board).or_default() += 1,
-                Some(TransitLeg::Air { .. }) | Some(TransitLeg::Subway { .. }) | Some(TransitLeg::Taxi) | None => {}
+                Some(TransitLeg::Air { .. }) | Some(TransitLeg::Subway { .. }) | Some(TransitLeg::Taxi) | Some(TransitLeg::Ferry { .. }) | None => {}
             }
         }
     }

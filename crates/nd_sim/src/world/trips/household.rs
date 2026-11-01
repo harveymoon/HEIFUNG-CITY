@@ -145,6 +145,8 @@ impl World {
         // delivered; sold ones are driven away.
         for &m in &grown {
             self.wheels(m, hid, today);
+            // [ferry-islands] A job across the water that wore them down.
+            self.island_job_quit(m);
         }
         let money = self.households[hid].money;
         let stressed = home.is_some() && rent > income * RENT_STRESS_SHARE;
@@ -215,6 +217,10 @@ impl World {
         if self.family_school_move(hid, income) {
             return;
         }
+        // [ferry-islands] Worn down by the crossing: to the mainland.
+        if self.island_move(hid, income) {
+            return;
+        }
         // The comfortable move up a tier.
         if money > 300.0 && self.rng.random::<f32>() < 0.2 {
             let ct = self.buildings[home].tier;
@@ -247,6 +253,11 @@ impl World {
     /// school covers when its tier has one free; dorms and frat houses are
     /// the university's.
     pub(in crate::world) fn choose_home(&mut self, income: f32, cheaper_than: Option<(BuildingId, f32)>, family: bool) -> Option<BuildingId> {
+        self.choose_home_where(income, cheaper_than, family, &|_, _| true)
+    }
+
+    /// [ferry-islands] `choose_home` among the homes `keep` lets through.
+    pub(in crate::world) fn choose_home_where(&mut self, income: f32, cheaper_than: Option<(BuildingId, f32)>, family: bool, keep: &dyn Fn(&World, BuildingId) -> bool) -> Option<BuildingId> {
         // [stories] Rent as the household will feel it: net of a district's
         // rent support.
         let any_policy = self.any_district_policy();
@@ -254,7 +265,7 @@ impl World {
         let candidates: Vec<(BuildingId, Tier, f32)> = self
             .buildings
             .iter()
-            .filter(|(_, b)| b.land_use == LandUse::Residential && b.operating() && b.free_homes() > 0 && b.annex.is_none())
+            .filter(|(id, b)| b.land_use == LandUse::Residential && b.operating() && b.free_homes() > 0 && b.annex.is_none() && keep(self, *id))
             .map(|(id, b)| (id, b.tier, net(self, id, b.rent)))
             .filter(|(id, _, rent)| cheaper_than.is_none_or(|(h, r)| *id != h && *rent < r * 0.95))
             .filter(|(_, _, rent)| *rent <= income * RENT_STRESS_SHARE)

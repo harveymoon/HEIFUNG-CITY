@@ -45,6 +45,7 @@ pub(super) fn connectivity(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> 
         .collect();
     let failed: Vec<Value> = k.failed.iter().rev().map(|f| json!({ "tick": f.tick, "citizen": key_str(f.citizen), "from": v2(f.from), "target": key_str(f.target), "target_name": w.buildings.get(f.target).map(|b| b.name.clone()), "why": f.why })).collect();
     let mut out = json!({
+        "islands": islands_json(w),
         "walk_main": k.walk_main, "drive_main": k.drive_main,
         "walk_components": w.walk.comp.iter().collect::<std::collections::BTreeSet<_>>().len(),
         "stranded": areas, "alerts": alerts, "failed_trips": failed,
@@ -65,6 +66,39 @@ pub(super) fn connectivity(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> 
     Ok(out)
 }
 
+/// [ferry-islands] Every island (a walk network off the main one that
+/// ferries join to it), with its crossing, people, services and freight.
+pub(super) fn islands_json(w: &nd_sim::World) -> Vec<Value> {
+    let name = |b: nd_sim::BuildingId| w.buildings.get(b).map(|x| x.name.clone());
+    w.islands()
+        .into_iter()
+        .map(|i| {
+            json!({
+                "name": i.name, "center": v2(i.center), "car_ferry": i.car_ferry,
+                "terminals": i.terminals.iter().map(|b| json!({ "id": key_str(*b), "name": name(*b) })).collect::<Vec<_>>(),
+                "mainland": i.mainland.iter().map(|b| json!({ "id": key_str(*b), "name": name(*b) })).collect::<Vec<_>>(),
+                "buildings": i.buildings, "residents": i.residents, "workers": i.workers,
+                "sail_minutes": round(i.sail_minutes), "wait_minutes_now": i.wait_minutes.map(round),
+                "police": i.police, "fire": i.fire, "health": i.health, "loads_waiting": i.loads_waiting,
+            })
+        })
+        .collect()
+}
+
+/// [ferry-islands] `islands`: the islands and the day's ferry figures for them.
+pub(super) fn islands(_cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let w = &ctx.sim.world;
+    let s = &w.ports.stats;
+    let waiting = w.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Waiting { .. }) && matches!(c.transit.map(|t| t.leg), Some(nd_sim::transit::TransitLeg::Ferry { .. }))).count();
+    let aboard = w.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::OnFerry { .. })).count();
+    Ok(json!({
+        "islands": islands_json(w),
+        "crossings": w.ports.links.iter().map(|l| json!({ "a": key_str(l.a), "a_name": w.buildings.get(l.a).map(|b| b.name.clone()), "b": key_str(l.b), "b_name": w.buildings.get(l.b).map(|b| b.name.clone()), "metres": round(l.metres), "car_ferry": l.cars })).collect::<Vec<_>>(),
+        "today": { "residents_carried": s.own_trips_today, "ferry_riders": s.ferry_riders_today, "loads_ferried": s.loads_ferried_today, "lorries_ferried": s.lorries_ferried_today, "missed_last_boat": s.missed_last_boat_today, "moved_to_mainland": s.islanders_moved_off_today, "island_jobs_given_up": s.island_jobs_quit_today },
+        "now": { "on_the_piers": waiting, "aboard": aboard, "loads_at_piers": w.ports.ferry_freight.len() },
+    }))
+}
+
 /// [walk-networks] `walk_networks`: the walk graph's separate networks, the
 /// main one first, with the colours the "Walk networks" map layer draws
 /// them in (`overlay {layer: "walk_networks"}` shows it).
@@ -83,7 +117,7 @@ pub(super) fn walk_networks(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String>
         .enumerate()
         .map(|(k, n)| {
             json!({
-                "id": n.id, "main": k == 0, "name": n.name, "color": hex(n.color()), "color_linear": n.color().map(round),
+                "id": n.id, "main": k == 0, "island": w.connectivity.islands.iter().any(|i| i.comp == n.comp), "name": n.name, "color": hex(n.color()), "color_linear": n.color().map(round),
                 "nodes": n.nodes, "edges": n.edges, "underground_edges": n.underground,
                 "buildings": n.buildings.len(), "residents": n.residents, "workers": n.workers,
                 "lo": v2(n.lo), "hi": v2(n.hi), "center": v2((n.lo + n.hi) * 0.5),

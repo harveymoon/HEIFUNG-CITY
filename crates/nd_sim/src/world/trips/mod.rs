@@ -62,6 +62,9 @@ pub enum ModePlan {
     /// [taxis] Hail a cab: wait at `wait_at` for one coming to `at` on
     /// `segment` (`world/taxis.rs`).
     Taxi { segment: SegmentId, at: Vec2, wait_at: Vec2 },
+    /// [ferry-islands] Across the water by ferry from `board`'s pier
+    /// (`stop`, where to wait) to `alight`'s (`world/islands.rs`).
+    Ferry { board: BuildingId, alight: BuildingId, stop: Vec2 },
 }
 
 /// One way to make a trip and what it would cost the traveller, in
