@@ -18,7 +18,7 @@ use crate::RuleBasedMind;
 
 /// A small grid town: most of it zoned, the rest free ground along the
 /// streets, a coal plant, no depot, no police or clinic; grown three days.
-fn grown() -> World {
+pub(super) fn grown() -> World {
     static W: OnceLock<World> = OnceLock::new();
     W.get_or_init(|| {
         let mut w = World::new(WorldConfig::default());

@@ -145,3 +145,54 @@ impl World {
         r
     }
 }
+
+/// [talk] One way this person could get to work, as they weigh it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CommuteOption {
+    /// `TripMode::key`.
+    pub mode: String,
+    pub minutes: f32,
+    pub money: f32,
+    /// Remembered pain of the mode (bad half-hours).
+    pub pain: f32,
+    /// Weighed cost, minute-equivalents (lower is preferred).
+    pub cost: f32,
+}
+
+/// [talk] Their commute, home door to work door: what is on offer now,
+/// cheapest first, and why there is no bus, metro or train when there is
+/// none. For the citizen chat's prompt; reads only (no RNG).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct CommuteChoice {
+    pub metres: f32,
+    pub options: Vec<CommuteOption>,
+    /// `NoBus::key`, when no bus serves the trip.
+    pub no_bus: Option<String>,
+    pub metro: bool,
+    pub train: bool,
+}
+
+impl World {
+    /// [talk] See `CommuteChoice`. None without a home and a job.
+    pub fn commute_choice(&self, id: CitizenId) -> Option<CommuteChoice> {
+        let c = self.citizens.get(id)?;
+        let (home, work) = (c.home?, c.work?);
+        let (from, to) = (self.building_entrance(home)?, self.building_entrance(work)?);
+        let q = trips::TripQuery { from, to, target: work, purpose: Purpose::Work, allow_transit: true, allow_car: true, allow_bike: true };
+        let mut options = self.mode_options(id, &q);
+        options.sort_by(|a, b| a.cost.total_cmp(&b.cost));
+        let mut seen = std::collections::HashSet::new();
+        let options = options
+            .into_iter()
+            .filter(|o| seen.insert(o.mode.index()))
+            .map(|o| CommuteOption { mode: o.mode.key().to_string(), minutes: o.minutes, money: o.money, pain: o.pain, cost: o.cost })
+            .collect();
+        Some(CommuteChoice {
+            metres: from.distance(to),
+            options,
+            no_bus: self.transit.why_no_bus(from, to).map(|w| w.key().to_string()),
+            metro: self.plan_subway_trip(from, to).is_some(),
+            train: self.plan_rail_trip(from, to).is_some(),
+        })
+    }
+}

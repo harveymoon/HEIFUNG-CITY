@@ -2477,6 +2477,15 @@ button) does.
 - `diary {citizen, refresh?}`: the citizen's diary of today, written from their memories and
   conversations: `day`, `text`, `pending` (a model still writing: call again), `by_model`,
   `backend`. The stand-in answers at once. Display only, not in the save.
+- [talk] `talk {citizen, text?, memory?, clear?}` (alias `chat`): the mayor says `text` (at most
+  300 characters) to a citizen, who answers in character from their real state (see
+  docs/AI_COMMITTEE.md, "Talk to a citizen"). Returns `sent` (`model`, `stand_in` or
+  `over_budget`), `reply` (at once with the stand-in), `typing` (a model still answering: call
+  again without `text` to read it), `lines` (the chat, saved with the city, bounded),
+  `status`, `model_messages_today`, `daily_budget`. `memory: true` lets the reply leave a memory
+  ("Talked to the mayor about ..."), one a game day; default the setting. A line holding an API
+  key is refused. Without `text` it only reads the chat; `clear: true` forgets it; `open: true`
+  opens Talk in the person pane (select the citizen to show it).
 - `voices {limit?}`: conversations of spotlit or favourite citizens that got a model's line
   (`serial`, `a`, `b`, names, `topic`, `template` (the sim's line), `line` (the model's)), and
   `lines_written`, `diaries_written`. With the stand-in no lines are asked (the template is the

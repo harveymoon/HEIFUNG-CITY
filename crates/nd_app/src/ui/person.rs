@@ -167,7 +167,7 @@ fn memory_line(ui: &mut egui::Ui, m: &nd_sim::Memory) {
 /// doing, where they are going, and everything they remember. The star keeps
 /// them in City Data's People, Favourites; closing the pane deselects them.
 /// `content` is the map area between the bars the window stays inside.
-pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, flags: &mut super::UiFlags, content: egui::Rect, cam: (&mut CameraFollow, &mut CameraFly, &mut CameraMode)) {
+pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection: &mut Selection, flags: &mut super::UiFlags, content: egui::Rect, cam: (&mut CameraFollow, &mut CameraFly, &mut CameraMode), mut committee: Option<&mut crate::committee::CommitteeRt>) {
     let (follow, fly, mode) = cam;
     let Selection::Citizen(id) = *selection else { return };
     if !sim.world.citizens.contains_key(id) {
@@ -194,6 +194,10 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
                 }
                 // [voices] Their diary of today, beside the pane.
                 super::diary::button(ui);
+                // [talk] Chat with them, in the pane.
+                if committee.is_some() {
+                    super::talk::button(ui);
+                }
                 if ui.small_button("Flag for Claude (F8)").on_hover_text("Bookmark this person with a note; the remote API's `flags` command lists it").clicked() {
                     flags.want_flag = true;
                 }
@@ -209,6 +213,13 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
                 go_to = Some(b);
             }
             ui.separator();
+            if let Some(open) = committee.as_deref_mut().and_then(|rt| rt.talk_open_request.take()) {
+                super::talk::set_open(ui.ctx(), open);
+            }
+            if let Some(rt) = committee.as_deref_mut().filter(|_| super::talk::is_open(ui.ctx())) {
+                super::talk::section(ui, &mut sim.world, rt, id);
+                ui.separator();
+            }
             let w = &sim.world;
             if let Some(b) = activity_heading(ui, w, id) {
                 go_to = Some(b);

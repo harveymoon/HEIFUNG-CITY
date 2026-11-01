@@ -240,7 +240,7 @@ mod timetable_tests;
 mod transit_tests;
 #[cfg(test)]
 mod metro_loop_tests;
-pub use transit_report::RidershipReport;
+pub use transit_report::{CommuteChoice, CommuteOption, RidershipReport};
 mod tourism;
 mod trips;
 mod water;
@@ -894,6 +894,10 @@ pub struct World {
     /// with none and are given a starting stock on load.
     #[serde(default)]
     pub containers: crate::containers::Containers,
+    /// [talk] The mayor's chats with citizens (the person pane's Talk):
+    /// display only, bounded (`crate::talk`). Old saves load with none.
+    #[serde(default)]
+    pub talks: crate::talk::TalkLog,
 }
 
 impl World {
@@ -1017,6 +1021,7 @@ impl World {
             insight: Default::default(),
             // [K34] A new city keeps records from its first box.
             containers: crate::containers::Containers { live: true, ..Default::default() },
+            talks: Default::default(),
         };
         w.landscape.set(Landscape::new(&w.config.landscape));
         // [sweep-sim] Grids over the whole buildable land (far islands too).

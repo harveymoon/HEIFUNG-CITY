@@ -22,10 +22,13 @@ pub mod http;
 pub mod mock;
 pub mod questions;
 pub mod settings;
+pub mod talk;
 pub mod voices;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod talk_tests;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -121,6 +124,9 @@ pub enum Task {
     /// last member asked, and nobody has answered yet (the stand-in then
     /// answers rather than leave the mayor in silence).
     Question { question: String, facts: Vec<Fact>, earlier: Vec<Heard>, last: bool },
+    /// [talk] The mayor talks to a citizen: their in-character reply to
+    /// `said` (text), from their real state and the chat so far.
+    Chat { who: talk::TalkCard, history: Vec<talk::ChatTurn>, said: String },
 }
 
 /// [ask-committee] A reply earlier in a question's thread, as the next
@@ -147,6 +153,7 @@ impl Task {
             Task::Dialogue { .. } => "dialogue",
             Task::Diary { .. } => "diary",
             Task::Question { .. } => "question",
+            Task::Chat { .. } => "talk",
         }
     }
 
@@ -254,6 +261,7 @@ pub fn system_prompt(req: &TurnRequest) -> String {
         Task::Dialogue { a, .. } => {
             return format!("You write one line of dialogue for {}, a fictional citizen of {}, a cyberpunk city in the game HEIFUNG://CITY. Who they are: {}. Reply with the line only: one short spoken sentence (at most 20 words), no quotes, no name, no stage directions.", a.name, req.city, a.describe());
         }
+        Task::Chat { who, .. } => return talk::chat_system(&req.city, who),
         Task::Diary { who, .. } => {
             return format!("You write the private diary of {}, a fictional citizen of {}, a cyberpunk city in the game HEIFUNG://CITY. Who they are: {}. Write in the first person, in their voice, 60 to 120 words, plain prose. Use only the events you are given; never invent places, people or numbers.", who.name, req.city, who.describe());
         }
@@ -290,6 +298,9 @@ pub fn system_prompt(req: &TurnRequest) -> String {
 
 /// The user prompt: the report and the task.
 pub fn user_prompt(req: &TurnRequest) -> String {
+    if let Task::Chat { who, history, said } = &req.task {
+        return talk::chat_user(who, history, said);
+    }
     let mut s = format!("{}\n", req.report);
     let facts = |f: &[Fact]| f.iter().map(Fact::line).collect::<Vec<_>>().join("; ");
     match &req.task {
@@ -380,6 +391,8 @@ pub fn user_prompt(req: &TurnRequest) -> String {
             }
             s.push_str("Write tonight's diary entry.");
         }
+        // [talk] Answered above.
+        Task::Chat { .. } => {}
     }
     s
 }
@@ -469,7 +482,7 @@ impl Courier {
                 // JSON) is still the member's: `questions::parse_answer`
                 // reads what it can.
                 Ok(reply) if matches!(req.task, Task::Question { .. }) && !reply.text.trim().is_empty() => out.push(Delivered { id, req, reply, fell_back: None }),
-                Ok(reply) if matches!(req.task, Task::Propose { .. }) && reply.text.trim().is_empty() => {
+                Ok(reply) if matches!(req.task, Task::Propose { .. } | Task::Chat { .. }) && reply.text.trim().is_empty() => {
                     let why = "the model gave an empty answer".to_string();
                     self.note_error(why.clone());
                     out.push(self.stand_in(id, req, why));

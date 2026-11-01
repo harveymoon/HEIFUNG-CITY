@@ -721,6 +721,14 @@ fn settings_tab(ui: &mut egui::Ui, sim: &mut Sim, rt: &mut CommitteeRt) {
         ui.label("Reply cap (tokens)");
         ui.add(egui::DragValue::new(&mut s.max_tokens).range(64..=4000));
     });
+    // [talk] Chats with citizens (the person pane's Talk).
+    ui.horizontal(|ui| {
+        ui.label("Citizen chats: messages a day");
+        ui.add(egui::DragValue::new(&mut s.talk_daily_budget).range(0..=1000)).on_hover_text("Lines sent to the model each day (0: the stand-in always answers)");
+        ui.label("cap (tokens)");
+        ui.add(egui::DragValue::new(&mut s.talk_max_tokens).range(64..=4000)).on_hover_text("Reply cap of one chat line; Claude's thinking counts against it");
+    });
+    ui.checkbox(&mut s.talk_memories, "A chat leaves a memory in the citizen (one a day)");
     if s != rt.settings {
         rt.settings = s;
     }

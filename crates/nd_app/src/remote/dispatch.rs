@@ -560,6 +560,14 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("refresh", "bool: write it again"),
         ("returns", "day, text, pending (a model still writing: call again), by_model, backend; display only, never in the save"),
     ] },
+    Cmd { name: "talk", aliases: &["chat"], effect: Paid, run: |cmd, ctx| committee::talk(cmd, &mut ctx.sim, &mut ctx.committee), help: &[
+        ("citizen", "id"),
+        ("text", "optional: what the mayor says (at most 300 characters); without it, read the chat"),
+        ("memory", "bool: the reply leaves a memory in them (\"Talked to the mayor about ...\", one a game day); default the setting"),
+        ("clear", "bool: forget the chat first"),
+        ("open", "bool: open (or close) Talk in the person pane (select the citizen to show the pane)"),
+        ("returns", "sent (model|stand_in|over_budget), reply (at once with the stand-in), typing (a model still answering: call again without text), lines, status, model_messages_today, daily_budget; through the committee's backend (stand-in offline), never a key"),
+    ] },
     Cmd { name: "voices", aliases: &[], effect: Read, run: |cmd, ctx| committee::voices(cmd, &ctx.sim, &ctx.committee), help: &[
         ("limit", "default 20"),
         ("returns", "conversations of spotlit or favourite citizens that got a model's line (template and line), lines_written, diaries_written, backend"),
@@ -1187,6 +1195,35 @@ mod dispatch_tests {
         app.world_mut().resource_mut::<crate::committee::CommitteeRt>().remote_may_switch = true;
         let (status, body) = send(&mut app, json!({ "cmd": "committee", "action": "settings", "backend": "mock" }));
         assert_eq!(status, 200, "{body}");
+    }
+
+    /// [talk] A chat through the remote API: offline the stand-in answers
+    /// at once from the citizen's state; the chat reads back and saves
+    /// with the city; a key-shaped line is refused.
+    #[test]
+    fn a_citizen_talks_back_through_the_api() {
+        let mut app = app();
+        send(&mut app, json!({ "cmd": "seed_demo" }));
+        send(&mut app, json!({ "cmd": "step", "ticks": 2880 }));
+        let id = {
+            let sim = app.world().resource::<Sim>();
+            sim.world.citizens.iter().next().map(|(id, _)| super::view::key_str(id)).expect("a resident")
+        };
+        let (status, body) = send(&mut app, json!({ "cmd": "talk", "citizen": id, "text": "How do you get to work?", "memory": false }));
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["sent"], "stand_in", "{body}");
+        assert_eq!(body["typing"], false);
+        assert!(body["reply"].as_str().is_some_and(|r| !r.is_empty()), "{body}");
+        assert_eq!(body["lines"].as_array().unwrap().len(), 2);
+        assert!(body["status"].as_str().unwrap().starts_with("Offline"), "{body}");
+        let (_, body) = send(&mut app, json!({ "cmd": "talk", "citizen": id }));
+        assert_eq!(body["lines"].as_array().unwrap().len(), 2, "read back: {body}");
+        assert!(body["sent"].is_null());
+        let (status, body) = send(&mut app, json!({ "cmd": "talk", "citizen": id, "text": "here: sk-ant-abc123" }));
+        assert_eq!(status, 400, "{body}");
+        assert!(!body.to_string().contains("abc123"), "{body}");
+        let (_, body) = send(&mut app, json!({ "cmd": "talk", "citizen": id, "clear": true }));
+        assert_eq!(body["lines"].as_array().unwrap().len(), 0);
     }
 
     /// [ask-committee] A question through the remote API: the stand-in
