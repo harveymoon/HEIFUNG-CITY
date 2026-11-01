@@ -106,7 +106,7 @@ the replies back. So:
 Every example is the POST body; the reply always carries `"ok"`.
 
 **Other names.** Some commands answer to other names as well (`help` lists them under `aliases`):
-`add_interchange` (`interchange`); `campus` (`university`); `city_name` (`city_identity`); `cleanup` (`clean_up`); `committee_meeting` (`meeting`); `corps` (`corp`, `megacorp`); `dirt_at` (`contamination_at`); `district` (`districts`); `estate` (`land_market`); `favourite` (`favorite`); `graphics` (`quality`); `grounds_junctions` (`park_junctions`); `heat_vision` (`heat`); `level_crossings` (`level_crossing`, `crossings`, `rail_crossings`); `photo_mode` (`photo`); `pressure` (`pressures`); `roads` (`road_condition`, `road_budget`); `shore` (`waterfront`); `skyline` (`towers`, `height_limit`); `street_events` (`nights`); `subway` (`metro`); `taxes` (`tax`); `tolls` (`toll`); `tourism` (`tourists`); `tow_car` (`tow`, `boot`); `zoom_to` (`zoom`).
+`add_interchange` (`interchange`); `campus` (`university`); `city_name` (`city_identity`); `cleanup` (`clean_up`); `committee_meeting` (`meeting`); `corps` (`corp`, `megacorp`); `megablock` (`megablocks`, `arcology`); `dirt_at` (`contamination_at`); `district` (`districts`); `estate` (`land_market`); `favourite` (`favorite`); `graphics` (`quality`); `grounds_junctions` (`park_junctions`); `heat_vision` (`heat`); `level_crossings` (`level_crossing`, `crossings`, `rail_crossings`); `photo_mode` (`photo`); `pressure` (`pressures`); `roads` (`road_condition`, `road_budget`); `shore` (`waterfront`); `skyline` (`towers`, `height_limit`); `street_events` (`nights`); `subway` (`metro`); `taxes` (`tax`); `tolls` (`toll`); `tourism` (`tourists`); `tow_car` (`tow`, `boot`); `zoom_to` (`zoom`).
 
 `help` is checked against the dispatcher by a unit test (`remote::dispatch_tests`): every command
 it runs is documented in `help` or named as an alias, and nothing else is.
@@ -1271,6 +1271,41 @@ A University is placed like any service: `place {kind: "university", tier, x, y}
 {"cmd": "corps", "action": "promote", "building": "88:1"}
 {"cmd": "corps", "action": "rules", "max_share": 0.05, "levy": 0.1}
 {"cmd": "campus", "action": "grow", "days": 10}
+```
+
+### Mega-blocks [megablocks]
+
+A mega-corp's flagship: an arcology over a block of plots it put together round land it held (its
+own homes and shops, vacant plots, low buildings the market may buy). Gates: 5,000 people, the
+corp 10+ days old with 8+ holdings, one per corp, one rising at a time (15% a day when all pass).
+Built over 40 days in four stages (`piling`, `podium`, `towers`, `fit_out`, a delivery each);
+open, it has homes for thousands, shops and a market hall in its street halls, office suites,
+sky gardens and car decks. Its corp opens a market, gym, café, noodle bar, lounge, bakehouse, tech
+shop and two offices in it at once; the rest is let over the days. Residents' trips to a job, a
+shop or a bar inside never touch the streets (a lift ride); residents take free jobs inside first
+(and up to 10 a day who work outside swap); 80% of a resident's park trips go up to a sky garden.
+Round it: land worth more out to 340 m, shade (a nuisance) on the plots next door; its corp's shops
+city-wide pull more custom while it stands.
+
+`inspect {building}` carries `megablock` (null otherwise; a tenant's carries its block's with
+`tenant_in`): id, name, corp, corp_id, open, progress, stage, stage_key, days_left, started_day,
+opened_day, pos, plots, area_m2, towers, tower_floors [per tower], storeys, height_m, homes,
+households, residents, `shops`/`market_counters`/`offices` {units, let}, sky_gardens, bridges,
+parking, `jobs` {total, filled}, residents_working, residents_working_inside, `trips`
+{inside_today, out_today, gardens_today, inside_yesterday, out_yesterday, gardens_yesterday,
+inside_share_yesterday, inside_total}, jobs_moved_inside_total, `tenants` [{id, name, kind}].
+
+`megablock {action?}` (also `megablocks`, `arcology`):
+
+| action | fields | reply |
+| --- | --- | --- |
+| `summary` (default) | | `blocks` (as above), `corps` [{corp, name, megablock, may_build, why_not}], `stats` {started_total, opened_total, inside_trips_total, garden_visits_total, jobs_moved_inside_total, last_refusal}, `rules` |
+| `start` | `corp`?, `force` (dev: skip the gates) | a corp breaks ground now; `started` |
+| `force` | `corp`?, `progress` (0..1) | dev: start one if needed, clear its bought plots, set the stage; without `progress` it is built and opened; `block` |
+
+```json
+{"cmd": "megablock", "action": "force", "progress": 0.6}
+{"cmd": "megablock", "action": "force"}
 ```
 
 ### Skyline: skyscrapers, supertalls, megatalls [supertall]

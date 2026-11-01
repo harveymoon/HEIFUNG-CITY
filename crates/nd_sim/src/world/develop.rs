@@ -252,6 +252,8 @@ impl World {
                 // [supertall] an address by a landmark tower
                 b.channel(Channel::Landmarks);
                 self.splat_towers(&mut b);
+                // [megablocks] an arcology lifts its district, shades its street
+                self.splat_megablocks(&mut b);
                 b.channel(Channel::Other);
                 // [pt-growth] the lie of the land: the hillsides above
                 // town are dearer from the start, the low ground cheaper
@@ -655,6 +657,8 @@ impl World {
                 let special = !b.is_grown() || self.district_frozen(b.lot)
                     // [supertall] a league tower is never torn down for a tier
                     || b.plot.tower.is_some()
+                    // [megablocks] nor a corp's arcology
+                    || b.plot.megablock.is_some()
                     // [taxis] a taxi yard and a cargo hub are what they are
                     || b.business.as_ref().is_some_and(|z| matches!(z.kind, BusinessKind::TaxiCompany | BusinessKind::CargoHub));
                 (b.land_use, b.tier, value, b.is_derelict(), full, special)
@@ -1328,6 +1332,7 @@ impl World {
             w.splat_parks(b)
         });
         report("towers", &|b| w.splat_towers(b));
+        report("megablocks", &|b| w.splat_megablocks(b));
         report("setting", &|b| w.splat_setting(b));
         report("access", &|b| {
             let (n, cell, half) = b.cells();

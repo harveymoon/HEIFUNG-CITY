@@ -237,6 +237,8 @@ pub(super) fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         v["land"] = property::building_land(w, id);
         // [megacorp] the owning corp or university and its logo
         v["brand"] = corp::building_brand(w, id);
+        // [megablocks] an arcology's stage, what is inside, its trips
+        v["megablock"] = super::megablock::building_megablock(w, id);
         // [supertall] height, rank in the skyline, and a league tower's record
         v["tower"] = skyline::building_tower(w, id);
         // [ferry-routes] a terminal's routes, a shipping port's lane

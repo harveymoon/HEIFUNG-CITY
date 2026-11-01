@@ -480,6 +480,8 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
         brand: world.brand_mark(id),
         annex: b.annex,
         tower: b.plot.tower,
+        // [megablocks] an arcology's plan
+        megablock: b.plot.megablock,
         // [attractions] a pier's deck over the water
         pier: world.attractions.piers.get(&id),
         // [parks] litter and dealers in a park let go

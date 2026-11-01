@@ -283,6 +283,11 @@ mod relocate;
 mod tenants;
 // [malls] Strip malls, malls and mega-malls.
 pub mod malls;
+// [megablocks] Mega-corps' arcologies.
+pub mod megablocks;
+pub use megablocks::MegaBlockReport;
+#[cfg(test)]
+mod megablocks_tests;
 // [land-assembly] Companies spreading over the land behind the road.
 mod land_assembly;
 #[cfg(test)]
@@ -862,6 +867,10 @@ pub struct World {
     /// `world/corp.rs`, `world/campus.rs`). Old saves load with none.
     #[serde(default)]
     pub corps: crate::corp::Corporations,
+    /// [megablocks] The mega-blocks' city-wide tallies (each block's own
+    /// record is on its building, `Plot::megablock`). Old saves: none.
+    #[serde(default)]
+    pub megablocks: crate::megablock::MegaBlockStats,
     /// [delivery-hours] Lorries ordered but not yet on the road: deliveries
     /// go out in working hours, each at its own minute
     /// (`world/delivery_hours.rs`). Old saves load with none.
@@ -1020,6 +1029,7 @@ impl World {
             shore: crate::shore::ShoreState { reach_water: true, ..Default::default() },
             path_links: Default::default(),
             corps: Default::default(),
+            megablocks: Default::default(),
             freight_queue: Vec::new(),
             games: Default::default(),
             airlifts: Vec::new(),

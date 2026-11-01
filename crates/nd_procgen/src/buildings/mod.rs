@@ -15,6 +15,8 @@ pub mod brand;
 mod shopfronts;
 // [malls] Strip malls, malls and mega-malls.
 mod malls;
+// [megablocks] mega-corps' arcologies
+mod megablock;
 mod civic;
 mod commercial;
 mod construction;
@@ -208,6 +210,11 @@ fn building_site(ctx: &Ctx, style: Style, rng: &mut nd_sim::SimRng, extras: &Ext
         supertall::site(&mut g, ctx, &t, progress);
         return g;
     }
+    // [megablocks] An arcology's four stages, a crane per tower.
+    if style == Style::MegaBlock {
+        megablock::site(&mut g, ctx, extras, progress);
+        return g;
+    }
     if Style::CAPSULE.contains(&style) {
         // [K39] The domes, pills and saucers go up in their own shape: the
         // finished building (from the same stream, so the same building)
@@ -238,12 +245,13 @@ fn finished(ctx: &Ctx, style: Style, rng: &mut nd_sim::SimRng, extras: &Extras) 
     // [megacorp] The owner's brand: rooftop signs, banners, the HQ crown.
     // [K19] Not on a public beach: a campus that annexed one as its
     // "plaza" laid a lawn quad over the sand, the towels under it.
-    if let Some(m) = extras.brand.as_ref().filter(|_| style != Style::Beach) {
+    // [megablocks] An arcology wears its corp's logo on its own crown.
+    if let Some(m) = extras.brand.as_ref().filter(|_| style != Style::Beach && style != Style::MegaBlock) {
         brand::decorate(&mut g, ctx, m);
     }
     // [tenants] A sign over each shop on the ground floor ([malls] a mall
     // style hangs its own).
-    if !extras.units.is_empty() && !style.is_mall() {
+    if !extras.units.is_empty() && !style.is_mall() && style != Style::MegaBlock {
         shopfronts::draw(&mut g, ctx, extras.units, ctx.seed);
     }
     // [capsule] The dome district is spotless whatever its tier or age.

@@ -12,6 +12,8 @@ impl World {
         let tick = self.clock.tick;
         // Tallied by `update_economy`, not every tick.
         let available = self.available;
+        // [megablocks] An arcology's residents at home have its sky gardens.
+        let arcologies = self.megablocks.opened_total > 0;
         let population = self.citizens.len() as u32;
         let groceries_for_sale = self.groceries_for_sale;
         let meals_for_sale = self.meals_for_sale;
@@ -90,7 +92,13 @@ impl World {
                     has_work: c.work.is_some(),
                     home_name: c.home.and_then(|h| self.buildings.get(h)).map(|b| b.name.as_str()),
                     work_name: c.work.and_then(|w| self.buildings.get(w)).map(|b| b.name.as_str()),
-                    available,
+                    available: {
+                        let mut a = available;
+                        if arcologies && c.home.is_some() && c.inside == c.home && c.home.and_then(|h| self.megablock_of(h)).is_some() {
+                            a[LandUse::Park.index()] = true;
+                        }
+                        a
+                    },
                     population,
                     satiety: c.satiety,
                     groceries: c.groceries,
@@ -180,6 +188,8 @@ impl World {
                     }
                 }
             }
+            // [megablocks] Up to the sky garden instead of out to a park.
+            Intent::Visit(LandUse::Park) if self.sky_garden_visit(id) => {}
             Intent::Visit(lu) => {
                 // Somewhere that is open: not a site, not a shut business,
                 // not a derelict shell.

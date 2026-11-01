@@ -58,6 +58,8 @@ pub mod level_crossing;
 /// [looks] What citizens look like.
 pub mod looks;
 pub mod market;
+// [megablocks] corps' arcologies
+pub mod megablock;
 pub mod mind;
 pub mod names;
 pub mod park;

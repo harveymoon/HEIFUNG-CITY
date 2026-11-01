@@ -802,6 +802,9 @@ impl Building {
                     _ => (homes, jobs),
                 }
             }
+            // [megablocks] An arcology's homes are its towers' (its plan);
+            // its jobs are all in its units (tenants), none its own.
+            Some(crate::estate::Form::MegaBlock) if self.plot.megablock.is_some() => (self.plot.megablock.map_or(0, |m| m.homes), 0),
             // [malls] A mall's shop floors are busier than an office floor:
             // twice a shop building's staff a floor.
             Some(crate::estate::Form::Mall | crate::estate::Form::MegaMall) => {
@@ -834,6 +837,8 @@ impl Building {
             Some(crate::estate::Form::StripMall) => self.parking_capacity = 10 + (self.seed % 11) as u16,
             Some(crate::estate::Form::Mall) => self.parking_capacity = 30 * k,
             Some(crate::estate::Form::MegaMall) => self.parking_capacity = 60 * k,
+            // [megablocks] Car decks in the podium.
+            Some(crate::estate::Form::MegaBlock) => self.parking_capacity = (homes as f32 * crate::megablock::PARKING_PER_HOME) as u16 + 40,
             _ => {}
         }
     }
@@ -849,9 +854,13 @@ impl Building {
         let k = 1 + self.plot.extra_lots.len() as u16;
         let shop_floor = (if self.tier == Tier::High { 4 } else { 3 }) * k;
         let homes_above = self.land_use == LandUse::Residential;
+        let mega = self.plot.form == Some(crate::estate::Form::MegaBlock);
         let mut own = 0u16;
         for u in self.units.iter_mut() {
-            let n = if homes_above {
+            let n = if mega {
+                // [megablocks] By floor area: shops, market counters, offices.
+                crate::megablock::unit_jobs(u.shopfront, u.area) as f32
+            } else if homes_above {
                 shop_floor as f32 * SHOPFRONT_STAFFING * u.share * u.floors() as f32
             } else {
                 jobs as f32 / floors * u.share * u.floors() as f32

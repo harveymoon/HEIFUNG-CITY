@@ -106,6 +106,8 @@ impl World {
             Some(Form::Tower) => crate::towers::TOWER_HULL_SLACK,
             // [malls] A mega-mall's car park fills the corners of its block.
             Some(Form::MegaMall) => super::super::malls::MALL_HULL_SLACK,
+            // [megablocks] An arcology's podium fills its block.
+            Some(Form::MegaBlock) => crate::megablock::MEGABLOCK_HULL_SLACK,
             _ if open => crate::estate::SITE_HULL_SLACK,
             _ => MERGE_HULL_SLACK,
         };

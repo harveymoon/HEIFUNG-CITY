@@ -28,7 +28,8 @@ pub fn demand_mw(b: &Building) -> f32 {
         Tier::High => 1.4,
     };
     // [supertall] Lifts, pumps and cooling up a league tower.
-    let tall = if b.plot.tower.is_some() { 1.25 } else { 1.0 };
+    // [megablocks] An arcology's too, and its malls and car decks.
+    let tall = if b.plot.tower.is_some() || b.plot.megablock.is_some() { 1.25 } else { 1.0 };
     per_floor * b.floors.max(1) as f32 * tier * tall
 }
 

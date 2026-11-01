@@ -425,7 +425,7 @@ impl World {
         let Some(b) = self.buildings.get(bid) else { return false };
         let Some(kind) = b.business.as_ref().map(|z| z.kind) else { return false };
         let Some(form) = expansion_form(kind) else { return false };
-        if !b.plot.pending_lots.is_empty() || b.construction.is_some() || b.plot.tower.is_some() {
+        if !b.plot.pending_lots.is_empty() || b.construction.is_some() || b.plot.tower.is_some() || b.plot.megablock.is_some() {
             return false;
         }
         // [land-assembly] Open-ground trades spread over the land round

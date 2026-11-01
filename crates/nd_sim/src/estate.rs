@@ -176,6 +176,9 @@ pub enum Form {
     /// [malls] A mall grown over the land round it: anchor stores, a food
     /// court, a parking structure; draws shoppers from across town.
     MegaMall,
+    /// [megablocks] A mega-corp's arcology over a block of plots: homes,
+    /// shops, offices and sky gardens in one (`Plot::megablock`).
+    MegaBlock,
 }
 
 impl Form {
@@ -190,6 +193,7 @@ impl Form {
             Form::StripMall => "strip mall",
             Form::Mall => "mall",
             Form::MegaMall => "mega-mall",
+            Form::MegaBlock => "mega-block",
         }
     }
 
@@ -288,6 +292,9 @@ pub struct Plot {
     /// [supertall] A league tower: its height, form and developer.
     #[serde(default)]
     pub tower: Option<crate::towers::Tower>,
+    /// [megablocks] A mega-corp's arcology: its plan and its tallies.
+    #[serde(default)]
+    pub megablock: Option<crate::megablock::MegaBlock>,
 }
 
 impl Plot {

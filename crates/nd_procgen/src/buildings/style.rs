@@ -580,6 +580,10 @@ styles! {
     Incinerator { label: "incinerator", family: Heavy, cluster: -1.0, draw: |g, c, r, _| sanitation::incinerator(g, c, r) },
     RecyclingPlant { label: "recycling plant", family: Heavy, cluster: -0.4, draw: |g, c, r, _| sanitation::recycling_plant(g, c, r) },
     TransferStation { label: "transfer station", family: Heavy, cluster: -0.4, draw: |g, c, r, _| sanitation::transfer_station(g, c, r) },
+    // -- [megablocks] a mega-corp's arcology (`buildings/megablock.rs`),
+    // drawn only for its `Form`; appended so `ALL` keeps its order. --
+    /// A podium of street halls, towers of flats, sky gardens and bridges.
+    MegaBlock { label: "mega-block", family: Special, cluster: -2.5, draw: |g, c, r, e| megablock::megablock(g, c, r, e) },
 }
 
 impl Style {
@@ -697,6 +701,7 @@ impl Style {
             Form::StripMall => Some(Style::StripMall),
             Form::Mall => Some(Style::Mall),
             Form::MegaMall => Some(Style::MegaMall),
+            Form::MegaBlock => Some(Style::MegaBlock),
         }
     }
 

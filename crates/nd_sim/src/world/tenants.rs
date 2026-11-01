@@ -72,6 +72,10 @@ pub fn unit_layout(b: &Building, frontage: f32, plate: f32) -> Vec<Unit> {
     if let Some(form) = b.plot.form.filter(|f| f.is_mall()) {
         return super::malls::mall_layout(form, b.floors.max(1), frontage, plate);
     }
+    // [megablocks] An arcology's street halls, market hall and offices.
+    if let Some(m) = b.plot.megablock.filter(|_| b.plot.form == Some(crate::estate::Form::MegaBlock)) {
+        return crate::megablock::layout(&m, plate);
+    }
     if b.business.as_ref().is_some_and(|z| z.kind.max_floors().is_some() || z.kind.needs_site() || z.kind.industry().is_some()) {
         return Vec::new();
     }
@@ -444,6 +448,9 @@ impl World {
             &[K::Cafe, K::BubbleTea, K::NoodleBar, K::Diner, K::FoodHall]
         } else if mall {
             &[K::Grocery, K::Bakery, K::GadgetShop, K::Cafe, K::Bookshop, K::Arcade, K::Gym, K::BubbleTea]
+        } else if h.plot.form == Some(crate::estate::Form::MegaBlock) {
+            // [megablocks] An arcology's street halls: a town's worth.
+            &[K::Grocery, K::Bakery, K::GadgetShop, K::Cafe, K::Bookshop, K::NoodleBar, K::BubbleTea, K::Bar, K::KaraokeBox, K::Arcade, K::Diner, K::PizzaPlace, K::BikeShop]
         } else if dear {
             &[K::Grocery, K::Bakery, K::GadgetShop, K::Cafe, K::Bookshop, K::NoodleBar, K::BubbleTea]
         } else if h.homes > 0 {
@@ -473,10 +480,20 @@ impl World {
         let demand = self.economy.demand_for(LandUse::Commercial).clamp(0.0, 1.0);
         let short_of_jobs = self.economy.job_gap();
         let hosts: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.vacant_units() > 0 && b.operating() && !b.is_derelict()).map(|(id, _)| id).collect();
-        let (mut let_today, mut mall_today) = (0, 0);
+        let (mut let_today, mut mall_today, mut mega_today) = (0, 0, 0);
         for host in hosts {
-            if let_today >= LETS_PER_DAY && mall_today >= super::malls::MALL_LETS_PER_DAY {
+            if let_today >= LETS_PER_DAY && mall_today >= super::malls::MALL_LETS_PER_DAY && mega_today >= crate::megablock::LETS_PER_DAY {
                 break;
+            }
+            // [megablocks] An arcology lets on its own allowance too, like a
+            // mall (its residents are its custom), its offices whether or
+            // not the town is short of jobs.
+            let mega = self.buildings[host].plot.form == Some(crate::estate::Form::MegaBlock);
+            if mega {
+                if mega_today < crate::megablock::LETS_PER_DAY {
+                    mega_today += self.let_megablock_units(host, day, demand);
+                }
+                continue;
             }
             // [malls] Malls let on their own allowance, up to two units a
             // day each, and more readily (shoppers come for the mall).
@@ -514,6 +531,35 @@ impl World {
                 }
             }
         }
+    }
+
+    /// [megablocks] Let up to two of the arcology `host`'s empty units today
+    /// (by hash): a shop or market counter to a trade the market would
+    /// open, an office suite to an office. The number let.
+    fn let_megablock_units(&mut self, host: BuildingId, day: u64, demand: f32) -> usize {
+        let vacant: Vec<usize> = self.buildings[host].units.iter().enumerate().filter(|(_, u)| u.vacant()).map(|(i, _)| i).take(2).collect();
+        let residents = self.buildings[host].residents.len() as f32;
+        let mut n = 0;
+        for i in vacant {
+            let h = &self.buildings[host];
+            let (seed, u) = (h.seed, h.units[i]);
+            // Its own residents are custom enough for its halls; offices
+            // come as the town grows.
+            let chance = if u.shopfront { LET_CHANCE * (0.5 + demand + residents / 1500.0).min(1.6) } else { LET_CHANCE * (0.8 + (self.economy.job_gap() * 10.0).clamp(0.0, 1.0)) };
+            if hash01(seed, day, 0x3E6A ^ i as u64) >= chance {
+                continue;
+            }
+            let kind = if u.shopfront { self.shop_for_unit(host, u.jobs, day ^ ((i as u64) << 20), u.role) } else { Some(BusinessKind::Office) };
+            let Some(kind) = kind else { continue };
+            let mut z = Business::new(kind, u.jobs);
+            let what = if u.role == UnitRole::FoodCourt { "a market-hall counter" } else if u.shopfront { "a unit in the street halls" } else { "an office suite" };
+            z.origin = Some(format!("Took {what} of {}, empty {} days.", self.buildings[host].name, self.clock.tick.saturating_sub(u.vacant_since) / 1440));
+            if self.open_tenant(host, i, z, None).is_some() {
+                n += 1;
+                self.economy.market.tenants_let_total += 1;
+            }
+        }
+        n
     }
 
     /// [tenants] A business that has outgrown its units (fully staffed,
