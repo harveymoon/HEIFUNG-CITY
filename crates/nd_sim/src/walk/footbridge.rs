@@ -26,7 +26,160 @@ pub struct Footbridge {
     /// on its deck to the bridge (`nd_procgen::terrain` draws it so), its
     /// ramp down to the street is not walked, and that end has no stairs.
     pub path_join: Option<(usize, NodeId, NodeId)>,
+    /// [r5-stairs] The stairs at each end (`StairKind::None` at a joined
+    /// end): a straight flight down the pavement where it has the room, a
+    /// switchback or a spiral tower where it is short.
+    pub stairs: [Stair; 2],
 }
+
+impl Footbridge {
+    /// [r5-stairs] The walk over the bridge from end `i`'s foot to the
+    /// other end's foot, every point of both stairs on the way (a joined
+    /// end gives its top alone).
+    pub fn over_from(&self, i: usize) -> Vec<Vec2> {
+        let j = 1 - i;
+        let mut pts: Vec<Vec2> = self.stairs[i].points_or(self.top[i]).into_iter().rev().collect();
+        pts.extend(self.stairs[j].points_or(self.top[j]));
+        pts
+    }
+}
+
+/// [r5-stairs] How a footbridge's stairs come down at one end.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StairKind {
+    /// No stairs: the end joins another deck or a raised path.
+    #[default]
+    None,
+    /// One flight straight down the pavement (`FOOTBRIDGE_RUN`).
+    Straight,
+    /// Two flights side by side, down and back with a landing between
+    /// them (`SWITCHBACK_NEEDS` of pavement).
+    Switchback,
+    /// A spiral round a column in a steel cage (`SPIRAL_NEEDS`).
+    Spiral,
+}
+
+/// [r5-stairs] One end's stairs: their walk line from the deck's end
+/// (first, at the bridge's level) down to the foot on the pavement (last,
+/// level 0), each point with its level above the street. The walk graph
+/// has a node at every point and the renderer draws the flights, landings
+/// and the spiral along the same line, so what walkers climb is what is
+/// drawn.
+#[derive(Clone, Debug, Default)]
+pub struct Stair {
+    pub kind: StairKind,
+    pub path: Vec<(Vec2, f32)>,
+    /// Unit direction along the pavement the stairs take.
+    pub along: Vec2,
+    /// Unit direction across the pavement, away from the road.
+    pub out: Vec2,
+    /// A spiral's axis (else the deck's end).
+    pub centre: Vec2,
+}
+
+impl Stair {
+    /// The walk line's points, top first; `top` alone without stairs.
+    pub fn points_or(&self, top: Vec2) -> Vec<Vec2> {
+        if self.path.is_empty() {
+            vec![top]
+        } else {
+            self.path.iter().map(|p| p.0).collect()
+        }
+    }
+
+    /// Length of the walk down the stairs, along the slope.
+    pub fn walk_length(&self) -> f32 {
+        self.path.windows(2).map(|w| (w[0].0.distance(w[1].0).powi(2) + (w[0].1 - w[1].1).powi(2)).sqrt()).sum()
+    }
+
+    /// The foot (None without stairs).
+    pub fn foot(&self) -> Option<Vec2> {
+        self.path.last().map(|p| p.0)
+    }
+
+    /// [r5-stairs] Lay out stairs from a deck end `top` at `level`, running
+    /// along `along` (`out` across the pavement away from the road), in the
+    /// `room` of pavement ahead: a straight flight where it fits, else a
+    /// switchback, else a spiral.
+    pub fn plan(top: Vec2, along: Vec2, out: Vec2, room: f32, level: f32) -> Stair {
+        use crate::junctions::FOOTBRIDGE_RUN;
+        let kind = if room >= STRAIGHT_NEEDS {
+            StairKind::Straight
+        } else if room >= SWITCHBACK_NEEDS {
+            StairKind::Switchback
+        } else {
+            StairKind::Spiral
+        };
+        let mut path = vec![(top, level)];
+        let mut centre = top;
+        match kind {
+            StairKind::Straight | StairKind::None => path.push((top + along * FOOTBRIDGE_RUN, 0.0)),
+            StairKind::Switchback => {
+                // Down the road-side half of the pavement from the deck's
+                // edge, round the landing and back down the inner half to a
+                // foot beside the deck's end.
+                let o = (SWITCHBACK_FLIGHT + SWITCHBACK_GAP) * 0.5;
+                let head = crate::junctions::FOOTBRIDGE_WIDTH * 0.5;
+                let run = level * 0.5 / STAIR_GRADE;
+                let mid = level * 0.5;
+                let land = head + run + SWITCHBACK_LANDING * 0.5;
+                path.push((top - out * o + along * head, level));
+                path.push((top - out * o + along * (head + run), mid));
+                path.push((top - out * o + along * land, mid));
+                path.push((top + out * o + along * land, mid));
+                path.push((top + out * o + along * (head + run), mid));
+                path.push((top + out * o + along * head, 0.0));
+            }
+            StairKind::Spiral => {
+                // On from the deck's end a step out from the road, then
+                // round the column one and a half turns, the walk line
+                // `SPIRAL_WALK` from its axis, to a foot on the pavement on
+                // the far side of the tower.
+                let start = top + out * SPIRAL_SHIFT;
+                centre = start + along * SPIRAL_WALK;
+                path.push((start, level));
+                let stair = Stair { kind, path: Vec::new(), along, out, centre };
+                for k in 1..=SPIRAL_PIECES {
+                    let f = k as f32 / SPIRAL_PIECES as f32;
+                    path.push((stair.spiral_point(f, SPIRAL_WALK), level * (1.0 - f)));
+                }
+            }
+        }
+        Stair { kind, path, along, out, centre }
+    }
+
+    /// [r5-stairs] The point `r` from a spiral's axis a share `f` of the
+    /// way round it from the top (0) to the foot (1).
+    pub fn spiral_point(&self, f: f32, r: f32) -> Vec2 {
+        let a = SPIRAL_TURNS * std::f32::consts::TAU * f;
+        self.centre + (-self.along * a.cos() + self.out * a.sin()) * r
+    }
+}
+
+/// [r5-stairs] Rise over run of a footbridge's flights (6 m up in 10 m).
+pub const STAIR_GRADE: f32 = 0.6;
+/// [r5-stairs] Pavement a straight flight takes from the deck's end, with
+/// a little to spare.
+pub const STRAIGHT_NEEDS: f32 = crate::junctions::FOOTBRIDGE_RUN + 0.8;
+/// [r5-stairs] Width of each of a switchback's two flights, the gap
+/// between them, and the depth of its landing.
+pub const SWITCHBACK_FLIGHT: f32 = 1.4;
+pub const SWITCHBACK_GAP: f32 = 0.15;
+pub const SWITCHBACK_LANDING: f32 = 1.5;
+/// [r5-stairs] Pavement a switchback takes from the deck's end.
+pub const SWITCHBACK_NEEDS: f32 = crate::junctions::FOOTBRIDGE_WIDTH * 0.5 + crate::junctions::FOOTBRIDGE_LEVEL * 0.5 / STAIR_GRADE + SWITCHBACK_LANDING + 0.8;
+/// [r5-stairs] A spiral's walk line from its axis, its outer and inner
+/// edges, its turns, how far it stands out from the road off the deck's
+/// end, and the pieces of its walk line (not a divisor of a whole turn's
+/// worth, so no two of its points stand at exactly the same place).
+pub const SPIRAL_WALK: f32 = 1.1;
+pub const SPIRAL_OUTER: f32 = 1.7;
+pub const SPIRAL_INNER: f32 = 0.24;
+pub const SPIRAL_TURNS: f32 = 1.5;
+pub const SPIRAL_SHIFT: f32 = 0.1;
+pub const SPIRAL_PIECES: usize = 19;
+/// [r5-stairs] Pavement a spiral takes from the deck's end.
+pub const SPIRAL_NEEDS: f32 = SPIRAL_WALK + SPIRAL_OUTER + 0.5;
 
 /// [r1-roads] (K14) The raised path coming down onto the street at road
 /// node `n`: the path piece from `n` whose other node is up on a deck
@@ -45,14 +198,83 @@ pub const CORNER_JOIN: f32 = 9.0;
 
 impl WalkGraph {
     /// [tools] Where a footbridge over crossing `k` would stand: its
-    /// walkway's ends and the stairs' feet (`add_footbridge`).
-    pub fn footbridge_shape(&self, k: u32, roads: &RoadNetwork) -> Option<([Vec2; 2], [Vec2; 2])> {
-        use crate::junctions::{FOOTBRIDGE_RUN, FOOTBRIDGE_WIDTH};
+    /// walkway's ends and the stairs at each (`add_footbridge`).
+    pub fn footbridge_plan(&self, k: u32, roads: &RoadNetwork) -> Option<([Vec2; 2], [Stair; 2])> {
+        use crate::junctions::{FOOTBRIDGE_LEVEL, FOOTBRIDGE_WIDTH};
         let c = self.crossings.get(k as usize)?;
         roads.try_segment(c.segment)?;
-        let along = self.stair_dirs(c, roads);
-        let top = [self.nodes[c.a as usize].pos + along[0] * (FOOTBRIDGE_WIDTH + 0.5), self.nodes[c.b as usize].pos + along[1] * (FOOTBRIDGE_WIDTH + 0.5)];
-        Some((top, [top[0] + along[0] * FOOTBRIDGE_RUN, top[1] + along[1] * FOOTBRIDGE_RUN]))
+        let ways = self.stair_ways(c, roads);
+        let top = [self.nodes[c.a as usize].pos + ways[0].0 * (FOOTBRIDGE_WIDTH + 0.5), self.nodes[c.b as usize].pos + ways[1].0 * (FOOTBRIDGE_WIDTH + 0.5)];
+        let plan = |i: usize| {
+            let (along, sid) = ways[i];
+            let out = self.away_from_road(top[i], along, sid, roads);
+            Stair::plan(top[i], along, out, self.stair_room(k, top[i], along, sid, roads), FOOTBRIDGE_LEVEL)
+        };
+        Some((top, [plan(0), plan(1)]))
+    }
+
+    /// [r5-stairs] Across the pavement at `p` away from street `sid`'s
+    /// middle (a unit vector square to `along`).
+    fn away_from_road(&self, p: Vec2, along: Vec2, sid: SegmentId, roads: &RoadNetwork) -> Vec2 {
+        let side = Vec2::new(-along.y, along.x);
+        let (s0, s1) = roads.segment_points(sid);
+        let on = geom::project_on_segment(p, s0, s1).1;
+        if (p - on).dot(side) >= 0.0 {
+            side
+        } else {
+            -side
+        }
+    }
+
+    /// [r5-stairs] How much pavement lies ahead of a deck's end at `top`
+    /// along `along` (street `sid`'s pavement) for its stairs: to the next
+    /// junction's crosswalk (on along a street running straight on through
+    /// a joint), less what other footbridges' stairs and decks there
+    /// already take.
+    pub(super) fn stair_room(&self, k: u32, top: Vec2, along: Vec2, sid: SegmentId, roads: &RoadNetwork) -> f32 {
+        const MOST: f32 = 40.0;
+        let mut room = 0.0f32;
+        let mut seg = sid;
+        let mut from = top;
+        let mut dir = along;
+        for _ in 0..6 {
+            let sg = roads.segment(seg);
+            let (pa, pb) = (roads.node(sg.a).pos, roads.node(sg.b).pos);
+            let far = if (pb - pa).dot(dir) >= 0.0 { sg.b } else { sg.a };
+            let fp = roads.node(far).pos;
+            room += (fp - from).dot(dir).max(0.0);
+            if room >= MOST {
+                break;
+            }
+            let streets: Vec<SegmentId> = roads.streets_at(far).filter(|&s| s != seg).collect();
+            if streets.len() == 1 {
+                let next = streets[0];
+                let nd = roads.away_dir(next, far);
+                if nd.dot(dir) > 0.95 {
+                    from = fp;
+                    dir = nd;
+                    seg = next;
+                    continue;
+                }
+            }
+            // The pavement ends at the far junction's crosswalk (or its
+            // corner), or at a dead end's turn.
+            room -= if streets.len() >= 2 { crosswalk_setback(roads, far, seg) + 2.0 } else { 2.0 };
+            break;
+        }
+        let side = Vec2::new(-along.y, along.x);
+        for f in &self.footbridges {
+            if f.crossing == k {
+                continue;
+            }
+            for q in f.top.iter().copied().chain(f.stairs.iter().flat_map(|s| s.path.iter().map(|p| p.0))) {
+                let (d, lat) = ((q - top).dot(along), (q - top).dot(side).abs());
+                if d > 0.5 && lat < 4.5 {
+                    room = room.min(d - 2.5);
+                }
+            }
+        }
+        room.min(MOST)
     }
 
     /// The way a footbridge's stairs run: along the street away from the
@@ -69,11 +291,13 @@ impl WalkGraph {
     /// mouth, which has no pavement of its own, each end's stairs run down
     /// the pavement of the street that end stands on, away from the
     /// junction, and the deck spans the mouth from corner to corner.
-    pub(super) fn stair_dirs(&self, c: &Crossing, roads: &RoadNetwork) -> [Vec2; 2] {
+    /// [r5-stairs] With the street whose pavement each end's stairs stand
+    /// on.
+    pub(super) fn stair_ways(&self, c: &Crossing, roads: &RoadNetwork) -> [(Vec2, SegmentId); 2] {
         let (s0, s1) = roads.segment_points(c.segment);
         let dir = (s1 - s0).normalize_or_zero();
         let along = Self::stair_dir(c, dir, roads);
-        let Some(n) = c.node.filter(|_| c.ramp) else { return [along; 2] };
+        let Some(n) = c.node.filter(|_| c.ramp) else { return [(along, c.segment); 2] };
         let centre = roads.node(n).pos;
         let end_dir = |p: Vec2| {
             // The street whose pavement line the end lies on.
@@ -93,7 +317,7 @@ impl WalkGraph {
                     ((off - want).abs() + if (p - centre).dot(away) < 0.0 { 50.0 } else { 0.0 }, s, away)
                 })
                 .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
-                .map_or(along, |(_, _, away)| away)
+                .map_or((along, c.segment), |(_, s, away)| (away, s))
         };
         [end_dir(self.nodes[c.a as usize].pos), end_dir(self.nodes[c.b as usize].pos)]
     }
@@ -101,8 +325,11 @@ impl WalkGraph {
     /// A footbridge over crossing `k`: the walkway a little to one side of
     /// the crosswalk at `FOOTBRIDGE_LEVEL`, stairs from each end along the
     /// pavement (`along`), and the feet joined to the pavement both ways.
-    pub(super) fn add_footbridge(&mut self, k: u32, along: [Vec2; 2], roads: &RoadNetwork) {
-        use crate::junctions::{FOOTBRIDGE_LEVEL, FOOTBRIDGE_RUN, FOOTBRIDGE_WIDTH};
+    pub(super) fn add_footbridge(&mut self, k: u32, roads: &RoadNetwork) {
+        use crate::junctions::{FOOTBRIDGE_LEVEL, FOOTBRIDGE_WIDTH};
+        let Some((plan_tops, plans)) = self.footbridge_plan(k, roads) else { return };
+        let along = [plans[0].along, plans[1].along];
+        let mut stairs: [Stair; 2] = Default::default();
         let c = self.crossings[k as usize].clone();
         let ends = [c.a, c.b];
         let mut nodes = [0u32; 4];
@@ -123,8 +350,7 @@ impl WalkGraph {
         for (i, &end) in ends.iter().enumerate() {
             let along = along[i];
             let p = self.nodes[end as usize].pos;
-            let top = p + along * (FOOTBRIDGE_WIDTH + 0.5);
-            let foot = top + along * FOOTBRIDGE_RUN;
+            let top = plan_tops[i];
             let t = self.add_node(top, None);
             self.nodes[t as usize].level = FOOTBRIDGE_LEVEL;
             if let Some((_, r, n)) = path_join.filter(|j| j.0 == i) {
@@ -166,17 +392,29 @@ impl WalkGraph {
                 feet[i] = top;
                 continue;
             }
-            let f = self.add_node(foot, None);
-            // The stairs.
-            self.link_raised(f, t);
+            // [r5-stairs] The stairs, node by node down their walk line
+            // (straight, switchback or spiral), each piece as long as the
+            // walk along its slope.
+            let stair = plans[i].clone();
+            let foot = stair.foot().unwrap_or(top);
+            let mut prev = t;
+            for &(q, level) in &stair.path[1..] {
+                let m = self.add_node(q, None);
+                self.nodes[m as usize].level = level;
+                self.link_raised(prev, m);
+                prev = m;
+            }
+            let f = prev;
+            stairs[i] = stair;
             // The foot on the pavement: back to the crosswalk's end, and on
             // to the next pavement node beyond it, so nobody doubles back.
             self.link(f, end, false);
+            let reach = ((foot - p).dot(along) * 0.5).max(1.0);
             let beyond = self.adj[end as usize]
                 .iter()
                 .filter(|e| e.cross == NO_CROSSING && !e.raised && e.to != f)
                 .map(|e| (e.to, (self.nodes[e.to as usize].pos - p).dot(along), self.nodes[e.to as usize].pos.distance(p)))
-                .filter(|&(_, d, _)| d > FOOTBRIDGE_RUN * 0.5)
+                .filter(|&(_, d, _)| d > reach)
                 .min_by(|a, b| a.2.total_cmp(&b.2));
             if let Some((q, _, _)) = beyond {
                 self.link(f, q, false);
@@ -189,7 +427,7 @@ impl WalkGraph {
         // The walkway.
         self.link_raised(nodes[1], nodes[3]);
         self.crossings[k as usize].bridged = true;
-        self.footbridges.push(Footbridge { crossing: k, top: tops, foot: feet, level: FOOTBRIDGE_LEVEL, width: FOOTBRIDGE_WIDTH, nodes: [nodes[0], nodes[2], nodes[1], nodes[3]], joined, path_join });
+        self.footbridges.push(Footbridge { crossing: k, top: tops, foot: feet, level: FOOTBRIDGE_LEVEL, width: FOOTBRIDGE_WIDTH, nodes: [nodes[0], nodes[2], nodes[1], nodes[3]], joined, path_join, stairs });
     }
 
     /// [footbridge] Take crossing `k`'s at-grade edge out of the walk graph
