@@ -14,6 +14,27 @@ pub(super) fn grant(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     Ok(json!({ "treasury": round(ctx.sim.world.economy.treasury) }))
 }
 
+/// [r5-hillside] Testing: build on every empty zoned lot round a point
+/// now, each finished at once.
+pub(super) fn build_now(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let p = req_point(cmd)?;
+    let r = opt_f32(cmd, "radius")?.unwrap_or(60.0).clamp(0.0, 500.0);
+    let w = &mut ctx.sim.world;
+    let mut lots: Vec<nd_sim::LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none() && l.center.distance(p) <= r).map(|(id, _)| id).collect();
+    lots.sort();
+    let mut built = 0;
+    for lot in lots {
+        w.build_on(lot);
+        if let Some(b) = w.lots.get(lot).and_then(|l| l.building) {
+            if w.buildings.get(b).is_some_and(|x| x.construction.is_some()) {
+                w.finish_construction(b);
+            }
+            built += 1;
+        }
+    }
+    Ok(json!({ "built": built }))
+}
+
 /// [dirty-industry] Testing: pour contamination onto the ground.
 pub(super) fn contaminate(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let p = req_point(cmd)?;

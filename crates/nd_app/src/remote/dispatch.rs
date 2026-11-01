@@ -297,6 +297,12 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("temp_c", "-50..55"),
         ("note", "dev: sets the sky now; it drifts again hour by hour"),
     ] },
+    Cmd { name: "build_now", aliases: &[], effect: Dev, run: dev::build_now, help: &[
+        ("x", ""),
+        ("y", ""),
+        ("radius", "m, default 60"),
+        ("note", "dev: [r5-hillside] every empty zoned lot whose centre is in the circle gets its building now, finished (test scenes)"),
+    ] },
     Cmd { name: "grant", aliases: &[], effect: Dev, run: dev::grant, help: &[
         ("amount", "money added to the treasury (dev), default 100000"),
     ] },

@@ -131,9 +131,11 @@ impl World {
                     }
                     pts
                 } else if near_a {
-                    vec![f.foot[0], f.top[0], f.top[1], f.foot[1]]
+                    // [r5-stairs] Up and down every point of the stairs
+                    // (a switchback's landing, a spiral's turns).
+                    f.over_from(0)
                 } else {
-                    vec![f.foot[1], f.top[1], f.top[0], f.foot[0]]
+                    f.over_from(1)
                 };
                 hits.push((s, half, pts));
                 break;

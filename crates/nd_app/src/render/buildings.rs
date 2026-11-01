@@ -56,6 +56,20 @@ fn detail_cell(world: &World, id: BuildingId) -> usize {
 pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<f32> {
     let b = world.buildings.get(id)?;
     let mut g = building_geometry(world, assets, styles, id)?;
+    // [r5-hillside] On a lot stepped down the hill, storeys under its back
+    // part down to the lower pad (lit with the building's own windows).
+    if let Some(step) = world.ground.steps.get(&b.lot) {
+        let plinth = nd_procgen::hill_plinth::hill_plinth(&g, step, world.lot_pad(b.lot), b.seed, &assets.palette, true);
+        g.append(&plinth);
+    }
+    // [r5-hillside] A terraced lot's pad off its street's height: steps up
+    // (or down) from the pavement to the door (heights from the pad).
+    if let Some(lot) = world.lots.get(b.lot).filter(|l| world.relief && nd_sim::landscape::walled_terrace(&world.landscape, l, world.lot_pad(b.lot))) {
+        if world.roads.try_segment(lot.front_segment).is_some_and(|s| !s.bridge) {
+            let street = world.road_height(lot.front_segment, lot.front_t) - world.lot_pad(b.lot);
+            g.append(&nd_procgen::hill_plinth::entrance_stair(lot.front_edge, lot.front_dir, street, 0.0, &assets.palette));
+        }
+    }
     // [climate] Snow on the roofs in a cold climate.
     nd_procgen::climate::snow_cover(&mut g, assets.palette.snow);
     lights::tag_windows(&mut g, lights::slot_of(id));
