@@ -306,7 +306,8 @@ fn sim_hotkeys(keys: Res<ButtonInput<KeyCode>>, mut flags: ResMut<UiFlags>, mode
     if flags.keyboard_captured {
         return;
     }
-    if keys.just_pressed(KeyCode::Space) {
+    // [r5-drive] At the wheel Space is the handbrake.
+    if keys.just_pressed(KeyCode::Space) && *mode != CameraMode::Drive {
         sim.paused = !sim.paused;
     }
     if keys.just_pressed(KeyCode::Equal) || keys.just_pressed(KeyCode::NumpadAdd) {

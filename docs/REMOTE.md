@@ -121,6 +121,7 @@ it runs is documented in `help` or named as an alias, and nothing else is.
 | `pause` | `paused` bool (omit to toggle) | `paused` |
 | `speed` | `index` 0..5 (1×, 4×, 16×, 64×, 256×, 1024×), or `value`: a multiple of real time for what moves, snapped to the nearest step on a log scale. At 1× people walk at their true pace; the clock runs 15× faster than that | `speed_index`, `speed`, `ticks_per_second`, `label` |
 | `step` | `ticks` (default 1, max 100000) | `ticks` (run), `clock`, `took_ms`; `stopped` when a committee meeting was called |
+| `drive` | `start` (bool; `at` [x,y], `heading` rad), `ticks` 1..900, `seconds` 0..60, `throttle` / `brake` 0..1, `steer` -1..1, `handbrake`, `horn`, `assist`, `view` chase / bonnet, `stop` | [r5-drive] Drive mode. `start` puts a car on the street nearest the camera (or `at`), the game at 1×; `ticks` drives that many sim ticks right now with the controls (car physics and traffic stepped together, the traffic told where the car is before each tick); `seconds` holds the controls in real play; `stop` gets out to Orbit over the car. Reply `driving`, `pos`, `floor`, `heading`, `bearing`, `speed_kmh`, `street`, `limit_kmh`, `on_road`, `in_tunnel`, `bumps`, `last_bump`, `held_behind` (vehicles queued behind the car now), `held_max` (most during the call), `red_runs`, `traffic_sees_player`, `game_speed`, `tick` |
 
 `step` runs the ticks immediately, on the main thread, even while paused (the same `World::tick`
 the frame loop uses), and stalls the frame for as long as it takes: a young city runs thousands of

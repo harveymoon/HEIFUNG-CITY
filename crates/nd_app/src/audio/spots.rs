@@ -85,7 +85,7 @@ pub(super) fn spots(
     let start = std::time::Instant::now();
     let w = &sim.world;
     let eye = gt.translation();
-    let focus = if *mode == CameraMode::Walk { SVec2::new(eye.x, eye.z) } else { SVec2::new(orbit.target.x, orbit.target.z) };
+    let focus = if mode.street() { SVec2::new(eye.x, eye.z) } else { SVec2::new(orbit.target.x, orbit.target.z) };
     let ground = w.surface_height(focus).max(nd_sim::landscape::WATER_LEVEL);
     let right = gt.right();
     let underground = tools.depth == Depth::Underground;

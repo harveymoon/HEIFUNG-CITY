@@ -875,13 +875,26 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("yaw", "rad"),
         ("pitch", "rad"),
         ("follow", "citizen/car id or {citizen|car|bot|building: id}; any camera command ends a follow"),
-        ("mode", "orbit|walk"),
+        ("mode", "orbit|walk|drive"),
     ] },
     Cmd { name: "nav", aliases: &[], effect: View, run: nav::nav, help: &[
         ("do", "pan_up|pan_down|pan_left|pan_right|zoom_in|zoom_out|rotate_left|rotate_right|tilt_up|tilt_down (as the on-screen pad's buttons), north, reset"),
         ("seconds", "how long the move is held, default 0.25"),
         ("set", "{scroll: auto|zoom|pan, pad: auto|on|off, pan_speed, zoom_speed, turn_speed (0.1..5), invert_zoom, invert_scroll_pan, invert_tilt, left_drag_pan, drag_look}"),
         ("note", "reads back the settings, whether raw mouse motion is trusted, the last scroll's kind and the camera"),
+    ] },
+    Cmd { name: "drive", aliases: &[], effect: View, run: drive::drive, help: &[
+        ("start", "bool: into a car on the street nearest the camera (or `at`), the game at 1x; `heading` rad to face"),
+        ("at", "[x,y] where to start"),
+        ("ticks", "1..900: drive this many sim ticks right now with the controls below (car physics and traffic together)"),
+        ("seconds", "0..60: hold the controls below that long in real play instead"),
+        ("throttle|brake", "0..1"),
+        ("steer", "-1 (left)..1 (right)"),
+        ("handbrake|horn", "bool"),
+        ("assist", "bool: lane assist"),
+        ("view", "chase|bonnet"),
+        ("stop", "bool: out of the car, back to Orbit over it"),
+        ("note", "reads back pos, speed_kmh, street, limit_kmh, on_road, in_tunnel, bumps, held_behind (traffic queued behind the car), red_runs"),
     ] },
     Cmd { name: "input", aliases: &[], effect: View, run: nav::input, help: &[
         ("frames", "[[event, ...], ...] one list a frame, or {wait: n}; events {cursor:[x,y]} {leave:true} {button:left|right|middle, down} {wheel:[x,y], unit: line|pixel} {pinch: f} {rotate: deg} {raw:[dx,dy]} {key: \"W\"|\"PageUp\"|..., down}"),
@@ -1058,6 +1071,7 @@ mod dispatch_tests {
             .init_resource::<crate::nav::NavInput>()
             .init_resource::<crate::nav::NavPad>()
             .init_resource::<crate::nav::NavRemote>()
+            .init_resource::<crate::drive::Drive>()
             .insert_resource(crate::audio::Sound::silent());
         app
     }

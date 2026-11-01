@@ -47,7 +47,7 @@ pub fn land_window(
     mut flags: ResMut<super::UiFlags>,
     mut said: Local<Said>,
 ) -> Result {
-    if !overlays.land_tiles || *mode == CameraMode::Walk || sim.world.landscape.is_flat() {
+    if !overlays.land_tiles || mode.street() || sim.world.landscape.is_flat() {
         return Ok(());
     }
     let ctx = contexts.ctx_mut()?;

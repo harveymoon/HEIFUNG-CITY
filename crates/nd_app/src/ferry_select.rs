@@ -419,7 +419,7 @@ fn labels(mut contexts: bevy_egui::EguiContexts, sim: Res<Sim>, selection: Res<S
         Selection::Ship(_) => true,
         _ => false,
     };
-    if !wants || *mode == crate::camera::CameraMode::Walk {
+    if !wants || mode.street() {
         return Ok(());
     }
     let net = frame.get(&sim);

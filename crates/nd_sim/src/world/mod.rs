@@ -169,6 +169,11 @@ mod plant_groups_tests;
 #[cfg(test)]
 mod plant_scale_tests;
 mod scenes;
+/// [r5-drive] What the player's car drives on in Drive mode.
+mod drive;
+pub use drive::{DriveBlock, DriveGround, DRIVE_STEP};
+#[cfg(test)]
+mod drive_tests;
 pub mod tow_moves;
 #[cfg(test)]
 mod blocker_tests;

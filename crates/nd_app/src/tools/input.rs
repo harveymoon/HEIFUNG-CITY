@@ -67,7 +67,7 @@ pub(crate) fn tool_input(
     scroll: Res<AccumulatedMouseScroll>,
     nav: Res<crate::nav::NavInput>,
 ) {
-    if *mode == CameraMode::Walk {
+    if mode.street() {
         tools.drag = None;
         tools.stroke = None;
         return;

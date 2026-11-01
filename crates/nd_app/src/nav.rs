@@ -452,6 +452,9 @@ pub struct NavPad {
     pub north: bool,
     /// Back to the default tilt as well.
     pub level: bool,
+    /// [r5-drive] Drive mode's handbrake and horn buttons, held this frame.
+    pub handbrake: bool,
+    pub horn: bool,
 }
 
 /// One synthetic input event for the remote `input` command.

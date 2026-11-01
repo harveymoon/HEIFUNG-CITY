@@ -78,7 +78,7 @@ pub fn sync_shell(
 ) {
     let w = &sim.world;
     let want = match *sel {
-        Selection::Building(b) if tools.depth != crate::tools::Depth::Underground && *mode != crate::camera::CameraMode::Walk => crate::tools::building_prism(w, &sim.building_tops, b).map(|p| (b, p)),
+        Selection::Building(b) if tools.depth != crate::tools::Depth::Underground && !mode.street() => crate::tools::building_prism(w, &sim.building_tops, b).map(|p| (b, p)),
         _ => None,
     };
     let Some((b, (poly, base, top))) = want else {

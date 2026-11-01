@@ -43,7 +43,7 @@ pub(super) fn listen(
     *next = now + EVERY;
     let Some((eye, orbit)) = eyes.iter().next() else { return };
     let eye = eye.translation();
-    let focus = if *mode == CameraMode::Walk { SVec2::new(eye.x, eye.z) } else { SVec2::new(orbit.target.x, orbit.target.z) };
+    let focus = if mode.street() { SVec2::new(eye.x, eye.z) } else { SVec2::new(orbit.target.x, orbit.target.z) };
     let heard = surroundings(&sim.world, &lighting, tools.depth == Depth::Underground, eye, focus);
     let beds = bed_params(&heard);
     sound.heard = heard;

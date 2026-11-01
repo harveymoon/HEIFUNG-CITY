@@ -44,7 +44,7 @@ pub(super) fn sun_cascades_follow_camera(
     mut sun: Query<&mut bevy::light::CascadeShadowConfig, With<SunTag>>,
     mut last: Local<f32>,
 ) {
-    let d = if *mode == crate::camera::CameraMode::Walk { 0.0 } else { cams.iter().next().map_or(0.0, |c| c.distance) };
+    let d = if mode.street() { 0.0 } else { cams.iter().next().map_or(0.0, |c| c.distance) };
     let far = (d * 1.9).clamp(SHADOW_FAR, 3000.0);
     if *last > 0.0 && (far / *last - 1.0).abs() < 0.1 {
         return;

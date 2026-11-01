@@ -445,11 +445,15 @@ fn camera(ui: &mut egui::Ui, p: &mut UiCtx) {
         p.lighting.heat = !heat;
     }
     ui.separator();
-    let walking = *p.mode == CameraMode::Walk;
-    if ui.selectable_label(walking, "Walk").on_hover_text(format!("Walk the street [Tab]. {}", help::CAMERA_WALK)).clicked() {
+    let m = *p.mode;
+    // [r5-drive] Drive: at the wheel of a car.
+    if ui.selectable_label(m == CameraMode::Drive, "Drive").on_hover_text(format!("Drive a car round the city [Shift+Tab]. {}", help::CAMERA_DRIVE)).clicked() {
+        *p.mode = CameraMode::Drive;
+    }
+    if ui.selectable_label(m == CameraMode::Walk, "Walk").on_hover_text(format!("Walk the street [Tab]. {}", help::CAMERA_WALK)).clicked() {
         *p.mode = CameraMode::Walk;
     }
-    if ui.selectable_label(!walking, "Orbit").on_hover_text(help::CAMERA_ORBIT).clicked() {
+    if ui.selectable_label(m == CameraMode::Orbit, "Orbit").on_hover_text(help::CAMERA_ORBIT).clicked() {
         *p.mode = CameraMode::Orbit;
     }
 }

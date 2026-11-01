@@ -140,7 +140,7 @@ pub use events::SimEvent;
 pub use mind::{Decision, Intent, MindContext, MindProvider};
 pub use plan::{Gesture, GestureId, Plan, PlanPreview, Project};
 pub use roads::{NodeId, RoadNetwork, Segment, SegmentId};
-pub use traffic::{Car, CarId, Cargo, LaneId, Traffic};
+pub use traffic::{Car, CarId, Cargo, LaneId, PlayerCar, Traffic};
 pub use walk::{GroundsJunction, GroundsKind, WalkGraph};
 pub use vehicle::{BodyType, CarEvent, CarPlace, Errand, Livery, OwnedCar, ParkKind, ParkSpot, VehicleClass, VehicleId, VehicleModel, Vehicles};
 pub use bots::{BotId, Bots, DeliveryBot};
@@ -159,6 +159,7 @@ pub use world::{ApproachView, Blocker, Joint, CrossingView, IntersectionView, La
 /// [camera]
 pub use world::{Gift, Holding, GIFT_AMOUNT};
 pub use world::{TowerOrder, TowerSite};
+pub use world::{DriveBlock, DriveGround, DRIVE_STEP};
 pub use world::{LotFit, LotNeed};
 pub use zoning::{LandUse, Lot, LotId, Parcel, ParcelKey, ParcelMap, Zone, ZoneId};
 

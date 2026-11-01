@@ -32,6 +32,16 @@ pub enum CameraMode {
     #[default]
     Orbit,
     Walk,
+    /// [r5-drive] At the wheel of a car (`drive.rs`).
+    Drive,
+}
+
+impl CameraMode {
+    /// [r5-drive] A view from the street (walking or driving): no tools,
+    /// no map pins, the pointer not on the map.
+    pub fn street(self) -> bool {
+        matches!(self, CameraMode::Walk | CameraMode::Drive)
+    }
 }
 
 /// First-person state: eye position and look angles.
@@ -56,6 +66,8 @@ const RUN_SPEED: f32 = 5.0;
 const LOOK_SPEED: f32 = 0.0022;
 const ORBIT_FOV: f32 = 0.785;
 const WALK_FOV: f32 = 1.2;
+/// [r5-drive] A little wider than the orbit's, for the sense of speed.
+const DRIVE_FOV: f32 = 0.95;
 /// The fog is solid this far from the camera; the ways to elsewhere run on
 /// past it from anywhere the camera may go, so their ends (where traffic
 /// appears and is taken off) are never seen.
@@ -166,7 +178,7 @@ pub struct CameraFollow {
     chase_on: bool,
     /// The chased thing is in a tunnel or the metro this frame, and the
     /// Underground view was switched on for it (`auto_depth`).
-    chase_under: bool,
+    pub(crate) chase_under: bool,
     auto_under: bool,
     /// [chase-cam] Dev: the chase without the cut-away, to compare
     /// (remote `follow {cutaway: false}`).
@@ -524,7 +536,7 @@ impl Plugin for CameraPlugin {
             .add_systems(Update, (control_camera, project_cursor).chain().before(SimSet::Input))
             // After the sim has stepped and the renderer has placed things,
             // so the camera sits on the thing where it is drawn this frame.
-            .add_systems(Update, (follow_and_fly, auto_depth).chain().after(SimSet::Sync));
+            .add_systems(Update, (follow_and_fly, crate::drive::drive_camera, auto_depth).chain().after(SimSet::Sync));
     }
 }
 
@@ -554,10 +566,11 @@ pub(crate) fn control_camera(
     mut keys: ResMut<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     mut flags: ResMut<UiFlags>,
-    sim: Res<Sim>,
+    mut sim: ResMut<Sim>,
     mut mode: ResMut<CameraMode>,
     mut walk: ResMut<WalkState>,
     mut q: Query<(&mut OrbitCamera, &mut Transform, &mut Projection, &mut DistanceFog)>,
+    mut drive: ResMut<crate::drive::Drive>,
     mut cursors: Query<&mut CursorOptions, With<PrimaryWindow>>,
     tools: Res<crate::tools::ToolState>,
     (mut follow, mut fly): (ResMut<CameraFollow>, ResMut<CameraFly>),
@@ -616,9 +629,14 @@ pub(crate) fn control_camera(
     // field must not pan and turn the camera.
     let held = |k: KeyCode| !typing && keys.pressed(k);
 
-    // Tab toggles walk mode; Escape leaves it.
-    if key(KeyCode::Tab) || (keys.just_pressed(KeyCode::Escape) && !flags.data_view && *mode == CameraMode::Walk) {
-        *mode = if *mode == CameraMode::Walk { CameraMode::Orbit } else { CameraMode::Walk };
+    // Tab toggles walk mode; Escape leaves it. [r5-drive] Shift+Tab gets
+    // into a car (and out); Tab or Escape out of it goes back to Orbit.
+    if key(KeyCode::Tab) && shift_held {
+        *mode = if *mode == CameraMode::Drive { CameraMode::Orbit } else { CameraMode::Drive };
+    } else if key(KeyCode::Tab) {
+        *mode = if *mode == CameraMode::Orbit { CameraMode::Walk } else { CameraMode::Orbit };
+    } else if keys.just_pressed(KeyCode::Escape) && !flags.data_view && mode.street() {
+        *mode = CameraMode::Orbit;
     }
     let pov = *mode == CameraMode::Walk && pov_capable;
     // [chase-cam] F: the chase view or the high one, while following.
@@ -630,7 +648,10 @@ pub(crate) fn control_camera(
         }
     }
     if *mode != walk.last_mode {
+        let prev = walk.last_mode;
         walk.last_mode = *mode;
+        // [r5-drive] Out of the car: the orbit over where it stopped.
+        let left_car = if prev == CameraMode::Drive { drive.end(&mut sim) } else { None };
         match *mode {
             CameraMode::Walk => {
                 // Step onto the pavement nearest the orbit target, facing along the street.
@@ -669,6 +690,47 @@ pub(crate) fn control_camera(
                     c.visible = free;
                 }
             }
+            CameraMode::Drive => {
+                // [r5-drive] Into a car on the street nearest the view.
+                let near = match prev {
+                    CameraMode::Walk => Vec2::new(walk.pos.x, walk.pos.z),
+                    _ => Vec2::new(cam.target.x, cam.target.z),
+                };
+                follow.stop();
+                fly.flight = None;
+                // (Already in one: the remote API's `drive` put it there.)
+                let car = if drive.active() { drive.car } else { drive.begin(&mut sim, near) };
+                match car {
+                    Some(_) => {
+                        *proj = Projection::Perspective(PerspectiveProjection { fov: DRIVE_FOV, near: 0.1, ..default() });
+                        flags.message = "Driving: W/S go and brake, A/D steer, Esc or Tab gets out (all the keys at the top right).".into();
+                    }
+                    None => {
+                        flags.message = "No street to drive on here yet: build a road first.".into();
+                        *mode = CameraMode::Orbit;
+                        walk.last_mode = CameraMode::Orbit;
+                        *proj = Projection::Perspective(PerspectiveProjection { fov: ORBIT_FOV, near: 0.1, ..default() });
+                    }
+                }
+                for mut c in &mut cursors {
+                    c.grab_mode = CursorGrabMode::None;
+                    c.visible = true;
+                }
+            }
+            CameraMode::Orbit if left_car.is_some() => {
+                let car = left_car.expect("checked");
+                cam.target = Vec3::new(car.pos.x, car.floor, car.pos.y);
+                cam.distance = 70.0;
+                // Behind the car, looking the way it faced.
+                cam.yaw = (-car.heading.cos()).atan2(-car.heading.sin());
+                cam.pitch = 0.6;
+                *proj = Projection::Perspective(PerspectiveProjection { fov: ORBIT_FOV, near: 0.1, ..default() });
+                fog.falloff = FogFalloff::Linear { start: 500.0, end: SIGHT };
+                for mut c in &mut cursors {
+                    c.grab_mode = CursorGrabMode::None;
+                    c.visible = true;
+                }
+            }
             CameraMode::Orbit => {
                 cam.target = Vec3::new(walk.pos.x, 0.0, walk.pos.z);
                 cam.distance = cam.distance.min(140.0);
@@ -683,6 +745,11 @@ pub(crate) fn control_camera(
         }
     }
 
+    // [r5-drive] At the wheel: `drive::drive_input` reads the keys and
+    // `drive::drive_camera` places the eye.
+    if *mode == CameraMode::Drive {
+        return;
+    }
     // [camera] Their point of view: `follow_and_fly` places the eye; here
     // only the head turns, with a right-drag, and springs back when let go.
     if *mode == CameraMode::Walk && pov {
@@ -1011,8 +1078,13 @@ fn follow_and_fly(
     // [chase-cam] Nothing is cut away unless the chase below says so.
     cut.0.on = false;
     follow.chase_under = false;
-    if *mode == CameraMode::Walk {
+    if mode.street() {
         fly.flight = None;
+    }
+    // [r5-drive] At the wheel: `drive::drive_camera` places the eye.
+    if *mode == CameraMode::Drive {
+        follow.chase_on = false;
+        return;
     }
     if fly.flight.is_some() || follow.target.is_none() || *mode == CameraMode::Walk {
         follow.chase_on = false;
@@ -1160,7 +1232,7 @@ fn project_cursor(
 ) {
     cursor.ground = None;
     cursor.ray = None;
-    if *mode == CameraMode::Walk || flags.pointer_over_ui {
+    if mode.street() || flags.pointer_over_ui {
         return;
     }
     let Ok(window) = windows.single() else { return };

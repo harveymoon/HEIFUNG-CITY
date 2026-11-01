@@ -189,8 +189,9 @@ pub fn set_active(o: &mut Overlays, layer: Option<LayerId>) {
 /// here, before `keep_exclusive`, not inside the render systems in Sync:
 /// there two exclusive layers showed together for a frame, and the systems
 /// earlier in the chain saw the toggle a frame late.
-fn layer_hotkeys(keys: Res<ButtonInput<KeyCode>>, flags: Res<crate::ui::UiFlags>, mut overlays: ResMut<Overlays>) {
-    if flags.keyboard_captured {
+fn layer_hotkeys(keys: Res<ButtonInput<KeyCode>>, flags: Res<crate::ui::UiFlags>, mode: Option<Res<crate::camera::CameraMode>>, mut overlays: ResMut<Overlays>) {
+    // [r5-drive] At the wheel V, L and P are the car's.
+    if flags.keyboard_captured || mode.is_some_and(|m| *m == crate::camera::CameraMode::Drive) {
         return;
     }
     if keys.just_pressed(KeyCode::KeyO) {

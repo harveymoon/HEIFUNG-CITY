@@ -880,7 +880,7 @@ fn rings(mut gizmos: Gizmos, hl: Res<BuildHighlight>, sim: Res<Sim>) {
 /// name when the camera is close.
 fn markers(mut contexts: bevy_egui::EguiContexts, hl: Res<BuildHighlight>, sim: Res<Sim>, mode: Res<crate::camera::CameraMode>, flags: Res<crate::ui::UiFlags>, cams: Query<(&Camera, &GlobalTransform, &crate::camera::OrbitCamera)>) -> Result {
     let Some(v) = &hl.view else { return Ok(()) };
-    if *mode == crate::camera::CameraMode::Walk {
+    if mode.street() {
         return Ok(());
     }
     let Some((camera, gt, orbit)) = cams.iter().next() else { return Ok(()) };

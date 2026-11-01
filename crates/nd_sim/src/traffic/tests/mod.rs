@@ -6,6 +6,7 @@ mod driving;
 mod following;
 mod lane_change;
 mod network;
+mod player;
 mod routing;
 mod signals;
 mod uturns;

@@ -134,6 +134,8 @@ mod airlift;
 mod reset;
 mod citizens;
 mod vehicles;
+/// [r5-drive] The player's car in Drive mode.
+mod drive_car;
 mod parked;
 mod overlays;
 mod trains;
@@ -447,6 +449,8 @@ impl Plugin for RenderPlugin {
         app.add_systems(PostUpdate, far::update_far_look.after(street_look::sync_fog_reach).after(heat::apply_heat).after(focus::focus_fog));
         app.add_systems(Update, retaining::sync_retaining.in_set(SimSet::Sync).after(sync_landscape));
         app.add_systems(Update, (waterside::sync_moored_boats, waterside::sync_boardwalks).in_set(SimSet::Sync).after(sync_landscape));
+        // [r5-drive] The player's car, after the cars on the road.
+        app.init_resource::<drive_car::DriveCarRender>().add_systems(Update, drive_car::sync_drive_car.after(sync_cars).in_set(SimSet::Sync));
         // [carlife] Cars parked at the kerb, after the cars on the road.
         app.init_resource::<ParkedRender>().add_systems(Update, sync_parked_cars.after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         // [taxis] Cabs standing in yards, at ranks and kerbs.

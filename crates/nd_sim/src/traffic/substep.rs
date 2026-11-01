@@ -20,6 +20,8 @@ pub(super) struct Step {
     pub(super) run: Option<LaneId>,
     /// [scene] How far sideways to ease round a scene.
     pub(super) dodge: f32,
+    /// [r5-drive] Held back by the player's car.
+    pub(super) player: bool,
 }
 
 /// Kerb spots claimed this substep, per lane: `(front at, length, car)`.
@@ -58,16 +60,18 @@ impl Traffic {
     /// car moves.
     pub(super) fn plan_substep(&self, dt: f32, claims: &Claims, zones: &[SceneZone]) -> Vec<Step> {
         let mut accs: Vec<Step> = Vec::with_capacity(self.cars.len());
+        // [r5-drive] The player's car where it is this substep.
+        let player = self.player_now();
         for (lane_id, lane) in self.net.lanes.iter().enumerate() {
             let lane_claims = claims.get(&(lane_id as LaneId));
             for (k, &cid) in lane.cars.iter().enumerate() {
                 let car = &self.cars[cid];
                 if car.hold > 0.0 {
-                    accs.push(Step { by: None, id: cid, acc: -1000.0, why: Wait::Dwell, left_wait: false, seen: 0.0, run: None, dodge: 0.0 });
+                    accs.push(Step { by: None, id: cid, acc: -1000.0, why: Wait::Dwell, left_wait: false, seen: 0.0, run: None, dodge: 0.0, player: false });
                     continue;
                 }
                 if car.crashed() {
-                    accs.push(Step { by: None, id: cid, acc: -1000.0, why: Wait::Crashed, left_wait: false, seen: 0.0, run: None, dodge: car.drive.dodge });
+                    accs.push(Step { by: None, id: cid, acc: -1000.0, why: Wait::Crashed, left_wait: false, seen: 0.0, run: None, dodge: car.drive.dodge, player: false });
                     continue;
                 }
                 let pending = car.change_pending(&self.net).is_some();
@@ -140,10 +144,16 @@ impl Traffic {
                 if let Some(g) = ask.stop.filter(|&g| g < gap) {
                     (gap, lead_v, why) = (g, 0.0, Wait::Blocked);
                 }
+                // [r5-drive] The player's car on the way ahead.
+                let mut held = false;
+                if let Some((g, v)) = player.and_then(|now| self.player_gap(car, now)).filter(|&(g, _)| g < gap) {
+                    (gap, lead_v, why) = (g, v, Wait::Leader);
+                    held = true;
+                }
                 if why == Wait::Leader && gap > 50.0 {
                     why = Wait::Free;
                 }
-                if by.is_none() {
+                if by.is_none() && !held {
                     by = match (why, lead) {
                         (Wait::Leader, Some(&l)) => Some(l),
                         (Wait::Leader | Wait::ExitFull, None) => self.blocker_ahead(car, why),
@@ -169,7 +179,7 @@ impl Traffic {
                 if let Some(cap) = ask.cap {
                     v0 = v0.min(cap);
                 }
-                accs.push(Step { by, id: cid, acc: car.idm(v0, gap, car.v - seen), why, left_wait, seen, run, dodge: ask.dodge });
+                accs.push(Step { by, id: cid, acc: car.idm(v0, gap, car.v - seen), why, left_wait, seen, run, dodge: ask.dodge, player: held && gap < 50.0 });
             }
         }
             accs
@@ -184,6 +194,9 @@ impl Traffic {
             car.wait = st.why;
             car.blocked_by = st.by;
             car.drive.seen_lead_v = st.seen;
+            if st.player {
+                self.player_held.push(st.id);
+            }
             if st.run.is_some() {
                 car.drive.running = st.run;
             }

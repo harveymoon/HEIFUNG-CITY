@@ -146,6 +146,7 @@ fn app() -> App {
         .init_resource::<CameraFollow>()
         .init_resource::<CameraFly>()
         .init_resource::<ToolState>()
+        .init_resource::<crate::drive::Drive>()
         .add_plugins(NavPlugin)
         .insert_resource(NavSettings::default())
         .add_systems(Update, control_camera);
@@ -356,4 +357,48 @@ fn walk_mode_works_without_mouselook() {
     app.update();
     play(&mut app, (0..40).map(|i| vec![Synth::Cursor(Vec2::new(300.0 + i as f32 * 3.0, 300.0))]).collect());
     assert!(!app.world().resource::<NavInput>().raw_reliable);
+}
+
+/// [r5-drive] Drive mode with the keyboard alone: Shift+Tab gets into a
+/// car on the nearest street, W drives it, A/D steer, Q turns the camera,
+/// Space is the handbrake (not pause), Esc gets out to Orbit over the car,
+/// and the traffic forgets it.
+#[test]
+fn drive_mode_with_the_keyboard_only() {
+    let mut app = app();
+    app.add_systems(Update, crate::drive::drive_input.after(crate::nav::gather).before(control_camera));
+    let hold = |k: KeyCode, frames: usize| {
+        let mut f = vec![vec![Synth::Key(k, true)]];
+        f.extend((0..frames).map(|_| Vec::new()));
+        f.push(vec![Synth::Key(k, false)]);
+        f
+    };
+    play(&mut app, vec![vec![Synth::Key(KeyCode::ShiftLeft, true), Synth::Key(KeyCode::Tab, true)], vec![Synth::Key(KeyCode::Tab, false), Synth::Key(KeyCode::ShiftLeft, false)]]);
+    assert_eq!(*app.world().resource::<CameraMode>(), CameraMode::Drive);
+    let start = app.world().resource::<crate::drive::Drive>().car.expect("in a car on the highway");
+    assert_eq!(app.world().resource::<Sim>().speed_index, 0, "the game at 1x while driving");
+    play(&mut app, hold(KeyCode::KeyW, 150));
+    let car = app.world().resource::<crate::drive::Drive>().car.unwrap();
+    assert!(car.pos.distance(start.pos) > 10.0 && car.v > 3.0, "W drives: {:?} at {} m/s", car.pos, car.v);
+    assert!(app.world().resource::<Sim>().world.traffic.player.is_some(), "the traffic sees the car");
+    // Steering with D turns it (heading up, the sim's right).
+    let h0 = car.heading;
+    play(&mut app, vec![vec![Synth::Key(KeyCode::KeyW, true), Synth::Key(KeyCode::KeyD, true)]].into_iter().chain((0..40).map(|_| Vec::new())).chain([vec![Synth::Key(KeyCode::KeyW, false), Synth::Key(KeyCode::KeyD, false)]]).collect());
+    let car = app.world().resource::<crate::drive::Drive>().car.unwrap();
+    assert!(crate::chase::wrap(car.heading - h0) > 0.05 || car.bumps > 0, "D steers right: {h0} -> {}", car.heading);
+    // Q swings the camera round the car.
+    play(&mut app, hold(KeyCode::KeyQ, 20));
+    assert!(app.world().resource::<crate::drive::Drive>().nudge.look.x.abs() > 0.1);
+    // Space: the handbrake, not the pause.
+    play(&mut app, hold(KeyCode::Space, 30));
+    assert!(!app.world().resource::<Sim>().paused);
+    // Escape: out, the orbit over the car, the traffic told.
+    let at = app.world().resource::<crate::drive::Drive>().car.unwrap().pos;
+    play(&mut app, vec![vec![Synth::Key(KeyCode::Escape, true)], vec![Synth::Key(KeyCode::Escape, false)]]);
+    assert_eq!(*app.world().resource::<CameraMode>(), CameraMode::Orbit);
+    assert!(app.world().resource::<crate::drive::Drive>().car.is_none());
+    assert!(app.world().resource::<Sim>().world.traffic.player.is_none());
+    let (target, ..) = cam(&mut app);
+    assert!(Vec2::new(target.x, target.z).distance(at) < 15.0, "orbit over the car: {target:?} vs {at:?}");
+    assert_eq!(app.world().resource::<Sim>().speed_index, crate::sim::DEFAULT_SPEED, "the game's speed back");
 }

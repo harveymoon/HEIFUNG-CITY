@@ -14,6 +14,10 @@ pub(super) fn camera_pose(ctx: &Ctx) -> Value {
             let w = &ctx.walk;
             json!({ "mode": "walk", "pos": [round(w.pos.x), round(w.pos.y), round(w.pos.z)], "yaw": round(w.yaw), "pitch": round(w.pitch) })
         }
+        CameraMode::Drive => match ctx.drive.car {
+            Some(c) => json!({ "mode": "drive", "pos": [round(c.pos.x), round(c.floor), round(c.pos.y)], "heading": round(c.heading), "speed": round(c.v) }),
+            None => json!({ "mode": "drive" }),
+        },
         CameraMode::Orbit => match ctx.cams.iter().next() {
             Some(cam) => {
                 // The eye as `control_camera` will place it from these
@@ -41,7 +45,8 @@ pub(super) fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         *ctx.mode = match mode.to_ascii_lowercase().as_str() {
             "orbit" => CameraMode::Orbit,
             "walk" => CameraMode::Walk,
-            _ => return Err(format!("unknown camera mode {mode:?}; orbit or walk")),
+            "drive" => CameraMode::Drive,
+            _ => return Err(format!("unknown camera mode {mode:?}; orbit, walk or drive")),
         };
     }
     let w = &ctx.sim.world;

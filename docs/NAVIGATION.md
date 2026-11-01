@@ -32,6 +32,32 @@ Mouselook uses the raw mouse; with **Walk mode: drag to look** (Settings), or by
 mouse motion is unusable (remote desktop, see below), the pointer stays free and a left- or right-drag
 turns the head.
 
+### Drive mode (Shift+Tab, or Drive in the top bar) [r5-drive]
+
+At the wheel of a car on the street nearest the view; the game runs at 1× while driving (its speed
+comes back after). Keyboard only is enough:
+
+| Key | Does |
+| --- | --- |
+| W / ↑ | accelerate |
+| S / ↓ | brake; once stopped, reverse |
+| A D / ← → | steer |
+| Space | handbrake (not pause while driving) |
+| H | horn (not heat vision while driving) |
+| Q / E | look left / right (eases back behind the car) |
+| R / F, Home / End | look up / down |
+| C (hold) | look behind |
+| `.` `,` (or wheel, [ ], Page Up/Down) | camera closer / further |
+| V | chase view / bonnet view |
+| L | lane assist (steers along the lane while you do not) |
+| Esc or Tab | back to Orbit over the car |
+
+A right-drag or Alt+left-drag looks round, from the cursor's movement (never the raw mouse alone),
+so a remote desktop works the same. The on-screen pad's arrows are the pedals and the wheel, its
+turn / tilt buttons the camera, + / − the zoom, and a row of HANDBRAKE and HORN buttons shows while
+driving. The HUD (bottom right) shows the speed, the limit, the street, the heading and a
+heading-up map of the streets round the car.
+
 ### Following something
 
 Right-drag or Alt+left-drag looks round, Q / E turn, Home / End tilt, wheel / pinch / `.` `,` zoom.

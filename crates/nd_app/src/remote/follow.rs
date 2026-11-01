@@ -82,7 +82,7 @@ pub(super) fn follow(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if stop {
         ctx.follow.stop();
         ctx.fly.flight = None;
-        if *ctx.mode == CameraMode::Walk {
+        if ctx.mode.street() {
             *ctx.mode = CameraMode::Orbit;
         }
         return Ok(json!({ "following": Value::Null, "camera": super::camera::camera_pose(ctx) }));
@@ -146,7 +146,7 @@ pub(super) fn zoom_to(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if !matches!(goal, FlyGoal::Thing(s) if ctx.follow.is(s)) {
         ctx.follow.stop();
     }
-    if *ctx.mode == CameraMode::Walk {
+    if ctx.mode.street() {
         *ctx.mode = CameraMode::Orbit;
     }
     ctx.fly.to(goal, Some(d.clamp(12.0, 2500.0)), Some(pitch.unwrap_or(0.62)));

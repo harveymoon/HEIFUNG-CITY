@@ -61,7 +61,7 @@ pub fn camera_buttons(ui: &mut egui::Ui, sim: &Sim, sel: Selection, follow: &mut
             if follow.is(sel) {
                 if ui.add(egui::Button::new(egui::RichText::new("Following - stop").color(egui::Color32::BLACK).strong()).fill(GOLD)).on_hover_text("The camera is locked on them. Click or press Esc to let go.").clicked() {
                     follow.stop();
-                    if *mode == CameraMode::Walk {
+                    if mode.street() {
                         *mode = CameraMode::Orbit;
                     }
                 }
@@ -154,7 +154,7 @@ pub fn banner(ctx: &egui::Context, sim: &Sim, follow: &mut CameraFollow, fly: &m
                         }
                         if ui.add(egui::Button::new(egui::RichText::new("Stop following (Esc)").color(egui::Color32::BLACK).strong()).fill(GOLD)).clicked() {
                             follow.stop();
-                            if *mode == CameraMode::Walk {
+                            if mode.street() {
                                 *mode = CameraMode::Orbit;
                             }
                         }
