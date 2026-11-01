@@ -549,11 +549,17 @@ pub struct FigureCache<H> {
     pub built: usize,
     /// Figures borrowed this frame.
     pub borrowed: usize,
+    /// [r6-perf] Every cached look was used this frame (found by a scan
+    /// for one to evict that came up empty): nothing is evicted again until
+    /// the next frame, since a look only ever becomes current. With more
+    /// looks outdoors than the cap (Harvey's day-65 city: 7,500 against
+    /// 1,024) every newcomer scanned the whole cache, 15 ms a frame.
+    full_frame: u64,
 }
 
 impl<H: Clone> FigureCache<H> {
     pub fn new(cap: usize) -> Self {
-        Self { cap: cap.max(1), entries: Default::default(), frame: 0, lent: Default::default(), built: 0, borrowed: 0 }
+        Self { cap: cap.max(1), entries: Default::default(), frame: 0, lent: Default::default(), built: 0, borrowed: 0, full_frame: u64::MAX }
     }
 
     pub fn begin_frame(&mut self) {
@@ -588,7 +594,10 @@ impl<H: Clone> FigureCache<H> {
             return Some(e.0.clone());
         }
         if self.entries.len() >= self.cap {
-            let oldest = self.entries.iter().filter(|(_, e)| e.1 < frame).min_by_key(|(_, e)| e.1).map(|(k, _)| *k);
+            let oldest = if self.full_frame == frame { None } else { self.entries.iter().filter(|(_, e)| e.1 < frame).min_by_key(|(_, e)| e.1).map(|(k, _)| *k) };
+            if oldest.is_none() {
+                self.full_frame = frame;
+            }
             match oldest {
                 Some(k) => {
                     self.entries.remove(&k);

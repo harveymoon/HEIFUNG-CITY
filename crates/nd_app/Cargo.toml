@@ -48,3 +48,7 @@ fast-dev = ["bevy/dynamic_linking"]
 # [memory] Count heap allocations (live, peak, biggest block) for the
 # remote `memory` command. Off in the game: every allocation pays for it.
 heap-count = []
+# [r6-perf] Bevy's per-system spans to a Chrome trace (`trace-*.json` in the
+# working directory; RUST_LOG=warn turns the spans off), for finding the
+# costly systems. Off in the game.
+trace = ["bevy/trace_chrome"]

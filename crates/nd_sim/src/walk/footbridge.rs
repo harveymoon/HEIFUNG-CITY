@@ -326,6 +326,7 @@ impl WalkGraph {
     /// the crosswalk at `FOOTBRIDGE_LEVEL`, stairs from each end along the
     /// pavement (`along`), and the feet joined to the pavement both ways.
     pub(super) fn add_footbridge(&mut self, k: u32, roads: &RoadNetwork) {
+        self.forget_routes();
         use crate::junctions::{FOOTBRIDGE_LEVEL, FOOTBRIDGE_WIDTH};
         let Some((plan_tops, plans)) = self.footbridge_plan(k, roads) else { return };
         let along = [plans[0].along, plans[1].along];
@@ -434,6 +435,7 @@ impl WalkGraph {
     /// (its footbridge stands in for it). The crossing itself stays listed,
     /// `closed`, so indices and the editor's view of it hold.
     pub(super) fn close_crossing(&mut self, k: u32) {
+        self.forget_routes();
         let Some(c) = self.crossings.get_mut(k as usize) else { return };
         c.closed = true;
         let (a, b) = (c.a as usize, c.b as usize);
@@ -444,6 +446,7 @@ impl WalkGraph {
     /// Join two nodes by a raised walkway edge (a deck or a flight of
     /// stairs), its length the walk along the slope.
     pub(super) fn link_raised(&mut self, a: u32, b: u32) {
+        self.forget_routes();
         if a == b {
             return;
         }
@@ -470,6 +473,7 @@ impl WalkGraph {
     /// use them, so they take the bridge or the underpass when it is a
     /// short way round. Run after the footbridges are up.
     pub fn mark_near_bridges(&mut self, roads: &RoadNetwork) {
+        self.forget_routes();
         let dir_of = |sid: SegmentId| {
             let (s0, s1) = roads.segment_points(sid);
             (s1 - s0).normalize_or_zero()

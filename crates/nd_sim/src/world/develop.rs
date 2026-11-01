@@ -554,7 +554,7 @@ impl World {
             self.economy.credit_item(Flow::GridExport, sold, Item::Named("power sold to the regional grid".into()));
         }
         self.economy.power.export_income_today = 0.0;
-        self.daily_ports();
+        crate::prof!("du_daily_ports", self.daily_ports());
         self.economy.power.upkeep_today = upkeep;
         self.economy.tax_today = 0.0;
         self.economy.power.import_cost_today = 0.0;
@@ -602,9 +602,9 @@ impl World {
         for (id, x) in rail_sites {
             self.economy.debit_item(Flow::RailUpkeep, x, Item::Building(id));
         }
-        self.daily_tolls();
+        crate::prof!("du_daily_tolls", self.daily_tolls());
         // [ledger] The ledger's day closes with the treasury's.
-        self.close_ledger_day();
+        crate::prof!("du_close_ledger_day", self.close_ledger_day());
         self.economy.ledger.roll();
         // [stories] Districts' policy books close with the ledger's day.
         for d in self.districts.list.iter_mut() {
@@ -634,7 +634,7 @@ impl World {
         let cars = &self.traffic.cars;
         self.transit.departures.retain(|id, _| cars.contains_key(*id));
         // [parking-market] Tomorrow's fees by today's busiest hour.
-        self.reprice_parking();
+        crate::prof!("du_reprice_parking", self.reprice_parking());
         self.economy.parking_street_today = 0;
         self.economy.parking_fees_today = 0.0;
         self.economy.materials_today = 0.0;
@@ -644,6 +644,7 @@ impl World {
             l.footfall_today = 0;
         }
         let ids: Vec<BuildingId> = self.buildings.keys().collect();
+        crate::prof_scope!("du_buildings_and_rest");
         for bid in ids {
             if self.buildings[bid].construction.is_some() {
                 continue;
@@ -731,22 +732,22 @@ impl World {
                 self.events.push(SimEvent::BuildingChanged(bid));
             }
         }
-        self.daily_citizens();
+        crate::prof!("du_daily_citizens", self.daily_citizens());
         let hids: Vec<crate::citizens::HouseholdId> = self.households.keys().collect();
-        for hid in hids {
+        crate::prof!("du_households", for hid in hids {
             self.daily_household(hid);
-        }
+        });
         // Unmet demand for each tier of housing fades over a few days.
         for d in self.economy.housing_demand_by_tier.iter_mut() {
             *d *= 0.6;
         }
         self.economy.roll_population(self.citizens.len() as u32);
-        self.daily_businesses();
+        crate::prof!("du_daily_businesses", self.daily_businesses());
         // [tenants] Shut tenants out, empty units let, growing businesses
         // into the unit next door.
-        self.daily_tenants();
+        crate::prof!("du_daily_tenants", self.daily_tenants());
         // Conditions moved: a station or yard may have gone derelict.
-        self.refresh_facility_cache();
+        crate::prof!("du_refresh_facility_cache", self.refresh_facility_cache());
     }
 
     /// A park standing on a lot since rezoned for something else: it stays

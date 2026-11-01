@@ -157,6 +157,16 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("building", "id: the boxes it holds (a depot's stock, a home's walls)"),
     ] },
     Cmd { name: "status", aliases: &[], effect: Read, run: |_, ctx| Ok(status::status(ctx)), help: &[] },
+    Cmd { name: "frame_stats", aliases: &["frames"], effect: Read, run: |cmd, ctx| {
+        let out = ctx.frame_stats.json();
+        if cmd.get("reset").and_then(|v| v.as_bool()).unwrap_or(false) {
+            ctx.frame_stats.reset();
+        }
+        Ok(out)
+    }, help: &[
+        ("note", "[r6-perf] the last ~2,000 frames: FPS, frame and sim ms (mean, p50, p95, p99, max), frames over 33/50/100 ms, ticks run"),
+        ("reset", "bool: start a fresh window after this reply"),
+    ] },
     Cmd { name: "memory", aliases: &[], effect: Read, run: |_, ctx| Ok(status::memory_json(ctx)), help: &[
         ("note", "[memory] the process working set, peak and commit charge (MB), the renderer's mesh/material/image and entity counts, and the world's big counts"),
     ] },
@@ -1060,6 +1070,7 @@ mod dispatch_tests {
             .init_resource::<WindowRequests>()
             .init_resource::<RenderStats>()
             .init_resource::<DiagnosticsStore>()
+            .init_resource::<crate::frame_stats::FrameStats>()
             .init_resource::<crate::flags::ClaudeFlags>()
             .init_resource::<crate::build_highlight::BuildHighlight>()
             .init_resource::<Assets<Mesh>>()

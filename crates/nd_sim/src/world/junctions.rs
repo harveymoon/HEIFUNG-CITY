@@ -533,6 +533,28 @@ impl World {
         best.map(|(_, z)| z)
     }
 
+    /// [r6-perf] Is the leg `from`..`to` plain: both ends at grade, and no
+    /// tunnel, bridge, viaduct or way off the ground within `reach` of it?
+    /// Then for anyone within `reach - 12` m of the leg (the reach the
+    /// height queries look round them) [`walker_way_height`] is None,
+    /// [`citizen_in_tunnel`] false and [`walker_level`] 0: the renderer
+    /// checks a leg once instead of searching the roads round every
+    /// walker every frame.
+    ///
+    /// [`walker_way_height`]: Self::walker_way_height
+    /// [`citizen_in_tunnel`]: Self::citizen_in_tunnel
+    /// [`walker_level`]: Self::walker_level
+    pub fn leg_is_plain(&self, from: Vec2, to: Vec2, reach: f32) -> bool {
+        if self.walk.level_at_node(from) != 0.0 || self.walk.level_at_node(to) != 0.0 {
+            return false;
+        }
+        let r = Vec2::splat(reach);
+        self.roads.segments_near_box(from.min(to) - r, from.max(to) + r).into_iter().all(|sid| {
+            let s = self.roads.segment(sid);
+            !s.tunnel && !s.bridge && !s.viaduct && self.roads.node(s.a).level.abs() <= 0.3 && self.roads.node(s.b).level.abs() <= 0.3
+        })
+    }
+
     /// [walk-networks] Is this walker or rider down in a tunnel now (shown
     /// in the underground view, like someone on a metro platform)?
     pub fn citizen_in_tunnel(&self, c: &Citizen) -> bool {

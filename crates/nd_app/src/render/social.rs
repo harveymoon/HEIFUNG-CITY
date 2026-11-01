@@ -27,6 +27,11 @@ pub(super) struct SocialRender {
     night: Vec<Entity>,
     /// Buildings carrying a mural, so a change to one repaints.
     walls: HashSet<BuildingId>,
+    /// [r6-perf] Each facade mural's paint (day, night), by everything it
+    /// is painted from (`facade_key`): a repaint generates again only the
+    /// murals whose inputs moved, not every mural's whole building (75 ms
+    /// at every repaint of Harvey's day-65 city, several times a game hour).
+    facades: HashMap<u64, Option<(Geometry, Geometry)>>,
 }
 
 /// Below this daylight the floodlit paint is on.
@@ -66,6 +71,17 @@ pub(super) fn sync_social(mut commands: Commands, mut meshes: ResMut<Assets<Mesh
         commands.entity(e).despawn();
     }
     state.walls.clear();
+    // Buildings changed this frame paint again; new rules, palette or city:
+    // everything does.
+    if sim.full_rebuild || assets.rules_changed || assets.palette_changed {
+        state.facades.clear();
+    }
+    let changed: HashSet<BuildingId> = sim.events.iter().filter_map(|e| match e {
+        SimEvent::BuildingChanged(id) | SimEvent::BuildingBuilt(id) => Some(*id),
+        _ => None,
+    }).collect();
+    let mut facades = std::mem::take(&mut state.facades);
+    let mut used: HashSet<u64> = HashSet::new();
     // On the ground: walls on vacant lots and gardens (raised onto the land);
     // on buildings: the facade paint (raised onto the building's pad).
     let mut ground = Geometry::default();
@@ -84,15 +100,30 @@ pub(super) fn sync_social(mut commands: Commands, mut meshes: ResMut<Assets<Mesh
             if b.construction.is_some() {
                 return Some((Geometry::default(), Geometry::default()));
             }
-            let geo = building_geometry(w, &assets, &sim.styles, bid)?;
-            // The lot's street edge: the mural's record stands just inside it.
-            let front = m.pos + m.facing.normalize_or_zero() * 0.9;
-            let spot = facade_spot(&geo, front, m.facing)?;
-            let (mut day, mut night) = paint_mural(&spot, m.quality, m.seed, crew, &tag, &assets.palette);
             let pad = w.lot_pad(b.lot);
-            nd_procgen::terrain::raise_geometry(&mut day, pad);
-            nd_procgen::terrain::raise_geometry(&mut night, pad);
-            Some((day, night))
+            // The paint reads the quality only against `paint_mural`'s
+            // thresholds (-0.2, 0.1, 0.35): its band is the key.
+            let fkey = {
+                let mut h = DefaultHasher::new();
+                (m.seed, m.group, (m.quality < -0.2, m.quality > 0.1, m.quality > 0.35), m.pos.x.to_bits(), m.pos.y.to_bits(), m.facing.x.to_bits(), m.facing.y.to_bits(), bid, &tag).hash(&mut h);
+                (b.seed, b.floors, b.tier, b.land_use, b.demolition.is_some(), b.lot, format!("{pad:?}")).hash(&mut h);
+                h.finish()
+            };
+            used.insert(fkey);
+            if changed.contains(&bid) {
+                facades.remove(&fkey);
+            }
+            let painted = facades.entry(fkey).or_insert_with(|| {
+                let geo = building_geometry(w, &assets, &sim.styles, bid)?;
+                // The lot's street edge: the mural's record stands just inside it.
+                let front = m.pos + m.facing.normalize_or_zero() * 0.9;
+                let spot = facade_spot(&geo, front, m.facing)?;
+                let (mut day, mut night) = paint_mural(&spot, m.quality, m.seed, crew, &tag, &assets.palette);
+                nd_procgen::terrain::raise_geometry(&mut day, pad);
+                nd_procgen::terrain::raise_geometry(&mut night, pad);
+                Some((day, night))
+            });
+            painted.clone()
         });
         match on_facade {
             Some((day, night)) => {
@@ -107,6 +138,8 @@ pub(super) fn sync_social(mut commands: Commands, mut meshes: ResMut<Assets<Mesh
         }
     }
     state.walls = walls;
+    facades.retain(|k, _| used.contains(k));
+    state.facades = facades;
     for g in &s.gardens {
         let Some(lot) = w.lots.get(g.lot) else { continue };
         let size = lot.width().min(lot.depth());

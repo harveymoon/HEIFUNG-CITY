@@ -134,6 +134,8 @@ impl LaneNetwork {
         let start_cost = self.lanes[start as usize].length - s_start;
         sc.set(start, start_cost, None);
         open.push(Open { f: start_cost + self.lanes[start as usize].end().distance(to), g: start_cost, lane: start, expanded: 0 });
+        let rooms = self.room.get(self);
+        let verify = crate::walk::verify_routes();
         let mut expansions = 0usize;
         while let Some(Open { lane, expanded, g: popped_g, .. }) = open.pop() {
             // A lane reached again more cheaply leaves its older entry in
@@ -178,9 +180,10 @@ impl LaneNetwork {
             // On a roundabout, slow and with arms close together, the line
             // is the shortest there is and changing between arms is how
             // the ring is driven: only a change inside the line costs.
-            let ring = self.rings.circulating.contains(&lane);
-            let line = if ring { SOLID_LINE_MIN } else { SOLID_LINE_MAX };
-            let room = here.length - (line - self.junction_after(lane, line)).max(0.0);
+            let (ring, room) = rooms.get(lane as usize).copied().unwrap_or_else(|| self.lane_room(lane));
+            if verify {
+                assert_eq!((ring, room.to_bits()), { let (r, m) = self.lane_room(lane); (r, m.to_bits()) }, "lane room cache is stale for lane {lane}");
+            }
             let late = if ring { 0.0 } else { (1.0 - room / SHORT_CHANGE_LEN).max(0.0) };
             let short = if room <= 0.0 || (!ring && room < CHANGE_ROOM_MIN) {
                 SOLID_CHANGE_COST
@@ -211,6 +214,18 @@ impl LaneNetwork {
             }
         }
         None
+    }
+
+    /// [r6-perf] Is `lane` on a roundabout's ring, and the room along it
+    /// before the solid line of the junction ahead (the line may begin
+    /// pieces back, round bends; on a ring it is the shortest there is).
+    /// What a route search reads of a lane's shape, the same for every
+    /// search on this network ([`RoomCache`]).
+    pub(super) fn lane_room(&self, lane: LaneId) -> (bool, f32) {
+        let ring = self.rings.circulating.contains(&lane);
+        let line = if ring { SOLID_LINE_MIN } else { SOLID_LINE_MAX };
+        let room = self.lanes[lane as usize].length - (line - self.junction_after(lane, line)).max(0.0);
+        (ring, room)
     }
 
     /// Does this road lane end at a junction (three or more streets, or a
@@ -312,6 +327,43 @@ thread_local! {
     /// [review] Scratch for the lane A*, reused across searches instead of
     /// two fresh hash maps per call.
     static SEARCH: std::cell::RefCell<SearchScratch> = std::cell::RefCell::new(SearchScratch::default());
+}
+
+/// [r6-perf] [`LaneNetwork::lane_room`] of every lane, kept while the
+/// network keeps its version, size, junctions and roundabouts (the
+/// shape it is worked out from is only built by `rebuild`): looked up a
+/// million times a game hour by the route searches, it walked the lanes
+/// ahead to the next junction every time. A clone starts empty.
+#[derive(Default)]
+pub(crate) struct RoomCache(std::sync::Mutex<Option<(RoomStamp, std::sync::Arc<Vec<(bool, f32)>>)>>);
+
+type RoomStamp = (u64, usize, usize, usize, usize, usize);
+
+impl Clone for RoomCache {
+    fn clone(&self) -> Self {
+        RoomCache::default()
+    }
+}
+
+impl std::fmt::Debug for RoomCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RoomCache")
+    }
+}
+
+impl RoomCache {
+    fn get(&self, net: &LaneNetwork) -> std::sync::Arc<Vec<(bool, f32)>> {
+        let stamp = (net.version, net.lanes.len(), net.intersections.len(), net.node_intersection.len(), net.rings.circulating.len(), net.rings.nodes.len());
+        let Ok(mut m) = self.0.lock() else { return Default::default() };
+        if let Some((s, rooms)) = m.as_ref() {
+            if *s == stamp {
+                return rooms.clone();
+            }
+        }
+        let rooms = std::sync::Arc::new((0..net.lanes.len() as LaneId).map(|l| net.lane_room(l)).collect::<Vec<_>>());
+        *m = Some((stamp, rooms.clone()));
+        rooms
+    }
 }
 
 /// Per-lane cost and parent, valid for the lanes stamped with the current
