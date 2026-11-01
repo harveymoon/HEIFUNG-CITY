@@ -59,4 +59,7 @@ pub enum SimEvent {
     /// removed crosswalk) went with the leg of its junction it crossed:
     /// where the junction was, what it was, the street's name.
     CrossingRuleRemoved { at: glam::Vec2, upgrade: crate::junctions::CrossingUpgrade, street: String },
+    /// [r5-fixes] The city sent a free airlift (a vehicle trapped in a
+    /// pocket with no way out, or stranded): where, and why in words.
+    Airlift { at: glam::Vec2, text: String },
 }

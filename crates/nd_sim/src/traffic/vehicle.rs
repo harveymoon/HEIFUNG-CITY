@@ -117,6 +117,11 @@ pub struct Car {
     pub glide_len: f32,
     #[serde(default)]
     pub glide_done: f32,
+    /// [r5-fixes] Standing at the kerb with nowhere it can drive (set by
+    /// the world; a new route clears it): shown as stranded, not as
+    /// unloading.
+    #[serde(default)]
+    pub stranded: bool,
     /// [passengers] Everyone riding along besides the driver (`citizen`),
     /// kept by `World::step_passengers`.
     #[serde(default)]

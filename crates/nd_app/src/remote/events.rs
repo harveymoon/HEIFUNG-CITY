@@ -87,6 +87,7 @@ pub(super) fn log_events(sim: Res<Sim>, flags: Res<UiFlags>, tools: Res<ToolStat
             }
             SimEvent::PathTrimmed { gesture, removed, grounds } => json!({ "kind": "PathTrimmed", "gesture_id": gesture.0, "removed": removed, "grounds": grounds.key() }),
             SimEvent::CrossingRuleRemoved { at, upgrade, street } => json!({ "kind": "CrossingRuleRemoved", "junction": [at.x, at.y], "upgrade": upgrade.label(), "street": street }),
+            SimEvent::Airlift { at, text } => json!({ "kind": "Airlift", "at": [at.x, at.y], "text": text }),
             SimEvent::StadiumEvent(b) => json!({ "kind": "StadiumEvent", "building": key_str(*b), "name": building_name(w, Some(*b)) }),
             SimEvent::NewThought(c) => {
                 let cit = w.citizens.get(*c);

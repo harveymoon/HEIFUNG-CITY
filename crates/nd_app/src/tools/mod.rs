@@ -84,6 +84,10 @@ fn path_trim_toasts(sim: Res<Sim>, mut flags: ResMut<UiFlags>) {
             let over = if street.is_empty() { "the street it crossed".to_string() } else { street.clone() };
             flags.message = format!("The {what} over {over} was taken down: that street no longer meets the junction.");
         }
+        // [r5-fixes] Why a free airlift is in the air.
+        if let nd_sim::SimEvent::Airlift { text, .. } = e {
+            flags.message = text.clone();
+        }
     }
 }
 

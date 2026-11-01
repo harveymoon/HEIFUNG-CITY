@@ -269,6 +269,8 @@ pub(super) fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(why) = ctx.sim.world.road_refusal(&bp, &bl, kind, lf, lb) {
         return Err(why);
     }
+    // [r5-fixes] As the Road tool: one-way streets into a pocket with no way out.
+    warnings.extend(ctx.sim.world.road_trap_warnings(&bp, &bl, kind, lf, lb));
     let elevation = if levels.iter().any(|l| *l != 0.0) { levels } else { Vec::new() };
     // [w1-roads] `use` (mixed | car_only) is stored on the road; without
     // it the road's use is read from its lanes as before.
@@ -304,6 +306,10 @@ pub(super) fn add_road(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             .collect::<Vec<_>>());
     }
     v["grade_warnings"] = json!(warnings);
+    // [r5-fixes] What implementing said (a pocket with no way out made).
+    if implemented {
+        v["plan_warnings"] = json!(ctx.sim.world.plan_warnings);
+    }
     // [r4-hillside] A zig-zag up the slope for a one-leg way too steep for
     // its kind (`World::switchback`): send these points to lay it.
     if let Some(Gesture::Road { points, elevation, curved: false, .. }) = ctx.sim.world.gesture(id) {

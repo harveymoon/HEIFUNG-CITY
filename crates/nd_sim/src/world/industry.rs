@@ -546,8 +546,13 @@ impl World {
             if !self.drive_lorry_on(car_id, cargo.to, home) && self.traffic.cars.contains_key(car_id) {
                 // [r4-flags-sim] Stranded in a pocket with no road out: the
                 // city lifts it out (its turn may come at a later retry).
+                // [r5-fixes] So too one stranded for hours with no road
+                // anywhere; meanwhile it shows as stranded, not unloading.
                 self.rescue_trapped(car_id);
                 self.traffic.pull_in_queued(car_id, STRANDED_RETRY_SECONDS);
+                if let Some(c) = self.traffic.cars.get_mut(car_id) {
+                    c.stranded = true;
+                }
             }
             return;
         }

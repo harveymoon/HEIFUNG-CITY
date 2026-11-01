@@ -250,7 +250,8 @@ impl Traffic {
 
     /// Cars at the kerb pull out into a gap, or wait (counting the stall).
     pub(super) fn pull_out_waiting(&mut self, dt: f32) {
-        let waiting: Vec<CarId> = self.cars.iter().filter(|(_, c)| c.entering).map(|(id, _)| id).collect();
+        // [r5-fixes] Not a car in a stunt: `end_stunt` puts it back.
+        let waiting: Vec<CarId> = self.cars.iter().filter(|(_, c)| c.entering && !c.in_stunt()).map(|(id, _)| id).collect();
         for id in waiting {
             // Standing at the kerb on purpose (unloading): not waiting yet.
             if self.cars[id].hold > 0.0 {

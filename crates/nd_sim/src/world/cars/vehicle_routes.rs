@@ -141,6 +141,9 @@ impl World {
             // [r4-flags-sim] No road out of the pocket it stands in.
             self.rescue_trapped(car);
             self.traffic.pull_in(car, RETIRE_RETRY_SECONDS);
+            if let Some(c) = self.traffic.cars.get_mut(car) {
+                c.stranded = true;
+            }
         }
     }
 
