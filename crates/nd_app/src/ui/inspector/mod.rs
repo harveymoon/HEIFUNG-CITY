@@ -4,6 +4,8 @@
 
 mod about;
 mod air;
+/// [airport] The airport card.
+mod airport;
 mod bot;
 /// [K34] Shipping containers.
 mod boxes;

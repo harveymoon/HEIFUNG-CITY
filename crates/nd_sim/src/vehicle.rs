@@ -542,6 +542,12 @@ pub struct ParkSpot {
     /// truck has taken it (the hook replaces the spot, clamp and all).
     #[serde(default)]
     pub booted: bool,
+    /// [r7-citizen-story] Left at the kerb by its owner coming home: the
+    /// residents' permit of the streets round home covers it out to
+    /// `RESIDENT_REACH` (a full street by home sent it a block or two
+    /// on, past `PERMIT_RADIUS`, onto a two-hour limit).
+    #[serde(default)]
+    pub resident: bool,
 }
 
 /// Where a private car is: parked somewhere, or on the road.

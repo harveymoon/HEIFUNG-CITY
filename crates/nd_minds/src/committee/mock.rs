@@ -134,7 +134,7 @@ impl MockCommittee {
             Task::Ping => text("ready".into()),
             Task::Dialogue { template, .. } => text(super::voices::mock_dialogue(template)),
             Task::Chat { who, said, history } => text(super::talk::mock_chat(who, said, seed, history.is_empty())),
-            Task::Diary { who, day, entries, talks } => TurnReply { text: super::voices::mock_diary(who, *day, entries, talks, seed), json: Some(json!({ "stand_in": true })) },
+            Task::Diary { who, day, entries, facts } => TurnReply { text: super::voices::mock_diary(who, *day, entries, facts, seed), json: Some(json!({ "stand_in": true })) },
             Task::Opening { meeting, members, alerts, on_demand } => {
                 let open = pick(seed, 3, &["The committee is in session.", "Order, please. We are in session.", "Good evening. The committee is in session."]);
                 let called = if *on_demand { " This meeting was called by the mayor." } else { "" };

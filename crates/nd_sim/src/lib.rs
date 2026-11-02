@@ -13,6 +13,8 @@ pub mod bots;
 pub mod buildings;
 /// Cargo hubs: freight terminals that consolidate imports and exports.
 pub mod cargo_hub;
+/// [airport] Airports: runways, flights to towns off the map, air cargo.
+pub mod airport;
 pub mod citizens;
 pub mod clock;
 /// [committee] The mayor's AI committee: pool, seats, alerts, proposals.
@@ -47,6 +49,7 @@ pub mod homeless;
 pub mod identity;
 /// [insight] The city's memory: trips, re-plans, life and building events.
 pub mod insight;
+pub mod travel_log;
 pub mod ground;
 pub mod industry;
 pub mod junctions;

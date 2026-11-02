@@ -530,6 +530,9 @@ impl World {
         if b.port.is_some() {
             return self.bulldoze_dock(bid);
         }
+        if b.airport.is_some() {
+            return self.bulldoze_airport(bid);
+        }
         if b.rail.is_some() {
             return Err(format!("{} is a station or yard: it is not bulldozed on its own", b.name));
         }

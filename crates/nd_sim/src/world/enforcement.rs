@@ -23,6 +23,10 @@ use rand::seq::IndexedRandom;
 /// at the pound (metres).
 const POUND_REACH: f32 = 25.0;
 
+/// [r7-citizen-story] A car further than this from home (metres) is not
+/// walked to: too far to bother on foot.
+const FETCH_MAX: f32 = 3000.0;
+
 /// What a tow truck looks like (as the driving agent's wreck trucks do): a
 /// wrecker with a boom and a wheel lift.
 pub(super) fn tow_model() -> VehicleModel {
@@ -197,7 +201,8 @@ impl World {
         let car = self.vehicles.cars.get(vid)?;
         let spot = car.spot()?;
         let home = self.citizens.get(car.owner).and_then(|c| c.home).and_then(|h| self.building_entrance(h));
-        if home.is_some_and(|h| h.distance(spot.pos) <= PERMIT_RADIUS) {
+        let reach = if spot.resident { RESIDENT_REACH } else { PERMIT_RADIUS };
+        if home.is_some_and(|h| h.distance(spot.pos) <= reach) {
             return None;
         }
         match spot.segment.and_then(|s| self.vehicles.kerb_rules.get(&s)) {
@@ -383,7 +388,7 @@ impl World {
                         None => {
                             // The truck was taken off the road (roads rebuilt).
                             if job.state == TowState::ToPound {
-                                self.impound(job.car, job.company);
+                                self.impound(job.car, job.company, if job.reason == TowReason::Unpaid { CLAMP_FINE } else { 0.0 });
                                 self.enforcement.jobs.retain(|j| j.id != job.id);
                             } else if let Some(j) = self.enforcement.jobs.iter_mut().find(|j| j.id == job.id) {
                                 j.truck = None;
@@ -521,12 +526,10 @@ impl World {
                 }
                 let company = self.enforcement.job(job_id).and_then(|j| j.company);
                 self.traffic.remove_car(truck);
-                self.impound(job.car, company);
                 // [clamp] The unpaid clamp fine is owed at the pound too.
-                if job.reason == TowReason::Unpaid {
-                    if let Some(CarPlace::Parked(s)) = self.vehicles.cars.get_mut(job.car).map(|c| &mut c.place) {
-                        s.fee += CLAMP_FINE;
-                    }
+                let unpaid = job.reason == TowReason::Unpaid;
+                self.impound(job.car, company, if unpaid { CLAMP_FINE } else { 0.0 });
+                if unpaid {
                     self.enforcement.stats.clamps_towed_total += 1;
                 }
                 self.enforcement.jobs.retain(|j| j.id != job_id);
@@ -635,15 +638,16 @@ impl World {
         self.redirect_out(truck)
     }
 
-    /// In the pound: the company's yard, or one out of town.
-    pub(in crate::world) fn impound(&mut self, vid: VehicleId, company: Option<BuildingId>) {
+    /// In the pound: the company's yard, or one out of town. `extra`: owed
+    /// on top of the tow fee ([clamp] an unpaid clamp fine).
+    pub(in crate::world) fn impound(&mut self, vid: VehicleId, company: Option<BuildingId>, extra: f32) {
         let tick = self.clock.tick;
         let company = company.filter(|c| self.buildings.contains_key(*c));
         let pos = match company {
             Some(c) => self.building_entrance(c).unwrap_or_default(),
             None => self.edge_exits(Vec2::ZERO).first().map(|&(l, s)| self.traffic.net.lanes[l as usize].point_at(s).0).unwrap_or_default(),
         };
-        let fee = if company.is_some() { TOW_FEE } else { OUT_OF_TOWN_TOW_FEE };
+        let fee = if company.is_some() { TOW_FEE } else { OUT_OF_TOWN_TOW_FEE } + extra;
         let Some(car) = self.vehicles.cars.get_mut(vid) else { return };
         car.place = CarPlace::Parked(ParkSpot { kind: ParkKind::Pound, building: company, pos, since: tick, fee, ..Default::default() });
         let owner = car.owner;
@@ -657,7 +661,9 @@ impl World {
         let name = company.map_or("a pound out of town".to_string(), |c| self.buildings[c].name.clone());
         if let Some(c) = self.citizens.get_mut(owner) {
             c.parked_at = None;
-            c.remember(tick, format!("The car's in the pound at {name}. {fee:.0} to get it back."));
+            // [r7-citizen-story] What it costs now and how it grows: a fixed
+            // figure went stale as the storage added up.
+            c.remember(tick, pound_memory(&name, fee + STORAGE_PER_DAY));
         }
     }
 
@@ -681,10 +687,15 @@ impl World {
         s.released_today += 1;
         s.released_total += 1;
         s.release_fees_today += fee;
+        let days = (tick.saturating_sub(spot.since) / 1440 + 1) as u32;
+        let at = spot.building.and_then(|b| self.buildings.get(b)).map_or_else(|| "the pound out of town".to_string(), |b| b.name.clone());
         if let Some(c) = self.citizens.get_mut(owner) {
-            c.remember(tick, format!("Paid {fee:.0} to get the car out of the pound."));
+            c.remember(tick, release_memory(&at, fee, spot.fee, days));
+            c.thought = "Got the car back. Not cheap.".to_string();
             c.commute.parking_pain += 0.5;
         }
+        // [r7-citizen-story] On the trip under way (the drive out of the pound).
+        self.travel.note(owner, crate::travel_log::ev::RELEASED, fee);
     }
 
     /// Hourly: cars in the pound are fetched (when the owner can pay and
@@ -693,6 +704,7 @@ impl World {
         let tick = self.clock.tick;
         self.settle_clamps();
         self.rebook_booted();
+        self.fetch_far_cars();
         let impounded: Vec<(VehicleId, ParkSpot)> = self.vehicles.cars.iter().filter_map(|(id, c)| c.spot().filter(|s| s.kind == ParkKind::Pound).map(|s| (id, *s))).collect();
         for (vid, spot) in impounded {
             // A yard that closed: its pound went to a company out of town.
@@ -706,6 +718,66 @@ impl World {
             } else {
                 self.maybe_collect(vid);
             }
+        }
+    }
+
+    /// [r7-citizen-story] Owners at home whose car stands beyond reach of
+    /// home (`CAR_REACH`: left where they lived before a move, or where a
+    /// trip ended without it) go and get it by day: the walk there and the
+    /// drive home, where it parks in a home space or at a kerb within the
+    /// residents' permit. Such a car was never driven (the mode choice only
+    /// offers a car within reach) and sat on a two-hour kerb collecting a
+    /// ticket, a clamp and the tow while its owner walked and biked
+    /// everywhere. Spread over the day by a hash of person and hour.
+    pub(super) fn fetch_far_cars(&mut self) {
+        let hour = self.clock.hour();
+        if !(8..20).contains(&hour) {
+            return;
+        }
+        let tick = self.clock.tick;
+        let mut todo = Vec::new();
+        for (id, c) in self.citizens.iter() {
+            let Some(vid) = c.car else { continue };
+            if c.asleep || c.to_car.is_some() || !matches!(c.activity, Activity::AtHome) || c.wakefulness < crate::citizens::TIRED + 0.1 {
+                continue;
+            }
+            let Some(home) = c.home else { continue };
+            // Not in the hours before a shift: workers go after 17:00.
+            if c.work.is_some() && hour < 17 {
+                continue;
+            }
+            let Some(car) = self.vehicles.cars.get(vid).filter(|car| car.owner == id && !car.spare) else { continue };
+            let Some(spot) = car.spot() else { continue };
+            if spot.booted || !matches!(spot.kind, ParkKind::Kerb | ParkKind::Overflow | ParkKind::Building | ParkKind::Lot) || self.enforcement.job_for(vid).is_some() {
+                continue;
+            }
+            let Some(door) = self.building_entrance(home) else { continue };
+            let d = spot.pos.distance(door);
+            if d <= super::cars::CAR_REACH || d > FETCH_MAX {
+                continue;
+            }
+            let key = slotmap::Key::data(&id).as_ffi();
+            if crate::pedestrians::hash01(key, tick / 60, 0xFE7C) >= 0.5 {
+                continue;
+            }
+            // Only with somewhere to put it by home: a space of the home's
+            // own, or a free kerb the permit covers (else the drive home ends
+            // as far off again, and they would go back and forth).
+            let room = self.buildings.get(home).is_some_and(|b| !b.is_parking() && b.parking_free() > 0) || self.free_kerb_near(door, RESIDENT_REACH - 50.0).is_some();
+            if !room {
+                continue;
+            }
+            todo.push((id, vid, spot.pos, home, door, d));
+        }
+        for (id, vid, at, home, door, d) in todo {
+            self.walk_to_car(id, vid, at, home, Purpose::Home, door);
+            if !self.citizens[id].activity.is_traveling() {
+                continue;
+            }
+            self.log_leg(id, Some(home), home, Purpose::Home, crate::travel_log::mode_bit(crate::citizens::TripMode::Walk), true);
+            self.travel.note(id, crate::travel_log::ev::FETCH_CAR, 0.0);
+            self.begin_trip(id, crate::citizens::TripMode::Car, d);
+            self.citizens[id].thought = "Going to get the car. It's been sitting miles from home.".to_string();
         }
     }
 
@@ -731,6 +803,7 @@ impl World {
             Some(pound) => {
                 self.travel_with(owner, Some(pound), Purpose::Wander, true, true, false);
                 if self.citizens[owner].activity.is_traveling() {
+                    self.travel.note(owner, crate::travel_log::ev::TO_POUND, 0.0);
                     let c = &mut self.citizens[owner];
                     c.to_car = Some(ToCar { car: vid, to: home, purpose: Purpose::Home });
                     c.thought = "Off to get the car out of the pound.".to_string();
@@ -973,6 +1046,24 @@ impl World {
         for (b, upkeep) in lots {
             self.economy.debit_item(Flow::ServiceUpkeep, upkeep, Item::Building(b));
         }
+    }
+}
+
+/// [r7-citizen-story] The owner's memory of the tow: what it costs to get
+/// the car out now (`now`: the tow fee and the first day's storage) and
+/// that it grows by `STORAGE_PER_DAY` a day.
+pub(crate) fn pound_memory(pound: &str, now: f32) -> String {
+    format!("The car's in the pound at {pound}. {now:.0} to get it out now, {STORAGE_PER_DAY:.0} more each day it stays.")
+}
+
+/// [r7-citizen-story] What getting it out cost: the total, and the tow fee
+/// and storage it was made of.
+pub(crate) fn release_memory(pound: &str, paid: f32, tow_fee: f32, days: u32) -> String {
+    let storage = paid - tow_fee;
+    if storage >= 0.5 {
+        format!("Paid {paid:.0} to get the car out of the pound at {pound} ({tow_fee:.0} for the tow, {storage:.0} for {days} day{} of storage).", if days == 1 { "" } else { "s" })
+    } else {
+        format!("Paid {paid:.0} to get the car out of the pound at {pound}.")
     }
 }
 

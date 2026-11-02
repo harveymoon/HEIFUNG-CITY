@@ -17,6 +17,9 @@ impl World {
         if let Placeable::Toll(_) = what {
             return Err("a toll booth goes on a road, not a lot (World::place_toll)".into());
         }
+        if let Placeable::Airport(s) = what {
+            return self.place_airport(s, p, None);
+        }
         let id = self.place_on_site(what, p)?;
         self.placed_grounds(what);
         Ok(id)
@@ -77,6 +80,10 @@ impl World {
             Placeable::MetroStation => self.build_metro_station(lot),
             Placeable::Toll(_) => Err("a toll booth goes on a road, not a lot (World::place_toll)".into()),
             Placeable::CargoHub => self.build_cargo_hub(lot),
+            Placeable::Airport(s) => {
+                let c = self.lots.get(lot).ok_or("no such lot")?.center;
+                self.place_airport(s, c, None)
+            }
         }
     }
 
@@ -89,7 +96,7 @@ impl World {
     /// [free-placement] [`World::placement_problem`] for a lot that may not
     /// exist yet (`lot_id` None: one about to be made on unzoned ground).
     pub(in crate::world) fn lot_problem(&self, what: Placeable, lot: &Lot, lot_id: Option<LotId>) -> Option<String> {
-        if matches!(what, Placeable::Rail(_) | Placeable::Dock(_)) {
+        if matches!(what, Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Airport(_)) {
             return None;
         }
         if matches!(what, Placeable::Toll(_)) {
@@ -288,6 +295,9 @@ impl World {
         }
         if let Some(k) = b.port {
             return Some(Placeable::Dock(k));
+        }
+        if let Some(s) = b.airport {
+            return Some(Placeable::Airport(s));
         }
         if b.metro {
             return Some(Placeable::MetroStation);

@@ -97,6 +97,8 @@ impl Family {
             Placeable::CargoHub => Family::Freight,
             Placeable::Rail(_) => Family::Rail,
             Placeable::Dock(_) => Family::Water,
+            // [airport]
+            Placeable::Airport(_) => Family::Air,
             Placeable::Toll(_) => return None,
         })
     }

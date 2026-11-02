@@ -95,6 +95,8 @@ fn placed_note(parking: (u16, u16), p: nd_sim::Placeable) -> Option<(String, Str
         P::CargoHub => "Freight terminal: businesses nearby import through it in shared trucks instead of one lorry each.".into(),
         P::ParkingLot(_) => format!("A car park the city runs: {} spaces ({} taken now). Drivers pay to park here instead of circling the block.", parking.0, parking.1),
         P::BusDepot => return Some(("A bus depot.".into(), "Buses on the lines park here overnight and leave at 05:30; without a depot a line sends no buses.".into())),
+        // [airport]
+        P::Airport(_) => return Some((what, "Planes to and from towns off the map: visitors fly in to the hotels, residents and business travellers fly out, and dear goods come and go by air cargo. Landing and passenger fees pay for it; the flight paths are loud and cheapen the land under them.".into())),
         P::Plant(_) | P::Battery(_) | P::Service(..) | P::Toll(_) => return None,
     };
     Some((what, gives))

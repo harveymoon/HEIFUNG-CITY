@@ -181,3 +181,31 @@ fn a_chat_saves_and_loads_with_the_city() {
     let back: nd_sim::talk::TalkLog = ron::from_str(&text).unwrap();
     assert_eq!(back.lines(id), w.talks.lines(id));
 }
+
+/// [r7-citizen-story] Harvey towed Yuki's car and they "seemed
+/// unbothered": the chat's card now says the car is in the pound and what
+/// it costs, among what is wrong right now, and the tow stays in view even
+/// when the last memories are all benches; the stand-in brings it up.
+#[test]
+fn a_fresh_tow_is_on_their_mind_when_the_mayor_talks_to_them() {
+    use nd_sim::vehicle::{CarPlace, ParkKind, ParkSpot};
+    let mut w = grown().clone();
+    let id = w.citizens.iter().find(|(_, c)| c.car.is_some() && c.home.is_some()).map(|(id, _)| id).expect("a car owner");
+    let vid = w.citizens[id].car.unwrap();
+    let pound = w.buildings.keys().next().unwrap();
+    let tick = w.clock.tick;
+    w.vehicles.cars[vid].place = CarPlace::Parked(ParkSpot { kind: ParkKind::Pound, building: Some(pound), since: tick - 120, fee: 80.0, ..Default::default() });
+    w.citizens[id].remember(tick - 120, "The car's in the pound at Hooked on Towing. 95 to get it out now, 15 more each day it stays.");
+    for k in 0..12 {
+        w.citizens[id].remember(tick - 100 + k, "Sat on a bench in Umbra Plaza.");
+    }
+    let req = talk_request(&w, id, "How are you doing?", &[], 300).unwrap();
+    let sys = system_prompt(&req);
+    assert!(sys.contains("What is wrong for you right now") && sys.contains("Your car was towed"), "{sys}");
+    assert!(sys.contains("to get it out now"), "the cost: {sys}");
+    assert!(sys.contains("Things that mattered lately") && sys.contains("The car's in the pound at Hooked"), "the tow stays in view: {sys}");
+    assert!(sys.contains("is on your mind"), "{sys}");
+    let Task::Chat { who, said, .. } = &req.task else { panic!("a chat") };
+    let reply = mock_chat(who, said, 1, true);
+    assert!(reply.contains("My car was towed"), "the stand-in reacts: {reply}");
+}

@@ -25,8 +25,27 @@ impl World {
         }
         let Some(car) = self.drive_from_spot(vid, ct_seg, ct_pt, id, Errand::Trip) else { return false };
         // [parking] Fetching it from the pound: pay to get it out.
+        // [r7-citizen-story] The way there (on foot, by bike, by bus) is a
+        // trip of its own, over at the pound: the drive on is the next one,
+        // so neither the memories nor the travel history count the ride
+        // there and the drive home as one long bike ride.
         if let Some(s) = spot.filter(|s| s.kind == ParkKind::Pound) {
+            let origin = self.citizens.get(id).and_then(|c| c.inside).or(s.building);
+            if self.citizens.get(id).is_some_and(|c| c.commute.mode.is_some()) {
+                self.log_arrived(id, s.building);
+                self.end_trip(id);
+            }
+            // "Coming from" the pound, not wherever they last went indoors.
+            if let Some(b) = s.building {
+                self.note_left(id, b);
+            }
+            let from = self.citizens.get(id).map_or(s.pos, |c| c.pos);
+            self.log_leg(id, origin, target, purpose, crate::travel_log::mode_bit(TripMode::Car), true);
+            let dist = self.building_entrance(target).map_or(0.0, |e| e.distance(from));
+            self.begin_trip(id, TripMode::Car, dist);
             self.pay_release(id, s);
+        } else {
+            self.travel.add_mode(id, crate::travel_log::mode_bit(TripMode::Car));
         }
         self.leave_building(id);
         let (pos, heading, model) = {
@@ -97,6 +116,7 @@ impl World {
             _ => "Waited hours for a bus that never came.",
         });
         self.concerns.heard(id, c, crate::concerns::Concern::Commute, 0.5);
+        self.travel.note(id, crate::travel_log::ev::TRANSIT_FAILED, 0.0);
     }
 
     /// The trip is over: how bad was it? Slow trips hurt by mode (a long

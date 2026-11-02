@@ -54,6 +54,8 @@ pub fn flow_color(f: Flow) -> Color32 {
         Flow::DistrictSpending => Color32::from_rgb(150, 110, 200),
         Flow::WasteDisposal => Color32::from_rgb(150, 120, 70),
         Flow::RecyclingSales => Color32::from_rgb(90, 200, 110),
+        Flow::AirportFees => Color32::from_rgb(130, 180, 255),
+        Flow::AirportUpkeep => Color32::from_rgb(120, 90, 220),
     }
 }
 
@@ -89,6 +91,8 @@ fn flow_note(f: Flow) -> &'static str {
         Flow::DistrictSpending => "What districts' policies pay out: rent support to residents, heritage grants to owners and business-rate relief, by district and policy.",
         Flow::WasteDisposal => "Getting rid of the trash, by the tonne, paid at midnight: tipped at each landfill, burnt in each incinerator, sorted at each recycling plant, shipped from each transfer station, and the dearest, the lorries that haul the depots' yards out of town. Services, Trash in City Data shows where it all went.",
         Flow::RecyclingSales => "Metal, plastics, paper and glass the recycling plants recover: sold to the scrap yards and works in town that are short, the rest out of town, by plant.",
+        Flow::AirportFees => "Landing charges for every plane, a fee for every passenger flying out and the handling fee on air cargo, by airport.",
+        Flow::AirportUpkeep => "Running each airport (staff, runways, the tower, the terminal), paid at midnight.",
     }
 }
 

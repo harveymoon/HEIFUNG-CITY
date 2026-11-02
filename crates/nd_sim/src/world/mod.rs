@@ -35,6 +35,11 @@ mod cargo_hubs;
 mod box_lorries;
 /// [r8] Freight forwarders: exports boxed up firm by firm.
 mod forwarders;
+/// [airport] Airports (`crate::airport`): placing, flights, passengers, cargo, noise.
+mod airports;
+pub use airports::{AirportReport, PlaneRow};
+#[cfg(test)]
+mod airport_tests;
 /// [K34] Shipping containers' lives (`crate::containers`).
 mod containers;
 pub use containers::{truck_look, BoxCounts, BoxStory, DepotKind};
@@ -71,6 +76,9 @@ mod history;
 /// [insight] Recording the city's memory (`crate::insight`).
 mod insight;
 pub use insight::{act_of, errand_of, ReplayPoint};
+/// [r7-citizen-story] Each citizen's trips of today and yesterday, in words.
+mod travel_history;
+pub use travel_history::{mode_words, TripView};
 #[cfg(test)]
 mod insight_tests;
 mod memory;
@@ -781,6 +789,9 @@ pub struct World {
     /// (`world/cargo_hubs.rs`).
     #[serde(default)]
     pub cargo_hubs: crate::cargo_hub::CargoHubs,
+    /// [airport] Airports, their timetables and planes.
+    #[serde(default)]
+    pub airports: crate::airport::Airports,
     /// [passengers] Stops on the way and the counts of people riding
     /// along in others' cars (`world/rides.rs`).
     #[serde(default)]
@@ -914,6 +925,11 @@ pub struct World {
     /// load with none.
     #[serde(default)]
     pub insight: crate::insight::Insight,
+    /// [r7-citizen-story] Each citizen's trips of today and yesterday
+    /// (`crate::travel_log`): the person pane's travel history and
+    /// `inspect citizen`'s. Recording only; old saves load with none.
+    #[serde(default)]
+    pub travel: crate::travel_log::TravelBook,
     /// [K34] Every shipping container in town, one by one: numbers, lines,
     /// wear, where each is and has been, and the Stacks homes built from
     /// them (`crate::containers`, `world/containers.rs`). Old saves load
@@ -1019,6 +1035,7 @@ impl World {
             tolls: Default::default(),
             taxis: Default::default(),
             cargo_hubs: Default::default(),
+            airports: Default::default(),
             rides: Default::default(),
             streets: Default::default(),
             pillars: Vec::new(),
@@ -1048,6 +1065,7 @@ impl World {
             dams: Default::default(),
             parks: Default::default(),
             insight: Default::default(),
+            travel: Default::default(),
             // [K34] A new city keeps records from its first box.
             containers: crate::containers::Containers { live: true, ..Default::default() },
             talks: Default::default(),
@@ -1116,13 +1134,13 @@ impl World {
     pub fn under_facility(&self, p: Vec2) -> bool {
         // [review] The corners as they are (`footprint()` copies them into
         // a new Vec per facility per call; this runs per lot in many loops).
-        self.facilities.values().any(|f| point_in_polygon(p, &f.corners()))
+        self.facilities.values().any(|f| point_in_polygon(p, &f.corners())) || self.airports.airports.values().any(|a| point_in_polygon(p, &a.corners()))
     }
 
     /// The ground every station, yard and dock stands on, facilities first
     /// (in slot order), then docks.
     pub(super) fn structure_footprints(&self) -> Vec<Vec<Vec2>> {
-        self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect()
+        self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).chain(self.airports.airports.values().map(|a| a.footprint())).collect()
     }
 
     /// How tall the surroundings of a lot justify building: the floors of

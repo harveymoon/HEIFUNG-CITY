@@ -166,6 +166,9 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("building", "id: the boxes it holds (a depot's stock, a home's walls)"),
     ] },
     Cmd { name: "status", aliases: &[], effect: Read, run: |_, ctx| Ok(status::status(ctx)), help: &[] },
+    Cmd { name: "airports", aliases: &[], effect: Read, run: airports::airports, help: &[
+        ("note", "[airport] (no fields) every airport's card: flights today and yesterday, passengers (visitors, business, residents away), cargo in and out, delays, cancellations, noise complaints, fees and upkeep, how passengers reach it, the transit serving the terminal, the planes on and over the field (phase, position, height) and the next arrivals; and the sizes on offer with their costs"),
+    ] },
     Cmd { name: "frame_stats", aliases: &["frames"], effect: Read, run: |cmd, ctx| {
         let out = ctx.frame_stats.json();
         if cmd.get("reset").and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -444,7 +447,8 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("tier", "low|mid|high"),
         ("x", "f"),
         ("y", "f"),
-        ("note", "hydro beside a river or stream with a current >= 0.8 m/s, tidal on the sea shore, geothermal over a hot spot; docks at the water's edge (they build a pier and a street stub)"),
+        ("note", "hydro beside a river or stream with a current >= 0.8 m/s, tidal on the sea shore, geothermal over a hot spot; docks at the water's edge (they build a pier and a street stub); [airport] airfield|airport fitted to the ground at x,y (every heading tried unless heading: degrees of the runways from +x), check: true only says whether and how it fits"),
+        ("heading", "airfield|airport: degrees of the runways from +x (default: the best fit)"),
     ] },
     Cmd { name: "plant_preview", aliases: &[], effect: Read, run: place::plant_preview, help: &[
         ("kind", "solar|wind|coal|..."),

@@ -374,6 +374,10 @@ fn attraction_lines(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId
 }
 
 pub(super) fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId, b: &nd_sim::Building) {
+    // [airport]
+    if b.airport.is_some() {
+        super::airport::airport_section(ui, w, id);
+    }
     if let Some(s) = b.service {
         let units: Vec<&nd_sim::Unit> = w.services.units.values().filter(|u| u.station == id).collect();
         let mut line = format!("{}  ·  {:.0}/day", s.kind.tier_label(s.tier), s.kind.upkeep_per_day(s.tier));

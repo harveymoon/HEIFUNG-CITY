@@ -804,6 +804,15 @@ pub fn placeable_info(ui: &mut egui::Ui, sim: &mut Sim, what: Placeable) {
                 line += &format!(" {} booths: {} cars paid today, {:.0} taken.", t.booths.len(), t.paid_today, t.revenue_today());
             }
         }
+        // [airport]
+        Placeable::Airport(s) => {
+            let (l, d) = s.size();
+            line += &format!(
+                ". Needs about {l:.0} by {d:.0} m of dry ground off the roads; a click fits it there at the best heading and levels the field (at most {:.0} m of cut or fill). Nothing tall may stand in the approaches off the runway ends (rising 1:{:.0}), and they stay height limit zones. Planes from towns off the map bring visitors for the hotels and take residents and business travellers away, more as the city grows; dear goods fly in and out. Landing and passenger fees pay for it; the flight paths are loud and cheapen the land under them. Draw a road to its forecourt road to open it.",
+                nd_sim::airport::MAX_EARTHWORK,
+                1.0 / nd_sim::airport::APPROACH_SLOPE
+            );
+        }
         Placeable::CargoHub => {
             line += &format!(
                 ". Freight terminal: businesses within {:.0} m import through it, by sea or rail when a port or yard works (one within {:.0} m unloads straight in), else in shared semis from the edge instead of one lorry each; its own lorries deliver on and park in its bays.",

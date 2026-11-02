@@ -89,6 +89,10 @@ pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world:
 /// pad (`World::lot_pad`); [social] murals read their wall off it.
 pub(crate) fn building_geometry(world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<Geometry> {
     let b = world.buildings.get(id)?;
+    // [airport] The whole field is drawn by `render/airport.rs`.
+    if b.airport.is_some() {
+        return Some(Geometry::default());
+    }
     // [land] A building over merged plots is drawn on their combined
     // footprint (`World::footprint`): one building, no seams.
     let footprint = world.footprint(id)?;

@@ -173,7 +173,8 @@ impl World {
         let rail = !self.stations.is_empty();
         // [ferries] A terminal with a boat to a town off the map is enough.
         let ferry = !self.ports.remote_terminals().is_empty();
-        let air = !self.vertiports().is_empty();
+        // [airport] An airport is a way in by air too.
+        let air = !self.vertiports().is_empty() || !self.working_airports().is_empty();
         [road, rail, ferry, air]
     }
 

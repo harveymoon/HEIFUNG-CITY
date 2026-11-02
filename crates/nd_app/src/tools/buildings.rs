@@ -28,6 +28,14 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, selection: 
     // [plot-hover] The remote API's pin stands in for the pointer.
     tools.build_here = match (tools.cursor_pin.or(ground), what) {
         (_, nd_sim::Placeable::Toll(_) | nd_sim::Placeable::Rail(_) | nd_sim::Placeable::Dock(_)) | (None, _) => None,
+        // [airport] Fitted to the ground under the pointer.
+        (Some(p), nd_sim::Placeable::Airport(size)) => Some(match airport_plan(&sim.world, size, p) {
+            Ok(a) => {
+                let heading = a.along.y.atan2(a.along.x).to_degrees().rem_euclid(180.0);
+                (true, format!("runways at {heading:.0}°, the ground levelled to {:.0} m; {:.0} to build ({:.0} of it earthworks), {:.0}/day", a.level, size.cost() + a.earthwork_cost, a.earthwork_cost, size.upkeep_per_day()), a.footprint())
+            }
+            Err(why) => (false, why, Vec::new()),
+        }),
         (Some(p), _) => {
             let w = &sim.world;
             // Joining unzoned parcels into a site is the dear part:
@@ -64,6 +72,20 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, selection: 
             })
         }
     };
+    // [airport] Shift-click: clear the streets across the site for it.
+    if f.shift_click {
+        if let (Some(p), nd_sim::Placeable::Airport(size)) = (ground, tools.build_item()) {
+            let before = sim.world.economy.treasury;
+            tools.status = match sim.world.place_airport_with(size, p, None, true) {
+                Ok(id) => {
+                    *selection = Selection::Building(id);
+                    format!("{} built for {:.0}, the streets across its site cleared. Draw a road to its forecourt road if it is not joined up.", size.label(), before - sim.world.economy.treasury)
+                }
+                Err(e) => format!("Cannot build: {e}."),
+            };
+            return;
+        }
+    }
     if click {
         if let Some(p) = ground {
             let what = tools.build_item();
@@ -104,6 +126,8 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, selection: 
                             Some(why) if sim.world.footpath_only(id) == Some(true) => format!("{} built for {:.0}. It is {why}.", what.label(), paid),
                             _ => format!("{} built for {:.0}. Not connected to the road network yet: draw a road to the marked end of its street stub.", what.label(), paid),
                         },
+                        // [airport] Its forecourt road needs joining to the city.
+                        None if sim.world.airports.by_building(id).is_some_and(|(_, a)| !a.road_connected) => format!("{} built for {:.0}. Not connected to the road network yet: draw a road to its forecourt road.", what.label(), paid),
                         None => format!("{} built for {:.0}; {:.0}/day to run.", what.label(), paid, what.upkeep()),
                     }
                 }
@@ -261,6 +285,30 @@ pub(super) fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor:
         }
         return;
     }
+    // [airport] Its runways and the approach surfaces off their ends.
+    if let nd_sim::Placeable::Airport(size) = what {
+        match airport_plan(w, size, c) {
+            Ok(a) => {
+                let y = |p: SVec2| Vec3::new(p.x, w.surface_height(p) + 1.5, p.y);
+                for r in size.runways() {
+                    let [p, q] = a.runway_ends(r);
+                    gizmos.line(y(p), y(q), Color::linear_rgb(3.0, 3.0, 3.0));
+                }
+                let cyan = Color::linear_rgb(0.3, 2.0, 3.0);
+                for quad in nd_sim::airport::approach_quads(size, a.center, a.along, 1500.0) {
+                    let mut pts: Vec<Vec3> = quad.iter().map(|&p| y(p)).collect();
+                    pts.push(pts[0]);
+                    gizmos.linestrip(pts, cyan.with_alpha(0.5));
+                }
+                let [sa, sb] = a.forecourt();
+                gizmos.line(y(sa), y(sb), cyan);
+            }
+            Err(_) => {
+                gizmos.circle(flat_at(lift(c)), 30.0, red);
+            }
+        }
+        return;
+    }
     if let nd_sim::Placeable::Rail(kind) = what {
         let (f, _, _) = nd_sim::Facility::plan(kind, c, &w.roads);
         let fp = f.footprint();
@@ -285,4 +333,23 @@ pub(super) fn draw_build_preview(gizmos: &mut Gizmos, tools: &ToolState, cursor:
         gizmos.circle(flat_at(lift(centre)), r, col);
         gizmos.circle(flat_at(lift(centre)), (r - nd_sim::services::COVERAGE_FADE).max(1.0), col.with_alpha(0.5));
     }
+}
+
+/// [airport] `World::plan_airport` for the pointer, worked out again only
+/// when it moves 10 m or the city under it changes (it tries every heading).
+fn airport_plan(w: &nd_sim::World, size: nd_sim::airport::AirportSize, p: SVec2) -> Result<nd_sim::airport::Airport, String> {
+    use std::hash::{Hash, Hasher};
+    static CACHE: std::sync::Mutex<Option<(u64, Result<nd_sim::airport::Airport, String>)>> = std::sync::Mutex::new(None);
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (size, (p.x / 10.0).round() as i32, (p.y / 10.0).round() as i32, w.buildings.len(), w.roads.version, w.lots.len(), w.airports.airports.len(), w.economy.treasury >= size.cost()).hash(&mut h);
+    let key = h.finish();
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((k, r)) = cache.as_ref() {
+        if *k == key {
+            return r.clone();
+        }
+    }
+    let r = w.plan_airport(size, p, None);
+    *cache = Some((key, r.clone()));
+    r
 }

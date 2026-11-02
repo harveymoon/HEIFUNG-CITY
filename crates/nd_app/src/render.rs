@@ -37,6 +37,8 @@ pub use thumbs::Thumbs;
 mod turntable;
 pub use turntable::{turntable_aspect, Turntable};
 mod air;
+/// [airport] Airports: the field, its lights, the planes.
+mod airport;
 /// [districts] The district layer; [tourism] visitors on foot.
 mod districts;
 /// Emergency vehicles, fires and rubble.
@@ -493,6 +495,7 @@ impl Plugin for RenderPlugin {
         app.init_resource::<cable::CableRender>().add_systems(Update, cable::sync_cable.after(sync_buildings).before(update_daylight).in_set(SimSet::Sync));
         // Drone taxis and helicopters, after the buildings whose pads they land on.
         app.init_resource::<air::AirState>().add_systems(Update, air::sync_air.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
+        app.init_resource::<airport::AirportRender>().add_systems(Update, airport::sync_airports.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, check_car_bodies.after(lift_movers).in_set(SimSet::Sync));
         // [rail-crossing] Level crossing gear: flashing lamps, swinging arms.
         // [r4] (K33) Containers on the freight trains and the yard cranes.

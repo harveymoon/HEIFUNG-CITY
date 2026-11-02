@@ -435,6 +435,15 @@ leaves_zone, outline}` or `{ok: false, reason}`. Off any lot or parcel the neare
 within 80 m is used, as before.
 
 
+- [airport] `airfield` (also `regional_airport`, `airstrip`) and `airport` (also
+  `international_airport`, `international`): fitted to the ground at `x`,`y` (`World::plan_airport`):
+  every heading is tried unless `heading` (degrees of the runways from +x) fixes it. Refused with the
+  reason when it runs off the map or into water, the ground is too hilly to level (over 40 m of cut or
+  fill; earthworks are paid on top), a road, column, station, dock or civic building is in the way, a hill or a building rises
+  through an approach surface off a runway end (named, with how far over the limit), the city has one
+  of that size already, or the treasury is short. `check: true` only says whether and how it fits:
+  `{ok, heading_deg, level_m, footprint, cost, earthworks_and_clearing, streets_cleared_m}` or `{ok: false, reason}`. `clear: true` takes the streets across the site out (60 a metre; not highways, railways or bridges). The reply carries the
+  `airport` card (as `airports`), with `forecourt_road`: draw a road to it to open the airport.
 - `station`, `freight_yard`, `central_station` (also `central`, `main_station`): rail pieces, placed
   anywhere (`World::place_rail_facility`); no road is needed. The reply message says whether track and street are
   joined. [dock-access] A passenger station on the track whose street is not yet on the road
@@ -963,6 +972,18 @@ up at the pier untimed, so a ferry's waits are null.
 
 ### Finding and inspecting
 
+[airport] `airports` (no fields): every airport's card, also `inspect {building}`'s `airport`
+section: name, size, works and problem, runways, stands, heading_deg, landing_towards_deg,
+flights_today (movements) and flights_yesterday, scheduled_today, pax_today / pax_yesterday,
+tourists_in_today (visitors who checked into a hotel), business_today, residents_out_today,
+cargo_in_today, cargo_out_today, cargo_waiting, delayed_today, avg_delay_min, cancelled_today,
+complaints_yesterday, homes_in_noise, fees_today / fees_yesterday, upkeep_per_day, jobs, workers,
+demand_pax_per_day, access (passengers by car, taxi, airport coach, rail, metro, bus over today and
+yesterday), transit (the station, metro and bus stop serving the terminal), planes (flight, kind,
+phase, from, to, stand, late_min), next_arrivals, centre, footprint, forecourt_road, level_m and
+planes_now (each plane's pos, alt_m and heading_deg now); and `sizes` (cost, upkeep, jobs, site,
+runways, rotations a day) with the placement rule.
+
 `find {what, near?, radius?, filter?, limit?}`, with `what` one of citizens, buildings, lots, cars,
 trains, metro_trains, routes, gestures. With `near` the rows are nearest first and carry `distance`; `radius`
 defaults to 100 m then. Filters (substring match on strings, case-insensitive):
@@ -1224,7 +1245,7 @@ stalled_s, anger_pct, route_left_m} while on the road, and `records`). A car no 
 still answers with its last trip (`car: null`, `on_road: false`). `inspect {citizen: id, history:
 true}` adds `history` {trips (each `set_off` record with `legs` (with `minutes`, and `waited_min` at
 a stop), `ended` (the activity it ended in) and `took_min`), trips_today, failed_routes, life,
-last_drive, current_drive, records}. `inspect {building: id, history: true}` adds `history`
+last_drive, current_drive, records}. [r7-citizen-story] `inspect {citizen}` always has `travel`: the trips of today and yesterday, oldest first, as the person pane's travel history shows them ({day, time, tick, from, from_name, to, to_name, why ("to work", "to get the car out of the pound", "to fetch the car"), modes ([walk, bike, bus, car, subway, lift, air, ...]), minutes (null while under way), events (["paid 95 to get the car out of the pound", "paid 4 to park", "no space, left the car on the street", ...]), cut_short, line}), saved with the city (14 a person at most), and `car_whereabouts` (the car in words: "in the pound at X: 95 to get it out now, 15 more each day it stays", "parked at the kerb 65 m from home (residents' permit, no limit)"; null without a car). `inspect {building: id, history: true}` adds `history`
 {events}.
 
 `replay {car | citizen, step_m?}` gives a trip's way as points: `points` [[x, y, tick], ...] (a
