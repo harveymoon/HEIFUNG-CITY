@@ -21,16 +21,45 @@ pub const SPEEDS: [(&str, f32); 6] = [("1×", 1.0), ("4×", 4.0), ("16×", 16.0)
 /// The speed a new game starts at (16×: the pace the game always had).
 pub const DEFAULT_SPEED: usize = 2;
 const MAX_TICKS_PER_FRAME: u32 = 400;
+/// [r7-sim-thread] Frames in a row with a write to the city after which the
+/// ticks run in the frame (see `Sim::edit_streak`).
+const EDIT_STREAK: u32 = 4;
+/// [r7-sim-thread] The most ticks the sim thread runs in one batch.
+const MAX_BATCH: u32 = 400;
 /// Real time the sim may consume per frame before it yields to rendering.
 const TICK_BUDGET: std::time::Duration = std::time::Duration::from_millis(12);
 
 #[derive(Resource)]
 pub struct Sim {
-    pub world: World,
+    /// [r7-sim-thread] The city as the screen has it: reads go straight to
+    /// it (`Deref<Target = World>`); a write (`DerefMut`) makes it the city
+    /// and sends the sim thread back to it (see `sim_thread`).
+    pub world: crate::sim_thread::SimCore,
+    /// The minds as they stand at `world`'s tick.
     pub minds: HybridMind,
     pub speed_index: usize,
     pub paused: bool,
     accumulator: f32,
+    /// [r7-sim-thread] Ticks in the last batch shown: one tick's motion is
+    /// spread over their time (`frac`).
+    batch_ticks: u32,
+    /// [r7-sim-thread] Pause when the clock reaches this tick (the remote
+    /// `run_to`): the thread stops its batches there exactly.
+    pub pause_at: Option<u64>,
+    /// [r5-drive] [r7-sim-thread] The player's own car for the traffic,
+    /// handed to every batch (Drive mode sets it every frame).
+    pub player_car: Option<nd_sim::PlayerCar>,
+    /// [r7-sim-thread] Tick on the sim thread (`ND_SIM_THREAD=0`: in the
+    /// frame, as before).
+    pub threaded: bool,
+    /// [r7-sim-thread] Frames in a row in which something wrote the city
+    /// between two `advance`s, and the write count the last one ended at.
+    /// A window that takes `&mut` to the world every frame (open, not
+    /// clicked) would make the thread start over every frame and the city
+    /// stand still: after [`EDIT_STREAK`] such frames the ticks run in the
+    /// frame, as before the thread, until the writes stop.
+    pub edit_streak: u32,
+    edits_seen: u64,
     /// Events produced since the previous frame.
     pub events: Vec<SimEvent>,
     /// Set by load; render systems rebuild everything.
@@ -75,11 +104,17 @@ impl Sim {
         let world = Self::fresh_world(nd_sim::LandscapeParams::default());
         let (start, start_gestures) = (world.clock.tick, world.master.gestures.len());
         Self {
-            world,
+            world: crate::sim_thread::SimCore::new(world),
             minds: HybridMind::new(Box::new(MockBackend::default())),
             speed_index: DEFAULT_SPEED,
             paused: false,
             accumulator: 0.0,
+            batch_ticks: 1,
+            pause_at: None,
+            player_car: None,
+            threaded: std::env::var("ND_SIM_THREAD").map_or(true, |v| v != "0"),
+            edit_streak: 0,
+            edits_seen: 0,
             events: Vec::new(),
             full_rebuild: true,
             generation: 0,
@@ -119,11 +154,12 @@ impl Sim {
 
     /// Throw the city away and start again on a new landscape.
     pub fn new_game(&mut self, landscape: nd_sim::LandscapeParams) {
-        self.world = Self::fresh_world(landscape);
+        self.world.replace(Self::fresh_world(landscape));
         // Answers still out are about the old city's citizens.
         nd_sim::MindProvider::reset(&mut self.minds);
         self.events.clear();
         self.accumulator = 0.0;
+        self.batch_ticks = 1;
         self.city_replaced();
     }
 
@@ -152,11 +188,14 @@ impl Sim {
     }
 
     /// Fraction of the way from the last tick to the next, for interpolation.
+    /// [r7-sim-thread] A batch of several ticks (the top speeds) shows its
+    /// last tick's motion over the whole batch's time.
     pub fn frac(&self) -> f32 {
         if self.paused {
             1.0
         } else {
-            self.accumulator.clamp(0.0, 1.0)
+            let n = self.batch_ticks.max(1) as f32;
+            ((self.accumulator + n - 1.0) / n).clamp(0.0, 1.0)
         }
     }
 
@@ -170,6 +209,9 @@ impl Sim {
     /// `step`. The events stay in `World::events` for `step_sim` to drain
     /// this frame, so renderers see them exactly as they see a normal tick.
     pub fn step_ticks(&mut self, n: u32) {
+        if n > 0 && (self.player_car.is_some() || self.world.traffic.player.is_some()) {
+            self.world.traffic.player = self.player_car.clone();
+        }
         for _ in 0..n {
             self.world.tick(&mut self.minds);
         }
@@ -202,7 +244,7 @@ impl Sim {
     pub fn load(&mut self, path: &str) -> Result<(), String> {
         crate::crash::note_io("loading", Path::new(path));
         // [saves] Compressed or plain RON (saves from before compression).
-        self.world = World::read_save(path)?;
+        self.world.replace(World::read_save(path)?);
         crate::crash::note_io("loaded", Path::new(path));
         self.city_replaced();
         self.saved_tick = Some(self.world.clock.tick);
@@ -220,6 +262,149 @@ impl Sim {
         self.saved_tick = Some(self.world.clock.tick);
         self.start_gestures = self.world.master.gestures.len();
         self.minds = HybridMind::new(Box::new(MockBackend::default()));
+        self.pause_at = None;
+        self.player_car = None;
+    }
+
+    /// [r7-sim-thread] Move the game on by `dt` real seconds: what the sim
+    /// thread finished is shown when the clock reaches it and the next
+    /// batch asked for; edits made since the last frame go to the thread
+    /// first. Returns the ticks shown this frame.
+    pub fn advance(&mut self, dt: f32) -> u32 {
+        let began = std::time::Instant::now();
+        let edits = self.world.stats_edits();
+        self.edit_streak = if edits != self.edits_seen { self.edit_streak + 1 } else { 0 };
+        let ticks = if self.threaded && self.edit_streak < EDIT_STREAK { self.advance_threaded(dt) } else { None };
+        let ticks = ticks.unwrap_or_else(|| self.advance_in_frame(dt));
+        self.edits_seen = self.world.stats_edits();
+        self.ticks_last_frame = ticks;
+        self.tick_ms = began.elapsed().as_secs_f32() * 1000.0;
+        // Ticks delivered against ticks asked for, as a half-second moving
+        // average: single frames carry 0 or 1 tick at low speeds, so the raw
+        // ratio is meaningless without smoothing.
+        if !self.paused && dt > 0.0 {
+            let ratio = ticks as f32 / (dt * self.speed());
+            // Averaged over a few ticks' worth of time: at 1x a tick comes only
+            // every few seconds, and a half-second window read as 0%.
+            let tau = (3.0 / self.speed()).max(0.5);
+            let k = 1.0 - (-dt / tau).exp();
+            self.effective_speed += (ratio - self.effective_speed) * k;
+        }
+        ticks
+    }
+
+    /// The old way, and the fallback: tick here, in the frame, within
+    /// [`TICK_BUDGET`].
+    fn advance_in_frame(&mut self, dt: f32) -> u32 {
+        let mut ticks = 0;
+        if !self.paused {
+            self.accumulator += dt * self.speed();
+            self.batch_ticks = 1;
+            let start = std::time::Instant::now();
+            if self.player_car.is_some() || self.world.traffic.player.is_some() {
+                self.world.traffic.player = self.player_car.clone();
+            }
+            while self.accumulator >= 1.0 && ticks < MAX_TICKS_PER_FRAME && !self.at_pause_tick() {
+                self.world.tick(&mut self.minds);
+                self.accumulator -= 1.0;
+                ticks += 1;
+                if start.elapsed() > TICK_BUDGET {
+                    break;
+                }
+            }
+            // Drop any backlog we could not afford: the sim runs slower, the frame stays smooth.
+            if self.accumulator > 2.0 {
+                self.accumulator = 1.0;
+            }
+            self.check_pause_at();
+        }
+        let mut events = std::mem::take(&mut self.events);
+        events.clear();
+        events.extend(self.world.take_events());
+        self.events = events;
+        ticks
+    }
+
+    /// The clock is at `pause_at`.
+    fn at_pause_tick(&self) -> bool {
+        self.pause_at.is_some_and(|t| self.world.clock.tick >= t)
+    }
+
+    fn check_pause_at(&mut self) {
+        if self.at_pause_tick() {
+            self.paused = true;
+            self.pause_at = None;
+            self.accumulator = 0.0;
+        }
+    }
+
+    /// Ticks to ask the thread for: enough that the batch covers the time it
+    /// takes (its copy and its ticks) at this speed, with a quarter to
+    /// spare; as many as fit in a batch when the thread cannot keep up.
+    fn batch_target(&self) -> u32 {
+        let s = &self.world.stats;
+        let (copy, tick) = (s.copy_ms.max(1.0), s.tick_ms.max(0.5));
+        let per_s = self.speed();
+        let room = 1000.0 - 1.25 * tick * per_s;
+        let n = if room < 50.0 { MAX_BATCH as f32 } else { (1.25 * copy * per_s / room).ceil() };
+        (n as u32).clamp(1, MAX_BATCH)
+    }
+
+    /// The sim thread's frame (see `sim_thread`). None when the thread
+    /// cannot run: tick in the frame.
+    fn advance_threaded(&mut self, dt: f32) -> Option<u32> {
+        self.world.poll();
+        // The screen's own edits since the last frame, before anything is
+        // handed to the thread (a copy of the world carries its events).
+        let mut events = std::mem::take(&mut self.events);
+        events.clear();
+        events.extend(self.world.take_events());
+        let mut ticks = 0;
+        if !self.paused {
+            self.check_pause_at();
+        }
+        if !self.paused {
+            self.accumulator += dt * self.speed();
+            if self.accumulator >= 1.0 {
+                if let Some(b) = self.world.adopt() {
+                    ticks = b.ticks;
+                    self.minds = b.minds;
+                    events.extend(b.events);
+                    self.accumulator -= ticks as f32;
+                    self.batch_ticks = ticks.max(1);
+                    self.check_pause_at();
+                }
+            }
+            // A backlog the thread cannot catch up: show batches as they
+            // come (the sim runs slower, the frame stays smooth).
+            if self.accumulator > (self.batch_target() + 2) as f32 {
+                self.accumulator = 1.0;
+            }
+        }
+        self.events = events;
+        // [r5-drive] At the wheel the traffic must see the car where it is
+        // now: no batch ahead, the tick is asked for when it is due.
+        let want = if self.paused || (self.player_car.is_some() && self.accumulator < 1.0) {
+            0
+        } else {
+            let n = self.batch_target();
+            match self.pause_at {
+                Some(t) => n.min(t.saturating_sub(self.world.clock.tick).min(MAX_BATCH as u64) as u32),
+                None => n,
+            }
+        };
+        // Flat out (the thread cannot keep up): longer batches, fewer copies.
+        let budget = if self.batch_target() >= MAX_BATCH {
+            let copy = std::time::Duration::from_secs_f32(self.world.stats.copy_ms.max(0.0) * 2.0 / 1000.0);
+            copy.clamp(crate::sim_thread::BATCH_BUDGET, crate::sim_thread::BATCH_BUDGET_MAX)
+        } else {
+            crate::sim_thread::BATCH_BUDGET
+        };
+        if !self.world.run(&self.minds, want, budget, self.player_car.clone()) {
+            self.threaded = false;
+            return None;
+        }
+        Some(ticks)
     }
 }
 
@@ -332,40 +517,5 @@ fn sim_hotkeys(keys: Res<ButtonInput<KeyCode>>, mut flags: ResMut<UiFlags>, mode
 }
 
 fn step_sim(time: Res<Time>, mut sim: ResMut<Sim>) {
-    let mut ticks = 0;
-    let began = std::time::Instant::now();
-    if !sim.paused {
-        let speed = sim.speed();
-        sim.accumulator += time.delta_secs() * speed;
-        let s = &mut *sim;
-        let start = std::time::Instant::now();
-        while s.accumulator >= 1.0 && ticks < MAX_TICKS_PER_FRAME {
-            s.world.tick(&mut s.minds);
-            s.accumulator -= 1.0;
-            ticks += 1;
-            if start.elapsed() > TICK_BUDGET {
-                break;
-            }
-        }
-        // Drop any backlog we could not afford: the sim runs slower, the frame stays smooth.
-        if s.accumulator > 2.0 {
-            s.accumulator = 1.0;
-        }
-    }
-    sim.ticks_last_frame = ticks;
-    sim.tick_ms = began.elapsed().as_secs_f32() * 1000.0;
-    // Ticks delivered against ticks asked for, as a half-second moving
-    // average: single frames carry 0 or 1 tick at low speeds, so the raw
-    // ratio is meaningless without smoothing.
-    let dt = time.delta_secs();
-    if !sim.paused && dt > 0.0 {
-        let ratio = ticks as f32 / (dt * sim.speed());
-        // Averaged over a few ticks' worth of time: at 1x a tick comes only
-        // every few seconds, and a half-second window read as 0%.
-        let tau = (3.0 / sim.speed()).max(0.5);
-        let k = 1.0 - (-dt / tau).exp();
-        sim.effective_speed += (ratio - sim.effective_speed) * k;
-    }
-    let events = sim.world.drain_events();
-    sim.events = events;
+    sim.advance(time.delta_secs());
 }

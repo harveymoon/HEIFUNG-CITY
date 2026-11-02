@@ -545,8 +545,12 @@ pub fn save_now_in_background(sim: &mut Sim, saves: &mut Saves, flags: &mut UiFl
         flags.message = "still writing the last quick save".into();
         return;
     }
-    ensure_game_id(&mut sim.world);
-    let world = sim.world.clone();
+    if !sim.world.identity.has_id() {
+        ensure_game_id(&mut sim.world);
+    }
+    // [r7-sim-thread] Shared, not copied: the screen's city is only ever
+    // replaced, never written while the save holds it (an edit copies).
+    let world = sim.world.share();
     sim.saved_tick = Some(sim.world.clock.tick);
     let meta = serde_json::to_string_pretty(&meta_of(sim, "")).ok();
     let slot = format!("{DIR}/city-{:012}-day{}.ron", now_unix(), sim.world.clock.day() + 1);
@@ -988,9 +992,12 @@ pub fn autosave(mut sim: ResMut<Sim>, mut saves: ResMut<Saves>, mut flags: ResMu
         warn!("autosave skipped: the previous one is still being written");
         return;
     }
-    ensure_game_id(&mut sim.world);
+    if !sim.world.identity.has_id() {
+        ensure_game_id(&mut sim.world);
+    }
     let start = std::time::Instant::now();
-    let world = sim.world.clone();
+    // [r7-sim-thread] Shared, not copied (the 90 ms hitch every day).
+    let world = sim.world.share();
     let hitch = start.elapsed().as_secs_f64() * 1000.0;
     debug!("autosave: world copied in {hitch:.1} ms on the main thread");
     let day = world.clock.day() + 1;

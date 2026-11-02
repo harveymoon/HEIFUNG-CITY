@@ -33,6 +33,7 @@ pub(super) fn sync_roads(
     mut lamps: ResMut<street_look::StreetLamps>,
     existing: Query<Entity, Or<(With<RoadsTag>, With<holo::TunnelTag>, With<holo::GhostRoadTag>)>>,
 ) {
+    let _t = crate::frame_stats::span("sync_roads");
     let version = sim.world.roads.version;
     // [footbridge] A footbridge built (or its crosswalk kept) repaints the
     // streets: its zebra goes or comes back.
@@ -119,6 +120,7 @@ pub(super) fn sync_signals(
     existing: Query<Entity, With<SignalTag>>,
     mut q: Query<(&SignalTag, Option<&PedSignalTag>, &mut MeshMaterial3d<StandardMaterial>, Option<&swap::SwapOriginal>)>,
 ) {
+    let _t = crate::frame_stats::span("sync_signals");
     let net = &sim.world.traffic.net;
     let closed = sim.world.closed_crosswalks();
     let closed_key = signals_key(closed_hash(&closed), net.signals_version);

@@ -47,7 +47,7 @@ pub(super) fn contaminate(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
 /// [social] Testing: a street-art crew's mural on a building now.
 pub(super) fn paint_mural(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let bid: nd_sim::BuildingId = key_from(field(cmd, "building").ok_or("missing building")?)?;
-    let w = &mut ctx.sim.world;
+    let w: &mut nd_sim::World = &mut ctx.sim.world;
     let b = w.buildings.get(bid).ok_or("no such building")?;
     let lot = b.lot;
     let l = w.lots.get(lot).ok_or("no lot")?;

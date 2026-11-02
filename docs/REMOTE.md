@@ -117,12 +117,23 @@ it runs is documented in `help` or named as an alias, and nothing else is.
 | --- | --- | --- |
 | `help` | | every command and its fields |
 | `status` | | clock, paused, speed, effective_speed, population, buildings, under_construction, lots, homes/jobs, treasury, ledger_yesterday, power, weather, land, market, demand, traffic, transit, rail, render (fps, ticks_per_frame, triangles), camera, tool, selection, project, overlays, lighting, message, tool_status, event_seq, favourites, `windows_open` (the tool windows), `city_data` {open, tab, sub}, `build_window` {open, section}, `title_screen`, `climate` {climate, label, precipitation: null or {kind rain/snow, intensity 0..1}}, `alerts_top` (the first 5 of `report`'s alerts) |
-| `frame_stats` (`frames`) | `reset`? | [r6-perf] the last ~2,000 frames: `fps`, `frame_ms` and `sim_ms` {mean, p50, p95, p99, max}, `over_33ms`, `over_50ms`, `over_100ms`, `ticks`, `ticks_per_second`; `reset: true` starts a fresh window after the reply |
+| `frame_stats` (`frames`) | `reset`? | [r6-perf] the last ~2,000 frames: `fps`, `frame_ms` and `sim_ms` {mean, p50, p95, p99, max}, `over_33ms`, `over_50ms`, `over_100ms`, `ticks`, `ticks_per_second`; `reset: true` starts a fresh window after the reply. [r7-sim-thread] A frame is the main loop's period on the wall clock (Bevy's `Time<Real>` misreads frames once the render thread is the slower one); `sim_ms` is the main thread's time on the sim (waits for the sim thread, near 0); `slow` lists the last 40 frames over 50 ms: `ms`, `main_ms`, `ticks` and `events` shown, `systems` (the costly render systems over 2 ms), `sim_thread` (ticking / copying / freeing meanwhile), `render_prep_ms`, `render_draw_ms`, `wait_ms`, `gap_ms` |
 | `memory` | | [memory] `working_set_mb`, `peak_working_set_mb`, `commit_mb` (the process's private commit); `meshes`, `materials`, `images`, `entities`; `render` {building_entities, people_meshes}; `world` {citizens, buildings, cars, lots, day}; `heap` {live_mb, peak_mb, biggest_block_mb} with the `heap-count` cargo feature only (zeros otherwise) |
 | `pause` | `paused` bool (omit to toggle) | `paused` |
 | `speed` | `index` 0..5 (1×, 4×, 16×, 64×, 256×, 1024×), or `value`: a multiple of real time for what moves, snapped to the nearest step on a log scale. At 1× people walk at their true pace; the clock runs 15× faster than that | `speed_index`, `speed`, `ticks_per_second`, `label` |
 | `step` | `ticks` (default 1, max 100000) | `ticks` (run), `clock`, `took_ms`; `stopped` when a committee meeting was called |
+| `run_to` | `tick`, or `ticks` from now; `speed_index`? | [r7-sim-thread] unpause and run on the sim thread at the speed set, pausing exactly when the clock reaches the tick: `from`, `pause_at`, `threaded` (poll `status.paused`) |
+| `fingerprint` | | [r7-sim-thread] a hash of the whole world (`World::fingerprint`, as perf_probe's `ND_FINGERPRINT`, with `ND_HYBRID=1` for the game's own mind): `fingerprint`, `bytes`, `tick`, `treasury`, `population`, `cars`. Same hash, same city |
 | `drive` | `start` (bool; `at` [x,y], `heading` rad), `ticks` 1..900, `seconds` 0..60, `throttle` / `brake` 0..1, `steer` -1..1, `handbrake`, `horn`, `assist`, `view` chase / bonnet, `stop` | [r5-drive] Drive mode. `start` puts a car on the street nearest the camera (or `at`), the game at 1×; `ticks` drives that many sim ticks right now with the controls (car physics and traffic stepped together, the traffic told where the car is before each tick); `seconds` holds the controls in real play; `stop` gets out to Orbit over the car. Reply `driving`, `pos`, `floor`, `heading`, `bearing`, `speed_kmh`, `street`, `limit_kmh`, `on_road`, `in_tunnel`, `bumps`, `last_bump`, `held_behind` (vehicles queued behind the car now), `held_max` (most during the call), `red_runs`, `traffic_sees_player`, `game_speed`, `tick` |
+
+[r7-sim-thread] The game ticks on a sim thread of its own: the screen shows a copy of the city
+handed over after each batch of ticks. Every command that changes the city does so between two
+ticks, on the tick the screen shows (a batch the thread ran ahead is thrown away and run again
+from the edited city); its reply carries `edit_tick`, so a replay can apply it on the same tick.
+`status.sim_thread` has the thread's figures: `threaded`, `running`, `ready`, `pause_at`, `tick_ms`,
+`copy_ms`, `max_tick_ms`, `batches`, `ticks`, `discarded`, `rebases`, `waited_ms` and `edit_sites`
+(where in the code the writes came from, for finding a system that writes every frame).
+`ND_SIM_THREAD=0` ticks in the frame as before.
 
 `step` runs the ticks immediately, on the main thread, even while paused (the same `World::tick`
 the frame loop uses), and stalls the frame for as long as it takes: a young city runs thousands of

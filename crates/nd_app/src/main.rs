@@ -50,6 +50,8 @@ mod render;
 /// [overlay] What the player has selected, checked after every step.
 mod selection;
 mod sim;
+/// [r7-sim-thread] The sim on its own thread.
+mod sim_thread;
 /// [dock-access] "Connect here" marks on unjoined dock and station street stubs.
 mod stub_marks;
 mod pressure_where;

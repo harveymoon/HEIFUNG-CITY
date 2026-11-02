@@ -350,6 +350,10 @@ struct RenderState {
     /// or going redraws the fields round it (see [`plant_field`]).
     plant_sites: HashMap<BuildingId, SVec2>,
     chunks: HashMap<ChunkKey, ChunkMeshes>,
+    /// [r7-sim-thread] Building chunks waiting to be regenerated: a few a
+    /// frame (`CHUNK_BUDGET`), so a batch of sim ticks that touched a dozen
+    /// blocks costs a dozen short frames, not one long one.
+    pending_chunks: std::collections::HashSet<ChunkKey>,
     citizens: HashMap<CitizenId, Entity>,
     cars: HashMap<CarId, [Entity; 2]>,
     overlay_version: u64,

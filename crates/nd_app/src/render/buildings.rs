@@ -170,6 +170,10 @@ pub(super) fn building_chunk(world: &World, id: BuildingId) -> Option<ChunkKey> 
 /// regenerated whenever a building in it is built, changed or removed, so
 /// an edit costs one street block of procgen rather than the whole city, and
 /// a few hundred buildings are a few dozen draw calls per surface.
+/// [r7-sim-thread] Main-thread time a frame may spend regenerating building
+/// chunks before the rest wait for the next frame (at least one is done).
+const CHUNK_BUDGET: std::time::Duration = std::time::Duration::from_millis(6);
+
 pub(super) fn sync_buildings(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -179,6 +183,7 @@ pub(super) fn sync_buildings(
     mut state: ResMut<RenderState>,
     mut stats: ResMut<RenderStats>,
 ) {
+    let _t = crate::frame_stats::span("sync_buildings");
     let rebuild_all = sim.full_rebuild || assets.rules_changed || assets.palette_changed;
     if sim.full_rebuild || assets.rules_changed {
         // Every building's resolved style and the older neighbours it was
@@ -283,6 +288,14 @@ pub(super) fn sync_buildings(
             }
         }
     }
+    // [r7-sim-thread] A load or a palette change draws everything at once;
+    // changes as the city runs are spread over frames within a budget.
+    let mut later: Vec<ChunkKey> = Vec::new();
+    if !rebuild_all {
+        state.pending_chunks.extend(dirty.drain());
+        let pending: Vec<ChunkKey> = state.pending_chunks.drain().collect();
+        dirty.extend(pending);
+    }
     let touched = !dirty.is_empty();
     if touched {
         {
@@ -298,7 +311,14 @@ pub(super) fn sync_buildings(
                 }
             }
         }
-        for k in dirty {
+        let began = std::time::Instant::now();
+        let mut order: Vec<ChunkKey> = dirty.into_iter().collect();
+        order.sort_unstable_by_key(|k| (k.0, k.1));
+        for k in order {
+            if !rebuild_all && began.elapsed() > CHUNK_BUDGET {
+                later.push(k);
+                continue;
+            }
             if let Some(chunk) = state.chunks.remove(&k) {
                 for e in chunk.entities {
                     commands.entity(e).despawn();
@@ -360,6 +380,7 @@ pub(super) fn sync_buildings(
             state.chunks.insert(k, ChunkMeshes { entities, triangles, detail });
         }
     }
+    state.pending_chunks.extend(later);
     if rebuild_all || touched {
         stats.building_entities = state.chunks.values().map(|c| c.entities.len()).sum();
         stats.building_triangles = state.chunks.values().map(|c| c.triangles).sum();

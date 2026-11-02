@@ -60,6 +60,7 @@ pub(super) fn sync_lots(
     existing: Query<Entity, With<LotsTag>>,
     tools: Res<crate::tools::ToolState>,
 ) {
+    let _t = crate::frame_stats::span("sync_lots");
     let w = &sim.world;
     // Unzoned parcels are outlined grey with the zoning overlay, and always
     // while the Zone tool is out (they are what it paints).

@@ -53,6 +53,26 @@ impl World {
         ron::ser::to_string_pretty(self, Self::ron_config())
     }
 
+    /// [r6-perf] [r7-sim-thread] A hash of the whole saved state: two runs
+    /// that give the same fingerprint simulated the same city. Over the
+    /// RON's sorted lines: a few maps (tourism's per-building tallies) are
+    /// `HashMap`s and save in a different order every run, which says
+    /// nothing about the simulation. (perf_probe's `ND_FINGERPRINT` and the
+    /// remote `fingerprint` command.) Returns the hash and the RON's size.
+    pub fn fingerprint(&self) -> Result<(u64, usize), ron::Error> {
+        let ron = self.to_ron()?;
+        let mut lines: Vec<&str> = ron.lines().collect();
+        lines.sort_unstable();
+        let mut h: u64 = 0xcbf29ce484222325;
+        for l in lines {
+            for b in l.bytes().chain(std::iter::once(b'\n')) {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x100000001b3);
+            }
+        }
+        Ok((h, ron.len()))
+    }
+
     /// [memory] The save, byte for byte as [`World::to_ron`], streamed into
     /// `out` (wrap a file in a `BufWriter`). A big city's save runs past
     /// 128 MiB, and building it as one `String` first needs a single 256 MiB
