@@ -199,8 +199,10 @@ impl World {
     /// landmark in a park, which `building_height` counts as 0, too).
     fn cable_obstacle_height(&self, b: BuildingId) -> f32 {
         let h = self.building_height(b);
-        let floors = self.buildings.get(b).map_or(0.0, |x| x.floors as f32 * 4.0);
-        h.max(floors).max(4.0)
+        if h > 0.0 {
+            return h.max(4.0);
+        }
+        self.buildings.get(b).map_or(0.0, |x| x.floors as f32 * 4.0).max(4.0)
     }
 
     fn cable_ground(&self, p: Vec2) -> f32 {
