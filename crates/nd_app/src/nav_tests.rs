@@ -380,7 +380,7 @@ fn drive_mode_with_the_keyboard_only() {
     play(&mut app, hold(KeyCode::KeyW, 150));
     let car = app.world().resource::<crate::drive::Drive>().car.unwrap();
     assert!(car.pos.distance(start.pos) > 10.0 && car.v > 3.0, "W drives: {:?} at {} m/s", car.pos, car.v);
-    assert!(app.world().resource::<Sim>().world.traffic.player.is_some(), "the traffic sees the car");
+    assert!(app.world().resource::<Sim>().player_car.is_some(), "the traffic is handed the car (r7-sim-thread: with every batch)");
     // Steering with D turns it (heading up, the sim's right).
     let h0 = car.heading;
     play(&mut app, vec![vec![Synth::Key(KeyCode::KeyW, true), Synth::Key(KeyCode::KeyD, true)]].into_iter().chain((0..40).map(|_| Vec::new())).chain([vec![Synth::Key(KeyCode::KeyW, false), Synth::Key(KeyCode::KeyD, false)]]).collect());
@@ -397,7 +397,7 @@ fn drive_mode_with_the_keyboard_only() {
     play(&mut app, vec![vec![Synth::Key(KeyCode::Escape, true)], vec![Synth::Key(KeyCode::Escape, false)]]);
     assert_eq!(*app.world().resource::<CameraMode>(), CameraMode::Orbit);
     assert!(app.world().resource::<crate::drive::Drive>().car.is_none());
-    assert!(app.world().resource::<Sim>().world.traffic.player.is_none());
+    assert!(app.world().resource::<Sim>().player_car.is_none());
     let (target, ..) = cam(&mut app);
     assert!(Vec2::new(target.x, target.z).distance(at) < 15.0, "orbit over the car: {target:?} vs {at:?}");
     assert_eq!(app.world().resource::<Sim>().speed_index, crate::sim::DEFAULT_SPEED, "the game's speed back");
