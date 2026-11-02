@@ -742,6 +742,10 @@ impl World {
                 continue;
             }
             let Some(home) = c.home else { continue };
+            // Not in the hours before a shift: workers go after 17:00.
+            if c.work.is_some() && hour < 17 {
+                continue;
+            }
             let Some(car) = self.vehicles.cars.get(vid).filter(|car| car.owner == id && !car.spare) else { continue };
             let Some(spot) = car.spot() else { continue };
             if spot.booted || !matches!(spot.kind, ParkKind::Kerb | ParkKind::Overflow | ParkKind::Building | ParkKind::Lot) || self.enforcement.job_for(vid).is_some() {

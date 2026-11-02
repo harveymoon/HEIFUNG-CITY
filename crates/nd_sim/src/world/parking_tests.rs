@@ -947,8 +947,9 @@ fn an_owner_fetches_a_car_left_far_from_home_and_parks_it_legally() {
     let at = w.vehicles.cars[vid].spot().unwrap().pos;
     assert!(at.distance(door) > super::cars::CAR_REACH, "out of reach of home: {}", at.distance(door));
     assert!(w.kerb_limit(vid).is_some(), "a time limit where it stands");
-    // At home and awake from 08:00 (owners set off from the hourly check at :47).
-    run_to_hour(&mut w, 8);
+    // At home and awake from 17:00 (owners with a job go after work; they
+    // set off from the hourly check at :47).
+    run_to_hour(&mut w, 17);
     {
         let c = &mut w.citizens[id];
         c.activity = Activity::AtHome;
