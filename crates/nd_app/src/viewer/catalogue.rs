@@ -69,7 +69,7 @@ pub fn group(s: Style) -> &'static str {
         ScrubLot | Garden | Plaza | Beach => "Parks and beaches",
         ParkingLot | CarPark => "Parking",
         PowerCoal | PowerSolar | PowerWind | PowerNuclear | PowerHydro | PowerTidal | PowerGeothermal | PowerBattery => "Power",
-        BusDepot | Station | FreightYard | MetroEntrance | CentralStation | Vertiport => "Transit and rail",
+        BusDepot | Station | FreightYard | MetroEntrance | CentralStation | Vertiport | CableStation => "Transit and rail",
         ShippingPort | FerryTerminal | MarinaSmall | MarinaLarge | FishingPortSmall | FishingPortLarge => "Docks",
         PoliceStation | FireStation | Hospital | School | DispatchCenter | Prison | TrashDepot | University | Landfill | Incinerator | RecyclingPlant | TransferStation => "City services",
         Landmark | Stadium | ArtMuseum | ScienceMuseum | HistoryMuseum | PleasurePier | GrandPark | Zoo | Observatory | Aquarium | BotanicalGarden | ConcertHall | AmusementPark | ConventionCentre | Cathedral | CasinoResort | LedgeHouse | PrairieHall | HillChapel | SkySlab | FanLibrary | CultureHouse => "Attractions",

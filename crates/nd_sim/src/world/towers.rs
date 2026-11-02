@@ -114,6 +114,10 @@ impl World {
             let m = (top - self.lot_pad(lot)).max(0.0);
             lim = Some(lim.map_or(m, |x| x.min(m)));
         }
+        // [cable] Under a cable line: what the cabins clear.
+        if let Some(m) = self.cable_height_limit(lot) {
+            lim = Some(lim.map_or(m, |x| x.min(m)));
+        }
         if self.skyline.vertiport_clearance {
             let near_pad = self.buildings.values().any(|b| b.service.is_some_and(|s| s.kind == ServiceKind::Vertiport) && self.lots.get(b.lot).is_some_and(|p| p.center.distance(l.center) < VERTIPORT_CLEARANCE_M));
             if near_pad {

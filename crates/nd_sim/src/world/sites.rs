@@ -358,4 +358,24 @@ mod tests {
         assert!(open < zoned - 0.1, "{open} after {zoned}");
         assert!((0.4..0.6).contains(&open), "half the parkland it needs: {open}");
     }
+
+    /// Parks never wear out to derelict (Harvey 2026-11-01), and one worn
+    /// in an older save is made good at the next daily update.
+    #[test]
+    fn parks_do_not_go_derelict() {
+        let mut w = World::new(WorldConfig { landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::test_town() });
+        w.add_road(&[Vec2::new(-400.0, 0.0), Vec2::new(400.0, 0.0)], 1, 1);
+        w.add_zone(square(10.0, 10.0, 190.0), LandUse::Park).unwrap();
+        let lot = w.lots.iter().find(|(_, l)| l.usable() && l.building.is_none() && l.land_use == LandUse::Park).map(|(id, _)| id).expect("a park lot");
+        let b = build(&mut w, lot);
+        w.finish_construction(b);
+        w.buildings[b].tier = crate::buildings::Tier::Low;
+        w.buildings[b].condition = 0.1;
+        assert!(!w.buildings[b].is_derelict(), "a park is never derelict");
+        for _ in 0..120 {
+            w.daily_update();
+        }
+        assert_eq!(w.buildings[b].condition, 1.0, "no wear on a park");
+        assert!(!w.buildings[b].is_derelict());
+    }
 }

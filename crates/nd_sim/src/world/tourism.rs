@@ -158,6 +158,8 @@ impl World {
                 out.push(Attraction { kind: AttractionKind::Beach, name: s.name.clone(), pos, building: Some(*bid), score });
             }
         }
+        // [cable] Scenic cable cars: the ride up for the view.
+        out.extend(self.cable_attractions());
         self.tourism.attractiveness = out.iter().map(|a| a.score).sum();
         self.tourism.attractions = out;
         self.tourism.ways_in = self.tourist_ways_in();
@@ -485,6 +487,11 @@ impl World {
                 t.state = TouristState::Sightseeing { kind, until: tick + rng.random_range(35..110) };
                 t.next_tick = tick + 1;
                 t.sights += 1;
+                // [cable] Up the cable car for the view, and back.
+                if kind == AttractionKind::CableCar {
+                    self.cable_sightseer(id);
+                }
+                let Some(t) = self.tourism.tourists.get_mut(id) else { return };
                 // A ticket at the stadium on a match day.
                 if kind == AttractionKind::Stadium && t.money > 15.0 {
                     t.spent += 15.0;

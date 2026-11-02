@@ -76,6 +76,7 @@ pub fn commute_thought(c: &nd_sim::Citizen) -> Option<&'static str> {
 
 // ── rule-based mind ──────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct RuleBasedMind {
     rng: SimRng,
 }
@@ -348,10 +349,19 @@ pub trait MindBackend: Send + Sync {
     fn submit(&mut self, id: RequestId, prompt: MindPrompt);
     fn poll(&mut self) -> Vec<(RequestId, MindAnswer)>;
     fn name(&self) -> &'static str;
+    /// [r7-sim-thread] A copy with the same requests in hand, when the
+    /// backend can make one (a model behind a connection cannot): the game
+    /// steps a copy of the city ahead on its sim thread and throws the copy
+    /// away when the player edits the city first, so the mind that copy
+    /// asked must be thrown away with it.
+    fn try_clone(&self) -> Option<Box<dyn MindBackend>> {
+        None
+    }
 }
 
 /// Answers after a few polls with a canned, personality-flavoured line. Lets
 /// the whole spotlight pipeline be exercised without a model.
+#[derive(Clone)]
 pub struct MockBackend {
     queue: Vec<(RequestId, MindPrompt, u8)>,
 }
@@ -397,6 +407,10 @@ impl MindBackend for MockBackend {
     fn name(&self) -> &'static str {
         "mock"
     }
+
+    fn try_clone(&self) -> Option<Box<dyn MindBackend>> {
+        Some(Box::new(self.clone()))
+    }
 }
 
 /// Rules for everyone, backend for spotlight citizens. Spotlight citizens
@@ -426,6 +440,12 @@ impl HybridMind {
             in_flight: HashMap::new(),
             next_request: 1,
         }
+    }
+
+    /// [r7-sim-thread] An exact copy (see [`MindBackend::try_clone`]);
+    /// None when the backend cannot be copied.
+    pub fn try_clone(&self) -> Option<HybridMind> {
+        Some(HybridMind { rules: self.rules.clone(), backend: self.backend.try_clone()?, pending: self.pending.clone(), in_flight: self.in_flight.clone(), next_request: self.next_request })
     }
 
     pub fn backend_name(&self) -> &'static str {

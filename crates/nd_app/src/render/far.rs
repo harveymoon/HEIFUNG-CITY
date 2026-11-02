@@ -155,6 +155,7 @@ pub(super) fn sync_far(
     mut state: ResMut<FarRender>,
     existing: Query<Entity, With<FarTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_far");
     let w = &sim.world;
     let forced = assets.palette_changed || sim.full_rebuild || existing.is_empty();
     if state.gate.same((sim.generation, w.landscape.version(), w.roads.version(), w.ground.version(), w.config.half_extent.to_bits(), w.ports.ports.len())) && state.key.is_some() && !forced {

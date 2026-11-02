@@ -271,6 +271,7 @@ pub(super) fn update_window_lights(
     mut last: Local<Option<(u64, usize)>>,
     mut minute: Local<u64>,
 ) {
+    let _t = crate::frame_stats::span("update_window_lights");
     let w = &sim.world;
     // The windows' own clock, at most once a sim minute (a material
     // write rebuilds its bind group).

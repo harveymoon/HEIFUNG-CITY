@@ -172,6 +172,12 @@ pub enum Activity {
         from: BuildingId,
         to: BuildingId,
     },
+    /// [cable] In cabin `cabin` of a cable line (`world/cable.rs`). Who is
+    /// aboard is not saved: after a load the rider is set down at a station.
+    OnCable {
+        line: crate::cable::CableLineId,
+        cabin: u32,
+    },
 }
 
 impl Activity {
@@ -192,6 +198,7 @@ impl Activity {
             Activity::Passenger { .. } => "walking to the car",
             Activity::Abroad { .. } => "away on a day trip",
             Activity::OnFerry { .. } => "on the ferry",
+            Activity::OnCable { .. } => "on the cable car",
             Activity::Traveling { purpose, .. } | Activity::Driving { purpose, .. } => match purpose {
                 Purpose::Home => "heading home",
                 Purpose::Work => "commuting",
@@ -205,7 +212,7 @@ impl Activity {
     }
 
     pub fn is_traveling(&self) -> bool {
-        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } | Activity::Flying { .. } | Activity::OnMetro { .. } | Activity::Passenger { .. } | Activity::Abroad { .. } | Activity::OnFerry { .. })
+        matches!(self, Activity::Traveling { .. } | Activity::Driving { .. } | Activity::Riding { .. } | Activity::OnTrain { .. } | Activity::Flying { .. } | Activity::OnMetro { .. } | Activity::Passenger { .. } | Activity::Abroad { .. } | Activity::OnFerry { .. } | Activity::OnCable { .. })
     }
 }
 
@@ -235,10 +242,12 @@ pub enum TripMode {
     /// [ferry-islands] A ferry between two terminals in town, with a walk
     /// at each end (`TransitLeg::Ferry`).
     Ferry,
+    /// [cable] A gondola or aerial tramway (`TransitLeg::Cable`).
+    Cable,
 }
 
 impl TripMode {
-    pub const ALL: [TripMode; 8] = [TripMode::Walk, TripMode::Bike, TripMode::Bus, TripMode::Train, TripMode::Car, TripMode::Subway, TripMode::Taxi, TripMode::Ferry];
+    pub const ALL: [TripMode; 9] = [TripMode::Walk, TripMode::Bike, TripMode::Bus, TripMode::Train, TripMode::Car, TripMode::Subway, TripMode::Taxi, TripMode::Ferry, TripMode::Cable];
 
     pub fn index(self) -> usize {
         match self {
@@ -250,6 +259,7 @@ impl TripMode {
             TripMode::Subway => 5,
             TripMode::Taxi => 6,
             TripMode::Ferry => 7,
+            TripMode::Cable => 8,
         }
     }
 
@@ -263,6 +273,7 @@ impl TripMode {
             TripMode::Subway => "subway",
             TripMode::Taxi => "taxi",
             TripMode::Ferry => "ferry",
+            TripMode::Cable => "cable",
         }
     }
 }
@@ -277,8 +288,10 @@ pub const PAIN_SLOTS: usize = crate::vehicle::MODE_SLOTS;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Commute {
+    #[serde(deserialize_with = "crate::vehicle::de_slots")]
     pub pain: [f32; PAIN_SLOTS],
     /// Recent trips per mode (fading), so a mode never tried has no memory.
+    #[serde(deserialize_with = "crate::vehicle::de_slots")]
     pub trips: [f32; PAIN_SLOTS],
     /// Searching for a space and paying for it, on the same scale.
     pub parking_pain: f32,
@@ -702,7 +715,13 @@ impl Citizen {
     }
 
     pub fn is_visible(&self) -> bool {
-        matches!(self.activity, Activity::Traveling { .. } | Activity::Idle | Activity::Sitting { .. } | Activity::Waiting { .. } | Activity::Passenger { seated: false, .. }) && !self.on_platform()
+        matches!(self.activity, Activity::Traveling { .. } | Activity::Idle | Activity::Sitting { .. } | Activity::Waiting { .. } | Activity::Passenger { seated: false, .. }) && !self.on_platform() && !self.in_cable_station()
+    }
+
+    /// [cable] Waiting in a cable car station's hall for a cabin (not
+    /// drawn: inside the station, perhaps up on a roof).
+    pub fn in_cable_station(&self) -> bool {
+        matches!(self.activity, Activity::Waiting { .. }) && matches!(self.transit.map(|t| t.leg), Some(crate::transit::TransitLeg::Cable { .. }))
     }
 
     /// [r4-metroloop] At a stop, platform, pad or kerb waiting for the

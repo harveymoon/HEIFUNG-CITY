@@ -505,6 +505,10 @@ pub struct Building {
     /// too, beside its railway platforms and bus terminal.
     #[serde(default)]
     pub metro: bool,
+    /// [cable] A cable car station's ground (`world/cable.rs`): drawn as
+    /// its plaza; the station itself is the cable renderer's.
+    #[serde(default)]
+    pub cable: bool,
     /// [megacorp] A campus building beyond a university's main one (a dorm,
     /// offices, a theatre, a sports centre, a frat house, a plaza). Offices,
     /// theatres and sports centres are the campus's own (`is_special`).
@@ -652,6 +656,7 @@ impl Building {
             demolition: None,
             look: None,
             metro: false,
+            cable: false,
             annex: None,
             plot: Default::default(),
             units: Vec::new(),
@@ -681,7 +686,7 @@ impl Building {
     /// disagreed with each other and with [`Building::is_special`] (city
     /// car parks and cargo hubs were missing here, annexes there).
     pub fn is_city_structure(&self) -> bool {
-        self.is_power() || self.depot || self.rail.is_some() || self.port.is_some() || self.airport.is_some() || self.service.is_some() || self.metro || self.city_parking || self.business.as_ref().is_some_and(|z| z.kind == crate::market::BusinessKind::CargoHub)
+        self.is_power() || self.depot || self.rail.is_some() || self.port.is_some() || self.airport.is_some() || self.service.is_some() || self.metro || self.cable || self.city_parking || self.business.as_ref().is_some_and(|z| z.kind == crate::market::BusinessKind::CargoHub)
     }
 
     /// Not an ordinary grown building: a city structure
@@ -979,8 +984,10 @@ impl Building {
         self.residents.len() + self.workers.len() + self.visitors as usize
     }
 
+    /// Run down past use. Never a park: how a park is kept is its own
+    /// measure (`ParkState::kept`), not the building's wear.
     pub fn is_derelict(&self) -> bool {
-        self.condition < 0.3
+        self.land_use != LandUse::Park && self.condition < 0.3
     }
 
     /// Fraction of jobs filled.

@@ -554,6 +554,11 @@ fn transit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         }
         TransitMode::Depot => hint(ui, help::TRANSIT_DEPOT),
         TransitMode::Metro => metro(ui, sim, tools),
+        // [cable] The Cable car line panel does the rest.
+        TransitMode::Cable => {
+            let s = &sim.world.cable.stats;
+            hint(ui, &format!("Click stops in order: an existing cable station, a roof (14 m+), a lot (bought out) or open ground with a way in. Pylons go up as needed to clear what is below. Enter builds; right click or Backspace takes back a stop; the Cable car line panel picks gondola or aerial tramway. {} line{} · {} station{} · {} cabins · {} riders today ({} yesterday) · fares {:.0}.", s.lines, super::fmt::s(s.lines), s.stations, super::fmt::s(s.stations), s.cabins, s.riders_today, s.riders_yesterday, s.fares_today));
+        }
     }
 }
 

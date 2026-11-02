@@ -32,6 +32,7 @@ pub(super) fn sync_preview(
     existing: Query<Entity, With<PreviewTag>>,
     tools: Res<crate::tools::ToolState>,
 ) {
+    let _t = crate::frame_stats::span("sync_preview");
     // [p1-sim] The raised fills of zoning planned but not laid show while a
     // project is open or parked, or with the Zone tool or the zoning layer:
     // with every layer off and no project, the plan is out of sight.

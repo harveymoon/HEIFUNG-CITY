@@ -580,6 +580,11 @@ pub(super) fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_s
         section(ui, "METRO");
         ui.label(if lines.is_empty() { "no line calls here yet (Build window, Transit, Metro lines)".to_string() } else { format!("{} · {today} boarded today, {yesterday} yesterday · {waiting} on the platform", lines.join(", ")) });
     }
+    // [cable] A cable car station on its lot or its roof.
+    if w.cable.stations.values().any(|s| s.building == Some(id)) {
+        section(ui, "CABLE CAR");
+        crate::cable_ux::building_card(ui, w, id);
+    }
     if b.depot {
         let out = w.traffic.cars.values().filter(|c| c.bus.as_ref().is_some_and(|x| x.depot == id)).count();
         section(ui, "BUS DEPOT");

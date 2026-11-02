@@ -243,6 +243,9 @@ impl World {
                 self.splat_shore(&mut b);
                 // [ferry-islands] the quiet of an island, less the crossing
                 self.splat_islands(&mut b);
+                // [cable] stations lift their quarter, hum next door, and
+                // a station high above the town has the view
+                self.splat_cable(&mut b);
                 // [parks] run-down parks sour the land round them
                 b.channel(Channel::Blight);
                 self.splat_parks(&mut b);
@@ -675,7 +678,12 @@ impl World {
             // daily upkeep is their maintenance. (They decayed to derelict
             // in weeks, out of service but still charged, and nothing ever
             // repaired them.) Fire damage is mended by `repair_civic`.
-            if !Self::is_civic_structure(&self.buildings[bid]) {
+            // Parks do not wear either (Harvey 2026-11-01): every park went
+            // derelict in time, however well kept. One worn in an older
+            // save is made good here.
+            if lu == LandUse::Park {
+                self.buildings[bid].condition = 1.0;
+            } else if !Self::is_civic_structure(&self.buildings[bid]) {
                 // [stories] A heritage grant keeps the repairs up.
                 let decay = decay * (1.0 - self.heritage_wear_cut(bid));
                 let b = &mut self.buildings[bid];

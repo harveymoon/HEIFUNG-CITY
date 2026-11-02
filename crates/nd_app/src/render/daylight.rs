@@ -85,6 +85,7 @@ pub(super) fn update_daylight(
     mut sky_look: ResMut<sky::SkyLook>,
     mut blooms: Query<&mut bevy::post_process::bloom::Bloom>,
 ) {
+    let _t = crate::frame_stats::span("update_daylight");
     let pal = &assets.palette;
     let t = if lighting.follow_clock { sim.world.clock.day_fraction() } else { (lighting.hour / 24.0).rem_euclid(1.0) };
     // Quantised to 1/4096 of a day (about 20 sim seconds, a 0.09 degree

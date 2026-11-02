@@ -194,6 +194,9 @@ mod social_tests;
 mod survey;
 pub use survey::SiteContext;
 mod subway;
+/// [cable] Cable car stations, lines and riders.
+mod cable;
+pub use cable::{CableStop, SiteWant, StationSite};
 /// [w1] Metro lines edited stop by stop.
 pub mod metro_edit;
 #[cfg(test)]
@@ -492,20 +495,15 @@ impl WorldConfig {
 }
 
 /// A land value recomputation in progress, spread over a few ticks so one
-/// tick does not carry the whole grid. Cloning a world mid-update drops the
-/// partial work: the next cycle starts afresh and the grid merely stays a
-/// little older for two hours. A save keeps it (REVIEW2 L7), so a game
-/// saved mid-cycle finishes the same grid after loading.
-#[derive(Default, Serialize, Deserialize)]
+/// tick does not carry the whole grid. A save keeps it (REVIEW2 L7), so a
+/// game saved mid-cycle finishes the same grid after loading; and
+/// [r7-sim-thread] so does a clone: the game's sim thread hands the screen
+/// copies of the world and carries on from a copy after an edit, and a
+/// copy that dropped the partial work would grow a different city.
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct LandValueWork {
     builder: Option<LandValueBuilder>,
-}
-
-impl Clone for LandValueWork {
-    fn clone(&self) -> Self {
-        Self::default()
-    }
 }
 
 impl std::fmt::Debug for LandValueWork {
@@ -707,6 +705,10 @@ pub struct World {
     /// tick (`world/trains.rs`).
     #[serde(skip)]
     waiting_cache: Option<(u64, Vec<CitizenId>)>,
+    /// [cable] Riders waiting at each cable station, counted every few
+    /// ticks (`world/cable.rs`), for the planners' queue estimate.
+    #[serde(skip)]
+    cable_waiting: HashMap<crate::cable::CableStationId, u32>,
     /// [perf] Who is inside each place, built at most once a tick for
     /// everyone choosing or rating a place (`world/places.rs`), instead of a
     /// scan of every citizen per decision. Arrivals later in the same tick
@@ -766,6 +768,9 @@ pub struct World {
     /// [subway] Metro lines and their trains (`world/subway.rs`).
     #[serde(default)]
     pub subway: crate::subway::Subway,
+    /// [cable] Cable car stations and lines (`world/cable.rs`).
+    #[serde(default)]
+    pub cable: crate::cable::CableWays,
     /// [tolls] Toll booths on the roads (`world/tolls.rs`).
     #[serde(default)]
     pub tolls: crate::tolls::Tolls,
@@ -999,6 +1004,7 @@ impl World {
             seats: Default::default(),
             crowds_cache: None,
             waiting_cache: None,
+            cable_waiting: HashMap::new(),
             society: Default::default(),
             vehicles: Default::default(),
             enforcement: Default::default(),
@@ -1013,6 +1019,7 @@ impl World {
             districts: Default::default(),
             tourism: Default::default(),
             subway: Default::default(),
+            cable: Default::default(),
             tolls: Default::default(),
             taxis: Default::default(),
             cargo_hubs: Default::default(),

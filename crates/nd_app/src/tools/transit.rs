@@ -65,6 +65,13 @@ pub(super) fn input(f: &Frame, sim: &mut Sim, tools: &mut ToolState, selection: 
         }
         metro_click(sim, tools, selection, ground, click, enter, right_click);
     }
+    // [cable] Stops clicked in order; Enter builds, a right click undoes
+    // (the panel switches gondola and tramway).
+    TransitMode::Cable => {
+        let enter = map_key(KeyCode::Enter) && !ctrl;
+        crate::cable_ux::input(&mut sim.world, tools, ground, click, right_click, enter, false);
+        let _ = selection;
+    }
     TransitMode::Depot => {
         if click {
             if let Some(p) = ground {

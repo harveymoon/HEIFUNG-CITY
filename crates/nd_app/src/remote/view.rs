@@ -210,6 +210,7 @@ pub fn transit_mode_name(m: TransitMode) -> &'static str {
         TransitMode::Route => "route",
         TransitMode::Depot => "depot",
         TransitMode::Metro => "metro",
+        TransitMode::Cable => "cable",
     }
 }
 
@@ -362,6 +363,12 @@ fn activity(w: &World, c: &Citizen) -> Value {
             m.insert("ferry_from".into(), json!(key_str(*from)));
             m.insert("ferry_to".into(), json!(key_str(*to)));
             m.insert("ferry_to_name".into(), name_of(Some(*to)));
+        }
+        // [cable] In a cabin of a cable line.
+        Activity::OnCable { line, cabin } => {
+            m.insert("cable_line".into(), json!(key_str(*line)));
+            m.insert("cabin".into(), json!(cabin));
+            m.insert("cable_line_name".into(), json!(w.cable.lines.get(*line).map(|l| l.name.clone())));
         }
         Activity::Arriving | Activity::AtHome | Activity::Working | Activity::Idle | Activity::Waiting { .. } => {}
     }

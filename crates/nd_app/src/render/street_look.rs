@@ -341,6 +341,7 @@ pub(super) fn sync_lamp_pools(
     mut pools: Query<(Entity, &mut Visibility), With<LampPoolTag>>,
     mut state: Local<PoolState>,
 ) {
+    let _t = crate::frame_stats::span("sync_lamp_pools");
     let material = state
         .material
         .get_or_insert_with(|| {

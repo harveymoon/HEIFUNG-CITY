@@ -65,7 +65,11 @@ fn big_city() -> World {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mut minds = RuleBasedMind::default();
+    // [r7-sim-thread] `ND_HYBRID=1`: the game's own mind (rules plus the
+    // mock spotlight backend), so a headless run can be held against a run
+    // in the game (the remote `fingerprint` command).
+    let mut minds: Box<dyn nd_sim::MindProvider> = if std::env::var_os("ND_HYBRID").is_some() { Box::new(nd_minds::HybridMind::new(Box::new(nd_minds::MockBackend::default()))) } else { Box::new(RuleBasedMind::default()) };
+    let minds = &mut *minds;
     match args.get(1).map(String::as_str) {
         Some("grow") => {
             let target: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(4000);
@@ -76,7 +80,7 @@ fn main() {
             let max_days: u64 = std::env::var("ND_DAYS").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
             for day in 0..max_days {
                 for _ in 0..1440 {
-                    w.tick(&mut minds);
+                    w.tick(minds);
                     // At the target: no more newcomers, and a day to settle in.
                     if settle.is_none() && w.citizens.len() >= target {
                         w.config.immigration_interval = u64::MAX / 4;
@@ -110,7 +114,7 @@ fn main() {
             let slow_ms: f64 = std::env::var("ND_SLOW_MS").ok().and_then(|s| s.parse().ok()).unwrap_or(100.0);
             for _ in 0..ticks {
                 let t = Instant::now();
-                w.tick(&mut minds);
+                w.tick(minds);
                 let dt = t.elapsed().as_secs_f64() * 1000.0;
                 let this = nd_sim::prof::take();
                 // [r6-perf] What the renderer is told each tick.
@@ -136,23 +140,11 @@ fn main() {
             // [r6-perf] What the run left behind: two builds that print the
             // same fingerprint simulated the same city.
             if std::env::var_os("ND_FINGERPRINT").is_some() {
-                let ron = w.to_ron().expect("save");
-                // Over the sorted lines: a few maps (tourism's per-building
-                // tallies) are `HashMap`s and save in a different order
-                // every run, which says nothing about the simulation.
-                let mut lines: Vec<&str> = ron.lines().collect();
-                lines.sort_unstable();
-                let mut h: u64 = 0xcbf29ce484222325;
-                for l in lines {
-                    for b in l.bytes().chain(std::iter::once(b'\n')) {
-                        h ^= b as u64;
-                        h = h.wrapping_mul(0x100000001b3);
-                    }
-                }
+                let (h, len) = w.fingerprint().expect("save");
                 if let Some(dump) = std::env::var_os("ND_DUMP") {
-                    std::fs::write(dump, &ron).expect("dump");
+                    std::fs::write(dump, w.to_ron().expect("save")).expect("dump");
                 }
-                println!("fingerprint {h:016x} ({} bytes) treasury {:.2} pop {} cars {}", ron.len(), w.economy.treasury, w.citizens.len(), w.traffic.cars.len());
+                println!("fingerprint {h:016x} ({len} bytes) tick {} treasury {:.2} pop {} cars {}", w.clock.tick, w.economy.treasury, w.citizens.len(), w.traffic.cars.len());
             }
             let total: f64 = times.iter().sum();
             let mut sorted = times.clone();
@@ -222,7 +214,7 @@ fn main() {
             for day in 0..days {
                 let t = Instant::now();
                 for _ in 0..1440 {
-                    w.tick(&mut minds);
+                    w.tick(minds);
                 }
                 if let Some(f) = floor {
                     w.economy.treasury = w.economy.treasury.max(f as _);

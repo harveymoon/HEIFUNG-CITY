@@ -55,7 +55,14 @@ const MEMO_ROUTES: usize = 40_000;
 const MEMO_NODES: usize = 4_000_000;
 
 impl Clone for RouteMemo {
+    /// Empty, but for [`crate::versioned::exact_clone`]: the same routes,
+    /// shared.
     fn clone(&self) -> Self {
+        if crate::versioned::cloning_exact() {
+            if let Ok(m) = self.0.lock() {
+                return RouteMemo(std::sync::Mutex::new(MemoInner { stamp: m.stamp, held: m.held, routes: m.routes.clone(), index: m.index.clone(), costs: m.costs.clone() }));
+            }
+        }
         RouteMemo::default()
     }
 }
