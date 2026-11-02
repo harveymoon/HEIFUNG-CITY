@@ -118,6 +118,8 @@ mod society;
 mod undercroft;
 /// [subway] The `subway` command and report section.
 mod subway;
+/// [cable] The `cable` command and report section.
+mod cable;
 mod taxes;
 /// [taxis] Taxi companies and cargo hubs in the report and inspector.
 mod taxis;

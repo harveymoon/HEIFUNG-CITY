@@ -319,6 +319,9 @@ fn role(b: &nd_sim::Building) -> u16 {
     if b.metro {
         return 70;
     }
+    if b.cable {
+        return 71;
+    }
     if let Some(p) = b.port {
         // [economy] Six dock kinds now: kept clear of the taxi and hotel values.
         return 100 + p as u16;
@@ -473,6 +476,7 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
         business: b.business.as_ref().map(|z| z.kind),
         look: b.look,
         metro: b.metro,
+        cable: b.cable,
         form: b.plot.form,
         // [waterfront] the water off a lot on it, a beach's crowd
         shore: super::shore::shore_look(world, id),

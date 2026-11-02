@@ -159,6 +159,12 @@ pub(crate) fn tool_input(
             tools.status = "Line cancelled: nothing was built.".into();
         }
         tools.metro_draft.clear();
+        // [cable] And the cable car line being drawn.
+        if !tools.cable.stops.is_empty() {
+            tools.status = "Cable line cancelled: nothing was built.".into();
+            tools.cable.stops.clear();
+            tools.cable.preview = None;
+        }
     }
     if map_key(KeyCode::Backspace) && matches!(tools.tool, Tool::Road | Tool::Zone) {
         tools.points.pop();
@@ -191,7 +197,10 @@ pub(crate) fn tool_input(
             tools.status = format!("Next point at {} ([ lowers, ] raises; Shift for the whole road).", elevation_label(tools.elevation));
         }
     }
-    if map_key(KeyCode::Backspace) && tools.tool == Tool::Transit && tools.transit_mode == TransitMode::Metro {
+    if map_key(KeyCode::Backspace) && tools.tool == Tool::Transit && tools.transit_mode == TransitMode::Cable {
+        // [cable] Backspace takes back the last stop.
+        crate::cable_ux::input(&mut sim.world, &mut tools, None, false, true, false, false);
+    } else if map_key(KeyCode::Backspace) && tools.tool == Tool::Transit && tools.transit_mode == TransitMode::Metro {
         // [metro-ux] Backspace takes back the last stop (or opens a loop).
         tools.status = crate::metro_ux::undo_stop(&sim.world, &mut tools.metro_draft);
     } else if map_key(KeyCode::Backspace) && tools.tool == Tool::Transit {

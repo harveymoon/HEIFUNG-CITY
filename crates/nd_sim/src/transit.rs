@@ -1065,6 +1065,9 @@ pub enum TransitLeg {
     /// [ferry-islands] A ferry from terminal `board`'s pier to `alight`'s,
     /// both in town (`world/islands.rs`).
     Ferry { board: crate::buildings::BuildingId, alight: crate::buildings::BuildingId },
+    /// [cable] A gondola or aerial tramway ride on one line between two of
+    /// its stations (`world/cable.rs`).
+    Cable { line: crate::cable::CableLineId, board: crate::cable::CableStationId, alight: crate::cable::CableStationId },
 }
 
 /// A citizen's transit trip in progress: walk to the stop or station,

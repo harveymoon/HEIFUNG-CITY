@@ -105,6 +105,9 @@ pub struct Extras<'a> {
     pub business: Option<nd_sim::BusinessKind>,
     /// [subway] A metro station: drawn as its entrance plaza.
     pub metro: bool,
+    /// [cable] A cable car station's lot: drawn as its plaza (the station
+    /// itself is drawn by the app's cable renderer).
+    pub cable: bool,
     /// [land] The form bought or merged plots were built in: McMansions,
     /// mansions, mega hotels and museums have their own style.
     pub form: Option<nd_sim::estate::Form>,
@@ -160,7 +163,7 @@ pub struct Extras<'a> {
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, battery: None, form: None, tower: None, megablock: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[], boxes_of: None, real_boxes: false, overhead: &[], waste_fill: 0.0, site: None }
+        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, cable: false, battery: None, form: None, tower: None, megablock: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[], boxes_of: None, real_boxes: false, overhead: &[], waste_fill: 0.0, site: None }
     }
 }
 

@@ -106,7 +106,7 @@ the replies back. So:
 Every example is the POST body; the reply always carries `"ok"`.
 
 **Other names.** Some commands answer to other names as well (`help` lists them under `aliases`):
-`add_interchange` (`interchange`); `campus` (`university`); `city_name` (`city_identity`); `cleanup` (`clean_up`); `committee_meeting` (`meeting`); `corps` (`corp`, `megacorp`); `megablock` (`megablocks`, `arcology`); `dirt_at` (`contamination_at`); `district` (`districts`); `estate` (`land_market`); `favourite` (`favorite`); `graphics` (`quality`); `grounds_junctions` (`park_junctions`); `heat_vision` (`heat`); `level_crossings` (`level_crossing`, `crossings`, `rail_crossings`); `photo_mode` (`photo`); `pressure` (`pressures`); `roads` (`road_condition`, `road_budget`); `shore` (`waterfront`); `skyline` (`towers`, `height_limit`); `street_events` (`nights`); `subway` (`metro`); `taxes` (`tax`); `tolls` (`toll`); `tourism` (`tourists`); `tow_car` (`tow`, `boot`); `zoom_to` (`zoom`).
+`add_interchange` (`interchange`); `campus` (`university`); `city_name` (`city_identity`); `cleanup` (`clean_up`); `committee_meeting` (`meeting`); `corps` (`corp`, `megacorp`); `megablock` (`megablocks`, `arcology`); `dirt_at` (`contamination_at`); `district` (`districts`); `estate` (`land_market`); `favourite` (`favorite`); `graphics` (`quality`); `grounds_junctions` (`park_junctions`); `heat_vision` (`heat`); `level_crossings` (`level_crossing`, `crossings`, `rail_crossings`); `photo_mode` (`photo`); `pressure` (`pressures`); `roads` (`road_condition`, `road_budget`); `shore` (`waterfront`); `skyline` (`towers`, `height_limit`); `street_events` (`nights`); `subway` (`metro`); `cable` (`cable_car`, `gondola`, `cablecar`); `taxes` (`tax`); `tolls` (`toll`); `tourism` (`tourists`); `tow_car` (`tow`, `boot`); `zoom_to` (`zoom`).
 
 `help` is checked against the dispatcher by a unit test (`remote::dispatch_tests`): every command
 it runs is documented in `help` or named as an alias, and nothing else is.
@@ -860,6 +860,50 @@ can refuse a click.
 {"cmd": "metro_line", "undo": 1}
 {"cmd": "metro_line", "finish": true, "headway": 6}
 {"cmd": "metro_line", "cancel": true}
+```
+
+#### Cable cars: `cable`
+
+`cable {action, ...}` (also `cable_car`, `gondola`, `cablecar`; `nd_app/src/remote/cable.rs`;
+[cable], see DESIGN "Cable cars"):
+
+| action | fields | does |
+|---|---|---|
+| `status` (default) | | the `cable` report section (below) |
+| `site` | `pos` [x, y], `site` auto / ground / roof | where a station clicked there would stand: `ok`, `roof`, `platform_m`, `ground_m`, `entrance`, `what` ("on the roof of ...", "buys out ...", "on open ground"), or `refusal` |
+| `preview` | `kind` gondola (default) / tramway, `points` [[x, y], ...] or `stations` [id \| [x, y] \| {at, site}, ...], `sites` [auto \| ground \| roof, ...] | what the line would be, built nothing: `preview` {kind, stations, new_stations, length_m, pylons, tallest_pylon_m, highest_over_ground_m, over_water, ride_min, cabins, interval_min, capacity_per_hour_each_way, build_cost, upkeep_per_day, scenic, ok, refusal, supports [{pos, s, base, top, height, station}]} and the treasury |
+| `build` (also `line`) | as `preview`, plus `cabins`, `fare`, `open`, `close` ("HH:MM") | builds the stations that are points (a station within 30 m of a point is used) and the line, and pays: `line` (as `inspect_line` without the detail), `paid`, `treasury`; an error with the refusal |
+| `cabins` | `line`, `n` | a gondola's cabins on the loop (clamped to 24..160 m apart) |
+| `hours` | `line`, `open`, `close` | opening hours ("HH:MM" or minutes) |
+| `fare` | `line`, `fare` | 0..25 |
+| `remove_line` | `line` | closes it: riders aboard set down at a station, waiting riders go another way, stations no other line calls at come down |
+| `inspect_line` | `line` | the line row plus `supports` (pos, height_m, rope_m, station), `yesterday_by_hour` (boarded, mean_wait_min) and `cabins_detail` (a sample: at, floor_m, in_station, riders) |
+| `inspect_station` | `station` id or [x, y] | the station row plus `riders_waiting_here` |
+
+A line row: `id`, `name`, `kind`, `colour`, `length_m`, `stations` [{id, name}], `pylons`,
+`tallest_pylon_m`, `cabins`, `seats_per_cabin`, `spacing_m`, `interval_min` (between cabins leaving
+a station each way), `expected_wait_min`, `ride_min` (end to end), `capacity_per_hour_each_way`,
+`open`, `close`, `open_now`, `running` (the rope moves), `fare`, `waiting`, `riding`,
+`riders_today`, `riders_yesterday`, `boarded_yesterday`, `mean_wait_min_yesterday`, `boarded_today`,
+`mean_wait_min_today`, `capacity_used` (seats taken over seats through stations, yesterday),
+`left_behind_today` / `_yesterday` (riders a full cabin left waiting, summed per cabin),
+`sightseers_today` / `_yesterday` (visitors riding for the view), `scenic`, `built_for`,
+`upkeep_per_day`. A station row: `id`, `name`, `pos`, `entrance`, `site` (lot / roof /
+open_ground), `building`, `building_name`, `platform_m`, `ground_m`, `above_street_m`, `lines`,
+`boardings_today`, `boardings_yesterday`, `waiting`.
+
+The `cable` report section (`report`): `lines`, `stations`, `cabins`, `pylons`, `rope_m`,
+`waiting`, `riding`, `riders_today`, `riders_yesterday`, `fares_today`, `fares_yesterday`,
+`upkeep_yesterday`, `line_list`, `station_list`. The Transit tool's Cable car mode is `tool {name:
+transit, kind: cable}`; trips by cable car count as `cable` in the trip shares.
+
+```json
+{"cmd": "cable", "action": "site", "pos": [420, -310]}
+{"cmd": "cable", "action": "preview", "kind": "gondola", "points": [[-640, 120], [-150, 260], [380, 520]]}
+{"cmd": "cable", "action": "build", "kind": "tramway", "points": [[210, -40], [1350, 610]], "sites": ["ground", "auto"]}
+{"cmd": "cable", "action": "cabins", "line": "1:1", "n": 90}
+{"cmd": "cable", "action": "hours", "line": "1:1", "open": "05:30", "close": "00:30"}
+{"cmd": "cable", "action": "inspect_line", "line": "1:1"}
 ```
 
 ### Timetables and the day on each line [r4-timetable]

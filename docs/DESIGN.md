@@ -1210,6 +1210,122 @@ Citizens are rendered from their simulated positions every frame.
     stations, stops, length, round trip (end to end and back, or once round a loop: running at
     22 m/s plus 16 s per call), trains out at once at the headway, the tunnel's cost against the
     treasury and the running cost a day (`subway::preview`).
+- **Cable cars** (`nd_sim::cable`, `world/cable.rs`, `render/cable.rs`, `cable_ux.rs`): aerial
+  ropeways the player draws station to station in straight spans (Build window, Transit, Cable car;
+  the Transit tool's Cable car mode; the `cable` API). Two kinds (`CableKind`):
+  - **gondola**: a loop of 10-seat cabins on a moving rope (6 m/s), 42 m apart by default (the
+    player sets the cabins, 24..160 m apart): a cabin every couple of minutes each way, some 400
+    seats an hour each way, waits of a minute. Spans up to 380 m between supports, pylons 12..58 m,
+    climbs up to 45 degrees, up to 8 stations and 6 km; it may turn at a station (an angle station,
+    not more than 120 degrees). Fare 3. Station 16,000 (150 a day with its 4 staff), rope 26/m and
+    110/km a day, a pylon 2,200 plus 70 a metre, a cabin 2 a day.
+  - **aerial tramway**: two 100-seat cabins on their own track ropes, one up while the other comes
+    down (12 m/s, eased in and out, 28 s at each station), between two stations only. Spans up to
+    2.1 km (across a lake, up a cliff), pylons 18..96 m, climbs to 56 degrees, up to 3.6 km. Riders
+    wait for their cabin (a run each way every round trip). Fare 4. Station 26,000 (220 a day, 6
+    staff), rope 38/m, a pylon 9,000 plus 160 a metre, a cabin 60 a day.
+
+  **Stations** (`World::cable_station_site`): a click on a lot with a building 14 m or taller puts
+  the station on its roof (the building stays and keeps its use; riders take its lifts from its
+  door; the platform is half a metre over the roof); a lower building is bought out (`take_over_lot`)
+  and the lot becomes the station's (a `Building` with `cable` set: drawn as a paved plaza, style
+  `CableStation`, with the station's staff as its jobs); a park keeps its park and the station
+  stands in it; open ground (a hillside, a bank) takes one if a way people walk is within 90 m (its
+  entrance is that walk node). Never on a road or in the water, 55 m from another station; a click
+  on or by a station uses it (lines share stations). `SiteWant` lets the player ask for the ground
+  or a roof. Bulldozing a station's building (or the roof under it) closes its lines.
+
+  **Pylons** (`cable::lay_line`, `lay_span`): each span between two stations is sampled every 4 m
+  for what stands highest below it (`Terrain::top`: the ground, the water, a road or the railway
+  deck, the buildings on the lots it crosses at their height). The rope hangs from each support to
+  the next as a parabola dipping `sag` (3 % gondola, 4.5 % tramway) of the span at mid-span, and the
+  cabin floor (`hanger` below the rope: 4.6 m, 7.4 m) must clear what is below by 4 m (roofs), 5 m
+  (a lorry on a road), 6 m (trees on open ground) or 9 m (masts on the water), rising to that over
+  the first 45 m past a station mouth (cabins leave low over the station forecourt and climb; never
+  into a roof). The rope at a station is the platform plus the hanger. The pylons are
+  the cheapest way along the span: every place a pylon may stand (every 5 m; 15 m for a tramway) at
+  ten heights, from as low as what is at its foot allows to the tallest it may be; a shortest path
+  from station to station over the pairs of supports the rope hangs clear between (at most
+  `max_span` apart, 45 m between pylons, not too steep), each pylon costing 120 plus 10 per metre of
+  height (few, low pylons); then each pylon lowered as far as its neighbours let it. A pylon may
+  not stand in the water, on a road or the railway, on a lot with a building, or within 24 m of a
+  station. Over open ground that is a pylon of some 17-22 m every 300-380 m; over a tall block the
+  pylons either side rise to clear it. Refused with
+  the reason: "no pylon can stand between 120 m and 500 m out of Summit (water)" (a tramway spans
+  further, or add a station), "clearing Tower Row Plaza 230 m out of Lookout needs a pylon 74 m tall
+  (a gondola pylon is at most 58 m): put a station on a roof or a hill, or go round it", "the climb
+  ... is too steep", stations under 110 m apart, a tramway with three stations, a line turning back
+  on itself, too long, or a treasury that cannot pay. The line keeps its supports (`Support`: where,
+  ground, rope height, station or pylon), so the sim, the renderer and the API agree. While a line
+  stands, buildings may grow under it only as tall as its cabins clear (`World::height_limit_at`
+  reads `CableWays::corridor`, per lot).
+
+  **Running** (`World::step_cable`, pure motion in `CableLine::cabin_pose`): a line runs from
+  `open` to `close` (06:00..23:00 by default, the player sets them), and its rope keeps going past
+  closing until the last rider is off. A gondola's cabins are spaced evenly round a virtual loop
+  (`loop_layout`: round the first station's bullwheel, out along every span and through every
+  station, round the last, back), a station counting as the rope metres of the 20 s a cabin crawls
+  through it (so cabins bunch up in the stations as real detached cabins do). A cabin reaching the
+  middle of a station sets down its riders for there (and everyone at a terminal) and takes on
+  riders waiting there going its way, up to its seats; the rest wait for the next. A tramway's two
+  cabins are half a cycle apart; arriving, everyone gets off; while it stands, riders board. Cabin
+  places are a pure function of the line and `phase` (saved), so nothing per cabin is saved; who is
+  aboard is not saved and after a load riders are set down at the nearest station of their line.
+  Riders ride along (`Activity::OnCable`, hidden), waiting riders stand inside the station
+  (`Citizen::in_cable_station`, not drawn), and a rider who gives up (three hours, or the line
+  closed for 15 minutes) comes down to the entrance and goes another way.
+
+  **Riders** (`TripMode::Cable`, `TransitLeg::Cable`, `World::cable_option`): a trip of 260 m or more
+  with a station within 340 m of each end on one line, the walks saving real distance
+  (`CableWays::plan_trip`, no transfers), open when they get there and still running for the ride:
+  the walks, a minute and a half of stairs and lift, the expected wait (half the gap between cabins,
+  plus a full cabin's worth for every ten in the queue already), the ride (the rope plus the crawl
+  through each station). The crowd matters little in a gondola's own cabin; the view pleases the
+  curious (`scenic`) and the drop worries the cautious. Where a cable ride is on offer the other
+  ways are reckoned for the lie of the land (`World::cable_reprice`): when the straight line crosses
+  water the walk, ride and drive take the real way round (the walk network's route, up to four
+  times), and the climb to a higher end costs walkers eight metres on the flat per metre up (bikers
+  ten), so a gondola across a river or up a hill beats the streets that go round. Fares go to the
+  treasury under "bus fares" (as ferries do) by line; upkeep (stations with their staff, rope, cabins)
+  at midnight under "transit upkeep", as one item. Each line counts riders, the seats that passed
+  through stations and the seats taken (capacity used), the riders full cabins left behind, its
+  hourly timeline (boarded, waits, waiting, aboard: the inspector's mean wait), sightseers. Trip
+  tallies per mode have nine slots now (`vehicle::MODE_SLOTS`); a save with eight still loads
+  (`vehicle::de_slots`).
+
+  **The city round it**: a station lifts land value by 0.08 within 200 m (the transit channel) and
+  hums a little next door (a nuisance of 0.03 within 45 m); a station 20 m or more above the town's
+  median ground has the view, up to 0.08 more within 160 m (`World::splat_cable`). A line's
+  `scenic` (0..1: how high it rides over the ground, how much is over water, a summit above the
+  rest) of 0.2 or more makes it a sight (`AttractionKind::CableCar`, pull 2 + 10 x scenic): visitors
+  go to its top station and ride it for the view (the fare there and back, `cable_sightseer`).
+  People in the same cabin may get talking (`Setting::Transit`).
+
+  **Drawing** (`render/cable.rs`): station halls (a concrete deck at the platform, on a ticket hall
+  down to the street or the slope, or on the roof with a lift tower; steel posts and glass sides; a
+  gable roof over the rope; a neon band in the line's colour; lit platform edges; at a terminal the
+  drive house over the bullwheel and a gondola's tension tower), lattice pylons sized to their
+  height (four tapering legs, X-bracing panel by panel, a crossarm with a sheave train under each
+  rope, a ladder; red warning lights blinking on the crossarm and half way up any pylon over 30 m),
+  the ropes sagging span by span (a tramway's track ropes in pairs over the haul rope), and the
+  cabins: painted in the line's colour with a band of lit windows (the glow material: warm at
+  night), a steel roof and a hanger up to the grip (a tramway's cabin hangs from a carriage on the
+  track ropes). One mesh per surface per kind and colour shared by every cabin (instanced batches);
+  each cabin is a parent transform posed every frame between ticks, swinging a little in the wind
+  and pitching as it slows through a station, not drawn beyond 2.6 km of the camera; bullwheels turn
+  while the rope runs. The static parts are rebuilt only when a line or station changes.
+
+  **The tool** (`cable_ux.rs`): each click is a stop (a station there is used; elsewhere what a
+  station would be is shown under the pointer, green or red with the reason, before the click); the
+  line is laid as it is drawn and shown over the city as it will stand (the rope span by span,
+  every pylon, white, red when refused). The Cable car line panel: gondola or tramway; where new
+  stations go (auto, ground, roof); the steps; length, stations (new), pylons and the tallest, how
+  high it rides, the ride, a cabin every so many minutes, capacity an hour, cost and upkeep, how
+  scenic; the refusal; Build, Undo stop, Cancel (Enter builds, a right click or Backspace undoes,
+  Esc cancels). Then every line's card (riders today and yesterday, waiting, aboard, mean wait,
+  capacity used, left behind; length, pylons, cabin interval, capacity, upkeep, open or closed,
+  sightseers; cabins, fare and hours to set; close the line), and the card of the station last
+  clicked. The inspector shows the same station card on a station's lot or roof building.
 - **Central Station** (`RailFacility::Central`): the grand terminus, a 150 by 64 m rail piece
   placed like a station (Buildings > Rail or Transit, or the Rail tool), one per city, 120,000 to
   build and 1,100 a day, 60 jobs. It is a passenger station on the intercity line (a 120 m platform,
