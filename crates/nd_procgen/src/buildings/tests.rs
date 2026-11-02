@@ -733,7 +733,8 @@ fn extras_paths_stay_on_their_lot() {
         for (surface, m) in g.iter() {
             for p in &m.positions {
                 let q = Vec2::new(p[0], p[2]);
-                let d = planned.iter().map(|l| outside_by(q, l)).fold(f32::MAX, f32::min);
+                // [r8-parks] The park is every lot of it, its backland too.
+                let d = park_lots.values().filter(|l| l.park.is_some()).map(|l| outside_by(q, l)).fold(f32::MAX, f32::min);
                 if d > over {
                     over = d;
                     culprit = format!("{surface:?} at ({:.1}, {:.1}) y {:.1}", q.x, q.y, p[1]);

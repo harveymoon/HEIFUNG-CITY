@@ -827,8 +827,9 @@ fn plan_car_park(lots: &[&Lot], polys: &[&[Vec2]], areas: &[f32]) -> Option<(usi
                 continue;
             }
             let along = (f1 - f0) / len;
-            let mut inward = -l.front_dir.normalize_or_zero();
-            if !point_in_polygon(f0.lerp(f1, 0.5) + inward * 2.0, &l.polygon) {
+            // Square to the frontage, into the lot.
+            let mut inward = along.perp();
+            if inward.dot(-l.front_dir) < 0.0 {
                 inward = -inward;
             }
             // Slide it along the frontage, the yard's middle on this lot;

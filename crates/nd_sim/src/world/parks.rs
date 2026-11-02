@@ -156,18 +156,14 @@ impl World {
             .collect()
     }
 
-    /// [r8-parks] How long a park takes to lay out: by its whole ground
-    /// (a day for a small one, up to four for a big one).
+    /// [r8-parks] How long a park takes to lay out: a building site's
+    /// day for a park (a little longer on dear land), and a little more
+    /// for a big one (up to a third of a day more), all its lots at once.
     pub(super) fn park_build_days(&self, lot: LotId, tier: Tier) -> f32 {
         // The ground still to lay out: the whole park when it is new, the
         // lots it takes in when it grows.
         let area: f32 = self.park_cluster_lots(lot).into_iter().filter(|l| self.lots[*l].building.is_none() || *l == lot).map(|l| self.lots[l].area()).sum();
-        let f = match tier {
-            Tier::Low => 0.8,
-            Tier::Mid => 1.0,
-            Tier::High => 1.3,
-        };
-        ((0.8 + area / 3000.0) * f).clamp(1.0, 4.0)
+        Construction::days_for(0, tier) + (area / 40_000.0).min(0.33)
     }
 
     /// [r8-parks] Build the park `lot` is part of as one project: every
