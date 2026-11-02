@@ -343,6 +343,10 @@ pub fn thing_pose(sim: &Sim, sel: Selection) -> Option<ThingPose> {
     let f = sim.frac();
     let car_pose = |id: nd_sim::CarId, head: f32| {
         w.traffic.cars.get(id).map(|car| {
+            // [r8] A lorry in a depot's bay is where the bay is drawn.
+            if let Some((p, h, y)) = sim.bay_pose(id) {
+                return ThingPose { pos: p, heading: Some(h), eye: y + head };
+            }
             let (p, h) = car.pose_at(f);
             ThingPose { pos: p, heading: Some(h), eye: w.car_height_at(car, p) + head }
         })
@@ -1139,8 +1143,13 @@ fn follow_and_fly(
             flags.message = format!("{} parked; following them on foot.", w.citizens[d].name);
             return;
         }
+        // [r8] (Harvey flag 4) A lorry says where it went.
+        let note = match sel {
+            Selection::Car(id) => w.lorry_note(id).map(|n| format!("Stopped following: the lorry {n}.")),
+            _ => None,
+        };
         follow.stop();
-        flags.message = "Stopped following: they are gone.".into();
+        flags.message = note.unwrap_or_else(|| "Stopped following: they are gone.".into());
         return;
     };
     if *mode == CameraMode::Walk {

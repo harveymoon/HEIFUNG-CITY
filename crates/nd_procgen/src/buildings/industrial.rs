@@ -555,6 +555,11 @@ pub fn depot(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let of = c.front_face(&office);
         entrance(g, c, rng, &of, 0.0, 1.6, 2.6);
     }
+    // [r8] Lorry bays along the front, beside the office, where the real
+    // lorries wait for the carrier.
+    if c.real_boxes {
+        lorry_bays(g, c, Vec2::new(lo.x + 11.0, lo.y + 0.8), Vec2::new(hi.x - 2.0, lo.y + 9.4), 4, 0.03);
+    }
     // Container rows in the yard with a gantry crane over them.
     let yard_lo = Vec2::new(lo.x + 1.0, lo.y + 10.0);
     let yard_hi = Vec2::new(hi.x - 1.0, hi.y - depth - 4.0);

@@ -28,6 +28,10 @@ pub(crate) struct BoxTag {
 #[derive(Component, Clone)]
 pub(super) struct DepotBoxTag;
 
+/// [r8] A real box riding on a container lorry's chassis.
+#[derive(Component, Clone)]
+pub(super) struct TruckBoxTag;
+
 #[derive(Component)]
 pub(super) struct NumberTag;
 
@@ -77,6 +81,9 @@ struct DepotDrawn {
 #[derive(Resource, Default)]
 pub(super) struct DepotBoxRender {
     depots: HashMap<nd_sim::BuildingId, DepotDrawn>,
+    /// [r8] Where each box was last stood in a stack (floor centre, yaw):
+    /// the carrier drives to it there when it lifts it out.
+    pub(super) seen: HashMap<BoxId, (Vec3, f32)>,
     version: Option<(u64, u64)>,
     frame: u32,
 }
@@ -93,7 +100,7 @@ pub(super) fn spawn_real_box(commands: &mut Commands, mats: &Materials, parts: &
 /// Which slot each box takes: ground tiers first; a twenty-footer in a
 /// forty-foot slot takes one half (the next one the other), a forty-footer
 /// a forty-foot slot. Boxes past the last slot are not drawn.
-fn lay_out(faces: &[BoxFace], slots: &[nd_procgen::BoxSlot]) -> Vec<(usize, Vec3, f32)> {
+pub(super) fn lay_out(faces: &[BoxFace], slots: &[nd_procgen::BoxSlot]) -> Vec<(usize, Vec3, f32)> {
     let mut order: Vec<usize> = (0..slots.len()).collect();
     order.sort_by_key(|&i| (slots[i].tier, i));
     let mut used = vec![false; slots.len()];
@@ -176,6 +183,10 @@ pub(super) fn sync_depot_boxes(mut commands: Commands, mut meshes: ResMut<Assets
             let f = faces[k];
             let parts = bm.get(&mut meshes, &assets.palette, &f);
             let tf = Transform::from_translation(at).with_rotation(Quat::from_rotation_y(-yaw));
+            if state.seen.len() > 50_000 {
+                state.seen.clear();
+            }
+            state.seen.insert(f.id, (at, yaw));
             entities.push(spawn_real_box(&mut commands, &mats, &parts, tf, BoxTag { id: f.id, face: f, offset: Vec3::ZERO }, (), DepotBoxTag));
         }
         state.depots.insert(b, DepotDrawn { ids, slots: *slot_ver, entities });

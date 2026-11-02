@@ -144,6 +144,8 @@ mod trains;
 mod freight;
 /// [K34] Real shipping containers in the depots, and their numbers close up.
 mod boxes;
+/// [r8] The depots' straddle carriers moving the real boxes.
+mod carriers;
 mod landscape;
 /// [r4-tiles] The Land for sale layer's outlines.
 pub mod land_tiles;
@@ -488,7 +490,7 @@ impl Plugin for RenderPlugin {
         // [r4] (K33) Containers on the freight trains and the yard cranes.
         app.init_resource::<freight::ContainerMeshes>().init_resource::<freight::FreightRender>().add_systems(Update, freight::sync_freight.after(sync_trains).before(update_daylight).in_set(SimSet::Sync));
         // [K34] The depots' real boxes, numbers close up, and where they are for picking.
-        app.init_resource::<boxes::BoxMeshes>().init_resource::<boxes::DepotBoxRender>().init_resource::<boxes::NumberRender>().add_systems(Update, (boxes::sync_depot_boxes.after(freight::sync_freight), boxes::box_numbers.after(boxes::sync_depot_boxes), boxes::box_spots.after(boxes::box_numbers)).before(update_daylight).in_set(SimSet::Sync));
+        app.init_resource::<boxes::BoxMeshes>().init_resource::<boxes::DepotBoxRender>().init_resource::<boxes::NumberRender>().init_resource::<carriers::CarrierRender>().add_systems(Update, (boxes::sync_depot_boxes.after(freight::sync_freight), carriers::sync_carriers.after(boxes::sync_depot_boxes), boxes::box_numbers.after(carriers::sync_carriers), boxes::box_spots.after(boxes::box_numbers)).before(update_daylight).in_set(SimSet::Sync));
         app.add_systems(Update, crossings::sync_crossings.after(sync_trains).before(update_daylight).in_set(SimSet::Sync));
         // [pt-visual] The crossings' red light on the road at night.
         app.add_systems(Update, crossings::sync_crossing_lights.after(update_daylight).in_set(SimSet::Sync));

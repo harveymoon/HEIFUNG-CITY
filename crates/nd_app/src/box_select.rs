@@ -26,8 +26,8 @@ pub fn pose(sim: &Sim, id: BoxId) -> Option<(Vec3, f32, f32)> {
             let (p, h) = car.pose_at(sim.frac());
             (Vec3::new(p.x, w.car_height_at(car, p) + 1.15, p.y), h, len)
         }),
-        Where::Stored(b) | Where::Site(b) | Where::Home(b) | Where::Scrap(b) => w.building_lot(b).map(|l| (Vec3::new(l.center.x, w.surface_height(l.center), l.center.y), 0.0, len)),
-        Where::Train => None,
+        Where::Stored(b) | Where::Site(b) | Where::Home(b) | Where::Scrap(b) | Where::Lifting(b) => w.building_lot(b).map(|l| (Vec3::new(l.center.x, w.surface_height(l.center), l.center.y), 0.0, len)),
+        Where::Train | Where::Ship(_) => None,
     }
 }
 

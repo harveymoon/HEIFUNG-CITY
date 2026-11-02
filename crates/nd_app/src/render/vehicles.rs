@@ -41,6 +41,9 @@ pub(super) struct VehicleRender {
     /// [K34] The look each car was drawn with: a lorry whose trailer box
     /// comes or goes is drawn again.
     pub(super) models: HashMap<CarId, nd_sim::VehicleModel>,
+    /// [r8] The real boxes drawn on each container lorry's chassis (as
+    /// children of its body), and which.
+    pub(super) truck_boxes: HashMap<CarId, (Vec<nd_sim::containers::BoxId>, Vec<Entity>)>,
 }
 
 impl VehicleRender {
@@ -159,6 +162,7 @@ pub(super) fn sync_cars(
     mut vr: ResMut<VehicleRender>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut bm: ResMut<super::boxes::BoxMeshes>,
     mut q: Query<(&mut Transform, Option<&mut InTunnel>), With<CarTag>>,
 ) {
     let lifted = lifts(*selection);
@@ -184,6 +188,8 @@ pub(super) fn sync_cars(
                     commands.entity(e).despawn();
                 }
             }
+            // (Its boxes were children of the body.)
+            vr.truck_boxes.remove(&id);
         }
         if !state.cars.contains_key(&id) {
             // Left over from entities a full rebuild drained.
@@ -202,21 +208,16 @@ pub(super) fn sync_cars(
             // spawned at the identity transform was drawn for one frame at
             // the world origin: the centre of the main junction, flashing
             // each time a car joined the road.
-            let pose = car_pose(car, f, &sim.world);
+            let pose = match sim.bay_pose(id) {
+                Some((p, h, y)) => Transform::from_translation(Vec3::new(p.x, y + 0.05, p.y)).with_rotation(Quat::from_rotation_y(-h)),
+                None => car_pose(car, f, &sim.world),
+            };
             let tunnel = sim.world.car_in_tunnel(car);
             let body = commands.spawn((Mesh3d(v.body), MeshMaterial3d(finish), pose, NotShadowCaster, CarTag, SelfLifted, InTunnel(tunnel))).id();
             let lights = commands.spawn((Mesh3d(v.lights), MeshMaterial3d(mats.glow()), pose, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted, InTunnel(tunnel))).id();
             state.cars.insert(id, [body, lights]);
             vr.models.insert(id, model);
-            // [K34] The real box on a semi's trailer: its number close up.
-            if model.body == nd_sim::BodyType::Semi {
-                let day = sim.world.clock.day() as i64;
-                if let Some(face) = sim.world.boxes_on_truck(id).first().and_then(|b| sim.world.containers.boxes.get(*b).map(|r| r.face(*b, day))) {
-                    // A twenty-footer as the trailer draws it, its doors at the back.
-                    let face = nd_sim::containers::BoxFace { forty: false, seed: face.seed | 1, ..face };
-                    commands.entity(body).insert(super::boxes::BoxTag { id: face.id, face, offset: Vec3::new(-1.77, 1.15, 0.0) });
-                }
-            }
+            vr.truck_boxes.remove(&id);
             if let Some(fx) = v.fx {
                 let e = commands.spawn((Mesh3d(fx), MeshMaterial3d(fx_mat.clone()), pose, NotShadowCaster, NotShadowReceiver, CarTag, SelfLifted, InTunnel(tunnel))).id();
                 vr.car_fx.insert(id, e);
@@ -241,6 +242,43 @@ pub(super) fn sync_cars(
         }
     }
     vr.models.retain(|id, _| traffic.cars.contains_key(*id));
+    // [r8] The real boxes on the container lorries' chassis, each its own
+    // object (its line, number, wear and length from its record), riding
+    // on the body; redrawn when what a lorry carries changes.
+    {
+        let w = &sim.world;
+        let day = w.clock.day() as i64;
+        vr.truck_boxes.retain(|id, _| traffic.cars.contains_key(*id) && state.cars.contains_key(id));
+        for (id, car) in traffic.cars.iter() {
+            let Some(&[body, _]) = state.cars.get(&id) else { continue };
+            let chassis = nd_sim::vehicle::chassis_of(car.model.boxed).is_some() && car.model.body == nd_sim::BodyType::Semi;
+            let want: &[nd_sim::containers::BoxId] = if chassis { w.containers.trucks.get(&id).map_or(&[], |t| t.boxes.as_slice()) } else { &[] };
+            let drawn = vr.truck_boxes.get(&id).map_or(&[][..], |d| d.0.as_slice());
+            if drawn == want {
+                continue;
+            }
+            if let Some((_, ents)) = vr.truck_boxes.remove(&id) {
+                for e in ents {
+                    commands.entity(e).despawn();
+                }
+            }
+            if want.is_empty() {
+                continue;
+            }
+            let faces: Vec<nd_sim::containers::BoxFace> = want.iter().filter_map(|b| w.containers.boxes.get(*b).map(|r| r.face(*b, day))).collect();
+            let xs = nd_procgen::vehicles::boxes_on_chassis(car.model.boxed, &faces.iter().map(|f| f.forty).collect::<Vec<_>>());
+            let deck = nd_procgen::vehicles::chassis_deck(car.model.boxed).map_or(1.34, |d| d.1);
+            let mut ents = Vec::new();
+            for (face, x) in faces.iter().zip(xs) {
+                // Doors to the back of the rig.
+                let face = nd_sim::containers::BoxFace { seed: face.seed | 1, ..*face };
+                let parts = bm.get(&mut meshes, &assets.palette, &face);
+                let tf = Transform::from_translation(Vec3::new(x, deck, 0.0));
+                ents.push(super::boxes::spawn_real_box(&mut commands, &mats, &parts, tf, super::boxes::BoxTag { id: face.id, face, offset: Vec3::ZERO }, ChildOf(body), super::boxes::TruckBoxTag));
+            }
+            vr.truck_boxes.insert(id, (want.to_vec(), ents));
+        }
+    }
     let gone: Vec<CarId> = state.cars.keys().copied().filter(|id| !traffic.cars.contains_key(*id)).collect();
     for id in gone {
         if let Some(ents) = state.cars.remove(&id) {
@@ -268,7 +306,7 @@ pub(super) fn sync_cars(
     for (id, ents) in state.cars.iter() {
         let Some(car) = traffic.cars.get(*id) else { continue };
         // [driving] Along the substep poses, not a chord across the turn.
-        let (pos, heading) = car.pose_at(f);
+        let (mut pos, mut heading) = car.pose_at(f);
         // Lifted when selected, whether through its driver or, for a bus or
         // truck with nobody to inspect, as the vehicle itself.
         let selected = lifted.citizen == Some(car.citizen) || lifted.car == Some(*id);
@@ -277,7 +315,15 @@ pub(super) fn sync_cars(
         // under the highway's decks position alone would put it up top.
         // At the height of the road where it is drawn, not where it ends
         // the tick.
-        let lift = sim.world.car_height_at(car, pos);
+        let mut lift = sim.world.car_height_at(car, pos);
+        // [r8] A lorry in a depot's bay stands in the painted bay.
+        if car.bay {
+            if let Some((p, h, y)) = sim.bay_pose(*id) {
+                pos = p;
+                heading = h;
+                lift = y;
+            }
+        }
         let tunnel = sim.world.car_in_tunnel(car);
         for e in ents.iter().copied().chain(fx) {
             if let Ok((mut tf, depth)) = q.get_mut(e) {

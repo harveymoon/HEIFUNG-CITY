@@ -310,6 +310,56 @@ pub fn ship_mesh(freighter: bool, palette: &Palette) -> MeshData {
     m
 }
 
+/// [r8] A freighter as the game draws it at sea and alongside: the hull,
+/// the bridge, and through-cargo for other ports in its aft bay only; the
+/// forward bays carry the real boxes it brings and takes, drawn on it from
+/// their records at [`freighter_deck_slots`].
+pub fn freighter_hull_mesh(palette: &Palette) -> MeshData {
+    use glam::Vec3;
+    let mut m = MeshData::default();
+    let (len, beam) = (70.0f32, 12.0f32);
+    let hull = [0.18, 0.2, 0.24];
+    let half = len * 0.5;
+    let bottom = [Vec3::new(-half, -1.5, -beam * 0.5), Vec3::new(half - beam, -1.5, -beam * 0.5), Vec3::new(half, -1.5, 0.0), Vec3::new(half - beam, -1.5, beam * 0.5), Vec3::new(-half, -1.5, beam * 0.5)];
+    let top: Vec<Vec3> = bottom.iter().map(|p| *p + Vec3::Y * 4.0).collect();
+    m.frustum(&bottom, &top, rgba(hull));
+    let deck: Vec<Vec3> = top.iter().map(|p| *p + Vec3::Y * 0.06).collect();
+    m.cap(&deck, Vec3::Y, rgba(mul(hull, 1.3)));
+    m.boxed(Vec3::new(-half + 6.0, 6.5, 0.0), Vec3::new(7.0, 7.0, beam * 0.8), 0.0, rgba([0.9, 0.9, 0.88]));
+    // Hatch coamings and lashing bridges between the bays.
+    for k in 0..4 {
+        let x = -half + 16.0 + k as f32 * (crate::CONTAINER_40 + 0.5);
+        m.boxed(Vec3::new(x, 2.9, 0.0), Vec3::new(0.4, 0.7, beam * 0.9), 0.0, rgba(mul(hull, 0.8)));
+    }
+    let cargo = crate::buildings::rail::freighter_cargo(0x5A11, 16.0 + crate::CONTAINER_40 + 10.5, beam, 2.56, palette);
+    for (_, part) in cargo.iter() {
+        // The through-cargo bay sits just forward of the bridge.
+        m.append_transformed(part, Vec3::new(-half + (16.0 + crate::CONTAINER_40 + 10.5) * 0.5, 0.0, 0.0), 0.0);
+    }
+    m
+}
+
+/// [r8] The deck places for real boxes on a freighter (ship frame: bow
+/// along +x, deck at 2.56 m): the two forward bays, four rows across,
+/// three high, forty-foot slots.
+pub fn freighter_deck_slots() -> Vec<crate::BoxSlot> {
+    let (len, beam) = (70.0f32, 12.0f32);
+    let half = len * 0.5;
+    let pitch = crate::CONTAINER_40 + 0.5;
+    let rows = ((beam * 0.86) / (crate::CONTAINER_W + 0.06)).floor() as i32;
+    let mut out = Vec::new();
+    for t in 0..3u8 {
+        for k in 1..3 {
+            let x = -half + 16.0 + pitch * 0.5 + k as f32 * pitch;
+            for r in 0..rows {
+                let z = (r as f32 - (rows - 1) as f32 * 0.5) * (crate::CONTAINER_W + 0.06);
+                out.push(crate::BoxSlot { at: glam::Vec3::new(x, 2.56 + t as f32 * crate::CONTAINER_H, z), yaw: 0.0, tier: t, forty: true });
+            }
+        }
+    }
+    out
+}
+
 /// [ferries] (D6) A car ferry: a blunt white hull with a bow visor, an
 /// open car deck aft with rows of cars, two decks of cabins and a bridge
 /// forward, a red stripe and a funnel.

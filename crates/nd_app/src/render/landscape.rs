@@ -226,14 +226,28 @@ pub(super) fn sync_landscape(
 pub(super) const SHIP_KINDS: [nd_sim::ShipKind; 6] = [nd_sim::ShipKind::Freighter, nd_sim::ShipKind::Ferry, nd_sim::ShipKind::FishingBoat, nd_sim::ShipKind::Yacht, nd_sim::ShipKind::Sailboat, nd_sim::ShipKind::CarFerry];
 
 /// Freighters, ferries and (economy) boats along their routes, blended between ticks.
-pub(super) fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut state: ResMut<LandscapeRender>, mut q: Query<&mut Transform, With<ShipTag>>) {
+#[allow(clippy::too_many_arguments)]
+pub(super) fn sync_ships(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mut state: ResMut<LandscapeRender>,
+    mut bm: ResMut<super::boxes::BoxMeshes>,
+    mut decks: Local<HashMap<nd_sim::ports::ShipId, (Vec<nd_sim::containers::BoxId>, Vec<Entity>)>>,
+    mut q: Query<&mut Transform, With<ShipTag>>,
+) {
     let ships = &sim.world.ports.ships;
     if ships.is_empty() && state.ships.is_empty() {
+        decks.clear();
         return;
     }
+    // [r8] A freighter's hull carries through-cargo aft only; the real
+    // boxes it brings and takes stand on its forward bays.
     let handles = state
         .ship_meshes
-        .get_or_insert_with(|| SHIP_KINDS.map(|k| meshes.add(shared_mesh(&nd_procgen::terrain::boat_mesh(k, &assets.palette), true))))
+        .get_or_insert_with(|| SHIP_KINDS.map(|k| meshes.add(shared_mesh(&if k == nd_sim::ShipKind::Freighter { nd_procgen::terrain::freighter_hull_mesh(&assets.palette) } else { nd_procgen::terrain::boat_mesh(k, &assets.palette) }, true))))
         .clone();
     let (despawn, spawn) = reconcile(&mut state.ships, ships.iter().map(|(id, s)| (id, s.kind)), sim.full_rebuild);
     for e in despawn {
@@ -243,6 +257,37 @@ pub(super) fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>
         let mesh = handles[SHIP_KINDS.iter().position(|k| *k == kind).unwrap_or(1)].clone();
         let e = commands.spawn((Mesh3d(mesh), MeshMaterial3d(mats.surface(Surface::Panel)), Transform::IDENTITY, ShipTag)).id();
         state.ships.insert(id, (e, kind));
+        decks.remove(&id);
+    }
+    // [r8] The real boxes aboard each freighter, on its deck, as children
+    // of the hull (redrawn when what is aboard changes).
+    {
+        let w = &sim.world;
+        let day = w.clock.day() as i64;
+        decks.retain(|id, _| state.ships.contains_key(id));
+        let slots = nd_procgen::terrain::freighter_deck_slots();
+        for (id, (hull, kind)) in state.ships.iter() {
+            if *kind != nd_sim::ShipKind::Freighter {
+                continue;
+            }
+            let aboard = w.ship_deck(*id);
+            if decks.get(id).is_some_and(|d| d.0 == aboard) {
+                continue;
+            }
+            if let Some((_, ents)) = decks.remove(id) {
+                for e in ents {
+                    commands.entity(e).despawn();
+                }
+            }
+            let faces: Vec<nd_sim::containers::BoxFace> = aboard.iter().filter_map(|b| w.containers.boxes.get(*b).map(|r| r.face(*b, day))).collect();
+            let mut ents = Vec::new();
+            for (k, at, yaw) in super::boxes::lay_out(&faces, &slots) {
+                let parts = bm.get(&mut meshes, &assets.palette, &faces[k]);
+                let tf = Transform::from_translation(at).with_rotation(Quat::from_rotation_y(-yaw));
+                ents.push(super::boxes::spawn_real_box(&mut commands, &mats, &parts, tf, super::boxes::BoxTag { id: faces[k].id, face: faces[k], offset: Vec3::ZERO }, ChildOf(*hull), ShipBoxTag));
+            }
+            decks.insert(*id, (aboard, ents));
+        }
     }
     let f = sim.frac();
     for (id, (e, _)) in state.ships.iter() {
@@ -261,8 +306,24 @@ pub(super) fn sync_ships(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>
 /// spreader goes down and up, landing the ship's imports on the quay and
 /// loading the city's exports (`nd_sim::ports::crane_work`).
 #[allow(clippy::type_complexity)]
-pub(super) fn sync_port_cranes(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut state: ResMut<LandscapeRender>, mut box_meshes: Local<Vec<Handle<Mesh>>>, mut q: Query<(&mut Transform, &mut Visibility, &mut Mesh3d), With<CraneGear>>) {
+#[allow(clippy::too_many_arguments)]
+pub(super) fn sync_port_cranes(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    sim: Res<Sim>,
+    assets: Res<GameAssets>,
+    mats: Res<Materials>,
+    mut state: ResMut<LandscapeRender>,
+    mut box_meshes: Local<Vec<Handle<Mesh>>>,
+    mut bm: ResMut<super::boxes::BoxMeshes>,
+    mut hooked: Local<HashMap<nd_sim::ports::PortId, (nd_sim::containers::BoxId, Entity)>>,
+    mut q: Query<(&mut Transform, &mut Visibility, &mut Mesh3d), With<CraneGear>>,
+    mut boxes_q: Query<&mut Transform, (With<QuayBoxTag>, Without<CraneGear>)>,
+) {
     let w = &sim.world;
+    if sim.full_rebuild {
+        hooked.clear();
+    }
     if sim.full_rebuild {
         for (_, ents) in state.cranes.drain() {
             for e in ents {
@@ -292,8 +353,13 @@ pub(super) fn sync_port_cranes(mut commands: Commands, mut meshes: ResMut<Assets
         }
     }
     let f = sim.frac();
+    let day = w.clock.day() as i64;
+    let mut keep: std::collections::HashSet<nd_sim::ports::PortId> = std::collections::HashSet::new();
     for (pid, port) in w.ports.ports.iter().filter(|(_, p)| p.kind == nd_sim::ports::PortKind::ShippingPort) {
-        let work = port.building.and_then(|b| w.ports.ships.values().find(|s| s.port == b && s.kind == nd_sim::ShipKind::Freighter)).and_then(|s| nd_sim::ports::crane_work(port, s, f));
+        let ship = port.building.and_then(|b| w.ports.ships.iter().find(|(_, s)| s.port == b && s.kind == nd_sim::ShipKind::Freighter));
+        let work = ship.and_then(|(_, s)| nd_sim::ports::crane_work(port, s, f));
+        // [r8] The box on the spreader is the record the sim is moving.
+        let real = ship.zip(work).and_then(|((sid, _), c)| w.quay_crane_box(sid, c.n)).filter(|b| w.containers.boxes.contains_key(*b));
         let Some(c) = work else {
             if let Some(ents) = state.cranes.get(&pid) {
                 for e in ents {
@@ -313,6 +379,18 @@ pub(super) fn sync_port_cranes(mut commands: Commands, mut meshes: ResMut<Assets
         }
         let ents = state.cranes[&pid];
         let yaw = Quat::from_rotation_y(-port.seaward.y.atan2(port.seaward.x));
+        if let Some(b) = real.filter(|_| c.carrying) {
+            keep.insert(pid);
+            if hooked.get(&pid).is_none_or(|h| h.0 != b) {
+                if let Some((_, e)) = hooked.remove(&pid) {
+                    commands.entity(e).despawn();
+                }
+                let face = w.containers.boxes[b].face(b, day);
+                let parts = bm.get(&mut meshes, &assets.palette, &face);
+                let e = super::boxes::spawn_real_box(&mut commands, &mats, &parts, super::offstage(), super::boxes::BoxTag { id: b, face, offset: Vec3::ZERO }, (), QuayBoxTag);
+                hooked.insert(pid, (b, e));
+            }
+        }
         let low = match c.low {
             nd_sim::ports::CraneEnd::Ship => CRANE_LOW_SHIP,
             nd_sim::ports::CraneEnd::Quay => CRANE_LOW_QUAY,
@@ -328,6 +406,11 @@ pub(super) fn sync_port_cranes(mut commands: Commands, mut meshes: ResMut<Assets
                 tf.scale = poses[k].1;
                 *v = if poses[k].2 { Visibility::Inherited } else { Visibility::Hidden };
                 if k == 3 {
+                    // A generic box only for a ship with no records (an
+                    // older save's); else the real one hangs there.
+                    if real.is_some() {
+                        *v = Visibility::Hidden;
+                    }
                     let want = &box_meshes[(c.n as usize + pid_salt(pid)) % box_meshes.len()];
                     if m.0 != *want {
                         m.0 = want.clone();
@@ -335,8 +418,29 @@ pub(super) fn sync_port_cranes(mut commands: Commands, mut meshes: ResMut<Assets
                 }
             }
         }
+        if let Some(&(_, e)) = hooked.get(&pid).filter(|_| real.is_some() && c.carrying) {
+            if let Ok(mut tf) = boxes_q.get_mut(e) {
+                let hook = poses[2].0;
+                tf.translation = hook - Vec3::Y * (0.2 + nd_procgen::CONTAINER_H);
+                tf.rotation = yaw * Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+            }
+        }
+    }
+    let drop: Vec<nd_sim::ports::PortId> = hooked.keys().copied().filter(|p| !keep.contains(p)).collect();
+    for p in drop {
+        if let Some((_, e)) = hooked.remove(&p) {
+            commands.entity(e).despawn();
+        }
     }
 }
+
+/// [r8] A real box on a freighter's deck.
+#[derive(Component, Clone)]
+pub(super) struct ShipBoxTag;
+
+/// [r8] The real box hanging from a quay crane's spreader.
+#[derive(Component, Clone)]
+pub(super) struct QuayBoxTag;
 
 fn pid_salt(p: nd_sim::ports::PortId) -> usize {
     (slotmap::Key::data(&p).as_ffi() % 7) as usize

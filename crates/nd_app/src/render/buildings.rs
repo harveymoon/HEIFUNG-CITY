@@ -312,7 +312,13 @@ pub(super) fn sync_buildings(
                 let slots_before = geo.box_slots.len();
                 let drawn = append_building(&mut geo, &mut cells, &sim.world, &assets, &sim.styles, id);
                 // [K34] A depot's stacks are where its real boxes stand.
-                let slots: Vec<nd_procgen::BoxSlot> = geo.box_slots.drain(slots_before..).collect();
+                let (bays, slots): (Vec<nd_procgen::BoxSlot>, Vec<nd_procgen::BoxSlot>) = geo.box_slots.drain(slots_before..).partition(|s| s.tier == nd_procgen::BAY_TIER);
+                // [r8] Its painted lorry bays, where the real lorries stand.
+                if bays.is_empty() {
+                    sim.depot_bays.remove(&id);
+                } else {
+                    sim.depot_bays.insert(id, bays.iter().map(|s| (s.at, s.yaw)).collect());
+                }
                 if slots.is_empty() {
                     if sim.depot_slots.remove(&id).is_some() {
                         sim.depot_slots_version += 1;

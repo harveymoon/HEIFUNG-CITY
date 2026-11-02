@@ -602,6 +602,96 @@ fn box_truck(b: &mut B, col: [f32; 3]) {
     b.wear_marks(rx + 0.3, cr - 0.3, 1.0, top - 0.3, hw);
 }
 
+
+/// [r8] Where each box aboard a container chassis rides: the x of its
+/// middle along the rig, for boxes `forty` (in loading order). A forty on
+/// the deck's middle; twenties end to end on a forty-foot chassis, or one
+/// alone on the twenty.
+pub fn boxes_on_chassis(boxed: u8, forty: &[bool]) -> Vec<f32> {
+    let Some((mid, _)) = chassis_deck(boxed) else { return Vec::new() };
+    let long = nd_sim::vehicle::chassis_of(boxed) == Some(true);
+    let mut out = Vec::new();
+    let mut twenties = 0;
+    for &f in forty {
+        if f || !long {
+            out.push(mid);
+        } else {
+            let half = crate::CONTAINER_20 * 0.5 + 0.03;
+            out.push(if twenties == 0 { mid + half } else { mid - half });
+            twenties += 1;
+        }
+    }
+    out
+}
+
+/// [r8] Height of a straddle carrier's frame: it lifts a box clear over
+/// one stacked three high.
+pub const CARRIER_H: f32 = 12.6;
+/// Half its length and width between the legs.
+pub const CARRIER_HL: f32 = 4.6;
+pub const CARRIER_HW: f32 = 2.05;
+
+/// [r8] A straddle carrier, as the port and the yards run them: four tall
+/// legs on wheels either side of the box it carries, a top frame with the
+/// hoist, the driver's cab perched at one top corner, worn safety-yellow
+/// paint and a beacon. Its own origin on the ground between the legs,
+/// length along +x. The spreader the box hangs from is drawn apart
+/// ([`spreader_mesh`]), moving with the box.
+pub fn straddle_carrier_mesh() -> MeshData {
+    let mut m = MeshData::default();
+    let paint = [0.62, 0.46, 0.08];
+    let dark = [0.08, 0.08, 0.085];
+    let (hl, hw, h) = (CARRIER_HL, CARRIER_HW, CARRIER_H);
+    for x in [-hl, hl] {
+        for z in [-hw, hw] {
+            m.boxed(Vec3::new(x, h * 0.5 + 0.4, z), Vec3::new(0.55, h - 0.8, 0.55), 0.0, c4(paint));
+            m.boxed(Vec3::new(x, 0.5, z), Vec3::new(1.1, 1.0, 0.5), 0.0, c4(TYRE));
+        }
+        // Cross beam over each pair of legs.
+        m.boxed(Vec3::new(x, h - 0.2, 0.0), Vec3::new(0.7, 0.7, hw * 2.0 + 0.5), 0.0, c4(paint));
+    }
+    // Side girders along the top and low wheel beams.
+    for z in [-hw, hw] {
+        m.boxed(Vec3::new(0.0, h + 0.2, z), Vec3::new(hl * 2.0 + 0.6, 0.8, 0.5), 0.0, c4(mul(paint, 0.92)));
+        m.boxed(Vec3::new(0.0, 1.3, z), Vec3::new(hl * 2.0 + 0.6, 0.5, 0.45), 0.0, c4(mul(paint, 0.85)));
+        // Rust and grime down the legs.
+        m.boxed(Vec3::new(hl + 0.29, h * 0.35, z), Vec3::new(0.02, h * 0.5, 0.4), 0.0, c4([0.3, 0.16, 0.07]));
+    }
+    // Hoist gear on top, the cab at the front corner with its glass.
+    m.boxed(Vec3::new(0.0, h + 0.9, 0.0), Vec3::new(3.0, 0.8, 1.6), 0.0, c4(mul(paint, 0.7)));
+    m.boxed(Vec3::new(hl - 0.4, h - 1.2, hw + 0.9), Vec3::new(1.8, 2.0, 1.4), 0.0, c4(mul(paint, 0.95)));
+    m.decal(Vec3::new(hl + 0.52, h - 1.0, hw + 0.9), Vec3::Z, Vec3::Y, 1.2, 1.0, Vec3::X, c4(GLASS));
+    m.decal(Vec3::new(hl - 0.4, h - 1.0, hw + 1.62), Vec3::X, Vec3::Y, 1.5, 1.0, Vec3::Z, c4(GLASS));
+    // Hazard chevrons low on the legs.
+    for x in [-hl, hl] {
+        for z in [-hw, hw] {
+            m.boxed(Vec3::new(x, 2.2, z), Vec3::new(0.57, 0.5, 0.57), 0.0, c4(dark));
+        }
+    }
+    m
+}
+
+/// [r8] The amber beacon on a carrier's roof (drawn lit).
+pub fn carrier_beacon_mesh() -> MeshData {
+    let mut m = MeshData::default();
+    m.boxed(Vec3::new(0.0, CARRIER_H + 1.45, 0.0), Vec3::new(0.35, 0.3, 0.35), 0.0, c4(AMBER));
+    m
+}
+
+/// [r8] A spreader: the frame that locks onto a box's four top corner
+/// castings, its origin at the top of the box, length along +x for a
+/// forty-foot box (scale x by half for a twenty).
+pub fn spreader_mesh() -> MeshData {
+    let mut m = MeshData::default();
+    let paint = [0.55, 0.42, 0.1];
+    m.boxed(Vec3::new(0.0, 0.18, 0.0), Vec3::new(crate::CONTAINER_40 - 0.2, 0.22, 0.35), 0.0, c4(paint));
+    for x in [-1.0f32, 1.0] {
+        m.boxed(Vec3::new(x * (crate::CONTAINER_40 * 0.5 - 0.2), 0.18, 0.0), Vec3::new(0.3, 0.22, crate::CONTAINER_W), 0.0, c4(paint));
+    }
+    m.boxed(Vec3::new(0.0, 0.42, 0.0), Vec3::new(1.4, 0.3, 1.0), 0.0, c4(mul(paint, 0.7)));
+    m
+}
+
 /// [r8] Where a box rides on a container chassis: the deck's centre along
 /// the rig (x, from the rig's middle) and the height of a box's floor on
 /// the bolsters. None for a semi with its own trailer.
@@ -1379,5 +1469,37 @@ mod tests {
         assert!(pizza.lights.indices.len() > plain.lights.indices.len(), "a lit sign panel");
         let red = livery_colors(Livery::Pizza, 0, &Palette::default()).unwrap().0;
         assert!(pizza.body.colors.iter().any(|c| (c[0] - red[0]).abs() < 0.05 && (c[1] - red[1]).abs() < 0.05));
+    }
+
+    /// [r8] A container rig is a tractor and a bare skeletal chassis as
+    /// long as the box it is for: nothing drawn over the deck (the real
+    /// box rides on it as its own object), and the box's slot on it the
+    /// length of its record.
+    #[test]
+    fn container_rigs_are_bare_chassis_of_the_boxs_length() {
+        use nd_sim::vehicle::{semi_length, CHASSIS_20, CHASSIS_40};
+        for (code, forty) in [(CHASSIS_20, false), (CHASSIS_40, true)] {
+            let m = vehicle_mesh(&VehicleModel { class: VehicleClass::Mid, body: BodyType::Semi, wear: 1, tuned: false, livery: Livery::None, paint: 2, boxed: code });
+            let (lo, hi) = m.body.positions.iter().fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p[0]), b.max(p[0])));
+            assert!((hi - lo - semi_length(code)).abs() < 0.4, "{code}: drawn {} long, {} in the sim", hi - lo, semi_length(code));
+            let lc = if forty { CHASSIS_40_LEN } else { CHASSIS_20_LEN };
+            let box_len = if forty { crate::CONTAINER_40 } else { crate::CONTAINER_20 };
+            assert!(lc >= box_len - 0.05, "{code}: the chassis carries the box's length");
+            // Bare: over the chassis nothing stands above the deck but the
+            // twistlocks.
+            let rx = -semi_length(code) * 0.5;
+            let over = m.body.positions.iter().filter(|p| p[0] > rx + 0.3 && p[0] < rx + lc - 2.0 && p[1] > CHASSIS_DECK + 0.3).count();
+            assert_eq!(over, 0, "{code}: an empty chassis looks empty");
+            let (mid, deck) = chassis_deck(code).unwrap();
+            assert!((deck - CHASSIS_DECK).abs() < 1e-4);
+            assert!(mid - box_len * 0.5 >= rx - 0.2 && mid + box_len * 0.5 <= rx + lc + 0.2, "{code}: the box sits on the chassis");
+        }
+        // Two twenties end to end on a forty-foot chassis, clear of each other.
+        let xs = boxes_on_chassis(CHASSIS_40, &[false, false]);
+        assert_eq!(xs.len(), 2);
+        assert!((xs[0] - xs[1]).abs() >= crate::CONTAINER_20);
+        assert_eq!(boxes_on_chassis(CHASSIS_40, &[true]), vec![chassis_deck(CHASSIS_40).unwrap().0]);
+        // A plain semi keeps a trailer of its own.
+        assert!(chassis_deck(0).is_none());
     }
 }

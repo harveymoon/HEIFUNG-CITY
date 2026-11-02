@@ -27,6 +27,79 @@ pub fn box_slot(g: &mut Geometry, c: &Ctx, u: f32, v: f32, yaw: f32, y0: f32, ti
     g.box_slots.push(BoxSlot { at: f.at2(Vec2::new(u, v), y0 + tier as f32 * CONTAINER_H), yaw: d.z.atan2(d.x), tier, forty });
 }
 
+
+/// [r8] A box slot with this tier is a lorry bay at a depot, not a place in
+/// its stacks: `at` the middle of the bay on the ground, `yaw` the way a
+/// lorry standing in it faces (world), `forty` whether a forty-foot rig fits.
+pub const BAY_TIER: u8 = 250;
+/// [r8] A lorry bay: wide enough to walk round a rig, long enough for a
+/// tractor and a forty-foot chassis.
+pub const BAY_W: f32 = 4.4;
+pub const BAY_LEN: f32 = 18.5;
+
+/// [r8] Lay out up to `n` lorry bays in the lot-local rectangle `lo`..`hi`
+/// on the ground at `y0`: side by side, a lorry's length across the lot
+/// (nose to the front) where the rectangle is deep enough, else along it in
+/// rows. Each is painted (two side lines and a stop bar, worn yellow) and
+/// handed to the renderer as a slot of tier [`BAY_TIER`]. Returns how many.
+pub fn lorry_bays(g: &mut Geometry, c: &Ctx, lo: Vec2, hi: Vec2, n: usize, y0: f32) -> usize {
+    let (w, d) = (hi.x - lo.x, hi.y - lo.y);
+    if w <= 0.0 || d <= 0.0 || n == 0 {
+        return 0;
+    }
+    let deep = d >= BAY_LEN;
+    // Bay centres, and the lorry's heading in lot terms.
+    let mut spots: Vec<(Vec2, f32)> = Vec::new();
+    if deep {
+        let per = (w / BAY_W).floor() as usize;
+        for k in 0..per {
+            spots.push((Vec2::new(lo.x + BAY_W * (k as f32 + 0.5), lo.y + BAY_LEN * 0.5), -std::f32::consts::FRAC_PI_2));
+        }
+    } else {
+        let rows = (d / BAY_W).floor() as usize;
+        let per = (w / BAY_LEN).floor() as usize;
+        for r in 0..rows {
+            for k in 0..per {
+                spots.push((Vec2::new(lo.x + BAY_LEN * (k as f32 + 0.5), lo.y + BAY_W * (r as f32 + 0.5)), 0.0));
+            }
+        }
+    }
+    let f = &c.frame;
+    let paint = [0.5, 0.43, 0.16];
+    let mut made = 0;
+    for (p, yaw) in spots {
+        if made >= n {
+            break;
+        }
+        let (s, co) = yaw.sin_cos();
+        let along = Vec2::new(co, s);
+        let across = Vec2::new(-s, co);
+        let corners = [p + along * BAY_LEN * 0.5 + across * BAY_W * 0.5, p + along * BAY_LEN * 0.5 - across * BAY_W * 0.5, p - along * BAY_LEN * 0.5 + across * BAY_W * 0.5, p - along * BAY_LEN * 0.5 - across * BAY_W * 0.5];
+        if !corners.iter().all(|q| c.inside_local(*q)) {
+            continue;
+        }
+        let y = y0 + 0.02;
+        let line = |g: &mut Geometry, a: Vec2, b: Vec2, wid: f32, col: [f32; 3]| {
+            let dir = (b - a).normalize_or_zero();
+            let side = Vec2::new(-dir.y, dir.x) * wid * 0.5;
+            let q = [f.at2(a - side, y), f.at2(b - side, y), f.at2(b + side, y), f.at2(a + side, y)];
+            g.part(Matte).quad_facing(q, Vec3::Y, rgba(col));
+        };
+        for sgn in [-1.0f32, 1.0] {
+            let o = across * BAY_W * 0.5 * sgn;
+            line(g, p - along * BAY_LEN * 0.5 + o, p + along * BAY_LEN * 0.5 + o, 0.14, paint);
+        }
+        // The stop bar where the cab pulls up, and a worn patch of oil
+        // where the rigs stand.
+        line(g, p + along * (BAY_LEN * 0.5 - 0.3) - across * BAY_W * 0.4, p + along * (BAY_LEN * 0.5 - 0.3) + across * BAY_W * 0.4, 0.3, mul(paint, 1.1));
+        line(g, p - along * 3.0, p + along * 4.0, 1.6, [0.05, 0.05, 0.05]);
+        let d3 = f.dir3(along);
+        g.box_slots.push(BoxSlot { at: f.at2(p, y0), yaw: d3.z.atan2(d3.x), tier: BAY_TIER, forty: true });
+        made += 1;
+    }
+    made
+}
+
 /// Rows of a 3 x 5 stencil glyph, top first; bit 2 is the left column.
 fn glyph(c: u8) -> [u8; 5] {
     match c {

@@ -176,6 +176,7 @@ fn trade_words(kind: BusinessKind) -> Option<(&'static [&'static str], &'static 
         B::OilWell => (&["Black Gold", "Crude", "Argent", "Kessler"], &["Oil", "Petroleum", "Drilling", "=Drill Baby Drill"]),
         B::Refinery => (&["Argent", "Kessler", "Oberon", "Black Gold"], &["Refining", "Petrochem", "Refinery"]),
         B::ContainerYard => (&["Meridian", "Harbour", "Vantage", "Iron"], &["Containers", "Freight", "Box Yard", "=Thinking Inside the Box"]),
+        B::FreightForwarder => (&["Tallyman", "Brackwater", "Northbound", "Quayside", "Ninefold", "Gantry"], &["Forwarding", "Consolidators", "Freight Agents", "Shipping & Forwarding", "=Box & Bundle Forwarding", "=Many Hands Consolidated"]),
         B::FleetLot => (&["Meridian", "Rust", "Iron", "Night"], &["Fleet Lot", "Truck Park", "Depot", "=Idle Hands Truck Park"]),
         B::Fishery | B::FishingPort => (&["Saltwind", "Tide", "Grey", "Old Wharf"], &["Fisheries", "Fishing Co.", "Trawlers"]),
         B::FishPlant | B::FishGutting | B::FishStickFactory => (&["Saltwind", "Tide", "Grey", "Captain"], &["Fish Processing", "Seafoods", "Fish Works", "=Gut Feeling Seafoods", "=Fin-ished Products"]),

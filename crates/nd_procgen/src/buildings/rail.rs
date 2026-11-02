@@ -172,6 +172,15 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     sign_board(g, c, rng, &c.front_face(&shed), 0.0, h - 1.3, 8.0, 0.9);
     roof_gear(g, c, rng, &shed, h, 0.2);
+    // [r8] Lorry bays on the forecourt before the shed, else beside it.
+    if c.real_boxes {
+        let (slo, _) = bounds(&shed);
+        let n = lorry_bays(g, c, Vec2::new(lo.x + 2.0, lo.y + 1.5), Vec2::new(hi.x - 2.0, slo.y - 1.0), 5, 0.03);
+        if n < 5 {
+            let (_, shi) = bounds(&shed);
+            lorry_bays(g, c, Vec2::new(shi.x + 1.5, lo.y + 1.5), Vec2::new(hi.x - 2.0, lo.y + (hi.y - lo.y) * 0.45), 5 - n, 0.03);
+        }
+    }
     // Sidings fan off the main line beside the apron, as many as the yard
     // is long for, under a gantry that spans them all.
     let [pa, pb] = link.platform;

@@ -25,6 +25,8 @@ fn where_json(w: &World, at: Where) -> Value {
         Where::Site(b) => json!({ "kind": "home_site", "building": key_str(b), "name": w.buildings.get(b).map(|x| x.name.clone()) }),
         Where::Home(b) => json!({ "kind": "home", "building": key_str(b), "name": w.buildings.get(b).map(|x| x.name.clone()) }),
         Where::Scrap(b) => json!({ "kind": "scrap", "building": key_str(b), "name": w.buildings.get(b).map(|x| x.name.clone()) }),
+        Where::Lifting(b) => json!({ "kind": "on_crane", "building": key_str(b), "name": w.buildings.get(b).map(|x| x.name.clone()) }),
+        Where::Ship(s) => json!({ "kind": "ship", "ship": key_str(s), "port": w.containers.ships.get(&s).map(|x| key_str(x.port)) }),
     }
 }
 
@@ -50,18 +52,32 @@ pub fn building_boxes(w: &World, b: nd_sim::BuildingId) -> Value {
     if let Some(h) = w.containers.homes.get(&b) {
         return json!({ "home": { "built_of": h.boxes.len(), "wants": h.want, "finished": h.done, "boxes": h.boxes.iter().filter_map(|id| row(*id)).collect::<Vec<_>>() } });
     }
+    // [r8] A forwarder's books.
+    if let Some((loads, units, out, f)) = w.forwarder_card(b) {
+        return json!({ "forwarder": { "boxes_out": f.boxes_out, "loads": f.loads_total, "firms_served": f.firms.len(), "units": round(f.units_total), "fees_today": round(f.fees_today), "fees_total": round(f.fees_total), "rounds": f.rounds, "waiting_loads": loads, "waiting_units": round(units), "lorries_out": out } });
+    }
     let Some(kind) = w.box_depot(b) else { return Value::Null };
     let ids = w.containers.stored_at(b);
-    json!({ "depot": { "kind": kind.label(), "stored": ids.len(), "capacity": w.box_capacity(b, kind), "full": ids.iter().filter(|id| w.containers.boxes[**id].goods.is_some()).count(), "boxes": ids.iter().take(60).filter_map(|id| row(*id)).collect::<Vec<_>>() } })
+    // [r8] Its lorry bays, gate queue and carrier.
+    let yard = w.containers.depots.get(&b).map(|y| json!({
+        "bays": y.bays.iter().map(|c| c.map(|c| json!({ "car": key_str(c), "status": w.lorry_status(c) }))).collect::<Vec<_>>(),
+        "queue": y.queue.iter().map(|c| key_str(*c)).collect::<Vec<_>>(),
+        "carrier": y.crane.map(|j| json!({ "box": key_str(j.boxid), "number": w.containers.boxes.get(j.boxid).map(|r| r.number()), "onto_lorry": j.onto_truck, "bay": j.bay + 1, "car": key_str(j.car) })),
+        "moves": y.moves,
+    }));
+    json!({ "depot": { "kind": kind.label(), "stored": ids.len(), "capacity": w.box_capacity(b, kind), "full": ids.iter().filter(|id| w.containers.boxes[**id].goods.is_some()).count(), "going_out": ids.iter().filter(|id| w.containers.boxes[**id].bound_out || !w.containers.boxes[**id].export.is_empty()).count(), "yard": yard, "boxes": ids.iter().take(60).filter_map(|id| row(*id)).collect::<Vec<_>>() } })
 }
 
 /// The boxes on lorry `car`.
 pub fn truck_boxes(w: &World, car: nd_sim::CarId) -> Value {
     let ids = w.boxes_on_truck(car);
-    if ids.is_empty() {
+    let status = w.lorry_status(car);
+    if ids.is_empty() && status.is_none() {
         return Value::Null;
     }
-    json!(ids.iter().filter_map(|id| w.containers.boxes.get(*id).map(|r| json!({ "id": key_str(*id), "number": r.number(), "full": r.goods.is_some() }))).collect::<Vec<_>>())
+    // [r8] The chassis, the boxes on it and what the lorry is about.
+    let chassis = w.traffic.cars.get(car).and_then(|c| nd_sim::vehicle::chassis_of(c.model.boxed)).map(|f| if f { "40ft" } else { "20ft" });
+    json!({ "chassis": chassis, "status": status, "boxes": ids.iter().filter_map(|id| w.containers.boxes.get(*id).map(|r| json!({ "id": key_str(*id), "number": r.number(), "size": if r.forty { "40ft" } else { "20ft" }, "full": r.goods.is_some() || !r.export.is_empty() }))).collect::<Vec<_>>() })
 }
 
 /// The town's boxes: where they are, the counts since records began, the
@@ -82,6 +98,11 @@ pub fn containers_json(w: &World) -> Value {
             "scrapped": s.scrapped_total, "steel_made": round(s.steel_total),
         },
         "today": { "arrived": s.arrived_today, "delivered": s.delivered_today, "scrapped": s.scrapped_today },
+        // [r8]
+        "exported_in_boxes": s.exported_total, "export_units_yesterday": round(s.export_units_yday), "sold_for_scrap_out_of_town": s.sold_for_scrap_total, "crane_moves": s.crane_moves_total, "surplus_empties_sent_out": s.surplus_out_total,
+        "on_cranes": c.lifting, "on_ships": c.on_ships,
+        "lorries_at_depots": w.containers.depots.values().map(|y| y.bays.iter().flatten().count() + y.queue.len()).sum::<usize>(),
+        "forwarders": w.containers.forwarders.len(),
         "awaiting_scrap": s.awaiting_scrap,
         "depots": depots,
         "homes": homes,

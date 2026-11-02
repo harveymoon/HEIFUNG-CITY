@@ -130,6 +130,7 @@ pub(crate) fn business_note(k: BusinessKind) -> String {
         B::Grocery | B::Bakery => "Feeds the neighbourhood: people on foot drop in to shop, and a street of shops draws more.".into(),
         B::Cafe => "Coffee and pastries, a place to sit: students and office workers drop in.".into(),
         B::Bookshop => "Books and stationery: students and downtown browsers drop in.".into(),
+        B::FreightForwarder => "A shipping company in town: leases empty containers, sends its lorries round the firms to fill each box with their exports, and ships the full boxes from the port or the freight yard, charging each firm a fee per load.".into(),
         B::ScrapYard => "Cuts worn-out shipping containers (and other scrap) into steel: sold to building sites in town and out of town.".into(),
         B::GadgetShop => "Sells to the people round about; its customers come on foot and by car.".into(),
         B::ArtStudio => "Artists make art in cheap space here; the galleries nearby sell it.".into(),

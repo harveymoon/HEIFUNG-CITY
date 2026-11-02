@@ -131,6 +131,8 @@ pub fn industry_styles(kind: nd_sim::BusinessKind, tier: Tier) -> Option<&'stati
         B::Refinery => &[(Style::Refinery, 0.8), (Style::TankFarm, 0.2)],
         B::ContainerYard => &[(Style::ContainerYard, 0.7), (Style::Depot, 0.3)],
         B::FleetLot => &[(Style::TruckLot, 1.0)],
+        // [r8] A freight forwarder: its lorries' lot and a shed.
+        B::FreightForwarder => &[(Style::TruckLot, 0.6), (Style::Depot, 0.4)],
         // [parking] A tow company: its trucks and the pound.
         B::TowYard => &[(Style::TruckLot, 1.0)],
         // A cargo hub: container stacks, a gantry crane, lorries in bays.
@@ -205,7 +207,7 @@ pub fn business_look_wins(kind: nd_sim::BusinessKind) -> bool {
     use nd_sim::BusinessKind as B;
     matches!(
         kind,
-        B::Mechanic | B::CarDealer | B::TrashCompany | B::BikeShop | B::CowFarm | B::ChickenFarm | B::Slaughterhouse | B::StripMine | B::Marina | B::FishingPort | B::FishGutting | B::FishStickFactory | B::FishMarket | B::SeafoodRestaurant | B::GolfRange | B::ArtStudio | B::Gallery | B::Smelter | B::Feedlot | B::ChemicalWorks | B::BeachResort | B::PierRestaurant | B::BeachBar | B::BoatRental | B::ScrapYard
+        B::Mechanic | B::CarDealer | B::TrashCompany | B::BikeShop | B::CowFarm | B::ChickenFarm | B::Slaughterhouse | B::StripMine | B::Marina | B::FishingPort | B::FishGutting | B::FishStickFactory | B::FishMarket | B::SeafoodRestaurant | B::GolfRange | B::ArtStudio | B::Gallery | B::Smelter | B::Feedlot | B::ChemicalWorks | B::BeachResort | B::PierRestaurant | B::BeachBar | B::BoatRental | B::ScrapYard | B::FreightForwarder
     ) || kind.is_eat_or_go_out()
 }
 

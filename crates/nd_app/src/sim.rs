@@ -65,12 +65,28 @@ pub struct Sim {
     /// count bumped whenever they change.
     pub depot_slots: std::collections::HashMap<nd_sim::BuildingId, (u64, Vec<nd_procgen::BoxSlot>)>,
     pub depot_slots_version: u64,
+    /// [r8] Each depot's painted lorry bays (from its drawn style): the
+    /// middle of each bay on the ground and the way a lorry in it faces.
+    pub depot_bays: std::collections::HashMap<nd_sim::BuildingId, Vec<(bevy::math::Vec3, f32)>>,
     /// [K34] The real boxes on screen (depots and trains), for picking:
     /// record, floor centre, rotation, forty-footer.
     pub box_spots: Vec<(nd_sim::containers::BoxId, bevy::math::Vec3, bevy::math::Quat, bool)>,
 }
 
 impl Sim {
+    /// [r8] Where a lorry standing in a depot's bay is drawn: the bay's
+    /// middle (the rig's centre), its heading and the ground there. None
+    /// for a lorry not in a bay, or a bay the depot does not draw (it is
+    /// then drawn where the road has it, at the kerb).
+    pub fn bay_pose(&self, car: nd_sim::CarId) -> Option<(bevy::math::Vec2, f32, f32)> {
+        if !self.world.traffic.cars.get(car).is_some_and(|c| c.bay) {
+            return None;
+        }
+        let (d, k) = self.world.lorry_bay(car)?;
+        let &(at, yaw) = self.depot_bays.get(&d)?.get(k)?;
+        Some((bevy::math::Vec2::new(at.x, at.z), yaw, at.y))
+    }
+
     pub fn new() -> Self {
         let world = Self::fresh_world(nd_sim::LandscapeParams::default());
         let (start, start_gestures) = (world.clock.tick, world.master.gestures.len());
@@ -92,6 +108,7 @@ impl Sim {
             building_tops: Default::default(),
             depot_slots: Default::default(),
             depot_slots_version: 0,
+            depot_bays: Default::default(),
             box_spots: Vec::new(),
         }
     }

@@ -260,8 +260,14 @@ pub fn shipping_port(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         f.bx(g, Metal, cu, 31.0, hi.y - 12.0, Vec3::new(2.0, 1.2, 18.0), mul(crane, 0.9));
         aviation_light_local(g, f, pal, cu, 32.0, hi.y - 3.0, 0.6);
     }
+    // [r8] Lorry bays in front of the stacks, where the real lorries wait
+    // for their boxes (the renderer drives the real straddle carrier and
+    // stands the real lorries); else the old dressing.
+    if c.real_boxes {
+        lorry_bays(g, c, Vec2::new(lo.x + w * 0.42, lo.y + 3.0), Vec2::new(hi.x - 4.0, (lo.y + d * 0.42 - 2.2).min(lo.y + 3.0 + BAY_LEN + 0.5)), 8, 0.03);
+    }
     // Straddle carriers and a lorry at the gate.
-    for k in 0..2 {
+    for k in 0..if c.real_boxes { 0 } else { 2 } {
         let p = Vec2::new(lo.x + w * (0.5 + 0.2 * k as f32), lo.y + d * 0.3);
         if poly_inside(c, &rect(p.x, p.y, 3.0, 2.0)) {
             for (du, dv) in [(-2.4, -1.6), (2.4, -1.6), (-2.4, 1.6), (2.4, 1.6)] {
@@ -271,7 +277,7 @@ pub fn shipping_port(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         }
     }
     let lorry = Vec2::new(lo.x + w * 0.38, lo.y + 6.0);
-    if vehicle_fits(c, lorry, 0.0, Vehicle::Truck) {
+    if !c.real_boxes && vehicle_fits(c, lorry, 0.0, Vehicle::Truck) {
         let paint = pick(rng, &pal.metal_paint);
         vehicle(g, f, pal, rng, lorry, 0.0, 0.0, Vehicle::Truck, paint);
     }

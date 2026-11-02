@@ -993,7 +993,55 @@ fn capsule_sites_rise_in_their_own_shape() {
 /// [K34] A record's box for the tests: line, size, wear and marks.
 fn test_box(c: &mut nd_sim::containers::Containers, line: u8, serial: u32, forty: bool, years: i32) -> nd_sim::containers::BoxId {
     use nd_sim::containers::*;
-    c.boxes.insert(BoxRec { line, serial, forty, kind: nd_sim::rail::BoxKind::Dry, origin: 3, built: -365 * years, knocks: (years * 5) as u16, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new() })
+    c.boxes.insert(BoxRec { line, serial, forty, kind: nd_sim::rail::BoxKind::Dry, origin: 3, built: -365 * years, knocks: (years * 5) as u16, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false })
+}
+
+/// [r8] Harvey: "white should not be the color under super faded, muted is
+/// what they tend to look like with more rust on the corners and edges".
+/// An old box of a line is darker and greyer in its own colour than a young
+/// one, never paler, and carries more rust.
+#[test]
+fn an_old_box_goes_dark_and_rusty_not_white() {
+    let pal = Palette::default();
+    let mut c = nd_sim::containers::Containers::default();
+    for line in 0..10u8 {
+        let young = test_box(&mut c, line, 1000 + line as u32, true, 1);
+        let old = test_box(&mut c, line, 2000 + line as u32, true, 19);
+        let (fy, fo) = (c.boxes[young].face(young, 0), c.boxes[old].face(old, 0));
+        let gy = crate::buildings::rail::real_box_geometry(&fy, false, &pal);
+        let go = crate::buildings::rail::real_box_geometry(&fo, false, &pal);
+        let lum = |g: &Geometry| {
+            let m = g.get(Surface::Container);
+            let n = m.colors.len().max(1) as f32;
+            m.colors.iter().map(|c| 0.3 * c[0] + 0.55 * c[1] + 0.15 * c[2]).sum::<f32>() / n
+        };
+        let (ly, lo) = (lum(&gy), lum(&go));
+        assert!(lo < ly, "line {line}: an old box is darker, not faded white ({lo} vs {ly})");
+        let rusty = |g: &Geometry| g.get(Surface::Container).colors.iter().filter(|c| c[0] > c[2] * 1.6 && c[0] > 0.12 && c[1] < c[0] * 0.8).count();
+        assert!(rusty(&go) > rusty(&gy), "line {line}: rust at the corners and edges");
+    }
+}
+
+/// [r8] The port, the container yards and the freight yards paint lorry
+/// bays where their real boxes stand, and hand them over.
+#[test]
+fn depots_with_real_boxes_paint_lorry_bays() {
+    let rules = BuildingRules::default();
+    let pal = Palette::default();
+    let zone = vec![Vec2::new(-100.0, -20.0), Vec2::new(100.0, -20.0), Vec2::new(100.0, 120.0), Vec2::new(-100.0, 120.0)];
+    let lots = lots(zone, LandUse::Industrial);
+    let lot = lots.iter().max_by(|a, b| a.area().total_cmp(&b.area())).unwrap();
+    for style in [Style::ContainerYard, Style::ShippingPort] {
+        let real = Extras { real_boxes: true, ..Extras::default() };
+        let g = generate_styled_extras(lot, LandUse::Industrial, 1, Tier::Mid, 0.8, 5, style, &rules, &pal, &real);
+        let bays: Vec<_> = g.box_slots.iter().filter(|s| s.tier == crate::BAY_TIER).collect();
+        assert!(!bays.is_empty(), "{style:?}: lorry bays");
+        for b in &bays {
+            assert!(b.at.is_finite() && b.yaw.is_finite());
+        }
+        let plain = generate_styled(lot, LandUse::Industrial, 1, Tier::Mid, 0.8, 5, style, &rules, &pal);
+        assert!(plain.box_slots.iter().all(|s| s.tier != crate::BAY_TIER), "{style:?}: none without real boxes");
+    }
 }
 
 /// [K34] A real box drawn with its number carries the number's strokes on

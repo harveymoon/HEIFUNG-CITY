@@ -95,6 +95,7 @@ fn rows(ui: &mut egui::Ui, sim: &Sim, selection: &mut Selection, ids: &[BoxId], 
 
 /// A building's boxes: a depot's stock, a Stacks home built of boxes.
 pub(super) fn building_boxes(ui: &mut egui::Ui, sim: &Sim, selection: &mut Selection, b: nd_sim::BuildingId) {
+    depot_yard(ui, sim, selection, b);
     let w = &sim.world;
     if let Some(h) = w.containers.homes.get(&b) {
         let head = if h.done { format!("BUILT FROM {} SHIPPING CONTAINERS", h.boxes.len()) } else { format!("STACK DEVELOPER  ·  {} OF {} BOXES ON SITE", h.boxes.len(), h.want) };
@@ -109,12 +110,64 @@ pub(super) fn building_boxes(ui: &mut egui::Ui, sim: &Sim, selection: &mut Selec
     rows(ui, sim, selection, &ids, 10);
 }
 
-/// The boxes on a lorry.
+/// [r8] The boxes on a lorry's chassis, and what the container lorry is
+/// about ("parked at the port in bay 3, waiting for a box").
 pub(super) fn truck_boxes(ui: &mut egui::Ui, sim: &Sim, selection: &mut Selection, car: nd_sim::CarId) {
-    let ids = sim.world.boxes_on_truck(car);
-    if ids.is_empty() {
+    let w = &sim.world;
+    let ids = w.boxes_on_truck(car);
+    let status = w.lorry_status(car);
+    if ids.is_empty() && status.is_none() {
         return;
     }
-    section(ui, "ON THE TRAILER");
+    let chassis = w.traffic.cars.get(car).and_then(|c| nd_sim::vehicle::chassis_of(c.model.boxed));
+    let head = match chassis {
+        Some(true) => "ON THE CHASSIS  ·  40 FT",
+        Some(false) => "ON THE CHASSIS  ·  20 FT",
+        None => "ON THE TRAILER",
+    };
+    section(ui, head);
+    if let Some(s) = status {
+        ui.label(egui::RichText::new(s).color(IVORY));
+    }
+    if ids.is_empty() {
+        ui.label(egui::RichText::new("empty chassis").small().weak());
+    }
     rows(ui, sim, selection, &ids, 4);
+}
+
+/// [r8] A depot's lorry bays and its carrier, and a forwarder's books.
+fn depot_yard(ui: &mut egui::Ui, sim: &Sim, selection: &mut Selection, b: nd_sim::BuildingId) {
+    let w = &sim.world;
+    if let Some(y) = w.containers.depots.get(&b) {
+        let used = y.bays.iter().flatten().count();
+        section(ui, &format!("LORRY BAYS  ·  {used} of {} in use, {} queued at the gate", y.bays.len(), y.queue.len()));
+        for (k, c) in y.bays.iter().enumerate() {
+            let Some(c) = *c else { continue };
+            ui.horizontal(|ui| {
+                if ui.link(format!("bay {}", k + 1)).clicked() {
+                    *selection = Selection::Car(c);
+                }
+                let s = w.lorry_status(c).unwrap_or_default();
+                ui.label(egui::RichText::new(s).small().weak());
+            });
+        }
+        let crane = match y.crane {
+            Some(j) => {
+                let n = w.containers.boxes.get(j.boxid).map(|r| r.number()).unwrap_or_default();
+                format!("Carrier: lifting {n} {} bay {}", if j.onto_truck { "onto the lorry in" } else { "off the lorry in" }, j.bay + 1)
+            }
+            None => "Carrier: standing by".to_string(),
+        };
+        ui.label(egui::RichText::new(format!("{crane}  ·  {} moves", y.moves)).small());
+    }
+    if let Some((loads, units, out, f)) = w.forwarder_card(b) {
+        section(ui, "FREIGHT FORWARDER");
+        ui.label(egui::RichText::new(format!("{} boxes of exports shipped  ·  {} loads from {} firms ({:.0} units)", f.boxes_out, f.loads_total, f.firms.len(), f.units_total)).color(IVORY));
+        ui.label(egui::RichText::new(format!("Fees: {:.0} today, {:.0} in all  ·  {} rounds", f.fees_today, f.fees_total, f.rounds)).color(GOLD));
+        ui.label(egui::RichText::new(format!("Waiting to be collected: {loads} loads ({units:.0} units)  ·  {out} lorries out")).small());
+        // Its boxes on their way.
+        let mine: Vec<BoxId> = w.containers.boxes.iter().filter(|(_, r)| r.owner == nd_sim::containers::Owner::Forwarder(b)).map(|(id, _)| id).collect();
+        rows(ui, sim, selection, &mine, 5);
+        hint(ui, "Leases sound empties, fills each with several firms' exports on a round of their yards, and ships it from the port or the freight yard, for a fee per load.");
+    }
 }

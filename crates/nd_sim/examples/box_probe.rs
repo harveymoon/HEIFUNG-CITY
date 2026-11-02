@@ -27,6 +27,7 @@ fn main() {
         if (k + 1) % 1440 == 0 {
             println!("day {} done, {:.1}s so far", w.clock.day(), t0.elapsed().as_secs_f32());
             report(&w, "");
+            report_r8(&w);
         }
     }
     let total: f32 = times.iter().sum();
@@ -50,3 +51,20 @@ fn report(w: &World, what: &str) {
     println!("  boxes {what}: total {} (trains {}, lorries {}, stored {} ({} full), sites {}, homes {}, scrap {}); since: in rail/sea/road {:?}, delivered {}, to stacks {} (off lorry {}), homes built {}, out-of-town for homes {}, sent out {}, sold {}, scrapped {}, steel {:.1}, awaiting scrap {}; depots {}", c.total, c.on_trains, c.on_trucks, c.stored, c.stored_full, c.on_sites, c.in_homes, c.at_scrap, s.arrived_total, s.delivered_total, s.sold_to_stacks_total, s.sold_off_truck_total, s.homes_built_total, s.bought_out_of_town_for_homes, s.sent_out_total, s.sold_out_of_town_total, s.scrapped_total, s.steel_total, s.awaiting_scrap, w.box_depots().len());
 }
 
+
+/// [r8] The lorries at the depots' bays, the carriers' and cranes' moves,
+/// the forwarders and the boxes going out.
+#[allow(dead_code)]
+fn report_r8(w: &World) {
+    let c = w.box_counts();
+    let s = &w.containers.stats;
+    let in_bays: usize = w.containers.depots.values().map(|y| y.bays.iter().flatten().count()).sum();
+    let queued: usize = w.containers.depots.values().map(|y| y.queue.len()).sum();
+    let going: usize = w.containers.boxes.values().filter(|r| r.bound_out).count();
+    println!("  r8: on cranes {}, aboard ships {}, lorries in bays {in_bays} queued {queued} jobs {}, crane moves {}, exported in boxes {}, sold for scrap {}, surplus out {}, going out {going}, export units yday {:.0}", c.lifting, c.on_ships, w.containers.lorries.len(), s.crane_moves_total, s.exported_total, s.sold_for_scrap_total, s.surplus_out_total, s.export_units_yday);
+    for (b, f) in &w.containers.forwarders {
+        println!("  forwarder {}: boxes out {}, loads {}, firms {}, units {:.0}, fees {:.0} (today {:.0}), rounds {}, waiting {}", w.buildings.get(*b).map(|x| x.name.clone()).unwrap_or_default(), f.boxes_out, f.loads_total, f.firms.len(), f.units_total, f.fees_total, f.fees_today, f.rounds, f.pending.len());
+    }
+    let fw = w.buildings.values().filter(|b| b.business.as_ref().is_some_and(|z| z.kind == nd_sim::BusinessKind::FreightForwarder)).count();
+    println!("  forwarder buildings {fw}");
+}
