@@ -128,10 +128,13 @@ pub enum AttractionKind {
     SkySlab,
     FanLibrary,
     CultureHouse,
+    /// [cable] A scenic cable car line: its top station is the sight, and
+    /// visitors ride it for the view. Appended.
+    CableCar,
 }
 
 impl AttractionKind {
-    pub const ALL: [AttractionKind; 27] = [
+    pub const ALL: [AttractionKind; 28] = [
         AttractionKind::Monument,
         AttractionKind::Stadium,
         AttractionKind::Park,
@@ -159,6 +162,7 @@ impl AttractionKind {
         AttractionKind::SkySlab,
         AttractionKind::FanLibrary,
         AttractionKind::CultureHouse,
+        AttractionKind::CableCar,
     ];
 
     /// [attractions] The landmark a sight of this kind is.
@@ -203,6 +207,7 @@ impl AttractionKind {
             AttractionKind::District => "landmark district",
             AttractionKind::Coast => "waterfront",
             AttractionKind::Beach => "beach",
+            AttractionKind::CableCar => "cable car",
             k => k.landmark().map_or("landmark", |s| s.label()),
         }
     }

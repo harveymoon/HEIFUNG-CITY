@@ -103,6 +103,8 @@ mod nights;
 mod survey;
 /// [subway] Metro tunnels and trains in the Underground view.
 mod subway;
+/// [cable] Cable car stations, pylons, ropes and cabins.
+mod cable;
 /// [society] Camps, RVs and overflowing bins.
 mod society;
 /// [r5-layered] Markets, hawkers, lock-ups and courts under the raised roads.
@@ -352,6 +354,10 @@ struct RenderState {
     /// or going redraws the fields round it (see [`plant_field`]).
     plant_sites: HashMap<BuildingId, SVec2>,
     chunks: HashMap<ChunkKey, ChunkMeshes>,
+    /// [r7-sim-thread] Building chunks waiting to be regenerated: a few a
+    /// frame (`CHUNK_BUDGET`), so a batch of sim ticks that touched a dozen
+    /// blocks costs a dozen short frames, not one long one.
+    pending_chunks: std::collections::HashSet<ChunkKey>,
     citizens: HashMap<CitizenId, Entity>,
     cars: HashMap<CarId, [Entity; 2]>,
     overlay_version: u64,
@@ -483,6 +489,8 @@ impl Plugin for RenderPlugin {
         app.init_resource::<social::SocialRender>().add_systems(Update, social::sync_social.after(sync_vacant).after(sync_buildings).before(update_daylight).in_set(SimSet::Sync));
         // [dirty-industry] Clean-up crews.
         app.init_resource::<cleanup::CleanupRender>().add_systems(Update, cleanup::sync_cleanup.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
+        // [cable] Gondolas and aerial tramways, over the buildings they clear.
+        app.init_resource::<cable::CableRender>().add_systems(Update, cable::sync_cable.after(sync_buildings).before(update_daylight).in_set(SimSet::Sync));
         // Drone taxis and helicopters, after the buildings whose pads they land on.
         app.init_resource::<air::AirState>().add_systems(Update, air::sync_air.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, check_car_bodies.after(lift_movers).in_set(SimSet::Sync));

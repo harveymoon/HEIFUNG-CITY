@@ -130,6 +130,8 @@ impl World {
             TransitLeg::Bus { route, .. } => (self.transit.routes.get(*route).map(|r| r.schedule()), Kind::Bus),
             TransitLeg::Subway { line, .. } => (self.subway.lines.get(*line).map(|l| l.schedule()), Kind::Metro),
             TransitLeg::Rail { .. } => (Some(self.rail.schedule()), Kind::Rail),
+            // [cable] By the line's own hours.
+            TransitLeg::Cable { line, .. } => return self.cable.lines.get(*line).is_none_or(|l| l.closed_for(minute, crate::cable::CLOSING_GRACE)),
             _ => return false,
         };
         t.unwrap_or_else(|| Timetable::flat(kind, kind.standard())).service_over(minute, kind.grace())
@@ -143,6 +145,7 @@ impl World {
             TransitLeg::Rail { .. } => Some(&mut self.rail.timeline),
             // [ferry-islands] The terminal the rider boards at.
             TransitLeg::Ferry { board, .. } => self.ports.ports.values_mut().find(|p| p.building == Some(*board)).map(|p| &mut p.timeline),
+            TransitLeg::Cable { line, .. } => self.cable.lines.get_mut(*line).map(|l| &mut l.timeline),
             _ => None,
         }
     }
@@ -155,6 +158,7 @@ impl World {
         let mut metro_wait: HashMap<MetroLineId, u32> = HashMap::new();
         let mut rail_wait = 0;
         let mut pier_wait: HashMap<BuildingId, u32> = HashMap::new();
+        let mut cable_wait: HashMap<crate::cable::CableLineId, u32> = HashMap::new();
         for c in self.citizens.values() {
             if !matches!(c.activity, Activity::Waiting { .. }) {
                 continue;
@@ -164,6 +168,7 @@ impl World {
                 Some(TransitLeg::Subway { line, .. }) => *metro_wait.entry(line).or_default() += 1,
                 Some(TransitLeg::Rail { .. }) => rail_wait += 1,
                 Some(TransitLeg::Ferry { board, .. }) => *pier_wait.entry(board).or_default() += 1,
+                Some(TransitLeg::Cable { line, .. }) => *cable_wait.entry(line).or_default() += 1,
                 _ => {}
             }
         }
@@ -188,6 +193,11 @@ impl World {
         }
         for (id, l) in self.subway.lines.iter_mut() {
             l.timeline.sample(hour, metro_wait.get(&id).copied().unwrap_or(0), metro_ride.get(&id).copied().unwrap_or(0));
+        }
+        // [cable] Riders in the stations and in the cabins.
+        for (id, l) in self.cable.lines.iter_mut() {
+            let riding = l.aboard.len() as u32;
+            l.timeline.sample(hour, cable_wait.get(&id).copied().unwrap_or(0), riding);
         }
         if !self.stations.is_empty() || !self.halts.is_empty() {
             let riding = self.rail.trains.values().filter(|t| t.kind == crate::rail::TrainKind::Passenger).map(|t| t.passengers.len() as u32).sum();

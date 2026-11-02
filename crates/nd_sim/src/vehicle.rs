@@ -677,8 +677,37 @@ impl CarEvent {
 }
 
 /// Trip modes counted per day, indexed by `citizens::TripMode::index`
-/// (room for modes added later, such as air taxis).
-pub const MODE_SLOTS: usize = 8;
+/// (room for modes added later, such as air taxis). [cable] Nine since the
+/// cable cars; a save from before has eight (`de_slots` reads either).
+pub const MODE_SLOTS: usize = 9;
+
+/// [cable] Read a per-mode array saved with fewer (or more) slots than
+/// there are now: the missing ones start empty, extra ones are dropped.
+pub fn de_slots<'de, D, T>(d: D) -> Result<[T; MODE_SLOTS], D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default + Copy,
+{
+    struct Slots<T>(std::marker::PhantomData<T>);
+    impl<'de, T: Deserialize<'de> + Default + Copy> serde::de::Visitor<'de> for Slots<T> {
+        type Value = [T; MODE_SLOTS];
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "up to {MODE_SLOTS} per-mode values")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut out = [T::default(); MODE_SLOTS];
+            let mut i = 0;
+            while let Some(v) = seq.next_element::<T>()? {
+                if i < MODE_SLOTS {
+                    out[i] = v;
+                }
+                i += 1;
+            }
+            Ok(out)
+        }
+    }
+    d.deserialize_tuple(MODE_SLOTS, Slots(std::marker::PhantomData))
+}
 
 /// Counts the lifecycle and the mode choice keep, today and in total.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -694,7 +723,9 @@ pub struct CarStats {
     pub bikes_bought_today: u32,
     pub bikes_sold_today: u32,
     /// Trips begun today and yesterday, by mode.
+    #[serde(deserialize_with = "de_slots")]
     pub trips_today: [u32; MODE_SLOTS],
+    #[serde(deserialize_with = "de_slots")]
     pub trips_yesterday: [u32; MODE_SLOTS],
     /// Drivers who had to look beyond their destination for a space.
     pub circled_today: u32,

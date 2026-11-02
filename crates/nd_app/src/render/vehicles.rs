@@ -165,6 +165,7 @@ pub(super) fn sync_cars(
     mut bm: ResMut<super::boxes::BoxMeshes>,
     mut q: Query<(&mut Transform, Option<&mut InTunnel>), With<CarTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_cars");
     let lifted = lifts(*selection);
     vr.ensure_materials(&mut materials);
     let fx_mat = vr.fx.clone().expect("vehicle materials");

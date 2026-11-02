@@ -33,6 +33,35 @@ pub(super) fn speed(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     Ok(json!({ "speed_index": sim.speed_index, "speed": SPEEDS[sim.speed_index].1, "ticks_per_second": sim.speed(), "label": SPEEDS[sim.speed_index].0 }))
 }
 
+/// [r7-sim-thread] Run on (on the sim thread, at the speed set) and pause
+/// exactly when the clock reaches `tick` (or `ticks` from now).
+pub(super) fn run_to(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let now = ctx.sim.world.clock.tick;
+    let target = match (opt_u64(cmd, "tick")?, opt_u64(cmd, "ticks")?) {
+        (Some(t), _) => t,
+        (None, Some(n)) => now + n,
+        _ => return Err("run_to needs {tick} or {ticks}".into()),
+    };
+    if target <= now {
+        return Err(format!("the clock is already at {now}"));
+    }
+    if let Some(i) = opt_u64(cmd, "speed_index")? {
+        ctx.sim.speed_index = (i as usize).min(SPEEDS.len() - 1);
+    }
+    ctx.sim.pause_at = Some(target);
+    ctx.sim.paused = false;
+    Ok(json!({ "from": now, "pause_at": target, "speed_index": ctx.sim.speed_index, "threaded": ctx.sim.threaded }))
+}
+
+/// [r7-sim-thread] The world's fingerprint (`World::fingerprint`, as
+/// perf_probe's `ND_FINGERPRINT`): two runs that print the same one grew the
+/// same city.
+pub(super) fn fingerprint(_cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
+    let w = &ctx.sim.world;
+    let (h, len) = w.fingerprint().map_err(|e| e.to_string())?;
+    Ok(json!({ "fingerprint": format!("{h:016x}"), "bytes": len, "tick": w.clock.tick, "treasury": format!("{:.2}", w.economy.treasury), "population": w.citizens.len(), "cars": w.traffic.cars.len() }))
+}
+
 pub(super) fn step(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let n = opt_u64(cmd, "ticks")?.unwrap_or(1);
     if n > MAX_STEP {

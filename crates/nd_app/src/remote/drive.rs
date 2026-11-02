@@ -37,7 +37,7 @@ fn state(ctx: &Ctx, held_max: usize) -> Value {
         "street": d.street, "limit_kmh": d.limit.map(|l| round(l * 3.6)), "on_road": c.on_road, "in_tunnel": d.in_tunnel,
         "bumps": c.bumps, "last_bump": c.last_bump.map(|b| b.label()), "held_behind": d.held, "held_max": held_max,
         "red_runs": d.red_runs, "assist": d.assist, "view": format!("{:?}", d.view).to_ascii_lowercase(),
-        "traffic_sees_player": ctx.sim.world.traffic.player.is_some(), "game_speed": crate::sim::SPEEDS[ctx.sim.speed_index].0,
+        "traffic_sees_player": ctx.sim.player_car.is_some(), "game_speed": crate::sim::SPEEDS[ctx.sim.speed_index].0,
         "tick": ctx.sim.world.clock.tick,
     })
 }

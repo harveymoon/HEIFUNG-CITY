@@ -95,6 +95,8 @@ pub struct ToolState {
     pub metro_hover: Option<BuildingId>,
     /// [w1] The metro line being edited stop by stop (`metro_edit`).
     pub metro_edit: Option<super::metro_edit::MetroEdit>,
+    /// [cable] The cable car line being drawn (`cable_ux`).
+    pub cable: crate::cable_ux::CableDraft,
     /// Rail tool: station or freight yard.
     pub rail_kind: nd_sim::RailFacility,
     /// Rail tool: a dock instead of a station or yard.
@@ -748,6 +750,7 @@ impl Default for ToolState {
             show_routes: false,
             rail_kind: nd_sim::RailFacility::Station,
             metro_draft: Default::default(),
+            cable: Default::default(),
             metro_hover: None,
             metro_edit: None,
             dock: None,

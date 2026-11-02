@@ -35,6 +35,7 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         // [subway] Before the depot: the Central Station is a bus terminal too.
         _ if extras.rail.is_some_and(|r| r.kind == RailFacility::Central) => Style::CentralStation,
         _ if extras.metro => Style::MetroEntrance,
+        _ if extras.cable => Style::CableStation,
         _ if extras.depot => Style::BusDepot,
         _ if extras.port == Some(nd_sim::ports::PortKind::ShippingPort) => Style::ShippingPort,
         _ if extras.port.is_some_and(|k| k.is_ferry()) => Style::FerryTerminal,

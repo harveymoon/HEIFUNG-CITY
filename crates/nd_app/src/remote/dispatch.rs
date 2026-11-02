@@ -112,7 +112,16 @@ fn execute(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Effect::Replace(check) = c.effect {
         confirm_replace(cmd, ctx, c.name, check)?;
     }
-    (c.run)(cmd, ctx)
+    // [r7-sim-thread] A command that changed the city says on which tick
+    // (between that tick and the next): a replay applies it there.
+    let edits = ctx.sim.world.stats_edits();
+    let mut v = (c.run)(cmd, ctx)?;
+    if ctx.sim.world.stats_edits() != edits {
+        if let Some(o) = v.as_object_mut() {
+            o.entry("edit_tick").or_insert(serde_json::json!(ctx.sim.world.clock.tick));
+        }
+    }
+    Ok(v)
 }
 
 /// [fix/review-app] A command that throws the running city away asks for
@@ -190,6 +199,14 @@ pub(super) static COMMANDS: &[Cmd] = &[
     ] },
     Cmd { name: "step", aliases: &[], effect: Game, run: time::step, help: &[
         ("ticks", "advance n sim minutes now, even while paused (default 1, max 100000); the committee's round runs each new day, and a meeting it calls stops the step there (reply `stopped`)"),
+    ] },
+    Cmd { name: "run_to", aliases: &[], effect: Game, run: time::run_to, help: &[
+        ("tick", "[r7-sim-thread] run on (unpaused, on the sim thread) and pause exactly when the clock reaches this tick"),
+        ("ticks", "or this many ticks from now"),
+        ("speed_index", "optional speed to run at (0..5)"),
+    ] },
+    Cmd { name: "fingerprint", aliases: &[], effect: Read, run: time::fingerprint, help: &[
+        ("note", "[r7-sim-thread] a hash of the whole world (as perf_probe ND_FINGERPRINT): same hash, same city"),
     ] },
     Cmd { name: "seed_demo", aliases: &[], effect: Game, run: city::seed_demo, help: &[] },
     Cmd { name: "save", aliases: &[], effect: Files, run: files::save, help: &[
@@ -690,6 +707,21 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("minutes", "headway"),
         ("headway", "minutes (line)"),
         ("station", "id or [x,y]"),
+    ] },
+    Cmd { name: "cable", aliases: &["cable_car", "gondola", "cablecar"], effect: Game, run: |cmd, ctx| cable::command(cmd, &mut ctx.sim.world), help: &[
+        ("action", "status (default) | site | preview | build | cabins | hours | fare | remove_line | inspect_line | inspect_station"),
+        ("kind", "preview, build: gondola (default; a loop of 10-seat cabins, short spans, may turn at stations) | tramway (two 100-seat cabins shuttling between two stations; spans up to 2.1 km)"),
+        ("points", "preview, build: [[x, y], ...] the stations in order: an existing station there is used; else one is built (a roof if the building is 14 m or taller, else the lot bought out, else open ground with a way in within 90 m)"),
+        ("stations", "preview, build: [id | [x, y] | {at: [x, y], site}, ...] instead of points"),
+        ("sites", "preview, build: [\"auto\"|\"ground\"|\"roof\", ...] per point"),
+        ("pos", "site: [x, y] where a station would stand (site: auto|ground|roof)"),
+        ("line", "id (cabins, hours, fare, remove_line, inspect_line)"),
+        ("n", "cabins: cabins on a gondola's loop (more: shorter waits, more seats, more upkeep)"),
+        ("open", "build, hours: \"HH:MM\" (default 06:00)"),
+        ("close", "build, hours: \"HH:MM\" (default 23:00)"),
+        ("fare", "build, fare: 0..25 (gondola 3, tramway 4)"),
+        ("station", "inspect_station: id or [x, y]"),
+        ("returns", "status: lines (kind, stations, pylons, tallest_pylon_m, cabins, interval_min, capacity_per_hour_each_way, open/close, riders today and yesterday, mean wait, capacity_used, left_behind, sightseers, scenic, upkeep) and stations (site: lot|roof|open_ground, platform_m, boardings, waiting); preview: the figures, ok and refusal (why it cannot be built), supports; build: the line, paid"),
     ] },
     Cmd { name: "timetable", aliases: &["timetables", "schedule"], effect: Game, run: |cmd, ctx| timetable::command(cmd, &mut ctx.sim.world), help: &[
         ("action", "list (default) | get | timeline (= get) | set | preset | default"),
@@ -1294,7 +1326,10 @@ mod dispatch_tests {
     #[test]
     fn a_ramp_drawn_through_the_api_takes_the_roads_heights() {
         let mut app = app();
-        app.world_mut().resource_mut::<Sim>().world = crate::tools::ramp_tests::ramp_town().world;
+        {
+            let town = crate::tools::ramp_tests::ramp_town().world.to_world();
+            app.world_mut().resource_mut::<Sim>().world.replace(town);
+        }
         let (s, v) = send(&mut app, json!({"cmd": "tool", "name": "road", "elevation": 12.0, "draw": [[0.0, 203.0], [0.0, 121.0]]}));
         assert_eq!(s, 200, "{v}");
         let levels: Vec<f64> = v["tool"]["point_levels"].as_array().expect("levels").iter().map(|l| l.as_f64().unwrap()).collect();

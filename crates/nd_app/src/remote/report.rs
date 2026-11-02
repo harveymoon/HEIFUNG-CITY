@@ -396,7 +396,9 @@ fn people(w: &World) -> Value {
             Activity::OnTrain { .. } => Some("train"),
             Activity::OnMetro { .. } => Some("subway"),
             Activity::OnFerry { .. } => Some("ferry"),
+            Activity::OnCable { .. } => Some("cable"),
             Activity::Waiting { .. } => Some(match c.transit.map(|t| t.leg) {
+                Some(TransitLeg::Cable { .. }) => "cable",
                 Some(TransitLeg::Rail { .. }) => "train",
                 Some(TransitLeg::Subway { .. }) => "subway",
                 Some(TransitLeg::Air { .. }) => "air",
@@ -787,7 +789,7 @@ fn services(w: &World) -> Value {
             match c.transit.map(|t| t.leg) {
                 Some(TransitLeg::Bus { route, .. }) => *route_waiting.entry(key_str(route)).or_default() += 1,
                 Some(TransitLeg::Rail { board, .. }) => *station_waiting.entry(board).or_default() += 1,
-                Some(TransitLeg::Air { .. }) | Some(TransitLeg::Subway { .. }) | Some(TransitLeg::Taxi) | Some(TransitLeg::Ferry { .. }) | None => {}
+                Some(TransitLeg::Air { .. }) | Some(TransitLeg::Subway { .. }) | Some(TransitLeg::Taxi) | Some(TransitLeg::Ferry { .. }) | Some(TransitLeg::Cable { .. }) | None => {}
             }
         }
     }
@@ -903,6 +905,8 @@ fn services(w: &World) -> Value {
             "rule": format!("shops deliver to homes within {} m; by pavement robot where shop and home both have land value >= {}, else by van", nd_sim::bots::DELIVERY_RANGE, nd_sim::bots::BOT_LAND_VALUE),
         },
     });
+    // [cable] Cable cars (outside the macro: it is at its recursion limit).
+    out["cable"] = crate::remote::cable::report(w);
     // [driving] Crashes, drink and takeovers, in the traffic section.
     if let (Some(t), Value::Object(d)) = (out.get_mut("traffic").and_then(|t| t.as_object_mut()), driving_json(w)) {
         t.extend(d);

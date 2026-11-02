@@ -148,6 +148,7 @@ pub(super) fn sync_landscape(
     water: Query<Entity, With<WaterTag>>,
     works: Query<Entity, With<WaterworksTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_landscape");
     let w = &sim.world;
     let fresh = !assets.palette_changed && !sim.full_rebuild;
     if state.gate.same((sim.generation, w.landscape.version(), w.roads.version, w.lots.len(), w.ports.ports.len(), w.buildings.version(), w.relief, w.dams.version)) && state.signature.is_some() && fresh {

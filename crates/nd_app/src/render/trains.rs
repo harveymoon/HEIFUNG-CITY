@@ -13,6 +13,7 @@ pub(super) fn sync_trains(
     mut state: ResMut<RenderState>,
     mut q: Query<&mut Transform, With<TrainTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_trains");
     let rail = &sim.world.rail;
     for (id, train) in rail.trains.iter() {
         if !state.trains.contains_key(&id) {

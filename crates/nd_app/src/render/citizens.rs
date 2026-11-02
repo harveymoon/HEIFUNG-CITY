@@ -91,6 +91,7 @@ pub(super) fn sync_citizens(
     tools: Res<crate::tools::ToolState>,
     mut q: Query<(&mut Transform, &mut Visibility, &mut MeshMaterial3d<StandardMaterial>, &mut Mesh3d, Option<&swap::SwapOriginal>, Option<&mut WayHeight>, Has<PlatformTag>, Option<&mut FigureCache>), With<CitizenTag>>,
 ) {
+    let _t = crate::frame_stats::span("sync_citizens");
     let lifted = lifts(*selection);
     // [pt-transit] Metro riders wait on the platform below the street:
     // drawn there in the Underground view only.

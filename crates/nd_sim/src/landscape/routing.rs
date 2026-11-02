@@ -207,7 +207,13 @@ pub(super) struct WaterCache {
 }
 
 impl Clone for WaterCache {
+    /// Empty, but for [`crate::versioned::exact_clone`]: the same graphs.
     fn clone(&self) -> Self {
+        if crate::versioned::cloning_exact() {
+            if let (Ok(g), Ok(s)) = (self.graph.lock(), self.sea.lock()) {
+                return WaterCache { graph: Mutex::new(g.clone()), sea: Mutex::new(s.clone()) };
+            }
+        }
         WaterCache::default()
     }
 }

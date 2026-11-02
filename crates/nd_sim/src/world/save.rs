@@ -53,6 +53,26 @@ impl World {
         ron::ser::to_string_pretty(self, Self::ron_config())
     }
 
+    /// [r6-perf] [r7-sim-thread] A hash of the whole saved state: two runs
+    /// that give the same fingerprint simulated the same city. Over the
+    /// RON's sorted lines: a few maps (tourism's per-building tallies) are
+    /// `HashMap`s and save in a different order every run, which says
+    /// nothing about the simulation. (perf_probe's `ND_FINGERPRINT` and the
+    /// remote `fingerprint` command.) Returns the hash and the RON's size.
+    pub fn fingerprint(&self) -> Result<(u64, usize), ron::Error> {
+        let ron = self.to_ron()?;
+        let mut lines: Vec<&str> = ron.lines().collect();
+        lines.sort_unstable();
+        let mut h: u64 = 0xcbf29ce484222325;
+        for l in lines {
+            for b in l.bytes().chain(std::iter::once(b'\n')) {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x100000001b3);
+            }
+        }
+        Ok((h, ron.len()))
+    }
+
     /// [memory] The save, byte for byte as [`World::to_ron`], streamed into
     /// `out` (wrap a file in a `BufWriter`). A big city's save runs past
     /// 128 MiB, and building it as one `String` first needs a single 256 MiB
@@ -201,6 +221,8 @@ impl World {
             self.social_concern = self.concern_of_the_week();
         }
         self.subway_after_load();
+        // [cable] Riders aboard a cabin (not saved) set down at a station.
+        self.cable_after_load();
         // [ferry-islands] The crossings (not saved), and riders whose boat
         // (ships are not saved) is gone set down where they were going.
         self.refresh_ferry_links();
@@ -318,6 +340,7 @@ impl World {
                 Some(TransitLeg::Subway { line, board, alight }) => self.subway.lines.get(line).is_some_and(|l| l.index_of(board).is_some() && l.index_of(alight).is_some()),
                 Some(TransitLeg::Taxi) => true,
                 Some(TransitLeg::Ferry { board, alight }) => buildings.contains_key(board) && buildings.contains_key(alight),
+                Some(TransitLeg::Cable { line, board, alight }) => self.cable.lines.get(line).is_some_and(|l| l.index_of(board).is_some() && l.index_of(alight).is_some()),
             } && c.transit.is_none_or(|t| buildings.contains_key(t.target));
             if !trip_ok {
                 c.transit = None;
@@ -333,6 +356,8 @@ impl World {
                 Activity::Flying { drone } => !self.air.drones.contains_key(*drone),
                 // Trains are not saved: `subway_after_load` sets riders down.
                 Activity::OnMetro { .. } => c.transit.is_none(),
+                // [cable] Cabins' riders are not saved: `cable_after_load`.
+                Activity::OnCable { line, .. } => c.transit.is_none() || !self.cable.lines.contains_key(*line),
                 _ => false,
             };
             if lost || target_gone {

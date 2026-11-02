@@ -367,7 +367,7 @@ impl Channel {
 
 /// Accumulates influences and produces the next value grid. Saved with
 /// the world when a save falls mid-cycle.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LandValueBuilder {
     n: usize,
     cell: f32,
