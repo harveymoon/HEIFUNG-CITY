@@ -975,8 +975,10 @@ impl Building {
         self.residents.len() + self.workers.len() + self.visitors as usize
     }
 
+    /// Run down past use. Never a park: how a park is kept is its own
+    /// measure (`ParkState::kept`), not the building's wear.
     pub fn is_derelict(&self) -> bool {
-        self.condition < 0.3
+        self.land_use != LandUse::Park && self.condition < 0.3
     }
 
     /// Fraction of jobs filled.
