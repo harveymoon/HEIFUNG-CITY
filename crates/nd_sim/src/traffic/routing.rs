@@ -340,7 +340,13 @@ pub(crate) struct RoomCache(std::sync::Mutex<Option<(RoomStamp, std::sync::Arc<V
 type RoomStamp = (u64, usize, usize, usize, usize, usize);
 
 impl Clone for RoomCache {
+    /// Empty, but for [`crate::versioned::exact_clone`]: the same rooms.
     fn clone(&self) -> Self {
+        if crate::versioned::cloning_exact() {
+            if let Ok(m) = self.0.lock() {
+                return RoomCache(std::sync::Mutex::new(m.clone()));
+            }
+        }
         RoomCache::default()
     }
 }

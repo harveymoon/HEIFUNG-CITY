@@ -19,6 +19,30 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// The next value's starting version.
 static NEXT_BASE: AtomicU64 = AtomicU64::new(1 << 32);
 
+thread_local! {
+    static EXACT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// [r7-sim-thread] Clone inside `f` as the same value going on: versions
+/// kept (not a fresh base) and caches carried over (they are keyed on the
+/// versions). The game's sim thread hands the screen copies of one city
+/// that only ever goes forward; with fresh versions every copy looked like
+/// a new world to every renderer keyed on a version, which redrew roads,
+/// lots and skid row from scratch after every batch (2.4 s a batch on a
+/// 38,000-person city). Only for a copy that replaces the value it was
+/// taken from, never for a what-if that goes its own way beside it.
+pub fn exact_clone<T>(f: impl FnOnce() -> T) -> T {
+    let was = EXACT.with(|e| e.replace(true));
+    let out = f();
+    EXACT.with(|e| e.set(was));
+    out
+}
+
+/// Cloning inside [`exact_clone`] on this thread.
+pub fn cloning_exact() -> bool {
+    EXACT.with(|e| e.get())
+}
+
 #[derive(Debug)]
 pub struct Versioned<T> {
     value: T,
@@ -41,9 +65,13 @@ impl<T> Versioned<T> {
     }
 }
 
-/// A clone starts from a fresh base too: it may go its own way.
+/// A clone starts from a fresh base too: it may go its own way (but see
+/// [`exact_clone`]).
 impl<T: Clone> Clone for Versioned<T> {
     fn clone(&self) -> Self {
+        if cloning_exact() {
+            return Self { value: self.value.clone(), version: self.version };
+        }
         Self::new(self.value.clone())
     }
 }
@@ -144,5 +172,18 @@ mod tests {
         let back: Versioned<Vec<u8>> = ron::from_str(&s).unwrap();
         assert_eq!(*back, vec![1, 2]);
         assert_ne!(back.version(), v.version(), "a loaded value starts from a fresh base");
+    }
+
+    /// [r7-sim-thread] A copy made to carry the same value on keeps its
+    /// version (renderers keyed on it redraw nothing); any other copy, and
+    /// copies after `exact_clone` returns, start from a fresh base.
+    #[test]
+    fn exact_clones_keep_their_version() {
+        let mut v = Versioned::new(vec![1u8]);
+        v.push(2);
+        let kept = exact_clone(|| v.clone());
+        assert_eq!(kept.version(), v.version());
+        assert_ne!(v.clone().version(), v.version(), "a plain clone goes its own way");
+        assert!(!cloning_exact());
     }
 }

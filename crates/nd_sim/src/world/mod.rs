@@ -487,20 +487,15 @@ impl WorldConfig {
 }
 
 /// A land value recomputation in progress, spread over a few ticks so one
-/// tick does not carry the whole grid. Cloning a world mid-update drops the
-/// partial work: the next cycle starts afresh and the grid merely stays a
-/// little older for two hours. A save keeps it (REVIEW2 L7), so a game
-/// saved mid-cycle finishes the same grid after loading.
-#[derive(Default, Serialize, Deserialize)]
+/// tick does not carry the whole grid. A save keeps it (REVIEW2 L7), so a
+/// game saved mid-cycle finishes the same grid after loading; and
+/// [r7-sim-thread] so does a clone: the game's sim thread hands the screen
+/// copies of the world and carries on from a copy after an edit, and a
+/// copy that dropped the partial work would grow a different city.
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 struct LandValueWork {
     builder: Option<LandValueBuilder>,
-}
-
-impl Clone for LandValueWork {
-    fn clone(&self) -> Self {
-        Self::default()
-    }
 }
 
 impl std::fmt::Debug for LandValueWork {

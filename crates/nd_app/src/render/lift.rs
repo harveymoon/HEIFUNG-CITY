@@ -39,6 +39,7 @@ pub(super) fn lift_spawned(
     tolls: Query<&Mesh3d, Added<TollTag>>,
     mut signals: Query<&mut Transform, Added<SignalTag>>,
 ) {
+    let _t = crate::frame_stats::span("lift_spawned");
     let w = &sim.world;
     if !w.relief {
         return;
@@ -85,6 +86,7 @@ pub(super) fn lift_movers(
     mut surfaces: Local<Option<(u64, u64, u64)>>,
     mut q: Query<(Entity, &mut Transform, Option<&mut Lifted>, Option<Ref<WayHeight>>), (Or<(With<CitizenTag>, With<CarTag>, With<TrainTag>, With<Grounded>)>, Without<SelfLifted>)>,
 ) {
+    let _t = crate::frame_stats::span("lift_movers");
     let w = &sim.world;
     if !w.relief {
         *surfaces = None;
