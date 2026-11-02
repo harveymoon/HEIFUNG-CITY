@@ -655,21 +655,12 @@ impl Port {
 /// those it loads, spread over `CRANE_MINUTES` of its stay. None while it
 /// is not at the berth or has nothing (left) to move.
 pub fn crane_work(port: &Port, ship: &Ship, frac: f32) -> Option<CraneWork> {
-    if ship.kind != ShipKind::Freighter || !ship.docked || ship.dwell == 0 {
-        return None;
-    }
     let quay = ship.quay?;
     let of = ship.boxes_in + ship.boxes_out;
-    if of == 0 {
-        return None;
-    }
-    let elapsed = (FREIGHTER_DWELL - ship.dwell.min(FREIGHTER_DWELL)) as f32 + frac.clamp(0.0, 1.0);
-    let per = CRANE_MINUTES / of as f32;
-    let n = (elapsed / per) as u32;
+    let (n, p) = crane_progress_at(ship, frac)?;
     if n >= of {
         return None;
     }
-    let p = elapsed / per - n as f32;
     let landing = n < ship.boxes_in;
     let (base, _) = port.crane_boom();
     let over_ship = base + port.seaward * (quay.at - base).dot(port.seaward);
@@ -691,6 +682,33 @@ pub fn crane_work(port: &Port, ship: &Ship, frac: f32) -> Option<CraneWork> {
     };
     let carrying = (LIFT * 0.5..0.45 + LIFT * 0.5).contains(&p);
     Some(CraneWork { trolley, drop, low, carrying, landing, n, of })
+}
+
+/// [r8] How far the quay crane is through its moves on freighter `ship`
+/// (`frac` of the minute gone): the move under way (or, once all are done,
+/// their number) and how far through it. None while it is not alongside
+/// or has nothing to move. The sim takes the boxes' records along with
+/// it (`World::step_ship_boxes`), so the box on the crane is the box.
+pub fn crane_progress_at(ship: &Ship, frac: f32) -> Option<(u32, f32)> {
+    if ship.kind != ShipKind::Freighter || !ship.docked {
+        return None;
+    }
+    let of = ship.boxes_in + ship.boxes_out;
+    if of == 0 {
+        return None;
+    }
+    if ship.dwell == 0 {
+        return Some((of, 0.0));
+    }
+    let elapsed = (FREIGHTER_DWELL - ship.dwell.min(FREIGHTER_DWELL)) as f32 + frac.clamp(0.0, 1.0);
+    let per = CRANE_MINUTES / of as f32;
+    let n = ((elapsed / per) as u32).min(of);
+    Some((n, (elapsed / per - n as f32).clamp(0.0, 1.0)))
+}
+
+/// [r8] The same at the start of the minute.
+pub fn crane_progress(ship: &Ship) -> Option<(u32, f32)> {
+    crane_progress_at(ship, 0.0)
 }
 
 impl Ship {

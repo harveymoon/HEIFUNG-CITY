@@ -11,7 +11,7 @@ const SITE_TRUCKS_EXTRA: usize = 40;
 /// yard or the port in their shipping containers: the boxes go out on the
 /// road to the buyer (in a city whose building sites fill the cap, every
 /// such load was handed over on the spot).
-const BOX_TRUCKS_EXTRA: usize = 20;
+pub(super) const BOX_TRUCKS_EXTRA: usize = 20;
 const SITE_RETRY: u64 = 60;
 /// [ledger] The most of a day's profit a business's unit rent takes
 /// (`World::shop_rent` is the full rent).
@@ -418,6 +418,7 @@ impl World {
         let export_bonus = (if yards.is_empty() { 1.0 } else { rail::RAIL_EXPORT_BONUS }).max(self.sea_export_bonus()) * self.hub_export_bonus();
         let mut shipped = 0.0f32;
         let mut sold: Vec<(BuildingId, f32)> = Vec::new();
+        let mut boxed: Vec<(BuildingId, Resource, f32, f32)> = Vec::new();
         for &bid in &ids {
             let b = &mut self.buildings[bid];
             if !b.operating() {
@@ -442,6 +443,7 @@ impl World {
                     let income = surplus * r.base_price() * EXPORT_DISCOUNT * export_bonus;
                     shipped += surplus;
                     sold.push((bid, income));
+                    boxed.push((bid, *r, surplus, income));
                     bz.revenue_today += income;
                     self.economy.market.exports_today += income;
                 }
@@ -450,6 +452,11 @@ impl World {
         for (bid, income) in sold {
             self.transfer(Account::Outside, Account::Business(bid), income, Kind::Exports);
         }
+        // [r8] Through a freight forwarder where there is one: boxed up firm
+        // by firm and shipped from the port or the freight yard (its fee to
+        // pay), not counted onto the quay as a number.
+        self.containers.stats.export_units_today += shipped;
+        let shipped = shipped - self.forwarders_take_exports(&boxed);
         // [freight] Onto the apron of a yard the freight trains call at.
         if let Some(&y) = self.yards.first().or(yards.first()) {
             self.buildings[y].rail_outbound += shipped;
@@ -793,6 +800,13 @@ impl World {
     /// edge. Delivered on the spot when there is no route or the road is
     /// full of trucks already: the buyer counts the load as inbound.
     pub(super) fn dispatch_truck(&mut self, origin: TruckOrigin, cargo: Cargo, color: u8) {
+        // [r8] A load in boxes at a depot: a container lorry comes for it,
+        // waits in a bay and has its box lifted onto its chassis.
+        if let TruckOrigin::Building(b) = origin {
+            if self.box_pickup(b, cargo) {
+                return;
+            }
+        }
         let to_site = self.buildings.get(cargo.to).is_some_and(|b| b.construction.is_some());
         // [r2-traffic] A building site's load goes by truck (the site
         // starts on what a truck brought, K6), with room for

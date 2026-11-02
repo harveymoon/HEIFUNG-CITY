@@ -77,13 +77,22 @@ pub struct BoxCounts {
     pub on_sites: u32,
     pub in_homes: u32,
     pub at_scrap: u32,
+    /// [r8] On a crane or carrier, and aboard freighters.
+    pub lifting: u32,
+    pub on_ships: u32,
 }
 
-/// [K34] The look a semi's trailer box is drawn with (`VehicleModel::boxed`):
-/// its line and a wear step.
-pub fn truck_look(line: u8, wear: f32) -> u8 {
-    1 + line % 10 + 10 * ((wear * 4.0).round() as u8).min(4)
+/// [K34] [r8] The chassis a container rig is drawn with
+/// (`VehicleModel::boxed`): a forty-foot one under a forty-foot box, else
+/// the twenty (the box itself is drawn on it from its record).
+pub fn truck_look(forty: bool) -> u8 {
+    if forty { crate::vehicle::CHASSIS_40 } else { crate::vehicle::CHASSIS_20 }
 }
+
+/// [r8] Boxes a freighter takes on at most in one call.
+pub const MAX_SHIP_OUT: usize = 18;
+/// [r8] Lorries a day a yard or hub sends with boxes going out of town.
+const OUT_HAULS_PER_DAY: usize = 4;
 
 impl World {
     fn today(&self) -> i64 {
@@ -157,7 +166,7 @@ impl World {
         let (line, serial, origin, years) = cx::arrival(h);
         let knocks = (years * 4.0 * (0.6 + crate::hash::unit(mix(h, 17)))) as u16;
         let forty = forty && kind != BoxKind::Tank;
-        let mut r = BoxRec { line, serial, forty, kind, origin, built: (day - (years * 365.0) as i64) as i32, knocks, owner: Owner::Line, at, goods, since: tick, visits: 1, log: Vec::new() };
+        let mut r = BoxRec { line, serial, forty, kind, origin, built: (day - (years * 365.0) as i64) as i32, knocks, owner: Owner::Line, at, goods, since: tick, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false };
         r.note(tick, first, place);
         match first {
             Event::ArrivedRail => st.arrived_today[0] += 1,
@@ -176,7 +185,7 @@ impl World {
     }
 
     /// [K34] Move box `id` to `at`, noting why; a lift or a ride is a knock.
-    fn box_to(&mut self, id: BoxId, at: Where, what: Event, place: BuildingId) {
+    pub(super) fn box_to(&mut self, id: BoxId, at: Where, what: Event, place: BuildingId) {
         let tick = self.clock.tick;
         let Some(r) = self.containers.boxes.get_mut(id) else { return };
         if r.at != at {
@@ -241,23 +250,72 @@ impl World {
         let out = self.empties_to_send(at, on);
         let mut v: Vec<Option<BoxId>> = out.into_iter().map(Some).collect();
         for &id in v.iter().flatten() {
-            self.box_to(id, Where::Train, Event::SentOut, at);
-            self.containers.stats.sent_out_total += 1;
+            let export = self.containers.boxes.get(id).is_some_and(|r| !r.export.is_empty());
+            self.box_to(id, Where::Train, if export { Event::Exported } else { Event::SentOut }, at);
+            if export {
+                self.containers.stats.exported_total += 1;
+                if let Some(Owner::Forwarder(f)) = self.containers.boxes.get(id).map(|r| r.owner) {
+                    if let Some(fw) = self.containers.forwarders.get_mut(&f) {
+                        fw.boxes_out += 1;
+                    }
+                }
+            } else {
+                self.containers.stats.sent_out_total += 1;
+            }
         }
         v.resize(on, None);
         v
     }
 
-    /// [K34] Up to `n` empties at `at` its line can send out (not the
-    /// yard's own stock, not one fit only for scrap), oldest first.
-    fn empties_to_send(&self, at: BuildingId, n: usize) -> Vec<BoxId> {
+    /// [K34] [r8] Up to `n` boxes at `at` to go out on a train or ship:
+    /// a forwarder's boxes of exports first, then the empties their lines
+    /// want gone, then other sound line empties (not the yard's own stock,
+    /// not one fit only for scrap, not one a lorry was sent for), oldest
+    /// first in each.
+    pub(super) fn empties_to_send(&self, at: BuildingId, n: usize) -> Vec<BoxId> {
         if n == 0 {
             return Vec::new();
         }
         let day = self.today();
-        let mut v: Vec<(u64, BoxId)> = self.containers.boxes.iter().filter(|(_, r)| r.at == Where::Stored(at) && r.goods.is_none() && r.owner == Owner::Line && !r.for_scrap(day)).map(|(id, r)| (r.since, id)).collect();
+        let promised: std::collections::BTreeSet<BoxId> = self.containers.lorries.values().flat_map(|j| j.take.iter().copied()).collect();
+        let mut v: Vec<(u8, u64, BoxId)> = self
+            .containers
+            .boxes
+            .iter()
+            .filter(|(id, r)| r.at == Where::Stored(at) && r.goods.is_none() && !promised.contains(id))
+            .filter_map(|(id, r)| {
+                let rank = if !r.export.is_empty() {
+                    0
+                } else if r.owner == Owner::Line && r.bound_out {
+                    1
+                } else if r.owner == Owner::Line && !r.for_scrap(day) {
+                    2
+                } else {
+                    return None;
+                };
+                Some((rank, r.since, id))
+            })
+            .collect();
         v.sort();
-        v.into_iter().take(n).map(|(_, id)| id).collect()
+        v.into_iter().take(n).map(|(_, _, id)| id).collect()
+    }
+
+    /// [r8] A box leaving town on a train or ship: full of exports, an
+    /// empty sent back, counted.
+    pub(super) fn box_exported(&mut self, id: BoxId) {
+        let Some(r) = self.containers.boxes.get(id) else { return };
+        if r.export.is_empty() {
+            self.box_gone(id, Event::SentOut);
+            return;
+        }
+        if let Owner::Forwarder(f) = r.owner {
+            if let Some(fw) = self.containers.forwarders.get_mut(&f) {
+                fw.boxes_out += 1;
+            }
+        }
+        self.containers.stats.exported_total += 1;
+        self.containers.boxes.remove(id);
+        self.containers.touch();
     }
 
     /// [K34] A freighter landing `cargo` at port `port`: its boxes, full,
@@ -274,15 +332,182 @@ impl World {
         }
     }
 
-    /// [K34] A freighter leaving port `port` with `n` boxes of exports:
-    /// that many empties go out on it.
-    pub(super) fn boxes_out_by_sea(&mut self, port: BuildingId, n: usize) {
+    /// [r8] A freighter sent to `port` with `cargo`: a record for each of
+    /// its import boxes, aboard, in the order the quay crane will land them
+    /// (not counted as arrived until it does). Returns how many.
+    pub(super) fn boxes_board_ship(&mut self, sid: crate::ports::ShipId, port: BuildingId, cargo: &[Cargo]) -> u32 {
+        if !self.containers.live {
+            return 0;
+        }
+        let mut inbound = Vec::new();
+        for c in cargo.iter().filter(|c| c.amount > 0.0) {
+            let kind = BoxKind::for_resource(Some(c.resource));
+            let n = cx::boxes_for_load(c.amount);
+            for k in 0..n {
+                let forty = kind != BoxKind::Tank && (n - k >= 2 || crate::hash::unit(mix(self.containers.stats.made, 3)) < 0.6);
+                let id = self.make_box(kind, forty, Where::Ship(sid), Some(Goods { resource: c.resource, buyer: c.to }), Event::ArrivedSea, port);
+                if let Some(r) = self.containers.boxes.get_mut(id) {
+                    r.log.clear();
+                }
+                self.containers.stats.arrived_today[1] -= 1;
+                self.containers.stats.arrived_total[1] -= 1;
+                inbound.push(id);
+            }
+        }
+        let n = inbound.len() as u32;
+        self.containers.ships.insert(sid, cx::ShipBoxes { port, inbound, outbound: Vec::new(), done: 0 });
+        n
+    }
+
+    /// [r8] A freighter alongside at `port`: the boxes the crane will load
+    /// onto it (a forwarder's boxes of exports, the empties their lines
+    /// want back, and empties for the exports counted on the quay), and
+    /// how many moves it has. A ship from an older save, with no records
+    /// aboard, has its imports set down on the quay at once as before.
+    pub(super) fn boxes_ship_docked(&mut self, sid: crate::ports::ShipId, port: BuildingId, cargo: &[Cargo]) {
         if !self.containers.live {
             return;
         }
-        for id in self.empties_to_send(port, n) {
-            self.box_gone(id, Event::SentOut);
+        if !self.containers.ships.contains_key(&sid) {
+            for c in cargo {
+                self.boxes_landed_by_sea(port, c);
+            }
+            self.containers.ships.insert(sid, cx::ShipBoxes { port, ..Default::default() });
         }
+        // The exports counted on the quay since the last call go out in
+        // empties (the town's exports no forwarder boxed).
+        let abstract_n = ((self.ports.outbound / crate::ports::CONTAINER_UNITS) as usize).min(crate::ports::MAX_BOXES as usize);
+        self.ports.outbound = (self.ports.outbound - abstract_n as f32 * crate::ports::CONTAINER_UNITS).max(0.0);
+        let day = self.today();
+        let mut out = self.empties_to_send(port, MAX_SHIP_OUT);
+        // Only as many plain empties as the counted exports ask for, past
+        // the boxes of exports and the ones going back anyway.
+        let mut plain = 0;
+        out.retain(|id| {
+            let r = &self.containers.boxes[*id];
+            if !r.export.is_empty() || r.bound_out {
+                return true;
+            }
+            plain += 1;
+            plain <= abstract_n && !r.for_scrap(day)
+        });
+        let n_in = self.containers.ships.get(&sid).map_or(0, |b| b.inbound.len()) as u32;
+        if let Some(sb) = self.containers.ships.get_mut(&sid) {
+            sb.outbound = out;
+            sb.done = 0;
+        }
+        let n_out = self.containers.ships.get(&sid).map_or(0, |b| b.outbound.len()) as u32;
+        if let Some(ship) = self.ports.ships.get_mut(sid) {
+            if n_in > 0 {
+                ship.boxes_in = n_in;
+            }
+            ship.boxes_out = n_out;
+        }
+    }
+
+    /// [r8] The quay crane's moves on each freighter alongside, box by
+    /// box from the records: the box it is lifting hangs from the crane
+    /// (`Where::Lifting`), and each move done sets it down on the quay
+    /// stack or aboard.
+    pub(super) fn step_ship_boxes(&mut self) {
+        if self.containers.ships.is_empty() {
+            return;
+        }
+        let sids: Vec<crate::ports::ShipId> = self.containers.ships.keys().copied().collect();
+        for sid in sids {
+            let Some(ship) = self.ports.ships.get(sid) else {
+                self.boxes_ship_left(sid);
+                continue;
+            };
+            if !ship.docked || ship.kind != crate::ports::ShipKind::Freighter {
+                continue;
+            }
+            let Some((n, _)) = crate::ports::crane_progress(ship) else { continue };
+            let sb = self.containers.ships[&sid].clone();
+            let n_in = ship.boxes_in as usize;
+            let of = (ship.boxes_in + ship.boxes_out) as usize;
+            let box_of = |m: usize| if m < n_in { sb.inbound.get(m).copied() } else { sb.outbound.get(m - n_in).copied() };
+            let port = sb.port;
+            for m in sb.done as usize..(n as usize).min(of) {
+                if let Some(id) = box_of(m) {
+                    self.quay_move_done(sid, port, id, m < n_in);
+                }
+            }
+            if let Some(b) = self.containers.ships.get_mut(&sid) {
+                b.done = b.done.max(n.min(of as u32));
+            }
+            // The move under way: its box on the crane.
+            if (n as usize) < of {
+                if let Some(id) = box_of(n as usize) {
+                    let ok = self.containers.boxes.get(id).is_some_and(|r| if (n as usize) < n_in { r.at == Where::Ship(sid) } else { r.at == Where::Stored(port) });
+                    if ok {
+                        if let Some(r) = self.containers.boxes.get_mut(id) {
+                            r.at = Where::Lifting(port);
+                        }
+                        self.containers.touch();
+                    }
+                }
+            }
+        }
+    }
+
+    fn quay_move_done(&mut self, sid: crate::ports::ShipId, port: BuildingId, id: BoxId, landing: bool) {
+        let Some(r) = self.containers.boxes.get(id) else { return };
+        if landing {
+            if !matches!(r.at, Where::Ship(_) | Where::Lifting(_)) {
+                return;
+            }
+            let first = r.log.is_empty();
+            self.containers.stats.crane_moves_total += 1;
+            self.box_to(id, Where::Stored(port), if first { Event::ArrivedSea } else { Event::Unloaded }, port);
+            if first {
+                self.containers.stats.arrived_today[1] += 1;
+                self.containers.stats.arrived_total[1] += 1;
+            }
+        } else {
+            if !matches!(r.at, Where::Stored(p) | Where::Lifting(p) if p == port) {
+                return;
+            }
+            let export = !r.export.is_empty();
+            self.containers.stats.crane_moves_total += 1;
+            self.box_to(id, Where::Ship(sid), if export { Event::LoadedOnShip } else { Event::SentOut }, port);
+        }
+    }
+
+    /// [r8] A freighter gone: whatever it still had to land is set down on
+    /// the quay (it left early), and the boxes aboard leave town with it.
+    pub(super) fn boxes_ship_left(&mut self, sid: crate::ports::ShipId) {
+        let Some(sb) = self.containers.ships.remove(&sid) else { return };
+        for id in sb.inbound.iter().copied() {
+            if self.containers.boxes.get(id).is_some_and(|r| matches!(r.at, Where::Ship(s) if s == sid) || r.at == Where::Lifting(sb.port)) {
+                self.quay_move_done(sid, sb.port, id, true);
+            }
+        }
+        for id in sb.outbound.iter().copied() {
+            if self.containers.boxes.get(id).is_some_and(|r| r.at == Where::Lifting(sb.port)) {
+                self.box_to(id, Where::Stored(sb.port), Event::Stored, sb.port);
+            }
+        }
+        let aboard: Vec<BoxId> = self.containers.boxes.iter().filter(|(_, r)| r.at == Where::Ship(sid)).map(|(id, _)| id).collect();
+        for id in aboard {
+            self.box_exported(id);
+        }
+    }
+
+    /// [r8] The boxes aboard freighter `sid`, in the order they stand on
+    /// its deck (those it brought, then those it took on), for drawing.
+    pub fn ship_deck(&self, sid: crate::ports::ShipId) -> Vec<BoxId> {
+        let Some(sb) = self.containers.ships.get(&sid) else { return Vec::new() };
+        sb.inbound.iter().chain(sb.outbound.iter()).copied().filter(|id| self.containers.boxes.get(*id).is_some_and(|r| r.at == Where::Ship(sid))).collect()
+    }
+
+    /// [r8] The box the quay crane at freighter `sid` lifts on move `n`.
+    pub fn quay_crane_box(&self, sid: crate::ports::ShipId, n: u32) -> Option<BoxId> {
+        let sb = self.containers.ships.get(&sid)?;
+        let ship = self.ports.ships.get(sid)?;
+        let n = n as usize;
+        let n_in = ship.boxes_in as usize;
+        if n < n_in { sb.inbound.get(n).copied() } else { sb.outbound.get(n - n_in).copied() }
     }
 
     // ── lorries ─────────────────────────────────────────────────────────────
@@ -331,16 +556,24 @@ impl World {
         self.dress_truck(car);
     }
 
-    /// [K34] The lorry's look follows the first box aboard: a semi with
-    /// that box on its trailer, or its own look again when it has none.
-    fn dress_truck(&mut self, car: crate::traffic::CarId) {
-        let day = self.today();
-        let look = self.containers.trucks.get(&car).and_then(|t| t.boxes.first()).and_then(|id| self.containers.boxes.get(*id)).map(|r| truck_look(r.line, r.wear(day)));
+    /// [K34] [r8] The lorry's look follows the boxes aboard: a container
+    /// rig whose chassis fits them (a forty-foot one for a forty, else the
+    /// twenty), the boxes drawn on it. A container lorry with none keeps
+    /// its bare chassis; any other lorry its own trailer.
+    pub(super) fn dress_truck(&mut self, car: crate::traffic::CarId) {
+        let forty = self.containers.trucks.get(&car).map(|t| t.boxes.iter().filter_map(|id| self.containers.boxes.get(*id)).any(|r| r.forty));
+        let ours = self.containers.lorries.contains_key(&car);
         if let Some(c) = self.traffic.cars.get_mut(car) {
-            match look {
-                Some(l) => {
+            match forty {
+                Some(f) => {
                     c.model.body = crate::vehicle::BodyType::Semi;
-                    c.model.boxed = l;
+                    c.model.boxed = truck_look(f);
+                }
+                None if ours || crate::vehicle::chassis_of(c.model.boxed).is_some() => {
+                    c.model.body = crate::vehicle::BodyType::Semi;
+                    if crate::vehicle::chassis_of(c.model.boxed).is_none() {
+                        c.model.boxed = crate::vehicle::CHASSIS_20;
+                    }
                 }
                 None => c.model.boxed = 0,
             }
@@ -374,7 +607,7 @@ impl World {
     /// unpacked and kept; at the buyer it is emptied, and then an old one
     /// goes for scrap, a stack developer may buy it, or it goes back to
     /// storage: on the lorry `car` when there is one, else at once.
-    fn box_arrives(&mut self, id: BoxId, to: BuildingId, car: Option<crate::traffic::CarId>) {
+    pub(super) fn box_arrives(&mut self, id: BoxId, to: BuildingId, car: Option<crate::traffic::CarId>) {
         let day = self.today();
         if self.cargo_hubs.hubs.contains_key(&to) {
             if let Some(r) = self.containers.boxes.get_mut(id) {
@@ -416,7 +649,7 @@ impl World {
         self.containers.touch();
     }
 
-    fn off_truck(&mut self, car: Option<crate::traffic::CarId>, id: BoxId) {
+    pub(super) fn off_truck(&mut self, car: Option<crate::traffic::CarId>, id: BoxId) {
         let Some(c) = car else { return };
         if let Some(t) = self.containers.trucks.get_mut(&c) {
             t.boxes.retain(|b| *b != id);
@@ -456,7 +689,25 @@ impl World {
     /// here come off (onto a home site or the scrap pile), and empties are
     /// set down when this is a depot.
     pub(super) fn boxes_drop(&mut self, car: crate::traffic::CarId, at: BuildingId) {
+        // [r8] Off the map: the boxes leave town with the lorry.
+        if at.is_null() {
+            return;
+        }
         let Some(tb) = self.containers.trucks.get(&car).cloned() else { return };
+        // [r8] Boxes of a load hauled to its buyer on a second lorry: emptied
+        // there, and back on the lorry to go home (unless a developer
+        // bought one on the spot).
+        if tb.to == Some(at) && self.box_depot(at).is_none() && tb.boxes.iter().any(|id| self.containers.boxes.get(*id).is_some_and(|r| r.goods.is_some())) {
+            if let Some(t) = self.containers.trucks.get_mut(&car) {
+                t.to = None;
+            }
+            for id in tb.boxes {
+                if self.containers.boxes.get(id).is_some_and(|r| r.goods.is_some()) {
+                    self.box_arrives(id, at, Some(car));
+                }
+            }
+            return;
+        }
         let depot = self.box_depot(at);
         if tb.to == Some(at) || (tb.to.is_none() && depot.is_some_and(|k| k != DepotKind::Scrap)) {
             self.containers.trucks.remove(&car);
@@ -505,7 +756,7 @@ impl World {
 
     /// [K34] An empty with nowhere particular to go: into the nearest
     /// depot (not a scrap yard), else back out of town.
-    fn box_to_storage(&mut self, id: BoxId, near: Vec2) {
+    pub(super) fn box_to_storage(&mut self, id: BoxId, near: Vec2) {
         if let Some(r) = self.containers.boxes.get_mut(id) {
             if matches!(r.owner, Owner::Home(_) | Owner::Scrap(_)) {
                 r.owner = Owner::Line;
@@ -531,7 +782,17 @@ impl World {
                 _ if at.is_null() || !self.buildings.contains_key(at) => {
                     // Off the map with its lorry; a box bought for a home is
                     // the developer's, so it goes to the home instead.
-                    self.box_gone(id, Event::SentOut)
+                    let day = self.today();
+                    let why = match self.containers.boxes.get(id) {
+                        Some(r) if !r.export.is_empty() => {
+                            self.box_exported(id);
+                            continue;
+                        }
+                        Some(r) if r.for_scrap(day) => Event::SoldForScrap,
+                        Some(r) if matches!(r.owner, Owner::Yard(_)) => Event::SoldOutOfTown,
+                        _ => Event::SentOut,
+                    };
+                    self.box_gone(id, why)
                 }
                 _ => {
                     let p = self.place_pos(at).unwrap_or_default();
@@ -547,6 +808,16 @@ impl World {
     fn haul_boxes(&mut self, from: BuildingId, to: BuildingId, ids: &[BoxId]) -> bool {
         if ids.is_empty() || self.truck_count() >= crate::market::MAX_TRUCKS {
             return false;
+        }
+        // [r8] From a depot's stack: a lorry comes to a bay and the carrier
+        // lifts the boxes onto its chassis.
+        if self.bay_depot(from).is_some() && ids.iter().all(|id| self.containers.boxes.get(*id).is_some_and(|r| r.at == Where::Stored(from))) {
+            let Some(car) = self.lorry_for(from) else { return false };
+            let j = self.containers.lorries.entry(car).or_default();
+            j.depot = from;
+            j.take.extend_from_slice(ids);
+            j.take_to = Some(to);
+            return true;
         }
         let route = (|| {
             let (a_seg, a_pt) = self.truck_stop(from)?;
@@ -714,6 +985,8 @@ impl World {
             self.containers.boxes.remove(id);
             self.containers.touch();
         }
+        // [r8] Jobs of lorries gone, old notes.
+        self.prune_box_lorries();
         // Lorries no longer on the road.
         let lost: Vec<crate::traffic::CarId> = self.containers.trucks.keys().copied().filter(|c| !self.traffic.cars.contains_key(*c)).collect();
         for car in lost {
@@ -838,6 +1111,8 @@ impl World {
         let mut due_scrap = 0u32;
         let mut awaiting = 0u32;
         let mut to_scrap: BTreeMap<(BuildingId, BuildingId), Vec<BoxId>> = BTreeMap::new();
+        let mut sell_out: BTreeMap<BuildingId, Vec<BoxId>> = BTreeMap::new();
+        let mut sell_scrap: BTreeMap<BuildingId, Vec<BoxId>> = BTreeMap::new();
         for (d, kind, pos) in depots.iter().copied() {
             if kind == DepotKind::Scrap {
                 continue;
@@ -877,11 +1152,18 @@ impl World {
                                 due_scrap += 1;
                             }
                             if days >= cx::SCRAP_WAIT_DAYS {
-                                self.box_gone(id, Event::SoldOutOfTown);
+                                // [r8] No yard in town to cut it up: sold for
+                                // scrap out of town, and off it goes by road.
+                                sell_scrap.entry(d).or_default().push(id);
                                 count -= 1;
                             }
                         }
                     }
+                    continue;
+                }
+                // [r8] Leased to a forwarder, full of exports, or already
+                // going out: not the owners' to deal with today.
+                if matches!(r.owner, Owner::Forwarder(_)) || !r.export.is_empty() || r.bound_out {
                     continue;
                 }
                 let line_owned = r.owner == Owner::Line;
@@ -902,19 +1184,77 @@ impl World {
                 let over = count > cap;
                 let roll = crate::hash::unit(h);
                 if line_owned && (over || (days >= 2 && roll < 0.12)) {
-                    // Repositioned: the line wants it elsewhere.
-                    self.box_gone(id, Event::SentOut);
+                    // [r8] Repositioned: the line wants it elsewhere, so it
+                    // goes out on the next ship or train (or by road): it
+                    // does not vanish from the stack.
+                    if let Some(r) = self.containers.boxes.get_mut(id) {
+                        r.bound_out = true;
+                    }
                     count -= 1;
                 } else if !line_owned && (over || roll < 0.05) {
-                    // The yard sells it to a buyer out of town.
+                    // The yard sells it to a buyer out of town; a lorry takes it.
                     let price = r.price(day);
                     if let Some(z) = self.buildings.get_mut(d).and_then(|b| b.business.as_mut()) {
                         z.revenue_today += price;
                     }
                     self.transfer(Account::Outside, Account::Business(d), price, crate::bank::Kind::Exports);
-                    self.box_gone(id, Event::SoldOutOfTown);
+                    sell_out.entry(d).or_default().push(id);
                     count -= 1;
                 }
+            }
+            // [r8] The surplus of empties: they may pile up a little when
+            // imports outrun exports, but past a share of the depot's room
+            // (and a most per depot) the worst go first: the lines ship
+            // theirs back out, a yard sells its own out of town.
+            let limit = ((cap as f32 * cx::SURPLUS_SHARE) as usize).min(cx::SURPLUS_MAX);
+            let mut spare: Vec<(i32, u64, BoxId, bool)> = self
+                .containers
+                .boxes
+                .iter()
+                .filter(|(_, r)| r.at == Where::Stored(d) && r.goods.is_none() && r.export.is_empty() && !r.bound_out && matches!(r.owner, Owner::Line | Owner::Yard(_)))
+                .filter(|(id, _)| !sell_out.get(&d).is_some_and(|v| v.contains(id)) && !sell_scrap.get(&d).is_some_and(|v| v.contains(id)))
+                .map(|(id, r)| (-((r.wear(day) * 1000.0) as i32), r.since, id, r.owner == Owner::Line))
+                .collect();
+            if spare.len() > limit {
+                spare.sort();
+                let extra = spare.len() - limit;
+                for &(_, _, id, line) in spare.iter().take(extra) {
+                    if line {
+                        if let Some(r) = self.containers.boxes.get_mut(id) {
+                            r.bound_out = true;
+                        }
+                    } else {
+                        sell_out.entry(d).or_default().push(id);
+                    }
+                    self.containers.stats.surplus_out_total += 1;
+                }
+            }
+            // [r8] At a yard or hub no ship or train calls at, the boxes
+            // going out are trucked to the port or a freight yard (or out
+            // by road), a few lorries a day.
+            if matches!(kind, DepotKind::Yard | DepotKind::Hub) {
+                let going: Vec<BoxId> = self.containers.boxes.iter().filter(|(_, r)| r.at == Where::Stored(d) && r.bound_out && r.goods.is_none()).map(|(id, _)| id).take(OUT_HAULS_PER_DAY).collect();
+                if !going.is_empty() {
+                    let to = depots.iter().filter(|x| matches!(x.1, DepotKind::Port | DepotKind::Rail)).min_by(|a, b| a.2.distance(pos).total_cmp(&b.2.distance(pos)).then(a.0.cmp(&b.0))).map(|x| x.0);
+                    for id in going {
+                        match to {
+                            Some(t) => {
+                                self.haul_boxes(d, t, &[id]);
+                            }
+                            None => sell_out.entry(d).or_default().push(id),
+                        }
+                    }
+                }
+            }
+        }
+        for (d, ids) in std::mem::take(&mut sell_out) {
+            for id in ids {
+                self.haul_out(d, id, Event::SoldOutOfTown);
+            }
+        }
+        for (d, ids) in std::mem::take(&mut sell_scrap) {
+            for id in ids {
+                self.haul_out(d, id, Event::SoldForScrap);
             }
         }
         // Worn-out boxes to the scrap yards, a lorry at a time.
@@ -938,6 +1278,30 @@ impl World {
         s.arrived_today = [0; 3];
         s.delivered_today = 0;
         s.scrapped_today = 0;
+        s.export_units_yday = s.export_units_today;
+        s.export_units_today = 0.0;
+    }
+
+    /// [r8] Box `id` at depot `d` sold out of town (`why`: as a box, or for
+    /// scrap): a lorry fetches it from the bay and drives it off the map;
+    /// with no lorry or no bays, it simply goes.
+    fn haul_out(&mut self, d: BuildingId, id: BoxId, why: Event) {
+        if why == Event::SoldForScrap {
+            self.containers.stats.sold_for_scrap_total += 1;
+        }
+        if self.bay_depot(d).is_some() && self.containers.boxes.get(id).is_some_and(|r| r.at == Where::Stored(d)) {
+            if let Some(car) = self.lorry_for(d) {
+                let j = self.containers.lorries.entry(car).or_default();
+                j.depot = d;
+                j.take.push(id);
+                j.take_to = Some(BuildingId::default());
+                if let Some(r) = self.containers.boxes.get_mut(id) {
+                    r.bound_out = true;
+                }
+                return;
+            }
+        }
+        self.box_gone(id, why);
     }
 
     /// [K34] The scrap yards cut up the boxes on their piles: the steel
@@ -1058,6 +1422,8 @@ impl World {
                 Where::Site(_) => c.on_sites += 1,
                 Where::Home(_) => c.in_homes += 1,
                 Where::Scrap(_) => c.at_scrap += 1,
+                Where::Lifting(_) => c.lifting += 1,
+                Where::Ship(_) => c.on_ships += 1,
             }
         }
         c
@@ -1099,6 +1465,7 @@ impl World {
             Owner::Yard(y) => (self.place_name(y), Some(y)),
             Owner::Home(h) => (format!("the stack developer of {}", self.place_name(h)), Some(h)),
             Owner::Scrap(y) => (self.place_name(y), Some(y)),
+            Owner::Forwarder(f) => (format!("{} (leased)", self.place_name(f)), Some(f)),
         };
         let mut car = None;
         let (now, now_id) = match r.at {
@@ -1115,6 +1482,14 @@ impl World {
             Where::Site(b) => (format!("on the building site of {}", self.place_name(b)), Some(b)),
             Where::Home(b) => (format!("part of the home {}", self.place_name(b)), Some(b)),
             Where::Scrap(b) => (format!("on the scrap pile at {}", self.place_name(b)), Some(b)),
+            Where::Lifting(b) => (format!("on the crane at {}", self.place_name(b)), Some(b)),
+            Where::Ship(s) => {
+                let port = self.containers.ships.get(&s).map(|x| x.port).filter(|b| !b.is_null());
+                (match port {
+                    Some(p) => format!("aboard a freighter at {}", self.place_name(p)),
+                    None => "aboard a freighter".to_string(),
+                }, port)
+            }
         };
         Some(BoxStory {
             number: r.number(),

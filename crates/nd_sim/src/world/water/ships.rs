@@ -109,6 +109,8 @@ impl World {
         for id in docked {
             self.ship_docked(id);
         }
+        // [r8] The quay crane works the real boxes, one move at a time.
+        self.step_ship_boxes();
         for id in returned {
             let (port, town) = {
                 let s = &self.ports.ships[id];
@@ -138,6 +140,8 @@ impl World {
             for c in cargo {
                 self.deliver(c);
             }
+            // [r8] Its boxes leave with it.
+            self.boxes_ship_left(id);
             self.ports.ships.remove(id);
         }
         self.ports.stats.ships_out = self.ports.ships.len() as u32;
@@ -205,11 +209,16 @@ impl World {
                     let from = out.get(1).copied().unwrap_or(port.berth + port.seaward);
                     let quay = Some(port.quay_for(from));
                     let boxes_in = cargo.iter().map(|c| ports::boxes_for(c.amount)).sum::<u32>().min(ports::MAX_BOXES);
-                    let boxes_out = ((self.ports.outbound / ports::CONTAINER_UNITS) as u32).min(ports::MAX_BOXES);
-                    self.ports.outbound = (self.ports.outbound - boxes_out as f32 * ports::CONTAINER_UNITS).max(0.0);
-                    // [K34] The exports go out in the port's empties.
-                    self.boxes_out_by_sea(b, boxes_out as usize);
-                    self.ports.ships.insert(Ship { kind: ShipKind::Freighter, path, s: 0.0, prev_s: 0.0, speed, dwell: 0, port: b, to: None, cargo, passengers: 0, docked: false, berth_s, color, remote: None, home: false, quay, boxes_in, boxes_out, cars: 0, riders: Vec::new() });
+                    // [r8] What it takes on is chosen alongside (the boxes
+                    // of exports and the empties there then): nothing leaves
+                    // the quay until the crane lifts it aboard.
+                    let sid = self.ports.ships.insert(Ship { kind: ShipKind::Freighter, path, s: 0.0, prev_s: 0.0, speed, dwell: 0, port: b, to: None, cargo, passengers: 0, docked: false, berth_s, color, remote: None, home: false, quay, boxes_in, boxes_out: 0, cars: 0, riders: Vec::new() });
+                    // [r8] Its import boxes aboard, as records, in crane order.
+                    let cargo = self.ports.ships[sid].cargo.clone();
+                    let n = self.boxes_board_ship(sid, b, &cargo);
+                    if n > 0 {
+                        self.ports.ships[sid].boxes_in = n;
+                    }
                     self.ports.ports[*pid].last_sailing = tick;
                 }
                 // [economy] Boats are sent by `World::step_boats`.
@@ -428,10 +437,12 @@ impl World {
             let port = ship.port;
             let cargo = std::mem::take(&mut ship.cargo);
             self.ports.stats.freight_landed_today += cargo.len() as u32;
+            // [K34] [r8] Its boxes come off by the crane, one by one; what
+            // it takes on is chosen now.
+            self.boxes_ship_docked(id, port, &cargo);
             for c in cargo {
-                // [K34] Its boxes on the quay, full.
-                self.boxes_landed_by_sea(port, &c);
-                // Into a cargo hub on the quay, else a lorry.
+                // Into a cargo hub on the quay, else a lorry (which waits in
+                // a bay for its box to come off).
                 self.unload_freight(port, c);
             }
         }

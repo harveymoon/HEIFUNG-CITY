@@ -199,8 +199,13 @@ pub fn variant_key(m: &VehicleModel) -> VehicleModel {
     let mut k = *m;
     k.wear = k.wear.min(2);
     k.paint %= PAINTS;
-    // [K34] Only a semi's trailer carries a real box.
+    // [K34] [r8] Only a semi has a trailer or a chassis; older saves'
+    // box looks read as the bare twenty-foot chassis.
     if k.body != BodyType::Semi {
+        k.boxed = 0;
+    } else if let Some(forty) = nd_sim::vehicle::chassis_of(k.boxed) {
+        k.boxed = if forty { nd_sim::vehicle::CHASSIS_40 } else { nd_sim::vehicle::CHASSIS_20 };
+    } else {
         k.boxed = 0;
     }
     if k.body == BodyType::DeliveryBot || k.body == BodyType::AkiraBike || k.body.flies() {
@@ -597,62 +602,149 @@ fn box_truck(b: &mut B, col: [f32; 3]) {
     b.wear_marks(rx + 0.3, cr - 0.3, 1.0, top - 0.3, hw);
 }
 
+/// [r8] Where a box rides on a container chassis: the deck's centre along
+/// the rig (x, from the rig's middle) and the height of a box's floor on
+/// the bolsters. None for a semi with its own trailer.
+pub fn chassis_deck(boxed: u8) -> Option<(f32, f32)> {
+    let forty = nd_sim::vehicle::chassis_of(boxed)?;
+    let len = nd_sim::vehicle::semi_length(boxed);
+    let lc = if forty { CHASSIS_40_LEN } else { CHASSIS_20_LEN };
+    Some((-len * 0.5 + lc * 0.5, CHASSIS_DECK))
+}
+
+/// [r8] A container chassis: its length (a forty-foot box overhangs it by
+/// a hair, a twenty-foot one sits on it with the rails showing at the
+/// ends), and the deck height: the top of the bolsters the box's corner
+/// castings lock onto.
+pub const CHASSIS_20_LEN: f32 = 6.5;
+pub const CHASSIS_40_LEN: f32 = 12.4;
+pub const CHASSIS_DECK: f32 = 1.34;
+/// Length of the tractor unit, bumper to the back of its frame.
+const TRACTOR_LEN: f32 = 6.0;
+
+/// [r8] A semi: a cab-over tractor, and behind it either a bare skeletal
+/// container chassis (twenty or forty foot; the real box it carries is
+/// drawn on it as its own object, so an empty lorry looks empty), or for
+/// goods not in containers its own curtain-sided trailer.
 fn semi(b: &mut B, col: [f32; 3]) {
     let m = *b.m;
-    let len = body_length(BodyType::Semi);
+    let len = nd_sim::vehicle::semi_length(m.boxed);
     let (fx, rx) = (len * 0.5, -len * 0.5);
     let hw = 1.22;
-    // Cab-over tractor, flat face.
+    // Cab-over tractor, flat face, its frame and fifth wheel behind.
     let cr = fx - 2.2;
+    let tr = fx - TRACTOR_LEN;
     let cab_col = if m.livery == Livery::None { col } else { livery_colors(m.livery, m.paint, b.pal).map_or(col, |l| l.0) };
     b.ext(&[(cr, 0.7), (fx, 0.7), (fx + 0.05, 2.6), (fx - 0.3, 3.15), (cr, 3.2)], hw - 0.05, cab_col);
     b.body.decal(Vec3::new(fx + 0.07, 2.05, 0.0), Vec3::Z, Vec3::Y, hw * 1.7, 0.8, Vec3::X, c4(GLASS));
     b.sides(fx - 0.6, 2.2, hw - 0.05, 0.6, 0.55, GLASS);
-    // Container on a skeletal trailer. [r4] (K33) The town's standard
-    // twenty-foot box (`CONTAINER_20` by `CONTAINER_W` by `CONTAINER_H`),
-    // in a shipping line's colours and mark.
-    let cfront = (rx + crate::CONTAINER_20).min(cr - 0.35);
-    let line = &crate::SHIPPING_LINES[b.rng.random_range(0..crate::SHIPPING_LINES.len())];
-    // [K34] A real box on the trailer: its line, faded and rusted as worn.
-    let worn = if m.boxed > 0 { ((m.boxed - 1) / 10) as f32 / 4.0 } else { 0.0 };
-    let line = if m.boxed > 0 { &crate::SHIPPING_LINES[((m.boxed - 1) % 10) as usize] } else { line };
-    let ccol = if m.boxed > 0 {
-        let l = 0.3 * line.body[0] + 0.55 * line.body[1] + 0.15 * line.body[2];
-        mix(mul(line.body, 1.0 - 0.15 * worn), [l * 1.2 + 0.07, l * 1.18 + 0.07, l * 1.15 + 0.07], 0.35 * worn)
-    } else {
-        line.body
-    };
-    let (cb, ct) = (1.15, 1.15 + crate::CONTAINER_H);
-    b.ext(&[(rx, cb), (cfront, cb), (cfront, ct), (rx, ct)], crate::CONTAINER_W * 0.5, ccol);
-    if b.detail {
-        for i in 1..8 {
-            let x = rx + (cfront - rx) * i as f32 / 8.0;
-            b.sides(x, (cb + ct) * 0.5, crate::CONTAINER_W * 0.5, 0.06, crate::CONTAINER_H - 0.1, mul(ccol, 0.7));
-        }
-        if line.band {
-            b.sides((rx + cfront) * 0.5, ct - 0.55, crate::CONTAINER_W * 0.5 + 0.004, cfront - rx - 0.6, 0.36, line.mark);
-        } else {
-            b.sides(rx + 1.4, (cb + ct) * 0.5 + 0.2, crate::CONTAINER_W * 0.5 + 0.004, 1.8, 0.9, line.mark);
-        }
-        b.lamp(rx - 0.005, (cb + ct) * 0.5, 0.0, 0.04, crate::CONTAINER_H - 0.1, -1.0, mul(ccol, 0.5));
-        if worn > 0.4 {
-            // Rust run down from the top rail, a dent low on the side.
-            let rust = [0.32, 0.14, 0.06];
-            b.sides(rx + (cfront - rx) * 0.3, ct - 0.6, crate::CONTAINER_W * 0.5 + 0.006, 0.35, 0.9 * worn, rust);
-            b.sides(rx + (cfront - rx) * 0.75, ct - 0.5, crate::CONTAINER_W * 0.5 + 0.006, 0.25, 0.7 * worn, mul(rust, 0.8));
-            b.sides(rx + (cfront - rx) * 0.55, cb + 0.5, crate::CONTAINER_W * 0.5 + 0.008, 0.8, 0.4, mul(ccol, 0.7));
-        }
-    }
-    b.bx(((rx + cfront) * 0.5 + 0.5, 0.95, 0.0), (cfront - rx, 0.3, hw * 1.2), TRIM);
+    // Tractor frame rails, fuel tank, the fifth wheel plate and the
+    // exhaust stack behind the cab.
+    b.bx(((cr + tr) * 0.5, 0.85, 0.0), (cr - tr, 0.22, 0.95), TRIM);
+    b.bx((cr - 0.9, 0.7, hw - 0.32), (1.2, 0.5, 0.5), mul(CHROME, 0.75));
+    b.bx((tr + 1.1, 1.08, 0.0), (1.3, 0.12, 1.5), mul(TRIM, 1.3));
+    b.bx((cr - 0.15, 2.6, -hw + 0.3), (0.16, 1.9, 0.16), mul(TRIM, 1.6));
     let r = 0.5;
     b.axle(fx - 0.75, hw, r, 0.3);
-    b.axle(cr - 0.2, hw, r, 0.3);
-    b.axle(rx + 1.0, hw, r, 0.3);
-    b.axle(rx + 2.1, hw, r, 0.3);
+    b.axle(tr + 1.6, hw, r, 0.3);
+    b.axle(tr + 0.55, hw, r, 0.3);
     b.lamps(fx + 0.05, 1.0, hw - 0.3, 0.32, 0.16, 1.0, HEAD);
     b.lamps(fx + 0.02, 3.2, hw - 0.3, 0.1, 0.06, 1.0, AMBER);
+    match nd_sim::vehicle::chassis_of(m.boxed) {
+        Some(forty) => skeletal_chassis(b, rx, if forty { CHASSIS_40_LEN } else { CHASSIS_20_LEN }, forty),
+        None => curtain_trailer(b, rx, tr + 0.9, col),
+    }
+    b.wear_marks(cr, fx - 0.2, 1.0, 2.8, hw - 0.05);
+}
+
+/// [r8] A skeletal container chassis from `rx` forward `lc` metres: two
+/// main rails, a gooseneck at the front over the tractor, cross bolsters
+/// with twistlocks at the corner castings' spots (both box lengths on a
+/// forty), landing legs, a tandem (or tri-axle) bogie at the back, the
+/// rear bumper with its lamps and the number-plate light.
+fn skeletal_chassis(b: &mut B, rx: f32, lc: f32, forty: bool) {
+    let fx = rx + lc;
+    let steel = [0.07, 0.072, 0.075];
+    let rail_y = CHASSIS_DECK - 0.22;
+    // Main rails, a hand's width in from the box's edges, and the
+    // gooseneck: the rails rise over the tractor's fifth wheel.
+    for z in [-0.48f32, 0.48] {
+        b.bx(((rx + fx - 1.6) * 0.5, rail_y - 0.1, z), (lc - 1.6, 0.34, 0.14), steel);
+        b.bx((fx - 0.8, rail_y + 0.02, z), (1.6, 0.2, 0.14), steel);
+    }
+    b.bx((fx - 1.0, rail_y - 0.14, 0.0), (0.5, 0.08, 0.9), mul(steel, 1.4));
+    // Bolsters across the full width at the box's corner castings, with
+    // a twistlock at each end: front and back, and on a forty the middle
+    // pair a twenty would sit on.
+    let mut at: Vec<f32> = vec![rx + 0.12, fx - 0.12];
+    if forty {
+        let mid = (rx + fx) * 0.5;
+        at.extend([mid - 0.08, mid + 0.08]);
+    }
+    for &x in &at {
+        b.bx((x, CHASSIS_DECK - 0.1, 0.0), (0.2, 0.2, crate::CONTAINER_W), mul(steel, 1.2));
+        for z in [-1.0f32, 1.0] {
+            b.bx((x, CHASSIS_DECK + 0.02, z * (crate::CONTAINER_W * 0.5 - 0.1)), (0.14, 0.06, 0.14), [0.55, 0.38, 0.06]);
+        }
+    }
+    // Cross members between the rails.
+    let n = (lc / 1.6) as i32;
+    for k in 1..n {
+        let x = rx + lc * k as f32 / n as f32;
+        b.bx((x, rail_y - 0.12, 0.0), (0.1, 0.16, 0.96), steel);
+    }
+    // Landing legs ahead of the bogie, near the front.
+    let leg = fx - 2.4;
+    for z in [-0.75f32, 0.75] {
+        b.bx((leg, (rail_y - 0.25) * 0.5 + 0.1, z), (0.14, rail_y - 0.25, 0.14), mul(steel, 1.3));
+        b.bx((leg, 0.12, z), (0.34, 0.08, 0.3), mul(steel, 1.3));
+    }
+    b.bx((leg, rail_y - 0.4, 0.0), (0.08, 0.08, 1.5), mul(steel, 1.3));
+    // The bogie: two axles, three under a forty.
+    let r = 0.5;
+    let hw = 1.22;
+    let axles: &[f32] = if forty { &[1.0, 2.3, 3.6] } else { &[1.0, 2.3] };
+    for &a in axles {
+        b.axle(rx + a, hw, r, 0.3);
+    }
+    let bog = rx + axles[axles.len() - 1] * 0.5 + 0.5;
+    b.bx((bog, 0.95, 0.0), (axles[axles.len() - 1] + 0.6, 0.16, 1.1), steel);
+    // Mud flaps, the rear bumper (underride bar) and its lamps.
+    for z in [-1.0f32, 1.0] {
+        b.bx((rx + 0.35, 0.6, z * (hw - 0.15)), (0.04, 0.55, 0.5), [0.04, 0.04, 0.04]);
+    }
+    b.bx((rx + 0.08, 0.55, 0.0), (0.12, 0.14, crate::CONTAINER_W - 0.2), [0.5, 0.48, 0.44]);
+    b.lamps(rx + 0.02, 0.85, hw - 0.25, 0.26, 0.12, -1.0, TAIL);
+    b.lamps(rx + 0.02, 0.85, hw - 0.55, 0.12, 0.12, -1.0, AMBER);
+    // Side marker lamps along the rails.
+    for k in 0..3 {
+        let x = rx + 1.0 + (lc - 2.0) * k as f32 / 2.0;
+        b.lit_sides(x, rail_y - 0.12, 0.56, 0.08, 0.06, AMBER);
+    }
+}
+
+/// [r8] A curtain-sided trailer for goods not in containers: a box body
+/// with tarpaulin sides strapped down, in the lorry's paint.
+fn curtain_trailer(b: &mut B, rx: f32, front: f32, col: [f32; 3]) {
+    let hw = 1.22;
+    let curtain = mix(col, [0.5, 0.5, 0.48], 0.45);
+    let (cb, ct) = (1.15, 1.15 + crate::CONTAINER_H);
+    b.ext(&[(rx, cb), (front, cb), (front, ct), (rx, ct)], crate::CONTAINER_W * 0.5, curtain);
+    if b.detail {
+        for i in 1..10 {
+            let x = rx + (front - rx) * i as f32 / 10.0;
+            b.sides(x, (cb + ct) * 0.5 - 0.1, crate::CONTAINER_W * 0.5, 0.05, crate::CONTAINER_H - 0.25, mul(curtain, 0.72));
+        }
+        b.sides((rx + front) * 0.5, ct - 0.12, crate::CONTAINER_W * 0.5 + 0.004, front - rx - 0.1, 0.2, mul(col, 0.8));
+        b.sides((rx + front) * 0.5, cb + 0.1, crate::CONTAINER_W * 0.5 + 0.004, front - rx - 0.1, 0.18, mul(TRIM, 1.5));
+        b.lamp(rx - 0.005, (cb + ct) * 0.5, 0.0, crate::CONTAINER_W - 0.3, crate::CONTAINER_H - 0.2, -1.0, mul(curtain, 0.55));
+    }
+    b.bx(((rx + front) * 0.5, 0.95, 0.0), (front - rx, 0.3, hw * 1.2), TRIM);
+    let r = 0.5;
+    b.axle(rx + 1.0, hw, r, 0.3);
+    b.axle(rx + 2.1, hw, r, 0.3);
     b.lamps(rx, 1.2, hw - 0.2, 0.3, 0.14, -1.0, TAIL);
-    b.wear_marks(rx + 0.4, cfront - 0.4, 1.4, 3.4, hw);
+    b.wear_marks(rx + 0.4, front - 0.4, 1.4, 3.4, hw);
 }
 
 /// [tow] A wrecker: a conventional cab, a low flat deck with tool lockers,
@@ -1028,7 +1120,7 @@ fn livery_marks(b: &mut B, accent: [f32; 3], sign: [f32; 3]) {
     if m.livery == Livery::Transit || m.body.is_bus() || m.body == BodyType::DeliveryBot {
         return;
     }
-    let len = body_length(m.body);
+    let len = if m.body == BodyType::Semi { nd_sim::vehicle::semi_length(m.boxed) } else { body_length(m.body) };
     match m.body {
         BodyType::DeliveryVan | BodyType::BoxVan | BodyType::PanelTruck | BodyType::GarbageTruck => {
             let (hw, x, y, w, h) = match m.body {
@@ -1071,9 +1163,11 @@ fn livery_marks(b: &mut B, accent: [f32; 3], sign: [f32; 3]) {
         }
         BodyType::Semi => {
             b.lit_sides(len * 0.5 - 1.1, 2.75, 1.17, 0.9, 0.3, sign);
-            // [megacorp] The logo on the trailer.
+            // [megacorp] The logo on the trailer (a bare chassis has none).
             if let Livery::Corp(colour, mark) = m.livery {
-                corp_logo(b, -1.4, 2.3, 1.25, 1.9, colour, mark);
+                if nd_sim::vehicle::chassis_of(m.boxed).is_none() {
+                    corp_logo(b, -1.4, 2.3, 1.25, 1.9, colour, mark);
+                }
             }
         }
         _ => {}

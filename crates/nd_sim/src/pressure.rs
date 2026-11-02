@@ -130,10 +130,12 @@ pub enum PressureKind {
     BoatRental,
     /// [K34] Old shipping containers waiting to be cut up. Appended.
     ScrapYard,
+    /// [r8] The town's exports, to be boxed up and shipped. Appended.
+    FreightForwarder,
 }
 
 impl PressureKind {
-    pub const ALL: [PressureKind; 19] = [
+    pub const ALL: [PressureKind; 20] = [
         PressureKind::TowCompany,
         PressureKind::Mechanic,
         PressureKind::CarDealer,
@@ -153,6 +155,7 @@ impl PressureKind {
         PressureKind::BeachBar,
         PressureKind::BoatRental,
         PressureKind::ScrapYard,
+        PressureKind::FreightForwarder,
     ];
 
     pub fn index(self) -> usize {
@@ -181,6 +184,7 @@ impl PressureKind {
             PressureKind::BeachBar => BusinessKind::BeachBar,
             PressureKind::BoatRental => BusinessKind::BoatRental,
             PressureKind::ScrapYard => BusinessKind::ScrapYard,
+            PressureKind::FreightForwarder => BusinessKind::FreightForwarder,
         })
     }
 
@@ -215,6 +219,7 @@ impl PressureKind {
             PressureKind::BeachBar => "beach bar",
             PressureKind::BoatRental => "boat rental",
             PressureKind::ScrapYard => "scrap yard",
+            PressureKind::FreightForwarder => "freight forwarder",
         }
     }
 
@@ -240,6 +245,7 @@ impl PressureKind {
             PressureKind::BeachBar => "beach_bar",
             PressureKind::BoatRental => "boat_rental",
             PressureKind::ScrapYard => "scrap_yard",
+            PressureKind::FreightForwarder => "freight_forwarder",
         }
     }
 
@@ -323,6 +329,12 @@ pub struct Signals {
     /// in town to take them (a flow).
     #[serde(default)]
     pub old_boxes: f32,
+    /// [r8] Export units a day leaving town (a flow), and the ports and
+    /// freight yards that ship boxes.
+    #[serde(default)]
+    pub export_units: f32,
+    #[serde(default)]
+    pub box_terminals: f32,
 }
 
 impl Signals {
@@ -344,6 +356,8 @@ impl Signals {
         mix(&mut self.fillets, today.fillets);
         mix(&mut self.beach_visits, today.beach_visits);
         mix(&mut self.old_boxes, today.old_boxes);
+        mix(&mut self.export_units, today.export_units);
+        self.box_terminals = today.box_terminals;
         self.cars = today.cars;
         self.tow_backlog = today.tow_backlog;
         self.rich_households = today.rich_households;
@@ -554,6 +568,11 @@ pub fn assess(s: &Signals, supply: &Supply) -> Vec<Pressure> {
             PressureKind::ScrapYard => {
                 let have_open = supply.open[BusinessKind::ScrapYard.index()] as f32;
                 (have_open + s.old_boxes / crate::containers::BOXES_PER_SCRAP_YARD, format!("{} worn-out shipping containers a day with no scrap yard to cut them up; {ht}", s.old_boxes.round()))
+            }
+            // [r8] Exports to box up, where a port or freight yard ships them.
+            PressureKind::FreightForwarder => {
+                let wanted = if s.box_terminals > 0.0 { s.export_units / crate::containers::UNITS_PER_FORWARDER } else { 0.0 };
+                (wanted, format!("{} units of exports a day to box up and ship, {} ports and freight yards; {ht}", s.export_units.round(), s.box_terminals))
             }
         };
         let mut p = Pressure::new(kind, wanted, supply, why);

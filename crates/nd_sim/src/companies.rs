@@ -153,7 +153,7 @@ pub fn fleet_hex(i: u8) -> String {
 /// and the shops and makers whose vans deliver.
 pub fn runs_fleet(kind: BusinessKind) -> bool {
     use BusinessKind as K;
-    matches!(kind, K::TaxiCompany | K::TowYard | K::TrashCompany | K::FleetLot | K::ContainerYard) || crate::vehicle::Livery::for_business(kind) != crate::vehicle::Livery::None
+    matches!(kind, K::TaxiCompany | K::TowYard | K::TrashCompany | K::FleetLot | K::ContainerYard | K::FreightForwarder) || crate::vehicle::Livery::for_business(kind) != crate::vehicle::Livery::None
 }
 
 /// The trades that grow a yard of vehicles: bigger yard first, then depots
@@ -192,7 +192,7 @@ impl Specialty {
     pub fn of_origin(kind: BusinessKind) -> Specialty {
         use BusinessKind as K;
         match kind {
-            K::GadgetShop | K::Assembly | K::Bookshop | K::ContainerYard | K::FleetLot | K::CargoHub => Specialty::Logistics,
+            K::GadgetShop | K::Assembly | K::Bookshop | K::ContainerYard | K::FleetLot | K::CargoHub | K::FreightForwarder => Specialty::Logistics,
             K::CarDealer | K::Mechanic | K::TaxiCompany | K::TowYard | K::BikeShop | K::Parking => Specialty::Motors,
             K::Grocery | K::Bakery | K::Cafe | K::VertFarm | K::GrainFarm | K::Dairy | K::ProteinVat | K::Mill | K::CowFarm | K::ChickenFarm | K::Slaughterhouse | K::Feedlot | K::Fishery | K::FishPlant | K::FishMarket | K::FishingPort | K::FishGutting | K::FishStickFactory => Specialty::Food,
             K::Hotel | K::Venue | K::GolfRange | K::BeachResort | K::PierRestaurant | K::BeachBar | K::BoatRental | K::SeafoodRestaurant | K::Marina | K::Gallery | K::ArtStudio => Specialty::Leisure,

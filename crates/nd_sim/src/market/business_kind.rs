@@ -159,6 +159,12 @@ pub enum BusinessKind {
     Gym,
     /// A comedy club: a stage, a brick wall, a two-drink minimum.
     ComedyClub,
+    /// [r8] A freight forwarder (a "shipping company" in town): leases
+    /// empty containers, sends its lorries round the firms to fill them
+    /// with their exports, takes the full boxes to the port or the freight
+    /// yard and charges each firm a fee per load. Opened by pressure where
+    /// the town exports. Appended so saved kinds keep their order.
+    FreightForwarder,
 }
 
 /// What a business turns into what, per filled job per hour.
@@ -169,7 +175,7 @@ pub struct Recipe {
 }
 
 impl BusinessKind {
-    pub const COUNT: usize = 67;
+    pub const COUNT: usize = 68;
     /// Every kind, in `index` order.
     pub const ALL: [BusinessKind; Self::COUNT] = [
         BusinessKind::VertFarm,
@@ -239,6 +245,7 @@ impl BusinessKind {
         BusinessKind::Arcade,
         BusinessKind::Gym,
         BusinessKind::ComedyClub,
+        BusinessKind::FreightForwarder,
     ];
 
     pub fn index(self) -> usize {
@@ -314,6 +321,7 @@ impl BusinessKind {
             BusinessKind::Arcade => "arcade",
             BusinessKind::Gym => "gym",
             BusinessKind::ComedyClub => "comedy club",
+            BusinessKind::FreightForwarder => "freight forwarder",
         }
     }
 
@@ -438,6 +446,8 @@ impl BusinessKind {
             // Machines wear out: a little electronics for spares.
             BusinessKind::Arcade => Recipe { inputs: &[(Resource::Electronics, 0.02)], outputs: &[] },
             BusinessKind::Gym => Recipe { inputs: &[], outputs: &[] },
+            // [r8] Its lorries burn fuel; its trade is the fees.
+            BusinessKind::FreightForwarder => Recipe { inputs: &[(Resource::Fuel, 0.1)], outputs: &[] },
         }
     }
 
@@ -516,6 +526,7 @@ impl BusinessKind {
             BusinessKind::GadgetShop => Hours::new(9, 20),
             BusinessKind::Venue => Hours::new(18, 3),
             BusinessKind::Office => Hours::new(8, 18),
+            BusinessKind::FreightForwarder => Hours::new(6, 22),
             BusinessKind::Parking | BusinessKind::FleetLot | BusinessKind::ContainerYard | BusinessKind::OilWell | BusinessKind::TowYard | BusinessKind::Hotel | BusinessKind::TaxiCompany | BusinessKind::CargoHub | BusinessKind::Marina => Hours::ALWAYS,
             BusinessKind::Mechanic => Hours::new(8, 18),
             BusinessKind::CarDealer | BusinessKind::BikeShop => Hours::new(9, 19),

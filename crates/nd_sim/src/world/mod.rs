@@ -31,6 +31,10 @@ mod buses;
 /// [lines] Inserting and sharing bus stops.
 pub mod bus_edit;
 mod cargo_hubs;
+/// [r8] Container lorries at the depots' bays, and the yards' carriers.
+mod box_lorries;
+/// [r8] Freight forwarders: exports boxed up firm by firm.
+mod forwarders;
 /// [K34] Shipping containers' lives (`crate::containers`).
 mod containers;
 pub use containers::{truck_look, BoxCounts, BoxStory, DepotKind};

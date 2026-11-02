@@ -122,6 +122,10 @@ pub struct Car {
     /// unloading.
     #[serde(default)]
     pub stranded: bool,
+    /// [r8] Standing in a depot's lorry bay, off the street (drawn in the
+    /// bay; it takes no room at the kerb).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bay: bool,
     /// [passengers] Everyone riding along besides the driver (`citizen`),
     /// kept by `World::step_passengers`.
     #[serde(default)]
@@ -233,6 +237,16 @@ impl Car {
 
     pub fn length(&self) -> f32 {
         if self.bus.is_some() { BUS_LENGTH } else { CAR_LENGTH }
+    }
+
+    /// [r8] The room it takes standing at the kerb in a queue: a container
+    /// rig as long as it is drawn (a forty-foot chassis is long), else its
+    /// length on the road.
+    pub fn kerb_length(&self) -> f32 {
+        match self.model.body {
+            crate::vehicle::BodyType::Semi => crate::vehicle::semi_length(self.model.boxed),
+            _ => self.length(),
+        }
     }
 
     /// Desired speed on a lane with this limit.

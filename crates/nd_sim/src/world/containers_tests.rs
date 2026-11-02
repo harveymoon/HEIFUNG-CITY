@@ -89,10 +89,12 @@ fn a_box_comes_by_rail_is_trucked_to_its_buyer_and_stored_empty() {
     assert!(saw.0 && saw.1 && saw.2, "set down at the yard, on a lorry, delivered: {saw:?}, {:?}", events(&w, id));
     let r = &w.containers.boxes[id];
     assert!(r.goods.is_none(), "emptied");
-    assert_eq!(r.at, Where::Stored(yard), "back in storage at the yard");
+    assert_eq!(r.at, Where::Stored(yard), "back in storage at the yard: {:?}", events(&w, id));
     let ev = events(&w, id);
     assert_eq!(ev[0], Event::ArrivedRail);
-    assert!(ev.contains(&Event::OnLorry) && ev.contains(&Event::Stored), "{ev:?}");
+    // [r8] Lifted onto the lorry's chassis at the yard, and off it again
+    // into the stack when the lorry came back with it empty.
+    assert!(ev.contains(&Event::CraneOn) && ev.contains(&Event::CraneOff), "{ev:?}");
     assert!(w.buildings[buyer].business.as_ref().unwrap().stock_of(Resource::Parts) >= stock0 + 20.0 - 0.01, "the goods arrived");
     assert!(w.containers.stats.delivered_total >= 1 && w.containers.stats.arrived_total[0] >= 1);
     let story = w.box_story(id).unwrap();
@@ -119,10 +121,16 @@ fn a_stack_developer_buys_a_box_off_the_truck_and_builds_a_home_of_it() {
     w.containers.boxes[id].knocks = 0;
     w.note_inbound(buyer, Resource::Parts, 20.0);
     w.dispatch_truck(super::market::TruckOrigin::Building(yard), Cargo { from: yard, to: buyer, resource: Resource::Parts, amount: 20.0, price: 0.0 }, 6);
-    let car = match w.containers.boxes[id].at {
-        Where::Truck(c) => c,
-        other => panic!("the box rides on the lorry: {other:?}"),
-    };
+    // [r8] A lorry pulls into a bay and the carrier lifts the box onto it.
+    let mut car = None;
+    for _ in 0..60 {
+        if let Where::Truck(c) = w.containers.boxes[id].at {
+            car = Some(c);
+            break;
+        }
+        tick(&mut w, 1);
+    }
+    let car = car.unwrap_or_else(|| panic!("the box rides on the lorry: {:?}", w.containers.boxes[id].at));
     assert_eq!(w.traffic.cars[car].model.body, crate::vehicle::BodyType::Semi);
     assert!(w.traffic.cars[car].model.boxed > 0, "the lorry wears the box");
     let mut bought = false;
@@ -277,4 +285,206 @@ fn exports_go_out_in_the_yards_empties() {
     let going = ids.iter().filter(|id| w.containers.boxes.get(**id).is_some_and(|r| r.at == Where::Train)).count();
     assert!(going >= 1, "an empty went on the train");
     assert!(w.containers.stats.sent_out_total >= 1);
+}
+
+// ── [r8] container lorries, bays, carriers, forwarders ─────────────────────
+
+/// A young box at `at`, full of `goods` (or empty).
+fn young_box(w: &mut World, at: BuildingId, forty: bool, goods: Option<cx::Goods>) -> cx::BoxId {
+    let id = w.make_box(crate::rail::BoxKind::Dry, forty, Where::Stored(at), goods, Event::ArrivedRail, at);
+    w.containers.boxes[id].built = w.clock.day() as i32 - 200;
+    w.containers.boxes[id].knocks = 0;
+    id
+}
+
+/// [r8] (Harvey flag 4) A container lorry pulls into a bay at the yard,
+/// the carrier lifts the very box onto its forty-foot chassis, it delivers,
+/// drives back with the empty, has it lifted off and stands in its bay
+/// waiting for a box: on the road's books the whole time, never removed
+/// while in town.
+#[test]
+fn a_lorry_waits_in_a_bay_and_never_vanishes_in_town() {
+    let (mut w, yard, buyer) = town();
+    let id = young_box(&mut w, yard, true, Some(cx::Goods { resource: Resource::Parts, buyer }));
+    w.note_inbound(buyer, Resource::Parts, 20.0);
+    w.dispatch_truck(super::market::TruckOrigin::Building(yard), Cargo { from: yard, to: buyer, resource: Resource::Parts, amount: 20.0, price: 0.0 }, 6);
+    let mut car = None;
+    let mut lifted = false;
+    let mut in_bay = false;
+    for _ in 0..120 {
+        tick(&mut w, 1);
+        match w.containers.boxes[id].at {
+            Where::Lifting(d) if d == yard => lifted = true,
+            Where::Truck(c) => {
+                car = Some(c);
+                break;
+            }
+            _ => {}
+        }
+        if let Some((c, _)) = w.containers.lorries.iter().find(|(_, j)| j.depot == yard) {
+            if w.lorry_bay(*c).is_some() {
+                in_bay = true;
+                let st = w.lorry_status(*c).unwrap();
+                assert!(st.contains("parked at") || st.contains("in a bay at"), "{st}");
+                assert!(w.traffic.cars[*c].bay, "drawn in the bay");
+            }
+        }
+    }
+    let car = car.expect("the box went onto a lorry");
+    assert!(lifted && in_bay, "it stood in a bay and the carrier lifted the box: lifted {lifted} bay {in_bay}");
+    // The chassis is the box's length.
+    assert_eq!(crate::vehicle::chassis_of(w.traffic.cars[car].model.boxed), Some(true), "a forty-foot chassis under a forty-foot box");
+    assert!(w.containers.boxes[id].forty);
+    let mut delivered = false;
+    let mut home = false;
+    for _ in 0..4000 {
+        tick(&mut w, 1);
+        assert!(w.traffic.cars.contains_key(car), "the lorry is never taken off the road in town: {:?}", w.lorry_note(car));
+        delivered |= w.containers.boxes[id].log.iter().any(|s| s.1 == Event::Delivered);
+        if delivered && w.containers.boxes[id].at == Where::Stored(yard) && w.lorry_bay(car).is_some() && !w.containers.trucks.contains_key(&car) {
+            home = true;
+            break;
+        }
+    }
+    assert!(delivered && home, "delivered, and back in a bay with the empty set down: {:?} {:?}", events(&w, id), w.lorry_status(car));
+    assert_eq!(crate::vehicle::chassis_of(w.traffic.cars[car].model.boxed), Some(true), "an empty chassis is still a chassis");
+    assert!(w.lorry_status(car).unwrap().contains("waiting for a box"), "{:?}", w.lorry_status(car));
+}
+
+/// [r8] A lorry that leaves the map says where it went.
+#[test]
+fn a_lorry_taken_off_the_road_leaves_a_note() {
+    let (mut w, yard, _) = town();
+    let car = w.spawn_box_lorry(yard, yard, yard).expect("a lorry at the gate");
+    w.note_lorry(car, "left town by road".to_string());
+    w.traffic.remove_car(car);
+    assert_eq!(w.lorry_note(car), Some("left town by road"));
+    assert!(!w.containers.lorries.contains_key(&car));
+}
+
+/// [r8] Every empty gets a use by its condition: past the depot's share of
+/// room the worst go first (sent back out by their lines), sound ones stay
+/// for the exports, and those fit only for scrap, with no scrap yard to
+/// take them, are sold for scrap out of town after a wait instead of
+/// piling up for ever.
+#[test]
+fn empties_are_used_by_condition_and_the_surplus_is_capped() {
+    let (mut w, yard, _) = town();
+    let cap = w.box_capacity(yard, DepotKind::Rail);
+    let limit = ((cap as f32 * cx::SURPLUS_SHARE) as usize).min(cx::SURPLUS_MAX);
+    let day = w.clock.day() as i32;
+    let mut scrap = Vec::new();
+    let mut worn = Vec::new();
+    let mut sound = Vec::new();
+    for k in 0..(limit + 20) {
+        let id = young_box(&mut w, yard, k % 2 == 0, None);
+        let r = &mut w.containers.boxes[id];
+        // (Come in today, bar the scrap: no line has repositioned them yet.)
+        r.since = 4 * crate::clock::MINUTES_PER_DAY;
+        if k < 6 {
+            r.since = 0;
+            r.built = day - 365 * 23;
+            scrap.push(id);
+        } else if k < 22 {
+            r.built = day - 365 * 13;
+            worn.push(id);
+        } else {
+            sound.push(id);
+        }
+    }
+    w.clock.tick += 4 * crate::clock::MINUTES_PER_DAY;
+    let today = w.clock.day() as i64;
+    w.daily_containers();
+    assert_eq!(w.containers.stats.sold_for_scrap_total as usize, scrap.len(), "no scrap yard: sold for scrap out of town");
+    for id in &scrap {
+        let gone_or_going = w.containers.boxes.get(*id).is_none_or(|r| r.bound_out);
+        assert!(gone_or_going, "a scrap box is on its way out");
+    }
+    let staying: Vec<cx::BoxId> = w.containers.boxes.iter().filter(|(_, r)| r.at == Where::Stored(yard) && !r.bound_out).map(|(id, _)| id).collect();
+    assert!(staying.len() <= limit, "the surplus is capped: {} over a limit of {limit}", staying.len());
+    // The worst went: every box going out is at least as worn as any kept.
+    let kept_worst = staying.iter().map(|id| w.containers.boxes[*id].wear(today)).fold(0.0f32, f32::max);
+    let out_best = w.containers.boxes.values().filter(|r| r.bound_out && !r.for_scrap(today)).map(|r| r.wear(today)).fold(1.0f32, f32::min);
+    assert!(out_best + 1e-4 >= kept_worst || w.containers.boxes.values().filter(|r| r.bound_out && !r.for_scrap(today)).count() == 0, "worst first: out {out_best} kept {kept_worst}");
+    assert!(sound.iter().filter(|id| staying.contains(id)).count() >= sound.len() / 2, "the sound ones are kept for the exports");
+    // A freight train calling takes the ones going out first.
+    let out_ids = w.empties_to_send(yard, 3);
+    assert!(out_ids.iter().all(|id| w.containers.boxes[*id].bound_out), "the empties going out go first");
+}
+
+/// [r8] A freight forwarder: two firms' exports, each charged a fee, go
+/// round in one leased box (sound, from the yard) on one lorry; the box is
+/// set down at the freight yard full of both firms' goods and leaves town
+/// on the next freight train, counted as exports.
+#[test]
+fn a_forwarder_fills_one_box_from_several_firms_and_charges_each() {
+    let (mut w, yard, _) = town();
+    let lot = free_lot(&w, LandUse::Industrial);
+    let fw = w.open_business(lot, BusinessKind::FreightForwarder, true).expect("a forwarder");
+    let lot = free_lot(&w, LandUse::Industrial);
+    let f1 = w.open_business(lot, BusinessKind::Fab, true).expect("a firm");
+    let lot = free_lot(&w, LandUse::Industrial);
+    let f2 = w.open_business(lot, BusinessKind::Assembly, true).expect("another firm");
+    let empty = young_box(&mut w, yard, true, None);
+    let m1 = w.buildings[f1].business.as_ref().unwrap().money;
+    let took = w.forwarders_take_exports(&[(f1, Resource::Parts, 24.0, 900.0), (f2, Resource::Electronics, 20.0, 800.0)]);
+    assert!((took - 44.0).abs() < 0.01, "the forwarder takes both loads");
+    assert!(w.buildings[f1].business.as_ref().unwrap().money < m1, "the firm pays the fee");
+    let fees = w.containers.forwarders[&fw].fees_total;
+    assert!(fees > 2.0 * cx::FORWARDER_FEE - 0.01, "a fee per load: {fees}");
+    w.forwarder_rounds();
+    assert_eq!(w.containers.boxes[empty].owner, Owner::Forwarder(fw), "it leased the sound empty at the yard");
+    let mut done = false;
+    for _ in 0..5000 {
+        tick(&mut w, 1);
+        let r = &w.containers.boxes[empty];
+        if r.at == Where::Stored(yard) && r.export.len() == 2 {
+            done = true;
+            break;
+        }
+    }
+    let r = &w.containers.boxes[empty];
+    assert!(done, "full of both firms' goods, back at the yard: {:?} at {:?}", events(&w, empty), r.at);
+    let firms: Vec<BuildingId> = r.export.iter().map(|l| l.firm).collect();
+    assert!(firms.contains(&f1) && firms.contains(&f2));
+    let ev = events(&w, empty);
+    assert!(ev.contains(&Event::Leased) && ev.contains(&Event::CraneOn) && ev.contains(&Event::CraneOff) && ev.iter().filter(|e| **e == Event::Packed).count() == 2, "{ev:?}");
+    let card = w.forwarder_card(fw).unwrap();
+    assert_eq!(card.3.loads_total, 2);
+    assert_eq!(card.3.firms.len(), 2);
+    assert!(w.buildings[yard].rail_outbound > 0.0, "a train is due to take it");
+    // Out on the next freight train.
+    assert!(w.spawn_train(TrainKind::Freight, &[yard]));
+    for _ in 0..400 {
+        tick(&mut w, 1);
+        if w.containers.boxes.get(empty).is_none_or(|r| r.at == Where::Train) {
+            break;
+        }
+    }
+    assert!(w.containers.boxes.get(empty).is_none_or(|r| r.at == Where::Train), "on the train: {:?}", w.containers.boxes.get(empty).map(|r| r.at));
+    assert!(w.containers.stats.exported_total >= 1);
+    assert_eq!(w.containers.forwarders[&fw].boxes_out, 1);
+}
+
+/// [r8] Lorries in bays, the carrier's work, forwarders' books and the
+/// boxes aboard ships come back from a save as they were.
+#[test]
+fn bays_jobs_and_books_survive_a_save() {
+    let (mut w, yard, buyer) = town();
+    young_box(&mut w, yard, false, Some(cx::Goods { resource: Resource::Parts, buyer }));
+    w.dispatch_truck(super::market::TruckOrigin::Building(yard), Cargo { from: yard, to: buyer, resource: Resource::Parts, amount: 10.0, price: 0.0 }, 6);
+    tick(&mut w, 2);
+    assert!(!w.containers.depots.is_empty() && !w.containers.lorries.is_empty());
+    w.containers.forwarders.insert(buyer, cx::Forwarder { loads_total: 3, fees_total: 99.0, ..Default::default() });
+    let ron = w.to_ron().unwrap();
+    let w2 = World::from_ron(&ron).unwrap();
+    assert_eq!(w.containers.depots, w2.containers.depots);
+    assert_eq!(w.containers.lorries.keys().collect::<Vec<_>>(), w2.containers.lorries.keys().collect::<Vec<_>>());
+    assert_eq!(w.containers.forwarders, w2.containers.forwarders);
+    let bays: Vec<bool> = w.traffic.cars.values().map(|c| c.bay).collect();
+    let bays2: Vec<bool> = w2.traffic.cars.values().map(|c| c.bay).collect();
+    assert_eq!(bays, bays2);
+    let at: Vec<Where> = w.containers.boxes.values().map(|r| r.at).collect();
+    let at2: Vec<Where> = w2.containers.boxes.values().map(|r| r.at).collect();
+    assert_eq!(at, at2);
 }

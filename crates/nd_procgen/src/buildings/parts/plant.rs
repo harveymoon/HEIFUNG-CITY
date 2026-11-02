@@ -59,6 +59,22 @@ pub fn container_paint(rng: &mut impl Rng, base: [f32; 3], wear: f32) -> [f32; 3
     c
 }
 
+/// [r8] Road grime and old soot a box's paint takes on over the years.
+pub const BOX_GRIME: [f32; 3] = [0.15, 0.12, 0.095];
+
+/// [r8] A real box's paint as it ages (Harvey: "white should not be the
+/// color under super faded, muted is what they tend to look like"): never
+/// chalked towards white; it goes muted (greyer in its own colour),
+/// darker and dirtier the more worn it is.
+pub fn aged_paint(rng: &mut impl Rng, base: [f32; 3], wear: f32) -> [f32; 3] {
+    let k = rng.random_range(0.95..1.04);
+    let c = base.map(|x| x * k);
+    let lum = 0.3 * c[0] + 0.55 * c[1] + 0.15 * c[2];
+    let w = wear.clamp(0.0, 1.0);
+    let muted = mix(c, [lum, lum, lum], 0.45 * w);
+    mix(mul(muted, 1.0 - 0.3 * w), BOX_GRIME, 0.2 * w)
+}
+
 /// Gradient decal: `top` at its upper edge fading to `bottom` at its lower
 /// one. Rust running down from a rail, a stain under a casting.
 #[allow(clippy::too_many_arguments)]
@@ -215,7 +231,7 @@ pub(crate) fn container_core(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f
         (Livery::Any(col), _) => col,
         (Livery::Line(l), _) => l.body,
     };
-    let paint = container_paint(rng, base, wear);
+    let paint = if life.is_some() { aged_paint(rng, base, wear) } else { container_paint(rng, base, wear) };
     let frame_col = mul(paint, 0.72);
     let door = if rng.random_bool(0.5) { -1.0f32 } else { 1.0 };
     let door = life.map_or(door, |l| l.door.signum());
@@ -375,7 +391,8 @@ pub(crate) fn container_core(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f
             break;
         }
         // A repainted patch in not-quite-matching paint, or bare primer.
-        let col = if rng.random_bool(0.7) { container_paint(rng, paint, 0.0) } else { mix([0.42, 0.40, 0.37], paint, 0.2) };
+        let primer = if life.is_some() { [0.28, 0.26, 0.24] } else { [0.42, 0.40, 0.37] };
+        let col = if rng.random_bool(0.7) { container_paint(rng, paint, 0.0) } else { mix(primer, paint, 0.2) };
         let (pw, ph) = (rng.random_range(0.6..2.4f32).min(len * 0.4), rng.random_range(0.5..1.6f32).min(wall_h * 0.8));
         let lu = rng.random_range(-1.0..1.0f32) * (hl - pw * 0.5 - 0.3).max(0.0);
         let side = if rng.random_bool(0.5) { 1.0f32 } else { -1.0 };
@@ -405,6 +422,24 @@ pub(crate) fn container_core(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f
         for side in [-1.0f32, 1.0] {
             let hh = wall_h * (0.18 + 0.3 * k);
             streak_decal(g.part(Container), at(0.0, wall_a + hh * 0.5, side * (hw + 0.012)), long, len - 0.5, hh, across * side, mix(paint, rust, 0.15 + 0.2 * k), mix(paint, rust, 0.55 + 0.35 * k));
+        }
+    }
+    if life.is_some() && wear > 0.22 {
+        // [r8] Rust spreading from the corners and along the edges: down
+        // each corner post from the casting, up from the bottom corners,
+        // and a dirty run under the roof seam all along each side.
+        let k = ((wear - 0.22) / 0.78).clamp(0.0, 1.0);
+        let rust = mix(pal.rust_stain, pal.rust, 0.6);
+        for side in [-1.0f32, 1.0] {
+            for end in [-1.0f32, 1.0] {
+                let w = 0.3 + 0.9 * k;
+                let hh = wall_h * (0.14 + 0.46 * k);
+                streak_decal(g.part(Container), at(end * (hl - w * 0.5 - 0.04), wall_b - hh * 0.5, side * (hw + 0.014)), long, w, hh, across * side, mix(paint, rust, 0.8), mix(paint, rust, 0.12));
+                let hb = wall_h * (0.1 + 0.25 * k);
+                streak_decal(g.part(Container), at(end * (hl - w * 0.4 - 0.04), wall_a + hb * 0.5, side * (hw + 0.015)), long, w * 0.8, hb, across * side, mix(paint, rust, 0.2), mix(paint, rust, 0.75));
+            }
+            let sh = 0.22 + 0.25 * k;
+            streak_decal(g.part(Container), at(0.0, wall_b - sh * 0.5, side * (hw + 0.011)), long, len - 0.4, sh, across * side, mix(paint, BOX_GRIME, 0.45 + 0.3 * k), mix(paint, BOX_GRIME, 0.08));
         }
     }
     let streaks = ((wear * 2.6 + rng.random_range(0.0..0.8)) as usize).min(room);

@@ -86,6 +86,8 @@ impl World {
         crate::prof!("step_cargo_hubs", self.step_cargo_hubs());
         // [delivery-hours] Lorries due out now.
         crate::prof!("step_freight_queue", self.step_freight_queue());
+        // [r8] Container lorries in the depots' bays, the carriers' moves.
+        crate::prof!("step_box_yards", self.step_box_yards());
         // [games] Away fans driving in to a game, and home after.
         crate::prof!("step_games", self.step_games());
         // [airlift] Stuck vehicles lifted off the road.
@@ -216,6 +218,8 @@ impl World {
     // [K34] Shipping containers: lorries and trains gone, stack developers.
     if tick % 60 == 17 {
         crate::prof!("hourly_containers", self.hourly_containers());
+        // [r8] The forwarders send their lorries round the firms.
+        crate::prof!("forwarder_rounds", self.forwarder_rounds());
     }
     // [land] People present and moving, at :13 clear of the rest.
     if tick % 60 == 13 {

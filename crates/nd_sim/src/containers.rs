@@ -90,7 +90,7 @@ pub const HAULS_PER_HOUR: usize = 2;
 pub const DEPOT_RESERVE: f32 = 0.4;
 /// Days an old box waits for a scrap yard in town before it is sold for
 /// scrap out of town.
-pub const SCRAP_WAIT_DAYS: u64 = 6;
+pub const SCRAP_WAIT_DAYS: u64 = 3;
 /// Old boxes a day that keep one scrap yard busy (the pressure).
 pub const BOXES_PER_SCRAP_YARD: f32 = 12.0;
 /// Days a line leaves an empty with a container yard before the yard buys
@@ -155,6 +155,9 @@ pub enum Owner {
     Home(BuildingId),
     /// A scrap yard, to cut up.
     Scrap(BuildingId),
+    /// [r8] A freight forwarder in town that leased it to fill with the
+    /// town's exports.
+    Forwarder(BuildingId),
 }
 
 /// [K34] Where a box is.
@@ -172,6 +175,12 @@ pub enum Where {
     Home(BuildingId),
     /// At the scrap yard, waiting to be cut up.
     Scrap(BuildingId),
+    /// [r8] Hanging from a crane or a straddle carrier at a depot (the
+    /// port's quay crane, a yard's carrier), between the stack and a ship,
+    /// a lorry's chassis or a wagon.
+    Lifting(BuildingId),
+    /// [r8] Aboard a freighter (coming in, or going out).
+    Ship(crate::ports::ShipId),
 }
 
 /// [K34] What a box is full of, and who it is for (a null buyer: whoever
@@ -221,6 +230,20 @@ pub enum Event {
     Counted,
     /// Salvaged from a home pulled down.
     Salvaged,
+    /// [r8] Lifted onto a lorry's chassis by the yard's carrier.
+    CraneOn,
+    /// [r8] Lifted off a lorry's chassis into the stack.
+    CraneOff,
+    /// [r8] Craned aboard a freighter at the quay.
+    LoadedOnShip,
+    /// [r8] Leased by a freight forwarder (place: the forwarder).
+    Leased,
+    /// [r8] A firm's export load packed in (place: the firm).
+    Packed,
+    /// [r8] Left town full of the town's exports.
+    Exported,
+    /// [r8] Sold for scrap out of town (no scrap yard in town to take it).
+    SoldForScrap,
 }
 
 impl Event {
@@ -245,6 +268,13 @@ impl Event {
             Event::CutUp => "cut up for steel",
             Event::Counted => "in town when the records began",
             Event::Salvaged => "salvaged from a home pulled down",
+            Event::CraneOn => "lifted onto a lorry's chassis",
+            Event::CraneOff => "lifted off a lorry into the stack",
+            Event::LoadedOnShip => "craned aboard a freighter",
+            Event::Leased => "leased by a freight forwarder",
+            Event::Packed => "export goods packed in",
+            Event::Exported => "left town full of exports",
+            Event::SoldForScrap => "sold for scrap out of town",
         }
     }
 }
@@ -278,6 +308,23 @@ pub struct BoxRec {
     pub visits: u16,
     #[serde(default)]
     pub log: Vec<Stop>,
+    /// [r8] Export loads packed in by a freight forwarder, firm by firm:
+    /// the box is full of the town's exports, bound out of town.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub export: Vec<ExportLoad>,
+    /// [r8] An empty its owners want gone from town (the surplus over a
+    /// depot's room): the next ship or train calling takes it, or a lorry
+    /// out by road.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bound_out: bool,
+}
+
+/// [r8] One firm's export goods in a forwarder's box.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ExportLoad {
+    pub firm: BuildingId,
+    pub resource: Resource,
+    pub amount: f32,
 }
 
 /// [K34] The marks of a box's life on its paint.
@@ -425,6 +472,17 @@ pub struct BoxStats {
     pub awaiting_scrap: u32,
     /// The same counted into the pressure: due for scrap today.
     pub due_scrap_today: u32,
+    /// [r8] Boxes that left town full of exports, and export units
+    /// through the forwarders today and yesterday (the pressure).
+    pub exported_total: u32,
+    pub export_units_today: f32,
+    pub export_units_yday: f32,
+    /// [r8] Boxes sold for scrap out of town (no yard in town to take them).
+    pub sold_for_scrap_total: u32,
+    /// [r8] Crane and carrier moves of real boxes, all told.
+    pub crane_moves_total: u32,
+    /// [r8] Surplus empties sent out by their lines.
+    pub surplus_out_total: u32,
 }
 
 /// [K34] Every box in town and the Stacks homes built from them.
@@ -441,9 +499,157 @@ pub struct Containers {
     /// Records are kept (a new city, or an older save given its stock).
     #[serde(default)]
     pub live: bool,
+    /// [r8] The lorry bays, gate queues and yard carriers of the depots.
+    #[serde(default)]
+    pub depots: BTreeMap<BuildingId, DepotYard>,
+    /// [r8] What each container lorry is about (a box to fetch, a round).
+    #[serde(default)]
+    pub lorries: BTreeMap<CarId, LorryJob>,
+    /// [r8] The boxes each freighter brings and takes, in crane order.
+    #[serde(default)]
+    pub ships: BTreeMap<crate::ports::ShipId, ShipBoxes>,
+    /// [r8] The freight forwarders' books.
+    #[serde(default)]
+    pub forwarders: BTreeMap<BuildingId, Forwarder>,
+    /// [r8] Lorries taken off the road lately, and where they went: the
+    /// follow camera says so instead of "they are gone".
+    #[serde(skip)]
+    pub lorry_notes: BTreeMap<CarId, (u64, String)>,
     /// Bumped whenever a box moves: the renderer redraws what changed.
     #[serde(skip)]
     pub version: u64,
+}
+
+/// [r8] Minutes the yard's carrier takes over one box between the stack
+/// and a lorry's chassis (drive over, lift, carry, set down).
+pub const CARRIER_MINUTES: u64 = 4;
+/// [r8] Lorries that queue at a depot's gate beyond its bays.
+pub const GATE_QUEUE: usize = 6;
+/// [r8] Minutes a lorry waits in a bay for the box it came for (still
+/// aboard a ship, on a train) before it sets off with the goods anyway.
+pub const BOX_WAIT_MINUTES: u64 = 8 * 60;
+/// [r8] Minutes an idle lorry stands in a bay before it leaves for home
+/// or out of town (when nobody else is waiting for the bay, longer).
+pub const IDLE_MINUTES: u64 = 10 * 60;
+/// [r8] Seconds a forwarder's lorry stands at a firm while its goods are
+/// packed into the box.
+pub const PACK_SECONDS: f32 = 240.0;
+/// [r8] Firms a forwarder's lorry calls at on one round, at most.
+pub const ROUND_STOPS: usize = 4;
+/// [r8] A forwarder's fee per firm's load, and per unit of goods on top.
+pub const FORWARDER_FEE: f32 = 40.0;
+pub const FORWARDER_FEE_PER_UNIT: f32 = 0.6;
+/// [r8] What a forwarder pays a line to lease an empty for a trip.
+pub const LEASE_PRICE: f32 = 120.0;
+/// [r8] Export units a day that keep one forwarder busy (the pressure).
+pub const UNITS_PER_FORWARDER: f32 = 600.0;
+/// [r8] How far a firm may be from a forwarder for it to take its goods.
+pub const FORWARDER_REACH: f32 = 3000.0;
+/// [r8] Wear below which an empty is sound enough for exports, and from
+/// which a worn one goes to the stack developers first.
+pub const SOUND_WEAR: f32 = 0.45;
+/// [r8] Share of a depot's room empties may fill before the surplus is
+/// sent out (imports outrunning exports pile up a little, no more), and
+/// the most a depot keeps at all.
+pub const SURPLUS_SHARE: f32 = 0.7;
+pub const SURPLUS_MAX: usize = 60;
+
+/// [r8] A depot's lorry bays, the queue at its gate, and its carrier's work.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct DepotYard {
+    /// Each bay's lorry (drawn in the bay; still on the road's books at
+    /// the kerb, off the carriageway).
+    #[serde(default)]
+    pub bays: Vec<Option<CarId>>,
+    /// Lorries queued at the gate, first come first in.
+    #[serde(default)]
+    pub queue: Vec<CarId>,
+    /// The carrier's move under way.
+    #[serde(default)]
+    pub crane: Option<CraneJob>,
+    /// Moves done (for the inspector).
+    #[serde(default)]
+    pub moves: u32,
+}
+
+/// [r8] One move of a yard's carrier: box `boxid` from the stack onto
+/// the chassis of lorry `car` in bay `bay` (`onto_truck`), or back.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CraneJob {
+    pub car: CarId,
+    pub boxid: BoxId,
+    pub onto_truck: bool,
+    pub bay: u8,
+    pub start: u64,
+}
+
+impl CraneJob {
+    /// How far through the move it is at `tick` + `frac`, 0..1.
+    pub fn progress(&self, tick: u64, frac: f32) -> f32 {
+        ((tick.saturating_sub(self.start)) as f32 + frac) / CARRIER_MINUTES as f32
+    }
+}
+
+/// [r8] A container lorry's business at a depot: the load it fetches
+/// (goods for a buyer, or boxes to haul), and a forwarder's round.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct LorryJob {
+    /// The depot it is bound for or standing at.
+    pub depot: BuildingId,
+    /// The paid load it fetches (delivered at `cargo.to`).
+    #[serde(default)]
+    pub cargo: Option<crate::traffic::Cargo>,
+    /// Boxes it is to take on (a haul to a home site, the scrap yard, out
+    /// of town, or the empty a forwarder leased), and where to.
+    #[serde(default)]
+    pub take: Vec<BoxId>,
+    #[serde(default)]
+    pub take_to: Option<BuildingId>,
+    /// Tick it got to the depot (0: not yet).
+    #[serde(default)]
+    pub since: u64,
+    /// [r8] A forwarder's round: the firms still to call at, and the depot
+    /// the filled box goes to.
+    #[serde(default)]
+    pub round: Option<Round>,
+}
+
+/// [r8] A forwarder's lorry going round the firms.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Round {
+    pub forwarder: BuildingId,
+    pub stops: Vec<ExportLoad>,
+    pub to: BuildingId,
+}
+
+/// [r8] A freighter's boxes: those it lands (in order) and those it
+/// loads, and how many crane moves are done.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ShipBoxes {
+    pub port: BuildingId,
+    #[serde(default)]
+    pub inbound: Vec<BoxId>,
+    #[serde(default)]
+    pub outbound: Vec<BoxId>,
+    #[serde(default)]
+    pub done: u32,
+}
+
+/// [r8] A freight forwarder's books: loads waiting to be collected, and
+/// what it has done.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Forwarder {
+    pub pending: Vec<ExportLoad>,
+    pub boxes_out: u32,
+    pub loads_total: u32,
+    pub units_total: f32,
+    pub firms: std::collections::BTreeSet<BuildingId>,
+    pub fees_total: f32,
+    pub fees_today: f32,
+    pub rounds: u32,
+    /// Tick the oldest load waiting came in.
+    pub since: u64,
 }
 
 impl Containers {
@@ -570,7 +776,7 @@ mod tests {
 
     #[test]
     fn wear_grows_with_age_and_knocks_and_shows() {
-        let r = BoxRec { line: 1, serial: 42, forty: true, kind: BoxKind::Dry, origin: 0, built: 0, knocks: 0, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new() };
+        let r = BoxRec { line: 1, serial: 42, forty: true, kind: BoxKind::Dry, origin: 0, built: 0, knocks: 0, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false };
         let young = r.wear(365);
         let old = r.wear(365 * 18);
         assert!(old > young + 0.4, "{young} {old}");
@@ -584,7 +790,7 @@ mod tests {
 
     #[test]
     fn the_log_keeps_the_first_entry_and_the_latest() {
-        let mut r = BoxRec { line: 0, serial: 1, forty: false, kind: BoxKind::Dry, origin: 0, built: 0, knocks: 0, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new() };
+        let mut r = BoxRec { line: 0, serial: 1, forty: false, kind: BoxKind::Dry, origin: 0, built: 0, knocks: 0, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false };
         r.note(0, Event::ArrivedRail, BuildingId::default());
         for t in 1..40 {
             r.note(t, Event::Stored, BuildingId::default());

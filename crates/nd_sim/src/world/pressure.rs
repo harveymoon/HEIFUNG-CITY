@@ -326,6 +326,9 @@ impl World {
             waterfront_sites: self.lots.values().filter(|l| l.building.is_none() && l.usable() && l.shore.is_waterfront() && !l.shore.beach && l.land_use != LandUse::Park).count() as f32,
             // [K34] yesterday's boxes due for scrap with no yard to cut them
             old_boxes: self.containers.stats.due_scrap_today as f32,
+            // [r8] yesterday's exports, and where boxes are shipped
+            export_units: self.containers.stats.export_units_yday,
+            box_terminals: self.box_depots().iter().filter(|d| matches!(d.1, DepotKind::Port | DepotKind::Rail)).count() as f32,
         }
     }
 
@@ -664,6 +667,14 @@ impl World {
                     anchors.push(self.city_centre());
                 }
                 Placement { uses: &[Industrial], anchors, reach: f32::INFINITY, min_area: 500.0, value: -1.0, needs_street: true, near: "the container yards" }
+            }
+            // [r8] By the port and the freight yards the boxes go out from.
+            PressureKind::FreightForwarder => {
+                let mut anchors: Vec<Vec2> = self.box_depots().into_iter().filter(|d| matches!(d.1, DepotKind::Port | DepotKind::Rail)).map(|d| d.2).collect();
+                if anchors.is_empty() {
+                    anchors.push(self.city_centre());
+                }
+                Placement { uses: &[Industrial, Commercial], anchors, reach: f32::INFINITY, min_area: 400.0, value: -0.5, needs_street: true, near: "the port and the freight yards" }
             }
             PressureKind::Marina => return None,
         };

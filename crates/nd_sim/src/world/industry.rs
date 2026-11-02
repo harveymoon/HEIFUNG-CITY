@@ -522,6 +522,11 @@ impl World {
     }
 
     fn lorry_arrived_here(&mut self, car_id: CarId) {
+        // [r8] Into a depot's bays (or its gate queue), or a firm on a
+        // forwarder's round.
+        if self.box_lorry_arrived(car_id) {
+            return;
+        }
         let Some(car) = self.traffic.cars.get(car_id) else { return };
         let Some(cargo) = car.cargo else { return };
         if is_return_trip(&cargo) {
@@ -535,17 +540,21 @@ impl World {
             // [ferry-islands] Back at an island's terminal: onto the car
             // ferry, home over the water.
             if self.island_pier_for(cargo.to) == Some(cargo.to) {
+                self.note_lorry(car_id, format!("onto the car ferry at {}", self.place_label(cargo.to)));
                 self.traffic.remove_car(car_id);
                 self.ports.stats.lorries_ferried_today += 1;
                 return;
             }
             if self.park_truck(cargo.to, home, model) {
+                self.note_lorry(car_id, format!("parked at {} (in its lot)", self.place_label(cargo.to)));
                 self.traffic.remove_car(car_id);
                 return;
             }
             // Home in its own yard, or off the map at the edge.
             let at_home = cargo.to == home && self.buildings.contains_key(home) && self.fleet_capacity(home) == 0;
             if at_home || !self.buildings.contains_key(cargo.to) && self.at_map_edge(car_id) {
+                let note = if at_home { format!("back in the yard of {}", self.place_label(home)) } else { "left town by road".to_string() };
+                self.note_lorry(car_id, note);
                 self.traffic.remove_car(car_id);
                 return;
             }
@@ -622,13 +631,20 @@ impl World {
         let model = self.traffic.cars[car_id].model;
         let pos = self.building_lot(at).map(|l| l.center).unwrap_or(self.traffic.cars[car_id].pos);
         let home_ok = home != at && self.buildings.get(home).is_some_and(|h| h.operating() && !h.is_derelict());
-        let dest = self
-            .fleet_lot_with_room(pos, FLEET_REACH)
-            .or_else(|| home_ok.then_some(home))
-            .or_else(|| self.fleet_lot_with_room(pos, f32::INFINITY))
-            .unwrap_or_default();
+        // [r8] A container lorry homed at a depot goes back to its bays
+        // (with the empty it carries, or to wait for the next box).
+        let to_bays = home_ok && self.containers.live && self.bay_depot(home).is_some() && (self.containers.trucks.contains_key(&car_id) || crate::vehicle::chassis_of(model.boxed).is_some());
+        let dest = if to_bays {
+            home
+        } else {
+            self.fleet_lot_with_room(pos, FLEET_REACH)
+                .or_else(|| home_ok.then_some(home))
+                .or_else(|| self.fleet_lot_with_room(pos, f32::INFINITY))
+                .unwrap_or_default()
+        };
         if dest == at && self.park_truck(dest, home, model) {
             // Delivered to a truck lot with room: it parks right there.
+            self.note_lorry(car_id, format!("parked at {} (in its lot)", self.place_label(dest)));
             self.traffic.remove_car(car_id);
             return true;
         }

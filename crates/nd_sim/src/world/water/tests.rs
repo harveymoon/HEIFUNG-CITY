@@ -211,8 +211,15 @@ fn freighters_berth_broadside_and_the_crane_works_their_cargo() {
     let id = w.place_port(PortKind::ShippingPort, click).expect("a port on the river bank");
     let [s0, _] = w.ports.port_of(id).unwrap().road_line();
     w.add_road(&[s0, road_at - flow * 300.0], 1, 1);
-    // Exports waiting on the quay; the next ship takes three boxes.
+    // Exports waiting on the quay; the next ship takes three boxes, the
+    // port's own empties [r8], when the crane lifts them aboard.
     w.ports.outbound = 3.0 * crate::ports::CONTAINER_UNITS + 5.0;
+    let port_b = w.ports.port_of(id).unwrap().building.unwrap();
+    let empties: Vec<crate::containers::BoxId> = (0..3).map(|_| w.make_box(crate::rail::BoxKind::Dry, true, crate::containers::Where::Stored(port_b), None, crate::containers::Event::Counted, port_b)).collect();
+    for &e in &empties {
+        w.containers.boxes[e].built = w.clock.day() as i32 - 300;
+        w.containers.boxes[e].knocks = 0;
+    }
     let dock = w.ports.port_of(id).unwrap().clone();
     let mut minds = IdleMind;
     let mut sid = None;
@@ -224,9 +231,29 @@ fn freighters_berth_broadside_and_the_crane_works_their_cargo() {
         }
     }
     let sid = sid.expect("a freighter sails");
+    // [r8] (Harvey flag 5) Nothing leaves the quay while it is at sea.
+    assert!(empties.iter().all(|e| w.containers.boxes[*e].at == crate::containers::Where::Stored(port_b)), "the empties wait on the quay");
+    let mut docked = false;
+    let mut seen_on_crane = false;
+    for _ in 0..4000 {
+        w.tick(&mut minds);
+        let Some(s) = w.ports.ships.get(sid) else { break };
+        if s.docked && !docked {
+            docked = true;
+            assert_eq!(s.boxes_out, 3, "it loads the exports by the box");
+            assert!(w.ports.outbound < crate::ports::CONTAINER_UNITS, "taken off the quay");
+            assert!(empties.iter().all(|e| w.containers.boxes[*e].at != crate::containers::Where::Ship(sid)), "none aboard yet as it ties up");
+        }
+        if empties.iter().any(|e| w.containers.boxes.get(*e).is_some_and(|r| r.at == crate::containers::Where::Lifting(port_b))) {
+            seen_on_crane = true;
+        }
+        if docked && s.dwell == 0 {
+            break;
+        }
+    }
+    assert!(docked && seen_on_crane, "the crane lifted them, one by one");
+    assert!(empties.iter().all(|e| w.containers.boxes.get(*e).is_some_and(|r| r.at == crate::containers::Where::Ship(sid))), "aboard once the crane is done");
     let ship = w.ports.ships[sid].clone();
-    assert_eq!(ship.boxes_out, 3, "it loads the exports by the box");
-    assert!(w.ports.outbound < crate::ports::CONTAINER_UNITS, "taken off the quay");
     // Broadside at the berth, along the shore; nosing in further out.
     let (at, dir) = ship.pose_at(ship.berth_s);
     assert!(at.distance(dock.berth) < 1.0);
@@ -413,4 +440,76 @@ fn ships_going_opposite_ways_pass_apart() {
     assert!(gap >= 20.0 || r.width < 50.0, "they pass {gap:.0} m apart on a {:.0} m river", r.width);
     let wet_line = route.iter().filter(|&&q| w.landscape.is_water(q)).count();
     assert!(out.iter().chain(&ret).filter(|&&q| w.landscape.is_water(q)).count() >= 2 * wet_line - 2, "kept on the water");
+}
+
+/// [r8] (Harvey flag 3) "A blue one come off the ship then a blue one on
+/// the crane then a blue one in the holding area": the freighter brings its
+/// imports as real boxes aboard; the quay crane lifts each one (the box on
+/// the crane is that box) onto the quay stack, and the lorry that came for
+/// it has that same box lifted onto its chassis by the carrier.
+#[test]
+fn the_crane_lands_the_ships_own_boxes_and_a_lorry_takes_the_same_one() {
+    use crate::containers::Where;
+    let mut w = valley(8);
+    w.economy.treasury = 500_000.0;
+    let (p, flow, n, width) = river_spot(&w);
+    let road_at = p + n * (width * 0.5 + 110.0);
+    w.add_road(&[road_at - flow * 300.0, road_at + flow * 300.0], 1, 1);
+    w.add_zone(vec![road_at + n * 10.0 - flow * 100.0, road_at + n * 10.0 + flow * 100.0, road_at + n * 80.0 + flow * 100.0, road_at + n * 80.0 - flow * 100.0], LandUse::Commercial);
+    let click = p + n * (width * 0.5 + 20.0);
+    let id = w.place_port(PortKind::ShippingPort, click).expect("a port on the river bank");
+    let [s0, _] = w.ports.port_of(id).unwrap().road_line();
+    w.add_road(&[s0, road_at - flow * 300.0], 1, 1);
+    let mut minds = IdleMind;
+    for _ in 0..3 {
+        w.tick(&mut minds);
+    }
+    let shop = w.lots.iter().filter(|(_, l)| l.usable() && l.land_use == LandUse::Commercial && l.car_access() && l.building.is_none()).map(|(id, _)| id).next().expect("a shop lot");
+    w.build_on(shop);
+    let buyer = w.lots[shop].building.unwrap();
+    w.finish_construction(buyer);
+    let jobs = w.buildings[buyer].jobs;
+    w.buildings[buyer].business = Some(Business::new(BusinessKind::Office, jobs));
+    let port_b = w.ports.port_of(id).unwrap().building.unwrap();
+    w.ports.inbound.push((port_b, Cargo { from: port_b, to: buyer, resource: Resource::Parts, amount: 30.0, price: 0.0 }));
+    w.note_inbound(buyer, Resource::Parts, 30.0);
+    let mut sid = None;
+    for _ in 0..800 {
+        w.tick(&mut minds);
+        sid = w.ports.ships.iter().find(|(_, s)| s.kind == ShipKind::Freighter).map(|(k, _)| k);
+        if sid.is_some() {
+            break;
+        }
+    }
+    let sid = sid.expect("a freighter sails");
+    let inbound = w.containers.ships[&sid].inbound.clone();
+    assert!(!inbound.is_empty(), "its imports are real boxes aboard");
+    assert!(inbound.iter().all(|b| w.containers.boxes[*b].at == Where::Ship(sid)));
+    assert_eq!(w.ship_deck(sid).len(), inbound.len(), "drawn on its deck");
+    let first = inbound[0];
+    let mut seen: Vec<Where> = vec![Where::Ship(sid)];
+    for _ in 0..6000 {
+        w.tick(&mut minds);
+        let at = w.containers.boxes.get(first).map(|r| r.at);
+        let Some(at) = at else { break };
+        if seen.last() != Some(&at) {
+            seen.push(at);
+        }
+        if matches!(at, Where::Truck(_)) {
+            break;
+        }
+    }
+    let kinds: Vec<&str> = seen
+        .iter()
+        .map(|w| match w {
+            Where::Ship(_) => "ship",
+            Where::Lifting(_) => "crane",
+            Where::Stored(_) => "stack",
+            Where::Truck(_) => "lorry",
+            _ => "other",
+        })
+        .collect();
+    assert_eq!(&kinds[..], &["ship", "crane", "stack", "crane", "lorry"], "one box all the way: {seen:?}");
+    assert!(w.containers.boxes[first].log.first().is_some_and(|s| s.1 == crate::containers::Event::ArrivedSea));
+    assert!(w.containers.ships.get(&sid).is_none_or(|b| b.done >= 1));
 }

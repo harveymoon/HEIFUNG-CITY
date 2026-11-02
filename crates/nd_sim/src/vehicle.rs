@@ -227,15 +227,42 @@ pub struct VehicleModel {
     /// Paint index into the vehicle palette (`0..PAINTS`).
     #[serde(default)]
     pub paint: u8,
-    /// [K34] The shipping container on a semi's trailer, as `1 + line +
-    /// 10 * wear step` (`containers::truck_look`); 0: the trailer's own
-    /// box as before (a line picked by the variant).
+    /// [K34] [r8] A semi's trailer: 0 its own (a curtain-sider for goods
+    /// not in containers), [`CHASSIS_20`] / [`CHASSIS_40`] a skeletal
+    /// container chassis (the real box drawn on it); 1..=50 from older
+    /// saves read as the twenty-foot chassis.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub boxed: u8,
 }
 
 fn is_zero(x: &u8) -> bool {
     *x == 0
+}
+
+/// [r8] `VehicleModel::boxed` of a container rig: a tractor with a
+/// skeletal chassis for a twenty- or a forty-foot box, drawn bare (the box
+/// it carries, if any, is drawn on it as the box itself). Codes 1..=50
+/// (older saves: a box drawn into the trailer) read as the twenty.
+pub const CHASSIS_20: u8 = 100;
+pub const CHASSIS_40: u8 = 101;
+
+/// [r8] Whether `boxed` is a container chassis, and if so a forty-foot one.
+pub fn chassis_of(boxed: u8) -> Option<bool> {
+    match boxed {
+        CHASSIS_40 => Some(true),
+        CHASSIS_20 | 1..=50 => Some(false),
+        _ => None,
+    }
+}
+
+/// [r8] Bumper to bumper, a semi: the tractor and its chassis (or its own
+/// trailer). Kept here so the sim queues them as long as they are drawn.
+pub fn semi_length(boxed: u8) -> f32 {
+    match chassis_of(boxed) {
+        Some(true) => 16.8,
+        Some(false) => 11.4,
+        None => 9.6,
+    }
 }
 
 /// Daily income from which `Tier::for_income` counts someone rich.
