@@ -327,7 +327,13 @@ fn park_paths(g: &mut Geometry, c: &Ctx, park: &Park) {
         Tier::Mid => (Paving, pal.paving, 0.06),
         Tier::High => (Paving, mul(pal.paving, 1.18), 0.06),
     };
-    for path in &layout.paths {
+    // [r8-parks] A walk that meets the car park stops at its kerb: people
+    // cross the yard itself on foot.
+    let walks: Vec<Vec<Vec2>> = match park.yard {
+        Some(yd) => layout.paths.iter().flat_map(|p| clip_off(p, |q| yd.distance(q) < 0.2)).collect(),
+        None => layout.paths.clone(),
+    };
+    for path in &walks {
         if path.len() < 2 {
             continue;
         }
@@ -517,6 +523,37 @@ fn park_edges(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, park: &Park, inner:
             }
         }
     }
+}
+
+/// [r8-parks] The runs of a polyline outside where `cut` holds, a metre
+/// at a time.
+fn clip_off(path: &[Vec2], cut: impl Fn(Vec2) -> bool) -> Vec<Vec<Vec2>> {
+    let mut out: Vec<Vec<Vec2>> = Vec::new();
+    let mut run: Vec<Vec2> = Vec::new();
+    for w in path.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let n = (a.distance(b).ceil() as usize).max(1);
+        for k in 0..=n {
+            let p = a.lerp(b, k as f32 / n as f32);
+            if cut(p) {
+                if run.len() >= 2 {
+                    out.push(std::mem::take(&mut run));
+                }
+                run.clear();
+            } else if run.last().is_none_or(|q| q.distance(p) > 1e-3) {
+                // Only the corners and the ends of a run need keeping.
+                if k == 0 || k == n || run.is_empty() {
+                    run.push(p);
+                } else if cut(a.lerp(b, (k + 1) as f32 / n as f32)) {
+                    run.push(p);
+                }
+            }
+        }
+    }
+    if run.len() >= 2 {
+        out.push(run);
+    }
+    out
 }
 
 /// The parts of the outline `poly` not covered by any of `seams` (stretches

@@ -717,13 +717,17 @@ fn entrance_for(l: &Lot, g: Vec2, link: bool) -> Vec2 {
             }
         }
     }
-    // A step in from the nearest point of the edge, so a gap in a seam is
-    // just inside it.
+    // [r8-parks] Right at the edge, square in from the nearest point of
+    // it: the walks of two lots of a park meet across the seam (or the
+    // footpath) with no lawn between their ends.
     let n = poly.len();
-    if let Some(q) = (0..n).map(|i| crate::geom::project_on_segment(g, poly[i], poly[(i + 1) % n]).1).min_by(|a, b| a.distance(g).total_cmp(&b.distance(g))) {
-        let p = q + (l.center - q).normalize_or_zero() * 0.9;
-        if point_in_polygon(p, poly) && distance_to_boundary(p, poly) >= 0.6 {
-            return p;
+    if let Some((i, q)) = (0..n).map(|i| (i, crate::geom::project_on_segment(g, poly[i], poly[(i + 1) % n]).1)).min_by(|a, b| a.1.distance(g).total_cmp(&b.1.distance(g))) {
+        let d = (poly[(i + 1) % n] - poly[i]).normalize_or_zero().perp();
+        for inward in [d, -d] {
+            let p = q + inward * 0.15;
+            if point_in_polygon(p, poly) && point_in_polygon(q + inward * 1.0, poly) {
+                return p;
+            }
         }
     }
     let p = g + inward * 0.8;
