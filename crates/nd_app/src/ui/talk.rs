@@ -39,7 +39,10 @@ pub fn button(ui: &mut egui::Ui) {
 }
 
 /// The chat, inside the person pane.
-pub fn section(ui: &mut egui::Ui, w: &mut World, rt: &mut CommitteeRt, id: CitizenId) {
+/// [r7-sim-thread] `w` is the Sim's city: drawn every frame, so it takes
+/// `&mut` only to send or clear (a write every frame would keep the sim
+/// thread starting over).
+pub fn section(ui: &mut egui::Ui, w: &mut crate::sim_thread::SimCore, rt: &mut CommitteeRt, id: CitizenId) {
     let Some(name) = w.citizens.get(id).map(|c| c.name.clone()) else { return };
     let first = name.split_whitespace().next().unwrap_or(&name).to_string();
     let typing = rt.talker.typing(id);

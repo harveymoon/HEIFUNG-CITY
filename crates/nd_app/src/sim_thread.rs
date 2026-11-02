@@ -662,4 +662,27 @@ mod tests {
         assert!(sites.iter().any(|(s, n)| s.contains("sim_thread.rs") && *n >= 3), "{sites:?}");
         assert!(a.world.stats.rebases >= 1);
     }
+
+    /// A window that writes the city every frame (open, not clicked) does
+    /// not stop the clock: after a few such frames the ticks run in the
+    /// frame, and back on the thread once the writes stop.
+    #[test]
+    fn a_write_every_frame_does_not_stop_the_city() {
+        let (mut a, _) = twins();
+        let t0 = a.world.clock.tick;
+        for _ in 0..12 {
+            a.world.economy.treasury += 0.0;
+            a.advance(1.0);
+            a.world.wait_batch(Duration::from_secs(30));
+        }
+        assert!(a.edit_streak >= 4);
+        let t1 = a.world.clock.tick;
+        assert!(t1 > t0 + 5, "the city went on: {t0} -> {t1}");
+        for _ in 0..12 {
+            a.advance(1.0);
+            a.world.wait_batch(Duration::from_secs(30));
+        }
+        assert_eq!(a.edit_streak, 0);
+        assert!(a.world.clock.tick > t1 && a.world.stats.batches > 0, "back on the thread");
+    }
 }

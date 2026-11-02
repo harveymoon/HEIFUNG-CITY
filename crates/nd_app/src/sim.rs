@@ -21,6 +21,9 @@ pub const SPEEDS: [(&str, f32); 6] = [("1×", 1.0), ("4×", 4.0), ("16×", 16.0)
 /// The speed a new game starts at (16×: the pace the game always had).
 pub const DEFAULT_SPEED: usize = 2;
 const MAX_TICKS_PER_FRAME: u32 = 400;
+/// [r7-sim-thread] Frames in a row with a write to the city after which the
+/// ticks run in the frame (see `Sim::edit_streak`).
+const EDIT_STREAK: u32 = 4;
 /// [r7-sim-thread] The most ticks the sim thread runs in one batch.
 const MAX_BATCH: u32 = 400;
 /// Real time the sim may consume per frame before it yields to rendering.
@@ -49,6 +52,14 @@ pub struct Sim {
     /// [r7-sim-thread] Tick on the sim thread (`ND_SIM_THREAD=0`: in the
     /// frame, as before).
     pub threaded: bool,
+    /// [r7-sim-thread] Frames in a row in which something wrote the city
+    /// between two `advance`s, and the write count the last one ended at.
+    /// A window that takes `&mut` to the world every frame (open, not
+    /// clicked) would make the thread start over every frame and the city
+    /// stand still: after [`EDIT_STREAK`] such frames the ticks run in the
+    /// frame, as before the thread, until the writes stop.
+    pub edit_streak: u32,
+    edits_seen: u64,
     /// Events produced since the previous frame.
     pub events: Vec<SimEvent>,
     /// Set by load; render systems rebuild everything.
@@ -102,6 +113,8 @@ impl Sim {
             pause_at: None,
             player_car: None,
             threaded: std::env::var("ND_SIM_THREAD").map_or(true, |v| v != "0"),
+            edit_streak: 0,
+            edits_seen: 0,
             events: Vec::new(),
             full_rebuild: true,
             generation: 0,
@@ -259,8 +272,11 @@ impl Sim {
     /// first. Returns the ticks shown this frame.
     pub fn advance(&mut self, dt: f32) -> u32 {
         let began = std::time::Instant::now();
-        let ticks = if self.threaded { self.advance_threaded(dt) } else { None };
+        let edits = self.world.stats_edits();
+        self.edit_streak = if edits != self.edits_seen { self.edit_streak + 1 } else { 0 };
+        let ticks = if self.threaded && self.edit_streak < EDIT_STREAK { self.advance_threaded(dt) } else { None };
         let ticks = ticks.unwrap_or_else(|| self.advance_in_frame(dt));
+        self.edits_seen = self.world.stats_edits();
         self.ticks_last_frame = ticks;
         self.tick_ms = began.elapsed().as_secs_f32() * 1000.0;
         // Ticks delivered against ticks asked for, as a half-second moving

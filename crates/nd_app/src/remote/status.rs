@@ -76,7 +76,7 @@ pub(super) fn status(ctx: &Ctx) -> Value {
         let c = &sim.world;
         let s = &c.stats;
         v["sim_thread"] = json!({
-            "threaded": sim.threaded && c.threaded(), "running": c.running(), "ready": c.has_ready(), "pause_at": sim.pause_at,
+            "threaded": sim.threaded && c.threaded(), "in_frame_while_edited": sim.edit_streak >= 4, "running": c.running(), "ready": c.has_ready(), "pause_at": sim.pause_at,
             "tick_ms": round(s.tick_ms), "copy_ms": round(s.copy_ms), "max_tick_ms": round(s.max_tick_ms),
             "batches": s.batches, "ticks": s.ticks, "discarded": s.discarded, "rebases": s.rebases, "waited_ms": round(s.waited_ms),
             "edit_sites": c.edit_sites(8),
