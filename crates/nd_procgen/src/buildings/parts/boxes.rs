@@ -212,7 +212,7 @@ fn lum(c: [f32; 3]) -> f32 {
 /// that reads on the paint, else white or black, faded with the paint.
 pub fn number_colour(face: &BoxFace) -> [f32; 3] {
     let line = &SHIPPING_LINES[face.line as usize % SHIPPING_LINES.len()];
-    let body = if face.kind == BoxKind::Reefer { [0.78, 0.78, 0.75] } else { line.body };
+    let body = line.body;
     let base = if face.marks.repainted {
         if lum(body) > 0.4 { [0.05, 0.05, 0.06] } else { [0.85, 0.85, 0.8] }
     } else if (lum(line.mark) - lum(body)).abs() > 0.25 {
@@ -244,7 +244,7 @@ pub fn box_number(m: &mut MeshData, f: &Frame, u: f32, v: f32, yaw: f32, y0: f32
     let drop = move |k: usize| scuffed && nd_sim::hash::unit(nd_sim::hash::mix(seed, k as u64)) < 0.3;
     let text = face.number;
     let line = &SHIPPING_LINES[face.line as usize % SHIPPING_LINES.len()];
-    let patch = mul(if face.kind == BoxKind::Reefer { [0.78, 0.78, 0.75] } else { line.body }, 0.82);
+    let patch = mul(line.body, 0.82);
     let iso: &[u8] = match (face.forty, face.kind) {
         (true, BoxKind::Reefer) => b"45R1",
         (false, BoxKind::Reefer) => b"22R1",

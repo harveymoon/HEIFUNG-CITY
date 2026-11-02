@@ -227,6 +227,10 @@ pub(crate) fn container_core(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f
     let wear = (c.wear * 0.75 + tier_wear + rng.random_range(-0.1..0.2)).clamp(0.0, 1.0);
     let wear = life.map_or(wear, |l| l.wear.clamp(0.0, 1.0));
     let base = match (livery, look) {
+        // [r8] A real box is its line's colour, a reefer too (the stacks of
+        // white reefers read as boxes faded to white); a generic reefer
+        // stays white.
+        (Livery::Line(l), BoxLook::Reefer) if life.is_some() => l.body,
         (_, BoxLook::Reefer) => [0.78, 0.78, 0.75],
         (Livery::Any(col), _) => col,
         (Livery::Line(l), _) => l.body,
@@ -349,7 +353,7 @@ pub(crate) fn container_core(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f
     match livery {
         Livery::Line(l) => {
             // A line paints its mark on both sides, the same on every box.
-            let mark = mix(if look == BoxLook::Reefer { l.body } else { l.mark }, paint, 0.15 * wear);
+            let mark = mix(if look == BoxLook::Reefer && life.is_none() { l.body } else { l.mark }, paint, 0.15 * wear);
             let bh = (wall_h * 0.18).min(0.42);
             let (bw, bh2) = ((len * 0.3).clamp(1.2, 3.2), (wall_h * 0.36).min(0.95));
             for side in [-1.0f32, 1.0] {
