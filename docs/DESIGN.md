@@ -1451,6 +1451,65 @@ Citizens are rendered from their simulated positions every frame.
   land value nuisance layer, vertiports are a nuisance too, and people on the street who are not rich grumble
   (a memory, a little mood, once a day). The renderer lands aircraft on the decks the buildings drew
   (`Geometry::pads`).
+- **Airports** [airport] (`nd_sim::airport` for the data, layout and rules, `world/airports.rs` for the
+  systems, `render/airport.rs`, the inspector's airport card, remote `airports` / `place`): Build >
+  Transit > Air offers a **regional airfield** (one 900 m runway, a small terminal, four walk-out stands
+  and a freight stand, a 24 m tower, two hangars, a car park, a fuel farm; 1,150 x 300 m; 160,000 to build,
+  1,300/day, 140 jobs) and an **international airport** (two parallel 1,500 m runways, arrivals on the
+  outer one, departures on the inner, a terminal with ten jet-bridge stands, three freight stands and a
+  cargo shed, a 52 m tower, hangars, a five-deck and two surface car parks, a fuel farm; 1,760 x 600 m;
+  520,000, 4,200/day, 620 jobs). One of each per city. A click fits the whole complex to the ground there
+  (`World::plan_airport`): every heading in 5 degree steps is tried and the one with the least earthwork
+  (and fewest grown buildings bought out) that clears everything wins (the remote API can fix `heading`).
+  It must be on the map, dry, levellable (the deepest cut or highest fill from the level it is graded to at most
+  40 m, paid at 0.03 a cubic metre of the mean cut or fill; streams up to 40 m wide are culverted; the field is levelled to the middle of its highest and lowest ground, the lot's pad), off every road (shift-click, or `clear: true` remotely, clears the streets across the site at 60 a metre, buys out what grew there and the grown buildings rising through the approach surfaces, 6,000 each; highways, railways and bridges cannot be cleared), column, station, dock and
+  civic building; and the **approach surfaces** off both ends of every runway (from 60 m past the end,
+  150 m (airfield 75 m) each side widening 15%, rising 1:40, 3 km out) must be clear: a building rising through one, or a hill
+  within 1.2 km closer than 12 m under the 3 degree glide path (`terrain_limit`; the first 500 m off each end is cut down with the field, up to 40 m, and 25 m is allowed beyond) closes that end: the airport then runs one way, as a mountain airfield does, landing towards the closed end and taking off away from it (`Airport::one_way`); hills at both ends refuse it; refuses the site, saying which and by how much. Afterwards they are
+  **height limit zones** (`World::height_limit_at`): nothing grows through them. The whole field is the
+  building's lot (`Airport::corners`, made again on every rebuild like a dock's); a 2+2-lane forecourt
+  road is laid along the landside unless a street runs there, and the airport runs once it reaches the
+  city. *Flights*: each midnight a timetable (`airport::timetable`, deterministic hashes, no world RNG)
+  of rotations (in from a town off the map, out to another) is made from the demand: 0.035 trips a day
+  per resident, 0.02 per office job and 90% of the tourist demand (`daily_pax`), at 80% loads, within
+  3-24 (airfield) or 8-84 (international) rotations, arrivals spread over 06:00-22:30 in morning and
+  evening banks (a night curfew), plus freighters for the air cargo. A plane's visit is a phase with a
+  start and an end tick (`PlanePhase`): the approach in over the map edge on a 3 degree glide slope, the
+  roll-out, taxiing in along the taxiways and links, the turnaround on its stand (30-85 minutes by type),
+  pushback and taxiing out to the far runway end, holding short until the runway is clear, the take-off
+  roll and the 7 degree climb out over the edge. It lands and takes off into the wind
+  (`weather::wind_dir`, rechecked hourly). Its pose is a pure function of the phase and the clock
+  (`plane_pose`), so the renderer draws exactly what the sim reckons. Approaches are spaced (3 minutes a
+  runway; on a single runway take-offs wait for landings and the other way round), a flight with no free
+  stand or in a gale or storm holds off the map (late), and one held three hours is cancelled; delays
+  over 15 minutes count. *Passengers*: off a plane, the visitors among them check into the city's hotels
+  as tourists who came by air (beds permitting) and fly home from it; the rest are business travellers
+  and residents back from trips. They reach town by car, cab and the airport coach (a few real cars and
+  cabs and a coach go between the terminal and homes, hotels and offices, `Airport::cars`), or by rail,
+  metro or bus when a station or a stop is within 450 m of the terminal door (30 / 22 / 10% of them;
+  the stop counts its riders). *Air cargo*: electronics and art imports (and a fifth of consumer goods
+  at the international airport) wait at the cargo terminal for the next flight in (a freighter takes
+  everything, a passenger plane its belly) and are trucked on to the buyers (`import_by_air`, before the
+  cargo hub); a load not flown in 15 hours comes by road. Those dear exports earn 10% more flown out and
+  go to the cargo terminal by lorry. *Money* (`Flow::AirportFees`, `Flow::AirportUpkeep`): landing
+  charges 60-420 by type, 2.5 per passenger out, 4% handling on cargo, against the daily upkeep.
+  *Noise*: every landing and take-off is logged on the air noise grid along its approach or climb,
+  loudest at the runway end and by type (a wide-body 1.8 times a narrow-body); the flight paths take up
+  to 0.16 off the land value at the runway ends at full traffic (40 movements a day), fading 2.4 km out
+  (`splat_airport_noise`); at midnight homes in cells louder than 25 count as under the flight paths and
+  their people complain (a memory, a little mood, a noise concern). *Drawn*: runways with edge,
+  centreline, threshold, aiming-point and touchdown-zone markings, edge, centreline and threshold lights
+  and PAPIs, blue taxiway edge lights and green link centrelines, an approach light row with a crossbar
+  off each runway end on poles, sequenced flashers running in to the end in use at night, apron
+  floodlights, the terminal (glazed, lit halls, neon roof band, forecourt canopy, jet bridges), the tower
+  with its lit cab and a rotating green and white beacon at night, barrel-roofed hangars, the cargo shed
+  with its truck docks and stacked containers, car parks full of cars, the fuel tanks, a windsock and the
+  perimeter fence; planes (turboprop, regional jet, narrow-body, wide-body, freighter) in their airline's
+  livery with lit windows, nav lights and the gear down near the ground, a tug pushing back, fuel
+  bowsers, belt loaders, baggage carts and catering trucks at the stands. Airlines (Corvid Air, Halide
+  Airways, Ferrowing, Lumen Pacific, Tessera Air, Quill Regional, Strata Freight, Kitebox Cargo) and the
+  towns they fly to are fictional. Saves keep the timetable and the planes' phases (`World::airports`,
+  `Building::airport`, both serde defaults).
 - **Taxis** (`nd_sim::taxi`, `world/taxis.rs`): a taxi company is a commercial business
   (`BusinessKind::TaxiCompany`) nobody plans. Every trip that chose another way although a cab
   would have beaten it by 10% (priced with an 8-minute wait, as if a company existed) is demand

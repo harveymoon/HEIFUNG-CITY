@@ -134,7 +134,7 @@ pub(super) fn sync_lots(
             // [sweep-sim] A dock or a station stands on its own unzoned
             // footprint: drawn as itself (a pale transport outline), not as
             // the civic/industrial use its lot carries for the economy.
-            let transport = lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.port.is_some() || b.rail.is_some());
+            let transport = lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.port.is_some() || b.rail.is_some() || b.airport.is_some());
             let c = if lot.shore.beach { BEACH_TINT } else if transport { TRANSPORT_TINT } else { zone_layer_color(lot.land_use) };
             let alpha = if lot.building.is_some() { 0.5 } else { 0.72 };
             // A plant or battery field is a flat yard: the wash would flood
@@ -164,7 +164,8 @@ pub(super) fn sync_lots(
             continue;
         }
         // A landmark, a beach or a built park floors its own ground.
-        let own_floor = lot.land_use == nd_sim::LandUse::Park || lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.service.is_some_and(|s| s.kind.is_landmark()));
+        // [airport] An airport's field is drawn by `render/airport.rs`.
+        let own_floor = lot.land_use == nd_sim::LandUse::Park || lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.service.is_some_and(|s| s.kind.is_landmark()) || b.airport.is_some());
         match lot_fill(lot.landlocked, lot.building.is_some(), holed.contains(&id), own_floor) {
             LotFill::Earth => fill.ground_polygon(&lot.polygon, 0.02, scale(pal.ground, 1.15)),
             LotFill::Gravel => fill.ground_polygon(&lot.polygon, 0.02, rgba(pal.gravel)),

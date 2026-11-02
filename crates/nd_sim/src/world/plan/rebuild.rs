@@ -65,7 +65,7 @@ impl World {
         self.parcel_lots = true;
         // (Docks, stations and yards stand on lots of their footprints, made
         // again below.)
-        let lockable = |b: BuildingId| self.is_city_building(b) && self.buildings.get(b).is_some_and(|x| x.port.is_none() && x.rail.is_none());
+        let lockable = |b: BuildingId| self.is_city_building(b) && self.buildings.get(b).is_some_and(|x| x.port.is_none() && x.rail.is_none() && x.airport.is_none());
         let locked: Vec<LotId> = old_lots.iter().filter(|(_, l)| l.building.is_some_and(lockable)).map(|(id, _)| id).collect();
         let parks: Vec<Vec<Vec2>> = old_lots
             .values()
@@ -115,6 +115,11 @@ impl World {
         let pids: Vec<crate::ports::PortId> = self.ports.ports.keys().collect();
         for pid in pids {
             self.ports.ports[pid].lot = self.port_lot(pid).map(|lot| self.lots.insert(lot));
+        }
+        // [airport] An airport's whole field is its lot.
+        let aids: Vec<crate::airport::AirportId> = self.airports.airports.keys().collect();
+        for aid in aids {
+            self.airports.airports[aid].lot = self.airport_lot(aid).map(|lot| self.lots.insert(lot));
         }
         // Match old lots to new ones through a coarse grid of the new lots'
         // bounding boxes, so a rebuild costs lots × neighbours, not lots².
@@ -251,7 +256,7 @@ impl World {
         }
         // [carlife] Parked cars on streets that changed find a kerb again.
         crate::prof!("rb.kerbs", self.refresh_kerbs());
-        crate::prof!("rb.links", { self.refresh_rail_links(); self.refresh_port_links() });
+        crate::prof!("rb.links", { self.refresh_rail_links(); self.refresh_port_links(); self.refresh_airport_links() });
         crate::prof!("rb.walk", self.rebuild_walk());
         // [r4-flags-sim] Footbridges and buttons follow a crosswalk that
         // moved with its junction (Harvey moved a junction a little and

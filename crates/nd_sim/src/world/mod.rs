@@ -31,6 +31,11 @@ mod buses;
 /// [lines] Inserting and sharing bus stops.
 pub mod bus_edit;
 mod cargo_hubs;
+/// [airport] Airports (`crate::airport`): placing, flights, passengers, cargo, noise.
+mod airports;
+pub use airports::{AirportReport, PlaneRow};
+#[cfg(test)]
+mod airport_tests;
 /// [K34] Shipping containers' lives (`crate::containers`).
 mod containers;
 pub use containers::{truck_look, BoxCounts, BoxStory, DepotKind};
@@ -772,6 +777,9 @@ pub struct World {
     /// (`world/cargo_hubs.rs`).
     #[serde(default)]
     pub cargo_hubs: crate::cargo_hub::CargoHubs,
+    /// [airport] Airports, their timetables and planes.
+    #[serde(default)]
+    pub airports: crate::airport::Airports,
     /// [passengers] Stops on the way and the counts of people riding
     /// along in others' cars (`world/rides.rs`).
     #[serde(default)]
@@ -1008,6 +1016,7 @@ impl World {
             tolls: Default::default(),
             taxis: Default::default(),
             cargo_hubs: Default::default(),
+            airports: Default::default(),
             rides: Default::default(),
             streets: Default::default(),
             pillars: Vec::new(),
@@ -1105,13 +1114,13 @@ impl World {
     pub fn under_facility(&self, p: Vec2) -> bool {
         // [review] The corners as they are (`footprint()` copies them into
         // a new Vec per facility per call; this runs per lot in many loops).
-        self.facilities.values().any(|f| point_in_polygon(p, &f.corners()))
+        self.facilities.values().any(|f| point_in_polygon(p, &f.corners())) || self.airports.airports.values().any(|a| point_in_polygon(p, &a.corners()))
     }
 
     /// The ground every station, yard and dock stands on, facilities first
     /// (in slot order), then docks.
     pub(super) fn structure_footprints(&self) -> Vec<Vec<Vec2>> {
-        self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).collect()
+        self.facilities.values().map(|f| f.footprint()).chain(self.ports.ports.values().map(|p| p.footprint())).chain(self.airports.airports.values().map(|a| a.footprint())).collect()
     }
 
     /// How tall the surroundings of a lot justify building: the floors of

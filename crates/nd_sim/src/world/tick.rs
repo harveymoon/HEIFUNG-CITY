@@ -52,6 +52,7 @@ impl World {
         // [land] Billionaires' convoys form and follow.
         crate::prof!("step_convoys", self.step_convoys());
         crate::prof!("step_air", self.step_air());
+        crate::prof!("step_airports", self.step_airports());
         crate::prof!("step_taxis", self.step_taxis());
         // [ped-highway] Nobody stands about on a highway or ramp.
         if tick % kerbside::STRANDED_SWEEP_EVERY == 7 {
@@ -167,6 +168,7 @@ impl World {
         // [stories] late licences, noise, heritage grants
         self.daily_stories();
         crate::prof!("daily_tourism", self.daily_tourism());
+        crate::prof!("daily_airports", self.daily_airports());
         // [waterfront] beach tallies, and the households near a good one
         self.daily_shore();
         // [parks] litter, campers, dealers: how kept each park is
@@ -295,6 +297,10 @@ impl World {
             }
             // [land] A convoy's escort or police car at the end of its run.
             if self.convoy_car_arrived(car_id) {
+                continue;
+            }
+            // [airport] Passengers' cars and cabs to and from the terminal.
+            if self.airport_car_arrived(car_id) {
                 continue;
             }
             // Fire engines, police cars and ambulances: services handle them.

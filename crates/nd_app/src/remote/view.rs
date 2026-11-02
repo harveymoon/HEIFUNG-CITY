@@ -1081,6 +1081,7 @@ pub fn placeable_key(p: nd_sim::Placeable) -> String {
         nd_sim::Placeable::MetroStation => "metro_station".to_string(),
         nd_sim::Placeable::Toll(s) => s.key().to_string(),
         nd_sim::Placeable::CargoHub => "cargo_hub".to_string(),
+        nd_sim::Placeable::Airport(s) => s.key().to_string(),
     }
 }
 

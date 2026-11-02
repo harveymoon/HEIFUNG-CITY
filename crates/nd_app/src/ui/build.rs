@@ -176,6 +176,8 @@ fn transit_group(p: Placeable) -> &'static str {
         Placeable::ParkingLot(_) => "Parking",
         Placeable::Toll(_) => "Tolls",
         Placeable::CargoHub => "Freight",
+        // [airport]
+        Placeable::Airport(_) => "Air",
         _ => "Other",
     }
 }

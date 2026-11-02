@@ -241,6 +241,10 @@ pub(super) fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         v["megablock"] = super::megablock::building_megablock(w, id);
         // [supertall] height, rank in the skyline, and a league tower's record
         v["tower"] = skyline::building_tower(w, id);
+        // [airport] the airport's card
+        if b.airport.is_some() {
+            v["airport"] = super::airports::building_airport(w, id);
+        }
         // [ferry-routes] a terminal's routes, a shipping port's lane
         if crate::ferry_select::is_route_dock(w, id) {
             v["routes"] = ferry::routes_json(w, id);

@@ -418,6 +418,9 @@ impl World {
         let export_bonus = (if yards.is_empty() { 1.0 } else { rail::RAIL_EXPORT_BONUS }).max(self.sea_export_bonus()) * self.hub_export_bonus();
         let mut shipped = 0.0f32;
         let mut sold: Vec<(BuildingId, f32)> = Vec::new();
+        // [airport] Dear exports flown out earn more, and go by lorry to the cargo terminal.
+        let air_bonus: Vec<f32> = Resource::ALL.iter().map(|r| self.air_export_bonus(*r)).collect();
+        let mut by_air: Vec<(BuildingId, Resource, f32)> = Vec::new();
         for &bid in &ids {
             let b = &mut self.buildings[bid];
             if !b.operating() {
@@ -439,7 +442,11 @@ impl World {
                 if have > keep * 1.2 {
                     let surplus = have - keep;
                     bz.take(*r, surplus);
-                    let income = surplus * r.base_price() * EXPORT_DISCOUNT * export_bonus;
+                    let air = air_bonus[Resource::ALL.iter().position(|x| x == r).unwrap_or(0)];
+                    let income = surplus * r.base_price() * EXPORT_DISCOUNT * export_bonus * air;
+                    if air > 1.0 {
+                        by_air.push((bid, *r, surplus));
+                    }
                     shipped += surplus;
                     sold.push((bid, income));
                     bz.revenue_today += income;
@@ -456,6 +463,7 @@ impl World {
         }
         // Exports through a cargo hub leave in full semis.
         self.hub_note_exports(shipped);
+        self.air_exports(by_air);
         // [berthing] And by sea: onto the quay for the next freighter's
         // crane (what it loads; a show of the trade, the money is paid).
         if shipped > 0.0 && !self.ports.working(crate::ports::PortKind::ShippingPort).is_empty() {
@@ -753,6 +761,10 @@ impl World {
         let site = self.buildings.get(to).is_some_and(|b| b.construction.is_some());
         // A cargo hub within reach takes it in (by sea, rail or a shared
         // semi) and sends it on in its own lorry (`world/cargo_hubs.rs`).
+        // [airport] Dear goods fly in, to the cargo terminal.
+        if !site && self.import_by_air(cargo) {
+            return;
+        }
         if !site {
             if let Some(hub) = self.hub_for(to) {
                 self.import_via_hub(hub, cargo);
@@ -936,6 +948,10 @@ impl World {
     pub(super) fn deliver(&mut self, cargo: Cargo) {
         // Goods for a cargo hub go into its shed for the local lorries.
         if self.hub_receive(&cargo) {
+            return;
+        }
+        // [airport] Exports for the holds at an airport's cargo terminal.
+        if self.airport_receive(&cargo) {
             return;
         }
         let Some(b) = self.buildings.get_mut(cargo.to) else { return };

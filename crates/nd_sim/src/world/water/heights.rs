@@ -256,6 +256,12 @@ impl World {
                 let mean = lot.polygon.iter().map(|c| self.landscape.height(*c)).sum::<f32>() / lot.polygon.len().max(1) as f32;
                 pad_at.insert(l, mean.max(crate::landscape::BANK_HEIGHT));
             }
+            // [airport] The field is levelled to the height it was planned at.
+            for a in self.airports.airports.values() {
+                if let Some(l) = a.lot {
+                    pad_at.insert(l, a.level);
+                }
+            }
         }
         // [stable-parcels] A lot kept through the works keeps its pad while
         // its street's height moves by no more than `PAD_HOLD` (the heights

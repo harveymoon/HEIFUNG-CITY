@@ -484,6 +484,9 @@ pub struct Building {
     /// A shipping port or ferry terminal.
     #[serde(default)]
     pub port: Option<crate::ports::PortKind>,
+    /// [airport] An airport (its whole field is this building's lot).
+    #[serde(default)]
+    pub airport: Option<crate::airport::AirportSize>,
     /// A police, fire, health, school or dispatch building, or an
     /// attraction, placed by the player (`nd_sim::services`).
     #[serde(default)]
@@ -643,6 +646,7 @@ impl Building {
             rail_inbound: Vec::new(),
             rail_outbound: 0.0,
             port: None,
+            airport: None,
             construction: None,
             service: None,
             demolition: None,
@@ -677,7 +681,7 @@ impl Building {
     /// disagreed with each other and with [`Building::is_special`] (city
     /// car parks and cargo hubs were missing here, annexes there).
     pub fn is_city_structure(&self) -> bool {
-        self.is_power() || self.depot || self.rail.is_some() || self.port.is_some() || self.service.is_some() || self.metro || self.city_parking || self.business.as_ref().is_some_and(|z| z.kind == crate::market::BusinessKind::CargoHub)
+        self.is_power() || self.depot || self.rail.is_some() || self.port.is_some() || self.airport.is_some() || self.service.is_some() || self.metro || self.city_parking || self.business.as_ref().is_some_and(|z| z.kind == crate::market::BusinessKind::CargoHub)
     }
 
     /// Not an ordinary grown building: a city structure

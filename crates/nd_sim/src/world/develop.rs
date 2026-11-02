@@ -231,6 +231,8 @@ impl World {
                 self.splat_social(&mut b);
                 // Rotor noise under busy flight paths and round the pads.
                 self.splat_air_noise(&mut b);
+                // [airport] jets on the flight paths
+                self.splat_airport_noise(&mut b);
                 // [industry] fouled ground
                 self.splat_contamination(&mut b);
                 // [districts] eco and historic districts lift the land
