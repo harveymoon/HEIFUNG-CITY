@@ -68,6 +68,7 @@ impl World {
             return false;
         }
         let Some(entrance) = self.building_entrance(to) else { return false };
+        let origin = self.citizens[p].inside;
         self.leave_building(p);
         let seated = matches!(self.citizens[driver].activity, Activity::Driving { .. });
         let c = &mut self.citizens[p];
@@ -82,6 +83,7 @@ impl World {
             self.pack_meal(p);
             self.begin_trip(p, TripMode::Car, dpos.distance(entrance));
         }
+        self.log_leg(p, origin, to, purpose, crate::travel_log::MODE_LIFT | crate::travel_log::mode_bit(TripMode::Car), begin);
         self.rides.note(kind);
         true
     }
@@ -339,12 +341,14 @@ impl World {
         // The parent drives to the school, the child beside them.
         let from = door;
         let lu = self.buildings.get(school).map_or(LandUse::Civic, |b| b.land_use);
+        let origin = self.citizens[parent].inside;
         if at.distance(from) > 25.0 {
             self.walk_to_car(parent, car, at, school, Purpose::Visit(lu), from);
         } else if !self.start_drive(parent, car, school, Purpose::Visit(lu)) {
             return false;
         }
         self.begin_trip(parent, TripMode::Car, from.distance(gate));
+        self.log_leg(parent, origin, school, Purpose::Visit(lu), crate::travel_log::mode_bit(TripMode::Car), true);
         self.rides.onward.push(OnwardLeg { driver: parent, stop: school, to: then, purpose: then_purpose });
         if !self.join_ride(kid, parent, school, purpose, RideKind::SchoolRun, true) {
             return false;

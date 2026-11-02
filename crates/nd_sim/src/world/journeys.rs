@@ -243,6 +243,12 @@ impl World {
     pub fn activity_line(&self, id: CitizenId) -> String {
         let Some(c) = self.citizens.get(id) else { return String::new() };
         let name = |b: BuildingId| self.buildings.get(b).map(|b| b.name.clone());
+        // [r7-citizen-story] On the way to the pound for the car: say so
+        // (the trip is a "wander" to the yard as far as the mode choice goes).
+        if let Some(spot) = c.to_car.filter(|_| c.activity.is_traveling()).and_then(|t| self.vehicles.cars.get(t.car)).and_then(|v| v.spot()).filter(|s| s.kind == crate::vehicle::ParkKind::Pound) {
+            let how = if c.mode == TravelMode::Bike { " (cycling)" } else { "" };
+            return format!("going to get the car out of the pound at {}{how}", spot.building.and_then(name).unwrap_or_else(|| "the yard".into()));
+        }
         if let Some((to, purpose)) = self.citizen_target(id) {
             let how = match (&c.activity, c.mode) {
                 (Activity::Driving { .. }, _) => " (driving)",

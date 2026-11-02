@@ -84,6 +84,19 @@ pub struct TalkCard {
     pub acquaintances: Vec<String>,
     /// "day 4, 14:20".
     pub now: String,
+    /// [r7-citizen-story] What has just gone wrong or is wrong now, newest
+    /// first: the car towed, clamped or ticketed, no home, no job, hunger,
+    /// the rent. They react to these.
+    #[serde(default)]
+    pub troubles: Vec<String>,
+    /// [r7-citizen-story] Where the car is, in words.
+    #[serde(default)]
+    pub car: Option<String>,
+    /// [r7-citizen-story] Memories of today and yesterday that matter (a
+    /// tow, an eviction, a new job), with when, oldest first, even when the
+    /// last `MEMORIES_IN_PROMPT` are all benches and walks.
+    #[serde(default)]
+    pub notable: Vec<String>,
 }
 
 /// Words for `NoBus::key`.
@@ -195,6 +208,12 @@ impl TalkCard {
         // Memories, newest last, with when.
         let n = c.memories.len();
         card.memories = c.memories.iter().skip(n.saturating_sub(MEMORIES_IN_PROMPT)).map(|m| format!("day {} {}: {}", m.tick / 1440 + 1, hhmm(m.tick), m.text)).collect();
+        // [r7-citizen-story] What matters lately, and what is wrong now.
+        let since = w.clock.day().saturating_sub(1) * 1440;
+        let recent_from = n.saturating_sub(MEMORIES_IN_PROMPT);
+        card.notable = c.memories.iter().enumerate().filter(|(i, m)| *i < recent_from && m.tick >= since && super::voices::is_key(&m.text)).map(|(_, m)| format!("day {} {}: {}", m.tick / 1440 + 1, hhmm(m.tick), m.text)).collect();
+        card.car = w.car_whereabouts(id);
+        card.troubles = troubles_of(w, id, card.car.as_deref());
         // Places.
         let lu = |l: nd_sim::LandUse| l.label().to_ascii_lowercase();
         let mut favs: Vec<&nd_sim::places::PlaceMemory> = c.places.places.iter().filter(|p| !p.never && (p.regular || p.score > 0.15)).collect();
@@ -244,6 +263,21 @@ impl TalkCard {
         s.push_str(&format!("Places you swore never to go back to: {}.\n", none(&self.never_again)));
         s.push_str(&format!("People you know: {}.\n", none(&self.people)));
         s.push_str(&format!("Faces you see at your regular spots: {}.\n", none(&self.acquaintances)));
+        if let Some(car) = &self.car {
+            s.push_str(&format!("Your car: {car}.\n"));
+        }
+        if !self.troubles.is_empty() {
+            s.push_str("What is wrong for you right now (on your mind):\n");
+            for t in &self.troubles {
+                s.push_str(&format!("- {t}\n"));
+            }
+        }
+        if !self.notable.is_empty() {
+            s.push_str("Things that mattered lately, oldest first:\n");
+            for m in &self.notable {
+                s.push_str(&format!("- {m}\n"));
+            }
+        }
         s.push_str("Your recent memories, oldest first:\n");
         if self.memories.is_empty() {
             s.push_str("- nothing much\n");
@@ -253,6 +287,60 @@ impl TalkCard {
         }
         s
     }
+}
+
+/// [r7-citizen-story] What is wrong for them now, the freshest first: the
+/// car (towed, on the hook, clamped, ticketed: with the cost), no home, no
+/// job, hunger, the rent. From the state, and the memories of the last day
+/// for what just happened.
+pub fn troubles_of(w: &World, id: CitizenId, car: Option<&str>) -> Vec<String> {
+    let Some(c) = w.citizens.get(id) else { return Vec::new() };
+    let mut out = Vec::new();
+    let tick = w.clock.tick;
+    let ago = |t: u64| {
+        let m = tick.saturating_sub(t);
+        if m < 60 {
+            "just now".to_string()
+        } else if m < 24 * 60 {
+            format!("{} hour{} ago", m / 60, if m / 60 == 1 { "" } else { "s" })
+        } else {
+            format!("{} days ago", m / 1440)
+        }
+    };
+    let last = |needle: &str| c.memories.iter().rev().find(|m| m.text.to_ascii_lowercase().contains(needle) && tick.saturating_sub(m.tick) <= 2 * 1440);
+    if let Some(car) = car {
+        if car.starts_with("in the pound") || car.starts_with("on a tow truck") {
+            let when = last("pound").or_else(|| last("clamp")).or_else(|| last("tow")).map(|m| format!(" (towed {})", ago(m.tick))).unwrap_or_default();
+            out.push(format!("Your car was towed{when}: it is {car}."));
+        } else if car.contains("clamped") {
+            out.push(format!("Your car has been clamped: {car}."));
+        } else if car.contains("ticketed") {
+            out.push(format!("Your car got a parking ticket: {car}."));
+        }
+    }
+    if let Some(m) = last("paid").filter(|m| m.text.contains("pound")) {
+        out.push(format!("{} ({})", m.text.trim_end_matches('.'), ago(m.tick)));
+    }
+    if let Some(m) = last("auction") {
+        out.push(format!("{} ({})", m.text.trim_end_matches('.'), ago(m.tick)));
+    }
+    if c.home.is_none() {
+        out.push("You have no home right now.".into());
+    } else if let Some(m) = last("had to go").or_else(|| last("evict")) {
+        out.push(format!("You were pushed out of your old home {}: {}", ago(m.tick), m.text));
+    }
+    if c.work.is_none() && matches!(c.stage(), nd_sim::citizens::LifeStage::Adult) {
+        out.push("You are out of work.".into());
+    }
+    if c.hungry_days > 0 {
+        out.push(format!("You have been hungry {} days running.", c.hungry_days));
+    } else if c.satiety < 0.3 {
+        out.push("You are hungry right now.".into());
+    }
+    if c.rent_stress_days > 0 {
+        out.push(format!("The rent has been crushing you for {} days.", c.rent_stress_days));
+    }
+    out
 }
 
 /// One earlier line of the chat, as the prompt shows it.
@@ -288,7 +376,7 @@ pub fn chat_system(city: &str, who: &TalkCard) -> String {
     format!(
         "You are {name}, a fictional citizen of {city}, a fictional cyberpunk city in the game HEIFUNG://CITY. The city's mayor has stopped you in the street to talk.\n\
 Answer as {first}, in character, in the first person, as spoken words: 1 to 3 short sentences, at most 60 words. Let your personality, mood and worries colour how you speak.\n\
-You know only what is written below about yourself and the city: your state, your memories, your places and the people you know. If asked about anything else, say you don't know, or guess vaguely in character. Never invent figures, names, places or events.\n\
+You know only what is written below about yourself and the city: your state, your memories, your places and the people you know. Anything listed as wrong for you right now (your car towed, no home, no job, hunger) is on your mind: let it show in how you answer, and bring it up if the mayor asks how you are or what happened. If asked about anything else, say you don't know, or guess vaguely in character. Never invent figures, names, places or events.\n\
 Everyone and everything here is fictional: never mention real people, real companies, brands or real-world places. Do not break character or mention being an AI, a model or a game. No stage directions, no quotation marks, no name prefix.\n\
 \n\
 About you:\n{card}",
@@ -407,7 +495,8 @@ pub fn mock_chat(who: &TalkCard, said: &str, seed: u64, first: bool) -> String {
                 bits.push("I don't have a bike.".into());
             }
             if who.commute_best.as_deref() != Some("car") && who.work.is_some() {
-                bits.push(if who.owns_car { "The car's there, but it's not worth it.".to_string() } else { "No car either.".to_string() });
+                let impounded = who.car.as_deref().is_some_and(|c| c.starts_with("in the pound") || c.starts_with("on a tow truck"));
+                bits.push(if impounded { "And the car's in the pound, so that's that.".to_string() } else if who.owns_car { "The car's there, but it's not worth it.".to_string() } else { "No car either.".to_string() });
             }
             if let Some(p) = who.travel_pain.iter().find(|p| !p.ends_with("fine")) {
                 bits.push(format!("Lately {}.", p));
@@ -455,6 +544,7 @@ pub fn mock_chat(who: &TalkCard, said: &str, seed: u64, first: bool) -> String {
             }
             s
         }
+        Topic::Today if !who.troubles.is_empty() => format!("{} Right now? {}.", trouble_said(&who.troubles[0]), capital(&who.doing)),
         Topic::Today => match who.memories.last() {
             Some(m) => {
                 let text = m.split_once(": ").map_or(m.as_str(), |(_, t)| t);
@@ -470,10 +560,20 @@ pub fn mock_chat(who: &TalkCard, said: &str, seed: u64, first: bool) -> String {
             } else {
                 pick(seed, 3, &["Getting by.", "Could be better, could be worse.", "Same as ever."])
             };
-            format!("{feel} {}", who.thought)
+            match who.troubles.first() {
+                Some(t) => format!("{feel} {}", trouble_said(t)),
+                None => format!("{feel} {}", who.thought),
+            }
         }
     };
     format!("{opener} {}", body.trim()).trim().to_string()
+}
+
+/// [r7-citizen-story] A trouble as they would say it: "your car" becomes
+/// "my car", "You are" becomes "I'm".
+pub fn trouble_said(t: &str) -> String {
+    let s = t.replace("Your car", "My car").replace("your car", "my car").replace("You have been", "I've been").replace("You have", "I have").replace("You are", "I'm").replace("You were", "I was").replace("your old home", "my old home").replace("you for", "me for").replace("Paid", "I paid");
+    if s.ends_with('.') || s.ends_with(')') { s } else { format!("{s}.") }
 }
 
 /// A place's name without the prompt's note ("Blue Corner (shop, 3 visits)").

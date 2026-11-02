@@ -1245,7 +1245,7 @@ stalled_s, anger_pct, route_left_m} while on the road, and `records`). A car no 
 still answers with its last trip (`car: null`, `on_road: false`). `inspect {citizen: id, history:
 true}` adds `history` {trips (each `set_off` record with `legs` (with `minutes`, and `waited_min` at
 a stop), `ended` (the activity it ended in) and `took_min`), trips_today, failed_routes, life,
-last_drive, current_drive, records}. `inspect {building: id, history: true}` adds `history`
+last_drive, current_drive, records}. [r7-citizen-story] `inspect {citizen}` always has `travel`: the trips of today and yesterday, oldest first, as the person pane's travel history shows them ({day, time, tick, from, from_name, to, to_name, why ("to work", "to get the car out of the pound", "to fetch the car"), modes ([walk, bike, bus, car, subway, lift, air, ...]), minutes (null while under way), events (["paid 95 to get the car out of the pound", "paid 4 to park", "no space, left the car on the street", ...]), cut_short, line}), saved with the city (14 a person at most), and `car_whereabouts` (the car in words: "in the pound at X: 95 to get it out now, 15 more each day it stays", "parked at the kerb 65 m from home (residents' permit, no limit)"; null without a car). `inspect {building: id, history: true}` adds `history`
 {events}.
 
 `replay {car | citizen, step_m?}` gives a trip's way as points: `points` [[x, y, tick], ...] (a

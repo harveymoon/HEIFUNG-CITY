@@ -72,6 +72,9 @@ mod history;
 /// [insight] Recording the city's memory (`crate::insight`).
 mod insight;
 pub use insight::{act_of, errand_of, ReplayPoint};
+/// [r7-citizen-story] Each citizen's trips of today and yesterday, in words.
+mod travel_history;
+pub use travel_history::{mode_words, TripView};
 #[cfg(test)]
 mod insight_tests;
 mod memory;
@@ -918,6 +921,11 @@ pub struct World {
     /// load with none.
     #[serde(default)]
     pub insight: crate::insight::Insight,
+    /// [r7-citizen-story] Each citizen's trips of today and yesterday
+    /// (`crate::travel_log`): the person pane's travel history and
+    /// `inspect citizen`'s. Recording only; old saves load with none.
+    #[serde(default)]
+    pub travel: crate::travel_log::TravelBook,
     /// [K34] Every shipping container in town, one by one: numbers, lines,
     /// wear, where each is and has been, and the Stacks homes built from
     /// them (`crate::containers`, `world/containers.rs`). Old saves load
@@ -1053,6 +1061,7 @@ impl World {
             dams: Default::default(),
             parks: Default::default(),
             insight: Default::default(),
+            travel: Default::default(),
             // [K34] A new city keeps records from its first box.
             containers: crate::containers::Containers { live: true, ..Default::default() },
             talks: Default::default(),

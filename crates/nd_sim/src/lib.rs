@@ -49,6 +49,7 @@ pub mod homeless;
 pub mod identity;
 /// [insight] The city's memory: trips, re-plans, life and building events.
 pub mod insight;
+pub mod travel_log;
 pub mod ground;
 pub mod industry;
 pub mod junctions;

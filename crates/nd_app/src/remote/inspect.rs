@@ -202,6 +202,31 @@ pub(super) fn find(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     Ok(json!({ "what": what, "total": total, "returned": rows.len(), "rows": rows }))
 }
 
+/// [r7-citizen-story] A citizen's trips of today and yesterday, oldest
+/// first: when they set off, from and to (ids and names), why, the modes,
+/// the minutes (null while under way) and what happened on the way.
+pub(super) fn travel_json(w: &nd_sim::World, id: nd_sim::CitizenId) -> Value {
+    let rows: Vec<Value> = w
+        .travel_history(id, 2)
+        .iter()
+        .map(|t| {
+            let mut v = tick_time(t.depart);
+            v["from"] = json!(t.from.map(key_str));
+            v["from_name"] = json!(t.from_label);
+            v["to"] = json!(t.to.map(key_str));
+            v["to_name"] = json!(t.to_label);
+            v["why"] = json!(t.why);
+            v["modes"] = json!(t.modes);
+            v["minutes"] = json!(t.minutes);
+            v["events"] = json!(t.events);
+            v["cut_short"] = json!(t.cut_short);
+            v["line"] = json!(t.line());
+            v
+        })
+        .collect();
+    json!(rows)
+}
+
 pub(super) fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     let w = &ctx.sim.world;
     // [toll-inspect] A toll booth by its id.
@@ -216,6 +241,9 @@ pub(super) fn inspect(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         v["places"] = places::citizen_places(w, id);
         v["social"] = social::citizen_social(w, id);
         v["holdings"] = follow::holdings_json(w, id);
+        // [r7-citizen-story] Today's and yesterday's trips, and the car.
+        v["travel"] = travel_json(w, id);
+        v["car_whereabouts"] = json!(w.car_whereabouts(id));
         // [insight] Trips, legs, failed routes, life events, the last drive.
         if opt_bool(cmd, "history")?.unwrap_or(false) {
             v["history"] = super::insight::citizen_history(w, id);

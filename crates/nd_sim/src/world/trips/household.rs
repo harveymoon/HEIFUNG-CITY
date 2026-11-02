@@ -5,6 +5,8 @@ use super::*;
 /// [carlife] Days a car bought or sold is kept (or done without) before
 /// its owner trades again.
 pub(in crate::world) const WHEELS_HOLD_DAYS: u64 = 14;
+/// [r7-citizen-story] Days a car may stand undriven before a poor owner sells it.
+pub(in crate::world) const UNUSED_CAR_DAYS: u64 = 4;
 
 impl World {
     pub(in crate::world) fn daily_citizens(&mut self) {
@@ -468,6 +470,17 @@ impl World {
         // A car the poor cannot keep.
         if has_car && class == Tier::Low && *money < -100.0 {
             if self.sell_car(m, "Sold the car. Couldn't afford to keep it.", 150.0).is_some() {
+                self.citizens[m].commute.wheels_day = today + 1;
+            }
+            return;
+        }
+        // [r7-citizen-story] A car that has stood a few days without being
+        // driven, by someone who gets about otherwise: the poor sell it
+        // rather than keep paying for tickets and the pound. (A hash, not
+        // the world's dice: the same people every run.)
+        let idle_since = self.citizens[m].car.and_then(|v| self.vehicles.cars.get(v)).filter(|v| !v.spare).and_then(|v| v.spot()).filter(|s| !matches!(s.kind, crate::ParkKind::Hooked | crate::ParkKind::Pound | crate::ParkKind::Dealer) && !s.booted).map(|s| s.since);
+        if has_car && !settled && class == Tier::Low && idle_since.is_some_and(|t| tick >= t + UNUSED_CAR_DAYS * 1440) && crate::pedestrians::hash01(slotmap::Key::data(&m).as_ffi(), today, 0x5E11) < 0.5 {
+            if self.sell_car(m, "Hardly ever drove it. Sold the car.", f32::MAX).is_some() {
                 self.citizens[m].commute.wheels_day = today + 1;
             }
             return;

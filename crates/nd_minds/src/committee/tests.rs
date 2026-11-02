@@ -819,3 +819,82 @@ fn the_question_log_is_bounded() {
     let id = w.committee.ask(&long, 0).unwrap();
     assert!(w.committee.question(id).unwrap().text.chars().count() <= nd_sim::committee::questions::QUESTION_MAX_CHARS + 3);
 }
+
+// ── [r7-citizen-story] the diary in time order, with the facts ─────────────
+
+/// Yuki Diallo's diary: a long walk yesterday evening, the tow later that
+/// night, a bench today, the car still in the pound. The request lists
+/// them oldest first with their times and says the car is still there;
+/// the stand-in tells them in that order and does not have the car back.
+#[test]
+fn the_diary_is_told_in_time_order_with_how_things_stand() {
+    use nd_sim::vehicle::{CarPlace, ParkKind, ParkSpot};
+    let mut w = grown().clone();
+    let id = w.citizens.iter().find(|(_, c)| c.car.is_some() && c.home.is_some()).map(|(id, _)| id).expect("a car owner");
+    let vid = w.citizens[id].car.unwrap();
+    let pound = w.buildings.keys().next().unwrap();
+    let day = w.clock.day();
+    let y = (day - 1) * 1440;
+    let t = day * 1440;
+    w.vehicles.cars[vid].place = CarPlace::Parked(ParkSpot { kind: ParkKind::Pound, building: Some(pound), since: y + 21 * 60 + 44, fee: 80.0, ..Default::default() });
+    w.citizens[id].memories = vec![
+        nd_sim::Memory { tick: y + 9 * 60, text: "Sat on a bench in Ember Greenway.".into() },
+        nd_sim::Memory { tick: y + 18 * 60 + 52, text: "92 minutes on foot. My feet are done.".into() },
+        nd_sim::Memory { tick: y + 21 * 60 + 44, text: "The car's in the pound at Hooked on Towing. 95 to get it out now, 15 more each day it stays.".into() },
+        nd_sim::Memory { tick: t + 2 * 60, text: "Sat on a bench in Umbra Plaza.".into() },
+    ];
+    let req = super::voices::diary_request(&w, id).unwrap();
+    let Task::Diary { entries, facts, .. } = &req.task else { panic!("a diary") };
+    let lines: Vec<String> = entries.iter().map(|e| e.line()).collect();
+    let walk = lines.iter().position(|l| l.contains("92 minutes")).unwrap();
+    let tow = lines.iter().position(|l| l.contains("in the pound")).unwrap();
+    assert!(walk < tow, "the walk came before the tow: {lines:?}");
+    assert_eq!(lines[walk], "yesterday 18:52: 92 minutes on foot. My feet are done.");
+    assert!(lines.iter().any(|l| l == "today 02:00: Sat on a bench in Umbra Plaza."), "{lines:?}");
+    assert!(entries[tow].key && !entries[walk].key, "the tow matters");
+    let car = facts.iter().find(|f| f.starts_with("Car: ")).expect("the car's state");
+    assert!(car.contains("in the pound") && car.contains("to get it out now") && car.contains("more each day"), "{car}");
+    assert!(facts.iter().any(|f| f.starts_with("Home: ")), "{facts:?}");
+    assert!(facts.iter().any(|f| f.starts_with("Now (")), "{facts:?}");
+    // The model is told the order, the times and not to invent outcomes.
+    let (sys, user) = (system_prompt(&req), user_prompt(&req));
+    assert!(sys.contains("in that order") && sys.contains("never invent events, outcomes"), "{sys}");
+    assert!(sys.contains("has not been put right"), "{sys}");
+    let (uw, ut) = (user.find("92 minutes").unwrap(), user.find("in the pound at Hooked").unwrap());
+    assert!(uw < ut && user.contains("How things stand now:") && user.contains("Car: in the pound"), "{user}");
+    // The stand-in: today's bench, the tow told as yesterday's (it matters,
+    // today was quiet), the car still in the pound, nothing fetched.
+    let text = super::voices::mock_diary(&super::voices::CitizenCard::of(&w, id).unwrap(), day as u32, entries, facts, 7);
+    let (a, b) = (text.find("Yesterday, the car's in the pound").unwrap_or_else(|| panic!("{text}")), text.find("Umbra Plaza").unwrap());
+    assert!(a < b, "in time order: {text}");
+    assert!(text.contains("The car is still in the pound"), "{text}");
+    assert!(!text.contains("92 minutes"), "yesterday's walk is not today's news: {text}");
+}
+
+/// A busy day: the stand-in keeps what matters and the latest of the
+/// rest, at most `MOCK_DIARY_ENTRIES`, in time order, and a bench sat on
+/// twice is told once.
+#[test]
+fn the_stand_in_diary_picks_the_day_that_matters_in_order() {
+    use super::voices::{diary_pick, is_key, DiaryEntry, MOCK_DIARY_ENTRIES};
+    let e = |time: &str, text: &str| DiaryEntry { today: true, time: time.into(), text: text.into(), key: is_key(text) };
+    let day = vec![
+        e("07:10", "Sat on a bench in Ember Greenway."),
+        e("08:00", "Got hired at Westhollow Institute of Technology."),
+        e("09:00", "Sat on a bench in Ember Greenway."),
+        e("10:00", "Ran into Orin Achebe at Umbra Plaza."),
+        e("11:00", "Paid 95 to get the car out of the pound at Hooked on Towing."),
+        e("12:00", "Found Marigold Beach. Lovely spot, I'll come again."),
+        e("13:00", "Got talking to Sable Sato on a bench in Umbra Plaza."),
+        e("14:00", "126 minutes on foot. My feet are done."),
+        e("15:00", "Sat on a bench in Marigold Beach."),
+    ];
+    let picked = diary_pick(&day);
+    assert!(picked.len() <= MOCK_DIARY_ENTRIES);
+    let times: Vec<&str> = picked.iter().map(|p| p.time.as_str()).collect();
+    let mut sorted = times.clone();
+    sorted.sort();
+    assert_eq!(times, sorted, "in time order");
+    assert!(times.contains(&"08:00") && times.contains(&"11:00"), "the job and the pound: {times:?}");
+    assert!(picked.iter().filter(|p| p.text == "Sat on a bench in Ember Greenway.").count() <= 1, "told once");
+}

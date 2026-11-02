@@ -312,7 +312,7 @@ impl World {
     /// [airlift] A resident's car into the pound (`pound`, else one out of
     /// town), the owner told.
     fn impound_airlifted(&mut self, vid: VehicleId, pound: Option<BuildingId>) {
-        self.impound(vid, pound);
+        self.impound(vid, pound, 0.0);
         let tick = self.clock.tick;
         if let Some(owner) = self.vehicles.cars.get(vid).map(|c| c.owner) {
             if let Some(c) = self.citizens.get_mut(owner) {
