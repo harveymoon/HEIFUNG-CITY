@@ -147,8 +147,13 @@ pub(super) fn sync_lots(
             }
             // A park's lots are one park: no zone edge down the seams
             // between them, only round the outside.
+            // [r8-parks] Nor across a footpath through it.
             let shared: &[usize] = lot.park.as_ref().map_or(&[], |p| p.shared_edges.as_slice());
-            if shared.is_empty() {
+            if let Some(p) = lot.park.as_ref().filter(|p| !p.inner_edges.is_empty()) {
+                for (a, b) in p.outer_stretches(&lot.polygon) {
+                    glow.ground_strip(&[a, b], 0.35, 0.4, scale(c, 1.3));
+                }
+            } else if shared.is_empty() {
                 let mut edge = lot.polygon.clone();
                 if let Some(&first) = lot.polygon.first() { edge.push(first); }
                 glow.ground_strip(&edge, 0.35, 0.4, scale(c, 1.3));
@@ -224,6 +229,17 @@ pub(super) fn park_key(lot: &nd_sim::Lot, layout: &nd_sim::ParkLayout) -> u64 {
     }
     layout.shared_edges.hash(&mut h);
     layout.anchor.hash(&mut h);
+    // [r8-parks] The features reaching over it, its car park, its seams.
+    for (p, r) in &layout.nearby {
+        hash_f32s(&mut h, [*p, SVec2::new(*r, 0.0)]);
+    }
+    if let Some(c) = &layout.car_park {
+        hash_f32s(&mut h, c.outline.iter().copied());
+        c.spaces.len().hash(&mut h);
+    }
+    for (a, b) in &layout.inner_edges {
+        hash_f32s(&mut h, [*a, *b]);
+    }
     h.finish()
 }
 

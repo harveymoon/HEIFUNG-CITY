@@ -92,9 +92,9 @@ mod toolbar;
 /// [fix/roads-tools] The plan bar: Implement / Discard while a plan is pending.
 mod plan_bar;
 pub(crate) mod tools;
-mod topbar;
+pub mod topbar;
 pub mod train;
-mod windows;
+pub mod windows;
 
 use bevy::diagnostic::DiagnosticsStore;
 use bevy::prelude::*;

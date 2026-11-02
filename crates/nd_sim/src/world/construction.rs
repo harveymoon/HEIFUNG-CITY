@@ -37,7 +37,9 @@ impl World {
         self.step_demolition(slot, working);
         // A site still clearing what stood before waits for the wrecking
         // crew; its materials are ordered when the lot is clear.
-        let ids: Vec<BuildingId> = self.buildings.iter().filter(|(id, b)| b.construction.is_some() && b.demolition.is_none() && site_slot(*id) == slot).map(|(id, _)| id).collect();
+        let ids: Vec<BuildingId> = self.buildings.iter().filter(|(id, b)| b.construction.as_ref().is_some_and(|c| !c.follows_park) && b.demolition.is_none() && site_slot(*id) == slot).map(|(id, _)| id).collect();
+        // [r8-parks] A park's other lots keep pace with its lead site.
+        self.step_park_followers(slot, working);
         // [r2-traffic] The street networks a truck from out of town can
         // drive (worked out once, only when some site steps now).
         let reach = if ids.is_empty() { None } else { Some(self.supply_networks()) };
@@ -210,9 +212,11 @@ impl World {
             None => (true, Vec2::ZERO),
         };
         let Some(b) = self.buildings.get_mut(bid) else { return };
-        if b.construction.take().is_none() {
-            return;
-        }
+        let Some(site) = b.construction.take() else { return };
+        // [r8-parks] A park opens as one: its lead site opening opens the
+        // park's other lots with it.
+        let park_lead = b.land_use == LandUse::Park && !site.follows_park;
+        let park_lot = b.lot;
         let crew = std::mem::take(&mut b.workers);
         b.recompute_capacity();
         if !car_access {
@@ -245,6 +249,15 @@ impl World {
         // [relocate] A business that moved here takes its old staff back.
         self.rehire_moved_staff(bid);
         self.building_opened(bid);
+        if self.buildings.get(bid).is_some_and(|b| b.land_use == LandUse::Park) {
+            // [r8-parks] Its car park's bays, and the rest of the park.
+            self.sync_park_bays();
+            if park_lead {
+                for f in self.park_sites(park_lot, true) {
+                    self.finish_construction(f);
+                }
+            }
+        }
     }
 
     /// [under-construction] `bid` has just opened (topped out, or its lot

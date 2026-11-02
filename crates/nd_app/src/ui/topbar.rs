@@ -470,7 +470,7 @@ fn layer_button(ui: &mut egui::Ui, p: &mut UiCtx) {
         .selected_text(text)
         .width(170.0)
         .height(620.0)
-        .show_ui(ui, |ui| layer_list(ui, p.overlays, false))
+        .show_ui(ui, |ui| layer_list(ui, p.overlays, false, ""))
         .response
         .on_hover_text("The map layer: one data view at a time, with its colour key at the bottom right. V, O, P toggle theirs; L steps through the heat maps, K through the land layers.");
 }
@@ -513,9 +513,49 @@ fn tab_groups(tab: usize) -> Vec<(&'static str, Vec<LayerId>)> {
 /// it alone, "None" clears the map. [view-tabs] Two tabs, City and World,
 /// each group once. `wrap` lays each group out in a wrapping row (the View
 /// window) rather than a column (the dropdown).
-pub fn layer_list(ui: &mut egui::Ui, overlays: &mut Overlays, wrap: bool) {
+/// [r8-parks] Whether a View window entry matches the search box: every
+/// word typed (any case) is somewhere in its name, its description or its
+/// heading. An empty search matches everything.
+pub fn view_matches(query: &str, texts: &[&str]) -> bool {
+    let hay = texts.iter().map(|t| t.to_lowercase()).collect::<Vec<_>>().join(" ");
+    query.split_whitespace().all(|w| hay.contains(&w.to_lowercase()))
+}
+
+/// [r8-parks] The layers matching a View search, by group in picker order,
+/// over both tabs (a group heading matches all of its layers).
+pub fn layers_matching(query: &str) -> Vec<(&'static str, Vec<LayerId>)> {
+    (0..VIEW_TABS.len())
+        .flat_map(tab_groups)
+        .filter_map(|(g, v)| {
+            let hit: Vec<LayerId> = v.into_iter().filter(|l| view_matches(query, &[l.label(), l.hint(), g, VIEW_TABS[tab_of(g)].0])).collect();
+            (!hit.is_empty()).then_some((g, hit))
+        })
+        .collect()
+}
+
+/// [r8-parks] `filter` (the View window's search): only the layers that
+/// match, from both tabs, under their headings; returns how many showed.
+pub fn layer_list(ui: &mut egui::Ui, overlays: &mut Overlays, wrap: bool, filter: &str) -> usize {
     let active = map_layers::active(overlays);
     let mut pick: Option<Option<LayerId>> = None;
+    if !filter.trim().is_empty() {
+        let groups = layers_matching(filter);
+        let n = groups.iter().map(|(_, v)| v.len()).sum();
+        for (group, members) in groups {
+            section(ui, &group.to_uppercase());
+            ui.horizontal_wrapped(|ui| {
+                for l in members {
+                    if ui.selectable_label(active == Some(l), l.label()).on_hover_text(l.hint()).clicked() {
+                        pick = Some(if active == Some(l) { None } else { Some(l) });
+                    }
+                }
+            });
+        }
+        if let Some(l) = pick {
+            map_layers::set_active(overlays, l);
+        }
+        return n;
+    }
     let tab_id = egui::Id::new("view_tab");
     // Opens on the tab of the layer showing, then stays where it was put.
     let mut tab: usize = ui.ctx().data(|d| d.get_temp(tab_id)).unwrap_or_else(|| active.map_or(0, |l| tab_of(l.group())));
@@ -550,6 +590,7 @@ pub fn layer_list(ui: &mut egui::Ui, overlays: &mut Overlays, wrap: bool) {
     if let Some(l) = pick {
         map_layers::set_active(overlays, l);
     }
+    LayerId::all().len()
 }
 
 #[cfg(test)]
@@ -562,6 +603,28 @@ mod tests {
 
     fn row_width(row: &[(Item, f32)]) -> f32 {
         row.iter().map(|r| r.1).sum::<f32>() + GROUP_GAP * (row.len() as f32 - 1.0)
+    }
+
+    /// [r8-parks] The View search: words in any order and case, over the
+    /// name, the description and the heading; nothing typed shows all.
+    #[test]
+    fn view_search_filters_by_name_and_description() {
+        assert!(view_matches("", &["Anything"]));
+        assert!(view_matches("LAND val", &["Land value", "What the land is worth"]));
+        assert!(view_matches("worth land", &["Land value", "What the land is worth"]));
+        assert!(!view_matches("noise", &["Land value", "What the land is worth"]));
+        let all: usize = layers_matching("").iter().map(|(_, v)| v.len()).sum();
+        assert_eq!(all, LayerId::all().len(), "an empty search lists every layer");
+        let l = LayerId::all()[0];
+        let hit = layers_matching(l.label());
+        assert!(hit.iter().any(|(_, v)| v.contains(&l)), "a layer's own name finds it");
+        let few: usize = hit.iter().map(|(_, v)| v.len()).sum();
+        assert!(few < all, "a name narrows the list");
+        assert!(layers_matching("zzqx-nothing").is_empty());
+        // A heading finds every layer under it.
+        let (g, members) = tab_groups(0).remove(0);
+        let by_group = layers_matching(g);
+        assert!(members.iter().all(|m| by_group.iter().any(|(_, v)| v.contains(m))));
     }
 
     /// [view-tabs] Every layer shows exactly once across the two tabs,

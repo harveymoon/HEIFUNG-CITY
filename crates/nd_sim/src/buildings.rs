@@ -135,6 +135,11 @@ pub struct Construction {
     pub blocked: Option<SiteBlock>,
     #[serde(default)]
     pub retry_at: u64,
+    /// [r8-parks] One lot's share of a park built as one project: no
+    /// deliveries of its own, it keeps pace with the park's lead site (or,
+    /// with none, with the park's other lots) and opens with it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub follows_park: bool,
 }
 
 /// [r2-traffic] Why a building site cannot go on (K6): the trucks that
@@ -168,7 +173,7 @@ impl Construction {
     pub const DELIVERIES: u8 = 4;
 
     pub fn new(days: f32) -> Self {
-        Self { progress: 0.0, days: days.clamp(1.0, 12.0), deliveries: 0, ordered: false, blocked: None, retry_at: 0 }
+        Self { progress: 0.0, days: days.clamp(1.0, 12.0), deliveries: 0, ordered: false, blocked: None, retry_at: 0, follows_park: false }
     }
 
     /// Build time for a building of this size and quality.
@@ -840,6 +845,11 @@ impl Building {
             // [megablocks] Car decks in the podium.
             Some(crate::estate::Form::MegaBlock) => self.parking_capacity = (homes as f32 * crate::megablock::PARKING_PER_HOME) as u16 + 40,
             _ => {}
+        }
+        // [r8-parks] A park's spaces are the bays of its car park, set by
+        // the world from its plan (`World::sync_park_bays`); none hidden.
+        if self.land_use == LandUse::Park {
+            self.parking_capacity = 0;
         }
     }
 

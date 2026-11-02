@@ -768,6 +768,9 @@ impl World {
         self.relocate_waiting();
         // [review] Only lots something may go on (not promised, rubble or
         // under a yard): parking and taxi yards took these as they were.
+        // [r8-parks] A park's new lots (a zone grown onto it, its
+        // backland) join it as the park's own works.
+        self.extend_parks();
         let vacant: Vec<LotId> = self.lots.iter().filter(|(id, l)| (l.building.is_none() || self.rezoned_park(l).is_some()) && self.site_clear(*id, SiteRule::STREET)).map(|(id, _)| id).collect();
         if vacant.is_empty() {
             return;
@@ -839,7 +842,12 @@ impl World {
                 chance *= UNDER_DECK_HOMES;
             }
             if self.rng.random::<f32>() < chance {
-                self.build_on(lot_id);
+                // [r8-parks] A park goes up as one project, all its lots.
+                if lu == LandUse::Park {
+                    self.build_park(lot_id);
+                } else {
+                    self.build_on(lot_id);
+                }
                 built += 1;
             }
         }
@@ -1199,6 +1207,10 @@ impl World {
         }
         // Nothing opens overnight: the lot becomes a building site first.
         b.construction = Some(Construction::new(if mall.is_some() { Construction::days_for(b.floors, b.tier) } else { Construction::days_for(floors, tier) }));
+        // [r8-parks] A park is laid out by its whole ground's size.
+        if lu == LandUse::Park {
+            b.construction = Some(Construction::new(self.park_build_days(lot_id, tier)));
+        }
         b.recompute_capacity();
         let id = self.buildings.insert(b);
         self.lots[lot_id].building = Some(id);

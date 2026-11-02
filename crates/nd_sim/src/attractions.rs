@@ -218,7 +218,7 @@ pub fn plan_grounds(kind: ServiceKind, lot: &Lot, pier: Option<&PierDeck>) -> Op
         // A grand park: the high-tier plan of the whole site (lakes, rides,
         // a bandstand, fountains), and a loop round it.
         ServiceKind::GrandPark | ServiceKind::BotanicalGarden => crate::park::plan_single(lot, Tier::High),
-        _ => ParkLayout { tier: Tier::High, paths: Vec::new(), benches: Vec::new(), features: Vec::new(), entrances: vec![gate], shared_edges: Vec::new(), cluster_lots: 1, cluster_area: area, anchor: true, seams: Vec::new(), preserve: false },
+        _ => ParkLayout::bare(Tier::High, vec![gate], area),
     };
     match kind {
         ServiceKind::GrandPark => {

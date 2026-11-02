@@ -543,7 +543,8 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
         })
     });
     let park = lot.and_then(|l| l.park.as_ref()).map(|p| {
-        json!({ "benches": p.benches.len(), "paths": p.paths.len(), "entrances": p.entrances.len(), "features": p.features.iter().map(|f| f.kind.label()).collect::<Vec<_>>(), "cluster_lots": p.cluster_lots, "cluster_area": round(p.cluster_area) })
+        json!({ "benches": p.benches.len(), "paths": p.paths.len(), "entrances": p.entrances.len(), "features": p.features.iter().map(|f| f.kind.label()).collect::<Vec<_>>(), "cluster_lots": p.cluster_lots, "cluster_area": round(p.cluster_area),
+            "park_features": w.park_contents(b.lot).0, "car_park_spaces": p.car_park.as_ref().filter(|c| c.own).map_or(0, |c| c.spaces.len()), "inner_edges": p.inner_edges.len() })
     });
     let people = |ids: &[CitizenId]| ids.iter().filter_map(|&c| w.citizens.get(c).map(|x| json!({ "id": key_str(c), "name": x.name }))).collect::<Vec<_>>();
     let mut v = json!({

@@ -8,7 +8,8 @@ use super::*;
 /// street (in a kerb slot, or squeezed in with no space) is a body mesh at
 /// its spot, and so is a dealer's used stock on its forecourt. Cars in a
 /// building's spaces are out of sight in its garage; a parking lot shows
-/// its occupancy itself.
+/// its occupancy itself. [r8-parks] A park's car park is open ground: its
+/// cars stand on its bays.
 #[derive(Resource, Default)]
 pub(super) struct ParkedRender {
     /// Tick and car count last drawn for.
@@ -45,7 +46,8 @@ pub(super) fn sync_parked_cars(mut commands: Commands, sim: Res<Sim>, assets: Re
     let mut seen: std::collections::HashSet<nd_sim::VehicleId> = std::collections::HashSet::new();
     for (vid, car) in w.vehicles.cars.iter() {
         // [carlife] And a dealer's used stock, in rows on its forecourt.
-        let Some(spot) = car.spot().filter(|s| s.kind.on_street() || (s.kind == nd_sim::ParkKind::Dealer && car.dealer.is_some())) else { continue };
+        // [r8-parks] And the cars in a park's car park, out in the open.
+        let Some(spot) = car.spot().filter(|s| s.kind.on_street() || (s.kind == nd_sim::ParkKind::Dealer && car.dealer.is_some()) || w.in_park_car_park(s)) else { continue };
         seen.insert(vid);
         let at = ((spot.pos.x * 10.0) as i32, (spot.pos.y * 10.0) as i32, spot.booted);
         if pr.cars.get(&vid).is_some_and(|(k, _, _)| *k == at) {

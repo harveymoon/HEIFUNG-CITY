@@ -234,19 +234,7 @@ pub fn plan_beach_with(lot: &Lot, tier: Tier, seams: &[(Vec2, Vec2)]) -> ParkLay
         v -= spacing_v;
         row += 1;
     }
-    ParkLayout {
-        tier,
-        paths: vec![walk],
-        benches,
-        features: Vec::new(),
-        entrances: vec![entrance],
-        shared_edges: Vec::new(),
-        cluster_lots: 1,
-        cluster_area: area,
-        anchor: true,
-        seams: Vec::new(),
-        preserve: false,
-    }
+    ParkLayout { paths: vec![walk], benches, ..ParkLayout::bare(tier, vec![entrance], area) }
 }
 
 /// What a private jetty is for.
