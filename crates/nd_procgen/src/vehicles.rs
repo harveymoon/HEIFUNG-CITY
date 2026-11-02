@@ -731,13 +731,10 @@ fn semi(b: &mut B, col: [f32; 3]) {
     // Tractor frame rails, fuel tank, the fifth wheel plate and the
     // exhaust stack behind the cab.
     b.bx(((cr + tr) * 0.5, 0.85, 0.0), (cr - tr, 0.22, 0.95), TRIM);
-    b.bx((cr - 0.9, 0.7, hw - 0.32), (1.2, 0.5, 0.5), mul(CHROME, 0.75));
-    b.bx((tr + 1.1, 1.08, 0.0), (1.3, 0.12, 1.5), mul(TRIM, 1.3));
     b.bx((cr - 0.15, 2.6, -hw + 0.3), (0.16, 1.9, 0.16), mul(TRIM, 1.6));
     let r = 0.5;
     b.axle(fx - 0.75, hw, r, 0.3);
-    b.axle(tr + 1.6, hw, r, 0.3);
-    b.axle(tr + 0.55, hw, r, 0.3);
+    b.axle(tr + 1.1, hw, r, 0.3);
     b.lamps(fx + 0.05, 1.0, hw - 0.3, 0.32, 0.16, 1.0, HEAD);
     b.lamps(fx + 0.02, 3.2, hw - 0.3, 0.1, 0.06, 1.0, AMBER);
     match nd_sim::vehicle::chassis_of(m.boxed) {
@@ -821,8 +818,8 @@ fn curtain_trailer(b: &mut B, rx: f32, front: f32, col: [f32; 3]) {
     let (cb, ct) = (1.15, 1.15 + crate::CONTAINER_H);
     b.ext(&[(rx, cb), (front, cb), (front, ct), (rx, ct)], crate::CONTAINER_W * 0.5, curtain);
     if b.detail {
-        for i in 1..10 {
-            let x = rx + (front - rx) * i as f32 / 10.0;
+        for i in 1..6 {
+            let x = rx + (front - rx) * i as f32 / 6.0;
             b.sides(x, (cb + ct) * 0.5 - 0.1, crate::CONTAINER_W * 0.5, 0.05, crate::CONTAINER_H - 0.25, mul(curtain, 0.72));
         }
         b.sides((rx + front) * 0.5, ct - 0.12, crate::CONTAINER_W * 0.5 + 0.004, front - rx - 0.1, 0.2, mul(col, 0.8));

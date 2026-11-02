@@ -915,7 +915,12 @@ pub fn container_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     // Loading lane along the front, with lorries.
     let lane_v = lo.y + 4.0;
     let front = c.front_face(&lot);
-    for k in 0..3 {
+    // [r8] With real boxes, painted bays along the loading lane where the
+    // real lorries stand (the renderer draws them and the carrier).
+    if c.real_boxes {
+        lorry_bays(g, c, Vec2::new(lo.x + 0.5, lo.y + 0.2), Vec2::new(hi.x - 0.5, lane_v + 4.7), 4, 0.03);
+    }
+    for k in 0..if c.real_boxes { 0 } else { 3 } {
         let p = Vec2::new(lo.x + 7.0 + k as f32 * 13.0, lane_v);
         if vehicle_fits(c, p, 0.0, Vehicle::Truck) && coin(rng, 0.6) {
             let col = pick(rng, &pal.car_colors);

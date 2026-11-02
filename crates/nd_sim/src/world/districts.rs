@@ -261,7 +261,9 @@ impl World {
                 }
                 let b = &self.buildings[id];
                 let Some(kind) = district.as_ref().and_then(|d| d.industry) else { continue };
-                if b.business.as_ref().is_none_or(|z| z.kind.industry() == Some(kind) || z.kind == BusinessKind::Parking) {
+                // [r8] Not a trade the town opened by pressure (a scrap yard, a
+                // freight forwarder...): those serve the town, not the policy.
+                if b.business.as_ref().is_none_or(|z| z.kind.industry() == Some(kind) || z.kind == BusinessKind::Parking || crate::pressure::PressureKind::of_business(z.kind).is_some()) {
                     continue;
                 }
                 let lot_id = b.lot;

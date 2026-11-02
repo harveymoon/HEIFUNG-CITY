@@ -106,7 +106,9 @@ impl BoxKind {
     pub fn for_resource(r: Option<crate::market::Resource>) -> BoxKind {
         use crate::market::Resource as R;
         match r {
-            Some(R::Meat | R::Dairy | R::Fish | R::Fillets | R::Produce | R::Groceries) => BoxKind::Reefer,
+            // [r8] Groceries are mostly packaged dry goods: a dry box (a
+            // port full of white reefers read as faded boxes).
+            Some(R::Meat | R::Dairy | R::Fish | R::Fillets | R::Produce) => BoxKind::Reefer,
             Some(R::Crude | R::Fuel | R::Plastics) => BoxKind::Tank,
             Some(R::Ore | R::Grain) => BoxKind::OpenTop,
             _ => BoxKind::Dry,

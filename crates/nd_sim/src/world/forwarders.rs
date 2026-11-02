@@ -32,7 +32,7 @@ impl World {
     /// [r8] The hour's exports (firm, goods, units, what the firm was paid):
     /// those from firms within a forwarder's reach are its to box up, and
     /// each firm pays the fee. Returns the units it took on.
-    pub(super) fn forwarders_take_exports(&mut self, exports: &[(BuildingId, Resource, f32, f32)]) -> f32 {
+    pub fn forwarders_take_exports(&mut self, exports: &[(BuildingId, Resource, f32, f32)]) -> f32 {
         if !self.containers.live || exports.is_empty() {
             return 0.0;
         }

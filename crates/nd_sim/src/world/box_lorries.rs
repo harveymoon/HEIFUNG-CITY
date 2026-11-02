@@ -233,6 +233,15 @@ impl World {
         let j = self.containers.lorries.entry(car).or_default();
         j.depot = d;
         j.since = tick;
+        // A lorry of the old kind (its own trailer) homed here is a
+        // container rig from now on: a bare chassis.
+        if let Some(c) = self.traffic.cars.get_mut(car) {
+            if crate::vehicle::chassis_of(c.model.boxed).is_none() {
+                c.model.body = crate::vehicle::BodyType::Semi;
+                c.model.boxed = crate::vehicle::CHASSIS_20;
+            }
+        }
+        self.dress_truck(car);
         let y = self.containers.depots.get_mut(&d).unwrap();
         match free {
             Some(k) => {
@@ -305,11 +314,18 @@ impl World {
             }
         }
         // The carrier's move.
+        let mut finished = false;
         if let Some(job) = self.containers.depots[&d].crane {
             if tick >= job.start + cx::CARRIER_MINUTES {
                 self.crane_finish(d, job);
                 self.containers.depots.get_mut(&d).unwrap().crane = None;
+                finished = true;
             }
+        }
+        // [perf] The looks for work (each a pass over the boxes) every
+        // third minute, or as soon as the carrier is free.
+        if !finished && (tick + (d.data().as_ffi() & 0xff)) % 3 != 0 {
+            return;
         }
         if self.containers.depots[&d].crane.is_none() {
             if let Some(job) = self.next_crane_job(d) {

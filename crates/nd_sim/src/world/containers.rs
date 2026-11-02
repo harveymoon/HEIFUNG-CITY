@@ -1233,7 +1233,9 @@ impl World {
             // going out are trucked to the port or a freight yard (or out
             // by road), a few lorries a day.
             if matches!(kind, DepotKind::Yard | DepotKind::Hub) {
-                let going: Vec<BoxId> = self.containers.boxes.iter().filter(|(_, r)| r.at == Where::Stored(d) && r.bound_out && r.goods.is_none()).map(|(id, _)| id).take(OUT_HAULS_PER_DAY).collect();
+                // More lorries the further over its room the yard is.
+                let hauls = OUT_HAULS_PER_DAY.max(count.saturating_sub(cap) / 3).min(24);
+                let going: Vec<BoxId> = self.containers.boxes.iter().filter(|(_, r)| r.at == Where::Stored(d) && r.bound_out && r.goods.is_none()).map(|(id, _)| id).take(hauls).collect();
                 if !going.is_empty() {
                     let to = depots.iter().filter(|x| matches!(x.1, DepotKind::Port | DepotKind::Rail)).min_by(|a, b| a.2.distance(pos).total_cmp(&b.2.distance(pos)).then(a.0.cmp(&b.0))).map(|x| x.0);
                     for id in going {

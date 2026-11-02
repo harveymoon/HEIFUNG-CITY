@@ -181,7 +181,10 @@ impl Surface {
         }
         match self {
             Surface::Metal => 0.75,
-            Surface::Container => 0.45,
+            // [r8] Painted steel is no mirror: at 0.45 a navy or oxblood
+            // box took the sky's colour and read white (Harvey's "mostly
+            // white" stacks).
+            Surface::Container => 0.06,
             Surface::Panel => 0.5,
             Surface::Rust => 0.35,
             Surface::Glass => 0.3,

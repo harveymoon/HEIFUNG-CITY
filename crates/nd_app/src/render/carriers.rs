@@ -152,7 +152,13 @@ pub(super) fn sync_carriers(
                     c.job = Some((j.start, j.boxid));
                     c.from = Some((c.at, c.yaw));
                     let truck = on_chassis(&sim, d, j.bay, j.car, j.boxid);
-                    let stack = in_stack(&sim, d, j.boxid, &stacks.seen);
+                    // A box the stacks had no room to draw: the stack slot
+                    // nearest the bay (or beside the bays) stands in.
+                    let stack = in_stack(&sim, d, j.boxid, &stacks.seen).or_else(|| {
+                        let (bay, yaw) = *sim.depot_bays.get(&d)?.get(j.bay as usize)?;
+                        let near = sim.depot_slots.get(&d).and_then(|(_, s)| s.iter().filter(|s| s.tier == 0).min_by(|a, b| a.at.distance(bay).total_cmp(&b.at.distance(bay))).map(|s| (s.at, s.yaw)));
+                        Some(near.unwrap_or((bay + Vec3::new(-yaw.sin(), 0.0, yaw.cos()) * 9.0, yaw)))
+                    });
                     c.ends = match (truck, stack) {
                         (Some(t), Some(s)) => Some(if j.onto_truck { (s, t) } else { (t, s) }),
                         _ => None,
