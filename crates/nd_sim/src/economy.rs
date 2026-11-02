@@ -74,13 +74,18 @@ pub enum Flow {
     /// [r5-trash] Metal, plastics, paper and glass the recycling plants
     /// sell (to the scrap yards and works in town first, the rest out).
     RecyclingSales,
+    /// [airport] Landing charges, the passenger fee and cargo handling at
+    /// the city's airports (`crate::airport`).
+    AirportFees,
+    /// [airport] Running the airports: staff, the runways, the tower.
+    AirportUpkeep,
 }
 
 /// Number of `Flow`s; the ledger's row length.
-pub const FLOWS: usize = 28;
+pub const FLOWS: usize = 30;
 
 impl Flow {
-    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep, Flow::GridExport, Flow::Gifts, Flow::RoadMaintenance, Flow::Fines, Flow::PropertyTax, Flow::DistrictLevies, Flow::DistrictSpending, Flow::WasteDisposal, Flow::RecyclingSales];
+    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep, Flow::GridExport, Flow::Gifts, Flow::RoadMaintenance, Flow::Fines, Flow::PropertyTax, Flow::DistrictLevies, Flow::DistrictSpending, Flow::WasteDisposal, Flow::RecyclingSales, Flow::AirportFees, Flow::AirportUpkeep];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -112,6 +117,8 @@ impl Flow {
             Flow::DistrictSpending => "district spending",
             Flow::WasteDisposal => "waste disposal",
             Flow::RecyclingSales => "recycling sales",
+            Flow::AirportFees => "airport fees",
+            Flow::AirportUpkeep => "airport upkeep",
         }
     }
 

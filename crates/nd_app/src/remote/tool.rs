@@ -135,7 +135,8 @@ pub(super) fn tool(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
                     "route" | "lines" => TransitMode::Route,
                     "depot" => TransitMode::Depot,
                     "metro" | "subway" => TransitMode::Metro,
-                    _ => return Err(format!("unknown transit mode {kind:?}; route, depot or metro")),
+                    "cable" | "cable_car" | "gondola" | "tramway" => TransitMode::Cable,
+                    _ => return Err(format!("unknown transit mode {kind:?}; route, depot, metro or cable")),
                 };
                 t.route_sel = None;
             }

@@ -28,6 +28,7 @@ impl World {
         // [carlife] The journey is over (a stop is a pause in it): how did
         // it feel?
         if purpose != Purpose::ToStop {
+            self.log_arrived(id, to);
             self.end_trip(id);
         }
         // The destination may have been demolished on the way.
@@ -176,6 +177,8 @@ impl World {
         let platform = if purpose == Purpose::ToStop {
             self.citizens[id].transit.and_then(|t| match t.leg {
                 TransitLeg::Subway { board, .. } => self.metro_platform(board),
+                // [cable] Up to the cable station's platform.
+                TransitLeg::Cable { board, .. } => self.cable_platform(board),
                 _ => None,
             })
         } else {

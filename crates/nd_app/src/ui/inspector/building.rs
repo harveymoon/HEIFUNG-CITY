@@ -377,6 +377,10 @@ fn attraction_lines(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId
 }
 
 pub(super) fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId, b: &nd_sim::Building) {
+    // [airport]
+    if b.airport.is_some() {
+        super::airport::airport_section(ui, w, id);
+    }
     if let Some(s) = b.service {
         let units: Vec<&nd_sim::Unit> = w.services.units.values().filter(|u| u.station == id).collect();
         let mut line = format!("{}  ·  {:.0}/day", s.kind.tier_label(s.tier), s.kind.upkeep_per_day(s.tier));
@@ -578,6 +582,11 @@ pub(super) fn service_and_transit(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_s
         let waiting = w.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Waiting { .. }) && matches!(c.transit.map(|t| t.leg), Some(nd_sim::transit::TransitLeg::Subway { board, .. }) if board == id)).count();
         section(ui, "METRO");
         ui.label(if lines.is_empty() { "no line calls here yet (Build window, Transit, Metro lines)".to_string() } else { format!("{} · {today} boarded today, {yesterday} yesterday · {waiting} on the platform", lines.join(", ")) });
+    }
+    // [cable] A cable car station on its lot or its roof.
+    if w.cable.stations.values().any(|s| s.building == Some(id)) {
+        section(ui, "CABLE CAR");
+        crate::cable_ux::building_card(ui, w, id);
     }
     if b.depot {
         let out = w.traffic.cars.values().filter(|c| c.bus.as_ref().is_some_and(|x| x.depot == id)).count();

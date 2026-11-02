@@ -187,7 +187,7 @@ impl World {
     }
 
     /// Buildings whose lots lie under or across a footprint.
-    pub(super) fn buildings_under(&self, fp: &[Vec2]) -> Vec<(BuildingId, LotId)> {
+    pub(in crate::world) fn buildings_under(&self, fp: &[Vec2]) -> Vec<(BuildingId, LotId)> {
         self.buildings.iter().filter(|(_, b)| self.lots.get(b.lot).is_some_and(|l| point_in_polygon(l.center, fp) || polygons_overlap(fp, &l.polygon))).map(|(id, b)| (id, b.lot)).collect()
     }
 

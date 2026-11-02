@@ -56,6 +56,11 @@ pub(super) fn place(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
             ctx.tools.status = note.clone();
             return Ok(json!({ "toll": id, "message": note, "row": row, "treasury": round(w.economy.treasury) }));
         }
+        // [airport] Fitted to the ground where asked (`heading` to fix it).
+        other if nd_sim::airport::AirportSize::from_key(other).is_some() => {
+            let size = nd_sim::airport::AirportSize::from_key(other).unwrap();
+            return super::airports::place(cmd, ctx, size, p);
+        }
         other if land::dock_of(other).is_some() => {
             let dock = land::dock_of(other).unwrap();
             let id = w.place_port(dock, p)?;

@@ -153,6 +153,19 @@ impl World {
                 self.park_at(vid, spot);
             }
         }
+        // [r7-citizen-story] Parks from older saves had a few spaces no one
+        // could see: none now, and cars parked in them go to the street.
+        let parks: Vec<BuildingId> = self.buildings.iter().filter(|(_, b)| b.land_use == LandUse::Park && b.parking_capacity > 0).map(|(id, _)| id).collect();
+        for bid in parks {
+            self.buildings[bid].parking_capacity = 0;
+            let inside: Vec<VehicleId> = self.vehicles.cars.iter().filter(|(_, c)| c.spot().is_some_and(|s| s.kind.uses_building() && s.building == Some(bid))).map(|(id, _)| id).collect();
+            for vid in inside {
+                let pos = self.vehicles.cars[vid].spot().map(|s| s.pos).unwrap_or_default();
+                self.vehicles.cars[vid].place = CarPlace::Driving(CarId::default());
+                let spot = self.place_near(pos, None).unwrap_or_else(|| self.squeezed_spot(pos));
+                self.park_at(vid, spot);
+            }
+        }
         // Building counts follow the cars in them.
         for b in self.buildings.values_mut() {
             b.parking_used = 0;

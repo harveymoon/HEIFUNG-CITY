@@ -13,6 +13,8 @@ pub mod bots;
 pub mod buildings;
 /// Cargo hubs: freight terminals that consolidate imports and exports.
 pub mod cargo_hub;
+/// [airport] Airports: runways, flights to towns off the map, air cargo.
+pub mod airport;
 pub mod citizens;
 pub mod clock;
 /// [committee] The mayor's AI committee: pool, seats, alerts, proposals.
@@ -47,6 +49,7 @@ pub mod homeless;
 pub mod identity;
 /// [insight] The city's memory: trips, re-plans, life and building events.
 pub mod insight;
+pub mod travel_log;
 pub mod ground;
 pub mod industry;
 pub mod junctions;
@@ -118,6 +121,8 @@ pub mod survey;
 pub mod talk;
 /// [tourism] Visitors, attractions and hotels.
 pub mod tourism;
+/// [cable] Aerial cable cars: gondolas and aerial tramways.
+pub mod cable;
 /// [subway] Metro stations, lines and trains.
 pub mod subway;
 pub mod traffic;
@@ -157,6 +162,7 @@ pub use subway::{MetroLine, MetroLineId, MetroTrain, MetroTrainId, Subway, Subwa
 pub use transit::{BusRoute, BusStop, DispatchProblem, LineProblem, RouteId, Transit, TransitStats};
 pub use rail::{Facility, FacilityId, Rail, RailFacility, RailLink, RailStats, Train, TrainId, TrainKind};
 pub use services::{BuildCategory, Incident, IncidentKind, Placeable, ServiceKind, ServiceSite, Services, ServiceStats, Unit, UnitId, UnitKind};
+pub use world::{CableStop, SiteWant, StationSite};
 pub use world::{GridAsset, PlacementSite, PlantGroup, PlantJoin, PlantPreview, PlantRow, World, WorldConfig, RIGHTING_MIN};
 pub use world::{ApproachView, Blocker, Joint, CrossingView, IntersectionView, LaneView, MoveView, PhaseView, ProjectCheck};
 /// [camera]

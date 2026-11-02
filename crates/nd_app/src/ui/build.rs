@@ -102,6 +102,8 @@ pub enum Item {
     BusLines,
     /// Lay metro lines between stations (the Transit tool's Metro mode).
     MetroLines,
+    /// [cable] Draw cable car lines (the Transit tool's Cable car mode).
+    CableLines,
 }
 
 impl Item {
@@ -128,6 +130,7 @@ impl Item {
             Item::RailPiece(f) => Placeable::Rail(f).menu_label().to_string(),
             Item::BusLines => "Bus lines".into(),
             Item::MetroLines => "Metro lines".into(),
+            Item::CableLines => "Cable car".into(),
         }
     }
 
@@ -176,6 +179,8 @@ fn transit_group(p: Placeable) -> &'static str {
         Placeable::ParkingLot(_) => "Parking",
         Placeable::Toll(_) => "Tolls",
         Placeable::CargoHub => "Freight",
+        // [airport]
+        Placeable::Airport(_) => "Air",
         _ => "Other",
     }
 }
@@ -261,6 +266,7 @@ fn make_groups(cat: Cat) -> Vec<Group> {
         Cat::Transit => {
             add("Buses", Item::BusLines);
             add("Metro", Item::MetroLines);
+            add("Cable car", Item::CableLines);
         }
         Cat::Rail => add("Track", Item::Track),
         _ => {}
@@ -310,6 +316,7 @@ pub fn current_item(t: &ToolState) -> Option<Item> {
         Tool::Transit => Some(match t.transit_mode {
             TransitMode::Route => Item::BusLines,
             TransitMode::Metro => Item::MetroLines,
+            TransitMode::Cable => Item::CableLines,
             TransitMode::Depot => Item::Place(Placeable::BusDepot),
         }),
         _ => None,
@@ -325,7 +332,7 @@ fn cat_of(item: Item) -> Cat {
         Item::Beach => Cat::Parks,
         Item::Zone(_) => Cat::Zoning,
         Item::District => Cat::Districts,
-        Item::BusLines | Item::MetroLines => Cat::Transit,
+        Item::BusLines | Item::MetroLines | Item::CableLines => Cat::Transit,
         Item::Place(p) => placeables().into_iter().find(|(_, i)| i.same(Item::Place(p))).map_or(Cat::Services, |(c, _)| c),
     }
 }
@@ -338,7 +345,7 @@ pub fn activate(item: Item, t: &mut ToolState) {
         Item::District => Tool::District,
         Item::Place(_) => Tool::Buildings,
         Item::RailPiece(_) => Tool::Rail,
-        Item::BusLines | Item::MetroLines => Tool::Transit,
+        Item::BusLines | Item::MetroLines | Item::CableLines => Tool::Transit,
     };
     if t.tool != tool {
         t.tool = tool;
@@ -382,8 +389,12 @@ pub fn activate(item: Item, t: &mut ToolState) {
             t.rail_kind = f;
             t.dock = None;
         }
-        Item::BusLines | Item::MetroLines => {
-            let mode = if item == Item::BusLines { TransitMode::Route } else { TransitMode::Metro };
+        Item::BusLines | Item::MetroLines | Item::CableLines => {
+            let mode = match item {
+                Item::BusLines => TransitMode::Route,
+                Item::CableLines => TransitMode::Cable,
+                _ => TransitMode::Metro,
+            };
             if t.transit_mode != mode {
                 t.transit_mode = mode;
                 t.route_sel = None;
@@ -848,6 +859,18 @@ fn icon(painter: &egui::Painter, r: Rect, item: Item, p: &UiCtx, col: Color32) {
             painter.rect_stroke(r.shrink(4.0), 6.0, egui::Stroke::new(2.0, c), egui::StrokeKind::Inside);
             painter.rect_filled(r.shrink(10.0), 4.0, c.gamma_multiply(0.35));
         }
+        // [cable] A rope sagging between two pylons, a cabin on it.
+        Item::CableLines => {
+            let c = Color32::from_rgb(240, 180, 70);
+            let (a, b) = (r.left_top() + egui::vec2(5.0, 10.0), r.right_top() + egui::vec2(-5.0, 6.0));
+            let mid = egui::pos2((a.x + b.x) * 0.5, (a.y + b.y) * 0.5 + 8.0);
+            painter.line(vec![a, mid, b], egui::Stroke::new(2.0, Color32::from_gray(190)));
+            for q in [a, b] {
+                painter.line_segment([q, egui::pos2(q.x, r.bottom() - 4.0)], egui::Stroke::new(2.5, Color32::from_gray(130)));
+            }
+            painter.line_segment([mid, mid + egui::vec2(0.0, 6.0)], egui::Stroke::new(1.5, Color32::from_gray(160)));
+            painter.rect_filled(egui::Rect::from_center_size(mid + egui::vec2(0.0, 12.0), egui::vec2(12.0, 10.0)), 2.0, c);
+        }
         Item::BusLines | Item::MetroLines => {
             let c = if item == Item::BusLines { super::theme::TEAL } else { Color32::from_rgb(190, 130, 230) };
             let pts = [r.left_bottom() + egui::vec2(4.0, -6.0), r.center() + egui::vec2(-6.0, 6.0), r.center() + egui::vec2(8.0, -8.0), r.right_top() + egui::vec2(-4.0, 6.0)];
@@ -934,6 +957,12 @@ fn info(ui: &mut egui::Ui, p: &mut UiCtx, item: Item, hovered: bool) {
             }
             let taxis = p.sim.world.taxis.counts();
             hint(ui, &format!("Taxis run themselves: a company opens where people want cabs ({} cabs now).", taxis.cabs));
+        }
+        Item::CableLines => {
+            let s = &p.sim.world.cable.stats;
+            row(ui, "network", format!("{} lines · {} stations · {:.1} km of rope", s.lines, s.stations, s.rope_m / 1000.0));
+            hint(ui, &format!("Gondola: a loop of 10-seat cabins, short waits, spans up to {:.0} m, may turn at stations. Aerial tramway: two 100-seat cabins between two stations, spans up to {:.1} km. Stations go on roofs, lots or hillsides; pylons rise to clear what is below.", nd_sim::cable::GONDOLA.max_span, nd_sim::cable::TRAMWAY.max_span / 1000.0));
+            hint(ui, &format!("Station {:.0} ({:.0}/day with its staff); rope {:.0}/m; pylons from {:.0}. Best up a hill or across water, where the streets go round.", nd_sim::cable::GONDOLA.station_cost, nd_sim::cable::GONDOLA.station_upkeep, nd_sim::cable::GONDOLA.cost_per_m, nd_sim::cable::GONDOLA.pylon_cost));
         }
         Item::MetroLines => {
             let s = &p.sim.world.subway.stats;

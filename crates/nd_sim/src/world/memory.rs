@@ -28,10 +28,10 @@ impl World {
             yards halts seller_index seller_index_hour available groceries_for_sale meals_for_sale gyms_open
             landscape land_tile_grounds ports fishing road_z road_inner relief ground bridge_metres bots driving journeys
             peds waiting_cache crowds_cache seats society vehicles enforcement air contamination cleanups
-            industry_bias commercial_bias places concerns districts tourism subway tolls taxis cargo_hubs rides streets
+            industry_bias commercial_bias places concerns districts tourism subway tolls taxis cargo_hubs airports rides streets
             pillars pillar_gaps undercroft crosswalks estate skyline pressure scene identity street_events road_wear
             dirty road_log social social_concern committee path_links corps megablocks shore level_crossings attractions
-            freight_queue games airlifts dams parks insight containers talks
+            freight_queue games airlifts dams parks insight travel containers talks cable cable_waiting
         );
     }
 }

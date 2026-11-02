@@ -39,6 +39,8 @@ pub fn act_of(c: &Citizen) -> Act {
         Activity::Passenger { driver, .. } => (13, ffi(Some(*driver))),
         Activity::Abroad { terminal, .. } => (14, k(Some(*terminal))),
         Activity::OnFerry { to, .. } => (15, k(Some(*to))),
+        // [cable] After "unknown" (16), so older records keep their names.
+        Activity::OnCable { line, .. } => (17, ffi(Some(*line))),
     };
     let mode = if tag == 5 && c.mode == TravelMode::Bike { 1 } else { 0 };
     Act { tag, with, mode }
@@ -85,6 +87,11 @@ impl World {
         self.insight_incidents();
         self.insight_buildings(synced);
         self.insight.synced = true;
+        // [r7-citizen-story] The travel logs of people who are gone.
+        if self.clock.tick % 60 == 0 {
+            let citizens = &self.citizens;
+            self.travel.retain(|k| citizens.contains_key(k));
+        }
     }
 
     fn trip_kind(&self, id: CarId, c: &Car) -> TripKind {

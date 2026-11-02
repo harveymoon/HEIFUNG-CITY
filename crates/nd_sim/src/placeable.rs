@@ -33,6 +33,9 @@ pub enum Placeable {
     /// A cargo hub (`crate::cargo_hub`): freight terminal for the imports
     /// and exports of the businesses around it.
     CargoHub,
+    /// [airport] An airfield or an international airport (not on a lot:
+    /// fitted to the ground where clicked, `World::place_airport`).
+    Airport(crate::airport::AirportSize),
 }
 
 /// The Buildings tool's sub-categories.
@@ -82,6 +85,7 @@ impl BuildCategory {
                 let mut v = vec![Placeable::BusDepot, Placeable::MetroStation, Placeable::Service(ServiceKind::Vertiport, Tier::Mid)];
                 v.extend(crate::enforcement::LotSize::OFFERED.iter().map(|&s| Placeable::ParkingLot(s)));
                 v.extend(crate::tolls::TollSize::OFFERED.iter().map(|&s| Placeable::Toll(s)));
+                v.extend(crate::airport::AirportSize::ALL.iter().map(|&s| Placeable::Airport(s)));
                 v
             }
             BuildCategory::Rail => vec![Placeable::Rail(RailFacility::Station), Placeable::Rail(RailFacility::Central), Placeable::Rail(RailFacility::FreightYard), Placeable::CargoHub],
@@ -106,6 +110,7 @@ impl Placeable {
             Placeable::MetroStation => BuildCategory::Transit,
             Placeable::Toll(_) => BuildCategory::Transit,
             Placeable::CargoHub => BuildCategory::Rail,
+            Placeable::Airport(_) => BuildCategory::Transit,
         }
     }
 
@@ -135,6 +140,7 @@ impl Placeable {
             Placeable::MetroStation => "metro station".into(),
             Placeable::Toll(s) => s.label().to_string(),
             Placeable::CargoHub => "cargo hub".into(),
+            Placeable::Airport(s) => s.label().into(),
         }
     }
 
@@ -198,6 +204,7 @@ impl Placeable {
             Placeable::Dock(PortKind::FishingPortSmall) => "Fishing port, small",
             Placeable::Dock(PortKind::FishingPortLarge) => "Fishing port, large",
             Placeable::CargoHub => "Cargo hub",
+            Placeable::Airport(s) => s.menu_label(),
         }
     }
 
@@ -213,6 +220,7 @@ impl Placeable {
             Placeable::ParkingLot(s) => s.cost(),
             Placeable::Toll(s) => s.cost(),
             Placeable::CargoHub => crate::cargo_hub::HUB_COST,
+            Placeable::Airport(s) => s.cost(),
         }
     }
 
@@ -228,6 +236,7 @@ impl Placeable {
             Placeable::ParkingLot(s) => s.upkeep_per_day(),
             Placeable::Toll(s) => s.upkeep_per_day(),
             Placeable::CargoHub => crate::cargo_hub::HUB_UPKEEP_PER_DAY,
+            Placeable::Airport(s) => s.upkeep_per_day(),
         }
     }
 
@@ -244,6 +253,7 @@ impl Placeable {
             // Collectors are part of the upkeep, not jobs in town.
             Placeable::Toll(_) => 0,
             Placeable::CargoHub => crate::cargo_hub::HUB_JOBS,
+            Placeable::Airport(s) => s.jobs(),
         }
     }
 
@@ -262,7 +272,7 @@ impl Placeable {
             Placeable::Battery(k) => k.min_area(),
             Placeable::Service(k, t) => k.min_area(t),
             Placeable::BusDepot => crate::transit::DEPOT_MIN_AREA,
-            Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_) => 0.0,
+            Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_) | Placeable::Airport(_) => 0.0,
             Placeable::ParkingLot(s) => s.min_area(),
             Placeable::MetroStation => crate::subway::STATION_MIN_AREA,
             Placeable::CargoHub => crate::cargo_hub::HUB_MIN_AREA,
@@ -312,7 +322,7 @@ impl Placeable {
     /// out front, the lot's size, the site (river, coast, hot spot).
     pub fn allowed_on(self, lu: LandUse) -> bool {
         match self {
-            Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_) | Placeable::MetroStation => true,
+            Placeable::Rail(_) | Placeable::Dock(_) | Placeable::Toll(_) | Placeable::MetroStation | Placeable::Airport(_) => true,
             _ => lu != LandUse::Park,
         }
     }
@@ -350,6 +360,7 @@ impl Placeable {
             "central_station" | "central" | "main_station" => Some(Placeable::Rail(RailFacility::Central)),
             "metro_station" | "metro" | "subway_station" | "subway" => Some(Placeable::MetroStation),
             "cargo_hub" | "hub" | "cargo" => Some(Placeable::CargoHub),
+            other if crate::airport::AirportSize::from_key(other).is_some() => crate::airport::AirportSize::from_key(other).map(Placeable::Airport),
             "clinic" => Some(Placeable::Service(ServiceKind::Health, tier.unwrap_or(Tier::Low))),
             other if crate::enforcement::LotSize::from_key(other).is_some() => crate::enforcement::LotSize::from_key(other).map(Placeable::ParkingLot),
             other if crate::tolls::TollSize::from_key(other).is_some() => crate::tolls::TollSize::from_key(other).map(Placeable::Toll),

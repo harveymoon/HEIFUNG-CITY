@@ -166,6 +166,9 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("building", "id: the boxes it holds (a depot's stock, a home's walls)"),
     ] },
     Cmd { name: "status", aliases: &[], effect: Read, run: |_, ctx| Ok(status::status(ctx)), help: &[] },
+    Cmd { name: "airports", aliases: &[], effect: Read, run: airports::airports, help: &[
+        ("note", "[airport] (no fields) every airport's card: flights today and yesterday, passengers (visitors, business, residents away), cargo in and out, delays, cancellations, noise complaints, fees and upkeep, how passengers reach it, the transit serving the terminal, the planes on and over the field (phase, position, height) and the next arrivals; and the sizes on offer with their costs"),
+    ] },
     Cmd { name: "frame_stats", aliases: &["frames"], effect: Read, run: |cmd, ctx| {
         let out = ctx.frame_stats.json();
         if cmd.get("reset").and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -444,7 +447,8 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("tier", "low|mid|high"),
         ("x", "f"),
         ("y", "f"),
-        ("note", "hydro beside a river or stream with a current >= 0.8 m/s, tidal on the sea shore, geothermal over a hot spot; docks at the water's edge (they build a pier and a street stub)"),
+        ("note", "hydro beside a river or stream with a current >= 0.8 m/s, tidal on the sea shore, geothermal over a hot spot; docks at the water's edge (they build a pier and a street stub); [airport] airfield|airport fitted to the ground at x,y (every heading tried unless heading: degrees of the runways from +x), check: true only says whether and how it fits"),
+        ("heading", "airfield|airport: degrees of the runways from +x (default: the best fit)"),
     ] },
     Cmd { name: "plant_preview", aliases: &[], effect: Read, run: place::plant_preview, help: &[
         ("kind", "solar|wind|coal|..."),
@@ -707,6 +711,21 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("minutes", "headway"),
         ("headway", "minutes (line)"),
         ("station", "id or [x,y]"),
+    ] },
+    Cmd { name: "cable", aliases: &["cable_car", "gondola", "cablecar"], effect: Game, run: |cmd, ctx| cable::command(cmd, &mut ctx.sim.world), help: &[
+        ("action", "status (default) | site | preview | build | cabins | hours | fare | remove_line | inspect_line | inspect_station"),
+        ("kind", "preview, build: gondola (default; a loop of 10-seat cabins, short spans, may turn at stations) | tramway (two 100-seat cabins shuttling between two stations; spans up to 2.1 km)"),
+        ("points", "preview, build: [[x, y], ...] the stations in order: an existing station there is used; else one is built (a roof if the building is 14 m or taller, else the lot bought out, else open ground with a way in within 90 m)"),
+        ("stations", "preview, build: [id | [x, y] | {at: [x, y], site}, ...] instead of points"),
+        ("sites", "preview, build: [\"auto\"|\"ground\"|\"roof\", ...] per point"),
+        ("pos", "site: [x, y] where a station would stand (site: auto|ground|roof)"),
+        ("line", "id (cabins, hours, fare, remove_line, inspect_line)"),
+        ("n", "cabins: cabins on a gondola's loop (more: shorter waits, more seats, more upkeep)"),
+        ("open", "build, hours: \"HH:MM\" (default 06:00)"),
+        ("close", "build, hours: \"HH:MM\" (default 23:00)"),
+        ("fare", "build, fare: 0..25 (gondola 3, tramway 4)"),
+        ("station", "inspect_station: id or [x, y]"),
+        ("returns", "status: lines (kind, stations, pylons, tallest_pylon_m, cabins, interval_min, capacity_per_hour_each_way, open/close, riders today and yesterday, mean wait, capacity_used, left_behind, sightseers, scenic, upkeep) and stations (site: lot|roof|open_ground, platform_m, boardings, waiting); preview: the figures, ok and refusal (why it cannot be built), supports; build: the line, paid"),
     ] },
     Cmd { name: "timetable", aliases: &["timetables", "schedule"], effect: Game, run: |cmd, ctx| timetable::command(cmd, &mut ctx.sim.world), help: &[
         ("action", "list (default) | get | timeline (= get) | set | preset | default"),

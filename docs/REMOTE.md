@@ -106,7 +106,7 @@ the replies back. So:
 Every example is the POST body; the reply always carries `"ok"`.
 
 **Other names.** Some commands answer to other names as well (`help` lists them under `aliases`):
-`add_interchange` (`interchange`); `campus` (`university`); `city_name` (`city_identity`); `cleanup` (`clean_up`); `committee_meeting` (`meeting`); `corps` (`corp`, `megacorp`); `megablock` (`megablocks`, `arcology`); `dirt_at` (`contamination_at`); `district` (`districts`); `estate` (`land_market`); `favourite` (`favorite`); `graphics` (`quality`); `grounds_junctions` (`park_junctions`); `heat_vision` (`heat`); `level_crossings` (`level_crossing`, `crossings`, `rail_crossings`); `photo_mode` (`photo`); `pressure` (`pressures`); `roads` (`road_condition`, `road_budget`); `shore` (`waterfront`); `skyline` (`towers`, `height_limit`); `street_events` (`nights`); `subway` (`metro`); `taxes` (`tax`); `tolls` (`toll`); `tourism` (`tourists`); `tow_car` (`tow`, `boot`); `zoom_to` (`zoom`).
+`add_interchange` (`interchange`); `campus` (`university`); `city_name` (`city_identity`); `cleanup` (`clean_up`); `committee_meeting` (`meeting`); `corps` (`corp`, `megacorp`); `megablock` (`megablocks`, `arcology`); `dirt_at` (`contamination_at`); `district` (`districts`); `estate` (`land_market`); `favourite` (`favorite`); `graphics` (`quality`); `grounds_junctions` (`park_junctions`); `heat_vision` (`heat`); `level_crossings` (`level_crossing`, `crossings`, `rail_crossings`); `photo_mode` (`photo`); `pressure` (`pressures`); `roads` (`road_condition`, `road_budget`); `shore` (`waterfront`); `skyline` (`towers`, `height_limit`); `street_events` (`nights`); `subway` (`metro`); `cable` (`cable_car`, `gondola`, `cablecar`); `taxes` (`tax`); `tolls` (`toll`); `tourism` (`tourists`); `tow_car` (`tow`, `boot`); `zoom_to` (`zoom`).
 
 `help` is checked against the dispatcher by a unit test (`remote::dispatch_tests`): every command
 it runs is documented in `help` or named as an alias, and nothing else is.
@@ -435,6 +435,15 @@ leaves_zone, outline}` or `{ok: false, reason}`. Off any lot or parcel the neare
 within 80 m is used, as before.
 
 
+- [airport] `airfield` (also `regional_airport`, `airstrip`) and `airport` (also
+  `international_airport`, `international`): fitted to the ground at `x`,`y` (`World::plan_airport`):
+  every heading is tried unless `heading` (degrees of the runways from +x) fixes it. Refused with the
+  reason when it runs off the map or into water, the ground is too hilly to level (over 40 m of cut or
+  fill; earthworks are paid on top), a road, column, station, dock or civic building is in the way, a hill or a building rises
+  through an approach surface off a runway end (named, with how far over the limit), the city has one
+  of that size already, or the treasury is short. `check: true` only says whether and how it fits:
+  `{ok, heading_deg, level_m, footprint, cost, earthworks_and_clearing, streets_cleared_m}` or `{ok: false, reason}`. `clear: true` takes the streets across the site out (60 a metre; not highways, railways or bridges). The reply carries the
+  `airport` card (as `airports`), with `forecourt_road`: draw a road to it to open the airport.
 - `station`, `freight_yard`, `central_station` (also `central`, `main_station`): rail pieces, placed
   anywhere (`World::place_rail_facility`); no road is needed. The reply message says whether track and street are
   joined. [dock-access] A passenger station on the track whose street is not yet on the road
@@ -862,6 +871,50 @@ can refuse a click.
 {"cmd": "metro_line", "cancel": true}
 ```
 
+#### Cable cars: `cable`
+
+`cable {action, ...}` (also `cable_car`, `gondola`, `cablecar`; `nd_app/src/remote/cable.rs`;
+[cable], see DESIGN "Cable cars"):
+
+| action | fields | does |
+|---|---|---|
+| `status` (default) | | the `cable` report section (below) |
+| `site` | `pos` [x, y], `site` auto / ground / roof | where a station clicked there would stand: `ok`, `roof`, `platform_m`, `ground_m`, `entrance`, `what` ("on the roof of ...", "buys out ...", "on open ground"), or `refusal` |
+| `preview` | `kind` gondola (default) / tramway, `points` [[x, y], ...] or `stations` [id \| [x, y] \| {at, site}, ...], `sites` [auto \| ground \| roof, ...] | what the line would be, built nothing: `preview` {kind, stations, new_stations, length_m, pylons, tallest_pylon_m, highest_over_ground_m, over_water, ride_min, cabins, interval_min, capacity_per_hour_each_way, build_cost, upkeep_per_day, scenic, ok, refusal, supports [{pos, s, base, top, height, station}]} and the treasury |
+| `build` (also `line`) | as `preview`, plus `cabins`, `fare`, `open`, `close` ("HH:MM") | builds the stations that are points (a station within 30 m of a point is used) and the line, and pays: `line` (as `inspect_line` without the detail), `paid`, `treasury`; an error with the refusal |
+| `cabins` | `line`, `n` | a gondola's cabins on the loop (clamped to 24..160 m apart) |
+| `hours` | `line`, `open`, `close` | opening hours ("HH:MM" or minutes) |
+| `fare` | `line`, `fare` | 0..25 |
+| `remove_line` | `line` | closes it: riders aboard set down at a station, waiting riders go another way, stations no other line calls at come down |
+| `inspect_line` | `line` | the line row plus `supports` (pos, height_m, rope_m, station), `yesterday_by_hour` (boarded, mean_wait_min) and `cabins_detail` (a sample: at, floor_m, in_station, riders) |
+| `inspect_station` | `station` id or [x, y] | the station row plus `riders_waiting_here` |
+
+A line row: `id`, `name`, `kind`, `colour`, `length_m`, `stations` [{id, name}], `pylons`,
+`tallest_pylon_m`, `cabins`, `seats_per_cabin`, `spacing_m`, `interval_min` (between cabins leaving
+a station each way), `expected_wait_min`, `ride_min` (end to end), `capacity_per_hour_each_way`,
+`open`, `close`, `open_now`, `running` (the rope moves), `fare`, `waiting`, `riding`,
+`riders_today`, `riders_yesterday`, `boarded_yesterday`, `mean_wait_min_yesterday`, `boarded_today`,
+`mean_wait_min_today`, `capacity_used` (seats taken over seats through stations, yesterday),
+`left_behind_today` / `_yesterday` (riders a full cabin left waiting, summed per cabin),
+`sightseers_today` / `_yesterday` (visitors riding for the view), `scenic`, `built_for`,
+`upkeep_per_day`. A station row: `id`, `name`, `pos`, `entrance`, `site` (lot / roof /
+open_ground), `building`, `building_name`, `platform_m`, `ground_m`, `above_street_m`, `lines`,
+`boardings_today`, `boardings_yesterday`, `waiting`.
+
+The `cable` report section (`report`): `lines`, `stations`, `cabins`, `pylons`, `rope_m`,
+`waiting`, `riding`, `riders_today`, `riders_yesterday`, `fares_today`, `fares_yesterday`,
+`upkeep_yesterday`, `line_list`, `station_list`. The Transit tool's Cable car mode is `tool {name:
+transit, kind: cable}`; trips by cable car count as `cable` in the trip shares.
+
+```json
+{"cmd": "cable", "action": "site", "pos": [420, -310]}
+{"cmd": "cable", "action": "preview", "kind": "gondola", "points": [[-640, 120], [-150, 260], [380, 520]]}
+{"cmd": "cable", "action": "build", "kind": "tramway", "points": [[210, -40], [1350, 610]], "sites": ["ground", "auto"]}
+{"cmd": "cable", "action": "cabins", "line": "1:1", "n": 90}
+{"cmd": "cable", "action": "hours", "line": "1:1", "open": "05:30", "close": "00:30"}
+{"cmd": "cable", "action": "inspect_line", "line": "1:1"}
+```
+
 ### Timetables and the day on each line [r4-timetable]
 
 `timetable {action, line?, ...}` (also `timetables`, `schedule`; `nd_app/src/remote/timetable.rs`)
@@ -918,6 +971,18 @@ up at the pier untimed, so a ferry's waits are null.
 ```
 
 ### Finding and inspecting
+
+[airport] `airports` (no fields): every airport's card, also `inspect {building}`'s `airport`
+section: name, size, works and problem, runways, stands, heading_deg, landing_towards_deg,
+flights_today (movements) and flights_yesterday, scheduled_today, pax_today / pax_yesterday,
+tourists_in_today (visitors who checked into a hotel), business_today, residents_out_today,
+cargo_in_today, cargo_out_today, cargo_waiting, delayed_today, avg_delay_min, cancelled_today,
+complaints_yesterday, homes_in_noise, fees_today / fees_yesterday, upkeep_per_day, jobs, workers,
+demand_pax_per_day, access (passengers by car, taxi, airport coach, rail, metro, bus over today and
+yesterday), transit (the station, metro and bus stop serving the terminal), planes (flight, kind,
+phase, from, to, stand, late_min), next_arrivals, centre, footprint, forecourt_road, level_m and
+planes_now (each plane's pos, alt_m and heading_deg now); and `sizes` (cost, upkeep, jobs, site,
+runways, rotations a day) with the placement rule.
 
 `find {what, near?, radius?, filter?, limit?}`, with `what` one of citizens, buildings, lots, cars,
 trains, metro_trains, routes, gestures. With `near` the rows are nearest first and carry `distance`; `radius`
@@ -1180,7 +1245,7 @@ stalled_s, anger_pct, route_left_m} while on the road, and `records`). A car no 
 still answers with its last trip (`car: null`, `on_road: false`). `inspect {citizen: id, history:
 true}` adds `history` {trips (each `set_off` record with `legs` (with `minutes`, and `waited_min` at
 a stop), `ended` (the activity it ended in) and `took_min`), trips_today, failed_routes, life,
-last_drive, current_drive, records}. `inspect {building: id, history: true}` adds `history`
+last_drive, current_drive, records}. [r7-citizen-story] `inspect {citizen}` always has `travel`: the trips of today and yesterday, oldest first, as the person pane's travel history shows them ({day, time, tick, from, from_name, to, to_name, why ("to work", "to get the car out of the pound", "to fetch the car"), modes ([walk, bike, bus, car, subway, lift, air, ...]), minutes (null while under way), events (["paid 95 to get the car out of the pound", "paid 4 to park", "no space, left the car on the street", ...]), cut_short, line}), saved with the city (14 a person at most), and `car_whereabouts` (the car in words: "in the pound at X: 95 to get it out now, 15 more each day it stays", "parked at the kerb 65 m from home (residents' permit, no limit)"; null without a car). `inspect {building: id, history: true}` adds `history`
 {events}.
 
 `replay {car | citizen, step_m?}` gives a trip's way as points: `points` [[x, y, tick], ...] (a

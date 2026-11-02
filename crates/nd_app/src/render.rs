@@ -37,6 +37,8 @@ pub use thumbs::Thumbs;
 mod turntable;
 pub use turntable::{turntable_aspect, Turntable};
 mod air;
+/// [airport] Airports: the field, its lights, the planes.
+mod airport;
 /// [districts] The district layer; [tourism] visitors on foot.
 mod districts;
 /// Emergency vehicles, fires and rubble.
@@ -103,6 +105,8 @@ mod nights;
 mod survey;
 /// [subway] Metro tunnels and trains in the Underground view.
 mod subway;
+/// [cable] Cable car stations, pylons, ropes and cabins.
+mod cable;
 /// [society] Camps, RVs and overflowing bins.
 mod society;
 /// [r5-layered] Markets, hawkers, lock-ups and courts under the raised roads.
@@ -485,8 +489,11 @@ impl Plugin for RenderPlugin {
         app.init_resource::<social::SocialRender>().add_systems(Update, social::sync_social.after(sync_vacant).after(sync_buildings).before(update_daylight).in_set(SimSet::Sync));
         // [dirty-industry] Clean-up crews.
         app.init_resource::<cleanup::CleanupRender>().add_systems(Update, cleanup::sync_cleanup.after(sync_vacant).before(update_daylight).in_set(SimSet::Sync));
+        // [cable] Gondolas and aerial tramways, over the buildings they clear.
+        app.init_resource::<cable::CableRender>().add_systems(Update, cable::sync_cable.after(sync_buildings).before(update_daylight).in_set(SimSet::Sync));
         // Drone taxis and helicopters, after the buildings whose pads they land on.
         app.init_resource::<air::AirState>().add_systems(Update, air::sync_air.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
+        app.init_resource::<airport::AirportRender>().add_systems(Update, airport::sync_airports.after(sync_buildings).after(sync_cars).before(lift_movers).in_set(SimSet::Sync));
         app.add_systems(Update, check_car_bodies.after(lift_movers).in_set(SimSet::Sync));
         // [rail-crossing] Level crossing gear: flashing lamps, swinging arms.
         // [r4] (K33) Containers on the freight trains and the yard cranes.

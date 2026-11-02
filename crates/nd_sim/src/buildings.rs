@@ -489,6 +489,9 @@ pub struct Building {
     /// A shipping port or ferry terminal.
     #[serde(default)]
     pub port: Option<crate::ports::PortKind>,
+    /// [airport] An airport (its whole field is this building's lot).
+    #[serde(default)]
+    pub airport: Option<crate::airport::AirportSize>,
     /// A police, fire, health, school or dispatch building, or an
     /// attraction, placed by the player (`nd_sim::services`).
     #[serde(default)]
@@ -507,6 +510,10 @@ pub struct Building {
     /// too, beside its railway platforms and bus terminal.
     #[serde(default)]
     pub metro: bool,
+    /// [cable] A cable car station's ground (`world/cable.rs`): drawn as
+    /// its plaza; the station itself is the cable renderer's.
+    #[serde(default)]
+    pub cable: bool,
     /// [megacorp] A campus building beyond a university's main one (a dorm,
     /// offices, a theatre, a sports centre, a frat house, a plaza). Offices,
     /// theatres and sports centres are the campus's own (`is_special`).
@@ -648,11 +655,13 @@ impl Building {
             rail_inbound: Vec::new(),
             rail_outbound: 0.0,
             port: None,
+            airport: None,
             construction: None,
             service: None,
             demolition: None,
             look: None,
             metro: false,
+            cable: false,
             annex: None,
             plot: Default::default(),
             units: Vec::new(),
@@ -682,7 +691,7 @@ impl Building {
     /// disagreed with each other and with [`Building::is_special`] (city
     /// car parks and cargo hubs were missing here, annexes there).
     pub fn is_city_structure(&self) -> bool {
-        self.is_power() || self.depot || self.rail.is_some() || self.port.is_some() || self.service.is_some() || self.metro || self.city_parking || self.business.as_ref().is_some_and(|z| z.kind == crate::market::BusinessKind::CargoHub)
+        self.is_power() || self.depot || self.rail.is_some() || self.port.is_some() || self.airport.is_some() || self.service.is_some() || self.metro || self.cable || self.city_parking || self.business.as_ref().is_some_and(|z| z.kind == crate::market::BusinessKind::CargoHub)
     }
 
     /// Not an ordinary grown building: a city structure
@@ -846,8 +855,10 @@ impl Building {
             Some(crate::estate::Form::MegaBlock) => self.parking_capacity = (homes as f32 * crate::megablock::PARKING_PER_HOME) as u16 + 40,
             _ => {}
         }
-        // [r8-parks] A park's spaces are the bays of its car park, set by
-        // the world from its plan (`World::sync_park_bays`); none hidden.
+        // [r7-citizen-story] A park has no garage: a car "in its spaces"
+        // stood nowhere that is drawn (Harvey: "the car disappeared").
+        // [r8-parks] A park's spaces are the bays of its car park, out in
+        // the open, set by the world from its plan (`World::sync_park_bays`).
         if self.land_use == LandUse::Park {
             self.parking_capacity = 0;
         }

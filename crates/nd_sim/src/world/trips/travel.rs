@@ -37,6 +37,11 @@ impl World {
     /// paths did this already; now every way out does.
     pub(in crate::world) fn up_from_platform(&mut self, id: CitizenId) {
         let Some(c) = self.citizens.get(id) else { return };
+        // [cable] Down from a cable station's platform, likewise.
+        if c.in_cable_station() {
+            self.out_of_cable_station(id);
+            return;
+        }
         if !c.on_platform() {
             return;
         }
@@ -95,6 +100,9 @@ impl World {
             return;
         }
         let origin = self.citizens[id].inside;
+        // [r7-citizen-story] Where the travel history says they set off
+        // from: at home counts even when not inside.
+        let log_from = origin.or_else(|| matches!(self.citizens[id].activity, Activity::AtHome).then_some(self.citizens[id].home).flatten());
         self.up_from_platform(id);
         self.citizens[id].transit = None;
         self.citizens[id].to_car = None;
@@ -134,6 +142,7 @@ impl World {
         if allow_bus {
             if let Some(plan) = self.consider_air(id, target, purpose, walk_from, entrance) {
                 self.note_trip(id, &[(crate::insight::AIR, 0.0)], 0, purpose, target, fresh);
+                self.log_leg(id, log_from, target, purpose, crate::travel_log::MODE_AIR, fresh);
                 self.start_air_trip(id, plan, target, purpose, fresh);
                 return;
             }
@@ -157,6 +166,7 @@ impl World {
                         continue;
                     }
                     self.note_trip(id, &modes, k, purpose, target, fresh);
+                    self.log_leg(id, log_from, target, purpose, crate::travel_log::mode_bit(opt.mode), fresh);
                     if fresh {
                         self.begin_trip(id, opt.mode, dist);
                         // [passengers] Coworkers and family setting off
@@ -175,6 +185,7 @@ impl World {
                 ModePlan::Bus { route, board, alight, stop, bike: false } => self.walk_to_transit(id, stop, TransitLeg::Bus { route, board, alight }, target, purpose, fresh),
                 ModePlan::Bus { route, board, alight, stop, bike: true } => self.ride_to_bus_stop(id, stop, TransitLeg::Bus { route, board, alight }, target, purpose, fresh),
                 ModePlan::Subway { line, board, alight, stop } => self.walk_to_transit(id, stop, TransitLeg::Subway { line, board, alight }, target, purpose, fresh),
+                ModePlan::Cable { line, board, alight, stop } => self.walk_to_transit(id, stop, TransitLeg::Cable { line, board, alight }, target, purpose, fresh),
                 ModePlan::Taxi { segment, at, wait_at } => self.hail_taxi(id, segment, at, wait_at, target, purpose, fresh),
                 // [ferry-islands] To the pier, to wait for the boat.
                 ModePlan::Ferry { board, alight, stop } => self.set_off_for_pier(id, walk_from, board, alight, stop, target, purpose, fresh),
@@ -186,6 +197,8 @@ impl World {
                 }
             }
             self.note_trip(id, &modes, k, purpose, target, fresh);
+            let bits = if matches!(opt.plan, ModePlan::Lift { .. }) { crate::travel_log::MODE_LIFT | crate::travel_log::mode_bit(opt.mode) } else { crate::travel_log::mode_bit(opt.mode) };
+            self.log_leg(id, log_from, target, purpose, bits, fresh);
             if fresh {
                 self.begin_trip(id, opt.mode, dist);
             }
@@ -409,6 +422,15 @@ impl World {
         // [taxis] A cab, when a company has one on duty within reach.
         if q.allow_transit {
             if let Some(o) = self.taxi_option(id, q, false) {
+                out.push(o);
+            }
+        }
+        // [cable] A gondola or aerial tramway; where one is on offer, the
+        // walk, the ride and the drive are reckoned the real way round the
+        // water and up the hill (`cable_reprice`).
+        if q.allow_transit && !self.cable.lines.is_empty() {
+            if let Some(o) = self.cable_option(id, q, time_w, money_w) {
+                self.cable_reprice(&mut out, q, time_w);
                 out.push(o);
             }
         }

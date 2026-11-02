@@ -17,6 +17,8 @@
 // The plumbing: the HTTP thread, the bundle commands run against, the
 // dispatcher and its help.
 /// [sound] The mixer, the beds' readout, WAV captures.
+/// [airport] Airports: the list, placing one, the inspector card.
+mod airports;
 mod audio;
 mod ctx;
 mod dispatch;
@@ -118,6 +120,8 @@ mod society;
 mod undercroft;
 /// [subway] The `subway` command and report section.
 mod subway;
+/// [cable] The `cable` command and report section.
+mod cable;
 mod taxes;
 /// [taxis] Taxi companies and cargo hubs in the report and inspector.
 mod taxis;

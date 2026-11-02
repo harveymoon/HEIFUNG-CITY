@@ -277,7 +277,7 @@ pub struct Act {
 }
 
 /// The `Activity` names, by `Act::tag`.
-pub const ACT_NAMES: [&str; 17] = ["arriving", "at_home", "working", "visiting", "idle", "traveling", "driving", "sitting", "waiting", "riding_bus", "on_train", "flying", "on_metro", "passenger", "abroad", "on_ferry", "unknown"];
+pub const ACT_NAMES: [&str; 18] = ["arriving", "at_home", "working", "visiting", "idle", "traveling", "driving", "sitting", "waiting", "riding_bus", "on_train", "flying", "on_metro", "passenger", "abroad", "on_ferry", "unknown", "on_cable"];
 
 /// One record of a log.
 #[derive(Clone, Debug, PartialEq)]
@@ -369,7 +369,7 @@ pub fn unffi<K: Key>(v: u64) -> Option<K> {
 
 // ── the codec ──
 
-fn put(b: &mut Vec<u8>, mut v: u64) {
+pub(crate) fn put(b: &mut Vec<u8>, mut v: u64) {
     while v >= 0x80 {
         b.push((v as u8) | 0x80);
         v >>= 7;
@@ -379,7 +379,7 @@ fn put(b: &mut Vec<u8>, mut v: u64) {
 
 /// A key's ffi bits (0: none) as its index and version, two short varints
 /// (the bits as one varint take five bytes or more).
-fn put_key(b: &mut Vec<u8>, v: u64) {
+pub(crate) fn put_key(b: &mut Vec<u8>, v: u64) {
     if v == 0 {
         put(b, 0);
     } else {
@@ -424,21 +424,21 @@ fn unq(p: [i64; 2]) -> Vec2 {
     Vec2::new(p[0] as f32 * 0.5, p[1] as f32 * 0.5)
 }
 
-struct Rd<'a> {
+pub(crate) struct Rd<'a> {
     b: &'a [u8],
     i: usize,
 }
 
 impl<'a> Rd<'a> {
-    fn new(b: &'a [u8]) -> Self {
+    pub(crate) fn new(b: &'a [u8]) -> Self {
         Self { b, i: 0 }
     }
 
-    fn done(&self) -> bool {
+    pub(crate) fn done(&self) -> bool {
         self.i >= self.b.len()
     }
 
-    fn u(&mut self) -> Option<u64> {
+    pub(crate) fn u(&mut self) -> Option<u64> {
         let mut v = 0u64;
         let mut shift = 0;
         loop {
@@ -455,7 +455,7 @@ impl<'a> Rd<'a> {
         }
     }
 
-    fn key(&mut self) -> Option<u64> {
+    pub(crate) fn key(&mut self) -> Option<u64> {
         match self.u()? {
             0 => Some(0),
             i => Some(((self.u()? & 0xffff_ffff) << 32) | ((i - 1) & 0xffff_ffff)),
@@ -466,7 +466,7 @@ impl<'a> Rd<'a> {
         self.u().map(unzz)
     }
 
-    fn byte(&mut self) -> Option<u8> {
+    pub(crate) fn byte(&mut self) -> Option<u8> {
         let v = *self.b.get(self.i)?;
         self.i += 1;
         Some(v)
@@ -484,7 +484,7 @@ impl<'a> Rd<'a> {
     }
 }
 
-fn put_purpose(b: &mut Vec<u8>, p: Purpose) {
+pub(crate) fn put_purpose(b: &mut Vec<u8>, p: Purpose) {
     let (tag, sub) = match p {
         Purpose::Home => (0, 0),
         Purpose::Work => (1, 0),
@@ -498,7 +498,7 @@ fn put_purpose(b: &mut Vec<u8>, p: Purpose) {
     b.push(sub);
 }
 
-fn get_purpose(r: &mut Rd) -> Option<Purpose> {
+pub(crate) fn get_purpose(r: &mut Rd) -> Option<Purpose> {
     let (tag, sub) = (r.byte()?, r.byte()? as usize);
     Some(match tag {
         0 => Purpose::Home,
@@ -1073,7 +1073,7 @@ pub fn unbase64(s: &str) -> Option<Vec<u8>> {
 /// The saved form: "z" and the base64 of the store's bytes deflated. (The
 /// save's own gzip cannot squeeze base64 of varints well: deflating first
 /// halves what the store adds to a compressed save.)
-fn pack(raw: &[u8]) -> String {
+pub(crate) fn pack(raw: &[u8]) -> String {
     use std::io::Write;
     let mut z = flate2::write::ZlibEncoder::new(Vec::with_capacity(raw.len() / 2), flate2::Compression::fast());
     let packed = z.write_all(raw).and_then(|_| z.finish());
@@ -1083,7 +1083,7 @@ fn pack(raw: &[u8]) -> String {
     }
 }
 
-fn unpack(s: &str) -> Option<Vec<u8>> {
+pub(crate) fn unpack(s: &str) -> Option<Vec<u8>> {
     use std::io::Read;
     match s.strip_prefix('z') {
         Some(rest) => {

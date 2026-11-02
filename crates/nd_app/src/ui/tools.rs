@@ -554,6 +554,11 @@ fn transit(ui: &mut egui::Ui, sim: &mut Sim, tools: &mut ToolState) {
         }
         TransitMode::Depot => hint(ui, help::TRANSIT_DEPOT),
         TransitMode::Metro => metro(ui, sim, tools),
+        // [cable] The Cable car line panel does the rest.
+        TransitMode::Cable => {
+            let s = &sim.world.cable.stats;
+            hint(ui, &format!("Click stops in order: an existing cable station, a roof (14 m+), a lot (bought out) or open ground with a way in. Pylons go up as needed to clear what is below. Enter builds; right click or Backspace takes back a stop; the Cable car line panel picks gondola or aerial tramway. {} line{} · {} station{} · {} cabins · {} riders today ({} yesterday) · fares {:.0}.", s.lines, super::fmt::s(s.lines), s.stations, super::fmt::s(s.stations), s.cabins, s.riders_today, s.riders_yesterday, s.fares_today));
+        }
     }
 }
 
@@ -798,6 +803,15 @@ pub fn placeable_info(ui: &mut egui::Ui, sim: &mut Sim, what: Placeable) {
             if !t.booths.is_empty() {
                 line += &format!(" {} booths: {} cars paid today, {:.0} taken.", t.booths.len(), t.paid_today, t.revenue_today());
             }
+        }
+        // [airport]
+        Placeable::Airport(s) => {
+            let (l, d) = s.size();
+            line += &format!(
+                ". Needs about {l:.0} by {d:.0} m of dry ground off the roads; a click fits it there at the best heading and levels the field (at most {:.0} m of cut or fill). Nothing tall may stand in the approaches off the runway ends (rising 1:{:.0}), and they stay height limit zones. Planes from towns off the map bring visitors for the hotels and take residents and business travellers away, more as the city grows; dear goods fly in and out. Landing and passenger fees pay for it; the flight paths are loud and cheapen the land under them. Draw a road to its forecourt road to open it.",
+                nd_sim::airport::MAX_EARTHWORK,
+                1.0 / nd_sim::airport::APPROACH_SLOPE
+            );
         }
         Placeable::CargoHub => {
             line += &format!(

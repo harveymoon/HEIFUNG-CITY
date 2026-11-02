@@ -52,6 +52,7 @@ impl World {
         // [land] Billionaires' convoys form and follow.
         crate::prof!("step_convoys", self.step_convoys());
         crate::prof!("step_air", self.step_air());
+        crate::prof!("step_airports", self.step_airports());
         crate::prof!("step_taxis", self.step_taxis());
         // [ped-highway] Nobody stands about on a highway or ramp.
         if tick % kerbside::STRANDED_SWEEP_EVERY == 7 {
@@ -74,6 +75,8 @@ impl World {
         crate::prof!("step_transit", self.step_transit());
         crate::prof!("step_rail", self.step_rail());
         crate::prof!("step_subway", self.step_subway());
+        // [cable] Gondolas and aerial tramways.
+        crate::prof!("step_cable", self.step_cable());
         crate::prof!("step_ships", self.step_ships());
         // [economy] marina boats out on the water
         crate::prof!("step_boats", self.step_boats());
@@ -136,6 +139,8 @@ impl World {
         crate::prof!("daily_services", self.daily_services());
         // [subway] Upkeep before the books close.
         crate::prof!("daily_subway", self.daily_subway());
+        // [cable] Stations, rope and cabins, before the books close.
+        crate::prof!("daily_cable", self.daily_cable());
         // [r4-timetable] Extra runs paid for, then the timelines roll.
         crate::prof!("daily_timetables", self.daily_timetables());
         // [events] Roads wear and the crews resurface, before the books close.
@@ -167,6 +172,7 @@ impl World {
         // [stories] late licences, noise, heritage grants
         self.daily_stories();
         crate::prof!("daily_tourism", self.daily_tourism());
+        crate::prof!("daily_airports", self.daily_airports());
         // [waterfront] beach tallies, and the households near a good one
         self.daily_shore();
         // [parks] litter, campers, dealers: how kept each park is
@@ -295,6 +301,10 @@ impl World {
             }
             // [land] A convoy's escort or police car at the end of its run.
             if self.convoy_car_arrived(car_id) {
+                continue;
+            }
+            // [airport] Passengers' cars and cabs to and from the terminal.
+            if self.airport_car_arrived(car_id) {
                 continue;
             }
             // Fire engines, police cars and ambulances: services handle them.

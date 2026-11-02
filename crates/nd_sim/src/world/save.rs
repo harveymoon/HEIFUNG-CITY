@@ -226,6 +226,8 @@ impl World {
             self.social_concern = self.concern_of_the_week();
         }
         self.subway_after_load();
+        // [cable] Riders aboard a cabin (not saved) set down at a station.
+        self.cable_after_load();
         // [ferry-islands] The crossings (not saved), and riders whose boat
         // (ships are not saved) is gone set down where they were going.
         self.refresh_ferry_links();
@@ -343,6 +345,7 @@ impl World {
                 Some(TransitLeg::Subway { line, board, alight }) => self.subway.lines.get(line).is_some_and(|l| l.index_of(board).is_some() && l.index_of(alight).is_some()),
                 Some(TransitLeg::Taxi) => true,
                 Some(TransitLeg::Ferry { board, alight }) => buildings.contains_key(board) && buildings.contains_key(alight),
+                Some(TransitLeg::Cable { line, board, alight }) => self.cable.lines.get(line).is_some_and(|l| l.index_of(board).is_some() && l.index_of(alight).is_some()),
             } && c.transit.is_none_or(|t| buildings.contains_key(t.target));
             if !trip_ok {
                 c.transit = None;
@@ -358,6 +361,8 @@ impl World {
                 Activity::Flying { drone } => !self.air.drones.contains_key(*drone),
                 // Trains are not saved: `subway_after_load` sets riders down.
                 Activity::OnMetro { .. } => c.transit.is_none(),
+                // [cable] Cabins' riders are not saved: `cable_after_load`.
+                Activity::OnCable { line, .. } => c.transit.is_none() || !self.cable.lines.contains_key(*line),
                 _ => false,
             };
             if lost || target_gone {
