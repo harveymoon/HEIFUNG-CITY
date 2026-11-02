@@ -233,6 +233,11 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
             super::ledger::account_section(ui, w, nd_sim::bank::Account::Person(id), "pocket");
             spotlight_toggle(ui, &mut sim.world, id, "Spotlight: route through the LLM mind");
             ui.separator();
+            // [r7-citizen-story] Where the car is, and the trips of today and yesterday.
+            if let Some(b) = travel_section(ui, &sim.world, id) {
+                go_to = Some(b);
+            }
+            ui.separator();
             super::places::citizen_places(ui, &sim.world, id);
             // [social] Friends, rivals, groups, conversations.
             match super::social::citizen_social(ui, &sim.world, id) {
@@ -264,6 +269,64 @@ pub fn pane(ctx: &egui::Context, sim: &mut Sim, tools: &mut ToolState, selection
     if let Some(c) = go_person {
         *selection = Selection::Citizen(c);
     }
+}
+
+/// [r7-citizen-story] The car's whereabouts and the travel history: each
+/// trip of today and yesterday, newest first, as "08:47 from → to" (the
+/// places buttons selecting their buildings), then why, how, how long and
+/// what happened on the way. Returns the building picked.
+fn travel_section(ui: &mut egui::Ui, w: &World, id: CitizenId) -> Option<nd_sim::BuildingId> {
+    let mut pick = None;
+    if let Some(car) = w.car_whereabouts(id) {
+        let trouble = car.starts_with("in the pound") || car.starts_with("on a tow truck") || car.contains("clamped") || car.contains("ticketed") || car.contains("banned");
+        let col = if trouble { egui::Color32::from_rgb(255, 150, 90) } else { egui::Color32::from_rgb(170, 200, 220) };
+        ui.label(egui::RichText::new(format!("car: {car}")).small().color(col));
+    }
+    let trips = w.travel_history(id, 2);
+    hint(ui, &format!("travel, today and yesterday, newest first ({})", trips.len()));
+    if trips.is_empty() {
+        ui.label(egui::RichText::new("No trips recorded yet.").small().weak());
+        return pick;
+    }
+    let today = w.clock.day();
+    egui::ScrollArea::vertical().id_salt("travel_history").max_height(170.0).show(ui, |ui| {
+        for t in trips.iter().rev() {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let day = if t.depart / 1440 == today { String::new() } else { "yday ".into() };
+                ui.label(egui::RichText::new(format!("{day}{}", super::fmt::hhmm(t.depart))).small().monospace().weak());
+                for (b, label, arrow) in [(t.from, &t.from_label, false), (t.to, &t.to_label, true)] {
+                    if arrow {
+                        ui.label(egui::RichText::new("→").small());
+                    }
+                    match b.filter(|b| w.buildings.contains_key(*b)) {
+                        Some(b) => {
+                            if ui.add(egui::Button::new(egui::RichText::new(label).small().color(super::IVORY)).small()).on_hover_text("Select it").clicked() {
+                                pick = Some(b);
+                            }
+                        }
+                        None => {
+                            ui.label(egui::RichText::new(label).small());
+                        }
+                    }
+                }
+            });
+            let took = match t.minutes {
+                Some(m) if t.cut_short => format!("{m} min, then went elsewhere"),
+                Some(m) => format!("{m} min"),
+                None => "under way".into(),
+            };
+            let mut line = format!("{}  ·  {}  ·  {took}", t.why, nd_sim::world::mode_words(&t.modes));
+            for e in &t.events {
+                line.push_str("  ·  ");
+                line.push_str(e);
+            }
+            let col = if t.events.is_empty() { egui::Color32::from_rgb(190, 190, 200) } else { egui::Color32::from_rgb(255, 190, 120) };
+            ui.label(egui::RichText::new(line).small().color(col));
+            ui.add_space(2.0);
+        }
+    });
+    pick
 }
 
 /// [camera] Home, work and anything they own as buttons in the pins'

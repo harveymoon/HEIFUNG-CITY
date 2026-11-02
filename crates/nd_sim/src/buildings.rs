@@ -841,6 +841,12 @@ impl Building {
             Some(crate::estate::Form::MegaBlock) => self.parking_capacity = (homes as f32 * crate::megablock::PARKING_PER_HOME) as u16 + 40,
             _ => {}
         }
+        // [r7-citizen-story] A park has no garage: a car "in its spaces"
+        // stood nowhere that is drawn (Harvey: "the car disappeared").
+        // Drivers to a park use the kerb or a car park near the gate.
+        if self.land_use == LandUse::Park {
+            self.parking_capacity = 0;
+        }
     }
 
     /// [tenants] Each unit's jobs from the building's (`jobs`, all floors):

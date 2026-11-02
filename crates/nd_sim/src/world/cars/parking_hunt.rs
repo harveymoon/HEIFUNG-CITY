@@ -469,6 +469,11 @@ impl World {
     /// gets out and walks the rest.
     pub(super) fn finish_park(&mut self, car_id: CarId, vid: VehicleId, spot: ParkSpot, tries: u8) {
         let Some(car) = self.traffic.remove_car(car_id) else { return };
+        // [r7-citizen-story] Its owner home for the night (or the new car
+        // delivered there): the residents' permit covers the street it is on.
+        let owner_home = self.vehicles.cars.get(vid).and_then(|v| self.citizens.get(v.owner)).and_then(|o| o.home);
+        let coming_home = owner_home.is_some() && (car.errand == Errand::Deliver || self.citizens.get(car.citizen).is_some_and(|d| matches!(d.activity, Activity::Driving { to, purpose: Purpose::Home, .. } if to == owner_home)));
+        let spot = ParkSpot { resident: coming_home && spot.kind == ParkKind::Kerb, ..spot };
         self.park_at(vid, spot);
         let slot = match spot.kind {
             ParkKind::Home | ParkKind::Building | ParkKind::Dealer | ParkKind::Hooked | ParkKind::Pound => 0,
@@ -510,6 +515,7 @@ impl World {
                 c.remember(tick, "Circled for ages. Nowhere to park, so I left it on the street.");
             }
             self.concerns.said(tick, driver, c, crate::concerns::Concern::Parking, 0.4, "Circled for ages. Nowhere to park, so I left it on the street.");
+            self.travel.note(driver, crate::travel_log::ev::NO_SPACE, 0.0);
         } else if tries >= 2 && roll {
             c.remember(tick, "Went round the block twice before I found a space.");
             self.concerns.heard(driver, c, crate::concerns::Concern::Parking, 0.2);

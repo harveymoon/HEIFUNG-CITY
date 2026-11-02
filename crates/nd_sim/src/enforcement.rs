@@ -42,6 +42,9 @@ pub const GRACE: u64 = 60;
 pub const FINE: f32 = 35.0;
 /// Residents parked this close to home have a permit (no limit).
 pub const PERMIT_RADIUS: f32 = 150.0;
+/// [r7-citizen-story] A car its owner parked on coming home holds the permit
+/// this far from home (the streets round it).
+pub const RESIDENT_REACH: f32 = 350.0;
 /// What a tow company in town charges to release a towed car.
 pub const TOW_FEE: f32 = 80.0;
 /// And one from out of town.

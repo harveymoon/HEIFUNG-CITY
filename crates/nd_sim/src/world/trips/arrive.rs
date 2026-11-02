@@ -28,6 +28,7 @@ impl World {
         // [carlife] The journey is over (a stop is a pause in it): how did
         // it feel?
         if purpose != Purpose::ToStop {
+            self.log_arrived(id, to);
             self.end_trip(id);
         }
         // The destination may have been demolished on the way.

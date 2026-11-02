@@ -117,7 +117,10 @@ pub enum Task {
     /// sim's own template line is the stand-in's answer.
     Dialogue { a: voices::CitizenCard, b: voices::CitizenCard, bond: String, topic: String, outcome: String, setting: String, place: Option<String>, template: String },
     /// [voices] A citizen's diary of the day, from their memories (text).
-    Diary { who: voices::CitizenCard, day: u32, entries: Vec<String>, talks: Vec<String> },
+    /// [r7-citizen-story] `entries`: memories and conversations of today
+    /// and yesterday, oldest first, with their times; `facts`: how things
+    /// stand now (the car, home and work, today's trips).
+    Diary { who: voices::CitizenCard, day: u32, entries: Vec<voices::DiaryEntry>, #[serde(default)] facts: Vec<String> },
     /// [ask-committee] The mayor's question between meetings (JSON
     /// `{respond, text}`): the member may choose not to answer. `earlier`:
     /// what others said before them in the thread (bounded). `last`: the
@@ -263,7 +266,7 @@ pub fn system_prompt(req: &TurnRequest) -> String {
         }
         Task::Chat { who, .. } => return talk::chat_system(&req.city, who),
         Task::Diary { who, .. } => {
-            return format!("You write the private diary of {}, a fictional citizen of {}, a cyberpunk city in the game HEIFUNG://CITY. Who they are: {}. Write in the first person, in their voice, 60 to 120 words, plain prose. Use only the events you are given; never invent places, people or numbers.", who.name, req.city, who.describe());
+            return format!("You write the private diary of {}, a fictional citizen of {}, a cyberpunk city in the game HEIFUNG://CITY. Who they are: {}. Write tonight's entry about today in the first person, in their voice, 60 to 120 words, plain prose. The events are listed oldest first with their times: tell them in that order, never moving one before or after another, and never count a trip as part of a later event. Yesterday's are background only. Use only the events and facts you are given; never invent events, outcomes, places, people or numbers. What the facts say is still so (a car still in the pound, no job, no home) has not been put right: do not write that it was.", who.name, req.city, who.describe());
         }
         _ => {}
     }
@@ -374,22 +377,21 @@ pub fn user_prompt(req: &TurnRequest) -> String {
                 a.name
             );
         }
-        Task::Diary { day, entries, talks, .. } => {
-            s = format!("Day {}. What happened today:
-", day + 1);
+        Task::Diary { day, entries, facts, .. } => {
+            s = format!("Day {}. What happened, oldest first (yesterday's for background, then today's), with the times:\n", day + 1);
             for e in entries {
-                s.push_str(&format!("- {e}
-"));
+                s.push_str(&format!("- {}\n", e.line()));
             }
-            for t in talks {
-                s.push_str(&format!("- {t}
-"));
+            if entries.is_empty() {
+                s.push_str("- nothing much\n");
             }
-            if entries.is_empty() && talks.is_empty() {
-                s.push_str("- nothing much
-");
+            if !facts.is_empty() {
+                s.push_str("How things stand now:\n");
+                for f in facts {
+                    s.push_str(&format!("- {f}\n"));
+                }
             }
-            s.push_str("Write tonight's diary entry.");
+            s.push_str("Write tonight's diary entry about today, keeping the events in the order above.");
         }
         // [talk] Answered above.
         Task::Chat { .. } => {}

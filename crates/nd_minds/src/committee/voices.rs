@@ -90,19 +90,93 @@ pub fn dialogue_request(w: &World, t: &Talk) -> Option<TurnRequest> {
     })
 }
 
-/// The request for a citizen's diary of today, from their memories.
+/// [r7-citizen-story] One thing that happened, as the diary is told it:
+/// when (today or yesterday, at a time), what, and whether it matters
+/// (a tow, an eviction, a new job: `is_key`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DiaryEntry {
+    pub today: bool,
+    /// "18:52".
+    pub time: String,
+    pub text: String,
+    pub key: bool,
+}
+
+impl DiaryEntry {
+    /// "today 09:10: Paid 95 to get the car out of the pound."
+    pub fn line(&self) -> String {
+        format!("{} {}: {}", if self.today { "today" } else { "yesterday" }, self.time, self.text)
+    }
+}
+
+/// Memories that matter to a day's story, by their words: the car and the
+/// parking rules, home and work, money, food, the mayor.
+pub fn is_key(text: &str) -> bool {
+    let t = text.to_ascii_lowercase();
+    ["pound", "tow", "clamp", "ticket", "had to go", "evict", "hired", "lost my job", "fired", "laid off", "moved into", "found a place", "bought", "sold", "hungry", "fed here", "rent", "leaving", "rolled into", "crash", "robbed", "arrested", "temper", "auction", "mayor", "never came", "sleeping in", "no home", "nowhere to"]
+        .iter()
+        .any(|k| t.contains(k))
+}
+
+fn hhmm(tick: u64) -> String {
+    format!("{:02}:{:02}", (tick % 1440) / 60, tick % 60)
+}
+
+/// [r7-citizen-story] What the diary is told about how things stand now:
+/// where they are, home and work, the car, money and food troubles, and
+/// today's trips. The model writes from these and the entries only.
+pub fn diary_facts(w: &World, id: CitizenId) -> Vec<String> {
+    let Some(c) = w.citizens.get(id) else { return Vec::new() };
+    let name = |b: Option<nd_sim::BuildingId>| b.and_then(|b| w.buildings.get(b)).map(|b| b.name.clone());
+    let mut out = Vec::new();
+    let now = w.activity_line(id);
+    out.push(format!("Now ({}): {}", hhmm(w.clock.tick), if now.is_empty() { "nothing in particular".to_string() } else { now }));
+    out.push(format!("Home: {}. Work: {}.", name(c.home).unwrap_or_else(|| "none (no home)".into()), name(c.work).unwrap_or_else(|| "none (out of work)".into())));
+    match w.car_whereabouts(id) {
+        Some(car) => out.push(format!("Car: {car}.")),
+        None => out.push("Car: none.".into()),
+    }
+    if c.hungry_days > 0 {
+        out.push(format!("Hungry {} days running.", c.hungry_days));
+    }
+    if c.rent_stress_days > 0 {
+        out.push(format!("The rent has strained them for {} days.", c.rent_stress_days));
+    }
+    let trips = w.travel_history(id, 1);
+    if !trips.is_empty() {
+        let n = trips.len();
+        let shown: Vec<String> = trips.iter().skip(n.saturating_sub(6)).map(|t| t.line()).collect();
+        out.push(format!("Trips today, in order: {}.", shown.join("; ")));
+    }
+    out
+}
+
+/// The request for a citizen's diary of today, from their memories and
+/// conversations of today and yesterday in time order, with their times,
+/// and how things stand now (`diary_facts`).
 pub fn diary_request(w: &World, id: CitizenId) -> Option<TurnRequest> {
     let c = w.citizens.get(id)?;
     let who = CitizenCard::of(w, id)?;
     let day = w.clock.day();
     let since = day.saturating_sub(1) * 1440;
-    let entries: Vec<String> = c.memories.iter().filter(|m| m.tick >= since).map(|m| m.text.clone()).collect();
-    let entries = if entries.is_empty() { c.memories.iter().rev().take(3).rev().map(|m| m.text.clone()).collect() } else { entries };
+    let today_from = day * 1440;
     let name = |x: CitizenId| w.citizens.get(x).map_or_else(|| "someone".to_string(), |c| c.name.clone());
-    let talks: Vec<String> = w.social.circles.get(&id).map_or_else(Vec::new, |circle| {
-        circle.talks.iter().filter(|n| n.tick >= since).rev().take(4).map(|n| format!("talked {} with {} ({})", n.topic.label(), name(n.with), n.outcome.label())).collect()
-    });
-    Some(TurnRequest { speaker: None, task: Task::Diary { who, day: day as u32, entries, talks }, city: city_of(w), day: day as u32, report: String::new(), seed: mix(mix(w.config.seed, id_bits(id)), day), max_tokens: 220 })
+    let entry = |tick: u64, text: String, key: bool| (tick, DiaryEntry { today: tick >= today_from, time: hhmm(tick), text, key });
+    let mut dated: Vec<(u64, DiaryEntry)> = c.memories.iter().filter(|m| m.tick >= since).map(|m| entry(m.tick, m.text.clone(), is_key(&m.text))).collect();
+    if dated.is_empty() {
+        // Nothing lately: the last few things they remember.
+        dated = c.memories.iter().rev().take(3).rev().map(|m| entry(m.tick, m.text.clone(), is_key(&m.text))).collect();
+    }
+    if let Some(circle) = w.social.circles.get(&id) {
+        for n in circle.talks.iter().filter(|n| n.tick >= since).rev().take(4) {
+            dated.push(entry(n.tick, format!("Talked {} with {} ({}).", n.topic.label(), name(n.with), n.outcome.label()), false));
+        }
+    }
+    // Oldest first, as it happened (stable: same-minute memories keep their order).
+    dated.sort_by_key(|(t, _)| *t);
+    let entries = dated.into_iter().map(|(_, e)| e).collect();
+    let facts = diary_facts(w, id);
+    Some(TurnRequest { speaker: None, task: Task::Diary { who, day: day as u32, entries, facts }, city: city_of(w), day: day as u32, report: String::new(), seed: mix(mix(w.config.seed, id_bits(id)), day), max_tokens: 260 })
 }
 
 fn id_bits(id: CitizenId) -> u64 {
@@ -120,9 +194,42 @@ pub fn mock_dialogue(template: &str) -> String {
     template.to_string()
 }
 
-/// The stand-in's diary: the day's memories in the first person, framed by
-/// the personality and the mood.
-pub fn mock_diary(who: &CitizenCard, day: u32, entries: &[String], talks: &[String], seed: u64) -> String {
+/// Entries a stand-in diary tells, at most.
+pub const MOCK_DIARY_ENTRIES: usize = 6;
+
+/// [r7-citizen-story] What the stand-in's diary tells, in time order:
+/// today's entries, the ones that matter first when there are too many
+/// (a tow, an eviction, a job), a bench sat on twice told once; with
+/// little today, yesterday's that matter come first ("Yesterday, ...").
+pub fn diary_pick(entries: &[DiaryEntry]) -> Vec<&DiaryEntry> {
+    let norm = |e: &DiaryEntry| e.text.chars().filter(|c| !c.is_ascii_digit()).collect::<String>();
+    let mut seen = std::collections::HashSet::new();
+    let today: Vec<(usize, &DiaryEntry)> = entries.iter().enumerate().filter(|(_, e)| e.today).filter(|(_, e)| seen.insert(norm(e))).collect();
+    let mut keep: Vec<usize> = today.iter().filter(|(_, e)| e.key).map(|(i, _)| *i).collect();
+    // Too many that matter: the latest ones.
+    if keep.len() > MOCK_DIARY_ENTRIES {
+        keep.drain(..keep.len() - MOCK_DIARY_ENTRIES);
+    }
+    // Room left: the rest of the day, latest first (the day's end is what
+    // is on their mind tonight), then all back in time order.
+    for (i, _) in today.iter().rev().filter(|(_, e)| !e.key) {
+        if keep.len() >= MOCK_DIARY_ENTRIES {
+            break;
+        }
+        keep.push(*i);
+    }
+    if keep.len() < 2 {
+        let ys: Vec<usize> = entries.iter().enumerate().filter(|(_, e)| !e.today && e.key).map(|(i, _)| i).collect();
+        keep.extend(ys.iter().skip(ys.len().saturating_sub(2)));
+    }
+    keep.sort_unstable();
+    keep.into_iter().map(|i| &entries[i]).collect()
+}
+
+/// The stand-in's diary: the day's memories in the first person, in the
+/// order they happened (`diary_pick`), framed by the personality and the
+/// mood, and how the car stands if it is in trouble.
+pub fn mock_diary(who: &CitizenCard, day: u32, entries: &[DiaryEntry], facts: &[String], seed: u64) -> String {
     let opening = match who.archetype.as_str() {
         "Socialite" => pick(seed, 1, &["Busy day, people everywhere.", "Saw half the city today, or felt like it.", "Never a quiet moment."]),
         "Corpo" => pick(seed, 1, &["Another day closer to the corner office.", "Logged the hours. Logged them well.", "Ambition doesn't sleep, and neither do I."]),
@@ -131,16 +238,26 @@ pub fn mock_diary(who: &CitizenCard, day: u32, entries: &[String], talks: &[Stri
         _ => pick(seed, 1, &["Noticed something new today.", "Took the long way round again.", "The city keeps changing under my feet."]),
     };
     let mut parts = vec![format!("Day {}. {opening}", day + 1)];
-    for (i, e) in entries.iter().take(4).enumerate() {
-        let e = e.trim().trim_end_matches('.');
-        let lead = pick(seed, 10 + i as u64, &["", "Also: ", "Then ", "And ", "Later, "]);
-        let e = if lead.is_empty() { e.to_string() } else { lower_first(e) };
-        parts.push(format!("{lead}{e}."));
+    let picked = diary_pick(entries);
+    let mut first_today = true;
+    for (i, e) in picked.iter().enumerate() {
+        let text = e.text.trim().trim_end_matches('.');
+        let lead = if !e.today {
+            "Yesterday, "
+        } else if first_today {
+            first_today = false;
+            if e.time.as_str() < "12:00" { pick(seed, 10 + i as u64, &["", "This morning: ", "First, "]) } else { pick(seed, 10 + i as u64, &["", "First, "]) }
+        } else {
+            pick(seed, 10 + i as u64, &["Then ", "After that, ", "Later, ", "And "])
+        };
+        let text = if lead.is_empty() { text.to_string() } else { lower_first(text) };
+        parts.push(format!("{lead}{text}."));
     }
-    if let Some(t) = talks.first() {
-        parts.push(format!("I {t}.", t = t.trim_end_matches('.')));
+    // The car still in trouble: said as it stands now, not as done.
+    if let Some(car) = facts.iter().find_map(|f| f.strip_prefix("Car: ")).filter(|c| c.starts_with("in the pound") || c.starts_with("on a tow truck")) {
+        parts.push(format!("The car is still {}.", car.trim_end_matches('.').replacen(": ", ". It's ", 1)));
     }
-    if entries.is_empty() && talks.is_empty() {
+    if picked.is_empty() {
         parts.push(pick(seed, 3, &["Nothing much happened, and that's fine.", "Quiet. I'll take it.", "Same streets, same faces."]).to_string());
     }
     parts.push(

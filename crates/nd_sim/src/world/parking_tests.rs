@@ -855,3 +855,138 @@ fn car_parks_meeting_along_a_skewed_edge_join() {
     let far = v(&[(300.0, -189.0), (319.0, -217.0), (352.0, -194.0), (333.0, -166.0)]);
     assert!(super::parking::join_plots(&cp50, &far).is_none());
 }
+
+// ── [r7-citizen-story] the pound fetch, the travel history, home parking ──
+
+/// Run until the clock reads `hour` (on the next day if it is past it).
+fn run_to_hour(w: &mut World, hour: u64) {
+    while w.clock.hour() != hour {
+        run(w, 1);
+    }
+}
+
+#[test]
+fn the_pound_memory_says_what_it_costs_now_and_that_storage_grows() {
+    let m = super::enforcement::pound_memory("Hook & Haul", TOW_FEE + STORAGE_PER_DAY);
+    assert_eq!(m, "The car's in the pound at Hook & Haul. 95 to get it out now, 15 more each day it stays.");
+    let r = super::enforcement::release_memory("Hook & Haul", 110.0, TOW_FEE, 2);
+    assert_eq!(r, "Paid 110 to get the car out of the pound at Hook & Haul (80 for the tow, 30 for 2 days of storage).");
+}
+
+/// Harvey's Yuki Diallo: towed in the evening, so nothing can happen
+/// before 08:00; then the owner goes to the pound (one trip), pays and
+/// drives home (the next), and the travel history and the memories say
+/// so in that order, with the right modes, through a save.
+#[test]
+fn a_car_towed_at_night_is_fetched_after_eight_and_the_history_shows_it() {
+    let mut w = town();
+    let yard = tow_yard(&mut w);
+    run_to_hour(&mut w, 21);
+    let (id, vid) = parked_far(&mut w);
+    if let Some(h) = w.citizens[id].household {
+        w.households[h].money = 1000.0;
+    }
+    w.order_tow(vid).expect("clamped and towed");
+    for _ in 0..600 {
+        run(&mut w, 1);
+        if w.vehicles.cars[vid].spot().is_some_and(|s| s.kind == ParkKind::Pound) {
+            break;
+        }
+    }
+    let spot = *w.vehicles.cars[vid].spot().unwrap();
+    assert_eq!((spot.kind, spot.building), (ParkKind::Pound, Some(yard)), "in the yard's pound by night");
+    let towed_day = spot.since / 1440;
+    let memory = w.citizens[id].memories.iter().rev().find(|m| m.text.contains("in the pound")).map(|m| m.text.clone()).expect("remembers the tow");
+    assert!(memory.contains("95 to get it out now, 15 more each day it stays"), "{memory}");
+    // Nothing before 08:00 the next morning.
+    while !(w.clock.day() > towed_day && w.clock.hour() >= 8) {
+        run(&mut w, 1);
+        assert_eq!(w.enforcement.stats.released_total, 0, "fetched at {} before 08:00", w.clock.format_hhmm());
+    }
+    w.citizens[id].next_decision_tick = u64::MAX;
+    for _ in 0..12 * 60 {
+        run(&mut w, 1);
+        if w.enforcement.stats.released_total > 0 && !w.citizens[id].activity.is_traveling() {
+            break;
+        }
+    }
+    assert_eq!(w.enforcement.stats.released_total, 1, "fetched the next day");
+    let paid = w.citizens[id].memories.iter().find(|m| m.text.starts_with("Paid") && m.text.contains("pound")).expect("remembers paying");
+    assert!(paid.tick % 1440 >= 8 * 60, "paid at {}", paid.tick % 1440);
+    assert!(paid.text.contains("(80 for the tow, 15 for 1 day of storage)") || paid.text.contains("days of storage"), "{}", paid.text);
+    let trips = w.travel_history(id, 2);
+    let to_pound = trips.iter().position(|t| t.why == "to get the car out of the pound" && t.to == Some(yard)).unwrap_or_else(|| panic!("the trip to the pound: {:#?}", trips));
+    let t = &trips[to_pound];
+    assert!(t.minutes.is_some() && !t.modes.contains(&"car"), "a trip of its own, not by car: {t:?}");
+    assert!(t.depart % 1440 >= 8 * 60, "set off after 08:00: {t:?}");
+    let back = trips.get(to_pound + 1).unwrap_or_else(|| panic!("the drive home: {:#?}", trips));
+    assert_eq!(back.from, Some(yard));
+    assert_eq!(back.modes, vec!["car"], "{back:?}");
+    assert!(back.events.iter().any(|e| e.starts_with("paid") && e.contains("pound")), "{back:?}");
+    // Saved and loaded: the same history.
+    let again = World::from_ron(&w.to_ron().unwrap()).unwrap();
+    assert_eq!(again.travel_history(id, 2), trips);
+    assert_no_car_lost(&w);
+}
+
+/// A car left far from home (a move, a trip that ended without it) is
+/// fetched by day and parked where the residents' permit covers it, not
+/// left on a two-hour kerb to be ticketed, clamped and towed.
+#[test]
+fn an_owner_fetches_a_car_left_far_from_home_and_parks_it_legally() {
+    let mut w = town();
+    let id = w.citizens.iter().filter(|(_, c)| c.home.is_some() && c.can_work()).map(|(id, _)| id).next().unwrap();
+    if let Some(v) = w.citizens[id].car {
+        w.drop_car(v, CarEvent::Sold);
+    }
+    let home = w.citizens[id].home.unwrap();
+    let door = w.building_entrance(home).unwrap();
+    // No kerb by these homes: spaces of their own (a mid-rise's few).
+    w.buildings[home].parking_capacity = w.buildings[home].parking_used + 2;
+    let vid = w.give_car_parked(id, Vec2::new(-390.0, 0.0));
+    let at = w.vehicles.cars[vid].spot().unwrap().pos;
+    assert!(at.distance(door) > super::cars::CAR_REACH, "out of reach of home: {}", at.distance(door));
+    assert!(w.kerb_limit(vid).is_some(), "a time limit where it stands");
+    // At home and awake from 08:00 (owners set off from the hourly check at :47).
+    run_to_hour(&mut w, 8);
+    {
+        let c = &mut w.citizens[id];
+        c.activity = Activity::AtHome;
+        c.inside = Some(home);
+        c.asleep = false;
+        c.wakefulness = 1.0;
+        c.next_decision_tick = u64::MAX;
+    }
+    let mut set_off = false;
+    for _ in 0..8 * 60 {
+        run(&mut w, 1);
+        set_off |= w.citizens[id].to_car.is_some();
+        if set_off && w.vehicles.cars[vid].spot().is_some_and(|s| s.pos.distance(door) < PERMIT_RADIUS) && !w.citizens[id].activity.is_traveling() {
+            break;
+        }
+    }
+    assert!(set_off, "went to get it");
+    let spot = *w.vehicles.cars[vid].spot().expect("parked again");
+    assert!(spot.pos.distance(door) < PERMIT_RADIUS, "back by home: {:?} {}", spot.kind, spot.pos.distance(door));
+    assert_eq!(w.kerb_limit(vid), None, "a legal spot: a home space or the residents' permit");
+    let trips = w.travel_history(id, 1);
+    let fetch = trips.iter().find(|t| t.why == "to fetch the car").unwrap_or_else(|| panic!("{trips:#?}"));
+    assert!(fetch.modes.contains(&"walk") && fetch.modes.contains(&"car"), "walked there, drove back: {fetch:?}");
+    assert!(w.car_whereabouts(id).is_some_and(|s| !s.contains("limit") || s.contains("no limit")), "{:?}", w.car_whereabouts(id));
+}
+
+/// [r7-citizen-story] A park has no garage: nobody parks in it out of sight.
+#[test]
+fn a_park_has_no_hidden_parking_spaces() {
+    let mut w = town();
+    w.add_zone(square(10.0, -200.0, 150.0), LandUse::Park);
+    run(&mut w, 6 * 60);
+    let ids: Vec<BuildingId> = w.buildings.iter().filter(|(_, b)| b.construction.is_some()).map(|(id, _)| id).collect();
+    for id in ids {
+        w.finish_construction(id);
+    }
+    run(&mut w, 60);
+    let parks: Vec<&crate::buildings::Building> = w.buildings.values().filter(|b| b.land_use == LandUse::Park).collect();
+    assert!(!parks.is_empty(), "a park was laid out");
+    assert!(parks.iter().all(|b| b.parking_capacity == 0), "{:?}", parks.iter().map(|b| b.parking_capacity).collect::<Vec<_>>());
+}
