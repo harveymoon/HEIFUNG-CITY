@@ -63,6 +63,9 @@ pub mod rail;
 pub mod waterworks;
 pub mod transit;
 mod residential;
+mod stacks;
+#[cfg(test)]
+mod stacks_tests;
 /// [supertall] Skyscrapers, supertalls and megatalls.
 mod supertall;
 mod towers;

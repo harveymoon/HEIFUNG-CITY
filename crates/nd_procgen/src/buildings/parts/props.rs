@@ -85,28 +85,6 @@ pub fn outdoor_steel(c: &Ctx, color: [f32; 3]) -> (Surface, [f32; 3]) {
     if c.wear > threshold { (Rust, mix(color, c.palette.rust, 0.55)) } else { (Metal, color) }
 }
 
-/// External zigzag stair up the side of a pile. Rusted when the lot is worn.
-#[allow(clippy::too_many_arguments)]
-pub fn stair_zigzag(g: &mut Geometry, c: &Ctx, u: f32, v: f32, levels: i32, rise: f32, run: f32, color: [f32; 3]) {
-    let f = &c.frame;
-    let (s, color) = outdoor_steel(c, color);
-    let rail = if s == Rust { Rust } else { Matte };
-    let mut y = 0.0;
-    for l in 0..levels {
-        let steps = 8;
-        let dir = if l % 2 == 0 { 1.0 } else { -1.0 };
-        for st in 0..steps {
-            let t = (st as f32 + 0.5) / steps as f32;
-            f.bx(g, s, u, y + t * rise, v + dir * (t * run - run * 0.5), Vec3::new(0.9, 0.16, 0.42), color);
-        }
-        f.bx(g, rail, u - 0.5, y + rise * 0.5 + 0.5, v, Vec3::new(0.06, rise + 1.0, run), color);
-        f.bx(g, s, u, y + rise + 0.08, v + dir * run * 0.5, Vec3::new(1.0, 0.16, 1.0), color);
-        y += rise;
-    }
-    f.bx(g, rail, u, y * 0.5, v + run * 0.55, Vec3::new(0.15, y, 0.15), color);
-    f.bx(g, rail, u, y * 0.5, v - run * 0.55, Vec3::new(0.15, y, 0.15), color);
-}
-
 pub fn ladder(g: &mut Geometry, c: &Ctx, face: &Face, t: f32, y0: f32, y1: f32, color: [f32; 3]) {
     let f = &c.frame;
     let (s, color) = outdoor_steel(c, color);
