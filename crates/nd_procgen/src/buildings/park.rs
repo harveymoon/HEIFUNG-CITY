@@ -13,7 +13,7 @@ use crate::mesh::MeshData;
 use crate::palette::Palette;
 use crate::surface::{Geometry, Surface::*};
 use glam::{Vec2, Vec3};
-use nd_sim::park::{distance_to_boundary as edge_distance, ParkFeature, ParkFeatureSlot, ParkLayout};
+use nd_sim::park::{distance_to_boundary as edge_distance, ParkCarPark, ParkFeature, ParkFeatureSlot, ParkLayout};
 use nd_sim::Tier;
 use rand::Rng;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
@@ -52,6 +52,8 @@ struct Park<'a> {
     path_width: f32,
     /// [r5-layered] Raised decks over the lot (world quads).
     overhead: &'a [[Vec2; 4]],
+    /// [r8-parks] The park's car park, if it reaches this lot.
+    yard: Option<&'a ParkCarPark>,
 }
 
 impl Park<'_> {
@@ -72,8 +74,13 @@ impl Park<'_> {
 
     /// Distance from a world point to the lot edge: how big a paved apron or
     /// a ring of tables can be before it spills onto the neighbours.
+    /// [r8-parks] To the park's outside edge (a feature may stand over
+    /// a seam into the next lot of the park).
     fn room(&self, w: Vec2) -> f32 {
-        if nd_sim::zoning::point_in_polygon(w, &self.lot) { edge_distance(w, &self.lot) } else { 0.0 }
+        if self.open_edges.is_empty() {
+            return if nd_sim::zoning::point_in_polygon(w, &self.lot) { edge_distance(w, &self.lot) } else { 0.0 };
+        }
+        self.open_edges.iter().map(|(a, b)| w.distance(project(w, *a, *b))).fold(f32::MAX, f32::min)
     }
 
     /// Distance from a point to the nearest path centreline.
@@ -87,8 +94,12 @@ impl Park<'_> {
         best
     }
 
+    /// Clear of the features (the park's next lots' reaching over this
+    /// one too) and of the car park.
     fn clear_of_features(&self, w: Vec2, margin: f32) -> bool {
         self.layout.features.iter().all(|f| f.pos.distance(w) >= f.radius + margin)
+            && self.layout.nearby.iter().all(|(p, r)| p.distance(w) >= r + margin)
+            && self.yard.is_none_or(|y| y.distance(w) >= margin)
     }
 
     /// [r5-layered] Under (or within `margin` of) a raised deck over the
@@ -139,6 +150,7 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             Tier::High => 2.4,
         },
         overhead: &c.overhead,
+        yard: layout.car_park.as_ref(),
     };
     let inner = offset_poly(&c.lot_poly, 0.3);
     // The lawn runs right up to (a hair over) the edges shared with the
@@ -155,11 +167,13 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     park_benches(g, c, rng, &park);
     for slot in &layout.features {
         // [r5-layered] Nothing tall under a deck over the park.
-        let tall = matches!(slot.kind, ParkFeature::FerrisWheel | ParkFeature::Carousel | ParkFeature::Bandstand | ParkFeature::Statue | ParkFeature::Kiosk);
-        if tall && park.covered(slot.pos, slot.radius) {
+        if slot.kind.tall() && park.covered(slot.pos, slot.radius) {
             continue;
         }
         feature(g, rng, &park, slot, pal);
+    }
+    if let Some(y) = layout.car_park.as_ref().filter(|y| y.own) {
+        car_park(g, &park, y, pal);
     }
 
     // ── trees ────────────────────────────────────────────────────────────
@@ -313,7 +327,13 @@ fn park_paths(g: &mut Geometry, c: &Ctx, park: &Park) {
         Tier::Mid => (Paving, pal.paving, 0.06),
         Tier::High => (Paving, mul(pal.paving, 1.18), 0.06),
     };
-    for path in &layout.paths {
+    // [r8-parks] A walk that meets the car park stops at its kerb: people
+    // cross the yard itself on foot.
+    let walks: Vec<Vec<Vec2>> = match park.yard {
+        Some(yd) => layout.paths.iter().flat_map(|p| clip_off(p, |q| yd.distance(q) < 0.2)).collect(),
+        None => layout.paths.clone(),
+    };
+    for path in &walks {
         if path.len() < 2 {
             continue;
         }
@@ -405,34 +425,67 @@ fn park_edges(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, park: &Park, inner:
     // Every entrance (the street gate and the gaps to neighbouring park
     // lots) gets an opening in whatever lines the edge.
     let gaps: Vec<Vec2> = layout.entrances.iter().map(|e| f.to_local(*e)).collect();
-    // Edges shared with the rest of the park stay open; the offset polygon
-    // keeps the vertex order, so face indices match polygon edges.
-    let open = |i: usize| faces.len() == c.lot_poly.len() && layout.shared_edges.contains(&i);
+    // [r8-parks] Only the park's outside is lined: the stretches facing
+    // another lot of it (touching, or across a footpath through it) stay
+    // open, and so does the street side of its car park.
+    let inner_local: Vec<(Vec2, Vec2)> = layout.inner_edges.iter().map(|(a, b)| (f.to_local(*a), f.to_local(*b))).chain(park.yard.map(|y| (f.to_local(y.outline[0]), f.to_local(y.outline[1])))).collect();
+    let open_runs = |face: &Face, runs: Vec<(f32, f32)>| -> Vec<(f32, f32)> {
+        let mut cover: Vec<(f32, f32)> = Vec::new();
+        for (a, b) in &inner_local {
+            let (ra, rb) = (*a - face.mid(), *b - face.mid());
+            if ra.dot(face.out).abs() > 1.2 || rb.dot(face.out).abs() > 1.2 {
+                continue;
+            }
+            let (ta, tb) = (ra.dot(face.tangent), rb.dot(face.tangent));
+            cover.push((ta.min(tb) - 0.4, ta.max(tb) + 0.4));
+        }
+        let mut out = runs;
+        for (lo, hi) in cover {
+            let mut next = Vec::new();
+            for (a, b) in out {
+                if lo > a {
+                    next.push((a, lo.min(b)));
+                }
+                if hi < b {
+                    next.push((hi.max(a), b));
+                }
+            }
+            out = next;
+        }
+        out.into_iter().filter(|(a, b)| b - a > 1.0).collect()
+    };
     match tier {
         Tier::Low => {
             // Bits of chain-link, a tagged wall.
             for (i, face) in faces.iter().enumerate() {
-                if face.is_front || face.len < 5.0 || open(i) {
+                if face.is_front || face.len < 5.0 {
                     continue;
                 }
-                if i % 2 == 0 {
-                    fence(g, c, face.a, face.at(-face.len * 0.2, 0.0), 1.8, false);
-                } else {
-                    face.bx(g, f, Concrete, 0.0, 0.9, -0.2, Vec3::new(face.len * 0.8, 1.8, 0.3), mul(pick(rng, &pal.concrete), 0.8));
-                    // Tagged on both sides: the inside faces the lot, the outside the neighbour.
-                    let inner = Face::from_edge(face.at(face.len * 0.4, -0.35), face.at(-face.len * 0.4, -0.35));
-                    graffiti(g, c, rng, &inner, 0.1, 1.7, 2.5);
-                    let outer = Face::from_edge(face.at(-face.len * 0.4, -0.05), face.at(face.len * 0.4, -0.05));
-                    graffiti(g, c, rng, &outer, 0.1, 1.7, 1.5);
+                for (t0, t1) in open_runs(face, vec![(-face.len * 0.5, face.len * 0.5)]) {
+                    let len = t1 - t0;
+                    if len < 4.0 {
+                        continue;
+                    }
+                    let mid = (t0 + t1) * 0.5;
+                    if i % 2 == 0 {
+                        fence(g, c, face.at(t0, 0.0), face.at(t0 + len * 0.8, 0.0), 1.8, false);
+                    } else {
+                        face.bx(g, f, Concrete, mid, 0.9, -0.2, Vec3::new(len * 0.8, 1.8, 0.3), mul(pick(rng, &pal.concrete), 0.8));
+                        // Tagged on both sides: the inside faces the lot, the outside the neighbour.
+                        let inner = Face::from_edge(face.at(mid + len * 0.4, -0.35), face.at(mid - len * 0.4, -0.35));
+                        graffiti(g, c, rng, &inner, 0.1, 1.7, 2.5);
+                        let outer = Face::from_edge(face.at(mid - len * 0.4, -0.05), face.at(mid + len * 0.4, -0.05));
+                        graffiti(g, c, rng, &outer, 0.1, 1.7, 1.5);
+                    }
                 }
             }
         }
         Tier::Mid => {
-            for (i, face) in faces.iter().enumerate() {
-                if face.len < 3.0 || open(i) {
+            for face in faces.iter() {
+                if face.len < 3.0 {
                     continue;
                 }
-                for (t0, t1) in edge_runs(face, &gaps, 2.0) {
+                for (t0, t1) in open_runs(face, edge_runs(face, &gaps, 2.0)) {
                     hedge(g, c, face.at(t0, 0.0), face.at(t1, 0.0), if face.is_front { 1.1 } else { 1.3 }, 0.8, pal.foliage);
                 }
             }
@@ -442,21 +495,26 @@ fn park_edges(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, park: &Park, inner:
                     break;
                 }
                 let p = front.at(s * 1.9, -0.2);
-                f.bx(g, Stone, p.x, 0.7, p.y, Vec3::new(0.5, 1.4, 0.5), mul(pal.stone, 1.2));
+                if park.clear_of_features(f.to_world(p.x, p.y), 0.3) {
+                    f.bx(g, Stone, p.x, 0.7, p.y, Vec3::new(0.5, 1.4, 0.5), mul(pal.stone, 1.2));
+                }
             }
         }
         Tier::High => {
-            for (i, face) in faces.iter().enumerate() {
-                if face.len < 3.0 || open(i) {
+            for face in faces.iter() {
+                if face.len < 3.0 {
                     continue;
                 }
-                for (t0, t1) in edge_runs(face, &gaps, 2.2) {
+                for (t0, t1) in open_runs(face, edge_runs(face, &gaps, 2.2)) {
                     railing(g, c, face, t0, t1);
                 }
             }
             if layout.anchor {
                 for s in [-1.0f32, 1.0] {
                     let p = front.at(s * 2.4, -0.3);
+                    if !park.clear_of_features(f.to_world(p.x, p.y), 0.3) {
+                        continue;
+                    }
                     f.bx(g, Stone, p.x, 1.0, p.y, Vec3::new(0.7, 2.0, 0.7), mul(pal.stone, 1.5));
                     f.bx(g, Glow, p.x, 2.15, p.y, Vec3::new(0.3, 0.3, 0.3), mul(pal.lamp, 0.8));
                 }
@@ -465,6 +523,37 @@ fn park_edges(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, park: &Park, inner:
             }
         }
     }
+}
+
+/// [r8-parks] The runs of a polyline outside where `cut` holds, a metre
+/// at a time.
+fn clip_off(path: &[Vec2], cut: impl Fn(Vec2) -> bool) -> Vec<Vec<Vec2>> {
+    let mut out: Vec<Vec<Vec2>> = Vec::new();
+    let mut run: Vec<Vec2> = Vec::new();
+    for w in path.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let n = (a.distance(b).ceil() as usize).max(1);
+        for k in 0..=n {
+            let p = a.lerp(b, k as f32 / n as f32);
+            if cut(p) {
+                if run.len() >= 2 {
+                    out.push(std::mem::take(&mut run));
+                }
+                run.clear();
+            } else if run.last().is_none_or(|q| q.distance(p) > 1e-3) {
+                // Only the corners and the ends of a run need keeping.
+                if k == 0 || k == n || run.is_empty() {
+                    run.push(p);
+                } else if cut(a.lerp(b, (k + 1) as f32 / n as f32)) {
+                    run.push(p);
+                }
+            }
+        }
+    }
+    if run.len() >= 2 {
+        out.push(run);
+    }
+    out
 }
 
 /// The parts of the outline `poly` not covered by any of `seams` (stretches
@@ -707,6 +796,11 @@ fn feature(g: &mut Geometry, rng: &mut impl Rng, park: &Park, s: &ParkFeatureSlo
         ParkFeature::Statue => statue(g, park, w, r, yaw, pal),
         ParkFeature::DogRun => dog_run(g, w, r, yaw, pal),
         ParkFeature::Lawn => g.part(Foliage).ground_polygon(&circle(w, r, 16, 0.0), 0.045, rgba(mul(pal.foliage, 1.15))),
+        ParkFeature::CommunityCentre => community_centre(g, rng, park, w, r, yaw, pal),
+        ParkFeature::Cafe => cafe(g, rng, park, w, r, yaw, pal),
+        ParkFeature::Toilets => toilets(g, park, w, r, yaw, pal),
+        ParkFeature::SportsPitch => sports_pitch(g, rng, park, w, r, yaw, pal),
+        ParkFeature::Allotments => allotments(g, rng, w, r, yaw, pal),
     }
 }
 
@@ -1130,4 +1224,324 @@ fn dog_run(g: &mut Geometry, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
     g.part(Matte).tube(Vec3::new(tunnel.x - d.x * 1.5, 0.45, tunnel.y - d.y * 1.5), Vec3::new(tunnel.x + d.x * 1.5, 0.45, tunnel.y + d.y * 1.5), 0.45, 10, rgba(mul(pal.awning(0), 0.9)));
     let bowl = w - n * (r * 0.4);
     g.part(Metal).cylinder(bowl, 0.25, 0.25, 0.0, 0.12, 8, rgba(mul(pal.steel, 0.9)));
+}
+
+// ── [r8-parks] a big park's own buildings and grounds ────────────────────────
+
+/// A paved apron round a building, as far as the park's edge allows.
+fn apron(g: &mut Geometry, park: &Park, w: Vec2, r: f32, pal: &Palette) {
+    let a = (r + 1.0).min(park.room(w) - 0.3);
+    if a > r * 0.6 {
+        g.part(Paving).ground_polygon(&circle(w, a, 18, 0.0), 0.046, rgba(mul(pal.paving, 1.05)));
+    }
+}
+
+/// The community centre: a low hall facing the path, its front lit, a
+/// canopy over the door, plant on the roof. On cheap land it is bare
+/// concrete with its shutters tagged; dearer, brick or panels and glass.
+fn community_centre(g: &mut Geometry, rng: &mut impl Rng, park: &Park, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
+    apron(g, park, w, r, pal);
+    let d = Vec2::from_angle(yaw);
+    let n = d.perp();
+    let (d3, n3) = (Vec3::new(d.x, 0.0, d.y), Vec3::new(n.x, 0.0, n.y));
+    let (depth, width, h) = (r * 0.85, r * 1.25, 4.4);
+    let wall = match park.tier {
+        Tier::Low => mul(pick(rng, &pal.concrete), 0.85),
+        Tier::Mid => pick(rng, &pal.brick),
+        Tier::High => mul(pick(rng, &pal.panel), 1.05),
+    };
+    let surface = match park.tier {
+        Tier::Low => Concrete,
+        Tier::Mid => Brick,
+        Tier::High => Panel,
+    };
+    g.part(surface).boxed(Vec3::new(w.x, h * 0.5, w.y), Vec3::new(depth, h, width), yaw, rgba(wall));
+    // Parapet and roof.
+    g.part(Concrete).boxed(Vec3::new(w.x, h + 0.25, w.y), Vec3::new(depth + 0.3, 0.5, width + 0.3), yaw, rgba(mul(wall, 0.75)));
+    for k in [-0.25f32, 0.2] {
+        let p = w + n * (width * k) - d * (depth * 0.15);
+        g.part(Metal).boxed(Vec3::new(p.x, h + 0.9, p.y), Vec3::new(1.4, 0.9, 1.1), yaw, rgba(mul(pal.steel, 0.7)));
+    }
+    let front = w + d * (depth * 0.5 + 0.03);
+    // A band of windows, lit warm; on cheap land half of it shuttered.
+    let band = if park.tier == Tier::Low { mul(pal.window_warm, 0.35) } else { mul(pal.window_warm, 0.75) };
+    for s in [-1.0f32, 1.0] {
+        let c = front + n * (width * 0.27 * s);
+        g.part(Glow).decal(Vec3::new(c.x, 2.4, c.y), n3, Vec3::Y, width * 0.36, 1.2, d3, rgba(band));
+        if park.tier == Tier::Low {
+            g.part(Metal).decal(Vec3::new(c.x, 2.15, c.y) + d3 * 0.02, n3, Vec3::Y, width * 0.36, 0.7, d3, rgba(mul(pal.steel, 0.55)));
+            let tag = pick(rng, &pal.led_colors);
+            g.part(Matte).decal(Vec3::new(c.x, 1.0, c.y) + d3 * 0.02, n3, Vec3::Y, width * 0.25, 0.8, d3, rgba(mul(tag, 0.8)));
+        }
+    }
+    // The door, a canopy over it and the centre's sign.
+    g.part(Glow).decal(Vec3::new(front.x, 1.15, front.y), n3, Vec3::Y, 1.8, 2.3, d3, rgba(mul(pal.window_warm, 0.9)));
+    let canopy = front + d * 1.0;
+    g.part(Metal).boxed(Vec3::new(canopy.x, 2.75, canopy.y), Vec3::new(2.0, 0.15, 3.2), yaw, rgba(mul(pal.steel, 0.8)));
+    for s in [-1.0f32, 1.0] {
+        let p = canopy + d * 0.8 + n * (1.4 * s);
+        g.part(Metal).cylinder(p, 0.06, 0.06, 0.0, 2.7, 6, rgba(mul(pal.steel, 0.6)));
+    }
+    let sign = front + d * 0.08;
+    g.part(Glow).decal(Vec3::new(sign.x, 3.55, sign.y), n3, Vec3::Y, width * 0.5, 0.55, d3, rgba(mul(pick(rng, &pal.led_colors), 1.1)));
+    // A noticeboard and a bike rack out front.
+    let board = front + d * 2.6 + n * (width * 0.35);
+    if park.room(board) > 0.8 {
+        g.part(Wood).boxed(Vec3::new(board.x, 1.2, board.y), Vec3::new(0.12, 1.0, 1.6), yaw, rgba(mul(pal.wood, 0.8)));
+        g.part(Matte).cylinder(board, 0.05, 0.05, 0.0, 0.8, 5, rgba(CHARCOAL));
+    }
+    for k in 0..4 {
+        let p = front + d * 2.2 - n * (width * 0.2 + k as f32 * 0.7);
+        g.part(Metal).beam(Vec3::new(p.x - d.x * 0.4, 0.45, p.y - d.y * 0.4), Vec3::new(p.x + d.x * 0.4, 0.45, p.y + d.y * 0.4), 0.05, rgba(mul(pal.steel, 0.8)));
+    }
+}
+
+/// A café: a glass pavilion under a flat roof with a striped awning to
+/// the path, tables and parasols out front.
+fn cafe(g: &mut Geometry, rng: &mut impl Rng, park: &Park, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
+    apron(g, park, w, r, pal);
+    let d = Vec2::from_angle(yaw);
+    let n = d.perp();
+    let (d3, n3) = (Vec3::new(d.x, 0.0, d.y), Vec3::new(n.x, 0.0, n.y));
+    let k = w - d * (r * 0.3);
+    let (depth, width) = (r * 0.7, r * 1.0);
+    g.part(Glass).boxed(Vec3::new(k.x, 1.5, k.y), Vec3::new(depth, 3.0, width), yaw, rgba(pick(rng, &pal.glass)));
+    g.part(Glow).boxed(Vec3::new(k.x, 1.5, k.y), Vec3::new(depth - 0.3, 2.4, width - 0.3), yaw, rgba(mul(pal.window_warm, 0.7)));
+    g.part(Panel).boxed(Vec3::new(k.x, 3.15, k.y), Vec3::new(depth + 0.8, 0.3, width + 0.6), yaw, rgba(mul(pick(rng, &pal.panel), 0.8)));
+    // The awning over the front.
+    let aw = k + d * (depth * 0.5 + 0.7);
+    let stripe = pick(rng, &pal.awning_colors);
+    g.part(Tarp).boxed(Vec3::new(aw.x, 2.6, aw.y), Vec3::new(1.4, 0.08, width), yaw, rgba(stripe));
+    g.part(Tarp).decal(Vec3::new(aw.x, 2.45, aw.y) + d3 * 0.7, n3, Vec3::Y, width, 0.3, d3, rgba(mul(stripe, 0.8)));
+    // Its name lit along the roof edge.
+    let front = k + d * (depth * 0.5 + 0.42);
+    g.part(Glow).decal(Vec3::new(front.x, 3.15, front.y), n3, Vec3::Y, width * 0.6, 0.22, d3, rgba(mul(pick(rng, &pal.led_colors), 1.2)));
+    // Tables out on the path side.
+    for (du, dv) in [(0.45f32, -0.45f32), (0.45, 0.45), (0.85, 0.0), (0.85, -0.7), (0.85, 0.7)] {
+        let t = w + d * (r * du) + n * (r * dv);
+        if park.room(t) < 1.4 || !park.clear_of_benches(t, 1.2) {
+            continue;
+        }
+        g.part(Metal).cylinder(t, 0.05, 0.05, 0.0, 0.75, 6, rgba(mul(pal.steel, 0.7)));
+        g.part(Metal).cylinder(t, 0.45, 0.45, 0.75, 0.8, 10, rgba(mul(pal.steel, 0.85)));
+        for s in 0..2 {
+            let p = t + n * (if s == 0 { 0.7 } else { -0.7 });
+            g.part(Wood).boxed(Vec3::new(p.x, 0.45, p.y), Vec3::new(0.4, 0.06, 0.4), yaw, rgba(pal.wood));
+        }
+        g.part(Metal).cylinder(t, 0.03, 0.03, 0.8, 2.3, 5, rgba(mul(pal.steel, 0.6)));
+        g.part(Tarp).frustum(&MeshData::ngon(t, 1.1, 8, 0.0, 2.0), &MeshData::ngon(t, 0.05, 8, 0.0, 2.4), rgba(stripe));
+    }
+}
+
+/// A public toilet block: a squat tiled box with two doors and a light
+/// over them (tagged and grimy on cheap land).
+fn toilets(g: &mut Geometry, park: &Park, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
+    let d = Vec2::from_angle(yaw);
+    let n = d.perp();
+    let (d3, n3) = (Vec3::new(d.x, 0.0, d.y), Vec3::new(n.x, 0.0, n.y));
+    let (depth, width) = ((r * 0.9).min(2.4), (r * 1.3).min(3.4));
+    let wall = if park.tier == Tier::Low { mul(pal.concrete(1), 0.7) } else { mul(pal.stone, 1.25) };
+    g.part(Concrete).boxed(Vec3::new(w.x, 1.35, w.y), Vec3::new(depth, 2.7, width), yaw, rgba(wall));
+    g.part(Concrete).boxed(Vec3::new(w.x, 2.8, w.y), Vec3::new(depth + 0.5, 0.2, width + 0.5), yaw, rgba(mul(wall, 0.8)));
+    let front = w + d * (depth * 0.5 + 0.02);
+    for (s, sign) in [(-1.0f32, [0.25, 0.45, 1.0]), (1.0, [1.0, 0.3, 0.35])] {
+        let c = front + n * (width * 0.25 * s);
+        g.part(Metal).decal(Vec3::new(c.x, 1.0, c.y), n3, Vec3::Y, 0.8, 2.0, d3, rgba(mul(pal.steel, 0.45)));
+        g.part(Glow).decal(Vec3::new(c.x, 2.25, c.y) + d3 * 0.01, n3, Vec3::Y, 0.3, 0.3, d3, rgba(sign));
+    }
+    g.part(Glow).boxed(Vec3::new(front.x + d.x * 0.15, 2.5, front.y + d.y * 0.15), Vec3::new(0.2, 0.1, 0.6), yaw, rgba(mul(pal.lamp, 0.9)));
+    if park.tier == Tier::Low {
+        g.part(Matte).decal(Vec3::new(w.x, 1.0, w.y) - d3 * (depth * 0.5 + 0.02), n3, Vec3::Y, width * 0.7, 1.0, -d3, rgba([0.9, 0.2, 0.6]));
+    }
+}
+
+/// A sports pitch: turf (dirt on cheap land) with its lines, goals at
+/// both ends behind ball-stop fences, floodlights on dearer land.
+fn sports_pitch(g: &mut Geometry, rng: &mut impl Rng, park: &Park, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
+    // The long way across the path, so the pitch lies along it.
+    let yaw = yaw + FRAC_PI_2;
+    let (hw, hd) = (r * 0.84, r * 0.52);
+    let d = Vec2::from_angle(yaw);
+    let n = d.perp();
+    let (d3, n3) = (Vec3::new(d.x, 0.0, d.y), Vec3::new(n.x, 0.0, n.y));
+    let low = park.tier == Tier::Low;
+    let turf = if low { mul(pal.dirt, 1.0) } else { mul(pal.foliage, 1.25) };
+    g.part(if low { Dirt } else { Foliage }).ground_polygon(&rect_world(w, hw + 1.0, hd + 1.0, yaw), 0.047, rgba(mul(turf, 0.92)));
+    // Mown stripes.
+    if !low {
+        let stripes = 8;
+        for k in 0..stripes {
+            if k % 2 == 0 {
+                continue;
+            }
+            let c = w + d * (-hw + (k as f32 + 0.5) * (2.0 * hw / stripes as f32));
+            g.part(Foliage).decal(Vec3::new(c.x, 0.052, c.y), n3, d3, hd * 2.0, 2.0 * hw / stripes as f32, Vec3::Y, rgba(mul(turf, 1.08)));
+        }
+    }
+    let line = if low { mul(pal.chalk, 0.6) } else { pal.chalk };
+    let paint = |g: &mut Geometry, c: Vec2, along: Vec3, across: Vec3, len: f32| {
+        g.part(Matte).decal(Vec3::new(c.x, 0.058, c.y), along, across, len, 0.1, Vec3::Y, rgba(line));
+    };
+    for s in [-1.0f32, 1.0] {
+        paint(g, w + n * hd * s, d3, n3, hw * 2.0);
+        paint(g, w + d * hw * s, n3, d3, hd * 2.0);
+        // The box in front of each goal.
+        let bx = w + d * (hw - 2.5) * s;
+        paint(g, bx, n3, d3, hd * 0.9);
+    }
+    paint(g, w, n3, d3, hd * 2.0);
+    g.part(Matte).cylinder(w, hd * 0.3, hd * 0.3, 0.055, 0.06, 18, rgba(mul(line, 0.5)));
+    // Goals and the fences behind them.
+    let post = [0.92, 0.92, 0.92];
+    let dark = [0.1, 0.1, 0.11];
+    for s in [-1.0f32, 1.0] {
+        let gl = w + d * hw * s;
+        let half = (hd * 0.35).min(2.5);
+        for k in [-1.0f32, 1.0] {
+            let p = gl + n * half * k;
+            g.part(Metal).cylinder(p, 0.06, 0.06, 0.0, 2.0, 6, rgba(post));
+        }
+        g.part(Metal).beam(Vec3::new(gl.x - n.x * half, 2.0, gl.y - n.y * half), Vec3::new(gl.x + n.x * half, 2.0, gl.y + n.y * half), 0.08, rgba(post));
+        // A ragged net on cheap land, a taut one dearer.
+        let back = gl + d * s * 1.0;
+        g.part(Tarp).frustum(
+            &[Vec3::new(gl.x - n.x * half, 2.0, gl.y - n.y * half), Vec3::new(gl.x + n.x * half, 2.0, gl.y + n.y * half)],
+            &[Vec3::new(back.x + n.x * half, 0.0, back.y + n.y * half), Vec3::new(back.x - n.x * half, 0.0, back.y - n.y * half)],
+            rgba(if low { [0.35, 0.33, 0.3] } else { [0.85, 0.85, 0.85] }),
+        );
+        let fb = w + d * (hw + 0.9) * s;
+        let (a, b) = (fb - n * (hd + 0.6), fb + n * (hd + 0.6));
+        let posts = ((2.0 * hd + 1.2) / 2.5).ceil() as i32;
+        for k in 0..=posts {
+            let p = a.lerp(b, k as f32 / posts as f32);
+            g.part(Matte).cylinder(p, 0.05, 0.05, 0.0, 4.0, 5, rgba(dark));
+        }
+        for y in [1.0f32, 2.5, 3.95] {
+            rail(g, a, b, y, 0.04, dark);
+        }
+    }
+    if !low {
+        for (sx, sy) in [(-1.0f32, -1.0f32), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)] {
+            let p = w + d * (hw * 0.6 * sx) + n * ((hd + 1.4) * sy);
+            if park.room(p) < 0.6 || park.covered(p, 1.0) {
+                continue;
+            }
+            g.part(Metal).cylinder(p, 0.12, 0.09, 0.0, 9.0, 6, rgba(mul(pal.steel, 0.6)));
+            let head = p - n * (0.5 * sy);
+            g.part(Metal).boxed(Vec3::new(head.x, 9.1, head.y), Vec3::new(1.4, 0.5, 0.3), yaw, rgba(mul(pal.steel, 0.5)));
+            g.part(Glow).decal(Vec3::new(head.x, 9.0, head.y) - n3 * (0.16 * sy), d3, Vec3::Y, 1.2, 0.35, -n3 * sy, rgba(mul(pal.lamp, 1.1)));
+        }
+    } else {
+        // Jumpers for goalposts: a couple of bags dumped by the line.
+        for _ in 0..2 {
+            let p = w + n * (hd + 0.6) + d * rng.random_range(-hw * 0.6..hw * 0.6);
+            g.part(Tarp).boxed(Vec3::new(p.x, 0.15, p.y), Vec3::new(0.5, 0.3, 0.35), rng.random_range(0.0..TAU), rgba(pick(rng, &pal.tarp_colors)));
+        }
+    }
+}
+
+/// Allotments: a fenced patch of plots in rows of crops, a shed, a water
+/// butt and a compost bin.
+fn allotments(g: &mut Geometry, rng: &mut impl Rng, w: Vec2, r: f32, yaw: f32, pal: &Palette) {
+    let (hw, hd) = (r * 0.8, r * 0.55);
+    let d = Vec2::from_angle(yaw);
+    let n = d.perp();
+    let corners = rect_world(w, hw, hd, yaw);
+    g.part(Dirt).ground_polygon(&corners, 0.045, rgba(mul(pal.dirt, 0.85)));
+    // Plots: three across, two deep, a path between.
+    let crops = [mul(pal.foliage, 1.2), mul(pal.foliage, 0.8), [0.55, 0.62, 0.2], [0.75, 0.3, 0.25], mul(pal.foliage_dry, 1.1)];
+    for i in 0..3 {
+        for j in 0..2 {
+            let cu = -hw + (i as f32 + 0.5) * (2.0 * hw / 3.0);
+            let cv = if j == 0 { -hd * 0.5 } else { hd * 0.5 };
+            let c = w + d * cu + n * cv;
+            let (pw, pd) = (hw / 3.0 - 0.6, hd * 0.5 - 0.6);
+            if pw < 0.5 || pd < 0.5 {
+                continue;
+            }
+            g.part(Dirt).ground_polygon(&rect_world(c, pw, pd, yaw), 0.06, rgba(mul(pal.dirt, 0.6)));
+            let crop = crops[rng.random_range(0..crops.len())];
+            let rows = ((pd * 2.0) / 0.8).floor().max(1.0) as i32;
+            for k in 0..rows {
+                let rv = -pd + (k as f32 + 0.5) * (2.0 * pd / rows as f32);
+                let p = c + n * rv;
+                g.part(Foliage).boxed(Vec3::new(p.x, 0.2, p.y), Vec3::new(pw * 1.8, rng.random_range(0.15..0.45), 0.35), yaw, rgba(mul(crop, rng.random_range(0.85..1.1))));
+            }
+            // Canes for the beans in some.
+            if rng.random_bool(0.35) {
+                for k in 0..4 {
+                    let p = c + d * (-pw * 0.8 + k as f32 * pw * 0.5);
+                    g.part(Wood).cylinder(p, 0.03, 0.02, 0.0, 1.8, 4, rgba(mul(pal.wood, 0.9)));
+                }
+            }
+        }
+    }
+    // A shed in the corner, a water butt and the compost.
+    let shed = w + d * (hw - 1.3) - n * (hd - 1.1);
+    g.part(Wood).boxed(Vec3::new(shed.x, 1.1, shed.y), Vec3::new(2.0, 2.2, 1.6), yaw, rgba(mul(pal.wood, 0.7)));
+    g.part(Metal).boxed(Vec3::new(shed.x, 2.3, shed.y), Vec3::new(2.4, 0.12, 2.0), yaw + 0.04, rgba(mul(pal.rust, 0.8)));
+    let butt = shed + n * 1.4;
+    g.part(Matte).cylinder(butt, 0.4, 0.4, 0.0, 1.0, 10, rgba([0.15, 0.3, 0.5]));
+    let compost = w - d * (hw - 1.0) + n * (hd - 1.0);
+    g.part(Wood).boxed(Vec3::new(compost.x, 0.45, compost.y), Vec3::new(1.2, 0.9, 1.2), yaw, rgba(mul(pal.plywood, 0.75)));
+    // A low post-and-wire fence, a gap to the path.
+    let dark = [0.2, 0.18, 0.15];
+    for i in 0..4 {
+        let (a, b) = (corners[i], corners[(i + 1) % 4]);
+        let len = a.distance(b);
+        let k = (len / 2.5).ceil().max(1.0) as i32;
+        for s in 0..=k {
+            let p = a.lerp(b, s as f32 / k as f32);
+            g.part(Wood).cylinder(p, 0.05, 0.05, 0.0, 1.1, 4, rgba(mul(pal.wood, 0.6)));
+        }
+        if i == 0 {
+            rail(g, a, a.lerp(b, 0.42), 1.0, 0.03, dark);
+            rail(g, a.lerp(b, 0.58), b, 1.0, 0.03, dark);
+        } else {
+            rail(g, a, b, 1.0, 0.03, dark);
+        }
+    }
+}
+
+/// The car park: asphalt, its bays painted with a wheel stop each, a kerb
+/// round the back and sides, lamps, and a lit P by the way in. The cars
+/// parked in it are the city's own (drawn by the renderer at their bays).
+fn car_park(g: &mut Geometry, park: &Park, y: &ParkCarPark, pal: &Palette) {
+    let o = y.outline;
+    let worn = if park.tier == Tier::Low { 0.85 } else { 1.0 };
+    g.part(Asphalt).ground_polygon(&o, 0.055, rgba(mul(pal.asphalt, 1.25 * worn)));
+    let line = mul(pal.lane_marker, 0.7 * worn);
+    let (bw, bd) = (nd_sim::parking_layout::BAY_W, nd_sim::parking_layout::BAY_D);
+    for (p, h) in &y.spaces {
+        let f = Vec2::from_angle(*h);
+        let s = f.perp();
+        let (f3, s3) = (Vec3::new(f.x, 0.0, f.y), Vec3::new(s.x, 0.0, s.y));
+        for k in [-0.5f32, 0.5] {
+            let c = *p + s * (bw * k);
+            g.part(Matte).decal(Vec3::new(c.x, 0.068, c.y), f3, s3, bd * 0.92, 0.1, Vec3::Y, rgba(line));
+        }
+        let stop = *p + f * (bd * 0.5 - 0.5);
+        g.part(Concrete).boxed(Vec3::new(stop.x, 0.1, stop.y), Vec3::new(0.2, 0.14, 1.6), *h, rgba(mul(pal.concrete(0), 1.1)));
+    }
+    // A kerb round the back and sides (the street side is open).
+    for i in 1..4 {
+        let (a, b) = (o[i], o[(i + 1) % 4]);
+        let (m, len) = ((a + b) * 0.5, a.distance(b));
+        let dir = (b - a).normalize_or_zero();
+        g.part(Concrete).boxed(Vec3::new(m.x, 0.12, m.y), Vec3::new(len, 0.24, 0.3), dir.to_angle(), rgba(mul(pal.curb, 1.0)));
+    }
+    // Lamps at the back corners and the middle of the back.
+    let inward = (o[3] - o[0]).normalize_or_zero();
+    let along = (o[1] - o[0]).normalize_or_zero();
+    for p in [o[3] + along * 0.8 - inward * 0.6, o[2] - along * 0.8 - inward * 0.6, (o[2] + o[3]) * 0.5 - inward * 0.6] {
+        lamp_post_world(g, p, 6.0, pal.street_lamp);
+    }
+    // The P sign by the way in.
+    let sp = y.entry + inward * 1.6 + along * 3.6;
+    g.part(Metal).cylinder(sp, 0.07, 0.07, 0.0, 3.4, 6, rgba(pal.steel));
+    g.part(Glow).boxed(Vec3::new(sp.x, 3.6, sp.y), Vec3::new(0.12, 1.0, 1.0), along.to_angle(), rgba(pal.parking_sign));
+    // An arrow painted at the way in.
+    let ar = y.entry + inward * 3.0;
+    let (i3, a3) = (Vec3::new(inward.x, 0.0, inward.y), Vec3::new(along.x, 0.0, along.y));
+    g.part(Matte).decal(Vec3::new(ar.x, 0.068, ar.y), i3, a3, 1.8, 0.25, Vec3::Y, rgba(line));
 }

@@ -6,6 +6,8 @@
 use super::*;
 use crate::parks::{self as pk, ParkState};
 use crate::services::ServiceKind;
+use crate::buildings::Construction;
+use std::collections::BTreeMap;
 
 impl World {
     /// Park lots the city keeps as parks (not beaches, not a landmark's
@@ -27,27 +29,41 @@ impl World {
         }
     }
 
-    /// The parks as they stand: park lots side by side are one park, held
-    /// by its oldest building (so a park keeps its name as lots join it),
-    /// every lot of it named alike. Gone parks are dropped.
+    /// The parks as they stand: [r8-parks] the park lots of one layout
+    /// cluster (`ParkLayout::cluster`, the ground `park::plan_parks` lays
+    /// out as one) are one park, held by the building of the biggest park
+    /// it took in (else its oldest), so a park keeps its name as lots join
+    /// it; every lot of it is named alike, sites going up on it too. Gone
+    /// parks are dropped.
     pub(super) fn refresh_parks(&mut self) {
         let now = self.park_buildings();
-        let by_lot: HashMap<LotId, BuildingId> = now.iter().map(|(b, l)| (*l, *b)).collect();
-        let lot_ids: Vec<LotId> = now.iter().map(|x| x.1).collect();
-        let groups = crate::shore::groups_of(&lot_ids, |a, b| crate::shore::touching(&self.lots[a].polygon, &self.lots[b].polygon));
-        let mut anchors: Vec<(BuildingId, Vec<BuildingId>, Vec<LotId>)> = Vec::new();
-        for lots in groups {
-            let mut members: Vec<BuildingId> = lots.iter().map(|l| by_lot[l]).collect();
+        let mut by_key: BTreeMap<LotId, Vec<(BuildingId, LotId)>> = BTreeMap::new();
+        for (b, l) in &now {
+            by_key.entry(self.park_key(*l)).or_default().push((*b, *l));
+        }
+        let mut anchors: Vec<(BuildingId, Vec<BuildingId>, Vec<LotId>, LotId)> = Vec::new();
+        for (key, group) in by_key {
+            let mut members: Vec<BuildingId> = group.iter().map(|x| x.0).collect();
             members.sort();
-            let anchor = members.iter().copied().filter(|b| self.parks.parks.contains_key(b)).min_by_key(|b| (self.buildings[*b].built_tick, *b)).or_else(|| members.iter().copied().min_by_key(|b| (self.buildings[*b].built_tick, *b))).unwrap_or(members[0]);
+            let mut lots: Vec<LotId> = group.iter().map(|x| x.1).collect();
+            lots.sort();
+            let held = |b: &BuildingId| self.parks.parks.get(b).map_or(0.0, |s| s.area);
+            let anchor = members
+                .iter()
+                .copied()
+                .filter(|b| self.parks.parks.contains_key(b))
+                .max_by(|a, b| held(a).total_cmp(&held(b)).then((self.buildings[*b].built_tick, *b).cmp(&(self.buildings[*a].built_tick, *a))))
+                .or_else(|| members.iter().copied().min_by_key(|b| (self.buildings[*b].built_tick, *b)))
+                .unwrap_or(members[0]);
             let others: Vec<BuildingId> = members.into_iter().filter(|b| *b != anchor).collect();
-            anchors.push((anchor, others, lots));
+            anchors.push((anchor, others, lots, key));
         }
         let keep: std::collections::HashSet<BuildingId> = anchors.iter().map(|x| x.0).collect();
         // A park that merged into another hands its troubles on.
         let gone: Vec<(BuildingId, ParkState)> = self.parks.parks.iter().filter(|(b, _)| !keep.contains(b)).map(|(b, s)| (*b, s.clone())).collect();
         self.parks.parks.retain(|b, _| keep.contains(b));
-        for (b, others, lots) in anchors {
+        let mut names: HashMap<LotId, String> = HashMap::new();
+        for (b, others, lots, key) in anchors {
             let preserve = lots.iter().any(|l| self.lots[*l].park.as_ref().is_some_and(|p| p.preserve));
             if !self.parks.parks.contains_key(&b) {
                 let name = self.buildings[b].name.clone();
@@ -69,16 +85,281 @@ impl World {
                 s.members = others.clone();
                 s.lots = lots;
                 s.area = area;
-                let name = s.name.clone();
-                for m in &others {
-                    if self.buildings[*m].name != name {
-                        self.buildings[*m].name = name.clone();
-                        self.events.push(SimEvent::BuildingChanged(*m));
-                    }
+            }
+            names.insert(key, s.name.clone());
+            if self.buildings[b].name != s.name {
+                let n = s.name.clone();
+                self.buildings[b].name = n;
+                self.events.push(SimEvent::BuildingChanged(b));
+            }
+        }
+        // Every park building on a park's ground carries its name, the
+        // sites of its lots still going up too.
+        let renames: Vec<(BuildingId, String)> = self
+            .lots
+            .iter()
+            .filter(|(_, l)| l.land_use == LandUse::Park && !l.shore.beach)
+            .filter_map(|(id, l)| {
+                let name = names.get(&self.park_key(id))?;
+                let b = l.building?;
+                let bld = self.buildings.get(b)?;
+                (bld.land_use == LandUse::Park && bld.service.is_none() && bld.lot == id && bld.name != *name).then(|| (b, name.clone()))
+            })
+            .collect();
+        for (b, name) in renames {
+            self.buildings[b].name = name;
+            self.events.push(SimEvent::BuildingChanged(b));
+        }
+        self.parks.reindex();
+    }
+
+    /// [r8-parks] The park a park lot is part of: the key every lot of its
+    /// layout cluster carries (the lot itself when it has no plan).
+    pub fn park_key(&self, lot: LotId) -> LotId {
+        self.lots.get(lot).and_then(|l| l.park.as_ref()).and_then(|p| p.cluster).unwrap_or(lot)
+    }
+
+    /// [r8-parks] What the park `lot` is part of holds over all its lots:
+    /// its features (counted, "2 playgrounds") and its car park's bays.
+    pub fn park_contents(&self, lot: LotId) -> (Vec<String>, usize) {
+        let mut counts: Vec<(crate::park::ParkFeature, usize)> = Vec::new();
+        let mut bays = 0;
+        for l in self.park_cluster_lots(lot) {
+            let Some(p) = self.lots[l].park.as_ref() else { continue };
+            bays += p.car_park.as_ref().filter(|c| c.own).map_or(0, |c| c.spaces.len());
+            for f in &p.features {
+                match counts.iter_mut().find(|(k, _)| *k == f.kind) {
+                    Some(c) => c.1 += 1,
+                    None => counts.push((f.kind, 1)),
                 }
             }
         }
-        self.parks.reindex();
+        let words = counts.into_iter().map(|(k, n)| if n == 1 { k.label().to_string() } else { format!("{n} {}s", k.label()) }).collect();
+        (words, bays)
+    }
+
+    /// [r8-parks] Every lot of the park `lot` is part of, built or not.
+    pub fn park_cluster_lots(&self, lot: LotId) -> Vec<LotId> {
+        let key = self.park_key(lot);
+        let mut v: Vec<LotId> = self.lots.iter().filter(|(id, l)| l.land_use == LandUse::Park && !l.shore.beach && (*id == lot || l.park.as_ref().and_then(|p| p.cluster) == Some(key))).map(|(id, _)| id).collect();
+        v.sort();
+        v
+    }
+
+    /// [r8-parks] The park's building sites on the park `lot` is part of:
+    /// its lots' shares (`followers`) or its lead sites.
+    pub(super) fn park_sites(&self, lot: LotId, followers: bool) -> Vec<BuildingId> {
+        self.park_cluster_lots(lot)
+            .into_iter()
+            .filter_map(|l| self.lots[l].building)
+            .filter(|b| self.buildings.get(*b).is_some_and(|x| x.land_use == LandUse::Park && x.construction.as_ref().is_some_and(|c| c.follows_park == followers)))
+            .collect()
+    }
+
+    /// [r8-parks] How long a park takes to lay out: a building site's
+    /// day for a park (a little longer on dear land), and a little more
+    /// for a big one (up to a third of a day more), all its lots at once.
+    pub(super) fn park_build_days(&self, lot: LotId, tier: Tier) -> f32 {
+        // The ground still to lay out: the whole park when it is new, the
+        // lots it takes in when it grows.
+        let area: f32 = self.park_cluster_lots(lot).into_iter().filter(|l| self.lots[*l].building.is_none() || *l == lot).map(|l| self.lots[l].area()).sum();
+        Construction::days_for(0, tier) + (area / 40_000.0).min(0.33)
+    }
+
+    /// [r8-parks] Build the park `lot` is part of as one project: every
+    /// empty lot of it (backland too: the park is its way in) becomes a
+    /// site at once under the park's name. One site on a street leads (it
+    /// takes the deliveries, `step_construction`); the others keep pace
+    /// with it and open with it. A park already open, or going up, takes
+    /// its new lots in the same way. Returns the lead site, if one was
+    /// started. Every park is built so, by the city's develop round; only
+    /// the testing `build_now` opens one at once.
+    pub fn build_park(&mut self, lot: LotId) -> Option<BuildingId> {
+        let cluster = self.park_cluster_lots(lot);
+        let built: Vec<BuildingId> = cluster
+            .iter()
+            .filter_map(|l| self.lots[*l].building)
+            .filter(|b| self.buildings.get(*b).is_some_and(|x| x.land_use == LandUse::Park && x.service.is_none()))
+            .collect();
+        let vacant: Vec<LotId> = cluster.iter().copied().filter(|l| self.lot_free_for(*l, SiteRule::ANY)).collect();
+        if vacant.is_empty() {
+            return None;
+        }
+        let tier = self.lots[lot].park.as_ref().map_or(Tier::Mid, |p| p.tier);
+        let days = self.park_build_days(lot, tier);
+        let mut name = built.iter().find_map(|b| self.parks.of(*b).map(|s| s.name.clone())).or_else(|| built.first().map(|b| self.buildings[*b].name.clone()));
+        let leading = built.iter().copied().find(|b| self.buildings[*b].construction.as_ref().is_some_and(|c| !c.follows_park));
+        let mut started = None;
+        if leading.is_none() && built.is_empty() {
+            // A new park: the asked lot leads if on a street, else the
+            // biggest of its lots on one.
+            let mut street: Vec<LotId> = vacant.iter().copied().filter(|l| self.site_clear(*l, SiteRule::STREET)).collect();
+            street.sort_by(|a, b| (*b == lot).cmp(&(*a == lot)).then(self.lots[*b].area().total_cmp(&self.lots[*a].area())).then(a.cmp(b)));
+            for l in street {
+                if let Some(b) = self.build_on_named(l, None, name.clone()) {
+                    name = Some(self.buildings[b].name.clone());
+                    started = Some(b);
+                    break;
+                }
+            }
+        }
+        let name = name.unwrap_or_else(|| names::building_name(&mut self.rng, LandUse::Park));
+        let tick = self.clock.tick;
+        for l in vacant {
+            if !self.lot_free_for(l, SiteRule::ANY) {
+                continue;
+            }
+            let value = self.lot_value(l);
+            let seed = self.fresh_seed();
+            let mut b = Building::new(l, LandUse::Park, 0, tier, seed, name.clone(), tick, value);
+            let mut c = Construction::new(days);
+            c.follows_park = true;
+            c.deliveries = Construction::DELIVERIES;
+            b.construction = Some(c);
+            b.recompute_capacity();
+            let id = self.buildings.insert(b);
+            self.lots[l].building = Some(id);
+            self.events.push(SimEvent::BuildingBuilt(id));
+        }
+        started
+    }
+
+    /// [r8-parks] Empty lots of a park that is open or going up (a zone
+    /// grown onto it, backland behind it) join it now, as the park's own
+    /// works, rather than one by one at random. Returns how many parks
+    /// grew.
+    pub(super) fn extend_parks(&mut self) -> usize {
+        let mut keys: Vec<LotId> = self
+            .lots
+            .iter()
+            .filter(|(id, l)| l.land_use == LandUse::Park && !l.shore.beach && l.building.is_none() && l.park.as_ref().is_some_and(|p| p.cluster.is_some()) && self.site_clear(*id, SiteRule::ANY))
+            .map(|(id, _)| self.park_key(id))
+            .collect();
+        keys.sort();
+        keys.dedup();
+        let mut grew = 0;
+        for key in keys {
+            let lots = self.park_cluster_lots(key);
+            let has_park = lots.iter().filter_map(|l| self.lots[*l].building).any(|b| self.buildings.get(b).is_some_and(|x| x.land_use == LandUse::Park && x.service.is_none()));
+            if has_park {
+                if let Some(&l) = lots.iter().find(|l| self.lot_free_for(**l, SiteRule::ANY)) {
+                    self.build_park(l);
+                    grew += 1;
+                }
+            }
+        }
+        grew
+    }
+
+    /// [r8-parks] Once an hour (in the first ten-minute slot): the shares
+    /// of each park being built keep pace with its lead site; a park's
+    /// new lots with no lead site (an open park growing) are laid out by
+    /// its own crew, together, and open together.
+    pub(super) fn step_park_followers(&mut self, slot: u64, working: bool) {
+        if slot != 0 {
+            return;
+        }
+        let mut groups: BTreeMap<LotId, Vec<BuildingId>> = BTreeMap::new();
+        let mut leads: HashMap<LotId, f32> = HashMap::new();
+        for (id, b) in self.buildings.iter() {
+            let Some(c) = &b.construction else { continue };
+            if b.land_use != LandUse::Park || !self.lots.contains_key(b.lot) {
+                continue;
+            }
+            let key = self.park_key(b.lot);
+            if c.follows_park {
+                groups.entry(key).or_default().push(id);
+            } else {
+                let p = leads.entry(key).or_insert(0.0);
+                *p = p.max(c.progress);
+            }
+        }
+        for (key, sites) in groups {
+            let lead = leads.get(&key).copied();
+            let now = sites.iter().filter_map(|b| self.buildings[*b].construction.as_ref()).map(|c| c.progress).fold(0.0, f32::max);
+            let step = self.buildings[sites[0]].construction.as_ref().map_or(0.0, |c| c.work_hour_step());
+            let progress = match lead {
+                Some(p) => p.min(0.999),
+                None if working => (now + step).min(1.0),
+                None => now,
+            };
+            for b in &sites {
+                if let Some(c) = self.buildings[*b].construction.as_mut() {
+                    if (progress * 10.0).floor() > (c.progress * 10.0).floor() {
+                        self.events.push(SimEvent::BuildingChanged(*b));
+                    }
+                    c.progress = progress;
+                }
+            }
+            if lead.is_none() && progress >= 1.0 {
+                for b in sites {
+                    self.finish_construction(b);
+                }
+            }
+        }
+    }
+
+    /// [r8-parks] Each park building's spaces are the bays of the car park
+    /// on its lot (none hidden); cars parked in them stand on their bays.
+    pub(crate) fn sync_park_bays(&mut self) {
+        let mut bays: HashMap<BuildingId, Vec<(Vec2, f32)>> = HashMap::new();
+        for (id, b) in self.buildings.iter_mut() {
+            if b.land_use != LandUse::Park || b.service.is_some() {
+                continue;
+            }
+            let spaces = self.lots.get(b.lot).and_then(|l| l.park.as_ref()).and_then(|p| p.car_park.as_ref()).filter(|c| c.own).map(|c| c.spaces.clone()).unwrap_or_default();
+            b.parking_capacity = if b.operating() { spaces.len() as u16 } else { 0 };
+            if !spaces.is_empty() {
+                bays.insert(id, spaces);
+            }
+        }
+        if bays.is_empty() {
+            return;
+        }
+        for car in self.vehicles.cars.values_mut() {
+            let crate::CarPlace::Parked(s) = &mut car.place else { continue };
+            if !s.kind.uses_building() {
+                continue;
+            }
+            if let Some(v) = s.building.and_then(|b| bays.get(&b)) {
+                if let Some(&(p, h)) = v.get(s.slot as usize) {
+                    s.pos = p;
+                    s.heading = h;
+                }
+            }
+        }
+    }
+
+    /// [r8-parks] A free bay of park `b`'s car park, as a spot, if it has
+    /// one.
+    pub(in crate::world) fn park_bay_spot(&self, kind: crate::vehicle::ParkKind, b: BuildingId) -> Option<crate::vehicle::ParkSpot> {
+        let bld = self.buildings.get(b).filter(|x| x.land_use == LandUse::Park)?;
+        let lot = self.lots.get(bld.lot)?;
+        let bays = &lot.park.as_ref()?.car_park.as_ref().filter(|c| c.own)?.spaces;
+        let taken: std::collections::HashSet<u16> = self.vehicles.cars.values().filter_map(|c| c.spot()).filter(|s| s.building == Some(b) && s.kind.uses_building()).map(|s| s.slot).collect();
+        let (i, &(pos, heading)) = bays.iter().enumerate().find(|(i, _)| !taken.contains(&(*i as u16)))?;
+        Some(crate::vehicle::ParkSpot { kind, building: Some(b), segment: lot.car_segment, side: 0, slot: i as u16, pos, heading, since: self.clock.tick, ..Default::default() })
+    }
+
+    /// [r8-parks] The building of park `b`'s car park (on whichever lot of
+    /// the park holds it), when it has a bay free.
+    pub(in crate::world) fn park_car_park_for(&self, b: BuildingId) -> Option<BuildingId> {
+        let bld = self.buildings.get(b).filter(|x| x.land_use == LandUse::Park && x.service.is_none())?;
+        if self.lots.get(bld.lot)?.park.as_ref()?.cluster_lots <= 1 {
+            return None;
+        }
+        self.park_cluster_lots(bld.lot)
+            .into_iter()
+            .filter(|l| self.lots[*l].park.as_ref().is_some_and(|p| p.car_park.as_ref().is_some_and(|c| c.own)))
+            .filter_map(|l| self.lots[l].building)
+            .find(|x| self.buildings.get(*x).is_some_and(|y| y.land_use == LandUse::Park && y.parking_free() > 0))
+    }
+
+    /// [r8-parks] Is a parked car standing in the open in a park's car
+    /// park (drawn there and picked there, as at the kerb)?
+    pub fn in_park_car_park(&self, s: &crate::vehicle::ParkSpot) -> bool {
+        s.kind.uses_building()
+            && s.building.and_then(|b| self.buildings.get(b)).filter(|b| b.land_use == LandUse::Park).and_then(|b| self.lots.get(b.lot)).and_then(|l| l.park.as_ref()).and_then(|p| p.car_park.as_ref()).is_some_and(|c| c.distance(s.pos) < 0.5)
     }
 
     /// [parks] (D5) Park hub gates: the point deep in each park lot where
@@ -422,5 +703,124 @@ mod tests {
         assert!(w.parks.of(b).is_some_and(|s| s.preserve));
         w.set_park_preserve(b, false).expect("a park again");
         assert!(w.lots[lot].park.as_ref().is_some_and(|p| !p.preserve));
+    }
+
+    /// [r8-parks] A deep park zone: lots on the street and backland behind.
+    fn deep_park() -> World {
+        let mut cfg = WorldConfig::test_town();
+        cfg.emergencies = false;
+        cfg.social = false;
+        let mut w = World::new(cfg);
+        w.economy.treasury = 1.0e6;
+        w.add_road(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
+        w.add_zone(vec![Vec2::new(-70.0, 6.0), Vec2::new(70.0, 6.0), Vec2::new(70.0, 96.0), Vec2::new(-70.0, 96.0)], LandUse::Park);
+        w
+    }
+
+    #[test]
+    fn a_park_builds_as_one_project_with_its_backland_and_one_name() {
+        let mut w = deep_park();
+        let park_lots: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Park).map(|(id, _)| id).collect();
+        assert!(park_lots.len() >= 3);
+        let key = w.park_key(park_lots[0]);
+        assert!(park_lots.iter().all(|l| w.park_key(*l) == key), "the zone is one park");
+        assert!(park_lots.iter().any(|l| w.lots[*l].landlocked), "with backland behind");
+        let first = *park_lots.iter().find(|l| !w.lots[**l].landlocked).unwrap();
+        let lead = w.build_park(first).expect("a lead site on the street");
+        // Every lot of it is a site now, under one name; one leads.
+        let sites: Vec<BuildingId> = park_lots.iter().map(|l| w.lots[*l].building.expect("every lot of the park is built on, backland too")).collect();
+        let name = w.buildings[lead].name.clone();
+        assert!(sites.iter().all(|b| w.buildings[*b].name == name && w.buildings[*b].construction.is_some()));
+        assert_eq!(sites.iter().filter(|b| w.buildings[**b].construction.as_ref().is_some_and(|c| !c.follows_park)).count(), 1, "one lead site");
+        // The others keep pace with it, and it opens them all.
+        w.buildings[lead].construction.as_mut().unwrap().progress = 0.5;
+        w.step_park_followers(0, true);
+        assert!(sites.iter().all(|b| w.buildings[*b].construction.as_ref().unwrap().progress == 0.5));
+        w.finish_construction(lead);
+        assert!(sites.iter().all(|b| w.buildings[*b].operating()), "the park opens as one");
+        w.refresh_parks();
+        assert_eq!(w.parks.parks.len(), 1);
+        let s = w.parks.parks.values().next().unwrap();
+        assert_eq!(s.lots.len(), park_lots.len(), "the city counts the whole park");
+        assert_eq!(s.name, name);
+        assert!((s.area - park_lots.iter().map(|l| w.lots[*l].area()).sum::<f32>()).abs() < 1.0);
+    }
+
+    #[test]
+    fn new_lots_of_an_open_park_join_it_under_its_name() {
+        let mut w = deep_park();
+        let park_lots: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Park).map(|(id, _)| id).collect();
+        let first = *park_lots.iter().find(|l| !w.lots[**l].landlocked).unwrap();
+        let lead = w.build_park(first).unwrap();
+        w.finish_construction(lead);
+        w.refresh_parks();
+        let name = w.buildings[lead].name.clone();
+        // A lot of it cleared (as a rezoned or re-cut lot would be): the
+        // park takes it back in, as its own works, under its name.
+        let back = *park_lots.iter().find(|l| w.lots[**l].landlocked).unwrap();
+        let old = w.lots[back].building.take().unwrap();
+        w.buildings.remove(old);
+        assert_eq!(w.extend_parks(), 1);
+        let b = w.lots[back].building.expect("rebuilt");
+        assert_eq!(w.buildings[b].name, name);
+        assert!(w.buildings[b].construction.as_ref().is_some_and(|c| c.follows_park));
+        // With no lead site, its crew lays it out over the working day.
+        for _ in 0..60 {
+            w.step_park_followers(0, true);
+        }
+        assert!(w.buildings[b].operating());
+    }
+
+    #[test]
+    fn a_big_parks_car_park_holds_visible_cars() {
+        let mut w = deep_park();
+        let park_lots: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Park).map(|(id, _)| id).collect();
+        let first = *park_lots.iter().find(|l| !w.lots[**l].landlocked).unwrap();
+        let lead = w.build_park(first).unwrap();
+        w.finish_construction(lead);
+        let (lot, bays) = park_lots.iter().find_map(|l| w.lots[*l].park.as_ref().and_then(|p| p.car_park.as_ref()).filter(|c| c.own).map(|c| (*l, c.spaces.clone()))).expect("a 12,600 m2 park has a car park");
+        let b = w.lots[lot].building.unwrap();
+        assert_eq!(w.buildings[b].parking_capacity as usize, bays.len(), "its spaces are its bays, none hidden");
+        let s1 = w.park_bay_spot(crate::vehicle::ParkKind::Building, b).unwrap();
+        assert!(bays.iter().any(|(p, _)| p.distance(s1.pos) < 0.01));
+        assert!(w.in_park_car_park(&s1), "a car there is out in the open");
+        // A park lot without the car park has no spaces of its own.
+        let other = park_lots.iter().filter(|l| **l != lot).find_map(|l| w.lots[*l].building).unwrap();
+        assert_eq!(w.buildings[other].parking_capacity, 0);
+        assert!(w.park_bay_spot(crate::vehicle::ParkKind::Building, other).is_none());
+    }
+
+    #[test]
+    fn an_old_save_regroups_its_park_lots_and_renames_them() {
+        let mut w = deep_park();
+        let park_lots: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.land_use == LandUse::Park).map(|(id, _)| id).collect();
+        let first = *park_lots.iter().find(|l| !w.lots[**l].landlocked).unwrap();
+        let lead = w.build_park(first).unwrap();
+        w.finish_construction(lead);
+        // As a save from before: no park key on the lots, every lot its own
+        // name, the backland left bare.
+        let back = *park_lots.iter().find(|l| w.lots[**l].landlocked).unwrap();
+        let gone = w.lots[back].building.take().unwrap();
+        w.buildings.remove(gone);
+        for (k, l) in park_lots.iter().enumerate() {
+            if let Some(p) = w.lots[*l].park.as_mut() {
+                p.cluster = None;
+            }
+            if let Some(b) = w.lots[*l].building {
+                w.buildings[b].name = format!("Old Park {k}");
+            }
+        }
+        w.parks = Default::default();
+        let text = w.to_ron().unwrap();
+        let mut back_w = World::from_ron(&text).unwrap();
+        let key = back_w.park_key(park_lots[0]);
+        assert!(back_w.lots[park_lots[0]].park.as_ref().is_some_and(|p| p.cluster.is_some()), "planned again on load");
+        assert!(park_lots.iter().all(|l| back_w.park_key(*l) == key));
+        assert_eq!(back_w.parks.parks.len(), 1, "one park");
+        let name = back_w.parks.parks.values().next().unwrap().name.clone();
+        assert!(park_lots.iter().filter_map(|l| back_w.lots[*l].building).all(|b| back_w.buildings[b].name == name), "every lot renamed after the park");
+        // The bare backland is built with its park.
+        back_w.extend_parks();
+        assert!(back_w.lots[back].building.is_some_and(|b| back_w.buildings[b].name == name));
     }
 }

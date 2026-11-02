@@ -291,7 +291,7 @@ fn pick_any(sim: &Sim, p: SVec2, depth: Depth, reach: Reach) -> Selection {
         .cars
         .iter()
         .filter(|_| reach.small)
-        .filter_map(|(vid, c)| c.spot().filter(|s| s.kind.on_street()).map(|s| (s.pos.distance(p), vid)))
+        .filter_map(|(vid, c)| c.spot().filter(|s| s.kind.on_street() || w.in_park_car_park(s)).map(|s| (s.pos.distance(p), vid)))
         .filter(|(d, _)| *d < 3.5)
         .min_by(|a, b| a.0.total_cmp(&b.0));
     if let Some((_, vid)) = parked {

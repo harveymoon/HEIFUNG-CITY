@@ -296,8 +296,11 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
     if let Some(lot) = w.lots.get(b.lot) {
         if let Some(park) = &lot.park {
             section(ui, "PARK");
-            let features: Vec<&str> = park.features.iter().map(|f| f.kind.label()).collect();
-            ui.label(format!("{} benches, {} paths, {} entrances{}; part of {}-lot park of {:.0} m²", park.benches.len(), park.paths.len(), park.entrances.len(), if features.is_empty() { String::new() } else { format!(", {}", features.join(", ")) }, nd_sim::names::a(&park.cluster_lots.to_string()), park.cluster_area));
+            // [r8-parks] The whole park's: what it holds over all its lots.
+            let (features, bays) = w.park_contents(b.lot);
+            let here: Vec<&str> = park.features.iter().map(|f| f.kind.label()).collect();
+            ui.label(format!("A {}-lot park of {:.0} m²{}{}", park.cluster_lots, park.cluster_area, if features.is_empty() { String::new() } else { format!(": {}", features.join(", ")) }, if bays > 0 { format!("; a car park of {bays} spaces") } else { String::new() }));
+            hint(ui, &format!("This lot: {} benches, {} paths, {} ways in{}", park.benches.len(), park.paths.len(), park.entrances.len(), if here.is_empty() { String::new() } else { format!(", {}", here.join(", ")) }));
             let sitting = w.citizens.values().filter(|c| matches!(c.activity, nd_sim::Activity::Sitting { park: p, .. } if Some(p) == lot.building)).count();
             // [benches] Seats held (sitting or on the way) out of all of them.
             let (seats, held) = w.seats_in(b.lot);

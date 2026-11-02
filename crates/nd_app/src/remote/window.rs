@@ -61,6 +61,9 @@ pub struct WindowRequests {
     pub directory_people: Option<crate::ui::directory::TableState<crate::directory::PersonCol>>,
     /// [companies] The Companies table's settings, from `directory {kind: companies, show}`.
     pub directory_companies: Option<crate::ui::directory::TableState<crate::directory::CompanyCol>>,
+    /// [r8-parks] Type into the View window's search box (`window {name:
+    /// view, search}`): what the map shows only, never the world.
+    pub view_search: Option<String>,
 }
 
 /// A tool window by name. The View window was the Land window; its old name
@@ -151,6 +154,9 @@ impl WindowRequests {
 
 pub fn apply_window_requests(mut contexts: EguiContexts, mut req: ResMut<WindowRequests>) {
     let Ok(ctx) = contexts.ctx_mut() else { return };
+    if let Some(q) = req.view_search.take() {
+        crate::ui::windows::set_view_search(ctx, &q);
+    }
     if let Some(open) = req.new_game.take() {
         crate::ui::newgame::set_open(ctx, open);
     }
@@ -290,7 +296,14 @@ pub(super) fn window(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         }
         Ok(Named::Tool) | Err(_) => {
             let info = info_of(req_str(cmd, "name")?)?;
-            let (open, list) = ctx.windows.request(info, opt_bool(cmd, "open")?);
+            // [r8-parks] The View window's search, typed in as by hand.
+            let search = opt_str(cmd, "search")?.map(str::to_string);
+            let open = if search.is_some() && info == Info::Land { Some(true) } else { opt_bool(cmd, "open")? };
+            let (open, list) = ctx.windows.request(info, open);
+            if let Some(q) = search.filter(|_| info == Info::Land) {
+                ctx.windows.view_search = Some(q.clone());
+                return Ok(json!({ "window": info.title().to_ascii_lowercase(), "open": open, "windows_open": list, "search": q, "matching_layers": crate::ui::topbar::layers_matching(&q).iter().map(|(_, v)| v.len()).sum::<usize>() }));
+            }
             Ok(json!({ "window": info.title().to_ascii_lowercase(), "open": open, "windows_open": list }))
         }
     }

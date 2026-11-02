@@ -1100,6 +1100,8 @@ impl World {
         self.note_path_links();
         let links: Vec<Vec2> = self.path_links.links.iter().map(|l| l.pos).collect();
         crate::park::plan_parks_wild(&mut self.lots, &self.land_value, &links, &self.parks.preserves);
+        // [r8-parks] The parks' car parks: their bays are the spaces.
+        self.sync_park_bays();
         // [attractions] The park clears every non-park lot's plan: the
         // landmarks people walk round lay theirs out again.
         self.plan_attraction_grounds();

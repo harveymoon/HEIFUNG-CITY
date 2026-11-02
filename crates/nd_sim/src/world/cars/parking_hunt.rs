@@ -149,6 +149,8 @@ impl World {
         // First arrival: the destination's own spaces.
         if matches!(errand, Errand::Trip | Errand::Deliver) {
             if let Some(b) = dest {
+                // [r8-parks] A park's visitors leave the car in its car park.
+                let b = self.park_car_park_for(b).unwrap_or(b);
                 let own = self.buildings.get(b).is_some_and(|bld| !bld.is_parking() && bld.parking_free() > 0);
                 if own {
                     let kind = if Some(b) == home { ParkKind::Home } else { ParkKind::Building };

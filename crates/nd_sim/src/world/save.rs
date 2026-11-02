@@ -162,11 +162,16 @@ impl World {
         // Park layouts are saved with their lots (the benches people sit on
         // must survive a load), so they are only planned again when a save
         // from before parks were serialised has park lots without one.
-        if self.lots.values().any(|l| l.land_use == LandUse::Park && l.polygon.len() >= 3 && l.park.is_none()) {
+        // [r8-parks] And a save from before parks were planned as one
+        // ground (no park key on its lots): its park lots regroup, and the
+        // city renames and builds them as one park (`refresh_parks`).
+        if self.lots.values().any(|l| l.land_use == LandUse::Park && l.polygon.len() >= 3 && l.park.as_ref().is_none_or(|p| p.cluster.is_none())) {
             let links: Vec<Vec2> = self.path_links.links.iter().map(|l| l.pos).collect();
             crate::park::plan_parks_wild(&mut self.lots, &self.land_value, &links, &self.parks.preserves);
             self.plan_attraction_grounds();
+            self.refresh_parks();
         }
+        self.sync_park_bays();
         // [K10] Grounds side by side in a save from before they were joined:
         // their walks run out to the seam now (a no-op once they do).
         self.join_neighbouring_grounds();

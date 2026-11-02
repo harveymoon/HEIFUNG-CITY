@@ -989,5 +989,8 @@ fn a_park_has_no_hidden_parking_spaces() {
     run(&mut w, 60);
     let parks: Vec<&crate::buildings::Building> = w.buildings.values().filter(|b| b.land_use == LandUse::Park).collect();
     assert!(!parks.is_empty(), "a park was laid out");
-    assert!(parks.iter().all(|b| b.parking_capacity == 0), "{:?}", parks.iter().map(|b| b.parking_capacity).collect::<Vec<_>>());
+    // [r8-parks] A big park's spaces are the bays of its car park, out in
+    // the open (cars there are drawn and picked); none anywhere else.
+    let bays = |b: &crate::buildings::Building| w.lots.get(b.lot).and_then(|l| l.park.as_ref()).and_then(|p| p.car_park.as_ref()).filter(|c| c.own).map_or(0, |c| c.spaces.len());
+    assert!(parks.iter().all(|b| b.parking_capacity as usize == bays(b)), "{:?}", parks.iter().map(|b| (b.parking_capacity, bays(b))).collect::<Vec<_>>());
 }

@@ -70,6 +70,10 @@ impl World {
 
     /// A spot in a building's spaces (home, garage, lot, forecourt).
     pub(in crate::world) fn building_spot(&self, kind: ParkKind, b: BuildingId) -> Option<ParkSpot> {
+        // [r8-parks] A park's car park: a bay of its own, out in the open.
+        if let Some(s) = self.park_bay_spot(kind, b) {
+            return Some(s);
+        }
         let lot = self.building_lot(b)?;
         let pos = if lot.car_segment.is_some() { lot.car_point } else { lot.entrance() };
         Some(ParkSpot { kind, building: Some(b), segment: lot.car_segment, side: 0, slot: 0, pos, heading: 0.0, since: self.clock.tick, ..Default::default() })

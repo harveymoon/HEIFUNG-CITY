@@ -167,30 +167,94 @@ fn body(ui: &mut egui::Ui, p: &mut UiCtx, info: Info) {
 
 /// The View window: the map layer (one at a time, with its key in the
 /// legend), what else is drawn, land value and class mix, and the lighting.
+/// [r8-parks] A search box at the top filters it all by name and
+/// description as you type (the matching sections stay, the tabs give way
+/// to every match); Esc clears it. It changes only what the map shows,
+/// never the world.
 pub(super) fn land(ui: &mut egui::Ui, p: &mut UiCtx) {
-    section(ui, "MAP LAYER");
-    hint(ui, "One layer at a time, its key at the bottom right of the map. The Layer button in the top bar picks it too; V, O, P toggle theirs, L steps through the heat maps, K through the land layers.");
-    super::topbar::layer_list(ui, p.overlays, true);
-    section(ui, "ALSO DRAWN");
-    ui.checkbox(&mut p.tools.show_routes, "Bus lines whatever the tool");
-    ui.checkbox(&mut p.overlays.projects, "Other pending projects, dim");
-    ui.checkbox(&mut p.lighting.heat, "Drone heat vision [H]");
-    ui.checkbox(&mut p.lighting.show_weather, "Show weather").on_hover_text("Falling rain and snow, fog and wet streets. Off only hides them: the weather still happens.");
-    hint(ui, "Land value, rents and the class mix are in City Data, City, Land and rent.");
-    section(ui, "LIGHTING");
-    let lighting = &mut *p.lighting;
-    ui.checkbox(&mut lighting.follow_clock, "Follow the clock");
-    if !lighting.follow_clock {
-        ui.horizontal(|ui| {
-            ui.add(egui::Slider::new(&mut lighting.hour, 0.0..=24.0).text("hour").fixed_decimals(1));
-            for (label, h) in [("dawn", 6.5), ("noon", 12.5), ("dusk", 18.5), ("night", 23.0)] {
-                if ui.small_button(label).clicked() {
-                    lighting.hour = h;
-                }
-            }
-        });
+    let id = view_search_id();
+    let mut q: String = ui.ctx().data(|d| d.get_temp(id)).unwrap_or_default();
+    ui.horizontal(|ui| {
+        let r = ui.add(egui::TextEdit::singleline(&mut q).hint_text("Search views, layers and options").desired_width(ui.available_width() - 30.0));
+        // egui drops the focus on Esc: that Esc clears the search too.
+        if (r.has_focus() || r.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            q.clear();
+        }
+        if !q.is_empty() && ui.small_button("x").on_hover_text("Clear the search [Esc]").clicked() {
+            q.clear();
+        }
+    });
+    ui.ctx().data_mut(|d| d.insert_temp(id, q.clone()));
+    let q = q.trim().to_string();
+    let searching = !q.is_empty();
+    let m = |texts: &[&str]| super::topbar::view_matches(&q, texts);
+    let mut shown = 0usize;
+    let layer_hint = "One layer at a time, its key at the bottom right of the map. The Layer button in the top bar picks it too; V, O, P toggle theirs, L steps through the heat maps, K through the land layers.";
+    if !searching {
+        section(ui, "MAP LAYER");
+        hint(ui, layer_hint);
     }
-    hint(ui, "Graphics, text size, speech bubbles and sound: the Settings window.");
+    shown += super::topbar::layer_list(ui, p.overlays, true, &q);
+    // What else is drawn: (label, description).
+    const ALSO: [(&str, &str); 4] = [
+        ("Bus lines whatever the tool", "Show every bus route on the map, not only with the Lines tool"),
+        ("Other pending projects, dim", "Projects not yet built, faint"),
+        ("Drone heat vision [H]", "Thermal look: people, cars and buildings glow by heat"),
+        ("Show weather", "Falling rain and snow, fog and wet streets. Off only hides them: the weather still happens."),
+    ];
+    let also: Vec<usize> = (0..ALSO.len()).filter(|&i| m(&[ALSO[i].0, ALSO[i].1, "also drawn"])).collect();
+    if !also.is_empty() {
+        section(ui, "ALSO DRAWN");
+        for i in also {
+            let v = match i {
+                0 => &mut p.tools.show_routes,
+                1 => &mut p.overlays.projects,
+                2 => &mut p.lighting.heat,
+                _ => &mut p.lighting.show_weather,
+            };
+            ui.checkbox(v, ALSO[i].0).on_hover_text(ALSO[i].1);
+            shown += 1;
+        }
+    }
+    if !searching {
+        hint(ui, "Land value, rents and the class mix are in City Data, City, Land and rent.");
+    }
+    let lighting = &mut *p.lighting;
+    let follow = m(&["Follow the clock", "lighting time of day sun light dawn noon dusk night"]);
+    let hour = !lighting.follow_clock && m(&["hour dawn noon dusk night", "lighting time of day sun light"]);
+    if follow || hour {
+        section(ui, "LIGHTING");
+        if follow {
+            ui.checkbox(&mut lighting.follow_clock, "Follow the clock");
+            shown += 1;
+        }
+        if !lighting.follow_clock && (hour || follow) {
+            ui.horizontal(|ui| {
+                ui.add(egui::Slider::new(&mut lighting.hour, 0.0..=24.0).text("hour").fixed_decimals(1));
+                for (label, h) in [("dawn", 6.5), ("noon", 12.5), ("dusk", 18.5), ("night", 23.0)] {
+                    if ui.small_button(label).clicked() {
+                        lighting.hour = h;
+                    }
+                }
+            });
+            shown += 1;
+        }
+    }
+    if searching && shown == 0 {
+        hint(ui, &format!("Nothing in View matches \"{q}\". Graphics, text size and sound are in Settings."));
+    } else if !searching {
+        hint(ui, "Graphics, text size, speech bubbles and sound: the Settings window.");
+    }
+}
+
+fn view_search_id() -> egui::Id {
+    egui::Id::new("view_search")
+}
+
+/// [r8-parks] Set the View window's search (the remote API's `window
+/// {name: view, search}`).
+pub fn set_view_search(ctx: &egui::Context, q: &str) {
+    ctx.data_mut(|d| d.insert_temp(view_search_id(), q.to_string()));
 }
 
 /// [settings] The Settings window: graphics, text size, speech bubbles and
