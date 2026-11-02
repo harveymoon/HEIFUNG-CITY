@@ -38,6 +38,8 @@ mod marks;
 mod memory;
 /// [metro-ux] The Metro map layer and drawing lines station to station.
 mod metro_ux;
+/// [cable] The cable car line tool, its panel and station card.
+mod cable_ux;
 /// [toll-inspect] Picking and outlining toll booths.
 mod toll_select;
 /// [road-inspect] Picking and outlining street pieces, and the road card's figures.
@@ -131,6 +133,7 @@ impl PluginGroup for WorldViewPlugins {
             .add(map_layers::MapLayersPlugin)
             .add(marks::MarksPlugin)
             .add(metro_ux::MetroUxPlugin)
+            .add(cable_ux::CableUxPlugin)
             .add(build_highlight::BuildHighlightPlugin)
             .add(stub_marks::StubMarksPlugin)
             .add(pressure_where::PressureWherePlugin)

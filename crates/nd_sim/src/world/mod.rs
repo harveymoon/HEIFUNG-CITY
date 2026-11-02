@@ -189,6 +189,9 @@ mod social_tests;
 mod survey;
 pub use survey::SiteContext;
 mod subway;
+/// [cable] Cable car stations, lines and riders.
+mod cable;
+pub use cable::{CableStop, SiteWant, StationSite};
 /// [w1] Metro lines edited stop by stop.
 pub mod metro_edit;
 #[cfg(test)]
@@ -702,6 +705,10 @@ pub struct World {
     /// tick (`world/trains.rs`).
     #[serde(skip)]
     waiting_cache: Option<(u64, Vec<CitizenId>)>,
+    /// [cable] Riders waiting at each cable station, counted every few
+    /// ticks (`world/cable.rs`), for the planners' queue estimate.
+    #[serde(skip)]
+    cable_waiting: HashMap<crate::cable::CableStationId, u32>,
     /// [perf] Who is inside each place, built at most once a tick for
     /// everyone choosing or rating a place (`world/places.rs`), instead of a
     /// scan of every citizen per decision. Arrivals later in the same tick
@@ -761,6 +768,9 @@ pub struct World {
     /// [subway] Metro lines and their trains (`world/subway.rs`).
     #[serde(default)]
     pub subway: crate::subway::Subway,
+    /// [cable] Cable car stations and lines (`world/cable.rs`).
+    #[serde(default)]
+    pub cable: crate::cable::CableWays,
     /// [tolls] Toll booths on the roads (`world/tolls.rs`).
     #[serde(default)]
     pub tolls: crate::tolls::Tolls,
@@ -991,6 +1001,7 @@ impl World {
             seats: Default::default(),
             crowds_cache: None,
             waiting_cache: None,
+            cable_waiting: HashMap::new(),
             society: Default::default(),
             vehicles: Default::default(),
             enforcement: Default::default(),
@@ -1005,6 +1016,7 @@ impl World {
             districts: Default::default(),
             tourism: Default::default(),
             subway: Default::default(),
+            cable: Default::default(),
             tolls: Default::default(),
             taxis: Default::default(),
             cargo_hubs: Default::default(),

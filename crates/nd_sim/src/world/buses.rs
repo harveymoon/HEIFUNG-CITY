@@ -597,9 +597,18 @@ impl World {
                         c.prev_pos = p;
                     }
                 }
+                // [cable] Down from the cable station.
+                if let TransitLeg::Cable { board, .. } = trip.leg {
+                    if let Some(p) = self.cable.stations.get(board).map(|s| s.building.and_then(|b| self.building_entrance(b)).unwrap_or(s.entrance)) {
+                        let c = &mut self.citizens[id];
+                        c.pos = p;
+                        c.prev_pos = p;
+                    }
+                }
                 if night {
                     self.citizens[id].thought = match trip.leg {
                         TransitLeg::Bus { .. } => "Missed the last bus. Walking it.",
+                        TransitLeg::Cable { .. } => "The cable car's shut for the night. Walking it.",
                         _ => "Missed the last train. Walking it.",
                     }
                     .to_string();

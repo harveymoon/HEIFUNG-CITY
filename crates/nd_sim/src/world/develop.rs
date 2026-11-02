@@ -241,6 +241,9 @@ impl World {
                 self.splat_shore(&mut b);
                 // [ferry-islands] the quiet of an island, less the crossing
                 self.splat_islands(&mut b);
+                // [cable] stations lift their quarter, hum next door, and
+                // a station high above the town has the view
+                self.splat_cable(&mut b);
                 // [parks] run-down parks sour the land round them
                 b.channel(Channel::Blight);
                 self.splat_parks(&mut b);

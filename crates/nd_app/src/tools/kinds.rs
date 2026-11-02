@@ -109,6 +109,8 @@ pub enum TransitMode {
     Depot,
     /// [subway] Place metro stations and join them into lines.
     Metro,
+    /// [cable] Draw cable car lines station to station (`cable_ux`).
+    Cable,
 }
 
 /// Which layer of the city the view and the tools work on.

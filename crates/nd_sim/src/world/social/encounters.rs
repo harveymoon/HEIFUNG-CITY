@@ -68,6 +68,8 @@ impl World {
                 Activity::Riding { bus } => (Setting::Transit, key64(*bus)),
                 Activity::OnTrain { train } => (Setting::Transit, key64(*train) ^ (1 << 62)),
                 Activity::OnMetro { train } => (Setting::Transit, key64(*train) ^ (2 << 62)),
+                // [cable] The same cabin, high over the town.
+                Activity::OnCable { line, cabin } => (Setting::Transit, key64(*line) ^ ((*cabin as u64) << 40) ^ (3 << 62)),
                 Activity::Waiting { at } => (Setting::Stop, cell(*at, 8.0)),
                 Activity::Traveling { .. } if c.mode == TravelMode::Walk => (Setting::Street, cell(c.pos, STREET_CELL)),
                 Activity::Idle => (Setting::Street, cell(c.pos, STREET_CELL)),
