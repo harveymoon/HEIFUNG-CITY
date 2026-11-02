@@ -25,6 +25,42 @@ pub const METRO_CYAN: [f32; 3] = [0.25, 1.5, 1.9];
 pub const NEON_MAGENTA: [f32; 3] = [1.9, 0.25, 1.35];
 pub const NEON_AMBER: [f32; 3] = [1.9, 1.05, 0.25];
 
+/// [cable] A cable car station's lot: paved, with bollards, benches, a
+/// lamp and a tree or two round the edge; the middle is left clear for the
+/// station hall the app draws over it.
+pub fn cable_plaza(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
+    let f = &c.frame;
+    let pal = c.palette;
+    ground(g, f, Paving, &offset_poly(&c.lot_poly, 0.3), 0.04, mul(pal.paving, 0.95));
+    let (lo, hi) = bounds(&c.poly);
+    let (w, d) = (hi.x - lo.x, hi.y - lo.y);
+    // Bollards along the front, a lamp at each front corner.
+    let face = c.front_face(&offset_poly(&c.lot_poly, 0.3));
+    let n = ((face.len - 4.0) / 2.2).floor().max(0.0) as i32;
+    for k in 0..n {
+        let p = face.at(2.0 + k as f32 * 2.2, -0.9);
+        if c.inside_local(p) {
+            f.bx(g, Matte, p.x, 0.45, p.y, Vec3::new(0.16, 0.9, 0.16), mul(pal.steel, 0.7));
+        }
+    }
+    for p in [Vec2::new(lo.x + 1.2, lo.y + 1.2), Vec2::new(hi.x - 1.2, lo.y + 1.2)] {
+        let p = clamp_into(&c.poly, p);
+        lamp_post(g, f, p, 5.5, pal.lamp);
+    }
+    // Benches and planted trees along the back, out of the hall's way.
+    for k in 0..3 {
+        let p = clamp_into(&c.poly, Vec2::new(lo.x + w * (0.2 + 0.3 * k as f32), hi.y - 1.6));
+        if c.inside_local(p) && d > 16.0 {
+            if k == 1 {
+                let wp = f.to_world(p.x, p.y);
+                bench_world(g, wp, f.yaw(), pal.wood, CHARCOAL);
+            } else {
+                tree_in(g, f, pal, p, 4.5 + rng.random_range(0.0..2.0), 1.6, pal.foliage);
+            }
+        }
+    }
+}
+
 /// A small entrance on its plaza.
 pub fn metro_entrance(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     let f = &c.frame;

@@ -448,6 +448,13 @@ fn citizen(gizmos: &mut Gizmos, pens: &mut Pens, sim: &Sim, id: CitizenId) {
         }
         // [ferries] Away off the map: nothing to draw.
         Activity::Abroad { .. } => {}
+        // [cable] In a cabin: a ring round it.
+        Activity::OnCable { line, cabin } => {
+            if let Some(l) = w.cable.lines.get(*line) {
+                let p = l.cabin_pose(*cabin, w.config.traffic_seconds_per_tick);
+                gizmos.circle(flat_at(Vec3::new(p.pos.x, p.z + 1.2, p.pos.y)), 3.0, GOLD);
+            }
+        }
         // [ferry-islands] On deck: a ring round the boat they are on.
         Activity::OnFerry { .. } => {
             if let Some(s) = w.ports.ships.values().find(|s| s.riders.contains(&id)) {

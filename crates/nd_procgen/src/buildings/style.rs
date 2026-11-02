@@ -598,6 +598,9 @@ styles! {
     FanLibrary { label: "wave library", family: Special, cluster: -1.5, draw: |g, c, r, _| architects::fan_library(g, c, r) },
     /// A red-brick fan hall with stepped clerestories, a courtyard.
     CultureHouse { label: "house of culture", family: Special, cluster: -1.5, draw: |g, c, r, _| architects::culture_house(g, c, r) },
+    // [cable] A cable car station's lot: a paved plaza (the station hall,
+    // its bullwheel and the rope are drawn by the app). Appended.
+    CableStation { label: "cable car station", family: Special, cluster: 0.0, draw: |g, c, r, _| subway::cable_plaza(g, c, r) },
 }
 
 impl Style {

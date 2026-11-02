@@ -5,7 +5,7 @@
 //! nothing here: they are cars whose model is the generator's garbage
 //! truck, drawn by `sync_cars`.
 //!
-//! Everything is one merged geometry, rebuilt when its signature changes:
+//! Merged geometry per map cell ([r7-sim-thread]), rebuilt when its signature changes:
 //! a camp's size, a van arriving or leaving, a building's bins crossing an
 //! overflow step, or the land under a camp crossing the skid row line (a
 //! camp shows only where land value is low).
@@ -20,7 +20,12 @@ pub(super) struct SocietyTag;
 #[derive(Resource, Default)]
 pub(super) struct SocietyRender {
     key: Option<u64>,
-    ents: Vec<Entity>,
+    /// [r7-sim-thread] The drawing, by map cell ([`CELL`]): each cell's
+    /// pieces hashed, and its meshes. A change rebuilds only its cell: one
+    /// merged mesh for the whole city took ~100 ms on a 15,000-person city
+    /// every time a camp grew or a bin crossed a step, several times a game
+    /// hour, which the sim thread's batches turned into a hitch per batch.
+    cells: HashMap<ChunkKey, (u64, Vec<Entity>)>,
     /// [r6-perf] Each camp, van and pile as last built and set on the
     /// ground, by everything it is built from, and the ground and
     /// landscape versions they were raised against (`pieces_on`). A
@@ -28,6 +33,20 @@ pub(super) struct SocietyRender {
     /// 38,000-person city's piles took 1.7 s at each bin step.
     pieces: HashMap<u64, Geometry>,
     pieces_on: Option<u64>,
+}
+
+/// [r7-sim-thread] Cells of four building chunks a side.
+const CELL: f32 = CHUNK * 4.0;
+
+fn cell_of(p: SVec2) -> ChunkKey {
+    ((p.x / CELL).floor() as i32, (p.y / CELL).floor() as i32)
+}
+
+/// What a piece is made from.
+enum Piece<'a> {
+    Camp(&'a nd_sim::homeless::Camp, SVec2, u64),
+    Rv(&'a nd_sim::homeless::Rv),
+    Pile { p: SVec2, along: SVec2, front: SVec2, step: u8, dumpster: bool, seed: u64 },
 }
 
 /// The key of a piece: what it is built from, hashed.
@@ -52,6 +71,7 @@ fn camp_visible(w: &World, p: SVec2) -> bool {
 }
 
 pub(super) fn sync_society(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, mut state: ResMut<SocietyRender>) {
+    let _t = crate::frame_stats::span("sync_society");
     let w = &sim.world;
     let s = &w.society;
     let mut h = DefaultHasher::new();
@@ -76,48 +96,19 @@ pub(super) fn sync_society(mut commands: Commands, mut meshes: ResMut<Assets<Mes
         return;
     }
     state.key = Some(key);
-    for e in state.ents.drain(..) {
-        commands.entity(e).despawn();
-    }
     let pal = &assets.palette;
     let on = piece_key((sim.generation, w.ground.version(), w.landscape.version(), w.relief, w.landscape.is_flat()));
     if state.pieces_on != Some(on) || assets.palette_changed || sim.full_rebuild {
         state.pieces.clear();
         state.pieces_on = Some(on);
+        for (_, (_, ents)) in state.cells.drain() {
+            for e in ents {
+                commands.entity(e).despawn();
+            }
+        }
     }
-    let mut pieces = std::mem::take(&mut state.pieces);
-    let mut used: HashSet<u64> = HashSet::new();
-    let flat = w.landscape.is_flat();
-    // A piece from the cache, or built and raised: by `surface_height`
-    // (onto a deck where there is one), or by the ground alone.
-    let mut piece = |key: u64, deck: bool, make: &dyn Fn() -> Geometry| -> Geometry {
-        used.insert(key);
-        pieces
-            .entry(key)
-            .or_insert_with(|| {
-                let mut g = make();
-                if flat {
-                } else if deck {
-                    for part in g.parts.iter_mut() {
-                        for p in part.positions.iter_mut() {
-                            p[1] += w.surface_height(SVec2::new(p[0], p[2]));
-                        }
-                    }
-                } else {
-                    for part in g.parts.iter_mut().chain(g.detail.iter_mut().flatten()) {
-                        for p in part.positions.iter_mut() {
-                            p[1] += w.ground_height(SVec2::new(p[0], p[2]));
-                        }
-                    }
-                }
-                g
-            })
-            .clone()
-    };
-    let mut geo = Geometry::default();
-    // [r5-layered] Camps under a deck: on the ground under it (not up on
-    // the deck), tents in a file along it, whatever the land is worth.
-    let mut under = Geometry::default();
+    // Every piece with its key and cell; a cell's hash is its pieces' keys.
+    let mut items: Vec<(ChunkKey, u64, Piece)> = Vec::new();
     for c in &s.homeless.camps {
         if !c.under && !camp_visible(w, c.pos) {
             continue;
@@ -125,16 +116,11 @@ pub(super) fn sync_society(mut commands: Commands, mut meshes: ResMut<Assets<Mes
         let out = if c.out != SVec2::ZERO { c.out } else { c.lot.and_then(|l| w.lots.get(l)).map_or(SVec2::Y, |l| l.front_dir) };
         let seed = w.config.seed ^ c.id as u64 * 0x9E37;
         let key = piece_key(("camp", c.under, [c.pos.x, c.pos.y, c.dir.x, c.dir.y, out.x, out.y].map(f32::to_bits), c.tents(), c.sidewalk || c.under, seed));
-        let g = piece(key, !c.under, &|| camp(c.pos, c.dir, out, c.tents(), c.sidewalk || c.under, seed, pal));
-        if c.under {
-            under.append(&g);
-        } else {
-            geo.append(&g);
-        }
+        items.push((cell_of(c.pos), key, Piece::Camp(c, out, seed)));
     }
     for r in s.homeless.rvs.iter().filter(|r| r.parked(tick)) {
         let key = piece_key(("rv", [r.pos.x, r.pos.y, r.heading].map(f32::to_bits), r.camper, r.seed, r.abandoned.is_some()));
-        geo.append(&piece(key, true, &|| nd_procgen::society::rv_kept(r.pos, r.heading, r.camper, r.seed, r.abandoned.is_some(), pal)));
+        items.push((cell_of(r.pos), key, Piece::Rv(r)));
     }
     for (id, bin) in &s.trash.bins {
         let step = overflow_step(bin.overflow());
@@ -150,14 +136,70 @@ pub(super) fn sync_society(mut commands: Commands, mut meshes: ResMut<Assets<Mes
         let dumpster = b.homes == 0 || b.business.is_some();
         let seed = w.config.seed ^ (lot.center.x.to_bits() as u64).wrapping_mul(31) ^ lot.center.y.to_bits() as u64;
         let key = piece_key(("pile", [p.x, p.y, along.x, along.y, lot.front_dir.x, lot.front_dir.y].map(f32::to_bits), step, dumpster, seed));
-        geo.append(&piece(key, true, &|| trash_pile(p, along, lot.front_dir, step as f32 / 3.0, dumpster, seed, pal)));
+        items.push((cell_of(p), key, Piece::Pile { p, along, front: lot.front_dir, step, dumpster, seed }));
+    }
+    let mut cell_hash: HashMap<ChunkKey, DefaultHasher> = HashMap::new();
+    for (cell, key, _) in &items {
+        key.hash(cell_hash.entry(*cell).or_default());
+    }
+    let cell_hash: HashMap<ChunkKey, u64> = cell_hash.into_iter().map(|(c, h)| (c, h.finish())).collect();
+    // Cells gone or changed lose their meshes.
+    let stale: Vec<ChunkKey> = state.cells.iter().filter(|(c, (h, _))| cell_hash.get(*c) != Some(h)).map(|(c, _)| *c).collect();
+    for c in &stale {
+        if let Some((_, ents)) = state.cells.remove(c) {
+            for e in ents {
+                commands.entity(e).despawn();
+            }
+        }
+    }
+    let todo: HashSet<ChunkKey> = cell_hash.keys().filter(|c| !state.cells.contains_key(*c)).copied().collect();
+    let mut pieces = std::mem::take(&mut state.pieces);
+    let mut used: HashSet<u64> = HashSet::new();
+    let flat = w.landscape.is_flat();
+    // A piece from the cache, or built and raised: by `surface_height`
+    // (onto a deck where there is one), or by the ground alone.
+    let mut piece = |key: u64, deck: bool, make: &dyn Fn() -> Geometry, out: &mut Geometry| {
+        let g = pieces.entry(key).or_insert_with(|| {
+            let mut g = make();
+            if flat {
+            } else if deck {
+                for part in g.parts.iter_mut() {
+                    for p in part.positions.iter_mut() {
+                        p[1] += w.surface_height(SVec2::new(p[0], p[2]));
+                    }
+                }
+            } else {
+                for part in g.parts.iter_mut().chain(g.detail.iter_mut().flatten()) {
+                    for p in part.positions.iter_mut() {
+                        p[1] += w.ground_height(SVec2::new(p[0], p[2]));
+                    }
+                }
+            }
+            g
+        });
+        out.append(g);
+    };
+    let mut built: HashMap<ChunkKey, Geometry> = HashMap::new();
+    for (cell, key, item) in &items {
+        // Pieces of cells kept stay in the cache unbuilt.
+        used.insert(*key);
+        if !todo.contains(cell) {
+            continue;
+        }
+        let geo = built.entry(*cell).or_default();
+        match item {
+            // [r5-layered] Camps under a deck: on the ground under it (not up
+            // on the deck), tents in a file along it, whatever the land is worth.
+            Piece::Camp(c, out, seed) => piece(*key, !c.under, &|| camp(c.pos, c.dir, *out, c.tents(), c.sidewalk || c.under, *seed, pal), geo),
+            Piece::Rv(r) => piece(*key, true, &|| nd_procgen::society::rv_kept(r.pos, r.heading, r.camper, r.seed, r.abandoned.is_some(), pal), geo),
+            Piece::Pile { p, along, front, step, dumpster, seed } => piece(*key, true, &|| trash_pile(*p, *along, *front, *step as f32 / 3.0, *dumpster, *seed, pal), geo),
+        }
     }
     // (Every piece is on the ground, or a bridge deck, already.)
     pieces.retain(|k, _| used.contains(k));
     state.pieces = pieces;
-    geo.append(&under);
-    if geo.triangle_count() == 0 {
-        return;
+    for (cell, geo) in built {
+        let ents = if geo.triangle_count() == 0 { Vec::new() } else { spawn_geometry(&mut commands, &mut meshes, &mats, &geo, SocietyTag) };
+        state.cells.insert(cell, (cell_hash[&cell], ents));
     }
-    state.ents = spawn_geometry(&mut commands, &mut meshes, &mats, &geo, SocietyTag);
 }

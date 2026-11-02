@@ -33,7 +33,7 @@ pub(crate) fn ramp_town() -> Sim {
     raised(&mut w, &[v(-500.0, 400.0), v(-380.0, 400.0), v(380.0, 400.0), v(500.0, 400.0)], &[0.0, LOW_DECK, LOW_DECK, 0.0]);
     w.add_road(&[v(-100.0, 120.0), v(-100.0, 300.0)], 1, 1);
     raised(&mut w, &[v(-500.0, -200.0), v(-300.0, -200.0), v(300.0, -200.0), v(500.0, -200.0)], &[0.0, T, T, 0.0]);
-    sim.world = w;
+    sim.world.replace(w);
     sim
 }
 

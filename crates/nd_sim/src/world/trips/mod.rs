@@ -65,6 +65,9 @@ pub enum ModePlan {
     /// [ferry-islands] Across the water by ferry from `board`'s pier
     /// (`stop`, where to wait) to `alight`'s (`world/islands.rs`).
     Ferry { board: BuildingId, alight: BuildingId, stop: Vec2 },
+    /// [cable] A cable car ride on one line, walking to `stop` (the
+    /// station's entrance).
+    Cable { line: crate::cable::CableLineId, board: crate::cable::CableStationId, alight: crate::cable::CableStationId, stop: Vec2 },
 }
 
 /// One way to make a trip and what it would cost the traveller, in

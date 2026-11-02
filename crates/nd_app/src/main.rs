@@ -38,6 +38,8 @@ mod marks;
 mod memory;
 /// [metro-ux] The Metro map layer and drawing lines station to station.
 mod metro_ux;
+/// [cable] The cable car line tool, its panel and station card.
+mod cable_ux;
 /// [toll-inspect] Picking and outlining toll booths.
 mod toll_select;
 /// [road-inspect] Picking and outlining street pieces, and the road card's figures.
@@ -50,6 +52,8 @@ mod render;
 /// [overlay] What the player has selected, checked after every step.
 mod selection;
 mod sim;
+/// [r7-sim-thread] The sim on its own thread.
+mod sim_thread;
 /// [dock-access] "Connect here" marks on unjoined dock and station street stubs.
 mod stub_marks;
 mod pressure_where;
@@ -131,6 +135,7 @@ impl PluginGroup for WorldViewPlugins {
             .add(map_layers::MapLayersPlugin)
             .add(marks::MarksPlugin)
             .add(metro_ux::MetroUxPlugin)
+            .add(cable_ux::CableUxPlugin)
             .add(build_highlight::BuildHighlightPlugin)
             .add(stub_marks::StubMarksPlugin)
             .add(pressure_where::PressureWherePlugin)

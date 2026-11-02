@@ -22,6 +22,7 @@ fn leg_kind(l: &TransitLeg) -> &'static str {
         TransitLeg::Taxi => "taxi",
         TransitLeg::Air { .. } => "air",
         TransitLeg::Ferry { .. } => "ferry",
+        TransitLeg::Cable { .. } => "cable",
     }
 }
 
@@ -35,6 +36,7 @@ fn leg_stop(l: &TransitLeg) -> String {
         TransitLeg::Air { from, .. } => format!("air {from:?}"),
         TransitLeg::Taxi => "taxi".to_string(),
         TransitLeg::Ferry { board, .. } => format!("ferry {board:?}"),
+        TransitLeg::Cable { board, .. } => format!("cable {board:?}"),
     }
 }
 

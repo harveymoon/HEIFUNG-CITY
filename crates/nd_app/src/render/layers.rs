@@ -280,6 +280,7 @@ pub(super) fn sync_layers(
     crime_q: Query<Entity, With<CrimeLayerTag>>,
     mut markers: Query<(Entity, &VehicleMarker, &mut Transform)>,
 ) {
+    let _t = crate::frame_stats::span("sync_layers");
     let w = &sim.world;
     let now = time.elapsed_secs();
     let (timers, shown) = &mut *layer_state;

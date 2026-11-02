@@ -451,7 +451,7 @@ impl Drive {
 
     /// Out of the car: the traffic forgets it, the game's speed comes back.
     pub fn end(&mut self, sim: &mut Sim) -> Option<DriveCar> {
-        sim.world.traffic.player = None;
+        sim.player_car = None;
         if let Some((speed, paused)) = self.restore.take() {
             sim.speed_index = speed;
             sim.paused = paused;
@@ -465,11 +465,12 @@ impl Drive {
     /// Hand the car to the traffic, and read back what it did.
     pub fn tell_traffic(&mut self, sim: &mut Sim) {
         let Some(car) = self.car else {
-            sim.world.traffic.player = None;
+            sim.player_car = None;
             return;
         };
+        // [r7-sim-thread] Handed to the sim thread with the next batch.
         let p = sim.world.player_car(car.pos, car.heading, car.v, car.accel, car.floor);
-        sim.world.traffic.player = Some(p);
+        sim.player_car = Some(p);
         self.held = sim.world.traffic.player_held.len();
     }
 
@@ -581,15 +582,15 @@ pub(crate) fn drive_input(
     sound: Option<Res<crate::audio::Sound>>,
 ) {
     if *mode != crate::camera::CameraMode::Drive || !drive.active() {
-        if sim.world.traffic.player.is_some() {
-            sim.world.traffic.player = None;
+        if sim.player_car.is_some() {
+            sim.player_car = None;
         }
         return;
     }
     // A loaded or new city: out of the car (the camera's switch to Orbit
     // ends the drive).
     if drive.generation != sim.generation {
-        sim.world.traffic.player = None;
+        sim.player_car = None;
         *mode = crate::camera::CameraMode::Orbit;
         return;
     }

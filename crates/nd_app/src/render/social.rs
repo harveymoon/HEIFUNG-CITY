@@ -39,6 +39,7 @@ const NIGHT_BELOW: f32 = 0.35;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn sync_social(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, sky: Res<sky::SkyLook>, mut state: ResMut<SocialRender>, mut nights: Query<&mut Visibility, With<MuralNightTag>>) {
+    let _t = crate::frame_stats::span("sync_social");
     // The night paint follows the light every frame (cheap: a handful of entities).
     let show = if sky.daylight < NIGHT_BELOW { Visibility::Inherited } else { Visibility::Hidden };
     for mut v in &mut nights {

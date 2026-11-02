@@ -119,6 +119,8 @@ pub mod survey;
 pub mod talk;
 /// [tourism] Visitors, attractions and hotels.
 pub mod tourism;
+/// [cable] Aerial cable cars: gondolas and aerial tramways.
+pub mod cable;
 /// [subway] Metro stations, lines and trains.
 pub mod subway;
 pub mod traffic;
@@ -158,6 +160,7 @@ pub use subway::{MetroLine, MetroLineId, MetroTrain, MetroTrainId, Subway, Subwa
 pub use transit::{BusRoute, BusStop, DispatchProblem, LineProblem, RouteId, Transit, TransitStats};
 pub use rail::{Facility, FacilityId, Rail, RailFacility, RailLink, RailStats, Train, TrainId, TrainKind};
 pub use services::{BuildCategory, Incident, IncidentKind, Placeable, ServiceKind, ServiceSite, Services, ServiceStats, Unit, UnitId, UnitKind};
+pub use world::{CableStop, SiteWant, StationSite};
 pub use world::{GridAsset, PlacementSite, PlantGroup, PlantJoin, PlantPreview, PlantRow, World, WorldConfig, RIGHTING_MIN};
 pub use world::{ApproachView, Blocker, Joint, CrossingView, IntersectionView, LaneView, MoveView, PhaseView, ProjectCheck};
 /// [camera]

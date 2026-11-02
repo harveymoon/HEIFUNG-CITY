@@ -232,7 +232,7 @@ impl World {
         let c = self.citizens.get(id)?;
         match &c.activity {
             Activity::Traveling { to, purpose, .. } | Activity::Driving { to, purpose, .. } | Activity::Passenger { to, purpose, .. } => Some((*to, *purpose)),
-            Activity::Riding { .. } | Activity::Waiting { .. } | Activity::OnTrain { .. } | Activity::OnMetro { .. } | Activity::Flying { .. } | Activity::OnFerry { .. } => c.transit.as_ref().map(|t| (Some(t.target), t.purpose)),
+            Activity::Riding { .. } | Activity::Waiting { .. } | Activity::OnTrain { .. } | Activity::OnMetro { .. } | Activity::Flying { .. } | Activity::OnFerry { .. } | Activity::OnCable { .. } => c.transit.as_ref().map(|t| (Some(t.target), t.purpose)),
             _ => None,
         }
     }
@@ -256,6 +256,7 @@ impl World {
                 (Activity::OnTrain { .. }, _) => " (on the train)",
                 (Activity::OnMetro { .. }, _) => " (on the subway)",
                 (Activity::OnFerry { .. }, _) => " (on the ferry)",
+                (Activity::OnCable { .. }, _) => " (on the cable car)",
                 (Activity::Passenger { .. }, _) => " (getting a lift)",
                 // [pt-transit] Each kind of wait by its name.
                 (Activity::Waiting { .. }, _) => match c.transit.map(|t| t.leg) {
@@ -265,6 +266,7 @@ impl World {
                     Some(TransitLeg::Taxi) => " (waiting for a cab)",
                     Some(TransitLeg::Air { .. }) => " (at the drone pad)",
                     Some(TransitLeg::Ferry { .. }) => " (on the pier, waiting for the boat)",
+                    Some(TransitLeg::Cable { .. }) => " (in the cable car station)",
                     None => " (waiting for a ride)",
                 },
                 (Activity::Traveling { .. }, TravelMode::Bike) => " (cycling)",

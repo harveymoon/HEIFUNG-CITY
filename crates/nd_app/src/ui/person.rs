@@ -148,7 +148,8 @@ fn look_line(ui: &mut egui::Ui, c: &Citizen) {
 }
 
 /// The spotlight checkbox, written back only when it changes.
-fn spotlight_toggle(ui: &mut egui::Ui, w: &mut World, id: CitizenId, label: &str) {
+/// [r7-sim-thread] Writes the city only when ticked (it is drawn every frame).
+fn spotlight_toggle(ui: &mut egui::Ui, w: &mut crate::sim_thread::SimCore, id: CitizenId, label: &str) {
     let Some(was) = w.citizens.get(id).map(|c| c.spotlight) else { return };
     let mut spotlight = was;
     if ui.checkbox(&mut spotlight, label).changed() {

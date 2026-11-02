@@ -255,7 +255,11 @@ fn committee_tick(mut sim: ResMut<Sim>, mut rt: ResMut<CommitteeRt>, mut flags: 
         }
     }
     // [ask-committee] The next member's turn on the mayor's questions.
-    rt.asker.pump(&mut sim.world, &mut rt.courier);
+    // [r7-sim-thread] Only with a question waiting: the pump writes the
+    // city, and a write every frame would keep the sim thread starting over.
+    if sim.world.committee.questions.iter().any(|q| !q.waiting().is_empty()) {
+        rt.asker.pump(&mut sim.world, &mut rt.courier);
+    }
     // [voices] New conversations of the people the player watches.
     {
         let w = &sim.world;

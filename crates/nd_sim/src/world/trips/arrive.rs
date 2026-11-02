@@ -177,6 +177,8 @@ impl World {
         let platform = if purpose == Purpose::ToStop {
             self.citizens[id].transit.and_then(|t| match t.leg {
                 TransitLeg::Subway { board, .. } => self.metro_platform(board),
+                // [cable] Up to the cable station's platform.
+                TransitLeg::Cable { board, .. } => self.cable_platform(board),
                 _ => None,
             })
         } else {
