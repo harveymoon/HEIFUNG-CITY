@@ -698,10 +698,20 @@ Citizens are rendered from their simulated positions every frame.
   sight it circles the streets around (counted as circling, the signal development opens lots on),
   and after four tries parks anywhere on the street. The hunt is also timed: after 20 minutes the driver looks further and at
   banned kerbs, after an hour it stops looking and leaves the car where it can (a banned kerb
-  nearby, a free one within 700 m, else squeezed in where it stands), and a worn-out hunter
+  nearby, a free one within 700 m, else squeezed in at a free corner of a street within 60 m; on a
+  roundabout, slip road or highway with no corner near it drives on), and a worn-out hunter
   standing two minutes in a queue does so on the spot instead of waiting to reach its street. Kerbs: one slot per 6.5 m on both sides of
   streets, none within 12 m of a junction, none on highways, bridges, avenues (clearways) or streets
-  fronted by shops and nightlife (loading). A car keeps its space until it drives off, so a lot's
+  fronted by shops and nightlife (loading). [r11-parking] No parking of any kind (legal, banned or
+  squeezed) on a roundabout's ring, a slip road, a highway, a tunnel or a bridge, and no slot whose
+  car would stand in the carriageway of another way meeting the street (corners, sharp forks).
+  A car with no slot of its own takes a *squeeze place* (`SQUEEZE_SLOT`): one at each corner zone
+  of a street (8.75 m from its end) or every 6.5 m along one too short for slots, clear of the
+  junction, one car to a place in the kerb index; a car taken off the road elsewhere (roads
+  rebuilt, a clamp, an old save) goes to the nearest free one within 60/250/1000 m. Every parked
+  car stands on its kerb line outside the lanes, so moving traffic never passes through one; on
+  load, cars an older save left in a lane, on a ring or ramp, or stacked on each other move to the
+  nearest legal kerb (else a squeeze place). A car keeps its space until it drives off, so a lot's
   occupancy is the cars standing in it, overnight too. Cars parked at a building that goes are moved
   to the street. Lorries return to their business or a truck lot (`world/industry`); delivery vans
   to their shop.

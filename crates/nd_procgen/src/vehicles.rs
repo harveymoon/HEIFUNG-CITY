@@ -1421,6 +1421,23 @@ mod tests {
     }
 
     #[test]
+    fn a_parked_scooter_or_motorbike_is_drawn_as_a_bike() {
+        // [r11-parking] Harvey's "scooter that looks like a car": the body a
+        // parked record is drawn with (`variant_key`, as the parked-car
+        // renderer asks for it) is the bike's own, narrow and short, in
+        // every class, wear and tuning; the car he saw was another car
+        // squeezed in on top of it (two squeezed cars at one corner).
+        for body in [BodyType::Scooter, BodyType::Motorcycle, BodyType::AkiraBike] {
+            for m in catalogue().into_iter().filter(|m| m.body == body) {
+                let v = vehicle_mesh_with(&variant_key(&m), &Palette::default());
+                let width = v.body.positions.iter().map(|p| p[2].abs()).fold(0.0, f32::max) * 2.0;
+                let length = v.body.positions.iter().map(|p| p[0].abs()).fold(0.0, f32::max) * 2.0;
+                assert!(width < 1.2 && length < 3.2, "{m:?} is drawn {length:.1} x {width:.1} m: a car's size");
+            }
+        }
+    }
+
+    #[test]
     fn generation_is_deterministic() {
         for m in catalogue().into_iter().step_by(7) {
             let a = vehicle_mesh(&m);
