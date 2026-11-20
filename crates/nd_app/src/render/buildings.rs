@@ -71,7 +71,8 @@ impl<'a> Kit<'a> {
 
 /// Generate one building's geometry into the chunk's merged geometry, its
 /// detail layers into the chunk's detail cell for it.
-pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world: &World, kit: Kit, styles: &StyleBook, id: BuildingId) -> Option<f32> {
+/// Returns its drawn height and the triangles of ghosts on its walls.
+pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world: &World, kit: Kit, styles: &StyleBook, id: BuildingId) -> Option<(f32, u32)> {
     let b = world.buildings.get(id)?;
     let mut g = building_geometry(world, kit, styles, id)?;
     // [r5-hillside] On a lot stepped down the hill, storeys under its back
@@ -88,6 +89,15 @@ pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world:
             g.append(&nd_procgen::hill_plinth::entrance_stair(lot.front_edge, lot.front_dir, street, 0.0, kit.palette));
         }
     }
+    // [r11-lot-memory] The ghosts of the buildings that stood against its
+    // walls (none on a site or a demolition: `ghost_traces`).
+    let traces = nd_procgen::lot_memory::ghost_traces(world, id);
+    let mut ghost_tris = 0;
+    if !traces.is_empty() {
+        let ghosts = nd_procgen::lot_memory::wall_ghosts(&g, &traces, world.clock.tick);
+        ghost_tris = ghosts.triangle_count() as u32;
+        g.append(&ghosts);
+    }
     // [climate] Snow on the roofs in a cold climate.
     nd_procgen::climate::snow_cover(&mut g, kit.palette.snow);
     lights::tag_windows(&mut g, lights::slot_of(id));
@@ -100,7 +110,7 @@ pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world:
         cells[detail_cell(world, id).min(cells.len() - 1)].append(&d);
     }
     geo.append(&g);
-    Some(top)
+    Some((top, ghost_tris))
 }
 
 /// One building's geometry as drawn, before it is raised onto its lot's
@@ -118,6 +128,8 @@ pub(crate) fn building_geometry(world: &World, kit: Kit, styles: &StyleBook, id:
     let field = if b.construction.is_none() && b.demolition.is_none() { plant_field(world, id) } else { None };
     // [r5-layered] The decks over a park: no trees or tall features there.
     let overhead = if b.land_use == nd_sim::LandUse::Park { nd_procgen::undercroft::deck_quads(world, &lot.polygon) } else { Vec::new() };
+    // [r11-lot-memory] Old signs painted over where the trade changed.
+    let ghost_signs = nd_procgen::lot_memory::ghost_signs(world, id);
     // What decides the style comes from `style_extras`, the same inputs the
     // style book and the inspector's label use (a taxi company's yard is a
     // surface lot whose cabs `render/taxis.rs` stands in the bays); only
@@ -133,6 +145,7 @@ pub(crate) fn building_geometry(world: &World, kit: Kit, styles: &StyleBook, id:
         dynamic_lights: true,
         fleet: b.business.as_ref().filter(|z| z.kind == nd_sim::BusinessKind::FleetLot).map_or(0.5, |z| z.fleet_trucks as f32 / world.fleet_capacity(id).max(1) as f32),
         overhead: &overhead,
+        ghost_signs: &ghost_signs,
         ..nd_procgen::style_extras(world, id, styles.neighbours(id))
     };
     let g = match &b.demolition {
@@ -300,7 +313,21 @@ pub(super) fn sync_buildings(
                 dirty.insert(k);
             }
         }
+        // [r11-lot-memory] Everything is drawn with the history as it is.
+        let w = &sim.world;
+        state.memory_gate.same((sim.generation, w.lot_memory.version, w.clock.day()));
+        state.memory_drawn = super::lot_memory::marks(w);
     } else {
+        // [r11-lot-memory] A trace new, gone or a week further faded: the
+        // layers it is drawn in.
+        let w = &sim.world;
+        if !state.memory_gate.same((sim.generation, w.lot_memory.version, w.clock.day())) {
+            let now = super::lot_memory::marks(w);
+            for k in super::lot_memory::changed_layers(w, &mut state.memory_drawn, now) {
+                *stats.chunks.causes.entry("lot_memory").or_default() += 1;
+                dirty.insert(k);
+            }
+        }
         // Built or changed: the layer the building is in now, and the one
         // it was drawn in (another when it became or stopped being live, or
         // the lot moved under it).
@@ -518,6 +545,11 @@ fn swap_in(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials,
         state.building_chunks.insert(id, r.key);
         if let Some(top) = d.top {
             sim.building_tops.0.insert(id, top);
+        }
+        if d.ghosts > 0 {
+            sim.ghost_walls.insert(id, d.ghosts);
+        } else {
+            sim.ghost_walls.remove(&id);
         }
         match d.plant {
             Some(p) => state.plant_sites.insert(id, p),

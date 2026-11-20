@@ -26,6 +26,10 @@
 
 mod air;
 mod foot_wear;
+/// [r11-lot-memory] Recording what stood on each lot (`crate::lot_memory`).
+mod lot_memory;
+#[cfg(test)]
+mod lot_memory_tests;
 /// [benches] Seats on park benches.
 pub mod benches;
 mod buses;
@@ -750,6 +754,11 @@ pub struct World {
     /// paving in the renderer. Old saves load clean and wear in.
     #[serde(default)]
     pub foot_wear: crate::foot_wear::FootWear,
+    /// [r11-lot-memory] What stood on each lot: buildings pulled down and
+    /// shops that changed trade (`crate::lot_memory`, `world/lot_memory.rs`).
+    /// Old saves load with no history.
+    #[serde(default)]
+    pub lot_memory: crate::lot_memory::LotMemory,
     /// [r4-tiles] The ground of the tiles round the map, surveyed once.
     #[serde(skip)]
     land_tile_grounds: std::sync::OnceLock<Vec<land_tiles::TileGround>>,
@@ -1029,6 +1038,7 @@ impl World {
             air: Default::default(),
             contamination: crate::ground::Contamination::new(half + 200.0, crate::ground::CONTAMINATION_CELL),
             foot_wear: Default::default(),
+            lot_memory: Default::default(),
             land_tile_grounds: Default::default(),
             cleanups: Vec::new(),
             industry_bias: Vec::new(),

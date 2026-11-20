@@ -16,3 +16,4 @@ noise = { workspace = true }
 [dev-dependencies]
 slotmap = { workspace = true }
 nd_minds = { workspace = true }
+ron = { workspace = true }

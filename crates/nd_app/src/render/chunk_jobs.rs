@@ -83,6 +83,8 @@ pub(super) struct Drawn {
     pub slots: Vec<nd_procgen::BoxSlot>,
     /// A solar or wind plant merging with its neighbours: its lot centre.
     pub plant: Option<SVec2>,
+    /// [r11-lot-memory] Triangles of ghosts drawn on its walls.
+    pub ghosts: u32,
 }
 
 /// One layer generated: the merged geometry, its detail cells (by lot
@@ -107,7 +109,8 @@ pub(super) fn generate_layer(world: &World, kit: Kit, styles: &StyleBook, key: L
         }
         let rigs_before = geo.games.len();
         let slots_before = geo.box_slots.len();
-        let top = append_building(&mut geo, &mut cells, world, kit, styles, id);
+        let drew = append_building(&mut geo, &mut cells, world, kit, styles, id);
+        let (top, ghosts) = (drew.map(|d| d.0), drew.map_or(0, |d| d.1));
         // [K34] A depot's stacks are where its real boxes stand; [r8] its
         // painted lorry bays, where the real lorries stand.
         let (bays, slots): (Vec<nd_procgen::BoxSlot>, Vec<nd_procgen::BoxSlot>) = geo.box_slots.drain(slots_before..).partition(|s| s.tier == nd_procgen::BAY_TIER);
@@ -118,7 +121,7 @@ pub(super) fn generate_layer(world: &World, kit: Kit, styles: &StyleBook, key: L
             }
         }
         let plant = world.buildings.get(id).filter(|b| b.plant.is_some_and(|k| k.merges_with_neighbours())).and_then(|b| world.lots.get(b.lot)).map(|l| l.center);
-        drawn.push(Drawn { id, top, bays: bays.iter().map(|s| (s.at, s.yaw)).collect(), slots, plant });
+        drawn.push(Drawn { id, top, bays: bays.iter().map(|s| (s.at, s.yaw)).collect(), slots, plant, ghosts });
     }
     Some(LayerGeo { key, geo, cells, drawn })
 }

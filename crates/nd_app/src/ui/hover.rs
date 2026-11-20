@@ -70,6 +70,10 @@ pub fn card(ctx: &egui::Context, sim: &Sim, cursor: &Cursor) {
             if let Some(a) = access {
                 ui.label(small(format!("{}  ·  {:+.2} for homes", access_text.clone().unwrap_or_else(|| a.describe()), a.value)));
             }
+            // [r11-lot-memory] What stood here: the last two.
+            for t in w.lot_history(lot_id).into_iter().take(2) {
+                ui.label(small(t.line()).color(egui::Color32::from_rgb(190, 170, 140)));
+            }
             // [pt-walk] Cut off from the rest of the city.
             for line in w.lot_link_warnings(lot_id) {
                 ui.label(small(line).color(egui::Color32::from_rgb(255, 130, 80)));
