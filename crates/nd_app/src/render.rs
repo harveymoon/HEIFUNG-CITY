@@ -59,6 +59,7 @@ mod gulls;
 mod grime;
 // [r10-worn-paths] Paths worn by real feet.
 mod foot_wear;
+mod lot_memory;
 /// [climate] Rain, snow and hot-spot steam.
 pub mod climate;
 /// Drone heat vision (render/heat.rs).
@@ -355,7 +356,7 @@ struct RenderState {
     /// [refactor/app] The lots version the parks, and the lots and land
     /// value versions the vacant dressing, were last checked against.
     parks_gate: Gate<(u64, u64)>,
-    vacant_gate: Gate<(u64, u64, u64, u64)>,
+    vacant_gate: Gate<(u64, u64, u64, u64, u64, u64)>,
     /// Park lots drawn, with a hash of the layout and polygon they show.
     parks: HashMap<LotId, (u64, Vec<Entity>)>,
     /// Vacant dressing per chunk, with a hash of the lots and land-value
@@ -370,6 +371,11 @@ struct RenderState {
     /// Solar and wind plants drawn, by lot centre: a plant coming, changing
     /// or going redraws the fields round it (see [`plant_field`]).
     plant_sites: HashMap<BuildingId, SVec2>,
+    /// [r11-lot-memory] The lot history the building layers were drawn
+    /// with: the generation, its version and the day they were checked
+    /// under, and each trace's fade stage (`lot_memory::changed_layers`).
+    memory_gate: Gate<(u64, u64, u64)>,
+    memory_drawn: HashMap<u32, lot_memory::Mark>,
     chunks: HashMap<chunk_jobs::LayerKey, ChunkMeshes>,
     /// [r7-sim-thread] Building chunks waiting to be regenerated: a few a
     /// frame (`CHUNK_BUDGET`), so a batch of sim ticks that touched a dozen

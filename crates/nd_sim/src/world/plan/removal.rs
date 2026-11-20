@@ -62,6 +62,11 @@ impl World {
             return;
         }
         let city = self.is_city_building(bid);
+        // [r11-lot-memory] Gone at once (a car park, a civic structure):
+        // the lot remembers it all the same.
+        if at.is_none() {
+            self.remember_demolished(bid, None);
+        }
         let Some(b) = self.buildings.remove(bid) else { return };
         if at.is_none() && self.lots.get(b.lot).is_some_and(|l| l.building == Some(bid)) {
             self.lots[b.lot].building = None;

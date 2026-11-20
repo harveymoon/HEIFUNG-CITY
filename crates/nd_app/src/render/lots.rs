@@ -387,7 +387,8 @@ pub(super) fn sync_vacant(
 ) {
     let w = &sim.world;
     let rebuild_all = assets.palette_changed || sim.full_rebuild;
-    if state.vacant_gate.same((sim.generation, w.lots.version(), w.land_value.version(), w.config.seed)) && !rebuild_all {
+    // [r11-lot-memory] Old slabs follow the lot history and fade by the day.
+    if state.vacant_gate.same((sim.generation, w.lots.version(), w.land_value.version(), w.config.seed, w.lot_memory.version, w.clock.day())) && !rebuild_all {
         return;
     }
     // Per chunk: the lots in it and a hash of what their dressing depends on.
@@ -400,6 +401,7 @@ pub(super) fn sync_vacant(
         id.hash(h);
         vacant_bucket(w.land_value.at(lot.center)).hash(h);
         hash_f32s(h, lot.polygon.iter().copied());
+        nd_procgen::lot_memory::slab_trace(w, lot).map(|(t, s)| (t.id, s)).hash(h);
         ids.push(id);
     }
     let wanted: HashMap<ChunkKey, (u64, Vec<LotId>)> = per_chunk.into_iter().map(|(k, (h, ids))| (k, (h.finish(), ids))).collect();
@@ -419,9 +421,18 @@ pub(super) fn sync_vacant(
         let mut geo = Geometry::default();
         for id in ids {
             let lot = &w.lots[id];
-            // Dormant, going wild or kept as a parklet, by what the land is worth.
             let seed = w.config.seed ^ ((lot.center.x * 31.0 + lot.center.y * 17.0).abs() as u64);
-            geo.append(&generate_vacant(lot, w.land_value.at(lot.center), seed, pal));
+            // [r11-lot-memory] The slab of what stood here, under the weeds.
+            // On dear land the owner has it turfed into a parklet after two
+            // weeks; until then the lot is the bare cleared ground round it.
+            let value = w.land_value.at(lot.center);
+            let slab = nd_procgen::lot_memory::slab_trace(w, lot).filter(|(_, s)| vacant_bucket(value) < 2 || *s < 2);
+            let value = if slab.is_some() && vacant_bucket(value) == 2 { (nd_procgen::vacant::LOW + nd_procgen::vacant::HIGH) * 0.5 } else { value };
+            // Dormant, going wild or kept as a parklet, by what the land is worth.
+            geo.append(&generate_vacant(lot, value, seed, pal));
+            if let Some((t, s)) = slab {
+                nd_procgen::lot_memory::slab(&mut geo, &lot.polygon, t, s, pal);
+            }
         }
         nd_procgen::climate::snow_cover(&mut geo, pal.snow);
         let ents = if geo.triangle_count() > 0 { spawn_geometry(&mut commands, &mut meshes, &mats, &geo, VacantTag) } else { Vec::new() };

@@ -89,6 +89,10 @@ pub struct Sim {
     /// [fire-scene] Every building's drawn height, filled by the renderer
     /// the same way (`fire_scene::BuildingTops`).
     pub building_tops: crate::fire_scene::BuildingTops,
+    /// [r11-lot-memory] Triangles of the ghosts of buildings gone drawn on
+    /// each standing building's walls, filled by the renderer as it draws
+    /// (the remote `lot_memory` reports them).
+    pub ghost_walls: std::collections::HashMap<nd_sim::BuildingId, u32>,
     /// [K34] Each depot's slots for its real boxes (from its drawn style,
     /// `Geometry::box_slots`), with the version they were drawn at; and a
     /// count bumped whenever they change.
@@ -141,6 +145,7 @@ impl Sim {
             effective_speed: 1.0,
             styles: nd_procgen::StyleBook::default(),
             building_tops: Default::default(),
+            ghost_walls: Default::default(),
             depot_slots: Default::default(),
             depot_slots_version: 0,
             depot_bays: Default::default(),

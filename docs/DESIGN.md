@@ -256,6 +256,42 @@ Citizens are rendered from their simulated positions every frame.
   The `foot_wear` map layer shows the heat itself and the remote `foot_wear` command reports it.
   Walkers stay on the walk graph (no new shortcuts): tracks form where the graph already crosses
   open ground (lot loops and gates, park walks' edges, vacant lots, open land).
+- **Lots remember what stood there** [r11-lot-memory] (`nd_sim::lot_memory`, `world/lot_memory.rs`,
+  `nd_procgen::lot_memory`, `buildings/ghost_signs.rs`, `nd_app` `render/lot_memory.rs`): a short
+  history per lot. A trace is recorded when a building is gone (when the rubble is cleared, or at
+  once for a car park or a civic structure; not for a site cleared before it opened): its outline (the lot, or its merged plots), floors,
+  land use, trade, name, seed, when it was built and went, and why (the demolition's reason). The
+  demolition keeps the old name and trade, since during a redevelopment the building's own fields
+  are already its successor's. And when a standing building's trade changes (`set_business`: a
+  new kind or shut) or a shopfront's tenant does (`sync_tenants`: the sign's trade), with what it
+  was and what it became (noted once if both happen in the same hour). Traces are found by place
+  (the lot whose outline holds the trace's centre), so a recut lot keeps the history of its ground;
+  at most 4 on a lot and 3,000 in the city, the oldest going first. Saved as one tuple a trace with
+  lengths in decimetres (about 140 bytes a trace); old saves load with no history. No random draws.
+  Drawn from it, procedurally, at no cost a frame:
+  - on a standing building's wall that faced the old ground within 2 m of the shared edge and
+    reaches the ground (so not across a gap, not on the successor standing on the lot, not on a
+    car park's or a park's neighbours), the ghost of the old house: a patch of old plaster up to its
+    roof line (a gable, a mono-pitch, or a flat roof with a lower back extension, from its seed and
+    height, held under the wall's own top), the dark flashing line where the roof met the wall, the
+    floor lines, scraps of each room's wallpaper (some stripped), the chimney breast with a
+    fireplace per floor and its stack's outline, a row of tile scars under a pitched roof. It fades
+    by the week to a faint scar after six weeks. Drawn into the neighbour's chunk layer
+    (`append_building`); the renderer keeps each trace's fade stage and redraws only the layers
+    round a trace that is new, gone or a week older;
+  - on a lot left vacant, the old slab in cracked 1.6 m squares, its footings broken along the
+    outline, a patch of kitchen tiles, weeds in the cracks; each week the weeds take more until it
+    is gone at ten weeks, or something is built (with the vacant-lot dressing). On dear land (a
+    parklet) the lot is bare cleared ground round the slab for two weeks, then the owner has it
+    turfed;
+  - on a building whose trade changed or shut, the old sign painted over above the shopfront (over
+    that shopfront for a tenant's): a patch of fresh paint with its screw holes, the old name (or
+    trade) faintly through it in stencil letters, fading over four weeks to faint; a third of the
+    time the old door bricked up, and a shopfront that is no shop any more filled in with
+    blockwork round a small window.
+  The building inspector shows "WHAT STOOD HERE" (one line a trace: "Day 12: Rust Row, a 4-storey
+  block of homes, pulled down (bulldozed: the zone was cleared); stood 30 days"), the lot hover
+  card the last two; `inspect` carries `what_stood_here`, and the remote `lot_memory` reports it.
 - **Road wear and maintenance** (`nd_sim::road_wear`, `world/roadworks.rs`): every street piece
   the city looks after (not paths, track, bored tunnels, highway carriageways or anything past the
   map edge) wears 0.0033 a day with age (about 300 days to crumble) plus 0.00012 per vehicle sample

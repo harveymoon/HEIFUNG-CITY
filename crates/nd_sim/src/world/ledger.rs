@@ -264,9 +264,16 @@ impl World {
         }
         let Some(b) = self.buildings.get_mut(bid) else { return };
         let fresh = z.is_some();
+        // [r11-lot-memory] A trade that changes in a standing building is
+        // remembered (its old sign painted over).
+        let was = b.business.as_ref().map(|o| (o.kind, b.name.clone()));
+        let now = z.as_ref().map(|n| n.kind);
         b.business = z;
         if fresh {
             self.settle_account(a);
+        }
+        if let Some((was, name)) = was.filter(|(k, _)| Some(*k) != now) {
+            self.remember_change(bid, None, was, name, now);
         }
     }
 
