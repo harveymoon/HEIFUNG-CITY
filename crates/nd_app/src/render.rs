@@ -57,6 +57,8 @@ mod haze;
 mod gulls;
 // [dirty-industry] smoke over the dirty plants and the poisoned ground's stain
 mod grime;
+// [r10-worn-paths] Paths worn by real feet.
+mod foot_wear;
 /// [climate] Rain, snow and hot-spot steam.
 pub mod climate;
 /// Drone heat vision (render/heat.rs).
@@ -92,6 +94,7 @@ mod mapview;
 pub use focus::{POLICE_GLOW, TRAFFIC_BLUE};
 pub use layers::danger_color;
 pub use nights::road_wear_color;
+pub use foot_wear::{pave_wear as foot_pave_wear, PAVE_FULL as FOOT_PAVE_FULL, PAVE_START as FOOT_PAVE_START};
 pub use mapview::{zone_tint as map_zone_tint, PIN_KEY as MAP_PIN_KEY, ROAD_KEY as MAP_ROAD_KEY};
 /// The sky dome: light pollution at night, glare round the sun by day.
 mod sky;
@@ -444,7 +447,7 @@ impl Plugin for RenderPlugin {
         app.add_systems(PostUpdate, holo::hide_surface_extras.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate));
         app.add_systems(Update, (subway::sync_metro_tunnels, subway::sync_metro_trains).in_set(SimSet::Sync).after(sync_trains).before(holo::apply_depth));
         app.add_systems(Update, subway::sync_platform_figures.in_set(SimSet::Sync).after(holo::apply_depth));
-        app.add_systems(Update, (turbines::sync_turbines, solar::sync_solar, haze::sync_haze, gulls::sync_gulls, grime::sync_grime, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
+        app.add_systems(Update, (turbines::sync_turbines, solar::sync_solar, haze::sync_haze, gulls::sync_gulls, grime::sync_grime, foot_wear::sync_foot_wear, foot_wear::sync_foot_wear_layer, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
         app.init_resource::<climate::SceneClock>().add_systems(Update, climate::tick_scene_clock.in_set(SimSet::Input));
         app.add_systems(Update, (climate::sync_precipitation, climate::sync_steam).in_set(SimSet::Sync).after(sync_landscape));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));

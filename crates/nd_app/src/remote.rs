@@ -93,6 +93,8 @@ mod list;
 mod map;
 /// [events] street races, raves, road condition
 mod nights;
+/// [r10-worn-paths] The walking-heat field.
+mod foot_wear;
 /// [places] taste, favourite places, venue ratings.
 mod places;
 /// [land] Owners, prices, merged plots, pressure and the super-elite.

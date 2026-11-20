@@ -71,11 +71,14 @@ pub struct Overlays {
     /// landfills, incinerators, recycling plants and transfer stations
     /// marked (`pt_layers::trash_gizmos`).
     pub trash: bool,
+    /// [r10-worn-paths] Foot wear: the walking heat that wears grass into
+    /// tracks and darkens busy paving (`foot_wear`).
+    pub foot_wear: bool,
 }
 
 impl Default for Overlays {
     fn default() -> Self {
-        Self { land_value: false, paths: false, zoning: false, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false, parking: false, trails: false, density: false, park_access: false, construction: false, walk_networks: false, land_tiles: false, trash: false }
+        Self { land_value: false, paths: false, zoning: false, projects: true, traffic: false, traffic_types: false, people: false, pollution: false, land: None, districts: false, crime: false, map: false, danger: false, road_condition: false, metro: false, parking: false, trails: false, density: false, park_access: false, construction: false, walk_networks: false, land_tiles: false, trash: false, foot_wear: false }
     }
 }
 

@@ -236,6 +236,26 @@ Citizens are rendered from their simulated positions every frame.
   the door. Police on scene shut it down, fine the promoter 400 (a quarter of the time taking them
   in); otherwise it winds down between 03:00 and 04:30. A city without a scene near its warehouses
   never has one (tested).
+- **Paths worn by real feet** [r10-worn-paths] (`nd_sim::foot_wear`, `world/foot_wear.rs`,
+  `nd_app` `render/foot_wear.rs`): a walking-heat field of 2 m cells in sparse 128 m chunks. Every
+  tick each walker on foot at grade lays its step (`prev_pos` to `pos`) into it, one count per cell
+  passed (not on raised walkways or decks; a jump of more than three ticks' walk only marks where
+  they stand); people waiting at a stop add 0.06 a minute, people on a bench 0.03. On the hour
+  everything fades (half-life 3 days), so a cell holds about 4.3 x the passes a day kept up, and a
+  path that falls out of use is gone in a week or two. Saved quantised (a letter per cell on a log
+  scale, zero runs as numbers); old saves load clean and wear in. The renderer draws it as a mask,
+  not triangles: per chunk up to two translucent lit sheets with 128 x 128 textures (1 m texels)
+  built on the CPU, a few tiles a frame after each hourly fade. Soft ground (park lawns, vacant
+  lots, verges, open land, a run-down park's dirt walks) wears from heat 40 and is bare earth at
+  600, with broken gritty edges from world-fixed value noise; the colour follows the climate (pale
+  dust in the desert, dark mud temperate and tropical, slush arctic, ash volcanic; a wet track
+  darker down its middle). Paving (pavements, footpaths, a park's paved walks, built lots and
+  plazas) darkens in blotches from 200 to 8,000 (outside busy doors, stops, station entrances and
+  crossings). Carriageways, rails and water get nothing. The soft sheet lies 5.5 cm over the built
+  ground (over a lawn, under paved park walks and pavements), the paving one just over the kerb.
+  The `foot_wear` map layer shows the heat itself and the remote `foot_wear` command reports it.
+  Walkers stay on the walk graph (no new shortcuts): tracks form where the graph already crosses
+  open ground (lot loops and gates, park walks' edges, vacant lots, open land).
 - **Road wear and maintenance** (`nd_sim::road_wear`, `world/roadworks.rs`): every street piece
   the city looks after (not paths, track, bored tunnels, highway carriageways or anything past the
   map edge) wears 0.0033 a day with age (about 300 days to crumble) plus 0.00012 per vehicle sample
