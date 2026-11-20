@@ -401,7 +401,7 @@ impl Subject {
         match self {
             Subject::None => None,
             Subject::City(id) => {
-                let mut g = crate::render::building_geometry(&sim.world, assets, &sim.styles, id)?;
+                let mut g = crate::render::building_geometry(&sim.world, crate::render::Kit::of(assets), &sim.styles, id)?;
                 nd_procgen::climate::snow_cover(&mut g, assets.palette.snow);
                 Some(g)
             }

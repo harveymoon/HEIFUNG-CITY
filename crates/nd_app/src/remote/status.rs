@@ -29,6 +29,11 @@ pub(super) fn memory_json(ctx: &Ctx) -> Value {
     })
 }
 
+/// [r10-chunk-hitch] Building chunk regeneration since the start.
+fn chunks_json(c: &crate::render::ChunkStats) -> Value {
+    json!({ "causes": c.causes, "rebuilt": c.rebuilt, "gen_ms": round(c.gen_ms as f32), "chunk_ms_max": round(c.chunk_ms_max), "frame_ms_max": round(c.frame_ms_max), "deferred": c.deferred, "pending": c.pending, "lag_ms": round(c.lag_ms as f32), "lag_ms_max": round(c.lag_ms_max), "jobs": c.jobs, "abandoned": c.abandoned, "full_ms": round(c.full_ms) })
+}
+
 pub(super) fn status(ctx: &Ctx) -> Value {
     let sim = &ctx.sim;
     let w = &sim.world;
@@ -64,7 +69,7 @@ pub(super) fn status(ctx: &Ctx) -> Value {
         "bots": { "active": w.bots.bots.len(), "delivered_today": w.bots.delivered_today, "vans_on_road": nd_sim::Bots::vans(w), "van_orders_today": w.bots.van_orders_today },
         "transit": { "routes": w.transit.routes.len(), "buses": t.buses, "depots": t.depots, "depot_capacity": t.depot_capacity, "waiting": t.waiting, "riding": t.riding, "riders_today": t.riders_today, "fares_today": round(t.fares_today), "upkeep_today": round(t.upkeep_today) },
         "rail": { "trains": r.trains, "stations": r.stations, "yards": r.yards, "waiting": r.waiting, "riding": r.riding, "riders_today": r.riders_today, "fares_today": round(r.fares_today), "next_passenger_in": r.next_passenger_in, "freight_in_today": round(r.freight_in_today), "freight_waiting": round(r.freight_waiting), "upkeep_today": round(r.upkeep_today) },
-        "render": { "fps": round(fps as f32), "ticks_per_frame": sim.ticks_last_frame, "triangles": ctx.stats.street_triangles + ctx.stats.building_triangles, "building_meshes": ctx.stats.building_entities, "detail_triangles": { "mid": ctx.stats.detail_triangles[0], "near": ctx.stats.detail_triangles[1] }, "detail_in_range": { "mid": ctx.stats.detail_in_range[0], "near": ctx.stats.detail_in_range[1] }, "drawn_triangles": ctx.stats.street_triangles + ctx.stats.building_triangles - ctx.stats.detail_triangles.iter().sum::<usize>() + ctx.stats.detail_in_range.iter().sum::<usize>(), "graphics": look::graphics_json(ctx) },
+        "render": { "fps": round(fps as f32), "ticks_per_frame": sim.ticks_last_frame, "triangles": ctx.stats.street_triangles + ctx.stats.building_triangles, "building_meshes": ctx.stats.building_entities, "detail_triangles": { "mid": ctx.stats.detail_triangles[0], "near": ctx.stats.detail_triangles[1] }, "detail_in_range": { "mid": ctx.stats.detail_in_range[0], "near": ctx.stats.detail_in_range[1] }, "drawn_triangles": ctx.stats.street_triangles + ctx.stats.building_triangles - ctx.stats.detail_triangles.iter().sum::<usize>() + ctx.stats.detail_in_range.iter().sum::<usize>(), "graphics": look::graphics_json(ctx), "chunks": chunks_json(&ctx.stats.chunks) },
         "camera": camera::camera_pose(ctx), "tool": tool::tool_state(&ctx.tools), "selection": selection(w, *ctx.selection),
         "project": planning::project_state(ctx)["project"], "overlays": look::overlays_json(&ctx.overlays),
         "lighting": { "follow_clock": ctx.lighting.follow_clock, "hour": round(ctx.lighting.hour), "heat_vision": ctx.lighting.heat },
@@ -79,6 +84,7 @@ pub(super) fn status(ctx: &Ctx) -> Value {
             "threaded": sim.threaded && c.threaded(), "in_frame_while_edited": sim.edit_streak >= 4, "running": c.running(), "ready": c.has_ready(), "pause_at": sim.pause_at,
             "tick_ms": round(s.tick_ms), "copy_ms": round(s.copy_ms), "max_tick_ms": round(s.max_tick_ms),
             "batches": s.batches, "ticks": s.ticks, "discarded": s.discarded, "rebases": s.rebases, "waited_ms": round(s.waited_ms),
+            "leases": c.leases_out(), "recalls": s.recalls,
             "edit_sites": c.edit_sites(8),
         });
     }

@@ -374,6 +374,12 @@ impl StyleBook {
         self.entries.get(&id).map(|e| e.neighbours.as_slice()).unwrap_or(&[])
     }
 
+    /// [r10-chunk-hitch] A book of just these buildings' entries: what a
+    /// renderer drawing them on another thread needs (`neighbours`).
+    pub fn subset(&self, ids: &[BuildingId]) -> StyleBook {
+        StyleBook { entries: ids.iter().filter_map(|id| self.entries.get(id).map(|e| (*id, e.clone()))).collect() }
+    }
+
     /// Resolve every building that is new or changed, oldest first, and
     /// forget removed ones. Cheap when nothing changed.
     pub fn refresh(&mut self, world: &World, rules: &BuildingRules) {

@@ -2348,6 +2348,19 @@ trait MindProvider {
 - Performance: the sim gets a real-time budget per frame (12 ms) and drops its
   backlog instead of stalling the renderer; shadows use three cascades out to 650 m;
   the HUD shows fps, meshes and triangles.
+- Building chunks [r10-chunk-hitch] (`render/buildings.rs`, `render/chunk_jobs.rs`): buildings
+  are merged per 128 m chunk in two layers, the settled buildings and the live ones whose look
+  follows the sim every few hours (building sites and demolitions by their progress, car parks by
+  the cars parked in them), so a car park filling up regenerates the few live buildings of its
+  chunk, not the block of towers round it. While the sim runs on its thread, changed layers are
+  regenerated on Bevy's async compute pool (at most 4 chunks at once, oldest first) from a lease
+  on the screen's world (`sim_thread::Lease`) and swapped in whole when done, every layer of a
+  chunk in the same frame; the main thread only adds the finished meshes. An edit to the world
+  while a job holds it recalls the job (it stops at its next building and starts again) instead
+  of copying the city. A load or a palette change draws every chunk at once on all cores; with
+  `ND_SIM_THREAD=0`, a window writing the city every frame or `ND_CHUNK_JOBS=0`, layers are
+  regenerated on the main thread within 6 ms a frame as before. `status.render.chunks` counts
+  what redrew chunks (by cause), their cost and the lag from change to screen.
 - Look ("grounded neon", `render/look.rs`): realistic light under the neon. Surfaces carry a
   metallic-roughness map beside their colour and normal maps (`textures::roughness_map`: grime
   and cracks rougher, clean spots glossier, rust less metallic); expensive car paint has a

@@ -528,7 +528,6 @@ impl World {
             tb.cmp(&ta).then(b.1.total_cmp(&a.1))
         });
         let mut unpowered = 0;
-        let mut changed = Vec::new();
         for (id, need) in order {
             let b = &mut self.buildings[id];
             let powered = if need <= 0.0 {
@@ -541,7 +540,6 @@ impl World {
                 remaining = 0.0;
                 p
             };
-            let before = (b.powered * 2.0).round();
             b.powered = powered;
             if powered < 0.6 {
                 if hourly {
@@ -549,13 +547,11 @@ impl World {
                 }
                 unpowered += 1;
             }
-            if (powered * 2.0).round() != before {
-                changed.push(id);
-            }
         }
-        for id in changed {
-            self.events.push(SimEvent::BuildingChanged(id));
-        }
+        // [r10-chunk-hitch] No `BuildingChanged` for a building whose share
+        // of power moved: its look does not change (window lights follow
+        // power live, `render/lights.rs`), and the event redrew its whole
+        // street block: ~1,600 a morning at 38k, most of the chunk redraws.
         let p = &mut self.economy.power;
         p.supply_mw = supply;
         p.demand_mw = demand;

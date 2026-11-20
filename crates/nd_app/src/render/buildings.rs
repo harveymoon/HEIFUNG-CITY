@@ -3,6 +3,9 @@
 //! [refactor/app] Split out of `render.rs`.
 
 use super::*;
+use super::chunk_jobs::{build_chunk, building_layer, spawn_layer, DrawKit, Job, LayerKey, ReadyLayer, MAX_JOBS};
+use std::sync::Arc;
+use std::time::Instant;
 
 /// The field a solar or wind plant is drawn as part of, when its parcel
 /// touches others of its kind (`World::plant_cluster`); `None` for a lone
@@ -51,15 +54,30 @@ fn detail_cell(world: &World, id: BuildingId) -> usize {
     (j as usize) * DETAIL_SPLIT + i as usize
 }
 
+/// [r10-chunk-hitch] What building generation reads besides the world
+/// and the styles: the rules and the palette (from `GameAssets`, or a
+/// chunk job's own `DrawKit`).
+#[derive(Clone, Copy)]
+pub(crate) struct Kit<'a> {
+    pub rules: &'a nd_procgen::BuildingRules,
+    pub palette: &'a nd_procgen::Palette,
+}
+
+impl<'a> Kit<'a> {
+    pub(crate) fn of(assets: &'a GameAssets) -> Self {
+        Kit { rules: &assets.rules, palette: &assets.palette }
+    }
+}
+
 /// Generate one building's geometry into the chunk's merged geometry, its
 /// detail layers into the chunk's detail cell for it.
-pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<f32> {
+pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world: &World, kit: Kit, styles: &StyleBook, id: BuildingId) -> Option<f32> {
     let b = world.buildings.get(id)?;
-    let mut g = building_geometry(world, assets, styles, id)?;
+    let mut g = building_geometry(world, kit, styles, id)?;
     // [r5-hillside] On a lot stepped down the hill, storeys under its back
     // part down to the lower pad (lit with the building's own windows).
     if let Some(step) = world.ground.steps.get(&b.lot) {
-        let plinth = nd_procgen::hill_plinth::hill_plinth(&g, step, world.lot_pad(b.lot), b.seed, &assets.palette, true);
+        let plinth = nd_procgen::hill_plinth::hill_plinth(&g, step, world.lot_pad(b.lot), b.seed, kit.palette, true);
         g.append(&plinth);
     }
     // [r5-hillside] A terraced lot's pad off its street's height: steps up
@@ -67,11 +85,11 @@ pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world:
     if let Some(lot) = world.lots.get(b.lot).filter(|l| world.relief && nd_sim::landscape::walled_terrace(&world.landscape, l, world.lot_pad(b.lot))) {
         if world.roads.try_segment(lot.front_segment).is_some_and(|s| !s.bridge) {
             let street = world.road_height(lot.front_segment, lot.front_t) - world.lot_pad(b.lot);
-            g.append(&nd_procgen::hill_plinth::entrance_stair(lot.front_edge, lot.front_dir, street, 0.0, &assets.palette));
+            g.append(&nd_procgen::hill_plinth::entrance_stair(lot.front_edge, lot.front_dir, street, 0.0, kit.palette));
         }
     }
     // [climate] Snow on the roofs in a cold climate.
-    nd_procgen::climate::snow_cover(&mut g, assets.palette.snow);
+    nd_procgen::climate::snow_cover(&mut g, kit.palette.snow);
     lights::tag_windows(&mut g, lights::slot_of(id));
     let top = mass_top(&g);
     // Every building stands on its lot's levelled pad.
@@ -87,7 +105,7 @@ pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world:
 
 /// One building's geometry as drawn, before it is raised onto its lot's
 /// pad (`World::lot_pad`); [social] murals read their wall off it.
-pub(crate) fn building_geometry(world: &World, assets: &GameAssets, styles: &StyleBook, id: BuildingId) -> Option<Geometry> {
+pub(crate) fn building_geometry(world: &World, kit: Kit, styles: &StyleBook, id: BuildingId) -> Option<Geometry> {
     let b = world.buildings.get(id)?;
     // [airport] The whole field is drawn by `render/airport.rs`.
     if b.airport.is_some() {
@@ -123,9 +141,9 @@ pub(crate) fn building_geometry(world: &World, assets: &GameAssets, styles: &Sty
         // cut down to what is left, with the demolition site around it.
         Some(d) => {
             let extras = Extras { powered: b.powered, park: lot.park.as_ref(), demolition: Some(d.progress), neighbours: styles.neighbours(id), animated_cranes: true, look: d.look, ..Extras::default() };
-            generate_building(lot, d.land_use, d.floors, d.tier, d.condition, d.seed, &assets.rules, &assets.palette, &extras)
+            generate_building(lot, d.land_use, d.floors, d.tier, d.condition, d.seed, kit.rules, kit.palette, &extras)
         }
-        None => generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, &assets.rules, &assets.palette, &extras),
+        None => generate_building(lot, b.land_use, b.floors, b.tier, b.condition, b.seed, kit.rules, kit.palette, &extras),
     };
     // [r5-layered] (flag line 147, Cinder Stacks through the raised ring)
     // Under a deck the building is held to the clearance in the sim; a
@@ -169,15 +187,60 @@ pub(super) fn building_chunk(world: &World, id: BuildingId) -> Option<ChunkKey> 
     Some(chunk_of(world.lots.get(b.lot)?.center))
 }
 
-/// Buildings, batched per [`CHUNK`] cell: one mesh per non-empty surface per
-/// cell instead of one per surface per building. A cell is thrown away and
-/// regenerated whenever a building in it is built, changed or removed, so
-/// an edit costs one street block of procgen rather than the whole city, and
-/// a few hundred buildings are a few dozen draw calls per surface.
+/// [r10-chunk-hitch] The layers the sim's building events redraw, each
+/// with its cause (counted once per event): the layer a built or changed
+/// building is in now, and the one it was drawn in (`drawn`), when that is
+/// another (it became or stopped being live, or the lot moved under it:
+/// cause "left_layer").
+pub(super) fn changed_layers(world: &World, drawn: &HashMap<BuildingId, LayerKey>, events: &[SimEvent]) -> Vec<(LayerKey, &'static str)> {
+    let mut out = Vec::new();
+    for e in events {
+        if let SimEvent::BuildingBuilt(id) | SimEvent::BuildingChanged(id) = e {
+            let cause = redraw_cause(world, e);
+            let now = building_layer(world, *id);
+            if let Some(k) = now {
+                out.push((k, cause));
+            }
+            if let Some(k) = drawn.get(id).filter(|k| Some(**k) != now) {
+                out.push((*k, "left_layer"));
+            }
+        }
+    }
+    out
+}
+
+/// [r10-chunk-hitch] Why a building event redraws its chunk, for
+/// `status.render.chunks.causes`.
+fn redraw_cause(world: &World, e: &SimEvent) -> &'static str {
+    let SimEvent::BuildingChanged(id) = e else { return "built" };
+    match world.buildings.get(*id) {
+        None => "changed_gone",
+        Some(b) if b.construction.is_some() => "construction",
+        Some(b) if b.demolition.is_some() => "demolition",
+        Some(b) if b.parking_visual().is_some() => "parking_fill",
+        Some(b) if super::chunk_jobs::is_live(b) => "live_other",
+        Some(_) => "changed_other",
+    }
+}
+
 /// [r7-sim-thread] Main-thread time a frame may spend regenerating building
-/// chunks before the rest wait for the next frame (at least one is done).
+/// chunks before the rest wait for the next frame (at least one is done);
+/// [r10-chunk-hitch] only when they are not built on the async pool.
 const CHUNK_BUDGET: std::time::Duration = std::time::Duration::from_millis(6);
 
+/// Buildings, batched per [`CHUNK`] cell: one mesh per non-empty surface per
+/// cell and layer instead of one per surface per building. A layer is
+/// thrown away and regenerated whenever a building in it is built, changed
+/// or removed, so an edit costs one street block of procgen rather than the
+/// whole city, and a few hundred buildings are a few dozen draw calls per
+/// surface.
+/// [r10-chunk-hitch] Two layers per cell (`chunk_jobs::Layer`): the settled
+/// buildings, and the live ones (sites, demolitions, car parks) that change
+/// every few hours. While the sim runs on its thread, layers are regenerated
+/// on the async pool (`chunk_jobs::Job`) and swapped in when done; otherwise
+/// (`ND_SIM_THREAD=0`, a window writing the city every frame,
+/// `ND_CHUNK_JOBS=0`) on the main thread within [`CHUNK_BUDGET`] a frame.
+/// A load or a new palette draws everything at once, on every core.
 pub(super) fn sync_buildings(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -188,6 +251,7 @@ pub(super) fn sync_buildings(
     mut stats: ResMut<RenderStats>,
 ) {
     let _t = crate::frame_stats::span("sync_buildings");
+    let frame_began = Instant::now();
     let rebuild_all = sim.full_rebuild || assets.rules_changed || assets.palette_changed;
     if sim.full_rebuild || assets.rules_changed {
         // Every building's resolved style and the older neighbours it was
@@ -197,8 +261,16 @@ pub(super) fn sync_buildings(
         // [fix/review-app] Drawn heights are keyed by building id too.
         sim.building_tops.0.clear();
     }
-    let mut dirty: HashSet<ChunkKey> = HashSet::new();
+    if rebuild_all || state.draw_kit.is_none() {
+        state.draw_kit = Some(Arc::new(DrawKit { rules: assets.rules.clone(), palette: assets.palette.clone() }));
+    }
+    let mut dirty: HashSet<LayerKey> = HashSet::new();
     if rebuild_all {
+        // [r10-chunk-hitch] Jobs out were drawing the old city or look:
+        // dropped (each stops at its next building).
+        state.chunk_jobs.clear();
+        state.pending_chunks.clear();
+        state.chunk_dirty_since.clear();
         for (_, chunk) in state.chunks.drain() {
             for e in chunk.entities {
                 commands.entity(e).despawn();
@@ -224,22 +296,17 @@ pub(super) fn sync_buildings(
             }
         }
         for id in sim.world.buildings.keys() {
-            if let Some(k) = building_chunk(&sim.world, id) {
+            if let Some(k) = building_layer(&sim.world, id) {
                 dirty.insert(k);
             }
         }
     } else {
-        // Built or changed: the chunk the building lives in now, and the one
-        // it was drawn in (the same unless the lot moved under it).
-        for e in &sim.events {
-            if let SimEvent::BuildingBuilt(id) | SimEvent::BuildingChanged(id) = e {
-                if let Some(k) = building_chunk(&sim.world, *id) {
-                    dirty.insert(k);
-                }
-                if let Some(k) = state.building_chunks.get(id) {
-                    dirty.insert(*k);
-                }
-            }
+        // Built or changed: the layer the building is in now, and the one
+        // it was drawn in (another when it became or stopped being live, or
+        // the lot moved under it).
+        for (k, cause) in changed_layers(&sim.world, &state.building_chunks, &sim.events) {
+            *stats.chunks.causes.entry(cause).or_default() += 1;
+            dirty.insert(k);
         }
         // Removed buildings leave no event in some paths (a rebuild of the
         // master plan drops them), so compare against what was drawn.
@@ -262,6 +329,7 @@ pub(super) fn sync_buildings(
         }
         for id in gone {
             if let Some(k) = state.building_chunks.remove(&id) {
+                *stats.chunks.causes.entry("removed").or_default() += 1;
                 dirty.insert(k);
             }
             if let Some(p) = state.plant_sites.remove(&id) {
@@ -276,124 +344,197 @@ pub(super) fn sync_buildings(
                 }
                 let Some(lot) = w.lots.get(b.lot) else { continue };
                 if plant_touch.iter().any(|p| p.distance(lot.center) < PLANT_FIELD_REACH) {
-                    if let Some(k) = building_chunk(w, id) {
+                    if let Some(k) = building_layer(w, id) {
+                        *stats.chunks.causes.entry("plant_field").or_default() += 1;
                         dirty.insert(k);
                     }
                 }
             }
         }
         // Buildings that exist but were never drawn (missed events) are
-        // caught the same way, cheaply, since the map lookup is O(1).
+        // caught the same way, cheaply, since the map lookup is O(1); not
+        // while their chunk is waiting or being drawn already.
         for id in sim.world.buildings.keys() {
             if !state.building_chunks.contains_key(&id) {
-                if let Some(k) = building_chunk(&sim.world, id) {
-                    dirty.insert(k);
+                if let Some(k) = building_layer(&sim.world, id) {
+                    if !state.pending_chunks.contains(&k) && !state.chunk_jobs.contains_key(&k.0) && dirty.insert(k) {
+                        *stats.chunks.causes.entry("undrawn").or_default() += 1;
+                    }
                 }
             }
         }
     }
-    // [r7-sim-thread] A load or a palette change draws everything at once;
-    // changes as the city runs are spread over frames within a budget.
-    let mut later: Vec<ChunkKey> = Vec::new();
-    if !rebuild_all {
+    let work = sim.world.clock.work_minutes();
+    let rebuilt_before = stats.chunks.rebuilt;
+    if rebuild_all {
+        // A load or a palette change draws everything now, on every core.
+        let groups = chunk_groups(&mut sim, &assets, &dirty);
+        let kit = Kit::of(&assets);
+        let (world, styles): (&World, &StyleBook) = (&sim.world, &sim.styles);
+        let mut ready: Vec<ReadyLayer> = bevy::tasks::ComputeTaskPool::get().scope(|s| {
+            for g in &groups {
+                s.spawn(async move { build_chunk(world, kit, styles, std::slice::from_ref(g), &|| false).unwrap_or_default() });
+            }
+        }).into_iter().flatten().collect();
+        for r in ready.iter_mut() {
+            swap_in(&mut commands, &mut meshes, &mats, &mut sim, &mut state, &mut stats, r, work);
+        }
+        stats.chunks.full_ms = frame_began.elapsed().as_secs_f32() * 1000.0;
+    } else {
+        for k in &dirty {
+            state.chunk_dirty_since.entry(*k).or_insert(frame_began);
+        }
         state.pending_chunks.extend(dirty.drain());
-        let pending: Vec<ChunkKey> = state.pending_chunks.drain().collect();
-        dirty.extend(pending);
+        // Swap in what the jobs finished, every layer of a chunk at once.
+        let done: Vec<ChunkKey> = state.chunk_jobs.iter().filter(|(_, j)| j.finished()).map(|(k, _)| *k).collect();
+        for c in done {
+            let Some(mut job) = state.chunk_jobs.remove(&c) else { continue };
+            match job.take() {
+                Some(mut layers) => {
+                    for r in layers.iter_mut() {
+                        swap_in(&mut commands, &mut meshes, &mats, &mut sim, &mut state, &mut stats, r, work);
+                    }
+                }
+                None => {
+                    // Recalled by an edit: drawn again from the edited city.
+                    stats.chunks.abandoned += 1;
+                    let layers = job.layers.clone();
+                    state.pending_chunks.extend(layers.into_iter().map(|l| (c, l)));
+                }
+            }
+        }
+        // Start what waits, oldest first, a chunk at a time (a chunk with a
+        // job out waits for it, so its layers always land together).
+        let mut waiting: Vec<(Instant, ChunkKey)> = Vec::new();
+        for k in state.pending_chunks.iter() {
+            if !state.chunk_jobs.contains_key(&k.0) {
+                waiting.push((state.chunk_dirty_since.get(k).copied().unwrap_or(frame_began), k.0));
+            }
+        }
+        waiting.sort_unstable_by_key(|(t, k)| (*t, k.0, k.1));
+        waiting.dedup_by_key(|(_, k)| *k);
+        let asynchronous = chunk_jobs_on() && sim.threaded && sim.world.threaded() && sim.edit_streak < crate::sim::EDIT_STREAK;
+        let room = if asynchronous { MAX_JOBS.saturating_sub(state.chunk_jobs.len()) } else { usize::MAX };
+        let start: Vec<ChunkKey> = waiting.into_iter().map(|(_, k)| k).take(room).collect();
+        if !start.is_empty() {
+            let keys: HashSet<LayerKey> = state.pending_chunks.iter().copied().filter(|k| start.contains(&k.0)).collect();
+            let mut groups = chunk_groups(&mut sim, &assets, &keys);
+            if asynchronous {
+                for chunk in &start {
+                    let mine: Vec<(LayerKey, Vec<BuildingId>)> = groups.extract_if(.., |(k, _)| k.0 == *chunk).collect();
+                    for (k, _) in &mine {
+                        state.pending_chunks.remove(k);
+                    }
+                    let ids: Vec<BuildingId> = mine.iter().flat_map(|(_, ids)| ids.iter().copied()).collect();
+                    let job = Job::start(sim.world.lend(), state.draw_kit.clone().expect("set above"), sim.styles.subset(&ids), mine);
+                    state.chunk_jobs.insert(*chunk, job);
+                }
+            } else {
+                // On the main thread, within the budget (at least one chunk).
+                let kit = Kit::of(&assets);
+                let began = Instant::now();
+                for chunk in &start {
+                    if began.elapsed() > CHUNK_BUDGET {
+                        stats.chunks.deferred += 1;
+                        continue;
+                    }
+                    let mine: Vec<(LayerKey, Vec<BuildingId>)> = groups.extract_if(.., |(k, _)| k.0 == *chunk).collect();
+                    for (k, _) in &mine {
+                        state.pending_chunks.remove(k);
+                    }
+                    let mut layers = build_chunk(&sim.world, kit, &sim.styles, &mine, &|| false).unwrap_or_default();
+                    for r in layers.iter_mut() {
+                        swap_in(&mut commands, &mut meshes, &mats, &mut sim, &mut state, &mut stats, r, work);
+                    }
+                }
+            }
+        }
+        stats.chunks.pending = state.pending_chunks.len();
+        stats.chunks.jobs = state.chunk_jobs.len();
+        stats.chunks.frame_ms_max = stats.chunks.frame_ms_max.max(frame_began.elapsed().as_secs_f32() * 1000.0);
     }
-    let touched = !dirty.is_empty();
-    if touched {
-        {
-            let s = &mut *sim;
-            s.styles.refresh(&s.world, &assets.rules);
-        }
-        // Bucket every building once; only the dirty cells are regenerated.
-        let mut members: HashMap<ChunkKey, Vec<BuildingId>> = HashMap::new();
-        for id in sim.world.buildings.keys() {
-            if let Some(k) = building_chunk(&sim.world, id) {
-                if dirty.contains(&k) {
-                    members.entry(k).or_default().push(id);
-                }
-            }
-        }
-        let began = std::time::Instant::now();
-        let mut order: Vec<ChunkKey> = dirty.into_iter().collect();
-        order.sort_unstable_by_key(|k| (k.0, k.1));
-        for k in order {
-            if !rebuild_all && began.elapsed() > CHUNK_BUDGET {
-                later.push(k);
-                continue;
-            }
-            if let Some(chunk) = state.chunks.remove(&k) {
-                for e in chunk.entities {
-                    commands.entity(e).despawn();
-                }
-            }
-            let Some(ids) = members.remove(&k) else { continue };
-            let mut geo = Geometry::default();
-            let mut cells: Vec<Geometry> = (0..DETAIL_SPLIT * DETAIL_SPLIT).map(|_| Geometry::default()).collect();
-            for &id in &ids {
-                let rigs_before = geo.games.len();
-                let slots_before = geo.box_slots.len();
-                let drawn = append_building(&mut geo, &mut cells, &sim.world, &assets, &sim.styles, id);
-                // [K34] A depot's stacks are where its real boxes stand.
-                let (bays, slots): (Vec<nd_procgen::BoxSlot>, Vec<nd_procgen::BoxSlot>) = geo.box_slots.drain(slots_before..).partition(|s| s.tier == nd_procgen::BAY_TIER);
-                // [r8] Its painted lorry bays, where the real lorries stand.
-                if bays.is_empty() {
-                    sim.depot_bays.remove(&id);
-                } else {
-                    sim.depot_bays.insert(id, bays.iter().map(|s| (s.at, s.yaw)).collect());
-                }
-                if slots.is_empty() {
-                    if sim.depot_slots.remove(&id).is_some() {
-                        sim.depot_slots_version += 1;
-                    }
-                } else {
-                    sim.depot_slots_version += 1;
-                    let v = sim.depot_slots_version;
-                    sim.depot_slots.insert(id, (v, slots));
-                }
-                if let Some(top) = drawn {
-                    // [games] A stadium's game-day dressing knows its building.
-                    for rig in geo.games[rigs_before..].iter_mut() {
-                        rig.building = Some(id);
-                    }
-                    sim.building_tops.0.insert(id, top);
-                    state.building_chunks.insert(id, k);
-                    let w = &sim.world;
-                    match w.buildings[id].plant.filter(|k| k.merges_with_neighbours()).and_then(|_| w.lots.get(w.buildings[id].lot)) {
-                        Some(lot) => state.plant_sites.insert(id, lot.center),
-                        None => state.plant_sites.remove(&id),
-                    };
-                }
-            }
-            let mut entities = spawn_building_geometry(&mut commands, &mut meshes, &mats, &geo);
-            // [r4-style] The detail layers, each cell its own meshes that
-            // drop out with distance.
-            let mut detail = Vec::new();
-            for cell in &cells {
-                for lod in nd_procgen::Lod::DETAIL {
-                    let (ents, at, tris) = spawn_detail_geometry(&mut commands, &mut meshes, &mats, cell, lod);
-                    if tris > 0 {
-                        entities.extend(ents);
-                        detail.push(DetailCell { at, lod, triangles: tris });
-                    }
-                }
-            }
-            let work = sim.world.clock.work_minutes();
-            for rig in &geo.cranes {
-                entities.extend(spawn_crane_head(&mut commands, &mut meshes, &mats, rig, work));
-            }
-            for rig in &geo.games {
-                entities.extend(super::games::spawn_game_rig(&mut commands, &mut meshes, &mats, rig));
-            }
-            let triangles = geo.triangle_count() + detail.iter().map(|d| d.triangles).sum::<usize>();
-            state.chunks.insert(k, ChunkMeshes { entities, triangles, detail });
-        }
-    }
-    state.pending_chunks.extend(later);
-    if rebuild_all || touched {
+    if rebuild_all || stats.chunks.rebuilt != rebuilt_before {
         stats.building_entities = state.chunks.values().map(|c| c.entities.len()).sum();
         stats.building_triangles = state.chunks.values().map(|c| c.triangles).sum();
+    }
+}
+
+/// [r10-chunk-hitch] `ND_CHUNK_JOBS=0` regenerates building chunks on the
+/// main thread, as before (within the budget).
+fn chunk_jobs_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("ND_CHUNK_JOBS").map_or(true, |v| v != "0"))
+}
+
+/// The buildings of each layer in `keys`, in the order the world lists
+/// them (a layer left empty is listed too: its meshes go), with the styles
+/// brought up to date first.
+fn chunk_groups(sim: &mut Sim, assets: &GameAssets, keys: &HashSet<LayerKey>) -> Vec<(LayerKey, Vec<BuildingId>)> {
+    {
+        let s = &mut *sim;
+        s.styles.refresh(&s.world, &assets.rules);
+    }
+    let mut members: HashMap<LayerKey, Vec<BuildingId>> = keys.iter().map(|k| (*k, Vec::new())).collect();
+    for id in sim.world.buildings.keys() {
+        if let Some(k) = building_layer(&sim.world, id) {
+            if let Some(m) = members.get_mut(&k) {
+                m.push(id);
+            }
+        }
+    }
+    let mut groups: Vec<(LayerKey, Vec<BuildingId>)> = members.into_iter().collect();
+    groups.sort_unstable_by_key(|(k, _)| (k.0 .0, k.0 .1, k.1));
+    groups
+}
+
+/// Put a finished layer on screen in place of the old one, and keep what
+/// it drew: which layer each building is in, drawn heights, depot slots
+/// and bays, plant sites.
+#[allow(clippy::too_many_arguments)]
+fn swap_in(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, sim: &mut Sim, state: &mut RenderState, stats: &mut RenderStats, r: &mut ReadyLayer, work: u64) {
+    if let Some(chunk) = state.chunks.remove(&r.key) {
+        for e in chunk.entities {
+            commands.entity(e).despawn();
+        }
+    }
+    for d in r.drawn.drain(..) {
+        let id = d.id;
+        if d.bays.is_empty() {
+            sim.depot_bays.remove(&id);
+        } else {
+            sim.depot_bays.insert(id, d.bays);
+        }
+        if d.slots.is_empty() {
+            if sim.depot_slots.remove(&id).is_some() {
+                sim.depot_slots_version += 1;
+            }
+        } else {
+            sim.depot_slots_version += 1;
+            let v = sim.depot_slots_version;
+            sim.depot_slots.insert(id, (v, d.slots));
+        }
+        // Tracked even when nothing could be drawn, so it is not tried
+        // again every frame as never drawn.
+        state.building_chunks.insert(id, r.key);
+        if let Some(top) = d.top {
+            sim.building_tops.0.insert(id, top);
+        }
+        match d.plant {
+            Some(p) => state.plant_sites.insert(id, p),
+            None => state.plant_sites.remove(&id),
+        };
+    }
+    let chunk = spawn_layer(commands, meshes, mats, r, work);
+    if !chunk.entities.is_empty() {
+        state.chunks.insert(r.key, chunk);
+    }
+    stats.chunks.rebuilt += 1;
+    stats.chunks.gen_ms += r.ms as f64;
+    stats.chunks.chunk_ms_max = stats.chunks.chunk_ms_max.max(r.ms);
+    if let Some(t) = state.chunk_dirty_since.remove(&r.key) {
+        let lag = t.elapsed().as_secs_f32() * 1000.0;
+        stats.chunks.lag_ms += lag as f64;
+        stats.chunks.lag_ms_max = stats.chunks.lag_ms_max.max(lag);
     }
 }
 
