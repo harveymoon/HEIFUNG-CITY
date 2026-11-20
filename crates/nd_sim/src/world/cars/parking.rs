@@ -205,10 +205,23 @@ impl World {
     }
 
     /// Does a car on the street still stand where its slot is?
-    pub(super) fn street_spot_valid(&self, s: &ParkSpot) -> bool {
+    pub(in crate::world) fn street_spot_valid(&self, s: &ParkSpot) -> bool {
         // [parking] Slot-less spots (saves from before every street car had
         // a slot of its own) are re-found too.
         let Some(seg) = s.segment.filter(|seg| self.kerb_physical(*seg)) else { return false };
-        s.slot != u16::MAX && s.slot < self.slot_count(seg) && self.kerb_sides(seg)[s.side.min(1) as usize] && self.slot_pose(seg, s.side, s.slot).0.distance(s.pos) < 1.0
+        if !self.kerb_sides(seg)[s.side.min(1) as usize] {
+            return false;
+        }
+        // [r11-parking] A squeeze place (a corner, or along a short street)
+        // is a place of its own too; either kind only while it is clear of
+        // the ways meeting the street (an older save's cars in slots that
+        // ran into the next street's lanes move on load).
+        let pose = if s.slot >= SQUEEZE_SLOT && s.slot != u16::MAX {
+            let k = s.slot - SQUEEZE_SLOT;
+            (k < self.squeeze_count(seg)).then(|| self.squeeze_pose(seg, s.side, k))
+        } else {
+            (s.slot < self.slot_count(seg)).then(|| self.slot_pose(seg, s.side, s.slot))
+        };
+        pose.is_some_and(|(p, h)| p.distance(s.pos) < 1.0 && self.kerb_clear(seg, p, h))
     }
 }

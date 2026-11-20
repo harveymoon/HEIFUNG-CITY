@@ -2476,7 +2476,9 @@ with a road selected returns the `segment` record plus `road`, the card:
   `queued_for_repair`, `queue_place`, `queue_length`, `priority`, `last_repaired_day`,
   `last_repair_whole`, `last_repair_ordered`, `funding`;
 - `tolls` [{id, name, price}], `crossings` {junction, zebra, push_button, footbridge}, `bus_stops`
-  (line names), `kerb_parking`, `kerb_parked`.
+  (line names), `kerb_parking` (legal kerb parking by the sim's own rule: [r11-parking] false on
+  a roundabout's ring, a slip road, a bridge, an avenue or a loading street; it used to read the
+  street's kind alone, so a ring said true), `kerb_parked`.
 
 ```json
 {"cmd": "select", "at": [120, -40]}

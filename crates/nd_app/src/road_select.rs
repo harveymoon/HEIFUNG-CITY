@@ -343,7 +343,9 @@ impl Card {
             crossings,
             bus_stops,
             kerb_parked: w.vehicles.kerbs.get(&sid).map_or(0, |k| k.len() as u32),
-            kerb_parking: s.is_street() && !s.is_motorway() && !s.tunnel && !w.vehicles.no_kerb.1.contains(&sid),
+            // [r11-parking] The sim's own rule (rings, slip roads, bridges and
+            // avenues have none; it used to say yes on a roundabout).
+            kerb_parking: w.kerb_parking(sid),
             vehicles: w.carries_vehicles(sid),
         })
     }
