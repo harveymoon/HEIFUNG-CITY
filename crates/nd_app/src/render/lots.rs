@@ -16,7 +16,7 @@ pub(super) fn is_vacant_lot(lot: &nd_sim::Lot) -> bool {
 }
 
 /// What floors a lot under whatever stands on it.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum LotFill {
     /// Unusable ground: plain earth, no outline.
     Earth,
@@ -45,9 +45,11 @@ pub(super) fn lot_fill(landlocked: bool, built: bool, holed: bool, own_floor: bo
 }
 
 /// Lot ground fills and (with the zoning overlay, toggled with O) the zone
-/// outline glows and vacant-lot outlines: three meshes for the whole city,
-/// rebuilt when a lot appears, disappears, or changes between built, vacant
-/// and park. Land value does not reach them, so the periodic land-value
+/// outline glows and vacant-lot outlines, looked at again when a lot
+/// appears, disappears, or changes between built, vacant and park: the
+/// fills one mesh per chunk ([r11-adopt-frames]: only the chunks whose
+/// fills changed are built again), the zoning layer's two for the whole
+/// city. Land value does not reach them, so the periodic land-value
 /// recompute no longer touches any ground mesh.
 pub(super) fn sync_lots(
     mut commands: Commands,
@@ -57,7 +59,6 @@ pub(super) fn sync_lots(
     mats: Res<Materials>,
     overlays: Res<Overlays>,
     mut state: ResMut<RenderState>,
-    existing: Query<Entity, With<LotsTag>>,
     tools: Res<crate::tools::ToolState>,
 ) {
     let _t = crate::frame_stats::span("sync_lots");
@@ -90,11 +91,12 @@ pub(super) fn sync_lots(
         return;
     }
     state.lots_signature = Some(signature);
-    despawn_all(&mut commands, &existing);
+    for e in state.lot_overlays.drain(..) {
+        commands.entity(e).despawn();
+    }
     let pal = &assets.palette;
     let outlines = overlays.zoning;
     let mut glow = MeshData::default();
-    let mut fill = MeshData::default();
     // The zoning layer: every zoned lot washed in its zone's colour (bright,
     // translucent, above the ground and pavements), built or not, with a
     // crisp edge; built lots a little fainter so the city still reads.
@@ -165,28 +167,96 @@ pub(super) fn sync_lots(
             }
         }
     }
+    // [r11-adopt-frames] The fills by chunk: only chunks whose lots' fills
+    // changed are built again.
+    let fills = lot_fills(w, &holed);
+    let hashes = fill_hashes(w, &fills);
+    if assets.palette_changed || sim.full_rebuild {
+        state.lot_fills.retain(|_, (_, e)| {
+            if let Some(e) = e {
+                commands.entity(*e).despawn();
+            }
+            false
+        });
+    }
+    let gone: Vec<ChunkKey> = state.lot_fills.keys().filter(|k| !hashes.contains_key(*k)).copied().collect();
+    for k in gone {
+        if let Some((_, Some(e))) = state.lot_fills.remove(&k) {
+            commands.entity(e).despawn();
+        }
+    }
+    for (k, h) in &hashes {
+        if state.lot_fills.get(k).map(|d| d.0) == Some(*h) {
+            continue;
+        }
+        if let Some((_, Some(e))) = state.lot_fills.remove(k) {
+            commands.entity(e).despawn();
+        }
+        let fill = fill_mesh_in(w, &fills, *k, pal);
+        let e = (!fill.is_empty()).then(|| commands.spawn((Mesh3d(meshes.add(to_mesh(&fill, true))), MeshMaterial3d(mats.surface(Surface::Dirt)), Transform::IDENTITY, LotsTag)).id());
+        state.lot_fills.insert(*k, (*h, e));
+    }
+    if !glow.is_empty() {
+        state.lot_overlays.push(commands.spawn((Mesh3d(meshes.add(to_mesh(&glow, false))), MeshMaterial3d(mats.glow()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, LotsTag)).id());
+    }
+    if !wash.is_empty() {
+        state.lot_overlays.push(commands.spawn((Mesh3d(meshes.add(to_mesh(&wash, false))), MeshMaterial3d(mats.overlay.clone()), Transform::IDENTITY, NotShadowCaster, NotShadowReceiver, LotsTag)).id());
+    }
+}
+
+/// [r11-adopt-frames] Every lot's fill (not a park's) with its chunk, in
+/// the order the world lists them: a landmark, a beach or a built park
+/// floors its own ground; [airport] an airport's field is drawn by
+/// `render/airport.rs`.
+pub(super) fn lot_fills(w: &World, holed: &[LotId]) -> Vec<(ChunkKey, LotId, LotFill)> {
+    let mut out = Vec::new();
     for (id, lot) in w.lots.iter() {
         if is_park_lot(lot) || lot.polygon.is_empty() {
             continue;
         }
-        // A landmark, a beach or a built park floors its own ground.
-        // [airport] An airport's field is drawn by `render/airport.rs`.
         let own_floor = lot.land_use == nd_sim::LandUse::Park || lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.service.is_some_and(|s| s.kind.is_landmark()) || b.airport.is_some());
-        match lot_fill(lot.landlocked, lot.building.is_some(), holed.contains(&id), own_floor) {
+        let fill = lot_fill(lot.landlocked, lot.building.is_some(), holed.contains(&id), own_floor);
+        if fill != LotFill::None {
+            out.push((chunk_of(lot.center), id, fill));
+        }
+    }
+    out
+}
+
+/// [r11-adopt-frames] Each chunk's fills hashed: the lots, their fill and
+/// their outlines, and the ground they are set on (`lift_spawned` lifts a
+/// fill onto the ground only when it is spawned: a regraded ground draws
+/// every chunk again, as the one mesh was).
+pub(super) fn fill_hashes(w: &World, fills: &[(ChunkKey, LotId, LotFill)]) -> HashMap<ChunkKey, u64> {
+    let mut hs: HashMap<ChunkKey, DefaultHasher> = HashMap::new();
+    let ground = (w.ground.version(), w.landscape.version(), w.relief);
+    for (k, id, fill) in fills {
+        let h = hs.entry(*k).or_insert_with(|| {
+            let mut h = DefaultHasher::new();
+            ground.hash(&mut h);
+            h
+        });
+        (id, fill).hash(h);
+        hash_f32s(h, w.lots[*id].polygon.iter().copied());
+    }
+    hs.into_iter().map(|(k, h)| (k, h.finish())).collect()
+}
+
+/// [r11-adopt-frames] One chunk's lot fill mesh.
+pub(super) fn fill_mesh_in(w: &World, fills: &[(ChunkKey, LotId, LotFill)], chunk: ChunkKey, pal: &nd_procgen::Palette) -> MeshData {
+    let mut fill = MeshData::default();
+    for (k, id, f) in fills {
+        if *k != chunk {
+            continue;
+        }
+        let lot = &w.lots[*id];
+        match f {
             LotFill::Earth => fill.ground_polygon(&lot.polygon, 0.02, scale(pal.ground, 1.15)),
             LotFill::Gravel => fill.ground_polygon(&lot.polygon, 0.02, rgba(pal.gravel)),
             LotFill::None => {}
         }
     }
-    if !fill.is_empty() {
-        commands.spawn((Mesh3d(meshes.add(to_mesh(&fill, true))), MeshMaterial3d(mats.surface(Surface::Dirt)), Transform::IDENTITY, LotsTag));
-    }
-    if !glow.is_empty() {
-        spawn_glow(&mut commands, &mut meshes, &mats, &glow, LotsTag);
-    }
-    if !wash.is_empty() {
-        spawn_overlay(&mut commands, &mut meshes, &mats, &wash, LotsTag);
-    }
+    fill
 }
 
 /// [waterfront] Public beaches on the zoning layer and in previews: sand.
@@ -374,5 +444,51 @@ mod lot_fill_tests {
         assert_eq!(lot_fill(false, false, false, false), LotFill::None, "vacant");
         assert_eq!(lot_fill(false, true, true, false), LotFill::None, "a strip mine");
         assert_eq!(lot_fill(false, true, false, true), LotFill::None, "a landmark or a park");
+    }
+
+    /// Every vertex of a mesh, as bits, sorted.
+    fn vertices(m: &MeshData) -> Vec<[u32; 3]> {
+        let mut v: Vec<[u32; 3]> = m.positions.iter().map(|p| p.map(f32::to_bits)).collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// [r11-adopt-frames] A lot built on redraws the fill of its chunk, not
+    /// the city's; the chunks' fills together are the one fill drawn before.
+    #[test]
+    fn a_lot_built_on_redraws_only_its_chunks_fill() {
+        let mut w = World::new(nd_sim::WorldConfig::default());
+        nd_sim::scenarios::demo_district(&mut w);
+        let pal = nd_procgen::Palette::default();
+        let holed = nd_procgen::holes::holed_lots(&w);
+        let before = fill_hashes(&w, &lot_fills(&w, &holed));
+        assert!(before.len() > 2, "fills in several chunks: {}", before.len());
+        let lot = w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none()).map(|(id, _)| id).min().expect("an empty lot");
+        w.build_on(lot);
+        assert!(w.lots[lot].building.is_some());
+        let fills = lot_fills(&w, &holed);
+        let after = fill_hashes(&w, &fills);
+        let moved: Vec<ChunkKey> = after.iter().filter(|(k, h)| before.get(*k) != Some(*h)).map(|(k, _)| *k).collect();
+        assert_eq!(moved, vec![chunk_of(w.lots[lot].center)], "its chunk only");
+        // The whole fill as one mesh, as it was drawn before.
+        let mut whole = MeshData::default();
+        for (id, lot) in w.lots.iter() {
+            if is_park_lot(lot) || lot.polygon.is_empty() {
+                continue;
+            }
+            let own_floor = lot.land_use == nd_sim::LandUse::Park || lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.service.is_some_and(|s| s.kind.is_landmark()) || b.airport.is_some());
+            match lot_fill(lot.landlocked, lot.building.is_some(), holed.contains(&id), own_floor) {
+                LotFill::Earth => whole.ground_polygon(&lot.polygon, 0.02, scale(pal.ground, 1.15)),
+                LotFill::Gravel => whole.ground_polygon(&lot.polygon, 0.02, rgba(pal.gravel)),
+                LotFill::None => {}
+            }
+        }
+        let mut parts = MeshData::default();
+        for k in after.keys() {
+            parts.append(&fill_mesh_in(&w, &fills, *k, &pal));
+        }
+        assert!(!whole.positions.is_empty());
+        assert_eq!(parts.indices.len(), whole.indices.len());
+        assert_eq!(vertices(&parts), vertices(&whole));
     }
 }

@@ -104,29 +104,42 @@ pub(super) fn sync_citizens(
     let look_mat = people.material(&mut materials, &mut images);
     people.set_night(night_strength(&sim, &lighting), &mut materials);
     people.cache.begin_frame();
-    for (id, _) in w.citizens.iter() {
-        if !state.citizens.contains_key(&id) {
-            let e = commands
-                .spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(look_mat.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CitizenTag, WayHeight::default(), FigureCache::default()))
-                .id();
-            state.citizens.insert(id, e);
+    // [r11-adopt-frames] Who is in the city, who is out and how they look
+    // change only with the city (a batch taken in, an edit): worked out
+    // then, not every frame (~15 ms a frame at 38,000 people).
+    let scan_key = (w.changes(), sim.generation, under, plain);
+    let rescan = people.crowd.key != Some(scan_key);
+    let sp = crate::frame_stats::span("cit_scan");
+    if rescan {
+        for (id, _) in w.citizens.iter() {
+            if !state.citizens.contains_key(&id) {
+                let e = commands
+                    .spawn((Mesh3d(mats.citizen_mesh.clone()), MeshMaterial3d(look_mat.clone()), Transform::IDENTITY, Visibility::Hidden, NotShadowCaster, CitizenTag, WayHeight::default(), FigureCache::default()))
+                    .id();
+                state.citizens.insert(id, e);
+            }
+        }
+        let gone: Vec<CitizenId> = state.citizens.keys().copied().filter(|id| !w.citizens.contains_key(*id)).collect();
+        for id in gone {
+            if let Some(e) = state.citizens.remove(&id) {
+                commands.entity(e).despawn();
+            }
         }
     }
-    let gone: Vec<CitizenId> = state.citizens.keys().copied().filter(|id| !w.citizens.contains_key(*id)).collect();
-    for id in gone {
-        if let Some(e) = state.citizens.remove(&id) {
-            commands.entity(e).despawn();
-        }
-    }
+    drop(sp);
+    let sp = crate::frame_stats::span("cit_outdoors");
     // Everyone outdoors and their look, first, so no look on screen this
     // frame is evicted to make room for another.
     // Nearest the camera first: they claim figures before the distant.
     let eye = camera.iter().next().map_or(Vec3::ZERO, |t| t.translation());
     let frustum = view.iter().next().flatten();
     let down = w.down_on_street();
+    // [r11-adopt-frames] The households sleeping rough, gathered once (each
+    // idle figure's pose looked through the whole list).
+    let homeless = w.homeless_households();
     // [K18] A seated figure of their own (on a bench, or on the kerb with
     // their knees up), not a standing one squashed into the ground.
-    let sit_of = |id: CitizenId, ride: bool| match w.pose_with(id, &down) {
+    let sit_of = |id: CitizenId, ride: bool| match w.pose_among(id, &down, &homeless) {
         _ if ride || plain => 0,
         nd_sim::world::Pose::Bench => nd_procgen::people::SIT_BENCH,
         nd_sim::world::Pose::SittingKerb => nd_procgen::people::SIT_GROUND,
@@ -135,12 +148,42 @@ pub(super) fn sync_citizens(
     // [r4-crossings] A cyclist on a footbridge's stairs or deck walks the
     // bike over: drawn on foot there, not riding up the steps into the air.
     let wheeled = |c: &nd_sim::Citizen, (k, s): (nd_procgen::people::PersonKey, f32)| (nd_procgen::people::PersonKey { ride: k.ride && !w.wheeling_bike(c), ..k }, s);
-    let mut outdoors: Vec<(CitizenId, Entity, nd_procgen::people::PersonKey, f32, f32)> = state
-        .citizens
-        .iter()
-        .filter_map(|(id, &e)| w.citizens.get(*id).filter(|c| shown(c)).map(|c| (*id, e, wheeled(c, people::figure_of(c)), c.pos.distance_squared(SVec2::new(eye.x, eye.z)))))
-        .map(|(id, e, (k, s), d)| (id, e, nd_procgen::people::PersonKey { sit: sit_of(id, k.ride), ..k }, s, d))
-        .collect();
+    if rescan {
+        // Everyone's looks pass flags (shown, in the spotlight) and, for
+        // those shown, their figure.
+        let kept = &people.crowd.looks;
+        // (In turn: spread over threads it ran little faster, and a thread
+        // the system did not schedule at once held the frame for ~50 ms.)
+        let all: Vec<_> = state.citizens.iter().filter_map(|(&id, &e)| {
+            let c = w.citizens.get(id)?;
+            let flags = shown(c) as u8 | (c.spotlight as u8) << 1;
+            let mut fresh = None;
+            let out = shown(c).then(|| {
+                let (look, new) = people::kept_look(c, kept.get(&id));
+                fresh = new;
+                let (k, s) = wheeled(c, people::figure_with(c, look));
+                (id, e, nd_procgen::people::PersonKey { sit: sit_of(id, k.ride), ..k }, s, c.pos)
+            });
+            Some(((id, e, flags), out, fresh))
+        }).collect();
+        let crowd = &mut people.crowd;
+        crowd.outdoors.clear();
+        crowd.flags.clear();
+        for (f, out, fresh) in all {
+            if let Some(l) = fresh {
+                crowd.looks.insert(f.0, l);
+            }
+            crowd.flags.push(f);
+            crowd.outdoors.extend(out);
+        }
+        if crowd.looks.len() > crowd.flags.len() * 2 {
+            let live: HashSet<CitizenId> = crowd.flags.iter().map(|f| f.0).collect();
+            crowd.looks.retain(|id, _| live.contains(id));
+        }
+        crowd.key = Some(scan_key);
+    }
+    let eye2 = SVec2::new(eye.x, eye.z);
+    let mut outdoors: Vec<(CitizenId, Entity, nd_procgen::people::PersonKey, f32, f32)> = people.crowd.outdoors.iter().map(|&(id, e, k, s, p)| (id, e, k, s, p.distance_squared(eye2))).collect();
     outdoors.sort_by(|a, b| a.4.total_cmp(&b.4));
     let mut protected: HashSet<nd_procgen::people::PersonKey> = HashSet::new();
     for o in &outdoors {
@@ -151,6 +194,8 @@ pub(super) fn sync_citizens(
             people.cache.touch(&o.2);
         }
     }
+    drop(sp);
+    let sp = crate::frame_stats::span("cit_figures");
     let mut looks: HashSet<nd_procgen::people::PersonKey> = HashSet::new();
     let stamp = {
         use std::hash::{Hash, Hasher};
@@ -180,7 +225,7 @@ pub(super) fn sync_citizens(
         let heading = lerp_angle(c.prev_heading, c.heading, f);
         // [clarity] Benches and kerbs sit; the hurt (and the homeless
         // sleeping rough) lie flat on the ground.
-        let pose = w.pose_with(id, &down);
+        let pose = w.pose_among(id, &down, &homeless);
         let seated = matches!(pose, nd_sim::world::Pose::Bench | nd_sim::world::Pose::SittingKerb);
         let lying = pose == nd_sim::world::Pose::Lying;
         // Thrown clear of the wreck: beside it, not under it.
@@ -274,29 +319,56 @@ pub(super) fn sync_citizens(
             mesh.0 = wanted_mesh;
         }
     }
-    for (id, &e) in state.citizens.iter() {
-        let Some(c) = w.citizens.get(*id) else { continue };
-        let Ok((_, mut vis, mut mat, mut mesh, heat_original, _, _, _)) = q.get_mut(e) else { continue };
-        if !shown(c) {
-            vis.set_if_neq(Visibility::Hidden);
-            // Indoors: let go of the figure so the cache can drop it.
-            if mesh.0 != mats.citizen_mesh {
-                mesh.0 = mats.citizen_mesh.clone();
+    drop(sp);
+    let _sp = crate::frame_stats::span("cit_mats");
+    // [r11-adopt-frames] Hidden indoors and the material: they change only
+    // with the city, the selection or the look (and once more for figures
+    // spawned since, which the query could not reach yet).
+    let looks_key = (scan_key.1, scan_key.2, scan_key.3, lifted.citizen, look_mat.id());
+    let crowd = &mut people.crowd;
+    if crowd.looks_key != Some(looks_key) {
+        crowd.looks_key = Some(looks_key);
+        crowd.applied.clear();
+        crowd.looks_seen = None;
+    }
+    if crowd.looks_seen != Some(scan_key.0) || crowd.looks_missed {
+        crowd.looks_seen = Some(scan_key.0);
+        crowd.looks_missed = false;
+        for &(id, e, flags) in &crowd.flags {
+            // Set as it is already: nothing to do.
+            if crowd.applied.get(&id) == Some(&flags) {
+                continue;
+            }
+            let Ok((_, mut vis, mut mat, mut mesh, heat_original, _, _, _)) = q.get_mut(e) else {
+                crowd.looks_missed = true;
+                continue;
+            };
+            crowd.applied.insert(id, flags);
+            if flags & 1 == 0 {
+                vis.set_if_neq(Visibility::Hidden);
+                // Indoors: let go of the figure so the cache can drop it.
+                if mesh.0 != mats.citizen_mesh {
+                    mesh.0 = mats.citizen_mesh.clone();
+                }
+            }
+            let wanted = if lifted.citizen == Some(id) {
+                &mats.citizen_selected
+            } else if flags & 2 != 0 {
+                &mats.citizen_spotlight
+            } else if plain {
+                &mats.citizen
+            } else {
+                &look_mat
+            };
+            // Under heat vision the entity shows a stand-in; what it stands in
+            // for is what counts.
+            if heat_original.map_or(&mat.0, |h| &h.0) != wanted {
+                mat.0 = wanted.clone();
             }
         }
-        let wanted = if lifted.citizen == Some(*id) {
-            &mats.citizen_selected
-        } else if c.spotlight {
-            &mats.citizen_spotlight
-        } else if plain {
-            &mats.citizen
-        } else {
-            &look_mat
-        };
-        // Under heat vision the entity shows a stand-in; what it stands in
-        // for is what counts.
-        if heat_original.map_or(&mat.0, |h| &h.0) != wanted {
-            mat.0 = wanted.clone();
+        if crowd.applied.len() > crowd.flags.len() * 2 {
+            let live: HashSet<CitizenId> = crowd.flags.iter().map(|f| f.0).collect();
+            crowd.applied.retain(|id, _| live.contains(id));
         }
     }
     stats.people_meshes = people.cache.len();
@@ -304,4 +376,40 @@ pub(super) fn sync_citizens(
     stats.people_looks_visible = looks.len();
     stats.people_built = people.cache.built;
     stats.people_borrowed = people.cache.borrowed;
+}
+
+#[cfg(test)]
+mod crowd_tests {
+    use super::*;
+
+    /// [r11-adopt-frames] A look kept from an earlier scan is the look drawn
+    /// afresh, until the citizen ages.
+    #[test]
+    fn a_kept_look_is_the_look_drawn_afresh() {
+        let mut w = World::new(nd_sim::WorldConfig::default());
+        nd_sim::scenarios::demo_district(&mut w);
+        let mut minds = nd_sim::mind::IdleMind;
+        // Until people have moved in.
+        for _ in 0..30_000 {
+            if w.citizens.len() >= 20 {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        let ids: Vec<CitizenId> = w.citizens.keys().collect();
+        assert!(!ids.is_empty(), "people live here");
+        for id in ids {
+            let c = w.citizens.get_mut(id).unwrap();
+            c.look = None;
+            let (look, kept) = people::kept_look(c, None);
+            let kept = kept.expect("drawn afresh");
+            assert_eq!(people::figure_with(c, look), people::figure_of(c));
+            let (again, none) = people::kept_look(c, Some(&kept));
+            assert!(none.is_none() && again == look, "kept");
+            c.age = c.age.saturating_add(30);
+            let (older, fresh) = people::kept_look(c, Some(&kept));
+            assert!(fresh.is_some(), "drawn again for the new age");
+            assert_eq!(people::figure_with(c, older), people::figure_of(c));
+        }
+    }
 }

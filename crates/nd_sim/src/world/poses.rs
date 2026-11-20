@@ -39,6 +39,24 @@ impl World {
 
     /// The pose of one citizen, given who is down on the street.
     pub fn pose_with(&self, id: CitizenId, down: &std::collections::HashSet<CitizenId>) -> Pose {
+        self.pose_by(id, down, |c| self.is_homeless(c))
+    }
+
+    /// [r11-adopt-frames] The pose of one of a crowd, given who is down on
+    /// the street and the households sleeping rough
+    /// ([`World::homeless_households`]): `pose_with` without a scan of
+    /// every homeless household for each idle citizen (a big city's
+    /// renderer asks for tens of thousands).
+    pub fn pose_among(&self, id: CitizenId, down: &std::collections::HashSet<CitizenId>, homeless: &std::collections::HashSet<HouseholdId>) -> Pose {
+        self.pose_by(id, down, |c| self.citizens.get(c).and_then(|c| c.household).is_some_and(|h| homeless.contains(&h)))
+    }
+
+    /// [r11-adopt-frames] The households on the street now, for [`World::pose_among`].
+    pub fn homeless_households(&self) -> std::collections::HashSet<HouseholdId> {
+        self.society.homeless.since.iter().map(|s| s.0).collect()
+    }
+
+    fn pose_by(&self, id: CitizenId, down: &std::collections::HashSet<CitizenId>, homeless: impl Fn(CitizenId) -> bool) -> Pose {
         let Some(c) = self.citizens.get(id) else { return Pose::Standing };
         if c.inside.is_some() {
             return Pose::Standing;
@@ -49,7 +67,7 @@ impl World {
         match c.activity {
             Activity::Sitting { .. } => Pose::Bench,
             // [walk-crossings] Never lying or sitting in a street's lanes.
-            Activity::Idle if self.is_homeless(id) => match homeless_pose(c.seed, self.clock.tick) {
+            Activity::Idle if homeless(id) => match homeless_pose(c.seed, self.clock.tick) {
                 Pose::Standing => Pose::Standing,
                 _ if self.in_carriageway(c.pos) => Pose::Standing,
                 p => p,
@@ -117,5 +135,52 @@ mod tests {
         w.lots[lot].shore.beach = false;
         w.lots[lot].land_use = crate::zoning::LandUse::Park;
         assert_eq!(w.ground_word(at).0, "on the grass");
+    }
+}
+
+#[cfg(test)]
+mod pose_among_tests {
+    use super::*;
+
+    /// [r11-adopt-frames] A crowd's poses with the homeless gathered once
+    /// are the poses one by one.
+    #[test]
+    fn poses_among_a_crowd_are_the_poses_one_by_one() {
+        let mut w = World::new(crate::WorldConfig::default());
+        crate::scenarios::demo_district(&mut w);
+        let mut minds = crate::mind::IdleMind;
+        // Until people have moved in.
+        for _ in 0..30_000 {
+            if w.citizens.len() >= 20 {
+                break;
+            }
+            w.tick(&mut minds);
+        }
+        // Half the households on the street, everyone standing about.
+        let hs: Vec<HouseholdId> = w.households.keys().collect();
+        for (i, h) in hs.iter().enumerate() {
+            if i % 2 == 0 {
+                w.society.homeless.since.push((*h, 0));
+            }
+        }
+        let ids: Vec<CitizenId> = w.citizens.keys().collect();
+        assert!(!ids.is_empty());
+        for id in &ids {
+            let c = w.citizens.get_mut(*id).unwrap();
+            c.inside = None;
+            c.activity = Activity::Idle;
+        }
+        let down = w.down_on_street();
+        let homeless = w.homeless_households();
+        let mut lying_or_sitting = 0;
+        for tick in [w.clock.tick, w.clock.tick + 60 * 13] {
+            w.clock.tick = tick;
+            for id in &ids {
+                let p = w.pose_with(*id, &down);
+                assert_eq!(w.pose_among(*id, &down, &homeless), p);
+                lying_or_sitting += (p != Pose::Standing) as u32;
+            }
+        }
+        assert!(lying_or_sitting > 0, "some of the homeless sit or lie");
     }
 }

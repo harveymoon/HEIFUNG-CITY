@@ -24,11 +24,39 @@ pub(super) struct PeopleRender {
     material: Option<Handle<StandardMaterial>>,
     pub(super) cache: FigureCache<Handle<Mesh>>,
     night_key: Option<i32>,
+    /// [r11-adopt-frames] The crowd as `sync_citizens` last worked it out.
+    pub(super) crowd: Crowd,
+}
+
+/// [r11-adopt-frames] Who is out and how they look, kept while the city on
+/// screen stays the same (`SimCore::changes`).
+#[derive(Default)]
+pub(super) struct Crowd {
+    /// What the crowd was worked out for: the city's change count, its
+    /// generation, the Underground view, plain figures.
+    pub(super) key: Option<(u64, u64, bool, bool)>,
+    /// Everyone shown: id, entity, look, stature, where they stand.
+    pub(super) outdoors: Vec<(CitizenId, Entity, PersonKey, f32, SVec2)>,
+    /// [r11-adopt-frames] Looks drawn from seeds, by citizen ([`kept_look`]).
+    pub(super) looks: HashMap<CitizenId, KeptLook>,
+    /// Everyone's entity and looks pass flags: shown (1), in the spotlight (2).
+    pub(super) flags: Vec<(CitizenId, Entity, u8)>,
+    /// What the materials were last chosen for (generation, Underground
+    /// view, plain figures, the selected citizen, the figures' material):
+    /// when it moves, everyone is set again.
+    pub(super) looks_key: Option<(u64, bool, bool, Option<CitizenId>, AssetId<StandardMaterial>)>,
+    /// The city change count the looks pass last ran for, the flags each
+    /// figure was last set by (only those whose flags moved are set
+    /// again), and whether some figure was not reachable yet (spawned that
+    /// frame).
+    pub(super) looks_seen: Option<u64>,
+    pub(super) applied: HashMap<CitizenId, u8>,
+    pub(super) looks_missed: bool,
 }
 
 impl Default for PeopleRender {
     fn default() -> Self {
-        Self { material: None, cache: FigureCache::new(MESH_CAP), night_key: None }
+        Self { material: None, cache: FigureCache::new(MESH_CAP), night_key: None, crowd: Crowd::default() }
     }
 }
 
@@ -80,7 +108,10 @@ impl PeopleRender {
     }
 
     pub(super) fn mesh_for(&mut self, key: PersonKey, meshes: &mut Assets<Mesh>) -> Option<Handle<Mesh>> {
-        self.cache.get_or_build(key, |k| meshes.add(shared_mesh(&person_mesh(k), false)))
+        self.cache.get_or_build(key, |k| {
+            let _b = crate::frame_stats::span("fig_build");
+            meshes.add(shared_mesh(&person_mesh(k), false))
+        })
     }
 }
 
@@ -93,7 +124,35 @@ pub(super) fn plain() -> bool {
 
 /// The key and size of a citizen's figure as they are now.
 pub(super) fn figure_of(c: &nd_sim::Citizen) -> (PersonKey, f32) {
-    let look = c.appearance();
+    figure_with(c, c.appearance())
+}
+
+/// [r11-adopt-frames] [`figure_of`] with the citizen's look given (as
+/// `Citizen::appearance` has it, perhaps kept from before: [`kept_look`]).
+pub(super) fn figure_with(c: &nd_sim::Citizen, look: nd_sim::looks::Appearance) -> (PersonKey, f32) {
     let riding = c.mode == nd_sim::citizens::TravelMode::Bike && c.activity.is_traveling();
     (person_key(&look, c.age, c.class(), riding), look.stature(c.age))
+}
+
+/// [r11-adopt-frames] A look drawn from a citizen's seed, with what it was
+/// drawn from (seed, age, class).
+pub(super) type KeptLook = (u64, u8, nd_sim::Tier, nd_sim::looks::Appearance);
+
+/// [r11-adopt-frames] A citizen's look as `Citizen::appearance` gives it:
+/// their own, or the one kept for them while their seed, age and class
+/// stay the same, or drawn afresh (several seeded generators, ~1 µs; a
+/// 38,000-person city's crowd was drawn afresh with every batch). The
+/// second value is a look drawn afresh, to keep.
+pub(super) fn kept_look(c: &nd_sim::Citizen, kept: Option<&KeptLook>) -> (nd_sim::looks::Appearance, Option<KeptLook>) {
+    if let Some(l) = c.look {
+        return (l, None);
+    }
+    let class = c.class();
+    match kept {
+        Some(k) if (k.0, k.1, k.2) == (c.seed, c.age, class) => (k.3, None),
+        _ => {
+            let l = c.appearance();
+            (l, Some((c.seed, c.age, class, l)))
+        }
+    }
 }

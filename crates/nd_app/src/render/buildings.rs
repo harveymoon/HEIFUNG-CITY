@@ -461,7 +461,7 @@ pub(super) fn sync_buildings(
 
 /// [r10-chunk-hitch] `ND_CHUNK_JOBS=0` regenerates building chunks on the
 /// main thread, as before (within the budget).
-fn chunk_jobs_on() -> bool {
+pub(super) fn chunk_jobs_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("ND_CHUNK_JOBS").map_or(true, |v| v != "0"))
 }

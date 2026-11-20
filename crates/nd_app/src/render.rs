@@ -130,6 +130,8 @@ mod shore;
 // [refactor/app] render.rs split into these modules (review 3.1).
 mod mesh_util;
 mod chunk_jobs;
+/// [r11-adopt-frames] Merged map cells (skid row, the trash) drawn on the async pool.
+mod cell_jobs;
 mod materials;
 mod daylight;
 mod ground;
@@ -342,6 +344,14 @@ struct RenderState {
     lots_signature: Option<(usize, usize, u64, bool, u64)>,
     /// [refactor/app] The counters `lots_signature` was hashed under.
     lots_gate: Gate<(u64, u64, u64, usize, u64, bool, bool, u64)>,
+    /// [r11-adopt-frames] The lot fills by chunk: what each was built from
+    /// (`lots::fill_hashes`) and its entity; a lot built on or cleared
+    /// redraws its chunk only (one mesh for the city was made again and set
+    /// on the ground vertex by vertex, ~20 ms at 38,000 people, with each
+    /// lot built on).
+    lot_fills: HashMap<ChunkKey, (u64, Option<Entity>)>,
+    /// The zoning layer's glow and wash, drawn whole.
+    lot_overlays: Vec<Entity>,
     /// [refactor/app] The lots version the parks, and the lots and land
     /// value versions the vacant dressing, were last checked against.
     parks_gate: Gate<(u64, u64)>,

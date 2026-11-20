@@ -50,12 +50,55 @@ pub struct FrameStats {
     began: Option<std::time::Instant>,
     /// The frame that just ran, filed when the next begins.
     last: Option<(Slow, f32)>,
+    /// [r11-adopt-frames] Each named system's time over the window, kept
+    /// apart for the frames that took in a batch from the sim thread
+    /// (`ticks` > 0) and the rest: frames seen, total ms and the slowest.
+    systems: std::collections::HashMap<&'static str, [SysTime; 2]>,
+    /// Frames of each kind (batch taken in, not) in the window.
+    kinds: [u32; 2],
+}
+
+/// [r11-adopt-frames] A named system's time over the `frame_stats` window.
+#[derive(Clone, Copy, Default)]
+struct SysTime {
+    frames: u32,
+    total: f32,
+    max: f32,
 }
 
 impl FrameStats {
     pub fn reset(&mut self) {
         self.frames.clear();
         self.slow.clear();
+        self.systems.clear();
+        self.kinds = [0; 2];
+    }
+
+    /// [r11-adopt-frames] File one frame's named systems: `adopted` when it
+    /// took in a batch.
+    fn add_systems(&mut self, spans: &[(&'static str, f32)], adopted: bool) {
+        let k = adopted as usize;
+        self.kinds[k] += 1;
+        for &(name, ms) in spans {
+            let t = &mut self.systems.entry(name).or_default()[k];
+            t.frames += 1;
+            t.total += ms;
+            t.max = t.max.max(ms);
+        }
+    }
+
+    /// [r11-adopt-frames] The named systems, costliest first: per frame of
+    /// each kind (mean over all frames of that kind, whether the system did
+    /// anything or not) and the slowest single run.
+    fn systems_json(&self) -> Value {
+        let mut v: Vec<(&&str, &[SysTime; 2])> = self.systems.iter().collect();
+        let per = |t: &SysTime, n: u32| if n == 0 { 0.0 } else { t.total / n as f32 };
+        v.sort_by(|a, b| (per(&b.1[1], self.kinds[1]) + per(&b.1[0], self.kinds[0])).total_cmp(&(per(&a.1[1], self.kinds[1]) + per(&a.1[0], self.kinds[0]))));
+        let rows: Vec<Value> = v
+            .into_iter()
+            .map(|(n, t)| json!({ "name": n, "adopt_mean": round(per(&t[1], self.kinds[1])), "adopt_max": round(t[1].max), "other_mean": round(per(&t[0], self.kinds[0])), "other_max": round(t[0].max) }))
+            .collect();
+        json!({ "adopt_frames": self.kinds[1], "other_frames": self.kinds[0], "by_system": rows })
     }
 
     /// Mean, percentiles and spike counts of the frames kept.
@@ -83,6 +126,7 @@ impl FrameStats {
             "sim_ms": stats(sim),
             "over_33ms": over(33.3), "over_50ms": over(50.0), "over_100ms": over(100.0),
             "ticks": ticks, "ticks_per_second": round(ticks as f32 / total_s.max(1e-3)),
+            "systems": self.systems_json(),
             "slow": self.slow.iter().map(|l| {
                 let phases: Vec<&str> = [(1, "ticking"), (2, "copying"), (4, "freeing")].into_iter().filter(|(b, _)| l.phases & b != 0).map(|(_, n)| n).collect();
                 json!({ "ms": round(l.ms), "main_ms": round(l.main_ms), "ticks": l.ticks, "events": l.events, "sim_thread": phases, "render_prep_ms": round(l.prep_ms), "render_draw_ms": round(l.draw_ms), "wait_ms": round(l.wait_ms), "gap_ms": round(l.gap_ms), "systems": l.spans.iter().map(|(n, ms)| format!("{n} {ms:.0}")).collect::<Vec<_>>() })
@@ -166,6 +210,7 @@ fn record(sim: Res<Sim>, mut stats: ResMut<FrameStats>) {
     let wait_ms = take_max(&WAIT);
     let main_ms = stats.began.map_or(0.0, |t| t.elapsed().as_secs_f32() * 1000.0);
     let mut spans: Vec<(&'static str, f32)> = SPANS.lock().map(|mut v| std::mem::take(&mut *v)).unwrap_or_default();
+    stats.add_systems(&spans, sim.ticks_last_frame > 0);
     spans.retain(|s| s.1 > 2.0);
     spans.sort_by(|a, b| b.1.total_cmp(&a.1));
     stats.last = Some((Slow { spans, ms: 0.0, main_ms, ticks: sim.ticks_last_frame, events: sim.events.len(), phases, prep_ms, draw_ms, wait_ms, gap_ms: 0.0 }, sim.tick_ms));

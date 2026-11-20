@@ -163,6 +163,9 @@ pub struct SimCore {
     log_edits: bool,
     /// [r10-chunk-hitch] Readers off the main thread holding the world.
     leases: Arc<LeaseBook>,
+    /// [r11-adopt-frames] Bumped whenever the screen's city may have
+    /// changed: a batch taken in, a write, a replacement ([`Self::changes`]).
+    changes: u64,
 }
 
 /// [r10-chunk-hitch] The world lent to readers off the main thread
@@ -221,7 +224,15 @@ impl SimCore {
             edits: HashMap::new(),
             log_edits: std::env::var_os("ND_EDIT_LOG").is_some_and(|v| v != "0"),
             leases: Arc::default(),
+            changes: 0,
         }
+    }
+
+    /// [r11-adopt-frames] A count bumped whenever the city on screen may
+    /// have changed (a batch taken in, any write, a load): a renderer that
+    /// saw the same count saw the same city.
+    pub fn changes(&self) -> u64 {
+        self.changes
     }
 
     /// [r10-chunk-hitch] Lend the city as it stands to a reader on another
@@ -268,6 +279,7 @@ impl SimCore {
     /// The player (or the API) changes the city: it is the screen's copy
     /// from here on, and whatever the thread ran ahead is void.
     fn touch(&mut self, at: &'static Location<'static>) {
+        self.changes += 1;
         *self.edits.entry((at.file(), at.line())).or_insert(0) += 1;
         if !self.dirty {
             self.dirty = true;
@@ -377,6 +389,7 @@ impl SimCore {
     /// came with it: the minds, the events and the tick count.
     pub fn adopt(&mut self) -> Option<Adopted> {
         let b = self.ready.take()?;
+        self.changes += 1;
         let old = std::mem::replace(&mut self.world, b.world);
         self.drop_later(Garbage::Shared(old));
         Some(Adopted { minds: b.minds, ticks: b.ticks, events: b.events })
@@ -652,6 +665,22 @@ mod tests {
             }
         }
         seen
+    }
+
+    /// [r11-adopt-frames] The change count renderers key on moves with every
+    /// write and every batch taken in, and not with a read.
+    #[test]
+    fn the_change_count_moves_with_each_new_city_on_screen() {
+        let (mut a, _) = twins();
+        let c0 = a.world.changes();
+        assert!(a.world.clock.tick > 0);
+        assert_eq!(a.world.changes(), c0, "a read changes nothing");
+        a.world.grant_treasury(1.0);
+        let c1 = a.world.changes();
+        assert!(c1 > c0, "a write");
+        a.pause_at = Some(a.world.clock.tick + 20);
+        run_threaded(&mut a);
+        assert!(a.world.changes() > c1, "batches taken in");
     }
 
     /// The thread's ticks are the frame's ticks: the same city, the same

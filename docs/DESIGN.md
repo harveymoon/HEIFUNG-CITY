@@ -2361,6 +2361,18 @@ trait MindProvider {
   `ND_SIM_THREAD=0`, a window writing the city every frame or `ND_CHUNK_JOBS=0`, layers are
   regenerated on the main thread within 6 ms a frame as before. `status.render.chunks` counts
   what redrew chunks (by cause), their cost and the lag from change to screen.
+- Taking in a batch [r11-adopt-frames]: the renderers react to each world the sim thread hands
+  over by redrawing only what changed. Skid row and the trash (`render/society.rs`) and murals and
+  gardens (`render/social.rs`) are merged per 512 m cell from pieces kept as built; a cell whose
+  pieces changed is put together and made into meshes on the async pool (`render/cell_jobs.rs`;
+  society's from a lease on the world, recalled by an edit) and swapped in whole, the old cell
+  shown meanwhile. Lot fills are one mesh per chunk (`render/lots.rs`), so a lot built on redraws
+  and re-lifts its chunk, not the city. `sync_citizens` works out who is out and how they look only
+  when the city changed (`SimCore::changes`, bumped by every batch taken in and every write), over
+  the compute pool's threads, and sets visibility and materials only on figures whose state moved;
+  poses of a crowd use `World::pose_among` (the homeless households gathered once). Same drawing as
+  before; `ND_CHUNK_JOBS=0` or the in-frame sim keeps the cell work on the main thread.
+  `frame_stats.systems` gives each named system's cost on the frames that took in a batch and the rest.
 - Look ("grounded neon", `render/look.rs`): realistic light under the neon. Surfaces carry a
   metallic-roughness map beside their colour and normal maps (`textures::roughness_map`: grime
   and cracks rougher, clean spots glossier, rust less metallic); expensive car paint has a
