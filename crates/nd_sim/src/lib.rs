@@ -51,6 +51,8 @@ pub mod identity;
 pub mod insight;
 pub mod travel_log;
 pub mod ground;
+/// [r10-worn-paths] The walking-heat field: worn grass and darkened paving.
+pub mod foot_wear;
 pub mod industry;
 pub mod junctions;
 pub mod land_value;

@@ -116,6 +116,8 @@ impl World {
         crate::prof!("step_concerns", self.step_concerns());
         // [insight] Everything has moved: the history takes it in.
         crate::prof!("step_insight", self.step_insight());
+        // [r10-worn-paths] Every step on foot this tick, into the ground.
+        crate::prof!("step_foot_wear", self.step_foot_wear());
         // Every system that moves people has run: lay the breadcrumbs.
         for c in self.citizens.values_mut() {
             c.push_trail();
@@ -201,6 +203,8 @@ impl World {
         crate::prof!("industry_hourly", self.industry_hourly());
         // [dirty-industry] Clean-up crews dig on.
         self.hourly_cleanups();
+        // [r10-worn-paths] Trodden ground recovers a little.
+        crate::prof!("foot_wear_hourly", self.foot_wear.hourly());
         // [economy] repair shops, bike shops, galleries and boats
         crate::prof!("trades_hourly", self.trades_hourly());
         crate::prof!("record_hour", self.record_hour());

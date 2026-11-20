@@ -533,6 +533,12 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("at", "[x,y] optional: the old warehouse nearest it"),
         ("returns", "rave id and detail (with no field: the warehouse with the strongest scene)"),
     ] },
+    // [r10-worn-paths]
+    Cmd { name: "foot_wear", aliases: &["worn_paths"], effect: Read, run: |cmd, ctx| foot_wear::command(cmd, &ctx.sim.world), help: &[
+        ("at", "[x,y] optional: the heat and wear at that point"),
+        ("top", "how many of the most trodden cells to list (default 10, at most 200)"),
+        ("returns", "cell_m, chunk_m, chunks, cells (walked), worn_cells, bare_cells, max_heat, total_heat, version, half_life_days, thresholds {grass_wear_start, grass_bare, paving_start, paving_full}, hottest [{pos, heat, passes_per_day, grass_wear, paving_wear}], at"),
+    ] },
     Cmd { name: "roads", aliases: &["road_condition", "road_budget"], effect: Game, run: |cmd, ctx| nights::roads(cmd, &mut ctx.sim.world), help: &[
         ("funding", "optional 0..1.5: road maintenance funding level (1 = what the network needs to stand still)"),
         ("age_days", "dev, optional: wear every street that many days at yesterday's traffic (the crews work each night unless crews: false; nothing is charged)"),

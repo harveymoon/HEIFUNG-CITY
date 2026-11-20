@@ -73,6 +73,8 @@ pub const MAP_LAYERS: &[MapLayer] = &[
     MapLayer { key: "people", label: "People", group: "People", hotkey: "L", hint: "Where everyone is right now", flag: |o| &mut o.people, legend: legend_people },
     MapLayer { key: "pollution", label: "Pollution and noise", group: "Environment", hotkey: "L", hint: "From plants, industry, nightlife and traffic", flag: |o| &mut o.pollution, legend: legend_pollution },
     // [r5-trash] (render/pt_layers.rs `trash_gizmos`)
+    // [r10-worn-paths] (render/foot_wear.rs `sync_foot_wear_layer`)
+    MapLayer { key: "foot_wear", label: "Foot wear", group: "People", hotkey: "", hint: "Where people really walk, over the last few days: the heat that wears grass into dirt tracks and darkens busy paving; fades when they stop", flag: |o| &mut o.foot_wear, legend: legend_foot_wear },
     MapLayer { key: "trash", label: "Trashy streets", group: "Environment", hotkey: "", hint: "Streets and blocks by overflowing bins and litter on the pavement, littered parks, and where the trash goes: landfills, incinerators, recycling plants and transfer stations marked", flag: |o| &mut o.trash, legend: legend_trash },
     // [layers] (render/focus.rs, render/layers.rs, render/mapview.rs)
     MapLayer { key: "crime", label: "Crime", group: "People", hotkey: "L", hint: "Where offences pile up; police cars and their routes lit over a dimmed city, the police stations marked and the ground they cover outlined", flag: |o| &mut o.crime, legend: legend_crime },
@@ -522,6 +524,18 @@ fn legend_parking(ui: &mut egui::Ui, cx: &LegendCtx) {
 }
 
 /// [pt-ux] The Trails layer's key.
+/// [r10-worn-paths] The Foot wear layer's key: the heat ramp and the
+/// city's totals.
+fn legend_foot_wear(ui: &mut egui::Ui, cx: &LegendCtx) {
+    let t = |v: f32| ((1.0 + v).ln() / (1.0 + crate::render::FOOT_PAVE_FULL).ln()).clamp(0.0, 1.0);
+    ramp(ui, |x| { let c = heat_color(x); linear([c[0], c[1], c[2]]) }, "a few passes", "thousands a day");
+    let s = cx.world.foot_wear.stats();
+    let start = t(nd_sim::foot_wear::WEAR_START);
+    let full = t(nd_sim::foot_wear::WEAR_FULL);
+    small(ui, &format!("grass shows wear past {:.0}% of the ramp and is bare past {:.0}%; paving darkens near the top", start * 100.0, full * 100.0));
+    small(ui, &format!("{} cells walked (2 m), {} worn, {} bare; fades by half in {:.0} days unused", s.cells, s.worn, s.bare, nd_sim::foot_wear::HALF_LIFE_HOURS / 24.0));
+}
+
 fn legend_trails(ui: &mut egui::Ui, _: &LegendCtx) {
     use crate::render::TrailMover as M;
     let items: Vec<(Color32, String)> = [(M::Car, "cars"), (M::Bus, "buses"), (M::Lorry, "lorries and vans"), (M::Siren, "sirens"), (M::Walker, "people on foot"), (M::Bot, "delivery robots")].into_iter()

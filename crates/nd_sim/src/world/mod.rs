@@ -25,6 +25,7 @@
 //! - `tests`: the world-level tests
 
 mod air;
+mod foot_wear;
 /// [benches] Seats on park benches.
 pub mod benches;
 mod buses;
@@ -744,6 +745,11 @@ pub struct World {
     /// spreads and fades daily. Old saves load clean.
     #[serde(default)]
     pub contamination: crate::ground::Contamination,
+    /// [r10-worn-paths] Where people walk, as heat that fades over days
+    /// (`crate::foot_wear`, `world/foot_wear.rs`): worn grass and darkened
+    /// paving in the renderer. Old saves load clean and wear in.
+    #[serde(default)]
+    pub foot_wear: crate::foot_wear::FootWear,
     /// [r4-tiles] The ground of the tiles round the map, surveyed once.
     #[serde(skip)]
     land_tile_grounds: std::sync::OnceLock<Vec<land_tiles::TileGround>>,
@@ -1022,6 +1028,7 @@ impl World {
             enforcement: Default::default(),
             air: Default::default(),
             contamination: crate::ground::Contamination::new(half + 200.0, crate::ground::CONTAMINATION_CELL),
+            foot_wear: Default::default(),
             land_tile_grounds: Default::default(),
             cleanups: Vec::new(),
             industry_bias: Vec::new(),
