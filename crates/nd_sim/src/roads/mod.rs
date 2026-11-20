@@ -43,6 +43,10 @@ pub const LANE_WIDTH: f32 = 3.5;
 pub const SHOULDER: f32 = 1.5;
 /// How far a road end may be dropped from an existing road and still join it.
 pub const END_SNAP_RADIUS: f32 = 9.0;
+/// [r10-walk-kerb] How far round a path end the network looks for a street
+/// whose pavement it may lie on (`end_target`): the half width of an 8-lane
+/// avenue and its pavement, with room to spare.
+pub const PAVEMENT_REACH_MAX: f32 = 24.0;
 /// [r4-flags-look] A way's end never snaps back onto its own pieces within
 /// this distance along it (a curve's last samples lie closer together than
 /// the snap radius); further back, it joins itself like any other road.

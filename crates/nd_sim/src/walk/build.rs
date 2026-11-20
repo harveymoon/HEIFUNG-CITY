@@ -223,6 +223,9 @@ impl WalkGraph {
             }
         }
         let mut zebras: HashMap<SegmentId, Vec<f32>> = HashMap::new();
+        // [r10-walk-kerb] Each street's pavement nodes per side, in order
+        // along it, for footpath ends left at its kerb (`join_kerb_ends`).
+        let mut pavements: HashMap<SegmentId, [Vec<u32>; 2]> = HashMap::new();
         for (s, t) in midblock_crossings(roads) {
             zebras.entry(s).or_default().push(t);
         }
@@ -259,6 +262,7 @@ impl WalkGraph {
                     let mids: Vec<f32> = zebras.get(&sid).cloned().unwrap_or_default();
                     let mut zebra_nodes: Vec<[u32; 2]> = vec![[0; 2]; mids.len()];
                     let mut lot_nodes: [Vec<(f32, u32)>; 2] = [Vec::new(), Vec::new()];
+                    let mut lines: [Vec<u32>; 2] = [Vec::new(), Vec::new()];
                     for (si, side) in [-1i8, 1].into_iter().enumerate() {
                         let o = right * off * side as f32;
                         // Lots fronting this side, and the zebras, ordered along the segment.
@@ -271,8 +275,10 @@ impl WalkGraph {
                         stops.sort_by(|x, y| x.0.total_cmp(&y.0));
                         let na = g.add_node(a + d * sa + o, None);
                         let mut prev = na;
+                        lines[si].push(na);
                         for (t, stop) in stops {
                             let n = g.add_node(a + d * (t * len) + o, None);
+                            lines[si].push(n);
                             match stop {
                                 Stop::Lot(lid) => {
                                     g.nodes[n as usize].near.push(lid);
@@ -287,11 +293,13 @@ impl WalkGraph {
                         }
                         let nb = g.add_node(b - d * sb + o, None);
                         g.link(prev, nb, false);
+                        lines[si].push(nb);
                         ends[seg.a.0 as usize].push((na, sid, side));
                         ends[seg.b.0 as usize].push((nb, sid, side));
                         street_nodes.push(na);
                         street_nodes.push(nb);
                     }
+                    pavements.insert(sid, lines);
                     for z in zebra_nodes {
                         g.link_cross(z[0], z[1], sid, None, CrossingKind::Zebra, roads);
                     }
@@ -473,6 +481,11 @@ impl WalkGraph {
             }
         }
 
+        // [r10-walk-kerb] A footpath end left at a street's kerb with no road
+        // node there joins the pavement (saves from before paths reached a
+        // wide street's pavement, `RoadNetwork::end_target`).
+        g.join_kerb_ends(roads, &ends, &mut pavements);
+
         g.close_redundant_path_zebras(roads);
 
         // ── lots ─────────────────────────────────────────────────────────
@@ -604,21 +617,61 @@ impl WalkGraph {
         // battery plant behind a factory). It gets a way out to the nearest
         // pavement, as its car has a drive. Not a public beach: one behind
         // private lots is meant to have no way on (`beach_gate_ok`).
-        for info in &loops {
-            let lot = &lots[info.lot];
-            if !lot.landlocked || lot.shore.beach {
+        // [r10-walk-kerb] Landlocked lots gated only to each other are one
+        // island too (nine little walk networks of empty back lots in
+        // Harvey's day-80 city, each pair joined by a gate and to nothing
+        // else): the group gets one way out, from the lot nearest a pavement.
+        let landlocked: Vec<usize> = (0..loops.len()).filter(|&k| lots[loops[k].lot].landlocked && !lots[loops[k].lot].shore.beach).collect();
+        let member: HashMap<LotId, usize> = landlocked.iter().enumerate().map(|(i, &k)| (loops[k].lot, i)).collect();
+        let mut group: Vec<usize> = (0..landlocked.len()).collect();
+        fn root(group: &mut [usize], mut x: usize) -> usize {
+            while group[x] != x {
+                group[x] = group[group[x]];
+                x = group[x];
+            }
+            x
+        }
+        // Whether a group has a way out: an edge to a pavement, a path, or a
+        // lot that is not landlocked.
+        let mut out = vec![false; landlocked.len()];
+        for (i, &k) in landlocked.iter().enumerate() {
+            let own = loops[k].lot;
+            for &m in &loops[k].mids {
+                for e in &g.adj[m as usize] {
+                    match g.nodes[e.to as usize].lot {
+                        Some(l) if l == own => {}
+                        Some(l) if member.contains_key(&l) => {
+                            let (a, b) = (root(&mut group, i), root(&mut group, member[&l]));
+                            if a != b {
+                                group[a.max(b)] = a.min(b);
+                            }
+                        }
+                        _ => out[i] = true,
+                    }
+                }
+            }
+        }
+        for i in 0..landlocked.len() {
+            let r = root(&mut group, i);
+            out[r] |= out[i];
+        }
+        // Each group without a way out: its lot's edge midpoint nearest a
+        // pavement node (the first lot's on a tie), joined to that node.
+        let street_dist = |p: Vec2| street_grid.nearest(p, |i| g.nodes[street_nodes[i as usize] as usize].pos.distance(p)).map_or(f32::INFINITY, |x| x.1);
+        let mut exits: std::collections::BTreeMap<usize, (f32, u32, LotId)> = Default::default();
+        for (i, &k) in landlocked.iter().enumerate() {
+            let r = root(&mut group, i);
+            if out[r] {
                 continue;
             }
-            let out = info.mids.iter().any(|&m| g.adj[m as usize].iter().any(|e| g.nodes[e.to as usize].lot != Some(info.lot)));
-            if out {
-                continue;
+            for &m in &loops[k].mids {
+                let d = street_dist(g.nodes[m as usize].pos);
+                if exits.get(&r).is_none_or(|x| d < x.0) {
+                    exits.insert(r, (d, m, loops[k].lot));
+                }
             }
-            let Some(&front) = info.mids.iter().min_by(|&&a, &&b| {
-                let (pa, pb) = (g.nodes[a as usize].pos, g.nodes[b as usize].pos);
-                let da = street_grid.nearest(pa, |i| g.nodes[street_nodes[i as usize] as usize].pos.distance(pa)).map_or(f32::INFINITY, |x| x.1);
-                let db = street_grid.nearest(pb, |i| g.nodes[street_nodes[i as usize] as usize].pos.distance(pb)).map_or(f32::INFINITY, |x| x.1);
-                da.total_cmp(&db)
-            }) else { continue };
+        }
+        for (_, (_, front, lot)) in exits {
             let fp = g.nodes[front as usize].pos;
             let within = |i: u32| {
                 let d = g.nodes[street_nodes[i as usize] as usize].pos.distance(fp);
@@ -627,7 +680,7 @@ impl WalkGraph {
             if let Some((i, _)) = street_grid.nearest(fp, within) {
                 let best = street_nodes[i as usize];
                 g.link(front, best, true);
-                g.nodes[best as usize].near.push(info.lot);
+                g.nodes[best as usize].near.push(lot);
             }
         }
 
@@ -701,6 +754,110 @@ impl WalkGraph {
         }
         g.reindex();
         g
+    }
+
+    /// [r10-walk-kerb] Join each footpath end that meets no street at its
+    /// road node but lies by a street's pavement (`KERB_JOIN_REACH` from
+    /// its middle, at about the street's level, not a highway's or a
+    /// car-only road's, no track between) to that pavement: to a node of it
+    /// within `KERB_NODE_SNAP` (a lot front, a zebra's end), else to a node
+    /// put on the pavement there. Harvey's Umbra Terrace (flag day 80: 25
+    /// buildings, 114 residents) was walled off behind two paths that
+    /// stopped on Kessler Avenue's kerb, joined to nothing. The nearest
+    /// pavement wins (ties to the lower street id), so the graph is the same
+    /// on every build. `pavements` are the streets' pavement nodes per side
+    /// in order along them; a node put on one is added to its line.
+    pub(super) fn join_kerb_ends(&mut self, roads: &RoadNetwork, ends: &[Vec<End>], pavements: &mut HashMap<SegmentId, [Vec<u32>; 2]>) {
+        // Nearest point of a line of nodes: (distance, edge index, point).
+        fn nearest_on(g: &WalkGraph, line: &[u32], p: Vec2) -> Option<(f32, usize, Vec2)> {
+            line.windows(2)
+                .enumerate()
+                .map(|(k, w)| {
+                    let q = geom::project_on_segment(p, g.nodes[w[0] as usize].pos, g.nodes[w[1] as usize].pos).1;
+                    (q.distance(p), k, q)
+                })
+                .min_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)))
+        }
+        for (ni, e) in ends.iter().enumerate() {
+            let Some(&(end, _, _)) = e.first() else { continue };
+            let nid = NodeId(ni as u32);
+            let node = roads.node(nid);
+            // Footpaths alone at this node (one meeting a street is joined
+            // to its pavement there already).
+            if node.segments.iter().any(|&s| roads.segment(s).alive && roads.segment(s).kind != RoadKind::Path) {
+                continue;
+            }
+            let p = node.pos;
+            let mut near = roads.segments_near(p, crate::roads::PAVEMENT_REACH_MAX);
+            near.sort();
+            // (distance to the pavement, street, side)
+            let mut best: Option<(f32, SegmentId, usize)> = None;
+            for sid in near {
+                let sg = roads.segment(sid);
+                if !sg.is_street() || !sg.walkable() || sg.tunnel {
+                    continue;
+                }
+                let Some(lines) = pavements.get(&sid) else { continue };
+                let (a, b) = roads.segment_points(sid);
+                let (t, q) = geom::project_on_segment(p, a, b);
+                if (roads.segment_level(sid, t) - node.level).abs() >= crate::roads::GRADE_SEPARATION {
+                    continue;
+                }
+                // The pavement on the end's side (side -1 first, as laid).
+                let d = (b - a).normalize_or_zero();
+                let si = if (p - q).dot(Vec2::new(-d.y, d.x)) >= 0.0 { 1 } else { 0 };
+                let Some((dist, _, at)) = nearest_on(self, &lines[si], p) else { continue };
+                if dist > KERB_JOIN_REACH || best.is_some_and(|x| x.0 <= dist) {
+                    continue;
+                }
+                // Never over track (a line laid between the path and the street).
+                let over_track = roads.segments_near(p, KERB_JOIN_REACH + 1.0).into_iter().any(|r| {
+                    let rs = roads.segment(r);
+                    rs.is_rail() && {
+                        let (ra, rb) = roads.segment_points(r);
+                        geom::segments_cross(p, at, ra, rb)
+                    }
+                });
+                if !over_track {
+                    best = Some((dist, sid, si));
+                }
+            }
+            let Some((_, sid, si)) = best else { continue };
+            let line = &pavements[&sid][si];
+            let Some((_, k, at)) = nearest_on(self, line, p) else { continue };
+            let (u, v) = (line[k], line[k + 1]);
+            let target = if self.nodes[u as usize].pos.distance(at) <= KERB_NODE_SNAP {
+                u
+            } else if self.nodes[v as usize].pos.distance(at) <= KERB_NODE_SNAP {
+                v
+            } else {
+                let n = self.split_pavement(u, v, at);
+                if let Some(lines) = pavements.get_mut(&sid) {
+                    lines[si].insert(k + 1, n);
+                }
+                n
+            };
+            self.link(end, target, false);
+        }
+    }
+
+    /// [r10-walk-kerb] Put a node on the pavement edge `u`-`v` at `at`
+    /// (standing as `u` does: its level, on a deck or not).
+    fn split_pavement(&mut self, u: u32, v: u32, at: Vec2) -> u32 {
+        let n = self.add_node(at, None);
+        let (level, deck, lifted) = {
+            let x = &self.nodes[u as usize];
+            (x.level, x.deck, x.lifted)
+        };
+        let m = &mut self.nodes[n as usize];
+        m.level = level;
+        m.deck = deck;
+        m.lifted = lifted;
+        self.adj[u as usize].retain(|e| !(e.to == v && e.cross == NO_CROSSING));
+        self.adj[v as usize].retain(|e| !(e.to == u && e.cross == NO_CROSSING));
+        self.link(u, n, false);
+        self.link(n, v, false);
+        n
     }
 
     /// [r1-roads] (K15) A footpath meeting a street a few metres from a

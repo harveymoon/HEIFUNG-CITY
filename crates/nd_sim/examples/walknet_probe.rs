@@ -13,6 +13,11 @@ fn main() {
     let t = std::time::Instant::now();
     let mut w = World::read_save(&args[1]).expect("load");
     eprintln!("loaded in {:.1}s", t.elapsed().as_secs_f32());
+    // [r10-walk-kerb] REBUILD: lay the network again from the plan first, as
+    // the next implement does (with the current road-building rules).
+    if std::env::var("REBUILD").is_ok() {
+        w.rebuild_from_plan();
+    }
     w.refresh_connectivity();
     let g = w.walk.clone();
     let g = &g;
@@ -71,6 +76,20 @@ fn main() {
                 }
             }
             println!("SMALL comp {c} nodes {n} nearest main {:.1} m at {:?}: {:?}", best.0, best.1, lots);
+        }
+    }
+    // [r10-walk-kerb] EMPTY: what the networks with no buildings hold (lots
+    // by land use, and how many of their nodes are pavements or paths).
+    if std::env::var("EMPTY").is_ok() {
+        for (c, (n, b, _, lo, hi)) in v.iter().skip(1) {
+            if *b > 0 { continue; }
+            let mut uses: HashMap<String, usize> = HashMap::new();
+            for (l, _) in lot_comp.iter().filter(|(_, x)| *x == c) {
+                let lot = &w.lots[*l];
+                *uses.entry(format!("{:?}{}{}", lot.land_use, if lot.landlocked { " landlocked" } else { "" }, if lot.shore.beach { " beach" } else { "" })).or_default() += 1;
+            }
+            let ways = (0..g.nodes.len()).filter(|&i| g.comp[i] == *c && g.nodes[i].lot.is_none() && !g.adj[i].is_empty()).count();
+            println!("EMPTY comp {c} nodes {n} way nodes {ways} box ({:.0},{:.0})..({:.0},{:.0}) lots {:?}", lo.x, lo.y, hi.x, hi.y, uses);
         }
     }
     // Usage stats of special edges.

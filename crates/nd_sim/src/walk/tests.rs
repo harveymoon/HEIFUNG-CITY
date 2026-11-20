@@ -389,3 +389,113 @@ fn the_route_memo_forgets_closed_crossings() {
         assert!(r.windows(2).all(|w| g.crossing_between(g.nodes[w[0] as usize].pos, g.nodes[w[1] as usize].pos).is_none_or(|c| !used.contains(&c))));
     }
 }
+
+/// [r10-walk-kerb] A 2+2 avenue across the middle, and the walk graph's
+/// component labels on it. `path` is laid after the avenue (the tool's
+/// way) or before it (an old layout: its end stays at the kerb, no node).
+fn avenue_with_path(path: &[Vec2], levels: &[f32], path_first: bool, car_only: bool) -> (RoadNetwork, WalkGraph) {
+    let mut roads = RoadNetwork::default();
+    let avenue = [Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)];
+    if path_first {
+        roads.add_polyline_levels(path, levels, 0, 0, RoadKind::Path);
+        roads.add_polyline(&avenue, 2, 2);
+    } else {
+        roads.add_polyline(&avenue, 2, 2);
+        roads.add_polyline_levels(path, levels, 0, 0, RoadKind::Path);
+    }
+    if car_only {
+        for s in roads.segments.iter_mut().filter(|s| s.kind == RoadKind::Street) {
+            s.car_only = Some(true);
+        }
+    }
+    let lots = SlotMap::with_key();
+    let mut g = WalkGraph::build(&roads, &lots, &LandValue::new(400.0, 32.0), 1);
+    g.compute_components();
+    (roads, g)
+}
+
+/// The component of the walk node nearest `p`, and how many nodes it has.
+fn comp_near(g: &WalkGraph, p: Vec2) -> (u32, usize) {
+    let n = (0..g.nodes.len()).filter(|&i| !g.adj[i].is_empty()).min_by(|&a, &b| g.nodes[a].pos.distance(p).total_cmp(&g.nodes[b].pos.distance(p))).unwrap();
+    let c = g.comp[n];
+    (c, g.comp.iter().zip(&g.adj).filter(|(x, a)| **x == c && !a.is_empty()).count())
+}
+
+/// [r10-walk-kerb] Harvey's flag day 80: a path drawn to a 2+2 avenue
+/// (its end put on the pavement, 10.3 m from the centre line, past the
+/// end-snap radius) stopped at the kerb with no road node, and the homes
+/// behind it were cut off on foot. It now meets the avenue at a node, and
+/// its far end is on the avenue's walk network, both pavements.
+#[test]
+fn a_path_drawn_to_a_wide_avenue_joins_its_pavements() {
+    let probe = {
+        let mut r = RoadNetwork::default();
+        r.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 2, 2);
+        r.pavement_snap(Vec2::new(30.0, 11.0), 8.0).expect("the pavement").0
+    };
+    assert!(probe.y > crate::roads::END_SNAP_RADIUS, "the pavement is past the end-snap radius: {probe}");
+    let (roads, g) = avenue_with_path(&[Vec2::new(30.0, 90.0), probe], &[], false, false);
+    let meet = roads.nodes.iter().position(|n| n.pos.distance(Vec2::new(30.0, 0.0)) < 0.5).map(|i| NodeId(i as u32));
+    let meet = meet.expect("the path meets the avenue at a node on it");
+    assert_eq!(roads.street_degree(meet), 2);
+    let far = comp_near(&g, Vec2::new(30.0, 90.0)).0;
+    assert_eq!(far, comp_near(&g, Vec2::new(-150.0, 10.3)).0, "on the near pavement's network");
+    assert_eq!(far, comp_near(&g, Vec2::new(-150.0, -10.3)).0, "and over the avenue");
+}
+
+/// [r10-walk-kerb] A layout from before (the path's end left on the kerb,
+/// no node there) is joined when the walk graph is built; not across a
+/// car-only road, and not from a raised walkway to the street under it.
+#[test]
+fn a_free_path_end_at_the_kerb_joins_the_pavement_but_not_across_levels_or_a_highway() {
+    let path = [Vec2::new(30.0, 90.0), Vec2::new(30.0, 10.3)];
+    let (roads, g) = avenue_with_path(&path, &[], true, false);
+    assert!(roads.nodes.iter().all(|n| n.pos.distance(Vec2::new(30.0, 0.0)) > 1.0), "an old layout: no node on the avenue");
+    let far = comp_near(&g, path[0]).0;
+    assert_eq!(far, comp_near(&g, Vec2::new(-150.0, 10.3)).0, "the free end joins the pavement");
+    assert_eq!(far, comp_near(&g, Vec2::new(150.0, -10.3)).0);
+    let again = avenue_with_path(&path, &[], true, false).1;
+    assert_eq!((again.nodes.len(), again.adj.iter().map(Vec::len).sum::<usize>()), (g.nodes.len(), g.adj.iter().map(Vec::len).sum::<usize>()), "the same graph on every build");
+    // A car-only road: no pavement to join.
+    let (_, g) = avenue_with_path(&path, &[], true, true);
+    assert!(comp_near(&g, path[0]).1 <= 4, "the path alone");
+    // A walkway 8 m up ending over the kerb: nothing joins it down there.
+    let (_, g) = avenue_with_path(&path, &[8.0, 8.0], true, false);
+    let (c, n) = comp_near(&g, path[0]);
+    assert!(n <= 4 && c != comp_near(&g, Vec2::new(-150.0, 10.3)).0, "the raised walkway alone");
+}
+
+/// [r10-walk-kerb] Two landlocked back lots gated only to each other (nine
+/// such little networks of empty back lots in Harvey's day-80 city) were an
+/// island on foot: each saw the other's gate as its way out. The pair gets
+/// one way out to the pavement.
+#[test]
+fn landlocked_lots_gated_only_to_each_other_get_one_way_out() {
+    let mut roads = RoadNetwork::default();
+    roads.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
+    let zone = Zone { polygon: vec![Vec2::new(-20.0, 8.0), Vec2::new(20.0, 8.0), Vec2::new(20.0, 40.0), Vec2::new(-20.0, 40.0)], land_use: LandUse::Commercial };
+    let mut made = SlotMap::with_key();
+    generate_lots(ZoneId::default(), &zone, &roads, &mut made, &[]);
+    let proto: Lot = made.values().next().expect("a lot").clone();
+    let mut lots: SlotMap<LotId, Lot> = SlotMap::with_key();
+    for x in [0.0f32, 30.0] {
+        let mut l = proto.clone();
+        l.polygon = vec![Vec2::new(x, 50.0), Vec2::new(x + 30.0, 50.0), Vec2::new(x + 30.0, 80.0), Vec2::new(x, 80.0)];
+        l.center = Vec2::new(x + 15.0, 65.0);
+        l.front_edge = [Vec2::new(x, 50.0), Vec2::new(x + 30.0, 50.0)];
+        l.landlocked = true;
+        l.land_use = LandUse::Commercial;
+        l.building = None;
+        l.park = None;
+        lots.insert(l);
+    }
+    let mut g = WalkGraph::build(&roads, &lots, &LandValue::new(400.0, 32.0), 1);
+    g.compute_components();
+    let pavement = comp_near(&g, Vec2::new(-150.0, 6.8)).0;
+    for (id, _) in lots.iter() {
+        let n = (0..g.nodes.len()).find(|&i| g.nodes[i].lot == Some(id)).expect("a loop");
+        assert_eq!(g.comp[n], pavement, "a back lot is on the street's walk network");
+    }
+    let exits = (0..g.nodes.len()).filter(|&i| g.nodes[i].lot.is_some() && g.adj[i].iter().any(|e| g.nodes[e.to as usize].lot.is_none())).count();
+    assert_eq!(exits, 1, "one way out for the pair");
+}
