@@ -67,7 +67,10 @@ pub fn building_boxes(w: &World, b: nd_sim::BuildingId) -> Value {
         "carrier": y.crane.map(|j| json!({ "box": key_str(j.boxid), "number": w.containers.boxes.get(j.boxid).map(|r| r.number()), "onto_lorry": j.onto_truck, "bay": j.bay + 1, "car": key_str(j.car) })),
         "moves": y.moves,
     }));
-    json!({ "depot": { "kind": kind.label(), "stored": ids.len(), "capacity": w.box_capacity(b, kind), "full": ids.iter().filter(|id| w.containers.boxes[**id].goods.is_some()).count(), "going_out": ids.iter().filter(|id| w.containers.boxes[**id].bound_out || !w.containers.boxes[**id].export.is_empty()).count(), "yard": yard, "boxes": ids.iter().take(60).filter_map(|id| row(*id)).collect::<Vec<_>>() } })
+    // [r11-box-stock] Its room (no more than its stacks draw), the boxes
+    // kept for it at the yards, and a yard's storage books.
+    let storage = w.storage_card(b).map(|c| json!({ "kept": c.kept, "room_left": c.room, "fee_per_box_day": c.fee, "fees_yesterday": round(c.book.fees_today), "fees_total": round(c.book.fees_total), "taken_in": c.book.taken_in_total, "returned": c.book.returned_total }));
+    json!({ "depot": { "kind": kind.label(), "stored": ids.len(), "capacity": w.box_room(b, kind), "ground_capacity": w.box_capacity(b, kind), "kept_at_yards": w.kept_away(b), "storage": storage, "full": ids.iter().filter(|id| w.containers.boxes[**id].goods.is_some()).count(), "going_out": ids.iter().filter(|id| w.containers.boxes[**id].bound_out || !w.containers.boxes[**id].export.is_empty()).count(), "yard": yard, "boxes": ids.iter().take(60).filter_map(|id| row(*id)).collect::<Vec<_>>() } })
 }
 
 /// The boxes on lorry `car`.
@@ -87,7 +90,7 @@ pub fn truck_boxes(w: &World, car: nd_sim::CarId) -> Value {
 pub fn containers_json(w: &World) -> Value {
     let c = w.box_counts();
     let s = &w.containers.stats;
-    let depots: Vec<Value> = w.box_depots().into_iter().map(|(b, k, _)| json!({ "building": key_str(b), "name": w.buildings.get(b).map(|x| x.name.clone()), "kind": k.label(), "stored": w.containers.stored_at(b).len(), "capacity": w.box_capacity(b, k) })).collect();
+    let depots: Vec<Value> = w.box_depots().into_iter().map(|(b, k, _)| json!({ "building": key_str(b), "name": w.buildings.get(b).map(|x| x.name.clone()), "kind": k.label(), "stored": w.containers.stored_at(b).len(), "capacity": w.box_room(b, k), "kept_at_yards": w.kept_away(b) })).collect();
     let homes: Vec<Value> = w.containers.homes.iter().map(|(b, h)| json!({ "building": key_str(*b), "name": w.buildings.get(*b).map(|x| x.name.clone()), "boxes": h.boxes.len(), "wants": h.want, "finished": h.done })).collect();
     json!({
         "live": w.containers.live,
@@ -102,6 +105,8 @@ pub fn containers_json(w: &World) -> Value {
         "today": { "arrived": s.arrived_today, "delivered": s.delivered_today, "scrapped": s.scrapped_today },
         // [r8]
         "exported_in_boxes": s.exported_total, "export_units_yesterday": round(s.export_units_yday), "sold_for_scrap_out_of_town": s.sold_for_scrap_total, "crane_moves": s.crane_moves_total, "surplus_empties_sent_out": s.surplus_out_total,
+        // [r11-box-stock] the terminals' overflow kept at the container yards
+        "sent_to_storage_yards": s.to_storage_total, "called_back_from_yards": s.called_back_total, "cleared_by_road": s.cleared_by_road_total, "overflow_yesterday": s.overflow_yday, "storage_fees_total": round(s.storage_fees_total),
         "on_cranes": c.lifting, "on_ships": c.on_ships,
         "lorries_at_depots": w.containers.depots.values().map(|y| y.bays.iter().flatten().count() + y.queue.len()).sum::<usize>(),
         "forwarders": w.containers.forwarders.len(),

@@ -34,6 +34,9 @@ pub mod bus_edit;
 mod cargo_hubs;
 /// [r8] Container lorries at the depots' bays, and the yards' carriers.
 mod box_lorries;
+// [r11-box-stock] The depots' stock kept within their room.
+mod box_stock;
+pub use box_stock::StorageCard;
 /// [r8] Freight forwarders: exports boxed up firm by firm.
 mod forwarders;
 /// [airport] Airports (`crate::airport`): placing, flights, passengers, cargo, noise.

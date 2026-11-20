@@ -335,6 +335,13 @@ pub struct BoxRec {
     /// share one and nothing moves when another box leaves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slot: Option<u16>,
+    /// [r11-box-stock] Kept at a container yard for its line, on a storage
+    /// contract, as the overflow of this terminal (the port, a freight yard,
+    /// a cargo hub): the line pays the yard [`STORAGE_FEE`] a day for it
+    /// until the terminal calls it back or the line sends it home. Set as
+    /// it is trucked over; gone once it stands anywhere but a yard.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept_for: Option<BuildingId>,
 }
 
 /// [r8] One firm's export goods in a forwarder's box.
@@ -501,6 +508,30 @@ pub struct BoxStats {
     pub crane_moves_total: u32,
     /// [r8] Surplus empties sent out by their lines.
     pub surplus_out_total: u32,
+    /// [r11-box-stock] Boxes trucked from a full terminal to a container
+    /// yard to be kept there, called back from one, and sent home by road
+    /// from a terminal (or a yard) with nowhere in town to keep them.
+    pub to_storage_total: u32,
+    pub called_back_total: u32,
+    pub cleared_by_road_total: u32,
+    /// [r11-box-stock] Boxes over the terminals' room no yard had room
+    /// for, today and yesterday (the pressure for container storage).
+    pub overflow_today: u32,
+    pub overflow_yday: u32,
+    /// [r11-box-stock] Storage fees the lines paid the yards, all told.
+    pub storage_fees_total: f32,
+}
+
+/// [r11-box-stock] A container yard's storage books: the boxes it keeps
+/// for the lines (the terminals' overflow), and the fees.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StorageBook {
+    pub taken_in_total: u32,
+    pub returned_total: u32,
+    pub fees_today: f32,
+    pub fees_yday: f32,
+    pub fees_total: f32,
 }
 
 /// [K34] Every box in town and the Stacks homes built from them.
@@ -529,6 +560,21 @@ pub struct Containers {
     /// [r8] The freight forwarders' books.
     #[serde(default)]
     pub forwarders: BTreeMap<BuildingId, Forwarder>,
+    /// [r11-box-stock] Boxes each depot's drawn stacks hold
+    /// (`nd_procgen::buildings::parts::stack_room`), as the renderer last
+    /// laid them out: a depot keeps no more than that, so every box it
+    /// holds is drawn. Unknown (never drawn, a headless run): its ground
+    /// alone says (`World::box_capacity`).
+    #[serde(default)]
+    pub drawn_room: BTreeMap<BuildingId, u16>,
+    /// [r11-box-stock] The container yards' storage books.
+    #[serde(default)]
+    pub storage: BTreeMap<BuildingId, StorageBook>,
+    /// [r11-box-stock] Lorries hired to clear a terminal's backlog: on the
+    /// road beside the town's own (not counted against the trade's lorries,
+    /// at most [`BACKLOG_LORRIES`] at once).
+    #[serde(default)]
+    pub haulers: std::collections::BTreeSet<CarId>,
     /// [r8] Lorries taken off the road lately, and where they went: the
     /// follow camera says so instead of "they are gone".
     #[serde(skip)]
@@ -571,6 +617,40 @@ pub const SOUND_WEAR: f32 = 0.45;
 /// the most a depot keeps at all.
 pub const SURPLUS_SHARE: f32 = 0.7;
 pub const SURPLUS_MAX: usize = 60;
+/// [r11-box-stock] Share of its room a terminal (the port, a freight yard,
+/// a cargo hub) fills with empties before the overflow is trucked to a
+/// container yard to be kept: the rest is headroom for the next ship or
+/// train to land into.
+pub const TERMINAL_FILL: f32 = 0.75;
+/// [r11-box-stock] Under this share of its room a terminal calls back the
+/// boxes kept for it at the yards (empties for the town's exports).
+pub const CALL_BACK_FILL: f32 = 0.4;
+/// [r11-box-stock] Share of its room a container yard lets out to the
+/// lines for storage (the rest for its own boxes and the comings and goings).
+pub const STORAGE_FILL: f32 = 0.85;
+/// [r11-box-stock] What a line pays a container yard a day for each box
+/// kept for it.
+pub const STORAGE_FEE: f32 = 9.0;
+/// [r11-box-stock] Days a line keeps a box at a yard before it sends it
+/// home (back to its terminal to ship out when there is room, else by road).
+pub const STORAGE_DAYS: u64 = 12;
+/// [r11-box-stock] How far a terminal's overflow is trucked to a yard, m.
+pub const STORAGE_REACH: f32 = 6000.0;
+/// [r11-box-stock] Boxes a day over the terminals' room with no yard to
+/// keep them that make work for one more container yard (the pressure).
+pub const BOXES_PER_STORAGE_YARD: f32 = 40.0;
+/// [r11-box-stock] Lorries a terminal sends each hour with its overflow
+/// through the bays (the carrier lifts each box), and lorries loaded at the
+/// back gate by hired reach stackers while it is over its room (an older
+/// save's backlog, a burst of landings).
+pub const SHIFT_LORRIES_PER_HOUR: usize = 2;
+pub const BACKLOG_LORRIES_PER_HOUR: usize = 24;
+/// [r11-box-stock] Hours a full box stands at a terminal over its room,
+/// nobody fetching it, before it is unpacked there (two days otherwise).
+pub const UNPACK_AFTER_HOURS: u64 = 6;
+/// [r11-box-stock] Hired backlog lorries on the road at once, all told
+/// (shared out evenly between the terminals over their room).
+pub const BACKLOG_LORRIES: usize = 110;
 
 /// [r8] A depot's lorry bays, the queue at its gate, and its carrier's work.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -927,7 +1007,7 @@ mod tests {
 
     #[test]
     fn wear_grows_with_age_and_knocks_and_shows() {
-        let r = BoxRec { line: 1, serial: 42, forty: true, kind: BoxKind::Dry, origin: 0, built: 0, knocks: 0, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false, slot: None };
+        let r = BoxRec { line: 1, serial: 42, forty: true, kind: BoxKind::Dry, origin: 0, built: 0, knocks: 0, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false, slot: None, kept_for: None };
         let young = r.wear(365);
         let old = r.wear(365 * 18);
         assert!(old > young + 0.4, "{young} {old}");
@@ -941,7 +1021,7 @@ mod tests {
 
     #[test]
     fn the_log_keeps_the_first_entry_and_the_latest() {
-        let mut r = BoxRec { line: 0, serial: 1, forty: false, kind: BoxKind::Dry, origin: 0, built: 0, knocks: 0, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false, slot: None };
+        let mut r = BoxRec { line: 0, serial: 1, forty: false, kind: BoxKind::Dry, origin: 0, built: 0, knocks: 0, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false, slot: None, kept_for: None };
         r.note(0, Event::ArrivedRail, BuildingId::default());
         for t in 1..40 {
             r.note(t, Event::Stored, BuildingId::default());

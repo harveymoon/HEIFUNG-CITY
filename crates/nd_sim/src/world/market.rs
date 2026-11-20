@@ -744,7 +744,9 @@ impl World {
     }
 
     pub(super) fn truck_count(&self) -> usize {
-        self.traffic.cars.values().filter(|c| c.cargo.is_some()).count()
+        // [r11-box-stock] Not the lorries hired to clear a depot's backlog.
+        let haulers = &self.containers.haulers;
+        self.traffic.cars.iter().filter(|(id, c)| c.cargo.is_some() && !haulers.contains(id)).count()
     }
 
     /// The buyer counts a load as on its way so it does not reorder.

@@ -91,6 +91,9 @@ pub fn truck_look(forty: bool) -> u8 {
 
 /// [r8] Boxes a freighter takes on at most in one call.
 pub const MAX_SHIP_OUT: usize = 18;
+/// [r11-box-stock] ... and at a port over its room, its lines sending
+/// their surplus empties home.
+pub const MAX_SHIP_OUT_SURPLUS: usize = 32;
 /// [r8] Lorries a day a yard or hub sends with boxes going out of town.
 const OUT_HAULS_PER_DAY: usize = 4;
 
@@ -151,7 +154,7 @@ impl World {
         self.box_depots().into_iter().filter(|d| want(d.1)).min_by(|a, b| a.2.distance_squared(p).total_cmp(&b.2.distance_squared(p)).then(a.0.cmp(&b.0))).map(|d| d.0)
     }
 
-    fn place_pos(&self, b: BuildingId) -> Option<Vec2> {
+    pub(super) fn place_pos(&self, b: BuildingId) -> Option<Vec2> {
         self.building_lot(b).map(|l| l.center)
     }
 
@@ -166,7 +169,7 @@ impl World {
         let (line, serial, origin, years) = cx::arrival(h);
         let knocks = (years * 4.0 * (0.6 + crate::hash::unit(mix(h, 17)))) as u16;
         let forty = forty && kind != BoxKind::Tank;
-        let mut r = BoxRec { line, serial, forty, kind, origin, built: (day - (years * 365.0) as i64) as i32, knocks, owner: Owner::Line, at, goods, since: tick, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false, slot: None };
+        let mut r = BoxRec { line, serial, forty, kind, origin, built: (day - (years * 365.0) as i64) as i32, knocks, owner: Owner::Line, at, goods, since: tick, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false, slot: None, kept_for: None };
         r.note(tick, first, place);
         match first {
             Event::ArrivedRail => st.arrived_today[0] += 1,
@@ -201,6 +204,18 @@ impl World {
         // [r10-port-boxes] Into a stack: the first free place there (a box
         // already standing in it keeps its own); out of one: its place is free.
         self.containers.seat(id, stays);
+        // [r11-box-stock] A box kept for a terminal stays kept on its way to
+        // a yard and in it; set down anywhere else, it is kept no more.
+        if self.containers.boxes[id].kept_for.is_some() {
+            let kept = match at {
+                Where::Stored(y) => self.box_depot(y) == Some(DepotKind::Yard),
+                Where::Truck(_) | Where::Lifting(_) => true,
+                _ => false,
+            };
+            if !kept {
+                self.containers.boxes[id].kept_for = None;
+            }
+        }
         self.containers.touch();
     }
 
@@ -211,6 +226,9 @@ impl World {
             match what {
                 Event::SentOut => s.sent_out_total += 1,
                 Event::SoldOutOfTown => s.sold_out_of_town_total += 1,
+                // [r11-box-stock] Counted as it leaves (not when sold): every
+                // box gone is counted once, by why.
+                Event::SoldForScrap => s.sold_for_scrap_total += 1,
                 _ => {}
             }
             self.containers.touch();
@@ -386,9 +404,14 @@ impl World {
         let abstract_n = ((self.ports.outbound / crate::ports::CONTAINER_UNITS) as usize).min(crate::ports::MAX_BOXES as usize);
         self.ports.outbound = (self.ports.outbound - abstract_n as f32 * crate::ports::CONTAINER_UNITS).max(0.0);
         let day = self.today();
-        let mut out = self.empties_to_send(port, MAX_SHIP_OUT);
+        let over_room = self.box_depot(port).is_some_and(|k| self.depot_stock(port) > self.box_room(port, k));
+        let mut out = self.empties_to_send(port, if over_room { MAX_SHIP_OUT_SURPLUS } else { MAX_SHIP_OUT });
         // Only as many plain empties as the counted exports ask for, past
         // the boxes of exports and the ones going back anyway.
+        // [r11-box-stock] A port over its fill sends its lines' extra
+        // empties home on the ship too.
+        let fill = self.box_depot(port).map_or(usize::MAX, |k| (self.box_room(port, k) as f32 * cx::TERMINAL_FILL) as usize);
+        let extra = self.depot_stock(port).saturating_sub(fill);
         let mut plain = 0;
         out.retain(|id| {
             let r = &self.containers.boxes[*id];
@@ -396,7 +419,7 @@ impl World {
                 return true;
             }
             plain += 1;
-            plain <= abstract_n && !r.for_scrap(day)
+            plain <= abstract_n + extra && !r.for_scrap(day)
         });
         let n_in = self.containers.ships.get(&sid).map_or(0, |b| b.inbound.len()) as u32;
         if let Some(sb) = self.containers.ships.get_mut(&sid) {
@@ -669,6 +692,9 @@ impl World {
     /// [K34] After the delivery: a lorry whose box was bought (or is going
     /// for scrap) takes it there before it drives on.
     pub(super) fn boxes_after_delivery(&mut self, car: crate::traffic::CarId, at: BuildingId, home: BuildingId) {
+        // [r11-box-stock] An empty going back to a terminal over its fill
+        // goes to a container yard to be kept for its line instead.
+        self.empty_to_storage_instead(car, at, home);
         let Some(to) = self.containers.trucks.get(&car).and_then(|t| t.to) else {
             self.boxes_check_truck(car, at);
             return;
@@ -769,7 +795,9 @@ impl World {
                 r.owner = Owner::Line;
             }
         }
-        match self.nearest_depot(near, |k| k != DepotKind::Scrap) {
+        // [r11-box-stock] The nearest with room for it, else the nearest.
+        let with_room = self.box_depots().into_iter().filter(|d| d.1 != DepotKind::Scrap && self.depot_stock(d.0) < self.box_room(d.0, d.1)).min_by(|a, b| a.2.distance_squared(near).total_cmp(&b.2.distance_squared(near)).then(a.0.cmp(&b.0))).map(|d| d.0);
+        match with_room.or_else(|| self.nearest_depot(near, |k| k != DepotKind::Scrap)) {
             Some(d) => self.box_to(id, Where::Stored(d), Event::Stored, d),
             None => self.box_gone(id, Event::SentOut),
         }
@@ -812,7 +840,7 @@ impl World {
     /// [K34] Put boxes on an empty lorry from `from` to `to` (a home site
     /// or a scrap yard). False when no lorry can go (none spare, or no
     /// road): the caller hands them over directly.
-    fn haul_boxes(&mut self, from: BuildingId, to: BuildingId, ids: &[BoxId]) -> bool {
+    pub(super) fn haul_boxes(&mut self, from: BuildingId, to: BuildingId, ids: &[BoxId]) -> bool {
         if ids.is_empty() || self.truck_count() >= crate::market::MAX_TRUCKS {
             return false;
         }
@@ -1028,6 +1056,8 @@ impl World {
         for (site, need) in short {
             self.developer_buys(site, need.min(cx::HAULS_PER_HOUR));
         }
+        // [r11-box-stock] The terminals' overflow to the yards, and back.
+        self.hourly_box_stock();
     }
 
     /// [K34] The developer of `site` buys up to `n` empties at the nearest
@@ -1043,7 +1073,7 @@ impl World {
             }
             // What the yard can spare over the stock it keeps.
             let spare = self.containers.boxes.values().filter(|r| r.at == Where::Stored(d) && r.goods.is_none() && !matches!(r.owner, Owner::Home(_)) && !r.for_scrap(day)).count();
-            let has = spare as f32 > self.box_capacity(d, kind) as f32 * cx::DEPOT_RESERVE;
+            let has = spare as f32 > self.box_room(d, kind) as f32 * cx::DEPOT_RESERVE;
             if has && best.is_none_or(|(bd, bid)| pos.distance(p) < bd || (pos.distance(p) == bd && d < bid)) {
                 best = Some((pos.distance(p), d));
             }
@@ -1057,7 +1087,7 @@ impl World {
             .map(|(id, r)| (-((r.wear(day) * 100.0) as i32), r.since, id))
             .collect();
         pick.sort();
-        let keep = self.box_depot(depot).map_or(0.0, |k| self.box_capacity(depot, k) as f32 * cx::DEPOT_RESERVE).ceil() as usize;
+        let keep = self.box_depot(depot).map_or(0.0, |k| self.box_room(depot, k) as f32 * cx::DEPOT_RESERVE).ceil() as usize;
         let n = n.min(pick.len().saturating_sub(keep));
         let ids: Vec<BoxId> = pick.into_iter().take(n).map(|p| p.2).collect();
         for &id in &ids {
@@ -1124,7 +1154,8 @@ impl World {
             if kind == DepotKind::Scrap {
                 continue;
             }
-            let cap = self.box_capacity(d, kind);
+            // [r11-box-stock] Its room: no more than its drawn stacks hold.
+            let cap = self.box_room(d, kind);
             let ids = self.containers.stored_at(d);
             let mut count = ids.len();
             for id in ids {
@@ -1170,7 +1201,9 @@ impl World {
                 }
                 // [r8] Leased to a forwarder, full of exports, or already
                 // going out: not the owners' to deal with today.
-                if matches!(r.owner, Owner::Forwarder(_)) || !r.export.is_empty() || r.bound_out {
+                // [r11-box-stock] Nor one kept at a yard on a contract
+                // (`daily_box_stock` sends it home in its time).
+                if matches!(r.owner, Owner::Forwarder(_)) || !r.export.is_empty() || r.bound_out || r.kept_for.is_some() {
                     continue;
                 }
                 let line_owned = r.owner == Owner::Line;
@@ -1218,7 +1251,7 @@ impl World {
                 .containers
                 .boxes
                 .iter()
-                .filter(|(_, r)| r.at == Where::Stored(d) && r.goods.is_none() && r.export.is_empty() && !r.bound_out && matches!(r.owner, Owner::Line | Owner::Yard(_)))
+                .filter(|(_, r)| r.at == Where::Stored(d) && r.goods.is_none() && r.export.is_empty() && !r.bound_out && r.kept_for.is_none() && matches!(r.owner, Owner::Line | Owner::Yard(_)))
                 .filter(|(id, _)| !sell_out.get(&d).is_some_and(|v| v.contains(id)) && !sell_scrap.get(&d).is_some_and(|v| v.contains(id)))
                 .map(|(id, r)| (-((r.wear(day) * 1000.0) as i32), r.since, id, r.owner == Owner::Line))
                 .collect();
@@ -1244,13 +1277,29 @@ impl World {
                 let hauls = OUT_HAULS_PER_DAY.max(count.saturating_sub(cap) / 3).min(24);
                 let going: Vec<BoxId> = self.containers.boxes.iter().filter(|(_, r)| r.at == Where::Stored(d) && r.bound_out && r.goods.is_none()).map(|(id, _)| id).take(hauls).collect();
                 if !going.is_empty() {
-                    let to = depots.iter().filter(|x| matches!(x.1, DepotKind::Port | DepotKind::Rail)).min_by(|a, b| a.2.distance(pos).total_cmp(&b.2.distance(pos)).then(a.0.cmp(&b.0))).map(|x| x.0);
+                    // [r11-box-stock] To a port or freight yard with room
+                    // under its fill (not one already full to bursting),
+                    // else the line sends it home by road.
+                    let to = depots
+                        .iter()
+                        .filter(|x| matches!(x.1, DepotKind::Port | DepotKind::Rail))
+                        .filter(|x| self.depot_stock(x.0) + going.len() <= (self.box_room(x.0, x.1) as f32 * cx::TERMINAL_FILL) as usize)
+                        .min_by(|a, b| a.2.distance(pos).total_cmp(&b.2.distance(pos)).then(a.0.cmp(&b.0)))
+                        .map(|x| x.0);
                     for id in going {
                         match to {
                             Some(t) => {
                                 self.haul_boxes(d, t, &[id]);
                             }
-                            None => sell_out.entry(d).or_default().push(id),
+                            None => {
+                                let line = self.containers.boxes.get(id).is_some_and(|r| r.owner == Owner::Line);
+                                if line {
+                                    self.containers.stats.cleared_by_road_total += 1;
+                                    self.haul_out(d, id, Event::SentOut);
+                                } else {
+                                    sell_out.entry(d).or_default().push(id);
+                                }
+                            }
                         }
                     }
                 }
@@ -1281,6 +1330,8 @@ impl World {
                 }
             }
         }
+        // [r11-box-stock] Storage fees, boxes kept their term, the overflow.
+        self.daily_box_stock();
         let s = &mut self.containers.stats;
         s.due_scrap_today = due_scrap;
         s.awaiting_scrap = awaiting;
@@ -1294,10 +1345,7 @@ impl World {
     /// [r8] Box `id` at depot `d` sold out of town (`why`: as a box, or for
     /// scrap): a lorry fetches it from the bay and drives it off the map;
     /// with no lorry or no bays, it simply goes.
-    fn haul_out(&mut self, d: BuildingId, id: BoxId, why: Event) {
-        if why == Event::SoldForScrap {
-            self.containers.stats.sold_for_scrap_total += 1;
-        }
+    pub(super) fn haul_out(&mut self, d: BuildingId, id: BoxId, why: Event) {
         if self.bay_depot(d).is_some() && self.containers.boxes.get(id).is_some_and(|r| r.at == Where::Stored(d)) {
             if let Some(car) = self.lorry_for(d) {
                 let j = self.containers.lorries.entry(car).or_default();
@@ -1491,6 +1539,8 @@ impl World {
                     None => "on a lorry".to_string(),
                 }, to)
             }
+            // [r11-box-stock] Kept at a yard for a terminal's line.
+            Where::Stored(b) if r.kept_for.is_some() => (format!("kept at {} for {} (the overflow of {})", self.place_name(b), line.name, self.place_name(r.kept_for.unwrap_or_default())), Some(b)),
             Where::Stored(b) => (format!("{} at {}", if r.goods.is_some() { "stored full" } else { "stored empty" }, self.place_name(b)), Some(b)),
             Where::Site(b) => (format!("on the building site of {}", self.place_name(b)), Some(b)),
             Where::Home(b) => (format!("part of the home {}", self.place_name(b)), Some(b)),

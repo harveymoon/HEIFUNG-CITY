@@ -672,6 +672,33 @@ Citizens are rendered from their simulated positions every frame.
   their business. Refineries are only developed with working oil wells within 1200 m or a
   shipping port to land crude. A bus depot with no room left dispatches into
   the lots within 450 m (a quarter of their bays). Lots develop near depots, ports and yards.
+- **Container stock and storage yards** [r11-box-stock] (`world/box_stock.rs`): a depot's room
+  is its ground's say (`box_capacity`: the port 60, a cargo hub area/45, a freight yard 24 +
+  area/120, a container yard area/16) but never more than its drawn stacks hold
+  (`Containers::drawn_room`, handed over by the renderer from `stack_room`: one box per forty-foot
+  place, two tiers over the drawn stacks counted), so every box a depot holds is drawn. Each hour
+  a terminal (port, freight yard, cargo hub) over 75% of its room trucks its lines' empties (not
+  those on a freighter's list, the ones going out last) to the nearest container yard with
+  storage room within 6 km (85% of the yard's room), two lorries an hour through the bays; the
+  line pays the yard 9 a box a day (`StorageBook`). The terminal calls its boxes back under 40%
+  of its room; after 12 days a kept box goes home (back to its terminal to ship out if it has
+  room, else out of town by road). Over its room with no yard to take the rest, the backlog is
+  cleared by hired lorries loaded at the back gate (up to 24 an hour per terminal, 110 on the road
+  at once shared by how far over each terminal is, outside the trade's lorry cap), to a yard or out
+  of town; a lorry bringing an empty back to a terminal over its fill takes it to a yard with room
+  instead (`empty_to_storage_instead`); full boxes nobody fetched for
+  6 hours at a terminal over its room are unpacked there (their goods go on as loose freight, as
+  after two days before); a port over its room sends up to 32 empties home on each freighter (18
+  otherwise), and a yard or hub sends its going-out boxes only to a terminal under its fill, else
+  by road. The boxes no yard could keep (`overflow_yday`) make the *container storage* pressure
+  (`PressureKind::ContainerStorage`, opening `ContainerYard`s): one yard per 40 a day, on
+  industrial land within 6 km of a terminal, else a shut container yard reopened, a shut-down
+  industrial business turned into one, or one losing money (not another box trade, not the only
+  one of its kind, at most three floors, 600 m2 of ground); container yards stay the logistics
+  industry's trade (`PressureKind::of_business` skips this pressure: a yard going broke does not
+  cool it down, and a sub-zone bias still retools yards). Every box leaving town is counted
+  once, by why, as it goes (`sent_out_total`, `sold_out_of_town_total`, `exported_total`,
+  `scrapped_total`, `sold_for_scrap_total`; `cleared_by_road_total` of them the overflow).
 - **Market**: a buyer whose stock plus inbound deliveries drops below half its target
   asks for the cheapest supplier, delivered price including haulage distance, strikes
   the deal, and a truck carries it. With no local seller it imports at a markup from a
