@@ -7,7 +7,7 @@
 //! wear and length.
 
 use super::*;
-use nd_sim::containers::{BoxFace, BoxId};
+use nd_sim::containers::BoxId;
 
 #[derive(Component, Clone)]
 pub(super) struct CarrierTag;
@@ -71,18 +71,23 @@ fn on_chassis(sim: &Sim, d: nd_sim::BuildingId, bay: u8, car: nd_sim::CarId, id:
     Some((at + along * x + Vec3::Y * deck, yaw))
 }
 
-/// Where a box stands (or will stand) in depot `d`'s stack.
-fn in_stack(sim: &Sim, d: nd_sim::BuildingId, id: BoxId, seen: &HashMap<BoxId, (Vec3, f32)>) -> Option<(Vec3, f32)> {
-    if let Some(p) = seen.get(&id) {
+/// Where a box stands (or will stand) in depot `d`'s stack; `seen`, where
+/// it was last drawn there (a box lifted out of the stack; [r10-port-boxes]
+/// not one coming back, which may well get another place).
+fn in_stack(sim: &Sim, d: nd_sim::BuildingId, id: BoxId, seen: Option<&HashMap<BoxId, (Vec3, f32)>>) -> Option<(Vec3, f32)> {
+    if let Some(p) = seen.and_then(|s| s.get(&id)) {
         return Some(*p);
     }
     let w = &sim.world;
     let day = w.clock.day() as i64;
     let (_, slots) = sim.depot_slots.get(&d)?;
-    let mut faces: Vec<BoxFace> = w.containers.faces_at(d, day);
-    faces.push(w.containers.boxes.get(id)?.face(id, day));
-    let k = faces.len() - 1;
-    super::boxes::lay_out(&faces, slots).into_iter().find(|x| x.0 == k).map(|x| (x.1, x.2))
+    // [r10-port-boxes] The box set down takes the first free place (as
+    // `Containers::seat` will give it), the boxes there keep theirs.
+    let r = w.containers.boxes.get(id)?;
+    let mut places: Vec<(bool, Option<u16>)> = w.containers.faces_at(d, day).iter().filter(|f| f.id != id).map(|f| (f.forty, w.containers.boxes.get(f.id).and_then(|r| r.slot))).collect();
+    places.push((r.forty, Some(r.slot.filter(|_| r.at.stack() == Some(d)).unwrap_or_else(|| w.containers.free_slot(d, r.forty)))));
+    let k = places.len() - 1;
+    nd_procgen::buildings::parts::stand_boxes(&places, slots).into_iter().find(|x| x.0 == k).map(|x| (x.1, x.2))
 }
 
 /// The carriers: one per depot that draws bays, parked beside them, and
@@ -154,7 +159,7 @@ pub(super) fn sync_carriers(
                     let truck = on_chassis(&sim, d, j.bay, j.car, j.boxid);
                     // A box the stacks had no room to draw: the stack slot
                     // nearest the bay (or beside the bays) stands in.
-                    let stack = in_stack(&sim, d, j.boxid, &stacks.seen).or_else(|| {
+                    let stack = in_stack(&sim, d, j.boxid, j.onto_truck.then_some(&stacks.seen)).or_else(|| {
                         let (bay, yaw) = *sim.depot_bays.get(&d)?.get(j.bay as usize)?;
                         let near = sim.depot_slots.get(&d).and_then(|(_, s)| s.iter().filter(|s| s.tier == 0).min_by(|a, b| a.at.distance(bay).total_cmp(&b.at.distance(bay))).map(|s| (s.at, s.yaw)));
                         Some(near.unwrap_or((bay + Vec3::new(-yaw.sin(), 0.0, yaw.cos()) * 9.0, yaw)))

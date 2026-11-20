@@ -166,7 +166,7 @@ impl World {
         let (line, serial, origin, years) = cx::arrival(h);
         let knocks = (years * 4.0 * (0.6 + crate::hash::unit(mix(h, 17)))) as u16;
         let forty = forty && kind != BoxKind::Tank;
-        let mut r = BoxRec { line, serial, forty, kind, origin, built: (day - (years * 365.0) as i64) as i32, knocks, owner: Owner::Line, at, goods, since: tick, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false };
+        let mut r = BoxRec { line, serial, forty, kind, origin, built: (day - (years * 365.0) as i64) as i32, knocks, owner: Owner::Line, at, goods, since: tick, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false, slot: None };
         r.note(tick, first, place);
         match first {
             Event::ArrivedRail => st.arrived_today[0] += 1,
@@ -181,19 +181,26 @@ impl World {
             _ => {}
         }
         self.containers.touch();
-        self.containers.boxes.insert(r)
+        let id = self.containers.boxes.insert(r);
+        // [r10-port-boxes] Landed straight into a stack: its own place there.
+        self.containers.seat(id, false);
+        id
     }
 
     /// [K34] Move box `id` to `at`, noting why; a lift or a ride is a knock.
     pub(super) fn box_to(&mut self, id: BoxId, at: Where, what: Event, place: BuildingId) {
         let tick = self.clock.tick;
         let Some(r) = self.containers.boxes.get_mut(id) else { return };
-        if r.at != at {
+        let stays = r.at == at;
+        if !stays {
             r.knocks = r.knocks.saturating_add(1);
         }
         r.at = at;
         r.since = tick;
         r.note(tick, what, place);
+        // [r10-port-boxes] Into a stack: the first free place there (a box
+        // already standing in it keeps its own); out of one: its place is free.
+        self.containers.seat(id, stays);
         self.containers.touch();
     }
 
@@ -1363,6 +1370,10 @@ impl World {
     /// stock of empties (mixed lines, ages and wear, some of them old enough
     /// for scrap), and the boxes on its freight trains their records.
     pub(super) fn containers_after_load(&mut self) {
+        // [r10-port-boxes] A save from before the stacks had places (or one
+        // with two boxes in one place): every stored box seated in a place
+        // of its own, the first comers keeping theirs.
+        self.containers.reseat_all();
         if self.containers.live {
             return;
         }

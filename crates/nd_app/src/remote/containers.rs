@@ -40,6 +40,8 @@ pub fn box_json(w: &World, id: BoxId) -> Value {
         "origin": s.origin, "age_years": round(s.built_year_ago), "condition": s.condition, "wear": round(s.wear),
         "marks": s.marks, "owner": s.owner, "owner_building": s.owner_id.map(key_str),
         "now": s.now, "where": where_json(w, r.at), "goods": s.goods, "visits": s.visits,
+        // [r10-port-boxes] Its place in the stack (twenty-foot cells), while stored.
+        "place": r.slot.filter(|_| r.at.stack().is_some()),
         "history": s.history.iter().map(|(t, what, place, b)| json!({ "time": super::inspect::tick_time_json(*t), "what": what, "where": place, "building": b.map(key_str) })).collect::<Vec<_>>(),
     })
 }
@@ -48,7 +50,7 @@ pub fn box_json(w: &World, id: BoxId) -> Value {
 /// capacity), the boxes a Stacks home is built of, a site's so far.
 pub fn building_boxes(w: &World, b: nd_sim::BuildingId) -> Value {
     let day = w.clock.day() as i64;
-    let row = |id: BoxId| w.containers.boxes.get(id).map(|r| json!({ "id": key_str(id), "number": r.number(), "line": nd_sim::containers::LINES[r.line as usize % 10].name, "size_ft": if r.forty { 40 } else { 20 }, "condition": r.condition_label(day), "full": r.goods.is_some() }));
+    let row = |id: BoxId| w.containers.boxes.get(id).map(|r| json!({ "id": key_str(id), "number": r.number(), "line": nd_sim::containers::LINES[r.line as usize % 10].name, "size_ft": if r.forty { 40 } else { 20 }, "condition": r.condition_label(day), "full": r.goods.is_some(), "place": r.slot.filter(|_| r.at.stack().is_some()) }));
     if let Some(h) = w.containers.homes.get(&b) {
         return json!({ "home": { "built_of": h.boxes.len(), "wants": h.want, "finished": h.done, "boxes": h.boxes.iter().filter_map(|id| row(*id)).collect::<Vec<_>>() } });
     }

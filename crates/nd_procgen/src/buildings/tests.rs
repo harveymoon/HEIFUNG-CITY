@@ -994,7 +994,7 @@ fn capsule_sites_rise_in_their_own_shape() {
 /// [K34] A record's box for the tests: line, size, wear and marks.
 fn test_box(c: &mut nd_sim::containers::Containers, line: u8, serial: u32, forty: bool, years: i32) -> nd_sim::containers::BoxId {
     use nd_sim::containers::*;
-    c.boxes.insert(BoxRec { line, serial, forty, kind: nd_sim::rail::BoxKind::Dry, origin: 3, built: -365 * years, knocks: (years * 5) as u16, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false })
+    c.boxes.insert(BoxRec { line, serial, forty, kind: nd_sim::rail::BoxKind::Dry, origin: 3, built: -365 * years, knocks: (years * 5) as u16, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false, slot: None })
 }
 
 /// [r8] Harvey: "white should not be the color under super faded, muted is
@@ -1109,6 +1109,108 @@ fn a_depot_with_real_boxes_hands_over_its_slots() {
         }
         for s in &g.box_slots {
             assert!(s.at.is_finite() && s.yaw.is_finite());
+        }
+    }
+}
+
+/// [r10-port-boxes] Two drawn boxes (floor centre, yaw, length) overlap by
+/// more than 5 cm every way.
+fn boxes_overlap(a: (Vec3, f32, f32), b: (Vec3, f32, f32)) -> bool {
+    if (a.0.y - b.0.y).abs() > crate::CONTAINER_H - 0.05 {
+        return false;
+    }
+    let axes = |yaw: f32| (Vec2::new(yaw.cos(), yaw.sin()), Vec2::new(-yaw.sin(), yaw.cos()));
+    let (a0, a1) = axes(a.1);
+    let (b0, b1) = axes(b.1);
+    let d = Vec2::new(b.0.x - a.0.x, b.0.z - a.0.z);
+    let (ha, hb) = (Vec2::new(a.2 * 0.5 - 0.05, crate::CONTAINER_W * 0.5 - 0.05), Vec2::new(b.2 * 0.5 - 0.05, crate::CONTAINER_W * 0.5 - 0.05));
+    [a0, a1, b0, b1].iter().all(|&ax| d.dot(ax).abs() < ha.x * a0.dot(ax).abs() + ha.y * a1.dot(ax).abs() + hb.x * b0.dot(ax).abs() + hb.y * b1.dot(ax).abs())
+}
+
+/// [r10-port-boxes] (Harvey flag, day 80: boxes flickering inside one
+/// another at the port) Every depot style's slots are apart, and its boxes
+/// stood in the places the sim gives them (twenty- and forty-footers mixed,
+/// boxes lifted out and set down in any order) never overlap, never hang
+/// in the air, and a box that stays keeps its spot when others leave.
+#[test]
+fn boxes_stood_in_their_places_never_overlap() {
+    use crate::buildings::parts::stand_boxes;
+    let rules = BuildingRules::default();
+    let pal = Palette::default();
+    let zone = vec![Vec2::new(-100.0, -20.0), Vec2::new(100.0, -20.0), Vec2::new(100.0, 120.0), Vec2::new(-100.0, 120.0)];
+    let lots = lots(zone, LandUse::Industrial);
+    let mut lots: Vec<_> = lots.iter().collect();
+    lots.sort_by(|a, b| b.area().total_cmp(&a.area()));
+    let mut cases: Vec<(String, Vec<BoxSlot>)> = Vec::new();
+    for lot in lots.iter().take(4) {
+        for style in [Style::ContainerYard, Style::Depot, Style::Junkyard, Style::ShippingPort] {
+            let real = Extras { real_boxes: true, ..Extras::default() };
+            let g = generate_styled_extras(lot, LandUse::Industrial, 1, Tier::Mid, 0.8, 5, style, &rules, &pal, &real);
+            cases.push((format!("{style:?} on {:.0} m2", lot.area()), g.box_slots.iter().copied().filter(|s| s.tier != crate::BAY_TIER).collect()));
+        }
+    }
+    // A freight yard's twenty-foot slots, two high.
+    cases.push(("twenty-foot slots".into(), (0..12).flat_map(|k| (0..2).map(move |t| BoxSlot { at: Vec3::new(k as f32 * 6.5, t as f32 * crate::CONTAINER_H, 0.0), yaw: 0.0, tier: t, forty: false })).collect()));
+    for (name, slots) in cases {
+        let len = |f: bool| if f { crate::CONTAINER_40 } else { crate::CONTAINER_20 };
+        for (i, a) in slots.iter().enumerate() {
+            for b in &slots[i + 1..] {
+                assert!(!boxes_overlap((a.at, a.yaw, len(a.forty)), (b.at, b.yaw, len(b.forty))), "{name}: slots at {} and {} overlap", a.at, b.at);
+            }
+        }
+        // The sim's seating (`Containers::seat`): the first free cell, a
+        // forty-footer the first free even pair; boxes leave at random.
+        let mut boxes: Vec<(bool, Option<u16>)> = Vec::new();
+        let mut h = 0x5EA7u64;
+        for step in 0..400 {
+            h = nd_sim::hash::mix(h, step);
+            if h % 3 == 0 && !boxes.is_empty() {
+                let k = (h as usize >> 8) % boxes.len();
+                boxes[k].1 = None;
+            } else {
+                let forty = h & 16 == 0;
+                let mut taken = std::collections::BTreeSet::new();
+                for &(f, s) in &boxes {
+                    if let Some(s) = s {
+                        taken.insert(s);
+                        if f {
+                            taken.insert(s + 1);
+                        }
+                    }
+                }
+                let mut s = 0u16;
+                while taken.contains(&s) || (forty && taken.contains(&(s + 1))) {
+                    s += if forty { 2 } else { 1 };
+                }
+                boxes.push((forty, Some(s)));
+            }
+            let laid = stand_boxes(&boxes, &slots);
+            let vols: Vec<(Vec3, f32, f32)> = laid.iter().map(|&(k, at, yaw)| (at, yaw, len(boxes[k].0))).collect();
+            for i in 0..vols.len() {
+                for j in i + 1..vols.len() {
+                    assert!(!boxes_overlap(vols[i], vols[j]), "{name} step {step}: boxes {} and {} overlap at {} / {}", laid[i].0, laid[j].0, vols[i].0, vols[j].0);
+                }
+                // Standing on the ground or on another box.
+                let ground = slots.iter().filter(|s| s.tier == 0).map(|s| s.at.y).fold(f32::INFINITY, f32::min);
+                if vols[i].0.y > ground + 0.5 {
+                    let under = (vols[i].0 - Vec3::Y * crate::CONTAINER_H, vols[i].1, vols[i].2);
+                    assert!(vols.iter().any(|v| boxes_overlap(*v, under)), "{name} step {step}: box {} in the air at {}", laid[i].0, vols[i].0);
+                }
+            }
+            // A box that stays where it is keeps its spot when one leaves.
+            if step % 7 == 0 {
+                if let Some(k) = (0..boxes.len()).rev().find(|k| boxes[*k].1.is_some() && laid.iter().any(|x| x.0 == *k)) {
+                    let mut fewer = boxes.clone();
+                    fewer[k].1 = None;
+                    let again = stand_boxes(&fewer, &slots);
+                    let gone_cells: Vec<_> = laid.iter().filter(|x| x.0 != k).filter(|x| !again.iter().any(|y| y.0 == x.0 && y.1.distance(x.1) < 0.01)).collect();
+                    // Only boxes resting on the one taken out may settle.
+                    for x in gone_cells {
+                        let y = again.iter().find(|y| y.0 == x.0).expect("still drawn");
+                        assert!(y.1.y < x.1.y - 0.5 && Vec2::new(y.1.x - x.1.x, y.1.z - x.1.z).length() < 0.01, "{name}: box {} moved sideways when box {k} left", x.0);
+                    }
+                }
+            }
         }
     }
 }

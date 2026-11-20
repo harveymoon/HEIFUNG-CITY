@@ -2650,7 +2650,12 @@ build, origin port, age, wear and marks, owner and where it is, and a short hist
 - `inspect {box}` and `select {box}`: the box (also picked with a click on a box in a depot's stacks or
   on a train); the reply has number, line, size, kind, origin, age_years, condition, wear, marks, owner,
   owner_building, now, where {kind: train/lorry/stored/home_site/home/scrap, ...}, goods, visits,
-  history [{time, what, where, building}].
+  history [{time, what, where, building}], and `place`: [r10-port-boxes] its place in its depot's stack
+  while it is stored there (in twenty-foot cells; a forty-footer takes an even cell and the next), else
+  null. A box keeps its place for as long as it stays: each box is drawn in its own place, the first
+  free one when it comes in (`Containers::seat`), so no two share space and nothing in a stack moves
+  when another box leaves. Places past the depot's drawn slots are not drawn. An older save, or one
+  where two boxes share a place, is re-seated on load (the first come keep theirs).
 - A building's `inspect` carries `containers`: a depot's {kind, stored, capacity, full, boxes} or a
-  Stacks home's {built_of, wants, finished, boxes}; a car's `inspect` carries the boxes on its trailer.
+  Stacks home's {built_of, wants, finished, boxes} (each box row with its `place`); a car's `inspect` carries the boxes on its trailer.
 - `pressure` has `scrap_yard`: old boxes a day with no scrap yard to cut them up.

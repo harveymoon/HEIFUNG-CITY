@@ -183,6 +183,17 @@ pub enum Where {
     Ship(crate::ports::ShipId),
 }
 
+impl Where {
+    /// [r10-port-boxes] The depot whose stack the box stands in (stored, or
+    /// on a scrap yard's pile).
+    pub fn stack(self) -> Option<BuildingId> {
+        match self {
+            Where::Stored(b) | Where::Scrap(b) => Some(b),
+            _ => None,
+        }
+    }
+}
+
 /// [K34] What a box is full of, and who it is for (a null buyer: whoever
 /// at its yard ordered that).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -317,6 +328,13 @@ pub struct BoxRec {
     /// out by road.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bound_out: bool,
+    /// [r10-port-boxes] Its place in its depot's stack while it stands
+    /// there, in twenty-foot cells (see [`Containers::seat`]): a
+    /// forty-footer takes an even cell and the one after it. The renderer
+    /// stands it in that place for as long as it stays, so no two boxes
+    /// share one and nothing moves when another box leaves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<u16>,
 }
 
 /// [r8] One firm's export goods in a forwarder's box.
@@ -660,6 +678,139 @@ impl Containers {
         v.into_iter().map(|(_, id)| id).collect()
     }
 
+    /// [r10-port-boxes] The cells of depot `b`'s stack taken, but box
+    /// `but`'s.
+    fn cells_taken(&self, b: BuildingId, but: Option<BoxId>) -> std::collections::BTreeSet<u16> {
+        let mut taken = std::collections::BTreeSet::new();
+        for (id, r) in self.boxes.iter() {
+            if Some(id) == but || r.at.stack() != Some(b) {
+                continue;
+            }
+            if let Some(s) = r.slot {
+                taken.insert(s);
+                if r.forty {
+                    taken.insert(s + 1);
+                }
+            }
+        }
+        taken
+    }
+
+    /// [r10-port-boxes] The place a box of size `forty` would take in depot
+    /// `b`'s stack now: the first free cell (a forty-footer the first free
+    /// even pair), so a stack fills from its first places and a box set
+    /// down fills the gap the last one lifted out left.
+    pub fn free_slot(&self, b: BuildingId, forty: bool) -> u16 {
+        Self::first_free(&self.cells_taken(b, None), forty)
+    }
+
+    fn first_free(taken: &std::collections::BTreeSet<u16>, forty: bool) -> u16 {
+        let mut s = 0u16;
+        loop {
+            if forty {
+                if !taken.contains(&s) && !taken.contains(&(s + 1)) {
+                    return s;
+                }
+                s += 2;
+            } else {
+                if !taken.contains(&s) {
+                    return s;
+                }
+                s += 1;
+            }
+        }
+    }
+
+    /// [r10-port-boxes] Give box `id` its place in the stack it now stands
+    /// in (keeping the one it has there if that is still its own), or take
+    /// its place away when it is not in a stack. Every way into a stack
+    /// (a crane off a ship, a lorry's drop, an empty returned, a forwarder's
+    /// box, a salvaged home, a depot's first stock) goes through here.
+    pub fn seat(&mut self, id: BoxId, keep: bool) {
+        let Some(r) = self.boxes.get(id) else { return };
+        let Some(b) = r.at.stack() else {
+            self.boxes[id].slot = None;
+            return;
+        };
+        let forty = r.forty;
+        let taken = self.cells_taken(b, Some(id));
+        let fits = |s: u16| !taken.contains(&s) && (!forty || (s % 2 == 0 && !taken.contains(&(s + 1))));
+        let s = match r.slot.filter(|s| keep && fits(*s)) {
+            Some(s) => s,
+            None => Self::first_free(&taken, forty),
+        };
+        self.boxes[id].slot = Some(s);
+    }
+
+    /// [r10-port-boxes] Every stack's boxes in places of their own: a box
+    /// without a place (an older save) or sharing one with a box that came
+    /// before it is re-seated in the first free place. In the order the
+    /// boxes came (oldest first, then by id), so the same city always comes
+    /// out the same. Returns how many were moved.
+    pub fn reseat_all(&mut self) -> usize {
+        let mut by_stack: BTreeMap<BuildingId, Vec<(u64, BoxId)>> = BTreeMap::new();
+        for (id, r) in self.boxes.iter() {
+            if let Some(b) = r.at.stack() {
+                by_stack.entry(b).or_default().push((r.since, id));
+            }
+        }
+        let mut moved = 0;
+        for (_, mut v) in by_stack {
+            v.sort();
+            let mut taken = std::collections::BTreeSet::new();
+            let mut later = Vec::new();
+            for &(_, id) in &v {
+                let r = &self.boxes[id];
+                let ok = r.slot.is_some_and(|s| !taken.contains(&s) && (!r.forty || (s % 2 == 0 && !taken.contains(&(s + 1)))));
+                if ok {
+                    let s = r.slot.unwrap();
+                    taken.insert(s);
+                    if r.forty {
+                        taken.insert(s + 1);
+                    }
+                } else {
+                    later.push(id);
+                }
+            }
+            for id in later {
+                let forty = self.boxes[id].forty;
+                let s = Self::first_free(&taken, forty);
+                taken.insert(s);
+                if forty {
+                    taken.insert(s + 1);
+                }
+                self.boxes[id].slot = Some(s);
+                moved += 1;
+            }
+        }
+        for r in self.boxes.values_mut().filter(|r| r.at.stack().is_none()) {
+            r.slot = None;
+        }
+        if moved > 0 {
+            self.touch();
+        }
+        moved
+    }
+
+    /// [r10-port-boxes] Pairs of boxes in one stack whose places overlap
+    /// (none, unless something went wrong): for the tests and the probes.
+    pub fn slot_clashes(&self) -> usize {
+        let mut cells: BTreeMap<(BuildingId, u16), u32> = BTreeMap::new();
+        let mut clashes = 0;
+        for r in self.boxes.values() {
+            let (Some(b), Some(s)) = (r.at.stack(), r.slot) else { continue };
+            for c in if r.forty { vec![s, s + 1] } else { vec![s] } {
+                let n = cells.entry((b, c)).or_default();
+                clashes += *n as usize;
+                *n += 1;
+            }
+            if r.forty && s % 2 == 1 {
+                clashes += 1;
+            }
+        }
+        clashes
+    }
+
     /// The faces of the boxes stored at `b`, for drawing.
     pub fn faces_at(&self, b: BuildingId, day: i64) -> Vec<BoxFace> {
         self.stored_at(b).into_iter().filter_map(|id| self.boxes.get(id).map(|r| r.face(id, day))).collect()
@@ -776,7 +927,7 @@ mod tests {
 
     #[test]
     fn wear_grows_with_age_and_knocks_and_shows() {
-        let r = BoxRec { line: 1, serial: 42, forty: true, kind: BoxKind::Dry, origin: 0, built: 0, knocks: 0, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false };
+        let r = BoxRec { line: 1, serial: 42, forty: true, kind: BoxKind::Dry, origin: 0, built: 0, knocks: 0, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false, slot: None };
         let young = r.wear(365);
         let old = r.wear(365 * 18);
         assert!(old > young + 0.4, "{young} {old}");
@@ -790,7 +941,7 @@ mod tests {
 
     #[test]
     fn the_log_keeps_the_first_entry_and_the_latest() {
-        let mut r = BoxRec { line: 0, serial: 1, forty: false, kind: BoxKind::Dry, origin: 0, built: 0, knocks: 0, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false };
+        let mut r = BoxRec { line: 0, serial: 1, forty: false, kind: BoxKind::Dry, origin: 0, built: 0, knocks: 0, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false, slot: None };
         r.note(0, Event::ArrivedRail, BuildingId::default());
         for t in 1..40 {
             r.note(t, Event::Stored, BuildingId::default());
