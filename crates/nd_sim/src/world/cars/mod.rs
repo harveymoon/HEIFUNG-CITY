@@ -27,6 +27,7 @@ use rand::seq::SliceRandom;
 use crate::vehicle::{CarEvent, CarPlace, Errand, OwnedCar, ParkKind, ParkSpot, VehicleId, VehicleModel, BIKE_PRICE};
 
 mod kerbs;
+pub(in crate::world) use kerbs::{SQUEEZE_REACH, SQUEEZE_SLOT};
 mod parking;
 #[cfg(test)]
 pub(in crate::world) use parking::parking_band;

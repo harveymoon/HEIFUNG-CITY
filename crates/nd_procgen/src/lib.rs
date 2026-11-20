@@ -46,6 +46,8 @@ pub mod toll;
 pub mod textures;
 pub mod vehicles;
 pub mod vacant;
+/// [r11-lot-memory] Ghosts on walls, old slabs, painted-over signs.
+pub mod lot_memory;
 
 #[cfg(test)]
 mod golden_tests;

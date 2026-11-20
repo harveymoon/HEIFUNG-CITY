@@ -5,7 +5,8 @@ use super::*;
 use crate::enforcement::*;
 use crate::mind::IdleMind;
 use crate::services::ServiceKind;
-use crate::vehicle::{CarEvent, CarPlace, ParkKind, VehicleId};
+use crate::vehicle::{CarEvent, CarPlace, ParkKind, ParkSpot, VehicleId};
+use super::cars::{SQUEEZE_REACH, SQUEEZE_SLOT};
 use super::cars::HUNT_GIVE_UP;
 use crate::Errand;
 
@@ -791,13 +792,178 @@ fn a_parked_car_keeps_its_kerb_slot_when_the_ids_change() {
 fn a_car_left_with_no_slot_stands_at_the_kerb_not_in_the_lane() {
     // K32/K35: a car squeezed in where there was no slot kept its place in
     // its lane and was drawn in the middle of the road.
+    // [r11-parking] It goes to a squeeze place of its own (a corner of
+    // the block, clear of the junction), not the point nearest it.
     let w = town();
     let lane_centre = Vec2::new(1.75, -150.0);
     let spot = w.squeezed_spot(lane_centre);
-    let half = w.roads.segment(spot.segment.expect("on the street")).half_width();
+    let sid = spot.segment.expect("on the street");
+    let half = w.roads.segment(sid).half_width();
     assert!((spot.pos.x.abs() - (half - 1.15)).abs() < 0.05, "on the kerb line: {:?} (half width {half})", spot.pos);
-    assert!(spot.pos.x > 0.0, "on the side it stood");
-    assert!((spot.pos.y + 150.0).abs() < 0.5);
+    assert!(spot.slot >= SQUEEZE_SLOT && spot.slot != u16::MAX, "a squeeze place of its own: {}", spot.slot);
+    assert!(w.street_spot_valid(&spot), "a place a car may keep");
+    assert!(lane_gap(&w, spot.pos) >= 1.9, "clear of every lane: {:.2} m", lane_gap(&w, spot.pos));
+}
+
+// ── [r11-parking] cars parked in the middle of the road ──────────────────
+
+/// How far `p` is from the centre line of the nearest lane (road lanes and
+/// the connectors through junctions): under 1.9 m a moving car drives
+/// through a car parked there.
+fn lane_gap(w: &World, p: Vec2) -> f32 {
+    w.traffic.net.lanes.iter().flat_map(|l| l.points.windows(2).map(|s| p.distance(crate::geom::project_on_segment(p, s[0], s[1]).1))).fold(f32::MAX, f32::min)
+}
+
+/// Put a car (with nobody's name on it) in `spot`.
+fn put(w: &mut World, spot: ParkSpot) -> VehicleId {
+    let vid = w.vehicles.cars.insert(crate::vehicle::OwnedCar { owner: CitizenId::default(), model: Default::default(), place: CarPlace::Driving(Default::default()), color: 0, since: 0, spare: false, usual: false, dealer: None });
+    w.park_at(vid, spot);
+    vid
+}
+
+/// Two streets crossing at a one-lane roundabout of radius 30.
+fn ring_town() -> World {
+    let mut w = World::new(WorldConfig { emergencies: false, landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::default() });
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(300.0, 0.0)], 1, 1);
+    w.add_road(&[Vec2::new(0.0, -300.0), Vec2::new(0.0, 300.0)], 1, 1);
+    w.add_roundabout(Vec2::ZERO, 30.0, 1).expect("ring");
+    w.implement();
+    w
+}
+
+#[test]
+fn cars_given_up_at_a_roundabout_stand_at_a_kerb_off_the_ring_one_to_a_place() {
+    // Harvey's day 81: a car given up by Varga Circus stood 0.4 m off the
+    // ring's centre line (the squeeze took the point of the nearest street
+    // nearest it: the arm's end, in the ring), and two more at one corner of
+    // the ramp's junction stood on each other (a "scooter" drawn as a car,
+    // z-fighting), with the traffic driving through them.
+    let mut w = ring_town();
+    let ring_nodes: Vec<Vec2> = w.roads.alive_segments().filter(|(id, _)| w.on_ring(*id)).map(|(id, _)| w.roads.segment_points(id).0).collect();
+    assert!(ring_nodes.len() >= 4);
+    let mut placed: Vec<Vec2> = Vec::new();
+    for p in ring_nodes.iter().cycle().take(ring_nodes.len() * 3) {
+        let spot = w.squeezed_spot(*p);
+        let sid = spot.segment.expect("at a street's kerb");
+        assert!(w.kerb_physical(sid) && !w.on_ring(sid), "never on the ring");
+        assert_eq!(spot.kind, ParkKind::Overflow, "a squeezed car is parked illegally");
+        assert!(w.kerb_clear(sid, spot.pos, spot.heading), "clear of the junction");
+        assert!(lane_gap(&w, spot.pos) >= 1.9, "the traffic never drives through it: {:.2} m from a lane at {:?}", lane_gap(&w, spot.pos), spot.pos);
+        if spot.slot == u16::MAX {
+            // Every squeeze place within a kilometre taken: the last resort
+            // is the kerb line, still out of the lanes.
+            break;
+        }
+        assert!(placed.iter().all(|q| q.distance(spot.pos) > 4.5), "never on another squeezed car: {:?} vs {:?}", spot.pos, placed);
+        placed.push(spot.pos);
+        put(&mut w, spot);
+    }
+    assert!(placed.len() >= 8, "a corner each side of every arm, both ends ({})", placed.len());
+}
+
+#[test]
+fn roundabouts_and_slip_roads_never_offer_kerb_parking() {
+    let mut w = ring_town();
+    let ring: Vec<SegmentId> = w.roads.alive_segments().filter(|(id, _)| w.on_ring(*id)).map(|(id, _)| id).collect();
+    for &id in &ring {
+        assert!(!w.kerb_parking(id) && w.slot_count(id) == 0 && w.squeeze_count(id) == 0, "no parking of any kind on the ring");
+    }
+    // A slip road the player set to Mixed is still a slip road.
+    let arm = w.roads.alive_segments().find(|(id, s)| s.is_street() && !w.on_ring(*id) && w.kerb_parking(*id)).map(|(id, _)| id).expect("an arm with kerb parking");
+    w.roads.segments[arm.0 as usize].ramp = true;
+    w.roads.segments[arm.0 as usize].car_only = Some(false);
+    assert!(!w.kerb_parking(arm) && !w.kerb_physical(arm) && w.squeeze_count(arm) == 0, "none on a slip road");
+}
+
+#[test]
+fn kerb_slots_never_run_into_the_lanes_of_a_forking_avenue() {
+    // Harvey's city: an illegally parked scooter in slot 0 of an avenue
+    // stood 2.5 m from the centre of the avenue forking off it at 35°.
+    let mut w = World::new(WorldConfig { emergencies: false, landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::default() });
+    w.add_road(&[Vec2::new(-300.0, 0.0), Vec2::new(0.0, 0.0), Vec2::new(300.0, 0.0)], 2, 2);
+    w.add_road(&[Vec2::new(0.0, 0.0), Vec2::new(260.0, 150.0)], 2, 2);
+    w.implement();
+    let slots = w.free_illegal_slots_near(Vec2::new(40.0, 10.0), 400.0, 1000);
+    assert!(slots.len() >= 4, "the avenues have kerbs to stand at ({})", slots.len());
+    for k in &slots {
+        assert!(lane_gap(&w, k.pos) >= 1.9, "slot {} of segment {} side {} at {:?} stands in a lane ({:.2} m)", k.slot, k.segment.0, k.side, k.pos, lane_gap(&w, k.pos));
+    }
+    // The fork's first slot is no place to stand.
+    let fork = w.roads.alive_segments().map(|(id, _)| id).find(|&id| {
+        let (a, b) = w.roads.segment_points(id);
+        (b - a).normalize().dot(Vec2::new(260.0, 150.0).normalize()).abs() > 0.99
+    }).unwrap();
+    let blocked = (0..2u8).any(|side| {
+        (0..w.slot_count(fork)).map(|k| w.slot_pose(fork, side, k)).filter(|(p, _)| p.length() < 30.0).any(|(p, h)| !w.kerb_clear(fork, p, h))
+    });
+    assert!(blocked, "a slot by the fork is out");
+}
+
+#[test]
+fn a_car_with_only_a_highway_near_is_squeezed_in_on_a_street_not_left_in_its_lane() {
+    // Two of Harvey's cars stood on the highway at the map's edge: no
+    // street within 40 m, so the squeeze kept them where they were.
+    let mut w = World::new(WorldConfig { emergencies: false, landscape: crate::landscape::LandscapeParams::flat(), ..WorldConfig::default() });
+    w.add_road(&[Vec2::new(-600.0, 0.0), Vec2::new(600.0, 0.0)], 3, 0);
+    w.add_road(&[Vec2::new(-200.0, 300.0), Vec2::new(200.0, 300.0)], 1, 1);
+    w.implement();
+    let on_highway = Vec2::new(0.0, 1.75);
+    assert!(w.free_squeeze_near(on_highway, SQUEEZE_REACH[0]).is_none(), "nothing near: a hunter drives on");
+    let spot = w.squeezed_spot(on_highway);
+    let sid = spot.segment.expect("on a street");
+    assert!(!w.roads.segment(sid).is_highway() && w.kerb_physical(sid));
+    assert!((spot.pos.y - 300.0).abs() < 6.0, "at the street's kerb: {:?}", spot.pos);
+    assert!(lane_gap(&w, spot.pos) >= 1.9);
+}
+
+#[test]
+fn an_old_saves_cars_parked_in_the_lanes_move_to_the_kerb_on_load() {
+    let mut w = town();
+    let (_, a) = parked_far(&mut w);
+    let (_, b) = parked_far(&mut w);
+    // As the old squeeze left them: one in the junction, one in its lane
+    // mid-street, neither with a place of its own.
+    for (vid, pos) in [(a, Vec2::new(1.75, 0.5)), (b, Vec2::new(1.75, -150.0))] {
+        w.unpark(vid);
+        if let CarPlace::Parked(s) = &mut w.vehicles.cars[vid].place {
+            *s = ParkSpot { kind: ParkKind::Overflow, segment: None, side: 0, slot: u16::MAX, pos, heading: 0.0, since: 1, ..Default::default() };
+        }
+    }
+    assert!(lane_gap(&w, Vec2::new(1.75, 0.5)) < 1.0);
+    let text = w.to_ron().unwrap();
+    let one = World::from_ron(&text).unwrap();
+    let two = World::from_ron(&text).unwrap();
+    let mut spots = Vec::new();
+    for vid in [a, b] {
+        let s = *one.vehicles.cars[vid].spot().expect("still parked");
+        assert!(s.kind.on_street() || s.kind.uses_building(), "{:?}", s.kind);
+        if s.kind.on_street() {
+            assert!(one.street_spot_valid(&s), "a kerb place of its own: {s:?}");
+            assert!(lane_gap(&one, s.pos) >= 1.9, "out of the lanes: {:?} ({:.2} m)", s.pos, lane_gap(&one, s.pos));
+        }
+        assert_eq!(two.vehicles.cars[vid].spot().map(|t| (t.pos, t.slot)), Some((s.pos, s.slot)), "the same place every load");
+        spots.push(s.pos);
+    }
+    assert!(spots[0].distance(spots[1]) > 4.5, "not on each other");
+}
+
+#[test]
+fn no_parked_car_stands_in_a_lane_after_a_busy_day() {
+    // Moving traffic never passes through a parked car: every car at a
+    // kerb (legal, illegal or squeezed in) stands clear of every lane.
+    let mut w = town();
+    // Few legal places: the kerbs fill and drivers squeeze in.
+    run(&mut w, 18 * 60);
+    let street: Vec<ParkSpot> = w.vehicles.cars.values().filter_map(|c| c.spot().copied()).filter(|s| s.kind.on_street()).collect();
+    assert!(!street.is_empty(), "cars at the kerb");
+    for s in &street {
+        assert!(lane_gap(&w, s.pos) >= 1.9, "{:?} at {:?} in a lane ({:.2} m)", s.kind, s.pos, lane_gap(&w, s.pos));
+    }
+    for i in 0..street.len() {
+        for j in i + 1..street.len() {
+            assert!(street[i].pos.distance(street[j].pos) > 3.0, "two cars on one place: {:?} {:?}", street[i], street[j]);
+        }
+    }
 }
 
 #[test]

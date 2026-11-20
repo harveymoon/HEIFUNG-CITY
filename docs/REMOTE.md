@@ -2437,6 +2437,19 @@ grass_bare, paving_start, paving_full}, `hottest` and `at` as {pos, heat, passes
 grass_wear 0..1, paving_wear 0..1}. Heat is steps through a cell, fading by half every 3 days unused
 (about 4.3 x the passes a day kept up). `overlay {layer: "foot_wear"}` shows the Foot wear layer
 (the heat cool to hot over a dimmed city).
+
+**What stood here.** [r11-lot-memory] `lot_memory` (aliases `what_stood_here`, `lot_history`; code
+`remote/lot_memory.rs`, model in DESIGN.md, Lots remember what stood there) reports the lot history:
+`traces`, `demolished`, `changed`, `version`, `per_lot` (4), `max` (3000), `newest` (the last `top`,
+default 10: {id, kind demolished | changed, at, weeks_ago, line}) and, with `at` [x,y], `at` {lot,
+vacant, what_stood_here} for the lot there. For testing (they change the city): `demolish` (a
+building id: pulled down now, the lot left vacant), `change` (a building id) with `to` (a business
+key, or `shut`: its trade changes, its old sign is painted over), `age_days` (everything remembered
+that many days earlier, to see the ghosts and slabs fade); `done` lists what was done.
+`inspect {building}` and `inspect {lot}` carry `what_stood_here`, newest first: {kind, day,
+weeks_ago, line, name, what, floors, land_use, business, became (changed: the new trade, null when
+it shut), reason (demolished: the demolition's key), shopfront (the unit, for a tenant's shop),
+stood_days}. `status.render.chunks.causes.lot_memory` counts the building layers redrawn for it.
 **Inspecting a road.** [road-inspect] A click with the Inspect tool on a road (not on a vehicle,
 person, toll booth or parked car, and not inside a junction) selects the street piece under the
 pointer: at a crossing of two levels the upper one, and in the Underground view only pieces below
@@ -2463,7 +2476,9 @@ with a road selected returns the `segment` record plus `road`, the card:
   `queued_for_repair`, `queue_place`, `queue_length`, `priority`, `last_repaired_day`,
   `last_repair_whole`, `last_repair_ordered`, `funding`;
 - `tolls` [{id, name, price}], `crossings` {junction, zebra, push_button, footbridge}, `bus_stops`
-  (line names), `kerb_parking`, `kerb_parked`.
+  (line names), `kerb_parking` (legal kerb parking by the sim's own rule: [r11-parking] false on
+  a roundabout's ring, a slip road, a bridge, an avenue or a loading street; it used to read the
+  street's kind alone, so a ring said true), `kerb_parked`.
 
 ```json
 {"cmd": "select", "at": [120, -40]}

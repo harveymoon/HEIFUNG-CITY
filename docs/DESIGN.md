@@ -256,6 +256,42 @@ Citizens are rendered from their simulated positions every frame.
   The `foot_wear` map layer shows the heat itself and the remote `foot_wear` command reports it.
   Walkers stay on the walk graph (no new shortcuts): tracks form where the graph already crosses
   open ground (lot loops and gates, park walks' edges, vacant lots, open land).
+- **Lots remember what stood there** [r11-lot-memory] (`nd_sim::lot_memory`, `world/lot_memory.rs`,
+  `nd_procgen::lot_memory`, `buildings/ghost_signs.rs`, `nd_app` `render/lot_memory.rs`): a short
+  history per lot. A trace is recorded when a building is gone (when the rubble is cleared, or at
+  once for a car park or a civic structure; not for a site cleared before it opened): its outline (the lot, or its merged plots), floors,
+  land use, trade, name, seed, when it was built and went, and why (the demolition's reason). The
+  demolition keeps the old name and trade, since during a redevelopment the building's own fields
+  are already its successor's. And when a standing building's trade changes (`set_business`: a
+  new kind or shut) or a shopfront's tenant does (`sync_tenants`: the sign's trade), with what it
+  was and what it became (noted once if both happen in the same hour). Traces are found by place
+  (the lot whose outline holds the trace's centre), so a recut lot keeps the history of its ground;
+  at most 4 on a lot and 3,000 in the city, the oldest going first. Saved as one tuple a trace with
+  lengths in decimetres (about 140 bytes a trace); old saves load with no history. No random draws.
+  Drawn from it, procedurally, at no cost a frame:
+  - on a standing building's wall that faced the old ground within 2 m of the shared edge and
+    reaches the ground (so not across a gap, not on the successor standing on the lot, not on a
+    car park's or a park's neighbours), the ghost of the old house: a patch of old plaster up to its
+    roof line (a gable, a mono-pitch, or a flat roof with a lower back extension, from its seed and
+    height, held under the wall's own top), the dark flashing line where the roof met the wall, the
+    floor lines, scraps of each room's wallpaper (some stripped), the chimney breast with a
+    fireplace per floor and its stack's outline, a row of tile scars under a pitched roof. It fades
+    by the week to a faint scar after six weeks. Drawn into the neighbour's chunk layer
+    (`append_building`); the renderer keeps each trace's fade stage and redraws only the layers
+    round a trace that is new, gone or a week older;
+  - on a lot left vacant, the old slab in cracked 1.6 m squares, its footings broken along the
+    outline, a patch of kitchen tiles, weeds in the cracks; each week the weeds take more until it
+    is gone at ten weeks, or something is built (with the vacant-lot dressing). On dear land (a
+    parklet) the lot is bare cleared ground round the slab for two weeks, then the owner has it
+    turfed;
+  - on a building whose trade changed or shut, the old sign painted over above the shopfront (over
+    that shopfront for a tenant's): a patch of fresh paint with its screw holes, the old name (or
+    trade) faintly through it in stencil letters, fading over four weeks to faint; a third of the
+    time the old door bricked up, and a shopfront that is no shop any more filled in with
+    blockwork round a small window.
+  The building inspector shows "WHAT STOOD HERE" (one line a trace: "Day 12: Rust Row, a 4-storey
+  block of homes, pulled down (bulldozed: the zone was cleared); stood 30 days"), the lot hover
+  card the last two; `inspect` carries `what_stood_here`, and the remote `lot_memory` reports it.
 - **Road wear and maintenance** (`nd_sim::road_wear`, `world/roadworks.rs`): every street piece
   the city looks after (not paths, track, bored tunnels, highway carriageways or anything past the
   map edge) wears 0.0033 a day with age (about 300 days to crumble) plus 0.00012 per vehicle sample
@@ -725,10 +761,20 @@ Citizens are rendered from their simulated positions every frame.
   sight it circles the streets around (counted as circling, the signal development opens lots on),
   and after four tries parks anywhere on the street. The hunt is also timed: after 20 minutes the driver looks further and at
   banned kerbs, after an hour it stops looking and leaves the car where it can (a banned kerb
-  nearby, a free one within 700 m, else squeezed in where it stands), and a worn-out hunter
+  nearby, a free one within 700 m, else squeezed in at a free corner of a street within 60 m; on a
+  roundabout, slip road or highway with no corner near it drives on), and a worn-out hunter
   standing two minutes in a queue does so on the spot instead of waiting to reach its street. Kerbs: one slot per 6.5 m on both sides of
   streets, none within 12 m of a junction, none on highways, bridges, avenues (clearways) or streets
-  fronted by shops and nightlife (loading). A car keeps its space until it drives off, so a lot's
+  fronted by shops and nightlife (loading). [r11-parking] No parking of any kind (legal, banned or
+  squeezed) on a roundabout's ring, a slip road, a highway, a tunnel or a bridge, and no slot whose
+  car would stand in the carriageway of another way meeting the street (corners, sharp forks).
+  A car with no slot of its own takes a *squeeze place* (`SQUEEZE_SLOT`): one at each corner zone
+  of a street (8.75 m from its end) or every 6.5 m along one too short for slots, clear of the
+  junction, one car to a place in the kerb index; a car taken off the road elsewhere (roads
+  rebuilt, a clamp, an old save) goes to the nearest free one within 60/250/1000 m. Every parked
+  car stands on its kerb line outside the lanes, so moving traffic never passes through one; on
+  load, cars an older save left in a lane, on a ring or ramp, or stacked on each other move to the
+  nearest legal kerb (else a squeeze place). A car keeps its space until it drives off, so a lot's
   occupancy is the cars standing in it, overnight too. Cars parked at a building that goes are moved
   to the street. Lorries return to their business or a truck lot (`world/industry`); delivery vans
   to their shop.

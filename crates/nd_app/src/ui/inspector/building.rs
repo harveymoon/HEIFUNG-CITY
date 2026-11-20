@@ -315,6 +315,15 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
     crate::ui::places::building_place(ui, w, id);
     // [land] owner, price, plots and the owner's other properties
     crate::ui::estate::building_section(ui, w, id, selection);
+    // [r11-lot-memory] What stood on the lot before, and the trades that
+    // changed in what stands.
+    let history = w.lot_history(b.lot);
+    if !history.is_empty() {
+        section(ui, "WHAT STOOD HERE");
+        for t in history {
+            hint(ui, &t.line());
+        }
+    }
 
     // ── People ──
     let inside: Vec<nd_sim::CitizenId> = w.citizens.iter().filter(|(_, c)| c.inside == Some(id)).map(|(cid, _)| cid).collect();

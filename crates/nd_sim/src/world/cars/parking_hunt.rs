@@ -409,11 +409,26 @@ impl World {
             }
             None => {
                 // An hour of it and not one slot free within 700 m: the car
-                // is left where it stands, squeezed in at the kerb (it used
-                // to drive round for good: drivers hunting two to ten hours
-                // for a space, through the jam they were part of).
-                let spot = self.squeezed_spot(pos);
-                self.finish_park(car_id, vid, spot, tries.max(1));
+                // is left close by, squeezed in at the kerb (it used to drive
+                // round for good: drivers hunting two to ten hours for a
+                // space, through the jam they were part of).
+                // [r11-parking] At a free corner of a street near where it
+                // stands, never in its lane: on a roundabout, a slip road or
+                // the highway, with no corner near, it drives on (a car given
+                // up in a roundabout's queue was left in the ring, and the
+                // traffic drove through it).
+                match self.free_squeeze_near(pos, SQUEEZE_REACH[0]) {
+                    Some(k) => {
+                        let spot = ParkSpot { kind: ParkKind::Overflow, segment: Some(k.segment), side: k.side, slot: k.slot, pos: k.pos, heading: k.heading, since: self.clock.tick, ..Default::default() };
+                        self.finish_park(car_id, vid, spot, tries.max(1));
+                    }
+                    None => {
+                        if let Some(c) = self.traffic.cars.get_mut(car_id) {
+                            c.errand = Errand::Search { tries: MAX_TRIES };
+                        }
+                        self.circle(car_id, target);
+                    }
+                }
             }
         }
     }
