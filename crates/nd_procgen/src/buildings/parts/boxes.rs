@@ -28,6 +28,124 @@ pub fn box_slot(g: &mut Geometry, c: &Ctx, u: f32, v: f32, yaw: f32, y0: f32, ti
 }
 
 
+/// Which slot each box takes (`forty` per box, in order): ground tiers
+/// first; a twenty-footer in a forty-foot slot takes one half (the next one
+/// the other), a forty-footer a forty-foot slot. Boxes past the last slot
+/// are not drawn. Returns (box index, floor centre, yaw).
+pub fn lay_out_boxes(forty: &[bool], slots: &[BoxSlot]) -> Vec<(usize, Vec3, f32)> {
+    let mut order: Vec<usize> = (0..slots.len()).collect();
+    order.sort_by_key(|&i| (slots[i].tier, i));
+    let mut used = vec![false; slots.len()];
+    let mut half: Option<usize> = None;
+    let mut out = Vec::new();
+    let shift = |s: &BoxSlot, d: f32| s.at + Vec3::new(s.yaw.cos(), 0.0, s.yaw.sin()) * d;
+    // A slot above another is usable only once the one below is taken.
+    let below: Vec<Option<usize>> = slots.iter().map(|a| if a.tier == 0 { None } else { slots.iter().position(|b| b.tier + 1 == a.tier && Vec2::new(b.at.x - a.at.x, b.at.z - a.at.z).length() < 0.5) }).collect();
+    let below_ok = |i: usize, used: &[bool]| below[i].is_none_or(|j| used[j]);
+    for (k, &f) in forty.iter().enumerate() {
+        if f {
+            let Some(&i) = order.iter().find(|&&i| !used[i] && slots[i].forty && below_ok(i, &used)) else { continue };
+            used[i] = true;
+            out.push((k, slots[i].at, slots[i].yaw));
+        } else if let Some(i) = half.take() {
+            out.push((k, shift(&slots[i], CONTAINER_20 * 0.5 + 0.02), slots[i].yaw));
+        } else {
+            let Some(&i) = order.iter().find(|&&i| !used[i] && below_ok(i, &used)) else { continue };
+            used[i] = true;
+            if slots[i].forty {
+                half = Some(i);
+                out.push((k, shift(&slots[i], -(CONTAINER_20 * 0.5 + 0.02)), slots[i].yaw));
+            } else {
+                out.push((k, slots[i].at, slots[i].yaw));
+            }
+        }
+    }
+    out
+}
+
+/// [r10-port-boxes] Stand a depot's boxes in its slots by the places the
+/// sim gave them (`(forty, place)` per box; `nd_sim::containers::BoxRec::
+/// slot`, in twenty-foot cells): the slots in order, ground tiers first,
+/// each two cells (one half of a forty-foot slot each; a twenty-foot slot
+/// takes the first only), or one cell each where every slot is a
+/// twenty-footer's. A forty-footer stands only on an even cell of a
+/// forty-foot slot, a box past the last slot or in a cell already taken is
+/// not drawn, so no two boxes ever share space; and a box whose slot below
+/// is empty (the box under it lifted out) is drawn sitting on what is
+/// there, never in the air. Each box keeps its place while it stays, so
+/// nothing in a stack moves when another box comes or goes.
+/// Returns (box index, floor centre, yaw).
+pub fn stand_boxes(boxes: &[(bool, Option<u16>)], slots: &[BoxSlot]) -> Vec<(usize, Vec3, f32)> {
+    let mut order: Vec<usize> = (0..slots.len()).collect();
+    order.sort_by_key(|&i| (slots[i].tier, i));
+    let per: usize = if slots.iter().any(|s| s.forty) { 2 } else { 1 };
+    // Who stands in each half of each slot (by slot index).
+    let mut cell: Vec<[Option<usize>; 2]> = vec![[None; 2]; slots.len()];
+    for (k, &(forty, place)) in boxes.iter().enumerate() {
+        let Some(p) = place.map(|p| p as usize) else { continue };
+        let (n, half) = (p / per, p % per);
+        let Some(&i) = order.get(n) else { continue };
+        if forty {
+            if half != 0 || !slots[i].forty || cell[i].iter().any(|c| c.is_some()) {
+                continue;
+            }
+            cell[i] = [Some(k); 2];
+        } else {
+            if (half == 1 && !slots[i].forty) || cell[i][half].is_some() {
+                continue;
+            }
+            cell[i][half] = Some(k);
+        }
+    }
+    // The slot under each (same spot, one tier down).
+    let below: Vec<Option<usize>> = slots.iter().map(|a| if a.tier == 0 { None } else { slots.iter().position(|b| b.tier + 1 == a.tier && Vec2::new(b.at.x - a.at.x, b.at.z - a.at.z).length() < 0.5) }).collect();
+    // Settle the stacks from the ground up: a box drops while the halves it
+    // needs in the slot under it are free (and that slot fits it).
+    for &i in &order {
+        for half in 0..2 {
+            let Some(k) = cell[i][half] else { continue };
+            let forty = boxes[k].0;
+            if forty && half == 1 {
+                continue;
+            }
+            let mut at = i;
+            while let Some(j) = below[at] {
+                let free = if forty { slots[j].forty && cell[j] == [None, None] } else { cell[j][half].is_none() && (half == 0 || slots[j].forty) };
+                if !free {
+                    break;
+                }
+                at = j;
+            }
+            if at != i {
+                if forty {
+                    cell[i] = [None, None];
+                    cell[at] = [Some(k); 2];
+                } else {
+                    cell[i][half] = None;
+                    cell[at][half] = Some(k);
+                }
+            }
+        }
+    }
+    let shift = |s: &BoxSlot, d: f32| s.at + Vec3::new(s.yaw.cos(), 0.0, s.yaw.sin()) * d;
+    let mut out = Vec::new();
+    for (i, c) in cell.iter().enumerate() {
+        let s = &slots[i];
+        match *c {
+            [Some(a), Some(b)] if a == b => out.push((a, s.at, s.yaw)),
+            _ => {
+                for (half, k) in c.iter().enumerate() {
+                    let Some(k) = *k else { continue };
+                    let at = if !s.forty { s.at } else { shift(s, if half == 0 { -1.0 } else { 1.0 } * (CONTAINER_20 * 0.5 + 0.02)) };
+                    out.push((k, at, s.yaw));
+                }
+            }
+        }
+    }
+    out.sort_by_key(|x| x.0);
+    out
+}
+
 /// [r8] A box slot with this tier is a lorry bay at a depot, not a place in
 /// its stacks: `at` the middle of the bay on the ground, `yaw` the way a
 /// lorry standing in it faces (world), `forty` whether a forty-foot rig fits.

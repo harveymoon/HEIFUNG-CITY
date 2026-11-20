@@ -74,8 +74,13 @@ impl BoxMeshes {
 /// One depot's boxes on screen: which, and their entities.
 struct DepotDrawn {
     ids: Vec<BoxId>,
+    /// [r10-port-boxes] Their places in the stack.
+    places: Vec<Option<u16>>,
     slots: u64,
-    entities: Vec<Entity>,
+    /// [r10-port-boxes] Each box's entity, where it stands and its look: a
+    /// box that stays where it is keeps its entity (and its number) when
+    /// the depot is redrawn.
+    drawn: HashMap<BoxId, (Entity, Vec3, f32, Key)>,
 }
 
 #[derive(Resource, Default)]
@@ -97,38 +102,18 @@ pub(super) fn spawn_real_box(commands: &mut Commands, mats: &Materials, parts: &
     parent
 }
 
-/// Which slot each box takes: ground tiers first; a twenty-footer in a
-/// forty-foot slot takes one half (the next one the other), a forty-footer
-/// a forty-foot slot. Boxes past the last slot are not drawn.
+/// Which slot each box takes on a freighter's deck (in order; see
+/// `nd_procgen::buildings::parts::lay_out_boxes`).
 pub(super) fn lay_out(faces: &[BoxFace], slots: &[nd_procgen::BoxSlot]) -> Vec<(usize, Vec3, f32)> {
-    let mut order: Vec<usize> = (0..slots.len()).collect();
-    order.sort_by_key(|&i| (slots[i].tier, i));
-    let mut used = vec![false; slots.len()];
-    let mut half: Option<usize> = None;
-    let mut out = Vec::new();
-    let shift = |s: &nd_procgen::BoxSlot, d: f32| s.at + Vec3::new(s.yaw.cos(), 0.0, s.yaw.sin()) * d;
-    // A slot above another is usable only once the one below is taken.
-    let below: Vec<Option<usize>> = slots.iter().map(|a| if a.tier == 0 { None } else { slots.iter().position(|b| b.tier + 1 == a.tier && b.at.xz().distance(a.at.xz()) < 0.5) }).collect();
-    let below_ok = |i: usize, used: &[bool]| below[i].is_none_or(|j| used[j]);
-    for (k, f) in faces.iter().enumerate() {
-        if f.forty {
-            let Some(&i) = order.iter().find(|&&i| !used[i] && slots[i].forty && below_ok(i, &used)) else { continue };
-            used[i] = true;
-            out.push((k, slots[i].at, slots[i].yaw));
-        } else if let Some(i) = half.take() {
-            out.push((k, shift(&slots[i], nd_procgen::CONTAINER_20 * 0.5 + 0.02), slots[i].yaw));
-        } else {
-            let Some(&i) = order.iter().find(|&&i| !used[i] && below_ok(i, &used)) else { continue };
-            used[i] = true;
-            if slots[i].forty {
-                half = Some(i);
-                out.push((k, shift(&slots[i], -(nd_procgen::CONTAINER_20 * 0.5 + 0.02)), slots[i].yaw));
-            } else {
-                out.push((k, slots[i].at, slots[i].yaw));
-            }
-        }
-    }
-    out
+    nd_procgen::buildings::parts::lay_out_boxes(&faces.iter().map(|f| f.forty).collect::<Vec<_>>(), slots)
+}
+
+/// [r10-port-boxes] Where each of a depot's boxes stands: in the place the
+/// sim gave it (`BoxRec::slot`), so boxes never share space and stay put
+/// while others come and go.
+pub(super) fn stand(w: &nd_sim::World, faces: &[BoxFace], slots: &[nd_procgen::BoxSlot]) -> Vec<(usize, Vec3, f32)> {
+    let places: Vec<(bool, Option<u16>)> = faces.iter().map(|f| (f.forty, w.containers.boxes.get(f.id).and_then(|r| r.slot))).collect();
+    nd_procgen::buildings::parts::stand_boxes(&places, slots)
 }
 
 /// Stand every depot's stored boxes in its slots; redrawn per depot when
@@ -138,7 +123,7 @@ pub(super) fn sync_depot_boxes(mut commands: Commands, mut meshes: ResMut<Assets
     let w = &sim.world;
     if sim.full_rebuild {
         for (_, d) in state.depots.drain() {
-            for e in d.entities {
+            for (e, ..) in d.drawn.into_values() {
                 commands.entity(e).despawn();
             }
         }
@@ -155,14 +140,14 @@ pub(super) fn sync_depot_boxes(mut commands: Commands, mut meshes: ResMut<Assets
     let lifting: std::collections::HashSet<BoxId> = w.rail.trains.values().flat_map(|t| t.boxes.iter().filter(|b| b.lift != nd_sim::rail::Lift::Aboard).filter_map(|b| b.id)).collect();
     let gone: Vec<nd_sim::BuildingId> = state.depots.keys().copied().filter(|b| !sim.depot_slots.contains_key(b)).collect();
     for b in gone {
-        for e in state.depots.remove(&b).map(|d| d.entities).unwrap_or_default() {
+        for (e, ..) in state.depots.remove(&b).map(|d| d.drawn).unwrap_or_default().into_values() {
             commands.entity(e).despawn();
         }
     }
     for (&b, (slot_ver, slots)) in sim.depot_slots.iter() {
         if w.box_depot(b).is_none() {
             if let Some(d) = state.depots.remove(&b) {
-                for e in d.entities {
+                for (e, ..) in d.drawn.into_values() {
                     commands.entity(e).despawn();
                 }
             }
@@ -170,26 +155,36 @@ pub(super) fn sync_depot_boxes(mut commands: Commands, mut meshes: ResMut<Assets
         }
         let faces: Vec<BoxFace> = w.containers.faces_at(b, day).into_iter().filter(|f| !lifting.contains(&f.id)).collect();
         let ids: Vec<BoxId> = faces.iter().map(|f| f.id).collect();
-        if state.depots.get(&b).is_some_and(|d| d.ids == ids && d.slots == *slot_ver) {
+        let places: Vec<Option<u16>> = faces.iter().map(|f| w.containers.boxes.get(f.id).and_then(|r| r.slot)).collect();
+        if state.depots.get(&b).is_some_and(|d| d.ids == ids && d.places == places && d.slots == *slot_ver) {
             continue;
         }
-        if let Some(d) = state.depots.remove(&b) {
-            for e in d.entities {
-                commands.entity(e).despawn();
-            }
-        }
-        let mut entities = Vec::new();
-        for (k, at, yaw) in lay_out(&faces, slots) {
+        let mut old = state.depots.remove(&b).map(|d| d.drawn).unwrap_or_default();
+        let mut drawn = HashMap::new();
+        for (k, at, yaw) in stand(w, &faces, slots) {
             let f = faces[k];
-            let parts = bm.get(&mut meshes, &assets.palette, &f);
-            let tf = Transform::from_translation(at).with_rotation(Quat::from_rotation_y(-yaw));
+            let key = key_of(&f);
             if state.seen.len() > 50_000 {
                 state.seen.clear();
             }
             state.seen.insert(f.id, (at, yaw));
-            entities.push(spawn_real_box(&mut commands, &mats, &parts, tf, BoxTag { id: f.id, face: f, offset: Vec3::ZERO }, (), DepotBoxTag));
+            // [r10-port-boxes] Still there, looking the same: left alone.
+            if let Some(&(e, a, y, kk)) = old.get(&f.id) {
+                if a.distance(at) < 0.01 && (y - yaw).abs() < 1e-3 && kk == key {
+                    old.remove(&f.id);
+                    drawn.insert(f.id, (e, at, yaw, key));
+                    continue;
+                }
+            }
+            let parts = bm.get(&mut meshes, &assets.palette, &f);
+            let tf = Transform::from_translation(at).with_rotation(Quat::from_rotation_y(-yaw));
+            let e = spawn_real_box(&mut commands, &mats, &parts, tf, BoxTag { id: f.id, face: f, offset: Vec3::ZERO }, (), DepotBoxTag);
+            drawn.insert(f.id, (e, at, yaw, key));
         }
-        state.depots.insert(b, DepotDrawn { ids, slots: *slot_ver, entities });
+        for (e, ..) in old.into_values() {
+            commands.entity(e).despawn();
+        }
+        state.depots.insert(b, DepotDrawn { ids, places, slots: *slot_ver, drawn });
     }
 }
 

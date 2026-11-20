@@ -488,3 +488,116 @@ fn bays_jobs_and_books_survive_a_save() {
     let at2: Vec<Where> = w2.containers.boxes.values().map(|r| r.at).collect();
     assert_eq!(at, at2);
 }
+
+// ── [r10-port-boxes] places in the stacks ──────────────────────────────────
+
+/// [r10-port-boxes] (Harvey flag, day 80: "boxes are stacked on top of each
+/// other again") A box lifted out onto a lorry's chassis gives up its place
+/// in the stack; boxes coming in meanwhile take the free places, and the
+/// box coming back off the lorry takes a place of its own: no two boxes
+/// ever share one, at any tick of the round trip.
+#[test]
+fn a_box_back_off_a_lorry_takes_a_free_place_in_the_stack() {
+    let (mut w, yard, buyer) = town();
+    for k in 0..5 {
+        young_box(&mut w, yard, k % 3 != 1, None);
+    }
+    let id = young_box(&mut w, yard, true, Some(cx::Goods { resource: Resource::Parts, buyer }));
+    let first = w.containers.boxes[id].slot.expect("a place in the stack");
+    assert_eq!(w.containers.slot_clashes(), 0);
+    w.note_inbound(buyer, Resource::Parts, 20.0);
+    w.dispatch_truck(super::market::TruckOrigin::Building(yard), Cargo { from: yard, to: buyer, resource: Resource::Parts, amount: 20.0, price: 0.0 }, 6);
+    let mut away = false;
+    let mut back = false;
+    let mut newcomers = Vec::new();
+    for _ in 0..5000 {
+        tick(&mut w, 1);
+        assert_eq!(w.containers.slot_clashes(), 0, "two boxes in one place at tick {}", w.clock.tick);
+        let r = &w.containers.boxes[id];
+        if !away && matches!(r.at, Where::Truck(_)) {
+            away = true;
+            assert_eq!(r.slot.filter(|_| r.at.stack().is_some()), None, "off the stack, out of its place");
+            // Two boxes landed while it is out: the first takes its place.
+            newcomers.push(young_box(&mut w, yard, true, None));
+            newcomers.push(young_box(&mut w, yard, false, None));
+            assert_eq!(w.containers.boxes[newcomers[0]].slot, Some(first), "the free place is filled");
+        }
+        if away && w.containers.boxes[id].at == Where::Stored(yard) {
+            back = true;
+            break;
+        }
+    }
+    assert!(away && back, "out on a lorry and back: {:?}", events(&w, id));
+    let s = w.containers.boxes[id].slot.expect("a place again");
+    assert_ne!(s, first, "not on top of the box that took its old place");
+    assert_eq!(s % 2, 0, "a forty-footer on an even cell");
+    assert_eq!(w.containers.slot_clashes(), 0);
+}
+
+/// [r10-port-boxes] Every way into a stack seats the box: twenty- and
+/// forty-footers mixed, boxes lifted out and set down at random, a scrap
+/// pile, an empty sent to storage; never two in one place, and a stack
+/// fills from its first places.
+#[test]
+fn every_box_in_a_stack_has_a_place_of_its_own() {
+    let (mut w, yard, _) = town();
+    let mut ids = Vec::new();
+    for k in 0..40u64 {
+        let h = crate::hash::mix(k, 0x51_07);
+        ids.push(young_box(&mut w, yard, h & 1 == 0, None));
+        if h % 5 == 0 {
+            // One out (onto a lorry, a site, the crane) and back.
+            let out = ids[(h as usize / 7) % ids.len()];
+            w.box_to(out, Where::Truck(crate::traffic::CarId::default()), Event::CraneOn, yard);
+            assert_eq!(w.containers.slot_clashes(), 0);
+            if h % 3 == 0 {
+                w.box_to(out, Where::Stored(yard), Event::CraneOff, yard);
+            }
+        }
+        assert_eq!(w.containers.slot_clashes(), 0, "after box {k}");
+    }
+    // A box set down again where it stands keeps its place.
+    let keep = *ids.iter().find(|id| w.containers.boxes[**id].at == Where::Stored(yard)).unwrap();
+    let s = w.containers.boxes[keep].slot;
+    w.box_to(keep, Where::Stored(yard), Event::Stored, yard);
+    assert_eq!(w.containers.boxes[keep].slot, s);
+    // Packed from the front: the cells taken are about as many as the TEU.
+    let teu: u32 = w.containers.boxes.values().filter(|r| r.at == Where::Stored(yard)).map(|r| if r.forty { 2 } else { 1 }).sum();
+    let top = w.containers.boxes.values().filter(|r| r.at == Where::Stored(yard)).map(|r| r.slot.unwrap() as u32 + if r.forty { 2 } else { 1 }).max().unwrap();
+    assert!(top <= teu + teu / 4 + 2, "no far-off places: top {top} for {teu} TEU");
+}
+
+/// [r10-port-boxes] An older save (no places yet), or one where two boxes
+/// share a place, loads with every stored box in a place of its own: the
+/// first come keeps its place, the rest go to the first free ones, the
+/// same way every time it is loaded.
+#[test]
+fn boxes_sharing_a_place_are_reseated_on_load() {
+    let (mut w, yard, _) = town();
+    let mut ids = Vec::new();
+    for k in 0..8 {
+        ids.push(young_box(&mut w, yard, k % 3 != 2, None));
+        w.containers.boxes[*ids.last().unwrap()].since = 100 + k as u64;
+    }
+    // Everyone in the first place (the bug), and two with none at all (an
+    // older save).
+    for id in &ids {
+        w.containers.boxes[*id].slot = Some(0);
+    }
+    w.containers.boxes[ids[6]].slot = None;
+    w.containers.boxes[ids[7]].slot = None;
+    assert!(w.containers.slot_clashes() > 0);
+    let ron = w.to_ron().unwrap();
+    let a = World::from_ron(&ron).unwrap();
+    let b = World::from_ron(&ron).unwrap();
+    assert_eq!(a.containers.slot_clashes(), 0, "re-seated on load");
+    assert!(ids.iter().all(|id| a.containers.boxes[*id].slot.is_some()));
+    assert_eq!(a.containers.boxes[ids[0]].slot, Some(0), "the first come keeps its place");
+    let places = |w: &World| ids.iter().map(|id| w.containers.boxes[*id].slot).collect::<Vec<_>>();
+    assert_eq!(places(&a), places(&b), "the same every load");
+    // A save without the field at all: every stored box seated.
+    let old = ron.replace("slot:Some(0),", "").replace("slot: Some(0),", "");
+    let c = World::from_ron(&old).unwrap();
+    assert_eq!(c.containers.slot_clashes(), 0);
+    assert!(ids.iter().all(|id| c.containers.boxes[*id].slot.is_some()));
+}
