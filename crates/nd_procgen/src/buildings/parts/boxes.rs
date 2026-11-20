@@ -63,38 +63,105 @@ pub fn lay_out_boxes(forty: &[bool], slots: &[BoxSlot]) -> Vec<(usize, Vec3, f32
     out
 }
 
+/// [r11-box-stock] Tiers a full depot stacks above the top of each of its
+/// drawn stacks (three-high stacks go to five, four-high to six, as a
+/// busy terminal's do).
+pub const EXTRA_TIERS: u8 = 2;
+
+/// [r11-box-stock] A depot's slots and the overflow tiers above each stack's
+/// top slot (appended after the drawn ones, the lower extra tier first).
+fn with_overflow(slots: &[BoxSlot]) -> Vec<BoxSlot> {
+    let near = |a: &BoxSlot, b: &BoxSlot| Vec2::new(b.at.x - a.at.x, b.at.z - a.at.z).length() < 0.5;
+    let tops: Vec<BoxSlot> = slots.iter().filter(|a| !slots.iter().any(|b| b.tier == a.tier + 1 && near(a, b))).copied().collect();
+    let mut v = slots.to_vec();
+    for k in 1..=EXTRA_TIERS {
+        v.extend(tops.iter().map(|t| BoxSlot { at: t.at + Vec3::Y * CONTAINER_H * k as f32, tier: t.tier + k, ..*t }));
+    }
+    v
+}
+
+/// [r11-box-stock] The places a stack takes boxes in, in order: its
+/// forty-foot slots (ground tiers first), then the overflow tiers; where
+/// every slot is a twenty-footer's, those. A twenty-foot slot among
+/// forty-foot ones is left empty (a forty-footer would not fit it).
+fn stack_order(slots: &[BoxSlot], real: usize) -> Vec<usize> {
+    let any_forty = slots.iter().any(|s| s.forty);
+    let usable = |i: &usize| !any_forty || slots[*i].forty;
+    let mut order: Vec<usize> = (0..real).filter(usable).collect();
+    order.sort_by_key(|&i| (slots[i].tier, i));
+    order.extend((real..slots.len()).filter(usable));
+    order
+}
+
+/// [r11-box-stock] How many boxes depot stacks `slots` hold, so that every
+/// one is drawn: one per forty-foot place (two twenty-footers share one),
+/// the overflow tiers counted. The sim keeps a depot's stock within it
+/// (`nd_sim::containers::Containers::drawn_room`).
+pub fn stack_room(slots: &[BoxSlot]) -> usize {
+    let all = with_overflow(slots);
+    stack_order(&all, slots.len()).len()
+}
+
 /// [r10-port-boxes] Stand a depot's boxes in its slots by the places the
 /// sim gave them (`(forty, place)` per box; `nd_sim::containers::BoxRec::
-/// slot`, in twenty-foot cells): the slots in order, ground tiers first,
-/// each two cells (one half of a forty-foot slot each; a twenty-foot slot
-/// takes the first only), or one cell each where every slot is a
-/// twenty-footer's. A forty-footer stands only on an even cell of a
-/// forty-foot slot, a box past the last slot or in a cell already taken is
-/// not drawn, so no two boxes ever share space; and a box whose slot below
-/// is empty (the box under it lifted out) is drawn sitting on what is
-/// there, never in the air. Each box keeps its place while it stays, so
-/// nothing in a stack moves when another box comes or goes.
+/// slot`, in twenty-foot cells): the places in order (`stack_order`),
+/// each two cells (one half of a forty-foot slot each), or one cell each
+/// where every slot is a twenty-footer's. A forty-footer stands only on an
+/// even cell, a box in a cell already taken is not drawn there, so no two
+/// boxes ever share space; and a box whose slot below is empty (the box
+/// under it lifted out) is drawn sitting on what is there, never in the
+/// air. Each box keeps its place while it stays, so nothing in a stack
+/// moves when another box comes or goes. [r11-box-stock] Past the drawn
+/// stacks a full yard stacks [`EXTRA_TIERS`] higher; a box whose place
+/// it cannot stand in (past them all) takes the first free one,
+/// so a depot holding no more than [`stack_room`] draws every box.
 /// Returns (box index, floor centre, yaw).
 pub fn stand_boxes(boxes: &[(bool, Option<u16>)], slots: &[BoxSlot]) -> Vec<(usize, Vec3, f32)> {
-    let mut order: Vec<usize> = (0..slots.len()).collect();
-    order.sort_by_key(|&i| (slots[i].tier, i));
+    let real = slots.len();
+    let slots = with_overflow(slots);
+    let order = stack_order(&slots, real);
     let per: usize = if slots.iter().any(|s| s.forty) { 2 } else { 1 };
     // Who stands in each half of each slot (by slot index).
     let mut cell: Vec<[Option<usize>; 2]> = vec![[None; 2]; slots.len()];
+    let mut later = Vec::new();
     for (k, &(forty, place)) in boxes.iter().enumerate() {
+        // (No place at all: not in the stack, not drawn.)
         let Some(p) = place.map(|p| p as usize) else { continue };
         let (n, half) = (p / per, p % per);
-        let Some(&i) = order.get(n) else { continue };
+        let Some(&i) = order.get(n) else {
+            later.push(k);
+            continue;
+        };
         if forty {
             if half != 0 || !slots[i].forty || cell[i].iter().any(|c| c.is_some()) {
+                later.push(k);
                 continue;
             }
             cell[i] = [Some(k); 2];
         } else {
             if (half == 1 && !slots[i].forty) || cell[i][half].is_some() {
+                later.push(k);
                 continue;
             }
             cell[i][half] = Some(k);
+        }
+    }
+    // [r11-box-stock] The rest into the first free place that fits.
+    for k in later {
+        let forty = boxes[k].0;
+        let spot = order.iter().find_map(|&i| {
+            if forty {
+                (slots[i].forty && cell[i] == [None, None]).then_some((i, 0))
+            } else if cell[i][0].is_none() {
+                Some((i, 0))
+            } else {
+                (slots[i].forty && cell[i][1].is_none()).then_some((i, 1))
+            }
+        });
+        match spot {
+            Some((i, _)) if forty => cell[i] = [Some(k); 2],
+            Some((i, half)) => cell[i][half] = Some(k),
+            None => {}
         }
     }
     // The slot under each (same spot, one tier down).

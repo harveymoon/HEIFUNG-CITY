@@ -132,10 +132,13 @@ pub enum PressureKind {
     ScrapYard,
     /// [r8] The town's exports, to be boxed up and shipped. Appended.
     FreightForwarder,
+    /// [r11-box-stock] Shipping containers over the terminals' room with no
+    /// container yard to keep them: one more yard. Appended.
+    ContainerStorage,
 }
 
 impl PressureKind {
-    pub const ALL: [PressureKind; 20] = [
+    pub const ALL: [PressureKind; 21] = [
         PressureKind::TowCompany,
         PressureKind::Mechanic,
         PressureKind::CarDealer,
@@ -156,6 +159,7 @@ impl PressureKind {
         PressureKind::BoatRental,
         PressureKind::ScrapYard,
         PressureKind::FreightForwarder,
+        PressureKind::ContainerStorage,
     ];
 
     pub fn index(self) -> usize {
@@ -185,12 +189,16 @@ impl PressureKind {
             PressureKind::BoatRental => BusinessKind::BoatRental,
             PressureKind::ScrapYard => BusinessKind::ScrapYard,
             PressureKind::FreightForwarder => BusinessKind::FreightForwarder,
+            PressureKind::ContainerStorage => BusinessKind::ContainerYard,
         })
     }
 
     /// The pressure that opens businesses of `kind`, if one does.
+    /// [r11-box-stock] Not the container storage pressure: container yards
+    /// are the logistics industry's trade first (retooled with it, and one
+    /// going broke does not hold back the storage the lines pay for).
     pub fn of_business(kind: BusinessKind) -> Option<PressureKind> {
-        PressureKind::ALL.into_iter().find(|p| p.business() == Some(kind))
+        PressureKind::ALL.into_iter().filter(|p| *p != PressureKind::ContainerStorage).find(|p| p.business() == Some(kind))
     }
 
     /// The player builds these; the pressure only says they would pay.
@@ -220,6 +228,7 @@ impl PressureKind {
             PressureKind::BoatRental => "boat rental",
             PressureKind::ScrapYard => "scrap yard",
             PressureKind::FreightForwarder => "freight forwarder",
+            PressureKind::ContainerStorage => "container storage yard",
         }
     }
 
@@ -246,6 +255,7 @@ impl PressureKind {
             PressureKind::BoatRental => "boat_rental",
             PressureKind::ScrapYard => "scrap_yard",
             PressureKind::FreightForwarder => "freight_forwarder",
+            PressureKind::ContainerStorage => "container_storage",
         }
     }
 
@@ -335,6 +345,10 @@ pub struct Signals {
     pub export_units: f32,
     #[serde(default)]
     pub box_terminals: f32,
+    /// [r11-box-stock] Shipping containers a day over the terminals' room
+    /// that no container yard had room to keep (a flow).
+    #[serde(default)]
+    pub box_overflow: f32,
 }
 
 impl Signals {
@@ -358,6 +372,7 @@ impl Signals {
         mix(&mut self.old_boxes, today.old_boxes);
         mix(&mut self.export_units, today.export_units);
         self.box_terminals = today.box_terminals;
+        mix(&mut self.box_overflow, today.box_overflow);
         self.cars = today.cars;
         self.tow_backlog = today.tow_backlog;
         self.rich_households = today.rich_households;
@@ -574,8 +589,25 @@ pub fn assess(s: &Signals, supply: &Supply) -> Vec<Pressure> {
                 let wanted = if s.box_terminals > 0.0 { s.export_units / crate::containers::UNITS_PER_FORWARDER } else { 0.0 };
                 (wanted, format!("{} units of exports a day to box up and ship, {} ports and freight yards; {ht}", s.export_units.round(), s.box_terminals))
             }
+            // [r11-box-stock] The terminals' overflow, to be kept for the
+            // lines at a yard for a fee.
+            PressureKind::ContainerStorage => {
+                // (The gap is the overflow's alone: the yards in town are
+                // all full, or too far, or it would be kept.)
+                let wanted = s.box_overflow / crate::containers::BOXES_PER_STORAGE_YARD;
+                (wanted, format!("{} shipping containers a day over the port's and freight terminals' room with no yard to keep them; {ht}", s.box_overflow.round()))
+            }
         };
         let mut p = Pressure::new(kind, wanted, supply, why);
+        if kind == PressureKind::ContainerStorage {
+            // [r11-box-stock] The container yards in town are counted in the
+            // cause already (they keep what they have room for): the
+            // overflow left over is the unmet need, one yard per
+            // `BOXES_PER_STORAGE_YARD` a day.
+            p.gap = p.wanted;
+            p.wanted += p.have as f32;
+            p.strength = p.gap.clamp(0.0, 1.0);
+        }
         if kind == PressureKind::Marina {
             // The player's docks are not businesses the supply counts. A
             // large marina's berths count as more than one small one's.
@@ -749,7 +781,9 @@ mod tests {
         for k in PressureKind::ALL {
             assert_eq!(PressureKind::from_key(k.key()), Some(k));
             let b = k.business().unwrap();
-            assert_eq!(PressureKind::of_business(b), Some(k));
+            // [r11-box-stock] Container yards stay the logistics industry's.
+            let want = if k == PressureKind::ContainerStorage { None } else { Some(k) };
+            assert_eq!(PressureKind::of_business(b), want);
         }
     }
 

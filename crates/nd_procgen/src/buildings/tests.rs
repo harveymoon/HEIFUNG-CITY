@@ -994,7 +994,7 @@ fn capsule_sites_rise_in_their_own_shape() {
 /// [K34] A record's box for the tests: line, size, wear and marks.
 fn test_box(c: &mut nd_sim::containers::Containers, line: u8, serial: u32, forty: bool, years: i32) -> nd_sim::containers::BoxId {
     use nd_sim::containers::*;
-    c.boxes.insert(BoxRec { line, serial, forty, kind: nd_sim::rail::BoxKind::Dry, origin: 3, built: -365 * years, knocks: (years * 5) as u16, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false, slot: None })
+    c.boxes.insert(BoxRec { line, serial, forty, kind: nd_sim::rail::BoxKind::Dry, origin: 3, built: -365 * years, knocks: (years * 5) as u16, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false, slot: None, kept_for: None })
 }
 
 /// [r8] Harvey: "white should not be the color under super faded, muted is
@@ -1162,9 +1162,16 @@ fn boxes_stood_in_their_places_never_overlap() {
         // forty-footer the first free even pair; boxes leave at random.
         let mut boxes: Vec<(bool, Option<u16>)> = Vec::new();
         let mut h = 0x5EA7u64;
+        // [r11-box-stock] The sim keeps a depot within the room its stacks
+        // draw (overflow tiers counted): every box it holds is drawn.
+        // (Where every slot is a twenty-footer's, a forty-footer the sim
+        // seats takes two cells and is not drawn: half the room.)
+        let forty_slots = slots.iter().any(|s| s.forty);
+        let room = crate::buildings::parts::stack_room(&slots) / if forty_slots { 1 } else { 2 };
         for step in 0..400 {
             h = nd_sim::hash::mix(h, step);
-            if h % 3 == 0 && !boxes.is_empty() {
+            let held = boxes.iter().filter(|b| b.1.is_some()).count();
+            if (h % 3 == 0 || held >= room) && !boxes.is_empty() {
                 let k = (h as usize >> 8) % boxes.len();
                 boxes[k].1 = None;
             } else {
@@ -1185,6 +1192,9 @@ fn boxes_stood_in_their_places_never_overlap() {
                 boxes.push((forty, Some(s)));
             }
             let laid = stand_boxes(&boxes, &slots);
+            if forty_slots {
+                assert_eq!(laid.len(), boxes.iter().filter(|b| b.1.is_some()).count(), "{name} step {step}: every box held within the room ({room}) is drawn");
+            }
             let vols: Vec<(Vec3, f32, f32)> = laid.iter().map(|&(k, at, yaw)| (at, yaw, len(boxes[k].0))).collect();
             for i in 0..vols.len() {
                 for j in i + 1..vols.len() {

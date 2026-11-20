@@ -555,7 +555,7 @@ impl World {
     /// [r8] Out of its bay (or the queue) at `d` and on to `to` (none:
     /// out of town), carrying `cargo` (none: an empty run). False when no
     /// road leads there: it stays where it is.
-    fn depart(&mut self, c: CarId, d: BuildingId, to: Option<BuildingId>, cargo: Option<Cargo>) -> bool {
+    pub(super) fn depart(&mut self, c: CarId, d: BuildingId, to: Option<BuildingId>, cargo: Option<Cargo>) -> bool {
         if !self.traffic.cars.contains_key(c) {
             return false;
         }

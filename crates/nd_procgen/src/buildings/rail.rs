@@ -231,17 +231,20 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     aviation_light(g, pal, Vec3::new(pa.x + out.x * near_off, 8.9, pa.y + out.y * near_off), 0.35);
     // Container stacks on the apron's far edge, towards the shed.
-    let n = ((length / 7.0) as i32).clamp(1, 10);
+    // [r11-box-stock] With real boxes, forty-foot places (a forty-footer
+    // or two twenties each), so every box the yard holds has one.
+    let n = if c.real_boxes { ((length / 13.6) as i32).clamp(1, 5) } else { ((length / 7.0) as i32).clamp(1, 10) };
     for k in 0..n {
         let p = pa.lerp(pb, (k as f32 + 0.5) / n as f32) + out * (apron_in + apron_w + 1.8);
         let lp = f.to_local(p);
-        if !poly_inside(c, &rect_yaw(lp.x, lp.y, 3.1, 1.3, along.y.atan2(along.x) - f.yaw())) {
+        let half_len = if c.real_boxes { 6.3 } else { 3.1 };
+        if !poly_inside(c, &rect_yaw(lp.x, lp.y, half_len, 1.3, along.y.atan2(along.x) - f.yaw())) {
             continue;
         }
         if c.real_boxes {
             // [K34] The yard's real boxes stand here.
             for level in 0..3 {
-                box_slot(g, c, lp.x, lp.y, along.y.atan2(along.x) - f.yaw(), 0.0, level, false);
+                box_slot(g, c, lp.x, lp.y, along.y.atan2(along.x) - f.yaw(), 0.0, level, true);
             }
             continue;
         }

@@ -329,6 +329,8 @@ impl World {
             // [r8] yesterday's exports, and where boxes are shipped
             export_units: self.containers.stats.export_units_yday,
             box_terminals: self.box_depots().iter().filter(|d| matches!(d.1, DepotKind::Port | DepotKind::Rail)).count() as f32,
+            // [r11-box-stock] yesterday's boxes no yard could keep
+            box_overflow: self.containers.stats.overflow_yday as f32,
         }
     }
 
@@ -515,6 +517,23 @@ impl World {
         for (_, kind) in order {
             let Some(bk) = kind.business() else { continue };
             let Some(lot) = self.pressure_lot(kind, vacant) else {
+                // [r11-box-stock] No lot for a container yard: a shut one
+                // reopens, or a shut or struggling works is turned into one.
+                if kind == PressureKind::ContainerStorage {
+                    let why = self.pressure.reading(kind).map(|r| r.why.split(';').next().unwrap_or("").trim().to_string()).unwrap_or_default();
+                    if self.convert_to_storage_yard(&why).is_some() {
+                        *self.pressure.opened_total.entry(kind.key().to_string()).or_insert(0) += 1;
+                        self.pressure.held_days[kind.index()] = 0;
+                        self.pressure.last_opened_day[kind.index()] = day + 1;
+                        if let Some(r) = self.pressure.readings.iter_mut().find(|r| r.kind == kind) {
+                            r.have += 1;
+                            r.gap -= 1.0;
+                            r.strength = r.gap.clamp(0.0, 1.0);
+                            r.held = None;
+                        }
+                        return true;
+                    }
+                }
                 let text = self.no_lot_text(kind);
                 if let Some(r) = self.pressure.readings.iter_mut().find(|r| r.kind == kind) {
                     r.held = Some(text);
@@ -675,6 +694,15 @@ impl World {
                     anchors.push(self.city_centre());
                 }
                 Placement { uses: &[Industrial, Commercial], anchors, reach: f32::INFINITY, min_area: 400.0, value: -0.5, needs_street: true, near: "the port and the freight yards" }
+            }
+            // [r11-box-stock] Industrial land within a lorry's run of the
+            // terminals whose overflow it keeps.
+            PressureKind::ContainerStorage => {
+                let anchors: Vec<Vec2> = self.box_depots().into_iter().filter(|d| matches!(d.1, DepotKind::Port | DepotKind::Rail | DepotKind::Hub)).map(|d| d.2).collect();
+                if anchors.is_empty() {
+                    return None;
+                }
+                Placement { uses: &[Industrial], anchors, reach: crate::containers::STORAGE_REACH, min_area: 1500.0, value: -1.0, needs_street: true, near: "the port, the freight yards and the cargo hubs" }
             }
             PressureKind::Marina => return None,
         };

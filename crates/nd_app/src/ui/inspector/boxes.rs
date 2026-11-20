@@ -106,7 +106,19 @@ pub(super) fn building_boxes(ui: &mut egui::Ui, sim: &Sim, selection: &mut Selec
     let Some(kind) = w.box_depot(b) else { return };
     let ids = w.containers.stored_at(b);
     let full = ids.iter().filter(|id| w.containers.boxes[**id].goods.is_some()).count();
-    section(ui, &format!("CONTAINERS  ·  {} of {} ({} full)", ids.len(), w.box_capacity(b, kind), full));
+    // [r11-box-stock] Its room is what its stacks hold (all drawn).
+    section(ui, &format!("CONTAINERS  ·  {} of {} ({} full)", ids.len(), w.box_room(b, kind), full));
+    let away = w.kept_away(b);
+    if away > 0 {
+        ui.label(egui::RichText::new(format!("{away} more of its lines' empties kept at container yards (its overflow), called back as it runs low")).small());
+    }
+    if let Some(c) = w.storage_card(b) {
+        section(ui, "CONTAINER STORAGE");
+        ui.label(egui::RichText::new(format!("{} boxes kept for the shipping lines  ·  room for {} more", c.kept, c.room)).color(IVORY));
+        ui.label(egui::RichText::new(format!("Fee {:.0} a box a day  ·  {:.0} yesterday, {:.0} in all", c.fee, c.book.fees_today, c.book.fees_total)).color(GOLD));
+        ui.label(egui::RichText::new(format!("{} taken in, {} gone back or home", c.book.taken_in_total, c.book.returned_total)).small());
+        hint(ui, "Keeps the port's and the freight terminals' overflow of empties for their lines, for a daily fee, until they are called back or sent home.");
+    }
     rows(ui, sim, selection, &ids, 10);
 }
 

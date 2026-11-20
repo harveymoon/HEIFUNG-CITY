@@ -2679,8 +2679,19 @@ build, origin port, age, wear and marks, owner and where it is, and a short hist
   while it is stored there (in twenty-foot cells; a forty-footer takes an even cell and the next), else
   null. A box keeps its place for as long as it stays: each box is drawn in its own place, the first
   free one when it comes in (`Containers::seat`), so no two share space and nothing in a stack moves
-  when another box leaves. Places past the depot's drawn slots are not drawn. An older save, or one
-  where two boxes share a place, is re-seated on load (the first come keep theirs).
+  when another box leaves. An older save, or one where two boxes share a place, is re-seated on load
+  (the first come keep theirs). [r11-box-stock] A full depot stacks two tiers over its drawn stacks,
+  and a box whose place is past them all (or a forty-footer's place in a twenty-foot slot) is drawn in
+  the first free place; a depot holds no more than its stacks draw, so every box it holds is drawn.
 - A building's `inspect` carries `containers`: a depot's {kind, stored, capacity, full, boxes} or a
   Stacks home's {built_of, wants, finished, boxes} (each box row with its `place`); a car's `inspect` carries the boxes on its trailer.
-- `pressure` has `scrap_yard`: old boxes a day with no scrap yard to cut them up.
+  [r11-box-stock] A depot's `capacity` is its room (its ground's say, no more than its drawn stacks
+  hold; `ground_capacity` the ground's alone), `kept_at_yards` the boxes kept for it at container
+  yards (its overflow), and a container yard's `storage` {kept, room_left, fee_per_box_day,
+  fees_yesterday, fees_total, taken_in, returned}. The town's `containers` adds
+  `sent_to_storage_yards`, `called_back_from_yards`, `cleared_by_road`, `overflow_yesterday` and
+  `storage_fees_total`, and each `depots` row `kept_at_yards`. A box kept at a yard says so in `now`
+  ("kept at X for Kestrel Ocean Lines (the overflow of Port of ...)").
+- `pressure` has `scrap_yard`: old boxes a day with no scrap yard to cut them up, and
+  [r11-box-stock] `container_storage`: boxes a day over the terminals' room that no container yard
+  had room to keep (one more yard per 40 a day).

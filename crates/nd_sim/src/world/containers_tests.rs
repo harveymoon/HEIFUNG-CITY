@@ -395,7 +395,9 @@ fn empties_are_used_by_condition_and_the_surplus_is_capped() {
     w.clock.tick += 4 * crate::clock::MINUTES_PER_DAY;
     let today = w.clock.day() as i64;
     w.daily_containers();
-    assert_eq!(w.containers.stats.sold_for_scrap_total as usize, scrap.len(), "no scrap yard: sold for scrap out of town");
+    // ([r11-box-stock] counted as each leaves town: gone, or on its way)
+    let going = scrap.iter().filter(|id| w.containers.boxes.contains_key(**id)).count();
+    assert_eq!(w.containers.stats.sold_for_scrap_total as usize + going, scrap.len(), "no scrap yard: sold for scrap out of town");
     for id in &scrap {
         let gone_or_going = w.containers.boxes.get(*id).is_none_or(|r| r.bound_out);
         assert!(gone_or_going, "a scrap box is on its way out");
@@ -600,4 +602,154 @@ fn boxes_sharing_a_place_are_reseated_on_load() {
     let c = World::from_ron(&old).unwrap();
     assert_eq!(c.containers.slot_clashes(), 0);
     assert!(ids.iter().all(|id| c.containers.boxes[*id].slot.is_some()));
+}
+
+// ── [r11-box-stock] the depots' stock kept within their room ────────────────
+
+/// A container yard business on the industrial land across the street.
+fn storage_yard(w: &mut World) -> BuildingId {
+    let lot = free_lot(w, LandUse::Industrial);
+    let y = w.open_business(lot, BusinessKind::ContainerYard, true).expect("a container yard");
+    assert_eq!(w.box_depot(y), Some(DepotKind::Yard));
+    y
+}
+
+/// Every box ever made is still in town, or counted out of it by why:
+/// none vanishes without a record. (A box put on a train going out is
+/// counted as it goes on: not again while the train is still in town.)
+fn accounted(w: &World) -> u64 {
+    let s = &w.containers.stats;
+    let on_the_way_out = w.containers.boxes.values().filter(|r| r.at == Where::Train && r.log.last().is_some_and(|l| matches!(l.1, Event::SentOut | Event::Exported))).count() as u64;
+    w.containers.boxes.len() as u64 - on_the_way_out + s.sent_out_total as u64 + s.sold_out_of_town_total as u64 + s.exported_total as u64 + s.scrapped_total as u64 + s.sold_for_scrap_total as u64
+}
+
+/// Where the boxes are and what last happened to them (for a failed count).
+fn census(w: &World) -> String {
+    let mut m: BTreeMap<String, u32> = BTreeMap::new();
+    for r in w.containers.boxes.values() {
+        let at = format!("{:?}", r.at);
+        let at = at.split('(').next().unwrap_or("").to_string();
+        *m.entry(format!("{at}/{:?}", r.log.last().map(|l| l.1))).or_default() += 1;
+    }
+    format!("{m:?} {:?}", w.containers.stats)
+}
+
+/// [r11-box-stock] A terminal over its fill trucks its lines' overflow to a
+/// container yard, which keeps it for a fee a day; the terminal stays
+/// within its room, the boxes' stories say where they are kept, the yard's
+/// books show the fees, and the terminal calls its boxes back once it runs
+/// low.
+#[test]
+fn a_full_terminal_keeps_its_overflow_at_a_container_yard_for_a_fee() {
+    let (mut w, yard, _) = town();
+    let store = storage_yard(&mut w);
+    let room = w.box_room(yard, DepotKind::Rail);
+    let fill = (room as f32 * cx::TERMINAL_FILL) as usize;
+    for k in 0..room {
+        young_box(&mut w, yard, k % 3 == 0, None);
+    }
+    let made = w.containers.stats.made;
+    let before = accounted(&w);
+    assert_eq!(before, made);
+    tick(&mut w, 2 * 1440);
+    assert!(w.depot_stock(yard) <= fill + 1, "the terminal is back under its fill: {} of {room} (fill {fill})", w.depot_stock(yard));
+    let kept: Vec<cx::BoxId> = w.containers.boxes.iter().filter(|(_, r)| r.kept_for == Some(yard) && r.at == Where::Stored(store)).map(|(id, _)| id).collect();
+    assert!(!kept.is_empty(), "its overflow is kept at the container yard: {:?}", w.containers.stats);
+    assert_eq!(w.kept_away(yard), w.containers.boxes.values().filter(|r| r.kept_for == Some(yard)).count());
+    let story = w.box_story(kept[0]).unwrap();
+    assert!(story.now.starts_with("kept at") && story.now.contains("overflow of"), "{}", story.now);
+    let card = w.storage_card(store).expect("the yard's storage books");
+    assert!(card.kept >= kept.len() && card.book.fees_total >= cx::STORAGE_FEE, "the lines pay the yard: {card:?}");
+    assert!(w.containers.stats.storage_fees_total > 0.0);
+    // Nothing vanished.
+    assert_eq!(accounted(&w), w.containers.stats.made, "every box is in town or counted out of it: {}", census(&w));
+    // The terminal runs low (the boxes there taken away): it calls its boxes back.
+    let there: Vec<cx::BoxId> = w.containers.boxes.iter().filter(|(_, r)| r.at == Where::Stored(yard)).map(|(id, _)| id).collect();
+    for id in there {
+        w.containers.boxes.remove(id);
+        w.containers.stats.sent_out_total += 1;
+    }
+    tick(&mut w, 1440);
+    assert!(w.containers.stats.called_back_total >= 1, "called back: {:?}", w.containers.stats);
+    assert!(w.containers.boxes.values().any(|r| r.at == Where::Stored(yard) && r.log.iter().any(|s| s.2 == store)), "a box from the yard is back at the terminal");
+    assert_eq!(accounted(&w), w.containers.stats.made);
+}
+
+/// [r11-box-stock] (Harvey's day-80 save: 1375 boxes at a port with room
+/// for 60) A terminal far over its room with nowhere in town to keep the
+/// rest works the backlog off over a few days, lorries carrying it out of
+/// town by road (every box counted as sent out), and the boxes no yard
+/// could keep make the pressure for a container storage yard.
+#[test]
+fn an_overstocked_terminal_drains_by_road_and_asks_for_a_storage_yard() {
+    let (mut w, yard, _) = town();
+    let room = w.box_room(yard, DepotKind::Rail);
+    for k in 0..room * 6 {
+        young_box(&mut w, yard, k % 2 == 0, None);
+    }
+    let mut by_day = Vec::new();
+    for _ in 0..6 {
+        tick(&mut w, 1440);
+        by_day.push(w.depot_stock(yard));
+        assert_eq!(accounted(&w), w.containers.stats.made, "every box is in town or counted out of it: {}", census(&w));
+    }
+    assert!(by_day.windows(2).all(|p| p[1] <= p[0] + 2), "the stock falls day by day: {by_day:?}");
+    assert!(*by_day.last().unwrap() <= room, "within its room after a few days: {by_day:?} (room {room})");
+    assert!(w.containers.stats.cleared_by_road_total as usize >= room * 4, "out of town by road: {:?}", w.containers.stats);
+    // The pressure: the boxes no yard could keep.
+    w.daily_pressure();
+    assert!(w.pressure.signals.box_overflow > 0.0 || w.containers.stats.overflow_yday > 0);
+    let s = crate::pressure::Signals { box_overflow: 120.0, box_terminals: 1.0, ..Default::default() };
+    let p = crate::pressure::assess(&s, &w.pressure_supply());
+    let r = p.iter().find(|r| r.kind == crate::pressure::PressureKind::ContainerStorage).unwrap();
+    assert!(r.wants_more(), "the overflow wants a container yard: {r:?}");
+    assert_eq!(r.kind.business(), Some(BusinessKind::ContainerYard));
+}
+
+/// [r11-box-stock] Over many days of boxes landing at a terminal (more
+/// than leave by train), with a container yard in town: the terminal's
+/// stock stays within its room every midnight, the yard's within its own,
+/// and no box vanishes without a record.
+#[test]
+fn stock_stays_within_room_over_many_days_of_landings() {
+    let (mut w, yard, buyer) = town();
+    let store = storage_yard(&mut w);
+    let room = w.box_room(yard, DepotKind::Rail);
+    let store_room = w.box_room(store, DepotKind::Yard);
+    let mut worst = 0usize;
+    for day in 0..10 {
+        for h in 0..24 {
+            // Two boxes land an hour, one of them full for the buyer.
+            young_box(&mut w, yard, h % 2 == 0, None);
+            if h % 3 == 0 {
+                young_box(&mut w, yard, false, Some(cx::Goods { resource: Resource::Parts, buyer }));
+            }
+            tick(&mut w, 60);
+        }
+        let stock = w.depot_stock(yard);
+        worst = worst.max(stock);
+        assert!(stock <= room, "day {day}: the terminal holds {stock}, room {room}");
+        assert!(w.depot_stock(store) <= store_room, "day {day}: the yard holds {}, room {store_room}", w.depot_stock(store));
+        assert_eq!(accounted(&w), w.containers.stats.made, "day {day}: every box is in town or counted out of it");
+    }
+    assert!(w.containers.stats.to_storage_total > 0, "some went to the yard to be kept");
+    assert!(worst > 0);
+}
+
+/// [r11-box-stock] The pressure for a container storage yard, with no
+/// vacant lot that suits: a shut-down industrial business near the
+/// terminals is turned into one.
+#[test]
+fn a_shut_industrial_business_becomes_a_storage_yard() {
+    let (mut w, _yard, _) = town();
+    let lot = free_lot(&w, LandUse::Industrial);
+    let b = w.open_business(lot, BusinessKind::Slaughterhouse, true).expect("a works");
+    w.buildings[b].floors = w.buildings[b].floors.min(2);
+    w.buildings[b].plot.form = None;
+    w.buildings[b].business.as_mut().unwrap().closed = true;
+    assert!(w.box_depot(b).is_none());
+    let y = w.convert_to_storage_yard("boxes with nowhere to go").expect("turned into a yard");
+    assert_eq!(y, b);
+    assert_eq!(w.box_depot(b), Some(DepotKind::Yard), "a working container yard now");
+    assert!(w.buildings[b].business.as_ref().unwrap().origin.as_deref().unwrap_or("").contains("container yard"));
 }
