@@ -23,7 +23,7 @@ pub const DEFAULT_SPEED: usize = 2;
 const MAX_TICKS_PER_FRAME: u32 = 400;
 /// [r7-sim-thread] Frames in a row with a write to the city after which the
 /// ticks run in the frame (see `Sim::edit_streak`).
-const EDIT_STREAK: u32 = 4;
+pub(crate) const EDIT_STREAK: u32 = 4;
 /// [r7-sim-thread] The most ticks the sim thread runs in one batch.
 const MAX_BATCH: u32 = 400;
 /// Real time the sim may consume per frame before it yields to rendering.

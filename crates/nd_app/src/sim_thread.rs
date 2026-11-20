@@ -30,7 +30,7 @@
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::panic::Location;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -120,6 +120,9 @@ pub struct ThreadStats {
     /// Ms the screen waited for the thread (an edit while the thread still
     /// copied the last edit), in total.
     pub waited_ms: f32,
+    /// [r10-chunk-hitch] Edits that recalled the world from readers on
+    /// other threads (their wait is in `waited_ms`).
+    pub recalls: u64,
 }
 
 struct Link {
@@ -158,7 +161,51 @@ pub struct SimCore {
     /// Edits by where in the code they came from (`#[track_caller]`).
     edits: HashMap<(&'static str, u32), u64>,
     log_edits: bool,
+    /// [r10-chunk-hitch] Readers off the main thread holding the world.
+    leases: Arc<LeaseBook>,
 }
+
+/// [r10-chunk-hitch] The world lent to readers off the main thread
+/// (building chunk jobs): how many are out, and whether the screen wants
+/// it back to write it.
+#[derive(Default)]
+struct LeaseBook {
+    out: AtomicUsize,
+    recall: AtomicBool,
+}
+
+/// [r10-chunk-hitch] The screen's world lent to a reader on another
+/// thread ([`SimCore::lend`]). A reader asks [`Lease::recalled`] between
+/// pieces of work and lets go when it is: an edit waits for that (a few
+/// ms) instead of copying the whole city because a reader holds it.
+pub struct Lease {
+    world: Option<Arc<World>>,
+    book: Arc<LeaseBook>,
+}
+
+impl Lease {
+    pub fn world(&self) -> &World {
+        self.world.as_ref().expect("held until dropped")
+    }
+
+    /// The screen is waiting to write the world: stop and let go.
+    pub fn recalled(&self) -> bool {
+        self.book.recall.load(Ordering::Relaxed)
+    }
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        // The hold goes before the count: a screen that sees the count
+        // reach 0 finds the world its own.
+        drop(self.world.take());
+        self.book.out.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// [r10-chunk-hitch] Longest an edit waits for recalled leases before it
+/// copies the world after all.
+const RECALL_WAIT: Duration = Duration::from_millis(250);
 
 impl SimCore {
     pub fn new(world: World) -> Self {
@@ -173,7 +220,20 @@ impl SimCore {
             stats: ThreadStats::default(),
             edits: HashMap::new(),
             log_edits: std::env::var_os("ND_EDIT_LOG").is_some_and(|v| v != "0"),
+            leases: Arc::default(),
         }
+    }
+
+    /// [r10-chunk-hitch] Lend the city as it stands to a reader on another
+    /// thread (see [`Lease`]).
+    pub fn lend(&self) -> Lease {
+        self.leases.out.fetch_add(1, Ordering::AcqRel);
+        Lease { world: Some(self.world.clone()), book: self.leases.clone() }
+    }
+
+    /// [r10-chunk-hitch] Leases out now.
+    pub fn leases_out(&self) -> usize {
+        self.leases.out.load(Ordering::Acquire)
     }
 
     /// The city as it stands, shared (no copy): a save written on another
@@ -234,6 +294,21 @@ impl SimCore {
     fn unshare(&mut self) {
         if Arc::get_mut(&mut self.world).is_some() {
             return;
+        }
+        // [r10-chunk-hitch] Readers on other threads let go at their next
+        // step: wait for them rather than copy the city.
+        if self.leases.out.load(Ordering::Acquire) > 0 {
+            let t = Instant::now();
+            self.leases.recall.store(true, Ordering::Release);
+            while Arc::get_mut(&mut self.world).is_none() && self.leases.out.load(Ordering::Acquire) > 0 && t.elapsed() < RECALL_WAIT {
+                std::thread::sleep(Duration::from_micros(200));
+            }
+            self.leases.recall.store(false, Ordering::Release);
+            self.stats.recalls += 1;
+            self.stats.waited_ms += t.elapsed().as_secs_f32() * 1000.0;
+            if Arc::get_mut(&mut self.world).is_some() {
+                return;
+            }
         }
         if self.rebase_out.is_some() && self.link.is_some() {
             let t = Instant::now();

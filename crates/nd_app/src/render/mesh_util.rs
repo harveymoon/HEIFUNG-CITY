@@ -87,47 +87,15 @@ pub(super) fn spawn_geometry<T: Component + Clone>(commands: &mut Commands, mesh
     out
 }
 
-/// Building chunk meshes: like [`spawn_geometry`], but the Glow surface
-/// uses the window-lights material so lights follow occupancy.
-pub(super) fn spawn_building_geometry(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, geo: &Geometry) -> Vec<Entity> {
-    let mut out = Vec::new();
-    for (s, data) in geo.iter() {
-        let mesh = Mesh3d(meshes.add(to_mesh(data, !s.is_glow())));
-        let e = if s.is_glow() {
-            commands.spawn((mesh, MeshMaterial3d(mats.windows.clone()), Transform::IDENTITY, BuildingTag, NotShadowCaster, NotShadowReceiver)).id()
-        } else {
-            commands.spawn((mesh, MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, BuildingTag)).id()
-        };
-        out.push(e);
-    }
-    out
-}
-
-/// [r4-style] One detail layer of a chunk's detail cell: a mesh per
-/// surface with a [`VisibilityRange`] from the middle of the cell's meshes,
-/// so the layer is drawn (and casts shadows) only within its range of the
-/// camera, fading out over the last 15 %. Returns the entities, the centre
-/// and the triangles.
-pub(super) fn spawn_detail_geometry(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, geo: &Geometry, lod: nd_procgen::Lod) -> (Vec<Entity>, Vec3, usize) {
+/// [r10-chunk-hitch] The distance range a building detail layer is drawn
+/// within (`render::chunk_jobs`): drawn, and casting shadows, only within
+/// its range of the camera, fading out over the last 15 %.
+pub(super) fn detail_range(lod: nd_procgen::Lod) -> VisibilityRange {
     let range = match lod {
         nd_procgen::Lod::Near => nd_procgen::Lod::NEAR_RANGE,
         _ => nd_procgen::Lod::MID_RANGE,
     };
-    let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
-    let mut tris = 0;
-    for (_, m) in geo.detail_iter(lod) {
-        for p in &m.positions {
-            lo = lo.min(Vec3::from(*p));
-            hi = hi.max(Vec3::from(*p));
-        }
-        tris += m.indices.len() / 3;
-    }
-    if tris == 0 {
-        return (Vec::new(), Vec3::ZERO, 0);
-    }
-    let vis = VisibilityRange { start_margin: 0.0..0.0, end_margin: range * 0.85..range, use_aabb: true };
-    let out = geo.detail_iter(lod).map(|(s, data)| commands.spawn((Mesh3d(meshes.add(to_mesh(data, true))), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, BuildingTag, vis.clone())).id()).collect();
-    (out, (lo + hi) * 0.5, tris)
+    VisibilityRange { start_margin: 0.0..0.0, end_margin: range * 0.85..range, use_aabb: true }
 }
 
 /// Spawn a glow-surface mesh: unlit, no shadows either way.

@@ -126,6 +126,7 @@ mod shore;
 
 // [refactor/app] render.rs split into these modules (review 3.1).
 mod mesh_util;
+mod chunk_jobs;
 mod materials;
 mod daylight;
 mod ground;
@@ -351,15 +352,25 @@ struct RenderState {
     scatter_signature: Option<(u64, usize)>,
     /// Which chunk each drawn building sits in, so a changed or removed
     /// building can mark its chunk dirty.
-    building_chunks: HashMap<BuildingId, ChunkKey>,
+    /// [r10-chunk-hitch] With the layer of the chunk it is drawn in.
+    building_chunks: HashMap<BuildingId, chunk_jobs::LayerKey>,
     /// Solar and wind plants drawn, by lot centre: a plant coming, changing
     /// or going redraws the fields round it (see [`plant_field`]).
     plant_sites: HashMap<BuildingId, SVec2>,
-    chunks: HashMap<ChunkKey, ChunkMeshes>,
+    chunks: HashMap<chunk_jobs::LayerKey, ChunkMeshes>,
     /// [r7-sim-thread] Building chunks waiting to be regenerated: a few a
     /// frame (`CHUNK_BUDGET`), so a batch of sim ticks that touched a dozen
     /// blocks costs a dozen short frames, not one long one.
-    pending_chunks: std::collections::HashSet<ChunkKey>,
+    /// [r10-chunk-hitch] Layers now, and only when the async pool is not
+    /// building them (see `chunk_jobs`).
+    pending_chunks: std::collections::HashSet<chunk_jobs::LayerKey>,
+    /// [r10-chunk-hitch] When each layer waiting for a redraw was first
+    /// marked, for the lag in `status.render.chunks`.
+    chunk_dirty_since: HashMap<chunk_jobs::LayerKey, std::time::Instant>,
+    /// [r10-chunk-hitch] Chunks being built on the async pool.
+    chunk_jobs: HashMap<ChunkKey, chunk_jobs::Job>,
+    /// [r10-chunk-hitch] The rules and palette the jobs draw with.
+    draw_kit: Option<std::sync::Arc<chunk_jobs::DrawKit>>,
     citizens: HashMap<CitizenId, Entity>,
     cars: HashMap<CarId, [Entity; 2]>,
     overlay_version: u64,
@@ -419,6 +430,37 @@ pub struct RenderStats {
     /// now (the rest are not drawn).
     pub detail_triangles: [usize; 2],
     pub detail_in_range: [usize; 2],
+    /// [r10-chunk-hitch] Building chunk regeneration since the start.
+    pub chunks: ChunkStats,
+}
+
+/// [r10-chunk-hitch] What redrew building chunks and what it cost, counted
+/// since the start (`status.render.chunks`; diff two replies for a rate).
+#[derive(Default, Clone)]
+pub struct ChunkStats {
+    /// Buildings that marked their chunk for a redraw, by cause.
+    pub causes: std::collections::BTreeMap<&'static str, u64>,
+    /// Chunk layers regenerated, and their generation time (procgen and
+    /// meshes; on the async pool when it builds them).
+    pub rebuilt: u64,
+    pub gen_ms: f64,
+    /// The slowest single chunk, and the most main-thread time
+    /// `sync_buildings` took in one frame.
+    pub chunk_ms_max: f32,
+    pub frame_ms_max: f32,
+    /// Chunks put off to a later frame (each frame a chunk waited counts).
+    pub deferred: u64,
+    /// Waiting now.
+    pub pending: usize,
+    /// From a chunk being marked to its new meshes being spawned: summed
+    /// over `rebuilt` (for the mean) and the longest.
+    pub lag_ms: f64,
+    pub lag_ms_max: f32,
+    /// Jobs on the async pool now, jobs recalled by an edit (started
+    /// again), and the last full redraw (a load, a new palette), ms.
+    pub jobs: usize,
+    pub abandoned: u64,
+    pub full_ms: f32,
 }
 
 pub struct RenderPlugin;

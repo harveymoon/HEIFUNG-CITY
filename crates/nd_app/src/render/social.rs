@@ -115,7 +115,7 @@ pub(super) fn sync_social(mut commands: Commands, mut meshes: ResMut<Assets<Mesh
                 facades.remove(&fkey);
             }
             let painted = facades.entry(fkey).or_insert_with(|| {
-                let geo = building_geometry(w, &assets, &sim.styles, bid)?;
+                let geo = building_geometry(w, super::buildings::Kit::of(&assets), &sim.styles, bid)?;
                 // The lot's street edge: the mural's record stands just inside it.
                 let front = m.pos + m.facing.normalize_or_zero() * 0.9;
                 let spot = facade_spot(&geo, front, m.facing)?;
