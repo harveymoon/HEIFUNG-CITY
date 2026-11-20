@@ -366,11 +366,16 @@ impl World {
                 (id, v.collect())
             })
             .collect();
+        // [r11-lot-memory] A shopfront whose trade changed: remembered.
+        let mut was: Vec<(BuildingId, u8, BusinessKind, Option<BusinessKind>)> = Vec::new();
         for (id, v) in signs {
             let b = &mut self.buildings[id];
             let mut any = false;
-            for (u, s) in b.units.iter_mut().zip(v) {
+            for (i, (u, s)) in b.units.iter_mut().zip(v).enumerate() {
                 if u.sign != s {
+                    if let (Some(old), true) = (u.sign, u.shopfront) {
+                        was.push((id, i.min(255) as u8, old, s));
+                    }
                     u.sign = s;
                     any |= u.shopfront;
                 }
@@ -378,6 +383,9 @@ impl World {
             if any {
                 changed.push(id);
             }
+        }
+        for (id, unit, old, now) in was {
+            self.remember_change(id, Some(unit), old, String::new(), now);
         }
         for id in changed {
             self.events.push(SimEvent::BuildingChanged(id));

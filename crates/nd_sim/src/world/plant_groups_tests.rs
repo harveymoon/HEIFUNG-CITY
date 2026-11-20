@@ -33,7 +33,7 @@ fn total_mw(w: &World, ids: &[BuildingId]) -> f32 {
 }
 
 fn cleared() -> crate::buildings::Demolition {
-    crate::buildings::Demolition { progress: 1.0, days: 1.0, loads: 0, floors: 1, tier: Tier::Low, land_use: LandUse::Industrial, seed: 1, condition: 1.0, clear_lot: true, own_lot: false, look: None, reason: Default::default() }
+    crate::buildings::Demolition { progress: 1.0, days: 1.0, loads: 0, floors: 1, tier: Tier::Low, land_use: LandUse::Industrial, seed: 1, condition: 1.0, clear_lot: true, own_lot: false, look: None, reason: Default::default(), name: String::new(), business: None, built: 0, was_site: false }
 }
 
 #[test]

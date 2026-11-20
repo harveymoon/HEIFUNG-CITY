@@ -639,7 +639,33 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
     super::shore::building_extra(w, id, &mut v);
     // [fishing] A fishing port's boats and grounds.
     v["fishing"] = super::economy::fishing(w, id);
+    // [r11-lot-memory] What stood on its lot before, and its shops' changes.
+    v["what_stood_here"] = lot_memory_json(w, lot);
     v
+}
+
+/// [r11-lot-memory] The history of a lot (`nd_sim::lot_memory`), newest
+/// first: what came down (its ghost on the neighbours' walls and its slab
+/// fade by the week: `weeks`) and the trades that changed in what stands.
+pub fn lot_memory_json(w: &World, lot: Option<&Lot>) -> Value {
+    let Some(l) = lot else { return json!([]) };
+    let tick = w.clock.tick;
+    Value::Array(
+        w.lot_memory
+            .on_lot(l)
+            .into_iter()
+            .map(|t| {
+                json!({
+                    "kind": if t.kind == nd_sim::lot_memory::TraceKind::Demolished { "demolished" } else { "changed" },
+                    "day": t.tick / nd_sim::clock::MINUTES_PER_DAY + 1, "weeks_ago": t.weeks(tick), "line": t.line(),
+                    "name": t.name, "what": t.what(), "floors": t.floors, "land_use": t.land_use.label(),
+                    "business": t.business.map(|k| k.label()), "became": t.now.map(|k| k.label()),
+                    "reason": (t.kind == nd_sim::lot_memory::TraceKind::Demolished).then(|| t.reason.key()),
+                    "shopfront": t.unit, "stood_days": (t.kind == nd_sim::lot_memory::TraceKind::Demolished).then(|| t.tick.saturating_sub(t.built) / nd_sim::clock::MINUTES_PER_DAY),
+                })
+            })
+            .collect(),
+    )
 }
 
 /// [dirty-industry] A building and dirty industry: how dirty it is itself,
@@ -697,6 +723,8 @@ pub fn lot_detail(w: &World, id: LotId, l: &Lot) -> Value {
         "footfall_today": l.footfall_today, "footfall_hour": l.footfall_hour, "zone": zone,
         // [waterfront] its edge on the water, and a beach's state
         "shore": super::shore::lot_shore(w, id),
+        // [r11-lot-memory] what stood here before
+        "what_stood_here": lot_memory_json(w, Some(l)),
     })
 }
 

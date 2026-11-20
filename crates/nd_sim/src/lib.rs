@@ -53,6 +53,8 @@ pub mod travel_log;
 pub mod ground;
 /// [r10-worn-paths] The walking-heat field: worn grass and darkened paving.
 pub mod foot_wear;
+/// [r11-lot-memory] What stood on each lot: ghosts, slabs, painted-over signs.
+pub mod lot_memory;
 pub mod industry;
 pub mod junctions;
 pub mod land_value;

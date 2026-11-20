@@ -333,6 +333,24 @@ pub struct Demolition {
     /// [pt-growth] Why it is coming down.
     #[serde(default)]
     pub reason: DemolitionReason,
+    /// [r11-lot-memory] The old building's name and trade, for the lot's
+    /// history (`crate::lot_memory`) when the rubble is gone: during a
+    /// redevelopment the building's own fields are its successor's.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub business: Option<crate::market::BusinessKind>,
+    /// [r11-lot-memory] When the old building was built.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub built: u64,
+    /// [r11-lot-memory] What comes down is a site that never opened: the
+    /// lot remembers nothing of it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub was_site: bool,
+}
+
+fn is_zero(v: &u64) -> bool {
+    *v == 0
 }
 
 impl Demolition {
@@ -367,6 +385,10 @@ impl Demolition {
             own_lot: false,
             look: b.look,
             reason: DemolitionReason::Unknown,
+            name: b.name.clone(),
+            business: b.business.as_ref().map(|z| z.kind),
+            built: b.built_tick,
+            was_site: b.construction.is_some() && b.demolition.is_none(),
         }
     }
 

@@ -13,6 +13,7 @@ pub mod air;
 pub mod brand;
 // [tenants] a sign over each shop of a building let in parts
 mod shopfronts;
+mod ghost_signs;
 // [malls] Strip malls, malls and mega-malls.
 mod malls;
 // [megablocks] mega-corps' arcologies
@@ -261,6 +262,10 @@ fn finished(ctx: &Ctx, style: Style, rng: &mut nd_sim::SimRng, extras: &Extras) 
     // style hangs its own).
     if !extras.units.is_empty() && !style.is_mall() && style != Style::MegaBlock {
         shopfronts::draw(&mut g, ctx, extras.units, ctx.seed);
+    }
+    // [r11-lot-memory] Old signs painted over, a door bricked up.
+    if !extras.ghost_signs.is_empty() && !style.is_mall() && style != Style::MegaBlock {
+        ghost_signs::draw(&mut g, ctx, extras.ghost_signs, extras.units);
     }
     // [capsule] The dome district is spotless whatever its tier or age.
     if weathered(ctx.tier, ctx.wear) && !Style::CAPSULE.contains(&style) {

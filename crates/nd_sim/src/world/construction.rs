@@ -357,6 +357,10 @@ impl World {
     /// Public so tests and scripts can skip the wait.
     pub fn finish_demolition(&mut self, bid: BuildingId) {
         let tick = self.clock.tick;
+        // [r11-lot-memory] The lot remembers what stood.
+        if let Some(d) = self.buildings.get(bid).and_then(|b| b.demolition.clone()) {
+            self.remember_demolished(bid, Some(&d));
+        }
         let Some(b) = self.buildings.get_mut(bid) else { return };
         let Some(d) = b.demolition.take() else { return };
         if !d.clear_lot {
