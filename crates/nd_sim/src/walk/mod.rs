@@ -111,6 +111,13 @@ pub const BRIDGE_DRAW: f32 = 50.0;
 /// one piece) has no crosswalk over its mouth: the pavement round its end
 /// is a few steps further (`close_redundant_path_zebras`).
 pub const DEAD_END_STUB: f32 = 30.0;
+/// [r10-walk-kerb] A footpath end with no street at its road node, this
+/// close to the middle of a street's pavement (on it, at its kerb, or a
+/// step off its back), is joined to that pavement (`join_kerb_ends`).
+pub const KERB_JOIN_REACH: f32 = SIDEWALK;
+/// [r10-walk-kerb] It joins a pavement node this close to where it meets
+/// the pavement (a lot front, a zebra's end) instead of adding one there.
+const KERB_NODE_SNAP: f32 = 2.5;
 
 /// [park-paths] Gates on the edges of a lot `outline` for paths to be drawn
 /// to: one every 40 m or so on each edge of 10 m or more (up to three),

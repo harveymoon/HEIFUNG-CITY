@@ -797,7 +797,14 @@ Citizens are rendered from their simulated positions every frame.
   `traffic/crosswalk.rs`): streets are crossed only at crossings. Every arm of a junction of
   three or more streets has a crosswalk where its zebra is painted (pavements meet round the
   corners, never through the junction); a footpath over a street and every ~120 m of a block
-  longer than 170 m get a zebra; a dead end is crossed at its end. At a signalised junction
+  longer than 170 m get a zebra; a dead end is crossed at its end. [r10-walk-kerb] A footpath drawn to a street ends on it (a node on
+  the street, so the pavements meet the path and the crossing rules above apply), however wide
+  the street: the end-snap reaches a street out to the back of its pavement. A path end left
+  at a kerb with no node (older layouts) is joined to that pavement when the walk graph is
+  built, if it is within 3.2 m of the pavement's middle, at the street's level, and not by a
+  highway or car-only road or across track (`WalkGraph::join_kerb_ends`). A group of landlocked lots
+  gated only to each other gets one way out to the nearest pavement, as a lone landlocked lot
+  does. At a signalised junction
   the crosswalk across an arm shows walk while the traffic parallel to it has the green (not
   during a protected left arrow, and not in the last 4 s of a green that is about to end);
   walkers wait at the kerb in a small cluster facing the street, call the walk phase (so it

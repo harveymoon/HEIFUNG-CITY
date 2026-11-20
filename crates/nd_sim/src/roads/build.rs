@@ -133,7 +133,8 @@ impl RoadNetwork {
     /// [interchange] Where an end of a way of `kind` drawn at `level` and
     /// dropped at `p` lands: a node within `SNAP_RADIUS`, else a point on a
     /// way within `radius` (a node within `SNAP_RADIUS` of that point if
-    /// there is one), else nowhere. Of what is in reach, a way at about the
+    /// there is one), else nowhere. A path end reaches a street out to the
+    /// back of its pavement, however wide the street. Of what is in reach, a way at about the
     /// end's own level (`GRADE_SEPARATION`) wins: an end dropped where a
     /// viaduct passes over a street joins the one it was drawn at, and a
     /// ramp end at a street under the highway lands on the street, never on
@@ -166,9 +167,17 @@ impl RoadNetwork {
                 None
             }
         };
+        // [r10-walk-kerb] A path end on a street's pavement is in reach of
+        // that street however wide it is: the Path tool puts it there
+        // (`pavement_snap`, the half width plus 1.8 m out), 10.3 m from the
+        // centre line of a 2+2 avenue, past `radius`. Harvey's paths to
+        // Kessler Avenue (flag day 80) stopped on its kerb with no node, a
+        // dead end on foot that looked joined.
+        let reach = |s: &Segment| if foot && s.is_street() && !s.is_motorway() { radius.max(s.half_width() + crate::zoning::SIDEWALK) } else { radius };
+        let look = if foot { radius.max(PAVEMENT_REACH_MAX) } else { radius };
         // Ways within reach, nearest first: (distance, segment, t, point).
-        let lo = p - Vec2::splat(radius);
-        let hi = p + Vec2::splat(radius);
+        let lo = p - Vec2::splat(look);
+        let hi = p + Vec2::splat(look);
         let mut ways: Vec<(f32, SegmentId, f32, Vec2)> = self
             .segments_in_box(lo, hi)
             .filter(|&sid| seg_ok(self.segment(sid)))
@@ -177,7 +186,7 @@ impl RoadNetwork {
                 let (t, q) = project_on_segment(p, a, b);
                 (q.distance(p), sid, t, q)
             })
-            .filter(|w| w.0 <= radius)
+            .filter(|w| w.0 <= reach(self.segment(w.1)))
             .collect();
         ways.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
         // Passes: at its own level first; for a path, a way that is not

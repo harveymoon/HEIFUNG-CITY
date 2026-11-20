@@ -492,9 +492,13 @@ impl World {
             return None;
         }
         let (a, b) = self.roads.segment_points(sid);
-        let mid = (a + b) * 0.5;
         let reach = s.half_width() + crate::zoning::SIDEWALK + 3.0;
-        self.walk.nearest_matching(mid, reach, |n| self.walk.nodes[n as usize].lot.is_none())
+        // [r10-walk-kerb] A footpath's walk nodes are only at its ends and
+        // its homes' fronts: a long one with no homes had none in reach of
+        // its middle and reported no walkway (`walk: null`, Harvey's paths
+        // 2641 and 2645). Look along it from the middle out to its ends.
+        let along: &[f32] = if s.is_street() { &[0.5] } else { &[0.5, 0.4, 0.6, 0.25, 0.75, 0.1, 0.9, 0.0, 1.0] };
+        along.iter().find_map(|&t| self.walk.nearest_matching(a.lerp(b, t), reach, |n| self.walk.nodes[n as usize].lot.is_none()))
     }
 
     /// How segment `sid` sits in the networks (see [`SegmentLinks`]).

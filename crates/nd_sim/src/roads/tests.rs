@@ -410,3 +410,23 @@ fn a_street_ending_beside_a_ramp_start_joins_the_avenue_there() {
     let n = (0..roads.nodes.len()).find(|&n| roads.nodes[n].pos.distance(Vec2::new(243.0, 488.5)) < 4.0 && !roads.nodes[n].segments.is_empty()).unwrap();
     assert_eq!(roads.streets_at(NodeId(n as u32)).count(), 4, "boulevard, both arms of the avenue and the ramp meet");
 }
+
+/// [r10-walk-kerb] Where the Path tool shows a path end snapped onto a
+/// street's pavement (`pavement_snap`), the network lays it onto that
+/// street, however wide: on a 2+2 avenue the pavement is 10.3 m from the
+/// centre line, past `END_SNAP_RADIUS`, and the end used to stay on the
+/// kerb joined to nothing (Harvey's Kessler Avenue, flag day 80).
+#[test]
+fn a_path_end_snapped_to_any_pavement_lands_on_its_street() {
+    for lanes in 1..=4u8 {
+        let mut net = RoadNetwork::default();
+        net.add_polyline(&[Vec2::new(-100.0, 0.0), Vec2::new(100.0, 0.0)], lanes, lanes);
+        for side in [1.0f32, -1.0] {
+            let (q, _) = net.pavement_snap(Vec2::new(20.0, side * 12.0), 8.0).expect("a pavement");
+            let (at, _) = net.end_landing(q, RoadKind::Path).unwrap_or_else(|| panic!("{lanes}+{lanes}: the end at {q} lands nowhere"));
+            assert!(at.y.abs() < 1e-3 && (at.x - 20.0).abs() < 1e-3, "{lanes}+{lanes}: on the street opposite: {at}");
+        }
+        // A street end is reached no further than before.
+        assert!(net.end_landing(Vec2::new(20.0, 12.0), RoadKind::Street).is_none(), "{lanes}+{lanes}: a street's end 12 m off");
+    }
+}
