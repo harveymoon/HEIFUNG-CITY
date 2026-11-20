@@ -994,7 +994,7 @@ fn capsule_sites_rise_in_their_own_shape() {
 /// [K34] A record's box for the tests: line, size, wear and marks.
 fn test_box(c: &mut nd_sim::containers::Containers, line: u8, serial: u32, forty: bool, years: i32) -> nd_sim::containers::BoxId {
     use nd_sim::containers::*;
-    c.boxes.insert(BoxRec { line, serial, forty, kind: nd_sim::rail::BoxKind::Dry, origin: 3, built: -365 * years, knocks: (years * 5) as u16, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false })
+    c.boxes.insert(BoxRec { line, serial, forty, kind: nd_sim::rail::BoxKind::Dry, origin: 3, built: -365 * years, knocks: (years * 5) as u16, owner: Owner::Line, at: Where::Train, goods: None, since: 0, visits: 1, log: Vec::new(), export: Vec::new(), bound_out: false, slot: None })
 }
 
 /// [r8] Harvey: "white should not be the color under super faded, muted is
