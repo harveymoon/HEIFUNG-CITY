@@ -21,11 +21,14 @@ pub struct Lighting {
     /// brings and wet streets (View window, ALSO DRAWN). Off hides them
     /// only; the sim's weather goes on.
     pub show_weather: bool,
+    /// [r12-grime] Draw the grime and soft edges (`weathering`): Settings,
+    /// Graphics; saved. `ND_WEATHERING=0` turns it off for a run.
+    pub weathering: bool,
 }
 
 impl Default for Lighting {
     fn default() -> Self {
-        Self { follow_clock: true, hour: 14.0, heat: false, quality: QualitySetting::from_env(), show_weather: true }
+        Self { follow_clock: true, hour: 14.0, heat: false, quality: QualitySetting::from_env(), show_weather: true, weathering: super::weathering::env_allows() && crate::ui::theme::saved_weathering().unwrap_or(true) }
     }
 }
 /// Near shadow cascade bounds (m): the defaults, kept while the orbit

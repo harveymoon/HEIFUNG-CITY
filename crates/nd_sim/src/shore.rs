@@ -237,6 +237,20 @@ pub fn plan_beach_with(lot: &Lot, tier: Tier, seams: &[(Vec2, Vec2)]) -> ParkLay
     ParkLayout { paths: vec![walk], benches, ..ParkLayout::bare(tier, vec![entrance], area) }
 }
 
+/// [r12-odd-lots] Does a trade use the water off its lot: boats, a berth,
+/// fish landed or a deck over it? Only these (and homes, which may keep a
+/// boat) draw a pier or landing off a waterfront lot; a karaoke bar, an
+/// office or a shop on the water does not get one for being there. The
+/// trades that build a jetty of their own (`World::jetty_kind_for`) are
+/// among them.
+pub fn uses_water(kind: crate::market::BusinessKind) -> bool {
+    use crate::market::BusinessKind as B;
+    matches!(
+        kind,
+        B::Marina | B::FishingPort | B::Fishery | B::FishPlant | B::FishGutting | B::FishStickFactory | B::FishMarket | B::SeafoodRestaurant | B::PierRestaurant | B::BoatRental | B::BeachResort | B::BeachBar
+    ) || crate::World::jetty_kind_for(kind).is_some()
+}
+
 /// What a private jetty is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum JettyKind {

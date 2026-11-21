@@ -60,6 +60,11 @@ pub(super) fn sync_roads(
     for (s, data) in geo.iter() {
         let mesh = meshes.add(to_mesh(data, !s.is_glow()));
         let mut e = commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, RoadsTag));
+        // [r12-grime] The pavements, marked with their distance from the
+        // back edge, wear the weathering (weeds, patches, kerb grime).
+        if weathering::has_channel(data) {
+            e.insert(weathering::Weathered(s));
+        }
         if s.is_glow() {
             e.insert((NotShadowCaster, NotShadowReceiver));
         } else if ghosts_underground(s) {

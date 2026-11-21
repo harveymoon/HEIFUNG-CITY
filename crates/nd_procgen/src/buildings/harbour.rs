@@ -84,6 +84,19 @@ fn own_jetty(e: &Extras) -> bool {
     e.business.and_then(nd_sim::World::jetty_kind_for).is_some()
 }
 
+/// [r12-odd-lots] The use on the lot uses the water: a home (a boat at the
+/// end of the garden), the front's fish sheds and market hall (drawn for
+/// industry), or a trade that works it (`nd_sim::shore::uses_water`: a
+/// seafood place, a boat rental, the fishing trades). A karaoke bar, an
+/// office, a shop or a hotel on the front runs no pier out (Harvey's flag
+/// on Null Pointer Karaoke: "it also has a dock for what reason?").
+fn uses_the_water(c: &Ctx, e: &Extras) -> bool {
+    match e.business {
+        Some(k) => nd_sim::shore::uses_water(k),
+        None => !c.land_use.is_commercial(),
+    }
+}
+
 /// Whether the water lies behind the lot (the usual waterfront lot).
 fn water_behind(c: &Ctx) -> bool {
     c.shore.is_some_and(|s| s.seaward != Vec2::ZERO) && sea_local(c, c.shore).y > 0.6
@@ -217,12 +230,13 @@ fn hipped(g: &mut Geometry, c: &Ctx, r: &R, y: f32, rise: f32, over: f32, s: Sur
 
 /// A small timber pier out over the water from where the lot meets it,
 /// on piles, with bollards, a ladder, a lamp at its end and a dinghy tied
-/// alongside. Only on a lot that touches the water, and not where the
-/// business builds its own jetty. `from` is a lot-local point to run it
+/// alongside. Only on a lot that touches the water, for a use that uses
+/// it ([`uses_the_water`]), and not where the business builds its own
+/// jetty. `from` is a lot-local point to run it
 /// out from (the lot's middle when `None`).
 fn small_pier(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras, from: Option<Vec2>) {
     let Some(look) = c.shore else { return };
-    if look.seaward == Vec2::ZERO || own_jetty(e) {
+    if look.seaward == Vec2::ZERO || own_jetty(e) || !uses_the_water(c, e) {
         return;
     }
     let f = &c.frame;

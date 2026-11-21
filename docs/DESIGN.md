@@ -292,6 +292,36 @@ Citizens are rendered from their simulated positions every frame.
   The building inspector shows "WHAT STOOD HERE" (one line a trace: "Day 12: Rust Row, a 4-storey
   block of homes, pulled down (bulldozed: the zone was cleared); stood 30 days"), the lot hover
   card the last two; `inspect` carries `what_stood_here`, and the remote `lot_memory` reports it.
+- **Soft edges and shader grime** [r12-grime] (`nd_procgen::weathering`, `nd_app`
+  `render/weathering.rs`): weathering drawn in the shaders, city-wide, with no extra triangles on
+  walls or pavements, no extra draw calls and no work a frame. Meshes carry a **weathering
+  channel**, one pair per vertex in their second UV set (`MeshData::aux`), written when they are
+  built anyway: a building's walls (masonry and render fully, panels and metal 0.8, frames and
+  tarps 0.45, glass 0.3; containers, ground, glow and paint not at all) get `[wear, ground height]`
+  (`append_building`); a pavement `[-wear, packed]`, its distance in from the back edge and its span
+  to the kerb (`kerb_ribbon`, marked per corner so the interpolation gives the true distance); a
+  convex lot's floor is laid as a fan from its middle, the middle marked with how far in it is
+  (`fill_lot`). Those meshes wear a copy of their surface's own material with a small shader
+  extension (`WeatherMaterial`, one per surface, so no draw is added; it keeps the chase camera's
+  cut and uses the cut's prepass). On walls: a ragged grime band at the foot (0.3 to 1.3 m by
+  wear), rain streaks in narrow columns under each 3.2 m storey's sill line, dirt where the ambient
+  occlusion is (inside corners, recesses; needs SSAO, so Medium and High), faint blotchy staining,
+  and in a damp climate darkening and patchy moss low on the shaded north side (-z, where the sun
+  never stands) and on old roofs. On the ground: weeds and grass creeping in ragged clumps from
+  the soft edge (further on neglected ground), soil washed over the edge, grime along the kerb,
+  patched slabs and cracks, AO dirt in corners. Fine detail fades out from 120 to 650 m.
+  **Wear** (`building_grime`): (0.18 + 0.55 x age/(age + 30 days)) x (0.45 + 0.9 x (1 -
+  condition)), +0.16 low tier / +0.04 mid / -0.08 high, +0.18 industry, x0.45 spires and luxury,
+  x0.7 offices and tech, x1.25 heavy industry and logistics, x1.2 slums, 0 for the capsule domes;
+  pavements by the street's land value (`street_grime`, 0.75 - 0.65 v); lot floors by their
+  building's (unusable ground 0.7). **Climate** (uniforms, `climate_grime`): brown-grey grime and
+  green growth temperate and tropical (damp 0.75 and 1), pale dust and little growth in the
+  desert, black soot volcanic, little damp arctic. Wear is baked when a mesh is rebuilt (as it is
+  anyway), so a building greys as it is redrawn. Settings, Graphics, "Grime and soft edges" (saved
+  in `settings.ron`; remote `graphics {weathering}` for a run; `ND_WEATHERING=0` off at start;
+  `ND_WEATHERING_K` scales it for judging the look). Off, and in the heat, focus and ghost views,
+  the meshes wear their plain materials (`apply_weathering`), so the material swapper and the cut
+  work on them unchanged.
 - **Road wear and maintenance** (`nd_sim::road_wear`, `world/roadworks.rs`): every street piece
   the city looks after (not paths, track, bored tunnels, highway carriageways or anything past the
   map edge) wears 0.0033 a day with age (about 300 days to crumble) plus 0.00012 per vehicle sample
@@ -547,7 +577,16 @@ Citizens are rendered from their simulated positions every frame.
   water off it is navigable (sea, lake, a river 18 m wide; `plan_jetty`); a cargo quay lands its
   imports by its own coaster at the sea price five hours on; a pier restaurant's deck and a boat
   rental's pontoon are jetties too. A fishing jetty is a trawler's berth (the fishing fleet
-  model does not sail it yet).
+  model does not sail it yet). [r12-odd-lots] *Docks only for uses that use the water*
+  (`shore::uses_water`: marinas, fishing ports and works, fish markets, seafood restaurants,
+  pier restaurants, boat rentals, beach resorts and bars, the jetty trades; and homes, which
+  keep a boat): the Harbour Pastel styles run their small timber pier out only for these, so a
+  karaoke bar, shop, office or hotel on the front has none. *Shore parcels*: the shore's bigger
+  cap (4,800 m²) is for a strip from the road to the water at least 1.6 times as long as it is
+  wide (`zoning::shore_cap`); a squat piece on the water is capped as inland land (2,400 m²) and
+  halved from the road to the water so both halves keep the shore (`cap_parcel`), and a lot
+  takes backland down to the water only within the same cap (`reach_the_water`). Saves keep
+  the parcels they were cut with; new cuts (a road built or changed) follow the rule.
 - **Golf driving ranges**: a place to go out (`BusinessKind::is_outing`): a night out also
   finds restaurants, ranges, galleries and marina clubhouses on any land use; each charges by
   the hour at its own rate (`tab_factor`). Open 08:00-23:00, floodlit after dark.
@@ -1135,7 +1174,17 @@ Citizens are rendered from their simulated positions every frame.
   lots for zoning and each names the building (`plot.extra_lots`); a built neighbour is
   demolished first and joins when its rubble is gone (`EstateMarket::reserved`). A merge
   is refused unless the plots make a compact block (hull within 6% of their area); the
-  renderer draws the building on `World::footprint`, the merged outline. Rebuilds carry
+  renderer draws the building on `World::footprint`, the merged outline. [r12-odd-lots] A shop
+  or place to go out on a site over 2.5 times its use's lot area whose style leaves most of it
+  bare (everything over 2.5 m covering under a fifth: a bar or shack in a yard of paving) is
+  drawn on a plot of its use's size at the street (`buildings::grounds::front_plot`: two lot
+  widths of frontage round its way in, a lot's depth or more), the rest laid out as grounds
+  (`grounds::draw`): a lawn with trees, a path back from the building with benches, on the
+  water a promenade along the shore with a rail, benches and lamps; rough grass and weeds on
+  cheap land. Forms, landmarks, car parks, plants, stations, docks, malls and the water trades
+  keep their whole site; nothing changes in the sim. Built lots' gravel floors lie on the
+  building's pad (`render/lots.rs`), not lifted onto the ground vertex by vertex (a street-side
+  vertex at pavement height tilted a triangle of gravel up through the yard). Rebuilds carry
   extras; a building's removal frees them. *McMansions*: at most one a day (30% roll), one
   per six households earning 220+, on two touching residential plots in a block held to
   three floors on land worth 0.45+, bought by the richest such household, which moves in;

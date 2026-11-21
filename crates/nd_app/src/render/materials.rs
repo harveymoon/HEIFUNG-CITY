@@ -31,6 +31,9 @@ pub(super) struct Materials {
     pub(super) windows: Handle<lights::WindowMaterial>,
     /// The lit share of every building, one texel each.
     pub(super) lit: Handle<Image>,
+    /// [r12-grime] The weathering copy of each lit surface's material, by
+    /// `Surface::index()` (`weathering`).
+    pub(super) weather: Vec<Option<Handle<weathering::WeatherMaterial>>>,
 }
 
 impl Materials {
@@ -64,6 +67,7 @@ impl Materials {
             ghost_road: default(),
             windows,
             lit: default(),
+            weather: Vec::new(),
         }
     }
 }
@@ -97,6 +101,7 @@ pub(super) fn setup(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut window_materials: ResMut<Assets<lights::WindowMaterial>>,
+    mut weather_materials: ResMut<Assets<weathering::WeatherMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     assets: Res<GameAssets>,
@@ -217,7 +222,9 @@ pub(super) fn setup(
         m.boxed(Vec3::ZERO, Vec3::new(0.08, 0.26, 0.26), 0.0, [1.0, 1.0, 1.0, 1.0]);
         meshes.add(shared_mesh(&m, false))
     };
+    let weather = weathering::make_materials(&surfaces, &materials, &mut weather_materials);
     commands.insert_resource(Materials {
+        weather,
         surfaces,
         citizen,
         citizen_spotlight,
