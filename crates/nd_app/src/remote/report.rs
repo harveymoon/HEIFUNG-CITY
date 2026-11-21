@@ -85,6 +85,21 @@ pub fn share(n: usize, d: usize) -> f64 {
     }
 }
 
+/// [r12-hunger] The hunger grid's eight hungriest cells: centre, the
+/// hungry living there (smoothed) and the pull for food businesses.
+fn hungriest_cells(w: &World) -> Vec<Value> {
+    let mut c = w.food_need.cells.clone();
+    c.sort_by(|a, b| b.2.total_cmp(&a.2));
+    let cell = nd_sim::world::food_need::NEED_CELL;
+    c.iter()
+        .take(8)
+        .map(|&(x, y, n)| {
+            let p = SVec2::new((x as f32 + 0.5) * cell, (y as f32 + 0.5) * cell);
+            json!({ "center": [round(p.x), round(p.y)], "hungry": round(n), "pull": r3(w.food_need.pull(p)) })
+        })
+        .collect()
+}
+
 fn r3(x: f32) -> f64 {
     (x as f64 * 1000.0).round() / 1000.0
 }
@@ -463,15 +478,7 @@ fn people(w: &World) -> Value {
                 "share": r3(w.food_need.share),
                 "town_hungry": w.food_need.town_hungry(),
                 "food_businesses_opened_for_hunger_total": w.food_need.opened_total,
-                "hungriest_cells": {
-                    let mut c = w.food_need.cells.clone();
-                    c.sort_by(|a, b| b.2.total_cmp(&a.2));
-                    c.iter().take(8).map(|&(x, y, n)| {
-                        let cell = nd_sim::world::food_need::NEED_CELL;
-                        let p = nd_sim::Vec2::new((x as f32 + 0.5) * cell, (y as f32 + 0.5) * cell);
-                        json!({ "center": [round(p.x), round(p.y)], "hungry": round(n), "pull": r3(w.food_need.pull(p)) })
-                    }).collect::<Vec<_>>()
-                },
+                "hungriest_cells": hungriest_cells(w),
             },
         },
         "commute_modes_now": { "travelling": travelling, "modes": mode_json, "owns_car_share": share(owns_car as usize, n), "owns_bike_share": share(owns_bike as usize, n) },

@@ -221,7 +221,7 @@ impl World {
             self.food_need.opened_total += 1;
             self.events.push(SimEvent::BuildingChanged(id));
             let (name, at) = (self.buildings[id].name.clone(), self.building_lot(id).map(|l| l.center).unwrap_or_default());
-            self.social.push_news(tick, format!("🥫 A {old} became {name}, a grocer for a hungry neighbourhood."), at, None);
+            self.social.push_news(tick, format!("🏢 A {old} became {name}, a grocer for a hungry neighbourhood."), at, None);
         }
         picks.len()
     }
