@@ -34,7 +34,10 @@ Open work: `todo.md` (sorted by area; tick items with "→ DONE [branch]: what")
   before reporting; do not merge into main yourself.
 
 ## Building and testing
-- Drive C: is tight. Build agent work to `CARGO_TARGET_DIR=O:/nd_targets/<branch>`.
+- Drive C: is tight. All work files live under `O:/projects/Heifung_District` (Harvey 2026-11-20; never loose `O:/nd_*` folders):
+  build agent work to `CARGO_TARGET_DIR=O:/projects/Heifung_District/targets/<branch>`, game homes/saves/probe output in
+  `O:/projects/Heifung_District/runs/<branch>`, screenshots worth keeping in `O:/projects/Heifung_District/shots/<branch>`.
+  The main-checkout test cache is `targets/main-check`. Delete a branch's target and run folder once it is merged.
 - Speed: `.cargo/config.toml` sets the rust-lld linker (sccache was dropped: ~0% hits, it serialised
   builds). Use `--profile fast` (release without LTO, 16 codegen units) for tests:
   `cargo test --profile fast --workspace`
