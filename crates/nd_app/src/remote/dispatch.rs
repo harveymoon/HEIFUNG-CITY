@@ -1005,6 +1005,7 @@ pub(super) static COMMANDS: &[Cmd] = &[
     ] },
     Cmd { name: "graphics", aliases: &["quality"], effect: View, run: look::graphics, help: &[
         ("quality", "auto|low|medium|high: pin the graphics tier (pin one before screenshots that must compare) or hand it back to the frame-rate throttler; omitted reports the setting, the tier in force, the smoothed frame time and the effects on the camera"),
+        ("weathering", "bool: [r12-grime] grime and soft edges drawn (shader weathering on walls, pavements and lot floors); for this run only, the Settings checkbox saves it"),
     ] },
     Cmd { name: "screenshot", aliases: &[], effect: Files, run: files::screenshot, help: &[
         ("path", "optional .png (see files); default screenshots/shot-<unix ms>.png; written a frame or two later"),

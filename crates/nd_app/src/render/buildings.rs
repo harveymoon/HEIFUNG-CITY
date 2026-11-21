@@ -101,6 +101,9 @@ pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world:
     // [climate] Snow on the roofs in a cold climate.
     nd_procgen::climate::snow_cover(&mut g, kit.palette.snow);
     lights::tag_windows(&mut g, lights::slot_of(id));
+    // [r12-grime] Its walls carry its grime and the ground they stand on,
+    // for the weathering shader (no vertex added).
+    nd_procgen::weathering::mark_building(&mut g, building_wear(world, styles, id), world.lot_pad(b.lot));
     let top = mass_top(&g);
     // Every building stands on its lot's levelled pad.
     nd_procgen::terrain::raise_geometry(&mut g, world.lot_pad(b.lot));
@@ -111,6 +114,14 @@ pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world:
     }
     geo.append(&g);
     Some((top, ghost_tris))
+}
+
+/// [r12-grime] How much grime a building's walls show: its age, condition,
+/// tier, land use and style (`weathering::building_grime`).
+pub(super) fn building_wear(world: &World, styles: &StyleBook, id: BuildingId) -> f32 {
+    let Some(b) = world.buildings.get(id) else { return 0.0 };
+    let age_days = world.clock.tick.saturating_sub(b.built_tick) as f32 / nd_sim::clock::MINUTES_PER_DAY as f32;
+    nd_procgen::weathering::building_grime(b.tier, b.condition, age_days, b.land_use, styles.style(id))
 }
 
 /// One building's geometry as drawn, before it is raised onto its lot's

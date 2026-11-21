@@ -156,6 +156,10 @@ struct Settings {
     /// [laptop-nav] Scroll, touchpad and navigation pad settings.
     #[serde(default)]
     nav: Option<crate::nav::NavSettings>,
+    /// [r12-grime] Grime and soft edges drawn (Settings, Graphics); on
+    /// unless turned off.
+    #[serde(default)]
+    weathering: Option<bool>,
 }
 
 fn load_settings() -> Settings {
@@ -200,6 +204,18 @@ pub fn saved_quality() -> Option<String> {
 pub fn save_quality(label: &str) {
     let mut settings = load_settings();
     settings.quality = Some(label.to_string());
+    save_settings(&settings);
+}
+
+/// [r12-grime] Whether grime and soft edges were left on, if ever set.
+pub fn saved_weathering() -> Option<bool> {
+    load_settings().weathering
+}
+
+/// [r12-grime] Save the weathering switch for the next run.
+pub fn save_weathering(on: bool) {
+    let mut settings = load_settings();
+    settings.weathering = Some(on);
     save_settings(&settings);
 }
 
@@ -545,6 +561,18 @@ mod tests {
         let text = ron::ser::to_string_pretty(&Settings { audio: Some(mine), ..Default::default() }, Default::default()).unwrap();
         let back: Settings = ron::from_str(&text).unwrap();
         assert_eq!(back.audio, Some(mine));
+    }
+
+    /// [r12-grime] The weathering switch survives a save and load; a file
+    /// from before it loads with it unset (on).
+    #[test]
+    fn weathering_setting_round_trips_and_old_files_load() {
+        let old = "(ui_scale: Some(1.15), quality: Some(\"High\"))";
+        let s: Settings = ron::from_str(old).unwrap();
+        assert_eq!(s.weathering, None);
+        let text = ron::ser::to_string_pretty(&Settings { weathering: Some(false), ..Default::default() }, Default::default()).unwrap();
+        let back: Settings = ron::from_str(&text).unwrap();
+        assert_eq!(back.weathering, Some(false));
     }
 
     #[test]

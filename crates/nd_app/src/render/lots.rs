@@ -193,7 +193,14 @@ pub(super) fn sync_lots(
             commands.entity(e).despawn();
         }
         let fill = fill_mesh_in(w, &fills, *k, pal);
-        let e = (!fill.is_empty()).then(|| commands.spawn((Mesh3d(meshes.add(to_mesh(&fill, true))), MeshMaterial3d(mats.surface(Surface::Dirt)), Transform::IDENTITY, LotsTag)).id());
+        let e = (!fill.is_empty()).then(|| {
+            let mut e = commands.spawn((Mesh3d(meshes.add(to_mesh(&fill, true))), MeshMaterial3d(mats.surface(Surface::Dirt)), Transform::IDENTITY, LotsTag));
+            // [r12-grime] Weeds and soil in from the lots' edges.
+            if weathering::has_channel(&fill) {
+                e.insert(weathering::Weathered(Surface::Dirt));
+            }
+            e.id()
+        });
         state.lot_fills.insert(*k, (*h, e));
     }
     if !glow.is_empty() {
@@ -250,14 +257,10 @@ pub(super) fn fill_mesh_in(w: &World, fills: &[(ChunkKey, LotId, LotFill)], chun
             continue;
         }
         let lot = &w.lots[*id];
-        match f {
-            LotFill::Earth => fill.ground_polygon(&lot.polygon, 0.02, scale(pal.ground, 1.15)),
-            LotFill::Gravel => {
-                let from = fill.positions.len();
-                fill.ground_polygon(&lot.polygon, 0.02, rgba(pal.gravel));
-                set_on_pad(w, *id, &mut fill.positions[from..]);
-            }
-            LotFill::None => {}
+        let from = fill.positions.len();
+        fill_lot(&mut fill, lot, *f, pal, lot_wear(w, lot, *f));
+        if *f == LotFill::Gravel {
+            set_on_pad(w, *id, &mut fill.positions[from..]);
         }
     }
     fill
@@ -281,6 +284,53 @@ pub(super) fn set_on_pad(w: &World, lot: LotId, verts: &mut [[f32; 3]]) {
     for p in verts {
         p[1] += pad - super::lift::lie_height(w, SVec2::new(p[0], p[2]));
     }
+}
+
+/// [r12-grime] How worn a lot's floor looks: its building's grime (by
+/// age, condition, tier and use), or well worn for unusable ground.
+pub(super) fn lot_wear(w: &World, lot: &nd_sim::Lot, f: LotFill) -> f32 {
+    match (f, lot.building.and_then(|b| w.buildings.get(b))) {
+        (LotFill::Earth, _) => 0.7,
+        (_, Some(b)) => {
+            let age_days = w.clock.tick.saturating_sub(b.built_tick) as f32 / nd_sim::clock::MINUTES_PER_DAY as f32;
+            nd_procgen::weathering::building_grime(b.tier, b.condition, age_days, b.land_use, None)
+        }
+        _ => 0.0,
+    }
+}
+
+fn seg_dist(p: SVec2, a: SVec2, b: SVec2) -> f32 {
+    let ab = b - a;
+    let l2 = ab.length_squared();
+    let t = if l2 < 1e-6 { 0.0 } else { ((p - a).dot(ab) / l2).clamp(0.0, 1.0) };
+    p.distance(a + ab * t)
+}
+
+/// One lot's floor. [r12-grime] A convex lot is laid as a fan from its
+/// middle, the middle marked with how far in it is and the rim with
+/// nothing, so the weathering's weeds and soil creep in from the lot's
+/// edge (furthest into its corners); any other lot as one polygon.
+pub(super) fn fill_lot(fill: &mut MeshData, lot: &nd_sim::Lot, f: LotFill, pal: &nd_procgen::Palette, wear: f32) {
+    let color = match f {
+        LotFill::Earth => scale(pal.ground, 1.15),
+        LotFill::Gravel => rgba(pal.gravel),
+        LotFill::None => return,
+    };
+    let poly = &lot.polygon;
+    if wear > 0.0 && poly.len() >= 3 && nd_procgen::mesh::is_convex(poly) {
+        let c = poly.iter().copied().fold(SVec2::ZERO, |a, p| a + p) / poly.len() as f32;
+        let inr = (0..poly.len()).map(|i| seg_dist(c, poly[i], poly[(i + 1) % poly.len()])).fold(f32::MAX, f32::min);
+        if inr > 0.5 {
+            use nd_procgen::weathering::{edge_aux, pack_edge};
+            let start = fill.positions.len();
+            let ring: Vec<Vec3> = poly.iter().map(|p| Vec3::new(p.x, 0.02, p.y)).collect();
+            fill.ground_fan(Vec3::new(c.x, 0.02, c.y), &ring, color);
+            fill.set_aux(start, edge_aux(wear, pack_edge(0.0, 0.0)));
+            fill.aux[start] = edge_aux(wear, pack_edge(inr, 0.0));
+            return;
+        }
+    }
+    fill.ground_polygon(poly, 0.02, color);
 }
 
 /// [waterfront] Public beaches on the zoning layer and in previews: sand.
@@ -512,14 +562,11 @@ mod lot_fill_tests {
                 continue;
             }
             let own_floor = lot.land_use == nd_sim::LandUse::Park || lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.service.is_some_and(|s| s.kind.is_landmark()) || b.airport.is_some());
-            match lot_fill(lot.landlocked, lot.building.is_some(), holed.contains(&id), own_floor) {
-                LotFill::Earth => whole.ground_polygon(&lot.polygon, 0.02, scale(pal.ground, 1.15)),
-                LotFill::Gravel => {
-                    let from = whole.positions.len();
-                    whole.ground_polygon(&lot.polygon, 0.02, rgba(pal.gravel));
-                    set_on_pad(&w, id, &mut whole.positions[from..]);
-                }
-                LotFill::None => {}
+            let f = lot_fill(lot.landlocked, lot.building.is_some(), holed.contains(&id), own_floor);
+            let from = whole.positions.len();
+            fill_lot(&mut whole, lot, f, &pal, lot_wear(&w, lot, f));
+            if f == LotFill::Gravel {
+                set_on_pad(&w, id, &mut whole.positions[from..]);
             }
         }
         let mut parts = MeshData::default();

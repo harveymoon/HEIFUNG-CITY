@@ -288,6 +288,12 @@ fn graphics_setting(ui: &mut egui::Ui, p: &mut UiCtx) {
             }
         }
     });
+    // [r12-grime] Grime and soft edges: shader work on draws already made.
+    let mut on = p.lighting.weathering;
+    if ui.checkbox(&mut on, "Grime and soft edges").on_hover_text("Weathering drawn in the shaders: dirt at the foot of walls, rain streaks, damp and moss, weeds over the pavement edges, patched paving. Costs almost nothing; off for the cleanest look.").changed() {
+        p.lighting.weathering = on;
+        super::theme::save_weathering(on);
+    }
     let g = &p.stats.graphics;
     let now = if p.lighting.quality == crate::render::QualitySetting::Auto { format!("Auto, at {} now", g.tier.label()) } else { g.tier.label().to_string() };
     hint(ui, &format!("{now} · {:.1} ms a frame. Auto steps ambient occlusion, volumetric fog, anti-aliasing and shadow detail down to hold 60 fps, and back up when there is room.", g.frame_ms));
