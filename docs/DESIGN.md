@@ -631,6 +631,13 @@ Citizens are rendered from their simulated positions every frame.
   the tier the land value supports (pulled down when people are waiting for something
   affordable). Full buildings on rising land upgrade; buildings on falling land decay.
   Cheap buildings wear out faster. Rent is tier base × land value × condition.
+  [r12-hunger] A building run down past use (condition under 0.3) takes no customers, so
+  a shop, café, eatery or place to go out that is still open and staffed repairs its
+  building when it falls under 0.35 (back to 0.8, 20 a job, paid from its money, or on
+  credit against what its shelves are worth at half the base price); a tenant repairs the
+  building its unit is in (a unit stands as its host does). With nothing to pay with it runs
+  down as before. (Harvey's day-80 city had 92 of its 203 grocers open in derelict
+  buildings, nearly all units under run-down flats, full shelves and no customers.)
 - **Class and migration**: a job pays a wage set by its building's land use and tier,
   times a personal skill factor. Income puts a citizen in a class. Newcomers take the
   best home they can afford (rent at most half their income) and are turned away if
@@ -741,9 +748,39 @@ Citizens are rendered from their simulated positions every frame.
   truck entering at the city edge; surplus raw outputs export at a discount. Trucks on
   the road are capped; beyond the cap deliveries are instant.
 - **Hunger**: citizens lose satiety every hour and eat from their pantry at home.
-  When the pantry is empty they shop for groceries; at lunch they may buy baked
-  goods; the comfortable buy goods for mood. Days without food cost mood and
-  eventually drive people out of town.
+  When the pantry is empty they shop for groceries (a quarter of the time, or
+  always with no grocer selling, a meal at a place cooking them instead
+  [r12-hunger]); at lunch they may buy baked goods; the comfortable buy goods
+  for mood. Days without food cost mood and eventually drive people out of town.
+- **Hunger as demand** [r12-hunger] (`world/food_need.rs`): each midnight the
+  hungry (gone to bed hungry, or hungry a day or more) are counted where they
+  live on a 400 m grid, smoothed over days (`World::food_need`). A cell's pull is
+  its hungry plus half its neighbours' over 30 (none under 4). While 3% or more
+  of the town is hungry a grocer is worth opening whatever the head count says
+  (its kind covering 60% of its costs), and so is another place cooking meals of
+  a kind already open. A vacant commercial lot under pull goes up as readily as
+  it is pulled (0.08 a round at full pull, against the land-use demand's 0.06)
+  and, from a pull of 0.25, opens as a grocer (60%, by the lot's hash) or a
+  place cooking meals (diner, noodle bar, street food, pizza, fast food, food
+  hall; only these under the nightlife sub-zone). A built-up town has no vacant
+  lots, so each day up to two shut shopfronts, else gadget shops, bookshops or
+  bike shops losing money (not the only one of their kind), where people are
+  hungry become grocers (news: "A struggling gadget shop became ..."), and empty
+  shopfronts there are let sooner (hunger counts as shop demand) and to the
+  menu's kinds that feed people. A grocer with bare shelves where people are
+  hungry buys groceries in at wholesale (before, only when the whole town's
+  stock was low, which it never was while the stock stood in a few full shops
+  across town).
+- **Inbound audit** [r12-hunger] (`world/inbound_audit.rs`): every 6 hours
+  (03:00, 09:00, ...) the loads on their way to buyers (queued and moving
+  lorries, rail orders, trains and yard aprons, ships ordered and at sea, island
+  ferries, cargo hubs' stages, airports, private quays, container lorries'
+  jobs) are summed by buyer and resource; what a business has booked as inbound
+  beyond them, at this audit and the last, is written off (the smaller of the
+  two), so it orders again. A cargo hub's rail or sea load expected 48 hours
+  comes by road from the map edge to its buyer instead. (Harvey's day-80 city:
+  129 of 203 grocers had 5,100 units booked that no load held and never
+  reordered; the hubs expected 470 loads with 40 on their way.)
 - **Business accounting**: businesses pay a share of their workers' wages daily.
   Deep in debt for five days means closure: workers laid off, the building goes
   derelict, and after a week it is demolished so the lot can be reused. Offices

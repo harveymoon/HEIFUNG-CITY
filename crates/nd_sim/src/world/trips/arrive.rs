@@ -148,6 +148,14 @@ impl World {
                 c.inside = None;
                 c.next_decision_tick = tick + 3;
                 self.economy.market.turned_away_today += 1;
+                if purpose == Purpose::Shop(crate::market::Resource::Groceries) {
+                    let f = &mut self.economy.market.food.today;
+                    if shut {
+                        f.shut += 1;
+                    } else {
+                        f.packed += 1;
+                    }
+                }
                 return;
             }
         }

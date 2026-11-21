@@ -118,6 +118,12 @@ pub mod interchange;
 mod interchange_tests;
 mod market;
 pub mod delivery_hours;
+// [r12-hunger] inbound bookings no load answers, written off
+mod inbound_audit;
+// [r12-hunger] hunger as demand for grocers and places cooking meals
+pub mod food_need;
+#[cfg(test)]
+mod hunger_tests;
 pub mod games;
 pub mod airlift;
 pub mod watchdog;
@@ -914,6 +920,16 @@ pub struct World {
     /// (`world/delivery_hours.rs`). Old saves load with none.
     #[serde(default)]
     pub freight_queue: Vec<delivery_hours::QueuedTruck>,
+    /// [r12-hunger] Inbound a business has booked that no load on its way
+    /// answered at the last audit (`world/inbound_audit.rs`): written off
+    /// at the next one if still unanswered. Old saves load with none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inbound_unanswered: Vec<(BuildingId, Resource, f32)>,
+    /// [r12-hunger] The hungry by where they live, read each midnight: the
+    /// demand hunger makes for food businesses (`world/food_need.rs`).
+    /// Old saves load with none.
+    #[serde(default)]
+    pub food_need: food_need::FoodNeed,
     /// [games] Stadium game days: away fans driving in and parked
     /// (`world/games.rs`). Old saves load with none.
     #[serde(default)]
@@ -1079,6 +1095,8 @@ impl World {
             corps: Default::default(),
             megablocks: Default::default(),
             freight_queue: Vec::new(),
+            inbound_unanswered: Vec::new(),
+            food_need: Default::default(),
             games: Default::default(),
             airlifts: Vec::new(),
             attractions: Default::default(),

@@ -467,6 +467,14 @@ impl World {
             &[K::Grocery, K::Bakery, K::GadgetShop]
         };
         let mut viable = self.kinds_viable_as(menu, Some(jobs), true);
+        // [r12-hunger] Where people are hungry, the kinds on the menu that
+        // feed them.
+        if self.lots.get(h.lot).is_some_and(|l| self.food_need.pull(l.center) >= super::food_need::FOOD_PULL) {
+            let food: Vec<BusinessKind> = viable.iter().copied().filter(|k| super::food_need::FOOD_KINDS.contains(k) || *k == K::Bakery).collect();
+            if !food.is_empty() {
+                viable = food;
+            }
+        }
         // A block of offices or a leisure block in a hamlet (no lunch counter
         // or bar would pay yet) lets its shopfronts as any street does.
         if viable.is_empty() && (h.land_use == LandUse::Entertainment || h.business.as_ref().is_some_and(|z| z.kind == K::Office)) {
@@ -515,7 +523,9 @@ impl World {
                 let seed = h.seed;
                 let u = h.units[i];
                 let pull = if mall { super::malls::MALL_LET_PULL } else { 1.0 };
-                let chance = if u.shopfront { LET_CHANCE * (0.25 + demand) * pull } else { LET_CHANCE * (short_of_jobs * 10.0).clamp(0.0, 1.0) };
+                // [r12-hunger] Hunger round it is demand for its shopfront too.
+                let hunger = self.lots.get(h.lot).map_or(0.0, |l| self.food_need.pull(l.center));
+                let chance = if u.shopfront { LET_CHANCE * (0.25 + demand.max(hunger)) * pull } else { LET_CHANCE * (short_of_jobs * 10.0).clamp(0.0, 1.0) };
                 if hash01(seed, day, i as u64) >= chance {
                     continue;
                 }

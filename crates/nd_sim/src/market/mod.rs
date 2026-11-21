@@ -78,6 +78,50 @@ pub struct MarketStats {
     /// kind and hour, and what they paid out for films and acts.
     #[serde(default)]
     pub leisure: crate::leisure::LeisureStats,
+    /// [r12-hunger] Where the town's groceries went today and yesterday.
+    #[serde(default)]
+    pub food: FoodStats,
+}
+
+/// [r12-hunger] The grocers' day: made, sold to the town's households,
+/// sold to passers-by, and the shoppers who left with nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FoodDay {
+    /// Groceries the grocers made from their produce, flour, meat and milk.
+    pub made: f32,
+    /// Groceries bought by the town's own shoppers (into their pantries).
+    pub bought: f32,
+    /// Groceries sold off the shelf to passers-by (untracked walk-in trade).
+    pub walk_in: f32,
+    /// Groceries bought in from outside for bare shelves.
+    pub imported: f32,
+    /// Grocery trips that found the shelves bare.
+    pub empty_shelves: u32,
+    /// Grocery trips that found the shop shut (past its hours or closed
+    /// down) or packed when they got there.
+    pub shut: u32,
+    pub packed: u32,
+    /// Inbound bookings (every business, every resource) no load answered,
+    /// written off (`world/inbound_audit.rs`).
+    pub written_off: f32,
+    /// Shops (any taking customers) that repaired their run-down building.
+    pub shops_repaired: u32,
+}
+
+/// [r12-hunger] Today's [`FoodDay`] and yesterday's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FoodStats {
+    pub today: FoodDay,
+    pub yesterday: FoodDay,
+}
+
+impl FoodStats {
+    /// Midnight: today becomes yesterday.
+    pub fn roll(&mut self) {
+        self.yesterday = std::mem::take(&mut self.today);
+    }
 }
 
 #[cfg(test)]

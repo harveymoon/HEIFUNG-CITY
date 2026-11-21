@@ -129,6 +129,9 @@ const HUNGRY_THOUGHTS: &[&str] = &[
     "Stomach's growling. Need food.",
     "Ration packs are gone. Shopping.",
 ];
+/// [r12-hunger] A hungry grown-up with an empty pantry eats out this often.
+const EAT_OUT_HUNGRY: f64 = 0.25;
+const EAT_OUT_THOUGHTS: &[&str] = &["Nothing in. A plate at the diner.", "Empty fridge. Noodles, then.", "Too hungry to cook. Eating out."];
 const LUNCH_THOUGHTS: &[&str] = &["Grabbing a bite.", "Synth-bun and a coffee.", "Lunch break. Finally."];
 const GOODS_THOUGHTS: &[&str] = &["Credits burning a hole. New optics?", "Treat yourself. The feed says so."];
 const TIRED_THOUGHTS: &[&str] = &[
@@ -210,6 +213,13 @@ impl MindProvider for RuleBasedMind {
         // food at home means dinner at home.
         let grown = ctx.stage != LifeStage::Child;
         let hungry = ctx.satiety < 0.45 && ctx.groceries < 1.0;
+        // [r12-hunger] Nothing in: now and then (always, with no grocer
+        // selling) a meal where meals are cooked, so the hungry are custom
+        // for the diners and noodle bars too.
+        if hungry && grown && ctx.meals_for_sale && !clock.is_night() && (!ctx.groceries_for_sale || self.rng.random_bool(EAT_OUT_HUNGRY)) {
+            let t = self.pick(EAT_OUT_THOUGHTS);
+            return decide(Intent::Shop(Resource::BakedGoods), t);
+        }
         if hungry && grown && ctx.groceries_for_sale && !clock.is_night() && self.rng.random_bool(0.8) {
             let t = self.pick(HUNGRY_THOUGHTS);
             return decide(Intent::Shop(Resource::Groceries), t);
@@ -697,6 +707,10 @@ mod tests {
         assert!(pantry.iter().any(|i| *i == Intent::Shop(Resource::Groceries)), "a low pantry sends a grown-up shopping");
         let kid = intents(Case { hour: 16, stage_age: 9, pantry_low: true, satiety: 0.3, groceries: 0.0, ..Default::default() });
         assert!(kid.iter().all(|i| *i != Intent::Shop(Resource::Groceries)), "children do not do the shopping");
+        // [r12-hunger] Some of the hungry with nothing in eat out instead.
+        let out = empty.iter().filter(|i| **i == Intent::Shop(Resource::BakedGoods)).count();
+        assert!(out > 10 && out < empty.len() / 2, "some eat out, most shop: {out} of {}", empty.len());
+        assert!(kid.iter().all(|i| *i != Intent::Shop(Resource::BakedGoods)), "children do not eat out alone");
     }
 
     #[test]

@@ -688,6 +688,12 @@ impl World {
                 let decay = decay * (1.0 - self.heritage_wear_cut(bid));
                 let b = &mut self.buildings[bid];
                 b.condition = (b.condition - decay + if full { 0.006 } else { 0.0 }).clamp(0.05, 1.0);
+                // [r12-hunger] A shop still trading keeps its premises up:
+                // run down past use, it took no customers (`takes_customers`)
+                // while it went on stocking its shelves. Harvey's day-80
+                // city had half the grocers of its oldest quarter standing
+                // derelict, open and full, beside thousands of hungry people.
+                self.keep_up_shop(bid);
             }
             let mut target = Tier::for_land_value(value);
             // [districts] the stacks stay cheap, campuses reach up
@@ -820,8 +826,9 @@ impl World {
             let mut chance = match lu {
                 LandUse::Park => 0.05,
                 // [r4-leisure] on auto in a nightlife district, as readily
-                // as nights out are wanted
-                LandUse::Commercial => self.commercial_demand_at(&self.lots[lot_id]) * 0.06,
+                // as nights out are wanted; [r12-hunger] where people go
+                // hungry, as readily as they are hungry
+                LandUse::Commercial => (self.commercial_demand_at(&self.lots[lot_id]) * 0.06).max(self.hunger_pull_at(lot_id) * super::food_need::HUNGER_BUILD_CHANCE),
                 _ => self.economy.demand_for(lu) * 0.06,
             };
             // [tax] Homes of a tier taxed over the standard go up less
@@ -922,6 +929,9 @@ impl World {
         let pop = self.economy.population;
         let new_room = (unit || new_sites < (pop / crate::leisure::PEOPLE_PER_TRIAL).max(1)) && new_kinds_open + new_sites < pop / crate::leisure::PEOPLE_PER_KIND;
         let grocery_jobs_needed = self.grocery_jobs_needed();
+        // [r12-hunger] A hungry town wants more grocers and places cooking
+        // meals than its head count says.
+        let hungry = self.food_need.town_hungry();
         let mut out: Vec<BusinessKind> = Vec::new();
         for &kind in candidates {
             // [economy] Kinds that need their site (the rock, the catch,
@@ -939,6 +949,8 @@ impl World {
             let ok = match kind {
                 BusinessKind::Office => true,
                 BusinessKind::Grocery if (jobs[i] as f32) < grocery_jobs_needed && self.economy.cover_of(kind).is_none_or(|c| c >= 0.85) => true,
+                BusinessKind::Grocery if hungry && self.economy.cover_of(kind).is_none_or(|c| c >= HUNGRY_COVER) && sites[i] <= open[i] / 8 + 1 => true,
+                _ if hungry && open[i] > 0 && kind.cooks_meals() && self.economy.cover_of(kind).is_none_or(|c| c >= HUNGRY_COVER) && sites[i] <= open[i] / 4 => true,
                 _ if open[i] == 0 && kind.is_eat_or_go_out() => new_room && jobs_here.is_none_or(|j| j <= TRIAL_MAX_JOBS),
                 _ if open[i] == 0 => sites[i] == 0 && jobs_here.is_none_or(|j| j <= TRIAL_MAX_JOBS),
                 _ => self.economy.cover_of(kind).is_some_and(|c| c >= COVER_TO_EXPAND) && room(i) && sites[i] <= open[i] / 4,
@@ -1246,6 +1258,11 @@ impl World {
         if let Some(k) = self.district_business(lot_id, lu, jobs) {
             return Some(k);
         }
+        // [r12-hunger] A grocer or a place cooking meals where people go hungry.
+        if let Some(k) = self.hunger_business(lot_id, lu, jobs) {
+            self.food_need.opened_total += 1;
+            return Some(k);
+        }
         // [megacorp] Pizza places and bars by a busy campus.
         if let Some(k) = self.campus_business(lot_id, lu) {
             return Some(k);
@@ -1275,6 +1292,55 @@ impl World {
         self.pick_business_kind(lu, jobs)
     }
 }
+
+/// [r12-hunger] A trading shop's building run down to this is repaired ...
+const SHOP_REPAIR_AT: f32 = 0.35;
+/// ... back to this ...
+const SHOP_REPAIRED: f32 = 0.8;
+/// ... for this much a job, out of the shop's money (nothing to pay with,
+/// money nor stock: it runs down, and a derelict shop takes no customers).
+const SHOP_REPAIR_PER_JOB: f32 = 20.0;
+
+impl World {
+    /// [r12-hunger] A shop, café, eatery or place to go out that is open and
+    /// staffed repairs its building before it falls derelict, if it can pay;
+    /// a tenant repairs the building its unit is in (it stands as its host
+    /// stands: most of the derelict grocers were shops under run-down flats).
+    pub(super) fn keep_up_shop(&mut self, bid: BuildingId) {
+        let Some(b) = self.buildings.get(bid) else { return };
+        let site = b.unit_of.filter(|h| self.buildings.contains_key(*h)).unwrap_or(bid);
+        if self.buildings[site].condition >= SHOP_REPAIR_AT || b.workers.is_empty() {
+            return;
+        }
+        let Some(z) = &b.business else { return };
+        if z.closed || z.kind.customers_per_job().is_none() {
+            return;
+        }
+        // Its money, or what its shelves are worth at half the base price
+        // (a shop run down past use sold nothing, but kept stocking up).
+        let cost = SHOP_REPAIR_PER_JOB * b.jobs.max(1) as f32;
+        let shelves: f32 = z.kind.recipe().outputs.iter().map(|(r, _)| z.stock_of(*r) * r.base_price() * 0.5).sum();
+        if z.money.max(0.0) + shelves < cost {
+            return;
+        }
+        if let Some(z) = self.buildings[bid].business.as_mut() {
+            z.spend_today += cost;
+        }
+        self.transfer(Account::Business(bid), Account::Outside, cost, Kind::Building);
+        let host_derelict = site != bid && self.buildings[site].is_derelict();
+        self.buildings[site].condition = SHOP_REPAIRED;
+        self.buildings[bid].condition = SHOP_REPAIRED;
+        if host_derelict {
+            self.events.push(SimEvent::BuildingChanged(site));
+        }
+        self.economy.market.food.today.shops_repaired += 1;
+    }
+}
+
+/// [r12-hunger] While the town is hungry a grocer, or a place cooking meals,
+/// is opened if its kind's takings cover this share of its costs (grocers
+/// starved of supplies lose money through no fault of the market).
+const HUNGRY_COVER: f32 = 0.6;
 
 /// [r4-decks] How readily homes are built on ground under a raised road,
 /// against elsewhere.

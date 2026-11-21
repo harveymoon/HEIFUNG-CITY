@@ -456,6 +456,23 @@ fn people(w: &World) -> Value {
             "no_groceries_at_home": no_groceries,
             "hungry_days": { "0": hungry_days[0], "1": hungry_days[1], "2": hungry_days[2], "3": hungry_days[3], "4+": hungry_days[4] },
             "note": "a citizen leaves after 4 hungry days",
+            // [r12-hunger] where the groceries went, and the demand hunger makes
+            "groceries": { "today": w.economy.market.food.today, "yesterday": w.economy.market.food.yesterday },
+            "demand": {
+                "hungry_counted_at_midnight": w.food_need.hungry,
+                "share": r3(w.food_need.share),
+                "town_hungry": w.food_need.town_hungry(),
+                "food_businesses_opened_for_hunger_total": w.food_need.opened_total,
+                "hungriest_cells": {
+                    let mut c = w.food_need.cells.clone();
+                    c.sort_by(|a, b| b.2.total_cmp(&a.2));
+                    c.iter().take(8).map(|&(x, y, n)| {
+                        let cell = nd_sim::world::food_need::NEED_CELL;
+                        let p = nd_sim::Vec2::new((x as f32 + 0.5) * cell, (y as f32 + 0.5) * cell);
+                        json!({ "center": [round(p.x), round(p.y)], "hungry": round(n), "pull": r3(w.food_need.pull(p)) })
+                    }).collect::<Vec<_>>()
+                },
+            },
         },
         "commute_modes_now": { "travelling": travelling, "modes": mode_json, "owns_car_share": share(owns_car as usize, n), "owns_bike_share": share(owns_bike as usize, n) },
         "moves": { "displaced_by_rent_total": e.displaced_total, "emigrated_total": e.emigrated_total, "emigrated_by_reason": nd_sim::economy::LeaveReason::ALL.iter().map(|r| (r.key().to_string(), serde_json::json!(e.emigrated_by[r.index()]))).collect::<serde_json::Map<_, _>>(), "priced_out_immigrants_total": e.priced_out_total },

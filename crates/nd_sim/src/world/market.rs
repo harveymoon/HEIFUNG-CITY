@@ -187,6 +187,7 @@ impl World {
         self.economy.market.grocery_imports_today = 0.0;
         self.economy.market.turned_away_today = 0;
         self.economy.market.leisure.roll();
+        self.economy.market.food.roll();
         self.wages_paid.clear();
     }
 
@@ -244,7 +245,10 @@ impl World {
             let staffing = if jobs == 0 { 0.0 } else { ((staff - tired * 0.5) / jobs as f32).clamp(0.0, 1.0) };
             if let Some(bz) = b.business.as_mut() {
                 if !bz.closed {
-                    bz.produce(jobs, staffing * b.powered.clamp(0.0, 1.0));
+                    let made = bz.produce(jobs, staffing * b.powered.clamp(0.0, 1.0));
+                    if bz.kind == BusinessKind::Grocery {
+                        self.economy.market.food.today.made += made;
+                    }
                 }
             }
         }
@@ -288,6 +292,9 @@ impl World {
                 if output == Resource::BakedGoods {
                     self.economy.market.meals_sold_today += got as u32;
                 }
+                if output == Resource::Groceries {
+                    self.economy.market.food.today.walk_in += got;
+                }
                 // [ledger] Passers-by are not tracked one by one: their
                 // custom comes in from outside the accounts.
                 self.transfer(Account::Outside, Account::Business(bid), got * price, Kind::WalkIn);
@@ -303,6 +310,9 @@ impl World {
         let food_factor = self.economy.food_order_factor();
         let grocery_share = self.grocery_share_per_day();
         let grocery_short = grocery_share > 0.0 && self.town_grocery_stock() < self.citizens.len() as f32 * crate::citizens::GROCERIES_PER_PERSON_DAY * 0.25;
+        // [r12-hunger] ... or where people round it are hungry: the town's
+        // stock can stand in a few shops across town while the rest are bare.
+        let hunger_near = |w: &World, at: Vec2| grocery_share > 0.0 && w.food_need.pull(at) >= super::food_need::FOOD_PULL;
         for &bid in &ids {
             let (kind, needs, at, closed) = {
                 let b = &self.buildings[bid];
@@ -333,7 +343,7 @@ impl World {
                     .collect();
                 // Shelves nearly bare while the whole town is short: buy
                 // groceries in from outside to cover half a day.
-                if bz.kind == BusinessKind::Grocery && grocery_short {
+                if bz.kind == BusinessKind::Grocery && (grocery_short || hunger_near(self, lot.center)) {
                     let have = bz.stock_of(Resource::Groceries) + bz.inbound_of(Resource::Groceries);
                     if have < grocery_share * 0.25 {
                         needs.push((Resource::Groceries, grocery_share * 0.5 - have, 0.0));
@@ -406,6 +416,7 @@ impl World {
                         self.economy.market.imports_today += cost;
                         if r == Resource::Groceries {
                             self.economy.market.grocery_imports_today += amount;
+                            self.economy.market.food.today.imported += amount;
                         }
                         self.import(bid, r, amount, cost);
                     }
@@ -1046,6 +1057,9 @@ impl World {
         }
         let got = bz.take(r, want.min(affordable));
         if got <= 0.0 {
+            if r == Resource::Groceries {
+                self.economy.market.food.today.empty_shelves += 1;
+            }
             c.remember(tick, format!("Shelves were empty at {name}."));
             self.concerns.heard(cid, c, crate::concerns::Concern::Food, 0.4);
             c.mood = (c.mood - 0.05).max(0.0);
@@ -1079,6 +1093,7 @@ impl World {
                 if c.household.is_none() {
                     c.groceries += got;
                 }
+                self.economy.market.food.today.bought += got;
                 self.economy.market.meals_sold_today += got as u32;
             }
             Resource::BakedGoods => {

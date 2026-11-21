@@ -156,6 +156,9 @@ impl World {
         // [clarity] Dangerous streets and far hospitals, complained of.
         self.daily_dangerous_streets();
         self.daily_healthcare();
+        // [r12-hunger] Who went to bed hungry, and where: demand for food.
+        self.daily_food_need();
+        self.daily_food_retool();
         self.daily_update();
         // [economy] the city's needs read and met, before the vehicles' day rolls
         crate::prof!("daily_pressure", self.daily_pressure());
@@ -200,6 +203,11 @@ impl World {
     // in strips from :20, development and immigration sit between.
     if tick % 60 == 0 {
         crate::prof!("hourly_economy", self.hourly_economy());
+        // [r12-hunger] Bookings no load answers, written off.
+        if tick % (super::inbound_audit::AUDIT_HOURS * 60) == 3 * 60 {
+            crate::prof!("audit_inbound", self.audit_inbound());
+            self.give_up_hub_loads();
+        }
         crate::prof!("industry_hourly", self.industry_hourly());
         // [dirty-industry] Clean-up crews dig on.
         self.hourly_cleanups();
