@@ -99,6 +99,10 @@ mod docks;
 /// boat rentals, public beaches and private jetties.
 pub mod shore;
 pub use shore::{BeachLook, ShoreLook};
+// [r12-odd-lots] small buildings on big sites: at the street, in grounds
+pub mod grounds;
+#[cfg(test)]
+mod grounds_tests;
 // [dirty-industry] smelters, factory farms, chemical works, stained ground
 pub mod dirty;
 #[cfg(test)]
@@ -208,7 +212,18 @@ pub fn generate_styled_extras(
     if let Some(progress) = extras.construction {
         return building_site(&ctx, style, &mut rng, extras, progress);
     }
-    finished(&ctx, style, &mut rng, extras)
+    let g = finished(&ctx, style, &mut rng, extras);
+    // [r12-odd-lots] A small shop or bar that left most of a big site bare
+    // (a yard of paving round it) stands at the street on a plot of its
+    // use's size; the rest of the site is laid out as grounds.
+    if grounds::roomy(lot, land_use) && grounds::candidate(style, extras) && grounds::cover(&g, lot) < grounds::MAX_COVER {
+        if let Some(front) = grounds::front_plot(lot, land_use) {
+            let mut out = generate_styled_extras(&front, land_use, floors, tier, condition, seed, style, rules, palette, &Extras { shore: None, park: None, ..*extras });
+            grounds::draw(&mut out, lot, &front, tier, ctx.wear, seed, ctx.palette, extras.shore.map_or(Vec2::ZERO, |s| s.seaward));
+            return out;
+        }
+    }
+    g
 }
 
 /// A building still going up: its site at `progress`.

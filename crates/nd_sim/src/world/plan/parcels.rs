@@ -517,7 +517,9 @@ impl World {
                 let Some(u) = crate::zoning::joined_outline(&[poly.clone(), p.polygon.clone()]) else { continue };
                 let area = crate::geom::polygon_area(&u).abs();
                 let shared = (crate::geom::perimeter(&poly) + crate::geom::perimeter(&p.polygon) - crate::geom::perimeter(&u)) * 0.5;
-                if shared < 3.0 || area < (crate::geom::polygon_area(&poly).abs() + p.area) * 0.98 || area > crate::zoning::MAX_SHORE_PARCEL_AREA {
+                // [r12-odd-lots] Under the shore cap for its shape: a deep
+                // strip down to the water, not a squat block.
+                if shared < 3.0 || area < (crate::geom::polygon_area(&poly).abs() + p.area) * 0.98 || area > crate::zoning::shore_cap(&u) {
                     continue;
                 }
                 poly = u;

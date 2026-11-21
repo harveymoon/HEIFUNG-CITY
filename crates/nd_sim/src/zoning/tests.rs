@@ -432,3 +432,35 @@ fn a_u_shaped_rest_is_split_at_its_inner_corners() {
         assert!(reflex_vertex(&ccw(p), 0.6).is_none(), "a piece with a sharp inner corner: {p:?}");
     }
 }
+
+/// [r12-odd-lots] The size rule on the water: a squat piece on the shore
+/// (Harvey's karaoke lot was one 62 x 60 m parcel, 2,984 m²) is capped as
+/// inland land and halved from the road to the water, both halves keeping
+/// the shore; a deep strip down to the shore keeps the shore's bigger cap
+/// and stays whole.
+#[test]
+fn a_squat_piece_on_the_shore_is_halved_road_to_water_and_a_deep_strip_is_not() {
+    // The water lies west of x = -0.5 (the road side is x = 62).
+    let water = WaterMask::new(&[(rect(-200.0, -200.0, -0.5, 200.0), vec![])]);
+    assert!(water.touches(&rect(0.0, 0.0, 62.0, 60.0), 1.2));
+    let squat = rect(0.0, 0.0, 62.0, 60.0);
+    assert_eq!(shore_cap(&squat), MAX_PARCEL_AREA);
+    let mut out = Vec::new();
+    cap_parcel(squat, &water, 0, &mut out);
+    assert_eq!(out.len(), 2, "halved: {:?}", out.iter().map(|p| polygon_area(p).abs()).collect::<Vec<_>>());
+    for p in &out {
+        assert!(polygon_area(p).abs() <= MAX_PARCEL_AREA + 1.0);
+        assert!(water.touches(p, 1.2), "each half keeps the shore");
+        let (lo, hi) = crate::geom::bounds(p);
+        assert!(lo.x < 0.5 && hi.x > 61.5, "each half runs from the road to the water");
+    }
+    let strip = rect(0.0, 0.0, 120.0, 34.0);
+    assert_eq!(shore_cap(&strip), MAX_SHORE_PARCEL_AREA);
+    let mut out = Vec::new();
+    cap_parcel(strip, &water, 0, &mut out);
+    assert_eq!(out.len(), 1, "a 34 m wide strip to the shore stays whole");
+    // Inland the squat piece is capped as before.
+    let mut out = Vec::new();
+    cap_parcel(rect(0.0, 0.0, 62.0, 60.0), &WaterMask::default(), 0, &mut out);
+    assert_eq!(out.len(), 2);
+}

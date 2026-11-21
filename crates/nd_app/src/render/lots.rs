@@ -252,11 +252,35 @@ pub(super) fn fill_mesh_in(w: &World, fills: &[(ChunkKey, LotId, LotFill)], chun
         let lot = &w.lots[*id];
         match f {
             LotFill::Earth => fill.ground_polygon(&lot.polygon, 0.02, scale(pal.ground, 1.15)),
-            LotFill::Gravel => fill.ground_polygon(&lot.polygon, 0.02, rgba(pal.gravel)),
+            LotFill::Gravel => {
+                let from = fill.positions.len();
+                fill.ground_polygon(&lot.polygon, 0.02, rgba(pal.gravel));
+                set_on_pad(w, *id, &mut fill.positions[from..]);
+            }
             LotFill::None => {}
         }
     }
     fill
+}
+
+/// [r12-odd-lots] A built lot's gravel lies under its building's yard, on
+/// the pad the building stands on (its primary lot's, for every plot of a
+/// merged one), not on the ground vertex by vertex: `lift_spawned` adds
+/// the ground under each vertex, so each is lowered by that first. Lifted
+/// as it was, a vertex on the street edge took the pavement's height and
+/// tilted a whole triangle of the fill up through the yard: a pale wedge
+/// of gravel cutting across the plot from its far corner to the street
+/// (Harvey's "large triangular cut through it in a diagonal" on Null
+/// Pointer Karaoke; 1,092 lots of his day-81 city rose over their yard,
+/// 407 by over half a metre, up the hill tens of metres).
+pub(super) fn set_on_pad(w: &World, lot: LotId, verts: &mut [[f32; 3]]) {
+    if !w.relief {
+        return;
+    }
+    let pad = w.lots.get(lot).and_then(|l| l.building).and_then(|b| w.buildings.get(b)).map_or_else(|| w.lot_pad(lot), |b| w.lot_pad(b.lot));
+    for p in verts {
+        p[1] += pad - super::lift::lie_height(w, SVec2::new(p[0], p[2]));
+    }
 }
 
 /// [waterfront] Public beaches on the zoning layer and in previews: sand.
@@ -490,7 +514,11 @@ mod lot_fill_tests {
             let own_floor = lot.land_use == nd_sim::LandUse::Park || lot.building.and_then(|b| w.buildings.get(b)).is_some_and(|b| b.service.is_some_and(|s| s.kind.is_landmark()) || b.airport.is_some());
             match lot_fill(lot.landlocked, lot.building.is_some(), holed.contains(&id), own_floor) {
                 LotFill::Earth => whole.ground_polygon(&lot.polygon, 0.02, scale(pal.ground, 1.15)),
-                LotFill::Gravel => whole.ground_polygon(&lot.polygon, 0.02, rgba(pal.gravel)),
+                LotFill::Gravel => {
+                    let from = whole.positions.len();
+                    whole.ground_polygon(&lot.polygon, 0.02, rgba(pal.gravel));
+                    set_on_pad(&w, id, &mut whole.positions[from..]);
+                }
                 LotFill::None => {}
             }
         }
@@ -502,4 +530,42 @@ mod lot_fill_tests {
         assert_eq!(parts.indices.len(), whole.indices.len());
         assert_eq!(vertices(&parts), vertices(&whole));
     }
+
+    /// [r12-odd-lots] A built lot's gravel lies on its building's pad at
+    /// every vertex once `lift_spawned` has set it on the ground (Harvey's
+    /// "large triangular cut through it in a diagonal": lifted vertex by
+    /// vertex, a street-side vertex took the pavement's height and tilted a
+    /// triangle of gravel up through the yard). On hilly ground, so some
+    /// vertices really do sit off the pad.
+    #[test]
+    fn a_built_lots_floor_lies_on_its_pad_not_up_the_kerb() {
+        let mut w = World::new(nd_sim::WorldConfig::default());
+        nd_sim::scenarios::demo_district(&mut w);
+        assert!(w.relief, "a map with relief");
+        let empty: Vec<LotId> = w.lots.iter().filter(|(_, l)| l.usable() && l.building.is_none() && l.park.is_none()).map(|(id, _)| id).collect();
+        for l in empty {
+            w.build_on(l);
+        }
+        let mut off_pad = 0;
+        let pal = nd_procgen::Palette::default();
+        let fills = lot_fills(&w, &[]);
+        let mut checked = 0;
+        for (k, id, f) in &fills {
+            if *f != LotFill::Gravel {
+                continue;
+            }
+            let lot = &w.lots[*id];
+            let pad = lot.building.and_then(|b| w.buildings.get(b)).map_or_else(|| w.lot_pad(*id), |b| w.lot_pad(b.lot));
+            off_pad += lot.polygon.iter().filter(|v| (super::super::lift::lie_height(&w, **v) - pad).abs() > 0.05).count();
+            let mesh = fill_mesh_in(&w, &[(*k, *id, *f)], *k, &pal);
+            for p in &mesh.positions {
+                let laid = p[1] + super::super::lift::lie_height(&w, SVec2::new(p[0], p[2]));
+                assert!((laid - (pad + 0.02)).abs() < 0.01, "lot {id:?}: floor at {laid:.2} m, pad {pad:.2} m");
+            }
+            checked += 1;
+        }
+        assert!(checked >= 4, "built lots checked: {checked}");
+        assert!(off_pad > 0, "some lot vertices sit off the pad (else this proves nothing)");
+    }
+
 }

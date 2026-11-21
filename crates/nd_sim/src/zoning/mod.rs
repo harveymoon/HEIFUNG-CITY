@@ -42,7 +42,7 @@ pub use parcels::*;
 pub use poly::*;
 pub use recut::*;
 use subdivide::*;
-pub use subdivide::{MAX_PARCEL_AREA, MAX_SHORE_PARCEL_AREA};
+pub use subdivide::{shore_cap, MAX_PARCEL_AREA, MAX_SHORE_PARCEL_AREA, SHORE_STRIP};
 pub use water_mask::*;
 
 /// Pavement between the kerb and the parcel line, in metres.

@@ -371,10 +371,45 @@ pub const MAX_SHORE_PARCEL_AREA: f32 = 4800.0;
 /// [parcel-size] The cap for a piece: bigger on the water.
 fn size_cap(poly: &[Vec2], water: &WaterMask) -> f32 {
     if water.touches(poly, 1.2) {
+        shore_cap(poly)
+    } else {
+        MAX_PARCEL_AREA
+    }
+}
+
+/// [r12-odd-lots] How much longer than wide a piece on the water must be
+/// for the shore's bigger cap: a strip from the road down to the shore.
+pub const SHORE_STRIP: f32 = 1.6;
+
+/// [r12-odd-lots] The cap for a piece on the water: the shore's bigger
+/// cap ([`MAX_SHORE_PARCEL_AREA`]) is for a strip that runs from the road
+/// down to the shore, at least [`SHORE_STRIP`] times as long as it is
+/// wide; a squat piece is capped as inland and halved from the road to
+/// the water ([`cap_parcel`]). A 62 x 60 m piece on a riverbank stayed one
+/// 2,984 m² parcel and became one karaoke bar's yard (Harvey's Null
+/// Pointer Karaoke); now it is two plots of 1,500 m², each on the street
+/// and the water.
+pub fn shore_cap(poly: &[Vec2]) -> f32 {
+    let (long, short) = long_short(poly);
+    if short > 0.0 && long >= short * SHORE_STRIP {
         MAX_SHORE_PARCEL_AREA
     } else {
         MAX_PARCEL_AREA
     }
+}
+
+/// A piece's extents along its longest edge and across it, longest first.
+fn long_short(poly: &[Vec2]) -> (f32, f32) {
+    let n = poly.len();
+    if n < 3 {
+        return (0.0, 0.0);
+    }
+    let li = (0..n).max_by(|&a, &b| poly[a].distance(poly[(a + 1) % n]).total_cmp(&poly[b].distance(poly[(b + 1) % n]))).unwrap_or(0);
+    let edge = (poly[(li + 1) % n] - poly[li]).normalize_or_zero();
+    let (u0, u1) = extents(poly, edge);
+    let (v0, v1) = extents(poly, Vec2::new(-edge.y, edge.x));
+    let (a, b) = (u1 - u0, v1 - v0);
+    (a.max(b), a.min(b))
 }
 
 /// A parcel a home could be built on as it is: a frontage, no sharp
@@ -470,8 +505,21 @@ pub(super) fn cap_parcel(poly: Vec<Vec2>, water: &WaterMask, depth: u32, out: &m
     let (u0, u1) = extents(&pts, edge);
     let (v0, v1) = extents(&pts, across);
     let axis = if u1 - u0 >= v1 - v0 { edge } else { across };
-    let (a0, a1) = extents(&pts, axis);
-    let pieces = cut(&to_geo(&pts), axis * ((a0 + a1) * 0.5), axis);
+    // [r12-odd-lots] A piece on the water is halved so that both halves
+    // keep the shore, as its slices were cut (from the road to the water,
+    // never across): the other axis when the long one leaves a half dry.
+    let halves = |axis: Vec2| {
+        let (a0, a1) = extents(&pts, axis);
+        cut(&to_geo(&pts), axis * ((a0 + a1) * 0.5), axis)
+    };
+    let mut pieces = halves(axis);
+    if water.touches(&pts, 1.2) && pieces.len() >= 2 && !pieces.iter().all(|p| water.touches(&from_geo(p), 1.2)) {
+        let other = if axis == edge { across } else { edge };
+        let alt = halves(other);
+        if alt.len() >= 2 && alt.iter().all(|p| water.touches(&from_geo(p), 1.2)) {
+            pieces = alt;
+        }
+    }
     if pieces.len() < 2 {
         out.push(pts);
         return;

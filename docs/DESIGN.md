@@ -547,7 +547,16 @@ Citizens are rendered from their simulated positions every frame.
   water off it is navigable (sea, lake, a river 18 m wide; `plan_jetty`); a cargo quay lands its
   imports by its own coaster at the sea price five hours on; a pier restaurant's deck and a boat
   rental's pontoon are jetties too. A fishing jetty is a trawler's berth (the fishing fleet
-  model does not sail it yet).
+  model does not sail it yet). [r12-odd-lots] *Docks only for uses that use the water*
+  (`shore::uses_water`: marinas, fishing ports and works, fish markets, seafood restaurants,
+  pier restaurants, boat rentals, beach resorts and bars, the jetty trades; and homes, which
+  keep a boat): the Harbour Pastel styles run their small timber pier out only for these, so a
+  karaoke bar, shop, office or hotel on the front has none. *Shore parcels*: the shore's bigger
+  cap (4,800 m²) is for a strip from the road to the water at least 1.6 times as long as it is
+  wide (`zoning::shore_cap`); a squat piece on the water is capped as inland land (2,400 m²) and
+  halved from the road to the water so both halves keep the shore (`cap_parcel`), and a lot
+  takes backland down to the water only within the same cap (`reach_the_water`). Saves keep
+  the parcels they were cut with; new cuts (a road built or changed) follow the rule.
 - **Golf driving ranges**: a place to go out (`BusinessKind::is_outing`): a night out also
   finds restaurants, ranges, galleries and marina clubhouses on any land use; each charges by
   the hour at its own rate (`tab_factor`). Open 08:00-23:00, floodlit after dark.
@@ -1098,7 +1107,17 @@ Citizens are rendered from their simulated positions every frame.
   lots for zoning and each names the building (`plot.extra_lots`); a built neighbour is
   demolished first and joins when its rubble is gone (`EstateMarket::reserved`). A merge
   is refused unless the plots make a compact block (hull within 6% of their area); the
-  renderer draws the building on `World::footprint`, the merged outline. Rebuilds carry
+  renderer draws the building on `World::footprint`, the merged outline. [r12-odd-lots] A shop
+  or place to go out on a site over 2.5 times its use's lot area whose style leaves most of it
+  bare (everything over 2.5 m covering under a fifth: a bar or shack in a yard of paving) is
+  drawn on a plot of its use's size at the street (`buildings::grounds::front_plot`: two lot
+  widths of frontage round its way in, a lot's depth or more), the rest laid out as grounds
+  (`grounds::draw`): a lawn with trees, a path back from the building with benches, on the
+  water a promenade along the shore with a rail, benches and lamps; rough grass and weeds on
+  cheap land. Forms, landmarks, car parks, plants, stations, docks, malls and the water trades
+  keep their whole site; nothing changes in the sim. Built lots' gravel floors lie on the
+  building's pad (`render/lots.rs`), not lifted onto the ground vertex by vertex (a street-side
+  vertex at pavement height tilted a triangle of gravel up through the yard). Rebuilds carry
   extras; a building's removal frees them. *McMansions*: at most one a day (30% roll), one
   per six households earning 220+, on two touching residential plots in a block held to
   three floors on land worth 0.45+, bought by the richest such household, which moves in;
