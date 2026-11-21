@@ -59,12 +59,7 @@ pub(super) fn lift_spawned(
             }
         }
     }
-    // Lots, parks, overlays and the like lie on the ground: under a viaduct
-    // they stay down (over the water, a bridge deck is the nearest surface).
-    let lie = |p: SVec2| {
-        let g = w.ground_height(p);
-        w.surface_height_near(p, g)
-    };
+    let lie = |p: SVec2| lie_height(w, p);
     for m in &q {
         let Some(mut mesh) = meshes.get_mut(&m.0) else { continue };
         if let Some(bevy::mesh::VertexAttributeValues::Float32x3(pos)) = mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION) {
@@ -76,6 +71,14 @@ pub(super) fn lift_spawned(
     for mut tf in &mut signals {
         tf.translation.y += on_road(SVec2::new(tf.translation.x, tf.translation.z));
     }
+}
+
+/// Where lots, parks, overlays and the like are laid on the ground at
+/// `p` (`lift_spawned` adds it to every vertex): under a viaduct they stay
+/// down (over the water, a bridge deck is the nearest surface).
+pub(super) fn lie_height(w: &World, p: SVec2) -> f32 {
+    let g = w.ground_height(p);
+    w.surface_height_near(p, g)
 }
 
 /// Raise movers onto the ground after their poses are written.

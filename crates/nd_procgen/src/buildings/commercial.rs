@@ -326,7 +326,11 @@ pub fn twist_tower(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         // floor plate edge
         // The plate's edge: a band without caps, which would lie in the
         // glass's own top and the next floor's bottom.
-        band(g, f, Panel, &offset_poly(&prev, -0.12), &offset_poly(&plate, -0.12), y + fh - 0.25, y + fh, mul(pick(rng, &pal.panel), 0.8));
+        // [r12-odd-lots] Round this floor's top outline, top and bottom:
+        // run from the floor below's outline (turned back by a step of the
+        // twist) it slanted out of the glass at the corners (the gallery's
+        // twist tower; the glass ledges the twist leaves are todo.md's).
+        band(g, f, Panel, &offset_poly(&plate, -0.12), &offset_poly(&plate, -0.12), y + fh - 0.25, y + fh, mul(pick(rng, &pal.panel), 0.8));
         if k % 2 == 0 {
             // Lit at mid-floor, on the facade where the glass is there.
             let mid: Vec<Vec2> = if prev.len() == plate.len() { prev.iter().zip(&plate).map(|(a, b)| a.lerp(*b, 0.5)).collect() } else { prev.clone() };
