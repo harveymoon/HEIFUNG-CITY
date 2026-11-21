@@ -111,7 +111,7 @@ impl<'a> StreetCtx<'a> {
             divider_c: rgba(pal.lane_divider),
             paving_c,
             kerb_c,
-            kerb_cols: KerbColours { kerb: kerb_c, paving: paving_c, tactile: rgba(pal.tactile) },
+            kerb_cols: KerbColours { kerb: kerb_c, paving: paving_c, tactile: rgba(pal.tactile), grime: 0.0 },
             runs,
             profiles,
             lifts,
@@ -642,11 +642,13 @@ pub(super) fn draw_kerbs(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &Run,
     // people walk it; no arm joins on that side, so it runs unbroken from
     // node to node. A small roundabout's inside is its apron.
     let big_ring = ring_out.is_some() && roads.ring_of_segment(run.first).and_then(|k| roads.rings.get(k)).is_some_and(|r| r.radius >= BIG_RING_RADIUS);
+    // [r12-grime] The pavements wear with the street's land value.
+    let cols = KerbColours { grime: crate::weathering::street_grime(cx.inp.land_value.at(point_along(pts, path_length(pts) * 0.5).0)), ..cx.kerb_cols };
     for side in [-1.0f32, 1.0] {
         if ring_out.is_some_and(|o| o != side) {
             if big_ring {
                 kerb_ends[(side > 0.0) as usize] = (0.0, 0.0);
-                kerb_ribbon(g, &offset_path(pts, side * hw), None, side, SIDEWALK, true, true, &run_cuts, &cx.kerb_cols);
+                kerb_ribbon(g, &offset_path(pts, side * hw), None, side, SIDEWALK, true, true, &run_cuts, &cols);
             }
             continue;
         }
@@ -697,7 +699,7 @@ pub(super) fn draw_kerbs(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &Run,
         }
         let line = if (e0, e1) == (t0, t1) { walk.to_vec() } else { trim(pts, e0, e1) };
         if line.len() >= 2 {
-            kerb_ribbon(g, &offset_path(&line, side * hw), None, side, SIDEWALK, true, true, &run_cuts, &cx.kerb_cols);
+            kerb_ribbon(g, &offset_path(&line, side * hw), None, side, SIDEWALK, true, true, &run_cuts, &cols);
         }
     }
     kerb_ends

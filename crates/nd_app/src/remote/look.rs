@@ -18,6 +18,7 @@ pub(super) fn graphics_json(ctx: &Ctx) -> Value {
     json!({
         "quality": ctx.lighting.quality.label().to_lowercase(), "tier": tier.label().to_lowercase(),
         "frame_ms": round(g.frame_ms), "sim_ms": round(g.sim_ms), "long_frames": g.long_frames.iter().map(|&(ms, sim_ms, tick)| json!({ "ms": round(ms), "sim_ms": round(sim_ms), "tick": tick })).collect::<Vec<_>>(), "auto_steps": g.steps, "reason": g.reason, "effects": g.effects,
+        "weathering": ctx.lighting.weathering,
     })
 }
 
@@ -167,6 +168,11 @@ pub(super) fn photo_mode(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
 pub(super) fn graphics(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(q) = opt_str(cmd, "quality")?.or(opt_str(cmd, "tier")?) {
         ctx.lighting.quality = crate::render::QualitySetting::parse(q).ok_or_else(|| format!("unknown quality {q:?}; auto, low, medium or high"))?;
+    }
+    // [r12-grime] Grime and soft edges on or off for this run (the
+    // Settings checkbox saves; this does not).
+    if let Some(on) = opt_bool(cmd, "weathering")? {
+        ctx.lighting.weathering = on;
     }
     Ok(graphics_json(ctx))
 }

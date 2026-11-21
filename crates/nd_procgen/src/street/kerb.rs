@@ -125,10 +125,32 @@ pub(crate) fn crossing_cuts(roads: &RoadNetwork) -> HashMap<u32, Vec<Cut>> {
 }
 
 /// The colours a kerb ribbon is drawn in.
+#[derive(Clone, Copy)]
 pub(super) struct KerbColours {
     pub(super) kerb: [f32; 4],
     pub(super) paving: [f32; 4],
     pub(super) tactile: [f32; 4],
+    /// [r12-grime] The street's wear (`weathering::street_grime`): when
+    /// above zero the pavement is marked with its distance from the back
+    /// edge, for the weeds and patches the shader draws there.
+    pub(super) grime: f32,
+}
+
+/// [r12-grime] Mark the pavement vertices from `start` on with their
+/// distance in from the back edge (`back` metres across, at station
+/// `far`), taken from the nearest of the quad's corners and the station
+/// each stands at, and the paving's span (`weathering::edge_aux`).
+fn mark_pavement(m: &mut crate::mesh::MeshData, start: usize, corners: &[(Vec3, f32)], far: f32, span: f32, wear: f32) {
+    if wear <= 0.0 {
+        return;
+    }
+    m.set_aux_with(start, |p| {
+        // Across the ground only: a dropped kerb's landing sits lower.
+        let p = Vec2::new(p[0], p[2]);
+        let flat = |c: Vec3| Vec2::new(c.x, c.z).distance_squared(p);
+        let st = corners.iter().min_by(|a, b| flat(a.0).total_cmp(&flat(b.0))).map_or(far, |c| c.1);
+        crate::weathering::edge_aux(wear, crate::weathering::pack_edge(far - st, span))
+    });
 }
 
 /// A kerb and the pavement behind it along `face` (the kerb's road-side
@@ -220,6 +242,7 @@ pub(super) fn kerb_ribbon(g: &mut Geometry, face: &[Vec2], normals: Option<&[Vec
         let (l0, l1) = (&lines[0], &lines[1]);
         g.part(Concrete).quad_facing([v3(l0[i], kerb_y(i)), v3(l0[j], kerb_y(j)), v3(l1[j], kerb_y(j)), v3(l1[i], kerb_y(i))], Vec3::Y, c.kerb);
         g.part(Concrete).quad_facing([v3(l0[i], 0.0), v3(l0[j], 0.0), v3(l0[j], kerb_y(j)), v3(l0[i], kerb_y(i))], -inward3, c.kerb);
+        let pave_from = g.get(Paving).positions.len();
         if f[i] == 0.0 && f[j] == 0.0 {
             let lf = &lines[far];
             g.part(Paving).quad_facing([v3(l1[i], top), v3(l1[j], top), v3(lf[j], top), v3(lf[i], top)], Vec3::Y, c.paving);
@@ -232,6 +255,9 @@ pub(super) fn kerb_ribbon(g: &mut Geometry, face: &[Vec2], normals: Option<&[Vec
                 g.part(Paving).quad_facing([v3(l3[i], top), v3(l3[j], top), v3(lf[j], top), v3(lf[i], top)], Vec3::Y, c.paving);
             }
         }
+        // [r12-grime] Each corner of this piece at its station across.
+        let corners: Vec<(Vec3, f32)> = (1..lines.len()).flat_map(|k| [(v3(lines[k][i], top), st[k]), (v3(lines[k][j], top), st[k])]).collect();
+        mark_pavement(g.part(Paving), pave_from, &corners, st[far], st[far] - KERB_W, c.grime);
         if pad[i].is_some() && pad[i] == pad[j] {
             let y = top - KERB_DROP + 0.006;
             let (a, b) = (&pad_lines[0], &pad_lines[1]);

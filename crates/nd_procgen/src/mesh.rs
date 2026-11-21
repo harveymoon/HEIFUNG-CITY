@@ -27,6 +27,11 @@ pub struct MeshData {
     /// mikktspace pass is needed on the renderer side.
     pub tangents: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
+    /// [r12-grime] The weathering channel (drawn as the second UV set):
+    /// empty, or one pair per vertex up to some vertex, the rest taken as
+    /// `[0, 0]` (none). See [`crate::weathering`] for what a pair means.
+    /// Only [`MeshData::set_aux`] writes it, padding as it goes.
+    pub aux: Vec<[f32; 2]>,
 }
 
 /// Texture basis for a face: `u` runs horizontally, `v` runs up the wall,
@@ -161,6 +166,40 @@ impl MeshData {
         self.uvs.extend_from_slice(&other.uvs);
         self.tangents.extend_from_slice(&other.tangents);
         self.indices.extend(other.indices.iter().map(|i| i + base));
+        // [r12-grime] The weathering channel stays one pair per vertex.
+        if !other.aux.is_empty() {
+            self.aux.resize(base as usize, [0.0; 2]);
+            self.aux.extend_from_slice(&other.aux);
+        }
+    }
+
+    /// [r12-grime] Give the vertices from `start` on the weathering pair
+    /// `aux` (the channel is padded with `[0, 0]` up to `start`).
+    pub fn set_aux(&mut self, start: usize, aux: [f32; 2]) {
+        let n = self.positions.len();
+        self.aux.resize(start.min(n), [0.0; 2]);
+        self.aux.resize(n, aux);
+    }
+
+    /// [r12-grime] Give each vertex from `start` on the weathering pair
+    /// `f` makes of its position.
+    pub fn set_aux_with(&mut self, start: usize, f: impl Fn([f32; 3]) -> [f32; 2]) {
+        let n = self.positions.len();
+        self.aux.resize(start.min(n), [0.0; 2]);
+        for k in self.aux.len()..n {
+            self.aux.push(f(self.positions[k]));
+        }
+    }
+
+    /// [r12-grime] The weathering channel one pair per vertex, `[0, 0]`
+    /// where none was set (empty when none was ever set).
+    pub fn aux_full(&self) -> Vec<[f32; 2]> {
+        if self.aux.is_empty() {
+            return Vec::new();
+        }
+        let mut a = self.aux.clone();
+        a.resize(self.positions.len(), [0.0; 2]);
+        a
     }
 
     /// Split off everything added since the mesh had `vstart` vertices and
@@ -176,6 +215,7 @@ impl MeshData {
             uvs: self.uvs.split_off(vstart.min(self.uvs.len())),
             tangents: self.tangents.split_off(vstart.min(self.tangents.len())),
             indices: self.indices.split_off(istart),
+            aux: self.aux.split_off(vstart.min(self.aux.len())),
         };
         for i in &mut out.indices {
             *i -= vstart as u32;
@@ -509,6 +549,10 @@ impl MeshData {
             self.tangents.push([tr[0], tr[1], tr[2], t[3]]);
         }
         self.indices.extend(src.indices.iter().map(|i| i + base));
+        if !src.aux.is_empty() {
+            self.aux.resize(base as usize, [0.0; 2]);
+            self.aux.extend_from_slice(&src.aux_full());
+        }
     }
 
     /// A fan of triangles from `centre` round the closed `ring`, facing up,

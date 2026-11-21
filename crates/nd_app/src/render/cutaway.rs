@@ -111,7 +111,7 @@ fn cut_away(world: vec3<f32>, frag: vec2<f32>, view_pos: vec3<f32>) -> bool {{
 }
 
 const CUT_SHADER: Handle<Shader> = uuid_handle!("3c5e1b7a-8d24-4f19-a6c2-7e9b0d41f583");
-const CUT_PREPASS_SHADER: Handle<Shader> = uuid_handle!("b8d27f04-1e6a-4c93-8f5d-2a7c6e0b9d14");
+pub(super) const CUT_PREPASS_SHADER: Handle<Shader> = uuid_handle!("b8d27f04-1e6a-4c93-8f5d-2a7c6e0b9d14");
 
 /// The main pass: the standard material's own lighting, after the cut.
 const CUT_MAIN_SRC: &str = r#"
@@ -301,6 +301,7 @@ pub(super) fn apply_cutaway(
     std_mats: Res<Assets<StandardMaterial>>,
     mut cut_mats: ResMut<Assets<CutMaterial>>,
     mut win_mats: ResMut<Assets<WindowMaterial>>,
+    mut weather_mats: ResMut<Assets<super::weathering::WeatherMaterial>>,
     plain: Query<(Entity, &MeshMaterial3d<StandardMaterial>, &Aabb, &GlobalTransform), (Scenery, Without<CutOriginal>, Without<SwapOriginal>)>,
     worn: Query<(Entity, &CutOriginal, &Aabb, &GlobalTransform), Scenery>,
 ) {
@@ -312,6 +313,9 @@ pub(super) fn apply_cutaway(
         if let Some(mut m) = win_mats.get_mut(&mats.windows) {
             m.extension.cut = params;
         }
+        // [r12-grime] The weathered walls and pavements cut in their own
+        // shader, as the windows do.
+        super::weathering::set_cut(&mats, &mut weather_mats, params);
     }
     let reach = |aabb: &Aabb, gt: &GlobalTransform| (gt.transform_point(Vec3::from(aabb.center)), Vec3::from(aabb.half_extents).length());
     let mut wearing = 0;
@@ -397,7 +401,7 @@ mod tests {
     fn swaps_the_meshes_in_the_way_and_back() {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins).add_plugins(AssetPlugin::default());
-        app.init_asset::<StandardMaterial>().init_asset::<CutMaterial>().init_asset::<WindowMaterial>().init_asset::<Image>();
+        app.init_asset::<StandardMaterial>().init_asset::<CutMaterial>().init_asset::<WindowMaterial>().init_asset::<super::super::weathering::WeatherMaterial>().init_asset::<Image>();
         app.init_resource::<Lighting>().init_resource::<Overlays>().init_resource::<CutState>().init_resource::<RenderStats>().init_resource::<crate::camera::CameraCut>();
         let brick = app.world_mut().resource_mut::<Assets<StandardMaterial>>().add(StandardMaterial::default());
         let overlay = app.world_mut().resource_mut::<Assets<StandardMaterial>>().add(StandardMaterial { alpha_mode: AlphaMode::Blend, ..default() });

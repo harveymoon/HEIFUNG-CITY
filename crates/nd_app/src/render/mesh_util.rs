@@ -50,6 +50,10 @@ pub(super) fn mesh_with_usage(data: &MeshData, tangents: bool, usage: RenderAsse
         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, data.colors.clone())
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, data.uvs.clone())
         .with_inserted_indices(Indices::U32(data.indices.clone()));
+    // [r12-grime] The weathering channel, as the second UV set.
+    if !data.aux.is_empty() {
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, data.aux_full());
+    }
     if tangents && !data.indices.is_empty() {
         if data.tangents.len() == data.positions.len() {
             mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, data.tangents.clone());
