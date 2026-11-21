@@ -104,6 +104,14 @@ pub struct Sim {
     /// [K34] The real boxes on screen (depots and trains), for picking:
     /// record, floor centre, rotation, forty-footer.
     pub box_spots: Vec<(nd_sim::containers::BoxId, bevy::math::Vec3, bevy::math::Quat, bool)>,
+    /// [r12-yards] Each home's free ground and windows as drawn
+    /// (`nd_procgen::yards::spots`, on its pad), with the count it was
+    /// drawn at; `yard_version` is bumped whenever one changes.
+    pub yard_spots: std::collections::HashMap<nd_sim::BuildingId, (u64, std::sync::Arc<nd_procgen::yards::Spots>)>,
+    pub yard_version: u64,
+    /// [r12-yards] The households' things on screen, for picking and the
+    /// remote API (`render/yards.rs`).
+    pub yard_props: Vec<crate::render::YardProp>,
 }
 
 impl Sim {
@@ -150,6 +158,9 @@ impl Sim {
             depot_slots_version: 0,
             depot_bays: Default::default(),
             box_spots: Vec::new(),
+            yard_spots: Default::default(),
+            yard_version: 0,
+            yard_props: Vec::new(),
         }
     }
 

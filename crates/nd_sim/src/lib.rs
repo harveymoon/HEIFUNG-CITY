@@ -55,6 +55,8 @@ pub mod ground;
 pub mod foot_wear;
 /// [r11-lot-memory] What stood on each lot: ghosts, slabs, painted-over signs.
 pub mod lot_memory;
+/// [r12-yards] What a household puts out round its home: bikes, toys, pots, washing.
+pub mod yards;
 pub mod industry;
 pub mod junctions;
 pub mod land_value;

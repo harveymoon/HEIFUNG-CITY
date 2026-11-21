@@ -76,6 +76,8 @@ pub(super) fn status(ctx: &Ctx) -> Value {
         "message": ctx.flags.message, "tool_status": ctx.tools.status, "event_seq": ctx.log.seq,
         "favourites": ctx.tools.favorites.iter().map(|&f| key_str(f)).collect::<Vec<_>>(),
     });
+    // [r12-yards] Households' things on screen.
+    v["render"]["yards"] = json!({ "props": ctx.stats.yard_props, "homes": ctx.stats.yard_homes });
     // [r7-sim-thread] The sim thread.
     {
         let c = &sim.world;

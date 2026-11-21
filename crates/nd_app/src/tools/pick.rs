@@ -104,6 +104,15 @@ fn pick_on_ray(sim: &Sim, click: &Click) -> Option<Selection> {
             return Some(Selection::Box(id));
         }
     }
+    // [r12-yards] A household's thing out front (a bike, the washing, a
+    // grill), close up: its owner, ahead of the house it stands by.
+    if click.view_dist <= crate::render::yards::REACH {
+        if let Some((ty, owner)) = crate::render::yards::pick_ray(sim, o, d).filter(|(t, _)| *t < ground_t + 1.0) {
+            if air.is_none_or(|(ta, _)| ty < ta) && bld.is_none_or(|(tb, _)| ty < tb + 3.0) {
+                return Some(Selection::Citizen(owner));
+            }
+        }
+    }
     match (air, bld) {
         (Some((ta, a)), Some((tb, _))) if ta <= tb => Some(Selection::Drone(a)),
         (Some((_, a)), None) => Some(Selection::Drone(a)),
@@ -263,6 +272,13 @@ fn pick_any(sim: &Sim, p: SVec2, depth: Depth, reach: Reach) -> Selection {
     if let Some((db, id)) = bot {
         if car.is_none_or(|c| c.0 > db) && person.is_none_or(|q| q.0 > db) {
             return Selection::Bot(id);
+        }
+    }
+    // [r12-yards] A household's thing right where the click is (nearer
+    // than any car or person): its owner.
+    if let Some((dy, owner)) = crate::render::yards::pick_at(sim, p).filter(|_| reach.small) {
+        if car.is_none_or(|c| c.0 > dy) && person.is_none_or(|q| q.0 > dy) {
+            return Selection::Citizen(owner);
         }
     }
     match (car, person) {
