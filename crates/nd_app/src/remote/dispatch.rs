@@ -548,6 +548,14 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("age_days", "testing: everything remembered that many days earlier (to see ghosts and slabs fade)"),
         ("returns", "traces, demolished, changed, version, per_lot, max, newest [{id, kind, at, weeks_ago, line}], done, at {lot, vacant, what_stood_here}"),
     ] },
+    // [r12-yards]
+    Cmd { name: "yards", aliases: &["out_front", "yard_props"], effect: Read, run: |cmd, ctx| yards::command(cmd, &ctx.sim), help: &[
+        ("building", "a building id, optional: what its households put out (out_front: kind, label \"Kai's bike\", owner, place) and what is drawn there"),
+        ("at", "[x,y] optional: the same for the home on the lot there"),
+        ("find", "optional: homes of a kind, nearest `near` first: kids, elderly, hobby, laundry, block, or a thing's key (bike, kid_bike, trike, ball, toys, chalk, plant, chair, laundry, project_bike, tools, grill, surfboard)"),
+        ("near", "[x,y] for find (default the origin); `top` how many (default 10); `drawn_only` only homes drawn (free ground worked out)"),
+        ("returns", "on, laundry_out, wet, homes_with_spots, drawn {props, homes, by_kind, reach_m, fade_m, far_eye_m}, home {building, name, households, block, pos, out_front, drawn [{kind, owner, pos, yaw}], spots {step, pavement, front, yard, windows}}, found [{building, name, pos, front_dir, distance, out_front}]"),
+    ] },
     Cmd { name: "roads", aliases: &["road_condition", "road_budget"], effect: Game, run: |cmd, ctx| nights::roads(cmd, &mut ctx.sim.world), help: &[
         ("funding", "optional 0..1.5: road maintenance funding level (1 = what the network needs to stand still)"),
         ("age_days", "dev, optional: wear every street that many days at yesterday's traffic (the crews work each night unless crews: false; nothing is charged)"),

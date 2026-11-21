@@ -106,7 +106,7 @@ the replies back. So:
 Every example is the POST body; the reply always carries `"ok"`.
 
 **Other names.** Some commands answer to other names as well (`help` lists them under `aliases`):
-`add_interchange` (`interchange`); `campus` (`university`); `city_name` (`city_identity`); `cleanup` (`clean_up`); `committee_meeting` (`meeting`); `corps` (`corp`, `megacorp`); `megablock` (`megablocks`, `arcology`); `dirt_at` (`contamination_at`); `district` (`districts`); `estate` (`land_market`); `favourite` (`favorite`); `graphics` (`quality`); `grounds_junctions` (`park_junctions`); `heat_vision` (`heat`); `level_crossings` (`level_crossing`, `crossings`, `rail_crossings`); `photo_mode` (`photo`); `pressure` (`pressures`); `roads` (`road_condition`, `road_budget`); `foot_wear` (`worn_paths`); `shore` (`waterfront`); `skyline` (`towers`, `height_limit`); `street_events` (`nights`); `subway` (`metro`); `cable` (`cable_car`, `gondola`, `cablecar`); `taxes` (`tax`); `tolls` (`toll`); `tourism` (`tourists`); `tow_car` (`tow`, `boot`); `zoom_to` (`zoom`).
+`add_interchange` (`interchange`); `campus` (`university`); `city_name` (`city_identity`); `cleanup` (`clean_up`); `committee_meeting` (`meeting`); `corps` (`corp`, `megacorp`); `megablock` (`megablocks`, `arcology`); `dirt_at` (`contamination_at`); `district` (`districts`); `estate` (`land_market`); `favourite` (`favorite`); `graphics` (`quality`); `grounds_junctions` (`park_junctions`); `heat_vision` (`heat`); `level_crossings` (`level_crossing`, `crossings`, `rail_crossings`); `photo_mode` (`photo`); `pressure` (`pressures`); `roads` (`road_condition`, `road_budget`); `foot_wear` (`worn_paths`); `yards` (`out_front`, `yard_props`); `shore` (`waterfront`); `skyline` (`towers`, `height_limit`); `street_events` (`nights`); `subway` (`metro`); `cable` (`cable_car`, `gondola`, `cablecar`); `taxes` (`tax`); `tolls` (`toll`); `tourism` (`tourists`); `tow_car` (`tow`, `boot`); `zoom_to` (`zoom`).
 
 `help` is checked against the dispatcher by a unit test (`remote::dispatch_tests`): every command
 it runs is documented in `help` or named as an alias, and nothing else is.
@@ -2450,6 +2450,18 @@ that many days earlier, to see the ghosts and slabs fade); `done` lists what was
 weeks_ago, line, name, what, floors, land_use, business, became (changed: the new trade, null when
 it shut), reason (demolished: the demolition's key), shopfront (the unit, for a tenant's shop),
 stood_days}. `status.render.chunks.causes.lot_memory` counts the building layers redrawn for it.
+**Yards and fronts.** [r12-yards] `yards` (aliases `out_front`, `yard_props`; code `remote/yards.rs`,
+model in DESIGN.md, Yards and fronts that say who lives there) reports the households' things:
+`on`, `laundry_out`, `wet`, `homes_with_spots` (homes whose free ground the renderer worked out),
+`drawn` {props, homes, by_kind, reach_m, fade_m, far_eye_m} (what is on screen round the camera).
+`building` (an id) or `at` [x,y] adds `home` {building, name, households, block, pos, out_front
+[{kind, label "Kai's bike", owner, owner_name, household, place step/front/yard/window}], drawn
+[{kind, owner, pos, yaw}], spots {step, pavement, front, yard, windows}}. `find` (kids, elderly,
+hobby, laundry, block, or a thing's key: bike, kid_bike, trike, ball, toys, chalk, plant, chair,
+laundry, project_bike, tools, grill, surfboard) with `near` [x,y], `top` (10) and `drawn_only` lists
+the nearest such homes {building, name, pos, front_dir, distance, out_front}. `inspect {building}`
+carries `out_front` for a home; `select {at}` on a drawn thing selects its owner; `status.render.yards`
+{props, homes}. Use `set_weather` to see the washing go in and out.
 **Inspecting a road.** [road-inspect] A click with the Inspect tool on a road (not on a vehicle,
 person, toll booth or parked car, and not inside a junction) selects the street piece under the
 pointer: at a crossing of two levels the upper one, and in the Underground view only pieces below

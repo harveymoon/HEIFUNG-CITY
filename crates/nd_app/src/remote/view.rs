@@ -641,6 +641,10 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
     v["fishing"] = super::economy::fishing(w, id);
     // [r11-lot-memory] What stood on its lot before, and its shops' changes.
     v["what_stood_here"] = lot_memory_json(w, lot);
+    // [r12-yards] What its households put out front and in the yard.
+    if b.homes > 0 {
+        v["out_front"] = super::yards::home_json(w, id);
+    }
     v
 }
 

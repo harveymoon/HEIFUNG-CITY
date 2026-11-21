@@ -325,6 +325,33 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
         }
     }
 
+    // [r12-yards] What the households put out front and in the yard, each
+    // a link to whose it is.
+    if b.homes > 0 && !b.households.is_empty() {
+        let laundry = nd_sim::yards::laundry_out(&w.weather, w.clock.hour());
+        let ctx = nd_sim::yards::home_ctx(w, id, &nd_sim::yards::beaches(w));
+        let wishes = nd_sim::yards::home_wishes(w, id, laundry, ctx);
+        if !wishes.is_empty() {
+            let block = nd_sim::yards::is_block(b.homes, b.floors);
+            section(ui, if block { "AT THE WINDOWS AND THE DOOR" } else { "OUT FRONT AND IN THE YARD" });
+            let mut pick = None;
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                for wish in wishes.iter().take(24) {
+                    if ui.link(egui::RichText::new(nd_sim::yards::line(w, wish)).small()).on_hover_text("Select them").clicked() {
+                        pick = Some(wish.owner);
+                    }
+                }
+            });
+            if wishes.len() > 24 {
+                hint(ui, &format!("and {} more", wishes.len() - 24));
+            }
+            if let Some(c) = pick {
+                *selection = Selection::Citizen(c);
+            }
+        }
+    }
+
     // ── People ──
     let inside: Vec<nd_sim::CitizenId> = w.citizens.iter().filter(|(_, c)| c.inside == Some(id)).map(|(cid, _)| cid).collect();
     let groups: [(&str, &[nd_sim::CitizenId]); 3] = [("LIVE HERE", &b.residents), ("WORK HERE", &b.workers), ("IN THE BUILDING NOW", &inside)];

@@ -62,6 +62,9 @@ mod foot_wear;
 mod lot_memory;
 // [r12-grime] Soft edges and shader grime.
 mod weathering;
+// [r12-yards] a household's things round its home, near the camera
+pub(crate) mod yards;
+pub use yards::YardProp;
 /// [climate] Rain, snow and hot-spot steam.
 pub mod climate;
 /// Drone heat vision (render/heat.rs).
@@ -453,6 +456,9 @@ pub struct RenderStats {
     pub detail_in_range: [usize; 2],
     /// [r10-chunk-hitch] Building chunk regeneration since the start.
     pub chunks: ChunkStats,
+    /// [r12-yards] Households' things on screen, and the homes they are at.
+    pub yard_props: usize,
+    pub yard_homes: usize,
 }
 
 /// [r10-chunk-hitch] What redrew building chunks and what it cost, counted
@@ -507,7 +513,8 @@ impl Plugin for RenderPlugin {
         app.add_systems(PostUpdate, holo::hide_surface_extras.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate));
         app.add_systems(Update, (subway::sync_metro_tunnels, subway::sync_metro_trains).in_set(SimSet::Sync).after(sync_trains).before(holo::apply_depth));
         app.add_systems(Update, subway::sync_platform_figures.in_set(SimSet::Sync).after(holo::apply_depth));
-        app.add_systems(Update, (turbines::sync_turbines, solar::sync_solar, haze::sync_haze, gulls::sync_gulls, grime::sync_grime, foot_wear::sync_foot_wear, foot_wear::sync_foot_wear_layer, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
+        app.add_systems(Update, (turbines::sync_turbines, solar::sync_solar, haze::sync_haze, gulls::sync_gulls, grime::sync_grime, foot_wear::sync_foot_wear, foot_wear::sync_foot_wear_layer, yards::sync_yards, layers::sync_layers, survey::sync_land_layer, lights::update_window_lights).chain().in_set(SimSet::Sync).after(sync_trains).before(update_daylight));
+        app.init_resource::<yards::YardRender>();
         app.init_resource::<climate::SceneClock>().add_systems(Update, climate::tick_scene_clock.in_set(SimSet::Input));
         app.add_systems(Update, (climate::sync_precipitation, climate::sync_steam).in_set(SimSet::Sync).after(sync_landscape));
         app.init_resource::<LandscapeRender>().add_systems(Update, (sync_landscape, sync_ships, lift_spawned, lift_movers).chain().in_set(SimSet::Sync).after(update_daylight));

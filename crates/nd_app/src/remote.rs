@@ -96,6 +96,8 @@ mod nights;
 /// [r10-worn-paths] The walking-heat field.
 mod foot_wear;
 mod lot_memory;
+// [r12-yards]
+mod yards;
 /// [places] taste, favourite places, venue ratings.
 mod places;
 /// [land] Owners, prices, merged plots, pressure and the super-elite.

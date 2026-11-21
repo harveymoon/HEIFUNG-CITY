@@ -322,6 +322,44 @@ Citizens are rendered from their simulated positions every frame.
   `ND_WEATHERING_K` scales it for judging the look). Off, and in the heat, focus and ghost views,
   the meshes wear their plain materials (`apply_weathering`), so the material swapper and the cut
   work on them unchanged.
+- **Yards and fronts that say who lives there** [r12-yards] (`nd_sim::yards`, `nd_procgen::yards`,
+  `nd_app` `render/yards.rs`, remote `yards`): the clutter round a home comes from its household.
+  What each household puts out (`home_wishes`) is a hash of its members' own seeds, ages, bikes,
+  vehicles and trades, so the same household always shows the same things and they change when it
+  does (a child grown up, a baby, someone moving in, a new job, a bike bought); nothing is saved and
+  no random stream is touched. Children: a toddler's trike or toys, a 5-11 year old's little bike
+  (on its side, stabilisers) and a ball or a hopscotch grid in chalk, a teenager's bike and a ball in
+  the yard. The old (67+): pot plants on the step and the eldest's chair out front. Grown-ups: their
+  own bike by the door (`owns_bike`), a motorbike on a stand half taken apart (an engine trade:
+  mechanic, tow yard, scrap yard, bike shop, dealer, taxi firm; or a rider of a two-wheeler with
+  curiosity over 0.55), a workbench and sawhorse (a trade with tools, or a careful tinkerer), a kettle
+  grill or an oil-drum barbecue (cooks, and the sociable who like a good time), a surfboard by the
+  door within 600 m of a public beach or on the water (beach trades and the young at heart), pots
+  for gardeners. The washing is out 08:00-19:00 when it is dry and bright (cloud under 0.55, not
+  raining: cloud 0.6+ on a map with rain or snow, the renderer's own line; not in a storm or a gale)
+  for about a third to most households by size, and in otherwise. At most six things a household,
+  one grill, workbench, chair and set of pots a home. A block of flats (more than 4 homes or 3
+  floors) puts its pots and washing at the household's own window (a window box, a pole of washing
+  out of the window, HK style), its bikes and boards by the door.
+  Where things stand comes from the drawn building: in the chunk job that draws a home, its geometry
+  (before it is raised onto its pad) is rasterised on a 0.5 m grid over its lot: every part that
+  stands on the ground (under 2.2 m: walls, fences, sheds, trunks, steps) blocks its cells and 0.3 m
+  round, every roof or slab overhead covers them, and what is open inside the lot (0.35 m in from its
+  edge) is free, with its free radius. The roofs give the house's front and back rows and its
+  middle; the step is open cells right in front of the front wall nearest the middle, the front
+  garden and the back yard roomy cells scattered by a hash and kept apart; a house built at the
+  street steps out onto the pavement against its wall (the kerb's height); a block's windows are its
+  street-side switchable window lights from the first floor to 30 m. Kept per home in
+  `Sim::yard_spots`. Drawn only near the camera: homes within 150 m of the eye get their things,
+  fading out from 105 to 140 m (`VisibilityRange`), none at all with the eye more than 220 m over
+  the ground; the homes in reach are looked at twice a second or when the eye moves 6 m, a home's
+  things placed again only when its household signature, its drawing or the washing changed. Each
+  look (13 kinds, 45 looks: about 100-900 triangles each) is one small procedural mesh per surface
+  built once and shared, so the GPU draws each look as one instanced batch on the building surface
+  materials. A click on a thing selects its owner (`pick_ray`, close up, ahead of the house); the
+  building inspector lists "OUT FRONT AND IN THE YARD" (on a block "AT THE WINDOWS AND THE DOOR"),
+  each line ("Kai's bike") selecting that person; `inspect {building}` carries `out_front`.
+  `ND_YARDS=0` draws none.
 - **Road wear and maintenance** (`nd_sim::road_wear`, `world/roadworks.rs`): every street piece
   the city looks after (not paths, track, bored tunnels, highway carriageways or anything past the
   map edge) wears 0.0033 a day with age (about 300 days to crumble) plus 0.00012 per vehicle sample

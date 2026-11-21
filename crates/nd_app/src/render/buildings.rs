@@ -71,8 +71,9 @@ impl<'a> Kit<'a> {
 
 /// Generate one building's geometry into the chunk's merged geometry, its
 /// detail layers into the chunk's detail cell for it.
-/// Returns its drawn height and the triangles of ghosts on its walls.
-pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world: &World, kit: Kit, styles: &StyleBook, id: BuildingId) -> Option<(f32, u32)> {
+/// Returns its drawn height, the triangles of ghosts on its walls and,
+/// for a home, [r12-yards] the free ground and windows round it.
+pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world: &World, kit: Kit, styles: &StyleBook, id: BuildingId) -> Option<(f32, u32, Option<nd_procgen::yards::Spots>)> {
     let b = world.buildings.get(id)?;
     let mut g = building_geometry(world, kit, styles, id)?;
     // [r5-hillside] On a lot stepped down the hill, storeys under its back
@@ -98,6 +99,10 @@ pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world:
         ghost_tris = ghosts.triangle_count() as u32;
         g.append(&ghosts);
     }
+    // [r12-yards] A home's free ground and windows (before the window
+    // lights are tagged with the building's slot: they are found by
+    // their mark).
+    let yard = super::yards::home_spots(world, id, &g);
     // [climate] Snow on the roofs in a cold climate.
     nd_procgen::climate::snow_cover(&mut g, kit.palette.snow);
     lights::tag_windows(&mut g, lights::slot_of(id));
@@ -113,7 +118,7 @@ pub(super) fn append_building(geo: &mut Geometry, cells: &mut [Geometry], world:
         cells[detail_cell(world, id).min(cells.len() - 1)].append(&d);
     }
     geo.append(&g);
-    Some((top, ghost_tris))
+    Some((top, ghost_tris, yard))
 }
 
 /// [r12-grime] How much grime a building's walls show: its age, condition,
@@ -284,6 +289,8 @@ pub(super) fn sync_buildings(
         sim.styles.clear();
         // [fix/review-app] Drawn heights are keyed by building id too.
         sim.building_tops.0.clear();
+        // [r12-yards] And the free ground round each home.
+        sim.yard_spots.clear();
     }
     if rebuild_all || state.draw_kit.is_none() {
         state.draw_kit = Some(Arc::new(DrawKit { rules: assets.rules.clone(), palette: assets.palette.clone() }));
@@ -566,6 +573,20 @@ fn swap_in(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials,
         state.building_chunks.insert(id, r.key);
         if let Some(top) = d.top {
             sim.building_tops.0.insert(id, top);
+        }
+        // [r12-yards] The free ground and windows round a home, for its
+        // household's things (`yards::sync_yards`).
+        match d.yard {
+            Some(s) => {
+                sim.yard_version += 1;
+                let v = sim.yard_version;
+                sim.yard_spots.insert(id, (v, Arc::new(s)));
+            }
+            None => {
+                if sim.yard_spots.remove(&id).is_some() {
+                    sim.yard_version += 1;
+                }
+            }
         }
         if d.ghosts > 0 {
             sim.ghost_walls.insert(id, d.ghosts);

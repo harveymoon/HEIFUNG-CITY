@@ -38,6 +38,8 @@ pub mod society;
 /// [social] Murals and community gardens.
 pub mod social;
 pub mod street;
+/// [r12-yards] A household's things round its home: free ground, placing, meshes, picking.
+pub mod yards;
 pub mod surface;
 /// [r5-layered] Bays under the raised roads: markets, hawkers, lock-ups, courts.
 pub mod undercroft;
