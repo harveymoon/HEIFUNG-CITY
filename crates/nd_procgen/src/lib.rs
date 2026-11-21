@@ -50,6 +50,8 @@ pub mod vehicles;
 pub mod vacant;
 /// [r11-lot-memory] Ghosts on walls, old slabs, painted-over signs.
 pub mod lot_memory;
+// [r12-grime] Grime and soft edges: how much, and the weathering channel.
+pub mod weathering;
 
 #[cfg(test)]
 mod golden_tests;

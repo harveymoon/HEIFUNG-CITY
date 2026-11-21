@@ -60,6 +60,8 @@ mod grime;
 // [r10-worn-paths] Paths worn by real feet.
 mod foot_wear;
 mod lot_memory;
+// [r12-grime] Soft edges and shader grime.
+mod weathering;
 // [r12-yards] a household's things round its home, near the camera
 pub(crate) mod yards;
 pub use yards::YardProp;
@@ -495,7 +497,7 @@ impl Plugin for RenderPlugin {
         app.init_resource::<people::PeopleRender>();
         app.add_plugins(thumbs::ThumbsPlugin);
         app.add_plugins(turntable::TurntablePlugin);
-        app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_plugins(MaterialPlugin::<street_look::PoolMaterial>::default()).add_plugins(MaterialPlugin::<cutaway::CutMaterial>::default()).init_resource::<cutaway::CutState>().add_systems(Startup, cutaway::add_shader).init_resource::<sky::SkyLook>().add_systems(Startup, (lights::add_shader, street_look::add_pool_shader, setup)).add_systems(
+        app.init_resource::<RenderState>().init_resource::<VehicleRender>().init_resource::<Overlays>().init_resource::<Lighting>().init_resource::<RenderStats>().add_plugins(MaterialPlugin::<lights::WindowMaterial>::default()).add_plugins(MaterialPlugin::<street_look::PoolMaterial>::default()).add_plugins(MaterialPlugin::<cutaway::CutMaterial>::default()).add_plugins(MaterialPlugin::<weathering::WeatherMaterial>::default()).add_systems(Startup, weathering::add_shader).init_resource::<cutaway::CutState>().add_systems(Startup, cutaway::add_shader).init_resource::<sky::SkyLook>().add_systems(Startup, (lights::add_shader, street_look::add_pool_shader, setup)).add_systems(
             Update,
             (sync_terrain, sync_scatter, sync_roads, sync_signals, sync_preview, sync_lots, sync_parks, sync_vacant, sync_overlay, sync_paths, sync_walk_networks, sync_transit, sync_buildings, sync_citizens, sync_cars, sync_bots, sync_trains, update_daylight)
                 .chain()
@@ -590,6 +592,9 @@ impl Plugin for RenderPlugin {
         app.init_resource::<swap::SwapState>().add_systems(PostUpdate, (focus::focus_fog.before(heat::apply_heat), swap::swap_materials));
         // [chase-cam] After the swapper: it only ever sees the originals.
         app.add_systems(PostUpdate, cutaway::apply_cutaway.after(swap::swap_materials));
+        // [r12-grime] The weathered meshes' twins shown or hidden; the
+        // weathering materials kept like their surfaces.
+        app.add_systems(PostUpdate, (weathering::sync_weather_materials, weathering::apply_weathering.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate)));
         app.add_plugins(look::LookPlugin);
         app.insert_gizmo_config(layers::XrayGizmos, bevy::gizmos::config::GizmoConfig { depth_bias: -1.0, line: bevy::gizmos::config::GizmoLineConfig { width: 3.0, ..default() }, ..default() });
         app.add_systems(Update, layers::layer_gizmos.in_set(SimSet::Sync).after(lift_movers));

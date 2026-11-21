@@ -292,6 +292,36 @@ Citizens are rendered from their simulated positions every frame.
   The building inspector shows "WHAT STOOD HERE" (one line a trace: "Day 12: Rust Row, a 4-storey
   block of homes, pulled down (bulldozed: the zone was cleared); stood 30 days"), the lot hover
   card the last two; `inspect` carries `what_stood_here`, and the remote `lot_memory` reports it.
+- **Soft edges and shader grime** [r12-grime] (`nd_procgen::weathering`, `nd_app`
+  `render/weathering.rs`): weathering drawn in the shaders, city-wide, with no extra triangles on
+  walls or pavements, no extra draw calls and no work a frame. Meshes carry a **weathering
+  channel**, one pair per vertex in their second UV set (`MeshData::aux`), written when they are
+  built anyway: a building's walls (masonry and render fully, panels and metal 0.8, frames and
+  tarps 0.45, glass 0.3; containers, ground, glow and paint not at all) get `[wear, ground height]`
+  (`append_building`); a pavement `[-wear, packed]`, its distance in from the back edge and its span
+  to the kerb (`kerb_ribbon`, marked per corner so the interpolation gives the true distance); a
+  convex lot's floor is laid as a fan from its middle, the middle marked with how far in it is
+  (`fill_lot`). Those meshes wear a copy of their surface's own material with a small shader
+  extension (`WeatherMaterial`, one per surface, so no draw is added; it keeps the chase camera's
+  cut and uses the cut's prepass). On walls: a ragged grime band at the foot (0.3 to 1.3 m by
+  wear), rain streaks in narrow columns under each 3.2 m storey's sill line, dirt where the ambient
+  occlusion is (inside corners, recesses; needs SSAO, so Medium and High), faint blotchy staining,
+  and in a damp climate darkening and patchy moss low on the shaded north side (-z, where the sun
+  never stands) and on old roofs. On the ground: weeds and grass creeping in ragged clumps from
+  the soft edge (further on neglected ground), soil washed over the edge, grime along the kerb,
+  patched slabs and cracks, AO dirt in corners. Fine detail fades out from 120 to 650 m.
+  **Wear** (`building_grime`): (0.18 + 0.55 x age/(age + 30 days)) x (0.45 + 0.9 x (1 -
+  condition)), +0.16 low tier / +0.04 mid / -0.08 high, +0.18 industry, x0.45 spires and luxury,
+  x0.7 offices and tech, x1.25 heavy industry and logistics, x1.2 slums, 0 for the capsule domes;
+  pavements by the street's land value (`street_grime`, 0.75 - 0.65 v); lot floors by their
+  building's (unusable ground 0.7). **Climate** (uniforms, `climate_grime`): brown-grey grime and
+  green growth temperate and tropical (damp 0.75 and 1), pale dust and little growth in the
+  desert, black soot volcanic, little damp arctic. Wear is baked when a mesh is rebuilt (as it is
+  anyway), so a building greys as it is redrawn. Settings, Graphics, "Grime and soft edges" (saved
+  in `settings.ron`; remote `graphics {weathering}` for a run; `ND_WEATHERING=0` off at start;
+  `ND_WEATHERING_K` scales it for judging the look). Off, and in the heat, focus and ghost views,
+  the meshes wear their plain materials (`apply_weathering`), so the material swapper and the cut
+  work on them unchanged.
 - **Yards and fronts that say who lives there** [r12-yards] (`nd_sim::yards`, `nd_procgen::yards`,
   `nd_app` `render/yards.rs`, remote `yards`): the clutter round a home comes from its household.
   What each household puts out (`home_wishes`) is a hash of its members' own seeds, ages, bikes,

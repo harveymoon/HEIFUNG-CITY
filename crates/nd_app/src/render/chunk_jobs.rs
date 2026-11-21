@@ -241,11 +241,18 @@ impl Drop for Job {
 pub(super) fn spawn_layer(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, r: &mut ReadyLayer, work_minutes: u64) -> ChunkMeshes {
     let mut entities = Vec::new();
     for (s, mesh) in r.base.drain(..) {
+        let weathered = mesh.attribute(Mesh::ATTRIBUTE_UV_1).is_some();
         let mesh = Mesh3d(meshes.add(mesh));
         let e = if s.is_glow() {
             commands.spawn((mesh, MeshMaterial3d(mats.windows.clone()), Transform::IDENTITY, BuildingTag, NotShadowCaster, NotShadowReceiver)).id()
         } else {
-            commands.spawn((mesh, MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, BuildingTag)).id()
+            let mut e = commands.spawn((mesh, MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, BuildingTag));
+            // [r12-grime] Walls with the weathering channel wear it
+            // (`weathering::apply_weathering`).
+            if weathered {
+                e.insert(super::weathering::Weathered(s));
+            }
+            e.id()
         };
         entities.push(e);
     }
@@ -253,7 +260,12 @@ pub(super) fn spawn_layer(commands: &mut Commands, meshes: &mut Assets<Mesh>, ma
     for d in r.detail.iter_mut() {
         let vis = detail_range(d.lod);
         for (s, mesh) in d.meshes.drain(..) {
-            entities.push(commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, BuildingTag, vis.clone())).id());
+            let weathered = mesh.attribute(Mesh::ATTRIBUTE_UV_1).is_some();
+            let mut e = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, BuildingTag, vis.clone()));
+            if weathered {
+                e.insert(super::weathering::Weathered(s));
+            }
+            entities.push(e.id());
         }
         detail.push(DetailCell { at: d.at, lod: d.lod, triangles: d.triangles });
     }

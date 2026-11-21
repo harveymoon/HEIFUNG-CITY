@@ -229,7 +229,7 @@ fn a_sharp_corner_gets_its_curb_cuts() {
 /// of hundred, so a city with thousands of crossings stays in budget.
 #[test]
 fn kerbs_stay_within_the_triangle_budget() {
-    let cols = KerbColours { kerb: [1.0; 4], paving: [1.0; 4], tactile: [1.0; 4] };
+    let cols = KerbColours { kerb: [1.0; 4], paving: [1.0; 4], tactile: [1.0; 4], grime: 0.0 };
     let face = [Vec2::new(0.0, 5.0), Vec2::new(60.0, 5.0)];
     let mut plain = Geometry::default();
     kerb_ribbon(&mut plain, &face, None, -1.0, SIDEWALK, true, true, &[], &cols);

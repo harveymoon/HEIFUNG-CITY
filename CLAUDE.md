@@ -33,6 +33,18 @@ Open work: `todo.md` (sorted by area; tick items with "→ DONE [branch]: what")
 - Work in a git worktree under `.claude/worktrees/<name>` on its own branch; merge main into it
   before reporting; do not merge into main yourself.
 
+## Rounds and the cleanup habit (for the coordinator; Harvey 2026-11-20)
+- Work goes in rounds of up to 5 agents, started only when Harvey says go.
+- **Every third round is a cleanup round, not a feature round** (round 13 is the first; then 16,
+  19, ...). It holds a mix of: consolidating scattered facts into one place (catalogues, shared
+  tables), sweeping agents' "LEFT" notes and the follow-ups list (close, fix small ones, file the
+  rest), auditing shallow placeholder systems that deep ones lean on, tidying the docs and
+  archiving finished todo items, and **always a photographer**: one agent that tours a copy of
+  Harvey's newest save (walk and orbit, day and night), captures 10-15 images and writes a
+  findings report (`docs/playtest/photo_report_<date>.md`: broken / wrong / unrealistic /
+  polish, with ids, positions and screenshot paths) for Harvey to review. Its findings feed the
+  next feature round.
+
 ## Building and testing
 - Drive C: is tight. All work files live under `O:/projects/Heifung_District` (Harvey 2026-11-20; never loose `O:/nd_*` folders):
   build agent work to `CARGO_TARGET_DIR=O:/projects/Heifung_District/targets/<branch>`, game homes/saves/probe output in
