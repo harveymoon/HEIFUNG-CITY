@@ -116,9 +116,9 @@ impl Trace {
             },
         };
         if self.kind == TraceKind::Changed || self.floors == 0 {
-            return crate::names::a(thing);
+            return crate::names::a_or_bare(thing);
         }
-        crate::names::a(format!("{}-storey {thing}", self.floors))
+        crate::names::a_or_bare(format!("{}-storey {thing}", self.floors))
     }
 
     /// One line for the inspector: "Day 12: Lucky Bowl, a 3-storey bakery,
@@ -139,7 +139,7 @@ impl Trace {
             }
             TraceKind::Changed => {
                 let became = match self.now {
-                    Some(k) => format!("became {}", crate::names::a(k.label())),
+                    Some(k) => format!("became {}", crate::names::a_or_bare(k.label())),
                     None => "shut".to_string(),
                 };
                 format!("Day {day}: {who} {became}")
