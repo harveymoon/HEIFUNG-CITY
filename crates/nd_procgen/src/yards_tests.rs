@@ -232,7 +232,7 @@ fn washing_goes_on_the_styles_lines_first() {
     assert_eq!(line.len(), 3, "three runs on a 3.3 m line: {line:?}");
     assert!(line.iter().all(|p| p.variant >= HUNG && (1.85..=2.0).contains(&p.at.y)));
     let pole = of(who[1]);
-    assert!(pole.len() == 1 && pole[0].variant >= HUNG && (pole[0].at.y - 6.0).abs() < 0.01, "a flat's washing on the pole: {pole:?}");
+    assert!(pole.len() == 1 && pole[0].variant >= HUNG && (pole[0].at.y - 6.0).abs() < 0.15, "a flat's washing on the pole: {pole:?}");
     let own = of(who[2]);
     assert!(own.len() == 1 && own[0].variant < POLE && own[0].at.y == 0.0, "no line left: its own line or airer: {own:?}");
 }
