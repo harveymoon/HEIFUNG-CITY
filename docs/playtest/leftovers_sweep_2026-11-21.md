@@ -166,5 +166,5 @@ Found by grepping for TODO / FIXME / "for now" / "placeholder" / "stub" / "stand
 
 ## Checks
 
-- Full suite: SUITE_RESULT.
-- Probe on a copy of Harvey's newest save (`perf_probe measure`, fast profile, ND_FINGERPRINT=1): PROBE_RESULT.
+- Full suite after merging main (e7d23df9): 28 of 28 "test result: ok" groups, no failures (`cargo test --profile fast --workspace`).
+- Probe on a copy of Harvey's newest save (day 81, 16,768 people), `perf_probe measure` 720 ticks, fast profile, `ND_FINGERPRINT=1`, main and branch back to back: both end at pop 17,422, treasury 5,392,060.50, 1,079 cars, with the **same fingerprint 76915f1e984451b2**, so the sim is unchanged. Tick mean/p50/p99/max ms: main 52.0/49.7/142.5/469, branch 50.2/47.9/125.1/419 (a loaded machine; an earlier main run gave p99 93 to 124, so p99 is noise here).
