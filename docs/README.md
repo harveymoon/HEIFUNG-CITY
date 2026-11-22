@@ -14,6 +14,7 @@ Where to look. One line each; newest facts win over older notes.
 - `AI_COMMITTEE.md`: the mayor's AI committee, model voices for citizens, Talk and Ask, and the LLM backends.
 - `STYLE_REFERENCE.md`: the building style guide drawn from Harvey's inspiration renders (Hong Kong and cyberpunk families).
 - `playtest/photo_report_<date>.md`: the cleanup round's photographer report (broken / wrong / unrealistic / polish).
+- `playtest/leftovers_sweep_<date>.md`: the cleanup round's sweep of agents' LEFT notes and the shallow-systems audit (CLOSED / FIXED / FILE / DROP per note).
 - `playtest/flags_2026-10-15.md`: Harvey's flags K1-K52, still referenced by the open "J. Flags" section of `todo.md`.
 - `review/save_determinism_wip.patch`: unfinished save-determinism work, referenced by `todo.md` and `crates/nd_sim/tests/determinism.rs`.
 - `reference/` (not in git): Harvey's reference material; leave it where it is.
