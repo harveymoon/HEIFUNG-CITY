@@ -200,7 +200,7 @@ pub fn hotel_styles(tier: Tier) -> Menu {
 
 /// Weighted pick from a menu, weighed by the site (towers need floors) and
 /// the neighbours (families cluster or contrast), as the land use menus are.
-pub fn pick(options: Menu, site: &Site, near: &[Neighbour], rng: &mut impl Rng) -> Style {
+pub fn pick(options: &[(Style, f32)], site: &Site, near: &[Neighbour], rng: &mut impl Rng) -> Style {
     let weights: Vec<f32> = options.iter().map(|(s, w)| w * adjacency::site_fit(*s, site) * adjacency::neighbour_factor(*s, near)).collect();
     super::choose::weighted_index(&weights, rng).map_or(options[0].0, |i| options[i].0)
 }
