@@ -293,6 +293,28 @@ pub fn a(word: impl AsRef<str>) -> String {
     format!("{} {word}", article(word))
 }
 
+/// [r13-leftovers] Whether `word` names a plural ("artists' studios",
+/// "street-food stalls"), which takes no article; "a chemical works", "a
+/// glass", "a campus" are singular.
+pub fn is_plural(word: &str) -> bool {
+    let last = word.trim_end().rsplit(' ').next().unwrap_or("").to_lowercase();
+    if last.ends_with("s'") {
+        return true;
+    }
+    last.len() > 3 && last.ends_with('s') && !["ss", "us", "is", "works", "news"].iter().any(|e| last.ends_with(e))
+}
+
+/// [r13-leftovers] [`a`], but a plural stands bare: "an artists' studios"
+/// read wrong (r11-lot-memory LEFT).
+pub fn a_or_bare(word: impl AsRef<str>) -> String {
+    let word = word.as_ref();
+    if is_plural(word) {
+        word.to_string()
+    } else {
+        a(word)
+    }
+}
+
 #[cfg(test)]
 mod business_name_tests {
     use super::*;
@@ -322,5 +344,23 @@ mod business_name_tests {
             assert_eq!(article(w), art, "{w}");
         }
         assert_eq!(a("observatory"), "an observatory");
+    }
+
+    /// [r13-leftovers] Plural trades stand bare; singular ones keep "a".
+    #[test]
+    fn plurals_take_no_article() {
+        assert_eq!(a_or_bare("artists' studios"), "artists' studios");
+        assert_eq!(a_or_bare("street-food stalls"), "street-food stalls");
+        assert_eq!(a_or_bare("3-storey artists' studios"), "3-storey artists' studios");
+        for w in ["chemical works", "bakery", "glass", "campus", "bus", "observatory"] {
+            assert!(a_or_bare(w).starts_with('a'), "{w}");
+            assert!(!is_plural(w), "{w}");
+        }
+        for k in BusinessKind::ALL {
+            let l = k.label();
+            if !is_plural(l) {
+                assert!(a_or_bare(l).ends_with(l));
+            }
+        }
     }
 }

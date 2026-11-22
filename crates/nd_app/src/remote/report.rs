@@ -766,6 +766,8 @@ pub fn power_json(w: &World, with_hours: bool) -> Value {
                 }
                 plants.push(v);
             }
+            // [r13-leftovers] Incinerators are in the trash section's sites.
+            nd_sim::GridAsset::Incinerator => {}
             nd_sim::GridAsset::Battery(k) => {
                 let mut v = json!({
                     "id": key_str(r.id), "name": r.name, "kind": k.key(), "capacity_mwh": round(r.capacity_mwh), "max_mw": round(r.capacity_mw),

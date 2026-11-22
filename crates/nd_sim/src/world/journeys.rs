@@ -397,6 +397,23 @@ impl World {
             };
             return Some(Journey { purpose, from, to, driver: Driver::Unknown("a bus driver".into()) });
         }
+        // [r13-leftovers] A garbage truck has no errand of its own (its
+        // round is the trash system's): it read "passing through".
+        if let Some(t) = self.society.trash.truck_of_car(id).and_then(|t| self.society.trash.trucks.get(t)) {
+            let to = t.target.or(t.dump).filter(|b| self.buildings.contains_key(*b)).map(|b| self.place_of_building(b));
+            let crew = match t.hauler {
+                crate::trash::Hauler::Private | crate::trash::Hauler::Contractor(_) => "a hauler's crew",
+                _ => "a bin crew",
+            };
+            return Some(Journey { purpose: format!("garbage truck, {}", t.state.label()), from, to, driver: Driver::Unknown(crew.into()) });
+        }
+        // [r13-leftovers] A billionaire's escort and the police car leading
+        // the convoy have no driver of their own either.
+        if let Some(conv) = self.estate.convoys.iter().find(|v| v.escorts.contains(&id) || v.police == Some(id)) {
+            let boss = self.citizens.get(conv.citizen).map_or("a billionaire".to_string(), |c| c.name.clone());
+            let (purpose, driver) = if conv.police == Some(id) { (format!("leading {boss}'s convoy"), "a police officer") } else { (format!("escorting {boss}"), "a bodyguard") };
+            return Some(Journey { purpose, from, to: None, driver: Driver::Unknown(driver.into()) });
+        }
         if let Some(c) = &car.cargo {
             let to = if self.buildings.contains_key(c.to) { self.place_of_building(c.to) } else { Place::text("out of town") };
             let purpose = if crate::world::is_return_trip(c) { "driving back empty".to_string() } else { format!("delivering {:.0} {}", c.amount, c.resource.label()) };

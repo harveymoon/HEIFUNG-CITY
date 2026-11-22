@@ -211,6 +211,10 @@ impl World {
         match self.citizens.get(c.citizen) {
             Some(p) => format!("{}'s {body}", p.name),
             None if c.siren || self.services.unit_of_car(id).is_some() => format!("emergency {body}"),
+            // [r13-leftovers] City vehicles another system tracks by car
+            // id read "passing through" before.
+            None if self.society.trash.truck_of_car(id).is_some() => format!("{} on its round", crate::names::a(&body)),
+            None if self.estate.convoys.iter().any(|v| v.escorts.contains(&id) || v.police == Some(id)) => format!("{} in a convoy", crate::names::a(&body)),
             // [moto] A rider from out of town in a moto pack.
             None if c.drive.gang.is_some_and(|g| g.pack) => format!("{} with the moto pack", crate::names::a(&body)),
             None => {

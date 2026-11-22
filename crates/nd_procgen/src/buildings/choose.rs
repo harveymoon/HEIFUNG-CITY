@@ -84,6 +84,15 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         // Alley district.)
         (None, None) if !extras.rooftop_pad && extras.look.is_some_and(|l| district::look_styles(l, land_use, tier).is_some()) && !(land_use == LandUse::Industrial && extras.business.is_some_and(|k| industry_styles(k, tier).is_some())) => {
             let menu = district::look_styles(extras.look.unwrap(), land_use, tier).unwrap();
+            // [r13-leftovers] Boathouses only where the lot meets the water
+            // (r4-harbour LEFT: they went up inland too).
+            let dry: Vec<(Style, f32)>;
+            let menu = if !lot.shore.is_waterfront() && menu.iter().any(|(s, _)| *s == Style::Boathouses) && menu.iter().any(|(s, _)| *s != Style::Boathouses) {
+                dry = menu.iter().copied().filter(|(s, _)| *s != Style::Boathouses).collect();
+                &dry[..]
+            } else {
+                menu
+            };
             district::pick(menu, &adjacency::Site { floors, frontage: lot.width() }, extras.neighbours, &mut rng)
         }
         // [capsule] A tower with a pad in the Capsule district keeps the

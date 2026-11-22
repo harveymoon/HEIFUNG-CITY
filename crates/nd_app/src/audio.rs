@@ -352,9 +352,14 @@ pub fn settings_ui(ui: &mut bevy_egui::egui::Ui) {
     let before = s;
     ui.checkbox(&mut s.muted, "Mute all sound");
     ui.add_enabled_ui(!s.muted, |ui| {
-        for (label, v) in [("Master", &mut s.master), ("Ambience", &mut s.ambience), ("Effects", &mut s.effects), ("Interface", &mut s.ui), ("Music", &mut s.music)] {
+        for (label, v) in [("Master", &mut s.master), ("Ambience", &mut s.ambience), ("Effects", &mut s.effects), ("Interface", &mut s.ui)] {
             ui.add(egui::Slider::new(v, 0.0..=1.0).text(label).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)));
         }
+        // [r13-leftovers] The game has no music yet: the slider is kept (and
+        // saved) for when it does, but greyed out instead of looking live.
+        ui.add_enabled_ui(false, |ui| {
+            ui.add(egui::Slider::new(&mut s.music, 0.0..=1.0).text("Music (none yet)").custom_formatter(|v, _| format!("{:.0}%", v * 100.0)));
+        });
     });
     ui.add_enabled_ui(!s.muted, |ui| {
         egui::CollapsingHeader::new(egui::RichText::new("Effects by kind").small()).id_salt("sound_spot_groups").show(ui, |ui| {

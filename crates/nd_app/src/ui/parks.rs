@@ -27,7 +27,10 @@ fn kept_word(s: &ParkState) -> egui::RichText {
 
 /// The buttons for one park: clean it up, leave it wild (or not). Returns
 /// a message to show, if one was pressed.
-fn actions(ui: &mut egui::Ui, w: &mut nd_sim::World, id: BuildingId, s: &ParkState) -> Option<String> {
+/// [r13-leftovers] Takes the city's handle, not `&mut World`: borrowing
+/// the world mutably every frame the window is open counted as an edit
+/// each frame and ran the sim in the frame (r7-sim-thread LEFT 1).
+fn actions(ui: &mut egui::Ui, w: &mut crate::sim_thread::SimCore, id: BuildingId, s: &ParkState) -> Option<String> {
     let mut msg = None;
     let cost = s.cleanup_cost();
     let dirty = s.trash >= 0.1 || s.dealers > 0 || s.campers > 0;
