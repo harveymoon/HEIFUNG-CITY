@@ -100,6 +100,12 @@ pub enum BoxKind {
     Reefer,
     Tank,
     OpenTop,
+    /// [r14-materials] A flat rack: a floor and two folding end walls,
+    /// the load (steel, rebar, timber, pipe) strapped down in the open.
+    FlatRack,
+    /// [r14-materials] A dry-bulk box: a dry box with loading hatches in
+    /// the roof and a discharge hatch low in the door end (cement).
+    Bulk,
 }
 
 impl BoxKind {
@@ -115,6 +121,8 @@ impl BoxKind {
             BoxKind::Reefer => "reefer",
             BoxKind::Tank => "tank container",
             BoxKind::OpenTop => "open-top box",
+            BoxKind::FlatRack => "flat rack",
+            BoxKind::Bulk => "bulk box",
         }
     }
 }

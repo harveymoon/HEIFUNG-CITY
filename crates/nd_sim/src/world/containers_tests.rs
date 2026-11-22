@@ -116,7 +116,7 @@ fn a_stack_developer_buys_a_box_off_the_truck_and_builds_a_home_of_it() {
     assert!(w.buildings[site].construction.is_some());
     w.containers.homes.insert(site, cx::BoxHome { want: 6, boxes: Vec::new(), done: false });
     // A full box at the yard, trucked to the buyer.
-    let id = w.make_box(crate::rail::BoxKind::Dry, false, Where::Stored(yard), Some(cx::Goods { resource: Resource::Parts, buyer }), Event::ArrivedRail, yard);
+    let id = w.make_box(crate::rail::BoxKind::Dry, false, Where::Stored(yard), Some(cx::Goods { resource: Resource::Parts, buyer, amount: 0.0 }), Event::ArrivedRail, yard);
     w.containers.boxes[id].built = w.clock.day() as i32 - 365 * 3;
     w.containers.boxes[id].knocks = 0;
     w.note_inbound(buyer, Resource::Parts, 20.0);
@@ -305,7 +305,7 @@ fn young_box(w: &mut World, at: BuildingId, forty: bool, goods: Option<cx::Goods
 #[test]
 fn a_lorry_waits_in_a_bay_and_never_vanishes_in_town() {
     let (mut w, yard, buyer) = town();
-    let id = young_box(&mut w, yard, true, Some(cx::Goods { resource: Resource::Parts, buyer }));
+    let id = young_box(&mut w, yard, true, Some(cx::Goods { resource: Resource::Parts, buyer, amount: 0.0 }));
     w.note_inbound(buyer, Resource::Parts, 20.0);
     w.dispatch_truck(super::market::TruckOrigin::Building(yard), Cargo { from: yard, to: buyer, resource: Resource::Parts, amount: 20.0, price: 0.0 }, 6);
     let mut car = None;
@@ -473,7 +473,7 @@ fn a_forwarder_fills_one_box_from_several_firms_and_charges_each() {
 #[test]
 fn bays_jobs_and_books_survive_a_save() {
     let (mut w, yard, buyer) = town();
-    young_box(&mut w, yard, false, Some(cx::Goods { resource: Resource::Parts, buyer }));
+    young_box(&mut w, yard, false, Some(cx::Goods { resource: Resource::Parts, buyer, amount: 0.0 }));
     w.dispatch_truck(super::market::TruckOrigin::Building(yard), Cargo { from: yard, to: buyer, resource: Resource::Parts, amount: 10.0, price: 0.0 }, 6);
     tick(&mut w, 2);
     assert!(!w.containers.depots.is_empty() && !w.containers.lorries.is_empty());
@@ -504,7 +504,7 @@ fn a_box_back_off_a_lorry_takes_a_free_place_in_the_stack() {
     for k in 0..5 {
         young_box(&mut w, yard, k % 3 != 1, None);
     }
-    let id = young_box(&mut w, yard, true, Some(cx::Goods { resource: Resource::Parts, buyer }));
+    let id = young_box(&mut w, yard, true, Some(cx::Goods { resource: Resource::Parts, buyer, amount: 0.0 }));
     let first = w.containers.boxes[id].slot.expect("a place in the stack");
     assert_eq!(w.containers.slot_clashes(), 0);
     w.note_inbound(buyer, Resource::Parts, 20.0);
@@ -722,7 +722,7 @@ fn stock_stays_within_room_over_many_days_of_landings() {
             // Two boxes land an hour, one of them full for the buyer.
             young_box(&mut w, yard, h % 2 == 0, None);
             if h % 3 == 0 {
-                young_box(&mut w, yard, false, Some(cx::Goods { resource: Resource::Parts, buyer }));
+                young_box(&mut w, yard, false, Some(cx::Goods { resource: Resource::Parts, buyer, amount: 0.0 }));
             }
             tick(&mut w, 60);
         }

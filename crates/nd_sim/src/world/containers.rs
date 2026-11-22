@@ -244,7 +244,7 @@ impl World {
             return;
         }
         for b in boxes.iter_mut().filter(|b| b.id.is_none() && b.yard.is_some()) {
-            let goods = b.resource.map(|resource| Goods { resource, buyer: BuildingId::default() });
+            let goods = b.resource.map(|resource| Goods { resource, buyer: BuildingId::default(), amount: cx::full_load(b.forty) });
             let id = self.make_box(b.kind, b.forty, Where::Train, goods, Event::ArrivedRail, BuildingId::default());
             // Not arrived yet: the first entry is rewritten when it is set down.
             if let Some(r) = self.containers.boxes.get_mut(id) {
@@ -353,7 +353,7 @@ impl World {
         let n = cx::boxes_for_load(cargo.amount);
         for k in 0..n {
             let forty = kind != BoxKind::Tank && (n - k >= 2 || crate::hash::unit(mix(self.containers.stats.made, 3)) < 0.6);
-            self.make_box(kind, forty, Where::Stored(port), Some(Goods { resource: cargo.resource, buyer: BuildingId::default() }), Event::ArrivedSea, port);
+            self.make_box(kind, forty, Where::Stored(port), Some(Goods { resource: cargo.resource, buyer: BuildingId::default(), amount: cargo.amount / n as f32 }), Event::ArrivedSea, port);
         }
     }
 
@@ -370,7 +370,7 @@ impl World {
             let n = cx::boxes_for_load(c.amount);
             for k in 0..n {
                 let forty = kind != BoxKind::Tank && (n - k >= 2 || crate::hash::unit(mix(self.containers.stats.made, 3)) < 0.6);
-                let id = self.make_box(kind, forty, Where::Ship(sid), Some(Goods { resource: c.resource, buyer: c.to }), Event::ArrivedSea, port);
+                let id = self.make_box(kind, forty, Where::Ship(sid), Some(Goods { resource: c.resource, buyer: c.to, amount: c.amount / n as f32 }), Event::ArrivedSea, port);
                 if let Some(r) = self.containers.boxes.get_mut(id) {
                     r.log.clear();
                 }
@@ -571,7 +571,7 @@ impl World {
         let ids = if origin_edge {
             let kind = BoxKind::for_resource(Some(cargo.resource));
             let forty = crate::hash::unit(mix(self.containers.stats.made, 5)) < 0.3;
-            vec![self.make_box(kind, forty, Where::Truck(car), Some(Goods { resource: cargo.resource, buyer: cargo.to }), Event::ArrivedRoad, cargo.to)]
+            vec![self.make_box(kind, forty, Where::Truck(car), Some(Goods { resource: cargo.resource, buyer: cargo.to, amount: cargo.amount }), Event::ArrivedRoad, cargo.to)]
         } else {
             let ids = self.full_boxes_at(cargo.from, cargo.resource, cargo.to, cx::boxes_for_load(cargo.amount));
             for &id in &ids {
@@ -1458,7 +1458,7 @@ impl World {
         for t in trains {
             let mut boxes = std::mem::take(&mut self.rail.trains[t].boxes);
             for b in boxes.iter_mut().filter(|b| b.id.is_none()) {
-                let goods = b.resource.map(|resource| Goods { resource, buyer: BuildingId::default() });
+                let goods = b.resource.map(|resource| Goods { resource, buyer: BuildingId::default(), amount: cx::full_load(b.forty) });
                 b.id = Some(self.make_box(b.kind, b.forty, Where::Train, goods, Event::Counted, BuildingId::default()));
             }
             self.rail.trains[t].boxes = boxes;
@@ -1569,7 +1569,7 @@ impl World {
             now,
             now_id,
             car,
-            goods: r.goods.map(|g| g.resource.label().to_string()),
+            goods: r.goods.map(|g| g.describe()),
             visits: r.visits,
             history: r.log.iter().map(|s| (s.0, s.1.label().to_string(), self.place_name(s.2), (!s.2.is_null()).then_some(s.2))).collect(),
         })

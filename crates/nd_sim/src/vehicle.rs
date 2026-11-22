@@ -63,10 +63,21 @@ pub enum BodyType {
     /// [tow] A heavy three-axle wrecker with a long rotator boom, for
     /// lorries, buses and RVs.
     HeavyTow,
+    /// [r14-materials] A flat-deck lorry with a loader crane behind the
+    /// cab; its load is drawn on the deck ([`VehicleModel::boxed`] holds a
+    /// [`Load`] code).
+    Flatbed,
+    /// [r14-materials] A concrete mixer: the turning drum.
+    Mixer,
+    /// [r14-materials] A tipper: an open steel body for sand and gravel.
+    Tipper,
+    /// [r14-materials] A curtain-sider: a box body with tarpaulin sides,
+    /// for pallets.
+    Curtainsider,
 }
 
 impl BodyType {
-    pub const ALL: [BodyType; 21] = [
+    pub const ALL: [BodyType; 25] = [
         BodyType::Hatchback,
         BodyType::Sedan,
         BodyType::Coupe,
@@ -88,6 +99,10 @@ impl BodyType {
         BodyType::Helicopter,
         BodyType::TowTruck,
         BodyType::HeavyTow,
+        BodyType::Flatbed,
+        BodyType::Mixer,
+        BodyType::Tipper,
+        BodyType::Curtainsider,
     ];
 
     pub fn two_wheeler(self) -> bool {
@@ -103,13 +118,13 @@ impl BodyType {
     }
 
     pub fn is_truck(self) -> bool {
-        matches!(self, BodyType::BoxVan | BodyType::DeliveryVan | BodyType::PanelTruck | BodyType::Semi | BodyType::GarbageTruck | BodyType::TowTruck | BodyType::HeavyTow)
+        matches!(self, BodyType::BoxVan | BodyType::DeliveryVan | BodyType::PanelTruck | BodyType::Semi | BodyType::GarbageTruck | BodyType::TowTruck | BodyType::HeavyTow | BodyType::Flatbed | BodyType::Mixer | BodyType::Tipper | BodyType::Curtainsider)
     }
 
     /// [tow] Too big for an ordinary wrecker's wheel lift: a lorry, a bus,
     /// an RV. A heavy tow truck comes for it.
     pub fn needs_heavy_tow(self) -> bool {
-        matches!(self, BodyType::BoxVan | BodyType::PanelTruck | BodyType::Semi | BodyType::GarbageTruck | BodyType::BubbleBus | BodyType::ArticulatedBus | BodyType::HeavyTow)
+        matches!(self, BodyType::BoxVan | BodyType::PanelTruck | BodyType::Semi | BodyType::GarbageTruck | BodyType::BubbleBus | BodyType::ArticulatedBus | BodyType::HeavyTow | BodyType::Flatbed | BodyType::Mixer | BodyType::Tipper | BodyType::Curtainsider)
     }
 
     pub fn label(self) -> &'static str {
@@ -135,6 +150,10 @@ impl BodyType {
             BodyType::Helicopter => "helicopter",
             BodyType::TowTruck => "tow_truck",
             BodyType::HeavyTow => "heavy_tow_truck",
+            BodyType::Flatbed => "flatbed",
+            BodyType::Mixer => "concrete_mixer",
+            BodyType::Tipper => "tipper",
+            BodyType::Curtainsider => "curtainsider",
         }
     }
 }
@@ -245,6 +264,50 @@ fn is_zero(x: &u8) -> bool {
 /// (older saves: a box drawn into the trailer) read as the twenty.
 pub const CHASSIS_20: u8 = 100;
 pub const CHASSIS_40: u8 = 101;
+
+/// [r14-materials] What a flatbed carries on its deck, kept in
+/// `VehicleModel::boxed` (codes from [`LOAD_BASE`], clear of the
+/// container chassis codes so nothing reads a flatbed as a box rig).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Load {
+    Timber,
+    Steel,
+    Rebar,
+    BrickPallets,
+    Glass,
+    Pipe,
+    Scrap,
+    Crates,
+}
+
+pub const LOAD_BASE: u8 = 150;
+
+impl Load {
+    pub const ALL: [Load; 8] = [Load::Timber, Load::Steel, Load::Rebar, Load::BrickPallets, Load::Glass, Load::Pipe, Load::Scrap, Load::Crates];
+
+    /// The load a flatbed of `r` shows.
+    pub fn of(r: Resource) -> Load {
+        match r {
+            Resource::Timber => Load::Timber,
+            Resource::Steel => Load::Steel,
+            Resource::Rebar => Load::Rebar,
+            Resource::Bricks => Load::BrickPallets,
+            Resource::Glass => Load::Glass,
+            Resource::Pipe => Load::Pipe,
+            Resource::Metal => Load::Scrap,
+            _ => Load::Crates,
+        }
+    }
+
+    pub fn code(self) -> u8 {
+        LOAD_BASE + self as u8
+    }
+
+    /// The load a `boxed` code stands for, if it is one.
+    pub fn from_code(c: u8) -> Option<Load> {
+        c.checked_sub(LOAD_BASE).and_then(|i| Load::ALL.get(i as usize).copied())
+    }
+}
 
 /// [r8] Whether `boxed` is a container chassis, and if so a forty-foot one.
 pub fn chassis_of(boxed: u8) -> Option<bool> {
@@ -374,8 +437,26 @@ impl VehicleModel {
     /// whether it comes from out of town or goes to a building site.
     pub fn for_cargo(resource: Resource, seller: Option<BusinessKind>, to_site: bool, long_haul: bool, rng: &mut impl Rng) -> Self {
         let mut m = if to_site {
-            let mut m = Self::new(VehicleClass::Mid, if rng.random_bool(0.6) { BodyType::PanelTruck } else { BodyType::Pickup });
+            // [r14-materials] Building materials come in their own lorry
+            // (a mixer, a tipper, a flatbed with the load on its deck);
+            // anything else in a panel truck or a pickup, as before.
+            let row = resource.row();
+            let body = if row.category == crate::catalogue::GoodCategory::BuildingMaterial || resource == Resource::Metal {
+                if resource == Resource::Metal {
+                    BodyType::Flatbed
+                } else {
+                    row.truck
+                }
+            } else if rng.random_bool(0.6) {
+                BodyType::PanelTruck
+            } else {
+                BodyType::Pickup
+            };
+            let mut m = Self::new(VehicleClass::Mid, body);
             m.livery = Livery::Construction;
+            if body == BodyType::Flatbed {
+                m.boxed = Load::of(resource).code();
+            }
             m
         } else if long_haul {
             Self::new(VehicleClass::Mid, BodyType::Semi)

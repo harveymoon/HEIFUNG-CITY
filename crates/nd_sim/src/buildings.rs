@@ -140,6 +140,27 @@ pub struct Construction {
     /// with none, with the park's other lots) and opens with it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub follows_park: bool,
+    /// [r14-materials] Materials ordered for the stage being supplied and
+    /// still on the road, each with the lorry load it rides in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub due: Vec<SiteLoad>,
+    /// [r14-materials] Materials delivered so far, by stage: the site's
+    /// stockpile (a stage's pile is used up as its quarter's work is done,
+    /// [`Construction::on_site`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub delivered: Vec<SiteLoad>,
+}
+
+/// [r14-materials] So much of a material for one stage of a site, and the
+/// load it came (or comes) in: `via` is the good the lorry's cargo is
+/// booked as (several imported lines of a stage share one lorry, booked as
+/// the first of them).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SiteLoad {
+    pub good: crate::market::Resource,
+    pub qty: f32,
+    pub stage: u8,
+    pub via: crate::market::Resource,
 }
 
 /// [r2-traffic] Why a building site cannot go on (K6): the trucks that
@@ -173,7 +194,7 @@ impl Construction {
     pub const DELIVERIES: u8 = 4;
 
     pub fn new(days: f32) -> Self {
-        Self { progress: 0.0, days: days.clamp(1.0, 12.0), deliveries: 0, ordered: false, blocked: None, retry_at: 0, follows_park: false }
+        Self { progress: 0.0, days: days.clamp(1.0, 12.0), deliveries: 0, ordered: false, blocked: None, retry_at: 0, follows_park: false, due: Vec::new(), delivered: Vec::new() }
     }
 
     /// Build time for a building of this size and quality.
@@ -194,6 +215,20 @@ impl Construction {
     /// Materials for the current quarter have not arrived yet.
     pub fn waiting_for_materials(&self) -> bool {
         self.progress < 1.0 && self.deliveries <= self.stage()
+    }
+
+    /// [r14-materials] What is left in the site's stockpile: each stage's
+    /// deliveries, less what its quarter's work has used so far (a stage
+    /// not begun keeps its whole pile; a finished one is used up).
+    pub fn on_site(&self) -> Vec<SiteLoad> {
+        self.delivered
+            .iter()
+            .filter_map(|l| {
+                let used = ((self.progress - l.stage as f32 * 0.25) / 0.25).clamp(0.0, 1.0);
+                let left = l.qty * (1.0 - used);
+                (left > 0.05).then_some(SiteLoad { qty: left, ..*l })
+            })
+            .collect()
     }
 
     /// Progress made in one sim hour at full pace.

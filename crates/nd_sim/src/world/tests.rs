@@ -1033,6 +1033,8 @@ fn a_site_waits_for_its_materials_and_resumes_on_delivery() {
         c.progress = 0.25 - c.hourly_step() * 0.5;
         c.deliveries = 1;
         c.ordered = true;
+        // [r14-materials] The loads taken off the road are not coming.
+        c.due.clear();
     }
     for _ in 0..240 {
         w.tick(&mut minds);

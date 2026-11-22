@@ -21,9 +21,13 @@ pub(super) fn car(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, i
             crate::ui::lines::request_pick(ui.ctx(), bus.route);
         }
     } else if let Some(cargo) = &car.cargo {
-        neon(ui, "Delivery truck");
+        // [r14-materials] A building site's lorry says so, and what is on
+        // it: every material of the stage riding in this load.
+        let site = w.buildings.get(cargo.to).is_some_and(|b| b.construction.is_some());
+        let body = car.model.body.label().replace('_', " ");
+        neon(ui, &if site { format!("Site lorry  ·  {body}") } else { format!("Delivery truck  ·  {body}") });
         let name = |b| w.buildings.get(b).map(|b| b.name.as_str()).unwrap_or("out of town");
-        ui.label(format!("{:.0} {} from {} to {}  ·  worth {:.0}  ·  {:.0} km/h", cargo.amount, cargo.resource.label(), name(cargo.from), name(cargo.to), cargo.price, car.v * 3.6));
+        ui.label(format!("{} from {} to {}  ·  worth {:.0}  ·  {:.0} km/h", nd_sim::catalogue::describe_load(&w.load_manifest(cargo)), name(cargo.from), name(cargo.to), cargo.price, car.v * 3.6));
     } else {
         // [clarity] A city vehicle says what it is and whose it is.
         let unit = w.services.unit_of_car(id).and_then(|u| w.services.units.get(u));
