@@ -568,7 +568,7 @@ impl World {
                 // [r4-leisure-places] A show, a gig, a meal out: paid at the door.
                 k if k.is_eat_or_go_out() => {
                     venue = true;
-                    paid = want * crate::leisure::tab_factor(k).min(2.0);
+                    paid = want * k.tab_factor().min(2.0);
                     if k.cooks_meals() {
                         let got = bz.take(Resource::BakedGoods, 1.0);
                         self.economy.market.meals_sold_today += got as u32;

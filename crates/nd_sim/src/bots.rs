@@ -105,15 +105,10 @@ pub struct Bots {
     pub van_orders_today: u32,
 }
 
-/// Retail a shop sends out to homes, and how much of it per order.
+/// Retail a shop sends out to homes, and how much of it per order (its
+/// catalogue row's `home_order`).
 fn order_of(kind: BusinessKind) -> Option<(Resource, f32)> {
-    match kind {
-        BusinessKind::Grocery => Some((Resource::Groceries, 4.0)),
-        BusinessKind::Bakery => Some((Resource::BakedGoods, 2.0)),
-        BusinessKind::GadgetShop | BusinessKind::Bookshop => Some((Resource::Goods, 1.0)),
-        BusinessKind::Cafe => Some((Resource::BakedGoods, 1.0)),
-        _ => None,
-    }
+    kind.row().home_order
 }
 
 impl Bots {

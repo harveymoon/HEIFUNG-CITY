@@ -103,69 +103,18 @@ fn placed_note(parking: (u16, u16), p: nd_sim::Placeable) -> Option<(String, Str
 }
 
 /// [fix/buildings-ui] What a business does for the town, kind by kind (the
-/// farms and sheds of the food chain are not corner shops).
+/// farms and sheds of the food chain are not corner shops). [r13-catalogue]
+/// The lines are the catalogue's (`nd_sim::catalogue`, `about`).
 pub(crate) fn business_note(k: BusinessKind) -> String {
-    use BusinessKind as B;
-    let dirt = if dirty(k) { ", and pollution the neighbours breathe" } else { "" };
-    match k {
-        B::Parking => "Drivers coming to this street pay to park here instead of circling the block.".into(),
-        B::Office => "Office work: steady, well-paid jobs. Its staff buy lunch and coffee nearby.".into(),
-        B::Hotel => "Rooms for visitors: tourists sleep here and spend in the shops, bars and sights round it.".into(),
-        B::BeachResort => "Rooms down to the sand: tourists sleep here, pay well by the night and spend in town.".into(),
-        B::TowYard => "Tows broken-down and illegally parked cars to its pound; owners pay to get them back.".into(),
-        B::TaxiCompany => "Runs taxis: people without a car get a ride, for a fare.".into(),
-        B::CarDealer => "Sells cars: more people drive, and more cars need parking.".into(),
-        B::Mechanic => "Fixes the town's cars.".into(),
-        B::BikeShop => "Sells and mends bikes: more people ride.".into(),
-        B::TrashCompany => "A private hauler: empties the bins of whoever pays.".into(),
-        B::CargoHub => "Freight terminal: businesses nearby import through it in shared trucks instead of one lorry each.".into(),
-        B::ContainerYard => "Stores and loads containers for the freight trade: handling fees, and lorries in and out.".into(),
-        B::FleetLot => "Parks idle lorries and buses for a fee, with fuel and noise from the yard.".into(),
-        B::Marina => "Lets berths to boat owners and keeps a cafe on the water: a place to go out.".into(),
-        B::FishingPort => "Adds to the local fishing economy and provides a dock for the fishing fleet: its trawlers land fish for the gutting sheds and markets.".into(),
-        B::Fishery => "Boats landing fish for the processing plants and markets: part of the local fishing economy.".into(),
-        B::FishPlant | B::FishGutting | B::FishStickFactory => format!("Fish processing: takes in the catch and sends food on to the shops, with lorries in and out{dirt}."),
-        B::FishMarket => "Sells the catch to the public: fresh fish for the neighbourhood.".into(),
-        B::VertFarm | B::GrainFarm | B::ProteinVat | B::Dairy | B::CowFarm | B::ChickenFarm => "Farming: grows food for the mills, dairies and shops, with lorries in and out.".into(),
-        B::Feedlot => format!("Factory farming: livestock out by the lorryload for the slaughterhouses{dirt}."),
-        B::Mill | B::Slaughterhouse => format!("Food processing: farm produce in, food out to the bakeries and shops{dirt}."),
-        B::Grocery | B::Bakery => "Feeds the neighbourhood: people on foot drop in to shop, and a street of shops draws more.".into(),
-        B::Cafe => "Coffee and pastries, a place to sit: students and office workers drop in.".into(),
-        B::Bookshop => "Books and stationery: students and downtown browsers drop in.".into(),
-        B::FreightForwarder => "A shipping company in town: leases empty containers, sends its lorries round the firms to fill each box with their exports, and ships the full boxes from the port or the freight yard, charging each firm a fee per load.".into(),
-        B::ScrapYard => "Cuts worn-out shipping containers (and other scrap) into steel: sold to building sites in town and out of town.".into(),
-        B::GadgetShop => "Sells to the people round about; its customers come on foot and by car.".into(),
-        B::ArtStudio => "Artists make art in cheap space here; the galleries nearby sell it.".into(),
-        B::Gallery => "Hangs and sells art and holds openings: a place to go out, free at the door.".into(),
-        // [r4-leisure-places]
-        B::Diner => "Breakfast all day and a booth for the family: the neighbourhood drops in morning, noon and night.".into(),
-        B::NoodleBar => "Noodles at the counter: lunch for the office crowd, a late bowl after a night out. Cooks with the mills' flour and the farms' meat and greens.".into(),
-        B::PizzaPlace => "Pizza by the slice and by the pie: families and students. Buys flour, milk and toppings from the mills and farms.".into(),
-        B::FastFood => "A drive-through on the main road: cheap and quick, open till late, and its takeaway boxes fill the bins.".into(),
-        B::FoodHall => "Many kitchens under one roof: the lunch crowd from the offices and visitors in from out of town.".into(),
-        B::StreetFood => "Food trucks and stalls on an open lot, busiest after dark: cheap eats, visitors love it, the bins overflow.".into(),
-        B::FineDining => "A long dinner for those who can pay: dates and anniversaries, rich regulars. Lifts the street's land value.".into(),
-        B::BubbleTea => "Bubble tea and juice: the young, the afternoon, the walk home from school.".into(),
-        B::Bar => "A drink after work and into the night: drinks bought from the grocers, regulars at the bar, some noise.".into(),
-        B::KaraokeBox => "Private rooms to sing in by the hour, late into the night: friends in groups, and loud.".into(),
-        B::Cinema => "Films in the evening and matinees by day: families, dates. A share of each ticket goes to the film's distributor.".into(),
-        B::Theatre => "Shows booked from touring companies: older and richer theatregoers and visitors. Lifts the street round it.".into(),
-        B::ConcertHall => "Bands every night: the young, loud, the band's share of the door paid out of town.".into(),
-        B::BowlingAlley => "Lanes for families and friends, afternoon to late, with a snack bar.".into(),
-        B::Arcade => "Game cabinets and VR booths: teenagers and the young after school and at night.".into(),
-        B::Gym => "Early mornings before work and evenings after: its regulars come most days.".into(),
-        B::ComedyClub => "Stand-up in a basement: couples and friends, late evenings. The comics take a share of the door.".into(),
-        B::Venue | B::SeafoodRestaurant | B::GolfRange | B::PierRestaurant | B::BeachBar | B::BoatRental => "Somewhere to go out: draws crowds (and some noise) in the evenings.".into(),
-        k => match k.industry() {
+    let row = k.row();
+    let dirt = if row.fouls_air { ", and pollution the neighbours breathe" } else { "" };
+    match row.about {
+        Some(text) => text.replace("{dirt}", dirt),
+        None => match k.industry() {
             Some(ind) => format!("{} industry: makes goods that shops and other firms buy, with freight trucks in and out{dirt}.", capitalise(ind.label())),
             None => "Sells to the people round about; its customers come on foot and by car.".into(),
         },
     }
-}
-
-/// Industries that foul the air.
-fn dirty(k: BusinessKind) -> bool {
-    matches!(k, BusinessKind::Refinery | BusinessKind::ChemicalWorks | BusinessKind::Smelter | BusinessKind::OilWell | BusinessKind::StripMine | BusinessKind::Slaughterhouse | BusinessKind::Feedlot)
 }
 
 /// "a thing" / "an office" (by the sound: `nd_sim::names::a`).

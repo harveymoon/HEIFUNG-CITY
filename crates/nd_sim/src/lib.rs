@@ -13,6 +13,7 @@ pub mod bots;
 pub mod buildings;
 /// Cargo hubs: freight terminals that consolidate imports and exports.
 pub mod cargo_hub;
+pub mod catalogue;
 /// [airport] Airports: runways, flights to towns off the map, air cargo.
 pub mod airport;
 pub mod citizens;

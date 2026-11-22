@@ -99,7 +99,7 @@ impl Business {
             // [dirty-industry] Heavy plant that sells out of town opens
             // with an investor's money: its first loads only leave once two
             // days of output stand in the yard.
-            money: (150.0 + jobs as f32 * 40.0) * if matches!(kind, BusinessKind::Smelter | BusinessKind::Feedlot | BusinessKind::ChemicalWorks) { 5.0 } else { 1.0 },
+            money: (150.0 + jobs as f32 * 40.0) * kind.row().start_capital,
             revenue_today: 0.0,
             spend_today: 0.0,
             deals: 0,

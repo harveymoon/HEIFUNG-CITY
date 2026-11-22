@@ -147,23 +147,26 @@ impl World {
         self.connectivity.push_alert(tick, crate::world::connectivity::AlertKind::SiteBlocked, pos, Some(bid), 1, text);
     }
 
-    /// A truckload of parts for a building site: from a local fab when one
-    /// has stock, else imported. The developer pays, so the money comes from
+    /// A truckload of materials for a building site, by the catalogue's
+    /// bill (`crate::catalogue::SITE_BILL`: parts, from a local fab when one
+    /// has stock, else imported). The developer pays, so the money comes from
     /// outside the city like export income does.
     pub(super) fn order_materials(&mut self, bid: BuildingId) {
         let Some(b) = self.buildings.get(bid) else { return };
         let Some(lot) = self.lots.get(b.lot) else { return };
         let at = lot.center;
-        let amount = 4.0 + b.floors as f32 * 2.0;
-        let resource = Resource::Parts;
+        let bill = crate::catalogue::SITE_BILL;
+        let amount = bill.amount(b.floors);
+        let resource = bill.material;
         if let Some(c) = self.buildings[bid].construction.as_mut() {
             c.ordered = true;
         }
         // [K34] Steel cut from old containers at a scrap yard in town goes
         // into the frame first.
-        if let Some(yard) = self.scrap_steel_for(at, amount * 0.5) {
-            let got = self.buildings[yard].business.as_mut().unwrap().take(Resource::Metal, amount * 0.5);
-            let cost = got * Resource::Metal.base_price();
+        let scrap_yard = bill.scrap.and_then(|(scrap, share)| self.scrap_steel_for(at, amount * share).map(|yard| (yard, scrap, share)));
+        if let Some((yard, scrap, share)) = scrap_yard {
+            let got = self.buildings[yard].business.as_mut().unwrap().take(scrap, amount * share);
+            let cost = got * scrap.base_price();
             if let Some(z) = self.buildings[yard].business.as_mut() {
                 z.revenue_today += cost;
                 z.deals += 1;
@@ -171,7 +174,7 @@ impl World {
             let payer = self.site_payer(bid);
             self.transfer(payer, Account::Business(yard), cost, Kind::Building);
             self.economy.market.deals_today += 1;
-            self.ship(yard, bid, Resource::Metal, got, cost);
+            self.ship(yard, bid, scrap, got, cost);
             return;
         }
         let seller = self.best_seller(resource, at, amount, bid);
@@ -326,7 +329,7 @@ impl World {
         if let Some(yard) = self.nearest_yard(bid) {
             // Nothing is sold and nothing stocked: the yard takes it off the
             // developer's hands.
-            let cargo = Cargo { from: bid, to: yard, resource: Resource::Parts, amount: 0.0, price: 0.0 };
+            let cargo = Cargo { from: bid, to: yard, resource: crate::catalogue::RUBBLE, amount: 0.0, price: 0.0 };
             self.dispatch_truck(TruckOrigin::Building(bid), cargo, RUBBLE_TRUCK_COLOR);
             return;
         }
@@ -345,7 +348,7 @@ impl World {
         })();
         if let Some((route, s0, s1)) = route {
             // Bound out of town: a null buyer, so arriving delivers nothing.
-            let cargo = Cargo { from: bid, to: BuildingId::default(), resource: Resource::Parts, amount, price: 0.0 };
+            let cargo = Cargo { from: bid, to: BuildingId::default(), resource: crate::catalogue::RUBBLE, amount, price: 0.0 };
             self.traffic.spawn_car(CitizenId::default(), Some(cargo), route, s0, s1, RUBBLE_TRUCK_COLOR);
         }
     }

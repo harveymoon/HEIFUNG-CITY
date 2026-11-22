@@ -1229,7 +1229,7 @@ impl Airports {
 /// Goods flown in: dear and wanted fast. Consumer goods only in part, at
 /// an international airport (`GOODS_BY_AIR`).
 pub fn flies(r: Resource) -> bool {
-    matches!(r, Resource::Electronics | Resource::Art)
+    r.row().by_air
 }
 
 #[cfg(test)]

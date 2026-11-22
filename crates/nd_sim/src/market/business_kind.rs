@@ -1,5 +1,5 @@
-//! Business kinds: the catalogue of businesses, their recipes, jobs, hours
-//! and looks.
+//! Business kinds. Their facts (recipes, hours, flags, the inspector's
+//! line) are rows of the catalogue (`crate::catalogue::BUSINESSES`).
 
 use super::*;
 
@@ -252,77 +252,13 @@ impl BusinessKind {
         self as usize
     }
 
+    /// [r13-catalogue] Its row in the catalogue: every fact below reads it.
+    pub fn row(self) -> &'static crate::catalogue::BusinessRow {
+        crate::catalogue::business(self)
+    }
+
     pub fn label(self) -> &'static str {
-        match self {
-            BusinessKind::VertFarm => "vertical farm",
-            BusinessKind::GrainFarm => "grain farm",
-            BusinessKind::ProteinVat => "protein vat",
-            BusinessKind::Dairy => "dairy",
-            BusinessKind::Mill => "mill",
-            BusinessKind::Fab => "parts fab",
-            BusinessKind::Assembly => "assembly plant",
-            BusinessKind::Grocery => "grocery",
-            BusinessKind::Bakery => "bakery",
-            BusinessKind::GadgetShop => "gadget shop",
-            BusinessKind::Venue => "venue",
-            BusinessKind::Office => "office",
-            BusinessKind::Parking => "parking",
-            BusinessKind::OilWell => "oil well",
-            BusinessKind::Refinery => "refinery",
-            BusinessKind::ContainerYard => "container yard",
-            BusinessKind::FleetLot => "truck and bus lot",
-            BusinessKind::Fishery => "fishery",
-            BusinessKind::FishPlant => "fish processing plant",
-            BusinessKind::TowYard => "tow company",
-            BusinessKind::Hotel => "hotel",
-            BusinessKind::TaxiCompany => "taxi company",
-            BusinessKind::CargoHub => "cargo hub",
-            BusinessKind::Mechanic => "car repair shop",
-            BusinessKind::CarDealer => "car dealership",
-            BusinessKind::TrashCompany => "trash company",
-            BusinessKind::BikeShop => "bike shop",
-            BusinessKind::CowFarm => "cattle farm",
-            BusinessKind::ChickenFarm => "chicken farm",
-            BusinessKind::Slaughterhouse => "slaughterhouse",
-            BusinessKind::StripMine => "strip mine",
-            BusinessKind::Marina => "marina",
-            BusinessKind::FishingPort => "fishing port",
-            BusinessKind::FishGutting => "fish gutting shed",
-            BusinessKind::FishStickFactory => "fish-stick factory",
-            BusinessKind::FishMarket => "fish market",
-            BusinessKind::SeafoodRestaurant => "seafood restaurant",
-            BusinessKind::GolfRange => "golf driving range",
-            BusinessKind::ArtStudio => "artists' studios",
-            BusinessKind::Gallery => "gallery",
-            BusinessKind::Smelter => "smelter",
-            BusinessKind::Feedlot => "factory farm",
-            BusinessKind::ChemicalWorks => "chemical works",
-            BusinessKind::BeachResort => "beach resort",
-            BusinessKind::PierRestaurant => "pier restaurant",
-            BusinessKind::BeachBar => "beach bar",
-            BusinessKind::BoatRental => "boat rental",
-            BusinessKind::Cafe => "cafe",
-            BusinessKind::Bookshop => "bookshop",
-            BusinessKind::ScrapYard => "scrap yard",
-            BusinessKind::Diner => "diner",
-            BusinessKind::NoodleBar => "noodle bar",
-            BusinessKind::PizzaPlace => "pizza place",
-            BusinessKind::FastFood => "fast-food drive-through",
-            BusinessKind::FoodHall => "food hall",
-            BusinessKind::StreetFood => "street-food stalls",
-            BusinessKind::FineDining => "fine-dining restaurant",
-            BusinessKind::BubbleTea => "bubble-tea bar",
-            BusinessKind::Bar => "bar",
-            BusinessKind::KaraokeBox => "karaoke box",
-            BusinessKind::Cinema => "cinema",
-            BusinessKind::Theatre => "theatre",
-            BusinessKind::ConcertHall => "live-music hall",
-            BusinessKind::BowlingAlley => "bowling alley",
-            BusinessKind::Arcade => "arcade",
-            BusinessKind::Gym => "gym",
-            BusinessKind::ComedyClub => "comedy club",
-            BusinessKind::FreightForwarder => "freight forwarder",
-        }
+        self.row().label
     }
 
     /// [economy] Short key for the remote API: the label in snake case.
@@ -339,410 +275,77 @@ impl BusinessKind {
     }
 
     pub fn recipe(self) -> Recipe {
-        match self {
-            BusinessKind::VertFarm => Recipe { inputs: &[], outputs: &[(Resource::Produce, 3.0)] },
-            BusinessKind::GrainFarm => Recipe { inputs: &[], outputs: &[(Resource::Grain, 4.0)] },
-            BusinessKind::ProteinVat => Recipe { inputs: &[(Resource::Grain, 1.0)], outputs: &[(Resource::Meat, 1.0)] },
-            BusinessKind::Dairy => Recipe { inputs: &[(Resource::Grain, 0.5)], outputs: &[(Resource::Dairy, 1.5)] },
-            // Milling is automated: a hand runs six of grain an hour. At two
-            // the mill added too little to what it bought to pay its wages.
-            BusinessKind::Mill => Recipe { inputs: &[(Resource::Grain, 6.0)], outputs: &[(Resource::Flour, 6.0)] },
-            BusinessKind::Fab => Recipe { inputs: &[], outputs: &[(Resource::Parts, 1.0)] },
-            // Two parts (18 at base) make 0.8 electronics (36); at 0.4 the
-            // plant added nothing to what it bought and could never pay wages.
-            BusinessKind::Assembly => Recipe { inputs: &[(Resource::Parts, 2.0)], outputs: &[(Resource::Electronics, 0.8)] },
-            // Shops pay town wages, so what a job adds to its inputs at base
-            // price covers its share of them: a grocer's job adds about 80 a day
-            // against 54, a baker's about 59, a gadget seller's about 84.
-            BusinessKind::Grocery => Recipe {
-                inputs: &[(Resource::Produce, 1.0), (Resource::Flour, 0.4), (Resource::Meat, 0.3), (Resource::Dairy, 0.4)],
-                outputs: &[(Resource::Groceries, 4.0)],
-            },
-            BusinessKind::Bakery => Recipe { inputs: &[(Resource::Flour, 1.2)], outputs: &[(Resource::BakedGoods, 4.0)] },
-            BusinessKind::GadgetShop => Recipe { inputs: &[(Resource::Electronics, 0.5)], outputs: &[(Resource::Goods, 0.8)] },
-            BusinessKind::Venue => Recipe { inputs: &[(Resource::Groceries, 0.3)], outputs: &[] },
-            BusinessKind::Office => Recipe { inputs: &[], outputs: &[] },
-            BusinessKind::Parking => Recipe { inputs: &[], outputs: &[] },
-            BusinessKind::OilWell => Recipe { inputs: &[], outputs: &[(Resource::Crude, 2.5)] },
-            BusinessKind::Refinery => Recipe { inputs: &[(Resource::Crude, 1.5)], outputs: &[(Resource::Fuel, 0.8), (Resource::Plastics, 0.4)] },
-            // Fuel is burnt by the hour in `World::industry_hourly`, which
-            // also pays the handling and bay fees.
-            BusinessKind::ContainerYard => Recipe { inputs: &[(Resource::Fuel, 0.15)], outputs: &[] },
-            BusinessKind::FleetLot => Recipe { inputs: &[(Resource::Fuel, 0.1)], outputs: &[] },
-            BusinessKind::Fishery => Recipe { inputs: &[], outputs: &[(Resource::Fish, 2.5)] },
-            BusinessKind::FishPlant => Recipe { inputs: &[(Resource::Fish, 1.5)], outputs: &[(Resource::Meat, 1.0)] },
-            BusinessKind::TowYard => Recipe { inputs: &[], outputs: &[] },
-            // [tourism] Breakfast: a little of the town's groceries. Rooms
-            // are paid for by the night (`World::tourism_nightly`).
-            BusinessKind::Hotel => Recipe { inputs: &[(Resource::Groceries, 0.15)], outputs: &[] },
-            // Lives on fares (`world/taxis.rs`).
-            BusinessKind::TaxiCompany => Recipe { inputs: &[], outputs: &[] },
-            // Handling fees (`world/cargo_hubs.rs`).
-            BusinessKind::CargoHub => Recipe { inputs: &[], outputs: &[] },
-            // [economy] Services paid by the job (`world/pressure.rs`), car
-            // and bike sales (`world/cars.rs`) and contracts (`trash.rs`).
-            BusinessKind::Mechanic | BusinessKind::CarDealer | BusinessKind::TrashCompany | BusinessKind::BikeShop => Recipe { inputs: &[], outputs: &[] },
-            // A job adds about 50 a day at base prices (7 an hour of value
-            // added at `JOB_RATE`), like the farms and plants it sits with.
-            BusinessKind::CowFarm => Recipe { inputs: &[(Resource::Grain, 1.0)], outputs: &[(Resource::Livestock, 2.2)] },
-            BusinessKind::ChickenFarm => Recipe { inputs: &[(Resource::Grain, 0.8)], outputs: &[(Resource::Livestock, 1.8)] },
-            BusinessKind::Slaughterhouse => Recipe { inputs: &[(Resource::Livestock, 2.0)], outputs: &[(Resource::Meat, 2.0)] },
-            // Sold out of town at the export discount.
-            BusinessKind::StripMine => Recipe { inputs: &[], outputs: &[(Resource::Ore, 2.0)] },
-            // Berth fees (`world/waterfront.rs`).
-            BusinessKind::Marina => Recipe { inputs: &[], outputs: &[] },
-            BusinessKind::FishingPort => Recipe { inputs: &[], outputs: &[(Resource::Fish, 3.0)] },
-            BusinessKind::FishGutting => Recipe { inputs: &[(Resource::Fish, 2.0)], outputs: &[(Resource::Fillets, 2.0)] },
-            BusinessKind::FishStickFactory => Recipe { inputs: &[(Resource::Fillets, 1.5)], outputs: &[(Resource::Meat, 2.2)] },
-            BusinessKind::FishMarket => Recipe { inputs: &[(Resource::Fish, 2.0)], outputs: &[(Resource::Groceries, 3.0)] },
-            // Diners and golfers pay at the door (`World::venue_tabs`).
-            BusinessKind::SeafoodRestaurant => Recipe { inputs: &[(Resource::Fillets, 0.3)], outputs: &[] },
-            BusinessKind::GolfRange => Recipe { inputs: &[], outputs: &[] },
-            BusinessKind::ArtStudio => Recipe { inputs: &[], outputs: &[(Resource::Art, 0.5)] },
-            // Hangs art bought from the studios; sells it to visitors.
-            BusinessKind::Gallery => Recipe { inputs: &[(Resource::Art, 0.1)], outputs: &[] },
-            // [dirty-industry] One and a half of ore (9 at base) and a little
-            // fuel make an ingot (75): exported at the discount (34) it
-            // clears local ore and the wages, as the mine's ore does; on
-            // imported ore the margin is thin, so smelters stay by the mines.
-            BusinessKind::Smelter => Recipe { inputs: &[(Resource::Ore, 1.5), (Resource::Fuel, 0.1)], outputs: &[(Resource::Metal, 1.0)] },
-            // Intensive: five times the livestock per hand of a cattle
-            // farm (the whole point of it), so it pays its way even
-            // selling out of town.
-            BusinessKind::Feedlot => Recipe { inputs: &[(Resource::Grain, 2.0)], outputs: &[(Resource::Livestock, 12.0)] },
-            BusinessKind::ChemicalWorks => Recipe { inputs: &[(Resource::Crude, 1.2)], outputs: &[(Resource::Plastics, 0.7)] },
-            // [waterfront] Breakfasts and the bar; rooms are paid by the night
-            // (`World::daily_tourism`).
-            BusinessKind::BeachResort => Recipe { inputs: &[(Resource::Groceries, 0.25)], outputs: &[] },
-            // Diners, drinkers and renters pay at the door (`World::venue_tabs`).
-            BusinessKind::PierRestaurant => Recipe { inputs: &[(Resource::Groceries, 0.35)], outputs: &[] },
-            BusinessKind::BeachBar => Recipe { inputs: &[(Resource::Groceries, 0.2)], outputs: &[] },
-            BusinessKind::BoatRental => Recipe { inputs: &[(Resource::Fuel, 0.05)], outputs: &[] },
-            // [sweep-sim] A job adds about 9 an hour at base prices, a
-            // baker's 15 (the café sells fewer, sits people down), a
-            // bookseller's about 17 against a gadget seller's 25.
-            BusinessKind::Cafe => Recipe { inputs: &[(Resource::Flour, 0.6), (Resource::Dairy, 0.3)], outputs: &[(Resource::BakedGoods, 2.5)] },
-            BusinessKind::Bookshop => Recipe { inputs: &[(Resource::Plastics, 0.25)], outputs: &[(Resource::Goods, 0.35)] },
-            // [K34] Its steel comes from the boxes it cuts up
-            // (`World::cut_up_boxes`); the trickle here is the other scrap
-            // brought in over the gate (cars, sheet, appliances).
-            BusinessKind::ScrapYard => Recipe { inputs: &[], outputs: &[(Resource::Metal, 0.04)] },
-            // [r4-leisure-places] Kitchens cook meals (sold as baked goods:
-            // over the counter, at lunch and to diners in) from the farms'
-            // and mills' produce, meat, flour and milk; a job adds about 7-10
-            // an hour at base prices, as a cafe's. The rest take their stock
-            // (drinks and snacks from the grocers, a fine kitchen's produce)
-            // by the visitor-hour (`World::venue_tabs`).
-            BusinessKind::Diner => Recipe { inputs: &[(Resource::Meat, 0.3), (Resource::Dairy, 0.3), (Resource::Flour, 0.4), (Resource::Produce, 0.4)], outputs: &[(Resource::BakedGoods, 2.5)] },
-            BusinessKind::NoodleBar => Recipe { inputs: &[(Resource::Flour, 0.5), (Resource::Meat, 0.25), (Resource::Produce, 0.4)], outputs: &[(Resource::BakedGoods, 2.6)] },
-            BusinessKind::PizzaPlace => Recipe { inputs: &[(Resource::Flour, 0.6), (Resource::Dairy, 0.4), (Resource::Meat, 0.15), (Resource::Produce, 0.2)], outputs: &[(Resource::BakedGoods, 2.6)] },
-            BusinessKind::FastFood => Recipe { inputs: &[(Resource::Meat, 0.4), (Resource::Flour, 0.4), (Resource::Produce, 0.3)], outputs: &[(Resource::BakedGoods, 3.2)] },
-            BusinessKind::FoodHall => Recipe { inputs: &[(Resource::Groceries, 0.3), (Resource::Meat, 0.2), (Resource::Produce, 0.4)], outputs: &[(Resource::BakedGoods, 2.4)] },
-            BusinessKind::StreetFood => Recipe { inputs: &[(Resource::Meat, 0.3), (Resource::Produce, 0.4), (Resource::Flour, 0.3)], outputs: &[(Resource::BakedGoods, 2.4)] },
-            BusinessKind::BubbleTea => Recipe { inputs: &[(Resource::Dairy, 0.4), (Resource::Produce, 0.3)], outputs: &[(Resource::BakedGoods, 2.2)] },
-            BusinessKind::FineDining => Recipe { inputs: &[(Resource::Meat, 0.3), (Resource::Produce, 0.3), (Resource::Dairy, 0.2)], outputs: &[] },
-            BusinessKind::Bar | BusinessKind::KaraokeBox => Recipe { inputs: &[(Resource::Groceries, 0.3)], outputs: &[] },
-            BusinessKind::Cinema | BusinessKind::Theatre | BusinessKind::ConcertHall | BusinessKind::ComedyClub | BusinessKind::BowlingAlley => Recipe { inputs: &[(Resource::Groceries, 0.12)], outputs: &[] },
-            // Machines wear out: a little electronics for spares.
-            BusinessKind::Arcade => Recipe { inputs: &[(Resource::Electronics, 0.02)], outputs: &[] },
-            BusinessKind::Gym => Recipe { inputs: &[], outputs: &[] },
-            // [r8] Its lorries burn fuel; its trade is the fees.
-            BusinessKind::FreightForwarder => Recipe { inputs: &[(Resource::Fuel, 0.1)], outputs: &[] },
-        }
+        let r = self.row();
+        Recipe { inputs: r.inputs, outputs: r.outputs }
     }
 
     /// Candidate kinds for a land use, picked at construction.
     pub fn candidates(land_use: LandUse) -> &'static [BusinessKind] {
-        match land_use {
-            // Industrial lots choose through `crate::industry` (ground,
-            // neighbours, the player's bias); this is the full menu.
-            LandUse::Industrial => &[
-                BusinessKind::VertFarm,
-                BusinessKind::GrainFarm,
-                BusinessKind::ProteinVat,
-                BusinessKind::Dairy,
-                BusinessKind::Mill,
-                BusinessKind::Fab,
-                BusinessKind::Assembly,
-                BusinessKind::OilWell,
-                BusinessKind::Refinery,
-                BusinessKind::ContainerYard,
-                BusinessKind::FleetLot,
-                BusinessKind::Fishery,
-                BusinessKind::FishPlant,
-                BusinessKind::TowYard,
-                BusinessKind::CowFarm,
-                BusinessKind::ChickenFarm,
-                BusinessKind::Slaughterhouse,
-                BusinessKind::StripMine,
-                BusinessKind::FishGutting,
-                BusinessKind::FishStickFactory,
-                BusinessKind::TrashCompany,
-                BusinessKind::Smelter,
-                BusinessKind::Feedlot,
-                BusinessKind::ChemicalWorks,
-            ],
-            // [r4-leisure-places] Every commercial sub-zone's menu but
-            // leisure's (`CommercialSub::menu`): neighbourhood, retail, offices.
-            LandUse::Commercial => &[
-                BusinessKind::Grocery,
-                BusinessKind::Grocery,
-                BusinessKind::Bakery,
-                BusinessKind::GadgetShop,
-                BusinessKind::Office,
-                BusinessKind::Diner,
-                BusinessKind::NoodleBar,
-                BusinessKind::PizzaPlace,
-                BusinessKind::BubbleTea,
-                BusinessKind::FastFood,
-                BusinessKind::FoodHall,
-                BusinessKind::Gym,
-            ],
-            // Leisure land: the nightclub and the rest of the nights out.
-            LandUse::Entertainment => &[
-                BusinessKind::Venue,
-                BusinessKind::Bar,
-                BusinessKind::KaraokeBox,
-                BusinessKind::Cinema,
-                BusinessKind::Theatre,
-                BusinessKind::ConcertHall,
-                BusinessKind::BowlingAlley,
-                BusinessKind::Arcade,
-                BusinessKind::ComedyClub,
-                BusinessKind::FineDining,
-                BusinessKind::StreetFood,
-                BusinessKind::NoodleBar,
-            ],
-            LandUse::Civic => &[BusinessKind::Office],
-            _ => &[],
-        }
+        crate::catalogue::candidates(land_use)
     }
 
     /// When the doors are open (and the shifts run).
     pub fn hours(self) -> Hours {
-        match self {
-            BusinessKind::Grocery => Hours::new(7, 22),
-            BusinessKind::Bakery => Hours::new(6, 19),
-            BusinessKind::GadgetShop => Hours::new(9, 20),
-            BusinessKind::Venue => Hours::new(18, 3),
-            BusinessKind::Office => Hours::new(8, 18),
-            BusinessKind::FreightForwarder => Hours::new(6, 22),
-            BusinessKind::Parking | BusinessKind::FleetLot | BusinessKind::ContainerYard | BusinessKind::OilWell | BusinessKind::TowYard | BusinessKind::Hotel | BusinessKind::TaxiCompany | BusinessKind::CargoHub | BusinessKind::Marina => Hours::ALWAYS,
-            BusinessKind::Mechanic => Hours::new(8, 18),
-            BusinessKind::CarDealer | BusinessKind::BikeShop => Hours::new(9, 19),
-            BusinessKind::TrashCompany => Hours::new(6, 18),
-            BusinessKind::FishingPort => Hours::new(4, 16),
-            BusinessKind::FishGutting => Hours::new(5, 17),
-            BusinessKind::FishMarket => Hours::new(5, 14),
-            BusinessKind::SeafoodRestaurant => Hours::new(11, 23),
-            // Floodlit until late.
-            BusinessKind::GolfRange => Hours::new(8, 23),
-            BusinessKind::ArtStudio => Hours::new(10, 20),
-            BusinessKind::Gallery => Hours::new(11, 22),
-            BusinessKind::CowFarm | BusinessKind::ChickenFarm | BusinessKind::Slaughterhouse | BusinessKind::StripMine | BusinessKind::FishStickFactory | BusinessKind::Feedlot => Hours::new(6, 22),
-            BusinessKind::Smelter | BusinessKind::ChemicalWorks => Hours::new(6, 22),
-            BusinessKind::Fishery => Hours::new(4, 16),
-            BusinessKind::Refinery | BusinessKind::FishPlant => Hours::new(6, 22),
-            // Plants run two shifts.
-            BusinessKind::VertFarm | BusinessKind::GrainFarm | BusinessKind::ProteinVat | BusinessKind::Dairy | BusinessKind::Mill | BusinessKind::Fab | BusinessKind::Assembly => Hours::new(6, 22),
-            // [waterfront]
-            BusinessKind::BeachResort => Hours::ALWAYS,
-            BusinessKind::PierRestaurant => Hours::new(12, 24),
-            BusinessKind::BeachBar => Hours::new(10, 2),
-            BusinessKind::BoatRental => Hours::new(8, 20),
-            BusinessKind::Cafe => Hours::new(7, 21),
-            BusinessKind::Bookshop => Hours::new(9, 20),
-            BusinessKind::ScrapYard => Hours::new(7, 18),
-            // [r4-leisure-places]
-            BusinessKind::Diner => Hours::new(6, 23),
-            BusinessKind::NoodleBar => Hours::new(11, 2),
-            BusinessKind::PizzaPlace => Hours::new(11, 23),
-            BusinessKind::FastFood => Hours::new(6, 2),
-            BusinessKind::FoodHall => Hours::new(10, 22),
-            BusinessKind::StreetFood => Hours::new(11, 2),
-            BusinessKind::FineDining => Hours::new(18, 24),
-            BusinessKind::BubbleTea => Hours::new(10, 22),
-            BusinessKind::Bar => Hours::new(16, 2),
-            BusinessKind::KaraokeBox => Hours::new(19, 5),
-            BusinessKind::Cinema => Hours::new(12, 24),
-            BusinessKind::Theatre => Hours::new(14, 23),
-            BusinessKind::ConcertHall => Hours::new(19, 1),
-            BusinessKind::BowlingAlley => Hours::new(10, 24),
-            BusinessKind::Arcade => Hours::new(10, 24),
-            BusinessKind::Gym => Hours::new(6, 23),
-            BusinessKind::ComedyClub => Hours::new(19, 1),
-        }
+        self.row().hours
     }
 
     /// Shops and venues that serve citizens at the door, and how many at once
     /// per job.
     pub fn customers_per_job(self) -> Option<u16> {
-        match self {
-            BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Cafe | BusinessKind::Bookshop => Some(3),
-            BusinessKind::Venue => Some(8),
-            BusinessKind::FishMarket | BusinessKind::BikeShop => Some(3),
-            BusinessKind::SeafoodRestaurant | BusinessKind::GolfRange => Some(6),
-            BusinessKind::Gallery => Some(8),
-            BusinessKind::PierRestaurant => Some(6),
-            BusinessKind::BeachBar => Some(10),
-            BusinessKind::BoatRental => Some(5),
-            // [r4-leisure-places]
-            BusinessKind::Diner | BusinessKind::PizzaPlace => Some(4),
-            BusinessKind::NoodleBar => Some(5),
-            BusinessKind::FastFood | BusinessKind::BubbleTea | BusinessKind::KaraokeBox => Some(6),
-            BusinessKind::FoodHall | BusinessKind::StreetFood | BusinessKind::Bar | BusinessKind::BowlingAlley => Some(8),
-            BusinessKind::FineDining => Some(3),
-            BusinessKind::Arcade => Some(10),
-            BusinessKind::Gym | BusinessKind::ComedyClub => Some(12),
-            BusinessKind::Theatre => Some(20),
-            BusinessKind::Cinema | BusinessKind::ConcertHall => Some(25),
-            _ => None,
-        }
+        self.row().customers_per_job
     }
 
     /// [waterfront] Sleeps visitors from out of town (`crate::tourism`):
     /// hotels and beach resorts.
     pub fn is_lodging(self) -> bool {
-        matches!(self, BusinessKind::Hotel | BusinessKind::BeachResort)
+        self.row().lodging
     }
 
     /// [waterfront] Opens only on a lot that runs down to the water
     /// (`Lot::shore`): the trades that live on the view.
     pub fn wants_waterfront(self) -> bool {
-        matches!(self, BusinessKind::BeachResort | BusinessKind::PierRestaurant | BusinessKind::BeachBar | BusinessKind::BoatRental)
+        self.row().waterfront
     }
 
     /// Part of the food chain, from farm to shelf: staffed first, and
     /// ordering ahead when the town is growing.
     pub fn is_food(self) -> bool {
-        matches!(
-            self,
-            BusinessKind::VertFarm
-                | BusinessKind::GrainFarm
-                | BusinessKind::ProteinVat
-                | BusinessKind::Dairy
-                | BusinessKind::Mill
-                | BusinessKind::Grocery
-                | BusinessKind::Bakery
-                | BusinessKind::Fishery
-                | BusinessKind::FishPlant
-                | BusinessKind::CowFarm
-                | BusinessKind::ChickenFarm
-                | BusinessKind::Slaughterhouse
-                | BusinessKind::FishingPort
-                | BusinessKind::FishGutting
-                | BusinessKind::FishStickFactory
-                | BusinessKind::FishMarket
-                | BusinessKind::Feedlot
-        )
+        self.row().food
     }
 
     /// [economy] A place people go out to and pay at the door by the hour
     /// (`World::venue_tabs`): venues, and the restaurants, ranges and
     /// galleries that open by pressure on whatever land suits them.
     pub fn is_outing(self) -> bool {
-        matches!(self, BusinessKind::Venue | BusinessKind::SeafoodRestaurant | BusinessKind::GolfRange | BusinessKind::Gallery | BusinessKind::Marina | BusinessKind::PierRestaurant | BusinessKind::BeachBar | BusinessKind::BoatRental) || self.is_eat_or_go_out()
+        self.row().outing || self.is_eat_or_go_out()
     }
 
     /// [economy] What an hour's tab costs here against a venue's.
     pub fn tab_factor(self) -> f32 {
-        match self {
-            BusinessKind::SeafoodRestaurant => 1.5,
-            // [waterfront] White tablecloths over the water; a drink in the
-            // sand; an hour in a pedalo.
-            BusinessKind::PierRestaurant => 2.4,
-            BusinessKind::BeachBar => 1.1,
-            BusinessKind::BoatRental => 1.8,
-            BusinessKind::GolfRange => 1.7,
-            // A drink at the clubhouse or the marina café.
-            BusinessKind::Marina => 1.3,
-            // Entry is free; sales and donations pay (`world/pressure.rs`).
-            BusinessKind::Gallery => 0.4,
-            // [r4-leisure-places] A bowl of noodles to a night at the
-            // theatre (`crate::leisure`).
-            k if k.is_eat_or_go_out() => crate::leisure::tab_factor(k),
-            _ => 1.0,
-        }
+        self.row().tab
     }
 
     /// [economy] Opened only where its site or a pressure calls for it:
     /// never the market's pick for a plain lot (`World::business_kinds_viable`).
     pub fn needs_site(self) -> bool {
-        matches!(
-            self,
-            BusinessKind::Mechanic
-                | BusinessKind::CarDealer
-                | BusinessKind::TrashCompany
-                | BusinessKind::BikeShop
-                | BusinessKind::CowFarm
-                | BusinessKind::ChickenFarm
-                | BusinessKind::Slaughterhouse
-                | BusinessKind::StripMine
-                | BusinessKind::Marina
-                | BusinessKind::FishingPort
-                | BusinessKind::FishGutting
-                | BusinessKind::FishStickFactory
-                | BusinessKind::FishMarket
-                | BusinessKind::SeafoodRestaurant
-                | BusinessKind::GolfRange
-                | BusinessKind::ArtStudio
-                | BusinessKind::Gallery
-                | BusinessKind::Smelter
-                | BusinessKind::Feedlot
-                | BusinessKind::ChemicalWorks
-                | BusinessKind::BeachResort
-                | BusinessKind::PierRestaurant
-                | BusinessKind::BeachBar
-                | BusinessKind::BoatRental
-                | BusinessKind::Cafe
-                | BusinessKind::Bookshop
-                | BusinessKind::ScrapYard
-        )
+        self.row().needs_site
     }
 
     /// [sweep-sim] Shops that sell what they make over the counter to
-    /// whoever walks in: (what they sell). The café sells as a bakery
-    /// does, the bookshop as a gadget shop.
+    /// whoever walks in: (what they sell).
     pub fn walk_in_sale(self) -> Option<Resource> {
-        match self {
-            BusinessKind::Grocery => Some(Resource::Groceries),
-            BusinessKind::Bakery | BusinessKind::Cafe => Some(Resource::BakedGoods),
-            BusinessKind::GadgetShop | BusinessKind::Bookshop => Some(Resource::Goods),
-            // [r4-leisure-places] Meals to go and to eat in, sold as baked
-            // goods: the lunch crowd and passers-by.
-            k if k.cooks_meals() => Some(Resource::BakedGoods),
-            _ => None,
-        }
+        self.row().walk_in
     }
 
-    /// [megacorp] [sweep-sim] The trades students drop into by campus:
-    /// pizza places (bakeries), cafés and bookshops.
+    /// [megacorp] [sweep-sim] The trades students drop into by campus.
     pub fn student_trade(self) -> bool {
-        matches!(self, BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Cafe | BusinessKind::Bookshop | BusinessKind::NoodleBar | BusinessKind::PizzaPlace | BusinessKind::BubbleTea | BusinessKind::FastFood)
+        self.row().student_trade
     }
 
     /// [economy] Most floors a building of this kind goes up with: sheds,
     /// forecourts and ranges stay low.
     pub fn max_floors(self) -> Option<u8> {
-        Some(match self {
-            BusinessKind::Mechanic | BusinessKind::ScrapYard | BusinessKind::TrashCompany | BusinessKind::GolfRange | BusinessKind::StripMine | BusinessKind::CowFarm | BusinessKind::ChickenFarm | BusinessKind::CarDealer | BusinessKind::BikeShop | BusinessKind::Feedlot => 1,
-            BusinessKind::Smelter | BusinessKind::ChemicalWorks => 2,
-            BusinessKind::FishMarket | BusinessKind::SeafoodRestaurant | BusinessKind::ArtStudio | BusinessKind::Gallery | BusinessKind::FishGutting => 2,
-            BusinessKind::Slaughterhouse | BusinessKind::FishStickFactory => 3,
-            // [waterfront] Low on the shore: a resort spreads, it does not climb.
-            BusinessKind::BeachBar | BusinessKind::BoatRental => 1,
-            BusinessKind::PierRestaurant => 2,
-            BusinessKind::BeachResort => 5,
-            // [r4-leisure-places] A diner and a drive-through are one storey;
-            // halls and alleys stay low; karaoke stacks its boxes.
-            BusinessKind::Diner | BusinessKind::FastFood | BusinessKind::StreetFood => 1,
-            BusinessKind::PizzaPlace | BusinessKind::BubbleTea | BusinessKind::FoodHall | BusinessKind::BowlingAlley | BusinessKind::FineDining => 2,
-            BusinessKind::NoodleBar | BusinessKind::Bar | BusinessKind::Arcade | BusinessKind::Gym | BusinessKind::ComedyClub => 3,
-            BusinessKind::Cinema => 4,
-            BusinessKind::Theatre | BusinessKind::ConcertHall => 5,
-            BusinessKind::KaraokeBox => 4,
-            _ => return None,
-        })
+        self.row().max_floors
     }
 
     /// The industry sub-zone this business belongs to, if any.
@@ -772,15 +375,11 @@ impl BusinessKind {
     /// Parks lorries in bays: a truck and bus lot, or a cargo hub's own
     /// fleet bays.
     pub fn is_truck_lot(self) -> bool {
-        matches!(self, BusinessKind::FleetLot | BusinessKind::CargoHub)
+        self.row().truck_lot
     }
 
     /// Stock a business tries to keep of each input, in hours of production.
     pub fn target_hours(self) -> f32 {
-        match self {
-            BusinessKind::Grocery | BusinessKind::Bakery | BusinessKind::GadgetShop | BusinessKind::Cafe | BusinessKind::Bookshop | BusinessKind::Venue | BusinessKind::FishMarket | BusinessKind::SeafoodRestaurant | BusinessKind::Gallery | BusinessKind::PierRestaurant | BusinessKind::BeachBar => 36.0,
-            k if k.is_eat_or_go_out() => 36.0,
-            _ => 24.0,
-        }
+        self.row().stock_hours
     }
 }

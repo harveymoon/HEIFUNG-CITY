@@ -5,7 +5,8 @@
 //! `Venue`). What each is like to the simulation lives here: who likes it
 //! at what hour (`appeal`), what an hour there costs, what share of the
 //! takings books the films and the acts, how loud it is and how much trash
-//! it leaves. The kinds themselves are rows of `market::BusinessKind`;
+//! it leaves. The kinds and their numbers (tab, loudness, trash, sign)
+//! are rows of the catalogue (`crate::catalogue`);
 //! where they grow is `crate::commercial`, who goes `world/places.rs`.
 //!
 //! Everything here is a pure function of its arguments: no random draws.
@@ -65,111 +66,43 @@ impl BusinessKind {
     /// Share of an hour's takings paid out of town for what is on: the
     /// film's distributor, the touring company, the band, the comic.
     pub fn booking_share(self) -> f32 {
-        match self {
-            K::Cinema => 0.45,
-            K::ConcertHall => 0.4,
-            K::Theatre => 0.3,
-            K::ComedyClub => 0.25,
-            _ => 0.0,
-        }
+        self.row().booking_share
     }
 
     /// Somewhere a parent takes the children before nine.
     pub fn family_friendly(self) -> bool {
-        matches!(self, K::Diner | K::PizzaPlace | K::FastFood | K::FoodHall | K::BowlingAlley | K::Cinema | K::Arcade | K::BubbleTea)
+        self.row().family_friendly
     }
 
     /// Somewhere for a date.
     pub fn date_spot(self) -> bool {
-        matches!(self, K::FineDining | K::Cinema | K::Theatre | K::ComedyClub | K::ConcertHall | K::Bar | K::NoodleBar)
+        self.row().date_spot
     }
 
     /// How loud it is out on the street, `0..1`: the nuisance it puts on
     /// the land round it (homes mind it most).
     pub fn loudness(self) -> f32 {
-        match self {
-            K::Venue => 0.9,
-            K::ConcertHall => 0.8,
-            K::KaraokeBox => 0.7,
-            K::Bar => 0.6,
-            K::FastFood | K::StreetFood => 0.5,
-            K::Arcade | K::ComedyClub | K::BowlingAlley => 0.4,
-            K::Cinema | K::FoodHall | K::Gym => 0.2,
-            _ => 0.1,
-        }
+        self.row().loudness
     }
 
     /// Trash a worker's day leaves here against its land use's rate:
     /// takeaway boxes and cups most of all.
     pub fn trash_factor(self) -> f32 {
-        match self {
-            K::FastFood | K::StreetFood => 2.0,
-            K::FoodHall | K::BubbleTea | K::PizzaPlace => 1.6,
-            K::Diner | K::NoodleBar | K::Bar | K::KaraokeBox => 1.3,
-            K::Cinema | K::BowlingAlley | K::Arcade | K::ConcertHall => 1.2,
-            K::FineDining | K::Theatre | K::ComedyClub => 1.0,
-            K::Gym => 0.6,
-            _ => 1.0,
-        }
+        self.row().trash
     }
 
     /// What it does to the land value round it beyond its land use's
     /// splat: `(radius, weight)`. A theatre or a fine-dining room lifts the
     /// street; the loud ones' nuisance is [`BusinessKind::loudness`].
     pub fn land_value_lift(self) -> Option<(f32, f32)> {
-        Some(match self {
-            K::Theatre | K::ConcertHall => (160.0, 0.06),
-            K::FineDining => (110.0, 0.05),
-            K::Cinema | K::FoodHall => (120.0, 0.035),
-            K::BubbleTea | K::Gym | K::Diner | K::NoodleBar => (80.0, 0.02),
-            _ => return None,
-        })
+        self.row().land_value_lift
     }
 }
 
 /// The word over a shopfront of this kind (a tenant's sign); `None` for
 /// the older shops, which keep their plain lit boards.
 pub fn sign_word(kind: BusinessKind) -> Option<&'static [u8]> {
-    Some(match kind {
-        K::Diner => b"DINER",
-        K::NoodleBar => b"NOODLES",
-        K::PizzaPlace => b"PIZZA",
-        K::FastFood => b"BURGERS",
-        K::FoodHall => b"FOOD HALL",
-        K::StreetFood => b"EATS",
-        K::FineDining => b"DINING",
-        K::BubbleTea => b"BOBA",
-        K::Bar => b"BAR",
-        K::KaraokeBox => b"KARAOKE",
-        K::Cinema => b"CINEMA",
-        K::Theatre => b"THEATRE",
-        K::ConcertHall => b"LIVE",
-        K::BowlingAlley => b"BOWL",
-        K::Arcade => b"ARCADE",
-        K::Gym => b"GYM",
-        K::ComedyClub => b"COMEDY",
-        K::Cafe => b"CAFE",
-        _ => return None,
-    })
-}
-
-/// What an hour here costs against a nightclub round (`VENUE_TAB`).
-pub fn tab_factor(kind: BusinessKind) -> f32 {
-    match kind {
-        K::FineDining => 3.0,
-        K::Theatre => 2.2,
-        K::ConcertHall => 2.0,
-        K::ComedyClub => 1.5,
-        K::Cinema => 1.3,
-        K::KaraokeBox | K::BowlingAlley => 1.2,
-        K::Bar => 1.0,
-        K::Diner | K::PizzaPlace | K::FoodHall => 0.9,
-        K::NoodleBar | K::Arcade => 0.8,
-        K::Gym => 0.7,
-        K::FastFood | K::StreetFood => 0.6,
-        K::BubbleTea => 0.5,
-        _ => 1.0,
-    }
+    kind.row().sign
 }
 
 /// People a town needs before the market opens its places to eat and go
@@ -382,7 +315,7 @@ mod tests {
             assert!(k.customers_per_job().is_some(), "{k:?}");
             assert!(!k.needs_site(), "{k:?} is opened by the market on its sub-zone");
             assert!(!k.hours().always(), "{k:?}");
-            assert!(tab_factor(k) > 0.0);
+            assert!(k.tab_factor() > 0.0);
             assert!(k.max_floors().is_some(), "{k:?}");
             assert_ne!(k.label(), "venue");
         }

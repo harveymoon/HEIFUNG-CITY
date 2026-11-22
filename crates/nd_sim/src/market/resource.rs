@@ -1,7 +1,10 @@
-//! Resources: what is made, bought and hauled, with base prices.
+//! Resources: what is made, bought and hauled. Their facts (label, price,
+//! box, lorry, ...) are rows of the catalogue (`crate::catalogue::GOODS`).
 
 use super::*;
 
+/// [r13-catalogue] Add a good at the end, with its row in
+/// `crate::catalogue` (see `docs/catalogue.md`); saves keep their keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Resource {
     Produce,
@@ -40,7 +43,8 @@ pub enum Resource {
 }
 
 impl Resource {
-    pub const ALL: [Resource; 19] = [
+    pub const COUNT: usize = 19;
+    pub const ALL: [Resource; Self::COUNT] = [
         Resource::Produce,
         Resource::Grain,
         Resource::Flour,
@@ -62,81 +66,36 @@ impl Resource {
         Resource::Metal,
     ];
 
+    /// Its row in the catalogue.
+    pub fn row(self) -> &'static crate::catalogue::GoodRow {
+        crate::catalogue::good(self)
+    }
+
     pub fn label(self) -> &'static str {
-        match self {
-            Resource::Produce => "produce",
-            Resource::Grain => "grain",
-            Resource::Flour => "flour",
-            Resource::BakedGoods => "baked goods",
-            Resource::Meat => "meat",
-            Resource::Dairy => "dairy",
-            Resource::Groceries => "groceries",
-            Resource::Parts => "parts",
-            Resource::Electronics => "electronics",
-            Resource::Goods => "goods",
-            Resource::Crude => "crude oil",
-            Resource::Fuel => "fuel",
-            Resource::Plastics => "plastics",
-            Resource::Fish => "fish",
-            Resource::Livestock => "livestock",
-            Resource::Ore => "ore",
-            Resource::Fillets => "fish fillets",
-            Resource::Art => "art",
-            Resource::Metal => "metal",
-        }
+        self.row().label
     }
 
     /// Reference price per unit; the outer market trades around it.
     pub fn base_price(self) -> f32 {
-        match self {
-            Resource::Produce => 2.0,
-            Resource::Grain => 1.0,
-            Resource::Flour => 2.4,
-            Resource::BakedGoods => 4.5,
-            Resource::Meat => 7.0,
-            Resource::Dairy => 3.0,
-            Resource::Groceries => 6.0,
-            Resource::Parts => 9.0,
-            Resource::Electronics => 45.0,
-            Resource::Goods => 60.0,
-            Resource::Crude => 4.0,
-            Resource::Fuel => 12.0,
-            Resource::Plastics => 16.0,
-            Resource::Fish => 3.0,
-            Resource::Livestock => 3.5,
-            Resource::Ore => 6.0,
-            Resource::Fillets => 6.0,
-            Resource::Art => 30.0,
-            // Dear enough that a smelter on local ore pays its way shipping
-            // ingots out of town at the export discount.
-            Resource::Metal => 75.0,
-        }
+        self.row().base_price
     }
 
     /// Hours of its own output a business keeps before shipping the rest
     /// out of town. [dirty-industry] Ingots have no local buyer: they go
     /// as soon as a lorryload stands in the yard.
     pub fn export_keep_hours(self) -> f32 {
-        match self {
-            Resource::Metal => 8.0,
-            _ => 48.0,
-        }
+        self.row().export_keep_hours
     }
 
     /// [dirty-industry] How much harder than an ordinary load a lorry full
     /// of this is on the road: ore, ingots and crude are dense, livestock
     /// lorries heavy and sloshing (`crate::road_wear::HEAVY` times this).
     pub fn road_wear_factor(self) -> f32 {
-        match self {
-            Resource::Ore | Resource::Metal => 2.5,
-            Resource::Crude => 2.0,
-            Resource::Livestock => 1.6,
-            _ => 1.0,
-        }
+        self.row().road_wear
     }
 
     /// Sold to citizens directly, not to other businesses.
     pub fn is_retail(self) -> bool {
-        matches!(self, Resource::Groceries | Resource::BakedGoods | Resource::Goods)
+        self.row().retail
     }
 }
