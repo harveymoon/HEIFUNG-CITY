@@ -336,6 +336,7 @@ impl World {
         }
         let Some(nodes) = streets.filter(|n| n.len() >= 2) else { return };
         let mut path = self.route_path(&nodes, TravelMode::Bike);
+        Self::trim_route_ends(&mut path, self.citizens[id].pos, stop);
         path.push(stop);
         self.bike_over_footbridges(&mut path);
         let c = &mut self.citizens[id];
