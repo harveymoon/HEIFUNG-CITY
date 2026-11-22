@@ -282,10 +282,15 @@ pub fn corporations_page(ui: &mut egui::Ui, p: &mut super::UiCtx) {
         hint(ui, "Ranked by size: what its buildings would sell for plus a year of its rent and takings. Every owner is in City Data › Directory › Companies.");
     }
     section(ui, "RULES");
-    let r = &mut p.sim.world.corps.rules;
-    ui.checkbox(&mut r.allowed, "Companies may grow into mega-corps");
-    ui.add(egui::Slider::new(&mut r.max_share, MIN_MAX_SHARE..=MAX_MAX_SHARE).text("most of the town one corp may own").custom_formatter(|v, _| format!("{:.0}%", v * 100.0)));
-    ui.add(egui::Slider::new(&mut r.levy, 0.0..=MAX_LEVY).text("antitrust levy on corp takings").custom_formatter(|v, _| format!("{:.0}%", v * 100.0)));
+    // [r13-leftovers] A copy, written back only when changed: a `&mut` to
+    // the world every frame the window is open ran the sim in the frame.
+    let mut r = p.sim.world.corps.rules.clone();
+    let mut changed = ui.checkbox(&mut r.allowed, "Companies may grow into mega-corps").changed();
+    changed |= ui.add(egui::Slider::new(&mut r.max_share, MIN_MAX_SHARE..=MAX_MAX_SHARE).text("most of the town one corp may own").custom_formatter(|v, _| format!("{:.0}%", v * 100.0))).changed();
+    changed |= ui.add(egui::Slider::new(&mut r.levy, 0.0..=MAX_LEVY).text("antitrust levy on corp takings").custom_formatter(|v, _| format!("{:.0}%", v * 100.0))).changed();
+    if changed {
+        p.sim.world.corps.rules = r;
+    }
     hint(ui, "A corp over the cap sells its newest holdings two a day (never its HQ). The levy is booked as business tax.");
     if let Some(b) = select {
         *p.selection = Selection::Building(b);
