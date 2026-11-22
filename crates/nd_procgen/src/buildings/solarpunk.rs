@@ -240,23 +240,13 @@ fn wind_tree(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, y: f32, h: 
     });
 }
 
-/// A bike at lot-local `p` along `dir` (near): two wheels and a frame.
+/// A bike at lot-local `p` along `dir` (near): the shared bicycle
+/// ([`crate::props::bicycle`]), a cargo box in front where `cargo`.
 fn bike(g: &mut Geometry, c: &Ctx, p: Vec2, dir: Vec2, col: [f32; 3], cargo: bool) {
     let f = &c.frame;
-    let d = dir.normalize_or_zero();
-    let side = d.perp() * 0.025;
-    let (back, front) = (p - d * 0.55, p + d * if cargo { 1.1 } else { 0.55 });
-    g.lod(Lod::Near, |g| {
-        for q in [back, front] {
-            g.part(Matte).tube_capped(f.at2(q - side, 0.33), f.at2(q + side, 0.33), 0.32, 8, true, true, rgba(DARK));
-        }
-        g.part(Matte).beam(f.at2(back, 0.45), f.at2(p + d * 0.35, 0.8), 0.06, rgba(col));
-        g.part(Matte).beam(f.at2(p - d * 0.15, 0.85), f.at2(p + d * 0.45, 0.95), 0.05, rgba(col));
-        if cargo {
-            let box_at = p + d * 0.75;
-            f.bx_yaw(g, Wood, box_at.x, 0.62, box_at.y, Vec3::new(0.7, 0.42, 0.62), mul(c.palette.wood, 0.75), d.y.atan2(d.x));
-        }
-    });
+    let d = f.dir3(dir.normalize_or_zero());
+    let look = crate::props::Bike { cargo: cargo.then(|| mul(c.palette.wood, 0.75)), ..crate::props::Bike::plain(col) };
+    g.lod(Lod::Near, |g| crate::props::bicycle(g, crate::props::Pose::along(f.at2(p, 0.0), Vec2::new(d.x, d.z)), look));
 }
 
 /// A run of bikes from `a` towards `b`, each `step` apart, against a rail
@@ -468,15 +458,11 @@ fn veg_bed(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, w: f32, d: f3
     });
 }
 
-/// A small tree in a timber tub standing at `y` (mid): a balcony's.
+/// A small tree in a timber tub standing at `y` (mid): a balcony's
+/// ([`crate::props::tub_tree`]).
 fn potted_tree(g: &mut Geometry, c: &Ctx, p: Vec2, y: f32, col: [f32; 3]) {
-    let f = &c.frame;
-    let w = f.to_world(p.x, p.y);
-    g.lod(Lod::Mid, |g| {
-        f.bx(g, Wood, p.x, y + 0.275, p.y, Vec3::new(0.7, 0.55, 0.7), mul(c.palette.wood, 0.55));
-        g.part(Wood).cylinder(w, 0.07, 0.05, y + 0.6, y + 1.3, 5, rgba(c.palette.bark));
-        g.part(Foliage).cylinder_capped(w, 0.55, 0.35, y + 1.1, y + 2.1, 7, true, true, rgba(col));
-    });
+    let w = c.frame.to_world(p.x, p.y);
+    g.lod(Lod::Mid, |g| crate::props::tub_tree(g, w, y, c.frame.yaw(), mul(c.palette.wood, 0.55), c.palette.bark, col));
 }
 
 /// A pile of produce crates at lot-local `p` (mid).

@@ -1224,3 +1224,36 @@ fn boxes_stood_in_their_places_never_overlap() {
         }
     }
 }
+
+/// [r13-detail] Styles draw the lines and poles but leave the washing to
+/// the household layer: Brick Row's yards, garden lawns, lantern alleys
+/// and laundry poles leave `WashLine`s, each a short, finite line over the
+/// lot, and no garment (a Tarp panel on a wire) is baked in near detail.
+#[test]
+fn styles_leave_wash_lines_not_washing() {
+    use super::coplanar_tests::test_lots;
+    let rules = BuildingRules::default();
+    let pal = Palette::default();
+    let lot = test_lots(LandUse::Residential)[0].clone();
+    let mut with_lines = Vec::new();
+    for style in [Style::BrickRow, Style::GardenHouse, Style::AlleyWalkups, Style::LanternShophouse, Style::TinShacks, Style::PatchStack] {
+        let mut n = 0;
+        for seed in 0..6u64 {
+            for floors in [2u8, 4, 6] {
+                let g = generate_styled_extras(&lot, LandUse::Residential, floors, Tier::Low, 0.6, 40 + seed, style, &rules, &pal, &Extras::default());
+                for l in &g.washing {
+                    assert!(l.a.is_finite() && l.b.is_finite(), "{style:?}: {l:?}");
+                    assert!((0.3..40.0).contains(&l.len()), "{style:?}: line {:.1} m", l.len());
+                    assert!(l.a.y > 0.5 && l.a.y < 120.0, "{style:?}: line at {:.1} m", l.a.y);
+                    let mid = (l.a + l.b) * 0.5;
+                    assert!(lot.polygon.iter().any(|p| p.distance(Vec2::new(mid.x, mid.z)) < 60.0), "{style:?}: line off the lot");
+                }
+                n += g.washing.len();
+            }
+        }
+        if n > 0 {
+            with_lines.push(style);
+        }
+    }
+    assert!(with_lines.len() >= 3, "styles leave lines for the washing: {with_lines:?}");
+}

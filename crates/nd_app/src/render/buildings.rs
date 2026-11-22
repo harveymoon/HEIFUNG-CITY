@@ -206,6 +206,10 @@ pub(crate) fn fit_under(g: &mut Geometry, room: f32) {
     for p in g.lamps.iter_mut() {
         p.y *= k;
     }
+    for l in g.washing.iter_mut() {
+        l.a.y *= k;
+        l.b.y *= k;
+    }
 }
 
 /// The chunk a building is drawn in: by its lot centre, so a building and
@@ -620,7 +624,7 @@ pub(super) fn detail_stats(state: Res<RenderState>, cams: Query<&GlobalTransform
     for c in state.chunks.values() {
         for d in &c.detail {
             let Some(k) = d.lod.layer() else { continue };
-            let range = if d.lod == nd_procgen::Lod::Near { nd_procgen::Lod::NEAR_RANGE } else { nd_procgen::Lod::MID_RANGE };
+            let range = nd_procgen::DetailBand::of(d.lod).map_or(f32::MAX, |b| b.range());
             all[k] += d.triangles;
             if eye.is_some_and(|e| e.distance(d.at) < range) {
                 near[k] += d.triangles;
@@ -629,6 +633,20 @@ pub(super) fn detail_stats(state: Res<RenderState>, cams: Query<&GlobalTransform
     }
     stats.detail_triangles = all;
     stats.detail_in_range = near;
+}
+
+/// [r13-detail] Count the mesh entities the camera drew last frame, and
+/// those under a distance band, for `status.render`.
+pub(super) fn mesh_stats(q: Query<(&ViewVisibility, Has<bevy::camera::visibility::VisibilityRange>), With<Mesh3d>>, mut stats: ResMut<RenderStats>) {
+    let (mut all, mut banded) = (0, 0);
+    for (v, ranged) in &q {
+        if v.get() {
+            all += 1;
+            banded += ranged as usize;
+        }
+    }
+    stats.visible_meshes = all;
+    stats.visible_detail_meshes = banded;
 }
 
 /// A tower crane's head, turned about its mast by [`animate_cranes`]. Each

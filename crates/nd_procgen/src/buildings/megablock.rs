@@ -603,9 +603,7 @@ fn raised_tree(g: &mut Geometry, c: &Ctx, p: Vec2, y: f32, h: f32, canopy: f32) 
 
 /// A concrete planter of shrubs on a roof or terrace at height `y`.
 fn raised_planter(g: &mut Geometry, c: &Ctx, p: Vec2, y: f32, r: f32, tub: [f32; 3]) {
-    let f = &c.frame;
-    f.bx(g, Concrete, p.x, y + 0.3, p.y, Vec3::new(r * 2.0, 0.6, r * 2.0), tub);
-    f.bx(g, Foliage, p.x, y + 0.75, p.y, Vec3::new(r * 1.7, 0.4, r * 1.7), c.palette.foliage);
+    crate::props::planter(g, c.frame.to_world(p.x, p.y), y, crate::props::Planter::Trough { yaw: c.frame.yaw() }, r, tub, c.palette.foliage);
 }
 
 #[cfg(test)]

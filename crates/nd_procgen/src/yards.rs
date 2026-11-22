@@ -19,11 +19,20 @@
 //!   window boxes, a chair, washing on an airer, a line or a pole out of
 //!   the window, a motorbike on a stand half taken apart, a workbench, a
 //!   kettle grill or an oil-drum barbecue, a surfboard against the wall.
+//! - [r13-detail] the washing on a building style's own lines and poles
+//!   ([`WashLine`], `Spots::lines`): a style draws the line or the pole, a
+//!   household with washing out hangs runs of it there ([`HUNG`]) before
+//!   it would put out an airer or a pole of its own; so washing is only
+//!   ever out by household and weather, never twice.
 //! - [`pick_ray`]: which of them a click meets, so it leads to its owner.
+//!
+//! The meshes come from the shared prop library (`crate::props`: the one
+//! bicycle, the pots, the garments), as the styles' do.
 
 use crate::color::{mix, mul, rgba, DARK};
+use crate::props::{self, append_xf, bicycle_local, garment, washing_run, wheel, Bike, Planter, CLOTH};
 use crate::mesh::MeshData;
-use crate::surface::{Geometry, Surface};
+use crate::surface::{Geometry, Surface, WashLine};
 use glam::{Mat3, Vec2, Vec3};
 use nd_sim::citizens::{CitizenId, HouseholdId};
 use nd_sim::hash::mix as hmix;
@@ -48,6 +57,8 @@ const STANDOFF: f32 = 0.3;
 pub const WINDOW_TOP: f32 = 30.0;
 /// Most windows kept for a block.
 const MAX_WINDOWS: usize = 160;
+/// [r13-detail] Most style lines one home keeps for its washing.
+const MAX_LINES: usize = 48;
 
 /// A free place round a home: its foot (world x, height from the lot's
 /// pad until [`Spots::raise`], world z), the way its things face (sim
@@ -74,11 +85,14 @@ pub struct Spots {
     pub yard: Vec<Spot>,
     /// A block's street-side windows: the middle of each sill, facing out.
     pub windows: Vec<Spot>,
+    /// [r13-detail] The building style's lines and poles washing may hang
+    /// from ([`Geometry::washing`]).
+    pub lines: Vec<WashLine>,
 }
 
 impl Spots {
     pub fn is_empty(&self) -> bool {
-        self.step.is_empty() && self.front.is_empty() && self.yard.is_empty() && self.windows.is_empty()
+        self.step.is_empty() && self.front.is_empty() && self.yard.is_empty() && self.windows.is_empty() && self.lines.is_empty()
     }
 
     /// Lift the spots on the lot by its pad, and set the ones on the
@@ -86,6 +100,10 @@ impl Spots {
     pub fn raise(&mut self, pad: f32, pavement: impl Fn(Vec2) -> f32) {
         for s in self.step.iter_mut().chain(self.front.iter_mut()).chain(self.yard.iter_mut()).chain(self.windows.iter_mut()) {
             s.at.y = if s.pavement { pavement(Vec2::new(s.at.x, s.at.z)) } else { s.at.y + pad };
+        }
+        for l in self.lines.iter_mut() {
+            l.a.y += pad;
+            l.b.y += pad;
         }
     }
 
@@ -190,6 +208,7 @@ pub fn spots(g: &Geometry, lot: &Lot, block: bool, seed: u64) -> Spots {
     if block {
         out.windows = windows(g, street);
     }
+    out.lines = g.washing.iter().copied().filter(|l| l.len() > 0.5).take(MAX_LINES).collect();
     if w < 1.0 || d < 1.0 || w > MAX_SIDE || d > MAX_SIDE || street == Vec2::ZERO {
         return out;
     }
@@ -452,8 +471,10 @@ pub fn variants(kind: PropKind) -> u8 {
         PropKind::KidBike | PropKind::Ball | PropKind::Chair => 3,
         // Pots on the ground 0..3, window boxes 3..5.
         PropKind::Plant => 5,
-        // An airer 0..3, a line 3..6, a pole from the window 6..9.
-        PropKind::Laundry => 9,
+        // An airer 0..3, a line 3..6, a pole from the window 6..9, a run
+        // on a style's line 9..12.
+        PropKind::Laundry => 12,
+        PropKind::Trampoline => 1,
         _ => 2,
     }
 }
@@ -463,6 +484,11 @@ pub const WINDOW_BOX: u8 = 3;
 /// The first washing-line and window-pole looks of [`PropKind::Laundry`].
 pub const LINE: u8 = 3;
 pub const POLE: u8 = 6;
+/// [r13-detail] The first look of a run of washing hung on a building
+/// style's own line or pole ([`WashLine`]).
+pub const HUNG: u8 = 9;
+/// Most runs one line holds.
+const MAX_RUNS: usize = 6;
 /// Free room a washing line wants round its middle, metres.
 const LINE_ROOM: f32 = 1.4;
 
@@ -476,9 +502,26 @@ pub fn place(wishes: &[Wish], spots: &Spots, seed: u64) -> Vec<Placed> {
     let mut yard: Vec<Spot> = spots.yard.clone();
     let mut flats: Vec<(u16, usize)> = Vec::new();
     let mut taken: Vec<bool> = vec![false; spots.windows.len()];
+    let mut hung: Vec<bool> = vec![false; spots.lines.len()];
     let mut out = Vec::new();
     for w in wishes {
         let look = |n: u8, base: u8| base + (hmix(w.seed, 0x100c) % n as u64) as u8;
+        // [r13-detail] Washing goes on the building's own lines and poles
+        // first: a flat's on a pole, a house's on a line, else the other.
+        if w.kind == PropKind::Laundry {
+            if let Some(i) = free_line(&spots.lines, &hung, w.place == Place::Window, hmix(seed, w.flat as u64 ^ 0x11e5)) {
+                hung[i] = true;
+                let l = spots.lines[i];
+                let d = l.b - l.a;
+                let yaw = d.z.atan2(d.x) - FRAC_PI_2;
+                let n = ((l.len() / props::RUN).floor() as usize).clamp(1, MAX_RUNS);
+                for k in 0..n {
+                    let v = HUNG + (hmix(w.seed, 0x40 + k as u64) % 3) as u8;
+                    out.push(Placed { kind: w.kind, variant: v, owner: w.owner, household: w.household, at: l.at((k as f32 + 0.5) / n as f32), yaw });
+                }
+                continue;
+            }
+        }
         // A thing put down takes the ground round it: the spots within its
         // reach are dropped (a 3 m washing line, a bench and its sawhorse).
         let mut put = |s: Spot, variant: u8, yaw: f32, pools: [&mut Vec<Spot>; 3]| {
@@ -542,6 +585,14 @@ pub fn place(wishes: &[Wish], spots: &Spots, seed: u64) -> Vec<Placed> {
                     put(s, if line { look(3, LINE) } else { look(3, 0) }, yaw, [&mut step, &mut front, &mut yard]);
                 }
             }
+            (Place::Yard, PropKind::Trampoline) => {
+                // Only in a back yard with room for it.
+                let best = yard.iter().enumerate().filter(|(_, s)| s.room >= TRAMPOLINE_ROOM).max_by(|a, b| a.1.room.total_cmp(&b.1.room).then(b.0.cmp(&a.0))).map(|(i, _)| i);
+                if let Some(i) = best {
+                    let s = yard.remove(i);
+                    put(s, 0, s.yaw, [&mut step, &mut front, &mut yard]);
+                }
+            }
             (Place::Yard, _) => {
                 if let Some(s) = ground(&mut yard, &mut front) {
                     put(s, look(variants(w.kind).min(3), 0), s.yaw, [&mut step, &mut front, &mut yard]);
@@ -552,11 +603,35 @@ pub fn place(wishes: &[Wish], spots: &Spots, seed: u64) -> Vec<Placed> {
     out
 }
 
+/// The free line of `lines` (not `hung`) a household's washing goes on:
+/// one of the kind asked for (`window`: a pole) first, from a place the
+/// household's `pick` hash says, else one of the other kind.
+fn free_line(lines: &[WashLine], hung: &[bool], window: bool, pick: u64) -> Option<usize> {
+    let n = lines.len();
+    if n == 0 {
+        return None;
+    }
+    let start = (pick % n as u64) as usize;
+    for want in [window, !window] {
+        for k in 0..n {
+            let i = (start + k) % n;
+            if !hung[i] && lines[i].window == want {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// A trampoline wants this much free room round its middle, metres.
+const TRAMPOLINE_ROOM: f32 = 1.9;
+
 /// The ground a thing takes round its foot: no other thing stands within
 /// this, metres.
 fn room_taken(kind: PropKind, variant: u8) -> f32 {
     match kind {
         PropKind::Laundry if (LINE..POLE).contains(&variant) => 2.1,
+        PropKind::Trampoline => 2.3,
         PropKind::Tools => 1.7,
         PropKind::ProjectBike => 1.5,
         // A bike is 1.75 m from tyre to tyre: two stand side by side.
@@ -578,7 +653,9 @@ pub fn reach(kind: PropKind, variant: u8) -> (f32, f32) {
         PropKind::Plant if variant >= WINDOW_BOX => (-0.05, 0.6),
         PropKind::Plant => (0.35, 0.5),
         PropKind::Chair => (0.45, 0.5),
+        PropKind::Laundry if variant >= HUNG => (-0.3, 0.6),
         PropKind::Laundry if variant >= POLE => (-0.4, 0.8),
+        PropKind::Trampoline => (0.8, 1.8),
         PropKind::Laundry if variant >= LINE => (1.3, 1.5),
         PropKind::Laundry => (0.6, 0.75),
         PropKind::Tools => (0.6, 0.85),
@@ -615,114 +692,6 @@ pub fn pick_ray(props: &[(PropKind, u8, Vec3)], o: Vec3, d: Vec3) -> Option<(usi
 
 // ── the meshes ──────────────────────────────────────────────────────────────
 
-/// Copy `src` into `dst` turned by `rot` and moved by `off`.
-fn append_xf(dst: &mut Geometry, src: &Geometry, rot: Mat3, off: Vec3) {
-    for (s, m) in src.iter() {
-        let t = dst.part(s);
-        let base = t.positions.len() as u32;
-        for i in 0..m.positions.len() {
-            t.positions.push((rot * Vec3::from(m.positions[i]) + off).to_array());
-            t.normals.push((rot * Vec3::from(m.normals[i])).normalize_or_zero().to_array());
-            t.colors.push(m.colors[i]);
-            t.uvs.push(m.uvs[i]);
-            let tg = m.tangents.get(i).copied().unwrap_or([1.0, 0.0, 0.0, 1.0]);
-            let r = rot * Vec3::new(tg[0], tg[1], tg[2]);
-            t.tangents.push([r.x, r.y, r.z, tg[3]]);
-        }
-        t.indices.extend(m.indices.iter().map(|i| i + base));
-    }
-}
-
-/// A wheel: a tyre ring of `segs` tubes in the plane through `c` spanned
-/// by `a` and `b` (unit vectors), radius `r`, and two spokes across.
-fn wheel(m: &mut MeshData, c: Vec3, a: Vec3, b: Vec3, r: f32, tyre: f32, segs: usize, col: [f32; 4], hub: [f32; 4]) {
-    let p = |k: usize| c + (a * (k as f32 / segs as f32 * TAU).cos() + b * (k as f32 / segs as f32 * TAU).sin()) * r;
-    for k in 0..segs {
-        m.tube_capped(p(k), p(k + 1), tyre, 4, false, false, col);
-    }
-    m.tube_capped(c - a * r * 0.92, c + a * r * 0.92, 0.006, 3, false, false, hub);
-    m.tube_capped(c - b * r * 0.92, c + b * r * 0.92, 0.006, 3, false, false, hub);
-}
-
-/// An upright bicycle along local z (wheels at z ±0.525 × `s`), on the
-/// ground at x 0, scaled by `s`.
-fn bicycle(g: &mut Geometry, s: f32, frame: [f32; 3]) {
-    let f = rgba(frame);
-    let steel = rgba([0.42, 0.42, 0.44]);
-    let at = |z: f32, y: f32| Vec3::new(0.0, y * s, z * s);
-    let r = 0.34;
-    let (rear, front) = (at(-0.525, r), at(0.525, r));
-    let m = g.part(Matte);
-    for c in [rear, front] {
-        wheel(m, c, Vec3::Z, Vec3::Y, r * s, 0.022 * s.max(0.8), 10, rgba(DARK), steel);
-    }
-    let (bb, seat, head, head_lo) = (at(-0.05, 0.28), at(-0.18, 0.82), at(0.38, 0.86), at(0.42, 0.7));
-    for (a, b) in [(rear, bb), (rear, seat), (bb, seat), (seat, head), (bb, head_lo), (head_lo, front), (head, head_lo)] {
-        m.tube(a, b, 0.018 * s.max(0.8), 5, f);
-    }
-    // Seat post and saddle, stem and bars, a chainring.
-    let saddle = at(-0.21, 0.95);
-    m.tube(seat, saddle, 0.012, 4, steel);
-    m.boxed(saddle + Vec3::Y * 0.02 * s, Vec3::new(0.11, 0.045, 0.25) * s, 0.0, rgba(DARK));
-    let bar = at(0.34, 0.99);
-    m.tube(head, bar, 0.014, 4, steel);
-    m.tube(bar - Vec3::X * 0.24 * s, bar + Vec3::X * 0.24 * s, 0.012, 4, steel);
-    m.pipe(Vec2::new(0.04, bb.z), Vec2::X, 0.015, 0.09 * s, bb.y, 8, rgba([0.2, 0.2, 0.21]));
-}
-
-/// A pot of `r` and `h` at `c` with a plant in it.
-fn pot_plant(g: &mut Geometry, c: Vec2, r: f32, h: f32, pot: [f32; 3], leaf: [f32; 3], seed: u64) {
-    g.part(Matte).cylinder(c, r * 0.8, r, 0.0, h, 8, rgba(pot));
-    g.part(Matte).cylinder_capped(c, r * 1.04, r * 1.06, h - 0.04, h, 8, false, true, rgba(mul(pot, 0.85)));
-    let lf = g.part(Foliage);
-    let tall = h01(seed, 1) < 0.4;
-    if tall {
-        lf.lathe(c, &[(r * 0.5, h), (r * 1.5, h + 0.25), (r * 1.2, h + 0.55), (0.0, h + 0.75)], 6, rgba(leaf));
-    } else {
-        lf.lathe(c, &[(r * 0.9, h - 0.02), (r * 1.6, h + 0.12), (r * 1.1, h + 0.26), (0.0, h + 0.32)], 7, rgba(leaf));
-        // A few flowers on the top.
-        if h01(seed, 2) < 0.6 {
-            let fl = [[0.62, 0.08, 0.10], [0.75, 0.62, 0.15], [0.62, 0.30, 0.50]][(hmix(seed, 3) % 3) as usize];
-            for k in 0..4 {
-                let a = k as f32 * 1.7 + h01(seed, 4) * TAU;
-                let q = c + Vec2::from_angle(a) * r * 0.9;
-                g.part(Matte).boxed(Vec3::new(q.x, h + 0.2, q.y), Vec3::splat(0.05), a, rgba(fl));
-            }
-        }
-    }
-}
-
-/// Washing as it is: greyed whites, faded denim, black, a worn red or
-/// mustard now and then (linear, kept dull so it reads in the sun).
-const CLOTH: [[[f32; 3]; 5]; 3] = [
-    [[0.42, 0.41, 0.38], [0.10, 0.13, 0.20], [0.30, 0.08, 0.07], [0.18, 0.20, 0.17], [0.40, 0.33, 0.22]],
-    [[0.08, 0.08, 0.09], [0.38, 0.34, 0.30], [0.10, 0.20, 0.23], [0.44, 0.43, 0.40], [0.24, 0.12, 0.16]],
-    [[0.46, 0.45, 0.42], [0.38, 0.27, 0.10], [0.13, 0.15, 0.24], [0.22, 0.06, 0.07], [0.33, 0.33, 0.31]],
-];
-
-/// A garment hung from a line at `top` (the line along `along`), `w`
-/// across and `drop` down, a shirt, trousers or a towel by `kind`.
-fn garment(g: &mut Geometry, top: Vec3, along: Vec3, w: f32, drop: f32, col: [f32; 3], kind: u64) {
-    let face = Vec3::Y.cross(along).normalize_or_zero();
-    let yaw = along.z.atan2(along.x);
-    let m = g.part(Tarp);
-    match kind % 3 {
-        // Trousers: two legs.
-        0 => {
-            for s in [-1.0, 1.0] {
-                m.boxed(top + along * (s * w * 0.24) - Vec3::Y * drop * 0.5, Vec3::new(w * 0.44, drop, 0.02), yaw, rgba(col));
-            }
-        }
-        // A shirt: body and sleeves.
-        1 => {
-            m.boxed(top - Vec3::Y * drop * 0.5, Vec3::new(w, drop, 0.02), yaw, rgba(col));
-            m.boxed(top - Vec3::Y * 0.12 + face * 0.001, Vec3::new(w * 1.6, 0.16, 0.018), yaw, rgba(mul(col, 0.92)));
-        }
-        // A towel or a sheet.
-        _ => m.boxed(top - Vec3::Y * drop * 0.5, Vec3::new(w, drop, 0.015), yaw, rgba(col)),
-    }
-}
-
 /// Draw one look of a thing, in its own frame: its foot at the origin, +x
 /// facing out (from the wall, towards the street), +y up, z along the wall.
 /// A window's things (`Plant` from [`WINDOW_BOX`], `Laundry` from
@@ -735,7 +704,7 @@ pub fn prop_geometry(kind: PropKind, variant: u8) -> Geometry {
         PropKind::Bike => {
             const FRAMES: [[f32; 3]; 4] = [[0.42, 0.07, 0.05], [0.09, 0.18, 0.30], [0.11, 0.11, 0.12], [0.30, 0.34, 0.28]];
             let mut b = Geometry::default();
-            bicycle(&mut b, 1.0, FRAMES[v as usize % 4]);
+            bicycle_local(&mut b, Bike { fine: true, ..Bike::plain(FRAMES[v as usize % 4]) });
             // Leaning on the wall behind it.
             let lean = Mat3::from_rotation_z(0.16);
             append_xf(&mut g, &b, lean, Vec3::new(0.32, 0.0, 0.0));
@@ -743,7 +712,7 @@ pub fn prop_geometry(kind: PropKind, variant: u8) -> Geometry {
         PropKind::KidBike => {
             const FRAMES: [[f32; 3]; 3] = [[0.62, 0.12, 0.30], [0.12, 0.42, 0.62], [0.70, 0.55, 0.08]];
             let mut b = Geometry::default();
-            bicycle(&mut b, 0.58, FRAMES[v as usize % 3]);
+            bicycle_local(&mut b, Bike { scale: 0.58, fine: true, ..Bike::plain(FRAMES[v as usize % 3]) });
             // Stabilisers.
             let m = b.part(Matte);
             for s in [-1.0f32, 1.0] {
@@ -839,10 +808,10 @@ pub fn prop_geometry(kind: PropKind, variant: u8) -> Geometry {
             let pots = [[0.44, 0.21, 0.12], [0.38, 0.36, 0.34], [0.30, 0.16, 0.10]];
             let leaf = [0.14, 0.27, 0.10];
             let pot = pots[v as usize % 3];
-            pot_plant(&mut g, Vec2::new(0.25, 0.0), 0.17, 0.34, pot, leaf, seed);
-            pot_plant(&mut g, Vec2::new(0.2, 0.42), 0.12, 0.24, pots[(v as usize + 1) % 3], mix(leaf, [0.22, 0.32, 0.14], 0.5), seed ^ 1);
+            props::planter(&mut g, Vec2::new(0.25, 0.0), 0.0, Planter::Pot { seed }, 0.17, pot, leaf);
+            props::planter(&mut g, Vec2::new(0.2, 0.42), 0.0, Planter::Pot { seed: seed ^ 1 }, 0.12, pots[(v as usize + 1) % 3], mix(leaf, [0.22, 0.32, 0.14], 0.5));
             if v != 1 {
-                pot_plant(&mut g, Vec2::new(0.45, -0.32), 0.1, 0.2, pots[(v as usize + 2) % 3], leaf, seed ^ 2);
+                props::planter(&mut g, Vec2::new(0.45, -0.32), 0.0, Planter::Pot { seed: seed ^ 2 }, 0.1, pots[(v as usize + 2) % 3], leaf);
             }
         }
         PropKind::Chair => {
@@ -857,6 +826,21 @@ pub fn prop_geometry(kind: PropKind, variant: u8) -> Geometry {
             m.boxed(o + r * Vec3::new(-0.21, 0.68, 0.0), Vec3::new(0.04, 0.44, 0.42), -yaw, rgba(mul(col, 0.95)));
             for (x, z) in [(-0.19, -0.19), (-0.19, 0.19), (0.19, -0.19), (0.19, 0.19)] {
                 m.tube(o + r * Vec3::new(x, 0.0, z), o + r * Vec3::new(x * 0.9, 0.43, z * 0.9), 0.016, 4, rgba(mul(col, 0.85)));
+            }
+        }
+        PropKind::Laundry if variant >= HUNG => {
+            // [r13-detail] A run of washing on a building style's own line
+            // or pole, the line through the origin along z.
+            washing_run(&mut g, (variant - HUNG) as usize, seed);
+        }
+        PropKind::Trampoline => {
+            // A round mat on a blue-padded ring, on four legs.
+            let r = 1.7;
+            g.part(Tarp).cylinder(Vec2::ZERO, r, r, 0.85, 0.9, 14, rgba([0.10, 0.10, 0.11]));
+            g.part(Matte).cylinder(Vec2::ZERO, r + 0.1, r + 0.1, 0.8, 0.86, 14, rgba([0.15, 0.36, 0.62]));
+            for k in 0..4 {
+                let d = Vec2::from_angle(k as f32 * FRAC_PI_2 + 0.4) * r;
+                g.part(Metal).tube(Vec3::new(d.x, 0.0, d.y), Vec3::new(d.x, 0.82, d.y), 0.03, 4, rgba([0.40, 0.40, 0.42]));
             }
         }
         PropKind::Laundry if variant >= POLE => {

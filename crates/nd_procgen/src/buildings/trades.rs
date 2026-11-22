@@ -306,21 +306,11 @@ pub fn car_dealer(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
 
 // ── bike shop ────────────────────────────────────────────────────────────────
 
-/// A bike: two wheels, a frame, a bar and a saddle.
+/// A bike at lot-local `p` along local heading `yaw` (near detail): the
+/// shared bicycle ([`crate::props::bicycle`]).
 pub(super) fn bike(g: &mut Geometry, f: &Frame, p: Vec2, yaw: f32, col: [f32; 3]) {
-    let d = Vec2::new(yaw.cos(), yaw.sin());
-    for s in [-0.52f32, 0.52] {
-        let q = p + d * s;
-        f.bx_yaw(g, Matte, q.x, 0.34, q.y, Vec3::new(0.66, 0.66, 0.05), DARK, yaw);
-    }
-    let rear = p - d * 0.5;
-    let head = p + d * 0.35;
-    g.part(Metal).beam(f.at(rear.x, 0.36, rear.y), f.at(head.x, 0.85, head.y), 0.06, rgba(col));
-    g.part(Metal).beam(f.at(p.x - d.x * 0.15, 0.4, p.y - d.y * 0.15), f.at(p.x - d.x * 0.2, 0.9, p.y - d.y * 0.2), 0.06, rgba(col));
-    let bar = p + d * 0.42;
-    f.bx_yaw(g, Matte, bar.x, 0.98, bar.y, Vec3::new(0.05, 0.05, 0.5), CHARCOAL, yaw);
-    let seat = p - d * 0.2;
-    f.bx_yaw(g, Matte, seat.x, 0.95, seat.y, Vec3::new(0.25, 0.05, 0.12), DARK, yaw);
+    let d = f.dir3(Vec2::new(yaw.cos(), yaw.sin()));
+    g.lod(crate::surface::Lod::Near, |g| crate::props::bicycle(g, crate::props::Pose::along(f.at2(p, 0.0), Vec2::new(d.x, d.z)), crate::props::Bike::plain(col)));
 }
 
 /// A narrow shopfront with bikes racked on the pavement, wheels hung in

@@ -513,7 +513,7 @@ pub fn alley_walkups(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             v += 2.8;
         }
     }
-    // Washing on lines across, between the lantern rows.
+    // Lines across for washing, between the lantern rows.
     g.lod(Lod::Near, |g| {
         for k in 0..levels {
             let y = fh * (1.0 + k as f32) + 2.2;
@@ -523,9 +523,10 @@ pub fn alley_walkups(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             }
             let (a, b) = (f.at(au0 + 0.05, y, v), f.at(au1 - 0.05, y, v));
             g.part(Matte).wire(a, b, 0.15, 0.025, rgba(CHARCOAL));
-            for i in 0..3 {
-                let u = au0 + aw * (0.25 + 0.25 * i as f32);
-                f.bx(g, Tarp, u, y - 0.45, v, Vec3::new(0.45, 0.6, 0.05), mul(pick(rng, &pal.tarp_colors), 1.15));
+            // [r13-detail] The washing is the household layer's.
+            g.washing.push(crate::surface::WashLine { a, b, sag: 0.15, window: false });
+            for _ in 0..3 {
+                let _ = pick(rng, &pal.tarp_colors);
             }
         }
     });

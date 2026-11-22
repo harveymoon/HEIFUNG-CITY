@@ -55,7 +55,7 @@ pub(super) fn command(cmd: &Value, sim: &crate::sim::Sim) -> Result<Value, Strin
         "laundry_out": sy::laundry_out(&w.weather, w.clock.hour()),
         "wet": sy::wet(&w.weather),
         "homes_with_spots": sim.yard_spots.len(),
-        "drawn": { "props": sim.yard_props.len(), "homes": homes.len(), "by_kind": by_kind, "reach_m": crate::render::yards::REACH, "fade_m": [crate::render::yards::FADE.start, crate::render::yards::FADE.end], "far_eye_m": crate::render::yards::FAR_EYE },
+        "drawn": { "props": sim.yard_props.len(), "homes": homes.len(), "by_kind": by_kind, "reach_m": crate::render::yards::REACH, "fade_m": [nd_procgen::DetailBand::Close.fade().start, nd_procgen::DetailBand::Close.fade().end], "far_eye_m": crate::render::yards::FAR_EYE },
     });
     // One home: by id, or the home under a point.
     let home = match field(cmd, "building") {

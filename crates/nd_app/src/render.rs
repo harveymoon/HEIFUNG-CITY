@@ -459,6 +459,11 @@ pub struct RenderStats {
     /// [r12-yards] Households' things on screen, and the homes they are at.
     pub yard_props: usize,
     pub yard_homes: usize,
+    /// [r13-detail] Mesh entities drawn by the main camera last frame (a
+    /// draw-call count before Bevy's batching), and those of them under a
+    /// distance band (`VisibilityRange`: the close-up detail).
+    pub visible_meshes: usize,
+    pub visible_detail_meshes: usize,
 }
 
 /// [r10-chunk-hitch] What redrew building chunks and what it cost, counted
@@ -585,6 +590,7 @@ impl Plugin for RenderPlugin {
         // Tower cranes slewing on building sites.
         app.add_systems(Update, animate_cranes.after(sync_buildings).in_set(SimSet::Sync));
         app.add_systems(Update, buildings::detail_stats.after(sync_buildings).in_set(SimSet::Sync));
+        app.add_systems(Update, buildings::mesh_stats);
         app.add_systems(Update, games::sync_game_days.after(sync_buildings).in_set(SimSet::Sync));
         app.add_systems(Update, airlift::sync_airlifts.in_set(SimSet::Sync));
         app.add_plugins(heat::HeatPlugin);

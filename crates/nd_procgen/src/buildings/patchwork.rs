@@ -270,8 +270,8 @@ fn small_dish(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, y: f32) {
     g.lod(Lod::Mid, |g| dish(g, &c.frame, p, y, r, col));
 }
 
-/// A washing line between lot-local anchors: the line and the washing on
-/// it (mid detail), a few gaps.
+/// A washing line between lot-local anchors (mid detail). [r13-detail] The
+/// washing on it is the household layer's ([`crate::surface::WashLine`]).
 fn laundry(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, a: Vec3, b: Vec3) {
     let f = &c.frame;
     let len = a.distance(b);
@@ -281,20 +281,19 @@ fn laundry(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, a: Vec3, b: Vec3) {
     let (wa, wb) = (f.at(a.x, a.y, a.z), f.at(b.x, b.y, b.z));
     let d = wb - wa;
     let yaw = d.z.atan2(d.x);
-    g.lod(Lod::Mid, |g| {
-        g.part(Matte).wire(wa, wb, 0.12, 0.02, rgba(CHARCOAL));
-        let n = (len / 0.65) as i32;
-        for i in 1..n {
-            if coin(rng, 0.3) {
-                continue;
-            }
-            let t = i as f32 / n as f32;
-            let gh = rng.random_range(0.4..0.8);
-            let p = wa.lerp(wb, t) - Vec3::Y * (0.12 * 4.0 * t * (1.0 - t) + gh * 0.5 + 0.02);
-            let col = mul(any(rng, &CLOTHES), 1.0 - 0.2 * c.wear);
-            g.part(Tarp).boxed(p, Vec3::new(rng.random_range(0.35..0.55), gh, 0.03), yaw, rgba(col));
+    g.lod(Lod::Mid, |g| g.part(Matte).wire(wa, wb, 0.12, 0.02, rgba(CHARCOAL)));
+    g.washing.push(crate::surface::WashLine { a: wa - Vec3::Y * 0.02, b: wb - Vec3::Y * 0.02, sag: 0.12, window: false });
+    // The draws the washing took, so the rest of the building is as it was.
+    let _ = yaw;
+    let n = (len / 0.65) as i32;
+    for _ in 1..n {
+        if coin(rng, 0.3) {
+            continue;
         }
-    });
+        let _ = rng.random_range(0.4..0.8);
+        let _ = any(rng, &CLOTHES);
+        let _ = rng.random_range(0.35..0.55);
+    }
 }
 
 /// A leaning timber pole with a crossbar, and wires from its top to each

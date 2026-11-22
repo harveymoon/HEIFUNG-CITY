@@ -225,7 +225,7 @@ pub fn draw(g: &mut Geometry, lot: &Lot, front: &Lot, tier: Tier, wear: f32, see
             let p = back_mid + dir * t + dir.perp() * side * (path_w * 0.5 + 0.9);
             if point_in_polygon(p, &site) && distance_to_boundary(p, &site) > 1.0 {
                 let yaw = (dir.perp() * -side).y.atan2((dir.perp() * -side).x) - std::f32::consts::FRAC_PI_2;
-                g.lod(Lod::Mid, |g| bench_world(g, p, yaw, wood, steel));
+                g.lod(Lod::Near, |g| bench_world(g, p, yaw, wood, steel));
             }
         }
     }
@@ -268,7 +268,7 @@ pub fn draw(g: &mut Geometry, lot: &Lot, front: &Lot, tier: Tier, wear: f32, see
             while t < l - 3.0 {
                 let p = *a + d * t - out * 2.2;
                 if k % 2 == 0 {
-                    g.lod(Lod::Mid, |g| bench_world(g, p, yaw, wood, steel));
+                    g.lod(Lod::Near, |g| bench_world(g, p, yaw, wood, steel));
                 } else if !rough {
                     lamp_post_world(g, p - out * 0.4, 3.6, [1.9, 1.5, 0.9]);
                 }
