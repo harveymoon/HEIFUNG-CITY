@@ -239,3 +239,18 @@ fn harbour_piers_run_out_over_the_water() {
     let g = generate_styled_extras(&lot, LandUse::Industrial, 2, Tier::Mid, 0.9, 77, Style::FishMarketHall, &rules, &pal, &market);
     assert!(beyond(&g) < 1.3, "the fish market's own jetty, not ours");
 }
+
+/// [r13-leftovers] Boathouses go up only on a lot that meets the water: an
+/// inland Harbour Pastel lot picks the terraces or the lighthouse corner.
+#[test]
+fn no_boathouses_inland() {
+    let rules = BuildingRules::default();
+    let lots = test_lots(LandUse::Residential);
+    assert!(!lots[0].shore.is_waterfront());
+    for tier in Tier::ALL {
+        for seed in 0..80u64 {
+            let s = choose_style(&lots[0], LandUse::Residential, 2, tier, seed, &rules, &harbour(false));
+            assert_ne!(s, Style::Boathouses, "{tier:?} seed {seed}");
+        }
+    }
+}
