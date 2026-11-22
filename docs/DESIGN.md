@@ -1,7 +1,8 @@
 # HEIFUNG://CITY: design from the drawing board
 
 A procedural cyberpunk city builder that we keep tinkering with. This document is the
-living design doc. `IDEAS.md` next to it is the backlog where new ideas land first.
+living design doc. New ideas and open work go to `todo.md` (its "Extras" section holds the
+unscheduled ideas); the first ideas backlog is kept in `docs/archive/IDEAS_2026-10.md`.
 
 ## Pillars
 
@@ -39,15 +40,17 @@ Changed:
 crates/
   nd_sim      engine-independent simulation (roads, zoning, lots, buildings,
               citizens, economy, clock, save/load, Mind trait)
-  nd_procgen  generators: terrain, parcels' buildings (47 styles from a parts
+  nd_procgen  generators: terrain, parcels' buildings (many styles from a parts
               toolkit), streets, seamless textures, palettes
   nd_minds    Mind implementations: RuleBasedMind, LlmMind (+ backend trait)
-  nd_app      Bevy app: rendering, camera, planning tools, egui UI, hot reload
+  nd_audio    synthesised sound (no samples; render side only)
+  nd_app      Bevy app: rendering, camera, planning tools, egui UI, hot reload,
+              the remote API
 assets/
   palette.ron           world and glow colors
   rules/buildings.ron   building grammar per land use and the style weights per tier
 docs/
-  DESIGN.md, IDEAS.md
+  DESIGN.md, REMOTE.md, ... (index: docs/README.md)
 ```
 
 Data flow per frame: `nd_app` steps `nd_sim::World` N times according to sim speed,
@@ -71,8 +74,9 @@ Citizens are rendered from their simulated positions every frame.
 - **Roads**: a node/segment graph with per-direction lane counts. New polylines snap to
   existing nodes and split segments they cross. Walking uses A* over nodes.
 - **Lanes and traffic**: every segment becomes offset lanes per direction, shortened at
-  junctions. Each junction gets connector lanes for every movement (U-turns only at
-  dead ends); lane arrows on each arriving street permit some of them. Defaults follow
+  junctions. Each junction gets connector lanes for every movement (U-turns at dead ends,
+  and since round 1 from the leftmost lane of a street with 2+ lanes each way at a real junction:
+  `Lane::uturn`); lane arrows on each arriving street permit some of them. Defaults follow
   the lane count and the turning counts, revised every 600 traffic seconds: two lanes
   are a left-only lane plus straight-and-right (a shared left-and-straight lane while
   under 30% turn left), three or more get a left lane, straight lanes and a
@@ -147,7 +151,7 @@ Citizens are rendered from their simulated positions every frame.
   (the adaptive junction arrows leave ring nodes alone). Hovering the tool shows the ring,
   the road it takes up, the joins and the lots under the ring road (red); clicking stamps it
   into the active project.
-- **Driving** (`traffic.rs` `DriverProfile`, `world/driving.rs`, `takeover.rs`): turns follow a
+- **Driving** (`traffic.rs` `DriverProfile`, `world/driving/`, `takeover.rs`): turns follow a
   circular arc tangent to both lanes (the fillet of their corner), long vehicles swing wide, and
   cars are drawn along the poses of every physics substep (`Car::pose_at`) rather than a straight
   blend across a 4 s tick, so nothing cuts corners. Each driver gets a profile from age,
@@ -862,7 +866,7 @@ Citizens are rendered from their simulated positions every frame.
   Deep in debt for five days means closure: workers laid off, the building goes
   derelict, and after a week it is demolished so the lot can be reused. Offices
   and civic buildings are publicly funded.
-- **Cars** (`world/cars.rs`, `vehicle::Vehicles`): every private car is a record with a place:
+- **Cars** (`world/cars/`, `vehicle::Vehicles`): every private car is a record with a place:
   parked (the owner's home spaces, a building's garage, a parking business, a kerb slot, or squeezed
   onto the street when nothing was free) or on the road. A car comes into the city only with a
   household driving in (along the highway or a road off the map edge, from its far end out of sight),
@@ -1175,7 +1179,7 @@ Citizens are rendered from their simulated positions every frame.
   New buildings are capped at two floors plus one per ten neighbouring floors within 150 m,
   so high-rises appear only where the block is already dense; the land market below caps
   them again by pressure.
-- **The land market** (`nd_sim::estate`, `world/estate.rs`, [land]). *Pressure*: every hour
+- **The land market** (`nd_sim::estate`, `world/estate/`, [land]). *Pressure*: every hour
   (:13) each 64 m cell counts the people present (walkers twice: they are also moving
   through) and the cars in it, folded into a running average (half a day to rise, two days
   to fall; an old save's cold grid takes its first sample outright). [pt-growth] *Foot
@@ -1624,7 +1628,7 @@ Citizens are rendered from their simulated positions every frame.
   hours of output, a battery's charge, 90 days of energy). The treasury starts at 60,000, takes 12% of
   incomes and 5% of business revenue each day (the standard rates; see Taxes), and pays plant upkeep
   and imported power.
-- **Services and emergencies** (`nd_sim::services`, `world/services.rs`): police, fire, health,
+- **Services and emergencies** (`nd_sim::services`, `world/services/`): police, fire, health,
   schools and a 911 dispatch centre, plus monuments and stadiums, placed by the player in three
   tiers (cost x0.5 / 1 / 2.2, upkeep x0.6 / 1 / 1.8, jobs half / base / double, radius x0.7 / 1 / 1.4,
   vehicles 1 / 2 / 4). Coverage is by road: a multi-source Dijkstra over street nodes from every
@@ -2046,7 +2050,7 @@ Citizens are rendered from their simulated positions every frame.
   deals, imports, exports, meals sold, hungry citizens, closures, and the average
   price and stock of every resource.
 
-- **Landscape** (`nd_sim::landscape`, `world/water.rs`): generated from a seed and
+- **Landscape** (`nd_sim::landscape`, `world/water/`): generated from a seed and
   `LandscapeParams` (preset river valley / islands / coast / delta / plains / flat; water, relief,
   branching, islands, highway). Features are saved with the world (old saves load flat): rivers and
   streams are centrelines with a width and a current (streams faster), lakes are outlines, the sea is
@@ -2256,7 +2260,7 @@ Citizens are rendered from their simulated positions every frame.
 
 ## The social layer: people talking, friends and feuds, crews and clubs
 
-`nd_sim::social` (data and pure rules), `world/social.rs` (the systems), `world/social_tests.rs`.
+`nd_sim::social` (data and pure rules), `world/social/` (the systems), `world/social_tests.rs`.
 People who share a bench, a bar, a workplace, a bus or a few metres of pavement get talking; how
 it goes builds friendships and feuds; friends and enemies then act differently; friends with a
 passion in common form groups that make things in the city.
@@ -2653,7 +2657,7 @@ trait MindProvider {
   selected person's remaining route and recent trail are drawn with the destination lot, a
   hover card describes the parcel under the cursor, and a draggable person pane carries their
   story with a favourites list to jump back to. Zoning layer toggle with O.
-- Track (`street.rs`): ballast, sleepers every 0.7 m, two rails; level crossings get planks
+- Track (`street/`): ballast, sleepers every 0.7 m, two rails; level crossings get planks
   over the carriageway, crossbuck signs, lights and raised barrier arms. Stations
   (`buildings/rail.rs`): brick hall with an arched glass front, canopy, clock and name
   board at the road; a 70 m platform along the track with a canopy on posts, a yellow
@@ -2683,7 +2687,7 @@ trait MindProvider {
   coal pile and conveyor and a transformer yard; a honeycomb of hexagonal sun trackers; a wind farm
   of helical vertical-axis turbines; a containment dome, hyperbolic cooling towers with steam
   and a double fence.
-- Wind farms (`buildings/power.rs`): turbines of one size (18 m gunmetal mast, 11 m rotor of
+- Wind farms (`buildings/power/wind.rs`): turbines of one size (18 m gunmetal mast, 11 m rotor of
   three graphite blades twisted a third of a turn, 3 m radius) in staggered rows 15 m apart,
   as many as fit with 2 m between every blade tip and the lot edge (`wind_sites`, tested for
   count growing with area and containment). The generator draws masts only
@@ -2691,7 +2695,7 @@ trait MindProvider {
   the same sites) and turns it about the vertical: still below wind 0.15, 0.6 to 4.2 rad/s
   above, easing up and down, stopped while paused. A red cap light and cyan tip lights trace
   the spin at night.
-- Solar farms (`buildings/power.rs`, `render/solar.rs`): dark blue hexagonal panels (2.2 m to a
+- Solar farms (`buildings/power/solar.rs`, `render/solar.rs`): dark blue hexagonal panels (2.2 m to a
   corner, six cells with dark seams and a cyan rim light) on dual-axis trackers, a pedestal every
   4.2 m on a triangular grid, flat sides facing their neighbours, so stowed panels tile the yard as a
   honeycomb; touching parcels share one grid (`PlantField::solar_sites`). The generator draws the
@@ -2714,7 +2718,7 @@ trait MindProvider {
   streaked white water into a stilling basin of foam that fades downstream, and two intake towers
   on the plant's side with a penstock to the turbine hall. Cyan light lines on the parapets, the
   ledges and the chute walls, magenta on the gates and the towers.
-- Battery packs (`buildings/power.rs::battery`): container-sized white modules on plinths in rows
+- Battery packs (`buildings/power/battery.rs`): container-sized white modules on plinths in rows
   (2 / 8 / up to 36 by size) with roof fans, door seams, an inverter skid at each row end, a control
   cabin and a fence; five status lights on each long face show fifths of charge, cyan charging,
   amber delivering, green holding, with a light line in the same colour. The sim raises
@@ -3153,7 +3157,8 @@ legs it changed. Nothing here draws random numbers.
 - v2: LLM spotlight citizens with real backends, dialogue, gossip.
 - v3: faction and corporate layer, events, story generation.
 
-See `IDEAS.md` for everything that has not been scheduled.
+Unscheduled ideas: the "Extras" section of `todo.md` (the first backlog is
+`docs/archive/IDEAS_2026-10.md`).
 - v0.10 (done): parking as a business with capacity, fees and shortage-driven
   construction; occupancy shown in the geometry; scale audit (metres everywhere).
 - v0.11 (done): pedestrian network through blocks with footfall and walk-in trade.
@@ -3167,8 +3172,12 @@ See `IDEAS.md` for everything that has not been scheduled.
   yards beside the track, passenger and freight trains on headways, rail riders, rail freight.
 - v0.16 (done): construction over time, eminent domain, redevelopment and density heights,
   vacant-land dressing and open-ground nature, graffiti and street grit, inspect UX.
-- v0.17 (done): whole-project code review (docs/REVIEW.md) and the first batch of fixes
+- v0.17 (done): whole-project code review (docs/archive/reviews/REVIEW.md) and the first batch of fixes
   from it: long frontages parcel, roads join junctions they pass through, no stale rail
   segment panic, no lost truck cargo, no NaN geometry, egui focus and right-drag input fixes.
 - Roundabouts: a Road tool preset that stamps a give-way ring over roads and junctions,
   with a live preview of what it cuts, joins and takes.
+
+After v0.17 the work went in agent rounds (round 1 to 12 by 2026-11-21) rather than numbered
+versions; what each round did is in `todo.md` ("Agents running") and, for finished items, in
+`docs/archive/todo_done_2026-11-21.md`.

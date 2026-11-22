@@ -226,6 +226,7 @@ The in-game Help window lists everything.
 Design notes live in [`docs/DESIGN.md`](docs/DESIGN.md), the art direction in
 [`docs/STYLE_REFERENCE.md`](docs/STYLE_REFERENCE.md), the committee in
 [`docs/AI_COMMITTEE.md`](docs/AI_COMMITTEE.md), and the work list in [`todo.md`](todo.md).
+Every doc is listed in [`docs/README.md`](docs/README.md).
 
 ## Roadmap
 

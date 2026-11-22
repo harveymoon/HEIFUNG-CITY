@@ -2,7 +2,8 @@
 
 The game runs a small HTTP JSON API on localhost so scripts, tests and AI assistants can drive
 and inspect it without synthetic keystrokes or clicks. `tools/mcp/nd_mcp.py` wraps it as an MCP
-server (see [`tools/mcp/README.md`](../tools/mcp/README.md)). The code is `crates/nd_app/src/remote.rs`.
+server (see [`tools/mcp/README.md`](../tools/mcp/README.md)). The code is `crates/nd_app/src/remote.rs` and
+`crates/nd_app/src/remote/` (the command registry is `COMMANDS` in `remote/dispatch.rs`).
 
 ## Transport
 
@@ -106,7 +107,7 @@ the replies back. So:
 Every example is the POST body; the reply always carries `"ok"`.
 
 **Other names.** Some commands answer to other names as well (`help` lists them under `aliases`):
-`add_interchange` (`interchange`); `campus` (`university`); `city_name` (`city_identity`); `cleanup` (`clean_up`); `committee_meeting` (`meeting`); `corps` (`corp`, `megacorp`); `megablock` (`megablocks`, `arcology`); `dirt_at` (`contamination_at`); `district` (`districts`); `estate` (`land_market`); `favourite` (`favorite`); `graphics` (`quality`); `grounds_junctions` (`park_junctions`); `heat_vision` (`heat`); `level_crossings` (`level_crossing`, `crossings`, `rail_crossings`); `photo_mode` (`photo`); `pressure` (`pressures`); `roads` (`road_condition`, `road_budget`); `foot_wear` (`worn_paths`); `yards` (`out_front`, `yard_props`); `shore` (`waterfront`); `skyline` (`towers`, `height_limit`); `street_events` (`nights`); `subway` (`metro`); `cable` (`cable_car`, `gondola`, `cablecar`); `taxes` (`tax`); `tolls` (`toll`); `tourism` (`tourists`); `tow_car` (`tow`, `boot`); `zoom_to` (`zoom`).
+`add_interchange` (`interchange`); `airlift` (`chinook`); `audio` (`sound`); `building_notes` (`notes`); `cable` (`cable_car`, `gondola`, `cablecar`); `campus` (`university`); `city_name` (`city_identity`); `cleanup` (`clean_up`); `committee_meeting` (`meeting`); `connectivity` (`stranded`, `no_route`); `containers` (`boxes`); `corps` (`corp`, `megacorp`); `dirt_at` (`contamination_at`); `district` (`districts`); `estate` (`land_market`); `favourite` (`favorite`); `foot_wear` (`worn_paths`); `frame_stats` (`frames`); `get` (`dump`); `graphics` (`quality`); `grounds_junctions` (`park_junctions`); `heat_vision` (`heat`); `islands` (`ferry_islands`); `ledger` (`money`, `books`); `level_crossings` (`level_crossing`, `crossings`, `rail_crossings`); `lot_memory` (`what_stood_here`, `lot_history`); `megablock` (`megablocks`, `arcology`); `photo_mode` (`photo`); `pressure` (`pressures`); `pressure_where` (`show_where`); `replay` (`trip_replay`); `road_use` (`set_road`, `road_edit`); `roads` (`road_condition`, `road_budget`); `shore` (`waterfront`); `skyline` (`towers`, `height_limit`); `stadium_game` (`game_day`); `street_events` (`nights`); `subway` (`metro`); `talk` (`chat`); `taxes` (`tax`); `tiles` (`land_tiles`); `timetable` (`timetables`, `schedule`); `tolls` (`toll`); `tourism` (`tourists`); `tow_car` (`tow`, `boot`); `under_decks` (`undercroft`, `bays`); `walk_crossings` (`crossing_use`); `walk_networks` (`walknets`, `pedestrian_networks`); `yards` (`out_front`, `yard_props`); `zoom_to` (`zoom`).
 
 `help` is checked against the dispatcher by a unit test (`remote::dispatch_tests`): every command
 it runs is documented in `help` or named as an alias, and nothing else is.
@@ -541,6 +542,26 @@ road_connected, reaches_elsewhere, works, ferries_sail, berth, stub}. `report`'s
 {"cmd": "place", "kind": "pier", "x": 40, "y": -610}
 {"cmd": "place", "kind": "dispatch:low", "x": -80, "y": 40}
 ```
+
+#### Hydro dams: `dams`, `dam` [dams]
+
+`dams`: every hydro plant with its output, nameplate and dam (`wall`: ends, length, crest
+footpath; `awaiting_wall`: placed with the tool, makes nothing yet; `automatic`: the old arch), and
+the wall rules. `dam {building, a?, b?, build?, step?, cursor?, click?}` works one plant's wall:
+`a` and `b` (the two banks, [x, y]) return what the wall would be (`length_m`, `span_m`, `cost`,
+`expected_mw`, or `reason`); with `build: true` it is built (paid; a footpath runs along the
+crest). `step: true` puts the Buildings tool in the wall step for this plant (as after placing it),
+`step: false` leaves it; in the step `cursor` reads out what is under the pointer and `click`
+takes the first bank, then the far bank (which builds). Rules: one end within 50 m of the plant,
+both ends on dry ground within 30 m of the water, across the plant's own river once and roughly
+square to it, never over a road (and no road may later be built over the dam).
+
+#### Ferry terminal estimate: `ferry_estimate` [ferries]
+
+`ferry_estimate {at, kind?}`: before placing a terminal at `at` ([x, y]; `kind`
+`ferry_terminal`, the default, or `ferry_terminal_large` for car ferries): residents within
+500 m, towns off the map it would reach, terminals it would link to, sailings, riders and cars a
+day, fares against upkeep, or why it cannot go there.
 
 #### What is already on the map: `build_highlight` [build-highlight]
 
@@ -1776,6 +1797,11 @@ sound and mixed city scenes: `cargo run -p nd_audio --example render_spots -- <o
 - the UI: `Message` and `ToolStatus` whenever the status lines change. Poll with `since` = the last `seq` you saw; `dropped: true` means events fell out of the
 ring in between. `thoughts {limit?}`: the newest memories across all citizens, and current thoughts.
 
+`stadium_game {building}` (alias `game_day`): the stadium plays a game today (gates open 16:30,
+kick-off 19:00, final whistle 21:15). Returns `building`, `game_today`, `gates_open`, `kickoff`,
+`final_whistle` (minutes of the day), `phase`, `away_cars_parked`, `away_cars_driving_in`; the day
+shows as `StadiumEvent`s.
+
 ## Reviewing the city
 
 Five read-only commands answer "how is this city doing, where, and why" in a few calls, with
@@ -2102,6 +2128,10 @@ Events in the log (`events`): `IncidentStarted`, `EmergencyCall`, `UnitDispatche
 `burning`. Emergency vehicles are cars in `find {what: "cars"}`; the units behind them are in
 `report {sections: ["services"]}` under `emergency.stations` and `emergency.active_incidents`.
 
+`airlift {car}` (alias `chinook`): a heavy-lift helicopter flies in, slings the vehicle (an id
+on the road) and flies it away (a resident's car to the pound); it costs the treasury. Returns
+`airlift`, `at`, `from`, `to`, `pound`, `hook_tick`, `end_tick`.
+
 ### Emergency units and the fire scene [fire-scene]
 
 `units {kind?, out?}` lists every fire engine, police car and ambulance: `unit` (its id), title
@@ -2227,7 +2257,10 @@ revenue}}, and the details under `crime` (hot spots, custody, releases, reformed
 
 `society {action}`: `report` (default) returns the section; `evict {building}` puts its households
 on the street (camps form on cheap land); `offend {citizen, building?, kind?}` makes a citizen a
-criminal and has them strike; `trash {kg, building?}` adds trash to bins. `place {kind:
+criminal and has them strike; `trash {kg, building?}` adds trash to bins; `tow_rv {rv}` has a
+camper or van (`rv`: its id in `street.rv_list`) towed within three hours, and whoever lived in it
+moves to a camp; `abandon_rv {rv}` has its household walk away, leaving it abandoned until the
+contractor tows it. `place {kind:
 "trash_depot"}` (also `trash`, `garbage`) puts down a depot (any lot or unzoned ground, a street out
 front). Garbage trucks are cars in `find {what: "cars"}` with a garbage truck body.
 
@@ -2244,6 +2277,16 @@ puts one down (Buildings > Services > Sanitation). Alerts `trash_yards_full`,
 `landfill_nearly_full`. `overlay {layer: "trash"}` is the Trashy streets layer; `city_data {tab:
 "services", sub: "trash"}` the page. Costs are the ledger's `waste disposal` and `recycling
 sales` flows.
+
+### Parks: run-down parks, clean-ups and preserves [parks]
+
+`parks`: every park (lots side by side are one park with one name): `area`, `kept` 0..1,
+`run_down`, `litter`, `dealers`, `campers`, `homeless`, `visits`, `preserve` (left wild),
+`cleanups`, `cleanup_cost`, `troubles`. `park {building, clean_up?, preserve?, set?}` acts on the
+park that `building` (any of its park buildings) belongs to: `clean_up: true` pays for a clean-up
+(litter cleared, dealers moved on for 10 days, campers by it found somewhere else); `preserve`
+true leaves it wild as a nature preserve, false makes it a kept park again; `set {trash 0..1,
+dealers 0..4}` (dev) sets its state.
 
 ### Life under the raised roads [r5-layered]
 

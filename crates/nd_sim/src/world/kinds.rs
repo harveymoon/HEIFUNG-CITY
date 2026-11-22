@@ -1,7 +1,7 @@
 //! [review] What kind of building this is, as the systems ask it: named
 //! predicates for the checks that were written out inline, each exactly
 //! as its callers wrote it (the differences between them are deliberate
-//! or historical; see `docs/review/nd_sim_world.md` §2.1). The broad ones
+//! or historical; see `docs/archive/reviews/nd_sim_world.md` §2.1). The broad ones
 //! live on `Building` itself (`is_city_structure`, `is_special`).
 
 use crate::buildings::Building;
