@@ -24,8 +24,21 @@ pub fn save_text(bytes: &[u8]) -> std::io::Result<String> {
     // than RON packs into (a damaged file must not ask for gigabytes).
     let hint = bytes.len().checked_sub(4).map_or(0, |at| u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]) as usize);
     let mut text = String::with_capacity(hint.min(bytes.len().saturating_mul(64)) + 1);
-    flate2::read::MultiGzDecoder::new(bytes).read_to_string(&mut text)?;
+    // [r13-leftovers] Gzip packs repeated bytes about 1000 to 1: a crafted
+    // file of a few MB must not unpack to gigabytes (a failed allocation
+    // aborts the game). Real saves pack about 5 to 1.
+    let limit = max_save_text(bytes.len());
+    flate2::read::MultiGzDecoder::new(bytes).take(limit as u64 + 1).read_to_string(&mut text)?;
+    if text.len() > limit {
+        return Err(std::io::Error::other(format!("save unpacks to more than {} MB", limit >> 20)));
+    }
     Ok(text)
+}
+
+/// [r13-leftovers] The most RON text a compressed save of `packed` bytes may
+/// unpack to: 200 times its size (at least 64 MB, at most 2 GB).
+pub fn max_save_text(packed: usize) -> usize {
+    packed.saturating_mul(200).clamp(64 << 20, 2 << 30)
 }
 
 impl World {
@@ -127,6 +140,12 @@ impl World {
         // [grid-weather] A save from before the climates keeps its weather
         // but learns which climate it is in.
         self.weather.climate = self.landscape.params.climate;
+        // [r13-leftovers] A land-value grid that cannot be read (a damaged
+        // or hand-edited save) starts again at the default: it refills on
+        // its next pass, where reading it as it is would panic.
+        if !self.land_value.sane() {
+            self.land_value.set(crate::land_value::LandValue::new(self.grid_half(32.0), 32.0));
+        }
         self.validate();
         self.migrate_through_cars();
         // [pt-visual] Generic names that do not fit the business (F38).
@@ -430,5 +449,42 @@ mod save_format_tests {
         let plain = World::from_save_bytes(w.to_ron().unwrap().as_bytes()).expect("plain loads");
         assert_eq!(plain.to_save_ron().unwrap(), back.to_save_ron().unwrap());
         assert!(World::from_save_bytes(&buf[..buf.len() / 2]).is_err());
+    }
+
+    /// [r13-leftovers] A save whose land-value grid cannot be read (`n: 0`,
+    /// a short `values` list, `cell: 0`) loads with a fresh grid instead of
+    /// panicking on the first read.
+    #[test]
+    fn a_broken_land_value_grid_loads_fresh() {
+        let w = World::new(WorldConfig::default());
+        let n = w.land_value.n;
+        for bad in [0usize, 1, 2] {
+            let mut b = w.clone();
+            match bad {
+                0 => b.land_value.n = 0,
+                1 => b.land_value.values.truncate(n * n / 2),
+                _ => b.land_value.cell = 0.0,
+            }
+            assert!(!b.land_value.sane());
+            let back = World::from_ron(&b.to_save_ron().unwrap()).expect("loads");
+            assert!(back.land_value.sane(), "case {bad}");
+            let _ = back.land_value.at(Vec2::new(10.0, 10.0));
+        }
+        assert!(w.land_value.sane());
+    }
+
+    /// [r13-leftovers] A compressed save that unpacks past the limit is an
+    /// error, not gigabytes of text.
+    #[test]
+    fn a_save_that_unpacks_too_far_is_refused() {
+        use std::io::Write;
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        let zeros = vec![b' '; 1 << 20];
+        for _ in 0..80 {
+            gz.write_all(&zeros).unwrap();
+        }
+        let buf = gz.finish().unwrap();
+        assert!(max_save_text(buf.len()) < 80 << 20);
+        assert!(save_text(&buf).is_err());
     }
 }

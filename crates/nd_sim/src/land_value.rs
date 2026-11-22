@@ -188,6 +188,15 @@ impl LandValue {
         true
     }
 
+    /// [r13-leftovers] Whether the grid can be read: a damaged or
+    /// hand-edited save can hold `n: 0`, `cell: 0` or a `values` list that
+    /// does not fill the grid, which [`LandValue::at`] and
+    /// [`LandValue::grow_to`] would panic on (the optional per-cell lists
+    /// are checked by length where they are read).
+    pub fn sane(&self) -> bool {
+        self.cell.is_finite() && self.cell > 0.0 && self.half.is_finite() && self.half > 0.0 && self.n > 0 && self.n.checked_mul(self.n) == Some(self.values.len())
+    }
+
     /// Set every cell (tests and scenarios).
     pub fn fill(&mut self, v: f32) {
         self.values.iter_mut().for_each(|x| *x = v);
