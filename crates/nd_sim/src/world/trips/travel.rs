@@ -2,6 +2,11 @@
 
 use super::*;
 
+/// [trip-review] A piece of a route shorter than this beside a junction is
+/// ridden as part of it (`route_path`), up to `SHORT_RUN` metres of them.
+const SHORT_PIECE: f32 = 12.0;
+const SHORT_RUN: f32 = 30.0;
+
 impl World {
     pub(in crate::world) fn leave_building(&mut self, id: CitizenId) -> Option<Vec2> {
         self.up_from_platform(id);
@@ -257,7 +262,11 @@ impl World {
                 }
                 pts
             }
-            None => self.route_path(&streets, mode),
+            None => {
+                let mut p = self.route_path(&streets, mode);
+                Self::trim_route_ends(&mut p, exit_pos.unwrap_or(walk_from), entrance);
+                p
+            }
         };
         path.push(entrance);
         if mode == TravelMode::Bike {
@@ -511,6 +520,24 @@ impl World {
     /// Route along the right-hand side of each leg: walkers in the middle
     /// of the pavement, bikes on the road shoulder; both down the middle of
     /// a path (walkers keep right, bikes keep left).
+    ///
+    /// [trip-review] Through a junction (a node of three or more ways) the
+    /// ride is a curve: the way in ends level with the junction's radius
+    /// (the widest street's half width and a metre, inside the zebra, so a
+    /// rider still meets the crosswalk on the straight and stops at its
+    /// line), the way out starts as far along it, and between them a
+    /// quadratic curve whose control point is the corner where the two
+    /// kerb lines meet, or, where that corner lies behind the way in or
+    /// past the way out (nearly straight on between ways of different
+    /// widths, a sharp turn, a street onto a path), a cubic one leaving
+    /// along the way in and arriving along the way out. Joining the pieces
+    /// at that corner alone sent a rider forward past the junction and
+    /// back, or sideways a few metres in its middle: Harvey saw the bikes
+    /// zig-zag through junctions, and with the heading taken from the leg
+    /// being ridden, a bike caught on a short back leg at the end of a tick
+    /// spun round for a frame. A plain bend of one street (two ways at the
+    /// node) keeps its corner, unless that corner is out of order too.
+    /// Short pieces beside a junction (`SHORT_PIECE`) are taken in with it.
     pub(in crate::world) fn route_path(&self, nodes: &[NodeId], mode: TravelMode) -> Vec<Vec2> {
         if nodes.len() < 2 {
             return nodes.iter().map(|&n| self.roads.node(n).pos).collect();
@@ -537,26 +564,142 @@ impl World {
             let off = right * offset;
             pieces.push((a + off, b + off));
         }
-        let mut out = Vec::with_capacity(pieces.len() + 1);
+        let mut out: Vec<Vec2> = Vec::with_capacity(pieces.len() * 2 + 1);
         out.push(pieces[0].0);
-        for (i, pair) in pieces.windows(2).enumerate() {
-            let ((p0, p1), (q0, q1)) = (pair[0], pair[1]);
+        let ways = |n: NodeId| self.roads.neighbors(n).filter(|(_, s)| !self.roads.segment(*s).is_rail()).count();
+        let len = |k: usize| pieces[k].0.distance(pieces[k].1);
+        let last_inner = nodes.len() - 2;
+        let mut j = 1;
+        while j <= last_inner {
+            // [trip-review] A junction whose arms are cut short (a divided
+            // road's two carriageways, a stub of a few metres between two
+            // nodes, a footpath's end beside the junction) is one junction
+            // to a rider: the pieces shorter than `SHORT_PIECE` next to a
+            // junction are ridden as one curve from the way into the first
+            // node to the way out of the last. Their kerb lines, offset
+            // further than the pieces are long, crossed in nonsense order.
+            let j0 = j;
+            let mut m = j;
+            let mut run = 0.0;
+            while m < last_inner && len(m) < SHORT_PIECE && (ways(nodes[m]) >= 3 || ways(nodes[m + 1]) >= 3) && run + len(m) < SHORT_RUN {
+                run += len(m);
+                m += 1;
+            }
+            let ((p0, p1), (q0, q1)) = (pieces[j0 - 1], pieces[m]);
             let (d, e) = ((p1 - p0).normalize_or_zero(), (q1 - q0).normalize_or_zero());
-            let node = self.roads.node(nodes[i + 1]).pos;
-            let reach = p1.distance(node).max(q0.distance(node)) * 3.0 + 2.0;
+            let (first, end) = (self.roads.node(nodes[j0]).pos, self.roads.node(nodes[m]).pos);
+            let centre = (first + end) * 0.5;
+            let reach = p1.distance(first).max(q0.distance(end)) * 3.0 + 2.0 + run;
             let cross = d.perp_dot(e);
             // The corner, unless the pieces run (nearly) straight on or back
             // the way they came, or it lies implausibly far off the junction.
-            let corner = (cross.abs() > 0.05).then(|| p1 + d * (q0 - p1).perp_dot(e) / cross).filter(|c| c.distance(node) < reach);
-            match corner {
-                Some(c) => out.push(c),
-                None => {
+            let corner = (cross.abs() > 0.05).then(|| p1 + d * (q0 - p1).perp_dot(e) / cross).filter(|c| c.distance(centre) < reach);
+            let last = *out.last().unwrap_or(&p0);
+            // [trip-review] In order: ahead of where the ride got to on the
+            // way in, and short of the way out's far end.
+            let ordered = |c: Vec2| (c - last).dot(d) > 0.05 && (q1 - c).dot(e) > 0.05;
+            let junction = (j0..=m).any(|x| ways(nodes[x]) >= 3);
+            let shift = (q0 - p1).perp_dot(d).abs();
+            j = m + 1;
+            if !junction {
+                // A plain bend of one street: its corner.
+                match corner {
+                    Some(c) if ordered(c) => {
+                        out.push(c);
+                        continue;
+                    }
+                    None if p1.distance(q0) < 0.3 => {
+                        out.push(p1);
+                        continue;
+                    }
+                    _ => {}
+                }
+            } else if cross.abs() < 0.14 && d.dot(e) > 0.0 && shift < 0.3 {
+                // Straight over on ways of one width: nothing to bend.
+                if m == j0 && (p1 - last).dot(d) > 0.05 {
                     out.push(p1);
-                    out.push(q0);
+                }
+                continue;
+            }
+            // The curve's ends: a junction's radius back along the way in
+            // and out along the way out (a plain bend: a few metres), never
+            // more than 45% of either piece.
+            let radius = |n: NodeId| if ways(n) >= 3 { self.roads.streets_at(n).map(|s| self.roads.segment(s).half_width()).fold(0.0, f32::max) + 1.0 } else { 3.0 };
+            let r_in = radius(nodes[j0]).min(p0.distance(p1) * 0.45);
+            let r_out = radius(nodes[m]).min(q0.distance(q1) * 0.45);
+            let mut from = p1 - d * r_in;
+            if (from - last).dot(d) <= 0.05 {
+                from = last;
+            }
+            let to = q0 + e * r_out;
+            let turn = d.angle_to(e).abs();
+            let control = corner.filter(|&c| (c - from).dot(d) > 0.05 && (to - c).dot(e) > 0.05);
+            if from.distance(last) > 0.05 {
+                out.push(from);
+            }
+            match control {
+                Some(c) => {
+                    // A turn: the quadratic through the corner turns one
+                    // way only, never back.
+                    let steps = ((turn.to_degrees() / 15.0).ceil() as usize).clamp(2, 8);
+                    for k in 1..steps {
+                        let t = k as f32 / steps as f32;
+                        let u = 1.0 - t;
+                        out.push(from * (u * u) + c * (2.0 * u * t) + to * (t * t));
+                    }
+                }
+                // A hairpin whose ends nearly meet: a sharp corner (a curve
+                // between them would be a little loop).
+                None if from.distance(to) < 2.0 => {}
+                None => {
+                    // Leave along the way in, arrive along the way out.
+                    let k = from.distance(to) * 0.4;
+                    let (c1, c2) = (from + d * k, to - e * k);
+                    let steps = ((turn.to_degrees().max(30.0) / 15.0).ceil() as usize).clamp(3, 10);
+                    for s in 1..steps {
+                        let t = s as f32 / steps as f32;
+                        let u = 1.0 - t;
+                        out.push(from * (u * u * u) + c1 * (3.0 * u * u * t) + c2 * (3.0 * u * t * t) + to * (t * t * t));
+                    }
                 }
             }
+            out.push(to);
         }
         out.push(pieces[pieces.len() - 1].1);
         out
+    }
+
+    /// [trip-review] A ride (or a walk along the streets) set off by going
+    /// to the first node of its route, even where that node lay behind the
+    /// door along the street it fronts, and back past the door again; and
+    /// at the far end on to the destination's access node (the nearer end
+    /// of its front street, up to half a block on) and back to the door.
+    /// Harvey's cyclists rode up to 98 m past and back. Where the door
+    /// lies abreast of the first leg (the last), the route starts (ends)
+    /// level with it on that leg.
+    pub(in crate::world) fn trim_route_ends(path: &mut [Vec2], start: Vec2, end: Vec2) {
+        // As far off the leg as a door at the back of the widest pavement.
+        const ABREAST: f32 = 25.0;
+        let abreast = |p: Vec2, a: Vec2, b: Vec2| -> Option<Vec2> {
+            let ab = b - a;
+            let len2 = ab.length_squared();
+            if len2 < 1.0 {
+                return None;
+            }
+            let t = (p - a).dot(ab) / len2;
+            let at = a + ab * t;
+            (t > 0.0 && t < 1.0 && at.distance(p) < ABREAST).then_some(at)
+        };
+        if path.len() >= 3 {
+            if let Some(at) = abreast(start, path[0], path[1]) {
+                path[0] = at;
+            }
+        }
+        let n = path.len();
+        if n >= 3 {
+            if let Some(at) = abreast(end, path[n - 2], path[n - 1]) {
+                path[n - 1] = at;
+            }
+        }
     }
 }

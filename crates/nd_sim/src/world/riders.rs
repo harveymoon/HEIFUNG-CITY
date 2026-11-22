@@ -63,6 +63,28 @@ fn ray_hits(o: Vec2, d: Vec2, reach: f32, a: Vec2, b: Vec2) -> Option<f32> {
 }
 
 impl World {
+    /// [trip-review] Is a rider at `at` heading `dir` riding along one of
+    /// the other streets at crossing `c`'s junction, on its carriageway
+    /// (within its half width of its middle, within about 35 degrees of its
+    /// line)? Then the crosswalk over the side arm they pass the mouth of
+    /// is not theirs: they ride on through the junction as traffic. Taken
+    /// for a footpath's line over that arm, Harvey's cyclists riding down a
+    /// curving one-way street were sent up the stairs of the footbridge
+    /// over a side street and back down onto the street they had left
+    /// (`bike_over_footbridges`), or stopped at a side street's zebra for
+    /// a gap as a walker would (`rider_stop`).
+    fn rides_along_street(&self, c: &crate::walk::Crossing, at: Vec2, dir: Vec2) -> bool {
+        let Some(node) = c.node else { return false };
+        self.roads.streets_at(node).any(|s| {
+            if s == c.segment {
+                return false;
+            }
+            let (s0, s1) = self.roads.segment_points(s);
+            let sd = (s1 - s0).normalize_or_zero();
+            dir.dot(sd).abs() > 0.82 && crate::geom::project_on_segment(at, s0, s1).1.distance(at) < self.roads.segment(s).half_width() + 0.5
+        })
+    }
+
     /// [walk-crossings] A bike's path that goes straight over a street
     /// where a footbridge replaced the crossing goes over the bridge
     /// instead: up the stairs at the near end (wheeling the bike, at a
@@ -111,7 +133,7 @@ impl World {
                     continue;
                 }
                 let (t, at) = crate::geom::project_on_segment(c.mid, p, q);
-                if at.distance(c.mid) > 3.0 {
+                if at.distance(c.mid) > 3.0 || self.rides_along_street(c, at, d) {
                     continue;
                 }
                 let s = arc[i - 1] + t * len;
@@ -393,7 +415,7 @@ impl World {
                 // Straight over the street on a footpath's line: as a walker.
                 let to_mid = crossing.mid - pos;
                 let t_mid = to_mid.dot(dir);
-                if to_mid.perp_dot(dir).abs() > 3.0 || t_mid < -12.0 || t_mid > reach + 12.0 {
+                if to_mid.perp_dot(dir).abs() > 3.0 || t_mid < -12.0 || t_mid > reach + 12.0 || self.rides_along_street(crossing, pos + dir * t_mid, dir) {
                     continue;
                 }
                 let hw = self.roads.segment(crossing.segment).half_width();
@@ -880,5 +902,33 @@ mod tests {
         assert_eq!(trials(&seeds(|c, _| c > CAUTIOUS, 20)), 0, "the cautious wait");
         let bold = trials(&seeds(|c, h| c < 0.15 && h > 0.8, 30));
         assert!(bold >= 2 && bold < 30, "rebels sometimes run a red on an empty junction: {bold} of 30");
+    }
+
+    /// [trip-review] Over a left turn at the crossroads a rider's heading
+    /// only ever swings one way (it used to flip round on a short leg of
+    /// the path: forward past the junction and back).
+    #[test]
+    fn a_cyclist_rides_a_turn_with_a_heading_that_never_swings_back() {
+        let mut w = town();
+        let near = |w: &World, p: Vec2| NodeId(w.roads.nodes.iter().position(|n| n.pos.distance(p) < 1.0 && !n.segments.is_empty()).unwrap() as u32);
+        for (from, to) in [(Vec2::new(-300.0, 0.0), Vec2::new(0.0, -300.0)), (Vec2::new(-300.0, 0.0), Vec2::new(0.0, 300.0))] {
+            let nodes = w.roads.foot_path(near(&w, from), near(&w, to)).unwrap();
+            let path = w.route_path(&nodes, TravelMode::Bike);
+            let turn = (path[1] - path[0]).angle_to(path[path.len() - 1] - path[path.len() - 2]);
+            let id = w.citizens.keys().next().unwrap();
+            rider(&mut w, id, seeds(|c, _| c > 0.85, 1)[0], path);
+            w.citizens[id].heading = 0.0;
+            let mut last = 0.0f32;
+            for _ in 0..200 {
+                run(&mut w, 1);
+                if !matches!(w.citizens[id].activity, Activity::Traveling { .. }) {
+                    break;
+                }
+                let h = w.citizens[id].heading;
+                let swing = (h - last + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+                assert!(swing * turn.signum() > -0.01, "{from} to {to}: the heading swung back {:.1} degrees", swing.to_degrees());
+                last = h;
+            }
+        }
     }
 }
