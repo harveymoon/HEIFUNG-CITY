@@ -116,7 +116,7 @@ fn a_job_on_the_pool_draws_what_the_main_thread_draws() {
     for (a, b) in here.iter().zip(&there) {
         assert_eq!((a.cell, a.hash), (b.cell, b.hash));
         assert_eq!(a.meshes.len(), b.meshes.len());
-        for ((sa, ma), (sb, mb)) in a.meshes.iter().zip(&b.meshes) {
+        for ((sa, ma, _), (sb, mb, _)) in a.meshes.iter().zip(&b.meshes) {
             assert_eq!(sa, sb);
             assert_eq!(ma.count_vertices(), mb.count_vertices());
             assert_eq!(format!("{:?}", ma.attribute(Mesh::ATTRIBUTE_POSITION)), format!("{:?}", mb.attribute(Mesh::ATTRIBUTE_POSITION)));

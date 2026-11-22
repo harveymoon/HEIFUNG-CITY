@@ -69,7 +69,7 @@ pub(super) fn status(ctx: &Ctx) -> Value {
         "bots": { "active": w.bots.bots.len(), "delivered_today": w.bots.delivered_today, "vans_on_road": nd_sim::Bots::vans(w), "van_orders_today": w.bots.van_orders_today },
         "transit": { "routes": w.transit.routes.len(), "buses": t.buses, "depots": t.depots, "depot_capacity": t.depot_capacity, "waiting": t.waiting, "riding": t.riding, "riders_today": t.riders_today, "fares_today": round(t.fares_today), "upkeep_today": round(t.upkeep_today) },
         "rail": { "trains": r.trains, "stations": r.stations, "yards": r.yards, "waiting": r.waiting, "riding": r.riding, "riders_today": r.riders_today, "fares_today": round(r.fares_today), "next_passenger_in": r.next_passenger_in, "freight_in_today": round(r.freight_in_today), "freight_waiting": round(r.freight_waiting), "upkeep_today": round(r.upkeep_today) },
-        "render": { "fps": round(fps as f32), "ticks_per_frame": sim.ticks_last_frame, "triangles": ctx.stats.street_triangles + ctx.stats.building_triangles, "building_meshes": ctx.stats.building_entities, "detail_triangles": { "mid": ctx.stats.detail_triangles[0], "near": ctx.stats.detail_triangles[1] }, "detail_in_range": { "mid": ctx.stats.detail_in_range[0], "near": ctx.stats.detail_in_range[1] }, "visible_meshes": ctx.stats.visible_meshes, "visible_detail_meshes": ctx.stats.visible_detail_meshes, "drawn_triangles": ctx.stats.street_triangles + ctx.stats.building_triangles - ctx.stats.detail_triangles.iter().sum::<usize>() + ctx.stats.detail_in_range.iter().sum::<usize>(), "graphics": look::graphics_json(ctx), "chunks": chunks_json(&ctx.stats.chunks) },
+        "render": { "fps": round(fps as f32), "ticks_per_frame": sim.ticks_last_frame, "triangles": ctx.stats.street_triangles + ctx.stats.building_triangles, "building_meshes": ctx.stats.building_entities, "detail_triangles": { "mid": ctx.stats.detail_triangles[0], "near": ctx.stats.detail_triangles[1] }, "detail_in_range": { "mid": ctx.stats.detail_in_range[0], "near": ctx.stats.detail_in_range[1] }, "drawn_triangles": ctx.stats.street_triangles + ctx.stats.building_triangles - ctx.stats.detail_triangles.iter().sum::<usize>() + ctx.stats.detail_in_range.iter().sum::<usize>(), "graphics": look::graphics_json(ctx), "chunks": chunks_json(&ctx.stats.chunks) },
         "camera": camera::camera_pose(ctx), "tool": tool::tool_state(&ctx.tools), "selection": selection(w, *ctx.selection),
         "project": planning::project_state(ctx)["project"], "overlays": look::overlays_json(&ctx.overlays),
         "lighting": { "follow_clock": ctx.lighting.follow_clock, "hour": round(ctx.lighting.hour), "heat_vision": ctx.lighting.heat },
@@ -78,6 +78,9 @@ pub(super) fn status(ctx: &Ctx) -> Value {
     });
     // [r12-yards] Households' things on screen.
     v["render"]["yards"] = json!({ "props": ctx.stats.yard_props, "homes": ctx.stats.yard_homes });
+    // [r13-detail] Mesh entities drawn last frame, and those under a detail band.
+    v["render"]["visible_meshes"] = json!(ctx.stats.visible_meshes);
+    v["render"]["visible_detail_meshes"] = json!(ctx.stats.visible_detail_meshes);
     // [r7-sim-thread] The sim thread.
     {
         let c = &sim.world;
