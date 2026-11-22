@@ -191,7 +191,8 @@ fn every_thing_is_drawn_small_and_believable() {
                 assert!(m.positions.iter().all(|p| p.iter().all(|c| c.is_finite())));
             }
             let size = hi - lo;
-            assert!(size.max_element() < 3.2, "{kind:?} {v}: {size:?}");
+            let most = if kind == PropKind::Trampoline { 3.8 } else { 3.2 };
+            assert!(size.max_element() < most, "{kind:?} {v}: {size:?}");
             let window = (kind == PropKind::Plant && v >= WINDOW_BOX) || (kind == PropKind::Laundry && v >= POLE);
             if window {
                 assert!(hi.y < 0.4 && lo.x > -0.05, "{kind:?} {v} hangs off the wall: {lo:?} {hi:?}");
@@ -206,4 +207,36 @@ fn every_thing_is_drawn_small_and_believable() {
     let ys: Vec<f32> = g.iter().flat_map(|(_, m)| m.positions.iter().map(|p| p[1])).collect();
     let top = ys.iter().copied().fold(0.0, f32::max);
     assert!((0.9..1.15).contains(&top), "bike height {top}");
+}
+
+/// [r13-detail] A household's washing goes on the building style's own
+/// lines first (a flat's on a pole, a house's on a line), in runs along
+/// it; a household with no line left puts out its own.
+#[test]
+fn washing_goes_on_the_styles_lines_first() {
+    let mut s = Spots::default();
+    s.yard.push(Spot { at: Vec3::new(0.0, 0.0, 5.0), yaw: 0.0, room: 2.0, pavement: false });
+    s.lines.push(nd_procgen_line(Vec3::new(0.0, 2.0, 0.0), Vec3::new(3.3, 2.0, 0.0), false));
+    s.lines.push(nd_procgen_line(Vec3::new(0.0, 6.0, 0.0), Vec3::new(1.2, 6.0, 0.0), true));
+    let who = owners(3);
+    let hh = nd_sim::citizens::HouseholdId::default();
+    let wishes = vec![
+        Wish { kind: PropKind::Laundry, owner: who[0], household: hh, flat: 0, place: Place::Yard, seed: 1 },
+        Wish { kind: PropKind::Laundry, owner: who[1], household: hh, flat: 1, place: Place::Window, seed: 2 },
+        Wish { kind: PropKind::Laundry, owner: who[2], household: hh, flat: 2, place: Place::Yard, seed: 3 },
+    ];
+    let a = place(&wishes, &s, 7);
+    assert_eq!(a, place(&wishes, &s, 7));
+    let of = |o| a.iter().filter(|p| p.owner == o).collect::<Vec<_>>();
+    let line = of(who[0]);
+    assert_eq!(line.len(), 3, "three runs on a 3.3 m line: {line:?}");
+    assert!(line.iter().all(|p| p.variant >= HUNG && (1.85..=2.0).contains(&p.at.y)));
+    let pole = of(who[1]);
+    assert!(pole.len() == 1 && pole[0].variant >= HUNG && (pole[0].at.y - 6.0).abs() < 0.01, "a flat's washing on the pole: {pole:?}");
+    let own = of(who[2]);
+    assert!(own.len() == 1 && own[0].variant < POLE && own[0].at.y == 0.0, "no line left: its own line or airer: {own:?}");
+}
+
+fn nd_procgen_line(a: Vec3, b: Vec3, window: bool) -> crate::surface::WashLine {
+    crate::surface::WashLine { a, b, sag: 0.1, window }
 }

@@ -15,7 +15,7 @@
 use crate::buildings::kit::{fence_run, hedge_run};
 use crate::buildings::parts::{bench_world, bin_world, distance_to_boundary, graffiti_world, mix, mul, ngon, offset_poly, pick, random_in_poly, rgba, rock_world, scrub_world, CHARCOAL, DARK};
 use crate::palette::Palette;
-use crate::surface::{Geometry, Surface::*};
+use crate::surface::{Geometry, Lod, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::rng_for;
 use nd_sim::zoning::{point_in_polygon, polygon_area};
@@ -193,46 +193,49 @@ fn dormant(g: &mut Geometry, site: &Site, rng: &mut impl Rng, pal: &Palette) {
             bx(g, Foliage, p, s * 0.3, Vec3::new(s, s * 0.6, s * 0.8), rng.random_range(0.0..TAU), mul(pal.foliage_dry, rng.random_range(0.7..1.1)));
         }
     }
-    // Rubbish: bags, boxes, sheets and bits of board.
-    for _ in 0..((area / 40.0) as i32).clamp(3, 8) {
-        if let Some(p) = site.sample(rng, 0.5) {
-            let yaw = rng.random_range(0.0..TAU);
-            match rng.random_range(0..5) {
-                0 | 1 => bx(g, Tarp, p, 0.18, Vec3::new(rng.random_range(0.4..0.8), 0.36, rng.random_range(0.35..0.6)), yaw, if rng.random_bool(0.5) { [0.07, 0.07, 0.08] } else { pick(rng, &pal.tarp_colors) }),
-                2 => bx(g, Wood, p, 0.04, Vec3::new(rng.random_range(0.6..1.4), 0.08, rng.random_range(0.5..1.0)), yaw, mul(pal.plywood, 0.75)),
-                3 => bx(g, Metal, p, 0.2, Vec3::new(rng.random_range(0.4..0.9), 0.4, rng.random_range(0.4..0.7)), yaw, mul(pal.steel, 0.55)),
-                _ => bx(g, Tarp, p, 0.03, Vec3::new(rng.random_range(1.0..2.2), 0.06, rng.random_range(0.8..1.6)), yaw, mul(pick(rng, &pal.tarp_colors), 0.7)),
-            }
-        }
-    }
-    // Tyres, lying flat in short stacks.
-    for _ in 0..rng.random_range(1..3) {
-        if let Some(p) = site.sample(rng, 0.8) {
-            for k in 0..rng.random_range(1..4) {
-                let q = p + Vec2::new(rng.random_range(-0.08..0.08), rng.random_range(-0.08..0.08));
-                g.part(Matte).cylinder(q, 0.38, 0.38, k as f32 * 0.24, k as f32 * 0.24 + 0.22, 6, rgba(DARK));
-            }
-        }
-    }
-    // Scrap: rusted sheet and a drum or two.
-    for _ in 0..rng.random_range(1..3) {
-        if let Some(p) = site.sample(rng, 1.2) {
-            for _ in 0..rng.random_range(2..5) {
-                let q = p + Vec2::new(rng.random_range(-0.9..0.9), rng.random_range(-0.9..0.9));
-                let size = Vec3::new(rng.random_range(0.5..1.6), rng.random_range(0.1..0.5), rng.random_range(0.3..1.2));
-                bx(g, Rust, q, size.y * 0.5, size, rng.random_range(0.0..TAU), mul(pal.rust, rng.random_range(0.7..1.1)));
-            }
-            if rng.random_bool(0.6) {
-                let q = p + Vec2::new(rng.random_range(-1.0..1.0), rng.random_range(-1.0..1.0));
-                if rng.random_bool(0.5) {
-                    g.part(Rust).cylinder(q, 0.3, 0.3, 0.0, 0.9, 8, rgba(pal.rust));
-                } else {
-                    let d = Vec2::from_angle(rng.random_range(0.0..TAU));
-                    g.part(Rust).pipe(q, d, 0.9, 0.3, 0.3, 8, rgba(mul(pal.rust, 0.9)));
+    // [r13-detail] The junk is near detail (`crate::detail`).
+    g.lod(Lod::Near, |g| {
+        // Rubbish: bags, boxes, sheets and bits of board.
+        for _ in 0..((area / 40.0) as i32).clamp(3, 8) {
+            if let Some(p) = site.sample(rng, 0.5) {
+                let yaw = rng.random_range(0.0..TAU);
+                match rng.random_range(0..5) {
+                    0 | 1 => bx(g, Tarp, p, 0.18, Vec3::new(rng.random_range(0.4..0.8), 0.36, rng.random_range(0.35..0.6)), yaw, if rng.random_bool(0.5) { [0.07, 0.07, 0.08] } else { pick(rng, &pal.tarp_colors) }),
+                    2 => bx(g, Wood, p, 0.04, Vec3::new(rng.random_range(0.6..1.4), 0.08, rng.random_range(0.5..1.0)), yaw, mul(pal.plywood, 0.75)),
+                    3 => bx(g, Metal, p, 0.2, Vec3::new(rng.random_range(0.4..0.9), 0.4, rng.random_range(0.4..0.7)), yaw, mul(pal.steel, 0.55)),
+                    _ => bx(g, Tarp, p, 0.03, Vec3::new(rng.random_range(1.0..2.2), 0.06, rng.random_range(0.8..1.6)), yaw, mul(pick(rng, &pal.tarp_colors), 0.7)),
                 }
             }
         }
-    }
+        // Tyres, lying flat in short stacks.
+        for _ in 0..rng.random_range(1..3) {
+            if let Some(p) = site.sample(rng, 0.8) {
+                for k in 0..rng.random_range(1..4) {
+                    let q = p + Vec2::new(rng.random_range(-0.08..0.08), rng.random_range(-0.08..0.08));
+                    g.part(Matte).cylinder(q, 0.38, 0.38, k as f32 * 0.24, k as f32 * 0.24 + 0.22, 6, rgba(DARK));
+                }
+            }
+        }
+        // Scrap: rusted sheet and a drum or two.
+        for _ in 0..rng.random_range(1..3) {
+            if let Some(p) = site.sample(rng, 1.2) {
+                for _ in 0..rng.random_range(2..5) {
+                    let q = p + Vec2::new(rng.random_range(-0.9..0.9), rng.random_range(-0.9..0.9));
+                    let size = Vec3::new(rng.random_range(0.5..1.6), rng.random_range(0.1..0.5), rng.random_range(0.3..1.2));
+                    bx(g, Rust, q, size.y * 0.5, size, rng.random_range(0.0..TAU), mul(pal.rust, rng.random_range(0.7..1.1)));
+                }
+                if rng.random_bool(0.6) {
+                    let q = p + Vec2::new(rng.random_range(-1.0..1.0), rng.random_range(-1.0..1.0));
+                    if rng.random_bool(0.5) {
+                        g.part(Rust).cylinder(q, 0.3, 0.3, 0.0, 0.9, 8, rgba(pal.rust));
+                    } else {
+                        let d = Vec2::from_angle(rng.random_range(0.0..TAU));
+                        g.part(Rust).pipe(q, d, 0.9, 0.3, 0.3, 8, rgba(mul(pal.rust, 0.9)));
+                    }
+                }
+            }
+        }
+    });
     // A broken fence along the front, stretches of it gone.
     let (a, b) = site.front_line(0.45);
     if a.distance(b) > 3.0 {
@@ -359,11 +362,11 @@ fn parklet(g: &mut Geometry, site: &Site, rng: &mut impl Rng, pal: &Palette) {
             let seat = end + site.inward * 1.0;
             // The bench's back is on its left side; turn it so that is inward.
             let yaw = (-site.inward.x).atan2(site.inward.y);
-            bench_world(g, seat, yaw, pal.wood, CHARCOAL);
+            g.lod(Lod::Near, |g| bench_world(g, seat, yaw, pal.wood, CHARCOAL));
             keep_clear.push((seat, 2.0));
             let bin = seat + Vec2::new(-site.inward.y, site.inward.x) * 1.6;
             if site.inside(bin, 0.6) {
-                bin_world(g, bin, mul(pal.metal_paint(0), 0.9));
+                g.lod(Lod::Near, |g| bin_world(g, bin, mul(pal.metal_paint(0), 0.9)));
             }
             // A low lamp by the path.
             let lamp = start + site.inward * (reach * 0.5) + Vec2::new(site.inward.y, -site.inward.x) * 1.2;

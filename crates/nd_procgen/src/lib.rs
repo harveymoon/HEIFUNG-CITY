@@ -10,6 +10,11 @@ pub mod color;
 pub mod crossing;
 /// [plants] The hydro plant's arch dam.
 pub mod dam;
+/// [r13-detail] The one set of distance bands close-up detail is drawn in.
+pub mod detail;
+/// [r13-detail] The shared small props (bike, trees, bench, bin, planters,
+/// washing), built once and used by styles, parks, grounds and yards.
+pub mod props;
 /// Named heights and decal depths (what stands proud of what).
 pub mod depth;
 pub mod footbridge;
@@ -67,7 +72,8 @@ pub use buildings::strip_mine_hole;
 pub use buildings::{battery_lights, solar_head, solar_trackers, SolarTracker, SOLAR_HUB, SOLAR_MAX_TILT, building_style, style_extras, coal_vents, incinerator_vents, CoalVent, generate_building, wind_rotor, wind_turbines, BuildingRules, PlantField, CraneRig, crane_slew, GameRig, Extras, LandUseRules, Neighbour, Style, StyleBook, Turbine, NEON_MARK, NIGHT_MARK, WINDOW_LIGHT_MARK};
 pub use mesh::MeshData;
 pub use palette::Palette;
-pub use surface::{Geometry, Lod, Surface};
+pub use surface::{Geometry, Lod, Surface, WashLine};
+pub use detail::DetailBand;
 pub use terrain::{build_far_ground, build_terrain, flat_height, scatter_nature, terrain_height, TerrainConfig};
 pub use textures::{generate as generate_texture, mip_chain, roughness_map, Texture};
 pub use vacant::generate_vacant;

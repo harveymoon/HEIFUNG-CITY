@@ -287,7 +287,7 @@ pub(super) fn atrium(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face,
 }
 
 /// A row of `n` bikes in a rack from lot-local `p` along `dir`: the rail
-/// and frames mid detail, the wheels near. Only where it fits the lot.
+/// mid detail, the bikes (the shared bicycle) near. Only where it fits the lot.
 fn bike_rack(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, dir: Vec2, n: i32) {
     let f = &c.frame;
     let len = n as f32 * 0.75;
@@ -300,23 +300,13 @@ fn bike_rack(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, dir: Vec2, 
     let m = (p + end) * 0.5;
     let rail = mul(c.palette.steel, 0.7);
     let cols: Vec<[f32; 3]> = (0..n).map(|_| if coin(rng, 0.4) { HIRE[rng.random_range(0..HIRE.len())] } else { pick(rng, &c.palette.metal_paint) }).collect();
-    g.lod(Lod::Mid, |g| {
-        f.bx_yaw(g, Matte, m.x, 0.45, m.y, Vec3::new(len, 0.06, 0.06), rail, yaw);
+    g.lod(Lod::Mid, |g| f.bx_yaw(g, Matte, m.x, 0.45, m.y, Vec3::new(len, 0.06, 0.06), rail, yaw));
+    // [r13-detail] The shared bicycle in each slot (near).
+    let d = f.dir3(Vec2::new(across.cos(), across.sin()));
+    g.lod(Lod::Near, |g| {
         for (i, col) in cols.iter().enumerate() {
             let q = p + dir * (i as f32 + 0.5) * 0.75;
-            f.bx_yaw(g, Matte, q.x, 0.62, q.y, Vec3::new(1.5, 0.3, 0.05), mul(*col, 1.0 - 0.3 * c.wear), across);
-        }
-    });
-    g.lod(Lod::Near, |g| {
-        for i in 0..n {
-            let q = p + dir * (i as f32 + 0.5) * 0.75;
-            let side = Vec2::new(across.cos(), across.sin());
-            for s in [-0.55f32, 0.55] {
-                let w = q + side * s;
-                let axle = f.dir3(dir) * 0.03;
-                let a = f.at2(w, 0.34);
-                g.part(Matte).tube(a - axle, a + axle, 0.33, 8, rgba(DARK));
-            }
+            crate::props::bicycle(g, crate::props::Pose::along(f.at2(q, 0.0), Vec2::new(d.x, d.z)), crate::props::Bike::plain(mul(*col, 1.0 - 0.3 * c.wear)));
         }
     });
 }

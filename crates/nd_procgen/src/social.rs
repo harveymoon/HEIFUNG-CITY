@@ -20,7 +20,7 @@
 use crate::color::{at, mix, mul, pick, rgba};
 use crate::palette::Palette;
 use crate::mesh::MeshData;
-use crate::surface::{Geometry, Surface, Surface::*};
+use crate::surface::{Geometry, Lod, Surface, Surface::*};
 use glam::{Vec2, Vec3};
 use nd_sim::rng_for;
 use rand::Rng;
@@ -1043,13 +1043,15 @@ pub fn garden(center: Vec2, front: Vec2, size: f32, seed: u64) -> Geometry {
                 let du = -1.0 + k as f32 * 2.0 / (n - 1).max(1) as f32;
                 let h = rng.random_range(0.2..0.6);
                 let col = if rng.random_bool(0.25) { pick(&mut rng, &flowers) } else { pick(&mut rng, &greens) };
-                g.part(Foliage).boxed(at(u + du, v + rng.random_range(-0.25..0.25), 0.4 + h * 0.5), Vec3::new(0.35, h, 0.35), yaw + k as f32, rgba(col));
+                let p = at(u + du, v + rng.random_range(-0.25..0.25), 0.4 + h * 0.5);
+                // [r13-detail] The plants are near detail.
+                g.lod(Lod::Near, |g| g.part(Foliage).boxed(p, Vec3::new(0.35, h, 0.35), yaw + k as f32, rgba(col)));
             }
         }
     }
     // A shed, a water butt, a sign by the street.
     g.part(Wood).boxed(at(span - 1.2, span - 1.2, 1.1), Vec3::new(2.0, 2.2, 1.6), yaw, rgba([0.22, 0.32, 0.25]));
-    g.part(Matte).cylinder(center + along * (span - 2.6) + out * (span - 0.8), 0.35, 0.35, LOT_Y, LOT_Y + 0.9, 8, rgba([0.1, 0.2, 0.12]));
+    g.lod(Lod::Near, |g| g.part(Matte).cylinder(center + along * (span - 2.6) + out * (span - 0.8), 0.35, 0.35, LOT_Y, LOT_Y + 0.9, 8, rgba([0.1, 0.2, 0.12])));
     g.part(Wood).boxed(at(-span + 0.6, span + 0.4, 0.6), Vec3::new(0.1, 1.2, 0.1), yaw, rgba([0.3, 0.2, 0.1]));
     g.part(Matte).decal(at(-span + 0.6, span + 0.46, 1.25), Vec3::new(along.x, 0.0, along.y), Vec3::Y, 1.2, 0.55, Vec3::new(out.x, 0.0, out.y), rgba([0.9, 0.85, 0.6]));
     g

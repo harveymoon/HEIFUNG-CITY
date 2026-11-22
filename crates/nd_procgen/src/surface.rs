@@ -257,9 +257,10 @@ impl Lod {
     pub const DETAIL: [Lod; 2] = [Lod::Mid, Lod::Near];
     /// Camera distance (m, to the middle of the chunk's detail) past which
     /// mid detail is dropped.
-    pub const MID_RANGE: f32 = 700.0;
+    /// ([r13-detail] the shared band, `crate::detail::DetailBand::Mid`.)
+    pub const MID_RANGE: f32 = crate::detail::DetailBand::Mid.range();
     /// Camera distance past which near detail is dropped.
-    pub const NEAR_RANGE: f32 = 320.0;
+    pub const NEAR_RANGE: f32 = crate::detail::DetailBand::Near.range();
 
     /// Index into [`Geometry::detail`], or `None` for the base mesh.
     pub fn layer(self) -> Option<usize> {
@@ -268,6 +269,29 @@ impl Lod {
             Lod::Mid => Some(0),
             Lod::Near => Some(1),
         }
+    }
+}
+
+/// [r13-detail] A line washing may hang from, left by a building style for
+/// the household layer: from `a` to `b` (world, metres), sagging `sag` at
+/// the middle. `window`: a pole out of a window (a flat's), else a line in
+/// a yard, an alley or across a roof.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WashLine {
+    pub a: glam::Vec3,
+    pub b: glam::Vec3,
+    pub sag: f32,
+    pub window: bool,
+}
+
+impl WashLine {
+    /// The point `t` (0..1) along the line, with its sag.
+    pub fn at(&self, t: f32) -> glam::Vec3 {
+        self.a.lerp(self.b, t) - glam::Vec3::Y * (self.sag * 4.0 * t * (1.0 - t))
+    }
+
+    pub fn len(&self) -> f32 {
+        self.a.distance(self.b)
     }
 }
 
@@ -293,6 +317,11 @@ pub struct Geometry {
     /// [K34] Where a depot stacks its real boxes (`Ctx::real_boxes`): the
     /// renderer stands the boxes stored there in these, in order.
     pub box_slots: Vec<crate::buildings::BoxSlot>,
+    /// [r13-detail] Where washing may hang (a style's lines and poles, world
+    /// coordinates, the building's own ground at 0): the style draws the
+    /// line or the pole, the household layer (`crate::yards`) hangs the
+    /// washing on it when a household there has some out (by the weather).
+    pub washing: Vec<WashLine>,
     /// [r4-style] The detail layers ([`Lod::DETAIL`] order), each split by
     /// surface like `parts`; empty until a generator draws into one (with
     /// [`Geometry::lod`]). Never holds glow: lit windows and signs stay in
@@ -304,7 +333,7 @@ pub struct Geometry {
 
 impl Default for Geometry {
     fn default() -> Self {
-        Self { parts: (0..Surface::ALL.len()).map(|_| MeshData::default()).collect(), pads: Vec::new(), cranes: Vec::new(), lamps: Vec::new(), games: Vec::new(), box_slots: Vec::new(), detail: [Vec::new(), Vec::new()], lod: Lod::Base }
+        Self { parts: (0..Surface::ALL.len()).map(|_| MeshData::default()).collect(), pads: Vec::new(), cranes: Vec::new(), lamps: Vec::new(), games: Vec::new(), box_slots: Vec::new(), washing: Vec::new(), detail: [Vec::new(), Vec::new()], lod: Lod::Base }
     }
 }
 
@@ -390,6 +419,7 @@ impl Geometry {
         self.lamps.extend_from_slice(&other.lamps);
         self.games.extend(other.games.iter().cloned());
         self.box_slots.extend_from_slice(&other.box_slots);
+        self.washing.extend_from_slice(&other.washing);
     }
 
     /// Move every surface that has a weathered variant onto it: the whole

@@ -133,7 +133,8 @@ pub(super) fn ground_piece(w: &World, pal: &nd_procgen::Palette, src: &Source) -
     };
     if !w.landscape.is_flat() {
         for geo in [&mut day, &mut night] {
-            for part in geo.parts.iter_mut() {
+            // [r13-detail] The detail layers too (a garden's plants).
+            for (_, part) in geo.meshes_mut() {
                 for p in part.positions.iter_mut() {
                     p[1] += w.surface_height(SVec2::new(p[0], p[2]));
                 }

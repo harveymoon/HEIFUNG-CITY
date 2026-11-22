@@ -94,10 +94,13 @@ pub(super) fn sync_undercroft(mut commands: Commands, mut meshes: ResMut<Assets<
         return;
     }
     lights::tag_windows(&mut geo, None);
-    for (s, data) in geo.iter().chain(nd_procgen::Lod::DETAIL.into_iter().flat_map(|l| geo.detail_iter(l))) {
+    for (lod, s, data) in geometry_layers(&geo) {
         let mesh = Mesh3d(meshes.add(to_mesh(data, !s.is_glow())));
         let e = if s.is_glow() {
             commands.spawn((mesh, MeshMaterial3d(mats.windows.clone()), Transform::IDENTITY, UndercroftTag, NotShadowCaster, NotShadowReceiver)).id()
+        } else if lod != nd_procgen::Lod::Base {
+            // [r13-detail] The bays' detail within its band.
+            commands.spawn((mesh, MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, UndercroftTag, detail_range(lod))).id()
         } else {
             commands.spawn((mesh, MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, UndercroftTag)).id()
         };

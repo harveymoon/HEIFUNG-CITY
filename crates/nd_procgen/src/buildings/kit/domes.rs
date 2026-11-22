@@ -518,17 +518,16 @@ pub fn landing_pad(g: &mut Geometry, c: &Ctx, p: Vec2, r: f32, deck: [f32; 3], a
     mark_glow(g, from, NIGHT_MARK);
 }
 
-/// A round planter: a white tub with a clipped ball of shrub in it.
+/// A round planter: a white tub with a clipped ball of shrub in it
+/// ([`crate::props::planter`]).
 pub fn planter(g: &mut Geometry, f: &Frame, p: Vec2, r: f32, tub: [f32; 3], leaf: [f32; 3]) {
-    turn(g, f, Matte, p, &[(r * 0.85, 0.0), (r, 0.5), (r * 0.82, 0.62), (0.0, 0.62)], sides_for(r).min(12), tub);
-    turn(g, f, Foliage, p, &dome_profile(r * 0.78, 0.55, r * 0.75, 3), 10, leaf);
+    crate::props::planter(g, f.to_world(p.x, p.y), 0.0, crate::props::Planter::Tub, r, tub, leaf);
 }
 
 /// A ball tree: a slim trunk and a round crown, the garden tree of the
-/// look.
+/// look ([`crate::props::TreeKind::Ball`]).
 pub fn ball_tree(g: &mut Geometry, f: &Frame, p: Vec2, h: f32, r: f32, bark: [f32; 3], leaf: [f32; 3]) {
-    turn(g, f, Wood, p, &[(0.2, 0.0), (0.13, h - r * 0.5)], 6, bark);
-    turn(g, f, Foliage, p, &ball_profile(r, r * 0.92, h, 6), 10, leaf);
+    crate::props::tree(g, f.to_world(p.x, p.y), 0.0, crate::props::TreeKind::Ball, h, r, bark, leaf);
 }
 
 /// A globe lamp on a slim post, lit after dark.

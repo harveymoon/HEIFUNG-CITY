@@ -1171,13 +1171,12 @@ fn draw_utilities(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: &StackPlan) 
         let (fa, fb) = (f.at(a.x, a.y, a.z), f.at(b.x, b.y, b.z));
         g.part(Matte).wire(fa, fb, w.sag, if w.washing { 0.03 } else { 0.05 }, rgba(DARK));
         if w.washing {
-            let d = fb - fa;
-            let yaw = d.z.atan2(d.x);
-            for k in 1..4 {
-                let t = k as f32 / 4.0;
-                let q = fa.lerp(fb, t) - Vec3::Y * (w.sag * 4.0 * t * (1.0 - t));
-                let tc = pick(rng, &pal.tarp_colors);
-                g.part(Tarp).boxed(Vec3::new(q.x, q.y - 0.37, q.z), Vec3::new(0.5, 0.7, 0.04), yaw + rng.random_range(-0.15..0.15), rgba(mul(tc, 1.4)));
+            // [r13-detail] A line for the household layer's washing; the
+            // draws the washing took, so the rest is as it was.
+            g.washing.push(crate::surface::WashLine { a: fa, b: fb, sag: w.sag, window: false });
+            for _ in 1..4 {
+                let _ = pick(rng, &pal.tarp_colors);
+                let _ = rng.random_range(-0.15..0.15);
             }
         }
     }

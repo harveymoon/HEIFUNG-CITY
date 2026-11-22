@@ -63,10 +63,12 @@ pub enum PropKind {
     Grill,
     /// A surfboard leaning on the wall.
     Surfboard,
+    /// [r13-detail] A garden trampoline (a house with children, room behind).
+    Trampoline,
 }
 
 impl PropKind {
-    pub const ALL: [PropKind; 13] = [
+    pub const ALL: [PropKind; 14] = [
         PropKind::Bike,
         PropKind::KidBike,
         PropKind::Trike,
@@ -80,6 +82,7 @@ impl PropKind {
         PropKind::Tools,
         PropKind::Grill,
         PropKind::Surfboard,
+        PropKind::Trampoline,
     ];
 
     pub fn index(self) -> usize {
@@ -102,6 +105,7 @@ impl PropKind {
             PropKind::Tools => "workbench",
             PropKind::Grill => "grill",
             PropKind::Surfboard => "surfboard",
+            PropKind::Trampoline => "trampoline",
         }
     }
 
@@ -121,6 +125,7 @@ impl PropKind {
             PropKind::Tools => "tools",
             PropKind::Grill => "grill",
             PropKind::Surfboard => "surfboard",
+            PropKind::Trampoline => "trampoline",
         }
     }
 }
@@ -266,6 +271,11 @@ pub fn household_wishes(world: &World, hid: HouseholdId, flat: u16, block: bool,
                 } else {
                     put(PropKind::KidBike, id, Place::Front, mix(s, 9));
                     put(if h01(s, 10) < 0.55 { PropKind::Ball } else { PropKind::Chalk }, id, Place::Front, mix(s, 11));
+                    // [r13-detail] Some have a trampoline (the styles no
+                    // longer bake one into the garden).
+                    if h01(s, 26) < 0.3 {
+                        put(PropKind::Trampoline, id, Place::Yard, mix(s, 27));
+                    }
                 }
             }
             12..=17 => {
@@ -312,7 +322,7 @@ pub fn household_wishes(world: &World, hid: HouseholdId, flat: u16, block: bool,
     // One grill, one workbench a home.
     let mut seen: Vec<PropKind> = Vec::new();
     out.retain(|w| {
-        if matches!(w.kind, PropKind::Grill | PropKind::Tools | PropKind::Plant | PropKind::Chair) {
+        if matches!(w.kind, PropKind::Grill | PropKind::Tools | PropKind::Plant | PropKind::Chair | PropKind::Trampoline) {
             if seen.contains(&w.kind) {
                 return false;
             }
@@ -340,7 +350,7 @@ pub fn home_wishes(world: &World, bid: BuildingId, laundry: bool, ctx: HomeCtx) 
         let mut count: Vec<(PropKind, usize)> = Vec::new();
         all.retain(|w| {
             let cap = match w.kind {
-                PropKind::Grill | PropKind::Tools | PropKind::ProjectBike | PropKind::Chair => 1,
+                PropKind::Grill | PropKind::Tools | PropKind::ProjectBike | PropKind::Chair | PropKind::Trampoline => 1,
                 PropKind::Laundry | PropKind::Plant => 2,
                 _ => usize::MAX,
             };

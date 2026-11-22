@@ -72,34 +72,49 @@ pub(super) fn scale(c: [f32; 3], k: f32) -> [f32; 4] {
     [c[0] * k, c[1] * k, c[2] * k, 1.0]
 }
 
+/// Every non-empty surface of a geometry with the layer it is in: the base
+/// mesh, then the detail layers ([`nd_procgen::Lod::DETAIL`] order).
+pub(super) fn geometry_layers(geo: &Geometry) -> impl Iterator<Item = (nd_procgen::Lod, Surface, &MeshData)> {
+    geo.iter().map(|(s, m)| (nd_procgen::Lod::Base, s, m)).chain(nd_procgen::Lod::DETAIL.into_iter().flat_map(move |l| geo.detail_iter(l).map(move |(s, m)| (l, s, m))))
+}
+
 /// Spawn one entity per non-empty surface of a geometry. Glow strips are
 /// thin unlit decals: they neither cast nor receive shadows, which also
 /// keeps them out of the shadow passes.
 ///
-/// [r4-style] The detail layers come too, drawn at every distance: a
-/// one-off view (a preview, a viewer) shows the whole building.
+/// [r13-detail] The detail layers come too, each within its distance band
+/// ([`detail_range`]), as a building chunk's are: parks, vacant lots, the
+/// undercroft and every other world-placed geometry fade their detail at
+/// the same distances. (Previews and the viewer draw their own meshes.)
 pub(super) fn spawn_geometry<T: Component + Clone>(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, geo: &Geometry, tag: T) -> Vec<Entity> {
     let mut out = Vec::new();
-    for (s, data) in geo.iter().chain(nd_procgen::Lod::DETAIL.into_iter().flat_map(|l| geo.detail_iter(l))) {
+    for (lod, s, data) in geometry_layers(geo) {
         let mesh = to_mesh(data, !s.is_glow());
         let mut e = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, tag.clone()));
         if s.is_glow() {
             e.insert((NotShadowCaster, NotShadowReceiver));
+        }
+        if lod != nd_procgen::Lod::Base {
+            e.insert(detail_range(lod));
         }
         out.push(e.id());
     }
     out
 }
 
-/// [r10-chunk-hitch] The distance range a building detail layer is drawn
-/// within (`render::chunk_jobs`): drawn, and casting shadows, only within
-/// its range of the camera, fading out over the last 15 %.
+/// [r13-detail] The `VisibilityRange` of a shared detail band
+/// ([`nd_procgen::DetailBand`]): drawn, and casting shadows, only within
+/// its range of the camera, fading out over its last part. `use_aabb`:
+/// measured to the mesh's bounds (merged meshes: a chunk's detail), else to
+/// its origin (an instanced prop).
+pub(super) fn band_range(band: nd_procgen::DetailBand, use_aabb: bool) -> VisibilityRange {
+    VisibilityRange { start_margin: 0.0..0.0, end_margin: band.fade(), use_aabb }
+}
+
+/// [r10-chunk-hitch] The distance range a geometry detail layer is drawn
+/// within: its band's ([`band_range`]).
 pub(super) fn detail_range(lod: nd_procgen::Lod) -> VisibilityRange {
-    let range = match lod {
-        nd_procgen::Lod::Near => nd_procgen::Lod::NEAR_RANGE,
-        _ => nd_procgen::Lod::MID_RANGE,
-    };
-    VisibilityRange { start_margin: 0.0..0.0, end_margin: range * 0.85..range, use_aabb: true }
+    band_range(nd_procgen::DetailBand::of(lod).unwrap_or(nd_procgen::DetailBand::Mid), true)
 }
 
 /// Spawn a glow-surface mesh: unlit, no shadows either way.
