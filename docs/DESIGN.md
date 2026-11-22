@@ -1043,6 +1043,21 @@ Citizens are rendered from their simulated positions every frame.
   (walk light or a gap at a zebra, and drivers stop for them on it). The rebellious, drunk or
   late may run a red when the cross traffic leaves a gap (`red_lights_run_today`); the
   cautious, old and young never do.
+  [trip-review] A rider's line (`route_path`) keeps the shoulder of each street (bikes keep
+  left on a footpath) and goes through a junction on a curve: the way in ends a junction radius
+  out (the widest street's half width and a metre, inside the zebra, so the rider still stops at
+  its line), the way out starts as far along, and between them a quadratic curve through the
+  corner where the two kerb lines meet (a turn swings one way only), or a cubic leaving along
+  the way in and arriving along the way out where that corner is out of order (straight on from
+  a wide street to a narrow one: a smooth shift; a sharp turn; a street onto a path). Pieces
+  under 12 m beside a junction (a divided road, a stub, a path's end beside the corner) are
+  ridden as part of it. A plain bend keeps its kerb corner. Joined at the corners alone, rides
+  went past a junction and back or stepped sideways in its middle, and the heading (taken from
+  the leg ridden) flipped round on those short back legs: the "zig-zag" Harvey saw. Riding
+  along a street, the crosswalk or footbridge over a side street's mouth is not the rider's
+  (`rides_along_street`): they no longer climb a side street's footbridge and come back down, nor
+  wait at its zebra as a walker. A ride starts and ends level with the door on its first and last
+  leg (`trim_route_ends`), not at the front street's far node (up to 98 m past and back).
 - **Homes on paths**: in a residential zone a path counts as frontage, so houses and
   blocks line footpaths. Such lots have no car access: a resident's car trips start and
   end at the nearest street, the last stretch is walked over the pedestrian network,

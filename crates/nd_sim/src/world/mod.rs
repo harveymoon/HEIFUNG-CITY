@@ -162,6 +162,8 @@ mod walk_crossings_tests;
 #[cfg(test)]
 mod bridge_riders_tests;
 #[cfg(test)]
+mod trip_review_tests;
+#[cfg(test)]
 mod site_access_tests;
 #[cfg(test)]
 mod ped_highway_tests;
