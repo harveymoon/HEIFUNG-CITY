@@ -51,7 +51,8 @@ something else.
 - The game is already built for the workable version:
   - **Most citizens:** the rule-based mind (cheap, deterministic).
   - **Spotlit and favourite citizens:** LLM diaries. `nd_minds` already has the hybrid mind and a
-    Spotlight toggle wired to an LLM backend (a mock today).
+    Spotlight toggle wired to an LLM backend (a mock in October 2026; the stand-in, local and Claude
+    backends since: see "Switching backends").
   - **Everyone else:** diaries on demand, written from the memories the sim already records ("Shelves
     were empty at…", "Rent got too steep…") when the player opens that person, then cached.
 
@@ -213,7 +214,7 @@ The same backend (and the same settings) gives words to the people the player ca
 (`nd_minds::committee::voices`, `ui/diary.rs`):
 
 - **Conversation lines.** The social layer writes a template line into every conversation
-  (`world/social.rs` `talk_line`), as before. When a spotlit or favourite citizen takes part and a
+  (`world/social/mod.rs` `talk_line`), as before. When a spotlit or favourite citizen takes part and a
   model is switched on, the line is asked of the model (at most three at a time) with both
   people's personality, class, mood, bond, the topic, how it went, where, and the template line;
   the answer replaces the template in the speech bubble when it arrives. With the stand-in nothing

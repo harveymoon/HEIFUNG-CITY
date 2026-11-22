@@ -22,7 +22,7 @@ close look at junctions, underpasses, overpasses, ramps and bridges.
   example cities (lane markings inside junctions, props and kerbs on lanes, terrain over roads).
 - Screenshots are under `screenshots/qa/` in the worktree (not committed): `b*` taken with
   main, `a*` with this branch, same camera. Before/after pairs below are in
-  `docs/qa/road_artifacts_2026-10-07/`.
+  `docs/archive/qa/road_artifacts_2026-10-07/`.
 
 Probe, before and after (four example cities):
 
