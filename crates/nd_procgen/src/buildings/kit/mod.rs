@@ -234,7 +234,9 @@ pub fn glow_outline(g: &mut Geometry, c: &Ctx, poly: &[Vec2], y: f32, thick: f32
     }
 }
 
-/// Laundry poles poking out of windows with washing on them.
+/// Laundry poles poking out of windows. [r13-detail] The poles only: each
+/// leaves a [`crate::surface::WashLine`] for the household layer, which
+/// hangs the washing when a flat there has some out.
 #[allow(clippy::too_many_arguments)]
 pub fn laundry_poles(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face, y0: f32, floors: i32, fh: f32, chance: f32) {
     let f = &c.frame;
@@ -249,9 +251,10 @@ pub fn laundry_poles(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, face: &Face,
         let t = rng.random_range(-face.len * 0.4..face.len * 0.4);
         let y = y0 + k as f32 * fh + fh * 0.2;
         face.bx(g, f, Matte, t, y, reach * 0.5, Vec3::new(0.05, 0.05, reach), CHARCOAL);
-        for i in 0..2 {
-            let d = reach * (0.35 + 0.4 * i as f32);
-            face.bx(g, f, Tarp, t, y - 0.35, d, Vec3::new(0.05, 0.6, 0.45), mul(pick(rng, &c.palette.tarp_colors), 1.2));
+        g.washing.push(crate::surface::WashLine { a: f.at2(face.at(t, 0.15), y - 0.04), b: f.at2(face.at(t, reach), y - 0.04), sag: 0.0, window: true });
+        // The draws the washing took, so the rest of the building is as it was.
+        for _ in 0..2 {
+            let _ = pick(rng, &c.palette.tarp_colors);
         }
     }
 }

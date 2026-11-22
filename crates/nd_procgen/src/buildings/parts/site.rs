@@ -1,4 +1,6 @@
-//! Site furniture: trees, lamp posts, benches, bins and bollards.
+//! Site furniture: trees, lamp posts, benches, bins and bollards, placed
+//! through the lot's [`Frame`]. [r13-detail] Trees, benches and bins are
+//! drawn by the shared prop library (`crate::props`).
 
 #[allow(unused_imports)]
 use super::*;
@@ -15,75 +17,19 @@ pub fn tree(g: &mut Geometry, f: &Frame, p: Vec2, h: f32, canopy: f32, bark: [f3
     tree_world(g, f.to_world(p.x, p.y), h, canopy, bark, leaf);
 }
 
-/// The one tree family. `Round` is the street and garden tree; the others
-/// come from parks and open ground.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TreeKind {
-    /// Trunk with a two-tier faceted canopy.
-    Round,
-    /// Three stacked cones.
-    Conifer,
-    /// Leaning trunk with a crown of fronds.
-    Palm,
-    /// Bare tapering trunk with a few branches, no canopy.
-    Dead,
-}
+/// [r13-detail] The tree family lives in the shared prop library.
+pub use crate::props::TreeKind;
 
 /// A round tree on the ground at a world point.
 pub fn tree_world(g: &mut Geometry, w: Vec2, h: f32, canopy: f32, bark: [f32; 3], leaf: [f32; 3]) {
     tree_kind(g, w, 0.0, TreeKind::Round, h, canopy, bark, leaf);
 }
 
-/// Any tree, standing on ground at height `y` at a world point. Branch and
-/// lean directions come from the position so no RNG is consumed: callers
-/// that place thousands of trees keep their streams stable.
+/// Any tree, standing on ground at height `y` at a world point
+/// ([`crate::props::tree`]).
 #[allow(clippy::too_many_arguments)]
 pub fn tree_kind(g: &mut Geometry, w: Vec2, y: f32, kind: TreeKind, h: f32, canopy: f32, bark: [f32; 3], leaf: [f32; 3]) {
-    use std::f32::consts::TAU;
-    match kind {
-        TreeKind::Round => {
-            g.part(Wood).cylinder(w, 0.22, 0.16, y, y + h, 7, rgba(bark));
-            let c = g.part(Foliage);
-            c.frustum(&MeshData::ngon(w, canopy * 0.5, 7, 0.0, y + h), &MeshData::ngon(w, canopy * 0.2, 7, 0.4, y + h + canopy * 0.8), rgba(leaf));
-            c.frustum(&MeshData::ngon(w, canopy * 0.35, 7, 0.3, y + h - canopy * 0.3), &MeshData::ngon(w, canopy * 0.5, 7, 0.0, y + h), rgba(mul(leaf, 0.85)));
-        }
-        TreeKind::Conifer => {
-            g.part(Wood).cylinder(w, 0.22, 0.12, y, y + h * 0.3, 6, rgba(bark));
-            for k in 0..3 {
-                let y0 = y + h * (0.25 + 0.22 * k as f32);
-                let rr = canopy * (1.0 - 0.22 * k as f32);
-                g.part(Foliage).frustum(&MeshData::ngon(w, rr, 8, 0.3 * k as f32, y0), &MeshData::ngon(w, rr * 0.12, 8, 0.3 * k as f32, y0 + h * 0.32), rgba(mul(leaf, 1.0 - 0.06 * k as f32)));
-            }
-        }
-        TreeKind::Palm => {
-            let lean = Vec2::new(w.y * 0.013, w.x * 0.011).normalize_or_zero() * 0.9;
-            let top = Vec3::new(w.x + lean.x, y + h, w.y + lean.y);
-            let mid = Vec3::new(w.x + lean.x * 0.5, y + h * 0.55, w.y + lean.y * 0.5);
-            g.part(Wood).beam(Vec3::new(w.x, y, w.y), mid, 0.34, rgba(bark));
-            g.part(Wood).beam(mid, top, 0.26, rgba(bark));
-            for k in 0..7 {
-                let a = k as f32 / 7.0 * TAU;
-                let dir = Vec3::new(a.cos(), 0.35, a.sin()).normalize();
-                let m = top + dir * 1.6;
-                let tip = m + Vec3::new(dir.x, -0.5, dir.z).normalize() * 1.8;
-                g.part(Foliage).beam(top, m, 0.5, rgba(leaf));
-                g.part(Foliage).beam(m, tip, 0.32, rgba(mul(leaf, 0.9)));
-            }
-            g.part(Foliage).cylinder(Vec2::new(top.x, top.z), 0.5, 0.5, y + h - 0.4, y + h + 0.3, 6, rgba(mul(leaf, 0.8)));
-        }
-        TreeKind::Dead => {
-            let wood = g.part(Wood);
-            wood.cylinder(w, 0.18, 0.07, y - 0.1, y + h, 5, rgba(bark));
-            let n = 2 + ((w.x * 0.37 + w.y * 0.61).abs() as i32 % 2);
-            for k in 0..n {
-                let a = k as f32 * 2.1 + w.x * 0.37 + w.y * 0.13;
-                let len = (h * 0.3).clamp(0.8, 1.8);
-                let from = Vec3::new(w.x, y + h * (0.55 + 0.12 * k as f32), w.y);
-                let to = from + Vec3::new(a.cos() * len, len * 0.7, a.sin() * len);
-                wood.beam(from, to, 0.08, rgba(bark));
-            }
-        }
-    }
+    crate::props::tree(g, w, y, kind, h, canopy, bark, leaf);
 }
 
 pub fn lamp_post(g: &mut Geometry, f: &Frame, p: Vec2, h: f32, glow: [f32; 3]) {
@@ -106,21 +52,11 @@ pub fn lamp_post_world(g: &mut Geometry, w: Vec2, h: f32, glow: [f32; 3]) {
 }
 
 pub fn bench_world(g: &mut Geometry, w: Vec2, yaw: f32, wood: [f32; 3], metal: [f32; 3]) {
-    let m = g.part(Wood);
-    m.boxed(Vec3::new(w.x, 0.45, w.y), Vec3::new(1.8, 0.08, 0.5), yaw, rgba(wood));
-    let (s, c) = yaw.sin_cos();
-    let back = Vec2::new(-s, c) * 0.22;
-    m.boxed(Vec3::new(w.x + back.x, 0.8, w.y + back.y), Vec3::new(1.8, 0.45, 0.06), yaw, rgba(wood));
-    let mm = g.part(Matte);
-    for side in [-0.8f32, 0.8] {
-        let o = Vec2::new(c, s) * side;
-        mm.boxed(Vec3::new(w.x + o.x, 0.22, w.y + o.y), Vec3::new(0.08, 0.44, 0.5), yaw, rgba(metal));
-    }
+    crate::props::bench(g, w, yaw, wood, metal, false);
 }
 
 pub fn bin_world(g: &mut Geometry, w: Vec2, color: [f32; 3]) {
-    g.part(Metal).cylinder(w, 0.35, 0.35, 0.0, 1.0, 10, rgba(color));
-    g.part(Matte).cylinder(w, 0.37, 0.37, 1.0, 1.1, 10, rgba(DARK));
+    crate::props::bin(g, w, color);
 }
 
 pub fn bollard_world(g: &mut Geometry, w: Vec2, color: [f32; 3]) {

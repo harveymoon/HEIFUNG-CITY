@@ -10,10 +10,13 @@
 //! entity sharing its look's mesh and the building surface material, so
 //! Bevy draws each look as one instanced batch.
 //!
-//! Only round the camera: the homes within [`REACH`] of the eye are given
-//! their things, each fading out from [`FADE`] (a `VisibilityRange`), and
-//! an eye more than [`FAR_EYE`] over the ground has none at all: zoomed
-//! out it costs nothing. Nothing a frame otherwise: the homes in reach
+//! Only round the camera, in the shared close band (`nd_procgen::detail`,
+//! [r13-detail]): the homes within `CLOSE_REACH` of the eye are given their
+//! things, each fading out over `DetailBand::Close` (a `VisibilityRange`),
+//! and an eye more than `CLOSE_EYE` over the ground has none at all: zoomed
+//! out it costs nothing. The washing on building styles' own lines and
+//! poles is drawn here too (`nd_procgen::yards::HUNG`): the styles draw
+//! only the lines. Nothing a frame otherwise: the homes in reach
 //! are looked at again twice a second, or when the eye has moved, and a
 //! home's things are placed again only when its household changed
 //! ([`nd_sim::yards::home_signature`]), its drawing did, or the washing
@@ -24,13 +27,11 @@ use nd_procgen::yards::{self as py, Placed, Spots};
 use nd_sim::yards::{self as sy, PropKind};
 
 /// Homes this near the eye (along the ground) get their things.
-pub const REACH: f32 = 150.0;
+pub const REACH: f32 = nd_procgen::detail::CLOSE_REACH;
 /// A home drawn stays drawn until the eye is this much farther off.
 const KEEP: f32 = 25.0;
-/// Things fade out between these distances from the eye.
-pub const FADE: std::ops::Range<f32> = 105.0..140.0;
 /// An eye higher than this over the ground draws no yards at all.
-pub const FAR_EYE: f32 = 220.0;
+pub const FAR_EYE: f32 = nd_procgen::detail::CLOSE_EYE;
 /// Seconds between looks at the homes in reach while the eye stands still.
 const REFRESH_SECS: f32 = 0.5;
 /// The eye moving this far brings the next look forward, metres.
@@ -199,7 +200,7 @@ pub(super) fn sync_yards(
             changed = true;
         }
     }
-    let fade = VisibilityRange { start_margin: 0.0..0.0, end_margin: FADE, use_aabb: false };
+    let fade = band_range(nd_procgen::DetailBand::Close, false);
     for (_, id) in near {
         let Some((ver, spots)) = sim.yard_spots.get(&id) else { continue };
         let key = (sy::home_signature(w, id), *ver, laundry);

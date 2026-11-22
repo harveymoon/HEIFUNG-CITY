@@ -447,7 +447,7 @@ pub fn brick_row(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             downpipes(g, c, rng, &face, h);
         }
     }
-    // Back yards: a wall between each, an outhouse at the end, washing.
+    // Back yards: a wall between each, an outhouse at the end, a line.
     let back_room = area.v1 - row.v1;
     if back_room > 4.0 {
         let yd = back_room.min(9.0) - 0.4;
@@ -476,9 +476,10 @@ pub fn brick_row(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
                 let (a, b) = (f.at(u - hw * 0.35, 1.9, row.v1 + yd * 0.45), f.at(u + hw * 0.3, 1.9, row.v1 + yd * 0.55));
                 if c.spans_lot(Vec2::new(u - hw * 0.35, row.v1 + yd * 0.45), Vec2::new(u + hw * 0.3, row.v1 + yd * 0.55)) {
                     g.part(Matte).wire(a, b, 0.15, 0.02, rgba(DARK));
-                    for j in 1..4 {
-                        let q = a.lerp(b, j as f32 / 4.0);
-                        g.part(Tarp).boxed(q - Vec3::Y * 0.35, Vec3::new(0.5, 0.55, 0.03), f.yaw(), rgba(mul(pick(rng, &c.palette.tarp_colors), 1.2)));
+                    // [r13-detail] The washing is the household layer's.
+                    g.washing.push(crate::surface::WashLine { a, b, sag: 0.15, window: false });
+                    for _ in 1..4 {
+                        let _ = pick(rng, &c.palette.tarp_colors);
                     }
                 }
             });

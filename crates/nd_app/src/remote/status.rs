@@ -78,6 +78,9 @@ pub(super) fn status(ctx: &Ctx) -> Value {
     });
     // [r12-yards] Households' things on screen.
     v["render"]["yards"] = json!({ "props": ctx.stats.yard_props, "homes": ctx.stats.yard_homes });
+    // [r13-detail] Mesh entities drawn last frame, and those under a detail band.
+    v["render"]["visible_meshes"] = json!(ctx.stats.visible_meshes);
+    v["render"]["visible_detail_meshes"] = json!(ctx.stats.visible_detail_meshes);
     // [r7-sim-thread] The sim thread.
     {
         let c = &sim.world;

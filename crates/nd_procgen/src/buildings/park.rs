@@ -164,7 +164,8 @@ fn park(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
     }
     park_ground(g, c, rng, &park, &inner, &lawn);
     park_paths(g, c, &park);
-    park_benches(g, c, rng, &park);
+    // [r13-detail] Benches, litter and the drum fire are near detail.
+    g.lod(crate::surface::Lod::Near, |g| park_benches(g, c, rng, &park));
     for slot in &layout.features {
         // [r5-layered] Nothing tall under a deck over the park.
         if slot.kind.tall() && park.covered(slot.pos, slot.radius) {
@@ -393,7 +394,7 @@ fn park_benches(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, park: &Park) {
     for (i, (w, facing)) in layout.benches.iter().enumerate() {
         let yaw = facing + FRAC_PI_2;
         if tier == Tier::Low && (i + c.seed as usize) % 3 == 0 {
-            broken_bench(g, *w, yaw, pal.plywood, CHARCOAL);
+            crate::props::bench(g, *w, yaw, pal.plywood, CHARCOAL, true);
         } else {
             let wood = if tier == Tier::High { mul(pal.wood, 1.1) } else { pal.wood };
             bench_world(g, *w, yaw, wood, CHARCOAL);
@@ -662,15 +663,6 @@ fn railing(g: &mut Geometry, c: &Ctx, face: &Face, t0: f32, t1: f32) {
     let mid = (t0 + t1) * 0.5;
     face.bx(g, f, Matte, mid, 1.15, -0.2, Vec3::new(t1 - t0, 0.05, 0.05), dark);
     face.bx(g, f, Matte, mid, 0.35, -0.2, Vec3::new(t1 - t0, 0.05, 0.05), dark);
-}
-
-fn broken_bench(g: &mut Geometry, w: Vec2, yaw: f32, wood: [f32; 3], metal: [f32; 3]) {
-    let (s, co) = yaw.sin_cos();
-    // Seat slats, one gone; one leg; no back.
-    g.part(Wood).boxed(Vec3::new(w.x, 0.42, w.y), Vec3::new(1.8, 0.06, 0.22), yaw, rgba(mul(wood, 0.8)));
-    let o = Vec2::new(co, s) * 0.8;
-    g.part(Matte).boxed(Vec3::new(w.x + o.x, 0.22, w.y + o.y), Vec3::new(0.08, 0.44, 0.5), yaw, rgba(metal));
-    g.part(Matte).boxed(Vec3::new(w.x - o.x, 0.12, w.y - o.y), Vec3::new(0.08, 0.24, 0.5), yaw + 0.5, rgba(metal));
 }
 
 // ── trees ────────────────────────────────────────────────────────────────────

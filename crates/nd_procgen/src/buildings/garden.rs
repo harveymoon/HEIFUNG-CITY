@@ -773,7 +773,8 @@ fn side_fences(g: &mut Geometry, c: &Ctx, plot: &Plot, fences: Fences, k_house: 
 }
 
 /// Behind the house: a patio and a table, a shed at the end, a tree, a
-/// washing line, vegetable beds or a trampoline.
+/// washing line and vegetable beds (the washing and any trampoline are the
+/// household layer's).
 fn back_garden(g: &mut Geometry, c: &Ctx, d: &mut impl Rng, plot: &Plot, k_back: f32, p: &Paint) {
     let f = &c.frame;
     let (pw, pd) = (plot.width(), plot.depth());
@@ -817,21 +818,21 @@ fn back_garden(g: &mut Geometry, c: &Ctx, d: &mut impl Rng, plot: &Plot, k_back:
     if room > 6.0 && coin(d, 0.6) {
         let (a, b) = (plot.at(-pw * 0.3, k_back + room * 0.35), plot.at(pw * 0.1, k_back + room * 0.42));
         if c.spans_lot(a, b) {
-            let cloth: Vec<[f32; 3]> = (0..4).map(|_| pick(d, &c.palette.tarp_colors)).collect();
+            // The draws the washing took, so the rest of the garden is as it was.
+            for _ in 0..4 {
+                let _ = pick(d, &c.palette.tarp_colors);
+            }
             g.lod(Lod::Near, |g| {
                 for q in [a, b] {
                     f.bx(g, Matte, q.x, 0.95, q.y, Vec3::new(0.06, 1.9, 0.06), [0.6, 0.6, 0.58]);
                 }
                 g.part(Matte).wire(f.at2(a, 1.85), f.at2(b, 1.85), 0.15, 0.015, rgba([0.7, 0.7, 0.68]));
-                let yaw = (b - a).y.atan2((b - a).x);
-                for (i, col) in cloth.iter().enumerate() {
-                    let q = a.lerp(b, (i as f32 + 1.0) / 5.0);
-                    f.bx_yaw(g, Tarp, q.x, 1.4, q.y, Vec3::new(0.5, 0.6, 0.02), *col, yaw);
-                }
             });
+            // [r13-detail] The washing is the household layer's.
+            g.washing.push(crate::surface::WashLine { a: f.at2(a, 1.84), b: f.at2(b, 1.84), sag: 0.15, window: false });
         }
     }
-    // Vegetable beds down one side, or a trampoline.
+    // Vegetable beds down one side, or open lawn.
     if room > 9.0 && pw > 9.0 {
         if coin(d, 0.5) {
             let s = shed_s.map_or(pw * 0.5 - 1.4, |x| -x.signum() * (pw * 0.5 - 1.4));
@@ -848,16 +849,9 @@ fn back_garden(g: &mut Geometry, c: &Ctx, d: &mut impl Rng, plot: &Plot, k_back:
                     }
                 });
             }
-        } else {
-            let q = plot.at(-pw * 0.2, k_back + room * 0.72);
-            if c.inside_local(q) && distance_to_boundary(q, &c.lot_poly) > 2.0 {
-                g.lod(Lod::Near, |g| {
-                    let w = f.to_world(q.x, q.y);
-                    g.part(Tarp).cylinder(w, 1.7, 1.7, 0.85, 0.9, 12, rgba([0.10, 0.10, 0.11]));
-                    g.part(Matte).cylinder(w, 1.8, 1.8, 0.8, 0.86, 12, rgba([0.15, 0.36, 0.62]));
-                });
-            }
         }
+        // [r13-detail] No trampoline baked in: a household's children bring
+        // one (`nd_sim::yards`, drawn by the household layer).
     }
 }
 

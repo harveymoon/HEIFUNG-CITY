@@ -19,22 +19,26 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 /// One surface's mesh, made off the main thread, ready to add.
-pub(super) type ReadyMesh = (Surface, Mesh);
+pub(super) type ReadyMesh = (Surface, Mesh, nd_procgen::Lod);
 
 /// The meshes [`spawn_geometry`] would make from `geo`, in its order: one
 /// per non-empty surface, then the detail layers.
 pub(super) fn geometry_meshes(geo: &Geometry) -> Vec<ReadyMesh> {
-    geo.iter().chain(nd_procgen::Lod::DETAIL.into_iter().flat_map(|l| geo.detail_iter(l))).map(|(s, data)| (s, to_mesh(data, !s.is_glow()))).collect()
+    geometry_layers(geo).map(|(l, s, data)| (s, to_mesh(data, !s.is_glow()), l)).collect()
 }
 
 /// Spawn meshes from [`geometry_meshes`]: the same entities
 /// [`spawn_geometry`] spawns.
 pub(super) fn spawn_meshes<T: Component + Clone>(commands: &mut Commands, meshes: &mut Assets<Mesh>, mats: &Materials, ready: Vec<ReadyMesh>, tag: T) -> Vec<Entity> {
     let mut out = Vec::with_capacity(ready.len());
-    for (s, mesh) in ready {
+    for (s, mesh, lod) in ready {
         let mut e = commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mats.surface(s)), Transform::IDENTITY, tag.clone()));
         if s.is_glow() {
             e.insert((NotShadowCaster, NotShadowReceiver));
+        }
+        // [r13-detail] Detail layers within their band, as everywhere.
+        if lod != nd_procgen::Lod::Base {
+            e.insert(detail_range(lod));
         }
         out.push(e.id());
     }

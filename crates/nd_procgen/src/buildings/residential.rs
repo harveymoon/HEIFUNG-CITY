@@ -75,9 +75,10 @@ pub fn tenement(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
             f.bx(g, Matte, lo.x + 1.0, h + 1.0, v, Vec3::new(0.08, 2.0, 0.08), CHARCOAL);
             f.bx(g, Matte, hi.x - 1.0, h + 1.0, v, Vec3::new(0.08, 2.0, 0.08), CHARCOAL);
             g.part(Matte).wire(a, b, 0.2, 0.03, rgba(DARK));
-            for i in 1..5 {
-                let p = a.lerp(b, i as f32 / 5.0);
-                g.part(Tarp).boxed(p - Vec3::Y * 0.45, Vec3::new(0.6, 0.7, 0.03), f.yaw(), rgba(mul(pick(rng, &pal.tarp_colors), 1.3)));
+            // [r13-detail] The washing is the household layer's.
+            g.washing.push(crate::surface::WashLine { a, b, sag: 0.2, window: false });
+            for _ in 1..5 {
+                let _ = pick(rng, &pal.tarp_colors);
             }
         }
     }
