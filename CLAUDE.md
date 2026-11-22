@@ -4,6 +4,7 @@ The game was called Neon District (and District 2040); internal names keep the `
 (crates, `ND_HOME`, `ND_REMOTE_PORT`, ...). The exe is `heifung_city.exe`.
 
 A Rust / Bevy 0.19 city builder. Design: `docs/DESIGN.md`. Remote API: `docs/REMOTE.md`.
+Index of all docs: `docs/README.md`.
 Open work: `todo.md` (sorted by area; tick items with "→ DONE [branch]: what").
 
 ## Crates
@@ -14,7 +15,8 @@ Open work: `todo.md` (sorted by area; tick items with "→ DONE [branch]: what")
 - `crates/nd_procgen`: meshes and generation: buildings (styles in `src/buildings/`), streets,
   kerbs, terrain, `citygen` (tensor-field example maps).
 - `crates/nd_minds`: personalities and the async LLM "minds".
-- `crates/nd_app`: the Bevy app: render (`src/render/`), UI (`src/ui/`), tools (`src/tools.rs`),
+- `crates/nd_audio`: the synthesised sound (no samples; render side only, never touches the sim).
+- `crates/nd_app`: the Bevy app: render (`src/render/`), UI (`src/ui/`), tools (`src/tools/`),
   the remote API (`src/remote.rs`, `src/remote/`), map layers (`src/map_layers.rs`).
 
 ## Rules
