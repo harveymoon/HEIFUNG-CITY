@@ -246,6 +246,8 @@ const EXPORT: Color32 = Color32::from_rgb(120, 225, 245);
 const DEMAND: Color32 = Color32::from_rgb(255, 90, 90);
 /// Batteries: delivering (above the axis) and their charge level.
 pub const BATTERY: Color32 = Color32::from_rgb(90, 235, 170);
+/// [r13-leftovers] Incinerators in the plant table.
+const INCINERATOR: Color32 = Color32::from_rgb(230, 110, 50);
 /// Batteries charging (below the axis).
 const CHARGING: Color32 = Color32::from_rgb(40, 140, 110);
 
@@ -273,6 +275,7 @@ fn plant_table(ui: &mut egui::Ui, w: &nd_sim::World, rows: &[nd_sim::PlantRow]) 
             let (color, kind) = match r.asset {
                 nd_sim::GridAsset::Plant(k) => (plant_color(k), k.label().to_string()),
                 nd_sim::GridAsset::Battery(k) => (BATTERY, k.label().to_string()),
+                nd_sim::GridAsset::Incinerator => (INCINERATOR, "Incinerator (waste to energy)".to_string()),
             };
             let status = if r.pending { " (not yet working)" } else if r.derelict { " (derelict)" } else { "" };
             let name = ui.label(egui::RichText::new(&r.name).color(color));
@@ -282,7 +285,7 @@ fn plant_table(ui: &mut egui::Ui, w: &nd_sim::World, rows: &[nd_sim::PlantRow]) 
             let cost = r.cost_per_mwh.map_or("-".to_string(), |c| format!("{c:.1}"));
             let noise = r.noise_db.map_or("quiet".to_string(), |d| format!("{d:.0} dB"));
             match r.asset {
-                nd_sim::GridAsset::Plant(_) => {
+                nd_sim::GridAsset::Plant(_) | nd_sim::GridAsset::Incinerator => {
                     let pct = if r.capacity_mw > 0.0 { r.now_mw / r.capacity_mw * 100.0 } else { 0.0 };
                     let smog = egui::RichText::new(format!("{:.2}", r.air));
                     ui.label(egui::RichText::new(format!("{:.1} MW · {pct:.0}% of {:.0}", r.now_mw, r.capacity_mw)));
@@ -478,6 +481,8 @@ pub fn power(ui: &mut egui::Ui, p: &mut UiCtx) {
                         let s = [Series::new("output MW", plant_color(k), plant_hours(&summed, n)), Series::new("nameplate", Color32::from_gray(90), vec![r.capacity_mw; n])];
                         pane::line_chart(ui, &hour_labels, &s, 56.0, &|x| format!("{x:.1} MW"));
                     }
+                    // [r13-leftovers] An incinerator's hours are its site's, not logged per plant.
+                    nd_sim::GridAsset::Incinerator => {}
                     nd_sim::GridAsset::Battery(k) => {
                         ui.label(egui::RichText::new(format!("{} · {}", r.name, k.label())).small().color(BATTERY));
                         let s = [Series::new("stored MWh", BATTERY, plant_hours(&log.level, n)), Series::new("flow MW (+ gives, - takes)", Color32::from_rgb(255, 190, 80), plant_hours(&log.hours, n))];

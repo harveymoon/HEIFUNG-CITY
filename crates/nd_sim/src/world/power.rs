@@ -17,6 +17,9 @@ pub struct GridHour {
 pub enum GridAsset {
     Plant(PowerPlantKind),
     Battery(BatteryKind),
+    /// [r13-leftovers] A waste-to-energy incinerator (`crate::waste`): its
+    /// MW were in the supply but in no row of the table.
+    Incinerator,
 }
 
 /// One plant or battery as the Power window's table and the remote API's
@@ -230,8 +233,38 @@ impl World {
             }
         }
         let mut rows = self.fold_group_rows(rows);
+        // [r13-leftovers] The incinerators, from their disposal records.
+        for (&id, site) in self.society.trash.disposal.sites.iter() {
+            let Some(b) = self.buildings.get(id) else { continue };
+            let Some(svc) = b.service.filter(|s| s.kind == crate::services::ServiceKind::Incinerator) else { continue };
+            let capacity = crate::waste::site_capacity(svc.kind, svc.tier) * crate::waste::MWH_PER_T / 24.0;
+            let mwh = if site.mwh_yesterday > 0.0 { site.mwh_yesterday } else { site.mwh_today };
+            let upkeep = svc.kind.upkeep_per_day(svc.tier) + site.cost_yesterday;
+            rows.push(PlantRow {
+                id,
+                name: b.name.clone(),
+                asset: GridAsset::Incinerator,
+                now_mw: site.mw,
+                capacity_mw: capacity,
+                mean_mw: mwh / 24.0,
+                upkeep_per_day: upkeep,
+                cost_per_mwh: (mwh > 1.0).then(|| upkeep / mwh),
+                co2_t_per_day: 0.0,
+                air: 0.0,
+                noise_db: None,
+                nuisance: (0.0, 0.0),
+                charge_mwh: 0.0,
+                capacity_mwh: 0.0,
+                derelict: b.is_derelict(),
+                pending: b.construction.is_some() || b.demolition.is_some(),
+                members: vec![id],
+                lots: vec![b.lot],
+                area_m2: self.lots.get(b.lot).map_or(0.0, |l| l.area()),
+            });
+        }
         let order = |a: &GridAsset| match a {
             GridAsset::Plant(k) => k.index(),
+            GridAsset::Incinerator => 99,
             GridAsset::Battery(k) => 100 + *k as usize,
         };
         rows.sort_by(|a, b| order(&a.asset).cmp(&order(&b.asset)).then(a.name.cmp(&b.name)));

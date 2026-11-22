@@ -326,3 +326,40 @@ fn disposal_is_deterministic() {
     };
     assert_eq!(run(), run());
 }
+
+/// [r13-leftovers] A garbage truck on its round says so in the car
+/// inspector (it read "passing through": no errand, no driver of its own).
+#[test]
+fn a_garbage_truck_is_not_passing_through() {
+    let (mut w, _depot, _) = town_with_depot(33);
+    at_hour(&mut w, 7);
+    let mut minds = IdleMind;
+    let mut seen = false;
+    for _ in 0..3 * 60 {
+        w.tick(&mut minds);
+        if let Some(car) = w.society.trash.trucks.values().filter_map(|t| t.car).find(|c| w.traffic.cars.contains_key(*c)) {
+            let label = w.car_label(car);
+            let journey = w.car_journey(car).expect("a journey");
+            assert!(!label.contains("passing through") && label.contains("round"), "{label}");
+            assert!(journey.purpose.starts_with("garbage truck"), "{}", journey.purpose);
+            seen = true;
+            break;
+        }
+    }
+    assert!(seen, "a truck took to the road");
+}
+
+/// [r13-leftovers] An incinerator's megawatts are a row of the Power
+/// page's plant table (they were in the supply but in no row).
+#[test]
+fn an_incinerator_is_a_row_in_the_plant_table() {
+    let (mut w, _depot, crew) = town_with_depot(34);
+    let inc = place(&mut w, ServiceKind::Incinerator, Tier::Low, 450.0);
+    staff(&mut w, inc, &crew[..3]);
+    w.society.trash.disposal.sites.entry(inc).or_default().mw = 0.5;
+    let rows = w.plant_rows();
+    let row = rows.iter().find(|r| r.id == inc).expect("an incinerator row");
+    assert_eq!(row.asset, crate::GridAsset::Incinerator);
+    assert!((row.now_mw - 0.5).abs() < 1e-6);
+    assert!(row.capacity_mw > 0.5 && row.upkeep_per_day > 0.0, "{row:?}");
+}
