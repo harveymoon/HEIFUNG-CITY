@@ -31,7 +31,7 @@ impl World {
             industry_bias commercial_bias places concerns districts tourism subway tolls taxis cargo_hubs airports rides streets
             pillars pillar_gaps undercroft crosswalks estate skyline pressure scene identity street_events road_wear
             dirty road_log social social_concern committee path_links corps megablocks shore level_crossings attractions
-            freight_queue inbound_unanswered food_need food_trucks games airlifts dams parks insight travel containers talks cable cable_waiting
+            freight_queue inbound_unanswered food_need games airlifts dams parks insight travel containers talks cable cable_waiting builders builder_sites food_trucks
         );
     }
 }

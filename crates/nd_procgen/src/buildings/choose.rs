@@ -193,6 +193,9 @@ pub fn industry_styles(kind: nd_sim::BusinessKind, tier: Tier) -> Option<&'stati
         B::Arcade => &[(Style::GameArcade, 1.0)],
         B::Gym => &[(Style::Gym, 1.0)],
         B::ComedyClub => &[(Style::ComedyClub, 1.0)],
+        // [r14-builders] the building trade
+        B::Contractor => &[(Style::BuildersYard, 1.0)],
+        B::BuildersMerchant => &[(Style::BuildersMerchant, 1.0)],
         // A dock's operator: normally drawn by its port kind (`extras.port`);
         // this is the fallback when the port is not passed.
         B::Marina => match tier {
@@ -217,7 +220,7 @@ pub fn business_look_wins(kind: nd_sim::BusinessKind) -> bool {
     use nd_sim::BusinessKind as B;
     matches!(
         kind,
-        B::Mechanic | B::CarDealer | B::TrashCompany | B::BikeShop | B::CowFarm | B::ChickenFarm | B::Slaughterhouse | B::StripMine | B::Marina | B::FishingPort | B::FishGutting | B::FishStickFactory | B::FishMarket | B::SeafoodRestaurant | B::GolfRange | B::ArtStudio | B::Gallery | B::Smelter | B::Feedlot | B::ChemicalWorks | B::BeachResort | B::PierRestaurant | B::BeachBar | B::BoatRental | B::ScrapYard | B::FreightForwarder
+        B::Mechanic | B::CarDealer | B::TrashCompany | B::BikeShop | B::CowFarm | B::ChickenFarm | B::Slaughterhouse | B::StripMine | B::Marina | B::FishingPort | B::FishGutting | B::FishStickFactory | B::FishMarket | B::SeafoodRestaurant | B::GolfRange | B::ArtStudio | B::Gallery | B::Smelter | B::Feedlot | B::ChemicalWorks | B::BeachResort | B::PierRestaurant | B::BeachBar | B::BoatRental | B::ScrapYard | B::FreightForwarder | B::Contractor | B::BuildersMerchant
     ) || kind.is_eat_or_go_out()
 }
 

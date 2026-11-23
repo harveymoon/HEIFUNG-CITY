@@ -217,6 +217,8 @@ impl World {
         crate::prof!("foot_wear_hourly", self.foot_wear.hourly());
         // [economy] repair shops, bike shops, galleries and boats
         crate::prof!("trades_hourly", self.trades_hourly());
+        // [r14-builders] merchants restock, builders fill their yards
+        crate::prof!("builders_hourly", self.builders_hourly());
         crate::prof!("record_hour", self.record_hour());
         // [toll-inspect] each booth's hour on its chart
         self.hourly_tolls();

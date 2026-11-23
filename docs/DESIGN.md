@@ -1129,13 +1129,43 @@ Citizens are rendered from their simulated positions every frame.
   before but nothing rises at night; and each site reports at its own ten-minute slot of the
   hour (`site_slot`, a hash of the building), so the city never grows a storey in one
   synchronised jump. The inspector says when it should be done ("done about day 23 14:00",
-  `Clock::after_work_hours`). Progress needs four loads of parts, one per quarter, each ordered a quarter
-  ahead from a local seller or by import; a late truck stalls the site at the next quarter.
+  `Clock::after_work_hours`). Progress needs four deliveries of the site's bill, one per quarter, each ordered a quarter
+  ahead by its builder (below); a late truck stalls the site at the next quarter.
   Every 10% the renderer redraws the site; on completion the crew is released, the real
   homes and jobs open, and tenants may move in. Player-placed specials and parking lots
   complete at once. Housing and job pressure are damped by what is already under
   construction. Sites are drawn as hoarding, raft, shell to the last full floor, scaffold,
   a tower crane from six floors, pallets, cabin, mixer and hi-vis workers.
+- **Builders and the builders' merchant** [r14-builders] (`crate::builders`, `world/builders.rs`):
+  when a site's work starts it is put out to tender (`World::tender_site`). A building
+  contractor in town (`BusinessKind::Contractor`, a yard opened by the "building contractor"
+  pressure when jobs go out of town) with a crew free (its staff in crews of 4) and the site
+  within 4.5 km takes it at the estimate (materials at 1.3x base for four deliveries plus the
+  crew's payroll for the days) x 1.15; its crew are its own staff, so the site hires nobody, and
+  they commute to the site they are on (`World::crew_site`). With no crew free the job goes to a
+  firm from out of town (a generated name, "Tri-County Contractors") whose fee is its labour x
+  1.35; its site hires labourers at the gate as before. Whoever is building (`site_payer`) pays
+  the contractor in four instalments, one per delivery ordered (`Construction.contract`). Each
+  delivery is the stage's lines of the site's bill as a list of (good, qty) (`World::site_load`,
+  r14-materials' `site_lines_to_order`), bought line by line by the builder: from its yard stock
+  (filled each 07:00 from the merchant), a scrap yard (steel), the cheapest of the merchant (it
+  stocks the material itself) and the makers in town of the good's `local_from` (the builder
+  fetches a maker's load in its own lorry), else all of the stage's imports on one lorry at the
+  import markup. Each load is booked on the site's `due` list before its lorry leaves; the stage
+  counts when the last is in (`site_received`). A contractor pays its staff like any business and goes bust with no
+  work (its sites are let again). The builders' merchant (`BusinessKind::BuildersMerchant`,
+  opened by pressure from the sites' materials a day and the population) keeps trade stock of
+  every good in `catalogue::site_materials`, bought from makers or imported in bulk at 1.25x,
+  sold at 1.4x base (+-8% by stock) to builders, sites and any business restocking (it is in
+  the seller index for those goods); its recipe (plastics into goods) is a DIY floor residents
+  shop at. Looks: `Style::BuildersYard` (shed, office, sign band, vans and a flatbed in the
+  firm's colour, stock bays, skip, fence) and `Style::BuildersMerchant` (clad shed, glazed
+  entrance, lit sign band, covered timber racks, pallets, car park, pylon); a site shows its
+  builder's van by the gate and a local firm's flatbed (`Extras::site_builder`). The inspector
+  says "Built by ..." on a site and lists a builder's crews, jobs and yard stock and a
+  merchant's trade counter; the API has `under_construction.builder`, `business.builder` /
+  `business.trade` and `economy.builders` (the day's books: jobs let local / out of town,
+  loads by source, money, busts).
 - **Demolition** (`buildings::Demolition`): nothing vanishes either. Whatever pulls a
   building down (a bulldozed zone, road works, a shop shut for a week, a take-over, a
   redevelopment) turns it into a demolition site. [pt-growth] It says why

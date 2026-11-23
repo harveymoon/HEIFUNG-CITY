@@ -198,7 +198,8 @@ impl Specialty {
             K::Hotel | K::Venue | K::GolfRange | K::BeachResort | K::PierRestaurant | K::BeachBar | K::BoatRental | K::SeafoodRestaurant | K::Marina | K::Gallery | K::ArtStudio => Specialty::Leisure,
             K::OilWell | K::Refinery | K::ChemicalWorks => Specialty::Energy,
             K::Fab | K::Smelter | K::StripMine | K::TrashCompany | K::ScrapYard => Specialty::Industry,
-            K::Office => Specialty::Property,
+            K::Office | K::Contractor => Specialty::Property,
+            K::BuildersMerchant => Specialty::Industry,
             // [r4-leisure-places] the kitchens with food, the nights out with hospitality
             K::Diner | K::NoodleBar | K::PizzaPlace | K::FastFood | K::FoodHall | K::StreetFood | K::BubbleTea | K::FoodTruck => Specialty::Food,
             K::FineDining | K::Bar | K::KaraokeBox | K::Cinema | K::Theatre | K::ConcertHall | K::BowlingAlley | K::Arcade | K::Gym | K::ComedyClub => Specialty::Leisure,
@@ -258,6 +259,9 @@ pub fn min_area(kind: BusinessKind) -> f32 {
         BusinessKind::Mechanic => 350.0,
         BusinessKind::GolfRange => 2800.0,
         BusinessKind::TowYard | BusinessKind::FleetLot | BusinessKind::ContainerYard => 500.0,
+        // [r14-builders] A builder's yard; the merchant's shed and car park.
+        BusinessKind::Contractor => 450.0,
+        BusinessKind::BuildersMerchant => 900.0,
         _ => 0.0,
     }
 }

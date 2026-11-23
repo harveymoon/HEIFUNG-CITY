@@ -618,10 +618,30 @@ fn economy(w: &World) -> Value {
             "deals": e.market.deals_today, "meals_sold": e.market.meals_sold_today, "walk_in_sales": round(e.walk_in_sales_today), "parking_fees": round(e.parking_fees_today),
         },
         "businesses": { "total": aggs.iter().map(|a| a.count).sum::<u32>(), "open": aggs.iter().map(|a| a.open).sum::<u32>(), "closed_ever": e.market.closed_total, "by_kind": kinds },
+        // [r14-builders] who builds the city's buildings, and the merchants
+        "builders": builders_summary(w),
         "resources": resources,
         "resources_note": "local_supply_per_day = open producers' output at current staffing if inputs allow; business_demand_per_day = open buyers' inputs at current staffing; citizens' own grocery and goods purchases are not included",
         "most_profitable_today": most,
         "least_profitable_today": least,
+    })
+}
+
+/// [r14-builders] The builders' books: today so far, yesterday, the totals.
+fn builders_summary(w: &World) -> Value {
+    let day = |d: &nd_sim::builders::BuildersDay| {
+        json!({
+            "day": d.day, "let_local": d.let_local, "let_out_of_town": d.let_outside, "finished": d.finished, "finished_local": d.finished_local,
+            "mean_build_days": round(d.mean_build_days()), "loads": { "yard": d.yard_loads, "merchant": d.merchant_loads, "maker": d.maker_loads, "scrap": d.scrap_loads, "import": d.import_loads, "collected_own_lorry": d.collected },
+            "material_units": round(d.material_units), "merchant_units": round(d.merchant_units),
+            "contracts_paid": round(d.contracts_paid), "out_of_town_fees": round(d.outside_paid), "merchant_trade_sales": round(d.trade_sales), "merchant_takings": round(d.merchant_takings),
+            "busts": d.busts, "contractors": d.contractors, "contractor_money": round(d.contractor_money), "crews": d.crews, "merchants": d.merchants,
+        })
+    };
+    let b = &w.builders;
+    json!({
+        "today": day(&b.today), "yesterday": b.yesterday().map(day),
+        "let_local_total": b.let_local_total, "let_out_of_town_total": b.let_outside_total, "busts_total": b.busts_total,
     })
 }
 

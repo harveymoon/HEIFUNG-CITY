@@ -18,6 +18,8 @@ enums' order, and the building sites' bill of materials:
 - `INDUSTRIAL`, `COMMERCIAL`, `ENTERTAINMENT`, `CIVIC`: the kinds each land use can grow.
 - `BUILD_MIXES`, `build_type`, `site_bill`: what each kind of building is made of, stage by stage (round 14, see below).
 - `makers(r)` / `users(r)`: who makes and who uses a good, read off the recipes (never written twice).
+- `site_materials()` [r14-builders]: every good a site bill can name (every `BuildingMaterial`): what
+  the builders' merchant stocks for the trade and builders keep in their yards.
 
 The old methods (`Resource::label`, `base_price`, `BusinessKind::recipe`, `hours`, `is_food`, ...)
 still exist and keep their signatures; they are one-line reads of the catalogue, so no caller had to
@@ -38,7 +40,7 @@ change. Enum variants, their order and serde are unchanged: saves load as before
 | Good: category, unit | nowhere | `GOODS[..].category`, `.unit` (r13; remote API since r14) |
 | Good: made in town from another good's stock | nowhere | `GOODS[..].local_from` (r14) |
 | Good: who makes / uses it | implicit in recipes | `catalogue::makers` / `users` (from the recipes); other flows in `GOODS[..].note` |
-| Building site materials | `world/construction.rs` `order_materials` literals, then `SITE_BILL` (r13) | `BUILD_MIXES` + `site_bill` (r14) |
+| Building site materials | `world/construction.rs` `order_materials` literals, then `SITE_BILL` (r13) | `BUILD_MIXES` + `site_bill` (r14); bought by the site's builder, `World::buy_site_load` (r14-builders) |
 | Rubble lorry's stand-in cargo | `world/construction.rs` literal `Resource::Parts` | `RUBBLE` |
 | Business: label (and API key) | `market/business_kind.rs` `label` | `BUSINESSES[..].label` |
 | Business: recipe | `business_kind.rs` `recipe` | `.inputs`, `.outputs` |
@@ -98,6 +100,28 @@ the row.
 ### Bills of materials
 
 See "Building materials and bills of materials" below (round 14).
+
+[r14-builders] Sites are built by builders (`world/builders.rs`, `docs/DESIGN.md` "Builders and the
+builders' merchant"). The builder buys the lines of the stage being supplied (`World::site_load(bid)`, the
+same list as `World::site_lines_to_order`: (good, qty)): from its own yard stock, a scrap yard (steel),
+the builders' merchant (which stocks every `BuildingMaterial` good, `catalogue::site_materials()`) or a
+maker of the good's `local_from` in town, whichever is cheapest, else all of the stage's imports on one
+lorry. Each load is booked on the site's `due` list before its lorry leaves, as r14-materials does.
+
+## The building trade's kinds [r14-builders]
+
+- `Contractor` ("building contractor"): no recipe; lives on contracts (instalments from whoever is
+  building), pays its crews, buys the sites' materials. `needs_site` (opened by the `Contractor` pressure
+  when sites go to firms from out of town), max 2 floors, min lot 450 m², look `Style::BuildersYard`,
+  `Livery::Construction` in its fleet colour, names from `names::trade_words` ("Okafor Construction").
+  Out-of-town firms are not businesses: a name (`builders::out_of_town_name`) and a colour on the contract.
+- `BuildersMerchant` ("builders' merchant"): recipe plastics into goods (the DIY floor, walk-in, residents
+  shop there); its trade stock of `site_materials()` (every building material) is bought and sold outside
+  the recipe (`World::merchant_restock`: from makers of the good's `local_from`, else a bulk import;
+  trade price `builders::trade_price` in `Business::sell_price`) and it is in the seller index for those
+  goods. `needs_site` (the `BuildersMerchant` pressure: site material units a day and population), max 2
+  floors, min lot 900 m², look `Style::BuildersMerchant`, sign "HARDWARE".
+- Numbers (crew size, reach, margins, merchant markups, pressure rates) are in `crates/nd_sim/src/builders.rs`.
 
 ## How to add a kind of business
 

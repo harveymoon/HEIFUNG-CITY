@@ -189,6 +189,9 @@ impl World {
             }
             Intent::GoWork => {
                 if let Some(w) = work {
+                    // [r14-builders] A contractor's crew go to the site
+                    // they are building, not the yard.
+                    let w = if self.builder_sites.contains_key(&w) { self.crew_site(id).unwrap_or(w) } else { w };
                     if inside != Some(w) {
                         self.travel_to(id, Some(w), Purpose::Work);
                     }

@@ -758,6 +758,9 @@ impl World {
             *d *= 0.6;
         }
         self.economy.roll_population(self.citizens.len() as u32);
+        // [r14-builders] The builders' and merchants' day, before the
+        // businesses close their books.
+        self.builders_daily();
         crate::prof!("du_daily_businesses", self.daily_businesses());
         // [tenants] Shut tenants out, empty units let, growing businesses
         // into the unit next door.

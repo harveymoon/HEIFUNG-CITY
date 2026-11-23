@@ -172,6 +172,12 @@ impl Business {
     /// Selling price of an output: base, up when stock is scarce, down when it
     /// piles up.
     pub fn sell_price(&self, r: Resource, jobs: u16) -> f32 {
+        // [r14-builders] A builders' merchant's trade stock, at its trade
+        // price (dearer as its racks empty).
+        if self.kind == BusinessKind::BuildersMerchant && !self.sells(r) {
+            let target = crate::builders::MERCHANT_STOCK_PER_JOB * jobs.max(4) as f32;
+            return crate::builders::trade_price(r.base_price(), self.stock_of(r) / target);
+        }
         let per_hour = self.kind.recipe().outputs.iter().find(|(x, _)| *x == r).map(|(_, a)| *a).unwrap_or(1.0);
         let target = (per_hour * jobs as f32 * JOB_RATE * 24.0).max(1.0);
         let ratio = (self.stock_of(r) / target).clamp(0.0, 3.0);

@@ -502,6 +502,9 @@ pub fn style_extras<'a>(world: &'a World, id: BuildingId, neighbours: &'a [Neigh
         waste_fill: world.landfill_fill(id).unwrap_or(0.0),
         // [r6-architects] the water or the fall off a landmark's site
         site: super::architects::site_look(world, id),
+        // [r14-builders] the site's builder's vans; a yard's fleet colour
+        site_builder: world.site_builder_livery(id).map(|(c, local)| (nd_sim::companies::fleet_rgb(c), local)),
+        fleet_colour: b.business.as_ref().filter(|z| matches!(z.kind, nd_sim::BusinessKind::Contractor | nd_sim::BusinessKind::BuildersMerchant)).map(|_| nd_sim::companies::fleet_rgb(world.fleet_colour(id).unwrap_or((nd_sim::hash::mix(b.seed, 0xF1) % 16) as u8))),
         ..Extras::default()
     }
 }

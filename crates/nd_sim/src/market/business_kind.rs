@@ -165,6 +165,16 @@ pub enum BusinessKind {
     /// yard and charges each firm a fee per load. Opened by pressure where
     /// the town exports. Appended so saved kinds keep their order.
     FreightForwarder,
+    /// [r14-builders] A building contractor: a yard, crews of its own
+    /// staff, vans and lorries; hired per building site (`world/builders.rs`),
+    /// it supplies the crew and buys the site's materials. Opened by
+    /// pressure when sites go to builders from out of town. Appended.
+    Contractor,
+    /// [r14-builders] A builders' merchant and hardware store: a big shed,
+    /// a yard of timber, bricks and pallets, a trade counter; stocks the
+    /// building materials and sells them to builders and industry, and DIY
+    /// goods to residents. Opened by pressure. Appended.
+    BuildersMerchant,
     /// [r14-foodtrucks] A food truck, van, cart or stand run by a household
     /// (`crate::food_trucks`): no building of its own; it drives out to
     /// where the crowds are. Never grown on a lot. Appended.
@@ -179,7 +189,7 @@ pub struct Recipe {
 }
 
 impl BusinessKind {
-    pub const COUNT: usize = 69;
+    pub const COUNT: usize = 71;
     /// Every kind, in `index` order.
     pub const ALL: [BusinessKind; Self::COUNT] = [
         BusinessKind::VertFarm,
@@ -250,6 +260,8 @@ impl BusinessKind {
         BusinessKind::Gym,
         BusinessKind::ComedyClub,
         BusinessKind::FreightForwarder,
+        BusinessKind::Contractor,
+        BusinessKind::BuildersMerchant,
         BusinessKind::FoodTruck,
     ];
 
