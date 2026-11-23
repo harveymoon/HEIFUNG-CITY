@@ -15,6 +15,20 @@ use crate::seg_match::{Matcher, OldPiece};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
+/// [r15-polish] A speed limit as it is posted, km/h: the lanes' limits are
+/// kept in m/s (13 m/s on a street), which read as 46.8 km/h in the
+/// inspector (F13). Signs show the nearest 10 km/h, or 5 under 30 (a
+/// street's 13 m/s: 50; a ring's 8.19 m/s: 30; a slip's 6 m/s: 20; a
+/// motorway's 25 m/s: 90). Display only: the traffic keeps its m/s.
+pub fn posted_kmh(ms: f32) -> f32 {
+    if ms <= 0.0 {
+        return 0.0;
+    }
+    let kmh = ms * 3.6;
+    let step = if kmh < 27.5 { 5.0 } else { 10.0 };
+    ((kmh / step).round() * step).max(5.0)
+}
+
 /// Hours of traffic kept per piece (three days).
 pub const HOURS: usize = 72;
 
@@ -340,5 +354,23 @@ mod tests {
             }
         }
         assert_eq!(halves, 2);
+    }
+}
+
+#[cfg(test)]
+mod posted_tests {
+    #[test]
+    fn limits_post_in_round_kmh() {
+        use super::posted_kmh;
+        assert_eq!(posted_kmh(13.0), 50.0);
+        assert_eq!(posted_kmh(12.68), 50.0);
+        assert_eq!(posted_kmh(8.0), 30.0);
+        assert_eq!(posted_kmh(8.186), 30.0);
+        assert_eq!(posted_kmh(10.68), 40.0);
+        assert_eq!(posted_kmh(6.0), 20.0);
+        assert_eq!(posted_kmh(4.5), 15.0);
+        assert_eq!(posted_kmh(25.0), 90.0);
+        assert_eq!(posted_kmh(0.5), 5.0);
+        assert_eq!(posted_kmh(0.0), 0.0);
     }
 }

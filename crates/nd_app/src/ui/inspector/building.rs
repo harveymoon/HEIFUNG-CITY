@@ -149,7 +149,9 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
         ui.label(egui::RichText::new("ON FIRE").strong().color(egui::Color32::from_rgb(255, 110, 60)));
     }
     if b.is_derelict() {
-        ui.label(egui::RichText::new("DERELICT").strong().color(WARN));
+        // [r15-polish] Worn past use, not empty (F11): nobody new moves in or
+        // shops here, but those already living or working here stay.
+        ui.label(egui::RichText::new("DILAPIDATED").strong().color(WARN)).on_hover_text("Worn past use (condition under 30%): nobody new moves in, opens up or shops here; people already living or working here stay until it is refitted or rebuilt.");
     }
     // [pt-growth] A demolition: why, how far, and when the lot is clear.
     if let Some(d) = &b.demolition {

@@ -3956,6 +3956,7 @@ dependencies = [
  "bevy",
  "bevy_egui",
  "embed-resource",
+ "gilrs",
  "glam",
  "image",
  "naga",

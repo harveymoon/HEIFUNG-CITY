@@ -3153,7 +3153,7 @@ Recording reads the world and pushes; it draws no random numbers, so determinism
 The inspector reads top down in order of what the player asks first. A building opens with its
 name, then coloured tags for what it is: the zone (in the zone's colour), the business kind and its
 industry, or the service, plant, depot or "Homes"; the tier and the district. The style, floors and
-build day follow in small print, then alarms (on fire, derelict, under construction with progress,
+build day follow in small print, then alarms (on fire, dilapidated (worn under 0.3 condition: nobody new moves in, residents stay), under construction with progress,
 underpowered). Sections appear only when they apply: a business shows cash, today's takings and
 spending, staff and a cash-flow sparkline (takings up in green, spending down in red, net as a gold
 line, the last 30 closed days from `Business::books` plus today) and its stock folded away, and no

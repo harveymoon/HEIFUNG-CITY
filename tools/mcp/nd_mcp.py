@@ -159,7 +159,7 @@ TOOLS = [
     },
     {
         "name": "find",
-        "description": "Search the city. what=citizens|buildings|lots|cars|trains|routes|gestures, optional near [x,y] + radius (nearest first), filter object (citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,derelict; lots: land_use,vacant,park,min_area; cars/trains: kind), limit. Rows carry ids for inspect/select.",
+        "description": "Search the city. what=citizens|buildings|lots|cars|trains|routes|gestures, optional near [x,y] + radius (nearest first), filter object (citizens: activity,name,class,visible,spotlight; buildings: land_use,tier,business_kind,name,under_construction,plant,rail,depot,dilapidated (old name derelict); lots: land_use,vacant,park,min_area; cars/trains: kind), limit. Rows carry ids for inspect/select.",
         "inputSchema": obj({
             "what": {"type": "string", "enum": ["citizens", "buildings", "lots", "parcels", "cars", "trains", "drones", "routes", "gestures"]},
             "near": POINT, "radius": {"type": "number"}, "filter": {"type": "object"}, "limit": {"type": "integer", "minimum": 1},
