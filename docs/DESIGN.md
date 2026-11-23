@@ -2147,7 +2147,12 @@ Citizens are rendered from their simulated positions every frame.
   *Landlords*: the independent landlords' pool pays its rent profit to the town's savers (households
   with $5,000+), keeps the price of buildings it sold as capital that builds the sites it will own,
   and pays 2% of that capital a day to the savers (`LANDLORD_DRAW`); nothing goes out of town.
-  *Corps* borrow (see Mega-corps). The probe `examples/money_probe.rs` prints a save's day by day:
+  *Corps* borrow (see Mega-corps). *Tuning* so firms and the treasury still pay their way with
+  the wage now paid in full: a civic job pays 75 (was 125), service upkeep is 0.6 of the old figure
+  (the staff are paid apart), households spend 15% of what a day's pay leaves after rent and living
+  costs at the town's shops and places (`SPARE_SPEND`), and a maker's goods (any industry kind) sell
+  in town at 1.3x a shop's reading of the same stock, at most 1.6x base (`MAKER_PRICE`, under an
+  import's 1.7x). The probe `examples/money_probe.rs` prints a save's day by day:
   earnings by payer, the treasury's lines, each flow across the edge by kind and class, and the
   town's health.
 - **Money across the town edge** [r15-money]: the only flows that cross the city limits, each where
