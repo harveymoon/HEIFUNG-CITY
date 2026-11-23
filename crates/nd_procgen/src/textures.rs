@@ -664,7 +664,8 @@ mod tests {
             let (d0, d1) = (dark(&clean, m0 * 0.7), dark(&a, m0 * 0.7));
             assert!(m1 < m0 * 0.97, "{worn:?} should be darker: {m1} vs {m0}");
             assert!(d1 > d0, "{worn:?} should have more dark marks: {d1} vs {d0}");
-            let half = generate_wear(base, 64, 0.4).unwrap();
+            // [r14-photofix] At the worn surface's own tiling (`repeat`).
+            let half = generate_tiled(base, 64, 0.4, worn.repeat()).unwrap();
             let mh = mean(&half);
             assert!(mh <= m0 && mh >= m1, "{base:?}: wear should be monotone ({m0} {mh} {m1})");
         }

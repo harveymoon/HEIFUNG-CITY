@@ -153,12 +153,14 @@ fn placing_is_deterministic_and_a_click_finds_the_owner() {
         }
     }
     // A click from a camera up the street, on each thing, finds its owner.
+    // [r14-photofix] From high up: the yard's things now stand near the
+    // house, so from a low eye the washing line can hide the grill.
     let props: Vec<(PropKind, u8, Vec3)> = a.iter().map(|p| (p.kind, p.variant, p.at)).collect();
     let eye_dir = Vec3::new(l.front_dir.x, 0.0, l.front_dir.y).normalize();
     for (i, p) in a.iter().enumerate() {
         let (up, _) = reach(p.kind, p.variant);
         let target = p.at + Vec3::Y * up;
-        let eye = target + eye_dir * 25.0 + Vec3::Y * 12.0;
+        let eye = target + eye_dir * 8.0 + Vec3::Y * 30.0;
         let (hit, _) = pick_ray(&props, eye, target - eye).expect("a hit");
         assert_eq!(a[hit].owner, p.owner, "clicked {:?}, got {:?}", p.kind, a[hit].kind);
         let _ = i;

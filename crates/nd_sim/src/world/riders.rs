@@ -43,6 +43,11 @@ const RED_SALT: u64 = 0xb1cc;
 /// [r14-photofix] A rider keeps this far behind the bike ahead (a bike's
 /// length and a little), metres.
 pub(super) const FOLLOW_GAP: f32 = 2.5;
+/// [r14-photofix] Ticks a rider waits behind the bike ahead before going
+/// round it (a long red is about this), and ticks it then rides on
+/// ignoring the gap.
+pub(super) const GAP_PATIENCE: u16 = 25;
+const PASS_TICKS: u16 = 3;
 /// [r14-photofix] Riders within this of each other across the line are on
 /// the same line, metres.
 const FOLLOW_LANE: f32 = 0.9;
@@ -553,7 +558,7 @@ impl World {
         };
         let mut r = self.peds.riders.get(&id).copied().unwrap_or_else(|| {
             let (caution, hedonism) = driver_traits(seed);
-            Rider { waiting: None, ran: None, caution, hedonism, bridges: 0 }
+            Rider { waiting: None, ran: None, caution, hedonism, bridges: 0, held: 0 }
         });
         let mut pos = self.citizens[id].pos;
         let mut heading = self.citizens[id].heading;
@@ -583,8 +588,19 @@ impl World {
         }
         // [r14-photofix] The following gap: no closer than `FOLLOW_GAP`
         // behind the rider ahead on the same line.
+        // Held up past `GAP_PATIENCE` (a rider ahead stopped for good: one
+        // waiting at a light that never serves it, a broken-down queue), the
+        // rider goes round for `PASS_TICKS`, as cyclists do: with the gap
+        // kept for good, a town's riders queued behind such a one and
+        // starved.
         if *idx < path.len() {
-            budget = budget.min(self.room_ahead(id, pos, path[*idx], budget, feet));
+            if r.held >= GAP_PATIENCE {
+                r.held = if r.held >= GAP_PATIENCE + PASS_TICKS { 0 } else { r.held + 1 };
+            } else {
+                let room = self.room_ahead(id, pos, path[*idx], budget, feet);
+                r.held = if room < budget * 0.5 { r.held + 1 } else { 0 };
+                budget = room;
+            }
         }
         // Crossings matter only once the walk graph and lanes are matched.
         let rules = !self.peds.cross_grid.is_empty() && self.peds.crossings.len() == self.walk.crossings.len();
@@ -835,7 +851,7 @@ mod tests {
         let mid_out = out_of(w.walk.crossings[cr as usize].mid, centre, out);
         until_red(&mut w, k, ap);
         let ids: Vec<CitizenId> = w.citizens.keys().take(3).collect();
-        let path = shoulder(&w, centre, out, mid_out + CROSSWALK_HALF + 40.0, -80.0);
+        let path = shoulder(&w, centre, out, mid_out + CROSSWALK_HALF + 6.0, -80.0);
         let cautious = seeds(|c, _| c > 0.85, 3);
         for (n, &id) in ids.iter().enumerate() {
             rider(&mut w, id, cautious[n], path.clone());

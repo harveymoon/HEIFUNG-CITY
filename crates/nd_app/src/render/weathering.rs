@@ -243,8 +243,8 @@ fn weather_ground(base: vec3<f32>, world: vec3<f32>, wear_in: f32, packed: f32, 
     let growth = weather.weeds.a * weather.surface.z;
     let clump = smoothstep(0.25, 0.8, w_noise(p * 0.42 + vec2(5.3, 1.7)));
     let reach = (0.12 + 0.45 * wk) * (0.35 + 1.15 * clump);
-    let patch = smoothstep(0.3, 0.7, w_noise(p * 3.1 + vec2(4.4, 0.9)));
-    let weeds = (1.0 - smoothstep(0.0, reach, d + (rag - 0.5) * 0.3)) * growth * (0.35 + 0.65 * patch);
+    let patchy_w = smoothstep(0.3, 0.7, w_noise(p * 3.1 + vec2(4.4, 0.9)));
+    let weeds = (1.0 - smoothstep(0.0, reach, d + (rag - 0.5) * 0.3)) * growth * (0.35 + 0.65 * patchy_w);
     let tuft = 0.55 + 0.6 * w_noise(p * 11.0);
     let lum = dot(weather.weeds.rgb, vec3(0.2126, 0.7152, 0.0722));
     let weed_rgb = mix(vec3(lum, lum, lum * 0.9), weather.weeds.rgb, 0.55);

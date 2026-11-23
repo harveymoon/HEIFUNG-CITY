@@ -843,6 +843,12 @@ fn the_diary_is_told_in_time_order_with_how_things_stand() {
         nd_sim::Memory { tick: y + 21 * 60 + 44, text: "The car's in the pound at Hooked on Towing. 95 to get it out now, 15 more each day it stays.".into() },
         nd_sim::Memory { tick: t + 2 * 60, text: "Sat on a bench in Umbra Plaza.".into() },
     ];
+    // [r14-photofix] Only these memories: the grown town's own talks of
+    // the day (four of them, after a change in how riders keep their
+    // distance) pushed yesterday's tow out of the stand-in's six entries.
+    if let Some(circle) = w.social.circles.get_mut(&id) {
+        circle.talks.clear();
+    }
     let req = super::voices::diary_request(&w, id).unwrap();
     let Task::Diary { entries, facts, .. } = &req.task else { panic!("a diary") };
     let lines: Vec<String> = entries.iter().map(|e| e.line()).collect();

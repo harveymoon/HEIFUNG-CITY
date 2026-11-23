@@ -168,11 +168,14 @@ pub struct Rider {
     /// ride was last fitted to the footbridges on (`step_rider`): a bridge
     /// put up after the ride was planned is taken (0: not yet).
     pub bridges: u64,
+    /// [r14-photofix] Ticks held up behind the bike ahead (`room_ahead`);
+    /// past `GAP_PATIENCE` the rider goes round it for a few ticks.
+    pub held: u16,
 }
 
 impl Default for Rider {
     fn default() -> Self {
-        Rider { waiting: None, ran: None, caution: 0.5, hedonism: 0.5, bridges: 0 }
+        Rider { waiting: None, ran: None, caution: 0.5, hedonism: 0.5, bridges: 0, held: 0 }
     }
 }
 
