@@ -129,8 +129,20 @@ impl Surface {
         self as usize
     }
 
+    /// [r14-photofix] How many of its clean tiles a weathered surface's
+    /// texture spans each way, so its stains and streaks repeat less often
+    /// (`textures::generate`): 2 for the worn walls and ground, 1 else.
+    pub fn repeat(self) -> u32 {
+        if self.is_worn() && self.base() != Surface::Container { 2 } else { 1 }
+    }
+
     /// Metres covered by one texture repeat.
     pub fn tile(self) -> f32 {
+        self.repeat() as f32 * self.base_tile()
+    }
+
+    /// Metres covered by one repeat of the clean pattern.
+    fn base_tile(self) -> f32 {
         match self.base() {
             Surface::Concrete => 3.0,
             Surface::Plaster => 3.0,
@@ -224,7 +236,7 @@ impl Surface {
     /// Texels across one tile. The container sheet spreads its tile over
     /// 5.6 m, so it gets twice the usual resolution to keep ~90 px a metre.
     pub fn texels(self, default: usize) -> usize {
-        if self.base() == Surface::Container { default * 2 } else { default }
+        if self.base() == Surface::Container { default * 2 } else { default * self.repeat() as usize }
     }
 
     /// Unlit decals with no texture: the Glow surface and road paint.

@@ -56,6 +56,23 @@ fn vnoise2(x: f32, y: f32, px: i32, py: i32, seed: u32) -> f32 {
     top + (bot - top) * fy
 }
 
+/// [r14-photofix] Fractal noise in 0..1 over a unit tile with separate
+/// lattice periods across (`pu`) and up (`pv`): stretched features (drips,
+/// runs) that tile. `fbm(u * k, v * j, p, ..)` with `k`, `j` not 1 did not:
+/// a seam at every repeat, or the same streak `k` times across a tile.
+fn fbm2(u: f32, v: f32, pu: i32, pv: i32, octaves: u32, seed: u32) -> f32 {
+    let (mut sum, mut amp, mut total) = (0.0, 0.5, 0.0);
+    let (mut pu, mut pv) = (pu.max(1), pv.max(1));
+    for o in 0..octaves {
+        sum += vnoise2(u * pu as f32, v * pv as f32, pu, pv, seed + o * 31) * amp;
+        total += amp;
+        amp *= 0.5;
+        pu *= 2;
+        pv *= 2;
+    }
+    sum / total
+}
+
 /// Fractal noise in 0..1 over a unit tile, seamless.
 fn fbm(u: f32, v: f32, base_period: i32, octaves: u32, seed: u32) -> f32 {
     let mut sum = 0.0;
@@ -110,14 +127,15 @@ fn sample(surface: Surface, u: f32, v: f32, px: i32, py: i32) -> Sample {
             Sample { value, tint: 0.0, height: g * 0.4 + if seam < 1.0 { -0.6 } else { 0.0 } + if hole < 1.0 { -1.0 } else { 0.0 } }
         }
         Surface::Plaster => {
+            // [r14-photofix] Smooth render: trowel texture and soft blotches
+            // only. Its hairline (a contour of a 1 m noise) closed on itself
+            // in a little heart, the same one every 3 m tile: rows of
+            // hearts over every Harbour Pastel wall (photo report
+            // 2026-11-22, finding 9). Cracks come with wear (`grit`).
             let g = fbm(u, v, 6, 4, 11);
-            let crack_field = fbm(u, v, 3, 3, 13);
-            // Hairlines only where a second field allows, so the contour
-            // breaks into short cracks instead of closed loops.
-            let crack = if (crack_field - 0.5).abs() < 0.004 && fbm(u, v, 5, 2, 19) > 0.55 { 0.6 } else { 1.0 };
             let blotch = fbm(u, v, 2, 2, 17);
-            let value = (0.84 + 0.12 * g) * crack * (0.94 + 0.08 * blotch);
-            Sample { value, tint: 0.0, height: g * 0.2 + if crack < 1.0 { -0.8 } else { 0.0 } }
+            let value = (0.84 + 0.12 * g) * (0.94 + 0.08 * blotch);
+            Sample { value, tint: 0.0, height: g * 0.2 }
         }
         Surface::Brick => {
             // 1 m tile: 12 courses, 4 bricks per course, running bond. An even
@@ -342,10 +360,16 @@ fn crack_line(field: f32, width: f32) -> f32 {
 /// on steel, rust bleeding from the fixings. Ground surfaces get crazing,
 /// chipped slabs and patched asphalt instead of drips. Strength `wear`,
 /// 0 leaves the sample untouched.
-fn grit(surface: Surface, s: Sample, u: f32, v: f32, px: i32, py: i32, wear: f32) -> Sample {
+///
+/// `r` is how many of the surface's own tiles the texture spans each way
+/// ([`Surface::repeat`]): the grit's lattices are `r` times finer, so its
+/// marks keep their size in metres and repeat only every `r` tiles.
+#[allow(clippy::too_many_arguments)]
+fn grit(surface: Surface, s: Sample, u: f32, v: f32, px: i32, py: i32, wear: f32, r: i32) -> Sample {
     if wear <= 0.0 {
         return s;
     }
+    let fbm = |u: f32, v: f32, p: i32, o: u32, seed: u32| fbm(u, v, p * r, o, seed);
     let Sample { mut value, mut tint, mut height } = s;
     let ground = matches!(surface, Surface::Paving | Surface::Asphalt);
     // Broad stains: damp patches and soot, a little warm.
@@ -359,20 +383,22 @@ fn grit(surface: Surface, s: Sample, u: f32, v: f32, px: i32, py: i32, wear: f32
     if !ground {
         // Drip streaks: stretched noise along v, darkest under the
         // stain bands, as rain carries dirt down a facade.
-        let drip = fbm(u * 6.0, v * 0.5, 6, 3, 419);
-        let dr = ((drip - 0.55) * 4.0).clamp(0.0, 1.0) * wear;
+        let drip = fbm2(u, v, 12 * r, 2 * r, 3, 419);
+        let dr = ((drip - 0.58) * 4.0).clamp(0.0, 1.0) * wear;
         value *= 1.0 - 0.28 * dr;
         height -= 0.15 * dr;
     }
-    // Cracks: hairlines along a noise contour, broken into short runs by a
-    // second field so they read as cracks, not a marbled map.
-    let w = 0.002 + 0.004 * wear;
-    let mask = fbm(u, v, 4, 2, 437) > 0.56;
-    let c1 = if mask { crack_line(fbm(u, v, 6, 3, 431), w) } else { 0.0 };
-    let c2 = if !mask { crack_line(fbm(u, v, 8, 2, 433), w * 0.7) * 0.6 } else { 0.0 };
+    // Cracks: hairlines along a contour of a warped noise (unwarped, its
+    // contours ring the lattice points: little closed loops, hearts, in a
+    // grid), kept only in short runs where a fine and a broad mask allow,
+    // so they read as scattered cracks, not a marbled map. [r14-photofix]
+    let w = 0.0015 + 0.003 * wear;
+    let (wu, wv) = ((fbm(u, v, 2, 3, 501) - 0.5) * 0.5 / r as f32, (fbm(u, v, 2, 3, 503) - 0.5) * 0.5 / r as f32);
+    let keep = fbm(u, v, 12, 2, 437) > 0.52 && fbm(u, v, 3, 2, 439) > 0.45;
+    let c1 = if keep { crack_line(fbm(u + wu, v + wv, 4, 4, 431), w) } else { 0.0 };
     // Steel sheet does not crack like render: no hairlines on containers.
-    let crack = if surface == Surface::Container { 0.0 } else { c1.max(c2) * wear };
-    value *= 1.0 - 0.35 * crack;
+    let crack = if surface == Surface::Container { 0.0 } else { c1 * wear };
+    value *= 1.0 - 0.3 * crack;
     height -= 1.0 * crack;
     match surface {
         Surface::Container => {
@@ -400,7 +426,7 @@ fn grit(surface: Surface, s: Sample, u: f32, v: f32, px: i32, py: i32, wear: f32
     }
     if matches!(surface, Surface::Metal | Surface::Panel | Surface::Container) {
         // Rust bleeding down from fixings in vertical runs.
-        let run = fbm(u * 10.0, v * 0.6, 10, 2, 457);
+        let run = fbm2(u, v, 20 * r, 2 * r, 2, 457);
         let r = ((run - 0.62) * 5.0).clamp(0.0, 1.0) * wear;
         value *= 1.0 - 0.2 * r;
         tint += 0.18 * r;
@@ -415,10 +441,10 @@ fn grit(surface: Surface, s: Sample, u: f32, v: f32, px: i32, py: i32, wear: f32
     if ground {
         // Crazing in a coarse cell pattern, chipped edges and dark spots
         // (gum, oil) on paving; patched repairs on asphalt.
-        let cu = u * 6.0;
-        let cv = v * 6.0;
+        let cu = u * (6 * r) as f32;
+        let cv = v * (6 * r) as f32;
         let (iu, iv) = (cu.floor() as i32, cv.floor() as i32);
-        let jitter = hash(iu.rem_euclid(6), iv.rem_euclid(6), 467);
+        let jitter = hash(iu.rem_euclid(6 * r), iv.rem_euclid(6 * r), 467);
         let edge = (cu.fract() - 0.5).abs().max((cv.fract() - 0.5).abs());
         if jitter < 0.5 * wear && edge > 0.47 {
             value *= 0.6;
@@ -445,7 +471,7 @@ const REFERENCE_SIZE: f32 = 256.0;
 /// which stays a flat emissive colour.
 pub fn generate(surface: Surface, size: usize) -> Option<Texture> {
     if surface.is_worn() {
-        return generate_wear(surface.base(), size, WORN);
+        return generate_tiled(surface.base(), size, WORN, surface.repeat());
     }
     generate_wear(surface, size, 0.0)
 }
@@ -453,9 +479,21 @@ pub fn generate(surface: Surface, size: usize) -> Option<Texture> {
 /// The texture of a surface weathered by `wear` in `0..1`: 0 is the clean
 /// texture, byte for byte; more adds stains, cracks, streaks and worn paint.
 pub fn generate_wear(surface: Surface, size: usize, wear: f32) -> Option<Texture> {
+    generate_tiled(surface, size, wear, 1)
+}
+
+/// [`generate_wear`] over `repeat` x `repeat` of the surface's own tiles:
+/// the clean pattern repeats in each, the grit spans them all (finer, so
+/// its marks keep their size). [r14-photofix] The same stain, drip and
+/// crack in every storey-high tile was the photographer's "streaks repeat
+/// panel after panel, floor after floor" (photo report 2026-11-22,
+/// finding 11).
+fn generate_tiled(surface: Surface, size: usize, wear: f32, repeat: u32) -> Option<Texture> {
     if surface.is_glow() {
         return None;
     }
+    let r = repeat.max(1) as i32;
+    let base = (size / r as usize).max(1);
     let surface = surface.base();
     let wear = if wear.is_finite() { wear.clamp(0.0, 1.0) } else { 0.0 };
     let mut heights = vec![0.0f32; size * size];
@@ -464,7 +502,9 @@ pub fn generate_wear(surface: Surface, size: usize, wear: f32) -> Option<Texture
         for px in 0..size {
             let u = (px as f32 + 0.5) / size as f32;
             let v = (py as f32 + 0.5) / size as f32;
-            let s = grit(surface, sample(surface, u, v, px as i32, py as i32), u, v, px as i32, py as i32, wear);
+            let (bx, by) = (px % base, py % base);
+            let clean = sample(surface, (bx as f32 + 0.5) / base as f32, (by as f32 + 0.5) / base as f32, bx as i32, by as i32);
+            let s = grit(surface, clean, u, v, px as i32, py as i32, wear, r);
             heights[py * size + px] = s.height;
             let r = (s.value * (1.0 + s.tint)).clamp(0.0, 1.0);
             let g = s.value.clamp(0.0, 1.0);
@@ -479,7 +519,7 @@ pub fn generate_wear(surface: Surface, size: usize, wear: f32) -> Option<Texture
     // The height field is a function of (u, v), so the finite difference
     // between neighbouring pixels shrinks as the texture grows; scaling by
     // the size keeps the normal map's slope the same at any resolution.
-    let strength = surface.bump() * (1.0 + 0.25 * wear) * 0.5 * (size as f32 / REFERENCE_SIZE);
+    let strength = surface.bump() * (1.0 + 0.25 * wear) * 0.5 * (base as f32 / REFERENCE_SIZE);
     let mut normal = vec![0u8; size * size * 4];
     let at = |x: i32, y: i32| heights[(y.rem_euclid(size as i32) as usize) * size + x.rem_euclid(size as i32) as usize];
     for py in 0..size as i32 {
