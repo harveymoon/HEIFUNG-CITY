@@ -31,6 +31,11 @@ pub const MAX_TRUCKS: usize = 60;
 /// Import and export with the world outside the city. Imports cost more than
 /// local goods, exports pay less, so a local supply chain is worth building.
 pub const IMPORT_MARKUP: f32 = 1.7;
+/// [r15-money] What a maker's goods (any business of an industry sub-zone)
+/// sell for in town over a shop's reading of the same stock, and the most
+/// over the base price they may fetch (under `IMPORT_MARKUP`).
+pub const MAKER_PRICE: f32 = 1.25;
+pub const MAKER_PRICE_CAP: f32 = 1.6;
 pub const EXPORT_DISCOUNT: f32 = 0.45;
 /// Haulage cost per unit per metre, added to a seller's price when comparing.
 pub const HAULAGE: f32 = 0.0012;

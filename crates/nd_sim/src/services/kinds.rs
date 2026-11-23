@@ -555,7 +555,9 @@ impl ServiceKind {
             ServiceKind::FanLibrary => 480.0,
             ServiceKind::CultureHouse => 640.0,
         };
-        base * [0.6, 1.0, 1.8][tier.index()]
+        // [r15-money] Supplies and running costs only: the staff are paid
+        // apart now (`Flow::StaffWages`), so a quarter off the old figure.
+        base * [0.6, 1.0, 1.8][tier.index()] * 0.75
     }
 
     pub fn jobs(self, tier: Tier) -> u16 {

@@ -236,11 +236,16 @@ impl World {
             // [delivery-hours] The hub's lorries keep the buyers' hours.
             self.queue_truck(TruckOrigin::Building(h), Cargo { from: h, to: l.buyer, resource: l.resource, amount: l.amount, price: l.price }, 6);
             let fee = l.price * hub::HANDLING_FEE;
+            // [r15-money] Handling, paid by the buyer the load goes on to
+            // (a business in town; else the shipper out of town).
+            let payer = self.business_account(l.buyer).unwrap_or(Account::Outside);
             if let Some(z) = self.buildings.get_mut(h).and_then(|b| b.business.as_mut()) {
                 z.revenue_today += fee;
                 z.deals += 1;
-                // [ledger] Handling, paid by the shipper out of town.
-                self.transfer(Account::Outside, Account::Business(h), fee, Kind::Fees);
+                self.transfer(payer, Account::Business(h), fee, Kind::Fees);
+                if let Some(z) = self.buildings.get_mut(l.buyer).and_then(|b| b.business.as_mut()) {
+                    z.spend_today += fee;
+                }
             }
             let s = &mut self.cargo_hubs.stats;
             s.forwarded_today += 1;

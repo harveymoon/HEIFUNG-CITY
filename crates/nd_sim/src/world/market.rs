@@ -16,13 +16,40 @@ const SITE_RETRY: u64 = 60;
 /// [ledger] The most of a day's profit a business's unit rent takes
 /// (`World::shop_rent` is the full rent).
 const SHOP_RENT_PROFIT_CAP: f32 = 0.5;
-/// [p1-sim] What a business pays out of its own money a day for each of its
-/// staff, as a share of the job's wage (`Building::wage`): its payroll. The
-/// rest of what a worker earns (skill, school, the wage over the payroll)
-/// comes in from out of town as before. At the full wage the businesses of
-/// Harvey's day-62 city would pay their staff ~$300k a day on ~$370k of
-/// takings, ~$400k spent in all: a fifth of them losing money every day.
-pub const PAYROLL_SHARE: f32 = 0.6;
+/// [r15-money] Share of a household's everyday living costs spent at the
+/// town's own shops, eateries and places (`World::spend_in_town`); the rest
+/// (power, phone, insurance, things bought from away) goes out of town.
+pub const LIVING_LOCAL: f32 = 0.5;
+/// [r15-money] Passers-by remembered per lot an hour, to pay for walk-in
+/// sales (the rest of the footfall shops through them).
+pub const PASSERS_KEPT: usize = 8;
+
+/// [r15-money] Someone who walked past a lot this hour: a resident (pays
+/// from their household's purse) or a tourist (from their wallet).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum Passer {
+    Citizen(CitizenId),
+    Tourist(crate::tourism::TouristId),
+}
+
+/// [r15-money] Who pays someone's daily earnings (`World::earnings_payer`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(in crate::world) enum Payer {
+    /// The business they work for, out of its own till.
+    Business(BuildingId),
+    /// An office on commercial land: out of the fees its clients out of town
+    /// pay it for the work (`Kind::Services`), booked as they are paid.
+    Office(BuildingId),
+    /// The treasury: the city's own staff (civic ground, services, plants,
+    /// depots, stations, ports, airports, the city's car parks and hubs).
+    City(BuildingId),
+    /// A building site's crew: the site's owner (a developer, residents'
+    /// company or builder), or the bank out of town for everyone else's
+    /// build (`World::site_payer`).
+    Site(Account),
+    /// From out of town: pensions and gig work.
+    Outside,
+}
 
 impl World {
     /// Businesses pay wages; those that cannot for several days close, and
@@ -36,6 +63,7 @@ impl World {
         // here: the building stands, its own units to let.
         let mut let_go: Vec<BuildingId> = Vec::new();
         let any_policy = self.any_district_policy();
+        let mut stray: Vec<CitizenId> = Vec::new();
         for bid in ids {
             if !self.buildings[bid].operating() {
                 continue;
@@ -49,9 +77,9 @@ impl World {
                 // [tax] What its takings are taxed under (the city's own
                 // businesses at the standard rate, as before).
                 let tax_line = if publicly_funded { None } else { crate::tax::TaxCategory::of_business(bz.kind, b.tier) };
-                (b.workers.len() as f32 * b.wage() * PAYROLL_SHARE, b.workers.clone(), publicly_funded, bz.kind, tax_line)
+                (0.0f32, b.workers.clone(), publicly_funded, bz.kind, tax_line)
             };
-            let (rate, surcharge) = tax_line.map_or((crate::tax::BUSINESS_TAX, 0.0), |c| (self.economy.taxes.rate(c), self.economy.taxes.surcharge(c)));
+            let rate = tax_line.map_or(crate::tax::BUSINESS_TAX, |c| self.economy.taxes.rate(c));
             let b = &mut self.buildings[bid];
             let bz = b.business.as_mut().unwrap();
             if bz.closed {
@@ -61,6 +89,12 @@ impl World {
                 bz.revenue_today = 0.0;
                 bz.spend_today = 0.0;
                 bz.broke_days = bz.broke_days.saturating_add(1);
+                // [r15-money] Nobody works for a shut business: anyone still
+                // on its staff (hired since it shut) is let go.
+                if !b.workers.is_empty() {
+                    stray.append(&mut b.workers);
+                }
+                let bz = b.business.as_mut().unwrap();
                 if bz.broke_days > 7 {
                     let tenanted = b.units.iter().any(|u| matches!(u.occupant, crate::buildings::Occupant::Tenant(_)));
                     if b.is_tenant() {
@@ -85,24 +119,17 @@ impl World {
             if let Some(c) = tax_line {
                 self.economy.taxes.collect(c, tax);
             }
-            // [ledger] The standard part was in the prices customers paid
-            // (from outside the business's own money); the rest below.
-            let extra = if publicly_funded { 0.0 } else { revenue * surcharge };
-            self.economy.credit_item(Flow::BusinessTax, tax - extra, Item::LandUse(lu));
+            // [r15-money] Paid out of the takings (the standard rate was in
+            // the prices its customers paid; a rate over it is a cost the
+            // business carries, one under it money kept), no longer from
+            // out of town.
+            self.pay_city(Account::Business(bid), Flow::BusinessTax, tax, Some(Item::LandUse(lu)));
+            let extra = if publicly_funded { 0.0 } else { tax };
+            // [r15-money] The wages went to the staff's households in their
+            // daily pass (`pay_earnings`, `wages_paid`): the whole wage, the
+            // income tax held back for the treasury.
+            let wage_bill = wage_bill + self.wages_paid.remove(&bid).unwrap_or(0.0);
             if !publicly_funded {
-                // [p1-sim] The payroll went to the staff's households in
-                // their daily pass (`daily_household`, `wages_paid`); what
-                // is left of it (staff with no household of their own,
-                // gone since) is paid out of town as before.
-                let paid = self.wages_paid.remove(&bid).unwrap_or(0.0);
-                self.transfer(Account::Business(bid), Account::Outside, (wage_bill - paid).max(0.0), Kind::Payroll);
-                // [tax] Prices were set on takings after the standard rate:
-                // a rate over it is a cost the business carries (and its
-                // cover, which decides whether more of it are built, shows
-                // it); one under it is money kept.
-                if extra != 0.0 {
-                    self.pay_city(Account::Business(bid), Flow::BusinessTax, extra, Some(Item::LandUse(lu)));
-                }
                 // [stories] The district's levies on its takings (or relief):
                 // a cost it carries like a tax over the standard.
                 let extra = extra + if any_policy { self.district_business_levies(bid, revenue) } else { 0.0 };
@@ -164,6 +191,11 @@ impl World {
                 self.events.push(SimEvent::BuildingChanged(bid));
             }
         }
+        for c in stray {
+            if self.citizens.get(c).and_then(|x| x.work).is_some_and(|w| !self.buildings.get(w).is_some_and(|b| b.workers.contains(&c))) {
+                self.lay_off(c, None);
+            }
+        }
         // [ledger] Offices into the failed tenant's tower floors.
         for (bid, jobs) in reoffice {
             self.set_business(bid, Some(Business::new(BusinessKind::Office, jobs)));
@@ -201,20 +233,130 @@ impl World {
         matches!(bz.kind, BusinessKind::Office | BusinessKind::CargoHub) || b.land_use == LandUse::Civic || self.vehicles.city_lots.contains_key(&bid)
     }
 
-    /// [p1-sim] The business that pays `cid`'s wage out of its own money and
-    /// what it pays them a day (`PAYROLL_SHARE` of the job's wage, never more
-    /// than they earn): an open business they are on the staff of, not one
-    /// the city runs. None for everyone else (a building site, the city's
-    /// jobs, gigs, pensions): their money comes in from outside.
-    pub(in crate::world) fn wage_payer(&self, cid: CitizenId) -> Option<(BuildingId, f32)> {
-        let c = self.citizens.get(cid)?;
-        let bid = c.work?;
-        let b = self.buildings.get(bid)?;
-        let bz = b.business.as_ref()?;
-        if bz.closed || !b.operating() || !b.workers.contains(&cid) || self.publicly_funded(bid) {
-            return None;
+    /// [r15-money] Who pays `cid`'s earnings: their employer (a business,
+    /// an office through its clients' fees, the city for its own staff, a
+    /// site's owner), or the outside world for pensions and gig work.
+    pub(in crate::world) fn earnings_payer(&self, cid: CitizenId) -> Payer {
+        let Some(bid) = self.citizens.get(cid).and_then(|c| c.work) else { return Payer::Outside };
+        let Some(b) = self.buildings.get(bid) else { return Payer::Outside };
+        if !b.workers.contains(&cid) {
+            return Payer::Outside;
         }
-        Some((bid, (b.wage() * PAYROLL_SHARE).min(c.income.max(0.0))))
+        if let Some(c) = &b.construction {
+            // A firm from out of town pays the crew it hired here (its fee
+            // was paid out to it); anyone else's crew, the site's owner.
+            if c.contract.as_ref().is_some_and(|k| k.local().is_none()) {
+                return Payer::Outside;
+            }
+            return Payer::Site(self.site_payer(bid));
+        }
+        match &b.business {
+            Some(z) if z.closed => Payer::Outside,
+            Some(z) if self.publicly_funded(bid) => {
+                if z.kind == BusinessKind::Office && b.land_use != LandUse::Civic {
+                    Payer::Office(bid)
+                } else {
+                    Payer::City(bid)
+                }
+            }
+            Some(_) => Payer::Business(bid),
+            None => Payer::City(bid),
+        }
+    }
+
+    /// [r15-money] `payer` spends `amount` at one of the town's open shops,
+    /// eateries and places (picked by `key`, more often the bigger ones):
+    /// its takings. Out of town when the town has none. Returns what moved.
+    pub(in crate::world) fn spend_in_town(&mut self, payer: Account, amount: f32, key: u64, kind: Kind) -> f32 {
+        if amount <= 0.0 {
+            return 0.0;
+        }
+        let tick = self.clock.tick;
+        if self.town_shops.0 != tick || self.town_shops.1.is_empty() {
+            let mut sum = 0.0;
+            let mut v = Vec::new();
+            for (id, b) in self.buildings.iter() {
+                if !b.operating() || !matches!(b.land_use, LandUse::Commercial | LandUse::Entertainment) || b.workers.is_empty() {
+                    continue;
+                }
+                let Some(z) = &b.business else { continue };
+                if z.closed || self.publicly_funded(id) {
+                    continue;
+                }
+                sum += b.workers.len() as f32;
+                v.push((sum, id));
+            }
+            self.town_shops = (tick, v);
+        }
+        let shops = &self.town_shops.1;
+        let Some(&(total, _)) = shops.last() else {
+            return self.transfer(payer, Account::Outside, amount, kind);
+        };
+        let at = crate::hash::unit(crate::hash::mix(key, tick)) * total;
+        let i = shops.partition_point(|(c, _)| *c <= at).min(shops.len() - 1);
+        let bid = shops[i].1;
+        let paid = self.transfer(payer, Account::Business(bid), amount, kind);
+        if let Some(z) = self.buildings.get_mut(bid).and_then(|b| b.business.as_mut()) {
+            z.revenue_today += paid;
+            z.deals += 1;
+        }
+        paid
+    }
+
+    /// [r15-money] What paying `cid` for a day costs their payer (the wage
+    /// plus the standard income tax on it) and the tax held back from it
+    /// (at the rate of their home's tier): (bill, tax).
+    pub(in crate::world) fn pay_bill(&self, cid: CitizenId) -> (f32, f32) {
+        let Some(c) = self.citizens.get(cid) else { return (0.0, 0.0) };
+        let wage = c.income.max(0.0);
+        let cat = self.income_tax_category(cid);
+        let rate = self.economy.taxes.rate(cat).clamp(0.0, 1.0);
+        (wage * (1.0 + (rate - self.economy.taxes.surcharge(cat)).clamp(0.0, 1.0)), wage * rate)
+    }
+
+    /// [r15-money] Pay `cid`'s day into `purse`. Wages were tuned as what is
+    /// kept after the standard income tax (`docs/DESIGN.md`, Taxes), so the
+    /// payer's bill is the wage plus the standard rate on it: it holds back
+    /// the tax at the rate of their home's tier for the treasury and pays
+    /// the rest (a rate over the standard comes off the pay, one under it is
+    /// kept). An office is paid its clients' fees for the work first; the
+    /// city pays its own staff the bill and takes the tax back (both on the
+    /// Economy window's ledger). Returns what reached the purse.
+    pub(in crate::world) fn pay_earnings(&mut self, cid: CitizenId, purse: Account) -> f32 {
+        let Some(c) = self.citizens.get(cid) else { return 0.0 };
+        let wage = c.income.max(0.0);
+        if wage <= 0.0 {
+            return 0.0;
+        }
+        let class = c.class();
+        let cat = self.income_tax_category(cid);
+        let (gross, tax) = self.pay_bill(cid);
+        self.economy.tax_today += tax;
+        self.economy.taxes.collect(cat, tax);
+        let item = Some(Item::Class(class));
+        match self.earnings_payer(cid) {
+            Payer::City(bid) => {
+                let paid = self.city_pays(purse, Flow::StaffWages, gross, Some(Item::Building(bid)));
+                self.pay_city(purse, Flow::IncomeTax, tax, item);
+                paid - tax
+            }
+            p => {
+                let from = match p {
+                    Payer::Business(b) | Payer::Office(b) => Account::Business(b),
+                    Payer::Site(a) => a,
+                    _ => Account::Outside,
+                };
+                if matches!(p, Payer::Office(_)) {
+                    self.transfer(Account::Outside, from, gross, Kind::Services);
+                }
+                self.pay_city(from, Flow::IncomeTax, tax, item);
+                let paid = self.transfer(from, purse, gross - tax, Kind::Wages);
+                if let Payer::Business(b) = p {
+                    *self.wages_paid.entry(b).or_default() += paid + tax;
+                }
+                paid
+            }
+        }
     }
 
     /// Every sim hour: hunger, eating at home, production, restocking through
@@ -259,6 +401,8 @@ impl World {
         // [megacorp] Students near a campus drop into pizza places, cafés
         // and bookshops.
         let pull = self.campus_pull();
+        let tick = self.clock.tick;
+        let passers = std::mem::take(&mut self.passers);
         for &bid in &ids {
             let (lot, jobs) = (self.buildings[bid].lot, self.buildings[bid].jobs);
             let students = if pull.is_empty() || !self.buildings[bid].business.as_ref().is_some_and(|z| z.kind.student_trade()) {
@@ -270,15 +414,44 @@ impl World {
             if feet <= 0.0 {
                 continue;
             }
+            {
+                let b = &self.buildings[bid];
+                if !b.operating() || !b.opening_hours().contains(hour) {
+                    continue;
+                }
+                match &b.business {
+                    Some(z) if !z.closed && z.kind.walk_in_sale().is_some() => {}
+                    _ => continue,
+                }
+            }
+            // [r15-money] Who steps in pays: the passers-by noted on the
+            // lot this hour (a resident from their household's purse, a
+            // tourist from their wallet) and, by a campus, one of its
+            // students; only those with money on them. Nobody to name
+            // (the hour after a load), no sale.
+            let key = slotmap::Key::data(&bid).as_ffi();
+            let mut payers: Vec<Account> = passers
+                .get(&lot)
+                .into_iter()
+                .flatten()
+                .filter_map(|p| match *p {
+                    Passer::Citizen(c) if self.citizens.contains_key(c) => Some(self.purse_of(c)),
+                    Passer::Tourist(t) if self.tourism.tourists.contains_key(t) => Some(Account::Tourist(t)),
+                    _ => None,
+                })
+                .collect();
+            if students > 0.0 {
+                if let Some(c) = self.lots.get(lot).and_then(|l| self.student_near(l.center, crate::hash::mix(key, tick))) {
+                    payers.push(self.purse_of(c));
+                }
+            }
+            payers.retain(|a| self.economy.bank.balance(*a) > 1.0);
+            payers.dedup();
+            if payers.is_empty() {
+                continue;
+            }
             let b = &mut self.buildings[bid];
-            if !b.operating() {
-                continue;
-            }
-            let open = b.opening_hours().contains(hour);
             let Some(bz) = b.business.as_mut() else { continue };
-            if bz.closed || !open {
-                continue;
-            }
             let Some(output) = bz.kind.walk_in_sale() else { continue };
             let want = feet * 0.06;
             let got = bz.take(output, want.min(bz.stock_of(output)));
@@ -296,9 +469,10 @@ impl World {
                 if output == Resource::Groceries {
                     self.economy.market.food.today.walk_in += got;
                 }
-                // [ledger] Passers-by are not tracked one by one: their
-                // custom comes in from outside the accounts.
-                self.transfer(Account::Outside, Account::Business(bid), got * price, Kind::WalkIn);
+                let each = got * price / payers.len() as f32;
+                for p in payers {
+                    self.transfer(p, Account::Business(bid), each, Kind::WalkIn);
+                }
             }
         }
         for l in self.lots.values_mut() {

@@ -513,6 +513,11 @@ impl World {
             if let Some(l) = self.lots.get_mut(lid) {
                 l.footfall_today += 1;
                 l.footfall_hour += 1;
+                // [r15-money] A few of them by name, to pay for what they buy.
+                let seen = self.passers.entry(lid).or_default();
+                if seen.len() < super::market::PASSERS_KEPT {
+                    seen.push(super::market::Passer::Citizen(id));
+                }
             }
         }
     }

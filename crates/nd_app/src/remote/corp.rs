@@ -42,6 +42,8 @@ fn corp_json(w: &World, c: &MegaCorp) -> Value {
             "pos": w.building_lot(h).map_or(Value::Null, |l| v2(l.center)),
         })),
         "cash": c.cash.round(),
+        // [r15-money] Its bank loan: what it owes, may still borrow, has paid back.
+        "debt": c.debt.round(), "credit_left": c.credit_left().round(), "repaid_total": c.repaid_total.round(),
         "holdings": props.len(),
         "holdings_by_use": by_use,
         "industries": kinds,

@@ -326,13 +326,24 @@ impl World {
                     let bz = self.buildings[id].business.as_mut().unwrap();
                     let got = if need > 0.0 { bz.take(Resource::Fuel, need) } else { 0.0 };
                     let fuelled = if need > 0.0 { got / need } else { 1.0 };
-                    let mut fee = HANDLING_PER_JOB_HOUR * jobs as f32 * staffing * (0.5 + 0.5 * fuelled) * (1.0 + 0.5 * port + 0.3 * yard);
-                    if kind == BusinessKind::FleetLot {
-                        fee += BAY_FEE_PER_HOUR * bz.fleet_trucks as f32;
+                    let handling = HANDLING_PER_JOB_HOUR * jobs as f32 * staffing * (0.5 + 0.5 * fuelled) * (1.0 + 0.5 * port + 0.3 * yard);
+                    // [r15-money] A fleet lot's bays and handling are paid
+                    // by the firms whose lorries stand in it (by bay, the
+                    // handling shared out among them); a container yard's
+                    // handling, and a lot's with no lorry in, by the
+                    // shipping lines and hauliers from out of town.
+                    let homes: Vec<BuildingId> = if kind == BusinessKind::FleetLot { bz.fleet_log.iter().map(|p| p.home).collect() } else { Vec::new() };
+                    let bays = BAY_FEE_PER_HOUR * homes.len() as f32;
+                    bz.revenue_today += handling + bays;
+                    let payers: Vec<Account> = homes.iter().filter_map(|h| self.business_account(*h)).collect();
+                    if payers.is_empty() {
+                        self.transfer(Account::Outside, Account::Business(id), handling + bays, Kind::Fees);
+                    } else {
+                        let each = (handling + bays) / payers.len() as f32;
+                        for p in payers {
+                            self.transfer(p, Account::Business(id), each, Kind::Fees);
+                        }
                     }
-                    bz.revenue_today += fee;
-                    // [ledger] Handling and bays, paid by hauliers from out of town.
-                    self.transfer(Account::Outside, Account::Business(id), fee, Kind::Fees);
                 }
                 _ => {}
             }

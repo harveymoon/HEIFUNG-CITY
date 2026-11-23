@@ -25,6 +25,10 @@ pub const COMPANY_DIVIDEND: f32 = 0.5;
 /// [p1-sim] Savings a household has before it counts among the town's
 /// small landlords, who share the independent landlords' surplus.
 pub const LANDLORD_SAVINGS: f32 = 5_000.0;
+/// [r15-money] Share a day of the independent landlords' capital (over the
+/// float and the day's rent profit: the price of buildings they sold) the
+/// town's savers draw; the rest stays to build with.
+pub const LANDLORD_DRAW: f64 = 0.02;
 
 impl World {
     // ── accounts ─────────────────────────────────────────────────────────
@@ -344,10 +348,10 @@ impl World {
     /// holds beyond the float, up to the last day's rent after upkeep and
     /// tax, is paid to the households with savings (`LANDLORD_SAVINGS`), in
     /// proportion to them, and stays in town. Past that it is the price of
-    /// buildings they sold, paid with the buyer's bank loan from outside: it
-    /// goes back out (`PropertySale`), so a sale moves no money into town
-    /// (handed to the savers, the old developers' selling up would have
-    /// given them ~$2M a day in Harvey's day-62 city).
+    /// buildings they sold: [r15-money] kept in town as their capital (it
+    /// used to go back out), building their own sites and drawn down by the
+    /// savers a little a day (all of it at once would hand them ~$2M on a
+    /// day the builders buy up unowned blocks, as in Harvey's day-62 city).
     pub(in crate::world) fn settle_owners(&mut self) {
         let landlords = self.economy.bank.balance(Account::Landlords);
         if landlords > OUT_OF_TOWN_FLOAT {
@@ -357,12 +361,20 @@ impl World {
             let savers: Vec<(crate::citizens::HouseholdId, f64)> = self.households.iter().filter(|(_, h)| h.money >= LANDLORD_SAVINGS).map(|(id, h)| (id, h.money as f64)).collect();
             let total: f64 = savers.iter().map(|s| s.1).sum();
             if total > 0.0 && profit > 0.0 {
-                for (hid, money) in savers {
+                for &(hid, money) in &savers {
                     self.transfer64(Account::Landlords, Account::Household(hid), profit * money / total, Kind::Dividend);
                 }
             }
-            if surplus > profit {
-                self.transfer64(Account::Landlords, Account::Outside, surplus - profit, Kind::PropertySale);
+            // [r15-money] Past that it is the price of buildings they sold
+            // (and what their sites did not spend): their capital, kept in
+            // town. It builds the sites they will own (`site_payer`) and a
+            // share a day is drawn by the savers (`LANDLORD_DRAW`).
+            let rest = surplus - profit.max(0.0);
+            if total > 0.0 && rest > 0.0 {
+                let draw = rest * LANDLORD_DRAW;
+                for (hid, money) in savers {
+                    self.transfer64(Account::Landlords, Account::Household(hid), draw * money / total, Kind::Dividend);
+                }
             }
         }
         let ids: Vec<OwnerId> = self.estate.owners.keys().collect();
@@ -399,9 +411,14 @@ impl World {
     /// [ledger] Who pays for the materials of a site: a developer, a
     /// residents' company or a builder out of its own money, anyone else's build is
     /// financed from out of town (as it always was).
+    /// [r15-money] A site no owner record holds is the independent
+    /// landlords' (they collect its rent once it opens): their pool pays for
+    /// it while it holds more than its float, the bank out of town after.
     pub fn site_payer(&self, bid: BuildingId) -> Account {
-        match self.buildings.get(bid).and_then(|b| b.plot.owner).and_then(|o| self.estate.owners.get(o).map(|x| (o, &x.kind))) {
+        let Some(b) = self.buildings.get(bid) else { return Account::Outside };
+        match b.plot.owner.and_then(|o| self.estate.owners.get(o).map(|x| (o, &x.kind))) {
             Some((o, OwnerKind::Developer | OwnerKind::Company { .. } | OwnerKind::Builder { .. })) => Account::Owner(o),
+            None if b.plot.owner.is_none() && self.economy.bank.balance(Account::Landlords) > OUT_OF_TOWN_FLOAT => Account::Landlords,
             _ => Account::Outside,
         }
     }

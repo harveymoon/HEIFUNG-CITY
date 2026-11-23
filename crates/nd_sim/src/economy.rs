@@ -79,13 +79,17 @@ pub enum Flow {
     AirportFees,
     /// [airport] Running the airports: staff, the runways, the tower.
     AirportUpkeep,
+    /// [r15-money] The pay of the city's own staff (civic buildings,
+    /// services, the plants, stations, depots, ports and lots it runs),
+    /// paid by the treasury net of the income tax it keeps back.
+    StaffWages,
 }
 
 /// Number of `Flow`s; the ledger's row length.
-pub const FLOWS: usize = 30;
+pub const FLOWS: usize = 31;
 
 impl Flow {
-    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep, Flow::GridExport, Flow::Gifts, Flow::RoadMaintenance, Flow::Fines, Flow::PropertyTax, Flow::DistrictLevies, Flow::DistrictSpending, Flow::WasteDisposal, Flow::RecyclingSales, Flow::AirportFees, Flow::AirportUpkeep];
+    pub const ALL: [Flow; FLOWS] = [Flow::IncomeTax, Flow::BusinessTax, Flow::BusFares, Flow::RailFares, Flow::PlantUpkeep, Flow::GridImport, Flow::TransitUpkeep, Flow::RailUpkeep, Flow::Construction, Flow::ServiceUpkeep, Flow::Tickets, Flow::ParkingFines, Flow::ParkingFees, Flow::TouristTax, Flow::SubwayFares, Flow::SubwayUpkeep, Flow::ImportDuty, Flow::Tolls, Flow::TollUpkeep, Flow::GridExport, Flow::Gifts, Flow::RoadMaintenance, Flow::Fines, Flow::PropertyTax, Flow::DistrictLevies, Flow::DistrictSpending, Flow::WasteDisposal, Flow::RecyclingSales, Flow::AirportFees, Flow::AirportUpkeep, Flow::StaffWages];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -119,6 +123,7 @@ impl Flow {
             Flow::RecyclingSales => "recycling sales",
             Flow::AirportFees => "airport fees",
             Flow::AirportUpkeep => "airport upkeep",
+            Flow::StaffWages => "city staff wages",
         }
     }
 

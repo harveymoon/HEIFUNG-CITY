@@ -97,59 +97,160 @@ fn a_residents_company_collects_the_rent_and_pays_its_founder() {
     assert_eq!(w.ledger_sum(), 0);
 }
 
-/// [p1-sim] Wages: a business pays its staff's households their payroll
-/// wage out of its own money (booked business → household), so its payroll
-/// no longer leaves town; its day's spending and money end the same as when
-/// the payroll went out of town, and each household's purse gets the same
-/// earnings as before (the rest from outside).
+/// [r15-money] Wages: a business pays its staff's households the whole wage
+/// out of its own money, holding back the income tax for the treasury
+/// (booked business → treasury); nothing comes from out of town for them,
+/// and the market's books count the wage bill as the business's spending.
 #[test]
-fn a_business_pays_its_staff_and_its_payroll_stays_in_town() {
+fn a_business_pays_its_staff_the_whole_wage_and_holds_back_the_tax() {
     let text = super::legacy_save_text();
     let mut w = World::from_ron(&text).expect("loads");
     let (bid, worker) = w
         .buildings
         .iter()
         .filter(|(id, b)| b.business.as_ref().is_some_and(|z| !z.closed) && b.operating() && !w.publicly_funded(*id))
-        .find_map(|(id, b)| b.workers.iter().copied().find(|c| w.citizens.get(*c).is_some_and(|c| c.household.is_some_and(|h| w.households.contains_key(h)))).map(|c| (id, c)))
+        .find_map(|(id, b)| b.workers.iter().copied().find(|c| w.citizens.get(*c).is_some_and(|c| c.income > 0.0 && c.household.is_some_and(|h| w.households.contains_key(h)))).map(|c| (id, c)))
         .expect("a business with staff in a household");
     let hid = w.citizens[worker].household.unwrap();
-    let (pay_bid, pay) = w.wage_payer(worker).expect("their employer pays them");
-    assert_eq!(pay_bid, bid);
-    let wage = w.buildings[bid].wage() * super::market::PAYROLL_SHARE;
-    assert!((pay - wage.min(w.citizens[worker].income)).abs() < 1e-3);
-    let income = w.household_income(hid);
+    assert_eq!(w.earnings_payer(worker), super::market::Payer::Business(bid));
+    let members = w.households[hid].members.clone();
+    let mut staff_gross = 0.0;
+    for m in &members {
+        if w.earnings_payer(*m) == super::market::Payer::Business(bid) {
+            staff_gross += w.pay_bill(*m).0;
+        }
+    }
     let biz0 = w.buildings[bid].business.as_ref().unwrap().money;
-    let purse0 = w.households[hid].money;
     let sum0 = w.ledger_sum();
     w.daily_household(hid);
-    assert!(w.wages_paid.get(&bid).is_some_and(|p| *p >= pay - 1e-3), "noted for the business's books: {:?}", w.wages_paid.get(&bid));
+    let paid = w.wages_paid.get(&bid).copied().unwrap_or(0.0);
+    assert!((paid - staff_gross).abs() < 0.01, "the whole wage on the business's books: {paid} of {staff_gross}");
     let cells = w.economy.bank.today_cells();
     assert!(cells.iter().any(|c| c.kind == Kind::Wages && c.from == Class::Business && c.to == Class::Household), "booked business to household");
-    assert!(w.buildings[bid].business.as_ref().unwrap().money < biz0, "the business paid");
-    let _ = (purse0, income);
+    assert!(cells.iter().any(|c| c.kind == Kind::Flow(Flow::IncomeTax) && c.from == Class::Business && c.to == Class::City), "the tax held back, business to treasury");
+    let biz1 = w.buildings[bid].business.as_ref().unwrap().money;
+    assert!((biz0 - biz1 - staff_gross).abs() < 0.05, "the business paid the gross: {} of {staff_gross}", biz0 - biz1);
     assert_eq!(w.ledger_sum(), sum0);
-    // The market's books just after take the wages paid off the payroll
-    // that leaves town: only what was not paid in a household pass goes.
-    let bills: f64 = w
-        .buildings
-        .iter()
-        .filter(|(id, b)| b.operating() && b.business.as_ref().is_some_and(|z| !z.closed) && !w.publicly_funded(*id))
-        .map(|(_, b)| (b.workers.len() as f32 * b.wage() * super::market::PAYROLL_SHARE) as f64)
-        .sum();
-    let paid = w.wages_paid[&bid] as f64;
+    // The market's books: no payroll out of town any more.
     let out = |w: &World| w.economy.bank.today_cells().iter().filter(|c| c.kind == Kind::Payroll && c.to == Class::Outside).map(|c| c.dollars()).sum::<f64>();
-    let out0 = out(&w);
     w.daily_businesses();
-    assert!((out(&w) - out0 - (bills - paid)).abs() < 1.0, "payroll out of town {} against the bills {bills} less {paid} paid", out(&w) - out0);
+    assert_eq!(out(&w), 0.0, "no payroll leaves town");
     assert!(w.wages_paid.is_empty(), "cleared with the day's books");
     assert_eq!(w.ledger_sum(), 0);
 }
 
+/// [r15-money] Who pays whom: the city pays its own staff (civic and
+/// service buildings) out of the treasury, an office its staff out of its
+/// clients' fees from out of town, pensions and gig money come from out of
+/// town; each holds back the income tax.
+#[test]
+fn the_city_pays_its_staff_and_offices_their_clients_fees() {
+    let text = super::legacy_save_text();
+    let mut w = World::from_ron(&text).expect("loads");
+    // A civic worker and an office worker, made where the save has none.
+    let worker = |w: &World, want: &dyn Fn(&World, BuildingId) -> bool| {
+        w.buildings
+            .iter()
+            .filter(|(id, b)| b.operating() && b.construction.is_none() && want(w, *id))
+            .find_map(|(id, b)| b.workers.iter().copied().find(|c| w.citizens.get(*c).is_some_and(|c| c.income > 0.0 && c.household.is_some())).map(|c| (id, c)))
+    };
+    let civic = worker(&w, &|w, id| w.buildings[id].service.is_some() || w.buildings[id].land_use == LandUse::Civic);
+    if let Some((bid, c)) = civic {
+        assert_eq!(w.earnings_payer(c), super::market::Payer::City(bid));
+        let hid = w.citizens[c].household.unwrap();
+        let t0 = w.economy.treasury;
+        w.pay_earnings(c, Account::Household(hid));
+        let (bill, _) = w.pay_bill(c);
+        assert!(w.economy.ledger.today_of(Flow::StaffWages) <= -bill + 0.01, "the wage bill on the staff wages line");
+        assert!(w.economy.treasury < t0, "the treasury paid its staff");
+    }
+    // A retiree: from out of town, the tax held back from it.
+    let retiree = w.citizens.iter().find(|(_, c)| c.work.is_none() && c.income > 0.0 && c.household.is_some()).map(|(id, _)| id).expect("someone on a pension or gigs");
+    assert_eq!(w.earnings_payer(retiree), super::market::Payer::Outside);
+    let hid = w.citizens[retiree].household.unwrap();
+    let purse0 = w.households[hid].money;
+    let (bill, tax) = w.pay_bill(retiree);
+    let net = w.pay_earnings(retiree, Account::Household(hid));
+    assert!((net - (bill - tax)).abs() < 0.01, "net of the tax: {net} of {bill} less {tax}");
+    let surcharge = w.economy.taxes.surcharge(w.income_tax_category(retiree));
+    assert!((net - w.citizens[retiree].income * (1.0 - surcharge)).abs() < 0.01, "the wage is what is kept at the standard rate");
+    assert!((w.households[hid].money - purse0 - net).abs() < 0.01);
+    // An office: its clients' fees in, its staff's pay out, the till even.
+    let office = w.buildings.iter().find(|(_, b)| b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Office && !z.closed) && b.land_use != LandUse::Civic).map(|(id, _)| id);
+    if let Some(o) = office {
+        let hid = w.households.keys().next().unwrap();
+        let c = w.households[hid].members[0];
+        if let Some(old) = w.citizens[c].work {
+            w.buildings[old].workers.retain(|x| *x != c);
+        }
+        w.citizens[c].work = Some(o);
+        w.citizens[c].income = 100.0;
+        w.buildings[o].workers.push(c);
+        assert_eq!(w.earnings_payer(c), super::market::Payer::Office(o));
+        let till = w.buildings[o].business.as_ref().unwrap().money;
+        let before = w.economy.bank.today_cells().iter().filter(|x| x.kind == Kind::Services).map(|x| x.dollars()).sum::<f64>();
+        w.pay_earnings(c, Account::Household(hid));
+        let fees = w.economy.bank.today_cells().iter().filter(|x| x.kind == Kind::Services).map(|x| x.dollars()).sum::<f64>() - before;
+        assert!((fees - w.pay_bill(c).0 as f64).abs() < 0.01, "the clients paid the office the wage bill: {fees}");
+        assert!((w.buildings[o].business.as_ref().unwrap().money - till).abs() < 0.01, "and it paid it on");
+    }
+    assert_eq!(w.ledger_sum(), 0);
+}
+
+/// [r15-money] A day's money is conserved: the books still balance, the
+/// change in the money the town holds is exactly what came in from outside
+/// less what went out, and every flow across the town edge is one of the
+/// named outside flows (`bank::EDGE_KINDS`, the list in docs/DESIGN.md).
+#[test]
+fn a_days_money_is_conserved_and_only_named_flows_cross_the_edge() {
+    let text = super::legacy_save_text();
+    let mut w = World::from_ron(&text).expect("loads");
+    let mut minds = IdleMind;
+    // Every flow across the edge booked so far (the kept days and today):
+    // in from outside less out to it.
+    let edge = |w: &World| -> f64 {
+        let b = &w.economy.bank;
+        b.history.iter().flat_map(|d| d.cells.iter().copied()).chain(b.today_cells()).filter(|c| (c.from == Class::Outside) != (c.to == Class::Outside)).map(|c| if c.from == Class::Outside { c.dollars() } else { -c.dollars() }).sum()
+    };
+    let held = |w: &World| -w.economy.bank.balance(Account::Outside);
+    let (held0, edge0, day0) = (held(&w), edge(&w), w.clock.day());
+    // A whole day and its midnight (wages, rents, the books).
+    for _ in 0..1440 + 30 {
+        w.tick(&mut minds);
+    }
+    let moved = held(&w) - held0;
+    let net = edge(&w) - edge0;
+    assert!((moved - net).abs() < 0.01 * (1.0 + net.abs() * 1e-6), "the town's money moved by {moved} against the edge flows {net}");
+    // Every crossing since is a named one.
+    let b = &w.economy.bank;
+    let strays: Vec<String> = b
+        .history
+        .iter()
+        .filter(|d| d.day >= day0)
+        .flat_map(|d| d.cells.iter().copied())
+        .chain(b.today_cells())
+        .filter(|c| (c.from == Class::Outside) != (c.to == Class::Outside) && c.kind != Kind::Opening)
+        .filter(|c| !crate::bank::EDGE_KINDS.iter().any(|(k, _)| *k == c.kind))
+        .map(|c| format!("{:?} {:?}->{:?} {:.0}", c.kind, c.from, c.to, c.dollars()))
+        .collect();
+    assert!(strays.is_empty(), "flows across the edge not on the list: {strays:?}");
+    // Wages crossed only for pay with no payer in town: business staff,
+    // city staff and offices are paid in town.
+    let cells: Vec<_> = b.history.iter().filter(|d| d.day >= day0).flat_map(|d| d.cells.iter().copied()).chain(b.today_cells()).collect();
+    assert!(cells.iter().any(|c| c.kind == Kind::Wages && c.from == Class::Business && c.to == Class::Household), "businesses paid wages");
+    assert!(!cells.iter().any(|c| c.kind == Kind::Payroll && c.to == Class::Outside), "no payroll out of town");
+    assert!(!cells.iter().any(|c| c.kind == Kind::WalkIn && c.from == Class::Outside), "walk-in custom is paid by those who walk in");
+    assert!(!cells.iter().any(|c| c.kind == Kind::Flow(Flow::BusinessTax) && c.from == Class::Outside), "business tax is paid by the business");
+    assert_eq!(w.ledger_sum(), 0);
+    assert_eq!(w.reconcile_ledger(), 0, "nothing moved outside the door");
+}
+
 /// [p1-sim] The independent landlords' rent profit stays in town: what
 /// their pool holds over the float, up to the last day's rent after upkeep
-/// and tax, goes to the households with savings in proportion to them; the
-/// rest (a building's sale price, which came from the buyer's bank) goes
-/// back out as a property sale.
+/// and tax, goes to the households with savings in proportion to them.
+/// [r15-money] The rest (a building's sale price) stays in town too: the
+/// pool keeps it to build with and the savers draw `LANDLORD_DRAW` of it a
+/// day.
 #[test]
 fn the_independent_landlords_pay_their_rent_profit_to_savers_in_town() {
     use super::ledger::{OUT_OF_TOWN_FLOAT, PROPERTY_TAX, RENT_UPKEEP};
@@ -174,12 +275,17 @@ fn the_independent_landlords_pay_their_rent_profit_to_savers_in_town() {
     w.economy.bank.roll(day);
     w.settle_owners();
     let profit = 1000.0 * (1.0 - RENT_UPKEEP - PROPERTY_TAX);
-    assert!((w.economy.bank.balance(Account::Landlords) - OUT_OF_TOWN_FLOAT).abs() < 1e-2, "the float stays");
-    assert!((w.households[hids[0]].money - 30_000.0 - profit * 0.75).abs() < 0.01, "three quarters to the bigger saver: {}", w.households[hids[0]].money);
-    assert!((w.households[hids[1]].money - 10_000.0 - profit * 0.25).abs() < 0.01, "a quarter to the other: {}", w.households[hids[1]].money);
+    let draw = 4_000.0 * super::ledger::LANDLORD_DRAW as f32;
+    assert!((w.economy.bank.balance(Account::Landlords) - OUT_OF_TOWN_FLOAT - (4_000.0 - draw) as f64).abs() < 1e-2, "the float and the sale's capital stay");
+    assert!((w.households[hids[0]].money - 30_000.0 - (profit + draw) * 0.75).abs() < 0.01, "three quarters to the bigger saver: {}", w.households[hids[0]].money);
+    assert!((w.households[hids[1]].money - 10_000.0 - (profit + draw) * 0.25).abs() < 0.01, "a quarter to the other: {}", w.households[hids[1]].money);
     let cells = w.economy.bank.today_cells();
     let out = |k: Kind| cells.iter().filter(|c| c.kind == k && c.from == Class::Landlords && c.to == Class::Outside).map(|c| c.dollars()).sum::<f64>();
     assert_eq!(out(Kind::Dividend), 0.0, "no profit out of town");
-    assert!((out(Kind::PropertySale) - 4_000.0).abs() < 0.01, "the sale price back out: {}", out(Kind::PropertySale));
+    assert_eq!(out(Kind::PropertySale), 0.0, "the sale price stays in town");
+    // A site nobody owns is built with the pool's money now.
+    let site = w.buildings.keys().next().unwrap();
+    w.buildings[site].plot.owner = None;
+    assert_eq!(w.site_payer(site), Account::Landlords);
     assert_eq!(w.ledger_sum(), 0);
 }

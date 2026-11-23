@@ -48,9 +48,10 @@ pub const OUT_OF_TOWN_MARKUP: f32 = 1.35;
 /// What an estimate expects to pay for materials, against their base price
 /// (between the makers' price and an import).
 pub const MATERIAL_ESTIMATE: f32 = 1.3;
-/// The labour in an estimate: a crew's payroll (the share of the site wage
-/// a business pays, `world::market::PAYROLL_SHARE`) per worker-day.
-pub const LABOUR_SHARE: f32 = 0.6;
+/// The labour in an estimate: a crew's pay per worker-day, as a share of
+/// the site wage. [r15-money] The whole wage now (the contractor pays its
+/// staff in full, skill and school on top: about 1.1 of the wage).
+pub const LABOUR_SHARE: f32 = 1.1;
 /// The merchant's trade price over a good's base price (scaled by how full
 /// its racks are, [`MERCHANT_PRICE_SWING`]).
 pub const MERCHANT_TRADE_MARKUP: f32 = 1.4;

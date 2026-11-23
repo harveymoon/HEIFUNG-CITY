@@ -1338,15 +1338,22 @@ Citizens are rendered from their simulated positions every frame.
   under and a sector word), a brand colour (12, a free one first) and a logo: a shape (circle,
   ring, hexagon, diamond, triangle, square, chevron) with its initial cut into it, an 11x11
   pixel mark (`Brand::logo_bitmap`) the renderer, the trucks and the UI all draw the same.
-  *Its day*: it skims 40% of each holding's profit (a till keeps 500) into its purse and pays
-  the player's levy; with no HQ it buys the dearest, most pressed commercial plots downtown it
+  *Its day*: it skims 40% of each holding's profit (a till keeps 500) into its purse, pays
+  the player's levy and [r15-money] its bank (0.03% interest a day on its debt and 0.5% of the debt
+  paid back, out of its cash; unpaid interest is added to the debt); with no HQ it buys the dearest, most pressed commercial plots downtown it
   can assemble (up to three touching, 900 m²) and raises a tower there (pressure floors + 10,
   18..40 floors; hook for feat/supertall: order it as a league tower when the city's height
   limit allows). It buys up to three things a day nearest its HQ *by road* (one Dijkstra per HQ,
   cached against the road network's version): businesses in profit (over their last three days) of any kind (a kind it does
   not own counts as 30% nearer, so it spreads into every industry), blocks of homes for its staff
   while it has under 0.6 homes a head, and vacant land of any zoning (a branded office, shop,
-  hotel, bar or works on it, a kind it lacks first; at most one buy in four is land). Staff move into its housing (six households a day, nearest their work)
+  hotel, bar or works on it, a kind it lacks first; at most one buy in four is land).
+  [r15-money] Every buy is paid in full to the independent landlords who held it: a 10% deposit
+  out of its cash (`DEPOSIT_SHARE`; and $400 over it) and a real bank loan for the rest
+  (`MegaCorp::debt`), allowed only while its debt stays under 60 days of its holdings' takings
+  (`LOAN_LIMIT_DAYS`; at the limit the repayments take about a third of them); a corp at its limit
+  waits. Its HQ and mega-block are paid the same way (to the sellers and builders out of town); a
+  corp over its limit starts no mega-block. Staff move into its housing (six households a day, nearest their work)
   and pay 30% less rent. *Balance*: the player caps how much of the town's ordinary buildings
   one corp may own (8% by default, 2-25%, at least four) and sets a levy (0-20% of its daily
   takings, booked as business tax) or bans new corps (City Data › Economy › Corporations); a
@@ -2085,9 +2092,9 @@ Citizens are rendered from their simulated positions every frame.
   by kind (grocers, bakeries, gadget shops, private car parks; nightlife by tier; each industry
   sub-zone; 5% standard, up to 30%); offices and the city's own businesses stay at 5%. Wages and
   prices were tuned as what is kept after the standard rates, so the treasury's standard take is
-  collected at source and the defaults change nothing; only the difference from the standard reaches
-  a purse (a household pays the extra out of its money every day, a business out of its takings,
-  which its cover shows). Each line has a pull, `exp(-(rate - standard) x k)` bounded to 0.25..1.6
+  collected at source: [r15-money] whoever pays a wage pays the wage plus the standard rate on it and
+  holds the tax back for the treasury (`World::pay_bill`, `pay_earnings`), so a rate over the standard
+  comes off the pay and one under it is kept; a business pays its tax on its takings out of its till. Each line has a pull, `exp(-(rate - standard) x k)` bounded to 0.25..1.6
   (k = 4 for homes, 8 for businesses): the land use's demand is scaled by its lines' mean pull,
   residential lots of a tier develop by that tier's pull, arrivals by the pull of the tiers with
   free homes, a new industrial lot's sub-zone weights and a new shop's kind by their line's pull.
@@ -2112,6 +2119,64 @@ Citizens are rendered from their simulated positions every frame.
   TOLL board and lane lights, raised barrier arms, rumble stripes; the plaza's asphalt flares out to
   six booth lanes with fanned lane lines (the sim keeps the road's lanes: a plaza is faster to pass,
   not wider).
+- **Who pays whom: the town's money loop** [r15-money] (`world/market.rs` `earnings_payer`,
+  `pay_earnings`, `spend_in_town`; `world/trips/household.rs`). Every balance is an account and money
+  moves only by `World::transfer` (`crate::bank`); the outside world is one account, so the sum of all
+  balances and it is always zero and every edge crossing is booked. *Earnings* are paid at midnight
+  in the household's pass by whoever really pays them: a business pays its staff the whole wage
+  (plus the standard income tax, held back for the treasury) out of its till; an office on
+  commercial land is paid by its clients out of town for the work (`Kind::Services`) and pays its
+  staff out of that; the treasury pays the city's own staff (civic ground, services, plants, depots,
+  stations, ports, airports, the city's car parks and cargo hubs; ledger line `city staff wages`,
+  `Flow::StaffWages`) and takes their tax back; a building site's crew is paid by its owner (a
+  developer, residents' company or builder), by the independent landlords' pool for a site no owner
+  record holds (while the pool has money over its float), by the firm from out of town that hired
+  them, or by the bank out of town; a local contractor pays its crews as staff (its estimate's labour
+  is the whole wage, `LABOUR_SHARE` 1.1). Pensions and gig money come from out of town. A shut
+  business has no jobs going and lets go anyone still on its staff (they were hired into shut shops
+  and paid from nowhere: ~1,000 people on Harvey's day-80 save, who found real jobs within a day).
+  *Spending*: half of a household's daily living costs is spent at the town's open shops, eateries
+  and places (`LIVING_LOCAL`, one picked by a hash of the household, the bigger more often: their
+  takings), half away. Walk-in sales are paid by the passers-by noted on the lot that hour (up to 8 a
+  lot, `World::passers`: a resident from their household's purse, a tourist from their wallet; one of
+  the campus's students for the student trade); repairs by the residents who own a car or bike (a
+  job each, picked by a hash); a cargo hub's handling by the buyer of the load; a fleet lot's bays
+  and handling by the firms whose lorries stand in it. A local trash company's trucks tip at the
+  city's disposal sites in reach of their yard and pay the city the site's cost a tonne as a gate fee
+  (`World::company_tips`); with none in reach the company pays the road price to cart it out of town.
+  *Landlords*: the independent landlords' pool pays its rent profit to the town's savers (households
+  with $5,000+), keeps the price of buildings it sold as capital that builds the sites it will own,
+  and pays 2% of that capital a day to the savers (`LANDLORD_DRAW`); nothing goes out of town.
+  *Corps* borrow (see Mega-corps). The probe `examples/money_probe.rs` prints a save's day by day:
+  earnings by payer, the treasury's lines, each flow across the edge by kind and class, and the
+  town's health.
+- **Money across the town edge** [r15-money]: the only flows that cross the city limits, each where
+  the other side really is outside (`bank::EDGE_KINDS`, held to a day of the sim by
+  `ledger_tests::a_days_money_is_conserved_and_only_named_flows_cross_the_edge`):
+  - *wages and pensions*: pensions and gig work paid from away; crews hired here by a building firm
+    from out of town; crews of a bank-financed build. *Income tax* held back from that pay.
+  - *office services sold out of town*: clients away paying the town's offices (who pay their staff).
+  - *exports* and *imports*: goods (and cinemas', theatres' and halls' bookings of films and acts).
+  - *living costs*: the half spent away (power, phone, insurance, things bought from away); food
+    bought away by those living rough (*shopping*).
+  - *upkeep*: owners' upkeep of what they let; the air taxis' running costs.
+  - *mortgages* (repayments to the banks, residents' and corps'), *bank loans* to corps,
+    *property sales* paid by a buyer's bank or for a corp's HQ or mega-block site and works,
+    *profits paid out* by out-of-town developers, *investment* by investors from away (tower
+    developers, the elite, stakes), *building work* by firms and makers away.
+  - *cars and bikes* from makers away; *private fares* of visitors; *private fees*: shipping lines
+    paying the container yards, hauliers from away, a trash firm's out-of-town disposal, the
+    out-of-town trash hauler, parking and repairs for drivers from away; the acts' share of a night
+    out (*outings*); stolen goods fenced away (*theft*).
+  - *arrivals* and *departures*: money brought and taken by people, visitors and businesses coming
+    and going; the player's *grants*.
+  - the treasury's own lines with the region: fares and tickets of visitors, fines and parking of
+    drivers from away, tolls, airport fees, power bought and sold, recycling sold, import duty, and
+    the running costs and works of plants, services, transit, rail, metro, toll booths, airports,
+    roads and waste disposal bought from away.
+  - Still open (on the list, not yet closed): train fares are booked from outside, not from the
+    rider; tower developers' investors top up their capital from away every day (~$64M a day on
+    Harvey's save, sitting unspent at ~$2B).
 - **Economy stats**: demand per land use, Gini of incomes, class counts, rents per
   tier, displaced, emigrated and priced-out counters, plus market stats: businesses,
   deals, imports, exports, meals sold, hungry citizens, closures, and the average

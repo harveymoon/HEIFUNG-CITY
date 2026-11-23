@@ -376,6 +376,38 @@ impl World {
         take_t * TONNE
     }
 
+    /// [r15-money] A local trash company's truck tips `kg`: at a city
+    /// disposal site (`site`) the company pays the city the site's own cost
+    /// a tonne as its gate fee (the city runs the site and books its cost);
+    /// at its own yard (no site in reach) the load is carted out of town at
+    /// today's road price, paid by the company. Returns the kg left on the
+    /// truck (a full site).
+    pub(crate) fn company_tips(&mut self, company: BuildingId, site: Option<BuildingId>, kg: f32) -> f32 {
+        let (left, fee, to) = match site {
+            Some(s) => {
+                let kind = self.waste_sites().into_iter().find(|x| x.id == s).map(|x| x.kind);
+                let took = self.tip_at_site(s, kg);
+                let per_t = match kind {
+                    Some(ServiceKind::Landfill) => COST_LANDFILL,
+                    Some(ServiceKind::Incinerator) => COST_BURN,
+                    Some(ServiceKind::RecyclingPlant) => COST_SORT,
+                    _ => COST_TRANSFER_ROAD,
+                };
+                (kg - took, took / TONNE * per_t, Some(s))
+            }
+            None => (0.0, kg / TONNE * self.road_price(), None),
+        };
+        let from = crate::bank::Account::Business(company);
+        let paid = match to {
+            Some(s) => self.pay_city(from, Flow::WasteDisposal, fee, Some(Item::Building(s))),
+            None => self.transfer(from, crate::bank::Account::Outside, fee, crate::bank::Kind::Fees),
+        };
+        if let Some(z) = self.buildings.get_mut(company).and_then(|b| b.business.as_mut()) {
+            z.spend_today += paid;
+        }
+        left.max(0.0)
+    }
+
     /// A truck unloads `kg` at its depot's yard: what the yard took, kg
     /// (all of it while the starter contract runs).
     pub(crate) fn tip_at_depot(&mut self, depot: BuildingId, kg: f32) -> f32 {

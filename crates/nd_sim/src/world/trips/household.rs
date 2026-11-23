@@ -22,15 +22,13 @@ impl World {
     /// money (`daily_household`), which is soon.
     pub(in crate::world) fn daily_citizen(&mut self, cid: CitizenId) {
         let tick = self.clock.tick;
-        // [tax] Income tax at the rate of the home's tier.
+        // [tax] Income tax at the rate of the home's tier: [r15-money] held
+        // back from the pay by whoever pays it (`pay_earnings`, in the
+        // household's pass just after).
         let cat = self.income_tax_category(cid);
         let rate = self.economy.taxes.rate(cat);
         let surcharge = self.economy.taxes.surcharge(cat);
         let Some(c) = self.citizens.get_mut(cid) else { return };
-        let tax = c.income * rate;
-        self.economy.tax_today += tax;
-        self.economy.credit_item(Flow::IncomeTax, tax, Item::Class(c.class()));
-        self.economy.taxes.collect(cat, tax);
         // [tax] A rate well over the standard is felt: a little mood a day,
         // and now and then a word about it.
         if surcharge > 0.02 && c.income > 0.0 {
@@ -99,23 +97,16 @@ impl World {
         let rent = home.map(|h| self.rent_due(hid, h)).unwrap_or(0.0);
         let income = self.household_income(hid);
         let living: f32 = members.iter().map(|m| if self.citizens[*m].stage() == LifeStage::Child { 10.0 } else { 20.0 }).sum();
-        // [tax] Wages are what is left after the standard income tax; a
-        // rate over it comes out of the purse, one under it is kept.
-        let tax_extra = income * self.economy.taxes.surcharge(self.tax_category_of_home(home));
-        // [ledger] Earnings (net of the rate over the standard tax), the
-        // rent goes to the home's owner (`collect_rent`), living costs go
-        // out of town. [p1-sim] A business pays its staff their payroll
-        // wage itself (`wage_payer`, noted in `wages_paid` for its books);
-        // the rest of everyone's earnings comes in from out of town.
+        // [ledger] [r15-money] Everyone's earnings from whoever pays them
+        // (`pay_earnings`: the employer, an office through its clients'
+        // fees, the city for its own staff, a site's owner, pensions and
+        // gig money from out of town), the income tax held back for the
+        // treasury; the rent goes to the home's owner (`collect_rent`),
+        // living costs part to the town's shops, part out of town.
         let purse = Account::Household(hid);
-        let mut from_employers = 0.0;
         for &m in &members {
-            let Some((bid, pay)) = self.wage_payer(m) else { continue };
-            let paid = self.transfer(Account::Business(bid), purse, pay, Kind::Wages);
-            *self.wages_paid.entry(bid).or_default() += paid;
-            from_employers += paid;
+            self.pay_earnings(m, purse);
         }
-        self.transfer(Account::Outside, purse, income - tax_extra - from_employers, Kind::Wages);
         if let Some(h) = home {
             self.collect_rent(purse, h, rent, Kind::Rent);
         }
@@ -125,7 +116,10 @@ impl World {
             _ => 0.0,
         };
         let rent = rent - support;
-        self.transfer(purse, Account::Outside, living, Kind::Living);
+        // [r15-money] Part at the town's shops and places, the rest away.
+        let local = living * super::market::LIVING_LOCAL;
+        self.spend_in_town(purse, local, slotmap::Key::data(&hid).as_ffi(), Kind::Living);
+        self.transfer(purse, Account::Outside, living - local, Kind::Living);
         // Pockets come back to the shared purse (with any debts run up on
         // them), then the grown-ups draw pocket money again if there is some.
         for &m in &members {

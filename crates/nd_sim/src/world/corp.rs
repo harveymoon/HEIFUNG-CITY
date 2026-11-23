@@ -369,7 +369,7 @@ impl World {
             self.events.push(SimEvent::BuildingChanged(p));
         }
         let day = self.clock.day() as u32;
-        self.corps.corps.push(MegaCorp { owner, brand, origin: kind, origin_name: origin_name.clone(), flagship: Some(bid), hq: None, cash: 2_000.0, founded_day: day, bought_total: 0, housed_total: 0, built_total: 0, levy_total: 0.0, revenue_yesterday: 0.0, megablock: None });
+        self.corps.corps.push(MegaCorp { owner, brand, origin: kind, origin_name: origin_name.clone(), flagship: Some(bid), hq: None, cash: 2_000.0, founded_day: day, bought_total: 0, housed_total: 0, built_total: 0, levy_total: 0.0, revenue_yesterday: 0.0, megablock: None, debt: 0.0, repaid_total: 0.0 });
         self.corps.stats.promotions_total += 1;
         let tick = self.clock.tick;
         self.social.push_news(tick, format!("🏢 {origin_name} is now {name}, a mega-corp. Its tower is coming downtown."), pos, None);
@@ -389,8 +389,11 @@ impl World {
         self.corps.stats.housed_today = 0;
         self.prune_corps();
         self.promote_companies();
+        self.corps.stats.repaid_today = 0.0;
+        self.corps.stats.refused_credit_today = 0;
         for ci in 0..self.corps.corps.len() {
             self.corp_books(ci);
+            self.corp_repays(ci);
             let hq_ok = self.corps.corps[ci].hq.is_some_and(|b| self.buildings.contains_key(b));
             if !hq_ok {
                 self.corps.corps[ci].hq = None;
@@ -427,6 +430,53 @@ impl World {
         }
         let keep: Vec<BuildingId> = self.corps.corps.iter().filter_map(|c| c.hq.or(c.flagship)).collect();
         self.corps.drive_cache.retain(|b, _| keep.contains(b));
+    }
+
+    /// [r15-money] Can corp `ci` buy at `price`: the deposit in cash (and
+    /// `BUY_MIN_CASH` over it) and the loan within its credit left.
+    pub(super) fn corp_can_finance(&self, ci: usize, price: f64) -> bool {
+        let c = &self.corps.corps[ci];
+        let deposit = price * DEPOSIT_SHARE;
+        c.cash >= deposit + BUY_MIN_CASH && price - deposit <= c.credit_left()
+    }
+
+    /// [r15-money] Corp `ci` pays `price` to `seller`: the deposit out of
+    /// its cash (what it has), the rest borrowed from the bank out of town
+    /// (`Kind::Credit`) and owed (`MegaCorp::debt`).
+    pub(super) fn corp_pays(&mut self, ci: usize, price: f64, seller: Account) {
+        if price <= 0.0 {
+            return;
+        }
+        let owner = self.corps.corps[ci].owner;
+        let deposit = (price * DEPOSIT_SHARE).min(self.corps.corps[ci].cash.max(0.0));
+        let loan = price - deposit;
+        if loan > 0.0 {
+            self.transfer64(Account::Outside, Account::Owner(owner), loan, Kind::Credit);
+            self.corps.corps[ci].debt += loan;
+            self.corps.stats.borrowed_total += loan;
+        }
+        self.transfer64(Account::Owner(owner), seller, price, Kind::PropertySale);
+    }
+
+    /// [r15-money] The corp's day at the bank: interest on what it owes and
+    /// a share of it paid back, out of its cash (what it has; interest it
+    /// cannot pay is added to the debt).
+    pub(super) fn corp_repays(&mut self, ci: usize) {
+        let c = &self.corps.corps[ci];
+        if c.debt <= 0.0 {
+            return;
+        }
+        let owner = c.owner;
+        let interest = c.debt * LOAN_INTEREST;
+        let due = interest + c.debt * LOAN_REPAY;
+        let paid = due.min(c.cash.max(0.0));
+        if paid > 0.0 {
+            self.transfer64(Account::Owner(owner), Account::Outside, paid, Kind::Loan);
+        }
+        let c = &mut self.corps.corps[ci];
+        c.debt = (c.debt + interest - paid).max(0.0);
+        c.repaid_total += paid;
+        self.corps.stats.repaid_today += paid;
     }
 
     /// Skim each holding's profit into the corp's purse and pay the levy.
@@ -610,9 +660,9 @@ impl World {
         self.give_to(bid, owner, price);
         let c = &mut self.corps.corps[ci];
         c.hq = Some(bid);
-        // [ledger] The deposit, to the sellers and builders out of town.
-        let deposit = (price * DEPOSIT_SHARE).min(c.cash.max(0.0));
-        self.transfer64(Account::Owner(owner), Account::Outside, deposit, Kind::PropertySale);
+        // [ledger] [r15-money] To the sellers and builders out of town: the
+        // deposit out of its cash, the rest on a bank loan it pays back.
+        self.corp_pays(ci, price, Account::Outside);
         let tick = self.clock.tick;
         let pos = self.lots.get(primary).map_or(Vec2::ZERO, |l| l.center);
         self.social.push_news(tick, format!("🏗 {name} broke ground on {short} Tower, {floors} floors, its headquarters."), pos, None);
@@ -699,9 +749,19 @@ impl World {
         let Some((_, pick)) = self.corp_candidates(ci).into_iter().next() else { return false };
         let name = self.corps.corps[ci].brand.name.clone();
         let tick = self.clock.tick;
+        // [r15-money] It must find the deposit and the bank must lend the
+        // rest: a corp at its limit waits until its takings grow or its
+        // debt comes down.
+        let price = match pick {
+            Buy::Building(bid) => self.sale_price(bid),
+            Buy::Land(lid) => self.lots.get(lid).map_or(0.0, |l| l.area() as f64 * (25.0 + 400.0 * self.lot_value(lid).max(0.0) as f64)),
+        };
+        if !self.corp_can_finance(ci, price) {
+            self.corps.stats.refused_credit_today += 1;
+            return false;
+        }
         let (bid, price) = match pick {
             Buy::Building(bid) => {
-                let price = self.sale_price(bid);
                 self.give_to(bid, owner, price);
                 if let Some(z) = self.buildings.get_mut(bid).and_then(|b| b.business.as_mut()) {
                     z.owner = None;
@@ -720,12 +780,12 @@ impl World {
             Buy::Land(lid) => {
                 let Some(bid) = self.corp_build_on(lid, ci) else { return false };
                 self.corps.corps[ci].built_total += 1;
-                (bid, 0.0)
+                (bid, price)
             }
         };
-        let deposit = (price * DEPOSIT_SHARE).max(100.0).min(self.corps.corps[ci].cash.max(0.0));
-        let owner = self.corps.corps[ci].owner;
-        self.transfer64(Account::Owner(owner), Account::Outside, deposit, Kind::PropertySale);
+        // [r15-money] To the independent landlords who held it (the corp
+        // buys what no owner record holds).
+        self.corp_pays(ci, price, Account::Landlords);
         let c = &mut self.corps.corps[ci];
         c.bought_total += 1;
         self.corps.stats.purchases_total += 1;

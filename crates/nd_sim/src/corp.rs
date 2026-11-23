@@ -57,10 +57,20 @@ pub const MIN_CAP: usize = 4;
 pub const SKIM: f32 = 0.4;
 /// A business keeps at least this much cash after the skim.
 pub const SKIM_FLOOR: f32 = 500.0;
-/// The corp's deposit on a purchase: this share of the price at the
-/// estate's scale (the rest is the bank's), and at least this much cash
-/// in hand to buy at all.
-pub const DEPOSIT_SHARE: f64 = 0.004;
+/// The corp's deposit on a purchase: this share of the price, out of its
+/// cash; [r15-money] the rest is a real bank loan (`MegaCorp::debt`), paid
+/// back with interest (`LOAN_INTEREST`, `LOAN_REPAY`) and allowed only up
+/// to `LOAN_LIMIT_DAYS` of its holdings' takings. And at least this much
+/// cash in hand to buy at all.
+pub const DEPOSIT_SHARE: f64 = 0.1;
+/// [r15-money] Interest on a corp's debt, a day (about 11% a year).
+pub const LOAN_INTEREST: f64 = 0.0003;
+/// [r15-money] Share of the debt paid back a day (a loan runs ~200 days).
+pub const LOAN_REPAY: f64 = 0.005;
+/// [r15-money] The most a corp may owe: this many days of its holdings'
+/// gross takings (yesterday's). At the limit its repayments take about a
+/// third of its takings.
+pub const LOAN_LIMIT_DAYS: f64 = 60.0;
 pub const BUY_MIN_CASH: f64 = 400.0;
 /// Purchases a day at most.
 pub const BUYS_PER_DAY: usize = 3;
@@ -410,6 +420,21 @@ pub struct MegaCorp {
     /// [megablocks] Its flagship arcology, rising or standing.
     #[serde(default)]
     pub megablock: Option<BuildingId>,
+    /// [r15-money] What it owes the bank for its purchases (the price over
+    /// the deposit), paid back daily with interest out of its cash.
+    #[serde(default)]
+    pub debt: f64,
+    /// [r15-money] Paid to the bank, all time (interest and principal).
+    #[serde(default)]
+    pub repaid_total: f64,
+}
+
+impl MegaCorp {
+    /// [r15-money] What it may still borrow: the limit by its takings less
+    /// what it owes.
+    pub fn credit_left(&self) -> f64 {
+        (self.revenue_yesterday as f64 * LOAN_LIMIT_DAYS - self.debt).max(0.0)
+    }
 }
 
 impl MegaCorp {
@@ -586,6 +611,12 @@ pub struct CorpStats {
     /// [sweep-sim] Local students who left the family home for a dorm.
     pub students_left_home_total: u32,
     pub divested_total: u32,
+    /// [r15-money] Borrowed from the bank for purchases, all time.
+    pub borrowed_total: f64,
+    /// [r15-money] Paid back to the bank today (interest and principal).
+    pub repaid_today: f64,
+    /// [r15-money] Buys put off today: no deposit, or the bank would not lend.
+    pub refused_credit_today: u32,
 }
 
 /// Everything about corps and campuses (`World::corps`).
