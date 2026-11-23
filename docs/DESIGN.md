@@ -2124,7 +2124,14 @@ Citizens are rendered from their simulated positions every frame.
   the lane network or the pavements; the upper way (higher level, else the highway) gets a vertex
   of its own over the crossing. Heights (`World::rebuild_ground`): ground plus level; nodes drawn
   off the ground are held, the rest eased to the grade (lowered toward a cutting beside them,
-  raised otherwise); at every separated crossing that is not clear by 4.5 m either way the upper
+  raised otherwise); [r14-cliffs] a node where only town streets and paths on the land meet (a
+  roundabout's ring too) is eased at most `STREET_EARTHWORK_MAX` (6 m) into or above the land
+  (`node_earthwork_band`): past that the street climbs steeper than its grade rather than digging
+  the hill away from its foot (Harvey's Neon Market was cut 64 m deep that way), and a long leg left
+  steeper than its grade still follows the land between its ends. A ring of 40 m radius or more
+  (`RoadNetwork::is_ring_road`) climbs at the land grade of its lanes; a compact roundabout keeps 7%.
+  A lot whose pad stands `TERRACE_DEEP` (6 m) or more off its ground anywhere is a walled terrace
+  whatever the slope (`landscape::walled_terrace`), and a pad held through a rebuild keeps its step; at every separated crossing that is not clear by 4.5 m either way the upper
   way's vertex is lifted (if the player did not set its level), so a street drawn across the
   highway at grade passes under it with the highway on a lifted deck. A piece with an end 2.5 m
   or more up is a viaduct (`Segment::viaduct`, a bridge: a deck on columns and crossheads,
