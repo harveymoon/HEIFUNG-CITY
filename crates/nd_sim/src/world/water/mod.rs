@@ -119,12 +119,22 @@ fn inner_heights(land: &crate::landscape::Landscape, roads: &crate::roads::RoadN
         }
         let (za, zb) = (z.get(s.a.0 as usize).copied().unwrap_or(0.0), z.get(s.b.0 as usize).copied().unwrap_or(0.0));
         // [r14-cliffs] A street left steeper than its grade between its
-        // ends (`STREET_EARTHWORK_MAX`) follows the land between them as
-        // closely as its end-to-end climb allows; it ran as a straight chord
-        // through every crest and hollow.
-        let g = segment_grade(roads, s).max((zb - za).abs() / len + 0.01);
+        // ends (`STREET_EARTHWORK_MAX`) follows the land between them; it
+        // ran as a straight chord through every crest and hollow.
+        // Where the land between them is steeper still (a flat foot, then
+        // the hill), the street climbs as steeply as the land does there,
+        // or it stood as a chord 20 m over the hollow.
         let m = (len / step).round().max(2.0) as usize;
         let ds = len / m as f32;
+        let grade = segment_grade(roads, s);
+        let chord = (zb - za).abs() / len;
+        let g = if chord > grade {
+            let at = |k: usize| land.height(a.lerp(b, k as f32 / m as f32).clamp(Vec2::splat(-edge), Vec2::splat(edge))).max(floor);
+            let pitch = (0..m).map(|k| (at(k + 1) - at(k)).abs() / ds).fold(0.0f32, f32::max);
+            chord.max(pitch) + 0.01
+        } else {
+            grade
+        };
         let mut h: Vec<f32> = (1..m)
             .map(|k| {
                 let (t, sk) = (k as f32 / m as f32, k as f32 * ds);

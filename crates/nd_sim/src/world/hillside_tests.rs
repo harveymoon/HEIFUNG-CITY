@@ -303,8 +303,22 @@ fn bench_walls_are_never_taller_than_the_cap() {
     let mut deepest = 0.0f32;
     for sid in laid(&w, a, b) {
         let seg = w.roads.segment(sid);
-        assert_eq!(earthwork_hold(&w.landscape, &w.roads, &w.road_z, &w.road_inner, sid), Some(Hold::Bench));
         let (p, q) = w.roads.segment_points(sid);
+        // [r14-cliffs] A street straight up the hill now lies on it (past
+        // its grade) wherever it can; a piece that needs no bench must lie
+        // within the earthwork cap of the land.
+        match earthwork_hold(&w.landscape, &w.roads, &w.road_z, &w.road_inner, sid) {
+            Some(Hold::Bench) => {}
+            None => {
+                for k in 1..10 {
+                    let t = k as f32 / 10.0;
+                    let off = (w.road_height(sid, t) - natural(&w, p.lerp(q, t))).abs();
+                    assert!(off <= super::water::STREET_EARTHWORK_MAX + 0.6, "unbenched piece {off:.1} m off the land");
+                }
+                continue;
+            }
+            other => panic!("a town street held as {other:?}"),
+        }
         let (_, back) = held_band(seg, Hold::Bench);
         for k in 1..10 {
             let t = k as f32 / 10.0;
@@ -323,7 +337,7 @@ fn bench_walls_are_never_taller_than_the_cap() {
     // [r14-cliffs] A town street is cut at most `STREET_EARTHWORK_MAX`
     // into the hill now (it used to be eased 20 m and more into it), so the
     // rock face past the cap is left for the hill rising across the way.
-    assert!(deepest > 2.0 && deepest <= super::water::STREET_EARTHWORK_MAX + 0.6, "cut {deepest:.1} m");
+    assert!(deepest <= super::water::STREET_EARTHWORK_MAX + 0.6, "cut {deepest:.1} m");
 }
 
 /// [r4-hillside] No terrace wall is taller than a bench's cap either.
