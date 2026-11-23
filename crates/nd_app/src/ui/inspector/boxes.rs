@@ -85,7 +85,7 @@ fn rows(ui: &mut egui::Ui, sim: &Sim, selection: &mut Selection, ids: &[BoxId], 
                 *selection = Selection::Box(id);
             }
             let line = nd_sim::containers::LINES[r.line as usize % 10].name;
-            ui.label(egui::RichText::new(format!("{line} · {}ft · {}{}", if r.forty { 40 } else { 20 }, r.condition_label(day), if r.goods.is_some() { " · full" } else { "" })).small().weak());
+            ui.label(egui::RichText::new(format!("{line} · {}ft {} · {}{}", if r.forty { 40 } else { 20 }, r.kind.label(), r.condition_label(day), r.goods.map_or(String::new(), |g| format!(" · {}", g.describe())))).small().weak());
         });
     }
     if ids.len() > max {

@@ -8,7 +8,7 @@
 //!
 //! Two tables, one row per variant, in the enums' order: [`GOODS`] and
 //! [`BUSINESSES`]; and the building sites' bill of materials,
-//! [`SITE_BILL`]. Adding a good or a kind of business means adding its
+//! bills of materials ([`BUILD_MIXES`], [`site_bill`]). Adding a good or a kind of business means adding its
 //! variant at the end of its enum and a row here; the exhaustive matches in
 //! [`good_index`] and [`business_index`] fail to compile until the row is
 //! there, and `tests` checks each row sits at its variant's index.
@@ -49,6 +49,25 @@ pub enum GoodCategory {
     Consumer,
     /// Paintings and sculpture.
     Culture,
+    /// [r14-materials] What buildings are built of: cement, sand and
+    /// gravel, brick, glass, steel, timber and the fit-out.
+    BuildingMaterial,
+}
+
+impl GoodCategory {
+    pub fn label(self) -> &'static str {
+        match self {
+            GoodCategory::Farm => "farm",
+            GoodCategory::Food => "food",
+            GoodCategory::Seafood => "seafood",
+            GoodCategory::Petrochemical => "petrochemical",
+            GoodCategory::Minerals => "minerals",
+            GoodCategory::Manufactured => "manufactured",
+            GoodCategory::Consumer => "consumer",
+            GoodCategory::Culture => "culture",
+            GoodCategory::BuildingMaterial => "building material",
+        }
+    }
 }
 
 /// What one unit of a good stands for (the sim counts plain units; this is
@@ -103,6 +122,11 @@ pub struct GoodRow {
     pub by_air: bool,
     /// Flows outside the recipes: where else it comes from and goes.
     pub note: &'static str,
+    /// [r14-materials] A local maker of this good sells its stock as this
+    /// one (the smelter's billets as structural steel, the strip mine's
+    /// rock as sand and gravel, the refinery's plastics as pipe): who makes
+    /// it in town without a recipe of its own ([`makers`] counts them).
+    pub local_from: Option<Resource>,
 }
 
 const GOOD_BASE: GoodRow = GoodRow {
@@ -118,6 +142,7 @@ const GOOD_BASE: GoodRow = GoodRow {
     retail: false,
     by_air: false,
     note: "",
+    local_from: None,
 };
 
 /// Every good, in `Resource` order.
@@ -234,7 +259,7 @@ pub const GOODS: [GoodRow; Resource::COUNT] = [
         road_wear: 1.0,
         retail: false,
         by_air: false,
-        note: "Also every building site's materials (`SITE_BILL`), and the stand-in cargo of rubble lorries.",
+        note: "Sold to building sites as wiring and fixtures (their `local_from`); also the stand-in cargo of rubble lorries.",
         ..GOOD_BASE
     },
     GoodRow {
@@ -397,7 +422,189 @@ pub const GOODS: [GoodRow; Resource::COUNT] = [
         road_wear: 2.5,
         retail: false,
         by_air: false,
-        note: "Also steel cut from worn-out containers at scrap yards (`World::cut_up_boxes`) and recovered from waste; scrap steel goes to building sites first (`SITE_BILL`).",
+        note: "Also steel cut from worn-out containers at scrap yards (`World::cut_up_boxes`) and recovered from waste; scrap steel goes to building sites first (structural steel, rebar and a shack's scrap, `site_bill`).",
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Cement,
+        label: "cement",
+        category: GoodCategory::BuildingMaterial,
+        unit: Unit::Tonne,
+        base_price: 6.0,
+        ships: BoxKind::Bulk,
+        truck: BodyType::Mixer,
+        export_keep_hours: 24.0,
+        road_wear: 2.0,
+        note: "Imported for now (no cement works in town). Ships as powder in bulk boxes; reaches a site as ready-mixed concrete in a mixer lorry. Used by every building site (`site_bill`): foundations, frames, slabs.",
+        local_from: None,
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Aggregate,
+        label: "sand and gravel",
+        category: GoodCategory::BuildingMaterial,
+        unit: Unit::Tonne,
+        base_price: 4.0,
+        ships: BoxKind::OpenTop,
+        truck: BodyType::Tipper,
+        export_keep_hours: 24.0,
+        road_wear: 2.0,
+        note: "Dug by the strip mines (sold from their rock stock) or imported. Tipped at building sites for foundations, concrete and paths.",
+        local_from: Some(R::Ore),
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Bricks,
+        label: "bricks and blocks",
+        category: GoodCategory::BuildingMaterial,
+        unit: Unit::Tonne,
+        base_price: 5.0,
+        ships: BoxKind::Dry,
+        truck: BodyType::Flatbed,
+        export_keep_hours: 24.0,
+        road_wear: 1.8,
+        note: "Imported for now (no brickworks yet). Pallets on a flatbed. The walls of brick rows and the block infill of concrete frames.",
+        local_from: None,
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Glass,
+        label: "glass",
+        category: GoodCategory::BuildingMaterial,
+        unit: Unit::Tonne,
+        base_price: 20.0,
+        ships: BoxKind::Dry,
+        truck: BodyType::Flatbed,
+        export_keep_hours: 24.0,
+        road_wear: 1.2,
+        note: "Imported for now. Panes on A-frame racks. Windows everywhere; the curtain walls of glass towers.",
+        local_from: None,
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Steel,
+        label: "structural steel",
+        category: GoodCategory::BuildingMaterial,
+        unit: Unit::Tonne,
+        base_price: 80.0,
+        ships: BoxKind::FlatRack,
+        truck: BodyType::Flatbed,
+        export_keep_hours: 24.0,
+        road_wear: 2.5,
+        note: "Rolled from the smelters' billets or cut from old boxes at scrap yards (scrap first), else imported. On flat racks. Frames of glass towers, sheds and plants.",
+        local_from: Some(R::Metal),
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Rebar,
+        label: "rebar",
+        category: GoodCategory::BuildingMaterial,
+        unit: Unit::Tonne,
+        base_price: 72.0,
+        ships: BoxKind::FlatRack,
+        truck: BodyType::Flatbed,
+        export_keep_hours: 24.0,
+        road_wear: 2.5,
+        note: "From the smelters and scrap yards like structural steel, else imported. Bundles of bar on flat racks. Inside every concrete foundation and frame.",
+        local_from: Some(R::Metal),
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Timber,
+        label: "timber",
+        category: GoodCategory::BuildingMaterial,
+        unit: Unit::Tonne,
+        base_price: 8.0,
+        ships: BoxKind::FlatRack,
+        truck: BodyType::Flatbed,
+        export_keep_hours: 24.0,
+        road_wear: 1.4,
+        note: "Imported for now (forestry and a sawmill would make it). Floors and roofs of brick rows, the frames of houses and shacks.",
+        local_from: None,
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Roofing,
+        label: "roofing",
+        category: GoodCategory::BuildingMaterial,
+        unit: Unit::Pallet,
+        base_price: 10.0,
+        ships: BoxKind::Dry,
+        truck: BodyType::Curtainsider,
+        export_keep_hours: 24.0,
+        road_wear: 1.0,
+        note: "Imported for now. Tiles, slates and metal sheet: every roof.",
+        local_from: None,
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Insulation,
+        label: "insulation",
+        category: GoodCategory::BuildingMaterial,
+        unit: Unit::Pallet,
+        base_price: 12.0,
+        ships: BoxKind::Dry,
+        truck: BodyType::Curtainsider,
+        export_keep_hours: 24.0,
+        road_wear: 1.0,
+        note: "Foam board from the refinery's or chemical works' plastics, else imported. Bulky and light. In walls and roofs.",
+        local_from: Some(R::Plastics),
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Pipe,
+        label: "pipe and plumbing",
+        category: GoodCategory::BuildingMaterial,
+        unit: Unit::Pallet,
+        base_price: 14.0,
+        ships: BoxKind::FlatRack,
+        truck: BodyType::Flatbed,
+        export_keep_hours: 24.0,
+        road_wear: 1.0,
+        note: "Plastic pipe from the refinery's or chemical works' plastics, else imported. Water, drains and gas in the fit-out; process pipe at plants.",
+        local_from: Some(R::Plastics),
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Wiring,
+        label: "wiring and electrical",
+        category: GoodCategory::BuildingMaterial,
+        unit: Unit::Crate,
+        base_price: 14.0,
+        ships: BoxKind::Dry,
+        truck: BodyType::BoxVan,
+        export_keep_hours: 24.0,
+        road_wear: 1.0,
+        note: "Cable and switchgear from the parts fabs, else imported. The electrical fit-out.",
+        local_from: Some(R::Parts),
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Fixtures,
+        label: "fixtures and fittings",
+        category: GoodCategory::BuildingMaterial,
+        unit: Unit::Crate,
+        base_price: 12.0,
+        ships: BoxKind::Dry,
+        truck: BodyType::PanelTruck,
+        export_keep_hours: 24.0,
+        road_wear: 1.0,
+        note: "Doors, kitchens, sanitaryware and lifts from the parts fabs, else imported. The last stage of every building.",
+        local_from: Some(R::Parts),
+        ..GOOD_BASE
+    },
+    GoodRow {
+        resource: R::Paint,
+        label: "paint",
+        category: GoodCategory::BuildingMaterial,
+        unit: Unit::Crate,
+        base_price: 14.0,
+        ships: BoxKind::Dry,
+        truck: BodyType::BoxVan,
+        export_keep_hours: 24.0,
+        road_wear: 1.0,
+        note: "Tins of paint and finishes from the refinery's or chemical works' plastics, else imported. The fit-out.",
+        local_from: Some(R::Plastics),
         ..GOOD_BASE
     },
 ];
@@ -1429,32 +1636,424 @@ pub fn candidates(land_use: LandUse) -> &'static [BusinessKind] {
 
 // ── building sites ─────────────────────────────────────────────────────────
 
-/// What a building site orders, one truckload when the site opens
-/// (`World::order_materials`): `base + per_floor * floors` units of
-/// `material`, from the cheapest local maker or else imported; but first,
-/// when a scrap yard in town has the stock, `scrap.1` of that load as
-/// `scrap.0` (steel cut from old boxes) instead.
-///
-/// Round 14 (the supplies review) turns this into a bill of materials per
-/// building style and size, with several materials delivered by stage;
-/// those rows go here.
-#[derive(Clone, Copy, Debug)]
-pub struct SiteBill {
-    pub base: f32,
-    pub per_floor: f32,
-    pub material: Resource,
-    pub scrap: Option<(Resource, f32)>,
+/// [r14-materials] The four stages of a build, one per quarter of the
+/// work (`Construction::stage`): each stage's materials are ordered ahead
+/// and its work waits until they are all on site.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Stage {
+    Foundations,
+    Frame,
+    Envelope,
+    FitOut,
 }
 
-impl SiteBill {
-    /// Units the site orders for `floors` floors.
-    pub fn amount(&self, floors: u8) -> f32 {
-        self.base + floors as f32 * self.per_floor
+impl Stage {
+    pub const ALL: [Stage; 4] = [Stage::Foundations, Stage::Frame, Stage::Envelope, Stage::FitOut];
+
+    /// The stage of quarter `q` (`0..=3`; later quarters are the fit-out).
+    pub fn of_quarter(q: u8) -> Stage {
+        Stage::ALL[(q as usize).min(3)]
+    }
+
+    pub fn index(self) -> u8 {
+        self as u8
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Stage::Foundations => "foundations",
+            Stage::Frame => "frame",
+            Stage::Envelope => "envelope",
+            Stage::FitOut => "fit-out",
+        }
     }
 }
 
-/// Every site's bill today: generic parts, scrap steel first.
-pub const SITE_BILL: SiteBill = SiteBill { base: 4.0, per_floor: 2.0, material: R::Parts, scrap: Some((R::Metal, 0.5)) };
+/// [r14-materials] How a building is built, which decides its bill of
+/// materials: the construction family behind the procgen styles (a glass
+/// tower, a brick row, a shack...). Chosen in the sim by [`build_type`]
+/// from what also chooses the drawn style (district look, land use, tier,
+/// floors, trade, plant, rail, port), since the sim cannot see procgen's
+/// styles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BuildType {
+    /// Steel frame and curtain-wall glass on a concrete core.
+    GlassTower,
+    /// Reinforced-concrete frame tower, block infill, punched windows.
+    ConcreteTower,
+    /// Low and mid-rise concrete frame: shops, offices, walk-ups.
+    ConcreteBlock,
+    /// Brick walls, timber floors and a tiled roof: rows, lofts, shophouses.
+    BrickRow,
+    /// Timber frame: houses, bungalows, eco terraces, boathouses.
+    TimberHouse,
+    /// Self-built: timber, scrap steel and tin.
+    Shack,
+    /// Steel portal frame, slab and cladding: works, warehouses, yards.
+    SteelShed,
+    /// Power stations, refineries, smelters: heavy concrete, steel, pipe.
+    HeavyPlant,
+    /// Stations, depots, ports, car parks, service buildings.
+    Infrastructure,
+    /// Parks and grounds: gravel, timber, paths, benches.
+    Landscape,
+    /// Container homes: the boxes themselves, on pads, fitted out.
+    BoxStack,
+}
+
+impl BuildType {
+    pub const COUNT: usize = 11;
+    pub const ALL: [BuildType; Self::COUNT] = [
+        BuildType::GlassTower,
+        BuildType::ConcreteTower,
+        BuildType::ConcreteBlock,
+        BuildType::BrickRow,
+        BuildType::TimberHouse,
+        BuildType::Shack,
+        BuildType::SteelShed,
+        BuildType::HeavyPlant,
+        BuildType::Infrastructure,
+        BuildType::Landscape,
+        BuildType::BoxStack,
+    ];
+
+    pub fn mix(self) -> &'static BuildMix {
+        &BUILD_MIXES[self as usize]
+    }
+
+    pub fn label(self) -> &'static str {
+        self.mix().label
+    }
+}
+
+/// One material line of a [`BuildMix`]: `base + per_floor * floors` units
+/// of `good` for `stage`, before the size and tier factors.
+#[derive(Clone, Copy, Debug)]
+pub struct MixLine {
+    pub good: Resource,
+    pub stage: Stage,
+    pub base: f32,
+    pub per_floor: f32,
+}
+
+const fn ml(good: Resource, stage: Stage, base: f32, per_floor: f32) -> MixLine {
+    MixLine { good, stage, base, per_floor }
+}
+
+/// What a kind of building is made of, per stage.
+#[derive(Clone, Copy, Debug)]
+pub struct BuildMix {
+    pub build: BuildType,
+    pub label: &'static str,
+    pub lines: &'static [MixLine],
+}
+
+use Stage::{Envelope as EN, FitOut as FO, Foundations as FD, Frame as FR};
+
+/// [r14-materials] THE table of what each kind of building is made of
+/// (Harvey: "every building should have different requirements for
+/// materials. glass, brick, concrete, steel, wood, ect for each size/type
+/// of architecture"). One row per [`BuildType`], in its order. Units are
+/// the goods' own (tonnes, pallets, crates); [`site_bill`] scales them by
+/// the lot and the tier. A good appears at most once per stage.
+pub const BUILD_MIXES: [BuildMix; BuildType::COUNT] = [
+    BuildMix {
+        build: BuildType::GlassTower,
+        label: "glass tower (steel frame, curtain wall)",
+        lines: &[
+            ml(R::Cement, FD, 4.0, 0.5),
+            ml(R::Rebar, FD, 0.4, 0.08),
+            ml(R::Aggregate, FD, 6.0, 0.6),
+            ml(R::Steel, FR, 1.0, 0.35),
+            ml(R::Cement, FR, 2.0, 0.3),
+            ml(R::Glass, EN, 2.0, 0.6),
+            ml(R::Insulation, EN, 1.0, 0.15),
+            ml(R::Wiring, FO, 1.0, 0.25),
+            ml(R::Fixtures, FO, 1.0, 0.3),
+            ml(R::Pipe, FO, 0.5, 0.15),
+        ],
+    },
+    BuildMix {
+        build: BuildType::ConcreteTower,
+        label: "concrete tower (concrete frame, block infill)",
+        lines: &[
+            ml(R::Cement, FD, 4.0, 0.5),
+            ml(R::Rebar, FD, 0.4, 0.08),
+            ml(R::Aggregate, FD, 6.0, 0.6),
+            ml(R::Cement, FR, 3.0, 0.6),
+            ml(R::Rebar, FR, 0.5, 0.15),
+            ml(R::Aggregate, FR, 3.0, 0.8),
+            ml(R::Bricks, EN, 3.0, 1.0),
+            ml(R::Glass, EN, 1.0, 0.25),
+            ml(R::Wiring, FO, 1.0, 0.2),
+            ml(R::Fixtures, FO, 1.0, 0.3),
+            ml(R::Pipe, FO, 0.5, 0.15),
+            ml(R::Paint, FO, 0.5, 0.15),
+        ],
+    },
+    BuildMix {
+        build: BuildType::ConcreteBlock,
+        label: "concrete block (frame, block walls, shopfront glass)",
+        lines: &[
+            ml(R::Cement, FD, 3.0, 0.4),
+            ml(R::Aggregate, FD, 5.0, 0.5),
+            ml(R::Rebar, FD, 0.3, 0.05),
+            ml(R::Cement, FR, 2.0, 0.5),
+            ml(R::Rebar, FR, 0.4, 0.12),
+            ml(R::Bricks, EN, 3.0, 1.2),
+            ml(R::Glass, EN, 1.0, 0.3),
+            ml(R::Roofing, EN, 1.0, 0.0),
+            ml(R::Wiring, FO, 0.8, 0.2),
+            ml(R::Fixtures, FO, 0.8, 0.25),
+            ml(R::Paint, FO, 0.5, 0.15),
+        ],
+    },
+    BuildMix {
+        build: BuildType::BrickRow,
+        label: "brick row (brick walls, timber floors, tiled roof)",
+        lines: &[
+            ml(R::Cement, FD, 2.0, 0.2),
+            ml(R::Aggregate, FD, 3.0, 0.3),
+            ml(R::Bricks, FR, 6.0, 3.0),
+            ml(R::Timber, FR, 2.0, 0.8),
+            ml(R::Roofing, EN, 2.0, 0.1),
+            ml(R::Glass, EN, 0.5, 0.2),
+            ml(R::Insulation, EN, 0.5, 0.2),
+            ml(R::Pipe, FO, 0.5, 0.15),
+            ml(R::Wiring, FO, 0.5, 0.15),
+            ml(R::Fixtures, FO, 0.6, 0.2),
+            ml(R::Paint, FO, 0.4, 0.1),
+        ],
+    },
+    BuildMix {
+        build: BuildType::TimberHouse,
+        label: "timber frame (houses, eco terraces)",
+        lines: &[
+            ml(R::Cement, FD, 1.5, 0.1),
+            ml(R::Aggregate, FD, 2.0, 0.2),
+            ml(R::Timber, FR, 4.0, 2.0),
+            ml(R::Roofing, EN, 1.5, 0.2),
+            ml(R::Glass, EN, 0.6, 0.25),
+            ml(R::Insulation, EN, 0.8, 0.3),
+            ml(R::Pipe, FO, 0.4, 0.15),
+            ml(R::Wiring, FO, 0.4, 0.15),
+            ml(R::Fixtures, FO, 0.5, 0.2),
+            ml(R::Paint, FO, 0.4, 0.15),
+        ],
+    },
+    BuildMix {
+        build: BuildType::Shack,
+        label: "self-built (timber, scrap steel and tin)",
+        lines: &[
+            ml(R::Aggregate, FD, 1.0, 0.1),
+            ml(R::Timber, FR, 1.5, 0.6),
+            ml(R::Metal, FR, 0.3, 0.1),
+            ml(R::Roofing, EN, 1.0, 0.3),
+            ml(R::Fixtures, FO, 0.2, 0.05),
+        ],
+    },
+    BuildMix {
+        build: BuildType::SteelShed,
+        label: "steel shed (portal frame, slab, cladding)",
+        lines: &[
+            ml(R::Cement, FD, 4.0, 0.5),
+            ml(R::Aggregate, FD, 6.0, 0.5),
+            ml(R::Rebar, FD, 0.4, 0.05),
+            ml(R::Steel, FR, 1.5, 0.5),
+            ml(R::Roofing, EN, 3.0, 0.6),
+            ml(R::Insulation, EN, 0.5, 0.1),
+            ml(R::Wiring, FO, 0.8, 0.2),
+            ml(R::Pipe, FO, 0.4, 0.1),
+        ],
+    },
+    BuildMix {
+        build: BuildType::HeavyPlant,
+        label: "heavy plant (concrete, steel and process pipe)",
+        lines: &[
+            ml(R::Cement, FD, 6.0, 0.6),
+            ml(R::Rebar, FD, 0.8, 0.1),
+            ml(R::Aggregate, FD, 8.0, 0.6),
+            ml(R::Steel, FR, 2.5, 0.6),
+            ml(R::Roofing, EN, 2.0, 0.4),
+            ml(R::Pipe, EN, 1.5, 0.3),
+            ml(R::Wiring, FO, 1.5, 0.3),
+            ml(R::Paint, FO, 0.5, 0.1),
+        ],
+    },
+    BuildMix {
+        build: BuildType::Infrastructure,
+        label: "infrastructure (concrete decks, steel roofs)",
+        lines: &[
+            ml(R::Cement, FD, 5.0, 0.6),
+            ml(R::Rebar, FD, 0.6, 0.12),
+            ml(R::Aggregate, FD, 8.0, 0.8),
+            ml(R::Cement, FR, 2.0, 0.6),
+            ml(R::Steel, FR, 0.8, 0.2),
+            ml(R::Roofing, EN, 1.5, 0.2),
+            ml(R::Glass, EN, 0.5, 0.15),
+            ml(R::Wiring, FO, 0.8, 0.15),
+            ml(R::Paint, FO, 0.4, 0.1),
+        ],
+    },
+    BuildMix {
+        build: BuildType::Landscape,
+        label: "landscape (gravel, timber, paths, benches)",
+        lines: &[
+            ml(R::Aggregate, FD, 4.0, 0.0),
+            ml(R::Timber, FR, 1.0, 0.0),
+            ml(R::Cement, EN, 0.5, 0.0),
+            ml(R::Fixtures, FO, 0.3, 0.0),
+        ],
+    },
+    BuildMix {
+        build: BuildType::BoxStack,
+        label: "container homes (boxes on pads, fitted out)",
+        lines: &[
+            ml(R::Cement, FD, 1.5, 0.1),
+            ml(R::Steel, FR, 0.2, 0.05),
+            ml(R::Glass, EN, 0.3, 0.1),
+            ml(R::Insulation, EN, 0.4, 0.1),
+            ml(R::Wiring, FO, 0.3, 0.1),
+            ml(R::Fixtures, FO, 0.4, 0.1),
+            ml(R::Pipe, FO, 0.2, 0.05),
+        ],
+    },
+];
+
+/// [r14-materials] What the sim knows about a site that decides how it is
+/// built (the same inputs procgen's `choose_style` keys on).
+#[derive(Clone, Copy, Debug)]
+pub struct SiteFacts {
+    pub land_use: LandUse,
+    pub tier: crate::buildings::Tier,
+    pub floors: u8,
+    pub business: Option<BusinessKind>,
+    pub look: Option<crate::districts::Look>,
+    /// A power plant or a grid battery.
+    pub plant: bool,
+    /// A station, depot, port, metro or cable-car stop, a placed service,
+    /// a car park.
+    pub infrastructure: bool,
+    /// A stack developer's home of real boxes.
+    pub boxes: bool,
+    /// An arcology or a corp's tower.
+    pub megastructure: bool,
+}
+
+/// [r14-materials] How a site with these facts is built.
+pub fn build_type(f: &SiteFacts) -> BuildType {
+    use crate::buildings::Tier;
+    use crate::districts::Look as L;
+    use BuildType as B;
+    let n = f.floors;
+    if f.boxes {
+        return B::BoxStack;
+    }
+    if f.land_use == LandUse::Park {
+        return B::Landscape;
+    }
+    if f.plant || matches!(f.business, Some(K::Refinery | K::Smelter | K::ChemicalWorks | K::OilWell)) {
+        return B::HeavyPlant;
+    }
+    if f.infrastructure || f.business == Some(K::Parking) {
+        return B::Infrastructure;
+    }
+    if f.megastructure {
+        return if f.tier == Tier::High { B::GlassTower } else { B::ConcreteTower };
+    }
+    let tall = |glass: bool| if glass { B::GlassTower } else { B::ConcreteTower };
+    if f.land_use == LandUse::Industrial {
+        return match f.look {
+            Some(L::Patchwork) => B::Shack,
+            Some(L::BrickSteel | L::Historic) => B::BrickRow,
+            _ => B::SteelShed,
+        };
+    }
+    match f.look {
+        Some(L::Patchwork) => {
+            if n <= 3 {
+                B::Shack
+            } else {
+                B::ConcreteBlock
+            }
+        }
+        Some(L::GlassCampus | L::SkylineLuxe | L::TechCampus) if n >= 3 => B::GlassTower,
+        Some(L::BrickSteel | L::Historic | L::Lantern | L::NightMarket) if n <= 5 => B::BrickRow,
+        Some(L::Garden | L::Suburban) if n <= 3 => B::TimberHouse,
+        Some(L::SolarpunkGreen | L::Eco) if n <= 8 => B::TimberHouse,
+        Some(L::HarbourPastel | L::Tourist) if n <= 2 => B::TimberHouse,
+        Some(L::HarbourPastel | L::Tourist) if n <= 5 => B::BrickRow,
+        Some(L::Capsule | L::Kowloon) if n >= 5 => B::ConcreteTower,
+        Some(L::NeonStrip) if n >= 6 => tall(f.tier != Tier::Low),
+        _ => match f.land_use {
+            LandUse::Residential => match n {
+                0..=2 if f.tier == Tier::Low => B::TimberHouse,
+                0..=3 => B::BrickRow,
+                4..=6 => B::ConcreteBlock,
+                _ => tall(f.tier == Tier::High),
+            },
+            _ => match n {
+                0..=5 => B::ConcreteBlock,
+                _ => tall(f.tier != Tier::Low),
+            },
+        },
+    }
+}
+
+/// [r14-materials] One line of a site's bill of materials: so much of a
+/// good for a stage. A plain list of these is the whole bill, for the
+/// site's own orders and for anyone who buys a bill for it (builder
+/// companies, the hardware store).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BillLine {
+    pub good: Resource,
+    pub qty: f32,
+    pub stage: Stage,
+}
+
+/// [r14-materials] The lot area a mix's numbers are written for; bigger
+/// lots scale up (to [`SIZE_MAX`]), smaller ones down (to [`SIZE_MIN`]).
+pub const MIX_LOT_AREA: f32 = 500.0;
+pub const SIZE_MIN: f32 = 0.6;
+pub const SIZE_MAX: f32 = 2.5;
+
+/// [r14-materials] A site's bill of materials: its build type's mix for
+/// `floors` floors on a lot of `lot_area` m², at its tier (a smart
+/// building is fitted out better, a cheap one skimps), every stage, lines
+/// rounded to a tenth of a unit, empty ones dropped.
+pub fn site_bill(build: BuildType, floors: u8, lot_area: f32, tier: crate::buildings::Tier) -> Vec<BillLine> {
+    use crate::buildings::Tier;
+    let size = (lot_area / MIX_LOT_AREA).clamp(SIZE_MIN, SIZE_MAX);
+    let tier_f = match tier {
+        Tier::Low => 0.85,
+        Tier::Mid => 1.0,
+        Tier::High => 1.2,
+    };
+    build
+        .mix()
+        .lines
+        .iter()
+        .map(|l| BillLine { good: l.good, qty: ((l.base + l.per_floor * floors as f32) * size * tier_f * 10.0).round() / 10.0, stage: l.stage })
+        .filter(|l| l.qty > 0.0)
+        .collect()
+}
+
+/// [r14-materials] The lines of `bill` for `stage`.
+pub fn stage_lines(bill: &[BillLine], stage: Stage) -> impl Iterator<Item = &BillLine> {
+    bill.iter().filter(move |l| l.stage == stage)
+}
+
+/// [r14-materials] "14 t structural steel, 3 pallets insulation": a load
+/// or a pile, what and how much, in each good's unit.
+pub fn describe_load(lines: &[(Resource, f32)]) -> String {
+    let parts: Vec<String> = lines.iter().filter(|(_, n)| *n > 0.0).map(|(r, n)| format!("{:.0} {} {}", n.max(1.0), good(*r).unit.label(), good(*r).label)).collect();
+    if parts.is_empty() { "empty".to_string() } else { parts.join(", ") }
+}
+
+/// [r14-materials] What a bill is worth at base prices.
+pub fn bill_value(bill: &[BillLine]) -> f32 {
+    bill.iter().map(|l| l.qty * l.good.base_price()).sum()
+}
 
 /// The stand-in cargo a rubble lorry carries (nothing is sold or stocked).
 pub const RUBBLE: Resource = R::Parts;
@@ -1484,6 +2083,19 @@ pub const fn good_index(r: Resource) -> usize {
         R::Fillets => 16,
         R::Art => 17,
         R::Metal => 18,
+        R::Cement => 19,
+        R::Aggregate => 20,
+        R::Bricks => 21,
+        R::Glass => 22,
+        R::Steel => 23,
+        R::Rebar => 24,
+        R::Timber => 25,
+        R::Roofing => 26,
+        R::Insulation => 27,
+        R::Pipe => 28,
+        R::Wiring => 29,
+        R::Fixtures => 30,
+        R::Paint => 31,
     }
 }
 
@@ -1572,9 +2184,11 @@ pub fn business(k: BusinessKind) -> &'static BusinessRow {
     &BUSINESSES[business_index(k)]
 }
 
-/// The kinds that make `r` (it is among their recipe's outputs).
+/// The kinds that make `r` (it is among their recipe's outputs), and
+/// [r14-materials] those whose output is sold as it (`local_from`).
 pub fn makers(r: Resource) -> impl Iterator<Item = BusinessKind> {
-    BUSINESSES.iter().filter(move |b| b.outputs.iter().any(|(x, _)| *x == r)).map(|b| b.kind)
+    let alt = good(r).local_from;
+    BUSINESSES.iter().filter(move |b| b.outputs.iter().any(|(x, _)| *x == r || Some(*x) == alt)).map(|b| b.kind)
 }
 
 /// The kinds that use `r` (it is among their recipe's inputs).
@@ -1651,6 +2265,154 @@ mod tests {
                 assert!(makers(r).next().is_some() || !good(r).note.is_empty(), "{r:?} is used but never made");
             }
         }
-        assert!(makers(SITE_BILL.material).next().is_some());
+        // Every material a bill asks for can be had: made in town, or a
+        // note says where it comes from.
+        for m in BUILD_MIXES.iter() {
+            for l in m.lines {
+                assert!(makers(l.good).next().is_some() || !good(l.good).note.is_empty(), "{:?}", l.good);
+            }
+        }
+    }
+
+    /// [r14-materials] Every build type has its mix, in order, with
+    /// something for every stage and each good once per stage.
+    #[test]
+    fn every_build_type_has_a_bill_for_every_stage() {
+        for (i, t) in BuildType::ALL.into_iter().enumerate() {
+            let m = t.mix();
+            assert_eq!(m.build, t, "mix {i} is {:?}, not {t:?}", m.build);
+            assert!(!m.label.is_empty());
+            for st in Stage::ALL {
+                let goods: Vec<Resource> = m.lines.iter().filter(|l| l.stage == st).map(|l| l.good).collect();
+                assert!(!goods.is_empty(), "{t:?} orders nothing for its {}", st.label());
+                let mut d = goods.clone();
+                d.sort();
+                d.dedup();
+                assert_eq!(d.len(), goods.len(), "{t:?} lists a good twice for its {}", st.label());
+            }
+            for l in m.lines {
+                assert!(l.base >= 0.0 && l.per_floor >= 0.0 && l.base + l.per_floor > 0.0, "{t:?} {:?}", l.good);
+            }
+            // Every bill, at any size, still has a line per stage.
+            for floors in [0u8, 1, 4, 30] {
+                let bill = site_bill(t, floors, 120.0, crate::buildings::Tier::Low);
+                for st in Stage::ALL {
+                    assert!(stage_lines(&bill, st).next().is_some(), "{t:?} at {floors} floors: empty {}", st.label());
+                }
+            }
+        }
+    }
+
+    /// [r14-materials] Bills grow with the building: more floors, a
+    /// bigger lot or a better tier never ask for less of anything, and
+    /// buildings with floors ask for more.
+    #[test]
+    fn bills_scale_with_floors_lot_and_tier() {
+        use crate::buildings::Tier;
+        for t in BuildType::ALL {
+            let small = site_bill(t, 2, 400.0, Tier::Mid);
+            let tall = site_bill(t, 10, 400.0, Tier::Mid);
+            let wide = site_bill(t, 2, 1200.0, Tier::Mid);
+            let posh = site_bill(t, 2, 400.0, Tier::High);
+            for (a, b) in small.iter().zip(tall.iter()).chain(small.iter().zip(wide.iter())).chain(small.iter().zip(posh.iter())) {
+                assert_eq!((a.good, a.stage), (b.good, b.stage));
+                assert!(b.qty >= a.qty, "{t:?}: {:?} shrank from {} to {}", a.good, a.qty, b.qty);
+            }
+            assert!(bill_value(&wide) > bill_value(&small) * 1.5, "{t:?}: a lot three times the size costs more");
+            if t.mix().lines.iter().any(|l| l.per_floor > 0.0) {
+                assert!(bill_value(&tall) > bill_value(&small) * 1.5, "{t:?}: ten floors cost more than two");
+            }
+        }
+        // A glass tower is mostly steel and glass; a brick row bricks; a
+        // shack timber; a shed steel.
+        let main = |t: BuildType| {
+            let bill = site_bill(t, 8, 500.0, Tier::Mid);
+            let mut v: Vec<(Resource, f32)> = Vec::new();
+            for l in &bill {
+                match v.iter_mut().find(|(r, _)| *r == l.good) {
+                    Some(e) => e.1 += l.qty * l.good.base_price(),
+                    None => v.push((l.good, l.qty * l.good.base_price())),
+                }
+            }
+            v.sort_by(|a, b| b.1.total_cmp(&a.1));
+            v.into_iter().take(2).map(|(r, _)| r).collect::<Vec<_>>()
+        };
+        assert!(main(BuildType::GlassTower).contains(&R::Steel) && main(BuildType::GlassTower).contains(&R::Glass), "{:?}", main(BuildType::GlassTower));
+        assert!(main(BuildType::BrickRow).contains(&R::Bricks), "{:?}", main(BuildType::BrickRow));
+        assert!(main(BuildType::Shack).contains(&R::Timber), "{:?}", main(BuildType::Shack));
+        assert!(main(BuildType::SteelShed).contains(&R::Steel), "{:?}", main(BuildType::SteelShed));
+    }
+
+    /// [r14-materials] A building costs about what it did when every site
+    /// ordered generic parts (4 loads of 4 + 2 per floor at 9): the
+    /// economy keeps its scale. Within a factor of two either way for the
+    /// ordinary town buildings at a typical lot.
+    #[test]
+    fn bills_cost_about_what_parts_did() {
+        use crate::buildings::Tier;
+        for t in [BuildType::GlassTower, BuildType::ConcreteTower, BuildType::ConcreteBlock, BuildType::BrickRow, BuildType::TimberHouse, BuildType::SteelShed] {
+            for floors in [2u8, 5, 12] {
+                let old = 4.0 * (4.0 + 2.0 * floors as f32) * 9.0;
+                let new = bill_value(&site_bill(t, floors, MIX_LOT_AREA, Tier::Mid));
+                assert!(new > old * 0.4 && new < old * 2.0, "{t:?} at {floors} floors: {new:.0} against {old:.0}");
+            }
+        }
+    }
+
+    /// [r14-materials] Building materials ship as they would: steel,
+    /// rebar and timber on flat racks, cement in bulk boxes, sand and
+    /// gravel in open tops; none in tanks; a lorry for each.
+    #[test]
+    fn building_materials_ship_sensibly() {
+        let mats: Vec<Resource> = Resource::ALL.into_iter().filter(|r| good(*r).category == GoodCategory::BuildingMaterial).collect();
+        assert!(mats.len() >= 13, "{mats:?}");
+        for r in &mats {
+            assert_ne!(good(*r).ships, BoxKind::Tank, "{r:?}");
+            assert!(good(*r).truck.is_truck(), "{r:?} comes in a {:?}", good(*r).truck);
+            assert!(!good(*r).note.is_empty(), "{r:?}: say where it comes from");
+        }
+        for r in [R::Steel, R::Rebar, R::Timber] {
+            assert_eq!(good(r).ships, BoxKind::FlatRack, "{r:?}");
+        }
+        assert_eq!(good(R::Cement).ships, BoxKind::Bulk);
+        assert_eq!(good(R::Aggregate).ships, BoxKind::OpenTop);
+        // Local makers: the smelter makes steel, the strip mine sand and
+        // gravel, the refinery pipe.
+        assert!(makers(R::Steel).any(|k| k == K::Smelter));
+        assert!(makers(R::Aggregate).any(|k| k == K::StripMine));
+        assert!(makers(R::Pipe).any(|k| k == K::Refinery));
+    }
+
+    /// [r14-materials] Build types follow the architecture.
+    #[test]
+    fn build_types_follow_the_district_and_the_size() {
+        use crate::buildings::Tier;
+        use crate::districts::Look;
+        let f = |land_use, floors, tier, look| SiteFacts { land_use, tier, floors, business: None, look, plant: false, infrastructure: false, boxes: false, megastructure: false };
+        assert_eq!(build_type(&f(LandUse::Commercial, 20, Tier::High, Some(Look::GlassCampus))), BuildType::GlassTower);
+        assert_eq!(build_type(&f(LandUse::Residential, 3, Tier::Low, Some(Look::BrickSteel))), BuildType::BrickRow);
+        assert_eq!(build_type(&f(LandUse::Residential, 1, Tier::Low, Some(Look::Patchwork))), BuildType::Shack);
+        assert_eq!(build_type(&f(LandUse::Residential, 2, Tier::Mid, Some(Look::Garden))), BuildType::TimberHouse);
+        assert_eq!(build_type(&f(LandUse::Industrial, 1, Tier::Mid, None)), BuildType::SteelShed);
+        assert_eq!(build_type(&f(LandUse::Residential, 14, Tier::Mid, None)), BuildType::ConcreteTower);
+        assert_eq!(build_type(&f(LandUse::Commercial, 14, Tier::High, None)), BuildType::GlassTower);
+        assert_eq!(build_type(&f(LandUse::Park, 0, Tier::Mid, None)), BuildType::Landscape);
+        assert_eq!(build_type(&SiteFacts { plant: true, ..f(LandUse::Industrial, 2, Tier::Mid, None) }), BuildType::HeavyPlant);
+        assert_eq!(build_type(&SiteFacts { boxes: true, ..f(LandUse::Residential, 3, Tier::Low, None) }), BuildType::BoxStack);
+    }
+
+    /// [r14-materials] The table of example bills, for the docs and the
+    /// report: `cargo test -p nd_sim print_example_bills -- --nocapture`.
+    #[test]
+    fn print_example_bills() {
+        use crate::buildings::Tier;
+        for (t, floors) in [(BuildType::GlassTower, 20u8), (BuildType::ConcreteTower, 12), (BuildType::BrickRow, 3), (BuildType::TimberHouse, 2), (BuildType::Shack, 1), (BuildType::SteelShed, 1)] {
+            let bill = site_bill(t, floors, MIX_LOT_AREA, Tier::Mid);
+            println!("{} at {floors} floors, worth {:.0} (parts bill was {:.0}):", t.label(), bill_value(&bill), 4.0 * (4.0 + 2.0 * floors as f32) * 9.0);
+            for st in Stage::ALL {
+                let v: Vec<(Resource, f32)> = stage_lines(&bill, st).map(|l| (l.good, l.qty)).collect();
+                println!("  {}: {}", st.label(), describe_load(&v));
+            }
+        }
     }
 }

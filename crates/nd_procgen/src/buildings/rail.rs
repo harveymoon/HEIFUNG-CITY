@@ -321,6 +321,7 @@ fn draw_free(seed: u64, wear: f32, pal: &Palette, draw: impl FnOnce(&mut Geometr
         overhead: Vec::new(),
         waste_fill: 0.0,
         site: None,
+        pile: Vec::new(),
     };
     let mut g = Geometry::default();
     draw(&mut g, &c);
@@ -351,7 +352,7 @@ pub fn real_box_geometry(face: &nd_sim::containers::BoxFace, numbered: bool, pal
 pub fn box_number_mesh(face: &nd_sim::containers::BoxFace) -> crate::mesh::MeshData {
     let f = Frame { center: Vec2::ZERO, along: Vec2::X, inward: Vec2::Y, width: 80.0, depth: 80.0 };
     let mut m = crate::mesh::MeshData::default();
-    if face.kind != nd_sim::rail::BoxKind::Tank {
+    if !matches!(face.kind, nd_sim::rail::BoxKind::Tank | nd_sim::rail::BoxKind::FlatRack) {
         box_number(&mut m, &f, 0.0, 0.0, 0.0, 0.0, face, box_life(face).door);
     }
     m
