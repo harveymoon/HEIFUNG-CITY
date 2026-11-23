@@ -176,3 +176,23 @@ fn the_same_household_shows_the_same_and_a_changed_one_shows_more() {
     w.buildings[bid].households.clear();
     assert!(home_wishes(&w, bid, true, HomeCtx::default()).is_empty());
 }
+
+/// [r14-photofix] No surfboards in a cold climate, nor by a lake or a
+/// river: only near the sea where people surf.
+#[test]
+fn surfboards_only_by_the_sea_in_a_warm_climate() {
+    let mut w = legacy();
+    let (bid, _, _) = home_with(&mut w, &[30]);
+    let lot = w.buildings[bid].lot;
+    w.lots[lot].shore.frontage = 20.0;
+    w.lots[lot].shore.seaward = glam::Vec2::X;
+    let beach = vec![w.lots[lot].center];
+    w.landscape.params.climate = crate::Climate::Volcanic;
+    assert!(!home_ctx(&w, bid, &beach).near_beach, "too cold to surf");
+    assert!(beaches(&w).is_empty());
+    w.landscape.params.climate = crate::Climate::Tropical;
+    if w.landscape.sea_now().is_none_or(|s| !s.contains(w.lots[lot].center + glam::Vec2::X * 30.0)) {
+        assert!(!home_ctx(&w, bid, &[]).near_beach, "on a lake or a river, not the sea");
+    }
+    assert!(home_ctx(&w, bid, &beach).near_beach, "a short walk from a sea beach, warm");
+}

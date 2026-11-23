@@ -338,7 +338,9 @@ Citizens are rendered from their simulated positions every frame.
   mechanic, tow yard, scrap yard, bike shop, dealer, taxi firm; or a rider of a two-wheeler with
   curiosity over 0.55), a workbench and sawhorse (a trade with tools, or a careful tinkerer), a kettle
   grill or an oil-drum barbecue (cooks, and the sociable who like a good time), a surfboard by the
-  door within 600 m of a public beach or on the water (beach trades and the young at heart), pots
+  door within 400 m of a public beach on the sea or on the sea front, in a climate with a mean of
+  10 °C or more (not volcanic or arctic maps; never by a lake or a river) (beach trades and the young
+  at heart; [r14-photofix]), pots
   for gardeners. The washing is out 08:00-19:00 when it is dry and bright (cloud under 0.55, not
   raining: cloud 0.6+ on a map with rain or snow, the renderer's own line; not in a storm or a gale)
   for about a third to most households by size, and in otherwise. At most six things a household,
@@ -1046,7 +1048,10 @@ Citizens are rendered from their simulated positions every frame.
   about to ride over, and straight over a street on a footpath's line they cross like a walker
   (walk light or a gap at a zebra, and drivers stop for them on it). The rebellious, drunk or
   late may run a red when the cross traffic leaves a gap (`red_lights_run_today`); the
-  cautious, old and young never do.
+  cautious, old and young never do. [r14-photofix] A rider keeps 2.5 m behind the bike ahead on
+  the same line (within 0.9 m across it, heading the same way: `room_ahead`), so riders who set
+  off together or meet at a red queue a bike's length apart and leave one after another instead
+  of riding inside each other on one point.
   [trip-review] A rider's line (`route_path`) keeps the shoulder of each street (bikes keep
   left on a footpath) and goes through a junction on a curve: the way in ends a junction radius
   out (the widest street's half width and a metre, inside the zebra, so the rider still stops at

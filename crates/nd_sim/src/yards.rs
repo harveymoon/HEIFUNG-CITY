@@ -389,20 +389,59 @@ pub fn home_signature(world: &World, bid: BuildingId) -> u64 {
     s
 }
 
-/// How far a home may be from a public beach for its people to keep a
-/// surfboard, metres.
-pub const BEACH_WALK: f32 = 600.0;
+/// How far a home may be from a public beach on the sea for its people to
+/// keep a surfboard, metres.
+pub const BEACH_WALK: f32 = 400.0;
 
-/// The middles of the public beaches (`LotShore::beach`).
-pub fn beaches(world: &World) -> Vec<glam::Vec2> {
-    world.lots.values().filter(|l| l.shore.beach).map(|l| l.center).collect()
+/// [r14-photofix] The climate's mean temperature from which people surf,
+/// degrees C (temperate, desert and tropical maps; not volcanic or arctic).
+pub const SURF_MIN_TEMP_C: f32 = 10.0;
+
+/// [r14-photofix] Whether open sea lies within `reach` metres of `p` (eight
+/// ways round, every 20 m): a lake or a river is no place to surf.
+fn sea_near(world: &World, p: glam::Vec2, reach: f32) -> bool {
+    let Some(sea) = world.landscape.sea_now() else { return false };
+    if sea.contains(p) {
+        return true;
+    }
+    let mut d = 20.0;
+    while d <= reach {
+        for k in 0..8 {
+            let a = k as f32 * std::f32::consts::FRAC_PI_4;
+            if sea.contains(p + glam::Vec2::new(a.cos(), a.sin()) * d) {
+                return true;
+            }
+        }
+        d += 20.0;
+    }
+    false
 }
 
-/// What is round a home: on the water, or within [`BEACH_WALK`] of one of
-/// `beaches`.
+/// The middles of the public beaches (`LotShore::beach`) on the sea, in a
+/// climate people surf in (none else: [`home_ctx`]).
+pub fn beaches(world: &World) -> Vec<glam::Vec2> {
+    if !surf_climate(world) {
+        return Vec::new();
+    }
+    world.lots.values().filter(|l| l.shore.beach && sea_near(world, l.center, l.width().max(l.depth()) * 0.5 + 60.0)).map(|l| l.center).collect()
+}
+
+fn surf_climate(world: &World) -> bool {
+    crate::weather::profile(world.landscape.params.climate).mean_temp_c >= SURF_MIN_TEMP_C
+}
+
+/// What is round a home: on the sea, or within [`BEACH_WALK`] of one of
+/// `beaches`. [r14-photofix] Only in a climate people surf in, and only
+/// the sea: the photographer found surfboards at a hundred homes up to
+/// 600 m from a lake and a river in a cold, snowy city (photo report
+/// 2026-11-22, finding 7).
 pub fn home_ctx(world: &World, bid: BuildingId, beaches: &[glam::Vec2]) -> HomeCtx {
     let Some(lot) = world.buildings.get(bid).and_then(|b| world.lots.get(b.lot)) else { return HomeCtx::default() };
-    HomeCtx { near_beach: lot.shore.is_waterfront() || beaches.iter().any(|c| c.distance(lot.center) < BEACH_WALK) }
+    if !surf_climate(world) {
+        return HomeCtx::default();
+    }
+    let on_sea = lot.shore.is_waterfront() && sea_near(world, lot.center, lot.width().max(lot.depth()) * 0.5 + 40.0);
+    HomeCtx { near_beach: on_sea || beaches.iter().any(|c| c.distance(lot.center) < BEACH_WALK) }
 }
 
 /// "Kai's bike".
