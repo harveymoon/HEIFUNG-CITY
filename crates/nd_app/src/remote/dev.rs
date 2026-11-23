@@ -86,6 +86,28 @@ pub(super) fn set_weather(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
     if let Some(t) = opt_f32(cmd, "temp_c")? {
         w.weather.temp_c = t.clamp(-50.0, 55.0);
     }
+    // [r14-photofix] The spell, by name; a sky cleared by hand ends a storm
+    // (it pulled the clouds back in within hours, and the reply said
+    // "storm" under a clear sky: photo report 2026-11-22, finding 5).
+    use nd_sim::weather::Spell;
+    match cmd.get("spell").and_then(Value::as_str) {
+        Some(name) => {
+            let spell = match name.to_ascii_lowercase().replace([' ', '-'], "_").as_str() {
+                "normal" | "none" => Spell::Normal,
+                "storm" => Spell::Storm,
+                "heat_wave" | "heatwave" => Spell::HeatWave,
+                "cold_snap" | "coldsnap" => Spell::ColdSnap,
+                other => return Err(format!("unknown spell \"{other}\": normal, storm, heat_wave or cold_snap")),
+            };
+            w.weather.spell = spell;
+            w.weather.spell_hours = if spell == Spell::Normal { 0 } else { w.weather.spell_hours.max(12) };
+        }
+        None if w.weather.spell == Spell::Storm && w.weather.cloud <= 0.45 => {
+            w.weather.spell = Spell::Normal;
+            w.weather.spell_hours = 0;
+        }
+        None => {}
+    }
     Ok(json!({ "cloud": round(w.weather.cloud), "wind": round(w.weather.wind), "temp_c": round(w.weather.temp_c), "spell": format!("{:?}", w.weather.spell).to_lowercase(), "label": w.weather.label(), "climate": w.landscape.params.climate.key(), "weather_climate": w.weather.climate.key(), "precipitation": crate::render::climate::precip_now(w).map(|(k, i)| json!({ "kind": k, "intensity": round(i) })) }))
 }
 

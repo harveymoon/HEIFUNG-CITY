@@ -245,7 +245,7 @@ while paused do not count as play time.
 | `grid` | | the time-of-use grid: `hour`, `import_price` and `export_price` now (per MWh), `mean_import_price`, `demand_mw` now, `full_draw_mw` (every building flat out, the old figure), `demand_factor_now`, `weather`, `day_ahead` (24 rows from this hour: `hour`, `temp_c`, `demand_mw`, `import_price`, `export_price`, if the weather holds), `last_24h` (recorded `day`, `hour`, `demand_mw`, `supply_mw`, `imported_mw`, `exported_mw`, `import_price`, `temp_c`) |
 | `grant` | `amount` (default 100000) | dev: adds money to the treasury |
 | `build_now` | `x`, `y`, `radius` (default 60) | dev: [r5-hillside] every empty zoned lot whose centre is in the circle gets its building now, finished (for test scenes). Reply `built` |
-| `set_weather` | `cloud` 0..1, `wind` 0.05..1, `temp_c` | dev: sets the sky now (it drifts back toward the climate's hour by hour); reply `cloud`, `wind`, `temp_c`, `spell`, `label`, `climate`, `weather_climate`, `precipitation` |
+| `set_weather` | `cloud` 0..1, `wind` 0.05..1, `temp_c`, `spell` (`normal`, `storm`, `heat_wave`, `cold_snap`) | dev: sets the sky now (it drifts back toward the climate's hour by hour); a cloud of 0.45 or less with no `spell` ends a storm; reply `cloud`, `wind`, `temp_c`, `spell`, `label`, `climate`, `weather_climate`, `precipitation` |
 
 ```json
 {"cmd": "new_game", "preset": "delta", "seed": 12, "water": 0.7, "branching": 0.9}

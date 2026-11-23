@@ -325,6 +325,7 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("cloud", "0..1 (rain or snow above 0.6, by climate)"),
         ("wind", "0.05..1"),
         ("temp_c", "-50..55"),
+        ("spell", "normal|storm|heat_wave|cold_snap (optional); a cloud of 0.45 or less with no spell ends a storm"),
         ("note", "dev: sets the sky now; it drifts again hour by hour"),
     ] },
     Cmd { name: "build_now", aliases: &[], effect: Dev, run: dev::build_now, help: &[

@@ -258,7 +258,10 @@ impl Weather {
 
     pub fn label(&self) -> &'static str {
         match self.spell {
-            Spell::Storm => return "storm",
+            // [r14-photofix] A storm under a clear sky (one ending, or a sky
+            // cleared by hand) reads as the sky it is.
+            Spell::Storm if self.cloud > 0.45 => return "storm",
+            Spell::Storm => {}
             Spell::HeatWave => return "heat wave",
             Spell::ColdSnap => return "cold snap",
             Spell::Normal => {}
@@ -406,6 +409,17 @@ mod tests {
         assert!(gale * 0.8 < CUT_OUT_MS, "a sheltered one keeps running: {gale} m/s");
         assert_eq!(turbine_curve(gale * 1.2), 0.0);
         assert_eq!(turbine_curve(gale * 0.8), 1.0);
+    }
+
+    #[test]
+    fn a_storm_under_a_clear_sky_is_not_labelled_a_storm() {
+        let mut w = Weather::for_climate(Climate::Volcanic);
+        w.spell = Spell::Storm;
+        w.cloud = 0.9;
+        assert_eq!(w.label(), "storm");
+        w.cloud = 0.1;
+        w.wind = 0.3;
+        assert_eq!(w.label(), "clear");
     }
 
     #[test]
