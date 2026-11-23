@@ -98,14 +98,68 @@ fn mix<const N: usize>(a: [f32; N], b: [f32; N], t: f32) -> [f32; N] {
     std::array::from_fn(|k| a[k] + (b[k] - a[k]) * t)
 }
 
+/// [r15-hillside] Holes binned by square of `HOLE_BUCKET` metres, so a
+/// triangle looks only at the holes near it (every hillside lot is one or
+/// more holes: thousands of them).
+pub struct HoleSet {
+    pub holes: Vec<Vec<Vec2>>,
+    boxes: Vec<(Vec2, Vec2)>,
+    bins: std::collections::HashMap<(i32, i32), Vec<u32>>,
+}
+
+const HOLE_BUCKET: f32 = 16.0;
+
+fn bucket(v: f32) -> i32 {
+    (v / HOLE_BUCKET).floor() as i32
+}
+
+impl HoleSet {
+    pub fn new(holes: Vec<Vec<Vec2>>) -> Self {
+        let holes: Vec<Vec<Vec2>> = holes.into_iter().filter(|h| h.len() >= 3).collect();
+        let boxes: Vec<(Vec2, Vec2)> = holes.iter().map(|h| bbox(h)).collect();
+        let mut bins: std::collections::HashMap<(i32, i32), Vec<u32>> = std::collections::HashMap::new();
+        for (k, (lo, hi)) in boxes.iter().enumerate() {
+            for j in bucket(lo.y)..=bucket(hi.y) {
+                for i in bucket(lo.x)..=bucket(hi.x) {
+                    bins.entry((i, j)).or_default().push(k as u32);
+                }
+            }
+        }
+        Self { holes, boxes, bins }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.holes.is_empty()
+    }
+
+    /// The holes whose box overlaps `b`, in their order.
+    fn near(&self, b: (Vec2, Vec2)) -> Vec<u32> {
+        let mut out: Vec<u32> = Vec::new();
+        for j in bucket(b.0.y)..=bucket(b.1.y) {
+            for i in bucket(b.0.x)..=bucket(b.1.x) {
+                if let Some(v) = self.bins.get(&(i, j)) {
+                    out.extend(v.iter().copied().filter(|&k| overlaps(b, self.boxes[k as usize])));
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+}
+
 /// Cut `holes` (convex polygons on the ground plane, world x, z) out of a
 /// ground mesh: every triangle a hole's box touches is replaced by its
 /// pieces outside the holes (new corners interpolated on the triangle);
 /// the rest are left as they are. Vertices no triangle uses any more stay
 /// in the buffers.
 pub fn cut_holes(mesh: &mut MeshData, holes: &[Vec<Vec2>]) {
-    let holes: Vec<(&Vec<Vec2>, (Vec2, Vec2))> = holes.iter().filter(|h| h.len() >= 3).map(|h| (h, bbox(h))).collect();
-    if holes.is_empty() || mesh.indices.is_empty() {
+    cut_hole_set(mesh, &HoleSet::new(holes.to_vec()));
+}
+
+/// [`cut_holes`] with the holes already binned.
+pub fn cut_hole_set(mesh: &mut MeshData, set: &HoleSet) {
+    if set.is_empty() || mesh.indices.is_empty() {
         return;
     }
     let tangents = mesh.tangents.len() == mesh.positions.len();
@@ -122,7 +176,8 @@ pub fn cut_holes(mesh: &mut MeshData, holes: &[Vec<Vec2>]) {
     for tri in old.chunks_exact(3) {
         let corners: Vec<Vec2> = tri.iter().map(|&i| Vec2::new(mesh.positions[i as usize][0], mesh.positions[i as usize][2])).collect();
         let tb = bbox(&corners);
-        if !holes.iter().any(|(_, hb)| overlaps(tb, *hb)) {
+        let near = set.near(tb);
+        if near.is_empty() {
             indices.extend_from_slice(tri);
             continue;
         }
@@ -131,11 +186,8 @@ pub fn cut_holes(mesh: &mut MeshData, holes: &[Vec<Vec2>]) {
             Vtx { p: mesh.positions[i], n: mesh.normals[i], c: mesh.colors[i], uv: mesh.uvs[i], t: tangents.then(|| mesh.tangents[i]) }
         };
         let mut pieces = vec![tri.iter().map(|&i| vtx(i)).collect::<Vec<Vtx>>()];
-        for (hole, hb) in &holes {
-            if !overlaps(tb, *hb) {
-                continue;
-            }
-            pieces = pieces.into_iter().flat_map(|p| subtract(p, hole, &pos, &mut lerp)).collect();
+        for &k in &near {
+            pieces = pieces.into_iter().flat_map(|p| subtract(p, &set.holes[k as usize], &pos, &mut lerp)).collect();
         }
         for piece in pieces {
             let first = base + fresh.len() as u32;
@@ -169,18 +221,11 @@ pub fn ground_holes(world: &nd_sim::World) -> Vec<Vec<Vec2>> {
         .filter_map(|(id, _)| world.footprint(id).and_then(|lot| crate::buildings::strip_mine_hole(&lot)))
         .collect();
     out.extend(bench_holes(world));
-    out.extend(step_holes(world));
+    // [r15-hillside] Every lot whose ground mesh leaves its floor (the
+    // stepped lots among them): its floor and sides are drawn
+    // (`lot_ground`).
+    out.extend(crate::lot_ground::lot_holes(world));
     out
-}
-
-/// [r5-hillside] The ground cut out under every lot stepped onto two pads
-/// (`nd_sim::landscape::PadStep`): its two caps and the wall between them
-/// are drawn (`terrain::retaining_walls`), and the coarse cells ramped
-/// from one pad to the other across the step, poking through the wall.
-pub fn step_holes(world: &nd_sim::World) -> Vec<Vec<Vec2>> {
-    let mut ids: Vec<nd_sim::LotId> = world.ground.steps.keys().copied().collect();
-    ids.sort();
-    ids.into_iter().filter_map(|id| world.lots.get(id)).filter(|l| l.polygon.len() >= 3).map(|l| l.polygon.clone()).collect()
 }
 
 /// [r4-hillside] The ground cut out under every way standing in a bench on
@@ -234,6 +279,10 @@ pub fn holes_key(world: &nd_sim::World) -> u64 {
     let mut steps: Vec<(nd_sim::LotId, u32)> = world.ground.steps.iter().map(|(id, st)| (*id, st.back.to_bits())).collect();
     steps.sort();
     steps.hash(&mut h);
+    // [r15-hillside] And every lot's pad (the lots cut to them).
+    let mut pads: Vec<(nd_sim::LotId, u32)> = world.ground.pads.iter().map(|(id, p)| (*id, p.to_bits())).collect();
+    pads.sort();
+    pads.hash(&mut h);
     for (id, b) in world.buildings.iter() {
         if b.construction.is_none() && b.demolition.is_none() && b.business.as_ref().is_some_and(|z| z.kind == nd_sim::BusinessKind::StripMine) {
             id.hash(&mut h);

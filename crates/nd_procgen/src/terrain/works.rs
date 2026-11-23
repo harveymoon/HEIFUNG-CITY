@@ -117,6 +117,29 @@ fn underpasses(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32;
                 if (t0 - f0).max(t1 - f1) < 0.4 {
                     continue;
                 }
+                // [r15-hillside] Not across another way: a slip road
+                // running down beside the lower way passed through the
+                // wing wall (the photographer's "sliver ramp through the
+                // abutment" at Route 88 / Neon Parade).
+                let crosses = [(a0, opening), (a1, opening), (a0, back), (a1, back), ((a0 + a1) * 0.5, (opening + back) * 0.5)].iter().any(|&(al, lat)| {
+                    let p = u.at + u.under_dir * al + across * sgn * lat;
+                    world.roads.segments_in_box(p - Vec2::splat(25.0), p + Vec2::splat(25.0)).any(|o| {
+                        let os = world.roads.segment(o);
+                        if !os.alive || os.tunnel || os.bridge || os.viaduct {
+                            return false;
+                        }
+                        let (oa, ob) = world.roads.segment_points(o);
+                        let (t, q) = nd_sim::roads::project_on_segment(p, oa, ob);
+                        // Ways along the cut (the lower way itself and its
+                        // twin carriageway) or over it (the deck) are its own.
+                        let along = (ob - oa).normalize_or_zero();
+                        let z = world.road_height(o, t);
+                        along.dot(u.under_dir).abs() < 0.9995 && (z - u.over_z).abs() > 1.5 && q.distance(p) < os.half_width() + 0.5 && (z - f0.min(f1)) > 0.5
+                    })
+                });
+                if crosses {
+                    continue;
+                }
                 let (b0, b1) = (f0 - 0.6, f1 - 0.6);
                 let out = Vec3::new(across.x * sgn, 0.0, across.y * sgn);
                 let m = g.part(Surface::Concrete);
@@ -515,6 +538,10 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
     let z_of = |n: nd_sim::NodeId| world.road_z.get(n.0 as usize).copied().unwrap_or(0.0);
     let wall = rgba(mul(concrete, 0.75));
     let coping = rgba(mul(concrete, 0.6));
+    let holds: Vec<Option<Hold>> = (0..roads.segments.len()).map(|k| {
+        let sid = nd_sim::roads::SegmentId(k as u32);
+        roads.segment(sid).alive.then(|| nd_sim::landscape::earthwork_hold(&world.landscape, roads, &world.road_z, &world.road_inner, sid)).flatten()
+    }).collect();
     for (sid, seg) in roads.alive_segments() {
         let (a, b) = roads.segment_points(sid);
         let (za, zb) = (z_of(seg.a), z_of(seg.b));
@@ -569,16 +596,20 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
         // is held in (`earthwork_band`), its face at the shoulder or the
         // back of the pavement. A way eased into a gentle slope is graded,
         // not walled: walls stood free on the slopes there (F11).
-        let Some(hold) = nd_sim::landscape::earthwork_hold(&world.landscape, roads, &world.road_z, &world.road_inner, sid) else { continue };
+        let Some(hold) = holds[sid.0 as usize] else { continue };
         let (face, back) = nd_sim::landscape::held_band(seg, hold);
         let bench = hold == Hold::Bench;
         let steps = (len / 4.0).ceil().max(1.0) as usize;
+        // [r15-hillside] Each side's wall a 4 m piece at a time, kept apart
+        // so a lone piece left between two ways (a slab standing loose on
+        // the grass beside a ramp) can be dropped.
+        let mut pieces: [Vec<Option<Geometry>>; 2] = [vec![None; steps], vec![None; steps]];
         for k in 0..steps {
             let (t0, t1) = (k as f32 / steps as f32, (k + 1) as f32 / steps as f32);
             let (p0, p1) = (a.lerp(b, t0), a.lerp(b, t1));
             // Through the way's inner heights (a street on a hillside).
             let (r0, r1) = (world.road_height(sid, t0), world.road_height(sid, t1));
-            for sgn in [-1.0f32, 1.0] {
+            for (si, sgn) in [-1.0f32, 1.0].into_iter().enumerate() {
                 let out2 = side * sgn;
                 // The ground just behind the band, as graded: the wall's
                 // top is flush with it (a neighbouring way's slope may have
@@ -607,8 +638,14 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
                 if [q0, q1, (q0 + q1) * 0.5, e0, e1].iter().any(|q| on_other_way(roads, sid, *q)) {
                     continue;
                 }
+                // [r15-hillside] Nor inside another held way's walls: two
+                // cuttings meeting at a junction crossed each other's walls.
+                if [q0, q1, (q0 + q1) * 0.5].iter().any(|q| in_other_band(world, &holds, sid, *q)) {
+                    continue;
+                }
                 let out = Vec3::new(out2.x, 0.0, out2.y);
-                let m = g.part(Surface::Concrete);
+                let piece = pieces[si][k].get_or_insert_with(Geometry::default);
+                let m = piece.part(Surface::Concrete);
                 // [r4-hillside] A bench on a hillside: on each side the wall
                 // the land there needs, holding the hill back above the way
                 // or holding the edge up over the drop (lower walls than a
@@ -654,6 +691,115 @@ pub fn tunnel_works(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: 
                     Hold::Bench => {}
                 }
             }
+        }
+        for side_pieces in pieces {
+            for k in 0..steps {
+                let Some(piece) = &side_pieces[k] else { continue };
+                // A lone piece inside the run (none either side of it, and
+                // not at an end, where the next way's wall carries on).
+                let lone = steps >= 3 && k > 0 && k + 1 < steps && side_pieces[k - 1].is_none() && side_pieces[k + 1].is_none();
+                if !lone {
+                    g.append(piece);
+                }
+            }
+        }
+    }
+}
+
+/// [r15-hillside] Does `p` lie within another held way's walls (between
+/// its face and the back of its held band), where the ground is held at
+/// that way's level: a wall of this way standing there crossed the other's.
+fn in_other_band(world: &World, holds: &[Option<nd_sim::landscape::Hold>], sid: nd_sim::roads::SegmentId, p: Vec2) -> bool {
+    let roads = &world.roads;
+    roads.segments_in_box(p - Vec2::splat(30.0), p + Vec2::splat(30.0)).any(|o| {
+        let os = roads.segment(o);
+        if o == sid || !os.alive || os.tunnel || os.bridge || os.viaduct {
+            return false;
+        }
+        let Some(hold) = holds.get(o.0 as usize).copied().flatten() else { return false };
+        if hold == nd_sim::landscape::Hold::Bench {
+            return false;
+        }
+        let (_, back) = nd_sim::landscape::held_band(os, hold);
+        let (oa, ob) = roads.segment_points(o);
+        let (t, q) = nd_sim::roads::project_on_segment(p, oa, ob);
+        t > 0.0 && t < 1.0 && q.distance(p) < back - 0.5
+    })
+}
+
+/// [r15-hillside] A motorway or railway cutting this deep under the land
+/// (at its quarter points and middle) is covered over: real engineers do
+/// not leave a 35-47 m canyon with sheer walls (the Route 88 cuttings out
+/// west, r14-cliffs' leftovers), they bore or cut and cover.
+pub const COVER_DEPTH: f32 = 20.0;
+
+/// [r15-hillside] Whether `sid` runs in a cutting deep enough to be covered
+/// (`COVER_DEPTH`): a held cutting of a motorway or railway.
+pub fn covered_cutting(world: &World, sid: nd_sim::roads::SegmentId) -> bool {
+    let roads = &world.roads;
+    let seg = roads.segment(sid);
+    if !seg.alive || !(seg.is_motorway() || seg.is_rail()) || seg.bridge || seg.viaduct || seg.tunnel {
+        return false;
+    }
+    if nd_sim::landscape::earthwork_hold(&world.landscape, roads, &world.road_z, &world.road_inner, sid) != Some(nd_sim::landscape::Hold::Cut) {
+        return false;
+    }
+    let (a, b) = roads.segment_points(sid);
+    [0.25f32, 0.5, 0.75].iter().all(|&t| world.landscape.height(a.lerp(b, t)).max(BANK_HEIGHT) - world.road_height(sid, t) >= COVER_DEPTH)
+}
+
+/// [r15-hillside] The lid over every covered cutting (`covered_cutting`):
+/// a slab spanning the cutting from the back of one wall's band to the
+/// other's at the land's height, its top the ground's colour, a concrete
+/// soffit under it, and a portal headwall where the open cutting goes
+/// under it.
+pub fn covered_cuttings(world: &World, g: &mut Geometry, concrete: [f32; 3], steel: [f32; 3], ground: [f32; 3]) {
+    use glam::Vec3;
+    let roads = &world.roads;
+    if world.landscape.is_flat() {
+        return;
+    }
+    let covered: Vec<bool> = (0..roads.segments.len()).map(|k| covered_cutting(world, nd_sim::roads::SegmentId(k as u32))).collect();
+    let wall = rgba(mul(concrete, 0.75));
+    let coping = rgba(mul(concrete, 0.6));
+    let top = rgba(ground);
+    for (sid, seg) in roads.alive_segments() {
+        if !covered[sid.0 as usize] {
+            continue;
+        }
+        let (a, b) = roads.segment_points(sid);
+        let len = a.distance(b);
+        if len < 0.5 {
+            continue;
+        }
+        let dir = (b - a) / len;
+        let side = Vec2::new(-dir.y, dir.x);
+        let (_, back) = nd_sim::landscape::held_band(seg, nd_sim::landscape::Hold::Cut);
+        let span = back + 1.0;
+        // The lid meets the land either side of the band (the ground is
+        // the natural land past a held band; the graded ground there may
+        // be the twin carriageway's cutting).
+        let natural = |p: Vec2| world.landscape.height(p).max(BANK_HEIGHT);
+        let lid = |p: Vec2| natural(p + side * span).max(natural(p - side * span)) + 0.05;
+        let steps = (len / 4.0).ceil().max(1.0) as usize;
+        for k in 0..steps {
+            let (t0, t1) = (k as f32 / steps as f32, (k + 1) as f32 / steps as f32);
+            let (p0, p1) = (a.lerp(b, t0) - dir * if k == 0 { 0.2 } else { 0.0 }, a.lerp(b, t1) + dir * if k + 1 == steps { 0.2 } else { 0.0 });
+            let v = |p: Vec2, z: f32| Vec3::new(p.x, z, p.y);
+            let (l0, l1, r0, r1) = (p0 + side * span, p1 + side * span, p0 - side * span, p1 - side * span);
+            let (zl0, zl1, zr0, zr1) = (natural(l0) + 0.05, natural(l1) + 0.05, natural(r0) + 0.05, natural(r1) + 0.05);
+            g.part(Surface::Dirt).quad_facing([v(r0, zr0), v(r1, zr1), v(l1, zl1), v(l0, zl0)], Vec3::Y, top);
+            g.part(Surface::Concrete).quad_facing([v(r0, zr0 - 1.2), v(r1, zr1 - 1.2), v(l1, zl1 - 1.2), v(l0, zl0 - 1.2)], -Vec3::Y, wall);
+        }
+        // A portal where the open cutting meets the covered one.
+        for (n, end) in [(seg.a, a), (seg.b, b)] {
+            let open = roads.node(n).segments.iter().copied().find(|&o| o != sid && roads.segment(o).alive && roads.segment(o).kind == seg.kind && !covered[o.0 as usize] && !roads.segment(o).tunnel);
+            let Some(o) = open else { continue };
+            let os = roads.segment(o);
+            let far = roads.node(if os.a == n { os.b } else { os.a }).pos;
+            let out = (far - end).normalize_or_zero();
+            let z = world.road_z.get(n.0 as usize).copied().unwrap_or(0.0);
+            portal_arch(g, end, out, z, seg.half_width() + crate::street::TUNNEL_WALL, lid(end), wall, coping, rgba(mul(steel, 2.2)));
         }
     }
 }
@@ -903,6 +1049,7 @@ pub fn waterworks(world: &World, palette: &Palette) -> Geometry {
     }
     viaducts(world, &mut g, concrete, steel);
     tunnel_works(world, &mut g, concrete, steel);
+    covered_cuttings(world, &mut g, concrete, steel, mul(palette.ground, 0.9));
     bench_verges(world, &mut g, concrete);
     bridges(world, &mut g, concrete, steel);
     underpasses(world, &mut g, concrete, steel);
