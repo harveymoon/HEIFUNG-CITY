@@ -241,15 +241,26 @@ impl World {
             Some(y) => Account::Business(y),
             None => self.site_payer(bid),
         };
+        // On order before the first lorry goes: a load handed over on the
+        // spot (no road, or the roads full of lorries) arrives inside
+        // `buy_site_line`, and must find the delivery already counted out.
+        let due = lines.len().clamp(1, u8::MAX as usize) as u8;
+        if let Some(c) = self.buildings.get_mut(bid).and_then(|b| b.construction.as_mut()) {
+            c.ordered = true;
+            c.loads_due = due;
+        }
         let mut sent = 0u8;
         for (r, q) in lines.iter().copied() {
             if self.buy_site_line(bid, at, yard, buyer, r, q) {
                 sent += 1;
             }
         }
-        if let Some(c) = self.buildings.get_mut(bid).and_then(|b| b.construction.as_mut()) {
-            c.ordered = true;
-            c.loads_due = sent.max(1);
+        // Lines nothing could be had for are not waited for.
+        let missing = due.saturating_sub(sent.max(1));
+        if missing > 0 {
+            if let Some(c) = self.buildings.get_mut(bid).and_then(|b| b.construction.as_mut()) {
+                c.loads_due = c.loads_due.saturating_sub(missing).max(1);
+            }
         }
     }
 
@@ -462,9 +473,11 @@ impl World {
             if stock + inbound >= target * bld::MERCHANT_REORDER {
                 continue;
             }
-            let want = target - stock - inbound;
-            // Nothing bought on money it has not got.
-            if money < want * r.base_price() * 0.5 {
+            // Nothing bought on money it has not got: what it can afford of
+            // the shortfall (a bulk import with its duty is the dearest way).
+            let unit = r.base_price() * bld::MERCHANT_BULK_IMPORT * (1.0 + self.economy.taxes.import_duty.max(0.0));
+            let want = (target - stock - inbound).min(money.max(0.0) / unit.max(0.01)).floor();
+            if want < target * 0.1 {
                 continue;
             }
             if let Some((seller, price)) = self.maker_of(r, at, want, id) {
@@ -544,7 +557,7 @@ impl World {
             let merchant = self
                 .buildings
                 .iter()
-                .filter(|(_, b)| b.operating() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::BuildersMerchant && !z.closed && z.stock_of(r) >= want))
+                .filter(|(_, b)| b.operating() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::BuildersMerchant && !z.closed && z.stock_of(r) >= want * 0.5))
                 .filter_map(|(m, b)| self.lots.get(b.lot).map(|l| (m, l.center.distance(at))))
                 .filter(|(_, d)| *d <= bld::LOCAL_REACH)
                 .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
@@ -552,7 +565,10 @@ impl World {
             let Some(m) = merchant else { continue };
             let jobs = self.buildings[m].jobs;
             let price = self.buildings[m].business.as_ref().map_or(0.0, |z| z.sell_price(r, jobs));
-            if money < want * price {
+            // What it can pay for, of what the racks hold.
+            let have = self.buildings[m].business.as_ref().map_or(0.0, |z| z.stock_of(r));
+            let want = want.min(have).min(money.max(0.0) / price.max(0.01)).floor();
+            if want < target * 0.25 {
                 continue;
             }
             let got = self.buildings[m].business.as_mut().unwrap().take(r, want);

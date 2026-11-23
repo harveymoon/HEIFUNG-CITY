@@ -33,8 +33,8 @@ fn bays(g: &mut Geometry, c: &Ctx, u0: f32, n: i32, w: f32, v0: f32, d: f32) {
     let f = &c.frame;
     for k in 0..=n {
         let u = u0 + k as f32 * w;
-        let p = Vec2::new(u, v0 + d * 0.5);
-        if c.inside_local(p) {
+        // Both ends on the lot (its corners may be cut).
+        if c.inside_local(Vec2::new(u, v0 + 0.1)) && c.inside_local(Vec2::new(u, v0 + d - 0.1)) {
             ground(g, f, Matte, &rect(u, v0 + d * 0.5, 0.06, d * 0.5 - 0.2), 0.05, [0.85, 0.85, 0.8]);
         }
     }
@@ -203,8 +203,10 @@ pub fn builders_merchant(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extr
     }
     // The timber yard beside the shed: a canopy over racks of lumber, and
     // pallets of bricks and blocks in the open.
-    let yr = R::new(shed_r.map_or(back.u1 - yard_w, |r| r.u1 + 0.6), back.u1, back.v0, back.v1);
-    if yr.w() > 4.0 && yr.d() > 6.0 {
+    // Trimmed to the lot (an L-shaped or slanted lot leaves no room for
+    // the whole rectangle).
+    let yr_want = R::new(shed_r.map_or(back.u1 - yard_w, |r| r.u1 + 0.6), back.u1, back.v0, back.v1);
+    if let Some(yr) = fit(c, yr_want, 4.0).filter(|r| r.w() > 4.0 && r.d() > 6.0) {
         ground(g, f, Concrete, &yr.inset(0.2).poly(), 0.04, mul(pal.concrete(0), 0.7));
         let canopy = R::new(yr.u0 + 0.5, yr.u1 - 0.5, yr.c().y, yr.v1 - 0.5);
         let ch = 5.5;

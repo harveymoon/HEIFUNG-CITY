@@ -1409,6 +1409,8 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         hours: Hours::new(7, 18),
         max_floors: Some(2),
         needs_site: true,
+        // [r14-builders] Enough to carry its first crews until the first instalment.
+        start_capital: 3.0,
         about: Some("A builder: crews, vans and lorries out of a yard. Hired per job to put up the city's buildings; buys each site's materials from the builders' merchant, the makers in town or imports, and fetches them in its own lorries or hires a haulier."),
         ..BASE
     },
@@ -1427,6 +1429,9 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         walk_in: Some(R::Goods),
         needs_site: true,
         sign: Some(b"HARDWARE"),
+        // [r14-builders] It opens with its racks to fill: at 1.0 its first bulk
+        // order put it in the red and it never restocked again.
+        start_capital: 6.0,
         about: Some("A builders' merchant and hardware store: timber, bricks, steel and parts by the pallet for the builders and the trades over the trade counter, delivered by its own lorries; paint, tools and garden things for everyone else."),
         ..BASE
     },
