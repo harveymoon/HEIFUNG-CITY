@@ -791,6 +791,10 @@ pub(super) fn draw_furniture(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &
             s += 32.0;
         }
     }
+    // [r15-polish] Kiosks and phone boxes stand in the kerb strip (lamps'
+    // line), clear of the lamps themselves.
+    let kerb_strip = hw + 0.75;
+    let near_lamp = |s: f32, side: f32| lamp_ts.iter().any(|(lt, ls)| *ls == side && (lt - s).abs() < 2.5);
     let mut s = 10.0 + rng.random_range(0.0..8.0);
     while s < len - 6.0 {
         let side = if rng.random_bool(0.5) { 1.0 } else { -1.0 };
@@ -806,18 +810,29 @@ pub(super) fn draw_furniture(cx: &StreetCtx, g: &mut Geometry, ri: usize, run: &
                 let (bp, _, _) = at(s, side, back_off);
                 bench_world(g, bp, d.y.atan2(d.x) + if side > 0.0 { std::f32::consts::PI } else { 0.0 }, pal.wood, CHARCOAL);
             }
-            3 if lv_mid < 0.55 => {
-                let (kp, _, _) = at(s, side, hw + 1.4);
+            // [r15-polish] A kiosk in the kerb strip with the lamps, not
+            // mid-footway: it stood 0.95-1.85 m in from the kerb of a
+            // 3.2 m pavement as a bare 2.4 m box of ribbed metal, which
+            // read as an upright corrugated panel in the way (Pylon
+            // Boulevard). Now 0.35-1.15 m in, clear of the lamps: painted
+            // panel with a roof, its lit hatch and counter facing the walkers.
+            3 if lv_mid < 0.55 && !near_lamp(s, side) => {
+                let (kp, _, _) = at(s, side, kerb_strip);
                 let yaw = d.y.atan2(d.x);
-                g.part(Metal).boxed(Vec3::new(kp.x, 1.2, kp.y), Vec3::new(1.0, 2.4, 0.9), yaw, rgba(pal.metal_paint(2)));
-                let face = kp - right * side * 0.47;
-                let out = Vec3::new(-right.x, 0.0, -right.y) * side;
-                g.part(Glow).decal(Vec3::new(face.x, 1.5, face.y), Vec3::new(d.x, 0.0, d.y), Vec3::Y, 0.6, 0.8, out, rgba(mul(pal.led(1), 0.5)));
+                let body = pal.metal_paint(2);
+                g.part(Panel).boxed(Vec3::new(kp.x, 1.1, kp.y), Vec3::new(1.2, 2.2, 0.8), yaw, rgba(body));
+                g.part(Panel).boxed(Vec3::new(kp.x, 2.26, kp.y), Vec3::new(1.4, 0.12, 1.0), yaw, rgba(mul(body, 0.6)));
+                let inward = right * side;
+                let face = kp + inward * 0.41;
+                let out = Vec3::new(inward.x, 0.0, inward.y);
+                g.part(Glow).decal(Vec3::new(face.x, 1.45, face.y), Vec3::new(d.x, 0.0, d.y), Vec3::Y, 0.8, 0.6, out, rgba(mul(pal.led(1), 0.5)));
+                g.part(Panel).boxed(Vec3::new(face.x, 1.05, face.y), Vec3::new(1.0, 0.06, 0.25), yaw, rgba(mul(body, 0.8)));
             }
-            4 if len > 80.0 => {
+            4 if len > 80.0 && !near_lamp(s, side) => {
                 // A phone box where a shelter used to stand at random;
-                // shelters now mark real bus stops.
-                let (sp, d, _) = at(s, side, hw + SIDEWALK * 0.55);
+                // shelters now mark real bus stops. [r15-polish] In the
+                // kerb strip too, not in the middle of the footway.
+                let (sp, d, _) = at(s, side, kerb_strip);
                 let yaw = d.y.atan2(d.x);
                 g.part(Glass).boxed(Vec3::new(sp.x, 1.2, sp.y), Vec3::new(1.0, 2.4, 1.0), yaw, rgba(pal.glass(0)));
                 g.part(Panel).boxed(Vec3::new(sp.x, 2.45, sp.y), Vec3::new(1.1, 0.1, 1.1), yaw, rgba(mul(pal.steel, 0.8)));

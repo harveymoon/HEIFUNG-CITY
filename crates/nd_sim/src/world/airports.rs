@@ -573,7 +573,7 @@ impl World {
         }
         let b = a.building.and_then(|b| self.buildings.get(b))?;
         if b.is_derelict() {
-            return Some("derelict".into());
+            return Some("dilapidated".into());
         }
         if !b.operating() {
             return Some("not open (staff or power)".into());

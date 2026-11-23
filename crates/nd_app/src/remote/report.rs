@@ -289,7 +289,7 @@ fn overview(w: &World, alerts: &[Alert]) -> Value {
         "population": w.citizens.len(), "households": w.households.len(), "households_housed": housed,
         "homes": { "total": e.homes_total, "free": e.homes_free, "being_built": e.homes_building },
         "jobs": { "total": e.jobs_total, "filled": e.jobs_total - e.jobs_free.min(e.jobs_total), "free": e.jobs_free, "being_built": e.jobs_building },
-        "buildings": { "built": built, "under_construction": sites, "being_demolished": demolishing, "derelict": derelict, "vacant_lots": vacant, "unusable_lots": unusable, "lots_total": w.lots.len() },
+        "buildings": { "built": built, "under_construction": sites, "being_demolished": demolishing, "dilapidated": derelict, "vacant_lots": vacant, "unusable_lots": unusable, "lots_total": w.lots.len() },
         "treasury": round(e.treasury),
         "net_yesterday": round(e.ledger.yesterday.iter().sum()), "net_today_so_far": round(e.ledger.today.iter().sum()),
         "land_value_avg": round(e.avg_land_value), "gini": round(e.gini),
@@ -772,7 +772,7 @@ pub fn power_json(w: &World, with_hours: bool) -> Value {
                     "cost_per_mwh": r.cost_per_mwh.map(round), "co2_t_per_day": round(r.co2_t_per_day), "co2_t_per_mwh": round(k.co2_t_per_mwh()),
                     "air_index": round(r.air), "noise_db": r.noise_db.map(round), "noise_db_running": round(k.noise_db()),
                     "pollution_radius_m": r.nuisance.0, "pollution_land_value_effect": round(r.nuisance.1),
-                    "workers": b.workers.len(), "jobs": b.jobs, "derelict": r.derelict, "pending": r.pending, "pos": building_pos(w, b).map_or(Value::Null, v2),
+                    "workers": b.workers.len(), "jobs": b.jobs, "dilapidated": r.derelict, "pending": r.pending, "pos": building_pos(w, b).map_or(Value::Null, v2),
                     "availability": round(w.plant_availability(b)), "area_m2": round(r.area_m2), "size_scale": round(w.plant_scale(b)),
                     "group": r.members.len() > 1, "members": r.members.iter().map(|m| key_str(*m)).collect::<Vec<_>>(), "lots": r.lots.iter().map(|l| key_str(*l)).collect::<Vec<_>>(),
                     "member_names": r.members.iter().filter_map(|m| w.buildings.get(*m).map(|x| x.name.clone())).collect::<Vec<_>>(),
@@ -798,7 +798,7 @@ pub fn power_json(w: &World, with_hours: bool) -> Value {
                     "charge_mwh": round(r.charge_mwh), "level": round(if r.capacity_mwh > 0.0 { r.charge_mwh / r.capacity_mwh } else { 0.0 }),
                     "flow_mw": round(r.now_mw), "state": if r.now_mw > 0.05 { "discharging" } else if r.now_mw < -0.05 { "charging" } else { "idle" },
                     "delivered_mwh_24h": round(r.mean_mw * 24.0), "upkeep_per_day": round(r.upkeep_per_day), "cost_per_mwh": r.cost_per_mwh.map(round),
-                    "noise_db": r.noise_db.map(round), "derelict": r.derelict, "pending": r.pending, "pos": building_pos(w, b).map_or(Value::Null, v2),
+                    "noise_db": r.noise_db.map(round), "dilapidated": r.derelict, "pending": r.pending, "pos": building_pos(w, b).map_or(Value::Null, v2),
                 });
                 if with_hours {
                     v["flow_mw_hours"] = series(log.map(|l| &l.hours));
@@ -1197,7 +1197,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     let mut rent = Alert::new("rent_stressed_residents", 2, "rent above half of income; more low-tier housing or jobs with better wages");
     let mut food_staff = Alert::new("food_sellers_understaffed", 3, "groceries and bakeries short of workers cannot produce; more housing nearby or better transit");
     let mut food_empty = Alert::new("food_sellers_empty", 3, "retail food out of stock: check the supply chain inputs (produce, flour, meat, dairy) in economy.businesses.by_kind");
-    let mut closed = Alert::new("closed_businesses", 1, "closed businesses go derelict; usually short of staff or customers");
+    let mut closed = Alert::new("closed_businesses", 1, "closed businesses run down to dilapidated and are cleared; usually short of staff or customers");
     let mut broke = Alert::new("broke_businesses", 2, "businesses losing money; they close after several broke days");
     let mut unpowered = Alert::new("unpowered_buildings", 3, "build power plants (status.power, report services.power)");
     let mut crowded = Alert::new("overcrowded_homes", 1, "more residents than homes");
@@ -1209,7 +1209,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     // [r2-traffic] Sites no truck can get to (K6).
     let mut sites_cut = Alert::new("construction_unreachable", 2, "building sites no delivery truck or builder can drive to: join their street to the roads that lead out of town (inspect building under_construction.blocked)");
     let mut stuck = Alert::new("stuck_vehicles", 2, "vehicles standing still for minutes: a gridlock ring (listed with its junctions) or a street over capacity; add lanes, another route or transit there");
-    let mut derelict = Alert::new("derelict_buildings", 1, "condition below 0.3; they are redeveloped or demolished in time");
+    let mut derelict = Alert::new("dilapidated_buildings", 1, "condition below 0.3 (worn, not empty): nobody new moves in, opens or shops there, but people already living or working there stay; refitted or rebuilt as land values rise");
     let mut vacant_demand = Alert::new("vacant_lots_with_high_demand", 1, "demand is high but lots stand empty: they may lack road access or the area may be unattractive");
     for (id, c) in w.citizens.iter() {
         if c.satiety < HUNGRY_SATIETY {
@@ -1345,7 +1345,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
             .collect();
         stuck.message += &format!("; {} gridlock(s): {}", gridlocks.len(), rings.join("; "));
     }
-    derelict.message = format!("{} buildings are derelict", derelict.count);
+    derelict.message = format!("{} buildings are dilapidated", derelict.count);
     vacant_demand.message = format!("{} vacant lots of high-demand land use ({}) stand empty", vacant_demand.count, high.iter().map(|lu| lu_key(*lu)).collect::<Vec<_>>().join(", "));
 
     // Services: homes outside each service's road reach, fires, slow responses.
