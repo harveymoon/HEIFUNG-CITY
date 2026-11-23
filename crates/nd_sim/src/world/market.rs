@@ -985,6 +985,8 @@ impl World {
                 }
                 c.ordered = false;
                 c.retry_at = tick + SITE_RETRY;
+                // [r14-materials] What rode in it is ordered again then.
+                c.due.retain(|d| d.via != cargo.resource);
                 newly
             }
             None => return,
@@ -1017,17 +1019,13 @@ impl World {
         }
         // Materials for a building site go onto the site, not the shelves.
         if let Some(c) = b.construction.as_mut() {
-            // [r14-builders] A delivery of several lorries counts when the
-            // last is in.
-            if !Self::site_load_arrived(c) {
-                return;
-            }
-            c.deliveries = c.deliveries.saturating_add(1);
-            c.ordered = false;
             // [r2-traffic] A truck got there: the way is open.
             if c.blocked == Some(crate::buildings::SiteBlock::Deliveries) {
                 c.blocked = None;
             }
+            // [r14-materials] Onto the stockpile; the stage goes on when
+            // all its materials are in.
+            self.site_received(cargo.to, cargo.resource, cargo.amount);
             return;
         }
         if let Some(bz) = b.business.as_mut() {

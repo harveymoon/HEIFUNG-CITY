@@ -23,12 +23,7 @@ fn sub(c: &Ctx, salt: u64) -> nd_sim::SimRng {
     nd_sim::rng_for(c.seed, 0x517E_0000 + salt)
 }
 
-/// Draw the site at `progress` in `0..1`.
-pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: f32) {
-    construction_site_of(g, c, rng, progress, None, None);
-}
-
-/// [r14-builders] The site with its builder's vehicles by the gate: the
+/// Draw the site at `progress` in `0..1`. [r14-builders] With its builder's vehicles by the gate: the
 /// van in the builder's colours (`builder.0`), and for a firm in town
 /// (`builder.1`) its own lorry with a load on the back.
 pub fn construction_site_by(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: f32, builder: Option<([f32; 3], bool)>) {
@@ -170,7 +165,11 @@ fn construction_site_of(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress:
             continue;
         }
         let yaw = rng.random_range(-0.4..0.4);
-        material_stack(g, c, rng, p, yaw);
+        // [r14-materials] The site's real pile when it has one.
+        match c.pile.get(k as usize % c.pile.len().max(1)) {
+            Some(&good) => material_pile(g, c, rng, p, yaw, good),
+            None => material_stack(g, c, rng, p, yaw),
+        }
     }
     if progress < 0.5 {
         for k in 0..sub(c, 6).random_range(1..3) {
@@ -765,6 +764,83 @@ pub(super) fn material_stack(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: V
             }
             f.bx_yaw(g, Matte, p.x + 1.4, 0.7, p.y, Vec3::new(1.0, 1.4, 0.8), mul(pal.steel, 0.6), yaw);
         }
+    }
+}
+
+/// [r14-materials] A stack of one material from the site's stockpile:
+/// brick pallets, cement bags, a sand heap, steel and rebar on bearers,
+/// timber packs, glass on an A-frame, pipe, roofing and insulation pallets,
+/// crates of fittings, a scrap heap.
+fn material_pile(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f32, good: nd_sim::market::Resource) {
+    use nd_sim::market::Resource as R;
+    let f = &c.frame;
+    let pal = c.palette;
+    let pallet = |g: &mut Geometry, q: Vec2, col: [f32; 3], layers: i32, tarp: bool| {
+        f.bx_yaw(g, Wood, q.x, 0.08, q.y, Vec3::new(1.2, 0.14, 1.0), pal.wood, yaw);
+        f.bx_yaw(g, Matte, q.x, 0.15 + layers as f32 * 0.25, q.y, Vec3::new(1.1, layers as f32 * 0.5, 0.95), col, yaw);
+        if tarp {
+            f.bx_yaw(g, Tarp, q.x, 0.15 + layers as f32 * 0.5 + 0.03, q.y, Vec3::new(1.2, 0.06, 1.0), pal.tarp_colors[0], yaw);
+        }
+    };
+    let (s, co) = yaw.sin_cos();
+    let along = |d: f32| Vec2::new(p.x + d * co, p.y + d * s);
+    match good {
+        R::Bricks => {
+            for k in 0..rng.random_range(2..4) {
+                pallet(g, along(k as f32 * 1.35), [0.56, 0.25, 0.17], 2, false);
+            }
+        }
+        R::Cement => {
+            for k in 0..2 {
+                pallet(g, along(k as f32 * 1.35), [0.78, 0.76, 0.72], rng.random_range(1..3), rng.random_bool(0.5));
+            }
+        }
+        R::Aggregate => {
+            let r = rng.random_range(1.4..2.4);
+            spoil_heap(g, c, rng, p, r);
+        }
+        R::Steel => {
+            for lv in [-0.4f32, 0.4] {
+                let q = Vec2::new(p.x - lv * s, p.y + lv * co);
+                f.bx_yaw(g, Wood, q.x, 0.1, q.y, Vec3::new(0.15, 0.2, 1.2), pal.wood, yaw);
+            }
+            f.bx_yaw(g, Metal, p.x, 0.35, p.y, Vec3::new(6.0, 0.3, 0.9), mul(pal.steel, 0.9), yaw);
+            f.bx_yaw(g, Metal, p.x, 0.62, p.y, Vec3::new(6.0, 0.24, 0.6), mul(pal.steel, 0.8), yaw);
+        }
+        R::Rebar | R::Metal => {
+            f.bx_yaw(g, Rust, p.x, 0.15, p.y, Vec3::new(5.0, 0.3, 0.7), pal.rust, yaw);
+            f.bx_yaw(g, Rust, p.x, 0.38, p.y, Vec3::new(5.0, 0.18, 0.45), mul(pal.rust, 1.1), yaw);
+        }
+        R::Timber => {
+            for k in 0..2 {
+                let q = along(k as f32 * 1.4 - 0.7);
+                f.bx_yaw(g, Wood, q.x, 0.08, q.y, Vec3::new(0.2, 0.16, 1.2), mul(pal.wood, 0.8), yaw);
+            }
+            f.bx_yaw(g, Wood, p.x, 0.5, p.y, Vec3::new(4.2, 0.7, 1.1), mix(pal.wood, [0.78, 0.62, 0.42], 0.6), yaw);
+            f.bx_yaw(g, Matte, p.x, 0.5, p.y, Vec3::new(0.06, 0.74, 1.14), [0.9, 0.55, 0.1], yaw);
+        }
+        R::Glass => {
+            f.bx_yaw(g, Matte, p.x, 0.9, p.y, Vec3::new(2.4, 1.8, 0.12), mul(pal.steel, 0.6), yaw);
+            for side in [-1.0f32, 1.0] {
+                let q = Vec2::new(p.x - side * 0.2 * s, p.y + side * 0.2 * co);
+                f.bx_yaw(g, Matte, q.x, 0.9, q.y, Vec3::new(2.2, 1.7, 0.06), [0.45, 0.62, 0.68], yaw);
+            }
+        }
+        R::Pipe => {
+            for k in 0..3 {
+                let q = Vec2::new(p.x - (k as f32 - 1.0) * 0.32 * s, p.y + (k as f32 - 1.0) * 0.32 * co);
+                f.bx_yaw(g, Matte, q.x, 0.16, q.y, Vec3::new(4.0, 0.3, 0.3), [0.82, 0.82, 0.8], yaw);
+            }
+            f.bx_yaw(g, Matte, p.x, 0.46, p.y, Vec3::new(4.0, 0.3, 0.3), [0.25, 0.25, 0.27], yaw);
+        }
+        R::Roofing => pallet(g, p, [0.24, 0.24, 0.26], 2, false),
+        R::Insulation => {
+            for k in 0..2 {
+                pallet(g, along(k as f32 * 1.35), [0.92, 0.78, 0.3], 3, false);
+            }
+        }
+        R::Paint => pallet(g, p, [0.85, 0.85, 0.82], 1, false),
+        _ => pallet(g, p, mix(pal.wood, [0.6, 0.5, 0.35], 0.5), 2, rng.random_bool(0.4)),
     }
 }
 

@@ -85,13 +85,14 @@ fn a_site_is_let_to_a_contractor_in_town_who_brings_its_crew_and_buys_the_materi
     let hand = w.buildings[yard].workers[0];
     assert_eq!(w.crew_site(hand), Some(s));
     // The first quarter's order: the developer paid an instalment, the
-    // contractor bought the load (imported: nobody in town makes parts).
+    // contractor bought the stage's lines (imported, on one lorry: nobody
+    // in town makes building materials).
     let z = w.buildings[yard].business.as_ref().unwrap();
     assert!((k.paid - k.price / 4.0).abs() < 1.0, "a quarter of the price paid: {}", k.paid);
     assert!(z.revenue_today >= k.paid - 1.0, "the contractor took it");
     assert!(z.spend_today > 0.0, "the contractor paid for the materials");
     let c = w.buildings[s].construction.as_ref().unwrap();
-    assert!(c.ordered && c.loads_due >= 1);
+    assert!(c.ordered && !c.due.is_empty(), "the stage's loads booked on the site");
     assert_eq!(w.builders.today.import_loads, imports0 + 1);
     // The site gets built and the books say who built it.
     for _ in 0..(20 * 1440) {
@@ -139,19 +140,20 @@ fn with_no_crew_free_the_job_goes_to_a_firm_from_out_of_town_at_a_markup() {
 fn the_merchant_restocks_and_sells_to_builders_and_residents() {
     let mut w = town();
     let merchant = open(&mut w, LandUse::Commercial, BusinessKind::BuildersMerchant, 4);
-    let parts = crate::catalogue::SITE_BILL.material;
+    // Cement: every site's foundations take some, and nobody makes it here.
+    let parts = Resource::Cement;
     assert!(crate::catalogue::site_materials().contains(&parts));
-    // It restocks its trade stock (nobody makes parts here: a bulk import).
+    // It restocks its trade stock (a bulk import).
     w.builders_hourly();
     assert!(w.buildings[merchant].business.as_ref().unwrap().inbound_of(parts) > 0.0, "parts on order");
     for _ in 0..3000 {
-        if w.buildings[merchant].business.as_ref().unwrap().stock_of(parts) > 20.0 {
+        if w.buildings[merchant].business.as_ref().unwrap().stock_of(parts) > 5.0 {
             break;
         }
         tick(&mut w, 1);
     }
     let stock = w.buildings[merchant].business.as_ref().unwrap().stock_of(parts);
-    assert!(stock > 20.0, "the racks filled: {stock}");
+    assert!(stock > 5.0, "the racks filled: {stock}");
     // Its trade price beats a site's own import.
     let jobs = w.buildings[merchant].jobs;
     let price = w.buildings[merchant].business.as_ref().unwrap().sell_price(parts, jobs);
@@ -164,7 +166,7 @@ fn the_merchant_restocks_and_sells_to_builders_and_residents() {
     let loads0 = w.builders.today.merchant_loads;
     let s = site(&mut w);
     assert_eq!(contract(&w, s).builder, SiteBuilder::Local(yard));
-    assert_eq!(w.builders.today.merchant_loads, loads0 + 1, "bought from the merchant, not imported");
+    assert!(w.builders.today.merchant_loads > loads0, "bought from the merchant, not imported");
     assert!(w.buildings[merchant].business.as_ref().unwrap().revenue_today > rev0);
     assert!(w.builders.today.trade_sales > 0.0);
     // The builder fills its yard from the merchant in the morning.
@@ -192,18 +194,6 @@ fn the_merchant_restocks_and_sells_to_builders_and_residents() {
     w.refresh_seller_index();
     let found = w.best_seller(parts, at, 2.0, BuildingId::default());
     assert_eq!(found.map(|f| f.0), Some(merchant));
-}
-
-#[test]
-fn a_delivery_of_several_lorries_counts_when_the_last_is_in() {
-    let mut c = Construction::new(2.0);
-    c.loads_due = 3;
-    assert!(!World::site_load_arrived(&mut c));
-    assert!(!World::site_load_arrived(&mut c));
-    assert!(World::site_load_arrived(&mut c));
-    // An old save's site (no count): the first lorry counts.
-    let mut old = Construction::new(2.0);
-    assert!(World::site_load_arrived(&mut old));
 }
 
 #[test]

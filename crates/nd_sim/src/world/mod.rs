@@ -75,6 +75,7 @@ mod construction;
 mod builders;
 #[cfg(test)]
 mod builders_tests;
+pub use construction::{SiteStage, SiteStageState};
 /// [w1] Sites going up and coming down, for the player.
 pub mod sites;
 /// [land] Pressure, prices, owners, merged plots and the super-elite.
@@ -258,6 +259,8 @@ pub mod walk_networks;
 mod connectivity_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod materials_tests;
 #[cfg(test)]
 mod gameplay_tests;
 mod taxes;

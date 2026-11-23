@@ -1130,12 +1130,13 @@ Citizens are rendered from their simulated positions every frame.
   firm from out of town (a generated name, "Tri-County Contractors") whose fee is its labour x
   1.35; its site hires labourers at the gate as before. Whoever is building (`site_payer`) pays
   the contractor in four instalments, one per delivery ordered (`Construction.contract`). Each
-  delivery is the site's bill as a list of (good, qty) (`World::site_load`, today the
-  catalogue's `SITE_BILL`), bought line by line by the builder: from its yard stock (filled each
-  07:00 from the merchant), a scrap yard (scrap steel stand-in), the cheapest of the merchant and
-  the makers in town (`best_seller`; the builder fetches a maker's load in its own lorry), else
-  imported at the import markup. One lorry per line; the delivery counts when the last arrives
-  (`Construction.loads_due`). A contractor pays its staff like any business and goes bust with no
+  delivery is the stage's lines of the site's bill as a list of (good, qty) (`World::site_load`,
+  r14-materials' `site_lines_to_order`), bought line by line by the builder: from its yard stock
+  (filled each 07:00 from the merchant), a scrap yard (steel), the cheapest of the merchant (it
+  stocks the material itself) and the makers in town of the good's `local_from` (the builder
+  fetches a maker's load in its own lorry), else all of the stage's imports on one lorry at the
+  import markup. Each load is booked on the site's `due` list before its lorry leaves; the stage
+  counts when the last is in (`site_received`). A contractor pays its staff like any business and goes bust with no
   work (its sites are let again). The builders' merchant (`BusinessKind::BuildersMerchant`,
   opened by pressure from the sites' materials a day and the population) keeps trade stock of
   every good in `catalogue::site_materials`, bought from makers or imported in bulk at 1.25x,

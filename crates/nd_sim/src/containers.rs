@@ -200,6 +200,27 @@ impl Where {
 pub struct Goods {
     pub resource: Resource,
     pub buyer: BuildingId,
+    /// [r14-materials] How much of it is in the box, in its unit (0 in
+    /// older saves: not known).
+    #[serde(default)]
+    pub amount: f32,
+}
+
+impl Goods {
+    /// [r14-materials] "14 t bricks and blocks": what and how much.
+    pub fn describe(&self) -> String {
+        let row = self.resource.row();
+        if self.amount > 0.0 {
+            format!("{:.0} {} {}", self.amount.max(1.0), row.unit.label(), row.label)
+        } else {
+            row.label.to_string()
+        }
+    }
+}
+
+/// [r14-materials] Units a full box holds (a forty holds two TEU).
+pub fn full_load(forty: bool) -> f32 {
+    BOX_UNITS * if forty { 2.0 } else { 1.0 }
 }
 
 /// [K34] Things that happen to a box, for its history.

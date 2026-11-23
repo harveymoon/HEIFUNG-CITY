@@ -190,6 +190,10 @@ pub fn body_length(b: BodyType) -> f32 {
         BodyType::Helicopter => 11.2,
         BodyType::TowTruck => 6.4,
         BodyType::HeavyTow => 9.8,
+        BodyType::Flatbed => 8.6,
+        BodyType::Mixer => 8.0,
+        BodyType::Tipper => 7.4,
+        BodyType::Curtainsider => 8.4,
     }
 }
 
@@ -201,7 +205,12 @@ pub fn variant_key(m: &VehicleModel) -> VehicleModel {
     k.paint %= PAINTS;
     // [K34] [r8] Only a semi has a trailer or a chassis; older saves'
     // box looks read as the bare twenty-foot chassis.
-    if k.body != BodyType::Semi {
+    if k.body == BodyType::Flatbed {
+        // [r14-materials] A flatbed's load is drawn on its deck.
+        if nd_sim::vehicle::Load::from_code(k.boxed).is_none() {
+            k.boxed = 0;
+        }
+    } else if k.body != BodyType::Semi {
         k.boxed = 0;
     } else if let Some(forty) = nd_sim::vehicle::chassis_of(k.boxed) {
         k.boxed = if forty { nd_sim::vehicle::CHASSIS_40 } else { nd_sim::vehicle::CHASSIS_20 };
@@ -227,6 +236,10 @@ pub fn catalogue() -> Vec<VehicleModel> {
         for livery in Livery::ALL {
             out.push(VehicleModel { class: VehicleClass::Mid, body, wear: 1, tuned: false, livery, paint: 3, boxed: 0 });
         }
+    }
+    // [r14-materials] A flatbed with each load on its deck.
+    for load in nd_sim::vehicle::Load::ALL {
+        out.push(VehicleModel { class: VehicleClass::Mid, body: BodyType::Flatbed, wear: 1, tuned: false, livery: Livery::Construction, paint: 3, boxed: load.code() });
     }
     out
 }
@@ -389,6 +402,10 @@ fn build(m: &VehicleModel, paint: [f32; 3], detail: bool, pal: &Palette) -> Vehi
         BodyType::Helicopter => helicopter(&mut b, col),
         BodyType::TowTruck => tow_truck(&mut b, col, false),
         BodyType::HeavyTow => tow_truck(&mut b, col, true),
+        BodyType::Flatbed => flatbed(&mut b, col),
+        BodyType::Mixer => mixer(&mut b, col),
+        BodyType::Tipper => tipper(&mut b, col),
+        BodyType::Curtainsider => curtainsider(&mut b, col),
     }
     if let Some((_, accent, sign)) = livery {
         livery_marks(&mut b, accent, sign);
@@ -602,6 +619,211 @@ fn box_truck(b: &mut B, col: [f32; 3]) {
     b.wear_marks(rx + 0.3, cr - 0.3, 1.0, top - 0.3, hw);
 }
 
+
+// ── [r14-materials] site lorries ───────────────────────────────────────────
+
+/// A lorry cab at the front (`fx`), `hw` half wide, its back at the
+/// returned x: the box truck's cab.
+fn site_cab(b: &mut B, fx: f32, hw: f32, col: [f32; 3]) -> f32 {
+    let cab_len = 1.9;
+    let cr = fx - cab_len;
+    b.ext(&[(cr, 0.55), (fx, 0.55), (fx + 0.03, 1.15), (fx - 0.25, 1.45), (fx - 0.55, 2.4), (cr, 2.45)], hw - 0.05, col);
+    slope_quad(&mut b.body, (fx - 0.27, 1.5), (fx - 0.53, 2.33), hw - 0.12, GLASS);
+    b.sides(fx - 0.95, 1.85, hw - 0.05, 0.7, 0.6, GLASS);
+    b.lamps(fx + 0.02, 1.0, hw - 0.25, 0.3, 0.16, 1.0, HEAD);
+    cr
+}
+
+/// Wheels, chassis rail and tail lamps shared by the site lorries.
+fn site_running_gear(b: &mut B, fx: f32, rx: f32, hw: f32, deck: f32) {
+    b.bx(((rx + fx) * 0.5, 0.6, 0.0), (fx - rx - 0.4, 0.25, hw * 1.4), TRIM);
+    let r = 0.5;
+    b.axle(fx - 0.95, hw + 0.02, r, 0.3);
+    b.axle(rx + 1.2, hw + 0.02, r, 0.32);
+    b.axle(rx + 2.35, hw + 0.02, r, 0.32);
+    b.lamps(rx, deck - 0.15, hw - 0.15, 0.25, 0.14, -1.0, TAIL);
+}
+
+/// A flat-deck lorry with a loader crane folded behind the cab and its
+/// load on the deck (`VehicleModel::boxed`, a `Load` code): timber in
+/// strapped packs, steel beams, bundled rebar, brick pallets, glass on an
+/// A-frame, pipe, a scrap heap or crates.
+fn flatbed(b: &mut B, col: [f32; 3]) {
+    let m = *b.m;
+    let len = body_length(m.body);
+    let (fx, rx) = (len * 0.5, -len * 0.5);
+    let hw = 1.22;
+    let cab_col = if m.livery == Livery::None { mix(col, [0.8, 0.8, 0.82], 0.5) } else { col };
+    let cr = site_cab(b, fx, hw, cab_col);
+    // The crane: a post and a folded boom just behind the cab.
+    let crane = [0.85, 0.62, 0.12];
+    b.bx((cr - 0.35, 1.6, 0.0), (0.45, 2.1, 0.5), crane);
+    b.bx((cr - 0.35, 2.55, 0.0), (0.5, 0.25, hw * 1.7), crane);
+    // The deck: a steel floor with low side rails.
+    let deck = 1.15;
+    let (d0, d1) = (rx, cr - 0.7);
+    b.bx(((d0 + d1) * 0.5, deck - 0.1, 0.0), (d1 - d0, 0.2, hw * 2.0), mul(col, 0.55));
+    b.bx((d1 + 0.05, deck + 0.6, 0.0), (0.1, 1.2, hw * 2.0), mul(col, 0.7));
+    site_running_gear(b, fx, rx, hw, deck);
+    let load = nd_sim::vehicle::Load::from_code(m.boxed);
+    let (mid, l) = ((d0 + d1) * 0.5, d1 - d0 - 0.4);
+    let strap = [0.9, 0.55, 0.1];
+    use nd_sim::vehicle::Load as L;
+    match load {
+        Some(L::Timber) => {
+            // Three packs of sawn boards, pale wood, strapped.
+            let wood = [0.72, 0.56, 0.36];
+            for i in 0..3 {
+                let x = d0 + 0.3 + (i as f32 + 0.5) * l / 3.0;
+                b.bx((x, deck + 0.45, 0.0), (l / 3.0 - 0.15, 0.9, hw * 1.7), wood);
+                b.bx((x, deck + 0.45, 0.0), (0.06, 0.94, hw * 1.74), strap);
+            }
+        }
+        Some(L::Steel) => {
+            // I-beams side by side: dark steel with the flanges showing.
+            let steel = [0.32, 0.3, 0.3];
+            for k in 0..4 {
+                let z = -hw * 0.75 + k as f32 * hw * 0.5;
+                b.bx((mid, deck + 0.05, z), (l, 0.08, 0.42), steel);
+                b.bx((mid, deck + 0.3, z), (l, 0.42, 0.06), steel);
+                b.bx((mid, deck + 0.55, z), (l, 0.08, 0.42), steel);
+            }
+            b.bx((mid - l * 0.3, deck + 0.35, 0.0), (0.06, 0.66, hw * 1.9), strap);
+            b.bx((mid + l * 0.3, deck + 0.35, 0.0), (0.06, 0.66, hw * 1.9), strap);
+        }
+        Some(L::Rebar) => {
+            // Bundles of rust-brown bar.
+            let rust = [0.45, 0.24, 0.14];
+            for k in 0..3 {
+                let z = -hw * 0.6 + k as f32 * hw * 0.6;
+                b.bx((mid, deck + 0.22, z), (l, 0.4, 0.55), rust);
+            }
+            b.bx((mid, deck + 0.22, 0.0), (0.06, 0.44, hw * 1.9), strap);
+        }
+        Some(L::BrickPallets) => {
+            // Cubes of brick on pallets, two rows.
+            let brick = [0.58, 0.26, 0.18];
+            let n = ((l / 1.2).floor() as i32).max(2);
+            for i in 0..n {
+                let x = d0 + 0.3 + (i as f32 + 0.5) * l / n as f32;
+                for z in [-hw * 0.5, hw * 0.5] {
+                    b.bx((x, deck + 0.08, z), (1.0, 0.14, 1.0), [0.55, 0.45, 0.3]);
+                    b.bx((x, deck + 0.55, z), (0.95, 0.8, 0.95), brick);
+                }
+            }
+        }
+        Some(L::Glass) => {
+            // An A-frame rack with glass panes leaning on both sides.
+            let frame = [0.2, 0.22, 0.25];
+            b.bx((mid, deck + 0.9, 0.0), (l, 1.8, 0.12), frame);
+            for s in [-1.0f32, 1.0] {
+                for k in 0..3 {
+                    b.bx((mid, deck + 0.9, s * (0.15 + k as f32 * 0.08)), (l * 0.95, 1.7, 0.04), [0.45, 0.62, 0.68]);
+                }
+            }
+        }
+        Some(L::Pipe) => {
+            let pvc = [0.82, 0.82, 0.8];
+            for row in 0..2 {
+                for k in 0..5 {
+                    let z = -hw * 0.8 + k as f32 * hw * 0.4;
+                    b.body.tube_capped(Vec3::new(d0 + 0.3, deck + 0.18 + row as f32 * 0.32, z), Vec3::new(d1 - 0.1, deck + 0.18 + row as f32 * 0.32, z), 0.15, 6, true, true, c4(pvc));
+                }
+            }
+        }
+        Some(L::Scrap) => {
+            // A low heap of rusty plate and sheet.
+            let rust = [0.4, 0.24, 0.16];
+            b.bx((mid, deck + 0.25, 0.0), (l, 0.5, hw * 1.7), rust);
+            b.bx((mid - 0.6, deck + 0.6, 0.2), (l * 0.5, 0.3, hw), mul(rust, 0.8));
+        }
+        Some(L::Crates) => {
+            let wood = [0.6, 0.48, 0.32];
+            b.bx((mid, deck + 0.5, 0.0), (l * 0.8, 1.0, hw * 1.6), wood);
+            b.bx((mid, deck + 0.5, 0.0), (0.06, 1.04, hw * 1.64), strap);
+        }
+        None => {}
+    }
+    b.wear_marks(rx + 0.3, cr - 0.3, 0.7, 1.1, hw);
+}
+
+/// A concrete mixer: the cab and a big tilted drum with spiral fins.
+fn mixer(b: &mut B, col: [f32; 3]) {
+    let m = *b.m;
+    let len = body_length(m.body);
+    let (fx, rx) = (len * 0.5, -len * 0.5);
+    let hw = 1.2;
+    let cab_col = if m.livery == Livery::None { mix(col, [0.8, 0.8, 0.82], 0.5) } else { col };
+    let cr = site_cab(b, fx, hw, cab_col);
+    site_running_gear(b, fx, rx, hw, 1.2);
+    // Frame under the drum.
+    b.bx(((rx + cr) * 0.5, 0.95, 0.0), (cr - rx - 0.3, 0.3, hw * 1.5), TRIM);
+    let drum = if m.livery == Livery::None { [0.86, 0.86, 0.82] } else { col };
+    // Tilted drum: low at the back (the chute end), high at the front.
+    let (a, z) = (Vec3::new(cr - 0.4, 2.05, 0.0), Vec3::new(rx + 0.9, 1.75, 0.0));
+    b.body.tube_capped(a, z, 1.05, 10, true, false, c4(drum));
+    b.body.tube_capped(z, Vec3::new(rx + 0.25, 2.25, 0.0), 0.55, 8, false, true, c4(mul(drum, 0.9)));
+    if b.detail {
+        // Two fin bands on the drum.
+        for t in [0.3f32, 0.65] {
+            let p = a.lerp(z, t);
+            b.body.tube_capped(p - Vec3::X * 0.06, p + Vec3::X * 0.06, 1.1, 10, false, false, c4(mul(drum, 0.7)));
+        }
+        // The chute.
+        b.bx((rx + 0.1, 1.3, 0.0), (0.5, 0.12, 0.4), [0.3, 0.3, 0.3]);
+    }
+    b.wear_marks(rx + 0.3, cr - 0.3, 1.0, 2.4, hw);
+}
+
+/// A tipper: the cab and an open steel body, a heap of sand showing.
+fn tipper(b: &mut B, col: [f32; 3]) {
+    let m = *b.m;
+    let len = body_length(m.body);
+    let (fx, rx) = (len * 0.5, -len * 0.5);
+    let hw = 1.2;
+    let cab_col = if m.livery == Livery::None { mix(col, [0.8, 0.8, 0.82], 0.5) } else { col };
+    let cr = site_cab(b, fx, hw, cab_col);
+    site_running_gear(b, fx, rx, hw, 1.2);
+    let body = if m.livery == Livery::None { mul(col, 0.8) } else { col };
+    let (x0, x1, y0, y1) = (rx + 0.05, cr - 0.25, 1.0, 2.3);
+    // Floor, sides, front wall (a cab guard) and tailgate.
+    b.bx(((x0 + x1) * 0.5, y0, 0.0), (x1 - x0, 0.15, hw * 2.0), body);
+    for s in [-1.0f32, 1.0] {
+        b.bx(((x0 + x1) * 0.5, (y0 + y1) * 0.5, s * (hw - 0.04)), (x1 - x0, y1 - y0, 0.08), body);
+    }
+    b.bx((x1, (y0 + y1) * 0.5 + 0.15, 0.0), (0.1, y1 - y0 + 0.3, hw * 2.0), body);
+    b.bx((x0, (y0 + y1) * 0.5, 0.0), (0.1, y1 - y0, hw * 2.0), mul(body, 0.85));
+    // The load: a sand heap just over the rim.
+    b.bx(((x0 + x1) * 0.5, y1 - 0.25, 0.0), (x1 - x0 - 0.3, 0.6, hw * 1.8), [0.68, 0.6, 0.45]);
+    b.bx(((x0 + x1) * 0.5, y1 + 0.1, 0.0), (x1 - x0 - 1.4, 0.25, hw * 1.2), [0.62, 0.55, 0.42]);
+    b.wear_marks(x0 + 0.2, x1 - 0.2, y0 + 0.2, y1, hw);
+}
+
+/// A curtain-sider: a box body whose sides are tarpaulin curtains, with
+/// the strap buckles down the sides; pallets of roofing and insulation.
+fn curtainsider(b: &mut B, col: [f32; 3]) {
+    let m = *b.m;
+    let len = body_length(m.body);
+    let (fx, rx) = (len * 0.5, -len * 0.5);
+    let hw = 1.22;
+    let cab_col = if m.livery == Livery::None { mix(col, [0.8, 0.8, 0.82], 0.5) } else { col };
+    let cr = site_cab(b, fx, hw, cab_col);
+    site_running_gear(b, fx, rx, hw, 1.1);
+    let top = 3.5;
+    let tarp = if m.livery == Livery::None { [0.25, 0.32, 0.42] } else { mix(col, [0.2, 0.2, 0.22], 0.3) };
+    b.ext(&[(rx, 0.9), (cr - 0.1, 0.9), (cr - 0.1, top), (rx, top)], hw, tarp);
+    // Roof rail and floor rail in steel.
+    b.bx(((rx + cr) * 0.5, top - 0.05, 0.0), (cr - rx - 0.1, 0.12, hw * 2.04), [0.6, 0.6, 0.62]);
+    b.bx(((rx + cr) * 0.5, 0.95, 0.0), (cr - rx - 0.1, 0.15, hw * 2.04), [0.4, 0.4, 0.42]);
+    if b.detail {
+        for i in 1..9 {
+            let x = rx + (cr - 0.1 - rx) * i as f32 / 9.0;
+            b.sides(x, 1.9, hw, 0.04, 1.9, mul(tarp, 0.6));
+        }
+    }
+    b.lamps(rx, top - 0.1, hw - 0.1, 0.08, 0.08, -1.0, AMBER);
+    b.wear_marks(rx + 0.3, cr - 0.3, 1.0, top - 0.3, hw);
+}
 
 /// [r8] Where each box aboard a container chassis rides: the x of its
 /// middle along the rig, for boxes `forty` (in loading order). A forty on
@@ -1209,11 +1431,12 @@ fn livery_marks(b: &mut B, accent: [f32; 3], sign: [f32; 3]) {
     }
     let len = if m.body == BodyType::Semi { nd_sim::vehicle::semi_length(m.boxed) } else { body_length(m.body) };
     match m.body {
-        BodyType::DeliveryVan | BodyType::BoxVan | BodyType::PanelTruck | BodyType::GarbageTruck => {
+        BodyType::DeliveryVan | BodyType::BoxVan | BodyType::PanelTruck | BodyType::GarbageTruck | BodyType::Curtainsider => {
             let (hw, x, y, w, h) = match m.body {
                 BodyType::DeliveryVan => (1.0, -0.6, 1.6, 2.6, 0.9),
                 BodyType::BoxVan => (1.05, -1.2, 1.9, 3.4, 1.4),
                 BodyType::PanelTruck => (1.2, -1.0, 2.2, 4.4, 1.6),
+                BodyType::Curtainsider => (1.22, -1.0, 2.2, 4.4, 1.6),
                 _ => (1.2, -0.8, 2.1, 3.0, 1.3),
             };
             // A stripe along the bottom and a lit logo panel.
@@ -1262,7 +1485,7 @@ fn livery_marks(b: &mut B, accent: [f32; 3], sign: [f32; 3]) {
     if matches!(m.livery.base(), Livery::Construction | Livery::Utility) {
         // Beacon on the roof of the cab.
         let (x, y) = match m.body {
-            BodyType::PanelTruck | BodyType::BoxVan => (len * 0.5 - 1.0, 2.5),
+            BodyType::PanelTruck | BodyType::BoxVan | BodyType::Flatbed | BodyType::Mixer | BodyType::Tipper | BodyType::Curtainsider => (len * 0.5 - 1.0, 2.5),
             BodyType::Semi => (len * 0.5 - 1.0, 3.2),
             BodyType::GarbageTruck => (len * 0.5 - 1.0, 2.85),
             BodyType::Pickup => (0.0, 1.9),

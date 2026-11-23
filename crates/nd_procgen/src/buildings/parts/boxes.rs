@@ -436,6 +436,10 @@ pub fn box_number(m: &mut MeshData, f: &Frame, u: f32, v: f32, yaw: f32, y0: f32
         (_, BoxKind::Tank) => b"22T6",
         (true, BoxKind::OpenTop) => b"42U1",
         (false, BoxKind::OpenTop) => b"22U1",
+        (true, BoxKind::FlatRack) => b"45P3",
+        (false, BoxKind::FlatRack) => b"22P3",
+        (true, BoxKind::Bulk) => b"42B0",
+        (false, BoxKind::Bulk) => b"22B0",
         (true, _) => b"45G1",
         (false, _) => b"22G1",
     };
@@ -496,16 +500,11 @@ pub fn box_life(face: &BoxFace) -> BoxLife {
 pub fn real_box(g: &mut Geometry, c: &Ctx, u: f32, v: f32, yaw: f32, y0: f32, face: &BoxFace, numbered: bool) {
     let mut rng = nd_sim::rng_for(face.seed, 0xB0C5);
     let line = &SHIPPING_LINES[face.line as usize % SHIPPING_LINES.len()];
-    let look = match face.kind {
-        BoxKind::Dry => BoxLook::Dry,
-        BoxKind::Reefer => BoxLook::Reefer,
-        BoxKind::Tank => BoxLook::Tank,
-        BoxKind::OpenTop => BoxLook::OpenTop,
-    };
+    let look = BoxLook::of(face.kind);
     let len = if face.forty && face.kind != BoxKind::Tank { CONTAINER_40 } else { CONTAINER_20 };
     let life = box_life(face);
     container_core(g, c, &mut rng, u, v, yaw, len, CONTAINER_W, CONTAINER_H, y0, Livery::Line(line), look, Some(life));
-    if numbered && face.kind != BoxKind::Tank {
+    if numbered && !matches!(face.kind, BoxKind::Tank | BoxKind::FlatRack) {
         box_number(g.part(Matte), &c.frame, u, v, yaw, y0, face, life.door);
     }
 }

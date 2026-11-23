@@ -3,7 +3,7 @@
 
 use super::*;
 use super::market::TruckOrigin;
-use crate::buildings::{Demolition, SiteBlock};
+use crate::buildings::{Demolition, SiteBlock, SiteLoad};
 
 /// A site this far into its build is only groundworks: a bulldozed one is
 /// cleared at once rather than demolished.
@@ -21,6 +21,58 @@ pub(super) fn site_slot(id: BuildingId) -> u64 {
 
 /// Colour of the dump trucks hauling rubble away.
 const RUBBLE_TRUCK_COLOR: u8 = 5;
+
+/// [r14-materials] One stage of a site's materials (`World::site_materials`).
+#[derive(Clone, Debug)]
+pub struct SiteStage {
+    pub stage: crate::catalogue::Stage,
+    pub state: SiteStageState,
+    /// The stage's bill: what it needs.
+    pub bill: Vec<(Resource, f32)>,
+    /// What has come for it.
+    pub delivered: Vec<(Resource, f32)>,
+    /// What is on the road to it.
+    pub due: Vec<(Resource, f32)>,
+    /// What is left of its pile on site.
+    pub on_site: Vec<(Resource, f32)>,
+}
+
+/// [r14-materials] Where a stage of a site stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SiteStageState {
+    /// Not ordered yet.
+    ToOrder,
+    /// Ordered; lorries on the way.
+    OnTheWay,
+    /// All its materials are on site, its work not begun.
+    OnSite,
+    /// Its work is going on, using up the pile.
+    Building,
+    /// Done: its materials are in the building.
+    Used,
+}
+
+impl SiteStageState {
+    pub fn label(self) -> &'static str {
+        match self {
+            SiteStageState::ToOrder => "to order",
+            SiteStageState::OnTheWay => "on the way",
+            SiteStageState::OnSite => "on site",
+            SiteStageState::Building => "being built",
+            SiteStageState::Used => "done",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            SiteStageState::ToOrder => "to_order",
+            SiteStageState::OnTheWay => "on_the_way",
+            SiteStageState::OnSite => "on_site",
+            SiteStageState::Building => "building",
+            SiteStageState::Used => "done",
+        }
+    }
+}
 
 impl World {
     /// Every ten sim minutes, a sixth of the sites (each its own slot in the
@@ -152,15 +204,178 @@ impl World {
         self.connectivity.push_alert(tick, crate::world::connectivity::AlertKind::SiteBlocked, pos, Some(bid), 1, text);
     }
 
-    /// The materials for a building site's next quarter: bought by its
-    /// builder line by line of the site's bill ([`World::site_load`], by
-    /// the catalogue's `SITE_BILL`), from the builder's yard, a scrap yard,
-    /// the merchant or a maker in town, else imported (`world/builders.rs`).
+    /// [r14-materials] What decides how `bid` is built (its build type).
+    pub fn site_facts(&self, bid: BuildingId) -> Option<crate::catalogue::SiteFacts> {
+        let b = self.buildings.get(bid)?;
+        Some(crate::catalogue::SiteFacts {
+            land_use: b.land_use,
+            tier: b.tier,
+            floors: b.floors,
+            business: b.business.as_ref().map(|z| z.kind),
+            look: b.look,
+            plant: b.plant.is_some() || b.battery.is_some(),
+            infrastructure: b.rail.is_some() || b.port.is_some() || b.depot || b.metro || b.cable || b.service.is_some() || b.is_parking(),
+            boxes: self.containers.homes.contains_key(&bid),
+            megastructure: b.plot.megablock.is_some() || b.plot.tower.is_some() || b.annex.is_some(),
+        })
+    }
+
+    /// [r14-materials] How `bid` is (being) built.
+    pub fn build_type(&self, bid: BuildingId) -> Option<crate::catalogue::BuildType> {
+        self.site_facts(bid).map(|f| crate::catalogue::build_type(&f))
+    }
+
+    /// [r14-materials] The bill of materials for building `bid`: every
+    /// stage's lines, by its build type, floors, lot and tier
+    /// (`crate::catalogue::site_bill`). A plain list of (good, quantity,
+    /// stage); builder companies and the hardware store can buy from it.
+    pub fn site_bill(&self, bid: BuildingId) -> Vec<crate::catalogue::BillLine> {
+        let Some(build) = self.build_type(bid) else { return Vec::new() };
+        let Some(b) = self.buildings.get(bid) else { return Vec::new() };
+        let area = self.lots.get(b.lot).map_or(crate::catalogue::MIX_LOT_AREA, |l| l.area());
+        crate::catalogue::site_bill(build, b.floors, area, b.tier)
+    }
+
+    /// [r14-materials] The lines of the stage `bid` is being supplied for
+    /// (its next delivery) still to order: the stage's bill less what has
+    /// come and what is on the road.
+    pub fn site_lines_to_order(&self, bid: BuildingId) -> Vec<crate::catalogue::BillLine> {
+        let Some(c) = self.buildings.get(bid).and_then(|b| b.construction.as_ref()) else { return Vec::new() };
+        let q = c.deliveries.min(Construction::DELIVERIES - 1);
+        let stage = crate::catalogue::Stage::of_quarter(q);
+        let bill = self.site_bill(bid);
+        crate::catalogue::stage_lines(&bill, stage)
+            .filter_map(|l| {
+                let had: f32 = c.delivered.iter().chain(c.due.iter()).filter(|d| d.stage == q && d.good == l.good).map(|d| d.qty).sum();
+                let left = l.qty - had;
+                (left > 0.05).then_some(crate::catalogue::BillLine { qty: left, ..*l })
+            })
+            .collect()
+    }
+
+    /// [r14-materials] Materials for a building site's next stage, by its
+    /// bill of materials (`site_bill`). [r14-builders] Bought by the site's
+    /// builder line by line (`World::buy_site_load`, `world/builders.rs`):
+    /// from its yard, a scrap yard, the builders' merchant or a maker in
+    /// town, else imported (all of a stage's imports on one lorry).
     pub(super) fn order_materials(&mut self, bid: BuildingId) {
         if self.buildings.get(bid).and_then(|b| b.construction.as_ref()).is_none() {
             return;
         }
         self.buy_site_load(bid);
+    }
+
+    /// [r14-materials] A building site's materials stage by stage: the
+    /// bill, what has come, what is on the road, what is left in the pile,
+    /// and where the stage stands. For the inspector and the remote API.
+    pub fn site_materials(&self, bid: BuildingId) -> Vec<SiteStage> {
+        let Some(c) = self.buildings.get(bid).and_then(|b| b.construction.as_ref()) else { return Vec::new() };
+        let bill = self.site_bill(bid);
+        let pile = c.on_site();
+        let sum = |v: &[SiteLoad], q: u8| -> Vec<(Resource, f32)> {
+            let mut out: Vec<(Resource, f32)> = Vec::new();
+            for l in v.iter().filter(|l| l.stage == q) {
+                match out.iter_mut().find(|(r, _)| *r == l.good) {
+                    Some(e) => e.1 += l.qty,
+                    None => out.push((l.good, l.qty)),
+                }
+            }
+            out
+        };
+        crate::catalogue::Stage::ALL
+            .iter()
+            .map(|&stage| {
+                let q = stage.index();
+                let state = if c.stage() > q || c.progress >= 1.0 {
+                    SiteStageState::Used
+                } else if c.deliveries > q {
+                    if c.stage() == q { SiteStageState::Building } else { SiteStageState::OnSite }
+                } else if c.deliveries == q && (c.ordered || !c.due.is_empty()) {
+                    SiteStageState::OnTheWay
+                } else {
+                    SiteStageState::ToOrder
+                };
+                SiteStage {
+                    stage,
+                    state,
+                    bill: crate::catalogue::stage_lines(&bill, stage).map(|l| (l.good, l.qty)).collect(),
+                    delivered: sum(&c.delivered, q),
+                    due: sum(&c.due, q),
+                    on_site: sum(&pile, q),
+                }
+            })
+            .collect()
+    }
+
+    /// [r14-materials] The goods in a building site's stockpile now, the
+    /// biggest pile (by weight of units) first: what its stacks are drawn as.
+    pub fn site_pile_goods(&self, bid: BuildingId) -> Vec<Resource> {
+        let Some(c) = self.buildings.get(bid).and_then(|b| b.construction.as_ref()) else { return Vec::new() };
+        let mut v: Vec<(Resource, f32)> = Vec::new();
+        for l in c.on_site() {
+            match v.iter_mut().find(|(r, _)| *r == l.good) {
+                Some(e) => e.1 += l.qty,
+                None => v.push((l.good, l.qty)),
+            }
+        }
+        v.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        v.into_iter().map(|(r, _)| r).collect()
+    }
+
+    /// [r14-materials] What a lorry load is: for a building site, every
+    /// material of the stage riding in it; else the one good.
+    pub fn load_manifest(&self, cargo: &crate::traffic::Cargo) -> Vec<(Resource, f32)> {
+        let riding: Vec<(Resource, f32)> = self
+            .buildings
+            .get(cargo.to)
+            .and_then(|b| b.construction.as_ref())
+            .map(|c| c.due.iter().filter(|d| d.via == cargo.resource).map(|d| (d.good, d.qty)).collect())
+            .unwrap_or_default();
+        if riding.is_empty() {
+            vec![(cargo.resource, cargo.amount)]
+        } else {
+            riding
+        }
+    }
+
+    /// [r14-materials] A load reached building site `bid` (booked as
+    /// `via`): its lines go onto the stockpile, and when the stage's whole
+    /// bill is on site the stage is supplied and its work can go on. A load
+    /// the site was not waiting for (an older save's parts) counts as the
+    /// stage's delivery, as loads always did.
+    pub(super) fn site_received(&mut self, bid: BuildingId, via: Resource, amount: f32) {
+        let complete = {
+            let Some(c) = self.buildings.get_mut(bid).and_then(|b| b.construction.as_mut()) else { return };
+            let q = c.deliveries.min(Construction::DELIVERIES - 1);
+            let mut came: Vec<SiteLoad> = Vec::new();
+            c.due.retain(|d| {
+                if d.via == via {
+                    came.push(*d);
+                    false
+                } else {
+                    true
+                }
+            });
+            if came.is_empty() {
+                c.delivered.push(SiteLoad { good: via, qty: amount, stage: q, via });
+                true
+            } else {
+                c.delivered.extend(came);
+                false
+            }
+        };
+        let complete = complete || self.site_lines_to_order(bid).is_empty();
+        let Some(c) = self.buildings.get_mut(bid).and_then(|b| b.construction.as_mut()) else { return };
+        if complete && c.due.is_empty() {
+            c.deliveries = c.deliveries.saturating_add(1);
+            c.ordered = false;
+            // The stage's pile is drawn on the site.
+            self.events.push(SimEvent::BuildingChanged(bid));
+        } else if c.due.is_empty() {
+            // Something went missing on the way (`site_unsupplied`): order
+            // the rest again.
+            c.ordered = false;
+        }
     }
 
     /// Open a finished building: the real homes and jobs appear, the site
@@ -335,7 +550,8 @@ impl World {
                 // Loads that turned up for the old building are not parts.
                 c.deliveries = 0;
                 c.ordered = false;
-                c.loads_due = 0;
+                c.due.clear();
+                c.delivered.clear();
             }
             let site = b.construction.is_some();
             if site {

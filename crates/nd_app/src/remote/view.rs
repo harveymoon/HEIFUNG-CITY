@@ -507,7 +507,13 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
                 let (name, yard) = w.site_builder(id).unwrap_or_default();
                 json!({ "name": name, "local": k.local().is_some(), "yard": yard.map(key_str), "price": round(k.price), "paid": round(k.paid), "since_tick": k.since })
             }),
-            "loads_due": c.loads_due,
+            // [r14-materials] How it is built, its bill and its stockpile.
+            "build_type": w.build_type(id).map(|t| t.label()),
+            "bill_value": round(nd_sim::catalogue::bill_value(&w.site_bill(id))),
+            "stages": w.site_materials(id).iter().map(|s| {
+                let lines = |v: &[(nd_sim::market::Resource, f32)]| v.iter().map(|(r, n)| json!({"good": r.label(), "qty": round(*n), "unit": r.row().unit.label()})).collect::<Vec<_>>();
+                json!({"stage": s.stage.label(), "state": s.state.key(), "bill": lines(&s.bill), "delivered": lines(&s.delivered), "on_the_way": lines(&s.due), "on_site": lines(&s.on_site)})
+            }).collect::<Vec<_>>(),
         })
     });
     let rail = b.rail.as_ref().map(|l| {

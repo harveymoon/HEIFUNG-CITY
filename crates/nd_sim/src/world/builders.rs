@@ -14,7 +14,7 @@
 use super::market::TruckOrigin;
 use super::*;
 use crate::builders::{self as bld, BuildersDay};
-use crate::buildings::{SiteBuilder, SiteContract};
+use crate::buildings::{SiteBuilder, SiteContract, SiteLoad};
 
 /// Colour index of the lorries the builders send (the trade livery is put
 /// on in `dispatch_truck`).
@@ -24,22 +24,15 @@ impl World {
     // ── reading ─────────────────────────────────────────────────────────────
 
     /// The site's bill for the delivery it is ordering now: a list of
-    /// (good, quantity). The one place that reads the catalogue's bill
-    /// (`crate::catalogue::SITE_BILL` today: one load of parts); a bill per
-    /// style and stage changes only this.
+    /// (good, quantity), the stage's lines still to order
+    /// ([`World::site_lines_to_order`], r14-materials' bill by build type).
     pub fn site_load(&self, bid: BuildingId) -> Vec<(Resource, f32)> {
-        let Some(b) = self.buildings.get(bid) else { return Vec::new() };
-        let bill = crate::catalogue::SITE_BILL;
-        vec![(bill.material, bill.amount(b.floors))]
+        self.site_lines_to_order(bid).into_iter().map(|l| (l.good, l.qty)).collect()
     }
 
     /// A contractor's yard that is open for work.
     pub fn is_contractor(&self, bid: BuildingId) -> bool {
         self.buildings.get(bid).is_some_and(|b| b.operating() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::Contractor && !z.closed))
-    }
-
-    fn is_merchant(&self, bid: BuildingId) -> bool {
-        self.buildings.get(bid).is_some_and(|b| b.operating() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::BuildersMerchant && !z.closed))
     }
 
     /// The crews a contractor runs (its staff in crews of `CREW_SIZE`).
@@ -104,12 +97,12 @@ impl World {
     // ── tendering ───────────────────────────────────────────────────────────
 
     /// What the job at `bid` should cost: its materials at the estimate's
-    /// price for every delivery, and its crew's payroll for the days.
+    /// price for the whole bill, and its crew's payroll for the days.
     pub fn job_estimate(&self, bid: BuildingId) -> (f32, f32) {
         let Some(b) = self.buildings.get(bid) else { return (0.0, 0.0) };
         let Some(c) = &b.construction else { return (0.0, 0.0) };
-        let load: f32 = self.site_load(bid).iter().map(|(r, q)| q * r.base_price()).sum();
-        let materials = load * Construction::DELIVERIES as f32 * bld::MATERIAL_ESTIMATE;
+        // The whole bill (every stage) at the estimate's price.
+        let materials = crate::catalogue::bill_value(&self.site_bill(bid)) * bld::MATERIAL_ESTIMATE;
         let labour = Construction::crew(b.floors) as f32 * c.days * Building::SITE_WAGE * bld::LABOUR_SHARE;
         (materials, labour)
     }
@@ -227,118 +220,164 @@ impl World {
     // ── buying a delivery ───────────────────────────────────────────────────
 
     /// The delivery site `bid` is ordering now: the next instalment is
-    /// paid, then each line of the site's bill is bought and sent. The
-    /// delivery counts when the last of its lorries arrives.
+    /// paid, then each line of the stage's bill is bought and sent, each
+    /// load booked on the site's `due` list before its lorry leaves (a load
+    /// handed over on the spot finds it counted out). The stage counts when
+    /// the last of them is in (`site_received`).
     pub(super) fn buy_site_load(&mut self, bid: BuildingId) {
         let Some(at) = self.building_lot(bid).map(|l| l.center) else { return };
         if self.needs_tender(bid) {
             self.tender_site(bid);
         }
-        let lines: Vec<(Resource, f32)> = self.site_load(bid).into_iter().filter(|(_, q)| *q > 0.0).collect();
+        let lines = self.site_load(bid);
+        let Some(c) = self.buildings[bid].construction.as_mut() else { return };
+        let q = c.deliveries.min(Construction::DELIVERIES - 1);
+        if lines.is_empty() {
+            // Everything for this stage is here (or on the road): an old
+            // save's stage, or a bill that shrank. Count it in.
+            if c.due.is_empty() {
+                c.deliveries = c.deliveries.saturating_add(1);
+                c.ordered = false;
+            }
+            return;
+        }
+        c.ordered = true;
         let yard = self.buildings[bid].construction.as_ref().and_then(|c| c.contract.as_ref()).and_then(|k| k.local()).filter(|y| self.is_contractor(*y));
         self.pay_instalment(bid);
         let buyer = match yard {
             Some(y) => Account::Business(y),
             None => self.site_payer(bid),
         };
-        // On order before the first lorry goes: a load handed over on the
-        // spot (no road, or the roads full of lorries) arrives inside
-        // `buy_site_line`, and must find the delivery already counted out.
-        let due = lines.len().clamp(1, u8::MAX as usize) as u8;
-        if let Some(c) = self.buildings.get_mut(bid).and_then(|b| b.construction.as_mut()) {
-            c.ordered = true;
-            c.loads_due = due;
-        }
-        let mut sent = 0u8;
-        for (r, q) in lines.iter().copied() {
-            if self.buy_site_line(bid, at, yard, buyer, r, q) {
-                sent += 1;
+        let mut imports: Vec<(Resource, f32)> = Vec::new();
+        for (r, n) in lines {
+            self.builders.today.material_units += n;
+            let left = self.buy_site_line(bid, at, q, yard, buyer, r, n);
+            if left > 0.05 {
+                imports.push((r, left));
             }
         }
-        // Lines nothing could be had for are not waited for.
-        let missing = due.saturating_sub(sent.max(1));
-        if missing > 0 {
-            if let Some(c) = self.buildings.get_mut(bid).and_then(|b| b.construction.as_mut()) {
-                c.loads_due = c.loads_due.saturating_sub(missing).max(1);
+        // The rest from out of town, all of the stage's imports on one lorry.
+        if let Some(&(lead, _)) = imports.first() {
+            let cost: f32 = imports.iter().map(|(r, n)| n * r.base_price() * IMPORT_MARKUP).sum();
+            let total: f32 = imports.iter().map(|(_, n)| n).sum();
+            self.economy.materials_today += cost;
+            self.pay_for_materials(buyer, yard, Account::Outside, cost);
+            if let Some(c) = self.buildings[bid].construction.as_mut() {
+                c.due.extend(imports.iter().map(|&(good, qty)| SiteLoad { good, qty, stage: q, via: lead }));
             }
+            self.import(bid, lead, total, 0.0);
+            self.builders.today.import_loads += 1;
         }
     }
 
-    /// One line of a delivery: where it comes from and the lorry that
-    /// brings it. False when nothing could be had (it never happens: an
-    /// import always can).
-    fn buy_site_line(&mut self, site: BuildingId, at: Vec2, yard: Option<BuildingId>, buyer: Account, r: Resource, q: f32) -> bool {
-        let bill = crate::catalogue::SITE_BILL;
-        self.builders.today.material_units += q;
+    /// Book a load for the site's stage `q` before its lorry goes.
+    fn book_site_load(&mut self, site: BuildingId, q: u8, r: Resource, got: f32) {
+        if let Some(c) = self.buildings.get_mut(site).and_then(|b| b.construction.as_mut()) {
+            c.due.push(SiteLoad { good: r, qty: got, stage: q, via: r });
+        }
+    }
+
+    /// One line of a delivery, `want` of good `r`: from the builder's own
+    /// yard, a scrap yard (steel), or the cheapest of the merchant (which
+    /// stocks the material itself) and the makers of what it is made from in
+    /// town (`local_from`). Returns how much is still wanted (imported).
+    #[allow(clippy::too_many_arguments)]
+    fn buy_site_line(&mut self, site: BuildingId, at: Vec2, q: u8, yard: Option<BuildingId>, buyer: Account, r: Resource, want: f32) -> f32 {
         // The builder's own yard stock, in its own lorry.
         if let Some(y) = yard {
             let have = self.buildings[y].business.as_ref().map_or(0.0, |z| z.stock_of(r));
-            if have >= q {
-                let got = self.buildings[y].business.as_mut().unwrap().take(r, q);
-                self.note_inbound(site, r, got);
+            if have >= want {
+                let got = self.buildings[y].business.as_mut().unwrap().take(r, want);
+                self.book_site_load(site, q, r, got);
                 self.queue_truck(TruckOrigin::Building(y), Cargo { from: y, to: site, resource: r, amount: got, price: 0.0 }, SITE_LORRY_COLOR);
                 self.builders.today.yard_loads += 1;
-                return true;
+                return want - got;
             }
         }
-        // [K34] Steel cut from old boxes at a scrap yard goes in first, as
-        // the bill's stand-in for its share of the line.
-        if let Some((scrap, share)) = bill.scrap.filter(|_| r == bill.material) {
-            if let Some(sy) = self.scrap_steel_for(at, q * share) {
-                let got = self.buildings[sy].business.as_mut().unwrap().take(scrap, q * share);
-                let cost = got * scrap.base_price();
-                self.pay_for_materials(buyer, yard, Account::Business(sy), cost);
-                if let Some(z) = self.buildings[sy].business.as_mut() {
+        let src = r.row().local_from;
+        // [K34] Steel cut from old boxes at a scrap yard goes in first.
+        if src == Some(Resource::Metal) {
+            if let Some(sy) = self.scrap_steel_for(at, want) {
+                let got = self.buildings[sy].business.as_mut().unwrap().take(Resource::Metal, want);
+                if got > 0.0 {
+                    let cost = got * Resource::Metal.base_price();
+                    self.pay_for_materials(buyer, yard, Account::Business(sy), cost);
+                    if let Some(z) = self.buildings[sy].business.as_mut() {
+                        z.revenue_today += cost;
+                        z.deals += 1;
+                    }
+                    self.economy.market.deals_today += 1;
+                    self.book_site_load(site, q, r, got);
+                    self.ship(sy, site, r, got, cost);
+                    self.builders.today.scrap_loads += 1;
+                    return want - got;
+                }
+            }
+        }
+        // The cheapest of the merchant (the material itself) and the makers
+        // of what it is made from.
+        let merchant = self.merchant_with(r, at, want);
+        let maker = src.and_then(|s| self.maker_of(s, at, want, site).map(|(m, p)| (m, p, s)));
+        let use_merchant = match (merchant, maker) {
+            (Some((_, pm)), Some((_, pk, _))) => pm <= pk,
+            (Some(_), None) => true,
+            _ => false,
+        };
+        if let (true, Some((m, price))) = (use_merchant, merchant) {
+            let got = self.buildings[m].business.as_mut().unwrap().take(r, want);
+            if got > 0.0 {
+                let cost = got * price;
+                self.pay_for_materials(buyer, yard, Account::Business(m), cost);
+                if let Some(z) = self.buildings[m].business.as_mut() {
                     z.revenue_today += cost;
                     z.deals += 1;
                 }
                 self.economy.market.deals_today += 1;
-                self.ship(sy, site, scrap, got, cost);
-                self.builders.today.scrap_loads += 1;
-                return true;
+                self.builders.today.trade_sales += cost;
+                self.builders.today.merchant_loads += 1;
+                self.builders.today.merchant_units += got;
+                self.book_site_load(site, q, r, got);
+                // The merchant delivers in its own lorry.
+                self.queue_truck(TruckOrigin::Building(m), Cargo { from: m, to: site, resource: r, amount: got, price: cost }, SITE_LORRY_COLOR);
+                return want - got;
             }
-        }
-        // The cheapest of the merchant and the makers in town.
-        if let Some((seller, price)) = self.best_seller(r, at, q, site) {
-            let got = self.buildings[seller].business.as_mut().unwrap().take(r, q);
+        } else if let Some((seller, price, s)) = maker {
+            let got = self.buildings[seller].business.as_mut().unwrap().take(s, want);
             if got > 0.0 {
                 let cost = got * price;
                 self.pay_for_materials(buyer, yard, Account::Business(seller), cost);
-                let merchant = self.is_merchant(seller);
                 if let Some(z) = self.buildings[seller].business.as_mut() {
                     z.revenue_today += cost;
                     z.deals += 1;
                 }
                 self.economy.market.deals_today += 1;
+                self.builders.today.maker_loads += 1;
+                self.book_site_load(site, q, r, got);
                 let cargo = Cargo { from: seller, to: site, resource: r, amount: got, price: cost };
-                if merchant {
-                    // The merchant delivers in its own lorry.
-                    self.builders.today.trade_sales += cost;
-                    self.builders.today.merchant_loads += 1;
-                    self.builders.today.merchant_units += got;
-                    self.note_inbound(site, r, got);
-                    self.queue_truck(TruckOrigin::Building(seller), cargo, SITE_LORRY_COLOR);
-                } else if let Some(y) = yard.filter(|y| bld::lorries(self.contractor_crews(*y)) > 0) {
+                if let Some(y) = yard.filter(|y| bld::lorries(self.contractor_crews(*y)) > 0) {
                     // The builder fetches it in its own lorry.
-                    self.builders.today.maker_loads += 1;
                     self.builders.today.collected += 1;
-                    self.note_inbound(site, r, got);
                     self.queue_truck(TruckOrigin::Building(y), cargo, SITE_LORRY_COLOR);
                 } else {
                     // A haulier brings it.
-                    self.builders.today.maker_loads += 1;
                     self.ship(seller, site, r, got, cost);
                 }
-                return true;
+                return want - got;
             }
         }
-        // Else from out of town, at the import price.
-        let cost = q * r.base_price() * IMPORT_MARKUP;
-        self.economy.materials_today += cost;
-        self.pay_for_materials(buyer, yard, Account::Outside, cost);
-        self.import(site, r, q, 0.0);
-        self.builders.today.import_loads += 1;
-        true
+        want
+    }
+
+    /// The nearest open merchant in reach with `want` of `r` on its racks,
+    /// and its trade price.
+    fn merchant_with(&self, r: Resource, at: Vec2, want: f32) -> Option<(BuildingId, f32)> {
+        self.buildings
+            .iter()
+            .filter(|(_, b)| b.operating() && b.business.as_ref().is_some_and(|z| z.kind == BusinessKind::BuildersMerchant && !z.closed && z.stock_of(r) >= want))
+            .filter_map(|(m, b)| self.lots.get(b.lot).map(|l| (m, b, l.center.distance(at))))
+            .filter(|(_, _, d)| *d <= bld::LOCAL_REACH)
+            .min_by(|a, b| a.2.total_cmp(&b.2).then(a.0.cmp(&b.0)))
+            .map(|(m, b, _)| (m, b.business.as_ref().map_or(0.0, |z| z.sell_price(r, b.jobs))))
     }
 
     /// The buyer of a site's materials pays the seller; a contractor books
@@ -391,17 +430,6 @@ impl World {
                 }
             }
         }
-    }
-
-    /// A delivery lorry reached site `bid`: true when it was the last of
-    /// the delivery's lorries (the delivery counts).
-    pub(super) fn site_load_arrived(c: &mut Construction) -> bool {
-        if c.loads_due > 1 {
-            c.loads_due -= 1;
-            return false;
-        }
-        c.loads_due = 0;
-        true
     }
 
     /// Site `bid` opened: the books, and the contractor's crew step out.
@@ -465,6 +493,14 @@ impl World {
         let Some(at) = self.building_lot(id).map(|l| l.center) else { return };
         let jobs = self.buildings[id].jobs.max(4) as f32;
         let target = bld::MERCHANT_STOCK_PER_JOB * jobs;
+        // Its money shared over the materials it is short of, so one dear
+        // line does not empty the till before the racks are all stocked.
+        let short = materials
+            .iter()
+            .filter(|r| self.buildings[id].business.as_ref().is_some_and(|z| z.stock_of(**r) + z.inbound_of(**r) < target * bld::MERCHANT_REORDER))
+            .count()
+            .max(1) as f32;
+        let budget = self.buildings[id].business.as_ref().map_or(0.0, |z| z.money.max(0.0)) / short;
         for &r in materials {
             let (stock, inbound, money) = {
                 let z = self.buildings[id].business.as_ref().unwrap();
@@ -476,12 +512,14 @@ impl World {
             // Nothing bought on money it has not got: what it can afford of
             // the shortfall (a bulk import with its duty is the dearest way).
             let unit = r.base_price() * bld::MERCHANT_BULK_IMPORT * (1.0 + self.economy.taxes.import_duty.max(0.0));
-            let want = (target - stock - inbound).min(money.max(0.0) / unit.max(0.01)).floor();
+            let want = (target - stock - inbound).min(money.max(0.0).min(budget) / unit.max(0.01)).floor();
             if want < target * 0.1 {
                 continue;
             }
-            if let Some((seller, price)) = self.maker_of(r, at, want, id) {
-                let got = self.buildings[seller].business.as_mut().unwrap().take(r, want);
+            // From a maker of what it is made from (`local_from`), else imported.
+            let src = r.row().local_from;
+            if let Some((seller, price, s)) = src.and_then(|s| self.maker_of(s, at, want, id).map(|(m, p)| (m, p, s))) {
+                let got = self.buildings[seller].business.as_mut().unwrap().take(s, want);
                 if got > 0.0 {
                     let cost = got * price;
                     self.transfer(Account::Business(id), Account::Business(seller), cost, Kind::Supplies);

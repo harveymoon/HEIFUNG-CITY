@@ -16,7 +16,7 @@
 //! developer from out of town) pays the contractor in four instalments, one
 //! as each quarter's materials are ordered. The contractor buys each
 //! delivery's bill of materials (`World::site_load`: a list of good and
-//! quantity, today the catalogue's `SITE_BILL`): from its own yard stock,
+//! quantity, the stage's lines of r14-materials' bill): from its own yard stock,
 //! a scrap yard, the cheapest of the builders' merchant and the makers in
 //! town, or imported; it fetches them in its own lorries or hires a haulier.
 //! It pays its crews out of its own money like any business, so a builder
@@ -60,13 +60,13 @@ pub const MERCHANT_PRICE_SWING: f32 = 0.08;
 /// single site's import pays `market::IMPORT_MARKUP`).
 pub const MERCHANT_BULK_IMPORT: f32 = 1.25;
 /// Trade stock the merchant keeps of each material, per job.
-pub const MERCHANT_STOCK_PER_JOB: f32 = 14.0;
+pub const MERCHANT_STOCK_PER_JOB: f32 = 5.0;
 /// A merchant reorders a material once its stock and what is on the way
 /// fall under this share of the target.
 pub const MERCHANT_REORDER: f32 = 0.6;
 /// A contractor keeps this many units of each material in its yard per
 /// crew, bought from the merchant each morning.
-pub const YARD_UNITS_PER_CREW: f32 = 10.0;
+pub const YARD_UNITS_PER_CREW: f32 = 3.0;
 /// One lorry of its own per this many crews (at least one).
 pub const CREWS_PER_LORRY: u16 = 2;
 /// [pressure] Sites a day one contractor takes off the firms from out of town.

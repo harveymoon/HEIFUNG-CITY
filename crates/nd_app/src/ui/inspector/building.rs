@@ -179,6 +179,8 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
             ui.label(egui::RichText::new(format!("Planned: {} floor{}, about {:.0} m high when finished", n.floors, crate::ui::fmt::s(n.floors), n.height_m)).strong().color(egui::Color32::from_rgb(120, 220, 245)));
         }
         ui.label(egui::RichText::new(format!("{} of {} deliveries in  ·  {:.1} days of work in all  ·  site crew {}/{}  ·  will have {} homes and {} jobs", c.deliveries, nd_sim::Construction::DELIVERIES, c.days, b.workers.len(), b.jobs, homes, jobs)).small());
+        // [r14-materials] What it is built of, stage by stage, and the pile.
+        materials_section(ui, w, id);
         // [r14-builders] Who is building it.
         if let Some(yard) = builders::site_builder(ui, w, id) {
             *selection = Selection::Building(yard);
@@ -779,5 +781,29 @@ fn depot_lines(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId) {
             };
             ui.label(egui::RichText::new(format!("{} stops · {what} · {} riders today", r.stops.len(), r.riders_today)).small());
         });
+    }
+}
+
+/// [r14-materials] A building site's bill of materials by stage (what each
+/// stage needs and where it stands: to order, on the way, on site, being
+/// built, done) and its stockpile.
+fn materials_section(ui: &mut egui::Ui, w: &nd_sim::World, id: nd_sim::BuildingId) {
+    let Some(build) = w.build_type(id) else { return };
+    let stages = w.site_materials(id);
+    let value = nd_sim::catalogue::bill_value(&w.site_bill(id));
+    section(ui, &format!("MATERIALS  ·  {}  ·  worth {:.0}", build.label(), value));
+    for s in &stages {
+        let what = match s.state {
+            nd_sim::world::SiteStageState::OnTheWay if !s.due.is_empty() => nd_sim::catalogue::describe_load(&s.due),
+            nd_sim::world::SiteStageState::OnSite | nd_sim::world::SiteStageState::Building => nd_sim::catalogue::describe_load(&s.on_site),
+            _ => nd_sim::catalogue::describe_load(&s.bill),
+        };
+        let col = match s.state {
+            nd_sim::world::SiteStageState::Used => egui::Color32::from_gray(150),
+            nd_sim::world::SiteStageState::Building | nd_sim::world::SiteStageState::OnSite => GOOD,
+            nd_sim::world::SiteStageState::OnTheWay => GOLD,
+            nd_sim::world::SiteStageState::ToOrder => IVORY,
+        };
+        ui.label(egui::RichText::new(format!("{} ({}): {what}", capitalise(s.stage.label()), s.state.label())).small().color(col));
     }
 }
