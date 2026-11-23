@@ -8,7 +8,7 @@
 //! along the street, `v` in from it, so the street side is `v0`.
 
 use super::construction::{builder_lorry, builder_van, material_stack};
-use super::kit::{block, fence_poly, fit, heap, pane, pane_row, R};
+use super::kit::{block, fence_poly, fit, heap, pane_row, R};
 use super::parts::*;
 use super::{Ctx, Extras};
 use crate::surface::{Geometry, Surface::*};
@@ -88,8 +88,6 @@ pub fn builders_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras) 
     }
     // The yard in front: vans by the gate, the lorry, the stock.
     let yard_r = R::new(area.u0 + 0.8, area.u1 - 0.8, area.v0 + 0.8, yard_v1);
-    let front = c.front_face(&c.poly);
-    let along = Vec2::new(1.0, 0.0);
     let vans = [2, 3, 4][t];
     let mut placed = 0;
     let mut u = yard_r.u0 + 2.0;
@@ -113,7 +111,8 @@ pub fn builders_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras) 
     while v < yard_v1 - 1.5 && k < 6 {
         let p = Vec2::new(side_u, v);
         if c.inside_local(p) && distance_to_boundary(p, &c.lot_poly) > 1.2 {
-            material_stack(g, c, rng, p, FRAC_PI_2 + rng.random_range(-0.15..0.15));
+            let yaw = FRAC_PI_2 + rng.random_range(-0.15..0.15);
+            material_stack(g, c, rng, p, yaw);
         }
         v += 2.6;
         k += 1;
@@ -130,7 +129,6 @@ pub fn builders_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras) 
         let front_i = c.faces(&lot).iter().enumerate().max_by(|a, b| (a.1.out.dot(Vec2::new(0.0, -1.0)) * a.1.len).total_cmp(&(b.1.out.dot(Vec2::new(0.0, -1.0)) * b.1.len))).map(|(i, _)| i);
         fence_poly(g, c, &lot, 2.2, front_i, t == 0);
     }
-    let _ = (front, along);
     lamp_post_in(g, c, Vec2::new(area.u0 + 1.0, area.v0 + 1.0), 6.0, pal.street_lamp);
 }
 
@@ -289,5 +287,4 @@ pub fn builders_merchant(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extr
             lamp_post_in(g, c, q, 7.0, pal.street_lamp);
         }
     }
-    let _ = pane;
 }
