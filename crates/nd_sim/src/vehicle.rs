@@ -204,6 +204,8 @@ impl Livery {
             BusinessKind::Grocery | BusinessKind::VertFarm | BusinessKind::Dairy | BusinessKind::ProteinVat => Livery::Grocery,
             BusinessKind::GadgetShop | BusinessKind::Assembly | BusinessKind::CargoHub => Livery::Parcels,
             BusinessKind::Fab | BusinessKind::Mill | BusinessKind::GrainFarm => Livery::Utility,
+            // [r14-builders] Builders' vans and lorries, the merchant's flatbeds.
+            BusinessKind::Contractor | BusinessKind::BuildersMerchant => Livery::Construction,
             _ => Livery::None,
         }
     }

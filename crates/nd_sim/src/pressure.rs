@@ -135,10 +135,17 @@ pub enum PressureKind {
     /// [r11-box-stock] Shipping containers over the terminals' room with no
     /// container yard to keep them: one more yard. Appended.
     ContainerStorage,
+    /// [r14-builders] Building sites let to firms from out of town for want
+    /// of a contractor in town with a crew free: one more contractor.
+    /// Appended.
+    Contractor,
+    /// [r14-builders] Building materials bought for sites with no builders'
+    /// merchant to stock them, and the town's DIY trade. Appended.
+    BuildersMerchant,
 }
 
 impl PressureKind {
-    pub const ALL: [PressureKind; 21] = [
+    pub const ALL: [PressureKind; 23] = [
         PressureKind::TowCompany,
         PressureKind::Mechanic,
         PressureKind::CarDealer,
@@ -160,6 +167,8 @@ impl PressureKind {
         PressureKind::ScrapYard,
         PressureKind::FreightForwarder,
         PressureKind::ContainerStorage,
+        PressureKind::Contractor,
+        PressureKind::BuildersMerchant,
     ];
 
     pub fn index(self) -> usize {
@@ -190,6 +199,8 @@ impl PressureKind {
             PressureKind::ScrapYard => BusinessKind::ScrapYard,
             PressureKind::FreightForwarder => BusinessKind::FreightForwarder,
             PressureKind::ContainerStorage => BusinessKind::ContainerYard,
+            PressureKind::Contractor => BusinessKind::Contractor,
+            PressureKind::BuildersMerchant => BusinessKind::BuildersMerchant,
         })
     }
 
@@ -229,6 +240,8 @@ impl PressureKind {
             PressureKind::ScrapYard => "scrap yard",
             PressureKind::FreightForwarder => "freight forwarder",
             PressureKind::ContainerStorage => "container storage yard",
+            PressureKind::Contractor => "building contractor",
+            PressureKind::BuildersMerchant => "builders' merchant",
         }
     }
 
@@ -256,6 +269,8 @@ impl PressureKind {
             PressureKind::ScrapYard => "scrap_yard",
             PressureKind::FreightForwarder => "freight_forwarder",
             PressureKind::ContainerStorage => "container_storage",
+            PressureKind::Contractor => "contractor",
+            PressureKind::BuildersMerchant => "builders_merchant",
         }
     }
 
@@ -349,6 +364,20 @@ pub struct Signals {
     /// that no container yard had room to keep (a flow).
     #[serde(default)]
     pub box_overflow: f32,
+    /// [r14-builders] Building sites a day let to firms from out of town,
+    /// and to contractors in town (flows); sites under way now.
+    #[serde(default)]
+    pub outside_contracts: f32,
+    #[serde(default)]
+    pub local_contracts: f32,
+    #[serde(default)]
+    pub sites: f32,
+    /// [r14-builders] Units of building materials a day bought for sites
+    /// (a flow), and of them from a builders' merchant.
+    #[serde(default)]
+    pub site_material_units: f32,
+    #[serde(default)]
+    pub merchant_units: f32,
 }
 
 impl Signals {
@@ -373,6 +402,11 @@ impl Signals {
         mix(&mut self.export_units, today.export_units);
         self.box_terminals = today.box_terminals;
         mix(&mut self.box_overflow, today.box_overflow);
+        mix(&mut self.outside_contracts, today.outside_contracts);
+        mix(&mut self.local_contracts, today.local_contracts);
+        mix(&mut self.site_material_units, today.site_material_units);
+        mix(&mut self.merchant_units, today.merchant_units);
+        self.sites = today.sites;
         self.cars = today.cars;
         self.tow_backlog = today.tow_backlog;
         self.rich_households = today.rich_households;
@@ -596,6 +630,19 @@ pub fn assess(s: &Signals, supply: &Supply) -> Vec<Pressure> {
                 // all full, or too far, or it would be kept.)
                 let wanted = s.box_overflow / crate::containers::BOXES_PER_STORAGE_YARD;
                 (wanted, format!("{} shipping containers a day over the port's and freight terminals' room with no yard to keep them; {ht}", s.box_overflow.round()))
+            }
+            // [r14-builders] The jobs that went out of town for want of a
+            // crew free in town.
+            PressureKind::Contractor => {
+                let open = supply.open[BusinessKind::Contractor.index()] as f32;
+                let wanted = open + s.outside_contracts / crate::builders::CONTRACTS_PER_CONTRACTOR;
+                (wanted, format!("{} building sites a day hired from out of town ({} to builders in town), {} sites under way; {ht}", s.outside_contracts.round(), s.local_contracts.round(), s.sites.round()))
+            }
+            // [r14-builders] The sites' materials (a merchant's worth a day
+            // each `UNITS_PER_MERCHANT`) and the town's DIY trade.
+            PressureKind::BuildersMerchant => {
+                let wanted = s.site_material_units / crate::builders::UNITS_PER_MERCHANT + s.people / crate::builders::PEOPLE_PER_MERCHANT;
+                (wanted, format!("{} units of building materials a day for the sites ({} of them over a merchant's counter), {} residents doing up their homes; {ht}", s.site_material_units.round(), s.merchant_units.round(), s.people.round()))
             }
         };
         let mut p = Pressure::new(kind, wanted, supply, why);

@@ -601,6 +601,12 @@ styles! {
     // [cable] A cable car station's lot: a paved plaza (the station hall,
     // its bullwheel and the rope are drawn by the app). Appended.
     CableStation { label: "cable car station", family: Special, cluster: 0.0, draw: |g, c, r, _| subway::cable_plaza(g, c, r) },
+    // -- [r14-builders] the building trade (`buildings/builders.rs`),
+    // forced by the business. Appended so `ALL` keeps its order. --
+    /// A shed and office, vans and a flatbed in the firm's colours, stock bays.
+    BuildersYard { label: "builder's yard", family: Logistics, cluster: -0.2, draw: |g, c, r, e| builders::builders_yard(g, c, r, e) },
+    /// A big clad shed, a covered timber yard, pallets, a car park.
+    BuildersMerchant { label: "builders' merchant", family: Retail, cluster: -1.0, draw: |g, c, r, e| builders::builders_merchant(g, c, r, e) },
 }
 
 impl Style {

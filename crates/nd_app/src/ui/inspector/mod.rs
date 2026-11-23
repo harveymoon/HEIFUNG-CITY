@@ -7,6 +7,8 @@ mod air;
 /// [airport] The airport card.
 mod airport;
 mod bot;
+/// [r14-builders] Builders and the builders' merchant.
+mod builders;
 /// [K34] Shipping containers.
 mod boxes;
 mod building;

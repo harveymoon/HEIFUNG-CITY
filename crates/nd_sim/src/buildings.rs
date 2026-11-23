@@ -140,6 +140,53 @@ pub struct Construction {
     /// with none, with the park's other lots) and opens with it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub follows_park: bool,
+    /// [r14-builders] Who was hired to build it (`world/builders.rs`):
+    /// a building contractor in town, or a firm from out of town. `None`
+    /// until the job is put out to tender (old saves: at the next order).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<SiteContract>,
+    /// [r14-builders] Lorries still to arrive with the delivery on order
+    /// (one per line of the site's bill): the delivery counts when the
+    /// last of them is in. 0 (old saves): the first lorry counts.
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub loads_due: u8,
+}
+
+fn is_zero_u8(v: &u8) -> bool {
+    *v == 0
+}
+
+/// [r14-builders] The builder hired for a site and the price agreed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SiteContract {
+    pub builder: SiteBuilder,
+    /// The whole job's price, paid by whoever is building in four
+    /// instalments, one as each quarter's materials are ordered.
+    pub price: f32,
+    /// Paid so far.
+    #[serde(default)]
+    pub paid: f32,
+    /// When it was let.
+    #[serde(default)]
+    pub since: u64,
+}
+
+/// [r14-builders] A local contractor's yard, or a firm from out of town
+/// (its name, and its vans' colour, `crate::companies::FLEET_COLOURS`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum SiteBuilder {
+    Local(BuildingId),
+    OutOfTown { name: String, livery: u8 },
+}
+
+impl SiteContract {
+    /// The local contractor, if one is building it.
+    pub fn local(&self) -> Option<BuildingId> {
+        match self.builder {
+            SiteBuilder::Local(b) => Some(b),
+            SiteBuilder::OutOfTown { .. } => None,
+        }
+    }
 }
 
 /// [r2-traffic] Why a building site cannot go on (K6): the trucks that
@@ -173,7 +220,7 @@ impl Construction {
     pub const DELIVERIES: u8 = 4;
 
     pub fn new(days: f32) -> Self {
-        Self { progress: 0.0, days: days.clamp(1.0, 12.0), deliveries: 0, ordered: false, blocked: None, retry_at: 0, follows_park: false }
+        Self { progress: 0.0, days: days.clamp(1.0, 12.0), deliveries: 0, ordered: false, blocked: None, retry_at: 0, follows_park: false, contract: None, loads_due: 0 }
     }
 
     /// Build time for a building of this size and quality.
@@ -779,11 +826,12 @@ impl Building {
             self.parking_capacity = 0;
             return;
         }
-        if self.construction.is_some() {
+        if let Some(c) = &self.construction {
             // A building site: nobody lives here yet, and the only work is
-            // for the crew putting it up.
+            // for the crew putting it up. [r14-builders] A contractor in
+            // town brings its own crew (its staff): no jobs on the site.
             self.homes = 0;
-            self.jobs = Construction::crew(self.floors);
+            self.jobs = if c.contract.as_ref().is_some_and(|k| k.local().is_some()) { 0 } else { Construction::crew(self.floors) };
             self.parking_capacity = 0;
             return;
         }

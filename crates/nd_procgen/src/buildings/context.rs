@@ -162,11 +162,17 @@ pub struct Extras<'a> {
     /// [r11-lot-memory] Old signs painted over on the front (a shop that
     /// changed trade or shut): `crate::lot_memory::ghost_signs`.
     pub ghost_signs: &'a [crate::lot_memory::GhostSign],
+    /// [r14-builders] A building site's builder: its vans' colour (linear
+    /// RGB) and whether it is a firm in town (its lorry stands on site too).
+    pub site_builder: Option<([f32; 3], bool)>,
+    /// [r14-builders] The company's fleet colour (linear RGB) for a yard
+    /// whose vans, sign band and lorries wear it (a builder, a merchant).
+    pub fleet_colour: Option<[f32; 3]>,
 }
 
 impl Default for Extras<'_> {
     fn default() -> Self {
-        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, cable: false, battery: None, form: None, tower: None, megablock: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[], boxes_of: None, real_boxes: false, overhead: &[], waste_fill: 0.0, site: None, ghost_signs: &[] }
+        Self { plant_scale: 1.0, parking: None, plant: None, powered: 1.0, park: None, depot: false, rail: None, port: None, construction: None, demolition: None, neighbours: &[], service: None, animated_rotors: false, field: None, animated_cranes: false, dynamic_lights: false, business: None, fleet: 0.5, rooftop_pad: false, look: None, metro: false, cable: false, battery: None, form: None, tower: None, megablock: None, brand: None, annex: None, shore: None, pier: None, park_look: None, units: &[], boxes_of: None, real_boxes: false, overhead: &[], waste_fill: 0.0, site: None, ghost_signs: &[], site_builder: None, fleet_colour: None }
     }
 }
 

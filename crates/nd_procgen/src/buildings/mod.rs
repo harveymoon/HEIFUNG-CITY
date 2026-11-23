@@ -21,6 +21,8 @@ mod megablock;
 mod civic;
 mod commercial;
 mod construction;
+/// [r14-builders] The builder's yard and the builders' merchant.
+mod builders;
 mod dense;
 /// [r4-style] The Hong Kong detail pass (docs/STYLE_REFERENCE.md).
 pub mod hk;
@@ -247,7 +249,7 @@ fn building_site(ctx: &Ctx, style: Style, rng: &mut nd_sim::SimRng, extras: &Ext
         construction::shaped_site(&mut g, ctx, rng, progress, shell);
         return g;
     }
-    construction::construction_site(&mut g, ctx, rng, progress);
+    construction::construction_site_by(&mut g, ctx, rng, progress, extras.site_builder);
     if weathered(ctx.tier, ctx.wear) {
         g.weather();
     }

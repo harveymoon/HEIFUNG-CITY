@@ -65,6 +65,11 @@ impl World {
             if !builders_ok {
                 continue;
             }
+            // [r14-builders] The job goes out to tender when the work
+            // starts (and again if its contractor went bust).
+            if self.needs_tender(bid) {
+                self.tender_site(bid);
+            }
             let (order, waiting, before, after) = {
                 let c = self.buildings[bid].construction.as_mut().unwrap();
                 let before = c.progress;
@@ -147,58 +152,15 @@ impl World {
         self.connectivity.push_alert(tick, crate::world::connectivity::AlertKind::SiteBlocked, pos, Some(bid), 1, text);
     }
 
-    /// A truckload of materials for a building site, by the catalogue's
-    /// bill (`crate::catalogue::SITE_BILL`: parts, from a local fab when one
-    /// has stock, else imported). The developer pays, so the money comes from
-    /// outside the city like export income does.
+    /// The materials for a building site's next quarter: bought by its
+    /// builder line by line of the site's bill ([`World::site_load`], by
+    /// the catalogue's `SITE_BILL`), from the builder's yard, a scrap yard,
+    /// the merchant or a maker in town, else imported (`world/builders.rs`).
     pub(super) fn order_materials(&mut self, bid: BuildingId) {
-        let Some(b) = self.buildings.get(bid) else { return };
-        let Some(lot) = self.lots.get(b.lot) else { return };
-        let at = lot.center;
-        let bill = crate::catalogue::SITE_BILL;
-        let amount = bill.amount(b.floors);
-        let resource = bill.material;
-        if let Some(c) = self.buildings[bid].construction.as_mut() {
-            c.ordered = true;
-        }
-        // [K34] Steel cut from old containers at a scrap yard in town goes
-        // into the frame first.
-        let scrap_yard = bill.scrap.and_then(|(scrap, share)| self.scrap_steel_for(at, amount * share).map(|yard| (yard, scrap, share)));
-        if let Some((yard, scrap, share)) = scrap_yard {
-            let got = self.buildings[yard].business.as_mut().unwrap().take(scrap, amount * share);
-            let cost = got * scrap.base_price();
-            if let Some(z) = self.buildings[yard].business.as_mut() {
-                z.revenue_today += cost;
-                z.deals += 1;
-            }
-            let payer = self.site_payer(bid);
-            self.transfer(payer, Account::Business(yard), cost, Kind::Building);
-            self.economy.market.deals_today += 1;
-            self.ship(yard, bid, scrap, got, cost);
+        if self.buildings.get(bid).and_then(|b| b.construction.as_ref()).is_none() {
             return;
         }
-        let seller = self.best_seller(resource, at, amount, bid);
-        if let Some((seller_id, price)) = seller {
-            let got = self.buildings[seller_id].business.as_mut().unwrap().take(resource, amount);
-            if got > 0.0 {
-                let cost = got * price;
-                let sb = self.buildings[seller_id].business.as_mut().unwrap();
-                sb.revenue_today += cost;
-                sb.deals += 1;
-                // [ledger] Paid by whoever is building: an owner with its
-                // own money, else a developer from out of town.
-                let payer = self.site_payer(bid);
-                self.transfer(payer, Account::Business(seller_id), cost, Kind::Building);
-                self.economy.market.deals_today += 1;
-                self.ship(seller_id, bid, resource, got, cost);
-                return;
-            }
-        }
-        let cost = amount * resource.base_price() * IMPORT_MARKUP;
-        self.economy.materials_today += cost;
-        let payer = self.site_payer(bid);
-        self.transfer(payer, Account::Outside, cost, Kind::Building);
-        self.import(bid, resource, amount, 0.0);
+        self.buy_site_load(bid);
     }
 
     /// Open a finished building: the real homes and jobs appear, the site
@@ -227,6 +189,8 @@ impl World {
         }
         b.built_tick = tick;
         let name = b.name.clone();
+        // [r14-builders] The builder's books, and its crew step out.
+        self.site_finished(bid, &site);
         for cid in crew {
             if self.citizens.get(cid).is_some_and(|c| c.work == Some(bid)) {
                 self.lay_off(cid, Some(format!("Topped out {name}. Crew's laid off; looking for the next site.")));
@@ -371,6 +335,7 @@ impl World {
                 // Loads that turned up for the old building are not parts.
                 c.deliveries = 0;
                 c.ordered = false;
+                c.loads_due = 0;
             }
             let site = b.construction.is_some();
             if site {

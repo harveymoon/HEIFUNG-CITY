@@ -13,6 +13,7 @@ pub mod bots;
 pub mod buildings;
 /// Cargo hubs: freight terminals that consolidate imports and exports.
 pub mod cargo_hub;
+pub mod builders;
 pub mod catalogue;
 /// [airport] Airports: runways, flights to towns off the map, air cargo.
 pub mod airport;
@@ -144,7 +145,7 @@ pub mod weather;
 pub mod world;
 pub mod zoning;
 
-pub use buildings::{Building, BuildingId, Construction, Demolition, DemolitionReason, Occupant, SiteBlock, Tier};
+pub use buildings::{Building, BuildingId, Construction, Demolition, DemolitionReason, Occupant, SiteBlock, SiteBuilder, SiteContract, Tier};
 pub use land_value::LandValue;
 pub use market::{Business, BusinessKind, Hours, MarketStats, Resource};
 pub use citizens::{Activity, Citizen, CitizenId, Household, HouseholdId, LifeStage, Memory, Purpose};

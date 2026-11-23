@@ -188,6 +188,10 @@ fn trade_words(kind: BusinessKind) -> Option<(&'static [&'static str], &'static 
         B::Feedlot => (&["Kessler", "Big Sky", "Meridian"], &["Feedlots", "Livestock", "Agri-Corp"]),
         B::ChemicalWorks => (&["Kessler", "Oberon", "Argent", "Toxic"], &["Chemicals", "Chemworks", "Industrial Solvents", "=Better Living Through Chemistry"]),
         B::CargoHub => (&["Meridian", "Vantage", "Harbour"], &["Cargo Hub", "Freight Terminal"]),
+        // [r14-builders] A builder named after its founder's family; the
+        // merchant after its street or its trade.
+        B::Contractor => (LAST, &["Construction", "Builders", "Contracting", "Building Co.", "Build & Restore", "=Hard Hat Brigade", "=Measure Twice Construction", "=Level Best Builders", "=Square & Plumb Contractors", "=Rebar & Co."]),
+        B::BuildersMerchant => (&["Big Sky", "Iron", "Timber Row", "Eastside", "Union", "Anchor", "Granite", "Keystone"], &["Builders' Merchants", "Building Supplies", "Hardware", "Timber & Hardware", "Trade Depot", "=Nuts & Bolts Depot", "=Measure Twice Hardware", "=The Lumber Barn", "=Brick by Brick Supplies", "=Hammer Time Hardware"]),
         // [r4-leisure-places] Places to eat and go out: made-up names only.
         B::Diner => (&["Starlite", "Route 9", "Chrome", "Mama Chen's", "Uncle Bo's", "Night Owl", "Sunrise", "Rust Belt"], &["Diner", "Grill", "Luncheonette", "=The Greasy Spoon", "=Over Easy", "=Bottomless Cup", "=The Chrome Counter"]),
         B::NoodleBar => (&["Lucky", "Golden", "Red Lantern", "Steam", "Jade", "Mama Chen's", "Midnight"], &["Noodle Bar", "Ramen", "Noodle House", "=Slurp Station", "=Broth & Order", "=Oodles", "=Hand-Pulled Hong's"]),

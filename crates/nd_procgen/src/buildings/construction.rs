@@ -25,7 +25,14 @@ fn sub(c: &Ctx, salt: u64) -> nd_sim::SimRng {
 
 /// Draw the site at `progress` in `0..1`.
 pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: f32) {
-    construction_site_of(g, c, rng, progress, None);
+    construction_site_of(g, c, rng, progress, None, None);
+}
+
+/// [r14-builders] The site with its builder's vehicles by the gate: the
+/// van in the builder's colours (`builder.0`), and for a firm in town
+/// (`builder.1`) its own lorry with a load on the back.
+pub fn construction_site_by(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: f32, builder: Option<([f32; 3], bool)>) {
+    construction_site_of(g, c, rng, progress, None, builder);
 }
 
 /// [K39] A site whose building goes up in its own shape: `shell` is the
@@ -35,14 +42,14 @@ pub fn construction_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress
 /// work goes on, the crane over it; its lawns, paths and trees go in last.
 /// Not a box that turns into domes on the day it is finished.
 pub fn shaped_site(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: f32, shell: Geometry) {
-    construction_site_of(g, c, rng, progress, Some(shell));
+    construction_site_of(g, c, rng, progress, Some(shell), None);
 }
 
 /// Progress past which a shaped site's grounds (lawn, paths, trees) are
 /// laid: the landscaping is the last job.
 const LANDSCAPE_FROM: f32 = 0.93;
 
-fn construction_site_of(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: f32, shell: Option<Geometry>) {
+fn construction_site_of(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress: f32, shell: Option<Geometry>, builder: Option<([f32; 3], bool)>) {
     let f = &c.frame;
     let pal = c.palette;
     let progress = progress.clamp(0.0, 1.0);
@@ -136,6 +143,23 @@ fn construction_site_of(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, progress:
     let loo = front.at(front.len * 0.42, -2.2);
     if clear(loo) {
         f.bx(g, Matte, loo.x, 1.15, loo.y, Vec3::new(1.1, 2.3, 1.1), [0.12, 0.30, 0.55]);
+    }
+    // [r14-builders] The builder's van parked inside the gate in its
+    // colours, and a firm in town's own lorry with a load on the back.
+    if let Some((paint, local)) = builder.filter(|_| progress < 0.99) {
+        let yaw = front.yaw();
+        let along = front.tangent;
+        let fits = |p: Vec2, half: f32| clear(p) && clear(p + along * half) && clear(p - along * half);
+        let spots = [front.at(-front.len * 0.05, -2.8), front.at(front.len * 0.05, -3.2), front.at(-front.len * 0.18, -2.8), front.at(0.0, -6.5)];
+        if let Some(p) = spots.iter().copied().find(|p| fits(*p, 2.8)) {
+            builder_van(g, c, &mut sub(c, 7), p, yaw, paint);
+        }
+        if local {
+            let lorry_spots = [front.at(-front.len * 0.1, -7.6), front.at(front.len * 0.08, -8.0), front.at(0.0, -10.5)];
+            if let Some(p) = lorry_spots.iter().copied().find(|p| fits(*p, 5.2)) {
+                builder_lorry(g, c, &mut sub(c, 8), p, yaw, paint);
+            }
+        }
     }
     // Stacks of materials, fewer as they are built in.
     let stacks = (2.0 + 5.0 * (1.0 - progress)).round() as i32 + c.floors as i32 / 8;
@@ -637,6 +661,51 @@ fn site_cabin(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f32) 
     f.bx_yaw(g, Glow, door.x, 2.5, door.y, Vec3::new(0.3, 0.1, 0.1), c.palette.street_lamp, yaw);
 }
 
+/// [r14-builders] A builder's van in its colours: a white stripe, a roof
+/// rack with a ladder.
+pub(super) fn builder_van(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f32, paint: [f32; 3]) {
+    let f = &c.frame;
+    vehicle(g, f, c.palette, rng, p, 0.0, yaw, Vehicle::Van, paint);
+    let d = Vec2::new(yaw.cos(), yaw.sin());
+    // Roof rack and ladder.
+    f.bx_yaw(g, Metal, p.x, 2.42, p.y, Vec3::new(3.0, 0.06, 1.5), mul(c.palette.steel, 0.8), yaw);
+    let l = p - d * 0.1;
+    f.bx_yaw(g, Metal, l.x, 2.52, l.y, Vec3::new(3.2, 0.08, 0.45), [0.75, 0.75, 0.7], yaw);
+}
+
+/// [r14-builders] A builder's own flatbed lorry in its colours, with a
+/// headboard, pallets of blocks and bricks and a steel bundle on the deck.
+pub(super) fn builder_lorry(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f32, paint: [f32; 3]) {
+    let f = &c.frame;
+    let pal = c.palette;
+    let d = Vec2::new(yaw.cos(), yaw.sin());
+    let n = Vec2::new(-d.y, d.x);
+    for (a, s) in [(2.4f32, 1.0f32), (2.4, -1.0), (-1.4, 1.0), (-1.4, -1.0), (-2.6, 1.0), (-2.6, -1.0)] {
+        let q = p + d * a + n * s;
+        f.bx_yaw(g, Matte, q.x, 0.45, q.y, Vec3::new(0.9, 0.9, 0.32), DARK, yaw);
+    }
+    f.bx_yaw(g, Matte, p.x, 0.95, p.y, Vec3::new(7.0, 0.3, 1.7), CHARCOAL, yaw);
+    let cab = p + d * 2.65;
+    f.bx_yaw(g, Metal, cab.x, 1.95, cab.y, Vec3::new(1.7, 1.9, 2.25), paint, yaw);
+    let ws = p + d * 3.52;
+    f.bx_yaw(g, Glass, ws.x, 2.3, ws.y, Vec3::new(0.04, 0.8, 1.9), [0.1, 0.13, 0.16], yaw);
+    // A white stripe along the cab.
+    f.bx_yaw(g, Matte, cab.x, 1.45, cab.y, Vec3::new(1.72, 0.14, 2.27), [0.92, 0.92, 0.9], yaw);
+    let bed = p - d * 0.95;
+    f.bx_yaw(g, Metal, bed.x, 1.18, bed.y, Vec3::new(4.7, 0.16, 2.3), mul(pal.steel, 0.6), yaw);
+    let hb = p + d * 1.6;
+    f.bx_yaw(g, Metal, hb.x, 1.8, hb.y, Vec3::new(0.12, 1.1, 2.2), mul(paint, 0.85), yaw);
+    // The load.
+    for (k, a) in [-2.6f32, -1.3].into_iter().enumerate() {
+        let q = p + d * a;
+        f.bx_yaw(g, Wood, q.x, 1.33, q.y, Vec3::new(1.15, 0.14, 1.0), pal.wood, yaw);
+        let (s, col) = if k == 0 { (Brick, mul(pick(rng, &pal.brick), 0.95)) } else { (Concrete, mul(pick(rng, &pal.concrete), 0.95)) };
+        f.bx_yaw(g, s, q.x, 1.76, q.y, Vec3::new(1.05, 0.72, 0.9), col, yaw);
+    }
+    let q = p + d * 0.1 + n * 0.3;
+    f.bx_yaw(g, Metal, q.x, 1.42, q.y, Vec3::new(1.6, 0.3, 0.7), mul(pal.steel, 0.9), yaw);
+}
+
 /// A truck with a mixer drum on the back.
 fn mixer_truck(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f32) {
     let f = &c.frame;
@@ -657,7 +726,7 @@ fn mixer_truck(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f32)
 }
 
 /// Pallet of blocks, bundle of steel, stack of pipe or drums.
-fn material_stack(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f32) {
+pub(super) fn material_stack(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f32) {
     let f = &c.frame;
     let pal = c.palette;
     match rng.random_range(0..5) {

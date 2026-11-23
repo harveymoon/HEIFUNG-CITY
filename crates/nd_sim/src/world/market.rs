@@ -159,6 +159,7 @@ impl World {
                     }
                 }
                 self.economy.market.closed_total += 1;
+                self.note_business_closed(kind);
                 self.events.push(SimEvent::BusinessClosed(bid));
                 self.events.push(SimEvent::BuildingChanged(bid));
             }
@@ -718,6 +719,16 @@ impl World {
             for (r, _) in bz.kind.recipe().outputs {
                 self.seller_index.entry(*r).or_default().push((id, lot.center));
             }
+            // [r14-builders] The builders' merchant sells its trade stock
+            // over the counter too: to sites and to anyone restocking.
+            if bz.kind == BusinessKind::BuildersMerchant {
+                for r in crate::catalogue::site_materials() {
+                    let v = self.seller_index.entry(r).or_default();
+                    if !v.iter().any(|(b, _)| *b == id) {
+                        v.push((id, lot.center));
+                    }
+                }
+            }
         }
     }
 
@@ -908,7 +919,23 @@ impl World {
                     }
                 }
                 // [companies] A builder's site lorries wear its colours.
-                if to_site {
+                // [r14-builders] A contractor's or merchant's own lorry
+                // (to a site, or a builder's run to the merchant) wears
+                // that firm's.
+                let own = match origin {
+                    TruckOrigin::Building(o) if self.buildings.get(o).and_then(|b| b.business.as_ref()).is_some_and(|z| matches!(z.kind, BusinessKind::Contractor | BusinessKind::BuildersMerchant)) => Some(o),
+                    _ => None,
+                };
+                if let Some(o) = own {
+                    let base = crate::vehicle::Livery::Construction;
+                    let l = self.fleet_livery(o, base).unwrap_or(base);
+                    let m = &mut self.traffic.cars[id].model;
+                    m.livery = l;
+                    // A builder's own runs go in its own lorry.
+                    if self.buildings.get(o).and_then(|b| b.business.as_ref()).is_some_and(|z| z.kind == BusinessKind::Contractor) {
+                        m.body = crate::vehicle::BodyType::PanelTruck;
+                    }
+                } else if to_site {
                     if let Some(c) = self.builder_colour(cargo.to) {
                         self.traffic.cars[id].model.livery = crate::vehicle::Livery::fleet(crate::vehicle::Livery::Construction, c);
                     }
@@ -990,6 +1017,11 @@ impl World {
         }
         // Materials for a building site go onto the site, not the shelves.
         if let Some(c) = b.construction.as_mut() {
+            // [r14-builders] A delivery of several lorries counts when the
+            // last is in.
+            if !Self::site_load_arrived(c) {
+                return;
+            }
             c.deliveries = c.deliveries.saturating_add(1);
             c.ordered = false;
             // [r2-traffic] A truck got there: the way is open.

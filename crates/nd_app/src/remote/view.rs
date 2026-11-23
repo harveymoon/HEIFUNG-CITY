@@ -502,6 +502,12 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
             "waiting_for_materials": c.waiting_for_materials(), "ordered": c.ordered,
             "blocked": c.blocked.map(|k| k.key()), "blocked_text": c.blocked.map(|k| k.text()),
             "crew": b.workers.len(), "crew_wanted": b.jobs, "planned_homes": homes, "planned_jobs": jobs,
+            // [r14-builders] who was hired to build it
+            "builder": c.contract.as_ref().map(|k| {
+                let (name, yard) = w.site_builder(id).unwrap_or_default();
+                json!({ "name": name, "local": k.local().is_some(), "yard": yard.map(key_str), "price": round(k.price), "paid": round(k.paid), "since_tick": k.since })
+            }),
+            "loads_due": c.loads_due,
         })
     });
     let rail = b.rail.as_ref().map(|l| {
@@ -528,6 +534,13 @@ pub fn building_detail(w: &World, id: BuildingId, b: &Building, style: &str) -> 
             "spend_today": round(z.spend_today), "deals": z.deals, "staffing": round(b.staffing()), "broke_days": z.broke_days,
             "needs": recipe.inputs.iter().map(|(r, _)| json!({ "resource": r.label(), "stock": round(z.stock_of(*r)), "target": round(z.target_input(*r, b.jobs)) })).collect::<Vec<_>>(),
             "sells": recipe.outputs.iter().map(|(r, _)| json!({ "resource": r.label(), "stock": round(z.stock_of(*r)), "price": round(z.sell_price(*r, b.jobs)) })).collect::<Vec<_>>(),
+            // [r14-builders] a contractor's crews, jobs and yard; a merchant's trade stock
+            "builder": (z.kind == nd_sim::BusinessKind::Contractor).then(|| json!({
+                "crews": w.contractor_crews(bz_id), "lorries": nd_sim::builders::lorries(w.contractor_crews(bz_id)),
+                "sites": w.contractor_sites(bz_id).iter().filter_map(|s| w.buildings.get(*s).map(|sb| json!({ "id": key_str(*s), "name": sb.name, "progress": round(sb.construction.as_ref().map_or(1.0, |c| c.progress)) }))).collect::<Vec<_>>(),
+                "yard_stock": nd_sim::catalogue::site_materials().into_iter().map(|r| json!({ "resource": r.label(), "stock": round(z.stock_of(r)) })).collect::<Vec<_>>(),
+            })),
+            "trade": (z.kind == nd_sim::BusinessKind::BuildersMerchant).then(|| nd_sim::catalogue::site_materials().into_iter().map(|r| json!({ "resource": r.label(), "stock": round(z.stock_of(r)), "inbound": round(z.inbound_of(r)), "price": round(z.sell_price(r, b.jobs)) })).collect::<Vec<_>>()),
         })
     });
     let plant = b.plant.map(|k| {
