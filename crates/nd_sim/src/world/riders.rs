@@ -40,6 +40,15 @@ const ZEBRA_PATIENCE: u64 = 5;
 const RED_ROLL_TICKS: u64 = 5;
 /// Salt of a rider's red-light dice, apart from a walker's.
 const RED_SALT: u64 = 0xb1cc;
+/// [r14-photofix] A rider keeps this far behind the bike ahead (a bike's
+/// length and a little), metres.
+pub(super) const FOLLOW_GAP: f32 = 2.5;
+/// [r14-photofix] Riders within this of each other across the line are on
+/// the same line, metres.
+const FOLLOW_LANE: f32 = 0.9;
+/// [r14-photofix] Closer than this ahead, a rider with a higher id is not
+/// waited for (`room_ahead`), metres.
+const NEAR: f32 = 1.5;
 
 /// What a rider found ahead: stop `at` metres along the ride, waiting at
 /// crossing `cr`.
@@ -472,6 +481,58 @@ impl World {
 
     /// One tick of riding for `id` (by bike, `Activity::Traveling`): true
     /// once the path is done.
+    /// [r14-photofix] How far a rider at `pos` riding towards `target` may
+    /// go this tick (at most `budget`) and stay `FOLLOW_GAP` behind the
+    /// rider ahead of them: one within `FOLLOW_LANE` of their line, heading
+    /// the same way. Every bike rides the same shoulder line at the same
+    /// speed, so riders who set off together (a household, a shop trip) or
+    /// met at a red light rode on inside each other: the photographer found
+    /// two and three riders on one exact point (photo report 2026-11-22,
+    /// finding 2). Now they queue at a stop line a bike's length apart and
+    /// leave it one after another.
+    pub(super) fn room_ahead(&self, id: CitizenId, pos: Vec2, target: Vec2, budget: f32, feet: &Feet) -> f32 {
+        let d = pos.distance(target);
+        if d < 1e-3 || feet.bikes.is_empty() {
+            return budget;
+        }
+        let dir = (target - pos) / d;
+        let reach = budget + FOLLOW_GAP;
+        let r = (reach / super::pedestrians::BIKE_CELL).ceil() as i32;
+        let (cx, cy) = super::pedestrians::bike_cell(pos);
+        let mut room = budget;
+        for x in cx - r..=cx + r {
+            for y in cy - r..=cy + r {
+                let Some(ids) = feet.bikes.get(&(x, y)) else { continue };
+                for &o in ids {
+                    if o == id {
+                        continue;
+                    }
+                    let Some(c) = self.citizens.get(o) else { continue };
+                    if c.mode != TravelMode::Bike || !c.activity.is_traveling() {
+                        continue;
+                    }
+                    let rel = c.pos - pos;
+                    let along = rel.dot(dir);
+                    if along > reach || along < -0.01 || rel.perp_dot(dir).abs() > FOLLOW_LANE {
+                        continue;
+                    }
+                    // Two already all but inside each other (met at an
+                    // angle, or on one point): the lower id goes first, so
+                    // two can never hold each other up for good.
+                    if along < NEAR && o > id {
+                        continue;
+                    }
+                    let (hs, hc) = c.heading.sin_cos();
+                    if Vec2::new(hc, hs).dot(dir) < 0.6 {
+                        continue;
+                    }
+                    room = room.min((along - FOLLOW_GAP).max(0.0));
+                }
+            }
+        }
+        room
+    }
+
     pub(super) fn step_rider(&mut self, id: CitizenId, feet: &mut Feet) -> bool {
         crate::prof_scope!("step_rider");
         let speed = self.config.bike_speed;
@@ -519,6 +580,11 @@ impl World {
                     path.extend_from_slice(&rest[1..]);
                 }
             }
+        }
+        // [r14-photofix] The following gap: no closer than `FOLLOW_GAP`
+        // behind the rider ahead on the same line.
+        if *idx < path.len() {
+            budget = budget.min(self.room_ahead(id, pos, path[*idx], budget, feet));
         }
         // Crossings matter only once the walk graph and lanes are matched.
         let rules = !self.peds.cross_grid.is_empty() && self.peds.crossings.len() == self.walk.crossings.len();
@@ -755,6 +821,50 @@ mod tests {
         assert_eq!(passed_on, Some(true), "went over on the green");
         assert_eq!(w.peds.red_lights_run_total, 0, "a cautious rider never runs the red");
         assert!(!matches!(w.citizens[id].activity, Activity::Traveling { .. }), "arrived");
+    }
+
+    /// [r14-photofix] Three riders setting off together on one path (a
+    /// household, a shop trip) rode on inside each other on one exact
+    /// point, and riders meeting at a red light all stopped on its line
+    /// (photo report 2026-11-22, finding 2). Now they queue a bike's length
+    /// apart, leave one after another and keep the gap.
+    #[test]
+    fn cyclists_on_one_path_keep_a_gap_and_queue_at_the_red() {
+        let mut w = town();
+        let (cr, k, ap, centre, out) = arm(&w);
+        let mid_out = out_of(w.walk.crossings[cr as usize].mid, centre, out);
+        until_red(&mut w, k, ap);
+        let ids: Vec<CitizenId> = w.citizens.keys().take(3).collect();
+        let path = shoulder(&w, centre, out, mid_out + CROSSWALK_HALF + 40.0, -80.0);
+        let cautious = seeds(|c, _| c > 0.85, 3);
+        for (n, &id) in ids.iter().enumerate() {
+            rider(&mut w, id, cautious[n], path.clone());
+        }
+        let apart = |w: &World| {
+            let riding: Vec<Vec2> = ids.iter().filter(|&&id| w.citizens[id].activity.is_traveling()).map(|&id| w.citizens[id].pos).collect();
+            let mut least = f32::MAX;
+            for i in 0..riding.len() {
+                for j in i + 1..riding.len() {
+                    least = least.min(riding[i].distance(riding[j]));
+                }
+            }
+            least
+        };
+        let mut queued = false;
+        for t in 0..400 {
+            run(&mut w, 1);
+            if t > 0 {
+                assert!(apart(&w) >= FOLLOW_GAP - 0.05, "tick {t}: two riders {} m apart", apart(&w));
+            }
+            if ids.iter().all(|&id| w.citizens[id].activity.is_traveling() && w.citizens[id].pos.distance(w.citizens[id].prev_pos) < 0.01) {
+                queued = true;
+            }
+            if ids.iter().all(|&id| !w.citizens[id].activity.is_traveling()) {
+                break;
+            }
+        }
+        assert!(queued, "all three stood in a queue at the red");
+        assert!(ids.iter().all(|&id| !w.citizens[id].activity.is_traveling()), "all three got there");
     }
 
     /// [r4-hunger] Coming into a signalised junction along a one-way

@@ -54,6 +54,9 @@ pub(super) struct Feet {
     grid: HashMap<(i32, i32), Vec<CitizenId>>,
     /// [cyclists] Riders stopped at a light or for a walker.
     pub(super) riders_waiting: u32,
+    /// [r14-photofix] Riders by `BIKE_CELL` grid cell of where they were
+    /// at the start of the tick, for the following gap (`step_rider`).
+    pub(super) bikes: HashMap<(i32, i32), Vec<CitizenId>>,
     /// Walkers already waiting at each end of each crossing this tick.
     queue: HashMap<(u32, u32), u32>,
     /// Crossings someone is on, stepping onto, or waiting at (a zebra).
@@ -67,6 +70,14 @@ pub(super) struct Feet {
 
 fn cell(p: Vec2) -> (i32, i32) {
     ((p.x / CELL).floor() as i32, (p.y / CELL).floor() as i32)
+}
+
+/// [r14-photofix] The grid riders are looked up in for the following gap:
+/// a cell is a little more than a tick's ride.
+pub(super) const BIKE_CELL: f32 = 20.0;
+
+pub(super) fn bike_cell(p: Vec2) -> (i32, i32) {
+    ((p.x / BIKE_CELL).floor() as i32, (p.y / BIKE_CELL).floor() as i32)
 }
 
 fn path_key(path: &[Vec2]) -> (usize, u32, u32) {
@@ -102,9 +113,12 @@ impl World {
         self.refresh_crossings();
         self.handle_ped_conflicts();
         let mut grid: HashMap<(i32, i32), Vec<CitizenId>> = HashMap::new();
+        let mut bikes: HashMap<(i32, i32), Vec<CitizenId>> = HashMap::new();
         for (id, c) in self.citizens.iter() {
             if walking(c) {
                 grid.entry(cell(c.pos)).or_default().push(id);
+            } else if c.mode == TravelMode::Bike && matches!(c.activity, Activity::Traveling { .. }) {
+                bikes.entry(bike_cell(c.pos)).or_default().push(id);
             }
         }
         let calls = self.traffic.net.intersections.iter().map(|i| vec![false; i.approaches]).collect();
@@ -118,7 +132,7 @@ impl World {
             self.peds.uses.clear();
             self.peds.uses_key = self.walk.version;
         }
-        Feet { grid, riders_waiting: 0, queue: HashMap::new(), occupied: Vec::new(), calls, waiting: 0, presses: Vec::new() }
+        Feet { grid, riders_waiting: 0, bikes, queue: HashMap::new(), occupied: Vec::new(), calls, waiting: 0, presses: Vec::new() }
     }
 
     /// After the walkers moved: the crossings in use become stop points for
