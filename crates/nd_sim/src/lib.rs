@@ -120,6 +120,8 @@ pub mod tolls;
 pub mod towers;
 /// [taxis] Taxi companies, their cabs and the riders who hail them.
 pub mod taxi;
+/// [r14-foodtrucks] Food trucks and street vendors.
+pub mod food_trucks;
 pub mod society;
 /// [social] Ties between citizens, conversations, crews and clubs.
 pub mod social;

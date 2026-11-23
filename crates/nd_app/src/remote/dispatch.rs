@@ -513,6 +513,14 @@ pub(super) static COMMANDS: &[Cmd] = &[
         ("use", "bare|market|hawkers|workshop|court (set)"),
         ("returns", "bays, by_use, visits/takings totals and yesterday, camps_under_decks, list (id, use, label, pos, len_m, width_m, headroom_m, under, walkway, park, open, since_day, holders, people_here, on_the_way, visits_today/yesterday, takings_today/yesterday, visits_total)"),
     ] },
+    Cmd { name: "food_trucks", aliases: &["trucks", "street_vendors"], effect: Game, run: |cmd, ctx| food_trucks::command(cmd, &mut ctx.sim.world), help: &[
+        ("found", "optional dev lever: a type (ice_cream|taco|noodle|kebab|coffee|hot_dog|fruit) or a count: start that many trucks now (deposit paid by the household best placed)"),
+        ("household", "optional id, with a type in found: the household that runs it"),
+        ("plan", "optional bool: plan the rest of today again from the next hour"),
+        ("enabled", "optional bool (dev): false stops trucks starting up and anyone buying from one (to compare a town without them)"),
+        ("spots", "optional bool, default true: include the crowd spots of the last plan"),
+        ("returns", "[r14-foodtrucks] summary (trucks, by_type, open_now, on_road, at_home, customers_queuing, meals/takings today and yesterday, fed_hungry, open_by_hour[24], meals_by_spot, ice_cream_too_cold, founded/sold totals, the town's hungry); list (id, name, type, label, menu, price, household and its money, base, crew, place home|parked|open|road, doing, pos, pitch {segment, side, slot, legal_kerb}, car, queue, stock, meals/takings/costs today and yesterday, bought_local/wholesale_today, fed_hungry_today, losing_days, plan [{from, to, spot, kind, at, crowd, state}], visits_today/yesterday [{spot, kind, opened, closed, meals, takings}], model); crowd_spots (kind park|beach|stadium|nightlife|offices|event, name, at, crowd, from, to). inspect {food_truck: id} gives one truck"),
+    ] },
     Cmd { name: "social", aliases: &[], effect: Read, run: |cmd, ctx| social::command(cmd, &ctx.sim.world), help: &[
         ("days", "daily history to include (default 7)"),
         ("talks", "latest conversations to list (default 10)"),

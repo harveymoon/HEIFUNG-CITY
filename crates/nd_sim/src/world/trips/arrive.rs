@@ -66,6 +66,10 @@ impl World {
         if purpose == Purpose::Wander && to.is_none() && self.under_arrive(id) {
             return;
         }
+        // [r14-foodtrucks] At a food truck's hatch.
+        if purpose == Purpose::Wander && to.is_none() && self.truck_arrive(id) {
+            return;
+        }
         // A park is not a building to go inside: walk its paths to a free
         // seat on a bench ([benches]), held from now so nobody else takes it.
         // [under-construction] A park that is a site (or coming down) has

@@ -12,6 +12,14 @@ pub(super) fn car(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, i
         return;
     };
     let mut driver_shown = false;
+    // [r14-foodtrucks] A food truck on the road: a click away from its card.
+    if let Some(t) = w.food_truck_of_car(id) {
+        let name = w.food_trucks.trucks.get(t).map(|x| x.name.clone()).unwrap_or_default();
+        if ui.small_button(format!("Food truck: {name}")).on_hover_text("Its menu, owner, today's spots and takings").clicked() {
+            *selection = Selection::FoodTruck(t);
+            return;
+        }
+    }
     if let Some(bus) = &car.bus {
         let line = w.transit.routes.get(bus.route).map(|r| r.name.clone()).unwrap_or_else(|| "a line that was removed".into());
         neon(ui, &format!("Bus on {line}"));

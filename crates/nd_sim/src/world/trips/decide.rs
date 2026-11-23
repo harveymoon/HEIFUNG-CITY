@@ -80,6 +80,12 @@ impl World {
                     continue;
                 }
             }
+            // [r14-foodtrucks] Someone near an open food truck (in the park,
+            // at the game, on a night out, on a lunch break) may get a bite.
+            if !self.food_trucks.trucks.is_empty() && self.truck_bite(id, crate::food_trucks::BITE_REACH, 0.12) {
+                self.citizens[id].next_decision_tick = self.citizens[id].next_decision_tick.max(tick + 20);
+                continue;
+            }
             let decision = {
                 let c = &self.citizens[id];
                 let hh = c.household.and_then(|h| self.households.get(h));
@@ -211,6 +217,8 @@ impl World {
                 None => self.wander(id),
             },
             Intent::Wander => self.wander(id),
+            // [r14-foodtrucks] A meal out: from a truck near by, half the time.
+            Intent::Shop(Resource::BakedGoods) if self.truck_instead_of_shop(id) => {}
             Intent::Shop(r) => {
                 let here = self.citizens[id].pos;
                 if let Some(b) = self.choose_shop(id, r, here) {
@@ -251,6 +259,10 @@ impl World {
         // [r5-layered] A stroll may stop at the stalls, the hawkers or the
         // court under a raised road near by.
         if self.under_stroll(id) {
+            return;
+        }
+        // [r14-foodtrucks] Or at a food truck parked near by.
+        if self.truck_bite(id, crate::food_trucks::STROLL_REACH, 0.25) {
             return;
         }
         // Bike owners who are comfortable take joy rides to a park when there is one.

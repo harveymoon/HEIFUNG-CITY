@@ -265,6 +265,10 @@ mod towers;
 #[cfg(test)]
 mod towers_tests;
 mod taxis;
+/// [r14-foodtrucks] Food trucks at work.
+mod food_trucks;
+#[cfg(test)]
+mod food_trucks_tests;
 #[cfg(test)]
 mod taxi_tests;
 mod trains;
@@ -932,6 +936,11 @@ pub struct World {
     /// Old saves load with none.
     #[serde(default)]
     pub food_need: food_need::FoodNeed,
+    /// [r14-foodtrucks] Food trucks, vans and carts: their plans, pitches,
+    /// queues and books (`crate::food_trucks`, `world/food_trucks.rs`).
+    /// Old saves load with none.
+    #[serde(default)]
+    pub food_trucks: crate::food_trucks::FoodTrucks,
     /// [games] Stadium game days: away fans driving in and parked
     /// (`world/games.rs`). Old saves load with none.
     #[serde(default)]
@@ -1099,6 +1108,7 @@ impl World {
             freight_queue: Vec::new(),
             inbound_unanswered: Vec::new(),
             food_need: Default::default(),
+            food_trucks: Default::default(),
             games: Default::default(),
             airlifts: Vec::new(),
             attractions: Default::default(),

@@ -200,7 +200,7 @@ impl Specialty {
             K::Fab | K::Smelter | K::StripMine | K::TrashCompany | K::ScrapYard => Specialty::Industry,
             K::Office => Specialty::Property,
             // [r4-leisure-places] the kitchens with food, the nights out with hospitality
-            K::Diner | K::NoodleBar | K::PizzaPlace | K::FastFood | K::FoodHall | K::StreetFood | K::BubbleTea => Specialty::Food,
+            K::Diner | K::NoodleBar | K::PizzaPlace | K::FastFood | K::FoodHall | K::StreetFood | K::BubbleTea | K::FoodTruck => Specialty::Food,
             K::FineDining | K::Bar | K::KaraokeBox | K::Cinema | K::Theatre | K::ConcertHall | K::BowlingAlley | K::Arcade | K::Gym | K::ComedyClub => Specialty::Leisure,
         }
     }

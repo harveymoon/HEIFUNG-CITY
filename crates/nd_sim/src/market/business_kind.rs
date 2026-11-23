@@ -165,6 +165,10 @@ pub enum BusinessKind {
     /// yard and charges each firm a fee per load. Opened by pressure where
     /// the town exports. Appended so saved kinds keep their order.
     FreightForwarder,
+    /// [r14-foodtrucks] A food truck, van, cart or stand run by a household
+    /// (`crate::food_trucks`): no building of its own; it drives out to
+    /// where the crowds are. Never grown on a lot. Appended.
+    FoodTruck,
 }
 
 /// What a business turns into what, per filled job per hour.
@@ -175,7 +179,7 @@ pub struct Recipe {
 }
 
 impl BusinessKind {
-    pub const COUNT: usize = 68;
+    pub const COUNT: usize = 69;
     /// Every kind, in `index` order.
     pub const ALL: [BusinessKind; Self::COUNT] = [
         BusinessKind::VertFarm,
@@ -246,6 +250,7 @@ impl BusinessKind {
         BusinessKind::Gym,
         BusinessKind::ComedyClub,
         BusinessKind::FreightForwarder,
+        BusinessKind::FoodTruck,
     ];
 
     pub fn index(self) -> usize {

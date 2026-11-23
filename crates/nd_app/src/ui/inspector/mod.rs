@@ -4,6 +4,8 @@
 
 mod about;
 mod air;
+/// [r14-foodtrucks]
+mod food_truck;
 /// [airport] The airport card.
 mod airport;
 mod bot;
@@ -32,7 +34,7 @@ pub use vehicle::occupants;
 /// The inspector window on a selected building or car, on the right where
 /// the person pane opens too. Closing it deselects.
 pub fn window(ctx: &egui::Context, p: &mut UiCtx, content: egui::Rect) {
-    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_) | Selection::Ship(_) | Selection::Drone(_) | Selection::Rv(_) | Selection::Box(_)) {
+    if !matches!(*p.selection, Selection::Building(_) | Selection::Car(_) | Selection::Parked(_) | Selection::Bot(_) | Selection::Train(_) | Selection::Metro(_) | Selection::Unit(_) | Selection::Ship(_) | Selection::Drone(_) | Selection::Rv(_) | Selection::Box(_) | Selection::FoodTruck(_)) {
         return;
     }
     let mut open = true;
@@ -107,6 +109,8 @@ fn show(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selection, assets: &Ga
         // [feat/pt-ux]
         Selection::Drone(id) => air::drone(ui, &sim.world, selection, id),
         Selection::Rv(seed) => air::rv(ui, sim, selection, seed),
+        // [r14-foodtrucks]
+        Selection::FoodTruck(id) => food_truck::card(ui, &sim.world, selection, id),
         // The window opens on the kinds above only (its guard); citizens
         // get the person pane, tolls and roads their own windows.
         Selection::None | Selection::Citizen(_) | Selection::Toll(_) | Selection::Road(_) => {}

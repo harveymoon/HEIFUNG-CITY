@@ -252,6 +252,7 @@ pub fn selection(w: &World, sel: Selection) -> Value {
         Selection::Ship(id) => json!({ "kind": "ship", "id": key_str(id), "label": crate::ferry_select::ship_title(w, id), "doing": crate::ferry_select::ship_doing(w, id) }),
         Selection::Drone(id) => json!({ "kind": "drone", "id": key_str(id), "label": crate::air_select::title(w, id), "doing": crate::air_select::doing(w, id) }),
         Selection::Rv(seed) => json!({ "kind": "rv", "id": seed, "label": crate::rv_select::title(w, seed) }),
+        Selection::FoodTruck(id) => json!({ "kind": "food_truck", "id": key_str(id), "label": crate::truck_select::title(w, id) }),
         Selection::Box(id) => json!({ "kind": "box", "id": key_str(id), "label": crate::box_select::title(w, id) }),
         Selection::Metro(id) => json!({ "kind": "metro_train", "id": key_str(id), "headcode": crate::train_select::metro_code(id), "line": w.subway.trains.get(id).and_then(|t| w.subway.lines.get(t.line)).map(|l| l.name.clone()) }),
     }

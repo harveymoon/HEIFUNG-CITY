@@ -54,6 +54,8 @@ impl World {
         crate::prof!("step_air", self.step_air());
         crate::prof!("step_airports", self.step_airports());
         crate::prof!("step_taxis", self.step_taxis());
+        // [r14-foodtrucks] Food trucks out to the crowds and home.
+        crate::prof!("step_food_trucks", self.step_food_trucks());
         // [ped-highway] Nobody stands about on a highway or ramp.
         if tick % kerbside::STRANDED_SWEEP_EVERY == 7 {
             crate::prof!("rescue_stranded", self.rescue_stranded());

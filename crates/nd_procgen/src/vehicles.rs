@@ -94,6 +94,7 @@ fn livery_code(l: Livery) -> u64 {
         Livery::Utility => 5,
         Livery::Transit => 6,
         Livery::Taxi => 7,
+        Livery::FoodTruck(k) => 90_000 + k as u64,
     }
 }
 
@@ -145,6 +146,8 @@ pub fn livery_colors(l: Livery, paint: u8, pal: &Palette) -> Option<([f32; 3], [
         Livery::Transit => ([0.82, 0.84, 0.86], [neon[0] * 0.3, neon[1] * 0.3, neon[2] * 0.3], neon),
         // [taxis] Neon yellow, a black checker band, a hot lit roof sign.
         Livery::Taxi => (TAXI_YELLOW, [0.02, 0.02, 0.025], [3.2, 2.6, 0.5]),
+        // [r14-foodtrucks] Each type's paint job.
+        Livery::FoodTruck(k) => food_truck_colors(k),
         // [megacorp] A dark body tinted with the brand, the brand as accent
         // and lit sign.
         Livery::Corp(c, _) => {
@@ -190,6 +193,7 @@ pub fn body_length(b: BodyType) -> f32 {
         BodyType::Helicopter => 11.2,
         BodyType::TowTruck => 6.4,
         BodyType::HeavyTow => 9.8,
+        BodyType::FoodTruck => 6.2,
     }
 }
 
@@ -389,9 +393,12 @@ fn build(m: &VehicleModel, paint: [f32; 3], detail: bool, pal: &Palette) -> Vehi
         BodyType::Helicopter => helicopter(&mut b, col),
         BodyType::TowTruck => tow_truck(&mut b, col, false),
         BodyType::HeavyTow => tow_truck(&mut b, col, true),
+        BodyType::FoodTruck => food_truck(&mut b, col),
     }
     if let Some((_, accent, sign)) = livery {
-        livery_marks(&mut b, accent, sign);
+        if m.body != BodyType::FoodTruck {
+            livery_marks(&mut b, accent, sign);
+        }
     }
     VehicleMesh { body: b.body, lights: b.lights, fx: b.fx }
 }
@@ -1197,6 +1204,184 @@ pub fn rotor_mesh() -> MeshData {
     }
     m.boxed(Vec3::ZERO, Vec3::new(0.5, 0.2, 0.5), 0.0, c4(TRIM));
     m
+}
+
+// ── food trucks ─────────────────────────────────────────────────────────────
+
+/// [r14-foodtrucks] A food truck type's colours: body, accent, lit sign
+/// (`nd_sim::food_trucks::TruckKind as u8`).
+pub fn food_truck_colors(k: u8) -> ([f32; 3], [f32; 3], [f32; 3]) {
+    match k {
+        // Ice cream: pastel pink and cream, baby blue, a pink neon cone.
+        0 => ([0.86, 0.72, 0.76], [0.25, 0.55, 0.85], [2.6, 0.9, 1.7]),
+        // Tacos: red and yellow.
+        1 => ([0.62, 0.06, 0.04], [0.92, 0.66, 0.05], [2.6, 1.6, 0.2]),
+        // Noodles: black with a red band, cyan neon.
+        2 => ([0.04, 0.04, 0.05], [0.72, 0.05, 0.05], [0.3, 2.2, 2.6]),
+        // Kebab: orange with a dark green band.
+        3 => ([0.78, 0.40, 0.05], [0.05, 0.26, 0.10], [2.6, 1.0, 0.2]),
+        // Coffee: brown and cream, a warm lamp.
+        4 => ([0.24, 0.13, 0.06], [0.86, 0.78, 0.62], [2.4, 1.6, 0.8]),
+        // Hot dogs: mustard yellow and ketchup red.
+        5 => ([0.86, 0.70, 0.06], [0.72, 0.05, 0.04], [2.6, 0.5, 0.2]),
+        // Fruit: leaf green and orange.
+        _ => ([0.15, 0.50, 0.12], [0.92, 0.46, 0.05], [0.6, 2.6, 0.4]),
+    }
+}
+
+/// The type of a food truck's livery (taco for any other livery).
+fn food_kind(l: Livery) -> u8 {
+    match l {
+        Livery::FoodTruck(k) => k % 7,
+        _ => 1,
+    }
+}
+
+/// A three-wheeler cart: coffee, hot dogs, fruit.
+pub fn food_cart(k: u8) -> bool {
+    matches!(k % 7, 4..=6)
+}
+
+/// [r14-foodtrucks] A food truck as it drives (hatch shut): a step van
+/// with a tall box, the serving hatch on the kerb side (+Z) under a lit
+/// sign board, the type's roof sign (a giant cone on the ice-cream van);
+/// or a three-wheeler cart with a glass counter and a canopy.
+fn food_truck(b: &mut B, col: [f32; 3]) {
+    let k = food_kind(b.m.livery);
+    let (_, accent, sign) = food_truck_colors(k);
+    if food_cart(k) {
+        // Cab up front, the counter box behind, a canopy over it.
+        let hw = 0.78;
+        b.ext(&[(0.75, 0.38), (1.65, 0.38), (1.7, 0.95), (1.45, 1.75), (0.75, 1.8)], hw - 0.08, col);
+        slope_quad(&mut b.body, (1.68, 1.0), (1.47, 1.7), hw - 0.14, GLASS);
+        b.bx((-0.45, 1.05, 0.0), (2.3, 1.1, hw * 2.0), col);
+        // The glass counter on the kerb side, the menu on the road side.
+        b.body.decal(Vec3::new(-0.45, 1.25, hw + 0.012), Vec3::X, Vec3::Y, 1.9, 0.5, Vec3::Z, c4(GLASS));
+        b.body.decal(Vec3::new(-0.45, 0.72, hw + 0.012), Vec3::X, Vec3::Y, 2.2, 0.16, Vec3::Z, c4(accent));
+        b.body.decal(Vec3::new(-0.45, 1.25, -hw - 0.012), Vec3::X, Vec3::Y, 1.9, 0.5, -Vec3::Z, c4(accent));
+        // Canopy posts and roof.
+        for (x, z) in [(-1.5, hw - 0.05), (0.6, hw - 0.05), (-1.5, -hw + 0.05), (0.6, -hw + 0.05)] {
+            b.bx((x, 1.85, z), (0.05, 0.5, 0.05), TRIM);
+        }
+        b.bx((-0.45, 2.12, 0.0), (2.5, 0.06, hw * 2.0 + 0.1), accent);
+        b.lights.boxed(Vec3::new(-0.45, 2.27, 0.0), Vec3::new(1.4, 0.24, 0.06), 0.0, c4(sign));
+        b.axle(-1.1, hw + 0.02, 0.26, 0.18);
+        b.body.pipe(Vec2::new(1.25, 0.0), Vec2::Y, 0.14, 0.26, 0.26, 8, c4(TYRE));
+        b.lamp(1.71, 0.95, 0.0, 0.3, 0.16, 1.0, HEAD);
+        b.lamps(-1.62, 0.8, hw - 0.12, 0.12, 0.12, -1.0, TAIL);
+        b.wear_marks(-1.5, 0.6, 0.6, 1.4, hw);
+        return;
+    }
+    let len = body_length(BodyType::FoodTruck);
+    let (fx, rx) = (len * 0.5, -len * 0.5);
+    let hw = 1.08;
+    let top = 2.75;
+    // One body: a bonnet, a raked screen, a tall box to the back.
+    b.ext(&[(rx, 0.42), (fx, 0.42), (fx + 0.03, 1.05), (fx - 0.45, 1.3), (fx - 1.05, 2.3), (fx - 1.2, top), (rx, top)], hw, col);
+    slope_quad(&mut b.body, (fx - 0.47, 1.34), (fx - 1.03, 2.24), hw - 0.08, GLASS);
+    b.sides(fx - 1.45, 1.8, hw, 0.6, 0.55, GLASS);
+    // A band of the accent along the bottom, and across the back.
+    b.sides(-0.4, 0.75, hw, len - 1.4, 0.22, accent);
+    b.lamp(rx - 0.005, 1.6, 0.0, hw * 1.9, 0.2, -1.0, accent);
+    // The serving hatch on the kerb side, shut: an accent shutter with a
+    // dark seam; a lit sign board over it on both sides.
+    b.body.decal(Vec3::new(-0.7, 1.62, hw + 0.012), Vec3::X, Vec3::Y, 2.6, 0.95, Vec3::Z, c4(mul(accent, 0.85)));
+    b.body.decal(Vec3::new(-0.7, 1.14, hw + 0.016), Vec3::X, Vec3::Y, 2.7, 0.05, Vec3::Z, c4(TRIM));
+    b.lit_sides(-0.7, 2.38, hw, 2.8, 0.34, sign);
+    // Roof: an air-con unit, and the type's sign.
+    b.bx((-1.9, top + 0.12, 0.0), (0.7, 0.24, 0.8), [0.7, 0.7, 0.72]);
+    match k {
+        // A giant cone and a scoop.
+        0 => {
+            b.body.cylinder(Vec2::new(0.6, 0.0), 0.06, 0.32, top, top + 0.8, 8, c4([0.78, 0.55, 0.25]));
+            b.body.cylinder(Vec2::new(0.6, 0.0), 0.36, 0.2, top + 0.8, top + 1.1, 8, c4([0.95, 0.75, 0.82]));
+            b.lights.boxed(Vec3::new(0.6, top + 1.15, 0.0), Vec3::new(0.12, 0.1, 0.12), 0.0, c4(sign));
+        }
+        // A noodle bowl.
+        2 => {
+            b.body.cylinder(Vec2::new(0.4, 0.0), 0.22, 0.42, top, top + 0.3, 8, c4(accent));
+            b.lights.boxed(Vec3::new(0.4, top + 0.42, 0.0), Vec3::new(0.12, 0.25, 0.04), 0.0, c4(sign));
+        }
+        // A spit: the kebab cone.
+        3 => b.body.cylinder(Vec2::new(0.4, 0.0), 0.12, 0.26, top, top + 0.6, 8, c4([0.5, 0.25, 0.1])),
+        // A lit sign board on the roof.
+        _ => b.lights.boxed(Vec3::new(0.3, top + 0.35, 0.0), Vec3::new(1.4, 0.5, 0.08), 0.0, c4(sign)),
+    }
+    b.axle(fx - 0.95, hw + 0.02, 0.4, 0.26);
+    b.axle(rx + 1.1, hw + 0.02, 0.4, 0.26);
+    b.bx((fx + 0.05, 0.55, 0.0), (0.12, 0.22, hw * 2.0), TRIM);
+    b.lamps(fx + 0.03, 0.95, hw - 0.22, 0.3, 0.16, 1.0, HEAD);
+    b.lamps(rx - 0.01, 0.9, hw - 0.12, 0.14, 0.4, -1.0, TAIL);
+    b.wear_marks(rx + 0.3, fx - 0.6, 0.6, 2.4, hw);
+}
+
+/// [r14-foodtrucks] What a food truck puts out when it trades, in its own
+/// frame (+X forward, +Z the kerb and the pavement): the hatch open (a lit
+/// counter inside, a steel shelf), the awning raised over the pavement,
+/// an A-board menu, and stools (and a high table) on the pavement; a
+/// cart's umbrella. `body` is lit like the vehicle; `lights` (bulbs under
+/// the awning, the lit menu, the warm hatch) take the glow material, so
+/// they show after dark.
+pub fn food_stall(k: u8) -> (MeshData, MeshData) {
+    let k = k % 7;
+    let (col, accent, sign) = food_truck_colors(k);
+    let mut body = MeshData::default();
+    let mut lights = MeshData::default();
+    let steel = [0.62, 0.63, 0.66];
+    let seat = [0.75, 0.12, 0.1];
+    if food_cart(k) {
+        let hw = 0.78;
+        // An umbrella beside the cart, and a stool or two.
+        let (ux, uz) = (0.2, hw + 1.25);
+        body.cylinder(Vec2::new(ux, uz), 0.03, 0.03, 0.0, 2.3, 5, c4(TRIM));
+        body.cylinder(Vec2::new(ux, uz), 1.15, 0.05, 2.0, 2.45, 8, c4(accent));
+        body.cylinder(Vec2::new(ux, uz), 1.17, 1.15, 1.95, 2.0, 8, c4(col));
+        for (x, z) in [(-0.4, hw + 1.6), (0.9, hw + 1.8)] {
+            body.cylinder(Vec2::new(x, z), 0.16, 0.16, 0.0, 0.6, 6, c4(seat));
+        }
+        // The vendor's side flap down as a shelf, a lit string of bulbs.
+        body.boxed(Vec3::new(-0.45, 1.05, hw + 0.2), Vec3::new(1.9, 0.05, 0.38), 0.0, c4(steel));
+        for i in 0..5 {
+            lights.boxed(Vec3::new(-1.5 + i as f32 * 0.5, 2.05, hw + 0.06), Vec3::new(0.07, 0.07, 0.07), 0.0, c4([2.8, 2.0, 0.9]));
+        }
+        lights.decal(Vec3::new(-0.45, 1.25, hw + 0.02), Vec3::X, Vec3::Y, 1.8, 0.45, Vec3::Z, c4([1.6, 1.3, 0.8]));
+    } else {
+        let hw = 1.08;
+        let (x0, x1) = (-2.0, 0.6);
+        let (y0, y1) = (1.15, 2.1);
+        // Inside the open hatch: a lit counter, a steel shelf out over the kerb.
+        lights.decal(Vec3::new((x0 + x1) * 0.5, (y0 + y1) * 0.5, hw + 0.014), Vec3::X, Vec3::Y, x1 - x0, y1 - y0, Vec3::Z, c4([1.5, 1.15, 0.75]));
+        body.boxed(Vec3::new((x0 + x1) * 0.5, y0, hw + 0.2), Vec3::new(x1 - x0 + 0.1, 0.06, 0.42), 0.0, c4(steel));
+        // The awning: the shutter swung up on its struts, out over the
+        // pavement, striped.
+        let a = [Vec3::new(x0 - 0.1, y1 + 0.08, hw), Vec3::new(x1 + 0.1, y1 + 0.08, hw), Vec3::new(x1 + 0.1, y1 + 0.42, hw + 1.25), Vec3::new(x0 - 0.1, y1 + 0.42, hw + 1.25)];
+        body.quad_facing(a, Vec3::new(0.0, 0.95, -0.3), c4(accent));
+        body.quad_facing([a[0] - Vec3::Y * 0.02, a[3] - Vec3::Y * 0.02, a[2] - Vec3::Y * 0.02, a[1] - Vec3::Y * 0.02], Vec3::new(0.0, -0.95, 0.3), c4(mul(accent, 0.6)));
+        for i in 0..4 {
+            let x = x0 + 0.25 + i as f32 * 0.7;
+            body.quad_facing([Vec3::new(x, y1 + 0.095, hw), Vec3::new(x + 0.3, y1 + 0.095, hw), Vec3::new(x + 0.3, y1 + 0.435, hw + 1.25), Vec3::new(x, y1 + 0.435, hw + 1.25)], Vec3::new(0.0, 0.95, -0.3), c4(col));
+        }
+        for x in [x0, x1] {
+            body.tube(Vec3::new(x, y1 - 0.3, hw), Vec3::new(x, y1 + 0.4, hw + 1.2), 0.025, 4, c4(steel));
+        }
+        // Bulbs along the awning's edge.
+        for i in 0..7 {
+            lights.boxed(Vec3::new(x0 + i as f32 * (x1 - x0) / 6.0, y1 + 0.32, hw + 1.22), Vec3::new(0.08, 0.08, 0.08), 0.0, c4([2.8, 2.1, 1.0]));
+        }
+        // A high table and two stools down the pavement behind it.
+        body.cylinder(Vec2::new(-3.1, hw + 1.3), 0.04, 0.04, 0.0, 1.05, 5, c4(TRIM));
+        body.cylinder(Vec2::new(-3.1, hw + 1.3), 0.32, 0.32, 1.05, 1.1, 8, c4(steel));
+        for (x, z) in [(-3.6, hw + 1.75), (-2.6, hw + 1.85)] {
+            body.cylinder(Vec2::new(x, z), 0.17, 0.17, 0.0, 0.7, 6, c4(seat));
+        }
+    }
+    // An A-board menu on the pavement ahead, its face lit.
+    let (mx, mz) = if food_cart(k) { (1.8, 1.4) } else { (3.6, 1.9) };
+    body.boxed(Vec3::new(mx, 0.5, mz), Vec3::new(0.08, 1.0, 0.6), 0.0, c4([0.08, 0.07, 0.07]));
+    for s in [-1.0f32, 1.0] {
+        lights.decal(Vec3::new(mx + s * 0.05, 0.6, mz), Vec3::Z, Vec3::Y, 0.5, 0.6, Vec3::X * s, c4(mul(sign, 0.7)));
+    }
+    (body, lights)
 }
 
 // ── fleet liveries ──────────────────────────────────────────────────────────
