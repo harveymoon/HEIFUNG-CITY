@@ -347,9 +347,9 @@ impl Traffic {
     /// that will pass the entry (not leave by it) arriving less than a
     /// critical gap after it, or not yet past when it gets there.
     /// [r15-freight] (photo 2026-11-20 F12) Rings holding up traffic: per
-    /// ring (`RoadNetwork::rings` index), the vehicles that have stood
-    /// `min_stall` seconds or more in queues whose head is giving way at
-    /// one of its entries, and the longest of their stalls. For the
+    /// ring (`RoadNetwork::rings` index), the vehicles standing in queues
+    /// whose head has given way at one of its entries for `min_stall`
+    /// seconds or more, and that head's stall (the longest). For the
     /// `roundabout_over_capacity` alert and probes.
     pub fn ring_queues(&self, min_stall: f32) -> std::collections::BTreeMap<usize, (usize, f32)> {
         let mut out: std::collections::BTreeMap<usize, (usize, f32)> = std::collections::BTreeMap::new();
@@ -357,20 +357,20 @@ impl Traffic {
             return out;
         }
         for (id, c) in self.cars.iter() {
-            if c.v >= 0.5 || c.stalled < min_stall || c.hold > 0.0 || c.entering {
+            if c.v >= 0.5 || c.hold > 0.0 || c.entering {
                 continue;
             }
             let Some(&head) = self.jam_chain(id).cars.last() else { continue };
-            if self.stop_reason(head) != StopReason::Roundabout {
+            let h = &self.cars[head];
+            if h.stalled < min_stall || self.stop_reason(head) != StopReason::Roundabout {
                 continue;
             }
-            let h = &self.cars[head];
             let Some(&next) = h.route.get(h.idx + 1) else { continue };
             let LaneKind::Connector { node, .. } = self.net.lanes[next as usize].kind else { continue };
             let Some(rn) = self.net.rings.nodes.get(&node) else { continue };
             let e = out.entry(rn.ring).or_default();
             e.0 += 1;
-            e.1 = e.1.max(c.stalled);
+            e.1 = e.1.max(h.stalled);
         }
         out
     }

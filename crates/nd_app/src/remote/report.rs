@@ -1181,9 +1181,9 @@ impl Alert {
 /// In traffic, standing still for minutes, not dwelling at a stop, not at
 /// a red light and not still waiting at the kerb to set off.
 /// [r15-freight] A roundabout is reported over capacity when this many cars
-/// have stood this long (s) in queues held at its entries.
+/// stand in queues whose heads have given way at its entries this long (s).
 const RING_QUEUE_STALL_S: f32 = 120.0;
-const RING_QUEUE_MIN: usize = 8;
+const RING_QUEUE_MIN: usize = 6;
 
 fn is_stuck(c: &nd_sim::Car) -> bool {
     c.stalled > STUCK_STALL_S && c.hold <= 0.0 && !c.entering && c.wait != nd_sim::traffic::Wait::Signal
@@ -1318,7 +1318,7 @@ pub fn alerts(w: &World) -> Vec<Alert> {
     }
     if let Some((k, n, stall)) = worst {
         let r = &w.roads.rings[k];
-        rings_over.message = format!("{} roundabouts hold queues of cars standing {RING_QUEUE_STALL_S:.0}+ s at their entries; worst {n} cars (longest {stall:.0} s) at ({:.0}, {:.0}), radius {:.0} m, {} lane(s)", rings_over.count, r.center.x, r.center.y, r.radius, r.lanes);
+        rings_over.message = format!("{} roundabouts hold queues whose front cars have given way {RING_QUEUE_STALL_S:.0}+ s at their entries; worst {n} cars queued (front car {stall:.0} s) at ({:.0}, {:.0}), radius {:.0} m, {} lane(s)", rings_over.count, r.center.x, r.center.y, r.radius, r.lanes);
     }
     let gridlocks = w.traffic.gridlocks();
     let mut kerb = 0;

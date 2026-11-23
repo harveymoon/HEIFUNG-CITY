@@ -11,9 +11,9 @@
 //! terminal calls its boxes back when it runs low (empties for the town's
 //! exports); after [`cx::STORAGE_DAYS`] the line sends a box home (back to
 //! its terminal to ship out when there is room, else out of town by road).
-//! Over its room with no yard to take the rest, the lines clear the backlog
-//! out of town by road, lorries loaded at the back gate by hired reach
-//! stackers (an older save works its surplus off so over a few days), and
+//! Over its room with no yard to take the rest, [r15-freight] the lines take
+//! their surplus empties back by sea or rail within the hour
+//! (`reposition_surplus`: no depot holds more than its room), and
 //! the boxes no yard could keep make the pressure for one more container
 //! yard: an entrepreneur opens one on an industrial lot, or turns a
 //! shut-down industrial business into one. A depot's room is what its

@@ -294,6 +294,8 @@ fn main() {
     let mut lorry_samples: Vec<[usize; 6]> = Vec::new();
     let mut ring_q: BTreeMap<usize, (usize, f32, BTreeMap<String, usize>)> = BTreeMap::new();
     let mut ring_sum: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
+    let mut alert_samples = 0usize;
+    let mut alert_rings: BTreeMap<usize, usize> = BTreeMap::new();
     for _ in 0..days * 1440 {
         w.tick(&mut minds);
         // Empty runs: a lorry seen first driving back empty, how far from its goal.
@@ -342,6 +344,15 @@ fn main() {
             for (k, _, _, _) in &rings {
                 ring_sum.entry(*k).or_insert((0, 0)).1 += 1;
             }
+            // The roundabout_over_capacity alert's view (6+ cars behind heads 120 s+).
+            let alert: Vec<(usize, usize)> = w.traffic.ring_queues(120.0).into_iter().filter(|x| x.1 .0 >= 6).map(|x| (x.0, x.1 .0)).collect();
+            if !alert.is_empty() {
+                alert_samples += 1;
+                for (k, n) in alert {
+                    let e = alert_rings.entry(k).or_insert(0usize);
+                    *e = (*e).max(n);
+                }
+            }
         }
         if m == 1439 {
             let t = &w.economy.transit;
@@ -365,6 +376,9 @@ fn main() {
                 println!("  ring {k} at ({:.0},{:.0}) r {:.0} lanes {lanes}: worst queue {n} (mean {mean:.1}), longest stall {:.0} s, heads then {:?}", ctr.x, ctr.y, r, s, ring_q[k].2);
             }
             ring_sum.clear();
+            println!("  roundabout_over_capacity alert up in {alert_samples}/144 samples, rings (worst queue) {alert_rings:?}");
+            alert_samples = 0;
+            alert_rings.clear();
             let ns = lorry_samples.len().max(1) as f32;
             let mean = |k: usize| lorry_samples.iter().map(|x| x[k]).sum::<usize>() as f32 / ns;
             let full = lorry_samples.iter().filter(|x| x[4] - x[2] >= w.truck_cap()).count();
