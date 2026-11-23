@@ -73,8 +73,8 @@ pub fn group(s: Style) -> &'static str {
         ShippingPort | FerryTerminal | MarinaSmall | MarinaLarge | FishingPortSmall | FishingPortLarge => "Docks",
         PoliceStation | FireStation | Hospital | School | DispatchCenter | Prison | TrashDepot | University | Landfill | Incinerator | RecyclingPlant | TransferStation => "City services",
         Landmark | Stadium | ArtMuseum | ScienceMuseum | HistoryMuseum | PleasurePier | GrandPark | Zoo | Observatory | Aquarium | BotanicalGarden | ConcertHall | AmusementPark | ConventionCentre | Cathedral | CasinoResort | LedgeHouse | PrairieHall | HillChapel | SkySlab | FanLibrary | CultureHouse => "Attractions",
-        Farmstead | OilField | Refinery | ContainerYard | FishProcessing | TruckLot | Smelter | Feedlot | ChemicalWorks | CowFarm | ChickenFarm | Slaughterhouse | StripMine | FishGutting | FishStickFactory | TrashCompany => "Industry trades",
-        Mechanic | CarDealer | BikeShop | FishMarket | SeafoodRestaurant | GolfRange | ArtStudio | Gallery => "Shops and trades",
+        Farmstead | OilField | Refinery | ContainerYard | FishProcessing | TruckLot | Smelter | Feedlot | ChemicalWorks | CowFarm | ChickenFarm | Slaughterhouse | StripMine | FishGutting | FishStickFactory | TrashCompany | BuildersYard => "Industry trades",
+        Mechanic | CarDealer | BikeShop | FishMarket | SeafoodRestaurant | GolfRange | ArtStudio | Gallery | BuildersMerchant => "Shops and trades",
         Shacks | TrailerPark | Huts | Suburb | McMansion | Mansion | MegaHotel | Museum => "Homes and estates",
         // [megablocks] the corps' arcologies sit with the league towers
         Supertall | MegaBlock => "League towers",

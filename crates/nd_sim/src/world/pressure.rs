@@ -289,6 +289,7 @@ impl World {
         let depots = self.trash_depots().iter().filter(|d| d.3 > 0).count() as f32;
         let fishing = self.working_docks(|k| k.is_fishing());
         let marinas = self.working_docks(|k| k.is_marina());
+        let yday = self.builders.yesterday().copied().unwrap_or_default();
         Signals {
             outside_tows: outside,
             local_tows: (all_tows - outside).max(0.0),
@@ -331,6 +332,12 @@ impl World {
             box_terminals: self.box_depots().iter().filter(|d| matches!(d.1, DepotKind::Port | DepotKind::Rail)).count() as f32,
             // [r11-box-stock] yesterday's boxes no yard could keep
             box_overflow: self.containers.stats.overflow_yday as f32,
+            // [r14-builders] yesterday's jobs and materials, today's sites
+            outside_contracts: yday.let_outside as f32,
+            local_contracts: yday.let_local as f32,
+            sites: self.buildings.values().filter(|b| b.construction.is_some() && b.demolition.is_none()).count() as f32,
+            site_material_units: yday.material_units,
+            merchant_units: yday.merchant_units,
         }
     }
 
@@ -703,6 +710,17 @@ impl World {
                     return None;
                 }
                 Placement { uses: &[Industrial], anchors, reach: crate::containers::STORAGE_REACH, min_area: 1500.0, value: -1.0, needs_street: true, near: "the port, the freight yards and the cargo hubs" }
+            }
+            // [r14-builders] A builder's yard on cheap industrial land
+            // among the sites; a merchant's shed on a big lot where people
+            // live, near the main roads.
+            PressureKind::Contractor => {
+                let sites: Vec<Vec2> = self.buildings.values().filter(|b| b.construction.is_some() && b.demolition.is_none()).filter_map(|b| self.lots.get(b.lot).map(|l| l.center)).collect();
+                Placement { uses: &[Industrial, Commercial], anchors: vec![self.centroid(&sites)], reach: f32::INFINITY, min_area: 450.0, value: -1.0, needs_street: true, near: "the building sites" }
+            }
+            PressureKind::BuildersMerchant => {
+                let homes = self.homes_of(|_| true);
+                Placement { uses: &[Commercial, Industrial], anchors: vec![self.centroid(&homes)], reach: f32::INFINITY, min_area: 900.0, value: -0.5, needs_street: true, near: "the homes" }
             }
             PressureKind::Marina => return None,
         };

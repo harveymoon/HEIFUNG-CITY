@@ -71,6 +71,10 @@ mod enforcement;
 pub mod gifts;
 pub use gifts::{Gift, Holding, GIFT_AMOUNT};
 mod construction;
+/// [r14-builders] Builder companies and the builders' merchant.
+mod builders;
+#[cfg(test)]
+mod builders_tests;
 pub use construction::{SiteStage, SiteStageState};
 /// [w1] Sites going up and coming down, for the player.
 pub mod sites;
@@ -979,6 +983,15 @@ pub struct World {
     /// display only, bounded (`crate::talk`). Old saves load with none.
     #[serde(default)]
     pub talks: crate::talk::TalkLog,
+    /// [r14-builders] The builders' and merchants' books (`crate::builders`,
+    /// `world/builders.rs`). Old saves load with none.
+    #[serde(default)]
+    pub builders: crate::builders::BuildersBook,
+    /// [r14-builders] Each contractor's sites under way, rebuilt on the hour
+    /// and when a job is let (`World::refresh_builder_sites`): where its
+    /// crews go to work. Not saved.
+    #[serde(skip)]
+    builder_sites: BTreeMap<BuildingId, Vec<BuildingId>>,
 }
 
 impl World {
@@ -1112,6 +1125,8 @@ impl World {
             // [K34] A new city keeps records from its first box.
             containers: crate::containers::Containers { live: true, ..Default::default() },
             talks: Default::default(),
+            builders: Default::default(),
+            builder_sites: BTreeMap::new(),
         };
         w.landscape.set(Landscape::new(&w.config.landscape));
         // [sweep-sim] Grids over the whole buildable land (far islands too).

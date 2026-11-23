@@ -181,6 +181,11 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
         ui.label(egui::RichText::new(format!("{} of {} deliveries in  ·  {:.1} days of work in all  ·  site crew {}/{}  ·  will have {} homes and {} jobs", c.deliveries, nd_sim::Construction::DELIVERIES, c.days, b.workers.len(), b.jobs, homes, jobs)).small());
         // [r14-materials] What it is built of, stage by stage, and the pile.
         materials_section(ui, w, id);
+        // [r14-builders] Who is building it.
+        if let Some(yard) = builders::site_builder(ui, w, id) {
+            *selection = Selection::Building(yard);
+            return;
+        }
     }
     if b.plant.is_none() && b.powered < 0.98 && b.construction.is_none() {
         ui.label(egui::RichText::new(format!("UNDERPOWERED: {:.0}% of {:.1} MW, {} dark hours today", b.powered * 100.0, nd_sim::power::demand_mw(b), b.unpowered_hours_today)).color(WARN));
@@ -216,6 +221,17 @@ pub(super) fn building(ui: &mut egui::Ui, sim: &mut Sim, selection: &mut Selecti
         }
         // [economy] why it is here and how it is doing
         crate::ui::pressure::business_story(ui, w, id);
+        // [r14-builders] A builder's jobs and yard; a merchant's counter.
+        match bz.kind {
+            nd_sim::BusinessKind::Contractor => {
+                if let Some(s) = builders::contractor(ui, w, id) {
+                    *selection = Selection::Building(s);
+                    return;
+                }
+            }
+            nd_sim::BusinessKind::BuildersMerchant => builders::merchant(ui, w, id),
+            _ => {}
+        }
         let recipe = bz.kind.recipe();
         if !recipe.inputs.is_empty() || !recipe.outputs.is_empty() {
             egui::CollapsingHeader::new(egui::RichText::new(format!("stock  ·  {} deals so far", bz.deals)).small()).id_salt(("inspector_stock", id)).show(ui, |ui| {

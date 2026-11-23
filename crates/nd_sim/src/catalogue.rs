@@ -1608,6 +1608,40 @@ pub const BUSINESSES: [BusinessRow; BusinessKind::COUNT] = [
         about: Some("A shipping company in town: leases empty containers, sends its lorries round the firms to fill each box with their exports, and ships the full boxes from the port or the freight yard, charging each firm a fee per load."),
         ..BASE
     },
+    // [r14-builders] A builder's yard: no recipe, it lives on its contracts (`world/builders.rs`):
+    // paid by the developer in instalments, it pays its crews and buys each site's materials.
+    BusinessRow {
+        kind: K::Contractor,
+        label: "building contractor",
+        hours: Hours::new(7, 18),
+        max_floors: Some(2),
+        needs_site: true,
+        // [r14-builders] Enough to carry its first crews until the first instalment.
+        start_capital: 3.0,
+        about: Some("A builder: crews, vans and lorries out of a yard. Hired per job to put up the city's buildings; buys each site's materials from the builders' merchant, the makers in town or imports, and fetches them in its own lorries or hires a haulier."),
+        ..BASE
+    },
+    // [r14-builders] The builders' merchant: its trade stock (every good a site bill names,
+    // `site_materials`) is bought and sold outside the recipe (`World::merchants_hourly`); the
+    // recipe is the DIY floor: paint, tools and garden things (goods) for residents.
+    BusinessRow {
+        kind: K::BuildersMerchant,
+        label: "builders' merchant",
+        inputs: &[(R::Plastics, 0.3)],
+        outputs: &[(R::Goods, 0.45)],
+        hours: Hours::new(7, 20),
+        customers_per_job: Some(4),
+        max_floors: Some(2),
+        stock_hours: 36.0,
+        walk_in: Some(R::Goods),
+        needs_site: true,
+        sign: Some(b"HARDWARE"),
+        // [r14-builders] It opens with its racks to fill (thirteen materials):
+        // at 1.0 its first bulk order put it in the red and it never restocked.
+        start_capital: 12.0,
+        about: Some("A builders' merchant and hardware store: timber, bricks, steel and parts by the pallet for the builders and the trades over the trade counter, delivered by its own lorries; paint, tools and garden things for everyone else."),
+        ..BASE
+    },
 ];
 
 // ── where kinds grow ───────────────────────────────────────────────────────
@@ -2058,6 +2092,13 @@ pub fn bill_value(bill: &[BillLine]) -> f32 {
 /// The stand-in cargo a rubble lorry carries (nothing is sold or stocked).
 pub const RUBBLE: Resource = R::Parts;
 
+/// [r14-builders] Every good a building site's bill can name (every
+/// `BuildingMaterial`): what the builders' merchant stocks for the trade and
+/// a builder keeps in its yard.
+pub fn site_materials() -> Vec<Resource> {
+    Resource::ALL.into_iter().filter(|r| good(*r).category == GoodCategory::BuildingMaterial).collect()
+}
+
 // ── lookups ────────────────────────────────────────────────────────────────
 
 /// The row index of a good. Exhaustive on purpose: a new `Resource`
@@ -2171,6 +2212,8 @@ pub const fn business_index(k: BusinessKind) -> usize {
         K::Gym => 65,
         K::ComedyClub => 66,
         K::FreightForwarder => 67,
+        K::Contractor => 68,
+        K::BuildersMerchant => 69,
     }
 }
 
