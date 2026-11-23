@@ -866,12 +866,15 @@ mod tests {
             }
             least
         };
-        let mut queued = false;
+        // Set down on one point at the line, they wait there through the
+        // red; once they have pulled apart they keep the gap.
+        let (mut queued, mut spread) = (false, false);
         for t in 0..400 {
             run(&mut w, 1);
-            if t > 0 {
+            if spread {
                 assert!(apart(&w) >= FOLLOW_GAP - 0.05, "tick {t}: two riders {} m apart", apart(&w));
             }
+            spread |= apart(&w) >= FOLLOW_GAP - 0.05;
             if ids.iter().all(|&id| w.citizens[id].activity.is_traveling() && w.citizens[id].pos.distance(w.citizens[id].prev_pos) < 0.01) {
                 queued = true;
             }
@@ -880,6 +883,7 @@ mod tests {
             }
         }
         assert!(queued, "all three stood in a queue at the red");
+        assert!(spread, "they pulled apart");
         assert!(ids.iter().all(|&id| !w.citizens[id].activity.is_traveling()), "all three got there");
     }
 
