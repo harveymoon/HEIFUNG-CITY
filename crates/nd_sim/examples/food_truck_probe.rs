@@ -6,7 +6,9 @@
 //!
 //! `off` switches the trucks off (to compare the hunger without them);
 //! `sunny` holds the weather warm and dry (24 °C, clear) every hour.
-//! SAVE_TO=path writes the city at the end (for screenshots).
+//! SAVE_TO=path writes the city at the end (for screenshots); with
+//! SAVE_AT_HOUR=h it writes it at h o'clock of the last day instead and stops.
+//! FOUND=ice_cream,taco starts those trucks at once (types by key).
 
 use nd_sim::food_trucks::{SpotKind, TruckPlace};
 use nd_sim::World;
@@ -20,6 +22,14 @@ fn main() {
     let mut w = World::read_save(&src).expect("load");
     let mut minds = nd_minds::RuleBasedMind::default();
     w.food_trucks.disabled = off;
+    if let Ok(list) = std::env::var("FOUND") {
+        for key in list.split(',') {
+            let k = nd_sim::food_trucks::TruckKind::ALL.into_iter().find(|k| k.key() == key).expect("truck type");
+            let id = w.found_food_truck(k, None).expect("found");
+            println!("founded {} ({key})", w.food_trucks.trucks[id].name);
+        }
+    }
+    let save_at: Option<u64> = std::env::var("SAVE_AT_HOUR").ok().and_then(|h| h.parse::<u64>().ok());
     println!(
         "start: day {} {:02}:{:02} pop {} hungry(<0.25) {} trucks {} weather {:.1}C cloud {:.2} {}",
         w.clock.day(),
@@ -41,7 +51,9 @@ fn main() {
             w.tick(&mut minds);
             w.drain_events();
             let m = w.clock.minute_of_day();
-            if sunny && m % 60 == 1 {
+            // Right after the hourly weather step (minute 0), before the
+            // trucks' next look at the sky (minute 1).
+            if sunny && m % 60 == 0 {
                 w.weather.temp_c = 24.0;
                 w.weather.cloud = 0.1;
             }
@@ -80,6 +92,12 @@ fn main() {
             }
             if m == 1439 {
                 break;
+            }
+            if save_at.is_some_and(|h| d + 1 == days && m == h * 60) {
+                let out = std::env::var("SAVE_TO").expect("SAVE_TO with SAVE_AT_HOUR");
+                std::fs::write(&out, w.to_save_ron().expect("save")).expect("write");
+                println!("saved at {:02}:00 to {out}", w.clock.hour());
+                return;
             }
         }
         let s = &w.food_trucks.stats;
