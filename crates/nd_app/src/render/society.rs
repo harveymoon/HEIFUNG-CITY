@@ -141,8 +141,10 @@ pub(super) fn society_items(w: &World) -> Vec<(ChunkKey, u64, Piece)> {
         let Some(lot) = w.lots.get(b.lot) else { continue };
         let along = (lot.front_edge[1] - lot.front_edge[0]).normalize_or_zero();
         let len = lot.front_edge[0].distance(lot.front_edge[1]);
-        // On the pavement, off to one side of the door.
-        let p = lot.entrance() + along * (len * 0.28).min(5.0) + lot.front_dir.normalize_or_zero() * 1.2;
+        // On the pavement, off to one side of the door, the bins against
+        // the lot's front line ([r14-photofix] they stood 0.65 m out, the
+        // bags and litter to 2.4 m: across the footway, `trash_pile`).
+        let p = lot.entrance() + along * (len * 0.28).min(5.0) + lot.front_dir.normalize_or_zero() * 0.95;
         let dumpster = b.homes == 0 || b.business.is_some();
         let seed = w.config.seed ^ (lot.center.x.to_bits() as u64).wrapping_mul(31) ^ lot.center.y.to_bits() as u64;
         let key = piece_key(("pile", [p.x, p.y, along.x, along.y, lot.front_dir.x, lot.front_dir.y].map(f32::to_bits), step, dumpster, seed));

@@ -520,6 +520,45 @@ fn chase_ground(w: &nd_sim::World, p: Vec2) -> f32 {
     if !w.landscape.is_flat() && w.landscape.is_water(p) { g.max(nd_sim::landscape::WATER_LEVEL) } else { g }
 }
 
+/// [r14-photofix] A walk eye at `p` (sim x, z) moved out of any car parked
+/// at the kerb (or on a dealer's forecourt or a park's car park) it stands
+/// in, to the nearer side with a little room. The photographer's walk view
+/// on Pylon Boulevard opened inside a parked car's roof (photo report
+/// 2026-11-22, finding 12).
+pub(crate) fn clear_of_parked_cars(w: &nd_sim::World, p: Vec2) -> Vec2 {
+    const MARGIN: f32 = 0.45;
+    let mut p = p;
+    for _ in 0..3 {
+        let mut moved = false;
+        for car in w.vehicles.cars.values() {
+            let Some(spot) = car.spot().filter(|s| s.kind.on_street() || (s.kind == nd_sim::ParkKind::Dealer && car.dealer.is_some()) || w.in_park_car_park(s)) else { continue };
+            if spot.pos.distance_squared(p) > 16.0 {
+                continue;
+            }
+            let fwd = Vec2::new(spot.heading.cos(), spot.heading.sin());
+            let left = fwd.perp();
+            let d = p - spot.pos;
+            let (along, across) = (d.dot(fwd), d.dot(left));
+            let half_len = nd_procgen::vehicles::body_length(car.model.body) * 0.5 + MARGIN;
+            let half_w = if car.model.body.two_wheeler() { 0.4 } else { 1.0 } + MARGIN;
+            if along.abs() >= half_len || across.abs() >= half_w {
+                continue;
+            }
+            // Out the nearer side (or end).
+            p = if half_w - across.abs() <= half_len - along.abs() {
+                spot.pos + fwd * along + left * half_w.copysign(if across == 0.0 { 1.0 } else { across })
+            } else {
+                spot.pos + fwd * half_len.copysign(if along == 0.0 { 1.0 } else { along }) + left * across
+            };
+            moved = true;
+        }
+        if !moved {
+            break;
+        }
+    }
+    p
+}
+
 /// The walk camera's yaw (forward = (sin, cos) in x, z) for a sim heading.
 fn yaw_of_heading(h: f32) -> f32 {
     h.cos().atan2(h.sin())
@@ -674,6 +713,7 @@ pub(crate) fn control_camera(
                     }
                     None => (target, 0.0),
                 };
+                let p = clear_of_parked_cars(&sim.world, p);
                 walk.pos = Vec3::new(p.x, EYE_HEIGHT, p.y);
                 walk.yaw = yaw;
                 walk.pitch = -0.05;

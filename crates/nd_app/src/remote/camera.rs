@@ -181,6 +181,12 @@ pub(super) fn camera(cmd: &Value, ctx: &mut Ctx) -> Result<Value, String> {
         if let Some(z) = z {
             walk.pos.z = z;
         }
+        // [r14-photofix] Never inside a parked car.
+        if look_at.is_some() || x.is_some() || z.is_some() {
+            let p = crate::camera::clear_of_parked_cars(&ctx.sim.world, Vec2::new(walk.pos.x, walk.pos.z));
+            walk.pos.x = p.x;
+            walk.pos.z = p.y;
+        }
         if let Some(y) = yaw {
             walk.yaw = y;
         }

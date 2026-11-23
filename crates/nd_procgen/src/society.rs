@@ -366,12 +366,15 @@ pub fn trash_pile(p: Vec2, along: Vec2, out: Vec2, level: f32, dumpster: bool, s
             g.part(Tarp).boxed(f.v3(u, -0.5, 1.12), Vec3::new(0.45, 0.25, 0.45), yaw + k as f32, rgba([0.06, 0.06, 0.07]));
         }
     }
-    // Bags on the ground, more the worse it is, spreading towards the kerb.
+    // Bags on the ground, more the worse it is, spreading along the wall.
+    // [r14-photofix] Kept within about 1.6 m of the lot's line, so a clear
+    // walking strip stays along the kerb (photo report 2026-11-22, finding
+    // 12: the heap left half a metre of footway).
     let bags = ((1.0 + level * 6.0) as usize).min(16);
     for k in 0..bags {
         let spread = 1.0 + level.min(2.5) * 0.9;
         let u = rng.random_range(-spread..spread);
-        let v = rng.random_range(-0.6..(0.2 + level.min(2.0) * 0.5));
+        let v = rng.random_range(-0.6..(0.0 + level.min(2.0) * 0.18));
         let tier = (k / 6) as f32;
         let col = if rng.random_bool(0.7) { [0.05, 0.05, 0.06] } else if rng.random_bool(0.5) { [0.1, 0.18, 0.45] } else { [0.55, 0.5, 0.42] };
         g.part(Tarp).boxed(f.v3(u, v, 0.2 + tier * 0.3), Vec3::new(rng.random_range(0.4..0.6), 0.4, rng.random_range(0.35..0.5)), yaw + rng.random_range(0.0..TAU), rgba(col));
@@ -379,7 +382,7 @@ pub fn trash_pile(p: Vec2, along: Vec2, out: Vec2, level: f32, dumpster: bool, s
     // Loose litter: cups, boxes, a split bag.
     for _ in 0..((level * 5.0) as usize).min(10) {
         let u = rng.random_range(-2.2..2.2);
-        let v = rng.random_range(-0.5..1.2);
+        let v = rng.random_range(-0.5..0.6);
         let s = rng.random_range(0.12..0.3);
         let col = pick(&mut rng, &[[0.8, 0.78, 0.7], [0.6, 0.45, 0.3], [0.7, 0.15, 0.12], [0.2, 0.5, 0.7]]);
         g.part(Matte).boxed(f.v3(u, v, s * 0.3), Vec3::new(s, s * 0.6, s * 0.8), rng.random_range(0.0..TAU), rgba(col));
@@ -436,5 +439,12 @@ mod tests {
         let small = bounds(&trash_pile(p, Vec2::X, Vec2::Y, 0.1, false, 3, &pal)).2;
         let big = bounds(&trash_pile(p, Vec2::X, Vec2::Y, 2.0, true, 3, &pal)).2;
         assert!(big > small, "a worse overflow is a bigger heap");
+        // [r14-photofix] Even the worst heap keeps off the walking strip:
+        // no more than 0.85 m towards the kerb from its spot (0.95 m out
+        // from the lot's line).
+        for dumpster in [false, true] {
+            let (_, hi, _) = bounds(&trash_pile(p, Vec2::X, Vec2::Y, 2.5, dumpster, 3, &pal));
+            assert!(hi.z - p.y < 0.85, "the heap reaches {} m towards the kerb", hi.z - p.y);
+        }
     }
 }
