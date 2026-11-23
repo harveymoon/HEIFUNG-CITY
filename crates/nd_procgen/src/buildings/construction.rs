@@ -731,7 +731,10 @@ fn material_pile(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, p: Vec2, yaw: f3
                 pallet(g, along(k as f32 * 1.35), [0.78, 0.76, 0.72], rng.random_range(1..3), rng.random_bool(0.5));
             }
         }
-        R::Aggregate => spoil_heap(g, c, rng, p, rng.random_range(1.4..2.4)),
+        R::Aggregate => {
+            let r = rng.random_range(1.4..2.4);
+            spoil_heap(g, c, rng, p, r);
+        }
         R::Steel => {
             for lv in [-0.4f32, 0.4] {
                 let q = Vec2::new(p.x - lv * s, p.y + lv * co);

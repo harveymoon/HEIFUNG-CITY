@@ -176,3 +176,13 @@ fn site_lorries_wear_the_load() {
     let f: SiteFacts = w.site_facts(id).unwrap();
     assert_eq!(w.build_type(id), Some(crate::catalogue::build_type(&f)));
 }
+
+#[test]
+fn boxes_and_loads_say_what_and_how_much() {
+    let g = crate::containers::Goods { resource: Resource::Aggregate, buyer: BuildingId::default(), amount: 25.0 };
+    assert_eq!(g.describe(), "25 t sand and gravel");
+    let old = crate::containers::Goods { amount: 0.0, ..g };
+    assert_eq!(old.describe(), "sand and gravel", "an older save's box does not know how much");
+    assert_eq!(crate::catalogue::describe_load(&[(Resource::Steel, 8.0), (Resource::Insulation, 3.0)]), "8 t structural steel, 3 pallets insulation");
+    assert_eq!(crate::catalogue::describe_load(&[(Resource::Fuel, 0.0)]), "empty");
+}

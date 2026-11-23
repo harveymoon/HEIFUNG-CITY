@@ -2046,8 +2046,8 @@ pub fn stage_lines(bill: &[BillLine], stage: Stage) -> impl Iterator<Item = &Bil
 /// [r14-materials] "14 t structural steel, 3 pallets insulation": a load
 /// or a pile, what and how much, in each good's unit.
 pub fn describe_load(lines: &[(Resource, f32)]) -> String {
-    let parts: Vec<String> = lines.iter().map(|(r, n)| format!("{:.0} {} {}", n.max(1.0), good(*r).unit.label(), good(*r).label)).collect();
-    if parts.is_empty() { "nothing".to_string() } else { parts.join(", ") }
+    let parts: Vec<String> = lines.iter().filter(|(_, n)| *n > 0.0).map(|(r, n)| format!("{:.0} {} {}", n.max(1.0), good(*r).unit.label(), good(*r).label)).collect();
+    if parts.is_empty() { "empty".to_string() } else { parts.join(", ") }
 }
 
 /// [r14-materials] What a bill is worth at base prices.

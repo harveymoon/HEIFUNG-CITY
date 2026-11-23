@@ -101,6 +101,10 @@ pub(super) fn car_model(car: &nd_sim::Car) -> nd_sim::VehicleModel {
             m.body = BodyType::PanelTruck;
         }
     }
+    // [r14-materials] A flatbed driving back empty shows a bare deck.
+    if m.body == BodyType::Flatbed && car.cargo.is_none_or(|c| c.amount <= 0.0) {
+        m.boxed = 0;
+    }
     if car.bus.is_some() && !m.body.is_bus() {
         m = VehicleModel { body: BodyType::BubbleBus, livery: Livery::Transit, paint: car.color % nd_sim::vehicle::PAINTS, ..Default::default() };
     }

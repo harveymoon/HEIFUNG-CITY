@@ -16,7 +16,7 @@ enums' order, and the building sites' bill of materials:
   fouls the air), the leisure numbers (tab, booking share, family/date spot, loudness, trash, land
   value lift, shopfront sign) and the inspector's line about it.
 - `INDUSTRIAL`, `COMMERCIAL`, `ENTERTAINMENT`, `CIVIC`: the kinds each land use can grow.
-- `SITE_BILL`: what a building site orders (today one load of parts, scrap steel first).
+- `BUILD_MIXES`, `build_type`, `site_bill`: what each kind of building is made of, stage by stage (round 14, see below).
 - `makers(r)` / `users(r)`: who makes and who uses a good, read off the recipes (never written twice).
 
 The old methods (`Resource::label`, `base_price`, `BusinessKind::recipe`, `hours`, `is_food`, ...)
@@ -35,9 +35,10 @@ change. Enum variants, their order and serde are unchanged: saves load as before
 | Good: container (dry/reefer/tank/open-top) | `rail/freight.rs` `BoxKind::for_resource` match | `GOODS[..].ships` |
 | Good: lorry body | `vehicle.rs` `VehicleModel::for_cargo` match | `GOODS[..].truck` |
 | Good: flown in | `airport.rs` `flies` | `GOODS[..].by_air` |
-| Good: category, unit | nowhere | `GOODS[..].category`, `.unit` (new) |
+| Good: category, unit | nowhere | `GOODS[..].category`, `.unit` (r13; remote API since r14) |
+| Good: made in town from another good's stock | nowhere | `GOODS[..].local_from` (r14) |
 | Good: who makes / uses it | implicit in recipes | `catalogue::makers` / `users` (from the recipes); other flows in `GOODS[..].note` |
-| Building site materials (parts, scrap steel first, 4 + 2/floor) | `world/construction.rs` `order_materials` literals | `SITE_BILL` |
+| Building site materials | `world/construction.rs` `order_materials` literals, then `SITE_BILL` (r13) | `BUILD_MIXES` + `site_bill` (r14) |
 | Rubble lorry's stand-in cargo | `world/construction.rs` literal `Resource::Parts` | `RUBBLE` |
 | Business: label (and API key) | `market/business_kind.rs` `label` | `BUSINESSES[..].label` |
 | Business: recipe | `business_kind.rs` `recipe` | `.inputs`, `.outputs` |
@@ -96,10 +97,7 @@ the row.
 
 ### Bills of materials
 
-`SITE_BILL` is one bill for every site. Round 14 makes it a table of bills by building style and
-size (`SiteBill` gains a list of `(Resource, units per floor)` and a stage), chosen by the site's
-style; `World::order_materials` already reads only `SITE_BILL`, so that is the one call to change.
-Builder companies would be a `BusinessKind` row like any other (recipe empty, paid per contract).
+See "Building materials and bills of materials" below (round 14).
 
 ## How to add a kind of business
 
@@ -115,3 +113,115 @@ Builder companies would be a `BusinessKind` row like any other (recipe empty, pa
 - Plastics ship in a dry box instead of a tank container (pellets in bags). Tanks now hold only crude
   and fuel. Plastics loads of two TEU or more can now go as forty-footers (tanks never did).
   Tank boxes already holding plastics in a save keep them until they are emptied.
+
+## Building materials and bills of materials (round 14, r14-materials)
+
+Harvey (2026-11-20): "every building should have different requirements for materials. glass, brick,
+concrete, steel, wood, ect for each size/type of architecture ... Then containers can display what and
+how much of different supplies it contains. keep it medium granularity."
+
+### The materials (13 goods, category `BuildingMaterial`, appended after `Metal`)
+
+| Good | Unit | Price | Box | Site lorry | Made in town by (`local_from`) |
+|---|---|---|---|---|---|
+| cement | t | 6 | bulk box (new) | concrete mixer (new) | imported for now |
+| sand and gravel | t | 4 | open-top | tipper (new) | strip mines (their rock stock) |
+| bricks and blocks | t | 5 | dry | flatbed, brick pallets | imported for now |
+| glass | t | 20 | dry | flatbed, glass on an A-frame | imported for now |
+| structural steel | t | 80 | flat rack (new) | flatbed, I-beams | smelters, scrap yards (scrap first) |
+| rebar | t | 72 | flat rack | flatbed, bar bundles | smelters, scrap yards |
+| timber | t | 8 | flat rack | flatbed, timber packs | imported for now (forestry later) |
+| roofing | pallets | 10 | dry | curtain-sider (new) | imported for now |
+| insulation | pallets | 12 | dry | curtain-sider | refinery / chemical works (plastics) |
+| pipe and plumbing | pallets | 14 | flat rack | flatbed, pipe | refinery / chemical works (plastics) |
+| wiring and electrical | crates | 14 | dry | box van | parts fabs |
+| fixtures and fittings | crates | 12 | dry | panel truck | parts fabs |
+| paint | crates | 14 | dry | box van | refinery / chemical works (plastics) |
+
+`GoodRow::local_from` is how a material is made in town without a recipe of its own: a site buys the
+maker's stock of that good (the smelter's billets, the mine's rock, the refinery's plastics, the fab's
+parts) and it is shipped as the material. `catalogue::makers` counts those makers, so "who makes it"
+still reads off one place. No existing recipe changed. Concrete is cement plus sand and gravel (mixed on
+site, delivered by the mixer); a cement works, brickworks, glassworks and sawmill would be new business
+kinds (left for later, or for whoever adds them: give them the good as a recipe output and drop the
+"imported for now" from the note).
+
+New `BoxKind`s: `FlatRack` (floor, two end walls, a strapped pack; no number stencils) and `Bulk` (a dry
+box with roof hatches). Looks in `nd_procgen/src/buildings/parts/plant.rs` (`BoxLook::of` maps a kind to
+its look; `boxes.rs` and `nd_app/src/render/freight.rs` call it). New `BodyType`s: `Flatbed` (loader
+crane, its deck load drawn from `VehicleModel::boxed` = a `vehicle::Load` code from 150, clear of the
+container chassis codes), `Mixer`, `Tipper`, `Curtainsider` (`nd_procgen/src/vehicles.rs`).
+
+### Bills of materials
+
+- `catalogue::BuildType`: how a building is built (glass tower, concrete tower, concrete block, brick
+  row, timber house, shack, steel shed, heavy plant, infrastructure, landscape, box stack).
+- `catalogue::BUILD_MIXES`: **the one table** of what each build type is made of: per line a good, a
+  stage (foundations, frame, envelope, fit-out) and `base + per_floor * floors` units.
+- `catalogue::build_type(&SiteFacts)`: the build type from the inputs that also choose the procgen style
+  (district look, land use, tier, floors, trade, plant, rail/port/depot/service, box home, megablock).
+  The sim cannot see procgen's styles (procgen depends on the sim, and the sim runs headless), so this is
+  a sim-side reading of the same inputs: Glass Campus / Skyline / Tech Campus at 3+ floors are glass
+  towers, Brick & Steel / Historic / Lantern / Night Market up to 5 floors brick rows, Garden and
+  Suburban houses timber, the Shantytown self-built, industry steel sheds, plants heavy, and so on.
+- `catalogue::site_bill(build, floors, lot_area, tier) -> Vec<BillLine>`: the bill, scaled by the lot
+  (`lot_area / 500`, clamped 0.6..2.5) and the tier (0.85 / 1.0 / 1.2). `BillLine { good, qty, stage }`
+  is a plain list, for the site's own orders and for anyone who buys a bill (builder companies, the
+  hardware store): `World::site_bill(bid)`.
+
+Examples at 500 m², mid tier (`cargo test -p nd_sim print_example_bills -- --nocapture`):
+
+| Build type (floors) | Foundations | Frame | Envelope | Fit-out | Worth (old parts bill) |
+|---|---|---|---|---|---|
+| glass tower (20) | 14 t cement, 2 t rebar, 18 t sand/gravel | 8 t steel, 8 t cement | 14 t glass, 4 pallets insulation | 6 crates wiring, 7 crates fixtures, 4 pallets pipe | 1,533 (1,584) |
+| concrete tower (12) | 10 t cement, 1 t rebar, 13 t sand/gravel | 10 t cement, 2 t rebar, 13 t sand/gravel | 15 t bricks/blocks, 4 t glass | 3 wiring, 5 fixtures, 2 pipe, 2 paint | 813 (1,008) |
+| brick row (3) | 3 t cement, 4 t sand/gravel | 15 t bricks, 4 t timber | 2 pallets roofing, 1 t glass, 1 insulation | 1 pipe, 1 wiring, 1 fixtures, 1 paint | 252 (360) |
+| timber house (2) | 2 t cement, 2 t sand/gravel | 8 t timber | 2 roofing, 1 t glass, 1 insulation | small lines | 182 (288) |
+| self-built shack (1) | 1 t sand/gravel | 2 t timber, 0.4 t scrap steel | 1 roofing | a crate of fittings | 68 (216) |
+| steel shed (1) | 4.5 t cement, 6.5 t sand/gravel, 0.5 t rebar | 2 t steel | 4 roofing, 1 insulation | 1 wiring, 1 pipe | 313 (216) |
+
+(The worths are at base prices; the test `bills_cost_about_what_parts_did` keeps the ordinary types
+within a factor of two of the old parts bill so the economy keeps its scale.)
+
+### Deliveries by stage
+
+A site still has four deliveries, one per quarter (`Construction::stage`), and still orders one stage
+ahead. Each order now carries the whole stage's lines (`World::order_materials`):
+
+1. each line with a local maker (`local_from`) comes from that maker in its own lorry (steel and rebar
+   from a scrap yard first, K34), paid to the maker;
+2. what no local maker can supply is imported, **all of a stage's imports on one lorry** from out of
+   town (booked as its first good, the lead; the other lines ride with it), paid to the outside;
+3. `Construction::due` lists every line on the road with the load it rides in (`SiteLoad::via`);
+   `World::site_received` moves arrived lines to `Construction::delivered` (the stockpile), and the
+   stage counts as supplied (`deliveries += 1`) only when every line of its bill is on site. Its work
+   waits until then (`waiting_for_materials`, unchanged).
+4. A load lost on the way (`site_unsupplied`: no road) drops its lines from `due`; the site then orders
+   only what is missing (`World::site_lines_to_order`).
+5. Older saves: a load the site was not waiting for (a parts lorry from before bills) counts as the
+   stage's delivery when nothing else is due, as loads always did; the new fields default empty.
+
+`Construction::on_site()` is the pile: each stage's deliveries less what its quarter's work has used.
+`World::site_materials(bid)` gives per stage the bill, delivered, on the road, on site and the state (to
+order, on the way, on site, being built, done): the building inspector's MATERIALS section and the remote
+API's `construction.stages` (plus `build_type`, `bill_value`). The site's drawn stacks are its real
+pile (`Extras::site_pile`, `World::site_pile_goods`): brick pallets, cement bags, a sand heap, steel and
+rebar on bearers, timber packs, glass on an A-frame, pipe, roofing and insulation pallets.
+
+### Showing what and how much
+
+- Boxes: `containers::Goods::amount` (serde default) and `Goods::describe()`: the box inspector says
+  "Full of 25 t sand and gravel" under "20 ft open-top box"; box rows say "20ft flat rack · ... · 50 t
+  structural steel". Boxes from older saves have no amount and say just the good.
+- Lorries: the inspector says "Site lorry · flatbed" and lists the whole load
+  (`World::load_manifest`: "8 t structural steel" or "14 t glass, 4 pallets insulation").
+- Remote API: `report economy` resources carry `category`, `unit`, `box`, `truck`, `local_from`.
+
+### For the builder companies (r14-builders) and the hardware store
+
+The bill is `World::site_bill(bid) -> Vec<BillLine { good, qty, stage }>` and the open lines of the next
+stage are `World::site_lines_to_order(bid)`. A builder that buys a stage itself should push its loads to
+`Construction::due` (with `via` = the cargo's resource) and ship them to the site; `deliver` hands them
+to `site_received` and the stage gating works unchanged. A hardware store would stock materials like any
+retailer (`Business::add`) and be found by `best_seller` once a material lists it as a maker (a recipe
+output, or a `local_from`-style rule).
