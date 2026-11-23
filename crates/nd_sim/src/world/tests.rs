@@ -1247,9 +1247,20 @@ fn imports_stranded_at_a_disconnected_yard_go_by_truck_and_sites_never_wait() {
         w.tick(&mut minds);
     }
     assert_eq!(w.rail.orders_for(yard).0, 0, "the stranded order came by road within the hour");
-    let delivered = w.buildings[shop].business.as_ref().unwrap().stock_of(Resource::Parts) > stock0;
-    let on_the_road = w.traffic.cars.values().any(|c| c.cargo.is_some_and(|k| k.to == shop && k.resource == Resource::Parts));
-    assert!(delivered || on_the_road, "the parts are on a truck or on the shelf");
+    // [r14-materials] Its lorry keeps delivery hours: it may wait up to
+    // `HOUR_SPREAD` minutes in the queue before it sets off.
+    let arrived = |w: &World| {
+        let delivered = w.buildings[shop].business.as_ref().unwrap().stock_of(Resource::Parts) > stock0;
+        let on_the_road = w.traffic.cars.values().any(|c| c.cargo.is_some_and(|k| k.to == shop && k.resource == Resource::Parts));
+        delivered || on_the_road
+    };
+    for _ in 0..super::delivery_hours::HOUR_SPREAD {
+        if arrived(&w) {
+            break;
+        }
+        w.tick(&mut minds);
+    }
+    assert!(arrived(&w), "the parts are on a truck or on the shelf");
     // A working yard whose trains stopped coming is drained too.
     let (mut w, _, _, _, yard) = rail_city();
     let shop_lot = lot_near(&w, Vec2::new(815.0, 40.0), LandUse::Commercial);

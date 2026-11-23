@@ -196,9 +196,10 @@ fn worn_out_boxes_are_scrapped_into_steel() {
     // A building site near it takes its steel.
     w.buildings[scrap].business.as_mut().unwrap().add(Resource::Metal, 30.0);
     let site_lot = free_lot(&w, LandUse::Commercial);
+    let before = w.buildings[scrap].business.as_ref().unwrap().stock_of(Resource::Metal);
+    // [r14-materials] Breaking ground orders the foundations (their rebar).
     w.build_on(site_lot);
     let site = w.lots[site_lot].building.unwrap();
-    let before = w.buildings[scrap].business.as_ref().unwrap().stock_of(Resource::Metal);
     w.order_materials(site);
     assert!(w.buildings[scrap].business.as_ref().unwrap().stock_of(Resource::Metal) < before, "the site bought scrap steel");
 }
