@@ -118,7 +118,11 @@ fn inner_heights(land: &crate::landscape::Landscape, roads: &crate::roads::RoadN
             continue;
         }
         let (za, zb) = (z.get(s.a.0 as usize).copied().unwrap_or(0.0), z.get(s.b.0 as usize).copied().unwrap_or(0.0));
-        let g = segment_grade(roads, s);
+        // [r14-cliffs] A street left steeper than its grade between its
+        // ends (`STREET_EARTHWORK_MAX`) follows the land between them as
+        // closely as its end-to-end climb allows; it ran as a straight chord
+        // through every crest and hollow.
+        let g = segment_grade(roads, s).max((zb - za).abs() / len + 0.01);
         let m = (len / step).round().max(2.0) as usize;
         let ds = len / m as f32;
         let mut h: Vec<f32> = (1..m)
@@ -127,8 +131,7 @@ fn inner_heights(land: &crate::landscape::Landscape, roads: &crate::roads::RoadN
                 let p = a.lerp(b, t).clamp(Vec2::splat(-edge), Vec2::splat(edge));
                 let lo = (za - g * sk).max(zb - g * (len - sk));
                 let hi = (za + g * sk).min(zb + g * (len - sk));
-                let line = za + (zb - za) * t;
-                if lo > hi { line } else { land.height(p).max(floor).clamp(lo, hi) }
+                if lo > hi { za + (zb - za) * t } else { land.height(p).max(floor).clamp(lo, hi) }
             })
             .collect();
         // Neighbour to neighbour within the grade, both ways.
@@ -190,12 +193,59 @@ pub fn land_grade_label(kind: RoadKind, lanes_fwd: u8, lanes_bwd: u8) -> &'stati
 /// (`way_grade`) where it is off the land (a deck, a tunnel, an end the
 /// player raised or sank, a roundabout's ring, a motorway).
 pub fn segment_grade(roads: &crate::roads::RoadNetwork, s: &crate::roads::Segment) -> f32 {
-    let structure = s.bridge || s.viaduct || s.tunnel || s.ring || s.is_motorway() || roads.node(s.a).level != 0.0 || roads.node(s.b).level != 0.0;
+    // [r14-cliffs] A ring road (`RoadNetwork::is_ring_road`) climbs the land
+    // as any street; a compact roundabout keeps the structure grade.
+    let structure = s.bridge || s.viaduct || s.tunnel || roads.is_compact_ring(s) || s.is_motorway() || roads.node(s.a).level != 0.0 || roads.node(s.b).level != 0.0;
     if structure {
         way_grade(s.kind)
+    } else if s.ring {
+        // A one-way ring of three lanes is no highway: an avenue's grade.
+        if s.lanes_fwd >= 3 { AVENUE_GRADE } else { LOCAL_STREET_GRADE }
     } else {
         land_grade(s.kind, s.lanes_fwd, s.lanes_bwd)
     }
+}
+
+/// [r14-cliffs] Deepest a town street or path laid on the land is cut into
+/// it, or stands on a fill above it, at a node, m. The heights used to be
+/// eased with no limit: wherever a street ran up ground steeper than its
+/// grade, its high end was lowered to its low end's height plus the grade,
+/// and that carried on from node to node up the hill, so a whole district
+/// on a hillside (Neon Market, Harvey's day-81 city) was dug 50-63 m into
+/// it from the junction at its foot. Past this a street climbs steeper
+/// than its grade instead (cars slow on the climb, `traffic::climb_factor`;
+/// the Road tool warns and offers a switchback when it is laid), and the
+/// street, its lots and the ground beside it stay with the land.
+pub const STREET_EARTHWORK_MAX: f32 = 6.0;
+
+/// [r14-cliffs] The band a node's height is eased within: `land` ±
+/// `STREET_EARTHWORK_MAX` when every live way at it is a town street or a
+/// path on the land (a roundabout's ring too; no deck, tunnel, ramp,
+/// motorway or railway, and
+/// no end the player raised or sank), else unbounded: structures keep
+/// their grades and are held by walls or piers where they leave the land.
+pub(in crate::world) fn node_earthwork_band(roads: &crate::roads::RoadNetwork, node: usize, land: f32) -> (f32, f32) {
+    let free = (f32::NEG_INFINITY, f32::INFINITY);
+    let Some(nd) = roads.nodes.get(node) else { return free };
+    if nd.level != 0.0 {
+        return free;
+    }
+    let mut any = false;
+    for &sid in &nd.segments {
+        let s = roads.segment(sid);
+        if !s.alive {
+            continue;
+        }
+        any = true;
+        let structure = s.bridge || s.viaduct || s.tunnel || s.ramp || s.is_motorway() || s.is_rail() || roads.node(s.a).level != 0.0 || roads.node(s.b).level != 0.0;
+        if structure || (!s.ring && crate::roads::is_highway_spec(s.kind, s.lanes_fwd, s.lanes_bwd)) {
+            return free;
+        }
+    }
+    if !any {
+        return free;
+    }
+    (land - STREET_EARTHWORK_MAX, land + STREET_EARTHWORK_MAX)
 }
 
 /// Ease node heights `z` to the grades of `segs` (a, b, length, grade):
@@ -206,8 +256,13 @@ pub fn segment_grade(roads: &crate::roads::RoadNetwork, s: &crate::roads::Segmen
 /// into them rather than carrying the basin up on an embankment as high as
 /// the hills; last the low end of anything still too steep is raised (fill
 /// and embankment, the approaches to a deck). Fixed nodes never move.
-fn ease_heights(z: &mut [f32], fixed: &[bool], least: &[f32], segs: &[(usize, usize, f32, f32)]) {
+/// [r14-cliffs] No node leaves its `band` (`node_earthwork_band`): a town street
+/// is lowered at most `STREET_EARTHWORK_MAX` into the land and raised at
+/// most as far above it; past that the way stays steeper than its grade.
+fn ease_heights(z: &mut [f32], fixed: &[bool], least: &[f32], segs: &[(usize, usize, f32, f32)], band: &[(f32, f32)]) {
     let n = z.len();
+    let lo = |k: usize| least[k].max(band.get(k).map_or(f32::NEG_INFINITY, |b| b.0));
+    let hi = |k: usize| band.get(k).map_or(f32::INFINITY, |b| b.1);
     if fixed.iter().any(|f| *f) {
         let mut cap: Vec<f32> = (0..n).map(|k| if fixed[k] { z[k] } else { f32::INFINITY }).collect();
         for _ in 0..200 {
@@ -229,7 +284,7 @@ fn ease_heights(z: &mut [f32], fixed: &[bool], least: &[f32], segs: &[(usize, us
         }
         for k in 0..n {
             if !fixed[k] {
-                z[k] = z[k].min(cap[k]);
+                z[k] = z[k].min(cap[k].max(lo(k)));
             }
         }
     }
@@ -237,11 +292,11 @@ fn ease_heights(z: &mut [f32], fixed: &[bool], least: &[f32], segs: &[(usize, us
         let mut changed = false;
         for &(a, b, len, grade) in segs {
             let max = len * grade;
-            if z[a] > z[b] + max + 1e-3 && !fixed[a] && z[a] > least[a] + 1e-3 {
-                z[a] = (z[b] + max).max(least[a]);
+            if z[a] > z[b] + max + 1e-3 && !fixed[a] && z[a] > lo(a) + 1e-3 {
+                z[a] = (z[b] + max).max(lo(a));
                 changed = true;
-            } else if z[b] > z[a] + max + 1e-3 && !fixed[b] && z[b] > least[b] + 1e-3 {
-                z[b] = (z[a] + max).max(least[b]);
+            } else if z[b] > z[a] + max + 1e-3 && !fixed[b] && z[b] > lo(b) + 1e-3 {
+                z[b] = (z[a] + max).max(lo(b));
                 changed = true;
             }
         }
@@ -253,11 +308,11 @@ fn ease_heights(z: &mut [f32], fixed: &[bool], least: &[f32], segs: &[(usize, us
         let mut changed = false;
         for &(a, b, len, grade) in segs {
             let max = len * grade;
-            if z[a] > z[b] + max + 1e-3 && !fixed[b] {
-                z[b] = z[a] - max;
+            if z[a] > z[b] + max + 1e-3 && !fixed[b] && z[b] < hi(b) - 1e-3 {
+                z[b] = (z[a] - max).min(hi(b));
                 changed = true;
-            } else if z[b] > z[a] + max + 1e-3 && !fixed[a] {
-                z[a] = z[b] - max;
+            } else if z[b] > z[a] + max + 1e-3 && !fixed[a] && z[a] < hi(a) - 1e-3 {
+                z[a] = (z[b] - max).min(hi(a));
                 changed = true;
             }
         }
@@ -266,4 +321,3 @@ fn ease_heights(z: &mut [f32], fixed: &[bool], least: &[f32], segs: &[(usize, us
         }
     }
 }
-
