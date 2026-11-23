@@ -245,6 +245,8 @@ impl World {
             self.social_concern = self.concern_of_the_week();
         }
         self.subway_after_load();
+        // [r14-photofix] Hunger demand from the first tick after a load.
+        self.food_need_after_load();
         // [cable] Riders aboard a cabin (not saved) set down at a station.
         self.cable_after_load();
         // [ferry-islands] The crossings (not saved), and riders whose boat

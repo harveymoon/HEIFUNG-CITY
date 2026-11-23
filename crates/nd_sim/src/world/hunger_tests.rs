@@ -165,6 +165,31 @@ fn the_hungry_are_counted_where_they_live() {
     assert!(w.food_need.cells.is_empty(), "faded away: {:?}", w.food_need.cells);
 }
 
+/// [r14-photofix] A save with no hunger reading (from before r12-hunger,
+/// or saved before its first midnight) counts the hungry on load: the
+/// demand is there from the first tick, not only after the next midnight.
+#[test]
+fn a_save_with_no_hunger_reading_counts_the_hungry_on_load() {
+    let (mut w, _, _) = grocer_street();
+    for c in w.citizens.values_mut() {
+        c.satiety = 0.9;
+        c.hungry_days = 0;
+    }
+    let hungry = w.citizens.keys().next().unwrap();
+    w.citizens[hungry].satiety = 0.1;
+    w.food_need = FoodNeed::default();
+    let back = World::from_ron(&w.to_ron().unwrap()).unwrap();
+    assert_eq!(back.food_need.hungry, 1, "counted on load");
+    let home = back.citizens[hungry].home.expect("housed");
+    assert!(back.food_need.hungry_near(back.lots[back.buildings[home].lot].center) >= 1.0, "in full, at home");
+    // A save with a reading keeps it as saved.
+    let mut kept = w.clone();
+    kept.food_need.hungry = 7;
+    kept.food_need.share = 0.5;
+    let back = World::from_ron(&kept.to_ron().unwrap()).unwrap();
+    assert_eq!(back.food_need.hungry, 7);
+}
+
 /// Hunger where people live makes a new commercial building there a
 /// grocer or a place cooking meals, and draws builders to the lot; with
 /// nobody hungry it does neither. A hungry town wants a grocer even when

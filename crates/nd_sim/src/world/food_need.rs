@@ -136,6 +136,29 @@ impl World {
     /// Midnight: count the hungry by where they live (home, else where
     /// they are) into the reading.
     pub(super) fn daily_food_need(&mut self) {
+        let (today, hungry, people) = self.count_hungry();
+        self.food_need.blend(&today, hungry, people);
+    }
+
+    /// [r14-photofix] After a load: a save with no reading (one from
+    /// before r12-hunger, or saved before its first midnight) counts the
+    /// hungry now, in full, instead of reading no hunger until the next
+    /// midnight. The photographer loaded Harvey's day-81 save with 6,800
+    /// hungry and read `hungry_counted_at_midnight: 0` and no demand for a
+    /// whole game day (photo report 2026-11-22, finding 4).
+    pub(super) fn food_need_after_load(&mut self) {
+        if !self.food_need.cells.is_empty() || self.food_need.hungry > 0 {
+            return;
+        }
+        let (today, hungry, people) = self.count_hungry();
+        self.food_need.cells = today.into_iter().filter(|(_, n)| *n >= 0.5).map(|((x, y), n)| (x, y, n)).collect();
+        self.food_need.hungry = hungry;
+        self.food_need.share = if people > 0 { hungry as f32 / people as f32 } else { 0.0 };
+    }
+
+    /// The hungry by the cell they live in (home, else where they are),
+    /// how many, and the head count.
+    fn count_hungry(&self) -> (BTreeMap<(i32, i32), f32>, u32, u32) {
         let mut today: BTreeMap<(i32, i32), f32> = BTreeMap::new();
         let mut hungry = 0u32;
         for c in self.citizens.values() {
@@ -146,8 +169,7 @@ impl World {
             let at = c.home.and_then(|h| self.buildings.get(h)).and_then(|b| self.lots.get(b.lot)).map_or(c.pos, |l| l.center);
             *today.entry(FoodNeed::cell_of(at)).or_default() += 1.0;
         }
-        let people = self.citizens.len() as u32;
-        self.food_need.blend(&today, hungry, people);
+        (today, hungry, self.citizens.len() as u32)
     }
 
     /// [r12-hunger] How strongly hunger round lot `lot` asks for food.
