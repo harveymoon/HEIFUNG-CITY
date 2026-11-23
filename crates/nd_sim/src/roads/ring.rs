@@ -10,6 +10,26 @@ impl RoadNetwork {
         kind == RoadKind::Street && lanes_bwd == 0 && lanes_fwd > 0 && points.len() >= 3 && self.rings.iter().any(|r| r.lanes == lanes_fwd && points.iter().all(|&p| r.on_circle(p)))
     }
 
+    /// [r14-cliffs] Is ring piece `s` part of a ring road (a ring of
+    /// `RING_ROAD_RADIUS` or more), not a compact roundabout? A compact
+    /// roundabout keeps the gentle grade of a structure; a ring road laid on
+    /// the land climbs it like any street of its lanes. Harvey's 240 m ring
+    /// round the Neon Market hill (land 5-93 m round it) was held to 7% from
+    /// its lowest point, so it and every lot and street off it were dug up
+    /// to 64 m into the hill.
+    pub fn is_ring_road(&self, s: &Segment) -> bool {
+        if !s.ring {
+            return false;
+        }
+        let (a, b) = (self.node(s.a).pos, self.node(s.b).pos);
+        self.rings.iter().any(|r| r.radius >= RING_ROAD_RADIUS && r.lanes == s.lanes_fwd && r.on_circle(a) && r.on_circle(b))
+    }
+
+    /// [r14-cliffs] A piece of a compact roundabout (`is_ring_road` not).
+    pub fn is_compact_ring(&self, s: &Segment) -> bool {
+        s.ring && !self.is_ring_road(s)
+    }
+
     /// The roundabout whose ring this segment is a piece of: a one-way
     /// street with both ends on the circle.
     pub fn ring_of_segment(&self, sid: SegmentId) -> Option<usize> {
@@ -38,6 +58,10 @@ impl RoadNetwork {
 pub const RING_MIN_RADIUS: f32 = 12.0;
 
 pub const RING_MAX_RADIUS: f32 = 120.0;
+
+/// [r14-cliffs] A ring this wide or wider (80 m across) is a ring road on
+/// the land, not a compact roundabout (`RoadNetwork::is_ring_road`).
+pub const RING_ROAD_RADIUS: f32 = 40.0;
 
 /// Most lanes a roundabout's ring may have.
 pub const RING_MAX_LANES: u8 = 3;
