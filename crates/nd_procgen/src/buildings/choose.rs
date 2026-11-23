@@ -85,10 +85,15 @@ pub fn choose_style(lot: &Lot, land_use: LandUse, floors: u8, tier: Tier, seed: 
         (None, None) if !extras.rooftop_pad && extras.look.is_some_and(|l| district::look_styles(l, land_use, tier).is_some()) && !(land_use == LandUse::Industrial && extras.business.is_some_and(|k| industry_styles(k, tier).is_some())) => {
             let menu = district::look_styles(extras.look.unwrap(), land_use, tier).unwrap();
             // [r13-leftovers] Boathouses only where the lot meets the water
-            // (r4-harbour LEFT: they went up inland too).
+            // (r4-harbour LEFT: they went up inland too). [r14-photofix]
+            // Lighthouse corner blocks too (photo report 2026-11-20 F5: 38
+            // in Signal Wharf, 2 on the water). The style is chosen each
+            // time the building is drawn, so this holds for the buildings
+            // of an old save as well.
+            let wet_only = |s: Style| matches!(s, Style::Boathouses | Style::LighthouseCorner);
             let dry: Vec<(Style, f32)>;
-            let menu = if !lot.shore.is_waterfront() && menu.iter().any(|(s, _)| *s == Style::Boathouses) && menu.iter().any(|(s, _)| *s != Style::Boathouses) {
-                dry = menu.iter().copied().filter(|(s, _)| *s != Style::Boathouses).collect();
+            let menu = if !lot.shore.is_waterfront() && menu.iter().any(|(s, _)| wet_only(*s)) && menu.iter().any(|(s, _)| !wet_only(*s)) {
+                dry = menu.iter().copied().filter(|(s, _)| !wet_only(*s)).collect();
                 &dry[..]
             } else {
                 menu

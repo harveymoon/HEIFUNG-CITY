@@ -33,6 +33,10 @@ pub struct ShoreLook {
     pub seaward: Vec2,
     /// How far the water's surface lies below the lot's pad, metres.
     pub drop: f32,
+    /// [r14-photofix] Metres from the lot's edge out over the bank to open
+    /// water along `seaward` (0: at the edge, or unknown), so a jetty
+    /// reaches it.
+    pub bank: f32,
     /// A public beach's crowd and state.
     pub beach: Option<BeachLook>,
 }
@@ -1008,7 +1012,37 @@ pub fn shore_look(world: &nd_sim::World, id: nd_sim::BuildingId) -> Option<Shore
             night: !(7..20).contains(&world.clock.hour()),
         }
     });
-    Some(ShoreLook { seaward: lot.shore.seaward, drop, beach })
+    Some(ShoreLook { seaward: lot.shore.seaward, drop, bank: bank_width(world, lot), beach })
+}
+
+/// [r14-photofix] Most bank a jetty is run out over to reach the water.
+pub const MAX_BANK: f32 = 30.0;
+
+/// [r14-photofix] How far open water lies beyond `lot`'s edge along its
+/// seaward way, metres: past the lot's outline, over the bank (inside the
+/// water's outline but above the water, drawn as mud) to where the ground
+/// is under the water. `MAX_BANK + 1` when it is farther than that. Tide
+/// Towers' jetty stopped on the mud short of the water (photo report
+/// 2026-11-22, finding 3).
+pub fn bank_width(world: &nd_sim::World, lot: &nd_sim::zoning::Lot) -> f32 {
+    let sea = lot.shore.seaward;
+    if sea == Vec2::ZERO {
+        return 0.0;
+    }
+    let land = &world.landscape;
+    let mut d = 0.0;
+    while d < 300.0 && nd_sim::geom::point_in_polygon(lot.center + sea * d, &lot.polygon) {
+        d += 0.5;
+    }
+    let edge = d;
+    while d - edge <= MAX_BANK {
+        let p = lot.center + sea * d;
+        if land.water_distance(p) < 0.0 && world.ground_height(p) < nd_sim::landscape::WATER_LEVEL - 0.1 {
+            return d - edge;
+        }
+        d += 0.5;
+    }
+    MAX_BANK + 1.0
 }
 
 /// Is there `d` metres of the lot outside a face along all of it (its

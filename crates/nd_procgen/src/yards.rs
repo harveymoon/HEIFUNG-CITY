@@ -51,6 +51,9 @@ const GROUND_Y: f32 = 0.22;
 /// A part reaching below this stands on the ground; one wholly above it
 /// is overhead (a roof, an upper floor, a canopy, a tree's crown).
 const LOW_Y: f32 = 2.2;
+/// [r14-photofix] Farthest a garden or yard thing stands from the house:
+/// metres beyond its front or back wall, and beside its side walls.
+pub const YARD_REACH: f32 = 9.0;
 /// How far round a standing part the ground is not free, metres.
 const STANDOFF: f32 = 0.3;
 /// Windows above this are too high to bother with.
@@ -319,6 +322,13 @@ pub fn spots(g: &Geometry, lot: &Lot, block: bool, seed: u64) -> Spots {
         // the front, the back half the yard.
         _ => (nv / 2, nv / 2, nu / 2),
     };
+    // [r14-photofix] The house's side walls (`cols` is sorted by `pct`):
+    // garden things stay within `YARD_REACH` of the house across the lot
+    // too. On a big waterfront lot the roomiest open cells lay out in the
+    // middle of the pad: Tide Towers' grill stood alone 30 m from the house
+    // (photo report 2026-11-22, finding 3).
+    let reach = (YARD_REACH / CELL).ceil() as usize;
+    let (col_lo, col_hi) = (cols.first().copied().unwrap_or(0).saturating_sub(reach), cols.last().copied().unwrap_or(nu).saturating_add(reach));
     let spot_at = |i: usize, j: usize, yaw: f32, r: f32| Spot { at: { let p = grid.world(i as f32 + 0.5, j as f32 + 0.5); Vec3::new(p.x, 0.0, p.y) }, yaw, room: r, pavement: false };
     // The step: open cells just in front of the house with its wall right
     // behind them, nearest the door first.
@@ -364,7 +374,7 @@ pub fn spots(g: &Geometry, lot: &Lot, block: bool, seed: u64) -> Spots {
     let pick = |from: usize, to: usize, min_room: f32, gap: f32, cap: usize, yaw: f32, salt: u64| -> Vec<Spot> {
         let mut cand: Vec<(u32, usize, usize)> = Vec::new();
         for j in from..to.min(nv) {
-            for i in 0..nu {
+            for i in col_lo..nu.min(col_hi + 1) {
                 let k = grid.idx(i, j);
                 if grid.open(k) && room[k] >= min_room {
                     // Roomiest first, then the hash: a long spot holds a line.
@@ -384,8 +394,8 @@ pub fn spots(g: &Geometry, lot: &Lot, block: bool, seed: u64) -> Spots {
         }
         got
     };
-    out.front = pick(0, front_row.saturating_sub(1), 0.6, 1.4, 8, facing, 0xf207);
-    out.yard = pick(back_row + 2, nv, 0.7, 1.8, 8, facing + PI, 0xba4d);
+    out.front = pick(front_row.saturating_sub(1 + reach), front_row.saturating_sub(1), 0.6, 1.4, 8, facing, 0xf207);
+    out.yard = pick(back_row + 2, back_row + 2 + reach, 0.7, 1.8, 8, facing + PI, 0xba4d);
     out
 }
 

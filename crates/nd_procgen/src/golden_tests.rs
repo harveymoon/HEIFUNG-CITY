@@ -244,7 +244,7 @@ fn buildings(out: &Out) {
         // The shore's looks with their water, and a beach's crowd.
         for (li, (name, lot)) in lots.iter().enumerate().filter(|(li, _)| [0usize, 3, 6].contains(li)) {
             let beach = shore::BeachLook::default();
-            let look = shore::ShoreLook { seaward: -lot.front_dir.perp(), drop: 1.8, beach: Some(beach) };
+            let look = shore::ShoreLook { seaward: -lot.front_dir.perp(), drop: 1.8, bank: 0.0, beach: Some(beach) };
             let extras = Extras { shore: Some(look), dynamic_lights: li % 2 == 0, ..Extras::default() };
             gen(format!("b5 {style:?} {name} shore"), lot, LandUse::ALL[si % 6], 6, Tier::ALL[li % 3], 0.6, 50 + si as u64, &rules, &pal, &extras);
         }
@@ -350,7 +350,7 @@ fn buildings(out: &Out) {
         let layout = nd_sim::shore::plan_beach(lot, Tier::ALL[li % 3]);
         for (k, (closed, night)) in [(false, false), (true, true)].into_iter().enumerate() {
             let beach = shore::BeachLook { bathers: 40, swimmers: 25, closed, night };
-            let look = shore::ShoreLook { seaward: -lot.front_dir.perp(), drop: 1.8, beach: Some(beach) };
+            let look = shore::ShoreLook { seaward: -lot.front_dir.perp(), drop: 1.8, bank: 0.0, beach: Some(beach) };
             let extras = Extras { shore: Some(look), park: Some(&layout), ..Extras::default() };
             out.geo(format!("beach {name} {k}"), &generate_styled_extras(lot, LandUse::Park, 1, Tier::Mid, 0.8, 60 + li as u64, Style::Beach, &rules, &pal, &extras));
         }

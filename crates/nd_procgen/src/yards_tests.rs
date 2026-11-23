@@ -76,6 +76,22 @@ fn free_ground_is_found_round_a_house_and_never_in_it() {
     assert!(again.all().all(|p| p.at.y == 4.0));
 }
 
+/// [r14-photofix] On a deep lot with a small house, yard and garden things
+/// stay near the house, not out in the middle of the empty ground (Tide
+/// Towers' grill stood alone 30 m from its house).
+#[test]
+fn yard_things_stay_near_the_house() {
+    let l = a_lot();
+    let (v0, v1) = (4.0, 9.0);
+    assert!(l.depth() > v1 + YARD_REACH + 6.0, "a deep lot: {}", l.depth());
+    let s = spots(&house(&l, v0, v1), &l, false, 7);
+    assert!(!s.yard.is_empty(), "{s:?}");
+    for p in &s.yard {
+        let q = local(&l, p.at);
+        assert!(q.y < v1 + YARD_REACH + 1.5, "a yard spot {} m behind the house", q.y - v1);
+    }
+}
+
 #[test]
 fn a_house_at_the_street_puts_its_step_on_the_pavement() {
     let l = a_lot();

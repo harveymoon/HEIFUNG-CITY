@@ -215,7 +215,7 @@ fn stilt_houses_on_piles_by_the_water() {
     let pal = Palette::default();
     let lot = test_lots(LandUse::Residential)[0].clone();
     let (frame, _) = Frame::lot_local(&lot);
-    let shore = ShoreLook { seaward: frame.inward, drop: 1.6, beach: None };
+    let shore = ShoreLook { seaward: frame.inward, drop: 1.6, bank: 0.0, beach: None };
     let beyond = |g: &Geometry| {
         let mut far = 0.0f32;
         for (_, m) in g.iter().chain(Lod::DETAIL.into_iter().flat_map(|l| g.detail_iter(l))) {

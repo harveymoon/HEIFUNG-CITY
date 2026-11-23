@@ -95,7 +95,7 @@ fn only_uses_that_use_the_water_run_a_pier_out_over_it() {
     let lot = super::coplanar_tests::test_lots(LandUse::Residential)[0].clone();
     let (frame, local) = Frame::lot_local(&lot);
     let back = parts::bounds(&local).1.y;
-    let shore = ShoreLook { seaward: frame.inward, drop: 1.6, beach: None };
+    let shore = ShoreLook { seaward: frame.inward, drop: 1.6, bank: 0.0, beach: None };
     let out = |g: &Geometry| all_points(g).iter().map(|q| frame.to_local(*q).y - back).fold(0.0f32, f32::max);
     let harbour = |business| Extras { shore: Some(shore), look: Some(Look::HarbourPastel), business, ..Extras::default() };
     for style in [Style::SeafoodShack, Style::BoardwalkCafe, Style::AwningArcade, Style::BoutiqueHotel] {
@@ -120,7 +120,7 @@ fn grounds_on_the_water_keep_a_promenade_on_the_site() {
     let pal = Palette::default();
     let lot = big_site();
     let (frame, _) = Frame::lot_local(&lot);
-    let shore = ShoreLook { seaward: frame.inward, drop: 1.6, beach: None };
+    let shore = ShoreLook { seaward: frame.inward, drop: 1.6, bank: 0.0, beach: None };
     let ex = Extras { shore: Some(shore), look: Some(Look::HarbourPastel), business: Some(nd_sim::BusinessKind::Venue), ..Extras::default() };
     let g = generate_styled_extras(&lot, LandUse::Entertainment, 4, Tier::High, 0.95, 9, Style::SeafoodShack, &rules, &pal, &ex);
     for q in all_points(&g) {

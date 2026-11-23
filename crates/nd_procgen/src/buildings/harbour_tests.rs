@@ -207,7 +207,7 @@ fn harbour_piers_run_out_over_the_water() {
     let lot = test_lots(LandUse::Residential)[0].clone();
     let (frame, _) = Frame::lot_local(&lot);
     // Seaward: the lot's inward direction (the water behind it).
-    let shore = ShoreLook { seaward: frame.inward, drop: 1.6, beach: None };
+    let shore = ShoreLook { seaward: frame.inward, drop: 1.6, bank: 0.0, beach: None };
     let beyond = |g: &Geometry| {
         let mut far = 0.0f32;
         for (_, m) in g.iter().chain(Lod::DETAIL.into_iter().flat_map(|l| g.detail_iter(l))) {
@@ -241,7 +241,8 @@ fn harbour_piers_run_out_over_the_water() {
 }
 
 /// [r13-leftovers] Boathouses go up only on a lot that meets the water: an
-/// inland Harbour Pastel lot picks the terraces or the lighthouse corner.
+/// inland Harbour Pastel lot picks the terraces. [r14-photofix] Nor a
+/// lighthouse corner block.
 #[test]
 fn no_boathouses_inland() {
     let rules = BuildingRules::default();
@@ -251,6 +252,7 @@ fn no_boathouses_inland() {
         for seed in 0..80u64 {
             let s = choose_style(&lots[0], LandUse::Residential, 2, tier, seed, &rules, &harbour(false));
             assert_ne!(s, Style::Boathouses, "{tier:?} seed {seed}");
+            assert_ne!(s, Style::LighthouseCorner, "{tier:?} seed {seed}");
         }
     }
 }

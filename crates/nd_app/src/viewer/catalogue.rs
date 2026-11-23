@@ -368,7 +368,7 @@ pub fn geometry(e: &Entry, v: Variant, rules: &BuildingRules, palette: &Palette)
     // tier as a billionaire's (the helipad on the penthouse).
     let look = look.or(Style::SKYLINE_LUXE.contains(&e.style).then_some(nd_sim::districts::Look::SkylineLuxe));
     let form = form.or((e.style == Style::SkyVilla && v.tier == Tier::High).then_some(nd_sim::estate::Form::Mansion));
-    let shore = (harbour || e.style == Style::StiltHouses).then(|| nd_procgen::buildings::ShoreLook { seaward: (lot.center - (lot.front_edge[0] + lot.front_edge[1]) * 0.5).normalize_or_zero(), drop: 1.2, beach: None });
+    let shore = (harbour || e.style == Style::StiltHouses).then(|| nd_procgen::buildings::ShoreLook { seaward: (lot.center - (lot.front_edge[0] + lot.front_edge[1]) * 0.5).normalize_or_zero(), drop: 1.2, bank: 0.0, beach: None });
     // [r5-trash] A landfill shown well filled (its mound grows with the fill).
     let waste_fill = if e.style == Style::Landfill { 0.7 } else { 0.0 };
     let extras = Extras { powered: 1.0, dynamic_lights: true, tower, look, form, shore, waste_fill, ..Extras::default() };

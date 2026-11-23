@@ -252,7 +252,12 @@ fn small_pier(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, e: &Extras, from: O
     }
     let root = start + sea * d;
     let across = sea.perp();
-    let len = rng.random_range(7.0..11.0);
+    // [r14-photofix] Out over the bank to the water, and a few metres on;
+    // no pier where the water is farther off than that.
+    if look.bank > super::shore::MAX_BANK {
+        return;
+    }
+    let len = rng.random_range(7.0..11.0f32).max(look.bank + 4.0);
     let w = rng.random_range(1.8..2.4);
     let drop = look.drop.max(0.8);
     let wood = mul(pal.wood, 0.85 - 0.25 * c.wear);
