@@ -464,7 +464,7 @@ impl World {
     /// the job (the longest-parked lorry leaves the lot), else the seller's
     /// own yard.
     pub(super) fn fleet_origin(&mut self, from: BuildingId) -> BuildingId {
-        if self.truck_count() >= crate::market::MAX_TRUCKS {
+        if self.truck_count() >= self.truck_cap() {
             return from;
         }
         let Some(at) = self.building_lot(from).map(|l| l.center) else { return from };

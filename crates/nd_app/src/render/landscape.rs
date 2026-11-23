@@ -481,3 +481,83 @@ mod reconcile_tests {
         assert_eq!(spawn, vec![(1, 's')]);
     }
 }
+
+/// [r15-freight] A quay crane's boom out over the water.
+#[derive(Component)]
+pub(super) struct CraneBoom;
+
+/// [r15-freight] The booms drawn: per shipping port its boom and tip light,
+/// and the boom's angle up from level now (radians).
+#[derive(Default)]
+pub(super) struct BoomState {
+    booms: HashMap<nd_sim::ports::PortId, ([Entity; 2], f32)>,
+    meshes: Option<[Handle<Mesh>; 2]>,
+}
+
+/// [r15-freight] How far a quay crane's boom stands raised with no ship
+/// alongside (radians up from level; a real one goes up 70-80 degrees so
+/// ships pass), how fast it moves (radians a second) and its height.
+const BOOM_RAISED: f32 = 1.3;
+const BOOM_SPEED: f32 = 0.12;
+const BOOM_Y: f32 = 31.0;
+
+/// [r15-freight] (photo 2026-11-20 F6) Each shipping port's quay crane boom,
+/// from its hinge over the seaward legs out over the berth, no further than
+/// a quay crane reaches (`nd_sim::ports::Port::crane_hinge`): level while a
+/// freighter lies alongside, raised otherwise, moving between the two.
+pub(super) fn sync_port_booms(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, sim: Res<Sim>, assets: Res<GameAssets>, mats: Res<Materials>, time: Res<Time>, mut state: Local<BoomState>, mut q: Query<&mut Transform, With<CraneBoom>>) {
+    let w = &sim.world;
+    if sim.full_rebuild {
+        for (_, (ents, _)) in state.booms.drain() {
+            for e in ents {
+                commands.entity(e).despawn();
+            }
+        }
+    }
+    let gone: Vec<nd_sim::ports::PortId> = state.booms.keys().copied().filter(|p| w.ports.ports.get(*p).is_none_or(|p| p.kind != nd_sim::ports::PortKind::ShippingPort)).collect();
+    for p in gone {
+        if let Some((ents, _)) = state.booms.remove(&p) {
+            for e in ents {
+                commands.entity(e).despawn();
+            }
+        }
+    }
+    if state.meshes.is_none() {
+        // A lattice boom one metre long along +x from the hinge (scaled to
+        // its length): two side girders, a top chord and the tip light.
+        let paint = rgba(assets.palette.metal_paint(0));
+        let mut m = MeshData::default();
+        for z in [-0.85f32, 0.85] {
+            m.boxed(Vec3::new(0.5, 0.0, z), Vec3::new(1.0, 1.4, 0.4), 0.0, paint);
+        }
+        m.boxed(Vec3::new(0.5, 0.75, 0.0), Vec3::new(1.0, 0.2, 2.1), 0.0, paint);
+        let mut light = MeshData::default();
+        light.boxed(Vec3::ZERO, Vec3::splat(0.6), 0.0, rgba(assets.palette.aviation_light));
+        state.meshes = Some([meshes.add(shared_mesh(&m, true)), meshes.add(shared_mesh(&light, true))]);
+    }
+    let [boom_mesh, light_mesh] = state.meshes.clone().unwrap();
+    let dt = time.delta_secs().min(0.25);
+    for (pid, port) in w.ports.ports.iter().filter(|(_, p)| p.kind == nd_sim::ports::PortKind::ShippingPort) {
+        let alongside = port.building.is_some_and(|b| w.ports.ships.values().any(|s| s.port == b && s.kind == nd_sim::ShipKind::Freighter && s.docked));
+        let target = if alongside { 0.0 } else { BOOM_RAISED };
+        let entry = state.booms.entry(pid).or_insert_with(|| {
+            let a = commands.spawn((Mesh3d(boom_mesh.clone()), MeshMaterial3d(mats.surface(Surface::Metal)), Transform::default(), CraneBoom)).id();
+            let b = commands.spawn((Mesh3d(light_mesh.clone()), MeshMaterial3d(mats.surface(Surface::Glow)), Transform::default(), NotShadowCaster, CraneBoom)).id();
+            ([a, b], target)
+        });
+        let step = BOOM_SPEED * dt;
+        entry.1 += (target - entry.1).clamp(-step, step);
+        let (hinge, len) = port.crane_hinge();
+        let tilt = entry.1;
+        let rot = Quat::from_rotation_y(-port.seaward.y.atan2(port.seaward.x)) * Quat::from_rotation_z(tilt);
+        let h3 = Vec3::new(hinge.x, BOOM_Y, hinge.y);
+        let tip = h3 + rot * Vec3::X * len;
+        let [a, b] = entry.0;
+        if let Ok(mut tf) = q.get_mut(a) {
+            *tf = Transform { translation: h3, rotation: rot, scale: Vec3::new(len, 1.0, 1.0) };
+        }
+        if let Ok(mut tf) = q.get_mut(b) {
+            *tf = Transform::from_translation(tip + rot * Vec3::Y * 0.8);
+        }
+    }
+}

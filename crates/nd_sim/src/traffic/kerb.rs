@@ -16,6 +16,25 @@ impl Traffic {
         let (pos, dir) = self.net.lanes[lane as usize].point_at(s_start);
         let heading = dir.y.atan2(dir.x);
         let id = self.cars.insert(Car { citizen, cargo, route, idx: 0, s: s_start, s_end, v: 0.0, pos, heading, prev_pos: pos, prev_heading: heading, color, age: 0.0, bus: None, hold: 0.0, lateral: 0.0, stalled: 0.0, wait: Wait::Free, cooldown: 0.0, entering: false, blocked_by: None, replans: 0, avoided: Vec::new(), passing: false, turn_wait: 0.0, yielded: 0.0, siren: false, model: Default::default(), owned: None, errand: Default::default(), drive: DriveState::default(), toll_booth: 0, toll_paid: false, occupants: Vec::new(), glide_from: 0.0, glide_len: 0.0, glide_done: 0.0, stranded: false, bay: false });
+        // [r15-freight] (photo 2026-11-20 F2) Setting off from the kerb
+        // where others already wait to pull out (lorries sent off from one
+        // depot's gate, cars from one door): behind them, never on top of
+        // them. Up to 36 lorries stood on one point at a cargo hub's gate.
+        if self.net.lanes[lane as usize].right.is_none() {
+            let s = self.kerb_room(lane, id);
+            if (s - s_start).abs() > 0.01 {
+                let (p, d) = self.net.lanes[lane as usize].point_at(s);
+                let c = &mut self.cars[id];
+                c.s = s;
+                c.pos = p;
+                c.prev_pos = p;
+                c.heading = d.y.atan2(d.x);
+                c.prev_heading = c.heading;
+                if c.route.len() == 1 && c.s_end < s {
+                    c.s_end = s;
+                }
+            }
+        }
         self.pull_out(id);
         // [toll-inspect] Did it set off round a booth? (The world looks,
         // once it knows whether this is a bus or a city vehicle.)

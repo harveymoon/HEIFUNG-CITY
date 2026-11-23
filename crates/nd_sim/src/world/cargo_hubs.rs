@@ -204,7 +204,7 @@ impl World {
         s.long_haul_saved_today += n.saturating_sub(1);
         s.long_haul_saved_total += n.saturating_sub(1);
         match route {
-            Some((route, s0, s1)) if self.truck_count() < crate::market::MAX_TRUCKS => {
+            Some((route, s0, s1)) if self.truck_count() < self.truck_cap() => {
                 let car = self.traffic.spawn_car(CitizenId::default(), Some(token), route, s0, s1, 6);
                 let mut rng = crate::vehicle::model_rng(tick, slotmap::Key::data(&car).as_ffi());
                 self.traffic.cars[car].model = crate::vehicle::VehicleModel::for_cargo(Resource::Goods, None, false, true, &mut rng);

@@ -1025,11 +1025,15 @@ fn port_docks(world: &World, palette: &Palette, g: &mut Geometry, concrete: [f32
         }
         match port.kind {
             PortKind::ShippingPort => {
-                // The crane's boom reaching out over the berth.
-                let base = port.center + port.seaward * (port.kind.size().1 * 0.5 - 9.0) + port.along * (port.kind.size().0 * 0.12);
-                let out = base + port.seaward * (len + 30.0);
-                g.part(Surface::Metal).beam(Vec3::new(base.x, 31.0, base.y), Vec3::new(out.x, 31.0, out.y), 1.4, rgba(palette.metal_paint(0)));
-                g.part(Surface::Glow).boxed(Vec3::new(out.x, 31.8, out.y), Vec3::splat(0.6), 0.0, rgba(palette.aviation_light));
+                // [r15-freight] (photo 2026-11-20 F6) The crane's boom from
+                // the crane's middle to its hinge over the seaward legs; the
+                // boom out over the berth is drawn apart, lowered while a
+                // freighter is alongside and raised otherwise (nd_app
+                // `sync_port_booms`). It was drawn here the pier's length
+                // and 30 m more out, across the whole river.
+                let (base, _) = port.crane_boom();
+                let (hinge, _) = port.crane_hinge();
+                g.part(Surface::Metal).beam(Vec3::new(base.x, 31.0, base.y), Vec3::new(hinge.x, 31.0, hinge.y), 1.4, rgba(palette.metal_paint(0)));
             }
             PortKind::FerryTerminal | PortKind::FerryTerminalLarge => {
                 // A floating pontoon at the tip with a lamp.

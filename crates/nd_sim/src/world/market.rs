@@ -767,8 +767,21 @@ impl World {
 
     pub(super) fn truck_count(&self) -> usize {
         // [r11-box-stock] Not the lorries hired to clear a depot's backlog.
+        // [r15-freight] Nor those standing in a depot's bays, off the street.
         let haulers = &self.containers.haulers;
-        self.traffic.cars.iter().filter(|(id, c)| c.cargo.is_some() && !haulers.contains(id)).count()
+        self.traffic.cars.iter().filter(|(id, c)| c.cargo.is_some() && !c.bay && !haulers.contains(id)).count()
+    }
+
+    /// [r15-freight] How many lorries the roads take before loads are
+    /// handed over on the spot (`dispatch_truck`): `MAX_TRUCKS`, and one
+    /// per `TRUCK_PEOPLE` residents in a bigger town. A flat 60 in a city
+    /// of 17,000 was full 97% of the day (95 lorries counted, 57 of them
+    /// driving back empty, 21 standing in depot bays), so nearly every load
+    /// that was not for a site or in boxes was handed over by magic, and
+    /// site loads past the site allowance too (the site lorry counts that
+    /// fell to near zero, todo r14-materials).
+    pub fn truck_cap(&self) -> usize {
+        crate::market::MAX_TRUCKS.max(self.citizens.len() / crate::market::TRUCK_PEOPLE)
     }
 
     /// The buyer counts a load as on its way so it does not reorder.
@@ -853,7 +866,7 @@ impl World {
         // behind the cap instead, a growing city's sites starved: a
         // generated city opened 17 businesses by day 4 instead of 20+.)
         let boxed = !to_site && self.has_full_boxes(cargo.from, cargo.resource, cargo.to);
-        let cap = crate::market::MAX_TRUCKS + if to_site { SITE_TRUCKS_EXTRA } else if boxed { BOX_TRUCKS_EXTRA } else { 0 };
+        let cap = self.truck_cap() + if to_site { SITE_TRUCKS_EXTRA } else if boxed { BOX_TRUCKS_EXTRA } else { 0 };
         if self.truck_count() >= cap {
             // [K34] Its boxes go with it.
             self.boxes_follow(&cargo);

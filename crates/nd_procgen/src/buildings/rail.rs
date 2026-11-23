@@ -110,8 +110,10 @@ pub fn platform(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, from: Vec2) {
     g.part(Concrete).slab(Vec3::new(exit.x, 0.05, exit.y), Vec3::new(pc.x, 0.95, pc.y), 3.0, 0.15, rgba(concrete));
 }
 
-/// [r4] (K33) Height of the yard crane's runway beams.
-pub const YARD_RUNWAY_Y: f32 = 8.4;
+/// [r4] (K33) Height of the yard crane's runway beams. [r15-freight] Over
+/// the stacks beside it (four high at most, `MAX_STACK_TIERS`): at 8.4 m
+/// the beam ran through the yard's stacks.
+pub const YARD_RUNWAY_Y: f32 = 11.4;
 
 /// [r4] (K33) A freight yard laid out across its track, as offsets along
 /// `out` (away from the track, on the yard's side) from the platform line:
@@ -223,13 +225,13 @@ pub fn freight_yard(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng) {
         let near = p + out * near_off;
         let far = p + out * far_off;
         for q in [near, far] {
-            g.part(Metal).boxed(Vec3::new(q.x, 4.0, q.y), Vec3::new(0.5, 8.0, 0.5), 0.0, rgba(steel));
+            g.part(Metal).boxed(Vec3::new(q.x, (YARD_RUNWAY_Y - 0.4) * 0.5, q.y), Vec3::new(0.5, YARD_RUNWAY_Y - 0.4, 0.5), 0.0, rgba(steel));
         }
     }
     for off in [near_off, far_off] {
         g.part(Metal).beam(Vec3::new(pa.x + out.x * off, YARD_RUNWAY_Y, pa.y + out.y * off), Vec3::new(pb.x + out.x * off, YARD_RUNWAY_Y, pb.y + out.y * off), 0.4, rgba(steel));
     }
-    aviation_light(g, pal, Vec3::new(pa.x + out.x * near_off, 8.9, pa.y + out.y * near_off), 0.35);
+    aviation_light(g, pal, Vec3::new(pa.x + out.x * near_off, YARD_RUNWAY_Y + 0.5, pa.y + out.y * near_off), 0.35);
     // Container stacks on the apron's far edge, towards the shed.
     // [r11-box-stock] With real boxes, forty-foot places (a forty-footer
     // or two twenties each), so every box the yard holds has one.

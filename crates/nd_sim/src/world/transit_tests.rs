@@ -319,3 +319,24 @@ fn riders_are_not_offered_a_bus_line_that_has_stopped() {
     let leg = TransitLeg::Bus { route: line, board: 0, alight: 1 };
     assert!(w.leg_service_over(&leg, 20 * 60 + 40) && !w.leg_service_over(&leg, 20 * 60 + 10));
 }
+
+/// [r15-freight] (photo 2026-11-20 F15: Harvey's five lines ran a bus every
+/// 36-69 minutes, 5-7 buses on loops of 3-8 hours, and riders cycled
+/// instead) A line with too few buses for its loop says so, with its
+/// headway; enough buses and it does not.
+#[test]
+fn a_line_with_too_few_buses_for_its_loop_says_how_rarely_they_come() {
+    let mut w = block_town();
+    let line = block_line(&mut w);
+    depot(&mut w);
+    let secs = w.config.traffic_seconds_per_tick;
+    let loop_min = w.transit.routes[line].loop_minutes(secs);
+    assert!(loop_min > transit::INFREQUENT_HEADWAY as f32, "the loop takes {loop_min} min");
+    w.transit.routes[line].buses = 1;
+    w.transit.routes[line].timetable = None;
+    let p = w.line_problems(line);
+    let rare = p.iter().find(|p| matches!(p, LineProblem::Infrequent { .. })).unwrap_or_else(|| panic!("{p:?}"));
+    assert!(!rare.blocks() && rare.to_string().contains("a bus only every"), "{rare}");
+    w.transit.routes[line].buses = (loop_min / 10.0).ceil() as u8 + 1;
+    assert!(!w.line_problems(line).iter().any(|p| matches!(p, LineProblem::Infrequent { .. })), "{:?}", w.line_problems(line));
+}

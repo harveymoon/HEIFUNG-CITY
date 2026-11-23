@@ -154,7 +154,7 @@ impl World {
                 return found;
             }
         }
-        if self.truck_count() >= crate::market::MAX_TRUCKS + super::market::BOX_TRUCKS_EXTRA {
+        if self.truck_count() >= self.truck_cap() + super::market::BOX_TRUCKS_EXTRA {
             return None;
         }
         // Parked at a truck lot near the depot: it drives over.

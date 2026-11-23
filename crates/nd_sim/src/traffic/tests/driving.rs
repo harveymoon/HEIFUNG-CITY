@@ -263,3 +263,41 @@ fn a_lorry_lined_up_at_the_kerb_never_stands_past_its_route_end() {
     assert_eq!(t.stop_reason(ids[0]), StopReason::Stranded);
     assert!(t.stop_reason(ids[0]).text(|_| String::new()).starts_with("stranded at the kerb"));
 }
+
+/// [r15-freight] (photo 2026-11-20 F2: 11 lorries at one exact point at a
+/// cargo hub's gate; 36 at another on Harvey's day-80 save) Lorries sent off
+/// one after another from the same kerb point, faster than they can pull
+/// out into the lane, line up along the kerb: never two on one spot, while
+/// they wait and once they have all driven off.
+#[test]
+fn lorries_setting_off_from_one_kerb_point_line_up() {
+    let mut roads = RoadNetwork::default();
+    roads.add_polyline(&[Vec2::new(-200.0, 0.0), Vec2::new(200.0, 0.0)], 1, 1);
+    let mut t = Traffic::default();
+    t.rebuild(&roads);
+    let seg = roads.nearest_street(Vec2::ZERO).unwrap().0;
+    let lane = lane_of(&t, seg, Vec2::X, 0);
+    let len = t.net.lanes[lane as usize].length;
+    // A queue already in the lane at the gate, so nobody can pull out yet.
+    let blocker = t.spawn_car(CitizenId::default(), None, vec![lane], 150.0, len - 1.0, 0);
+    t.cars[blocker].hold = 1.0e6;
+    let ids: Vec<CarId> = (0..8)
+        .map(|_| t.spawn_car(CitizenId::default(), None, vec![lane], 150.0, len - 1.0, 0))
+        .collect();
+    let apart = |t: &Traffic| {
+        for (i, &a) in ids.iter().enumerate() {
+            for &b in &ids[i + 1..] {
+                let (ca, cb) = (&t.cars[a], &t.cars[b]);
+                if ca.entering && cb.entering {
+                    assert!((ca.s - cb.s).abs() >= ca.kerb_length().min(cb.kerb_length()) - 0.01, "two lorries on one spot at the kerb: {:.1} and {:.1}", ca.s, cb.s);
+                }
+            }
+        }
+    };
+    apart(&t);
+    assert!(ids.iter().filter(|&&id| t.cars[id].entering).count() >= 6, "they wait at the kerb");
+    for _ in 0..40 {
+        t.step(1.0, 4);
+        apart(&t);
+    }
+}

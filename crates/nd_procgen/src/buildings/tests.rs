@@ -1225,6 +1225,41 @@ fn boxes_stood_in_their_places_never_overlap() {
     }
 }
 
+/// [r15-freight] (photo 2026-11-20 F2: Yard 21 and the cargo hubs drawn
+/// six and seven high, a gantry's beam through the stack) Every depot
+/// style's stacks, the overflow tiers of a full yard counted, stand at most
+/// `MAX_STACK_TIERS` high, and their tops are under the yard cranes: the
+/// straddle carrier's frame, the freight yard's runway, the gantries.
+#[test]
+fn depot_stacks_stay_under_the_cranes() {
+    use crate::buildings::parts::{stack_room, stand_boxes, MAX_STACK_TIERS};
+    let rules = BuildingRules::default();
+    let pal = Palette::default();
+    let zone = vec![Vec2::new(-100.0, -20.0), Vec2::new(100.0, -20.0), Vec2::new(100.0, 120.0), Vec2::new(-100.0, 120.0)];
+    let lots = lots(zone, LandUse::Industrial);
+    let top_allowed = MAX_STACK_TIERS as f32 * crate::CONTAINER_H;
+    assert!(top_allowed < crate::vehicles::CARRIER_H - 1.0, "a straddle carrier clears the highest stack");
+    assert!(top_allowed < crate::YARD_RUNWAY_Y - 0.5, "the freight yard's runway clears the stacks beside it");
+    for lot in lots.iter() {
+        for style in [Style::ContainerYard, Style::Depot, Style::Junkyard, Style::ShippingPort] {
+            let real = Extras { real_boxes: true, ..Extras::default() };
+            let g = generate_styled_extras(lot, LandUse::Industrial, 1, Tier::Mid, 0.8, 5, style, &rules, &pal, &real);
+            let slots: Vec<BoxSlot> = g.box_slots.iter().copied().filter(|s| s.tier != crate::BAY_TIER).collect();
+            if slots.is_empty() {
+                continue;
+            }
+            let ground = slots.iter().map(|s| s.at.y).fold(f32::INFINITY, f32::min);
+            // A full yard: a box in every place it has room for.
+            let room = stack_room(&slots);
+            let boxes: Vec<(bool, Option<u16>)> = (0..room).map(|k| (true, Some(2 * k as u16))).collect();
+            let laid = stand_boxes(&boxes, &slots);
+            assert_eq!(laid.len(), room, "{style:?}: every box within its room is drawn");
+            let top = laid.iter().map(|x| x.1.y + crate::CONTAINER_H - ground).fold(0.0f32, f32::max);
+            assert!(top <= top_allowed + 0.01, "{style:?} on {:.0} m2: stacked {top:.1} m high (at most {MAX_STACK_TIERS} boxes, {top_allowed:.1} m)", lot.area());
+        }
+    }
+}
+
 /// [r13-detail] Styles draw the lines and poles but leave the washing to
 /// the household layer: Brick Row's yards, garden lawns, lantern alleys
 /// and laundry poles leave `WashLine`s, each a short, finite line over the

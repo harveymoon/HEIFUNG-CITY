@@ -56,6 +56,9 @@ pub const TRANSFER_WALK: f32 = 90.0;
 /// [pt-transit] Minutes a change of line costs on top of the second wait
 /// (finding the stop, the uncertainty).
 pub const TRANSFER_PENALTY: f32 = 5.0;
+/// [r15-freight] Minutes between buses at a line's busiest hour past which
+/// the Lines window warns that it is too infrequent to use.
+pub const INFREQUENT_HEADWAY: u64 = 30;
 /// [pt-transit] Minutes a rider expects to wait at the stop: half the
 /// line's headway, within these bounds.
 pub const MIN_EXPECTED_WAIT: f32 = 3.0;
@@ -333,6 +336,10 @@ pub enum LineProblem {
     /// Night: the buses are home until the line's timetable starts them
     /// (`start`; they stopped at `end`).
     OutOfService { start: u32, end: u32 },
+    /// [r15-freight] (photo 2026-11-20 F15) A bus only every `headway`
+    /// minutes at the busiest hour, with `buses` on a loop of `loop_min`:
+    /// riders expect a long wait at the stop and most cycle instead.
+    Infrequent { headway: u32, buses: u32, loop_min: u32 },
 }
 
 impl LineProblem {
@@ -362,6 +369,7 @@ impl LineProblem {
             LineProblem::FleetShort { .. } => "fleet_short",
             LineProblem::DepotsFull => "depots_full",
             LineProblem::OutOfService { .. } => "out_of_service",
+            LineProblem::Infrequent { .. } => "infrequent",
         }
     }
 }
@@ -380,6 +388,7 @@ impl std::fmt::Display for LineProblem {
             LineProblem::FleetShort { wanted, capacity } => write!(f, "the lines want {wanted} buses but the depots hold {capacity}: build another depot or run fewer buses"),
             LineProblem::DepotsFull => write!(f, "every depot has its buses out: this line waits for one"),
             LineProblem::OutOfService { start, end } => write!(f, "night: buses run {} to {}", hm(*start), hm(*end)),
+            LineProblem::Infrequent { headway, buses, loop_min } => write!(f, "a bus only every {headway} min ({buses} on a {loop_min}-min loop): riders wait long and most cycle instead; run more buses or split the line"),
         }
     }
 }
@@ -597,6 +606,12 @@ pub struct TransitStats {
     pub riders_today: u32,
     pub fares_today: f32,
     pub upkeep_today: f32,
+    /// [r15-freight] Yesterday's bus riders and fares, kept at midnight
+    /// (the photographer's "211 riders a day" was the count at 02:00).
+    #[serde(default)]
+    pub riders_yesterday: u32,
+    #[serde(default)]
+    pub fares_yesterday: f32,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

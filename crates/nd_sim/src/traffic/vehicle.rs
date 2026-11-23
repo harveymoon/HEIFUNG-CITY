@@ -236,7 +236,12 @@ impl Car {
     }
 
     pub fn length(&self) -> f32 {
-        if self.bus.is_some() { BUS_LENGTH } else { CAR_LENGTH }
+        if self.bus.is_some() {
+            BUS_LENGTH
+        } else {
+            // [r15-freight] A lorry takes its own length on the road.
+            crate::vehicle::road_length(self.model.body, self.model.boxed).unwrap_or(CAR_LENGTH)
+        }
     }
 
     /// [r8] The room it takes standing at the kerb in a queue: a container

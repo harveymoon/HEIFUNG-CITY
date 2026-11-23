@@ -64,9 +64,14 @@ pub fn lay_out_boxes(forty: &[bool], slots: &[BoxSlot]) -> Vec<(usize, Vec3, f32
 }
 
 /// [r11-box-stock] Tiers a full depot stacks above the top of each of its
-/// drawn stacks (three-high stacks go to five, four-high to six, as a
-/// busy terminal's do).
+/// drawn stacks, as a busy terminal's do.
 pub const EXTRA_TIERS: u8 = 2;
+/// [r15-freight] (photo 2026-11-20 F2) The most boxes a stack stands,
+/// overflow and all: four high (10.4 m), under every yard's crane (the
+/// straddle carrier's 12.6 m frame, the yards' gantries, the freight
+/// yard's runway). The overflow tiers stacked four-high yards six high,
+/// through their gantries.
+pub const MAX_STACK_TIERS: u8 = 4;
 
 /// [r11-box-stock] A depot's slots and the overflow tiers above each stack's
 /// top slot (appended after the drawn ones, the lower extra tier first).
@@ -75,7 +80,7 @@ fn with_overflow(slots: &[BoxSlot]) -> Vec<BoxSlot> {
     let tops: Vec<BoxSlot> = slots.iter().filter(|a| !slots.iter().any(|b| b.tier == a.tier + 1 && near(a, b))).copied().collect();
     let mut v = slots.to_vec();
     for k in 1..=EXTRA_TIERS {
-        v.extend(tops.iter().map(|t| BoxSlot { at: t.at + Vec3::Y * CONTAINER_H * k as f32, tier: t.tier + k, ..*t }));
+        v.extend(tops.iter().filter(|t| t.tier + k < MAX_STACK_TIERS).map(|t| BoxSlot { at: t.at + Vec3::Y * CONTAINER_H * k as f32, tier: t.tier + k, ..*t }));
     }
     v
 }

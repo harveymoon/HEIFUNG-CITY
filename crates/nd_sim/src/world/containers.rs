@@ -220,7 +220,7 @@ impl World {
     }
 
     /// [K34] A box leaves town (or the records): counted, then dropped.
-    fn box_gone(&mut self, id: BoxId, what: Event) {
+    pub(super) fn box_gone(&mut self, id: BoxId, what: Event) {
         if self.containers.boxes.remove(id).is_some() {
             let s = &mut self.containers.stats;
             match what {
@@ -841,7 +841,7 @@ impl World {
     /// or a scrap yard). False when no lorry can go (none spare, or no
     /// road): the caller hands them over directly.
     pub(super) fn haul_boxes(&mut self, from: BuildingId, to: BuildingId, ids: &[BoxId]) -> bool {
-        if ids.is_empty() || self.truck_count() >= crate::market::MAX_TRUCKS {
+        if ids.is_empty() || self.truck_count() >= self.truck_cap() {
             return false;
         }
         // [r8] From a depot's stack: a lorry comes to a bay and the carrier

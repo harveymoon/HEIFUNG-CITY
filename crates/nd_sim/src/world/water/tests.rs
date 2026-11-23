@@ -513,3 +513,26 @@ fn the_crane_lands_the_ships_own_boxes_and_a_lorry_takes_the_same_one() {
     assert!(w.containers.boxes[first].log.first().is_some_and(|s| s.1 == crate::containers::Event::ArrivedSea));
     assert!(w.containers.ships.get(&sid).is_none_or(|b| b.done >= 1));
 }
+
+/// [r15-freight] (photo 2026-11-20 F6) The quay crane's boom reaches out
+/// over the berth and the freighter's far side, but no further than a quay
+/// crane does: never across the river (the Port of Saltmarsh's boom was
+/// drawn over the far bank), whatever the berth.
+#[test]
+fn quay_crane_boom_reaches_the_berth_not_the_far_bank() {
+    use crate::ports::{CRANE_MAX_OUTREACH, CRANE_PAST_BERTH};
+    let w = valley(3);
+    let (p, _, n, width) = river_spot(&w);
+    let dock = (0..40).find_map(|k| w.plan_port(PortKind::ShippingPort, p + n * (width * 0.5 + 10.0) + n.perp() * (k as f32 * 15.0)).ok()).expect("a shipping port fits on the bank");
+    let (hinge, out) = dock.crane_hinge();
+    assert!(out <= CRANE_MAX_OUTREACH + 0.01, "outreach {out}");
+    let berth = (dock.berth - hinge).dot(dock.seaward);
+    assert!(out >= (berth + CRANE_PAST_BERTH).min(CRANE_MAX_OUTREACH) - 0.01, "reaches over the berth: {out} vs berth {berth}");
+    // A port planned with its berth far out (a wide river) still keeps its boom short.
+    let mut far = dock.clone();
+    far.berth = dock.berth + dock.seaward * 300.0;
+    assert!((far.crane_hinge().1 - CRANE_MAX_OUTREACH).abs() < 0.01);
+    // The boom's tip is the crane's, the trolley runs under it.
+    let (base, tip) = far.crane_boom();
+    assert!(base.distance(tip) <= crate::ports::CRANE_HINGE + CRANE_MAX_OUTREACH + 0.01);
+}

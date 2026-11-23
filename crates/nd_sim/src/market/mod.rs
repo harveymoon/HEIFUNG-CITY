@@ -27,6 +27,9 @@ pub use resource::*;
 pub const JOB_RATE: f32 = 0.3;
 /// Trucks allowed on the road at once; beyond this deliveries are instant.
 pub const MAX_TRUCKS: usize = 60;
+/// [r15-freight] Residents per lorry the roads take in a town past
+/// `MAX_TRUCKS * TRUCK_PEOPLE` people (`World::truck_cap`).
+pub const TRUCK_PEOPLE: usize = 150;
 
 /// Import and export with the world outside the city. Imports cost more than
 /// local goods, exports pay less, so a local supply chain is worth building.

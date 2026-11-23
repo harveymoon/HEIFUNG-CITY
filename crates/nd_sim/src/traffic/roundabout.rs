@@ -41,6 +41,13 @@ const RING_LOOKBACK: f32 = 45.0;
 /// change costs `LANE_CHANGE_COST`: first and second exits stay outside,
 /// later ones go round further in.
 const RING_OUTER_THROUGH: f32 = 5.0;
+/// [r15-freight] Seconds a car stands at an entry's give-way line before a
+/// slow queue on the ring (slower than `RING_COURTESY_SPEED`, m/s) lets it
+/// in, one car from each side in turn.
+const RING_COURTESY_AFTER: f32 = 20.0;
+const RING_COURTESY_SPEED: f32 = 3.0;
+/// [r15-freight] Seconds a ring car stands back at most for an entry.
+const RING_COURTESY_HOLD: f32 = 25.0;
 /// Seconds a ring car stands behind a ring that does not move before it
 /// gets off at the arm it is at (`Traffic::bail_off_ring`).
 const RING_BAIL_AFTER: f32 = 20.0;
@@ -265,6 +272,19 @@ impl Traffic {
             };
         }
         if rn.through.contains(&conn) && !rn.entries.is_empty() {
+            // [r15-freight] (photo 2026-11-20 F12) A queue crawling round
+            // lets in a car kept waiting at an entry: zip merging, as
+            // drivers do in a slow roundabout. With the ring queued across
+            // its mouth, an entry got no gap at all for minutes on end
+            // (heads 264 s at the line on Harvey's ring at (919,-59), the
+            // queues behind them 15-53 cars, the photographer's 400 s).
+            // It stands back for `RING_COURTESY_HOLD` at most: an entry
+            // that cannot use the gap (the ring ahead full) is not waited
+            // for longer.
+            let holding = car.wait == Wait::Yield && car.stalled >= RING_COURTESY_HOLD;
+            if car.v < RING_COURTESY_SPEED && dist > 0.5 && !holding && self.entry_kept_waiting(rn, exit) {
+                return RingCall::Wait(dist - 1.0 + IDM_MIN_GAP, 0.0, Wait::Yield);
+            }
             // Follow a car that merged ahead onto the lane this one joins.
             let ours = dist + lanes[conn as usize].length;
             let mut best: Option<(f32, f32)> = None;
@@ -346,6 +366,21 @@ impl Traffic {
     /// traffic there: a vehicle in the junction when it arrives, or one
     /// that will pass the entry (not leave by it) arriving less than a
     /// critical gap after it, or not yet past when it gets there.
+    /// [r15-freight] Is a car standing at the give-way line of an entry
+    /// onto ring lane `exit` at this node, kept waiting there
+    /// `RING_COURTESY_AFTER` seconds or more?
+    fn entry_kept_waiting(&self, rn: &RingNode, exit: Option<LaneId>) -> bool {
+        let lanes = &self.net.lanes;
+        rn.entries.iter().filter(|&&e| lanes[e as usize].next.first().copied() == exit).any(|&e| {
+            lanes[e as usize].prev.iter().any(|&a| {
+                let arm = &lanes[a as usize];
+                arm.cars.last().map(|&h| &self.cars[h]).is_some_and(|h| {
+                    h.v < 0.5 && h.wait == Wait::Yield && h.stalled >= RING_COURTESY_AFTER && arm.length - h.s < 3.0 && h.route.get(h.idx + 1) == Some(&e)
+                })
+            })
+        })
+    }
+
     fn ring_blocks_entry(&self, rn: &RingNode, reach: f32) -> bool {
         let lanes = &self.net.lanes;
         // Too far off to judge: decide nearer the line.
@@ -362,8 +397,14 @@ impl Traffic {
                 continue;
             }
             let lane = &lanes[l as usize];
+            // [r15-freight] A ring car standing back to let an entry in:
+            // neither it nor anyone behind it comes past before this car.
+            let held = lane.cars.iter().map(|&c| &self.cars[c]).filter(|c| c.v < 0.5 && c.wait == Wait::Yield).map(|c| c.s).fold(f32::NEG_INFINITY, f32::max);
             for &c in &lane.cars {
                 let car = &self.cars[c];
+                if car.s <= held {
+                    continue;
+                }
                 let d = off + lane.length - car.s;
                 let arrive = d / car.v.max(2.0);
                 // Past the line before this car gets there, or far enough
@@ -377,7 +418,7 @@ impl Traffic {
                 }
             }
             let further = off + lane.length;
-            if further > rn.lookback {
+            if further > rn.lookback || held.is_finite() {
                 continue;
             }
             for &p in &lane.prev {
@@ -897,5 +938,66 @@ mod tests {
             }
         }
         assert!(left_by_exit, "got off at the arm instead of standing behind the ring for good");
+    }
+
+    /// [r15-freight] (photo 2026-11-20 F12: queues of 15-53 cars giving
+    /// way at single-lane rings for 400 s) A car kept waiting at an entry
+    /// while the ring queue crawls past is let in: the next ring car stands
+    /// back (zip merging), the entry no longer counts it as traffic coming,
+    /// and a ring car moving freely or an entry car just arrived changes
+    /// nothing.
+    #[test]
+    fn a_crawling_ring_lets_in_a_car_kept_waiting_at_an_entry() {
+        let roads = city(1, Some((18.0, 1)));
+        let mut t = Traffic::default();
+        t.rebuild(&roads);
+        let rn = t.net.rings.nodes.values().find(|n| n.entries.iter().any(|&e| t.net.lanes[e as usize].start().x > 10.0)).unwrap().clone();
+        let (east, _) = arm_points(Vec2::X, 1, 0);
+        let (_, west) = arm_points(Vec2::NEG_X, 1, 0);
+        let (north, _) = arm_points(Vec2::Y, 1, 0);
+        let (_, south_end) = arm_points(Vec2::NEG_Y, 1, 0);
+        let entering = send(&mut t, &roads, east * (60.0 / 280.0), west);
+        let ring_car = send(&mut t, &roads, north * (40.0 / 280.0), south_end);
+        // Put each where the test needs it: the entering car at the give-way
+        // line, the ring car on the ring lane just before the junction.
+        let place = |t: &mut Traffic, id: CarId, k: usize, back: f32, v: f32| {
+            let old = t.cars[id].route[t.cars[id].idx];
+            t.net.lanes[old as usize].cars.retain(|&c| c != id);
+            let lane = t.cars[id].route[k];
+            let len = t.net.lanes[lane as usize].length;
+            let c = &mut t.cars[id];
+            c.idx = k;
+            c.s = (len - back).max(0.0);
+            c.v = v;
+            c.entering = false;
+            c.hold = 0.0;
+            t.insert_sorted(lane, id);
+        };
+        let ke = t.cars[entering].route.iter().position(|l| rn.entries.contains(l)).expect("enters at the east node") - 1;
+        let kr = t.cars[ring_car].route.iter().position(|l| rn.through.contains(l)).expect("passes the east node") - 1;
+        place(&mut t, entering, ke, 1.0, 0.0);
+        place(&mut t, ring_car, kr, 1.0, 1.0);
+        let through = t.cars[ring_car].route[kr + 1];
+        let dist = t.net.lanes[t.cars[ring_car].route[kr] as usize].length - t.cars[ring_car].s;
+        let call = |t: &Traffic| match t.ring_wait(&t.cars[ring_car], through, dist) {
+            RingCall::Wait(_, _, why) => Some(why),
+            RingCall::Go => None,
+        };
+        // Just arrived at the line: the ring goes on.
+        t.cars[entering].wait = Wait::Yield;
+        t.cars[entering].stalled = 5.0;
+        assert_ne!(call(&t), Some(Wait::Yield), "a car just at the line waits for a gap");
+        // Kept waiting: the crawling ring car stands back for it.
+        t.cars[entering].stalled = RING_COURTESY_AFTER + 1.0;
+        assert_eq!(call(&t), Some(Wait::Yield), "the crawling ring lets it in");
+        // A ring car going at speed does not stop for it.
+        t.cars[ring_car].v = RING_SPEED;
+        assert_ne!(call(&t), Some(Wait::Yield), "a free-flowing ring keeps its priority");
+        // Standing back, it is no longer traffic the entry gives way to.
+        t.cars[ring_car].v = 0.0;
+        t.cars[ring_car].wait = Wait::Leader;
+        assert!(t.ring_blocks_entry(&rn, 0.5), "a ring car standing just before the entry blocks it");
+        t.cars[ring_car].wait = Wait::Yield;
+        assert!(!t.ring_blocks_entry(&rn, 0.5), "one standing back to let it in does not");
     }
 }

@@ -236,6 +236,12 @@ impl World {
                 out.push(LineProblem::DepotsFull);
             }
         }
+        // [r15-freight] Too few buses for the loop.
+        let secs = self.config.traffic_seconds_per_tick;
+        let peak = r.peak_buses();
+        if peak > 0 && r.stops.len() >= 2 && r.headway_with(secs, peak) > transit::INFREQUENT_HEADWAY {
+            out.push(LineProblem::Infrequent { headway: r.headway_with(secs, peak) as u32, buses: peak, loop_min: r.loop_minutes(secs).round() as u32 });
+        }
         // [r4-timetable] By the line's own hours.
         let t = r.schedule();
         if !t.runs_at(self.clock.minute_of_day() as u32, Kind::Bus) {
