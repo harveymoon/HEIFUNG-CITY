@@ -154,6 +154,26 @@ pub enum BoxLook {
     Reefer,
     Tank,
     OpenTop,
+    /// [r14-materials] A flat rack: floor, two end walls, the load strapped
+    /// down in the open.
+    FlatRack,
+    /// [r14-materials] A dry-bulk box: a dry box with roof hatches.
+    Bulk,
+}
+
+impl BoxLook {
+    /// [r14-materials] How a box of this kind is drawn.
+    pub fn of(kind: nd_sim::rail::BoxKind) -> BoxLook {
+        use nd_sim::rail::BoxKind as K;
+        match kind {
+            K::Dry => BoxLook::Dry,
+            K::Reefer => BoxLook::Reefer,
+            K::Tank => BoxLook::Tank,
+            K::OpenTop => BoxLook::OpenTop,
+            K::FlatRack => BoxLook::FlatRack,
+            K::Bulk => BoxLook::Bulk,
+        }
+    }
 }
 
 /// [r4] (K33) How a box is painted: anyhow from the place's palette (the
@@ -268,6 +288,23 @@ pub(crate) fn container_core(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f
         return;
     }
 
+    if look == BoxLook::FlatRack {
+        // [r14-materials] A flat rack: a deep steel floor, an end wall at
+        // each end, and its load (a strapped pack of steel or timber).
+        let m = g.part(Matte);
+        let ya = f.yaw() + yaw;
+        m.boxed(at(0.0, y0 + 0.14, 0.0), Vec3::new(len, 0.28, wid), ya, rgba(frame_col));
+        for end in [-1.0f32, 1.0] {
+            m.boxed(at(end * (hl - 0.12), y0 + h * 0.5, 0.0), Vec3::new(0.24, h, wid), ya, rgba(paint));
+        }
+        let pack = if rng.random_bool(0.5) { [0.34, 0.32, 0.31] } else { [0.66, 0.52, 0.34] };
+        m.boxed(at(0.0, y0 + 0.28 + 0.55, 0.0), Vec3::new(len - 0.9, 1.1, wid - 0.35), ya, rgba(pack));
+        for k in [-0.3f32, 0.0, 0.3] {
+            m.boxed(at(k * len, y0 + 0.28 + 0.55, 0.0), Vec3::new(0.06, 1.14, wid - 0.3), ya, rgba([0.9, 0.55, 0.1]));
+        }
+        return;
+    }
+
     // Corrugated sheet: both sides, the door leaves, the recessed front
     // wall and the roof (a tarp on an open-top box).
     {
@@ -284,6 +321,13 @@ pub(crate) fn container_core(g: &mut Geometry, c: &Ctx, rng: &mut impl Rng, u: f
         let (rl, rw) = (hl + rail_out, hw + rail_out);
         if look != BoxLook::OpenTop {
             m.quad_facing([at(-rl, top, -rw), at(rl, top, -rw), at(rl, top, rw), at(-rl, top, rw)], Vec3::Y, rgba(mul(paint, 0.94)));
+        }
+    }
+    if look == BoxLook::Bulk {
+        // [r14-materials] Three round loading hatches along the roof.
+        let m = g.part(Matte);
+        for k in [-0.3f32, 0.0, 0.3] {
+            m.boxed(at(k * len, top + 0.05, 0.0), Vec3::new(0.7, 0.1, 0.7), f.yaw() + yaw, rgba(mul(frame_col, 0.8)));
         }
     }
     if look == BoxLook::OpenTop {

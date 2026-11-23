@@ -30,12 +30,7 @@ pub(super) struct ContainerMeshes {
 
 impl ContainerMeshes {
     pub(super) fn get(&mut self, meshes: &mut Assets<Mesh>, pal: &nd_procgen::Palette, forty: bool, kind: BoxKind, seed: u32) -> Vec<(Surface, Handle<Mesh>)> {
-        let look = match kind {
-            BoxKind::Dry => nd_procgen::BoxLook::Dry,
-            BoxKind::Reefer => nd_procgen::BoxLook::Reefer,
-            BoxKind::Tank => nd_procgen::BoxLook::Tank,
-            BoxKind::OpenTop => nd_procgen::BoxLook::OpenTop,
-        };
+        let look = nd_procgen::BoxLook::of(kind);
         let key = (forty && kind != BoxKind::Tank, kind as u8, seed % PAINTS);
         self.map
             .entry(key)
